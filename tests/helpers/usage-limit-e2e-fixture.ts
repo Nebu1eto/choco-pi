@@ -426,12 +426,13 @@ export async function runTool(
   if (!definition) throw new Error(`Tool ${name} is not registered.`);
   toolCallCounter += 1;
   const toolCallId = "usage-limit-e2e-" + String(toolCallCounter);
+  const signal = new AbortController().signal;
   return definition.execute(
     toolCallId,
     params,
-    new AbortController().signal,
+    signal,
     () => undefined,
-    session.extensionRunner.createContext(),
+    session.extensionRunner.createToolContext(toolCallId, signal),
   );
 }
 

@@ -10,7 +10,7 @@ import {
 test("imported SDK identity uses supported public exports", async () => {
   const observation = await readImportedSdkVersion();
   assert.equal(observation.source, "imported-sdk");
-  assert.equal(observation.version, "0.87.1");
+  assert.equal(observation.version, "1.0.4");
   assert.equal(observation.authoritative, true);
   assert.match(observation.path ?? "", /pi-coding-agent/);
 });

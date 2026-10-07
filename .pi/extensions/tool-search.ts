@@ -9,7 +9,12 @@ import { isPrefixLocked, lockPrefix, publishPrefixLock, unlockPrefix } from "./l
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import type { ExtensionAPI, ExtensionContext, ToolInfo } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+  ToolExposure,
+  ToolInfo,
+} from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { hasCanonicalSearch } from "../packages/choco-pi-web-search/index.ts";
 
@@ -25,6 +30,33 @@ const LEGACY_SEARCH_TOOL_NAMES = new Set<string>([
 
 function withoutDisabledTools(names: readonly string[]): string[] {
   return names.filter((name) => !DISABLED_TOOL_NAMES.has(name));
+}
+
+/**
+ * Exposures this extension must never declare to the model.
+ *
+ * Pi declares only `direct` and `model-only` tools by default. `codemode` and
+ * `deferred` tools stay callable through scripts without a declaration, and
+ * `hidden` tools are unreachable, so none of them belongs in the active set
+ * this extension commits. A missing exposure is `direct`, as in Pi itself.
+ */
+const UNDECLARED_EXPOSURES: ReadonlySet<ToolExposure> = new Set<ToolExposure>([
+  "codemode",
+  "deferred",
+  "hidden",
+]);
+
+function isDeclarable(tool: ToolInfo): boolean {
+  return !UNDECLARED_EXPOSURES.has(tool.exposure);
+}
+
+/**
+ * Whether the tool is reachable only through scripts. Such tools are
+ * searchable without ever having been active, because they are callable
+ * without a declaration, but search must never activate them.
+ */
+function isScriptOnly(tool: ToolInfo): boolean {
+  return tool.exposure === "codemode" || tool.exposure === "deferred";
 }
 
 // Keep the minimum execution, orchestration, and discovery path available
@@ -440,15 +472,24 @@ export default function toolSearch(pi: ExtensionAPI): void {
     );
   };
 
+  const undeclarableNames = (tools: readonly ToolInfo[]): Set<string> =>
+    new Set(tools.filter((tool) => !isDeclarable(tool)).map((tool) => tool.name));
+
   const computeLeanSurface = (): string[] => {
-    const allNames = new Set(withoutUnavailableTools(pi.getAllTools().map((tool) => tool.name)));
+    const allTools = pi.getAllTools();
+    const undeclarable = undeclarableNames(allTools);
+    const allNames = new Set(
+      withoutUnavailableTools(allTools.map((tool) => tool.name)).filter(
+        (name) => !undeclarable.has(name),
+      ),
+    );
     const alwaysActive = ALWAYS_ACTIVE_TOOL_NAMES.filter(
       (name) => name !== "tool_search" && allNames.has(name),
     );
     const included = new Set<string>(alwaysActive);
     const currentlyActive = leanSurfaceInitialized
       ? withoutUnavailableTools(pi.getActiveTools()).filter(
-          (name) => name !== "tool_search" && !included.has(name),
+          (name) => name !== "tool_search" && !undeclarable.has(name) && !included.has(name),
         )
       : [];
     for (const name of currentlyActive) included.add(name);
@@ -474,16 +515,24 @@ export default function toolSearch(pi: ExtensionAPI): void {
   };
 
   const refreshSearchCatalog = (): void => {
-    const allTools = pi
-      .getAllTools()
-      .filter((tool) => withoutUnavailableTools([tool.name]).length > 0);
-    const allNames = new Set(allTools.map((tool) => tool.name));
-    for (const name of withoutUnavailableTools(pi.getActiveTools())) allowedNames.add(name);
+    const registeredTools = pi.getAllTools();
+    // Hidden tools are unreachable, so they are never search documents.
+    const allTools = registeredTools.filter(
+      (tool) => tool.exposure !== "hidden" && withoutUnavailableTools([tool.name]).length > 0,
+    );
+    const undeclarable = undeclarableNames(registeredTools);
+    for (const name of withoutUnavailableTools(pi.getActiveTools())) {
+      if (!undeclarable.has(name)) allowedNames.add(name);
+    }
     searchableNames = new Set(
-      [...allNames].filter(
-        (name) =>
-          !DISABLED_TOOL_NAMES.has(name) && allowedNames.has(name) && !ALWAYS_ACTIVE.has(name),
-      ),
+      allTools
+        .filter(
+          (tool) =>
+            !DISABLED_TOOL_NAMES.has(tool.name) &&
+            (isScriptOnly(tool) ||
+              (isDeclarable(tool) && allowedNames.has(tool.name) && !ALWAYS_ACTIVE.has(tool.name))),
+        )
+        .map((tool) => tool.name),
     );
     searchableDocuments = [
       ...buildPiDocuments(allTools.filter((tool) => searchableNames.has(tool.name))),
@@ -547,6 +596,7 @@ export default function toolSearch(pi: ExtensionAPI): void {
       const matches = rankTools(searchableDocuments, query).slice(0, params.limit ?? DEFAULT_LIMIT);
       const added = matches
         .filter((target): target is Extract<SearchTarget, { kind: "pi" }> => target.kind === "pi")
+        .filter((target) => isDeclarable(target.tool))
         .map((target) => target.tool.name)
         .filter((name) => !activeSet.has(name));
       const nativeToolSearch = usesNativeToolSearch(context);
@@ -558,7 +608,7 @@ export default function toolSearch(pi: ExtensionAPI): void {
 
       const lines = matches.map((target) =>
         target.kind === "pi"
-          ? `- ${target.tool.name} [Pi]: ${compactDescription(target.tool.description)}\n  Call: ${nativeToolSearch ? `${target.tool.name} directly (native provider tool search)` : `await tools.${target.tool.name}({ ...args })`}`
+          ? `- ${target.tool.name} [Pi]: ${compactDescription(target.tool.description)}\n  Call: ${nativeToolSearch && isDeclarable(target.tool) ? `${target.tool.name} directly (native provider tool search)` : `await tools.${target.tool.name}({ ...args })`}`
           : `- ${target.name} [MCP: ${target.server}]: ${compactDescription(target.description)}\n  Parameters: ${parameterSummary(target.parameters)}\n  Call: await tools.mcp({ tool: "${target.name}", args: { ...args } })`,
       );
       const mcpMatches = matches.filter((target) => target.kind === "mcp").length;
@@ -597,7 +647,10 @@ export default function toolSearch(pi: ExtensionAPI): void {
     mcpCatalogReady = false;
     loadedNames.clear();
     leanSurfaceInitialized = false;
-    allowedNames = new Set(withoutUnavailableTools(pi.getActiveTools()));
+    const undeclarable = undeclarableNames(pi.getAllTools());
+    allowedNames = new Set(
+      withoutUnavailableTools(pi.getActiveTools()).filter((name) => !undeclarable.has(name)),
+    );
     scheduleLeanSurface();
   });
   pi.on("before_agent_start", () => {

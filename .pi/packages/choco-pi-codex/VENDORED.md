@@ -421,7 +421,7 @@ it does not migrate or change the package's Pi SDK compatibility.
 ## Pi SDK target alignment
 
 Host-provided Pi SDK peer contracts and any development SDK dependencies now
-require exactly `0.87.1`, matching the harness target. Package-local frozen
+require exactly `1.0.4`, matching the harness target. Package-local frozen
 locks resolve that release, with release-age exceptions
 limited to the six exact SDK/chord/telemetry `0.87.1` packages and the existing
 `typebox@1.3.29` exception. This SDK alignment is separate from the pnpm 11
@@ -498,3 +498,37 @@ custom entry, a structural copy of root `CodexUsageLimitEntry` (no root import).
 `session_shutdown` and `session_before_switch` clear the current session's signal.
 A host test confirms the provider's stream `sessionId` equals
 `ctx.sessionManager.getSessionId()` at `message_end`.
+
+## 2026-10-07 choco-pi patch: Pi SDK 1.0.4
+
+Pi SDK peer and development pins move from `0.87.1` to exactly `1.0.4`,
+matching the harness target. Other dependency contracts are unchanged.
+
+The package workspace release-age exceptions now list eight exact
+`@earendil-works/*@1.0.4` packages and the existing `typebox@1.3.29` exception.
+`@earendil-works/pi-codemode@1.0.4` and `@earendil-works/pi-mcp@1.0.4` now appear
+in the frozen lock as transitive dependencies of `pi-coding-agent`.
+
+## 2026-10-07 choco-pi patch: Pi 1.0.4 nested tool context and shell results
+
+In Pi 1.0.4, tool `execute` receives `ExtensionToolContext` (`tools` and `executeTool`).
+`ToolExecutionContext.extensionContext` is now that type, and the `exec`/`wait` tool's
+own context passes through unchanged. Its tool members are non-enumerable, so the
+adapter never copies the context.
+
+Bridged registered tools (`collectBridgedTools`) use `dispatch: "session"`. When
+`ctx.tools` lists the name, the call runs through `ctx.executeTool(name, input,
+{ signal, onUpdate })` with the code-mode-prepared input. Pi then applies its hooks,
+nested-call events, the `nestedCalls` record and usage folding. An `isError` outcome
+without shell structured content rejects with the tool's text. Registered tools that
+the session cannot call (inactive `direct` tools) and the Codex-native instances code
+mode builds (`apply_patch`, `exec_command`, `write_stdin`, `view_image`, `web__run`,
+`image_gen__imagegen`) still run their definition directly, because `executeTool`
+reaches only callable session tools.
+
+Results whose `structuredContent` matches Pi's shell shape (`output`, `truncated`,
+optional `full_output_path`, `exit_code`, `wall_time_seconds`) resolve to that
+validated object, including non-zero exits. Empty output resolves to `""` rather than
+`(no output)`. The text fallback of other tools is unchanged. `extension/events.ts`
+ignores `tool_execution_start` events that carry `parentToolCallId`, so nested calls
+no longer reset the exploration group.

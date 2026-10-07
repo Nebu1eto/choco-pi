@@ -10,7 +10,7 @@ Keep OAuth tokens, API keys, and machine-local configuration outside Git.
 
 - Node.js 24 or later
 - pnpm `11.11.0` exactly
-- Pi `0.87.1`, matching the SDK packages pinned by this checkout
+- Pi `1.0.4`, matching the SDK packages pinned by this checkout
 - Git
 - Optional: [`agent-browser`](https://github.com/vercel-labs/agent-browser) for browser automation. Versions 0.34.0, 0.35.2, 0.36.0, 0.37.1, and 0.38.1 are tested; other versions run with an advisory warning.
 - Optional: macOS 14 or later for computer use (see [Set up computer use](#set-up-computer-use-macos))
@@ -46,14 +46,14 @@ Homebrew's `pi-coding-agent` formula lags the supported release. Install Pi in
 a versioned local prefix instead:
 
 ```sh
-npm install --prefix ~/.local/pi-0.87.1 --ignore-scripts @earendil-works/pi-coding-agent@0.87.1
+npm install --prefix ~/.local/pi-1.0.4 --ignore-scripts @earendil-works/pi-coding-agent@1.0.4
 ```
 
 Create an executable shim at `~/.local/pi-shim/pi`:
 
 ```sh
 #!/bin/sh
-PI_SKIP_VERSION_CHECK=1 exec "$HOME/.local/pi-0.87.1/node_modules/.bin/pi" "$@"
+PI_SKIP_VERSION_CHECK=1 exec "$HOME/.local/pi-1.0.4/node_modules/.bin/pi" "$@"
 ```
 
 Place the shim before `/opt/homebrew/bin` in your shell configuration:
@@ -62,7 +62,7 @@ Place the shim before `/opt/homebrew/bin` in your shell configuration:
 export PATH="$HOME/.local/pi-shim:$PATH"
 ```
 
-Pi 0.87.1's `cli.js` launcher enables Node's compile cache. When diagnosing
+Pi 1.0.4's `cli.js` launcher enables Node's compile cache. When diagnosing
 unusual module-load errors, set `NODE_DISABLE_COMPILE_CACHE=1` to disable it.
 
 When Pi opens, run `/login` and select a provider. The installation scripts do
@@ -100,6 +100,10 @@ npm run install:profile
 Restart Pi after an update. For edits under `.pi` during an existing Pi session,
 run `/reload` to reload extensions, skills, prompts, themes, and linked profile
 files.
+
+### Built-in extensions
+
+Pi 1.0.4 ships built-in `codemode`, `tool-search`, `mcp`, and `llama.cpp` extensions. choco-pi disables the first three with `"extensions": ["-builtin:codemode", "-builtin:tool-search", "-builtin:mcp"]` in `.pi/settings.json` and the profile installer because it provides its own `exec` code-mode tool, `tool_search`, and `/mcp`. While the built-in MCP extension is disabled, Pi's `pi mcp …` CLI subcommands are unavailable.
 
 ## Authentication
 
@@ -351,6 +355,8 @@ win. Neither file is created for you. This example shows the defaults:
 | `~/.pi/agent/mcp.json` from [`.pi/mcp.example.json`](.pi/mcp.example.json)                                                                      | Untracked MCP server and OAuth configuration                                |
 | Package [`AGENTS.md`](.pi/packages/choco-pi-agent-browser/AGENTS.md) and [`VENDORED.md`](.pi/packages/choco-pi-agent-browser/VENDORED.md) files | Package policy and recorded upstream differences                            |
 
+Pi 1.0.3 changed `Home`/`End` to move the editor cursor. Use `Ctrl+Home`/`Ctrl+End` to jump to the transcript top/bottom.
+
 `npm run install:profile` links the policy files, `subagents.json`, `choco-pi-codex.json`, `models.json`, `keybindings.json`, the agent definitions, and the three extension JSON files into `~/.pi/agent`; `zentui.json` is linked as `choco-pi-ui.json`.
 
 ### Example global settings
@@ -359,7 +365,7 @@ win. Neither file is created for you. This example shows the defaults:
 [`.pi/settings.json`](.pi/settings.json) and keeps any keys it does not manage.
 Each run does three things:
 
-- Writes `packages`, `extensions`, `skills`, and `prompts` as absolute checkout paths. Entries you added are kept after the choco-pi entries.
+- Writes `packages`, `skills`, and `prompts` as absolute checkout paths; `extensions` also includes the disabled built-in entries above. Entries you added are kept after the choco-pi entries.
 - Copies `theme`, `tuiMode`, `fullscreenExitOutput`, `fuzzyFileMentions`, and `compaction` from `.pi/settings.json` over the global value. Change these in `.pi/settings.json`; edits made only in the global file are lost on the next install.
 - Merges `modelThinkingLevels`. Your global entries win; `.pi/settings.json` only adds levels for models you have not set.
 - Leaves the remaining keys alone. Set them yourself or through `/preferences`.
@@ -389,7 +395,12 @@ values are the maintainer's current settings. Secrets never belong in this file.
     "/path/to/choco-pi/.pi/packages/choco-pi-computer-use",
     "/path/to/choco-pi/.pi/packages/choco-pi-editor-context"
   ],
-  "extensions": ["/path/to/choco-pi/.pi/extensions"],
+  "extensions": [
+    "/path/to/choco-pi/.pi/extensions",
+    "-builtin:codemode",
+    "-builtin:tool-search",
+    "-builtin:mcp"
+  ],
   "skills": ["/path/to/choco-pi/.pi/skills"],
   "prompts": ["/path/to/choco-pi/.pi/prompts"],
 

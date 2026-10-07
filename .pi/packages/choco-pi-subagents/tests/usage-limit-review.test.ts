@@ -18,6 +18,7 @@ import { ResumeModelError } from "../src/agent-manager.ts";
 import { createNestedSubagentTools } from "../src/nested-tools.ts";
 import { ProviderUnavailableError } from "../src/provider-health.ts";
 import { setWorktreeIsolationEnabled } from "../src/worktree.ts";
+import { toolContext } from "./fixtures/tool-context.ts";
 import {
   cleanupProviders,
   createUsageLimitEnv,
@@ -556,7 +557,7 @@ test("nested resume forwards and validates model through the manager", async (t)
         },
         undefined,
         undefined,
-        env.context(),
+        toolContext(env.context()),
       );
 
     closeOpenAi = true;

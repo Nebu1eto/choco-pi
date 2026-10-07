@@ -69,6 +69,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   if (request.type === "get_available_models") data = { models: [{ provider: "test", id: "model", name: "Model" }] };
   if (request.type === "get_commands") data = { commands: [] };
   if (request.type === "get_messages") data = { messages: [{ role: "user", content: "Persisted question" }, { role: "assistant", content: [{ type: "text", text: "Persisted answer" }] }] };
+  if (request.type === "prompt") data = { disposition: "started" };
   send({ type: "response", id: request.id, command: request.type, success: true, data });
   if (request.type === "prompt") {
     send({ type: "agent_start" });
@@ -100,6 +101,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   if (request.type === "get_state") data = { sessionId, thinkingLevel: "medium", model: { provider: "test", id: "model" } };
   if (request.type === "get_available_models") data = { models: [{ provider: "test", id: "model", name: "Model" }] };
   if (request.type === "get_commands") data = { commands: [] };
+  if (request.type === "prompt") data = { disposition: "started" };
   send({ type: "response", id: request.id, command: request.type, success: true, data });
   if (request.type === "abort") send({ type: "agent_settled" });
 });
@@ -213,7 +215,7 @@ const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
 readline.createInterface({ input: process.stdin }).on("line", (line) => {
   const request = JSON.parse(line);
   if (request.type !== "prompt") return;
-  send({ type: "response", id: request.id, command: "prompt", success: true, data: {} });
+  send({ type: "response", id: request.id, command: "prompt", success: true, data: { disposition: "started" } });
   send({ type: "tool_execution_start", toolCallId: "oversized-raw-input", toolName: "apply_patch", args: { input: "p".repeat(300_000) } });
   send({ type: "agent_settled" });
 });

@@ -244,6 +244,7 @@ before(async () => {
   const root = await mkdtemp(join(tmpdir(), "choco-pi-canonical-host-"));
   const loaderAgentDir = join(root, "agent");
   await mkdir(loaderAgentDir, { recursive: true });
+  const settingsManager = SettingsManager.inMemory();
   const loader = new DefaultResourceLoader({
     agentDir: loaderAgentDir,
     cwd: root,
@@ -257,7 +258,7 @@ before(async () => {
     noPromptTemplates: true,
     noSkills: true,
     noThemes: true,
-    settingsManager: SettingsManager.inMemory(),
+    settingsManager,
   });
   await loader.reload();
   const loaded = loader.getExtensions();
@@ -309,6 +310,7 @@ before(async () => {
     setLabel: () => undefined,
     getActiveTools: () => [...activeTools],
     getAllTools: () => [],
+    getSettings: () => settingsManager.getSettings(),
     setActiveTools: (names: string[]) => {
       activeTools = [...names];
     },
@@ -360,9 +362,14 @@ async function execute(
   parameters: BoundaryToolParameters,
   onUpdate?: (result: AgentToolResult<unknown>) => void,
 ) {
-  const context = host.runner.createContext();
-  return host.tool.execute(`canonical-${Date.now()}`, parameters, undefined, onUpdate, {
+  const toolCallId = `canonical-${Date.now()}`;
+  const context = host.runner.createToolContext(toolCallId, undefined);
+  // createToolContext defines tools/executeTool as non-enumerable properties; carry them
+  // explicitly because the spread below copies only enumerable members.
+  return host.tool.execute(toolCallId, parameters, undefined, onUpdate, {
     ...context,
+    tools: context.tools,
+    executeTool: context.executeTool,
     hasUI: true,
   });
 }
@@ -413,7 +420,7 @@ test("standalone direct actions explain the missing unified core", async () => {
       { action: "open", url: "https://example.test" },
       undefined,
       undefined,
-      host.runner.createContext(),
+      host.runner.createToolContext("standalone-action", undefined),
     );
     assert.match(JSON.stringify(result), /requires unified search core/i);
   } finally {
@@ -715,14 +722,14 @@ test("command curator publishes initial and added references before storage", as
     { responseId: searchId, queryIndex: 0 },
     undefined,
     undefined,
-    host.runner.createContext(),
+    host.runner.createToolContext("command-initial-retrieval", undefined),
   );
   const addedStored = await retrieval.execute(
     "command-added-retrieval",
     { responseId: searchId, queryIndex: 1 },
     undefined,
     undefined,
-    host.runner.createContext(),
+    host.runner.createToolContext("command-added-retrieval", undefined),
   );
   const initialReference = visibleReference(initialStored);
   const addedReference = visibleReference(addedStored);
@@ -749,7 +756,7 @@ test("legacy stored search retrieval remains compatible", async () => {
     { responseId: "legacy-result", queryIndex: 0 },
     undefined,
     undefined,
-    host.runner.createContext(),
+    host.runner.createToolContext("legacy-retrieval", undefined),
   );
   assert.match(JSON.stringify(result), /Legacy answer/);
   assert.match(JSON.stringify(result), /example\.test\/legacy/);
@@ -769,7 +776,7 @@ test("result-only snippets remain visible in tool output and stored retrieval", 
     { responseId: id, queryIndex: 0 },
     undefined,
     undefined,
-    host.runner.createContext(),
+    host.runner.createToolContext("snippet-retrieval", undefined),
   );
   assert.match(JSON.stringify(stored), /Opens at 09:00/);
 });

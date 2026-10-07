@@ -186,6 +186,7 @@ function toolInfo(runner: ExtensionRunner): ToolInfo[] {
     description: definition.description,
     parameters: definition.parameters,
     promptGuidelines: definition.promptGuidelines,
+    exposure: definition.exposure ?? "direct",
     sourceInfo,
   }));
 }
@@ -231,6 +232,7 @@ async function createHarness(
     { factory: browserSearchFactory(), name: "browser-search-registration" },
     { factory: legacySearchFactory, name: "late-legacy-discovery-fixture" },
   );
+  const settingsManager = SettingsManager.inMemory();
   const loader = new DefaultResourceLoader({
     agentDir,
     cwd,
@@ -241,7 +243,7 @@ async function createHarness(
     noPromptTemplates: true,
     noSkills: true,
     noThemes: true,
-    settingsManager: SettingsManager.inMemory(),
+    settingsManager,
   });
   await loader.reload();
   const loaded = loader.getExtensions();
@@ -263,7 +265,7 @@ async function createHarness(
     noPromptTemplates: true,
     noSkills: true,
     noThemes: true,
-    settingsManager: SettingsManager.inMemory(),
+    settingsManager,
   });
   await syntheticLoader.reload();
   const syntheticLoaded = syntheticLoader.getExtensions();
@@ -348,6 +350,7 @@ async function createHarness(
     setLabel: (entryId, label) => manager.appendLabelChange(entryId, label),
     getActiveTools: () => [...activeTools],
     getAllTools: () => toolInfo(runner),
+    getSettings: () => settingsManager.getSettings(),
     setActiveTools: (names) => {
       activeTools = [...names];
     },
@@ -423,7 +426,7 @@ async function executeTool(
       parameters,
       signal,
       undefined,
-      harness.runner.createContext(),
+      harness.runner.createToolContext(`fixture-${name}`, signal),
     );
   } finally {
     harness.setSignal(undefined);

@@ -9,8 +9,10 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import { AgentManager, type AgentManagerRunner } from "../src/agent-manager.ts";
+import type { QueuedInputDisposition } from "../src/agent-message.ts";
 import subagentsExtension from "../src/index.ts";
 import { NUDGE_HOLD_MS } from "../src/notification-gate.ts";
+import { toolContext } from "./fixtures/tool-context.ts";
 
 function partialFixture<T extends object>(value: Partial<T>): T {
   // SAFETY: Fixtures supply only the host members exercised by the registered tools and injected runner.
@@ -118,12 +120,14 @@ async function fixture(t: TestContext, initialMaxConcurrent = 1) {
   const start = handlers.get("session_start");
   assert.ok(start);
   await start({}, ctx);
+  const toolCtx = toolContext(ctx);
   return {
     manager,
     notices,
     deliveryOptions,
     tools,
     ctx,
+    toolCtx,
     pi,
     events,
     pending,
@@ -146,7 +150,7 @@ async function fixture(t: TestContext, initialMaxConcurrent = 1) {
     async call(name: string, id: string) {
       const tool = tools.get(name);
       assert.ok(tool);
-      const result = await tool.execute(name, { agent_id: id }, undefined, undefined, ctx);
+      const result = await tool.execute(name, { agent_id: id }, undefined, undefined, toolCtx);
       const first = result.content[0];
       assert.equal(first?.type, "text");
       return first.type === "text" ? first.text : "";
@@ -191,7 +195,7 @@ test("registered root MESSAGE/TASK/FINAL use safe-boundary steering with idle wa
         { to: "/root", message: "coordination", type },
         undefined,
         undefined,
-        host.ctx,
+        host.toolCtx,
       );
       assert.deepEqual(host.notices.at(-1), {
         customType: "subagent-message",
@@ -230,7 +234,7 @@ test("registered peer message rejects unpublished cancellation, then reports pub
       { to: id, message: "must not queue" },
       undefined,
       undefined,
-      host.ctx,
+      host.toolCtx,
     );
     const beforeSessionText = beforeSession.content[0];
     assert.equal(beforeSessionText?.type, "text");
@@ -243,8 +247,9 @@ test("registered peer message rejects unpublished cancellation, then reports pub
     let steers = 0;
     let fixtureSessionDisposed = false;
     const fixtureSession = partialFixture<AgentSession>({
-      async steer() {
+      async steer(): Promise<QueuedInputDisposition> {
         steers += 1;
+        return "queued";
       },
       dispose() {
         fixtureSessionDisposed = true;
@@ -256,7 +261,7 @@ test("registered peer message rejects unpublished cancellation, then reports pub
       { to: id, message: "must not steer" },
       undefined,
       undefined,
-      host.ctx,
+      host.toolCtx,
     );
     const liveSessionText = liveSession.content[0];
     assert.equal(liveSessionText?.type, "text");
@@ -284,7 +289,7 @@ test("registered peer message rejects unpublished cancellation, then reports pub
       { to: id, message: "must remain finished" },
       undefined,
       undefined,
-      host.ctx,
+      host.toolCtx,
     );
     const publishedText = published.content[0];
     assert.equal(publishedText?.type, "text");

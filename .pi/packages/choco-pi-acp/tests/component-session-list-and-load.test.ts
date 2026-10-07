@@ -27,6 +27,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   if (request.type === "get_available_models") data = { models: [] };
   if (request.type === "get_state") data = { thinkingLevel: "medium" };
   if (request.type === "get_commands") data = { commands: [] };
+  if (request.type === "prompt") data = { disposition: "started" };
   send({ type: "response", id: request.id, command: request.type, success: true, data });
 });
 `,

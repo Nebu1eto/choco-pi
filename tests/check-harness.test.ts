@@ -29,13 +29,13 @@ function fixture(overrides: Partial<HarnessOptions> = {}) {
       nodeVersion: "v24.0.0",
       runtimeIdentity: {
         source: "active-host" as const,
-        version: "0.87.1",
+        version: "1.0.4",
         path: "/active/pi-sdk",
         authoritative: true,
       },
       readImportedRuntime: async () => ({
         source: "imported-sdk" as const,
-        version: "0.87.1",
+        version: "1.0.4",
         path: "/checkout/pi-sdk",
         authoritative: true,
       }),
@@ -46,14 +46,14 @@ function fixture(overrides: Partial<HarnessOptions> = {}) {
         return value;
       },
       pathExists: async () => true,
-      runCommand: async () => ({ status: 0, stdout: "0.87.1\n", stderr: "" }),
+      runCommand: async () => ({ status: 0, stdout: "1.0.4\n", stderr: "" }),
       ...overrides,
     },
   };
 }
 
 test("active host readiness requires exactly the supported SDK release", async () => {
-  for (const version of ["0.86.1", "0.87.0", "0.87.1", "0.87.2", "0.87.1-rc.1", "garbage"]) {
+  for (const version of ["0.87.1", "1.0.3", "1.0.4", "1.0.5", "1.0.4-rc.1", "garbage"]) {
     const { options } = fixture({
       runtimeIdentity: {
         source: "active-host",
@@ -64,7 +64,7 @@ test("active host readiness requires exactly the supported SDK release", async (
     const report = await checkHarness(options);
     assert.equal(
       report.checks.find((check) => check.id === "active-host")?.status,
-      version === "0.87.1" ? "pass" : "fail",
+      version === "1.0.4" ? "pass" : "fail",
       version,
     );
   }
@@ -95,7 +95,7 @@ test("compatible active host ignores an old or missing PATH launcher automatical
 test("incompatible active host fails despite a correct PATH launcher", async () => {
   const { options } = fixture({
     runtimeIdentity: { source: "active-host", version: "0.85.1", authoritative: true },
-    runCommand: async () => ({ status: 0, stdout: "0.87.1\n", stderr: "" }),
+    runCommand: async () => ({ status: 0, stdout: "1.0.4\n", stderr: "" }),
   });
   const report = await checkHarness(options);
   assert.equal(report.status, "fail");
@@ -133,7 +133,7 @@ test("malformed host metadata is not guessed from a valid launcher", async () =>
       authoritative: true,
       error: "host metadata malformed",
     },
-    runCommand: async () => ({ status: 0, stdout: "0.87.1\n", stderr: "" }),
+    runCommand: async () => ({ status: 0, stdout: "1.0.4\n", stderr: "" }),
   });
   const report = await checkHarness(options);
   assert.equal(report.checks.find((check) => check.id === "active-host")?.status, "fail");
@@ -153,7 +153,7 @@ test("matching launcher evidence cannot impersonate an active host", async () =>
   const { options } = fixture({
     runtimeIdentity: {
       source: "launcher",
-      version: "0.87.1",
+      version: "1.0.4",
       authoritative: false,
     },
   });
@@ -171,7 +171,7 @@ test("non-authoritative imported SDK evidence cannot pass standalone readiness",
     runtimeIdentity: undefined,
     readImportedRuntime: async () => ({
       source: "imported-sdk",
-      version: "0.87.1",
+      version: "1.0.4",
       authoritative: false,
     }),
   });
@@ -327,4 +327,90 @@ test("checks never read credential files", async () => {
     reads.some((target) => /(?:auth\.json|credential|token|secret)/i.test(target)),
     false,
   );
+});
+
+test("built-in extension policy passes only when project settings disable all three", async () => {
+  const noneLoaded: string[] = [];
+  const cases = [
+    {
+      extensions: ["-builtin:codemode", "-builtin:tool-search", "-builtin:mcp"],
+      loaded: noneLoaded,
+      status: "pass",
+      detail:
+        /project settings disable builtin:codemode, builtin:tool-search, builtin:mcp; active host registers no tools/,
+    },
+    {
+      extensions: ["-builtin:codemode", "-builtin:tool-search"],
+      loaded: noneLoaded,
+      status: "warn",
+      detail: /does not disable builtin:mcp/,
+    },
+    {
+      // Pi applies project entries in order, so a later + re-enables the built-in.
+      extensions: ["-builtin:codemode", "-builtin:tool-search", "-builtin:mcp", "+builtin:mcp"],
+      loaded: noneLoaded,
+      status: "warn",
+      detail: /does not disable builtin:mcp/,
+    },
+    {
+      extensions: undefined,
+      loaded: noneLoaded,
+      status: "warn",
+      detail: /does not disable builtin:codemode, builtin:tool-search, builtin:mcp/,
+    },
+    {
+      extensions: ["-builtin:codemode", "-builtin:tool-search", "-builtin:mcp"],
+      loaded: ["codemode"],
+      status: "warn",
+      detail: /active host registered tools or commands from builtin:codemode/,
+    },
+  ];
+  for (const testCase of cases) {
+    const { options } = fixture({
+      loadedBuiltinExtensions: testCase.loaded,
+      readText: async (target) => {
+        if (target === path.join(root, "settings.json")) {
+          return JSON.stringify({
+            packages: [],
+            tuiMode: "fullscreen",
+            extensions: testCase.extensions,
+          });
+        }
+        throw new Error(`missing fixture: ${target}`);
+      },
+    });
+    const report = await checkHarness(options);
+    const check = report.checks.find((entry) => entry.id === "builtin-extensions");
+    assert.equal(check?.status, testCase.status, JSON.stringify(testCase.extensions));
+    assert.match(check?.detail ?? "", testCase.detail);
+    assert.match(check?.detail ?? "", /does not expose extension load warnings/);
+  }
+});
+
+test("standalone built-in extension check states that no host was observed", async () => {
+  const { options } = fixture({
+    runtimeIdentity: undefined,
+    readText: async (target) => {
+      if (target === path.join(root, "settings.json")) {
+        return JSON.stringify({
+          packages: [],
+          extensions: ["-builtin:codemode", "-builtin:tool-search", "-builtin:mcp"],
+        });
+      }
+      throw new Error(`missing fixture: ${target}`);
+    },
+  });
+  const report = await checkHarness(options);
+  const check = report.checks.find((entry) => entry.id === "builtin-extensions");
+  assert.equal(check?.status, "pass");
+  assert.match(check?.detail ?? "", /active host not observed/);
+});
+
+test("the repository settings disable the policy built-in extensions", async () => {
+  const report = await checkHarness({
+    mode: "automatic",
+    configRoot: fileURLToPath(new URL("../.pi", import.meta.url)),
+    nodeVersion: "v24.0.0",
+  });
+  assert.equal(report.checks.find((entry) => entry.id === "builtin-extensions")?.status, "pass");
 });

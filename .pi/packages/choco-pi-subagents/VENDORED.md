@@ -891,7 +891,7 @@ it does not migrate or change the package's Pi SDK compatibility.
 ## Pi SDK target alignment
 
 Host-provided Pi SDK peer contracts and any development SDK dependencies now
-require exactly `0.87.1`, matching the harness target. Package-local frozen
+require exactly `1.0.4`, matching the harness target. Package-local frozen
 locks resolve that release, with release-age exceptions
 limited to the six exact SDK/chord/telemetry `0.87.1` packages and the existing
 `typebox@1.3.29` exception. This SDK alignment is separate from the pnpm 11
@@ -1102,3 +1102,48 @@ Review corrections, round 3 (supersede the bullets above where they differ):
   `toolCallId`, `joinMode` or `outputFile`.
 - Tests: new `tests/usage-limit-round3.test.ts`; `tests/workflow.test.ts`
   builds the health-aware runner with `Object.assign` instead of a cast.
+
+## 2026-10-07 choco-pi patch: Pi SDK 1.0.4
+
+Pi SDK peer and development pins move from `0.87.1` to exactly `1.0.4`,
+matching the harness target. Other dependency contracts are unchanged.
+
+The package workspace release-age exceptions now list eight exact
+`@earendil-works/*@1.0.4` packages and the existing `typebox@1.3.29` exception.
+`@earendil-works/pi-codemode@1.0.4` and `@earendil-works/pi-mcp@1.0.4` now appear
+in the frozen lock as transitive dependencies of `pi-coding-agent`.
+
+## 2026-10-07 choco-pi patch: Pi 1.0.4 source migration
+
+- Queued-input disposition: Pi 1.0.4 `AgentSession.steer()`/`followUp()`
+  resolve to `"queued" | "handled"`. `src/agent-message.ts` exports
+  `QueuedInputDisposition` (derived from `AgentSession["steer"]`, since Pi does
+  not export the alias by name) and `SteerableAgentSession.steer` returns it.
+  `deliverAgentMessage` keeps the "Message steered to ..." text for `queued`
+  and, for `handled`, says that an input handler in the recipient's session consumed the
+  message, did not queue it, and that the recipient's model will not get it. The nested
+  `steer_subagent` tool (`src/nested-tools.ts`) reports `handled` the same
+  way instead of "Steering message sent". Fire-and-forget steer paths
+  (`AgentManager.steer`, watchdog, turn-limit, pending-steer flush) still
+  ignore the disposition.
+- Mention clone tool context: tool `execute` now receives
+  `ExtensionToolContext`. `createMentionCloneAgentTool` passes
+  `bindToolContextToSession(mainCtx, cloneCtx)`, a new export in
+  `src/mention-clone.ts`. Session-bound members delegate lazily to the main
+  session context. That keeps the spawn's `rootSessionId`, transcript, cwd and model
+  with the main session, and they stay valid after the clone is disposed.
+  `tools`/`executeTool` delegate to the clone call's own tool context and go stale
+  with it.
+- Tests: new `tests/queued-input-disposition.test.ts` (real SDK sessions with
+  an input handler that returns `handled`, for both tools, plus the clone context
+  binding across clone disposal) and `tests/child-session-file-lazy.test.ts`
+  (real `runAgent` persisted child: no session file with setup-only entries,
+  file and parent link created at the first user message, and resume of a path that was
+  never written). New `tests/fixtures/tool-context.ts` builds a cast-free
+  `ExtensionToolContext` for partial fixtures. Existing fakes return `"queued"`
+  from `steer` and pass tool contexts to `execute`.
+- Checked, unchanged: Pi 1.0.4 still names inline extensions
+  `<inline:<name>>` (`resource-loader.js`), so `shouldKeepExtension` and
+  `tests/runner-status-wiring.test.ts` still hold. Built-in extensions now load as
+  `builtin:<name>` paths and are enabled by default. An `extensions:` allowlist
+  drops them unless it names them literally (for example `builtin:mcp`).

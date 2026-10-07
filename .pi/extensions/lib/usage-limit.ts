@@ -585,10 +585,13 @@ export type UsageLimitPolicyOptions = {
   /** Extension event bus, required to corroborate Synthetic limits. */
   events?: SyntheticQuotaEvents;
   /**
-   * Fallback table. When omitted the policy loads it asynchronously and
-   * `pickFallback` returns `undefined` until `fallbacksLoaded` resolves.
+   * Fallback table. When omitted the policy loads it asynchronously;
+   * `pickFallback` returns `undefined` until `fallbacksLoaded` resolves, and
+   * `preference` and `corroborate` settle only after it does.
    */
   fallbacks?: ModelFallbacks;
+  /** Loads the fallback table when `fallbacks` is omitted; defaults to `loadModelFallbacks`. */
+  loadFallbacks?: () => Promise<ModelFallbacks>;
   /** Overrides the quota reader, mainly for tests. */
   usageSnapshot?: (provider: string) => Promise<ProviderUsageSnapshot | undefined>;
   /** Latest Codex usage-limit entry on the session branch. */
@@ -614,25 +617,32 @@ export function createUsageLimitPolicy(options: UsageLimitPolicyOptions): UsageL
   const resolveAccountId = options.resolveAccountId ?? defaultAccountId;
   const closed = new Map<string, number>();
   let fallbacks = options.fallbacks;
+  const loadFallbacks = options.loadFallbacks ?? (() => loadModelFallbacks());
+  // Settles exactly once and never rejects: a failed load leaves no fallbacks.
   const fallbacksLoaded: Promise<void> = fallbacks
     ? Promise.resolve()
-    : loadModelFallbacks().then(
+    : new Promise<ModelFallbacks>((resolve) => resolve(loadFallbacks())).then(
         (table) => {
           fallbacks = table;
         },
         () => undefined,
       );
 
+  // `preference` and `corroborate` precede `pickFallback` for every consumer, so
+  // waiting here means a startup failure never sees a table that is still loading.
   return {
     owner: options.owner,
     generation: options.generation,
     fallbacksLoaded,
     async preference() {
+      let preference: OnUsageLimit;
       try {
-        return await options.readPreference();
+        preference = await options.readPreference();
       } catch {
-        return DEFAULT_ON_USAGE_LIMIT;
+        preference = DEFAULT_ON_USAGE_LIMIT;
       }
+      await fallbacksLoaded;
+      return preference;
     },
     classify(input) {
       return classifyUsageLimit({ ...input, now: now() });
@@ -649,7 +659,7 @@ export function createUsageLimitPolicy(options: UsageLimitPolicyOptions): UsageL
           codexEntry = undefined;
         }
       }
-      return corroborateUsageLimit(
+      const corroboration = await corroborateUsageLimit(
         {
           usageSnapshot: options.usageSnapshot,
           extension: options.ctx,
@@ -659,6 +669,8 @@ export function createUsageLimitPolicy(options: UsageLimitPolicyOptions): UsageL
         },
         classification,
       );
+      await fallbacksLoaded;
+      return corroboration;
     },
     pickFallback(current, context) {
       return fallbacks ? pickFallback(fallbacks, current, context, resolveAccountId) : undefined;

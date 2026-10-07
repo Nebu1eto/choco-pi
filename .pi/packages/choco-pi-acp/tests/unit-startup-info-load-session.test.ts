@@ -3,7 +3,12 @@ import assert from "node:assert/strict";
 import { isBoundaryRecord, type BoundaryValue } from "../src/boundary.ts";
 import { PiAcpAgent, type SessionStoreLike } from "../src/acp/agent.ts";
 import type { StoredSession } from "../src/acp/session-store.ts";
-import { PiRpcProcess, type PiRpcEvent, type PiRpcProcessLike } from "../src/pi-rpc/process.ts";
+import {
+  PiRpcProcess,
+  type PiPromptDisposition,
+  type PiRpcEvent,
+  type PiRpcProcessLike,
+} from "../src/pi-rpc/process.ts";
 import type {
   PiAvailableModels,
   PiMessages,
@@ -34,7 +39,9 @@ class RestoredProcess implements PiRpcProcessLike {
     return () => {};
   }
 
-  async prompt(_message: string, _images: PiPromptImage[] = []): Promise<void> {}
+  async prompt(_message: string, _images: PiPromptImage[] = []): Promise<PiPromptDisposition> {
+    return "started";
+  }
 
   async getMessages(): Promise<PiMessages> {
     return { messages: [] };

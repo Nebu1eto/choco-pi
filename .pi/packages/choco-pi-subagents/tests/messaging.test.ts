@@ -6,6 +6,7 @@ import {
   type AgentMessageRecord,
   createAgentMessageTool,
   deliverAgentMessage,
+  type QueuedInputDisposition,
 } from "../src/agent-message.ts";
 import {
   parseSubagentMessageNotification,
@@ -420,8 +421,9 @@ test("worker messages reach live recipients by steering, not by the follow-up qu
     id: "child-id",
     alias: "reviewer-e2e",
     session: {
-      steer: async (text: string) => {
+      steer: async (text: string): Promise<QueuedInputDisposition> => {
         steered.push(text);
+        return "queued";
       },
     },
   });
@@ -496,9 +498,10 @@ test("a steer that lands on a retired, replaced, or cancelled recipient reports 
       status: "running",
       resultGeneration: 1,
       session: {
-        steer: async () => {
+        steer: async (): Promise<QueuedInputDisposition> => {
           release?.();
           await held;
+          return "queued";
         },
       },
     };
@@ -545,9 +548,10 @@ test("an uncontested deferred steer still acknowledges delivery exactly once", a
     status: "running",
     resultGeneration: 3,
     session: {
-      steer: async () => {
+      steer: async (): Promise<QueuedInputDisposition> => {
         steers += 1;
         await held;
+        return "queued";
       },
     },
   };

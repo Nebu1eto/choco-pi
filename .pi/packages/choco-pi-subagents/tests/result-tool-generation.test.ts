@@ -10,6 +10,7 @@ import type {
 import subagentsExtension from "../src/index.ts";
 import { claimSubagentResultRead } from "../src/result-read.ts";
 import type { AgentRecord } from "../src/types.ts";
+import { toolContext } from "./fixtures/tool-context.ts";
 
 interface GlobalManagerEntry {
   getRecord(id: string): AgentRecord | undefined;
@@ -114,7 +115,7 @@ test("top-level get_subagent_result refuses repeated generation reads and retain
       { agent_id: id },
       undefined,
       undefined,
-      context,
+      toolContext(context),
     );
     assert.match(resultText(first), /Status: running/);
 
@@ -123,7 +124,7 @@ test("top-level get_subagent_result refuses repeated generation reads and retain
       { agent_id: id },
       undefined,
       undefined,
-      context,
+      toolContext(context),
     );
     assert.equal(JSON.parse(resultText(repeated)).reason, "active_generation_already_read");
 
@@ -140,7 +141,7 @@ test("top-level get_subagent_result refuses repeated generation reads and retain
       { agent_id: id },
       undefined,
       undefined,
-      context,
+      toolContext(context),
     );
     assert.match(resultText(terminal), new RegExp(`Agent: ${id}`));
     assert.match(resultText(terminal), /Status: error/);
@@ -150,7 +151,7 @@ test("top-level get_subagent_result refuses repeated generation reads and retain
       { agent_id: id },
       undefined,
       undefined,
-      context,
+      toolContext(context),
     );
     assert.equal(JSON.parse(resultText(consumed)).reason, "terminal_generation_already_consumed");
   } finally {
@@ -192,7 +193,7 @@ test("top-level get_subagent_result treats an aborted wait as benign and release
       { agent_id: id, wait: true },
       controller.signal,
       undefined,
-      context,
+      toolContext(context),
     );
     controller.abort(new Error("user cancelled tool call"));
     const cancelled = await wait;
@@ -232,7 +233,7 @@ test("get_workflow_result treats an aborted wait as benign and leaves the workfl
       },
       undefined,
       undefined,
-      context,
+      toolContext(context),
     );
     const workflowId = /Workflow ID: (\S+)/.exec(resultText(started))?.[1];
     assert.ok(workflowId);
@@ -243,7 +244,7 @@ test("get_workflow_result treats an aborted wait as benign and leaves the workfl
       { workflow_id: workflowId, wait: true },
       controller.signal,
       undefined,
-      context,
+      toolContext(context),
     );
     controller.abort(new Error("user cancelled tool call"));
     const cancelled = await wait;
@@ -255,7 +256,7 @@ test("get_workflow_result treats an aborted wait as benign and leaves the workfl
       { workflow_id: workflowId },
       undefined,
       undefined,
-      context,
+      toolContext(context),
     );
     assert.match(resultText(stillAvailable), new RegExp(workflowId));
   } finally {

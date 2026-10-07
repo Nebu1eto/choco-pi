@@ -46,8 +46,11 @@
  *     handle, completion notification, all as if the main model had called it;
  *   - that tool is re-bound to the main `ExtensionContext`, because the handler
  *     reads `cwd`, `model` and `sessionManager.getSessionId()` off it to place
- *     the transcript and the `rootSessionId`. The clone's own context would
- *     file both under the throwaway fork;
+ *     the transcript and the `rootSessionId`, and a background spawn keeps it
+ *     past the clone's disposal. The clone's own context would file both under
+ *     the throwaway fork and turn stale when the clone is disposed. Only the
+ *     nested-tool surface Pi 1.0.4 adds (`tools`, `executeTool`) comes from the
+ *     clone's own tool context, since that call is the one actually executing;
  *   - it is called with no tool-call id. The clone's turn produces one, but the
  *     real session never issued it, and a `<tool-use-id>` pointing at nothing
  *     is exactly the bug the mention-resume path had to fix;
@@ -68,6 +71,7 @@ import {
   DefaultResourceLoader,
   type ExtensionContext,
   type ExtensionAPI,
+  type ExtensionToolContext,
   type InlineExtension,
   getAgentDir,
   SessionManager,
@@ -192,6 +196,62 @@ export function createMentionClonePromptExtension(systemPrompt: string): InlineE
   };
 }
 
+/**
+ * Present the main session's context to a tool executing inside the clone.
+ * Session-bound members delegate lazily to `session`, so they keep its
+ * lifecycle and stale-instance checks; `tools` and `executeTool` delegate to
+ * the clone call's own tool context, which owns the executing call.
+ */
+export function bindToolContextToSession(
+  session: ExtensionContext,
+  call: ExtensionToolContext,
+): ExtensionToolContext {
+  return {
+    get ui() {
+      return session.ui;
+    },
+    get mode() {
+      return session.mode;
+    },
+    get hasUI() {
+      return session.hasUI;
+    },
+    get cwd() {
+      return session.cwd;
+    },
+    get sessionManager() {
+      return session.sessionManager;
+    },
+    get modelRegistry() {
+      return session.modelRegistry;
+    },
+    get model() {
+      return session.model;
+    },
+    get scopedModels() {
+      return session.scopedModels;
+    },
+    get thinkingLevel() {
+      return session.thinkingLevel;
+    },
+    isIdle: () => session.isIdle(),
+    isProjectTrusted: () => session.isProjectTrusted(),
+    get signal() {
+      return session.signal;
+    },
+    abort: () => session.abort(),
+    hasPendingMessages: () => session.hasPendingMessages(),
+    shutdown: () => session.shutdown(),
+    getContextUsage: () => session.getContextUsage(),
+    compact: (options) => session.compact(options),
+    getSystemPrompt: () => session.getSystemPrompt(),
+    get tools() {
+      return call.tools;
+    },
+    executeTool: (name, args, options) => call.executeTool(name, args, options),
+  };
+}
+
 export function createMentionCloneAgentTool(
   agentTool: ToolDefinition,
   ctx: ExtensionContext,
@@ -199,7 +259,7 @@ export function createMentionCloneAgentTool(
 ): ToolDefinition {
   return {
     ...agentTool,
-    execute: (_cloneToolCallId, params, signal, onUpdate, _cloneCtx) => {
+    execute: (_cloneToolCallId, params, signal, onUpdate, cloneCtx) => {
       if (state.spawned) {
         return Promise.resolve({
           content: [
@@ -220,7 +280,7 @@ export function createMentionCloneAgentTool(
         { ...(params as MentionAgentToolParams), run_in_background: true },
         signal,
         onUpdate,
-        ctx,
+        bindToolContextToSession(ctx, cloneCtx),
       );
     },
   };

@@ -205,7 +205,7 @@ it does not migrate or change the package's Pi SDK compatibility.
 ## Pi SDK target alignment
 
 Host-provided Pi SDK peer contracts and any development SDK dependencies now
-require exactly `0.87.1`, matching the harness target. Package-local frozen
+require exactly `1.0.4`, matching the harness target. Package-local frozen
 locks resolve that release, with release-age exceptions
 limited to the six exact SDK/chord/telemetry `0.87.1` packages and the existing
 `typebox@1.3.29` exception. This SDK alignment is separate from the pnpm 11
@@ -222,3 +222,13 @@ runtime dependency ownership is unchanged.
 Context-injection tests now pass history through Pi 0.86.1's
 `normalizeContext`. This is a test-only type update; runtime source is
 unchanged.
+
+## 2026-10-07 choco-pi patch: Pi SDK 1.0.4
+
+Pi SDK peer and development pins move from `0.87.1` to exactly `1.0.4`,
+matching the harness target. Other dependency contracts are unchanged.
+
+The package workspace release-age exceptions now list eight exact
+`@earendil-works/*@1.0.4` packages and the existing `typebox@1.3.29` exception.
+`@earendil-works/pi-codemode@1.0.4` and `@earendil-works/pi-mcp@1.0.4` now appear
+in the frozen lock as transitive dependencies of `pi-coding-agent`.

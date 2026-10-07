@@ -7,7 +7,7 @@ import type { ScenarioId } from "./scenarios/index.ts";
 
 export const project = resolve(fileURLToPath(new URL("../../../../", import.meta.url)));
 export const packagePath = resolve(fileURLToPath(new URL("../", import.meta.url)));
-export const piPath = "/Users/Nebuleto/.local/pi-0.87.1/node_modules/.bin/pi";
+export const piPath = "/Users/Nebuleto/.local/pi-1.0.4/node_modules/.bin/pi";
 export const tools =
   "find_roots,observe_ui,search_ui,expand_ui,inspect_ui,act_ui,read_text,wait_for";
 export const models = ["anthropic/claude-opus-5-5", "openai-codex/gpt-6-sol"] as const;

@@ -7,6 +7,7 @@ import type {
   AgentSessionEventListener,
 } from "@earendil-works/pi-coding-agent";
 
+import type { QueuedInputDisposition } from "../src/agent-message.ts";
 import { installRunnerTurnLimit, resumeAgent, setGraceTurns } from "../src/agent-runner.ts";
 
 function partialFixture<T extends object>(fixture: Partial<T>): T {
@@ -28,8 +29,9 @@ function turnLimitFixture(maxTurns: number, signal?: AbortSignal) {
         listeners.delete(listener);
       };
     },
-    async steer() {
+    async steer(): Promise<QueuedInputDisposition> {
       steers++;
+      return "queued";
     },
     async abort() {
       aborts++;

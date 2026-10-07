@@ -15,7 +15,12 @@ import {
   SessionManager,
   boundedSessionIdleMs,
 } from "../src/acp/session.ts";
-import type { PiRpcEvent, PiRpcExit, PiRpcProcessLike } from "../src/pi-rpc/process.ts";
+import type {
+  PiPromptDisposition,
+  PiRpcEvent,
+  PiRpcExit,
+  PiRpcProcessLike,
+} from "../src/pi-rpc/process.ts";
 import { numberField, recordField, type PiExtensionUiResponse } from "../src/pi-rpc/protocol.ts";
 import type { AcpConnectionLike } from "./helpers-fakes.ts";
 
@@ -70,8 +75,9 @@ class UiProcess implements PiRpcProcessLike {
     this.responses.push(response);
   }
 
-  async prompt(message: string): Promise<void> {
+  async prompt(message: string): Promise<PiPromptDisposition> {
     this.promptCalls.push(message);
+    return "started";
   }
 
   async shutdown(graceMs?: number): Promise<PiRpcExit> {

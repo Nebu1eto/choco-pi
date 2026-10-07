@@ -215,6 +215,7 @@ export function collectBridgedTools(
       {},
       {
         deferLoading: true,
+        dispatch: "session",
       },
     );
     const toolName = definition.name;

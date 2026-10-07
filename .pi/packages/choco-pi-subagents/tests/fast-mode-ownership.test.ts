@@ -67,7 +67,7 @@ test("nested fast-mode control reaches retained descendants but rejects siblings
       { agent_id: grandchild.id, enabled: true },
       undefined,
       undefined,
-      fixture.ctx,
+      fixture.session.extensionRunner.createToolContext("call", undefined),
     );
     assert.match(
       descendant.content[0]?.type === "text" ? descendant.content[0].text : "",
@@ -80,7 +80,7 @@ test("nested fast-mode control reaches retained descendants but rejects siblings
       { agent_id: sibling.id, enabled: true },
       undefined,
       undefined,
-      fixture.ctx,
+      fixture.session.extensionRunner.createToolContext("call", undefined),
     );
     assert.match(
       denied.content[0]?.type === "text" ? denied.content[0].text : "",

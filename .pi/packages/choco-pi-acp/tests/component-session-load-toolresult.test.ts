@@ -5,7 +5,7 @@ import { PiAcpAgent, type SessionStoreLike } from "../src/acp/agent.ts";
 import type { SessionStoreEntry, StoredSession } from "../src/acp/session-store.ts";
 import { FakeAgentSideConnection, asAgentConn } from "./helpers-fakes.ts";
 import { PiRpcProcess, type PiRpcProcessLike } from "../src/pi-rpc/process.ts";
-import type { PiMessages } from "../src/pi-rpc/protocol.ts";
+import type { PiMessages, PiPromptDisposition } from "../src/pi-rpc/protocol.ts";
 
 type SpawnParameters = Parameters<typeof PiRpcProcess.spawn>[0];
 
@@ -32,7 +32,7 @@ test("PiAcpAgent: loadSession replays toolResult as tool_call + tool_call_update
   spawner.spawn = async () => {
     const fakeProcess: PiRpcProcessLike = {
       onEvent: () => () => {},
-      prompt: async () => {},
+      prompt: async (): Promise<PiPromptDisposition> => "started",
       getMessages: async (): Promise<PiMessages> => ({
         messages: [
           {

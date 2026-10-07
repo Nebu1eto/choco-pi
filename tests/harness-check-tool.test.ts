@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   default as harnessCheckExtension,
   executeHarnessCheck,
+  loadedBuiltinExtensions,
   type HarnessCheckRegistration,
   type HarnessCheckExecutionDependencies,
 } from "../.pi/extensions/harness-check.ts";
@@ -137,7 +138,7 @@ test("default extension registers a host-authenticated schema and reports failur
     context("session-a"),
   );
   assert.equal(observedSource, "active-host");
-  assert.equal(observedVersion, "0.87.1");
+  assert.equal(observedVersion, "1.0.4");
   assert.equal(result.isError, true);
 });
 
@@ -178,3 +179,36 @@ for (const lifecycle of ["start", "shutdown", "tree"] as const) {
     await assert.rejects(execution, /stale/);
   });
 }
+
+test("in-host observation of built-in extensions reaches the readiness check", async () => {
+  const deps = dependencies();
+  let observed: readonly string[] | undefined;
+  deps.observeBuiltinExtensions = () => ["codemode"];
+  deps.check = async (options) => {
+    observed = options.loadedBuiltinExtensions;
+    return report;
+  };
+  await executeHarnessCheck({ mode: "automatic" }, undefined, deps);
+  assert.deepEqual(observed, ["codemode"]);
+
+  const withoutObservation = dependencies();
+  withoutObservation.check = async (options) => {
+    assert.equal("loadedBuiltinExtensions" in options, false);
+    return report;
+  };
+  await executeHarnessCheck({ mode: "automatic" }, undefined, withoutObservation);
+});
+
+test("built-in extensions are identified by their builtin source path", () => {
+  const entry = (path: string) => ({ sourceInfo: { path } });
+  assert.deepEqual(
+    loadedBuiltinExtensions([
+      entry("builtin:read"),
+      entry("builtin:codemode"),
+      entry("builtin:llama.cpp"),
+      entry("/repo/.pi/extensions/tool-search.ts"),
+      entry("builtin:mcp"),
+    ]),
+    ["codemode", "mcp"],
+  );
+});

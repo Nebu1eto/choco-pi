@@ -4,7 +4,7 @@ import { Value } from "typebox/value";
 import { validateToolArguments, type JsonObject as PiJsonObject } from "@earendil-works/pi-ai";
 import type {
   AgentToolResult,
-  ExtensionContext,
+  ExtensionToolContext,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Type, type TSchema } from "typebox";
@@ -29,6 +29,18 @@ const PiJsonObjectSchema = Type.Unsafe<PiJsonObject>({
 
 const WebRunDetailsSchema = Type.Object({ webRun: Type.Unknown() });
 
+/**
+ * `structuredContent` of Pi's shell tools (`bash`, `powershell`): the full output up to 1 MiB,
+ * whether it was cut, the spill file when it was, the exit code and the wall time.
+ */
+const ShellStructuredContentSchema = Type.Object({
+  output: Type.String(),
+  truncated: Type.Boolean(),
+  full_output_path: Type.Optional(Type.String()),
+  exit_code: Type.Number(),
+  wall_time_seconds: Type.Number(),
+});
+
 /** Pi's native validator appends the raw payload after this marker; code mode never surfaces it. */
 const RECEIVED_ARGUMENTS_MARKER = "\n\nReceived arguments:\n";
 const VALIDATION_FAILURE_PREFIX = 'Validation failed for tool "';
@@ -46,16 +58,34 @@ interface NestedToolLifecycle {
   end?(id: string): void;
 }
 
-interface NestedToolContract<TDetails> {
+interface NestedToolContractBase {
   kind?: "function" | "freeform";
   /** Deferred tools stay out of the prompt and are discovered through ALL_TOOLS. */
   deferLoading?: boolean;
   toolName?: CodeModeToolIdentity;
   yieldTimeMs?: number;
   prepareInput?(input: BoundaryValue): BoundaryValue;
+}
+
+/** Run the wrapped definition itself; used for Codex-native tool instances code mode owns. */
+interface DirectNestedToolContract<TDetails> extends NestedToolContractBase {
+  dispatch?: "direct";
   resultError?(result: AgentToolResult<TDetails>): string | undefined;
   resultValue?(result: AgentToolResult<TDetails>): BoundaryValue;
 }
+
+/**
+ * Run a session-registered tool through `ctx.executeTool()` when the session lists it as
+ * callable, so the call gets Pi's hooks, nested-call events, `nestedCalls` record and usage
+ * folding. A registered tool the session does not list as callable (an inactive `direct` tool)
+ * keeps running its definition directly, as before. Session outcomes carry untyped details, so
+ * this variant takes no details-typed result hooks.
+ */
+interface SessionNestedToolContract extends NestedToolContractBase {
+  dispatch: "session";
+}
+
+type NestedToolContract<TDetails> = DirectNestedToolContract<TDetails> | SessionNestedToolContract;
 
 export function toNestedTool<TParams extends TSchema, TDetails, TState>(
   tool: ToolDefinition<TParams, TDetails, TState>,
@@ -129,6 +159,19 @@ export function toNestedTool<TParams extends TSchema, TDetails, TState>(
       lifecycle.start?.(toolCallId, lifecycleInput);
       context.refreshTrace?.();
       try {
+        if (contract.dispatch === "session" && isSessionCallable(extensionContext, tool.name)) {
+          // Pi prepares and validates the arguments again, exactly as for a model-issued call.
+          const outcome = await extensionContext.executeTool(tool.name, toolInput, {
+            signal,
+            onUpdate: (update) => forwardUpdate(update, context),
+          });
+          const result: AgentToolResult<unknown> = outcome.result;
+          const structured = shellStructuredResult(result);
+          if (outcome.isError && structured === undefined)
+            throw new Error(resultText(result) || `${tool.name} failed`);
+          context.captureResult?.(result);
+          return structured ?? compactNestedResult(result);
+        }
         const result = await tool.execute(
           toolCallId,
           validated,
@@ -136,10 +179,11 @@ export function toNestedTool<TParams extends TSchema, TDetails, TState>(
           (update) => forwardUpdate(update, context),
           extensionContext,
         );
-        const resultError = contract.resultError?.(result);
+        const direct = contract.dispatch === "session" ? undefined : contract;
+        const resultError = direct?.resultError?.(result);
         if (resultError) throw new Error(resultError);
         context.captureResult?.(result);
-        return contract.resultValue?.(result) ?? compactNestedResult(result);
+        return direct?.resultValue?.(result) ?? compactNestedResult(result);
       } finally {
         lifecycle.end?.(toolCallId);
       }
@@ -270,9 +314,14 @@ export function codeModeWebResult<TDetails>(result: AgentToolResult<TDetails>): 
   return compactNestedResult(result);
 }
 
-function requireExtensionContext(context: ToolExecutionContext): ExtensionContext {
+function requireExtensionContext(context: ToolExecutionContext): ExtensionToolContext {
   if (!context.extensionContext) throw new Error("Code-mode Pi context is unavailable");
   return context.extensionContext;
+}
+
+/** Whether `ctx.executeTool()` can reach `name`: active `direct` tools and `codemode`/`deferred` ones. */
+function isSessionCallable(context: ExtensionToolContext, name: string): boolean {
+  return context.tools.some((candidate) => candidate.name === name);
 }
 
 function forwardUpdate<TDetails>(
@@ -285,14 +334,39 @@ function forwardUpdate<TDetails>(
   context.onUpdate?.({ content, details: update.details });
 }
 
-function compactNestedResult<TDetails>(result: AgentToolResult<TDetails>): BoundaryValue {
-  const images = result.content.filter((item) => item.type === "image");
-  if (images.length > 0) return { content: result.content, details: result.details };
-  if (Value.Check(JsonObjectSchema, result.details) && "output" in result.details)
-    return result.details;
-  const text = result.content
+/**
+ * Shell results resolve to their validated `structuredContent`, also for non-zero exits, so a
+ * script sees the exit code, an empty output as `""`, and truncation with its spill file.
+ */
+function shellStructuredResult<TDetails>(
+  result: AgentToolResult<TDetails>,
+): BoundaryValue | undefined {
+  const structured = result.structuredContent;
+  if (!Value.Check(ShellStructuredContentSchema, structured)) return undefined;
+  return {
+    output: structured.output,
+    truncated: structured.truncated,
+    ...conditionalProperties(structured.full_output_path !== undefined, {
+      full_output_path: structured.full_output_path,
+    }),
+    exit_code: structured.exit_code,
+    wall_time_seconds: structured.wall_time_seconds,
+  };
+}
+
+function resultText<TDetails>(result: AgentToolResult<TDetails>): string {
+  return result.content
     .filter((item): item is { type: "text"; text: string } => item.type === "text")
     .map((item) => item.text)
     .join("\n");
-  return text || "(no output)";
+}
+
+function compactNestedResult<TDetails>(result: AgentToolResult<TDetails>): BoundaryValue {
+  const images = result.content.filter((item) => item.type === "image");
+  if (images.length > 0) return { content: result.content, details: result.details };
+  const structured = shellStructuredResult(result);
+  if (structured !== undefined) return structured;
+  if (Value.Check(JsonObjectSchema, result.details) && "output" in result.details)
+    return result.details;
+  return resultText(result) || "(no output)";
 }

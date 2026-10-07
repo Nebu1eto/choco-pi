@@ -123,10 +123,7 @@ export async function preflight(options: {
     helper,
   } = options;
   if (resolve(executable) !== piPath)
-    throw new GateError(
-      "PI_VERSION_MISMATCH",
-      `${executable} is not the pinned Pi 0.87.1 launcher`,
-    );
+    throw new GateError("PI_VERSION_MISMATCH", `${executable} is not the pinned Pi 1.0.4 launcher`);
   if (!baseline && (requireBaseline || requestedWaivers.size > 0))
     throw new GateError("BASELINE_GATES", "provide --baseline with root gate evidence");
   const waivers = baseline ? await baselineGates(baseline, requestedWaivers) : [];
@@ -138,7 +135,7 @@ export async function preflight(options: {
     } catch {
       throw new GateError("PI_VERSION_MISMATCH", "pinned launcher unavailable");
     }
-    if (version.code !== 0 || version.stdout.trim() !== "0.87.1")
+    if (version.code !== 0 || version.stdout.trim() !== "1.0.4")
       throw new GateError("PI_VERSION_MISMATCH", version.stdout.trim());
     const listing = await command(executable, ["--list-models"], isolatedEnv);
     if (listing.code !== 0) throw new GateError("MODEL_LIST_FAILED", listing.stderr.trim());

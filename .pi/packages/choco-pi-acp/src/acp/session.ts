@@ -1040,7 +1040,11 @@ export class PiAcpSession {
 
   private startTurn(t: QueuedTurn): void {
     this.cancelRequested = false;
-    this.pendingTurn = { resolve: t.resolve, reject: t.reject, settling: false };
+    // The object identity is this turn's ownership token: a late prompt acknowledgement
+    // may only act while this exact turn is still pending and not already settling.
+    const turn: PendingTurn = { resolve: t.resolve, reject: t.reject, settling: false };
+    this.pendingTurn = turn;
+    const ownsTurn = (): boolean => this.pendingTurn === turn && !turn.settling;
 
     // Publish queue depth (0 because we're starting the turn now).
     this.emit({
@@ -1048,23 +1052,31 @@ export class PiAcpSession {
       _meta: { piAcp: { queueDepth: this.turnQueue.length, running: true } },
     });
 
-    // Kick off pi, but completion is determined by pi events, not the RPC response.
-    // The prompt RPC only acknowledges acceptance; retry, compaction, or queued
-    // continuations may emit multiple `agent_end` events before `agent_settled`.
-    this.proc.prompt(t.message, t.images).catch((err) => {
-      // If this looks like an auth/config issue, surface AUTH_REQUIRED so clients can offer terminal login.
-      const authErr = maybeAuthRequiredError(err);
-      let settlement: TurnSettlement;
-      if (authErr) {
-        settlement = { type: "reject", error: authErr };
-      } else {
-        const reason: StopReason = this.cancelRequested ? "cancelled" : "error";
-        settlement = { type: "resolve", reason };
-      }
-      // A prompt acknowledgement failure leaves Pi's health unknown, so queued turns
-      // must settle rather than being started against the same process automatically.
-      this.settlePendingTurn(settlement, { queuedSettlement: settlement });
-    });
+    // For `started` and `queued`, completion is determined by pi events: retry,
+    // compaction, or queued continuations may emit multiple `agent_end` events before
+    // `agent_settled`. Only `handled` settles here, because no run follows it.
+    this.proc.prompt(t.message, t.images).then(
+      (disposition) => {
+        if (disposition !== "handled" || !ownsTurn()) return;
+        const reason: StopReason = this.cancelRequested ? "cancelled" : "end_turn";
+        this.settlePendingTurn({ type: "resolve", reason }, { startNext: true });
+      },
+      (err) => {
+        if (!ownsTurn()) return;
+        // If this looks like an auth/config issue, surface AUTH_REQUIRED so clients can offer terminal login.
+        const authErr = maybeAuthRequiredError(err);
+        let settlement: TurnSettlement;
+        if (authErr) {
+          settlement = { type: "reject", error: authErr };
+        } else {
+          const reason: StopReason = this.cancelRequested ? "cancelled" : "error";
+          settlement = { type: "resolve", reason };
+        }
+        // A prompt acknowledgement failure leaves Pi's health unknown, so queued turns
+        // must settle rather than being started against the same process automatically.
+        this.settlePendingTurn(settlement, { queuedSettlement: settlement });
+      },
+    );
   }
 
   /** Surface a tool call while the model is still streaming its arguments. */

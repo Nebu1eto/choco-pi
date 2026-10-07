@@ -53,6 +53,7 @@ rl.on("line", (line) => {
   if (request.type === "get_state") data = { sessionId: "fake-session", thinkingLevel: "medium", model: { provider: "test", id: "model" } };
   if (request.type === "get_available_models") data = { models: [{ provider: "test", id: "model", name: "Model" }] };
   if (request.type === "get_commands") data = { commands: [{ name: "context", description: "Show context", source: "extension" }] };
+  if (request.type === "prompt") data = { disposition: "started" };
   process.stdout.write(JSON.stringify({ type: "response", id: request.id, command: request.type, success: true, data }) + "\\n");
 });
 process.on("SIGTERM", () => { record({ type: "signal", signal: "SIGTERM" }); process.exit(0); });

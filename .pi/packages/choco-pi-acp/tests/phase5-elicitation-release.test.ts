@@ -92,7 +92,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   const request = JSON.parse(line);
   fs.appendFileSync(recordsPath, JSON.stringify(request) + "\\n");
   if (request.type !== "prompt") return;
-  send({ type: "response", id: request.id, command: "prompt", success: true, data: {} });
+  send({ type: "response", id: request.id, command: "prompt", success: true, data: { disposition: "started" } });
   send({ type: "extension_ui_request", id: "confirm", method: "confirm", title: "Confirm" });
   send({ type: "extension_ui_request", id: "select", method: "select", title: "Select", options: ["A", "B"] });
   send({ type: "extension_ui_request", id: "input", method: "input", title: "Input" });

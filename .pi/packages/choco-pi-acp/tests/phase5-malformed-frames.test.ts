@@ -377,7 +377,7 @@ send({ type: "ready" });
 readline.createInterface({ input: process.stdin }).on("line", (line) => {
   const request = JSON.parse(line);
   if (request.type === "prompt") {
-    send({ type: "response", id: request.id, command: "prompt", success: true, data: {} });
+    send({ type: "response", id: request.id, command: "prompt", success: true, data: { disposition: "started" } });
     send({ type: "agent_start" });
     send({ type: "extension_ui_request", id: "pending-input", method: "input", title: "Input" });
     return;
@@ -401,7 +401,7 @@ const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
 readline.createInterface({ input: process.stdin }).on("line", (line) => {
   const request = JSON.parse(line);
   if (request.type !== "prompt") return;
-  send({ type: "response", id: request.id, command: "prompt", success: true, data: {} });
+  send({ type: "response", id: request.id, command: "prompt", success: true, data: { disposition: "started" } });
   send({ type: "agent_start" });
   send({ type: "agent_settled" });
 });

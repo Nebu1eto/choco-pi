@@ -706,6 +706,91 @@ test('policy accountId reports the resolver\'s id and defaults to "default"', ()
   assert.equal(unresolved.accountId("openai-codex"), "default");
 });
 
+type Deferred<Value> = {
+  promise: Promise<Value>;
+  resolve: (value: Value) => void;
+  reject: (reason: Error) => void;
+};
+
+function deferred<Value>(): Deferred<Value> {
+  let resolve: (value: Value) => void = () => undefined;
+  let reject: (reason: Error) => void = () => undefined;
+  const promise = new Promise<Value>((onResolve, onReject) => {
+    resolve = onResolve;
+    reject = onReject;
+  });
+  return { promise, resolve, reject };
+}
+
+const pending = (): Promise<boolean> => new Promise((resolve) => setImmediate(() => resolve(true)));
+
+test("policy preference and corroborate wait for a slow fallback table before answering", async () => {
+  for (const step of ["preference", "corroborate"] as const) {
+    const table = deferred<ModelFallbacks>();
+    const policy = createUsageLimitPolicy({
+      owner: "root",
+      generation: 1,
+      readPreference: async () => "none",
+      loadFallbacks: () => table.promise,
+      usageSnapshot: snapshots(undefined),
+    });
+    const answer =
+      step === "preference"
+        ? policy.preference()
+        : policy.corroborate(quota("anthropic", { sessionId: "child" }));
+    let settled = false;
+    void answer.then(() => {
+      settled = true;
+    });
+    await pending();
+    assert.equal(settled, false, `${step} answered before the fallback table loaded`);
+    table.resolve(TABLE);
+    await answer;
+    assert.deepEqual(
+      policy.pickFallback(opus, { available: ALL, scoped: [], isClosed: open }),
+      { provider: "openai-codex", id: "gpt-6-sol" },
+      `${step}: the suggestion must be present once ${step} settles`,
+    );
+  }
+});
+
+test("policy answers without fallbacks once a slow fallback table fails to load", async () => {
+  const table = deferred<ModelFallbacks>();
+  let loads = 0;
+  const policy = createUsageLimitPolicy({
+    owner: "root",
+    generation: 1,
+    readPreference: async () => "fallback",
+    loadFallbacks: () => {
+      loads += 1;
+      return table.promise;
+    },
+    usageSnapshot: snapshots(undefined),
+  });
+  const preference = policy.preference();
+  const corroboration = policy.corroborate(quota("anthropic"));
+  table.reject(new Error("unreadable"));
+  assert.equal(await preference, "fallback");
+  assert.equal((await corroboration).classification.provider, "anthropic");
+  await policy.fallbacksLoaded;
+  assert.equal(
+    policy.pickFallback(opus, { available: ALL, scoped: [], isClosed: open }),
+    undefined,
+  );
+  assert.equal(await policy.preference(), "fallback");
+  assert.equal(loads, 1, "the table loads once per policy");
+
+  const throwing = createUsageLimitPolicy({
+    owner: "root",
+    generation: 1,
+    readPreference: async () => "none",
+    loadFallbacks: () => {
+      throw new Error("sync failure");
+    },
+  });
+  assert.equal(await throwing.preference(), "none");
+});
+
 test("policy preference falls back to none when the reader throws", async () => {
   const policy = createUsageLimitPolicy({
     owner: "root",

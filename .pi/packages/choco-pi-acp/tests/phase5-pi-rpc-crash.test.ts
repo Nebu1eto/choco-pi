@@ -34,7 +34,7 @@ const readline = require("node:readline");
 readline.createInterface({ input: process.stdin }).on("line", (line) => {
   const request = JSON.parse(line);
   if (request.type !== "prompt") return;
-  process.stdout.write(JSON.stringify({ type: "response", id: request.id, command: "prompt", success: true, data: {} }) + "\\n");
+  process.stdout.write(JSON.stringify({ type: "response", id: request.id, command: "prompt", success: true, data: { disposition: "started" } }) + "\\n");
   setTimeout(() => process.exit(47), 20);
 });
 `,
@@ -81,7 +81,8 @@ test("a child exit after cancellation settles the acknowledged ACP turn as cance
 const readline = require("node:readline");
 readline.createInterface({ input: process.stdin }).on("line", (line) => {
   const request = JSON.parse(line);
-  process.stdout.write(JSON.stringify({ type: "response", id: request.id, command: request.type, success: true, data: {} }) + "\\n");
+  const data = request.type === "prompt" ? { disposition: "started" } : {};
+  process.stdout.write(JSON.stringify({ type: "response", id: request.id, command: request.type, success: true, data }) + "\\n");
   if (request.type === "abort") setTimeout(() => process.exit(48), 20);
 });
 `,
@@ -213,6 +214,7 @@ if (spawnNumber === 1) {
     if (request.type === "get_state") data = { sessionId: "retry-session", thinkingLevel: "medium", model: { provider: "test", id: "model" } };
     if (request.type === "get_available_models") data = { models: [{ provider: "test", id: "model", name: "Model" }] };
     if (request.type === "get_commands") data = { commands: [] };
+    if (request.type === "prompt") data = { disposition: "started" };
     process.stdout.write(JSON.stringify({ type: "response", id: request.id, command: request.type, success: true, data }) + "\\n");
   });
 }

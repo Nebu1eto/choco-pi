@@ -101,7 +101,7 @@ Diff a fresh checkout of the upstream repository against base commit `de72583`, 
 ## Pi SDK target alignment
 
 Host-provided Pi SDK peer contracts and any development SDK dependencies now
-require exactly `0.87.1`, matching the harness target. This SDK alignment is
+require exactly `1.0.4`, matching the harness target. This SDK alignment is
 separate from installer policy; TypeBox and unrelated
 dependencies retain their existing contracts.
 
@@ -131,3 +131,13 @@ Fixes for the two product findings in `docs/computer-use-e2e-evidence.md` "Run B
 - **TypeScript.** `PreparedAction` click/press gains `pointerOnly` (a ref target whose node has neither `canPress` nor `isTextInput`). `refusalForResult` maps a background `didnt` on such a click to `foreground_required` (`effectPossible: true`, capability `pointer_input`), in headless `ax_only` as well. A `didnt` is never retried. The single granted retry still requires `foreground_required` with `effectPossible: false`. After a granted attempt, the grant hint no longer says that the background attempt was not retried. An action is marked "changed (acted here)" in the window note only when the whole execution ended `worked` (after any postcondition or value check) or its own step outcome is `worked`. Otherwise its region gets "effect not verified", and the `act_ui` text adds "Effect not verified for action N (<action>: <outcome>)". `details.execution.steps[].outcome` is unchanged. `HelperActPerformed` declares `verification: "caller_required"`.
 - **Fake daemon and tests.** In every script the wire fake refuses an ungranted click on a ref with no AX press action that is not a text input (`custom-1`) before delivery, and presses `button-1` through AX with or without a grant. A granted HID click on `custom-1` activates and answers `unknown`, and a granted `params.delivery: "pid"` click answers `didnt`. Looks record the window frame. `fixtureMutation: "resize"` on a `look` moves and resizes the window to `RESIZED_FRAME`, and a later act with an earlier look id is refused with `stale_look`. S5's generation bump is unchanged. The new foreground-policy tests cover a no-action ref click that is refused once, the same refusal with a grant that escalates once to a granted foreground act, a `didnt` on such a click that is refused and not retried, and an `unknown` that makes no change claim, surfaces the step outcome, and leaves `worked` still marked "acted here". The new transport tests cover a resize refused as `stale_look` with no delivery, the granted pid `didnt`, and the updated S2/S6 expectations. The suite has 65 tests.
 - **Prebuilts.** Built with Apple Swift 6.4 (swiftlang-6.4.0.34.1) via `xcrun swiftc -target {arm64,x86_64}-apple-macosx14.0 -module-cache-path /tmp/choco-pi/build/modcache -O`, using the `setup-helper.mjs` frameworks and sources. Source revision `86aa83d9` plus uncommitted `native/macos/bridge.swift`. `native/macos/bridge.swift` sha256 `d8bc07452222d66e347f28568ba76ab146014472fbfda2af4b3b6440326147d3`; bridge sha256 arm64 `a07277cc77ff5834ed8d7d196e24d55e5a3c2cf488eb8cb763179e583ceeb348`, x64 `2659a42cc5b2c180a8b027cc7a3f8d91be02a259b465be26c22290b755c24ccd` (x64 compiled only, never run). On an isolated socket, the arm64 binary answered `diagnostics` with protocol 7 and exited on `shutdown`. The refusal, settle, and frame paths need a real target window and were not exercised natively.
+
+## 2026-10-07 choco-pi patch: Pi SDK 1.0.4
+
+Pi SDK peer and development pins move from `0.87.1` to exactly `1.0.4`,
+matching the harness target. Other dependency contracts are unchanged.
+
+## 2026-10-07 choco-pi patch: Pi E2E launcher alignment
+
+The isolated E2E launcher path and preflight version gate now require the local
+Pi `1.0.4` executable instead of `0.87.1`. Native helper behavior is unchanged.

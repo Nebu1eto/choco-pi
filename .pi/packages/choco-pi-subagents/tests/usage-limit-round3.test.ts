@@ -196,14 +196,16 @@ test("a background resume refused on availability leaves the record untouched", 
   );
   const agentTool = parent.session.extensionRunner.getToolDefinition("Agent");
   assert.ok(agentTool);
-  const execute = (toolCallId: string, params: Record<string, string | boolean>) =>
-    agentTool.execute(
+  const execute = (toolCallId: string, params: Record<string, string | boolean>) => {
+    const signal = new AbortController().signal;
+    return agentTool.execute(
       toolCallId,
       params,
-      new AbortController().signal,
+      signal,
       () => undefined,
-      parent.session.extensionRunner.createContext(),
+      parent.session.extensionRunner.createToolContext(toolCallId, signal),
     );
+  };
   const owner = parent.ctx.sessionManager.getSessionId();
   await execute("spawn-call", {
     prompt: "task",

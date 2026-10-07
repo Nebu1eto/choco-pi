@@ -280,6 +280,8 @@ export function registerCodexEvents(
       tracker.resetExplorationGroup();
   });
   pi.on("tool_execution_start", async (event) => {
+    // Calls a tool makes through ctx.executeTool() run inside the caller's group.
+    if (event.parentToolCallId !== undefined) return;
     if (event.toolName !== "exec_command") {
       tracker.resetExplorationGroup();
       return;

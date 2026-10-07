@@ -13,7 +13,7 @@ import {
   SettingsManager,
   type AgentToolResult,
   type ExtensionActions,
-  type ExtensionContext,
+  type ExtensionToolContext,
   type ExtensionContextActions,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
@@ -74,7 +74,7 @@ interface SourceCheckParams {
 }
 
 interface SourceCheckHost {
-  context: ExtensionContext;
+  context: ExtensionToolContext;
   entries: StoredEntry[];
   tool: ToolDefinition;
 }
@@ -103,6 +103,7 @@ async function createSourceCheckHost(t: TestContext): Promise<SourceCheckHost> {
   t.after(() => rm(root, { recursive: true, force: true }));
   const agentDir = join(root, "agent");
   await mkdir(agentDir, { recursive: true });
+  const settingsManager = SettingsManager.inMemory();
   const loader = new DefaultResourceLoader({
     agentDir,
     cwd: root,
@@ -112,7 +113,7 @@ async function createSourceCheckHost(t: TestContext): Promise<SourceCheckHost> {
     noPromptTemplates: true,
     noSkills: true,
     noThemes: true,
-    settingsManager: SettingsManager.inMemory(),
+    settingsManager,
   });
   await loader.reload();
   const loaded = loader.getExtensions();
@@ -139,6 +140,7 @@ async function createSourceCheckHost(t: TestContext): Promise<SourceCheckHost> {
     setLabel: () => undefined,
     getActiveTools: () => [...activeTools],
     getAllTools: () => [],
+    getSettings: () => settingsManager.getSettings(),
     setActiveTools: (names: string[]) => {
       activeTools = [...names];
     },
@@ -167,7 +169,7 @@ async function createSourceCheckHost(t: TestContext): Promise<SourceCheckHost> {
   activeTools = runner.getAllRegisteredTools().map(({ definition }) => definition.name);
   const tool = runner.getToolDefinition("source_check");
   assert.ok(tool, "source_check must be registered by the SDK-loaded extension");
-  return { context: runner.createContext(), entries, tool };
+  return { context: runner.createToolContext("call", undefined), entries, tool };
 }
 
 function requireSourceCheckDetails(resultValue: AgentToolResult<unknown>): SourceCheckDetails {

@@ -150,7 +150,7 @@ migrate or change the package's Pi SDK compatibility.
 ## Pi SDK target alignment
 
 Host-provided Pi SDK peer contracts and any development SDK dependencies now
-require exactly `0.87.1`, matching the harness target. Package-local frozen
+require exactly `1.0.4`, matching the harness target. Package-local frozen
 locks resolve that release, with release-age exceptions
 limited to the six exact SDK/chord/telemetry `0.87.1` packages and the existing
 `typebox@1.3.29` exception. This SDK alignment is separate from the pnpm 11
@@ -191,3 +191,45 @@ including the anti-slop rules. `AGENTS.md` and `README.md` name the new tools.
 `message_end` error whose message starts with `429`, before context-overflow handling.
 This refreshes quota state after a provider usage limit. Validation: root `pnpm lint`,
 `pnpm fmt:check`, and `pnpm typecheck`.
+
+## 2026-10-07 choco-pi patch: Pi SDK 1.0.4
+
+Pi SDK peer and development pins move from `0.87.1` to exactly `1.0.4`,
+matching the harness target. Other dependency contracts are unchanged.
+
+The package workspace release-age exceptions now list eight exact
+`@earendil-works/*@1.0.4` packages and the existing `typebox@1.3.29` exception.
+`@earendil-works/pi-codemode@1.0.4` and `@earendil-works/pi-mcp@1.0.4` now appear
+in the frozen lock as transitive dependencies of `pi-coding-agent`.
+
+The workspace `overrides` for `pi-ai` and `pi-tui` move to `1.0.4`. The vendored
+`@aliou/pi-utils-settings@0.15.1` and `@aliou/pi-utils-ui@0.4.1` declare a
+`pi-coding-agent` peer of `>=0.74.0 <1`, so `pnpm peers check` reports them as
+unmet against `1.0.4`.
+
+## 2026-10-07 choco-pi patch: Pi 1.0.4 chat model config type
+
+Pi 1.0.4 turns `ProviderModelConfig` into the union of chat, image, and
+classifier members. `reasoning`, `thinkingLevelMap`, `compat`,
+`contextWindow`, and `maxTokens` now exist only on the chat member, which the
+package root does not export by name. `extensions/provider/models.ts` now
+derives `SyntheticModel` from
+`Extract<ProviderModelConfig, { type?: "chat" }>` and still omits `api` and
+`compat`. Built models still omit `type`, and Pi normalizes a missing `type`
+to `"chat"`. Their arrays and the `refreshModels` result are assignable to
+`ProviderModelConfig[]` without casts. Runtime objects and persisted store
+entries are unchanged.
+
+The vendored `@aliou/pi-utils-settings@0.15.1` and `@aliou/pi-utils-ui@0.4.1`
+still declare a `pi-coding-agent` peer of `>=0.74.0 <1` and remain unmet
+peers against `1.0.4`. `extensions/provider/**` does not import either
+package. `src/config.ts` imports the settings package, and
+`extensions/web-search/tool.ts` imports the UI package. pnpm resolves both
+packages to the single `pi-coding-agent@1.0.4` and `pi-tui@1.0.4` install, so
+the packages share one Pi instance. Every runtime value they import exists in
+`1.0.4`: `getAgentDir` and `getSettingsListTheme` from `pi-coding-agent`, and
+`Key`, `matchesKey`, `truncateToWidth`, `visibleWidth`, `wrapTextWithAnsi`,
+`Input`, `fuzzyFilter`, `Text`, `TruncatedText`, `Spacer`, and
+`getKeybindings` from `pi-tui`. Package `tsc`, which also checks their
+TypeScript sources, reports no errors. No break is known, but nothing exercises
+the settings or tool-render UI end to end against `1.0.4`.

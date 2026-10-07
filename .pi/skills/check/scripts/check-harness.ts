@@ -21,12 +21,40 @@ import { promisify } from "node:util";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 
 export type Capability = "tui" | "subagents" | "resources" | "lsp";
-export const PI_SDK_TARGET = "0.87.1";
+export const PI_SDK_TARGET = "1.0.4";
 type CheckStatus = "pass" | "warn" | "fail";
 
 type Check = { id: string; status: CheckStatus; detail: string };
-type Settings = { packages?: unknown; tuiMode?: unknown };
+type Settings = { packages?: unknown; tuiMode?: unknown; extensions?: unknown };
 type SubagentsSettings = { disableDefaultAgents?: unknown; fallbackSubagent?: unknown };
+
+/**
+ * Pi built-in extensions the profile disables. choco-pi replaces tool search
+ * and MCP with its own tool and `/mcp` command, so Pi would otherwise omit the
+ * built-ins with an `[Extension issues]` warning on every start; codemode
+ * overlaps choco-pi's exec bridge.
+ */
+export const DISABLED_BUILTIN_EXTENSIONS = ["codemode", "tool-search", "mcp"] as const;
+
+/**
+ * Whether the project `extensions` entries disable `builtin:<name>`. Pi applies
+ * the project's exact `+`/`-` and `!` entries in order and the last match wins;
+ * a project match also overrides any user setting, so a project `-` decides.
+ */
+function projectDisablesBuiltin(entries: readonly RuntimeValue[], name: string): boolean {
+  let disabled = false;
+  for (const entry of entries) {
+    if (!isString(entry)) continue;
+    const marker = entry.charAt(0);
+    if (
+      (marker === "-" || marker === "!" || marker === "+") &&
+      entry.slice(1) === `builtin:${name}`
+    ) {
+      disabled = marker !== "+";
+    }
+  }
+  return disabled;
+}
 
 export type HarnessOptions = {
   configRoot?: string;
@@ -35,6 +63,11 @@ export type HarnessOptions = {
   nodeVersion?: string;
   signal?: AbortSignal;
   runtimeIdentity?: RuntimeVersionObservation;
+  /**
+   * Built-in extension names whose tools or commands the active host
+   * registered, observed in-host. Undefined when no host was observed.
+   */
+  loadedBuiltinExtensions?: readonly string[];
   readImportedRuntime?: () => Promise<RuntimeVersionObservation>;
   readText?: (target: string) => Promise<string>;
   pathExists?: (target: string) => Promise<boolean>;
@@ -257,6 +290,41 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
         errors.length ? errors.join("; ") : "all configured local packages have valid Pi manifests",
       );
     }
+
+    const entries: readonly RuntimeValue[] = Array.isArray(settings.extensions)
+      ? settings.extensions
+      : [];
+    const enabledByPolicy = DISABLED_BUILTIN_EXTENSIONS.filter(
+      (name) => !projectDisablesBuiltin(entries, name),
+    );
+    const observedLoaded = (options.loadedBuiltinExtensions ?? []).filter((name) =>
+      DISABLED_BUILTIN_EXTENSIONS.some((disabled) => disabled === name),
+    );
+    const findings = [
+      settings.extensions !== undefined && !Array.isArray(settings.extensions)
+        ? "settings.extensions must be an array"
+        : null,
+      enabledByPolicy.length
+        ? `settings.extensions does not disable ${enabledByPolicy.map((name) => `builtin:${name}`).join(", ")}`
+        : null,
+      observedLoaded.length
+        ? `active host registered tools or commands from ${observedLoaded.map((name) => `builtin:${name}`).join(", ")}`
+        : null,
+    ].filter((value): value is string => value !== null);
+    const hostEvidence =
+      options.loadedBuiltinExtensions === undefined
+        ? "active host not observed"
+        : "active host registers no tools or commands from them";
+    add(
+      "builtin-extensions",
+      findings.length ? "warn" : "pass",
+      [
+        findings.length
+          ? findings.join("; ")
+          : `project settings disable ${DISABLED_BUILTIN_EXTENSIONS.map((name) => `builtin:${name}`).join(", ")}; ${hostEvidence}`,
+        "Pi does not expose extension load warnings to extensions; check [Extension issues] at startup",
+      ].join("; "),
+    );
   }
 
   try {

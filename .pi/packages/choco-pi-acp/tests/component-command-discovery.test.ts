@@ -4,7 +4,7 @@ import type { AvailableCommand, PromptResponse } from "@agentclientprotocol/sdk"
 import { PiAcpAgent } from "../src/acp/agent.ts";
 import { buildCommandCatalog, parseSlashInvocation } from "../src/acp/pi-commands.ts";
 import { isBoundaryRecord } from "../src/boundary.ts";
-import type { PiCommands, PiPromptImage } from "../src/pi-rpc/protocol.ts";
+import type { PiCommands, PiPromptDisposition, PiPromptImage } from "../src/pi-rpc/protocol.ts";
 import type { PiRpcProcessLike } from "../src/pi-rpc/process.ts";
 import { FakeAgentSideConnection, asAgentConn } from "./helpers-fakes.ts";
 
@@ -49,9 +49,10 @@ class CommandProcess implements PiRpcProcessLike {
     return this.getCommandsImpl ? this.getCommandsImpl() : this.commandData;
   }
 
-  async prompt(message: string, attachments: PiPromptImage[]): Promise<void> {
+  async prompt(message: string, attachments: PiPromptImage[]): Promise<PiPromptDisposition> {
     this.prompts.push({ message, attachments });
     await this.promptImpl?.(message, attachments);
+    return "handled";
   }
 }
 

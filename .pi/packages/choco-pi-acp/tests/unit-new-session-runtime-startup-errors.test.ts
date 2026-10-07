@@ -8,7 +8,12 @@ import { PiAcpAgent, type SessionManagerLike } from "../src/acp/agent.ts";
 import { SessionStore } from "../src/acp/session-store.ts";
 import { PiAcpSession } from "../src/acp/session.ts";
 import type { PiRpcEvent, PiRpcProcessLike } from "../src/pi-rpc/process.ts";
-import type { PiAvailableModels, PiPromptImage, PiState } from "../src/pi-rpc/protocol.ts";
+import type {
+  PiAvailableModels,
+  PiPromptDisposition,
+  PiPromptImage,
+  PiState,
+} from "../src/pi-rpc/protocol.ts";
 import { FakeAgentSideConnection, asAgentConn } from "./helpers-fakes.ts";
 
 /** A session manager that hands out one prepared session and records closures. */
@@ -60,7 +65,9 @@ class FailingModelProbeProcess implements PiRpcProcessLike {
     return () => {};
   }
 
-  async prompt(_message: string, _images: PiPromptImage[] = []): Promise<void> {}
+  async prompt(_message: string, _images: PiPromptImage[] = []): Promise<PiPromptDisposition> {
+    return "started";
+  }
 
   async getAvailableModels(): Promise<PiAvailableModels> {
     throw new Error(this.failure);

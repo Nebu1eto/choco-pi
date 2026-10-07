@@ -1,9 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { PiAcpAgent, type SessionManagerLike } from "../src/acp/agent.ts";
+import { getQuietStartup } from "../src/acp/pi-settings.ts";
 import { PiAcpSession } from "../src/acp/session.ts";
 import type { PiRpcEvent, PiRpcProcessLike } from "../src/pi-rpc/process.ts";
-import type { PiAvailableModels, PiPromptImage, PiState } from "../src/pi-rpc/protocol.ts";
+import type {
+  PiAvailableModels,
+  PiPromptDisposition,
+  PiPromptImage,
+  PiState,
+} from "../src/pi-rpc/protocol.ts";
 import { FakeAgentSideConnection, asAgentConn } from "./helpers-fakes.ts";
 
 /** A session manager that always resolves to one prepared session. */
@@ -43,7 +49,9 @@ class SingleModelProcess implements PiRpcProcessLike {
     return () => {};
   }
 
-  async prompt(_message: string, _images: PiPromptImage[] = []): Promise<void> {}
+  async prompt(_message: string, _images: PiPromptImage[] = []): Promise<PiPromptDisposition> {
+    return "started";
+  }
 
   async getAvailableModels(): Promise<PiAvailableModels> {
     return { models: [{ provider: "test", id: "model", name: "model" }] };
@@ -142,5 +150,31 @@ test("PiAcpAgent: quietStartup=true disables startup info generation/emission", 
     timers.restore();
     if (prevAgentDir == null) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = prevAgentDir;
+  }
+});
+
+test("getQuietStartup mirrors Pi 1.0.4 values: true and header suppress, others do not", async () => {
+  const { mkdtemp, rm, writeFile } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const prevAgentDir = process.env.PI_CODING_AGENT_DIR;
+  const dir = await mkdtemp(join(tmpdir(), "pi-acp-quietstartup-values-"));
+  process.env.PI_CODING_AGENT_DIR = dir;
+  try {
+    const cases: Array<[string, boolean]> = [
+      ["true", true],
+      ['"header"', true],
+      ["false", false],
+      ['"details"', false],
+    ];
+    for (const [value, expected] of cases) {
+      await writeFile(join(dir, "settings.json"), `{"quietStartup": ${value}}`, "utf-8");
+      // The temp dir has no project .pi/settings.json, so only the global value applies.
+      assert.equal(getQuietStartup(dir), expected, `quietStartup: ${value}`);
+    }
+  } finally {
+    if (prevAgentDir == null) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = prevAgentDir;
+    await rm(dir, { recursive: true, force: true });
   }
 });

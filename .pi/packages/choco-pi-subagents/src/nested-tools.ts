@@ -7,6 +7,7 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import type { QueuedInputDisposition } from "./agent-message.ts";
 import {
   buildAgentRegistry,
   getAgentConfigIn,
@@ -624,12 +625,18 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
         record.pendingSteers.push(envelope);
         return textResult(`Steering message queued for nested agent ${params.agent_id}.`);
       }
+      let disposition: QueuedInputDisposition;
       try {
-        await record.session.steer(envelope);
+        disposition = await record.session.steer(envelope);
       } catch (err) {
         return textResult(
           `Failed to steer nested agent: ${err instanceof Error ? err.message : String(err)}`,
           true,
+        );
+      }
+      if (disposition === "handled") {
+        return textResult(
+          `Steering message to nested agent ${params.agent_id} was handled by an input handler in its session and was not queued; its model will not receive it as a message.`,
         );
       }
       return textResult(`Steering message sent to nested agent ${params.agent_id}.`);

@@ -1,5 +1,5 @@
 import type { BoundaryRecord, BoundaryValue } from "../boundary.ts";
-import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
 import type { CodeModeToolPreflightRunner } from "./nested-tool-preflight.ts";
 
@@ -57,7 +57,8 @@ export interface ToolExecutionContext {
   cwd: string;
   defaultYieldTimeMs?: number | undefined;
   toolCallId?: string | undefined;
-  extensionContext?: ExtensionContext | undefined;
+  /** The `exec`/`wait` tool's own context, passed through unchanged (its tool members are non-enumerable). */
+  extensionContext?: ExtensionToolContext | undefined;
   preflight?: CodeModeToolPreflightRunner | undefined;
   onUpdate?: ((result: AgentToolResult<unknown>) => void) | undefined;
   captureResult?: ((result: RuntimeToolResult) => void) | undefined;

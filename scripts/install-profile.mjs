@@ -150,6 +150,15 @@ function isForeignProfileDirectory(entry, root, name) {
   return path.resolve(entry) !== path.resolve(root, ".pi", name);
 }
 
+/**
+ * Name of the Pi built-in extension an `extensions` override entry targets,
+ * such as `codemode` for `-builtin:codemode`, or undefined for any other entry.
+ */
+function builtinOverrideName(entry) {
+  // Settings entries are user-edited JSON; a non-string never stringifies to a match.
+  return /^[+\-!]builtin:(.+)$/.exec(String(entry))?.[1];
+}
+
 export function buildGlobalSettings(projectSettings, existingSettings, root, supersededNames = []) {
   const canonicalPackages = projectSettings.packages.map((spec) =>
     spec.startsWith("./") ? path.resolve(root, ".pi", spec) : spec,
@@ -169,6 +178,17 @@ export function buildGlobalSettings(projectSettings, existingSettings, root, sup
     ...projectSettings.modelThinkingLevels,
     ...existingSettings.modelThinkingLevels,
   };
+  // The profile's built-in extension policy (`-builtin:<name>`) has to reach the
+  // global settings, because Pi only reads the project file from this checkout.
+  // For the built-ins the profile names, its entries replace the user's; the
+  // user's overrides for any other built-in are kept.
+  const builtinPolicy = (projectSettings.extensions ?? []).filter(
+    (entry) => builtinOverrideName(entry) !== undefined,
+  );
+  const policyNames = new Set(builtinPolicy.map(builtinOverrideName));
+  const extensions = profileDirectories("extensions").filter(
+    (entry) => !policyNames.has(builtinOverrideName(entry)),
+  );
   return {
     ...existingSettings,
     ...projectSettings,
@@ -176,7 +196,7 @@ export function buildGlobalSettings(projectSettings, existingSettings, root, sup
     // profile only fills in models the user has not set.
     ...(Object.keys(thinkingLevels).length > 0 && { modelThinkingLevels: thinkingLevels }),
     packages: mergePackages(canonicalPackages, retainedPackages),
-    extensions: unique(profileDirectories("extensions")),
+    extensions: unique([...extensions, ...builtinPolicy]),
     skills: unique(profileDirectories("skills")),
     prompts: unique(profileDirectories("prompts")),
   };
