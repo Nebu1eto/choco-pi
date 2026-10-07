@@ -478,6 +478,10 @@ The WebSocket request gate, async exec decoration and call tracking, the
 `openai-codex` input-hook steering gate, and the setting descriptions share it.
 Other models and SSE keep ordinary behavior.
 
+2026-10-07: the gate also accepts `gpt-6.1-sol` (exact ID only; no other 6.1
+name). Native steering and async exec support for GPT-6.1 Sol is assumed from
+GPT-6 Sol and is pending a live probe by the orchestrator.
+
 ## choco-pi patch: structured Codex usage-limit reset signal
 
 User-facing error text is unchanged. `errors.ts` adds `parseCodexUsageLimitError`

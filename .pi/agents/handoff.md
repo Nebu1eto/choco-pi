@@ -1,6 +1,6 @@
 ---
 description: Read-only handoff leaf that reports only verified state in the user's language
-default_model: openai-codex/gpt-6-sol
+default_model: openai-codex/gpt-6.1-sol
 default_thinking: low
 prompt_mode: append
 skills: true

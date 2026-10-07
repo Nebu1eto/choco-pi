@@ -838,7 +838,7 @@ test("the repository fallback table loads and mirrors the model-guidance tiers",
       "openai-codex/gpt-6-astra",
     ]);
     assert.deepEqual(table.tiers.workhorse, {
-      primary: ["anthropic/claude-opus-5-5", "openai-codex/gpt-6-sol"],
+      primary: ["anthropic/claude-opus-5-5", "openai-codex/gpt-6.1-sol"],
       secondary: ["anthropic/claude-opus-5", "openai-codex/gpt-5.6-sol"],
     });
     assert.deepEqual(table.tiers.utility?.primary, [

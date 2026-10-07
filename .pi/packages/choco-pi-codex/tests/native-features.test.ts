@@ -107,7 +107,7 @@ test("native async decorates only direct GPT-6 exec and excludes hosted PTC", ()
     { type: "function", name: "wait" },
   ]);
   assert.equal(withAsyncCodeMode(input, false), input);
-  for (const model of ["gpt-6-sol", "gpt-6-luna"]) {
+  for (const model of ["gpt-6-sol", "gpt-6.1-sol", "gpt-6-luna"]) {
     assert.deepEqual(withAsyncCodeMode({ ...input, model }, true).tools?.[0], {
       type: "custom",
       name: "exec",
@@ -115,7 +115,15 @@ test("native async decorates only direct GPT-6 exec and excludes hosted PTC", ()
       async: true,
     });
   }
-  for (const model of ["gpt-5.6-sol", "gpt-6", "gpt-6-astra-mini"]) {
+  for (const model of [
+    "gpt-5.6-sol",
+    "gpt-6",
+    "gpt-6-astra-mini",
+    "gpt-6.1-astra",
+    "gpt-6.1-luna",
+    "gpt-6.1-sol-mini",
+    "gpt-61-sol",
+  ]) {
     const other = { ...input, model };
     assert.equal(withAsyncCodeMode(other, true), other);
   }
@@ -129,11 +137,21 @@ test("native async decorates only direct GPT-6 exec and excludes hosted PTC", ()
   assert.deepEqual(input.tools?.[0], { type: "custom", name: "exec", format: { type: "text" } });
 });
 
-test("native features target exactly the GPT-6 family", () => {
-  for (const id of ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"]) {
+test("native features target exactly the GPT-6 family and GPT-6.1 Sol", () => {
+  for (const id of ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]) {
     assert.equal(supportsNativeResponsesModel(id), true, id);
   }
-  for (const id of [undefined, "gpt-6", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-6-sol-mini"]) {
+  for (const id of [
+    undefined,
+    "gpt-6",
+    "gpt-5.6-sol",
+    "gpt-5.6-luna",
+    "gpt-6-sol-mini",
+    "gpt-6.1-astra",
+    "gpt-6.1-luna",
+    "gpt-6.1-sol-mini",
+    "gpt-61-sol",
+  ]) {
     assert.equal(supportsNativeResponsesModel(id), false, String(id));
   }
 });

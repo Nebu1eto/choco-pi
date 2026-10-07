@@ -16,6 +16,8 @@ node_modules/
 **/node_modules.bootstrap-backup*
 **/node_modules.bootstrap-lock/
 
+.DS_Store
+
 # Never commit local credentials or environment overrides.
 .env
 .env.*

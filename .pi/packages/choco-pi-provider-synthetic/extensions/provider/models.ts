@@ -200,6 +200,35 @@ export const SYNTHETIC_MODELS: SyntheticModel[] = [
     contextWindow: 524288,
     maxTokens: 65536,
   },
+  // API: hf:zai-org/GLM-5.3 → ctx=524288, out=65536
+  // API efforts: ['low', 'high', 'max'] — reasoning is always on; off and the
+  // advertised but unreliable low effort are intentionally hidden.
+  {
+    id: "hf:zai-org/GLM-5.3",
+    name: "zai-org/GLM-5.3",
+    reasoning: true,
+    thinkingLevelMap: {
+      off: null,
+      minimal: null,
+      low: null,
+      medium: null,
+      high: "high",
+      xhigh: null,
+      max: "max",
+    },
+    compat: {
+      supportsReasoningEffort: true,
+    },
+    input: ["text"],
+    cost: {
+      input: 1.4,
+      output: 4.4,
+      cacheRead: 0.26,
+      cacheWrite: 0,
+    },
+    contextWindow: 524288,
+    maxTokens: 65536,
+  },
   // API: hf:zai-org/GLM-4.7-Flash → ctx=196608, out=65536
   // API efforts: ['none', 'low', 'medium', 'high'] ('minimal'/'xhigh'/'max' rejected upstream).
   {
@@ -456,6 +485,10 @@ const THINKING_LEVEL_MAP_OVERRIDES = new Map<
   // Direct API probes on 2026-09-21 showed low can exhaust output on reasoning
   // or stop with empty content, despite being advertised by the live catalog.
   ["hf:zai-org/GLM-5.3-Flash", { low: null }],
+  // Pi 1.0.4 session probes on 2026-10-07 showed low returning reasoning with
+  // no visible text or reasoning until aborted in five of five attempts, while
+  // high and max answered correctly.
+  ["hf:zai-org/GLM-5.3", { low: null }],
 ]);
 
 function mergeWithStaticOverride(

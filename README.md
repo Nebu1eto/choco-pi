@@ -423,6 +423,7 @@ values are the maintainer's current settings. Secrets never belong in this file.
     "anthropic/claude-fable-5-1": "low",
     "anthropic/claude-opus-5-5": "medium",
     "openai-codex/gpt-6-sol": "low",
+    "openai-codex/gpt-6.1-sol": "low",
     "openai-codex/gpt-6-luna": "high",
     "synthetic/hf:deepseek-ai/DeepSeek-V4.1-Flash": "low"
   },
@@ -443,12 +444,14 @@ values are the maintainer's current settings. Secrets never belong in this file.
     "anthropic/claude-sonnet-5",
     "openai-codex/gpt-6-astra",
     "openai-codex/gpt-6-sol",
+    "openai-codex/gpt-6.1-sol",
     "openai-codex/gpt-5.6-sol",
     "openai-codex/gpt-5.6-terra",
     "openai-codex/gpt-6-luna",
     "openai-codex/gpt-daybreak-blue-latest",
     "synthetic/hf:moonshotai/Kimi-K3",
     "synthetic/hf:deepseek-ai/DeepSeek-V4.1-Flash",
+    "synthetic/hf:zai-org/GLM-5.3",
     "synthetic/hf:zai-org/GLM-5.3-Flash"
   ],
   "cacheWarming": "streaming",
