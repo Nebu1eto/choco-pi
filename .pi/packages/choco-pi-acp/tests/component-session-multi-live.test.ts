@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { SessionManager } from "../src/acp/session.ts";
-import type { PiRpcProcessLike } from "../src/pi-rpc/process.ts";
+import type { PiPromptDisposition, PiRpcProcessLike } from "../src/pi-rpc/process.ts";
 import { FakeAgentSideConnection, asAgentConn } from "./helpers-fakes.ts";
 
 class DisposableFakePiProcess implements PiRpcProcessLike {
@@ -12,7 +12,9 @@ class DisposableFakePiProcess implements PiRpcProcessLike {
     return () => {};
   }
 
-  async prompt(): Promise<void> {}
+  async prompt(): Promise<PiPromptDisposition> {
+    return "started";
+  }
 
   dispose(): void {
     this.disposed = true;

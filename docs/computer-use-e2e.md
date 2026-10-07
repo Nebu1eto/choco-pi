@@ -1,6 +1,6 @@
 # Computer-use end-to-end validation
 
-The isolated harness is `CU/e2e/run.ts` (`CU/` means `.pi/packages/choco-pi-computer-use/`). Run it only from `/Users/Nebuleto/Workspace/choco-pi-dev`. It pins `/Users/Nebuleto/.local/pi-0.87.1/node_modules/.bin/pi` and refuses the 0.86.1 Homebrew launcher. Begin with:
+The isolated harness is `CU/e2e/run.ts` (`CU/` means `.pi/packages/choco-pi-computer-use/`). Run it only from `/Users/Nebuleto/Workspace/choco-pi-dev`. It pins `/Users/Nebuleto/.local/pi-1.0.4/node_modules/.bin/pi` and refuses the 0.86.1 Homebrew launcher. Begin with:
 
 ```sh
 node --experimental-strip-types .pi/packages/choco-pi-computer-use/e2e/run.ts --tier a --dry-run --preflight-only --baseline /tmp/choco-pi/$PI_SESSION_ID/e2e/baseline.json --waive-gate 'typecheck=pre-existing unrelated SDK mismatch' --waive-gate 'test=pre-existing subagent-config model expectation'

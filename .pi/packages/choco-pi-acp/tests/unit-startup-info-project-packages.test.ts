@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { PiAcpAgent, type SessionManagerLike } from "../src/acp/agent.ts";
 import { PiAcpSession } from "../src/acp/session.ts";
-import type { PiRpcEvent, PiRpcProcessLike } from "../src/pi-rpc/process.ts";
+import type { PiPromptDisposition, PiRpcEvent, PiRpcProcessLike } from "../src/pi-rpc/process.ts";
 import type {
   PiAvailableModels,
   PiCommands,
@@ -48,7 +48,9 @@ class SingleModelProcess implements PiRpcProcessLike {
     return () => {};
   }
 
-  async prompt(_message: string, _images: PiPromptImage[] = []): Promise<void> {}
+  async prompt(_message: string, _images: PiPromptImage[] = []): Promise<PiPromptDisposition> {
+    return "started";
+  }
 
   async getAvailableModels(): Promise<PiAvailableModels> {
     return { models: [{ provider: "test", id: "model", name: "model" }] };

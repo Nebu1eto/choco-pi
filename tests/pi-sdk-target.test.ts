@@ -11,7 +11,7 @@ interface PackageManifest {
 }
 
 const ROOT = new URL("../", import.meta.url);
-const TARGET = "0.87.1";
+const TARGET = "1.0.4";
 const SDK_NAMES = ["pi-ai", "pi-agent-core", "pi-coding-agent", "pi-tui"];
 const PACKAGE_PATHS = [
   "",
@@ -53,7 +53,7 @@ test("every frozen lock resolves only the target SDK release", async () => {
     const lock = await readFile(lockPath, "utf8");
     const references = [
       ...lock.matchAll(
-        /@earendil-works\/(?:pi-ai|pi-agent-core|pi-coding-agent|pi-tui|pi-telemetry|chord)@([^\s'"():]+)/g,
+        /@earendil-works\/(?:pi-ai|pi-agent-core|pi-codemode|pi-coding-agent|pi-mcp|pi-tui|pi-telemetry|chord)@([^\s'"():]+)/g,
       ),
     ];
     assert.ok(references.length > 0, `${path} must lock the SDK`);

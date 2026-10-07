@@ -166,12 +166,13 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 async function sendTool(sender: AgentSession, sessionId: string, message: string) {
   const definition = sender.extensionRunner.getToolDefinition("session_send");
   assert.ok(definition);
+  const signal = new AbortController().signal;
   return definition.execute(
     `send-${message}`,
     { session_id: sessionId, message },
-    new AbortController().signal,
+    signal,
     () => undefined,
-    sender.extensionRunner.createContext(),
+    sender.extensionRunner.createToolContext(`send-${message}`, signal),
   );
 }
 

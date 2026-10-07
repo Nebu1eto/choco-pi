@@ -4,7 +4,12 @@ import type { SessionNotification } from "@agentclientprotocol/sdk";
 import { PiAcpAgent, type SessionManagerLike } from "../src/acp/agent.ts";
 import { PiAcpSession } from "../src/acp/session.ts";
 import type { PiRpcEvent, PiRpcProcessLike } from "../src/pi-rpc/process.ts";
-import type { PiPromptImage, PiState, PiTurnMode } from "../src/pi-rpc/protocol.ts";
+import type {
+  PiPromptDisposition,
+  PiPromptImage,
+  PiState,
+  PiTurnMode,
+} from "../src/pi-rpc/protocol.ts";
 import { FakeAgentSideConnection, asAgentConn } from "./helpers-fakes.ts";
 
 /** A session manager that always resolves to one prepared session. */
@@ -56,8 +61,9 @@ class TurnModeProcess implements PiRpcProcessLike {
     return () => {};
   }
 
-  async prompt(message: string, _images: PiPromptImage[] = []): Promise<void> {
+  async prompt(message: string, _images: PiPromptImage[] = []): Promise<PiPromptDisposition> {
     this.prompts.push(message);
+    return "started";
   }
 
   async getState(): Promise<PiState> {

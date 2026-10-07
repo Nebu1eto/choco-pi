@@ -31,18 +31,18 @@
     "prepublishOnly": "npm run verify && npm run pack:check"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "0.87.1",
-    "@earendil-works/pi-coding-agent": "0.87.1",
-    "@earendil-works/pi-tui": "0.87.1",
+    "@earendil-works/pi-ai": "1.0.4",
+    "@earendil-works/pi-coding-agent": "1.0.4",
+    "@earendil-works/pi-tui": "1.0.4",
     "@types/node": "^26.0.0",
     "oxfmt": "0.64.0",
     "oxlint": "1.79.0",
     "typescript": "^7.0.2"
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": "0.87.1",
-    "@earendil-works/pi-coding-agent": "0.87.1",
-    "@earendil-works/pi-tui": "0.87.1"
+    "@earendil-works/pi-ai": "1.0.4",
+    "@earendil-works/pi-coding-agent": "1.0.4",
+    "@earendil-works/pi-tui": "1.0.4"
   },
   "chocoPi": {
     "supersedes": [

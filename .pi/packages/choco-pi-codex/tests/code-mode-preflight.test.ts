@@ -4,11 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import {
-  createSyntheticSourceInfo,
-  type ExtensionContext,
-  type ToolDefinition,
-} from "@earendil-works/pi-coding-agent";
+import { createSyntheticSourceInfo, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { ExecutePatchError } from "../src/patch/types.ts";
 import { prepareCodeModeApplyPatchInput } from "../src/tools/apply-patch/code-mode-input.ts";
@@ -17,6 +13,7 @@ import { executeApplyPatch } from "../src/tools/apply-patch/execute.ts";
 import { enhanceCodeModeNestedToolError } from "../src/tools/code-mode/nested-tool-errors.ts";
 import { collectBridgedTools } from "../src/tools/code-mode/registered-tool-bridge.ts";
 import { preflightCodeModeSource } from "../src/tools/code-mode/source-preflight.ts";
+import { createToolContextFixture } from "./tool-context-fixture.ts";
 
 const RESTRICTED = {
   mode: "code" as const,
@@ -231,8 +228,7 @@ test("the registered-tool bridge applies focused read-offset errors", async () =
     ],
   });
   assert.ok(readTool);
-  // SAFETY: The fake tool ignores ExtensionContext; the bridge only requires a present context.
-  const extensionContext = {} as ExtensionContext;
+  const extensionContext = createToolContextFixture();
   await assert.rejects(
     readTool.invoke(
       { path: "src/example.ts", offset: 260 },

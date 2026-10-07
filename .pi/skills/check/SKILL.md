@@ -19,7 +19,9 @@ Use a capability-relevant check before `task-inline`, `task`, or `task-hotfix`. 
 
 Never read or print `auth.json`, API keys, OAuth tokens, environment secrets, or credential-bearing configuration.
 
-Core readiness requires Node `>=24` and the actual runtime source exactly Pi `0.87.1`, matching the repository's SDK contracts. In-host checks name `active-host`; standalone checks name `imported-sdk`. Older, newer, prerelease, missing, or malformed actual runtime versions fail. A different or unavailable direct PATH launcher does not override a verified runtime and warns only in a full diagnostic.
+Core readiness requires Node `>=24` and the actual runtime source exactly Pi `1.0.4`, matching the repository's SDK contracts. In-host checks name `active-host`; standalone checks name `imported-sdk`. Older, newer, prerelease, missing, or malformed actual runtime versions fail. A different or unavailable direct PATH launcher does not override a verified runtime and warns only in a full diagnostic.
+
+The `builtin-extensions` check warns unless the project `settings.json` disables `builtin:codemode`, `builtin:tool-search`, and `builtin:mcp`, and, in-host, unless the active host shows no tools or commands from them. choco-pi replaces tool search and `/mcp`, so leaving these enabled only adds an `[Extension issues]` warning at startup. Pi does not expose extension load warnings to extensions; when this check warns, ask the user what `[Extension issues]` reported at startup. Run `pnpm install:profile` to carry the policy into the global settings.
 
 A successful automatic check may be reused within the same session only while its relevant runtime, configuration, resources, and required live tools remain unchanged. Always rerun a fresh explicit `/check`.
 

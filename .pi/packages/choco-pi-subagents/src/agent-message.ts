@@ -1,4 +1,5 @@
 import {
+  type AgentSession,
   defineTool,
   type ExtensionAPI,
   type ToolDefinition,
@@ -16,9 +17,16 @@ import {
 
 export const AGENT_MESSAGE_TOOL_NAME = "agent_message";
 
+/**
+ * What Pi did with queued input: `"queued"` entered the steering queue,
+ * `"handled"` was consumed by an input handler and never reaches the model.
+ * Pi 1.0.4 does not export the alias by name, so derive it from the session.
+ */
+export type QueuedInputDisposition = Awaited<ReturnType<AgentSession["steer"]>>;
+
 /** The only session capability this tool uses; `AgentSession` satisfies it. */
 export interface SteerableAgentSession {
-  steer(message: string): Promise<void>;
+  steer(message: string): Promise<QueuedInputDisposition>;
 }
 
 /** The record surface this tool reads and writes, narrowed from `AgentRecord`. */
@@ -122,12 +130,13 @@ export async function deliverAgentMessage(
   // ours to assume across suspension.
   const recipientId = recipient.record.id;
   const generation = recipient.record.resultGeneration ?? 1;
+  let disposition: QueuedInputDisposition | undefined;
   if (held) {
     recipient.record.pendingSteers ??= [];
     recipient.record.pendingSteers.push(envelope);
   } else {
     try {
-      await session.steer(envelope);
+      disposition = await session.steer(envelope);
     } catch (error) {
       return textResult(
         `Failed to deliver to ${recipient.address}: ${error instanceof Error ? error.message : String(error)}`,
@@ -160,10 +169,16 @@ export async function deliverAgentMessage(
     type,
     queued: held,
   });
+  if (held) return textResult(`Message held for ${recipient.address} until its session starts.`);
+  if (disposition === "handled") {
+    // An input handler in the recipient's session consumed the envelope. It
+    // was not queued and the recipient's model will not see it as a message.
+    return textResult(
+      `Message to ${recipient.address} was handled by an input handler in the recipient's session and was not queued; the recipient's model will not receive it as a message.`,
+    );
+  }
   return textResult(
-    held
-      ? `Message held for ${recipient.address} until its session starts.`
-      : `Message steered to ${recipient.address}; it arrives at the recipient's next safe boundary.`,
+    `Message steered to ${recipient.address}; it arrives at the recipient's next safe boundary.`,
   );
 }
 

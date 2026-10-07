@@ -16,7 +16,11 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { SyntheticApiModelSchema, type SyntheticApiModel } from "../../src/client/types";
 
-export type SyntheticModel = Omit<ProviderModelConfig, "api" | "compat"> & {
+// Pi 1.0 split ProviderModelConfig into chat/image/classifier members and does
+// not export the chat member by name; every Synthetic model is a chat model.
+type ProviderChatModelConfig = Extract<ProviderModelConfig, { type?: "chat" }>;
+
+export type SyntheticModel = Omit<ProviderChatModelConfig, "api" | "compat"> & {
   api?: "openai-completions";
   compat?: OpenAICompletionsCompat;
 };

@@ -10,7 +10,7 @@ OAuth 토큰, API 키, 컴퓨터별 로컬 설정은 Git 밖에 보관하세요.
 
 - Node.js 24 이상
 - pnpm `11.11.0` (다른 버전은 사용할 수 없음)
-- Pi `0.87.1` (이 체크아웃이 고정한 SDK 패키지와 동일한 버전)
+- Pi `1.0.4` (이 체크아웃이 고정한 SDK 패키지와 동일한 버전)
 - Git
 - 선택 사항: 브라우저 자동화를 위한 [`agent-browser`](https://github.com/vercel-labs/agent-browser). 0.34.0, 0.35.2, 0.36.0, 0.37.1, 0.38.1 버전을 검증했으며, 그 외 버전은 경고만 표시하고 실행합니다.
 - 선택 사항: 데스크톱 조작(computer use)을 위한 macOS 14 이상([computer use 설정하기](#computer-use-설정하기-macos) 참고)
@@ -44,14 +44,14 @@ pi
 Homebrew의 `pi-coding-agent` formula는 지원 버전보다 늦게 갱신됩니다. 다음과 같이 버전별 로컬 경로에 Pi를 설치하세요.
 
 ```sh
-npm install --prefix ~/.local/pi-0.87.1 --ignore-scripts @earendil-works/pi-coding-agent@0.87.1
+npm install --prefix ~/.local/pi-1.0.4 --ignore-scripts @earendil-works/pi-coding-agent@1.0.4
 ```
 
 `~/.local/pi-shim/pi` 파일을 만들고 실행 권한을 부여하세요.
 
 ```sh
 #!/bin/sh
-PI_SKIP_VERSION_CHECK=1 exec "$HOME/.local/pi-0.87.1/node_modules/.bin/pi" "$@"
+PI_SKIP_VERSION_CHECK=1 exec "$HOME/.local/pi-1.0.4/node_modules/.bin/pi" "$@"
 ```
 
 셸 설정에서 이 shim 경로를 `/opt/homebrew/bin`보다 앞에 두세요.
@@ -60,7 +60,7 @@ PI_SKIP_VERSION_CHECK=1 exec "$HOME/.local/pi-0.87.1/node_modules/.bin/pi" "$@"
 export PATH="$HOME/.local/pi-shim:$PATH"
 ```
 
-Pi 0.87.1의 `cli.js` 실행기는 Node 컴파일 캐시를 활성화합니다. 원인을 알 수 없는 모듈 로드 오류를 조사할 때는 `NODE_DISABLE_COMPILE_CACHE=1`로 설정해 캐시를 끌 수 있습니다.
+Pi 1.0.4의 `cli.js` 실행기는 Node 컴파일 캐시를 활성화합니다. 원인을 알 수 없는 모듈 로드 오류를 조사할 때는 `NODE_DISABLE_COMPILE_CACHE=1`로 설정해 캐시를 끌 수 있습니다.
 
 Pi가 열리면 `/login`을 실행하고 공급자를 선택하세요. 설치 스크립트는 인증을 수행하거나 로그인 화면을 열지 않으며, 인증 정보를 저장소에 복사하지 않습니다.
 
@@ -91,6 +91,10 @@ npm run install:profile
 
 업데이트 후에는 Pi를 다시 시작하세요. 실행 중인 세션에서 `.pi` 아래 파일을 수정했다면
 `/reload`를 실행해 확장, 스킬, 프롬프트, 테마, 연결된 프로필 파일을 다시 불러오세요.
+
+### 내장 확장
+
+Pi 1.0.4에는 `codemode`, `tool-search`, `mcp`, `llama.cpp` 확장이 내장되어 있습니다. choco-pi는 자체 `exec` 코드 모드 도구, `tool_search`, `/mcp`를 제공하므로 `.pi/settings.json`과 프로필 설치 프로그램에서 `"extensions": ["-builtin:codemode", "-builtin:tool-search", "-builtin:mcp"]`로 앞의 세 확장을 비활성화합니다. 내장 MCP 확장을 비활성화한 동안에는 Pi의 `pi mcp …` CLI 하위 명령을 사용할 수 없습니다.
 
 ## 인증
 
@@ -337,6 +341,8 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 | `~/.pi/agent/mcp.json`과 그 예시인 [`.pi/mcp.example.json`](.pi/mcp.example.json)                                                             | 추적하지 않는 MCP 서버 및 OAuth 설정                            |
 | 패키지별 [`AGENTS.md`](.pi/packages/choco-pi-agent-browser/AGENTS.md)와 [`VENDORED.md`](.pi/packages/choco-pi-agent-browser/VENDORED.md) 파일 | 패키지 정책과 기록된 업스트림 변경 사항                         |
 
+Pi 1.0.3부터 `Home`/`End`는 편집기 커서를 이동합니다. 대화 기록의 맨 위/아래로 이동하려면 `Ctrl+Home`/`Ctrl+End`를 사용하세요.
+
 `npm run install:profile`은 정책 파일, `subagents.json`, `choco-pi-codex.json`, `models.json`, `keybindings.json`, 에이전트 정의, 확장 JSON 파일 3개를 `~/.pi/agent`에 연결합니다. `zentui.json`은 `choco-pi-ui.json`이라는 이름으로 연결됩니다.
 
 ### 전역 설정 예시
@@ -345,7 +351,7 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 `~/.pi/agent/settings.json`을 만들며, 관리하지 않는 키는 그대로 둡니다. 실행할 때마다
 다음 세 가지를 합니다.
 
-- `packages`, `extensions`, `skills`, `prompts`를 체크아웃 절대 경로로 기록합니다. 사용자가 추가한 항목은 choco-pi 항목 뒤에 유지됩니다.
+- `packages`, `skills`, `prompts`를 체크아웃 절대 경로로 기록하고, `extensions`에는 위의 내장 확장 비활성화 항목도 넣습니다. 사용자가 추가한 항목은 choco-pi 항목 뒤에 유지됩니다.
 - `.pi/settings.json`의 `theme`, `tuiMode`, `fullscreenExitOutput`, `fuzzyFileMentions`, `compaction`을 전역 값 위에 덮어씁니다. 이 키들은 `.pi/settings.json`에서 바꾸세요. 전역 파일에서만 고친 값은 다음 설치 때 사라집니다.
 - `modelThinkingLevels`는 합칩니다. 전역 파일의 값이 우선하며, `.pi/settings.json`은 사용자가 설정하지 않은 모델의 수준만 추가합니다.
 - 그 밖의 키는 건드리지 않습니다. 직접 쓰거나 `/preferences`로 설정하세요.
@@ -375,7 +381,12 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
     "/path/to/choco-pi/.pi/packages/choco-pi-computer-use",
     "/path/to/choco-pi/.pi/packages/choco-pi-editor-context"
   ],
-  "extensions": ["/path/to/choco-pi/.pi/extensions"],
+  "extensions": [
+    "/path/to/choco-pi/.pi/extensions",
+    "-builtin:codemode",
+    "-builtin:tool-search",
+    "-builtin:mcp"
+  ],
   "skills": ["/path/to/choco-pi/.pi/skills"],
   "prompts": ["/path/to/choco-pi/.pi/prompts"],
 

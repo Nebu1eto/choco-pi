@@ -140,9 +140,74 @@ test("profile installer links tracked config and is idempotent", async (context)
       "choco-pi-editor-context",
     ].map((name) => path.resolve(".pi/packages", name)),
   );
-  assert.deepEqual(settings.extensions, [path.resolve(".pi/extensions")]);
   const projectSettings = JSON.parse(await readFile(path.resolve(".pi/settings.json"), "utf8"));
+  assert.deepEqual(settings.extensions, [
+    path.resolve(".pi/extensions"),
+    "-builtin:codemode",
+    "-builtin:tool-search",
+    "-builtin:mcp",
+  ]);
+  assert.deepEqual(projectSettings.extensions, [
+    "-builtin:codemode",
+    "-builtin:tool-search",
+    "-builtin:mcp",
+  ]);
   assert.deepEqual(settings.modelThinkingLevels, projectSettings.modelThinkingLevels);
+});
+
+test("the profile's built-in extension policy overrides the user's entries for the same built-ins", () => {
+  const settings = buildGlobalSettings(
+    {
+      packages: [],
+      extensions: ["-builtin:codemode", "-builtin:tool-search", "-builtin:mcp"],
+    },
+    {
+      extensions: [
+        "+builtin:codemode",
+        "-builtin:llama.cpp",
+        "/Users/someone/my-tools",
+        "-builtin:mcp",
+      ],
+      deviceId: "device-from-chatgpt-sign-in",
+      defaultModel: "user-model",
+    },
+    "/repo",
+  );
+
+  assert.deepEqual(settings.extensions, [
+    path.resolve("/repo/.pi/extensions"),
+    "-builtin:llama.cpp",
+    "/Users/someone/my-tools",
+    "-builtin:codemode",
+    "-builtin:tool-search",
+    "-builtin:mcp",
+  ]);
+  assert.ok(!settings.extensions.includes("+builtin:codemode"));
+  assert.equal(settings.deviceId, "device-from-chatgpt-sign-in");
+  assert.equal(settings.defaultModel, "user-model");
+});
+
+test("reinstalling keeps exactly one copy of the built-in extension policy", async (context) => {
+  const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-builtins-"));
+  context.after(() => rm(agentDir, { recursive: true, force: true }));
+  await writeFile(
+    path.join(agentDir, "settings.json"),
+    `${JSON.stringify({ extensions: ["+builtin:codemode", "-builtin:llama.cpp"], deviceId: "d-1" })}\n`,
+    "utf8",
+  );
+
+  await installProfile({ root: process.cwd(), agentDir });
+  await installProfile({ root: process.cwd(), agentDir });
+
+  const settings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
+  assert.deepEqual(settings.extensions, [
+    path.resolve(".pi/extensions"),
+    "-builtin:llama.cpp",
+    "-builtin:codemode",
+    "-builtin:tool-search",
+    "-builtin:mcp",
+  ]);
+  assert.equal(settings.deviceId, "d-1");
 });
 
 test("profile installer preserves enabled and disabled fast preferences", async (context) => {

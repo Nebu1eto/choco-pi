@@ -105,7 +105,7 @@ upstream `prompts/create-goal.md` diffs against `goalObjectivePrompt` in
 ## Pi SDK target alignment
 
 Host-provided Pi SDK peer contracts and any development SDK dependencies now
-require exactly `0.87.1`, matching the harness target. This SDK alignment is
+require exactly `1.0.4`, matching the harness target. This SDK alignment is
 separate from installer policy; TypeBox and unrelated
 dependencies retain their existing contracts.
 
@@ -145,3 +145,8 @@ nothing from the repository root; both seams are validated structurally.
   auto-resume is scheduled.
 - `tests/recovery-ownership.test.ts` (new) covers ownership states, dispose,
   seam use, regex fallback, and the resume schedule.
+
+## 2026-10-07 choco-pi patch: Pi SDK 1.0.4
+
+Pi SDK peer and development pins move from `0.87.1` to exactly `1.0.4`,
+matching the harness target. Other dependency contracts are unchanged.

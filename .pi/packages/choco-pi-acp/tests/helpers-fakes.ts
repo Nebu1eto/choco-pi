@@ -4,7 +4,7 @@ import type {
   SessionNotification,
 } from "@agentclientprotocol/sdk";
 import type { AcpConnection } from "../src/acp/session.ts";
-import type { PiRpcEvent, PiRpcProcessLike } from "../src/pi-rpc/process.ts";
+import type { PiPromptDisposition, PiRpcEvent, PiRpcProcessLike } from "../src/pi-rpc/process.ts";
 import type {
   PiAvailableModels,
   PiExtensionUiResponse,
@@ -53,6 +53,8 @@ export class FakePiRpcProcess implements PiRpcProcessLike {
   readonly prompts: RecordedPrompt[] = [];
   readonly extensionUiResponses: PiExtensionUiResponse[] = [];
   abortCount = 0;
+  /** Decides each prompt's acknowledgement; defaults to Pi's `started` disposition. */
+  promptResponder: (message: string) => Promise<PiPromptDisposition> = async () => "started";
 
   onEvent(handler: (ev: PiRpcEvent) => void): () => void {
     this.handlers.push(handler);
@@ -65,8 +67,9 @@ export class FakePiRpcProcess implements PiRpcProcessLike {
     for (const h of this.handlers) h(ev);
   }
 
-  async prompt(message: string, attachments: PiPromptImage[] = []): Promise<void> {
+  async prompt(message: string, attachments: PiPromptImage[] = []): Promise<PiPromptDisposition> {
     this.prompts.push({ message, attachments });
+    return this.promptResponder(message);
   }
 
   async abort(): Promise<void> {

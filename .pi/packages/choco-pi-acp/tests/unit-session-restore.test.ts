@@ -8,6 +8,7 @@ import { PiAcpSession, SessionManager } from "../src/acp/session.ts";
 import type { SessionStoreEntry } from "../src/acp/session-store.ts";
 import type {
   PiAvailableModels,
+  PiPromptDisposition,
   PiPromptImage,
   PiRpcEvent,
   PiState,
@@ -101,9 +102,10 @@ class RestorableFakeProcess implements PiRpcProcessLike {
     return () => {};
   }
 
-  async prompt(message: string, _images: PiPromptImage[] = []): Promise<void> {
+  async prompt(message: string, _images: PiPromptImage[] = []): Promise<PiPromptDisposition> {
     this.promptCalls.push(message);
     queueMicrotask(() => this.eventHandler?.({ type: "agent_settled" }));
+    return "started";
   }
 
   async shutdown(graceMs?: number): Promise<PiRpcExit> {
@@ -142,7 +144,7 @@ test("PiAcpAgent: prompt auto-restores a missing session from SessionStore", asy
     spawnCalls.push(params);
     return {
       onEvent: () => () => {},
-      prompt: async () => {},
+      prompt: async (): Promise<PiPromptDisposition> => "started",
     };
   };
 
@@ -297,7 +299,7 @@ test("PiAcpAgent: setSessionConfigOption auto-restores via pi session discovery 
     spawnCalls.push(params);
     return {
       onEvent: () => () => {},
-      prompt: async () => {},
+      prompt: async (): Promise<PiPromptDisposition> => "started",
       getAvailableModels: async (): Promise<PiAvailableModels> => ({
         models: [
           { provider: "test", id: "alpha", name: "Alpha" },
@@ -382,7 +384,7 @@ test("PiAcpAgent: cancel ignores stale session IDs without spawning a restore pr
     spawnCalls.push(params);
     return {
       onEvent: () => () => {},
-      prompt: async () => {},
+      prompt: async (): Promise<PiPromptDisposition> => "started",
     };
   };
 

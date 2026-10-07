@@ -4,38 +4,10 @@ import test from "node:test";
 import { createSyntheticSourceInfo, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { collectBridgedTools } from "../src/tools/code-mode/registered-tool-bridge.ts";
+import { createToolContextFixture } from "./tool-context-fixture.ts";
 
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-
-function unexpectedHostService(name: string): never {
-  throw new Error(`Unexpected ExtensionContext access in bridge fixture: ${name}`);
-}
-
-const extensionContext: ExtensionContext = {
-  get ui(): ExtensionContext["ui"] {
-    return unexpectedHostService("ui");
-  },
-  mode: "json",
-  hasUI: false,
-  cwd: "/tmp",
-  get sessionManager(): ExtensionContext["sessionManager"] {
-    return unexpectedHostService("sessionManager");
-  },
-  get modelRegistry(): ExtensionContext["modelRegistry"] {
-    return unexpectedHostService("modelRegistry");
-  },
-  model: undefined,
-  scopedModels: [],
-  isIdle: () => true,
-  isProjectTrusted: () => false,
-  signal: undefined,
-  abort: () => unexpectedHostService("abort"),
-  hasPendingMessages: () => false,
-  shutdown: () => unexpectedHostService("shutdown"),
-  getContextUsage: () => undefined,
-  compact: () => unexpectedHostService("compact"),
-  getSystemPrompt: () => "",
-};
+// No callable session tools: bridged calls run their definitions directly.
+const extensionContext = createToolContextFixture();
 const context = { cwd: "/tmp", extensionContext };
 
 function bridge(definition: ToolDefinition) {

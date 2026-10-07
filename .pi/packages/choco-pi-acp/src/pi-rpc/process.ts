@@ -8,6 +8,7 @@ import {
   decodePiCompactResult,
   decodePiExportHtml,
   decodePiMessages,
+  decodePiPromptDisposition,
   decodePiRpcEvent,
   decodePiRpcResponse,
   decodePiSessionStats,
@@ -19,6 +20,7 @@ import {
   type PiExtensionUiResponse,
   type PiMessages,
   type PiPromptImage,
+  type PiPromptDisposition,
   type PiRpcEvent,
   type PiRpcResponse,
   type PiSessionStats,
@@ -27,7 +29,7 @@ import {
   type PiTurnMode,
 } from "./protocol.ts";
 
-export type { PiRpcEvent } from "./protocol.ts";
+export type { PiPromptDisposition, PiRpcEvent } from "./protocol.ts";
 
 export type PiRpcSpawnErrorOptions = {
   code?: string;
@@ -116,7 +118,7 @@ export type PiRpcPrelude = {
  */
 export type PiRpcProcessLike = {
   onEvent(handler: (ev: PiRpcEvent) => void): () => void;
-  prompt(message: string, images?: PiPromptImage[]): Promise<void>;
+  prompt(message: string, images?: PiPromptImage[]): Promise<PiPromptDisposition>;
   onExit?(listener: (exit: PiRpcExit) => void): () => void;
   abort?(): Promise<void>;
   getState?(): Promise<PiState>;
@@ -450,9 +452,21 @@ export class PiRpcProcess {
     return { lines, truncated: this.preludeTruncated };
   }
 
-  async prompt(message: string, images: PiPromptImage[] = []): Promise<void> {
+  /**
+   * Submit a prompt and return Pi's disposition for it. A success response without a
+   * recognized `data.disposition` is a protocol error: guessing `started` would wait for
+   * events that may never arrive, and guessing `handled` would end a live run early.
+   */
+  async prompt(message: string, images: PiPromptImage[] = []): Promise<PiPromptDisposition> {
     const res = await this.request({ type: "prompt", message, images });
     if (!res.success) throw new Error(`pi prompt failed: ${failureText(res)}`);
+    const disposition = decodePiPromptDisposition(res.data);
+    if (disposition === undefined) {
+      throw new Error(
+        "pi prompt failed: response is missing a valid data.disposition (expected started, queued, or handled).",
+      );
+    }
+    return disposition;
   }
 
   async abort(): Promise<void> {

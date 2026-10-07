@@ -337,3 +337,29 @@ The source-only package manifest, repository TypeScript/lint/test adaptations,
 README rename, `choco-pi` Zed setup generator, and explicit editor-context
 targeting remain repository-specific divergences rather than upstream
 candidates.
+
+## 2026-10-07 choco-pi patch: Pi SDK 1.0.4
+
+The repository Pi SDK target moves from `0.87.1` to `1.0.4`. This package
+declares no Pi SDK pin and has no package-local lockfile, so its files are
+unchanged.
+
+## 2026-10-07 choco-pi patch: Pi 1.0.4 RPC prompt disposition
+
+Pi 1.0.4 behavior requires source changes, so the "files are unchanged"
+statement above covers only the manifest and lockfile.
+
+- `src/pi-rpc/protocol.ts` and `src/pi-rpc/process.ts`: `prompt()` decodes and
+  returns the success response's `data.disposition` (`started`, `queued`, or
+  `handled`). A missing or unknown disposition is a protocol error and is
+  never defaulted.
+- `src/acp/session.ts`: `startTurn()` settles the ACP turn as `end_turn` (or
+  `cancelled`) on `handled`, because Pi emits no `agent_settled` for consumed
+  input. `started` and `queued` still settle from `agent_settled`. A prompt
+  acknowledgement or failure acts only while its own turn is pending and not
+  already settling, so a late reply cannot settle a later turn or its queue.
+- `src/acp/pi-settings.ts`: `quietStartup: "header"` hides Pi's startup
+  details, so it suppresses the adapter's startup block like `true`.
+- Tests: `tests/component-prompt-disposition.test.ts` covers real RPC response
+  frames, malformed payloads, and stale acknowledgements. Test fakes and stub
+  executables now return a disposition.

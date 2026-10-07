@@ -765,3 +765,120 @@ test("the native tier contains only core calls and rich-artifact tools", () => {
   ];
   assert.deepEqual([...ALWAYS_ACTIVE_TOOL_NAMES], expected);
 });
+
+test("only direct and model-only tools are ever declared; hidden tools are never searchable", async () => {
+  type SearchResult = {
+    content: Array<{ type: string; text: string }>;
+    details: { matches: string[]; added: string[] };
+  };
+  type SearchExecutor = {
+    execute(
+      toolCallId: string,
+      params: { query: string; limit?: number },
+      signal?: AbortSignal,
+      onUpdate?: undefined,
+      context?: ExtensionContext,
+    ): Promise<SearchResult>;
+  };
+
+  const exposures = {
+    probe_direct: "direct",
+    probe_model_only: "model-only",
+    probe_codemode: "codemode",
+    probe_deferred: "deferred",
+    probe_hidden: "hidden",
+  } as const;
+  const undeclared = ["probe_codemode", "probe_deferred", "probe_hidden"];
+  const events = createEventBus();
+  let searchTool: SearchExecutor | undefined;
+  let sessionStart: (() => void) | undefined;
+  let beforeAgentStart: (() => void) | undefined;
+  // A host that ignored exposure would hand back every name it was given.
+  let active = ["read", "probe_direct", "probe_model_only", "probe_codemode", "probe_hidden"];
+  const commits: string[][] = [];
+  const tools = [
+    {
+      name: "read",
+      description: "Read",
+      parameters: {},
+      exposure: "direct",
+      sourceInfo: { source: "builtin", path: "builtin" },
+    },
+    ...Object.entries(exposures).map(([name, exposure]) => ({
+      name,
+      description: `Inspect widget probe state (${exposure})`,
+      parameters: {},
+      exposure,
+      sourceInfo: { source: "extension", path: name },
+    })),
+  ];
+
+  toolSearch(
+    reinterpretHostValue<Parameters<typeof toolSearch>[0]>({
+      registerTool: (tool: SearchExecutor & { name: string }) => {
+        searchTool = tool;
+        tools.push({
+          name: tool.name,
+          description: "Search deferred tools",
+          parameters: {},
+          exposure: "direct",
+          sourceInfo: { source: "extension", path: "tool-search" },
+        });
+      },
+      getAllTools: () => tools,
+      getActiveTools: () => active,
+      setActiveTools: (names: string[]) => {
+        commits.push([...names]);
+        active = names;
+      },
+      events,
+      on: (name: string, handler: () => void) => {
+        if (name === "session_start") sessionStart = handler;
+        if (name === "before_agent_start") beforeAgentStart = handler;
+      },
+    }),
+  );
+
+  sessionStart?.();
+  events.emit(MCP_STATUS_CHANNEL, { servers: [] });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(active, ["read", "tool_search"]);
+
+  // An undeclarable tool activated outside this extension is not carried forward.
+  active = [...active, "probe_codemode", "probe_deferred"];
+  beforeAgentStart?.();
+  assert.deepEqual(active, ["read", "tool_search"]);
+
+  const nativeContext = reinterpretHostValue<ExtensionContext>({
+    model: {
+      provider: "openai-codex",
+      compat: { supportsAdditionalTools: false, supportsToolSearch: true },
+    },
+  });
+  const result = await searchTool?.execute(
+    "call",
+    { query: "widget probe", limit: 5 },
+    undefined,
+    undefined,
+    nativeContext,
+  );
+  const text = result?.content[0]?.text ?? "";
+
+  assert.deepEqual([...(result?.details.matches ?? [])].sort(), [
+    "probe_codemode",
+    "probe_deferred",
+    "probe_direct",
+    "probe_model_only",
+  ]);
+  assert.doesNotMatch(text, /probe_hidden/);
+  assert.deepEqual([...(result?.details.added ?? [])].sort(), ["probe_direct", "probe_model_only"]);
+  assert.match(text, /Call: await tools\.probe_codemode\(\{ \.\.\.args \}\)/);
+  assert.match(text, /Call: await tools\.probe_deferred\(\{ \.\.\.args \}\)/);
+  assert.match(text, /probe_direct directly \(native provider tool search\)/);
+  assert.deepEqual([...active].sort(), ["probe_direct", "probe_model_only", "read", "tool_search"]);
+
+  assert.ok(commits.length > 0);
+  for (const commit of commits)
+    for (const name of undeclared)
+      assert.ok(!commit.includes(name), `${name} must never be committed: ${commit.join(", ")}`);
+});

@@ -229,3 +229,13 @@ lockfile selections remain unchanged.
 installed-version alignment, optional peers, and the declared Standard Schema
 types. Root typechecking and MCP lifecycle/schema tests validate the resulting
 type and runtime boundaries.
+
+## 2026-10-07 choco-pi patch: Pi SDK 1.0.4
+
+Pi SDK peer and development pins move from `0.87.1` to exactly `1.0.4`,
+matching the harness target. Other dependency contracts are unchanged.
+
+The package workspace release-age exceptions now list eight exact
+`@earendil-works/*@1.0.4` packages and the existing `typebox@1.3.29` exception.
+`@earendil-works/pi-codemode@1.0.4` and `@earendil-works/pi-mcp@1.0.4` now appear
+in the frozen lock as transitive dependencies of `pi-coding-agent`.

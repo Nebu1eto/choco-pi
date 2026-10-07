@@ -69,6 +69,7 @@ const syntheticPath = fileURLToPath(
   new URL("../../../choco-pi-provider-synthetic/extensions/web-search/index.ts", import.meta.url),
 );
 const probePath = fileURLToPath(new URL("./jiti-probe-extension.ts", import.meta.url));
+const settingsManager = SettingsManager.inMemory();
 const loader = new DefaultResourceLoader({
   agentDir,
   cwd,
@@ -79,7 +80,7 @@ const loader = new DefaultResourceLoader({
   noPromptTemplates: true,
   noSkills: true,
   noThemes: true,
-  settingsManager: SettingsManager.inMemory(),
+  settingsManager,
 });
 await loader.reload();
 const loaded = loader.getExtensions();
@@ -121,6 +122,7 @@ const actions: ExtensionActions = {
   setLabel: (entryId, label) => manager.appendLabelChange(entryId, label),
   getActiveTools: () => [...activeTools],
   getAllTools: () => [],
+  getSettings: () => settingsManager.getSettings(),
   setActiveTools: (names) => {
     activeTools = [...names];
   },

@@ -139,10 +139,10 @@ history.
 
 A new thread normally opens with a startup block that reports the Pi version,
 context, skills, prompts, and extensions, mirroring what `pi` prints in a
-terminal. That block is suppressed when Pi's `quietStartup` setting is enabled
-in `~/.pi/agent/settings.json` or `<project>/.pi/settings.json`; the shipped
-default is `quietStartup: false`, so the block appears unless you turned it off.
-With `quietStartup: true` the adapter still emits a "New version available"
+terminal. That block is suppressed when Pi's `quietStartup` setting is `true`
+or `"header"` in `~/.pi/agent/settings.json` or `<project>/.pi/settings.json`;
+the shipped default is `quietStartup: false`, so the block appears unless you
+turned it off. With either suppressing value the adapter still emits a "New version available"
 notice when the installed Pi is outdated. If a fresh thread shows no startup
 block, check that setting before treating it as a defect.
 

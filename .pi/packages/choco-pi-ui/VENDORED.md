@@ -189,7 +189,7 @@ so `"theme": "nord-dark"` resolves exactly as before.
 ## Pi SDK target alignment
 
 Host-provided Pi SDK peer contracts and any development SDK dependencies now
-require exactly `0.87.1`, matching the harness target. This SDK alignment is
+require exactly `1.0.4`, matching the harness target. This SDK alignment is
 separate from installer policy; TypeBox and unrelated
 dependencies retain their existing contracts.
 
@@ -202,3 +202,16 @@ install tree of its own, so its scripts resolve the root binaries and configs.
 
 `vitest` is removed as well: the package tests use `node:test`, which Vitest
 cannot collect, so `test` runs `node --test tests/*.test.ts`.
+
+## 2026-10-07 choco-pi patch: Pi SDK 1.0.4
+
+Pi SDK peer and development pins move from `0.87.1` to exactly `1.0.4`,
+matching the harness target. Other dependency contracts are unchanged.
+
+## 2026-10-07 choco-pi patch: Nord theme appearance
+
+The three vendored Nord themes now declare Pi `1.0.4`'s optional `appearance`:
+`nord` and `nord-dark` are dark, and `nord-light` is light. A test loads every
+theme through Pi's actual `validateThemeJson` function. Palette colors and
+theme names remain unchanged; the JSON files are no longer byte-identical to
+the upstream tarball described above.

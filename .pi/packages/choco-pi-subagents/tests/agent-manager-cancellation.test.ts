@@ -4,6 +4,7 @@ import test from "node:test";
 import type { AgentSession, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { AgentManager, type AgentManagerRunner } from "../src/agent-manager.ts";
+import type { QueuedInputDisposition } from "../src/agent-message.ts";
 
 function partialHostFixture<T extends object>(fixture: Partial<T>): T {
   // SAFETY: Each caller supplies the exact host-owned slice exercised by its injected runner path.
@@ -111,7 +112,10 @@ test("budget-cancelled startup discards queued steering and refuses new messages
     sessionManager: partialHostFixture<AgentSession["sessionManager"]>({
       getSessionFile: () => undefined,
     }),
-    steer: async (message: string) => void steers.push(message),
+    steer: async (message: string): Promise<QueuedInputDisposition> => {
+      steers.push(message);
+      return "queued";
+    },
     dispose: () => undefined,
   });
   const runner: AgentManagerRunner = {
@@ -183,7 +187,10 @@ for (const cancellation of ["user", "budget", "shutdown"] as const) {
               sessionId: "cancelled-child",
               cost: 2,
             }),
-          steer: async (message) => void steers.push(message),
+          steer: async (message: string): Promise<QueuedInputDisposition> => {
+            steers.push(message);
+            return "queued";
+          },
           dispose: () => disposals++,
         });
         const runner: AgentManagerRunner = {

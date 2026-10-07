@@ -7,6 +7,7 @@ import type {
   PiCommandInfo,
   PiCommands,
   PiExtensionUiResponse,
+  PiPromptDisposition,
   PiPromptImage,
   PiRpcEvent,
 } from "../src/pi-rpc/protocol.ts";
@@ -82,7 +83,7 @@ class MatrixPiProcess implements PiRpcProcessLike {
     return { commands: this.commands };
   }
 
-  async prompt(message: string, attachments: PiPromptImage[]): Promise<void> {
+  async prompt(message: string, attachments: PiPromptImage[]): Promise<PiPromptDisposition> {
     this.prompts.push({ message, attachments });
     const name = commandName(message);
     const id = `matrix-ui-${this.nextUiId++}`;
@@ -112,6 +113,7 @@ class MatrixPiProcess implements PiRpcProcessLike {
     }
 
     queueMicrotask(() => this.emit({ type: "agent_settled" }));
+    return "started";
   }
 
   async sendExtensionUiResponse(response: PiExtensionUiResponse): Promise<void> {

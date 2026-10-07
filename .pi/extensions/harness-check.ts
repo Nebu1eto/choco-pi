@@ -12,6 +12,7 @@ import {
 
 import {
   checkHarness,
+  DISABLED_BUILTIN_EXTENSIONS,
   type Capability,
   type HarnessOptions,
   type HarnessReport,
@@ -65,13 +66,31 @@ export type HarnessCheckRegistration = {
   onSessionShutdown: (handler: EventHandler<SessionShutdownEvent>) => void;
   onSessionTree: (handler: EventHandler<SessionTreeEvent>) => void;
   checkHarness?: (options: HarnessOptions) => Promise<HarnessReport>;
+  /** Names of the policy-disabled built-in extensions the host currently loads. */
+  observeBuiltinExtensions?: () => readonly string[];
 };
 
 export type HarnessCheckExecutionDependencies = {
   capture: () => CapturedHostIdentity;
   currentOwner: () => CapturedHostIdentity["owner"];
   check: (options: HarnessOptions) => Promise<HarnessReport>;
+  observeBuiltinExtensions?: () => readonly string[];
 };
+
+type SourcedEntry = { sourceInfo: { path: string } };
+
+/**
+ * Policy-disabled built-in extensions that registered a tool or command.
+ *
+ * Pi names a built-in extension's resources `builtin:<name>` in their source
+ * info. An extension that registered nothing, or that Pi omitted because
+ * another extension replaced it, leaves no trace here; Pi 1.0.4 does not hand
+ * extensions its load warnings.
+ */
+export function loadedBuiltinExtensions(entries: readonly SourcedEntry[]): string[] {
+  const paths = new Set(entries.map((entry) => entry.sourceInfo.path));
+  return DISABLED_BUILTIN_EXTENSIONS.filter((name) => paths.has(`builtin:${name}`));
+}
 
 function sameOwner(
   left: CapturedHostIdentity["owner"],
@@ -86,12 +105,14 @@ export async function executeHarnessCheck(
   dependencies: HarnessCheckExecutionDependencies,
 ): Promise<HarnessReport> {
   const identity = dependencies.capture();
+  const loadedBuiltins = dependencies.observeBuiltinExtensions?.();
   if (signal?.aborted) throw new Error("harness check cancelled");
   const report = await dependencies.check({
     mode: input.mode,
     requiredCapabilities: input.required_capabilities,
     nodeVersion: identity.nodeVersion,
     runtimeIdentity: identity.runtime,
+    ...(loadedBuiltins !== undefined && { loadedBuiltinExtensions: loadedBuiltins }),
     signal,
   });
   if (signal?.aborted) throw new Error("harness check cancelled");
@@ -121,6 +142,8 @@ export default function harnessCheckExtension(host: ExtensionAPI | HarnessCheckR
         onSessionTree: (handler) => {
           host.on("session_tree", handler);
         },
+        observeBuiltinExtensions: () =>
+          loadedBuiltinExtensions([...host.getAllTools(), ...host.getCommands()]),
       };
   let generation = 0;
   let sessionId = "uninitialized";
@@ -163,6 +186,7 @@ export default function harnessCheckExtension(host: ExtensionAPI | HarnessCheckR
           }),
         currentOwner: owner,
         check: registration.checkHarness ?? checkHarness,
+        observeBuiltinExtensions: registration.observeBuiltinExtensions,
       });
       return {
         content: [{ type: "text", text: JSON.stringify(report, null, 2) }],

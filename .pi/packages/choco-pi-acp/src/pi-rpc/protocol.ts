@@ -102,6 +102,25 @@ export function decodePiRpcResponse(value: BoundaryValue): PiRpcResponse | undef
 // Response payloads
 // ---------------------------------------------------------------------------
 
+/**
+ * What Pi did with one submitted `prompt` input (Pi 1.0.4+ `data.disposition`).
+ * - `started`: Pi started a run; completion arrives as `agent_settled`.
+ * - `queued`: Pi queued the input behind an active run that later delivers it.
+ * - `handled`: an extension command or input handler consumed it; no run follows.
+ */
+export type PiPromptDisposition = "started" | "queued" | "handled";
+
+export function isPiPromptDisposition(value: BoundaryValue): value is PiPromptDisposition {
+  return value === "started" || value === "queued" || value === "handled";
+}
+
+/** Decode a successful `prompt` payload; `undefined` when the disposition is missing or unknown. */
+export function decodePiPromptDisposition(value: BoundaryValue): PiPromptDisposition | undefined {
+  if (!isBoundaryRecord(value)) return undefined;
+  const disposition = value.disposition;
+  return isPiPromptDisposition(disposition) ? disposition : undefined;
+}
+
 /** The provider/model pair Pi reports as currently selected. */
 export type PiModelSelection = {
   provider?: string;

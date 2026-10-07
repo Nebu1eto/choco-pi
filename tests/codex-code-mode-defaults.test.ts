@@ -16,8 +16,8 @@ import {
   SettingsManager,
   type ExtensionActions,
   type ExtensionAPI,
-  type ExtensionContext,
   type ExtensionContextActions,
+  type ExtensionToolContext,
   type RegisteredTool,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
@@ -298,7 +298,7 @@ class FixtureModelRegistry extends ModelRegistry {
 
 interface FixtureHost {
   activationApi: ExtensionAPI;
-  context: ExtensionContext;
+  context: ExtensionToolContext;
   manager: SessionManager;
   registry: FixtureModelRegistry;
 }
@@ -326,6 +326,7 @@ async function createFixtureHost(
   };
   let activeTools = ["read", "bash", "edit", "write", "web_search"];
   let activationApi: ExtensionAPI | undefined;
+  const settingsManager = SettingsManager.inMemory();
   const loader = new DefaultResourceLoader({
     agentDir: join(root, "agent"),
     cwd: root,
@@ -342,7 +343,7 @@ async function createFixtureHost(
     noPromptTemplates: true,
     noSkills: true,
     noThemes: true,
-    settingsManager: SettingsManager.inMemory(),
+    settingsManager,
   });
   await loader.reload();
   const loaded = loader.getExtensions();
@@ -357,6 +358,7 @@ async function createFixtureHost(
     setLabel: () => {},
     getActiveTools: () => [...activeTools],
     getAllTools: () => [],
+    getSettings: () => settingsManager.getSettings(),
     setActiveTools: (toolNames: string[]) => {
       activeTools = [...toolNames];
     },
@@ -381,7 +383,13 @@ async function createFixtureHost(
   } satisfies ExtensionContextActions;
   const runner = new ExtensionRunner(loaded.extensions, loaded.runtime, root, manager, registry);
   runner.bindCore(actions, contextActions);
-  return { activationApi, context: runner.createContext(), manager, registry };
+  // Tools receive a tool context; this fixture binds no nested-call backend.
+  return {
+    activationApi,
+    context: runner.createToolContext("fixture-call", undefined),
+    manager,
+    registry,
+  };
 }
 
 const MOCK_WEB_RUN_SOURCE = `#!/usr/bin/env -S node --experimental-strip-types

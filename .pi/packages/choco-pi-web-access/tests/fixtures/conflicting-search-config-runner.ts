@@ -41,6 +41,7 @@ async function rejection(run: () => void | Promise<void>): Promise<string> {
   }
 }
 
+const settingsManager = SettingsManager.inMemory();
 const loader = new DefaultResourceLoader({
   agentDir: root,
   cwd: root,
@@ -53,7 +54,7 @@ const loader = new DefaultResourceLoader({
   noPromptTemplates: true,
   noSkills: true,
   noThemes: true,
-  settingsManager: SettingsManager.inMemory(),
+  settingsManager,
 });
 await loader.reload();
 const loaded = loader.getExtensions();
@@ -83,6 +84,7 @@ const actions = {
   setLabel: () => undefined,
   getActiveTools: () => [...activeTools],
   getAllTools: () => [],
+  getSettings: () => settingsManager.getSettings(),
   setActiveTools: (names: string[]) => {
     activeTools = [...names];
   },
@@ -111,7 +113,7 @@ activeTools = runner.getAllRegisteredTools().map(({ definition }) => definition.
 await runner.emit({ type: "session_start", reason: "startup" });
 const tool = runner.getToolDefinition("web_search");
 if (!tool) throw new Error("web_search was not registered");
-const context = runner.createContext();
+const context = runner.createToolContext("direct-conflict", undefined);
 
 const results = [
   await rejection(() => {
