@@ -6,7 +6,7 @@ The config keys are `openai.midTurnSteering` and `openai.asyncCodeMode`.
 Existing project/global preference scoping is unchanged.
 
 The native integration targets the `openai-codex` GPT-6 family (`gpt-6-astra`,
-`gpt-6-sol`, `gpt-6-luna`) over the Responses WebSocket transport. Other models and SSE do not enable these features.
+`gpt-6-sol`, `gpt-6-luna`) and GPT-6.1 Sol (`gpt-6.1-sol`) over the Responses WebSocket transport. Other models and SSE do not enable these features.
 Code Mode stays selected; no temporary execution-mode switch is required.
 The native features use public Pi APIs and do not require the legacy
 registered-tool capture. That pre-existing Code Mode bridge is unchanged.

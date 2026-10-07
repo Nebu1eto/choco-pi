@@ -5,7 +5,7 @@ This file solely owns choco-pi model routing and model-specific behavioral advic
 ## Routing
 
 - **Flagship:** `anthropic/claude-fable-5-1` and `openai-codex/gpt-6-astra` are for orchestration, initial planning, and review of genuinely complex output. They are very expensive.
-- **Workhorse:** `anthropic/claude-opus-5-5` and `openai-codex/gpt-6-sol` first. Use `anthropic/claude-opus-5` and `openai-codex/gpt-5.6-sol` only when those are unavailable. Keep role effort defaults; tune from representative evidence rather than assuming more effort is better.
+- **Workhorse:** `anthropic/claude-opus-5-5` and `openai-codex/gpt-6.1-sol` first. Use `anthropic/claude-opus-5` and `openai-codex/gpt-5.6-sol` only when those are unavailable. Do not choose `openai-codex/gpt-6-sol`; it is superseded by `gpt-6.1-sol`. Keep role effort defaults; tune from representative evidence rather than assuming more effort is better.
 - **Utility:** `openai-codex/gpt-5.6-terra` and `anthropic/claude-sonnet-5` suit easy exploration and web research. Give them more explicit task packets; raise effort only when task evidence warrants it.
 - **Micro:** `openai-codex/gpt-6-luna` is only for extremely simple tasks with detailed guidance. Prefer Utility when uncertain. Do not use outdated `anthropic/claude-haiku-4-5`.
 - **Specialized:** `callstack-apex/callstack/Apex` is only for React Native or Expo mobile work.
@@ -39,7 +39,7 @@ Opus 5.5: a progress update is not completion. Take the next step you announce i
 Fable: ground long-run progress in observed evidence and milestones. Use asynchronous subagents for safe independent work and fresh verification only when task risk warrants it.
 <!-- choco-pi:model-guidance:end -->
 
-<!-- choco-pi:model-guidance openai-codex/gpt-6-sol,openai/gpt-6-sol,openai-codex/gpt-6-luna,openai/gpt-6-luna,openai-codex/gpt-5.6-sol,openai/gpt-5.6-sol,openai-codex/gpt-5.6-terra,openai/gpt-5.6-terra,openai-codex/gpt-5.6-luna,openai/gpt-5.6-luna -->
+<!-- choco-pi:model-guidance openai-codex/gpt-6.1-sol,openai/gpt-6.1-sol,openai-codex/gpt-6-sol,openai/gpt-6-sol,openai-codex/gpt-6-luna,openai/gpt-6-luna,openai-codex/gpt-5.6-sol,openai/gpt-5.6-sol,openai-codex/gpt-5.6-terra,openai/gpt-5.6-terra,openai-codex/gpt-5.6-luna,openai/gpt-5.6-luna -->
 
 Sol: infer intended work from context while preserving hard constraints, approvals, and success criteria. Use established effort as the baseline and compare one level lower on representative work.
 <!-- choco-pi:model-guidance:end -->

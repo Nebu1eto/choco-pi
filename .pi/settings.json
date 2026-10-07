@@ -38,6 +38,7 @@
     "anthropic/claude-fable-5-1": "low",
     "anthropic/claude-opus-5-5": "medium",
     "openai-codex/gpt-6-sol": "low",
+    "openai-codex/gpt-6.1-sol": "low",
     "openai-codex/gpt-6-luna": "high",
     "synthetic/hf:deepseek-ai/DeepSeek-V4.1-Flash": "low"
   },

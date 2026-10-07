@@ -15,6 +15,9 @@ interface Discrepancy {
   api: unknown;
 }
 
+// Models whose advertised low effort is hidden by THINKING_LEVEL_MAP_OVERRIDES.
+const LOW_HIDDEN_MODEL_IDS = new Set(["hf:zai-org/GLM-5.3-Flash", "hf:zai-org/GLM-5.3"]);
+
 async function fetchApiModels(): Promise<SyntheticApiModel[]> {
   const response = await fetch("https://api.synthetic.new/openai/v1/models", {
     headers: {
@@ -89,7 +92,7 @@ function compareModels(
         xhigh: efforts.has("xhigh") ? "xhigh" : null,
         max: efforts.has("max") ? "max" : null,
       };
-      if (hardcoded.id === "hf:zai-org/GLM-5.3-Flash") {
+      if (LOW_HIDDEN_MODEL_IDS.has(hardcoded.id)) {
         apiThinkingLevelMap.low = null;
       }
       if (JSON.stringify(apiThinkingLevelMap) !== JSON.stringify(hardcoded.thinkingLevelMap)) {
@@ -239,8 +242,8 @@ describe("Synthetic models", () => {
     expect(model.compat?.supportsReasoningEffort).toBe(true);
   });
 
-  it("keeps GLM-5.3-Flash low hidden across live and cached catalogs", () => {
-    const apiModel: SyntheticApiModel = {
+  it.each<SyntheticApiModel>([
+    {
       id: "hf:zai-org/GLM-5.3-Flash",
       name: "zai-org/GLM-5.3-Flash",
       provider: "synthetic",
@@ -256,8 +259,25 @@ describe("Synthetic models", () => {
       },
       supported_features: ["reasoning"],
       reasoning_parameters: { efforts: ["low", "high", "max"] },
-    };
-
+    },
+    {
+      id: "hf:zai-org/GLM-5.3",
+      name: "zai-org/GLM-5.3",
+      provider: "synthetic",
+      input_modalities: ["text"],
+      output_modalities: ["text"],
+      context_length: 524288,
+      max_output_length: 65536,
+      pricing: {
+        prompt: "$0.0000014",
+        completion: "$0.0000044",
+        input_cache_reads: "$0.00000026",
+        input_cache_writes: "0",
+      },
+      supported_features: ["reasoning"],
+      reasoning_parameters: { efforts: ["low", "high", "max"] },
+    },
+  ])("keeps $id low hidden across live and cached catalogs", (apiModel) => {
     const liveModel = buildSyntheticProviderModelsFromApi([apiModel])[0];
     expect(liveModel?.thinkingLevelMap).toEqual({
       off: null,
@@ -341,12 +361,7 @@ describe("Synthetic models", () => {
       const expected = {
         off: efforts.includes("none") ? "none" : null,
         minimal: efforts.includes("minimal") ? "minimal" : null,
-        low:
-          apiModel.id === "hf:zai-org/GLM-5.3-Flash"
-            ? null
-            : efforts.includes("low")
-              ? "low"
-              : null,
+        low: LOW_HIDDEN_MODEL_IDS.has(apiModel.id) ? null : efforts.includes("low") ? "low" : null,
         medium: efforts.includes("medium") ? "medium" : null,
         high: efforts.includes("high") ? "high" : null,
         xhigh: efforts.includes("xhigh") ? "xhigh" : null,

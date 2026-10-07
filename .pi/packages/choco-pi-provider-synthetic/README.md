@@ -98,8 +98,9 @@ levels that the API does not advertise. Its offline catalog currently maps:
   high.
 - `syn:large:vision` and `hf:moonshotai/Kimi-K3`: low, high, and max. These
   models do not advertise an off effort.
-- `hf:zai-org/GLM-5.3-Flash`: high and max. Its advertised low effort is hidden
-  because direct probes returned empty content or failed to complete.
+- `hf:zai-org/GLM-5.3-Flash` and `hf:zai-org/GLM-5.3`: high and max. Their
+  advertised low effort is hidden because probes returned empty content or
+  failed to complete.
 - `syn:small:vision` and `hf:Qwen/Qwen3.8-27B`: low, medium, and xhigh. These
   models do not advertise an off effort.
 

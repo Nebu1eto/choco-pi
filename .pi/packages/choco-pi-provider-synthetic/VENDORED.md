@@ -233,3 +233,26 @@ the packages share one Pi instance. Every runtime value they import exists in
 `getKeybindings` from `pi-tui`. Package `tsc`, which also checks their
 TypeScript sources, reports no errors. No break is known, but nothing exercises
 the settings or tool-render UI end to end against `1.0.4`.
+
+## 2026-10-07 choco-pi patch: GLM-5.3 static catalog entry
+
+Synthetic now serves `hf:zai-org/GLM-5.3`. `extensions/provider/models.ts`
+adds it to the static `SYNTHETIC_MODELS` fallback next to GLM-5.3-Flash, with
+values from the live models API: text input, 524288-token context, 65536
+maximum output tokens, and $1.40 input, $4.40 output, $0.26 cache-read, and $0
+cache-write per million tokens. Its `thinkingLevelMap` exposes the advertised
+`high` and `max` efforts and hides `off` and the advertised `low`.
+
+As with GLM-5.3-Flash, `low` is hidden in the static entry and through a
+`THINKING_LEVEL_MAP_OVERRIDES` entry that also applies to live and cached
+catalogs. Observed in a Pi 1.0.4 session on 2026-10-07 against
+`synthetic/hf:zai-org/GLM-5.3` with the prompt `Reply with exactly:
+GLM_OK_<n>`: at `reasoning_effort=low`, all five attempts failed. Failures
+included reasoning with no visible text (14 s and 928 tokens; 66 s and 4.0k
+tokens) and reasoning that continued until aborted (4 min 20 s and 16k tokens;
+13 min 57 s and 17k tokens). At `high` (3 s) and `max` (1 s) the model
+answered correctly. Network was healthy; a separate connection-error burst was
+excluded. To re-enable `low`, set the static entry back to `low: "low"`,
+remove the override, and update the test special cases. The live refresh
+already discovered the model; this entry updates the offline fallback, the
+override, and the live parity test.

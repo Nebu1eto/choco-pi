@@ -20,9 +20,9 @@ const AsyncExecSchema = Type.Object({
 });
 
 /** Unconsumed automatic generations must not have executed server-hosted actions. */
-/** GPT-6 family models (Astra, Sol, Luna) accept mid-turn steering and async tool calls. */
+/** GPT-6 family models (Astra, Sol, Luna) and GPT-6.1 Sol accept mid-turn steering and async tool calls. */
 export function supportsNativeResponsesModel(modelId: string | undefined): boolean {
-  return modelId !== undefined && /^gpt-6-(?:astra|sol|luna)$/.test(modelId);
+  return modelId !== undefined && /^(?:gpt-6-(?:astra|sol|luna)|gpt-6\.1-sol)$/.test(modelId);
 }
 
 export function supportsNativeSteeringTools(body: ResponsesBody): boolean {
