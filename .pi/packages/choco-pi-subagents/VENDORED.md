@@ -1259,3 +1259,20 @@ controller's threshold, adaptive reserve, half-grant floor, cold-start charge,
 exact-once steering and stopping, disposal, generation retirement, unlimited
 runs, and independent watchdog stages. Temporarily disabling the reserve call
 makes five regression cases fail.
+
+## 2026-10-08 choco-pi patch: focused custom messages and renderer resolution
+
+`ConversationViewer` renders displayed custom messages through Pi's
+`CustomMessageComponent`, using the child runner's registered message renderer
+and the host's text fallback when none exists. Hidden messages remain invisible.
+Custom rows share the viewer-owned expansion flag, including newly created rows.
+Tool renderers now resolve through the child extension runner, with registered
+and built-in renderers inside the resolver's base callback, matching the main
+transcript's override ordering. Sessions without a runner retain the base path.
+
+`tests/conversation-viewer.test.ts` uses real SDK sessions and the production
+notification formatter to cover descendant-completion message presentation,
+hidden messages, fallback text, expansion, resolver-only historical tools,
+unknown historical tools, and registered/built-in renderer overrides. Restoring
+the original viewer makes the displayed-message, fallback, and resolver
+regressions fail.
