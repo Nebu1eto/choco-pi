@@ -72,7 +72,7 @@ export interface UiAction {
   keys?: string[];
   scrollX?: number;
   scrollY?: number;
-  path?: Array<{ x: number; y: number } | [number, number]>;
+  path?: Array<{ x: number; y: number }>;
   button?: MouseButtonName;
   clickCount?: number;
 }

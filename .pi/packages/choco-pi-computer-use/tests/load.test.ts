@@ -94,7 +94,7 @@ test("extension and bridge load under Node strip-types with intact tool schemas"
   const items = isJsonObject(actSchema.items) ? actSchema.items : {};
   assert.equal(
     Array.isArray(items.anyOf) ? items.anyOf.length : undefined,
-    9,
-    "act_ui must retain all nine action variants",
+    8,
+    "act_ui must retain all eight action variants with one merged click branch",
   );
 });
