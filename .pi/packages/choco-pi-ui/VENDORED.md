@@ -222,3 +222,14 @@ Removes the adapter `mcp` and `mcpScript` labels and the source-code
 summarizer; recognizes built-in `mcp__<server>__<tool>` names (including
 underscore server names) without exposing arguments, and keeps `tool_search`
 summaries and labels.
+
+## 2026-10-08 choco-pi patch: focus-scoped footer identity
+
+The footer captures one focused-agent runtime snapshot per render and derives
+model/provider labels and cost/context from that same snapshot. Built-in model
+information and custom `$model`/`$provider` substitutions now follow child focus;
+removing focus restores the main identity and usage together. Regression coverage
+exercises both formats through main, child, unknown child usage, and main again,
+and verifies a single publisher read per focused render. The repository's zentui
+test compiler rewrites explicit TypeScript import extensions for emitted JavaScript
+and includes its compiler flags in the build-cache key.

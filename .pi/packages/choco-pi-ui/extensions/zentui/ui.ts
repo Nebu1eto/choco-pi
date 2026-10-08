@@ -106,7 +106,7 @@ function focusedProviderLabel(provider: string): string {
 function focusScopedMinimalistMetadata(
   metadata: MinimalistEditorMetadata,
 ): MinimalistEditorMetadata {
-  const usage = selectFocusScopedUsage(metadata);
+  const usage = selectFocusScopedUsage(metadata, readFocusedAgentRuntime());
   return {
     ...metadata,
     ...usage,

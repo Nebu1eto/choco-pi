@@ -1,11 +1,11 @@
-import { buildCostLabel } from "./format";
+import { buildCostLabel } from "./format.ts";
 import {
   type BoundaryValue,
   isBoundaryRecord,
   isCallable,
   isNumber,
   isString,
-} from "./runtime-values";
+} from "./runtime-values.ts";
 
 const FOCUSED_AGENT_RUNTIME_SYMBOL = Symbol.for("choco-pi.subagents.focused-agent-runtime");
 
@@ -77,8 +77,10 @@ export function readFocusedAgentRuntime(): FocusedAgentRuntime | undefined {
 }
 
 /** Select focused usage without ever falling back field-by-field to main usage. */
-export function selectFocusScopedUsage(main: FocusScopedUsage): FocusScopedUsage {
-  const focused = readFocusedAgentRuntime();
+export function selectFocusScopedUsage(
+  main: FocusScopedUsage,
+  focused: FocusedAgentRuntime | undefined,
+): FocusScopedUsage {
   if (!focused) return main;
   return {
     costLabel: focused.costTotal === null ? "" : buildCostLabel({ cost: focused.costTotal }),
