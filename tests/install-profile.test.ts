@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
-import { buildGlobalSettings, installProfile } from "../scripts/install-profile.mjs";
+import { buildGlobalSettings, installProfile } from "../scripts/install-profile.ts";
 
 const CodexConfigSchema = Type.Object({
   openai: Type.Object({ fast: Type.Boolean() }),
@@ -141,32 +141,25 @@ test("profile installer links tracked config and is idempotent", async (context)
     ].map((name) => path.resolve(".pi/packages", name)),
   );
   const projectSettings = JSON.parse(await readFile(path.resolve(".pi/settings.json"), "utf8"));
-  assert.deepEqual(settings.extensions, [
-    path.resolve(".pi/extensions"),
-    "-builtin:codemode",
-    "-builtin:tool-search",
-    "-builtin:mcp",
-  ]);
-  assert.deepEqual(projectSettings.extensions, [
-    "-builtin:codemode",
-    "-builtin:tool-search",
-    "-builtin:mcp",
-  ]);
+  assert.deepEqual(settings.extensions, [path.resolve(".pi/extensions"), "-builtin:codemode"]);
+  assert.deepEqual(projectSettings.extensions, ["-builtin:codemode"]);
   assert.deepEqual(settings.modelThinkingLevels, projectSettings.modelThinkingLevels);
 });
 
-test("the profile's built-in extension policy overrides the user's entries for the same built-ins", () => {
+test("the profile removes stale built-in exclusions and preserves unrelated settings", () => {
   const settings = buildGlobalSettings(
     {
       packages: [],
-      extensions: ["-builtin:codemode", "-builtin:tool-search", "-builtin:mcp"],
+      extensions: ["-builtin:codemode"],
     },
     {
       extensions: [
         "+builtin:codemode",
-        "-builtin:llama.cpp",
+        "+builtin:llama.cpp",
         "/Users/someone/my-tools",
         "-builtin:mcp",
+        "-builtin:tool-search",
+        "!builtin:old-extension",
       ],
       deviceId: "device-from-chatgpt-sign-in",
       defaultModel: "user-model",
@@ -176,11 +169,9 @@ test("the profile's built-in extension policy overrides the user's entries for t
 
   assert.deepEqual(settings.extensions, [
     path.resolve("/repo/.pi/extensions"),
-    "-builtin:llama.cpp",
+    "+builtin:llama.cpp",
     "/Users/someone/my-tools",
     "-builtin:codemode",
-    "-builtin:tool-search",
-    "-builtin:mcp",
   ]);
   assert.ok(!settings.extensions.includes("+builtin:codemode"));
   assert.equal(settings.deviceId, "device-from-chatgpt-sign-in");
@@ -200,13 +191,7 @@ test("reinstalling keeps exactly one copy of the built-in extension policy", asy
   await installProfile({ root: process.cwd(), agentDir });
 
   const settings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
-  assert.deepEqual(settings.extensions, [
-    path.resolve(".pi/extensions"),
-    "-builtin:llama.cpp",
-    "-builtin:codemode",
-    "-builtin:tool-search",
-    "-builtin:mcp",
-  ]);
+  assert.deepEqual(settings.extensions, [path.resolve(".pi/extensions"), "-builtin:codemode"]);
   assert.equal(settings.deviceId, "d-1");
 });
 
@@ -324,4 +309,54 @@ test("malformed JSON names the file instead of reporting a bare parse position",
       error.message.includes(settingsPath) &&
       error.message.includes("valid JSON"),
   );
+});
+
+test("invalid settings shapes fail before profile links are written", async (context) => {
+  const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-shape-"));
+  context.after(() => rm(agentDir, { recursive: true, force: true }));
+  for (const value of [
+    null,
+    [],
+    { extensions: [42] },
+    { packages: "not-an-array" },
+    { modelThinkingLevels: { model: 3 } },
+  ]) {
+    await writeFile(path.join(agentDir, "settings.json"), JSON.stringify(value));
+    await assert.rejects(installProfile({ root: process.cwd(), agentDir }), /valid JSON/);
+    await assert.rejects(readlink(path.join(agentDir, "SYSTEM.md")), { code: "ENOENT" });
+  }
+});
+
+test("built-in exclusion removal preserves arbitrary unrelated JSON fields", () => {
+  const existing = {
+    extensions: [
+      "-builtin:mcp",
+      "-builtin:tool-search",
+      "-builtin:llama.cpp",
+      "/user/extension.ts",
+      "+builtin:other",
+    ],
+    userPreference: { nested: [false, 42, null, { text: "untouched" }] },
+    deviceId: "unchanged-device",
+  };
+  const settings = buildGlobalSettings(
+    { packages: [], extensions: ["-builtin:codemode"] },
+    existing,
+    "/repo",
+  );
+  assert.deepEqual(settings.extensions, [
+    "/repo/.pi/extensions",
+    "/user/extension.ts",
+    "+builtin:other",
+    "-builtin:codemode",
+  ]);
+  assert.deepEqual(settings.userPreference, existing.userPreference);
+  assert.equal(settings.deviceId, existing.deviceId);
+  assert.deepEqual(existing.extensions, [
+    "-builtin:mcp",
+    "-builtin:tool-search",
+    "-builtin:llama.cpp",
+    "/user/extension.ts",
+    "+builtin:other",
+  ]);
 });

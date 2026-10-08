@@ -5,6 +5,7 @@ import {
   default as harnessCheckExtension,
   executeHarnessCheck,
   loadedBuiltinExtensions,
+  activeHostTools,
   type HarnessCheckRegistration,
   type HarnessCheckExecutionDependencies,
 } from "../.pi/extensions/harness-check.ts";
@@ -17,6 +18,22 @@ const report: HarnessReport = {
   requiredCapabilities: [],
   checks: [],
 };
+
+test("active tools require built-in search provenance and expose custom adapters", () => {
+  const entry = (name: string, path: string) => ({ name, sourceInfo: { path } });
+  assert.deepEqual(
+    activeHostTools([
+      entry("tool_search", "builtin:tool-search"),
+      entry("mcp", "/custom/adapter.ts"),
+      entry("mcpScript", "/custom/adapter.ts"),
+    ]),
+    { builtinToolSearch: true, adapterTools: ["mcp", "mcpScript"] },
+  );
+  assert.equal(
+    activeHostTools([entry("tool_search", "/custom/search.ts")]).builtinToolSearch,
+    false,
+  );
+});
 
 function dependencies(): HarnessCheckExecutionDependencies {
   const owner = { sessionId: "session-a", generation: 4 };
@@ -184,8 +201,13 @@ test("in-host observation of built-in extensions reaches the readiness check", a
   const deps = dependencies();
   let observed: readonly string[] | undefined;
   deps.observeBuiltinExtensions = () => ["codemode"];
+  deps.observeActiveHostTools = () => ({ builtinToolSearch: true, adapterTools: ["mcpScript"] });
   deps.check = async (options) => {
     observed = options.loadedBuiltinExtensions;
+    assert.deepEqual(options.activeHostTools, {
+      builtinToolSearch: true,
+      adapterTools: ["mcpScript"],
+    });
     return report;
   };
   await executeHarnessCheck({ mode: "automatic" }, undefined, deps);
@@ -209,6 +231,6 @@ test("built-in extensions are identified by their builtin source path", () => {
       entry("/repo/.pi/extensions/tool-search.ts"),
       entry("builtin:mcp"),
     ]),
-    ["codemode", "mcp"],
+    ["codemode"],
   );
 });

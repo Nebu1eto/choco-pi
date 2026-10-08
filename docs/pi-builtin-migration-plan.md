@@ -1,6 +1,10 @@
 # Plan: migrate tool search and MCP to Pi built-ins
 
-Status: proposed; implementation and live validation have not started.
+Status: implemented in this revision; live validation pending.
+
+The sections below retain the migration audit and acceptance criteria. Project policy now excludes only built-in codemode; Pi owns tool search and MCP. The installer is Node-erasable TypeScript and removes stale global built-in exclusions. Offline installer and readiness tests are recorded separately from pending live gates below.
+
+The approved global change added only `-builtin:codemode` to `extensions`; all unrelated bytes were preserved and a settings backup was retained beside the original. The full installer was not run: dry inspection found pre-existing thinking-default drift and a conflicting `choco-pi-codex.json` profile file. Neither was changed.
 
 Baseline: choco-pi `2566b0789e40090e0cfad72de6f96feb3791dd0d`, Pi SDK and active host `1.0.4`. Recheck these assumptions before implementation. This document records the inspected behavior and the migration plan; it does not authorize configuration changes, authentication, or server connections.
 
@@ -17,14 +21,14 @@ Do not rename the custom `/mcp` command to run both MCP clients. Do not remove t
 
 ## Verified baseline and uncertainty
 
-| Finding                                                                            | Evidence and limitation                                                                                                                                                                             |
-| ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| These warnings report registration collisions, not MCP connection failures.        | Installed Pi `dist/core/resource-loader.js`, `omitReplacedExtensions`, keeps the custom registration and omits the replaceable built-in. This does not establish whether any MCP server is healthy. |
-| The project disables the three competing built-ins.                                | [`.pi/settings.json`](../.pi/settings.json) contains `-builtin:codemode`, `-builtin:tool-search`, and `-builtin:mcp`.                                                                               |
-| The inspected global profile loads the custom extensions without those exclusions. | Observed in the active global settings during diagnosis. Reinspect only relevant fields before applying changes; this machine-specific observation is not a repository invariant.                   |
-| The warning proves a conflicting built-in was attempted during that startup.       | Effective exclusion would filter it before collision detection. The exact startup was not reproduced: working directory, project trust, settings state, and explicit overrides remain unresolved.   |
-| Active-host and shell-launcher versions differ.                                    | The host readiness check reported `1.0.4`; the shell's `pi` resolved to a Homebrew `0.87.1` installation. Verify the intended executable before any restart or CLI operation.                       |
-| These features predate `1.0.0`.                                                    | The installed Pi changelog records built-in codemode, tool search, MCP, and replacement warnings under `0.99.0`. This plan targets the inspected `1.0.4` behavior.                                  |
+| Finding                                                                      | Evidence and limitation                                                                                                                                                                             |
+| ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| These warnings report registration collisions, not MCP connection failures.  | Installed Pi `dist/core/resource-loader.js`, `omitReplacedExtensions`, keeps the custom registration and omits the replaceable built-in. This does not establish whether any MCP server is healthy. |
+| The project now disables only built-in codemode.                             | [`.pi/settings.json`](../.pi/settings.json) contains only `-builtin:codemode`; built-in tool search and MCP are enabled.                                                                            |
+| The global profile now excludes only built-in codemode.                      | The approved targeted settings edit preserved the existing extension path and all unrelated bytes. This machine-specific observation is not a repository invariant.                                 |
+| The warning proves a conflicting built-in was attempted during that startup. | Effective exclusion would filter it before collision detection. The exact startup was not reproduced: working directory, project trust, settings state, and explicit overrides remain unresolved.   |
+| Active-host and shell-launcher versions differ.                              | The host readiness check reported `1.0.4`; the shell's `pi` resolved to a Homebrew `0.87.1` installation. Verify the intended executable before any restart or CLI operation.                       |
+| These features predate `1.0.0`.                                              | The installed Pi changelog records built-in codemode, tool search, MCP, and replacement warnings under `0.99.0`. This plan targets the inspected `1.0.4` behavior.                                  |
 
 The prior Fable 5.1 review agreed with the plan after corrections. Its suggestion that subagents do not consume the custom search policy was rejected: [`agent-runner.ts`](../.pi/packages/choco-pi-subagents/src/agent-runner.ts) reads `Symbol.for("choco-pi.tool-search.lean-surface")` in `leanSurfaceNames()` and applies it during tool narrowing. Review conclusions are not substitutes for the source checks below.
 
@@ -50,7 +54,7 @@ Keeping built-in `codemode` disabled requires an explicit reachability decision.
 
 - Identify the intended Pi `1.0.4` executable, active agent directory, working directory, project trust, and effective built-in selection.
 - With approval to write the global profile, merge the exclusions into its existing extension list. Preserve unrelated entries and user settings.
-- Prefer a targeted settings change when only containment is authorized. [`scripts/install-profile.mjs`](../scripts/install-profile.mjs) propagates the policy but also updates other profile settings and links; inspect that broader scope before using it.
+- Prefer a targeted settings change when only containment is authorized. [`scripts/install-profile.ts`](../scripts/install-profile.ts) propagates the policy but also updates other profile settings and links; inspect that broader scope before using it.
 - Have the user restart/reload with the intended runtime, or obtain explicit permission to launch a separate Pi process. Verify startup both in this checkout and outside it.
 
 **Exit gate:** neither collision warning appears, each custom interface remains available, and existing operations still work. A readiness-check pass alone is insufficient: that tool cannot inspect startup warning history.
@@ -79,7 +83,7 @@ Keeping built-in `codemode` disabled requires an explicit reachability decision.
 
 - Stop loading the custom search registration and MCP adapter entry point. Enable the built-in replacements and make `tool_search` active in every supported session type.
 - Apply approved configuration changes while sessions are stopped; start the replacement only after the former client has shut down.
-- Remove obsolete exclusions from both project and global settings. Simply deleting them from the project file is insufficient: the installer retains prior global exclusions for built-ins no longer named by project policy.
+- Remove obsolete exclusions from both project and global settings. The TypeScript installer now makes global built-in exclusions match project policy instead of retaining obsolete exclusions.
 - Update the installer and its tests, readiness checks, README, MCP scripting instructions, tool renderers, and affected provider tests. Revise checks that currently require built-in MCP and search to be disabled.
 - If modifying installer logic, migrate the changed JavaScript logic to Node-erasable TypeScript and update its callers/tests as required by [`AGENTS.md`](../AGENTS.md). Do not add new logic to the legacy JavaScript file.
 - If adding a package to `.pi/settings.json`, run the repository-required `pnpm install:profile` after its broader write scope is authorized. Preserve load-bearing vendored dependency trees.
@@ -88,7 +92,9 @@ Keeping built-in `codemode` disabled requires an explicit reachability decision.
 
 ### 5. Validate, then retire obsolete implementation
 
-All rows below are **pending**. The documentation change itself does not satisfy them.
+Installer exclusion-removal, unrelated-setting preservation, and readiness-policy tests are satisfied offline. Combined repository and sibling-unit evidence must be checked on the final implementation revision. All live session, startup, lifecycle, and server/authentication gates remain pending; offline tests do not satisfy them.
+
+The readiness script is [`.pi/skills/check/scripts/check-harness.ts`](../.pi/skills/check/scripts/check-harness.ts). There is no `bin/choco-pi-acp.ts` in this tree; audit actual package entry points before claiming ACP coverage.
 
 | Gate                                        | Required evidence                                                                                                                                                                                         |
 | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

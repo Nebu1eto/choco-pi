@@ -28,13 +28,8 @@ type Check = { id: string; status: CheckStatus; detail: string };
 type Settings = { packages?: unknown; tuiMode?: unknown; extensions?: unknown };
 type SubagentsSettings = { disableDefaultAgents?: unknown; fallbackSubagent?: unknown };
 
-/**
- * Pi built-in extensions the profile disables. choco-pi replaces tool search
- * and MCP with its own tool and `/mcp` command, so Pi would otherwise omit the
- * built-ins with an `[Extension issues]` warning on every start; codemode
- * overlaps choco-pi's exec bridge.
- */
-export const DISABLED_BUILTIN_EXTENSIONS = ["codemode", "tool-search", "mcp"] as const;
+/** choco-pi keeps its exec bridge and uses Pi's built-in tool search and MCP. */
+export const DISABLED_BUILTIN_EXTENSIONS = ["codemode"] as const;
 
 /**
  * Whether the project `extensions` entries disable `builtin:<name>`. Pi applies
@@ -68,6 +63,8 @@ export type HarnessOptions = {
    * registered, observed in-host. Undefined when no host was observed.
    */
   loadedBuiltinExtensions?: readonly string[];
+  /** Tool names registered by the active host, with built-in tool search provenance. */
+  activeHostTools?: { builtinToolSearch: boolean; adapterTools: readonly string[] };
   readImportedRuntime?: () => Promise<RuntimeVersionObservation>;
   readText?: (target: string) => Promise<string>;
   pathExists?: (target: string) => Promise<boolean>;
@@ -295,10 +292,13 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
       ? settings.extensions
       : [];
     const enabledByPolicy = DISABLED_BUILTIN_EXTENSIONS.filter(
-      (name) => !projectDisablesBuiltin(entries, name),
+      (name) => !entries.includes(`-builtin:${name}`) || !projectDisablesBuiltin(entries, name),
     );
     const observedLoaded = (options.loadedBuiltinExtensions ?? []).filter((name) =>
       DISABLED_BUILTIN_EXTENSIONS.some((disabled) => disabled === name),
+    );
+    const disabledReplacements = ["tool-search", "mcp"].filter((name) =>
+      entries.some((entry) => entry === `-builtin:${name}` || entry === `!builtin:${name}`),
     );
     const findings = [
       settings.extensions !== undefined && !Array.isArray(settings.extensions)
@@ -307,6 +307,15 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
       enabledByPolicy.length
         ? `settings.extensions does not disable ${enabledByPolicy.map((name) => `builtin:${name}`).join(", ")}`
         : null,
+      disabledReplacements.length
+        ? `settings.extensions must not exclude ${disabledReplacements.map((name) => `builtin:${name}`).join(", ")}`
+        : null,
+      options.activeHostTools !== undefined && !options.activeHostTools.builtinToolSearch
+        ? "active host has not registered built-in tool_search"
+        : null,
+      options.activeHostTools?.adapterTools.length
+        ? `active host registered custom MCP adapter tools: ${options.activeHostTools.adapterTools.join(", ")}`
+        : null,
       observedLoaded.length
         ? `active host registered tools or commands from ${observedLoaded.map((name) => `builtin:${name}`).join(", ")}`
         : null,
@@ -314,14 +323,14 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
     const hostEvidence =
       options.loadedBuiltinExtensions === undefined
         ? "active host not observed"
-        : "active host registers no tools or commands from them";
+        : "active host registers no built-in codemode tools or commands";
     add(
       "builtin-extensions",
       findings.length ? "warn" : "pass",
       [
         findings.length
           ? findings.join("; ")
-          : `project settings disable ${DISABLED_BUILTIN_EXTENSIONS.map((name) => `builtin:${name}`).join(", ")}; ${hostEvidence}`,
+          : `project settings disable builtin:codemode and enable built-in tool search and MCP; ${hostEvidence}`,
         "Pi does not expose extension load warnings to extensions; check [Extension issues] at startup",
       ].join("; "),
     );
@@ -374,8 +383,7 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
     "../package.json",
     "../pnpm-lock.yaml",
     "../pnpm-workspace.yaml",
-    "../scripts/install-profile.mjs",
-    "../scripts/install-profile.d.mts",
+    "../scripts/install-profile.ts",
     "SYSTEM.md",
     "choco-pi-codex.json",
     "zentui.json",

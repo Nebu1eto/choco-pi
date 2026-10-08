@@ -103,7 +103,7 @@ files.
 
 ### Built-in extensions
 
-Pi 1.0.4 ships built-in `codemode`, `tool-search`, `mcp`, and `llama.cpp` extensions. choco-pi disables the first three with `"extensions": ["-builtin:codemode", "-builtin:tool-search", "-builtin:mcp"]` in `.pi/settings.json` and the profile installer because it provides its own `exec` code-mode tool, `tool_search`, and `/mcp`. While the built-in MCP extension is disabled, Pi's `pi mcp …` CLI subcommands are unavailable.
+Pi 1.0.4 ships built-in `codemode`, `tool-search`, `mcp`, and `llama.cpp` extensions. choco-pi uses Pi's built-in tool search and MCP and disables only `codemode` with `"extensions": ["-builtin:codemode"]` because it keeps its own `exec` code-mode bridge. The profile installer carries this policy into global settings and removes stale built-in exclusions.
 
 ## Authentication
 
@@ -262,7 +262,7 @@ win. Neither file is created for you. This example shows the defaults:
 
 - Web research uses one deferred `web_search` tool regardless of the conversation model. Search credentials and billing come from the selected search backend (OpenAI, Exa, Kagi, Synthetic, or Brave), not from the conversation provider. See [Web search](docs/web-search.md) for providers, routing, privacy, and fallback behavior.
 - `fetch_content` extracts page content and `source_check` verifies claims against cited passages. `/search` browses stored results; `/websearch` and `/curator` drive the search curator workflow.
-- MCP servers start lazily, support OAuth (`/mcp-auth`) and elicitation, and can be batched with `mcpScript`. Native Figma tools read files, components, variables, and renders.
+- Pi's built-in MCP owns server configuration, discovery, and execution; custom `mcp`/`mcpScript` adapter tools are no longer loaded. Native Figma tools remain separate and read files, components, variables, and renders.
 - `agent_browser` automates web pages through the optional `agent-browser` CLI.
 - On macOS, computer-use tools inspect and operate desktop applications through a native helper that requires Accessibility and Screen Recording permissions. [Set up computer use](#set-up-computer-use-macos) covers installation, permissions, and configuration.
 - Claude Code-compatible lifecycle hooks run from Pi settings. `/hooks` browses them and `/add-dir` adds a working directory and runs `DirectoryAdded` hooks.
