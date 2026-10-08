@@ -372,12 +372,12 @@ test("applyDaybreakAction refuses a non-canonical model without mutating the req
       provider: "anthropic",
       baseUrl: "https://api.anthropic.com",
     };
-    assert.match(applyDaybreakAction(controller, "status", codex), /on \(blue\)/);
+    assert.match(applyDaybreakAction(controller, "status", codex), /^Daybreak: on$/);
     assert.match(
       applyDaybreakAction(controller, "status", opus),
       /only to OpenAI Codex ChatGPT-account models/,
     );
-    assert.match(applyDaybreakAction(controller, "status", codex), /on \(blue\)/);
+    assert.match(applyDaybreakAction(controller, "status", codex), /^Daybreak: on$/);
   } finally {
     controller.dispose();
   }

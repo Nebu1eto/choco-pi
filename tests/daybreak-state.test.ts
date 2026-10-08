@@ -246,8 +246,8 @@ test("status text distinguishes every outcome", () => {
   };
   assert.equal(daybreakStatusValue(undefined), "not initialized");
   assert.equal(daybreakStatusValue({ ...base, requested: false, outcome: "off" }), "off");
-  assert.equal(daybreakStatusValue({ ...base, outcome: "blue" }), "on (blue)");
-  assert.equal(daybreakStatusValue({ ...base, outcome: "red" }), "on (red)");
+  assert.equal(daybreakStatusValue({ ...base, outcome: "blue" }), "on");
+  assert.equal(daybreakStatusValue({ ...base, outcome: "red" }), "on");
   assert.match(daybreakStatusValue({ ...base, outcome: "not-granted" }), /not granted/);
   assert.match(daybreakStatusValue({ ...base, outcome: "auth-not-eligible" }), /not eligible/);
   assert.match(daybreakStatusValue(base), /lookup failed/);

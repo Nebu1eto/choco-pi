@@ -225,8 +225,8 @@ export function daybreakStatusValue(state: DaybreakState | undefined): string {
 
 const DAYBREAK_REQUESTED_STATUS = {
   pending: "requested; checking availability",
-  blue: "on (blue)",
-  red: "on (red)",
+  blue: "on",
+  red: "on",
   "not-granted": "requested; not granted for this account",
   "auth-not-eligible": "requested; current authentication is not eligible",
   "lookup-failed": "requested; Daybreak lookup failed",

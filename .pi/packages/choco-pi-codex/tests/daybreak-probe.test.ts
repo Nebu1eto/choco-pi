@@ -127,7 +127,7 @@ test("toggle-on probes credentials once and publishes without a provider turn", 
   assert.deepEqual(f.credentialModels, ["blue"]);
   assert.deepEqual(f.urls, ["/backend-api/codex/models", "/backend-api/accounts/verified_access"]);
   assert.equal(f.controller.getState().outcome, "blue");
-  assert.equal(daybreakStatusValue(f.controller.getState()), "on (blue)");
+  assert.equal(daybreakStatusValue(f.controller.getState()), "on");
 });
 
 test("missing credentials use the decision pipeline's auth-not-eligible outcome", async (t) => {

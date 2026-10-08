@@ -376,8 +376,8 @@ test("root Daybreak editor badge shows grants and names each denial", () => {
     );
   assert.match(render({ requested: true, outcome: "pending" }), /high +daybreak pending {2}$/);
   assert.match(render({ requested: true, outcome: "off" }), /high +daybreak pending {2}$/);
-  assert.match(render({ requested: true, outcome: "blue" }), /high +daybreak blue {2}$/);
-  assert.match(render({ requested: true, outcome: "red" }), /high +daybreak red {2}$/);
+  assert.match(render({ requested: true, outcome: "blue" }), /high +daybreak {2}$/);
+  assert.match(render({ requested: true, outcome: "red" }), /high +daybreak {2}$/);
   assert.match(render({ requested: true, outcome: "not-granted" }), /daybreak not granted {2}$/);
   assert.match(
     render({ requested: true, outcome: "model-not-supported" }),
@@ -395,7 +395,7 @@ test("root Daybreak editor badge shows grants and names each denial", () => {
   assert.equal(render(undefined), " gpt-5.6-sol  OpenAI  high");
   assert.match(
     render({ requested: true, outcome: "blue" }, true),
-    /high +fast {2}daybreak blue {2}$/,
+    /high +fast {2}daybreak {2}$/,
     "Fast and Daybreak share one metadata row",
   );
   for (const ineligible of [
@@ -462,7 +462,7 @@ test("focused child Daybreak state supersedes the root outcome", () => {
         rootBlue,
       )[0] ?? "",
     );
-  assert.match(render(undefined), /daybreak blue {2}$/, "unfocused shows the root grant");
+  assert.match(render(undefined), /daybreak {2}$/, "unfocused shows the root grant");
   assert.equal(render(child), " gpt-child  OpenAI  high", "child without state shows none");
   assert.match(
     render({ ...child, daybreak: { requested: true, outcome: "auth-not-eligible" } }),
@@ -470,7 +470,7 @@ test("focused child Daybreak state supersedes the root outcome", () => {
   );
   assert.match(
     render({ ...child, daybreak: { requested: true, outcome: "red" } }),
-    /daybreak red {2}$/,
+    /daybreak {2}$/,
   );
   assert.equal(
     render({ ...child, daybreak: { requested: false, outcome: "off" } }),
@@ -524,7 +524,7 @@ test("wrapped editor reads the focused runtime Daybreak projection", () => {
       "an unknown child outcome never implies a grant",
     );
     projection.daybreakOutcome = "red";
-    assert.match(stripTerminalSequences(editor.render(80)[0] ?? ""), /daybreak red {2}$/);
+    assert.match(stripTerminalSequences(editor.render(80)[0] ?? ""), /daybreak {2}$/);
     projection.api = "anthropic-messages";
     projection.provider = "anthropic";
     projection.baseUrl = "https://api.anthropic.com";
@@ -534,5 +534,5 @@ test("wrapped editor reads the focused runtime Daybreak projection", () => {
   } finally {
     delete host[key];
   }
-  assert.match(stripTerminalSequences(editor.render(80)[0] ?? ""), /daybreak blue {2}$/);
+  assert.match(stripTerminalSequences(editor.render(80)[0] ?? ""), /daybreak {2}$/);
 });

@@ -121,8 +121,8 @@ function isDaybreakOutcome(value: RuntimeValue): value is DaybreakOutcome {
 const DAYBREAK_BADGES = {
   off: "daybreak pending",
   pending: "daybreak pending",
-  blue: "daybreak blue",
-  red: "daybreak red",
+  blue: "daybreak",
+  red: "daybreak",
   "not-granted": "daybreak not granted",
   "lookup-failed": "daybreak lookup failed",
   "model-not-supported": "daybreak unavailable",

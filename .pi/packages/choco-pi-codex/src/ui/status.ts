@@ -20,9 +20,9 @@ export function formatDaybreakStatus(
     case "pending":
       return "Daybreak pending (checking)";
     case "blue":
-      return "Daybreak on (blue)";
+      return "Daybreak on";
     case "red":
-      return "Daybreak on (red)";
+      return "Daybreak on";
     case "not-granted":
       return "Daybreak requested (not granted)";
     case "model-not-supported":
