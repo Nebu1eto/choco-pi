@@ -134,6 +134,7 @@ export interface NestedAgentManager {
     prompt: string,
     signal?: AbortSignal,
     options?: {
+      maxTurns?: number;
       name?: string;
       /** `provider/id`; validated and applied by the manager before the run. */
       model?: string;
@@ -333,6 +334,7 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
         let resumed: AgentRecord | undefined;
         try {
           resumed = await context.manager.resume(params.resume, params.prompt, signal, {
+            maxTurns: params.max_turns,
             name: params.name,
             model: resumeModel,
             fastModeRequested: params.fast_mode,

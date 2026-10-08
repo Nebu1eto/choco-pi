@@ -1624,6 +1624,13 @@ export async function runAgent(
   };
 }
 
+interface ResumeResult {
+  text: string;
+  failure?: string;
+  aborted?: boolean;
+  steered?: boolean;
+}
+
 /**
  * Send a new prompt to an existing session (resume).
  */
@@ -1631,6 +1638,7 @@ export async function resumeAgent(
   session: AgentSession,
   prompt: string,
   options: {
+    maxTurns?: number;
     onToolActivity?: (activity: ToolActivity) => void;
     onAssistantUsage?: (usage: { input: number; output: number; cacheWrite: number }) => void;
     onCompaction?: (info: {
@@ -1639,11 +1647,16 @@ export async function resumeAgent(
     }) => void;
     signal?: AbortSignal;
   } = {},
-): Promise<{ text: string; failure?: string }> {
+): Promise<ResumeResult> {
   // Boundary for the history fallback: the session already holds prior turns,
   // so only assistant text produced by THIS resume prompt counts as its output
   // — a failed resume must not surface the previous turn's answer (#144).
   const startLen = session.messages.length;
+  const maxTurns = normalizeMaxTurns(options.maxTurns);
+  const turnLimit =
+    maxTurns === undefined
+      ? undefined
+      : installRunnerTurnLimit(session, { maxTurns, signal: options.signal });
   const collector = collectResponseText(session);
   const cleanupAbort = forwardAbortSignal(session, options.signal);
 
@@ -1670,15 +1683,21 @@ export async function resumeAgent(
   try {
     if (!options.signal?.aborted) await session.prompt(prompt);
   } finally {
+    turnLimit?.unsubscribe();
     collector.unsubscribe();
     unsubEvents();
     cleanupAbort();
   }
 
-  return {
+  const result: ResumeResult = {
     text: collector.getText().trim() || getLastAssistantText(session, startLen),
     failure: finalTurnError(session, startLen),
   };
+  if (turnLimit) {
+    result.aborted = turnLimit.getAborted();
+    result.steered = turnLimit.getSteered();
+  }
+  return result;
 }
 
 /**
