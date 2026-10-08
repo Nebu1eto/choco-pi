@@ -1293,3 +1293,19 @@ visible host preferences, repeated local toggles, unchanged main components and
 settings, exit, and reseeding on reopen. Temporarily restoring unconditional
 visibility fails the hidden-host case; removing shortcut interception fails both
 cases.
+
+## 2026-10-08 choco-pi patch: nested delegation cards
+
+`delegation-render.ts` owns the shared Agent result-details builder and call/result
+renderers, validating renderer inputs with TypeBox. Root and nested Agent spawns
+and resumes carry record identity, alias, handle, output path, and resume metadata.
+Root and nested result retrieval and steering reuse the same details and renderers.
+Nested model-facing text, schemas, and tool names remain unchanged.
+
+`tests/nested-delegation-rendering.test.ts` exercises production nested tools with
+SDK contexts, checks shared root details and visible card output, and snapshots
+spawn, resume, retrieval, and queued-steering text. Removing nested details or
+renderers makes these regressions fail.
+
+The root focused controller now reads the live host `hideThinkingBlock` setting
+through its optional callback, paired with the focused viewer preference change.
