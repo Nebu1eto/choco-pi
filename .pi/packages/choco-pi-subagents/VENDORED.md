@@ -1228,3 +1228,16 @@ and cancellation precedence remain unchanged. Omitted or zero resume limits
 remain unlimited; neither agent-file nor global turn defaults are newly applied
 to resumes. `tests/resume-turn-limit.test.ts` exercises the production limiter,
 resume runner, manager settlement paths, and nested tool forwarding.
+
+## 2026-10-08 choco-pi patch: event-backed focused transcript
+
+`ConversationViewer` retains the uncommitted assistant tail from session
+`message_start`/`message_update` events (including the current agent streaming
+snapshot when opening mid-response). The tail respects the existing render
+budget and is replaced by the committed transcript on `message_end`, with a
+fresh final render and no duplicate assistant block. Tool calls discovered in
+streaming updates retain their components and receive partial execution results
+by call ID, matching Pi's partial-result rendering contract. Closed viewers
+ignore events. `tests/conversation-viewer.test.ts` now keeps streaming messages
+out of committed history until completion and covers deltas, partial tool
+output, final replacement, and closed-viewer isolation.

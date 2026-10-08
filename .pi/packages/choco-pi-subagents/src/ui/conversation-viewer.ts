@@ -7,6 +7,7 @@
 
 import {
   type AgentSession,
+  type AgentSessionEvent,
   AssistantMessageComponent,
   BashExecutionComponent,
   createBashToolDefinition,
@@ -34,7 +35,7 @@ import {
   visibleWidth,
 } from "@earendil-works/pi-tui";
 import { dispatchMouseEvent } from "@earendil-works/pi-tui/dist/tui.js";
-import { Type } from "typebox";
+import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 import { renderAgentName } from "../agent-color.ts";
 import { extractText } from "../context.ts";
@@ -66,6 +67,7 @@ export const VIEWPORT_HEIGHT_PCT = 70;
  */
 const TAIL_RENDER_INTERVAL_MS = 100;
 
+type AssistantMessage = Extract<AgentSession["messages"][number], { role: "assistant" }>;
 type MessageLayout = { component: Component; y: number; height: number };
 type MessageRender = { width: number; lines: string[]; layout: MessageLayout[] };
 
@@ -83,6 +85,18 @@ interface HostBashExecutionTrace {
 const HostStringSchema = Type.String();
 const HostNumberSchema = Type.Number();
 const HostBooleanSchema = Type.Boolean();
+const PartialToolResultSchema = Type.Object({
+  content: Type.Array(
+    Type.Object({
+      type: Type.String(),
+      text: Type.Optional(Type.String()),
+      data: Type.Optional(Type.String()),
+      mimeType: Type.Optional(Type.String()),
+    }),
+  ),
+  details: Type.Optional(Type.Unknown()),
+});
+type PartialToolResult = Static<typeof PartialToolResultSchema>;
 
 function parseHostString(value: any): string | undefined {
   return Value.Check(HostStringSchema, value) ? value : undefined;
@@ -137,6 +151,7 @@ export type ConversationViewerOptions = {
 };
 
 export class ConversationViewer implements Component {
+  private liveAssistant: AssistantMessage | undefined;
   private scrollOffset = 0;
   private autoScroll = true;
   private unsubscribe: (() => void) | undefined;
@@ -241,13 +256,11 @@ export class ConversationViewer implements Component {
     this.toolOutputExpanded = options.toolOutputExpanded === true;
     this.hostMarkdownTransformers = options.hostMarkdownTransformers ?? [];
 
+    const streamingMessage = session.agent?.state.streamingMessage;
+    if (streamingMessage?.role === "assistant") this.liveAssistant = streamingMessage;
     this.wasRunning = this.record.status === "running";
     this.keys = createViewerKeys(keybindings);
-    this.unsubscribe = session.subscribe(() => {
-      if (this.closed) return;
-      this.contentDirty = true;
-      this.tui.requestRender();
-    });
+    this.unsubscribe = session.subscribe((event) => this.handleSessionEvent(event));
   }
 
   handleInput(data: string): void {
@@ -391,14 +404,11 @@ export class ConversationViewer implements Component {
 
     // Header
     lines.push(hrTop);
-    const statusIcon =
-      this.record.status === "running"
-        ? th.fg("accent", "●")
-        : this.record.status === "completed"
-          ? th.fg("success", "✓")
-          : this.record.status === "error"
-            ? th.fg("error", "✗")
-            : th.fg("dim", "○");
+    let statusIcon: string;
+    if (this.record.status === "running") statusIcon = th.fg("accent", "●");
+    else if (this.record.status === "completed") statusIcon = th.fg("success", "✓");
+    else if (this.record.status === "error") statusIcon = th.fg("error", "✗");
+    else statusIcon = th.fg("dim", "○");
     const duration = formatDuration(this.record.startedAt, this.record.completedAt);
 
     const headerParts: string[] = [duration];
@@ -558,6 +568,7 @@ export class ConversationViewer implements Component {
 
   dispose(): void {
     this.closed = true;
+    this.liveAssistant = undefined;
     this.invalidate();
     if (this.unsubscribe) {
       this.unsubscribe();
@@ -566,6 +577,74 @@ export class ConversationViewer implements Component {
   }
 
   // ---- Private ----
+
+  private handleSessionEvent(event: AgentSessionEvent): void {
+    if (this.closed) return;
+    switch (event.type) {
+      case "message_start":
+      case "message_update":
+        if (event.message.role === "assistant") this.trackLiveAssistant(event.message);
+        break;
+      case "message_end":
+        if (event.message.role === "assistant") this.commitLiveAssistant(event.message);
+        break;
+      case "tool_execution_start":
+        this.syncComponents(false);
+        this.toolComponents.get(event.toolCallId)?.markExecutionStarted();
+        break;
+      case "tool_execution_update": {
+        this.syncComponents(false);
+        const partialResult: unknown = event.partialResult;
+        if (Value.Check(PartialToolResultSchema, partialResult)) {
+          this.applyPartialToolResult(event.toolCallId, partialResult);
+        }
+        break;
+      }
+    }
+    this.contentDirty = true;
+    this.tui.requestRender();
+  }
+
+  private trackLiveAssistant(message: AssistantMessage): void {
+    const previous = this.liveAssistant;
+    this.liveAssistant = message;
+    if (previous && previous !== message) {
+      const components = this.messageComponents.get(previous);
+      const cached = this.messageLineCache.get(previous);
+      if (components) this.messageComponents.set(message, components);
+      if (cached) this.messageLineCache.set(message, cached);
+      if (this.fastAssistantHeads.has(previous)) this.fastAssistantHeads.add(message);
+      this.forgetAssistant(previous);
+    }
+  }
+
+  private commitLiveAssistant(message: AssistantMessage): void {
+    if (this.liveAssistant) this.forgetAssistant(this.liveAssistant);
+    this.liveAssistant = undefined;
+    // Even an in-place final message must bypass the streaming frame budget.
+    this.forgetAssistant(message);
+  }
+
+  private applyPartialToolResult(toolCallId: string, partialResult: PartialToolResult): void {
+    const tool = this.toolComponents.get(toolCallId);
+    if (tool && !this.settledTools.has(toolCallId)) {
+      tool.updateResult({ ...partialResult, isError: false }, true);
+      const owner = this.toolOwners.get(toolCallId);
+      if (owner) this.messageLineCache.delete(owner);
+    }
+  }
+
+  private forgetAssistant(message: AssistantMessage): void {
+    this.messageComponents.delete(message);
+    this.messageLineCache.delete(message);
+    this.fastAssistantHeads.delete(message);
+  }
+
+  private transcriptMessages(): AgentSession["messages"] {
+    const messages = this.session.messages;
+    const live = this.liveAssistant;
+    return live && !messages.includes(live) ? [...messages, live] : messages;
+  }
 
   private viewportHeight(): number {
     // Cap mirrors the overlay's maxHeight — otherwise the viewer would render
@@ -608,7 +687,7 @@ export class ConversationViewer implements Component {
     this.contentDirty = false;
 
     const th = this.theme;
-    const messages = this.session.messages;
+    const messages = this.transcriptMessages();
     const lines: string[] = [];
     this.mouseLayout = [];
 
@@ -672,7 +751,7 @@ export class ConversationViewer implements Component {
    * so a result arriving in the same frame as its call still settles first.
    */
   private syncComponents(renderTail: boolean): void {
-    const messages = this.session.messages;
+    const messages = this.transcriptMessages();
     const streaming = this.record.status === "running";
     for (let i = 0; i < messages.length; i++) {
       const msg = messages[i];
@@ -705,7 +784,7 @@ export class ConversationViewer implements Component {
 
       if (msg.role === "assistant") {
         let components = this.messageComponents.get(msg);
-        const wantFastTheme = isTail;
+        const wantFastTheme = isTail && msg === this.liveAssistant;
         if (!components || this.fastAssistantHeads.has(msg) !== wantFastTheme) {
           // (Re)build the head. While the message is the streaming tail it
           // uses a theme without syntax highlighting — re-highlighting every
@@ -725,32 +804,41 @@ export class ConversationViewer implements Component {
           if (wantFastTheme) this.fastAssistantHeads.add(msg);
           else this.fastAssistantHeads.delete(msg);
           this.messageLineCache.delete(msg);
-          for (const content of msg.content) {
-            if (content.type !== "toolCall") continue;
-            let tool = this.toolComponents.get(content.id);
-            if (!tool) {
-              tool = new ToolExecutionComponent(
-                content.name,
-                content.id,
-                content.arguments,
-                undefined,
-                this.toolDefinition(content.name),
-                this.tui,
-                this.cwd(),
-              );
-              tool.setArgsComplete();
-              tool.markExecutionStarted();
-              tool.setExpanded(this.toolOutputExpanded);
-              this.toolComponents.set(content.id, tool);
-              this.expandableComponents.add(tool);
-              this.toolOwners.set(content.id, msg);
-            }
-            components.push(tool);
-          }
           this.messageComponents.set(msg, components);
         }
+        for (const content of msg.content) {
+          if (content.type !== "toolCall") continue;
+          let tool = this.toolComponents.get(content.id);
+          if (!tool) {
+            tool = new ToolExecutionComponent(
+              content.name,
+              content.id,
+              content.arguments,
+              undefined,
+              this.toolDefinition(content.name),
+              this.tui,
+              this.cwd(),
+            );
+            if (msg !== this.liveAssistant) {
+              tool.setArgsComplete();
+              tool.markExecutionStarted();
+            }
+            tool.setExpanded(this.toolOutputExpanded);
+            this.toolComponents.set(content.id, tool);
+            this.expandableComponents.add(tool);
+          } else if (msg === this.liveAssistant) {
+            tool.updateArgs(content.arguments);
+          } else {
+            tool.setArgsComplete();
+          }
+          this.toolOwners.set(content.id, msg);
+          if (!components.includes(tool)) {
+            components.push(tool);
+            this.messageLineCache.delete(msg);
+          }
+        }
         const head = components[0];
-        if (isTail && renderTail && head instanceof AssistantMessageComponent) {
+        if (wantFastTheme && renderTail && head instanceof AssistantMessageComponent) {
           head.updateContent(msg, true);
         }
         // A run that died mid-tool settles the call with its error instead of

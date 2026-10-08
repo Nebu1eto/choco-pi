@@ -11,6 +11,7 @@ import test from "node:test";
 import type { AssistantMessage, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
 import {
   type AgentSession,
+  type AgentSessionEvent,
   type AgentSessionEventListener,
   initTheme,
 } from "@earendil-works/pi-coding-agent";
@@ -104,13 +105,13 @@ function makeTui(): TUI {
 }
 
 function makeSession(messages: unknown[]) {
-  const listeners: Array<() => void> = [];
+  const listeners: AgentSessionEventListener[] = [];
   const session = partialFixture<AgentSession>({
     // SAFETY: each fixture builds pi-ai UserMessage / AssistantMessage /
     // ToolResultMessage values, all members of the session message union.
     messages: messages as AgentSession["messages"],
     subscribe: (listener: AgentSessionEventListener) => {
-      listeners.push(() => listener({ type: "agent_settled" }));
+      listeners.push(listener);
       return () => {};
     },
     getToolDefinition: () => undefined,
@@ -118,7 +119,11 @@ function makeSession(messages: unknown[]) {
       getCwd: () => "/project",
     }),
   });
-  return { session, fire: () => listeners.forEach((listener) => listener()) };
+  return {
+    session,
+    fire: (event: AgentSessionEvent = { type: "agent_settled" }) =>
+      listeners.forEach((listener) => listener(event)),
+  };
 }
 
 function makeRecord(
@@ -291,58 +296,143 @@ test("bash executions render as transcript bash blocks", () => {
   viewer.dispose();
 });
 
-test("a running agent streams: deltas reach frames within the throttle window", async () => {
-  const messages: unknown[] = [
-    makeUserMessage("Work on it."),
-    makeAssistantMessage([{ type: "text", text: "Starting" }]),
-  ];
+test("opening mid-response includes the agent's uncommitted streaming snapshot", () => {
+  const { session } = makeSession([]);
+  const tail = makeAssistantMessage([{ type: "text", text: "Already streaming" }]);
+  Object.defineProperty(session, "agent", { value: { state: { streamingMessage: tail } } });
+  const { viewer, rendered } = makeViewer(session, makeRecord(session, "running"));
+  assert.match(rendered(), /Already streaming/);
+  assert.equal(session.messages.length, 0);
+  viewer.dispose();
+});
+
+test("live assistant deltas render before commit and finalize exactly once", async () => {
+  const messages = [makeUserMessage("Work on it.")];
   const { session, fire } = makeSession(messages);
   const { viewer, rendered } = makeViewer(session, makeRecord(session, "running"));
-  assert.ok(rendered().includes("Starting"));
+  const start = makeAssistantMessage([{ type: "text", text: "Starting" }]);
+  fire({ type: "message_start", message: start });
+  assert.match(rendered(), /Starting/);
+  assert.equal(session.messages.length, 1, "live tail is not committed");
 
-  // Streaming mutates the tail message in place, as pi-ai delivers deltas,
-  // and every mutation arrives with a session event. Within the throttle
-  // window a frame may keep the previous lines...
-  // SAFETY: messages[1] is the assistant fixture created just above, with
-  // exactly one text part.
-  const tail = messages[1] as AssistantMessage;
-  // SAFETY: see the narrowed tail above.
-  (tail.content[0] as { text: string }).text = "Starting... now halfway through";
-  fire();
-  const withinWindow = rendered();
-  assert.ok(withinWindow.includes("Starting"), "throttled frame still renders the tail");
-  assert.ok(!withinWindow.includes("halfway through"), "throttled frame reuses tail lines");
-
-  // ...and the next budget tick repaints it.
+  const delta = makeAssistantMessage([{ type: "text", text: "Starting... now halfway through" }]);
+  fire({
+    type: "message_update",
+    message: delta,
+    assistantMessageEvent: {
+      type: "text_delta",
+      contentIndex: 0,
+      delta: "... now halfway through",
+      partial: delta,
+    },
+  });
+  assert.doesNotMatch(rendered(), /halfway through/, "frame budget reuses tail lines");
   await new Promise((resolve) => setTimeout(resolve, 150));
-  fire();
-  const updated = rendered();
-  assert.ok(updated.includes("halfway through"), "next budget tick re-renders the tail");
+  assert.match(rendered(), /halfway through/, "delta renders without committing it");
 
-  messages.push(makeAssistantMessage([{ type: "text", text: "Done." }]));
+  const final = makeAssistantMessage([{ type: "text", text: "The final answer." }]);
+  session.messages.push(final);
+  fire({ type: "message_end", message: final });
+  const committed = rendered();
+  assert.doesNotMatch(committed, /halfway through/);
+  assert.equal(committed.split("The final answer.").length - 1, 1);
+  viewer.dispose();
+});
+
+test("tool partial output is routed by call ID before the committed result", () => {
+  const assistant = makeAssistantMessage(
+    [
+      { type: "toolCall", id: "call-live", name: "stream_output", arguments: { path: "live.ts" } },
+      {
+        type: "toolCall",
+        id: "call-other",
+        name: "stream_output",
+        arguments: { path: "other.ts" },
+      },
+    ],
+    "toolUse",
+  );
+  const { session, fire } = makeSession([]);
+  const { viewer, rendered } = makeViewer(session, makeRecord(session, "running"));
+  fire({ type: "message_start", message: makeAssistantMessage([]) });
+  rendered();
+  fire({
+    type: "message_update",
+    message: assistant,
+    assistantMessageEvent: {
+      type: "toolcall_delta",
+      contentIndex: 0,
+      delta: "{}",
+      partial: assistant,
+    },
+  });
+  assert.match(rendered(), /live.ts/, "tool calls appear as the assistant streams");
+  session.messages.push(assistant);
+  fire({ type: "message_end", message: assistant });
+  fire({
+    type: "tool_execution_update",
+    toolCallId: "call-live",
+    toolName: "read",
+    args: {},
+    partialResult: { content: [{ type: "text", text: "Partial live output" }] },
+  });
+  const partial = rendered();
+  assert.equal(partial.split("Partial live output").length - 1, 1);
+  assert.ok(partial.indexOf("Partial live output") < partial.indexOf("other.ts"));
+  assert.equal(session.messages.length, 1);
+  session.messages.push(makeToolResult("call-live", "Final live output"));
   fire();
-  const grown = rendered();
-  assert.ok(grown.includes("Done."), "newly appended messages render immediately");
+  assert.match(rendered(), /Final live output/);
+  assert.doesNotMatch(rendered(), /Partial live output/);
+  viewer.dispose();
+});
+
+test("closed viewers ignore assistant and tool events", () => {
+  const { session, fire } = makeSession([]);
+  let requests = 0;
+  const tui = makeTui();
+  tui.requestRender = () => {
+    requests++;
+  };
+  const viewer = new ConversationViewer(
+    tui,
+    session,
+    makeRecord(session, "running"),
+    undefined,
+    theme,
+    () => {},
+  );
+  viewer.handleInput("q");
+  fire({
+    type: "message_start",
+    message: makeAssistantMessage([{ type: "text", text: "Ignored tail" }]),
+  });
+  fire({
+    type: "tool_execution_update",
+    toolCallId: "ignored",
+    toolName: "read",
+    args: {},
+    partialResult: { content: [{ type: "text", text: "Ignored partial" }] },
+  });
+  assert.equal(requests, 0);
+  assert.doesNotMatch(viewer.render(120).join("\n"), /Ignored/);
   viewer.dispose();
 });
 
 test("settling flushes the throttled tail into its final render immediately", () => {
-  const messages: unknown[] = [
-    makeUserMessage("Work on it."),
-    makeAssistantMessage([{ type: "text", text: "Half" }]),
-  ];
+  const messages: unknown[] = [makeUserMessage("Work on it.")];
+  const tail = makeAssistantMessage([{ type: "text", text: "Half" }]);
   const { session, fire } = makeSession(messages);
   const record = makeRecord(session, "running");
   const { viewer, rendered } = makeViewer(session, record);
+  fire({ type: "message_start", message: tail });
   assert.ok(rendered().includes("Half"));
 
   // The final delta lands together with the status flip, inside the throttle
   // window: the settle must bypass the window, not wait 100ms.
-  // SAFETY: messages[1] is the assistant fixture created just above, with
-  // exactly one text part.
-  const tail = messages[1] as AssistantMessage;
-  // SAFETY: see the narrowed tail above.
-  (tail.content[0] as { text: string }).text = "Half — the full answer.";
+  tail.content = [{ type: "text", text: "Half — the full answer." }];
+  messages.push(tail);
+  fire({ type: "message_end", message: tail });
   record.status = "completed";
   record.completedAt = Date.now();
   fire();
