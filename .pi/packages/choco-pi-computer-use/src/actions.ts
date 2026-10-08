@@ -115,8 +115,8 @@ function path(value: UiAction["path"], env: ActionEnvironment): Array<{ x: numbe
   if (!Array.isArray(value) || value.length < 2)
     throw new Error("drag.path must contain at least two points.");
   return value.map((point, index) => {
-    const x = Array.isArray(point) ? toFiniteNumber(point[0], NaN) : toFiniteNumber(point?.x, NaN);
-    const y = Array.isArray(point) ? toFiniteNumber(point[1], NaN) : toFiniteNumber(point?.y, NaN);
+    const x = toFiniteNumber(point.x, NaN);
+    const y = toFiniteNumber(point.y, NaN);
     env.validatePoint(x, y, `Drag point ${index + 1}`);
     return { x, y };
   });

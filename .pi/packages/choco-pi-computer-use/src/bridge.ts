@@ -3518,11 +3518,10 @@ async function performBrowserTransaction(
 }
 
 function normalizeActionPath(path: UiAction["path"]): Array<{ x: number; y: number }> {
-  return (path ?? []).map((point) =>
-    Array.isArray(point)
-      ? { x: toFiniteNumber(point[0], 0), y: toFiniteNumber(point[1], 0) }
-      : { x: toFiniteNumber(point.x, 0), y: toFiniteNumber(point.y, 0) },
-  );
+  return (path ?? []).map((point) => ({
+    x: toFiniteNumber(point.x, 0),
+    y: toFiniteNumber(point.y, 0),
+  }));
 }
 
 function validateActionTarget(action: UiAction): void {

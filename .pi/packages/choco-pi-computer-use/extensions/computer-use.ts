@@ -35,25 +35,22 @@ const point = { x: Type.Number(), y: Type.Number() };
 const mouseButton = Type.Optional(
   Type.Union([Type.Literal("left"), Type.Literal("right"), Type.Literal("middle")]),
 );
-const clickByRef = Type.Object({
+const click = Type.Object({
   action: Type.Literal("click"),
-  ref: Type.String(),
+  ref: Type.Optional(
+    Type.String({ description: "Exactly one target is required: ref or both x and y" }),
+  ),
+  x: Type.Optional(Type.Number({ description: "Target x; requires y and no ref" })),
+  y: Type.Optional(Type.Number({ description: "Target y; requires x and no ref" })),
   button: mouseButton,
-  clickCount: Type.Optional(Type.Number({ minimum: 1, maximum: 3 })),
-});
-const clickByPoint = Type.Object({
-  action: Type.Literal("click"),
-  ...point,
-  button: mouseButton,
-  clickCount: Type.Optional(Type.Number({ minimum: 1, maximum: 3 })),
+  clickCount: Type.Optional(Type.Integer({ minimum: 1, maximum: 3 })),
 });
 const uiAction = Type.Union([
   Type.Object({
     action: Type.Literal("press"),
     ref: Type.String({ description: "Actionable outline ref" }),
   }),
-  clickByRef,
-  clickByPoint,
+  click,
   Type.Object({
     action: Type.Literal("setText"),
     ref: Type.String({ description: "Editable outline ref" }),
@@ -63,21 +60,40 @@ const uiAction = Type.Union([
     action: Type.Literal("typeText"),
     ref: Type.Optional(
       Type.String({
-        description: "Omit after a click to type into the focus established by that click",
+        description: "Required unless an earlier action in this same call focused an input",
       }),
     ),
     text: Type.String(),
   }),
   Type.Object({
     action: Type.Literal("keypress"),
-    ref: Type.Optional(Type.String({ description: "Omit to send keys to the focused control" })),
+    ref: Type.Optional(
+      Type.String({
+        description: "Required unless an earlier action in this same call focused an input",
+      }),
+    ),
     keys: Type.Array(Type.String(), { minItems: 1 }),
   }),
   Type.Object({
     action: Type.Literal("scroll"),
-    ref: Type.Optional(Type.String()),
-    scrollX: Type.Optional(Type.Number()),
-    scrollY: Type.Optional(Type.Number()),
+    ref: Type.Optional(
+      Type.String({
+        description:
+          "Target ref or both x and y required; at least one non-zero scrollX/scrollY required",
+      }),
+    ),
+    x: Type.Optional(Type.Number({ description: "Target x; requires y; omit when using ref" })),
+    y: Type.Optional(Type.Number({ description: "Target y; requires x; omit when using ref" })),
+    scrollX: Type.Optional(
+      Type.Number({
+        description: "Horizontal delta; at least one non-zero scrollX/scrollY required",
+      }),
+    ),
+    scrollY: Type.Optional(
+      Type.Number({
+        description: "Vertical delta; at least one non-zero scrollX/scrollY required",
+      }),
+    ),
   }),
   Type.Object({
     action: Type.Literal("drag"),
@@ -212,7 +228,8 @@ const actTool = defineTool({
   promptSnippet:
     "Pass dependent click/type steps together and use expect for observable completion.",
   promptGuidelines: [
-    "After clicking an editable region, omit ref from typeText/keypress so input follows the established focus.",
+    'Action shapes: {action:"press",ref}; {action:"click",ref|x,y,button?,clickCount?}; {action:"setText",ref,text}; {action:"typeText",text,ref?}; {action:"keypress",keys:[key,…],ref?}; {action:"scroll",ref|x,y,scrollX?,scrollY?}; {action:"drag",path:[{x,y},…]}; {action:"moveMouse",x,y}. Click requires exactly one target; scroll requires a target and at least one non-zero delta.',
+    "typeText/keypress require ref unless an earlier action in this same call focused an input; then omit ref to follow that focus.",
   ],
   parameters: Type.Object({
     stateId: actionStateId,

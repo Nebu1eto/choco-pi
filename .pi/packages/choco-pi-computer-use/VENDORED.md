@@ -141,3 +141,12 @@ matching the harness target. Other dependency contracts are unchanged.
 
 The isolated E2E launcher path and preflight version gate now require the local
 Pi `1.0.4` executable instead of `0.87.1`. Native helper behavior is unchanged.
+
+## 2026-10-08 choco-pi patch: act_ui action schema contract
+
+The `click` branch is a single shape (`ref` or `x`,`y`; exactly one target, enforced at
+runtime); `scroll` declares `x`/`y` so a schema-conformant call can target a point;
+`clickCount` is an integer; the tuple form of `drag.path` is removed. The tool
+description lists every action branch so a caller can build a valid element without
+reading the schema. `tests/action-schema.test.ts` validates each documented example
+against the registered schema.

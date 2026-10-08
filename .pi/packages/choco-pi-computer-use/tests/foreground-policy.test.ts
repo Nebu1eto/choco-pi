@@ -319,6 +319,30 @@ async function actOnce(
   return (await actOnceWithText(context, actions)).details;
 }
 
+test("click rejects missing, ambiguous, and partial targets before native delivery", async () => {
+  await withFixture(
+    {},
+    () => ({ outcome: "worked" }),
+    async ({ ctx, signal, requests }) => {
+      const observed = await executeObserve("observe", {}, signal, undefined, ctx);
+      const stateId = stateIdFromContent(observed.content);
+      const invalidTargets: UiAction[] = [
+        { action: "click" },
+        { action: "click", ref: "@e2", x: 10, y: 20 },
+        { action: "click", x: 10 },
+        { action: "click", y: 20 },
+      ];
+      for (const action of invalidTargets) {
+        await assert.rejects(
+          executeAct("invalid-click", { stateId, actions: [action] }, signal, undefined, ctx),
+          /click (requires exactly one target|coordinates require both x and y)/,
+        );
+      }
+      assert.deepEqual(requests, [], "invalid clicks must not reach the native backend");
+    },
+  );
+});
+
 interface Route {
   name: string;
   actions: UiAction[];
