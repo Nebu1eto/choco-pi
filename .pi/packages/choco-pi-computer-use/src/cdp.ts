@@ -113,48 +113,95 @@ const NAVIGATE_LOAD_TIMEOUT_MS = 10_000;
 const CONNECT_FAILURE_RETRY_MS = 5_000;
 const CONSOLE_BUFFER_LIMIT = 20;
 
+interface CdpCommandResult {
+  result?: { value?: JsonValue };
+  nodes?: CdpAxNode[];
+  object?: { objectId?: string };
+  bounds?: { left?: number; top?: number; width?: number; height?: number };
+}
+
+function checkAbort(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new DOMException("Operation aborted.", "AbortError");
+}
+
+export interface CdpTransport {
+  readonly readyState: number;
+  send(data: string): void;
+  close(): void;
+  onopen: ((event: Event) => void) | null;
+  onerror: ((event: Event) => void) | null;
+  onclose: ((event: CloseEvent) => void) | null;
+  onmessage: ((event: MessageEvent) => void) | null;
+}
+let createTransport: (url: string) => CdpTransport = (url) => new WebSocket(url);
+
+/** Replace only the wire transport; protocol handling remains production code. */
+export function replaceCdpTransportForTest(factory: (url: string) => CdpTransport): () => void {
+  const previous = createTransport;
+  createTransport = factory;
+  return () => {
+    createTransport = previous;
+  };
+}
+
 export class CdpTab {
   private nextId = 1;
   private readonly pending = new Map<
     number,
-    { resolve: (result: any) => void; reject: (error: Error) => void }
+    { resolve: (result: CdpCommandResult) => void; reject: (error: Error) => void }
   >();
   private consoleBuffer: CdpConsoleEntry[] = [];
   private loadFired: (() => void) | undefined;
-  private readonly ws: WebSocket;
+  private readonly ws: CdpTransport;
   readonly targetId: string;
   public title: string;
 
-  private constructor(ws: WebSocket, targetId: string, title: string) {
+  private constructor(ws: CdpTransport, targetId: string, title: string) {
     this.ws = ws;
     this.targetId = targetId;
     this.title = title;
   }
 
-  static async connect(wsUrl: string, targetId: string, title: string): Promise<CdpTab> {
-    const ws = new WebSocket(wsUrl);
+  static async connect(
+    wsUrl: string,
+    targetId: string,
+    title: string,
+    signal?: AbortSignal,
+  ): Promise<CdpTab> {
+    checkAbort(signal);
+    const ws = createTransport(wsUrl);
     try {
       await new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+          clearTimeout(timer);
+          signal?.removeEventListener("abort", abort);
+          ws.onopen = null;
+          ws.onerror = null;
+        };
+        const fail = (error: Error) => {
+          cleanup();
+          reject(error);
+        };
+        const abort = () => fail(new DOMException("Operation aborted.", "AbortError"));
         const timer = setTimeout(
-          () => reject(new Error(`Timed out connecting to CDP target at ${wsUrl}`)),
+          () => fail(new Error(`Timed out connecting to CDP target at ${wsUrl}`)),
           COMMAND_TIMEOUT_MS,
         );
+        signal?.addEventListener("abort", abort, { once: true });
         ws.onopen = () => {
-          clearTimeout(timer);
+          cleanup();
           resolve();
         };
-        ws.onerror = () => {
-          clearTimeout(timer);
-          reject(new Error(`Failed to connect to CDP target at ${wsUrl}`));
-        };
+        ws.onerror = () => fail(new Error(`Failed to connect to CDP target at ${wsUrl}`));
       });
 
       const tab = new CdpTab(ws, targetId, title);
       ws.onmessage = (event) => tab.handleMessage(String(event.data));
       ws.onclose = () => tab.rejectAllPending(new Error("CDP connection closed."));
       ws.onerror = () => tab.rejectAllPending(new Error("CDP connection error."));
-      await tab.send("Runtime.enable");
-      await tab.send("Page.enable");
+      checkAbort(signal);
+      await tab.send("Runtime.enable", {}, signal);
+      await tab.send("Page.enable", {}, signal);
       return tab;
     } catch (error) {
       try {
@@ -213,40 +260,58 @@ export class CdpTab {
     }
   }
 
-  async clickBackendNode(backendNodeId: number): Promise<void> {
+  async clickBackendNode(backendNodeId: number, signal?: AbortSignal): Promise<void> {
     await this.withBackendNode(
       backendNodeId,
       "function(){ this.scrollIntoView({block:'center', inline:'center'}); this.click(); }",
+      [],
+      signal,
     );
   }
 
-  async typeIntoBackendNode(backendNodeId: number, text: string, replace: boolean): Promise<void> {
+  async typeIntoBackendNode(
+    backendNodeId: number,
+    text: string,
+    replace: boolean,
+    signal?: AbortSignal,
+  ): Promise<void> {
     await this.withBackendNode(
       backendNodeId,
       "function(text, replace){ this.scrollIntoView({block:'center', inline:'center'}); this.focus(); if (replace) { if ('value' in this) this.value = ''; else this.textContent = ''; } if ('value' in this) this.value += text; else this.textContent = (this.textContent || '') + text; this.dispatchEvent(new InputEvent('input', {bubbles:true, inputType:'insertText', data:text})); this.dispatchEvent(new Event('change', {bubbles:true})); }",
       [text, replace],
+      signal,
     );
   }
 
-  async scrollBy(deltaX: number, deltaY: number, backendNodeId?: number): Promise<void> {
+  async scrollBy(
+    deltaX: number,
+    deltaY: number,
+    backendNodeId?: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
     if (backendNodeId) {
       await this.withBackendNode(
         backendNodeId,
         "function(dx, dy){ this.scrollIntoView({block:'center', inline:'center'}); this.scrollBy(dx, dy); }",
         [deltaX, deltaY],
+        signal,
       );
       return;
     }
-    await this.send("Runtime.evaluate", {
-      expression: `window.scrollBy(${JSON.stringify(deltaX)}, ${JSON.stringify(deltaY)})`,
-    });
+    await this.send(
+      "Runtime.evaluate",
+      {
+        expression: `window.scrollBy(${JSON.stringify(deltaX)}, ${JSON.stringify(deltaY)})`,
+      },
+      signal,
+    );
   }
 
-  async typeIntoFocused(text: string): Promise<void> {
-    await this.send("Input.insertText", { text });
+  async typeIntoFocused(text: string, signal?: AbortSignal): Promise<void> {
+    await this.send("Input.insertText", { text }, signal);
   }
 
-  async keypress(keys: string[]): Promise<void> {
+  async keypress(keys: string[], signal?: AbortSignal): Promise<void> {
     const modifierBits: ModifierBits = {
       alt: 1,
       option: 1,
@@ -261,14 +326,23 @@ export class CdpTab {
     for (const key of keys.filter(
       (candidate) => modifierBits[candidate.toLowerCase()] === undefined,
     )) {
-      await this.send("Input.dispatchKeyEvent", {
-        type: "keyDown",
-        key,
-        code: key,
-        text: key.length === 1 && modifiers === 0 ? key : undefined,
-        modifiers,
-      });
-      await this.send("Input.dispatchKeyEvent", { type: "keyUp", key, code: key, modifiers });
+      checkAbort(signal);
+      try {
+        await this.send(
+          "Input.dispatchKeyEvent",
+          {
+            type: "keyDown",
+            key,
+            code: key,
+            text: key.length === 1 && modifiers === 0 ? key : undefined,
+            modifiers,
+          },
+          signal,
+        );
+      } finally {
+        await this.send("Input.dispatchKeyEvent", { type: "keyUp", key, code: key, modifiers });
+      }
+      checkAbort(signal);
     }
   }
 
@@ -278,52 +352,97 @@ export class CdpTab {
     type: "mouseMoved" | "mousePressed" | "mouseReleased",
     button: "left" | "right" | "middle" = "left",
     clickCount = 1,
+    signal?: AbortSignal,
   ): Promise<void> {
-    await this.send("Input.dispatchMouseEvent", {
-      type,
-      x,
-      y,
-      button: type === "mouseMoved" ? "none" : button,
-      clickCount,
-    });
+    await this.send(
+      "Input.dispatchMouseEvent",
+      {
+        type,
+        x,
+        y,
+        button: type === "mouseMoved" ? "none" : button,
+        clickCount,
+      },
+      signal,
+    );
   }
 
-  async dragPath(path: Array<{ x: number; y: number }>): Promise<void> {
+  async dragPath(path: Array<{ x: number; y: number }>, signal?: AbortSignal): Promise<void> {
     if (path.length < 2) throw new Error("CDP drag requires at least two points.");
-    await this.mouseAt(path[0].x, path[0].y, "mousePressed");
-    for (const point of path.slice(1))
-      await this.send("Input.dispatchMouseEvent", {
-        type: "mouseMoved",
-        x: point.x,
-        y: point.y,
-        button: "left",
-        buttons: 1,
-      });
-    const end = path[path.length - 1];
-    await this.mouseAt(end.x, end.y, "mouseReleased");
+    checkAbort(signal);
+    let last = path[0];
+    try {
+      await this.mouseAt(last.x, last.y, "mousePressed", "left", 1, signal);
+      for (const point of path.slice(1)) {
+        checkAbort(signal);
+        last = point;
+        await this.send(
+          "Input.dispatchMouseEvent",
+          {
+            type: "mouseMoved",
+            x: point.x,
+            y: point.y,
+            button: "left",
+            buttons: 1,
+          },
+          signal,
+        );
+      }
+    } finally {
+      await this.mouseAt(last.x, last.y, "mouseReleased");
+    }
+    checkAbort(signal);
+  }
+
+  async clickAt(
+    x: number,
+    y: number,
+    button: "left" | "right" | "middle",
+    clickCount: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    checkAbort(signal);
+    try {
+      await this.mouseAt(x, y, "mousePressed", button, clickCount, signal);
+    } finally {
+      await this.mouseAt(x, y, "mouseReleased", button, clickCount);
+    }
+    checkAbort(signal);
   }
 
   private async withBackendNode(
     backendNodeId: number,
     functionDeclaration: string,
     args: JsonValue[] = [],
+    signal?: AbortSignal,
   ): Promise<void> {
-    const resolved = await this.send("DOM.resolveNode", { backendNodeId });
+    const resolved = await this.send("DOM.resolveNode", { backendNodeId }, signal);
+    checkAbort(signal);
     const objectId = resolved?.object?.objectId;
     if (!isString(objectId))
       throw new Error(`CDP could not resolve backend node ${backendNodeId}.`);
-    await this.send("Runtime.callFunctionOn", {
-      objectId,
-      functionDeclaration,
-      arguments: args.map((value) => ({ value })),
-    });
+    await this.send(
+      "Runtime.callFunctionOn",
+      {
+        objectId,
+        functionDeclaration,
+        arguments: args.map((value) => ({ value })),
+      },
+      signal,
+    );
   }
 
   /** Screen bounds of the browser window containing this tab. */
   async windowBounds(): Promise<WindowFrame | undefined> {
     const result = await this.send("Browser.getWindowForTarget", { targetId: this.targetId });
     const bounds = result?.bounds;
-    if (!isNumber(bounds?.left) || !isNumber(bounds?.width)) return undefined;
+    if (
+      !isNumber(bounds?.left) ||
+      !isNumber(bounds?.top) ||
+      !isNumber(bounds?.width) ||
+      !isNumber(bounds?.height)
+    )
+      return undefined;
     return { x: bounds.left, y: bounds.top, w: bounds.width, h: bounds.height };
   }
 
@@ -334,29 +453,40 @@ export class CdpTab {
     return entries;
   }
 
-  private send(method: string, params: JsonObject = {}): Promise<any> {
+  private send(
+    method: string,
+    params: JsonObject = {},
+    signal?: AbortSignal,
+  ): Promise<CdpCommandResult> {
+    checkAbort(signal);
     const id = this.nextId++;
+    const ws = this.ws;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const cleanup = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", abort);
         this.pending.delete(id);
-        reject(new Error(`CDP command '${method}' timed out after ${COMMAND_TIMEOUT_MS}ms.`));
+      };
+      const fail = (error: Error) => {
+        cleanup();
+        reject(error);
+      };
+      const abort = () => fail(new DOMException("Operation aborted.", "AbortError"));
+      const timer = setTimeout(() => {
+        fail(new Error(`CDP command '${method}' timed out after ${COMMAND_TIMEOUT_MS}ms.`));
       }, COMMAND_TIMEOUT_MS);
       this.pending.set(id, {
         resolve: (result) => {
-          clearTimeout(timer);
+          cleanup();
           resolve(result);
         },
-        reject: (error) => {
-          clearTimeout(timer);
-          reject(error);
-        },
+        reject: fail,
       });
+      signal?.addEventListener("abort", abort, { once: true });
       try {
-        this.ws.send(JSON.stringify({ id, method, params }));
+        ws.send(JSON.stringify({ id, method, params }));
       } catch (error) {
-        clearTimeout(timer);
-        this.pending.delete(id);
-        reject(error instanceof Error ? error : new Error(String(error)));
+        fail(error instanceof Error ? error : new Error(String(error)));
       }
     });
   }
@@ -509,12 +639,17 @@ export async function listCdpPageContexts(): Promise<CdpPageContext[]> {
 export async function cdpClickForContext(
   contextId: string,
   backendNodeId: number,
+  signal?: AbortSignal,
 ): Promise<boolean> {
   return (
-    (await withCdpContextTab(contextId, async (tab) => {
-      await tab.clickBackendNode(backendNodeId);
-      return true;
-    })) === true
+    (await withCdpContextTab(
+      contextId,
+      async (tab) => {
+        await tab.clickBackendNode(backendNodeId, signal);
+        return true;
+      },
+      signal,
+    )) === true
   );
 }
 
@@ -523,12 +658,17 @@ export async function cdpTypeForContext(
   backendNodeId: number,
   text: string,
   replace: boolean,
+  signal?: AbortSignal,
 ): Promise<boolean> {
   return (
-    (await withCdpContextTab(contextId, async (tab) => {
-      await tab.typeIntoBackendNode(backendNodeId, text, replace);
-      return true;
-    })) === true
+    (await withCdpContextTab(
+      contextId,
+      async (tab) => {
+        await tab.typeIntoBackendNode(backendNodeId, text, replace, signal);
+        return true;
+      },
+      signal,
+    )) === true
   );
 }
 
@@ -537,30 +677,51 @@ export async function cdpScrollForContext(
   deltaX: number,
   deltaY: number,
   backendNodeId?: number,
+  signal?: AbortSignal,
 ): Promise<boolean> {
   return (
-    (await withCdpContextTab(contextId, async (tab) => {
-      await tab.scrollBy(deltaX, deltaY, backendNodeId);
-      return true;
-    })) === true
+    (await withCdpContextTab(
+      contextId,
+      async (tab) => {
+        await tab.scrollBy(deltaX, deltaY, backendNodeId, signal);
+        return true;
+      },
+      signal,
+    )) === true
   );
 }
 
-export async function cdpTypeFocusedForContext(contextId: string, text: string): Promise<boolean> {
+export async function cdpTypeFocusedForContext(
+  contextId: string,
+  text: string,
+  signal?: AbortSignal,
+): Promise<boolean> {
   return (
-    (await withCdpContextTab(contextId, async (tab) => {
-      await tab.typeIntoFocused(text);
-      return true;
-    })) === true
+    (await withCdpContextTab(
+      contextId,
+      async (tab) => {
+        await tab.typeIntoFocused(text, signal);
+        return true;
+      },
+      signal,
+    )) === true
   );
 }
 
-export async function cdpKeypressForContext(contextId: string, keys: string[]): Promise<boolean> {
+export async function cdpKeypressForContext(
+  contextId: string,
+  keys: string[],
+  signal?: AbortSignal,
+): Promise<boolean> {
   return (
-    (await withCdpContextTab(contextId, async (tab) => {
-      await tab.keypress(keys);
-      return true;
-    })) === true
+    (await withCdpContextTab(
+      contextId,
+      async (tab) => {
+        await tab.keypress(keys, signal);
+        return true;
+      },
+      signal,
+    )) === true
   );
 }
 
@@ -571,24 +732,54 @@ export async function cdpMouseForContext(
   type: "mouseMoved" | "mousePressed" | "mouseReleased",
   button: "left" | "right" | "middle" = "left",
   clickCount = 1,
+  signal?: AbortSignal,
 ): Promise<boolean> {
   return (
-    (await withCdpContextTab(contextId, async (tab) => {
-      await tab.mouseAt(x, y, type, button, clickCount);
-      return true;
-    })) === true
+    (await withCdpContextTab(
+      contextId,
+      async (tab) => {
+        await tab.mouseAt(x, y, type, button, clickCount, signal);
+        return true;
+      },
+      signal,
+    )) === true
   );
 }
 
 export async function cdpDragForContext(
   contextId: string,
   path: Array<{ x: number; y: number }>,
+  signal?: AbortSignal,
 ): Promise<boolean> {
   return (
-    (await withCdpContextTab(contextId, async (tab) => {
-      await tab.dragPath(path);
-      return true;
-    })) === true
+    (await withCdpContextTab(
+      contextId,
+      async (tab) => {
+        await tab.dragPath(path, signal);
+        return true;
+      },
+      signal,
+    )) === true
+  );
+}
+
+export async function cdpClickAtForContext(
+  contextId: string,
+  x: number,
+  y: number,
+  button: "left" | "right" | "middle",
+  clickCount: number,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  return (
+    (await withCdpContextTab(
+      contextId,
+      async (tab) => {
+        await tab.clickAt(x, y, button, clickCount, signal);
+        return true;
+      },
+      signal,
+    )) === true
   );
 }
 
@@ -649,29 +840,39 @@ export async function cdpSnapshotForContext(
 async function withCdpContextTab<T>(
   contextId: string,
   run: (tab: CdpTab) => Promise<T>,
+  signal?: AbortSignal,
 ): Promise<T | undefined> {
-  const page = await cdpPageForContext(contextId);
+  checkAbort(signal);
+  const page = await cdpPageForContext(contextId, signal);
+  checkAbort(signal);
   if (!page?.webSocketDebuggerUrl) return undefined;
-  const tab = await CdpTab.connect(page.webSocketDebuggerUrl, page.id, page.title);
+  const tab = await CdpTab.connect(page.webSocketDebuggerUrl, page.id, page.title, signal);
   try {
+    checkAbort(signal);
     return await run(tab);
   } finally {
     tab.close();
   }
 }
 
-async function cdpPageForContext(contextId: string): Promise<CdpPageTarget | undefined> {
+async function cdpPageForContext(
+  contextId: string,
+  signal?: AbortSignal,
+): Promise<CdpPageTarget | undefined> {
   if (!contextId.startsWith(CDP_CONTEXT_PREFIX)) return undefined;
   const targetId = contextId.slice(CDP_CONTEXT_PREFIX.length);
-  const pages = await cdpPages();
+  const pages = await cdpPages(signal);
+  checkAbort(signal);
   return pages.find((candidate) => candidate.id === targetId);
 }
 
-async function cdpPages(): Promise<CdpPageTarget[]> {
+async function cdpPages(signal?: AbortSignal): Promise<CdpPageTarget[]> {
   if (!cdpEnabled()) return [];
   const port = process.env.PI_COMPUTER_USE_CDP_PORT;
   const response = await fetch(`http://127.0.0.1:${port}/json/list`, {
-    signal: AbortSignal.timeout(2_000),
+    signal: signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(2_000)])
+      : AbortSignal.timeout(2_000),
   });
   const targets: CdpPageTarget[] = await response.json();
   return targets.filter(

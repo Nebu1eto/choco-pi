@@ -18,6 +18,7 @@ import {
   type PreparedAction,
 } from "./actions.ts";
 import {
+  cdpClickAtForContext,
   cdpClickForContext,
   cdpDragForContext,
   cdpEvaluateForContext,
@@ -3444,54 +3445,66 @@ async function performBrowserTransaction(
     return { action, target };
   });
   return await withBrowserWrite(contextId, async () => {
+    throwIfAborted(signal);
     for (const { action, target } of prepared) {
+      throwIfAborted(signal);
       let worked = false;
       if (action.action === "press" || (action.action === "click" && action.ref)) {
         worked = true;
-        for (let count = 0; count < (action.clickCount ?? 1); count += 1)
-          worked = (await cdpClickForContext(contextId, target!.backendNodeId!)) && worked;
+        for (let count = 0; count < (action.clickCount ?? 1); count += 1) {
+          throwIfAborted(signal);
+          worked = (await cdpClickForContext(contextId, target!.backendNodeId!, signal)) && worked;
+        }
       } else if (action.action === "click") {
-        worked =
-          (await cdpMouseForContext(
-            contextId,
-            action.x!,
-            action.y!,
-            "mousePressed",
-            action.button ?? "left",
-            action.clickCount ?? 1,
-          )) &&
-          (await cdpMouseForContext(
-            contextId,
-            action.x!,
-            action.y!,
-            "mouseReleased",
-            action.button ?? "left",
-            action.clickCount ?? 1,
-          ));
+        worked = await cdpClickAtForContext(
+          contextId,
+          action.x!,
+          action.y!,
+          action.button ?? "left",
+          action.clickCount ?? 1,
+          signal,
+        );
       } else if (action.action === "setText")
         worked = await cdpTypeForContext(
           contextId,
           target!.backendNodeId!,
           action.text ?? "",
           true,
+          signal,
         );
       else if (action.action === "typeText")
         worked = target?.backendNodeId
-          ? await cdpTypeForContext(contextId, target.backendNodeId, action.text ?? "", false)
-          : await cdpTypeFocusedForContext(contextId, action.text ?? "");
+          ? await cdpTypeForContext(
+              contextId,
+              target.backendNodeId,
+              action.text ?? "",
+              false,
+              signal,
+            )
+          : await cdpTypeFocusedForContext(contextId, action.text ?? "", signal);
       else if (action.action === "keypress")
-        worked = await cdpKeypressForContext(contextId, action.keys ?? []);
+        worked = await cdpKeypressForContext(contextId, action.keys ?? [], signal);
       else if (action.action === "scroll")
         worked = await cdpScrollForContext(
           contextId,
           toFiniteNumber(action.scrollX, 0),
           toFiniteNumber(action.scrollY, 0),
           target?.backendNodeId,
+          signal,
         );
       else if (action.action === "drag")
-        worked = await cdpDragForContext(contextId, normalizeActionPath(action.path));
+        worked = await cdpDragForContext(contextId, normalizeActionPath(action.path), signal);
       else if (action.action === "moveMouse")
-        worked = await cdpMouseForContext(contextId, action.x!, action.y!, "mouseMoved");
+        worked = await cdpMouseForContext(
+          contextId,
+          action.x!,
+          action.y!,
+          "mouseMoved",
+          "left",
+          1,
+          signal,
+        );
+      throwIfAborted(signal);
       if (!worked)
         throw new Error(
           "The browser root became unavailable during the action transaction. Observe it again.",
