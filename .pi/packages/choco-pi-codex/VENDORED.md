@@ -598,3 +598,10 @@ selected model advertises a Daybreak program the request carries it and the serv
 `not-granted` and invalidates the account caches. `verified_access` only chooses red
 over blue (default blue); it never blocks, because it reports `inactive` for accounts
 the backend still serves Daybreak to.
+
+## 2026-10-08 choco-pi patch: memoized bridged tool usage lines
+
+`bridgedToolUsage` caches its rendered call line per registered definition (keyed on
+the definition and its `parameters` object). The code-mode result renderer rebuilds the
+bridged catalog for every rendered result, so resuming a session with a few hundred
+code-mode results walked ~170 schemas per result and blocked the main thread for 11 s.

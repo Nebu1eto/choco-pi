@@ -279,8 +279,27 @@ export function registeredToolNames(
 /**
  * One compact call line, e.g. `await tools.symbol_search({query, limit?})` or
  * `await tools.harness_check({mode:"automatic"|"full", required_capabilities?:[…]})`.
+ *
+ * Memoized per registered definition: the schema walk costs ~0.4 ms per tool and the
+ * bridge is rebuilt for every rendered code-mode result, so a resumed session with a
+ * few hundred results would otherwise block the main thread for seconds. The cache
+ * key is the definition object and its `parameters` object, so a re-registered tool
+ * or a swapped schema recomputes.
  */
 export function bridgedToolUsage(definition: ToolDefinition): string {
+  const cached = usageCache.get(definition);
+  if (cached && cached.parameters === definition.parameters) return cached.usage;
+  const usage = computeBridgedToolUsage(definition);
+  usageCache.set(definition, { parameters: definition.parameters, usage });
+  return usage;
+}
+
+const usageCache = new WeakMap<
+  ToolDefinition,
+  { parameters: ToolDefinition["parameters"]; usage: string }
+>();
+
+function computeBridgedToolUsage(definition: ToolDefinition): string {
   const parameters = Value.Check(ToolParametersSchema, definition.parameters)
     ? definition.parameters
     : undefined;
