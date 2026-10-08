@@ -197,7 +197,7 @@ function renderCall(
   if (info.hidden) return new Text("", 0, 0);
   const text = info.actionGroups
     ? renderGroupedExecCommandCall(info.actionGroups, info.status, theme)
-    : renderExecCommandCall(command, info.status, theme);
+    : renderExecCommandCall(command, info.status, theme, context?.expanded ?? false);
   return new Text(text, 0, 0);
 }
 

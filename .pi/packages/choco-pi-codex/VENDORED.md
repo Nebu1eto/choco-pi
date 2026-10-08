@@ -626,3 +626,15 @@ listener cleanup, turn replacement, and terminal invalidation.
 the definition and its `parameters` object). The code-mode result renderer rebuilds the
 bridged catalog for every rendered result, so resuming a session with a few hundred
 code-mode results walked ~170 schemas per result and blocked the main thread for 11 s.
+
+## 2026-10-08 choco-pi patch: expanded exec command source
+
+Native `exec_command` call rendering forwards expansion state to the command
+renderer. Expanded command source preserves every line without per-line shortening
+or exploration summaries; collapsed calls retain their existing five-line and
+100-character previews. Both modes share line normalization, including three-space
+tab expansion for TUI width accounting. Existing grouped exploration rendering
+is unchanged.
+Code Mode's native-renderer catalog receives the same command-source behavior
+without changes to trace rendering. Regression tests cover direct
+native calls, real-catalog nested traces, collapsed defaults, and tab normalization.
