@@ -15,10 +15,18 @@ import {
   type AgentSessionEventListener,
   initTheme,
 } from "@earendil-works/pi-coding-agent";
-import { stripTerminalSequences, type TUI, type TuiMouseEvent } from "@earendil-works/pi-tui";
-import type { AgentInvocation, AgentRecord, SubagentType } from "../src/types.ts";
+import { stripTerminalSequences, Text, type TUI, type TuiMouseEvent } from "@earendil-works/pi-tui";
+import { Type } from "typebox";
+import type {
+  AgentInvocation,
+  AgentRecord,
+  NotificationDetails,
+  SubagentType,
+} from "../src/types.ts";
 import { formatAgentMessage } from "../src/messaging.ts";
 import { ConversationViewer } from "../src/ui/conversation-viewer.ts";
+import { renderSubagentNotification } from "../src/ui/notification-render.ts";
+import { createSdkFixture } from "./sdk-fixture.ts";
 
 initTheme("dark", false);
 
@@ -584,6 +592,180 @@ test("viewer expansion applies to existing and newly arriving tool and bash rows
   assert.doesNotMatch(rendered(), /new-tool-30/);
   assert.doesNotMatch(rendered(), /new-bash-01/);
   viewer.dispose();
+});
+
+function makeFocusedViewer(session: AgentSession) {
+  return new ConversationViewer(
+    makeTui(),
+    session,
+    makeRecord(session),
+    undefined,
+    theme,
+    () => {},
+    undefined,
+    undefined,
+    undefined,
+    { profile: "focus" },
+  );
+}
+
+function focusedText(viewer: ConversationViewer): string {
+  return viewer.render(120).map(stripTerminalSequences).join("\n");
+}
+
+const completionDetails: NotificationDetails = {
+  id: "descendant-1",
+  description: "Descendant regression check",
+  type: "general",
+  status: "completed",
+  toolUses: 1,
+  turnCount: 1,
+  totalTokens: 10,
+  durationMs: 1000,
+  resultPreview: "Descendant completed visibly.\nExpanded descendant detail.",
+};
+
+function sendCompletion(session: AgentSession, display: boolean): Promise<void> {
+  return session.sendCustomMessage(
+    {
+      customType: "subagent-notification",
+      content: "Descendant completed visibly.",
+      display,
+      details: completionDetails,
+    },
+    // Exercise descendant delivery without starting a provider-backed turn.
+    { deliverAs: "steer", triggerTurn: false },
+  );
+}
+
+for (const display of [true, false]) {
+  test(`focused descendant completion honors display:${display} and the child renderer`, async () => {
+    let renderCalls = 0;
+    const { session } = await createSdkFixture(undefined, [
+      (pi) => {
+        pi.registerMessageRenderer<NotificationDetails>(
+          "subagent-notification",
+          (message, options, hostTheme) => {
+            renderCalls++;
+            if (!message.details) return undefined;
+            return new Text(renderSubagentNotification(message.details, options, hostTheme), 0, 0);
+          },
+        );
+      },
+    ]);
+    const viewer = makeFocusedViewer(session);
+    try {
+      focusedText(viewer);
+      await sendCompletion(session, display);
+      const output = focusedText(viewer);
+      if (display) {
+        assert.match(output, /Delegation: Completed/);
+        assert.match(output, /Descendant completed visibly/);
+        assert.doesNotMatch(output, /Expanded descendant detail/);
+        viewer.toggleToolOutputExpanded();
+        assert.match(focusedText(viewer), /Expanded descendant detail/);
+        assert.ok(renderCalls > 0);
+      } else {
+        assert.doesNotMatch(output, /Descendant|Delegation/);
+        assert.equal(renderCalls, 0);
+      }
+    } finally {
+      viewer.dispose();
+      session.dispose();
+    }
+  });
+}
+
+test("focused custom messages without a renderer retain the host text fallback", async () => {
+  const { session } = await createSdkFixture();
+  await sendCompletion(session, true);
+  session.sessionManager.appendCustomMessageEntry(
+    "historical-notice",
+    [{ type: "text", text: "Historical notification text." }],
+    true,
+  );
+  session.refreshContext();
+  const viewer = makeFocusedViewer(session);
+  try {
+    const output = focusedText(viewer);
+    assert.match(output, /\[subagent-notification\]/);
+    assert.match(output, /Descendant completed visibly/);
+    assert.match(output, /Historical notification text/);
+  } finally {
+    viewer.dispose();
+    session.dispose();
+  }
+});
+
+test("focused tool renderers resolve historical tools and override registered and built-in tools", async () => {
+  const resolverNames: string[] = [];
+  const { session } = await createSdkFixture(undefined, [
+    (pi) => {
+      pi.registerTool({
+        name: "registered-render-test",
+        label: "Registered renderer",
+        description: "Renderer regression fixture.",
+        parameters: Type.Object({}),
+        execute: async () => ({
+          content: [{ type: "text", text: "Unused execution." }],
+          details: undefined,
+        }),
+        renderCall: () => new Text("BASE REGISTERED CALL", 0, 0),
+        renderResult: () => new Text("BASE REGISTERED RESULT", 0, 0),
+      });
+      pi.registerToolRenderer((name, next) => {
+        resolverNames.push(name);
+        if (name === "resolver-only" || name === "registered-render-test") {
+          return {
+            renderCall: () => new Text(`RESOLVED CALL ${name}`, 0, 0),
+            renderResult: () => new Text(`RESOLVED RESULT ${name}`, 0, 0),
+          };
+        }
+        if (name === "read") {
+          const base = next();
+          assert.ok(base?.renderCall, "built-in renderers are visible to next()");
+          return { ...base, renderCall: () => new Text("RESOLVED BUILT-IN CALL", 0, 0) };
+        }
+        return next();
+      });
+    },
+  ]);
+  // The SDK fixture disables executable tools; expose its real registered definition as the base.
+  session.getToolDefinition = (name) => session.extensionRunner.getToolDefinition(name);
+  assert.ok(session.getToolDefinition("registered-render-test"));
+  assert.equal(session.getToolDefinition("resolver-only"), undefined);
+  const names = ["resolver-only", "registered-render-test", "unknown-historical", "read"];
+  for (const name of names) {
+    session.sessionManager.appendMessage(
+      makeAssistantMessage(
+        [{ type: "toolCall", id: name, name, arguments: { path: "historical.ts" } }],
+        "toolUse",
+      ),
+    );
+    session.sessionManager.appendMessage({
+      ...makeToolResult(name, `RESULT ${name}`),
+      toolName: name,
+    });
+  }
+  session.refreshContext();
+  const viewer = makeFocusedViewer(session);
+  try {
+    const output = focusedText(viewer);
+    for (const name of ["resolver-only", "registered-render-test"]) {
+      assert.match(output, new RegExp(`RESOLVED CALL ${name}`));
+      assert.match(output, new RegExp(`RESOLVED RESULT ${name}`));
+    }
+    assert.doesNotMatch(output, /BASE REGISTERED/);
+    assert.match(output, /unknown-historical/);
+    assert.match(output, /RESULT unknown-historical/);
+    assert.match(output, /RESOLVED BUILT-IN CALL/);
+    viewer.setToolOutputExpanded(true);
+    assert.match(focusedText(viewer), /RESULT read/);
+    assert.deepEqual(resolverNames, names);
+  } finally {
+    viewer.dispose();
+    session.dispose();
+  }
 });
 
 test("invalidate drops the caches and re-renders identically", () => {

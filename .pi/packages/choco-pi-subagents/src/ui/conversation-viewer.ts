@@ -18,6 +18,7 @@ import {
   createPowerShellToolDefinition,
   createReadToolDefinition,
   createWriteToolDefinition,
+  CustomMessageComponent,
   getMarkdownTheme,
   type MarkdownTransformer,
   ToolExecutionComponent,
@@ -68,6 +69,7 @@ export const VIEWPORT_HEIGHT_PCT = 70;
 const TAIL_RENDER_INTERVAL_MS = 100;
 
 type AssistantMessage = Extract<AgentSession["messages"][number], { role: "assistant" }>;
+type ToolRendererDefinition = ConstructorParameters<typeof ToolExecutionComponent>[4];
 type MessageLayout = { component: Component; y: number; height: number };
 type MessageRender = { width: number; lines: string[]; layout: MessageLayout[] };
 
@@ -175,12 +177,11 @@ export class ConversationViewer implements Component {
   private messageLineCache = new Map<object, MessageRender>();
   private mouseLayout: Array<MessageLayout & { msg: object }> = [];
   private toolComponents = new Map<string, ToolExecutionComponent>();
-  private builtInToolDefinitions = new Map<
-    string,
-    ConstructorParameters<typeof ToolExecutionComponent>[4]
+  private builtInToolDefinitions = new Map<string, ToolRendererDefinition>();
+  /** Tool, bash and custom rows that follow this viewer's expansion state. */
+  private expandableComponents = new Set<
+    ToolExecutionComponent | BashExecutionComponent | CustomMessageComponent
   >();
-  /** Tool and bash rows that follow this viewer's expansion state. */
-  private expandableComponents = new Set<ToolExecutionComponent | BashExecutionComponent>();
   private toolOutputExpanded: boolean;
   private hostMarkdownTransformers: readonly MarkdownTransformer[];
   /** Tool calls whose result (real or synthesized error) has been applied. */
@@ -782,6 +783,17 @@ export class ConversationViewer implements Component {
         continue;
       }
 
+      if (msg.role === "custom") {
+        if (msg.display && !this.messageComponents.has(msg)) {
+          const renderer = this.session.extensionRunner?.getMessageRenderer(msg.customType);
+          const component = new CustomMessageComponent(msg, renderer, getMarkdownTheme(), 1);
+          component.setExpanded(this.toolOutputExpanded);
+          this.messageComponents.set(msg, [component]);
+          this.expandableComponents.add(component);
+        }
+        continue;
+      }
+
       if (msg.role === "assistant") {
         let components = this.messageComponents.get(msg);
         const wantFastTheme = isTail && msg === this.liveAssistant;
@@ -922,15 +934,22 @@ export class ConversationViewer implements Component {
   }
 
   /** Registered tool renderers, exactly what the main transcript passes. */
-  private toolDefinition(name: string): ConstructorParameters<typeof ToolExecutionComponent>[4] {
-    let definition: ConstructorParameters<typeof ToolExecutionComponent>[4];
+  private toolDefinition(name: string): ToolRendererDefinition {
+    const runner = this.session.extensionRunner;
+    return runner
+      ? runner.resolveToolRenderers(name, () => this.baseToolDefinition(name))
+      : this.baseToolDefinition(name);
+  }
+
+  private baseToolDefinition(name: string): ToolRendererDefinition {
+    let definition: ToolRendererDefinition;
     try {
       definition = this.session.getToolDefinition(name);
     } catch {
       definition = undefined;
     }
 
-    // pi 0.85 moved the built-in renderer fallback from the component to callers.
+    // Built-ins belong inside the resolver's base, just like Pi's main transcript.
     const builtIn = this.builtInToolDefinition(name);
     if (!definition) return builtIn;
     if (!builtIn) return definition;
@@ -941,12 +960,10 @@ export class ConversationViewer implements Component {
     };
   }
 
-  private builtInToolDefinition(
-    name: string,
-  ): ConstructorParameters<typeof ToolExecutionComponent>[4] {
+  private builtInToolDefinition(name: string): ToolRendererDefinition {
     if (this.builtInToolDefinitions.has(name)) return this.builtInToolDefinitions.get(name);
 
-    let definition: ConstructorParameters<typeof ToolExecutionComponent>[4];
+    let definition: ToolRendererDefinition;
     try {
       const cwd = this.cwd();
       switch (name) {
