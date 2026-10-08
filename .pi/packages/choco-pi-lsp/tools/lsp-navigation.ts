@@ -731,9 +731,10 @@ export function createLspNavigationTool(
       return `lsp_navigation ${op} — ${n} result${n === 1 ? "" : "s"}`;
     }),
     parameters: Type.Object({
-      operation: Type.String({
-        description: "LSP operation to perform. Valid values: " + VALID_OPERATIONS.join(", "),
-      }),
+      operation: Type.Union(
+        VALID_OPERATIONS.map((operation) => Type.Literal(operation)),
+        { description: "LSP operation to perform." },
+      ),
       path: Type.Optional(
         Type.String({
           description:

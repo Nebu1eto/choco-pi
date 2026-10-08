@@ -207,13 +207,13 @@ export function createWebSearchTool(
     ...options,
     sessionIdOverride: options.sessionId !== undefined,
   };
-  // SAFETY: The Pi tool API provides object arguments to prepareArguments; the record check preserves that shape.
+  // No prepareArguments shim: non-object input must fail schema validation instead of
+  // silently running an empty search.
   const tool: ToolDefinition<typeof WEB_SEARCH_PARAMETERS> = {
     name,
     label: name,
     description: "Search/open web",
     parameters: WEB_SEARCH_PARAMETERS,
-    prepareArguments: (args) => (args && isObjectValue(args) ? args : {}),
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       if (!supportsExecutableWebSearch(ctx.model, toolOptions))
         throw new Error(WEB_SEARCH_UNSUPPORTED_MESSAGE);

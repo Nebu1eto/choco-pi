@@ -25,7 +25,10 @@ type HarnessCheckInput = {
 };
 
 const harnessCheckParameters = Type.Object({
-  mode: Type.Union([Type.Literal("automatic"), Type.Literal("full")]),
+  mode: Type.Union([Type.Literal("automatic"), Type.Literal("full")], {
+    description:
+      "automatic = readiness for required_capabilities (the workflow default); full = every capability. Only these two values exist.",
+  }),
   required_capabilities: Type.Optional(
     Type.Array(
       Type.Union([
@@ -34,7 +37,7 @@ const harnessCheckParameters = Type.Object({
         Type.Literal("resources"),
         Type.Literal("lsp"),
       ]),
-      { uniqueItems: true },
+      { uniqueItems: true, description: "Capabilities an automatic check must prove." },
     ),
   ),
 });

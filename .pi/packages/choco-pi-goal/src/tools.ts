@@ -33,7 +33,8 @@ const CreateGoalParams = Type.Object({
 
 const UpdateGoalParams = Type.Object({
   status: StringEnum(["complete"] as const, {
-    description: "Only complete is accepted. Do not call this until no required work remains.",
+    description:
+      "Confirmation token; the only accepted value is complete. Do not call this until no required work remains.",
   }),
 });
 
