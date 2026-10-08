@@ -649,3 +649,16 @@ image renderers; the public result renderer already forwards the outer context
 unchanged. Regression tests exercise throwing and successful custom renderers
 and compare nested `view_image` rendering with direct calls for disabled, enabled,
 and unspecified image preferences.
+
+## 2026-10-08 choco-pi patch: compact Code Mode contracts
+
+The exec description and compact system-prompt help share two sentences describing
+non-empty notification text and the boundary between exposed tools and direct-only
+Pi tools. The namespace guard in `src/tools/code-mode/tools-namespace.ts` enforces
+the latter. Notification validation lives inside the external
+`codex-code-mode-host` binary, not readable package or installed Pi source: the
+session evidence recorded in `docs/audits/2026-10-08-session-audit.md` (lines 152 and 254)
+is corroborated by a production-host regression that rejects empty and
+whitespace-only notifications. The same probe confirms that `text` and `notify`
+emit output and return `undefined`; their existing help sentence is unchanged.
+No runtime enforcement or result formatting changes are included.
