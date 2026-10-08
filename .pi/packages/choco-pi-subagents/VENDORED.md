@@ -1180,3 +1180,15 @@ first request. Tool narrowing publishes the allowed set under
 `choco-pi.tool-scope.v1`; a `tool_call` guard and the Codex exec bridge both
 consult it, so a denied or read-only child cannot reach a deferred or MCP tool
 directly, through `tool_search`, `ctx.executeTool()`, or the bridge.
+
+## 2026-10-08 choco-pi patch: tool schema contracts
+
+`thinking` on the root and nested Agent tools is a literal union of `THINKING_LEVELS`
+(exported from `workflow.ts` via `thinkingLevelSchema()`), so invalid levels fail
+validation instead of being dropped. Caller parameters an agent file can pin
+(`model`, `thinking`, `max_turns`, `run_in_background`, `isolated`,
+`inherit_context`, `isolation`) say they apply unless the definition pins them.
+Root and nested `steer_subagent` accept queued agents and hold the message until the
+session starts. Failure results from the root `workflow_*`, `get_subagent_result`,
+`steer_subagent`, `stop_subagent`, and `set_subagent_*` tools set `isError`;
+`workflow_update` with neither `steps` nor `finish` is an error.

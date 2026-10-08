@@ -6,7 +6,21 @@ import {
   providerUnavailableMessage,
 } from "./provider-health.ts";
 
-const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+/**
+ * Advertised thinking levels, ordered to mirror pi-ai's EXTENDED_THINKING_LEVELS
+ * (`off` + every `ThinkingLevel`). Single source for the workflow step and
+ * Agent tool schemas, the generated-agent template, and the `/agents` wizard so
+ * these lists can't drift behind pi again (#147). Availability of any level
+ * still depends on the host pi version and the selected model.
+ */
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+/** Literal union of {@link THINKING_LEVELS}, so validation rejects any other level. */
+export function thinkingLevelSchema(description?: string) {
+  const levels = THINKING_LEVELS.map((level) => Type.Literal(level));
+  return description === undefined ? Type.Union(levels) : Type.Union(levels, { description });
+}
+
 const STEP_ID_PATTERN = "^[A-Za-z][A-Za-z0-9_-]{0,63}$";
 const TEMPLATE_REFERENCE =
   /\{\{\s*steps\.([A-Za-z][A-Za-z0-9_-]{0,63})\.([A-Za-z][A-Za-z0-9_-]*)\s*\}\}/g;
@@ -31,7 +45,7 @@ export const WorkflowStepSchema = Type.Object(
       }),
     ),
     model: Type.Optional(Type.String({ description: "Optional model override." })),
-    thinking: Type.Optional(Type.Union(THINKING_LEVELS.map((level) => Type.Literal(level)))),
+    thinking: Type.Optional(thinkingLevelSchema()),
     fast_mode: Type.Optional(Type.Boolean({ description: "Request fast mode for this step." })),
     daybreak: Type.Optional(Type.Boolean({ description: "Request Daybreak for this step." })),
     max_turns: Type.Optional(

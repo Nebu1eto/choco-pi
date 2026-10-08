@@ -28,7 +28,8 @@ import type { AgentConfig, IsolationMode, JoinMode, ThinkingLevel } from "./type
 const isolationSchemaFields = {
   isolation: Type.Optional(
     Type.Union([Type.Literal("off"), Type.Literal("worktree")], {
-      description: '"off" uses this checkout; "worktree" creates an isolated temporary copy.',
+      description:
+        '"off" uses this checkout; "worktree" creates an isolated temporary copy. Applies unless the agent definition pins it.',
     }),
   ),
 };

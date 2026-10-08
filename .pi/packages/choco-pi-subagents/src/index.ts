@@ -195,6 +195,8 @@ import {
 } from "./usage-limit-seam.ts";
 import { isWorktreeIsolationEnabled, setWorktreeIsolationEnabled } from "./worktree.ts";
 import {
+  THINKING_LEVELS,
+  thinkingLevelSchema,
   WorkflowDefinitionSchema,
   WorkflowManager,
   WorkflowStepSchema,
@@ -211,6 +213,11 @@ interface FleetPanelUIContext {
 /** Tool execute return value for a text response. */
 function textResult(msg: string, details?: AgentDetails) {
   return { content: [{ type: "text" as const, text: msg }], details };
+}
+
+/** A failed tool call; `isError` lets the exec bridge raise it instead of returning text. */
+function errorResult(msg: string) {
+  return { ...textResult(msg), isError: true };
 }
 
 export function renderRunningAgentStatus(
@@ -282,15 +289,6 @@ function createActivityTracker(maxTurns?: number, onStreamUpdate?: () => void) {
 
   return { state, callbacks };
 }
-
-/**
- * Advertised thinking levels, ordered to mirror pi-ai's EXTENDED_THINKING_LEVELS
- * (`off` + every `ThinkingLevel`). Single source for the Agent tool description,
- * the generated-agent template, and the `/agents` wizard so these lists can't
- * drift behind pi again (#147). Availability of any level still depends on the
- * host pi version and the selected model — pi clamps unsupported levels down.
- */
-const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 /** Escape XML special characters to prevent injection in structured notifications. */
 function escapeXml(s: string): string {
@@ -1829,18 +1827,16 @@ export default function (pi: ExtensionAPI) {
       model: Type.Optional(
         Type.String({
           description:
-            'Model override as "provider/modelId" or a fuzzy name. With resume: continue a usage-limited child on another model.',
+            'Model as "provider/modelId" or a fuzzy name; applies unless the agent definition pins it. With resume: continue a usage-limited child on another model.',
         }),
       ),
       thinking: Type.Optional(
-        Type.String({
-          description: `Thinking level: ${THINKING_LEVELS.join(", ")}. Overrides agent default.`,
-        }),
+        thinkingLevelSchema("Thinking level; applies unless the agent definition pins it."),
       ),
       max_turns: Type.Optional(
         Type.Number({
           description:
-            "Maximum number of agentic turns before stopping. Omit for unlimited (default).",
+            "Maximum agentic turns; applies unless the agent definition pins it. Omit for unlimited (default).",
           minimum: 1,
         }),
       ),
@@ -1871,7 +1867,7 @@ export default function (pi: ExtensionAPI) {
       run_in_background: Type.Optional(
         Type.Boolean({
           description:
-            "Default true: return an ID and notify on completion. false blocks until the agent finishes; use it only when the user asks.",
+            "Default true: return an ID and notify on completion. false blocks until the agent finishes; use it only when the user asks. Applies unless the agent definition pins it.",
         }),
       ),
       resume: Type.Optional(
@@ -1882,13 +1878,14 @@ export default function (pi: ExtensionAPI) {
       ),
       isolated: Type.Optional(
         Type.Boolean({
-          description: "If true, agent gets no extension/MCP tools — only built-in tools.",
+          description:
+            "If true, agent gets no extension/MCP tools — only built-in tools. Applies unless the agent definition pins it.",
         }),
       ),
       inherit_context: Type.Optional(
         Type.Boolean({
           description:
-            "If true, fork parent conversation into the agent. Default: false (fresh context).",
+            "If true, fork parent conversation into the agent. Default: false (fresh context). Applies unless the agent definition pins it.",
         }),
       ),
       fast_mode: Type.Optional(
@@ -2810,7 +2807,7 @@ export default function (pi: ExtensionAPI) {
               "You will be notified when the workflow completes. Use get_workflow_result for aggregate status and per-step outputs.",
           );
         } catch (error) {
-          return textResult(error instanceof Error ? error.message : String(error));
+          return errorResult(error instanceof Error ? error.message : String(error));
         }
       },
     }),
@@ -2820,7 +2817,8 @@ export default function (pi: ExtensionAPI) {
     defineTool({
       name: "workflow_update",
       label: "Update Workflow",
-      description: "Add, replace, or finish pending workflow steps.",
+      description:
+        "Add, replace, or finish pending workflow steps; requires steps or finish: true.",
       promptSnippet: "Adjust a running subagent workflow",
       parameters: Type.Object(
         {
@@ -2833,17 +2831,17 @@ export default function (pi: ExtensionAPI) {
       execute: async (_toolCallId, params) => {
         reloadCustomAgents();
         if (!params.steps && params.finish !== true) {
-          return textResult("workflow_update requires `steps` or `finish: true`.");
+          return errorResult("workflow_update requires `steps` or `finish: true`.");
         }
         try {
           let result = params.steps
             ? workflowManager.update(params.workflow_id, params.steps, resolveWorkflowType)
             : workflowManager.get(params.workflow_id);
-          if (!result) return textResult(`Workflow not found: "${params.workflow_id}".`);
+          if (!result) return errorResult(`Workflow not found: "${params.workflow_id}".`);
           if (params.finish === true) result = workflowManager.finish(params.workflow_id);
           return textResult(JSON.stringify(result, null, 2));
         } catch (error) {
-          return textResult(error instanceof Error ? error.message : String(error));
+          return errorResult(error instanceof Error ? error.message : String(error));
         }
       },
     }),
@@ -2864,7 +2862,7 @@ export default function (pi: ExtensionAPI) {
       ),
       execute: async (_toolCallId, params, signal) => {
         let result = workflowManager.get(params.workflow_id);
-        if (!result) return textResult(`Workflow not found: "${params.workflow_id}".`);
+        if (!result) return errorResult(`Workflow not found: "${params.workflow_id}".`);
         if (params.wait && (result.status === "running" || result.status === "waiting")) {
           const completion = workflowManager.wait(params.workflow_id);
           if (completion) {
@@ -2907,7 +2905,7 @@ export default function (pi: ExtensionAPI) {
         try {
           return textResult(JSON.stringify(workflowManager.cancel(params.workflow_id), null, 2));
         } catch (error) {
-          return textResult(error instanceof Error ? error.message : String(error));
+          return errorResult(error instanceof Error ? error.message : String(error));
         }
       },
     }),
@@ -2926,10 +2924,10 @@ export default function (pi: ExtensionAPI) {
       ),
       execute: async (_toolCallId, params) => {
         const record = resolveAgentRef(params.agent_id);
-        if (!record) return textResult(`Agent not found: "${params.agent_id}".`);
+        if (!record) return errorResult(`Agent not found: "${params.agent_id}".`);
         const updated = manager.setFastMode(record.id, params.enabled);
         if (!updated) {
-          return textResult(`Agent "${params.agent_id}" is no longer retained.`);
+          return errorResult(`Agent "${params.agent_id}" is no longer retained.`);
         }
         return textResult(
           `Fast mode ${params.enabled ? "enabled" : "disabled"} for ${updated.id}. ` +
@@ -2953,9 +2951,9 @@ export default function (pi: ExtensionAPI) {
       ),
       execute: async (_toolCallId, params) => {
         const record = resolveAgentRef(params.agent_id);
-        if (!record) return textResult(`Agent not found: "${params.agent_id}".`);
+        if (!record) return errorResult(`Agent not found: "${params.agent_id}".`);
         const updated = manager.setDaybreak(record.id, params.enabled);
-        if (!updated) return textResult(`Agent "${params.agent_id}" is no longer retained.`);
+        if (!updated) return errorResult(`Agent "${params.agent_id}" is no longer retained.`);
         return textResult(
           `Daybreak ${params.enabled ? "enabled" : "disabled"} for ${updated.id}. ` +
             `Generation: ${updated.resultGeneration ?? 1}. Revision: ${updated.daybreakRevision ?? 0}. ` +
@@ -2992,7 +2990,7 @@ export default function (pi: ExtensionAPI) {
       execute: async (_toolCallId, params, signal, _onUpdate, _ctx) => {
         const record = resolveAgentRef(params.agent_id);
         if (!record || record.parentAgentId) {
-          return textResult(`Agent not found: "${params.agent_id}". It may have been cleaned up.`);
+          return errorResult(`Agent not found: "${params.agent_id}". It may have been cleaned up.`);
         }
 
         let claim = claimSubagentResultRead(record, signal);
@@ -3001,7 +2999,7 @@ export default function (pi: ExtensionAPI) {
           claim.kind === "terminal-refused" ||
           claim.kind === "terminal-pending"
         ) {
-          return textResult(formatResultReadRefusal(record, claim));
+          return errorResult(formatResultReadRefusal(record, claim));
         }
         let waitOutcome: "settled" | "timed-out" = "settled";
         if (claim.kind === "active" && params.wait) {
@@ -3009,7 +3007,7 @@ export default function (pi: ExtensionAPI) {
           try {
             waitOutcome = await waitForSubagentResult(record, signal);
             if (record.resultGeneration !== generation) {
-              return textResult(formatResultReadGenerationChanged(record, generation));
+              return errorResult(formatResultReadGenerationChanged(record, generation));
             }
             if (
               waitOutcome !== "timed-out" ||
@@ -3023,7 +3021,7 @@ export default function (pi: ExtensionAPI) {
                 claim.kind === "terminal-refused" ||
                 claim.kind === "terminal-pending"
               ) {
-                return textResult(formatResultReadRefusal(record, claim));
+                return errorResult(formatResultReadRefusal(record, claim));
               }
             }
           } catch (error) {
@@ -3102,7 +3100,7 @@ export default function (pi: ExtensionAPI) {
       promptSnippet: "Redirect a running or queued agent.",
       parameters: Type.Object({
         agent_id: Type.String({
-          description: "Running agent ID, handle, or assigned name.",
+          description: "Running or queued agent ID, handle, or assigned name.",
         }),
         message: Type.String({
           description: "Guidance delivered as an agent MESSAGE.",
@@ -3111,11 +3109,11 @@ export default function (pi: ExtensionAPI) {
       execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
         const record = resolveAgentRef(params.agent_id);
         if (!record || record.parentAgentId) {
-          return textResult(`Agent not found: "${params.agent_id}". It may have been cleaned up.`);
+          return errorResult(`Agent not found: "${params.agent_id}". It may have been cleaned up.`);
         }
-        if (record.status !== "running") {
-          return textResult(
-            `Agent "${params.agent_id}" is not running (status: ${record.status}). Cannot steer a non-running agent.`,
+        if (record.status !== "running" && record.status !== "queued") {
+          return errorResult(
+            `Agent "${params.agent_id}" is not running or queued (status: ${record.status}). Cannot steer it.`,
           );
         }
         const envelope = formatSteerMessage(ROOT_AGENT_PATH, params.message);
@@ -3123,7 +3121,9 @@ export default function (pi: ExtensionAPI) {
         // converges on this same manager path, including pre-session queueing.
         const queuedBeforeSession = !record.session;
         if (!manager.steer(record.id, envelope)) {
-          return textResult(`Failed to steer agent ${record.id}. It is no longer running.`);
+          return errorResult(
+            `Failed to steer agent ${record.id}. It is no longer running or queued, or is being cancelled.`,
+          );
         }
         pi.events.emit("subagents:steered", { id: record.id, message: envelope });
         if (queuedBeforeSession) {
@@ -3165,10 +3165,10 @@ export default function (pi: ExtensionAPI) {
       execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
         const outcome = resolveStopOutcome(resolveAgentRef(params.agent_id));
         if (outcome.kind === "not_found") {
-          return textResult(`Agent not found: "${params.agent_id}". It may have been cleaned up.`);
+          return errorResult(`Agent not found: "${params.agent_id}". It may have been cleaned up.`);
         }
         if (outcome.kind === "nested") {
-          return textResult(
+          return errorResult(
             `Agent "${params.agent_id}" is nested under another agent and cannot be stopped from the top-level orchestrator.`,
           );
         }
@@ -3190,7 +3190,7 @@ export default function (pi: ExtensionAPI) {
         // A stop acknowledgement is not a terminal-result read. Running cleanup
         // still owns publication and its eventual completion notification.
         if (!manager.abort(record.id)) {
-          return textResult(
+          return errorResult(
             `Failed to stop agent ${record.id}. It is no longer running or queued.`,
           );
         }
