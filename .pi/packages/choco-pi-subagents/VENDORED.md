@@ -1276,3 +1276,20 @@ hidden messages, fallback text, expansion, resolver-only historical tools,
 unknown historical tools, and registered/built-in renderer overrides. Restoring
 the original viewer makes the displayed-message, fallback, and resolver
 regressions fail.
+
+## 2026-10-08 choco-pi patch: focus-local thinking visibility
+
+Focused viewers seed thinking visibility from the host's effective
+`hideThinkingBlock` setting when opened. The configured `app.thinking.toggle`
+action is intercepted before the main editor and updates only the focused
+viewer's assistant heads and render caches; host settings and hidden main
+components are never changed. Reopening focus seeds from the host again rather
+than retaining a prior local toggle. New and rebuilt assistant heads inherit the
+viewer-owned flag, including streaming tails.
+
+`tests/focus-mode.test.ts` drives the production controller and viewer with a
+real SDK child session and a remapped toggle key. It covers initially hidden and
+visible host preferences, repeated local toggles, unchanged main components and
+settings, exit, and reseeding on reopen. Temporarily restoring unconditional
+visibility fails the hidden-host case; removing shortcut interception fails both
+cases.
