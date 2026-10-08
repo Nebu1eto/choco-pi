@@ -245,14 +245,11 @@ export default function shellsExtension(pi: ExtensionAPI): void {
   let shuttingDown = false;
 
   const flushCompletions = (completed: ShellResult[]): void => {
-    if (shuttingDown || completed.length === 0) return;
-    const shells = completed.flatMap((shell) => {
-      try {
-        return [buildCompletionDetails(manager, shell)];
-      } catch {
-        return [];
-      }
-    });
+    if (shuttingDown) {
+      throw new Error("This extension ctx is stale after session replacement or reload.");
+    }
+    if (completed.length === 0) return;
+    const shells = completed.map((shell) => buildCompletionDetails(manager, shell));
     if (shells.length === 0) return;
     boundGroupedTails(shells);
     const details: ShellCompletionDetails = { shells };
@@ -273,6 +270,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
       // SAFETY: catch produces unknown; the helper narrows via instanceof before reading the message.
       if (!isStaleContextError(error as RuntimeValue)) throw error;
       shuttingDown = true;
+      throw error;
     }
   };
 
@@ -336,6 +334,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
   if (!isChildActivation) {
     pi.on("tool_execution_start", async (_event, ctx) => {
       currentSessionId = ctx.sessionManager.getSessionId();
+      notificationGate.activateOwner(currentSessionId);
       if (!ctx.hasUI) return;
       bindRootUI(ctx.ui, currentSessionId);
     });
@@ -352,6 +351,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
       execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
         try {
           currentSessionId = ctx.sessionManager.getSessionId();
+          notificationGate.activateOwner(currentSessionId);
           return jsonResult(
             manager.start({
               ownerId: currentSessionId,

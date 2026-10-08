@@ -585,7 +585,7 @@ test("cleanupOwner stops only that owner's shells and dispose stops the rest onc
   }
 });
 
-test("completed record retention evicts oldest terminal records but never running records", async () => {
+test("completed record retention evicts acknowledged terminal records but never running records", async () => {
   const manager = new ShellManager({
     shell: process.execPath,
     shellArgs: ["-e"],
@@ -605,10 +605,11 @@ test("completed record retention evicts oldest terminal records but never runnin
         command: `process.stdout.write(${JSON.stringify(output)})`,
       });
       completedIds.push(started.shellId);
-      await waitFor(
+      const completed = await waitFor(
         () => readShell(manager, started.shellId),
         (result) => isTerminal(result.shell),
       );
+      manager.acknowledgeCompletion(completed.shell);
     }
 
     assert.throws(() => readShell(manager, completedIds[0] ?? ""), /Shell not found/);
