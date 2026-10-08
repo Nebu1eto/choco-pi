@@ -69,3 +69,27 @@ export function cleanupChildSessionOwner(session: ChildSessionOwner): void {
 
   for (const cleanup of cleanups) startCleanup(cleanup, ownerId);
 }
+
+interface ShutdownCapableSession {
+  extensionRunner?: {
+    hasHandlers(event: "session_shutdown"): boolean;
+    emit(event: { type: "session_shutdown"; reason: "quit" }): Promise<void | object>;
+  };
+}
+
+/**
+ * Give a child session's extensions their `session_shutdown` turn before `dispose()`,
+ * mirroring Pi's `AgentSessionRuntime.dispose()`. Returns `undefined` synchronously when
+ * no handler is registered so callers can dispose immediately; otherwise returns the
+ * settled emit, which never rejects so disposal is never blocked.
+ */
+export function emitChildSessionShutdown(
+  session: ShutdownCapableSession,
+): Promise<void> | undefined {
+  const runner = session.extensionRunner;
+  if (!runner?.hasHandlers("session_shutdown")) return undefined;
+  return runner.emit({ type: "session_shutdown", reason: "quit" }).then(
+    () => undefined,
+    () => undefined,
+  );
+}
