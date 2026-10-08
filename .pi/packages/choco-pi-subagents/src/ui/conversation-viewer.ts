@@ -148,6 +148,8 @@ export type ConversationViewerOptions = {
   replyLabel?: "steer" | "reply";
   /** Initial tool/bash expansion state, retained by fullscreen focus per agent. */
   toolOutputExpanded?: boolean;
+  /** Initial thinking visibility, owned by this viewer rather than host settings. */
+  hideThinkingBlock?: boolean;
   /** Host-owned transformers (notably Pi's built-in Mermaid renderer). */
   hostMarkdownTransformers?: readonly MarkdownTransformer[];
 };
@@ -183,6 +185,7 @@ export class ConversationViewer implements Component {
     ToolExecutionComponent | BashExecutionComponent | CustomMessageComponent
   >();
   private toolOutputExpanded: boolean;
+  private hideThinkingBlock: boolean;
   private hostMarkdownTransformers: readonly MarkdownTransformer[];
   /** Tool calls whose result (real or synthesized error) has been applied. */
   private settledTools = new Set<string>();
@@ -255,6 +258,7 @@ export class ConversationViewer implements Component {
     this.allowReplyWhenFinished = options.allowReplyWhenFinished === true;
     this.replyLabel = options.replyLabel ?? "steer";
     this.toolOutputExpanded = options.toolOutputExpanded === true;
+    this.hideThinkingBlock = options.hideThinkingBlock === true;
     this.hostMarkdownTransformers = options.hostMarkdownTransformers ?? [];
 
     const streamingMessage = session.agent?.state.streamingMessage;
@@ -355,14 +359,30 @@ export class ConversationViewer implements Component {
   setToolOutputExpanded(expanded: boolean): void {
     this.toolOutputExpanded = expanded;
     for (const component of this.expandableComponents) component.setExpanded(expanded);
-    this.messageLineCache.clear();
-    this.contentCache = undefined;
-    this.contentDirty = true;
-    this.tui.requestRender();
+    this.refreshMessageRendering();
   }
 
   getToolOutputExpanded(): boolean {
     return this.toolOutputExpanded;
+  }
+
+  /** Toggle only this viewer's assistant heads, including the streaming tail. */
+  toggleThinkingVisibility(): void {
+    this.hideThinkingBlock = !this.hideThinkingBlock;
+    for (const components of this.messageComponents.values()) {
+      const head = components[0];
+      if (head instanceof AssistantMessageComponent) {
+        head.setHideThinkingBlock(this.hideThinkingBlock);
+      }
+    }
+    this.refreshMessageRendering();
+  }
+
+  private refreshMessageRendering(): void {
+    this.messageLineCache.clear();
+    this.contentCache = undefined;
+    this.contentDirty = true;
+    this.tui.requestRender();
   }
 
   /** Focus-mode replacement for Pi's root pending-message sibling. */
@@ -806,7 +826,7 @@ export class ConversationViewer implements Component {
           components = [
             new AssistantMessageComponent(
               msg,
-              false,
+              this.hideThinkingBlock,
               this.markdownThemeFor(wantFastTheme),
               undefined,
               1,

@@ -72,6 +72,7 @@ export type FocusState = { kind: "orchestrator" } | { kind: "agent"; agentId: st
 
 export type FocusControllerOptions = {
   getActivity?: (id: string) => AgentActivity | undefined;
+  getHideThinkingBlock?: () => boolean;
   onSteered?: (id: string, message: string) => void;
   /**
    * Whether a visible switcher (FleetView) can currently move focus. Focus is
@@ -365,6 +366,7 @@ export class FocusedAgentController {
       undefined,
       {
         profile: "focus",
+        hideThinkingBlock: this.options.getHideThinkingBlock?.() ?? false,
         toolOutputExpanded: this.toolOutputExpandedByAgent.get(record.id) ?? false,
         hostMarkdownTransformers,
       },
@@ -492,6 +494,10 @@ export class FocusedAgentController {
         // configured action first so fullscreen focus toggles only its viewer.
         if (keybindings.matches(data, "app.tools.expand")) {
           this.active.viewer.toggleToolOutputExpanded();
+          return undefined;
+        }
+        if (keybindings.matches(data, "app.thinking.toggle")) {
+          this.active.viewer.toggleThinkingVisibility();
           return undefined;
         }
         // `/exit` addressed to a focused agent means "end this agent", not "quit

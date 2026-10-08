@@ -16,6 +16,8 @@ import {
   setKeybindings,
   stripTerminalSequences,
   TUI_KEYBINDINGS,
+  ProcessTerminal,
+  TuiMainScreen,
   type TUI,
   type TuiMouseEvent,
 } from "@earendil-works/pi-tui";
@@ -26,6 +28,7 @@ import {
   type FocusedAgentRuntimeSource,
 } from "../src/ui/focused-runtime.ts";
 import { installMethodPatch } from "../src/ui/method-patch-registry.ts";
+import { createSdkFixture } from "./sdk-fixture.ts";
 
 initTheme("dark", false);
 
@@ -161,6 +164,107 @@ function makeToolMessage(id: string, output: string): [AssistantMessage, ToolRes
       timestamp: Date.now(),
     },
   ];
+}
+
+for (const initiallyHidden of [true, false]) {
+  test(`focused thinking is local and seeded from the host (${initiallyHidden})`, async (t) => {
+    const originalKeybindings = getKeybindings();
+    const toggleKey = "\x05";
+    setKeybindings(
+      new KeybindingsManager(
+        {
+          ...TUI_KEYBINDINGS,
+          "app.thinking.toggle": { defaultKeys: "ctrl+t", description: "Toggle thinking" },
+        },
+        { "app.thinking.toggle": "ctrl+e" },
+      ),
+    );
+    t.after(() => setKeybindings(originalKeybindings));
+    const { session } = await createSdkFixture();
+    t.after(() => session.dispose());
+    const message: AssistantMessage = {
+      ...makeAssistantMessage("Public child answer"),
+      content: [
+        { type: "thinking", thinking: "Private child reasoning" },
+        { type: "text", text: "Public child answer" },
+      ],
+    };
+    session.sessionManager.appendMessage(message);
+    session.refreshContext();
+    const record: AgentRecord = {
+      id: "thinking-child",
+      type: "implementer",
+      description: "Thinking visibility regression",
+      status: "completed",
+      toolUses: 0,
+      startedAt: Date.now(),
+      lifetimeUsage: { input: 0, output: 0, cacheWrite: 0 },
+      compactionCount: 0,
+      session,
+    };
+    let hostHidden = initiallyHidden;
+    let mainToggleCalls = 0;
+    const main = new AssistantMessageComponent(message, hostHidden);
+    const document = new Container();
+    document.addChild(main);
+    const originalMainLines = document.render(100);
+    const editor = {
+      text: "",
+      getText() {
+        return this.text;
+      },
+      setText(text: string) {
+        this.text = text;
+      },
+      render() {
+        return [];
+      },
+      invalidate() {},
+      handleInput(data: string) {
+        if (getKeybindings().matches(data, "app.thinking.toggle")) {
+          mainToggleCalls++;
+          hostHidden = !hostHidden;
+          main.setHideThinkingBlock(hostHidden);
+        }
+      },
+    };
+    const tui = new TuiMainScreen(new ProcessTerminal());
+    tui.requestRender = () => {};
+    tui.addChild(document);
+    tui.addChild(editor);
+    tui.setFocus(editor);
+    const controller = new FocusedAgentController(
+      {
+        steer: () => true,
+        abort: () => true,
+        resume: async () => undefined,
+        setFastMode: () => undefined,
+      },
+      { getHideThinkingBlock: () => hostHidden },
+    );
+    t.after(() => controller.dispose());
+    const render = () => document.render(100).map(stripTerminalSequences).join("\n");
+    const assertVisibility = (hidden: boolean) => {
+      assert.equal(render().includes("Private child reasoning"), !hidden);
+      assert.match(render(), /Public child answer/);
+      assert.equal(hostHidden, initiallyHidden);
+      assert.equal(mainToggleCalls, 0);
+      assert.deepEqual(main.render(100), originalMainLines);
+    };
+    assert.equal(controller.focus(record, tui, theme), true);
+    assertVisibility(initiallyHidden);
+    editor.handleInput(toggleKey);
+    assertVisibility(!initiallyHidden);
+    editor.handleInput(toggleKey);
+    assertVisibility(initiallyHidden);
+    editor.handleInput(toggleKey);
+    controller.unfocus();
+    assert.equal(hostHidden, initiallyHidden);
+    assert.equal(mainToggleCalls, 0);
+    assert.deepEqual(document.render(100), originalMainLines);
+    assert.equal(controller.focus(record, tui, theme), true);
+    assertVisibility(initiallyHidden);
+  });
 }
 
 test("focus survives Esc and restores exact predecessors on exit", async (t) => {
