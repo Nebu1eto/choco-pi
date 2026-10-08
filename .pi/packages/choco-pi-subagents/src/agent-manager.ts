@@ -487,7 +487,19 @@ interface SpawnOptions {
   rootSessionId?: string;
 }
 
+function terminalStatusFor(run: {
+  aborted?: boolean;
+  failure?: string;
+  steered?: boolean;
+}): AgentRecord["status"] {
+  if (run.aborted) return "aborted";
+  if (run.failure) return "error";
+  if (run.steered) return "steered";
+  return "completed";
+}
+
 interface ResumeOptions {
+  maxTurns?: number;
   /** Rebind the accepted record's alias for this resumed run. */
   name?: string;
   /**
@@ -1815,16 +1827,7 @@ export class AgentManager {
             return responseText;
           }
           let finalResult = responseText;
-          let terminalStatus: AgentRecord["status"];
-          if (aborted) {
-            terminalStatus = "aborted";
-          } else if (failure) {
-            terminalStatus = "error";
-          } else if (steered) {
-            terminalStatus = "steered";
-          } else {
-            terminalStatus = "completed";
-          }
+          const terminalStatus = terminalStatusFor({ aborted, failure, steered });
           detach();
 
           // Final flush of streaming output file
@@ -2257,7 +2260,8 @@ export class AgentManager {
 
     const resumePromise = (async (): Promise<AgentRecord> => {
       try {
-        const { text, failure } = await this.runner.resumeAgent(session, prompt, {
+        const { text, failure, aborted, steered } = await this.runner.resumeAgent(session, prompt, {
+          maxTurns: options?.maxTurns,
           onToolActivity: (activity) => {
             if (isBudgetedToolActivity(activity)) {
               runBudget.controller?.noteToolActivity(activity.type);
@@ -2309,8 +2313,9 @@ export class AgentManager {
         // Same contract as the spawn path (#144): a failed final turn is an
         // error, not a completion — but the resumed text stays available.
         const cancellation = cancellationForGeneration(record, runGeneration);
-        record.status =
-          runBudget.forcedStatus ?? (cancellation ? "stopped" : failure ? "error" : "completed");
+        if (runBudget.forcedStatus !== undefined) record.status = runBudget.forcedStatus;
+        else if (cancellation) record.status = "stopped";
+        else record.status = terminalStatusFor({ aborted, failure, steered });
         if (cancellation) {
           record.error = cancellation.reason;
         }
@@ -2469,6 +2474,7 @@ export class AgentManager {
 
     const promise = this.runner
       .resumeAgent(record.session, prompt, {
+        maxTurns: options.maxTurns,
         onToolActivity: (activity) => {
           if (isBudgetedToolActivity(activity)) {
             runBudget.controller?.noteToolActivity(activity.type);
@@ -2488,7 +2494,7 @@ export class AgentManager {
         },
         signal: abortController.signal,
       })
-      .then(async ({ text, failure }) => {
+      .then(async ({ text, failure, aborted, steered }) => {
         try {
           runBudget.controller?.dispose();
           // A post-reset continuation that hits the limit again is exhausted;
@@ -2532,7 +2538,7 @@ export class AgentManager {
             if (forcedStatus === undefined) {
               // Same contract as the spawn path (#144): a failed final turn is an
               // error, not a completion — but the resumed text stays available.
-              record.status = failure ? "error" : "completed";
+              record.status = terminalStatusFor({ aborted, failure, steered });
               if (failure) {
                 record.error =
                   usageDecision === undefined

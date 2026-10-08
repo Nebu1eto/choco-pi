@@ -1216,3 +1216,15 @@ The Daybreak bridge, manager record types, and focused runtime metadata retain
 Explicit boolean overrides remain unchanged. The provider owns entitlement and
 model-support checks; inherited Auto must not become best-effort On.
 Focused Daybreak tests cover snapshot preservation and explicit overrides.
+
+## 2026-10-08 choco-pi patch: resumed turn limits
+
+Root foreground/background and nested Agent resumes now forward the caller's
+`max_turns` through `ResumeOptions` to the runner. Resumes reuse the fresh-run
+turn limiter: steer at the soft cap, abort after the configured grace turns,
+and publish the same `steered`/`aborted` statuses. Spawn and both resume
+settlement paths share one module-private terminal-status helper; forced-status
+and cancellation precedence remain unchanged. Omitted or zero resume limits
+remain unlimited; neither agent-file nor global turn defaults are newly applied
+to resumes. `tests/resume-turn-limit.test.ts` exercises the production limiter,
+resume runner, manager settlement paths, and nested tool forwarding.

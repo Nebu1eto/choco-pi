@@ -1637,6 +1637,7 @@ export default function (pi: ExtensionAPI) {
     const record = await manager.resume(id, prompt, undefined, {
       isBackground: true,
       name: opts.name,
+      maxTurns: opts.maxTurns,
       model: opts.model,
       fastModeRequested: opts.fastModeRequested,
       daybreakRequested: opts.daybreakRequested,
@@ -2279,7 +2280,7 @@ export default function (pi: ExtensionAPI) {
           try {
             record = await startBackgroundResume(ctx, existing, params.prompt, {
               outputTranscript,
-              maxTurns: effectiveMaxTurns,
+              maxTurns: params.max_turns,
               toolCallId,
               name: params.name,
               model: resumeModel,
@@ -2326,6 +2327,7 @@ export default function (pi: ExtensionAPI) {
         let record: AgentRecord | undefined;
         try {
           record = await manager.resume(params.resume, params.prompt, signal, {
+            maxTurns: params.max_turns,
             name: params.name,
             model: resumeModel,
             fastModeRequested: params.fast_mode,
