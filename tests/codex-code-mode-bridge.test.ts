@@ -126,3 +126,33 @@ test("bridged tools stay discoverable in ALL_TOOLS and callable through the guar
   assert.match(preamble, /\["read_symbol"\]/, "bridged name survives the ALL_TOOLS filter");
   assert.match(preamble, /Available tools: /, "namespace guard lists it as callable");
 });
+
+test("bridgedToolUsage renders enums, array elements, and union discriminators", () => {
+  const definition: ToolDefinition = {
+    name: "act_ui",
+    label: "act_ui",
+    description: "act",
+    parameters: Type.Object({
+      mode: Type.Union([Type.Literal("automatic"), Type.Literal("full")]),
+      caps: Type.Optional(Type.Array(Type.Union([Type.Literal("a"), Type.Literal("b")]))),
+      actions: Type.Array(
+        Type.Union([
+          Type.Object({ action: Type.Literal("press"), ref: Type.String() }),
+          Type.Object({ action: Type.Literal("click"), ref: Type.String() }),
+          Type.Object({ action: Type.Literal("click"), x: Type.Number(), y: Type.Number() }),
+        ]),
+      ),
+      expect: Type.Optional(
+        Type.Object({ ref: Type.Optional(Type.String()), text: Type.String() }),
+      ),
+      free: Type.Optional(Type.String()),
+    }),
+    async execute() {
+      return { content: [], details: {} };
+    },
+  };
+  assert.equal(
+    bridgedToolUsage(definition),
+    'await tools.act_ui({mode:"automatic"|"full", caps?:["a"|"b"], actions:[{action:"press"|"click", …}], expect?:{ref?, text}, free?})',
+  );
+});

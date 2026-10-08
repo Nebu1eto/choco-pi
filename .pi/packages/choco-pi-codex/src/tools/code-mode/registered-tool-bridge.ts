@@ -24,7 +24,8 @@ import {
   type ExtensionContext,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { Type, type Static } from "typebox";
+import { BoundaryValueSchema, type BoundaryValue } from "../../adapter/runtime-values.ts";
 import { Value } from "typebox/value";
 import { toNestedTool } from "../../adapter/code-mode/nested-tool-adapter.ts";
 import { withLiveCtx } from "../../extension/live-context.ts";
@@ -167,9 +168,102 @@ export function resetRegisteredToolCapture(ctx?: ExtensionContext): void {
 }
 
 const ToolParametersSchema = Type.Object({
-  properties: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  properties: Type.Optional(Type.Record(Type.String(), BoundaryValueSchema)),
   required: Type.Optional(Type.Array(Type.String())),
 });
+
+/** The JSON Schema facets the usage line renders; everything else is opaque. */
+const UsageNodeSchema = Type.Object({
+  type: Type.Optional(Type.String()),
+  const: Type.Optional(BoundaryValueSchema),
+  enum: Type.Optional(Type.Array(BoundaryValueSchema)),
+  anyOf: Type.Optional(Type.Array(BoundaryValueSchema)),
+  items: Type.Optional(BoundaryValueSchema),
+  properties: Type.Optional(Type.Record(Type.String(), BoundaryValueSchema)),
+  required: Type.Optional(Type.Array(Type.String())),
+});
+const MAX_USAGE_LITERALS = 8;
+const MAX_USAGE_DEPTH = 2;
+
+/**
+ * Render the shape a caller must produce: literal unions inline, arrays with their element
+ * shape, and object unions by their discriminator key and values. Plain scalars stay as bare
+ * names so the common case keeps its one-line form.
+ */
+type UsageNode = Static<typeof UsageNodeSchema>;
+
+function parseUsageNode(candidate: BoundaryValue): UsageNode | undefined {
+  return Value.Check(UsageNodeSchema, candidate) ? candidate : undefined;
+}
+
+function renderUsageValue(node: UsageNode, depth: number): string | undefined {
+  const literals = (branches: readonly BoundaryValue[]): string[] | undefined => {
+    const values: string[] = [];
+    for (const candidate of branches) {
+      const branch = parseUsageNode(candidate);
+      if (!branch || branch.const === undefined) return undefined;
+      values.push(JSON.stringify(branch.const));
+    }
+    return values;
+  };
+  const joinLiterals = (values: string[]): string =>
+    values.length > MAX_USAGE_LITERALS
+      ? values.slice(0, MAX_USAGE_LITERALS).join("|") + "|…"
+      : values.join("|");
+  if (node.enum) return joinLiterals(node.enum.map((value) => JSON.stringify(value)));
+  if (node.const !== undefined) return JSON.stringify(node.const);
+  if (node.anyOf) {
+    const flat = literals(node.anyOf);
+    if (flat) return joinLiterals(flat);
+    if (depth >= MAX_USAGE_DEPTH) return undefined;
+    const discriminator = unionDiscriminator(node.anyOf);
+    return discriminator ? "{" + discriminator + ", …}" : undefined;
+  }
+  if (node.type === "array") {
+    const item = parseUsageNode(node.items);
+    const element = item && depth < MAX_USAGE_DEPTH ? renderUsageValue(item, depth + 1) : undefined;
+    return "[" + (element ?? "…") + "]";
+  }
+  if (node.type === "object" && node.properties && depth < MAX_USAGE_DEPTH) {
+    return "{" + usageParams(node.properties, node.required ?? [], depth + 1) + "}";
+  }
+  return undefined;
+}
+
+/** `key:"a"|"b"` when every branch pins the same key to a literal; otherwise undefined. */
+function unionDiscriminator(branches: readonly BoundaryValue[]): string | undefined {
+  const values = new Map<string, string[]>();
+  for (const candidate of branches) {
+    const branch = parseUsageNode(candidate);
+    if (!branch?.properties) return undefined;
+    for (const [key, property] of Object.entries(branch.properties)) {
+      const literal = parseUsageNode(property);
+      if (!literal || literal.const === undefined) continue;
+      const seen = values.get(key) ?? [];
+      seen.push(JSON.stringify(literal.const));
+      values.set(key, seen);
+    }
+  }
+  for (const [key, seen] of values)
+    if (seen.length === branches.length) return key + ":" + [...new Set(seen)].join("|");
+  return undefined;
+}
+
+function usageParams(
+  properties: Record<string, BoundaryValue>,
+  required: readonly string[],
+  depth: number,
+): string {
+  const requiredNames = new Set(required);
+  return Object.entries(properties)
+    .map(([name, property]) => {
+      const label = requiredNames.has(name) ? name : name + "?";
+      const node = parseUsageNode(property);
+      const rendered = node ? renderUsageValue(node, depth) : undefined;
+      return rendered ? label + ":" + rendered : label;
+    })
+    .join(", ");
+}
 
 /** All direct Pi tool names, including tools intentionally excluded from the bridge. */
 export function registeredToolNames(
@@ -182,15 +276,17 @@ export function registeredToolNames(
     .sort((left, right) => left.localeCompare(right));
 }
 
-/** One compact call line, e.g. await tools.symbol_search({query, limit?}). */
+/**
+ * One compact call line, e.g. `await tools.symbol_search({query, limit?})` or
+ * `await tools.harness_check({mode:"automatic"|"full", required_capabilities?:[…]})`.
+ */
 export function bridgedToolUsage(definition: ToolDefinition): string {
   const parameters = Value.Check(ToolParametersSchema, definition.parameters)
     ? definition.parameters
     : undefined;
   const names = parameters?.properties ? Object.keys(parameters.properties) : [];
   if (names.length === 0) return "await tools." + definition.name + "()";
-  const requiredNames = new Set(parameters?.required ?? []);
-  const params = names.map((name) => (requiredNames.has(name) ? name : name + "?")).join(", ");
+  const params = usageParams(parameters?.properties ?? {}, parameters?.required ?? [], 0);
   return "await tools." + definition.name + "({" + params + "})";
 }
 
