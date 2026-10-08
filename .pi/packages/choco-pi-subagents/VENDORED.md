@@ -1147,3 +1147,12 @@ in the frozen lock as transitive dependencies of `pi-coding-agent`.
   `tests/runner-status-wiring.test.ts` still hold. Built-in extensions now load as
   `builtin:<name>` paths and are enabled by default. An `extensions:` allowlist
   drops them unless it names them literally (for example `builtin:mcp`).
+
+## 2026-10-08 choco-pi patch: built-in tool search
+
+`agent-runner.ts` supplies Pi's `createToolSearchExtension` to child sessions
+and activates the built-in `tool_search` with the lean surface before the
+first request. Tool narrowing publishes the allowed set under
+`choco-pi.tool-scope.v1`; a `tool_call` guard and the Codex exec bridge both
+consult it, so a denied or read-only child cannot reach a deferred or MCP tool
+directly, through `tool_search`, `ctx.executeTool()`, or the bridge.

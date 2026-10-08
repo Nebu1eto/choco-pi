@@ -12,6 +12,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import {
   createEventBus,
+  createToolSearchExtension,
   DefaultResourceLoader,
   ExtensionRunner,
   ModelRegistry,
@@ -158,6 +159,21 @@ const legacySearchFactory: ExtensionFactory = (pi) => {
   }
 };
 
+/** A deferred tool, as built-in MCP registers them: only tool_search declares it. */
+export const DEFERRED_RESEARCH_TOOL = "mcp__research__digest";
+const deferredResearchFactory: ExtensionFactory = (pi) => {
+  pi.registerTool({
+    name: DEFERRED_RESEARCH_TOOL,
+    label: DEFERRED_RESEARCH_TOOL,
+    description: "Summarize a research web search digest",
+    parameters: Type.Object({ query: Type.Optional(Type.String()) }),
+    exposure: "deferred",
+    async execute() {
+      return { content: [{ type: "text", text: "digest" }], details: {} };
+    },
+  });
+};
+
 function codexSearchFactory(): ExtensionFactory {
   return (pi) => {
     const config = structuredClone(DEFAULT_CODEX_CONVERSION_CONFIG);
@@ -231,6 +247,8 @@ async function createHarness(
     { factory: codexSearchFactory(), name: "codex-search-registration" },
     { factory: browserSearchFactory(), name: "browser-search-registration" },
     { factory: legacySearchFactory, name: "late-legacy-discovery-fixture" },
+    { factory: createToolSearchExtension(), name: "builtin-tool-search" },
+    { factory: deferredResearchFactory, name: "deferred-research-fixture" },
   );
   const settingsManager = SettingsManager.inMemory();
   const loader = new DefaultResourceLoader({
@@ -377,7 +395,17 @@ async function createHarness(
     getSystemPrompt: () => "",
   };
   runner.bindCore(actions, contextActions);
-  activeTools = toolInfo(runner).map((tool) => tool.name);
+  // Pi activates registered direct tools by default; deferred, codemode, and
+  // inactive-by-default tools (the built-in tool_search) start inactive.
+  activeTools = runner
+    .getAllRegisteredTools()
+    .filter(
+      ({ definition }) =>
+        definition.defaultActive !== false &&
+        (definition.exposure ?? "direct") !== "deferred" &&
+        definition.exposure !== "codemode",
+    )
+    .map(({ definition }) => definition.name);
   await runner.emit({ type: "session_start", reason: "startup" });
   await runner.emitBeforeAgentStart("", undefined, { cwd });
 
@@ -398,6 +426,8 @@ async function createHarness(
     runner.getActiveTools().filter((name) => LEGACY_SEARCH_NAME_SET.has(name)),
     [],
   );
+  assert.ok(runner.getActiveTools().includes("tool_search"), "built-in tool_search is declared");
+  assert.ok(!runner.getActiveTools().includes(DEFERRED_RESEARCH_TOOL));
   return {
     runner,
     scopeSessionId: scope.session.id,
@@ -565,7 +595,11 @@ for (const harness of [anthropic, synthetic]) {
     limit: 5,
   });
   const discoveryText = JSON.stringify(discovery);
-  assert.match(discoveryText, /web_search/);
+  // Pi's built-in tool_search loads deferred tools only; the canonical
+  // web_search stays a direct tool reached through the exec bridge catalog,
+  // and legacy names never surface.
+  assert.match(discoveryText, new RegExp(DEFERRED_RESEARCH_TOOL));
+  assert.ok(harness.runner.getActiveTools().includes(DEFERRED_RESEARCH_TOOL));
   for (const legacyName of LEGACY_SEARCH_NAMES) {
     assert.doesNotMatch(discoveryText, new RegExp(legacyName));
   }

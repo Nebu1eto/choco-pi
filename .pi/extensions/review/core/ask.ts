@@ -631,9 +631,14 @@ async function createDefaultReviewSession(
 ): Promise<ReviewChatSession> {
   const { ModelRuntime, SessionManager, createAgentSession, resolveCliModel } =
     await import("@earendil-works/pi-coding-agent");
+  const { createToolSearchResourceLoader } = await import("../../lib/tool-surface.ts");
 
   const root = request.reviewRoot || request.cwd;
   const modelRuntime = await ModelRuntime.create();
+  // Default discovery plus Pi's built-in `tool_search`, which SDK sessions do
+  // not load on their own, so deferred tools stay discoverable as in the main
+  // session.
+  const resourceLoader = await createToolSearchResourceLoader(root);
 
   // Extension-registered providers (for example a proxy the main session's
   // model lives on) only enter `modelRuntime` during `bindExtensions`, so a
@@ -657,6 +662,7 @@ async function createDefaultReviewSession(
     // harness system prompt, and a model told about tools it cannot call
     // starts writing fake tool transcripts with fabricated results.
     sessionManager: SessionManager.inMemory(root),
+    resourceLoader,
   });
 
   try {

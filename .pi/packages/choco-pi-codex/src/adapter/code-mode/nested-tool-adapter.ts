@@ -30,6 +30,21 @@ const PiJsonObjectSchema = Type.Unsafe<PiJsonObject>({
 const WebRunDetailsSchema = Type.Object({ webRun: Type.Unknown() });
 
 /**
+ * Per-session tool scopes published by choco-pi-subagents for its children.
+ * A bridged session tool can run without Pi's `tool_call` hooks (the direct
+ * `execute()` fallback below), so the bridge must consult the calling
+ * session's scope itself. Typed independently over `Symbol.for` because a
+ * package must not import another; a session without a scope is unrestricted.
+ */
+const TOOL_SCOPE_SYMBOL = Symbol.for("choco-pi.tool-scope.v1");
+const ToolScopeRegistrySchema = Type.Object({
+  isToolAllowed: Type.Function(
+    [Type.Object({ getSessionId: Type.Function([], Type.String()) }), Type.String()],
+    Type.Boolean(),
+  ),
+});
+
+/**
  * `structuredContent` of Pi's shell tools (`bash`, `powershell`): the full output up to 1 MiB,
  * whether it was cut, the spill file when it was, the exit code and the wall time.
  */
@@ -133,6 +148,11 @@ export function toNestedTool<TParams extends TSchema, TDetails, TState>(
     async invoke(input, context, signal) {
       if (signal.aborted) throw new Error(`${tool.name} aborted`);
       const extensionContext = requireExtensionContext(context);
+      if (contract.dispatch === "session" && !isInSessionToolScope(extensionContext, tool.name)) {
+        throw new Error(
+          `Code mode tool error [not_available]: ${tool.name} is not available to this session.`,
+        );
+      }
       const parsedInput = isBoundaryValue(input) ? input : undefined;
       const schemaInput =
         parsedInput === undefined && Value.Check(tool.parameters, {}) ? {} : parsedInput;
@@ -317,6 +337,13 @@ export function codeModeWebResult<TDetails>(result: AgentToolResult<TDetails>): 
 function requireExtensionContext(context: ToolExecutionContext): ExtensionToolContext {
   if (!context.extensionContext) throw new Error("Code-mode Pi context is unavailable");
   return context.extensionContext;
+}
+
+/** Whether the calling session's published tool scope admits `name`. */
+function isInSessionToolScope(context: ExtensionToolContext, name: string): boolean {
+  const registry = Object.getOwnPropertyDescriptor(globalThis, TOOL_SCOPE_SYMBOL)?.value;
+  if (!Value.Check(ToolScopeRegistrySchema, registry)) return true;
+  return registry.isToolAllowed(context.sessionManager, name);
 }
 
 /** Whether `ctx.executeTool()` can reach `name`: active `direct` tools and `codemode`/`deferred` ones. */
