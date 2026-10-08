@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 
-import { SHELL_COMPLETION_PENDING_ENTRY, ShellNotificationGate } from "../src/notification-gate.ts";
-import type { ShellManager, ShellResult } from "../src/shell-manager.ts";
+import {
+  SHELL_COMPLETION_PENDING_ENTRY,
+  ShellNotificationGate,
+  type ShellNotificationGateOptions,
+} from "../src/notification-gate.ts";
+import type { ShellResult } from "../src/shell-manager.ts";
 
 const nativeSteeringSymbol = Symbol.for("choco-pi-codex:native-steering");
 
@@ -29,10 +33,15 @@ function shell(index: number, ownerId = "session"): ShellResult {
   };
 }
 
-function fakeManager(shells: readonly ShellResult[]): ShellManager {
+function fakeManager(shells: readonly ShellResult[]): ShellNotificationGateOptions["manager"] {
   const byId = new Map(shells.map((result) => [result.shellId, result]));
-  // SAFETY: The gate uses only ShellManager.read, which this fixture implements with full results.
+  const acknowledged = new Set<string>();
   return {
+    pendingCompletions: () => [],
+    isCompletionAcknowledged: (result) => acknowledged.has(result.shellId),
+    acknowledgeCompletion: (result) => {
+      acknowledged.add(result.shellId);
+    },
     read(input: { shellId: string }) {
       const result = byId.get(input.shellId);
       if (!result) throw new Error(`Shell not found: ${input.shellId}`);
@@ -42,7 +51,7 @@ function fakeManager(shells: readonly ShellResult[]): ShellManager {
         stderr: { data: "", startOffset: 0, nextOffset: 0, endOffset: 0, dropped: false },
       };
     },
-  } as ShellManager;
+  };
 }
 
 function setup(t: TestContext, shells: readonly ShellResult[] = []) {
@@ -175,7 +184,7 @@ test("non-stale delivery failures are reported without stopping future batches",
   gate.enqueue(first);
   gate.enqueue(later);
   t.mock.timers.tick(250);
-  assert.deepEqual(attempted, [[first], [later]]);
+  assert.deepEqual(attempted, [[first], [first, later]]);
 });
 
 test("turn_end delivery failures are contained and future batches still flush", (t) => {
@@ -206,7 +215,7 @@ test("turn_end delivery failures are contained and future batches still flush", 
   gate.enqueue(first);
   gate.enqueue(later);
   gate.turnEnd();
-  assert.deepEqual(attempted, [[first], [later]]);
+  assert.deepEqual(attempted, [[first], [first, later]]);
 });
 
 test("stale-context delivery failures stop all further gate activity", (t) => {

@@ -61,7 +61,10 @@ const PendingEntrySchema = Type.Object(
 );
 
 export interface ShellNotificationGateOptions {
-  manager: ShellManager;
+  manager: Pick<
+    ShellManager,
+    "read" | "pendingCompletions" | "isCompletionAcknowledged" | "acknowledgeCompletion"
+  >;
   flush(shells: ShellResult[]): void;
   appendEntry(type: string, data: PendingCompletionData): void;
 }
@@ -91,7 +94,7 @@ export function isNativeSteerPending(sessionId: string): boolean {
 }
 
 export class ShellNotificationGate {
-  private readonly manager: ShellManager;
+  private readonly manager: ShellNotificationGateOptions["manager"];
   private readonly flushCallback: (shells: ShellResult[]) => void;
   private readonly appendEntry: (type: string, data: PendingCompletionData) => void;
   private readonly held = new Map<string, ShellResult>();
@@ -111,8 +114,7 @@ export class ShellNotificationGate {
 
   sessionStart(sessionId: string, entries: readonly RuntimeValue[]): void {
     if (this.stopped) return;
-    this.sessionId = sessionId;
-    this.deliveredBySession.set(sessionId, this.deliveredBySession.get(sessionId) ?? new Set());
+    this.activateOwner(sessionId);
     const entry = entries.findLast((candidate) => Value.Check(PendingEntrySchema, candidate));
     if (!entry || !Value.Check(PendingEntrySchema, entry)) return;
     for (let index = 0; index < entry.data.shells.length; index += 1) {
@@ -148,6 +150,19 @@ export class ShellNotificationGate {
     }
   }
 
+  activateOwner(sessionId: string): void {
+    if (this.stopped) return;
+    if (this.sessionId !== sessionId) {
+      this.clearTimer();
+      this.held.clear();
+      this.heldSince = undefined;
+      this.nativePendingSince = undefined;
+    }
+    this.sessionId = sessionId;
+    this.deliveredBySession.set(sessionId, this.deliveredBySession.get(sessionId) ?? new Set());
+    for (const shell of this.manager.pendingCompletions(sessionId)) this.enqueue(shell);
+  }
+
   agentStart(): void {
     if (this.stopped) return;
     this.streaming = true;
@@ -166,9 +181,15 @@ export class ShellNotificationGate {
   }
 
   enqueue(shell: ShellResult): void {
-    if (this.stopped || this.sessionId === undefined) return;
+    if (this.stopped || this.sessionId === undefined || shell.ownerId !== this.sessionId) return;
     const key = completionKey(shell);
-    if (!key || this.held.has(key) || this.delivered().has(key)) return;
+    if (
+      !key ||
+      this.held.has(key) ||
+      this.delivered().has(key) ||
+      this.manager.isCompletionAcknowledged(shell)
+    )
+      return;
     this.held.set(key, shell);
     this.heldSince ??= Date.now();
     if (this.timer !== undefined) return;
@@ -236,17 +257,23 @@ export class ShellNotificationGate {
     }
 
     this.clearTimer();
-    const pending = [...this.held.entries()];
+    const pending = [...this.held.entries()].filter(
+      ([, shell]) => !this.manager.isCompletionAcknowledged(shell),
+    );
     this.held.clear();
     this.heldSince = undefined;
     this.nativePendingSince = undefined;
+    if (pending.length === 0) return;
     const delivered = this.delivered();
-    for (const [key] of pending) delivered.add(key);
     try {
       this.flushCallback(pending.map(([, shell]) => shell));
+      for (const [key, shell] of pending) {
+        delivered.add(key);
+        this.manager.acknowledgeCompletion(shell);
+      }
     } catch (error) {
-      // Every flush path must contain extension failures. A stale host deactivates
-      // the gate; other failed batches stay delivered and future batches may flush.
+      // Failed delivery leaves the manager ledger unacknowledged for reconciliation.
+      // A stale host deactivates this gate; other failures allow later attempts.
       // SAFETY: catch produces unknown; the helper narrows before reading the message.
       if (isStaleContextError(error as RuntimeValue)) {
         this.stopped = true;

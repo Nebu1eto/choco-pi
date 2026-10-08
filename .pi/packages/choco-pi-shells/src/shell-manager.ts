@@ -136,6 +136,8 @@ export class ShellManager {
   private readonly killFinalizeMs: number;
   private readonly completedRecordCap: number;
   private readonly completedRecordIds: string[] = [];
+  private readonly pendingByOwner = new Map<string, Map<string, ShellResult>>();
+  private readonly acknowledgedCompletions = new Set<string>();
   private disposed = false;
   private disposePromise?: Promise<void>;
 
@@ -183,6 +185,24 @@ export class ShellManager {
       subscribed = false;
       this.changeListeners.delete(listener);
     };
+  }
+
+  pendingCompletions(ownerId: string): ShellResult[] {
+    return [...(this.pendingByOwner.get(ownerId)?.values() ?? [])].map((shell) => ({ ...shell }));
+  }
+
+  isCompletionAcknowledged(shell: ShellResult): boolean {
+    return this.acknowledgedCompletions.has(`${shell.shellId}:${shell.endedAt}`);
+  }
+
+  acknowledgeCompletion(shell: ShellResult): void {
+    const pending = this.pendingByOwner.get(shell.ownerId);
+    const stored = pending?.get(shell.shellId);
+    if (stored && stored.endedAt !== shell.endedAt) return;
+    this.acknowledgedCompletions.add(`${shell.shellId}:${shell.endedAt}`);
+    pending?.delete(shell.shellId);
+    if (pending?.size === 0) this.pendingByOwner.delete(shell.ownerId);
+    this.evictCompletedRecords();
   }
 
   start(input: StartShellInput): StartShellResult {
@@ -375,6 +395,9 @@ export class ShellManager {
     child?.stderr?.removeAllListeners();
     child?.removeAllListeners();
     record.child = undefined;
+    const pending = this.pendingByOwner.get(record.ownerId) ?? new Map<string, ShellResult>();
+    pending.set(record.shellId, snapshot(record));
+    this.pendingByOwner.set(record.ownerId, pending);
     this.emitChange("end", record);
     record.resolveTerminal();
     this.completedRecordIds.push(record.shellId);
@@ -395,9 +418,16 @@ export class ShellManager {
   }
 
   private evictCompletedRecords(): void {
-    while (this.completedRecordIds.length > this.completedRecordCap) {
-      const shellId = this.completedRecordIds.shift();
-      if (shellId !== undefined) this.records.delete(shellId);
+    for (let index = 0; this.completedRecordIds.length > this.completedRecordCap;) {
+      const shellId = this.completedRecordIds[index];
+      if (shellId === undefined) break;
+      const record = this.records.get(shellId);
+      if (record && this.pendingByOwner.get(record.ownerId)?.has(shellId)) {
+        index += 1;
+        continue;
+      }
+      this.completedRecordIds.splice(index, 1);
+      this.records.delete(shellId);
     }
   }
 
