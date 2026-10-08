@@ -47,7 +47,6 @@ interface ToolMetadata {
 
 interface ExtensionModule {
   default?: unknown;
-  createMcpAdapter?: unknown;
 }
 
 function schemaNode(value: RuntimeValue): SchemaNode | undefined {
@@ -146,7 +145,6 @@ const FIRST_PARTY_TOOL_INVENTORY = new Map<string, readonly string[]>([
       "diagnostic_mark",
     ],
   ],
-  ["mcp", ["mcpScript", "mcp"]],
   [
     "mcp-figma",
     [
@@ -211,16 +209,6 @@ async function loadFirstPartyTools(): Promise<Map<string, ToolMetadata[]>> {
   for (const [packageName, path] of extensionPaths) {
     factories.set(packageName, await loadExtensionFactory(path));
   }
-  const mcpModule = await loadExtensionModule("../.pi/packages/choco-pi-mcp/index.ts");
-  const createMcpAdapter = mcpModule.createMcpAdapter;
-  if (!(createMcpAdapter instanceof Function)) throw new Error("MCP factory export is missing");
-  const mcpFactory =
-    reinterpretHostValue<
-      (options: {
-        config: { mcpServers: Record<string, never>; settings: Record<string, never> };
-      }) => ExtensionFactory
-    >(createMcpAdapter);
-  factories.set("mcp", mcpFactory({ config: { mcpServers: {}, settings: {} } }));
   const toolsByPackage = new Map<string, ToolMetadata[]>();
   for (const [packageName, factory] of factories) {
     const extension = await loadExtensionFromFactory(

@@ -7,7 +7,6 @@ import type {
   HttpHook,
   JsonObject,
   JsonValue,
-  McpToolHook,
   ModelHook,
   MergedHookResult,
 } from "./types.ts";
@@ -33,7 +32,6 @@ export interface RawExecution {
 export interface HookBackends {
   command?: (hook: CommandHook, input: HookInput, signal: AbortSignal) => Promise<RawExecution>;
   http?: (hook: HttpHook, input: HookInput, signal: AbortSignal) => Promise<RawExecution>;
-  mcpTool?: (hook: McpToolHook, input: HookInput, signal: AbortSignal) => Promise<RawExecution>;
   model?: (hook: ModelHook, input: HookInput, signal: AbortSignal) => Promise<RawExecution>;
   onAsyncResult?: (
     input: HookInput,
@@ -193,15 +191,12 @@ export async function executeHandler(
     else if (handler.type === "http")
       result = await (backends.http ?? runHttp)(handler, input, controller.signal);
     else if (handler.type === "mcp_tool") {
-      if (!backends.mcpTool)
-        return { exitCode: 1, stdout: "", stderr: "MCP hook backend is not connected" };
-      const substituted = substitute(handler.input ?? {}, input);
-      // SAFETY: An MCP handler input starts as a JsonObject and recursive substitution preserves that container.
-      result = await backends.mcpTool(
-        { ...handler, input: substituted as JsonObject },
-        input,
-        controller.signal,
-      );
+      return {
+        exitCode: 1,
+        stdout: "",
+        stderr:
+          "MCP hook backend is unavailable: choco-pi uses Pi's built-in MCP, which exposes tool execution only inside tool calls; use a command hook instead",
+      };
     } else {
       if (!backends.model)
         return {

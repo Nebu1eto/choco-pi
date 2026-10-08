@@ -89,23 +89,16 @@ function pathSummary(args: BoundaryRecord | undefined): string | undefined {
 /** Concise, producer-aware argument text. Never serializes the argument object. */
 export function summarizeToolInput(name: string, value: BoundaryValue): string {
   const args = record(value);
+  if (name.startsWith("mcp__")) {
+    const [server, ...tool] = name.slice("mcp__".length).split("__");
+    return join([server, readableKey(tool.join("__"))]);
+  }
   switch (name) {
     case "tool_search":
       return join([
         compact(stringField(args, "query") ?? "", 100),
         numberField(args, "limit") ? `limit ${numberField(args, "limit")}` : undefined,
       ]);
-    case "mcpScript": {
-      const code = stringField(args, "code") ?? "";
-      const calls = [...code.matchAll(/\btools\.([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g)].map((match) =>
-        readableKey((match[1] ?? "MCP tool").replace(/^mcp__/, "")),
-      );
-      return join([
-        `${calls.length} MCP call${calls.length === 1 ? "" : "s"}`,
-        calls.slice(0, 3).join(" · "),
-        numberField(args, "timeoutMs") ? `${numberField(args, "timeoutMs")}ms` : undefined,
-      ]);
-    }
     case "get_subagent_result":
       return join([
         idSummary(args, "agent_id", "Agent"),
@@ -120,13 +113,13 @@ export function summarizeToolInput(name: string, value: BoundaryValue): string {
     case "workflow_run":
       return join([
         stringField(args, "name"),
-        arrayCount(args, "steps") !== undefined ? `${arrayCount(args, "steps")} steps` : undefined,
+        arrayCount(args, "steps") === undefined ? undefined : `${arrayCount(args, "steps")} steps`,
         booleanField(args, "dynamic") ? "dynamic" : undefined,
       ]);
     case "workflow_update":
       return join([
         idSummary(args, "workflow_id", "Workflow"),
-        arrayCount(args, "steps") !== undefined ? `${arrayCount(args, "steps")} steps` : undefined,
+        arrayCount(args, "steps") === undefined ? undefined : `${arrayCount(args, "steps")} steps`,
         booleanField(args, "finish") ? "finish" : undefined,
       ]);
     case "get_workflow_result":
@@ -160,9 +153,9 @@ export function summarizeToolInput(name: string, value: BoundaryValue): string {
     case "session_wait":
       return join([
         idSummary(args, "session_id", "Session"),
-        numberField(args, "timeout_ms") !== undefined
-          ? `${numberField(args, "timeout_ms")}ms`
-          : undefined,
+        numberField(args, "timeout_ms") === undefined
+          ? undefined
+          : `${numberField(args, "timeout_ms")}ms`,
         stringField(args, "after_cursor") ? "after cursor" : undefined,
       ]);
     case "create_goal":
@@ -217,7 +210,7 @@ export function summarizeToolInput(name: string, value: BoundaryValue): string {
     case "read_enclosing":
       return join([
         pathSummary(args),
-        numberField(args, "line") !== undefined ? `line ${numberField(args, "line")}` : undefined,
+        numberField(args, "line") === undefined ? undefined : `line ${numberField(args, "line")}`,
       ]);
     case "lsp_diagnostics":
       return join([
@@ -331,9 +324,9 @@ export function summarizeToolResult(
   if (name === "tool_search") {
     return (
       join([
-        arrayCount(details, "matches") !== undefined
-          ? `${arrayCount(details, "matches")} matches`
-          : undefined,
+        arrayCount(details, "matches") === undefined
+          ? undefined
+          : `${arrayCount(details, "matches")} matches`,
         arrayCount(details, "added") ? `${arrayCount(details, "added")} activated` : undefined,
       ]) || "No matches"
     );
@@ -341,12 +334,12 @@ export function summarizeToolResult(
   if (name === "source_check") {
     return (
       join([
-        numberField(details, "sourceCount") !== undefined
-          ? `${numberField(details, "sourceCount")} sources`
-          : undefined,
-        numberField(details, "passageCount") !== undefined
-          ? `${numberField(details, "passageCount")} passages`
-          : undefined,
+        numberField(details, "sourceCount") === undefined
+          ? undefined
+          : `${numberField(details, "sourceCount")} sources`,
+        numberField(details, "passageCount") === undefined
+          ? undefined
+          : `${numberField(details, "passageCount")} passages`,
         idSummary(details, "responseId", "Response"),
       ]) || "Source check complete"
     );

@@ -35,7 +35,9 @@ test(
     assert.equal(resolve("steer_subagent"), "Delegation: Steering");
     assert.equal(resolve("get_subagent_result"), "Delegation: Retrieving");
 
-    assert.equal(resolve("mcp__linear_save_document"), "MCP: linear");
+    assert.equal(resolve("mcp__linear_workspace__save_document"), "MCP: linear_workspace");
+    assert.equal(resolve("tool_search"), "Tools: Searching");
+    assert.equal(resolve("mcpScript"), "mcpScript");
     assert.equal(resolve("brand_new_tool"), "brand_new_tool", "an unknown tool keeps its name");
     assert.equal(resolve("apply_patch", { apply_patch: "Applying" }), "Applying");
     assert.equal(
@@ -64,7 +66,9 @@ test("a settled tool call reads in the past tense", { skip: SKIP_WITHOUT_ZENTUI 
   assert.equal(resolve("get_subagent_result"), "Delegation: Retrieved");
   assert.equal(resolve("module_report"), "LSP: Analysed Module");
 
-  assert.equal(resolve("mcp__linear_save_document"), "MCP: linear");
+  assert.equal(resolve("mcp__linear_workspace__save_document"), "MCP: linear_workspace");
+  assert.equal(resolve("tool_search"), "Tools: Searched");
+  assert.equal(resolve("mcp"), "mcp");
   assert.equal(resolve("brand_new_tool"), "brand_new_tool");
   assert.equal(
     resolve("apply_patch", { apply_patch: "Applying" }),

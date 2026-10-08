@@ -215,3 +215,10 @@ The three vendored Nord themes now declare Pi `1.0.4`'s optional `appearance`:
 theme through Pi's actual `validateThemeJson` function. Palette colors and
 theme names remain unchanged; the JSON files are no longer byte-identical to
 the upstream tarball described above.
+
+## 2026-10-08 choco-pi patch: built-in MCP tool names
+
+Removes the adapter `mcp` and `mcpScript` labels and the source-code
+summarizer; recognizes built-in `mcp__<server>__<tool>` names (including
+underscore server names) without exposing arguments, and keeps `tool_search`
+summaries and labels.

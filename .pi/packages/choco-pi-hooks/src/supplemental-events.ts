@@ -1,11 +1,6 @@
 import type { ExtensionAPI, ExtensionContext, TurnEndEvent } from "@earendil-works/pi-coding-agent";
 import type { HookEventName, JsonObject, MergedHookResult } from "./types.ts";
-import {
-  isFunctionValue,
-  isStringValue,
-  parseRuntimeRecord,
-  type RuntimeValue,
-} from "./validation.ts";
+import { isStringValue, parseRuntimeRecord } from "./validation.ts";
 import { rethrowUnlessStaleContext } from "./lifecycle.ts";
 
 export type HookDispatch = (
@@ -21,11 +16,6 @@ interface SupplementalLifecycle {
   isCurrentGeneration(token: number): boolean;
   getBackgroundTasks(): JsonObject[];
   dispose(): void;
-}
-
-interface ElicitationResponse {
-  action: string;
-  content?: JsonObject;
 }
 
 function toolCalls(event: TurnEndEvent): JsonObject[] {
@@ -238,67 +228,6 @@ export function registerSupplementalEvents(
       }),
     );
   };
-  const onElicitation = async <Value>(payload: Value): Promise<void> => {
-    const ctx = context;
-    const generationToken = generation;
-    const data = parseRuntimeRecord(payload);
-    const claim = data?.claim;
-    const resolve = data?.resolve;
-    const event = data?.event;
-    if (!ctx || !data || !isFunctionValue(claim) || !isFunctionValue(resolve)) return;
-    if (event !== "Elicitation" && event !== "ElicitationResult") return;
-    // SAFETY: isFunctionValue established the zero-argument claim callback supplied by the MCP bridge.
-    const claimRequest = claim as () => void;
-    // SAFETY: isFunctionValue established the elicitation result callback supplied by the MCP bridge.
-    const resolveRequest = resolve as (value: ElicitationResponse | undefined) => void;
-    claimRequest();
-    let resolved = false;
-    const resolveOnce = (value: ElicitationResponse | undefined): void => {
-      if (resolved) return;
-      resolved = true;
-      resolveRequest(value);
-    };
-    const params = parseRuntimeRecord(data.params) ?? {};
-    const current = parseRuntimeRecord(data.current);
-    // SAFETY: MCP elicitation schemas and result content are JSON protocol property bags.
-    const requestedSchema = (parseRuntimeRecord(params.requestedSchema) ?? {}) as JsonObject;
-    const extra: JsonObject = {
-      mcp_server_name: isStringValue(data.serverName) ? data.serverName : "",
-      message: isStringValue(params.message) ? params.message : "",
-      mode: isStringValue(params.mode) ? params.mode : undefined,
-      url: isStringValue(params.url) ? params.url : undefined,
-      elicitation_id: isStringValue(params.elicitationId) ? params.elicitationId : undefined,
-      requested_schema: requestedSchema,
-    };
-    if (event === "ElicitationResult") {
-      extra.action = isStringValue(current?.action) ? current.action : undefined;
-      const content = parseRuntimeRecord(current?.content);
-      if (content) {
-        // SAFETY: MCP elicitation result content is a JSON protocol property bag.
-        extra.content = content as JsonObject;
-      }
-    }
-    try {
-      const result = await dispatch(event, ctx, extra);
-      if (!isGenerationCurrent(generationToken)) {
-        resolveOnce(undefined);
-        return;
-      }
-      if (!result.elicitationAction) {
-        resolveOnce(undefined);
-        return;
-      }
-      const response: ElicitationResponse = {
-        action: result.elicitationAction,
-      };
-      if (result.elicitationContent) response.content = result.elicitationContent;
-      resolveOnce(response);
-    } catch (error: unknown) {
-      resolveOnce(undefined);
-      // SAFETY: The caught value is only passed to the runtime-value stale-error discriminator.
-      rethrowUnlessStaleContext(error as RuntimeValue);
-    }
-  };
   const onInstructionsLoaded = <Value>(payload: Value): void => {
     const ctx = context;
     const data = parseRuntimeRecord(payload);
@@ -320,7 +249,6 @@ export function registerSupplementalEvents(
   unsubscribers.push(pi.events.on("subagents:failed", onSubagentStopped));
   unsubscribers.push(pi.events.on("subagents:completed", onSubagentNotification));
   unsubscribers.push(pi.events.on("subagents:failed", onSubagentNotification));
-  unsubscribers.push(pi.events.on("choco-pi-hooks:elicitation", onElicitation));
   unsubscribers.push(pi.events.on("choco-pi-hooks:instructions-loaded", onInstructionsLoaded));
 
   return {

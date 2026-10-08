@@ -1,93 +1,9 @@
 {
   "name": "choco-pi-mcp",
   "version": "0.1.0",
-  "description": "Vendored MCP adapter and Figma design extension for choco-pi",
-  "keywords": [
-    "ai",
-    "claude",
-    "coding-agent",
-    "extension",
-    "figma",
-    "llm",
-    "mcp",
-    "model-context-protocol",
-    "pi",
-    "pi-package"
-  ],
+  "description": "Native Figma design extension for choco-pi; MCP is provided by Pi",
   "license": "MIT",
-  "author": "Nico Bailon",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/nicobailon/pi-mcp-adapter.git"
-  },
-  "bin": {
-    "choco-pi-mcp": "cli.js"
-  },
   "files": [
-    "cli.js",
-    "agent-dir.ts",
-    "index.ts",
-    "error-signal.ts",
-    "state.ts",
-    "utils.ts",
-    "protocol-values.ts",
-    "abort.ts",
-    "runtime-owner.ts",
-    "tool-metadata.ts",
-    "ts-shape.ts",
-    "search-ranking.ts",
-    "tool-approval.ts",
-    "init.ts",
-    "ui-session.ts",
-    "proxy-modes.ts",
-    "direct-tools.ts",
-    "commands.ts",
-    "prompts.ts",
-    "onboarding-state.ts",
-    "mcp-setup-panel.ts",
-    "types.ts",
-    "ui-stream-types.ts",
-    "ui-tool-visibility.ts",
-    "ui-app-bridge-helpers.ts",
-    "config.ts",
-    "server-manager.ts",
-    "request-headers-command.ts",
-    "unix-socket-transport.ts",
-    "json-schema-validator.ts",
-    "session-recovery.ts",
-    "sampling-handler.ts",
-    "elicitation-handler.ts",
-    "tool-registrar.ts",
-    "tool-result-renderer.ts",
-    "mcp-output-guard.ts",
-    "mcp-code.ts",
-    "mcp-script-worker.mjs",
-    "mcp-probe.ts",
-    "agent-plugin-loader.ts",
-    "resource-tools.ts",
-    "lifecycle.ts",
-    "mcp-status.ts",
-    "metadata-cache.ts",
-    "host-html-template.ts",
-    "ui-resource-handler.ts",
-    "consent-manager.ts",
-    "ui-server.ts",
-    "glimpse-ui.ts",
-    "npx-resolver.ts",
-    "oauth-handler.ts",
-    "oauth.ts",
-    "mcp-auth.ts",
-    "mcp-keyring-helper.cjs",
-    "mcp-oauth-provider.ts",
-    "mcp-callback-server.ts",
-    "mcp-auth-flow.ts",
-    "mcp-panel.ts",
-    "panel-keys.ts",
-    "mcp-trace.ts",
-    "logger.ts",
-    "errors.ts",
-    "app-bridge.bundle.js",
-    "banner.png",
     "figma",
     "skills",
     "README.md",
@@ -95,22 +11,12 @@
     "LICENSE"
   ],
   "type": "module",
-  "types": "./index.ts",
+  "types": "./figma/index.ts",
   "exports": {
     ".": {
-      "types": "./index.ts",
-      "import": "./index.ts",
-      "default": "./index.ts"
-    },
-    "./types": {
-      "types": "./types.ts",
-      "import": "./types.ts",
-      "default": "./types.ts"
-    },
-    "./oauth": {
-      "types": "./oauth.ts",
-      "import": "./oauth.ts",
-      "default": "./oauth.ts"
+      "types": "./figma/index.ts",
+      "import": "./figma/index.ts",
+      "default": "./figma/index.ts"
     }
   },
   "scripts": {
@@ -158,7 +64,7 @@
     }
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   },
   "packageManager": "pnpm@11.11.0",
   "chocoPi": {
@@ -169,12 +75,10 @@
   },
   "pi": {
     "extensions": [
-      "./index.ts",
       "./figma/index.ts"
     ],
     "skills": [
       "./skills"
-    ],
-    "video": "https://github.com/nicobailon/pi-mcp-adapter/raw/refs/heads/main/pi-mcp.mp4"
+    ]
   }
 }

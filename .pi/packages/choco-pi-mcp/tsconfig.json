@@ -1,14 +1,6 @@
 {
   "extends": "../../../tsconfig.json",
-  "compilerOptions": {
-    "rootDir": "."
-  },
-  "include": [
-    "./*.ts",
-    "./figma/**/*.ts",
-    "./tests/figma-*.test.ts",
-    "./tests/json-schema-validator.test.ts",
-    "./tests/ui-stream-types.test.ts"
-  ],
+  "compilerOptions": { "rootDir": "." },
+  "include": ["./figma/**/*.ts", "./tests/figma-*.test.ts"],
   "exclude": ["./node_modules"]
 }

@@ -1,15 +1,7 @@
 import { spawn } from "node:child_process";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { HookBackends, RawExecution } from "./executor.ts";
-import type { HookInput, McpToolHook, ModelHook } from "./types.ts";
-
-interface McpHookRequest {
-  server: string;
-  tool: string;
-  input: McpToolHook["input"];
-  signal: AbortSignal;
-  resolve(result: RawExecution): void;
-}
+import type { HookInput, ModelHook } from "./types.ts";
 
 function runPiEvaluator(
   hook: ModelHook,
@@ -54,41 +46,9 @@ function runPiEvaluator(
   });
 }
 
-function runMcpHook(
-  pi: ExtensionAPI,
-  hook: McpToolHook,
-  _input: HookInput,
-  signal: AbortSignal,
-): Promise<RawExecution> {
-  return new Promise((resolve) => {
-    if (signal.aborted) {
-      resolve({ exitCode: 1, stdout: "", stderr: "Hook aborted" });
-      return;
-    }
-    let settled = false;
-    const finish = (result: RawExecution): void => {
-      if (settled) return;
-      settled = true;
-      signal.removeEventListener("abort", onAbort);
-      resolve(result);
-    };
-    const onAbort = (): void => finish({ exitCode: 1, stdout: "", stderr: "Hook aborted" });
-    signal.addEventListener("abort", onAbort, { once: true });
-    const request: McpHookRequest = {
-      server: hook.server,
-      tool: hook.tool,
-      input: hook.input,
-      signal,
-      resolve: finish,
-    };
-    pi.events.emit("choco-pi-hooks:mcp-call", request);
-  });
-}
-
 export function createPiHookBackends(pi: ExtensionAPI): HookBackends {
   return {
     model: runPiEvaluator,
-    mcpTool: (hook, input, signal) => runMcpHook(pi, hook, input, signal),
     onAsyncResult: (_input, result, rewake) => {
       const content = [...result.additionalContext, ...result.systemMessages].join("\n");
       if (!content && !rewake) return;
@@ -105,5 +65,3 @@ export function createPiHookBackends(pi: ExtensionAPI): HookBackends {
     },
   };
 }
-
-export type { McpHookRequest };

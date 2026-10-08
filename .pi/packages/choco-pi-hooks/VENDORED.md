@@ -6,3 +6,12 @@
 
 Pi SDK peer and development pins move from `0.87.1` to exactly `1.0.4`,
 matching the harness target. Other dependency contracts are unchanged.
+
+## 2026-10-08 choco-pi patch: MCP hook backend retired
+
+Removes the custom `choco-pi-hooks:mcp-call` request and response event and
+the dead `choco-pi-hooks:elicitation` consumer. MCP hook configuration still
+parses, but the executor fails closed with a command-hook migration message:
+the public Pi SDK offers approved `executeTool` only inside `tool.execute`,
+not from lifecycle hooks. This is an intentional user-visible removal, not an
+approval bypass.
