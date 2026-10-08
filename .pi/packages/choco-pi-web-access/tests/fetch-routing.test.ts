@@ -25,7 +25,7 @@ test("default fetch routing uses direct HTTP extraction", async () => {
 		globalThis.fetch = async () => new Response('<html><head><title>Direct</title></head><body><article>${"content ".repeat(100)}</article></body></html>', { headers: { 'content-type': 'text/html' } });
 		const { extractContent } = await import(${JSON.stringify(extractUrl)});
 		const lookup = async () => [{ address: '93.184.216.34', family: 4 }];
-		console.log(JSON.stringify(await extractContent('https://example.com/page', undefined, { lookup })));
+		console.log(JSON.stringify(await extractContent('https://example.com/page', undefined, { lookup, fetch: globalThis.fetch })));
 	`,
   );
   assert.equal(child.status, 0, child.stderr);

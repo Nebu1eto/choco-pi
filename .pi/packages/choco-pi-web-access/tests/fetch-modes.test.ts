@@ -21,7 +21,11 @@ test("local HTTP fetch sends the compatible User-Agent", async () => {
     return new Response("body", { headers: { "content-type": "text/plain" } });
   };
 
-  await extractContent("https://example.com/article", undefined, { mode: "raw", lookup });
+  await extractContent("https://example.com/article", undefined, {
+    mode: "raw",
+    lookup,
+    fetch: globalThis.fetch,
+  });
   assert.equal(userAgent, "choco-pi-web-access/0.24.1");
 });
 
@@ -37,6 +41,7 @@ test("raw mode returns textual non-2xx bodies but rejects images", async () => {
   const text = await extractContent("https://example.com/missing", undefined, {
     mode: "raw",
     lookup,
+    fetch: globalThis.fetch,
   });
   assert.equal(text.error, null);
   assert.equal(text.status, 404);
@@ -45,6 +50,7 @@ test("raw mode returns textual non-2xx bodies but rejects images", async () => {
   const image = await extractContent("https://example.com/pixel.png", undefined, {
     mode: "raw",
     lookup,
+    fetch: globalThis.fetch,
   });
   assert.match(image.error, /Unsupported content type in raw mode: image\/png/);
   assert.equal(image.thumbnail, undefined);
@@ -57,6 +63,7 @@ test("raw mode keeps data URIs in the exact HTTP body", async () => {
   const [result] = await fetchAllContent(["https://example.com/data"], undefined, {
     mode: "raw",
     lookup,
+    fetch: globalThis.fetch,
   });
   assert.equal(result.content, body);
 });
@@ -64,7 +71,10 @@ test("raw mode keeps data URIs in the exact HTTP body", async () => {
 test("readable mode returns supported image content", async () => {
   globalThis.fetch = async () =>
     new Response(png, { status: 200, headers: { "content-type": "image/png" } });
-  const result = await extractContent("https://example.com/pixel.png", undefined, { lookup });
+  const result = await extractContent("https://example.com/pixel.png", undefined, {
+    lookup,
+    fetch: globalThis.fetch,
+  });
 
   assert.equal(result.error, null);
   assert.equal(result.mimeType, "image/png");
