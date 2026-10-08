@@ -22,6 +22,7 @@ import {
   resolveAgentStyle,
   writeAgentPreference,
   writeAgentPreferenceIfChanged,
+  type DaybreakPreference,
   type OnUsageLimit,
   type PreferencesExtraSection,
   type PreferencesOutcomeFocus,
@@ -39,7 +40,11 @@ const ENABLED_LABEL = "Enabled";
 const DISABLED_LABEL = "Disabled";
 const DAYBREAK_ON = "on";
 const DAYBREAK_OFF = "off";
-const DAYBREAK_VALUES = [DAYBREAK_OFF, DAYBREAK_ON];
+const DAYBREAK_VALUES = [DAYBREAK_OFF, DAYBREAK_ON, "auto"];
+function formatDaybreakPreference(value: DaybreakPreference | undefined): string {
+  if (value === "auto") return "auto";
+  return value ? DAYBREAK_ON : DAYBREAK_OFF;
+}
 const STALE_CONTEXT_ERROR =
   "This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().";
 
@@ -160,21 +165,25 @@ async function writeSessionAutoName(ctx: ExtensionCommandContext, enabled: boole
 }
 
 /** Parses a Daybreak preference row or argument value; `undefined` when unrecognized. */
-export function parseDaybreakValue(value: string): boolean | undefined {
+export function parseDaybreakValue(value: string): DaybreakPreference | undefined {
   const normalized = value.trim().toLowerCase();
+  if (normalized === "auto") return "auto";
   if (normalized === DAYBREAK_ON) return true;
   if (normalized === DAYBREAK_OFF) return false;
   return undefined;
 }
 
-async function writeDaybreakDefault(ctx: ExtensionCommandContext, enabled: boolean): Promise<void> {
+async function writeDaybreakDefault(
+  ctx: ExtensionCommandContext,
+  enabled: DaybreakPreference,
+): Promise<void> {
   await writeAndNotify(
     ctx,
     // An unchanged value neither writes nor emits, so it cannot reseed default-source sessions.
     async () => {
       await writeAgentPreferenceIfChanged(DAYBREAK_DEFAULT_KEY, enabled);
     },
-    `Daybreak default: ${enabled ? DAYBREAK_ON : DAYBREAK_OFF} (sessions without an explicit /daybreak choice follow it)`,
+    `Daybreak default: ${formatDaybreakPreference(enabled)} (sessions without an explicit /daybreak choice follow it)`,
     (error) =>
       `Could not update the Daybreak default: ${error instanceof Error ? error.message : String(error)}`,
   );
@@ -306,8 +315,8 @@ export function buildAgentPreferencesSection(
           id: DAYBREAK_DEFAULT_KEY,
           label: "Daybreak",
           description:
-            "Default Daybreak request for sessions without an explicit /daybreak choice (off by default). A request applies only when the account is entitled; /daybreak status shows the outcome. Explicit and inherited session choices win.",
-          currentValue: preferences.daybreak ? DAYBREAK_ON : DAYBREAK_OFF,
+            "Default Daybreak request for sessions without an explicit /daybreak choice (off by default). Auto enables only with confirmed Blue/Red account eligibility and model support; on retains best-effort requests. /daybreak status shows the outcome. Explicit and inherited session choices win.",
+          currentValue: formatDaybreakPreference(preferences.daybreak),
           values: [...DAYBREAK_VALUES],
         },
         {

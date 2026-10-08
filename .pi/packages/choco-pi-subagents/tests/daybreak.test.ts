@@ -5,7 +5,11 @@ import { getDaybreakBridge } from "../../../extensions/lib/daybreak-state.ts";
 import { AgentManager, type AgentManagerRunner } from "../src/agent-manager.ts";
 import { runAgent, type RunOptions } from "../src/agent-runner.ts";
 import { registerAgents } from "../src/agent-types.ts";
-import { createChildDaybreakExtension, reconcileChildDaybreak } from "../src/daybreak-bridge.ts";
+import {
+  createChildDaybreakExtension,
+  reconcileChildDaybreak,
+  snapshotDaybreak,
+} from "../src/daybreak-bridge.ts";
 import { resolveAgentInvocationConfig } from "../src/invocation-config.ts";
 import type { AgentConfig } from "../src/types.ts";
 import { createNestedSubagentTools, type NestedToolContext } from "../src/nested-tools.ts";
@@ -36,6 +40,35 @@ const config: AgentConfig = {
   promptMode: "replace",
   daybreak: true,
 };
+
+test("Daybreak auto survives inherited snapshots and explicit overrides", () => {
+  const bridge = getDaybreakBridge();
+  const controller = bridge.register({
+    sessionId: "auto-parent",
+    owner: {},
+    generation: 0,
+    initial: { requested: "auto", source: "default" },
+  });
+  try {
+    assert.equal(snapshotDaybreak("auto-parent").requested, "auto");
+    const child = bridge.register({
+      sessionId: "auto-child",
+      owner: {},
+      generation: 0,
+      initial: { ...snapshotDaybreak("auto-parent"), source: "inherited" },
+    });
+    try {
+      assert.equal(child.getState().requested, "auto");
+      child.set(false);
+      assert.equal(child.getState().requested, false);
+      assert.equal(child.getState().source, "explicit");
+    } finally {
+      child.dispose();
+    }
+  } finally {
+    controller.dispose();
+  }
+});
 
 test("Daybreak caller overrides agent defaults including explicit false", () => {
   assert.equal(resolveAgentInvocationConfig(config, {}).daybreak, true);
@@ -116,7 +149,7 @@ test("manager snapshots parent, mutates queued bootstrap, and preserves resume u
     sessionId: fixture.ctx.sessionManager.getSessionId(),
     owner: fixture,
     generation: 1,
-    initial: { requested: true, source: "explicit" },
+    initial: { requested: "auto", source: "default" },
   });
   const runs: RunOptions[] = [];
   const settlements: (() => void)[] = [];
@@ -149,7 +182,7 @@ test("manager snapshots parent, mutates queued bootstrap, and preserves resume u
       isolated: true,
       daybreakRequested: false,
     });
-    assert.deepEqual(runs[0]?.daybreak, { requested: true, source: "inherited", revision: 0 });
+    assert.deepEqual(runs[0]?.daybreak, { requested: "auto", source: "inherited", revision: 0 });
     assert.equal(manager.getRecord(second)?.status, "queued");
     manager.setDaybreak(second, true);
     assert.equal(manager.getRecord(second)?.daybreakSource, "explicit");

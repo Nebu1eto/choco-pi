@@ -1,5 +1,14 @@
 # Vendored: choco-pi-codex
 
+## Daybreak Auto preference (choco-pi addition)
+
+Daybreak request state accepts `"auto"` alongside existing booleans. Auto uses
+the existing account and model lookups but requires a confirmed Blue/Red grant
+before adding `access_programs`; denial and lookup failure remain inactive.
+Explicit On retains its best-effort behavior. Request ownership, revisions,
+model-support gates, and finalizer validation remain unchanged. Decision tests
+cover Auto grants, denial, failure, unsupported models, and On compatibility.
+
 This directory is a **vendored, renamed, stripped fork** of the upstream
 open-source package **@howaboua/pi-codex-conversion**. This is not the original
 source repository.

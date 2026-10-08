@@ -12,7 +12,7 @@ export type DaybreakOutcome =
   | "auth-not-eligible";
 
 export interface DaybreakSnapshot {
-  requested: boolean;
+  requested: boolean | "auto";
   source: DaybreakSource;
   revision: number;
 }
@@ -30,7 +30,7 @@ interface DaybreakOwner {
 interface DaybreakRecordLookup extends DaybreakOwner {
   getRecord(id: string):
     | {
-        daybreakRequested?: boolean;
+        daybreakRequested?: boolean | "auto";
         daybreakSource?: DaybreakSource;
         daybreakRevision?: number;
       }
@@ -39,7 +39,7 @@ interface DaybreakRecordLookup extends DaybreakOwner {
 
 interface DaybreakController {
   getState(): DaybreakState;
-  set(requested: boolean, source?: DaybreakSource): DaybreakState;
+  set(requested: boolean | "auto", source?: DaybreakSource): DaybreakState;
   report(outcome: DaybreakOutcome, revision: number): void;
   dispose(): void;
 }
@@ -50,13 +50,13 @@ interface DaybreakBridge {
     sessionId: string;
     owner: DaybreakOwner;
     generation: number;
-    initial: { requested: boolean; source: DaybreakSource };
+    initial: { requested: boolean | "auto"; source: DaybreakSource };
   }): DaybreakController;
   get(sessionId: string): DaybreakController | undefined;
   createExtension(input: {
     owner: DaybreakOwner;
     generation: number;
-    initial: { requested: boolean; source: DaybreakSource };
+    initial: { requested: boolean | "auto"; source: DaybreakSource };
   }): ExtensionFactory;
 }
 
