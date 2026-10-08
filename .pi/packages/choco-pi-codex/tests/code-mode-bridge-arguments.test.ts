@@ -354,3 +354,43 @@ test("missing required properties are named without executing the tool", async (
   );
   assert.equal(executions, 0);
 });
+
+test("object-union failures name the discriminator and its accepted values once", async () => {
+  const tool = bridge({
+    name: "act_ui",
+    label: "act_ui",
+    description: "act",
+    parameters: Type.Object({
+      actions: Type.Array(
+        Type.Union([
+          Type.Object({ action: Type.Literal("press"), ref: Type.String() }),
+          Type.Object({ action: Type.Literal("click"), ref: Type.String() }),
+          Type.Object({ action: Type.Literal("click"), x: Type.Number(), y: Type.Number() }),
+        ]),
+        { minItems: 1 },
+      ),
+    }),
+    async execute() {
+      return success("unexpected");
+    },
+  });
+
+  await assert.rejects(
+    tool.invoke(
+      { actions: [{ kind: "press", target: "e1" }] },
+      context,
+      new AbortController().signal,
+    ),
+    (error: Error) => {
+      assert.match(error.message, /\[invalid_arguments\]/);
+      assert.match(
+        error.message,
+        /actions\.0: expected one of the 3 shapes selected by "action": "press", "click", "click"/,
+      );
+      // No per-branch repetition and no echo of the rejected value.
+      assert.equal(error.message.split("actions.0").length - 1, 1, error.message);
+      assert.doesNotMatch(error.message, /target|e1/);
+      return true;
+    },
+  );
+});
