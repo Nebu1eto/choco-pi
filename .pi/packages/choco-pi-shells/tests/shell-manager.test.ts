@@ -447,17 +447,90 @@ test("cursor reads are incremental and bounded buffers report dropped absolute U
   }
 });
 
+test("a stop request does not hide a subsequent child spawn error", async () => {
+  const manager = new ShellManager({ shell: join(cwd, "missing-shell-executable") });
+  try {
+    const started = manager.start({ ownerId: "owner", cwd, command: "unused" });
+    const stopped = await manager.stop({
+      requesterId: "owner",
+      isAdmin: false,
+      shellId: started.shellId,
+    });
+    assert.equal(stopped.state, "failed");
+    assert.match(stopped.error ?? "", /ENOENT/);
+  } finally {
+    await manager.dispose();
+  }
+});
+
+test(
+  "stop preserves its terminal state and diagnostic when final group cleanup reports EPERM",
+  { skip: process.platform === "win32" },
+  async (context) => {
+    const manager = new ShellManager({ shell: process.execPath, shellArgs: ["-e"] });
+    const kill = process.kill.bind(process);
+    try {
+      const started = manager.start({
+        ownerId: "owner",
+        cwd,
+        command: 'process.stdout.write("ready"); setInterval(() => {}, 1000)',
+      });
+      assert.ok(started.pid !== undefined);
+      const groupPid = started.pid;
+      await waitFor(
+        () => readShell(manager, started.shellId),
+        (result) => result.stdout.data === "ready",
+      );
+      let cleanupAttempts = 0;
+      context.mock.method(process, "kill", (pid: number, signal?: string | number) => {
+        if (pid === -groupPid && signal === "SIGKILL") {
+          cleanupAttempts += 1;
+          throw Object.assign(new Error("kill EPERM"), { code: "EPERM" });
+        }
+        return kill(pid, signal);
+      });
+      const stopped = await manager.stop({
+        requesterId: "owner",
+        isAdmin: false,
+        shellId: started.shellId,
+      });
+      assert.equal(cleanupAttempts, 1);
+      assert.equal(stopped.state, "stopped");
+      assert.equal(stopped.signal, "SIGTERM");
+      assert.equal(stopped.error, "Failed to send SIGKILL: kill EPERM");
+      assert.ok(stopped.endedAt !== undefined);
+      assert.deepEqual(
+        await manager.stop({ requesterId: "owner", isAdmin: false, shellId: started.shellId }),
+        stopped,
+      );
+    } finally {
+      await manager.dispose();
+    }
+  },
+);
+
 test(
   "stop terminates the owned detached process group, reaches terminal state, and is idempotent",
   { skip: process.platform === "win32" },
   async () => {
-    const manager = new ShellManager({ stopGraceMs: 100 });
+    const manager = new ShellManager({
+      shell: process.execPath,
+      shellArgs: ["-e"],
+      stopGraceMs: 100,
+    });
     let groupPid: number | undefined;
     try {
       const started = manager.start({
         ownerId: "owner",
         cwd,
-        command: `${JSON.stringify(process.execPath)} -e 'process.stdout.write(String(process.pid) + "\\n"); setInterval(() => {}, 1000)' & wait`,
+        // Reap the descendant before exiting so cleanup never targets an orphaned zombie group.
+        command: [
+          'const { spawn } = require("node:child_process")',
+          'process.on("SIGTERM", () => {})',
+          `const child = spawn(process.execPath, ["-e", ${JSON.stringify('process.stdout.write(String(process.pid) + "\\n"); setInterval(() => {}, 1000)')}], { stdio: ["ignore", "pipe", "inherit"] })`,
+          "child.stdout.pipe(process.stdout)",
+          'child.once("exit", () => process.exit(0))',
+        ].join(";"),
       });
       groupPid = started.pid;
       assert.ok(groupPid !== undefined);
@@ -474,7 +547,7 @@ test(
         isAdmin: false,
         shellId: started.shellId,
       });
-      assert.equal(stopped.state, "stopped");
+      assert.equal(stopped.state, "stopped", JSON.stringify(stopped));
       assert.ok(stopped.endedAt !== undefined);
 
       const stoppedAgain = await manager.stop({

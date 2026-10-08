@@ -114,6 +114,7 @@ interface ShellRecord {
   startedAt: number;
   endedAt?: number;
   child?: ChildProcess;
+  signalError?: string;
   stdout: StreamBuffer;
   stderr: StreamBuffer;
   stopRequested: boolean;
@@ -386,7 +387,8 @@ export class ShellManager {
     this.flushDecoder(record.stdout);
     this.flushDecoder(record.stderr);
     record.endedAt = Date.now();
-    if (record.error) record.state = "failed";
+    // Stop-related signaling failures remain diagnostic, not child execution failures.
+    if (record.error || (!record.stopRequested && record.signalError)) record.state = "failed";
     else if (record.stopRequested) record.state = "stopped";
     else record.state = "exited";
 
@@ -455,18 +457,16 @@ export class ShellManager {
 
   private signalRecord(record: ShellRecord, signal: NodeJS.Signals): void {
     const pid = record.pid;
-    if (pid === undefined) {
-      record.child?.kill(signal);
-      return;
-    }
+    // A pending spawn failure has no owned process to signal.
+    if (pid === undefined) return;
     try {
       if (process.platform === "win32") record.child?.kill(signal);
       else process.kill(-pid, signal);
     } catch (error) {
-      // SAFETY: Node process signaling reports failures with the ErrnoException shape.
-      const failure = error as NodeJS.ErrnoException;
-      if (failure.code !== "ESRCH") {
-        record.error ??= `Failed to send ${signal}: ${failure.message ?? String(error)}`;
+      const code = error instanceof Error && "code" in error ? error.code : undefined;
+      if (code !== "ESRCH") {
+        const message = error instanceof Error ? error.message : String(error);
+        record.signalError ??= `Failed to send ${signal}: ${message}`;
         record.child?.kill(signal);
       }
     }
@@ -545,7 +545,8 @@ function snapshot(record: ShellRecord): ShellResult {
   if (record.pid !== undefined) result.pid = record.pid;
   if (record.exitCode !== undefined) result.exitCode = record.exitCode;
   if (record.signal !== undefined) result.signal = record.signal;
-  if (record.error !== undefined) result.error = record.error;
+  const error = record.error ?? record.signalError;
+  if (error !== undefined) result.error = error;
   if (record.endedAt !== undefined) result.endedAt = record.endedAt;
   return result;
 }
