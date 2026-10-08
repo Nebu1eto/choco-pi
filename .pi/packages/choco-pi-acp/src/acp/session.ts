@@ -229,6 +229,8 @@ const MAX_EXTENSION_UI_TEXT_LENGTH = 10_000;
 const EXTENSION_UI_TOMBSTONE_CAPACITY = 8_192;
 /** One active turn plus at most this many explicitly queued ACP prompts. */
 const MAX_QUEUED_TURNS = 64;
+/** Preserve responsive-client delivery without letting a dead child retain a prompt forever. */
+const PI_EXIT_EMIT_DRAIN_MS = 100;
 const SENSITIVE_UI_REQUEST =
   /\b(?:auth(?:entication|orization)?|credential|login|pass(?:code|phrase|word)?|secret|token|api[ _-]?key|private[ _-]?key)\b/i;
 
@@ -673,6 +675,10 @@ export class PiAcpSession {
   // Ensure `session/update` notifications are sent in order and can be awaited
   // before completing a `session/prompt` request.
   private lastEmit: Promise<void> = Promise.resolve();
+  private readonly emitDrain = {
+    abandoned: false,
+    release: Promise.withResolvers<void>(),
+  };
   private extensionUiGeneration = 0;
   private extensionUiActive = true;
   private readonly pendingExtensionUi = new Map<string, PendingExtensionUi>();
@@ -879,14 +885,16 @@ export class PiAcpSession {
   }
 
   private emit(update: SessionUpdate): void {
-    // Serialize update delivery.
+    const drain = this.emitDrain;
+    if (drain.abandoned) return;
+    const conn = this.conn;
+    const sessionId = this.sessionId;
+    // Serialize update delivery, but do not restart abandoned work after a late reply.
     this.lastEmit = this.lastEmit
-      .then(() =>
-        this.conn.sessionUpdate({
-          sessionId: this.sessionId,
-          update,
-        }),
-      )
+      .then(() => {
+        if (drain.abandoned) return;
+        return conn.sessionUpdate({ sessionId, update });
+      })
       .catch(() => {
         // Ignore notification errors (client may have gone away). We still want
         // prompt completion.
@@ -895,7 +903,8 @@ export class PiAcpSession {
 
   private async flushEmits(): Promise<void> {
     const emits = this.lastEmit;
-    await emits;
+    const released = this.emitDrain.release.promise;
+    await Promise.race([emits, released]);
   }
 
   private emitBashToolCall(params: {
@@ -1034,6 +1043,15 @@ export class PiAcpSession {
     );
     const reason: StopReason = this.cancelRequested ? "cancelled" : "error";
     const settlement: TurnSettlement = { type: "resolve", reason };
+    // Also release a settlement already awaiting flushEmits. Child exit must not
+    // depend on an ACP notification promise ever resolving.
+    const drain = this.emitDrain;
+    const emits = this.lastEmit;
+    const timer = setTimeout(() => {
+      drain.abandoned = true;
+      drain.release.resolve();
+    }, PI_EXIT_EMIT_DRAIN_MS);
+    void emits.then(() => clearTimeout(timer));
     this.settlePendingTurn(settlement, { queuedSettlement: settlement });
     void this.closeExtensionUi();
   }
