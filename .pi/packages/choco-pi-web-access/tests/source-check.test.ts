@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test, type TestContext } from "node:test";
@@ -23,6 +23,17 @@ import { Check } from "typebox/value";
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 const isolatedAgentDir = await mkdtemp(join(tmpdir(), "choco-pi-source-check-agent-"));
 process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
+// Extension-level fixtures use the existing trusted-proxy fetch seam, not a direct socket.
+const previousHttpsProxy = process.env.HTTPS_PROXY;
+const previousNoProxy = process.env.NO_PROXY;
+const previousLowerNoProxy = process.env.no_proxy;
+process.env.HTTPS_PROXY = "http://fixture-proxy.test:8080";
+process.env.NO_PROXY = "";
+process.env.no_proxy = "";
+await writeFile(
+  join(isolatedAgentDir, "web-search.json"),
+  JSON.stringify({ ssrf: { trustEnvProxy: true } }),
+);
 
 const { default: initializeExtension } = await import("../index.ts");
 const {
@@ -38,6 +49,12 @@ const { clearResults } = await import("../storage.ts");
 after(async () => {
   if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
   else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+  if (previousHttpsProxy === undefined) delete process.env.HTTPS_PROXY;
+  else process.env.HTTPS_PROXY = previousHttpsProxy;
+  if (previousNoProxy === undefined) delete process.env.NO_PROXY;
+  else process.env.NO_PROXY = previousNoProxy;
+  if (previousLowerNoProxy === undefined) delete process.env.no_proxy;
+  else process.env.no_proxy = previousLowerNoProxy;
   await rm(isolatedAgentDir, { recursive: true, force: true });
 });
 

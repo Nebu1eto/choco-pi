@@ -130,3 +130,21 @@ Test fixtures follow the 1.0.4 extension contract. Tool calls receive a real
 `ExtensionToolContext` from `ExtensionRunner.createToolContext()`, and fixture
 `ExtensionActions` implement `getSettings()` from the same in-memory
 `SettingsManager` given to the resource loader. Runtime code is unchanged.
+
+## 2026-10-08 choco-pi patch: pin direct connections to SSRF approvals
+
+- URL validation now returns an immutable URL/address approval; the URL-only
+  validation API remains available. Direct HTTP(S) requests use `node:http` and
+  `node:https` with an approval-only lookup and no shared connection pool. Every
+  redirect gets a new approval; authenticated requests retain theirs across
+  cookie acquisition. The explicitly trusted environment-proxy path remains on
+  native fetch without local DNS validation.
+- The native Response adapter preserves Host, verified HTTPS SNI, streaming,
+  response URL, duplicate headers, decompression, request bodies, and aborts.
+  Redirect handling disposes skipped bodies, drops POST entity headers when
+  switching to GET, and strips credentials across origins. Extraction disposes
+  unconsumed error bodies. No dependency was added; undici remains dropped.
+- Added real loopback HTTP/HTTPS regressions for rebinding, redirects,
+  authenticated cookie awaits, IPv4/IPv6, TLS identity, cancellation, and decoded
+  size limits. Existing fetch fixtures use explicit injection or the existing
+  trusted-proxy seam instead of intercepting direct connections globally.

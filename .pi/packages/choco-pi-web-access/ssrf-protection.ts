@@ -2,6 +2,12 @@ import { lookup as dnsLookup } from "node:dns/promises";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import net from "node:net";
 import { getWebSearchConfigPath } from "./utils.ts";
+import {
+  discardResponse,
+  fetchApprovedRemoteUrl,
+  type ApprovedAddress,
+  type ApprovedRemoteUrl,
+} from "./pinned-http.ts";
 
 const DEFAULT_MAX_REDIRECTS = 5;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
@@ -221,25 +227,26 @@ interface FetchRemoteOptions extends ValidationOptions {
   fetch?: Fetch;
   maxRedirects?: number;
   onRedirect?: (args: RedirectRequestInitArgs) => RequestInit;
+  prepareRequest?: (url: URL, init: RequestInit) => Promise<RequestInit>;
 }
 
 async function defaultLookup(hostname: string): Promise<LookupAddress[]> {
   return dnsLookup(hostname, { all: true, verbatim: true });
 }
 
-export async function validateRemoteUrl(
+export async function approveRemoteUrl(
   rawUrl: string | URL,
   options: ValidationOptions = {},
-): Promise<URL> {
-  const url = rawUrl instanceof URL ? rawUrl : new URL(rawUrl);
+): Promise<ApprovedRemoteUrl> {
+  const url = parseRemoteUrl(rawUrl.toString());
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error("Only HTTP and HTTPS URLs can be fetched remotely");
   }
 
   const hostname = normalizeHostname(url.hostname);
   if (!hostname) throw new Error("URL must include a hostname");
-  if (hostname === "localhost") {
-    if (options.allowLoopback === true) return url;
+  const allowedLocalhost = hostname === "localhost" && options.allowLoopback === true;
+  if (hostname === "localhost" && !allowedLocalhost) {
     throw new Error(`Blocked internal hostname: ${hostname}`);
   }
   if (hostname.endsWith(".localhost")) {
@@ -247,18 +254,19 @@ export async function validateRemoteUrl(
   }
 
   const allowRanges = parseAllowRanges(options.allowRanges);
-  assertDomainPolicy(hostname, options.domainPolicy);
+  if (!allowedLocalhost) assertDomainPolicy(hostname, options.domainPolicy);
+  const addressAllowRanges =
+    options.allowLoopback === true && (allowedLocalhost || net.isIP(hostname))
+      ? [...allowRanges, ...parseAllowRanges(LOOPBACK_ALLOW_RANGES)]
+      : allowRanges;
 
   if (net.isIP(hostname)) {
-    const addressAllowRanges =
-      options.allowLoopback === true
-        ? [...allowRanges, ...parseAllowRanges(LOOPBACK_ALLOW_RANGES)]
-        : allowRanges;
     assertPublicAddress(hostname, hostname, addressAllowRanges);
-    return url;
+    return approvalSnapshot(url, [{ address: hostname, family: net.isIP(hostname) }]);
   }
 
-  if (shouldTrustEnvProxy(url, options.trustEnvProxy === true)) return url;
+  if (!allowedLocalhost && shouldTrustEnvProxy(url, options.trustEnvProxy === true))
+    return approvalSnapshot(url, null);
 
   let addresses: LookupAddress[];
   try {
@@ -271,9 +279,32 @@ export async function validateRemoteUrl(
   if (addresses.length === 0)
     throw new Error(`Failed to resolve ${hostname}: no addresses returned`);
   for (const { address } of addresses) {
-    assertPublicAddress(address, hostname, allowRanges);
+    assertPublicAddress(address, hostname, addressAllowRanges);
   }
-  return url;
+  return approvalSnapshot(url, addresses);
+}
+
+function approvalSnapshot(url: URL, addresses: LookupAddress[] | null): ApprovedRemoteUrl {
+  const approved: ApprovedAddress[] | null =
+    addresses === null
+      ? null
+      : addresses.map(({ address, family }) => {
+          if ((family !== 4 && family !== 6) || net.isIP(address) !== family) {
+            throw new Error(`Failed to resolve ${url.hostname}: invalid address or family`);
+          }
+          return Object.freeze({ address, family });
+        });
+  return Object.freeze({
+    url: url.href,
+    addresses: approved === null ? null : Object.freeze(approved),
+  });
+}
+
+export async function validateRemoteUrl(
+  rawUrl: string | URL,
+  options: ValidationOptions = {},
+): Promise<URL> {
+  return parseRemoteUrl((await approveRemoteUrl(rawUrl, options)).url);
 }
 
 export async function fetchRemoteUrl(
@@ -281,35 +312,78 @@ export async function fetchRemoteUrl(
   init: RequestInit = {},
   options: FetchRemoteOptions = {},
 ): Promise<Response> {
-  const fetchImpl = options.fetch ?? fetch;
+  const fetchImpl = options.fetch;
+  const onRedirect = options.onRedirect;
+  const prepareRequest = options.prepareRequest;
+  const signal = init.signal;
   const maxRedirects = options.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
-  let current = await validateRemoteUrl(url, options);
-  let requestInit = init;
+  const validation: ValidationOptions = {
+    ...options,
+    allowRanges: options.allowRanges?.slice(),
+    domainPolicy: options.domainPolicy
+      ? { allow: [...options.domainPolicy.allow], deny: [...options.domainPolicy.deny] }
+      : undefined,
+  };
+  let requestInit = { ...init, headers: new Headers(init.headers) };
+  let approval = await approveRemoteUrl(url, validation);
+  signal?.throwIfAborted();
+  let current = parseRemoteUrl(approval.url);
 
   for (let redirects = 0; redirects <= maxRedirects; redirects++) {
-    const response = await fetchImpl(current, { ...requestInit, redirect: "manual" });
+    const prepared = prepareRequest ? await prepareRequest(current, requestInit) : requestInit;
+    signal?.throwIfAborted();
+    const response = fetchImpl
+      ? await fetchImpl(current, { ...prepared, redirect: "manual" })
+      : await fetchApprovedRemoteUrl(approval, prepared);
+    if (signal?.aborted) {
+      await discardResponse(response);
+      signal.throwIfAborted();
+    }
     if (!REDIRECT_STATUSES.has(response.status)) return response;
 
     const location = response.headers.get("location");
     if (!location) return response;
-    if (redirects === maxRedirects)
-      throw new Error(`Too many redirects fetching ${current.toString()}`);
+    try {
+      if (redirects === maxRedirects)
+        throw new Error(`Too many redirects fetching ${current.toString()}`);
 
-    const from = current;
-    current = await validateRemoteUrl(new URL(location, current), options);
-    if (
-      response.status === 303 ||
-      ((response.status === 301 || response.status === 302) &&
-        requestInit.method?.toUpperCase() === "POST")
-    ) {
-      const { body: _body, ...nextInit } = requestInit;
-      requestInit = { ...nextInit, method: "GET" };
+      const from = current;
+      approval = await approveRemoteUrl(new URL(location, current), validation);
+      signal?.throwIfAborted();
+      current = parseRemoteUrl(approval.url);
+      if (
+        response.status === 303 ||
+        ((response.status === 301 || response.status === 302) &&
+          requestInit.method?.toUpperCase() === "POST")
+      ) {
+        const { body: _body, ...nextInit } = requestInit;
+        const headers = new Headers(nextInit.headers);
+        for (const name of ["content-length", "content-type", "transfer-encoding"])
+          headers.delete(name);
+        requestInit = { ...nextInit, headers, method: "GET" };
+      }
+      if (from.origin !== current.origin) {
+        for (const name of ["authorization", "proxy-authorization", "cookie"])
+          requestInit.headers.delete(name);
+      }
+      if (onRedirect) {
+        const next = onRedirect({ from, to: current, init: requestInit, response });
+        requestInit = { ...next, headers: new Headers(next.headers) };
+      }
+    } finally {
+      await discardResponse(response);
     }
-    if (options.onRedirect)
-      requestInit = options.onRedirect({ from, to: current, init: requestInit, response });
   }
 
   throw new Error(`Too many redirects fetching ${current.toString()}`);
+}
+
+function parseRemoteUrl(rawUrl: string): URL {
+  try {
+    return new URL(rawUrl);
+  } catch {
+    throw new Error("Invalid remote URL");
+  }
 }
 
 function normalizeHostname(hostname: string): string {

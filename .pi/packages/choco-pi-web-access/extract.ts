@@ -29,6 +29,7 @@ import { isImageEnabled } from "./feature-config.ts";
 import { assertAuthFetchUrl, authFetchRedirectGuard, type AuthFetchProfile } from "./auth-fetch.ts";
 import { getBrowserCookiesForHosts, getLastBrowserCookieDiagnostic } from "./chrome-cookies.ts";
 import { sanitizeInlineDataUris } from "./data-uri-sanitize.ts";
+import { discardResponse } from "./pinned-http.ts";
 
 const DEFAULT_TIMEOUT_MS = 30000;
 const CONCURRENT_LIMIT = 3;
@@ -59,6 +60,7 @@ interface AuthRemoteValidationConfig {
   ssrf: SsrfConfig;
   domainPolicy: DomainPolicy;
   lookup?: Lookup;
+  fetch?: typeof fetch;
 }
 interface AuthenticatedRequestInit extends RequestInit {
   headers: Record<string, string>;
@@ -149,42 +151,35 @@ async function resolveAuthCookieHeader(
   throw new Error(`Authenticated fetch profile ${profile.name} could not build a cookie header`);
 }
 
-const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
-
-async function fetchAuthenticatedRemoteUrl(
+export async function fetchAuthenticatedRemoteUrl(
   url: string,
   init: AuthenticatedRequestInit,
   validationOptions: AuthRemoteValidationConfig,
   profile: AuthFetchProfile,
+  cookieProvider: typeof resolveAuthCookieHeader = resolveAuthCookieHeader,
 ): Promise<Response> {
   const validation = remoteValidationOptions(
     validationOptions.ssrf,
     validationOptions.domainPolicy,
     validationOptions.lookup,
   );
-  let current = await validateRemoteUrl(url, validation);
-  let requestInit = init;
-  for (let redirects = 0; redirects <= 5; redirects++) {
-    const cookieHeader = await resolveAuthCookieHeader(current, profile);
-    const headers = { ...requestInit.headers, cookie: cookieHeader };
-    const response = await fetch(current, { ...requestInit, headers, redirect: "manual" });
-    if (!REDIRECT_STATUSES.has(response.status)) return response;
-    const location = response.headers.get("location");
-    if (!location) return response;
-    if (redirects === 5) throw new Error(`Too many redirects fetching ${current.toString()}`);
-    const from = current;
-    current = await validateRemoteUrl(new URL(location, current), validation);
-    authFetchRedirectGuard(profile, from, current);
-    if (
-      response.status === 303 ||
-      ((response.status === 301 || response.status === 302) &&
-        requestInit.method?.toUpperCase() === "POST")
-    ) {
-      const { body: _body, ...nextInit } = requestInit;
-      requestInit = { ...nextInit, method: "GET" };
-    }
-  }
-  throw new Error(`Too many redirects fetching ${current.toString()}`);
+  const authProfile = { ...profile, hosts: [...profile.hosts] };
+  const signal = init.signal;
+  return fetchRemoteUrl(url, init, {
+    ...validation,
+    fetch: validationOptions.fetch,
+    async prepareRequest(current, requestInit) {
+      const cookieHeader = await cookieProvider(current, authProfile);
+      signal?.throwIfAborted();
+      const headers = new Headers(requestInit.headers);
+      headers.set("cookie", cookieHeader);
+      return { ...requestInit, headers };
+    },
+    onRedirect({ from, to, init: nextInit }) {
+      authFetchRedirectGuard(authProfile, from, to);
+      return nextInit;
+    },
+  });
 }
 
 function loadFetchRouting(): FetchRouting {
@@ -283,6 +278,8 @@ export interface ExtractOptions {
   authFetchProfile?: AuthFetchProfile;
   /** Custom DNS resolver used for SSRF validation. Primarily a test seam. */
   lookup?: Lookup;
+  /** Explicit transport fixture seam; direct requests otherwise use approved DNS snapshots. */
+  fetch?: typeof fetch;
 }
 
 export async function extractContent(
@@ -298,7 +295,9 @@ export async function extractContent(
   try {
     const parsed = new URL(url);
     if (parsed.protocol === "http:" || parsed.protocol === "https:") remoteUrl = parsed;
-  } catch {}
+  } catch {
+    remoteUrl = null;
+  }
   if (remoteUrl) {
     try {
       const ssrf = loadSsrfConfig();
@@ -560,6 +559,7 @@ async function extractViaHttp(
 
   const onAbort = () => controller.abort();
   signal?.addEventListener("abort", onAbort);
+  let response: Response | undefined;
 
   try {
     const ssrf = loadSsrfConfig();
@@ -583,9 +583,10 @@ async function extractViaHttp(
     const validation = remoteValidationOptions(ssrf, domainPolicy, options?.lookup);
     const authValidation: AuthRemoteValidationConfig = { ssrf, domainPolicy };
     if (options?.lookup) authValidation.lookup = options.lookup;
-    const response = authProfile
+    authValidation.fetch = options?.fetch;
+    response = authProfile
       ? await fetchAuthenticatedRemoteUrl(url, requestInit, authValidation, authProfile)
-      : await fetchRemoteUrl(url, requestInit, validation);
+      : await fetchRemoteUrl(url, requestInit, { ...validation, fetch: options?.fetch });
 
     if (!response.ok && options?.mode !== "raw") {
       activityMonitor.logComplete(activityId, response.status);
@@ -837,6 +838,7 @@ async function extractViaHttp(
   } finally {
     clearTimeout(timeoutId);
     signal?.removeEventListener("abort", onAbort);
+    if (response?.body && !response.bodyUsed) await discardResponse(response);
   }
 }
 
@@ -848,7 +850,13 @@ export function extractHeadingTitle(text: string): string | null {
 }
 
 function extractTextTitle(text: string, url: string): string {
-  return extractHeadingTitle(text) ?? (new URL(url).pathname.split("/").pop() || url);
+  const heading = extractHeadingTitle(text);
+  if (heading) return heading;
+  try {
+    return new URL(url).pathname.split("/").pop() || url;
+  } catch {
+    return url;
+  }
 }
 
 export async function fetchAllContent(
