@@ -11,6 +11,7 @@ import {
   reserveMailboxSubmission,
   type SubmittedMailboxClaim,
 } from "./lib/session-mailbox-delivery.ts";
+import { createToolSearchResourceLoader } from "./lib/tool-surface.ts";
 import { randomUUID } from "node:crypto";
 import { mkdir, open, readdir, rename, stat, unlink, watch } from "node:fs/promises";
 import { join } from "node:path";
@@ -241,11 +242,15 @@ async function createIndependentSession(
   const model = resolveModel(ctx, input.model);
   const effort = resolveEffort(input.effort, ctx.thinkingLevel);
   const sessionManager = SessionManager.create(ctx.cwd);
+  // SDK sessions do not load Pi's built-in tool_search on their own; an
+  // independent session discovers deferred tools like the session that made it.
+  const resourceLoader = await createToolSearchResourceLoader(ctx.cwd);
   const { session } = await createAgentSession({
     cwd: ctx.cwd,
     model,
     thinkingLevel: effort,
     sessionManager,
+    resourceLoader,
   });
 
   try {

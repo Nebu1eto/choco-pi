@@ -11,8 +11,10 @@ import {
   type AgentSession,
   type AgentSessionEvent,
   createAgentSession,
+  createToolSearchExtension,
   DefaultResourceLoader,
   type ExtensionAPI,
+  type ExtensionFactory,
   getAgentDir,
   SessionManager,
   SettingsManager,
@@ -204,6 +206,104 @@ function leanSurfaceNames(): Set<string> | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** Late-bound reachability of one child, filled after its scope is installed. */
+interface ChildToolScopeSlot {
+  isReachable?: (name: string) => boolean;
+}
+
+/** Pi's built-in discovery tool, registered in every extension-enabled child. */
+const TOOL_SEARCH_TOOL_NAME = "tool_search";
+
+/** Exposures only `tool_search` can activate; an active one was loaded by a search. */
+const SEARCH_LOADED_EXPOSURES: ReadonlySet<string> = new Set(["deferred", "codemode"]);
+
+/**
+ * Pi's built-in `tool_search`, seeing only the tools this child may reach.
+ *
+ * The built-in searches the session's inactive `deferred`/`codemode` tools and
+ * activates the matches. Handing it a view whose `getAllTools()` is filtered by
+ * the child's scope keeps a search from naming, let alone loading, a tool the
+ * child was denied. The same predicate blocks every `tool_call` outside the
+ * scope, which also covers calls other tools issue through `ctx.executeTool()`
+ * (`parentToolCallId` set); `agent.beforeToolCall` never sees those.
+ *
+ * `isReachable` must fail closed until the scope is installed.
+ */
+export function createChildToolSearchExtension(
+  isReachable: (name: string) => boolean,
+): ExtensionFactory {
+  const registerToolSearch = createToolSearchExtension();
+  return async (childPi) => {
+    // Pi's ExtensionAPI members are closures over the extension, so a copy
+    // with one replaced member registers and activates exactly like the original.
+    const scopedPi: ExtensionAPI = {
+      ...childPi,
+      getAllTools: () => childPi.getAllTools().filter((tool) => isReachable(tool.name)),
+    };
+    await registerToolSearch(scopedPi);
+    childPi.on("tool_call", (event) =>
+      isReachable(event.toolName)
+        ? undefined
+        : { block: true, reason: `Tool "${event.toolName}" is not available to this subagent.` },
+    );
+  };
+}
+
+/**
+ * Per-session tool scopes for tool bridges that can run a registered tool
+ * without Pi's hooks (choco-pi-codex's exec bridge falls back to a direct
+ * `execute()` for tools `ctx.executeTool()` cannot reach). Keyed by the
+ * session's SessionManager, which is the object `ctx.sessionManager` returns
+ * inside that session. A session without a scope is unrestricted.
+ *
+ * Matched over `Symbol.for` because a package must not import another; the
+ * consumer types this boundary independently. Do not rename the symbol.
+ */
+const TOOL_SCOPE_SYMBOL = Symbol.for("choco-pi.tool-scope.v1");
+
+/** The session identity a scope is keyed by: the session's own SessionManager. */
+const ToolScopeOwnerSchema = Type.Object({ getSessionId: Type.Function([], Type.String()) });
+type ToolScopeOwner = Pick<SessionManager, "getSessionId">;
+
+const ToolScopeRegistrySchema = Type.Object({
+  isToolAllowed: Type.Function([ToolScopeOwnerSchema, Type.String()], Type.Boolean()),
+  restrict: Type.Function(
+    [ToolScopeOwnerSchema, Type.Function([Type.String()], Type.Boolean())],
+    Type.Void(),
+  ),
+});
+
+interface ToolScopeRegistry {
+  isToolAllowed(sessionManager: ToolScopeOwner, name: string): boolean;
+  restrict(sessionManager: ToolScopeOwner, allows: (name: string) => boolean): void;
+}
+
+function toolScopeRegistry(): ToolScopeRegistry {
+  const existing = Object.getOwnPropertyDescriptor(globalThis, TOOL_SCOPE_SYMBOL)?.value;
+  if (Value.Check(ToolScopeRegistrySchema, existing)) return existing;
+  const scopes = new WeakMap<ToolScopeOwner, (name: string) => boolean>();
+  const registry: ToolScopeRegistry = {
+    isToolAllowed: (sessionManager, name) => scopes.get(sessionManager)?.(name) ?? true,
+    restrict: (sessionManager, allows) => {
+      scopes.set(sessionManager, allows);
+    },
+  };
+  Object.defineProperty(globalThis, TOOL_SCOPE_SYMBOL, {
+    configurable: true,
+    writable: true,
+    value: registry,
+  });
+  return registry;
+}
+
+/** Restrict what tool bridges may run inside the session owning `sessionManager`. */
+export function restrictSessionToolScope(
+  sessionManager: ToolScopeOwner,
+  allows: (name: string) => boolean,
+): void {
+  toolScopeRegistry().restrict(sessionManager, allows);
 }
 
 /** Built-ins available to read-only side conversations. No shell or write path. */
@@ -416,6 +516,9 @@ export function parseExtSelectors(entries: string[]): ExtensionToolSelection {
  *
  * Only meaningful when extensions are loaded — under `noExtensions`/`isolated` the
  * static `allowedToolNames` allowlist already gates the registry itself.
+ *
+ * Returns the live reachability predicate: the scope without the lean surface,
+ * which `tool_search`, the `tool_call` guard, and tool bridges enforce.
  */
 export function installExtensionToolScope(
   session: AgentSession,
@@ -430,7 +533,7 @@ export function installExtensionToolScope(
     /** Tree messaging is always available, regardless of depth or frontmatter tool denies. */
     alwaysToolNames: Set<string>;
   },
-): void {
+): (name: string) => boolean {
   const {
     loader,
     toolNames,
@@ -448,7 +551,12 @@ export function installExtensionToolScope(
   // selector is present, extension tools become an explicit allowlist — a loaded
   // extension not named by a selector contributes nothing (its handlers still ran),
   // and `ext:foo/bar` narrows `foo` to just `bar`.
-  const inScope = (): Set<string> => {
+  //
+  // `applyLean` separates the two scopes: with it, the names active without a
+  // search (the lean surface); without it, every name this child may reach at
+  // all, through `tool_search` or a tool bridge. Both honor `ext:` narrowing
+  // and `disallowedTools`; only the lean surface is optional.
+  const scopeOf = (applyLean: boolean): Set<string> => {
     const keep = new Set(toolNames.filter((t) => !disallowedSet?.has(t)));
     const optInActive = extNames.size > 0;
     for (const extension of loader.getExtensions().extensions) {
@@ -462,10 +570,12 @@ export function installExtensionToolScope(
         if (disallowedSet?.has(name)) continue;
         // An explicitly configured tool name stays available; the lean surface
         // only gates what an extension contributes on its own.
-        if (!toolNames.includes(name) && !leanAllows(name)) continue;
+        if (applyLean && !toolNames.includes(name) && !leanAllows(name)) continue;
         keep.add(name);
       }
     }
+    // Discovery grants nothing by itself: the child's search sees only reachable tools.
+    if (!disallowedSet?.has(TOOL_SEARCH_TOOL_NAME)) keep.add(TOOL_SEARCH_TOOL_NAME);
     for (const name of EXCLUDED_TOOL_NAMES) keep.delete(name);
     // Opt-in nested delegation tools share EXCLUDED_TOOL_NAMES' names but are
     // legitimately active for this agent — re-admit them so the renarrow keeps
@@ -477,14 +587,28 @@ export function installExtensionToolScope(
     for (const name of DISABLED_BUILTIN_TOOL_NAMES) keep.delete(name);
     return keep;
   };
+  const inScope = (): Set<string> => scopeOf(true);
+  const reachable = (): Set<string> => scopeOf(false);
 
+  // Keep the current order and append newcomers, so a tool `tool_search` loaded
+  // stays where Pi put it instead of being re-sorted into registry order.
+  // A loaded `deferred`/`codemode` tool survives only while it stays reachable.
   const renarrow = () => {
     const allowed = inScope();
-    const next = session
-      .getAllTools()
-      .map((t) => t.name)
-      .filter((n) => allowed.has(n));
+    const reach = reachable();
+    const registered = session.getAllTools();
+    const loadable = new Set(
+      registered
+        .filter((tool) => SEARCH_LOADED_EXPOSURES.has(tool.exposure) && reach.has(tool.name))
+        .map((tool) => tool.name),
+    );
     const current = session.getActiveToolNames();
+    const kept = current.filter((n) => allowed.has(n) || loadable.has(n));
+    const keptSet = new Set(kept);
+    const next = [
+      ...kept,
+      ...registered.map((t) => t.name).filter((n) => allowed.has(n) && !keptSet.has(n)),
+    ];
     // setActiveToolsByName unconditionally rebuilds the system prompt, so skip
     // the no-op that steady-state turns would otherwise pay for every turn.
     if (next.length !== current.length || next.some((n, i) => n !== current[i])) {
@@ -502,7 +626,7 @@ export function installExtensionToolScope(
 
   const priorBeforeToolCall = session.agent.beforeToolCall;
   session.agent.beforeToolCall = async (context, signal) => {
-    if (!inScope().has(context.toolCall.name)) {
+    if (!reachable().has(context.toolCall.name)) {
       return {
         block: true,
         reason: `Tool "${context.toolCall.name}" is not available to this subagent.`,
@@ -510,6 +634,8 @@ export function installExtensionToolScope(
     }
     return priorBeforeToolCall?.(context, signal);
   };
+
+  return (name) => reachable().has(name);
 }
 
 /** Default max turns. undefined = unlimited (no turn limit). */
@@ -1069,6 +1195,9 @@ export async function runAgent(
           };
         };
 
+  // Filled once the child's scope is installed; the search and `tool_call`
+  // guard fail closed until then.
+  const childToolScope: ChildToolScopeSlot = {};
   const loaderOptions: ConstructorParameters<typeof DefaultResourceLoader>[0] = {
     cwd: configCwd,
     agentDir,
@@ -1099,6 +1228,19 @@ export async function runAgent(
             },
           ]
         : []),
+      // Static-allowlist children (noExtensions) register nothing a search could
+      // find, and the allowlist would drop `tool_search` anyway.
+      ...(noExtensions
+        ? []
+        : [
+            {
+              name: "subagent-tool-search",
+              hidden: true,
+              factory: createChildToolSearchExtension(
+                (name) => childToolScope.isReachable?.(name) === true,
+              ),
+            },
+          ]),
     ],
     noSkills,
     noPromptTemplates: true,
@@ -1381,7 +1523,7 @@ export async function runAgent(
   // handled below by re-deriving scope from the loader's live extension maps —
   // `registerTool` writes into those same maps, so late arrivals are judged too.
   if (!noExtensions) {
-    installExtensionToolScope(session, {
+    const isReachable = installExtensionToolScope(session, {
       loader,
       toolNames,
       disallowedSet,
@@ -1390,6 +1532,8 @@ export async function runAgent(
       nestedToolNames,
       alwaysToolNames,
     });
+    childToolScope.isReachable = isReachable;
+    restrictSessionToolScope(session.sessionManager, isReachable);
   }
 
   options.onSessionCreated?.(session);
