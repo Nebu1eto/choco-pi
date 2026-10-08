@@ -68,6 +68,7 @@ export type HarnessCheckRegistration = {
   checkHarness?: (options: HarnessOptions) => Promise<HarnessReport>;
   /** Names of the policy-disabled built-in extensions the host currently loads. */
   observeBuiltinExtensions?: () => readonly string[];
+  observeActiveHostTools?: () => NonNullable<HarnessOptions["activeHostTools"]>;
 };
 
 export type HarnessCheckExecutionDependencies = {
@@ -75,9 +76,23 @@ export type HarnessCheckExecutionDependencies = {
   currentOwner: () => CapturedHostIdentity["owner"];
   check: (options: HarnessOptions) => Promise<HarnessReport>;
   observeBuiltinExtensions?: () => readonly string[];
+  observeActiveHostTools?: () => NonNullable<HarnessOptions["activeHostTools"]>;
 };
 
-type SourcedEntry = { sourceInfo: { path: string } };
+type SourcedEntry = { name?: string; sourceInfo: { path: string } };
+
+export function activeHostTools(
+  entries: readonly SourcedEntry[],
+): NonNullable<HarnessOptions["activeHostTools"]> {
+  return {
+    builtinToolSearch: entries.some(
+      (entry) => entry.name === "tool_search" && entry.sourceInfo.path === "builtin:tool-search",
+    ),
+    adapterTools: entries.flatMap((entry) =>
+      entry.name === "mcp" || entry.name === "mcpScript" ? [entry.name] : [],
+    ),
+  };
+}
 
 /**
  * Policy-disabled built-in extensions that registered a tool or command.
@@ -106,6 +121,7 @@ export async function executeHarnessCheck(
 ): Promise<HarnessReport> {
   const identity = dependencies.capture();
   const loadedBuiltins = dependencies.observeBuiltinExtensions?.();
+  const hostTools = dependencies.observeActiveHostTools?.();
   if (signal?.aborted) throw new Error("harness check cancelled");
   const report = await dependencies.check({
     mode: input.mode,
@@ -113,6 +129,7 @@ export async function executeHarnessCheck(
     nodeVersion: identity.nodeVersion,
     runtimeIdentity: identity.runtime,
     ...(loadedBuiltins !== undefined && { loadedBuiltinExtensions: loadedBuiltins }),
+    ...(hostTools !== undefined && { activeHostTools: hostTools }),
     signal,
   });
   if (signal?.aborted) throw new Error("harness check cancelled");
@@ -144,6 +161,7 @@ export default function harnessCheckExtension(host: ExtensionAPI | HarnessCheckR
         },
         observeBuiltinExtensions: () =>
           loadedBuiltinExtensions([...host.getAllTools(), ...host.getCommands()]),
+        observeActiveHostTools: () => activeHostTools(host.getAllTools()),
       };
   let generation = 0;
   let sessionId = "uninitialized";
@@ -187,6 +205,7 @@ export default function harnessCheckExtension(host: ExtensionAPI | HarnessCheckR
         currentOwner: owner,
         check: registration.checkHarness ?? checkHarness,
         observeBuiltinExtensions: registration.observeBuiltinExtensions,
+        observeActiveHostTools: registration.observeActiveHostTools,
       });
       return {
         content: [{ type: "text", text: JSON.stringify(report, null, 2) }],

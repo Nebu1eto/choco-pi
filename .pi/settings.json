@@ -18,7 +18,7 @@
     "./packages/choco-pi-computer-use",
     "./packages/choco-pi-editor-context"
   ],
-  "extensions": ["-builtin:codemode", "-builtin:tool-search", "-builtin:mcp"],
+  "extensions": ["-builtin:codemode"],
   "theme": "nord-dark",
   "tuiMode": "fullscreen",
   "fullscreenExitOutput": "resume-hint",

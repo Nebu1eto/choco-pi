@@ -329,37 +329,48 @@ test("checks never read credential files", async () => {
   );
 });
 
-test("built-in extension policy passes only when project settings disable all three", async () => {
+test("built-in policy keeps codemode disabled and tool search and MCP enabled", async () => {
   const noneLoaded: string[] = [];
   const cases = [
     {
-      extensions: ["-builtin:codemode", "-builtin:tool-search", "-builtin:mcp"],
+      extensions: ["-builtin:codemode"],
       loaded: noneLoaded,
       status: "pass",
-      detail:
-        /project settings disable builtin:codemode, builtin:tool-search, builtin:mcp; active host registers no tools/,
+      detail: /project settings disable builtin:codemode and enable built-in tool search and MCP/,
     },
     {
       extensions: ["-builtin:codemode", "-builtin:tool-search"],
       loaded: noneLoaded,
       status: "warn",
-      detail: /does not disable builtin:mcp/,
+      detail: /must not exclude builtin:tool-search/,
     },
     {
       // Pi applies project entries in order, so a later + re-enables the built-in.
       extensions: ["-builtin:codemode", "-builtin:tool-search", "-builtin:mcp", "+builtin:mcp"],
       loaded: noneLoaded,
       status: "warn",
-      detail: /does not disable builtin:mcp/,
+      detail: /must not exclude builtin:tool-search, builtin:mcp/,
+    },
+    {
+      extensions: ["!builtin:codemode"],
+      loaded: noneLoaded,
+      status: "warn",
+      detail: /does not disable builtin:codemode/,
+    },
+    {
+      extensions: ["-builtin:codemode", "+builtin:codemode"],
+      loaded: noneLoaded,
+      status: "warn",
+      detail: /does not disable builtin:codemode/,
     },
     {
       extensions: undefined,
       loaded: noneLoaded,
       status: "warn",
-      detail: /does not disable builtin:codemode, builtin:tool-search, builtin:mcp/,
+      detail: /does not disable builtin:codemode/,
     },
     {
-      extensions: ["-builtin:codemode", "-builtin:tool-search", "-builtin:mcp"],
+      extensions: ["-builtin:codemode"],
       loaded: ["codemode"],
       status: "warn",
       detail: /active host registered tools or commands from builtin:codemode/,
@@ -394,7 +405,7 @@ test("standalone built-in extension check states that no host was observed", asy
       if (target === path.join(root, "settings.json")) {
         return JSON.stringify({
           packages: [],
-          extensions: ["-builtin:codemode", "-builtin:tool-search", "-builtin:mcp"],
+          extensions: ["-builtin:codemode"],
         });
       }
       throw new Error(`missing fixture: ${target}`);
@@ -404,6 +415,27 @@ test("standalone built-in extension check states that no host was observed", asy
   const check = report.checks.find((entry) => entry.id === "builtin-extensions");
   assert.equal(check?.status, "pass");
   assert.match(check?.detail ?? "", /active host not observed/);
+});
+
+test("active host must register built-in tool search without custom MCP adapters", async () => {
+  for (const tools of [
+    { builtinToolSearch: true, adapterTools: [] },
+    { builtinToolSearch: false, adapterTools: [] },
+    { builtinToolSearch: true, adapterTools: ["mcp", "mcpScript"] },
+  ]) {
+    const { options } = fixture({
+      activeHostTools: tools,
+      loadedBuiltinExtensions: [],
+      readText: async () => JSON.stringify({ packages: [], extensions: ["-builtin:codemode"] }),
+    });
+    const result = (await checkHarness(options)).checks.find(
+      (check) => check.id === "builtin-extensions",
+    );
+    assert.equal(
+      result?.status,
+      tools.builtinToolSearch && tools.adapterTools.length === 0 ? "pass" : "warn",
+    );
+  }
 });
 
 test("the repository settings disable the policy built-in extensions", async () => {

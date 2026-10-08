@@ -15,9 +15,32 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { isJsonRecord, type JsonRecord } from "../.pi/extensions/lib/runtime-values.ts";
+import { Type, type Static } from "typebox";
+import { Value } from "typebox/value";
+
+const SettingsSchema = Type.Object(
+  {
+    packages: Type.Optional(Type.Array(Type.String())),
+    extensions: Type.Optional(Type.Array(Type.String())),
+    skills: Type.Optional(Type.Array(Type.String())),
+    prompts: Type.Optional(Type.Array(Type.String())),
+    modelThinkingLevels: Type.Optional(Type.Record(Type.String(), Type.String())),
+  },
+  { additionalProperties: Type.Unknown() },
+);
+type Settings = Static<typeof SettingsSchema> & JsonRecord;
+type ProjectSettings = Settings & { packages: string[] };
+export type InstallLinkResult = {
+  target: string;
+  action: "unchanged" | "linked" | "backed-up";
+  backup?: string;
+};
+export type InstallProfileOptions = { root?: string; agentDir?: string; backup?: boolean };
+
 const SCRIPT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-const PROFILE_LINKS = [
+const PROFILE_LINKS: readonly (readonly [string, string])[] = [
   [".pi/SYSTEM.md", "SYSTEM.md"],
   [".pi/writing-policy.md", "writing-policy.md"],
   [".pi/review-policy.md", "review-policy.md"],
@@ -38,7 +61,7 @@ const PROFILE_LINKS = [
   [".pi/extensions/review.json", "extensions/review.json"],
 ];
 
-async function exists(target) {
+async function exists(target: string) {
   try {
     await access(target, constants.F_OK);
     return true;
@@ -47,11 +70,17 @@ async function exists(target) {
   }
 }
 
-async function readJson(target, fallback) {
-  if (!(await exists(target))) return fallback;
+async function readJson(target: string, fallback?: Settings): Promise<Settings> {
+  if (!(await exists(target))) {
+    if (fallback !== undefined) return fallback;
+    throw new Error(`${target} does not exist`);
+  }
   const contents = await readFile(target, "utf8");
   try {
-    return JSON.parse(contents);
+    const parsed: unknown = JSON.parse(contents);
+    if (!isJsonRecord(parsed) || !Value.Check(SettingsSchema, parsed))
+      throw new Error("invalid settings shape");
+    return parsed;
   } catch (error) {
     // The CLI prints only `error.message`, so a bare SyntaxError would report a
     // parse position with no file. Returning the fallback instead would be
@@ -61,11 +90,11 @@ async function readJson(target, fallback) {
   }
 }
 
-function unique(values) {
+function unique(values: string[]) {
   return [...new Set(values)];
 }
 
-function packageIdentity(spec) {
+function packageIdentity(spec: string) {
   const relativeMatch = spec.match(/^\.\/packages\/([^/]+)$/);
   if (relativeMatch) return `local:${relativeMatch[1]}`;
   if (path.isAbsolute(spec)) {
@@ -81,7 +110,7 @@ function packageIdentity(spec) {
   return spec;
 }
 
-function npmPackageName(raw) {
+function npmPackageName(raw: string) {
   if (raw.startsWith("@")) {
     const slash = raw.indexOf("/");
     const versionAt = slash === -1 ? -1 : raw.indexOf("@", slash);
@@ -91,13 +120,13 @@ function npmPackageName(raw) {
   return versionAt === -1 ? raw : raw.slice(0, versionAt);
 }
 
-function specVersion(spec) {
+function specVersion(spec: string) {
   if (!spec.startsWith("npm:")) return undefined;
   const match = spec.slice(4).match(/@(\d[^@/]*)$/);
   return match?.[1];
 }
 
-function compareSpecVersions(left, right) {
+function compareSpecVersions(left: string, right: string) {
   const leftVersion = specVersion(left);
   const rightVersion = specVersion(right);
   if (leftVersion === undefined || rightVersion === undefined) return 0;
@@ -110,9 +139,9 @@ function compareSpecVersions(left, right) {
   return 0;
 }
 
-function mergePackages(canonical, existing) {
+function mergePackages(canonical: string[], existing: string[]) {
   const canonicalIds = new Set(canonical.map(packageIdentity));
-  const extras = new Map();
+  const extras = new Map<string, string>();
   for (const spec of existing) {
     const identity = packageIdentity(spec);
     if (canonicalIds.has(identity)) continue;
@@ -128,7 +157,7 @@ function mergePackages(canonical, existing) {
  * listed as checkout paths, pi-lens as an npm spec — so supersession has to
  * match on the name alone.
  */
-function identityName(identity) {
+function identityName(identity: string) {
   const separator = identity.indexOf(":");
   return separator === -1 ? identity : identity.slice(separator + 1);
 }
@@ -143,7 +172,7 @@ function identityName(identity) {
  * conflicts with ..."). Directories outside that shape belong to the user and
  * are preserved.
  */
-function isForeignProfileDirectory(entry, root, name) {
+function isForeignProfileDirectory(entry: string, root: string, name: string) {
   if (!path.isAbsolute(entry)) return false;
   if (path.basename(entry) !== name) return false;
   if (path.basename(path.dirname(entry)) !== ".pi") return false;
@@ -154,21 +183,26 @@ function isForeignProfileDirectory(entry, root, name) {
  * Name of the Pi built-in extension an `extensions` override entry targets,
  * such as `codemode` for `-builtin:codemode`, or undefined for any other entry.
  */
-function builtinOverrideName(entry) {
+function builtinOverrideName(entry: string) {
   // Settings entries are user-edited JSON; a non-string never stringifies to a match.
   return /^[+\-!]builtin:(.+)$/.exec(String(entry))?.[1];
 }
 
-export function buildGlobalSettings(projectSettings, existingSettings, root, supersededNames = []) {
+export function buildGlobalSettings(
+  projectSettings: ProjectSettings,
+  existingSettings: Settings,
+  root: string,
+  supersededNames: string[] = [],
+): Settings & { packages: string[]; extensions: string[]; skills: string[]; prompts: string[] } {
   const canonicalPackages = projectSettings.packages.map((spec) =>
     spec.startsWith("./") ? path.resolve(root, ".pi", spec) : spec,
   );
-  const rooted = (name) => path.resolve(root, ".pi", name);
+  const rooted = (name: string) => path.resolve(root, ".pi", name);
   const superseded = new Set(supersededNames);
   const retainedPackages = (existingSettings.packages ?? []).filter(
     (spec) => !superseded.has(identityName(packageIdentity(spec))),
   );
-  const profileDirectories = (name) => [
+  const profileDirectories = (name: "extensions" | "skills" | "prompts") => [
     rooted(name),
     ...(existingSettings[name] ?? []).filter(
       (entry) => !isForeignProfileDirectory(entry, root, name),
@@ -180,14 +214,17 @@ export function buildGlobalSettings(projectSettings, existingSettings, root, sup
   };
   // The profile's built-in extension policy (`-builtin:<name>`) has to reach the
   // global settings, because Pi only reads the project file from this checkout.
-  // For the built-ins the profile names, its entries replace the user's; the
-  // user's overrides for any other built-in are kept.
+  // Built-in exclusions exactly match the project policy. Preserve unrelated
+  // extension paths and explicit enable overrides for other built-ins.
   const builtinPolicy = (projectSettings.extensions ?? []).filter(
     (entry) => builtinOverrideName(entry) !== undefined,
   );
   const policyNames = new Set(builtinPolicy.map(builtinOverrideName));
   const extensions = profileDirectories("extensions").filter(
-    (entry) => !policyNames.has(builtinOverrideName(entry)),
+    (entry) =>
+      !policyNames.has(builtinOverrideName(entry)) &&
+      !entry.startsWith("-builtin:") &&
+      !entry.startsWith("!builtin:"),
   );
   return {
     ...existingSettings,
@@ -202,12 +239,12 @@ export function buildGlobalSettings(projectSettings, existingSettings, root, sup
   };
 }
 
-function backupPath(target) {
+function backupPath(target: string) {
   const stamp = new Date().toISOString().replaceAll(":", "-");
   return `${target}.backup-${stamp}`;
 }
 
-async function sameFileContents(left, right) {
+async function sameFileContents(left: string, right: string) {
   try {
     return (await readFile(left)).equals(await readFile(right));
   } catch {
@@ -215,7 +252,7 @@ async function sameFileContents(left, right) {
   }
 }
 
-async function linkConflict(source, target) {
+async function linkConflict(source: string, target: string) {
   try {
     const status = await lstat(target);
     if (status.isSymbolicLink()) {
@@ -225,12 +262,16 @@ async function linkConflict(source, target) {
     if (status.isFile() && (await sameFileContents(source, target))) return undefined;
     return target;
   } catch (error) {
-    if (error?.code === "ENOENT") return undefined;
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
     throw error;
   }
 }
 
-async function installLink(source, target, backup) {
+async function installLink(
+  source: string,
+  target: string,
+  backup: boolean,
+): Promise<InstallLinkResult> {
   await mkdir(path.dirname(target), { recursive: true });
   try {
     const status = await lstat(target);
@@ -256,13 +297,13 @@ async function installLink(source, target, backup) {
     }
     return { target, action: "backed-up", backup: saved };
   } catch (error) {
-    if (error?.code !== "ENOENT") throw error;
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
     await symlink(source, target);
     return { target, action: "linked" };
   }
 }
 
-async function writeSettings(target, settings) {
+async function writeSettings(target: string, settings: Settings) {
   await mkdir(path.dirname(target), { recursive: true });
   const temporary = `${target}.${process.pid}.tmp`;
   await writeFile(temporary, `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600 });
@@ -276,11 +317,15 @@ async function writeSettings(target, settings) {
  * this profile must remove the predecessors: a fork and the package it forked
  * register the same tools and commands, and pi refuses to start on a conflict.
  */
-async function supersededPackageNames(root, projectSettings) {
+async function supersededPackageNames(root: string, projectSettings: ProjectSettings) {
   const names = [];
   for (const spec of projectSettings.packages) {
     if (!spec.startsWith("./")) continue;
     const manifest = await readJson(path.resolve(root, ".pi", spec, "package.json"), {});
+    const schema = Type.Object({
+      chocoPi: Type.Optional(Type.Object({ supersedes: Type.Optional(Type.Array(Type.String())) })),
+    });
+    if (!Value.Check(schema, manifest)) throw new Error(`invalid chocoPi.supersedes in ${spec}`);
     for (const name of manifest.chocoPi?.supersedes ?? []) names.push(name);
   }
   return names;
@@ -290,8 +335,11 @@ export async function installProfile({
   root = SCRIPT_ROOT,
   agentDir = process.env.PI_CODING_AGENT_DIR ?? path.join(homedir(), ".pi", "agent"),
   backup = false,
-} = {}) {
+}: InstallProfileOptions = {}) {
   const projectSettings = await readJson(path.join(root, ".pi", "settings.json"));
+  if (projectSettings.packages === undefined)
+    throw new Error("project settings must declare packages");
+  const project: ProjectSettings = { ...projectSettings, packages: projectSettings.packages };
   const settingsPath = path.join(agentDir, "settings.json");
   const existingSettings = await readJson(settingsPath, {});
   // MCP configuration is deliberately not linked. Pi reads ~/.pi/agent/mcp.json and a
@@ -318,16 +366,16 @@ export async function installProfile({
       ),
     );
   }
-  const superseded = await supersededPackageNames(root, projectSettings);
+  const superseded = await supersededPackageNames(root, project);
   await writeSettings(
     settingsPath,
-    buildGlobalSettings(projectSettings, existingSettings, root, superseded),
+    buildGlobalSettings(project, existingSettings, root, superseded),
   );
   return { agentDir, settingsPath, links: results };
 }
 
-function parseArgs(args) {
-  const options = { backup: false };
+function parseArgs(args: string[]) {
+  const options: InstallProfileOptions = { backup: false };
   for (let index = 0; index < args.length; index++) {
     const argument = args[index];
     if (argument === "--backup") options.backup = true;
