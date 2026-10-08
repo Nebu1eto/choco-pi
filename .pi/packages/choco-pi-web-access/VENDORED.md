@@ -1,7 +1,7 @@
 # Vendored: choco-pi-web-access
 
-Tool metadata is compacted to the repository's provider schema budgets; runtime
-behavior is unchanged.
+Tool metadata is compacted to the repository's provider schema budgets; the
+compaction itself does not change runtime behavior.
 
 This directory is a vendored, renamed fork of the upstream open-source package `pi-web-access`.
 

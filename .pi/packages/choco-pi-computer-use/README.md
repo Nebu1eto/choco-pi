@@ -12,7 +12,7 @@ The installer may modify `/Applications` or `~/Applications`, register the app w
 
 ## Helper protocol and test environment
 
-The TypeScript client requires helper protocol 7: request cancellation, cross-process session ownership, and native enforcement of the foreground grant. A daemon that reports another protocol is shut down and relaunched once; the committed prebuilts still report protocol 6 until they are rebuilt.
+The TypeScript client requires helper protocol 7: request cancellation, cross-process session ownership, and native enforcement of the foreground grant. The committed prebuilts report protocol 7. A daemon that reports another protocol is shut down and relaunched once. Cancelling a browser tool call stops the remaining actions in its batch and releases any pressed key or mouse button.
 
 - `PI_CU_SOCKET_PATH` points the client at another helper socket. With it set, the client never installs or launches the helper app.
 - `PI_COMPUTER_USE_HELPER_APP_PATH` overrides the helper app bundle whose executable `diagnostics.executablePath` must match.

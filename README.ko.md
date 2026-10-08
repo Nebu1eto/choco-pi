@@ -94,7 +94,9 @@ npm run install:profile
 
 ### 내장 확장
 
-Pi 1.0.4에는 `codemode`, `tool-search`, `mcp`, `llama.cpp` 확장이 내장되어 있습니다. choco-pi는 자체 `exec` 코드 모드 도구, `tool_search`, `/mcp`를 제공하므로 `.pi/settings.json`과 프로필 설치 프로그램에서 `"extensions": ["-builtin:codemode", "-builtin:tool-search", "-builtin:mcp"]`로 앞의 세 확장을 비활성화합니다. 내장 MCP 확장을 비활성화한 동안에는 Pi의 `pi mcp …` CLI 하위 명령을 사용할 수 없습니다.
+Pi 1.0.4에는 `codemode`, `tool-search`, `mcp`, `llama.cpp` 확장이 내장되어 있습니다. choco-pi는 Pi에 내장된 도구 검색과 MCP를 그대로 쓰고, 자체 `exec` 코드 모드 브리지를 유지하기 위해 `"extensions": ["-builtin:codemode"]`로 `codemode`만 비활성화합니다. 프로필 설치 프로그램은 이 정책을 전역 설정에 반영하고 그 밖의 내장 확장 비활성화 항목은 제거합니다.
+
+MCP 서버는 Pi의 `~/.pi/agent/mcp.json` 형식으로 설정합니다. 폐기된 `pi-mcp-adapter` 포크용으로 작성한 파일은 `node scripts/translate-mcp-config.ts`로 변환하세요. 이 스크립트는 값을 가린 dry-run diff를 출력하며, `--apply`를 줄 때만 시각이 붙은 백업을 남기고 파일을 씁니다.
 
 ## 인증
 
@@ -226,9 +228,10 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 ### 에이전트와 오케스트레이션
 
 - [`.pi/agents`](.pi/agents)의 전문 역할(`advisor`, `explore`, `general`, `handoff`, `implementer`, `planner`, `reviewer`)은 백그라운드 서브 에이전트로 실행됩니다. 예약 실행, 격리된 Git worktree 실행, `workflow_run`으로 의존 관계 순서를 따르는 workflow 실행도 지원합니다. `/agents`로 관리합니다.
-- fleet 패널은 실행 중인 서브 에이전트와 관리되는 백그라운드 셸을 함께 보여 줍니다. 셸은 소유자별로 격리되며 `shell_start`와 `/shells`로 관리합니다.
+- `max_turns` 제한은 재개한 실행에도 적용되며, 토큰 예산이 있는 에이전트는 예산에 걸려 중단되기 전에 마무리하라는 지시를 받습니다.
+- fleet 패널은 실행 중인 서브 에이전트와 관리되는 백그라운드 셸을 함께 보여 줍니다. 서브 에이전트를 선택하면 그 대화 기록에 포커스가 가며, 텍스트, 도구 진행 상황, 사용자 정의 메시지가 실시간으로 표시됩니다. 이 화면에서 thinking 표시를 전환해도 포커스된 화면에만 적용됩니다. 셸은 소유자별로 격리되며 `shell_start`와 `/shells`로 관리합니다. 소유 세션이 비활성일 때 끝난 셸의 완료 알림은 그 세션이 다시 활성화되면 전달됩니다.
 - `/btw`는 병렬로 진행되는 읽기 전용 곁대화를 엽니다.
-- 루트 에이전트와 하위 에이전트는 `advisor` 도구로 설정된 고성능 모델에 의견을 구할 수 있습니다. advisor는 현재 세션 중 일부 발췌만 새 문맥에서 읽고 파일은 수정하지 않으며, 호출한 에이전트는 답을 받을 때까지 기다립니다. 기본값은 비활성이며, advisor 모델이 세션 모델과 같으면 호출을 건너뜁니다. `/preferences`의 Agent → Advisor Agent에서 `enabled`, `model`, `effort`, `maxUses`를 설정할 수 있습니다.
+- 루트 에이전트와 하위 에이전트는 응답을 기다리는 `advisor` 도구로, 설정된 고성능 모델에게서 새 읽기 전용 문맥의 두 번째 의견을 받습니다. 이 문맥에는 현재 세션의 제한된 발췌만 들어갑니다. 기본값은 비활성이며, advisor 모델이 세션 모델과 같으면 호출을 건너뜁니다. `/preferences`의 Agent → Advisor Agent나 [`advisor.json`](#advisor-설정)에서 설정하세요.
 
 ### 세션, 컨텍스트, goal
 
@@ -248,7 +251,7 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 
 - 웹 조사는 대화 모델과 관계없이 지연 로딩되는 단일 `web_search` 도구를 사용합니다. 검색 인증 정보와 요금은 대화 공급자가 아니라 선택된 검색 백엔드(OpenAI, Exa, Kagi, Synthetic, Brave)에서 결정됩니다. 공급자, 라우팅, 개인정보 보호, fallback 동작은 [웹 검색 안내](docs/web-search.md)를 참고하세요.
 - `fetch_content`는 페이지 내용을 추출하고, `source_check`는 인용된 구절로 주장을 검증합니다. `/search`는 저장된 검색 결과를 보여 주고, `/websearch`와 `/curator`는 검색 curator 작업 절차를 실행합니다.
-- MCP 서버는 필요할 때 시작되며 OAuth(`/mcp-auth`)와 elicitation을 지원하고, `mcpScript`로 여러 호출을 묶을 수 있습니다. 네이티브 Figma 도구는 파일, 컴포넌트, 변수, 렌더링 결과를 읽습니다.
+- 서버 설정, 인증, 실행은 Pi에 내장된 MCP가 맡습니다. 에이전트는 `tool_search`로 MCP 도구를 찾아 `mcp__<server>__<tool>` 이름으로 호출합니다. 네이티브 Figma 도구는 별개이며 파일, 컴포넌트, 변수, 렌더링 결과를 읽습니다.
 - `agent_browser`는 선택 사항인 `agent-browser` CLI로 웹 페이지를 자동화합니다.
 - macOS에서는 computer-use 도구가 네이티브 helper를 통해 데스크톱 앱을 확인하고 조작합니다. helper에는 손쉬운 사용(Accessibility)과 화면 기록(Screen Recording) 권한이 필요합니다. 설치, 권한, 설정 방법은 [computer use 설정하기](#computer-use-설정하기-macos)를 참고하세요.
 - Claude Code 호환 생명주기 훅은 Pi 설정에서 실행됩니다. `/hooks`로 훅을 살펴볼 수 있고, `/add-dir`는 작업 디렉터리를 추가한 뒤 `DirectoryAdded` 훅을 실행합니다.
@@ -289,7 +292,7 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 | `/session-read`, `/session-send`, `/session-wait` | 다른 대화 읽기, 조정, 대기                                  |
 | `/goal [objective]`                               | 지속형 goal 생성, 확인, 관리                                |
 | `/hooks`, `/add-dir`                              | 훅 살펴보기 또는 작업 디렉터리 추가                         |
-| `/mcp`, `/mcp-auth`                               | MCP 서버 상태 확인 또는 서버 인증                           |
+| `/mcp`                                            | MCP 서버 확인, 로그인·로그아웃, 재연결, 노출 방식 변경      |
 | `/search`, `/websearch`, `/curator`               | 저장된 검색 결과 보기 또는 검색 curator 실행                |
 | `/lsp`                                            | LSP 사용을 켜거나 끄고 상태 표시                            |
 | `/codex`, `/computer-use`                         | Codex 어댑터 설정 또는 computer-use 설정 확인               |
@@ -312,7 +315,7 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 | [`choco-pi-advisor`](.pi/packages/choco-pi-advisor)                       |          0.1.0 | 서브 에이전트를 통한 읽기 전용 advisor 자문      |
 | [`choco-pi-editor-context`](.pi/packages/choco-pi-editor-context)         |          0.1.0 | 에디터 컨텍스트 프로토콜, 저장, 주입             |
 | [`choco-pi-goal`](.pi/packages/choco-pi-goal)                             |          0.1.0 | Codex 형태의 지속형 goal                         |
-| [`choco-pi-mcp`](.pi/packages/choco-pi-mcp)                               |          0.1.0 | 지연 로딩 MCP 서버, Figma 도구, elicitation      |
+| [`choco-pi-mcp`](.pi/packages/choco-pi-mcp)                               |          0.1.0 | 네이티브 Figma 도구(MCP 자체는 Pi 내장)          |
 | [`choco-pi-lsp`](.pi/packages/choco-pi-lsp)                               |          0.1.0 | LSP, lint, 구조 분석, 시맨틱 도구                |
 | [`choco-pi-compaction`](.pi/packages/choco-pi-compaction)                 |          0.1.0 | 유지된 최근 메시지와 대조한 로컬 compaction 요약 |
 | [`choco-pi-codex`](.pi/packages/choco-pi-codex)                           |          0.1.0 | Codex 도구, Code Mode, Responses compaction      |
@@ -338,7 +341,7 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 | [`apex-provider.json`](.pi/extensions/apex-provider.json)                                                                                     | Callstack Apex 공급자 탐색 기본값                               |
 | [`review.json`](.pi/extensions/review.json)                                                                                                   | 로컬 리뷰 인터페이스 설정                                       |
 | 전역 `~/.pi/agent/advisor.json`과 프로젝트 재정의 `.pi/advisor.json`                                                                          | advisor 활성화, 모델, effort, 턴별 사용 한도                    |
-| `~/.pi/agent/mcp.json`과 그 예시인 [`.pi/mcp.example.json`](.pi/mcp.example.json)                                                             | 추적하지 않는 MCP 서버 및 OAuth 설정                            |
+| `~/.pi/agent/mcp.json`과 그 예시인 [`.pi/mcp.example.json`](.pi/mcp.example.json)                                                             | 추적하지 않는 Pi 내장 형식의 MCP 서버 설정                      |
 | 패키지별 [`AGENTS.md`](.pi/packages/choco-pi-agent-browser/AGENTS.md)와 [`VENDORED.md`](.pi/packages/choco-pi-agent-browser/VENDORED.md) 파일 | 패키지 정책과 기록된 업스트림 변경 사항                         |
 
 Pi 1.0.3부터 `Home`/`End`는 편집기 커서를 이동합니다. 대화 기록의 맨 위/아래로 이동하려면 `Ctrl+Home`/`Ctrl+End`를 사용하세요.
@@ -349,9 +352,9 @@ Pi 1.0.3부터 `Home`/`End`는 편집기 커서를 이동합니다. 대화 기�
 
 `npm run install:profile`은 [`.pi/settings.json`](.pi/settings.json)을 바탕으로
 `~/.pi/agent/settings.json`을 만들며, 관리하지 않는 키는 그대로 둡니다. 실행할 때마다
-다음 세 가지를 합니다.
+다음과 같이 처리합니다.
 
-- `packages`, `skills`, `prompts`를 체크아웃 절대 경로로 기록하고, `extensions`에는 위의 내장 확장 비활성화 항목도 넣습니다. 사용자가 추가한 항목은 choco-pi 항목 뒤에 유지됩니다.
+- `packages`, `skills`, `prompts`를 체크아웃 절대 경로로 기록하고, `extensions`에는 [내장 확장 정책](#내장-확장)도 넣습니다. 사용자가 추가한 항목은 choco-pi 항목 뒤에 유지됩니다.
 - `.pi/settings.json`의 `theme`, `tuiMode`, `fullscreenExitOutput`, `fuzzyFileMentions`, `compaction`을 전역 값 위에 덮어씁니다. 이 키들은 `.pi/settings.json`에서 바꾸세요. 전역 파일에서만 고친 값은 다음 설치 때 사라집니다.
 - `modelThinkingLevels`는 합칩니다. 전역 파일의 값이 우선하며, `.pi/settings.json`은 사용자가 설정하지 않은 모델의 수준만 추가합니다.
 - 그 밖의 키는 건드리지 않습니다. 직접 쓰거나 `/preferences`로 설정하세요.
@@ -381,12 +384,7 @@ Pi 1.0.3부터 `Home`/`End`는 편집기 커서를 이동합니다. 대화 기�
     "/path/to/choco-pi/.pi/packages/choco-pi-computer-use",
     "/path/to/choco-pi/.pi/packages/choco-pi-editor-context"
   ],
-  "extensions": [
-    "/path/to/choco-pi/.pi/extensions",
-    "-builtin:codemode",
-    "-builtin:tool-search",
-    "-builtin:mcp"
-  ],
+  "extensions": ["/path/to/choco-pi/.pi/extensions", "-builtin:codemode"],
   "skills": ["/path/to/choco-pi/.pi/skills"],
   "prompts": ["/path/to/choco-pi/.pi/prompts"],
 
@@ -475,6 +473,8 @@ Pi 1.0.3부터 `Home`/`End`는 편집기 커서를 이동합니다. 대화 기�
 | `agentLanguage`, `agentStyle`, `agentPersona`, `agentOnUsageLimit`, `sessionAutoName`, `sessionAutoNameModel`      | 사용자 또는 `/preferences`                  | choco-pi는 이 키를 전역 파일에서만 읽습니다. `agentStyle`은 `concise`, `explanatory`, 또는 `~/.pi/agent/agent-styles/`에 둔 스타일 파일 이름입니다. `agentPersona`의 기본값은 `pessimistic`, `agentOnUsageLimit`의 기본값은 `none`(`fallback`, `auto-resume` 선택 가능), `sessionAutoNameModel`의 기본값은 `openai-codex/gpt-6-luna`입니다. |
 | `hooks`                                                                                                            | 사용자                                      | Claude Code 훅 형식입니다. choco-pi-hooks는 `.claude`, `.agents` 설정 파일의 훅도 읽습니다. 자세한 내용은 [README](.pi/packages/choco-pi-hooks/README.md)를 참고하세요.                                                                                                                                                                     |
 
+### advisor 설정
+
 advisor 설정은 별도 파일인 `~/.pi/agent/advisor.json`에 두며, 프로젝트의
 `.pi/advisor.json`이 키 단위로 덮어씁니다.
 
@@ -488,7 +488,8 @@ advisor 설정은 별도 파일인 `~/.pi/agent/advisor.json`에 두며, 프로�
 ```
 
 `effort`에는 `off`부터 `max`까지 쓸 수 있고, `maxUses`는 1 이상이어야 합니다. 파일이
-없으면 advisor는 비활성 상태입니다.
+없으면 advisor는 비활성 상태입니다. 기본값과 제한은
+[advisor README](.pi/packages/choco-pi-advisor/README.md)를 참고하세요.
 
 ## Zed에서 choco-pi 사용하기
 

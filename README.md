@@ -103,7 +103,9 @@ files.
 
 ### Built-in extensions
 
-Pi 1.0.4 ships built-in `codemode`, `tool-search`, `mcp`, and `llama.cpp` extensions. choco-pi uses Pi's built-in tool search and MCP and disables only `codemode` with `"extensions": ["-builtin:codemode"]` because it keeps its own `exec` code-mode bridge. The profile installer carries this policy into global settings and removes stale built-in exclusions.
+Pi 1.0.4 ships built-in `codemode`, `tool-search`, `mcp`, and `llama.cpp` extensions. choco-pi uses Pi's built-in tool search and MCP and disables only `codemode` with `"extensions": ["-builtin:codemode"]` because it keeps its own `exec` code-mode bridge. The profile installer carries this policy into global settings and removes other built-in exclusions.
+
+MCP servers are configured in Pi's `~/.pi/agent/mcp.json` format. To convert a file written for the retired `pi-mcp-adapter` fork, run `node scripts/translate-mcp-config.ts`; it prints a redacted dry-run diff and writes only with `--apply`, keeping a timestamped backup.
 
 ## Authentication
 
@@ -240,9 +242,10 @@ win. Neither file is created for you. This example shows the defaults:
 ### Agents and orchestration
 
 - Specialist roles in [`.pi/agents`](.pi/agents) (`advisor`, `explore`, `general`, `handoff`, `implementer`, `planner`, `reviewer`) run as background subagents, as scheduled runs, in isolated Git worktrees, or as dependency-ordered workflows through `workflow_run`. `/agents` manages them.
-- A fleet panel shows running subagents and managed background shells together. Shells are owner-scoped and managed with `shell_start` and `/shells`.
+- `max_turns` also limits resumed runs, and an agent with a token budget is told to conclude before the budget stops it.
+- A fleet panel shows running subagents and managed background shells together. Selecting a subagent focuses its transcript, which streams text, tool progress, and custom messages; the thinking toggle there affects only the focused view. Shells are owner-scoped and managed with `shell_start` and `/shells`; a completion that arrives while its owning session is inactive is delivered when that session becomes active again.
 - `/btw` opens a parallel read-only side conversation.
-- The blocking `advisor` tool gives root or child agents a fresh, read-only second opinion from a configured higher-intelligence model using a bounded excerpt of the live session. It is disabled by default and skips consults when the advisor and session models match. Configure `enabled`, `model`, `effort`, and `maxUses` in `/preferences` under Agent → Advisor Agent.
+- The blocking `advisor` tool gives root or child agents a fresh, read-only second opinion from a configured higher-intelligence model using a bounded excerpt of the live session. It is disabled by default and skips consults when the advisor and session models match. Configure it in `/preferences` under Agent → Advisor Agent or in [`advisor.json`](#advisor-settings).
 
 ### Sessions, context, and goals
 
@@ -262,7 +265,7 @@ win. Neither file is created for you. This example shows the defaults:
 
 - Web research uses one deferred `web_search` tool regardless of the conversation model. Search credentials and billing come from the selected search backend (OpenAI, Exa, Kagi, Synthetic, or Brave), not from the conversation provider. See [Web search](docs/web-search.md) for providers, routing, privacy, and fallback behavior.
 - `fetch_content` extracts page content and `source_check` verifies claims against cited passages. `/search` browses stored results; `/websearch` and `/curator` drive the search curator workflow.
-- Pi's built-in MCP owns server configuration, discovery, and execution; custom `mcp`/`mcpScript` adapter tools are no longer loaded. Native Figma tools remain separate and read files, components, variables, and renders.
+- Pi's built-in MCP owns server configuration, authentication, and execution; agents find MCP tools with `tool_search` and call them by their `mcp__<server>__<tool>` names. Native Figma tools are separate and read files, components, variables, and renders.
 - `agent_browser` automates web pages through the optional `agent-browser` CLI.
 - On macOS, computer-use tools inspect and operate desktop applications through a native helper that requires Accessibility and Screen Recording permissions. [Set up computer use](#set-up-computer-use-macos) covers installation, permissions, and configuration.
 - Claude Code-compatible lifecycle hooks run from Pi settings. `/hooks` browses them and `/add-dir` adds a working directory and runs `DirectoryAdded` hooks.
@@ -281,34 +284,34 @@ win. Neither file is created for you. This example shows the defaults:
 
 ## Common commands
 
-| Command                                           | Purpose                                                           |
-| ------------------------------------------------- | ----------------------------------------------------------------- |
-| `/status`                                         | Show session, cost, model, context, MCP, and environment state    |
-| `/preferences` (`/pref`)                          | Configure agent, advisor, language, style, persona, and interface |
-| `/context all`                                    | Inspect prompt, tools, MCP, agents, files, skills, and token use  |
-| `/usage` (`/quota`)                               | Show supported provider usage and reset information               |
-| `/effort [level]`, `/fast [on\|off\|status]`      | Set reasoning effort or the session Fast mode preference          |
-| `/check`                                          | Validate the installed profile and required resources             |
-| `/task-inline <task>`                             | Implement one ordinary change directly                            |
-| `/task <task>`                                    | Run independent implementation units in parallel                  |
-| `/task-dynamic <task>`                            | Explicitly enable dynamically decomposed nested work              |
-| `/task-hotfix <task>`                             | Apply an urgent production fix directly                           |
-| `/review [target]`                                | Review session, branch, or pull request changes yourself          |
-| `/review-agent [target]`                          | Run a fresh, report-only adversarial review                       |
-| `/commit [guidance]`                              | Create a verified local commit without pushing                    |
-| `/rewind`                                         | Roll back, rewind, or fork at a checkpointed turn                 |
-| `/agents`, `/btw`                                 | Manage agents or open a read-only side conversation               |
-| `/shells`                                         | List, read, or stop managed shells                                |
-| `/sessions`, `/session-new`                       | List project conversations or start an independent one            |
-| `/session-read`, `/session-send`, `/session-wait` | Read, steer, or wait on another conversation                      |
-| `/goal [objective]`                               | Create, inspect, or manage a persistent goal                      |
-| `/hooks`, `/add-dir`                              | Browse hooks or add a working directory                           |
-| `/mcp`, `/mcp-auth`                               | Inspect MCP server state or authenticate a server                 |
-| `/search`, `/websearch`, `/curator`               | Browse stored search results or run the search curator            |
-| `/lsp`                                            | Turn LSP usage on or off, or show its state                       |
-| `/codex`, `/computer-use`                         | Configure the Codex adapter or show computer-use configuration    |
-| `/apex-refresh`                                   | Refresh Callstack Apex models                                     |
-| `/clear`, `/exit`, `/delete`                      | Start a fresh session, quit, or permanently delete this session   |
+| Command                                           | Purpose                                                            |
+| ------------------------------------------------- | ------------------------------------------------------------------ |
+| `/status`                                         | Show session, cost, model, context, MCP, and environment state     |
+| `/preferences` (`/pref`)                          | Configure agent, advisor, language, style, persona, and interface  |
+| `/context all`                                    | Inspect prompt, tools, MCP, agents, files, skills, and token use   |
+| `/usage` (`/quota`)                               | Show supported provider usage and reset information                |
+| `/effort [level]`, `/fast [on\|off\|status]`      | Set reasoning effort or the session Fast mode preference           |
+| `/check`                                          | Validate the installed profile and required resources              |
+| `/task-inline <task>`                             | Implement one ordinary change directly                             |
+| `/task <task>`                                    | Run independent implementation units in parallel                   |
+| `/task-dynamic <task>`                            | Explicitly enable dynamically decomposed nested work               |
+| `/task-hotfix <task>`                             | Apply an urgent production fix directly                            |
+| `/review [target]`                                | Review session, branch, or pull request changes yourself           |
+| `/review-agent [target]`                          | Run a fresh, report-only adversarial review                        |
+| `/commit [guidance]`                              | Create a verified local commit without pushing                     |
+| `/rewind`                                         | Roll back, rewind, or fork at a checkpointed turn                  |
+| `/agents`, `/btw`                                 | Manage agents or open a read-only side conversation                |
+| `/shells`                                         | List, read, or stop managed shells                                 |
+| `/sessions`, `/session-new`                       | List project conversations or start an independent one             |
+| `/session-read`, `/session-send`, `/session-wait` | Read, steer, or wait on another conversation                       |
+| `/goal [objective]`                               | Create, inspect, or manage a persistent goal                       |
+| `/hooks`, `/add-dir`                              | Browse hooks or add a working directory                            |
+| `/mcp`                                            | Inspect MCP servers, sign in or out, reconnect, or change exposure |
+| `/search`, `/websearch`, `/curator`               | Browse stored search results or run the search curator             |
+| `/lsp`                                            | Turn LSP usage on or off, or show its state                        |
+| `/codex`, `/computer-use`                         | Configure the Codex adapter or show computer-use configuration     |
+| `/apex-refresh`                                   | Refresh Callstack Apex models                                      |
+| `/clear`, `/exit`, `/delete`                      | Start a fresh session, quit, or permanently delete this session    |
 
 ## Installed packages
 
@@ -326,7 +329,7 @@ win. Neither file is created for you. This example shows the defaults:
 | [`choco-pi-advisor`](.pi/packages/choco-pi-advisor)                       |          0.1.0 | Read-only advisor consults through sub-agents                |
 | [`choco-pi-editor-context`](.pi/packages/choco-pi-editor-context)         |          0.1.0 | Editor-context protocol, storage, and injection              |
 | [`choco-pi-goal`](.pi/packages/choco-pi-goal)                             |          0.1.0 | Persistent Codex-style goals                                 |
-| [`choco-pi-mcp`](.pi/packages/choco-pi-mcp)                               |          0.1.0 | Lazy MCP servers, Figma tools, and elicitation               |
+| [`choco-pi-mcp`](.pi/packages/choco-pi-mcp)                               |          0.1.0 | Native Figma tools; MCP itself is Pi's built-in              |
 | [`choco-pi-lsp`](.pi/packages/choco-pi-lsp)                               |          0.1.0 | LSP, lint, structural analysis, and semantic tools           |
 | [`choco-pi-compaction`](.pi/packages/choco-pi-compaction)                 |          0.1.0 | Local compaction summaries reconciled with retained messages |
 | [`choco-pi-codex`](.pi/packages/choco-pi-codex)                           |          0.1.0 | Codex tools, Code Mode, and Responses compaction             |
@@ -352,7 +355,7 @@ win. Neither file is created for you. This example shows the defaults:
 | [`apex-provider.json`](.pi/extensions/apex-provider.json)                                                                                       | Callstack Apex provider discovery defaults                                  |
 | [`review.json`](.pi/extensions/review.json)                                                                                                     | Local review interface configuration                                        |
 | Global `~/.pi/agent/advisor.json` with project override `.pi/advisor.json`                                                                      | Advisor enablement, model, effort, and per-turn cap                         |
-| `~/.pi/agent/mcp.json` from [`.pi/mcp.example.json`](.pi/mcp.example.json)                                                                      | Untracked MCP server and OAuth configuration                                |
+| `~/.pi/agent/mcp.json` from [`.pi/mcp.example.json`](.pi/mcp.example.json)                                                                      | Untracked MCP server configuration in Pi's built-in format                  |
 | Package [`AGENTS.md`](.pi/packages/choco-pi-agent-browser/AGENTS.md) and [`VENDORED.md`](.pi/packages/choco-pi-agent-browser/VENDORED.md) files | Package policy and recorded upstream differences                            |
 
 Pi 1.0.3 changed `Home`/`End` to move the editor cursor. Use `Ctrl+Home`/`Ctrl+End` to jump to the transcript top/bottom.
@@ -363,9 +366,9 @@ Pi 1.0.3 changed `Home`/`End` to move the editor cursor. Use `Ctrl+Home`/`Ctrl+E
 
 `npm run install:profile` builds `~/.pi/agent/settings.json` from
 [`.pi/settings.json`](.pi/settings.json) and keeps any keys it does not manage.
-Each run does three things:
+Each run:
 
-- Writes `packages`, `skills`, and `prompts` as absolute checkout paths; `extensions` also includes the disabled built-in entries above. Entries you added are kept after the choco-pi entries.
+- Writes `packages`, `skills`, and `prompts` as absolute checkout paths; `extensions` also gets the [built-in policy](#built-in-extensions). Entries you added are kept after the choco-pi entries.
 - Copies `theme`, `tuiMode`, `fullscreenExitOutput`, `fuzzyFileMentions`, and `compaction` from `.pi/settings.json` over the global value. Change these in `.pi/settings.json`; edits made only in the global file are lost on the next install.
 - Merges `modelThinkingLevels`. Your global entries win; `.pi/settings.json` only adds levels for models you have not set.
 - Leaves the remaining keys alone. Set them yourself or through `/preferences`.
@@ -395,12 +398,7 @@ values are the maintainer's current settings. Secrets never belong in this file.
     "/path/to/choco-pi/.pi/packages/choco-pi-computer-use",
     "/path/to/choco-pi/.pi/packages/choco-pi-editor-context"
   ],
-  "extensions": [
-    "/path/to/choco-pi/.pi/extensions",
-    "-builtin:codemode",
-    "-builtin:tool-search",
-    "-builtin:mcp"
-  ],
+  "extensions": ["/path/to/choco-pi/.pi/extensions", "-builtin:codemode"],
   "skills": ["/path/to/choco-pi/.pi/skills"],
   "prompts": ["/path/to/choco-pi/.pi/prompts"],
 
@@ -489,6 +487,8 @@ values are the maintainer's current settings. Secrets never belong in this file.
 | `agentLanguage`, `agentStyle`, `agentPersona`, `agentOnUsageLimit`, `sessionAutoName`, `sessionAutoNameModel`      | You or `/preferences`               | choco-pi reads these only from the global file. `agentStyle` is `concise`, `explanatory`, or the name of a style file in `~/.pi/agent/agent-styles/`. `agentPersona` defaults to `pessimistic`, `agentOnUsageLimit` to `none` (`fallback`, `auto-resume`), and `sessionAutoNameModel` to `openai-codex/gpt-6-luna`. |
 | `hooks`                                                                                                            | You                                 | Claude Code hook format. choco-pi-hooks also reads hooks from `.claude` and `.agents` settings files, as described in its [README](.pi/packages/choco-pi-hooks/README.md).                                                                                                                                          |
 
+### Advisor settings
+
 The advisor has its own file, `~/.pi/agent/advisor.json`, which a project
 `.pi/advisor.json` overrides key by key:
 
@@ -502,7 +502,8 @@ The advisor has its own file, `~/.pi/agent/advisor.json`, which a project
 ```
 
 `effort` accepts `off` through `max`, and `maxUses` must be at least 1. Without
-the file the advisor is disabled.
+the file the advisor is disabled. The [advisor README](.pi/packages/choco-pi-advisor/README.md)
+lists defaults and limits.
 
 ## Use choco-pi in Zed
 

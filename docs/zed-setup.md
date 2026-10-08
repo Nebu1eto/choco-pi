@@ -13,19 +13,21 @@ agent. It does not install or fetch a published package.
 - `pi` installed and available on `PATH`, with a model provider configured.
   Set `PI_ACP_PI_COMMAND` to an executable path if `pi` is elsewhere.
 
-From the repository root, install dependencies and install the choco-pi
-profile:
+From the repository root, install dependencies and the choco-pi profile as the
+root README describes:
 
 ```sh
-pnpm install
-pnpm install:profile
+pnpm install --frozen-lockfile --ignore-scripts
+npm run install:vendored
+npm run install:profile
 ```
 
 The `install:profile` step is required. It adds the
 `choco-pi-editor-context` package from this checkout to Pi's global profile;
-without it, Tasks can publish context but a Pi session will not consume it.
+without it, Tasks can publish context but Pi sessions outside this checkout will
+not consume it.
 The installer reports every linked or updated path. If it finds conflicting
-profile files, review them and rerun `pnpm install:profile --backup` only if
+profile files, review them and rerun `npm run install:profile -- --backup` only if
 you want it to preserve and replace those files.
 
 ## Preview and apply Zed setup

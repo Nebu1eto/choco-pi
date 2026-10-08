@@ -38,6 +38,10 @@ node .pi/packages/choco-pi-acp/bin/choco-pi-acp.ts zed setup --dry-run
 See [the Zed setup guide](../../../docs/zed-setup.md) before applying changes to
 a real Zed profile.
 
+When the Pi child exits, the adapter gives pending editor updates at most 100 ms
+to drain and then settles the active prompt, so an unresponsive client cannot
+leave the turn hanging.
+
 ## Command reference
 
 All commands run through `node .pi/packages/choco-pi-acp/bin/choco-pi-acp.ts`.

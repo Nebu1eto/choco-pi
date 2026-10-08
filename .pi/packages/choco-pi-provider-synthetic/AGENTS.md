@@ -5,7 +5,7 @@ Pi extension providing models available through the Synthetic provider.
 ## Stack
 
 - TypeScript (strict mode)
-- pnpm 10.26.1
+- pnpm 11.11.0
 - oxlint for linting and oxfmt for formatting, using the choco-pi root configs
 - Changesets for versioning
 - Vitest for testing

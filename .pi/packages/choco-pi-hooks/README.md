@@ -7,7 +7,7 @@
 - Pi preferred: `$PI_CODING_AGENT_DIR/settings.json`, `<project>/.pi/settings.json`, `<project>/.pi/settings.local.json`
 - caller-provided managed, plugin, skill, agent, and session sources
 
-The engine exports all 31 documented hook event names and supports command, HTTP, MCP-tool, prompt, and agent handlers. The Pi extension supplies MCP and model backends and bridges task, sub-agent, worktree, elicitation, configuration, file, and session events. `PermissionRequest` and `PermissionDenied` are ignored because Pi has no permission subsystem.
+The engine exports all 31 documented hook event names and supports command, HTTP, prompt, and agent handlers. The Pi extension supplies the model backend and bridges task, sub-agent, worktree, configuration, file, and session events. `mcp_tool` handlers still parse but fail with a message to use a command hook, because Pi's built-in MCP runs tools only inside tool calls. `PermissionRequest` and `PermissionDenied` are ignored because Pi has no permission subsystem.
 
 ## Pi integration
 
@@ -21,6 +21,8 @@ The bundled extension maps Pi lifecycle events to their direct Claude Code equiv
 - `agent_end` → `Stop`
 - `session_shutdown` → `SessionEnd`
 
+A blocking `Stop` reason or `additionalContext` from `Stop` hooks continues the session with a follow-up message. Both count against `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP` (default 8), which resets on the next user input.
+
 `COMPATIBILITY.md` records every live binding and explicit host exclusion.
 
 ## Public API
@@ -30,7 +32,6 @@ import { HookEngine, loadHookSources } from "choco-pi-hooks";
 
 const { sources } = loadHookSources({ cwd: process.cwd() });
 const hooks = new HookEngine(sources, {
-  mcpTool: async (handler, input, signal) => /* call connected MCP tool */,
   model: async (handler, input, signal) => /* run prompt or agent evaluator */,
 });
 

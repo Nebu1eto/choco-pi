@@ -9,7 +9,7 @@
 - Forked on: `2026-08-22`
 - License: MIT (`LICENCE.md` copied verbatim to `figma/LICENSE`)
 
-This package integrates the upstream Figma extension as a second Pi extension entry. The existing MCP entry remains first and unchanged, while `figma/index.ts` gives the Figma tools their own extension family. The package supersedes both `pi-mcp-adapter` and `pi-mono-figma`.
+This package integrates the upstream Figma extension as `figma/index.ts`, now its only Pi extension entry; the former MCP adapter entry was retired on 2026-10-08 (see `VENDORED.md`). The package supersedes both `pi-mcp-adapter` and `pi-mono-figma`.
 
 ## What was taken
 
