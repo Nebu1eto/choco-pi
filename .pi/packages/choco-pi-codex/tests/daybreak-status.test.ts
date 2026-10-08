@@ -29,7 +29,7 @@ const outcomes: readonly [DaybreakOutcome, string][] = [
   ["red", "Daybreak on (red)"],
   ["not-granted", "Daybreak requested (not granted)"],
   ["lookup-failed", "Daybreak requested (lookup failed)"],
-  ["model-not-supported", "Daybreak requested (model unsupported)"],
+  ["model-not-supported", "Daybreak unavailable (model unsupported)"],
   ["auth-not-eligible", "Daybreak requested (auth not eligible)"],
 ];
 

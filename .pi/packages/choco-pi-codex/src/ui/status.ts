@@ -20,7 +20,7 @@ export function formatDaybreakStatus(
     case "not-granted":
       return "Daybreak requested (not granted)";
     case "model-not-supported":
-      return "Daybreak requested (model unsupported)";
+      return "Daybreak unavailable (model unsupported)";
     case "auth-not-eligible":
       return "Daybreak requested (auth not eligible)";
     case "off":

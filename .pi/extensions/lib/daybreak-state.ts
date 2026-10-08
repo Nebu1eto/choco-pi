@@ -211,7 +211,7 @@ const DAYBREAK_REQUESTED_STATUS = {
   "not-granted": "requested; not granted for this account",
   "auth-not-eligible": "requested; current authentication is not eligible",
   "lookup-failed": "requested; Daybreak lookup failed or not yet confirmed",
-  "model-not-supported": "requested; current model does not support Daybreak",
+  "model-not-supported": "unavailable; the current model does not support Daybreak",
   // A requested state never reports off; read it as unconfirmed.
   off: "requested; entitlement lookup failed or not yet confirmed",
 } satisfies Record<DaybreakOutcome, string>;

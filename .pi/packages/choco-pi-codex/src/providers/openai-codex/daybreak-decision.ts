@@ -16,6 +16,7 @@ import {
   copyDaybreakHeaders,
   daybreakAccount,
   type DaybreakLookupCredentials,
+  invalidateCodexDaybreakAccount,
   lookupCodexDaybreakEntitlement,
 } from "./daybreak-entitlement.ts";
 
@@ -251,6 +252,22 @@ async function resolveTicket(record: TicketRecord): Promise<CodexDaybreakDecisio
   if (!credentials || !account)
     return publish(owner, decisionFrom(sessionId, state, "auth-not-eligible"));
   const modelId = record.model.id ?? "";
+  // A toggle-on transition drops both caches before any lookup so the catalog is re-read too.
+  if (record.turnedOn) invalidateCodexDaybreakAccount(account);
+  // Model availability first: an unsupported model reads "unavailable" no matter what the
+  // account lookup says, and it never spends an entitlement call.
+  const availability = await lookupCodexDaybreakModelSupport(account, credentials, modelId, "any");
+  if (availability !== "supported")
+    return publish(
+      owner,
+      decisionFrom(
+        sessionId,
+        state,
+        availability === "unsupported" ? "model-not-supported" : "lookup-failed",
+      ),
+    );
+  const checked = decisionFrom(sessionId, state, "off");
+  if (!ownerCurrent(owner.controller, checked)) return publish(owner, checked);
   const result = await lookupCodexDaybreakEntitlement(account, credentials, record.turnedOn);
   if (result.entitlement !== "blue" && result.entitlement !== "red")
     return publish(owner, decisionFrom(sessionId, state, result.entitlement));

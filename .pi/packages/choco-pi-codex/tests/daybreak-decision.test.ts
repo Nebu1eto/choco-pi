@@ -236,6 +236,11 @@ async function resolve(t: CodexDaybreakTicket): Promise<CodexDaybreakDecision> {
   return decision;
 }
 
+async function waitFor(ready: () => boolean): Promise<void> {
+  for (let i = 0; i < 1000 && !ready(); i++) await new Promise((resolve) => setImmediate(resolve));
+  if (!ready()) throw new Error("condition not reached");
+}
+
 function cleanup() {
   Reflect.deleteProperty(globalThis, DAYBREAK_BRIDGE_SYMBOL);
   configureCodexDaybreakEntitlementForTest(undefined);
@@ -421,25 +426,37 @@ test("lookup uses canonical URL with auth headers only and times out safely", as
   assert.ok(Date.now() - started < 2_000);
 });
 
-test("model lookup runs only after a granted entitlement and failures omit the field", async (t) => {
+test("model availability is checked before entitlement and failures omit the field", async (t) => {
   t.after(cleanup);
   const bridge = installBridge();
+  // An unsupported model never spends an entitlement lookup, whatever the account would say.
+  const entitlementCalls = fakeLookup(() => Response.json(grantsPayload()));
+  configureCodexDaybreakModelSupportForTest({
+    fetch: async () => Response.json({ models: [] }),
+  });
+  bridge.add("unsupported-first", true);
+  assert.equal((await resolve(ticket("unsupported-first"))).outcome, "model-not-supported");
+  assert.equal(entitlementCalls.length, 0);
+
+  // A supported model then consults entitlement; denial and failure both omit the field.
+  configureCodexDaybreakModelSupportForTest({
+    fetch: async () =>
+      Response.json({
+        models: [{ slug: model.id, available_access_programs: { cyber: ["daybreak_blue"] } }],
+      }),
+  });
   for (const [name, respond, expected] of [
     ["denied", () => Response.json(grantsPayload()), "not-granted"],
     ["failure", () => new Response("failed", { status: 500 }), "lookup-failed"],
   ] satisfies Array<readonly [string, () => Response, DaybreakOutcome]>) {
     fakeLookup(respond);
-    let modelsCalls = 0;
-    configureCodexDaybreakModelSupportForTest({
-      fetch: async () => {
-        modelsCalls++;
-        return Response.json({ models: [] });
-      },
-    });
     bridge.add(name, true);
-    assert.equal((await resolve(ticket(name))).outcome, expected);
-    assert.equal(modelsCalls, 0);
+    const decision = await resolve(ticket(name));
+    assert.equal(decision.outcome, expected);
+    assert.equal(hasAccessPrograms(applyCodexDaybreakAccessPrograms({}, decision)), false);
   }
+
+  // A catalog failure omits the field too.
   fakeLookup(() => Response.json(grantsPayload("tac1")));
   configureCodexDaybreakModelSupportForTest({
     fetch: async () => new Response("failed", { status: 500 }),
@@ -453,6 +470,17 @@ test("model lookup runs only after a granted entitlement and failures omit the f
     ),
     false,
   );
+
+  // A model that advertises only a different program than the grant is still unsupported.
+  fakeLookup(() => Response.json(grantsPayload("tac3")));
+  configureCodexDaybreakModelSupportForTest({
+    fetch: async () =>
+      Response.json({
+        models: [{ slug: model.id, available_access_programs: { cyber: ["daybreak_blue"] } }],
+      }),
+  });
+  bridge.add("red-on-blue-only", true);
+  assert.equal((await resolve(ticket("red-on-blue-only"))).outcome, "model-not-supported");
 });
 
 test("toggle-on refreshes cached model support and stale owners never enable an unverified model", async (t) => {
@@ -587,6 +615,17 @@ test("entitlement cache: shared single-flight, TTL, token change, 401, bounded e
 test("toggle-on and invalidation drop pending flights that cannot refill the cache", async (t) => {
   t.after(cleanup);
   const bridge = installBridge();
+  configureCodexDaybreakModelSupportForTest({
+    fetch: async () =>
+      Response.json({
+        models: [
+          {
+            slug: model.id,
+            available_access_programs: { cyber: ["daybreak_blue", "daybreak_red"] },
+          },
+        ],
+      }),
+  });
   const gates: Array<ReturnType<typeof deferred<void>>> = [];
   const grants = ["tac1", "tac3"];
   const calls = fakeLookup(async () => {
@@ -598,11 +637,11 @@ test("toggle-on and invalidation drop pending flights that cannot refill the cac
   });
   const fake = bridge.add("toggle", true);
   const stale = resolve(ticket("toggle"));
-  await Promise.resolve();
+  await waitFor(() => calls.length === 1);
   fake.controller.set(false);
   fake.controller.set(true);
   const fresh = resolve(ticket("toggle"));
-  await Promise.resolve();
+  await waitFor(() => calls.length === 2);
   assert.equal(calls.length, 2, "toggle-on must not reuse the pre-toggle pending flight");
   gates[0]?.resolve();
   gates[1]?.resolve();
@@ -626,7 +665,7 @@ test("toggle-on and invalidation drop pending flights that cannot refill the cac
   });
   bridge.add("pending", true);
   const pending = resolve(ticket("pending"));
-  await Promise.resolve();
+  await waitFor(() => lookups === 1);
   invalidateCodexDaybreakEntitlement(token("acct-1"), model.baseUrl);
   pendingGate.resolve();
   await pending;

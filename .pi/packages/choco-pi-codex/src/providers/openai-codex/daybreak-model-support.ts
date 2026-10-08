@@ -12,6 +12,8 @@ import { buildVerifiedAccessHeaders } from "./headers.ts";
 
 export type DaybreakModelSupport = "supported" | "unsupported" | "lookup-failed";
 export type DaybreakTargetProgram = "daybreak_blue" | "daybreak_red";
+/** `any` asks whether the model advertises some Daybreak program at all. */
+export type DaybreakSupportQuery = DaybreakTargetProgram | "any";
 const ModelSchema = Type.Object({
   slug: Type.String(),
   available_access_programs: Type.Optional(
@@ -85,7 +87,7 @@ export async function lookupCodexDaybreakModelSupport(
   account: DaybreakAccount,
   credentials: DaybreakLookupCredentials,
   modelId: string,
-  targetProgram: DaybreakTargetProgram,
+  targetProgram: DaybreakSupportQuery,
 ): Promise<DaybreakModelSupport> {
   const io = dependencies;
   let entry = cache.get(account.key);
@@ -127,10 +129,13 @@ export async function lookupCodexDaybreakModelSupport(
   }
   const result = entry.pending ? await entry.pending : entry.settled?.result;
   if (!result?.models) return "lookup-failed";
-  return result.models.some(
-    (model) =>
-      model.slug === modelId && model.available_access_programs?.cyber?.includes(targetProgram),
-  )
+  return result.models.some((model) => {
+    if (model.slug !== modelId) return false;
+    const programs = model.available_access_programs?.cyber ?? [];
+    return targetProgram === "any"
+      ? programs.some((program) => program.startsWith("daybreak_"))
+      : programs.includes(targetProgram);
+  })
     ? "supported"
     : "unsupported";
 }
