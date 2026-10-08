@@ -64,7 +64,7 @@ Errors report attempted backends without including credentials. Cancellation sto
 
 ## Privacy and storage
 
-Queries and enabled filters are sent to the selected backend. Page extraction may subsequently contact result URLs. Review each provider's privacy and billing terms before enabling it, and avoid putting secrets in queries.
+Queries and enabled filters are sent to the selected backend. Page extraction may subsequently contact result URLs; direct page fetches connect only to the DNS addresses that passed private-network validation, and each redirect is validated again. Review each provider's privacy and billing terms before enabling it, and avoid putting secrets in queries.
 
 Search results can be stored in the current Pi session so `get_search_content`, source checking, and curator workflows can retrieve them. Legacy stored provider results remain readable. Search references are session-owned and are not accepted across sessions.
 

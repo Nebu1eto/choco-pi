@@ -1,42 +1,22 @@
 {
-  "settings": {
-    "directTools": false,
-    "toolPrefix": "mcp"
-  },
   "mcpServers": {
     "notion": {
-      "url": "https://mcp.notion.com/mcp",
-      "auth": "oauth",
-      "protocolVersion": "auto"
+      "url": "https://mcp.notion.com/mcp"
     },
     "github": {
       "url": "https://api.githubcopilot.com/mcp",
-      "auth": "bearer",
-      "bearerToken": "!gh auth token",
-      "protocolVersion": "auto"
+      "headers": {
+        "Authorization": "!echo Bearer $(gh auth token)"
+      }
     },
     "linear": {
-      "url": "https://mcp.linear.app/mcp",
-      "auth": "oauth",
-      "protocolVersion": "auto"
+      "url": "https://mcp.linear.app/mcp"
     },
     "slack": {
-      "url": "https://mcp.slack.com/mcp",
-      "auth": "oauth",
-      "protocolVersion": "auto"
+      "url": "https://mcp.slack.com/mcp"
     },
     "figma": {
-      "url": "https://mcp.figma.com/mcp",
-      "auth": "oauth",
-      "protocolVersion": "auto"
-    },
-    "expo": {
-      "url": "https://mcp.expo.dev/mcp",
-      "auth": "oauth",
-      "oauth": {
-        "skipIssuerMetadataValidation": true
-      },
-      "protocolVersion": "auto"
+      "url": "https://mcp.figma.com/mcp"
     },
     "chrome-devtools": {
       "command": "npx",

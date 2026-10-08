@@ -1,8 +1,9 @@
 # Vendored source record
 
-The MCP proxy and first-party Figma tools carry compact prompt snippets for the
-provider schema budget and deferred Code Mode catalog. Dynamic server and
-instruction details remain available through proxy discovery actions.
+This package began as a fork of `pi-mcp-adapter` 2.26.1. Since the 2026-10-08
+entry at the end of this file, it loads only the native Figma tools; Pi's
+`builtin:mcp` owns MCP. The sections before that entry record the retired
+adapter fork.
 
 ## Provenance
 

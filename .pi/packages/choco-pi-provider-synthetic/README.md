@@ -34,23 +34,14 @@ Credentials are resolved in this order:
 
 ### Install Extension
 
-```bash
-# From npm
-pi install npm:@aliou/pi-synthetic
-
-# From git
-pi install git:github.com/aliou/pi-synthetic
-
-# Local development
-pi -e .
-```
+In choco-pi, `.pi/settings.json` loads this package as `./packages/choco-pi-provider-synthetic`; the root README's installation steps add it to the global profile. Do not also install the upstream `npm:@aliou/pi-synthetic` package.
 
 ## Usage
 
 Once installed, select `synthetic` as your provider and choose from available models:
 
 ```
-/model synthetic hf:moonshotai/Kimi-K2.5
+/model synthetic hf:moonshotai/Kimi-K3
 ```
 
 ### Models
@@ -145,12 +136,12 @@ To disable features directly in `~/.pi/agent/settings.json`, list the extensions
 {
   "packages": [
     {
-      "source": "npm:@aliou/pi-synthetic",
+      "source": "/path/to/choco-pi/.pi/packages/choco-pi-provider-synthetic",
       "extensions": [
-        "-src/extensions/sub-bar-integration/index.ts",
-        "+src/extensions/command-quotas/index.ts",
-        "-src/extensions/usage-status/index.ts",
-        "+src/extensions/quota-warnings/index.ts",
+        "-extensions/sub-bar-integration/index.ts",
+        "+extensions/command-quotas/index.ts",
+        "-extensions/usage-status/index.ts",
+        "+extensions/quota-warnings/index.ts",
         "+extensions/web-search/index.ts",
         "+extensions/provider/index.ts"
       ]
@@ -159,7 +150,7 @@ To disable features directly in `~/.pi/agent/settings.json`, list the extensions
 }
 ```
 
-The extension paths map to the files under `extensions/` in this repo: `provider`, `web-search`, `command-quotas`, `sub-bar-integration`, `usage-status`, and `quota-warnings`.
+The extension paths map to the files under `extensions/` in this package: `provider`, `web-search`, `command-quotas`, `sub-bar-integration`, `usage-status`, and `quota-warnings`.
 
 The **Utility API Proxy** setting is not a loadable extension feature. It is a regular setting controlled through `/synthetic:settings`.
 
@@ -181,23 +172,7 @@ See `AGENTS.md` for the full model entry shape and the update workflow.
 
 ## Development
 
-### Setup
-
-```bash
-git clone https://github.com/aliou/pi-synthetic.git
-cd pi-synthetic
-
-# Install dependencies (sets up pre-commit hooks)
-pnpm install && pnpm prepare
-```
-
-Pre-commit hooks run on every commit:
-
-- TypeScript type checking
-- oxlint linting
-- oxfmt formatting
-
-### Commands
+The repository root's `npm run install:vendored` installs this package's dependencies from its lockfile. Run the package scripts from this directory:
 
 ```bash
 # Type check
@@ -213,25 +188,9 @@ pnpm run format
 pnpm run test
 ```
 
-### Test Locally
-
-```bash
-pi -e .
-```
-
-## Release
-
-This repository uses [Changesets](https://github.com/changesets/changesets) for versioning.
-
-**Note:** Automatic NPM publishing is currently disabled. To publish manually:
-
-1. Create a changeset: `pnpm changeset`
-2. Version packages: `pnpm version`
-3. Publish (when ready): Uncomment the publish job in `.github/workflows/publish.yml`
-
 ## Requirements
 
-- Pi coding agent v0.80.8+ (required for `ProviderConfig.refreshModels` dynamic model discovery)
+- Pi `1.0.4`, the version this package's Pi SDK peer dependencies pin
 - Synthetic API key (configured in `~/.pi/agent/auth.json` or via `SYNTHETIC_API_KEY`) for model provider calls and authenticated utility API calls
 
 ## Links

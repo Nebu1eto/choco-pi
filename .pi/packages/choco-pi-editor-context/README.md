@@ -12,15 +12,18 @@ and runs from TypeScript source with no build step.
 
 ## Installation
 
-Pi loads the extension only from the global choco-pi profile:
+Pi loads the extension from `.pi/settings.json` inside this checkout and, for
+sessions started elsewhere, from the global choco-pi profile. From the
+repository root, follow the root README's install steps:
 
 ```sh
-pnpm install
-pnpm install:profile
+pnpm install --frozen-lockfile --ignore-scripts
+npm run install:vendored
+npm run install:profile
 ```
 
-Without `install:profile`, `publish` can still write a snapshot, but no Pi session
-will consume it.
+Without `install:profile`, `publish` can still write a snapshot, but Pi sessions
+outside this checkout will not consume it.
 
 ## CLI
 
@@ -52,15 +55,15 @@ selection changes.
 
 ## Package layout
 
-- `index.ts` is the Pi extension entry and re-exports the public API.
+- `index.ts` re-exports the public API.
 - `src/protocol.ts` defines editor-context protocol v1.
 - `src/security.ts` validates documents, paths, and size limits.
 - `src/context-store.ts` owns the atomic, mode 0600 context store with
   ownership, expiry, and crash-leftover cleanup.
 - `src/context-target.ts` persists the per-worktree selected target.
 - `src/live-session-client.ts` discovers live Pi sessions.
-- `src/context-extension.ts` injects the `[Editor context]` block before an
-  agent turn.
+- `src/context-extension.ts` is the Pi extension entry; it injects the
+  `[Editor context]` block before an agent turn.
 - `src/cli.ts` implements `publish`, `select`, `list`, and `diagnose`.
 
 ## Tests
