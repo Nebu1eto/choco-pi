@@ -420,7 +420,7 @@ async function showTabOnce(
     const digitHint = STATUS_TABS.map((_tab, index) => index + 1).join("/");
     const textHint = (): string => {
       const parts = ["Tab switches tabs", "↑/↓ scrolls", `${digitHint} jumps`];
-      if (active === "usage") parts.push("r uses a saved Codex reset");
+      if (active === "usage") parts.push("r uses a saved ChatGPT reset");
       if (isExpandableTab(active)) parts.push(expanded ? "Ctrl+O collapses" : "Ctrl+O expands");
       parts.push("Enter/Esc closes");
       return theme.fg("dim", parts.join(" · "));
@@ -686,8 +686,7 @@ export default function statusCommands(pi: ExtensionAPI): void {
   });
   overrideSessionCommand();
   const usageCommand = {
-    description:
-      "Show connected Claude Code, OpenAI Codex, and Synthetic usage (Status/Context/Usage tabs)",
+    description: "Show connected Claude, ChatGPT, and Synthetic usage (Status/Context/Usage tabs)",
     handler: async (_args: string, ctx: ExtensionCommandContext) =>
       showTab(ctx, pi.getThinkingLevel(), "usage"),
   };

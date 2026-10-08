@@ -97,10 +97,10 @@ export function createCodexResetClient(
 const activeAccounts = new Set<string>();
 const pendingRequests = new Map<string, string>();
 const OUTCOMES = new Map([
-  ["reset", "Codex reset applied."],
-  ["already_redeemed", "This Codex reset was already redeemed."],
+  ["reset", "ChatGPT reset applied."],
+  ["already_redeemed", "This ChatGPT reset was already redeemed."],
   ["nothing_to_reset", "No eligible usage window to reset; no reset was spent."],
-  ["no_credit", "No saved Codex reset is available."],
+  ["no_credit", "No saved ChatGPT reset is available."],
 ]);
 
 async function refreshAfterReset(refresh: () => Promise<void>): Promise<void> {
@@ -121,14 +121,14 @@ export async function runCodexResetFlow(options: {
 }): Promise<string | undefined> {
   const { client, select, isCurrent, refresh } = options;
   const accountId = client.accountId;
-  if (activeAccounts.has(accountId)) return "A Codex reset action is already in progress.";
+  if (activeAccounts.has(accountId)) return "A ChatGPT reset action is already in progress.";
   activeAccounts.add(accountId);
   try {
     const resets = await client.list();
     if (!isCurrent()) return;
-    if (resets.length === 0) return "No saved Codex reset is available.";
+    if (resets.length === 0) return "No saved ChatGPT reset is available.";
     const labels = resets.map((reset, index) => `Reset ${index + 1} — expires ${reset.expiresAt}`);
-    const selected = await select("Saved Codex resets (earliest expiry first)", [
+    const selected = await select("Saved ChatGPT resets (earliest expiry first)", [
       "Cancel",
       ...labels,
     ]);
@@ -136,7 +136,7 @@ export async function runCodexResetFlow(options: {
     const reset = selected ? resets[labels.indexOf(selected)] : undefined;
     if (!reset) return;
     const confirmed = await select(
-      `Spend this saved reset? Eligible Codex usage windows will reset. This cannot be undone.\nExpires ${reset.expiresAt}`,
+      `Spend this saved reset? Eligible ChatGPT usage windows will reset. This cannot be undone.\nExpires ${reset.expiresAt}`,
       ["Cancel", "Use reset"],
     );
     if (!isCurrent() || confirmed !== "Use reset") return;
