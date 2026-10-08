@@ -407,8 +407,7 @@ test("root Daybreak editor badge shows grants and names each denial", () => {
       requested: true,
       outcome: "blue",
     });
-    assert.match(stripTerminalSequences(decorated[1] ?? ""), /daybreak auth ineligible/);
-    assert.doesNotMatch(stripTerminalSequences(decorated[1] ?? ""), /daybreak blue/);
+    assert.doesNotMatch(stripTerminalSequences(decorated[1] ?? ""), /daybreak/);
   }
 });
 
@@ -445,6 +444,8 @@ test("focused child Daybreak state supersedes the root outcome", () => {
     modelId: "gpt-child",
     modelName: "GPT Child",
     provider: "openai-codex",
+    api: "openai-codex-responses",
+    baseUrl: "https://chatgpt.com/backend-api",
     supported: false,
     active: false,
   };
@@ -482,6 +483,8 @@ test("wrapped editor reads the focused runtime Daybreak projection", () => {
   type Projection = {
     modelId: string;
     provider: string;
+    api: string;
+    baseUrl: string;
     daybreakRequested?: boolean;
     daybreakOutcome: string;
   };
@@ -508,6 +511,8 @@ test("wrapped editor reads the focused runtime Daybreak projection", () => {
   const projection: Projection = {
     modelId: "gpt-child",
     provider: "openai-codex",
+    api: "openai-codex-responses",
+    baseUrl: "https://chatgpt.com/backend-api",
     daybreakRequested: true,
     daybreakOutcome: "bogus",
   };
@@ -520,6 +525,10 @@ test("wrapped editor reads the focused runtime Daybreak projection", () => {
     );
     projection.daybreakOutcome = "red";
     assert.match(stripTerminalSequences(editor.render(80)[0] ?? ""), /daybreak red {2}$/);
+    projection.api = "anthropic-messages";
+    projection.provider = "anthropic";
+    projection.baseUrl = "https://api.anthropic.com";
+    assert.doesNotMatch(stripTerminalSequences(editor.render(80)[0] ?? ""), /daybreak/);
     delete projection.daybreakRequested;
     assert.doesNotMatch(stripTerminalSequences(editor.render(80)[0] ?? ""), /daybreak/);
   } finally {

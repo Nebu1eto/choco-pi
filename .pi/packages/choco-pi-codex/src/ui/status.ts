@@ -3,7 +3,10 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AdapterState } from "../adapter/activation/state.ts";
 import type { CodexRuntimePlan } from "../adapter/activation/runtime-plan.ts";
 import { STATUS_KEY, buildStatusText } from "../adapter/activation/tool-set.ts";
-import { isResponsesContext } from "../adapter/prompt/codex-model.ts";
+import {
+  isCanonicalCodexSubscriptionModel,
+  isResponsesContext,
+} from "../adapter/prompt/codex-model.ts";
 import { snapshotCodexFastModeDecision } from "../providers/openai-codex/fast-mode-decision.ts";
 import { snapshotCodexDaybreakDecision } from "../providers/openai-codex/daybreak-decision.ts";
 import type { CodexDaybreakDecision } from "../providers/openai-codex/daybreak-types.ts";
@@ -67,6 +70,9 @@ export function renderCodexStatus(
         }),
       },
       ctx.ui.theme,
-    ) + ctx.ui.theme.fg("dim", ` • ${formatDaybreakStatus(daybreak)}`),
+    ) +
+      (isCanonicalCodexSubscriptionModel(ctx.model)
+        ? ctx.ui.theme.fg("dim", ` • ${formatDaybreakStatus(daybreak)}`)
+        : ""),
   );
 }

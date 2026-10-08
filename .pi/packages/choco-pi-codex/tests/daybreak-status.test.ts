@@ -95,6 +95,20 @@ test("Codex status line reads the session's effective Daybreak outcome", async (
     renderCodexStatus(context, state, plan);
     assert.ok(statuses.at(-1)?.includes("Daybreak off"));
     assert.equal(controller.getState().source, "explicit");
+    renderCodexStatus(
+      {
+        ...context,
+        model: {
+          ...model,
+          provider: "anthropic",
+          api: "anthropic-messages",
+          baseUrl: "https://api.anthropic.com",
+        },
+      },
+      state,
+      plan,
+    );
+    assert.doesNotMatch(statuses.at(-1) ?? "", /Daybreak/i);
   } finally {
     controller.dispose();
     fixture.session.dispose();

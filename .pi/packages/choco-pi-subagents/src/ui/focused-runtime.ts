@@ -12,6 +12,8 @@ export interface FocusedAgentRuntime {
   modelId: string;
   modelName: string;
   provider: string;
+  api?: string;
+  baseUrl?: string;
   thinking: string;
   costTotal: number | null;
   contextPercent: number | null;
@@ -42,7 +44,7 @@ export function focusedAgentRuntime(record: AgentRecord): FocusedAgentRuntime | 
   const sessionId = session.sessionManager?.getSessionId?.() ?? "";
   const fastMode = decideSessionFastMode(sessionId, session.model);
   const daybreak = getSessionDaybreak(sessionId);
-  return {
+  const runtime: FocusedAgentRuntime = {
     modelId: session.model?.id ?? "",
     modelName: session.model?.name ?? "",
     provider: session.model?.provider ?? "",
@@ -55,13 +57,15 @@ export function focusedAgentRuntime(record: AgentRecord): FocusedAgentRuntime | 
     fastModeSupported: fastMode?.supported ?? false,
     fastModeActive: fastMode?.active ?? false,
     fastModeRevision: fastMode?.revision ?? record.fastModeRevision ?? 0,
-    daybreakRequested: daybreak?.requested ?? record.daybreakRequested ?? false,
-    daybreakOutcome:
-      daybreak?.requested && !isCanonicalCodexSubscriptionModel(session.model)
-        ? "auth-not-eligible"
-        : daybreak?.outcome,
-    daybreakRevision: daybreak?.revision ?? record.daybreakRevision ?? 0,
   };
+  if (session.model?.api) runtime.api = session.model.api;
+  if (session.model?.baseUrl) runtime.baseUrl = session.model.baseUrl;
+  if (isCanonicalCodexSubscriptionModel(session.model)) {
+    runtime.daybreakRequested = daybreak?.requested ?? record.daybreakRequested ?? false;
+    runtime.daybreakOutcome = daybreak?.outcome;
+    runtime.daybreakRevision = daybreak?.revision ?? record.daybreakRevision ?? 0;
+  }
+  return runtime;
 }
 
 /** Publish a live getter and return an ownership-safe cleanup function. */

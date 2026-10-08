@@ -1,3 +1,4 @@
+import { reportCodexDaybreakResponse, type CodexDaybreakTicket } from "./daybreak-decision.ts";
 import { processResponsesStream } from "../openai-responses/shared.ts";
 import { type Static, Type } from "typebox";
 import { Check } from "typebox/value";
@@ -341,6 +342,16 @@ function responseStreamOptions<TApi extends Api>(
   return streamOptions;
 }
 
+async function* observeDaybreakCompletion(
+  events: AsyncIterable<CodexStreamEvent>,
+  ticket: CodexDaybreakTicket | undefined,
+): AsyncIterable<CodexStreamEvent> {
+  for await (const event of events) {
+    if (event.type === "response.completed") reportCodexDaybreakResponse(ticket, event.response);
+    yield event;
+  }
+}
+
 export async function processMappedCodexResponsesStream<TApi extends Api>(
   events: AsyncIterable<CodexStreamEvent>,
   output: AssistantMessage,
@@ -351,7 +362,7 @@ export async function processMappedCodexResponsesStream<TApi extends Api>(
   await processResponsesStream(
     // SAFETY: mapCodexEvents validates the discriminator and normalizes Codex terminal events to
     // the Responses event names consumed by processResponsesStream before this adapter runs.
-    events as AsyncIterable<never>,
+    observeDaybreakCompletion(events, options?.daybreakTicket) as AsyncIterable<never>,
     output,
     stream,
     model,

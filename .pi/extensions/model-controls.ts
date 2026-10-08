@@ -79,6 +79,8 @@ type FocusedAgentRuntimeRegistry = {
           modelId?: RuntimeValue;
           modelName?: RuntimeValue;
           provider?: RuntimeValue;
+          api?: RuntimeValue;
+          baseUrl?: RuntimeValue;
           fastModeSupported?: RuntimeValue;
           fastModeActive?: RuntimeValue;
           daybreakRequested?: RuntimeValue;
@@ -93,6 +95,8 @@ export type FocusedFastEditorState = {
   modelId?: string;
   modelName?: string;
   provider?: string;
+  api?: string;
+  baseUrl?: string;
   supported: boolean;
   active: boolean;
   /** The focused child's own Daybreak state; when absent no Daybreak badge renders. */
@@ -165,6 +169,8 @@ function focusedFastEditorState(): FocusedFastEditorState | undefined {
   if (isString(current?.modelId)) state.modelId = current.modelId;
   if (isString(current?.modelName)) state.modelName = current.modelName;
   if (isString(current?.provider)) state.provider = current.provider;
+  if (isString(current?.api)) state.api = current.api;
+  if (isString(current?.baseUrl)) state.baseUrl = current.baseUrl;
   return state;
 }
 
@@ -223,6 +229,8 @@ export function applyDaybreakAction(
   actionInput: string,
   model?: Model<Api>,
 ): string {
+  if (!isCanonicalCodexSubscriptionModel(model))
+    return "Daybreak applies only to OpenAI Codex ChatGPT-account models.";
   const action = actionInput.trim().toLowerCase();
   const describe = (state: DaybreakState | undefined): string =>
     describeDaybreakState(projectDaybreakForModel(state, model));
@@ -234,17 +242,14 @@ export function applyDaybreakAction(
 }
 
 /**
- * A reported outcome attests the model that produced it. Once the session points at a
- * model outside the canonical Codex subscription, the requested state can only be
- * ineligible, so every surface projects it the same way.
+ * Daybreak metadata belongs only to canonical ChatGPT Codex models. Hide a saved
+ * request and any stale grant completely when the active model is ineligible.
  */
 function projectDaybreakForModel<T extends { requested: boolean; outcome: DaybreakOutcome }>(
   state: T | undefined,
   model: Model<Api> | undefined,
 ): T | undefined {
-  if (!state || !model || !state.requested || isCanonicalCodexSubscriptionModel(model))
-    return state;
-  return { ...state, outcome: "auth-not-eligible" };
+  return isCanonicalCodexSubscriptionModel(model) ? state : undefined;
 }
 
 export function appendFastModeToEditorMetadata(
@@ -335,7 +340,9 @@ export function appendFocusedModelToEditorMetadata(
   // The focused child's state supersedes the root's; the root outcome never leaks in.
   const badges: string[] = [];
   if (focused.supported && focused.active) badges.push("fast");
-  const daybreakBadge = daybreakEditorBadge(focused.daybreak);
+  const daybreakBadge = daybreakEditorBadge(
+    isCanonicalCodexSubscriptionModel(focused) ? focused.daybreak : undefined,
+  );
   if (daybreakBadge) badges.push(daybreakBadge);
   return appendFastBadge(updated, width, focused.modelId, badges, style);
 }
@@ -644,12 +651,14 @@ export default function modelControls(pi: ExtensionAPI): void {
   pi.registerCommand("daybreak", {
     description: "Set the session Daybreak request: /daybreak [on|off|status]",
     getArgumentCompletions: (prefix) => {
+      if (!isCanonicalCodexSubscriptionModel(activeModel)) return null;
       const normalized = prefix.trim().toLowerCase();
       const matches = ["on", "off", "status"].filter((value) => value.startsWith(normalized));
       return matches.length > 0 ? matches.map((value) => ({ value, label: value })) : null;
     },
     handler: async (args, ctx) => {
       try {
+        updateModel(ctx.model);
         ctx.ui.notify(setDaybreak(args), "info");
       } catch (error) {
         ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");

@@ -579,3 +579,22 @@ root editor repaints through the same `setStatus` path as Fast mode. Disposal an
 replacement clear listeners. The independent subagent outcome union also includes
 `pending`; its hidden registration factory is unchanged. Focused probe, state, badge,
 and subagent tests cover these paths.
+
+Daybreak editor and status metadata now disappear outside canonical ChatGPT Codex
+models. Pi 1.0.4's `RegisteredCommand` and `ExtensionAPI` expose no dynamic command
+visibility or unregister API: `/daybreak` remains listed, but offers no argument
+completions and only explains its model restriction when ineligible. The shared
+normalized terminal consumer in `stream-events.ts` validates the server's
+`response.access_programs.cyber` echo once per frozen request ticket on HTTP and
+WebSocket paths. A different or missing program in a present access-program object
+reports `not-granted` and invalidates that account's entitlement/catalog caches;
+confirmed blue/red programs report their grant. Entirely absent or malformed echoes
+leave the previous outcome unchanged. Superseded revisions cannot report or invalidate,
+and no request is retried or resent.
+
+Gate order (2026-10-08, matching codex-cli 0.161): the model catalog is the gate. If the
+selected model advertises a Daybreak program the request carries it and the server's
+`response.completed.access_programs` echo is final: a downgrade to `standard` reports
+`not-granted` and invalidates the account caches. `verified_access` only chooses red
+over blue (default blue); it never blocks, because it reports `inactive` for accounts
+the backend still serves Daybreak to.

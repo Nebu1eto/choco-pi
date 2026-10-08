@@ -1,3 +1,4 @@
+import { isCanonicalCodexSubscriptionModel } from "../../../choco-pi-codex/src/adapter/prompt/codex-model.ts";
 import type { AgentSession, MarkdownTransformer } from "@earendil-works/pi-coding-agent";
 import { getKeybindings, Key, matchesKey, truncateToWidth, type TUI } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
@@ -104,6 +105,8 @@ export function executeFocusedDaybreak(
 ): string {
   const session = record.session;
   if (!session) throw new Error("Focused Daybreak controls are unavailable.");
+  if (!isCanonicalCodexSubscriptionModel(session.model))
+    return "Daybreak applies only to OpenAI Codex ChatGPT-account models.";
   const sessionId = session.sessionManager?.getSessionId?.();
   const action = actionInput.trim().toLowerCase();
   if (action && action !== "on" && action !== "off" && action !== "status")
@@ -280,13 +283,11 @@ function focusLabel(record: AgentRecord): string {
 }
 
 function withoutFocusedUsage(runtime: FocusedAgentRuntime): FocusedAgentRuntime {
-  return {
-    ...runtime,
-    daybreakOutcome: undefined,
-    costTotal: null,
-    contextPercent: null,
-    contextWindow: null,
-  };
+  const retained = { ...runtime, costTotal: null, contextPercent: null, contextWindow: null };
+  delete retained.daybreakRequested;
+  delete retained.daybreakOutcome;
+  delete retained.daybreakRevision;
+  return retained;
 }
 
 /** `/exit` and its aliases, as typed at a prompt that a focused agent owns. */
@@ -544,12 +545,12 @@ export class FocusedAgentController {
 
     const run = async (): Promise<void> => {
       if (command === "model") {
-        if (!argument) {
-          await session.cycleModel("forward", { persist: false });
-        } else {
+        if (argument) {
           const model = this.options.resolveModel?.(argument);
           if (!model) throw new Error(`Model not found: ${argument}`);
           await session.setModel(model, { persist: false });
+        } else {
+          await session.cycleModel("forward", { persist: false });
         }
         if (
           this.active !== active ||
