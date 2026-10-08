@@ -1148,6 +1148,24 @@ in the frozen lock as transitive dependencies of `pi-coding-agent`.
   `builtin:<name>` paths and are enabled by default. An `extensions:` allowlist
   drops them unless it names them literally (for example `builtin:mcp`).
 
+## 2026-10-08 choco-pi patch: Daybreak controls
+
+Per-session Daybreak controls mirror Fast mode across Agent and frontmatter
+invocation defaults, manager spawn, queue, bootstrap, resume state and live
+mutation, hidden child and mention factories, the descendant-only
+`set_subagent_daybreak` tool, workflow, schedule, and RPC forwarding, focused
+`/daybreak` routing, and focused requested, outcome, and revision metadata.
+Focused grants are gated against the current canonical Codex subscription
+model. New `daybreak-bridge.ts` ranks sources (explicit over inherited over
+default) and reconciles revisions after `bindExtensions`.
+`tests/daybreak.test.ts` exercises real SDK child registration, manager queues
+and resumes, ownership, replacement generations, focused isolated persistence,
+model-switch badge gating, and runner loader installation; `focus-mode.test.ts`
+expectations include the new metadata.
+`daybreak-bridge.ts` declares its own outcome union and must be kept in step with
+the codex package's `daybreak-types.ts` (`model-not-supported` was added on
+2026-10-08).
+
 ## 2026-10-08 choco-pi patch: built-in tool search
 
 `agent-runner.ts` supplies Pi's `createToolSearchExtension` to child sessions

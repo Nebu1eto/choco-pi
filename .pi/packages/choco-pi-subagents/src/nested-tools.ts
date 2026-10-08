@@ -70,6 +70,7 @@ const NESTED_TOOL_NAMES = [
   "steer_subagent",
   "stop_subagent",
   "set_subagent_fast_mode",
+  "set_subagent_daybreak",
 ] as const;
 
 interface NestedSpawnOptions {
@@ -89,6 +90,7 @@ interface NestedSpawnOptions {
   isBackground?: boolean;
   isolation?: IsolationMode;
   fastModeRequested?: boolean;
+  daybreakRequested?: boolean;
   hookWorktreePath?: string;
   invocation?: AgentInvocation;
   signal?: AbortSignal;
@@ -125,6 +127,7 @@ export interface NestedAgentManager {
   getMaxConcurrent(): number;
   abort(id: string): boolean;
   setFastMode?(id: string, requested: boolean): AgentRecord | undefined;
+  setDaybreak?(id: string, requested: boolean): AgentRecord | undefined;
   resume(
     id: string,
     prompt: string,
@@ -135,6 +138,7 @@ export interface NestedAgentManager {
       model?: string;
       budgets?: NestedSpawnOptions["budgets"];
       fastModeRequested?: boolean;
+      daybreakRequested?: boolean;
     },
   ): Promise<AgentRecord | undefined>;
 }
@@ -278,6 +282,7 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
       isolated: Type.Optional(Type.Boolean()),
       inherit_context: Type.Optional(Type.Boolean()),
       fast_mode: Type.Optional(Type.Boolean({ description: "Request fast mode for this run." })),
+      daybreak: Type.Optional(Type.Boolean({ description: "Request Daybreak for this run." })),
       ...isolationParam(isWorktreeIsolationEnabled()),
     }),
     execute: async (_toolCallId, params, signal, _onUpdate, ctx) => {
@@ -314,6 +319,7 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
             name: params.name,
             model: resumeModel,
             fastModeRequested: params.fast_mode,
+            daybreakRequested: params.daybreak,
             budgets: {
               timeoutMs: params.timeout_ms,
               maxToolCalls: params.max_tool_calls,
@@ -423,6 +429,7 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
         thinkingLevel: invocation.thinking,
         isolation: invocation.isolation,
         fastModeRequested: invocation.fastMode,
+        daybreakRequested: invocation.daybreak,
         hookWorktreePath,
         invocation: {
           thinking: invocation.thinking,
@@ -436,6 +443,7 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
           runInBackground: invocation.runInBackground,
           isolation: invocation.isolation,
           fastMode: invocation.fastMode,
+          daybreak: invocation.daybreak,
         },
         // Nested children are hidden from every reporting surface, so their spend
         // would otherwise be unattributable. Fold it into every ancestor's record:
@@ -702,5 +710,29 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
     },
   });
 
-  return [agentTool, resultTool, steerTool, stopTool, fastModeTool];
+  const daybreakTool = defineTool({
+    name: NESTED_TOOL_NAMES[5],
+    label: "Set Descendant Daybreak",
+    description:
+      "Enable or disable Daybreak for a running or queued descendant owned by this agent.",
+    parameters: Type.Object({ agent_id: Type.String(), enabled: Type.Boolean() }),
+    execute: async (_toolCallId, params) => {
+      const record = context.manager.getRecord(params.agent_id);
+      if (!ownsDescendant(context.manager, record, context.parentAgentId)) {
+        return textResult(
+          `Nested agent not found or not owned by this parent: "${params.agent_id}".`,
+          true,
+        );
+      }
+      const updated = context.manager.setDaybreak?.(record.id, params.enabled);
+      if (!updated)
+        return textResult(`Nested agent "${params.agent_id}" is no longer retained.`, true);
+      return textResult(
+        `Daybreak ${params.enabled ? "enabled" : "disabled"} for ${updated.id} ` +
+          `(generation ${updated.resultGeneration ?? 1}, revision ${updated.daybreakRevision ?? 0}).`,
+      );
+    },
+  });
+
+  return [agentTool, resultTool, steerTool, stopTool, fastModeTool, daybreakTool];
 }

@@ -1594,6 +1594,7 @@ export default function (pi: ExtensionAPI) {
       /** `provider/id` to switch to before the resumed run (Agent tool only). */
       model?: string;
       fastModeRequested?: boolean;
+      daybreakRequested?: boolean;
       budgets?: {
         timeoutMs?: number;
         maxToolCalls?: number;
@@ -1640,6 +1641,7 @@ export default function (pi: ExtensionAPI) {
       name: opts.name,
       model: opts.model,
       fastModeRequested: opts.fastModeRequested,
+      daybreakRequested: opts.daybreakRequested,
       budgets: opts.budgets,
       onToolActivity: bgCallbacks.onToolActivity,
       onAssistantUsage: bgCallbacks.onAssistantUsage,
@@ -1892,6 +1894,11 @@ export default function (pi: ExtensionAPI) {
       fast_mode: Type.Optional(
         Type.Boolean({
           description: "Request fast mode for this run; defaults to the parent request.",
+        }),
+      ),
+      daybreak: Type.Optional(
+        Type.Boolean({
+          description: "Request Daybreak for this run; defaults to the parent request.",
         }),
       ),
       ...isolationParam(isWorktreeIsolationEnabled()),
@@ -2164,6 +2171,7 @@ export default function (pi: ExtensionAPI) {
         runInBackground,
         isolation,
         fastMode: resolvedConfig.fastMode,
+        daybreak: resolvedConfig.daybreak,
       };
       const { tags: invocationTags } = buildInvocationTags(agentInvocation);
       const detailBase = {
@@ -2221,6 +2229,7 @@ export default function (pi: ExtensionAPI) {
             isolated: isolated,
             isolation: isolation,
             fast_mode: resolvedConfig.fastMode,
+            daybreak: resolvedConfig.daybreak,
           });
           const next = scheduler.getNextRun(job.id);
           return textResult(
@@ -2278,6 +2287,7 @@ export default function (pi: ExtensionAPI) {
               name: params.name,
               model: resumeModel,
               fastModeRequested: params.fast_mode,
+              daybreakRequested: params.daybreak,
               budgets,
             });
           } catch (error) {
@@ -2322,6 +2332,7 @@ export default function (pi: ExtensionAPI) {
             name: params.name,
             model: resumeModel,
             fastModeRequested: params.fast_mode,
+            daybreakRequested: params.daybreak,
             budgets,
           });
         } catch (error) {
@@ -2397,6 +2408,7 @@ export default function (pi: ExtensionAPI) {
           inheritContext,
           thinkingLevel: thinking,
           fastModeRequested: resolvedConfig.fastMode,
+          daybreakRequested: resolvedConfig.daybreak,
           isBackground: true,
           isolation,
           hookWorktreePath,
@@ -2539,6 +2551,7 @@ export default function (pi: ExtensionAPI) {
             inheritContext,
             thinkingLevel: thinking,
             fastModeRequested: resolvedConfig.fastMode,
+            daybreakRequested: resolvedConfig.daybreak,
             isolation,
             hookWorktreePath,
             invocation: agentInvocation,
@@ -2691,6 +2704,7 @@ export default function (pi: ExtensionAPI) {
           runInBackground: true,
           isolation: resolvedConfig.isolation,
           fastMode: resolvedConfig.fastMode,
+          daybreak: resolvedConfig.daybreak,
         };
         const { state, callbacks } = createActivityTracker(effectiveMaxTurns);
         const outputTranscript = config?.outputTranscript ?? getOutputTranscriptDefault();
@@ -2713,6 +2727,7 @@ export default function (pi: ExtensionAPI) {
           inheritContext: false,
           thinkingLevel: resolvedConfig.thinking,
           fastModeRequested: resolvedConfig.fastMode,
+          daybreakRequested: resolvedConfig.daybreak,
           isBackground: true,
           isolation: resolvedConfig.isolation,
           invocation,
@@ -2925,6 +2940,31 @@ export default function (pi: ExtensionAPI) {
     }),
   );
 
+  pi.registerTool(
+    defineTool({
+      name: "set_subagent_daybreak",
+      label: "Set Subagent Daybreak",
+      description:
+        "Enable or disable Daybreak for a running or queued descendant. Entitlement is checked separately.",
+      promptSnippet: "Change a descendant subagent's Daybreak request",
+      parameters: Type.Object(
+        { agent_id: Type.String(), enabled: Type.Boolean() },
+        { additionalProperties: false },
+      ),
+      execute: async (_toolCallId, params) => {
+        const record = resolveAgentRef(params.agent_id);
+        if (!record) return textResult(`Agent not found: "${params.agent_id}".`);
+        const updated = manager.setDaybreak(record.id, params.enabled);
+        if (!updated) return textResult(`Agent "${params.agent_id}" is no longer retained.`);
+        return textResult(
+          `Daybreak ${params.enabled ? "enabled" : "disabled"} for ${updated.id}. ` +
+            `Generation: ${updated.resultGeneration ?? 1}. Revision: ${updated.daybreakRevision ?? 0}. ` +
+            `Status: ${updated.status}.`,
+        );
+      },
+    }),
+  );
+
   // ---- get_subagent_result tool ----
 
   pi.registerTool(
@@ -3011,6 +3051,7 @@ export default function (pi: ExtensionAPI) {
           `Agent: ${record.id}\n` +
           `Type: ${displayName} | Status: ${record.status}${getStatusNote(record.status)} | ${statsParts.join(" | ")}\n` +
           `Fast mode: ${record.fastModeRequested ? "requested" : "standard"} (revision ${record.fastModeRevision ?? 0})\n` +
+          `Daybreak: ${record.daybreakRequested ? "requested" : "off"} (revision ${record.daybreakRevision ?? 0})\n` +
           `Description: ${record.description}\n\n`;
 
         const cancellation = record.cancellation;

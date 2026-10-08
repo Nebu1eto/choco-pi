@@ -202,6 +202,11 @@ export function registerRpcHandlers(deps: RpcDeps): RpcHandle {
         normalizedOptions = { ...normalizedOptions, fastModeRequested };
       }
 
+      const daybreakRequested = wireBoolean(options?.daybreak);
+      if (daybreakRequested !== undefined) {
+        normalizedOptions = { ...normalizedOptions, daybreakRequested };
+      }
+
       return { id: manager.spawn(pi, ctx, type, prompt, normalizedOptions) };
     },
   );

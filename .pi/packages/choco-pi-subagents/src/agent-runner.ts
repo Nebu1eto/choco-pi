@@ -43,6 +43,11 @@ import {
   reconcileChildFastMode,
   type FastModeSnapshot,
 } from "./fast-mode-bridge.ts";
+import {
+  createChildDaybreakExtension,
+  reconcileChildDaybreak,
+  type DaybreakSnapshot,
+} from "./daybreak-bridge.ts";
 import { registerSubagentStatusMessage } from "./limits.ts";
 import { buildMemoryBlock, buildReadOnlyMemoryBlock } from "./memory.ts";
 import {
@@ -120,6 +125,7 @@ export const SUBAGENT_TOOL_NAMES = {
   STEER: "steer_subagent",
   STOP: "stop_subagent",
   SET_FAST: "set_subagent_fast_mode",
+  SET_DAYBREAK: "set_subagent_daybreak",
   MESSAGE: AGENT_MESSAGE_TOOL_NAME,
   LIMITS: "subagent_limits",
 } as const;
@@ -860,6 +866,8 @@ export interface RunOptions {
   /** Accepted at spawn time; never read dynamically from the parent. */
   fastMode?: FastModeSnapshot;
   fastModeGeneration?: number;
+  daybreak?: DaybreakSnapshot;
+  daybreakGeneration?: number;
 }
 
 export interface RunResult {
@@ -1218,6 +1226,19 @@ export async function runAgent(
             },
           ]
         : []),
+      ...(options.daybreak
+        ? [
+            {
+              name: "subagent-daybreak",
+              hidden: true,
+              factory: createChildDaybreakExtension(
+                options.nestedRuntime?.manager ?? options,
+                options.daybreakGeneration ?? 1,
+                options.daybreak,
+              ),
+            },
+          ]
+        : []),
       ...(subagentStatusSource
         ? [
             {
@@ -1511,6 +1532,10 @@ export async function runAgent(
   }
   if (options.nestedRuntime && options.agentId) {
     reconcileChildFastMode(session.sessionManager.getSessionId(), {
+      id: options.agentId,
+      manager: options.nestedRuntime.manager,
+    });
+    reconcileChildDaybreak(session.sessionManager.getSessionId(), {
       id: options.agentId,
       manager: options.nestedRuntime.manager,
     });

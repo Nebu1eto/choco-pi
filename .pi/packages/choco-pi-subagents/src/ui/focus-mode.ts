@@ -4,6 +4,7 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 import type { AgentRecord } from "../types.ts";
 import { decideSessionFastMode, snapshotFastMode } from "../fast-mode-bridge.ts";
+import { getSessionDaybreak, snapshotDaybreak } from "../daybreak-bridge.ts";
 import type { AgentActivity, Theme } from "./agent-widget.ts";
 import { ConversationViewer } from "./conversation-viewer.ts";
 import {
@@ -63,6 +64,7 @@ export type FocusManager = {
     opts?: { isBackground?: boolean },
   ): Promise<AgentRecord | undefined>;
   setFastMode(id: string, requested: boolean): AgentRecord | undefined;
+  setDaybreak?(id: string, requested: boolean): AgentRecord | undefined;
 };
 
 export type FocusState = { kind: "orchestrator" } | { kind: "agent"; agentId: string };
@@ -94,6 +96,29 @@ type ActiveFocus = {
   document: RenderTarget;
   pendingMessages: RenderTarget | undefined;
 };
+
+export function executeFocusedDaybreak(
+  manager: FocusManager,
+  record: AgentRecord,
+  actionInput: string,
+): string {
+  const session = record.session;
+  if (!session) throw new Error("Focused Daybreak controls are unavailable.");
+  const sessionId = session.sessionManager?.getSessionId?.();
+  const action = actionInput.trim().toLowerCase();
+  if (action && action !== "on" && action !== "off" && action !== "status")
+    throw new Error("Usage: /daybreak [on|off|status]");
+  const current = snapshotDaybreak(sessionId);
+  if (action !== "status") {
+    const requested = action === "on" || (action === "" && !current.requested);
+    if (!manager.setDaybreak?.(record.id, requested))
+      throw new Error("Focused Daybreak target is unavailable.");
+  }
+  const state = getSessionDaybreak(sessionId);
+  const requested = state?.requested ?? record.daybreakRequested ?? false;
+  const outcome = focusedAgentRuntime(record)?.daybreakOutcome;
+  return `Daybreak: ${requested ? "on" : "off"}${requested ? ` (${outcome ?? "lookup-failed"})` : ""}`;
+}
 
 export function executeFocusedFastMode(
   manager: FocusManager,
@@ -257,6 +282,7 @@ function focusLabel(record: AgentRecord): string {
 function withoutFocusedUsage(runtime: FocusedAgentRuntime): FocusedAgentRuntime {
   return {
     ...runtime,
+    daybreakOutcome: undefined,
     costTotal: null,
     contextPercent: null,
     contextWindow: null,
@@ -505,7 +531,7 @@ export class FocusedAgentController {
     const active = this.active;
     if (!active) return false;
     const text = editor.getText().trim();
-    const match = /^\/(model|effort|fast)(?:\s+(.*))?$/i.exec(text);
+    const match = /^\/(model|effort|fast|daybreak)(?:\s+(.*))?$/i.exec(text);
     if (!match) return false;
 
     editor.addToHistory?.(text);
@@ -537,7 +563,10 @@ export class FocusedAgentController {
         }
         session.setThinkingLevel(argument, { persist: false });
       } else {
-        const status = executeFocusedFastMode(this.manager, active.record, argument);
+        const status =
+          command === "daybreak"
+            ? executeFocusedDaybreak(this.manager, active.record, argument)
+            : executeFocusedFastMode(this.manager, active.record, argument);
         if (argument.toLowerCase() === "status" || status.includes("inactive"))
           this.ui?.notify(status, "info");
       }

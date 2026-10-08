@@ -58,6 +58,7 @@ interface AgentFrontmatter {
   run_in_background?: FrontmatterValue;
   isolated?: FrontmatterValue;
   fast_mode?: FrontmatterValue;
+  daybreak?: FrontmatterValue;
   memory?: FrontmatterValue;
   isolation?: FrontmatterValue;
   enabled?: FrontmatterValue;
@@ -188,6 +189,7 @@ function loadFromDir(
       runInBackground: fm.run_in_background != null ? fm.run_in_background === true : undefined,
       isolated: fm.isolated != null ? fm.isolated === true : undefined,
       fastMode: fm.fast_mode != null ? fm.fast_mode === true : undefined,
+      daybreak: fm.daybreak != null ? fm.daybreak === true : undefined,
       memory: parseMemory(fm.memory),
       isolation: parseIsolation(fm.isolation),
       enabled: fm.enabled !== false, // default true; explicitly false disables

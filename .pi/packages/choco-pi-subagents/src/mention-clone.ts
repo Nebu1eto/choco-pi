@@ -79,6 +79,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { runInChildSessionContext } from "./child-context.ts";
 import { createChildFastModeExtension, snapshotFastMode } from "./fast-mode-bridge.ts";
+import { createChildDaybreakExtension, snapshotDaybreak } from "./daybreak-bridge.ts";
 import { agentMentionReminder } from "./mention.ts";
 import type { SubagentType, ThinkingLevel } from "./types.ts";
 
@@ -308,6 +309,7 @@ export async function runMentionClone(opts: MentionCloneOptions): Promise<Mentio
 
   const sessionId = ctx.sessionManager.getSessionId();
   const fastMode = snapshotFastMode(sessionId);
+  const daybreak = snapshotDaybreak(sessionId);
   const mentionGeneration = (mentionGenerations.get(sessionId) ?? 0) + 1;
   mentionGenerations.set(sessionId, mentionGeneration);
   const cwd = ctx.cwd;
@@ -353,6 +355,10 @@ export async function runMentionClone(opts: MentionCloneOptions): Promise<Mentio
         createMentionClonePromptExtension(systemPrompt),
         createChildFastModeExtension(opts, mentionGeneration, {
           ...fastMode,
+          source: "inherited",
+        }),
+        createChildDaybreakExtension(opts, mentionGeneration, {
+          ...daybreak,
           source: "inherited",
         }),
       ],
