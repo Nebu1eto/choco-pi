@@ -1,7 +1,9 @@
+import { isCanonicalCodexSubscriptionModel } from "../../../choco-pi-codex/src/adapter/prompt/codex-model.ts";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { AgentRecord } from "../types.ts";
 import { getSessionContextUsage, getSessionCost } from "../usage.ts";
 import { decideSessionFastMode } from "../fast-mode-bridge.ts";
+import { getSessionDaybreak, type DaybreakOutcome } from "../daybreak-bridge.ts";
 
 /** Loose cross-package seam read by editor chrome while a subagent owns the prompt. */
 export const FOCUSED_AGENT_RUNTIME_SYMBOL = Symbol.for("choco-pi.subagents.focused-agent-runtime");
@@ -19,6 +21,9 @@ export interface FocusedAgentRuntime {
   fastModeSupported: boolean;
   fastModeActive: boolean;
   fastModeRevision: number;
+  daybreakRequested?: boolean;
+  daybreakOutcome?: DaybreakOutcome;
+  daybreakRevision?: number;
 }
 
 export interface FocusedAgentRuntimeSource {
@@ -36,6 +41,7 @@ export function focusedAgentRuntime(record: AgentRecord): FocusedAgentRuntime | 
   const context = getSessionContextUsage(session, session.model?.contextWindow);
   const sessionId = session.sessionManager?.getSessionId?.() ?? "";
   const fastMode = decideSessionFastMode(sessionId, session.model);
+  const daybreak = getSessionDaybreak(sessionId);
   return {
     modelId: session.model?.id ?? "",
     modelName: session.model?.name ?? "",
@@ -49,6 +55,12 @@ export function focusedAgentRuntime(record: AgentRecord): FocusedAgentRuntime | 
     fastModeSupported: fastMode?.supported ?? false,
     fastModeActive: fastMode?.active ?? false,
     fastModeRevision: fastMode?.revision ?? record.fastModeRevision ?? 0,
+    daybreakRequested: daybreak?.requested ?? record.daybreakRequested ?? false,
+    daybreakOutcome:
+      daybreak?.requested && !isCanonicalCodexSubscriptionModel(session.model)
+        ? "auth-not-eligible"
+        : daybreak?.outcome,
+    daybreakRevision: daybreak?.revision ?? record.daybreakRevision ?? 0,
   };
 }
 

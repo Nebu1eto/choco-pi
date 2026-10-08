@@ -18,6 +18,7 @@ import { resumeAgent, runAgent, type MainSessionFork, type ToolActivity } from "
 import { unregisterChildSessionId } from "./child-context.ts";
 import { cleanupChildSessionOwner } from "./child-session-cleanup.ts";
 import { setSessionFastMode, snapshotFastMode } from "./fast-mode-bridge.ts";
+import { setSessionDaybreak, snapshotDaybreak } from "./daybreak-bridge.ts";
 import { normalizeMaxConcurrent, schedulingMaxConcurrent } from "./limits.ts";
 import { assignHandle, handleBase } from "./mention.ts";
 import type { ModelEntry } from "./model-resolver.ts";
@@ -481,6 +482,7 @@ interface SpawnOptions {
   configCwd?: string;
   /** Explicit request; omitted snapshots the immediate parent's current request. */
   fastModeRequested?: boolean;
+  daybreakRequested?: boolean;
   /** Root session id, inherited by nested launches so transcripts stay grouped. */
   rootSessionId?: string;
 }
@@ -496,6 +498,7 @@ interface ResumeOptions {
    */
   model?: string;
   fastModeRequested?: boolean;
+  daybreakRequested?: boolean;
   /**
    * Run the resumed turn detached in the background: return immediately with
    * the record still "running" (or "queued" at the concurrency limit) and
@@ -1458,6 +1461,8 @@ export class AgentManager {
     const id = randomUUID().slice(0, 17);
     const inheritedFastMode = snapshotFastMode(ctx.sessionManager?.getSessionId?.());
     const fastModeRequested = options.fastModeRequested ?? inheritedFastMode.requested;
+    const inheritedDaybreak = snapshotDaybreak(ctx.sessionManager?.getSessionId?.());
+    const daybreakRequested = options.daybreakRequested ?? inheritedDaybreak.requested;
     const abortController = new AbortController();
     const record: AgentRecord = {
       id,
@@ -1499,6 +1504,9 @@ export class AgentManager {
       fastModeRequested,
       fastModeSource: options.fastModeRequested === undefined ? "inherited" : "explicit",
       fastModeRevision: 0,
+      daybreakRequested,
+      daybreakSource: options.daybreakRequested === undefined ? "inherited" : "explicit",
+      daybreakRevision: 0,
     };
     const reclaimedTombstone =
       options.parentAgentId === undefined && options.reclaim !== undefined
@@ -1681,6 +1689,12 @@ export class AgentManager {
       revision: record.fastModeRevision ?? 0,
     };
     record.fastModeInitialization = fastModeInitialization;
+    const daybreakInitialization = {
+      requested: record.daybreakRequested ?? false,
+      source: record.daybreakSource ?? "default",
+      revision: record.daybreakRevision ?? 0,
+    };
+    record.daybreakInitialization = daybreakInitialization;
     const promise = this.runner
       .runAgent(ctx, type, prompt, {
         pi,
@@ -1732,6 +1746,8 @@ export class AgentManager {
         },
         fastMode: fastModeInitialization,
         fastModeGeneration: runGeneration,
+        daybreak: daybreakInitialization,
+        daybreakGeneration: runGeneration,
         onSessionCreated: (session) => {
           if (record.resultGeneration !== runGeneration) return;
           // Cancellation stops provider work, not ownership of the child that
@@ -1995,6 +2011,23 @@ export class AgentManager {
     this.onSpawned?.(id);
   }
 
+  /** Update both bootstrap and live state for the retained child generation. */
+  setDaybreak(id: string, requested: boolean): AgentRecord | undefined {
+    const record = this.agents.get(id);
+    if (!record) return undefined;
+    record.daybreakRequested = requested;
+    record.daybreakSource = "explicit";
+    record.daybreakRevision = (record.daybreakRevision ?? 0) + 1;
+    const state = setSessionDaybreak(record.session?.sessionManager?.getSessionId?.(), requested);
+    if (state) record.daybreakRevision = state.revision;
+    if (record.daybreakInitialization) {
+      record.daybreakInitialization.requested = requested;
+      record.daybreakInitialization.source = "explicit";
+      record.daybreakInitialization.revision = record.daybreakRevision;
+    }
+    return record;
+  }
+
   /** Update one accepted generation without changing resume persistence semantics. */
   setFastMode(id: string, requested: boolean): AgentRecord | undefined {
     const record = this.agents.get(id);
@@ -2181,6 +2214,10 @@ export class AgentManager {
         options.fastModeRequested,
       );
       if (state) record.fastModeRevision = state.revision;
+    }
+
+    if (options?.daybreakRequested !== undefined) {
+      this.setDaybreak(id, options.daybreakRequested);
     }
 
     // Background resume: settle asynchronously and notify on completion exactly

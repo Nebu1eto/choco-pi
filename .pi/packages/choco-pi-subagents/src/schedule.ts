@@ -68,6 +68,7 @@ export interface NewJobInput {
   isolated?: boolean;
   isolation?: IsolationMode;
   fast_mode?: boolean;
+  daybreak?: boolean;
 }
 
 export class SubagentScheduler {
@@ -141,6 +142,7 @@ export class SubagentScheduler {
       isolated: input.isolated,
       isolation: input.isolation,
       fast_mode: input.fast_mode,
+      daybreak: input.daybreak,
       enabled: true,
       createdAt: new Date().toISOString(),
       runCount: 0,
@@ -310,6 +312,7 @@ export class SubagentScheduler {
         isolated: job.isolated,
         thinkingLevel: job.thinking,
         fastModeRequested: job.fast_mode,
+        daybreakRequested: job.daybreak,
         isolation: job.isolation,
       });
     } catch (err) {

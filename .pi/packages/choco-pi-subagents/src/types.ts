@@ -80,6 +80,8 @@ export interface AgentConfig {
   isolated?: boolean;
   /** Default fast-mode request. Caller parameters override this default. */
   fastMode?: boolean;
+  /** Default Daybreak request. Caller parameters override this default. */
+  daybreak?: boolean;
   /** Persistent memory scope — agents with memory get a persistent directory and MEMORY.md */
   memory?: MemoryScope;
   /**
@@ -297,6 +299,14 @@ export interface AgentRecord {
     source: "default" | "explicit" | "inherited";
     revision: number;
   };
+  daybreakRequested?: boolean;
+  daybreakSource?: "default" | "explicit" | "inherited";
+  daybreakRevision?: number;
+  daybreakInitialization?: {
+    requested: boolean;
+    source: "default" | "explicit" | "inherited";
+    revision: number;
+  };
 }
 
 export interface AgentInvocation {
@@ -313,6 +323,7 @@ export interface AgentInvocation {
   runInBackground?: boolean;
   isolation?: IsolationMode;
   fastMode?: boolean;
+  daybreak?: boolean;
 }
 
 /** Details attached to custom notification messages for visual rendering. */
@@ -372,6 +383,7 @@ export interface ScheduledSubagent {
   isolated?: boolean;
   isolation?: IsolationMode;
   fast_mode?: boolean;
+  daybreak?: boolean;
 
   // state
   enabled: boolean;

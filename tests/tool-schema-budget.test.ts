@@ -184,6 +184,7 @@ const FIRST_PARTY_TOOL_INVENTORY = new Map<string, readonly string[]>([
       "get_workflow_result",
       "workflow_cancel",
       "set_subagent_fast_mode",
+      "set_subagent_daybreak",
       "get_subagent_result",
       "steer_subagent",
       "stop_subagent",

@@ -240,6 +240,7 @@ export function buildInvocationTags(invocation: AgentInvocation | undefined): In
   if (invocation.isolated) tags.push("isolated");
   if (invocation.isolation === "worktree") tags.push("worktree");
   if (invocation.fastMode) tags.push("fast");
+  if (invocation.daybreak) tags.push("daybreak");
   if (invocation.inheritContext) tags.push("inherit context");
   if (invocation.runInBackground) tags.push("background");
   if (invocation.maxTurns != null) tags.push(`max turns: ${invocation.maxTurns}`);

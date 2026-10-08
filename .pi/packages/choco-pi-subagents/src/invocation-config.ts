@@ -65,6 +65,7 @@ interface AgentInvocationParams {
   inherit_context?: boolean;
   isolated?: boolean;
   fast_mode?: boolean;
+  daybreak?: boolean;
   /**
    * Untyped on purpose. Both tool schemas now build this field conditionally
    * and spread it, which erases TypeBox's literal inference to `unknown` (the
@@ -89,6 +90,7 @@ interface ResolvedAgentInvocationConfig {
   isolated: boolean;
   isolation?: IsolationMode;
   fastMode?: boolean;
+  daybreak?: boolean;
 }
 
 interface ResolveOptions {
@@ -152,6 +154,7 @@ export function resolveAgentInvocationConfig(
       false,
     isolated: agentConfig?.isolated ?? params.isolated ?? false,
     fastMode: params.fast_mode ?? agentConfig?.fastMode,
+    daybreak: params.daybreak ?? agentConfig?.daybreak,
     isolation,
   };
 }
