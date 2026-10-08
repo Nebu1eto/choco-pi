@@ -266,8 +266,12 @@ function validateBridgedArguments<TParams extends TSchema, TDetails, TState>(
       return { ok: false, issues: describeSchemaIssues(tool.parameters, validated) };
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
-      if (message.startsWith(VALIDATION_FAILURE_PREFIX))
-        return { ok: false, issues: describeNativeIssues(message) };
+      if (message.startsWith(VALIDATION_FAILURE_PREFIX)) {
+        // The schema-aware description collapses union branches; fall back to the native
+        // bullets only when typebox cannot reproduce the failure (e.g. converter-only rejects).
+        const schemaIssues = describeSchemaIssues(tool.parameters, prepared);
+        return { ok: false, issues: schemaIssues || describeNativeIssues(message) };
+      }
       // Not a validation rejection: propagate it instead of executing on unvalidated input.
       throw error;
     }
@@ -287,25 +291,73 @@ function boundIssue(issue: string): string {
     : flattened;
 }
 
-/** Schema issues name their instance path and never repeat the rejected value. */
-function describeSchemaIssues(schema: TSchema, value: BridgeCandidate): string {
-  return [...Value.Errors(schema, value)]
-    .slice(0, MAX_REPORTED_ISSUES)
-    .map((issue) => {
-      const path = issue.instancePath.replace(/^\//, "").replace(/\//g, ".");
-      return boundIssue(`${path || "root"}: ${issue.message}`);
-    })
-    .join("; ");
+const UnionBranchSchema = Type.Object({
+  properties: Type.Record(Type.String(), Type.Object({ const: Type.Optional(Type.Unknown()) })),
+});
+const UnionSchema = Type.Object({ anyOf: Type.Array(UnionBranchSchema) });
+/** The two schema shapes the path walk needs: a property map or an array item schema. */
+const PropertiesNodeSchema = Type.Object({
+  properties: Type.Record(Type.String(), Type.Unknown()),
+});
+const ItemsNodeSchema = Type.Object({ items: Type.Unknown() });
+
+/**
+ * For an object union keyed by a literal (e.g. `action: "click" | "press"`), name the key and the
+ * accepted values instead of repeating one branch's complaint per alternative.
+ */
+function unionHint(schema: TSchema, instancePath: string): string | undefined {
+  let node: unknown = schema;
+  for (const segment of instancePath.split("/").filter(Boolean)) {
+    if (/^\d+$/.test(segment)) {
+      if (!Value.Check(ItemsNodeSchema, node)) return undefined;
+      node = node.items;
+      continue;
+    }
+    if (!Value.Check(PropertiesNodeSchema, node)) return undefined;
+    node = node.properties[segment];
+  }
+  if (!Value.Check(UnionSchema, node)) return undefined;
+  const keys = new Map<string, string[]>();
+  for (const branch of node.anyOf) {
+    for (const [key, property] of Object.entries(branch.properties)) {
+      if (property.const === undefined) continue;
+      const values = keys.get(key) ?? [];
+      values.push(JSON.stringify(property.const));
+      keys.set(key, values);
+    }
+  }
+  const [key, values] = [...keys.entries()].find(([, v]) => v.length === node.anyOf.length) ?? [];
+  if (!key || !values) return undefined;
+  return `expected one of the ${node.anyOf.length} shapes selected by "${key}": ${values.join(", ")}`;
 }
 
-/** Keep the native validator's path-qualified bullets and drop its raw-arguments suffix. */
+/** Schema issues name their instance path, collapse union branches, and never echo the value. */
+function describeSchemaIssues(schema: TSchema, value: BridgeCandidate): string {
+  const issues: string[] = [];
+  const seen = new Set<string>();
+  for (const issue of Value.Errors(schema, value)) {
+    if (issues.length >= MAX_REPORTED_ISSUES) break;
+    const path = issue.instancePath.replace(/^\//, "").replace(/\//g, ".") || "root";
+    const hint = unionHint(schema, issue.instancePath);
+    const text = hint ? `${path}: ${hint}` : `${path}: ${issue.message}`;
+    if (seen.has(text)) continue;
+    seen.add(text);
+    issues.push(boundIssue(text));
+  }
+  return issues.join("; ");
+}
+
+/** Keep the native validator's path-qualified bullets, deduplicated, without the raw arguments. */
 function describeNativeIssues(message: string): string {
   const [head = ""] = message.split(RECEIVED_ARGUMENTS_MARKER);
   const issues: string[] = [];
+  const seen = new Set<string>();
   for (const line of head.split("\n")) {
     if (issues.length >= MAX_REPORTED_ISSUES) break;
     const issue = /^ {2}- (.+)$/.exec(line)?.[1];
-    if (issue !== undefined) issues.push(boundIssue(issue));
+    if (issue === undefined || seen.has(issue)) continue;
+    seen.add(issue);
+    issues.push(boundIssue(issue));
   }
   return issues.join("; ");
 }
