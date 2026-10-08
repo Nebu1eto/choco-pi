@@ -239,3 +239,20 @@ The package workspace release-age exceptions now list eight exact
 `@earendil-works/*@1.0.4` packages and the existing `typebox@1.3.29` exception.
 `@earendil-works/pi-codemode@1.0.4` and `@earendil-works/pi-mcp@1.0.4` now appear
 in the frozen lock as transitive dependencies of `pi-coding-agent`.
+
+## 2026-10-08 choco-pi patch: adapter retired in favor of builtin:mcp
+
+The `pi-mcp-adapter` fork is retired; the package now loads only
+`figma/index.ts` and keeps the native Figma tools and auth unchanged. Removed:
+the custom adapter graph, CLI and adapter exports, client transports (including
+SSE and socket), auth, keyring, and OAuth store, proxy and direct tools, prompt
+commands, the `mcpScript` worker, sampling and elicitation handlers, metadata
+and status (event `pi-mcp-adapter/status/v1`), approval and output guarding,
+MCP UI assets, and adapter-only tests. MCP connections, auth, and tool names
+now belong to Pi's `builtin:mcp`; discovery uses the built-in `tool_search`
+and activated `mcp__<server>__<tool>` calls through the exec bridge.
+`chocoPi.supersedes` keeps `pi-mcp-adapter` and `pi-mono-figma` so the installer
+still strips both from the global profile; frozen dependency pins and locks are
+unchanged. The root `scripts/translate-mcp-config.ts` converts the legacy
+`~/.pi/agent/mcp.json` shape to the built-in schema with redacted dry runs.
+The provenance sections above describe the retired fork's history.

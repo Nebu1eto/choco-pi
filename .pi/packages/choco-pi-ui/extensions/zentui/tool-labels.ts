@@ -55,8 +55,6 @@ export const DEFAULT_TOOL_LABELS = {
 
   // Tool discovery and MCP
   tool_search: "Tools: Searching",
-  mcp: "MCP: Calling",
-  mcpScript: "MCP: Scripting",
 
   // Sub-agents
   Agent: "Delegation: Launching",
@@ -141,8 +139,6 @@ export const DEFAULT_FINISHED_TOOL_LABELS = {
 
   // Tool discovery and MCP
   tool_search: "Tools: Searched",
-  mcp: "MCP: Called",
-  mcpScript: "MCP: Scripted",
 
   // Sub-agents
   Agent: "Delegation: Launched",
@@ -192,8 +188,7 @@ function knownLabel(
   table: Readonly<Record<KnownToolName, string>>,
   name: string,
 ): string | undefined {
-  // SAFETY: the `Object.hasOwn` guard on this expression establishes the key before the lookup.
-  return Object.hasOwn(table, name) ? table[name as KnownToolName] : undefined;
+  return Object.entries(table).find(([key]) => key === name)?.[1];
 }
 
 function resolve(
@@ -206,7 +201,7 @@ function resolve(
   const known = knownLabel(table, name);
   if (known !== undefined) return known;
   if (name.startsWith(MCP_TOOL_PREFIX)) {
-    const server = name.slice(MCP_TOOL_PREFIX.length).split("_")[0];
+    const server = name.slice(MCP_TOOL_PREFIX.length).split("__")[0];
     if (server) return `MCP: ${server}`;
   }
   return name;
@@ -214,7 +209,7 @@ function resolve(
 
 /**
  * Resolves the label shown while a tool is running: a user override first,
- * then the built-in table, then a readable form of an `mcp__server_tool`
+ * then the built-in table, then a readable form of an `mcp__server__tool`
  * name, and finally the registered name itself.
  */
 export function resolveToolLabel(

@@ -1,5 +1,5 @@
 export { loadHookSources, mergeHooks, type LoadHooksOptions } from "./config.ts";
-export { createPiHookBackends, type McpHookRequest } from "./backends.ts";
+export { createPiHookBackends } from "./backends.ts";
 export { HookEngine, matchesIf, mergeResults } from "./engine.ts";
 export {
   executeHandler,

@@ -4,9 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createPiHookBackends } from "../src/index.ts";
+import { createPiHookBackends, executeHandler } from "../src/index.ts";
 import type { HookInput } from "../src/index.ts";
-import type { RuntimeValue } from "../src/validation.ts";
 
 const input: HookInput = {
   session_id: "s",
@@ -43,32 +42,12 @@ test("prompt and agent hooks use a dedicated Pi evaluator without caller backend
   assert.deepEqual(JSON.parse(result.stdout), { ok: true });
 });
 
-test("MCP hook backend performs a request-response round trip on Pi events", async () => {
-  let listener: ((payload: RuntimeValue) => void) | undefined;
-  const pi = extensionApi({
-    events: {
-      emit(_channel: string, payload: RuntimeValue) {
-        listener?.(payload);
-      },
-      on(_channel: string, handler: (payload: RuntimeValue) => void) {
-        listener = handler;
-        return () => undefined;
-      },
-    },
-  });
-  pi.events.on("choco-pi-hooks:mcp-call", (payload) => {
-    // SAFETY: This focused listener receives the McpHookRequest emitted by createPiHookBackends.
-    const request = payload as {
-      resolve(result: { exitCode: number; stdout: string; stderr: string }): void;
-    };
-    request.resolve({ exitCode: 0, stdout: '{"continue":true}', stderr: "" });
-  });
-  const backend = createPiHookBackends(pi).mcpTool;
-  assert.ok(backend);
-  const result = await backend(
-    { type: "mcp_tool", server: "test", tool: "check" },
-    input,
-    new AbortController().signal,
+test("MCP hooks fail closed without bypassing approval", async () => {
+  const result = await executeHandler({ type: "mcp_tool", server: "test", tool: "check" }, input);
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.stdout, "");
+  assert.equal(
+    result.stderr,
+    "MCP hook backend is unavailable: choco-pi uses Pi's built-in MCP, which exposes tool execution only inside tool calls; use a command hook instead",
   );
-  assert.equal(result.exitCode, 0);
 });
