@@ -68,6 +68,7 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
   let transcriptPath = "";
   let stopHookActive = false;
   let stopHookBlocks = 0;
+  let stopTaskGeneration = 0;
   let watchers: HookWatchers | undefined;
   let currentSources: HookSource[] = [];
   let envFile = hookEnvironmentFile(sessionId);
@@ -298,6 +299,11 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
     if (pi.getFlag("init-only")) ctx.shutdown();
   });
   pi.on("input", async (event, ctx) => {
+    if (event.source !== "extension") {
+      stopTaskGeneration += 1;
+      stopHookActive = false;
+      stopHookBlocks = 0;
+    }
     supplemental.setContext(ctx);
     await ensureCwd(ctx);
     if (event.source === "extension") return { action: "continue" };
@@ -417,6 +423,8 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
     });
   });
   pi.on("agent_end", async (event, ctx) => {
+    const generation = lifecycleGeneration;
+    const taskGeneration = stopTaskGeneration;
     const last = event.messages.findLast((message) => message.role === "assistant");
     if (last?.role === "assistant" && last.stopReason === "error") {
       const errorText = last.errorMessage ?? textOf(last);
@@ -425,6 +433,7 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
         error_details: errorText,
         last_assistant_message: errorText,
       });
+      if (generation !== lifecycleGeneration || taskGeneration !== stopTaskGeneration) return;
       stopHookActive = false;
       return;
     }
@@ -434,19 +443,18 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
       background_tasks: supplemental.getBackgroundTasks(),
       session_crons: [],
     });
+    if (generation !== lifecycleGeneration || taskGeneration !== stopTaskGeneration) return;
     notify(ctx, result.systemMessages);
-    if (result.blocked && result.reason) {
+    const continuation =
+      result.blocked && result.reason ? result.reason : result.additionalContext.join("\n");
+    if (continuation) {
       const configuredCap = Number(process.env.CLAUDE_CODE_STOP_HOOK_BLOCK_CAP ?? 8);
       const cap = Number.isSafeInteger(configuredCap) && configuredCap > 0 ? configuredCap : 8;
       stopHookBlocks += 1;
       if (stopHookBlocks < cap) {
         stopHookActive = true;
-        pi.sendUserMessage(result.reason, { deliverAs: "followUp" });
+        pi.sendUserMessage(continuation, { deliverAs: "followUp" });
       } else stopHookActive = false;
-    } else if (result.additionalContext.length) {
-      stopHookActive = true;
-      stopHookBlocks += 1;
-      pi.sendUserMessage(result.additionalContext.join("\n"), { deliverAs: "followUp" });
     } else {
       stopHookActive = false;
       stopHookBlocks = 0;

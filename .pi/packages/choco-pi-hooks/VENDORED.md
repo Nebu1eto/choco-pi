@@ -15,3 +15,12 @@ parses, but the executor fails closed with a command-hook migration message:
 the public Pi SDK offers approved `executeTool` only inside `tool.execute`,
 not from lifecycle hooks. This is an intentional user-visible removal, not an
 approval bypass.
+
+## 2026-10-08 choco-pi patch: shared Stop continuation budget
+
+Applies `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP` to both blocking reasons and
+additional-context follow-ups. Preserves the existing default of 8 and the
+blocking branch's exclusive threshold (at most 7 follow-ups by default).
+Non-extension `input` starts a fresh user-task budget; extension-generated
+continuations retain `stop_hook_active`. Pending Stop results are discarded
+when a new user task or lifecycle generation supersedes their owner.
