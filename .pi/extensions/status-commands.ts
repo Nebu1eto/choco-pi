@@ -57,6 +57,7 @@ import { buildContextCapSection } from "./model-context-cap.ts";
 import { resetCodexUsage, usageReport } from "./provider-usage.ts";
 import { CodexResetError } from "./lib/codex-resets.ts";
 import { rethrowUnlessStaleContext } from "./lib/lifecycle.ts";
+import { daybreakStatusValue, getDaybreakBridge } from "./lib/daybreak-state.ts";
 
 export type StatusTabId = "status" | "context" | "usage" | "preferences";
 export type TextTabId = "status" | "context" | "usage";
@@ -247,6 +248,10 @@ export function statusBody(
   const all = summarizeStatusRows(ctx, thinkingLevel).filter(
     (row) => !SESSION_INFO_ROWS.has(row.label),
   );
+  all.push({
+    label: "Daybreak",
+    value: daybreakStatusValue(getDaybreakBridge().get(sessionId)?.getState()),
+  });
   const rows = expanded ? all : condenseStatusRows(all);
   return `${info}\n\n${statusHeading(style)}\n\n${formatStatus(rows, style)}`;
 }
@@ -290,7 +295,7 @@ function closeOpenDialogs(): void {
 }
 
 const PREFERENCES_USAGE =
-  "Usage: /preferences [editor|messages|statusline|viewport-indicators] [enable|disable|toggle], /preferences [messages|user-messages|working-line|agent], /preferences [language <name>|style <name>], or /preferences format <template>";
+  "Usage: /preferences [editor|messages|statusline|viewport-indicators] [enable|disable|toggle], /preferences [messages|user-messages|working-line|agent], /preferences [language <name>|style <name>|daybreak on|off], or /preferences format <template>";
 
 /**
  * Every section the Preferences tab hosts on top of the panel's own choco-ui
@@ -350,6 +355,7 @@ function preferencesSummary(ctx: ExtensionCommandContext): void {
         `Agent language: ${preferences.language ?? "match user"}`,
         `Agent style: ${preferences.style ?? "default"}`,
         `On usage limit: ${preferences.onUsageLimit}`,
+        `Daybreak default: ${preferences.daybreak ? "on" : "off"}`,
         "Run /preferences in the interactive TUI to change preferences.",
       ].join("\n"),
       "info",

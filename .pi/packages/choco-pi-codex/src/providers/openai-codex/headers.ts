@@ -163,6 +163,36 @@ export function buildSSEHeaders(
   return headers;
 }
 
+// Account lookups reuse the Responses auth assembly but request plain JSON;
+// transport-specific stream, beta, routing, and session headers are omitted.
+export function buildVerifiedAccessHeaders(
+  modelHeaders: Record<string, string> | undefined,
+  additionalHeaders: ProviderHeaders | undefined,
+  accountId: string,
+  token: string,
+  originator = "pi",
+): Headers {
+  const headers = buildBaseCodexHeaders(
+    modelHeaders,
+    additionalHeaders,
+    accountId,
+    token,
+    originator,
+  );
+  for (const name of [
+    "OpenAI-Beta",
+    "content-type",
+    "content-encoding",
+    "session-id",
+    "thread-id",
+    "x-client-request-id",
+    "x-codex-beta-features",
+  ])
+    headers.delete(name);
+  headers.set("accept", "application/json");
+  return headers;
+}
+
 export function buildWebSocketHeaders(
   modelHeaders: Record<string, string> | undefined,
   additionalHeaders: ProviderHeaders | undefined,

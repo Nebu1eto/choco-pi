@@ -155,7 +155,14 @@ test(
     const notices: string[] = [];
     const sessionStart = handlers.get("session_start");
     assert.ok(sessionStart);
-    sessionStart({}, { hasUI: true, ui: { notify: (message: string) => notices.push(message) } });
+    sessionStart(
+      {},
+      {
+        hasUI: true,
+        sessionManager: { getSessionId: () => "preferences-fixture" },
+        ui: { notify: (message: string) => notices.push(message) },
+      },
+    );
     assert.equal(notices.length, 1);
     assert.match(notices[0], /does-not-exist/);
   }),

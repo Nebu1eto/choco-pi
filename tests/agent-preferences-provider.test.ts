@@ -18,7 +18,11 @@ import {
   ON_USAGE_LIMIT_VALUES,
   PERSONA_VALUES,
 } from "../.pi/extensions/lib/agent-preferences.ts";
-import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import {
+  isJsonRecord,
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "../.pi/extensions/lib/runtime-values.ts";
 import { realZentuiLoader, SKIP_WITHOUT_ZENTUI, ZENTUI_BUILD } from "./zentui-build.ts";
 
 type Notice = [string, string];
@@ -91,6 +95,7 @@ test(
         "agentStyle",
         "agentPersona",
         "agentOnUsageLimit",
+        "daybreakDefault",
         "sessionAutoName",
         "sessionAutoNameModel",
       ],
@@ -104,23 +109,31 @@ test(
     assert.equal(items[3].currentValue, "none");
     assert.deepEqual(items[3].values, ON_USAGE_LIMIT_VALUES);
     assert.ok(items[3].description?.includes("auto-resume waits for the quota reset"));
-    assert.equal(items[4].currentValue, "Enabled");
-    assert.equal(items[5].currentValue, "openai-codex/gpt-6-luna");
+    assert.equal(items[4].label, "Daybreak");
+    assert.equal(items[4].currentValue, "off");
+    assert.deepEqual(items[4].values, ["off", "on"]);
+    assert.equal(items[5].currentValue, "Enabled");
+    assert.equal(items[6].currentValue, "openai-codex/gpt-6-luna");
 
     assert.deepEqual(section.handleChange("agentLanguage", "Korean"), { kind: "update" });
     assert.deepEqual(section.handleChange("agentStyle", "concise"), { kind: "update" });
     assert.deepEqual(section.handleChange("agentPersona", "critical"), { kind: "update" });
     assert.deepEqual(section.handleChange("agentOnUsageLimit", "fallback"), { kind: "update" });
+    assert.deepEqual(section.handleChange("daybreakDefault", "on"), { kind: "update" });
     assert.deepEqual(section.handleChange("sessionAutoName", "Disabled"), { kind: "update" });
     assert.deepEqual(section.handleChange("sessionAutoNameModel", "openai-codex/gpt-5.6-luna"), {
       kind: "update",
     });
     await settleWrites();
-    const settings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
+    const settings: unknown = JSON.parse(
+      await readFile(path.join(agentDir, "settings.json"), "utf8"),
+    );
+    assert.ok(isJsonRecord(settings));
     assert.equal(settings.agentLanguage, "Korean");
     assert.equal(settings.agentStyle, "concise");
     assert.equal(settings.agentPersona, "critical");
     assert.equal(settings.agentOnUsageLimit, "fallback");
+    assert.equal(settings.daybreakDefault, true);
     assert.equal(settings.sessionAutoName, false);
     assert.equal(settings.sessionAutoNameModel, "openai-codex/gpt-5.6-luna");
     assert.equal(settings.theme, "nord-dark", "unrelated settings must survive");

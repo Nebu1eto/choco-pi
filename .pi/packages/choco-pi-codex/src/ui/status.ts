@@ -5,6 +5,29 @@ import type { CodexRuntimePlan } from "../adapter/activation/runtime-plan.ts";
 import { STATUS_KEY, buildStatusText } from "../adapter/activation/tool-set.ts";
 import { isResponsesContext } from "../adapter/prompt/codex-model.ts";
 import { snapshotCodexFastModeDecision } from "../providers/openai-codex/fast-mode-decision.ts";
+import { snapshotCodexDaybreakDecision } from "../providers/openai-codex/daybreak-decision.ts";
+import type { CodexDaybreakDecision } from "../providers/openai-codex/daybreak-types.ts";
+
+export function formatDaybreakStatus(
+  decision: Pick<CodexDaybreakDecision, "requested" | "outcome">,
+): string {
+  if (!decision.requested) return "Daybreak off";
+  switch (decision.outcome) {
+    case "blue":
+      return "Daybreak on (blue)";
+    case "red":
+      return "Daybreak on (red)";
+    case "not-granted":
+      return "Daybreak requested (not granted)";
+    case "model-not-supported":
+      return "Daybreak requested (model unsupported)";
+    case "auth-not-eligible":
+      return "Daybreak requested (auth not eligible)";
+    case "off":
+    case "lookup-failed":
+      return "Daybreak requested (lookup failed)";
+  }
+}
 
 export function renderCodexStatus(
   ctx: ExtensionContext,
@@ -12,6 +35,7 @@ export function renderCodexStatus(
   plan: Extract<CodexRuntimePlan, { kind: "normal" | "code" | "notebook" }>,
 ): void {
   const config = state.config;
+  const daybreak = snapshotCodexDaybreakDecision(ctx.sessionManager.getSessionId(), ctx.model);
   const fastActive = ctx.model
     ? snapshotCodexFastModeDecision(
         ctx.sessionManager.getSessionId(),
@@ -41,6 +65,6 @@ export function renderCodexStatus(
         }),
       },
       ctx.ui.theme,
-    ),
+    ) + ctx.ui.theme.fg("dim", ` • ${formatDaybreakStatus(daybreak)}`),
   );
 }

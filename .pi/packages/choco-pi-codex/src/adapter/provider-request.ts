@@ -36,6 +36,7 @@ import {
   snapshotCodexFastModeDecision,
   type CodexFastModeDecision,
 } from "../providers/openai-codex/fast-mode-decision.ts";
+import { withoutCodexAccessPrograms } from "../providers/openai-codex/daybreak-decision.ts";
 
 function prepareCodexProviderRequest(
   payload: BoundaryValue,
@@ -137,7 +138,29 @@ export function captureActiveProviderSystemPrompt(
   if (instructions !== undefined) state.activeProviderSystemPrompt = instructions;
 }
 
+/**
+ * This hook boundary never authorizes Daybreak: stock Responses providers must not send
+ * access_programs, and the custom Codex provider re-applies its frozen decision after hooks.
+ * Every return path, including early non-rewrite paths, therefore drops a stale field.
+ */
+function withoutAccessPrograms(
+  original: BoundaryValue,
+  rewritten: BoundaryValue | undefined,
+): BoundaryValue | undefined {
+  const payload = rewritten ?? original;
+  if (!isRecord(payload) || !Object.hasOwn(payload, "access_programs")) return rewritten;
+  return withoutCodexAccessPrograms(payload);
+}
+
 export async function rewriteCodexProviderRequest(
+  payload: BoundaryValue,
+  ctx: ExtensionContext,
+  state: AdapterState,
+): Promise<BoundaryValue | undefined> {
+  return withoutAccessPrograms(payload, await rewriteCodexProviderRequestBody(payload, ctx, state));
+}
+
+async function rewriteCodexProviderRequestBody(
   payload: BoundaryValue,
   ctx: ExtensionContext,
   state: AdapterState,
@@ -177,12 +200,13 @@ export function rewriteCodexPrewarmProviderRequest(
   state: AdapterState,
 ): BoundaryValue | undefined {
   const prepared = prepareCodexProviderRequest(payload, ctx, state);
-  return prepared
+  const rewritten = prepared
     ? applyAuthoritativeServiceTier(
         applyCodexRuntimePayload(prepared.configuredPayload, isCodeModeRuntime(prepared.plan)),
         prepared.fastModeDecision,
       )
     : undefined;
+  return withoutAccessPrograms(payload, rewritten);
 }
 
 function isCodeModeCompatibleBody(value: BoundaryValue): value is ResponsesLiteCompatibleBody {

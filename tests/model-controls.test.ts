@@ -14,6 +14,7 @@ import {
   isEffectiveFastModeEnabled,
   restoreFastMode,
   wrapFastModeEditorFactory,
+  type DaybreakEditorState,
 } from "../.pi/extensions/model-controls.ts";
 
 type EditorFactory = NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]>;
@@ -83,7 +84,7 @@ function model(provider: "openai" | "openai-codex" | "synthetic"): Model<Api> {
     id: "gpt-5.6-sol",
     name: "GPT-5.6 Sol",
     provider,
-    api: "openai-responses",
+    api: provider === "openai-codex" ? "openai-codex-responses" : "openai-responses",
     baseUrl:
       provider === "openai"
         ? "https://api.openai.com/v1"
@@ -364,4 +365,163 @@ test("fast toggles rerender without appending a scrollback status row", async ()
   assert.equal(notifications, 0);
   assert.equal(renders, 1);
   handlers.get("session_shutdown")?.({}, ctx);
+});
+
+test("root Daybreak editor badge shows grants and names each denial", () => {
+  const lines = ["─".repeat(80), " gpt-5.6-sol  OpenAI  high"];
+  const codex = model("openai-codex");
+  const render = (daybreak: DaybreakEditorState | undefined, fast = false) =>
+    stripTerminalSequences(
+      appendFastModeToEditorMetadata(lines, 80, codex, fast, undefined, daybreak)[1] ?? "",
+    );
+  assert.match(render({ requested: true, outcome: "blue" }), /high +daybreak blue {2}$/);
+  assert.match(render({ requested: true, outcome: "red" }), /high +daybreak red {2}$/);
+  assert.match(render({ requested: true, outcome: "not-granted" }), /daybreak not granted {2}$/);
+  assert.match(
+    render({ requested: true, outcome: "model-not-supported" }),
+    /daybreak model unsupported {2}$/,
+  );
+  assert.match(
+    render({ requested: true, outcome: "lookup-failed" }),
+    /daybreak lookup failed {2}$/,
+  );
+  assert.match(
+    render({ requested: true, outcome: "auth-not-eligible" }),
+    /daybreak auth ineligible {2}$/,
+  );
+  assert.equal(render({ requested: false, outcome: "off" }), " gpt-5.6-sol  OpenAI  high");
+  assert.equal(render(undefined), " gpt-5.6-sol  OpenAI  high");
+  assert.match(
+    render({ requested: true, outcome: "blue" }, true),
+    /high +fast {2}daybreak blue {2}$/,
+    "Fast and Daybreak share one metadata row",
+  );
+  for (const ineligible of [
+    model("synthetic"),
+    { ...codex, api: "openai-responses" },
+    { ...codex, baseUrl: "https://proxy.example.test" },
+  ]) {
+    const decorated = appendFastModeToEditorMetadata(lines, 80, ineligible, true, undefined, {
+      requested: true,
+      outcome: "blue",
+    });
+    assert.match(stripTerminalSequences(decorated[1] ?? ""), /daybreak auth ineligible/);
+    assert.doesNotMatch(stripTerminalSequences(decorated[1] ?? ""), /daybreak blue/);
+  }
+});
+
+test("Daybreak badge fits narrow rows and appears once on the last metadata match", () => {
+  const lines = [" gpt-5.6-sol  first", " gpt-5.6-sol  OpenAI  high  extra metadata that is long"];
+  const decorated = appendFastModeToEditorMetadata(
+    lines,
+    40,
+    model("openai-codex"),
+    true,
+    undefined,
+    { requested: true, outcome: "not-granted" },
+  );
+  assert.equal(decorated[0], lines[0]);
+  const plain = stripTerminalSequences(decorated[1] ?? "");
+  assert.match(plain, /fast {2}daybreak not granted {2}$/);
+  assert.equal(plain.match(/daybreak/g)?.length, 1);
+  assert.ok(decorated.every((line) => visibleWidth(line) <= 40));
+  assert.deepEqual(
+    appendFastModeToEditorMetadata([" other"], 40, model("openai-codex"), true, undefined, {
+      requested: true,
+      outcome: "blue",
+    }),
+    [" other"],
+    "no matching metadata row leaves lines unchanged",
+  );
+});
+
+test("focused child Daybreak state supersedes the root outcome", () => {
+  const parent = { ...model("openai-codex"), id: "parent", name: "Parent" };
+  const lines = [" parent  OpenAI  high"];
+  const child = {
+    focused: true as const,
+    modelId: "gpt-child",
+    modelName: "GPT Child",
+    provider: "openai-codex",
+    supported: false,
+    active: false,
+  };
+  const rootBlue: DaybreakEditorState = { requested: true, outcome: "blue" };
+  const render = (focused: Parameters<typeof appendFocusedModelToEditorMetadata>[4]) =>
+    stripTerminalSequences(
+      appendFocusedModelToEditorMetadata(
+        lines,
+        80,
+        parent,
+        false,
+        focused,
+        undefined,
+        rootBlue,
+      )[0] ?? "",
+    );
+  assert.match(render(undefined), /daybreak blue {2}$/, "unfocused shows the root grant");
+  assert.equal(render(child), " gpt-child  OpenAI  high", "child without state shows none");
+  assert.match(
+    render({ ...child, daybreak: { requested: true, outcome: "auth-not-eligible" } }),
+    /daybreak auth ineligible {2}$/,
+  );
+  assert.match(
+    render({ ...child, daybreak: { requested: true, outcome: "red" } }),
+    /daybreak red {2}$/,
+  );
+  assert.equal(
+    render({ ...child, daybreak: { requested: false, outcome: "off" } }),
+    " gpt-child  OpenAI  high",
+  );
+});
+
+test("wrapped editor reads the focused runtime Daybreak projection", () => {
+  const key = Symbol.for("choco-pi.subagents.focused-agent-runtime");
+  type Projection = {
+    modelId: string;
+    provider: string;
+    daybreakRequested?: boolean;
+    daybreakOutcome: string;
+  };
+  const host: typeof globalThis & {
+    [key: symbol]: { current(): Projection | undefined } | undefined;
+  } = globalThis;
+  const baseFactory = reinterpretHostValue<EditorFactory>(
+    (_tui: never, _theme: never, _keybindings: never) => ({
+      render: () => [" parent  OpenAI  high"],
+      invalidate: () => {},
+    }),
+  );
+  const factory = wrapFastModeEditorFactory(baseFactory, {
+    getModel: () => ({ ...model("openai-codex"), id: "parent", name: "Parent" }),
+    isEnabled: () => false,
+    style: (text) => text,
+    getDaybreak: () => ({ requested: true, outcome: "blue" }),
+  });
+  const editor = factory(
+    reinterpretHostValue<Parameters<EditorFactory>[0]>({}),
+    reinterpretHostValue<Parameters<EditorFactory>[1]>({}),
+    reinterpretHostValue<Parameters<EditorFactory>[2]>({}),
+  );
+  const projection: Projection = {
+    modelId: "gpt-child",
+    provider: "openai-codex",
+    daybreakRequested: true,
+    daybreakOutcome: "bogus",
+  };
+  host[key] = { current: () => projection };
+  try {
+    assert.match(
+      stripTerminalSequences(editor.render(80)[0] ?? ""),
+      /daybreak lookup failed {2}$/,
+      "an unknown child outcome never implies a grant",
+    );
+    projection.daybreakOutcome = "red";
+    assert.match(stripTerminalSequences(editor.render(80)[0] ?? ""), /daybreak red {2}$/);
+    delete projection.daybreakRequested;
+    assert.doesNotMatch(stripTerminalSequences(editor.render(80)[0] ?? ""), /daybreak/);
+  } finally {
+    delete host[key];
+  }
+  assert.match(stripTerminalSequences(editor.render(80)[0] ?? ""), /daybreak blue {2}$/);
 });

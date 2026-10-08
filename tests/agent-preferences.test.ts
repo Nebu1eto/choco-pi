@@ -112,7 +112,11 @@ test(
 test(
   "store creates the settings file when missing and ignores invalid values",
   withTempDirs(async ({ agent }) => {
-    const defaults = { persona: DEFAULT_PERSONA, onUsageLimit: DEFAULT_ON_USAGE_LIMIT };
+    const defaults = {
+      persona: DEFAULT_PERSONA,
+      onUsageLimit: DEFAULT_ON_USAGE_LIMIT,
+      daybreak: false,
+    };
     assert.deepEqual(readAgentPreferences(agent), defaults);
     assert.deepEqual(await readAgentPreferencesAsync(agent), defaults);
     await writeAgentPreference("agentStyle", "concise", agent);

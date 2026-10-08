@@ -93,11 +93,13 @@ import {
 } from "./websocket.ts";
 import {
   isPermanentWebSocketError,
+  isWebSocketForbiddenError,
   isWebSocketMessageTooBigError,
   isWebSocketUnauthorizedError,
   isWebSocketUpgradeRequiredError,
 } from "./websocket-connection.ts";
 import { processWebSocketStream } from "./websocket-stream.ts";
+import { invalidateCodexDaybreakEntitlement } from "./daybreak-decision.ts";
 import { withRemoteCompactionV2Feature } from "../openai-responses/compaction-v2-feature.ts";
 import {
   captureCanonicalSessionToken,
@@ -118,6 +120,7 @@ export interface CodexTransportRecoveryDependencies {
   onPreparedPayload?: ((payload: ResponsesBody) => void) | undefined;
   onStreamSettled?: () => void | undefined;
   getDiagnostics?: (() => CodexDiagnosticsSink | undefined) | undefined;
+  processWebSocketStream?: typeof processWebSocketStream;
   prepareRequestBody: <TApi extends Api>(
     model: Model<TApi>,
     context: TranscriptContext,
@@ -306,6 +309,7 @@ export function createCodexTransportStream<TApi extends Api>(
     effectiveOptions.headers = withRemoteCompactionV2Feature(options.headers);
   }
   const stream = createAssistantMessageEventStream();
+  const daybreakBaseUrl = model.baseUrl;
 
   (async () => {
     let output = createInitialAssistantMessage(model);
@@ -421,7 +425,7 @@ export function createCodexTransportStream<TApi extends Api>(
           if (attempt > 0) output = createInitialAssistantMessage(model);
           let websocketStarted = false;
           try {
-            await processWebSocketStream(
+            await (deps.processWebSocketStream ?? processWebSocketStream)(
               resolveCodexWebSocketUrl(model.baseUrl),
               withCodexTurnState(websocketBody, deps.turnState),
               websocketHeaders,
@@ -453,10 +457,12 @@ export function createCodexTransportStream<TApi extends Api>(
             stream.end();
             return;
           } catch (error) {
+            const unauthorized = isWebSocketUnauthorizedError(error);
+            if (unauthorized || isWebSocketForbiddenError(error))
+              invalidateCodexDaybreakEntitlement(apiKey, daybreakBaseUrl);
             if (effectiveOptions?.signal?.aborted) throw error;
             const upgradeRequired = isWebSocketUpgradeRequiredError(error);
             const messageTooBig = isWebSocketMessageTooBigError(error);
-            const unauthorized = isWebSocketUnauthorizedError(error);
             const retryableWebSocketError =
               (isCodexApiError(error) || !isPermanentWebSocketError(error)) &&
               isRetryableCodexStreamError(error);

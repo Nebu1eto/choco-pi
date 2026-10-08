@@ -268,6 +268,10 @@ export function isWebSocketUnauthorizedError<T>(error: T): boolean {
   return webSocketStatus(error) === 401;
 }
 
+export function isWebSocketForbiddenError<T>(error: T): boolean {
+  return webSocketStatus(error) === 403;
+}
+
 class WebSocketStatusError extends Error {
   status?: number | undefined;
 }
