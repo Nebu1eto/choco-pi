@@ -638,3 +638,14 @@ is unchanged.
 Code Mode's native-renderer catalog receives the same command-source behavior
 without changes to trace rendering. Regression tests cover direct
 native calls, real-catalog nested traces, collapsed defaults, and tab normalization.
+
+## 2026-10-08 choco-pi patch: nested result fallback and image preferences
+
+Expanded Code Mode traces fall back to generic result rendering when a custom
+renderer throws, while retaining the call header and any execution error.
+Successful custom rendering still replaces the generic result. The nested render
+context now carries Pi's optional `showImages` preference through to native
+image renderers; the public result renderer already forwards the outer context
+unchanged. Regression tests exercise throwing and successful custom renderers
+and compare nested `view_image` rendering with direct calls for disabled, enabled,
+and unspecified image preferences.

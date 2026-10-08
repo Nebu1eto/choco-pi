@@ -74,6 +74,7 @@ export interface CodeModeNestedRenderContext {
   toolCallId?: string | undefined;
   cwd?: string | undefined;
   expanded?: boolean | undefined;
+  showImages?: boolean | undefined;
   isError?: boolean | undefined;
   args?: unknown;
   invalidate?: (() => void) | undefined;
