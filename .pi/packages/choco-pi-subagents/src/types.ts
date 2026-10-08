@@ -182,6 +182,13 @@ export interface AgentRecord {
      */
     | "waiting_for_reset";
   result?: string;
+  /** Terminal-boundary snapshot, captured before owned-child cleanup. */
+  pendingDependents?: {
+    id: string;
+    handle?: string;
+    status: "running" | "queued" | "waiting_for_reset";
+    generation?: number;
+  }[];
   error?: string;
   /** Provider usage-limit details for the current generation chain, if one was hit. */
   usageLimit?: SubagentUsageLimit;

@@ -1739,6 +1739,7 @@ export class AgentManager {
           options.onToolActivity?.(activity);
         },
         onTurnEnd: options.onTurnEnd,
+        onFinishAttempt: this.dependencyCompletionGuard(record, runGeneration),
         onTextDelta: options.onTextDelta,
         onAssistantUsage: (usage) => {
           runBudget.controller?.noteUsage(usage);
@@ -2014,6 +2015,49 @@ export class AgentManager {
     this.onSpawned?.(id);
   }
 
+  private dependencyCompletionGuard(record: AgentRecord, generation: number) {
+    let corrected = false;
+    // A resumed generation must discard its prior terminal snapshot before any turn runs.
+    record.pendingDependents = undefined;
+    return () => {
+      if (
+        this.disposed ||
+        record.resultGeneration !== generation ||
+        record.status !== "running" ||
+        record.cancellation?.generation === generation
+      )
+        return undefined;
+      const pending: NonNullable<AgentRecord["pendingDependents"]> = [];
+      for (const child of this.agents.values()) {
+        if (child.parentAgentId !== record.id) continue;
+        if (
+          child.status === "running" ||
+          child.status === "queued" ||
+          child.status === "waiting_for_reset"
+        ) {
+          pending.push({
+            id: child.id,
+            handle: child.handle,
+            status: child.status,
+            generation: child.resultGeneration,
+          });
+        }
+      }
+      if (pending.length === 0) return undefined;
+      if (!corrected) {
+        corrected = true;
+        const labels = pending
+          .map((child) => (child.handle ? `${child.id}/@${child.handle}` : child.id))
+          .join(", ");
+        return {
+          steer: `Delegated run(s) ${labels} you own are still running. Await their result with get_subagent_result (or stop them) before finishing.`,
+        };
+      }
+      record.pendingDependents = pending;
+      return { failure: "Owned delegated runs were unsettled at the terminal boundary." };
+    };
+  }
+
   /** Update both bootstrap and live state for the retained child generation. */
   setDaybreak(id: string, requested: boolean): AgentRecord | undefined {
     const record = this.agents.get(id);
@@ -2261,6 +2305,7 @@ export class AgentManager {
     const resumePromise = (async (): Promise<AgentRecord> => {
       try {
         const { text, failure, aborted, steered } = await this.runner.resumeAgent(session, prompt, {
+          onFinishAttempt: this.dependencyCompletionGuard(record, runGeneration),
           maxTurns: options?.maxTurns,
           onToolActivity: (activity) => {
             if (isBudgetedToolActivity(activity)) {
@@ -2474,6 +2519,7 @@ export class AgentManager {
 
     const promise = this.runner
       .resumeAgent(record.session, prompt, {
+        onFinishAttempt: this.dependencyCompletionGuard(record, runGeneration),
         maxTurns: options.maxTurns,
         onToolActivity: (activity) => {
           if (isBudgetedToolActivity(activity)) {

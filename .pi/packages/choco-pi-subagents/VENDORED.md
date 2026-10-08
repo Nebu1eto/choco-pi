@@ -51,6 +51,17 @@ source package cannot use:
 
 ## What was changed
 
+- 2026-10-08: Guard spawn and foreground/background resume completion against
+  owned running, queued, or waiting-for-reset dependents. A tool-free terminal
+  turn gets one corrective steer per execution generation; a second unfinished
+  attempt becomes an error with partial output and a terminal-boundary
+  `pendingDependents` snapshot captured before owned-child cleanup. Shared root
+  and nested result details, completion notification text, and existing failed
+  lifecycle payloads carry the snapshot. Cancellation and stale generations do
+  not trigger correction. Controlled SDK regression tests cover each run path,
+  settling during correction, parked dependents, cancellation, stale generation,
+  unchanged no-dependent behavior, and result/notification/lifecycle delivery.
+
 ### Identity
 
 - `package.json` `name`: `@tintinweb/pi-subagents` → `choco-pi-subagents`;
