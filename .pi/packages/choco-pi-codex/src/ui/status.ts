@@ -13,6 +13,9 @@ export function formatDaybreakStatus(
 ): string {
   if (!decision.requested) return "Daybreak off";
   switch (decision.outcome) {
+    case "off":
+    case "pending":
+      return "Daybreak pending (checking)";
     case "blue":
       return "Daybreak on (blue)";
     case "red":
@@ -23,7 +26,6 @@ export function formatDaybreakStatus(
       return "Daybreak unavailable (model unsupported)";
     case "auth-not-eligible":
       return "Daybreak requested (auth not eligible)";
-    case "off":
     case "lookup-failed":
       return "Daybreak requested (lookup failed)";
   }

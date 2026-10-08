@@ -63,14 +63,14 @@ test("default state is off; turning on advances the revision and is honestly unk
     const on = controller.set(true);
     assert.equal(on.revision, 1);
     assert.equal(on.source, "explicit");
-    assert.equal(on.outcome, "lookup-failed");
+    assert.equal(on.outcome, "pending");
     const requestedInitially = bridge.register({
       sessionId: "s-requested",
       owner: {},
       generation: 0,
       initial: { requested: true, source: "inherited" },
     });
-    assert.equal(requestedInitially.getState().outcome, "lookup-failed");
+    assert.equal(requestedInitially.getState().outcome, "pending");
     requestedInitially.dispose();
   } finally {
     controller.dispose();
@@ -90,9 +90,9 @@ test("report applies only to the current controller at the matching revision", (
   });
   const { revision } = controller.set(true);
   controller.report("blue", revision - 1);
-  assert.equal(controller.getState().outcome, "lookup-failed");
+  assert.equal(controller.getState().outcome, "pending");
   controller.report("off", revision);
-  assert.equal(controller.getState().outcome, "lookup-failed");
+  assert.equal(controller.getState().outcome, "pending");
   controller.report("red", revision);
   assert.equal(controller.getState().outcome, "red");
   assert.ok(
@@ -124,6 +124,38 @@ test("report applies only to the current controller at the matching revision", (
   assert.equal(bridge.get("s-report"), replacement);
   replacement.dispose();
   assert.equal(bridge.get("s-report"), undefined);
+});
+
+test("subscriptions notify mutations and reports, unsubscribe once, and retire on disposal", () => {
+  const bridge = createDaybreakBridge();
+  const input = {
+    sessionId: "s-subscribe",
+    owner: {},
+    generation: 0,
+    initial: { requested: false, source: "default" as const },
+  };
+  const controller = bridge.register(input);
+  let notifications = 0;
+  const unsubscribe = controller.subscribe(() => notifications++);
+  controller.set(true);
+  controller.report("blue", 1);
+  controller.report("blue", 1);
+  controller.report("red", 0);
+  assert.equal(notifications, 2);
+  unsubscribe();
+  unsubscribe();
+  controller.set(false);
+  assert.equal(notifications, 2);
+  controller.subscribe(() => notifications++);
+  const replacement = bridge.register({ ...input, generation: 1 });
+  controller.dispose();
+  controller.report("red", 2);
+  assert.equal(notifications, 2, "replacement clears old listeners");
+  replacement.subscribe(() => notifications++);
+  replacement.dispose();
+  replacement.dispose();
+  replacement.report("blue", 0);
+  assert.equal(notifications, 2, "disposed controllers retain no listeners");
 });
 
 test("an unrequested session ignores entitlement reports", () => {
@@ -179,7 +211,7 @@ test("restoration replays the latest request and never the outcome", () => {
   });
   assert.equal(controller.getState().requested, true);
   assert.equal(controller.getState().revision, 5);
-  assert.equal(controller.getState().outcome, "lookup-failed");
+  assert.equal(controller.getState().outcome, "pending");
   controller.dispose();
 });
 
@@ -219,6 +251,10 @@ test("status text distinguishes every outcome", () => {
   assert.match(daybreakStatusValue({ ...base, outcome: "not-granted" }), /not granted/);
   assert.match(daybreakStatusValue({ ...base, outcome: "auth-not-eligible" }), /not eligible/);
   assert.match(daybreakStatusValue(base), /lookup failed/);
+  assert.equal(
+    daybreakStatusValue({ ...base, outcome: "pending" }),
+    "requested; checking availability",
+  );
   assert.match(
     daybreakStatusValue({ ...base, outcome: "model-not-supported" }),
     /model does not support Daybreak/,
@@ -249,7 +285,7 @@ test("hidden child extension registers inherited state, restores on tree, strips
   const state = bridge.get("child")?.getState();
   assert.equal(state?.requested, true);
   assert.equal(state?.source, "inherited");
-  assert.equal(state?.outcome, "lookup-failed");
+  assert.equal(state?.outcome, "pending");
   assert.deepEqual(appended, [
     { type: DAYBREAK_ENTRY, data: { enabled: true, source: "inherited", revision: 0 } },
   ]);

@@ -374,6 +374,8 @@ test("root Daybreak editor badge shows grants and names each denial", () => {
     stripTerminalSequences(
       appendFastModeToEditorMetadata(lines, 80, codex, fast, undefined, daybreak)[1] ?? "",
     );
+  assert.match(render({ requested: true, outcome: "pending" }), /high +daybreak pending {2}$/);
+  assert.match(render({ requested: true, outcome: "off" }), /high +daybreak pending {2}$/);
   assert.match(render({ requested: true, outcome: "blue" }), /high +daybreak blue {2}$/);
   assert.match(render({ requested: true, outcome: "red" }), /high +daybreak red {2}$/);
   assert.match(render({ requested: true, outcome: "not-granted" }), /daybreak not granted {2}$/);
@@ -513,7 +515,7 @@ test("wrapped editor reads the focused runtime Daybreak projection", () => {
   try {
     assert.match(
       stripTerminalSequences(editor.render(80)[0] ?? ""),
-      /daybreak lookup failed {2}$/,
+      /daybreak pending {2}$/,
       "an unknown child outcome never implies a grant",
     );
     projection.daybreakOutcome = "red";

@@ -46,6 +46,7 @@ import {
   takeCodexUsageLimitEntry,
 } from "./usage-limit-entry.ts";
 import { withLiveCtx } from "./live-context.ts";
+import { registerCodexDaybreakProbe } from "./daybreak-probe.ts";
 import { resetRegisteredToolCapture } from "../tools/code-mode/registered-tool-bridge.ts";
 import { isNativeSteerPending } from "../providers/openai-codex/native-steering.ts";
 import { initializeCodexFastModeDefault } from "../providers/openai-codex/fast-mode-decision.ts";
@@ -172,6 +173,7 @@ export function registerCodexEvents(
   codeMode: CodeModeRegistration,
   proxyProvider: CodeModeProxyProviderRegistration,
 ): void {
+  registerCodexDaybreakProbe(pi);
   const { state, tracker, sessions } = runtime;
   let elisionEpoch = "";
   let elisionCut = 0;

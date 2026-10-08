@@ -117,7 +117,7 @@ export function executeFocusedDaybreak(
   const state = getSessionDaybreak(sessionId);
   const requested = state?.requested ?? record.daybreakRequested ?? false;
   const outcome = focusedAgentRuntime(record)?.daybreakOutcome;
-  return `Daybreak: ${requested ? "on" : "off"}${requested ? ` (${outcome ?? "lookup-failed"})` : ""}`;
+  return `Daybreak: ${requested ? "on" : "off"}${requested ? ` (${outcome ?? "pending"})` : ""}`;
 }
 
 export function executeFocusedFastMode(

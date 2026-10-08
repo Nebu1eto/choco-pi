@@ -3,6 +3,7 @@ import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 export type DaybreakSource = "default" | "explicit" | "inherited";
 export type DaybreakOutcome =
   | "off"
+  | "pending"
   | "blue"
   | "red"
   | "not-granted"

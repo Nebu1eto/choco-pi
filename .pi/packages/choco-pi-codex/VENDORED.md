@@ -568,3 +568,14 @@ entitlement invalidation events. Missing support for the exact blue/red program
 omits the wire field and reports `model-not-supported`; lookup failures fail
 closed as `lookup-failed`. Catalog successes expire after ten minutes, failures
 after one minute, with a five-second lookup timeout.
+
+Requested sessions now start as `pending`, distinct from a genuine `lookup-failed`.
+`extension/daybreak-probe.ts` resolves credentials and runs the same ticket decision
+pipeline on session start, toggle-on, and model changes without building a Responses
+body or sending `/responses`. One serialized lane coalesces rapid changes; session,
+controller generation, revision, and model replacement guards discard stale reports.
+Controller subscriptions notify both `set()` and changed `report()` outcomes; the
+root editor repaints through the same `setStatus` path as Fast mode. Disposal and
+replacement clear listeners. The independent subagent outcome union also includes
+`pending`; its hidden registration factory is unchanged. Focused probe, state, badge,
+and subagent tests cover these paths.

@@ -141,6 +141,7 @@ function fakeController(sessionId: string, requested: boolean, generation = 1): 
     reports: [],
     controller: {
       getState: () => fake.state,
+      subscribe: () => () => {},
       set: (next, source = "explicit") => {
         fake.state = { ...fake.state, requested: next, source, revision: fake.state.revision + 1 };
         return fake.state;

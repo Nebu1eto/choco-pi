@@ -51,7 +51,7 @@ type StoredState = {
 
 /** A request without a confirmed entitlement is honestly unknown until a lookup succeeds. */
 export function defaultDaybreakOutcome(requested: boolean): DaybreakOutcome {
-  return requested ? "lookup-failed" : "off";
+  return requested ? "pending" : "off";
 }
 
 /** Persisted request record; the entitlement outcome is deliberately absent. */
@@ -113,7 +113,7 @@ export function createDaybreakBridge(): DaybreakBridge {
       if (existing?.owner === input.owner && existing.generation === input.generation)
         return existing.controller;
 
-      existing?.unregisterCleanup();
+      existing?.controller.dispose();
 
       const initial = restoreDaybreakInitialization(input.entries, input.initial);
       let state: DaybreakState = {
@@ -124,10 +124,24 @@ export function createDaybreakBridge(): DaybreakBridge {
         generation: input.generation,
         outcome: defaultDaybreakOutcome(initial.requested),
       };
+      const listeners = new Set<() => void>();
+      const notify = (): void => {
+        for (const listener of listeners) listener();
+      };
       const isCurrent = (): boolean =>
         registrations.get(input.sessionId)?.controller === controller;
       const controller: DaybreakController = {
         getState: () => state,
+        subscribe(listener) {
+          if (!isCurrent()) return () => {};
+          listeners.add(listener);
+          let subscribed = true;
+          return () => {
+            if (!subscribed) return;
+            subscribed = false;
+            listeners.delete(listener);
+          };
+        },
         set(requested, source = "explicit") {
           if (!isCurrent()) throw new Error("Daybreak controller is stale.");
           const next: DaybreakState = {
@@ -139,15 +153,19 @@ export function createDaybreakBridge(): DaybreakBridge {
           };
           input.persist?.(next);
           state = next;
+          notify();
           return state;
         },
         report(outcome, revision) {
           if (!isCurrent() || revision !== state.revision) return;
           // An unrequested session is always off, and a requested one cannot report off.
           if (!state.requested || outcome === "off") return;
+          if (state.outcome === outcome) return;
           state = { ...state, outcome };
+          notify();
         },
         dispose() {
+          listeners.clear();
           const current = registrations.get(input.sessionId);
           if (current?.controller !== controller) return;
           registrations.delete(input.sessionId);
@@ -197,7 +215,7 @@ export function stripStaleDaybreakAccess(payload: RuntimeValue): JsonRecord | un
 
 /**
  * Status text distinguishing off, an active blue/red grant, and each reason a
- * request is not applied. An unconfirmed request reads as a failed lookup.
+ * request is not applied. An unconfirmed request reads as pending.
  */
 export function daybreakStatusValue(state: DaybreakState | undefined): string {
   if (!state) return "not initialized";
@@ -206,14 +224,15 @@ export function daybreakStatusValue(state: DaybreakState | undefined): string {
 }
 
 const DAYBREAK_REQUESTED_STATUS = {
+  pending: "requested; checking availability",
   blue: "on (blue)",
   red: "on (red)",
   "not-granted": "requested; not granted for this account",
   "auth-not-eligible": "requested; current authentication is not eligible",
-  "lookup-failed": "requested; Daybreak lookup failed or not yet confirmed",
+  "lookup-failed": "requested; Daybreak lookup failed",
   "model-not-supported": "unavailable; the current model does not support Daybreak",
   // A requested state never reports off; read it as unconfirmed.
-  off: "requested; entitlement lookup failed or not yet confirmed",
+  off: "requested; checking availability",
 } satisfies Record<DaybreakOutcome, string>;
 
 export function describeDaybreakState(state: DaybreakState | undefined): string {

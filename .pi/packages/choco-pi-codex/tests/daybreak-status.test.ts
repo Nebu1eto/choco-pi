@@ -25,6 +25,7 @@ const model: Model<Api> = {
 };
 
 const outcomes: readonly [DaybreakOutcome, string][] = [
+  ["pending", "Daybreak pending (checking)"],
   ["blue", "Daybreak on (blue)"],
   ["red", "Daybreak on (red)"],
   ["not-granted", "Daybreak requested (not granted)"],
