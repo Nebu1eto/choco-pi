@@ -66,6 +66,10 @@ async function withAgentDir<T>(
 function daybreakSession(id: string, entries: RuntimeValue[] = []) {
   const handlers = new Map<string, Handler>();
   const commands = new Map<string, (args: string, ctx: RuntimeValue) => Promise<void>>();
+  const completions = new Map<
+    string,
+    (prefix: string) => { value: string; label: string }[] | null
+  >();
   const appended: { type: string; data: RuntimeValue }[] = [];
   const notices: string[] = [];
   const refreshes: string[] = [];
@@ -83,8 +87,14 @@ function daybreakSession(id: string, entries: RuntimeValue[] = []) {
       on: (name: string, handler: Handler) => handlers.set(name, handler),
       registerCommand: (
         name: string,
-        options: { handler: (args: string, context: RuntimeValue) => Promise<void> },
-      ) => commands.set(name, options.handler),
+        options: {
+          handler: (args: string, context: RuntimeValue) => Promise<void>;
+          getArgumentCompletions?: (prefix: string) => { value: string; label: string }[] | null;
+        },
+      ) => {
+        commands.set(name, options.handler);
+        if (options.getArgumentCompletions) completions.set(name, options.getArgumentCompletions);
+      },
       appendEntry: (type: string, data: RuntimeValue) => appended.push({ type, data }),
     }),
   );
@@ -98,8 +108,46 @@ function daybreakSession(id: string, entries: RuntimeValue[] = []) {
     run: (args: string) => commands.get("daybreak")?.(args, ctx),
     request: (payload: RuntimeValue) => handlers.get("before_provider_request")?.({ payload }, ctx),
     state: () => getDaybreakBridge().get(id)?.getState(),
+    complete: (prefix: string) => completions.get("daybreak")?.(prefix),
+    select: (model: Model<Api>) => {
+      ctx.model = model;
+      handlers.get("model_select")?.({}, ctx);
+    },
   };
 }
+
+test("Daybreak command suppresses completions and mutations on an Anthropic model", async () => {
+  await withAgentDir(undefined, async () => {
+    const session = daybreakSession("db-hidden");
+    await session.start();
+    try {
+      assert.deepEqual(
+        session.complete("")?.map((item) => item.value),
+        ["on", "off", "status"],
+      );
+      session.select({
+        ...codexModel(),
+        provider: "anthropic",
+        api: "anthropic-messages",
+        baseUrl: "https://api.anthropic.com",
+      });
+      assert.equal(session.complete(""), null);
+      const before = session.state();
+      await session.run("on");
+      assert.match(session.notices.at(-1) ?? "", /only to OpenAI Codex ChatGPT-account models/);
+      assert.deepEqual(session.state(), before);
+      session.select(codexModel());
+      assert.deepEqual(
+        session.complete("o")?.map((item) => item.value),
+        ["on", "off"],
+      );
+      await session.run("on");
+      assert.equal(session.state()?.requested, true);
+    } finally {
+      session.stop();
+    }
+  });
+});
 
 test("/daybreak on|off|status persists the request and status does not advance revision", async () => {
   await withAgentDir(undefined, async () => {
@@ -271,9 +319,9 @@ test("focused routing exposes setDaybreak beside setFast", async () => {
 });
 
 test("applyDaybreakAction toggles, rejects bad input, and reports uninitialized state", () => {
-  assert.equal(applyDaybreakAction(undefined, "status"), "Daybreak: not initialized");
-  assert.throws(() => applyDaybreakAction(undefined, "on"), /not initialized/);
-  assert.throws(() => applyDaybreakAction(undefined, "maybe"), /Usage/);
+  assert.equal(applyDaybreakAction(undefined, "status", codexModel()), "Daybreak: not initialized");
+  assert.throws(() => applyDaybreakAction(undefined, "on", codexModel()), /not initialized/);
+  assert.throws(() => applyDaybreakAction(undefined, "maybe", codexModel()), /Usage/);
 });
 
 test("preferences: daybreak defaults false, parses, and writes through /preferences", async () => {
@@ -305,7 +353,7 @@ test("preferences: daybreak defaults false, parses, and writes through /preferen
   });
 });
 
-test("applyDaybreakAction status projects a non-canonical model as auth-not-eligible", () => {
+test("applyDaybreakAction refuses a non-canonical model without mutating the request", () => {
   const bridge = getDaybreakBridge();
   const controller = bridge.register({
     sessionId: "status-projection",
@@ -325,8 +373,11 @@ test("applyDaybreakAction status projects a non-canonical model as auth-not-elig
       baseUrl: "https://api.anthropic.com",
     };
     assert.match(applyDaybreakAction(controller, "status", codex), /on \(blue\)/);
-    assert.match(applyDaybreakAction(controller, "status", opus), /not eligible/);
-    assert.match(applyDaybreakAction(controller, "status"), /on \(blue\)/);
+    assert.match(
+      applyDaybreakAction(controller, "status", opus),
+      /only to OpenAI Codex ChatGPT-account models/,
+    );
+    assert.match(applyDaybreakAction(controller, "status", codex), /on \(blue\)/);
   } finally {
     controller.dispose();
   }

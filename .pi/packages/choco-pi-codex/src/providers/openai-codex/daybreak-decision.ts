@@ -1,4 +1,5 @@
 import { Type } from "typebox";
+import type { CodexStreamEvent } from "./types.ts";
 import { Check } from "typebox/value";
 import {
   type CodexLikeModelDescriptor,
@@ -25,7 +26,10 @@ export {
   invalidateCodexDaybreakEntitlement,
 } from "./daybreak-entitlement.ts";
 
-import { lookupCodexDaybreakModelSupport } from "./daybreak-model-support.ts";
+import {
+  lookupCodexDaybreakModelSupport,
+  type DaybreakTargetProgram,
+} from "./daybreak-model-support.ts";
 
 export type CodexAccessPrograms = { cyber: "daybreak_blue" | "daybreak_red" };
 
@@ -49,11 +53,14 @@ type TicketRecord = {
   readonly turnedOn: boolean;
   readonly isCurrent: (() => boolean) | undefined;
   resolution?: Promise<CodexDaybreakDecision>;
+  decision?: CodexDaybreakDecision;
+  responseObserved?: boolean;
 };
 
 type DecisionOwner = Readonly<{
   controller: DaybreakController | undefined;
   isCurrent?: (() => boolean) | undefined;
+  account?: ReturnType<typeof daybreakAccount>;
 }>;
 type Observation = Readonly<{ requested: boolean; revision: number }>;
 type BridgeHost = typeof globalThis & { [DAYBREAK_BRIDGE_SYMBOL]?: DaybreakBridge };
@@ -256,22 +263,28 @@ function publish(owner: DecisionOwner, decision: CodexDaybreakDecision): CodexDa
 }
 
 async function resolveTicket(record: TicketRecord): Promise<CodexDaybreakDecision> {
-  const owner: DecisionOwner = { controller: record.controller, isCurrent: record.isCurrent };
   const { state, sessionId, credentials } = record;
-  // Off never performs a lookup.
-  if (!record.controller || !state?.requested)
-    return publish(owner, decisionFrom(sessionId, state, "off"));
   const account =
     credentials && isDaybreakEligibleModel(record.model)
       ? daybreakAccount(credentials.apiKey, record.model.baseUrl)
       : undefined;
+  const owner: DecisionOwner = {
+    controller: record.controller,
+    isCurrent: record.isCurrent,
+    account,
+  };
+  // Off never performs a lookup.
+  if (!record.controller || !state?.requested)
+    return publish(owner, decisionFrom(sessionId, state, "off"));
   if (!credentials || !account)
     return publish(owner, decisionFrom(sessionId, state, "auth-not-eligible"));
   const modelId = record.model.id ?? "";
   // A toggle-on transition drops both caches before any lookup so the catalog is re-read too.
   if (record.turnedOn) invalidateCodexDaybreakAccount(account);
-  // Model availability first: an unsupported model reads "unavailable" no matter what the
-  // account lookup says, and it never spends an entitlement call.
+  // Codex's own contract (observed in codex-cli 0.161): the model catalog is the gate. If the
+  // selected model advertises a Daybreak program, the request is sent and the server's echo
+  // is the final word. `verified_access` only chooses red over blue; it is not a gate, because
+  // it reports "inactive" for accounts the backend still serves Daybreak to.
   const availability = await lookupCodexDaybreakModelSupport(account, credentials, modelId, "any");
   if (availability !== "supported")
     return publish(
@@ -286,23 +299,30 @@ async function resolveTicket(record: TicketRecord): Promise<CodexDaybreakDecisio
   if (record.isCurrent?.() === false || !ownerCurrent(owner.controller, checked))
     return publish(owner, checked);
   const result = await lookupCodexDaybreakEntitlement(account, credentials, record.turnedOn);
-  if (result.entitlement !== "blue" && result.entitlement !== "red")
-    return publish(owner, decisionFrom(sessionId, state, result.entitlement));
-  const granted = decisionFrom(sessionId, state, result.entitlement);
-  if (record.isCurrent?.() === false || !ownerCurrent(owner.controller, granted))
-    return publish(owner, granted);
-  const support = await lookupCodexDaybreakModelSupport(
-    account,
-    credentials,
-    modelId,
-    result.entitlement === "blue" ? "daybreak_blue" : "daybreak_red",
-  );
-  const outcome =
+  const preferred: DaybreakTargetProgram =
+    result.entitlement === "red" ? "daybreak_red" : "daybreak_blue";
+  const current = decisionFrom(sessionId, state, "off");
+  if (record.isCurrent?.() === false || !ownerCurrent(owner.controller, current))
+    return publish(owner, current);
+  const support = await lookupCodexDaybreakModelSupport(account, credentials, modelId, preferred);
+  const program: DaybreakTargetProgram | undefined =
     support === "supported"
-      ? result.entitlement
-      : support === "unsupported"
-        ? "model-not-supported"
-        : "lookup-failed";
+      ? preferred
+      : preferred === "daybreak_red" &&
+          (await lookupCodexDaybreakModelSupport(
+            account,
+            credentials,
+            modelId,
+            "daybreak_blue",
+          )) === "supported"
+        ? "daybreak_blue"
+        : undefined;
+  const outcome =
+    program === "daybreak_red"
+      ? "red"
+      : program === "daybreak_blue"
+        ? "blue"
+        : "model-not-supported";
   return publish(owner, decisionFrom(sessionId, state, outcome));
 }
 
@@ -315,8 +335,34 @@ export function resolveCodexDaybreakTicket(
 ): Promise<CodexDaybreakDecision | undefined> {
   const record = ticket ? tickets.get(ticket) : undefined;
   if (!record) return Promise.resolve(undefined);
-  record.resolution ??= resolveTicket(record);
+  record.resolution ??= resolveTicket(record).then((decision) => {
+    record.decision = decision;
+    return decision;
+  });
   return record.resolution;
+}
+
+const CompletedResponseSchema = Type.Object({
+  access_programs: Type.Optional(Type.Object({ cyber: Type.Optional(Type.String()) })),
+});
+/** Observe the terminal echo once, using only the request's frozen revision and account. */
+export function reportCodexDaybreakResponse(
+  ticket: CodexDaybreakTicket | undefined,
+  response: CodexStreamEvent["response"],
+): void {
+  const record = ticket ? tickets.get(ticket) : undefined;
+  if (!record || record.responseObserved) return;
+  record.responseObserved = true;
+  const decision = record.decision;
+  if (!decision?.cyber || !isCurrentCodexDaybreakDecision(decision)) return;
+  // Older backends omit the echo entirely; omission does not attest a downgrade.
+  if (!Check(CompletedResponseSchema, response) || !response.access_programs) return;
+  const owner = genuineDecisions.get(decision);
+  if (!owner?.controller) return;
+  const outcome =
+    response.access_programs.cyber === decision.cyber ? decision.outcome : "not-granted";
+  if (outcome === "not-granted" && owner.account) invalidateCodexDaybreakAccount(owner.account);
+  owner.controller.report(outcome, decision.revision);
 }
 
 type AccessProgramsCarrier = { access_programs?: unknown };

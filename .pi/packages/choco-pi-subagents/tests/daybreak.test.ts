@@ -311,13 +311,22 @@ test("focused isolated Daybreak persists child-only controls and gates stale gra
       api: "openai-responses",
       baseUrl: "https://api.openai.com/v1",
     });
-    assert.equal(focusedAgentRuntime(record)?.daybreakOutcome, "auth-not-eligible");
+    assert.equal(focusedAgentRuntime(record)?.daybreakOutcome, undefined);
+    assert.equal(focusedAgentRuntime(record)?.daybreakRequested, undefined);
+    assert.equal(focusedAgentRuntime(record)?.daybreakRevision, undefined);
     await fixture.session.setModel({
       ...model,
       provider: "openai",
       baseUrl: "https://proxy.example/codex",
     });
-    assert.equal(focusedAgentRuntime(record)?.daybreakOutcome, "auth-not-eligible");
+    assert.equal(focusedAgentRuntime(record)?.daybreakOutcome, undefined);
+    const before = controller.getState();
+    assert.match(
+      executeFocusedDaybreak(manager, record, "off"),
+      /only to OpenAI Codex ChatGPT-account models/,
+    );
+    assert.deepEqual(controller.getState(), before);
+    await fixture.session.setModel({ ...model, provider: "openai" });
     assert.equal(parent.getState().requested, false);
     assert.equal(executeFocusedDaybreak(manager, record, ""), "Daybreak: off");
     assert.equal(executeFocusedDaybreak(manager, record, "status"), "Daybreak: off");

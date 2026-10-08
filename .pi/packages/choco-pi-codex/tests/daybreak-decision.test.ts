@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { promisify } from "node:util";
 import { zstdDecompress } from "node:zlib";
-import { normalizeContext, type Api, type Model } from "@earendil-works/pi-ai";
+import {
+  createAssistantMessageEventStream,
+  normalizeContext,
+  type Api,
+  type AssistantMessage,
+  type Model,
+} from "@earendil-works/pi-ai";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
@@ -21,6 +27,7 @@ import {
   invalidateCodexDaybreakEntitlement,
   isCurrentCodexDaybreakDecision,
   resolveCodexDaybreakTicket,
+  reportCodexDaybreakResponse,
   snapshotCodexDaybreakDecision,
   type CodexDaybreakTicket,
 } from "../src/providers/openai-codex/daybreak-decision.ts";
@@ -35,12 +42,17 @@ import {
   prepareCodexRequestBody,
   prewarmOpenAICodexWebSocket,
 } from "../src/providers/openai-codex-custom-provider.ts";
+import {
+  processCodexResponsesStream,
+  processMappedCodexResponsesStream,
+} from "../src/providers/openai-codex/stream-events.ts";
 import { buildRequestBody } from "../src/providers/openai-codex/request-body.ts";
 import { buildCachedWebSocketRequestBody } from "../src/providers/openai-codex/websocket-continuation.ts";
 import { sendPreparedWebSocketRequest } from "../src/providers/openai-codex/websocket-stream.ts";
 import { createCodexTransportStream } from "../src/providers/openai-codex/transport-recovery.ts";
 import {
   isResponsesBody,
+  type CodexStreamEvent,
   type OpenAICodexStreamOptions,
   type ResponsesBody,
 } from "../src/providers/openai-codex/types.ts";
@@ -294,7 +306,7 @@ test("off never looks up and every finalizer strips stale or forged access_progr
   assert.equal(calls.length, 0);
 });
 
-test("verified_access grant matrix: active cyber required, red precedence, strict schema", async (t) => {
+test("verified_access picks red over blue; anything else defaults to blue (catalog gates)", async (t) => {
   t.after(cleanup);
   const bridge = installBridge();
   const cases: Array<readonly [string, () => Response, DaybreakOutcome]> = [
@@ -302,12 +314,12 @@ test("verified_access grant matrix: active cyber required, red precedence, stric
     ["tac2", () => Response.json(grantsPayload("tac2")), "blue"],
     ["tac1+tac3", () => Response.json(grantsPayload("tac1", "tac3")), "red"],
     ["government", () => Response.json(grantsPayload("government")), "red"],
-    ["no grants", () => Response.json(grantsPayload()), "not-granted"],
-    ["unknown grant", () => Response.json(grantsPayload("other")), "not-granted"],
+    ["no grants", () => Response.json(grantsPayload()), "blue"],
+    ["unknown grant", () => Response.json(grantsPayload("other")), "blue"],
     [
       "grants omitted",
       () => Response.json({ programs: [{ program: "cyber", state: "active" }] }),
-      "not-granted",
+      "blue",
     ],
     [
       "inactive with tac3",
@@ -315,7 +327,7 @@ test("verified_access grant matrix: active cyber required, red precedence, stric
         Response.json({
           programs: [{ program: "cyber", state: "pending", grants: [{ level: "tac3" }] }],
         }),
-      "not-granted",
+      "blue",
     ],
     [
       "unavailable",
@@ -323,7 +335,7 @@ test("verified_access grant matrix: active cyber required, red precedence, stric
         Response.json({
           programs: [{ program: "cyber", state: "unavailable", grants: [{ level: "tac1" }] }],
         }),
-      "not-granted",
+      "blue",
     ],
     [
       "non-cyber program",
@@ -331,7 +343,7 @@ test("verified_access grant matrix: active cyber required, red precedence, stric
         Response.json({
           programs: [{ program: "bio", state: "active", grants: [{ level: "tac1" }] }],
         }),
-      "not-granted",
+      "blue",
     ],
     [
       "later active entry",
@@ -355,17 +367,17 @@ test("verified_access grant matrix: active cyber required, red precedence, stric
         }),
       "red",
     ],
-    ["programs not array", () => Response.json({ programs: "cyber" }), "lookup-failed"],
-    ["missing programs", () => Response.json({}), "lookup-failed"],
+    ["programs not array", () => Response.json({ programs: "cyber" }), "blue"],
+    ["missing programs", () => Response.json({}), "blue"],
     [
       "program missing state",
       () => Response.json({ programs: [{ program: "cyber", grants: [{ level: "tac1" }] }] }),
-      "lookup-failed",
+      "blue",
     ],
     [
       "non-string grant",
       () => Response.json({ programs: [{ program: "cyber", state: "active", grants: [1] }] }),
-      "lookup-failed",
+      "blue",
     ],
     [
       "object grant",
@@ -373,10 +385,10 @@ test("verified_access grant matrix: active cyber required, red precedence, stric
         Response.json({
           programs: [{ program: "cyber", state: "active", grants: [{ grant: "tac1" }] }],
         }),
-      "lookup-failed",
+      "blue",
     ],
-    ["invalid json", () => new Response("{not json", { status: 200 }), "lookup-failed"],
-    ["server error", () => new Response("down", { status: 500 }), "lookup-failed"],
+    ["invalid json", () => new Response("{not json", { status: 200 }), "blue"],
+    ["server error", () => new Response("down", { status: 500 }), "blue"],
   ];
   for (const [name, respond, expected] of cases) {
     const calls = fakeLookup(respond);
@@ -422,12 +434,12 @@ test("lookup uses canonical URL with auth headers only and times out safely", as
   });
   const started = Date.now();
   const timedOut = await resolve(ticket("timeout"));
-  assert.equal(timedOut.outcome, "lookup-failed");
-  assert.equal(timedOut.cyber, undefined);
+  assert.equal(timedOut.outcome, "blue", "a grant lookup timeout does not block Daybreak");
+  assert.equal(timedOut.cyber, "daybreak_blue");
   assert.ok(Date.now() - started < 2_000);
 });
 
-test("model availability is checked before entitlement and failures omit the field", async (t) => {
+test("model availability gates; the grant only selects red and never blocks", async (t) => {
   t.after(cleanup);
   const bridge = installBridge();
   // An unsupported model never spends an entitlement lookup, whatever the account would say.
@@ -439,7 +451,7 @@ test("model availability is checked before entitlement and failures omit the fie
   assert.equal((await resolve(ticket("unsupported-first"))).outcome, "model-not-supported");
   assert.equal(entitlementCalls.length, 0);
 
-  // A supported model then consults entitlement; denial and failure both omit the field.
+  // A supported model then consults the grant only to choose red; denial and failure still send blue.
   configureCodexDaybreakModelSupportForTest({
     fetch: async () =>
       Response.json({
@@ -447,14 +459,14 @@ test("model availability is checked before entitlement and failures omit the fie
       }),
   });
   for (const [name, respond, expected] of [
-    ["denied", () => Response.json(grantsPayload()), "not-granted"],
-    ["failure", () => new Response("failed", { status: 500 }), "lookup-failed"],
+    ["denied", () => Response.json(grantsPayload()), "blue"],
+    ["failure", () => new Response("failed", { status: 500 }), "blue"],
   ] satisfies Array<readonly [string, () => Response, DaybreakOutcome]>) {
     fakeLookup(respond);
     bridge.add(name, true);
     const decision = await resolve(ticket(name));
     assert.equal(decision.outcome, expected);
-    assert.equal(hasAccessPrograms(applyCodexDaybreakAccessPrograms({}, decision)), false);
+    assert.equal(hasAccessPrograms(applyCodexDaybreakAccessPrograms({}, decision)), true);
   }
 
   // A catalog failure omits the field too.
@@ -472,7 +484,7 @@ test("model availability is checked before entitlement and failures omit the fie
     false,
   );
 
-  // A model that advertises only a different program than the grant is still unsupported.
+  // A red grant on a blue-only model falls back to blue, matching what the server would apply.
   fakeLookup(() => Response.json(grantsPayload("tac3")));
   configureCodexDaybreakModelSupportForTest({
     fetch: async () =>
@@ -481,7 +493,9 @@ test("model availability is checked before entitlement and failures omit the fie
       }),
   });
   bridge.add("red-on-blue-only", true);
-  assert.equal((await resolve(ticket("red-on-blue-only"))).outcome, "model-not-supported");
+  const fallback = await resolve(ticket("red-on-blue-only"));
+  assert.equal(fallback.outcome, "blue");
+  assert.equal(fallback.cyber, "daybreak_blue");
 });
 
 test("toggle-on refreshes cached model support and stale owners never enable an unverified model", async (t) => {
@@ -596,7 +610,7 @@ test("entitlement cache: shared single-flight, TTL, token change, 401, bounded e
 
   const denied = fakeLookup(() => new Response("forbidden", { status: 403 }));
   bridge.add("denied", true);
-  assert.equal((await resolve(ticket("denied"))).outcome, "lookup-failed");
+  assert.equal((await resolve(ticket("denied"))).outcome, "blue");
   await resolve(ticket("denied"));
   assert.equal(denied.length, 2, "403 lookups are not cached");
 
@@ -718,6 +732,108 @@ test("frozen decision: revision drift keeps start state; identity or generation 
   credentials.apiKey = "not-a-jwt";
   assert.equal((await resolve(ownedTicket)).outcome, "blue");
   assert.deepEqual(owned.reports, [["blue", 1]]);
+});
+
+test("HTTP and normalized WebSocket terminal echoes attest the applied Daybreak program", async (t) => {
+  t.after(cleanup);
+  const bridge = installBridge();
+  fakeLookup(() => Response.json(grantsPayload("tac1")));
+  const account = daybreakAccount(token("acct-1"), model.baseUrl);
+  assert.ok(account);
+  for (const transport of ["http", "ws"]) {
+    for (const echo of ["standard", "daybreak_blue", "absent", "malformed"]) {
+      const id = `${transport}-${echo}`;
+      const fake = bridge.add(id, true);
+      const requestTicket = ticket(id);
+      await resolve(requestTicket);
+      assert.equal(hasCodexDaybreakEntitlementEntry(account), true);
+      const response: CodexStreamEvent["response"] = { status: "completed" };
+      if (echo !== "absent")
+        response.access_programs = echo === "malformed" ? { cyber: 5 } : { cyber: echo };
+      const output: AssistantMessage = {
+        role: "assistant",
+        content: [],
+        api: model.api,
+        provider: model.provider,
+        model: model.id,
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+        timestamp: 1,
+      };
+      async function* events(): AsyncIterable<CodexStreamEvent> {
+        yield { type: transport === "http" ? "response.done" : "response.completed", response };
+      }
+      const process =
+        transport === "http" ? processCodexResponsesStream : processMappedCodexResponsesStream;
+      await process(events(), output, createAssistantMessageEventStream(), model, {
+        daybreakTicket: requestTicket,
+      });
+      assert.equal(fake.state.outcome, echo === "standard" ? "not-granted" : "blue");
+      assert.equal(hasCodexDaybreakEntitlementEntry(account), echo !== "standard");
+      assert.equal(fake.reports.length, echo === "standard" || echo === "daybreak_blue" ? 2 : 1);
+      reportCodexDaybreakResponse(requestTicket, { access_programs: { cyber: "standard" } });
+      assert.equal(
+        fake.reports.length,
+        echo === "standard" || echo === "daybreak_blue" ? 2 : 1,
+        "terminal observation settles once",
+      );
+    }
+  }
+});
+
+test("custom HTTP provider carries its frozen Daybreak ticket through terminal echo observation", async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    cleanup();
+  });
+  const bridge = installBridge();
+  fakeLookup(() => Response.json(grantsPayload("tac1")));
+  const fake = bridge.add("http-echo", true);
+  let requests = 0;
+  globalThis.fetch = async () => {
+    requests++;
+    return new Response(
+      `data: ${JSON.stringify({ type: "response.completed", response: { status: "completed", access_programs: { cyber: "standard" } } })}\n\n`,
+      { headers: { "content-type": "text/event-stream" } },
+    );
+  };
+  const stream = createOpenAICodexProviderStream(
+    model,
+    context,
+    { sessionId: "http-echo", apiKey: token("acct-1"), transport: "sse", maxRetries: 0 },
+    {},
+  );
+  for await (const _event of stream);
+  assert.equal(fake.state.outcome, "not-granted");
+  assert.equal(requests, 1, "the echo never retries or resends the request");
+  const account = daybreakAccount(token("acct-1"), model.baseUrl);
+  assert.ok(account);
+  assert.equal(hasCodexDaybreakEntitlementEntry(account), false);
+});
+
+test("server echoes from superseded Daybreak revisions do not report or invalidate the cache", async (t) => {
+  t.after(cleanup);
+  const bridge = installBridge();
+  fakeLookup(() => Response.json(grantsPayload("tac1")));
+  const fake = bridge.add("echo-stale", true);
+  const requestTicket = ticket("echo-stale");
+  await resolve(requestTicket);
+  fake.controller.set(false);
+  fake.controller.set(true);
+  const before = fake.reports.length;
+  reportCodexDaybreakResponse(requestTicket, { access_programs: { cyber: "standard" } });
+  assert.equal(fake.reports.length, before);
+  const account = daybreakAccount(token("acct-1"), model.baseUrl);
+  assert.ok(account);
+  assert.equal(hasCodexDaybreakEntitlementEntry(account), true);
 });
 
 test("HTTP provider path applies after payload hooks and 401 invalidates entitlement", async (t) => {
