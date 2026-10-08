@@ -6,7 +6,7 @@ import {
   type ExtensionAPI,
   type ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
-import { Box, matchesKey, ScrollView, Text } from "@earendil-works/pi-tui";
+import { Box, matchesKey, ScrollView, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import {
   AGENT_OUTCOME_PREFIX,
   getPreferencesProvider,
@@ -127,6 +127,8 @@ function setToolInventory(inventory: ToolInventory): void {
 export type TabController = {
   /** Switch to a tab in one of its two views, repaint the last body, and re-query it. */
   activate: (id: TextTabId, expanded?: boolean) => void;
+  /** Drop theme-dependent bodies and refresh the visible tab without losing its scroll position. */
+  invalidate: () => void;
   /** Stop the refresh timer. */
   dispose: () => void;
 };
@@ -141,9 +143,9 @@ export type TabController = {
  * view paints the other one immediately instead of blanking on every keypress.
  */
 export function createTabController(options: {
-  load: (id: TextTabId, expanded: boolean) => Promise<string>;
+  load: (id: TextTabId, expanded: boolean) => string | Promise<string>;
   paint: (body: string, view: { preserveScroll: boolean }) => void;
-  loading: string;
+  loading: () => string;
   failure: (id: TextTabId, message: string) => string;
   intervalMs?: number;
 }): TabController {
@@ -152,23 +154,31 @@ export function createTabController(options: {
   let active: TextTabId | undefined;
   let activeExpanded = false;
   let token = 0;
+  let generation = 0;
   let timer: ReturnType<typeof setInterval> | undefined;
   const viewKey = (id: TextTabId, expanded: boolean): string => `${id}:${expanded ? "all" : ""}`;
   const query = (id: TextTabId, expanded: boolean, background: boolean): void => {
     const current = ++token;
-    Promise.resolve()
-      .then(() => options.load(id, expanded))
-      .then((body) => {
-        cache.set(viewKey(id, expanded), body);
-        if (current === token && active === id && activeExpanded === expanded)
-          options.paint(body, { preserveScroll: background });
-      })
-      .catch((error: RuntimeValue) => {
-        if (current !== token || active !== id || activeExpanded !== expanded) return;
-        if (cache.has(viewKey(id, expanded))) return;
-        const message = error instanceof Error ? error.message : String(error);
-        options.paint(options.failure(id, message), { preserveScroll: background });
-      });
+    const currentGeneration = generation;
+    const accept = (body: string): void => {
+      if (currentGeneration !== generation) return;
+      cache.set(viewKey(id, expanded), body);
+      if (current === token && active === id && activeExpanded === expanded)
+        options.paint(body, { preserveScroll: background });
+    };
+    const fail = (error: RuntimeValue): void => {
+      if (current !== token || active !== id || activeExpanded !== expanded) return;
+      if (cache.has(viewKey(id, expanded))) return;
+      const message = error instanceof Error ? error.message : String(error);
+      options.paint(options.failure(id, message), { preserveScroll: background });
+    };
+    try {
+      const body = options.load(id, expanded);
+      if (isString(body)) accept(body);
+      else void body.then(accept).catch(fail);
+    } catch (error) {
+      fail(error);
+    }
   };
   const restartTimer = (): void => {
     if (timer !== undefined) clearInterval(timer);
@@ -182,13 +192,24 @@ export function createTabController(options: {
     activate: (id: TextTabId, expanded = false) => {
       active = id;
       activeExpanded = expanded;
-      options.paint(cache.get(viewKey(id, expanded)) ?? options.loading, { preserveScroll: false });
+      options.paint(cache.get(viewKey(id, expanded)) ?? options.loading(), {
+        preserveScroll: false,
+      });
       restartTimer();
       query(id, expanded, false);
+    },
+    invalidate: () => {
+      cache.clear();
+      generation++;
+      token++;
+      if (active === undefined) return;
+      options.paint(options.loading(), { preserveScroll: true });
+      query(active, activeExpanded, true);
     },
     dispose: () => {
       if (timer !== undefined) clearInterval(timer);
       timer = undefined;
+      generation++;
       token++;
     },
   };
@@ -272,13 +293,13 @@ export function tabBody(
   id: TextTabId,
   styled: boolean,
   expanded = false,
-): Promise<string> {
+): string | Promise<string> {
   const style = styled ? ctx.ui.theme : undefined;
   if (id === "usage") {
     return usageReport(ctx, style);
   }
-  if (id === "context") return Promise.resolve(contextBody(ctx, expanded, styled));
-  return Promise.resolve(statusBody(ctx, thinkingLevel, style, expanded));
+  if (id === "context") return contextBody(ctx, expanded, styled);
+  return statusBody(ctx, thinkingLevel, style, expanded);
 }
 
 type PreferencesFocus = { section?: string; focusId?: string; openSubmenu?: boolean };
@@ -443,7 +464,7 @@ async function showTabOnce(
     const controller = createTabController({
       load: (id, view) => tabBody(ctx, thinkingLevel, id, true, view),
       paint,
-      loading: theme.fg("dim", "Loading…"),
+      loading: () => theme.fg("dim", "Loading…"),
       failure: (id, message) => theme.fg("error", `Failed to load the ${id} tab: ${message}`),
     });
 
@@ -532,18 +553,25 @@ async function showTabOnce(
     return {
       render: (width: number) => {
         if (active === "preferences") {
-          const rows = [header(), ""];
+          const rows = [truncateToWidth(header(), width), ""];
           if (panel) rows.push(...panel.render(width));
           else
             rows.push(
-              theme.fg("dim", "The choco-pi-ui package is not loaded; Preferences is unavailable."),
+              truncateToWidth(
+                theme.fg(
+                  "dim",
+                  "The choco-pi-ui package is not loaded; Preferences is unavailable.",
+                ),
+                width,
+              ),
             );
-          rows.push("", panelHint());
+          rows.push("", truncateToWidth(panelHint(), width));
           return rows;
         }
         return scrollView.render(width);
       },
       invalidate: () => {
+        controller.invalidate();
         scrollView.invalidate();
         panel?.invalidate();
       },

@@ -162,7 +162,7 @@ test("contains a synchronous stale-context failure while a tab is switching", as
       throw new Error("This extension ctx is stale after session replacement or reload.");
     },
     paint: (body) => paints.push(body),
-    loading: "Loading",
+    loading: () => "Loading",
     failure: (_id, message) => `Failed: ${message}`,
   });
 
@@ -326,7 +326,7 @@ test("re-queries the usage tab on every activation and every refresh interval", 
       return Promise.resolve(`${id}-body-${loads.length}`);
     },
     paint: (body, view) => paints.push([body, view.preserveScroll]),
-    loading: "loading",
+    loading: () => "loading",
     failure: (id, message) => `failed ${id}: ${message}`,
   });
 
@@ -361,7 +361,7 @@ test("keeps the last good body when a refresh fails and never auto-refreshes Sta
       return attempt === 1 ? Promise.resolve("fresh") : Promise.reject(new Error("HTTP 500"));
     },
     paint: (body) => paints.push(body),
-    loading: "loading",
+    loading: () => "loading",
     failure: (id, message) => `failed ${id}: ${message}`,
   });
 
@@ -394,7 +394,7 @@ test("caches a tab's concise and expanded bodies separately", async () => {
       return Promise.resolve(`${id}-${expanded ? "all" : "brief"}`);
     },
     paint: (body) => paints.push(body),
-    loading: "loading",
+    loading: () => "loading",
     failure: (id, message) => `failed ${id}: ${message}`,
   });
 
