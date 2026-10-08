@@ -16,6 +16,7 @@ import {
   resolveTypeIn,
 } from "./agent-types.ts";
 import { loadCustomAgents } from "./custom-agents.ts";
+import { buildRecordDetails, delegationRenderers } from "./delegation-render.ts";
 import { isolationParam, resolveAgentInvocationConfig } from "./invocation-config.ts";
 import { SUBAGENT_DEPTH_CEILING } from "./limits.ts";
 import { formatSteerMessage, getAgentIdentity } from "./messaging.ts";
@@ -157,8 +158,8 @@ export interface NestedToolContext {
   configCwd: string;
 }
 
-function textResult(text: string, isError = false) {
-  return { content: [{ type: "text" as const, text }], isError, details: {} };
+function textResult(text: string, isError = false, details = {}) {
+  return { content: [{ type: "text" as const, text }], isError, details };
 }
 
 function ownsRecord(record: AgentRecord | undefined, parentAgentId: string): record is AgentRecord {
@@ -234,6 +235,8 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
   const agentTool = defineTool({
     name: NESTED_TOOL_NAMES[0],
     label: "Agent",
+    renderCall: delegationRenderers.renderCall,
+    renderResult: delegationRenderers.renderResult,
     description:
       "Launch a child-safe nested subagent for bounded delegated work. " +
       "Only use agent types allowed by this parent agent; nesting is depth-limited.",
@@ -360,6 +363,7 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
         return textResult(
           `Agent alias: @${address}\n\n${formatRecord(resumed, "inline")}`,
           resumed.status === "error",
+          buildRecordDetails(resumed, false, true),
         );
       }
 
@@ -534,9 +538,12 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
           // Synchronous, before the event loop yields — onSessionCreated fires
           // asynchronously inside runAgent, so the file is attached in time.
           attachTranscript(id);
+          const record = context.manager.getRecord(id);
           return textResult(
             `Nested agent started in background. Agent ID: ${id}\n` +
               `${TERMINAL_RESULT_RETRIEVAL_GUIDANCE} Use steer_subagent to send it a message mid-run.`,
+            false,
+            record ? buildRecordDetails(record, true) : {},
           );
         }
 
@@ -548,7 +555,11 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
           { ...options, signal },
           attachTranscript,
         );
-        return textResult(formatRecord(record, "inline"), record.status === "error");
+        return textResult(
+          formatRecord(record, "inline"),
+          record.status === "error",
+          buildRecordDetails(record),
+        );
       } catch (err) {
         return textResult(err instanceof Error ? err.message : String(err), true);
       }
@@ -558,6 +569,8 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
   const resultTool = defineTool({
     name: NESTED_TOOL_NAMES[1],
     label: "Get Nested Agent Result",
+    renderCall: delegationRenderers.renderCall,
+    renderResult: delegationRenderers.renderResult,
     description:
       "Retrieve an owned background nested-agent result after terminal completion. The first active read returns current status; repeated active reads in that run are refused until completion. " +
       `${TERMINAL_RESULT_RETRIEVAL_GUIDANCE} ${RESULT_WAIT_MECHANICS}`,
@@ -619,13 +632,19 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
           throw error;
         }
       }
-      return textResult(formatRecord(record, "fetched"), record.status === "error");
+      return textResult(
+        formatRecord(record, "fetched"),
+        record.status === "error",
+        buildRecordDetails(record),
+      );
     },
   });
 
   const steerTool = defineTool({
     name: NESTED_TOOL_NAMES[2],
     label: "Steer Nested Agent",
+    renderCall: delegationRenderers.renderCall,
+    renderResult: delegationRenderers.renderResult,
     description:
       "Send an agent-authored MESSAGE envelope to a running or queued nested agent you own. It interrupts the agent after its current tool execution and only works while the agent is running or queued.",
     parameters: Type.Object({
@@ -653,7 +672,11 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
       if (!record.session) {
         if (!record.pendingSteers) record.pendingSteers = [];
         record.pendingSteers.push(envelope);
-        return textResult(`Steering message queued for nested agent ${params.agent_id}.`);
+        return textResult(
+          `Steering message queued for nested agent ${params.agent_id}.`,
+          false,
+          buildRecordDetails(record),
+        );
       }
       let disposition: QueuedInputDisposition;
       try {
@@ -667,9 +690,15 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
       if (disposition === "handled") {
         return textResult(
           `Steering message to nested agent ${params.agent_id} was handled by an input handler in its session and was not queued; its model will not receive it as a message.`,
+          false,
+          buildRecordDetails(record),
         );
       }
-      return textResult(`Steering message sent to nested agent ${params.agent_id}.`);
+      return textResult(
+        `Steering message sent to nested agent ${params.agent_id}.`,
+        false,
+        buildRecordDetails(record),
+      );
     },
   });
 

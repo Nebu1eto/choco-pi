@@ -33,7 +33,6 @@ import {
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { abortable } from "./abortable.ts";
-import { hasAgentBadge, renderAgentName } from "./agent-color.ts";
 import {
   buildNewAgentFile,
   disableInContent,
@@ -157,14 +156,11 @@ import {
   type AgentDetails,
   buildInvocationTags,
   describeActivity,
-  fgPreservingNestedStyles,
   formatDuration,
   formatMs,
   formatTokens,
-  formatTurns,
   getDisplayName,
   SPINNER,
-  type Theme,
 } from "./ui/agent-widget.ts";
 import { FleetPanel, type FleetPanelUICtx } from "./ui/fleet-panel.ts";
 import type {
@@ -193,6 +189,7 @@ import {
   SUBAGENTS_USAGE_LIMIT_EVENT,
   type SubagentsUsageLimitEvent,
 } from "./usage-limit-seam.ts";
+import { buildDetails, buildRecordDetails, delegationRenderers } from "./delegation-render.ts";
 import { isWorktreeIsolationEnabled, setWorktreeIsolationEnabled } from "./worktree.ts";
 import {
   THINKING_LEVELS,
@@ -220,19 +217,11 @@ function errorResult(msg: string) {
   return { ...textResult(msg), isError: true };
 }
 
-export function renderRunningAgentStatus(
-  frame: string,
-  statsText: string,
-  activity: string,
-  theme: Pick<Theme, "fg">,
-): Container {
-  const container = new Container();
-  container.addChild(
-    new Text(theme.fg("accent", frame) + (statsText ? " " + statsText : ""), 0, 0),
-  );
-  container.addChild(new Text(theme.fg("dim", `  ⎿  ${activity}`), 0, 0));
-  return container;
-}
+export {
+  buildRecordDetails,
+  delegationRenderers,
+  renderRunningAgentStatus,
+} from "./delegation-render.ts";
 
 /** Format an agent's lifetime token total, or "" when zero. */
 function formatLifetimeTokens(o: { lifetimeUsage: LifetimeUsage }): string {
@@ -340,36 +329,6 @@ function formatTaskNotification(record: AgentRecord, resultMaxLen: number): stri
   ]
     .filter(Boolean)
     .join("\n");
-}
-
-/** Build AgentDetails from a base + record-specific fields. */
-function buildDetails(
-  base: Pick<AgentDetails, "displayName" | "description" | "subagentType" | "modelName" | "tags">,
-  record: {
-    toolUses: number;
-    startedAt: number;
-    completedAt?: number;
-    status: AgentDetails["status"];
-    error?: string;
-    id?: string;
-    session?: any;
-    lifetimeUsage: LifetimeUsage;
-  },
-  activity?: AgentActivity,
-  overrides?: Partial<AgentDetails>,
-): AgentDetails {
-  return {
-    ...base,
-    toolUses: record.toolUses,
-    tokens: formatLifetimeTokens(record),
-    turnCount: activity?.turnCount,
-    maxTurns: activity?.maxTurns,
-    durationMs: (record.completedAt ?? Date.now()) - record.startedAt,
-    status: record.status,
-    agentId: record.id,
-    error: record.error,
-    ...overrides,
-  };
 }
 
 /** Build notification details for the custom message renderer. */
@@ -1385,6 +1344,7 @@ export default function (pi: ExtensionAPI) {
   // Fullscreen focus replaces the main transcript renderer and binds the existing
   // prompt editor to manager.steer(), preserving every editor adapter already on it.
   const focus = new FocusedAgentController(manager, {
+    getHideThinkingBlock: () => pi.getSettings().hideThinkingBlock === true,
     getActivity: (id) => agentActivity.get(id),
     onSteered: (id, message) => pi.events.emit("subagents:steered", { id, message }),
     // FleetView is the focus switcher; when it is turned off, focus mode keeps
@@ -1905,142 +1865,8 @@ export default function (pi: ExtensionAPI) {
 
     // ---- Custom rendering: Claude Code style ----
 
-    renderCall(args, theme, context) {
-      // A badge closes its own background, which would clear the tool block's row tint
-      // for the rest of the line, so the badge restores it. The tint is opened here too:
-      // the TUI's Box paints it, but HTML export takes it from CSS, and restoring a
-      // background the line never opened is what banded the export before. The line is
-      // deliberately left open — Box.applyBackgroundToLine pads to width and *then*
-      // wraps, so closing here would leave that padding untinted, and HTML export closes
-      // any open span per line anyway. No badge means no tint, so an uncolored agent
-      // renders exactly the line it always did.
-      const rowBackground = hasAgentBadge(args.subagent_type)
-        ? theme.getBgAnsi(
-            context.isPartial ? "toolPendingBg" : context.isError ? "toolErrorBg" : "toolSuccessBg",
-          )
-        : "";
-      const desc = args.description ?? "";
-      const name = renderAgentName(args.subagent_type, theme, {
-        fallbackColor: "toolTitle",
-        restoreBackground: rowBackground,
-        bold: true,
-      });
-      return new Text(
-        rowBackground + "▸ " + name + (desc ? "  " + theme.fg("muted", desc) : ""),
-        0,
-        0,
-      );
-    },
-
-    renderResult(result, { expanded, isPartial }, theme, renderContext) {
-      // SAFETY: This renderer is registered with the Agent tool whose execute paths create AgentDetails.
-      const details = result.details as AgentDetails | undefined;
-      const text = result.content[0]?.type === "text" ? result.content[0].text : "";
-      // Pi reports pre-execution failures (extension block, abort, argument
-      // validation) as `{ content: [reason], details: {} }` with isError set —
-      // no status to render, so show the reason instead of inventing one (#199).
-      if (renderContext.isError || !details?.status) {
-        return new Text(text, 0, 0);
-      }
-
-      // Helper: build "haiku · thinking: high · ↻5≤30 · 3 tool uses · 33.8k tokens" stats string
-      const stats = (d: AgentDetails) => {
-        const parts: string[] = [];
-        if (d.modelName) parts.push(d.modelName);
-        if (d.tags) parts.push(...d.tags);
-        if (d.turnCount != null && d.turnCount > 0) {
-          parts.push(formatTurns(d.turnCount, d.maxTurns));
-        }
-        if (d.toolUses > 0) parts.push(`${d.toolUses} tool use${d.toolUses === 1 ? "" : "s"}`);
-        if (d.tokens) parts.push(d.tokens);
-        return parts
-          .map((p) => fgPreservingNestedStyles(theme, "dim", p))
-          .join(" " + theme.fg("dim", "·") + " ");
-      };
-
-      // ---- While running (streaming) ----
-      if (isPartial || details.status === "running") {
-        const frame = SPINNER[details.spinnerFrame ?? 0];
-        const s = stats(details);
-        return renderRunningAgentStatus(frame, s, details.activity ?? "thinking…", theme);
-      }
-
-      // ---- Background agent launched ----
-      if (details.status === "background") {
-        return new Text(
-          theme.fg("dim", `  ⎿  Running in background (ID: ${details.agentId})`),
-          0,
-          0,
-        );
-      }
-
-      // ---- Completed / Steered ----
-      if (details.status === "completed" || details.status === "steered") {
-        const duration = formatMs(details.durationMs);
-        const isSteered = details.status === "steered";
-        const icon = isSteered ? theme.fg("warning", "✓") : theme.fg("success", "✓");
-        const s = stats(details);
-        let line = icon + (s ? " " + s : "");
-        line += " " + theme.fg("dim", "·") + " " + theme.fg("dim", duration);
-
-        if (expanded) {
-          const resultText = result.content[0]?.type === "text" ? result.content[0].text : "";
-          if (resultText) {
-            const lines = resultText.split("\n").slice(0, 50);
-            for (const l of lines) {
-              line += "\n" + theme.fg("dim", `  ${l}`);
-            }
-            if (resultText.split("\n").length > 50) {
-              line +=
-                "\n" +
-                theme.fg("muted", "  ... (use get_subagent_result with verbose for full output)");
-            }
-          }
-        } else {
-          const doneText = isSteered ? "Wrapped up (turn limit)" : "Done";
-          line += "\n" + theme.fg("dim", `  ⎿  ${doneText}`);
-        }
-        return new Text(line, 0, 0);
-      }
-
-      // ---- Stopped (user-initiated abort) ----
-      if (details.status === "stopped") {
-        const s = stats(details);
-        let line = theme.fg("dim", "■") + (s ? " " + s : "");
-        line += "\n" + theme.fg("dim", "  ⎿  Stopped");
-        return new Text(line, 0, 0);
-      }
-
-      if (details.status === "budget_exceeded" || details.status === "watchdog_stopped") {
-        const s = stats(details);
-        let line = theme.fg("warning", "■") + (s ? " " + s : "");
-        line +=
-          "\n" +
-          theme.fg(
-            "warning",
-            `  ⎿  ${details.status === "budget_exceeded" ? "Budget exceeded" : "Idle watchdog stopped"}: ${details.error ?? "unknown"}`,
-          );
-        return new Text(line, 0, 0);
-      }
-
-      // Anything left ("queued", or a status added later) has no rendering of
-      // its own — the turn-limit wording below must not be the catch-all.
-      if (details.status !== "error" && details.status !== "aborted") {
-        return new Text(text, 0, 0);
-      }
-
-      // ---- Error / Aborted (hard max_turns) ----
-      const s = stats(details);
-      let line = theme.fg("error", "✗") + (s ? " " + s : "");
-
-      if (details.status === "error") {
-        line += "\n" + theme.fg("error", `  ⎿  Error: ${details.error ?? "unknown"}`);
-      } else {
-        line += "\n" + theme.fg("warning", "  ⎿  Aborted (max turns exceeded)");
-      }
-
-      return new Text(line, 0, 0);
-    },
+    renderCall: delegationRenderers.renderCall,
+    renderResult: delegationRenderers.renderResult,
 
     // ---- Execute ----
 
@@ -2311,16 +2137,7 @@ export default function (pi: ExtensionAPI) {
                 : "") +
               `\nYou will be notified when this agent completes.\n` +
               `${TERMINAL_RESULT_RETRIEVAL_GUIDANCE} Use steer_subagent to send it messages.`,
-            {
-              ...detailBase,
-              subagentType: existing.type,
-              displayName: existing.type,
-              toolUses: record.toolUses,
-              tokens: "",
-              durationMs: 0,
-              status: "background" as const,
-              agentId: id,
-            },
+            buildRecordDetails(record, true, true),
           );
         }
 
@@ -2356,7 +2173,7 @@ export default function (pi: ExtensionAPI) {
               `Agent ID: ${record.id}\n` +
               (record.usageLimit ? `Usage limit: ${describeUsageLimit(record.usageLimit)}\n` : "") +
               `It resumes on the same model after the reset. ${TERMINAL_RESULT_RETRIEVAL_GUIDANCE}`,
-            buildDetails(detailBase, record),
+            buildRecordDetails(record, false, true),
           );
         }
         // A failed resume surfaces the error, plus any partial output THIS
@@ -2368,12 +2185,12 @@ export default function (pi: ExtensionAPI) {
         ) {
           return textResult(
             `Agent alias: @${address}\nAgent failed: ${record.error}${partialOutputSuffix(record)}`,
-            buildDetails(detailBase, record),
+            buildRecordDetails(record, false, true),
           );
         }
         return textResult(
           `Agent alias: @${address}\n\n${record.result?.trim() || "No output."}`,
-          buildDetails(detailBase, record),
+          buildRecordDetails(record, false, true),
         );
       }
 
@@ -2462,14 +2279,16 @@ export default function (pi: ExtensionAPI) {
             `\nYou will be notified when this agent completes.\n` +
             `${TERMINAL_RESULT_RETRIEVAL_GUIDANCE} Use steer_subagent to send it messages.\n` +
             `Do not duplicate this agent's work.`,
-          {
-            ...detailBase,
-            toolUses: 0,
-            tokens: "",
-            durationMs: 0,
-            status: "background" as const,
-            agentId: id,
-          },
+          record
+            ? buildRecordDetails(record, true)
+            : {
+                ...detailBase,
+                toolUses: 0,
+                tokens: "",
+                durationMs: 0,
+                status: "background",
+                agentId: id,
+              },
         );
       }
 
@@ -2971,6 +2790,8 @@ export default function (pi: ExtensionAPI) {
     defineTool({
       name: SUBAGENT_TOOL_NAMES.GET_RESULT,
       label: "Get Agent Result",
+      renderCall: delegationRenderers.renderCall,
+      renderResult: delegationRenderers.renderResult,
       description: "Retrieve a background agent's status or terminal result.",
       promptSnippet: "Retrieve a terminal background-agent result",
       parameters: Type.Object({
@@ -3087,7 +2908,7 @@ export default function (pi: ExtensionAPI) {
           }
         }
 
-        return textResult(output);
+        return textResult(output, buildRecordDetails(record));
       },
     }),
   );
@@ -3098,6 +2919,8 @@ export default function (pi: ExtensionAPI) {
     defineTool({
       name: SUBAGENT_TOOL_NAMES.STEER,
       label: "Steer Agent",
+      renderCall: delegationRenderers.renderCall,
+      renderResult: delegationRenderers.renderResult,
       description: "Send guidance to a running or queued agent.",
       promptSnippet: "Redirect a running or queued agent.",
       parameters: Type.Object({
@@ -3131,6 +2954,7 @@ export default function (pi: ExtensionAPI) {
         if (queuedBeforeSession) {
           return textResult(
             `Steering message queued for agent ${record.id}. It will be delivered once the session initializes.`,
+            buildRecordDetails(record),
           );
         }
         const tokens = formatLifetimeTokens(record);
@@ -3146,6 +2970,7 @@ export default function (pi: ExtensionAPI) {
         return textResult(
           `Steering message sent to agent ${record.id}. The agent will process it after its current tool execution.\n` +
             `Current state: ${stateParts.join(" · ")}`,
+          buildRecordDetails(record),
         );
       },
     }),
