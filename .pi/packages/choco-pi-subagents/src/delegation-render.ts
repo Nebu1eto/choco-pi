@@ -86,6 +86,7 @@ export function buildDetails(
     outputFile?: string;
     session?: AgentRecord["session"];
     lifetimeUsage: LifetimeUsage;
+    pendingDependents?: AgentRecord["pendingDependents"];
   },
   activity?: AgentActivity,
   overrides?: Partial<AgentDetails>,
@@ -104,6 +105,7 @@ export function buildDetails(
     handle: record.handle,
     outputFile: record.outputFile,
     resumed: false,
+    ...(record.pendingDependents && { pendingDependents: record.pendingDependents }),
     ...overrides,
   };
 }

@@ -324,6 +324,9 @@ function formatTaskNotification(record: AgentRecord, resultMaxLen: number): stri
       : null,
     `<summary>Agent "${escapeXml(record.description)}" ${record.status}${getStatusNote(record.status)}</summary>`,
     `<result>${escapeXml(resultPreview)}</result>`,
+    record.pendingDependents
+      ? `Pending dependents (terminal-boundary snapshot): ${escapeXml(record.pendingDependents.map((child) => child.handle ?? child.id).join(", "))}.`
+      : null,
     `<usage><total_tokens>${totalTokens}</total_tokens><tool_uses>${record.toolUses}</tool_uses>${ctxXml}${compactXml}<duration_ms>${durationMs}</duration_ms></usage>`,
     `</task-notification>`,
   ]
@@ -567,6 +570,7 @@ export default function (pi: ExtensionAPI) {
       tokens,
       agentTranscriptPath: record.outputFile ?? record.sessionFile,
       ...(record.usageLimit && { usageLimit: record.usageLimit }),
+      ...(record.pendingDependents && { pendingDependents: record.pendingDependents }),
       ...(record.sideConversation && { sideConversation: true }),
       ...(record.workflowId && {
         workflowId: record.workflowId,

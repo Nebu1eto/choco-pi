@@ -779,6 +779,8 @@ export function buildEffectivePrompt(
 }
 
 export interface RunOptions {
+  /** Synchronous, generation-pinned check before a tool-free turn may finish. */
+  onFinishAttempt?: () => { steer?: string; failure?: string } | undefined;
   /** ExtensionAPI instance — used for pi.exec() instead of execSync. */
   pi: ExtensionAPI;
   /** Narrow loader-construction seam used by wiring probes before a child session is created. */
@@ -985,11 +987,13 @@ export function installRunnerTurnLimit(
     maxTurns: number | undefined;
     signal?: AbortSignal;
     onTurnEnd?: (turnCount: number) => void;
+    onFinishAttempt?: RunOptions["onFinishAttempt"];
   },
 ) {
   let turnCount = 0;
   let softLimitReached = false;
   let aborted = false;
+  let failure: string | undefined;
   const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
     if (event.type !== "turn_end") return;
     turnCount++;
@@ -1003,6 +1007,16 @@ export function installRunnerTurnLimit(
       // before the host checks queues to decide whether to continue.
       session.clearQueue();
       return;
+    }
+    // A tool-free turn ends with a finish attempt, where the dependency guard may steer.
+    if (
+      options.onFinishAttempt &&
+      event.message.role === "assistant" &&
+      !event.message.content.some((block) => block.type === "toolCall")
+    ) {
+      const correction = options.onFinishAttempt?.();
+      failure = correction?.failure;
+      if (correction?.steer) session.steer(correction.steer);
     }
     if (options.maxTurns == null) return;
     if (!softLimitReached && turnCount >= options.maxTurns) {
@@ -1018,6 +1032,7 @@ export function installRunnerTurnLimit(
   return {
     getAborted: () => aborted,
     getSteered: () => softLimitReached,
+    getFailure: () => failure,
     unsubscribe,
   };
 }
@@ -1571,6 +1586,7 @@ export async function runAgent(
     maxTurns,
     signal: options.signal,
     onTurnEnd: options.onTurnEnd,
+    onFinishAttempt: options.onFinishAttempt,
   });
   const unsubEvents = session.subscribe((event: AgentSessionEvent) => {
     if (event.type === "message_start") {
@@ -1620,7 +1636,7 @@ export async function runAgent(
     session,
     aborted: turnLimit.getAborted(),
     steered: turnLimit.getSteered(),
-    failure: finalTurnError(session, startLen),
+    failure: turnLimit.getFailure() ?? finalTurnError(session, startLen),
   };
 }
 
@@ -1638,6 +1654,7 @@ export async function resumeAgent(
   session: AgentSession,
   prompt: string,
   options: {
+    onFinishAttempt?: RunOptions["onFinishAttempt"];
     maxTurns?: number;
     onToolActivity?: (activity: ToolActivity) => void;
     onAssistantUsage?: (usage: { input: number; output: number; cacheWrite: number }) => void;
@@ -1654,9 +1671,13 @@ export async function resumeAgent(
   const startLen = session.messages.length;
   const maxTurns = normalizeMaxTurns(options.maxTurns);
   const turnLimit =
-    maxTurns === undefined
+    maxTurns === undefined && options.onFinishAttempt === undefined
       ? undefined
-      : installRunnerTurnLimit(session, { maxTurns, signal: options.signal });
+      : installRunnerTurnLimit(session, {
+          maxTurns,
+          signal: options.signal,
+          onFinishAttempt: options.onFinishAttempt,
+        });
   const collector = collectResponseText(session);
   const cleanupAbort = forwardAbortSignal(session, options.signal);
 
@@ -1691,7 +1712,7 @@ export async function resumeAgent(
 
   const result: ResumeResult = {
     text: collector.getText().trim() || getLastAssistantText(session, startLen),
-    failure: finalTurnError(session, startLen),
+    failure: turnLimit?.getFailure() ?? finalTurnError(session, startLen),
   };
   if (turnLimit) {
     result.aborted = turnLimit.getAborted();
