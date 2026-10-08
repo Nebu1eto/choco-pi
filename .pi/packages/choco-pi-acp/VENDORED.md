@@ -363,3 +363,16 @@ statement above covers only the manifest and lockfile.
 - Tests: `tests/component-prompt-disposition.test.ts` covers real RPC response
   frames, malformed payloads, and stale acknowledgements. Test fakes and stub
   executables now return a disposition.
+
+## 2026-10-08 choco-pi patch: bounded child-exit notification draining
+
+- `src/acp/session.ts`: child exit gives serialized ACP notifications a 100 ms
+  best-effort drain window, then releases local prompt settlement even when a
+  client update never resolves. This also releases settlement already in progress;
+  abandoned notifications cannot resume delivery after a late client reply.
+  Responsive connections still drain pending updates before active-turn settlement,
+  and queued turns retain their independent exactly-once exit settlement.
+- `tests/phase5-pi-rpc-exit-stalled-updates.test.ts`: real `PiAcpSession` tests
+  cover stalled delivery, cancellation, an already-draining turn, late replies,
+  duplicate terminal events, and responsive-client notification ordering without
+  spawning a Pi child.
