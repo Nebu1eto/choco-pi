@@ -6,7 +6,10 @@ import type {
   ModelRegistry,
 } from "@earendil-works/pi-coding-agent";
 import { InteractiveMode } from "@earendil-works/pi-coding-agent";
-import statusCommands, { statusBody } from "../.pi/extensions/status-commands.ts";
+import statusCommands, {
+  createTabController,
+  statusBody,
+} from "../.pi/extensions/status-commands.ts";
 import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
 
 function fakeContext(): ExtensionCommandContext {
@@ -34,10 +37,71 @@ function fakeContext(): ExtensionCommandContext {
   return reinterpretHostValue<ExtensionCommandContext>(ctx);
 }
 
-test("statusBody includes cache warming when the host capture is unavailable", () => {
+test("statusBody synchronously includes cache warming while MCP configuration loads", () => {
   const body = statusBody(fakeContext(), "medium");
+  assert.match(body, /MCP servers:\s+checking configuration \(see \/mcp\)/);
   assert.match(body, /^Cache warming {2}unavailable$/m);
 });
+
+test("an MCP refresh updates the immediate status body without resetting its scroll", async () => {
+  let resolveRefresh = (_render: () => string): void => {};
+  const paints: Array<{ body: string; preserveScroll: boolean }> = [];
+  const controller = createTabController({
+    load: () => ({
+      body: "checking configuration",
+      refresh: new Promise<() => string>((resolve) => {
+        resolveRefresh = resolve;
+      }),
+    }),
+    paint: (body, view) => paints.push({ body, ...view }),
+    loading: () => "Loading",
+    failure: (_id, message) => message,
+  });
+  try {
+    controller.activate("status");
+    assert.equal(paints.at(-1)?.body, "checking configuration");
+    resolveRefresh(() => "3 configured (see /mcp)");
+    await Promise.resolve();
+    assert.deepEqual(paints.at(-1), { body: "3 configured (see /mcp)", preserveScroll: true });
+  } finally {
+    controller.dispose();
+  }
+});
+
+for (const transition of ["invalidate", "switch", "dispose"] as const) {
+  test(`an MCP refresh does not render a stale context after ${transition}`, async () => {
+    let resolveRefresh = (_render: () => string): void => {};
+    let rendered = 0;
+    const controller = createTabController({
+      load: (id) =>
+        id === "status"
+          ? {
+              body: "immediate status",
+              refresh: new Promise<() => string>((resolve) => {
+                resolveRefresh = resolve;
+              }),
+            }
+          : "Context Usage",
+      paint: () => {},
+      loading: () => "Loading",
+      failure: (_id, message) => message,
+    });
+    try {
+      controller.activate("status");
+      const staleResolve = resolveRefresh;
+      if (transition === "switch") controller.activate("context");
+      else controller[transition]();
+      staleResolve(() => {
+        rendered += 1;
+        return "stale status";
+      });
+      await Promise.resolve();
+      assert.equal(rendered, 0);
+    } finally {
+      controller.dispose();
+    }
+  });
+}
 
 test("the interactive host is captured when InteractiveMode.run starts", async () => {
   type Host = {

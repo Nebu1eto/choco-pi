@@ -1,5 +1,6 @@
 import { isObject, isString, type RuntimeValue } from "./lib/runtime-values.ts";
 import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -95,41 +96,42 @@ function readJsonFile(filePath: string): RuntimeValue | undefined {
   }
 }
 
-function mcpEnabled(cwd: string): Set<string> {
-  const agent = readJsonFile(path.join(agentDir(), "mcp.json"));
+async function readMcpConfig(filePath: string): Promise<RuntimeValue | undefined> {
+  try {
+    return JSON.parse(await readFile(filePath, "utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
+async function mcpEnabled(cwd: string, registeredNames: readonly string[]): Promise<Set<string>> {
+  const agentPath = path.join(agentDir(), "mcp.json");
+  const projectPath = path.join(cwd, ".pi", "mcp.json");
+  const [agent, project] = await Promise.all([
+    readMcpConfig(agentPath),
+    readMcpConfig(projectPath),
+  ]);
   const agentServers = isRecord(agent) && isRecord(agent.mcpServers) ? agent.mcpServers : {};
-  const project = readJsonFile(path.join(cwd, ".pi", "mcp.json"));
   const projectServers =
     isRecord(project) && isRecord(project.mcpServers) ? project.mcpServers : {};
-  const merged = { ...agentServers, ...projectServers };
+  // File configuration takes precedence over extension registrations in Pi.
+  const registrations = Object.fromEntries(registeredNames.map((name) => [name, {}]));
+  const merged = { ...registrations, ...agentServers, ...projectServers };
   return new Set(
     Object.entries(merged).flatMap(([name, definition]) =>
-      isRecord(definition) && definition.disabled === true ? [] : [name],
+      isRecord(definition) && (definition.disabled === true || definition.enabled === false)
+        ? []
+        : [name],
     ),
   );
 }
 
-type McpState = { count: number; missing: string[]; cached: boolean };
-
-function mcpLabel(mcp: McpState): string {
-  if (mcp.count === 0) return "none configured";
-  const cached = `${mcp.count} configured, ${mcp.count - mcp.missing.length} cached`;
-  const awaiting = mcp.missing.length === 0 ? "" : `, awaiting: ${mcp.missing.join(", ")}`;
-  const uninitialized = mcp.cached ? "" : " (adapter cache not initialized; see /mcp)";
-  return `${cached}${awaiting}${uninitialized}`;
-}
-
-function mcpState(cwd: string): McpState {
-  const names = mcpEnabled(cwd);
-  if (names.size === 0) return { count: 0, missing: [], cached: true };
-  const cache = readJsonFile(path.join(agentDir(), "mcp-cache.json"));
-  if (!isRecord(cache) || !isRecord(cache.servers)) {
-    return { count: names.size, missing: [...names], cached: false };
-  }
-  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
-  const cachedServers = cache.servers as Record<string, RuntimeValue>;
-  const missing = [...names].filter((name) => cachedServers[name] === undefined);
-  return { count: names.size, missing, cached: true };
+export async function summarizeMcpServers(
+  cwd: string,
+  registeredNames: readonly string[] = [],
+): Promise<string> {
+  const names = await mcpEnabled(cwd, [...registeredNames]);
+  return names.size === 0 ? "none configured" : `${names.size} configured (see /mcp)`;
 }
 
 function sessionStartedAt(ctx: {
@@ -322,6 +324,7 @@ export function summarizeStatusRows(
     | "getSystemPromptOptions"
   >,
   thinkingLevel: string,
+  mcpLabel = "checking configuration (see /mcp)",
 ): StatusRow[] {
   const cwd = ctx.cwd;
   const rows: StatusRow[] = [];
@@ -387,11 +390,7 @@ export function summarizeStatusRows(
   const bridge = bridgeSummary(cwd);
   if (bridge) rows.push({ label: "Live Pi sessions", value: bridge });
 
-  const mcp = mcpState(cwd);
-  rows.push({
-    label: "MCP servers",
-    value: mcpLabel(mcp),
-  });
+  rows.push({ label: "MCP servers", value: mcpLabel });
 
   rows.push({ label: "Theme", value: themeLabel(cwd) });
   const core = corePackageLabel();
@@ -494,14 +493,9 @@ function contextUsageValue(value: string, paint: StatusPainter): string {
 }
 
 function mcpValue(value: string, paint: StatusPainter): string {
-  const awaiting = value.indexOf(", awaiting: ");
-  if (awaiting === -1) return paint.value(value);
-  const suffix = value.indexOf(" (adapter cache not initialized; see /mcp)", awaiting);
-  if (suffix === -1)
-    return `${paint.value(value.slice(0, awaiting))}${paint.warn(value.slice(awaiting))}`;
-  return `${paint.value(value.slice(0, awaiting))}${paint.warn(
-    value.slice(awaiting, suffix),
-  )}${paint.dim(value.slice(suffix))}`;
+  const suffix = value.indexOf(" (see /mcp)");
+  if (suffix === -1) return paint.value(value);
+  return `${paint.value(value.slice(0, suffix))}${paint.dim(value.slice(suffix))}`;
 }
 
 function statusValue(row: StatusRow, value: string, paint: StatusPainter): string {

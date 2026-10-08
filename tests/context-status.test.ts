@@ -54,11 +54,19 @@ test("zero window renders a bounded grid", () => {
 const TOOLS = [
   { name: "read", description: "Read a file", parameters: {}, sourceInfo: { source: "builtin" } },
   {
-    name: "mcp",
-    description: "MCP gateway",
+    name: "figma_get_file",
+    description: "Native Figma tool",
     parameters: {},
     sourceInfo: { source: "choco-pi-mcp" },
   },
+  ...["mcp__alpha__read", "mcp__alpha__search", "mcp__beta__list", "read_mcp_resource"].map(
+    (name) => ({
+      name,
+      description: "Built-in MCP server tool",
+      parameters: {},
+      sourceInfo: { source: "builtin", path: "builtin:mcp" },
+    }),
+  ),
 ];
 
 function contextTabContext() {
@@ -105,11 +113,20 @@ test("the Context tab is concise by default and expands its inventories on reque
   const expanded = await tabBody(ctx as never, "medium", "context", false, true);
 
   assert.match(concise, /^Context Usage\n/);
-  assert.match(concise, /^Tools: 1 active · 1 deferred$/m);
+  assert.match(concise, /^Tools: 1 active · 5 deferred$/m);
   assert.ok(!concise.includes("Active tools"), "inventories wait for the expanded view");
 
   assert.match(expanded, /^Active tools$/m);
   assert.match(expanded, /^- AGENTS\.md \(/m);
+  assert.match(
+    expanded,
+    /^- MCP: figma_get_file, mcp__alpha__read, mcp__alpha__search, mcp__beta__list, read_mcp_resource$/m,
+  );
+  assert.match(
+    expanded,
+    /^- MCP catalog: alpha \(2 tools, \d+ tokens\), beta \(1 tool, \d+ tokens\)$/m,
+  );
+  assert.match(expanded, /^- Other: none$/m);
 });
 
 test("measured usage caps message estimates and keeps categories inside the window", () => {

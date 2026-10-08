@@ -51,6 +51,7 @@ import {
   formatStatus,
   statusHeading,
   summarizeStatusRows,
+  summarizeMcpServers,
   type CacheWarmingInfo,
 } from "./session-status.ts";
 import { buildContextCapSection } from "./model-context-cap.ts";
@@ -85,7 +86,8 @@ export function isExpandableTab(id: StatusTabId): boolean {
   return EXPANDABLE_TABS.has(id);
 }
 
-type ToolInventory = Pick<ExtensionAPI, "getAllTools" | "getActiveTools">;
+type ToolInventory = Pick<ExtensionAPI, "getAllTools" | "getActiveTools"> &
+  Partial<Pick<ExtensionAPI, "getMcpServers">>;
 
 const TOOL_INVENTORY_KEY: unique symbol = Symbol.for("choco-pi.status.tool-inventory");
 const CACHE_WARMING_SOURCE_KEY: unique symbol = Symbol.for("choco-pi.status.cache-warming-source");
@@ -142,8 +144,10 @@ export type TabController = {
  * A tab's concise and expanded bodies are cached separately, so toggling the
  * view paints the other one immediately instead of blanking on every keypress.
  */
+type TabLoad = string | Promise<string> | { body: string; refresh: Promise<() => string> };
+
 export function createTabController(options: {
-  load: (id: TextTabId, expanded: boolean) => string | Promise<string>;
+  load: (id: TextTabId, expanded: boolean) => TabLoad;
   paint: (body: string, view: { preserveScroll: boolean }) => void;
   loading: () => string;
   failure: (id: TextTabId, message: string) => string;
@@ -160,11 +164,11 @@ export function createTabController(options: {
   const query = (id: TextTabId, expanded: boolean, background: boolean): void => {
     const current = ++token;
     const currentGeneration = generation;
-    const accept = (body: string): void => {
+    const accept = (body: string, preserveScroll = background): void => {
       if (currentGeneration !== generation) return;
       cache.set(viewKey(id, expanded), body);
       if (current === token && active === id && activeExpanded === expanded)
-        options.paint(body, { preserveScroll: background });
+        options.paint(body, { preserveScroll });
     };
     const fail = (error: RuntimeValue): void => {
       if (current !== token || active !== id || activeExpanded !== expanded) return;
@@ -175,7 +179,17 @@ export function createTabController(options: {
     try {
       const body = options.load(id, expanded);
       if (isString(body)) accept(body);
-      else void body.then(accept).catch(fail);
+      else if ("body" in body) {
+        accept(body.body);
+        void body.refresh
+          .then((render) => {
+            // Check ownership before the deferred renderer touches context or theme.
+            if (currentGeneration !== generation || current !== token) return;
+            if (active !== id || activeExpanded !== expanded) return;
+            accept(render(), true);
+          })
+          .catch(fail);
+      } else void body.then(accept).catch(fail);
     } catch (error) {
       fail(error);
     }
@@ -241,6 +255,7 @@ export function statusBody(
   thinkingLevel: string,
   style?: SessionInfoStyle,
   expanded = false,
+  mcpLabel = "checking configuration (see /mcp)",
 ): string {
   const entries = ctx.sessionManager.getEntries();
   const sessionId = ctx.sessionManager.getSessionId();
@@ -266,13 +281,14 @@ export function statusBody(
     style,
     expanded,
   );
-  const all = summarizeStatusRows(ctx, thinkingLevel).filter(
-    (row) => !SESSION_INFO_ROWS.has(row.label),
-  );
-  all.push({
+  const daybreak = {
     label: "Daybreak",
     value: daybreakStatusValue(getDaybreakBridge().get(sessionId)?.getState()),
-  });
+  };
+  const all = summarizeStatusRows(ctx, thinkingLevel, mcpLabel).filter(
+    (row) => !SESSION_INFO_ROWS.has(row.label),
+  );
+  all.push(daybreak);
   const rows = expanded ? all : condenseStatusRows(all);
   return `${info}\n\n${statusHeading(style)}\n\n${formatStatus(rows, style)}`;
 }
@@ -300,6 +316,34 @@ export function tabBody(
   }
   if (id === "context") return contextBody(ctx, expanded, styled);
   return statusBody(ctx, thinkingLevel, style, expanded);
+}
+
+function registeredMcpNames(): string[] {
+  return (
+    getToolInventory()
+      ?.getMcpServers?.()
+      .filter((server) => server.config.enabled !== false)
+      .map((server) => server.name) ?? []
+  );
+}
+
+/** MCP I/O refreshes only after the controller verifies this load still owns its view. */
+function loadTabBody(
+  ctx: ExtensionCommandContext,
+  thinkingLevel: string,
+  id: TextTabId,
+  expanded: boolean,
+): TabLoad {
+  if (id !== "status") return tabBody(ctx, thinkingLevel, id, true, expanded);
+  const cwd = ctx.cwd;
+  const names = registeredMcpNames();
+  const style = ctx.ui.theme;
+  return {
+    body: statusBody(ctx, thinkingLevel, style, expanded),
+    refresh: summarizeMcpServers(cwd, names).then(
+      (label) => () => statusBody(ctx, thinkingLevel, style, expanded, label),
+    ),
+  };
 }
 
 type PreferencesFocus = { section?: string; focusId?: string; openSubmenu?: boolean };
@@ -406,6 +450,18 @@ async function showTabOnce(
       preferencesSummary(ctx);
       return undefined;
     }
+    if (initial === "status") {
+      const cwd = ctx.cwd;
+      const names = registeredMcpNames();
+      const owner = ctx.sessionManager;
+      const currentSessionId = owner.getSessionId.bind(owner);
+      const sessionId = currentSessionId();
+      const label = await summarizeMcpServers(cwd, names);
+      if (currentSessionId() !== sessionId) return undefined;
+      const body = statusBody(ctx, thinkingLevel, undefined, initialExpanded, label);
+      ctx.ui.notify(ctx.ui.theme.fg("text", body), "info");
+      return undefined;
+    }
     const body = await tabBody(ctx, thinkingLevel, initial, false, initialExpanded);
     ctx.ui.notify(ctx.ui.theme.fg("text", body), "info");
     return undefined;
@@ -462,7 +518,7 @@ async function showTabOnce(
     };
 
     const controller = createTabController({
-      load: (id, view) => tabBody(ctx, thinkingLevel, id, true, view),
+      load: (id, view) => loadTabBody(ctx, thinkingLevel, id, view),
       paint,
       loading: () => theme.fg("dim", "Loading…"),
       failure: (id, message) => theme.fg("error", `Failed to load the ${id} tab: ${message}`),
