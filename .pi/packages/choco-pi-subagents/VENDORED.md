@@ -1166,6 +1166,12 @@ expectations include the new metadata.
 the codex package's `daybreak-types.ts` (`model-not-supported` was added on
 2026-10-08).
 
+The independent outcome union now also includes `pending`, matching the Codex
+controller's pre-lookup state. Focused `/daybreak` status uses `pending` when no
+outcome has been reported, rather than implying a failed lookup. The hidden
+registration factory and bridge contract remain unchanged; Daybreak and focus-mode
+regression tests still pass.
+
 ## 2026-10-08 choco-pi patch: built-in tool search
 
 `agent-runner.ts` supplies Pi's `createToolSearchExtension` to child sessions

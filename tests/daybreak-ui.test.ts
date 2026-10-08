@@ -68,11 +68,15 @@ function daybreakSession(id: string, entries: RuntimeValue[] = []) {
   const commands = new Map<string, (args: string, ctx: RuntimeValue) => Promise<void>>();
   const appended: { type: string; data: RuntimeValue }[] = [];
   const notices: string[] = [];
+  const refreshes: string[] = [];
   const ctx = {
     mode: "rpc",
     model: codexModel(),
     sessionManager: { getBranch: () => entries, getSessionId: () => id },
-    ui: { notify: (message: string) => notices.push(message), setStatus: () => {} },
+    ui: {
+      notify: (message: string) => notices.push(message),
+      setStatus: (key: string) => refreshes.push(key),
+    },
   };
   modelControls(
     reinterpretHostValue<ExtensionAPI>({
@@ -87,6 +91,7 @@ function daybreakSession(id: string, entries: RuntimeValue[] = []) {
   return {
     appended,
     notices,
+    refreshes,
     start: () => handlers.get("session_start")?.({}, ctx),
     tree: () => handlers.get("session_tree")?.({}, ctx),
     stop: () => handlers.get("session_shutdown")?.({}, ctx),
@@ -107,13 +112,16 @@ test("/daybreak on|off|status persists the request and status does not advance r
       assert.equal(session.state()?.revision, 0);
       await session.run("on");
       assert.equal(session.state()?.revision, 1);
-      assert.match(session.notices.at(-1) ?? "", /requested; Daybreak lookup failed/);
+      assert.match(session.notices.at(-1) ?? "", /requested; checking availability/);
       await session.run("status");
       await session.run("status");
       assert.equal(session.state()?.revision, 1, "status is read-only");
       const controller = getDaybreakBridge().get("db-command");
       assert.ok(controller);
+      const refreshCount = session.refreshes.length;
       controller.report("model-not-supported", controller.getState().revision);
+      assert.equal(session.refreshes.length, refreshCount + 1, "report repaints the editor");
+      assert.equal(session.refreshes.at(-1), "daybreak-refresh");
       await session.run("status");
       assert.match(session.notices.at(-1) ?? "", /current model does not support Daybreak/);
       await session.run("bogus");
@@ -148,7 +156,7 @@ test("persisted entries restore on session start and tree", async () => {
     try {
       assert.equal(session.state()?.requested, true);
       assert.equal(session.state()?.revision, 4);
-      assert.equal(session.state()?.outcome, "lookup-failed", "outcome is not restored");
+      assert.equal(session.state()?.outcome, "pending", "outcome is not restored");
       entries.push({
         type: "custom",
         customType: DAYBREAK_ENTRY,
@@ -255,10 +263,7 @@ test("focused routing exposes setDaybreak beside setFast", async () => {
       assert.ok(focused?.setDaybreak);
       assert.match(focused.setDaybreak("on"), /requested/);
       assert.equal(session.state()?.requested, true);
-      assert.equal(
-        focused.setDaybreak("status"),
-        "Daybreak: requested; Daybreak lookup failed or not yet confirmed",
-      );
+      assert.equal(focused.setDaybreak("status"), "Daybreak: requested; checking availability");
     } finally {
       session.stop();
     }

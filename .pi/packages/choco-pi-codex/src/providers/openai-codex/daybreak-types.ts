@@ -4,6 +4,7 @@ export const DAYBREAK_BRIDGE_SYMBOL = Symbol.for("choco-pi.daybreak-state");
 export type DaybreakSource = "default" | "explicit" | "inherited";
 export type DaybreakOutcome =
   | "off"
+  | "pending"
   | "blue"
   | "red"
   | "not-granted"
@@ -29,6 +30,7 @@ export type DaybreakRegistration = Readonly<{
 }>;
 export type DaybreakController = Readonly<{
   getState(): DaybreakState;
+  subscribe(listener: () => void): () => void;
   set(requested: boolean, source?: DaybreakSource): DaybreakState;
   report(outcome: DaybreakOutcome, revision: number): void;
   dispose(): void;

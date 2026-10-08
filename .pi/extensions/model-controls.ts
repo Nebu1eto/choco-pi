@@ -34,6 +34,7 @@ import {
 } from "./lib/daybreak-state.ts";
 import { DEFAULT_DAYBREAK, readAgentPreferencesAsync } from "./lib/agent-preferences.ts";
 import { isCanonicalCodexSubscriptionModel } from "../packages/choco-pi-codex/src/adapter/prompt/codex-model.ts";
+import { withLiveCtx } from "../packages/choco-pi-codex/src/extension/live-context.ts";
 
 const THINKING_LEVELS: ThinkingLevel[] = [
   "off",
@@ -100,6 +101,7 @@ export type FocusedFastEditorState = {
 
 const DAYBREAK_OUTCOMES = new Set<RuntimeValue>([
   "off",
+  "pending",
   "blue",
   "red",
   "not-granted",
@@ -113,7 +115,8 @@ function isDaybreakOutcome(value: RuntimeValue): value is DaybreakOutcome {
 }
 
 const DAYBREAK_BADGES = {
-  off: "daybreak lookup failed",
+  off: "daybreak pending",
+  pending: "daybreak pending",
   blue: "daybreak blue",
   red: "daybreak red",
   "not-granted": "daybreak not granted",
@@ -153,7 +156,7 @@ function focusedFastEditorState(): FocusedFastEditorState | undefined {
   };
   if (isBoolean(current?.daybreakRequested)) {
     // A requested state without a known outcome stays honestly unknown.
-    const fallback: DaybreakOutcome = current.daybreakRequested ? "lookup-failed" : "off";
+    const fallback: DaybreakOutcome = current.daybreakRequested ? "pending" : "off";
     state.daybreak = {
       requested: current.daybreakRequested,
       outcome: isDaybreakOutcome(current.daybreakOutcome) ? current.daybreakOutcome : fallback,
@@ -415,6 +418,7 @@ export default function modelControls(pi: ExtensionAPI): void {
   let fastEnabled = false;
   let fastController: FastModeController | undefined;
   let daybreakController: DaybreakController | undefined;
+  let unsubscribeDaybreak: (() => void) | undefined;
   let daybreakSeed: Promise<void> = Promise.resolve();
   let effortCompletions: ThinkingLevel[] = ["off"];
   let activeModel: Model<Api> | undefined;
@@ -490,7 +494,13 @@ export default function modelControls(pi: ExtensionAPI): void {
           if (state.source !== "default") pi.appendEntry(DAYBREAK_ENTRY, daybreakEntryData(state));
         },
       });
+    unsubscribeDaybreak?.();
     daybreakController = controller;
+    unsubscribeDaybreak = controller.subscribe(() => {
+      if (daybreakBridge.get(sessionId) !== controller) return;
+      // setStatus uses the same repaint path as /fast; no extra status row is displayed.
+      withLiveCtx(() => ctx.ui.setStatus("daybreak-refresh", undefined));
+    });
     // Only a default-source request follows the global preference; explicit and inherited win.
     if (controller.getState().source !== "default") {
       daybreakSeed = Promise.resolve();
@@ -514,6 +524,8 @@ export default function modelControls(pi: ExtensionAPI): void {
     applyDaybreakAction(currentDaybreak(), action, activeModel);
 
   const disposeDaybreak = (): void => {
+    unsubscribeDaybreak?.();
+    unsubscribeDaybreak = undefined;
     daybreakController?.dispose();
     daybreakController = undefined;
     daybreakSeed = Promise.resolve();

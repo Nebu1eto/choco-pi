@@ -47,10 +47,14 @@ type TicketRecord = {
   readonly model: Readonly<DaybreakModel>;
   readonly credentials: DaybreakLookupCredentials | undefined;
   readonly turnedOn: boolean;
+  readonly isCurrent: (() => boolean) | undefined;
   resolution?: Promise<CodexDaybreakDecision>;
 };
 
-type DecisionOwner = Readonly<{ controller: DaybreakController | undefined }>;
+type DecisionOwner = Readonly<{
+  controller: DaybreakController | undefined;
+  isCurrent?: (() => boolean) | undefined;
+}>;
 type Observation = Readonly<{ requested: boolean; revision: number }>;
 type BridgeHost = typeof globalThis & { [DAYBREAK_BRIDGE_SYMBOL]?: DaybreakBridge };
 
@@ -61,6 +65,7 @@ const SourceSchema = Type.Union([
 ]);
 const OutcomeSchema = Type.Union([
   Type.Literal("off"),
+  Type.Literal("pending"),
   Type.Literal("blue"),
   Type.Literal("red"),
   Type.Literal("not-granted"),
@@ -84,6 +89,10 @@ const BridgeSchema = Type.Object({
 });
 const ControllerSchema = Type.Object({
   getState: Type.Function([], StateSchema),
+  subscribe: Type.Function(
+    [Type.Function([], Type.Undefined())],
+    Type.Function([], Type.Undefined()),
+  ),
   set: Type.Function([], StateSchema),
   report: Type.Function([], Type.Undefined()),
   dispose: Type.Function([], Type.Undefined()),
@@ -103,6 +112,10 @@ function currentController(sessionId: string): DaybreakController | undefined {
   if (!sessionId) return undefined;
   const controller = validatedBridge()?.get(sessionId);
   return controller && Check(ControllerSchema, controller) ? controller : undefined;
+}
+
+export function getCodexDaybreakController(sessionId: string): DaybreakController | undefined {
+  return currentController(sessionId);
 }
 
 function controllerState(
@@ -154,7 +167,7 @@ export function snapshotCodexDaybreakDecision(
   if (!state?.requested) return decisionFrom(id, state, "off");
   if (model !== undefined && !isDaybreakEligibleModel(model))
     return decisionFrom(id, state, "auth-not-eligible");
-  return decisionFrom(id, state, state.outcome === "off" ? "lookup-failed" : state.outcome);
+  return decisionFrom(id, state, state.outcome === "off" ? "pending" : state.outcome);
 }
 
 function frozenModel(model: DaybreakModel): Readonly<DaybreakModel> {
@@ -198,6 +211,8 @@ export function beginCodexDaybreakRequest(input: {
   sessionId: string | undefined;
   model: DaybreakModel;
   credentials?: CodexDaybreakCredentials | undefined;
+  /** Eager probes also invalidate on model/session replacement, without mutating the request. */
+  isCurrent?: (() => boolean) | undefined;
 }): CodexDaybreakTicket {
   const sessionId = input.sessionId ?? "";
   const controller = currentController(sessionId);
@@ -212,6 +227,7 @@ export function beginCodexDaybreakRequest(input: {
     model: frozenModel(input.model),
     credentials: frozenCredentials(input.credentials),
     turnedOn,
+    isCurrent: input.isCurrent,
   });
   return ticket;
 }
@@ -225,7 +241,7 @@ function ownerCurrent(controller: DaybreakController | undefined, decision: Code
 /** Identity, generation, and revision all still match the frozen decision. */
 export function isCurrentCodexDaybreakDecision(decision: CodexDaybreakDecision): boolean {
   const owner = genuineDecisions.get(decision);
-  if (!owner) return false;
+  if (!owner || owner.isCurrent?.() === false) return false;
   if (!owner.controller) return !decision.requested;
   if (!ownerCurrent(owner.controller, decision)) return false;
   return controllerState(owner.controller, decision.sessionId)?.revision === decision.revision;
@@ -240,7 +256,7 @@ function publish(owner: DecisionOwner, decision: CodexDaybreakDecision): CodexDa
 }
 
 async function resolveTicket(record: TicketRecord): Promise<CodexDaybreakDecision> {
-  const owner: DecisionOwner = { controller: record.controller };
+  const owner: DecisionOwner = { controller: record.controller, isCurrent: record.isCurrent };
   const { state, sessionId, credentials } = record;
   // Off never performs a lookup.
   if (!record.controller || !state?.requested)
@@ -267,12 +283,14 @@ async function resolveTicket(record: TicketRecord): Promise<CodexDaybreakDecisio
       ),
     );
   const checked = decisionFrom(sessionId, state, "off");
-  if (!ownerCurrent(owner.controller, checked)) return publish(owner, checked);
+  if (record.isCurrent?.() === false || !ownerCurrent(owner.controller, checked))
+    return publish(owner, checked);
   const result = await lookupCodexDaybreakEntitlement(account, credentials, record.turnedOn);
   if (result.entitlement !== "blue" && result.entitlement !== "red")
     return publish(owner, decisionFrom(sessionId, state, result.entitlement));
   const granted = decisionFrom(sessionId, state, result.entitlement);
-  if (!ownerCurrent(owner.controller, granted)) return publish(owner, granted);
+  if (record.isCurrent?.() === false || !ownerCurrent(owner.controller, granted))
+    return publish(owner, granted);
   const support = await lookupCodexDaybreakModelSupport(
     account,
     credentials,
