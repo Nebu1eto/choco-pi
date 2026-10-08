@@ -1,6 +1,5 @@
 import { isNumber, isString, recordOf, type RuntimeValue } from "./runtime-values.ts";
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
 import {
   calculateContextTokens,
@@ -77,7 +76,7 @@ type Category = {
 
 type McpCatalog = {
   total: number;
-  servers: Array<{ name: string; count: number }>;
+  servers: Array<{ name: string; count: number; tokens: number }>;
 };
 
 function estimate(value: RuntimeValue): number {
@@ -116,52 +115,29 @@ function toolTokens(tool: ToolInfo): number {
 }
 
 function isMcpTool(tool: ToolInfo): boolean {
-  return tool.sourceInfo.source.includes("choco-pi-mcp");
+  return (
+    tool.name.startsWith("mcp__") ||
+    tool.sourceInfo.path === "builtin:mcp" ||
+    tool.sourceInfo.source.includes("choco-pi-mcp")
+  );
 }
 
 function isAgentTool(tool: ToolInfo): boolean {
   return tool.sourceInfo.source.includes("subagents");
 }
 
-function mcpCatalog(cwd: string): McpCatalog {
-  try {
-    const agentDir = process.env.PI_CODING_AGENT_DIR ?? path.join(homedir(), ".pi", "agent");
-    const configPaths = [path.join(cwd, ".pi", "mcp.json"), path.join(agentDir, "mcp.json")];
-    const configPath = configPaths.find((candidate) => {
-      try {
-        readFileSync(candidate);
-        return true;
-      } catch {
-        return false;
-      }
-    });
-    if (!configPath) return { total: 0, servers: [] };
-    // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
-    const projectConfig = JSON.parse(readFileSync(configPath, "utf8")) as {
-      mcpServers?: Record<string, { disabled?: boolean }>;
-    };
-    const enabledServers = new Set(
-      Object.entries(projectConfig.mcpServers ?? {}).flatMap(([name, definition]) =>
-        definition.disabled === true ? [] : [name],
-      ),
-    );
-    // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
-    const cache = JSON.parse(readFileSync(path.join(agentDir, "mcp-cache.json"), "utf8")) as {
-      version?: number;
-      servers?: Record<string, { tools?: unknown[]; resources?: unknown[] }>;
-    };
-    if (cache.version !== 1 || !cache.servers) return { total: 0, servers: [] };
-    const servers = Object.entries(cache.servers)
-      .flatMap(([name, entry]) =>
-        enabledServers.has(name)
-          ? [{ name, count: (entry.tools?.length ?? 0) + (entry.resources?.length ?? 0) }]
-          : [],
-      )
-      .sort((left, right) => left.name.localeCompare(right.name));
-    return { total: servers.reduce((sum, server) => sum + server.count, 0), servers };
-  } catch {
-    return { total: 0, servers: [] };
+function mcpCatalog(tools: ToolInfo[]): McpCatalog {
+  const byServer = new Map<string, { name: string; count: number; tokens: number }>();
+  for (const tool of tools) {
+    const name = /^mcp__(.+?)__(.+)$/.exec(tool.name)?.[1];
+    if (!name) continue;
+    const server = byServer.get(name) ?? { name, count: 0, tokens: 0 };
+    server.count += 1;
+    server.tokens += toolTokens(tool);
+    byServer.set(name, server);
   }
+  const servers = [...byServer.values()].sort((left, right) => left.name.localeCompare(right.name));
+  return { total: servers.reduce((sum, server) => sum + server.count, 0), servers };
 }
 
 function contextEntries(ctx: ExtensionCommandContext): SessionEntry[] {
@@ -393,7 +369,7 @@ export function renderContext(
   const deferred = tools.filter((tool) => !activeNames.has(tool.name));
   const deferredMcp = deferred.filter(isMcpTool);
   const activeAgents = tools.filter((tool) => activeNames.has(tool.name) && isAgentTool(tool));
-  const catalog = mcpCatalog(ctx.cwd);
+  const catalog = mcpCatalog(tools);
   const contextFiles = options.contextFiles ?? [];
   const skills = options.skills ?? [];
   const sidebarWidth = MAX_REPORT_WIDTH - GRID_ROW_WIDTH - LEGEND_GAP;
@@ -449,7 +425,7 @@ export function renderContext(
     `- MCP: ${deferredMcp.map((tool) => tool.name).join(", ") || "none"}`,
   );
   lines.push(
-    `- MCP catalog: ${catalog.servers.map((server) => `${server.name} (${server.count})`).join(", ") || "none"}`,
+    `- MCP catalog: ${catalog.servers.map((server) => `${server.name} (${countLabel(server.count, "tool")}, ${formatTokens(server.tokens)} tokens)`).join(", ") || "none"}`,
   );
   const otherDeferred = deferred.filter((tool) => !isMcpTool(tool));
   lines.push(`- Other: ${otherDeferred.map((tool) => tool.name).join(", ") || "none"}`);

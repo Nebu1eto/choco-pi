@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -13,7 +13,48 @@ import {
   normalizePackageKey,
   parseAgentFrontmatter,
   summarizeStatusRows,
+  summarizeMcpServers,
 } from "../.pi/extensions/session-status.ts";
+
+test("MCP status counts merged config and registrations without adapter cache", async (context) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "choco-pi-status-mcp-"));
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = directory;
+  context.after(async () => {
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    await rm(directory, { recursive: true, force: true });
+  });
+  await mkdir(path.join(directory, ".pi"));
+  assert.equal(await summarizeMcpServers(directory), "none configured");
+  await writeFile(
+    path.join(directory, "mcp.json"),
+    JSON.stringify({
+      mcpServers: {
+        shared: {},
+        enabled: {},
+        disabled: { disabled: true },
+        builtinDisabled: { enabled: false },
+      },
+    }),
+  );
+  await writeFile(
+    path.join(directory, ".pi", "mcp.json"),
+    JSON.stringify({
+      mcpServers: { shared: { enabled: false }, project: {} },
+    }),
+  );
+  assert.equal(
+    await summarizeMcpServers(directory, ["enabled", "registered", "disabled", "builtinDisabled"]),
+    "3 configured (see /mcp)",
+  );
+  await writeFile(path.join(directory, "mcp-cache.json"), JSON.stringify({ servers: {} }));
+  assert.equal(await summarizeMcpServers(directory), "2 configured (see /mcp)");
+  await writeFile(path.join(directory, ".pi", "mcp.json"), "not JSON");
+  assert.equal(await summarizeMcpServers(directory), "2 configured (see /mcp)");
+  await writeFile(path.join(directory, "mcp.json"), JSON.stringify({ mcpServers: [] }));
+  assert.equal(await summarizeMcpServers(directory), "none configured");
+});
 
 test("formatCacheWarming renders actual state before decision explanations", () => {
   assert.equal(formatCacheWarming({ mode: "off", status: undefined }), "off");
@@ -115,7 +156,7 @@ test("formatStatus colors semantic environment values", () => {
       { label: "Context usage", value: "59.9% (10,000 tokens) · details in /context" },
       { label: "Context usage", value: "60.0% (20,000 tokens) · details in /context" },
       { label: "Context usage", value: "85.1% (30,000 tokens) · details in /context" },
-      { label: "MCP servers", value: "2 configured, 1 cached, awaiting: figma" },
+      { label: "MCP servers", value: "2 configured (see /mcp)" },
       { label: "Skills", value: "2 loaded\n  check, review" },
     ],
     style,
@@ -126,7 +167,7 @@ test("formatStatus colors semantic environment values", () => {
   assert.ok(calls.includes("success:59.9%"));
   assert.ok(calls.includes("warning:60.0%"));
   assert.ok(calls.includes("error:85.1%"));
-  assert.ok(calls.includes("warning:, awaiting: figma"));
+  assert.ok(calls.includes("dim: (see /mcp)"));
   assert.ok(calls.includes("dim:  check, review"));
 });
 
@@ -229,7 +270,7 @@ test("summarizeStatusRows includes session and model essentials", async (context
     getSystemPromptOptions: () => ({ contextFiles: [], skills: [] }),
   };
   // SAFETY: The fixture supplies every host member exercised by this test.
-  const rows = summarizeStatusRows(ctx as never, "medium");
+  const rows = await summarizeStatusRows(ctx as never, "medium");
   const rendered = formatStatus(rows);
   assert.match(rendered, /Session ID:\s+session-1/);
   assert.match(rendered, /Model:\s+No model is currently selected/);
@@ -276,7 +317,7 @@ test("context files report a count so the concise Status tab has a headline", as
     }),
   };
   // SAFETY: The fixture supplies every host member exercised by this test.
-  const rows = summarizeStatusRows(ctx as never, "medium");
+  const rows = await summarizeStatusRows(ctx as never, "medium");
   const files = rows.find((row) => row.label === "Context files");
   assert.equal(files?.value.split("\n")[0], "2 loaded");
   assert.match(formatStatus(condenseStatusRows(rows)), /Context files:\s+2 loaded$/m);

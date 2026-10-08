@@ -1,5 +1,11 @@
 # Package provenance
 
+## 2026-10-08 choco-pi patch: truthful MCP elicitation coverage
+
+Labels `Elicitation` and `ElicitationResult` as having no producer, matching
+`COMPATIBILITY.md`. Pi's built-in MCP handles elicitation; this package does
+not bridge its requests or responses.
+
 `choco-pi-hooks` is a first-party choco-pi package. It is not vendored from an external project.
 
 ## 2026-10-07 choco-pi patch: Pi SDK 1.0.4

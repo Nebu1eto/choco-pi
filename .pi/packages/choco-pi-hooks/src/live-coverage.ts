@@ -29,7 +29,7 @@ export const LIVE_EVENT_BINDINGS = {
   WorktreeRemove: "subagent hook-managed worktree settlement",
   PreCompact: "pi:session_before_compact",
   PostCompact: "pi:session_compact",
-  Elicitation: "MCP elicitation request bridge",
-  ElicitationResult: "MCP elicitation response bridge",
+  Elicitation: "no producer; Pi's built-in MCP handles elicitation",
+  ElicitationResult: "no producer; Pi's built-in MCP handles elicitation",
   SessionEnd: "pi:session_shutdown",
 } as const satisfies Record<HookEventName, string>;
