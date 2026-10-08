@@ -150,3 +150,24 @@ runtime); `scroll` declares `x`/`y` so a schema-conformant call can target a poi
 description lists every action branch so a caller can build a valid element without
 reading the schema. `tests/action-schema.test.ts` validates each documented example
 against the registered schema.
+
+## 2026-10-08 choco-pi patch: browser batch cancellation (B2)
+
+Browser transactions check caller cancellation after acquiring the write lock,
+before every independent action and repeated ref click, and after action waits.
+CDP action commands, connection setup, and page discovery accept the signal;
+pending replies remove their listener, timer, and pending entry on abort. Started
+coordinate clicks, key presses, and drags release their input on the same CDP
+connection before propagating cancellation; key-up preserves the key-down modifier flags, and a
+cancelled drag releases at its last dispatched point. Cleanup is deliberately
+uncancellable and remains bounded by the existing command timeout.
+
+`tests/browser-batch-cancellation.test.ts` drives the production bridge and CDP
+protocol handler through a test-only transport replacement and a local HTTP page
+listing. It covers delayed replies, suppression of subsequent actions, mouse/key
+pairing, and acquisition by a following transaction. Its fake platform backend
+forbids native calls; no browser or helper installation is involved.
+
+Review corrections preserve the original key-up modifier payload and make all
+externally parsed window-bound fields optional; `windowBounds` requires numeric
+left, top, width, and height before returning a complete frame.
