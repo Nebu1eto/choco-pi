@@ -277,7 +277,7 @@ export function normalizeClaudeUsage(payload: RuntimeValue, profile?: RuntimeVal
       : undefined;
   const plan = claudePlanLabel(profile, stringValue(payload.plan_type));
   return {
-    name: "Claude Code",
+    name: "Claude",
     plan,
     status,
     windows: structuredWindows.length > 0 ? structuredWindows : legacyWindows,
@@ -314,8 +314,9 @@ const CODEX_PLAN_LABELS = recordOf<string, string>()({
   free_workspace: "Free",
   go: "Go",
   plus: "Plus",
-  prolite: "Pro (5x)",
-  pro: "Pro (20x)",
+  prolite: "Pro 100",
+  pro: "Pro 200",
+  promax: "Pro 500",
   team: "Team",
   self_serve_business_prolite: "Business",
   self_serve_business_usage_based: "Business",
@@ -365,7 +366,7 @@ export function normalizeCodexUsage(payload: RuntimeValue): ProviderUsage {
       ? `${resetCount} saved reset${resetCount === 1 ? "" : "s"} available`
       : undefined;
   return {
-    name: "OpenAI Codex",
+    name: "ChatGPT",
     plan,
     status:
       [balance === undefined ? undefined : `${balance} credits`, resets]
@@ -548,7 +549,7 @@ async function claudeProfile(token: string): Promise<RuntimeValue> {
  */
 async function claudeUsage(ctx: ExtensionContext): Promise<ProviderUsage> {
   const token = await providerToken(ctx, "anthropic");
-  if (!token) return { name: "Claude Code", status: "not connected", windows: [] };
+  if (!token) return { name: "Claude", status: "not connected", windows: [] };
   return readClaudeUsage(token);
 }
 
@@ -566,7 +567,7 @@ async function readClaudeUsage(token: string): Promise<ProviderUsage> {
 
 async function codexUsage(ctx: ExtensionContext): Promise<ProviderUsage> {
   const token = await providerToken(ctx, "openai-codex");
-  if (!token) return { name: "OpenAI Codex", status: "not connected", windows: [] };
+  if (!token) return { name: "ChatGPT", status: "not connected", windows: [] };
   const accountId = codexAccountId(token);
   if (!accountId) throw new Error("OAuth account ID is unavailable");
   return readCodexUsage(token, accountId);
@@ -596,10 +597,10 @@ export async function resetCodexUsage(
 ): Promise<string | undefined> {
   const registry = ctx.modelRegistry;
   if (!registry.getProviderAuthStatus("openai-codex").configured)
-    return "OpenAI Codex is not connected.";
+    return "ChatGPT is not connected.";
   const token = await registry.getApiKeyForProvider("openai-codex");
   if (!isCurrent()) return;
-  if (!token) return "OpenAI Codex is not connected.";
+  if (!token) return "ChatGPT is not connected.";
   const accountId = codexAccountId(token);
   if (!accountId) return "OAuth account ID is unavailable.";
   return runCodexResetFlow({
@@ -852,7 +853,7 @@ export function formatProviderUsage(
   return [heading, ...windows].join("\n");
 }
 
-const PROVIDER_NAMES = ["Claude Code", "OpenAI Codex", "Synthetic"] as const;
+const PROVIDER_NAMES = ["Claude", "ChatGPT", "Synthetic"] as const;
 
 /**
  * Describes why a provider produced nothing: a throttled request also reports

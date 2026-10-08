@@ -135,12 +135,26 @@ test("selection and confirmation both default to cancel; cancellation and stale 
   assert.equal(fixture.consumed.length, 0);
 });
 
+test("saved-reset dialogs use ChatGPT labels", async () => {
+  const fixture = flowFixture("dialog-labels");
+  const titles: string[] = [];
+  fixture.options.select = async (title, choices) => {
+    titles.push(title);
+    return choices[1];
+  };
+  assert.equal(await runCodexResetFlow(fixture.options), "ChatGPT reset applied.");
+  assert.deepEqual(titles, [
+    "Saved ChatGPT resets (earliest expiry first)",
+    "Spend this saved reset? Eligible ChatGPT usage windows will reset. This cannot be undone.\nExpires 2099-01-01",
+  ]);
+});
+
 test("business outcomes refresh usage and never overclaim a reset", async () => {
   for (const [code, message] of [
-    ["reset", /reset applied/],
-    ["already_redeemed", /already redeemed/],
+    ["reset", /ChatGPT reset applied/],
+    ["already_redeemed", /This ChatGPT reset was already redeemed/],
     ["nothing_to_reset", /no reset was spent/],
-    ["no_credit", /No saved/],
+    ["no_credit", /No saved ChatGPT reset/],
     ["future_code", /Unknown reset outcome/],
   ] as const) {
     const fixture = flowFixture(code, code);
@@ -186,7 +200,7 @@ test("a stalled post-reset read times out and releases the account guard", async
   const result = runCodexResetFlow(fixture.options);
   await started.promise;
   t.mock.timers.tick(10_000);
-  assert.match((await result)!, /Codex reset applied.*Usage refresh failed/);
+  assert.match((await result)!, /ChatGPT reset applied.*Usage refresh failed/);
   fixture.options.select = async () => undefined;
   assert.equal(await runCodexResetFlow(fixture.options), undefined);
   assert.equal(fixture.consumed.length, 1);

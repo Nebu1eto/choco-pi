@@ -68,7 +68,8 @@ test("the usage tab paints its own body instead of one flat colour", async () =>
     "usage",
     true,
   );
-  assert.match(body, /^<accent>Claude Code<\/accent><dim> — <\/dim><text>not connected<\/text>/);
+  assert.match(body, /^<accent>Claude<\/accent><dim> — <\/dim><text>not connected<\/text>/);
+  assert.match(body, /<accent>ChatGPT<\/accent><dim> — <\/dim><text>not connected<\/text>/);
 });
 
 test("registers /quota as a white-text alias for /usage", async () => {
@@ -101,7 +102,7 @@ test("registers /quota as a white-text alias for /usage", async () => {
 
   assert.equal(notifications.length, 1);
   assert.equal(notifications[0]?.[1], "info");
-  assert.match(notifications[0]?.[0] ?? "", /^<text>Claude Code — not connected/);
+  assert.match(notifications[0]?.[0] ?? "", /^<text>Claude — not connected/);
 });
 
 test("closes an open status dialog when reload starts before its context becomes stale", async () => {
@@ -214,7 +215,7 @@ test("Usage reset key runs the action once and returns to the Usage menu", async
   // SAFETY: The fixture implements the Usage dialog and disconnected reset path.
   await commands.get("usage")?.handler("", ctx as never);
   assert.equal(dialogs, 2);
-  assert.deepEqual(notices, ["OpenAI Codex is not connected."]);
+  assert.deepEqual(notices, ["ChatGPT is not connected."]);
 });
 
 test("labels Claude plans from the live profile, with Team seats before the rate-limit tier", () => {
@@ -266,26 +267,33 @@ test("shows the Claude plan next to the usage windows", () => {
     { organization: { rate_limit_tier: "default_claude_max_20x" } },
   );
   assert.equal(usage.plan, "Max (20x)");
-  assert.match(formatProviderUsage(usage), /^Claude Code — Max \(20x\) · extra usage 4% used\n/);
+  assert.match(formatProviderUsage(usage), /^Claude — Max \(20x\) · extra usage 4% used\n/);
 });
 
 test("labels ChatGPT Codex plans and keeps unknown wire values readable", () => {
   assert.equal(codexPlanLabel("plus"), "Plus");
-  assert.equal(codexPlanLabel("prolite"), "Pro (5x)");
-  assert.equal(codexPlanLabel("pro"), "Pro (20x)");
+  assert.equal(codexPlanLabel("prolite"), "Pro 100");
+  assert.equal(codexPlanLabel("pro"), "Pro 200");
+  assert.equal(codexPlanLabel("promax"), "Pro 500");
   assert.equal(codexPlanLabel("business"), "Business");
   assert.equal(codexPlanLabel("self_serve_business_usage_based"), "Business");
   assert.equal(codexPlanLabel("team"), "Team");
   assert.equal(codexPlanLabel("some_new_plan"), "Some New Plan");
   assert.equal(codexPlanLabel(undefined), undefined);
 
-  const usage = normalizeCodexUsage({
-    plan_type: "prolite",
-    credits: { balance: "0" },
-    rate_limit: {},
-  });
-  assert.equal(usage.plan, "Pro (5x)");
-  assert.equal(formatProviderUsage(usage), "OpenAI Codex — Pro (5x) · 0 credits");
+  for (const [planType, label] of [
+    ["prolite", "Pro 100"],
+    ["pro", "Pro 200"],
+    ["promax", "Pro 500"],
+    ["PROMAX", "Pro 500"],
+  ]) {
+    const usage = normalizeCodexUsage({
+      plan_type: planType,
+      credits: { balance: "0" },
+      rate_limit: {},
+    });
+    assert.equal(formatProviderUsage(usage), `ChatGPT — ${label} · 0 credits`);
+  }
 });
 
 test("usage numbers are rounded for display instead of echoing float noise", () => {
@@ -294,7 +302,7 @@ test("usage numbers are rounded for display instead of echoing float noise", () 
     credits: { balance: "62500.0000000000" },
     rate_limit: {},
   });
-  assert.equal(formatProviderUsage(codex), "OpenAI Codex — Pro (20x) · 62500 credits");
+  assert.equal(formatProviderUsage(codex), "ChatGPT — Pro 200 · 62500 credits");
   const fractional = normalizeCodexUsage({ credits: { balance: 12.3456 }, rate_limit: {} });
   assert.equal(fractional.status, "12.35 credits");
   const unparsable = normalizeCodexUsage({ credits: { balance: "n/a" }, rate_limit: {} });
@@ -662,12 +670,12 @@ test("shares the snapshot and the gate with the next session", async () => {
 
 test("marks a usage report that was rebuilt from the cache", () => {
   const report = formatProviderUsage({
-    name: "Claude Code",
+    name: "Claude",
     plan: "Max (20x)",
     cached: { at: new Date(Date.now() - 12 * 60_000), reason: "HTTP 429" },
     windows: [{ label: "5h", percent: 40, qualifier: "used" }],
   });
-  assert.match(report, /^Claude Code — Max \(20x\) · cached 12m ago · HTTP 429\n/);
+  assert.match(report, /^Claude — Max \(20x\) · cached 12m ago · HTTP 429\n/);
   assert.match(
     formatProviderUsage({
       name: "Synthetic",
