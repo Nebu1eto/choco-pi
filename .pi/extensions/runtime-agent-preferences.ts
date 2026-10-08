@@ -1,16 +1,31 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   AGENT_PREFERENCES_MARKER,
+  DAYBREAK_DEFAULT_KEY,
   DEFAULT_PERSONA,
   PERSONA_MESSAGE_TYPE,
   appendPersonaDefinitions,
   buildAgentPreferencesBlock,
+  onAgentPreferenceChange,
+  parseDaybreakPreference,
   readAgentPreferences,
   renderPersonaAnnouncement,
   resolveAgentStyle,
   resolvePersona,
   type AgentPreferences,
 } from "./lib/agent-preferences.ts";
+import { getDaybreakBridge } from "./lib/daybreak-state.ts";
+
+/**
+ * Applies a changed global Daybreak default to one session. Only a
+ * default-source request follows it; explicit and inherited choices win.
+ */
+export function reseedDaybreakDefault(sessionId: string, value: boolean): void {
+  const controller = getDaybreakBridge().get(sessionId);
+  const state = controller?.getState();
+  if (!controller || state?.source !== "default" || state.requested === value) return;
+  controller.set(value, "default");
+}
 
 /**
  * Injects the user's configured agent language and agent style into the
@@ -20,6 +35,7 @@ import {
  * no injection.
  */
 export default function runtimeAgentPreferences(pi: ExtensionAPI): void {
+  let unsubscribeDaybreak: (() => void) | undefined;
   const readPreferences = (): Partial<AgentPreferences> => {
     try {
       return readAgentPreferences();
@@ -29,6 +45,13 @@ export default function runtimeAgentPreferences(pi: ExtensionAPI): void {
   };
 
   pi.on("session_start", (_event, ctx) => {
+    unsubscribeDaybreak?.();
+    const sessionId = ctx.sessionManager.getSessionId();
+    unsubscribeDaybreak = onAgentPreferenceChange((change) => {
+      if (change.key !== DAYBREAK_DEFAULT_KEY) return;
+      const value = parseDaybreakPreference(change.value);
+      if (value !== undefined) reseedDaybreakDefault(sessionId, value);
+    });
     const preferences = readPreferences();
     if (!preferences.style) return;
     if (resolveAgentStyle(preferences.style)) return;
@@ -38,6 +61,11 @@ export default function runtimeAgentPreferences(pi: ExtensionAPI): void {
         "warning",
       );
     }
+  });
+
+  pi.on("session_shutdown", () => {
+    unsubscribeDaybreak?.();
+    unsubscribeDaybreak = undefined;
   });
 
   pi.on("before_agent_start", (event, ctx) => {

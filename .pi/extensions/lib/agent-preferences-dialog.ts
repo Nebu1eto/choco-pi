@@ -8,6 +8,7 @@ import {
   AGENT_ON_USAGE_LIMIT_KEY,
   AGENT_PERSONA_KEY,
   AGENT_STYLE_KEY,
+  DAYBREAK_DEFAULT_KEY,
   DEFAULT_SESSION_AUTO_NAME_MODEL,
   ON_USAGE_LIMIT_VALUES,
   SESSION_AUTO_NAME_KEY,
@@ -36,6 +37,9 @@ const DEFAULT_STYLE_LABEL = "Default";
 const LANGUAGE_PRESETS = ["English", "Korean", "Japanese", "Chinese"];
 const ENABLED_LABEL = "Enabled";
 const DISABLED_LABEL = "Disabled";
+const DAYBREAK_ON = "on";
+const DAYBREAK_OFF = "off";
+const DAYBREAK_VALUES = [DAYBREAK_OFF, DAYBREAK_ON];
 const STALE_CONTEXT_ERROR =
   "This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().";
 
@@ -155,6 +159,27 @@ async function writeSessionAutoName(ctx: ExtensionCommandContext, enabled: boole
   );
 }
 
+/** Parses a Daybreak preference row or argument value; `undefined` when unrecognized. */
+export function parseDaybreakValue(value: string): boolean | undefined {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === DAYBREAK_ON) return true;
+  if (normalized === DAYBREAK_OFF) return false;
+  return undefined;
+}
+
+async function writeDaybreakDefault(ctx: ExtensionCommandContext, enabled: boolean): Promise<void> {
+  await writeAndNotify(
+    ctx,
+    // An unchanged value neither writes nor emits, so it cannot reseed default-source sessions.
+    async () => {
+      await writeAgentPreferenceIfChanged(DAYBREAK_DEFAULT_KEY, enabled);
+    },
+    `Daybreak default: ${enabled ? DAYBREAK_ON : DAYBREAK_OFF} (sessions without an explicit /daybreak choice follow it)`,
+    (error) =>
+      `Could not update the Daybreak default: ${error instanceof Error ? error.message : String(error)}`,
+  );
+}
+
 async function writeSessionAutoNameModel(
   ctx: ExtensionCommandContext,
   model: string,
@@ -201,6 +226,11 @@ function handleAgentPreferenceChange(
   if (id === AGENT_ON_USAGE_LIMIT_KEY) {
     const onUsageLimit = parseOnUsageLimit(newValue);
     if (onUsageLimit) void writeOnUsageLimit(ctx, onUsageLimit);
+    return { kind: "update" };
+  }
+  if (id === DAYBREAK_DEFAULT_KEY) {
+    const daybreak = parseDaybreakValue(newValue);
+    if (daybreak !== undefined) void writeDaybreakDefault(ctx, daybreak);
     return { kind: "update" };
   }
   if (id === SESSION_AUTO_NAME_KEY) {
@@ -271,6 +301,14 @@ export function buildAgentPreferencesSection(
             "What happens when the active provider reports a usage limit: none leaves the run settled with the error (default); fallback switches to a similar-tier model on another provider and continues; auto-resume waits for the quota reset, then continues. Sub-agents report limits to their parent, and are parked and resumed only under auto-resume.",
           currentValue: preferences.onUsageLimit,
           values: [...ON_USAGE_LIMIT_VALUES],
+        },
+        {
+          id: DAYBREAK_DEFAULT_KEY,
+          label: "Daybreak",
+          description:
+            "Default Daybreak request for sessions without an explicit /daybreak choice (off by default). A request applies only when the account is entitled; /daybreak status shows the outcome. Explicit and inherited session choices win.",
+          currentValue: preferences.daybreak ? DAYBREAK_ON : DAYBREAK_OFF,
+          values: [...DAYBREAK_VALUES],
         },
         {
           id: SESSION_AUTO_NAME_KEY,
@@ -402,6 +440,22 @@ export function resolveAgentPreferencesArgs(
     void writeOnUsageLimit(ctx, onUsageLimit);
     return { open: false };
   }
+  if (command === "daybreak") {
+    if (rest.length === 0) {
+      return { open: true, section: AGENT_SECTION_ID, focusId: DAYBREAK_DEFAULT_KEY };
+    }
+    const value = rest.join(" ");
+    const daybreak = parseDaybreakValue(value);
+    if (daybreak === undefined) {
+      ctx.ui.notify(
+        `Daybreak default "${value}" is not one of ${DAYBREAK_VALUES.join(", ")}.`,
+        "warning",
+      );
+      return { open: false };
+    }
+    void writeDaybreakDefault(ctx, daybreak);
+    return { open: false };
+  }
   return undefined;
 }
 
@@ -427,7 +481,14 @@ export function agentPreferencesCompletions(prefix: string): { value: string; la
       label: `usage-limit ${value}`,
     })).filter((item) => item.value.startsWith(`usage-limit ${valuePrefix}`));
   }
-  const candidates = ["agent", "language ", "style ", "persona ", "usage-limit "];
+  if (/^daybreak\s/i.test(normalized)) {
+    const valuePrefix = normalized.replace(/^daybreak\s+/i, "");
+    return DAYBREAK_VALUES.map((value) => ({
+      value: `daybreak ${value}`,
+      label: `daybreak ${value}`,
+    })).filter((item) => item.value.startsWith(`daybreak ${valuePrefix}`));
+  }
+  const candidates = ["agent", "language ", "style ", "persona ", "usage-limit ", "daybreak "];
   return candidates.flatMap((candidate) =>
     candidate.startsWith(normalized.toLowerCase())
       ? [{ value: candidate, label: candidate.trimEnd() }]

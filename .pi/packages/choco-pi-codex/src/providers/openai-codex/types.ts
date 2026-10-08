@@ -7,6 +7,7 @@ import type {
 } from "openai/resources/responses/responses.js";
 import type { CodexCompactionDiagnostic } from "../../adapter/compaction/diagnostics.ts";
 import type { CodexFastModeDecision } from "./fast-mode-decision.ts";
+import type { CodexAccessPrograms, CodexDaybreakTicket } from "./daybreak-decision.ts";
 
 const ProtocolValueTypeSchema = Type.Union([
   Type.Unsafe<object>({ type: "object" }),
@@ -229,6 +230,8 @@ export type CodexProviderStreamOptions = SimpleStreamOptions & {
 export type CodexReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type OpenAICodexStreamOptions = CodexProviderStreamOptions & {
   fastModeDecision?: CodexFastModeDecision | undefined;
+  /** Minted by the registered provider entry; injected values are never trusted. */
+  daybreakTicket?: CodexDaybreakTicket | undefined;
   midTurnSteering?: boolean | undefined;
   asyncCodeMode?: boolean | undefined;
   reasoningEffort?: CodexReasoningEffort | undefined;
@@ -255,6 +258,7 @@ export interface ResponsesBody {
   parallel_tool_calls: boolean;
   temperature?: number | undefined;
   service_tier?: ServiceTier | undefined;
+  access_programs?: CodexAccessPrograms | undefined;
   tools?: ProtocolValue[] | undefined;
   reasoning?:
     | {

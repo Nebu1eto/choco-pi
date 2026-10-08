@@ -35,6 +35,8 @@ import { isResponsesBody } from "./openai-codex/types.ts";
 import { recordWebSocketSseFallback } from "./openai-codex/websocket.ts";
 import {
   isWebSocketMessageTooBigError,
+  isWebSocketForbiddenError,
+  isWebSocketUnauthorizedError,
   isWebSocketUpgradeRequiredError,
 } from "./openai-codex/websocket-connection.ts";
 import { prewarmWebSocket } from "./openai-codex/websocket-stream.ts";
@@ -46,6 +48,14 @@ import {
   snapshotCodexFastModeDecision,
   type CodexFastModeDecision,
 } from "./openai-codex/fast-mode-decision.ts";
+import {
+  applyCodexDaybreakAccessPrograms,
+  beginCodexDaybreakRequest,
+  invalidateCodexDaybreakEntitlement,
+  isCurrentCodexDaybreakDecision,
+  resolveCodexDaybreakTicket,
+  type CodexDaybreakTicket,
+} from "./openai-codex/daybreak-decision.ts";
 import { withRemoteCompactionV2Feature } from "./openai-responses/compaction-v2-feature.ts";
 import { normalizeResponsesToolHistory } from "./openai-responses/tool-history.ts";
 import {
@@ -66,6 +76,8 @@ export async function prepareCodexRequestBody<TApi extends Api>(
   options: OpenAICodexStreamOptions | undefined,
   responsesLite: boolean,
 ): Promise<ResponsesBody> {
+  const daybreakTicket = options?.daybreakTicket;
+  const fastModeDecision = options?.fastModeDecision;
   let body = buildRequestBody(model, context, options);
   const nextBody = await options?.onPayload?.(body, model);
   if (nextBody !== undefined && isResponsesBody(nextBody)) body = nextBody;
@@ -79,7 +91,28 @@ export async function prepareCodexRequestBody<TApi extends Api>(
     const input = normalizeResponsesToolHistory(body.input ?? []);
     if (input !== body.input) body = { ...body, input };
   }
-  return applyFrozenFastModeDecision(body, options?.fastModeDecision);
+  // Final wire authority after every payload hook: stale or hook-injected access_programs is
+  // removed, and only a provider-minted, still-owned Daybreak decision may write it back.
+  const daybreak = await resolveCodexDaybreakTicket(daybreakTicket);
+  return applyCodexDaybreakAccessPrograms(
+    applyFrozenFastModeDecision(body, fastModeDecision),
+    daybreak,
+  );
+}
+
+function mintDaybreakTicket<TApi extends Api>(
+  model: Model<TApi>,
+  options: OpenAICodexStreamOptions | undefined,
+): CodexDaybreakTicket {
+  return beginCodexDaybreakRequest({
+    sessionId: options?.sessionId,
+    model,
+    credentials: {
+      apiKey: options?.apiKey,
+      headers: options?.headers,
+      modelHeaders: model.headers,
+    },
+  });
 }
 
 function applyFrozenFastModeDecision(
@@ -111,9 +144,11 @@ export async function prewarmOpenAICodexWebSocket<TApi extends Api>(
     runtimeConfig?.openai.fast === true,
   );
   const serviceTier = codexServiceTierForDecision(fastModeDecision);
+  const daybreakTicket = mintDaybreakTicket(model, options);
   options = {
     ...options,
     fastModeDecision,
+    daybreakTicket,
   };
   if (serviceTier) options.serviceTier = serviceTier;
   if (
@@ -142,8 +177,14 @@ export async function prewarmOpenAICodexWebSocket<TApi extends Api>(
   const preparedBody = deps.preparedBody
     ? structuredClone(deps.preparedBody)
     : await prepareCodexRequestBody(model, context, effectiveOptions, responsesLite);
-  const body = applyFrozenFastModeDecision(preparedBody, fastModeDecision);
+  const daybreak = await resolveCodexDaybreakTicket(daybreakTicket);
+  const body = applyCodexDaybreakAccessPrograms(
+    applyFrozenFastModeDecision(preparedBody, fastModeDecision),
+    daybreak,
+  );
   if (!isCurrentCodexFastModeDecision(fastModeDecision)) return;
+  // A prewarmed inference payload is reusable only for the exact Daybreak revision it carries.
+  if (!daybreak || !isCurrentCodexDaybreakDecision(daybreak)) return;
   const accountId = extractAccountId(options.apiKey);
   const routing = resolveCodexRequestRouting({
     model: body.model,
@@ -180,6 +221,10 @@ export async function prewarmOpenAICodexWebSocket<TApi extends Api>(
       deps.preserveContinuation,
     );
   } catch (error) {
+    // Prewarm bypasses the transport catch that drops a stale Daybreak grant, so an
+    // auth rejection here must invalidate too; otherwise the next request reuses it.
+    if (isWebSocketUnauthorizedError(error) || isWebSocketForbiddenError(error))
+      invalidateCodexDaybreakEntitlement(options.apiKey, model.baseUrl);
     if (
       !options.signal?.aborted &&
       (isWebSocketUpgradeRequiredError(error) || isWebSocketMessageTooBigError(error))
@@ -226,9 +271,18 @@ export function createOpenAICodexProviderStream<TApi extends Api>(
     runtimeConfig?.openai.fast === true,
   );
   const serviceTier = codexServiceTierForDecision(fastModeDecision);
+  const upstreamOnResponse = streamOptions?.onResponse;
+  const daybreakApiKey = streamOptions?.apiKey;
+  const daybreakBaseUrl = model.baseUrl;
   const effectiveStreamOptions: OpenAICodexStreamOptions = {
     ...streamOptions,
     fastModeDecision,
+    daybreakTicket: mintDaybreakTicket(model, streamOptions),
+    onResponse: async (response, responseModel) => {
+      if (response.status === 401 || response.status === 403)
+        invalidateCodexDaybreakEntitlement(daybreakApiKey, daybreakBaseUrl);
+      await upstreamOnResponse?.(response, responseModel);
+    },
   };
   if (serviceTier) effectiveStreamOptions.serviceTier = serviceTier;
   return createCodexTransportStream(

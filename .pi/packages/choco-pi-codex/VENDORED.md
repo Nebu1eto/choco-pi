@@ -536,3 +536,35 @@ validated object, including non-zero exits. Empty output resolves to `""` rather
 `(no output)`. The text fallback of other tools is unchanged. `extension/events.ts`
 ignores `tool_execution_start` events that carry `parentToolCallId`, so nested calls
 no longer reset the exploration group.
+
+## 2026-10-08 choco-pi patch: Daybreak access program
+
+Adds a per-session Daybreak toggle for the OpenAI Codex provider, modeled on Fast
+mode. `providers/openai-codex/daybreak-types.ts` publishes the shared state
+contract (registry symbol `choco-pi.daybreak-state`, requested, source,
+revision, generation, outcome). `daybreak-decision.ts` freezes a decision per
+request and checks currentness by controller identity, generation, and
+revision. `daybreak-entitlement.ts` looks up `accounts/verified_access` with
+the Codex auth headers, validates the response with typebox, caches per account
+and backend with a bounded TTL and single flight, and is invalidated on toggle,
+auth change, and inference 401/403 (HTTP, WebSocket transport, and prewarm).
+
+Wire semantics: off (default) strips `access_programs` from every outgoing
+body; on sends `access_programs.cyber` as `daybreak_blue` or `daybreak_red`
+only with canonical ChatGPT-account Codex auth and an active cyber grant;
+otherwise the field is omitted and the outcome records why (`not-granted`,
+`lookup-failed`, `auth-not-eligible`). The finalizer runs after payload hooks
+in `prepareCodexRequestBody` and the prewarm `preparedBody` branch; remote
+compaction v2 replaces the field in history bodies; the WebSocket continuation
+comparison keeps the effective field so a change forces a fresh
+`response.create`; stock and proxy Responses overlays never receive it.
+`src/ui/status.ts` shows the effective state and reason. Tests:
+`tests/daybreak-decision.test.ts`, `tests/daybreak-status.test.ts`.
+
+Granted requests also pre-check the selected model against the authenticated
+`codex/models?client_version=1.0.0` catalog. The per-account/backend single-flight
+cache validates only used fields, skips malformed model entries, and shares
+entitlement invalidation events. Missing support for the exact blue/red program
+omits the wire field and reports `model-not-supported`; lookup failures fail
+closed as `lookup-failed`. Catalog successes expire after ten minutes, failures
+after one minute, with a five-second lookup timeout.

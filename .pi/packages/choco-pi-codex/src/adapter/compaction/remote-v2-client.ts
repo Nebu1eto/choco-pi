@@ -164,6 +164,9 @@ function withCurrentCompactionControls(
   requestOptions: NativeCompactionRequestOptions,
 ): ResponsesBody {
   const {
+    // Stored canonical history never carries Daybreak authority; the provider finalizer
+    // writes the current request's frozen decision after this payload hook.
+    access_programs: _canonicalAccessPrograms,
     client_metadata: _canonicalMetadata,
     reasoning: canonicalReasoning,
     service_tier: _canonicalServiceTier,
