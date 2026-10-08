@@ -1208,3 +1208,11 @@ extension runner before `dispose()`, mirroring Pi's `AgentSessionRuntime.dispose
 A bare `dispose()` never fired the event, so extensions owning per-session
 processes (the Codex code-mode host and exec bridge, MCP clients) leaked one
 process pair per finished subagent.
+
+## Daybreak Auto preference propagation
+
+The Daybreak bridge, manager record types, and focused runtime metadata retain
+`"auto"` in parent snapshots, child initialization, reconciliation, and replay.
+Explicit boolean overrides remain unchanged. The provider owns entitlement and
+model-support checks; inherited Auto must not become best-effort On.
+Focused Daybreak tests cover snapshot preservation and explicit overrides.

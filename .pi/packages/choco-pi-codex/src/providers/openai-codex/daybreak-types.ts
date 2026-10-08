@@ -1,6 +1,7 @@
 import type { ExtensionFactory, SessionEntry } from "@earendil-works/pi-coding-agent";
 
 export const DAYBREAK_BRIDGE_SYMBOL = Symbol.for("choco-pi.daybreak-state");
+export type DaybreakRequest = boolean | "auto";
 export type DaybreakSource = "default" | "explicit" | "inherited";
 export type DaybreakOutcome =
   | "off"
@@ -13,13 +14,16 @@ export type DaybreakOutcome =
   | "auth-not-eligible";
 export type DaybreakState = Readonly<{
   sessionId: string;
-  requested: boolean;
+  requested: DaybreakRequest;
   source: DaybreakSource;
   revision: number;
   generation: number;
   outcome: DaybreakOutcome;
 }>;
-export type DaybreakInitialization = Readonly<{ requested: boolean; source: DaybreakSource }>;
+export type DaybreakInitialization = Readonly<{
+  requested: DaybreakRequest;
+  source: DaybreakSource;
+}>;
 export type DaybreakRegistration = Readonly<{
   sessionId: string;
   owner: object;
@@ -31,7 +35,7 @@ export type DaybreakRegistration = Readonly<{
 export type DaybreakController = Readonly<{
   getState(): DaybreakState;
   subscribe(listener: () => void): () => void;
-  set(requested: boolean, source?: DaybreakSource): DaybreakState;
+  set(requested: DaybreakRequest, source?: DaybreakSource): DaybreakState;
   report(outcome: DaybreakOutcome, revision: number): void;
   dispose(): void;
 }>;
@@ -45,7 +49,7 @@ export type DaybreakBridge = Readonly<{
 }>;
 export type CodexDaybreakDecision = Readonly<{
   sessionId: string;
-  requested: boolean;
+  requested: DaybreakRequest;
   source: DaybreakSource;
   revision: number;
   generation: number;

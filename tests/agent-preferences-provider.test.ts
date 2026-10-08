@@ -111,7 +111,7 @@ test(
     assert.ok(items[3].description?.includes("auto-resume waits for the quota reset"));
     assert.equal(items[4].label, "Daybreak");
     assert.equal(items[4].currentValue, "off");
-    assert.deepEqual(items[4].values, ["off", "on"]);
+    assert.deepEqual(items[4].values, ["off", "on", "auto"]);
     assert.equal(items[5].currentValue, "Enabled");
     assert.equal(items[6].currentValue, "openai-codex/gpt-6-luna");
 
@@ -138,6 +138,9 @@ test(
     assert.equal(settings.sessionAutoNameModel, "openai-codex/gpt-5.6-luna");
     assert.equal(settings.theme, "nord-dark", "unrelated settings must survive");
     assert.equal(section.buildItems()[3].currentValue, "fallback");
+    section.handleChange("daybreakDefault", "auto");
+    await settleWrites();
+    assert.equal(section.buildItems()[4].currentValue, "auto");
 
     section.handleChange("agentPersona", "unset");
     await settleWrites();

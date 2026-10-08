@@ -66,7 +66,7 @@ type FastEditorState = {
 };
 
 /** Daybreak request plus its last reported entitlement outcome. */
-export type DaybreakEditorState = { requested: boolean; outcome: DaybreakOutcome };
+export type DaybreakEditorState = { requested: boolean | "auto"; outcome: DaybreakOutcome };
 
 type FocusedModelControlsRegistry = Map<
   string,
@@ -158,7 +158,7 @@ function focusedFastEditorState(): FocusedFastEditorState | undefined {
     supported: isBoolean(current?.fastModeSupported) && current.fastModeSupported,
     active: isBoolean(current?.fastModeActive) && current.fastModeActive,
   };
-  if (isBoolean(current?.daybreakRequested)) {
+  if (isBoolean(current?.daybreakRequested) || current?.daybreakRequested === "auto") {
     // A requested state without a known outcome stays honestly unknown.
     const fallback: DaybreakOutcome = current.daybreakRequested ? "pending" : "off";
     state.daybreak = {
@@ -245,10 +245,9 @@ export function applyDaybreakAction(
  * Daybreak metadata belongs only to canonical ChatGPT Codex models. Hide a saved
  * request and any stale grant completely when the active model is ineligible.
  */
-function projectDaybreakForModel<T extends { requested: boolean; outcome: DaybreakOutcome }>(
-  state: T | undefined,
-  model: Model<Api> | undefined,
-): T | undefined {
+function projectDaybreakForModel<
+  T extends { requested: boolean | "auto"; outcome: DaybreakOutcome },
+>(state: T | undefined, model: Model<Api> | undefined): T | undefined {
   return isCanonicalCodexSubscriptionModel(model) ? state : undefined;
 }
 

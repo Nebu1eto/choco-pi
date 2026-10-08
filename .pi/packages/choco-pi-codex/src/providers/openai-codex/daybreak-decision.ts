@@ -62,7 +62,7 @@ type DecisionOwner = Readonly<{
   isCurrent?: (() => boolean) | undefined;
   account?: ReturnType<typeof daybreakAccount>;
 }>;
-type Observation = Readonly<{ requested: boolean; revision: number }>;
+type Observation = Readonly<{ requested: DaybreakState["requested"]; revision: number }>;
 type BridgeHost = typeof globalThis & { [DAYBREAK_BRIDGE_SYMBOL]?: DaybreakBridge };
 
 const SourceSchema = Type.Union([
@@ -82,7 +82,7 @@ const OutcomeSchema = Type.Union([
 ]);
 const StateSchema = Type.Object({
   sessionId: Type.String(),
-  requested: Type.Boolean(),
+  requested: Type.Union([Type.Boolean(), Type.Literal("auto")]),
   source: SourceSchema,
   revision: Type.Integer({ minimum: 0 }),
   generation: Type.Integer({ minimum: 0 }),
@@ -299,6 +299,8 @@ async function resolveTicket(record: TicketRecord): Promise<CodexDaybreakDecisio
   if (record.isCurrent?.() === false || !ownerCurrent(owner.controller, checked))
     return publish(owner, checked);
   const result = await lookupCodexDaybreakEntitlement(account, credentials, record.turnedOn);
+  if (state.requested === "auto" && result.entitlement !== "blue" && result.entitlement !== "red")
+    return publish(owner, decisionFrom(sessionId, state, result.entitlement));
   const preferred: DaybreakTargetProgram =
     result.entitlement === "red" ? "daybreak_red" : "daybreak_blue";
   const current = decisionFrom(sessionId, state, "off");

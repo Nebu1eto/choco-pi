@@ -13,6 +13,7 @@ import {
   resolveAgentStyle,
   resolvePersona,
   type AgentPreferences,
+  type DaybreakPreference,
 } from "./lib/agent-preferences.ts";
 import { getDaybreakBridge } from "./lib/daybreak-state.ts";
 
@@ -20,7 +21,7 @@ import { getDaybreakBridge } from "./lib/daybreak-state.ts";
  * Applies a changed global Daybreak default to one session. Only a
  * default-source request follows it; explicit and inherited choices win.
  */
-export function reseedDaybreakDefault(sessionId: string, value: boolean): void {
+export function reseedDaybreakDefault(sessionId: string, value: DaybreakPreference): void {
   const controller = getDaybreakBridge().get(sessionId);
   const state = controller?.getState();
   if (!controller || state?.source !== "default" || state.requested === value) return;

@@ -299,11 +299,11 @@ export interface AgentRecord {
     source: "default" | "explicit" | "inherited";
     revision: number;
   };
-  daybreakRequested?: boolean;
+  daybreakRequested?: boolean | "auto";
   daybreakSource?: "default" | "explicit" | "inherited";
   daybreakRevision?: number;
   daybreakInitialization?: {
-    requested: boolean;
+    requested: boolean | "auto";
     source: "default" | "explicit" | "inherited";
     revision: number;
   };

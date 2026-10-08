@@ -7,6 +7,7 @@ import {
   type DaybreakInitialization,
   type DaybreakOutcome,
   type DaybreakRegistration,
+  type DaybreakRequest,
   type DaybreakSource,
   type DaybreakState,
 } from "../../packages/choco-pi-codex/src/providers/openai-codex/daybreak-types.ts";
@@ -20,6 +21,7 @@ export {
   type DaybreakInitialization,
   type DaybreakOutcome,
   type DaybreakRegistration,
+  type DaybreakRequest,
   type DaybreakSource,
   type DaybreakState,
 };
@@ -50,13 +52,13 @@ type StoredState = {
 };
 
 /** A request without a confirmed entitlement is honestly unknown until a lookup succeeds. */
-export function defaultDaybreakOutcome(requested: boolean): DaybreakOutcome {
+export function defaultDaybreakOutcome(requested: DaybreakRequest): DaybreakOutcome {
   return requested ? "pending" : "off";
 }
 
 /** Persisted request record; the entitlement outcome is deliberately absent. */
 export type DaybreakEntryData = Readonly<{
-  enabled: boolean;
+  enabled: DaybreakRequest;
   source: DaybreakSource;
   revision: number;
 }>;
@@ -85,7 +87,7 @@ export function restoreDaybreakInitialization(
   for (const entry of entries ?? []) {
     if (entry.type !== "custom" || entry.customType !== DAYBREAK_ENTRY) continue;
     const data = entry.data;
-    if (!isJsonRecord(data) || !isBoolean(data.enabled)) continue;
+    if (!isJsonRecord(data) || !(isBoolean(data.enabled) || data.enabled === "auto")) continue;
     const revision =
       isNumber(data.revision) && Number.isSafeInteger(data.revision) && data.revision >= 0
         ? data.revision
@@ -220,7 +222,7 @@ export function stripStaleDaybreakAccess(payload: RuntimeValue): JsonRecord | un
 export function daybreakStatusValue(state: DaybreakState | undefined): string {
   if (!state) return "not initialized";
   if (!state.requested) return "off";
-  return DAYBREAK_REQUESTED_STATUS[state.outcome];
+  return `${state.requested === "auto" ? "auto; " : ""}${DAYBREAK_REQUESTED_STATUS[state.outcome]}`;
 }
 
 const DAYBREAK_REQUESTED_STATUS = {

@@ -23,7 +23,7 @@ export interface FocusedAgentRuntime {
   fastModeSupported: boolean;
   fastModeActive: boolean;
   fastModeRevision: number;
-  daybreakRequested?: boolean;
+  daybreakRequested?: boolean | "auto";
   daybreakOutcome?: DaybreakOutcome;
   daybreakRevision?: number;
 }

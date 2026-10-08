@@ -147,7 +147,11 @@ type FakeController = {
   reports: Array<readonly [DaybreakOutcome, number]>;
 };
 
-function fakeController(sessionId: string, requested: boolean, generation = 1): FakeController {
+function fakeController(
+  sessionId: string,
+  requested: DaybreakState["requested"],
+  generation = 1,
+): FakeController {
   const fake: FakeController = {
     state: { sessionId, requested, source: "explicit", revision: 1, generation, outcome: "off" },
     reports: [],
@@ -178,7 +182,7 @@ function installBridge() {
   };
   Object.defineProperty(globalThis, DAYBREAK_BRIDGE_SYMBOL, { configurable: true, value: bridge });
   return {
-    add(sessionId: string, requested: boolean, generation = 1): FakeController {
+    add(sessionId: string, requested: DaybreakState["requested"], generation = 1): FakeController {
       const fake = fakeController(sessionId, requested, generation);
       controllers.set(sessionId, fake.controller);
       return fake;
@@ -259,6 +263,48 @@ function cleanup() {
   configureCodexDaybreakEntitlementForTest(undefined);
   configureCodexDaybreakModelSupportForTest(undefined);
 }
+
+test("auto requires confirmed eligibility and model support; on remains best effort", async (t) => {
+  t.after(cleanup);
+  const bridge = installBridge();
+  for (const eligibility of ["blue", "red", "none", "failure"] as const) {
+    fakeLookup(() =>
+      eligibility === "failure"
+        ? new Response(null, { status: 503 })
+        : Response.json(
+            grantsPayload(
+              ...(eligibility === "none" ? [] : [eligibility === "red" ? "tac3" : "tac1"]),
+            ),
+          ),
+    );
+    const id = `auto-${eligibility}`;
+    bridge.add(id, "auto");
+    const decision = await resolve(ticket(id));
+    assert.equal(decision.requested, "auto");
+    assert.equal(
+      decision.outcome,
+      eligibility === "none"
+        ? "not-granted"
+        : eligibility === "failure"
+          ? "lookup-failed"
+          : eligibility,
+    );
+    assert.equal(
+      cyberOf(applyCodexDaybreakAccessPrograms({}, decision)),
+      eligibility === "blue" || eligibility === "red" ? `daybreak_${eligibility}` : undefined,
+    );
+    bridge.add(`on-${eligibility}`, true);
+    assert.equal(
+      (await resolve(ticket(`on-${eligibility}`))).outcome,
+      eligibility === "red" ? "red" : "blue",
+    );
+  }
+  const calls = fakeLookup(() => Response.json(grantsPayload("tac3")));
+  configureCodexDaybreakModelSupportForTest({ fetch: async () => Response.json({ models: [] }) });
+  bridge.add("auto-unsupported", "auto");
+  assert.equal((await resolve(ticket("auto-unsupported"))).outcome, "model-not-supported");
+  assert.equal(calls.length, 0, "unsupported models skip the entitlement lookup");
+});
 
 test("off never looks up and every finalizer strips stale or forged access_programs", async (t) => {
   t.after(cleanup);

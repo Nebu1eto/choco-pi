@@ -46,7 +46,7 @@ function codexModel(): Model<Api> {
 }
 
 async function withAgentDir<T>(
-  settings: Record<string, boolean> | undefined,
+  settings: Record<string, boolean | "auto"> | undefined,
   run: (dir: string) => Promise<T>,
 ): Promise<T> {
   const previous = process.env.PI_CODING_AGENT_DIR;
@@ -243,6 +243,10 @@ test("the global preference seeds only default-source state", async () => {
       assert.equal(seeded.state()?.requested, false);
       assert.equal(seeded.state()?.revision, 2);
       assert.equal(explicit.state()?.requested, false);
+      reseedDaybreakDefault("db-seeded", "auto");
+      reseedDaybreakDefault("db-explicit", "auto");
+      assert.equal(seeded.state()?.requested, "auto");
+      assert.equal(explicit.state()?.requested, false);
     } finally {
       seeded.stop();
       explicit.stop();
@@ -250,8 +254,8 @@ test("the global preference seeds only default-source state", async () => {
   });
 });
 
-test("an existing default controller follows the preference; explicit and inherited stay", async () => {
-  await withAgentDir({ [DAYBREAK_DEFAULT_KEY]: true }, async () => {
+test("an existing default controller follows auto; explicit and inherited stay", async () => {
+  await withAgentDir({ [DAYBREAK_DEFAULT_KEY]: "auto" }, async () => {
     const bridge = getDaybreakBridge();
     const owners = ["db-pre-default", "db-pre-inherited", "db-pre-explicit"] as const;
     const sources = ["default", "inherited", "explicit"] as const;
@@ -268,7 +272,7 @@ test("an existing default controller follows the preference; explicit and inheri
       for (const session of sessions) await session.start();
       assert.deepEqual(
         sessions.map((session) => session.state()?.requested),
-        [true, false, false],
+        ["auto", false, false],
       );
     } finally {
       for (const session of sessions) session.stop();
@@ -329,6 +333,7 @@ test("preferences: daybreak defaults false, parses, and writes through /preferen
     assert.equal((await readAgentPreferencesAsync(dir)).daybreak, false);
     assert.equal(parseDaybreakValue(" ON "), true);
     assert.equal(parseDaybreakValue("off"), false);
+    assert.equal(parseDaybreakValue(" AUTO "), "auto");
     assert.equal(parseDaybreakValue("yes"), undefined);
     assert.deepEqual(
       agentPreferencesCompletions("daybreak o").map((item) => item.value),
@@ -350,6 +355,10 @@ test("preferences: daybreak defaults false, parses, and writes through /preferen
     const settings: unknown = JSON.parse(await readFile(path.join(dir, "settings.json"), "utf8"));
     assert.deepEqual(settings, { [DAYBREAK_DEFAULT_KEY]: true });
     assert.equal((await readAgentPreferencesAsync(dir)).daybreak, true);
+    assert.deepEqual(resolveAgentPreferencesArgs("daybreak auto", ctx), { open: false });
+    await flushAgentPreferenceWrites();
+    assert.equal((await readAgentPreferencesAsync(dir)).daybreak, "auto");
+    assert.match(notices.at(-1) ?? "", /Daybreak default: auto/);
   });
 });
 

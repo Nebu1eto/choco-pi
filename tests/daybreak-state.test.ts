@@ -77,6 +77,27 @@ test("default state is off; turning on advances the revision and is honestly unk
   }
 });
 
+test("Auto is persisted and restored as policy, never as a grant", () => {
+  const bridge = createDaybreakBridge();
+  const controller = bridge.register({
+    sessionId: "auto-replay",
+    owner: {},
+    generation: 0,
+    initial: { requested: false, source: "default" },
+    entries: [entry({ enabled: "auto", source: "inherited", revision: 3 })],
+  });
+  try {
+    const state = controller.getState();
+    assert.equal(state.requested, "auto");
+    assert.equal(state.outcome, "pending");
+    assert.match(daybreakStatusValue(state), /^auto;.*checking availability/);
+    controller.report("red", state.revision);
+    assert.equal(daybreakStatusValue(controller.getState()), "auto; on");
+  } finally {
+    controller.dispose();
+  }
+});
+
 test("report applies only to the current controller at the matching revision", () => {
   const bridge = createDaybreakBridge();
   const persisted: DaybreakState[] = [];

@@ -32,6 +32,7 @@ export const AGENT_PERSONA_KEY = "agentPersona";
 export const AGENT_ON_USAGE_LIMIT_KEY = "agentOnUsageLimit";
 /** Global default for new sessions' Daybreak request; seeds only default-source state. */
 export const DAYBREAK_DEFAULT_KEY = "daybreakDefault";
+export type DaybreakPreference = boolean | "auto";
 export const DEFAULT_DAYBREAK = false;
 export const PERSONA_MESSAGE_TYPE = "choco-pi-agent-persona";
 export const PERSONA_DEFINITIONS_HEADING = "## Agent persona";
@@ -68,7 +69,7 @@ export interface AgentPreferences {
   /** Always set by the readers; optional so partial fallbacks stay valid. */
   onUsageLimit?: OnUsageLimit;
   /** Always set by the readers; optional so partial fallbacks stay valid. */
-  daybreak?: boolean;
+  daybreak?: DaybreakPreference;
   language?: string;
   style?: string;
   sessionAutoName?: boolean;
@@ -78,13 +79,13 @@ export interface AgentPreferences {
 /** Preferences as read from the settings file, with every defaulted key resolved. */
 export interface ResolvedAgentPreferences extends AgentPreferences {
   onUsageLimit: OnUsageLimit;
-  daybreak: boolean;
+  daybreak: DaybreakPreference;
 }
 
 interface AgentPreferenceValues {
   agentPersona: string;
   agentOnUsageLimit: OnUsageLimit;
-  daybreakDefault: boolean;
+  daybreakDefault: DaybreakPreference;
   agentLanguage: string;
   agentStyle: string;
   sessionAutoName: boolean;
@@ -192,8 +193,8 @@ function preferencesFromSettings(settings: JsonRecord): ResolvedAgentPreferences
   return preferences;
 }
 
-export function parseDaybreakPreference(value: RuntimeValue): boolean | undefined {
-  return isBoolean(value) ? value : undefined;
+export function parseDaybreakPreference(value: RuntimeValue): DaybreakPreference | undefined {
+  return isBoolean(value) || value === "auto" ? value : undefined;
 }
 
 export function readAgentPreferences(agentDir: string = getAgentDir()): ResolvedAgentPreferences {
