@@ -16,7 +16,7 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { resumeAgent, runAgent, type MainSessionFork, type ToolActivity } from "./agent-runner.ts";
 import { unregisterChildSessionId } from "./child-context.ts";
-import { cleanupChildSessionOwner } from "./child-session-cleanup.ts";
+import { cleanupChildSessionOwner, emitChildSessionShutdown } from "./child-session-cleanup.ts";
 import { setSessionFastMode, snapshotFastMode } from "./fast-mode-bridge.ts";
 import { setSessionDaybreak, snapshotDaybreak } from "./daybreak-bridge.ts";
 import { normalizeMaxConcurrent, schedulingMaxConcurrent } from "./limits.ts";
@@ -2792,13 +2792,20 @@ export class AgentManager {
     this.usageScopes.delete(id);
     this.wakeRuns.delete(id);
     if (record.session) {
+      const session = record.session;
       try {
-        unregisterChildSessionId(record.session.sessionManager.getSessionId());
+        unregisterChildSessionId(session.sessionManager.getSessionId());
       } catch {
         /* a stub or retired session manager has no id to release */
       }
-      cleanupChildSessionOwner(record.session);
-      record.session.dispose?.();
+      cleanupChildSessionOwner(session);
+      // Pi's own runtime emits session_shutdown before dispose(); a bare dispose() skips
+      // it, so extensions that own per-session processes (the Codex code-mode host and
+      // exec bridge, MCP clients) never release them and the children leak. Emit it the
+      // same way, then dispose regardless of handler failures.
+      const shutdown = emitChildSessionShutdown(session);
+      if (shutdown) void shutdown.then(() => session.dispose?.());
+      else session.dispose?.();
     }
     record.session = undefined;
     this.agents.delete(id);

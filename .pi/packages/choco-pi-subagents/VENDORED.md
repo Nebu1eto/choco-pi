@@ -688,7 +688,7 @@ mentions with the off-screen clone start path (`src/mention.ts`,
 ## Runtime dependencies
 
 Notification-render tests spell repeated literal indentation spaces as fixed
-regex counts (` {4}` and ` {6}`), preserving the exact asserted output.
+regex counts (`{4}` and `{6}`), preserving the exact asserted output.
 
 Vendored under `node_modules/`, copied from the pnpm store of the original
 `choco-pi` checkout at the exact versions that resolved there. Both are
@@ -1172,6 +1172,14 @@ outcome has been reported, rather than implying a failed lookup. The hidden
 registration factory and bridge contract remain unchanged; Daybreak and focus-mode
 regression tests still pass.
 
+Focused runtime metadata now omits every Daybreak field for noncanonical Codex
+models, while eligible children retain their own request/outcome/revision. The
+runtime publishes API and backend identity so editor chrome can independently
+apply the canonical-model predicate. Focused `/daybreak` is a notice-only no-op
+on ineligible models, and evicted sessions retain model identity without stale
+Daybreak metadata. Invocation tags lacking a resolved model descriptor remain
+request metadata rather than entitlement claims.
+
 ## 2026-10-08 choco-pi patch: built-in tool search
 
 `agent-runner.ts` supplies Pi's `createToolSearchExtension` to child sessions
@@ -1192,3 +1200,11 @@ Root and nested `steer_subagent` accept queued agents and hold the message until
 session starts. Failure results from the root `workflow_*`, `get_subagent_result`,
 `steer_subagent`, `stop_subagent`, and `set_subagent_*` tools set `isError`;
 `workflow_update` with neither `steps` nor `finish` is an error.
+
+## 2026-10-08 choco-pi patch: child session_shutdown before dispose
+
+`removeRecord` now emits `session_shutdown` (reason `quit`) to a child session's
+extension runner before `dispose()`, mirroring Pi's `AgentSessionRuntime.dispose()`.
+A bare `dispose()` never fired the event, so extensions owning per-session
+processes (the Codex code-mode host and exec bridge, MCP clients) leaked one
+process pair per finished subagent.
