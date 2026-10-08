@@ -379,7 +379,7 @@ test("root Daybreak editor badge shows grants and names each denial", () => {
   assert.match(render({ requested: true, outcome: "not-granted" }), /daybreak not granted {2}$/);
   assert.match(
     render({ requested: true, outcome: "model-not-supported" }),
-    /daybreak model unsupported {2}$/,
+    /daybreak unavailable {2}$/,
   );
   assert.match(
     render({ requested: true, outcome: "lookup-failed" }),

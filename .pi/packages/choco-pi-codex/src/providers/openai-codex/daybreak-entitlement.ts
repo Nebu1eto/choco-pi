@@ -154,7 +154,6 @@ export function lookupCodexDaybreakEntitlement(
     invalidateCodexDaybreakAccount(account);
     entry = undefined;
   }
-  if (invalidate) invalidateCodexDaybreakModelSupport(account);
   if (entry && invalidate) {
     cache.delete(account.key);
     entry = undefined;
@@ -186,7 +185,7 @@ export function lookupCodexDaybreakEntitlement(
       result,
       expiresAt:
         dependencies.now() +
-        (result.entitlement === "lookup-failed"
+        (result.entitlement === "lookup-failed" || result.entitlement === "not-granted"
           ? DAYBREAK_FAILURE_TTL_MS
           : DAYBREAK_ENTITLEMENT_TTL_MS),
     };

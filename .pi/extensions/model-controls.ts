@@ -118,7 +118,7 @@ const DAYBREAK_BADGES = {
   red: "daybreak red",
   "not-granted": "daybreak not granted",
   "lookup-failed": "daybreak lookup failed",
-  "model-not-supported": "daybreak model unsupported",
+  "model-not-supported": "daybreak unavailable",
   "auth-not-eligible": "daybreak auth ineligible",
 } satisfies Record<DaybreakOutcome, string>;
 
