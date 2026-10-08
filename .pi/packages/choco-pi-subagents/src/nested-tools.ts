@@ -48,6 +48,7 @@ import type {
 } from "./types.ts";
 import { addUsage } from "./usage.ts";
 import { isWorktreeIsolationEnabled } from "./worktree.ts";
+import { thinkingLevelSchema } from "./workflow.ts";
 
 /**
  * Hard ceiling on nesting for every branch: main session = 0, its subagents = 1,
@@ -247,9 +248,19 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
       subagent_type: Type.String({
         description: `Allowed nested agent type. Available: ${availableIn(loadRegistry()).join(", ") || "none"}.`,
       }),
-      model: Type.Optional(Type.String({ description: "Optional provider/model override." })),
-      thinking: Type.Optional(Type.String({ description: "Optional thinking level." })),
-      max_turns: Type.Optional(Type.Number({ minimum: 1 })),
+      model: Type.Optional(
+        Type.String({
+          description: "Optional provider/model; applies unless the agent definition pins it.",
+        }),
+      ),
+      thinking: Type.Optional(
+        thinkingLevelSchema(
+          "Optional thinking level; applies unless the agent definition pins it.",
+        ),
+      ),
+      max_turns: Type.Optional(
+        Type.Number({ minimum: 1, description: "Applies unless the agent definition pins it." }),
+      ),
       timeout_ms: Type.Optional(
         Type.Integer({
           minimum: 1,
@@ -272,15 +283,21 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
             "Tool-inactivity interval before one conclusion steering request, then watchdog stop.",
         }),
       ),
-      run_in_background: Type.Optional(Type.Boolean()),
+      run_in_background: Type.Optional(
+        Type.Boolean({ description: "Applies unless the agent definition pins it." }),
+      ),
       resume: Type.Optional(
         Type.String({
           description:
             "Resume a nested agent owned by this parent. Supplying `name` explicitly renames its alias; omitting `name` preserves it.",
         }),
       ),
-      isolated: Type.Optional(Type.Boolean()),
-      inherit_context: Type.Optional(Type.Boolean()),
+      isolated: Type.Optional(
+        Type.Boolean({ description: "Applies unless the agent definition pins it." }),
+      ),
+      inherit_context: Type.Optional(
+        Type.Boolean({ description: "Applies unless the agent definition pins it." }),
+      ),
       fast_mode: Type.Optional(Type.Boolean({ description: "Request fast mode for this run." })),
       daybreak: Type.Optional(Type.Boolean({ description: "Request Daybreak for this run." })),
       ...isolationParam(isWorktreeIsolationEnabled()),
@@ -615,9 +632,12 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
     }),
     execute: async (_toolCallId, params) => {
       const record = context.manager.getRecord(params.agent_id);
-      if (!ownsRecord(record, context.parentAgentId) || record.status !== "running") {
+      if (
+        !ownsRecord(record, context.parentAgentId) ||
+        (record.status !== "running" && record.status !== "queued")
+      ) {
         return textResult(
-          `Running nested agent not found or not owned by this parent: "${params.agent_id}".`,
+          `Running or queued nested agent not found or not owned by this parent: "${params.agent_id}".`,
           true,
         );
       }
