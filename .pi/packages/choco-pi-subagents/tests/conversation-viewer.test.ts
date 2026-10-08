@@ -768,6 +768,58 @@ test("focused tool renderers resolve historical tools and override registered an
   }
 });
 
+test("settled tools keep their result render cache across live deltas", async () => {
+  let resultRenders = 0;
+  const fixture = await createSdkFixture(undefined, [
+    (pi) => {
+      pi.registerToolRenderer((name, next) =>
+        name === "cached-tool"
+          ? {
+              renderCall: () => new Text("CACHED CALL", 0, 0),
+              renderResult: () => {
+                resultRenders++;
+                return new Text("CACHED RESULT", 0, 0);
+              },
+            }
+          : next(),
+      );
+    },
+  ]);
+  const assistant = makeAssistantMessage(
+    [{ type: "toolCall", id: "cached-call", name: "cached-tool", arguments: {} }],
+    "toolUse",
+  );
+  const { session, fire } = makeSession([
+    assistant,
+    { ...makeToolResult("cached-call", "done"), toolName: "cached-tool" },
+  ]);
+  Object.defineProperty(session, "extensionRunner", { value: fixture.session.extensionRunner });
+  const { viewer, rendered } = makeViewer(session, makeRecord(session, "running"));
+  try {
+    assert.match(rendered(), /CACHED RESULT/);
+    const settledRenders = resultRenders;
+    assert.ok(settledRenders > 0);
+    for (let i = 0; i < 3; i++) {
+      const delta = makeAssistantMessage([{ type: "text", text: `Live delta ${i}` }]);
+      fire({
+        type: "message_update",
+        message: delta,
+        assistantMessageEvent: {
+          type: "text_delta",
+          contentIndex: 0,
+          delta: `${i}`,
+          partial: delta,
+        },
+      });
+      rendered();
+      assert.equal(resultRenders, settledRenders, "historical tool is not re-rendered");
+    }
+  } finally {
+    viewer.dispose();
+    fixture.session.dispose();
+  }
+});
+
 test("invalidate drops the caches and re-renders identically", () => {
   const { session } = makeSession([
     makeUserMessage("Hello **there**."),

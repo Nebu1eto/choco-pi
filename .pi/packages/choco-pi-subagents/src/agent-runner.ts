@@ -653,6 +653,14 @@ export function normalizeMaxTurns(n: number | undefined): number | undefined {
   return Math.max(1, n);
 }
 
+/** Resolve the same turn-limit precedence for fresh and resumed runs. */
+export function resolveAgentMaxTurns(
+  type: string,
+  explicit: number | undefined,
+): number | undefined {
+  return normalizeMaxTurns(explicit ?? getAgentConfig(type)?.maxTurns ?? defaultMaxTurns);
+}
+
 /** Get the default max turns value. undefined = unlimited. */
 export function getDefaultMaxTurns(): number | undefined {
   return defaultMaxTurns;
@@ -994,6 +1002,9 @@ export function installRunnerTurnLimit(
   let softLimitReached = false;
   let aborted = false;
   let failure: string | undefined;
+  let active = true;
+  const corrections: Promise<void>[] = [];
+  let correctionError: { error: unknown } | undefined;
   const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
     if (event.type !== "turn_end") return;
     turnCount++;
@@ -1016,7 +1027,23 @@ export function installRunnerTurnLimit(
     ) {
       const correction = options.onFinishAttempt?.();
       failure = correction?.failure;
-      if (correction?.steer) session.steer(correction.steer);
+      if (correction?.steer) {
+        const onFinishAttempt = options.onFinishAttempt;
+        const steerText = correction.steer;
+        corrections.push(
+          (async () => {
+            try {
+              const disposition = await session.steer(steerText, undefined, {
+                source: "extension",
+              });
+              if (!active || options.signal?.aborted || disposition === "queued") return;
+              failure = onFinishAttempt?.()?.failure ?? "Dependency correction was not queued.";
+            } catch (error) {
+              correctionError = { error };
+            }
+          })(),
+        );
+      }
     }
     if (options.maxTurns == null) return;
     if (!softLimitReached && turnCount >= options.maxTurns) {
@@ -1033,7 +1060,14 @@ export function installRunnerTurnLimit(
     getAborted: () => aborted,
     getSteered: () => softLimitReached,
     getFailure: () => failure,
-    unsubscribe,
+    async settleCorrections() {
+      await Promise.all(corrections);
+      if (correctionError) throw correctionError.error;
+    },
+    unsubscribe() {
+      active = false;
+      unsubscribe();
+    },
   };
 }
 
@@ -1579,7 +1613,7 @@ export async function runAgent(
   options.onSessionCreated?.(session);
 
   // Track turns for graceful max_turns enforcement
-  const maxTurns = normalizeMaxTurns(options.maxTurns ?? agentConfig?.maxTurns ?? defaultMaxTurns);
+  const maxTurns = resolveAgentMaxTurns(type, options.maxTurns);
 
   let currentMessageText = "";
   const turnLimit = installRunnerTurnLimit(session, {
@@ -1623,6 +1657,7 @@ export async function runAgent(
   const startLen = session.messages.length;
   try {
     if (!options.signal?.aborted) await session.prompt(effectivePrompt);
+    await turnLimit.settleCorrections();
   } finally {
     turnLimit.unsubscribe();
     unsubEvents();
@@ -1703,6 +1738,7 @@ export async function resumeAgent(
 
   try {
     if (!options.signal?.aborted) await session.prompt(prompt);
+    await turnLimit?.settleCorrections();
   } finally {
     turnLimit?.unsubscribe();
     collector.unsubscribe();

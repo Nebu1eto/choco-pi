@@ -31,12 +31,15 @@ const answer: AssistantMessage = {
   timestamp: 0,
 };
 
-type Scenario = "persist" | "settle" | "none" | "cancel" | "stale";
+type Scenario = "persist" | "settle" | "none" | "cancel" | "stale" | "handled";
 
 async function harness(scenario: Scenario, factories: Parameters<typeof createSdkFixture>[1] = []) {
   let currentScenario = scenario;
   const sdk = await createSdkFixture(undefined, factories);
-  const child = factories.length > 0 ? await createSdkFixture() : sdk;
+  const child =
+    factories.length > 0
+      ? await createSdkFixture(undefined, scenario === "handled" ? factories : [])
+      : sdk;
   const listeners = new Set<AgentSessionEventListener>();
   const steers: string[] = [];
   let manager: AgentManager;
@@ -48,6 +51,14 @@ async function harness(scenario: Scenario, factories: Parameters<typeof createSd
   const fire = (message = answer) => {
     for (const listener of listeners) listener({ type: "turn_end", message, toolResults: [] });
   };
+  if (scenario !== "handled") {
+    Object.defineProperty(child.session, "steer", {
+      value: async (message: string) => {
+        steers.push(message);
+        return "queued";
+      },
+    });
+  }
   Object.defineProperties(child.session, {
     subscribe: {
       value: (listener: AgentSessionEventListener) => {
@@ -55,11 +66,6 @@ async function harness(scenario: Scenario, factories: Parameters<typeof createSd
         return () => {
           listeners.delete(listener);
         };
-      },
-    },
-    steer: {
-      value: async (message: string) => {
-        steers.push(message);
       },
     },
     clearQueue: { value: () => undefined },
@@ -169,6 +175,36 @@ async function harness(scenario: Scenario, factories: Parameters<typeof createSd
   };
 }
 
+test("a handled dependency correction fails with the pending snapshot", async () => {
+  const sources: string[] = [];
+  const fixture = await harness("handled", [
+    (pi) => {
+      pi.on("input", (event) => {
+        sources.push(event.source);
+        return { action: "handled" };
+      });
+    },
+  ]);
+  try {
+    const { record } = await fixture
+      .manager()
+      .spawnAndWait(fixture.pi, fixture.ctx, "general-purpose", "owner", { description: "owner" });
+    assert.equal(record.status, "error");
+    assert.equal(record.error, "Owned delegated runs were unsettled at the terminal boundary.");
+    assert.deepEqual(record.pendingDependents, [
+      {
+        id: fixture.dependent()?.id,
+        handle: fixture.dependent()?.handle,
+        status: "running",
+      },
+    ]);
+    assert.deepEqual(sources, ["extension"]);
+    assert.equal(record.result, "partial answer");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 for (const scenario of ["persist", "settle", "none", "cancel", "stale"] as const) {
   test(`spawn completion guard: ${scenario}`, async () => {
     const fixture = await harness(scenario);
@@ -192,7 +228,7 @@ for (const scenario of ["persist", "settle", "none", "cancel", "stale"] as const
         const child = fixture.dependent();
         assert.ok(child);
         assert.deepEqual(record.pendingDependents, [
-          { id: child.id, handle: child.handle, status: "running", generation: 1 },
+          { id: child.id, handle: child.handle, status: "running" },
         ]);
         assert.deepEqual(buildRecordDetails(record).pendingDependents, record.pendingDependents);
         assert.equal(record.result, "partial answer");
@@ -277,7 +313,6 @@ const PendingPayload = Type.Object({
       id: Type.String(),
       handle: Type.Optional(Type.String()),
       status: Type.String(),
-      generation: Type.Optional(Type.Number()),
     }),
   ),
 });

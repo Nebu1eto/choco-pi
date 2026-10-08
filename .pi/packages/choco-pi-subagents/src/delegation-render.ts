@@ -81,8 +81,6 @@ export function buildDetails(
     status: AgentDetails["status"];
     error?: string;
     id?: string;
-    alias?: string;
-    handle?: string;
     outputFile?: string;
     session?: AgentRecord["session"];
     lifetimeUsage: LifetimeUsage;
@@ -101,10 +99,7 @@ export function buildDetails(
     status: record.status,
     agentId: record.id,
     error: record.error,
-    alias: record.alias,
-    handle: record.handle,
     outputFile: record.outputFile,
-    resumed: false,
     ...(record.pendingDependents && { pendingDependents: record.pendingDependents }),
     ...overrides,
   };
@@ -133,7 +128,6 @@ export function buildRecordDetails(record: AgentRecord, background = false, resu
           }
         : undefined,
     ),
-    resumed,
   };
 }
 
@@ -203,10 +197,17 @@ export const delegationRenderers: DelegationRenderers = {
     };
 
     // ---- While running (streaming) ----
-    if (isPartial || details.status === "running") {
+    if (isPartial) {
       const frame = SPINNER[details.spinnerFrame ?? 0];
       const s = stats(details);
       return renderRunningAgentStatus(frame, s, details.activity ?? "thinking…", theme);
+    }
+
+    // A settled control-tool response can describe a still-active child.
+    if (details.status === "running" || details.status === "queued") {
+      const s = stats(details);
+      const output = expanded ? text : text.split("\n")[0];
+      return new Text((s ? s + "\n" : "") + theme.fg("dim", output), 0, 0);
     }
 
     // ---- Background agent launched ----

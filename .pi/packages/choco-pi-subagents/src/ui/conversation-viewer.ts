@@ -189,6 +189,7 @@ export class ConversationViewer implements Component {
   private hostMarkdownTransformers: readonly MarkdownTransformer[];
   /** Tool calls whose result (real or synthesized error) has been applied. */
   private settledTools = new Set<string>();
+  private completedToolArgs = new Set<string>();
   /** toolCallId -> owning assistant message, for line-cache invalidation. */
   private toolOwners = new Map<string, object>();
 
@@ -557,6 +558,7 @@ export class ConversationViewer implements Component {
     this.toolComponents.clear();
     this.expandableComponents.clear();
     this.settledTools.clear();
+    this.completedToolArgs.clear();
     this.toolOwners.clear();
     this.lastTailRenderAt = 0;
     this.fastAssistantHeads.clear();
@@ -853,6 +855,7 @@ export class ConversationViewer implements Component {
             );
             if (msg !== this.liveAssistant) {
               tool.setArgsComplete();
+              this.completedToolArgs.add(content.id);
               tool.markExecutionStarted();
             }
             tool.setExpanded(this.toolOutputExpanded);
@@ -860,8 +863,9 @@ export class ConversationViewer implements Component {
             this.expandableComponents.add(tool);
           } else if (msg === this.liveAssistant) {
             tool.updateArgs(content.arguments);
-          } else {
+          } else if (!this.completedToolArgs.has(content.id)) {
             tool.setArgsComplete();
+            this.completedToolArgs.add(content.id);
           }
           this.toolOwners.set(content.id, msg);
           if (!components.includes(tool)) {

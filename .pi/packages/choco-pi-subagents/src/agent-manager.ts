@@ -14,7 +14,13 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import type { AgentSession, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { resumeAgent, runAgent, type MainSessionFork, type ToolActivity } from "./agent-runner.ts";
+import {
+  resolveAgentMaxTurns,
+  resumeAgent,
+  runAgent,
+  type MainSessionFork,
+  type ToolActivity,
+} from "./agent-runner.ts";
 import { unregisterChildSessionId } from "./child-context.ts";
 import { cleanupChildSessionOwner, emitChildSessionShutdown } from "./child-session-cleanup.ts";
 import { setSessionFastMode, snapshotFastMode } from "./fast-mode-bridge.ts";
@@ -2039,7 +2045,6 @@ export class AgentManager {
             id: child.id,
             handle: child.handle,
             status: child.status,
-            generation: child.resultGeneration,
           });
         }
       }
@@ -2306,7 +2311,7 @@ export class AgentManager {
       try {
         const { text, failure, aborted, steered } = await this.runner.resumeAgent(session, prompt, {
           onFinishAttempt: this.dependencyCompletionGuard(record, runGeneration),
-          maxTurns: options?.maxTurns,
+          maxTurns: resolveAgentMaxTurns(record.type, options?.maxTurns),
           onToolActivity: (activity) => {
             if (isBudgetedToolActivity(activity)) {
               runBudget.controller?.noteToolActivity(activity.type);
@@ -2520,7 +2525,7 @@ export class AgentManager {
     const promise = this.runner
       .resumeAgent(record.session, prompt, {
         onFinishAttempt: this.dependencyCompletionGuard(record, runGeneration),
-        maxTurns: options.maxTurns,
+        maxTurns: resolveAgentMaxTurns(record.type, options.maxTurns),
         onToolActivity: (activity) => {
           if (isBudgetedToolActivity(activity)) {
             runBudget.controller?.noteToolActivity(activity.type);
