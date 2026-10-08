@@ -1418,9 +1418,9 @@ export class AgentManager {
     const controller = new RunBudgetController(limits, {
       isActive: () =>
         !this.disposed && record.resultGeneration === generation && record.status === "running",
-      steerConclusion: () => {
-        const message =
-          "The idle watchdog detected no tool activity. Conclude now with your current findings in the required output format.";
+      steerConclusion: (
+        message = "The idle watchdog detected no tool activity. Conclude now with your current findings in the required output format.",
+      ) => {
         const session = record.session;
         if (session) {
           void session.steer(message).catch(() => undefined);

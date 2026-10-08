@@ -13,7 +13,7 @@ export type ForcedTerminalStatus = "budget_exceeded" | "watchdog_stopped";
 
 interface RunBudgetHooks {
   isActive(): boolean;
-  steerConclusion(): void;
+  steerConclusion(message?: string): void;
   stop(status: ForcedTerminalStatus, reason: string): void;
   onDispose(controller: RunBudgetController): void;
 }
@@ -32,6 +32,8 @@ export class RunBudgetController {
   private idleTimer?: ReturnType<typeof setTimeout>;
   private toolCalls = 0;
   private tokens = 0;
+  private largestRequestCharge = 0;
+  private tokenConclusionRequested = false;
   private conclusionRequested = false;
   private disposed = false;
 
@@ -63,13 +65,19 @@ export class RunBudgetController {
 
   noteUsage(usage: { input: number; output: number; cacheWrite: number }): void {
     if (!this.isActive()) return;
-    this.tokens += usage.input + usage.output + usage.cacheWrite;
-    if (this.limits.maxTokens !== undefined && this.tokens >= this.limits.maxTokens) {
+    const requestCharge = usage.input + usage.output + usage.cacheWrite;
+    this.tokens += requestCharge;
+    this.largestRequestCharge = Math.max(this.largestRequestCharge, requestCharge);
+    const maxTokens = this.limits.maxTokens;
+    if (maxTokens === undefined) return;
+    if (this.tokens >= maxTokens) {
       this.stop(
         "budget_exceeded",
-        `Token budget exceeded at ${this.tokens} tokens (limit ${this.limits.maxTokens}).`,
+        `Token budget exceeded at ${this.tokens} tokens (limit ${maxTokens}).`,
       );
+      return;
     }
+    this.requestTokenConclusion(maxTokens);
   }
 
   dispose(): void {
@@ -84,6 +92,17 @@ export class RunBudgetController {
 
   private isActive(): boolean {
     return !this.disposed && this.hooks.isActive();
+  }
+
+  private requestTokenConclusion(maxTokens: number): void {
+    const reserve = Math.max(0.2 * maxTokens, 1.5 * this.largestRequestCharge);
+    const threshold = Math.max(0.5 * maxTokens, maxTokens - reserve);
+    if (this.tokenConclusionRequested || this.tokens < threshold) return;
+    this.tokenConclusionRequested = true;
+    const remaining = Math.floor(maxTokens - this.tokens);
+    this.hooks.steerConclusion(
+      `About ${remaining} tokens remain of your ${maxTokens}-token budget; conclude now with your current findings in the required output format.`,
+    );
   }
 
   private armIdleTimer(): void {

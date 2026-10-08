@@ -1241,3 +1241,21 @@ by call ID, matching Pi's partial-result rendering contract. Closed viewers
 ignore events. `tests/conversation-viewer.test.ts` now keeps streaming messages
 out of committed history until completion and covers deltas, partial tool
 output, final replacement, and closed-viewer isolation.
+
+## 2026-10-08 choco-pi patch: token-budget conclusion reserve
+
+`RunBudgetController` now requests conclusion once per execution generation when
+reported input, output, and cache-write spending reaches the greater of half the
+user's token grant and the grant minus a reserve. The reserve is the greater of
+20% of the grant and 1.5 times the largest request charge observed so far,
+including the current request. Steering states the remaining allowance and
+uses the manager's existing conclusion hook. The hard token stop is unchanged
+and takes precedence over steering, including single-request exhaustion; no
+limit is raised and no public tool option is added. Token steering does not
+consume the idle watchdog's independent first-warning stage.
+
+`tests/run-budgets-conclusion-reserve.test.ts` exercises the production budget
+controller's threshold, adaptive reserve, half-grant floor, cold-start charge,
+exact-once steering and stopping, disposal, generation retirement, unlimited
+runs, and independent watchdog stages. Temporarily disabling the reserve call
+makes five regression cases fail.
