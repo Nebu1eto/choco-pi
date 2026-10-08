@@ -12,7 +12,9 @@ export function renderExecCommandCall(
   command: string,
   state: ExecCommandStatus,
   theme: RenderTheme,
+  expanded = false,
 ): string {
+  if (expanded) return renderCommandText(command, state, theme, true);
   const summary = summarizeShellCommand(command);
   return summary.maskAsExplored
     ? renderExplorationText([summary.actions], state, theme)
@@ -66,24 +68,29 @@ function renderExplorationText(
   return text;
 }
 
-function renderCommandText(command: string, state: ExecCommandStatus, theme: RenderTheme): string {
+function renderCommandText(
+  command: string,
+  state: ExecCommandStatus,
+  theme: RenderTheme,
+  expanded = false,
+): string {
   const verb = state === "running" ? "Running" : "Ran";
   let text = `${theme.fg("dim", "•")} ${theme.bold(verb)}`;
-  for (const [index, line] of formatCommandLines(command).entries()) {
+  for (const [index, line] of formatCommandLines(command, expanded).entries()) {
     const prefix = index === 0 ? "  └ " : "    ";
     text += `\n${theme.fg("dim", prefix)}${theme.fg("accent", line)}`;
   }
   return text;
 }
 
-function formatCommandLines(command: string, maxLines = 5): string[] {
+function formatCommandLines(command: string, expanded: boolean, maxLines = 5): string[] {
   const lines = command
     .replace(/\t/g, "   ")
     .split("\n")
     .map((line) => line.trimEnd())
     .filter((line, index, all) => line.length > 0 || (index > 0 && index < all.length - 1));
-  const visible = lines.slice(0, maxLines).map((line) => shortenLine(line));
-  if (lines.length > maxLines) {
+  const visible = expanded ? lines : lines.slice(0, maxLines).map((line) => shortenLine(line));
+  if (!expanded && lines.length > maxLines) {
     visible.push("...");
   }
   return visible.length > 0 ? visible : [""];
