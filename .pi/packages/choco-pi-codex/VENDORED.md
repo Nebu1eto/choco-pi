@@ -608,6 +608,18 @@ selected model advertises a Daybreak program the request carries it and the serv
 over blue (default blue); it never blocks, because it reports `inactive` for accounts
 the backend still serves Daybreak to.
 
+## 2026-10-08 choco-pi patch: WebSocket decode ownership
+
+`websocket-parser.ts` invalidates its decoding generation synchronously on abort,
+idle timeout, terminal completion, failure, and consumer return, including return
+while a next call is pending. Stale decoding continuations cannot capture metadata
+or mutate the event queue. `turn-state.ts` supplies generation-bound capture
+callbacks, frozen by `websocket-stream.ts` before connection acquisition, so a
+superseded request cannot claim the next turn's first metadata value. Socket close
+still drains already-received frames for terminal and close-error classification.
+`tests/websocket-parser-abort.test.ts` exercises delayed production decoding,
+listener cleanup, turn replacement, and terminal invalidation.
+
 ## 2026-10-08 choco-pi patch: memoized bridged tool usage lines
 
 `bridgedToolUsage` caches its rendered call line per registered definition (keyed on

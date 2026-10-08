@@ -36,7 +36,7 @@ export async function decodeWebSocketData(data: WebSocketEvent["data"]): Promise
   return null;
 }
 
-export async function* parseWebSocket(
+export function parseWebSocket(
   socket: WebSocketLike,
   signal: AbortSignal | undefined,
   idleTimeoutMs?: number,
@@ -45,6 +45,7 @@ export async function* parseWebSocket(
   const queue: CodexStreamEvent[] = [];
   let pending: (() => void) | null = null;
   let done = false;
+  let returning = false;
   let failed: Error | null = null;
   let closeError: Error | null = null;
   let sawCompletion = false;
@@ -53,6 +54,15 @@ export async function* parseWebSocket(
   let messageChain = Promise.resolve();
   let socketError: Error | null = null;
   let socketErrorTimer: ReturnType<typeof setTimeout> | undefined;
+  let generation = 0;
+  let active = true;
+
+  const invalidate = () => {
+    active = false;
+    generation++;
+    pendingMessages = 0;
+  };
+  const owns = (owner: number) => active && generation === owner && !signal?.aborted;
 
   const wake = () => {
     if (!pending) return;
@@ -62,12 +72,16 @@ export async function* parseWebSocket(
   };
 
   const onMessage = (event: WebSocketEvent) => {
+    const owner = generation;
+    const data = event.data;
+    if (!owns(owner)) return;
     pendingMessages++;
     wake();
     messageChain = messageChain
       .then(async () => {
-        const text = await decodeWebSocketData(event.data);
-        if (!text) return;
+        if (!owns(owner)) return;
+        const text = await decodeWebSocketData(data);
+        if (!owns(owner) || !text) return;
         let parsed: CodexStreamEvent;
         try {
           const candidate: object = JSON.parse(text);
@@ -79,6 +93,7 @@ export async function* parseWebSocket(
         }
         const turnState = extractCodexTurnStateFromWebSocketEvent(parsed);
         if (turnState) onTurnState?.(turnState);
+        if (!owns(owner)) return;
         const type = parsed.type ?? "";
         if (
           type === "response.completed" ||
@@ -90,28 +105,41 @@ export async function* parseWebSocket(
           done = true;
         }
         queue.push(parsed);
+        if (sawCompletion) {
+          invalidate();
+          wake();
+        }
       })
       .catch((error) => {
+        if (!owns(owner)) return;
         failed = error instanceof Error ? error : new Error(String(error));
         done = true;
+        invalidate();
+        wake();
       })
       .finally(() => {
+        if (!owns(owner)) return;
         pendingMessages--;
         wake();
       });
   };
 
   const onError = (event: WebSocketEvent) => {
+    const owner = generation;
+    if (!owns(owner)) return;
     socketError = extractWebSocketError(event);
     if (socketErrorTimer) clearTimeout(socketErrorTimer);
     socketErrorTimer = setTimeout(() => {
+      if (!owns(owner)) return;
       failed = socketError;
       done = true;
+      invalidate();
       wake();
     }, DEFAULT_WEBSOCKET_CLOSE_TIMEOUT_MS);
   };
 
   const onClose = (event: WebSocketEvent) => {
+    if (!active) return;
     if (socketErrorTimer) clearTimeout(socketErrorTimer);
     if (sawCompletion) {
       done = true;
@@ -134,56 +162,80 @@ export async function* parseWebSocket(
   };
 
   const onAbort = () => {
+    invalidate();
     failed = new Error("Request was aborted");
     done = true;
     wake();
   };
 
-  socket.addEventListener("message", onMessage);
-  socket.addEventListener("error", onError);
-  socket.addEventListener("close", onClose);
-  signal?.addEventListener("abort", onAbort);
+  async function* events(): AsyncGenerator<CodexStreamEvent> {
+    socket.addEventListener("message", onMessage);
+    socket.addEventListener("error", onError);
+    socket.addEventListener("close", onClose);
+    signal?.addEventListener("abort", onAbort);
 
-  try {
-    while (true) {
-      if (signal?.aborted) {
-        throw new Error("Request was aborted");
-      }
-      if (queue.length > 0) {
-        const event = queue.shift();
-        if (event) yield event;
-        continue;
-      }
-      if (failed && (pendingMessages === 0 || idleTimedOut)) break;
-      if (done && pendingMessages === 0) break;
-      let timeout: ReturnType<typeof setTimeout> | undefined;
-      await new Promise<void>((resolve) => {
-        pending = resolve;
-        if (idleTimeoutMs && idleTimeoutMs > 0) {
-          timeout = setTimeout(() => {
-            idleTimedOut = true;
-            failed = new Error(`WebSocket idle timeout after ${idleTimeoutMs}ms`);
-            done = true;
-            wake();
-          }, idleTimeoutMs);
+    try {
+      while (true) {
+        if (returning) return;
+        if (signal?.aborted) {
+          throw new Error("Request was aborted");
         }
-      }).finally(() => {
-        if (timeout) clearTimeout(timeout);
-      });
-    }
+        if (queue.length > 0) {
+          const event = queue.shift();
+          if (event) yield event;
+          continue;
+        }
+        if (failed && (pendingMessages === 0 || idleTimedOut)) break;
+        if (done && pendingMessages === 0) break;
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        await new Promise<void>((resolve) => {
+          pending = resolve;
+          if (idleTimeoutMs && idleTimeoutMs > 0) {
+            timeout = setTimeout(() => {
+              invalidate();
+              idleTimedOut = true;
+              failed = new Error(`WebSocket idle timeout after ${idleTimeoutMs}ms`);
+              done = true;
+              wake();
+            }, idleTimeoutMs);
+          }
+        }).finally(() => {
+          if (timeout) clearTimeout(timeout);
+        });
+      }
 
-    if (failed) throw failed;
-    if (closeError && !sawCompletion) throw closeError;
-    if (!sawCompletion) {
-      throw new Error("WebSocket stream closed before response.completed");
+      if (failed) throw failed;
+      if (closeError && !sawCompletion) throw closeError;
+      if (!sawCompletion) {
+        throw new Error("WebSocket stream closed before response.completed");
+      }
+    } finally {
+      invalidate();
+      if (socketErrorTimer) clearTimeout(socketErrorTimer);
+      socket.removeEventListener("message", onMessage);
+      socket.removeEventListener("error", onError);
+      socket.removeEventListener("close", onClose);
+      signal?.removeEventListener("abort", onAbort);
     }
-  } finally {
-    if (socketErrorTimer) clearTimeout(socketErrorTimer);
-    socket.removeEventListener("message", onMessage);
-    socket.removeEventListener("error", onError);
-    socket.removeEventListener("close", onClose);
-    signal?.removeEventListener("abort", onAbort);
   }
+
+  const iterator = events();
+  // A generator suspended at an internal await cannot observe return() until next() settles.
+  // This wrapper invalidates ownership synchronously and wakes the loop to exit;
+  // any later decode continuation sees stale ownership and cannot mutate the stream.
+  return {
+    [Symbol.asyncIterator]() {
+      return {
+        next: () => iterator.next(),
+        return: () => {
+          returning = true;
+          invalidate();
+          wake();
+          return iterator.return(undefined);
+        },
+      };
+    },
+  };
 }
 
 export async function* startWebSocketOutputOnFirstEvent(

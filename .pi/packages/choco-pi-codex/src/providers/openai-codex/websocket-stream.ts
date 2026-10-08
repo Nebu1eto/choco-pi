@@ -96,6 +96,7 @@ export async function processWebSocketStream<TApi extends Api>(
       }
     | undefined,
 ): Promise<void> {
+  const captureTurnState = turnState?.captureForTurn();
   let streamStarted = false;
   body = withAsyncCodeMode(body, options?.asyncCodeMode === true);
   const idleTimeoutMs = normalizeTimeoutMs(
@@ -245,11 +246,9 @@ export async function processWebSocketStream<TApi extends Api>(
             ? native.responseEvents(
                 options?.signal,
                 idleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS,
-                (value) => turnState?.capture(value),
+                captureTurnState,
               )
-            : parseWebSocket(socket, options?.signal, idleTimeoutMs, (value) =>
-                turnState?.capture(value),
-              ),
+            : parseWebSocket(socket, options?.signal, idleTimeoutMs, captureTurnState),
           output,
         ),
         () => {

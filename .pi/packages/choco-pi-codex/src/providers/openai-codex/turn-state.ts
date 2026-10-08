@@ -13,6 +13,8 @@ type TurnStateEvent = Static<typeof TurnStateEventSchema>;
 export interface CodexTurnState {
   current(): string | undefined;
   capture(value: string | null | undefined): void;
+  /** Binds capture to the current turn generation so stale decodes cannot capture. */
+  captureForTurn(): (value: string | null | undefined) => void;
   capturePrewarm(value: string | null | undefined): void;
   beginTurn(): void;
   reset(): void;
@@ -43,6 +45,7 @@ export function withCodexTurnStateHeader(
 export function createCodexTurnState(): CodexTurnState {
   let value: string | undefined;
   let prewarmed = false;
+  let generation = 0;
   const capture = (next: string | null | undefined) => {
     if (value !== undefined || !next?.trim()) return;
     value = next.trim();
@@ -50,11 +53,18 @@ export function createCodexTurnState(): CodexTurnState {
   return {
     current: () => value,
     capture,
+    captureForTurn() {
+      const owner = generation;
+      return (next) => {
+        if (owner === generation) capture(next);
+      };
+    },
     capturePrewarm(next) {
       capture(next);
       if (value !== undefined) prewarmed = true;
     },
     beginTurn() {
+      generation++;
       if (prewarmed) {
         prewarmed = false;
         return;
@@ -62,6 +72,7 @@ export function createCodexTurnState(): CodexTurnState {
       value = undefined;
     },
     reset() {
+      generation++;
       value = undefined;
       prewarmed = false;
     },
