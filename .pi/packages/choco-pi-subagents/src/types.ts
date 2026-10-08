@@ -187,7 +187,6 @@ export interface AgentRecord {
     id: string;
     handle?: string;
     status: "running" | "queued" | "waiting_for_reset";
-    generation?: number;
   }[];
   error?: string;
   /** Provider usage-limit details for the current generation chain, if one was hit. */

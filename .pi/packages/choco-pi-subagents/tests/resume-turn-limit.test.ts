@@ -3,7 +3,14 @@ import test from "node:test";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { AgentSessionEventListener } from "@earendil-works/pi-coding-agent";
 import { AgentManager, type AgentManagerRunner } from "../src/agent-manager.ts";
-import { installRunnerTurnLimit, resumeAgent, setGraceTurns } from "../src/agent-runner.ts";
+import {
+  getDefaultMaxTurns,
+  installRunnerTurnLimit,
+  resumeAgent,
+  setDefaultMaxTurns,
+  setGraceTurns,
+} from "../src/agent-runner.ts";
+import { getAgentConfig, registerAgents } from "../src/agent-types.ts";
 import { createNestedSubagentTools, type NestedAgentManager } from "../src/nested-tools.ts";
 import type { AgentRecord } from "../src/types.ts";
 import { toolContext } from "./fixtures/tool-context.ts";
@@ -135,7 +142,65 @@ for (const wrapUp of [true, false]) {
   }
 }
 
-test("nested resume forwards max_turns without changing omitted values", async () => {
+for (const isBackground of [false, true]) {
+  test(`resume resolves explicit, definition and default turn limits (background=${isBackground})`, async () => {
+    const fixture = await createSdkFixture();
+    const savedDefault = getDefaultMaxTurns();
+    const config = getAgentConfig("general-purpose");
+    const forwarded: (number | undefined)[] = [];
+    const manager = new AgentManager(undefined, 4, undefined, undefined, {
+      async runAgent() {
+        return { session: fixture.session, responseText: "ready", aborted: false, steered: false };
+      },
+      async resumeAgent(_session, _prompt, options) {
+        forwarded.push(options?.maxTurns);
+        return { text: "resumed", aborted: false, steered: false };
+      },
+    });
+    try {
+      const { id } = await manager.spawnAndWait(
+        fixture.pi,
+        fixture.ctx,
+        "general-purpose",
+        "fresh",
+        { description: "limits" },
+      );
+      setDefaultMaxTurns(7);
+      registerAgents(
+        new Map([
+          [
+            "general-purpose",
+            {
+              name: "general-purpose",
+              description: "limits",
+              extensions: false,
+              skills: false,
+              systemPrompt: "",
+              promptMode: "replace",
+              maxTurns: 3,
+            },
+          ],
+        ]),
+      );
+      for (const maxTurns of [2, undefined, 0]) {
+        const resumed = await manager.resume(id, "resume", undefined, { isBackground, maxTurns });
+        assert.ok(resumed);
+        await resumed.promise;
+      }
+      registerAgents(new Map());
+      const resumed = await manager.resume(id, "default", undefined, { isBackground });
+      assert.ok(resumed);
+      await resumed.promise;
+      assert.deepEqual(forwarded, [2, 3, undefined, 7]);
+    } finally {
+      manager.dispose();
+      setDefaultMaxTurns(savedDefault);
+      registerAgents(config ? new Map([[config.name, config]]) : new Map());
+    }
+  });
+}
+
+test("nested resume forwards max_turns for manager-side resolution", async () => {
   const fixture = await createSdkFixture();
   const child: AgentRecord = {
     id: "child",

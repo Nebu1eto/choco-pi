@@ -1320,3 +1320,21 @@ renderers makes these regressions fail.
 
 The root focused controller now reads the live host `hideThinkingBlock` setting
 through its optional callback, paired with the focused viewer preference change.
+
+## 2026-10-08 choco-pi patch: adversarial-review follow-ups
+
+Settled root and nested steering/result-read cards render their response text and
+stats even while the child remains running or queued; only streaming partials
+show the activity spinner. Fresh and resumed runs share turn-limit resolution:
+explicit value, agent definition, then configured default (explicit zero remains
+unlimited). Pending-dependent snapshots no longer include the unread generation
+field. Card details drop unread alias, handle, and resumed fields while retaining
+outputFile; record identity and model-facing text are unchanged.
+
+Conversation viewers mark each tool's arguments complete once, preserving settled
+tool render caches across unrelated live deltas. Dependency corrections carry the
+extension input source and await steering disposition; a handled correction fails
+with the pending-dependent snapshot instead of completing silently. Nested card
+tests remove the redundant renderer self-comparison. Regression coverage lives in
+nested-delegation-rendering, resume-turn-limit, dependency-completion-guard, and
+conversation-viewer tests.
