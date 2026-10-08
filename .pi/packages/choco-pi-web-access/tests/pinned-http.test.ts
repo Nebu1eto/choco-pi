@@ -10,7 +10,7 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { getCACertificates, setDefaultCACertificates, TLSSocket } from "node:tls";
 import { promisify } from "node:util";
-import { gzipSync, brotliCompressSync } from "node:zlib";
+import { constants, deflate, deflateRawSync, gzip, gzipSync, brotliCompressSync } from "node:zlib";
 import { test } from "node:test";
 import { approveRemoteUrl, fetchRemoteUrl } from "../ssrf-protection.ts";
 import { pinnedLookup } from "../pinned-http.ts";
@@ -163,6 +163,37 @@ test("redirects re-pin, POST transitions discard body headers, 307 retains JSON,
     assert.equal(observed[3].body, init.body);
     assert.equal(observed[5].authorization, undefined);
     assert.equal(observed[5].cookie, undefined);
+  } finally {
+    await close(server);
+  }
+});
+
+test("pinned decoding matches native fetch for raw/wrapped deflate and complete/sync-flushed gzip", async () => {
+  const body = "decoded response body".repeat(100);
+  const cases = [
+    { name: "raw-deflate", encoding: "deflate", bytes: deflateRawSync(body) },
+    { name: "wrapped-deflate", encoding: "deflate", bytes: await promisify(deflate)(body) },
+    { name: "gzip", encoding: "gzip", bytes: await promisify(gzip)(body) },
+    {
+      name: "sync-flushed-gzip",
+      encoding: "gzip",
+      bytes: await promisify(gzip)(body, { finishFlush: constants.Z_SYNC_FLUSH }),
+    },
+  ];
+  const server = createServer((request, response) => {
+    const fixture = cases.find((entry) => request.url === `/${entry.name}`);
+    assert.ok(fixture);
+    response.writeHead(200, { "content-encoding": fixture.encoding });
+    response.end(fixture.bytes);
+  });
+  const port = await listen(server);
+  try {
+    for (const fixture of cases) {
+      const native = await fetch(`http://127.0.0.1:${port}/${fixture.name}`);
+      assert.equal(await native.text(), body, `native ${fixture.name}`);
+      const pinned = await fetchRemoteUrl(`http://pinned.test:${port}/${fixture.name}`, {}, policy);
+      assert.equal(await pinned.text(), body, `pinned ${fixture.name}`);
+    }
   } finally {
     await close(server);
   }

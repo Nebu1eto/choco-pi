@@ -148,3 +148,12 @@ Test fixtures follow the 1.0.4 extension contract. Tool calls receive a real
   authenticated cookie awaits, IPv4/IPv6, TLS identity, cancellation, and decoded
   size limits. Existing fetch fixtures use explicit injection or the existing
   trusted-proxy seam instead of intercepting direct connections globally.
+
+## 2026-10-08 choco-pi patch: native fetch decompression compatibility
+
+- Pinned response decoding now mirrors undici's first-non-empty-chunk deflate
+  detection, accepting both raw and zlib-wrapped bodies. Gzip/deflate use
+  `Z_SYNC_FLUSH`; Brotli uses `BROTLI_OPERATION_FLUSH` for flush and finishFlush,
+  preserving native fetch's tolerance for unfinished compressed responses.
+- Added loopback comparisons against native fetch for raw/wrapped deflate,
+  complete gzip, and unfinished sync-flushed gzip. No dependency was added.
