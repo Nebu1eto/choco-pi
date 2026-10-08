@@ -1,9 +1,9 @@
 // @ts-nocheck
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { test } from "node:test";
@@ -361,33 +361,13 @@ test(
       "utf8",
     );
     await writeFakeExecutable(binDir, "gh", "process.exit(1);");
-    await writeFakeExecutable(
-      binDir,
-      "git",
-      `
-			const { spawn } = require("node:child_process");
-			process.on("SIGTERM", () => {});
-			const helperSource = ${JSON.stringify(`
-				const { writeFileSync } = require("node:fs");
-				process.on("SIGTERM", () => {});
-				writeFileSync(process.env.CLONE_PROCESS_PID_FILE, JSON.stringify({
-					rootPid: process.ppid,
-					helperPid: process.pid,
-				}));
-				setInterval(() => {}, 1000);
-			`)};
-			spawn(process.execPath, ["-e", helperSource], { stdio: "ignore" });
-			setInterval(() => {}, 1000);
-		`,
-    );
+    const fixturePath = join(import.meta.dirname, "fixtures", "github-timeout.ts");
+    const fakeGitPath = join(binDir, "git.ts");
+    await copyFile(fixturePath, fakeGitPath);
+    await chmod(fakeGitPath, 0o755);
+    await symlink(fakeGitPath, join(binDir, "git"));
 
-    const child = spawnSync(process.execPath, ["--input-type=module"], {
-      input: `
-			const { extractGitHub } = await import(${JSON.stringify(extractModuleUrl)});
-			const result = await extractGitHub("https://github.com/test/repo");
-			console.log(JSON.stringify(result));
-		`,
-      encoding: "utf8",
+    const child = spawn(process.execPath, [fixturePath, "runner"], {
       timeout: 10000,
       env: {
         ...process.env,
@@ -396,9 +376,21 @@ test(
         PI_CODING_AGENT_DIR: agentDir,
       },
     });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    const status = await new Promise<number | null>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", resolve);
+    });
 
-    assert.equal(child.status, 0, child.stderr);
-    assert.equal(JSON.parse(child.stdout), null);
+    assert.equal(status, 0, stderr);
+    assert.equal(JSON.parse(stdout), null);
     const { rootPid, helperPid } = JSON.parse(await readFile(processPidFile, "utf8"));
     try {
       assert.equal(
