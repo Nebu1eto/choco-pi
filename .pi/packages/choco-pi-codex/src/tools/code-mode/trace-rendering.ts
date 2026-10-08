@@ -78,6 +78,7 @@ function renderTrace(
     toolCallId: trace.id,
     cwd: context?.cwd,
     expanded: options.expanded,
+    showImages: context?.showImages,
     isError: trace.status === "error",
     args: trace.input,
     invalidate: context?.invalidate,
@@ -92,6 +93,7 @@ function renderTrace(
     call = renderGenericTraceCall(trace, theme, options.expanded);
   }
   const components = [orderedTraceCall(call, trace, order, theme)];
+  let customResultRendered = false;
   if (renderedTrace.result && programmatic?.renderResult) {
     try {
       components.push(
@@ -102,16 +104,18 @@ function renderTrace(
           renderContext,
         ),
       );
+      customResultRendered = true;
     } catch {
       // A stale persisted trace must not break the whole transcript.
     }
   }
-  if (trace.status === "error" && trace.error) {
-    components.push(new Text(theme.fg("error", trace.error), 4, 0));
-  } else if (renderedTrace.result && !programmatic?.renderResult) {
+  if (renderedTrace.result && !customResultRendered) {
     components.push(
       renderGenericTraceResult(renderedTrace, theme, options.expanded || options.isPartial),
     );
+  }
+  if (trace.status === "error" && trace.error) {
+    components.push(new Text(theme.fg("error", trace.error), 4, 0));
   }
   return components;
 }
