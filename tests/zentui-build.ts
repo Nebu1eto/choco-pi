@@ -30,6 +30,18 @@ const REPOSITORY_ROOT = resolvePath(dirname(fileURLToPath(import.meta.url)), "..
 const PINNED_MANIFEST = resolvePath(REPOSITORY_ROOT, ".pi/packages/choco-pi-ui/package.json");
 const execFileAsync = promisify(execFile);
 const COMPLETION_MARKER = ".complete";
+const COMPILER_FLAGS = [
+  "--ignoreConfig",
+  "--target",
+  "esnext",
+  "--module",
+  "esnext",
+  "--moduleResolution",
+  "bundler",
+  "--rewriteRelativeImportExtensions",
+  "--noCheck",
+  "--skipLibCheck",
+];
 
 async function pathExists(path: string): Promise<boolean> {
   try {
@@ -73,6 +85,8 @@ async function compileZentui(): Promise<string | undefined> {
   }
   const hash = createHash("sha256");
   hash.update(compilerVersion);
+  hash.update("\0");
+  hash.update(COMPILER_FLAGS.join("\0"));
   for (const [index, source] of sources.entries()) {
     hash.update("\0");
     hash.update(relative(sourceDirectory, source));
@@ -90,24 +104,9 @@ async function compileZentui(): Promise<string | undefined> {
   try {
     await mkdir(cacheRoot, { recursive: true });
     await rm(temporaryOutDir, { force: true, recursive: true });
-    await execFileAsync(
-      compiler,
-      [
-        "--ignoreConfig",
-        ...sources,
-        "--outDir",
-        temporaryOutDir,
-        "--target",
-        "esnext",
-        "--module",
-        "esnext",
-        "--moduleResolution",
-        "bundler",
-        "--noCheck",
-        "--skipLibCheck",
-      ],
-      { cwd: REPOSITORY_ROOT },
-    );
+    await execFileAsync(compiler, [...COMPILER_FLAGS, ...sources, "--outDir", temporaryOutDir], {
+      cwd: REPOSITORY_ROOT,
+    });
     await writeFile(resolvePath(temporaryOutDir, COMPLETION_MARKER), "complete\n");
     try {
       await rename(temporaryOutDir, outDir);

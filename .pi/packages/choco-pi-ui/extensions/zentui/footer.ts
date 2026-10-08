@@ -1,13 +1,13 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import type { ZentuiConfig } from "./config";
-import { FOOTER_FORMAT_ALIASES } from "./config";
-import { sanitizeEditorMetadataText } from "./editor-metadata-format";
+import type { ZentuiConfig } from "./config.ts";
+import { FOOTER_FORMAT_ALIASES } from "./config.ts";
+import { sanitizeEditorMetadataText } from "./editor-metadata-format.ts";
 import {
   collectExtensionStatusSegments,
   type ExtensionStatusSegment,
   sanitizeExtensionStatusText,
-} from "./extension-status";
+} from "./extension-status.ts";
 import {
   collectFooterFormatReferences,
   compileCompactFormat,
@@ -15,14 +15,14 @@ import {
   renderFormatSplit,
   renderFormatTokens,
   stripOrphanSeparators,
-} from "./footer-format";
+} from "./footer-format.ts";
 import {
   compactChunkBudget,
   fullFooterFitsAligned,
   packCompactChunks,
   reflowFullFooter,
-} from "./footer-layout";
-import { selectFocusScopedUsage } from "./focused-runtime";
+} from "./footer-layout.ts";
+import { readFocusedAgentRuntime, selectFocusScopedUsage } from "./focused-runtime.ts";
 import {
   buildContextDisplayLabel,
   buildSessionDurationLabel,
@@ -33,14 +33,15 @@ import {
   formatGitMetricsSegment,
   formatOsLabel,
   formatPackageVersionSegment,
+  formatProviderLabel,
   formatRuntimeSegment,
   formatTimeLabel,
   formatUsernameHostLabel,
-} from "./format";
-import { resolveRuntimeSymbol } from "./icons";
-import type { LiveContextOverride } from "./live-context";
-import { type FooterState, modelLabelFor } from "./state";
-import { renderStyleForSource } from "./style";
+} from "./format.ts";
+import { resolveRuntimeSymbol } from "./icons.ts";
+import type { LiveContextOverride } from "./live-context.ts";
+import { type FooterState, modelLabelFor } from "./state.ts";
+import { renderStyleForSource } from "./style.ts";
 
 const separatorText = {
   pipe: " | ",
@@ -211,7 +212,11 @@ export function installFooter(
         if (width <= 0) return [""];
         const config = getConfig();
         const footer = config.components.footer;
-        const footerModelLabel = modelLabelFor(state, footer.modelLabel);
+        const focusedRuntime = readFocusedAgentRuntime();
+        const footerModelLabel = modelLabelFor(focusedRuntime ?? state, footer.modelLabel);
+        const footerProviderLabel = focusedRuntime
+          ? formatProviderLabel(focusedRuntime.provider)
+          : state.providerLabel;
         const wideFormatTokens = config.components.footer.styles.starship.format
           ? parseFooterFormat(config.components.footer.styles.starship.format)
           : [];
@@ -292,8 +297,8 @@ export function installFooter(
           ? (liveContext.tokens / contextWindow) * 100
           : contextUsage?.percent;
         const mainUsage = { costLabel: state.costLabel, contextPercent, contextWindow };
-        const selectedUsage = selectFocusScopedUsage(mainUsage);
-        const focusedUsage = selectedUsage !== mainUsage;
+        const selectedUsage = selectFocusScopedUsage(mainUsage, focusedRuntime);
+        const focusedUsage = focusedRuntime !== undefined;
         const contextLabel = buildContextDisplayLabel({
           percent: selectedUsage.contextPercent,
           contextWindow: selectedUsage.contextWindow ?? undefined,
@@ -392,7 +397,7 @@ export function installFooter(
             case "model":
               return sanitizeExtensionStatusText(footerModelLabel);
             case "provider":
-              return sanitizeExtensionStatusText(state.providerLabel);
+              return sanitizeExtensionStatusText(footerProviderLabel);
             case "session_duration":
               return state.sessionStartEpoch
                 ? renderStyleForSource(
@@ -630,7 +635,7 @@ export function installFooter(
         const modelInfoSegment = config.components.footer.styles.starship.segments.modelInfo
           ? composeModelInfoLabel(
               sanitizeExtensionStatusText(footerModelLabel),
-              sanitizeExtensionStatusText(state.providerLabel),
+              sanitizeExtensionStatusText(footerProviderLabel),
             )
           : "";
         const timeSegment = config.components.footer.styles.starship.segments.time

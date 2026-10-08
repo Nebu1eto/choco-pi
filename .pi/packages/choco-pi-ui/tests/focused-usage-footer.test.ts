@@ -89,7 +89,7 @@ function registry(): typeof globalThis & RuntimeRegistry {
   return globalThis as typeof globalThis & RuntimeRegistry;
 }
 
-test("footer cost and context follow focus on every render without main fallback", async (t) => {
+test("footer identity and usage follow one focused snapshot on every render", async (t) => {
   const { loadZentuiModule, SKIP_WITHOUT_ZENTUI } = await loadBuild();
   if (SKIP_WITHOUT_ZENTUI) {
     t.skip(SKIP_WITHOUT_ZENTUI);
@@ -126,7 +126,7 @@ test("footer cost and context follow focus on every render without main fallback
     gitCommit: false,
     gitMetrics: false,
     runtime: false,
-    modelInfo: false,
+    modelInfo: true,
     context: true,
     tokens: true,
     cost: true,
@@ -138,6 +138,10 @@ test("footer cost and context follow focus on every render without main fallback
   };
 
   const state: FooterState = createInitialState(emptyGitStatus());
+  state.modelId = "main-model";
+  state.modelName = "Main Model";
+  state.providerLabel = "Anthropic";
+  config.components.footer.modelLabel = "name";
   state.costLabel = "$9.999";
   state.tokenLabel = "↑111 ↓222";
   state.cacheReadLabel = "R333";
@@ -171,56 +175,82 @@ test("footer cost and context follow focus on every render without main fallback
     onBranchChange: () => () => {},
     getExtensionStatuses: () => new Map(),
   });
-  const render = () => component.render(200).map(stripTerminalSequences).join("\n");
+  let snapshotReads = 0;
+  const assertRenders = (check: (output: string) => void) => {
+    for (const format of [
+      "",
+      "$model :: $provider :: $context :: $tokens :: $cache_read :: $cache_write :: $cost",
+    ]) {
+      starship.format = format;
+      const readsBefore = snapshotReads;
+      const output = component.render(240).map(stripTerminalSequences).join("\n");
+      if (registry()[FOCUSED_AGENT_RUNTIME_SYMBOL]) {
+        assert.equal(snapshotReads - readsBefore, 1, "read one focused snapshot per render");
+      }
+      check(output);
+    }
+  };
   const seam = registry();
   t.after(() => {
     delete seam[FOCUSED_AGENT_RUNTIME_SYMBOL];
   });
 
   delete seam[FOCUSED_AGENT_RUNTIME_SYMBOL];
-  const main = render();
-  assert.match(main, /warning\[.*80\.0%\/1\.0k.*\]/);
-  assert.match(main, /\$9\.999/);
-  assert.match(main, /↑111 ↓222/);
-  assert.match(main, /R333/);
-  assert.match(main, /W444/);
-  assert.match(main, /\(sub\)/);
+  const assertMain = (output: string) => {
+    assert.match(output, /Main Model/);
+    assert.match(output, /Anthropic/);
+    assert.match(output, /warning\[.*80\.0%\/1\.0k.*\]/);
+    assert.match(output, /\$9\.999/);
+    assert.match(output, /↑111 ↓222/);
+    assert.match(output, /R333/);
+    assert.match(output, /W444/);
+    if (!starship.format) assert.match(output, /\(sub\)/);
+    assert.doesNotMatch(output, /Child Model|OpenAI|40\.0%|\?\/3\.0k|\$1\.250/);
+  };
+  assertRenders(assertMain);
+  seam[FOCUSED_AGENT_RUNTIME_SYMBOL] = {
+    current: () => {
+      snapshotReads += 1;
+      return undefined;
+    },
+  };
+  assertRenders(assertMain);
 
   const child: FocusedRuntime = {
-    modelId: "child",
-    modelName: "Child",
+    modelId: "child-model",
+    modelName: "Child Model",
     provider: "openai",
     thinking: "medium",
     costTotal: 1.25,
     contextPercent: 40,
     contextWindow: 2_000,
   };
-  seam[FOCUSED_AGENT_RUNTIME_SYMBOL] = { current: () => child };
-  const focused = render();
-  assert.match(focused, /success\[.*40\.0%\/2\.0k.*\]/);
-  assert.match(focused, /\$1\.250/);
-  assert.doesNotMatch(focused, /80\.0%|\$9\.999|↑111|R333|W444|\(sub\)/);
+  seam[FOCUSED_AGENT_RUNTIME_SYMBOL] = {
+    current: () => {
+      snapshotReads += 1;
+      return child;
+    },
+  };
+  assertRenders((output) => {
+    assert.match(output, /Child Model/);
+    assert.match(output, /OpenAI/);
+    assert.match(output, /success\[.*40\.0%\/2\.0k.*\]/);
+    assert.match(output, /\$1\.250/);
+    assert.doesNotMatch(output, /Main Model|Anthropic|80\.0%|\$9\.999|↑111|R333|W444|\(sub\)/);
+  });
 
   child.costTotal = Number.NaN;
   child.contextPercent = null;
   child.contextWindow = 3_000;
-  const mutated = render();
-  assert.match(mutated, /\?\/3\.0k/);
-  assert.doesNotMatch(mutated, /\$1\.250|\$9\.999|80\.0%|↑111|R333|W444/);
-
-  starship.format = "$context :: $tokens :: $cache_read :: $cache_write :: $cost";
-  const custom = render();
-  assert.match(custom, /\?\/3\.0k/);
-  assert.doesNotMatch(custom, /\$9\.999|↑111|R333|W444/);
+  assertRenders((output) => {
+    assert.match(output, /Child Model/);
+    assert.match(output, /OpenAI/);
+    assert.match(output, /\?\/3\.0k/);
+    assert.doesNotMatch(output, /Main Model|Anthropic|\$1\.250|\$9\.999|80\.0%|↑111|R333|W444/);
+  });
 
   delete seam[FOCUSED_AGENT_RUNTIME_SYMBOL];
-  const restored = render();
-  assert.match(restored, /80\.0%\/1\.0k/);
-  assert.match(restored, /\$9\.999/);
-  assert.match(restored, /↑111 ↓222/);
-  assert.match(restored, /R333/);
-  assert.match(restored, /W444/);
-  assert.doesNotMatch(restored, /\?\/3\.0k|\$1\.250/);
+  assertRenders(assertMain);
 });
 
 test("wrapped minimalist editor selects focused usage on each render", async (t) => {
