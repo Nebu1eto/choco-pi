@@ -9,13 +9,17 @@ export const CODE_MODE_DEFAULT_ROUTING =
 export const CODE_MODE_DIRECT_EXCEPTIONS =
   "Use direct tools only for approvals, native artifacts, citations, one decision-gating result, or capabilities unavailable in code mode";
 
+const CODE_MODE_RUNTIME_CONTRACTS = `notify(value) rejects empty or whitespace-only text; guard before calling.
+Only exposed tools are callable via tools.<name>; direct-only Pi tools must be called outside exec.`;
+
 export const EXEC_DESCRIPTION = `Run JavaScript source only; no JSON/fences
 Follow the <code_mode_tools> system block for routing and composition guidance.
 Code: fresh restricted JS in every cell with no Deno, console, imports, Node, filesystem/network, or browser globals. Notebook: persistent shared Deno TypeScript globals with console, imports/npm, Deno, and Web APIs
 Source preflight rejects malformed restricted JavaScript, unsupported restricted globals, and unconditional top-level tools.<name> typos absent from both code mode and direct Pi tools; guarded or real unbridged references run to the runtime guard; command strings and non-zero exec_command exits are not rewritten
 Optional // @exec: {"yield_time_ms":10000,"max_output_tokens":1000}; defaults 30000 ms/10000 tokens
 Optional first-line // @description: short intent for the collapsed code call; otherwise the first exec_command description labels it
-Await work; bare values are discarded. Restricted globals: tools, image, generatedImage, store, load, exit, setTimeout, clearTimeout, ALL_TOOLS; do not declare a local tools variable that shadows the injected namespace. text(value) and notify(value) EMIT output and return nothing — never nest them in an expression, use String()/JSON.stringify() to build one; yield_control() yields`;
+Await work; bare values are discarded. Restricted globals: tools, image, generatedImage, store, load, exit, setTimeout, clearTimeout, ALL_TOOLS; do not declare a local tools variable that shadows the injected namespace. text(value) and notify(value) EMIT output and return nothing — never nest them in an expression, use String()/JSON.stringify() to build one; yield_control() yields
+${CODE_MODE_RUNTIME_CONTRACTS}`;
 
 export const WAIT_DESCRIPTION =
   "Resume or terminate a yielded exec JavaScript cell in this session. Restricted cells retain state only while that yielded cell lives; notebook cells resume persistent shared Deno state. Cell IDs do not survive restart; exec_command session IDs belong to write_stdin.";
@@ -32,7 +36,8 @@ const BRIDGED_SUMMARY_WORD_LIMIT = 8;
 const CODE_MODE_ROUTING_GUIDANCE = `Composition: ${CODE_MODE_DEFAULT_ROUTING}.
 Parallelize only independent calls; sequence dependent work. Preserve Promise.allSettled failures instead of hiding them.
 ${CODE_MODE_DIRECT_EXCEPTIONS}. Inspect one unfamiliar schema in ALL_TOOLS; never dump the catalog.
-UI refs are not file paths. Never repeat writes or keep cells alive only to poll.`;
+UI refs are not file paths. Never repeat writes or keep cells alive only to poll.
+${CODE_MODE_RUNTIME_CONTRACTS}`;
 
 function buildCapabilityGuidance(tools: CodeModeToolDefinition[]): string {
   if (!tools.some((tool) => tool.name === "read_text")) return CODE_MODE_ROUTING_GUIDANCE;
