@@ -2,8 +2,14 @@ import { request as httpRequest, type IncomingMessage, type ClientRequest } from
 import { request as httpsRequest, type RequestOptions } from "node:https";
 import { isIP } from "node:net";
 import type { LookupFunction } from "node:net";
-import { Readable } from "node:stream";
-import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
+import { Readable, Transform, type TransformCallback } from "node:stream";
+import {
+  constants,
+  createBrotliDecompress,
+  createGunzip,
+  createInflate,
+  createInflateRaw,
+} from "node:zlib";
 
 export interface ApprovedAddress {
   readonly address: string;
@@ -81,10 +87,46 @@ function responseFromMessage(message: IncomingMessage, method: string, url: stri
   return new RemoteResponse(responseBody(body), init, url);
 }
 
+const zlibOptions = {
+  flush: constants.Z_SYNC_FLUSH,
+  finishFlush: constants.Z_SYNC_FLUSH,
+};
+
+/** Match native fetch's first-non-empty-chunk detection of raw and wrapped deflate. */
+class InflateStream extends Transform {
+  #inflateStream: ReturnType<typeof createInflate> | undefined;
+
+  override _transform(chunk: Buffer, encoding: BufferEncoding, callback: TransformCallback): void {
+    if (!this.#inflateStream) {
+      if (chunk.length === 0) {
+        callback();
+        return;
+      }
+      this.#inflateStream =
+        (chunk[0] & 0x0f) === 0x08 ? createInflate(zlibOptions) : createInflateRaw(zlibOptions);
+      this.#inflateStream.on("data", (data: Buffer) => this.push(data));
+      this.#inflateStream.on("end", () => this.push(null));
+      this.#inflateStream.on("error", (error: Error) => this.destroy(error));
+    }
+    this.#inflateStream.write(chunk, encoding, callback);
+  }
+
+  override _final(callback: TransformCallback): void {
+    this.#inflateStream?.end();
+    this.#inflateStream = undefined;
+    callback();
+  }
+}
+
 function decoderFor(encoding: string) {
-  if (encoding === "br") return createBrotliDecompress();
-  if (encoding === "deflate") return createInflate();
-  return createGunzip();
+  if (encoding === "br") {
+    return createBrotliDecompress({
+      flush: constants.BROTLI_OPERATION_FLUSH,
+      finishFlush: constants.BROTLI_OPERATION_FLUSH,
+    });
+  }
+  if (encoding === "deflate") return new InflateStream();
+  return createGunzip(zlibOptions);
 }
 
 function responseBody(body: Readable): ReadableStream<Uint8Array> {
