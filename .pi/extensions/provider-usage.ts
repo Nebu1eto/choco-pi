@@ -355,9 +355,7 @@ export function normalizeCodexUsage(payload: RuntimeValue): ProviderUsage {
   ].filter((window): window is UsageWindow => window !== undefined);
   const plan = codexPlanLabel(stringValue(payload.plan_type));
   const credits = isRecord(payload.credits) ? payload.credits : undefined;
-  const balance = credits
-    ? (stringValue(credits.balance) ?? numberValue(credits.balance)?.toString())
-    : undefined;
+  const balance = credits ? formatCredits(credits.balance) : undefined;
   const resetCredits = isRecord(payload.rate_limit_reset_credits)
     ? payload.rate_limit_reset_credits
     : undefined;
@@ -461,7 +459,9 @@ export function normalizeSyntheticUsage(
         ? maximum - boundedRemaining
         : (subscriptionRequests ?? maximum - boundedRemaining);
     const requestDetail =
-      requestsUsed === 0 ? "No requests used" : `${boundedRemaining}/${maximum} requests remaining`;
+      requestsUsed === 0
+        ? "No requests used"
+        : `${formatNumber(boundedRemaining, 2)}/${formatNumber(maximum, 2)} requests remaining`;
     const detail = `${requestDetail}${rolling?.limited === true ? " · limited" : ""}`;
     const window: UsageWindow = {
       label: "Five-hour requests",
@@ -714,6 +714,14 @@ function currencyValue(value: string): number {
 function formatNumber(value: number, precision: number): string {
   const fixed = value.toFixed(precision);
   return fixed.includes(".") ? fixed.replace(/0+$/, "").replace(/\.$/, "") : fixed;
+}
+
+/** Credit balances arrive as decimal strings or floats; show at most two decimals, trimmed. */
+function formatCredits(value: RuntimeValue): string | undefined {
+  const text = stringValue(value);
+  const parsed = text !== undefined ? Number(text) : numberValue(value);
+  if (parsed !== undefined && Number.isFinite(parsed)) return formatNumber(parsed, 2);
+  return text;
 }
 
 function relativeTime(date: Date | undefined, at = Date.now()): string | undefined {

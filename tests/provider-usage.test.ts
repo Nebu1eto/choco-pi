@@ -288,6 +288,26 @@ test("labels ChatGPT Codex plans and keeps unknown wire values readable", () => 
   assert.equal(formatProviderUsage(usage), "OpenAI Codex — Pro (5x) · 0 credits");
 });
 
+test("usage numbers are rounded for display instead of echoing float noise", () => {
+  const codex = normalizeCodexUsage({
+    plan_type: "pro",
+    credits: { balance: "62500.0000000000" },
+    rate_limit: {},
+  });
+  assert.equal(formatProviderUsage(codex), "OpenAI Codex — Pro (20x) · 62500 credits");
+  const fractional = normalizeCodexUsage({ credits: { balance: 12.3456 }, rate_limit: {} });
+  assert.equal(fractional.status, "12.35 credits");
+  const unparsable = normalizeCodexUsage({ credits: { balance: "n/a" }, rate_limit: {} });
+  assert.equal(unparsable.status, "n/a credits");
+
+  const synthetic = normalizeSyntheticUsage(
+    syntheticPayload(943.2666666667, "$40.00"),
+    undefined,
+    NOW,
+  );
+  assert.match(synthetic.windows[0]?.detail ?? "", /^943\.27\/1000 requests remaining/);
+});
+
 test("re-queries the usage tab on every activation and every refresh interval", async (t) => {
   t.mock.timers.enable({ apis: ["setInterval"] });
   const loads: StatusTabId[] = [];
