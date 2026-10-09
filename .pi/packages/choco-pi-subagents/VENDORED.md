@@ -1338,3 +1338,105 @@ with the pending-dependent snapshot instead of completing silently. Nested card
 tests remove the redundant renderer self-comparison. Regression coverage lives in
 nested-delegation-rendering, resume-turn-limit, dependency-completion-guard, and
 conversation-viewer tests.
+
+## 2026-10-08 choco-pi patch: durable subagent revival
+
+U1 adds pure foundations, not yet wired into the manager. `src/revival-journal.ts`
+defines the `subagent-journal` custom-entry schema (serializable run-option
+subset, usage-wait classification copy, optional worktree `workPath`/`hookManaged`),
+`buildJournalData` (64 KiB result/error cap, prompt dropped once a session file
+exists), `reduceJournal` (file order, latest per agent, foreign roots ignored, a
+malformed later entry discards that agent's stale snapshot), `startupDisposition`
+(two unclean revivals, then capped) and `buildInterruptionPrompt`.
+`src/session-file-ownership.ts` keeps a process-wide child-session-file owner
+registry on `globalThis` so claims survive /reload. `src/worktree-probe.ts`
+asynchronously verifies a journaled worktree directory and its git registration.
+Tests: revival-journal, session-file-ownership, worktree-probe.
+
+U2a adds the writer side in `src/agent-manager.ts`. Every status write goes
+through a private `transition()` (24 former `record.status =` sites), and
+terminal publication, session-file confirmation, usage-wait re-arm, steers
+queued while parked and `setRevivals` also schedule a write. Writes are
+coalesced per record in one microtask, deduplicated, and contained (failures
+are counted and reported once per record through the optional
+`sink.reportError`). Without a `setJournalSink` sink nothing is journaled.
+Workflow steps, /btw records and their descendants are excluded, as are records
+of another root session and stops caused by shutdown (U2b replaces the last with
+a suspend write). `abort()` sets `stoppedByUser`; owned-child cascades do not.
+The prompt stays in the journal until the run's first assistant message, turn
+end or tool activity confirms the child session file. Evicted journaled terminal
+records stay reachable as dormant snapshots (bounded at 500, oldest dropped)
+through `getDormant`, `findDormantByHandle`, `markDormantResultConsumed`,
+`hydrateDormant` and the `setJournalLookup` fallback. `AgentRecord` gains the
+`"interrupted"` status and the journal fields (`revivals`, `stoppedByUser`,
+`spawnPrompt`, `runOptions`, `spawnModel`, `worktreeRepo`). `"interrupted"` is
+also added to the `AgentDetails` status union (`ui/agent-widget.ts`) and the
+delegation-render schema. Tests: revival-manager-journal.
+U2b adds suspension and revival to `src/agent-manager.ts` (wiring into
+`index.ts` is U5). `flushJournal()` writes coalesced entries synchronously.
+`suspendAll()` (and `dispose({ suspend: true })`, which runs its synchronous
+part) writes a `suspended: true` entry for every live journaled queued, running
+or parked record (`interrupted`, or `waiting_for_reset` with the usage wait and
+steers, including a queued post-reset continuation) before aborting it with the
+new cancellation cause `"suspend"`. That cause skips worktree cleanup,
+publication, completion callbacks, owned-child aborts and every later journal
+write; queued and parked records are retired at once, running ones on settle,
+and `suspendAll` waits at most 10 s. Records outside the journal keep the
+`abortAll` semantics. Each run claims its persisted child session file
+(`session-file-ownership.ts`, token = instance + id + generation) and releases
+it after the session is disposed. `reviveFromJournal(snapshots, context)` applies
+`startupDisposition`: it re-creates records under the same id, handle, alias and
+run options (readOnly, scoped models; foreground becomes background), reopens the
+session file with `buildInterruptionPrompt` after waiting up to 15 s for its
+release, restarts a never-started run from its journaled prompt, adopts a
+probed worktree, re-arms usage waits (3 s grace when the reset passed, up to
+30 s of retries while the policy is unregistered; the wake reopens the file via
+the spawn path), keeps capped and terminal snapshots dormant, revives nested
+children only with their parent (whose prompt lists them), and journals
+validation failures as errors. `resumeDormant` reopens a dormant agent's file
+under its id; `assertResumable(id, model, { dormant: true })` and
+`canResumeDormant` pre-check it. The journal schema gains optional `steers` and
+`inMemorySession`; `buildInterruptionPrompt` accepts an unknown cause and a
+`children` list. `src/agent-runner.ts`: nested sessions now persist like
+top-level ones (`persistSession ?? rememberAgents`); frontmatter
+`persist_session: false` still keeps a session in memory, which makes that agent
+non-revivable once it has started (its revival is journaled as an error). Tests:
+revival-suspend, revival-revive, revival-nested, revival-journal.
+
+U5 wires this into `src/index.ts`. Only the root activation that owns the
+manager registry journals, and only for a persisted root session outside
+`print`/`json` mode; every other activation keeps `abortAll` at shutdown.
+`session_start` installs the sink (`pi.appendEntry("subagent-journal", ...)`),
+a lookup that reduces `getEntries()` on a miss, and hydrates every journaled
+snapshot as dormant so ids and handles resolve at once; it then starts
+`reviveFromJournal` 250 ms after the handler returns (re-reducing the journal
+then, so a stop issued in between wins), guarded by an activation generation.
+The session-start `cancelUsageLimitWaits`/`clearCompleted` run only for
+non-journaling sessions. `session_before_switch` no longer cancels usage waits or
+clears records (the switch can still be cancelled); `session_shutdown` flushes
+the journal, awaits `suspendAll()` and calls `dispose({ suspend: true })`.
+Revived/re-armed outcomes are UI notices; capped, failed and skipped ones are a
+non-turn-triggering `subagent-revival` message naming the agent and how to
+resume it. Dormant agents: `Agent` with `resume` reopens them through
+`resumeDormant`, `get_subagent_result` (root and nested)
+returns the journaled result once or says the agent is not running,
+`stop_subagent` journals an unfinished one as stopped by the user, and an
+`@handle` mention prefers live > dormant > tombstone. Pending notification keys
+of dormant unread results survive a restart and render from the snapshot.
+Result reads that change `resultConsumed` re-journal the record. In
+`src/agent-manager.ts`, a capped agent is journaled once as the terminal error
+`CAPPED_REVIVAL_ERROR` (`src/revival-journal.ts`) instead of `interrupted`, so
+later startups neither revive nor re-report it; `stopDormant` and
+`isRevivalPending` were added. A revival or dormant resume that reopens a
+claimed child session file sets `sessionFile` (confirmed) and drops the spawn
+prompt in `spawnWith` before the first journal write, so even a revival queued
+behind the concurrency cap is journaled with its file and never with the
+interruption prompt; a kill in that window reopens the same file. A queued run
+without a file still journals its original prompt. `resumeDormant` takes
+`{ model }` and `assertResumable(id, model, { dormant: true, ctx })` validates
+it: both share `validateResumeModel` (format, availability, strict scope,
+provider closure, `ResumeModelError`) with the live resume, and the chosen model
+replaces the journaled one, so later revivals keep it. `Agent` with `resume`
+and `model` on a dormant agent uses this. Tests: revival-lifecycle (real
+extension activation, fake runner), revival-revive (capped, queued crash
+window, dormant resume with a model).

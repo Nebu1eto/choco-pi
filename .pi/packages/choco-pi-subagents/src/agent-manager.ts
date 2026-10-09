@@ -9,6 +9,7 @@
 
 import { randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { AgentSession, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -53,6 +54,25 @@ import {
   type ForcedTerminalStatus,
   type RunBudgetLimits,
 } from "./run-budgets.ts";
+import {
+  buildInterruptionPrompt,
+  buildJournalData,
+  CAPPED_REVIVAL_ERROR,
+  journalClassificationOf,
+  JournalAgentSnapshotSchema,
+  startupDisposition,
+  usageClassificationOf,
+  type InterruptedChildRun,
+  type JournalAgentSnapshot,
+  type JournalRunOptions,
+  type SubagentJournalData,
+} from "./revival-journal.ts";
+import {
+  claimSessionFile,
+  releaseSessionFile,
+  waitForSessionFileRelease,
+} from "./session-file-ownership.ts";
+import { probeWorktree } from "./worktree-probe.ts";
 import { getSessionCostBaseline } from "./usage.ts";
 import type {
   AgentInvocation,
@@ -115,6 +135,18 @@ const USAGE_LIMIT_POLL_MS = 5 * 60_000;
 const USAGE_LIMIT_MAX_POLL_MS = 6 * 60 * 60_000;
 /** Closure applied when the provider gives no reset estimate. */
 const USAGE_LIMIT_DEFAULT_CLOSE_MS = 30 * 60_000;
+/** Delay before a re-armed wait whose reset already passed re-checks readiness. */
+export const REARM_RESET_GRACE_MS = 3_000;
+/** How long a re-armed wake keeps retrying while the usage-limit policy is unregistered. */
+export const REARM_POLICY_RETRY_MS = 30_000;
+/** Retry cadence while waiting for the usage-limit policy to register. */
+const REARM_POLICY_POLL_MS = 2_000;
+/** Bound on how long `suspendAll` waits for suspended runs to settle. */
+export const SUSPEND_SETTLE_TIMEOUT_MS = 10_000;
+/** Bound on how long a revival waits for another owner to release a session file. */
+export const SESSION_FILE_RELEASE_TIMEOUT_MS = 15_000;
+
+const SUSPEND_REASON = "Suspended by the host (quit, reload, or session switch).";
 
 /** Continuation prompt for a child resumed after its usage window reset. */
 export const USAGE_LIMIT_RESUME_PROMPT =
@@ -162,6 +194,10 @@ interface UsageWait {
   continuation: string[];
   /** Set once the wait falls back to polling (no usable reset estimate). */
   pollUntil?: number;
+  /** Re-armed from the journal at startup: the policy may register late. */
+  revived?: boolean;
+  /** Deadline for the late-policy retry, set on the first wake without a policy. */
+  policyRetryUntil?: number;
   timer?: ReturnType<typeof setTimeout>;
   parkedPromise: Promise<string>;
   release(value: string | PromiseLike<string>): void;
@@ -171,6 +207,108 @@ interface UsageWait {
 export { ResumeModelError };
 
 export type UsageLimitListener = (record: AgentRecord) => void;
+
+/**
+ * Durable-revival writer. The root activation installs one per root session;
+ * child-session activations never do, so their managers journal nothing.
+ */
+export interface SubagentJournalSink {
+  /** Root session id stamped on every entry (fork/clone guard). */
+  rootSessionId: string;
+  /** Append one `subagent-journal` entry to the ROOT session file. */
+  append(data: SubagentJournalData): void;
+  /** Optional diagnostic, called at most once per record when journaling fails. */
+  reportError?(agentId: string, error: Error): void;
+}
+
+/** Background callbacks a revived run streams into (mirrors a background spawn's). */
+export interface RevivalRunCallbacks {
+  onToolActivity?: (activity: ToolActivity) => void;
+  onTextDelta?: (delta: string, fullText: string) => void;
+  onSessionCreated?: (session: AgentSession) => void;
+  onTurnEnd?: (turnCount: number) => void;
+  onAssistantUsage?: (usage: { input: number; output: number; cacheWrite: number }) => void;
+  onCompaction?: (info: CompactionInfo) => void;
+}
+
+export type RevivalReportKind = "revived" | "rearmed" | "capped" | "failed" | "skipped";
+
+/** One revival outcome, for the main-session notification U5 renders. */
+export interface RevivalReport {
+  kind: RevivalReportKind;
+  agentId: string;
+  handle?: string;
+  description: string;
+  parentAgentId?: string;
+  message: string;
+}
+
+/** What a revival needs from the activation that owns the root session. */
+export interface RevivalContext {
+  pi: ExtensionAPI;
+  /** The current root session's context (cwd, model registry, session id). */
+  ctx: ExtensionContext;
+  /**
+   * Agent-type resolution with spawn's dispatch rules (index.ts:
+   * `reloadCustomAgents()` + `resolveSpawnType`). Omitted accepts the type.
+   */
+  resolveType?: (type: string) => { ok: true; type: string } | { ok: false; message: string };
+  /** Per-agent background callbacks (activity tracker, transcript streaming). */
+  callbacksFor?: (snapshot: JournalAgentSnapshot) => RevivalRunCallbacks;
+  /** Called synchronously once a revived record is live (join mode, output file). */
+  onRevived?: (record: AgentRecord) => void;
+  /** Every revival outcome, in order. */
+  onRevivalReport?: (report: RevivalReport) => void;
+}
+
+/** A reduced journal snapshot (`reduceJournal` values satisfy it). */
+export type RevivalSnapshot = Pick<SubagentJournalData, "suspended" | "agent">;
+
+/** Outcome of `suspendAll`. */
+export interface SuspendSummary {
+  /** Journaled records suspended for revival. */
+  suspended: string[];
+  /** Suspended runs that did not settle within `SUSPEND_SETTLE_TIMEOUT_MS`. */
+  unsettled: string[];
+  /** Records outside the journal stopped with today's shutdown semantics. */
+  aborted: number;
+}
+
+/** Lookup for journaled snapshots the in-memory dormant map no longer holds. */
+export type SubagentJournalLookup = (id: string) => JournalAgentSnapshot | undefined;
+
+/** Journal failure counters, for diagnostics and tests. */
+export interface SubagentJournalHealth {
+  failures: number;
+  lastError?: string;
+}
+
+/**
+ * Bound on dormant snapshots kept in memory (oldest inserted dropped first).
+ * Each is at most two 64 KiB texts plus small fields; the session file stays
+ * the source of truth and `setJournalLookup` covers anything dropped.
+ */
+const MAX_DORMANT = 500;
+
+/** Statuses whose generation has no final outcome yet. */
+function isUnsettledStatus(status: AgentRecord["status"]): boolean {
+  return (
+    status === "queued" ||
+    status === "running" ||
+    status === "waiting_for_reset" ||
+    status === "interrupted"
+  );
+}
+
+/** The child session already holds an assistant message, so its file exists. */
+function sessionHasAssistantMessage(session: AgentSession | undefined): boolean {
+  if (session === undefined) return false;
+  try {
+    return session.messages.some((message) => message.role === "assistant");
+  } catch {
+    return false;
+  }
+}
 
 function modelRefOf(model: ModelRef | undefined): ModelRef | undefined {
   return model === undefined ? undefined : { provider: model.provider, id: model.id };
@@ -285,6 +423,39 @@ function withSessionId(
 
 /** Terminal handling for a queued entry that never started (stop, shutdown, drop). */
 type QueuedFinalizer = (notify: boolean) => void;
+
+/** A background start waiting for a concurrency slot. */
+interface QueueEntry {
+  id: string;
+  providerKey: string;
+  start: () => void;
+  /**
+   * Post-reset continuation only: owns the parked task's promise and final
+   * notification while queued, so every queued terminal path must call it.
+   */
+  finalize?: QueuedFinalizer;
+  /**
+   * Post-reset continuation only: return the task to `waiting_for_reset`
+   * when its provider account was closed again by a usage limit while queued.
+   */
+  repark?: () => void;
+  /** Post-reset continuation only: the wait it continues (for a suspend write). */
+  wait?: UsageWait;
+}
+
+/** One record a graceful suspend journals and cancels. */
+interface SuspendPlan {
+  record: AgentRecord;
+  status: "interrupted" | "waiting_for_reset";
+  wait?: UsageWait;
+  queueEntry?: QueueEntry;
+}
+
+interface SuspendPlanResult {
+  suspended: AgentRecord[];
+  /** Suspended records whose run must still settle. */
+  running: AgentRecord[];
+}
 
 async function removeHookWorktree(pi: ExtensionAPI, path: string): Promise<void> {
   let claimed = false;
@@ -488,10 +659,67 @@ interface SpawnOptions {
   configCwd?: string;
   /** Explicit request; omitted snapshots the immediate parent's current request. */
   fastModeRequested?: boolean;
-  daybreakRequested?: boolean;
+  daybreakRequested?: boolean | "auto";
   /** Root session id, inherited by nested launches so transcripts stay grouped. */
   rootSessionId?: string;
+  /**
+   * Internal revival capability: run in this existing worktree instead of
+   * creating one. Its final settle cleans it up like a created worktree.
+   */
+  adoptWorktree?: AdoptedWorktree;
 }
+
+interface AdoptedWorktree {
+  path: string;
+  branch: string;
+  baseSha: string;
+  repo: string;
+  workPath?: string;
+  hookManaged?: boolean;
+}
+
+/** Identity a revival reuses instead of allocating a new one. */
+interface RevivalIdentity {
+  id: string;
+  handle?: string;
+  alias?: string;
+  revivals: number;
+  /** Steering carried into the new session (fresh restarts). */
+  steers?: string[];
+  /** Parent scoped models (`provider/id`) captured at the original spawn. */
+  scoped?: string[];
+  outputFile?: string;
+  /** Session-file claim already taken for this id. */
+  claim?: SessionClaim;
+  /** Re-arm a usage wait instead of starting a run. */
+  rearm?: { snapshot: JournalAgentSnapshot; sessionFile: string };
+}
+
+interface SessionClaim {
+  file: string;
+  token: string;
+}
+
+/** Validated inputs for one revival, with its session-file claim held. */
+interface PreparedRevival {
+  snapshot: JournalAgentSnapshot;
+  mode: "revive" | "rearm" | "resume";
+  clean: boolean | undefined;
+  revivals: number;
+  type: SubagentType;
+  model?: Model<Api>;
+  adopt?: AdoptedWorktree;
+  claim?: SessionClaim;
+  /** Original prompt for a fresh restart (no session file). */
+  freshPrompt?: string;
+  steers: string[];
+}
+
+type PrepareOutcome =
+  | { kind: "ok"; prepared: PreparedRevival }
+  /** `journal`: a permanent failure recorded as an error; otherwise left dormant. */
+  | { kind: "failed"; reason: string; journal: boolean }
+  | { kind: "stale" };
 
 function terminalStatusFor(run: {
   aborted?: boolean;
@@ -502,6 +730,43 @@ function terminalStatusFor(run: {
   if (run.failure) return "error";
   if (run.steered) return "steered";
   return "completed";
+}
+
+/**
+ * Serializable subset of the options a spawn ran with, for the journal.
+ * `readOnly` is carried so a revival can never widen a restricted child.
+ */
+function journalRunOptionsOf(options: SpawnOptions, scopedModels: string[]): JournalRunOptions {
+  const budgets = options.budgets;
+  return {
+    maxTurns: options.maxTurns,
+    budgets:
+      budgets === undefined
+        ? undefined
+        : {
+            timeoutMs: budgets.timeoutMs,
+            maxToolCalls: budgets.maxToolCalls,
+            maxTokens: budgets.maxTokens,
+            idleTimeoutMs: budgets.idleTimeoutMs,
+          },
+    thinkingLevel: options.thinkingLevel,
+    isolated: options.isolated,
+    inheritContext: options.inheritContext,
+    isolation: options.isolation,
+    // RPC callers may send null for "unset".
+    cwd: options.cwd ?? undefined,
+    configCwd: options.configCwd,
+    isBackground: options.isBackground,
+    readOnly: options.readOnly,
+    sideConversation: options.sideConversation,
+    workflowId: options.workflowId,
+    workflowStepId: options.workflowStepId,
+    maxSubagentDepth: options.maxSubagentDepth,
+    fastModeRequested: options.fastModeRequested,
+    daybreakRequested: options.daybreakRequested,
+    scopedModels: scopedModels.length > 0 ? [...scopedModels] : undefined,
+    invocation: options.invocation === undefined ? undefined : { ...options.invocation },
+  };
 }
 
 interface ResumeOptions {
@@ -566,21 +831,7 @@ export class AgentManager {
   private tombstones = new Map<string, AgentTombstone>();
 
   /** Queue of background agents waiting to start. */
-  private queue: {
-    id: string;
-    providerKey: string;
-    start: () => void;
-    /**
-     * Post-reset continuation only: owns the parked task's promise and final
-     * notification while queued, so every queued terminal path must call it.
-     */
-    finalize?: QueuedFinalizer;
-    /**
-     * Post-reset continuation only: return the task to `waiting_for_reset`
-     * when its provider account was closed again by a usage limit while queued.
-     */
-    repark?: () => void;
-  }[] = [];
+  private queue: QueueEntry[] = [];
   /** Number of currently running background agents. */
   private runningBackground = 0;
   /** Usage-limit inputs snapshotted per record at spawn. */
@@ -596,6 +847,42 @@ export class AgentManager {
   /** Worktree cleanup deferred by a parked spawn; runs on the task's final settle. */
   private deferredWorktrees = new Map<string, () => void>();
   private usageLimitListener?: UsageLimitListener;
+
+  /** Durable-revival writer; undefined (child managers, tests) journals nothing. */
+  private journalSink?: SubagentJournalSink;
+  /** Fallback for dormant snapshots evicted from (or never loaded into) memory. */
+  private journalLookup?: SubagentJournalLookup;
+  /** Root session the dormant map and journal bookkeeping belong to. */
+  private journalRoot?: string;
+  /**
+   * Evicted journaled terminal records, keyed by id, insertion-ordered so the
+   * oldest is dropped first past `MAX_DORMANT`. Never part of the live views
+   * (`agents`, `listAgents`, concurrency counts, `getRecord`).
+   */
+  private dormant = new Map<string, JournalAgentSnapshot>();
+  /** Records excluded from revival: workflow steps, /btw, and their descendants. */
+  private unjournaled = new Set<string>();
+  /** Records whose child session file is known to hold the conversation. */
+  private sessionFileConfirmed = new Set<string>();
+  /** Records changed since the last flush; flushed together in one microtask. */
+  private pendingJournal = new Map<string, AgentRecord>();
+  private journalFlushQueued = false;
+  /** Last appended snapshot per record (serialized), to skip identical writes. */
+  private lastJournaled = new Map<string, string>();
+  private journalFailureReported = new Set<string>();
+  private journalFailures = 0;
+  private lastJournalError?: string;
+
+  /** Distinguishes this instance's session-file claims from a reloaded one's. */
+  private readonly instanceToken = randomUUID();
+  /** Session-file claim held per record id. */
+  private sessionClaims = new Map<string, SessionClaim>();
+  /** Spawn inputs of re-armed records with no session yet (wake reopens the file). */
+  private revivalArgs = new Map<string, SpawnArgs>();
+  /** Ids with a revival or dormant resume in flight. */
+  private revivalReservations = new Set<string>();
+  /** Bumped by dispose, suspend and root switches; stale revivals stop. */
+  private revivalEpoch = 0;
 
   constructor(
     onComplete?: OnAgentComplete,
@@ -697,6 +984,422 @@ export class AgentManager {
     } catch {
       /* ignore observer errors */
     }
+  }
+
+  // ---- Durable revival journal (writer side) ----
+
+  /**
+   * Install or remove the journal writer. A different root session clears the
+   * dormant map, the lookup, and the dedupe state: they describe another
+   * session's file. Removing the sink keeps them, but hides dormant entries.
+   */
+  setJournalSink(sink: SubagentJournalSink | undefined): void {
+    const root = sink?.rootSessionId;
+    if (root !== undefined && root !== this.journalRoot) {
+      this.dormant.clear();
+      this.lastJournaled.clear();
+      this.journalLookup = undefined;
+      this.journalRoot = root;
+      this.revivalEpoch++;
+    }
+    this.journalSink = sink;
+  }
+
+  /** Fallback consulted by `getDormant` when the in-memory map misses. */
+  setJournalLookup(lookup: SubagentJournalLookup | undefined): void {
+    this.journalLookup = lookup;
+  }
+
+  /** Journaling failures since construction, for diagnostics and tests. */
+  getJournalHealth(): SubagentJournalHealth {
+    return { failures: this.journalFailures, lastError: this.lastJournalError };
+  }
+
+  /**
+   * Re-journal a live record after a change made outside the manager (a
+   * result read flipping `resultConsumed`). Returns false for an unknown id.
+   */
+  journalRecord(id: string): boolean {
+    const record = this.agents.get(id);
+    if (record === undefined) return false;
+    this.scheduleJournal(record);
+    return true;
+  }
+
+  /** Set a live record's consecutive unclean-revival count and journal it. */
+  setRevivals(id: string, revivals: number): boolean {
+    const record = this.agents.get(id);
+    if (record === undefined || !Number.isInteger(revivals) || revivals < 0) return false;
+    record.revivals = revivals;
+    this.scheduleJournal(record);
+    return true;
+  }
+
+  /**
+   * Load dormant snapshots (startup: terminal snapshots of the current root).
+   * Call after `setJournalSink` for that root. Invalid snapshots and ids that
+   * are live are skipped. Returns how many were stored.
+   */
+  hydrateDormant(snapshots: Iterable<JournalAgentSnapshot>): number {
+    let stored = 0;
+    for (const snapshot of snapshots) {
+      if (!Value.Check(JournalAgentSnapshotSchema, snapshot)) continue;
+      if (this.putDormant(snapshot)) stored++;
+    }
+    return stored;
+  }
+
+  /** Dormant snapshot by id; undefined while a live record holds the id or no sink is set. */
+  getDormant(id: string): JournalAgentSnapshot | undefined {
+    if (this.journalSink === undefined || this.agents.has(id)) return undefined;
+    const stored = this.dormant.get(id);
+    if (stored !== undefined) return stored;
+    let found: JournalAgentSnapshot | undefined;
+    try {
+      found = this.journalLookup?.(id);
+    } catch {
+      return undefined;
+    }
+    return found !== undefined && found.id === id && Value.Check(JournalAgentSnapshotSchema, found)
+      ? found
+      : undefined;
+  }
+
+  /**
+   * Newest top-level dormant snapshot whose handle or alias matches
+   * case-insensitively, or whose id matches exactly. In-memory map only.
+   */
+  findDormantByHandle(handleOrAlias: string): JournalAgentSnapshot | undefined {
+    if (this.journalSink === undefined) return undefined;
+    const wanted = handleOrAlias.toLowerCase();
+    let match: JournalAgentSnapshot | undefined;
+    for (const entry of this.dormant.values()) {
+      if (entry.parentAgentId !== undefined || this.agents.has(entry.id)) continue;
+      if (
+        entry.handle?.toLowerCase() === wanted ||
+        entry.alias?.toLowerCase() === wanted ||
+        entry.id === handleOrAlias
+      ) {
+        match = entry;
+      }
+    }
+    return match;
+  }
+
+  /** Record that a dormant agent's result was read, and journal it. */
+  markDormantResultConsumed(id: string): boolean {
+    const sink = this.journalSink;
+    const entry = this.getDormant(id);
+    if (sink === undefined || entry === undefined) return false;
+    if (entry.resultConsumed) return true;
+    const updated: JournalAgentSnapshot = { ...entry, resultConsumed: true };
+    this.putDormant(updated);
+    try {
+      sink.append(
+        buildJournalData({ rootSessionId: sink.rootSessionId, suspended: false, agent: updated }),
+      );
+    } catch (err) {
+      this.noteJournalFailure(sink, id, err instanceof Error ? err : new Error(String(err)));
+    }
+    return true;
+  }
+
+  /**
+   * Explicit stop of a dormant agent that has no run (interrupted, parked or
+   * never revived): journal it `stopped` with `stoppedByUser` so no startup
+   * revives it. Returns the stopped snapshot, or undefined when the id is
+   * live, being revived, unknown, or already terminal.
+   */
+  stopDormant(id: string): JournalAgentSnapshot | undefined {
+    const sink = this.journalSink;
+    if (sink === undefined || this.disposed || this.revivalReservations.has(id)) return undefined;
+    const entry = this.getDormant(id);
+    if (entry === undefined || !isUnsettledStatus(entry.status)) return undefined;
+    const stopped: JournalAgentSnapshot = {
+      ...entry,
+      status: "stopped",
+      stoppedByUser: true,
+      error: entry.error ?? "Stopped by user request while not running.",
+      usageWait: undefined,
+      steers: undefined,
+    };
+    this.putDormant(stopped);
+    try {
+      sink.append(
+        buildJournalData({ rootSessionId: sink.rootSessionId, suspended: false, agent: stopped }),
+      );
+    } catch (err) {
+      this.noteJournalFailure(sink, id, err instanceof Error ? err : new Error(String(err)));
+    }
+    return stopped;
+  }
+
+  /** Whether a startup revival or dormant resume currently holds `id`. */
+  isRevivalPending(id: string): boolean {
+    return this.revivalReservations.has(id);
+  }
+
+  /** The only status writer: every transition is journaled. */
+  private transition(record: AgentRecord, status: AgentRecord["status"]): void {
+    record.status = status;
+    this.scheduleJournal(record);
+  }
+
+  /**
+   * Publish a terminal generation and journal it: a settle after an explicit
+   * stop fills result/error without another status write.
+   */
+  private publishTerminal(record: AgentRecord): void {
+    publishTerminalResult(record);
+    this.scheduleJournal(record);
+  }
+
+  /** Publish an inline-consumed terminal generation and journal it. */
+  private markTerminalConsumed(record: AgentRecord): void {
+    markResultGenerationConsumed(record);
+    this.scheduleJournal(record);
+  }
+
+  /**
+   * Queue a journal write. Writes are coalesced in one microtask so a settle
+   * path that sets status, then error/result/consumption synchronously, lands
+   * as one complete entry. The microtask runs before any I/O callback, so the
+   * entry precedes the run's first provider call.
+   */
+  private scheduleJournal(record: AgentRecord): void {
+    if (this.journalSink === undefined || this.disposed) return;
+    this.pendingJournal.set(record.id, record);
+    if (this.journalFlushQueued) return;
+    this.journalFlushQueued = true;
+    queueMicrotask(() => {
+      this.journalFlushQueued = false;
+      this.flushJournal();
+    });
+  }
+
+  /**
+   * Write every coalesced journal entry now (e.g. inside `session_shutdown`,
+   * where a pending microtask may never run before the process exits).
+   */
+  flushJournal(): void {
+    const pending = [...this.pendingJournal.values()];
+    this.pendingJournal.clear();
+    for (const entry of pending) {
+      if (this.agents.get(entry.id) === entry) this.writeJournal(entry);
+    }
+  }
+
+  /** The sink this record journals to, or undefined when it must not be journaled. */
+  private journalSinkFor(record: AgentRecord): SubagentJournalSink | undefined {
+    const sink = this.journalSink;
+    if (sink === undefined || this.disposed || this.unjournaled.has(record.id)) return undefined;
+    // A record of another root session (spawned before a switch) is not this file's.
+    const owner = this.usageScopes.get(record.id)?.owner;
+    if (owner !== undefined && owner !== sink.rootSessionId) return undefined;
+    // Host shutdown stops are not outcomes: the journal keeps the last real
+    // state so startup can revive. A suspended record's suspend entry must
+    // stay its latest, so nothing after it is journaled.
+    const generation = record.resultGeneration ?? 1;
+    if (
+      record.cancellation?.generation === generation &&
+      (record.cancellation.cause === "shutdown" || record.cancellation.cause === "suspend")
+    ) {
+      return undefined;
+    }
+    return sink;
+  }
+
+  /** Build and append one snapshot. Never throws; returns the snapshot built. */
+  private writeJournal(record: AgentRecord): JournalAgentSnapshot | undefined {
+    const sink = this.journalSinkFor(record);
+    if (sink === undefined) return undefined;
+    let data: SubagentJournalData;
+    try {
+      data = buildJournalData({
+        rootSessionId: sink.rootSessionId,
+        suspended: false,
+        agent: this.journalSnapshot(record),
+      });
+    } catch (err) {
+      this.noteJournalFailure(sink, record.id, err instanceof Error ? err : new Error(String(err)));
+      return undefined;
+    }
+    const key = JSON.stringify(data.agent);
+    if (this.lastJournaled.get(record.id) !== key) {
+      try {
+        sink.append(data);
+        this.lastJournaled.set(record.id, key);
+      } catch (err) {
+        this.noteJournalFailure(
+          sink,
+          record.id,
+          err instanceof Error ? err : new Error(String(err)),
+        );
+      }
+    }
+    return data.agent;
+  }
+
+  private noteJournalFailure(sink: SubagentJournalSink, agentId: string, error: Error): void {
+    this.journalFailures++;
+    this.lastJournalError = error.message;
+    if (this.journalFailureReported.has(agentId)) return;
+    this.journalFailureReported.add(agentId);
+    try {
+      sink.reportError?.(agentId, error);
+    } catch {
+      /* a failing diagnostic must not break the run either */
+    }
+  }
+
+  /**
+   * Write the suspend entry (`suspended: true`) synchronously. `status` is
+   * `interrupted`, or `waiting_for_reset` with the wait it continues.
+   */
+  private writeSuspendedJournal(
+    record: AgentRecord,
+    status: "interrupted" | "waiting_for_reset",
+    wait: UsageWait | undefined,
+  ): void {
+    const sink = this.journalSinkFor(record);
+    if (sink === undefined) return;
+    this.pendingJournal.delete(record.id);
+    try {
+      const steers = status === "interrupted" ? [...(record.pendingSteers ?? [])] : undefined;
+      const data = buildJournalData({
+        rootSessionId: sink.rootSessionId,
+        suspended: true,
+        agent: this.journalSnapshot(record, { status, wait, steers }),
+      });
+      sink.append(data);
+      this.lastJournaled.set(record.id, JSON.stringify(data.agent));
+    } catch (err) {
+      this.noteJournalFailure(sink, record.id, err instanceof Error ? err : new Error(String(err)));
+    }
+  }
+
+  /** Plain snapshot of a record; `buildJournalData` copies, caps and validates it. */
+  private journalSnapshot(
+    record: AgentRecord,
+    override?: {
+      status: AgentRecord["status"];
+      wait: UsageWait | undefined;
+      steers: string[] | undefined;
+    },
+  ): JournalAgentSnapshot {
+    const status = override?.status ?? record.status;
+    const terminal = !isUnsettledStatus(status);
+    const sessionFile =
+      record.sessionFile !== undefined &&
+      (this.sessionFileConfirmed.has(record.id) || sessionHasAssistantMessage(record.session))
+        ? record.sessionFile
+        : undefined;
+    const wait =
+      override === undefined
+        ? record.status === "waiting_for_reset"
+          ? this.usageWaits.get(record.id)
+          : undefined
+        : override.wait;
+    const worktree = record.worktree;
+    const repo = record.worktreeRepo;
+    const spawnOptions: JournalRunOptions = record.runOptions ?? {};
+    return {
+      id: record.id,
+      handle: record.handle,
+      alias: record.alias,
+      type: record.type,
+      description: record.description,
+      parentAgentId: record.parentAgentId,
+      depth: record.depth ?? 1,
+      status,
+      sessionFile,
+      model: modelRefOf(record.session?.model) ?? record.spawnModel,
+      // Spawn-time options, with the fields the record carries forward (a
+      // parked foreground child becomes background; fast/daybreak can change).
+      options: {
+        ...spawnOptions,
+        isBackground: record.isBackground,
+        fastModeRequested: record.fastModeRequested,
+        daybreakRequested: record.daybreakRequested,
+        outputFile: record.outputFile ?? spawnOptions.outputFile,
+      },
+      prompt: sessionFile === undefined ? record.spawnPrompt : undefined,
+      usageWait:
+        wait === undefined
+          ? undefined
+          : {
+              providerKey: wait.providerKey,
+              resetAt: wait.classification.resetAt ?? record.usageLimit?.resetAt,
+              classification: journalClassificationOf(wait.classification),
+              steers: [...wait.continuation, ...(record.pendingSteers ?? [])],
+            },
+      worktree:
+        worktree === undefined || repo === undefined
+          ? undefined
+          : {
+              path: worktree.path,
+              branch: worktree.branch,
+              baseSha: worktree.baseSha,
+              repo,
+              workPath: worktree.workPath,
+              hookManaged: worktree.hookManaged,
+            },
+      revivals: record.revivals ?? 0,
+      resultConsumed: record.resultConsumed === true,
+      stoppedByUser: record.stoppedByUser,
+      result: terminal ? record.result : undefined,
+      error: terminal ? record.error : undefined,
+      steers: override?.steers,
+      inMemorySession: record.inMemorySession,
+    };
+  }
+
+  /**
+   * The child's session file now holds the conversation (first assistant
+   * message, turn end, or tool activity of this generation), so the journal can
+   * point at it instead of carrying the prompt. One-shot per record.
+   */
+  private confirmSessionFile(record: AgentRecord, generation: number): void {
+    if (record.resultGeneration !== generation || record.sessionFile === undefined) return;
+    if (this.sessionFileConfirmed.has(record.id)) return;
+    this.sessionFileConfirmed.add(record.id);
+    record.spawnPrompt = undefined;
+    this.scheduleJournal(record);
+  }
+
+  /** Store a dormant snapshot as the newest entry; false when its id is live. */
+  private putDormant(snapshot: JournalAgentSnapshot): boolean {
+    if (this.agents.has(snapshot.id)) return false;
+    this.dormant.delete(snapshot.id);
+    this.dormant.set(snapshot.id, snapshot);
+    while (this.dormant.size > MAX_DORMANT) {
+      const oldest = this.dormant.keys().next();
+      if (oldest.done === true) break;
+      this.dormant.delete(oldest.value);
+    }
+    return true;
+  }
+
+  /** Drop a record's journal bookkeeping (eviction or a failed spawn). */
+  private forgetJournalState(id: string): void {
+    this.pendingJournal.delete(id);
+    this.lastJournaled.delete(id);
+    this.sessionFileConfirmed.delete(id);
+    this.unjournaled.delete(id);
+    this.journalFailureReported.delete(id);
+  }
+
+  /**
+   * Final journal write for an evicted record, then keep its terminal snapshot
+   * for the dormant map. Catches up on changes made outside the manager
+   * (result reads). The caller stores it after the live record is gone.
+   */
+  private retireJournal(record: AgentRecord): JournalAgentSnapshot | undefined {
+    this.pendingJournal.delete(record.id);
+    const snapshot = this.writeJournal(record);
+    this.forgetJournalState(record.id);
+    if (snapshot === undefined || isUnsettledStatus(snapshot.status)) return undefined;
+    return snapshot;
   }
 
   private captureUsageScope(ctx: ExtensionContext, options: SpawnOptions): UsageLimitScope {
@@ -924,7 +1627,7 @@ export class AgentManager {
     const parkedPromise = new Promise<string>((resolve) => {
       release = resolve;
     });
-    record.status = "waiting_for_reset";
+    this.transition(record, "waiting_for_reset");
     // A parked foreground child has already answered its caller; from here it
     // behaves as background and reports through the completion notification.
     record.isBackground = true;
@@ -975,6 +1678,10 @@ export class AgentManager {
       }
       delay = Math.min(USAGE_LIMIT_POLL_MS, wait.pollUntil - now);
     }
+    this.armWakeTimer(record, wait, delay);
+  }
+
+  private armWakeTimer(record: AgentRecord, wait: UsageWait, delay: number): void {
     if (wait.timer !== undefined) clearTimeout(wait.timer);
     wait.timer = setTimeout(() => {
       wait.timer = undefined;
@@ -987,6 +1694,20 @@ export class AgentManager {
     const record = this.agents.get(id);
     if (!this.isCurrentWait(record, wait)) return;
     const policy = readUsageLimitPolicy(wait.owner);
+    if (policy === undefined && wait.revived === true) {
+      // A re-armed wait can wake before the extension that registers the
+      // policy has started; give it a bounded chance to appear.
+      const now = Date.now();
+      wait.policyRetryUntil ??= now + REARM_POLICY_RETRY_MS;
+      if (now < wait.policyRetryUntil) {
+        this.armWakeTimer(
+          record,
+          wait,
+          Math.min(REARM_POLICY_POLL_MS, wait.policyRetryUntil - now),
+        );
+        return;
+      }
+    }
     if (policy === undefined) {
       this.settleParked(record, wait, {
         status: "error",
@@ -1010,6 +1731,8 @@ export class AgentManager {
       if (record.usageLimit !== undefined) {
         record.usageLimit = { ...record.usageLimit, resetAt: nextReset };
       }
+      // A new reset estimate re-parks the task on a different timer.
+      this.scheduleJournal(record);
     }
     this.armUsageWake(record, wait, nextReset);
   }
@@ -1046,6 +1769,7 @@ export class AgentManager {
       },
       finalize: (notify) => this.settleDroppedWake(record, wait, generation, notify),
       repark: () => this.reparkQueuedWake(record, wait, generation),
+      wait,
     });
     // After the status leaves waiting_for_reset, so observers never mistake
     // the resume for a second park.
@@ -1068,7 +1792,7 @@ export class AgentManager {
     wait.generation = record.resultGeneration ?? generation;
     wait.pollUntil = undefined;
     if (resetAt !== undefined) wait.classification = { ...wait.classification, resetAt };
-    record.status = "waiting_for_reset";
+    this.transition(record, "waiting_for_reset");
     record.error = providerUnavailableMessage(key, block?.closure);
     record.usageLimit =
       record.usageLimit === undefined
@@ -1168,7 +1892,7 @@ export class AgentManager {
     }
     this.usageWaits.delete(record.id);
     const generation = record.resultGeneration ?? 1;
-    record.status = outcome.status;
+    this.transition(record, outcome.status);
     if (outcome.cause !== undefined) {
       record.cancellation = {
         generation,
@@ -1192,7 +1916,7 @@ export class AgentManager {
       record.outputCleanup = undefined;
     }
     this.finishDeferredWorktree(record);
-    publishTerminalResult(record);
+    this.publishTerminal(record);
     wait?.release(record.result ?? "");
     if (!outcome.notify || this.disposed) return;
     this.notifyUsageLimit(record);
@@ -1236,10 +1960,10 @@ export class AgentManager {
 
   /** Terminal state for a queued record that will never start. */
   private stopQueuedRecord(record: AgentRecord, cause: CancellationCause, reason: string): void {
-    record.status = "stopped";
+    this.transition(record, "stopped");
     this.requestCancellation(record, record.resultGeneration ?? 1, cause, reason);
     record.completedAt = Date.now();
-    publishTerminalResult(record);
+    this.publishTerminal(record);
   }
 
   /** Validate and apply a caller-selected model to an idle child session. */
@@ -1267,15 +1991,51 @@ export class AgentManager {
    * authentication, the parent's scope, and owner-scoped availability.
    */
   private resolveResumeModel(record: AgentRecord, input: string): Model<Api> {
+    const scope = this.usageScopes.get(record.id);
+    return this.validateResumeModel(input, {
+      registry: scope?.modelRegistry,
+      cwd: scope?.cwd,
+      owner: scope?.owner,
+      agentLabel: record.type,
+    });
+  }
+
+  /** `resolveResumeModel` for a dormant agent, against the current root context. */
+  private resolveDormantModel(
+    snapshot: JournalAgentSnapshot,
+    input: string,
+    ctx: ExtensionContext | undefined,
+  ): Model<Api> {
+    return this.validateResumeModel(input, {
+      registry: ctx?.modelRegistry,
+      cwd: ctx?.cwd,
+      owner: this.journalSink?.rootSessionId,
+      agentLabel: snapshot.type,
+    });
+  }
+
+  /**
+   * Shared caller-model validation for live and dormant resumes: provider/id
+   * format, registry availability, model scope (strict), provider closure.
+   */
+  private validateResumeModel(
+    input: string,
+    scope: {
+      registry: UsageModelRegistry | undefined;
+      cwd: string | undefined;
+      owner: string | undefined;
+      agentLabel: string;
+    },
+  ): Model<Api> {
     const slash = input.indexOf("/");
     if (slash <= 0 || slash === input.length - 1) {
       throw new ResumeModelError(`Invalid model "${input}": expected provider/id.`);
     }
     const provider = input.slice(0, slash);
     const modelId = input.slice(slash + 1);
-    const scope = this.usageScopes.get(record.id);
-    const registry = scope?.modelRegistry;
-    if (scope === undefined || registry === undefined) {
+    const registry = scope.registry;
+    const cwd = scope.cwd;
+    if (registry === undefined || cwd === undefined) {
       throw new ResumeModelError(
         `Cannot resolve model "${input}": no model registry is available for this agent.`,
       );
@@ -1299,10 +2059,10 @@ export class AgentManager {
     }
     const verdict = checkModelScope({
       model,
-      cwd: scope.cwd,
+      cwd,
       modelRegistry: registry,
       callerSupplied: true,
-      agentLabel: record.type,
+      agentLabel: scope.agentLabel,
       modelInput: input,
     });
     if (verdict.kind === "error") throw new ResumeModelError(verdict.message);
@@ -1341,8 +2101,24 @@ export class AgentManager {
    * pending model switch); throws the same `ResumeModelError` it would throw
    * for an invalid model or a closed provider. `resume()` re-checks everything.
    */
-  assertResumable(id: string, model?: string): boolean {
+  assertResumable(
+    id: string,
+    model?: string,
+    options?: { dormant?: boolean; ctx?: ExtensionContext },
+  ): boolean {
     const record = this.agents.get(id);
+    // Opt-in: a dormant or interrupted agent resumes through `resumeDormant`,
+    // which re-validates everything when it reopens the file. A caller model
+    // is checked here against the current root context (`ctx`), exactly as a
+    // live resume checks it, and throws the same ResumeModelError.
+    if (record === undefined && options?.dormant === true) {
+      if (!this.canResumeDormant(id)) return false;
+      const snapshot = this.getDormant(id);
+      if (model !== undefined && snapshot !== undefined) {
+        this.resolveDormantModel(snapshot, model, options.ctx);
+      }
+      return true;
+    }
     if (this.disposed || !record?.session || this.resumeBlockedByRun(id, record)) return false;
     if (model === undefined) this.assertResumeProviderOpen(id, record.session);
     else this.resolveResumeModel(record, model);
@@ -1360,28 +2136,46 @@ export class AgentManager {
       onRunStarted?: (promise: Promise<string>) => void;
       finalize?: QueuedFinalizer;
       repark?: () => void;
+      wait?: UsageWait;
     } = {},
   ): void {
     record.isBackground = true;
     beginResultGeneration(record);
+    // A new generation is a new request: an earlier explicit stop no longer applies.
+    record.stoppedByUser = undefined;
     record.result = undefined;
     record.error = undefined;
     record.cancellation = undefined;
     record.completedAt = undefined;
-    record.status = "queued";
+    this.transition(record, "queued");
 
     const start = () => {
-      this.startResume(id, record, prompt, signal, options);
-      if (record.promise !== undefined) hooks.onRunStarted?.(record.promise);
+      const before = record.promise;
+      const revival = record.session === undefined ? this.revivalArgs.get(id) : undefined;
+      if (revival === undefined) {
+        this.startResume(id, record, prompt, signal, options);
+      } else {
+        // A re-armed record has no session yet: reopen its file (claimed at
+        // re-arm) through the spawn path, as a wake continuation.
+        this.startRevivedContinuation(id, record, revival, prompt, hooks.finalize);
+      }
+      if (record.promise !== undefined && (revival === undefined || record.promise !== before)) {
+        hooks.onRunStarted?.(record.promise);
+      }
     };
     if (occupiesPoolSlot(record) && this.runningBackground >= this.getSchedulingMaxConcurrent()) {
       // At the concurrency limit — queue it, drains when a slot frees.
       this.queue.push({
         id,
-        providerKey: (record.session?.model?.provider ?? "unknown").toLowerCase(),
+        providerKey: (
+          record.session?.model?.provider ??
+          record.spawnModel?.provider ??
+          "unknown"
+        ).toLowerCase(),
         start,
         finalize: hooks.finalize,
         repark: hooks.repark,
+        wait: hooks.wait,
       });
     } else {
       start();
@@ -1466,17 +2260,50 @@ export class AgentManager {
     prompt: string,
     options: SpawnOptions,
   ): string {
+    return this.spawnWith(pi, ctx, type, prompt, options, undefined);
+  }
+
+  /** True when a live record other than `id` holds `name` as handle or alias. */
+  private nameTakenByLive(name: string, id: string): boolean {
+    for (const record of this.agents.values()) {
+      if (record.id === id) continue;
+      if (record.handle === name || record.alias === name) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Spawn, or (with `identity`) recreate a journaled agent under its own id,
+   * handle and alias. A re-arm identity parks the record instead of starting it.
+   */
+  private spawnWith(
+    pi: ExtensionAPI,
+    ctx: ExtensionContext,
+    type: SubagentType,
+    prompt: string,
+    options: SpawnOptions,
+    identity: RevivalIdentity | undefined,
+  ): string {
     // Validate before the queue branch — a queued spawn should fail at the
     // call, not minutes later at drain. Throw (not warn): programmatic callers
     // can fix and retry; the RPC layer converts throws into error envelopes.
     assertValidSpawnCwd(options.cwd);
     const providerKey = providerKeyFor(options, ctx);
     const usageScope = this.captureUsageScope(ctx, options);
-    if (!this.isProviderAvailable(providerKey, usageScope.owner)) {
+    if (identity?.scoped !== undefined) usageScope.scoped = [...identity.scoped];
+    // A re-armed wait is expected to find its provider closed.
+    if (identity?.rearm === undefined && !this.isProviderAvailable(providerKey, usageScope.owner)) {
       throw this.unavailableError(providerKey, usageScope.owner);
     }
+    if (identity !== undefined && this.agents.has(identity.id)) {
+      throw new Error(`Agent ${identity.id} is already live.`);
+    }
 
-    const id = randomUUID().slice(0, 17);
+    const id = identity?.id ?? randomUUID().slice(0, 17);
+    const revivedHandle =
+      identity?.handle !== undefined && !this.nameTakenByLive(identity.handle, id)
+        ? identity.handle
+        : undefined;
     const inheritedFastMode = snapshotFastMode(ctx.sessionManager?.getSessionId?.());
     const fastModeRequested = options.fastModeRequested ?? inheritedFastMode.requested;
     const inheritedDaybreak = snapshotDaybreak(ctx.sessionManager?.getSessionId?.());
@@ -1488,16 +2315,24 @@ export class AgentManager {
       // Handles are unique across the live tree, so every agent has one flat,
       // unambiguous address regardless of its ownership branch.
       handle:
-        options.parentAgentId === undefined && options.reclaim?.handle
+        revivedHandle ??
+        (options.parentAgentId === undefined && options.reclaim?.handle
           ? // A reclaimed handle is used as-is: it belongs to the conversation this
             // spawn is reopening, and re-deriving it would lose the numbering.
             options.reclaim.handle
-          : assignHandle(handleBase(type), this.takenHandles(options.parentAgentId)),
+          : assignHandle(handleBase(type), this.takenHandles(options.parentAgentId))),
       description: options.description,
       // Reclaimed here, or filled in below from `name` — in which case it must
       // see the handle this record just took, since both come out of the same
       // namespace.
-      alias: options.parentAgentId === undefined ? options.reclaim?.alias : undefined,
+      alias:
+        identity === undefined
+          ? options.parentAgentId === undefined
+            ? options.reclaim?.alias
+            : undefined
+          : identity.alias !== undefined && !this.nameTakenByLive(identity.alias, id)
+            ? identity.alias
+            : undefined,
       status: options.isBackground ? "queued" : "running",
       toolUses: 0,
       startedAt: Date.now(),
@@ -1525,14 +2360,54 @@ export class AgentManager {
       daybreakRequested,
       daybreakSource: options.daybreakRequested === undefined ? "inherited" : "explicit",
       daybreakRevision: 0,
+      spawnPrompt: prompt,
+      runOptions: journalRunOptionsOf(options, usageScope.scoped),
+      spawnModel: modelRefOf(options.model ?? ctx.model),
+      revivals: identity?.revivals,
+      pendingSteers:
+        identity?.steers !== undefined && identity.steers.length > 0
+          ? [...identity.steers]
+          : undefined,
+      outputFile: identity?.outputFile,
     };
     const reclaimedTombstone =
-      options.parentAgentId === undefined && options.reclaim !== undefined
+      identity === undefined && options.parentAgentId === undefined && options.reclaim !== undefined
         ? this.tombstones.get(options.reclaim.handle)
         : undefined;
     let previousTombstoneId: string | undefined;
     this.agents.set(id, record);
     this.usageScopes.set(id, usageScope);
+    if (identity !== undefined) {
+      this.dormant.delete(id);
+      if (identity.claim !== undefined) {
+        this.sessionClaims.set(id, identity.claim);
+        // Reopening an existing conversation: the file already holds it, so
+        // the very first entry (even a queued one) points at the file and
+        // never carries the continuation prompt. A kill before the run starts
+        // must reopen the same file, not start a fresh session from the
+        // interruption text.
+        record.sessionFile = identity.claim.file;
+        this.sessionFileConfirmed.add(id);
+        record.spawnPrompt = undefined;
+      }
+    }
+    // Workflow steps and /btw answers have single-shot aggregate delivery and
+    // are never revived; neither are the children they own.
+    if (
+      options.workflowId !== undefined ||
+      options.sideConversation === true ||
+      options.mainSessionFork !== undefined ||
+      (options.parentAgentId !== undefined && this.unjournaled.has(options.parentAgentId))
+    ) {
+      this.unjournaled.add(id);
+    }
+    this.scheduleJournal(record);
+    if (identity !== undefined && identity.rearm === undefined) {
+      // The revived record (with its revivals count) reaches the journal
+      // before the runner is even invoked, so before any provider call. A
+      // re-arm is not flushed here: its waiting_for_reset entry coalesces.
+      this.flushJournal();
+    }
     // The retained tombstone now describes this live incarnation. Besides
     // proving ownership for later alias rebinding, moving its id prevents the
     // evicted id from reopening a duplicate while this reclaimed record exists.
@@ -1556,6 +2431,11 @@ export class AgentManager {
 
     const args: SpawnArgs = { pi, ctx, type, prompt, options };
 
+    if (identity?.rearm !== undefined) {
+      this.armRevivedWait(record, args, identity.rearm.snapshot, identity.rearm.sessionFile);
+      return id;
+    }
+
     if (
       occupiesPoolSlot(record) &&
       !options.bypassQueue &&
@@ -1573,6 +2453,9 @@ export class AgentManager {
     } catch (err) {
       this.agents.delete(id);
       this.usageScopes.delete(id);
+      this.forgetJournalState(id);
+      // A revival's claim is released by its caller, which still owns the snapshot.
+      this.sessionClaims.delete(id);
       if (
         previousTombstoneId !== undefined &&
         reclaimedTombstone !== undefined &&
@@ -1616,7 +2499,8 @@ export class AgentManager {
     // Single resolution point for the caller-supplied cwd — the worktree base
     // repo and both cleanup calls below MUST agree on this value forever.
     const customCwd = options.cwd ?? undefined; // null (RPC "unset") → undefined
-    const baseCwd = customCwd ?? ctx.cwd;
+    // An adopted worktree came from its journaled repo; cleanup must target it.
+    const baseCwd = options.adoptWorktree?.repo ?? customCwd ?? ctx.cwd;
 
     // Worktree isolation: try to create a temporary git worktree. Strict —
     // fail loud if not possible (no silent fallback to main tree). Done
@@ -1625,7 +2509,23 @@ export class AgentManager {
     // because cross-extension RPC forwards its options unvalidated — a schema
     // that omits the field can't stop a caller that never saw the schema.
     let worktreeCwd: string | undefined;
-    if (options.isolation === "worktree" && isWorktreeIsolationEnabled()) {
+    if (options.adoptWorktree !== undefined) {
+      // Revival: continue in the original worktree (verified by the caller).
+      const adopt = options.adoptWorktree;
+      const workPath = adopt.workPath ?? adopt.path;
+      record.worktree = {
+        path: adopt.path,
+        branch: adopt.branch,
+        baseSha: adopt.baseSha,
+        workPath,
+        hookManaged: adopt.hookManaged,
+      };
+      record.worktreeRepo = adopt.repo;
+      // Same rule as a created worktree: a caller-supplied cwd maps to its
+      // subdirectory, a plain spawn runs at the copy's root.
+      worktreeCwd = customCwd === undefined ? adopt.path : workPath;
+      this.worktreeRepos.add(adopt.repo);
+    } else if (options.isolation === "worktree" && isWorktreeIsolationEnabled()) {
       const wt = options.hookWorktreePath
         ? adoptHookWorktree(baseCwd, options.hookWorktreePath, id)
         : createWorktree(baseCwd, id);
@@ -1636,6 +2536,7 @@ export class AgentManager {
         );
       }
       record.worktree = wt;
+      record.worktreeRepo = baseCwd;
       // workPath preserves subdirectory scoping for caller-supplied cwds: a
       // cwd deep in a monorepo maps to the same subdir inside the copy, not
       // the copied repo's root. Plain worktree spawns keep the historical
@@ -1646,9 +2547,12 @@ export class AgentManager {
       this.worktreeRepos.add(baseCwd);
     }
 
-    record.status = "running";
+    this.transition(record, "running");
     record.startedAt = Date.now();
     const runGeneration = record.resultGeneration ?? 1;
+    // A post-reset continuation of a re-armed record runs through this path; a
+    // repeated limit then exhausts it instead of parking again.
+    const isWakeRun = this.wakeRuns.get(id) === runGeneration;
     const runTookPoolSlot = occupiesPoolSlot(record);
     let runPoolSlotHeld = runTookPoolSlot;
     if (runTookPoolSlot) this.runningBackground++;
@@ -1666,7 +2570,7 @@ export class AgentManager {
             "Parent run was cancelled.",
           )
         ) {
-          record.status = "stopped";
+          this.transition(record, "stopped");
           record.completedAt ??= Date.now();
         }
       };
@@ -1738,16 +2642,21 @@ export class AgentManager {
         configCwd: options.configCwd ?? (customCwd === undefined ? undefined : ctx.cwd),
         signal: record.abortController!.signal,
         onToolActivity: (activity) => {
+          this.confirmSessionFile(record, runGeneration);
           if (isBudgetedToolActivity(activity)) {
             runBudget.controller?.noteToolActivity(activity.type);
           }
           if (activity.type === "end") record.toolUses++;
           options.onToolActivity?.(activity);
         },
-        onTurnEnd: options.onTurnEnd,
+        onTurnEnd: (turnCount) => {
+          this.confirmSessionFile(record, runGeneration);
+          options.onTurnEnd?.(turnCount);
+        },
         onFinishAttempt: this.dependencyCompletionGuard(record, runGeneration),
         onTextDelta: options.onTextDelta,
         onAssistantUsage: (usage) => {
+          this.confirmSessionFile(record, runGeneration);
           runBudget.controller?.noteUsage(usage);
           addUsage(record.lifetimeUsage, usage);
           options.onAssistantUsage?.(usage);
@@ -1784,6 +2693,18 @@ export class AgentManager {
           // stubbed session must degrade to "not resumable" rather than throw
           // and take the whole spawn down with it.
           record.sessionFile = session.sessionManager?.getSessionFile?.();
+          if (record.sessionFile === undefined) {
+            if (options.mainSessionFork === undefined) record.inMemorySession = true;
+          } else {
+            record.inMemorySession = undefined;
+            this.claimRecordSessionFile(record, record.sessionFile, runGeneration);
+          }
+          // A reopened conversation already lives in that file. A fresh one is
+          // only written once it holds a message, so the journal keeps the
+          // prompt until the run's first assistant message confirms the file.
+          if (options.resumeSessionFile !== undefined) {
+            this.confirmSessionFile(record, runGeneration);
+          }
           // Caller wiring can use host-owned context; shutdown retires it.
           if (this.disposed) return;
           // Flush pre-session steers only while this generation is uncancelled.
@@ -1798,6 +2719,15 @@ export class AgentManager {
       })
       .then(async ({ responseText, session, aborted, steered, failure }) => {
         try {
+          if (this.wakeRuns.get(id) === runGeneration) this.wakeRuns.delete(id);
+          if (this.isSuspendedGeneration(record, runGeneration)) {
+            runBudget.controller?.dispose();
+            detach();
+            releaseRunPoolSlot();
+            currentRunSettled = true;
+            this.finishSuspendedRun(record, session);
+            return responseText;
+          }
           runBudget.controller?.dispose();
           // Before detach: a parent abort during evaluation must still cancel.
           const usageDecision = aborted
@@ -1810,8 +2740,8 @@ export class AgentManager {
                 providerKey,
                 modelRefOf(session?.model) ?? runModel,
                 session ?? record.session,
-                canParkForReset(record),
-                "reported",
+                !isWakeRun && canParkForReset(record),
+                isWakeRun ? "exhausted" : "reported",
               );
           if (usageDecision?.park === true) {
             // Parked: keep the session, transcript stream, and any worktree for
@@ -1880,7 +2810,7 @@ export class AgentManager {
           // active through asynchronous worktree cleanup prevents resume/result
           // reads from observing a terminal status with unfinished output.
           if (record.status !== "stopped") {
-            record.status = runBudget.forcedStatus ?? terminalStatus;
+            this.transition(record, runBudget.forcedStatus ?? terminalStatus);
           }
           if (runBudget.forcedReason !== undefined) record.error = runBudget.forcedReason;
           else if (record.cancellation?.generation === runGeneration) {
@@ -1905,7 +2835,7 @@ export class AgentManager {
               if (kind) recordFailure(providerKey, kind, retryAfterMsFromFailure(failure));
             } else if (failure === undefined && !aborted) recordSuccess(providerKey);
           }
-          publishTerminalResult(record);
+          this.publishTerminal(record);
           if (usageDecision !== undefined) this.notifyUsageLimit(record);
 
           this.abortOwnedChildren(id);
@@ -1922,7 +2852,7 @@ export class AgentManager {
             }
             this.drainQueue();
           } else {
-            markResultGenerationConsumed(record);
+            this.markTerminalConsumed(record);
             currentRunSettled = true;
             try {
               this.onComplete?.(record);
@@ -1937,6 +2867,15 @@ export class AgentManager {
       })
       .catch(async (err) => {
         try {
+          if (this.wakeRuns.get(id) === runGeneration) this.wakeRuns.delete(id);
+          if (this.isSuspendedGeneration(record, runGeneration)) {
+            runBudget.controller?.dispose();
+            detach();
+            releaseRunPoolSlot();
+            currentRunSettled = true;
+            this.finishSuspendedRun(record, undefined);
+            return "";
+          }
           runBudget.controller?.dispose();
           const error = err instanceof Error ? err.message : String(err);
           detach();
@@ -1976,7 +2915,7 @@ export class AgentManager {
             return "";
           }
           if (record.status !== "stopped") {
-            record.status = runBudget.forcedStatus ?? "error";
+            this.transition(record, runBudget.forcedStatus ?? "error");
           }
           record.error =
             runBudget.forcedReason ??
@@ -1991,7 +2930,7 @@ export class AgentManager {
             const kind = classifyTerminalFailure(error);
             if (kind) recordFailure(providerKey, kind, retryAfterMsFromFailure(error));
           }
-          publishTerminalResult(record);
+          this.publishTerminal(record);
 
           this.abortOwnedChildren(id);
 
@@ -2003,7 +2942,7 @@ export class AgentManager {
             this.onComplete?.(record);
             this.drainQueue();
           } else {
-            markResultGenerationConsumed(record);
+            this.markTerminalConsumed(record);
             currentRunSettled = true;
             this.onComplete?.(record);
           }
@@ -2105,7 +3044,9 @@ export class AgentManager {
    */
   private abortOwnedChildren(parentId: string): void {
     for (const [id, record] of this.agents) {
-      if (record.parentAgentId === parentId) this.abort(id);
+      if (record.parentAgentId === parentId && this.agents.get(id) === record) {
+        this.stopRecord(record, false);
+      }
     }
   }
 
@@ -2125,10 +3066,10 @@ export class AgentManager {
         continue;
       }
       if (next.finalize === undefined && block !== undefined) {
-        record.status = "error";
+        this.transition(record, "error");
         record.error = providerUnavailableMessage(next.providerKey.toLowerCase(), block.closure);
         record.completedAt = Date.now();
-        publishTerminalResult(record);
+        this.publishTerminal(record);
         this.onComplete?.(record);
         continue;
       }
@@ -2137,10 +3078,10 @@ export class AgentManager {
       } catch (err) {
         // Late failure (e.g. strict worktree-isolation) — surface on the record
         // so the user/agent can see it via /agents, then keep draining.
-        record.status = "error";
+        this.transition(record, "error");
         record.error = err instanceof Error ? err.message : String(err);
         record.completedAt = Date.now();
-        publishTerminalResult(record);
+        this.publishTerminal(record);
         if (next.finalize === undefined) this.onComplete?.(record);
         else next.finalize(true);
       }
@@ -2285,7 +3226,9 @@ export class AgentManager {
 
     // Foreground resume: run inline and return the settled record.
     const runGeneration = beginResultGeneration(record);
-    record.status = "running";
+    // A new generation is a new request: an earlier explicit stop no longer applies.
+    record.stoppedByUser = undefined;
+    this.transition(record, "running");
     record.startedAt = Date.now();
     record.completedAt = undefined;
     record.result = undefined;
@@ -2331,6 +3274,10 @@ export class AgentManager {
           },
           signal: abortController.signal,
         });
+        if (this.isSuspendedGeneration(record, runGeneration)) {
+          this.finishSuspendedRun(record, undefined);
+          return record;
+        }
         // A limit under auto-resume parks exactly like a foreground spawn: the
         // caller gets the paused record now and the outcome as a notification.
         const usageDecision = await this.evaluateRunUsageLimit(
@@ -2363,9 +3310,9 @@ export class AgentManager {
         // Same contract as the spawn path (#144): a failed final turn is an
         // error, not a completion — but the resumed text stays available.
         const cancellation = cancellationForGeneration(record, runGeneration);
-        if (runBudget.forcedStatus !== undefined) record.status = runBudget.forcedStatus;
-        else if (cancellation) record.status = "stopped";
-        else record.status = terminalStatusFor({ aborted, failure, steered });
+        if (runBudget.forcedStatus !== undefined) this.transition(record, runBudget.forcedStatus);
+        else if (cancellation) this.transition(record, "stopped");
+        else this.transition(record, terminalStatusFor({ aborted, failure, steered }));
         if (cancellation) {
           record.error = cancellation.reason;
         }
@@ -2379,23 +3326,27 @@ export class AgentManager {
         if (usageDecision !== undefined) record.usageLimit = usageDecision.usageLimit;
         record.result = text;
         record.completedAt = Date.now();
-        markResultGenerationConsumed(record);
+        this.markTerminalConsumed(record);
         if (usageDecision !== undefined) this.notifyUsageLimit(record);
       } catch (err) {
         if (record.resultGeneration !== runGeneration) return record;
+        if (this.isSuspendedGeneration(record, runGeneration)) {
+          this.finishSuspendedRun(record, undefined);
+          return record;
+        }
         if (this.disposed) {
           this.abortOwnedChildren(id);
           this.removeRecord(id, record);
           return record;
         }
         const cancellation = cancellationForGeneration(record, runGeneration);
-        record.status = runBudget.forcedStatus ?? (cancellation ? "stopped" : "error");
+        this.transition(record, runBudget.forcedStatus ?? (cancellation ? "stopped" : "error"));
         record.error =
           runBudget.forcedReason ??
           cancellation?.reason ??
           (err instanceof Error ? err.message : String(err));
         record.completedAt = Date.now();
-        markResultGenerationConsumed(record);
+        this.markTerminalConsumed(record);
       } finally {
         runBudget.controller?.dispose();
         signal?.removeEventListener("abort", onParentAbort);
@@ -2427,7 +3378,7 @@ export class AgentManager {
   ) {
     if (!record.session) return;
 
-    record.status = "running";
+    this.transition(record, "running");
     record.startedAt = Date.now();
     const runGeneration = record.resultGeneration ?? 1;
     const resumeProviderKey = (record.session.model?.provider ?? "unknown").toLowerCase();
@@ -2455,7 +3406,7 @@ export class AgentManager {
             "Parent run was cancelled.",
           )
         ) {
-          record.status = "stopped";
+          this.transition(record, "stopped");
           record.completedAt ??= Date.now();
         }
       };
@@ -2547,6 +3498,13 @@ export class AgentManager {
       })
       .then(async ({ text, failure, aborted, steered }) => {
         try {
+          if (this.isSuspendedGeneration(record, runGeneration)) {
+            this.settleSuspendedResume(id, runGeneration, runBudget, detach, () => {
+              releaseRunPoolSlot();
+              currentRunSettled = true;
+            });
+            return text;
+          }
           runBudget.controller?.dispose();
           // A post-reset continuation that hits the limit again is exhausted;
           // any other resumed run may park like a fresh spawn.
@@ -2589,7 +3547,7 @@ export class AgentManager {
             if (forcedStatus === undefined) {
               // Same contract as the spawn path (#144): a failed final turn is an
               // error, not a completion — but the resumed text stays available.
-              record.status = terminalStatusFor({ aborted, failure, steered });
+              this.transition(record, terminalStatusFor({ aborted, failure, steered }));
               if (failure) {
                 record.error =
                   usageDecision === undefined
@@ -2597,7 +3555,7 @@ export class AgentManager {
                     : withUsageLimitNote(failure, usageDecision.usageLimit);
               }
             } else {
-              record.status = forcedStatus;
+              this.transition(record, forcedStatus);
               record.error = runBudget.forcedReason;
             }
           }
@@ -2608,7 +3566,7 @@ export class AgentManager {
           record.result = text;
           record.completedAt ??= Date.now();
           this.finishDeferredWorktree(record);
-          publishTerminalResult(record);
+          this.publishTerminal(record);
           if (usageDecision !== undefined) this.notifyUsageLimit(record);
           settle();
           return text;
@@ -2618,6 +3576,13 @@ export class AgentManager {
       })
       .catch((err) => {
         try {
+          if (this.isSuspendedGeneration(record, runGeneration)) {
+            this.settleSuspendedResume(id, runGeneration, runBudget, detach, () => {
+              releaseRunPoolSlot();
+              currentRunSettled = true;
+            });
+            return "";
+          }
           runBudget.controller?.dispose();
           if (record.resultGeneration !== runGeneration) return "";
           if (this.disposed) {
@@ -2625,7 +3590,7 @@ export class AgentManager {
             return "";
           }
           if (record.status !== "stopped") {
-            record.status = runBudget.forcedStatus ?? "error";
+            this.transition(record, runBudget.forcedStatus ?? "error");
             record.error =
               runBudget.forcedReason ?? (err instanceof Error ? err.message : String(err));
           }
@@ -2634,7 +3599,7 @@ export class AgentManager {
           }
           record.completedAt ??= Date.now();
           this.finishDeferredWorktree(record);
-          publishTerminalResult(record);
+          this.publishTerminal(record);
           settle();
           return "";
         } finally {
@@ -2659,6 +3624,8 @@ export class AgentManager {
     // A parked session is idle; hold the message for the post-reset prompt.
     if (record.status === "waiting_for_reset") {
       (record.pendingSteers ??= []).push(message);
+      // Journaled so a revival delivers it after the reset.
+      this.scheduleJournal(record);
       return true;
     }
     if (record.status !== "running" && record.status !== "queued") return false;
@@ -2786,13 +3753,22 @@ export class AgentManager {
     ).length;
   }
 
+  /**
+   * Explicit stop (stop_subagent, UI, RPC). Marks the record `stoppedByUser`
+   * so durable revival never restarts it.
+   */
   abort(id: string): boolean {
     const record = this.agents.get(id);
     if (!record) return false;
+    return this.stopRecord(record, true);
+  }
 
+  private stopRecord(record: AgentRecord, byUser: boolean): boolean {
+    const id = record.id;
     // A parked record has no live run: cancel its wait and settle it now, with
     // a terminal usage status so exactly one final event follows the park.
     if (record.status === "waiting_for_reset") {
+      if (byUser) record.stoppedByUser = true;
       this.settleParked(record, this.usageWaits.get(id), {
         status: "stopped",
         usageStatus: "exhausted",
@@ -2805,6 +3781,7 @@ export class AgentManager {
 
     // Remove from queue if queued
     if (record.status === "queued") {
+      if (byUser) record.stoppedByUser = true;
       const entry = this.queue.find((q) => q.id === id);
       this.queue = this.queue.filter((q) => q.id !== id);
       this.stopQueuedRecord(record, "user_stop", "Stopped by user request.");
@@ -2828,26 +3805,40 @@ export class AgentManager {
     }
 
     if (record.status !== "running") return false;
+    if (byUser) record.stoppedByUser = true;
     this.requestCancellation(
       record,
       record.resultGeneration ?? 1,
       "user_stop",
       "Stopped by user request.",
     );
-    record.status = "stopped";
+    this.transition(record, "stopped");
     record.completedAt = Date.now();
     return true;
   }
 
   /** Dispose a record's session and remove it from the map. */
-  private removeRecord(id: string, record: AgentRecord): void {
-    this.tombstone(record);
+  private removeRecord(id: string, record: AgentRecord, options?: { suspended?: boolean }): void {
+    const suspended = options?.suspended === true;
+    // A suspended record is revived or kept dormant from the journal; its
+    // worktree is kept for the revival and its name stays with the journal.
+    if (suspended) this.deferredWorktrees.delete(id);
+    else this.tombstone(record);
     this.finishDeferredWorktree(record);
+    // Before the scope and session go: the final snapshot reads both.
+    const dormant = this.retireJournal(record);
     const wait = this.usageWaits.get(id);
     if (wait?.timer !== undefined) clearTimeout(wait.timer);
     this.usageWaits.delete(id);
     this.usageScopes.delete(id);
     this.wakeRuns.delete(id);
+    this.revivalArgs.delete(id);
+    // Captured now: a revival may claim this id again before disposal ends.
+    const claim = this.sessionClaims.get(id);
+    this.sessionClaims.delete(id);
+    const releaseClaim = () => {
+      if (claim !== undefined) releaseSessionFile(claim.file, claim.token);
+    };
     if (record.session) {
       const session = record.session;
       try {
@@ -2861,11 +3852,24 @@ export class AgentManager {
       // exec bridge, MCP clients) never release them and the children leak. Emit it the
       // same way, then dispose regardless of handler failures.
       const shutdown = emitChildSessionShutdown(session);
-      if (shutdown) void shutdown.then(() => session.dispose?.());
-      else session.dispose?.();
+      if (shutdown) {
+        void shutdown
+          .then(() => session.dispose?.())
+          .catch(() => undefined)
+          .finally(releaseClaim);
+      } else {
+        try {
+          session.dispose?.();
+        } finally {
+          releaseClaim();
+        }
+      }
+    } else {
+      releaseClaim();
     }
     record.session = undefined;
     this.agents.delete(id);
+    if (dormant !== undefined) this.putDormant(dormant);
   }
 
   /**
@@ -2932,6 +3936,863 @@ export class AgentManager {
     return [...this.agents.values()].some(ownsUnsettledGeneration);
   }
 
+  // ---- Durable revival: session-file ownership ----
+
+  private ownerToken(id: string, generation: number): string {
+    return `${this.instanceToken}:${id}:${generation}`;
+  }
+
+  /**
+   * Claim the record's child session file once its path is known. An existing
+   * claim on the same file (a revival's pre-claim) is kept. Returns false when
+   * another owner holds the file.
+   */
+  private claimRecordSessionFile(record: AgentRecord, file: string, generation: number): boolean {
+    const existing = this.sessionClaims.get(record.id);
+    if (existing?.file === file) return true;
+    const token = this.ownerToken(record.id, generation);
+    if (!claimSessionFile(file, token)) return false;
+    if (existing !== undefined) releaseSessionFile(existing.file, existing.token);
+    this.sessionClaims.set(record.id, { file, token });
+    return true;
+  }
+
+  // ---- Durable revival: graceful suspend ----
+
+  private isSuspendedGeneration(record: AgentRecord, generation: number): boolean {
+    return (
+      record.resultGeneration === generation &&
+      cancellationForGeneration(record, generation)?.cause === "suspend"
+    );
+  }
+
+  /**
+   * Settle a suspended run: no worktree cleanup, publication, completion
+   * callback, owned-child abort or journal write. The session is disposed and
+   * its file released, so a revival can reopen it.
+   */
+  private finishSuspendedRun(record: AgentRecord, session: AgentSession | undefined): void {
+    if (session !== undefined) record.session = session;
+    if (record.outputCleanup) {
+      try {
+        record.outputCleanup();
+      } catch {
+        /* ignore */
+      }
+      record.outputCleanup = undefined;
+    }
+    if (this.agents.get(record.id) === record) {
+      this.removeRecord(record.id, record, { suspended: true });
+    }
+    if (!this.disposed) this.drainQueue();
+  }
+
+  /** startResume's settle for a suspended generation. */
+  private settleSuspendedResume(
+    id: string,
+    generation: number,
+    runBudget: RunBudgetState,
+    detach: () => void,
+    releaseSlot: () => void,
+  ): void {
+    if (this.wakeRuns.get(id) === generation) this.wakeRuns.delete(id);
+    runBudget.controller?.dispose();
+    detach();
+    releaseSlot();
+    const record = this.agents.get(id);
+    if (record !== undefined) this.finishSuspendedRun(record, undefined);
+  }
+
+  /**
+   * Synchronous part of a graceful suspend. Every live journaled record that
+   * is queued, running or waiting for a usage reset gets a `suspended: true`
+   * entry first (interrupted, or waiting_for_reset with its usage wait and
+   * steers), then is cancelled with cause `suspend`. Records without a run
+   * (queued, parked) are removed at once; running ones on settle. Returns the
+   * suspended records and the running ones whose settlement is pending.
+   */
+  private suspendNow(): SuspendPlanResult {
+    this.revivalEpoch++;
+    this.flushJournal();
+    const plans: SuspendPlan[] = [];
+    for (const record of this.agents.values()) {
+      if (this.journalSinkFor(record) === undefined) continue;
+      const generation = record.resultGeneration ?? 1;
+      // A run already being cancelled for a real reason settles normally.
+      if (record.cancellation?.generation === generation) continue;
+      if (record.status === "waiting_for_reset") {
+        plans.push({ record, status: "waiting_for_reset", wait: this.usageWaits.get(record.id) });
+      } else if (record.status === "queued") {
+        const queueEntry = this.queue.find((entry) => entry.id === record.id);
+        // A queued post-reset continuation is still a usage wait.
+        if (queueEntry?.wait === undefined) {
+          plans.push({ record, status: "interrupted", queueEntry });
+        } else {
+          plans.push({ record, status: "waiting_for_reset", wait: queueEntry.wait, queueEntry });
+        }
+      } else if (record.status === "running") {
+        plans.push({ record, status: "interrupted" });
+      }
+    }
+    // Journal every suspension before anything is aborted.
+    for (const plan of plans) this.writeSuspendedJournal(plan.record, plan.status, plan.wait);
+
+    const running: AgentRecord[] = [];
+    for (const plan of plans) {
+      const record = plan.record;
+      const generation = record.resultGeneration ?? 1;
+      record.cancellation = {
+        generation,
+        cause: "suspend",
+        reason: SUSPEND_REASON,
+        requestedAt: Date.now(),
+      };
+      this.transition(record, "interrupted");
+      this.deferredWorktrees.delete(record.id);
+      if (plan.queueEntry !== undefined) {
+        const entry = plan.queueEntry;
+        this.queue = this.queue.filter((queued) => queued !== entry);
+      }
+      const wait = plan.wait ?? this.usageWaits.get(record.id);
+      if (wait !== undefined) {
+        if (wait.timer !== undefined) clearTimeout(wait.timer);
+        wait.timer = undefined;
+        this.usageWaits.delete(record.id);
+      }
+      const hasRun = plan.status === "interrupted" && plan.queueEntry === undefined;
+      if (hasRun) {
+        record.pendingSteers = undefined;
+        record.abortController?.abort();
+        running.push(record);
+      } else {
+        // No run will settle it: unblock anyone awaiting the parked promise
+        // (the record reads "interrupted"), then dispose and release now.
+        if (this.wakeRuns.get(record.id) === generation) this.wakeRuns.delete(record.id);
+        wait?.release(record.result ?? "");
+        this.removeRecord(record.id, record, { suspended: true });
+      }
+    }
+    return { suspended: plans.map((plan) => plan.record), running };
+  }
+
+  /**
+   * Graceful suspend for quit, /reload, or a session switch. Journaled live
+   * records are journaled as suspended and cancelled without an outcome;
+   * records outside the journal (workflow steps, /btw) are stopped as by
+   * `abortAll`. Waits up to `SUSPEND_SETTLE_TIMEOUT_MS` for suspended runs to settle
+   * (each settle disposes its session and releases its file).
+   */
+  async suspendAll(): Promise<SuspendSummary> {
+    const { suspended, running } = this.suspendNow();
+    const aborted = this.abortAll();
+    const settled = new Set<string>();
+    const pending = running.map((record) =>
+      Promise.resolve(record.promise)
+        .catch(() => undefined)
+        .then(() => {
+          settled.add(record.id);
+        }),
+    );
+    if (pending.length > 0) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const bound = new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, SUSPEND_SETTLE_TIMEOUT_MS);
+        timer.unref?.();
+      });
+      try {
+        await Promise.race([Promise.all(pending), bound]);
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
+    }
+    return {
+      suspended: suspended.map((record) => record.id),
+      unsettled: running.filter((record) => !settled.has(record.id)).map((record) => record.id),
+      aborted,
+    };
+  }
+
+  // ---- Durable revival: startup revival and dormant resume ----
+
+  /** Journal a revival that can never succeed as an error, and keep it dormant. */
+  private journalRevivalFailure(snapshot: JournalAgentSnapshot, reason: string): void {
+    const sink = this.journalSink;
+    const failed: JournalAgentSnapshot = {
+      ...snapshot,
+      status: "error",
+      error: reason,
+      usageWait: undefined,
+      steers: undefined,
+    };
+    if (sink !== undefined) {
+      try {
+        sink.append(
+          buildJournalData({ rootSessionId: sink.rootSessionId, suspended: false, agent: failed }),
+        );
+      } catch (err) {
+        this.noteJournalFailure(
+          sink,
+          snapshot.id,
+          err instanceof Error ? err : new Error(String(err)),
+        );
+      }
+    }
+    this.putDormant(failed);
+  }
+
+  private async fileExists(path: string): Promise<boolean> {
+    try {
+      return (await stat(path)).isFile();
+    } catch {
+      return false;
+    }
+  }
+
+  private async directoryExists(path: string): Promise<boolean> {
+    try {
+      return (await stat(path)).isDirectory();
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Validate one snapshot for a revival, re-arm or dormant resume and take its
+   * session-file claim. Mirrors spawn's checks (type, registry, model scope,
+   * provider closure); every failure names its reason. After each await the
+   * revival must still be current (`isCurrent`), otherwise any claim is released.
+   */
+  private async prepareRevival(
+    snapshot: JournalAgentSnapshot,
+    mode: PreparedRevival["mode"],
+    clean: boolean | undefined,
+    revivals: number,
+    context: RevivalContext,
+    isCurrent: () => boolean,
+  ): Promise<PrepareOutcome> {
+    const permanent = (reason: string): PrepareOutcome => ({
+      kind: "failed",
+      reason,
+      journal: true,
+    });
+    if (snapshot.options.workflowId !== undefined || snapshot.options.sideConversation === true) {
+      return permanent("Workflow steps and /btw answers are not revivable.");
+    }
+    let type: SubagentType = snapshot.type;
+    if (context.resolveType !== undefined) {
+      let resolved: ReturnType<NonNullable<RevivalContext["resolveType"]>>;
+      try {
+        resolved = context.resolveType(snapshot.type);
+      } catch (err) {
+        return permanent(err instanceof Error ? err.message : String(err));
+      }
+      if (!resolved.ok) return permanent(resolved.message);
+      type = resolved.type;
+    }
+    let model: Model<Api> | undefined;
+    const ctx = context.ctx;
+    if (snapshot.model !== undefined) {
+      const key = `${snapshot.model.provider}/${snapshot.model.id}`;
+      let available: ModelEntry[] = [];
+      try {
+        model = ctx.modelRegistry.find(snapshot.model.provider, snapshot.model.id);
+        available = ctx.modelRegistry.getAvailable();
+      } catch {
+        model = undefined;
+      }
+      const wanted = key.toLowerCase();
+      if (
+        model === undefined ||
+        !available.some((entry) => `${entry.provider}/${entry.id}`.toLowerCase() === wanted)
+      ) {
+        return permanent(
+          `Model not available: "${key}" (unknown to the registry or missing authentication).`,
+        );
+      }
+      const verdict = checkModelScope({
+        model,
+        cwd: ctx.cwd,
+        modelRegistry: ctx.modelRegistry,
+        // Strict: a revival never runs a model outside the current scope.
+        callerSupplied: true,
+        agentLabel: snapshot.type,
+        modelInput: key,
+      });
+      if (verdict.kind === "error") return permanent(verdict.message);
+    }
+    if (mode !== "rearm") {
+      const providerKey = (model?.provider ?? ctx.model?.provider ?? "unknown").toLowerCase();
+      const block = this.providerBlock(providerKey, this.journalSink?.rootSessionId);
+      if (block !== undefined) {
+        return permanent(providerUnavailableMessage(providerKey, block.closure));
+      }
+    }
+    const steers = [...(snapshot.steers ?? []), ...(snapshot.usageWait?.steers ?? [])];
+    if (
+      snapshot.inMemorySession === true &&
+      snapshot.sessionFile === undefined &&
+      snapshot.status !== "queued"
+    ) {
+      return permanent(
+        "Not revivable: its session was kept in memory (persist_session: false), so there is nothing to continue from.",
+      );
+    }
+
+    let adopt: AdoptedWorktree | undefined;
+    const worktree = snapshot.worktree;
+    if (worktree !== undefined) {
+      if (worktree.hookManaged === true) {
+        const present = await this.directoryExists(worktree.path);
+        if (!isCurrent()) return { kind: "stale" };
+        if (!present) {
+          return permanent(
+            `Isolated worktree ${worktree.path} (branch "${worktree.branch}") no longer exists.`,
+          );
+        }
+      } else {
+        const probe = await probeWorktree(worktree);
+        if (!isCurrent()) return { kind: "stale" };
+        if (!probe.present) return permanent(probe.message);
+      }
+      adopt = { ...worktree };
+    }
+
+    const file = snapshot.sessionFile;
+    let freshPrompt: string | undefined;
+    let claim: SessionClaim | undefined;
+    if (file !== undefined && (await this.fileExists(file))) {
+      if (!isCurrent()) return { kind: "stale" };
+      const outcome = await waitForSessionFileRelease(file, {
+        timeoutMs: SESSION_FILE_RELEASE_TIMEOUT_MS,
+      });
+      if (!isCurrent()) return { kind: "stale" };
+      const token = this.ownerToken(snapshot.id, 1);
+      if (outcome !== "released" || !claimSessionFile(file, token)) {
+        return {
+          kind: "failed",
+          reason: `Session file ${file} is still in use by another owner; it was not reopened.`,
+          journal: false,
+        };
+      }
+      claim = { file, token };
+    } else {
+      if (!isCurrent()) return { kind: "stale" };
+      if (mode === "rearm" || mode === "resume") {
+        return permanent(
+          file === undefined
+            ? "No saved session file to continue from."
+            : `Session file ${file} is missing.`,
+        );
+      }
+      if (snapshot.prompt === undefined) {
+        return permanent(
+          file === undefined
+            ? "No saved session file or original prompt to continue from."
+            : `Session file ${file} is missing and the original prompt was not kept.`,
+        );
+      }
+      freshPrompt = snapshot.prompt;
+    }
+    return {
+      kind: "ok",
+      prepared: { snapshot, mode, clean, revivals, type, model, adopt, claim, freshPrompt, steers },
+    };
+  }
+
+  /** Spawn options that re-create a journaled agent's run settings. */
+  private revivalSpawnOptions(prepared: PreparedRevival, context: RevivalContext): SpawnOptions {
+    const snapshot = prepared.snapshot;
+    const saved = snapshot.options;
+    const callbacks = context.callbacksFor?.(snapshot) ?? {};
+    return {
+      description: snapshot.description,
+      model: prepared.model,
+      maxTurns: saved.maxTurns,
+      budgets: saved.budgets,
+      thinkingLevel: saved.thinkingLevel,
+      isolated: saved.isolated,
+      // A reopened file already holds the conversation; re-sending the
+      // parent's context would only duplicate it.
+      inheritContext: prepared.claim === undefined ? saved.inheritContext : false,
+      isolation: saved.isolation,
+      cwd: saved.cwd,
+      configCwd: saved.configCwd,
+      // A revived foreground agent has no caller left to answer inline.
+      isBackground: true,
+      readOnly: saved.readOnly,
+      maxSubagentDepth: saved.maxSubagentDepth,
+      fastModeRequested: saved.fastModeRequested,
+      daybreakRequested: saved.daybreakRequested,
+      invocation:
+        saved.invocation === undefined ? undefined : { ...saved.invocation, runInBackground: true },
+      depth: snapshot.depth,
+      parentAgentId: snapshot.parentAgentId,
+      rootSessionId: this.journalSink?.rootSessionId,
+      resumeSessionFile: prepared.claim?.file,
+      adoptWorktree: prepared.adopt,
+      onToolActivity: callbacks.onToolActivity,
+      onTextDelta: callbacks.onTextDelta,
+      onSessionCreated: callbacks.onSessionCreated,
+      onTurnEnd: callbacks.onTurnEnd,
+      onAssistantUsage: callbacks.onAssistantUsage,
+      onCompaction: callbacks.onCompaction,
+    };
+  }
+
+  /**
+   * Start (or queue) a prepared revival under its journaled identity. Throws
+   * what spawn would throw; the caller journals it and releases the claim.
+   */
+  private startPreparedRevival(
+    prepared: PreparedRevival,
+    context: RevivalContext,
+    prompt: string,
+  ): AgentRecord {
+    const snapshot = prepared.snapshot;
+    const options = this.revivalSpawnOptions(prepared, context);
+    const identity: RevivalIdentity = {
+      id: snapshot.id,
+      handle: snapshot.handle,
+      alias: snapshot.alias,
+      revivals: prepared.revivals,
+      steers: prepared.claim === undefined ? prepared.steers : undefined,
+      scoped: snapshot.options.scopedModels ?? [],
+      outputFile: snapshot.options.outputFile,
+      claim: prepared.claim,
+      rearm:
+        prepared.mode === "rearm" && prepared.claim !== undefined
+          ? { snapshot, sessionFile: prepared.claim.file }
+          : undefined,
+    };
+    const id = this.spawnWith(context.pi, context.ctx, prepared.type, prompt, options, identity);
+    const record = this.agents.get(id);
+    if (record === undefined) throw new Error(`Revived agent ${id} disappeared while starting.`);
+    // Journaled with the record's first entry (flushed before the runner ran).
+    this.setRevivals(id, prepared.revivals);
+    try {
+      context.onRevived?.(record);
+    } catch {
+      /* caller wiring errors must not undo the revival */
+    }
+    return record;
+  }
+
+  /**
+   * Re-arm a usage wait for a record recreated from the journal. No session is
+   * open while it waits; the file stays claimed so the wake can reopen it.
+   */
+  private armRevivedWait(
+    record: AgentRecord,
+    args: SpawnArgs,
+    snapshot: JournalAgentSnapshot,
+    sessionFile: string,
+  ): void {
+    const saved = snapshot.usageWait;
+    if (saved === undefined) throw new Error(`Agent ${record.id} has no journaled usage wait.`);
+    const owner = this.journalSink?.rootSessionId ?? this.usageScopes.get(record.id)?.owner ?? "";
+    const classification = usageClassificationOf(saved.classification);
+    const providerKey = saved.providerKey.toLowerCase();
+    const accountId = this.accountFor(owner, providerKey);
+    const accountIds =
+      classification.accountId === undefined || classification.accountId === accountId
+        ? [accountId]
+        : [accountId, classification.accountId];
+    let release: (value: string | PromiseLike<string>) => void = () => undefined;
+    const parkedPromise = new Promise<string>((resolve) => {
+      release = resolve;
+    });
+    record.sessionFile = sessionFile;
+    this.sessionFileConfirmed.add(record.id);
+    record.spawnPrompt = undefined;
+    record.pendingSteers = undefined;
+    record.isBackground = true;
+    record.promise = parkedPromise;
+    const resetAt = saved.resetAt ?? classification.resetAt;
+    record.usageLimit = {
+      provider: classification.provider,
+      accountId: classification.accountId ?? accountId,
+      kind: classification.kind,
+      resetAt,
+      status: "waiting_for_reset",
+    };
+    const wait: UsageWait = {
+      generation: record.resultGeneration ?? 1,
+      owner,
+      providerKey,
+      accountIds,
+      classification,
+      resumeOptions: {
+        budgets: args.options.budgets,
+        onToolActivity: args.options.onToolActivity,
+        onAssistantUsage: args.options.onAssistantUsage,
+        onCompaction: args.options.onCompaction,
+      },
+      continuation: [...saved.steers],
+      parkedPromise,
+      release,
+      revived: true,
+    };
+    this.usageWaits.set(record.id, wait);
+    this.revivalArgs.set(record.id, args);
+    const adopt = args.options.adoptWorktree;
+    if (adopt !== undefined) {
+      // Journaled while waiting (a second restart must still find it) and
+      // cleaned up if the wait settles without a continuation.
+      record.worktree = {
+        path: adopt.path,
+        branch: adopt.branch,
+        baseSha: adopt.baseSha,
+        workPath: adopt.workPath ?? adopt.path,
+        hookManaged: adopt.hookManaged,
+      };
+      record.worktreeRepo = adopt.repo;
+      this.worktreeRepos.add(adopt.repo);
+      const customCwd = args.options.cwd ?? undefined;
+      this.deferredWorktrees.set(record.id, () =>
+        this.cleanupRecordWorktree(args.pi, record, adopt.repo, customCwd, record.description),
+      );
+    }
+    this.transition(record, "waiting_for_reset");
+    if (resetAt !== undefined && resetAt > Date.now()) {
+      this.armUsageWake(record, wait, resetAt);
+    } else {
+      // The reset passed while the host was down (or was never estimated):
+      // re-check readiness shortly instead of waiting a full poll interval.
+      this.armWakeTimer(record, wait, REARM_RESET_GRACE_MS);
+    }
+  }
+
+  /**
+   * Post-reset continuation of a re-armed record: reopen its claimed session
+   * file through the spawn path under the same id. A start failure settles the
+   * parked task as an error instead of throwing into the wake timer.
+   */
+  private startRevivedContinuation(
+    id: string,
+    record: AgentRecord,
+    args: SpawnArgs,
+    prompt: string,
+    finalize: QueuedFinalizer | undefined,
+  ): void {
+    record.abortController = new AbortController();
+    // The continuation's own settle cleans an adopted worktree from here on.
+    const deferredCleanup = this.deferredWorktrees.get(id);
+    this.deferredWorktrees.delete(id);
+    try {
+      this.startAgent(id, record, {
+        ...args,
+        prompt,
+        options: {
+          ...args.options,
+          resumeSessionFile: record.sessionFile,
+          inheritContext: false,
+        },
+      });
+      this.revivalArgs.delete(id);
+    } catch (err) {
+      if (deferredCleanup !== undefined) this.deferredWorktrees.set(id, deferredCleanup);
+      this.transition(record, "error");
+      record.error = err instanceof Error ? err.message : String(err);
+      record.completedAt = Date.now();
+      this.publishTerminal(record);
+      if (finalize === undefined) {
+        this.finishDeferredWorktree(record);
+        try {
+          this.onComplete?.(record);
+        } catch {
+          /* ignore completion side-effect errors */
+        }
+      } else finalize(true);
+    }
+  }
+
+  /**
+   * Revive journaled agents at startup. Call after `setJournalSink` for the root
+   * whose journal produced `snapshots` (`reduceJournal(...).values()`). Per
+   * `startupDisposition`: revive (same id, handle and options; reopen the
+   * session file with the interruption prompt, or restart a never-started run
+   * from its original prompt), re-arm a usage wait, keep capped and terminal
+   * agents dormant. Nested children revive only with their parent (parents
+   * first). Every outcome except a plain terminal dormant entry is reported
+   * through `context.onRevivalReport` and returned.
+   */
+  async reviveFromJournal(
+    snapshots: Iterable<RevivalSnapshot>,
+    context: RevivalContext,
+  ): Promise<RevivalReport[]> {
+    const reports: RevivalReport[] = [];
+    const report = (
+      kind: RevivalReportKind,
+      snapshot: JournalAgentSnapshot,
+      message: string,
+    ): void => {
+      const entry: RevivalReport = {
+        kind,
+        agentId: snapshot.id,
+        handle: snapshot.handle,
+        description: snapshot.description,
+        parentAgentId: snapshot.parentAgentId,
+        message,
+      };
+      reports.push(entry);
+      try {
+        context.onRevivalReport?.(entry);
+      } catch {
+        /* reporting must not stop the revival pass */
+      }
+    };
+    const sink = this.journalSink;
+    const inputs = [...snapshots].filter((input) =>
+      Value.Check(JournalAgentSnapshotSchema, input.agent),
+    );
+    if (sink === undefined || this.disposed) {
+      for (const input of inputs) {
+        if (startupDisposition(input).kind !== "dormant") {
+          report("skipped", input.agent, "No journal is active for this session; not revived.");
+        }
+      }
+      return reports;
+    }
+    const epoch = this.revivalEpoch;
+    const isCurrent = () =>
+      !this.disposed && this.revivalEpoch === epoch && this.journalSink === sink;
+
+    interface Candidate {
+      snapshot: JournalAgentSnapshot;
+      mode: "revive" | "rearm";
+      clean: boolean | undefined;
+      revivals: number;
+    }
+    const dormant: JournalAgentSnapshot[] = [];
+    const candidates: Candidate[] = [];
+    for (const input of inputs) {
+      const snapshot = input.agent;
+      if (this.agents.has(snapshot.id) || this.revivalReservations.has(snapshot.id)) continue;
+      const disposition = startupDisposition(input);
+      if (disposition.kind === "dormant") {
+        dormant.push(snapshot);
+      } else if (disposition.kind === "capped") {
+        // Journaled once as a terminal error: the next startup finds a plain
+        // dormant error and neither revives nor reports it again.
+        this.journalRevivalFailure(snapshot, CAPPED_REVIVAL_ERROR);
+        report(
+          "capped",
+          snapshot,
+          `Not revived: its run ended unexpectedly ${disposition.revivals + 1} times in a row. Resume it explicitly to continue.`,
+        );
+      } else if (disposition.kind === "revive") {
+        candidates.push({
+          snapshot,
+          mode: "revive",
+          clean: disposition.clean,
+          revivals: disposition.revivals,
+        });
+      } else {
+        candidates.push({ snapshot, mode: "rearm", clean: true, revivals: snapshot.revivals });
+      }
+    }
+    this.hydrateDormant(dormant);
+    for (const candidate of candidates) this.revivalReservations.add(candidate.snapshot.id);
+
+    const prepared = new Map<string, PreparedRevival>();
+    const releasePrepared = (item: PreparedRevival): void => {
+      if (item.claim !== undefined && this.sessionClaims.get(item.snapshot.id) !== item.claim) {
+        releaseSessionFile(item.claim.file, item.claim.token);
+      }
+    };
+    try {
+      // Prepare level by level so a child sees whether its parent made it.
+      const depths = [...new Set(candidates.map((c) => c.snapshot.depth))].sort((a, b) => a - b);
+      for (const depth of depths) {
+        const level = candidates.filter((candidate) => candidate.snapshot.depth === depth);
+        const outcomes = await Promise.all(
+          level.map(async (candidate): Promise<[Candidate, PrepareOutcome]> => {
+            const parentId = candidate.snapshot.parentAgentId;
+            if (parentId !== undefined && !prepared.has(parentId) && !this.agents.has(parentId)) {
+              return [
+                candidate,
+                {
+                  kind: "failed",
+                  reason: `Not revived: its parent agent ${parentId} is not being revived.`,
+                  journal: false,
+                },
+              ];
+            }
+            const outcome = await this.prepareRevival(
+              candidate.snapshot,
+              candidate.mode,
+              candidate.clean,
+              candidate.revivals,
+              context,
+              isCurrent,
+            );
+            return [candidate, outcome];
+          }),
+        );
+        for (const [candidate, outcome] of outcomes) {
+          const snapshot = candidate.snapshot;
+          if (outcome.kind === "ok") {
+            prepared.set(snapshot.id, outcome.prepared);
+          } else if (outcome.kind === "stale") {
+            this.putDormant(snapshot);
+          } else if (outcome.journal) {
+            this.journalRevivalFailure(snapshot, outcome.reason);
+            report("failed", snapshot, outcome.reason);
+          } else {
+            this.putDormant(snapshot);
+            const parentSkip =
+              snapshot.parentAgentId !== undefined &&
+              !prepared.has(snapshot.parentAgentId) &&
+              !this.agents.has(snapshot.parentAgentId) &&
+              outcome.reason.startsWith("Not revived: its parent");
+            report(parentSkip ? "skipped" : "failed", snapshot, outcome.reason);
+          }
+        }
+      }
+
+      if (!isCurrent()) {
+        for (const item of prepared.values()) {
+          releasePrepared(item);
+          this.putDormant(item.snapshot);
+          report("skipped", item.snapshot, "Revival cancelled: the session changed or shut down.");
+        }
+        return reports;
+      }
+
+      // Start synchronously, parents first, each parent told which children
+      // are being revived for it.
+      const ordered = [...prepared.values()].sort((a, b) => a.snapshot.depth - b.snapshot.depth);
+      for (const item of ordered) {
+        const snapshot = item.snapshot;
+        const parentId = snapshot.parentAgentId;
+        if (parentId !== undefined && !this.agents.has(parentId)) {
+          releasePrepared(item);
+          this.putDormant(snapshot);
+          report("skipped", snapshot, `Not revived: its parent agent ${parentId} did not start.`);
+          continue;
+        }
+        const children: InterruptedChildRun[] = ordered
+          .filter((other) => other.snapshot.parentAgentId === snapshot.id)
+          .map((other) => ({
+            id: other.snapshot.id,
+            handle: other.snapshot.handle,
+            description: other.snapshot.description,
+          }));
+        const prompt =
+          item.mode === "rearm"
+            ? USAGE_LIMIT_RESUME_PROMPT
+            : item.claim === undefined
+              ? (item.freshPrompt ?? "")
+              : buildInterruptionPrompt({
+                  unclean: item.clean === undefined ? undefined : !item.clean,
+                  steers: item.steers,
+                  children,
+                });
+        try {
+          this.startPreparedRevival(item, context, prompt);
+        } catch (err) {
+          releasePrepared(item);
+          const reason = err instanceof Error ? err.message : String(err);
+          this.journalRevivalFailure(snapshot, reason);
+          report("failed", snapshot, reason);
+          continue;
+        }
+        if (item.mode === "rearm") {
+          report(
+            "rearmed",
+            snapshot,
+            "Waiting for the provider usage window to reset again; it continues automatically.",
+          );
+        } else {
+          const how =
+            item.claim === undefined
+              ? "restarts from its original prompt"
+              : `continues from its saved session${item.clean === false ? ` (unclean exit, revival ${item.revivals} of 2)` : ""}`;
+          report("revived", snapshot, `Revived: ${how}.`);
+        }
+      }
+      return reports;
+    } finally {
+      for (const candidate of candidates) this.revivalReservations.delete(candidate.snapshot.id);
+    }
+  }
+
+  /**
+   * Whether `id` is a dormant (evicted or never-revived) agent whose saved
+   * session `resumeDormant` could reopen. Side-effect free.
+   */
+  canResumeDormant(id: string): boolean {
+    if (this.disposed || this.agents.has(id) || this.revivalReservations.has(id)) return false;
+    return this.getDormant(id)?.sessionFile !== undefined;
+  }
+
+  /**
+   * Continue a dormant or interrupted agent from its saved session file under
+   * the same id, in the background, with the user's prompt (prefixed by the
+   * interruption notice when it was interrupted). Throws with the reason when
+   * it cannot: unknown id, live, no file, validation failure, or the file
+   * still owned elsewhere. Nothing is journaled on failure.
+   */
+  async resumeDormant(
+    id: string,
+    prompt: string,
+    context: RevivalContext,
+    options?: { model?: string },
+  ): Promise<AgentRecord> {
+    if (this.disposed) throw new Error("The subagent manager is shut down.");
+    if (this.agents.has(id) || this.revivalReservations.has(id)) {
+      throw new Error(`Agent ${id} is live; resume it directly.`);
+    }
+    const saved = this.getDormant(id);
+    if (saved === undefined) throw new Error(`No saved agent ${id} in this session.`);
+    // A caller-selected model is validated like a live resume's (format,
+    // availability, scope, provider closure; throws ResumeModelError) and
+    // replaces the journaled one, so the revived run and its journal use it.
+    const switched =
+      options?.model === undefined
+        ? undefined
+        : this.resolveDormantModel(saved, options.model, context.ctx);
+    const snapshot: JournalAgentSnapshot =
+      switched === undefined
+        ? saved
+        : { ...saved, model: { provider: switched.provider, id: switched.id } };
+    const sink = this.journalSink;
+    const epoch = this.revivalEpoch;
+    const isCurrent = () =>
+      !this.disposed && this.revivalEpoch === epoch && this.journalSink === sink;
+    this.revivalReservations.add(id);
+    try {
+      const outcome = await this.prepareRevival(
+        snapshot,
+        "resume",
+        undefined,
+        0,
+        context,
+        isCurrent,
+      );
+      if (outcome.kind === "stale")
+        throw new Error("Resume cancelled: the session changed or shut down.");
+      if (outcome.kind === "failed") throw new Error(outcome.reason);
+      const item = outcome.prepared;
+      if (this.agents.has(id)) {
+        if (item.claim !== undefined) releaseSessionFile(item.claim.file, item.claim.token);
+        throw new Error(`Agent ${id} became live while resuming.`);
+      }
+      const fullPrompt =
+        snapshot.status === "interrupted" || snapshot.error === CAPPED_REVIVAL_ERROR
+          ? `${buildInterruptionPrompt({ unclean: undefined, steers: item.steers })}\n\n${prompt}`
+          : prompt;
+      try {
+        return this.startPreparedRevival(item, context, fullPrompt);
+      } catch (err) {
+        if (item.claim !== undefined) releaseSessionFile(item.claim.file, item.claim.token);
+        throw err;
+      }
+    } finally {
+      this.revivalReservations.delete(id);
+    }
+  }
+
   /** Abort all running and queued agents immediately. */
   abortAll(): number {
     let count = 0;
@@ -2941,7 +4802,7 @@ export class AgentManager {
     for (const queued of this.queue) {
       const record = this.agents.get(queued.id);
       if (record) {
-        record.status = "stopped";
+        this.transition(record, "stopped");
         this.requestCancellation(
           record,
           record.resultGeneration ?? 1,
@@ -2949,7 +4810,7 @@ export class AgentManager {
           "Manager shutdown requested.",
         );
         record.completedAt = Date.now();
-        publishTerminalResult(record);
+        this.publishTerminal(record);
         queued.finalize?.(false);
         count++;
       }
@@ -2964,7 +4825,7 @@ export class AgentManager {
           "shutdown",
           "Manager shutdown requested.",
         );
-        record.status = "stopped";
+        this.transition(record, "stopped");
         record.completedAt = Date.now();
         count++;
       }
@@ -2987,7 +4848,15 @@ export class AgentManager {
     }
   }
 
-  dispose() {
+  /**
+   * Shut the manager down. With `suspend: true`, journaled live records are
+   * suspended first (journaled, cancelled without an outcome, worktrees kept);
+   * everything else is stopped as before. Suspended runs dispose their
+   * sessions and release their files when they settle.
+   */
+  dispose(options?: { suspend?: boolean }) {
+    if (options?.suspend === true && !this.disposed) this.suspendNow();
+    this.revivalEpoch++;
     this.disposed = true;
     clearInterval(this.cleanupInterval);
     for (const controller of this.activeRunBudgets) controller.dispose();

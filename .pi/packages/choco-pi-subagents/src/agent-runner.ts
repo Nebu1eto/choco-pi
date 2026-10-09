@@ -818,9 +818,9 @@ export interface RunOptions {
   resumeSessionFile?: string;
   /**
    * True when another agent spawned this one. Nested handles form messaging
-   * paths but stay outside prompt mentions and persisted resume/tombstone
-   * surfaces, so nested runs remain in memory unless their own frontmatter asks
-   * otherwise.
+   * paths but stay outside prompt mentions and tombstones. Their sessions
+   * persist like top-level ones (`rememberAgents`) so durable revival can
+   * reopen them; frontmatter `persist_session: false` still keeps one in memory.
    */
   nested?: boolean;
   /** Override working directory (e.g. for worktree isolation). */
@@ -1495,9 +1495,10 @@ export async function runAgent(
   const defaultSessionDir =
     process.env.PI_CODING_AGENT_SESSION_DIR ?? settingsManager.getSessionDir?.();
   // Frontmatter wins when it says anything; otherwise the project default,
-  // which `rememberAgents` supplies for top-level agents only. Same precedence
-  // as `outputTranscript`.
-  const persistSession = agentConfig?.persistSession ?? (options.nested ? false : rememberAgents);
+  // `rememberAgents`, for top-level and nested agents alike (durable revival
+  // reopens nested children from their files). Same precedence as
+  // `outputTranscript`.
+  const persistSession = agentConfig?.persistSession ?? rememberAgents;
   const sessionManager = options.mainSessionFork
     ? options.mainSessionFork.sessionManager
     : options.resumeSessionFile

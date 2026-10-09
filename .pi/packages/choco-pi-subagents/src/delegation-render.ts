@@ -38,6 +38,7 @@ const AgentDetailsSchema = Type.Object({
         "watchdog_stopped",
         "error",
         "waiting_for_reset",
+        "interrupted",
         "background",
       ] as const
     ).map((status) => Type.Literal(status)),

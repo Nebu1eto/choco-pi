@@ -4,6 +4,7 @@
 
 import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { JournalRunOptions } from "./revival-journal.ts";
 import type { SubagentUsageLimit } from "./usage-limit-seam.ts";
 import type { LifetimeUsage } from "./usage.ts";
 
@@ -180,7 +181,12 @@ export interface AgentRecord {
      * preference. Not terminal: the generation stays unpublished, no pool slot
      * is held, and a wake-up resumes it on the same model or settles it.
      */
-    | "waiting_for_reset";
+    | "waiting_for_reset"
+    /**
+     * The host stopped this run without settling it (graceful suspend for
+     * quit/reload/switch). Not a final outcome: durable revival continues it.
+     */
+    | "interrupted";
   result?: string;
   /** Terminal-boundary snapshot, captured before owned-child cleanup. */
   pendingDependents?: {
@@ -211,7 +217,11 @@ export interface AgentRecord {
   /** First cancellation request for the current generation; immutable until the next run. */
   cancellation?: {
     generation: number;
-    cause: "budget" | "watchdog" | "user_stop" | "parent_signal" | "shutdown";
+    /**
+     * `suspend` is a graceful host suspend (quit/reload/switch): the run is
+     * journaled as interrupted and its settle path publishes nothing.
+     */
+    cause: "budget" | "watchdog" | "user_stop" | "parent_signal" | "shutdown" | "suspend";
     reason: string;
     requestedAt: number;
   };
@@ -237,6 +247,29 @@ export interface AgentRecord {
     workPath: string;
     hookManaged?: boolean;
   };
+  /** Repository the worktree was created from (the spawn's base cwd). */
+  worktreeRepo?: string;
+  /**
+   * Durable revival: consecutive automatic revivals after unclean exits.
+   * Undefined means 0. Journaled with every snapshot.
+   */
+  revivals?: number;
+  /** Set by an explicit stop (stop_subagent, UI, RPC); never revived. */
+  stoppedByUser?: boolean;
+  /**
+   * Original task prompt, kept for the subagent journal until the child
+   * session file is confirmed to hold the conversation, then cleared.
+   */
+  spawnPrompt?: string;
+  /** Serializable spawn/run options captured at spawn for the journal. */
+  runOptions?: JournalRunOptions;
+  /** Model the spawn requested; the live session model wins once it exists. */
+  spawnModel?: { provider: string; id: string };
+  /**
+   * The child session was created in memory (`persist_session: false`): no
+   * file can reopen it, so a revival must not re-run it from the prompt.
+   */
+  inMemorySession?: boolean;
   /** Worktree cleanup result after agent completion. */
   worktreeResult?: { hasChanges: boolean; branch?: string };
   /** The tool_use_id from the original Agent tool call. */

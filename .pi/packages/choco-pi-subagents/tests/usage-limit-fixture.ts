@@ -26,6 +26,7 @@ import { createSdkFixture } from "./sdk-fixture.ts";
 
 export type RunResult = Awaited<ReturnType<AgentManagerRunner["runAgent"]>>;
 export type ResumeResult = Awaited<ReturnType<AgentManagerRunner["resumeAgent"]>>;
+export type RunAgentOptions = Parameters<AgentManagerRunner["runAgent"]>[3];
 export type SetSessionModel = (session: AgentSession, model: Model<Api>) => Promise<void>;
 
 export interface Deferred<Value> {
@@ -282,6 +283,12 @@ export interface Harness {
   runs: Deferred<RunResult>[];
   resumes: Deferred<ResumeResult>[];
   resumePrompts: string[];
+  /** Options of every `runAgent` call, in call order (drive runner callbacks). */
+  runOptions: RunAgentOptions[];
+  /** Prompt of every `runAgent` call, in call order. */
+  runPrompts: string[];
+  /** Agent type of every `runAgent` call, in call order. */
+  runTypes: string[];
   completions: AgentRecord["status"][];
   usageEvents: string[];
   /** Every model passed to the injected `setSessionModel`, in call order. */
@@ -292,20 +299,29 @@ export interface HarnessOptions {
   maxConcurrent?: number;
   /** Runs after the switch is recorded; throw to simulate a failed switch. */
   setSessionModel?: SetSessionModel;
+  /** Called synchronously inside each `runAgent`, e.g. to fire onSessionCreated. */
+  onRunAgent?: (options: RunAgentOptions) => void;
 }
 
 export function harness(options: HarnessOptions = {}): Harness {
   const runs: Deferred<RunResult>[] = [];
   const resumes: Deferred<ResumeResult>[] = [];
   const resumePrompts: string[] = [];
+  const runOptions: RunAgentOptions[] = [];
+  const runPrompts: string[] = [];
+  const runTypes: string[] = [];
   const completions: AgentRecord["status"][] = [];
   const usageEvents: string[] = [];
   const modelSwitches: Model<Api>[] = [];
   const switchModel = options.setSessionModel;
   const runner: AgentManagerRunner = {
-    runAgent() {
+    runAgent(_ctx, type, prompt, runAgentOptions) {
+      runOptions.push(runAgentOptions);
+      runPrompts.push(prompt);
+      runTypes.push(type);
       const run = deferred<RunResult>();
       runs.push(run);
+      options.onRunAgent?.(runAgentOptions);
       return run.promise;
     },
     resumeAgent(_session, prompt) {
@@ -329,7 +345,18 @@ export function harness(options: HarnessOptions = {}): Harness {
   manager.setUsageLimitListener((record) =>
     usageEvents.push(`${record.status}:${record.usageLimit?.status}`),
   );
-  return { manager, runs, resumes, resumePrompts, completions, usageEvents, modelSwitches };
+  return {
+    manager,
+    runs,
+    resumes,
+    resumePrompts,
+    runOptions,
+    runPrompts,
+    runTypes,
+    completions,
+    usageEvents,
+    modelSwitches,
+  };
 }
 
 export function cleanupProviders(): void {
