@@ -32,14 +32,17 @@ export type SetSessionModel = (session: AgentSession, model: Model<Api>) => Prom
 export interface Deferred<Value> {
   promise: Promise<Value>;
   resolve(value: Value): void;
+  reject(reason: Error): void;
 }
 
 export function deferred<Value>(): Deferred<Value> {
   let resolvePromise: (value: Value) => void = () => undefined;
-  const promise = new Promise<Value>((resolve) => {
+  let rejectPromise: (reason: Error) => void = () => undefined;
+  const promise = new Promise<Value>((resolve, reject) => {
     resolvePromise = resolve;
+    rejectPromise = reject;
   });
-  return { promise, resolve: resolvePromise };
+  return { promise, resolve: resolvePromise, reject: rejectPromise };
 }
 
 export async function flush(): Promise<void> {

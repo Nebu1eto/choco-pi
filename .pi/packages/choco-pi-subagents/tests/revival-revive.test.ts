@@ -6,6 +6,9 @@ import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { promisify } from "node:util";
 
+import { Type } from "typebox";
+import { Value } from "typebox/value";
+
 import {
   REARM_POLICY_RETRY_MS,
   REARM_RESET_GRACE_MS,
@@ -20,6 +23,8 @@ import {
 import {
   CAPPED_REVIVAL_ERROR,
   type JournalAgentSnapshot,
+  reduceJournal,
+  SUBAGENT_JOURNAL_ENTRY,
   startupDisposition,
   type SubagentJournalData,
 } from "../src/revival-journal.ts";
@@ -574,6 +579,86 @@ test("a revival queued behind the cap journals its file, and a kill then reopens
   assert.match(next.runPrompts[0] ?? "", /ended unexpectedly/);
 });
 
+test("a worktree revival queued behind the cap journals its original worktree and a restart adopts it", async (t) => {
+  const s = await setup(t, { maxConcurrent: 1 });
+  const first = await repoWithWorktree(t, s.dir, "wt-first");
+  const second = await repoWithWorktree(t, s.dir, "wt-second");
+  const before = (await second.git("worktree", "list", "--porcelain")).stdout;
+  const runningSnap = snap("rev-wt-run", {
+    sessionFile: await sessionFile(s.dir, "wt-run.jsonl"),
+    options: { isBackground: true, isolation: "worktree" },
+    worktree: {
+      path: first.path,
+      branch: "pi-agent-rev-wt-run",
+      baseSha: first.baseSha,
+      repo: first.repo,
+    },
+  });
+  const queuedWorktree = {
+    path: second.path,
+    branch: "pi-agent-rev-wt-q",
+    baseSha: second.baseSha,
+    repo: second.repo,
+  };
+  const queuedSnap = snap("rev-wt-q", {
+    sessionFile: await sessionFile(s.dir, "wt-q.jsonl"),
+    options: { isBackground: true, isolation: "worktree" },
+    worktree: queuedWorktree,
+  });
+  const reports = await s.manager.reviveFromJournal(
+    [input(runningSnap), input(queuedSnap)],
+    s.context,
+  );
+  assert.deepEqual(
+    reports.map((report) => report.kind),
+    ["revived", "revived"],
+  );
+  assert.equal(s.h.runs.length, 1, "the cap holds the second revival");
+  assert.equal(s.manager.getRecord("rev-wt-q")?.status, "queued");
+  await flush();
+  const queuedEntries = s.entries.filter((entry) => entry.agent.id === "rev-wt-q");
+  assert.ok(queuedEntries.length > 0);
+  for (const entry of queuedEntries) {
+    assert.equal(entry.agent.worktree?.path, second.path, "every entry carries the worktree");
+    assert.equal(entry.agent.worktree?.repo, second.repo);
+    assert.equal(entry.agent.worktree?.branch, queuedWorktree.branch);
+  }
+
+  // Restart before the queued revival starts: reduce the journal as startup does.
+  s.manager.dispose();
+  assert.equal(await exists(second.path), true, "the original worktree is untouched");
+  const reduced = reduceJournal(
+    s.entries.map((data, index) => ({
+      type: "custom",
+      id: `e${index}`,
+      customType: SUBAGENT_JOURNAL_ENTRY,
+      data,
+    })),
+    s.env.owner,
+  );
+  const latest = reduced.get("rev-wt-q");
+  assert.ok(latest);
+  assert.equal(latest.agent.status, "queued");
+  assert.equal(latest.agent.worktree?.path, second.path, "latest-wins keeps the worktree");
+  assert.deepEqual(startupDisposition(latest), { kind: "revive", clean: false, revivals: 1 });
+  const next = harness();
+  t.after(() => next.manager.dispose());
+  next.manager.setJournalSink({ rootSessionId: s.env.owner, append: () => undefined });
+  const again = await next.manager.reviveFromJournal([latest], {
+    pi: s.env.pi,
+    ctx: s.env.context(),
+  });
+  assert.equal(again[0]?.kind, "revived");
+  assert.equal(next.runOptions[0]?.agentId, "rev-wt-q");
+  assert.equal(next.runOptions[0]?.cwd, second.path, "runs in the original worktree");
+  assert.equal(next.manager.getRecord("rev-wt-q")?.worktree?.path, second.path);
+  assert.equal(
+    (await second.git("worktree", "list", "--porcelain")).stdout,
+    before,
+    "no new worktree was created",
+  );
+});
+
 test("a queued revival without a file keeps the original prompt in the journal", async (t) => {
   const s = await setup(t, { maxConcurrent: 1 });
   fillSlot(s);
@@ -668,3 +753,70 @@ test("a dormant resume onto a closed provider is refused like a live resume", as
   assert.equal(s.h.runs.length, 0);
   assert.equal(sessionFileOwner(file), undefined);
 });
+
+for (const outcome of ["settles", "throws"] as const) {
+  test(`a suspend while a hook-managed worktree removal is pending publishes nothing (run ${outcome})`, async (t) => {
+    await suspendDuringHookRemoval(t, outcome);
+  });
+}
+
+/** What the test's `subagents:worktree-remove` listener observed. */
+interface HookRemoval {
+  done?: () => void;
+  paths: string[];
+}
+
+async function suspendDuringHookRemoval(t: TestContext, outcome: "settles" | "throws") {
+  const s = await setup(t);
+  const hookPath = join(s.dir, "hook-wt");
+  await mkdir(hookPath);
+  const removal: HookRemoval = { paths: [] };
+  const RemovePayload = Type.Object({
+    path: Type.String(),
+    claim: Type.Function([], Type.Void()),
+    done: Type.Function([], Type.Void()),
+  });
+  const unsubscribe = s.env.pi.events.on("subagents:worktree-remove", (payload) => {
+    if (!Value.Check(RemovePayload, payload)) return;
+    removal.paths.push(payload.path);
+    payload.claim();
+    removal.done = payload.done;
+  });
+  t.after(() => unsubscribe());
+  const completions = s.h.completions;
+  const agent = snap("rev-hook", {
+    sessionFile: await sessionFile(s.dir, "hook.jsonl"),
+    options: { isBackground: true, isolation: "worktree" },
+    worktree: {
+      path: hookPath,
+      branch: "pi-agent-rev-hook",
+      baseSha: "0000000",
+      repo: s.dir,
+      hookManaged: true,
+    },
+  });
+  const reports = await s.manager.reviveFromJournal([input(agent)], s.context);
+  assert.equal(reports[0]?.kind, "revived");
+  const session = await s.env.childSession();
+  if (outcome === "settles") {
+    s.h.runs[0].resolve({ responseText: "done", session, aborted: false, steered: false });
+  } else {
+    s.h.runs[0].reject(new Error("runner crashed"));
+  }
+  await flush();
+  assert.deepEqual(removal.paths, [hookPath], "the final settle awaits the hook removal");
+  assert.equal(s.manager.getRecord("rev-hook")?.status, "running");
+
+  const pending = s.manager.suspendAll();
+  removal.done?.();
+  const summary = await pending;
+  await flush();
+
+  assert.deepEqual(summary.suspended, ["rev-hook"]);
+  assert.deepEqual(summary.unsettled, []);
+  const last = lastOf(s.entries, "rev-hook");
+  assert.equal(last?.suspended, true, "the suspend entry stays the latest");
+  assert.equal(last?.agent.status, "interrupted");
+  assert.deepEqual(completions, [], "no completion callback");
+  assert.equal(s.manager.getRecord("rev-hook"), undefined);
+}

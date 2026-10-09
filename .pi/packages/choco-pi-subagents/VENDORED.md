@@ -1402,6 +1402,7 @@ top-level ones (`persistSession ?? rememberAgents`); frontmatter
 `persist_session: false` still keeps a session in memory, which makes that agent
 non-revivable once it has started (its revival is journaled as an error). Tests:
 revival-suspend, revival-revive, revival-nested, revival-journal.
+Fixes: `spawnWith` records an adopted worktree before the first journal write, so a revival queued behind the cap is journaled (and a restart re-adopts it) with its original worktree; every spawn and resume settle path rechecks suspension after each await (usage-limit evaluation, hook worktree removal) and settles as suspended, so no worktree cleanup, publication or completion callback follows a suspend entry.
 
 U5 wires this into `src/index.ts`. Only the root activation that owns the
 manager registry journals, and only for a persisted root session outside
