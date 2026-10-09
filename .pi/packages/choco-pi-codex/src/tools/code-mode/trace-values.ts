@@ -117,7 +117,7 @@ function sanitizeValue(value: BoundaryValue, budget: SerializationBudget): Bound
       : `${value.slice(0, Math.max(0, available - 21))}[value truncated]`;
   }
   if (depth >= 12) return "[depth limit]";
-  if (!isObjectValue(value)) return String(value);
+  if (!Array.isArray(value) && !isObjectValue(value)) return String(value);
   const seen = budget.seen ?? new WeakSet<object>();
   if (seen.has(value)) return "[circular]";
   seen.add(value);

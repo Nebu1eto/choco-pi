@@ -662,3 +662,11 @@ is corroborated by a production-host regression that rejects empty and
 whitespace-only notifications. The same probe confirms that `text` and `notify`
 emit output and return `undefined`; their existing help sentence is unchanged.
 No runtime enforcement or result formatting changes are included.
+
+## 2026-10-09 choco-pi patch: array-preserving tool traces
+
+The shared trace serializer recognizes arrays before the record-only object guard.
+Tool content blocks, array arguments, and nested result details now remain structured
+in streaming updates, final snapshots, and JSON replay for every tool producer.
+Existing size, depth, and cycle limits remain in place; literal strings are unchanged.
+`tests/code-mode-trace-arrays.test.ts` covers these production boundaries.
