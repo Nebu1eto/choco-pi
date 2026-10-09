@@ -12,6 +12,7 @@ import type {
   ExtensionContext,
   ModelSelectSource,
   SessionEntry,
+  SessionShutdownEvent,
   SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
 import {
@@ -66,6 +67,13 @@ export const MAX_WAIT_MS = 24 * HOUR_MS;
 export const POLL_INTERVAL_MS = 5 * MINUTE_MS;
 /** Longest polling phase without a known reset time. */
 export const POLL_LIMIT_MS = 6 * HOUR_MS;
+/**
+ * Delay before a replayed wait whose reset already passed (or was never known)
+ * re-checks readiness. A restart or reload is still settling other extensions,
+ * model restore and queued input; the wake-up itself still requires an idle
+ * session, the armed model, and corroborated capacity before it continues.
+ */
+export const REPLAY_GRACE_MS = 5 * SECOND_MS;
 /** Fallback switches per interrupted task. */
 export const MAX_FALLBACK_SWITCHES = 2;
 /** Auto-resume continuations per interrupted task. */
@@ -102,7 +110,10 @@ export type UsageLimitHostContext<M extends UsageLimitModel> = {
 /** The event fields the controller reads, by event name. */
 export type UsageLimitHostEvents<M extends UsageLimitModel> = {
   session_start: { readonly type: "session_start"; readonly reason: SessionStartEvent["reason"] };
-  session_shutdown: { readonly type: "session_shutdown" };
+  session_shutdown: {
+    readonly type: "session_shutdown";
+    readonly reason: SessionShutdownEvent["reason"];
+  };
   session_before_tree: { readonly type: "session_before_tree" };
   session_tree: { readonly type: "session_tree" };
   before_agent_start: { readonly type: "before_agent_start" };
@@ -277,22 +288,32 @@ function latestCodexEntry(branch: readonly SessionEntry[]): CodexUsageLimitEntry
   return undefined;
 }
 
-/** Latest pending recovery on the branch that no resolved entry closes. */
-export function unresolvedPendingEntry(
-  branch: readonly SessionEntry[],
-): UsageLimitPendingEntry | undefined {
+/** A persisted pending recovery and when its entry was written (epoch ms, when parseable). */
+type PendingRecord = { pending: UsageLimitPendingEntry; recordedAt?: number };
+
+function latestUnresolvedPending(branch: readonly SessionEntry[]): PendingRecord | undefined {
   const resolved = new Set<string>();
-  let latest: UsageLimitPendingEntry | undefined;
+  let latest: PendingRecord | undefined;
   for (const entry of branch) {
     if (entry.type !== "custom") continue;
     if (entry.customType === USAGE_LIMIT_PENDING_ENTRY) {
-      latest = parseUsageLimitPendingEntry(entry.data) ?? latest;
+      const pending = parseUsageLimitPendingEntry(entry.data);
+      if (!pending) continue;
+      const recordedAt = Date.parse(entry.timestamp);
+      latest = Number.isFinite(recordedAt) ? { pending, recordedAt } : { pending };
     } else if (entry.customType === USAGE_LIMIT_RESOLVED_ENTRY) {
       const parsed = parseUsageLimitResolvedEntry(entry.data);
       if (parsed) resolved.add(parsed.recoveryId);
     }
   }
-  return latest && !resolved.has(latest.recoveryId) ? latest : undefined;
+  return latest && !resolved.has(latest.pending.recoveryId) ? latest : undefined;
+}
+
+/** Latest pending recovery on the branch that no resolved entry closes. */
+export function unresolvedPendingEntry(
+  branch: readonly SessionEntry[],
+): UsageLimitPendingEntry | undefined {
+  return latestUnresolvedPending(branch)?.pending;
 }
 
 export function formatReset(resetAt: number | undefined, now: number): string {
@@ -474,8 +495,6 @@ export function registerUsageLimitController<
   };
 
   const scheduleWake = (session: OwnerSession<C>, recovery: Recovery): void => {
-    recovery.timer?.cancel();
-    recovery.timer = undefined;
     const now = deps.now();
     let delay: number;
     if (recovery.resetAt !== undefined && recovery.resetAt > now) {
@@ -484,11 +503,19 @@ export function registerUsageLimitController<
     } else {
       recovery.pollDeadline ??= now + POLL_LIMIT_MS;
       if (now >= recovery.pollDeadline) {
+        recovery.timer?.cancel();
+        recovery.timer = undefined;
         exhaust(session, recovery);
         return;
       }
       delay = Math.min(POLL_INTERVAL_MS, recovery.pollDeadline - now);
     }
+    scheduleWakeIn(recovery, delay);
+  };
+
+  const scheduleWakeIn = (recovery: Recovery, delay: number): void => {
+    recovery.timer?.cancel();
+    recovery.timer = undefined;
     recovery.timer = deps.schedule(() => {
       recovery.timer = undefined;
       wake(recovery).catch((error: RuntimeValue) => reportTimerFailure(recovery, error));
@@ -560,6 +587,7 @@ export function registerUsageLimitController<
       provider: classification.provider,
       accountId,
       attempts,
+      sessionId: session.sessionId,
     };
     if (classification.resetAt !== undefined) pending.resetAt = classification.resetAt;
     if (branchEntryId !== undefined) pending.branchEntryId = branchEntryId;
@@ -834,18 +862,29 @@ export function registerUsageLimitController<
     notifyLimit(ctx, classification, "Use /model to switch.");
   };
 
-  const replay = (session: OwnerSession<C>, ctx: C): void => {
-    const pending = unresolvedPendingEntry(ctx.sessionManager.getBranch());
-    if (!pending || pending.resetAt === undefined || pending.resetAt <= deps.now()) return;
+  /**
+   * Re-arms the wait an earlier process, reload or session switch left pending
+   * on this branch. Shutdown detaches without resolving, so the entry is the
+   * durable record. A future reset waits for it; a passed or unknown reset
+   * re-checks after `REPLAY_GRACE_MS`, with polling bounded from the original
+   * reset (or from when the entry was written), so restarts never extend it.
+   * The current preference is re-read; anything but auto-resume cancels.
+   */
+  const replay = async (session: OwnerSession<C>, ctx: C): Promise<void> => {
+    const record = latestUnresolvedPending(ctx.sessionManager.getBranch());
+    if (!record) return;
+    const { pending, recordedAt } = record;
+    // A fork or clone copies the entry under a new session id; only the writer replays it.
+    if (pending.sessionId !== undefined && pending.sessionId !== session.sessionId) return;
     const classification: UsageLimitClassification = {
       kind: "quota",
       provider: pending.provider,
       modelId: pending.modelId,
       accountId: pending.accountId,
-      resetAt: pending.resetAt,
       confidence: "inferred",
       sessionId: session.sessionId,
     };
+    if (pending.resetAt !== undefined) classification.resetAt = pending.resetAt;
     const recovery: Recovery = {
       recoveryId: pending.recoveryId,
       sessionId: session.sessionId,
@@ -855,11 +894,22 @@ export function registerUsageLimitController<
       classification,
       accountId: pending.accountId,
       attempts: pending.attempts,
-      resetAt: pending.resetAt,
     };
     state.recovery = recovery;
     state.resumeAttempts = pending.attempts;
-    scheduleWake(session, recovery);
+    const now = deps.now();
+    if (pending.resetAt !== undefined && pending.resetAt > now) {
+      recovery.resetAt = pending.resetAt;
+      scheduleWake(session, recovery);
+    } else {
+      const pollStart = pending.resetAt ?? recordedAt;
+      if (pollStart !== undefined) recovery.pollDeadline = pollStart + POLL_LIMIT_MS;
+      scheduleWakeIn(recovery, REPLAY_GRACE_MS);
+    }
+    // Armed before the read, so a cancelling event during it resolves this recovery normally.
+    const preference = await session.policy.preference();
+    if (!isCurrentRecovery(recovery)) return;
+    if (preference !== "auto-resume") resolveRecovery(recovery, "cancelled");
   };
 
   /**
@@ -884,10 +934,9 @@ export function registerUsageLimitController<
   };
 
   pi.on("session_start", (event, ctx) =>
-    contained(() => {
+    contained(async () => {
       const sessionId = ctx.sessionManager.getSessionId();
-      // Only the same session may receive a resolved entry; pi now targets the new session.
-      cancelRecovery(sessionId);
+      // Detach without resolving: the pending entry stays durable and replay re-adopts it.
       invalidate();
       if (isChildSession(deps.readProbe, sessionId)) {
         unsubscribePreference();
@@ -920,14 +969,17 @@ export function registerUsageLimitController<
       if (provider !== undefined && LOCAL_ACCOUNT_PROVIDERS.has(provider)) {
         void lookupAccountId(session, provider);
       }
-      if (event.reason === "startup" || event.reason === "resume") replay(session, ctx);
+      if (event.reason === "startup" || event.reason === "reload" || event.reason === "resume") {
+        await replay(session, ctx);
+      }
     }),
   );
 
+  // Quit, reload and session switch only detach: timers stop, but no resolved
+  // entry is written, so the next start of this session replays the wait.
   pi.on("session_shutdown", () =>
     contained(() => {
       unsubscribePreference();
-      cancelRecovery();
       invalidate();
     }),
   );

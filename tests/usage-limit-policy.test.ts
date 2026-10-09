@@ -22,6 +22,7 @@ import {
   MAX_WAIT_MS,
   POLL_INTERVAL_MS,
   registerUsageLimitController,
+  REPLAY_GRACE_MS,
   RESET_MARGIN_MS,
   RESUME_MESSAGE,
   USAGE_LIMIT_MESSAGE_TYPE,
@@ -314,8 +315,12 @@ class Harness implements UsageLimitHost<ModelStub, HarnessContext> {
     await this.fire("model_select", { type: "model_select", model: next, source: "set" });
   }
 
-  start(reason: "startup" | "resume" | "new" = "new"): Promise<void> {
+  start(reason: HostEvents["session_start"]["reason"] = "new"): Promise<void> {
     return this.fire("session_start", { type: "session_start", reason });
+  }
+
+  shutdown(reason: HostEvents["session_shutdown"]["reason"]): Promise<void> {
+    return this.fire("session_shutdown", { type: "session_shutdown", reason });
   }
 
   settle(): Promise<void> {
@@ -427,7 +432,7 @@ test("session_start registers the owner policy and unregisters the previous owne
   await harness.start("resume");
   assert.equal(getUsageLimitPolicy("root-1"), undefined);
   assert.ok(getUsageLimitPolicy("root-2"));
-  await harness.fire("session_shutdown", { type: "session_shutdown" });
+  await harness.shutdown("quit");
   assert.equal(getUsageLimitPolicy("root-2"), undefined);
 });
 
@@ -622,8 +627,9 @@ function pendingEntry(recoveryId: string, resetAt: number): UsageLimitPendingEnt
   };
 }
 
-test("replay re-arms only an unresolved pending entry whose reset is in the future", async () => {
+test("replay re-arms only an unresolved pending entry; a passed reset re-checks after the grace", async () => {
   const replayed = new Harness();
+  replayed.preferences = ["auto-resume"];
   replayed.register();
   replayed.branch.push(
     {
@@ -656,6 +662,7 @@ test("replay re-arms only an unresolved pending entry whose reset is in the futu
   assert.equal(replayed.liveTimers[0]?.at, T0 + HOUR_MS + RESET_MARGIN_MS);
 
   const past = new Harness();
+  past.preferences = ["auto-resume"];
   past.register();
   past.branch.push({
     type: "custom",
@@ -666,9 +673,11 @@ test("replay re-arms only an unresolved pending entry whose reset is in the futu
     data: pendingEntry("stale", T0 - 1),
   });
   await past.start("resume");
-  assert.equal(past.liveTimers.length, 0);
+  assert.equal(past.liveTimers.length, 1, "a passed reset is re-checked, not skipped");
+  assert.equal(past.liveTimers[0]?.delay, REPLAY_GRACE_MS);
 
   const resolvedOnly = new Harness();
+  resolvedOnly.preferences = ["auto-resume"];
   resolvedOnly.register();
   resolvedOnly.branch.push(
     {
@@ -692,6 +701,7 @@ test("replay re-arms only an unresolved pending entry whose reset is in the futu
   assert.equal(resolvedOnly.liveTimers.length, 0);
 
   const freshSession = new Harness();
+  freshSession.preferences = ["auto-resume"];
   freshSession.register();
   freshSession.branch.push({
     type: "custom",
@@ -702,11 +712,14 @@ test("replay re-arms only an unresolved pending entry whose reset is in the futu
     data: pendingEntry("new", T0 + HOUR_MS),
   });
   await freshSession.start("new");
-  assert.equal(freshSession.liveTimers.length, 0, "only startup/resume replay");
+  assert.equal(freshSession.liveTimers.length, 0, "only startup/reload/resume replay");
+  await freshSession.start("fork");
+  assert.equal(freshSession.liveTimers.length, 0, "a fork does not replay");
 });
 
 test("the controller's own model_select does not cancel; a user model_select does", async () => {
   const harness = new Harness();
+  harness.preferences = ["auto-resume"];
   harness.register();
   harness.branch.push({
     type: "custom",
@@ -1157,6 +1170,176 @@ test("the preference subscription is dropped on session shutdown", async () => {
   assert.equal(harness.preferenceListeners.size, 1);
   await harness.start("resume");
   assert.equal(harness.preferenceListeners.size, 1, "a session switch keeps one subscription");
-  await harness.fire("session_shutdown", { type: "session_shutdown" });
+  await harness.shutdown("quit");
   assert.equal(harness.preferenceListeners.size, 0);
+});
+
+function pendingAt(id: string, data: UsageLimitPendingEntry, recordedAt: number): SessionEntry {
+  return {
+    type: "custom",
+    id,
+    parentId: null,
+    timestamp: new Date(recordedAt).toISOString(),
+    customType: USAGE_LIMIT_PENDING_ENTRY,
+    data,
+  };
+}
+
+async function armedAutoResume(sessionId: string): Promise<{
+  harness: Harness;
+  pending: UsageLimitPendingEntry;
+}> {
+  const harness = await started((h) => {
+    h.preferences = ["auto-resume"];
+    h.sessionId = sessionId;
+  });
+  harness.snapshot = exhausted(T0 + HOUR_MS, T0);
+  harness.pushAssistant("anthropic", "claude-opus-5-5", ANTHROPIC_429);
+  await harness.settle();
+  const [pending] = harness.pending();
+  assert.ok(pending);
+  return { harness, pending };
+}
+
+const DURABLE_CYCLES = [
+  { shutdown: "quit", start: "startup" },
+  { shutdown: "reload", start: "reload" },
+  { shutdown: "resume", start: "resume" },
+] as const;
+
+for (const cycle of DURABLE_CYCLES) {
+  test(`shutdown(${cycle.shutdown}) keeps the wait durable and start(${cycle.start}) re-arms it`, async () => {
+    const { harness, pending } = await armedAutoResume(`durable-${cycle.shutdown}`);
+    assert.equal(
+      pending.sessionId,
+      `durable-${cycle.shutdown}`,
+      "the pending entry names its writer",
+    );
+    await harness.shutdown(cycle.shutdown);
+    assert.deepEqual(harness.resolved(), [], "shutdown writes no resolved entry");
+    assert.equal(harness.liveTimers.length, 0, "shutdown stops the timer");
+
+    await harness.start(cycle.start);
+    assert.equal(harness.liveTimers.length, 1);
+    assert.equal(harness.liveTimers[0]?.at, T0 + HOUR_MS + RESET_MARGIN_MS);
+    harness.snapshot = available(T0 + HOUR_MS + RESET_MARGIN_MS);
+    await harness.advance(HOUR_MS + RESET_MARGIN_MS);
+    assert.deepEqual(harness.resolved(), [
+      { recoveryId: pending.recoveryId, outcome: "continued" },
+    ]);
+    assert.deepEqual(harness.sent, [
+      { customType: USAGE_LIMIT_MESSAGE_TYPE, content: RESUME_MESSAGE, display: true },
+    ]);
+  });
+}
+
+test("a new process replays the persisted wait of the same session", async () => {
+  const { harness, pending } = await armedAutoResume("restart-1");
+  await harness.shutdown("quit");
+  const restarted = new Harness();
+  restarted.preferences = ["auto-resume"];
+  restarted.sessionId = "restart-1";
+  restarted.branch.push(...harness.branch);
+  restarted.register();
+  await restarted.start("startup");
+  assert.equal(restarted.liveTimers.length, 1);
+  assert.equal(restarted.liveTimers[0]?.at, T0 + HOUR_MS + RESET_MARGIN_MS);
+  assert.equal(restarted.pending().at(-1)?.recoveryId, pending.recoveryId);
+});
+
+test("a replayed reset that already passed continues after the grace delay", async () => {
+  const harness = new Harness();
+  harness.preferences = ["auto-resume"];
+  harness.branch.push(
+    pendingAt(
+      "p1",
+      { ...pendingEntry("passed", T0 - HOUR_MS), sessionId: "root-1" },
+      T0 - 2 * HOUR_MS,
+    ),
+  );
+  harness.register();
+  await harness.start("startup");
+  assert.equal(harness.liveTimers.length, 1);
+  assert.equal(harness.liveTimers[0]?.delay, REPLAY_GRACE_MS);
+  harness.snapshot = available(T0 + REPLAY_GRACE_MS);
+  await harness.advance(REPLAY_GRACE_MS - 1);
+  assert.equal(harness.sent.length, 0, "nothing fires before the grace delay");
+  await harness.advance(1);
+  assert.deepEqual(harness.resolved(), [{ recoveryId: "passed", outcome: "continued" }]);
+  assert.deepEqual(harness.sent, [
+    { customType: USAGE_LIMIT_MESSAGE_TYPE, content: RESUME_MESSAGE, display: true },
+  ]);
+});
+
+test("replayed polling stays bounded from the original reset across restarts", async () => {
+  const harness = new Harness();
+  harness.preferences = ["auto-resume"];
+  const { resetAt: _resetAt, ...unknownReset } = pendingEntry("unknown", T0);
+  harness.branch.push(pendingAt("p1", unknownReset, T0 - 7 * HOUR_MS));
+  harness.register();
+  await harness.start("startup");
+  assert.equal(harness.liveTimers[0]?.delay, REPLAY_GRACE_MS, "an unknown reset gets one check");
+  harness.snapshot = {
+    observedAt: T0,
+    windows: [{ label: "5h", percent: 100, qualifier: "used" }],
+  };
+  await harness.advance(REPLAY_GRACE_MS);
+  assert.deepEqual(harness.resolved(), [{ recoveryId: "unknown", outcome: "exhausted" }]);
+  assert.equal(harness.sent.length, 0);
+  assert.equal(harness.liveTimers.length, 0);
+});
+
+test("replay resolves cancelled when the preference is no longer auto-resume", async () => {
+  const harness = new Harness();
+  harness.preferences = ["none"];
+  harness.branch.push(pendingAt("p1", pendingEntry("stale-pref", T0 + HOUR_MS), T0));
+  harness.register();
+  await harness.start("startup");
+  assert.deepEqual(harness.resolved(), [{ recoveryId: "stale-pref", outcome: "cancelled" }]);
+  assert.equal(harness.liveTimers.length, 0);
+  await harness.advance(HOUR_MS + RESET_MARGIN_MS);
+  assert.equal(harness.sent.length, 0);
+});
+
+test("a cancellation or shutdown during replay's preference read is respected", async () => {
+  const userTurn = new Harness();
+  userTurn.preferences = ["auto-resume"];
+  userTurn.branch.push(pendingAt("p1", pendingEntry("turn", T0 + HOUR_MS), T0));
+  userTurn.register();
+  let release = userTurn.holdPreference();
+  let starting = userTurn.start("startup");
+  await userTurn.flush();
+  await userTurn.fire("before_agent_start", { type: "before_agent_start" });
+  release();
+  await starting;
+  assert.deepEqual(userTurn.resolved(), [{ recoveryId: "turn", outcome: "cancelled" }]);
+  assert.equal(userTurn.liveTimers.length, 0);
+
+  const quit = new Harness();
+  quit.preferences = ["none"];
+  quit.branch.push(pendingAt("p1", pendingEntry("quit", T0 + HOUR_MS), T0));
+  quit.register();
+  release = quit.holdPreference();
+  starting = quit.start("startup");
+  await quit.flush();
+  await quit.shutdown("quit");
+  release();
+  await starting;
+  assert.deepEqual(quit.resolved(), [], "a detached replay writes nothing");
+  assert.equal(quit.liveTimers.length, 0);
+});
+
+test("a pending entry written by another session (fork/clone copy) does not replay", async () => {
+  const harness = new Harness();
+  harness.preferences = ["auto-resume"];
+  harness.sessionId = "fork-1";
+  harness.branch.push(
+    pendingAt("p1", { ...pendingEntry("parent", T0 + HOUR_MS), sessionId: "parent-1" }, T0),
+  );
+  harness.register();
+  for (const reason of ["startup", "reload", "resume"] as const) {
+    await harness.start(reason);
+    assert.equal(harness.liveTimers.length, 0, reason);
+  }
+  assert.deepEqual(harness.resolved(), []);
 });

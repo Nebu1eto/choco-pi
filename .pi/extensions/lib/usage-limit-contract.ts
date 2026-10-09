@@ -177,6 +177,8 @@ export type UsageLimitPendingEntry = {
   accountId: string;
   attempts: number;
   branchEntryId?: string;
+  /** Root session that wrote the entry; a fork or clone carrying a copy does not replay it. */
+  sessionId?: string;
 };
 export const UsageLimitPendingEntrySchema = Type.Object({
   recoveryId: Type.String(),
@@ -186,6 +188,7 @@ export const UsageLimitPendingEntrySchema = Type.Object({
   accountId: Type.String(),
   attempts: Type.Number(),
   branchEntryId: Type.Optional(Type.String()),
+  sessionId: Type.Optional(Type.String()),
 });
 
 export const USAGE_LIMIT_RESOLVED_ENTRY = "choco-pi-usage-limit-resolved";
