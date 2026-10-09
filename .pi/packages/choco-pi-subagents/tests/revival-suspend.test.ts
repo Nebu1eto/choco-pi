@@ -18,6 +18,7 @@ import { sessionFileOwner } from "../src/session-file-ownership.ts";
 import {
   cleanupProviders,
   createUsageLimitEnv,
+  deferred,
   flush,
   harness,
   installPolicy,
@@ -76,6 +77,34 @@ async function sessionWithFile(env: UsageLimitEnv, file: string): Promise<AgentS
   const session = await env.childSession();
   session.sessionManager.getSessionFile = () => file;
   return session;
+}
+
+/**
+ * Install an auto-resume quota policy whose corroboration stays pending until
+ * `release()`, so a suspend can land while the usage-limit evaluation awaits it.
+ */
+function heldCorroboration(t: TestContext, env: UsageLimitEnv) {
+  const state = policyState({
+    preference: "auto-resume",
+    classification: { kind: "quota", confidence: "structured", resetAt: Date.now() + 3_600_000 },
+  });
+  const installed = installPolicy(state, env.owner);
+  t.after(() => installed.remove());
+  const gate = deferred<undefined>();
+  installed.policy.corroborate = async (classification) => {
+    state.corroborations++;
+    await gate.promise;
+    return { ready: false, classification };
+  };
+  return { state, release: () => gate.resolve(undefined) };
+}
+
+/** The record's journal entries after its suspend entry. */
+function afterSuspend(entries: SubagentJournalData[], id: string): SubagentJournalData[] {
+  const own = entriesOf(entries, id);
+  const index = own.findIndex((entry) => entry.suspended);
+  assert.notEqual(index, -1, `${id}: a suspend entry was written`);
+  return own.slice(index + 1);
 }
 
 test("suspend journals interrupted entries before aborting, and nothing follows them", async (t) => {
@@ -320,5 +349,122 @@ test("dispose({ suspend: true }) keeps a suspended run's worktree", async (t) =>
   assert.equal(last?.agent.worktree?.path, worktree.path);
   assert.equal(last?.agent.worktree?.repo, repo);
   assert.deepEqual(completions, []);
+  assert.equal(manager.getRecord(id), undefined);
+});
+
+test("a suspend during the usage-limit evaluation keeps the worktree and publishes nothing", async (t) => {
+  const env = await setup(t);
+  const repo = await tempDir(t);
+  const git = (...args: string[]) => execFileAsync("git", args, { cwd: repo });
+  await git("init", "-q");
+  await git("config", "user.email", "test@example.com");
+  await git("config", "user.name", "Test");
+  await writeFile(join(repo, "file.txt"), "content\n");
+  await git("add", ".");
+  await git("commit", "-qm", "init");
+  const held = heldCorroboration(t, env);
+  const session = await env.childSession();
+  const { manager, runs, completions, usageEvents } = managed(t);
+  const entries = journal(manager, env.owner);
+
+  const id = manager.spawn(env.pi, env.context(), "implementer", "task", {
+    ...background,
+    isolation: "worktree",
+    cwd: repo,
+  });
+  const worktree = manager.getRecord(id)?.worktree;
+  assert.ok(worktree, "a worktree was created");
+  t.after(async () => {
+    await git("worktree", "remove", "--force", worktree.path).catch(() => undefined);
+  });
+  runs[0].resolve({ responseText: "", session, aborted: false, steered: false, failure: LIMIT });
+  await flush();
+  assert.equal(held.state.corroborations, 1, "the evaluation awaits corroboration");
+  assert.equal(manager.getRecord(id)?.status, "running");
+
+  const pending = manager.suspendAll();
+  held.release();
+  const summary = await pending;
+  await flush();
+
+  assert.deepEqual(summary.suspended, [id]);
+  assert.deepEqual(summary.unsettled, [], "the run settled within the bound");
+  assert.equal(await exists(worktree.path), true, "the worktree directory survives");
+  const last = entriesOf(entries, id).at(-1);
+  assert.equal(last?.suspended, true, "the suspend entry stays the latest");
+  assert.equal(last?.agent.status, "interrupted");
+  assert.equal(last?.agent.worktree?.path, worktree.path);
+  assert.deepEqual(afterSuspend(entries, id), []);
+  assert.deepEqual(completions, [], "no completion callback");
+  assert.deepEqual(usageEvents, [], "no usage-limit publication");
+  assert.equal(manager.getRecord(id), undefined);
+});
+
+test("a suspend during a background resume's usage-limit evaluation publishes nothing", async (t) => {
+  const env = await setup(t);
+  const session = await env.childSession();
+  const { manager, runs, resumes, completions, usageEvents } = managed(t);
+  const entries = journal(manager, env.owner);
+  const id = manager.spawn(env.pi, env.context(), "implementer", "task", background);
+  runs[0].resolve({ responseText: "done", session, aborted: false, steered: false });
+  await flush();
+  assert.equal(manager.getRecord(id)?.status, "completed");
+  const held = heldCorroboration(t, env);
+
+  await manager.resume(id, "more", undefined, { isBackground: true });
+  assert.equal(manager.getRecord(id)?.status, "running");
+  resumes[0].resolve({ text: "", aborted: false, steered: false, failure: LIMIT });
+  await flush();
+  assert.equal(held.state.corroborations, 1, "the evaluation awaits corroboration");
+
+  const pending = manager.suspendAll();
+  held.release();
+  const summary = await pending;
+  await flush();
+
+  assert.deepEqual(summary.suspended, [id]);
+  assert.deepEqual(summary.unsettled, []);
+  const last = entriesOf(entries, id).at(-1);
+  assert.equal(last?.suspended, true);
+  assert.equal(last?.agent.status, "interrupted");
+  assert.deepEqual(afterSuspend(entries, id), []);
+  assert.deepEqual(completions, ["completed"], "only the first run completed");
+  assert.deepEqual(usageEvents, []);
+  assert.equal(manager.getRecord(id), undefined);
+});
+
+test("a suspend during a foreground resume's usage-limit evaluation publishes nothing", async (t) => {
+  const env = await setup(t);
+  const session = await env.childSession();
+  const { manager, runs, resumes, completions, usageEvents } = managed(t);
+  const entries = journal(manager, env.owner);
+  const id = manager.spawn(env.pi, env.context(), "implementer", "task", background);
+  runs[0].resolve({ responseText: "done", session, aborted: false, steered: false });
+  await flush();
+  const held = heldCorroboration(t, env);
+
+  const resumed = manager.resume(id, "more");
+  await flush();
+  assert.equal(manager.getRecord(id)?.status, "running");
+  resumes[0].resolve({ text: "", aborted: false, steered: false, failure: LIMIT });
+  await flush();
+  assert.equal(held.state.corroborations, 1, "the evaluation awaits corroboration");
+
+  const pending = manager.suspendAll();
+  held.release();
+  const summary = await pending;
+  const record = await resumed;
+  await flush();
+
+  assert.deepEqual(summary.suspended, [id]);
+  assert.deepEqual(summary.unsettled, []);
+  assert.equal(record?.status, "interrupted", "the caller sees the interrupted record");
+  assert.equal(record?.terminalResultGeneration === record?.resultGeneration, false);
+  const last = entriesOf(entries, id).at(-1);
+  assert.equal(last?.suspended, true);
+  assert.equal(last?.agent.status, "interrupted");
+  assert.deepEqual(afterSuspend(entries, id), []);
+  assert.deepEqual(completions, ["completed"]);
+  assert.deepEqual(usageEvents, []);
   assert.equal(manager.getRecord(id), undefined);
 });

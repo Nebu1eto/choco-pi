@@ -2379,6 +2379,12 @@ export class AgentManager {
     this.usageScopes.set(id, usageScope);
     if (identity !== undefined) {
       this.dormant.delete(id);
+      // A revival continues in its original worktree. Record it before the
+      // first journal write: a revival queued behind the concurrency cap must
+      // be journaled with it, or a restart before it starts loses the work.
+      if (options.adoptWorktree !== undefined) {
+        this.applyAdoptedWorktree(record, options.adoptWorktree);
+      }
       if (identity.claim !== undefined) {
         this.sessionClaims.set(id, identity.claim);
         // Reopening an existing conversation: the file already holds it, so
@@ -2468,6 +2474,24 @@ export class AgentManager {
     return id;
   }
 
+  /**
+   * Point a revived record at its original worktree (no new one is created);
+   * returns the working path inside it. Idempotent.
+   */
+  private applyAdoptedWorktree(record: AgentRecord, adopt: AdoptedWorktree): string {
+    const workPath = adopt.workPath ?? adopt.path;
+    record.worktree = {
+      path: adopt.path,
+      branch: adopt.branch,
+      baseSha: adopt.baseSha,
+      workPath,
+      hookManaged: adopt.hookManaged,
+    };
+    record.worktreeRepo = adopt.repo;
+    this.worktreeRepos.add(adopt.repo);
+    return workPath;
+  }
+
   /** Actually start an agent (called immediately or from queue drain). */
   private startAgent(
     id: string,
@@ -2512,19 +2536,10 @@ export class AgentManager {
     if (options.adoptWorktree !== undefined) {
       // Revival: continue in the original worktree (verified by the caller).
       const adopt = options.adoptWorktree;
-      const workPath = adopt.workPath ?? adopt.path;
-      record.worktree = {
-        path: adopt.path,
-        branch: adopt.branch,
-        baseSha: adopt.baseSha,
-        workPath,
-        hookManaged: adopt.hookManaged,
-      };
-      record.worktreeRepo = adopt.repo;
+      const workPath = this.applyAdoptedWorktree(record, adopt);
       // Same rule as a created worktree: a caller-supplied cwd maps to its
       // subdirectory, a plain spawn runs at the copy's root.
       worktreeCwd = customCwd === undefined ? adopt.path : workPath;
-      this.worktreeRepos.add(adopt.repo);
     } else if (options.isolation === "worktree" && isWorktreeIsolationEnabled()) {
       const wt = options.hookWorktreePath
         ? adoptHookWorktree(baseCwd, options.hookWorktreePath, id)
@@ -2589,6 +2604,14 @@ export class AgentManager {
     };
     let staleRunSettled = false;
     let currentRunSettled = false;
+    // Settle this generation as suspended (every settle path, after every await).
+    const settleSuspendedRun = (session: AgentSession | undefined) => {
+      runBudget.controller?.dispose();
+      detach();
+      releaseRunPoolSlot();
+      currentRunSettled = true;
+      this.finishSuspendedRun(record, session);
+    };
     const settleStaleRun = () => {
       if (staleRunSettled) return;
       staleRunSettled = true;
@@ -2721,11 +2744,7 @@ export class AgentManager {
         try {
           if (this.wakeRuns.get(id) === runGeneration) this.wakeRuns.delete(id);
           if (this.isSuspendedGeneration(record, runGeneration)) {
-            runBudget.controller?.dispose();
-            detach();
-            releaseRunPoolSlot();
-            currentRunSettled = true;
-            this.finishSuspendedRun(record, session);
+            settleSuspendedRun(session);
             return responseText;
           }
           runBudget.controller?.dispose();
@@ -2743,6 +2762,11 @@ export class AgentManager {
                 !isWakeRun && canParkForReset(record),
                 isWakeRun ? "exhausted" : "reported",
               );
+          // A suspend during the evaluation keeps the worktree and publishes nothing.
+          if (this.isSuspendedGeneration(record, runGeneration)) {
+            settleSuspendedRun(session);
+            return responseText;
+          }
           if (usageDecision?.park === true) {
             // Parked: keep the session, transcript stream, and any worktree for
             // the same-model continuation; publish nothing yet. The worktree is
@@ -2786,6 +2810,10 @@ export class AgentManager {
               ? (await removeHookWorktree(pi, worktreePath), { hasChanges: false })
               : cleanupWorktree(baseCwd, worktree, options.description);
             if (record.resultGeneration !== runGeneration) return responseText;
+            if (this.isSuspendedGeneration(record, runGeneration)) {
+              settleSuspendedRun(session);
+              return responseText;
+            }
             record.worktreeResult = wtResult;
             if (wtResult.hasChanges && wtResult.branch) {
               // With a caller-supplied cwd the branch lives in THAT repo, not the
@@ -2869,11 +2897,7 @@ export class AgentManager {
         try {
           if (this.wakeRuns.get(id) === runGeneration) this.wakeRuns.delete(id);
           if (this.isSuspendedGeneration(record, runGeneration)) {
-            runBudget.controller?.dispose();
-            detach();
-            releaseRunPoolSlot();
-            currentRunSettled = true;
-            this.finishSuspendedRun(record, undefined);
+            settleSuspendedRun(undefined);
             return "";
           }
           runBudget.controller?.dispose();
@@ -2900,6 +2924,10 @@ export class AgentManager {
                 ? (await removeHookWorktree(pi, worktreePath), { hasChanges: false })
                 : cleanupWorktree(baseCwd, worktree, options.description);
               if (record.resultGeneration !== runGeneration) return "";
+              if (this.isSuspendedGeneration(record, runGeneration)) {
+                settleSuspendedRun(undefined);
+                return "";
+              }
               record.worktreeResult = wtResult;
             } catch {
               /* ignore cleanup errors */
@@ -3292,6 +3320,11 @@ export class AgentManager {
           "reported",
         );
         if (record.resultGeneration !== runGeneration) return record;
+        // A suspend during the evaluation settles without an outcome.
+        if (this.isSuspendedGeneration(record, runGeneration)) {
+          this.finishSuspendedRun(record, undefined);
+          return record;
+        }
         if (this.disposed) {
           this.abortOwnedChildren(id);
           this.removeRecord(id, record);
@@ -3521,6 +3554,14 @@ export class AgentManager {
             isWakeRun ? "exhausted" : "reported",
           );
           if (record.resultGeneration !== runGeneration) return text;
+          // A suspend during the evaluation settles without an outcome.
+          if (this.isSuspendedGeneration(record, runGeneration)) {
+            this.settleSuspendedResume(id, runGeneration, runBudget, detach, () => {
+              releaseRunPoolSlot();
+              currentRunSettled = true;
+            });
+            return text;
+          }
           if (this.disposed) {
             settle();
             return text;
@@ -4438,15 +4479,7 @@ export class AgentManager {
     if (adopt !== undefined) {
       // Journaled while waiting (a second restart must still find it) and
       // cleaned up if the wait settles without a continuation.
-      record.worktree = {
-        path: adopt.path,
-        branch: adopt.branch,
-        baseSha: adopt.baseSha,
-        workPath: adopt.workPath ?? adopt.path,
-        hookManaged: adopt.hookManaged,
-      };
-      record.worktreeRepo = adopt.repo;
-      this.worktreeRepos.add(adopt.repo);
+      this.applyAdoptedWorktree(record, adopt);
       const customCwd = args.options.cwd ?? undefined;
       this.deferredWorktrees.set(record.id, () =>
         this.cleanupRecordWorktree(args.pi, record, adopt.repo, customCwd, record.description),
