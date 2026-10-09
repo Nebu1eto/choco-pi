@@ -146,6 +146,9 @@ test("persisted schemas and parsers accept valid entries and reject malformed en
   assert.equal(Value.Check(UsageLimitPendingEntrySchema, pending), true);
   assert.deepEqual(parseUsageLimitPendingEntry(pending), pending);
   assert.equal(parseUsageLimitPendingEntry({ ...pending, attempts: "1" }), undefined);
+  const owned = { ...pending, sessionId: "root" };
+  assert.deepEqual(parseUsageLimitPendingEntry(owned), owned);
+  assert.equal(parseUsageLimitPendingEntry({ ...pending, sessionId: 1 }), undefined);
   const resolved = { recoveryId: "recovery", outcome: "continued" };
   assert.equal(USAGE_LIMIT_RESOLVED_ENTRY, "choco-pi-usage-limit-resolved");
   assert.equal(Value.Check(UsageLimitResolvedEntrySchema, resolved), true);
