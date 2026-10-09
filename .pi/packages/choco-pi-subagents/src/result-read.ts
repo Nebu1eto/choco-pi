@@ -245,3 +245,56 @@ export function formatResultReadTimeout(id: string, status: ActiveResultStatus):
     `${TERMINAL_RESULT_RETRIEVAL_GUIDANCE} Do not poll.`
   );
 }
+
+/** Saved-agent fields a dormant (journal-only) result read needs. */
+export interface DormantResultView {
+  id: string;
+  handle?: string;
+  alias?: string;
+  status: AgentRecord["status"];
+  resultConsumed: boolean;
+}
+
+/** A dormant snapshot still describes an unfinished run (interrupted, parked or never revived). */
+export function isDormantRunUnfinished(status: AgentRecord["status"]): boolean {
+  return (
+    status === "interrupted" ||
+    status === "waiting_for_reset" ||
+    status === "running" ||
+    status === "queued"
+  );
+}
+
+/** How to continue a saved agent: by id, or by its `@handle` from the prompt. */
+export function dormantResumeHint(
+  view: Pick<DormantResultView, "id" | "handle" | "alias">,
+): string {
+  const name = view.alias ?? view.handle;
+  return (
+    `Resume it with Agent { resume: "${view.id}", prompt: ... }` +
+    (name === undefined ? "." : ` or by typing @${name} <message>.`)
+  );
+}
+
+/** Result read of a dormant agent whose run did not finish: nothing is running. */
+export function formatDormantNotRunning(view: DormantResultView): string {
+  return (
+    `Agent ${view.id} is not running (saved status: ${view.status}); it has no result yet and ` +
+    `will not report one on its own. ${dormantResumeHint(view)}`
+  );
+}
+
+/** Second result read of a dormant terminal agent: mirrors the live exactly-once refusal. */
+export function formatDormantResultConsumed(view: DormantResultView): string {
+  return JSON.stringify(
+    {
+      kind: "subagent_result_read_refused",
+      agent_id: view.id,
+      status: view.status,
+      reason: "terminal_generation_already_consumed",
+      action: "Do not call get_subagent_result again for this generation.",
+    },
+    null,
+    2,
+  );
+}

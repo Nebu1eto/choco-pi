@@ -15,6 +15,7 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import {
+  type AgentSession,
   defineTool,
   type ExtensionAPI,
   type ExtensionCommandContext,
@@ -43,7 +44,13 @@ import {
   projectAgentsDir,
   serializeAgentFile,
 } from "./agent-file-toggle.ts";
-import { AgentManager, ResumeModelError } from "./agent-manager.ts";
+import {
+  AgentManager,
+  type RevivalContext,
+  type RevivalReport,
+  type RevivalRunCallbacks,
+  ResumeModelError,
+} from "./agent-manager.ts";
 import { createAgentMessageTool } from "./agent-message.ts";
 import {
   getAgentConversation,
@@ -133,13 +140,22 @@ import { NotificationGate, NUDGE_HOLD_MS } from "./notification-gate.ts";
 import { formatTaskNotificationStatus } from "./notification-status.ts";
 import {
   claimSubagentResultRead,
+  dormantResumeHint,
+  formatDormantNotRunning,
+  formatDormantResultConsumed,
   formatResultReadGenerationChanged,
   formatResultReadRefusal,
   formatResultReadTimeout,
+  isDormantRunUnfinished,
   releaseActiveResultRead,
   TERMINAL_RESULT_RETRIEVAL_GUIDANCE,
   waitForSubagentResult,
 } from "./result-read.ts";
+import {
+  type JournalAgentSnapshot,
+  reduceJournal,
+  SUBAGENT_JOURNAL_ENTRY,
+} from "./revival-journal.ts";
 import type {
   AgentConfig,
   AgentInvocation,
@@ -400,6 +416,31 @@ export function formatToolsSuffix(cfg: AgentConfig | undefined): string {
   return isFullSet ? "*" : tools.join(", ");
 }
 
+/**
+ * Notification view of a dormant (journal-only) terminal agent, so a pending
+ * completion notification saved before a restart can still be delivered.
+ * Live-only fields (session, usage, timing) read as empty.
+ */
+function dormantNotificationRecord(snapshot: JournalAgentSnapshot): AgentRecord {
+  return {
+    id: snapshot.id,
+    type: snapshot.type,
+    handle: snapshot.handle,
+    alias: snapshot.alias,
+    description: snapshot.description,
+    status: snapshot.status,
+    result: snapshot.result,
+    error: snapshot.error,
+    toolUses: 0,
+    startedAt: 0,
+    lifetimeUsage: { input: 0, output: 0, cacheWrite: 0 },
+    compactionCount: 0,
+    resultConsumed: snapshot.resultConsumed,
+    outputFile: snapshot.options.outputFile,
+    sessionFile: snapshot.sessionFile,
+  };
+}
+
 function getModelLabelFromConfig(model: string): string {
   const name = model.split("/").at(-1) ?? model;
   return name.replace(/-\d{8}$/, "");
@@ -459,10 +500,20 @@ export default function (pi: ExtensionAPI) {
   const notificationGate = new NotificationGate<AgentRecord>({
     resolve: (key) => {
       const record = manager.getRecord(key);
-      return record &&
-        record.status !== "running" &&
+      if (record === undefined) {
+        // A pending notification saved before a restart names a record that
+        // now lives only in the journal; deliver its terminal snapshot.
+        const dormant = manager.getDormant(key);
+        return dormant !== undefined &&
+          dormant.parentAgentId === undefined &&
+          !isDormantRunUnfinished(dormant.status)
+          ? dormantNotificationRecord(dormant)
+          : undefined;
+      }
+      return record.status !== "running" &&
         record.status !== "queued" &&
-        record.status !== "waiting_for_reset"
+        record.status !== "waiting_for_reset" &&
+        record.status !== "interrupted"
         ? record
         : undefined;
     },
@@ -658,6 +709,7 @@ export default function (pi: ExtensionAPI) {
           sendIndividualNudge(record);
         } else {
           record.resultConsumed = true;
+          manager.journalRecord(record.id);
           agentActivity.delete(record.id);
           fleet.markFinished(record.id);
           fleet.onAgentFinished(record.id);
@@ -934,12 +986,294 @@ export default function (pi: ExtensionAPI) {
     }
   }
 
+  // ---- Durable revival: journal sink and startup revival ----
+  //
+  // Only the root activation that owns the manager registry journals, and only
+  // for a persisted root session outside print/json one-shot runs. Everything
+  // else keeps the old semantics (abortAll at shutdown). Child-session
+  // activations return before registering any handler (top of this factory).
+  //
+  // Revival starts on a timer after session_start returns: Pi awaits each
+  // extension's session_start in load order, so the handlers of extensions
+  // loaded after this one (usage-limit policy registration, provider setup)
+  // still run before the revived runs make their first provider call. A
+  // re-armed usage wait additionally retries policy lookup for ~30 s.
+  const REVIVAL_START_DELAY_MS = 250;
+  /** Bumped on every session_start/session_shutdown; stale continuations compare it. */
+  let revivalGeneration = 0;
+  let journalActive = false;
+  let revivalTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Activity trackers created for revivals, claimed by `onRevived`. */
+  const revivalTrackers = new Map<string, AgentActivity>();
+
+  function journalEligible(ctx: ExtensionContext): boolean {
+    if (!ownsManagerRegistry) return false;
+    if (ctx.mode === "print" || ctx.mode === "json") return false;
+    let file: string | undefined;
+    try {
+      file = ctx.sessionManager.getSessionFile();
+    } catch {
+      return false;
+    }
+    return file !== undefined && file.length > 0;
+  }
+
+  /** Top-level dormant agent addressed by id, handle or alias. */
+  function findTopLevelDormant(ref: string): JournalAgentSnapshot | undefined {
+    const byId = manager.getDormant(ref);
+    if (byId !== undefined) return byId.parentAgentId === undefined ? byId : undefined;
+    return manager.findDormantByHandle(ref);
+  }
+
+  function revivalCallbacks(
+    snapshot: JournalAgentSnapshot,
+    ctx: ExtensionContext,
+  ): RevivalRunCallbacks {
+    const { state, callbacks } = createActivityTracker(snapshot.options.maxTurns);
+    // A reopened file already holds every earlier turn; stream only new ones.
+    const reopened = snapshot.sessionFile !== undefined;
+    const onSessionCreated = (session: AgentSession): void => {
+      callbacks.onSessionCreated(session);
+      const record = manager.getRecord(snapshot.id);
+      if (record?.outputFile) {
+        record.outputCleanup = streamToOutputFile(
+          session,
+          record.outputFile,
+          snapshot.id,
+          ctx.cwd,
+          reopened ? session.messages.length : undefined,
+        );
+      }
+    };
+    if (snapshot.parentAgentId !== undefined) return { onSessionCreated };
+    revivalTrackers.set(snapshot.id, state);
+    return {
+      onToolActivity: callbacks.onToolActivity,
+      onTextDelta: callbacks.onTextDelta,
+      onTurnEnd: callbacks.onTurnEnd,
+      onAssistantUsage: callbacks.onAssistantUsage,
+      onSessionCreated,
+    };
+  }
+
+  /** Wire a revived or dormant-resumed record like a background spawn. */
+  function onAgentRevived(record: AgentRecord): void {
+    const state = revivalTrackers.get(record.id);
+    revivalTrackers.delete(record.id);
+    if (record.parentAgentId !== undefined) return;
+    // The tool call that created it was answered in an earlier process.
+    record.toolCallId = undefined;
+    const joinMode = resolveJoinMode(defaultJoinMode, true);
+    if (joinMode) record.joinMode = joinMode;
+    if (state !== undefined) agentActivity.set(record.id, state);
+    fleet.markRunning(record.id);
+    if (currentCtx?.hasUI) {
+      fleet.ensureTimer();
+      fleet.update();
+    }
+    pi.events.emit("subagents:created", {
+      id: record.id,
+      type: record.type,
+      description: record.description,
+      isBackground: true,
+    });
+  }
+
+  function deliverRevivalReport(report: RevivalReport, ctx: ExtensionContext): void {
+    const name = report.handle === undefined ? report.agentId : `@${report.handle}`;
+    if (report.kind === "revived" || report.kind === "rearmed") {
+      if (ctx.hasUI) ctx.ui.notify(`Subagent ${name}: ${report.message}`, "info");
+      return;
+    }
+    const label =
+      report.handle === undefined ? report.agentId : `${report.agentId} (@${report.handle})`;
+    const howToContinue =
+      report.parentAgentId === undefined
+        ? dormantResumeHint({ id: report.agentId, handle: report.handle })
+        : `It belongs to agent ${report.parentAgentId}; continue that agent instead.`;
+    const content =
+      `Subagent ${label} "${report.description}" was not revived after the restart ` +
+      `(${report.kind}): ${report.message}\n${howToContinue}`;
+    pi.sendMessage(
+      { customType: "subagent-revival", content, display: true },
+      { deliverAs: "steer", triggerTurn: false },
+    );
+  }
+
+  function revivalContext(ctx: ExtensionContext, generation: number): RevivalContext {
+    return {
+      pi,
+      ctx,
+      resolveType: (type) => {
+        reloadCustomAgents();
+        const dispatch = resolveSpawnType(type);
+        if (!dispatch.ok) return { ok: false, message: dispatch.message };
+        // Same rule as the tombstone resume: reopening a conversation under a
+        // substitute agent's prompt and tools is not continuing it.
+        if (dispatch.fellBackFrom !== undefined) {
+          return { ok: false, message: `The ${type} agent is no longer available.` };
+        }
+        return { ok: true, type: dispatch.type };
+      },
+      callbacksFor: (snapshot) => revivalCallbacks(snapshot, ctx),
+      onRevived: (record) => {
+        if (generation === revivalGeneration) onAgentRevived(record);
+      },
+      onRevivalReport: (report) => {
+        if (generation === revivalGeneration) deliverRevivalReport(report, ctx);
+      },
+    };
+  }
+
+  function scheduleRevival(ctx: ExtensionContext, rootSessionId: string, generation: number) {
+    if (revivalTimer !== undefined) clearTimeout(revivalTimer);
+    revivalTimer = setTimeout(() => {
+      revivalTimer = undefined;
+      if (generation !== revivalGeneration) return;
+      // Reduced now rather than at session_start, so a stop_subagent issued in
+      // between is honored.
+      const snapshots = [...reduceJournal(ctx.sessionManager.getEntries(), rootSessionId).values()];
+      manager.reviveFromJournal(snapshots, revivalContext(ctx, generation)).catch((error) => {
+        if (generation !== revivalGeneration) return;
+        console.error("[choco-pi-subagents] Subagent revival failed", error);
+      });
+    }, REVIVAL_START_DELAY_MS);
+  }
+
+  /** Agent(resume) of a dormant top-level agent: reopen its saved session in the background. */
+  async function resumeDormantFromTool(
+    ctx: ExtensionContext,
+    dormant: JournalAgentSnapshot,
+    prompt: string,
+    /** `provider/id` chosen by the caller; validated like a live resume's. */
+    model: string | undefined,
+    toolCallId: string,
+  ) {
+    const id = dormant.id;
+    if (manager.isRevivalPending(id)) {
+      return textResult(
+        `Agent "${id}" is being revived right now. ${TERMINAL_RESULT_RETRIEVAL_GUIDANCE}`,
+      );
+    }
+    let resumable: boolean;
+    try {
+      resumable = manager.assertResumable(id, model, { dormant: true, ctx });
+    } catch (error) {
+      if (error instanceof ResumeModelError) {
+        return textResult(`Failed to resume agent "${id}": ${error.message}`);
+      }
+      throw error;
+    }
+    if (!resumable) {
+      return textResult(
+        `Agent "${id}" has no saved session to resume (saved status: ${dormant.status}).`,
+      );
+    }
+    let record: AgentRecord;
+    try {
+      record = await manager.resumeDormant(id, prompt, revivalContext(ctx, revivalGeneration), {
+        model,
+      });
+    } catch (error) {
+      return textResult(
+        `Failed to resume agent "${id}": ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    record.toolCallId = toolCallId;
+    const isQueued = record.status === "queued";
+    const address = record.alias ?? record.handle ?? record.id;
+    return textResult(
+      `Agent ${isQueued ? "queued" : "resumed"} in background from its saved session (it was not running: ${dormant.status}).\n` +
+        `Agent ID: ${id}\n` +
+        `Alias: @${address}\n` +
+        `Type: ${record.type}\n` +
+        (record.outputFile ? `Output file: ${record.outputFile}\n` : "") +
+        (isQueued
+          ? `Position: queued (cap ${formatConcurrencyCap(manager.getMaxConcurrent())})\n`
+          : "") +
+        `\nYou will be notified when this agent completes.\n` +
+        `${TERMINAL_RESULT_RETRIEVAL_GUIDANCE} Use steer_subagent to send it messages.`,
+      buildRecordDetails(record, true, true),
+    );
+  }
+
+  /** get_subagent_result of a dormant top-level agent, from its journaled snapshot. */
+  function readDormantResult(dormant: JournalAgentSnapshot, verbose: boolean | undefined) {
+    if (isDormantRunUnfinished(dormant.status)) {
+      return textResult(formatDormantNotRunning(dormant));
+    }
+    if (dormant.resultConsumed) return errorResult(formatDormantResultConsumed(dormant));
+    manager.markDormantResultConsumed(dormant.id);
+    cancelNudge(dormant.id);
+    let output =
+      `Agent: ${dormant.id}\n` +
+      `Type: ${getDisplayName(dormant.type)} | Status: ${dormant.status}${getStatusNote(dormant.status)} | Not running (saved result)\n` +
+      `Description: ${dormant.description}\n\n`;
+    output +=
+      dormant.status === "error"
+        ? `Error: ${dormant.error ?? "unknown error"}`
+        : dormant.result?.trim() || dormant.error?.trim() || "No output.";
+    if (verbose && dormant.sessionFile !== undefined) {
+      output += `\n\nFull conversation: ${dormant.sessionFile}`;
+    }
+    return textResult(output);
+  }
+
+  /** stop_subagent of a dormant top-level agent: make sure it never revives. */
+  function stopDormantAgent(ref: string, dormant: JournalAgentSnapshot) {
+    if (!isDormantRunUnfinished(dormant.status)) {
+      return textResult(
+        `Agent "${ref}" is not running (status: ${dormant.status}); nothing to stop.` +
+          (dormant.resultConsumed ? "" : " Its result is readable once with get_subagent_result."),
+      );
+    }
+    if (manager.isRevivalPending(dormant.id)) {
+      return errorResult(
+        `Agent "${ref}" is being revived right now; call stop_subagent again in a moment.`,
+      );
+    }
+    if (manager.stopDormant(dormant.id) === undefined) {
+      return errorResult(`Failed to stop agent ${dormant.id}.`);
+    }
+    return textResult(
+      `Agent ${dormant.id} was not running (saved status: ${dormant.status}). ` +
+        "It is now marked stopped and will not be revived. Resume it later with Agent resume if needed.",
+    );
+  }
+
   // Capture ctx from session_start for RPC spawn handler + start the scheduler.
   // This also wires the RPC handlers and broadcasts readiness — on the first
   // bound session_start, so a filtered-out activation never advertises (#142).
   pi.on("session_start", async (_event, ctx) => {
     activeMentionCloneGeneration = ++nextMentionCloneGeneration;
+    const generation = ++revivalGeneration;
     currentCtx = ctx;
+    journalActive = journalEligible(ctx);
+    const rootSessionId = ctx.sessionManager.getSessionId();
+    if (journalActive) {
+      const sessionManager = ctx.sessionManager;
+      manager.setJournalSink({
+        rootSessionId,
+        append: (data) => pi.appendEntry(SUBAGENT_JOURNAL_ENTRY, data),
+        reportError: (agentId, error) =>
+          console.error(
+            `[choco-pi-subagents] Subagent journal write failed for ${agentId}: ${error.message}`,
+          ),
+      });
+      // Dormant fallback for anything the in-memory map no longer holds.
+      manager.setJournalLookup(
+        (id) => reduceJournal(sessionManager.getEntries(), rootSessionId).get(id)?.agent,
+      );
+      // Every journaled agent is addressable (id, @handle) right away, also
+      // before the deferred revival pass; live records always take precedence.
+      manager.hydrateDormant(
+        [...reduceJournal(sessionManager.getEntries(), rootSessionId).values()].map(
+          (snapshot) => snapshot.agent,
+        ),
+      );
+    } else {
+      manager.setJournalSink(undefined);
+    }
     const pendingEntry = ctx.sessionManager
       .getEntries()
       .findLast(
@@ -952,7 +1286,15 @@ export default function (pi: ExtensionAPI) {
       ctx.sessionManager.getSessionId(),
       pendingKeys.filter((key) => {
         const record = manager.getRecord(key);
-        return record !== undefined && !record.resultConsumed;
+        if (record !== undefined) return !record.resultConsumed;
+        // After a restart the record is dormant; its unread result still counts.
+        const dormant = manager.getDormant(key);
+        return (
+          dormant !== undefined &&
+          dormant.parentAgentId === undefined &&
+          !dormant.resultConsumed &&
+          !isDormantRunUnfinished(dormant.status)
+        );
       }),
     );
     if (pendingKeys.length > 0) pi.appendEntry("subagent-notification-pending", { keys: [] });
@@ -979,9 +1321,13 @@ export default function (pi: ExtensionAPI) {
       });
     }
     // A new/resumed/forked session never inherits a parked usage-limit wait;
-    // the no-op case is the first start of this activation.
-    manager.cancelUsageLimitWaits("Session switched; usage-limit wait cancelled.");
-    manager.clearCompleted(true);
+    // the no-op case is the first start of this activation. A journaling
+    // session keeps its records: they are suspended at shutdown and revived
+    // or kept dormant from the journal instead.
+    if (!journalActive) {
+      manager.cancelUsageLimitWaits("Session switched; usage-limit wait cancelled.");
+      manager.clearCompleted(true);
+    }
     // Guard mirrors the `!scheduler.isActive()` pattern below: session_start
     // fires once per activation, but a double-bind must not leak listeners.
     if (!rpcHandle) {
@@ -1019,6 +1365,7 @@ export default function (pi: ExtensionAPI) {
         ),
       );
     }
+    if (journalActive) scheduleRevival(ctx, rootSessionId, generation);
   });
 
   /** Agent types `@` can start, in the shape the roster wants. */
@@ -1085,7 +1432,15 @@ export default function (pi: ExtensionAPI) {
     // available at all. Falling through here rather than dropping to the start
     // path below matters: the handle names an agent that already exists, and
     // asking the model to start another one is not what was typed.
-    if (resolved && !canDispatchDirectly) return { action: "continue" };
+    // A journaled agent evicted from memory or not revived after a restart.
+    // Live records win; a dormant one is preferred over an in-memory tombstone
+    // because it reopens under the same id.
+    const dormant =
+      resolved?.kind === "live"
+        ? undefined
+        : (manager.findDormantByHandle(mention.handle) ??
+          (alias ? manager.findDormantByHandle(alias) : undefined));
+    if ((resolved || dormant) && !canDispatchDirectly) return { action: "continue" };
 
     if (resolved?.kind === "live") {
       const record = resolved.record;
@@ -1096,6 +1451,7 @@ export default function (pi: ExtensionAPI) {
         // steer_subagent tool. Un-consume the result so the agent's reply to
         // this message is still relayed even if the LLM read its last answer.
         record.resultConsumed = false;
+        manager.journalRecord(record.id);
         manager.steer(record.id, mention.message);
         pi.events.emit("subagents:steered", { id: record.id, message: mention.message });
         ctx.ui.notify(`Sent to ${target}`, "info");
@@ -1131,6 +1487,35 @@ export default function (pi: ExtensionAPI) {
       // A live record with no session never got far enough to continue, so it
       // falls through to the start-fresh path below, like Claude's
       // `no_transcript`.
+    }
+
+    if (dormant !== undefined) {
+      const target = `@${dormant.alias ?? dormant.handle ?? mention.handle}`;
+      if (manager.isRevivalPending(dormant.id)) {
+        ctx.ui.notify(`${target} is being revived right now; try again in a moment.`, "warning");
+        return { action: "handled" };
+      }
+      if (!manager.canResumeDormant(dormant.id)) {
+        ctx.ui.notify(`Could not resume ${target} \u2014 it has no saved session.`, "warning");
+        return { action: "handled" };
+      }
+      const generation = revivalGeneration;
+      // Detached: reopening may wait for the previous runtime to release the
+      // session file, and prompt() is blocked until this hook returns.
+      manager.resumeDormant(dormant.id, mention.message, revivalContext(ctx, generation)).then(
+        () => {
+          if (generation === revivalGeneration) ctx.ui.notify(`Resumed ${target}`, "info");
+        },
+        (error) => {
+          if (generation !== revivalGeneration) return;
+          ctx.ui.notify(
+            `Could not resume ${target}: ${error instanceof Error ? error.message : String(error)}`,
+            "warning",
+          );
+        },
+      );
+      ctx.ui.notify(`Resuming ${target}\u2026`, "info");
+      return { action: "handled" };
     }
 
     // Evicted, but its conversation is still on disk: reopen it. This is an
@@ -1286,11 +1671,12 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_before_switch", () => {
+    // Another extension can still cancel this switch, so nothing here may
+    // suspend agents or cancel usage waits: session_shutdown (emitted for
+    // new/resume/fork before the old session is disposed) suspends them, and
+    // a non-journaling session aborts them there as before.
     sideConversations.dismiss();
     focus.unfocus();
-    // Parked usage-limit waits belong to the session being left.
-    manager.cancelUsageLimitWaits("Session switched; usage-limit wait cancelled.");
-    manager.clearCompleted(true);
     scheduler.stop();
   });
 
@@ -1304,6 +1690,13 @@ export default function (pi: ExtensionAPI) {
     // Invalidate detached clone continuations before clearing their captured
     // context and before any future cleanup step can introduce an await.
     activeMentionCloneGeneration = undefined;
+    // Likewise for a revival that has not started or is still preparing.
+    revivalGeneration++;
+    if (revivalTimer !== undefined) clearTimeout(revivalTimer);
+    revivalTimer = undefined;
+    revivalTrackers.clear();
+    const suspend = journalActive;
+    journalActive = false;
     const pendingKeys = notificationGate.shutdown();
     if (pendingKeys.length > 0) {
       pi.appendEntry("subagent-notification-pending", { keys: pendingKeys });
@@ -1325,14 +1718,22 @@ export default function (pi: ExtensionAPI) {
     }
     scheduler.stop();
     workflowManager.dispose();
-    manager.abortAll();
+    if (suspend) {
+      // Journal every live run as interrupted (or still waiting) before it is
+      // aborted, then wait (bounded by the manager, 10 s) for the runs to
+      // settle and release their session files for the next runtime.
+      manager.flushJournal();
+      await manager.suspendAll();
+    } else {
+      manager.abortAll();
+    }
     groupJoin.dispose();
     for (const timer of workflowNudges.values()) clearTimeout(timer);
     workflowNudges.clear();
     sideConversations.dispose();
     focus.dispose();
     fleet.dispose();
-    manager.dispose();
+    manager.dispose(suspend ? { suspend: true } : undefined);
   });
 
   // Widget mode controls agent-row detail verbosity and is read live at render time.
@@ -2072,12 +2473,34 @@ export default function (pi: ExtensionAPI) {
 
       // Resume existing agent
       if (params.resume) {
-        const existing = manager.getRecord(params.resume);
+        let existing = manager.getRecord(params.resume);
+        // A settled journaled record without a session (a re-armed usage wait
+        // that was stopped) continues from its saved file like a dormant one.
+        if (
+          existing !== undefined &&
+          existing.parentAgentId === undefined &&
+          existing.session === undefined &&
+          existing.sessionFile !== undefined &&
+          journalActive &&
+          manager.disposeSettledRecord(existing.id)
+        ) {
+          existing = undefined;
+        }
+        if (!existing) {
+          const dormant = findTopLevelDormant(params.resume);
+          if (dormant !== undefined) {
+            return resumeDormantFromTool(
+              ctx,
+              dormant,
+              params.prompt,
+              // Same rule as a live resume: only a caller-supplied model switches.
+              resolvedConfig.modelFromParams && model ? `${model.provider}/${model.id}` : undefined,
+              toolCallId,
+            );
+          }
+        }
         if (!existing || existing.parentAgentId) {
           return textResult(`Agent not found: "${params.resume}".`);
-        }
-        if (!existing.session) {
-          return textResult(`Agent "${params.resume}" has no active session to resume.`);
         }
         // Keep this caller-facing check mode-independent. AgentManager.resume
         // repeats the guard at the causal boundary so a concurrent state change
@@ -2094,6 +2517,9 @@ export default function (pi: ExtensionAPI) {
               `(${formatResetAt(existing.usageLimit?.resetAt)}) and will resume on its own. ` +
               `To continue it on another model now, stop it with stop_subagent, then resume it with model.`,
           );
+        }
+        if (!existing.session) {
+          return textResult(`Agent "${params.resume}" has no active session to resume.`);
         }
         // Only a caller-supplied model switches the resumed session; an agent
         // file's default model never overrides the model the child already has.
@@ -2816,6 +3242,10 @@ export default function (pi: ExtensionAPI) {
       }),
       execute: async (_toolCallId, params, signal, _onUpdate, _ctx) => {
         const record = resolveAgentRef(params.agent_id);
+        if (!record) {
+          const dormant = findTopLevelDormant(params.agent_id);
+          if (dormant !== undefined) return readDormantResult(dormant, params.verbose);
+        }
         if (!record || record.parentAgentId) {
           return errorResult(`Agent not found: "${params.agent_id}". It may have been cleaned up.`);
         }
@@ -2902,6 +3332,7 @@ export default function (pi: ExtensionAPI) {
         // Terminal claim above already marked exactly this generation consumed.
         if (claim.kind === "terminal") {
           cancelNudge(record.id);
+          manager.journalRecord(record.id);
         }
 
         // Verbose: include full conversation
@@ -2994,7 +3425,12 @@ export default function (pi: ExtensionAPI) {
         }),
       }),
       execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
-        const outcome = resolveStopOutcome(resolveAgentRef(params.agent_id));
+        const live = resolveAgentRef(params.agent_id);
+        if (!live) {
+          const dormant = findTopLevelDormant(params.agent_id);
+          if (dormant !== undefined) return stopDormantAgent(params.agent_id, dormant);
+        }
+        const outcome = resolveStopOutcome(live);
         if (outcome.kind === "not_found") {
           return errorResult(`Agent not found: "${params.agent_id}". It may have been cleaned up.`);
         }

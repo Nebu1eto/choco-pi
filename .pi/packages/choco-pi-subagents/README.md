@@ -31,6 +31,23 @@ while agents it owns are still running, queued, or waiting for a usage-limit res
 gets one corrective steer; a second attempt fails with a `pendingDependents`
 snapshot. Nested delegations render with the same result cards as root ones.
 
+Durable revival: subagents survive `/reload`, quit and restart, a crash, and a
+session switch. Every state change is saved as a hidden `subagent-journal` entry
+in the main session file. At shutdown, running, queued and usage-limit-parked
+agents are saved as interrupted and stopped. When the session starts again
+(startup, `/reload`, or `/resume` back to it) they continue in the background
+under the same id from their saved conversation, after a notice that the last
+tool call may have partly run; a parked agent's wait is re-armed. After an
+unexpected exit (crash, `kill -9`, closed terminal) an agent is revived at most
+twice in a row, then saved as an error that must be resumed by hand. Explicitly
+stopped agents, workflow steps and `/btw` answers never revive, and a fork or
+clone never revives the original session's agents. Agents that have left memory
+stay reachable: `Agent` with `resume` (optionally with `model`),
+`get_subagent_result`, `stop_subagent` and `@handle` work on them. Print and
+JSON modes and unsaved sessions keep the old stop-at-shutdown behavior. Nested
+sessions are now saved to disk like top-level ones, so they appear in `/resume`;
+an agent with `persist_session: false` cannot be revived.
+
 In the fleet panel, the selection is the focus: ↑/↓ onto a subagent row focuses it in
 Pi's main conversation area, and moving back onto `main` restores the
 orchestrator conversation and prompt unchanged. The switcher stays visible while
@@ -83,6 +100,9 @@ node --experimental-strip-types --test tests/focus-mode.test.ts
 
 # the repository's regression test for the fixed role system
 node --test tests/subagent-config.test.ts
+
+# opt-in real Pi 1.0.4 check of durable revival (scripted faux model, no credit spent)
+node tests/e2e-revival/run.ts --scenario S1,S2,S3,S4,S5
 ```
 
 Every source file is erasable-syntax-only and every relative import carries an

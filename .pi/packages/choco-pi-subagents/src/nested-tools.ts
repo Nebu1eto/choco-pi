@@ -34,12 +34,15 @@ import {
   claimSubagentResultRead,
   formatResultReadGenerationChanged,
   formatResultReadRefusal,
+  formatDormantResultConsumed,
   formatResultReadTimeout,
+  isDormantRunUnfinished,
   releaseActiveResultRead,
   RESULT_WAIT_MECHANICS,
   TERMINAL_RESULT_RETRIEVAL_GUIDANCE,
   waitForSubagentResult,
 } from "./result-read.ts";
+import type { JournalAgentSnapshot } from "./revival-journal.ts";
 import type {
   AgentConfig,
   AgentInvocation,
@@ -130,6 +133,12 @@ export interface NestedAgentManager {
   abort(id: string): boolean;
   setFastMode?(id: string, requested: boolean): AgentRecord | undefined;
   setDaybreak?(id: string, requested: boolean): AgentRecord | undefined;
+  /** Journaled snapshot of an agent no longer in memory (durable revival). */
+  getDormant?(id: string): JournalAgentSnapshot | undefined;
+  /** Record that a dormant agent's result was read. */
+  markDormantResultConsumed?(id: string): boolean;
+  /** Re-journal a live record after a result read changed it. */
+  journalRecord?(id: string): boolean;
   resume(
     id: string,
     prompt: string,
@@ -213,6 +222,24 @@ function formatRecord(record: AgentRecord, position: ResultPosition): string {
   const note =
     position === "inline" ? getForegroundOutcomeNote(record.status) : getStatusNote(record.status);
   return note ? `Nested agent${note}.\n\n${text}` : text;
+}
+
+/** get_subagent_result of an owned nested child that exists only in the journal. */
+function readDormantNested(context: NestedToolContext, dormant: JournalAgentSnapshot) {
+  if (isDormantRunUnfinished(dormant.status)) {
+    return textResult(
+      `Nested agent ${dormant.id} is not running (saved status: ${dormant.status}); it was not revived ` +
+        "with this run and will not report a result. Start a new nested agent for any work it left unfinished.",
+    );
+  }
+  if (dormant.resultConsumed) return textResult(formatDormantResultConsumed(dormant), true);
+  context.manager.markDormantResultConsumed?.(dormant.id);
+  if (dormant.status === "error") {
+    return textResult(`Agent failed: ${dormant.error ?? "unknown error"}`, true);
+  }
+  const text = dormant.result?.trim() || dormant.error?.trim() || "No output.";
+  const note = getStatusNote(dormant.status);
+  return textResult(note ? `Nested agent${note}.\n\n${text}` : text);
 }
 
 /** Build child-safe orchestration tools scoped to one parent agent instance. */
@@ -585,6 +612,14 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
     }),
     execute: async (_toolCallId, params, signal) => {
       const record = context.manager.getRecord(params.agent_id);
+      if (record === undefined) {
+        // A child that was not revived with this parent run (finished before
+        // the restart, or could not be revived) is read from the journal.
+        const dormant = context.manager.getDormant?.(params.agent_id);
+        if (dormant !== undefined && dormant.parentAgentId === context.parentAgentId) {
+          return readDormantNested(context, dormant);
+        }
+      }
       if (!ownsRecord(record, context.parentAgentId)) {
         return textResult(
           `Nested agent not found or not owned by this parent: "${params.agent_id}".`,
@@ -632,6 +667,7 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
           throw error;
         }
       }
+      if (claim.kind === "terminal") context.manager.journalRecord?.(record.id);
       return textResult(
         formatRecord(record, "fetched"),
         record.status === "error",
