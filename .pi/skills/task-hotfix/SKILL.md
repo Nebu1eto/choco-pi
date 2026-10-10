@@ -26,6 +26,8 @@ Keep implementation in the main agent. Do not spawn implementation agents. A fre
 
 Unless the user explicitly excluded a commit, load and follow the harness `commit` skill. Run required executable behavior against that exact `HEAD`. A corrective edit invalidates affected evidence and requires validation, a new checkpoint, and final-`HEAD` verification again.
 
+When the integrated diff contains more than one coherent change, follow the commit skill's split rule; the final `HEAD` still receives full gates and required executable-behavior proof.
+
 ## 4. Review and report
 
 When independent review is selected, prepare its immutable input through `../review/references/review-bundle.md`; independently validate any finding. After owned runtime cleanup, release the lease with `node <resolved-script> release --cwd "$PWD"`. Report the root cause, minimal patch, exact gates and runtime observations, final revision, waivers, and remaining risk.

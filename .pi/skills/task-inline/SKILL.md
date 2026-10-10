@@ -29,6 +29,8 @@ Unless the user explicitly excluded a commit, load and follow the harness `commi
 
 Run each required `runtime_e2e` item against that exact `HEAD` unless the user explicitly waived it. After any corrective edit, invalidate affected evidence, repeat validation, create a new checkpoint, and verify the new `HEAD`.
 
+When the integrated diff contains more than one coherent change, follow the commit skill's split rule; the final `HEAD` still receives full gates and `runtime_e2e` proof.
+
 ## 4. Review and finish
 
 When independent review is selected, prepare the exact `review_base..HEAD` input through `../review/references/review-bundle.md` and give the fresh read-only reviewer only its bundle path and manifest digest. Verify findings yourself before changing code.

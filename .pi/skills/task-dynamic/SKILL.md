@@ -50,3 +50,5 @@ Optimize for a correct, complete result. Work solo only for trivial units, and g
 ## 4. Integrate and hand off
 
 Follow the `task` skill's sections 4–5 for integration, checkpointing, review, and handoff. The orchestrator owns final gates, commits through the harness `commit` skill, and mutation-lease release.
+
+When the integrated diff contains more than one coherent change, follow the commit skill's split rule; the final `HEAD` still receives full gates and the task skill's required runtime-behavior proof.
