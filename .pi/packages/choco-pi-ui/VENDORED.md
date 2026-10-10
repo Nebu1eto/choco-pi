@@ -233,3 +233,12 @@ exercises both formats through main, child, unknown child usage, and main again,
 and verifies a single publisher read per focused render. The repository's zentui
 test compiler rewrites explicit TypeScript import extensions for emitted JavaScript
 and includes its compiler flags in the build-cache key.
+
+## 2026-10-08 choco-pi patch: shared provider display
+
+`extensions/zentui/model-display.ts` is a new import-free leaf that owns the
+provider display table (`formatProviderLabel`) and the `provider/id` identifier
+form (`formatModelRef`). `format.ts` re-exports `formatProviderLabel` under the
+same name, and `ui.ts` drops its duplicate `focusedProviderLabel` in favor of the
+leaf. choco-pi-subagents and root extensions import the leaf by relative path, so
+it must stay free of imports.

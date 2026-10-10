@@ -135,26 +135,7 @@ export function formatElapsedDuration(durationMs: number): string {
   return `${seconds}s`;
 }
 
-interface ProviderLabels {
-  [provider: string]: string;
-}
-
-export function formatProviderLabel(provider: string | undefined): string {
-  if (!provider) return "Unknown";
-
-  const known: ProviderLabels = {
-    anthropic: "Anthropic",
-    gemini: "Google",
-    google: "Google",
-    ollama: "Ollama",
-    openai: "OpenAI",
-    "openai-codex": "OpenAI",
-  };
-
-  return (
-    known[provider] ?? provider.replace(/[-_]/g, " ").replace(/\b\w/g, (char) => char.toUpperCase())
-  );
-}
+export { formatProviderLabel } from "./model-display";
 
 function calculateCacheHitRate(
   input: number,

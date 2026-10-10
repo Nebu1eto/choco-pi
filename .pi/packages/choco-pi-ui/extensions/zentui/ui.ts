@@ -12,6 +12,7 @@ import { padsBottom, padsTop, type EditorStyle, type ZentuiConfig } from "./conf
 import { renderEditorMetadataFormat } from "./editor-metadata-format";
 import { readFocusedAgentRuntime, selectFocusScopedUsage } from "./focused-runtime";
 import { type MinimalistEditorMetadata, renderMinimalistFrame } from "./minimalist-editor";
+import { formatProviderLabel } from "./model-display";
 import {
   type BoundaryValue,
   invokeWithReceiver,
@@ -93,15 +94,6 @@ export type EditorMeta = {
   providerLabel: string;
   sessionName?: string;
 };
-
-function focusedProviderLabel(provider: string): string {
-  if (!provider) return "Unknown";
-  if (provider === "anthropic") return "Anthropic";
-  if (provider === "gemini" || provider === "google") return "Google";
-  if (provider === "ollama") return "Ollama";
-  if (provider === "openai" || provider === "openai-codex") return "OpenAI";
-  return provider.replace(/[-_]/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
-}
 
 function focusScopedMinimalistMetadata(
   metadata: MinimalistEditorMetadata,
@@ -685,7 +677,7 @@ export function renderPolishedEditorFrame({
       modelLabel,
       modelId: focusedRuntime.modelId,
       modelName: focusedRuntime.modelName,
-      providerLabel: focusedProviderLabel(focusedRuntime.provider),
+      providerLabel: formatProviderLabel(focusedRuntime.provider),
       sessionName: modelMeta.sessionName,
     };
     effectiveThinkingLevel = focusedRuntime.thinking;
