@@ -243,3 +243,96 @@ test("registered tools the session cannot call keep running their definition", a
   );
   assert.equal(directExecutions, 1);
 });
+
+function detailsProbe(details: BoundaryValue | undefined, text = "page body") {
+  return toNestedTool(
+    {
+      name: "fetch_probe",
+      label: "fetch_probe",
+      description: "fetch_probe",
+      parameters: Type.Object({}),
+      async execute() {
+        return { content: [{ type: "text", text }], details };
+      },
+    },
+    "await tools.fetch_probe()",
+  );
+}
+
+async function invokeProbe(details: BoundaryValue | undefined, text?: string) {
+  return detailsProbe(details, text).invoke(
+    {},
+    { cwd: "/tmp", extensionContext: createToolContextFixture() },
+    new AbortController().signal,
+  );
+}
+
+test("results naming stored content keep their responseId and cheap scalars", async () => {
+  const value = await invokeProbe({
+    responseId: "resp-1",
+    urlCount: 1,
+    successful: 1,
+    truncated: true,
+    title: "Example",
+    urls: ["https://example.com"],
+    nested: { large: true },
+    prompt: "x".repeat(300),
+    ratio: Number.NaN,
+    nextOffset: null,
+  });
+  assert.deepEqual(value, {
+    output: "page body",
+    responseId: "resp-1",
+    urlCount: 1,
+    successful: 1,
+    truncated: true,
+    title: "Example",
+  });
+});
+
+test("web_search searchId results keep the id; empty text keeps the no-output marker", async () => {
+  assert.deepEqual(await invokeProbe({ searchId: "search-1", fetchId: null, queryCount: 2 }, ""), {
+    output: "(no output)",
+    searchId: "search-1",
+    queryCount: 2,
+  });
+});
+
+test("results without a retrievable id stay text", async () => {
+  assert.equal(await invokeProbe({ urlCount: 1, successful: 1 }), "page body");
+  assert.equal(await invokeProbe({ responseId: 7 }), "page body");
+  assert.equal(await invokeProbe(undefined), "page body");
+});
+
+test("session-dispatched results keep their responseId", async () => {
+  const definition: ToolDefinition = {
+    name: "fetch_content",
+    label: "fetch_content",
+    description: "fetch_content",
+    parameters: Type.Object({ url: Type.String() }),
+    async execute() {
+      throw new Error("direct execution must not run");
+    },
+  };
+  const extensionContext = createToolContextFixture({
+    tools: [{ ...definition, execute: async () => ({ content: [], details: undefined }) }],
+    async executeTool(name) {
+      return {
+        toolCall: { type: "toolCall", id: "exec-1/1", name, arguments: {} },
+        result: {
+          content: [{ type: "text", text: "fetched" }],
+          details: { responseId: "resp-2", urls: ["https://example.com"], urlCount: 1 },
+        },
+        isError: false,
+      };
+    },
+  });
+  assert.deepEqual(
+    await bridged(definition).invoke(
+      { url: "https://example.com" },
+      { cwd: "/tmp", toolCallId: "exec-1", extensionContext },
+      new AbortController().signal,
+    ),
+    { output: "fetched", responseId: "resp-2", urlCount: 1 },
+  );
+});

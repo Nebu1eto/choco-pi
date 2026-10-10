@@ -56,6 +56,24 @@ const ShellStructuredContentSchema = Type.Object({
   wall_time_seconds: Type.Number(),
 });
 
+/**
+ * Details that name stored, retrievable content: web-access `fetch_content`/`source_check` set
+ * `responseId` and `web_search` sets `searchId`; `get_search_content` needs that id to page the
+ * content, so a nested result must keep it instead of collapsing to text.
+ */
+const RetrievableDetailsSchema = Type.Union([
+  Type.Object({ responseId: Type.String() }),
+  Type.Object({ searchId: Type.String() }),
+]);
+const DetailsRecordSchema = Type.Record(Type.String(), Type.Unknown());
+const DetailScalarSchema = Type.Union([
+  Type.Boolean(),
+  Type.Number(),
+  Type.String({ maxLength: 256 }),
+]);
+/** Keys the retrievable result owns; detail scalars never overwrite them. */
+const RETRIEVABLE_RESERVED_KEYS = new Set(["output"]);
+
 /** Pi's native validator appends the raw payload after this marker; code mode never surfaces it. */
 const RECEIVED_ARGUMENTS_MARKER = "\n\nReceived arguments:\n";
 const VALIDATION_FAILURE_PREFIX = 'Validation failed for tool "';
@@ -447,5 +465,26 @@ function compactNestedResult<TDetails>(result: AgentToolResult<TDetails>): Bound
   if (structured !== undefined) return structured;
   if (Value.Check(JsonObjectSchema, result.details) && "output" in result.details)
     return result.details;
+  const retrievable = retrievableResult(result);
+  if (retrievable !== undefined) return retrievable;
   return resultText(result) || "(no output)";
+}
+
+/**
+ * Results naming stored content resolve to `{ output, ...scalars }` so a script can pass the
+ * `responseId`/`searchId` on to `get_search_content`. Only top-level booleans, finite numbers
+ * and short strings from `details` are copied; arrays, objects and long strings stay out.
+ */
+function retrievableResult<TDetails>(result: AgentToolResult<TDetails>): BoundaryValue | undefined {
+  const details = result.details;
+  if (!Value.Check(RetrievableDetailsSchema, details)) return undefined;
+  if (!Value.Check(DetailsRecordSchema, details)) return undefined;
+  const scalars: Record<string, boolean | number | string> = {};
+  for (const [key, value] of Object.entries(details)) {
+    if (RETRIEVABLE_RESERVED_KEYS.has(key)) continue;
+    // TypeBox's number check rejects NaN and Infinity, so copied scalars stay JSON-safe.
+    if (!Value.Check(DetailScalarSchema, value)) continue;
+    scalars[key] = value;
+  }
+  return { output: resultText(result) || "(no output)", ...scalars };
 }
