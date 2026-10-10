@@ -15,11 +15,13 @@ const MAX_SUGGESTION_CHARS = 300;
 const REQUEST_TIMEOUT_MS = 15_000;
 
 export const PROMPT_SUGGESTION_SYSTEM_PROMPT =
-  "You predict the next message a user will type to a coding agent, given their recent conversation. " +
-  "Return only that message, written as the user would write it to the agent: one line, under 120 characters, " +
-  "in the language the user writes their own messages in. " +
-  "Suggest only an obvious next step the conversation sets up, such as answering the agent's question, " +
-  "choosing among options the agent offered, approving its proposed next step, or asking for the natural follow-up. " +
+  "You predict the next message the USER will type to a coding AGENT, given their recent conversation. " +
+  "The transcript labels each message USER or AGENT. You write as the USER, replying to the AGENT's last message: " +
+  "never repeat, paraphrase, or continue the AGENT's words, and never ask the AGENT's own questions back. " +
+  "If the AGENT asked a question, write the USER's answer to it (for example, AGENT: 'Should I add a test?' -> USER: 'Yes, add a test'). " +
+  "Return only that message: one line, under 120 characters, in the language the USER writes in. " +
+  "Suggest only an obvious next step the conversation sets up, such as answering the AGENT's question, " +
+  "choosing among options the AGENT offered, approving its proposed next step, or asking for the natural follow-up. " +
   "Never suggest deploying, pushing, publishing, deleting data, or other destructive or external actions " +
   "unless the user already asked for them. " +
   "If no next message is clearly predictable, return exactly NONE.";
@@ -28,6 +30,15 @@ export const PROMPT_SUGGESTION_SYSTEM_PROMPT =
 export interface PromptSuggestionSlot {
   text: string | undefined;
   requestRender: (() => void) | undefined;
+}
+
+const USER_LABEL = "USER:";
+const AGENT_LABEL = "AGENT:";
+const AGENT_VOICE =
+  /^(?:should i|shall i|do you want me|would you like me|want me to|let me know if)\b/iu;
+
+function speakerLabel(role: "user" | "assistant"): string {
+  return role === "user" ? USER_LABEL : AGENT_LABEL;
 }
 
 interface TextLikeContent {
@@ -68,12 +79,12 @@ export function suggestionTranscript(entries: readonly SessionEntry[]): string |
     }
     const text = textContent(message.content);
     if (!text) continue;
-    const block = "[" + message.role + "]\n" + clipMiddle(text, MAX_MESSAGE_CHARS);
+    const block = speakerLabel(message.role) + "\n" + clipMiddle(text, MAX_MESSAGE_CHARS);
     if (total + block.length > MAX_TRANSCRIPT_CHARS && blocks.length > 0) break;
     blocks.unshift(block);
     total += block.length;
   }
-  if (!blocks.some((block) => block.startsWith("[user]"))) return undefined;
+  if (!blocks.some((block) => block.startsWith(USER_LABEL))) return undefined;
   return blocks.join("\n\n");
 }
 
@@ -91,6 +102,8 @@ export function sanitizePromptSuggestion(raw: string): string | undefined {
     .replace(/\s+/gu, " ")
     .trim();
   if (!text || /^none[.!]?$/iu.test(text)) return undefined;
+  // An offer phrased in the agent's voice is a role mix-up, not a user prompt.
+  if (AGENT_VOICE.test(text)) return undefined;
   if (text.length > MAX_SUGGESTION_CHARS) return undefined;
   return text;
 }
@@ -186,7 +199,10 @@ export const generatePromptSuggestion: PromptSuggestionGenerator = async ({
           content: [
             {
               type: "text",
-              text: "Conversation, oldest first:\n\n" + transcript + "\n\nThe user's next message:",
+              text:
+                "Conversation, oldest first:\n\n" +
+                transcript +
+                "\n\nWrite the USER's next message to the AGENT, or NONE:",
             },
           ],
           timestamp: Date.now(),
@@ -227,7 +243,7 @@ export interface PromptSuggestionController {
 
 async function promptSuggestionEnabled(): Promise<boolean> {
   try {
-    return (await readAgentPreferencesAsync()).promptSuggestion === true;
+    return (await readAgentPreferencesAsync()).promptSuggestion !== false;
   } catch {
     return false;
   }

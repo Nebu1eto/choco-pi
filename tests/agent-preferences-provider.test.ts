@@ -115,6 +115,7 @@ test(
     assert.deepEqual(items[4].values, ["off", "on", "auto"]);
     assert.equal(items[5].currentValue, "Enabled");
     assert.equal(items[6].currentValue, "openai-codex/gpt-6-luna");
+    assert.equal(items[7].currentValue, "Enabled", "prompt suggestions default to on when unset");
 
     assert.deepEqual(section.handleChange("agentLanguage", "Korean"), { kind: "update" });
     assert.deepEqual(section.handleChange("agentStyle", "concise"), { kind: "update" });
