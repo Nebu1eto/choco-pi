@@ -44,7 +44,8 @@ export default function (pi: ExtensionAPI) {
     defineTool({
       name: ADVISOR_TOOL_NAME,
       label: "Advisor",
-      description: "Consult a fresh read-only advisor about a focused question.",
+      description:
+        "Consult a fresh read-only advisor on an unproven diagnosis, a consequential plan, or final acceptance; its answer is advice, not evidence.",
       promptSnippet: "Consult a fresh read-only advisor for a focused second opinion.",
       parameters: Type.Object({ question: Type.String(), context: Type.Optional(Type.String()) }),
       async execute(_toolCallId, params, signal, onUpdate, ctx) {
