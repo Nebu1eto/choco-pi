@@ -670,3 +670,18 @@ Tool content blocks, array arguments, and nested result details now remain struc
 in streaming updates, final snapshots, and JSON replay for every tool producer.
 Existing size, depth, and cycle limits remain in place; literal strings are unchanged.
 `tests/code-mode-trace-arrays.test.ts` covers these production boundaries.
+
+## 2026-10-09 choco-pi patch: retrievable nested results keep their content id
+
+`compactNestedResult` in `src/adapter/code-mode/nested-tool-adapter.ts` no longer
+collapses a text-only result to a string when its `details` carry a string
+`responseId` (web-access `fetch_content`, `source_check`, and
+`get_search_content` error/artifact replies) or `searchId` (`web_search`). Such
+results resolve to `{ output, ...scalars }`, copying top-level booleans, finite
+numbers, and strings up to 256 characters from `details`; arrays, objects, nulls,
+and longer strings are dropped, and `output` is never overwritten. Scripts can then
+pass the id to `get_search_content`, which requires it. Both the direct and
+session dispatch paths use this fallback. Results without such an id, shell
+`structuredContent`, `details.output`, image results, and tools with a
+`resultValue` hook are unchanged. `tests/code-mode-nested-tool-dispatch.test.ts`
+covers both id keys, scalar filtering, the text fallback, and session dispatch.
