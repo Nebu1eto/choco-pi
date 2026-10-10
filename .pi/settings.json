@@ -37,6 +37,8 @@
     "synthetic/hf:moonshotai/Kimi-K3": "high",
     "anthropic/claude-fable-5-1": "low",
     "anthropic/claude-opus-5-5": "medium",
+    "anthropic/claude-sonnet-5-5": "medium",
+    "anthropic/claude-haiku-5-5": "medium",
     "openai-codex/gpt-6-sol": "low",
     "openai-codex/gpt-6.1-sol": "low",
     "openai-codex/gpt-6-luna": "high",
