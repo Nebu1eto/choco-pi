@@ -40,6 +40,7 @@ export const SESSION_AUTO_NAME_KEY = "sessionAutoName";
 export const SESSION_AUTO_NAME_MODEL_KEY = "sessionAutoNameModel";
 export const DEFAULT_SESSION_AUTO_NAME_MODEL = "openai-codex/gpt-6-luna";
 export const SESSION_AUTO_NAME_FALLBACK_MODEL = "openai-codex/gpt-5.6-luna";
+export const PROMPT_SUGGESTION_KEY = "promptSuggestion";
 export const AGENT_PREFERENCES_MARKER = "<choco_pi_agent_preferences>";
 export const AGENT_PREFERENCES_MARKER_END = "</choco_pi_agent_preferences>";
 export const USER_STYLES_DIR_NAME = "agent-styles";
@@ -74,6 +75,7 @@ export interface AgentPreferences {
   style?: string;
   sessionAutoName?: boolean;
   sessionAutoNameModel?: string;
+  promptSuggestion?: boolean;
 }
 
 /** Preferences as read from the settings file, with every defaulted key resolved. */
@@ -90,6 +92,7 @@ interface AgentPreferenceValues {
   agentStyle: string;
   sessionAutoName: boolean;
   sessionAutoNameModel: string;
+  promptSuggestion: boolean;
 }
 
 export type AgentPreferenceChange = { key: keyof AgentPreferenceValues; value: unknown };
@@ -189,6 +192,10 @@ function preferencesFromSettings(settings: JsonRecord): ResolvedAgentPreferences
   const sessionAutoNameModel = settings[SESSION_AUTO_NAME_MODEL_KEY];
   if (isString(sessionAutoNameModel) && sessionAutoNameModel !== "") {
     preferences.sessionAutoNameModel = sessionAutoNameModel;
+  }
+  const promptSuggestion = settings[PROMPT_SUGGESTION_KEY];
+  if (isBoolean(promptSuggestion)) {
+    preferences.promptSuggestion = promptSuggestion;
   }
   return preferences;
 }

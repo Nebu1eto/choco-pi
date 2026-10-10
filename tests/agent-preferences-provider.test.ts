@@ -98,6 +98,7 @@ test(
         "daybreakDefault",
         "sessionAutoName",
         "sessionAutoNameModel",
+        "promptSuggestion",
       ],
     );
     assert.equal(items[0].currentValue, "Match user");
