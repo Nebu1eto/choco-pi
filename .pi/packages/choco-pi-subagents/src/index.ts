@@ -193,6 +193,7 @@ import {
 import { showSchedulesMenu } from "./ui/schedule-menu.ts";
 import { resolveBtwType, SideConversationController } from "./ui/side-conversation.ts";
 import { selectItem } from "./ui/select-item.ts";
+import { formatProviderLabel } from "../../choco-pi-ui/extensions/zentui/model-display.ts";
 import {
   addUsage,
   getLifetimeTotal,
@@ -816,7 +817,7 @@ export default function (pi: ExtensionAPI) {
         ? "the provider reports capacity again (reset time unknown)"
         : formatResetAt(usageLimit.resetAt);
     const content =
-      `child ${name} paused until ${until}: ${usageLimit.provider} usage limit (${usageLimit.kind}). ` +
+      `child ${name} paused until ${until}: ${formatProviderLabel(usageLimit.provider)} usage limit (${usageLimit.kind}). ` +
       `It resumes on the same model after the reset; its result will arrive as a notification. ` +
       `Suggested model: ${usageLimit.suggestedModel ?? "none available"}. ` +
       `To continue elsewhere now, stop it with stop_subagent and resume it with a model.`;

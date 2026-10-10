@@ -21,6 +21,7 @@ import {
   readAgentPreferencesAsync,
 } from "./lib/agent-preferences.ts";
 import { isStaleContextError, rethrowUnlessStaleContext } from "./lib/lifecycle.ts";
+import { formatProviderLabel } from "../packages/choco-pi-ui/extensions/zentui/model-display.ts";
 import type { RuntimeValue } from "./lib/runtime-values.ts";
 import { providerAccountId } from "./provider-usage.ts";
 import {
@@ -489,7 +490,7 @@ export function registerUsageLimitController<
     state.resumeAttempts = 0;
     notify(
       session.ctx,
-      `${recovery.classification.provider} usage limit did not reset in time; auto-resume stopped. Use /model to switch.`,
+      `${formatProviderLabel(recovery.classification.provider)} usage limit did not reset in time; auto-resume stopped. Use /model to switch.`,
       "warning",
     );
   };
@@ -627,7 +628,7 @@ export function registerUsageLimitController<
   const notifyLimit = (ctx: C, classification: UsageLimitClassification, suffix: string): void => {
     notify(
       ctx,
-      `${classification.provider} ${classification.kind} limit reached; resets ${formatReset(
+      `${formatProviderLabel(classification.provider)} ${classification.kind} limit reached; resets ${formatReset(
         classification.resetAt,
         deps.now(),
       )}. ${suffix}`,
@@ -742,7 +743,7 @@ export function registerUsageLimitController<
       if (pi.getThinkingLevel() !== thinkingLevel) pi.setThinkingLevel(thinkingLevel);
       state.fallbackSwitches += 1;
       sendContinuation(
-        `${classification.provider} usage limit reached (resets ${formatReset(
+        `${formatProviderLabel(classification.provider)} usage limit reached (resets ${formatReset(
           classification.resetAt,
           deps.now(),
         )}). Switched to ${key}. Continue the previous task without repeating completed tool calls.`,
@@ -801,7 +802,7 @@ export function registerUsageLimitController<
     if (hasCapacity(evidence)) {
       notify(
         ctx,
-        `${classification.provider} rate limit is not a confirmed usage limit (live usage data shows capacity); not recovering automatically. Retry, or use /model to switch.`,
+        `${formatProviderLabel(classification.provider)} rate limit is not a confirmed usage limit (live usage data shows capacity); not recovering automatically. Retry, or use /model to switch.`,
         "warning",
       );
       return;

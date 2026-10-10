@@ -127,7 +127,7 @@ test("preference none: child limit is reported, provider closed, model untouched
     assert.match(text, /Agent failed: Codex usage limit reached \(plus plan\)\. Resets in ~5m\./);
     assert.match(
       text,
-      /Usage limit: openai-codex usage limit \(quota\); resets ~\S+; suggested model: anthropic\/e2e-claude; status: reported/,
+      /Usage limit: OpenAI usage limit \(quota\); resets ~\S+; suggested model: anthropic\/e2e-claude; status: reported/,
     );
 
     const events = usageEvents(e2e.usageEvents);
@@ -417,7 +417,7 @@ test("real root controller, fallback: Anthropic 429 switches the session to Code
     assert.equal(codexRequests.length, 1);
     assert.match(
       codexRequests[0]?.lastText ?? "",
-      /^anthropic usage limit reached \(resets .+\)\. Switched to openai-codex\/e2e-codex\. Continue the previous task/,
+      /^Anthropic usage limit reached \(resets .+\)\. Switched to openai-codex\/e2e-codex\. Continue the previous task/,
     );
     assert.deepEqual(usageLimitPolicyOwners(), [parentId]);
     // Corroboration had a (fake) Anthropic token, so it tried the OAuth usage endpoints.

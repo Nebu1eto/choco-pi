@@ -1,6 +1,7 @@
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
+import { formatProviderLabel } from "../../../choco-pi-ui/extensions/zentui/model-display.ts";
 import { renderAgentName } from "../agent-color.ts";
 import { parseAgentMessage } from "../messaging.ts";
 import type { NotificationDetails } from "../types.ts";
@@ -206,7 +207,7 @@ function renderOne(details: NotificationDetails, expanded: boolean, theme: Theme
   if (details.usageLimit) {
     const limit = details.usageLimit;
     const usageParts = [
-      limit.provider,
+      formatProviderLabel(limit.provider),
       limit.kind,
       `resets ${formatResetAt(limit.resetAt)}`,
       `suggested ${limit.suggestedModel ?? "none available"}`,
