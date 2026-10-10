@@ -106,6 +106,7 @@ function startHarness(store: PromptStashStore): Harness {
   const ctx = reinterpretHostValue<ExtensionContext>({
     mode: "tui",
     cwd: "/nonexistent/choco-pi-prompt-editor-test",
+    sessionManager: { getSessionId: () => "prompt-editor-test-session" },
     ui: {
       setWidget: (_key: string, lines: string[] | undefined) => harness.widgets.push(lines),
       getEditorComponent: () => harness.current,

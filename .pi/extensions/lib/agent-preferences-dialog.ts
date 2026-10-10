@@ -11,6 +11,7 @@ import {
   DAYBREAK_DEFAULT_KEY,
   DEFAULT_SESSION_AUTO_NAME_MODEL,
   ON_USAGE_LIMIT_VALUES,
+  PROMPT_SUGGESTION_KEY,
   SESSION_AUTO_NAME_KEY,
   SESSION_AUTO_NAME_MODEL_KEY,
   SESSION_AUTO_NAME_FALLBACK_MODEL,
@@ -164,6 +165,19 @@ async function writeSessionAutoName(ctx: ExtensionCommandContext, enabled: boole
   );
 }
 
+async function writePromptSuggestion(
+  ctx: ExtensionCommandContext,
+  enabled: boolean,
+): Promise<void> {
+  await writeAndNotify(
+    ctx,
+    () => writeAgentPreference(PROMPT_SUGGESTION_KEY, enabled),
+    `Prompt suggestions ${enabled ? "enabled" : "disabled"}`,
+    (error) =>
+      `Could not update prompt suggestions: ${error instanceof Error ? error.message : String(error)}`,
+  );
+}
+
 /** Parses a Daybreak preference row or argument value; `undefined` when unrecognized. */
 export function parseDaybreakValue(value: string): DaybreakPreference | undefined {
   const normalized = value.trim().toLowerCase();
@@ -248,6 +262,9 @@ function handleAgentPreferenceChange(
   }
   if (id === SESSION_AUTO_NAME_MODEL_KEY) {
     void writeSessionAutoNameModel(ctx, newValue);
+  }
+  if (id === PROMPT_SUGGESTION_KEY) {
+    void writePromptSuggestion(ctx, newValue === ENABLED_LABEL);
   }
   return { kind: "update" };
 }
@@ -341,6 +358,14 @@ export function buildAgentPreferencesSection(
               void writeSessionAutoNameModel(ctx, value);
             },
           }),
+        },
+        {
+          id: PROMPT_SUGGESTION_KEY,
+          label: "Prompt suggestions",
+          description:
+            "After each completed agent turn, predict your next prompt and show it as dim text in the empty editor; Tab fills it in. Uses openai-codex/gpt-6-luna, falling back to anthropic/claude-haiku-5-5, and costs one small request per turn. Off by default.",
+          currentValue: preferences.promptSuggestion === true ? ENABLED_LABEL : DISABLED_LABEL,
+          values: [ENABLED_LABEL, DISABLED_LABEL],
         },
       ];
     },

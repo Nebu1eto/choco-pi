@@ -4,6 +4,12 @@ import { FuzzyMentionEditor } from "../packages/choco-pi-ui/extensions/fuzzy-men
 import { IgnoreAwareFileCache } from "../packages/choco-pi-ui/extensions/fuzzy-mention/file-cache.ts";
 import { rethrowUnlessStaleContext } from "./lib/lifecycle.ts";
 import {
+  createPromptSuggestionController,
+  renderGhostSuggestion,
+  type PromptSuggestionController,
+  type PromptSuggestionSlot,
+} from "./lib/prompt-suggestion.ts";
+import {
   isBoolean,
   isJsonRecord,
   isNumber,
@@ -16,7 +22,7 @@ import {
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { matchesKey, type EditorComponent } from "@earendil-works/pi-tui";
+import { getKeybindings, matchesKey, type EditorComponent } from "@earendil-works/pi-tui";
 
 interface EditorState {
   lines: string[];
@@ -37,6 +43,7 @@ interface EditorInternals extends EditorComponent {
   preferredVisualCol: number | null;
   snappedFromCursorCol: number | null;
   lastAction: unknown;
+  isShowingAutocomplete?(): boolean;
 }
 
 export interface PromptStash {
@@ -76,6 +83,7 @@ type EditorFactory = NonNullable<Parameters<ExtensionContext["ui"]["setEditorCom
 type PromptEditorState = {
   onStashChange: (stashed: boolean) => void;
   binding?: PromptStashBinding;
+  suggestion?: PromptSuggestionSlot;
 };
 
 type PromptEditorFactory = EditorFactory & {
@@ -196,6 +204,7 @@ export function decoratePromptEditor(
   onStashChange: (stashed: boolean) => void,
   requestRender: () => void,
   binding?: PromptStashBinding,
+  suggestion?: PromptSuggestionSlot,
 ): EditorComponent {
   // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
   const target = editor as DecoratedEditor;
@@ -203,6 +212,14 @@ export function decoratePromptEditor(
 
   const store = binding?.store ?? globalPromptStashStore;
   const handleInput = editor.handleInput.bind(editor);
+  const render = editor.render.bind(editor);
+
+  // A suggestion shows only in an empty editor with no autocomplete menu open.
+  const visibleSuggestion = (): string | undefined => {
+    const text = suggestion?.text;
+    if (text === undefined || target.getText() !== "") return undefined;
+    return target.isShowingAutocomplete?.() ? undefined : text;
+  };
 
   const restoreStash = (): boolean => {
     const restored = store.get();
@@ -243,10 +260,26 @@ export function decoratePromptEditor(
       stashOrRestore();
       return;
     }
+    const suggested = visibleSuggestion();
+    if (suggestion && suggested !== undefined && getKeybindings().matches(data, "tui.input.tab")) {
+      suggestion.text = undefined;
+      target.setText(suggested);
+      requestRender();
+      return;
+    }
     // Submitting never restores here: Enter also runs commands and bash. The
     // extension's `input` handler restores only once a real prompt is accepted.
     handleInput(data);
   };
+
+  if (suggestion) {
+    suggestion.requestRender = requestRender;
+    target.render = (width: number): string[] => {
+      const lines = render(width);
+      const suggested = visibleSuggestion();
+      return suggested === undefined ? lines : renderGhostSuggestion(lines, suggested);
+    };
+  }
 
   Object.defineProperty(target, decoratedEditor, { value: true });
   binding?.controller.register({
@@ -287,6 +320,7 @@ export function wrapPromptEditorFactory(
       state.onStashChange,
       () => args[0].requestRender(),
       state.binding,
+      state.suggestion,
     );
   }) as PromptEditorFactory;
   Object.defineProperty(wrappedFactory, factoryState, { value: state });
@@ -363,6 +397,7 @@ export type PromptEditorOptions = {
   store?: PromptStashStore;
   agentDir?: () => string;
   schedule?: EditorInstallOptions["schedule"];
+  suggestions?: PromptSuggestionController;
 };
 
 export function createPromptEditor(options: PromptEditorOptions = {}): (pi: ExtensionAPI) => void {
@@ -374,6 +409,7 @@ export function createPromptEditor(options: PromptEditorOptions = {}): (pi: Exte
 
   return (pi) => {
     const controller = createPromptStashController();
+    const suggestions = options.suggestions ?? createPromptSuggestionController();
     let activeFileCache: IgnoreAwareFileCache | undefined;
     let zentuiInstall: { state: PromptEditorState; isCurrent: () => boolean } | undefined;
 
@@ -382,7 +418,9 @@ export function createPromptEditor(options: PromptEditorOptions = {}): (pi: Exte
       activeFileCache = undefined;
       zentuiInstall = undefined;
       const generation = controller.advance();
+      suggestions.stop();
       if (ctx.mode !== "tui") return;
+      suggestions.start(ctx.sessionManager.getSessionId());
       const cwd = ctx.cwd;
       const isCurrent = (): boolean => controller.isCurrent(generation);
       const showStash = (stashed: boolean): void => {
@@ -400,6 +438,7 @@ export function createPromptEditor(options: PromptEditorOptions = {}): (pi: Exte
       const state: PromptEditorState = {
         onStashChange: showStash,
         binding: { store, controller, generation },
+        suggestion: suggestions.slot,
       };
       showStash(store.get() !== undefined);
 
@@ -412,6 +451,7 @@ export function createPromptEditor(options: PromptEditorOptions = {}): (pi: Exte
             showStash,
             () => tui.requestRender(),
             state.binding,
+            state.suggestion,
           );
         Object.defineProperty(factory, factoryState, { value: state });
         ctx.ui.setEditorComponent(factory);
@@ -426,6 +466,7 @@ export function createPromptEditor(options: PromptEditorOptions = {}): (pi: Exte
     // are consumed; built-in commands and `!` bash never reach it. A stashed
     // draft therefore returns only once a real prompt has been accepted.
     pi.on("input", (event, ctx) => {
+      suggestions.invalidate();
       if (event.source !== "interactive") return undefined;
       const generation = controller.generation;
       let factory: EditorFactory | undefined;
@@ -441,6 +482,16 @@ export function createPromptEditor(options: PromptEditorOptions = {}): (pi: Exte
       if (factoryStateOf(factory)?.binding?.controller !== controller) return undefined;
       controller.restore();
       return undefined;
+    });
+
+    // A new run makes any suggestion stale; a settled run may produce the next one.
+    pi.on("agent_start", () => {
+      suggestions.invalidate();
+    });
+
+    // Never await here: Pi defers new prompts until settled handlers return.
+    pi.on("agent_settled", (_event, ctx) => {
+      void suggestions.settled(ctx);
     });
 
     // Zentui's /preferences editor toggle installs a fresh, undecorated factory
@@ -460,6 +511,7 @@ export function createPromptEditor(options: PromptEditorOptions = {}): (pi: Exte
 
     pi.on("session_shutdown", () => {
       controller.advance();
+      suggestions.stop();
       zentuiInstall = undefined;
       activeFileCache?.invalidate();
       activeFileCache = undefined;
