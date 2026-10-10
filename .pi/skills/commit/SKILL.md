@@ -7,7 +7,7 @@ description: Create an authorized local Git checkpoint with signing and verifica
 
 Create a commit only under explicit user authority or an active workflow's checkpoint rule. Never push.
 
-When a `task`, `task-inline`, or `task-hotfix` workflow completes, the orchestrator commits locally unless the user explicitly excluded a commit. Deferring without that exclusion bypasses the workflow; resolve instruction conflicts by precedence before checkpointing.
+When a `task`, `task-inline`, `task-dynamic`, or `task-hotfix` workflow completes, the orchestrator commits locally unless the user explicitly excluded a commit. Deferring without that exclusion bypasses the workflow; resolve instruction conflicts by precedence before checkpointing.
 
 ## Resolve policy
 
@@ -29,6 +29,13 @@ Assisted-by: choco-pi:<contributing sub-agent model name, normalized, when appli
 - Include one `Assisted-by` trailer for the orchestrator model and one for each distinct sub-agent model that materially contributed to the committed changes. Omit unused worker output, list the orchestrator first followed by sub-agent models in first-contribution order, and deduplicate only after normalizing each ID.
 - Normalize every model ID to the bare model name in lower case. Drop each provider, registry, and owner segment, keeping only the final path segment: `openai-codex/gpt-5.6-sol`, `hf:moonshotai/Kimi-K3`, and `synthetic/hf:moonshotai/Kimi-K3` become `gpt-5.6-sol`, `kimi-k3`, and `kimi-k3`. Lower-casing is the only character change; keep the remaining characters, including dots, exactly as the provider spells them.
 - Never write a `Signed-off-by` trailer by hand; the template above deliberately omits it. Commit with `-s` so Git appends exactly one trailer in its canonical `Signed-off-by: {git user.name} <{git user.email}>` form, angle brackets included. A hand-written line that differs by even one character is not deduplicated and produces two sign-offs.
+
+## Split checkpoints
+
+- Prefer one coherent, bisectable change per commit: each subject must read alone and each commit must build and pass its proportional gate. Split in dependency order: shared modules before consumers, fixes before dependent tests, and standalone documentation separately. Never split a change whose halves cannot each pass.
+- Validate an intermediate commit from its own tree, never from the fuller working tree. Stage only that commit's files, run `git stash push --keep-index --include-untracked -m checkpoint-<n>` so the working tree equals the index, run its gate, commit, then run `git stash pop`. Stop and report a pop conflict. A detached worktree is not a substitute because it omits untracked vendored `.pi/packages/*/node_modules`.
+- Create no checkpoint while another writer, formatter, or generator is active.
+- Gate proportionally: prose/docs-only commits need the formatter check on staged files plus a read-through; code commits need lint, typecheck, and focused tests for the staged scope. Every repository-required gate still runs on the final `HEAD` exactly as before.
 
 ## Create the checkpoint
 

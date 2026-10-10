@@ -54,6 +54,8 @@ After all writers stop, merge and deduplicate deferred checks, follow `task-core
 
 Unless the user explicitly excluded a commit, load and follow the harness `commit` skill. Run every required runtime behavior against the exact checkpoint `HEAD`. A correction invalidates affected evidence and requires combined validation, a new checkpoint, and final-`HEAD` proof.
 
+When the integrated diff contains more than one coherent change, follow the commit skill's split rule; the final `HEAD` still receives full gates and required runtime-behavior proof.
+
 ## 5. Review and handoff
 
 Select review through `task-core`'s task-shaped rule. When selected, prepare the immutable input through `../review/references/review-bundle.md` and give one fresh `reviewer` only its bundle path and manifest digest, not claimed safety, expected findings, or previous conclusions. Findings remain advisory until the main agent reproduces or proves them.

@@ -2,7 +2,7 @@
 
 ## Commit policy
 
-When a task/task-inline/task-hotfix workflow completes and the user has not excluded a commit, the orchestrator commits locally per `.pi/skills/commit/SKILL.md` (sign, trailer, never push).
+When a task/task-inline/task-dynamic/task-hotfix workflow completes and the user has not excluded a commit, the orchestrator commits locally per `.pi/skills/commit/SKILL.md` (sign, trailer, never push).
 
 ## Vendored dependencies
 
