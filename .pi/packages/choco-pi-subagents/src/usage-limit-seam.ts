@@ -11,6 +11,7 @@
 
 import { Type } from "typebox";
 import { Value } from "typebox/value";
+import { formatProviderLabel } from "../../choco-pi-ui/extensions/zentui/model-display.ts";
 
 export const USAGE_LIMIT_POLICY_SYMBOL = Symbol.for("choco-pi.usage-limit-policy");
 export const SUBAGENTS_USAGE_LIMIT_EVENT = "subagents:usage_limit";
@@ -373,7 +374,7 @@ export function formatResetAt(resetAt: number | undefined): string {
 /** One-line description of a usage-limit block for error text and notifications. */
 export function describeUsageLimit(limit: SubagentUsageLimit): string {
   return (
-    `${limit.provider} usage limit (${limit.kind}); resets ~${formatResetAt(limit.resetAt)}; ` +
+    `${formatProviderLabel(limit.provider)} usage limit (${limit.kind}); resets ~${formatResetAt(limit.resetAt)}; ` +
     `suggested model: ${limit.suggestedModel ?? "none available"}; status: ${limit.status}`
   );
 }

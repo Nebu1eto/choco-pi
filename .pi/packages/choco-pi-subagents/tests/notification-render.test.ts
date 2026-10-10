@@ -355,8 +355,9 @@ test("renders the usageLimit block with reset, kind, suggestion, and status", ()
   );
   assert.match(
     rendered,
-    /Usage limit · openai-codex · quota · resets 2026-01-01T12:00:00\.000Z · suggested none available · reported/,
+    /Usage limit · OpenAI · quota · resets 2026-01-01T12:00:00\.000Z · suggested none available · reported/,
   );
+  assert.doesNotMatch(rendered, /openai-codex/);
   const paused = renderSubagentNotification(
     notificationFixture({ status: "waiting_for_reset" }),
     { expanded: false },

@@ -449,7 +449,7 @@ test("none: notifies and closes the provider without switching or continuing", a
   assert.equal(harness.notes.length, 1);
   assert.match(
     harness.notes[0] ?? "",
-    /anthropic quota limit reached; resets in ~60m\. Use \/model/,
+    /^Anthropic quota limit reached; resets in ~60m\. Use \/model/,
   );
   assert.equal(getUsageLimitPolicy("none-1")?.isClosed("anthropic", "default", T0 + 1), true);
   await harness.settle();

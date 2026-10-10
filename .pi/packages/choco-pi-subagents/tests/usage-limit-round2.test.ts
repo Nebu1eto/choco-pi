@@ -97,7 +97,7 @@ test("a billing failure through the real classifier is reported with a suggestio
       suggestedModel: SOL,
       status: "reported",
     });
-    assert.match(record?.error ?? "", /Usage limit: anthropic usage limit \(billing\)/);
+    assert.match(record?.error ?? "", /Usage limit: Anthropic usage limit \(billing\)/);
     assert.deepEqual(completions, ["error"]);
     assert.deepEqual(usageEvents, ["error:reported"]);
     // Closed for 30 minutes under the owner's policy and the manager's closure.

@@ -1441,3 +1441,19 @@ replaces the journaled one, so later revivals keep it. `Agent` with `resume`
 and `model` on a dormant agent uses this. Tests: revival-lifecycle (real
 extension activation, fake runner), revival-revive (capped, queued crash
 window, dormant resume with a model).
+
+## 2026-10-08 choco-pi patch: provider display names in usage-limit prose
+
+User-facing usage-limit sentences now name the provider through
+`formatProviderLabel` (`openai-codex` → `OpenAI`, `anthropic` → `Anthropic`)
+instead of the raw provider id: the notification `Usage limit` row
+(`src/ui/notification-render.ts`), the paused-child message (`src/index.ts`),
+and `describeUsageLimit` (`src/usage-limit-seam.ts`). Identifier forms
+(`provider/id`) and lowercase provider keys used for policy lookups stay raw.
+
+The formatter is imported by relative path from
+`../choco-pi-ui/extensions/zentui/model-display.ts`. This is a deliberate
+exception to the vendored-dependencies rule: that module is an import-free leaf
+owned by the sibling `choco-pi-ui` package (which imports nothing from this
+package, so no cycle), shared so every surface uses one provider table. A resync
+must keep these three imports or restore a local copy of the table.
