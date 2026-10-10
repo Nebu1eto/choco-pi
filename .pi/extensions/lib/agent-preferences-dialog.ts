@@ -363,8 +363,8 @@ export function buildAgentPreferencesSection(
           id: PROMPT_SUGGESTION_KEY,
           label: "Prompt suggestions",
           description:
-            "After each completed agent turn, predict your next prompt and show it as dim text in the empty editor; Tab fills it in. Uses openai-codex/gpt-6-luna, falling back to anthropic/claude-haiku-5-5, and costs one small request per turn. Off by default.",
-          currentValue: preferences.promptSuggestion === true ? ENABLED_LABEL : DISABLED_LABEL,
+            "After each completed agent turn, predict your next prompt and show it as dim text in the empty editor; Tab fills it in. Uses openai-codex/gpt-6-luna, falling back to anthropic/claude-haiku-5-5, and costs one small request per turn. On by default.",
+          currentValue: preferences.promptSuggestion === false ? DISABLED_LABEL : ENABLED_LABEL,
           values: [ENABLED_LABEL, DISABLED_LABEL],
         },
       ];

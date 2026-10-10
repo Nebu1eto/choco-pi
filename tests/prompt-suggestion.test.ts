@@ -130,6 +130,9 @@ test("sanitizing keeps one clean line and rejects NONE or overlong output", () =
   assert.equal(sanitizePromptSuggestion("NONE"), undefined);
   assert.equal(sanitizePromptSuggestion("none."), undefined);
   assert.equal(sanitizePromptSuggestion("x".repeat(301)), undefined);
+  assert.equal(sanitizePromptSuggestion("Should I add a unit test?"), undefined);
+  assert.equal(sanitizePromptSuggestion("Do you want me to commit?"), undefined);
+  assert.equal(sanitizePromptSuggestion("Yes, add a unit test"), "Yes, add a unit test");
 });
 
 type Entry = {
@@ -151,7 +154,7 @@ test("transcripts require a completed final reply and include user turns", () =>
   const done = suggestionTranscript(
     entries([message("user", "Fix the bug"), message("assistant", "Fixed. Run tests?")]),
   );
-  assert.equal(done, "[user]\nFix the bug\n\n[assistant]\nFixed. Run tests?");
+  assert.equal(done, "USER:\nFix the bug\n\nAGENT:\nFixed. Run tests?");
   assert.equal(
     suggestionTranscript(
       entries([message("user", "Fix"), message("assistant", "partial", "aborted")]),
