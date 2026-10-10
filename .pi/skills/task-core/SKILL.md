@@ -24,6 +24,8 @@ Record the outcome, exclusions, affected scope, success criteria, authority boun
 - `direct_check`: a focused command, typecheck, lint, build, or inspection proves the requirement.
 - `runtime_e2e`: only the real application path can prove the behavior.
 
+Advisor output is never an evidence mode; it may only suggest what to verify.
+
 Add no test by default. A regression test must exercise production behavior or a real boundary and fail when the behavior regresses; a test that mirrors implementation constants or asserts its own fixture setup is not evidence.
 
 The `check` skill owns environment readiness. Choose validation from the acceptance ledger and applicable repository requirements; do not impose a full repository gate pass before editing. A fresh existing automatic result may satisfy a selected check only when its record includes the completed status, scope, repository revision or exact working-tree state, and all are current for the acceptance item. A pending, cancelled, stale, unavailable, or failed result is never a pass.

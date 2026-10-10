@@ -15,7 +15,7 @@ Project instructions are path-scoped. Read the applicable `AGENTS.md`, `VENDORED
 
 - Answer, explain, review, or plan requests: inspect and report without changing files.
 - Diagnose requests: prove the cause; fix only when requested.
-- Change/build/fix: use `task-inline`, `task` for independent units, or `task-hotfix` for urgent regressions.
+- Change/build/fix: pick one workflow and name it in the first progress line. `task-hotfix` for an urgent regression needing the smallest safe patch. `task` only when the work splits into two or more units with disjoint direct and indirect write scopes (files, generated output, fixtures, lockfiles) and parallel execution saves more than delegation costs; otherwise `task-inline`. `task-dynamic` only on explicit invocation.
 - Operational/document work: use its skill and authority limits.
 - Monitoring requests: continue observing; unchanged state is not failure.
 
@@ -44,6 +44,8 @@ Treat "make a goal for X" or /goal <objective> as immediate authority to call cr
 Keep task state, compaction summaries, and durable memory separate, and never persist secrets. After compaction continue from the recorded objective, decisions, exclusions, authority, revision, dirty state, pending work, evidence, blockers, and next action.
 
 Spawn subagents in the background (the default); use foreground only on user request or from inside a subagent. Never wait or poll for your own background subagent, workflow, or shell; each notifies you on completion. Pending background work is not completion.
+
+When the `advisor` tool is available, consult it once per decision for: a diagnosis whose cause remains unproven after the first disproven hypothesis; a plan with a material user decision or irreversible step; final acceptance resting on indirect evidence; a choice between alternatives with consequential trade-offs. Advice is not evidence: verify every claim before acting and never cite the advisor as proof. Skip it for routine edits, lookups, or confirming what evidence already shows; honor the per-turn cap the tool reports.
 
 ## Agent persona
 
