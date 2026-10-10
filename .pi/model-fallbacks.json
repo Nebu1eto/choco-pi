@@ -9,11 +9,11 @@
       "secondary": ["anthropic/claude-opus-5", "openai-codex/gpt-5.6-sol"]
     },
     "utility": {
-      "primary": ["anthropic/claude-sonnet-5", "openai-codex/gpt-5.6-terra"],
-      "secondary": []
+      "primary": ["anthropic/claude-sonnet-5-5", "openai-codex/gpt-5.6-terra"],
+      "secondary": ["anthropic/claude-sonnet-5"]
     },
     "micro": {
-      "primary": ["openai-codex/gpt-6-luna"],
+      "primary": ["openai-codex/gpt-6-luna", "anthropic/claude-haiku-5-5"],
       "secondary": []
     }
   },

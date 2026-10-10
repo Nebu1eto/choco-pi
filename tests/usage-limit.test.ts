@@ -841,11 +841,14 @@ test("the repository fallback table loads and mirrors the model-guidance tiers",
       primary: ["anthropic/claude-opus-5-5", "openai-codex/gpt-6.1-sol"],
       secondary: ["anthropic/claude-opus-5", "openai-codex/gpt-5.6-sol"],
     });
-    assert.deepEqual(table.tiers.utility?.primary, [
-      "anthropic/claude-sonnet-5",
-      "openai-codex/gpt-5.6-terra",
+    assert.deepEqual(table.tiers.utility, {
+      primary: ["anthropic/claude-sonnet-5-5", "openai-codex/gpt-5.6-terra"],
+      secondary: ["anthropic/claude-sonnet-5"],
+    });
+    assert.deepEqual(table.tiers.micro?.primary, [
+      "openai-codex/gpt-6-luna",
+      "anthropic/claude-haiku-5-5",
     ]);
-    assert.deepEqual(table.tiers.micro?.primary, ["openai-codex/gpt-6-luna"]);
     assert.deepEqual(table.lastResort, ["synthetic/hf:moonshotai/Kimi-K3"]);
 
     await writeFile(
