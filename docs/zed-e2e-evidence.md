@@ -1,3 +1,5 @@
+> Historical evidence: the captured runs below used the legacy `openai-codex` provider (since replaced by `openai` sign-in as the documented path). Captured values are kept verbatim.
+
 # Zed runtime E2E evidence
 
 Evidence record for running choco-pi inside real Zed through the ACP adapter.

@@ -151,7 +151,7 @@ export async function preflight(options: {
       )
         throw new GateError(
           "MODEL_UNAVAILABLE",
-          `${chosen}; run ${piPath} update --models; explicit fallback: --substitute ${model}=openai-codex/gpt-6-astra or gpt-5.6-sol`,
+          `${chosen}; run ${piPath} update --models; explicit fallback: --substitute ${model}=openai/gpt-6-astra or gpt-5.6-sol`,
         );
     }
   }

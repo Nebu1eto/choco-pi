@@ -18,7 +18,7 @@ The audit sends three noninteractive prompts. It prints a short report and write
 
 ```sh
 node tools/prefix-eval/run-matrix.ts \
-  --models 'openai-codex/gpt-5.6-sol:low,anthropic/claude-opus-5:medium' \
+  --models 'openai/gpt-5.6-sol:low,anthropic/claude-opus-5:medium' \
   --tasks tools/prefix-eval/tasks.json \
   --fixture tools/prefix-eval/fixture \
   --out /tmp/choco-pi/prefix-eval/matrix

@@ -4,7 +4,7 @@ import { list, selectModels, selectScenarios } from "./selection.ts";
 
 const pairs = [
   { original: "anthropic/claude-opus-5-5", resolved: "anthropic/claude-opus-5-5" },
-  { original: "openai-codex/gpt-6-sol", resolved: "openai-codex/gpt-6-astra" },
+  { original: "openai/gpt-6-sol", resolved: "openai/gpt-6-astra" },
 ];
 
 test("list rejects empty and duplicate entries", () => {
@@ -16,10 +16,10 @@ test("list rejects empty and duplicate entries", () => {
 test("selectModels defaults to all and matches original or substitute ids", () => {
   assert.deepEqual(selectModels(pairs, undefined), [
     "anthropic/claude-opus-5-5",
-    "openai-codex/gpt-6-astra",
+    "openai/gpt-6-astra",
   ]);
-  assert.deepEqual(selectModels(pairs, ["openai-codex/gpt-6-sol"]), ["openai-codex/gpt-6-astra"]);
-  assert.deepEqual(selectModels(pairs, ["openai-codex/gpt-6-astra"]), ["openai-codex/gpt-6-astra"]);
+  assert.deepEqual(selectModels(pairs, ["openai/gpt-6-sol"]), ["openai/gpt-6-astra"]);
+  assert.deepEqual(selectModels(pairs, ["openai/gpt-6-astra"]), ["openai/gpt-6-astra"]);
   assert.throws(() => selectModels(pairs, ["x/y"]), /unknown model x\/y/);
 });
 

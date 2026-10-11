@@ -19,7 +19,7 @@ const KNOWN_PROVIDER_LABELS: ProviderLabels = {
   "openai-codex": "OpenAI",
 };
 
-/** Human-readable provider name for prose, e.g. `openai-codex` → `OpenAI`. */
+/** Human-readable provider name for prose, e.g. `openai` or legacy `openai-codex` → `OpenAI`. */
 export function formatProviderLabel(provider: string | undefined): string {
   if (!provider) return "Unknown";
   return (

@@ -121,7 +121,7 @@ prompt='Use native Agent to spawn exactly one isolated general child named coord
 CHOCO_PI_COORDINATION_TRACE="$scratch/coordination-astra-trace.jsonl" \
   pi -p -ne \
   -e .pi/packages/choco-pi-subagents/tests/fixtures/coordination-host-probe.ts \
-  --provider openai-codex --model gpt-6-astra \
+  --provider openai --model gpt-6-astra \
   --session-dir "$scratch/coordination-astra-sessions" "$prompt"
 node .pi/packages/choco-pi-subagents/tests/fixtures/coordination-host-check.ts \
   "$scratch/coordination-astra-trace.jsonl" "$scratch/coordination-astra-sessions"
@@ -137,7 +137,7 @@ mkdir -p "$scratch/coordination-sol-sessions"
 CHOCO_PI_COORDINATION_TRACE="$scratch/coordination-sol-trace.jsonl" \
   pi -p -ne \
   -e .pi/packages/choco-pi-subagents/tests/fixtures/coordination-host-probe.ts \
-  --provider openai-codex --model gpt-5.6-sol \
+  --provider openai --model gpt-5.6-sol \
   --session-dir "$scratch/coordination-sol-sessions" "$prompt"
 node .pi/packages/choco-pi-subagents/tests/fixtures/coordination-host-check.ts \
   "$scratch/coordination-sol-trace.jsonl" "$scratch/coordination-sol-sessions"

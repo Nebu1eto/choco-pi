@@ -21,4 +21,5 @@ test("formatProviderLabel maps provider ids to display names", () => {
 
 test("formatModelRef keeps the raw provider/id identifier form", () => {
   assert.equal(formatModelRef("openai-codex", "gpt-5"), "openai-codex/gpt-5");
+  assert.equal(formatModelRef("openai", "gpt-5"), "openai/gpt-5");
 });

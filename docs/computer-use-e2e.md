@@ -1,3 +1,5 @@
+> Note: model ids below use the `openai/*` provider. Recorded fixtures under `CU/e2e` (for example `assertions.test.ts`) still carry `openai-codex-*` run names from earlier captures.
+
 # Computer-use end-to-end validation
 
 The isolated harness is `CU/e2e/run.ts` (`CU/` means `.pi/packages/choco-pi-computer-use/`). Run it only from `/Users/Nebuleto/Workspace/choco-pi-dev`. It pins `/Users/Nebuleto/.local/pi-1.0.4/node_modules/.bin/pi` and refuses the 0.86.1 Homebrew launcher. Begin with:
@@ -7,7 +9,7 @@ node --experimental-strip-types .pi/packages/choco-pi-computer-use/e2e/run.ts --
 node --experimental-strip-types .pi/packages/choco-pi-computer-use/e2e/run.ts --tier a --baseline /tmp/choco-pi/$PI_SESSION_ID/e2e/baseline.json --main-daemon-pid 5914 --waive-gate 'typecheck=pre-existing unrelated SDK mismatch' --waive-gate 'test=pre-existing subagent-config model expectation'
 ```
 
-To rerun a subset, add `--models <comma-separated ids>` and `--scenarios <comma-separated S-ids>` (default: all). A scenario filter must include `S1`: S1's isolation checks gate the other scenarios, so a filtered run cannot skip them. For example, `--models openai-codex/gpt-6-sol --scenarios S1,S3` runs S1 then S3 for that model only. Preflight still checks every configured model, and `summary.json` records the selection under `filters` (`null` for an unfiltered dimension).
+To rerun a subset, add `--models <comma-separated ids>` and `--scenarios <comma-separated S-ids>` (default: all). A scenario filter must include `S1`: S1's isolation checks gate the other scenarios, so a filtered run cannot skip them. For example, `--models openai/gpt-6-sol --scenarios S1,S3` runs S1 then S3 for that model only. Preflight still checks every configured model, and `summary.json` records the selection under `filters` (`null` for an unfiltered dimension).
 
 The second command needs explicit authorization to spawn Pi and U2's fake wire daemon. Tier A is designed not to use Accessibility, Screen Recording, or live desktop input. Tier B requires separate authorization for a dev helper installation, signing/TCC, disposable fixture apps and desktop operation. No fallback model is implicit; pass `--substitute anthropic/claude-opus-5-5=<provider>/<model>` or the corresponding OpenAI id explicitly. Preflight errors exit 2 with a reason; an unavailable model includes the pinned-binary model-refresh command and substitution examples. A dry-run does not execute Pi, so version/model-list checks remain deferred; it does reject a non-pinned `--pi` immediately.
 

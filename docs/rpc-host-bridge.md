@@ -177,7 +177,7 @@ floored at zero. Reports carry paths (session file, cwd, context files) but no
 credentials or MCP configuration beyond the enable flag.
 
 A usage report has one section per provider (`Claude`, `ChatGPT`,
-`Synthetic`) with `Plan`, `Status`, and `Snapshot` rows when present and one
+`ChatGPT Codex` (legacy), `Synthetic`) with `Plan`, `Status`, and `Snapshot` rows when present and one
 row per quota window (`value` such as `42% used`; `hint` the reset time, pace,
 and provider detail as the Usage tab prints them). The `usage` block:
 
@@ -263,7 +263,7 @@ Use Node 24 or later and an explicit compatible launcher and model:
 ```sh
 node tests/live/rpc-host-bridge.ts \
   --pi-launcher "$HOME/.local/pi-shim/pi" \
-  --model openai-codex/gpt-6.1-sol \
+  --model openai/gpt-6.1-sol \
   --scratch-dir /tmp/choco-pi/<approved-task>/probe \
   --capture /tmp/choco-pi/<approved-task>/probe/bridge-manual.jsonl \
   --timeout-ms 180000
