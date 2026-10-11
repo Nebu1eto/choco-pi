@@ -1,3 +1,4 @@
+import { stripVTControlCharacters } from "node:util";
 import { isString, reinterpretHostValue, type RuntimeValue } from "./lib/runtime-values.ts";
 import {
   InteractiveMode,
@@ -459,11 +460,13 @@ async function showTabOnce(
       const label = await summarizeMcpServers(cwd, names);
       if (currentSessionId() !== sessionId) return undefined;
       const body = statusBody(ctx, thinkingLevel, undefined, initialExpanded, label);
-      ctx.ui.notify(ctx.ui.theme.fg("text", body), "info");
+      // Hosts without a terminal render notices as plain text; escape codes
+      // would show up verbatim.
+      ctx.ui.notify(stripVTControlCharacters(body), "info");
       return undefined;
     }
     const body = await tabBody(ctx, thinkingLevel, initial, false, initialExpanded);
-    ctx.ui.notify(ctx.ui.theme.fg("text", body), "info");
+    ctx.ui.notify(stripVTControlCharacters(body), "info");
     return undefined;
   }
   const provider = getPreferencesProvider();

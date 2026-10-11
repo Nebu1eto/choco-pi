@@ -75,7 +75,9 @@ export function registerCodexCommand(
   }
 
   async function openSettings(ctx: ExtensionContext, tab: SettingsTab): Promise<void> {
-    if (!ctx.hasUI) {
+    // RPC hosts have dialogs but no terminal components, so only the TUI gets
+    // the settings screen; every other mode receives the text summary.
+    if (ctx.mode !== "tui") {
       if (tab === "usage") {
         const [{ fetchCodexUsage }, { formatCodexUsage }] = await Promise.all([
           import("../../codex-usage/client.ts"),

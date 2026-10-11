@@ -314,3 +314,35 @@ test("btw type resolution falls through to an available role when defaults are d
     agentTypes.registerAgents(new Map());
   }
 });
+
+test("without a terminal, BTW never opens an overlay and posts the answer as notices", () => {
+  const record = makeRecord(makeSession("rpc answer"));
+  const manager = partialFixture<AgentManager>({ getRecord: () => record });
+  const harness = overlayHarness(record);
+  let customCalls = 0;
+  const controller = new SideConversationController(manager);
+  controller.setUICtx(
+    {
+      notify: harness.ui.notify,
+      custom<T>(): Promise<T> {
+        customCalls++;
+        return Promise.reject(new Error("RPC has no terminal components"));
+      },
+    },
+    false,
+  );
+
+  assert.equal(controller.open(record), true);
+  assert.match(
+    harness.notifications[0] ?? "",
+    /^BTW @general-purpose · running\n\nNo answer yet\./,
+  );
+  assert.match(harness.notifications[0] ?? "", /needs the terminal UI/);
+
+  record.status = "completed";
+  record.result = "rpc answer";
+  controller.onAgentComplete(record);
+  assert.equal(harness.notifications[1], "BTW @general-purpose finished.\n\nrpc answer");
+  assert.equal(customCalls, 0);
+  assert.equal(controller.isOpen(), false);
+});

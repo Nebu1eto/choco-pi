@@ -149,3 +149,42 @@ test("invalidation rejects pending old-theme loads and drops inactive styled cac
     controller.dispose();
   }
 });
+
+test("RPC status tabs post plain-text notices without terminal escape codes", async () => {
+  const notices: { message: string; level: string | undefined }[] = [];
+  const theme = {
+    fg: (_name: string, value: string) => `\u001b[31m${value}\u001b[0m`,
+    bold: (value: string) => `\u001b[1m${value}\u001b[22m`,
+  };
+  const ctx = reinterpretHostValue<ExtensionCommandContext>({
+    cwd: process.cwd(),
+    mode: "rpc",
+    hasUI: true,
+    model: undefined,
+    sessionManager: {
+      getEntries: () => [],
+      buildContextEntries: () => [],
+      getSessionName: () => undefined,
+      getSessionId: () => "rpc-test",
+      getSessionFile: () => undefined,
+      getHeader: () => null,
+    },
+    getContextUsage: () => undefined,
+    getSystemPrompt: () => "system prompt",
+    getSystemPromptOptions: () => ({ cwd: process.cwd(), contextFiles: [], skills: [] }),
+    modelRegistry: { find: () => undefined },
+    ui: {
+      theme,
+      notify: (message: string, level?: string) => notices.push({ message, level }),
+      custom: () => Promise.reject(new Error("RPC has no terminal components")),
+    },
+  });
+  await openStatusTab(ctx, "medium", "context");
+  await openStatusTab(ctx, "medium", "status");
+  assert.equal(notices.length, 2);
+  for (const notice of notices) {
+    assert.equal(notice.level, "info");
+    assert.ok(notice.message.length > 0);
+    assert.ok(!notice.message.includes("\u001b"), "notice carries no escape codes");
+  }
+});

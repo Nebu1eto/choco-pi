@@ -72,7 +72,7 @@ test("the usage tab paints its own body instead of one flat colour", async () =>
   assert.match(body, /<accent>ChatGPT<\/accent><dim> — <\/dim><text>not connected<\/text>/);
 });
 
-test("registers /quota as a white-text alias for /usage", async () => {
+test("registers /quota as a plain-text alias for /usage outside the TUI", async () => {
   const commands = new Map<string, { handler: (args: string, ctx: any) => Promise<void> }>();
   // SAFETY: The fixture supplies every host member exercised by this test.
   statusCommands({
@@ -102,7 +102,8 @@ test("registers /quota as a white-text alias for /usage", async () => {
 
   assert.equal(notifications.length, 1);
   assert.equal(notifications[0]?.[1], "info");
-  assert.match(notifications[0]?.[0] ?? "", /^<text>Claude — not connected/);
+  // Hosts without a terminal render notices verbatim, so no theme styling is applied.
+  assert.match(notifications[0]?.[0] ?? "", /^Claude — not connected/);
 });
 
 test("closes an open status dialog when reload starts before its context becomes stale", async () => {

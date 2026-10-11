@@ -1478,3 +1478,20 @@ exception to the vendored-dependencies rule: that module is an import-free leaf
 owned by the sibling `choco-pi-ui` package (which imports nothing from this
 package, so no cycle), shared so every surface uses one provider table. A resync
 must keep these three imports or restore a local copy of the table.
+
+## 2026-10-11 choco-pi patch: `/agents` and `/btw` without a terminal
+
+Pi RPC forwards dialogs and notices but resolves `ctx.ui.custom()` to
+`undefined`, so RPC hosts saw `/agents` silently reopen its menu and never saw a
+BTW answer. Outside `ctx.mode === "tui"` only (TUI behavior unchanged):
+
+- `src/ui/headless-menus.ts` (new) holds the dialog fallbacks. In
+  `src/index.ts`, Agent types uses a numbered select, Settings edits through
+  select/input dialogs, and the running-agent viewer posts the agent's status
+  and latest answer with a note that the live view needs the terminal UI.
+- `SideConversationController.setUICtx(ui, terminal)` (`src/ui/side-conversation.ts`)
+  skips auto-reveal, `open()` posts the answer as a notice, and completion posts
+  the answer instead of "Run /btw to open it". The `/btw` launch notice drops
+  the Esc hint in that mode.
+
+Tests: `tests/headless-menus.test.ts`, `tests/side-conversation.test.ts`.

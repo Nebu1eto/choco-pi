@@ -192,6 +192,11 @@ import {
   renderSubagentNotification,
 } from "./ui/notification-render.ts";
 import { showSchedulesMenu } from "./ui/schedule-menu.ts";
+import {
+  editSettingsWithDialogs,
+  headlessConversationNotice,
+  pickAgentType,
+} from "./ui/headless-menus.ts";
 import { resolveBtwType, SideConversationController } from "./ui/side-conversation.ts";
 import { selectItem } from "./ui/select-item.ts";
 import { formatProviderLabel } from "../../choco-pi-ui/extensions/zentui/model-display.ts";
@@ -1328,7 +1333,7 @@ export default function (pi: ExtensionAPI) {
     if (ctx.hasUI) {
       fleet.setUICtx(ctx.ui);
       focus.setUICtx(ctx.ui);
-      sideConversations.setUICtx(ctx.ui);
+      sideConversations.setUICtx(ctx.ui, ctx.mode === "tui");
     }
     if (ownsManagerRegistry && !unregisterPreferencesProvider) {
       unregisterPreferencesProvider = registerSubagentPreferencesProvider((providerCtx) =>
@@ -3651,6 +3656,16 @@ export default function (pi: ExtensionAPI) {
     if (hasCustom) legendParts.push("• = project  ◦ = global");
     if (hasDisabled) legendParts.push("✕ = disabled");
 
+    if (ctx.mode !== "tui") {
+      // RPC hosts get dialogs but not the settings-list component.
+      const picked = await pickAgentType(ctx.ui, items);
+      if (picked && getAgentConfig(picked)) {
+        await showAgentDetail(ctx, picked);
+        await showAllAgentsList(ctx);
+      }
+      return;
+    }
+
     const selected = await ctx.ui.custom<string | undefined>((_tui, _theme, _kb, done) => {
       const slTheme = getSettingsListTheme();
       const list = new SettingsList(
@@ -3706,6 +3721,11 @@ export default function (pi: ExtensionAPI) {
     ctx: ExtensionCommandContext,
     record: AgentRecord,
   ): Promise<boolean> {
+    if (ctx.mode !== "tui") {
+      const label = `${getDisplayName(record.type)} (${record.description})`;
+      ctx.ui.notify(headlessConversationNotice(record, label), "info");
+      return false;
+    }
     if (!record.session) {
       ctx.ui.notify(
         `Agent is ${record.status === "queued" ? "queued" : "expired"} — no session available.`,
@@ -4216,6 +4236,14 @@ Write the file using the write tool. Only write the file, nothing else.`;
     const applyValue = (id: string, value: string): void =>
       applySubagentSetting(id, value, controller);
 
+    if (ctx.mode !== "tui") {
+      await editSettingsWithDialogs(ctx.ui, buildItems, applyValue, {
+        ids: SUBAGENT_NUMERIC_SETTING_IDS,
+        label: (item) => getSubagentNumericSettingRange(item.id)?.inputLabel ?? item.label,
+      });
+      return;
+    }
+
     let list: SettingsList;
     // Track current selection index directly (SettingsList doesn't expose it).
     // Updated on arrow keys so Enter knows which field is selected immediately.
@@ -4324,7 +4352,11 @@ Write the file using the write tool. Only write the file, nothing else.`;
         });
         const handle = record?.alias ?? record?.handle ?? id;
         ctx.ui.notify(
-          `${record?.status === "queued" ? "Queued" : "Started"} BTW @${handle}. Esc dismisses without stopping it.`,
+          `${record?.status === "queued" ? "Queued" : "Started"} BTW @${handle}. ${
+            ctx.mode === "tui"
+              ? "Esc dismisses without stopping it."
+              : "Its answer will be posted here when it finishes."
+          }`,
           "info",
         );
       } catch (error) {

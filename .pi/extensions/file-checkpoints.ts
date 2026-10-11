@@ -333,8 +333,15 @@ export default function fileCheckpoints(pi: ExtensionAPI): void {
   ): Promise<void> {
     try {
       if (action === "fork") {
-        const result = await ctx.fork(turn.entryId, { position: "before" });
-        if (!result.cancelled) ctx.ui.notify(`Forked a new session at turn ${turn.index}.`, "info");
+        const index = turn.index;
+        // Forking replaces the session and invalidates `ctx`; only the
+        // replacement context may report the result.
+        await ctx.fork(turn.entryId, {
+          position: "before",
+          withSession: async (fresh) => {
+            fresh.ui.notify(`Forked a new session at turn ${index}.`, "info");
+          },
+        });
         return;
       }
       if (action === "rewind") {

@@ -635,7 +635,12 @@ export default function modelControls(pi: ExtensionAPI): void {
       try {
         updateModel(ctx.model);
         const status = setFast(args);
-        if (args.trim().toLowerCase() === "status" || status.includes("inactive"))
+        // Hosts without the TUI editor badge need the notice as confirmation.
+        if (
+          ctx.mode !== "tui" ||
+          args.trim().toLowerCase() === "status" ||
+          status.includes("inactive")
+        )
           ctx.ui.notify(status, "info");
       } catch (error) {
         ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");

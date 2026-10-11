@@ -20,6 +20,7 @@ import {
 import type { AgentRecord } from "../types.ts";
 import type { AgentActivity, Theme } from "./agent-widget.ts";
 import { ConversationViewer, VIEWPORT_HEIGHT_PCT } from "./conversation-viewer.ts";
+import { describeAgentResult, headlessConversationNotice } from "./headless-menus.ts";
 
 export type SideConversationUICtx = {
   notify(message: string, type?: "info" | "warning" | "error"): void;
@@ -69,6 +70,10 @@ function describeQuestion(question: string): string {
   return oneLine.length > 72 ? `btw: ${oneLine.slice(0, 69)}…` : `btw: ${oneLine}`;
 }
 
+function handleOf(record: AgentRecord): string {
+  return record.alias ?? record.handle ?? record.id;
+}
+
 export class SideConversationController {
   private manager: AgentManager;
   private options: SideConversationOptions;
@@ -76,14 +81,17 @@ export class SideConversationController {
   private autoOpen = new Set<string>();
   private openAgentId: string | undefined;
   private closeOverlay: (() => void) | undefined;
+  /** False when the host has dialogs and notices but no terminal components (RPC). */
+  private terminal = true;
 
   constructor(manager: AgentManager, options: SideConversationOptions = {}) {
     this.manager = manager;
     this.options = options;
   }
 
-  setUICtx(ui: SideConversationUICtx): void {
+  setUICtx(ui: SideConversationUICtx, terminal = true): void {
     this.ui = ui;
+    this.terminal = terminal;
   }
 
   /**
@@ -112,6 +120,8 @@ export class SideConversationController {
       // before spawn() returns its id.
       onSessionCreated: () => queueMicrotask(reveal),
     });
+    // Without a terminal there is no overlay to reveal; the answer arrives as a notice.
+    if (!this.terminal) return id;
     this.autoOpen.add(id);
 
     // A synchronous manager double may already have attached its session.
@@ -122,6 +132,10 @@ export class SideConversationController {
   /** Open one side conversation in the shared dismissible viewer. */
   open(record: AgentRecord): boolean {
     if (!record.sideConversation || !record.session || !this.ui) return false;
+    if (!this.terminal) {
+      this.ui.notify(headlessConversationNotice(record, `BTW @${handleOf(record)}`), "info");
+      return true;
+    }
     if (this.openAgentId === record.id) return true;
     if (this.openAgentId) {
       this.ui.notify("Close the open BTW conversation before opening another.", "info");
@@ -177,11 +191,14 @@ export class SideConversationController {
     if (!record.sideConversation) return;
     this.autoOpen.delete(record.id);
     if (this.openAgentId === record.id) return;
-    const handle = record.alias ?? record.handle ?? record.id;
-    this.ui?.notify(
-      `BTW @${handle} finished. Run /btw to open it.`,
-      record.status === "error" ? "warning" : "info",
-    );
+    const handle = handleOf(record);
+    const level = record.status === "error" ? "warning" : "info";
+    if (!this.terminal) {
+      // No overlay can be reopened, so the notice carries the answer itself.
+      this.ui?.notify(`BTW @${handle} finished.\n\n${describeAgentResult(record)}`, level);
+      return;
+    }
+    this.ui?.notify(`BTW @${handle} finished. Run /btw to open it.`, level);
   }
 
   isOpen(id?: string): boolean {

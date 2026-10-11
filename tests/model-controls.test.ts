@@ -255,7 +255,8 @@ test("legacy process-global Codex state cannot seed a new session", async () => 
     await fastHandler?.("status", ctx);
     await fastHandler?.("off", ctx);
     await fastHandler?.("status", ctx);
-    assert.deepEqual(notifications, ["Fast mode: off", "Fast mode: off"]);
+    // RPC confirms the toggle as well as both status reads.
+    assert.deepEqual(notifications, ["Fast mode: off", "Fast mode: off", "Fast mode: off"]);
     handlers.get("session_shutdown")?.({}, ctx);
   } finally {
     if (previous === undefined) delete store[symbol];
@@ -342,15 +343,15 @@ test("fast toggles rerender without appending a scrollback status row", async ()
   });
   modelControls(pi);
 
-  let notifications = 0;
+  const notifications: string[] = [];
   let renders = 0;
   const ctx = {
     mode: "rpc",
     model: model("openai-codex"),
     sessionManager: { getBranch: () => [], getSessionId: () => "render-session" },
     ui: {
-      notify: () => {
-        notifications++;
+      notify: (message: string) => {
+        notifications.push(message);
       },
       setStatus: (_key: string, value: string | undefined) => {
         assert.equal(value, undefined);
@@ -359,11 +360,18 @@ test("fast toggles rerender without appending a scrollback status row", async ()
     },
   };
   handlers.get("session_start")?.({}, ctx);
-  await fastHandler?.("on", ctx);
+  // The TUI editor badge is the confirmation; no scrollback row is appended.
+  await fastHandler?.("on", { ...ctx, mode: "tui" });
 
   assert.equal(entries, 1);
-  assert.equal(notifications, 0);
+  assert.deepEqual(notifications, []);
   assert.equal(renders, 1);
+
+  // RPC hosts have no badge, so the toggle confirms with a notice.
+  await fastHandler?.("off", ctx);
+  assert.equal(entries, 2);
+  assert.deepEqual(notifications, ["Fast mode: off"]);
+  assert.equal(renders, 2);
   handlers.get("session_shutdown")?.({}, ctx);
 });
 

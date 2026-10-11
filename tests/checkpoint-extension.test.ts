@@ -355,6 +355,62 @@ test("rollback still records and uses a safety snapshot when Git state is reused
   );
 });
 
+test("fork reports through the replacement context because the old one is stale", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "choco-pi-fork-notice-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(restoreForkSelector);
+  await execFileAsync("git", ["init", "-q", "-b", "main", "."], { cwd: root });
+  await writeFile(path.join(root, "note.txt"), "fork target\n");
+
+  const harness = createHarness(root);
+  persistUserEntry(harness, "fork target");
+  const freshNotices: Notice[] = [];
+  let stale = false;
+  const staleNotices: Notice[] = [];
+  const ui = {
+    select: async (title: string, choices: string[]) =>
+      title === "Checkpoints" ? choices[0] : "Fork",
+    confirm: async () => true,
+    notify: (message: string, level: string) => staleNotices.push({ message, level }),
+  };
+  const ctx = reinterpretHostValue<RuntimeValue>({
+    cwd: root,
+    hasUI: true,
+    mode: "rpc",
+    isIdle: () => true,
+    waitForIdle: async () => {},
+    get ui() {
+      if (stale) throw new Error("This extension ctx is stale after session replacement");
+      return ui;
+    },
+    sessionManager: {
+      getSessionId: () => "01a02000-0000-7000-8000-000000000000",
+      getBranch: () => harness.branch,
+    },
+    fork: async (
+      _entryId: string,
+      options: { withSession?: (fresh: RuntimeValue) => Promise<void> },
+    ) => {
+      stale = true;
+      await options.withSession?.(
+        reinterpretHostValue<RuntimeValue>({
+          ui: {
+            notify: (message: string, level: string) => freshNotices.push({ message, level }),
+          },
+        }),
+      );
+      return { cancelled: false };
+    },
+  });
+
+  const rewind = harness.commands.get("rewind");
+  assert.ok(rewind);
+  await rewind.handler("", ctx);
+
+  assert.deepEqual(staleNotices, []);
+  assert.deepEqual(freshNotices, [{ message: "Forked a new session at turn 1.", level: "info" }]);
+});
+
 test("a working tree without Git warns once and then stays quiet", async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), "choco-pi-nogit-"));
   t.after(() => rm(root, { recursive: true, force: true }));

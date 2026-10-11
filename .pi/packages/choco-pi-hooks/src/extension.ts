@@ -165,10 +165,13 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
         ctx.ui.notify("Usage: /add-dir <path>", "warning");
         return;
       }
+      const mode = ctx.mode;
       await dispatch("DirectoryAdded", ctx, {
         directory,
         source: "slash_command",
       });
+      // Hosts without the TUI otherwise get no confirmation at all.
+      if (mode !== "tui") ctx.ui.notify(`Ran DirectoryAdded hooks for ${directory}.`, "info");
     },
   });
   const removeDirectoryAddedListener = pi.events.on(

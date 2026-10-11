@@ -685,3 +685,10 @@ session dispatch paths use this fallback. Results without such an id, shell
 `structuredContent`, `details.output`, image results, and tools with a
 `resultValue` hook are unchanged. `tests/code-mode-nested-tool-dispatch.test.ts`
 covers both id keys, scalar filtering, the text fallback, and session dispatch.
+
+## 2026-10-11 choco-pi patch: `/codex` summary outside the TUI
+
+`openSettings` in `src/ui/settings/command.ts` gated the text summary on
+`!ctx.hasUI`, but Pi RPC reports `hasUI` true while `ctx.ui.custom()` returns
+`undefined`, so RPC hosts got no output. The gate is now `ctx.mode !== "tui"`;
+TUI is unchanged. Test: `tests/settings-command-rpc.test.ts`.
