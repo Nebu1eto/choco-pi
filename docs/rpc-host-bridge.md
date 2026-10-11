@@ -62,6 +62,15 @@ These are session records, not assistant messages. On connection, send
 the full session history with `get_entries` during the handshake. That command
 remains available for manual diagnostics.
 
+Subagent sessions are ordinary Pi session files in the same session
+directory. Each freshly created one starts with a `choco-pi:subagent` custom
+entry (`{ schemaVersion: 1, agentId, agentType, parentSessionId }`, nulls
+when unknown). Hosts that list Pi session files for a resume picker should
+hide sessions carrying it. Do not use the header's `parentSession` as the
+signal: user `/branch` sessions carry it too. Sessions written before this
+marker existed can only be recognised by their `session_info` name, which the
+subagent runner sets to `<agent name>#<first 8 hex of agentId>`.
+
 Progress is emitted only when **both** `ctx.mode === "rpc"` and
 `CHOCO_PI_HOST === "waku"`. The bridge uses changed, 250 ms-debounced
 `setStatus` frames:

@@ -132,6 +132,12 @@ export const SUBAGENT_TOOL_NAMES = {
 
 /** Names of tools registered by this extension that subagents must NOT inherit. */
 const EXCLUDED_TOOL_NAMES: string[] = Object.values(SUBAGENT_TOOL_NAMES);
+/**
+ * Custom session entry written once into every freshly created subagent
+ * session. Part of the host contract (docs/waku-integration.md): hosts hide
+ * sessions carrying it from user-facing session pickers.
+ */
+export const SUBAGENT_SESSION_MARKER = "choco-pi:subagent";
 
 /** Pi built-ins intentionally unavailable in every choco-pi child session. */
 const DISABLED_BUILTIN_TOOL_NAMES = new Set(["grep"]);
@@ -1561,6 +1567,18 @@ export async function runAgent(
   session.setSessionName(
     options.agentId ? `${baseSessionName}#${options.agentId.slice(0, 8)}` : baseSessionName,
   );
+  // Durable marker so hosts that list Pi session files (Waku's Resume picker)
+  // can tell a subagent transcript from a user session without parsing the
+  // `name#id` convention above or `parentSession`, which ordinary `/branch`
+  // sessions carry too. A resumed file already has its marker.
+  if (!options.resumeSessionFile) {
+    session.sessionManager.appendCustomEntry(SUBAGENT_SESSION_MARKER, {
+      schemaVersion: 1,
+      agentId: options.agentId ?? null,
+      agentType: type,
+      parentSessionId: ctx.sessionManager?.getSessionId?.() ?? null,
+    });
+  }
 
   // Bind extensions so that session_start fires and extensions can initialize
   // (e.g. loading credentials, setting up state). Tool gating already happened

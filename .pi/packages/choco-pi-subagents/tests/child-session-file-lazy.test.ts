@@ -7,7 +7,7 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 
 import { registerAgents } from "../src/agent-types.ts";
-import { runAgent } from "../src/agent-runner.ts";
+import { SUBAGENT_SESSION_MARKER, runAgent } from "../src/agent-runner.ts";
 import { unregisterChildSessionId } from "../src/child-context.ts";
 import type { AgentConfig } from "../src/types.ts";
 import { createSdkFixture } from "./sdk-fixture.ts";
@@ -15,6 +15,17 @@ import { createSdkFixture } from "./sdk-fixture.ts";
 const SessionHeaderSchema = Type.Object({
   type: Type.Literal("session"),
   parentSession: Type.Optional(Type.String()),
+});
+
+const SubagentMarkerSchema = Type.Object({
+  type: Type.Literal("custom"),
+  customType: Type.Literal(SUBAGENT_SESSION_MARKER),
+  data: Type.Object({
+    schemaVersion: Type.Literal(1),
+    agentId: Type.Union([Type.String(), Type.Null()]),
+    agentType: Type.String(),
+    parentSessionId: Type.Union([Type.String(), Type.Null()]),
+  }),
 });
 
 async function exists(path: string): Promise<boolean> {
@@ -82,11 +93,26 @@ test("runAgent tolerates a persisted child session whose file is created lazily"
         timestamp: Date.now(),
       });
       assert.equal(await exists(sessionFile), true, "the first user message creates the file");
-      const [headerLine] = (await readFile(sessionFile, "utf8")).split("\n");
+      const lines = (await readFile(sessionFile, "utf8")).split("\n");
+      const [headerLine] = lines;
       assert.ok(headerLine);
       const header: unknown = JSON.parse(headerLine);
       assert.ok(Value.Check(SessionHeaderSchema, header), "the file starts with a session header");
       assert.equal(header.parentSession, fixture.ctx.sessionManager.getSessionFile());
+      // The subagent marker is a durable custom entry (hosts filter on it).
+      const markers = [];
+      for (const line of lines) {
+        if (!line.includes(SUBAGENT_SESSION_MARKER)) continue;
+        const entry: unknown = JSON.parse(line);
+        if (Value.Check(SubagentMarkerSchema, entry)) markers.push(entry);
+      }
+      assert.equal(markers.length, 1, "exactly one subagent marker is written at spawn");
+      assert.deepEqual(markers[0]?.data, {
+        schemaVersion: 1,
+        agentId: "lazyagent01",
+        agentType: config.name,
+        parentSessionId: fixture.ctx.sessionManager.getSessionId(),
+      });
     } finally {
       child.dispose();
     }
