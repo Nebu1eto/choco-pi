@@ -14,12 +14,15 @@ import {
   claudePlanLabel,
   codexPlanLabel,
   formatProviderUsage,
+  formatUsageReport,
   normalizeClaudeUsage,
   normalizeCodexUsage,
   normalizeSyntheticUsage,
+  openaiUsage,
   providerAccountId,
   providerUsageWindows,
   quotaHealth,
+  readProviderUsages,
   refillPace,
   usageFailureMessage,
   windowElapsedPercent,
@@ -220,7 +223,7 @@ test("Usage reset key runs the action once and returns to the Usage menu", async
   // SAFETY: The fixture implements the Usage dialog and disconnected reset path.
   await commands.get("usage")?.handler("", ctx as never);
   assert.equal(dialogs, 2);
-  assert.deepEqual(notices, ["ChatGPT is not connected."]);
+  assert.deepEqual(notices, ["ChatGPT Codex (legacy) is not signed in."]);
 });
 
 test("labels Claude plans from the live profile, with Team seats before the rate-limit tier", () => {
@@ -297,7 +300,7 @@ test("labels ChatGPT Codex plans and keeps unknown wire values readable", () => 
       credits: { balance: "0" },
       rate_limit: {},
     });
-    assert.equal(formatProviderUsage(usage), `ChatGPT — ${label} · 0 credits`);
+    assert.equal(formatProviderUsage(usage), `ChatGPT Codex — ${label} · 0 credits`);
   }
 });
 
@@ -307,7 +310,7 @@ test("usage numbers are rounded for display instead of echoing float noise", () 
     credits: { balance: "62500.0000000000" },
     rate_limit: {},
   });
-  assert.equal(formatProviderUsage(codex), "ChatGPT — Pro 200 · 62500 credits");
+  assert.equal(formatProviderUsage(codex), "ChatGPT Codex — Pro 200 · 62500 credits");
   const fractional = normalizeCodexUsage({ credits: { balance: 12.3456 }, rate_limit: {} });
   assert.equal(fractional.status, "12.35 credits");
   const unparsable = normalizeCodexUsage({ credits: { balance: "n/a" }, rate_limit: {} });
@@ -699,6 +702,148 @@ function registryContext(tokens: Record<string, string>): ExtensionContext {
     },
   });
 }
+
+/**
+ * Registry fake for the `openai` usage entry: `credential` is the host's stored
+ * credential type, and every token or network path throws so the test proves
+ * neither is touched.
+ */
+type OpenAIFixture = { ctx: ExtensionContext; tokenRequests: string[] };
+
+function openaiContext(
+  credential: "oauth" | "api_key" | undefined,
+  codexToken?: string,
+  activeModel?: { provider: string; id: string },
+): OpenAIFixture {
+  const tokenRequests: string[] = [];
+  const models = [{ provider: "openai", id: "gpt-6.1-sol" }];
+  const ctx = reinterpretHostValue<ExtensionContext>({
+    model: activeModel,
+    modelRegistry: {
+      getProviderAuthStatus: (provider: string) => ({
+        configured:
+          (provider === "openai" && credential !== undefined) ||
+          (provider === "openai-codex" && codexToken !== undefined),
+      }),
+      getApiKeyForProvider: async (provider: string) => {
+        tokenRequests.push(provider);
+        if (provider === "openai") throw new Error("openai token must not be resolved");
+        return provider === "openai-codex" ? codexToken : undefined;
+      },
+      getAll: () => models,
+      isUsingOAuth: (model: { provider: string }) =>
+        model.provider === "openai" && credential === "oauth",
+    },
+  });
+  return { ctx, tokenRequests };
+}
+
+test("signed-in openai reports no quota window and never resolves a token", async (t) => {
+  const fetches: string[] = [];
+  t.mock.method(globalThis, "fetch", (input: RuntimeValue) => {
+    fetches.push(String(input));
+    return Promise.reject(new Error("no network in tests"));
+  });
+  const { ctx, tokenRequests } = openaiContext("oauth");
+  assert.deepEqual(openaiUsage(ctx), {
+    name: "ChatGPT",
+    status: "signed in; quota window not available on api.openai.com",
+    windows: [],
+  });
+  const report = await readProviderUsages(ctx);
+  assert.deepEqual(
+    report.providers.map((reading) =>
+      reading.ok ? [reading.usage.name, reading.usage.status] : [reading.name, reading.error],
+    ),
+    [
+      ["Claude", "not connected"],
+      ["ChatGPT", "signed in; quota window not available on api.openai.com"],
+      ["ChatGPT Codex", "legacy, not signed in"],
+      ["Synthetic", "not connected"],
+    ],
+  );
+  assert.match(
+    formatUsageReport(report),
+    /^ChatGPT — signed in; quota window not available on api\.openai\.com$/m,
+  );
+  assert.deepEqual(tokenRequests, []);
+  assert.deepEqual(fetches, []);
+  assert.equal(await providerUsageWindows(ctx, "openai"), undefined);
+  assert.equal(await providerAccountId(ctx, "openai"), undefined);
+});
+
+test("openai usage entry distinguishes API keys, absent auth, and a broken registry", () => {
+  assert.equal(
+    openaiUsage(openaiContext("api_key").ctx).status,
+    "API key; no subscription quota window",
+  );
+  assert.equal(openaiUsage(openaiContext(undefined).ctx).status, "not connected");
+  const broken = reinterpretHostValue<ExtensionContext>({
+    modelRegistry: {
+      getProviderAuthStatus: () => {
+        throw new Error("registry unavailable");
+      },
+    },
+  });
+  assert.deepEqual(openaiUsage(broken), { name: "ChatGPT", status: "not connected", windows: [] });
+  // Configured, but the host cannot report the credential type: still no request.
+  const unknownType = reinterpretHostValue<ExtensionContext>({
+    modelRegistry: { getProviderAuthStatus: () => ({ configured: true }) },
+  });
+  assert.equal(
+    openaiUsage(unknownType).status,
+    "signed in; quota window not available on api.openai.com",
+  );
+});
+
+test("legacy Codex without a usable sign-in reads as legacy, not signed in", async (t) => {
+  t.mock.method(globalThis, "fetch", () => Promise.reject(new Error("no network in tests")));
+  // A token without chatgpt_account_id (an expired or foreign sign-in) is not a Codex sign-in.
+  const { ctx } = openaiContext("oauth", "not-a-jwt", {
+    provider: "openai-codex",
+    id: "gpt-6-sol",
+  });
+  const report = await readProviderUsages(ctx);
+  const codex = report.providers[2];
+  assert.ok(codex?.ok);
+  assert.deepEqual(codex.usage, {
+    name: "ChatGPT Codex",
+    status: "legacy, not signed in",
+    windows: [],
+  });
+});
+
+test("an active openai model leaves the legacy Codex credential unresolved", async (t) => {
+  const fetches: string[] = [];
+  t.mock.method(globalThis, "fetch", (input: RuntimeValue) => {
+    fetches.push(String(input));
+    return Promise.reject(new Error("no network in tests"));
+  });
+  const { ctx, tokenRequests } = openaiContext("oauth", "stale-codex-token", {
+    provider: "openai",
+    id: "gpt-6.1-sol",
+  });
+  const report = await readProviderUsages(ctx);
+  const codex = report.providers[2];
+  assert.ok(codex?.ok);
+  assert.deepEqual(codex.usage, {
+    name: "ChatGPT Codex",
+    status: "legacy, not active",
+    windows: [],
+  });
+  assert.ok(!tokenRequests.includes("openai-codex"));
+  assert.deepEqual(fetches, []);
+});
+
+test("an active openai-codex model still reads the legacy Codex credential", async (t) => {
+  t.mock.method(globalThis, "fetch", () => Promise.reject(new Error("no network in tests")));
+  const { ctx, tokenRequests } = openaiContext("oauth", "not-a-jwt", {
+    provider: "openai-codex",
+    id: "gpt-6-sol",
+  });
+  await readProviderUsages(ctx);
+  assert.deepEqual(tokenRequests, ["openai-codex"]);
+});
 
 test("providerUsageWindows resolves undefined for disconnected or unknown providers", async () => {
   const ctx = registryContext({});

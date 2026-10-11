@@ -499,3 +499,21 @@ test("the extension points Pi's built-in /session at /status", (t) => {
   });
   assert.deepEqual(prompts, ["/status"]);
 });
+
+test("the status provider row names a ChatGPT sign-in on the stock openai endpoint", async () => {
+  const { providerDisplay } = await import("../.pi/extensions/session-status.ts");
+  const stock = { baseUrl: "https://api.openai.com/v1" };
+  assert.equal(providerDisplay("openai", stock, true), "openai (ChatGPT sign-in)");
+  assert.equal(providerDisplay("openai", { baseUrl: "https://api.openai.com/v1/" }), "openai");
+  assert.equal(providerDisplay("openai", stock, false), "openai");
+  assert.equal(providerDisplay("openai", stock, undefined), "openai");
+  assert.equal(
+    providerDisplay("openai-codex", { baseUrl: "https://chatgpt.com/backend-api/codex" }, true),
+    "openai-codex (ChatGPT sign-in, legacy)",
+  );
+  assert.equal(
+    providerDisplay("openai", { baseUrl: "https://proxy.example/v1" }, true),
+    "openai (ChatGPT sign-in) - https://proxy.example/v1",
+  );
+  assert.doesNotMatch(providerDisplay("openai", stock, true), /api key/i);
+});

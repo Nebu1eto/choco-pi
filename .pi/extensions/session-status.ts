@@ -172,13 +172,34 @@ function modelDisplay(
   return name && name !== id ? `${name} (${id})` : id;
 }
 
-function providerDisplay(provider: string, record: ModelRecord | undefined): string {
-  if (!record || !isString(record.baseUrl) || record.baseUrl.length === 0) return provider;
-  if (isDefaultProviderUrl(provider, record.baseUrl)) return provider;
-  return `${provider} - ${record.baseUrl}`;
+/** How a signed-in provider authenticates, named without any credential. */
+const OAUTH_LABELS: ReadonlyMap<string, string> = new Map([
+  ["openai", "ChatGPT sign-in"],
+  ["openai-codex", "ChatGPT sign-in, legacy"],
+  ["anthropic", "Claude sign-in"],
+]);
+
+/**
+ * Provider row: the provider id, a non-default base URL, and for an OAuth
+ * sign-in the account kind. `oauth` comes from the host's credential type, so
+ * the row never says "API key" for a subscription sign-in.
+ */
+export function providerDisplay(
+  provider: string,
+  record: ModelRecord | undefined,
+  oauth?: boolean,
+): string {
+  const auth = oauth === true ? ` (${OAUTH_LABELS.get(provider) ?? "OAuth sign-in"})` : "";
+  if (!record || !isString(record.baseUrl) || record.baseUrl.length === 0) {
+    return `${provider}${auth}`;
+  }
+  if (isDefaultProviderUrl(provider, record.baseUrl)) return `${provider}${auth}`;
+  return `${provider}${auth} - ${record.baseUrl}`;
 }
 
-function isDefaultProviderUrl(provider: string, baseUrl: string): boolean {
+function isDefaultProviderUrl(provider: string, rawBaseUrl: string): boolean {
+  // `https://api.openai.com/v1` is the stock openai-responses endpoint.
+  const baseUrl = rawBaseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
   if (provider === "openai-codex") {
     return (
       baseUrl === "https://chatgpt.com/backend-api/codex" || baseUrl === "https://api.openai.com"
@@ -186,6 +207,18 @@ function isDefaultProviderUrl(provider: string, baseUrl: string): boolean {
   }
   if (provider === "openai") return baseUrl === "https://api.openai.com";
   return baseUrl === `https://api.${provider}.com`;
+}
+
+/** The host's credential type for `model`; `undefined` when it cannot say. Reads no token. */
+function usesOAuth(
+  modelRegistry: Pick<ExtensionCommandContext["modelRegistry"], "isUsingOAuth">,
+  model: NonNullable<ExtensionCommandContext["model"]>,
+): boolean | undefined {
+  try {
+    return modelRegistry.isUsingOAuth(model);
+  } catch {
+    return undefined;
+  }
 }
 
 function contextWindowLabel(
@@ -350,7 +383,10 @@ export function summarizeStatusRows(
     value: modelDisplay(model?.id, record?.name as string | undefined, model?.name),
   });
   if (model) {
-    rows.push({ label: "Model provider", value: providerDisplay(model.provider, record) });
+    rows.push({
+      label: "Model provider",
+      value: providerDisplay(model.provider, record, usesOAuth(ctx.modelRegistry, model)),
+    });
     const windowLabel = contextWindowLabel(ctx.modelRegistry, model);
     if (windowLabel) rows.push({ label: "Context window", value: windowLabel });
     const usage = ctx.getContextUsage();

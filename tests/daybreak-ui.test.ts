@@ -15,7 +15,15 @@ import {
   parseDaybreakValue,
   resolveAgentPreferencesArgs,
 } from "../.pi/extensions/lib/agent-preferences-dialog.ts";
-import { DAYBREAK_ENTRY, getDaybreakBridge } from "../.pi/extensions/lib/daybreak-state.ts";
+import {
+  createDaybreakBridge,
+  DAYBREAK_ENTRY,
+  daybreakStatusValue,
+  type DaybreakExtensionContext,
+  getDaybreakBridge,
+  installDaybreakExtension,
+  OPENAI_SIGN_IN_DAYBREAK_REASON,
+} from "../.pi/extensions/lib/daybreak-state.ts";
 import {
   isJsonRecord,
   reinterpretHostValue,
@@ -390,4 +398,89 @@ test("applyDaybreakAction refuses a non-canonical model without mutating the req
   } finally {
     controller.dispose();
   }
+});
+
+function signInModel(): Model<Api> {
+  return {
+    ...codexModel(),
+    id: "gpt-6.1-sol",
+    api: "openai-responses",
+    provider: "openai",
+    baseUrl: "https://api.openai.com/v1",
+  };
+}
+
+test("openai sign-in Daybreak is unavailable with a reason and never sends access_programs", () => {
+  const bridge = createDaybreakBridge();
+  let start: ((ctx: DaybreakExtensionContext) => void) | undefined;
+  let request: ((payload: RuntimeValue, ctx: DaybreakExtensionContext) => RuntimeValue) | undefined;
+  installDaybreakExtension(
+    bridge,
+    { owner: {}, generation: 1, initial: { requested: true, source: "explicit" } },
+    {
+      appendEntry: () => undefined,
+      onSessionStart: (handler) => (start = handler),
+      onSessionTree: () => undefined,
+      onBeforeProviderRequest: (handler) => (request = handler),
+      onSessionShutdown: () => undefined,
+    },
+  );
+  const sessionManager = { getSessionId: () => "db-sign-in", getBranch: () => [] };
+  // No account id, no credential read: only the synchronous auth-type query.
+  const signIn = {
+    model: signInModel(),
+    sessionManager,
+    modelRegistry: { isUsingOAuth: () => true },
+  };
+  start?.(signIn);
+  const controller = bridge.get("db-sign-in");
+  assert.ok(controller);
+  try {
+    assert.equal(controller?.getState().outcome, "auth-not-eligible");
+    const stripped = request?.({ model: "m", access_programs: ["daybreak_blue"] }, signIn);
+    assert.ok(isJsonRecord(stripped) && !("access_programs" in stripped));
+    assert.equal(request?.({ model: "m" }, signIn), undefined);
+    assert.equal(
+      daybreakStatusValue(controller?.getState(), true),
+      `unavailable; ${OPENAI_SIGN_IN_DAYBREAK_REASON}`,
+    );
+    assert.equal(daybreakStatusValue({ ...controller.getState(), requested: false }, true), "off");
+  } finally {
+    controller.dispose();
+  }
+});
+
+test("sk- openai and openai-codex Daybreak requests are not marked as sign-in", () => {
+  const bridge = createDaybreakBridge();
+  let start: ((ctx: DaybreakExtensionContext) => void) | undefined;
+  installDaybreakExtension(
+    bridge,
+    { owner: {}, generation: 1, initial: { requested: true, source: "explicit" } },
+    {
+      appendEntry: () => undefined,
+      onSessionStart: (handler) => (start = handler),
+      onSessionTree: () => undefined,
+      onBeforeProviderRequest: () => undefined,
+      onSessionShutdown: () => undefined,
+    },
+  );
+  for (const [id, model, oauth] of [
+    ["db-key", signInModel(), false],
+    ["db-codex", codexModel(), true],
+  ] as const) {
+    start?.({
+      model,
+      sessionManager: { getSessionId: () => id, getBranch: () => [] },
+      modelRegistry: { isUsingOAuth: () => oauth },
+    });
+    assert.equal(bridge.get(id)?.getState().outcome, "pending", id);
+    bridge.get(id)?.dispose();
+  }
+});
+
+test("/daybreak on an openai sign-in model refuses without mutating the request", () => {
+  assert.equal(
+    applyDaybreakAction(undefined, "on", signInModel()),
+    "Daybreak applies only to OpenAI Codex ChatGPT-account models.",
+  );
 });

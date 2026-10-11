@@ -366,7 +366,7 @@ export function normalizeCodexUsage(payload: RuntimeValue): ProviderUsage {
       ? `${resetCount} saved reset${resetCount === 1 ? "" : "s"} available`
       : undefined;
   return {
-    name: "ChatGPT",
+    name: CODEX_USAGE_NAME,
     plan,
     status:
       [balance === undefined ? undefined : `${balance} credits`, resets]
@@ -565,11 +565,87 @@ async function readClaudeUsage(token: string): Promise<ProviderUsage> {
   return withCacheNote(normalizeClaudeUsage(usage.payload, profile), usage);
 }
 
+/** Display name of the Sign in with ChatGPT provider `openai`. */
+export const OPENAI_USAGE_NAME = "ChatGPT";
+/** Display name of the legacy `openai-codex` provider (chatgpt.com backend). */
+export const CODEX_USAGE_NAME = "ChatGPT Codex";
+/** Status of a signed-in `openai` account: api.openai.com exposes no quota window. */
+export const OPENAI_SIGNED_IN_STATUS = "signed in; quota window not available on api.openai.com";
+/** Status of `openai` configured with an API key, which has no subscription window. */
+export const OPENAI_API_KEY_STATUS = "API key; no subscription quota window";
+/** Status of the legacy Codex provider when its sign-in is absent, expired, or unusable. */
+export const CODEX_LEGACY_SIGNED_OUT_STATUS = "legacy, not signed in";
+/**
+ * Status of the legacy Codex provider while `openai` is configured and a model
+ * of another provider is active: its token is not resolved, so a stale stored
+ * sign-in is never refreshed by a usage read.
+ */
+export const CODEX_LEGACY_INACTIVE_STATUS = "legacy, not active";
+const CODEX_RESET_SIGNED_OUT = "ChatGPT Codex (legacy) is not signed in.";
+
+/**
+ * Whether `provider` authenticates with a stored OAuth sign-in. The host reads
+ * only the credential type from its auth snapshot, so no token is resolved,
+ * refreshed, or exposed. Resolves `undefined` when the host cannot say.
+ */
+export function providerUsesOAuth(ctx: ExtensionContext, provider: string): boolean | undefined {
+  try {
+    const registry = ctx.modelRegistry;
+    const model =
+      ctx.model?.provider === provider
+        ? ctx.model
+        : registry.getAll().find((candidate) => candidate.provider === provider);
+    return model ? registry.isUsingOAuth(model) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Whether `openai` has a stored credential; reads auth status only, never a token. */
+function openaiConfigured(ctx: ExtensionContext): boolean {
+  try {
+    return ctx.modelRegistry.getProviderAuthStatus("openai").configured;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Provider `openai` (api.openai.com). Sign in with ChatGPT carries no account
+ * id for chatgpt.com, and api.openai.com publishes no quota window, so this
+ * never resolves a token or makes a request; it reports the sign-in state only.
+ */
+export function openaiUsage(ctx: ExtensionContext): ProviderUsage {
+  const notConnected: ProviderUsage = {
+    name: OPENAI_USAGE_NAME,
+    status: "not connected",
+    windows: [],
+  };
+  if (!openaiConfigured(ctx)) return notConnected;
+  const oauth = providerUsesOAuth(ctx, "openai");
+  return {
+    name: OPENAI_USAGE_NAME,
+    status: oauth === false ? OPENAI_API_KEY_STATUS : OPENAI_SIGNED_IN_STATUS,
+    windows: [],
+  };
+}
+
 async function codexUsage(ctx: ExtensionContext): Promise<ProviderUsage> {
+  const signedOut: ProviderUsage = {
+    name: CODEX_USAGE_NAME,
+    status: CODEX_LEGACY_SIGNED_OUT_STATUS,
+    windows: [],
+  };
+  if (!ctx.modelRegistry.getProviderAuthStatus("openai-codex").configured) return signedOut;
+  // Resolving the legacy token may refresh a stale OAuth credential (network and
+  // credential-store lock); do so only while Codex is active or `openai` is absent.
+  if (ctx.model?.provider !== "openai-codex" && openaiConfigured(ctx)) {
+    return { name: CODEX_USAGE_NAME, status: CODEX_LEGACY_INACTIVE_STATUS, windows: [] };
+  }
   const token = await providerToken(ctx, "openai-codex");
-  if (!token) return { name: "ChatGPT", status: "not connected", windows: [] };
+  if (!token) return signedOut;
   const accountId = codexAccountId(token);
-  if (!accountId) throw new Error("OAuth account ID is unavailable");
+  if (!accountId) return signedOut;
   return readCodexUsage(token, accountId);
 }
 
@@ -596,11 +672,10 @@ export async function resetCodexUsage(
   isCurrent: () => boolean,
 ): Promise<string | undefined> {
   const registry = ctx.modelRegistry;
-  if (!registry.getProviderAuthStatus("openai-codex").configured)
-    return "ChatGPT is not connected.";
+  if (!registry.getProviderAuthStatus("openai-codex").configured) return CODEX_RESET_SIGNED_OUT;
   const token = await registry.getApiKeyForProvider("openai-codex");
   if (!isCurrent()) return;
-  if (!token) return "ChatGPT is not connected.";
+  if (!token) return CODEX_RESET_SIGNED_OUT;
   const accountId = codexAccountId(token);
   if (!accountId) return "OAuth account ID is unavailable.";
   return runCodexResetFlow({
@@ -865,7 +940,7 @@ export function formatProviderUsage(
   return [heading, ...windows].join("\n");
 }
 
-const PROVIDER_NAMES = ["Claude", "ChatGPT", "Synthetic"] as const;
+const PROVIDER_NAMES = ["Claude", OPENAI_USAGE_NAME, CODEX_USAGE_NAME, "Synthetic"] as const;
 
 /**
  * Describes why a provider produced nothing: a throttled request also reports
@@ -888,13 +963,15 @@ export type ProviderUsageReading =
 export type ProviderUsageReport = { observedAt: Date; providers: ProviderUsageReading[] };
 
 /**
- * Queries Claude, ChatGPT, and Synthetic once. A failed provider becomes a
- * reading with its failure message, so this never rejects; the Usage tab and
- * the structured host report both render from one result.
+ * Queries Claude, ChatGPT (`openai`), legacy ChatGPT Codex, and Synthetic once.
+ * A failed provider becomes a reading with its failure message, so this never
+ * rejects; the Usage tab and the structured host report both render from one
+ * result.
  */
 export async function readProviderUsages(ctx: ExtensionContext): Promise<ProviderUsageReport> {
   const settled = await Promise.allSettled([
     claudeUsage(ctx),
+    Promise.resolve().then(() => openaiUsage(ctx)),
     codexUsage(ctx),
     syntheticUsage(ctx),
   ]);

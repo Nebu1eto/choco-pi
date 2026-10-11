@@ -6,6 +6,9 @@ import {
   createFastModeBridge,
   decideFastMode,
   installFastModeExtension,
+  isOpenAISubscriptionSignIn,
+  OPENAI_SIGN_IN_FAST_REASON,
+  supportsFastMode,
   type FastModeExtensionContext,
 } from "../.pi/extensions/lib/fast-mode-state.ts";
 
@@ -252,4 +255,94 @@ test("failed persistence does not publish a state update", () => {
   assert.equal(controller.getState().requested, false);
   assert.equal(controller.getState().revision, 0);
   controller.dispose();
+});
+
+const oauth = { isUsingOAuth: () => true };
+const apiKey = { isUsingOAuth: () => false };
+
+test("sign-in predicate needs openai, the exact platform URL, and OAuth", () => {
+  const openai = model("openai");
+  assert.equal(isOpenAISubscriptionSignIn(openai, oauth), true);
+  assert.equal(
+    isOpenAISubscriptionSignIn({ ...openai, baseUrl: "https://api.openai.com/v1/" }, oauth),
+    true,
+  );
+  assert.equal(isOpenAISubscriptionSignIn(openai, apiKey), false);
+  assert.equal(isOpenAISubscriptionSignIn(openai, undefined), false);
+  assert.equal(isOpenAISubscriptionSignIn(model("openai-codex"), oauth), false);
+  assert.equal(
+    isOpenAISubscriptionSignIn({ ...openai, baseUrl: "https://proxy.example/v1" }, oauth),
+    false,
+  );
+  const throwing = {
+    isUsingOAuth: (): boolean => {
+      throw new Error("no auth storage");
+    },
+  };
+  assert.equal(isOpenAISubscriptionSignIn(openai, throwing), false);
+});
+
+test("sign-in openai is unsupported with a reason; sk- openai and openai-codex keep priority", () => {
+  const state = { sessionId: "s", requested: true, source: "explicit" as const, revision: 1 };
+  assert.deepEqual(decideFastMode(state, model("openai"), oauth), {
+    ...state,
+    supported: false,
+    active: false,
+    serviceTier: undefined,
+    reason: OPENAI_SIGN_IN_FAST_REASON,
+  });
+  assert.equal(supportsFastMode(model("openai"), oauth), false);
+  const paid = decideFastMode(state, model("openai"), apiKey);
+  assert.equal(paid.serviceTier, "priority");
+  assert.equal(Object.hasOwn(paid, "reason"), false);
+  assert.equal(decideFastMode(state, model("openai-codex"), oauth).serviceTier, "priority");
+});
+
+test("controller binds its registration registry unless a caller passes one", () => {
+  const bridge = createFastModeBridge();
+  const controller = bridge.register({
+    sessionId: "bound",
+    owner,
+    generation: 1,
+    initial: { requested: true, source: "explicit" },
+    modelRegistry: oauth,
+  });
+  assert.equal(controller.decide(model("openai")).reason, OPENAI_SIGN_IN_FAST_REASON);
+  assert.equal(controller.decide(model("openai"), apiKey).active, true);
+  controller.dispose();
+});
+
+test("provider request hook injects no service_tier for sign-in and keeps it for sk- keys", () => {
+  const bridge = createFastModeBridge();
+  let start: ((ctx: FastModeExtensionContext) => void) | undefined;
+  let request: ((payload: RuntimeValue, ctx: FastModeExtensionContext) => RuntimeValue) | undefined;
+  installFastModeExtension(
+    bridge,
+    { owner, generation: 1, initial: { requested: true, source: "explicit" } },
+    {
+      appendEntry: () => undefined,
+      onSessionStart: (handler) => (start = handler),
+      onSessionTree: () => undefined,
+      onBeforeProviderRequest: (handler) => (request = handler),
+      onSessionShutdown: () => undefined,
+    },
+  );
+  const sessionManager = { getSessionId: () => "hook", getBranch: () => [] };
+  start?.({ model: model("openai"), sessionManager, modelRegistry: oauth });
+  const signIn = { model: model("openai"), sessionManager, modelRegistry: oauth };
+  assert.equal(request?.({ model: "fixture" }, signIn), undefined);
+  assert.deepEqual(request?.({ model: "fixture", service_tier: "priority" }, signIn), {
+    model: "fixture",
+  });
+  const keyed = { model: model("openai"), sessionManager, modelRegistry: apiKey };
+  assert.deepEqual(request?.({ model: "fixture" }, keyed), {
+    model: "fixture",
+    service_tier: "priority",
+  });
+  const codex = { model: model("openai-codex"), sessionManager, modelRegistry: oauth };
+  assert.deepEqual(request?.({ model: "fixture" }, codex), {
+    model: "fixture",
+    service_tier: "priority",
+  });
+  bridge.get("hook")?.dispose();
 });

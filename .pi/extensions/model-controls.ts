@@ -204,6 +204,11 @@ function isRecord(value: RuntimeValue): value is Record<string, RuntimeValue> {
   return isObject(value) && value !== null && !Array.isArray(value);
 }
 
+/** Suffix for a saved Fast request that the current model or authentication does not apply. */
+export function fastInactiveNote(reason: string | undefined): string {
+  return ` (saved; ${reason ?? "inactive for this model"})`;
+}
+
 export function isEffectiveFastModeEnabled(sessionEnabled: boolean): boolean {
   return sessionEnabled;
 }
@@ -444,7 +449,7 @@ export default function modelControls(pi: ExtensionAPI): void {
     const action = actionInput.trim().toLowerCase();
     if (action === "status") {
       const decision = currentController?.decide(activeModel);
-      return `Fast mode: ${decision?.requested ? "on" : "off"}${decision && !decision.supported ? " (saved; inactive for this model)" : ""}`;
+      return `Fast mode: ${decision?.requested ? "on" : "off"}${decision && !decision.supported ? fastInactiveNote(decision.reason) : ""}`;
     }
     if (action && action !== "on" && action !== "off") {
       throw new Error("Usage: /fast [on|off|status]");
@@ -455,7 +460,8 @@ export default function modelControls(pi: ExtensionAPI): void {
     if (!controller) throw new Error("Fast mode state is not initialized.");
     const state = controller.set(requested);
     fastEnabled = state.requested;
-    return `Fast mode: ${fastEnabled ? "on" : "off"}${controller.decide(activeModel).supported ? "" : " (saved; inactive for this model)"}`;
+    const decision = controller.decide(activeModel);
+    return `Fast mode: ${fastEnabled ? "on" : "off"}${decision.supported ? "" : fastInactiveNote(decision.reason)}`;
   };
 
   const registerState = (ctx: ExtensionContext): void => {
@@ -469,6 +475,7 @@ export default function modelControls(pi: ExtensionAPI): void {
         generation: stateGeneration,
         initial: { requested: false, source: "default" },
         entries: ctx.sessionManager.getBranch(),
+        modelRegistry: ctx.modelRegistry,
         persist: (state) =>
           pi.appendEntry(FAST_MODE_ENTRY, {
             enabled: state.requested,
@@ -676,7 +683,12 @@ export default function modelControls(pi: ExtensionAPI): void {
     const payload = stripStaleDaybreakAccess(event.payload) ?? event.payload;
     const decision = (
       registeredSessionId ? bridge.get(registeredSessionId) : fastController
-    )?.decide(ctx.model);
+    )?.decide(ctx.model, ctx.modelRegistry);
+    // Subscription sign-in accepts but ignores the tier: send none at all.
+    if (decision?.reason !== undefined && isRecord(payload) && "service_tier" in payload) {
+      const { service_tier: _ignored, ...rest } = payload;
+      return rest;
+    }
     if (!decision?.supported || !isRecord(payload))
       return payload === event.payload ? undefined : payload;
     return { ...payload, service_tier: decision.active ? "priority" : "default" };

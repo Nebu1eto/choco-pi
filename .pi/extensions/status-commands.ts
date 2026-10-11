@@ -73,7 +73,7 @@ import { hasUsageWindows, usageReportFrame } from "./lib/usage-report.ts";
 import { CodexResetError } from "./lib/codex-resets.ts";
 import { isStaleContextError, rethrowUnlessStaleContext } from "./lib/lifecycle.ts";
 import { daybreakStatusValue, getDaybreakBridge } from "./lib/daybreak-state.ts";
-import { getFastModeBridge } from "./lib/fast-mode-state.ts";
+import { getFastModeBridge, isOpenAISubscriptionSignIn } from "./lib/fast-mode-state.ts";
 import { hostFramesEnabled } from "./lib/host-bridge/bridge.ts";
 import { createProcessSources } from "./lib/host-bridge/sources.ts";
 import { REPORT_STATUS_KEY } from "./lib/host-bridge/schema.ts";
@@ -289,9 +289,10 @@ function sessionInfoInput(ctx: ExtensionCommandContext): SessionInfoInput {
 
 /** Fast mode as `/fast status` words it, or "not initialized" before the session registers it. */
 function fastStatusValue(ctx: ExtensionCommandContext, sessionId: string): string {
-  const decision = getFastModeBridge().get(sessionId)?.decide(ctx.model);
+  const decision = getFastModeBridge().get(sessionId)?.decide(ctx.model, ctx.modelRegistry);
   if (!decision) return "not initialized";
   if (!decision.requested) return "off";
+  if (decision.reason !== undefined) return `on (saved; ${decision.reason})`;
   return decision.supported ? "on" : "on (saved; inactive for this model)";
 }
 
@@ -308,7 +309,10 @@ function environmentRows(
   all.push(
     {
       label: "Daybreak",
-      value: daybreakStatusValue(getDaybreakBridge().get(sessionId)?.getState()),
+      value: daybreakStatusValue(
+        getDaybreakBridge().get(sessionId)?.getState(),
+        isOpenAISubscriptionSignIn(ctx.model, ctx.modelRegistry),
+      ),
     },
     { label: "Fast mode", value: fastStatusValue(ctx, sessionId) },
   );
@@ -806,7 +810,8 @@ async function showTabOnce(
     const digitHint = STATUS_TABS.map((_tab, index) => index + 1).join("/");
     const textHint = (): string => {
       const parts = ["Tab switches tabs", "↑/↓ scrolls", `${digitHint} jumps`];
-      if (active === "usage") parts.push("r uses a saved ChatGPT reset");
+      // The reset flow reads the legacy openai-codex login, not openai sign-in.
+      if (active === "usage") parts.push("r uses a saved ChatGPT reset (openai-codex login)");
       if (isExpandableTab(active)) parts.push(expanded ? "Ctrl+O collapses" : "Ctrl+O expands");
       parts.push("Enter/Esc closes");
       return theme.fg("dim", parts.join(" · "));

@@ -340,6 +340,7 @@ test("rpc /usage and /quota publish the usage report before the plain-text notic
       [
         ["Claude", "not connected"],
         ["ChatGPT", "not connected"],
+        ["ChatGPT Codex", "legacy, not signed in"],
         ["Synthetic", "not connected"],
       ],
       "a user-invoked report is sent even without quota windows",

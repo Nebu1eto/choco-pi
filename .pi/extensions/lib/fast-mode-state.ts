@@ -24,7 +24,38 @@ export type FastModeDecision = FastModeState &
     supported: boolean;
     active: boolean;
     serviceTier: "priority" | "standard" | undefined;
+    /** Why a selectable Fast mode is not applied for this model and authentication. */
+    reason?: string;
   }>;
+
+/** The synchronous auth-type query of Pi's `ModelRegistry` (`ctx.modelRegistry`). */
+export type FastModeAuthRegistry = Readonly<{ isUsingOAuth(model: Model<Api>): boolean }>;
+
+export const OPENAI_PLATFORM_BASE_URL = "https://api.openai.com/v1";
+/**
+ * Live probes against Pi 1.0.4 "Sign in with ChatGPT" on provider `openai` showed
+ * `service_tier: "priority"` accepted but echoed as `default`.
+ */
+export const OPENAI_SIGN_IN_FAST_REASON =
+  "accepted but not honored by api.openai.com subscription sign-in";
+
+/**
+ * Stock `openai` provider on api.openai.com authenticated with the ChatGPT
+ * subscription OAuth credential rather than an `sk-` API key. Local copy of the
+ * Codex package predicate; root code must not import that vendored package.
+ */
+export function isOpenAISubscriptionSignIn(
+  model: Model<Api> | undefined,
+  registry: FastModeAuthRegistry | undefined,
+): boolean {
+  if (!model || !registry || model.provider !== "openai") return false;
+  if ((model.baseUrl ?? "").replace(/\/+$/, "") !== OPENAI_PLATFORM_BASE_URL) return false;
+  try {
+    return registry.isUsingOAuth(model) === true;
+  } catch {
+    return false;
+  }
+}
 
 export type FastModeInitialization = Readonly<{
   requested: boolean;
@@ -38,11 +69,13 @@ export type FastModeRegistration = Readonly<{
   initial: FastModeInitialization;
   entries?: readonly SessionEntry[];
   persist?: (state: FastModeState) => void;
+  /** Default auth source for `decide` when a caller passes no registry. */
+  modelRegistry?: FastModeAuthRegistry | undefined;
 }>;
 
 export type FastModeController = Readonly<{
   getState(): FastModeState;
-  decide(model: Model<Api> | undefined): FastModeDecision;
+  decide(model: Model<Api> | undefined, registry?: FastModeAuthRegistry): FastModeDecision;
   set(requested: boolean, source?: FastModeSource): FastModeState;
   dispose(): void;
 }>;
@@ -58,6 +91,7 @@ export type FastModeBridge = Readonly<{
 
 export type FastModeExtensionContext = Pick<ExtensionContext, "model"> & {
   sessionManager: Pick<ExtensionContext["sessionManager"], "getBranch" | "getSessionId">;
+  modelRegistry?: FastModeAuthRegistry;
 };
 
 export type FastModeExtensionHooks = Readonly<{
@@ -101,8 +135,12 @@ function restoredInitialization(
   return restored;
 }
 
-export function supportsFastMode(model: Model<Api> | undefined): boolean {
+export function supportsFastMode(
+  model: Model<Api> | undefined,
+  registry?: FastModeAuthRegistry,
+): boolean {
   if (!model || (model.provider !== "openai" && model.provider !== "openai-codex")) return false;
+  if (isOpenAISubscriptionSignIn(model, registry)) return false;
   try {
     const hostname = new URL(model.baseUrl).hostname;
     return model.provider === "openai"
@@ -116,8 +154,17 @@ export function supportsFastMode(model: Model<Api> | undefined): boolean {
 export function decideFastMode(
   state: FastModeState,
   model: Model<Api> | undefined,
+  registry?: FastModeAuthRegistry,
 ): FastModeDecision {
-  const supported = supportsFastMode(model);
+  if (isOpenAISubscriptionSignIn(model, registry))
+    return {
+      ...state,
+      supported: false,
+      active: false,
+      serviceTier: undefined,
+      reason: OPENAI_SIGN_IN_FAST_REASON,
+    };
+  const supported = supportsFastMode(model, registry);
   return {
     ...state,
     supported,
@@ -147,7 +194,7 @@ export function createFastModeBridge(): FastModeBridge {
       };
       const controller: FastModeController = {
         getState: () => state,
-        decide: (model) => decideFastMode(state, model),
+        decide: (model, registry = input.modelRegistry) => decideFastMode(state, model, registry),
         set(requested, source = "explicit") {
           if (registrations.get(input.sessionId)?.controller !== controller)
             throw new Error("Fast mode controller is stale.");
@@ -207,6 +254,7 @@ export function installFastModeExtension(
       ...input,
       sessionId: ctx.sessionManager.getSessionId(),
       generation,
+      modelRegistry: ctx.modelRegistry ?? input.modelRegistry,
       persist: (state) =>
         hooks.appendEntry(FAST_MODE_ENTRY, {
           enabled: state.requested,
@@ -238,7 +286,12 @@ export function installFastModeExtension(
     registerForContext(ctx);
   });
   hooks.onBeforeProviderRequest((payload, ctx) => {
-    const decision = controller?.decide(ctx.model);
+    const decision = controller?.decide(ctx.model, ctx.modelRegistry);
+    // Sign-in accepts but ignores the tier: send none rather than claim it.
+    if (decision?.reason !== undefined && isJsonRecord(payload) && "service_tier" in payload) {
+      const { service_tier: _ignored, ...rest } = payload;
+      return rest;
+    }
     if (!decision?.supported || !isJsonRecord(payload)) return;
     return { ...payload, service_tier: decision.active ? "priority" : "default" };
   });

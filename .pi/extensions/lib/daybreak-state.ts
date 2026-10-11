@@ -13,6 +13,7 @@ import {
 } from "../../packages/choco-pi-codex/src/providers/openai-codex/daybreak-types.ts";
 import { isBoolean, isFunction, isJsonRecord, isNumber } from "./runtime-values.ts";
 import type { JsonRecord, RuntimeValue } from "./runtime-values.ts";
+import { isOpenAISubscriptionSignIn, type FastModeAuthRegistry } from "./fast-mode-state.ts";
 
 export {
   DAYBREAK_BRIDGE_SYMBOL,
@@ -29,9 +30,16 @@ export {
 export const DAYBREAK_ENTRY = "choco-pi-daybreak";
 /** Request field that carries a Daybreak entitlement; only the provider finalizer may add it. */
 export const DAYBREAK_ACCESS_FIELD = "access_programs";
+/**
+ * Live probes against Pi 1.0.4 "Sign in with ChatGPT" on provider `openai`:
+ * `access_programs` cannot be granted there and its echo is an account default.
+ */
+export const OPENAI_SIGN_IN_DAYBREAK_REASON =
+  "not controllable on api.openai.com (no account id, no entitlement endpoint); server echo is not a grant";
 
 export type DaybreakExtensionContext = Pick<ExtensionContext, "model"> & {
   sessionManager: Pick<ExtensionContext["sessionManager"], "getBranch" | "getSessionId">;
+  modelRegistry?: FastModeAuthRegistry;
 };
 
 export type DaybreakExtensionHooks = Readonly<{
@@ -217,11 +225,14 @@ export function stripStaleDaybreakAccess(payload: RuntimeValue): JsonRecord | un
 
 /**
  * Status text distinguishing off, an active blue/red grant, and each reason a
- * request is not applied. An unconfirmed request reads as pending.
+ * request is not applied. An unconfirmed request reads as pending. `signIn`
+ * marks api.openai.com subscription sign-in, where a request is unavailable.
  */
-export function daybreakStatusValue(state: DaybreakState | undefined): string {
+export function daybreakStatusValue(state: DaybreakState | undefined, signIn = false): string {
   if (!state) return "not initialized";
   if (!state.requested) return "off";
+  if (signIn)
+    return `${state.requested === "auto" ? "auto; " : ""}unavailable; ${OPENAI_SIGN_IN_DAYBREAK_REASON}`;
   return `${state.requested === "auto" ? "auto; " : ""}${DAYBREAK_REQUESTED_STATUS[state.outcome]}`;
 }
 
@@ -237,8 +248,22 @@ const DAYBREAK_REQUESTED_STATUS = {
   off: "requested; checking availability",
 } satisfies Record<DaybreakOutcome, string>;
 
-export function describeDaybreakState(state: DaybreakState | undefined): string {
-  return `Daybreak: ${daybreakStatusValue(state)}`;
+export function describeDaybreakState(state: DaybreakState | undefined, signIn = false): string {
+  return `Daybreak: ${daybreakStatusValue(state, signIn)}`;
+}
+
+/**
+ * Record that the current model cannot carry Daybreak because it uses
+ * api.openai.com subscription sign-in. Reads no credential or account id.
+ */
+export function reportDaybreakSignIn(
+  controller: DaybreakController | undefined,
+  ctx: Pick<DaybreakExtensionContext, "model" | "modelRegistry">,
+): boolean {
+  if (!controller || !isOpenAISubscriptionSignIn(ctx.model, ctx.modelRegistry)) return false;
+  const state = controller.getState();
+  if (state.requested) controller.report("auth-not-eligible", state.revision);
+  return true;
 }
 
 /**
@@ -271,6 +296,7 @@ export function installDaybreakExtension(
         !entries.some((entry) => entry.type === "custom" && entry.customType === DAYBREAK_ENTRY))
     )
       hooks.appendEntry(DAYBREAK_ENTRY, daybreakEntryData(controller.getState()));
+    reportDaybreakSignIn(controller, ctx);
     firstRegistration = false;
   };
   hooks.onSessionStart(registerForContext);
@@ -279,7 +305,10 @@ export function installDaybreakExtension(
     generation++;
     registerForContext(ctx);
   });
-  hooks.onBeforeProviderRequest((payload) => stripStaleDaybreakAccess(payload));
+  hooks.onBeforeProviderRequest((payload, ctx) => {
+    reportDaybreakSignIn(controller, ctx);
+    return stripStaleDaybreakAccess(payload);
+  });
   hooks.onSessionShutdown(() => controller?.dispose());
 }
 

@@ -1,6 +1,7 @@
-import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
+import { isJsonRecord, reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
 import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { runInChildSessionContext } from "../.pi/packages/choco-pi-subagents/src/child-context.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -19,18 +20,54 @@ import {
 
 type EditorFactory = NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]>;
 
-function fastModeSession(id: string, enabled?: boolean) {
+test("OpenAI thinking defaults mirror legacy models without overriding stock authentication", async () => {
+  const settings: unknown = JSON.parse(await readFile(".pi/settings.json", "utf8"));
+  assert.ok(isJsonRecord(settings));
+  const levels = settings.modelThinkingLevels;
+  assert.ok(isJsonRecord(levels));
+  const expected = new Map([
+    ["gpt-6-astra", "low"],
+    ["gpt-5.6-sol", "low"],
+    ["gpt-daybreak-blue-latest", "high"],
+    ["gpt-5.6-terra", "high"],
+    ["gpt-5.6-luna", "xhigh"],
+    ["gpt-6-sol", "low"],
+    ["gpt-6.1-sol", "low"],
+    ["gpt-6-luna", "high"],
+  ]);
+  for (const [id, level] of expected) {
+    assert.equal(levels["openai/" + id], level, id);
+    assert.equal(levels["openai-codex/" + id], level, id + " legacy");
+  }
+  const models: unknown = JSON.parse(await readFile(".pi/models.json", "utf8"));
+  assert.ok(isJsonRecord(models));
+  assert.ok(isJsonRecord(models.providers));
+  const openai = models.providers.openai;
+  assert.ok(isJsonRecord(openai));
+  assert.deepEqual(Object.keys(openai), ["modelOverrides"]);
+  assert.ok(isJsonRecord(openai.modelOverrides));
+  for (const override of Object.values(openai.modelOverrides)) {
+    assert.ok(isJsonRecord(override));
+    assert.deepEqual(Object.keys(override), ["contextWindow"]);
+  }
+  assert.ok(isJsonRecord(models.providers["openai-codex"]), "legacy provider stays opt-in");
+});
+
+function fastModeSession(id: string, enabled?: boolean, oauth = false) {
   const handlers = new Map<string, (event: RuntimeValue, ctx: RuntimeValue) => RuntimeValue>();
   const commands = new Map<string, (args: string, ctx: RuntimeValue) => Promise<void>>();
+  const notices: string[] = [];
   const entries =
     enabled === undefined
       ? []
       : [{ type: "custom", customType: "choco-pi-fast-mode", data: { enabled } }];
   const ctx = {
     mode: "rpc",
-    model: model("openai-codex"),
+    model: model("openai"),
     sessionManager: { getBranch: () => entries, getSessionId: () => id },
-    ui: { notify: () => {}, setStatus: () => {} },
+    // Pi's synchronous auth-type query: true models "Sign in with ChatGPT" on openai.
+    modelRegistry: { isUsingOAuth: () => oauth },
+    ui: { notify: (message: string) => notices.push(message), setStatus: () => {} },
   };
   modelControls(
     reinterpretHostValue<import("@earendil-works/pi-coding-agent").ExtensionAPI>({
@@ -44,10 +81,11 @@ function fastModeSession(id: string, enabled?: boolean) {
     }),
   );
   return {
+    notices,
     start: () => handlers.get("session_start")?.({}, ctx),
     stop: () => handlers.get("session_shutdown")?.({}, ctx),
     toggle: (action: string) => commands.get("fast")?.(action, ctx),
-    request: (provider: "openai" | "openai-codex" | "synthetic" = "openai-codex") =>
+    request: (provider: "openai" | "openai-codex" | "synthetic" = "openai") =>
       handlers.get("before_provider_request")?.(
         { payload: { model: "test", service_tier: "auto" } },
         { ...ctx, model: model(provider) },
@@ -66,6 +104,8 @@ test("sessions keep independent explicit preferences and emit standard when off"
     assert.deepEqual(root.request(), priority);
     assert.deepEqual(child.request(), standard);
     assert.deepEqual(child.request("openai"), standard);
+    assert.deepEqual(root.request("openai-codex"), priority);
+    assert.deepEqual(child.request("openai-codex"), standard);
     assert.equal(child.request("synthetic"), undefined);
     await root.toggle("off");
     assert.deepEqual(root.request(), standard);
@@ -76,6 +116,30 @@ test("sessions keep independent explicit preferences and emit standard when off"
   } finally {
     child.stop();
     root.stop();
+  }
+});
+
+test("openai sign-in sends no service_tier and /fast names the reason; codex keeps priority", async () => {
+  const session = fastModeSession("fast-sign-in", true, true);
+  session.start();
+  try {
+    // The inbound field is stripped too: the tier is accepted but not honored.
+    assert.deepEqual(session.request(), { model: "test" });
+    assert.deepEqual(session.request("openai-codex"), { model: "test", service_tier: "priority" });
+    await session.toggle("status");
+    assert.equal(
+      session.notices.at(-1),
+      "Fast mode: on (saved; accepted but not honored by api.openai.com subscription sign-in)",
+    );
+  } finally {
+    session.stop();
+  }
+  const keyed = fastModeSession("fast-api-key", true, false);
+  keyed.start();
+  try {
+    assert.deepEqual(keyed.request(), { model: "test", service_tier: "priority" });
+  } finally {
+    keyed.stop();
   }
 });
 
