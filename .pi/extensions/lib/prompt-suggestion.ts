@@ -6,7 +6,7 @@ import { readAgentPreferencesAsync } from "./agent-preferences.ts";
 import { isStaleContextError } from "./lifecycle.ts";
 import { isString, type RuntimeValue } from "./runtime-values.ts";
 
-export const PROMPT_SUGGESTION_MODEL = "openai/gpt-6-luna";
+export const PROMPT_SUGGESTION_MODEL = "openai-codex/gpt-6-luna";
 export const PROMPT_SUGGESTION_FALLBACK_MODEL = "anthropic/claude-haiku-5-5";
 
 const MAX_TRANSCRIPT_CHARS = 12_000;

@@ -1,19 +1,19 @@
 {
   "tiers": {
     "flagship": {
-      "primary": ["anthropic/claude-fable-5-1", "openai/gpt-6-astra"],
+      "primary": ["anthropic/claude-fable-5-1", "openai-codex/gpt-6-astra"],
       "secondary": []
     },
     "workhorse": {
-      "primary": ["anthropic/claude-opus-5-5", "openai/gpt-6.1-sol"],
-      "secondary": ["anthropic/claude-opus-5", "openai/gpt-5.6-sol"]
+      "primary": ["anthropic/claude-opus-5-5", "openai-codex/gpt-6.1-sol"],
+      "secondary": ["anthropic/claude-opus-5", "openai-codex/gpt-5.6-sol"]
     },
     "utility": {
-      "primary": ["anthropic/claude-sonnet-5-5", "openai/gpt-5.6-terra"],
+      "primary": ["anthropic/claude-sonnet-5-5", "openai-codex/gpt-5.6-terra"],
       "secondary": ["anthropic/claude-sonnet-5"]
     },
     "micro": {
-      "primary": ["openai/gpt-6-luna", "anthropic/claude-haiku-5-5"],
+      "primary": ["openai-codex/gpt-6-luna", "anthropic/claude-haiku-5-5"],
       "secondary": []
     }
   },

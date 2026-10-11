@@ -176,9 +176,10 @@ Free space is `contextWindow - (measuredTokens ?? estimatedTokens) - autocompact
 floored at zero. Reports carry paths (session file, cwd, context files) but no
 credentials or MCP configuration beyond the enable flag.
 
-A usage report has one section per provider (`Claude`, `ChatGPT`,
-`ChatGPT Codex` (legacy), `Synthetic`) with `Plan`, `Status`, and `Snapshot` rows when present and one
-row per quota window (`value` such as `42% used`; `hint` the reset time, pace,
+A usage report has one section per provider (`Claude`, `ChatGPT`, `Synthetic`) with `Plan`,
+`Status`, and `Snapshot` rows when present and one row per quota window. `ChatGPT` reports the
+active model's provider when it is a configured `openai-codex` or `openai`, else `openai-codex`
+(Codex usage windows), else `openai` (signed in, no quota window). Each quota window row has (`value` such as `42% used`; `hint` the reset time, pace,
 and provider detail as the Usage tab prints them). The `usage` block:
 
 | Field                                 | Meaning                                                                                             |

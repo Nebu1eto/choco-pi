@@ -115,9 +115,9 @@ test(
     assert.equal(items[4].currentValue, "off");
     assert.deepEqual(items[4].values, ["off", "on", "auto"]);
     assert.equal(items[5].currentValue, "Enabled");
-    assert.equal(items[6].currentValue, "openai/gpt-6-luna");
+    assert.equal(items[6].currentValue, "openai-codex/gpt-6-luna");
     assert.ok(items[6].submenu, "model picker remains available for both providers");
-    assert.ok(items[7].description?.includes("Uses openai/gpt-6-luna"));
+    assert.ok(items[7].description?.includes("Uses openai-codex/gpt-6-luna"));
     assert.equal(items[7].currentValue, "Enabled", "prompt suggestions default to on when unset");
 
     assert.deepEqual(section.handleChange("agentLanguage", "Korean"), { kind: "update" });

@@ -564,14 +564,14 @@ function parseRefs(refs: readonly string[] | undefined): ModelRef[] {
  * Ordered fallback candidates for `current`: same-tier primaries on another
  * provider, then same-tier secondaries (another provider first), then the last
  * resort list. A model outside every tier only gets the last resort. The
- * legacy `openai-codex` provider is never a candidate, but a limited Codex
- * model finds its tier through the same model id on `openai`.
+ * tiers list `openai-codex`; a limited model on the manually chosen `openai`
+ * provider finds its tier through the same model id on `openai-codex`.
  */
 export function fallbackCandidates(table: ModelFallbacks, current: ModelRef): ModelRef[] {
   const currentKey = refKey(current);
   const tierKey =
-    current.provider === "openai-codex"
-      ? refKey({ provider: "openai", id: current.id })
+    current.provider === "openai"
+      ? refKey({ provider: "openai-codex", id: current.id })
       : currentKey;
   const tier = Object.values(table.tiers).find((entry) =>
     [...entry.primary, ...(entry.secondary ?? [])].some(

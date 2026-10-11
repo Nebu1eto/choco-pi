@@ -4,16 +4,16 @@ This file solely owns choco-pi model routing and model-specific behavioral advic
 
 ## Routing
 
-- **Flagship:** `anthropic/claude-fable-5-1` and `openai/gpt-6-astra` are for orchestration, initial planning, and review of genuinely complex output. They are very expensive.
-- **Workhorse:** `anthropic/claude-opus-5-5` and `openai/gpt-6.1-sol` first. Use `anthropic/claude-opus-5` and `openai/gpt-5.6-sol` only when those are unavailable. Do not choose `openai/gpt-6-sol`; it is superseded by `gpt-6.1-sol`. Keep role effort defaults; tune from representative evidence rather than assuming more effort is better.
-- **Utility:** `anthropic/claude-sonnet-5-5` and `openai/gpt-5.6-terra` suit easy exploration and web research; use `anthropic/claude-sonnet-5` only when Sonnet 5.5 is unavailable. Give them more explicit task packets; raise effort only when task evidence warrants it.
-- **Micro:** `openai/gpt-6-luna` and `anthropic/claude-haiku-5-5` are only for extremely simple tasks with detailed guidance. Prefer Utility when uncertain. Do not use outdated `anthropic/claude-haiku-4-5`.
+- **Flagship:** `anthropic/claude-fable-5-1` and `openai-codex/gpt-6-astra` are for orchestration, initial planning, and review of genuinely complex output. They are very expensive.
+- **Workhorse:** `anthropic/claude-opus-5-5` and `openai-codex/gpt-6.1-sol` first. Use `anthropic/claude-opus-5` and `openai-codex/gpt-5.6-sol` only when those are unavailable. Do not choose `openai-codex/gpt-6-sol`; it is superseded by `gpt-6.1-sol`. Keep role effort defaults; tune from representative evidence rather than assuming more effort is better.
+- **Utility:** `anthropic/claude-sonnet-5-5` and `openai-codex/gpt-5.6-terra` suit easy exploration and web research; use `anthropic/claude-sonnet-5` only when Sonnet 5.5 is unavailable. Give them more explicit task packets; raise effort only when task evidence warrants it.
+- **Micro:** `openai-codex/gpt-6-luna` and `anthropic/claude-haiku-5-5` are only for extremely simple tasks with detailed guidance. Prefer Utility when uncertain. Do not use outdated `anthropic/claude-haiku-4-5`.
 - **Specialized:** `callstack-apex/callstack/Apex` is only for React Native or Expo mobile work.
 - **Fallback:** `synthetic/hf:moonshotai/Kimi-K3` has limited quota. Use it only after preferred OpenAI and Anthropic models are unavailable. Never route non-mobile work to Apex.
 
 On capacity errors, retry the same model three times with bounded backoff, then use the comparable other provider. On rate limits, move Fable to Opus, another Anthropic model to comparable OpenAI or Kimi K3, and OpenAI to comparable Anthropic or Kimi K3. `splitDeferredTools` is available only for `openai-codex` and `openai-responses`; compact descriptions benefit all providers, but deferred loading must not alter shared tool semantics.
 
-`.pi/model-fallbacks.json` mirrors the tier list above for usage-limit fallback; update both together. `openai` is the primary OpenAI provider; `openai-codex` remains opt-in legacy and is excluded from fallback routing.
+`.pi/model-fallbacks.json` mirrors the tier list above for usage-limit fallback; update both together. The OpenAI tier is `openai-codex/*` (preferred: Codex login, supports Fast and Daybreak). `openai/*` (Sign in with ChatGPT) remains a supported manual choice but is not a default or fallback.
 
 Routing provenance only: Pi 1.0.4's `/Users/Nebuleto/.local/pi-1.0.4/node_modules/@earendil-works/pi-coding-agent/CHANGELOG.md`, section 0.99.0, adds “Sign in with ChatGPT” to `openai` and renames OpenAI Codex to “OpenAI Codex (legacy)”. This routing update does not refresh model source guides or behavioral advice.
 

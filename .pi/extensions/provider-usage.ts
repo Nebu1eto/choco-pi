@@ -366,7 +366,7 @@ export function normalizeCodexUsage(payload: RuntimeValue): ProviderUsage {
       ? `${resetCount} saved reset${resetCount === 1 ? "" : "s"} available`
       : undefined;
   return {
-    name: CODEX_USAGE_NAME,
+    name: CHATGPT_USAGE_NAME,
     plan,
     status:
       [balance === undefined ? undefined : `${balance} credits`, resets]
@@ -565,23 +565,17 @@ async function readClaudeUsage(token: string): Promise<ProviderUsage> {
   return withCacheNote(normalizeClaudeUsage(usage.payload, profile), usage);
 }
 
-/** Display name of the Sign in with ChatGPT provider `openai`. */
-export const OPENAI_USAGE_NAME = "ChatGPT";
-/** Display name of the legacy `openai-codex` provider (chatgpt.com backend). */
-export const CODEX_USAGE_NAME = "ChatGPT Codex";
+/**
+ * Display name of the single ChatGPT entry. It reports whichever of the twin
+ * providers `openai-codex` (Codex login, chatgpt.com) or `openai` (Sign in with
+ * ChatGPT, api.openai.com) `chatgptUsageProvider` selects.
+ */
+export const CHATGPT_USAGE_NAME = "ChatGPT";
 /** Status of a signed-in `openai` account: api.openai.com exposes no quota window. */
 export const OPENAI_SIGNED_IN_STATUS = "signed in; quota window not available on api.openai.com";
 /** Status of `openai` configured with an API key, which has no subscription window. */
 export const OPENAI_API_KEY_STATUS = "API key; no subscription quota window";
-/** Status of the legacy Codex provider when its sign-in is absent, expired, or unusable. */
-export const CODEX_LEGACY_SIGNED_OUT_STATUS = "legacy, not signed in";
-/**
- * Status of the legacy Codex provider while `openai` is configured and a model
- * of another provider is active: its token is not resolved, so a stale stored
- * sign-in is never refreshed by a usage read.
- */
-export const CODEX_LEGACY_INACTIVE_STATUS = "legacy, not active";
-const CODEX_RESET_SIGNED_OUT = "ChatGPT Codex (legacy) is not signed in.";
+const CODEX_RESET_SIGNED_OUT = "ChatGPT Codex login (openai-codex) is not signed in.";
 
 /**
  * Whether `provider` authenticates with a stored OAuth sign-in. The host reads
@@ -601,13 +595,30 @@ export function providerUsesOAuth(ctx: ExtensionContext, provider: string): bool
   }
 }
 
-/** Whether `openai` has a stored credential; reads auth status only, never a token. */
-function openaiConfigured(ctx: ExtensionContext): boolean {
+/** Whether `provider` has a stored credential; reads auth status only, never a token. */
+function providerConfigured(ctx: ExtensionContext, provider: string): boolean {
   try {
-    return ctx.modelRegistry.getProviderAuthStatus("openai").configured;
+    return ctx.modelRegistry.getProviderAuthStatus(provider).configured;
   } catch {
     return false;
   }
+}
+
+type ChatGPTProvider = "openai" | "openai-codex";
+
+/**
+ * Provider the ChatGPT entry reports: the active model's provider when it is
+ * `openai` or `openai-codex` and configured, else `openai-codex` when
+ * configured, else `openai` when configured. Reads auth status only.
+ */
+export function chatgptUsageProvider(ctx: ExtensionContext): ChatGPTProvider | undefined {
+  const active = ctx.model?.provider;
+  if ((active === "openai" || active === "openai-codex") && providerConfigured(ctx, active)) {
+    return active;
+  }
+  if (providerConfigured(ctx, "openai-codex")) return "openai-codex";
+  if (providerConfigured(ctx, "openai")) return "openai";
+  return undefined;
 }
 
 /**
@@ -617,35 +628,32 @@ function openaiConfigured(ctx: ExtensionContext): boolean {
  */
 export function openaiUsage(ctx: ExtensionContext): ProviderUsage {
   const notConnected: ProviderUsage = {
-    name: OPENAI_USAGE_NAME,
+    name: CHATGPT_USAGE_NAME,
     status: "not connected",
     windows: [],
   };
-  if (!openaiConfigured(ctx)) return notConnected;
+  if (!providerConfigured(ctx, "openai")) return notConnected;
   const oauth = providerUsesOAuth(ctx, "openai");
   return {
-    name: OPENAI_USAGE_NAME,
+    name: CHATGPT_USAGE_NAME,
     status: oauth === false ? OPENAI_API_KEY_STATUS : OPENAI_SIGNED_IN_STATUS,
     windows: [],
   };
 }
 
-async function codexUsage(ctx: ExtensionContext): Promise<ProviderUsage> {
-  const signedOut: ProviderUsage = {
-    name: CODEX_USAGE_NAME,
-    status: CODEX_LEGACY_SIGNED_OUT_STATUS,
-    windows: [],
-  };
-  if (!ctx.modelRegistry.getProviderAuthStatus("openai-codex").configured) return signedOut;
-  // Resolving the legacy token may refresh a stale OAuth credential (network and
-  // credential-store lock); do so only while Codex is active or `openai` is absent.
-  if (ctx.model?.provider !== "openai-codex" && openaiConfigured(ctx)) {
-    return { name: CODEX_USAGE_NAME, status: CODEX_LEGACY_INACTIVE_STATUS, windows: [] };
-  }
+/**
+ * The single ChatGPT entry. Resolving the `openai-codex` token may refresh a
+ * stale OAuth credential (network and credential-store lock), so it happens
+ * only when the selection is `openai-codex`; an `openai` selection reads auth
+ * status only. A Codex sign-in without a usable account id falls back to the
+ * `openai` state.
+ */
+async function chatgptUsage(ctx: ExtensionContext): Promise<ProviderUsage> {
+  const selected = chatgptUsageProvider(ctx);
+  if (selected !== "openai-codex") return openaiUsage(ctx);
   const token = await providerToken(ctx, "openai-codex");
-  if (!token) return signedOut;
-  const accountId = codexAccountId(token);
-  if (!accountId) return signedOut;
+  const accountId = token ? codexAccountId(token) : undefined;
+  if (!token || !accountId) return openaiUsage(ctx);
   return readCodexUsage(token, accountId);
 }
 
@@ -940,7 +948,7 @@ export function formatProviderUsage(
   return [heading, ...windows].join("\n");
 }
 
-const PROVIDER_NAMES = ["Claude", OPENAI_USAGE_NAME, CODEX_USAGE_NAME, "Synthetic"] as const;
+const PROVIDER_NAMES = ["Claude", CHATGPT_USAGE_NAME, "Synthetic"] as const;
 
 /**
  * Describes why a provider produced nothing: a throttled request also reports
@@ -963,7 +971,7 @@ export type ProviderUsageReading =
 export type ProviderUsageReport = { observedAt: Date; providers: ProviderUsageReading[] };
 
 /**
- * Queries Claude, ChatGPT (`openai`), legacy ChatGPT Codex, and Synthetic once.
+ * Queries Claude, ChatGPT (`openai-codex` or `openai`), and Synthetic once.
  * A failed provider becomes a reading with its failure message, so this never
  * rejects; the Usage tab and the structured host report both render from one
  * result.
@@ -971,8 +979,7 @@ export type ProviderUsageReport = { observedAt: Date; providers: ProviderUsageRe
 export async function readProviderUsages(ctx: ExtensionContext): Promise<ProviderUsageReport> {
   const settled = await Promise.allSettled([
     claudeUsage(ctx),
-    Promise.resolve().then(() => openaiUsage(ctx)),
-    codexUsage(ctx),
+    chatgptUsage(ctx),
     syntheticUsage(ctx),
   ]);
   return {

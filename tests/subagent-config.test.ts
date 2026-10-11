@@ -60,16 +60,19 @@ test("role model and thinking follow hard pin, caller, then default precedence",
   assert.equal(pinned.thinking, "xhigh");
 });
 
-test("fallbacks exclude legacy Codex and every role uses an OpenAI or Anthropic default", async () => {
+test("fallbacks and role defaults route OpenAI through openai-codex only", async () => {
   const fallbacks = await readFile(resolve(".pi/model-fallbacks.json"), "utf8");
-  assert.doesNotMatch(fallbacks, /openai-codex\//u);
+  assert.doesNotMatch(fallbacks, /"openai\//u, "no openai/* fallback defaults");
+  for (const id of ["gpt-6-astra", "gpt-6.1-sol", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-luna"]) {
+    assert.ok(fallbacks.includes(`"openai-codex/${id}"`), id);
+  }
   const files = (await readdir(resolve(".pi/agents"))).filter((file) => file.endsWith(".md"));
   assert.ok(files.length > 0);
   const expectedOpenAI = new Map([
-    ["general.md", "openai/gpt-6.1-sol"],
-    ["explore.md", "openai/gpt-6.1-sol"],
-    ["handoff.md", "openai/gpt-6.1-sol"],
-    ["reviewer.md", "openai/gpt-6-astra"],
+    ["general.md", "openai-codex/gpt-6.1-sol"],
+    ["explore.md", "openai-codex/gpt-6.1-sol"],
+    ["handoff.md", "openai-codex/gpt-6.1-sol"],
+    ["reviewer.md", "openai-codex/gpt-6-astra"],
   ]);
   for (const file of expectedOpenAI.keys()) assert.ok(files.includes(file), file + " exists");
   for (const file of files) {
@@ -77,6 +80,6 @@ test("fallbacks exclude legacy Codex and every role uses an OpenAI or Anthropic 
     const defaultModel = /^default_model:\s*(\S+)$/mu.exec(content)?.[1];
     const expected = expectedOpenAI.get(file);
     if (expected) assert.equal(defaultModel, expected, file);
-    if (defaultModel) assert.match(defaultModel, /^(?:openai|anthropic)\//u, file);
+    if (defaultModel) assert.match(defaultModel, /^(?:openai-codex|anthropic)\//u, file);
   }
 });

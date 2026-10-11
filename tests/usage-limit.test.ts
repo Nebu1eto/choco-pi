@@ -152,12 +152,12 @@ test("an openai quota without usage data closes for the default window, never co
   assert.deepEqual(result, { ready: false, classification: classified, evidence: "unavailable" });
 });
 
-test("a limited openai model falls back to comparable Anthropic, never to legacy Codex", () => {
+test("limited OpenAI models on either provider fall back to comparable Anthropic", () => {
   const table: ModelFallbacks = {
     tiers: {
       workhorse: {
-        primary: ["anthropic/claude-opus-5-5", "openai/gpt-6.1-sol"],
-        secondary: ["anthropic/claude-opus-5", "openai/gpt-5.6-sol"],
+        primary: ["anthropic/claude-opus-5-5", "openai-codex/gpt-6.1-sol"],
+        secondary: ["anthropic/claude-opus-5", "openai-codex/gpt-5.6-sol"],
       },
     },
     lastResort: ["synthetic/hf:moonshotai/Kimi-K3"],
@@ -170,12 +170,12 @@ test("a limited openai model falls back to comparable Anthropic, never to legacy
     { provider: "synthetic", id: "hf:moonshotai/Kimi-K3" },
   ];
   const openaiClosed = (provider: string): boolean => provider === "openai";
+  // A limited manually chosen openai model resolves its tier through the same id on openai-codex.
   const sol = { provider: "openai", id: "gpt-6.1-sol" };
   assert.deepEqual(pickFallback(table, sol, { available, scoped: [], isClosed: openaiClosed }), {
     provider: "anthropic",
     id: "claude-opus-5-5",
   });
-  // A limited legacy Codex model resolves its tier through the same id on `openai`.
   const codexSol = { provider: "openai-codex", id: "gpt-6.1-sol" };
   assert.deepEqual(pickFallback(table, codexSol, { available, scoped: [], isClosed: open }), {
     provider: "anthropic",
@@ -927,24 +927,24 @@ test("the repository fallback table loads and mirrors the model-guidance tiers",
     const table = await loadModelFallbacks(agentDir);
     assert.deepEqual(table.tiers.flagship?.primary, [
       "anthropic/claude-fable-5-1",
-      "openai/gpt-6-astra",
+      "openai-codex/gpt-6-astra",
     ]);
     assert.deepEqual(table.tiers.workhorse, {
-      primary: ["anthropic/claude-opus-5-5", "openai/gpt-6.1-sol"],
-      secondary: ["anthropic/claude-opus-5", "openai/gpt-5.6-sol"],
+      primary: ["anthropic/claude-opus-5-5", "openai-codex/gpt-6.1-sol"],
+      secondary: ["anthropic/claude-opus-5", "openai-codex/gpt-5.6-sol"],
     });
     assert.deepEqual(table.tiers.utility, {
-      primary: ["anthropic/claude-sonnet-5-5", "openai/gpt-5.6-terra"],
+      primary: ["anthropic/claude-sonnet-5-5", "openai-codex/gpt-5.6-terra"],
       secondary: ["anthropic/claude-sonnet-5"],
     });
     assert.deepEqual(table.tiers.micro?.primary, [
-      "openai/gpt-6-luna",
+      "openai-codex/gpt-6-luna",
       "anthropic/claude-haiku-5-5",
     ]);
     assert.deepEqual(table.lastResort, ["synthetic/hf:moonshotai/Kimi-K3"]);
     for (const refs of Object.values(table.tiers)) {
       for (const ref of [...refs.primary, ...(refs.secondary ?? [])]) {
-        assert.equal(ref.startsWith("openai-codex/"), false, `legacy Codex is no fallback: ${ref}`);
+        assert.equal(ref.startsWith("openai/"), false, `openai/* is no default fallback: ${ref}`);
       }
     }
 
