@@ -1,11 +1,14 @@
 import { stripVTControlCharacters } from "node:util";
+import { Value } from "typebox/value";
 import { isString, reinterpretHostValue, type RuntimeValue } from "./lib/runtime-values.ts";
 import {
   InteractiveMode,
   type AgentSession,
+  type BuildSystemPromptOptions,
   type CacheWarmingMode,
   type ExtensionAPI,
   type ExtensionCommandContext,
+  type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Box, matchesKey, ScrollView, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import {
@@ -40,11 +43,13 @@ import {
 import {
   computeCacheWaste,
   formatSessionInfo,
+  sessionInfoRows,
   summarizeMainUsage,
   summarizeSubagentUsage,
+  type SessionInfoInput,
   type SessionInfoStyle,
 } from "./lib/session-usage.ts";
-import { renderContext } from "./lib/context-report.ts";
+import { buildContextReport, renderContext } from "./lib/context-report.ts";
 import { hasRunningSubagents } from "./lib/subagent-manager.ts";
 import {
   condenseStatusRows,
@@ -54,12 +59,23 @@ import {
   summarizeStatusRows,
   summarizeMcpServers,
   type CacheWarmingInfo,
+  type StatusRow,
 } from "./session-status.ts";
 import { buildContextCapSection } from "./model-context-cap.ts";
 import { resetCodexUsage, usageReport } from "./provider-usage.ts";
 import { CodexResetError } from "./lib/codex-resets.ts";
-import { rethrowUnlessStaleContext } from "./lib/lifecycle.ts";
+import { isStaleContextError, rethrowUnlessStaleContext } from "./lib/lifecycle.ts";
 import { daybreakStatusValue, getDaybreakBridge } from "./lib/daybreak-state.ts";
+import { getFastModeBridge } from "./lib/fast-mode-state.ts";
+import { hostFramesEnabled } from "./lib/host-bridge/bridge.ts";
+import { createProcessSources } from "./lib/host-bridge/sources.ts";
+import { REPORT_STATUS_KEY } from "./lib/host-bridge/schema.ts";
+import {
+  REPORT_SCHEMA_VERSION,
+  ReportFrameSchema,
+  type ReportFrame,
+  type ReportRow,
+} from "./lib/host-bridge/report-schema.ts";
 
 export type StatusTabId = "status" | "context" | "usage" | "preferences";
 export type TextTabId = "status" | "context" | "usage";
@@ -240,6 +256,58 @@ const SESSION_INFO_ROWS: ReadonlySet<string> = new Set([
   "Session file",
 ]);
 
+/** The figures behind the Session Info block, shared by the text tab and the host report. */
+function sessionInfoInput(ctx: ExtensionCommandContext): SessionInfoInput {
+  const entries = ctx.sessionManager.getEntries();
+  const sessionId = ctx.sessionManager.getSessionId();
+  return {
+    sessionName: ctx.sessionManager.getSessionName(),
+    sessionFile: ctx.sessionManager.getSessionFile(),
+    cwd: ctx.cwd,
+    sessionId,
+    main: summarizeMainUsage(entries),
+    cacheWaste: computeCacheWaste(entries, ctx.modelRegistry),
+    subagents: summarizeSubagentUsage(sessionId),
+    subagentsRunning: hasRunningSubagents(),
+    cacheWarming: (() => {
+      const warming = currentCacheWarming();
+      const decision = warming?.status?.decision;
+      const summary = formatCacheWarming(warming);
+      return decision?.economicsAvailable
+        ? { summary, missCost: decision.missCost, warmCost: decision.warmCost }
+        : { summary };
+    })(),
+  };
+}
+
+/** Fast mode as `/fast status` words it, or "not initialized" before the session registers it. */
+function fastStatusValue(ctx: ExtensionCommandContext, sessionId: string): string {
+  const decision = getFastModeBridge().get(sessionId)?.decide(ctx.model);
+  if (!decision) return "not initialized";
+  if (!decision.requested) return "off";
+  return decision.supported ? "on" : "on (saved; inactive for this model)";
+}
+
+/** The Environment rows in their expanded form, shared by the text tab and the host report. */
+function environmentRows(
+  ctx: ExtensionCommandContext,
+  thinkingLevel: string,
+  mcpLabel: string,
+): StatusRow[] {
+  const sessionId = ctx.sessionManager.getSessionId();
+  const all = summarizeStatusRows(ctx, thinkingLevel, mcpLabel).filter(
+    (row) => !SESSION_INFO_ROWS.has(row.label),
+  );
+  all.push(
+    {
+      label: "Daybreak",
+      value: daybreakStatusValue(getDaybreakBridge().get(sessionId)?.getState()),
+    },
+    { label: "Fast mode", value: fastStatusValue(ctx, sessionId) },
+  );
+  return all;
+}
+
 /**
  * The Status tab: the retired `/session` block first, then the environment rows.
  *
@@ -258,40 +326,196 @@ export function statusBody(
   expanded = false,
   mcpLabel = "checking configuration (see /mcp)",
 ): string {
-  const entries = ctx.sessionManager.getEntries();
-  const sessionId = ctx.sessionManager.getSessionId();
-  const info = formatSessionInfo(
-    {
-      sessionName: ctx.sessionManager.getSessionName(),
-      sessionFile: ctx.sessionManager.getSessionFile(),
-      cwd: ctx.cwd,
-      sessionId,
-      main: summarizeMainUsage(entries),
-      cacheWaste: computeCacheWaste(entries, ctx.modelRegistry),
-      subagents: summarizeSubagentUsage(sessionId),
-      subagentsRunning: hasRunningSubagents(),
-      cacheWarming: (() => {
-        const warming = currentCacheWarming();
-        const decision = warming?.status?.decision;
-        const summary = formatCacheWarming(warming);
-        return decision?.economicsAvailable
-          ? { summary, missCost: decision.missCost, warmCost: decision.warmCost }
-          : { summary };
-      })(),
-    },
-    style,
-    expanded,
-  );
-  const daybreak = {
-    label: "Daybreak",
-    value: daybreakStatusValue(getDaybreakBridge().get(sessionId)?.getState()),
-  };
-  const all = summarizeStatusRows(ctx, thinkingLevel, mcpLabel).filter(
-    (row) => !SESSION_INFO_ROWS.has(row.label),
-  );
-  all.push(daybreak);
+  const info = formatSessionInfo(sessionInfoInput(ctx), style, expanded);
+  const all = environmentRows(ctx, thinkingLevel, mcpLabel);
   const rows = expanded ? all : condenseStatusRows(all);
   return `${info}\n\n${statusHeading(style)}\n\n${formatStatus(rows, style)}`;
+}
+
+/** A multi-line status value becomes its headline plus the dedented inventory as a hint. */
+function reportRow(row: StatusRow): ReportRow {
+  const [value = "", ...rest] = row.value.split("\n");
+  const hint = rest
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .join("\n");
+  return hint.length > 0 ? { label: row.label, value, hint } : { label: row.label, value };
+}
+
+/**
+ * The structured `/status` report for RPC hosts: the Session Info figures and
+ * every Environment row, including Daybreak, Fast mode, and reasoning effort.
+ */
+export function buildStatusReport(
+  ctx: ExtensionCommandContext,
+  thinkingLevel: string,
+  mcpLabel = "checking configuration (see /mcp)",
+  at: Date = new Date(),
+): ReportFrame {
+  return {
+    schema: REPORT_SCHEMA_VERSION,
+    kind: "status",
+    at: at.toISOString(),
+    sessionId: ctx.sessionManager.getSessionId(),
+    title: "Status",
+    sections: [
+      { title: "Session Info", rows: sessionInfoRows(sessionInfoInput(ctx)) },
+      { title: "Environment", rows: environmentRows(ctx, thinkingLevel, mcpLabel).map(reportRow) },
+    ],
+  };
+}
+
+/** Sends one report frame; refuses a frame the documented schema would reject. */
+function publishReport(ui: Pick<ExtensionContext["ui"], "setStatus">, frame: ReportFrame): void {
+  const kind = frame.kind;
+  if (!Value.Check(ReportFrameSchema, frame)) {
+    throw new Error(`status-commands produced an invalid ${kind} report frame`);
+  }
+  ui.setStatus(REPORT_STATUS_KEY, JSON.stringify(frame));
+}
+
+/**
+ * The latest system-prompt options seen for a session. Event contexts carry
+ * none, so automatic reports read the options of the most recent command
+ * context or `before_agent_start` event of the same session.
+ */
+let latestPromptOptions: { sessionId: string; read: () => BuildSystemPromptOptions } | undefined;
+
+function rememberPromptOptions(ctx: ExtensionCommandContext, sessionId: string): void {
+  latestPromptOptions = { sessionId, read: () => ctx.getSystemPromptOptions() };
+}
+
+/**
+ * Publishes the structured report, then the plain-text fallback. A report
+ * failure never suppresses the text: it is raised after the notice, except a
+ * stale context, which ends the command silently.
+ */
+function reportThenNotify(
+  ctx: ExtensionCommandContext,
+  build: (() => ReportFrame) | undefined,
+  body: string,
+): void {
+  let failure: { error: RuntimeValue } | undefined;
+  if (build) {
+    try {
+      publishReport(ctx.ui, build());
+    } catch (error) {
+      if (isStaleContextError(error)) return;
+      failure = { error };
+    }
+  }
+  // Hosts without a terminal render notices as plain text; escape codes
+  // would show up verbatim.
+  ctx.ui.notify(stripVTControlCharacters(body), "info");
+  if (failure) rethrowUnlessStaleContext(failure.error);
+}
+
+/** Trailing debounce for automatic context reports. */
+export const REPORT_DEBOUNCE_MS = 500;
+
+type ReportApi = Pick<ExtensionAPI, "on" | "getAllTools" | "getActiveTools"> &
+  Partial<Pick<ExtensionAPI, "getMcpServers">>;
+
+export interface ReportAutoPublishOptions {
+  /** `CHOCO_PI_HOST`; reports are automatic only where host-bridge progress frames are. */
+  host: string | undefined;
+  /** True when this extension instance was loaded for a subagent child session. */
+  inChildLoad?: boolean;
+  isChildSession?: (sessionId: string) => boolean;
+  /** Schedules `callback` once and returns its canceller. */
+  setTimer?: (callback: () => void, ms: number) => () => void;
+  warn?: (message: string) => void;
+}
+
+function defaultTimer(callback: () => void, ms: number): () => void {
+  const handle = setTimeout(callback, ms);
+  handle.unref();
+  return () => clearTimeout(handle);
+}
+
+/**
+ * Publishes a context report on `session_start`, after each `turn_end`, and on
+ * `model_select`, debounced, only in rpc mode under a bridge-enabled host. A
+ * report needs the session's system-prompt options, so none is sent until a
+ * command or `before_agent_start` has supplied them for the current session.
+ */
+export function registerReportAutoPublish(pi: ReportApi, options: ReportAutoPublishOptions): void {
+  if (options.inChildLoad === true) return;
+  const setTimer = options.setTimer ?? defaultTimer;
+  const warn = options.warn ?? ((message: string) => console.warn(message));
+  let generation = 0;
+  let cancel: (() => void) | undefined;
+  let lastKey: string | undefined;
+
+  const enabledSession = (ctx: ExtensionContext): string | undefined => {
+    if (!hostFramesEnabled(ctx.mode, options.host)) return undefined;
+    const sessionId = ctx.sessionManager.getSessionId();
+    return options.isChildSession?.(sessionId) === true ? undefined : sessionId;
+  };
+
+  const publish = (ctx: ExtensionContext, sessionId: string, scheduled: number): void => {
+    if (scheduled !== generation) return;
+    try {
+      if (ctx.sessionManager.getSessionId() !== sessionId) return;
+      const source = latestPromptOptions;
+      if (source?.sessionId !== sessionId) return;
+      const frame = buildContextReport(pi, ctx, source.read());
+      // Re-sending identical figures only moves the timestamp.
+      const key = JSON.stringify({ ...frame, at: "" });
+      if (key === lastKey) return;
+      publishReport(ctx.ui, frame);
+      lastKey = key;
+    } catch (error) {
+      // A timer callback has no caller to receive an error: report, never throw.
+      if (isStaleContextError(error)) return;
+      warn(
+        `[status-commands] automatic context report failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  };
+
+  const schedule = (ctx: ExtensionContext): void => {
+    let sessionId: string | undefined;
+    try {
+      sessionId = enabledSession(ctx);
+    } catch (error) {
+      rethrowUnlessStaleContext(error);
+      return;
+    }
+    if (sessionId === undefined) return;
+    cancel?.();
+    const scheduled = generation;
+    const target = sessionId;
+    cancel = setTimer(() => {
+      cancel = undefined;
+      publish(ctx, target, scheduled);
+    }, REPORT_DEBOUNCE_MS);
+  };
+
+  const reset = (): void => {
+    generation += 1;
+    cancel?.();
+    cancel = undefined;
+    lastKey = undefined;
+  };
+
+  pi.on("session_start", (_event, ctx) => {
+    reset();
+    schedule(ctx);
+  });
+  pi.on("session_shutdown", reset);
+  pi.on("before_agent_start", (event, ctx) => {
+    try {
+      const sessionId = enabledSession(ctx);
+      if (sessionId === undefined) return;
+      const promptOptions = event.systemPromptOptions;
+      latestPromptOptions = { sessionId, read: () => promptOptions };
+    } catch (error) {
+      rethrowUnlessStaleContext(error);
+    }
+  });
+  pi.on("turn_end", (_event, ctx) => schedule(ctx));
+  pi.on("model_select", (_event, ctx) => schedule(ctx));
 }
 
 /** The Context tab body, or a notice when no extension API was captured. */
@@ -459,10 +683,22 @@ async function showTabOnce(
       const sessionId = currentSessionId();
       const label = await summarizeMcpServers(cwd, names);
       if (currentSessionId() !== sessionId) return undefined;
+      rememberPromptOptions(ctx, sessionId);
       const body = statusBody(ctx, thinkingLevel, undefined, initialExpanded, label);
-      // Hosts without a terminal render notices as plain text; escape codes
-      // would show up verbatim.
-      ctx.ui.notify(stripVTControlCharacters(body), "info");
+      reportThenNotify(ctx, () => buildStatusReport(ctx, thinkingLevel, label), body);
+      return undefined;
+    }
+    if (initial === "context") {
+      rememberPromptOptions(ctx, ctx.sessionManager.getSessionId());
+      const inventory = getToolInventory();
+      const body = contextBody(ctx, initialExpanded, false);
+      reportThenNotify(
+        ctx,
+        inventory
+          ? () => buildContextReport(inventory, ctx, ctx.getSystemPromptOptions())
+          : undefined,
+        body,
+      );
       return undefined;
     }
     const body = await tabBody(ctx, thinkingLevel, initial, false, initialExpanded);
@@ -764,6 +1000,12 @@ async function showTab(
 
 export default function statusCommands(pi: ExtensionAPI): void {
   setToolInventory(pi);
+  const sources = createProcessSources();
+  registerReportAutoPublish(pi, {
+    host: process.env.CHOCO_PI_HOST,
+    inChildLoad: sources.inChildLoad(),
+    isChildSession: (sessionId) => sources.isChildSession(sessionId),
+  });
   pi.on("session_start", closeOpenDialogs);
   pi.on("session_shutdown", closeOpenDialogs);
   pi.registerCommand("status", {

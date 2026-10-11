@@ -4,6 +4,7 @@ import path from "node:path";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { describePath } from "../session-status.ts";
 import { isJsonRecord, isNumber, isString, type RuntimeValue } from "./runtime-values.ts";
+import type { ReportRow } from "./host-bridge/report-schema.ts";
 
 /**
  * Session accounting for the `/status` Session Info block.
@@ -623,4 +624,87 @@ function subagentNotes(input: SessionInfoInput): string[] {
     notes.push("A running agent's current turn is counted only once that turn ends.");
   }
   return notes;
+}
+
+/**
+ * The Session Info block as label/value rows for structured host reports. The
+ * figures and wording match the expanded formatSessionInfo; the cost breakdown
+ * and sub-agent footnotes become the Cost row's hint.
+ */
+export function sessionInfoRows(input: SessionInfoInput): ReportRow[] {
+  const paint = painter(undefined);
+  const rows: ReportRow[] = [];
+  if (input.sessionName) rows.push({ label: "Name", value: input.sessionName });
+  rows.push({
+    label: "File",
+    value: input.sessionFile
+      ? describePath(input.sessionFile, input.cwd ?? process.cwd())
+      : "In-memory",
+  });
+  rows.push({ label: "ID", value: input.sessionId });
+  const counts = input.main.counts;
+  rows.push({
+    label: "Messages",
+    value: `${counts.total} total · ${counts.user} user · ${counts.assistant} assistant · ${counts.toolCalls} tool calls`,
+  });
+  const totals = input.main.totals;
+  const promptTokens = totals.input + totals.cacheRead + totals.cacheWrite;
+  const tokenParts = [`${formatCompactTokens(promptTokens)} in`];
+  if (promptTokens > 0 && totals.cacheRead + totals.cacheWrite > 0)
+    tokenParts.push(`${cacheRate(paint, (totals.cacheRead / promptTokens) * 100)} cached`);
+  tokenParts.push(`${formatCompactTokens(totals.output)} out`);
+  rows.push({ label: "Tokens", value: tokenParts.join(" · ") });
+  rows.push({ label: "Cache warming", value: input.cacheWarming.summary });
+  if (input.cacheWarming.missCost !== undefined) {
+    rows.push(
+      { label: "Miss penalty", value: `$${input.cacheWarming.missCost.toFixed(3)}` },
+      {
+        label: "Refresh cost",
+        value: `$${input.cacheWarming.warmCost?.toFixed(3) ?? "0.000"}`,
+      },
+    );
+  }
+  const warming = input.main.warming;
+  if (warming.count > 0) {
+    const refreshes = warming.count === 1 ? "1 refresh" : `${warming.count} refreshes`;
+    rows.push({ label: "Warming usage", value: `${refreshes}, $${warming.cost.toFixed(3)}` });
+  }
+  const sub = input.subagents;
+  const hasSubagents = sub.agents > 0 || sub.totals.cost > 0;
+  const waste = input.cacheWaste;
+  if (totals.cost > 0 || hasSubagents || waste.missedTokens > 0) {
+    const detail: string[] = [];
+    if (input.main.breakdown.length > 0) {
+      detail.push(...input.main.breakdown.map((entry) => costEntryLine(entry, paint, "main")));
+    } else if (totals.cost > 0) {
+      detail.push(
+        `main  ${formatCost(totals.cost)} · ${formatCompactTokens(totalTokens(totals))} tok`,
+      );
+    }
+    if (hasSubagents) {
+      const agentLabel = sub.agents === 1 ? "1 agent" : `${sub.agents} agents`;
+      detail.push(
+        `sub (${agentLabel}; transcripts)  ${formatCost(sub.totals.cost)} · ${formatCompactTokens(totalTokens(sub.totals))} tok`,
+      );
+      detail.push(...sub.breakdown.map((entry) => costEntryLine(entry, paint, "", "  ")));
+    }
+    if (waste.missedTokens > 0) {
+      const missLabel = waste.missCount === 1 ? "1 miss" : `${waste.missCount} misses`;
+      const amount = waste.missedCost >= 0.0001 ? `${formatCost(waste.missedCost)} · ` : "";
+      detail.push(
+        `cache re-billed  ${amount}${formatCompactTokens(waste.missedTokens)} tok · ${missLabel}`,
+      );
+    }
+    detail.push(...subagentNotes(input));
+    const row: ReportRow = {
+      label: "Cost",
+      value: `${formatCost(totals.cost + sub.totals.cost)} ${warming.count > 0 ? "total (excl. warming)" : "total"}`,
+    };
+    if (detail.length > 0) row.hint = detail.join("\n");
+    rows.push(row);
+  } else {
+    const notes = subagentNotes(input);
+    if (notes.length > 0) rows.push({ label: "Sub-agents", value: notes.join(" ") });
+  }
+  return rows;
 }

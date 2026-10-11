@@ -8,10 +8,16 @@ import {
   type BuildSystemPromptOptions,
   type ExtensionAPI,
   type ExtensionCommandContext,
+  type ExtensionContext,
   type SessionEntry,
   type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import { currentProviderPrefixMetrics, type ProviderPrefixMetrics } from "../cache-probe.ts";
+import {
+  REPORT_SCHEMA_VERSION,
+  type ReportFrame,
+  type ReportRow,
+} from "./host-bridge/report-schema.ts";
 
 const GRID_COLUMNS = 10;
 const GRID_ROWS = 10;
@@ -73,6 +79,9 @@ type Category = {
   tokens: number;
   marker: string;
 };
+
+/** A report category and whether its figure is an estimate rather than a measurement. */
+type MeasuredCategory = Category & { estimated: boolean };
 
 type McpCatalog = {
   total: number;
@@ -140,7 +149,7 @@ function mcpCatalog(tools: ToolInfo[]): McpCatalog {
   return { total: servers.reduce((sum, server) => sum + server.count, 0), servers };
 }
 
-function contextEntries(ctx: ExtensionCommandContext): SessionEntry[] {
+function contextEntries(ctx: Pick<ExtensionContext, "sessionManager">): SessionEntry[] {
   return ctx.sessionManager.buildContextEntries();
 }
 
@@ -189,14 +198,14 @@ function allocateTokens(values: number[], total: number): number[] {
 }
 
 function categoryData(
-  ctx: ExtensionCommandContext,
+  ctx: Pick<ExtensionContext, "getSystemPrompt">,
   options: BuildSystemPromptOptions,
   tools: ToolInfo[],
   activeNames: Set<string>,
   measuredTotal: number | undefined,
   messagesEstimate: number,
   providerMetrics: ProviderPrefixMetrics | undefined,
-): Category[] {
+): MeasuredCategory[] {
   const activeTools = tools.filter((tool) => activeNames.has(tool.name));
   let mcp = activeTools.filter(isMcpTool).reduce((sum, tool) => sum + toolTokens(tool), 0);
   let agents = activeTools.filter(isAgentTool).reduce((sum, tool) => sum + toolTokens(tool), 0);
@@ -220,21 +229,30 @@ function categoryData(
   const known = prompt + systemTools + mcp + agents + contextFiles + skills;
   let messages =
     measuredTotal === undefined ? messagesEstimate : Math.max(0, measuredTotal - known);
-  if (measuredTotal !== undefined && known + messagesEstimate > measuredTotal) {
+  const normalized = measuredTotal !== undefined && known + messagesEstimate > measuredTotal;
+  if (normalized) {
     // Normalize all estimates together: overhead must not erase real messages.
     [prompt, systemTools, mcp, agents, contextFiles, skills, messages] = allocateTokens(
       [prompt, systemTools, mcp, agents, contextFiles, skills, messagesEstimate],
       measuredTotal,
     );
   }
+  // Provider metrics measure the tool and system blocks; messages are measured
+  // as the remainder of a measured total. Normalizing rescales every estimate.
+  const toolsEstimated = normalized || !providerMetrics;
   return [
-    { label: "System prompt", tokens: prompt, marker: "S" },
-    { label: "System tools", tokens: systemTools, marker: "T" },
-    { label: "MCP tools", tokens: mcp, marker: "M" },
-    { label: "Custom agents", tokens: agents, marker: "A" },
-    { label: "Context files", tokens: contextFiles, marker: "C" },
-    { label: "Skills", tokens: skills, marker: "K" },
-    { label: "Messages", tokens: messages, marker: "G" },
+    { label: "System prompt", tokens: prompt, marker: "S", estimated: true },
+    { label: "System tools", tokens: systemTools, marker: "T", estimated: toolsEstimated },
+    { label: "MCP tools", tokens: mcp, marker: "M", estimated: toolsEstimated },
+    { label: "Custom agents", tokens: agents, marker: "A", estimated: toolsEstimated },
+    { label: "Context files", tokens: contextFiles, marker: "C", estimated: true },
+    { label: "Skills", tokens: skills, marker: "K", estimated: true },
+    {
+      label: "Messages",
+      tokens: messages,
+      marker: "G",
+      estimated: normalized || measuredTotal === undefined,
+    },
   ];
 }
 
@@ -328,21 +346,42 @@ function sourceLabel(tool: ToolInfo): string {
   return tool.sourceInfo.source === "builtin" ? "Pi" : tool.sourceInfo.source.replace(/^npm:/, "");
 }
 
-/**
- * The Context tab body. Concise mode reports the bar, the per-category split,
- * and the counts; expanded mode appends the tool, context-file, and skill
- * inventories those counts summarize.
- */
-export function renderContext(
+/** The context a report reads; event handlers lack the command-only prompt options. */
+export type ContextReportContext = Pick<
+  ExtensionContext,
+  "cwd" | "model" | "getContextUsage" | "getSystemPrompt" | "sessionManager"
+>;
+
+type ContextInventory = Pick<ExtensionAPI, "getAllTools" | "getActiveTools"> &
+  Partial<Pick<ExtensionAPI, "getMcpServers">>;
+
+/** Everything the Context tab and the structured context report are drawn from. */
+type ContextData = {
+  window: number;
+  tools: ToolInfo[];
+  activeNames: Set<string>;
+  measuredTotal: number | undefined;
+  reserve: number;
+  categories: MeasuredCategory[];
+  categoryTotal: number;
+  total: number;
+  free: number;
+  deferred: ToolInfo[];
+  deferredMcp: ToolInfo[];
+  activeAgents: ToolInfo[];
+  catalog: McpCatalog;
+  contextFiles: NonNullable<BuildSystemPromptOptions["contextFiles"]>;
+  skills: NonNullable<BuildSystemPromptOptions["skills"]>;
+};
+
+function collectContextData(
   pi: Pick<ExtensionAPI, "getAllTools" | "getActiveTools">,
-  ctx: ExtensionCommandContext,
-  expanded: boolean,
-  colorize: boolean,
-  providerMetrics: ProviderPrefixMetrics | undefined = currentProviderPrefixMetrics(ctx),
-): string {
+  ctx: ContextReportContext,
+  options: BuildSystemPromptOptions,
+  providerMetrics: ProviderPrefixMetrics | undefined,
+): ContextData {
   const usage = ctx.getContextUsage();
   const window = usage?.contextWindow ?? ctx.model?.contextWindow ?? 0;
-  const options = ctx.getSystemPromptOptions();
   const tools = pi.getAllTools();
   const activeNames = new Set(pi.getActiveTools());
   const entries = contextEntries(ctx);
@@ -365,13 +404,54 @@ export function renderContext(
   );
   const categoryTotal = categories.reduce((sum, category) => sum + category.tokens, 0);
   const total = measuredTotal ?? categoryTotal;
-  const free = Math.max(0, window - total - reserve);
   const deferred = tools.filter((tool) => !activeNames.has(tool.name));
-  const deferredMcp = deferred.filter(isMcpTool);
-  const activeAgents = tools.filter((tool) => activeNames.has(tool.name) && isAgentTool(tool));
-  const catalog = mcpCatalog(tools);
-  const contextFiles = options.contextFiles ?? [];
-  const skills = options.skills ?? [];
+  return {
+    window,
+    tools,
+    activeNames,
+    measuredTotal,
+    reserve,
+    categories,
+    categoryTotal,
+    total,
+    free: Math.max(0, window - total - reserve),
+    deferred,
+    deferredMcp: deferred.filter(isMcpTool),
+    activeAgents: tools.filter((tool) => activeNames.has(tool.name) && isAgentTool(tool)),
+    catalog: mcpCatalog(tools),
+    contextFiles: options.contextFiles ?? [],
+    skills: options.skills ?? [],
+  };
+}
+
+/**
+ * The Context tab body. Concise mode reports the bar, the per-category split,
+ * and the counts; expanded mode appends the tool, context-file, and skill
+ * inventories those counts summarize.
+ */
+export function renderContext(
+  pi: Pick<ExtensionAPI, "getAllTools" | "getActiveTools">,
+  ctx: ExtensionCommandContext,
+  expanded: boolean,
+  colorize: boolean,
+  providerMetrics: ProviderPrefixMetrics | undefined = currentProviderPrefixMetrics(ctx),
+): string {
+  const {
+    window,
+    tools,
+    activeNames,
+    measuredTotal,
+    reserve,
+    categories,
+    total,
+    free,
+    deferred,
+    deferredMcp,
+    activeAgents,
+    catalog,
+    contextFiles,
+    skills,
+  } = collectContextData(pi, ctx, ctx.getSystemPromptOptions(), providerMetrics);
   const sidebarWidth = MAX_REPORT_WIDTH - GRID_ROW_WIDTH - LEGEND_GAP;
   const legend = [
     truncateText(ctx.model?.id ?? "No model", sidebarWidth),
@@ -444,4 +524,124 @@ export function renderContext(
     ...(skills.length > 0 ? skills.map((skill) => `- ${skill.name}`) : ["- none"]),
   );
   return lines.join("\n");
+}
+
+function modelLabel(model: ExtensionContext["model"]): string {
+  return model ? `${model.provider}/${model.id}` : "";
+}
+
+/** MCP servers from the tool catalog, with each registered server's state when known. */
+function reportMcpServers(
+  catalog: McpCatalog,
+  registered: ReturnType<ExtensionAPI["getMcpServers"]>,
+): ContextReportServer[] {
+  const servers = new Map<string, ContextReportServer>();
+  for (const server of catalog.servers)
+    servers.set(server.name, { name: server.name, tools: server.count, tokens: server.tokens });
+  for (const server of registered) {
+    // Only the enable flag is read: a server config can carry credentials.
+    const state = server.config.enabled === false ? "disabled" : "registered";
+    const known = servers.get(server.name);
+    servers.set(server.name, { ...(known ?? { name: server.name, tools: 0, tokens: 0 }), state });
+  }
+  return [...servers.values()].sort((left, right) => left.name.localeCompare(right.name));
+}
+
+type ContextReportServer = { name: string; tools: number; tokens: number; state?: string };
+
+/**
+ * The structured `/context` report for RPC hosts: the same figures the Context
+ * tab draws, as typed data plus generic rows for hosts that render only rows.
+ * `options` comes from a command context or the latest `before_agent_start`,
+ * because event contexts carry no system-prompt options.
+ */
+export function buildContextReport(
+  pi: ContextInventory,
+  ctx: ExtensionContext,
+  options: BuildSystemPromptOptions,
+  providerMetrics: ProviderPrefixMetrics | undefined = currentProviderPrefixMetrics(ctx),
+  at: Date = new Date(),
+): ReportFrame {
+  const data = collectContextData(pi, ctx, options, providerMetrics);
+  const { window, categories, reserve, free, total, measuredTotal, catalog } = data;
+  const tokensRow = (label: string, tokens: number, hint?: string): ReportRow => {
+    const row: ReportRow = {
+      label,
+      value: `${formatTokens(tokens)} tokens (${percent(tokens, window)})`,
+    };
+    if (hint !== undefined) row.hint = hint;
+    return row;
+  };
+  const skillTokens = categoryTokens(categories, "Skills");
+  const contextFileTokens = categoryTokens(categories, "Context files");
+  return {
+    schema: REPORT_SCHEMA_VERSION,
+    kind: "context",
+    at: at.toISOString(),
+    sessionId: ctx.sessionManager.getSessionId(),
+    title: "Context Usage",
+    sections: [
+      {
+        title: "Usage",
+        rows: [
+          { label: "Model", value: ctx.model?.id ?? "No model" },
+          {
+            label: "Total",
+            value: `${formatTokens(total)}/${formatTokens(window)} tokens (${percent(total, window)}${measuredTotal === undefined ? "; estimated" : ""})`,
+          },
+          ...categories.map((category) =>
+            tokensRow(
+              category.label,
+              category.tokens,
+              category.estimated ? "estimated" : undefined,
+            ),
+          ),
+          tokensRow("Free space", free),
+          tokensRow("Autocompact buffer", reserve),
+        ],
+      },
+      {
+        title: "Inventory",
+        rows: [
+          {
+            label: "Tools",
+            value: `${data.activeNames.size} active · ${data.deferred.length} deferred`,
+          },
+          {
+            label: "MCP tools",
+            value: `${countLabel(catalog.servers.length, "server")} · ${countLabel(catalog.total, "tool")} · ${formatTokens(categoryTokens(categories, "MCP tools"))} tokens`,
+          },
+          {
+            label: "Custom agents",
+            value: `${countLabel(data.activeAgents.length, "tool")} · ${formatTokens(categoryTokens(categories, "Custom agents"))} tokens`,
+          },
+          {
+            label: "Context files",
+            value: `${countLabel(data.contextFiles.length, "file")} · ${formatTokens(contextFileTokens)} tokens`,
+          },
+          {
+            label: "Skills",
+            value: `${countLabel(data.skills.length, "skill")} · ${formatTokens(skillTokens)} tokens`,
+          },
+        ],
+      },
+    ],
+    context: {
+      model: modelLabel(ctx.model),
+      contextWindow: window,
+      measuredTokens: measuredTotal ?? null,
+      estimatedTokens: data.categoryTotal,
+      autocompactReserve: reserve,
+      categories: categories.map((category) => ({
+        label: category.label,
+        tokens: category.tokens,
+        estimated: category.estimated,
+      })),
+      tools: { active: data.activeNames.size, deferred: data.deferred.length },
+      // Per-server figures are raw schema estimates; the MCP category may be rescaled.
+      mcp: { servers: reportMcpServers(catalog, pi.getMcpServers?.() ?? []) },
+      skills: { count: data.skills.length, tokens: skillTokens },
+      contextFiles: { count: data.contextFiles.length, tokens: contextFileTokens },
+    },
+  };
 }

@@ -7,6 +7,8 @@ import { Type, type Static } from "typebox";
  */
 export const HOST_BRIDGE_SCHEMA_VERSION = 1;
 export const HOST_BRIDGE_STATUS_KEY = "choco-pi.host-bridge";
+/** setStatus key carrying structured `/status` and `/context` reports (report-schema.ts). */
+export const REPORT_STATUS_KEY = "choco-pi.report";
 export const HOST_BRIDGE_ENTRY_PREFIX = "choco-pi:host-bridge/";
 export const SUBAGENT_ENTRY_TYPE = `${HOST_BRIDGE_ENTRY_PREFIX}subagent`;
 export const SHELL_ENTRY_TYPE = `${HOST_BRIDGE_ENTRY_PREFIX}shell`;

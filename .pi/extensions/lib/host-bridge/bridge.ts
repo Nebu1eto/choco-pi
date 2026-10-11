@@ -49,6 +49,14 @@ export interface HostBridgeEnvironment {
   requestedSchema: string | undefined;
 }
 
+/**
+ * Whether this run streams transient host frames: progress frames here and
+ * automatic structured reports in status-commands.ts share this one gate.
+ */
+export function hostFramesEnabled(mode: string, host: string | undefined): boolean {
+  return mode === "rpc" && host === "waku";
+}
+
 export interface HostBridgeClock {
   now(): number;
   /** Schedules `callback` once and returns its canceller. */
@@ -750,7 +758,7 @@ export function registerHostBridge(pi: HostBridgeApi, deps: HostBridgeDependenci
       generation,
       sessionId,
       ctx,
-      frames: rpc && deps.environment.host === "waku",
+      frames: hostFramesEnabled(ctx.mode, deps.environment.host),
       owned: new Set(),
       agents: new Map(),
       liveShells: new Map(),

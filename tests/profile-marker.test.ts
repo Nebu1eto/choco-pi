@@ -135,6 +135,7 @@ test("marker uses schema 1, private modes and atomic replacement without changin
         schema: 1,
         entryPrefix: "choco-pi:host-bridge",
         statusKey: "choco-pi.host-bridge",
+        reportStatusKey: "choco-pi.report",
       },
     });
     assert.ok(Number.isFinite(Date.parse(parsed.installedAt)));

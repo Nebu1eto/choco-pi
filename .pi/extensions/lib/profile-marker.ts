@@ -26,6 +26,8 @@ export const ProfileMarkerSchema = Type.Object(
         schema: Type.Literal(1),
         entryPrefix: Type.Literal("choco-pi:host-bridge"),
         statusKey: Type.Literal("choco-pi.host-bridge"),
+        // Optional so markers written before structured reports stay valid.
+        reportStatusKey: Type.Optional(Type.Literal("choco-pi.report")),
       },
       { additionalProperties: false },
     ),
@@ -110,6 +112,7 @@ export async function writeProfileMarker(
       schema: 1,
       entryPrefix: "choco-pi:host-bridge",
       statusKey: "choco-pi.host-bridge",
+      reportStatusKey: "choco-pi.report",
     },
   };
   await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });

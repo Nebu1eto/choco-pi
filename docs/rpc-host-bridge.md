@@ -21,10 +21,14 @@ observed Pi version, launcher, and bridge schema:
   "hostBridge": {
     "schema": 1,
     "entryPrefix": "choco-pi:host-bridge",
-    "statusKey": "choco-pi.host-bridge"
+    "statusKey": "choco-pi.host-bridge",
+    "reportStatusKey": "choco-pi.report"
   }
 }
 ```
+
+`reportStatusKey` names the status key of [structured reports](#structured-reports).
+Markers written before it existed omit it and remain valid.
 
 The installer resolves the launcher from `--pi-launcher`, then
 `CHOCO_PI_LAUNCHER`, then the first `pi` on `PATH` reporting version 1.0.4.
@@ -95,6 +99,71 @@ A restored live subagent from another session with no owning runtime becomes
 `event: "lost"`, `agent.status: "lost"`; its `finishedAt` is the detection time.
 The envelope gains no session-ID field. A live owning runtime must not be
 reported as lost.
+
+## Structured reports
+
+In every non-TUI mode, `/status` and `/context` publish their data as a
+`setStatus` frame keyed `choco-pi.report`, then send the same plain-text
+`notify` as before. A host that does not recognise the key keeps rendering the
+notice; a host that does can render a native view and suppress the notice that
+follows. `/status usage` and `/preferences` send no report.
+
+```json
+{
+  "type": "extension_ui_request",
+  "id": "<request-id>",
+  "method": "setStatus",
+  "statusKey": "choco-pi.report",
+  "statusText": "{\"schema\":1,\"kind\":\"context\",...}"
+}
+```
+
+A context report is also published automatically, under the same gate as
+progress frames (`ctx.mode === "rpc"` and `CHOCO_PI_HOST === "waku"`): on
+`session_start`, after each `turn_end`, and on `model_select`, with a 500 ms
+trailing debounce, and only when its figures changed. Pi gives event handlers
+no system-prompt options, so the first automatic report waits until a
+`before_agent_start` or a `/status`/`/context` command has supplied them for
+the current session; a `session_start` alone sends nothing.
+
+`statusText` is schema-1 JSON (`.pi/extensions/lib/host-bridge/report-schema.ts`,
+all objects closed):
+
+| Field       | Type                           | Meaning                                                       |
+| ----------- | ------------------------------ | ------------------------------------------------------------- |
+| `schema`    | `1`                            | Report schema version.                                        |
+| `kind`      | `"status"` \| `"context"`      | Which command produced it.                                    |
+| `at`        | ISO-8601 string                | Build time.                                                   |
+| `sessionId` | string                         | The reporting session; ignore reports for another session.    |
+| `title`     | string                         | `"Status"` or `"Context Usage"`.                              |
+| `sections`  | `{ title, rows }[]`            | Generic rows `{ label, value, hint? }`; render them in order. |
+| `context`   | object, `kind: "context"` only | Typed figures for a breakdown bar (below).                    |
+
+Rows are generic so a new status row needs no host change. `value` is one
+line; `hint` holds secondary detail, such as the inventory behind a count or
+the cost breakdown, and may span lines. A status report has a `Session Info`
+section (name, file, ID, messages, tokens, cache warming, cost) and an
+`Environment` section (every `/status` row, including reasoning effort,
+Daybreak, and Fast mode).
+
+The `context` block:
+
+| Field                | Meaning                                                                                                                              |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `model`              | `provider/id`, or `""` with no model.                                                                                                |
+| `contextWindow`      | Window size in tokens.                                                                                                               |
+| `measuredTokens`     | Provider-measured context tokens; `null` before a response or when the sample predates compaction.                                   |
+| `estimatedTokens`    | Sum of `categories`, the figure the text bar draws.                                                                                  |
+| `autocompactReserve` | Tokens reserved for compaction.                                                                                                      |
+| `categories`         | `{ label, tokens, estimated }` in bar order: system prompt, system tools, MCP tools, custom agents, context files, skills, messages. |
+| `tools`              | `{ active, deferred }` tool counts.                                                                                                  |
+| `mcp.servers`        | `{ name, tools, tokens, state? }`; `state` is `registered` or `disabled` for registered servers.                                     |
+| `skills`             | `{ count, tokens }`.                                                                                                                 |
+| `contextFiles`       | `{ count, tokens }`.                                                                                                                 |
+
+Free space is `contextWindow - (measuredTokens ?? estimatedTokens) - autocompactReserve`,
+floored at zero. Reports carry paths (session file, cwd, context files) but no
+credentials or MCP configuration beyond the enable flag.
 
 ## Snapshot and controls
 
