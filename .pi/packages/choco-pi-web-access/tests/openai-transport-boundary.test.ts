@@ -48,7 +48,7 @@ async function runChild(
 }
 
 for (const conversationProvider of ["anthropic", "synthetic"] as const) {
-  test(`${conversationProvider} conversation uses configured OpenAI API auth after unauthenticated Codex catalog entry`, async () => {
+  test(`${conversationProvider} conversation uses configured OpenAI API auth before the Codex catalog entry`, async () => {
     const result = await runChild(
       `
         const calls = [];
@@ -87,7 +87,7 @@ for (const conversationProvider of ["anthropic", "synthetic"] as const) {
       auth: { providerId: string; transport: string; billing: string };
       calls: Array<{ url: string; authorization: string }>;
     } = JSON.parse(result.stdout.trim());
-    assert.deepEqual(output.attempted, ["openai-codex", "openai"]);
+    assert.deepEqual(output.attempted, ["openai"]);
     assert.deepEqual(output.auth, {
       providerId: "openai",
       transport: "responses-api",
@@ -203,7 +203,7 @@ test("environment API auth survives a fully unauthenticated built-in OpenAI cata
   const output: { attempted: string[]; auth: { providerId: string; billing: string } } = JSON.parse(
     result.stdout.trim(),
   );
-  assert.deepEqual(output.attempted, ["openai-codex", "openai"]);
+  assert.deepEqual(output.attempted, ["openai", "openai-codex"]);
   assert.deepEqual(output.auth, { providerId: "openai", billing: "api" });
 });
 
@@ -219,7 +219,7 @@ test("registry ok:false is a typed auth hard stop", async () => {
         getApiKeyAndHeaders: async (model) => {
           attempted.push(model.provider);
           return model.provider === "openai"
-            ? { ok: true, apiKey: "must-not-be-used", headers: {} }
+            ? { ok: true, headers: {} }
             : { ok: false, error: "Codex login expired" };
         },
       } };
@@ -236,7 +236,7 @@ test("registry ok:false is a typed auth hard stop", async () => {
     attempted: string[];
     failure: { name: string; kind: string; message: string };
   } = JSON.parse(result.stdout.trim());
-  assert.deepEqual(output.attempted, ["openai-codex"]);
+  assert.deepEqual(output.attempted, ["openai", "openai-codex"]);
   assert.equal(output.failure.name, "SearchTransportError");
   assert.equal(output.failure.kind, "auth");
   assert.match(output.failure.message, /Codex login expired/);

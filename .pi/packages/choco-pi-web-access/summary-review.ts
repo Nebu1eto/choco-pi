@@ -50,6 +50,9 @@ interface SummaryModelCandidates {
 
 const PREFERRED_SUMMARY_MODELS = [
   { provider: "anthropic", id: "claude-haiku-4-5" },
+  { provider: "openai", id: "gpt-5.6-luna" },
+  { provider: "openai", id: "gpt-5.6-terra" },
+  // Legacy ChatGPT-backend subscription provider.
   { provider: "openai-codex", id: "gpt-5.6-luna" },
   { provider: "openai-codex", id: "gpt-5.6-terra" },
   { provider: "google", id: "gemini-3.6-flash" },
@@ -452,16 +455,16 @@ export async function generateSummaryDraft(
           suppliedCompleteFn === undefined &&
           registryComplete === undefined
             ? completeSimple(model, { messages: [userMessage] }, simpleOptions)
-            : suppliedCompleteFn !== undefined
-              ? suppliedCompleteFn(model, { messages: [userMessage] }, completionOptions)
-              : registryComplete !== undefined
-                ? registryComplete.call(
+            : suppliedCompleteFn === undefined
+              ? registryComplete === undefined
+                ? complete(model, { messages: [userMessage] }, completionOptions)
+                : registryComplete.call(
                     ctx.modelRegistry,
                     model,
                     { messages: [userMessage] },
                     completionOptions,
                   )
-                : complete(model, { messages: [userMessage] }, completionOptions);
+              : suppliedCompleteFn(model, { messages: [userMessage] }, completionOptions);
 
         const response = await raceSummaryOperation(Promise.resolve(completion));
         if (response.stopReason === "aborted") {

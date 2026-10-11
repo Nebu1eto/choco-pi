@@ -13,6 +13,7 @@ import {
 import { getWebSearchConfigPath } from "./utils.ts";
 
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
+const OPENAI_API_BASE_URL = "https://api.openai.com/v1";
 const CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
 const CONFIG_PATH = getWebSearchConfigPath();
 const SEARCH_TIMEOUT_MS = 60_000;
@@ -26,7 +27,9 @@ const MODEL_PREFERENCE = [
   (id: string) => id.includes("terra"),
   (id: string) => /^gpt-\d+(\.\d+)?$/.test(id),
 ];
-const DEFAULT_SEARCH_PROVIDERS: readonly string[] = ["openai-codex", "openai"];
+// Pi's stock `openai` provider carries both API keys and "Sign in with ChatGPT" tokens;
+// `openai-codex` is the legacy ChatGPT-backend subscription provider.
+const DEFAULT_SEARCH_PROVIDERS: readonly string[] = ["openai", "openai-codex"];
 
 function pickSearchModel<T extends { id: string }>(models: readonly T[]): T | undefined {
   const candidates = models
@@ -192,6 +195,26 @@ function isCodexJwt(token: string): boolean {
   return !!payload?.["https://api.openai.com/auth"];
 }
 
+/**
+ * Detects a Pi "Sign in with ChatGPT" credential on the stock `openai` provider. It is billed
+ * against the ChatGPT subscription but must be sent to api.openai.com, never chatgpt.com.
+ * Pi's own `isChatGPTSignIn` (pi-ai openai-responses) uses provider, base URL, and a
+ * non-`sk-` key. The registry's auth type is authoritative when available so an environment
+ * or config API key is never misreported as subscription billing; registries without
+ * `isUsingOAuth` fall back to the sign-in token shape (a JWT with the OpenAI auth claim).
+ * Because that JWT carries the same claim as Codex tokens, this check must precede
+ * `isCodexJwt`.
+ */
+function isChatGPTSignInCredential(
+  model: { provider: string; baseUrl?: string },
+  apiKey: string,
+  usingOAuth: boolean | undefined,
+): boolean {
+  if (model.provider !== "openai" || model.baseUrl !== OPENAI_API_BASE_URL) return false;
+  if (apiKey.startsWith("sk-")) return false;
+  return usingOAuth ?? isCodexJwt(apiKey);
+}
+
 function extractAccountId(token: string): string | undefined {
   const payload = decodeJwtPayload(token);
   const auth = payload?.["https://api.openai.com/auth"];
@@ -253,10 +276,14 @@ async function resolvePiAuth(
   const { responsesUrl, providers, request, modelOverride } = options;
   let getAll: typeof ctx.modelRegistry.getAll;
   let getApiKeyAndHeaders: typeof ctx.modelRegistry.getApiKeyAndHeaders;
+  // Optional on minimal registries; when present it reports the credential's auth type.
+  let isUsingOAuth: typeof ctx.modelRegistry.isUsingOAuth | undefined;
   let models: ReturnType<typeof ctx.modelRegistry.getAll>;
   try {
     getAll = ctx.modelRegistry.getAll.bind(ctx.modelRegistry);
     getApiKeyAndHeaders = ctx.modelRegistry.getApiKeyAndHeaders.bind(ctx.modelRegistry);
+    const registryIsUsingOAuth: typeof isUsingOAuth = ctx.modelRegistry.isUsingOAuth;
+    isUsingOAuth = registryIsUsingOAuth?.bind(ctx.modelRegistry);
     models = getAll();
   } catch (err) {
     assertTransportRequestActive("OpenAI Responses", request.signal, request.isCurrent);
@@ -286,12 +313,16 @@ async function resolvePiAuth(
         );
       }
       if (resolved.apiKey) {
-        const subscription = providerId === "openai-codex" || isCodexJwt(resolved.apiKey);
+        const chatGPTSignIn =
+          providerId !== "openai-codex" &&
+          isChatGPTSignInCredential(preferred, resolved.apiKey, isUsingOAuth?.(preferred));
+        const codexTransport =
+          providerId === "openai-codex" || (!chatGPTSignIn && isCodexJwt(resolved.apiKey));
         return {
           provider: providerId,
           providerId,
-          transport: subscription ? "codex-subscription" : "responses-api",
-          billing: subscription ? "subscription" : "api",
+          transport: codexTransport ? "codex-subscription" : "responses-api",
+          billing: codexTransport || chatGPTSignIn ? "subscription" : "api",
           apiKey: resolved.apiKey,
           model,
           headers: resolved.headers ?? {},
@@ -599,7 +630,7 @@ export async function searchWithOpenAI(
       "OpenAI Responses",
       "auth",
       "OpenAI web search unavailable. Either:\n" +
-        "  1. Use /login to sign in with a Codex subscription\n" +
+        "  1. Use /login to Sign in with ChatGPT (OpenAI) or with a Codex subscription\n" +
         `  2. Create ${CONFIG_PATH} with { "openaiApiKey": "your-key" }\n` +
         "  3. Set OPENAI_API_KEY environment variable",
     );

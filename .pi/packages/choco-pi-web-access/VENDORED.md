@@ -5,7 +5,7 @@ compaction itself does not change runtime behavior.
 
 This directory is a vendored, renamed fork of the upstream open-source package `pi-web-access`.
 
-- Original source: https://github.com/nicobailon/pi-web-access
+- Original source: <https://github.com/nicobailon/pi-web-access>
 - Base commit: `8a1748f106acb20626ace32806fc726bb0858859`
 - Base version: `0.24.1`
 - Forked on: 2026-08-22
@@ -157,3 +157,25 @@ Test fixtures follow the 1.0.4 extension contract. Tool calls receive a real
   preserving native fetch's tolerance for unfinished compressed responses.
 - Added loopback comparisons against native fetch for raw/wrapped deflate,
   complete gzip, and unfinished sync-flushed gzip. No dependency was added.
+
+## 2026-10-11 choco-pi patch: OpenAI Sign in with ChatGPT
+
+- Default `openaiSearchProviders` order is now `["openai", "openai-codex"]`,
+  superseding the `["openai-codex", "openai"]` priority noted above. An explicit
+  `openaiSearchProviders` config still wins.
+- Pi 1.0.4 "Sign in with ChatGPT" stores a JWT on the stock `openai` provider
+  that carries the `https://api.openai.com/auth` claim (no ChatGPT account id).
+  Before this patch `isCodexJwt` routed it to `chatgpt.com/backend-api/codex`.
+  Now a non-`sk-` credential on `openai` at `https://api.openai.com/v1` whose
+  registry auth type is OAuth (`isUsingOAuth`; JWT-claim shape only when the
+  registry lacks that method) resolves to transport `responses-api`,
+  billing `subscription`, and the configured Responses URL (default
+  api.openai.com). Non-OAuth env/config keys stay `api` billing. The request
+  body is unchanged; it never sent the fields Sign in with ChatGPT rejects.
+- `openai-codex` credentials and Codex JWTs on other providers keep the
+  unchanged `codex-subscription` path, headers, and URL.
+- Summary-review defaults (`summary-review.ts`, `index.ts`) now try
+  `openai/gpt-5.6-luna` and `openai/gpt-5.6-terra` before the legacy
+  `openai-codex` entries.
+- Added `tests/openai-signin-provider.test.ts` (fixture registry, mocked fetch)
+  and updated `openai-transport-boundary.test.ts` order expectations.
