@@ -4,6 +4,7 @@ import test from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { runInChildSessionContext } from "../src/child-context.ts";
+import type { AgentRecord } from "../src/types.ts";
 import subagentsExtension from "../src/index.ts";
 import type {
   ShellSectionProvider,
@@ -58,6 +59,8 @@ test("root registry capabilities survive a child activation", async () => {
     hasFleetRows?: unknown;
     isFleetActive?: unknown;
     registerShellSection(provider: ShellSectionProvider): ShellSectionRegistration;
+    getAllRecords(): AgentRecord[];
+    stop(id: string): boolean;
   };
   // SAFETY: This test reads only its symbol-keyed optional registry slot on the global object.
   const registry = globalThis as typeof globalThis & {
@@ -93,6 +96,8 @@ test("root registry capabilities survive a child activation", async () => {
   assert.ok(rootEntry);
 
   try {
+    assert.deepEqual(rootEntry.getAllRecords(), []);
+    assert.equal(rootEntry.stop("missing-agent"), false);
     assert.equal("hasFleetRows" in rootEntry, false);
     assert.equal("isFleetActive" in rootEntry, false);
     assert.equal("registerShellSection" in rootEntry, true);
@@ -121,6 +126,8 @@ test("root registry capabilities survive a child activation", async () => {
     await runInChildSessionContext(async () => subagentsExtension(child.pi));
     assert.strictEqual(getEntry(), rootEntry);
     assert.strictEqual(getEntry()?.registerShellSection, rootEntry.registerShellSection);
+    assert.strictEqual(getEntry()?.getAllRecords, rootEntry.getAllRecords);
+    assert.strictEqual(getEntry()?.stop, rootEntry.stop);
     assert.equal(child.handlers.has("session_shutdown"), false);
   } finally {
     const shutdown = root.handlers.get("session_shutdown");
@@ -134,6 +141,8 @@ test("root activation wires the live manager into a persisted turn-start status 
   const key = Symbol.for("pi-subagents:manager");
   type RegistryEntry = {
     hasRunning(): boolean;
+    getAllRecords(): AgentRecord[];
+    stop(id: string): boolean;
     spawn(
       pi: ExtensionAPI,
       ctx: ExtensionContext,
@@ -154,7 +163,7 @@ test("root activation wires the live manager into a persisted turn-start status 
   try {
     // The manager inserts the running record synchronously; the deliberately
     // incomplete context may then make the detached child setup settle as an error.
-    rootEntry.spawn(
+    const id = rootEntry.spawn(
       root.pi,
       reinterpretHostValue<ExtensionContext>({ cwd: process.cwd() }),
       "implementer",
@@ -162,6 +171,8 @@ test("root activation wires the live manager into a persisted turn-start status 
       { description: "status probe", isBackground: true, isolated: true },
     );
     assert.equal(rootEntry.hasRunning(), true);
+    assert.equal(rootEntry.getAllRecords()[0]?.id, id);
+    assert.equal(rootEntry.getAllRecords()[0]?.spawnCwd, process.cwd());
 
     const beforeAgentStart = root.handlers.get("before_agent_start");
     assert.ok(beforeAgentStart, "index.ts must register the root status handler");
@@ -174,6 +185,8 @@ test("root activation wires the live manager into a persisted turn-start status 
       result.message.content,
       /^<system-reminder>Turn-start subagent snapshot \(historical after this turn\): 1 scheduled \/ cap (?:unlimited|\d+); 1 in tree; inherited depth ceiling \d+<\/system-reminder>$/,
     );
+    assert.equal(rootEntry.stop(id), true);
+    assert.equal(rootEntry.getAllRecords()[0]?.cancellation?.cause, "user_stop");
   } finally {
     const shutdown = root.handlers.get("session_shutdown");
     assert.ok(shutdown);

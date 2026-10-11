@@ -10,7 +10,8 @@ import shellsExtension, {
   type ShellNotificationTheme,
   renderShellCompletion,
 } from "../src/index.ts";
-import type { ShellManager, ShellResult } from "../src/shell-manager.ts";
+import type { ShellLifecyclePayload } from "../src/lifecycle-events.ts";
+import { ShellManager, type ShellResult } from "../src/shell-manager.ts";
 import type { RuntimeValue } from "../src/validation.ts";
 import type { ShellCustomOptions, ShellViewerKeybindings } from "../src/ui/shells-overlay.ts";
 import type {
@@ -97,6 +98,10 @@ interface Notice {
 
 interface Activation {
   tools: Map<string, ToolDefinition>;
+  events: Array<{ channel: string; payload: ShellLifecyclePayload }>;
+  /** When set, events.emit throws it instead of recording, simulating a stale runtime. */
+  emitError?: Error;
+  emitAttempts: number;
   messages: Array<{
     message: {
       customType: string;
@@ -125,9 +130,9 @@ interface Activation {
 
 interface GlobalFixtureRegistry {
   [managerKey]?: ShellManager;
-  [subagentsManagerKey]?: {
-    registerShellSection(provider: ShellSectionProvider): ShellSectionRegistration;
-  };
+  [subagentsManagerKey]?:
+    | { registerShellSection(provider: ShellSectionProvider): ShellSectionRegistration }
+    | { isChildSessionId(id: string): boolean };
 }
 
 interface MessageRenderOptionsFixture {
@@ -138,6 +143,10 @@ interface ExtensionFixture {
   registerTool(tool: ToolDefinition): void;
   registerCommand(name: string, command: CommandDefinition): void;
   on(event: string, handler: LifecycleHandler): void;
+  events: {
+    emit(channel: string, payload: ShellLifecyclePayload): void;
+    on(channel: string, handler: (payload: RuntimeValue) => void): () => void;
+  };
   appendEntry(type: string, data: { keys: string[]; shells: ShellResult[] }): void;
   sendMessage(
     message: {
@@ -227,7 +236,13 @@ function asExtensionAPI(fixture: ExtensionFixture): ExtensionAPI {
 }
 
 function activate(child: boolean): Promise<Activation> {
-  const activation: Activation = { tools: new Map(), messages: [], renderers: new Map() };
+  const activation: Activation = {
+    tools: new Map(),
+    events: [],
+    emitAttempts: 0,
+    messages: [],
+    renderers: new Map(),
+  };
   const fixture: ExtensionFixture = {
     registerTool(tool: ToolDefinition) {
       activation.tools.set(tool.name, tool);
@@ -248,6 +263,16 @@ function activate(child: boolean): Promise<Activation> {
         activation.turnEnd = handler;
       } else if (event === "session_shutdown") activation.shutdown = handler;
       else assert.fail(`unexpected event ${event}`);
+    },
+    events: {
+      emit(channel, payload) {
+        activation.emitAttempts += 1;
+        if (activation.emitError) throw activation.emitError;
+        activation.events.push({ channel, payload });
+      },
+      on() {
+        return () => {};
+      },
     },
     appendEntry() {},
     sendMessage(message, options) {
@@ -893,5 +918,409 @@ test("root session replacement preserves the process manager and quit removes an
     }
     if (previousHost) registry()[subagentsManagerKey] = previousHost;
     else delete registry()[subagentsManagerKey];
+  }
+});
+
+const payloadKeys = [
+  "id",
+  "name",
+  "command",
+  "cwd",
+  "pid",
+  "exitCode",
+  "startedAt",
+  "finishedAt",
+  "toolCallId",
+  "tailPath",
+];
+
+async function waitFor(predicate: () => boolean, label: string, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) assert.fail(`timed out waiting for ${label}`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
+function eventsFor(activation: Activation, id: string): string[] {
+  return activation.events.filter((event) => event.payload.id === id).map((event) => event.channel);
+}
+
+async function startShell(
+  activation: Activation,
+  toolCallId: string,
+  params: ShellToolParams,
+  sessionId: string,
+): Promise<{ shellId: string; startedAt: number; pid?: number }> {
+  return details<{ shellId: string; startedAt: number; pid?: number }>(
+    await tool(activation, "shell_start").execute(
+      toolCallId,
+      params,
+      new AbortController().signal,
+      () => {},
+      context(sessionId),
+    ),
+  );
+}
+
+test("lifecycle events publish flat started/exited payloads with the tool call id", async () => {
+  assert.equal(registry()[managerKey], undefined);
+  const root = await activate(false);
+  try {
+    assert.ok(root.sessionStart);
+    await root.sessionStart(
+      {},
+      context("root-session", [], packageCwd, new TestUI(), "print", false),
+    );
+    const started = await startShell(
+      root,
+      "tool-call-7",
+      { command: "exit 7", name: "seven" },
+      "root-session",
+    );
+    // started is emitted synchronously inside shell_start.
+    assert.deepEqual(eventsFor(root, started.shellId), ["shells:started"]);
+    await waitFor(() => eventsFor(root, started.shellId).length === 2, "exit event");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.deepEqual(eventsFor(root, started.shellId), ["shells:started", "shells:exited"]);
+
+    const [start, exit] = root.events.filter((event) => event.payload.id === started.shellId);
+    assert.ok(start && exit);
+    assert.deepEqual(Object.keys(start.payload), payloadKeys);
+    assert.deepEqual(Object.keys(exit.payload), payloadKeys);
+    assert.deepEqual(start.payload, {
+      id: started.shellId,
+      name: "seven",
+      command: "exit 7",
+      cwd: packageCwd,
+      pid: started.pid ?? null,
+      exitCode: null,
+      startedAt: started.startedAt,
+      finishedAt: null,
+      toolCallId: "tool-call-7",
+      tailPath: null,
+    });
+    assert.equal(exit.payload.exitCode, 7);
+    assert.equal(exit.payload.toolCallId, "tool-call-7");
+    assert.equal(exit.payload.tailPath, null);
+    assert.ok((exit.payload.finishedAt ?? 0) >= started.startedAt);
+    assert.equal(registry()[managerKey]?.toolCallIdOf(started.shellId), "tool-call-7");
+
+    const unnamed = await startShell(root, "tool-call-0", { command: "exit 0" }, "root-session");
+    await waitFor(() => eventsFor(root, unnamed.shellId).length === 2, "unnamed exit");
+    const unnamedExit = root.events.find(
+      (event) => event.payload.id === unnamed.shellId && event.channel === "shells:exited",
+    );
+    assert.equal(unnamedExit?.payload.name, null);
+    assert.equal(unnamedExit?.payload.exitCode, 0);
+  } finally {
+    assert.ok(root.shutdown);
+    await root.shutdown({ reason: "quit" }, context("root-session"));
+  }
+});
+
+test("a stopped shell emits stopped exactly once and never a duplicate exited", async () => {
+  assert.equal(registry()[managerKey], undefined);
+  const root = await activate(false);
+  try {
+    assert.ok(root.sessionStart);
+    await root.sessionStart(
+      {},
+      context("root-session", [], packageCwd, new TestUI(), "print", false),
+    );
+    const started = await startShell(
+      root,
+      "tool-call-stop",
+      { command: "while :; do sleep 1; done" },
+      "root-session",
+    );
+    await execute(root, "shell_stop", { shell_id: started.shellId }, "root-session");
+    await waitFor(() => eventsFor(root, started.shellId).length >= 2, "stop event");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.deepEqual(eventsFor(root, started.shellId), ["shells:started", "shells:stopped"]);
+    const stopped = root.events.at(-1);
+    assert.equal(stopped?.payload.toolCallId, "tool-call-stop");
+    assert.ok((stopped?.payload.finishedAt ?? 0) >= started.startedAt);
+  } finally {
+    assert.ok(root.shutdown);
+    await root.shutdown({ reason: "quit" }, context("root-session"));
+  }
+});
+
+test("a spawn failure emits started then one exited with a null exit code", async () => {
+  assert.equal(registry()[managerKey], undefined);
+  const manager = new ShellManager({ shell: resolve(packageCwd, "missing-shell-executable") });
+  registry()[managerKey] = manager;
+  const root = await activate(false);
+  try {
+    assert.ok(root.sessionStart);
+    await root.sessionStart(
+      {},
+      context("root-session", [], packageCwd, new TestUI(), "print", false),
+    );
+    const started = await startShell(root, "tool-call-fail", { command: "true" }, "root-session");
+    await waitFor(() => eventsFor(root, started.shellId).length >= 2, "failure event");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.deepEqual(eventsFor(root, started.shellId), ["shells:started", "shells:exited"]);
+    const failed = root.events.at(-1);
+    assert.equal(failed?.payload.exitCode, null);
+    assert.equal(failed?.payload.toolCallId, "tool-call-fail");
+    const listed = manager.list({ requesterId: "root-session", isAdmin: true }).shells;
+    assert.equal(listed.find((shell) => shell.shellId === started.shellId)?.state, "failed");
+  } finally {
+    assert.ok(root.shutdown);
+    await root.shutdown({ reason: "quit" }, context("root-session"));
+    assert.equal(registry()[managerKey], undefined);
+  }
+});
+
+test("session replacement emits lost for running shells and reload emits nothing", async () => {
+  assert.equal(registry()[managerKey], undefined);
+  try {
+    const reloaded = await activate(false);
+    assert.ok(reloaded.sessionStart && reloaded.shutdown);
+    await reloaded.sessionStart(
+      {},
+      context("root-session", [], packageCwd, new TestUI(), "print", false),
+    );
+    const kept = await startShell(
+      reloaded,
+      "tool-call-kept",
+      { command: "while :; do sleep 1; done" },
+      "root-session",
+    );
+    await reloaded.shutdown({ reason: "reload" }, context("root-session"));
+    assert.deepEqual(eventsFor(reloaded, kept.shellId), ["shells:started"]);
+
+    const root = await activate(false);
+    assert.ok(root.sessionStart && root.shutdown);
+    await root.sessionStart(
+      {},
+      context("root-session", [], packageCwd, new TestUI(), "print", false),
+    );
+    const finished = await startShell(
+      root,
+      "tool-call-done",
+      { command: "exit 0" },
+      "root-session",
+    );
+    await waitFor(() => eventsFor(root, finished.shellId).length === 2, "finished exit");
+    await root.shutdown({ reason: "new" }, context("root-session"));
+
+    const lost = root.events.filter((event) => event.channel === "shells:lost");
+    assert.deepEqual(
+      lost.map((event) => event.payload.id),
+      [kept.shellId],
+    );
+    assert.deepEqual(Object.keys(lost[0]?.payload ?? {}), payloadKeys);
+    assert.equal(lost[0]?.payload.finishedAt, null);
+    assert.equal(lost[0]?.payload.exitCode, null);
+    assert.equal(lost[0]?.payload.toolCallId, "tool-call-kept");
+
+    const manager = registry()[managerKey];
+    assert.ok(manager);
+    const before = root.events.length;
+    await manager.stop({ requesterId: "root-session", isAdmin: true, shellId: kept.shellId });
+    assert.equal(root.events.length, before, "detached activations stay silent");
+    assert.deepEqual(eventsFor(reloaded, kept.shellId), ["shells:started"]);
+  } finally {
+    // Read the slot directly so a failure before the stop above still kills the loop.
+    await registry()[managerKey]?.dispose();
+    delete registry()[managerKey];
+  }
+});
+
+test("lifecycle events are scoped to the activation's own session", async () => {
+  assert.equal(registry()[managerKey], undefined);
+  const root = await activate(false);
+  const child = await activate(true);
+  try {
+    assert.ok(root.sessionStart && child.sessionStart);
+    await root.sessionStart(
+      {},
+      context("root-session", [], packageCwd, new TestUI(), "print", false),
+    );
+    await child.sessionStart({}, context("child-session"));
+    const childShell = await startShell(
+      child,
+      "tool-call-child",
+      { command: "while :; do sleep 1; done" },
+      "child-session",
+    );
+    assert.deepEqual(eventsFor(child, childShell.shellId), ["shells:started"]);
+    assert.deepEqual(eventsFor(root, childShell.shellId), []);
+
+    assert.ok(child.shutdown);
+    await child.shutdown({ reason: "quit" }, context("child-session"));
+    assert.deepEqual(eventsFor(child, childShell.shellId), ["shells:started", "shells:stopped"]);
+    assert.deepEqual(eventsFor(root, childShell.shellId), []);
+  } finally {
+    assert.ok(root.shutdown);
+    await root.shutdown({ reason: "quit" }, context("root-session"));
+  }
+});
+
+test("a stale event bus detaches lifecycle emission without reporting errors", async () => {
+  assert.equal(registry()[managerKey], undefined);
+  const root = await activate(false);
+  const originalError = console.error;
+  const diagnostics: RuntimeValue[][] = [];
+  console.error = (...args: RuntimeValue[]) => {
+    diagnostics.push(args);
+  };
+  try {
+    assert.ok(root.sessionStart);
+    await root.sessionStart(
+      {},
+      context("root-session", [], packageCwd, new TestUI(), "print", false),
+    );
+    root.emitError = new Error("This extension ctx is stale after session replacement or reload.");
+    const first = await startShell(root, "tool-call-stale", { command: "exit 0" }, "root-session");
+    assert.equal(root.emitAttempts, 1);
+    await waitFor(
+      () =>
+        registry()
+          [managerKey]?.list({ requesterId: "root-session", isAdmin: true })
+          .shells.find((shell) => shell.shellId === first.shellId)?.state === "exited",
+      "stale shell exit",
+    );
+    await startShell(root, "tool-call-after", { command: "exit 0" }, "root-session");
+    assert.equal(root.emitAttempts, 1, "no emission after the bus went stale");
+    assert.deepEqual(diagnostics, []);
+  } finally {
+    console.error = originalError;
+    assert.ok(root.shutdown);
+    await root.shutdown({ reason: "quit" }, context("root-session"));
+  }
+});
+
+test("an unrelated event bus failure escapes the manager listener boundary", async () => {
+  assert.equal(registry()[managerKey], undefined);
+  const root = await activate(false);
+  const originalQueue = globalThis.queueMicrotask;
+  const deferred: Array<() => void> = [];
+  globalThis.queueMicrotask = (callback: () => void) => {
+    deferred.push(callback);
+  };
+  const failure = new Error("bus exploded");
+  try {
+    assert.ok(root.sessionStart);
+    await root.sessionStart(
+      {},
+      context("root-session", [], packageCwd, new TestUI(), "print", false),
+    );
+    root.emitError = failure;
+    const started = await startShell(
+      root,
+      "tool-call-boom",
+      { command: "while :; do sleep 1; done" },
+      "root-session",
+    );
+    globalThis.queueMicrotask = originalQueue;
+    assert.equal(deferred.length, 1);
+    assert.throws(
+      () => deferred[0]?.(),
+      (error) => error === failure,
+    );
+    // The shell itself is unaffected and the activation keeps emitting.
+    root.emitError = undefined;
+    await execute(root, "shell_stop", { shell_id: started.shellId }, "root-session");
+    await waitFor(() => eventsFor(root, started.shellId).includes("shells:stopped"), "stop event");
+  } finally {
+    globalThis.queueMicrotask = originalQueue;
+    assert.ok(root.shutdown);
+    await root.shutdown({ reason: "quit" }, context("root-session"));
+  }
+});
+
+test("a child identified only by the subagents registry never disposes the root manager", async () => {
+  assert.equal(registry()[managerKey], undefined);
+  const previousHost = registry()[subagentsManagerKey];
+  const liveChildIds = new Set(["registry-child"]);
+  registry()[subagentsManagerKey] = {
+    isChildSessionId: (id: string) => liveChildIds.has(id),
+  };
+  const root = await activate(false);
+  try {
+    assert.ok(root.sessionStart && root.shutdown);
+    await root.sessionStart({}, context("root-session"));
+    const manager = registry()[managerKey];
+    assert.ok(manager);
+    const rootShell = await startShell(
+      root,
+      "tool-call-root",
+      { command: "while :; do sleep 1; done" },
+      "root-session",
+    );
+
+    // No async child-context marker: the activation loads like a root extension.
+    const child = await activate(false);
+    assert.ok(child.sessionStart && child.shutdown);
+    assert.ok(child.toolExecutionStart, "marker-less child still registers root-only hooks");
+    await child.sessionStart({}, context("registry-child"));
+    await child.toolExecutionStart({}, context("registry-child"));
+    const childShell = await startShell(
+      child,
+      "tool-call-child",
+      { command: "while :; do sleep 1; done" },
+      "registry-child",
+    );
+    const childVisible = details<{ shells: Array<{ shellId: string }> }>(
+      await execute(child, "shell_list", {}, "registry-child"),
+    ).shells.map((shell) => shell.shellId);
+    assert.deepEqual(childVisible, [childShell.shellId], "child is not admin");
+
+    // Subagents unregisters the id before emitting the child's quit shutdown.
+    liveChildIds.delete("registry-child");
+    await child.shutdown({ reason: "quit" }, context("registry-child"));
+
+    assert.equal(registry()[managerKey], manager, "root keeps the shared manager");
+    assert.deepEqual(eventsFor(child, childShell.shellId), ["shells:started", "shells:stopped"]);
+    assert.deepEqual(eventsFor(root, childShell.shellId), []);
+    const listed = manager.list({ requesterId: "root-session", isAdmin: true }).shells;
+    assert.equal(listed.find((shell) => shell.shellId === childShell.shellId)?.state, "stopped");
+    assert.equal(listed.find((shell) => shell.shellId === rootShell.shellId)?.state, "running");
+
+    const after = await startShell(
+      root,
+      "tool-call-after",
+      { command: "printf ok" },
+      "root-session",
+    );
+    await waitFor(() => eventsFor(root, after.shellId).includes("shells:exited"), "root exit");
+    const read = details<{ stdout: { data: string } }>(
+      await execute(root, "shell_read", { shell_id: after.shellId }, "root-session"),
+    );
+    assert.equal(read.stdout.data, "ok");
+  } finally {
+    await root.shutdown?.({ reason: "quit" }, context("root-session"));
+    assert.equal(registry()[managerKey], undefined, "root quit still disposes");
+    if (previousHost) registry()[subagentsManagerKey] = previousHost;
+    else delete registry()[subagentsManagerKey];
+  }
+});
+
+test("a root quit whose manager no longer owns the process slot leaves the slot alone", async () => {
+  assert.equal(registry()[managerKey], undefined);
+  const stale = await activate(false);
+  const replacement = new ShellManager();
+  try {
+    assert.ok(stale.sessionStart && stale.shutdown);
+    await stale.sessionStart({}, context("root-session"));
+    const staleManager = registry()[managerKey];
+    assert.ok(staleManager);
+    registry()[managerKey] = replacement;
+    await stale.shutdown({ reason: "quit" }, context("root-session"));
+    assert.equal(registry()[managerKey], replacement);
+    const started = replacement.start({
+      ownerId: "root-session",
+      command: "exit 0",
+      cwd: packageCwd,
+    });
+    assert.equal(started.state, "running");
+    await staleManager.dispose();
+  } finally {
+    await replacement.dispose();
+    delete registry()[managerKey];
   }
 });

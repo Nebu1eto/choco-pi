@@ -4,10 +4,18 @@ import { resolve } from "node:path";
 import { Type } from "typebox";
 
 import { inChildSessionContext } from "../../choco-pi-subagents/src/child-context.ts";
+import { isRegisteredChildSession } from "./child-session.ts";
 import { ShellNotificationGate } from "./notification-gate.ts";
 import { ShellManager } from "./shell-manager.ts";
 import type { ReadShellResult, ShellChangeEvent, ShellResult } from "./shell-manager.ts";
 import { isStaleContextError, type RuntimeValue } from "./lifecycle.ts";
+import {
+  lifecycleKindForChange,
+  SHELL_LIFECYCLE_CHANNELS,
+  shellLifecyclePayload,
+  type ShellLifecycleKind,
+  type ShellLifecyclePayload,
+} from "./lifecycle-events.ts";
 import { openShellsOverlay, type ShellsUICtx } from "./ui/shells-overlay.ts";
 import { createShellSectionProvider, findShellSectionHost } from "./ui/shell-section.ts";
 import type { ShellSectionRegistration } from "../../choco-pi-subagents/src/ui/shell-section-contract.ts";
@@ -135,7 +143,7 @@ export function renderShellCompletion(
       const status = statusPresentation(shell.state);
       const metadata = [
         shell.name ?? shell.shellId,
-        shell.exitCode !== undefined ? `exit ${shell.exitCode}` : undefined,
+        shell.exitCode === undefined ? undefined : `exit ${shell.exitCode}`,
         shell.signal,
       ].filter(Boolean);
       const tail = [shell.stdout.tail, shell.stderr.tail]
@@ -226,8 +234,17 @@ const StopSchema = Type.Object(
 const ListSchema = Type.Object({}, { additionalProperties: false });
 
 export default function shellsExtension(pi: ExtensionAPI): void {
-  const isChildActivation = inChildSessionContext();
-  const isAdmin = !isChildActivation;
+  // Child identity latches one way: the async-context marker is checked at load, and the
+  // subagents registry is probed for every session id this activation observes. The
+  // registry drops a child id before its session_shutdown, so the latch must already be
+  // set by session_start; a child must never be treated as the process-singleton owner.
+  const loadedInChildContext = inChildSessionContext();
+  let isChildActivation = loadedInChildContext;
+  const isChildSession = (sessionId: string): boolean => {
+    if (!isChildActivation && isRegisteredChildSession(sessionId)) isChildActivation = true;
+    return isChildActivation;
+  };
+  const adminFor = (sessionId: string): boolean => !isChildSession(sessionId);
   // SAFETY: Symbol.for provides the process-wide slot used only for ShellManager instances here.
   const registry = globalThis as typeof globalThis & ProcessRegistry;
 
@@ -291,6 +308,52 @@ export default function shellsExtension(pi: ExtensionAPI): void {
     notificationGate.enqueue(event.shell);
   });
 
+  // Lifecycle events stay attached through quit/child cleanup so stop transitions
+  // are still published; they detach synchronously on every other shutdown path.
+  let lifecycleEventsActive = true;
+  const emitLifecycle = (kind: ShellLifecycleKind, payload: ShellLifecyclePayload): void => {
+    if (!lifecycleEventsActive) return;
+    try {
+      pi.events.emit(SHELL_LIFECYCLE_CHANNELS[kind], payload);
+    } catch (error) {
+      // SAFETY: catch produces unknown; the helper narrows via instanceof before reading the message.
+      if (isStaleContextError(error as RuntimeValue)) {
+        detachLifecycle();
+        return;
+      }
+      // ShellManager swallows listener exceptions so its lifecycle cannot be
+      // interrupted; rethrow unrelated failures outside that boundary instead.
+      queueMicrotask(() => {
+        throw error;
+      });
+    }
+  };
+  const unsubscribeLifecycle = manager.onChange((event: ShellChangeEvent) => {
+    if (
+      !lifecycleEventsActive ||
+      currentSessionId === undefined ||
+      event.shell.ownerId !== currentSessionId
+    )
+      return;
+    const kind = lifecycleKindForChange(event);
+    if (kind === undefined) return;
+    emitLifecycle(
+      kind,
+      shellLifecyclePayload(event.shell, manager.toolCallIdOf(event.shell.shellId)),
+    );
+  });
+  const detachLifecycle = (): void => {
+    lifecycleEventsActive = false;
+    unsubscribeLifecycle();
+  };
+  const emitLostForOwner = (ownerId: string | undefined): void => {
+    if (ownerId === undefined) return;
+    for (const shell of manager.list({ requesterId: ownerId, isAdmin: false }).shells) {
+      if (shell.state !== "running") continue;
+      emitLifecycle("lost", shellLifecyclePayload(shell, manager.toolCallIdOf(shell.shellId)));
+    }
+  };
+
   pi.registerMessageRenderer<ShellCompletionDetails>(
     SHELL_NOTIFICATION_TYPE,
     (message, _options, theme) =>
@@ -315,6 +378,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
 
   pi.on("session_start", async (_event, ctx) => {
     currentSessionId = ctx.sessionManager.getSessionId();
+    isChildSession(currentSessionId);
     notificationGate.sessionStart(currentSessionId, ctx.sessionManager.getEntries());
     if (!isChildActivation && ctx.hasUI) bindRootUI(ctx.ui, currentSessionId);
   });
@@ -331,9 +395,11 @@ export default function shellsExtension(pi: ExtensionAPI): void {
     notificationGate.turnEnd();
   });
 
-  if (!isChildActivation) {
+  if (!loadedInChildContext) {
     pi.on("tool_execution_start", async (_event, ctx) => {
-      currentSessionId = ctx.sessionManager.getSessionId();
+      const sessionId = ctx.sessionManager.getSessionId();
+      if (isChildSession(sessionId)) return;
+      currentSessionId = sessionId;
       notificationGate.activateOwner(currentSessionId);
       if (!ctx.hasUI) return;
       bindRootUI(ctx.ui, currentSessionId);
@@ -348,9 +414,10 @@ export default function shellsExtension(pi: ExtensionAPI): void {
         "Start a managed long-running background process. Exit is delivered as a shell-completion notification; do not poll.",
       promptSnippet: "Start a managed long-running background process.",
       parameters: StartSchema,
-      execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
+      execute: async (toolCallId, params, _signal, _onUpdate, ctx) => {
         try {
           currentSessionId = ctx.sessionManager.getSessionId();
+          isChildSession(currentSessionId);
           notificationGate.activateOwner(currentSessionId);
           return jsonResult(
             manager.start({
@@ -358,6 +425,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
               command: params.command,
               cwd: resolve(ctx.cwd, params.cwd ?? "."),
               name: params.name,
+              toolCallId,
             }),
           );
         } catch (error) {
@@ -379,7 +447,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
           return jsonResult(
             manager.read({
               requesterId: ctx.sessionManager.getSessionId(),
-              isAdmin,
+              isAdmin: adminFor(ctx.sessionManager.getSessionId()),
               shellId: params.shell_id,
               stdoutOffset: params.stdout_offset,
               stderrOffset: params.stderr_offset,
@@ -405,7 +473,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
           return jsonResult(
             await manager.stop({
               requesterId: ctx.sessionManager.getSessionId(),
-              isAdmin,
+              isAdmin: adminFor(ctx.sessionManager.getSessionId()),
               shellId: params.shell_id,
             }),
           );
@@ -428,7 +496,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
           return jsonResult(
             manager.list({
               requesterId: ctx.sessionManager.getSessionId(),
-              isAdmin,
+              isAdmin: adminFor(ctx.sessionManager.getSessionId()),
             }),
           );
         } catch (error) {
@@ -443,6 +511,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
     handler: async (args, ctx) => {
       const [action, id] = args.trim().split(/\s+/, 2);
       const requesterId = ctx.sessionManager.getSessionId();
+      const isAdmin = adminFor(requesterId);
 
       try {
         if (!action || action === "list") {
@@ -492,9 +561,17 @@ export default function shellsExtension(pi: ExtensionAPI): void {
     notificationGate.shutdown();
     shuttingDown = true;
     unsubscribeCompletions();
+    // Snapshot identity before any await; this activation is already invalidated above.
+    const shutdownSessionId = currentSessionId ?? ctx.sessionManager.getSessionId();
 
-    if (isChildActivation) {
-      await manager.cleanupOwner(ctx.sessionManager.getSessionId());
+    if (isChildSession(shutdownSessionId)) {
+      // A child quit releases only its own shells; the shared manager stays with root.
+      const ownerId = shutdownSessionId;
+      try {
+        await manager.cleanupOwner(ownerId);
+      } finally {
+        detachLifecycle();
+      }
       return;
     }
 
@@ -505,10 +582,26 @@ export default function shellsExtension(pi: ExtensionAPI): void {
     rootUI = undefined;
     rootSessionId = undefined;
 
-    if (event.reason !== "quit") return;
-    await manager.dispose();
-    if (registry[MANAGER_KEY] === manager) {
-      delete registry[MANAGER_KEY];
+    if (event.reason !== "quit") {
+      // Session replacement leaves shells running under the outgoing owner with no
+      // runtime to report them; reload keeps the same session id, so its new
+      // activation continues reporting and nothing is lost.
+      if (event.reason !== "reload") emitLostForOwner(currentSessionId);
+      detachLifecycle();
+      return;
+    }
+    // Only the root activation whose manager still occupies the process-wide slot owns
+    // teardown. Release the slot synchronously before awaiting so an activation created
+    // during disposal builds a fresh manager and is never torn down by this one.
+    if (registry[MANAGER_KEY] !== manager) {
+      detachLifecycle();
+      return;
+    }
+    delete registry[MANAGER_KEY];
+    try {
+      await manager.dispose();
+    } finally {
+      detachLifecycle();
     }
   });
 }

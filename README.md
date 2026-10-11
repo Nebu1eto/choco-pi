@@ -80,8 +80,16 @@ deleting it blindly.
 
 `npm run install:profile` preserves existing runtime and authentication state
 plus user-added packages, writes absolute checkout paths, and links tracked
-profile resources into `~/.pi/agent`. It does not link MCP configuration. If a
-target already contains unrelated content, the installer stops; review the
+profile resources into `~/.pi/agent` (or `PI_CODING_AGENT_DIR` / `--agent-dir`).
+After installation succeeds, it atomically writes `choco-pi/profile.json` in
+that agent directory with the checkout path, Git revision (null if unavailable),
+observed Pi version, launcher path, and host-bridge schema. The installer selects
+`--pi-launcher <path>`, then `CHOCO_PI_LAUNCHER`, or the first `pi` on `PATH` that
+reports exactly `1.0.4`; missing launchers are recorded as null with a warning.
+External hosts such as Waku use this marker to identify the profile;
+`harness_check` warns about a missing marker, checkout mismatch, or incompatible
+launcher. It does not link MCP configuration. If a target already contains
+unrelated content, the installer stops; review the
 conflict, then use `npm run install:profile -- --backup` to preserve and replace
 it when appropriate.
 
@@ -230,6 +238,8 @@ win. Neither file is created for you. This example shows the defaults:
 4. Optionally, delete the `pi-computer-use Local Signing` identity from your login keychain in Keychain Access.
 
 ## Features
+
+The [RPC host bridge](docs/rpc-host-bridge.md) lets Waku identify the installed choco-pi profile and consume durable background-work and goal entries. RPC mode streams bridge progress when `CHOCO_PI_HOST=waku`; `/host-bridge` provides snapshots and background-work controls without starting a model turn. Pi's RPC UI carries user dialogs.
 
 ### Operating rules and workflows
 

@@ -16,6 +16,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { isJsonRecord, type JsonRecord } from "../.pi/extensions/lib/runtime-values.ts";
+import {
+  PROFILE_PI_TARGET,
+  resolvePiLauncher,
+  writeProfileMarker,
+} from "../.pi/extensions/lib/profile-marker.ts";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 
@@ -36,7 +41,12 @@ export type InstallLinkResult = {
   action: "unchanged" | "linked" | "backed-up";
   backup?: string;
 };
-export type InstallProfileOptions = { root?: string; agentDir?: string; backup?: boolean };
+export type InstallProfileOptions = {
+  root?: string;
+  agentDir?: string;
+  backup?: boolean;
+  piLauncher?: string;
+};
 
 const SCRIPT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -335,6 +345,7 @@ export async function installProfile({
   root = SCRIPT_ROOT,
   agentDir = process.env.PI_CODING_AGENT_DIR ?? path.join(homedir(), ".pi", "agent"),
   backup = false,
+  piLauncher,
 }: InstallProfileOptions = {}) {
   const projectSettings = await readJson(path.join(root, ".pi", "settings.json"));
   if (projectSettings.packages === undefined)
@@ -371,7 +382,15 @@ export async function installProfile({
     settingsPath,
     buildGlobalSettings(project, existingSettings, root, superseded),
   );
-  return { agentDir, settingsPath, links: results };
+  const pi = await resolvePiLauncher(piLauncher);
+  const markerPath = await writeProfileMarker(agentDir, root, pi);
+  const warnings: string[] = [];
+  if (pi.launcher === null || pi.version !== PROFILE_PI_TARGET) {
+    warnings.push(
+      `No compatible Pi ${PROFILE_PI_TARGET} launcher: ${pi.launcher ?? "none found"} (${pi.version ?? "unavailable"}). Set --pi-launcher or CHOCO_PI_LAUNCHER.`,
+    );
+  }
+  return { agentDir, settingsPath, markerPath, warnings, links: results };
 }
 
 function parseArgs(args: string[]) {
@@ -381,6 +400,8 @@ function parseArgs(args: string[]) {
     if (argument === "--backup") options.backup = true;
     else if (argument === "--agent-dir" && args[index + 1])
       options.agentDir = path.resolve(args[++index]);
+    else if (argument === "--pi-launcher" && args[index + 1])
+      options.piLauncher = path.resolve(args[++index]);
     else throw new Error(`unknown or incomplete argument: ${argument}`);
   }
   return options;
@@ -394,6 +415,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       console.log(`${link.action}: ${link.target}${suffix}`);
     }
     console.log(`updated: ${result.settingsPath}`);
+    console.log(`updated: ${result.markerPath}`);
+    for (const warning of result.warnings) console.warn(`warning: ${warning}`);
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;

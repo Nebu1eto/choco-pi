@@ -19,6 +19,27 @@ fullscreen takeover, dismissible side conversations, dynamic workflow fan-out)
 without carrying a patch stack against a published package. See
 `ARCHITECTURE.md` for the module map and the seams those phases attach to.
 
+## Waku host-bridge lifecycle metadata (C4)
+
+`src/lifecycle-event.ts` supplies flat metadata for the existing per-agent
+`subagents:created`, `started`, `compacted`, `completed`, `failed`, `stopped`,
+and `steered` events in `src/index.ts`. Event names remain unchanged. Payloads
+include `toolCallId`, `outputFile`, `parentAgentId`, `description`, `model`
+(provider/id), and `cwd`; unavailable runtime fields are explicit nulls. The
+manager snapshots `spawnCwd` on `AgentRecord` before its parent context can
+retire. Worktree working directories and live session models take precedence.
+Terminal payloads retain existing result/error fields and add `summary`: the
+first final-report line, capped at 200 Unicode characters, or null if absent.
+
+The existing `Symbol.for("pi-subagents:manager")` registry adds
+`getAllRecords()` for whole-tree discovery and `stop(id)` using the manager's
+existing cancellation path and `subagents:stopped` event. Top-level
+`getRecord`, nested ownership guards, and stale-generation settlement remain
+unchanged. `tests/lifecycle-event.test.ts` covers nullability, nested identity,
+working-directory selection, detached metadata, and summary boundaries;
+`tests/registry.test.ts` covers discovery, unknown-id stops, and child activation
+preserving the root registry methods.
+
 ## What was taken
 
 The tarball ships both `src/` (TypeScript) and `dist/` (built JS), and declares

@@ -4,6 +4,7 @@ import { registerGoalCommand } from "./commands.ts";
 import { createContinuationScheduler } from "./continuation-scheduler.ts";
 import { createGoalAccounting } from "./goal-accounting.ts";
 import { createGoalPersistence } from "./goal-persistence.ts";
+import { createGoalRuntimeAccessPublisher } from "./goal-runtime-access.ts";
 import {
   createGoalRuntimeEventHandlers,
   type GoalRuntimeEventHandlers,
@@ -186,6 +187,11 @@ export function createGoalRuntimeController(pi: ExtensionAPI): GoalRuntimeContro
     return stateController.completeGoal(source, ctx);
   };
 
+  const runtimeAccess = createGoalRuntimeAccessPublisher({
+    getGoal: goalForDisplay,
+    completeGoal,
+  });
+
   return {
     getGoalForDisplay: goalForDisplay,
     getGoalStartTurnStrategy: () => goalStartTurnStrategy(runtimeState.recoveryState.phase),
@@ -207,9 +213,12 @@ export function createGoalRuntimeController(pi: ExtensionAPI): GoalRuntimeContro
     onSessionStart(event, ctx) {
       recoveryOwnershipOwner = ownerSessionId(ctx);
       recoveryOwnership.install();
+      runtimeAccess.install(recoveryOwnershipOwner);
       return eventHandlers.onSessionStart(event, ctx);
     },
     async onSessionShutdown(event, ctx) {
+      // Invalidate host access before the first await so a session installed meanwhile keeps its own.
+      runtimeAccess.dispose();
       try {
         return await eventHandlers.onSessionShutdown(event, ctx);
       } finally {

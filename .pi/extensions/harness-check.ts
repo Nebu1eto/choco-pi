@@ -1,3 +1,4 @@
+import path from "node:path";
 import { Type, type Static } from "typebox";
 import {
   VERSION,
@@ -18,6 +19,9 @@ import {
   type HarnessReport,
 } from "../skills/check/scripts/check-harness.ts";
 import { captureHostIdentity, type CapturedHostIdentity } from "./lib/pi-runtime-identity.ts";
+import { readProfileMarker, type ProfileMarkerObservation } from "./lib/profile-marker.ts";
+
+export type HarnessCheckReport = HarnessReport & { profileMarker?: ProfileMarkerObservation };
 
 type HarnessCheckInput = {
   mode: "full" | "automatic";
@@ -78,6 +82,7 @@ export type HarnessCheckExecutionDependencies = {
   capture: () => CapturedHostIdentity;
   currentOwner: () => CapturedHostIdentity["owner"];
   check: (options: HarnessOptions) => Promise<HarnessReport>;
+  readProfileMarker?: () => Promise<ProfileMarkerObservation>;
   observeBuiltinExtensions?: () => readonly string[];
   observeActiveHostTools?: () => NonNullable<HarnessOptions["activeHostTools"]>;
 };
@@ -121,7 +126,7 @@ export async function executeHarnessCheck(
   input: HarnessCheckInput,
   signal: AbortSignal | undefined,
   dependencies: HarnessCheckExecutionDependencies,
-): Promise<HarnessReport> {
+): Promise<HarnessCheckReport> {
   const identity = dependencies.capture();
   const loadedBuiltins = dependencies.observeBuiltinExtensions?.();
   const hostTools = dependencies.observeActiveHostTools?.();
@@ -139,7 +144,41 @@ export async function executeHarnessCheck(
   if (!sameOwner(identity.owner, dependencies.currentOwner())) {
     throw new Error("harness check result is stale because the session changed");
   }
-  return report;
+  if (!dependencies.readProfileMarker) return report;
+  const profileMarker = await dependencies.readProfileMarker();
+  if (signal?.aborted) throw new Error("harness check cancelled");
+  if (!sameOwner(identity.owner, dependencies.currentOwner())) {
+    throw new Error("harness check result is stale because the session changed");
+  }
+  const checks: HarnessReport["checks"] = [...report.checks];
+  if (profileMarker.status !== "valid") {
+    checks.push({ id: "profile-marker", status: "warn", detail: profileMarker.reason });
+  } else {
+    const expectedCheckout = path.resolve(report.configRoot, "..");
+    const matches = path.resolve(profileMarker.marker.checkout) === expectedCheckout;
+    checks.push({
+      id: "profile-marker",
+      status: matches ? "pass" : "warn",
+      detail: matches
+        ? `Profile marker matches ${expectedCheckout}`
+        : `Profile marker checkout ${profileMarker.marker.checkout} differs from ${expectedCheckout}`,
+    });
+    checks.push({
+      id: "profile-launcher",
+      status: profileMarker.warning ? "warn" : "pass",
+      detail:
+        profileMarker.warning ?? `Recorded Pi launcher reports ${profileMarker.observedPiVersion}`,
+    });
+  }
+  return {
+    ...report,
+    status:
+      checks.some((check) => check.status === "warn") && report.status === "pass"
+        ? "warn"
+        : report.status,
+    checks,
+    profileMarker,
+  };
 }
 
 function isTestRegistration(
@@ -207,6 +246,7 @@ export default function harnessCheckExtension(host: ExtensionAPI | HarnessCheckR
           }),
         currentOwner: owner,
         check: registration.checkHarness ?? checkHarness,
+        readProfileMarker,
         observeBuiltinExtensions: registration.observeBuiltinExtensions,
         observeActiveHostTools: registration.observeActiveHostTools,
       });

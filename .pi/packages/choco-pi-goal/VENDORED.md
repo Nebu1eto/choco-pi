@@ -150,3 +150,35 @@ nothing from the repository root; both seams are validated structurally.
 
 Pi SDK peer and development pins move from `0.87.1` to exactly `1.0.4`,
 matching the harness target. Other dependency contracts are unchanged.
+
+## choco-pi patch: goal change events and runtime access for the host bridge
+
+The Waku host bridge (`docs/waku-integration.md` C5) mirrors goal state and
+completes a goal on request. The package still imports nothing from the
+repository root; consumers validate both seams structurally.
+
+- `src/goal-persistence.ts`: exports `GOAL_CHANGED_EVENT = "goal:changed"` and
+  emits `pi.events.emit("goal:changed", ThreadGoal | null)` (a copy) after every
+  `pi-codex-goal` set, usage, or clear entry is appended. This covers create,
+  pause/resume, complete, budget limits, runtime usage flushes, and clear.
+  Skipped equivalent sets and `host_overflow_cap_reset` entries do not emit.
+- `src/goal-state-controller.ts`: `reloadFromSession` (session start/tree) also
+  emits when the reconstructed goal differs from the in-memory goal, without
+  appending an entry. Its context parameter narrows to the branch reader and
+  status UI it uses.
+- `src/goal-runtime-access.ts` (new): publishes
+  `globalThis[Symbol.for("choco-pi-goal:runtime")]` as
+  `Map<ownerSessionId, { owner, getGoal(), completeGoal(ctx) }>`. `getGoal`
+  returns a copy with live usage; `completeGoal` runs the `update_goal` path
+  recorded with source `command`. It returns `ok: false` for a disposed or
+  replaced runtime, a context from another session, or a stale context (only
+  the host's canonical stale-context error is contained; other errors rethrow).
+  A foreign value in the slot is never overwritten.
+- `src/goal-runtime-controller.ts`: installs the access on `session_start` under
+  the same owner as the recovery reader and removes it synchronously when
+  `session_shutdown` begins, before any await, so a session started while the
+  old shutdown is pending keeps its own access.
+- `tests/goal-events.test.ts` (new) covers emission per mutation, reload
+  emission, copy isolation, owner keying, foreign/stale/unrelated context
+  errors, replacement, slot preservation, and a pending shutdown overlapping
+  the next session start.

@@ -28,6 +28,8 @@ export interface StartShellInput {
   command: string;
   cwd: string;
   name?: string;
+  /** Originating tool call; kept off ShellResult so tool output and persisted entries stay unchanged. */
+  toolCallId?: string;
 }
 
 export interface ShellResult {
@@ -104,6 +106,7 @@ interface ShellRecord {
   shellId: string;
   ownerId: string;
   name?: string;
+  toolCallId?: string;
   command: string;
   cwd: string;
   state: ShellState;
@@ -212,6 +215,8 @@ export class ShellManager {
     const command = requireNonEmpty(input.command, "command");
     const cwd = requireNonEmpty(input.cwd, "cwd");
     const name = input.name === undefined ? undefined : requireNonEmpty(input.name, "name");
+    const toolCallId =
+      input.toolCallId === undefined ? undefined : requireNonEmpty(input.toolCallId, "toolCallId");
     let cwdStat: ReturnType<typeof statSync>;
     try {
       cwdStat = statSync(cwd);
@@ -242,6 +247,7 @@ export class ShellManager {
       finalized: false,
     };
     if (name !== undefined) record.name = name;
+    if (toolCallId !== undefined) record.toolCallId = toolCallId;
     this.records.set(shellId, record);
 
     try {
@@ -315,6 +321,11 @@ export class ShellManager {
     }
     shells.sort((left, right) => left.startedAt - right.startedAt);
     return { shells };
+  }
+
+  /** Tool call that started a still-retained shell, or null when unknown or evicted. */
+  toolCallIdOf(shellId: string): string | null {
+    return this.records.get(shellId)?.toolCallId ?? null;
   }
 
   async cleanupOwner(ownerId: string): Promise<void> {

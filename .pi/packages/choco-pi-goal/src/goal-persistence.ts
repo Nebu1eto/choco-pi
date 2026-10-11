@@ -11,8 +11,11 @@ import {
 } from "./state.ts";
 import { CUSTOM_ENTRY_TYPE, type GoalEntrySource, type ThreadGoal } from "./types.ts";
 
+/** Event-bus channel announcing the goal after each persisted goal-state change. */
+export const GOAL_CHANGED_EVENT = "goal:changed";
+
 interface GoalPersistenceDeps {
-  pi: Pick<ExtensionAPI, "appendEntry">;
+  pi: Pick<ExtensionAPI, "appendEntry" | "events">;
 }
 
 function canPersistRuntimeUsageEntry(
@@ -36,6 +39,11 @@ export function createGoalPersistence(deps: GoalPersistenceDeps) {
   let lastRuntimePersistAt: number | null = null;
 
   const getGoal = (): ThreadGoal | null => (goal ? cloneGoal(goal) : null);
+
+  /** Subscribers receive a copy so they cannot mutate runtime state. */
+  const emitGoalChanged = (snapshot: ThreadGoal | null): void => {
+    deps.pi.events.emit(GOAL_CHANGED_EVENT, snapshot ? cloneGoal(snapshot) : null);
+  };
 
   const setGoalSnapshot = (nextGoal: ThreadGoal | null): void => {
     goal = nextGoal ? cloneGoal(nextGoal) : null;
@@ -62,6 +70,7 @@ export function createGoalPersistence(deps: GoalPersistenceDeps) {
     );
     lastPersistedGoal = cloneGoal(goal);
     lastRuntimePersistAt = Date.now();
+    emitGoalChanged(goal);
     return true;
   };
 
@@ -85,10 +94,12 @@ export function createGoalPersistence(deps: GoalPersistenceDeps) {
   const appendClearEntry = (clearedGoalId: string | null, source: GoalEntrySource): void => {
     clearGoalSnapshot();
     deps.pi.appendEntry(CUSTOM_ENTRY_TYPE, clearEntry(clearedGoalId, source));
+    emitGoalChanged(null);
   };
 
   return {
     appendClearEntry,
+    emitGoalChanged,
     flushGoalPersistence,
     getGoal,
     maybeFlushRuntimePersistence,

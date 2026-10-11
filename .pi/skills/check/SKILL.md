@@ -23,6 +23,16 @@ Core readiness requires Node `>=24` and the actual runtime source exactly Pi `1.
 
 The `builtin-extensions` check requires `-builtin:codemode` and warns if project settings exclude `builtin:tool-search` or `builtin:mcp`. In-host, it requires the built-in `tool_search` tool and warns if custom `mcp` or `mcpScript` adapter tools or built-in codemode resources are registered. choco-pi uses Pi's built-in tool search and MCP and keeps its own `exec` code-mode bridge. Pi does not expose extension load warnings to extensions; when this check warns, ask the user what `[Extension issues]` reported at startup. Run `pnpm install:profile` to carry the policy into the global settings.
 
+The host tool also reports `profileMarker` for `<agentDir>/choco-pi/profile.json`,
+where `agentDir` is `PI_CODING_AGENT_DIR` or `~/.pi/agent`. Its status is `valid`,
+`missing`, `invalid`, or `unreadable`; a valid schema-1 marker includes the checkout,
+revision (possibly null), installation time, observed Pi version and launcher
+(both nullable), and host-bridge schema. The tool warns if the marker is absent,
+invalid, points to a different checkout, has no launcher, or its launcher no longer
+reports exactly `1.0.4`. This is installation evidence, not proof that the active
+host loaded the bridge. A missing or invalid marker can be repaired with
+an approved `pnpm install:profile` run; the standalone fallback does not report it.
+
 A successful automatic check may be reused within the same session only while its relevant runtime, configuration, resources, and required live tools remain unchanged. Always rerun a fresh explicit `/check`.
 
 ## Scope additions

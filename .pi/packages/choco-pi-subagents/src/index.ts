@@ -34,6 +34,7 @@ import {
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { abortable } from "./abortable.ts";
+import { buildLifecycleMetadata, finalReportSummary } from "./lifecycle-event.ts";
 import {
   buildNewAgentFile,
   disableInContent,
@@ -598,6 +599,23 @@ export default function (pi: ExtensionAPI) {
     fleet.update();
   }, 30_000);
 
+  function emitLifecycle<Payload extends { id: string }>(event: string, payload: Payload): void {
+    const record = manager.getRecord(payload.id);
+    if (record !== undefined) {
+      pi.events.emit(event, { ...payload, ...buildLifecycleMetadata(record) });
+      return;
+    }
+    pi.events.emit(event, {
+      toolCallId: null,
+      outputFile: null,
+      parentAgentId: null,
+      description: null,
+      model: null,
+      cwd: null,
+      ...payload,
+    });
+  }
+
   /** Helper: build event data for lifecycle events from an AgentRecord. */
   function buildEventData(record: AgentRecord) {
     const durationMs = record.completedAt
@@ -621,6 +639,7 @@ export default function (pi: ExtensionAPI) {
       durationMs,
       tokens,
       agentTranscriptPath: record.outputFile ?? record.sessionFile,
+      summary: finalReportSummary(record.result),
       ...(record.usageLimit && { usageLimit: record.usageLimit }),
       ...(record.pendingDependents && { pendingDependents: record.pendingDependents }),
       ...(record.sideConversation && { sideConversation: true }),
@@ -679,9 +698,9 @@ export default function (pi: ExtensionAPI) {
         record.status === "watchdog_stopped";
       const eventData = buildEventData(record);
       if (isError) {
-        pi.events.emit("subagents:failed", eventData);
+        emitLifecycle("subagents:failed", eventData);
       } else {
-        pi.events.emit("subagents:completed", eventData);
+        emitLifecycle("subagents:completed", eventData);
       }
 
       // Persist final record for cross-extension history reconstruction
@@ -766,7 +785,7 @@ export default function (pi: ExtensionAPI) {
         fleet.update();
       }
       // Emit started event when agent transitions to running (including from queue)
-      pi.events.emit("subagents:started", {
+      emitLifecycle("subagents:started", {
         id: record.id,
         type: record.type,
         description: record.description,
@@ -779,7 +798,7 @@ export default function (pi: ExtensionAPI) {
     (record, info) => {
       if (record.parentAgentId) return;
       // Emit compacted event when agent's session compacts (preserves count on record).
-      pi.events.emit("subagents:compacted", {
+      emitLifecycle("subagents:compacted", {
         id: record.id,
         type: record.type,
         description: record.description,
@@ -913,6 +932,13 @@ export default function (pi: ExtensionAPI) {
   const registryEntry = {
     waitForAll: () => manager.waitForAll(),
     hasRunning: () => manager.hasRunning(),
+    getAllRecords: () => manager.listAgents(),
+    stop: (id: string) => {
+      const record = manager.getRecord(id);
+      if (!record || !manager.abort(id)) return false;
+      emitLifecycle("subagents:stopped", buildEventData(record));
+      return true;
+    },
     registerShellSection: (provider: ShellSectionProvider): ShellSectionRegistration => {
       shellSectionProvider = provider;
       fleetSource?.setShellSection(provider);
@@ -1072,7 +1098,7 @@ export default function (pi: ExtensionAPI) {
       fleet.ensureTimer();
       fleet.update();
     }
-    pi.events.emit("subagents:created", {
+    emitLifecycle("subagents:created", {
       id: record.id,
       type: record.type,
       description: record.description,
@@ -1454,7 +1480,7 @@ export default function (pi: ExtensionAPI) {
         record.resultConsumed = false;
         manager.journalRecord(record.id);
         manager.steer(record.id, mention.message);
-        pi.events.emit("subagents:steered", { id: record.id, message: mention.message });
+        emitLifecycle("subagents:steered", { id: record.id, message: mention.message });
         ctx.ui.notify(`Sent to ${target}`, "info");
         return { action: "handled" };
       }
@@ -1752,7 +1778,7 @@ export default function (pi: ExtensionAPI) {
   const focus = new FocusedAgentController(manager, {
     getHideThinkingBlock: () => pi.getSettings().hideThinkingBlock === true,
     getActivity: (id) => agentActivity.get(id),
-    onSteered: (id, message) => pi.events.emit("subagents:steered", { id, message }),
+    onSteered: (id, message) => emitLifecycle("subagents:steered", { id, message }),
     // FleetView is the focus switcher; when it is turned off, focus mode keeps
     // its own Esc exit so the prompt can always return to main.
     hasSwitcher: () => isFleetViewEnabled() && fleet.hasAgentRows(),
@@ -1768,7 +1794,7 @@ export default function (pi: ExtensionAPI) {
   // notice delivery; focus, concurrency and handles remain manager-owned.
   const sideConversations = new SideConversationController(manager, {
     getActivity: (id) => agentActivity.get(id),
-    onSteered: (id, message) => pi.events.emit("subagents:steered", { id, message }),
+    onSteered: (id, message) => emitLifecycle("subagents:steered", { id, message }),
     focusAgent: (record, tui, theme) => focus.focus(record, tui, theme),
   });
 
@@ -2047,7 +2073,7 @@ export default function (pi: ExtensionAPI) {
     // spawned with), so report the record's own identity — a "created"
     // event carrying the caller's type would re-register the agent under
     // the wrong one in cross-extension mirrors keyed by id.
-    pi.events.emit("subagents:created", {
+    emitLifecycle("subagents:created", {
       id,
       type: existing.type,
       description: existing.description,
@@ -2690,7 +2716,7 @@ export default function (pi: ExtensionAPI) {
         fleet.update();
 
         // Emit created event
-        pi.events.emit("subagents:created", {
+        emitLifecycle("subagents:created", {
           id,
           type: subagentType,
           description: params.description,
@@ -2998,7 +3024,7 @@ export default function (pi: ExtensionAPI) {
         agentActivity.set(id, state);
         fleet.ensureTimer();
         fleet.update();
-        pi.events.emit("subagents:created", {
+        emitLifecycle("subagents:created", {
           id,
           type: step.subagent_type,
           description: record.description,
@@ -3386,7 +3412,7 @@ export default function (pi: ExtensionAPI) {
             `Failed to steer agent ${record.id}. It is no longer running or queued, or is being cancelled.`,
           );
         }
-        pi.events.emit("subagents:steered", { id: record.id, message: envelope });
+        emitLifecycle("subagents:steered", { id: record.id, message: envelope });
         if (queuedBeforeSession) {
           return textResult(
             `Steering message queued for agent ${record.id}. It will be delivered once the session initializes.`,
@@ -3462,7 +3488,7 @@ export default function (pi: ExtensionAPI) {
             `Failed to stop agent ${record.id}. It is no longer running or queued.`,
           );
         }
-        pi.events.emit("subagents:stopped", buildEventData(record));
+        emitLifecycle("subagents:stopped", buildEventData(record));
         const tokens = formatLifetimeTokens(record);
         const contextPercent = getSessionContextPercent(record.session);
         const stateParts: string[] = [];
@@ -4289,7 +4315,7 @@ Write the file using the write tool. Only write the file, nothing else.`;
         const record = manager.getRecord(id);
         fleet.ensureTimer();
         fleet.update();
-        pi.events.emit("subagents:created", {
+        emitLifecycle("subagents:created", {
           id,
           type: dispatch.type,
           description: record?.description ?? question,

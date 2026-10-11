@@ -263,6 +263,8 @@ export interface AgentRecord {
   spawnPrompt?: string;
   /** Serializable spawn/run options captured at spawn for the journal. */
   runOptions?: JournalRunOptions;
+  /** Accepted base cwd, snapshotted before the parent context can retire. */
+  spawnCwd?: string;
   /** Model the spawn requested; the live session model wins once it exists. */
   spawnModel?: { provider: string; id: string };
   /**

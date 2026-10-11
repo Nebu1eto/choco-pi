@@ -49,9 +49,14 @@ export interface GoalStateController {
   pauseForAbort: (ctx: ExtensionContext) => void;
   pauseForRecovery: (ctx: ExtensionContext, recoveryReason: string) => void;
   persistHostOverflowUserReset: (needsReset: boolean) => void;
-  reloadFromSession: (ctx: ExtensionContext) => void;
+  reloadFromSession: (ctx: SessionReloadContext) => void;
   resumePausedGoal: (ctx: StatusContext) => void;
 }
+
+/** Session reload reads only the active branch and refreshes the status line. */
+export type SessionReloadContext = StatusContext & {
+  sessionManager: Pick<ExtensionContext["sessionManager"], "getBranch">;
+};
 
 export function createGoalStateController(deps: GoalStateControllerDeps) {
   const getGoal = (): ThreadGoal | null => deps.persistence.getGoal();
@@ -131,12 +136,16 @@ export function createGoalStateController(deps: GoalStateControllerDeps) {
     }
   };
 
-  const reloadFromSession = (ctx: ExtensionContext): void => {
-    const previousGoalId = getGoal()?.goalId ?? null;
+  const reloadFromSession = (ctx: SessionReloadContext): void => {
+    const previousGoal = getGoal();
+    const previousGoalId = previousGoal?.goalId ?? null;
     const branch = ctx.sessionManager.getBranch();
     const reconstructed = reconstructGoal(branch).goal;
     deps.persistence.setGoalSnapshot(reconstructed);
     deps.persistence.syncPersistedSnapshot(reconstructed);
+    if (!sameGoalState(previousGoal, reconstructed)) {
+      deps.persistence.emitGoalChanged(reconstructed);
+    }
     syncHostOverflowUserResetFromSession(
       deps.getRecoveryState(),
       reconstructHostOverflowCapNeedsUserReset(branch),
@@ -204,4 +213,11 @@ export function createGoalStateController(deps: GoalStateControllerDeps) {
   };
 
   return controller;
+}
+
+function sameGoalState(left: ThreadGoal | null, right: ThreadGoal | null): boolean {
+  if (!left || !right) {
+    return left === right;
+  }
+  return goalsEquivalent(left, right);
 }

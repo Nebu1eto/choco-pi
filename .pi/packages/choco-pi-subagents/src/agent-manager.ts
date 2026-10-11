@@ -2363,6 +2363,7 @@ export class AgentManager {
       spawnPrompt: prompt,
       runOptions: journalRunOptionsOf(options, usageScope.scoped),
       spawnModel: modelRefOf(options.model ?? ctx.model),
+      spawnCwd: options.cwd ?? ctx.cwd,
       revivals: identity?.revivals,
       pendingSteers:
         identity?.steers !== undefined && identity.steers.length > 0
