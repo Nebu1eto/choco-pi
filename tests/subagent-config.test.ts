@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -38,7 +39,7 @@ test("role model and thinking follow hard pin, caller, then default precedence",
   assert.ok(implementer.defaultModel, "implementer declares a default model");
   assert.ok(implementer.defaultThinking, "implementer declares a default thinking level");
 
-  const caller = { model: "openai-codex/gpt-5.6-terra", thinking: "high" };
+  const caller = { model: "openai/gpt-5.6-terra", thinking: "high" };
 
   const defaults = resolveAgentInvocationConfig(implementer, {});
   assert.equal(defaults.modelInput, implementer.defaultModel);
@@ -57,4 +58,25 @@ test("role model and thinking follow hard pin, caller, then default precedence",
   assert.equal(pinned.modelInput, "test/pinned-model");
   assert.equal(pinned.modelFromParams, false);
   assert.equal(pinned.thinking, "xhigh");
+});
+
+test("fallbacks exclude legacy Codex and every role uses an OpenAI or Anthropic default", async () => {
+  const fallbacks = await readFile(resolve(".pi/model-fallbacks.json"), "utf8");
+  assert.doesNotMatch(fallbacks, /openai-codex\//u);
+  const files = (await readdir(resolve(".pi/agents"))).filter((file) => file.endsWith(".md"));
+  assert.ok(files.length > 0);
+  const expectedOpenAI = new Map([
+    ["general.md", "openai/gpt-6.1-sol"],
+    ["explore.md", "openai/gpt-6.1-sol"],
+    ["handoff.md", "openai/gpt-6.1-sol"],
+    ["reviewer.md", "openai/gpt-6-astra"],
+  ]);
+  for (const file of expectedOpenAI.keys()) assert.ok(files.includes(file), file + " exists");
+  for (const file of files) {
+    const content = await readFile(resolve(".pi/agents", file), "utf8");
+    const defaultModel = /^default_model:\s*(\S+)$/mu.exec(content)?.[1];
+    const expected = expectedOpenAI.get(file);
+    if (expected) assert.equal(defaultModel, expected, file);
+    if (defaultModel) assert.match(defaultModel, /^(?:openai|anthropic)\//u, file);
+  }
 });

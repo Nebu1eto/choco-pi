@@ -81,29 +81,29 @@ const styleOf = (name: string, body: string): AgentStyle => ({
 test(
   "store round-trips both keys and preserves unrelated settings",
   withTempDirs(async ({ agent }) => {
-    mkdirSync(agent, { recursive: true });
-    writeFileSync(
+    await mkdir(agent, { recursive: true });
+    await writeFile(
       path.join(agent, "settings.json"),
       JSON.stringify({ theme: "nord-dark", compaction: { enabled: true } }, null, 2),
     );
     await writeAgentPreference("agentLanguage", "Korean", agent);
     await writeAgentPreference("agentStyle", "concise", agent);
     await writeAgentPreference("sessionAutoName", false, agent);
-    await writeAgentPreference("sessionAutoNameModel", "openai-codex/gpt-5.6-luna", agent);
+    await writeAgentPreference("sessionAutoNameModel", "openai/gpt-5.6-luna", agent);
 
-    const preferences = readAgentPreferences(agent);
+    const preferences = await readAgentPreferencesAsync(agent);
     assert.equal(preferences.language, "Korean");
     assert.equal(preferences.style, "concise");
     assert.equal(preferences.persona, DEFAULT_PERSONA);
     assert.equal(preferences.sessionAutoName, false);
-    assert.equal(preferences.sessionAutoNameModel, "openai-codex/gpt-5.6-luna");
+    assert.equal(preferences.sessionAutoNameModel, "openai/gpt-5.6-luna");
 
-    const settings = JSON.parse(readFileSync(path.join(agent, "settings.json"), "utf8"));
+    const settings = JSON.parse(await readFile(path.join(agent, "settings.json"), "utf8"));
     assert.equal(settings.theme, "nord-dark");
     assert.deepEqual(settings.compaction, { enabled: true });
 
     await writeAgentPreference("agentLanguage", undefined, agent);
-    const after = readAgentPreferences(agent);
+    const after = await readAgentPreferencesAsync(agent);
     assert.equal(after.language, undefined);
     assert.equal(after.style, "concise");
   }),

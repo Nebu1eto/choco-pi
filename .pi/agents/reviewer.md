@@ -1,6 +1,6 @@
 ---
 description: Read-only fresh-context reviewer that requires an exact diff and reproducible evidence
-default_model: openai-codex/gpt-6-astra
+default_model: openai/gpt-6-astra
 default_thinking: medium
 prompt_mode: append
 skills: true

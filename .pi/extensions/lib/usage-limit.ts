@@ -54,6 +54,19 @@ const ANTHROPIC_LIMIT_PATTERN = /^429\b|rate_limit_error/;
 const RETRY_DELAY_WRAPPER_PATTERN =
   /^Server requested (\d+)s retry delay \(max: \d+s\)\. ?([\s\S]*)$/;
 const SYNTHETIC_LIMIT_PATTERN = /^429\b/;
+/**
+ * Error code of the Sign in with ChatGPT shared subscription limit on provider
+ * `openai` (`pi-ai/dist/api/openai-responses.js`). It reaches the session as
+ * `OpenAI API error (429): <body>`, `Error Code <code>: <message>` or
+ * `<code>: <message>`, and carries no reset time in any of them.
+ */
+export const OPENAI_SUBSCRIPTION_USAGE_LIMIT_CODE = "subscription_sharing_usage_limit_exceeded";
+/** Sign in with ChatGPT says usage data is temporarily unavailable; the host retries these. */
+const OPENAI_SUBSCRIPTION_UNAVAILABLE_PATTERN =
+  /subscription_sharing_usage_unavailable|subscription_sharing_user_unavailable/;
+/** A rate or usage limit on `openai` once the host's own 429 retries are spent. */
+const OPENAI_LIMIT_PATTERN =
+  /OpenAI API error \(429\)|^429\b|rate_limit_exceeded|rate.?limit|too many requests|usage_limit_reached/i;
 
 export type ClassifyUsageLimitInput = UsageLimitClassifyInput & { now?: number };
 
@@ -71,6 +84,7 @@ function codexResetAt(message: string, now: number): number | undefined {
  * not a usage limit. `resetAt` from a Codex message is a lower bound because the
  * provider rounds it; an Anthropic wrapper delay only proves a long requested
  * delay, so it is a candidate reset for a 429 and a transient failure otherwise.
+ * Provider `openai` reports no reset time, so its limits never carry `resetAt`.
  */
 export function classifyUsageLimit(
   input: ClassifyUsageLimitInput,
@@ -78,6 +92,7 @@ export function classifyUsageLimit(
   const now = input.now ?? Date.now();
   const { provider, modelId, errorMessage } = input;
   const base = { provider, modelId };
+  if (provider === "openai") return classifyOpenAI(base, errorMessage);
   if (BILLING_PATTERN.test(errorMessage)) {
     return { ...base, kind: "billing", confidence: "inferred" };
   }
@@ -110,6 +125,29 @@ export function classifyUsageLimit(
       : undefined;
   }
   return undefined;
+}
+
+/**
+ * Provider `openai` (api.openai.com, API key or Sign in with ChatGPT). The
+ * subscription code is checked before the billing words because the host's
+ * non-retryable pattern lists both; `insufficient_quota` stays billing.
+ */
+function classifyOpenAI(
+  base: { provider: string; modelId: string },
+  errorMessage: string,
+): UsageLimitClassification | undefined {
+  if (errorMessage.includes(OPENAI_SUBSCRIPTION_USAGE_LIMIT_CODE)) {
+    return { ...base, kind: "quota", confidence: "inferred" };
+  }
+  if (OPENAI_SUBSCRIPTION_UNAVAILABLE_PATTERN.test(errorMessage)) {
+    return { ...base, kind: "transient", confidence: "inferred" };
+  }
+  if (BILLING_PATTERN.test(errorMessage)) {
+    return { ...base, kind: "billing", confidence: "inferred" };
+  }
+  return OPENAI_LIMIT_PATTERN.test(errorMessage)
+    ? { ...base, kind: "quota", confidence: "inferred" }
+    : undefined;
 }
 
 /** One quota window that currently blocks requests, with the time it restores capacity. */
@@ -525,12 +563,20 @@ function parseRefs(refs: readonly string[] | undefined): ModelRef[] {
 /**
  * Ordered fallback candidates for `current`: same-tier primaries on another
  * provider, then same-tier secondaries (another provider first), then the last
- * resort list. A model outside every tier only gets the last resort.
+ * resort list. A model outside every tier only gets the last resort. The
+ * legacy `openai-codex` provider is never a candidate, but a limited Codex
+ * model finds its tier through the same model id on `openai`.
  */
 export function fallbackCandidates(table: ModelFallbacks, current: ModelRef): ModelRef[] {
   const currentKey = refKey(current);
+  const tierKey =
+    current.provider === "openai-codex"
+      ? refKey({ provider: "openai", id: current.id })
+      : currentKey;
   const tier = Object.values(table.tiers).find((entry) =>
-    [...entry.primary, ...(entry.secondary ?? [])].includes(currentKey),
+    [...entry.primary, ...(entry.secondary ?? [])].some(
+      (ref) => ref === currentKey || ref === tierKey,
+    ),
   );
   const primary = parseRefs(tier?.primary).filter((ref) => ref.provider !== current.provider);
   const secondary = parseRefs(tier?.secondary);

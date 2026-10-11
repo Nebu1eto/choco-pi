@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -45,6 +44,8 @@ function createCtx(
 ): ExtensionCommandContext {
   const models = [
     { provider: "synthetic", id: "hf:Qwen/Qwen3.8-27B" },
+    { provider: "openai", id: "gpt-6-luna" },
+    { provider: "openai", id: "gpt-5.6-luna" },
     { provider: "openai-codex", id: "gpt-6-luna" },
     { provider: "openai-codex", id: "gpt-5.6-luna" },
   ];
@@ -61,11 +62,11 @@ function createCtx(
 
 function withAgentDir(run: (agentDir: string, notices: Notice[]) => void | Promise<void>) {
   return async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "agent-preferences-provider-"));
+    const root = await mkdtemp(path.join(tmpdir(), "agent-preferences-provider-"));
     const previous = process.env.PI_CODING_AGENT_DIR;
     process.env.PI_CODING_AGENT_DIR = root;
-    mkdirSync(root, { recursive: true });
-    writeFileSync(
+    await mkdir(root, { recursive: true });
+    await writeFile(
       path.join(root, "settings.json"),
       JSON.stringify({ theme: "nord-dark" }, null, 2),
     );
@@ -74,7 +75,7 @@ function withAgentDir(run: (agentDir: string, notices: Notice[]) => void | Promi
     } finally {
       if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
       else process.env.PI_CODING_AGENT_DIR = previous;
-      rmSync(root, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true });
     }
   };
 }
@@ -114,7 +115,9 @@ test(
     assert.equal(items[4].currentValue, "off");
     assert.deepEqual(items[4].values, ["off", "on", "auto"]);
     assert.equal(items[5].currentValue, "Enabled");
-    assert.equal(items[6].currentValue, "openai-codex/gpt-6-luna");
+    assert.equal(items[6].currentValue, "openai/gpt-6-luna");
+    assert.ok(items[6].submenu, "model picker remains available for both providers");
+    assert.ok(items[7].description?.includes("Uses openai/gpt-6-luna"));
     assert.equal(items[7].currentValue, "Enabled", "prompt suggestions default to on when unset");
 
     assert.deepEqual(section.handleChange("agentLanguage", "Korean"), { kind: "update" });
@@ -123,7 +126,7 @@ test(
     assert.deepEqual(section.handleChange("agentOnUsageLimit", "fallback"), { kind: "update" });
     assert.deepEqual(section.handleChange("daybreakDefault", "on"), { kind: "update" });
     assert.deepEqual(section.handleChange("sessionAutoName", "Disabled"), { kind: "update" });
-    assert.deepEqual(section.handleChange("sessionAutoNameModel", "openai-codex/gpt-5.6-luna"), {
+    assert.deepEqual(section.handleChange("sessionAutoNameModel", "openai/gpt-5.6-luna"), {
       kind: "update",
     });
     await settleWrites();
@@ -137,7 +140,12 @@ test(
     assert.equal(settings.agentOnUsageLimit, "fallback");
     assert.equal(settings.daybreakDefault, true);
     assert.equal(settings.sessionAutoName, false);
-    assert.equal(settings.sessionAutoNameModel, "openai-codex/gpt-5.6-luna");
+    assert.equal(settings.sessionAutoNameModel, "openai/gpt-5.6-luna");
+    assert.deepEqual(section.handleChange("sessionAutoNameModel", "openai-codex/gpt-5.6-luna"), {
+      kind: "update",
+    });
+    await settleWrites();
+    assert.equal(section.buildItems()[6].currentValue, "openai-codex/gpt-5.6-luna");
     assert.equal(settings.theme, "nord-dark", "unrelated settings must survive");
     assert.equal(section.buildItems()[3].currentValue, "fallback");
     section.handleChange("daybreakDefault", "auto");

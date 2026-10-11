@@ -91,6 +91,98 @@ test("synthetic 429 is an inferred quota; other text is not a limit", () => {
   assert.equal(classify("some-other", ANTHROPIC_429), undefined);
 });
 
+// pi-ai openai-responses.js error surfaces for Sign in with ChatGPT on provider `openai`
+// (live re-verification: no retry-after, x-ratelimit-* or reset field on any of them).
+const OPENAI_SUBSCRIPTION_HTTP =
+  'OpenAI API error (429): {"error":{"code":"subscription_sharing_usage_limit_exceeded","message":"You have reached your usage limit."}}\nCheck your ChatGPT usage: https://chatgpt.com/settings/usage';
+const OPENAI_SUBSCRIPTION_STREAM =
+  "Error Code subscription_sharing_usage_limit_exceeded: You have reached your usage limit.\nCheck your ChatGPT usage: https://chatgpt.com/settings/usage";
+const OPENAI_SUBSCRIPTION_FAILED =
+  "subscription_sharing_usage_limit_exceeded: You have reached your usage limit.\nCheck your ChatGPT usage: https://chatgpt.com/settings/usage";
+
+test("openai subscription usage limit is a quota with no fabricated reset", () => {
+  for (const message of [
+    OPENAI_SUBSCRIPTION_HTTP,
+    OPENAI_SUBSCRIPTION_STREAM,
+    OPENAI_SUBSCRIPTION_FAILED,
+  ]) {
+    const classified = classify("openai", message);
+    assert.deepEqual(classified, {
+      provider: "openai",
+      modelId: "m",
+      kind: "quota",
+      confidence: "inferred",
+    });
+    assert.equal(classified && "resetAt" in classified, false);
+  }
+  // The code only means a limit on `openai`; other providers keep their own rules.
+  assert.equal(classify("openai-codex", OPENAI_SUBSCRIPTION_STREAM), undefined);
+});
+
+test("openai generic rate limits are quotas; billing and unavailable usage are not", () => {
+  const rateLimit =
+    'OpenAI API error (429): {"error":{"code":"rate_limit_exceeded","message":"Rate limit reached"}}';
+  assert.equal(classify("openai", rateLimit)?.kind, "quota");
+  assert.equal(classify("openai", rateLimit)?.resetAt, undefined);
+  assert.equal(classify("openai", "429 Too Many Requests")?.kind, "quota");
+  assert.equal(
+    classify("openai", wrap(30, 'OpenAI API error (429): {"error":{"code":"rate_limit_exceeded"}}'))
+      ?.kind,
+    "quota",
+  );
+  assert.equal(
+    classify("openai", 'OpenAI API error (429): {"error":{"code":"insufficient_quota"}}')?.kind,
+    "billing",
+  );
+  assert.equal(
+    classify("openai", "Error Code subscription_sharing_usage_unavailable: try again")?.kind,
+    "transient",
+  );
+  assert.equal(classify("openai", "OpenAI API error (500): server error"), undefined);
+  assert.equal(classify("openai", "OpenAI API error (400): invalid request"), undefined);
+});
+
+test("an openai quota without usage data closes for the default window, never confirms", async () => {
+  const classified = classify("openai", OPENAI_SUBSCRIPTION_STREAM);
+  assert.ok(classified);
+  const result = await corroborateUsageLimit(
+    { now: () => NOW, usageSnapshot: () => Promise.reject(new Error("must not be read")) },
+    classified,
+  );
+  assert.deepEqual(result, { ready: false, classification: classified, evidence: "unavailable" });
+});
+
+test("a limited openai model falls back to comparable Anthropic, never to legacy Codex", () => {
+  const table: ModelFallbacks = {
+    tiers: {
+      workhorse: {
+        primary: ["anthropic/claude-opus-5-5", "openai/gpt-6.1-sol"],
+        secondary: ["anthropic/claude-opus-5", "openai/gpt-5.6-sol"],
+      },
+    },
+    lastResort: ["synthetic/hf:moonshotai/Kimi-K3"],
+  };
+  const available = [
+    { provider: "anthropic", id: "claude-opus-5-5" },
+    { provider: "anthropic", id: "claude-opus-5" },
+    { provider: "openai", id: "gpt-5.6-sol" },
+    { provider: "openai-codex", id: "gpt-6.1-sol" },
+    { provider: "synthetic", id: "hf:moonshotai/Kimi-K3" },
+  ];
+  const openaiClosed = (provider: string): boolean => provider === "openai";
+  const sol = { provider: "openai", id: "gpt-6.1-sol" };
+  assert.deepEqual(pickFallback(table, sol, { available, scoped: [], isClosed: openaiClosed }), {
+    provider: "anthropic",
+    id: "claude-opus-5-5",
+  });
+  // A limited legacy Codex model resolves its tier through the same id on `openai`.
+  const codexSol = { provider: "openai-codex", id: "gpt-6.1-sol" };
+  assert.deepEqual(pickFallback(table, codexSol, { available, scoped: [], isClosed: open }), {
+    provider: "anthropic",
+    id: "claude-opus-5-5",
+  });
+});
+
 test("host billing patterns classify as billing on every provider", () => {
   for (const provider of ["anthropic", "openai-codex", "synthetic", "opencode"]) {
     for (const message of [
@@ -835,21 +927,26 @@ test("the repository fallback table loads and mirrors the model-guidance tiers",
     const table = await loadModelFallbacks(agentDir);
     assert.deepEqual(table.tiers.flagship?.primary, [
       "anthropic/claude-fable-5-1",
-      "openai-codex/gpt-6-astra",
+      "openai/gpt-6-astra",
     ]);
     assert.deepEqual(table.tiers.workhorse, {
-      primary: ["anthropic/claude-opus-5-5", "openai-codex/gpt-6.1-sol"],
-      secondary: ["anthropic/claude-opus-5", "openai-codex/gpt-5.6-sol"],
+      primary: ["anthropic/claude-opus-5-5", "openai/gpt-6.1-sol"],
+      secondary: ["anthropic/claude-opus-5", "openai/gpt-5.6-sol"],
     });
     assert.deepEqual(table.tiers.utility, {
-      primary: ["anthropic/claude-sonnet-5-5", "openai-codex/gpt-5.6-terra"],
+      primary: ["anthropic/claude-sonnet-5-5", "openai/gpt-5.6-terra"],
       secondary: ["anthropic/claude-sonnet-5"],
     });
     assert.deepEqual(table.tiers.micro?.primary, [
-      "openai-codex/gpt-6-luna",
+      "openai/gpt-6-luna",
       "anthropic/claude-haiku-5-5",
     ]);
     assert.deepEqual(table.lastResort, ["synthetic/hf:moonshotai/Kimi-K3"]);
+    for (const refs of Object.values(table.tiers)) {
+      for (const ref of [...refs.primary, ...(refs.secondary ?? [])]) {
+        assert.equal(ref.startsWith("openai-codex/"), false, `legacy Codex is no fallback: ${ref}`);
+      }
+    }
 
     await writeFile(
       join(agentDir, "model-fallbacks.json"),
