@@ -25,6 +25,20 @@ export interface CodexUsageSnapshot {
   raw: BoundaryValue;
 }
 
+/** The usage window cannot be read for the active credential; `reason` says why. */
+export interface CodexUsageUnavailable {
+  unavailable: true;
+  reason: string;
+}
+
+export type CodexUsageResult = CodexUsageSnapshot | CodexUsageUnavailable;
+
+export function isCodexUsageUnavailable(
+  value: CodexUsageResult | { error: string },
+): value is CodexUsageUnavailable {
+  return "unavailable" in value;
+}
+
 export interface CodexRateLimitResetCredit {
   id?: string | undefined;
   resetType?: string | undefined;

@@ -16,6 +16,7 @@ import {
 import { renderTextWithImages } from "../../ui/tool-rendering/media.ts";
 import { renderCodexToolCell } from "../../ui/tool-rendering/codex-tool-cell.ts";
 import { supportsViewImageInputs } from "../../adapter/tool-support.ts";
+import { OPENAI_PLATFORM_BASE_URL } from "../../adapter/openai-sign-in.ts";
 
 function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
   let promise: Promise<Module> | undefined;
@@ -30,6 +31,7 @@ const loadToolProvider = memoizedImport(() => import("../../adapter/codex-tool-p
 const VIEW_IMAGE_UNSUPPORTED_MESSAGE =
   "view_image is not allowed because you do not support image inputs";
 const IMAGE_DESCRIPTION_MODEL = "gpt-5.6-luna";
+const OPENAI_PLATFORM_RESPONSES_URL = `${OPENAI_PLATFORM_BASE_URL}/responses`;
 const IMAGE_DESCRIPTION_PROMPT =
   "Describe this image in detail. Output only the image description, no other commentary";
 interface ViewImageParams {
@@ -153,9 +155,12 @@ function extractOutputText(value: BoundaryValue): string | undefined {
   return text || undefined;
 }
 
-function isUsableDescriptionModel(model: ExtensionContext["model"]): boolean {
+function isUsableDescriptionModel(
+  model: ExtensionContext["model"],
+  providerName: string = "openai-codex",
+): boolean {
   return (
-    (model?.provider ?? "").toLowerCase() === "openai-codex" &&
+    (model?.provider ?? "").toLowerCase() === providerName &&
     Boolean(model?.api?.includes("responses")) &&
     (!Array.isArray(model?.input) || model.input.includes("image"))
   );
@@ -176,7 +181,11 @@ function compareModelIdsDescending(left: string, right: string): number {
   return right.localeCompare(left);
 }
 
-export function resolveImageDescriptionModel(ctx: ExtensionContext): string {
+/** Pick the description model from the provider whose credential will be used. */
+export function resolveImageDescriptionModel(
+  ctx: ExtensionContext,
+  providerName: "openai-codex" | "openai" = "openai-codex",
+): string {
   // SAFETY: ExtensionContext supplies Pi's model registry; this narrows only the documented optional lookup methods used below.
   const registry = ctx.modelRegistry as {
     getAvailable?: () => ExtensionContext["model"][];
@@ -184,14 +193,16 @@ export function resolveImageDescriptionModel(ctx: ExtensionContext): string {
     find?: (provider: string, modelId: string) => ExtensionContext["model"] | undefined;
   };
   const models = [...(registry.getAvailable?.() ?? []), ...(registry.getAll?.() ?? [])].filter(
-    isUsableDescriptionModel,
+    (model) => isUsableDescriptionModel(model, providerName),
   );
   const mini = models
     .filter((model) => model?.id?.toLowerCase().includes("mini"))
     .sort((left, right) => compareModelIdsDescending(left!.id, right!.id))[0];
   if (mini?.id) return mini.id;
-  const direct = registry.find?.("openai-codex", IMAGE_DESCRIPTION_MODEL);
-  return isUsableDescriptionModel(direct) && direct?.id ? direct.id : IMAGE_DESCRIPTION_MODEL;
+  const direct = registry.find?.(providerName, IMAGE_DESCRIPTION_MODEL);
+  return isUsableDescriptionModel(direct, providerName) && direct?.id
+    ? direct.id
+    : IMAGE_DESCRIPTION_MODEL;
 }
 
 export async function describeImageContentForTextModel(
@@ -204,11 +215,15 @@ export async function describeImageContentForTextModel(
     { codexToolProviderHeaders, resolveCodexResponsesUrl, resolveCodexToolProvider },
   ] = await Promise.all([loadSse(), loadToolProvider()]);
   const provider = await resolveCodexToolProvider(ctx);
-  const model = resolveImageDescriptionModel(ctx);
+  const openAIPlatform = Boolean(provider.openAIPlatform);
+  const model = resolveImageDescriptionModel(ctx, openAIPlatform ? "openai" : "openai-codex");
   const headers = codexToolProviderHeaders(provider);
   headers.set("accept", "text/event-stream");
   headers.set("OpenAI-Beta", "responses=experimental");
-  const response = await fetch(resolveCodexResponsesUrl(provider.baseUrl), {
+  const responsesUrl = openAIPlatform
+    ? OPENAI_PLATFORM_RESPONSES_URL
+    : resolveCodexResponsesUrl(provider.baseUrl);
+  const response = await fetch(responsesUrl, {
     method: "POST",
     headers,
     signal: signal ?? null,
@@ -218,7 +233,8 @@ export async function describeImageContentForTextModel(
       stream: true,
       instructions: IMAGE_DESCRIPTION_PROMPT,
       text: { verbosity: "low" },
-      reasoning: { effort: "low", summary: "auto" },
+      // api.openai.com may gate reasoning summaries behind org verification; the description needs none.
+      reasoning: openAIPlatform ? { effort: "low" } : { effort: "low", summary: "auto" },
       input: [
         {
           role: "user",

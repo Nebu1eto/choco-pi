@@ -12,10 +12,16 @@ import {
 } from "../adapter/prompt/codex-model.ts";
 import { DEFAULT_CODEX_BASE_URL, JWT_CLAIM_PATH } from "../providers/openai-codex/constants.ts";
 import {
+  isOpenAISubscriptionSignInModel,
+  OPENAI_SIGN_IN_USAGE_REASON,
+} from "../adapter/openai-sign-in.ts";
+import {
   codexWeeklyUsageLeft,
   type CodexRateLimitResetConsumeResult,
   type CodexRateLimitResetCredits,
+  type CodexUsageResult,
   type CodexUsageSnapshot,
+  type CodexUsageUnavailable,
   parseCodexRateLimitResetConsumePayload,
   parseCodexRateLimitResetCreditsPayload,
   parseCodexUsagePayload,
@@ -24,6 +30,9 @@ import {
 const RESET_CREDITS_CACHE_MS = 5_000;
 const WEEKLY_USAGE_CACHE_MS = 5 * 60_000;
 const WEEKLY_USAGE_TIMEOUT_MS = 10_000;
+
+export const CODEX_USAGE_NO_CREDENTIAL_REASON =
+  "ChatGPT usage window is unavailable: no openai-codex credential is configured";
 
 type RuntimeModel = Model<Api>;
 
@@ -169,7 +178,37 @@ async function fetchCodexUsageWithHeaders(
   return snapshot;
 }
 
-export async function fetchCodexUsage(ctx: ExtensionContext): Promise<CodexUsageSnapshot> {
+function hasConfiguredProviderCredential(ctx: ExtensionContext, provider: string): boolean {
+  try {
+    return ctx.modelRegistry.getProviderAuthStatus(provider).configured;
+  } catch {
+    // Unknown status keeps the existing auth path, which reports its own error.
+    return true;
+  }
+}
+
+/**
+ * Why the ChatGPT usage window cannot be read for the active model, decided from synchronous
+ * registry state so no credential is resolved or refreshed and no request is sent.
+ */
+export function resolveCodexUsageUnavailable(
+  ctx: ExtensionContext,
+): CodexUsageUnavailable | undefined {
+  const model = ctx.model;
+  if (isOpenAISubscriptionSignInModel(model, ctx.modelRegistry))
+    return { unavailable: true, reason: OPENAI_SIGN_IN_USAGE_REASON };
+  if (
+    model &&
+    isCanonicalCodexSubscriptionModel(model) &&
+    !hasConfiguredProviderCredential(ctx, model.provider)
+  )
+    return { unavailable: true, reason: CODEX_USAGE_NO_CREDENTIAL_REASON };
+  return undefined;
+}
+
+export async function fetchCodexUsage(ctx: ExtensionContext): Promise<CodexUsageResult> {
+  const unavailable = resolveCodexUsageUnavailable(ctx);
+  if (unavailable) return unavailable;
   const model = ctx.model;
   if (!model) throw new Error("No active model selected.");
   if (!isCanonicalCodexSubscriptionModel(model)) {

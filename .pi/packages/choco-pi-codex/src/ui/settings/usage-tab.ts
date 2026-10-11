@@ -5,15 +5,19 @@ import {
   createCodexRateLimitResetRedeemRequestId,
   fetchCodexUsage,
 } from "../../codex-usage/client.ts";
-import type {
-  CodexRateLimitResetConsumeResult,
-  CodexRateLimitResetCredit,
-  CodexUsageSnapshot,
+import {
+  isCodexUsageUnavailable,
+  type CodexRateLimitResetConsumeResult,
+  type CodexRateLimitResetCredit,
+  type CodexUsageResult,
+  type CodexUsageSnapshot,
 } from "../../codex-usage/payload.ts";
 
+type UsageState = CodexUsageResult | { error: string };
+
 export interface UsageTabOptions {
-  initialUsage?: CodexUsageSnapshot | { error: string } | undefined;
-  onRefreshUsage?: (() => Promise<CodexUsageSnapshot>) | undefined;
+  initialUsage?: UsageState | undefined;
+  onRefreshUsage?: (() => Promise<CodexUsageResult>) | undefined;
   onConsumeResetCredit?:
     | ((redeemRequestId: string) => Promise<CodexRateLimitResetConsumeResult>)
     | undefined;
@@ -30,7 +34,7 @@ export function createUsageTab(
   options: UsageTabOptions,
   requestRender: () => void,
 ): UsageTabController {
-  let usageState = options.initialUsage;
+  let usageState: UsageState | undefined = options.initialUsage;
   let usageLoading = false;
   let resetLoading = false;
   let resetLockedUntilRefresh = false;
@@ -128,7 +132,7 @@ export function createUsageTab(
 
 function formatUsageLines(
   theme: Theme,
-  usageState: CodexUsageSnapshot | { error: string } | undefined,
+  usageState: UsageState | undefined,
   loading: boolean,
   resetLoading: boolean,
   resetLockedUntilRefresh: boolean,
@@ -137,6 +141,11 @@ function formatUsageLines(
   if (!usageState) return [theme.fg("dim", "  Loading Codex usage…")];
   if ("error" in usageState)
     return [theme.fg("error", `  ${usageState.error}`), theme.fg("dim", "  Press R to retry.")];
+  if (isCodexUsageUnavailable(usageState))
+    return [
+      `  ${theme.bold("Codex usage unavailable")}${loading ? theme.fg("dim", "  refreshing…") : ""}`,
+      theme.fg("warning", `  ${usageState.reason}`),
+    ];
 
   const rows = usageState.limits.map((limit) => {
     const primary = usageColumns(limit.primary);
@@ -175,11 +184,12 @@ function formatUsageLines(
   ];
 }
 
-function canConsumeResetCredit(
-  usageState: CodexUsageSnapshot | { error: string } | undefined,
-): boolean {
+function canConsumeResetCredit(usageState: UsageState | undefined): boolean {
   return Boolean(
-    usageState && !("error" in usageState) && (usageState.resetCredits?.availableCount ?? 0) > 0,
+    usageState &&
+    !("error" in usageState) &&
+    !isCodexUsageUnavailable(usageState) &&
+    (usageState.resetCredits?.availableCount ?? 0) > 0,
   );
 }
 

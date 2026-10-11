@@ -55,4 +55,6 @@ export type CodexDaybreakDecision = Readonly<{
   generation: number;
   outcome: DaybreakOutcome;
   cyber: "daybreak_blue" | "daybreak_red" | undefined;
+  /** Why Daybreak cannot be controlled for this model (display only; never enables the wire). */
+  reason?: string | undefined;
 }>;

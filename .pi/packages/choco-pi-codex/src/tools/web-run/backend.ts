@@ -1,7 +1,10 @@
 import { spawn } from "node:child_process";
 import { formatNativeBinaryError, nativeBinaryRecoveryMessage } from "../../native-binary-error.ts";
 import type { CodexToolProvider } from "../../adapter/codex-tool-provider.ts";
-import { codexToolProviderEnv } from "../../adapter/codex-tool-provider.ts";
+import {
+  codexToolProviderEnv,
+  OPENAI_PLATFORM_WEB_RUN_UNSUPPORTED_REASON,
+} from "../../adapter/codex-tool-provider.ts";
 import type { BoundaryRecord, BoundaryValue } from "../boundary.ts";
 import { isNumberValue, isObjectValue, isStringValue } from "../boundary.ts";
 
@@ -279,6 +282,9 @@ async function executeCodexWebRun(
       "config",
       "Native OpenAI web search requires the OpenAI Codex subscription transport",
     );
+  // The helper only calls /alpha/search; never hand it an api.openai.com credential.
+  if (provider.openAIPlatform)
+    throw new CodexWebRunTransportError("config", OPENAI_PLATFORM_WEB_RUN_UNSUPPORTED_REASON);
   const request: WebRunRequest = { ...params, id: sessionId };
   if (model) request["model"] = model;
   const stdout = await runWebRunBinary(

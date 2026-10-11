@@ -64,6 +64,17 @@ import {
 } from "../../providers/openai-codex/headers.ts";
 import type { CodexCompactionDiagnostic } from "./diagnostics.ts";
 import { projectForcedPromptContext } from "../forced-prompt-projection.ts";
+import { OPENAI_SIGN_IN_COMPACTION_REASON } from "../openai-sign-in.ts";
+
+const notifiedOpenAISignInCompactionSessions = new Set<string>();
+
+/** Tell the user once per session that sign-in uses Pi's local compaction instead. */
+function notifyOpenAISignInCompactionFallback(ctx: ExtensionContext): void {
+  const sessionId = ctx.sessionManager.getSessionId();
+  if (notifiedOpenAISignInCompactionSessions.has(sessionId)) return;
+  notifiedOpenAISignInCompactionSessions.add(sessionId);
+  ctx.ui.notify(`OpenAI native compaction skipped: ${OPENAI_SIGN_IN_COMPACTION_REASON}.`, "info");
+}
 
 function isRecord(value: BoundaryValue): value is JsonObject {
   return Value.Check(JsonObjectSchema, value);
@@ -325,6 +336,10 @@ async function handleCodexSessionBeforeCompactInner(
   });
   if (!resolution.ok) {
     if (resolution.reason === "unsupported-provider" || resolution.reason === "unsupported-api") {
+      return undefined;
+    }
+    if (resolution.reason === "openai-subscription-sign-in") {
+      notifyOpenAISignInCompactionFallback(ctx);
       return undefined;
     }
     ctx.ui.notify(

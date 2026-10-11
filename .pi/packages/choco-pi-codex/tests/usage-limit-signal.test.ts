@@ -161,6 +161,56 @@ test("message_end entry drains only for Codex error messages", () => {
   );
 });
 
+function openaiErrorMessage(
+  errorMessage: string,
+  stopReason: AssistantMessage["stopReason"] = "error",
+): AssistantMessage {
+  return {
+    ...assistantMessage("openai", stopReason),
+    api: "openai-responses",
+    errorMessage,
+  };
+}
+
+test("openai sign-in usage-limit error yields an observedAt-only entry", () => {
+  recordUsageLimitSignal("openai-entry-session", { resetAt: 7, accountId: "acct" }, 100);
+  const limited = openaiErrorMessage(
+    'OpenAI API error (429): {"error":{"code":"subscription_sharing_usage_limit_exceeded"}}\nCheck your ChatGPT usage: https://chatgpt.com/settings/usage',
+  );
+  assert.deepEqual(takeCodexUsageLimitEntry(limited, "openai-entry-session", 200), {
+    observedAt: 200,
+  });
+  assert.deepEqual(
+    takeCodexUsageLimitEntry(
+      openaiErrorMessage("Error Code subscription_sharing_usage_limit_exceeded: limit"),
+      "openai-entry-session",
+      201,
+    ),
+    { observedAt: 201 },
+  );
+  assert.equal(
+    takeCodexUsageLimitEntry(openaiErrorMessage("OpenAI API error (500): boom"), "s", 200),
+    undefined,
+  );
+  assert.equal(
+    takeCodexUsageLimitEntry(
+      openaiErrorMessage("subscription_sharing_usage_limit_exceeded", "stop"),
+      "s",
+      200,
+    ),
+    undefined,
+  );
+  // The openai entry never drains or borrows the Codex provider's signal.
+  assert.deepEqual(
+    takeCodexUsageLimitEntry(
+      assistantMessage("openai-codex", "error"),
+      "openai-entry-session",
+      300,
+    ),
+    { observedAt: 100, resetAt: 7, accountId: "acct" },
+  );
+});
+
 function fakeCodexToken(accountId: string): string {
   const payload = Buffer.from(
     JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: accountId } }),

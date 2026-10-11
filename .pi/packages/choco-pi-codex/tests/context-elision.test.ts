@@ -369,3 +369,39 @@ test("inactive runtimes bypass context elision and cut advancement", () => {
   host.invoke("turn_start");
   assert.equal(host.manager.getLeafEntry(), leaf);
 });
+
+test("message_end persists an observedAt-only usage-limit entry for openai sign-in", () => {
+  const host = harness();
+  const before = Date.now();
+  host.invoke("message_end", {
+    message: {
+      role: "assistant",
+      content: [],
+      api: "openai-responses",
+      provider: "openai",
+      model: "gpt-5.5",
+      stopReason: "error",
+      errorMessage: "Error Code subscription_sharing_usage_limit_exceeded: limit reached",
+      timestamp: 1,
+    },
+  });
+  const entry = host.manager.getLeafEntry();
+  assert.ok(entry?.type === "custom");
+  assert.equal(entry.customType, "choco-pi-codex-usage-limit");
+  const data = fixture<{ observedAt: number }>(entry.data);
+  assert.deepEqual(Object.keys(data), ["observedAt"]);
+  assert.ok(data.observedAt >= before && data.observedAt <= Date.now());
+  host.invoke("message_end", {
+    message: {
+      role: "assistant",
+      content: [],
+      api: "openai-responses",
+      provider: "openai",
+      model: "gpt-5.5",
+      stopReason: "error",
+      errorMessage: "OpenAI API error (500): boom",
+      timestamp: 2,
+    },
+  });
+  assert.equal(host.manager.getLeafEntry(), entry);
+});

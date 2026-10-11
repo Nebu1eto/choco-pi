@@ -1,4 +1,8 @@
-import type { CodexUsageSnapshot, CodexUsageWindow } from "./payload.ts";
+import {
+  isCodexUsageUnavailable,
+  type CodexUsageResult,
+  type CodexUsageWindow,
+} from "./payload.ts";
 
 function formatReset(timestampSeconds: number | undefined): string {
   if (!timestampSeconds) return "reset unknown";
@@ -18,7 +22,8 @@ function formatWindow(label: string, window: CodexUsageWindow | undefined): stri
   return `${label}: ${percent} left (${span}, ${formatReset(window.resetsAt)})`;
 }
 
-export function formatCodexUsage(snapshot: CodexUsageSnapshot): string {
+export function formatCodexUsage(snapshot: CodexUsageResult): string {
+  if (isCodexUsageUnavailable(snapshot)) return `Codex usage unavailable: ${snapshot.reason}`;
   const lines = [`Codex usage${snapshot.planType ? ` (${snapshot.planType})` : ""}:`];
   if (snapshot.resetCredits)
     lines.push(`- resets available: ${snapshot.resetCredits.availableCount}`);

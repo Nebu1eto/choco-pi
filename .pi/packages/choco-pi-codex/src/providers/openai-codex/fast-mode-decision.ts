@@ -1,6 +1,12 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
 import { Check } from "typebox/value";
+import {
+  isOpenAIPlatformModel,
+  isOpenAISubscriptionSignInModel,
+  OPENAI_SIGN_IN_FAST_REASON,
+  type OAuthAwareModelRegistry,
+} from "../../adapter/openai-sign-in.ts";
 
 const FAST_MODE_BRIDGE_SYMBOL = Symbol.for("choco-pi.fast-mode-state");
 
@@ -12,7 +18,16 @@ export type CodexFastModeDecision = Readonly<{
   supported: boolean;
   active: boolean;
   serviceTier: "priority" | "standard" | undefined;
+  /** Why an otherwise selectable Fast mode is disabled for this model, for status display. */
+  reason?: string | undefined;
 }>;
+
+/**
+ * Subscription sign-in evidence for `snapshotCodexFastModeDecision`: a registry exposing
+ * `isUsingOAuth` (e.g. `ctx.modelRegistry`), or a boolean the caller already resolved.
+ * Omitted or `false` preserves the pre-sign-in behavior for every provider.
+ */
+export type CodexFastModeSignIn = boolean | OAuthAwareModelRegistry | null | undefined;
 
 type FastModeController = Readonly<{
   getState(): FastModeState;
@@ -61,6 +76,7 @@ const FastModeDecisionSchema = Type.Object({
   serviceTier: Type.Optional(
     Type.Union([Type.Literal("priority"), Type.Literal("standard"), Type.Undefined()]),
   ),
+  reason: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
 });
 const FastModeStateSchema = Type.Object({
   sessionId: Type.String(),
@@ -96,22 +112,62 @@ function validDecision(
   return decision.sessionId === sessionId && Check(FastModeDecisionSchema, decision);
 }
 
+/** True when `model` is the stock `openai` provider on api.openai.com with subscription OAuth. */
+export function isOpenAISignInFastModeModel(
+  model: Model<Api> | null | undefined,
+  signIn: CodexFastModeSignIn,
+): boolean {
+  if (!signIn || !model) return false;
+  return signIn === true
+    ? isOpenAIPlatformModel(model)
+    : isOpenAISubscriptionSignInModel(model, signIn);
+}
+
+/**
+ * Visible-but-disabled Fast decision for api.openai.com subscription sign-in: the server accepts
+ * `service_tier: "priority"` but echoes `default`, so no tier is ever emitted. Keeps the
+ * request/source/revision so status and revision-drift checks still reflect the user's choice.
+ */
+export function openAISignInFastModeDecision(
+  decision: CodexFastModeDecision,
+): CodexFastModeDecision {
+  return Object.freeze({
+    sessionId: decision.sessionId,
+    requested: decision.requested,
+    source: decision.source,
+    revision: decision.revision,
+    supported: false,
+    active: false,
+    serviceTier: undefined,
+    reason: OPENAI_SIGN_IN_FAST_REASON,
+  });
+}
+
+/**
+ * Freezes one Fast decision for a request. `signIn` (optional) identifies api.openai.com
+ * subscription sign-in; when it does, any bridge or fallback decision is neutralized to
+ * unsupported with `OPENAI_SIGN_IN_FAST_REASON`. Omitting it keeps the previous behavior.
+ */
 export function snapshotCodexFastModeDecision(
   sessionId: string | undefined,
   model: Model<Api>,
   legacyFast: boolean,
+  signIn?: CodexFastModeSignIn,
 ): CodexFastModeDecision {
+  const neutralize = isOpenAISignInFastModeModel(model, signIn);
   const controller = sessionId ? validatedBridge()?.get(sessionId) : undefined;
   if (controller && Check(FastModeControllerSchema, controller) && sessionId) {
     const decision = controller.decide(model);
     if (validDecision(decision, sessionId)) {
-      const snapshot = Object.freeze({ ...decision });
+      const snapshot = neutralize
+        ? openAISignInFastModeDecision(decision)
+        : Object.freeze({ ...decision });
       bridgeDecisions.add(snapshot);
       return snapshot;
     }
   }
   const supported = model.provider === "openai" || model.provider === "openai-codex";
-  return Object.freeze({
+  const fallback: CodexFastModeDecision = Object.freeze({
     sessionId: sessionId ?? "",
     requested: legacyFast,
     source: "default",
@@ -120,6 +176,7 @@ export function snapshotCodexFastModeDecision(
     active: supported && legacyFast,
     serviceTier: supported ? (legacyFast ? "priority" : "standard") : undefined,
   });
+  return neutralize ? openAISignInFastModeDecision(fallback) : fallback;
 }
 
 export function isCurrentCodexFastModeDecision(decision: CodexFastModeDecision): boolean {

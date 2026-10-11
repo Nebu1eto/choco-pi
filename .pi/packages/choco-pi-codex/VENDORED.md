@@ -692,3 +692,73 @@ covers both id keys, scalar filtering, the text fallback, and session dispatch.
 `!ctx.hasUI`, but Pi RPC reports `hasUI` true while `ctx.ui.custom()` returns
 `undefined`, so RPC hosts got no output. The gate is now `ctx.mode !== "tui"`;
 TUI is unchanged. Test: `tests/settings-command-rpc.test.ts`.
+
+## 2026-10-11 choco-pi patch: OpenAI subscription sign-in degradation
+
+Pi 1.0.4 "Sign in with ChatGPT" on provider `openai` sends the subscription
+token to `https://api.openai.com/v1` (SSE, no ChatGPT account id). Live probes
+showed the following Codex-backend capabilities are refused or ignored there:
+`service_tier`, `access_programs`, `compaction_trigger`, `/responses/compact`,
+and the chatgpt.com usage/entitlement routes.
+`src/adapter/openai-sign-in.ts` (new) owns detection: provider `openai`, public
+base URL, and `modelRegistry.isUsingOAuth`. That mirrors pi-ai `isChatGPTSignIn()`
+without reading the token. It also owns the user-facing reasons. `sk-` API keys
+and `openai-codex` (kept as opt-in legacy) are unchanged.
+
+- Request boundary (`provider-request.ts`): the sign-in result is snapshotted
+  before the first await. Sign-in payloads lose `service_tier` after the
+  existing `access_programs` strip. The Fast snapshot receives
+  `ctx.modelRegistry`. Test: `tests/openai-sign-in-request.test.ts`.
+- Fast/Daybreak (`fast-mode-decision.ts`, `daybreak-decision.ts`,
+  `daybreak-types.ts`, `extension/daybreak-probe.ts`, `ui/status.ts`,
+  `ui/steering-status.ts`): decisions gain an optional `reason`. On sign-in,
+  bridge or fallback Fast decisions become unsupported/inactive with no tier.
+  Daybreak reports `auth-not-eligible` with the reason, and the probe performs
+  no credential read or lookup for api.openai.com models. Status shows
+  "Fast/Daybreak unavailable (<reason>)" while requested. Steering receipts on
+  `openai` state that native steering is unavailable (SSE). Test:
+  `tests/openai-sign-in-fast-daybreak.test.ts`.
+- Compaction (`compaction-runtime.ts`, `compaction.ts`): the resolver fails with
+  `openai-subscription-sign-in` before any auth lookup. `session_before_compact`
+  notifies once per session and returns `undefined` so Pi local compaction runs.
+  The pending native-window backend check is kept: it prevents replaying
+  encrypted compaction items to a different backend.
+- Usage (`usage-limit-entry.ts`, `codex-usage/{client,payload,format}.ts`,
+  `ui/settings/usage-tab.ts`): an `openai` error containing
+  `subscription_sharing_usage_limit_exceeded` yields `{ observedAt }` only.
+  `fetchCodexUsage` returns `{ unavailable, reason }` without a request for
+  sign-in or an unconfigured `openai-codex` credential. Tests:
+  `tests/openai-sign-in-compaction-usage.test.ts`, plus added cases in
+  `usage-limit-signal` and `context-elision`.
+
+## 2026-10-11 choco-pi patch: OpenAI sign-in tool authentication
+
+Companion to the sign-in degradation patch above. Tools now resolve stock
+`openai` (api.openai.com) credentials before the legacy `openai-codex` chain.
+Files: `adapter/codex-tool-provider.ts`, `tools/web-run/{backend,tool}.ts`,
+`tools/imagegen/tool.ts`, `tools/view-image/tool.ts`,
+`extension/search-adapter.ts`, `ui/settings/config-items-tools.ts`.
+
+- Provider (`codex-tool-provider.ts`): new `resolveOpenAIPlatformAuthModel`
+  picks an available `openai` Responses model (preferred ids shared with the
+  legacy chain). `resolveCodexToolProvider` takes `{ capability }`; the
+  `search` capability on an `openai` model fails before credential lookup with
+  the new `unsupported` error kind, because api.openai.com has no
+  `/alpha/search` route. `resolveOpenAICodexToolProvider` rejects a configured
+  `openai` provider the same way and uses the legacy chain only when `openai`
+  is unconfigured. On `openai` the account id is empty, the
+  `ChatGPT-Account-ID` header is omitted, and `openAIPlatform.subscriptionSignIn`
+  is set. Login hints now lead with `/login openai`, legacy `/login openai-codex`.
+- web_run (`backend.ts`, `tool.ts`, `search-adapter.ts`): the helper is never
+  given an `openai` credential; `unsupported` maps to a config error with the
+  reason, and missing credentials say native search needs an `openai-codex`
+  login. Web search on `openai` goes through choco-pi-web-access.
+- imagegen (`tool.ts`): `openai` models are executable; a helper failure under
+  sign-in appends a note that Images API acceptance of the sign-in token is
+  unverified. view_image (`tool.ts`): the description call posts to
+  `https://api.openai.com/v1/responses` with an `openai` description model and
+  no reasoning summary. Neither is verified live.
+- Settings (`config-items-tools.ts`): the web search model row takes the
+  credential provider, is labelled "(openai-codex legacy only)" on `openai`, and
+  accepts either prefix while storing the bare model id.
+  Test: `tests/codex-tool-provider-openai.test.ts`.

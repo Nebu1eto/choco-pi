@@ -10,6 +10,7 @@ import { Type } from "typebox";
 import { Container, Text } from "@earendil-works/pi-tui";
 import { WEB_SEARCH_TOOL_NAME } from "../../adapter/activation/tool-set.ts";
 import { supportsNativeWebSearch } from "../../adapter/tool-support.ts";
+import { isOpenAIPlatformModel } from "../../adapter/openai-sign-in.ts";
 import { renderCodexToolCell } from "../../ui/tool-rendering/codex-tool-cell.ts";
 import { buildWebSearchInput } from "./history.ts";
 
@@ -23,7 +24,7 @@ const loadToolProvider = memoizedImport(() => import("../../adapter/codex-tool-p
 const loadWebRunBackend = memoizedImport(() => import("./backend.ts"));
 
 export const WEB_SEARCH_UNSUPPORTED_MESSAGE =
-  "web_run/imagegen requires an OpenAI Codex-compatible Responses provider or /login openai-codex";
+  "web_run/imagegen requires an OpenAI Responses provider or /login openai (Sign in with ChatGPT)";
 
 // Codex sends the recent visible turn in SearchRequest.input. Controlled
 // alpha/search comparisons showed no meaningful output benefit, so Pi keeps
@@ -132,6 +133,8 @@ function supportsExecutableWebSearch(
 ): boolean {
   return (
     supportsNativeWebSearch(model) ||
+    // Resolution reports the precise api.openai.com limitation instead of a generic refusal.
+    isOpenAIPlatformModel(model) ||
     Boolean(options.allowConfiguredProvider?.(model)) ||
     options.allowCodexProviderFallback === true
   );
@@ -181,6 +184,7 @@ export async function executeCodexWebSearch(
   const provider = await resolveCodexToolProvider(
     { model: currentModel, modelRegistry },
     configuredProvider,
+    { capability: "search" },
   );
   if (signal?.aborted) throw new Error("web_run was cancelled");
   if (!isSessionCurrent()) throw new Error("web_run session is no longer current");

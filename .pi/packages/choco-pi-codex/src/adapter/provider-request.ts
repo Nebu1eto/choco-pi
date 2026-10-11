@@ -37,6 +37,7 @@ import {
   type CodexFastModeDecision,
 } from "../providers/openai-codex/fast-mode-decision.ts";
 import { withoutCodexAccessPrograms } from "../providers/openai-codex/daybreak-decision.ts";
+import { isOpenAISubscriptionSignInModel } from "./openai-sign-in.ts";
 
 function prepareCodexProviderRequest(
   payload: BoundaryValue,
@@ -54,6 +55,7 @@ function prepareCodexProviderRequest(
     ctx.sessionManager.getSessionId(),
     model,
     state.config.openai.fast === true,
+    ctx.modelRegistry,
   );
   return {
     plan,
@@ -152,12 +154,34 @@ function withoutAccessPrograms(
   return withoutCodexAccessPrograms(payload);
 }
 
+/**
+ * api.openai.com subscription sign-in accepts `service_tier` but does not honor it
+ * (a requested "priority" is echoed back as "default"), so Fast mode is reported
+ * as unavailable there and the field is never sent. API-key `openai` requests and
+ * every other provider keep their service tier untouched.
+ */
+function withoutSubscriptionSignInServiceTier(
+  original: BoundaryValue,
+  rewritten: BoundaryValue | undefined,
+): BoundaryValue | undefined {
+  const payload = rewritten ?? original;
+  if (!isRecord(payload) || !Object.hasOwn(payload, "service_tier")) return rewritten;
+  const { service_tier: _serviceTier, ...rest } = payload;
+  return rest;
+}
+
 export async function rewriteCodexProviderRequest(
   payload: BoundaryValue,
   ctx: ExtensionContext,
   state: AdapterState,
 ): Promise<BoundaryValue | undefined> {
-  return withoutAccessPrograms(payload, await rewriteCodexProviderRequestBody(payload, ctx, state));
+  // Snapshot before the first await: the request belongs to the model selected now.
+  const subscriptionSignIn = isOpenAISubscriptionSignInModel(ctx.model, ctx.modelRegistry);
+  const rewritten = withoutAccessPrograms(
+    payload,
+    await rewriteCodexProviderRequestBody(payload, ctx, state),
+  );
+  return subscriptionSignIn ? withoutSubscriptionSignInServiceTier(payload, rewritten) : rewritten;
 }
 
 async function rewriteCodexProviderRequestBody(

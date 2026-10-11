@@ -30,6 +30,10 @@ import {
   lookupCodexDaybreakModelSupport,
   type DaybreakTargetProgram,
 } from "./daybreak-model-support.ts";
+import {
+  isOpenAIPlatformModel,
+  OPENAI_SIGN_IN_DAYBREAK_REASON,
+} from "../../adapter/openai-sign-in.ts";
 
 export type CodexAccessPrograms = { cyber: "daybreak_blue" | "daybreak_red" };
 
@@ -164,14 +168,22 @@ export function isDaybreakEligibleModel(model: DaybreakModel | null | undefined)
 /**
  * Synchronous status snapshot. Carries the controller's latest reported outcome; with a model,
  * a requested-on state on an ineligible model reports `auth-not-eligible`. Never enables the wire.
+ * `signIn` (optional, default false) marks api.openai.com subscription sign-in: a requested
+ * state then reports `auth-not-eligible` with `OPENAI_SIGN_IN_DAYBREAK_REASON`.
  */
 export function snapshotCodexDaybreakDecision(
   sessionId: string | undefined,
   model?: DaybreakModel | null,
+  signIn = false,
 ): CodexDaybreakDecision {
   const id = sessionId ?? "";
   const state = controllerState(currentController(id), id);
   if (!state?.requested) return decisionFrom(id, state, "off");
+  if (signIn && isOpenAIPlatformModel(model))
+    return Object.freeze({
+      ...decisionFrom(id, state, "auth-not-eligible"),
+      reason: OPENAI_SIGN_IN_DAYBREAK_REASON,
+    });
   if (model !== undefined && !isDaybreakEligibleModel(model))
     return decisionFrom(id, state, "auth-not-eligible");
   return decisionFrom(id, state, state.outcome === "off" ? "pending" : state.outcome);

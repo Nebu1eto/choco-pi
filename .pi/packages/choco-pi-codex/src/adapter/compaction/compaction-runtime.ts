@@ -5,6 +5,7 @@ import { Value } from "typebox/value";
 import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isCanonicalCodexSubscriptionModel, isOpenAICodexModel } from "../prompt/codex-model.ts";
+import { isOpenAISubscriptionSignInModel } from "../openai-sign-in.ts";
 
 export const DEFAULT_SUPPORTED_PROVIDERS = ["openai", "openai-codex"] as const;
 export const DEFAULT_SUPPORTED_APIS = ["openai-responses", "openai-codex-responses"] as const;
@@ -21,7 +22,8 @@ type NativeCompactionFailureReason =
   | "missing-base-url"
   | "missing-api-key"
   | "unsupported-payload"
-  | "payload-model-mismatch";
+  | "payload-model-mismatch"
+  | "openai-subscription-sign-in";
 
 export type NativeCompactionSupportOptions = {
   enabled?: boolean | undefined;
@@ -202,6 +204,15 @@ export async function resolveNativeCompactionEnvironment(
     return {
       ok: false,
       reason: "unsupported-provider",
+      ...descriptor,
+    };
+  }
+  // api.openai.com rejects compaction_trigger and /responses/compact for ChatGPT sign-in
+  // credentials; resolve before credentials so no auth lookup or request is made.
+  if (isOpenAISubscriptionSignInModel(currentModel, ctx.modelRegistry)) {
+    return {
+      ok: false,
+      reason: "openai-subscription-sign-in",
       ...descriptor,
     };
   }

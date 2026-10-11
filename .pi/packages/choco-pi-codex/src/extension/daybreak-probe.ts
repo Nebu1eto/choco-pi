@@ -5,6 +5,7 @@ import {
   resolveCodexDaybreakTicket,
 } from "../providers/openai-codex/daybreak-decision.ts";
 import type { DaybreakController } from "../providers/openai-codex/daybreak-types.ts";
+import { isOpenAIPlatformModel } from "../adapter/openai-sign-in.ts";
 import { withLiveCtx } from "./live-context.ts";
 
 export type DaybreakProbeContext = Pick<ExtensionContext, "model"> & {
@@ -66,6 +67,12 @@ export function createCodexDaybreakProbe() {
         }
         const state = controller.getState();
         if (!state.requested || !model) return;
+        // api.openai.com has no ChatGPT account id or entitlement endpoint: settle as ineligible
+        // without reading credentials (no token refresh) or issuing any lookup.
+        if (isOpenAIPlatformModel(model)) {
+          controller.report("auth-not-eligible", state.revision);
+          return;
+        }
         // A model change cannot display the previous model's grant while this lookup runs.
         controller.report("pending", state.revision);
         const probeRevision = state.revision;

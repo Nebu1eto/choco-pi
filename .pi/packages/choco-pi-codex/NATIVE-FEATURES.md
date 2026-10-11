@@ -11,6 +11,26 @@ Code Mode stays selected; no temporary execution-mode switch is required.
 The native features use public Pi APIs and do not require the legacy
 registered-tool capture. That pre-existing Code Mode bridge is unchanged.
 
+## OpenAI subscription sign-in (`openai` provider)
+
+Pi 1.0.4 "Sign in with ChatGPT" on provider `openai` sends the subscription token
+straight to `https://api.openai.com/v1` over SSE. The token has no ChatGPT account
+id and the Codex backend routes are unreachable, so these features degrade with a
+visible reason instead of failing (`src/adapter/openai-sign-in.ts` owns the
+detection and wording; `openai-codex` remains an opt-in legacy provider):
+
+| Feature                                             | `openai` sign-in behavior                                            |
+| --------------------------------------------------- | -------------------------------------------------------------------- |
+| Mid-turn Steering, Async Code Mode, WebSocket cache | Not available (SSE only); Pi queues steering normally.               |
+| Fast                                                | Disabled: `service_tier` is never sent ("accepted but not honored"). |
+| Daybreak                                            | Unavailable: no entitlement lookup, no `access_programs`.            |
+| Server-side compaction                              | Never attempted; Pi local compaction runs.                           |
+| Usage window (`/codex` usage)                       | Reports unavailable without a request.                               |
+| Usage-limit entry                                   | Recorded with `observedAt` only (no reset time exists).              |
+
+An `sk-` API key on `openai` keeps Fast. Native steering and Async Code Mode
+remain `openai-codex`-only by design (no custom `openai` WebSocket transport).
+
 ## Mid-turn Steering
 
 Pi already queues steering input. This option additionally sends eligible input

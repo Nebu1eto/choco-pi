@@ -245,7 +245,7 @@ export function normalizeCodexWebRunResponse(
 }
 
 function providerErrorKind(kind: CodexToolProviderErrorKind): "auth" | "config" {
-  return kind === "config" ? "config" : "auth";
+  return kind === "config" || kind === "unsupported" ? "config" : "auth";
 }
 
 function transportErrorKind(
@@ -373,7 +373,7 @@ export function createCodexWebRunSearchAdapter(
             status: error.kind === "config" ? "error" : "unavailable",
             reason:
               error.kind === "missing_credentials"
-                ? "OpenAI Codex subscription credentials are not configured"
+                ? "Native OpenAI search credentials are not configured: it needs an openai-codex (legacy) login; /login openai (Sign in with ChatGPT) cannot serve the /alpha/search route"
                 : error.message,
             transport: CODEX_WEB_RUN_SEARCH_TRANSPORT,
             billing: "subscription",

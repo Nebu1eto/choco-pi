@@ -9,6 +9,7 @@ import { Value } from "typebox/value";
 import { Text } from "@earendil-works/pi-tui";
 import { IMAGE_GENERATION_TOOL_NAME } from "../../adapter/activation/tool-set.ts";
 import { supportsNativeImageGeneration } from "../../adapter/tool-support.ts";
+import { isOpenAIPlatformModel } from "../../adapter/openai-sign-in.ts";
 import {
   formatImagegenOutput,
   imageContentsFromImagegenOutput,
@@ -27,7 +28,15 @@ const loadNativeRunner = memoizedImport(() => import("../native/runner.ts"));
 const loadToolProvider = memoizedImport(() => import("../../adapter/codex-tool-provider.ts"));
 
 export const IMAGE_GENERATION_UNSUPPORTED_MESSAGE =
-  "imagegen requires an image-capable OpenAI Codex-compatible Responses provider";
+  "imagegen requires an image-capable OpenAI Responses provider or /login openai (Sign in with ChatGPT)";
+
+/**
+ * The helper calls `<base>/images/generations` (Images API, model gpt-image-2).
+ * On api.openai.com that is the documented API-key endpoint; acceptance of the
+ * ChatGPT sign-in token there has not been verified.
+ */
+export const OPENAI_SIGN_IN_IMAGEGEN_UNVERIFIED_NOTE =
+  "imagegen through api.openai.com with openai Sign in with ChatGPT is unverified; an openai API key or openai-codex (legacy) model may be required";
 const IMAGE_GENERATION_PARAMETERS = Type.Object({
   prompt: Type.String(),
   action: Type.Optional(
@@ -77,6 +86,7 @@ function supportsExecutableImageGeneration(
 ): boolean {
   return (
     supportsNativeImageGeneration(model) ||
+    isOpenAIPlatformModel(model) ||
     Boolean(options.allowConfiguredProvider?.(model)) ||
     options.allowCodexProviderFallback === true
   );
@@ -106,8 +116,14 @@ async function executeRustImagegen(
     signal,
     label: IMAGE_GENERATION_TOOL_NAME,
   });
-  if (child.status !== 0)
-    throw new Error((child.stderr || child.stdout || "imagegen failed").trim());
+  if (child.status !== 0) {
+    const detail = (child.stderr || child.stdout || "imagegen failed").trim();
+    throw new Error(
+      provider.openAIPlatform?.subscriptionSignIn
+        ? `${detail} (${OPENAI_SIGN_IN_IMAGEGEN_UNVERIFIED_NOTE})`
+        : detail,
+    );
+  }
   const parsed = imagegenOutputFromJson(child.stdout);
   if (!Value.Check(ImagegenDetailsSchema, parsed)) {
     throw new Error("imagegen returned output, but Pi could not parse it");

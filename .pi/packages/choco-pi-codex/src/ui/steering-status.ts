@@ -7,9 +7,14 @@ import type {
 } from "../providers/openai-codex/native-steering.ts";
 
 const WIDGET = "codex-steering";
+/** Native mid-turn steering needs the openai-codex websocket; stock `openai` streams over SSE. */
+export const OPENAI_STEERING_UNAVAILABLE_REASON =
+  "native steering unavailable on openai (SSE transport)";
 type SteeringUIContext = Pick<ExtensionContext, "hasUI"> & {
   sessionManager: Pick<ExtensionContext["sessionManager"], "getSessionId">;
   ui: { setWidget(key: string, lines: string[] | undefined): void };
+  /** Optional; when it is the stock `openai` provider, receipts state steering is unavailable. */
+  model?: Readonly<{ provider: string }> | undefined;
 };
 const labels = {
   queued: "Queued (Pi path)",
@@ -17,12 +22,13 @@ const labels = {
   accepted: "Mid-turn accepted",
   applied: "Mid-turn applied",
   fallback: "Queue fallback",
-} satisfies Record<SteeringStatus | "queued", string>;
+  unavailable: `Queued (Pi path; ${OPENAI_STEERING_UNAVAILABLE_REASON})`,
+} satisfies Record<SteeringStatus | "queued" | "unavailable", string>;
 
 interface Row {
   number: number;
   preview: string;
-  status: SteeringStatus | "queued";
+  status: SteeringStatus | "queued" | "unavailable";
 }
 
 /** Session-local, per-submission receipts. Never enters model context or session history. */
@@ -48,7 +54,7 @@ export class SteeringStatusWidget {
       number: ++this.sequence,
       preview:
         Array.from(preview).slice(0, 64).join("") + (Array.from(preview).length > 64 ? "…" : ""),
-      status: "queued",
+      status: ctx.model?.provider === "openai" ? "unavailable" : "queued",
     };
     this.rows = [...this.rows.slice(-3), row];
     const draw = () => {
@@ -65,7 +71,12 @@ export class SteeringStatusWidget {
     };
     draw();
     return (status) => {
-      if (generation !== this.generation || row.status === "applied" || row.status === "fallback")
+      if (
+        generation !== this.generation ||
+        row.status === "applied" ||
+        row.status === "fallback" ||
+        row.status === "unavailable"
+      )
         return;
       row.status = status;
       // Keep host UI calls outside the provider's protocol-error containment.
