@@ -193,6 +193,7 @@ import {
 } from "./ui/notification-render.ts";
 import { showSchedulesMenu } from "./ui/schedule-menu.ts";
 import {
+  BACK,
   editSettingsWithDialogs,
   headlessConversationNotice,
   pickAgentType,
@@ -3595,28 +3596,37 @@ export default function (pi: ExtensionAPI) {
     const choice = await ctx.ui.select("Agents", options);
     if (!choice) return;
 
+    // In the TUI, Esc from a sub-screen returns to this menu and Esc here
+    // leaves. RPC hosts have no Esc: cancelling a dialog is their only exit,
+    // and their "stop" aborts the model run but not this command, so a
+    // re-shown menu would trap the user. Sub-screens there carry their own
+    // "Back" row; a cancel ends the command.
+    const reopen = ctx.mode === "tui" ? () => showAgentsMenu(ctx) : async () => {};
+
     if (choice.startsWith("Running agents (")) {
       const focused = await showRunningAgents(ctx);
-      if (!focused) await showAgentsMenu(ctx);
+      if (!focused) await reopen();
     } else if (choice.startsWith("Agent types (")) {
-      await showAllAgentsList(ctx);
-      await showAgentsMenu(ctx);
+      const back = await showAllAgentsList(ctx);
+      if (back) await showAgentsMenu(ctx);
+      else await reopen();
     } else if (choice.startsWith("Scheduled jobs (")) {
       await showSchedulesMenu(ctx, scheduler);
-      await showAgentsMenu(ctx);
+      await reopen();
     } else if (choice === "Create new agent") {
       await showCreateWizard(ctx);
     } else if (choice === "Settings") {
       await showSettings(ctx);
-      await showAgentsMenu(ctx);
+      await reopen();
     }
   }
 
-  async function showAllAgentsList(ctx: ExtensionCommandContext) {
+  /** Resolves true when the user chose "Back" (headless) rather than cancelling. */
+  async function showAllAgentsList(ctx: ExtensionCommandContext): Promise<boolean> {
     const allNames = getAllTypes();
     if (allNames.length === 0) {
       ctx.ui.notify("No agents.", "info");
-      return;
+      return false;
     }
 
     // Source indicators: defaults unmarked, custom agents get • (project) or ◦ (global)
@@ -3659,11 +3669,12 @@ export default function (pi: ExtensionAPI) {
     if (ctx.mode !== "tui") {
       // RPC hosts get dialogs but not the settings-list component.
       const picked = await pickAgentType(ctx.ui, items);
-      if (picked && getAgentConfig(picked)) {
+      if (picked === BACK) return true;
+      if (picked !== undefined && getAgentConfig(picked)) {
         await showAgentDetail(ctx, picked);
-        await showAllAgentsList(ctx);
+        return showAllAgentsList(ctx);
       }
-      return;
+      return false;
     }
 
     const selected = await ctx.ui.custom<string | undefined>((_tui, _theme, _kb, done) => {
@@ -3692,6 +3703,7 @@ export default function (pi: ExtensionAPI) {
       await showAgentDetail(ctx, selected);
       await showAllAgentsList(ctx);
     }
+    return false;
   }
 
   async function showRunningAgents(ctx: ExtensionCommandContext): Promise<boolean> {

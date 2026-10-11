@@ -24,18 +24,26 @@ function clip(text: string): string {
   return text.length > NOTICE_BODY_LIMIT ? `${text.slice(0, NOTICE_BODY_LIMIT)}…` : text;
 }
 
+/**
+ * Sentinel returned by {@link pickAgentType} when the user picked the explicit
+ * "Back" row. Hosts have no Esc, and cancelling a dialog ends the command, so
+ * sub-menus need their own way up.
+ */
+export const BACK: unique symbol = Symbol("back");
+
+const BACK_LABEL = "Back";
+
 /** Choose an agent type from a numbered dialog instead of the settings list. */
 export async function pickAgentType(
   ui: SelectUI,
   items: readonly SettingItem[],
-): Promise<string | undefined> {
-  const item = await selectItem(
-    ui,
-    "Agent types",
-    items,
-    (entry) => `${entry.label.trim()} · ${entry.currentValue}`,
+): Promise<string | typeof BACK | undefined> {
+  const rows: ReadonlyArray<SettingItem | typeof BACK> = [...items, BACK];
+  const item = await selectItem(ui, "Agent types", rows, (entry) =>
+    entry === BACK ? BACK_LABEL : `${entry.label.trim()} · ${entry.currentValue}`,
   );
-  return item?.id;
+  if (item === undefined) return undefined;
+  return item === BACK ? BACK : item.id;
 }
 
 /**

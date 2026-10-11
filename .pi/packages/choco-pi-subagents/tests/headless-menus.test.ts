@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { SettingItem } from "@earendil-works/pi-tui";
 import {
+  BACK,
   describeAgentResult,
   editSettingsWithDialogs,
   pickAgentType,
@@ -39,6 +40,8 @@ test("agent types are chosen from a numbered dialog", async () => {
   const { ui } = scriptedUI(["review · openai/gpt"]);
   assert.equal(await pickAgentType(ui, items), "review");
   assert.equal(await pickAgentType(scriptedUI([undefined]).ui, items), undefined);
+  // Hosts without Esc leave through an explicit last row.
+  assert.equal(await pickAgentType(scriptedUI(["3. Back"]).ui, items), BACK);
 });
 
 test("settings dialogs apply picked values and validated numbers until cancelled", async () => {

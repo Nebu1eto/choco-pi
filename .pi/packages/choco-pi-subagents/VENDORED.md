@@ -1495,3 +1495,11 @@ BTW answer. Outside `ctx.mode === "tui"` only (TUI behavior unchanged):
   the Esc hint in that mode.
 
 Tests: `tests/headless-menus.test.ts`, `tests/side-conversation.test.ts`.
+
+## 2026-10-11 choco-pi patch: `/agents` exit outside the TUI
+
+Hosts have no Esc and their stop aborts the model run, not the command, so
+re-showing the top menu after a cancelled sub-screen trapped the user in
+`/agents`. Outside `ctx.mode === "tui"`, a cancelled dialog now ends the
+command and the agent-type picker carries an explicit "Back" row (`BACK` in
+`src/ui/headless-menus.ts`). TUI navigation is unchanged.
