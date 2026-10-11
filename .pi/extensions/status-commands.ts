@@ -62,7 +62,14 @@ import {
   type StatusRow,
 } from "./session-status.ts";
 import { buildContextCapSection } from "./model-context-cap.ts";
-import { resetCodexUsage, usageReport } from "./provider-usage.ts";
+import {
+  formatUsageReport,
+  readProviderUsages,
+  resetCodexUsage,
+  usageReport,
+  type ProviderUsageReport,
+} from "./provider-usage.ts";
+import { hasUsageWindows, usageReportFrame } from "./lib/usage-report.ts";
 import { CodexResetError } from "./lib/codex-resets.ts";
 import { isStaleContextError, rethrowUnlessStaleContext } from "./lib/lifecycle.ts";
 import { daybreakStatusValue, getDaybreakBridge } from "./lib/daybreak-state.ts";
@@ -413,6 +420,13 @@ function reportThenNotify(
 /** Trailing debounce for automatic context reports. */
 export const REPORT_DEBOUNCE_MS = 500;
 
+/**
+ * Shortest gap between two automatic usage reports. Each one queries every
+ * connected provider, so it is sent on the first turn end of a session and
+ * then at most this often, never on every turn.
+ */
+export const USAGE_REPORT_INTERVAL_MS = 10 * 60_000;
+
 type ReportApi = Pick<ExtensionAPI, "on" | "getAllTools" | "getActiveTools"> &
   Partial<Pick<ExtensionAPI, "getMcpServers">>;
 
@@ -424,6 +438,10 @@ export interface ReportAutoPublishOptions {
   isChildSession?: (sessionId: string) => boolean;
   /** Schedules `callback` once and returns its canceller. */
   setTimer?: (callback: () => void, ms: number) => () => void;
+  /** Queries the providers for an automatic usage report; defaults to the live read. */
+  readUsage?: (ctx: ExtensionContext) => Promise<ProviderUsageReport>;
+  /** Clock for the usage-report interval, in epoch ms. */
+  now?: () => number;
   warn?: (message: string) => void;
 }
 
@@ -438,14 +456,30 @@ function defaultTimer(callback: () => void, ms: number): () => void {
  * `model_select`, debounced, only in rpc mode under a bridge-enabled host. A
  * report needs the session's system-prompt options, so none is sent until a
  * command or `before_agent_start` has supplied them for the current session.
+ *
+ * A usage report follows the context report of the session's first
+ * `turn_end`, then of a later one only once USAGE_REPORT_INTERVAL_MS has
+ * passed since the last usage query. A query in which no provider reported a
+ * quota window publishes nothing.
  */
 export function registerReportAutoPublish(pi: ReportApi, options: ReportAutoPublishOptions): void {
   if (options.inChildLoad === true) return;
   const setTimer = options.setTimer ?? defaultTimer;
   const warn = options.warn ?? ((message: string) => console.warn(message));
+  const readUsage = options.readUsage ?? readProviderUsages;
+  const now = options.now ?? Date.now;
   let generation = 0;
   let cancel: (() => void) | undefined;
   let lastKey: string | undefined;
+  /** A turn ended while the usage interval allowed a query; the next timer sends one. */
+  let usageDue = false;
+  let lastUsageQuery: number | undefined;
+  /** Generation whose usage query is still running, so one session never overlaps two. */
+  let usageInFlight: number | undefined;
+
+  const usageAllowed = (): boolean =>
+    usageInFlight !== generation &&
+    (lastUsageQuery === undefined || now() - lastUsageQuery >= USAGE_REPORT_INTERVAL_MS);
 
   const enabledSession = (ctx: ExtensionContext): string | undefined => {
     if (!hostFramesEnabled(ctx.mode, options.host)) return undefined;
@@ -474,7 +508,32 @@ export function registerReportAutoPublish(pi: ReportApi, options: ReportAutoPubl
     }
   };
 
-  const schedule = (ctx: ExtensionContext): void => {
+  const publishUsage = async (
+    ctx: ExtensionContext,
+    sessionId: string,
+    scheduled: number,
+  ): Promise<void> => {
+    if (scheduled !== generation || !usageAllowed()) return;
+    usageInFlight = scheduled;
+    lastUsageQuery = now();
+    try {
+      if (ctx.sessionManager.getSessionId() !== sessionId) return;
+      const report = await readUsage(ctx);
+      if (scheduled !== generation) return;
+      if (ctx.sessionManager.getSessionId() !== sessionId) return;
+      if (!hasUsageWindows(report)) return;
+      publishReport(ctx.ui, usageReportFrame(sessionId, report));
+    } catch (error) {
+      if (isStaleContextError(error)) return;
+      warn(
+        `[status-commands] automatic usage report failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      if (usageInFlight === scheduled) usageInFlight = undefined;
+    }
+  };
+
+  const schedule = (ctx: ExtensionContext, turnEnd = false): void => {
     let sessionId: string | undefined;
     try {
       sessionId = enabledSession(ctx);
@@ -483,12 +542,16 @@ export function registerReportAutoPublish(pi: ReportApi, options: ReportAutoPubl
       return;
     }
     if (sessionId === undefined) return;
+    if (turnEnd && usageAllowed()) usageDue = true;
     cancel?.();
     const scheduled = generation;
     const target = sessionId;
     cancel = setTimer(() => {
       cancel = undefined;
       publish(ctx, target, scheduled);
+      if (!usageDue || scheduled !== generation) return;
+      usageDue = false;
+      void publishUsage(ctx, target, scheduled);
     }, REPORT_DEBOUNCE_MS);
   };
 
@@ -497,6 +560,8 @@ export function registerReportAutoPublish(pi: ReportApi, options: ReportAutoPubl
     cancel?.();
     cancel = undefined;
     lastKey = undefined;
+    usageDue = false;
+    lastUsageQuery = undefined;
   };
 
   pi.on("session_start", (_event, ctx) => {
@@ -514,7 +579,7 @@ export function registerReportAutoPublish(pi: ReportApi, options: ReportAutoPubl
       rethrowUnlessStaleContext(error);
     }
   });
-  pi.on("turn_end", (_event, ctx) => schedule(ctx));
+  pi.on("turn_end", (_event, ctx) => schedule(ctx, true));
   pi.on("model_select", (_event, ctx) => schedule(ctx));
 }
 
@@ -701,8 +766,13 @@ async function showTabOnce(
       );
       return undefined;
     }
-    const body = await tabBody(ctx, thinkingLevel, initial, false, initialExpanded);
-    ctx.ui.notify(stripVTControlCharacters(body), "info");
+    // Usage: one provider query feeds both the report and the text notice.
+    const owner = ctx.sessionManager;
+    const currentSessionId = owner.getSessionId.bind(owner);
+    const sessionId = currentSessionId();
+    const report = await readProviderUsages(ctx);
+    if (currentSessionId() !== sessionId) return undefined;
+    reportThenNotify(ctx, () => usageReportFrame(sessionId, report), formatUsageReport(report));
     return undefined;
   }
   const provider = getPreferencesProvider();

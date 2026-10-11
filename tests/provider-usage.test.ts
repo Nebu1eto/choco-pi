@@ -90,16 +90,20 @@ test("registers /quota as a plain-text alias for /usage outside the TUI", async 
   assert.equal(commands.has("settings"), false);
 
   const notifications: Array<[string, string]> = [];
+  const statusKeys: string[] = [];
   await commands.get("quota")?.handler("", {
+    sessionManager: { getSessionId: () => "session-quota" },
     modelRegistry: {
       getProviderAuthStatus: () => ({ configured: false }),
     },
     ui: {
       theme: { fg: (color: string, text: string) => `<${color}>${text}</${color}>` },
+      setStatus: (key: string) => statusKeys.push(key),
       notify: (text: string, level: string) => notifications.push([text, level]),
     },
   });
 
+  assert.deepEqual(statusKeys, ["choco-pi.report"], "the structured report precedes the notice");
   assert.equal(notifications.length, 1);
   assert.equal(notifications[0]?.[1], "info");
   // Hosts without a terminal render notices verbatim, so no theme styling is applied.

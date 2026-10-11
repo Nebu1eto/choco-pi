@@ -102,11 +102,11 @@ reported as lost.
 
 ## Structured reports
 
-In every non-TUI mode, `/status` and `/context` publish their data as a
-`setStatus` frame keyed `choco-pi.report`, then send the same plain-text
-`notify` as before. A host that does not recognise the key keeps rendering the
-notice; a host that does can render a native view and suppress the notice that
-follows. `/status usage` and `/preferences` send no report.
+In every non-TUI mode, `/status`, `/context`, and `/usage` (alias `/quota`)
+publish their data as a `setStatus` frame keyed `choco-pi.report`, then send
+the same plain-text `notify` as before. A host that does not recognise the key
+keeps rendering the notice; a host that does can render a native view and
+suppress the notice that follows. `/preferences` sends no report.
 
 ```json
 {
@@ -126,18 +126,29 @@ no system-prompt options, so the first automatic report waits until a
 `before_agent_start` or a `/status`/`/context` command has supplied them for
 the current session; a `session_start` alone sends nothing.
 
+A usage report is published automatically under the same gate, but because
+each one queries every connected provider it is not sent on every turn: it
+follows the context report of the session's first `turn_end`, and after that
+of a `turn_end` only once 10 minutes have passed since the last automatic
+query. `session_start` and `model_select` never trigger one. An automatic
+query in which no provider reported a quota window publishes nothing and
+still waits out the interval; a user-invoked `/usage` always publishes,
+including providers that only carry a `status` such as `not connected` or
+`unavailable (HTTP 401)`.
+
 `statusText` is schema-1 JSON (`.pi/extensions/lib/host-bridge/report-schema.ts`,
 all objects closed):
 
-| Field       | Type                           | Meaning                                                       |
-| ----------- | ------------------------------ | ------------------------------------------------------------- |
-| `schema`    | `1`                            | Report schema version.                                        |
-| `kind`      | `"status"` \| `"context"`      | Which command produced it.                                    |
-| `at`        | ISO-8601 string                | Build time.                                                   |
-| `sessionId` | string                         | The reporting session; ignore reports for another session.    |
-| `title`     | string                         | `"Status"` or `"Context Usage"`.                              |
-| `sections`  | `{ title, rows }[]`            | Generic rows `{ label, value, hint? }`; render them in order. |
-| `context`   | object, `kind: "context"` only | Typed figures for a breakdown bar (below).                    |
+| Field       | Type                                   | Meaning                                                       |
+| ----------- | -------------------------------------- | ------------------------------------------------------------- |
+| `schema`    | `1`                                    | Report schema version.                                        |
+| `kind`      | `"status"` \| `"context"` \| `"usage"` | Which command produced it.                                    |
+| `at`        | ISO-8601 string                        | Build time.                                                   |
+| `sessionId` | string                                 | The reporting session; ignore reports for another session.    |
+| `title`     | string                                 | `"Status"`, `"Context Usage"`, or `"Usage"`.                  |
+| `sections`  | `{ title, rows }[]`                    | Generic rows `{ label, value, hint? }`; render them in order. |
+| `context`   | object, `kind: "context"` only         | Typed figures for a breakdown bar (below).                    |
+| `usage`     | object, `kind: "usage"` only           | Typed provider quota windows (below).                         |
 
 Rows are generic so a new status row needs no host change. `value` is one
 line; `hint` holds secondary detail, such as the inventory behind a count or
@@ -164,6 +175,27 @@ The `context` block:
 Free space is `contextWindow - (measuredTokens ?? estimatedTokens) - autocompactReserve`,
 floored at zero. Reports carry paths (session file, cwd, context files) but no
 credentials or MCP configuration beyond the enable flag.
+
+A usage report has one section per provider (`Claude`, `ChatGPT`,
+`Synthetic`) with `Plan`, `Status`, and `Snapshot` rows when present and one
+row per quota window (`value` such as `42% used`; `hint` the reset time, pace,
+and provider detail as the Usage tab prints them). The `usage` block:
+
+| Field                                 | Meaning                                                                                             |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `observedAt`                          | ISO-8601 time the provider queries finished.                                                        |
+| `providers[].name`                    | Provider display name.                                                                              |
+| `providers[].plan`                    | Plan label, such as `Max (5x)` or `Pro 200`, when known.                                            |
+| `providers[].status`                  | Free text: `not connected`, `unavailable (<error>)`, credits, or extra-usage state.                 |
+| `providers[].cached`                  | `{ at, reason? }` when the reading was served from the store instead of a live response.            |
+| `providers[].windows[].label`         | Window name, such as `5h`, `7d`, `Opus 7d`, or `Weekly credits`.                                    |
+| `providers[].windows[].percent`       | 0–100 as reported, read with `qualifier` (`"used"` or `"remaining"`).                               |
+| `providers[].windows[].resetsAt`      | ISO-8601 time of the next reset or regeneration; `resetLabel` names it (`resets`, `regenerates …`). |
+| `providers[].windows[].detail`        | Provider detail, such as remaining requests or credits.                                             |
+| `providers[].windows[].windowSeconds` | Fixed window length; pace is `(windowSeconds - (resetsAt - now)) / windowSeconds`.                  |
+| `providers[].windows[].pace`          | `{ health: "over" \| "under", label }` decided by the provider for refilling buckets.               |
+
+Usage reports carry no account ID, token, cookie, or other credential.
 
 ## Snapshot and controls
 

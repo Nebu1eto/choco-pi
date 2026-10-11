@@ -12,8 +12,12 @@ import statusCommands, {
   openStatusTab,
   registerReportAutoPublish,
   REPORT_DEBOUNCE_MS,
+  USAGE_REPORT_INTERVAL_MS,
+  type ReportAutoPublishOptions,
 } from "../.pi/extensions/status-commands.ts";
 import { buildContextReport } from "../.pi/extensions/lib/context-report.ts";
+import { usageReportFrame } from "../.pi/extensions/lib/usage-report.ts";
+import type { ProviderUsageReport } from "../.pi/extensions/provider-usage.ts";
 import {
   ReportFrameSchema,
   type ReportFrame,
@@ -55,7 +59,12 @@ function fixture(mode: "rpc" | "tui" = "rpc") {
       buildContextEntries: () => [],
     },
     getContextUsage: () => ({ tokens: 50_000, contextWindow: 200_000, percent: 25 }),
-    modelRegistry: { find: () => undefined },
+    modelRegistry: {
+      find: () => undefined,
+      // No provider is connected, so /usage never reaches the network.
+      getProviderAuthStatus: () => ({ configured: false }),
+      getApiKeyForProvider: async () => undefined,
+    },
     getSystemPrompt: () => "system prompt",
     getSystemPromptOptions: () => PROMPT_OPTIONS,
     ui: {
@@ -199,10 +208,158 @@ test("rpc /status and /context publish the report before the plain-text notice",
   }
 });
 
+const USAGE_AT = new Date("2026-10-11T09:00:00.000Z");
+
+const USAGE_FIXTURE: ProviderUsageReport = {
+  observedAt: USAGE_AT,
+  providers: [
+    {
+      ok: true,
+      usage: {
+        name: "Claude",
+        plan: "Max (5x)",
+        windows: [
+          {
+            label: "5h",
+            percent: 42,
+            qualifier: "used",
+            eventAt: new Date("2026-10-11T11:00:00.000Z"),
+            eventLabel: "resets",
+            windowSeconds: 5 * 3600,
+          },
+        ],
+      },
+    },
+    {
+      ok: true,
+      usage: {
+        name: "Synthetic",
+        cached: { at: new Date("2026-10-11T08:30:00.000Z"), reason: "HTTP 429" },
+        windows: [
+          {
+            label: "Weekly credits",
+            percent: 12.5,
+            qualifier: "used",
+            detail: "$21.00 remaining",
+            precision: 2,
+            pace: { health: "under", label: "refill keeping up" },
+          },
+        ],
+      },
+    },
+    { ok: false, name: "ChatGPT", error: "HTTP 401" },
+  ],
+};
+
+test("usageReportFrame yields a schema-valid frame with a typed block and generic sections", () => {
+  const frame = usageReportFrame("session-report", USAGE_FIXTURE, USAGE_AT);
+  assert.ok(Value.Check(ReportFrameSchema, frame));
+  assert.equal(frame.kind, "usage");
+  assert.equal(frame.title, "Usage");
+  assert.equal(frame.context, undefined);
+  const usage = frame.usage;
+  assert.ok(usage);
+  assert.equal(usage.observedAt, USAGE_AT.toISOString());
+  assert.deepEqual(usage.providers, [
+    {
+      name: "Claude",
+      plan: "Max (5x)",
+      windows: [
+        {
+          label: "5h",
+          percent: 42,
+          qualifier: "used",
+          resetsAt: "2026-10-11T11:00:00.000Z",
+          resetLabel: "resets",
+          windowSeconds: 18_000,
+        },
+      ],
+    },
+    {
+      name: "Synthetic",
+      cached: { at: "2026-10-11T08:30:00.000Z", reason: "HTTP 429" },
+      windows: [
+        {
+          label: "Weekly credits",
+          percent: 12.5,
+          qualifier: "used",
+          detail: "$21.00 remaining",
+          pace: { health: "under", label: "refill keeping up" },
+        },
+      ],
+    },
+    { name: "ChatGPT", status: "unavailable (HTTP 401)", windows: [] },
+  ]);
+  assert.deepEqual(
+    frame.sections.map((section) => [section.title, section.rows.map((row) => row.label)]),
+    [
+      ["Claude", ["Plan", "5h"]],
+      ["Synthetic", ["Snapshot", "Weekly credits"]],
+      ["ChatGPT", ["Status"]],
+    ],
+  );
+  const claude = frame.sections[0].rows[1];
+  assert.equal(claude.value, "42% used");
+  assert.equal(claude.hint, "resets in 2h · 60% of window elapsed");
+  assert.equal(frame.sections[1].rows[1].value, "12.5% used");
+  assert.match(frame.sections[1].rows[0].value, /^cached .+ · HTTP 429$/);
+  assert.doesNotMatch(JSON.stringify(frame), /account|token|Bearer|cookie/i);
+});
+
+test("rpc /usage and /quota publish the usage report before the plain-text notice", async () => {
+  const commands = new Map<string, (args: string, ctx: ExtensionCommandContext) => Promise<void>>();
+  statusCommands(
+    reinterpretHostValue<Parameters<typeof statusCommands>[0]>({
+      on: () => undefined,
+      registerCommand: (
+        name: string,
+        command: { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> },
+      ) => {
+        commands.set(name, command.handler);
+      },
+      getThinkingLevel: () => "medium",
+      ...inventory,
+    }),
+  );
+  for (const name of ["usage", "quota"]) {
+    const handler = commands.get(name);
+    assert.ok(handler, `/${name} is registered`);
+    const { ctx, calls } = fixture("rpc");
+    await handler("", ctx);
+    assert.deepEqual(
+      calls.map((call) => call.method),
+      ["setStatus", "notify"],
+      `/${name}: report first, text fallback second`,
+    );
+    assert.equal(calls[0].key, REPORT_STATUS_KEY);
+    const frame = parseFrame(calls[0].text);
+    assert.equal(frame.kind, "usage");
+    assert.equal(frame.sessionId, "session-report");
+    assert.deepEqual(
+      frame.usage?.providers.map((provider) => [provider.name, provider.status]),
+      [
+        ["Claude", "not connected"],
+        ["ChatGPT", "not connected"],
+        ["Synthetic", "not connected"],
+      ],
+      "a user-invoked report is sent even without quota windows",
+    );
+    assert.match(calls[1].text ?? "", /^Claude — not connected/);
+  }
+});
+
 type HookPayload = Readonly<Record<string, RuntimeValue>>;
 type Handler = (event: HookPayload, ctx: ExtensionCommandContext) => void;
 
-function publisherHarness(host: string | undefined) {
+const NO_USAGE: ProviderUsageReport = {
+  observedAt: USAGE_AT,
+  providers: [{ ok: false, name: "Claude", error: "HTTP 500" }],
+};
+
+function publisherHarness(
+  host: string | undefined,
+  extra: Pick<ReportAutoPublishOptions, "readUsage" | "now"> = {},
+) {
   const handlers = new Map<string, Handler[]>();
   const timers: Array<{ callback: () => void; ms: number; cancelled: boolean }> = [];
   const warnings: string[] = [];
@@ -214,6 +371,8 @@ function publisherHarness(host: string | undefined) {
   });
   registerReportAutoPublish(api, {
     host,
+    readUsage: async () => NO_USAGE,
+    ...extra,
     setTimer: (callback, ms) => {
       const timer = { callback, ms, cancelled: false };
       timers.push(timer);
@@ -256,6 +415,85 @@ test("auto-publish sends one debounced context report per burst under an rpc bri
   harness.flush();
   assert.equal(calls.length, 1, "unchanged figures are not re-sent");
   assert.deepEqual(harness.warnings, []);
+});
+
+const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
+test("auto-publish sends a usage report on the first turn end, then at most every 10 minutes", async () => {
+  let clock = 1_000_000;
+  let queries = 0;
+  let next: ProviderUsageReport = USAGE_FIXTURE;
+  const harness = publisherHarness("waku", {
+    now: () => clock,
+    readUsage: async () => {
+      queries += 1;
+      return next;
+    },
+  });
+  const { ctx, calls } = fixture("rpc");
+  const kinds = (): string[] => calls.map((call) => parseFrame(call.text).kind);
+  harness.emit("session_start", { reason: "startup" }, ctx);
+  harness.emit("model_select", { type: "model_select" }, ctx);
+  harness.flush();
+  await settle();
+  assert.equal(queries, 0, "only a turn end queries the providers");
+  harness.emit("before_agent_start", BEFORE_AGENT_START, ctx);
+  harness.emit("turn_end", { type: "turn_end" }, ctx);
+  harness.flush();
+  await settle();
+  assert.equal(queries, 1);
+  assert.deepEqual(kinds(), ["context", "usage"], "usage follows the context report");
+
+  clock += USAGE_REPORT_INTERVAL_MS - 1;
+  harness.emit("turn_end", { type: "turn_end" }, ctx);
+  harness.flush();
+  await settle();
+  assert.equal(queries, 1, "no query inside the interval");
+
+  clock += 1;
+  next = NO_USAGE;
+  harness.emit("turn_end", { type: "turn_end" }, ctx);
+  harness.flush();
+  await settle();
+  assert.equal(queries, 2, "the interval elapsed");
+  assert.deepEqual(kinds(), ["context", "usage"], "a query without windows publishes nothing");
+
+  clock += 60_000;
+  next = USAGE_FIXTURE;
+  harness.emit("turn_end", { type: "turn_end" }, ctx);
+  harness.flush();
+  await settle();
+  assert.equal(queries, 2, "a failed query still waits out the interval");
+
+  harness.emit("session_start", { reason: "new" }, ctx);
+  harness.emit("turn_end", { type: "turn_end" }, ctx);
+  harness.flush();
+  await settle();
+  assert.equal(queries, 3, "a new session gets its first-turn report");
+  assert.deepEqual(kinds(), ["context", "usage", "context", "usage"]);
+  assert.deepEqual(harness.warnings, []);
+});
+
+test("auto-publish drops a usage report that resolves after a session switch", async () => {
+  let release: (report: ProviderUsageReport) => void = () => undefined;
+  const harness = publisherHarness("waku", {
+    now: () => 0,
+    readUsage: () =>
+      new Promise<ProviderUsageReport>((resolve) => {
+        release = resolve;
+      }),
+  });
+  const { ctx, calls } = fixture("rpc");
+  harness.emit("session_start", { reason: "startup" }, ctx);
+  harness.emit("turn_end", { type: "turn_end" }, ctx);
+  harness.flush();
+  harness.emit("session_shutdown", {}, ctx);
+  release(USAGE_FIXTURE);
+  await settle();
+  assert.deepEqual(
+    calls.filter((call) => parseFrame(call.text).kind === "usage"),
+    [],
+  );
 });
 
 test("auto-publish stays off in tui mode and without CHOCO_PI_HOST", () => {

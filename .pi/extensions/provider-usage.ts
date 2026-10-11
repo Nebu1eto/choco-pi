@@ -813,10 +813,29 @@ function usagePainter(style: UsageStyle | undefined): UsagePainter {
   };
 }
 
-function cachedLabel(cached: { at: Date; reason?: string } | undefined): string | undefined {
+export function cachedLabel(cached: { at: Date; reason?: string } | undefined): string | undefined {
   if (!cached) return undefined;
   const age = elapsedTime(cached.at);
   return cached.reason ? `cached ${age} · ${cached.reason}` : `cached ${age}`;
+}
+
+/** A window's printed percentage and its secondary line. */
+export type UsageWindowSummary = { percent: string; detail: string };
+
+/**
+ * One window in words: the percentage as the report prints it, and the
+ * secondary line (next reset or regeneration, pace, provider detail), which is
+ * empty when the provider reported none of them.
+ */
+export function describeUsageWindow(window: UsageWindow, now = Date.now()): UsageWindowSummary {
+  const percent = formatNumber(window.percent, window.precision ?? 0);
+  const eventTime = relativeTime(window.eventAt, now);
+  const event = window.eventLabel && eventTime ? `${window.eventLabel} ${eventTime}` : undefined;
+  const elapsed = windowElapsedPercent(window, now);
+  const pace =
+    window.pace?.label ??
+    (elapsed === undefined ? undefined : `${formatNumber(elapsed, 0)}% of window elapsed`);
+  return { percent, detail: [event, pace, window.detail].filter(Boolean).join(" · ") };
 }
 
 export function formatProviderUsage(
@@ -836,14 +855,7 @@ export function formatProviderUsage(
   }
   const windows = result.windows.flatMap((window) => {
     const health = quotaHealth(window, now);
-    const percent = formatNumber(window.percent, window.precision ?? 0);
-    const eventTime = relativeTime(window.eventAt, now);
-    const event = window.eventLabel && eventTime ? `${window.eventLabel} ${eventTime}` : undefined;
-    const elapsed = windowElapsedPercent(window, now);
-    const pace =
-      window.pace?.label ??
-      (elapsed === undefined ? undefined : `${formatNumber(elapsed, 0)}% of window elapsed`);
-    const detail = [event, pace, window.detail].filter(Boolean).join(" · ");
+    const { percent, detail } = describeUsageWindow(window, now);
     return [
       `  ${paint.label(window.label)}`,
       `  ${progressBar(window.percent, paint, health)} ${paint.health(health, `${percent}% ${window.qualifier}`)}`,
@@ -867,20 +879,51 @@ export function usageFailureMessage(reason: RuntimeValue): string {
   return reason instanceof Error ? reason.message : "unknown error";
 }
 
-export async function usageReport(ctx: ExtensionContext, style?: UsageStyle): Promise<string> {
-  const paint = usagePainter(style);
-  const requests = [claudeUsage(ctx), codexUsage(ctx), syntheticUsage(ctx)];
-  const settled = await Promise.allSettled(requests);
-  return settled
-    .map((result, index) =>
+/** One provider's outcome: its report, or why none could be read. */
+export type ProviderUsageReading =
+  | { ok: true; usage: ProviderUsage }
+  | { ok: false; name: string; error: string };
+
+/** Every provider's outcome from one round of requests, and when the round finished. */
+export type ProviderUsageReport = { observedAt: Date; providers: ProviderUsageReading[] };
+
+/**
+ * Queries Claude, ChatGPT, and Synthetic once. A failed provider becomes a
+ * reading with its failure message, so this never rejects; the Usage tab and
+ * the structured host report both render from one result.
+ */
+export async function readProviderUsages(ctx: ExtensionContext): Promise<ProviderUsageReport> {
+  const settled = await Promise.allSettled([
+    claudeUsage(ctx),
+    codexUsage(ctx),
+    syntheticUsage(ctx),
+  ]);
+  return {
+    observedAt: new Date(),
+    providers: settled.map((result, index): ProviderUsageReading =>
       result.status === "fulfilled"
-        ? formatProviderUsage(result.value, style)
-        : `${paint.head(PROVIDER_NAMES[index])}${paint.dim(" — ")}${paint.health(
+        ? { ok: true, usage: result.value }
+        : { ok: false, name: PROVIDER_NAMES[index], error: usageFailureMessage(result.reason) },
+    ),
+  };
+}
+
+export function formatUsageReport(report: ProviderUsageReport, style?: UsageStyle): string {
+  const paint = usagePainter(style);
+  return report.providers
+    .map((reading) =>
+      reading.ok
+        ? formatProviderUsage(reading.usage, style)
+        : `${paint.head(reading.name)}${paint.dim(" — ")}${paint.health(
             "exhausted",
-            `unavailable (${usageFailureMessage(result.reason)})`,
+            `unavailable (${reading.error})`,
           )}`,
     )
     .join("\n\n");
+}
+
+export async function usageReport(ctx: ExtensionContext, style?: UsageStyle): Promise<string> {
+  return formatUsageReport(await readProviderUsages(ctx), style);
 }
 
 // Command registration lives in status-commands.ts; this module only fetches
