@@ -133,6 +133,7 @@ export interface NestedAgentManager {
   abort(id: string): boolean;
   setFastMode?(id: string, requested: boolean): AgentRecord | undefined;
   setDaybreak?(id: string, requested: boolean): AgentRecord | undefined;
+  featureUnavailableReason?(id: string, feature: "fast" | "daybreak"): string | undefined;
   /** Journaled snapshot of an agent no longer in memory (durable revival). */
   getDormant?(id: string): JournalAgentSnapshot | undefined;
   /** Record that a dormant agent's result was read. */
@@ -790,8 +791,13 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
       const updated = context.manager.setFastMode?.(record.id, params.enabled);
       if (!updated)
         return textResult(`Nested agent "${params.agent_id}" is no longer retained.`, true);
+      const unavailable = params.enabled
+        ? context.manager.featureUnavailableReason?.(updated.id, "fast")
+        : undefined;
       return textResult(
-        `Fast mode ${params.enabled ? "enabled" : "disabled"} for ${updated.id} ` +
+        (unavailable === undefined
+          ? `Fast mode ${params.enabled ? "enabled" : "disabled"} for ${updated.id} `
+          : `Fast mode requested for ${updated.id} but not applied: ${unavailable} `) +
           `(generation ${updated.resultGeneration ?? 1}, revision ${updated.fastModeRevision ?? 0}).`,
       );
     },
@@ -814,8 +820,13 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
       const updated = context.manager.setDaybreak?.(record.id, params.enabled);
       if (!updated)
         return textResult(`Nested agent "${params.agent_id}" is no longer retained.`, true);
+      const unavailable = params.enabled
+        ? context.manager.featureUnavailableReason?.(updated.id, "daybreak")
+        : undefined;
       return textResult(
-        `Daybreak ${params.enabled ? "enabled" : "disabled"} for ${updated.id} ` +
+        (unavailable === undefined
+          ? `Daybreak ${params.enabled ? "enabled" : "disabled"} for ${updated.id} `
+          : `Daybreak requested for ${updated.id} but unavailable: ${unavailable} `) +
           `(generation ${updated.resultGeneration ?? 1}, revision ${updated.daybreakRevision ?? 0}).`,
       );
     },

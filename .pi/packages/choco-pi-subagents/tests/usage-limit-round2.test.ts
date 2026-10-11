@@ -426,3 +426,92 @@ test("seam: Codex entries are validated structurally and accountId is optional",
   assert.equal(accountIdWithPolicy(throwing, "openai-codex"), undefined);
   assert.equal(readUsageLimitPolicy(undefined), undefined);
 });
+
+for (const signed of [true, false]) {
+  test(`openai sign-in limit entry upgrades only the subscription code (${signed ? "code" : "plain"})`, async (t) => {
+    const { env } = await setup(t);
+    const sol = env.models.sol;
+    const solSession = await env.childSession(sol);
+    enableTimers(t);
+    const rootManager = env.freshSessionManager();
+    const state = policyState({
+      preference: "auto-resume",
+      classification: { kind: "quota", confidence: "inferred" },
+    });
+    state.corroborate = (count) => ({
+      ready: false,
+      evidence:
+        state.corroborated[count - 1]?.confidence === "structured" ? "confirmed" : "unavailable",
+    });
+    const installed = installPolicy(state, rootManager.getSessionId());
+    const { manager, runs } = harness();
+    try {
+      // The openai sign-in entry carries no reset time and no account id.
+      solSession.sessionManager.appendCustomEntry(CODEX_USAGE_LIMIT_ENTRY, {
+        observedAt: Date.now(),
+      });
+      const id = manager.spawn(
+        env.pi,
+        env.context({ sessionManager: rootManager }),
+        "implementer",
+        "task",
+        { ...background, model: sol },
+      );
+      const promise = manager.getRecord(id)?.promise;
+      runs[0].resolve({
+        responseText: "",
+        session: solSession,
+        aborted: false,
+        steered: false,
+        failure: signed
+          ? '429 {"error":{"code":"subscription_sharing_usage_limit_exceeded"}}'
+          : "429 rate limit exceeded",
+      });
+      await promise;
+      const sent = state.corroborated[0];
+      assert.equal(sent?.provider, "openai");
+      assert.equal(sent?.confidence, signed ? "structured" : "inferred");
+      assert.equal(sent?.resetAt, undefined, "sign-in limits expose no reset time");
+      assert.equal(sent?.accountId, undefined);
+    } finally {
+      manager.dispose();
+      installed.remove();
+      cleanupProviders();
+    }
+  });
+}
+
+test("Fast and Daybreak requests on openai sign-in report why they are not applied", async (t) => {
+  const { env } = await setup(t);
+  const sol = env.models.sol;
+  const { manager, runs } = harness();
+  // The real registry; only its auth-type answer is scripted, read at query time.
+  let oauth = true;
+  const registry = env.context().modelRegistry;
+  t.mock.method(registry, "isUsingOAuth", () => oauth);
+  try {
+    const id = manager.spawn(env.pi, env.context(), "implementer", "task", {
+      ...background,
+      model: sol,
+    });
+    assert.equal(
+      manager.featureUnavailableReason(id, "fast"),
+      "accepted but not honored by api.openai.com subscription sign-in",
+    );
+    assert.match(manager.featureUnavailableReason(id, "daybreak") ?? "", /not controllable/);
+    oauth = false;
+    assert.equal(manager.featureUnavailableReason(id, "fast"), undefined, "sk- key keeps Fast");
+    assert.equal(manager.featureUnavailableReason("missing", "fast"), undefined);
+    for (const run of runs) {
+      run.resolve({
+        responseText: "ok",
+        session: await env.childSession(sol),
+        aborted: false,
+        steered: false,
+      });
+    }
+  } finally {
+    manager.dispose();
+    cleanupProviders();
+  }
+});

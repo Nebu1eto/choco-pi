@@ -72,6 +72,18 @@ source package cannot use:
 
 ## What was changed
 
+- 2026-10-09: Treat Pi "Sign in with ChatGPT" on provider `openai`
+  (`https://api.openai.com/v1`, `ModelRegistry.isUsingOAuth`) like
+  `openai-codex` for the child's structured usage-limit entry, but only when
+  the failure text carries `subscription_sharing_usage_limit_exceeded`; that
+  entry has no reset time. `set_subagent_fast_mode` and
+  `set_subagent_daybreak` (top-level and nested) still record the request but
+  report it as not honored/unavailable on that sign-in, since live probes
+  showed `service_tier` echoed `default` and `access_programs` not
+  controllable. New `src/openai-sign-in.ts` holds a local copy of the
+  predicate (no import from the root or the Codex package);
+  `AgentManager.featureUnavailableReason` exposes the reason.
+
 - 2026-10-08: Guard spawn and foreground/background resume completion against
   owned running, queued, or waiting-for-reset dependents. A tool-free terminal
   turn gets one corrective steer per execution generation; a second unfinished

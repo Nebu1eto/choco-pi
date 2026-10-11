@@ -3213,8 +3213,13 @@ export default function (pi: ExtensionAPI) {
         if (!updated) {
           return errorResult(`Agent "${params.agent_id}" is no longer retained.`);
         }
+        const unavailable = params.enabled
+          ? manager.featureUnavailableReason(updated.id, "fast")
+          : undefined;
         return textResult(
-          `Fast mode ${params.enabled ? "enabled" : "disabled"} for ${updated.id}. ` +
+          (unavailable === undefined
+            ? `Fast mode ${params.enabled ? "enabled" : "disabled"} for ${updated.id}. `
+            : `Fast mode requested for ${updated.id} but not applied: ${unavailable}. `) +
             `Generation: ${updated.resultGeneration ?? 1}. Revision: ${updated.fastModeRevision ?? 0}. ` +
             `Status: ${updated.status}.`,
         );
@@ -3238,8 +3243,13 @@ export default function (pi: ExtensionAPI) {
         if (!record) return errorResult(`Agent not found: "${params.agent_id}".`);
         const updated = manager.setDaybreak(record.id, params.enabled);
         if (!updated) return errorResult(`Agent "${params.agent_id}" is no longer retained.`);
+        const unavailable = params.enabled
+          ? manager.featureUnavailableReason(updated.id, "daybreak")
+          : undefined;
         return textResult(
-          `Daybreak ${params.enabled ? "enabled" : "disabled"} for ${updated.id}. ` +
+          (unavailable === undefined
+            ? `Daybreak ${params.enabled ? "enabled" : "disabled"} for ${updated.id}. `
+            : `Daybreak requested for ${updated.id} but unavailable: ${unavailable}. `) +
             `Generation: ${updated.resultGeneration ?? 1}. Revision: ${updated.daybreakRevision ?? 0}. ` +
             `Status: ${updated.status}.`,
         );

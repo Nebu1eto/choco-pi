@@ -26,6 +26,12 @@ import { unregisterChildSessionId } from "./child-context.ts";
 import { cleanupChildSessionOwner, emitChildSessionShutdown } from "./child-session-cleanup.ts";
 import { setSessionFastMode, snapshotFastMode } from "./fast-mode-bridge.ts";
 import { setSessionDaybreak, snapshotDaybreak } from "./daybreak-bridge.ts";
+import {
+  isOpenAISubscriptionSignIn,
+  OPENAI_SIGN_IN_DAYBREAK_REASON,
+  OPENAI_SIGN_IN_FAST_REASON,
+  OPENAI_SIGN_IN_USAGE_LIMIT_CODE,
+} from "./openai-sign-in.ts";
 import { normalizeMaxConcurrent, schedulingMaxConcurrent } from "./limits.ts";
 import { assignHandle, handleBase } from "./mention.ts";
 import type { ModelEntry } from "./model-resolver.ts";
@@ -157,6 +163,8 @@ interface UsageModelRegistry {
   getAll(): ModelEntry[];
   getAvailable?(): ModelEntry[];
   find(provider: string, modelId: string): Model<Api> | undefined;
+  /** Pi's auth-type query; read only to detect openai subscription sign-in. */
+  isUsingOAuth?(model: Model<Api>): boolean;
 }
 
 type ModelRef = { provider: string; id: string };
@@ -375,17 +383,23 @@ function accountKey(owner: string, providerKey: string): string {
 /**
  * Apply the Codex provider's structured limit entry from the failing child's
  * own branch. The entry is appended on that session's errored `message_end`,
- * so the root branch never carries it for a child failure.
+ * so the root branch never carries it for a child failure. Provider `openai`
+ * (ChatGPT sign-in on api.openai.com) gets the same entry, without a reset
+ * time, only for the subscription usage-limit code in this failure's text.
  */
 function withCodexUsageEntry(
   classification: UsageLimitClassification,
   model: ModelRef,
   session: AgentSession | undefined,
   failedAt: number,
+  failure: string,
 ): UsageLimitClassification {
-  if (session === undefined || model.provider.toLowerCase() !== "openai-codex") {
-    return classification;
-  }
+  if (session === undefined) return classification;
+  const provider = model.provider.toLowerCase();
+  const eligible =
+    provider === "openai-codex" ||
+    (provider === "openai" && failure.includes(OPENAI_SIGN_IN_USAGE_LIMIT_CODE));
+  if (!eligible) return classification;
   let entry: ReturnType<typeof latestCodexUsageLimitEntry>;
   try {
     entry = latestCodexUsageLimitEntry(session.sessionManager.getBranch(), failedAt);
@@ -1454,7 +1468,7 @@ export class AgentManager {
     if (classified === undefined || classified.kind === "transient") return undefined;
     const sessionId = childSessionId(record, session);
     const initial = withSessionId(
-      withCodexUsageEntry(classified, model, session, failedAt),
+      withCodexUsageEntry(classified, model, session, failedAt, failure),
       sessionId,
     );
     const preference = await preferenceFromPolicy(policy);
@@ -3046,6 +3060,27 @@ export class AgentManager {
       record.daybreakInitialization.revision = record.daybreakRevision;
     }
     return record;
+  }
+
+  /**
+   * Why a Fast or Daybreak request cannot take effect on the record's current
+   * model: openai subscription sign-in on api.openai.com accepts neither. The
+   * request itself is still recorded so a later model change honors it.
+   */
+  featureUnavailableReason(id: string, feature: "fast" | "daybreak"): string | undefined {
+    const record = this.agents.get(id);
+    if (!record) return undefined;
+    const registry = this.usageScopes.get(id)?.modelRegistry;
+    let model: Model<Api> | undefined;
+    try {
+      model = record.session?.model;
+      const ref = record.spawnModel;
+      if (model === undefined && ref !== undefined) model = registry?.find(ref.provider, ref.id);
+    } catch {
+      return undefined;
+    }
+    if (!isOpenAISubscriptionSignIn(model, registry)) return undefined;
+    return feature === "fast" ? OPENAI_SIGN_IN_FAST_REASON : OPENAI_SIGN_IN_DAYBREAK_REASON;
   }
 
   /** Update one accepted generation without changing resume persistence semantics. */
