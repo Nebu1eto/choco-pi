@@ -268,20 +268,23 @@ export function createOpenAICodexProviderStream<TApi extends Api>(
   streamOptions: OpenAICodexStreamOptions | undefined,
   options: OpenAICodexProviderOptions,
 ) {
-  const runtimeConfig = options.getConfig?.();
-  const fastModeDecision = snapshotCodexFastModeDecision(
-    streamOptions?.sessionId,
-    model,
-    runtimeConfig?.openai.fast === true,
-  );
-  const serviceTier = codexServiceTierForDecision(fastModeDecision);
+  const backgroundLane = streamOptions?.backgroundCompactionLane === true;
+  const runtimeConfig = backgroundLane ? undefined : options.getConfig?.();
+  const fastModeDecision = backgroundLane
+    ? undefined
+    : snapshotCodexFastModeDecision(
+        streamOptions?.sessionId,
+        model,
+        runtimeConfig?.openai.fast === true,
+      );
+  const serviceTier = fastModeDecision ? codexServiceTierForDecision(fastModeDecision) : undefined;
   const upstreamOnResponse = streamOptions?.onResponse;
   const daybreakApiKey = streamOptions?.apiKey;
   const daybreakBaseUrl = model.baseUrl;
   const effectiveStreamOptions: OpenAICodexStreamOptions = {
     ...streamOptions,
     fastModeDecision,
-    daybreakTicket: mintDaybreakTicket(model, streamOptions),
+    daybreakTicket: backgroundLane ? undefined : mintDaybreakTicket(model, streamOptions),
     onResponse: async (response, responseModel) => {
       if (response.status === 401 || response.status === 403)
         invalidateCodexDaybreakEntitlement(daybreakApiKey, daybreakBaseUrl);

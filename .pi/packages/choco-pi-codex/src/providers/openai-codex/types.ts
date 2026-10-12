@@ -241,6 +241,9 @@ export type OpenAICodexStreamOptions = CodexProviderStreamOptions & {
   websocketConnectTimeoutMs?: number | undefined;
   env?: ProviderEnv | undefined;
   canonicalCompaction?: boolean | undefined;
+  /** Isolated native preparation: no foreground turn state or responses-lite rewriting. */
+  backgroundCompactionLane?: boolean | undefined;
+  validateBackgroundCompactionPayload?: ((body: ResponsesBody) => boolean) | undefined;
   compactionDiagnostics?: CodexCompactionDiagnostic | undefined;
 };
 

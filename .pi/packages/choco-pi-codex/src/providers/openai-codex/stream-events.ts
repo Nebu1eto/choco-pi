@@ -352,13 +352,38 @@ async function* observeDaybreakCompletion(
   }
 }
 
-export async function processMappedCodexResponsesStream<TApi extends Api>(
+function observeProviderEvents<TApi extends Api>(
   events: AsyncIterable<CodexStreamEvent>,
+  model: Model<TApi>,
+  options: OpenAICodexStreamOptions | undefined,
+): AsyncIterable<CodexStreamEvent> {
+  const observer = options?.onProviderStreamEvent;
+  const signal = options?.signal;
+  if (!observer) return events;
+  const capturedModel = structuredClone(model);
+  return (async function* () {
+    for await (const event of events) {
+      signal?.throwIfAborted();
+      try {
+        await observer(structuredClone(event), capturedModel);
+      } catch {
+        // An advisory observer cannot corrupt provider-owned events or fail foreground generation.
+        signal?.throwIfAborted();
+      }
+      signal?.throwIfAborted();
+      yield event;
+    }
+  })();
+}
+
+export async function processMappedCodexResponsesStream<TApi extends Api>(
+  sourceEvents: AsyncIterable<CodexStreamEvent>,
   output: AssistantMessage,
   stream: AssistantMessageEventStream,
   model: Model<TApi>,
   options: OpenAICodexStreamOptions | undefined,
 ): Promise<void> {
+  const events = observeProviderEvents(sourceEvents, model, options);
   await processResponsesStream(
     // SAFETY: mapCodexEvents validates the discriminator and normalizes Codex terminal events to
     // the Responses event names consumed by processResponsesStream before this adapter runs.
