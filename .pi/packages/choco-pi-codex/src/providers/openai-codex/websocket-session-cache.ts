@@ -52,7 +52,8 @@ async function websocketRouteKey(
   const proxy = await resolveWebSocketProxyForTarget(url, env);
   const handshakeIdentity = JSON.stringify([
     accountId,
-    new URL(url).href,
+    // Normalize when parseable; an unparseable URL still keys its own route verbatim.
+    URL.parse(url)?.href ?? url,
     proxy ?? null,
     routeIdentityHeaders(headers),
   ]);

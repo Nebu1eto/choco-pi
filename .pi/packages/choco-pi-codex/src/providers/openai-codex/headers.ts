@@ -65,7 +65,9 @@ export function resolveCodexUrl(baseUrl: string | undefined): string {
 }
 
 export function resolveCodexWebSocketUrl(baseUrl: string | undefined): string {
-  const url = new URL(resolveCodexUrl(baseUrl));
+  const resolved = resolveCodexUrl(baseUrl);
+  const url = URL.parse(resolved);
+  if (!url) throw new Error(`Invalid OpenAI Codex base URL: ${resolved}`);
   if (url.protocol === "https:") url.protocol = "wss:";
   if (url.protocol === "http:") url.protocol = "ws:";
   return url.toString();
