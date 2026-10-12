@@ -1,7 +1,7 @@
 import { conditionalProperties } from "../runtime-values.ts";
 import { jsonValueType, JsonObjectSchema } from "../runtime-values.ts";
 import type { JsonObject, BoundaryValue } from "../runtime-values.ts";
-import { Type } from "typebox";
+import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 import type { CompactionEntry, CompactionResult } from "@earendil-works/pi-coding-agent";
 import { isCodexCompactionDiagnostic, type CodexCompactionDiagnostic } from "./diagnostics.ts";
@@ -49,7 +49,41 @@ export type NativeCompactionIdentity = {
   baseUrl: string;
 };
 
+export const BackgroundNativeMetadataSchema = Type.Object(
+  {
+    sessionId: Type.String({ minLength: 1 }),
+    ownerKey: Type.String({ minLength: 1 }),
+    ownerGeneration: Type.Integer({ minimum: 0 }),
+    cutEntryId: Type.String({ minLength: 1 }),
+    retentionPolicyVersion: Type.Literal(1),
+    providerScope: Type.Object(
+      {
+        provider: Type.String({ minLength: 1 }),
+        baseUrl: Type.Optional(Type.String({ minLength: 1 })),
+        model: Type.String({ minLength: 1 }),
+        authMode: Type.Optional(Type.String({ minLength: 1 })),
+        accountScope: Type.Optional(Type.String({ minLength: 1 })),
+      },
+      { additionalProperties: false },
+    ),
+  },
+  { additionalProperties: false },
+);
+export type BackgroundNativeMetadata = Static<typeof BackgroundNativeMetadataSchema>;
+
+export type BackgroundNativeCompactionDetails = NativeCompactionDetails & {
+  compactedWindow: JsonObject[];
+  schemaVersion: 1;
+  candidateId: string;
+  prefixFingerprint: string;
+  background: BackgroundNativeMetadata;
+};
+
 export type NativeCompactionDetails = NativeCompactionIdentity & {
+  schemaVersion?: 1 | undefined;
+  candidateId?: string | undefined;
+  prefixFingerprint?: string | undefined;
+  background?: BackgroundNativeMetadata | undefined;
   strategy: PersistedNativeCompactionStrategy;
   compactedWindow: BoundaryValue[];
   compactResponseId?: string | undefined;
@@ -189,26 +223,30 @@ export function isNativeCompactionDetails(value: BoundaryValue): value is Native
   return (
     (candidate["strategy"] === NATIVE_COMPACTION_STRATEGY ||
       candidate["strategy"] === LEGACY_NATIVE_COMPACTION_STRATEGY) &&
-    isNonEmptyString(candidate["provider"]!) &&
-    isNonEmptyString(candidate["api"]!) &&
-    isNonEmptyString(candidate["model"]!) &&
-    isNonEmptyString(candidate["baseUrl"]!) &&
-    Array.isArray(candidate["compactedWindow"]!) &&
-    candidate["compactedWindow"]!.every(isCompactedWindowItem) &&
-    isNonEmptyString(candidate["createdAt"]!) &&
+    isNonEmptyString(candidate["provider"]) &&
+    isNonEmptyString(candidate["api"]) &&
+    isNonEmptyString(candidate["model"]) &&
+    isNonEmptyString(candidate["baseUrl"]) &&
+    Array.isArray(candidate["compactedWindow"]) &&
+    candidate["compactedWindow"].every(isCompactedWindowItem) &&
+    isNonEmptyString(candidate["createdAt"]) &&
     (candidate["compactResponseId"] === undefined ||
-      isNonEmptyString(candidate["compactResponseId"]!)) &&
+      isNonEmptyString(candidate["compactResponseId"])) &&
     (candidate["requestMeta"] === undefined ||
-      isNativeCompactionRequestMeta(candidate["requestMeta"]!)) &&
-    (candidate["usage"] === undefined || isNativeCompactionUsage(candidate["usage"]!))
+      isNativeCompactionRequestMeta(candidate["requestMeta"])) &&
+    (candidate["usage"] === undefined || isNativeCompactionUsage(candidate["usage"])) &&
+    (candidate["schemaVersion"] === undefined || candidate["schemaVersion"] === 1) &&
+    (candidate["candidateId"] === undefined || isNonEmptyString(candidate["candidateId"])) &&
+    (candidate["prefixFingerprint"] === undefined ||
+      isNonEmptyString(candidate["prefixFingerprint"])) &&
+    (candidate["background"] === undefined ||
+      Value.Check(BackgroundNativeMetadataSchema, candidate["background"]))
   );
 }
 
 export function isNativeCompactionEntry(value: BoundaryValue): value is NativeCompactionEntry {
   return (
-    isRecord(value) &&
-    value["type"] === "compaction" &&
-    isNativeCompactionDetails(value["details"]!)
+    isRecord(value) && value["type"] === "compaction" && isNativeCompactionDetails(value["details"])
   );
 }
 
