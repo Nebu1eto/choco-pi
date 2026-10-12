@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
@@ -15,6 +18,7 @@ import {
   elideToolResults,
   ELISION_STEP_CHARS,
 } from "../src/extension/context-elision.ts";
+import { rewriteCodexProviderRequest } from "../src/adapter/provider-request.ts";
 import { registerCodexEvents } from "../src/extension/events.ts";
 import { createCodexExtensionRuntime } from "../src/extension/runtime.ts";
 import {
@@ -171,10 +175,10 @@ function fixture<T>(value: FixtureValue): T {
 }
 
 function harness(manager = SessionManager.inMemory()) {
-  const handlers = new Map<string, Handler>();
+  const handlers = new Map<string, Handler[]>();
   const pi = fixture<ExtensionAPI>({
     on(name: string, handler: Handler) {
-      handlers.set(name, handler);
+      handlers.set(name, [...(handlers.get(name) ?? []), handler]);
     },
     appendEntry(name: string, data: FixtureValue) {
       manager.appendCustomEntry(name, data);
@@ -207,10 +211,11 @@ function harness(manager = SessionManager.inMemory()) {
     }),
     fixture({ applyConfig() {} }),
   );
+  /** Runs every handler registered for the event in order; returns the last handler's result. */
   const invoke = (name: string, event: FixtureValue = {}) => {
-    const handler = handlers.get(name);
-    assert.ok(handler);
-    return handler(event, ctx);
+    const registered = handlers.get(name);
+    assert.ok(registered?.length);
+    return registered.map((handler) => handler(event, ctx)).at(-1);
   };
   const activate = () => {
     ctx.model = fixture({
@@ -404,4 +409,39 @@ test("message_end persists an observedAt-only usage-limit entry for openai sign-
     },
   });
   assert.equal(host.manager.getLeafEntry(), entry);
+});
+
+async function withIsolatedAgentDir(run: () => Promise<void>): Promise<void> {
+  const agentDir = await mkdtemp(join(tmpdir(), "codex-legacy-gate-"));
+  const previous = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+  try {
+    await run();
+  } finally {
+    if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previous;
+    await rm(agentDir, { recursive: true, force: true });
+  }
+}
+
+test("a cancelled session switch keeps the legacy request rewrite while background compaction is off", async () => {
+  await withIsolatedAgentDir(async () => {
+    const host = harness();
+    host.manager.appendMessage(fixture(user("hello")));
+    await host.invoke("session_start", { reason: "resume" });
+    host.activate();
+    const payload = () => ({
+      model: "gpt-6-astra",
+      instructions: "system",
+      input: [{ role: "user", content: [{ type: "input_text", text: "hello" }] }],
+      stream: true,
+      store: false,
+    });
+    const expected = await rewriteCodexProviderRequest(payload(), host.ctx, host.runtime.state);
+    assert.notEqual(expected, undefined);
+    // A later handler or a failing SessionManager.open leaves this instance serving the session.
+    host.invoke("session_before_switch", { reason: "new" });
+    const actual = await host.invoke("before_provider_request", { payload: payload() });
+    assert.deepEqual(actual, expected);
+  });
 });

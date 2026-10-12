@@ -46,6 +46,13 @@ import {
   takeCodexUsageLimitEntry,
 } from "./usage-limit-entry.ts";
 import { withLiveCtx } from "./live-context.ts";
+import {
+  createCodexBackgroundIntegration,
+  registerCodexBackgroundFactory,
+  updateCodexBackgroundElision,
+  willAdoptCodexBackgroundCheckpoint,
+  type CodexBackgroundElisionState,
+} from "./background-compaction.ts";
 import { registerCodexDaybreakProbe } from "./daybreak-probe.ts";
 import { resetRegisteredToolCapture } from "../tools/code-mode/registered-tool-bridge.ts";
 import { isNativeSteerPending } from "../providers/openai-codex/native-steering.ts";
@@ -138,6 +145,8 @@ export function registerSessionReplacementEvents(
   pi: ExtensionAPI,
   runtime: Pick<CodexExtensionRuntime, "cancelCacheKeepalive">,
 ): void {
+  // A later handler may cancel the replacement, or it may fail before teardown; session_shutdown
+  // owns background teardown so a surviving instance keeps its current generation.
   pi.on("session_before_switch", (_event, ctx) => {
     runtime.cancelCacheKeepalive();
     resetRegisteredToolCapture(ctx);
@@ -175,41 +184,82 @@ export function registerCodexEvents(
 ): void {
   registerCodexDaybreakProbe(pi);
   const { state, tracker, sessions } = runtime;
-  let elisionEpoch = "";
-  let elisionCut = 0;
+  // The host settings gate excludes this registry entry while native background compaction is off.
+  registerCodexBackgroundFactory(true);
+  const elisionStates = new Map<string, CodexBackgroundElisionState>();
+  const elisionFor = (sessionId: string): CodexBackgroundElisionState => {
+    let elision = elisionStates.get(sessionId);
+    if (elision === undefined) {
+      elision = { epoch: "", cut: 0 };
+      elisionStates.set(sessionId, elision);
+    }
+    return elision;
+  };
+  const background = createCodexBackgroundIntegration({
+    state,
+    onInstalled: (sessionId, epoch) =>
+      updateCodexBackgroundElision(elisionStates, sessionId, epoch),
+  });
   const restoreElision = (ctx: ExtensionContext): void => {
+    const elision = elisionFor(ctx.sessionManager.getSessionId());
     const branch = ctx.sessionManager.getBranch();
-    elisionEpoch = branch.findLast((entry) => entry.type === "compaction")?.id ?? "";
-    elisionCut = 0;
+    elision.epoch = branch.findLast((entry) => entry.type === "compaction")?.id ?? "";
+    elision.cut = 0;
     for (const entry of branch) {
       if (
         entry.type === "custom" &&
         entry.customType === CONTEXT_ELISION_ENTRY &&
         Value.Check(ContextElisionEntrySchema, entry.data) &&
-        entry.data.epoch === elisionEpoch
+        entry.data.epoch === elision.epoch
       )
-        elisionCut = Math.max(elisionCut, entry.data.cut);
+        elision.cut = Math.max(elision.cut, entry.data.cut);
     }
   };
   sessions.onSessionExit((sessionId) => tracker.recordSessionFinished(sessionId));
   registerSessionReplacementEvents(pi, runtime);
+  /** Rebind background compaction for the generation begin() returned; false once superseded. */
+  const refreshBackground = async (
+    ctx: ExtensionContext,
+    ownerGeneration: number,
+  ): Promise<boolean> => {
+    await background.refresh(ctx, ownerGeneration);
+    return background.isGenerationCurrent(ownerGeneration);
+  };
+  /** Shared activation tail; false when voice-only or superseded, so no host prep follows. */
+  const activateAdapter = async (
+    ctx: ExtensionContext,
+    ownerGeneration: number,
+  ): Promise<boolean> => {
+    const voiceFeaturesOnly = state.config.voiceFeaturesOnly;
+    tools.ensureOptionalTools();
+    syncAdapter(pi, ctx, state);
+    await runtime.configureDiagnostics(ctx);
+    if (voiceFeaturesOnly || !background.isGenerationCurrent(ownerGeneration)) return false;
+    void withLiveCtx(() => ui.refreshUsageStatus(ctx));
+    prepareCodeModeHost(codeMode, ctx);
+    if (!state.config.prompt.heavySystemPromptOverwrite)
+      void withLiveCtx(() =>
+        runtime.startPrewarm(ctx, codeMode.refreshPromptTools(ctx.getSystemPrompt(), ctx)),
+      );
+    return true;
+  };
 
   pi.on("session_start", async (event, ctx) => {
+    const sessionId = ctx.sessionManager.getSessionId();
+    const ownerGeneration = background.begin(ctx);
     restoreElision(ctx);
     ui.invalidateUsageStatus();
     const [{ initializeBashParser }, { extractPiPromptSkills }, { maybeWarnLocalCheckoutVersion }] =
       await Promise.all([loadBash(), loadPromptBuilder(), loadLocalVersionWarning()]);
+    if (!background.isGenerationCurrent(ownerGeneration)) return;
     initializeBashParser();
-    runtime.resetTransport(ctx.sessionManager.getSessionId());
+    runtime.resetTransport(sessionId);
     state.cwd = ctx.cwd;
     state.config = readEffectiveCodexConversionConfig({
       cwd: ctx.cwd,
       projectTrusted: ctx.isProjectTrusted(),
     });
-    initializeCodexFastModeDefault(
-      ctx.sessionManager.getSessionId(),
-      state.config.openai.fast === true,
-    );
+    initializeCodexFastModeDefault(sessionId, state.config.openai.fast === true);
     state.weeklyUsageLeft = undefined;
     state.executionMode = state.config.executionMode;
     state.activeProviderSystemPrompt = undefined;
@@ -217,32 +267,23 @@ export function registerCodexEvents(
     state.canonicalAliasEndpoint = undefined;
     proxyProvider.applyConfig(state.config, ctx.modelRegistry);
     state.promptSkills = extractPiPromptSkills(ctx.getSystemPrompt());
-    if (state.config.voiceFeaturesOnly) {
-      clearApplyPatchRenderState();
-      tools.ensureOptionalTools();
-      syncAdapter(pi, ctx, state);
-      await runtime.configureDiagnostics(ctx);
-      return;
+    if (!(await refreshBackground(ctx, ownerGeneration))) return;
+    if (!state.config.voiceFeaturesOnly) {
+      sessions.setBaseEnv(runtime.execEnv());
+      tracker.clear();
     }
-    sessions.setBaseEnv(runtime.execEnv());
-    tracker.clear();
     clearApplyPatchRenderState();
-    tools.ensureOptionalTools();
-    syncAdapter(pi, ctx, state);
-    await runtime.configureDiagnostics(ctx);
-    void withLiveCtx(() => ui.refreshUsageStatus(ctx));
-    prepareCodeModeHost(codeMode, ctx);
-    if (!state.config.prompt.heavySystemPromptOverwrite)
-      void withLiveCtx(() =>
-        runtime.startPrewarm(ctx, codeMode.refreshPromptTools(ctx.getSystemPrompt(), ctx)),
-      );
-    if (event.reason === "startup") await maybeWarnLocalCheckoutVersion(ctx);
+    const activated = await activateAdapter(ctx, ownerGeneration);
+    if (activated && event.reason === "startup") await maybeWarnLocalCheckoutVersion(ctx);
   });
 
   pi.on("model_select", async (_event, ctx) => {
+    const sessionId = ctx.sessionManager.getSessionId();
+    const ownerGeneration = background.begin(ctx);
     const { extractPiPromptSkills } = await loadPromptBuilder();
+    if (!background.isGenerationCurrent(ownerGeneration)) return;
     ui.invalidateUsageStatus();
-    runtime.resetTransport(ctx.sessionManager.getSessionId());
+    runtime.resetTransport(sessionId);
     state.cwd = ctx.cwd;
     state.activeProviderSystemPrompt = undefined;
     state.voiceSystemPromptOverride = undefined;
@@ -250,28 +291,19 @@ export function registerCodexEvents(
     state.weeklyUsageLeft = undefined;
     state.promptSkills = extractPiPromptSkills(ctx.getSystemPrompt());
     proxyProvider.applyConfig(state.config, ctx.modelRegistry);
-    if (state.config.voiceFeaturesOnly) {
-      tools.ensureOptionalTools();
-      syncAdapter(pi, ctx, state);
-      await runtime.configureDiagnostics(ctx);
-      return;
-    }
-    tools.ensureOptionalTools();
-    syncAdapter(pi, ctx, state);
-    await runtime.configureDiagnostics(ctx);
-    void withLiveCtx(() => ui.refreshUsageStatus(ctx));
-    prepareCodeModeHost(codeMode, ctx);
-    if (!state.config.prompt.heavySystemPromptOverwrite)
-      void withLiveCtx(() =>
-        runtime.startPrewarm(ctx, codeMode.refreshPromptTools(ctx.getSystemPrompt(), ctx)),
-      );
+    if (!(await refreshBackground(ctx, ownerGeneration))) return;
+    await activateAdapter(ctx, ownerGeneration);
   });
   pi.on("session_tree", async (_event, ctx) => {
+    const sessionId = ctx.sessionManager.getSessionId();
+    const ownerGeneration = background.begin(ctx);
     restoreElision(ctx);
     state.activeProviderSystemPrompt = undefined;
     state.voiceSystemPromptOverride = undefined;
-    runtime.resetTransport(ctx.sessionManager.getSessionId());
+    runtime.resetTransport(sessionId);
     await codeMode.shutdownHost();
+    if (!background.isGenerationCurrent(ownerGeneration)) return;
+    if (!(await refreshBackground(ctx, ownerGeneration))) return;
     proxyProvider.applyConfig(state.config, ctx.modelRegistry);
     syncAdapter(pi, ctx, state);
     prepareCodeModeHost(codeMode, ctx);
@@ -305,13 +337,14 @@ export function registerCodexEvents(
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
+    const sessionId = ctx.sessionManager.getSessionId();
+    background.stop();
+    elisionStates.delete(sessionId);
     runtime.cancelCacheKeepalive();
     resetRegisteredToolCapture(ctx);
     clearUsageLimitSignal(ctx.sessionManager.getSessionId());
     const failures: BoundaryValue[] = [];
-    await runShutdownStep(failures, () =>
-      runtime.shutdownTransport(ctx.sessionManager.getSessionId()),
-    );
+    await runShutdownStep(failures, () => runtime.shutdownTransport(sessionId));
     await runShutdownStep(failures, () => runtime.shutdownDiagnostics());
     await runShutdownStep(failures, () => sessions.shutdown());
     await runShutdownStep(failures, () => proxyProvider.shutdown());
@@ -357,40 +390,60 @@ export function registerCodexEvents(
     const messages = buildSessionContext(ctx.sessionManager.getBranch()).messages.filter(
       (message) => !isProviderContextExcludedMessage(message),
     );
+    const elision = elisionFor(ctx.sessionManager.getSessionId());
     const cut = computeCut({
       ordinal: assignTurnOrdinals(messages),
-      priorCut: elisionCut,
+      priorCut: elision.cut,
       eligibleChars: messages.map(eligibleToolResultChars),
     });
-    if (cut === elisionCut) return;
-    pi.appendEntry(CONTEXT_ELISION_ENTRY, { epoch: elisionEpoch, cut });
-    elisionCut = cut;
+    if (cut === elision.cut) return;
+    pi.appendEntry(CONTEXT_ELISION_ENTRY, { epoch: elision.epoch, cut });
+    elision.cut = cut;
   });
   pi.on("agent_settled", async (_event, ctx) => {
     handleCodexAgentSettled(runtime, ui, ctx);
   });
   pi.on("before_provider_request", async (event, ctx) => {
+    const fence = background.fence();
+    const sessionId = ctx.sessionManager.getSessionId();
     state.cwd = ctx.cwd;
     if (!isBoundaryValue(event.payload)) return undefined;
+    await background.refresh(ctx, fence.generation);
+    if (background.isStale(fence)) return undefined;
     const { rewriteCodexProviderRequest } = await loadProviderRequest();
-    return rewriteCodexProviderRequest(event.payload, ctx, state);
+    if (background.isStale(fence)) return undefined;
+    const requestState = background.requestState(state, sessionId);
+    const rewritten = await rewriteCodexProviderRequest(event.payload, ctx, requestState);
+    if (background.isStale(fence)) return undefined;
+    if (requestState !== state)
+      state.activeProviderSystemPrompt = requestState.activeProviderSystemPrompt;
+    return rewritten;
   });
   pi.on("before_provider_headers", async (event, ctx) => {
     const { rewriteCodexProviderHeaders } = await loadProviderRequest();
     rewriteCodexProviderHeaders(event.headers, ctx, state);
   });
   pi.on("session_before_compact", async (event, ctx) => {
+    const fence = background.fence();
+    const sessionId = ctx.sessionManager.getSessionId();
     state.cwd = ctx.cwd;
     if (!resolveCodexRuntimePlanForState(ctx, state).nativeCompaction) return undefined;
+    const adopting = await willAdoptCodexBackgroundCheckpoint(sessionId, event);
+    if (background.isStale(fence) || adopting) return undefined;
+    if (background.requestState(state, sessionId) !== state) return undefined;
     const { handleCodexSessionBeforeCompact } = await loadCompaction();
+    if (background.isStale(fence)) return undefined;
     return handleCodexSessionBeforeCompact(event, ctx, state, pi);
   });
   pi.on("session_compact", async (event, ctx) => {
-    elisionEpoch = event.compactionEntry.id;
-    elisionCut = 0;
+    const fence = background.fence();
+    const sessionId = ctx.sessionManager.getSessionId();
+    updateCodexBackgroundElision(elisionStates, sessionId, event.compactionEntry.id);
+    background.invalidateReplay();
     state.pendingPiCompactionNativeWindow = undefined;
     let nativeCompaction = false;
     const { findLatestCompactionEntry } = await loadCompactionDetails();
+    if (background.isStale(fence)) return;
     const compactionEntry = findLatestCompactionEntry(ctx.sessionManager.getBranch());
     if (
       event.fromExtension &&
@@ -418,18 +471,21 @@ export function registerCodexEvents(
       ctx,
     );
     state.activeProviderSystemPrompt = postCompactionPrompt;
-    runtime.resetTransportAfterCompaction(ctx.sessionManager.getSessionId());
+    runtime.resetTransportAfterCompaction(sessionId);
+    await background.refresh(ctx, fence.generation);
+    if (background.isStale(fence)) return;
     await (nativeCompaction
       ? runtime.startCompactionPrewarm(ctx)
       : runtime.startPrewarm(ctx, postCompactionPrompt, true));
   });
   pi.on("context", (event, ctx) => {
     const messages = event.messages.filter((message) => !isProviderContextExcludedMessage(message));
+    const elision = elisionFor(ctx.sessionManager.getSessionId());
     if (
-      elisionCut > 0 &&
+      elision.cut > 0 &&
       isAdapterRuntime(resolveCodexRuntimePlan(ctx, state.config, state.executionMode))
     )
-      return { messages: elideToolResults(messages, elisionCut) };
+      return { messages: elideToolResults(messages, elision.cut) };
     return { messages };
   });
 }
