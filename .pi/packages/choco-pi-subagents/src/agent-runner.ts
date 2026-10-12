@@ -31,6 +31,10 @@ import {
 } from "./agent-types.ts";
 import { AGENT_MESSAGE_TOOL_NAME, createAgentMessageTool } from "./agent-message.ts";
 import {
+  createChildCompactionBridge,
+  getChildCompactionBridge,
+} from "./child-compaction-bridge.ts";
+import {
   registerChildSessionId,
   runInChildSessionContext,
   unregisterChildSessionId,
@@ -248,19 +252,32 @@ export function createChildToolSearchExtension(
 ): ExtensionFactory {
   const registerToolSearch = createToolSearchExtension();
   return async (childPi) => {
-    // Pi's ExtensionAPI members are closures over the extension, so a copy
-    // with one replaced member registers and activates exactly like the original.
-    const scopedPi: ExtensionAPI = {
-      ...childPi,
-      getAllTools: () => childPi.getAllTools().filter((tool) => isReachable(tool.name)),
-    };
-    await registerToolSearch(scopedPi);
-    childPi.on("tool_call", (event) =>
-      isReachable(event.toolName)
-        ? undefined
-        : { block: true, reason: `Tool "${event.toolName}" is not available to this subagent.` },
-    );
+    await registerToolSearch(reachableToolsView(childPi, isReachable));
+    childPi.on("tool_call", (event) => blockUnreachableToolCall(isReachable, event.toolName));
   };
+}
+
+/**
+ * Pi's ExtensionAPI members are closures over the extension, so a copy with
+ * one replaced member registers and activates exactly like the original.
+ */
+function reachableToolsView(
+  childPi: ExtensionAPI,
+  isReachable: (name: string) => boolean,
+): ExtensionAPI {
+  return {
+    ...childPi,
+    getAllTools: () => childPi.getAllTools().filter((tool) => isReachable(tool.name)),
+  };
+}
+
+function blockUnreachableToolCall(
+  isReachable: (name: string) => boolean,
+  toolName: string,
+): { block: true; reason: string } | undefined {
+  return isReachable(toolName)
+    ? undefined
+    : { block: true, reason: `Tool "${toolName}" is not available to this subagent.` };
 }
 
 /**
@@ -504,6 +521,76 @@ export function parseExtSelectors(entries: string[]): ExtensionToolSelection {
   return { extNames, narrowing };
 }
 
+/** Inputs to the two tool scopes `installExtensionToolScope` derives on demand. */
+interface ToolScopeInputs {
+  loader: DefaultResourceLoader;
+  toolNames: string[];
+  disallowedSet: Set<string> | undefined;
+  extNames: Set<string>;
+  narrowing: Map<string, Set<string>>;
+  nestedToolNames: Set<string>;
+  alwaysToolNames: Set<string>;
+  /** The lean surface, read once when the scope is installed. */
+  leanAllows: (name: string) => boolean;
+}
+
+type LoadedExtension = LoadExtensionsResult["extensions"][number];
+
+/**
+ * The names allowed right now. Mirrors the `ext:` opt-in flip: when any `ext:`
+ * selector is present, extension tools become an explicit allowlist — a loaded
+ * extension not named by a selector contributes nothing (its handlers still ran),
+ * and `ext:foo/bar` narrows `foo` to just `bar`.
+ *
+ * `applyLean` separates the two scopes: with it, the names active without a
+ * search (the lean surface); without it, every name this child may reach at
+ * all, through `tool_search` or a tool bridge. Both honor `ext:` narrowing
+ * and `disallowedTools`; only the lean surface is optional.
+ */
+function toolScopeNames(scope: ToolScopeInputs, options: { applyLean: boolean }): Set<string> {
+  const { toolNames, disallowedSet, nestedToolNames, alwaysToolNames } = scope;
+  const keep = new Set(toolNames.filter((t) => !disallowedSet?.has(t)));
+  for (const extension of scope.loader.getExtensions().extensions) {
+    addExtensionScopeTools(keep, extension, scope, options);
+  }
+  // Discovery grants nothing by itself: the child's search sees only reachable tools.
+  if (!disallowedSet?.has(TOOL_SEARCH_TOOL_NAME)) keep.add(TOOL_SEARCH_TOOL_NAME);
+  for (const name of EXCLUDED_TOOL_NAMES) keep.delete(name);
+  // Opt-in nested delegation tools share EXCLUDED_TOOL_NAMES' names but are
+  // legitimately active for this agent — re-admit them so the renarrow keeps
+  // them in the active set and beforeToolCall doesn't block them.
+  for (const name of nestedToolNames) {
+    if (!disallowedSet?.has(name)) keep.add(name);
+  }
+  for (const name of alwaysToolNames) keep.add(name);
+  for (const name of DISABLED_BUILTIN_TOOL_NAMES) keep.delete(name);
+  return keep;
+}
+
+/** Add the tools one loaded extension contributes to a scope. */
+function addExtensionScopeTools(
+  keep: Set<string>,
+  extension: LoadedExtension,
+  scope: ToolScopeInputs,
+  options: { applyLean: boolean },
+): void {
+  const { toolNames, disallowedSet, extNames, narrowing, leanAllows } = scope;
+  const canons = extensionCanonicalNames(extension.path);
+  const optInActive = extNames.size > 0;
+  if (optInActive && !canons.some((c) => extNames.has(c))) return;
+  // First alias that carries a narrowing set — a user won't narrow one
+  // extension under two different names, so first-match is correct.
+  const narrowed = canons.map((c) => narrowing.get(c)).find(Boolean);
+  for (const name of extension.tools.keys()) {
+    if (narrowed && !narrowed.has(name)) continue;
+    if (disallowedSet?.has(name)) continue;
+    // An explicitly configured tool name stays available; the lean surface
+    // only gates what an extension contributes on its own.
+    if (options.applyLean && !toolNames.includes(name) && !leanAllows(name)) continue;
+    keep.add(name);
+  }
+}
+
 /**
  * Keep a subagent's tool scope correct as extensions register tools over time.
  *
@@ -546,61 +633,13 @@ export function installExtensionToolScope(
     alwaysToolNames: Set<string>;
   },
 ): (name: string) => boolean {
-  const {
-    loader,
-    toolNames,
-    disallowedSet,
-    extNames,
-    narrowing,
-    nestedToolNames,
-    alwaysToolNames,
-  } = ctx;
-
   const lean = leanSurfaceNames();
-  const leanAllows = (name: string): boolean => lean === undefined || lean.has(name);
-
-  // The names allowed right now. Mirrors the `ext:` opt-in flip: when any `ext:`
-  // selector is present, extension tools become an explicit allowlist — a loaded
-  // extension not named by a selector contributes nothing (its handlers still ran),
-  // and `ext:foo/bar` narrows `foo` to just `bar`.
-  //
-  // `applyLean` separates the two scopes: with it, the names active without a
-  // search (the lean surface); without it, every name this child may reach at
-  // all, through `tool_search` or a tool bridge. Both honor `ext:` narrowing
-  // and `disallowedTools`; only the lean surface is optional.
-  const scopeOf = (applyLean: boolean): Set<string> => {
-    const keep = new Set(toolNames.filter((t) => !disallowedSet?.has(t)));
-    const optInActive = extNames.size > 0;
-    for (const extension of loader.getExtensions().extensions) {
-      const canons = extensionCanonicalNames(extension.path);
-      if (optInActive && !canons.some((c) => extNames.has(c))) continue;
-      // First alias that carries a narrowing set — a user won't narrow one
-      // extension under two different names, so first-match is correct.
-      const narrowed = canons.map((c) => narrowing.get(c)).find(Boolean);
-      for (const name of extension.tools.keys()) {
-        if (narrowed && !narrowed.has(name)) continue;
-        if (disallowedSet?.has(name)) continue;
-        // An explicitly configured tool name stays available; the lean surface
-        // only gates what an extension contributes on its own.
-        if (applyLean && !toolNames.includes(name) && !leanAllows(name)) continue;
-        keep.add(name);
-      }
-    }
-    // Discovery grants nothing by itself: the child's search sees only reachable tools.
-    if (!disallowedSet?.has(TOOL_SEARCH_TOOL_NAME)) keep.add(TOOL_SEARCH_TOOL_NAME);
-    for (const name of EXCLUDED_TOOL_NAMES) keep.delete(name);
-    // Opt-in nested delegation tools share EXCLUDED_TOOL_NAMES' names but are
-    // legitimately active for this agent — re-admit them so the renarrow keeps
-    // them in the active set and beforeToolCall doesn't block them.
-    for (const name of nestedToolNames) {
-      if (!disallowedSet?.has(name)) keep.add(name);
-    }
-    for (const name of alwaysToolNames) keep.add(name);
-    for (const name of DISABLED_BUILTIN_TOOL_NAMES) keep.delete(name);
-    return keep;
+  const scope: ToolScopeInputs = {
+    ...ctx,
+    leanAllows: (name) => lean === undefined || lean.has(name),
   };
-  const inScope = (): Set<string> => scopeOf(true);
-  const reachable = (): Set<string> => scopeOf(false);
+  const inScope = (): Set<string> => toolScopeNames(scope, { applyLean: true });
+  const reachable = (): Set<string> => toolScopeNames(scope, { applyLean: false });
 
   // Keep the current order and append newcomers, so a tool `tool_search` loaded
   // stays where Pi put it instead of being re-sorted into registry order.
@@ -994,87 +1033,131 @@ function forwardAbortSignal(session: AgentSession, signal?: AbortSignal): () => 
   return () => signal.removeEventListener("abort", onAbort);
 }
 
+type TurnLimitSession = Pick<AgentSession, "subscribe" | "steer" | "abort" | "clearQueue">;
+
+interface TurnLimitOptions {
+  maxTurns: number | undefined;
+  signal?: AbortSignal;
+  onTurnEnd?: (turnCount: number) => void;
+  onFinishAttempt?: RunOptions["onFinishAttempt"];
+}
+
+/** Mutable turn-limit state shared by the turn_end listener and the returned handle. */
+interface TurnLimitState {
+  turnCount: number;
+  softLimitReached: boolean;
+  aborted: boolean;
+  failure: string | undefined;
+  active: boolean;
+  readonly corrections: Promise<void>[];
+  correctionError: { error: unknown } | undefined;
+}
+
+type TurnEndMessage = Extract<AgentSessionEvent, { type: "turn_end" }>["message"];
+
 /** Install max-turn enforcement at the host's turn_end event boundary. */
-export function installRunnerTurnLimit(
-  session: Pick<AgentSession, "subscribe" | "steer" | "abort" | "clearQueue">,
-  options: {
-    maxTurns: number | undefined;
-    signal?: AbortSignal;
-    onTurnEnd?: (turnCount: number) => void;
-    onFinishAttempt?: RunOptions["onFinishAttempt"];
-  },
-) {
-  let turnCount = 0;
-  let softLimitReached = false;
-  let aborted = false;
-  let failure: string | undefined;
-  let active = true;
-  const corrections: Promise<void>[] = [];
-  let correctionError: { error: unknown } | undefined;
+export function installRunnerTurnLimit(session: TurnLimitSession, options: TurnLimitOptions) {
+  const state: TurnLimitState = {
+    turnCount: 0,
+    softLimitReached: false,
+    aborted: false,
+    failure: undefined,
+    active: true,
+    corrections: [],
+    correctionError: undefined,
+  };
   const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
     if (event.type !== "turn_end") return;
-    turnCount++;
-    options.onTurnEnd?.(turnCount);
-
-    // An externally cancelled run owns its shutdown. In particular, pi still
-    // emits turn_end for the aborted provider turn; steering there would start
-    // another provider request, while a later hard-limit abort would be redundant.
-    if (options.signal?.aborted) {
-      // Catch messages queued by synchronous post-abort session listeners
-      // before the host checks queues to decide whether to continue.
-      session.clearQueue();
-      return;
-    }
-    // A tool-free turn ends with a finish attempt, where the dependency guard may steer.
-    if (
-      options.onFinishAttempt &&
-      event.message.role === "assistant" &&
-      !event.message.content.some((block) => block.type === "toolCall")
-    ) {
-      const correction = options.onFinishAttempt?.();
-      failure = correction?.failure;
-      if (correction?.steer) {
-        const onFinishAttempt = options.onFinishAttempt;
-        const steerText = correction.steer;
-        corrections.push(
-          (async () => {
-            try {
-              const disposition = await session.steer(steerText, undefined, {
-                source: "extension",
-              });
-              if (!active || options.signal?.aborted || disposition === "queued") return;
-              failure = onFinishAttempt?.()?.failure ?? "Dependency correction was not queued.";
-            } catch (error) {
-              correctionError = { error };
-            }
-          })(),
-        );
-      }
-    }
-    if (options.maxTurns == null) return;
-    if (!softLimitReached && turnCount >= options.maxTurns) {
-      softLimitReached = true;
-      session.steer(
-        "You have reached your turn limit. Wrap up immediately — provide your final answer now.",
-      );
-    } else if (softLimitReached && turnCount >= options.maxTurns + graceTurns) {
-      aborted = true;
-      session.abort();
-    }
+    onRunnerTurnEnd(session, options, state, event.message);
   });
   return {
-    getAborted: () => aborted,
-    getSteered: () => softLimitReached,
-    getFailure: () => failure,
+    getAborted: () => state.aborted,
+    getSteered: () => state.softLimitReached,
+    getFailure: () => state.failure,
     async settleCorrections() {
-      await Promise.all(corrections);
-      if (correctionError) throw correctionError.error;
+      await Promise.all(state.corrections);
+      if (state.correctionError) throw state.correctionError.error;
     },
     unsubscribe() {
-      active = false;
+      state.active = false;
       unsubscribe();
     },
   };
+}
+
+function onRunnerTurnEnd(
+  session: TurnLimitSession,
+  options: TurnLimitOptions,
+  state: TurnLimitState,
+  message: TurnEndMessage,
+): void {
+  state.turnCount++;
+  options.onTurnEnd?.(state.turnCount);
+
+  // An externally cancelled run owns its shutdown. In particular, pi still
+  // emits turn_end for the aborted provider turn; steering there would start
+  // another provider request, while a later hard-limit abort would be redundant.
+  if (options.signal?.aborted) {
+    // Catch messages queued by synchronous post-abort session listeners
+    // before the host checks queues to decide whether to continue.
+    session.clearQueue();
+    return;
+  }
+  // A tool-free turn ends with a finish attempt, where the dependency guard may steer.
+  if (options.onFinishAttempt && isFinishAttempt(message)) {
+    handleFinishAttempt(session, options, state);
+  }
+  enforceTurnLimit(session, options, state);
+}
+
+function isFinishAttempt(message: TurnEndMessage): boolean {
+  return (
+    message.role === "assistant" && !message.content.some((block) => block.type === "toolCall")
+  );
+}
+
+function handleFinishAttempt(
+  session: TurnLimitSession,
+  options: TurnLimitOptions,
+  state: TurnLimitState,
+): void {
+  const correction = options.onFinishAttempt?.();
+  state.failure = correction?.failure;
+  if (!correction?.steer) return;
+  state.corrections.push(steerDependencyCorrection(session, options, state, correction.steer));
+}
+
+async function steerDependencyCorrection(
+  session: TurnLimitSession,
+  options: TurnLimitOptions,
+  state: TurnLimitState,
+  steerText: string,
+): Promise<void> {
+  const onFinishAttempt = options.onFinishAttempt;
+  try {
+    const disposition = await session.steer(steerText, undefined, { source: "extension" });
+    if (!state.active || options.signal?.aborted || disposition === "queued") return;
+    state.failure = onFinishAttempt?.()?.failure ?? "Dependency correction was not queued.";
+  } catch (error) {
+    state.correctionError = { error };
+  }
+}
+
+function enforceTurnLimit(
+  session: TurnLimitSession,
+  options: TurnLimitOptions,
+  state: TurnLimitState,
+): void {
+  if (options.maxTurns == null) return;
+  if (!state.softLimitReached && state.turnCount >= options.maxTurns) {
+    state.softLimitReached = true;
+    session.steer(
+      "You have reached your turn limit. Wrap up immediately — provide your final answer now.",
+    );
+  } else if (state.softLimitReached && state.turnCount >= options.maxTurns + graceTurns) {
+    state.aborted = true;
+    session.abort();
+  }
 }
 
 function resolveConfiguredSessionDir(
@@ -1261,6 +1344,15 @@ export async function runAgent(
   // Filled once the child's scope is installed; the search and `tool_call`
   // guard fail closed until then.
   const childToolScope: ChildToolScopeSlot = {};
+  // Absent unless the compaction extension published an enabled provider.
+  const childCompaction = createChildCompactionBridge({
+    parentSessionId: ctx.sessionManager?.getSessionId?.(),
+    mainSessionFork: options.mainSessionFork !== undefined,
+    readOnly: options.readOnly === true,
+    isolated: options.isolated === true,
+    onError: (message) =>
+      options.onToolActivity?.({ type: "end", toolName: `extension-error:${message}` }),
+  });
   const loaderOptions: ConstructorParameters<typeof DefaultResourceLoader>[0] = {
     cwd: configCwd,
     agentDir,
@@ -1317,6 +1409,7 @@ export async function runAgent(
               ),
             },
           ]),
+      ...(childCompaction ? [childCompaction.extension] : []),
     ],
     noSkills,
     noPromptTemplates: true,
@@ -1562,6 +1655,7 @@ export async function runAgent(
   // manager registry probe to stay inert. The manager removes it on dispose.
   const childSessionId = session.sessionManager.getSessionId();
   registerChildSessionId(childSessionId);
+  childCompaction?.bindSession(session);
 
   const baseSessionName = agentConfig?.name ?? type;
   session.setSessionName(
@@ -1596,6 +1690,7 @@ export async function runAgent(
   } catch (error) {
     // No record will own this session, so nothing else would remove its id.
     unregisterChildSessionId(childSessionId);
+    childCompaction?.dispose();
     throw error;
   }
   if (options.nestedRuntime && options.agentId) {
@@ -1674,6 +1769,8 @@ export async function runAgent(
   // Boundary for the history fallback: only assistant text produced from here
   // on counts as this run's output (a fresh session, so usually 0).
   const startLen = session.messages.length;
+  // Boundary adoptions emit no compaction_end; the bridge reports them once.
+  const stopChildAdoptions = childCompaction?.onAdoption((info) => options.onCompaction?.(info));
   try {
     if (!options.signal?.aborted) await session.prompt(effectivePrompt);
     await turnLimit.settleCorrections();
@@ -1682,6 +1779,11 @@ export async function runAgent(
     unsubEvents();
     collector.unsubscribe();
     cleanupAbort();
+    stopChildAdoptions?.();
+    childCompaction?.settle({
+      canceled: options.signal?.aborted === true,
+      timedOut: turnLimit.getAborted(),
+    });
   }
 
   const responseText = collector.getText().trim() || getLastAssistantText(session, startLen);
@@ -1754,6 +1856,8 @@ export async function resumeAgent(
           }
         })
       : () => {};
+  const childCompaction = getChildCompactionBridge(session);
+  const stopChildAdoptions = childCompaction?.onAdoption((info) => options.onCompaction?.(info));
 
   try {
     if (!options.signal?.aborted) await session.prompt(prompt);
@@ -1763,6 +1867,11 @@ export async function resumeAgent(
     collector.unsubscribe();
     unsubEvents();
     cleanupAbort();
+    stopChildAdoptions?.();
+    childCompaction?.settle({
+      canceled: options.signal?.aborted === true,
+      timedOut: turnLimit?.getAborted() === true,
+    });
   }
 
   const result: ResumeResult = {
@@ -1788,27 +1897,42 @@ export async function steerAgent(session: AgentSession, message: string): Promis
  * Get the subagent's conversation messages as formatted text.
  */
 export function getAgentConversation(session: AgentSession): string {
-  const parts: string[] = [];
+  return session.messages.flatMap(conversationParts).join("\n\n");
+}
 
-  for (const msg of session.messages) {
-    if (msg.role === "user") {
-      const text = Array.isArray(msg.content) ? extractText(msg.content) : msg.content;
-      if (text.trim()) parts.push(`[User]: ${text.trim()}`);
-    } else if (msg.role === "assistant") {
-      const textParts: string[] = [];
-      const toolCalls: string[] = [];
-      for (const c of msg.content) {
-        if (c.type === "text" && c.text) textParts.push(c.text);
-        else if (c.type === "toolCall") toolCalls.push(`  Tool: ${hostToolCallName(c)}`);
-      }
-      if (textParts.length > 0) parts.push(`[Assistant]: ${textParts.join("\n")}`);
-      if (toolCalls.length > 0) parts.push(`[Tool Calls]:\n${toolCalls.join("\n")}`);
-    } else if (msg.role === "toolResult") {
-      const text = extractText(msg.content);
-      const truncated = text.length > 200 ? text.slice(0, 200) + "..." : text;
-      parts.push(`[Tool Result (${msg.toolName})]: ${truncated}`);
-    }
+type ConversationMessage = AgentSession["messages"][number];
+
+/** Longest tool-result excerpt shown in a formatted conversation. */
+const TOOL_RESULT_PREVIEW_CHARS = 200;
+
+function conversationParts(msg: ConversationMessage): string[] {
+  if (msg.role === "user") {
+    const text = Array.isArray(msg.content) ? extractText(msg.content) : msg.content;
+    return text.trim() ? [`[User]: ${text.trim()}`] : [];
   }
+  if (msg.role === "assistant") return assistantConversationParts(msg);
+  if (msg.role === "toolResult") {
+    const text = extractText(msg.content);
+    const truncated =
+      text.length > TOOL_RESULT_PREVIEW_CHARS
+        ? text.slice(0, TOOL_RESULT_PREVIEW_CHARS) + "..."
+        : text;
+    return [`[Tool Result (${msg.toolName})]: ${truncated}`];
+  }
+  return [];
+}
 
-  return parts.join("\n\n");
+function assistantConversationParts(
+  msg: Extract<ConversationMessage, { role: "assistant" }>,
+): string[] {
+  const parts: string[] = [];
+  const textParts: string[] = [];
+  const toolCalls: string[] = [];
+  for (const c of msg.content) {
+    if (c.type === "text" && c.text) textParts.push(c.text);
+    else if (c.type === "toolCall") toolCalls.push(`  Tool: ${hostToolCallName(c)}`);
+  }
+  if (textParts.length > 0) parts.push(`[Assistant]: ${textParts.join("\n")}`);
+  if (toolCalls.length > 0) parts.push(`[Tool Calls]:\n${toolCalls.join("\n")}`);
+  return parts;
 }
