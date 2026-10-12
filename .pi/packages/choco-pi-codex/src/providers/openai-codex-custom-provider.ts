@@ -9,7 +9,6 @@ import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import {
   extractAccountId,
   buildWebSocketHeaders,
-  PI_CODEX_CONVERSION_ORIGINATOR,
   resolveCodexRequestRouting,
   resolveCodexWebSocketUrl,
 } from "./openai-codex/headers.ts";
@@ -43,6 +42,7 @@ import { prewarmWebSocket } from "./openai-codex/websocket-stream.ts";
 import { openaiCodexNativeOAuthProvider } from "./openai-codex/oauth.ts";
 import { type CodexTurnState, withCodexTurnState } from "./openai-codex/turn-state.ts";
 import {
+  codexDecisionOmitsServiceTier,
   codexServiceTierForDecision,
   isCurrentCodexFastModeDecision,
   snapshotCodexFastModeDecision,
@@ -120,7 +120,10 @@ function applyFrozenFastModeDecision(
   decision: CodexFastModeDecision | undefined,
 ): ResponsesBody {
   const serviceTier = decision ? codexServiceTierForDecision(decision) : undefined;
-  return serviceTier ? { ...body, service_tier: serviceTier } : body;
+  if (serviceTier) return { ...body, service_tier: serviceTier };
+  if (!decision || !codexDecisionOmitsServiceTier(decision)) return body;
+  const { service_tier: _omitted, ...standard } = body;
+  return standard;
 }
 
 export async function prewarmOpenAICodexWebSocket<TApi extends Api>(
@@ -188,11 +191,7 @@ export async function prewarmOpenAICodexWebSocket<TApi extends Api>(
   const accountId = extractAccountId(options.apiKey);
   const routing = resolveCodexRequestRouting({
     model: body.model,
-    fast: fastModeDecision.active,
     serviceTier: body.service_tier === null ? undefined : body.service_tier,
-    normalOriginator: runtimeConfig?.openai.harnessIdentifierHeader
-      ? PI_CODEX_CONVERSION_ORIGINATOR
-      : "pi",
   });
   const headers = buildWebSocketHeaders(
     model.headers,
@@ -202,6 +201,11 @@ export async function prewarmOpenAICodexWebSocket<TApi extends Api>(
     options.sessionId,
     routing.originator,
     routing.routingHint,
+    {
+      requestKind: "prewarm",
+      model: body.model,
+      reasoningEffort: body.reasoning?.effort ?? undefined,
+    },
   );
   const turnState = deps.preserveContinuation ? undefined : deps.turnState;
   const websocketBody = withCodexTurnState(

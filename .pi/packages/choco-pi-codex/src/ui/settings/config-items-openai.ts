@@ -82,21 +82,6 @@ export function buildOpenAISettings(config: CodexConversionConfig, theme: Theme)
         openai: { ...current.openai, forceCachedWebSockets: enabled },
       }),
     ),
-    setting(
-      {
-        id: "harnessIdentifierHeader",
-        label: "Harness identifier header",
-        currentValue: config.openai.harnessIdentifierHeader ? "pi-codex-conversion <3" : "off",
-        values: ["off", "pi-codex-conversion <3"],
-      },
-      (value, current) => ({
-        ...current,
-        openai: {
-          ...current.openai,
-          harnessIdentifierHeader: value !== "off",
-        },
-      }),
-    ),
     setting({
       id: "compactionHeader",
       label: theme.fg("dim", "Compaction"),

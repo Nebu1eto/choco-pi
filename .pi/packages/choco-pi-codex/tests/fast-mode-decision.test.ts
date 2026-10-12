@@ -75,7 +75,7 @@ test("bridge decision is frozen, drives explicit tiers, and detects revision dri
     const body = buildRequestBody(model, normalizeContext({ messages: [] }), {
       serviceTier: codexServiceTierForDecision(decision),
     });
-    assert.equal(body.service_tier, "default");
+    assert.equal(Object.hasOwn(body, "service_tier"), false);
     assert.equal(isCurrentCodexFastModeDecision(decision), true);
     revision++;
     assert.equal(isCurrentCodexFastModeDecision(decision), false);
@@ -126,8 +126,8 @@ test("frozen explicit off wins after the real provider payload hook", async () =
       },
       false,
     );
-    assert.equal(body.service_tier, "default");
-    let prewarmTier: string | null | undefined;
+    assert.equal(Object.hasOwn(body, "service_tier"), false);
+    let prewarmHasTier: boolean | undefined;
     const tokenPayload = Buffer.from(
       JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "account-1" } }),
     ).toString("base64url");
@@ -143,12 +143,12 @@ test("frozen explicit off wins after the real provider payload hook", async () =
         preparedBody: { ...body, service_tier: "priority" },
         useResponsesLite: () => false,
         prewarmTransport: async (_url, prepared) => {
-          prewarmTier = prepared.service_tier;
+          prewarmHasTier = Object.hasOwn(prepared, "service_tier");
           return { socketReused: false };
         },
       },
     );
-    assert.equal(prewarmTier, "default");
+    assert.equal(prewarmHasTier, false);
   } finally {
     controller.dispose();
     fixture.session.dispose();

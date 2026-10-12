@@ -4,7 +4,8 @@ import { Value } from "typebox/value";
 import type { ExtensionContext, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai";
 import { DEFAULT_CODEX_BASE_URL } from "../providers/openai-codex/constants.ts";
-import { extractAccountId } from "../providers/openai-codex/headers.ts";
+import { CODEX_CLI_ORIGINATOR, extractAccountId } from "../providers/openai-codex/headers.ts";
+import { CODEX_CLIENT_VERSION, codexUserAgent } from "../providers/openai-codex/client-identity.ts";
 import {
   OPENAI_PLATFORM_BASE_URL,
   isOpenAIPlatformModel,
@@ -77,7 +78,6 @@ export interface CodexToolProviderContext {
 
 export type AllowConfiguredCodexToolProvider = (model: ExtensionContext["model"]) => boolean;
 
-const CODEX_ORIGINATOR = "codex_cli_rs";
 const OPENAI_CODEX_PROVIDER = "openai-codex";
 const OPENAI_PROVIDER = "openai";
 const PREFERRED_TOOL_MODEL_IDS = [
@@ -331,26 +331,11 @@ export function codexToolProviderHeaders(provider: CodexToolProvider): Headers {
   const headers = new Headers();
   headers.set("Authorization", `Bearer ${provider.token}`);
   if (!provider.openAIPlatform) headers.set("ChatGPT-Account-ID", provider.accountId);
-  headers.set("originator", CODEX_ORIGINATOR);
-  headers.set("User-Agent", codexWebRunUserAgent(CODEX_ORIGINATOR));
-  headers.set("version", "0.0.0");
+  headers.set("originator", CODEX_CLI_ORIGINATOR);
+  headers.set("User-Agent", codexUserAgent(CODEX_CLI_ORIGINATOR));
+  headers.set("version", CODEX_CLIENT_VERSION);
   headers.set("content-type", "application/json");
   return headers;
-}
-
-export function codexWebRunUserAgent(originator: string = CODEX_ORIGINATOR): string {
-  const platform =
-    process.platform === "darwin"
-      ? "Mac OS"
-      : process.platform === "win32"
-        ? "Windows"
-        : process.platform === "linux"
-          ? "Linux"
-          : process.platform;
-  const release = "unknown";
-  const arch = process.arch === "arm64" ? "arm64" : process.arch;
-  const terminal = process.env["TERM_PROGRAM"]?.trim() || process.env["TERM"]?.trim() || "unknown";
-  return `${originator}/0.0.0 (${platform} ${release}; ${arch}) ${terminal}`;
 }
 
 export function codexToolProviderEnv(provider: CodexToolProvider): NodeJS.ProcessEnv {

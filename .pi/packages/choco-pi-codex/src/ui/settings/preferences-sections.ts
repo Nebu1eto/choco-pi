@@ -84,7 +84,6 @@ const CODEX_ROW_LAYOUT: ReadonlyArray<{ section: string; rows: readonly string[]
       "transportHeader",
       "responsesLite",
       "forceCachedWebSockets",
-      "harnessIdentifierHeader",
       "compactionHeader",
       "responsesCompaction",
       "v2UserMessageRetention",

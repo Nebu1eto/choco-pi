@@ -31,6 +31,9 @@ const CONTINUATION_HEADERS = new Set([
   "thread-id",
   "x-client-request-id",
   "x-codex-beta-features",
+  // Per-request Codex metadata; the socket keeps whichever values opened it, as Codex does.
+  "x-codex-turn-metadata",
+  "x-codex-window-id",
 ]);
 
 function routeIdentityHeaders(headers: Headers): [string, string][] {

@@ -32,6 +32,7 @@ import {
   type ResponsesLiteCompatibleBody,
 } from "../providers/openai-codex/responses-lite.ts";
 import {
+  codexDecisionOmitsServiceTier,
   codexServiceTierForDecision,
   snapshotCodexFastModeDecision,
   type CodexFastModeDecision,
@@ -77,7 +78,10 @@ function applyAuthoritativeServiceTier(
 ): BoundaryValue {
   if (!isRecord(payload)) return payload;
   const serviceTier = codexServiceTierForDecision(decision);
-  return serviceTier ? { ...payload, service_tier: serviceTier } : payload;
+  if (serviceTier) return { ...payload, service_tier: serviceTier };
+  if (!codexDecisionOmitsServiceTier(decision)) return payload;
+  const { service_tier: _omitted, ...standard } = payload;
+  return standard;
 }
 
 function applyVoiceSystemPrompt(

@@ -100,7 +100,7 @@ test("sessions keep independent explicit preferences and emit standard when off"
   child.start();
   try {
     const priority = { model: "test", service_tier: "priority" };
-    const standard = { model: "test", service_tier: "default" };
+    const standard = { model: "test" };
     assert.deepEqual(root.request(), priority);
     assert.deepEqual(child.request(), standard);
     assert.deepEqual(child.request("openai"), standard);

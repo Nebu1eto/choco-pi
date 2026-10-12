@@ -1,5 +1,22 @@
 # Vendored: choco-pi-codex
 
+## Codex Fast wire parity (choco-pi addition)
+
+Fast and standard requests follow openai/codex `service_tier_for_request` and
+`build_routing_hint_header`: Fast sends `service_tier: "priority"`; standard
+omits `service_tier` instead of sending `default`. Every inference request
+carries `x-codex-routing-hint: model=<slug>`, adding `;tier=<tier>` only when a
+tier is sent. The originator is always `codex_cli_rs`, Codex's own client
+identity; the upstream `harnessIdentifierHeader` preference and its
+`pi-codex-conversion` originator are removed.
+
+Request identity follows `get_codex_user_agent` and `CodexResponsesMetadata`
+(`client-identity.ts`): User-Agent `codex_cli_rs/<ver> (<os> <ver>; <arch>)
+<terminal>`, `version: <ver>` (`CODEX_CLIENT_VERSION`, bump with the verified
+codex-cli), `x-codex-window-id: <thread>:0`, and an `x-codex-turn-metadata`
+subset (ids, window, `request_kind`, model, effort). Window numbers do not track
+compaction; installation id, sandbox fields, and the cookie jar are not sent.
+
 ## Daybreak Auto preference (choco-pi addition)
 
 Daybreak request state accepts `"auto"` alongside existing booleans. Auto uses

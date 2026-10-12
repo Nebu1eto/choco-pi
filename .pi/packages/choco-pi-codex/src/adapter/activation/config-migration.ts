@@ -142,7 +142,6 @@ export function migrateCodexConversionConfigIfNeeded(value: BoundaryValue): Conf
         ? value["forceCachedWebSockets"]
         : DEFAULT_CODEX_CONVERSION_CONFIG.openai["forceCachedWebSockets"],
       cacheDiagnostics: DEFAULT_CODEX_CONVERSION_CONFIG.openai.cacheDiagnostics,
-      harnessIdentifierHeader: DEFAULT_CODEX_CONVERSION_CONFIG.openai["harnessIdentifierHeader"],
       webSearchModel: DEFAULT_CODEX_CONVERSION_CONFIG.openai["webSearchModel"],
     },
   };

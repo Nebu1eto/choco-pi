@@ -3,33 +3,44 @@ import {
   JWT_CLAIM_PATH,
   OPENAI_BETA_RESPONSES_WEBSOCKETS,
 } from "./constants.ts";
-import { osInfo } from "./node-runtime.ts";
+import {
+  CODEX_CLIENT_VERSION,
+  codexTurnMetadataHeader,
+  codexUserAgent,
+  codexWindowId,
+  type CodexTurnMetadata,
+} from "./client-identity.ts";
 import { RESPONSES_LITE_HEADER } from "./responses-lite.ts";
 export { headersToRecord } from "./header-record.ts";
+export type { CodexTurnMetadata } from "./client-identity.ts";
 
 type ProviderHeaders = Record<string, string | null>;
 
-export const PI_CODEX_CONVERSION_ORIGINATOR = "pi-codex-conversion";
-export const CODEX_FAST_MODE_ORIGINATOR = "codex_cli_rs";
+export const CODEX_CLI_ORIGINATOR = "codex_cli_rs";
 export const X_CODEX_ROUTING_HINT_HEADER = "x-codex-routing-hint";
+export const X_CODEX_WINDOW_ID_HEADER = "x-codex-window-id";
+export const X_CODEX_TURN_METADATA_HEADER = "x-codex-turn-metadata";
 
 export interface CodexRequestRouting {
   originator: string;
   routingHint?: string | undefined;
 }
 
+/**
+ * Mirrors openai/codex `build_routing_hint_header`: the originator is a fixed client identity
+ * independent of the tier, and every Codex-backend request carries `model=<slug>`, plus
+ * `;tier=<tier>` only when the body sends a `service_tier`.
+ */
 export function resolveCodexRequestRouting(options: {
   model: string;
-  fast: boolean;
   serviceTier?: string | undefined;
-  normalOriginator?: string | undefined;
 }): CodexRequestRouting {
-  return options.fast && options.serviceTier === "priority"
-    ? {
-        originator: CODEX_FAST_MODE_ORIGINATOR,
-        routingHint: `model=${options.model};tier=priority`,
-      }
-    : { originator: options.normalOriginator ?? "pi" };
+  return {
+    originator: CODEX_CLI_ORIGINATOR,
+    routingHint: options.serviceTier
+      ? `model=${options.model};tier=${options.serviceTier}`
+      : `model=${options.model}`,
+  };
 }
 
 export function extractAccountId(token: string): string {
@@ -123,12 +134,21 @@ function buildBaseCodexHeaders(
   headers.set("originator", originator);
   if (routingHint) headers.set(X_CODEX_ROUTING_HINT_HEADER, routingHint);
   else headers.delete(X_CODEX_ROUTING_HINT_HEADER);
-  const os = osInfo.current;
-  headers.set(
-    "User-Agent",
-    os ? `pi (${os.platform()} ${os.release()}; ${os.arch()})` : "pi (browser)",
-  );
+  headers.set("User-Agent", codexUserAgent(originator));
+  headers.set("version", CODEX_CLIENT_VERSION);
   return headers;
+}
+
+/** Codex's per-request compatibility headers: window id always, turn metadata with a kind. */
+function applyCodexWindowHeaders(
+  headers: Headers,
+  threadId: string,
+  metadata: CodexTurnMetadata | undefined,
+): void {
+  headers.set(X_CODEX_WINDOW_ID_HEADER, codexWindowId(threadId));
+  if (metadata)
+    headers.set(X_CODEX_TURN_METADATA_HEADER, codexTurnMetadataHeader(threadId, metadata));
+  else headers.delete(X_CODEX_TURN_METADATA_HEADER);
 }
 
 export function buildSSEHeaders(
@@ -138,8 +158,9 @@ export function buildSSEHeaders(
   token: string,
   sessionId: string | undefined,
   responsesLite = false,
-  originator = "pi",
+  originator = CODEX_CLI_ORIGINATOR,
   routingHint?: string | undefined,
+  metadata?: CodexTurnMetadata | undefined,
 ): Headers {
   const headers = buildBaseCodexHeaders(
     modelHeaders,
@@ -158,6 +179,7 @@ export function buildSSEHeaders(
     headers.set("session-id", sessionId);
     headers.set("thread-id", sessionId);
     headers.set("x-client-request-id", sessionId);
+    applyCodexWindowHeaders(headers, sessionId, metadata);
   }
 
   return headers;
@@ -170,7 +192,7 @@ export function buildVerifiedAccessHeaders(
   additionalHeaders: ProviderHeaders | undefined,
   accountId: string,
   token: string,
-  originator = "pi",
+  originator = CODEX_CLI_ORIGINATOR,
 ): Headers {
   const headers = buildBaseCodexHeaders(
     modelHeaders,
@@ -187,6 +209,8 @@ export function buildVerifiedAccessHeaders(
     "thread-id",
     "x-client-request-id",
     "x-codex-beta-features",
+    X_CODEX_WINDOW_ID_HEADER,
+    X_CODEX_TURN_METADATA_HEADER,
   ])
     headers.delete(name);
   headers.set("accept", "application/json");
@@ -199,8 +223,9 @@ export function buildWebSocketHeaders(
   accountId: string,
   token: string,
   requestId: string,
-  originator = "pi",
+  originator = CODEX_CLI_ORIGINATOR,
   routingHint?: string | undefined,
+  metadata?: CodexTurnMetadata | undefined,
 ): Headers {
   const headers = buildBaseCodexHeaders(
     modelHeaders,
@@ -218,5 +243,6 @@ export function buildWebSocketHeaders(
   headers.set("x-client-request-id", requestId);
   headers.set("session-id", requestId);
   headers.set("thread-id", requestId);
+  applyCodexWindowHeaders(headers, requestId, metadata);
   return headers;
 }

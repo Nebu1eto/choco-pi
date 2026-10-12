@@ -39,7 +39,6 @@ import {
   createCodexRequestId,
   extractAccountId,
   headersToRecord,
-  PI_CODEX_CONVERSION_ORIGINATOR,
   resolveCodexRequestRouting,
   resolveCodexUrl,
   resolveCodexWebSocketUrl,
@@ -352,12 +351,13 @@ export function createCodexTransportStream<TApi extends Api>(
       const websocketRequestId = effectiveOptions?.sessionId || createCodexRequestId();
       const routing = resolveCodexRequestRouting({
         model: body.model,
-        fast: options?.fastModeDecision?.active ?? runtimeConfig?.openai.fast === true,
         serviceTier: body.service_tier === null ? undefined : body.service_tier,
-        normalOriginator: runtimeConfig?.openai.harnessIdentifierHeader
-          ? PI_CODEX_CONVERSION_ORIGINATOR
-          : "pi",
       });
+      const turnMetadata = {
+        requestKind: "turn" as const,
+        model: body.model,
+        reasoningEffort: body.reasoning?.effort ?? undefined,
+      };
       const baseSseHeaders = buildSSEHeaders(
         model.headers,
         effectiveOptions?.headers,
@@ -367,6 +367,7 @@ export function createCodexTransportStream<TApi extends Api>(
         responsesLite,
         routing.originator,
         routing.routingHint,
+        turnMetadata,
       );
       const websocketHeaders = buildWebSocketHeaders(
         model.headers,
@@ -376,6 +377,7 @@ export function createCodexTransportStream<TApi extends Api>(
         websocketRequestId,
         routing.originator,
         routing.routingHint,
+        turnMetadata,
       );
       const bodyJson = JSON.stringify(body);
       const websocketBody = responsesLite ? applyResponsesLiteWebSocketMetadata(body) : body;

@@ -198,10 +198,17 @@ export function initializeCodexFastModeDefault(
   return state.requested === requested ? state : controller.set(requested, "default");
 }
 
+/**
+ * Mirrors openai/codex `service_tier_for_request`: only `priority` is sent; standard omits the
+ * field rather than sending `default`.
+ */
 export function codexServiceTierForDecision(
   decision: CodexFastModeDecision,
-): "priority" | "default" | undefined {
-  if (decision.serviceTier === "priority") return "priority";
-  if (decision.serviceTier === "standard") return "default";
-  return undefined;
+): "priority" | undefined {
+  return decision.serviceTier === "priority" ? "priority" : undefined;
+}
+
+/** Whether a frozen decision requires removing any `service_tier` already on the payload. */
+export function codexDecisionOmitsServiceTier(decision: CodexFastModeDecision): boolean {
+  return decision.serviceTier === "standard";
 }

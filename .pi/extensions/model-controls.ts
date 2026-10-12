@@ -691,6 +691,9 @@ export default function modelControls(pi: ExtensionAPI): void {
     }
     if (!decision?.supported || !isRecord(payload))
       return payload === event.payload ? undefined : payload;
-    return { ...payload, service_tier: decision.active ? "priority" : "default" };
+    if (decision.active) return { ...payload, service_tier: "priority" };
+    // Codex omits the tier for standard requests instead of sending "default".
+    const { service_tier: _standard, ...standard } = payload;
+    return standard;
   });
 }

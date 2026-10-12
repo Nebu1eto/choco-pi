@@ -39,7 +39,6 @@
     "forceCachedWebSockets": true,
     "cacheKeepalive": true,
     "cacheDiagnostics": "off",
-    "harnessIdentifierHeader": false,
     "webSearchModel": "gpt-5.6-luna",
     "proxyResponsesLite": false,
     "midTurnSteering": true,

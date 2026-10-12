@@ -113,7 +113,6 @@ export interface CodexConversionConfig {
     midTurnSteering: boolean;
     asyncCodeMode: boolean;
     cacheDiagnostics: CacheDiagnosticsMode;
-    harnessIdentifierHeader: boolean;
     webSearchModel: WebSearchModel;
   };
 }
@@ -169,7 +168,6 @@ export const DEFAULT_CODEX_CONVERSION_CONFIG: CodexConversionConfig = {
     midTurnSteering: true,
     asyncCodeMode: true,
     cacheDiagnostics: "off",
-    harnessIdentifierHeader: false,
     webSearchModel: "gpt-5.6-luna",
   },
 };
@@ -456,10 +454,6 @@ export function normalizeCodexConversionConfig(value: BoundaryValue): CodexConve
       cacheDiagnostics:
         normalizeCacheDiagnosticsMode(openai["cacheDiagnostics"]) ??
         DEFAULT_CODEX_CONVERSION_CONFIG.openai.cacheDiagnostics,
-      harnessIdentifierHeader: bool(
-        openai["harnessIdentifierHeader"],
-        DEFAULT_CODEX_CONVERSION_CONFIG.openai["harnessIdentifierHeader"],
-      ),
       webSearchModel:
         normalizeWebSearchModel(openai["webSearchModel"]) ??
         DEFAULT_CODEX_CONVERSION_CONFIG.openai["webSearchModel"],
