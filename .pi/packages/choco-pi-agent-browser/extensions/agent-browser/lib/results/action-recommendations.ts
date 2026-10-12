@@ -270,7 +270,11 @@ export function buildAgentBrowserNextActions(options: {
           buildNextToolAction({
             args: ["snapshot", "-i"],
             id: "refresh-interactive-refs",
-            reason: "Get current interactive refs before retrying the element action.",
+            reason:
+              "Get current interactive refs before retrying the element action." +
+              (options.failureCategory === "stale-ref"
+                ? " Any click that rerenders a React list can recycle refs; re-snapshot before the next ref action even without navigation."
+                : ""),
             safety:
               "Prefer a current @ref or a stable find locator; do not retry stale refs blindly.",
           }),

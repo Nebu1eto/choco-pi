@@ -2,7 +2,7 @@
 
 This directory is a vendored, renamed fork of the MIT-licensed package [`pi-agent-browser-native`](https://github.com/fitchmultz/pi-agent-browser-native).
 
-- Upstream URL: https://github.com/fitchmultz/pi-agent-browser-native
+- Upstream URL: <https://github.com/fitchmultz/pi-agent-browser-native>
 - Base commit: `bb2197bef0e142941b84f641993f81c5b1d325f9` (`bb2197b`)
 - Base version: `0.5.0`
 - Forked on: 2026-08-22
@@ -107,6 +107,12 @@ The fork lets choco-pi customize the extension in-tree and load its TypeScript s
 - Added a `press` job step (`{ action: "press", press: "Enter" }`) that compiles to upstream
   `press <key>`. The schema reuses the existing `press` field; other job steps are unchanged.
 - Regression coverage: `tests/agent-browser.output-fidelity.test.ts`.
+
+### Exact selector guidance and bounded recovery hints
+
+- Merge locator guidance with exact snapshot Unicode copying and an explicit Playwright `text=`/`:has-text()` warning; refresh refs after non-navigating rerenders.
+- Append replayable semanticAction suggestions for unsupported Playwright selectors and unique current-ref suggestions for Unicode ellipsis/quote mismatches. Scan only the current ref map, preserve click/fill payloads and sessions, and omit Unicode suggestions for invalidated snapshots or ambiguous matches; no additional CLI call is made.
+- Extend next-action metadata with typed semanticAction payloads and explain React ref recycling in stale-ref failures, including early preflight errors. Regression coverage: `tests/agent-browser.selector-hints.test.ts`.
 
 ## Updating
 

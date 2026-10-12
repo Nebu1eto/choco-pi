@@ -16,6 +16,15 @@ export interface AgentBrowserNextAction {
       session?: string;
       url?: string;
     };
+    semanticAction?: {
+      action: "click" | "fill";
+      locator: "text" | "label" | "role";
+      value?: string;
+      role?: string;
+      name?: string;
+      text?: string;
+      session?: string;
+    };
     sessionMode?: "auto" | "fresh";
     stdin?: string;
   };

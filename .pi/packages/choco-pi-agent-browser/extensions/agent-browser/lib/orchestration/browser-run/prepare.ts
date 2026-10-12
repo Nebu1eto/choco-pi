@@ -1247,7 +1247,12 @@ export async function prepareBrowserRun(
           kind: "early-result",
           statePatch,
           result: {
-            content: [{ type: "text", text: staleRefPreflight.message }],
+            content: [
+              {
+                type: "text",
+                text: `${staleRefPreflight.message} Any click that rerenders a React list can recycle refs; re-snapshot before the next ref action even without navigation.`,
+              },
+            ],
             details: {
               args: redactedArgs,
               command: executionPlan.commandInfo.command,
@@ -1302,7 +1307,12 @@ export async function prepareBrowserRun(
           kind: "early-result",
           statePatch,
           result: {
-            content: [{ type: "text", text: samePageRefFreshnessPreflight.message }],
+            content: [
+              {
+                type: "text",
+                text: `${samePageRefFreshnessPreflight.message} Any click that rerenders a React list can recycle refs; re-snapshot before the next ref action even without navigation.`,
+              },
+            ],
             details: {
               args: redactedArgs,
               command: executionPlan.commandInfo.command,

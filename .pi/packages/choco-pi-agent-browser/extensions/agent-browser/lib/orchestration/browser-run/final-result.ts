@@ -18,6 +18,10 @@ import {
   type CompiledAgentBrowserSemanticAction,
 } from "../../input-modes/types.ts";
 import { buildAgentBrowserNextActions } from "../../results/action-recommendations.ts";
+import {
+  buildPlaywrightSelectorHint,
+  buildUnicodeSelectorHint,
+} from "../../results/selector-hints.ts";
 import { buildAgentBrowserResultCategoryDetails } from "../../results/categories.ts";
 import { type AgentBrowserEnvelope, type AgentBrowserNextAction } from "../../results/contracts.ts";
 import { formatSessionArtifactRetentionSummary } from "../../results/artifact-manifest.ts";
@@ -736,6 +740,15 @@ function buildResultNextActions(options: FinalResultInput): AgentBrowserNextActi
           options.electronSessionMismatch.liveTarget,
         ),
       );
+  }
+  if (options.categoryDetails.failureCategory === "selector-not-found") {
+    const commandTokens = redactInvocationArgs(
+      options.presentation.batchFailure?.failedStep.command ?? options.commandTokens,
+    );
+    const hintInput = { commandTokens, sessionName: options.executionPlan.sessionName };
+    append(buildPlaywrightSelectorHint(hintInput));
+    if (!options.currentRefSnapshotInvalidation)
+      append(buildUnicodeSelectorHint({ ...hintInput, snapshot: options.currentRefSnapshot }));
   }
   if (
     options.categoryDetails.failureCategory === "selector-not-found" &&
