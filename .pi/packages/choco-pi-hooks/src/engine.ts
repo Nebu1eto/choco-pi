@@ -229,23 +229,33 @@ export class HookEngine {
       jobs.map(async ({ source, handler }) => {
         if (handler.type === "command" && (handler.async || handler.asyncRewake)) {
           const pending = executeHandler(handler, input, this.backends).then(async (raw) => {
-            const parsed = parseOutput(raw.stdout);
-            const invocation: HookInvocationResult = {
-              source,
-              handler,
-              status: raw.timedOut ? "timeout" : raw.exitCode === 2 ? "blocking" : "success",
-              exitCode: raw.exitCode,
-              output: parsed.output,
-              plainText: parsed.plainText,
-              stderr: raw.stderr,
-              error: parsed.validationError,
-            };
-            const merged = mergeResults(event, [invocation]);
-            await this.backends.onAsyncResult?.(
-              input,
-              merged,
-              handler.asyncRewake === true && raw.exitCode === 2,
-            );
+            try {
+              const parsed = parseOutput(raw.stdout);
+              let status: HookInvocationResult["status"] = "success";
+              if (raw.timedOut) status = "timeout";
+              else if (raw.exitCode === 2) status = "blocking";
+              const invocation: HookInvocationResult = {
+                source,
+                handler,
+                status,
+                exitCode: raw.exitCode,
+                output: parsed.output,
+                plainText: parsed.plainText,
+                stderr: raw.stderr,
+                error: parsed.validationError,
+              };
+              const merged = mergeResults(event, [invocation]);
+              await this.backends.onAsyncResult?.(
+                input,
+                merged,
+                handler.asyncRewake === true && raw.exitCode === 2,
+              );
+            } catch (error) {
+              console.error(
+                "Async hook failed:",
+                error instanceof Error ? error.message : String(error),
+              );
+            }
           });
           this.#background.add(pending);
           void pending.finally(() => this.#background.delete(pending));

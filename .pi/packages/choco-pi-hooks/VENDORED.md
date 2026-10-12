@@ -1,5 +1,14 @@
 # Package provenance
 
+## 2026-10-11 choco-pi patch: contain hook transport failures
+
+Command hooks handle stdin write callbacks and stream errors before writing the
+payload. EPIPE and ERR_STREAM_DESTROYED preserve the child's actual exit result;
+other stdin failures are recorded in stderr. Command completion settles once,
+and rejected async result delivery is reported without an unhandled rejection.
+Regression tests exercise large payloads with real children and inject transport
+and delivery failures. This remains a first-party package, not an external fork.
+
 ## 2026-10-08 choco-pi patch: truthful MCP elicitation coverage
 
 Labels `Elicitation` and `ElicitationResult` as having no producer, matching

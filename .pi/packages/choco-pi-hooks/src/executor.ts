@@ -80,6 +80,7 @@ function runCommand(
   input: HookInput,
   signal: AbortSignal,
 ): Promise<RawExecution> {
+  const payload = JSON.stringify(input);
   return new Promise((resolve) => {
     const env: NodeJS.ProcessEnv = { ...process.env, CLAUDE_PROJECT_DIR: input.cwd };
     if (isStringValue(input._claude_env_file)) env.CLAUDE_ENV_FILE = input._claude_env_file;
@@ -103,15 +104,35 @@ function runCommand(
     });
     let stdout = "";
     let stderr = "";
+    let settled = false;
+    const stdinErrors = new Set<Error>();
+    const settle = (exitCode: number) => {
+      if (settled) return;
+      settled = true;
+      resolve({ exitCode, stdout, stderr });
+    };
+    const onStdinError = (error: Error | null | undefined) => {
+      if (!error || settled || stdinErrors.has(error)) return;
+      stdinErrors.add(error);
+      if ("code" in error && (error.code === "EPIPE" || error.code === "ERR_STREAM_DESTROYED"))
+        return;
+      stderr += `${stderr && !stderr.endsWith("\n") ? "\n" : ""}Hook stdin: ${error.message}\n`;
+    };
+    child.stdin.on("error", onStdinError);
     child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
       stdout += chunk;
     });
     child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
       stderr += chunk;
     });
-    child.on("error", (error) => resolve({ exitCode: 1, stdout, stderr: stderr || error.message }));
-    child.on("close", (code) => resolve({ exitCode: code ?? 1, stdout, stderr }));
-    child.stdin.end(JSON.stringify(input));
+    child.on("error", (error) => {
+      if (settled) return;
+      stderr ||= error.message;
+      settle(1);
+    });
+    child.on("close", (code) => settle(code ?? 1));
+    child.stdin.write(payload, onStdinError);
+    child.stdin.end();
   });
 }
 
