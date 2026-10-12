@@ -118,6 +118,7 @@ const JOB_STEP_ALLOWED_FIELDS = {
   click: new Set(["action", "locator", "name", "role", "selector", "value"]),
   fill: new Set(["action", "locator", "name", "role", "selector", "text", "value"]),
   open: new Set(["action", "loadState", "url"]),
+  press: new Set(["action", "press"]),
   screenshot: new Set(["action", "path"]),
   select: new Set(["action", "selector", "value", "values"]),
   snapshot: new Set(["action"]),
@@ -221,6 +222,14 @@ function compileTypeJobStep(step: InputRecord): CompileJobStepResult {
   return { args: firstStep.args, extraSteps, generatedFrom: firstStep.generatedFrom };
 }
 
+function compilePressJobStep(step: InputRecord): CompileJobStepResult {
+  const press = step.press;
+  if (!isNonEmptyString(press)) {
+    return { error: "job step press requires a non-empty press key string." };
+  }
+  return { args: ["press", press] };
+}
+
 function compileSelectJobStep(step: InputRecord, index: number): CompileJobStepResult {
   const selector = getRequiredJobString(step, "selector", "select");
   if ("error" in selector) return { error: selector.error };
@@ -272,6 +281,7 @@ const JOB_STEP_COMPILERS = {
   click: compileClickJobStep,
   fill: compileFillJobStep,
   open: compileOpenJobStep,
+  press: compilePressJobStep,
   screenshot: (step) => compilePathArtifactJobStep(step, "screenshot"),
   select: compileSelectJobStep,
   snapshot: () => ({ args: ["snapshot", "-i"] }),

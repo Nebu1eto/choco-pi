@@ -18,6 +18,7 @@ export const AGENT_BROWSER_JOB_STEP_ACTIONS = [
   "click",
   "fill",
   "type",
+  "press",
   "select",
   "wait",
   "assertText",

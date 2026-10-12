@@ -280,7 +280,9 @@ export function createAgentBrowserParamsSchema(
                       minimum: 1,
                     }),
                   ),
-                  press: Type.Optional(Type.String({ description: "Key to press after typing." })),
+                  press: Type.Optional(
+                    Type.String({ description: "Key for press, or to press after typing." }),
+                  ),
                   milliseconds: Type.Optional(
                     Type.Number({ description: "Wait duration in milliseconds." }),
                   ),

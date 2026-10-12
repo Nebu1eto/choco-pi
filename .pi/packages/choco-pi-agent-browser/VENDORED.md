@@ -98,6 +98,16 @@ The fork lets choco-pi customize the extension in-tree and load its TypeScript s
   canonical response metadata, real Pi wrapper scope isolation, and integrated/standalone tool
   discovery.
 
+### Output fidelity and job press step
+
+- `redactUrlToken` in `lib/runtime.ts` returns the original token when no credential or sensitive
+  parameter was redacted. Upstream always re-serialized through `URL`, which appended `/` to
+  bare-origin URLs in eval output, page text, and replayable `effectiveArgs`/`nextActions`, and
+  rewrote an escaped `\"` that followed a URL into `/"`.
+- Added a `press` job step (`{ action: "press", press: "Enter" }`) that compiles to upstream
+  `press <key>`. The schema reuses the existing `press` field; other job steps are unchanged.
+- Regression coverage: `tests/agent-browser.output-fidelity.test.ts`.
+
 ## Updating
 
 Diff a new upstream revision against the base commit, copy the same runtime subset, and reapply every divergence above. Run the target-checking specifier codemod rather than a blind replacement, then update the base revision, version, fork date, rewrite counts, and divergence log here.
