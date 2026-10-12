@@ -24,13 +24,38 @@ import {
   buildSinglePassPrompt,
   COMPACTION_SYSTEM_PROMPT,
 } from "./prompt.ts";
-import type { CompactionSessionState } from "./session-state.ts";
+import type { SessionStateReader } from "./session-state.ts";
 import { CompactionAbortedError, runSummaryCall } from "./summarize.ts";
 import type { CompactionMessage } from "./types.ts";
 import { combineUsage } from "./usage.ts";
 
-/** Reads the state `session_start` resolved for the current session. */
-export type SessionStateReader = () => CompactionSessionState;
+// Background compaction host integration lives in ./background-host/; this
+// module stays the package's entry for both the summarizer and the background
+// host API.
+export { ANCHOR_ENTRY_TYPE, CANDIDATE_RECORD_TYPE } from "./background/entry-types.ts";
+export {
+  type AdoptionRoute,
+  BACKGROUND_ADOPTION_SIGNAL_SYMBOL,
+  type BackgroundAdoptionListener,
+  type BackgroundAdoptionNotice,
+  type BackgroundAdoptionOwner,
+  type BackgroundAdoptionSignal,
+  getBackgroundAdoptionSignal,
+  readAdoptionIdentity,
+} from "./background-host/adoption-signal.ts";
+export { registerDefaultBackendFactories } from "./background-host/backends.ts";
+export {
+  candidateRecordsOf,
+  findCommittedAdoption,
+  latestCompactionOf,
+} from "./background-host/branch.ts";
+export type { BackgroundCompactionOptions } from "./background-host/owner-spec.ts";
+export { resolveProviderScope } from "./background-host/provider-scope.ts";
+export {
+  type BackgroundCompaction,
+  registerBackgroundCompaction,
+} from "./background-host/register.ts";
+export type { SessionStateReader } from "./session-state.ts";
 
 const CANCELLED: SessionBeforeCompactResult = { cancel: true };
 
@@ -73,6 +98,24 @@ interface SummaryOutcome {
   readonly passes: 1 | 2;
 }
 
+/** Host scalars one compaction snapshots before its first await. */
+interface CompactionRun {
+  readonly event: SessionBeforeCompactEvent;
+  readonly preparation: SessionBeforeCompactEvent["preparation"];
+  readonly customInstructions: string | undefined;
+  readonly model: NonNullable<ExtensionContext["model"]>;
+  readonly modelRegistry: ExtensionContext["modelRegistry"];
+  readonly thinkingLevel: ExtensionContext["thinkingLevel"];
+  readonly retry: RetryPolicy | undefined;
+  readonly signal: AbortSignal;
+  readonly isStale: () => boolean;
+}
+
+interface Summarized {
+  readonly input: CompactionInput;
+  readonly outcome: SummaryOutcome;
+}
+
 /**
  * Build the `session_before_compact` handler.
  *
@@ -86,115 +129,133 @@ export function createBeforeCompactHandler(
   readState: SessionStateReader,
 ): ExtensionHandler<SessionBeforeCompactEvent, SessionBeforeCompactResult> {
   return async (event, ctx) => {
-    // Snapshot every host-owned scalar before the first await.
-    const state = readState();
-    const owner = resolveOwner(ctx, state.codexCompaction);
-    const model = ctx.model;
-    if (owner !== "local" || !model) {
-      return undefined;
-    }
-    const generation = state.generation;
-    const retry = state.retryPolicy;
-    const sessionId = readSessionId(ctx);
-    const thinkingLevel = ctx.thinkingLevel;
-    const modelRegistry = ctx.modelRegistry;
-    const signal = event.signal;
-    const preparation = event.preparation;
-    const customInstructions = event.customInstructions;
-    if (signal.aborted) {
-      return CANCELLED;
-    }
-
-    const isStale = (): boolean =>
-      signal.aborted || readState().generation !== generation || readSessionId(ctx) !== sessionId;
-
-    let outcome: SummaryOutcome;
-    let input: CompactionInput;
+    const run = snapshotRun(readState, event, ctx);
+    if (run === undefined) return undefined;
+    if (run.signal.aborted) return CANCELLED;
+    let summarized: Summarized | undefined;
     try {
-      input = buildCompactionInput(event);
-      const budget: ModelBudget = {
-        contextWindow: model.contextWindow,
-        maxTokens: model.maxTokens,
-      };
-      const maxTokens = resolveMaxTokens(budget, preparation.settings);
-      const singlePassPrompt = buildSinglePassPrompt({
+      summarized = await summarizeRun(run);
+    } catch (error) {
+      // Abort and stale-context failures cancel quietly; anything else is reported.
+      if (error instanceof CompactionAbortedError) return CANCELLED;
+      if (error instanceof Error && isStaleContextError(error)) return CANCELLED;
+      return failVisibly(ctx, error instanceof Error ? error.message : String(error));
+    }
+    if (summarized === undefined) return CANCELLED;
+    return { compaction: buildCompaction(run.preparation, summarized) };
+  };
+}
+
+/** Snapshot every host-owned scalar before the first await; undefined when not locally owned. */
+function snapshotRun(
+  readState: SessionStateReader,
+  event: SessionBeforeCompactEvent,
+  ctx: ExtensionContext,
+): CompactionRun | undefined {
+  const state = readState();
+  const owner = resolveOwner(ctx, state.codexCompaction);
+  const model = ctx.model;
+  if (owner !== "local" || !model) {
+    return undefined;
+  }
+  const generation = state.generation;
+  const sessionId = readSessionId(ctx);
+  const signal = event.signal;
+  return {
+    event,
+    preparation: event.preparation,
+    customInstructions: event.customInstructions,
+    model,
+    modelRegistry: ctx.modelRegistry,
+    thinkingLevel: ctx.thinkingLevel,
+    retry: state.retryPolicy,
+    signal,
+    isStale: () =>
+      signal.aborted || readState().generation !== generation || readSessionId(ctx) !== sessionId,
+  };
+}
+
+/** Summarize in one pass when it fits, else two; undefined when the run went stale. */
+async function summarizeRun(run: CompactionRun): Promise<Summarized | undefined> {
+  const { model, customInstructions } = run;
+  const input = buildCompactionInput(run.event);
+  const budget: ModelBudget = {
+    contextWindow: model.contextWindow,
+    maxTokens: model.maxTokens,
+  };
+  const maxTokens = resolveMaxTokens(budget, run.preparation.settings);
+  const singlePassPrompt = buildSinglePassPrompt({
+    history: input.history,
+    prefix: input.prefix,
+    tail: input.tail,
+    previousSummary: input.previousSummary,
+    customInstructions,
+  });
+  const outcome = promptFits(budget, maxTokens, COMPACTION_SYSTEM_PROMPT, singlePassPrompt)
+    ? await runSinglePass(run, { promptText: singlePassPrompt, maxTokens })
+    : await runTwoPass({
+        modelRegistry: run.modelRegistry,
+        model,
+        budget,
+        maxTokens,
+        signal: run.signal,
+        thinkingLevel: run.thinkingLevel,
+        retry: run.retry,
+        customInstructions,
         history: input.history,
         prefix: input.prefix,
         tail: input.tail,
         previousSummary: input.previousSummary,
-        customInstructions,
+        isStaleAfterCall: run.isStale,
       });
-      if (promptFits(budget, maxTokens, COMPACTION_SYSTEM_PROMPT, singlePassPrompt)) {
-        const single = await runSummaryCall({
-          modelRegistry,
-          model,
-          systemPrompt: COMPACTION_SYSTEM_PROMPT,
-          promptText: singlePassPrompt,
-          maxTokens,
-          signal,
-          thinkingLevel,
-          retry,
-          label: "Summarization",
-        });
-        if (isStale()) {
-          return CANCELLED;
-        }
-        outcome = { text: single.text, usage: single.usage, passes: 1 };
-      } else {
-        outcome = await runTwoPass({
-          modelRegistry,
-          model,
-          budget,
-          maxTokens,
-          signal,
-          thinkingLevel,
-          retry,
-          customInstructions,
-          history: input.history,
-          prefix: input.prefix,
-          tail: input.tail,
-          previousSummary: input.previousSummary,
-          isStaleAfterCall: isStale,
-        });
-        if (isStale()) {
-          return CANCELLED;
-        }
-      }
-    } catch (error) {
-      if (error instanceof CompactionAbortedError) {
-        return CANCELLED;
-      }
-      if (error instanceof Error && isStaleContextError(error)) {
-        return CANCELLED;
-      }
-      return failVisibly(ctx, error instanceof Error ? error.message : String(error));
-    }
+  if (run.isStale()) return undefined;
+  return { input, outcome };
+}
 
-    const fileLists = resolveFileLists(preparation.fileOps, input.previousDetails);
-    const details: LocalCompactionDetails = {
-      strategy: "local-reconciled",
-      schemaVersion: 1,
-      readFiles: fileLists.readFiles,
-      modifiedFiles: fileLists.modifiedFiles,
-      passes: outcome.passes,
-      evidence: {
-        historyEntryIds: input.historyEntryIds === null ? null : [...input.historyEntryIds],
-        tailEntryIds: input.tailEntryIds === null ? null : [...input.tailEntryIds],
-      },
-    };
-    if (input.previousCheckpointId !== undefined) {
-      details.evidence.previousCheckpointId = input.previousCheckpointId;
-    }
+async function runSinglePass(
+  run: CompactionRun,
+  request: { readonly promptText: string; readonly maxTokens: number },
+): Promise<SummaryOutcome> {
+  const single = await runSummaryCall({
+    modelRegistry: run.modelRegistry,
+    model: run.model,
+    systemPrompt: COMPACTION_SYSTEM_PROMPT,
+    promptText: request.promptText,
+    maxTokens: request.maxTokens,
+    signal: run.signal,
+    thinkingLevel: run.thinkingLevel,
+    retry: run.retry,
+    label: "Summarization",
+  });
+  return { text: single.text, usage: single.usage, passes: 1 };
+}
 
-    return {
-      compaction: {
-        summary: `${normalizeSummary(outcome.text)}${formatFileLists(fileLists)}`,
-        firstKeptEntryId: preparation.firstKeptEntryId,
-        tokensBefore: preparation.tokensBefore,
-        usage: outcome.usage,
-        details,
-      },
-    };
+function buildCompaction(
+  preparation: CompactionRun["preparation"],
+  summarized: Summarized,
+): NonNullable<SessionBeforeCompactResult["compaction"]> {
+  const { input, outcome } = summarized;
+  const fileLists = resolveFileLists(preparation.fileOps, input.previousDetails);
+  const details: LocalCompactionDetails = {
+    strategy: "local-reconciled",
+    schemaVersion: 1,
+    readFiles: fileLists.readFiles,
+    modifiedFiles: fileLists.modifiedFiles,
+    passes: outcome.passes,
+    evidence: {
+      historyEntryIds: input.historyEntryIds === null ? null : [...input.historyEntryIds],
+      tailEntryIds: input.tailEntryIds === null ? null : [...input.tailEntryIds],
+    },
+  };
+  if (input.previousCheckpointId !== undefined) {
+    details.evidence.previousCheckpointId = input.previousCheckpointId;
+  }
+  return {
+    summary: `${normalizeSummary(outcome.text)}${formatFileLists(fileLists)}`,
+    firstKeptEntryId: preparation.firstKeptEntryId,
+    tokensBefore: preparation.tokensBefore,
+    usage: outcome.usage,
+    details,
   };
 }
 

@@ -1,4 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 
 import {
   isCodexTransportContext,
@@ -44,6 +46,43 @@ export interface CodexCompactionSnapshot {
  * absent snapshot means no configuration was loaded yet, which only leaves the
  * transport rule in force.
  */
+/** Owner key prefix of a main (non-child) session's background coordinator. */
+const MAIN_OWNER_KEY_PREFIX = "main-session:";
+
+/**
+ * Registry owner key of a main session's background coordinator.
+ *
+ * Deterministic: `main-session:<sessionId>`, where `sessionId` is
+ * `ctx.sessionManager.getSessionId()`. It is the key under which the
+ * coordinator is registered (`getCoordinator(mainOwnerKey(id))`) and the
+ * `ownerKey` written into every adopted checkpoint's details. Child sessions
+ * use the subagent bridge's `subagent-child:<childSessionId>` instead. The
+ * owner generation is a process-unique counter and is not derivable; read it
+ * from the registered coordinator.
+ */
+export function mainOwnerKey(sessionId: string): string {
+  return `${MAIN_OWNER_KEY_PREFIX}${sessionId}`;
+}
+
+const SUBAGENTS_MANAGER_KEY = Symbol.for("pi-subagents:manager");
+const ChildSessionRegistrySchema = Type.Object({
+  isChildSessionId: Type.Function([Type.String()], Type.Boolean()),
+});
+
+/**
+ * Whether a session ID belongs to a live subagent child session.
+ *
+ * The subagents runner registers each child ID before its extensions bind, so
+ * the probe is reliable at `session_start`. An absent or malformed registry
+ * means "not a child". Child sessions get their coordinator from the runner's
+ * bridge; the main extension stays inert there so a child never has two.
+ */
+export function isChildSession(sessionId: string): boolean {
+  const entry: unknown = Object.getOwnPropertyDescriptor(globalThis, SUBAGENTS_MANAGER_KEY)?.value;
+  if (!Value.Check(ChildSessionRegistrySchema, entry)) return false;
+  return entry.isChildSessionId(sessionId) === true;
+}
+
 export function resolveOwner(
   ctx: Pick<ExtensionContext, "model">,
   snapshot?: CodexCompactionSnapshot | undefined,

@@ -34,6 +34,18 @@ function model(contextWindow: number): Model<Api> {
   };
 }
 
+/** A host context whose usage sits just past the 550K compaction threshold. */
+function overThresholdContext(options: { model: Model<Api>; onCompact: () => void }) {
+  return {
+    cwd: process.cwd(),
+    model: options.model,
+    modelRegistry: { getAll: () => [options.model] },
+    getContextUsage: () => ({ tokens: 550_001, contextWindow: 600_000, percent: 91.7 }),
+    compact: options.onCompact,
+    ui: { notify: () => {} },
+  };
+}
+
 test("one-million-token models use the 600K cap and 550K compaction threshold", () => {
   assert.deepEqual(resolvePolicy(model(1_000_000), 1_000_000, config), {
     cap: 600_000,
@@ -234,4 +246,106 @@ test("the cap is a Model preference row instead of a command", async () => {
   assert.equal(row.id, CONTEXT_CAP_ROW_ID);
   assert.equal(row.currentValue, "1,000,000 → 600,000 · compact at 550,000");
   assert.equal(row.values, undefined, "the row reports the policy rather than editing it");
+});
+
+type CapHandler = (
+  event: RuntimeValue,
+  context: RuntimeValue,
+) => RuntimeValue | Promise<RuntimeValue>;
+
+/** Register the cap against a minimal host and return its event handlers. */
+function registerCap(): Map<string, CapHandler> {
+  const handlers = new Map<string, CapHandler>();
+  const pi = reinterpretHostValue<ExtensionAPI>({
+    on: (event: string, handler: CapHandler) => handlers.set(event, handler),
+    registerCommand: () => {},
+  });
+  modelContextCap(pi);
+  return handlers;
+}
+
+const ADOPTION_SLOT = Symbol.for("choco-pi:compaction-background-adoption");
+
+/** What a test publishes on the slot; a foreign value may omit `adoptReady`. */
+interface AdoptionSlotValue {
+  readonly version: number;
+  readonly adoptReady?: (
+    sessionId: string,
+    ctx: RuntimeValue,
+    settle: (adopted: boolean) => void,
+  ) => boolean;
+}
+
+/** Publish `value` on the background-adoption slot for the duration of `run`. */
+async function withAdoptionSlot(value: AdoptionSlotValue, run: () => Promise<void>): Promise<void> {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, ADOPTION_SLOT);
+  Object.defineProperty(globalThis, ADOPTION_SLOT, { configurable: true, value });
+  try {
+    await run();
+  } finally {
+    if (previous) Object.defineProperty(globalThis, ADOPTION_SLOT, previous);
+    else Reflect.deleteProperty(globalThis, ADOPTION_SLOT);
+  }
+}
+
+test("a ready background candidate takes the cap's compaction instead of the summarizer", async () => {
+  const handlers = registerCap();
+  const routed: { sessionId: string; settle: (adopted: boolean) => void }[] = [];
+  let ready = true;
+  const signal: AdoptionSlotValue = {
+    version: 1,
+    adoptReady: (sessionId, _ctx, settle) => {
+      if (!ready) return false;
+      routed.push({ sessionId, settle });
+      return true;
+    },
+  };
+  let compactionRequests = 0;
+  const context = {
+    ...overThresholdContext({
+      model: model(1_000_000),
+      onCompact: () => {
+        compactionRequests++;
+      },
+    }),
+    sessionManager: { getSessionId: () => "session-1" },
+  };
+
+  await withAdoptionSlot(signal, async () => {
+    await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, context);
+    await handlers.get("agent_settled")?.({ type: "agent_settled" }, context);
+    assert.equal(compactionRequests, 0, "the host summarizer was not requested");
+    assert.deepEqual(
+      routed.map((entry) => entry.sessionId),
+      ["session-1"],
+    );
+
+    // While adoption is in flight the cap does not request a second compaction.
+    await handlers.get("agent_settled")?.({ type: "agent_settled" }, context);
+    assert.equal(routed.length, 1);
+    assert.equal(compactionRequests, 0);
+
+    // A refused adoption settles false; with no ready candidate left the cap
+    // falls back to its existing ctx.compact() path.
+    routed[0]?.settle(false);
+    ready = false;
+    await handlers.get("agent_settled")?.({ type: "agent_settled" }, context);
+    assert.equal(compactionRequests, 1);
+  });
+});
+
+test("a foreign adoption slot is ignored and the cap compacts as before", async () => {
+  const handlers = registerCap();
+  let compactionRequests = 0;
+  const context = overThresholdContext({
+    model: model(1_000_000),
+    onCompact: () => {
+      compactionRequests++;
+    },
+  });
+  await withAdoptionSlot({ version: 2 }, async () => {
+    await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, context);
+    await handlers.get("agent_settled")?.({ type: "agent_settled" }, context);
+    assert.equal(compactionRequests, 1);
+  });
 });

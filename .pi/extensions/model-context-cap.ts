@@ -10,6 +10,8 @@ import {
   type ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
 import type { SettingItem } from "@earendil-works/pi-tui";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import type { PreferencesExtraSection } from "./lib/agent-preferences.ts";
 import { MODEL_SECTION_ID } from "./lib/native-settings.ts";
 
@@ -99,8 +101,15 @@ async function readConfig(cwd: string): Promise<ContextCapConfig> {
   }
   const models: Record<string, number | null | ModelContextPolicy> = {};
   for (const [key, value] of Object.entries(parsed.models ?? {})) {
-    if (value === null || isNumber(value)) {
-      models[key] = value === null ? null : positiveInteger(value, `models.${key}`)!;
+    if (value === null) {
+      models[key] = null;
+      continue;
+    }
+    if (isNumber(value)) {
+      // A defined number either validates or throws; it never yields undefined.
+      const cap = positiveInteger(value, `models.${key}`);
+      if (cap === undefined) throw new Error(`models.${key} must be a positive integer`);
+      models[key] = cap;
       continue;
     }
     if (!value || !isObject(value) || Array.isArray(value)) {
@@ -153,6 +162,45 @@ export function shouldRequestCompaction(
   compactAt: number | undefined,
 ): boolean {
   return compactAt !== undefined && tokens !== null && tokens !== undefined && tokens > compactAt;
+}
+
+/**
+ * Background-compaction adoption signal published by `choco-pi-compaction`
+ * when its (default-off) background mode is enabled for this session.
+ */
+const BACKGROUND_ADOPTION_SIGNAL = Symbol.for("choco-pi:compaction-background-adoption");
+const AdoptionSignalSchema = Type.Object({
+  version: Type.Literal(1),
+  adoptReady: Type.Function([], Type.Unknown()),
+});
+interface AdoptionSignal {
+  adoptReady(
+    sessionId: string,
+    ctx: ExtensionContext,
+    onSettled: (adopted: boolean) => void,
+  ): boolean;
+}
+
+function isAdoptionSignal<T>(value: T): value is T & AdoptionSignal {
+  return Value.Check(AdoptionSignalSchema, value);
+}
+
+/**
+ * Hand the cap's compaction to a ready background candidate. Returns true when
+ * adoption started, in which case `onSettled` runs once with the outcome; the
+ * host summarizer is not invoked. Without a signal or a ready candidate this
+ * returns false and the caller keeps its existing `ctx.compact()` path.
+ */
+export function routeToBackgroundAdoption(
+  ctx: ExtensionContext,
+  onSettled: (adopted: boolean) => void,
+): boolean {
+  const found: unknown = Object.getOwnPropertyDescriptor(
+    globalThis,
+    BACKGROUND_ADOPTION_SIGNAL,
+  )?.value;
+  if (!isAdoptionSignal(found)) return false;
+  return found.adoptReady(ctx.sessionManager.getSessionId(), ctx, onSettled) === true;
 }
 
 function cappedModels(ctx: ExtensionContext, extra?: Model<Api>): Model<Api>[] {
@@ -270,6 +318,12 @@ export default function modelContextCap(pi: ExtensionAPI): void {
     }
     if (compactionRequested) return;
     compactionRequested = true;
+    if (
+      routeToBackgroundAdoption(ctx, () => {
+        compactionRequested = false;
+      })
+    )
+      return;
     ctx.compact({
       onComplete: () => {
         compactionRequested = false;

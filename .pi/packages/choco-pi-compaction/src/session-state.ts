@@ -6,7 +6,7 @@
  * manager, and re-reading configuration files on the compaction path would put
  * filesystem work inside a request the user is waiting on.
  */
-import type { RetryPolicy } from "@earendil-works/pi-ai";
+import type { Api, Model, RetryPolicy } from "@earendil-works/pi-ai";
 import { getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 
 import { readEffectiveCodexConversionConfig } from "../../choco-pi-codex/src/adapter/activation/config-store.ts";
@@ -23,7 +23,15 @@ export interface CompactionSessionState {
   readonly retryPolicy: RetryPolicy | undefined;
   /** Codex's native-compaction configuration, or undefined before the first session. */
   readonly codexCompaction: CodexCompactionSnapshot | undefined;
+  /**
+   * The host's per-model compaction cut policy, from the same settings load as
+   * `retryPolicy`; undefined before the first session.
+   */
+  readonly compactionPolicy?: HostCompactionPolicyReader | undefined;
 }
+
+/** Reads the state `session_start` resolved for the current session. */
+export type SessionStateReader = () => CompactionSessionState;
 
 /**
  * Read the session's retry policy from the same settings the host uses.
@@ -34,13 +42,52 @@ export interface CompactionSessionState {
  * plain policy so nothing holds the manager alive past `session_start`.
  */
 export function readRetryPolicy(cwd: string): RetryPolicy {
-  const settings = SettingsManager.create(cwd, getAgentDir()).getRetrySettings();
+  return readHostSettings(cwd).retryPolicy;
+}
+
+/** The host's compaction cut policy for one model, as the host itself resolves it. */
+export interface HostCompactionPolicy {
+  readonly keepRecentTokens: number;
+  readonly reserveTokens: number;
+}
+
+export type HostCompactionPolicyReader = (
+  model: Pick<Model<Api>, "provider" | "id"> | undefined,
+) => HostCompactionPolicy;
+
+export interface HostSettingsSnapshot {
+  readonly retryPolicy: RetryPolicy;
+  readonly compactionPolicy: HostCompactionPolicyReader;
+}
+
+/** Read retry and compaction settings from the given (already loaded) manager. */
+function hostSettingsFrom(settings: SettingsManager): HostSettingsSnapshot {
+  const retry = settings.getRetrySettings();
   return {
-    enabled: settings.enabled,
-    maxRetries: settings.maxRetries,
-    baseDelayMs: settings.baseDelayMs,
-    maxAgentDelayMs: settings.maxAgentDelayMs,
+    retryPolicy: {
+      enabled: retry.enabled,
+      maxRetries: retry.maxRetries,
+      baseDelayMs: retry.baseDelayMs,
+      maxAgentDelayMs: retry.maxAgentDelayMs,
+    },
+    // The manager is in memory after creation; per-model reads touch no file.
+    compactionPolicy: (model) => {
+      const compaction = settings.getCompactionSettings(model);
+      return {
+        keepRecentTokens: compaction.keepRecentTokens,
+        reserveTokens: compaction.reserveTokens,
+      };
+    },
   };
+}
+
+/**
+ * Load the host settings once per session start. This is the same single
+ * settings load the retry policy always used; the background coordinator's
+ * cut policy is read from that one manager rather than a second load.
+ */
+export function readHostSettings(cwd: string): HostSettingsSnapshot {
+  return hostSettingsFrom(SettingsManager.create(cwd, getAgentDir()));
 }
 
 /**
