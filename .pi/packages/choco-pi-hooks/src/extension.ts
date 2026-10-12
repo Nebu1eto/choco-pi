@@ -2,16 +2,21 @@ import crypto from "node:crypto";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { registerSessionResourceCleanup } from "@earendil-works/pi-ai";
 import type {
+  CompactionEntry,
+  CustomToolCallEvent,
   ExtensionAPI,
   ExtensionContext,
+  SessionBeforeCompactEvent,
   ToolCallEvent,
   ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { loadHookSources } from "./config.ts";
 import { createPiHookBackends } from "./backends.ts";
 import { HookEngine } from "./engine.ts";
 import type { HookEventName, HookInput, HookSource, JsonObject } from "./types.ts";
-import { registerSupplementalEvents } from "./supplemental-events.ts";
+import { type HookDispatch, registerSupplementalEvents } from "./supplemental-events.ts";
 import { createHookWatchers, type HookWatchers } from "./watchers.ts";
 import { applyHookEnvironment, hookEnvironmentFile, removeHookEnvironment } from "./environment.ts";
 import { registerClaudeTaskTools } from "./tasks.ts";
@@ -54,6 +59,97 @@ function stopFailureType(message: string): string {
   if (/invalid request/i.test(message)) return "invalid_request";
   if (/server error/i.test(message)) return "server_error";
   return "unknown";
+}
+
+/**
+ * Background-compaction adoption signal published by `choco-pi-compaction`.
+ *
+ * Background adoption does not run external PreCompact/PostCompact hooks.
+ * A boundary adoption emits no host compaction event at all; the idle and
+ * threshold routes emit a real session_before_compact/session_compact pair,
+ * which the signal identifies by owner token and candidate ID so they are
+ * skipped here. Host and manual compactions keep running each hook once. An
+ * absent or foreign slot leaves hook behavior unchanged.
+ */
+const BACKGROUND_ADOPTION_SIGNAL = Symbol.for("choco-pi:compaction-background-adoption");
+const AdoptionSignalSchema = Type.Object({
+  version: Type.Literal(1),
+  willAdopt: Type.Function([], Type.Unknown()),
+  isAdoption: Type.Function([], Type.Unknown()),
+});
+interface AdoptionSignal {
+  willAdopt(sessionId: string, event: SessionBeforeCompactEvent): Promise<boolean>;
+  isAdoption(sessionId: string, entry: CompactionEntry): boolean;
+}
+function isAdoptionSignal<T>(value: T): value is T & AdoptionSignal {
+  return Value.Check(AdoptionSignalSchema, value);
+}
+function adoptionSignal(): AdoptionSignal | undefined {
+  const found: unknown = Object.getOwnPropertyDescriptor(
+    globalThis,
+    BACKGROUND_ADOPTION_SIGNAL,
+  )?.value;
+  return isAdoptionSignal(found) ? found : undefined;
+}
+/** Whether this compaction request is answered by a background adoption. */
+async function isBackgroundAdoptionRequest(
+  ctx: ExtensionContext,
+  event: SessionBeforeCompactEvent,
+): Promise<boolean> {
+  const signal = adoptionSignal();
+  if (!signal) return false;
+  const sessionId = ctx.sessionManager.getSessionId();
+  try {
+    return (await signal.willAdopt(sessionId, event)) === true;
+  } catch {
+    // A failed decision cannot adopt; the hook runs as for any host compaction.
+    return false;
+  }
+}
+function isBackgroundAdoptionEntry(ctx: ExtensionContext, entry: CompactionEntry): boolean {
+  const signal = adoptionSignal();
+  if (!signal) return false;
+  return signal.isAdoption(ctx.sessionManager.getSessionId(), entry) === true;
+}
+
+/** One read-only `/hooks` row per configured handler. */
+function configuredHookRows(sources: HookSource[]): string[] {
+  return sources.flatMap(sourceHookRows);
+}
+function sourceHookRows(source: HookSource): string[] {
+  return Object.entries(source.hooks).flatMap(([event, groups]) =>
+    (groups ?? []).flatMap((group) =>
+      group.hooks.map(
+        (handler) =>
+          `${event} ${group.matcher ?? "*"} [${handler.type}] (${source.kind}: ${source.id})`,
+      ),
+    ),
+  );
+}
+function warnBlockedReason(ctx: ExtensionContext, reason: string | undefined): void {
+  if (reason && ctx.hasUI) ctx.ui.notify(reason, "warning");
+}
+/**
+ * Run WorktreeCreate for an `Agent` call that asks for worktree isolation.
+ * Returns a block result when a configured hook fails to supply a path.
+ */
+async function createHookWorktree(
+  dispatch: HookDispatch,
+  ctx: ExtensionContext,
+  call: Pick<CustomToolCallEvent, "input" | "toolCallId">,
+): Promise<{ block: true; reason: string } | undefined> {
+  const { input, toolCallId } = call;
+  const created = await dispatch("WorktreeCreate", ctx, {
+    name:
+      Object.prototype.toString.call(input.name) === "[object String]"
+        ? String(input.name)
+        : `agent-${toolCallId.slice(0, 8)}`,
+  });
+  if (created.invocations.length === 0) return undefined;
+  if (created.blocked || !created.worktreePath)
+    return { block: true, reason: created.reason ?? "WorktreeCreate hook returned no path" };
+  input.__choco_hook_worktree_path = created.worktreePath;
+  return undefined;
 }
 
 export default function chocoPiHooks(pi: ExtensionAPI): void {
@@ -140,16 +236,7 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
   pi.registerCommand("hooks", {
     description: "Browse configured Claude-compatible hooks",
     handler: async (_args, ctx) => {
-      const rows = currentSources.flatMap((source) =>
-        Object.entries(source.hooks).flatMap(([event, groups]) =>
-          (groups ?? []).flatMap((group) =>
-            group.hooks.map(
-              (handler) =>
-                `${event} ${group.matcher ?? "*"} [${handler.type}] (${source.kind}: ${source.id})`,
-            ),
-          ),
-        ),
-      );
+      const rows = configuredHookRows(currentSources);
       if (!rows.length) {
         ctx.ui.notify("No hooks configured", "info");
         return;
@@ -321,7 +408,7 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
         prompt: event.text,
       });
       if (expansionResult.blocked || !expansionResult.continue) {
-        if (expansionResult.reason && ctx.hasUI) ctx.ui.notify(expansionResult.reason, "warning");
+        warnBlockedReason(ctx, expansionResult.reason);
         return { action: "handled" } as const;
       }
       expansionContext = expansionResult.additionalContext.join("\n");
@@ -329,7 +416,7 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
     const result = await dispatch("UserPromptSubmit", ctx, { prompt: event.text });
     notify(ctx, result.systemMessages);
     if (result.blocked || !result.continue) {
-      if (result.reason && ctx.hasUI) ctx.ui.notify(result.reason, "warning");
+      warnBlockedReason(ctx, result.reason);
       return { action: "handled" } as const;
     }
     const promptContext = [expansionContext, ...result.additionalContext].filter(Boolean);
@@ -344,17 +431,8 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
   pi.on("tool_call", async (event: ToolCallEvent, ctx) => {
     await ensureCwd(ctx);
     if (event.toolName === "Agent" && event.input.isolation === "worktree") {
-      const created = await dispatch("WorktreeCreate", ctx, {
-        name:
-          Object.prototype.toString.call(event.input.name) === "[object String]"
-            ? String(event.input.name)
-            : `agent-${event.toolCallId.slice(0, 8)}`,
-      });
-      if (created.invocations.length > 0) {
-        if (created.blocked || !created.worktreePath)
-          return { block: true, reason: created.reason ?? "WorktreeCreate hook returned no path" };
-        event.input.__choco_hook_worktree_path = created.worktreePath;
-      }
+      const blocked = await createHookWorktree(dispatch, ctx, event);
+      if (blocked) return blocked;
     }
     const result = await dispatch("PreToolUse", ctx, {
       tool_name: claudeToolName(event.toolName),
@@ -413,6 +491,7 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
     if (appended.length) return { content: [...event.content, ...appended] };
   });
   pi.on("session_before_compact", async (event, ctx) => {
+    if (await isBackgroundAdoptionRequest(ctx, event)) return;
     const result = await dispatch("PreCompact", ctx, {
       trigger: event.reason === "manual" ? "manual" : "auto",
       custom_instructions: event.customInstructions ?? "",
@@ -420,6 +499,7 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
     if (result.blocked || !result.continue) return { cancel: true };
   });
   pi.on("session_compact", async (event, ctx) => {
+    if (isBackgroundAdoptionEntry(ctx, event.compactionEntry)) return;
     await dispatch("PostCompact", ctx, {
       trigger: event.reason === "manual" ? "manual" : "auto",
       compact_summary: event.compactionEntry.summary,
