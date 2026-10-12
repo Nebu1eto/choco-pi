@@ -32,6 +32,7 @@ import {
 } from "./lib/codex-preferences.ts";
 import { buildSubagentPreferencesSections } from "./lib/subagent-preferences.ts";
 import { buildAdvisorPreferencesSections } from "./lib/advisor-preferences.ts";
+import { buildBackgroundCompactionPreferencesSections } from "./lib/background-compaction-preferences.ts";
 import {
   buildNativeSettingsSections,
   createHostCommandContext,
@@ -675,6 +676,7 @@ function buildPreferencesExtraSections(ctx: ExtensionCommandContext): Preference
     ...buildCodexPreferencesSections(ctx),
     ...buildSubagentPreferencesSections(ctx),
     ...buildAdvisorPreferencesSections(ctx),
+    ...buildBackgroundCompactionPreferencesSections(ctx),
     buildAgentPreferencesSection(ctx),
   ];
 }
