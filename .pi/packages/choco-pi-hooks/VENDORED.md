@@ -39,3 +39,26 @@ blocking branch's exclusive threshold (at most 7 follow-ups by default).
 Non-extension `input` starts a fresh user-task budget; extension-generated
 continuations retain `stop_hook_active`. Pending Stop results are discarded
 when a new user task or lifecycle generation supersedes their owner.
+
+## choco-pi patch: no compaction hooks for background adoption
+
+Background compaction (`choco-pi-compaction`, off by default) adopts prepared
+checkpoints without running `PreCompact` or `PostCompact`; host and manual
+compactions still run each once. No new hook event type exists.
+
+- `src/extension.ts`: `session_before_compact` and `session_compact` first
+  consult the compaction package's adoption signal
+  (`Symbol.for("choco-pi:compaction-background-adoption")`, typebox-validated).
+  `willAdopt(sessionId, event)` shares the coordinator's per-event arbitration,
+  so the PreCompact skip and the adoption are one decision;
+  `isAdoption(sessionId, entry)` recognizes this process's adopted entries. An
+  absent or foreign slot, or a throwing `willAdopt`, leaves behavior unchanged.
+  Boundary adoption emits no host event and needs no change.
+- Structural divergence (behavior-preserving, same call and dispatch order):
+  inside `chocoPiHooks`, `/hooks` uses `configuredHookRows` and
+  `sourceHookRows`, `input` uses `warnBlockedReason`, and the `tool_call`
+  worktree branch uses `createHookWorktree(dispatch, ctx, event)`.
+- `tests/background-compaction-hooks.test.ts` (new): real SDK session with the
+  real hooks and compaction extensions and temporary HOME/agent dir; an
+  idle-route adoption runs no hook despite its real host events, and a later
+  host compaction runs PreCompact and PostCompact once each.

@@ -1,0 +1,220 @@
+# choco-pi-compaction
+
+Compaction summaries reconciled against the retained recent messages, plus an
+optional background mode that prepares a checkpoint while the session keeps
+working and adopts it at a safe point.
+
+## Reconciled summaries (always on)
+
+Pi's default summarizer sees only the messages it discards. This extension
+answers `session_before_compact` for locally summarized models and gives the
+summarizer the retained tail as current-state evidence. Codex-owned models are
+left to the Codex package.
+
+## Background compaction (off by default)
+
+Nothing changes unless a settings sidecar turns it on. With the feature off,
+or with a malformed sidecar, provider requests, session entries and hook runs
+are the same as with the reconciled summarizer alone.
+
+### Settings
+
+The sidecar is `background-compaction.json`. The first file found wins:
+
+1. `<project>/.pi/extensions/background-compaction.json` (trusted projects only)
+2. `<agent dir>/extensions/background-compaction.json`
+3. the profile's own `.pi/extensions/background-compaction.json`
+
+No file means the defaults below. Unknown keys, wrong types, out-of-range
+values, `hysteresis >= prepareAt`, `maxOutputTokens > maxInputTokens`, or
+`maxQueued < maxConcurrent` disable the feature and show one warning naming the
+file and the problem. Settings are read at session start.
+
+| Key                                                     | Default                       | Meaning                                                                                                              |
+| ------------------------------------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `enabled`                                               | `false`                       | Master switch. Every backend switch is ignored while it is off.                                                      |
+| `text`                                                  | `false`                       | Text backend: summarizes the frozen prefix with the session model. Also the only backend subagent children use.      |
+| `anthropicNative`                                       | `false`                       | Anthropic on-demand native compaction for allow-listed provider/model/endpoint/auth combinations.                    |
+| `codexNative`                                           | `false`                       | Codex native lane, supplied by the Codex package through the backend registry.                                       |
+| `prepareAt`                                             | `0.7`                         | Start preparing when context tokens reach this fraction of the host trigger point (`contextWindow - reserveTokens`). |
+| `hysteresis`                                            | `0.1`                         | After a preparation, usage must fall below `prepareAt - hysteresis` before another starts.                           |
+| `reserveTokens`                                         | `8192`                        | Headroom subtracted from the context window to get the trigger point; also orders the shared preparation queue.      |
+| `maxConcurrent` / `maxQueued`                           | `2` / `32`                    | Process-wide preparation limits.                                                                                     |
+| `maxAttempts` / `retryBaseMs` / `cooldownMs`            | `2` / `1000` / `60000`        | Retries per candidate, backoff base, and cooldown after a failure before the same owner tries again.                 |
+| `timeoutMs`                                             | `120000`                      | Deadline per candidate.                                                                                              |
+| `maxInputTokens` / `maxOutputTokens` / `maxResultBytes` | `200000` / `8192` / `1048576` | Preparation budget; larger prefixes or results fail as `oversized`.                                                  |
+| `minReductionTokens`                                    | `1024`                        | Accepted for forward compatibility; usefulness is decided by each backend.                                           |
+
+Example that enables only the text backend:
+
+```json
+{ "enabled": true, "text": true }
+```
+
+The Preferences panel's Agent tab has a **Background compaction
+(Experimental)** row (`off` by default) that flips `enabled` in the agent
+directory's sidecar, keeping its other keys, and applies the change to the
+running session: switching on starts a coordinator, switching off discards any
+prepared candidate before it can be adopted. It refuses to rewrite a file that
+is not valid JSON or fails the schema. It turns on text background compaction:
+switching on a file with no backend switch on also sets `text: true`. Native
+Codex/Anthropic lanes are switched in `background-compaction.json`, and a
+trusted project's sidecar still wins.
+
+### How a checkpoint is prepared
+
+Each main session gets one coordinator, registered in the process-wide
+registry under `mainOwnerKey(sessionId)` = `main-session:<sessionId>` with a
+process-unique generation. At each `turn_end`, `agent_before_settle` and
+`agent_settled` the extension reads context usage; past the threshold it
+freezes the prefix up to a legal cut and starts preparation in the background.
+The foreground run never waits for it. Ready candidates are persisted as
+`choco-compaction-candidate` custom entries, which are not model-visible.
+
+On reload or a model change the coordinator is rebuilt for the current provider
+scope (provider, endpoint, model, auth mode). A persisted ready candidate is
+bound again only when its scope, prior checkpoint and prefix fingerprint still
+match; recovery never starts a paid preparation. Anything else is discarded
+with a reason.
+
+### How a checkpoint is adopted
+
+A ready candidate is installed by exactly one of these routes. None forges a
+host event.
+
+- **Boundary (mid-run).** At `turn_end` or `agent_before_settle` the extension
+  returns the checkpoint as a compaction draft. The next request of the same run
+  uses it. The host emits no `session_compact`. Commit is confirmed by scanning
+  the branch for the entry's candidate ID, fingerprint and owner key after the
+  boundary settles; a dropped or replaced draft returns the candidate to ready.
+- **Idle (before the next prompt).** When a prompt arrives while the session is
+  idle (`input` with no streaming behavior and `ctx.isIdle()`), the extension
+  calls `ctx.compact()` only as a trigger and answers the resulting
+  `session_before_compact` with the ready checkpoint, so the host summarizer
+  never runs and the first request of the new prompt already uses it. The host
+  emits a real `session_compact` with `reason: "manual"`. If the host refuses
+  ("Nothing to compact", "Already compacted", or another extension cancels),
+  the route fails closed: no retry, no summarization, and the candidate stays
+  available to a later boundary. `ctx.compact()` is never called while a run is
+  active.
+- **Host compaction.** When the host compacts on its own (threshold or a plain
+  `/compact`), a ready, still-valid candidate answers `session_before_compact`
+  instead of the summarizer. `/compact` with custom instructions discards the
+  candidate and runs the normal summarizer. Overflow recovery with no ready
+  candidate cancels any preparation and proceeds unchanged.
+- **Context cap.** When `.pi/extensions/model-context-cap.ts` reaches its
+  compaction threshold and a ready candidate exists, it hands the compaction to
+  the idle route instead of requesting a summary. Otherwise it behaves as before.
+
+### Consumers
+
+Consumers learn about adoptions from the process-global signal
+`Symbol.for("choco-pi:compaction-background-adoption")` (`getBackgroundAdoptionSignal()`),
+which delivers one notice per committed adoption with its route (`boundary`,
+`host` or `recovered`) and can tell whether a `session_before_compact` or a
+compaction entry belongs to a background adoption. The slot is created when the
+extension registers, so consumers loaded earlier bind in their own
+`session_start`; while the feature is off it has no owners and publishes nothing.
+Subagent children register their own owner through the runner bridge.
+
+- **Goal:** runs its post-compaction work exactly once per compaction. Boundary
+  adoptions come from the signal; idle and host adoptions from their real
+  `session_compact`.
+- **Hooks:** external `PreCompact` and `PostCompact` hooks are **not run** for
+  background adoption on any route. Host and manual compactions run each hook
+  once, as before. No new hook event type exists.
+
+### Subagents
+
+The extension stays inert inside subagent child sessions. It publishes a child
+provider that the subagent runner uses to attach a separate text-backend
+coordinator to each child under `subagent-child:<childSessionId>`; the parent
+session is never touched. Children only use the text backend and have no idle
+route. When a child's cut has no retained entry yet, the coordinator appends a
+model-invisible `choco-compaction-anchor` entry through the runner bridge and
+keeps it.
+
+### Backends and the registry
+
+| Backend ID         | Switch            | Scope                                                                                                                                                |
+| ------------------ | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `text`             | `text`            | Any locally summarized model; summarizes the frozen prefix with the session model.                                                                   |
+| `anthropic-native` | `anthropicNative` | Allow-listed provider/endpoint/model/auth combinations only; on-demand native compaction on a separate lane, replayed byte-exact at the transport.   |
+| `codex-native-v2`  | `codexNative`     | Codex-owned models; registered by the Codex package. Prepares on a detached SSE lane from a frozen canonical request and installs only after commit. |
+
+Backends are created through the neutral registry (`registerBackendFactory`).
+The in-package `text` and `anthropic-native` factories are registered only when
+no factory exists for that ID, so a harness can register its own (for example
+with a scripted `fetch`) before the extension binds. Factories receive
+`{ ownerKey, ownerGeneration, providerScope }`.
+
+### Diagnostics
+
+Warnings are shown once per message, prefixed `Background compaction:`.
+They cover rejected settings, unavailable backends, preparation or recovery
+failures, idle adoption failures other than the expected refusals, and
+Anthropic replay that was refused or could not be verified at the transport
+(the summary text is sent instead). Child-session warnings are prefixed
+`subagent:`. The Codex package reports a rejected sidecar and an incompatible
+committed Codex checkpoint (model, account or credentials changed) once per
+session; the host's existing compaction path is then used.
+
+### Limitations
+
+- Provider errors from the text backend are classified by matching error text;
+  an unrecognized error is treated as a retryable malformed response.
+- Snapshots are refused when no legal cut exists (for example a cut that would
+  split a tool call or, for Anthropic, an ambiguous wire mapping); preparation
+  then waits for the cooldown and a later threshold.
+- Anthropic native replay is refused with `binding-mismatch` when the system
+  prompt or tools changed while the retained messages carry thinking bound to
+  them; the summary text is used instead.
+- Anthropic native support is limited to the allow-listed combination with live
+  evidence (first-party API, OAuth, `claude-haiku-5-5`).
+- A canceled or timed-out subagent run detaches its coordinator permanently;
+  resuming that child continues without background compaction.
+- Runs started without `prompt()` (for example `sendMessage(..., { triggerTurn: true })`)
+  skip the idle route and rely on boundary adoption.
+- Scheduling is per process; separate Pi processes do not share limits.
+
+### Host behavior this relies on (Pi SDK 1.0.4)
+
+- A compaction draft returned from `turn_end` or `agent_before_settle` commits
+  while the run is active, without abort or `session_compact`. Returning it
+  proves nothing: a later handler can replace the batch and one invalid draft
+  drops it, so adoption is acknowledged only by finding the entry on the branch.
+- `ctx.compact()` aborts an active run, so it is called only while idle.
+  Answering its `session_before_compact` with the checkpoint skips the host
+  summarizer; other extensions' handlers still run (last result wins, `cancel`
+  short-circuits).
+- `firstKeptEntryId: null` is stored as a self-reference and silently drops
+  later entries. Adoption always uses an ID on the current branch; an empty
+  suffix gets an anchor custom entry.
+- An inline factory appended to the subagent runner's `extensionFactories`
+  binds in every restricted child mode without enabling denied extensions.
+- `pi.appendEntry` custom entries survive reopen exactly and never reach model
+  context. A new session writes no file before its first message.
+- `before_provider_request` is last-writer-wins. The Anthropic replay rewrite
+  registers last and is verified against the body the transport actually sends;
+  a later change to the block or beta fails the request closed.
+- The installed Anthropic adapter rejects `stop_reason: "compaction"`, so native
+  summarization uses its own client, never the foreground stream.
+
+### Verification and live status
+
+Pure logic is unit-tested in `tests/`; host and provider behavior is checked by
+real-SDK integration tests and the end-to-end harness
+(`tests/live/background-compaction/`), whose five offline scenarios pass. Live
+runs are blocked:
+
+- **Anthropic OAuth entitlement.** With a subscription OAuth credential, every
+  full-profile foreground request to `claude-haiku-5-5` returned HTTP 400
+  `invalid_request_error` ("Third-party apps now draw from your extra usage,
+  not your plan limits"); the tool-less summarizer request returned 200. The
+  live idle-input run prepared and adopted the checkpoint and the next request
+  carried it, but the provider rejected that request. This is account policy,
+  not a feature defect; a pass needs extra usage or an API-key credential.
+- **Codex.** No live driver: Codex foreground traffic uses the cached
+  WebSocket, not `fetch`, and the harness transport checks are
+  Anthropic-shaped. The Codex lane is covered by unit tests with fake
+  transports only.

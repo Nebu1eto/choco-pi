@@ -182,3 +182,27 @@ repository root; consumers validate both seams structurally.
   emission, copy isolation, owner keying, foreign/stale/unrelated context
   errors, replacement, slot preservation, and a pending shutdown overlapping
   the next session start.
+
+## choco-pi patch: background-compaction adoption notifications
+
+Background compaction (`choco-pi-compaction`, off by default) can commit a
+checkpoint at a `turn_end`/`agent_before_settle` boundary, which emits no
+`session_compact`. The goal runtime's post-compaction work must still run once.
+
+- `src/goal-runtime-session-handlers.ts`: the `session_compact` body is a shared
+  `afterCompaction(ctx, willRetry)`. `session_start` subscribes to the
+  compaction package's adoption signal
+  (`Symbol.for("choco-pi:compaction-background-adoption")`, typebox-validated;
+  an absent or foreign slot means no subscription and unchanged behavior) and
+  `session_shutdown` unsubscribes. Notices for this session run
+  `afterCompaction(ctx, false)` except `"recovered"` ones, which happened in an
+  earlier process. Idle and host adoptions also arrive as a real
+  `session_compact`, so while subscribed both paths key on the committed entry
+  ID (a per-session set cleared on session change) and run it once. No host
+  event is forged. `createSessionEventHandlers` also extracts
+  `clearHostOverflowRecoveryForContinuation` and `confirmPausedGoalResume`
+  (behavior-preserving).
+- `tests/background-compaction-adoption.test.ts` (new): real SDK session with the
+  real compaction extension. A boundary adoption, loaded in production order
+  (goal first, no pre-existing slot), notifies once and a later host compaction
+  once more; an idle-route adoption notifies once through its `session_compact`.

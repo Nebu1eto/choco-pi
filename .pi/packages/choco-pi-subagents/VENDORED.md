@@ -1374,7 +1374,7 @@ conversation-viewer tests.
 
 ## 2026-10-08 choco-pi patch: durable subagent revival
 
-U1 adds pure foundations, not yet wired into the manager. `src/revival-journal.ts`
+Pure foundations, not wired into the manager by themselves: `src/revival-journal.ts`
 defines the `subagent-journal` custom-entry schema (serializable run-option
 subset, usage-wait classification copy, optional worktree `workPath`/`hookManaged`),
 `buildJournalData` (64 KiB result/error cap, prompt dropped once a session file
@@ -1386,7 +1386,7 @@ registry on `globalThis` so claims survive /reload. `src/worktree-probe.ts`
 asynchronously verifies a journaled worktree directory and its git registration.
 Tests: revival-journal, session-file-ownership, worktree-probe.
 
-U2a adds the writer side in `src/agent-manager.ts`. Every status write goes
+The writer side lives in `src/agent-manager.ts`. Every status write goes
 through a private `transition()` (24 former `record.status =` sites), and
 terminal publication, session-file confirmation, usage-wait re-arm, steers
 queued while parked and `setRevivals` also schedule a write. Writes are
@@ -1394,7 +1394,7 @@ coalesced per record in one microtask, deduplicated, and contained (failures
 are counted and reported once per record through the optional
 `sink.reportError`). Without a `setJournalSink` sink nothing is journaled.
 Workflow steps, /btw records and their descendants are excluded, as are records
-of another root session and stops caused by shutdown (U2b replaces the last with
+of another root session and stops caused by shutdown (suspension, below, replaces the last with
 a suspend write). `abort()` sets `stoppedByUser`; owned-child cascades do not.
 The prompt stays in the journal until the run's first assistant message, turn
 end or tool activity confirms the child session file. Evicted journaled terminal
@@ -1405,8 +1405,8 @@ through `getDormant`, `findDormantByHandle`, `markDormantResultConsumed`,
 `spawnPrompt`, `runOptions`, `spawnModel`, `worktreeRepo`). `"interrupted"` is
 also added to the `AgentDetails` status union (`ui/agent-widget.ts`) and the
 delegation-render schema. Tests: revival-manager-journal.
-U2b adds suspension and revival to `src/agent-manager.ts` (wiring into
-`index.ts` is U5). `flushJournal()` writes coalesced entries synchronously.
+Suspension and revival in `src/agent-manager.ts` (wired into `index.ts`
+below). `flushJournal()` writes coalesced entries synchronously.
 `suspendAll()` (and `dispose({ suspend: true })`, which runs its synchronous
 part) writes a `suspended: true` entry for every live journaled queued, running
 or parked record (`interrupted`, or `waiting_for_reset` with the usage wait and
@@ -1437,7 +1437,7 @@ non-revivable once it has started (its revival is journaled as an error). Tests:
 revival-suspend, revival-revive, revival-nested, revival-journal.
 Fixes: `spawnWith` records an adopted worktree before the first journal write, so a revival queued behind the cap is journaled (and a restart re-adopts it) with its original worktree; every spawn and resume settle path rechecks suspension after each await (usage-limit evaluation, hook worktree removal) and settles as suspended, so no worktree cleanup, publication or completion callback follows a suspend entry.
 
-U5 wires this into `src/index.ts`. Only the root activation that owns the
+`src/index.ts` wiring: Only the root activation that owns the
 manager registry journals, and only for a persisted root session outside
 `print`/`json` mode; every other activation keeps `abortAll` at shutdown.
 `session_start` installs the sink (`pi.appendEntry("subagent-journal", ...)`),
@@ -1515,3 +1515,62 @@ re-showing the top menu after a cancelled sub-screen trapped the user in
 `/agents`. Outside `ctx.mode === "tui"`, a cancelled dialog now ends the
 command and the agent-type picker carries an explicit "Back" row (`BACK` in
 `src/ui/headless-menus.ts`). TUI navigation is unchanged.
+
+## 2026-10-12 choco-pi patch: child background-compaction attachment
+
+Runner-created children, including `/btw` `mainSessionFork` children, can carry
+a background-compaction coordinator (feature off by default).
+
+`src/child-compaction-bridge.ts` (new) builds one hidden, tool-free inline
+extension (`subagent-background-compaction`) that `runAgent` appends last to
+`extensionFactories`, beside the Fast-mode and Daybreak factories. It registers
+no tool, command, flag or prompt change and leaves the extension filter alone, so
+denied extensions stay unbound in every restricted mode. It exists only when the
+compaction extension's provider on `Symbol.for("choco-pi:compaction-child-provider")`
+validates structurally at spawn and reports `isEnabled()`.
+
+- Owner key `subagent-child:<child session id>` (a fork shares the parent's
+  entry IDs, so they cannot identify the owner); registered through the
+  compaction package's `setCoordinator`/`release`.
+- Forwards `turn_end`, `agent_before_settle` (ready candidates only) and
+  `session_before_compact` arbitration, memoized per event so the compaction
+  extension, hooks, Codex native compaction and the bridge share one decision.
+  Proposals whose retained entry is not on the child branch are refused.
+- Commits are acknowledged from `entry_appended` (boundary drafts) or the real
+  `session_compact` (host-routed results).
+- `appendAnchor()` appends a model-invisible `choco-compaction-anchor` entry
+  through the child's `pi.appendEntry` and returns its ID, so a cut with no
+  retained entry adopts instead of failing closed; after detachment it appends
+  nothing and returns `""`.
+- While attached, the child is an owner on the adoption signal
+  (`Symbol.for("choco-pi:compaction-background-adoption")`, typebox-validated;
+  an absent or foreign slot leaves it unregistered). Children have no idle route.
+
+`src/agent-runner.ts`:
+
+- Additive: `bindSession` after `registerChildSessionId`; `dispose` when
+  `bindExtensions` throws; in `runAgent` and `resumeAgent` an `onAdoption`
+  listener forwards boundary adoptions (which emit no `compaction_end`) to
+  `onCompaction`, so each adoption is delivered once; `settle` in each
+  `finally` (cancellation or the turn-limit hard abort releases and disposes;
+  normal settlement cancels the candidate and keeps the attachment for resume;
+  the manager's `session_shutdown` releases it permanently). Contained failures
+  use the existing `extension-error:` tool-activity channel.
+- Structural divergence (behavior-preserving extraction, same symbols, events
+  and order): `createChildToolSearchExtension` uses `reachableToolsView` and
+  `blockUnreachableToolCall`; `installExtensionToolScope` uses `toolScopeNames`
+  and `addExtensionScopeTools`; `installRunnerTurnLimit` keeps its state in a
+  `TurnLimitState` with `onRunnerTurnEnd`, `isFinishAttempt`,
+  `handleFinishAttempt`, `steerDependencyCorrection` and `enforceTurnLimit`;
+  `getAgentConversation` uses `conversationParts` and
+  `assistantConversationParts` (`TOOL_RESULT_PREVIEW_CHARS = 200`).
+
+Registry and contract types come by relative path from
+`../choco-pi-compaction/src/background/{registry,contract,entry-types}.ts`,
+following the `choco-pi-ui` precedent; those files import nothing from this
+package, so there is no cycle. A resync must keep the bridge, these runner
+hooks and the imports.
+
+Tests: `tests/child-compaction-bridge.test.ts` runs the real `runAgent` and
+`resumeAgent` with a scripted provider, a temporary `PI_CODING_AGENT_DIR` and the
+real registry.

@@ -20,6 +20,86 @@ Cached WebSocket routes ignore User-Agent like the per-request metadata: its
 macOS version is refined asynchronously after startup, so keying it would strand
 the first socket. `originator` and `version` remain route-keyed.
 
+## Background compaction (choco-pi addition)
+
+Off by default (`codexNative` in `.pi/extensions/background-compaction.json`).
+While off or unbound, the legacy request rewrite, native compaction and
+post-compaction reset run exactly as before.
+
+**Lane** (`adapter/compaction/background-v2.ts`). Implements the compaction
+package's backend contract through a relative TypeScript import (existing
+compaction imports of Codex adapter modules set the precedent); no dependency or
+second coordinator. It captures one lineage-validated, deeply frozen canonical
+request per snapshot and prepares on a fresh SSE session and prompt cache key,
+never touching the foreground canonical cache. Deadline, cancellation,
+input/output/result limits, account/model/endpoint incompatibility, an
+incomplete terminal response, or anything but exactly one compaction item fail
+closed. Failures come from named constructors (`authFailure`,
+`rateLimitFailure`, `timeoutFailure`, ...) with named cooldowns (60 s for auth,
+unsupported and a 429 without Retry-After; 1 s after a timeout). Version-1
+native details persist candidate ID, prefix fingerprint, retention-policy
+version and a SHA-256 account scope, never credentials or a plaintext
+reinterpretation of encrypted data; legacy details stay readable. The
+subscription endpoint rejects `max_output_tokens`, so the output budget is a
+result acceptance limit, not a paid-generation cap, and rejected attempts report
+no usage.
+
+**Transport** (`providers/openai-codex/{transport-recovery,stream-events,types}.ts`,
+`providers/openai-codex-custom-provider.ts`, `adapter/compaction/{remote-v2-client,details-store,types}.ts`):
+
+- The SSE transport honors `options.fetch` and rechecks abort after each await.
+- Foreground requests always keep `MAX_SSE_REQUEST_RETRIES` (the SDK always
+  passes `maxRetries`); only the background lane with an explicit `maxRetries`
+  narrows the request retry budget. The v2 client's stream retries use the
+  supplied `maxRetries`, else the previous default.
+- A per-call background marker gives the lane a private `CodexTurnState` and
+  skips live fast/Daybreak configuration, responses-lite, steering, async-code
+  rewriting and the foreground `onPreparedPayload` hook; stale turn-state hints
+  are omitted. Before fetch, the provider-finalized body is compared with the
+  frozen payload; drift is a typed unsupported result with zero network
+  attempts. Captured `access_programs` are unsupported, so no Daybreak grant is
+  borrowed or minted.
+- The raw mapped-event observer receives detached events and cannot fail
+  foreground generation. Frozen-body calls validate the terminal compaction
+  count, response ID and exact opaque item; other calls keep legacy validation.
+- Structural divergence (behavior-preserving): `createCodexTransportStream` is
+  split into named steps (setup, request preparation, retry planning, WebSocket
+  and SSE attempts and failure handling, error emission) with calls, awaits and
+  side effects in the original order; `runAttempt` and
+  `executeRemoteCompactionV2` are split the same way, dropping a loop over a
+  one-element transport list. A resync must re-apply these as structure.
+
+**Adoption runtime** (`extension/background-compaction.ts`, `extension/events.ts`).
+The backend factory registers at extension load (first registration wins; an
+unbound factory reports unsupported). The legal-cut hook serializes only the
+frozen prefix with the image policy snapshotted at session start; incomplete
+canonical lineage refuses the cut before transport. The adoption consumer
+verifies strategy, candidate ID and fingerprint before the guarded install;
+duplicate adoption IDs install once and elision epoch/cut state is
+session-keyed. Session start, tree and model changes and the host compaction
+reset restore compatible committed checkpoints. An account or model mismatch
+clears the pending window and disables legacy native replay for that session via
+a fresh detached request state, because the legacy rewriter does not check
+account or model. A rejected sidecar warns once per session; an incompatible
+checkpoint warns once per session and reason, re-armed by a compatible refresh.
+Handlers snapshot a generation fence before their first await and drop their
+result only when a background binding (or incompatible state) existed then and
+the generation has moved, so the fence never gates the legacy path.
+`session_before_switch`/`session_before_fork` leave the integration running (the
+replacement may be cancelled); `session_shutdown` tears it down. `events.ts`
+shares `refreshBackground` (refresh plus generation check) across
+`session_start`, `model_select` and `session_tree`, and `activateAdapter` for
+the `session_start`/`model_select` tail. Settings and owner identity use the
+compaction package's exports; the adoption signal is read through its validated
+process-global symbol. Without a child-owner binding, preparation is refused.
+
+Tests: `tests/background-compaction-{v2-preparation,v2-transport,adoption-runtime}.test.ts`
+use fake SSE/WebSocket transports, `InMemoryCredentialStore`, synthetic opaque
+placeholders and a throwing global-fetch guard; no live behavior is inferred
+from them. `tests/context-elision.test.ts` runs every handler registered for an
+event and covers a cancelled switch followed by the unchanged legacy request
+rewrite.
+
 ## Daybreak Auto preference (choco-pi addition)
 
 Daybreak request state accepts `"auto"` alongside existing booleans. Auto uses
@@ -261,7 +341,7 @@ and error actions are unchanged by this test-only readability cleanup.
 
 ## Code Mode and edit preflight (choco-pi addition)
 
-`tools/code-mode/source-preflight.ts` parses restricted cells before host execution and scans executable source tokens for unsupported restricted globals. It hard-rejects a `tools.<name>` reference only when the reference is unconditional at the cell's top level and Pi registers the name neither inside nor outside code mode. A separate compile-only `node:vm` `Script` sentinel detects conflicting same-scope `tools` bindings without executing cell source or transforming it at runtime, so automatic semicolon insertion, loop-scoped lexical declarations, nested functions, property and named function expressions keep their real JavaScript meaning; multiple declarations are covered without rejecting nested expression arrows or notebook-local bindings. Guarded references and real-but-unbridged tool names run to the namespace proxy. String, comment, template text, and regular expression contents are ignored. Notebook cells retain Deno TypeScript capabilities and skip restricted-global and JavaScript-only checks. Command strings and non-zero `exec_command` exits remain runtime data and are not reclassified.
+`tools/code-mode/source-preflight.ts` parses restricted cells before host execution and scans executable source tokens for unsupported restricted globals. It hard-rejects a `tools.<name>` reference only when the reference is unconditional at the cell's top level and Pi registers the name neither inside nor outside code mode. A separate compile-only `node:vm` `Script` probe detects conflicting same-scope `tools` bindings without executing cell source or transforming it at runtime, so automatic semicolon insertion, loop-scoped lexical declarations, nested functions, property and named function expressions keep their real JavaScript meaning; multiple declarations are covered without rejecting nested expression arrows or notebook-local bindings. Guarded references and real-but-unbridged tool names run to the namespace proxy. String, comment, template text, and regular expression contents are ignored. Notebook cells retain Deno TypeScript capabilities and skip restricted-global and JavaScript-only checks. Command strings and non-zero `exec_command` exits remain runtime data and are not reclassified.
 
 The tools namespace guard supplies close-match and direct-registration guidance at runtime. The registered-tool bridge validates prepared object arguments through Pi's public `validateToolArguments` from `@earendil-works/pi-ai`, so code mode receives the same normalization as a directly registered tool call: optional `null` properties are dropped, coercible scalars are converted, and the executor receives the validator's cloned arguments while the caller's object stays unmodified. Non-object payloads keep the bare TypeBox schema check, preserving freeform inputs and top-level `null` rejection for object-only schemas. Only a validation rejection is translated into a bridge error; any other failure raised by the native validator, such as a structured-clone failure on a schema-valid but non-cloneable member, propagates unchanged and never reaches the executor. Only `undefined` normalizes to an empty object, and only when that object is valid; explicit `null` keeps its schema meaning. Invalid calls return at most three length-bounded `[invalid_arguments]` messages that name the failing instance path (for example `edits.0.oldText`), never the rejected values and never the native validator's `Received arguments:` payload suffix. Bridged tools translate stale `read` offsets, exact-match ambiguity versus stale `edit` context, and missing UI observation state into focused recovery errors. Recovery names only an available filesystem reader or direct `read`; UI recovery names `observe_ui` only when available, and the `read_text` hint remains UI-specific. Filesystem recovery uses asynchronous Node APIs. `apply_patch` accepts only its documented freeform string in Code Mode; its native first-match, `@@` anchor, and fuzzy resolution remain authoritative. Context analysis runs only after the native applier rejects a hunk, when it reports current line counts, anchor-scoped candidate ranges, and exact re-read windows. `tests/code-mode-preflight.test.ts`, `tests/code-mode-bridge-arguments.test.ts`, and focused namespace tests pin these boundaries.
 
@@ -277,7 +357,7 @@ Payload-hook replacements on the custom Codex provider are validated as complete
 recursive protocol bodies, including nested objects and arrays, and replace the
 original body instead of being spread over it. Responses Lite normalization and
 the frozen fast-mode decision still run afterward; focused tests pin transport,
-field-removal, and service-tier behavior.
+field-removal, and service-tier handling.
 
 ## Codex SSE EOF handling (pi 0.85.1 backport)
 
@@ -429,7 +509,7 @@ fidelity, and send-path exception isolation.
 Codex provider entry points consume the validated v1 process bridge at
 `Symbol.for("choco-pi.fast-mode-state")` by session id. Each request freezes one
 decision before asynchronous preparation and maps its explicit `priority` or
-`standard` choice to the SDK-verified `priority` or `default` wire tier across the
+`standard` choice to the SDK-verified `priority` or `default` wire tier for the
 body, routing headers, retries, continuation, usage
 pricing fallback, prewarm/keepalive, and native-compaction streams. Prewarm rejects
 a bridge-backed snapshot whose revision changes before transport send. The legacy
