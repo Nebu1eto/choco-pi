@@ -288,3 +288,33 @@ test("empty owner ids never trigger global transport cleanup or reset", async ()
     restoreWebSocket();
   }
 });
+
+test("a refined User-Agent reuses the cached socket; originator still splits the route", async () => {
+  const restoreWebSocket = installFakeWebSocket();
+  closeOpenAICodexWebSocketSessions();
+  const acquire = async (userAgent: string, originator: string) => {
+    const acquired = await acquireWebSocket(
+      TEST_URL,
+      new Headers({ "user-agent": userAgent, originator }),
+      "identity-lane",
+      TEST_ACCOUNT,
+      undefined,
+      100,
+      TEST_ENV,
+    );
+    acquired.release({ keep: true });
+    return acquired.reused;
+  };
+
+  try {
+    assert.equal(
+      await acquire("codex_cli_rs/1 (Mac OS 27.0.0; arm64) term", "codex_cli_rs"),
+      false,
+    );
+    assert.equal(await acquire("codex_cli_rs/1 (Mac OS 27.0.1; arm64) term", "codex_cli_rs"), true);
+    assert.equal(await acquire("codex_cli_rs/1 (Mac OS 27.0.1; arm64) term", "other"), false);
+  } finally {
+    closeOpenAICodexWebSocketSessions();
+    restoreWebSocket();
+  }
+});

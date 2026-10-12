@@ -34,6 +34,9 @@ const CONTINUATION_HEADERS = new Set([
   // Per-request Codex metadata; the socket keeps whichever values opened it, as Codex does.
   "x-codex-turn-metadata",
   "x-codex-window-id",
+  // Descriptive client identity; its macOS version is refined asynchronously after startup.
+  // originator and version stay keyed as their own headers.
+  "user-agent",
 ]);
 
 function routeIdentityHeaders(headers: Headers): [string, string][] {

@@ -16,6 +16,9 @@ Request identity follows `get_codex_user_agent` and `CodexResponsesMetadata`
 codex-cli), `x-codex-window-id: <thread>:0`, and an `x-codex-turn-metadata`
 subset (ids, window, `request_kind`, model, effort). Window numbers do not track
 compaction; installation id, sandbox fields, and the cookie jar are not sent.
+Cached WebSocket routes ignore User-Agent like the per-request metadata: its
+macOS version is refined asynchronously after startup, so keying it would strand
+the first socket. `originator` and `version` remain route-keyed.
 
 ## Daybreak Auto preference (choco-pi addition)
 
