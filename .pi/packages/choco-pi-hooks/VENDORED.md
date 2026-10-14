@@ -1,5 +1,18 @@
 # Package provenance
 
+## 2026-10-12 choco-pi patch: subagent hook input names its root session
+
+Subagents run in the parent's process and share its terminal, so hook
+consumers keyed by terminal (the Zellij status bridge) could not tell a
+subagent's events from the parent's. Hook input from a subagent session now
+carries `root_session_id`, the top-level session it belongs to; other
+sessions omit it. `session_start` asks the `pi-subagents:manager` registry
+`isChildSessionId` once, because the registry drops a child id before that
+child's shutdown. The parent comes from the in-memory `choco-pi:subagent`
+entry, and a process-wide table resolves nested subagents to the top level.
+A subagent transcript resumed as an ordinary session is not in the registry
+and gets no `root_session_id`.
+
 ## 2026-10-11 choco-pi patch: contain hook transport failures
 
 Command hooks handle stdin write callbacks and stream errors before writing the

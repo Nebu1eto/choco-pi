@@ -9,6 +9,7 @@ The main host adaptations are:
 
 - Pi input, tool, turn, message, compaction, and session events provide the direct lifecycle events.
 - `choco-pi-subagents` supplies subagent, teammate, workflow-task, and worktree bridges.
+- Hook input from a subagent session adds `root_session_id`, the top-level session it runs under, because subagents share the parent's process and terminal.
 - The package supplies Claude-compatible task tools, setup flags, notifications, environment persistence, and filesystem watchers where Pi has no native equivalent.
 
 MCP-tool handlers fail closed with a command-hook migration message, and no

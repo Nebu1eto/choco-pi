@@ -47,6 +47,8 @@ export interface HookInput extends JsonObject {
   effort?: { level: "low" | "medium" | "high" | "xhigh" | "max" };
   agent_id?: string;
   agent_type?: string;
+  /** choco-pi extension: the top-level session of a subagent session; absent elsewhere. */
+  root_session_id?: string;
 }
 
 export interface HookOutput extends JsonObject {

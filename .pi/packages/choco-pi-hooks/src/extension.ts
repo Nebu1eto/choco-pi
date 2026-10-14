@@ -44,6 +44,45 @@ function sourceForStart(reason: string): string {
 function endReason(reason: string): string {
   return reason === "resume" ? "resume" : "other";
 }
+
+/**
+ * Subagents run in the parent's process, so their hooks share its terminal and
+ * environment. `root_session_id` names the top-level session a subagent
+ * belongs to, letting hook consumers tell its events from the parent's. The
+ * subagents registry is the identity source; it drops a child id before the
+ * child's shutdown, so the answer is taken once at session_start.
+ */
+const SUBAGENTS_MANAGER_KEY = Symbol.for("pi-subagents:manager");
+const SUBAGENT_SESSION_MARKER = "choco-pi:subagent";
+const SESSION_ROOTS_KEY = Symbol.for("choco-pi-hooks:subagent-session-roots");
+const ChildSessionRegistrySchema = Type.Object({
+  isChildSessionId: Type.Function([Type.String()], Type.Boolean()),
+});
+
+function subagentSessionRoots(): Map<string, string> {
+  // SAFETY: Symbol.for provides a process-wide slot that only this module writes, always with a Map.
+  const slot = globalThis as typeof globalThis & { [SESSION_ROOTS_KEY]?: Map<string, string> };
+  slot[SESSION_ROOTS_KEY] ??= new Map();
+  return slot[SESSION_ROOTS_KEY];
+}
+
+function subagentRootSessionId(sessionId: string, ctx: ExtensionContext): string | undefined {
+  const registry: unknown = Object.getOwnPropertyDescriptor(
+    globalThis,
+    SUBAGENTS_MANAGER_KEY,
+  )?.value;
+  if (!Value.Check(ChildSessionRegistrySchema, registry)) return undefined;
+  if (registry.isChildSessionId(sessionId) !== true) return undefined;
+  const marker = ctx.sessionManager
+    .getEntries()
+    .findLast((entry) => entry.type === "custom" && entry.customType === SUBAGENT_SESSION_MARKER);
+  const data: unknown = marker?.type === "custom" ? marker.data : undefined;
+  const parent =
+    data instanceof Object && "parentSessionId" in data ? data.parentSessionId : undefined;
+  if (!isStringValue(parent) || !parent) return undefined;
+  // A nested subagent's parent is itself a subagent; resolve to the top level.
+  return subagentSessionRoots().get(parent) ?? parent;
+}
 function textOf(message: AgentMessage | undefined): string {
   if (!message || message.role !== "assistant") return "";
   return message.content.flatMap((item) => (item.type === "text" ? [item.text] : [])).join("");
@@ -161,6 +200,7 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
   });
   let engine = new HookEngine([]);
   let sessionId: string = crypto.randomUUID();
+  let rootSessionId: string | undefined;
   let transcriptPath = "";
   let stopHookActive = false;
   let stopHookBlocks = 0;
@@ -195,6 +235,7 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
       _claude_env_file: envFile,
       ...extra,
     } as HookInput;
+    if (rootSessionId) hookInput.root_session_id = rootSessionId;
     if (ctx.thinkingLevel === "minimal") hookInput.effort = { level: "low" };
     else if (ctx.thinkingLevel && ctx.thinkingLevel !== "off")
       hookInput.effort = { level: ctx.thinkingLevel };
@@ -346,6 +387,8 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
     watchers?.dispose();
     watchers = undefined;
     reload(ctx);
+    rootSessionId = subagentRootSessionId(sessionId, ctx);
+    if (rootSessionId) subagentSessionRoots().set(sessionId, rootSessionId);
     unregisterResourceCleanup?.();
     const ownedSessionId = sessionId;
     unregisterResourceCleanup = registerSessionResourceCleanup((cleanupSessionId) => {
@@ -545,6 +588,7 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
   });
   pi.on("session_shutdown", async (event, ctx) => {
     disposeExternalProducers();
+    if (rootSessionId) subagentSessionRoots().delete(sessionId);
     await dispatch("SessionEnd", ctx, { reason: endReason(event.reason) });
     await engine.waitForBackground();
     removeHookEnvironment(envFile);
