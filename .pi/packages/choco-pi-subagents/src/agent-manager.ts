@@ -2362,6 +2362,7 @@ export class AgentManager {
       isBackground: options.isBackground,
       invocation: options.invocation,
       sideConversation: options.sideConversation,
+      transcriptStartAt: options.mainSessionFork?.capturedAt,
       workflowId: options.workflowId,
       workflowStepId: options.workflowStepId,
       depth: options.depth ?? 1,

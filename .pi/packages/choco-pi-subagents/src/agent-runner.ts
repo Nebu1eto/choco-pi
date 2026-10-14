@@ -793,6 +793,11 @@ export interface MainSessionFork {
   /** Main-agent runtime identity captured with the branch. */
   model: Model<any> | undefined;
   thinkingLevel: ThinkingLevel | undefined;
+  /**
+   * Wall-clock fork time. Every inherited message predates it, so viewers use
+   * it to start the side transcript at the /btw question.
+   */
+  capturedAt: number;
 }
 
 /**
@@ -816,6 +821,7 @@ export function captureMainSessionFork(ctx: ExtensionContext): MainSessionFork {
     systemPrompt: ctx.getSystemPrompt(),
     model: ctx.model,
     thinkingLevel: ctx.thinkingLevel === "off" ? undefined : ctx.thinkingLevel,
+    capturedAt: Date.now(),
   };
 }
 

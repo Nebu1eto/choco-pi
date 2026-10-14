@@ -832,3 +832,63 @@ test("invalidate drops the caches and re-renders identically", () => {
   assert.equal(after, before);
   viewer.dispose();
 });
+
+test("/btw viewers hide inherited main-session history in overlay and focus", () => {
+  const forkedAt = Date.now();
+  const inheritedUser: UserMessage = {
+    role: "user",
+    content: "Inherited main question",
+    timestamp: forkedAt - 5000,
+  };
+  const inheritedAnswer = {
+    ...makeAssistantMessage([{ type: "text", text: "Inherited main answer" }]),
+    timestamp: forkedAt - 4000,
+  };
+  // Pi re-creates compaction summaries on rebuild with the source entry's
+  // timestamp, so an inherited summary keeps a pre-fork timestamp.
+  const inheritedSummary = {
+    role: "compactionSummary",
+    summary: "Inherited compaction summary",
+    tokensBefore: 42,
+    timestamp: forkedAt - 3000,
+  };
+  const question: UserMessage = { role: "user", content: "Side question", timestamp: forkedAt };
+  const answer = {
+    ...makeAssistantMessage([{ type: "text", text: "Side answer" }]),
+    timestamp: forkedAt + 1000,
+  };
+  const { session } = makeSession([
+    inheritedSummary,
+    inheritedUser,
+    inheritedAnswer,
+    question,
+    answer,
+  ]);
+  const record = makeRecord(session);
+  record.sideConversation = true;
+  record.transcriptStartAt = forkedAt;
+
+  for (const profile of ["overlay", "focus"] as const) {
+    const viewer = new ConversationViewer(
+      makeTui(),
+      session,
+      record,
+      undefined,
+      theme,
+      () => {},
+      undefined,
+      undefined,
+      undefined,
+      { profile },
+    );
+    const text = viewer.render(120).map(stripTerminalSequences).join("\n");
+    assert.doesNotMatch(text, /Inherited/, `${profile} hides inherited history`);
+    assert.match(text, /Side question/, `${profile} starts at the side question`);
+    assert.match(text, /Side answer/, `${profile} shows the side answer`);
+    viewer.dispose();
+  }
+
+  const ordinary = makeViewer(session);
+  assert.match(ordinary.rendered(), /Inherited main question/, "ordinary agents keep everything");
+  ordinary.viewer.dispose();
+});

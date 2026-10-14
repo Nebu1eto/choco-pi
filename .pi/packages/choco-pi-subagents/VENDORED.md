@@ -1574,3 +1574,23 @@ hooks and the imports.
 Tests: `tests/child-compaction-bridge.test.ts` runs the real `runAgent` and
 `resumeAgent` with a scripted provider, a temporary `PI_CODING_AGENT_DIR` and the
 real registry.
+
+## 2026-10-14 choco-pi patch: `/btw` transcript starts at the question
+
+A `/btw` child runs on a fork of the main conversation, so the overlay and
+focus mode rendered the entire inherited main transcript before the side
+question. The model context is unchanged; only the viewer now hides it.
+
+- `MainSessionFork.capturedAt` (`src/agent-runner.ts`) records the fork time;
+  `spawnWith` copies it to `AgentRecord.transcriptStartAt` (`src/types.ts`).
+  `/btw` records are neither journaled nor revived, so the field is not
+  persisted.
+- `ConversationViewer.transcriptMessages()` drops messages older than that
+  time. Both the overlay and focus mode read through it. Pi rebuilds
+  `session.messages` on compaction and re-creates summary messages with the
+  source entry's timestamp, so a timestamp is the boundary that survives
+  rebuilds; an array index or message identity does not.
+
+Tests: `tests/conversation-viewer.test.ts` (inherited history hidden in overlay
+and focus, ordinary agents unchanged),
+`tests/side-conversation.test.ts` (record carries the fork time).

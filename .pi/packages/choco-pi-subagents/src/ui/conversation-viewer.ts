@@ -664,9 +664,22 @@ export class ConversationViewer implements Component {
   }
 
   private transcriptMessages(): AgentSession["messages"] {
-    const messages = this.session.messages;
+    const messages = this.ownMessages(this.session.messages);
     const live = this.liveAssistant;
     return live && !messages.includes(live) ? [...messages, live] : messages;
+  }
+
+  /**
+   * A /btw session runs on a fork of the main conversation. The model keeps
+   * that context, but the viewer starts at the side question. Pi rebuilds
+   * `session.messages` on compaction and re-creates summary messages with
+   * their source entry's timestamp, so the fork time is the stable boundary;
+   * an array index or object identity is not.
+   */
+  private ownMessages(messages: AgentSession["messages"]): AgentSession["messages"] {
+    const start = this.record.transcriptStartAt;
+    if (start === undefined) return messages;
+    return messages.filter((message) => message.timestamp >= start);
   }
 
   private viewportHeight(): number {

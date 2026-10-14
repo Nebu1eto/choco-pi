@@ -315,6 +315,11 @@ export interface AgentRecord {
    * deliver them differently.
    */
   sideConversation?: boolean;
+  /**
+   * Fork time of a /btw session. Messages older than this were inherited from
+   * the main conversation: the model keeps them, but viewers hide them.
+   */
+  transcriptStartAt?: number;
   /** Aggregate workflow and step identity for FleetView grouping/tagging. */
   workflowId?: string;
   workflowStepId?: string;

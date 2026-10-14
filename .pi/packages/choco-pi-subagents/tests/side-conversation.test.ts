@@ -201,6 +201,11 @@ test("side launch forks the main session state without a context preamble", () =
   assert.equal(fork.systemPrompt, "You are the main choco-pi agent.");
   assert.equal(fork.model, ctx.model);
   assert.equal(fork.thinkingLevel, "high");
+  assert.equal(
+    record?.transcriptStartAt,
+    fork.capturedAt,
+    "viewers start the side transcript at the fork",
+  );
 
   // SAFETY: Captured launch options contain the two fields buildEffectivePrompt reads.
   const effectivePrompt = buildEffectivePrompt(ctx, question, capturedOptions as never);

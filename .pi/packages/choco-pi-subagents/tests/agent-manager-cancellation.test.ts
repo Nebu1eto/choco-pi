@@ -217,6 +217,7 @@ for (const cancellation of ["user", "budget", "shutdown"] as const) {
               systemPrompt: "fork",
               model: undefined,
               thinkingLevel: undefined,
+              capturedAt: Date.now(),
             },
             onSessionCreated(created) {
               assert.equal(created, session);
