@@ -1594,3 +1594,15 @@ question. The model context is unchanged; only the viewer now hides it.
 Tests: `tests/conversation-viewer.test.ts` (inherited history hidden in overlay
 and focus, ordinary agents unchanged),
 `tests/side-conversation.test.ts` (record carries the fork time).
+
+## 2026-10-14 choco-pi patch: multiline reply composer
+
+The reply/steer composer in `ConversationViewer` (`src/ui/conversation-viewer.ts`)
+is a pi-tui `Editor` instead of a single-line `Input`: Enter sends,
+Shift+Enter or Ctrl+J inserts a newline, Esc cancels (after dismissing any open
+completion list). The overlay renders only the editor's text rows, dropping its
+top and bottom rules so the draft sits directly between the footer rule and
+the hint row, and clamps them so the transcript keeps its minimum viewport.
+
+Tests: `tests/conversation-viewer.test.ts` (multiline send, Esc cancel, no
+margin rows around the draft).

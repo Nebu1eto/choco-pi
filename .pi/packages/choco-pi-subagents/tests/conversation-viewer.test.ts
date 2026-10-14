@@ -892,3 +892,49 @@ test("/btw viewers hide inherited main-session history in overlay and focus", ()
   assert.match(ordinary.rendered(), /Inherited main question/, "ordinary agents keep everything");
   ordinary.viewer.dispose();
 });
+
+test("the reply composer accepts multiline input and sends it on Enter", () => {
+  const { session } = makeSession([makeUserMessage("q")]);
+  const sent: string[] = [];
+  const viewer = new ConversationViewer(
+    makeTui(),
+    session,
+    makeRecord(session, "running"),
+    undefined,
+    theme,
+    () => {},
+    undefined,
+    undefined,
+    (message) => sent.push(message),
+  );
+  const rendered = () => viewer.render(120).map(stripTerminalSequences).join("\n");
+
+  viewer.handleInput("\r");
+  viewer.handleInput("first line");
+  viewer.handleInput("\x1b[13;2~"); // Shift+Enter
+  viewer.handleInput("second line");
+  const draft = rendered();
+  assert.match(draft, /first line/);
+  assert.match(draft, /second line/);
+  assert.match(draft, /Shift\+Enter newline/);
+  assert.deepEqual(sent, [], "Shift+Enter inserts a newline instead of sending");
+  // No margin rows: the draft sits directly between the footer rule and hint.
+  const rows = viewer.render(120).map(stripTerminalSequences);
+  const firstRow = rows.findIndex((line) => line.includes("first line"));
+  const rule = /^│ ─+ │$/;
+  assert.match(rows[firstRow - 1] ?? "", rule, "footer rule directly above the draft");
+  assert.doesNotMatch(rows[firstRow - 2] ?? "", rule, "no editor rule stacked on the footer rule");
+  assert.match(rows[firstRow + 1] ?? "", /second line/);
+  assert.match(rows[firstRow + 2] ?? "", /Esc cancel/, "hint row directly below the draft");
+
+  viewer.handleInput("\r");
+  assert.deepEqual(sent, ["first line\nsecond line"]);
+  assert.match(rendered(), /Esc close/, "sending closes the composer");
+
+  viewer.handleInput("\r");
+  viewer.handleInput("discard me");
+  viewer.handleInput("\x1b");
+  assert.deepEqual(sent, ["first line\nsecond line"], "Esc cancels without sending");
+  assert.doesNotMatch(rendered(), /discard me/);
+  viewer.dispose();
+});

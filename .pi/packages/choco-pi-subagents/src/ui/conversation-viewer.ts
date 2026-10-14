@@ -26,7 +26,9 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
   type Component,
-  Input,
+  CURSOR_MARKER,
+  Editor,
+  type EditorTheme,
   matchesKey,
   type MarkdownTheme,
   Text,
@@ -110,6 +112,40 @@ function firstTerminalLine(text: string): string {
   return newlineIndex === -1 ? text : text.slice(0, newlineIndex);
 }
 
+function composerTheme(theme: Theme): EditorTheme {
+  return {
+    borderColor: (text) => theme.fg("borderMuted", text),
+    selectList: {
+      selectedPrefix: (text) => theme.fg("accent", text),
+      selectedText: (text) => theme.fg("accent", text),
+      description: (text) => theme.fg("muted", text),
+      scrollInfo: (text) => theme.fg("muted", text),
+      noMatch: (text) => theme.fg("muted", text),
+    },
+  };
+}
+
+/**
+ * Keep only the editor's text rows. The overlay's footer rule already sits
+ * above the composer and the hint row below it, so the Editor's own top and
+ * bottom rules would read as blank margins. The composer has no autocomplete
+ * provider, so render() is exactly [top rule, ...text rows, bottom rule].
+ * pi-tui sizes an Editor from the whole terminal (at least five text rows), so
+ * on a short terminal it can outgrow the overlay; keep the window of text rows
+ * that holds the cursor.
+ */
+function fitComposerLines(lines: string[], maxRows: number): string[] {
+  const body = lines.slice(1, -1);
+  const window = Math.max(1, maxRows);
+  if (body.length <= window) return body;
+  const cursor = Math.max(
+    0,
+    body.findIndex((line) => line.includes(CURSOR_MARKER)),
+  );
+  const start = Math.min(Math.max(0, cursor - window + 1), body.length - window);
+  return body.slice(start, start + window);
+}
+
 interface BashExecutionTrace {
   command: string;
   output?: string;
@@ -164,8 +200,8 @@ export class ConversationViewer implements Component {
   /** Two-press confirm guard for the stop key, so a stray key can't kill the agent. */
   private stopArmed = false;
   private keys: ViewerKeys;
-  /** Steering composer — present while the user is typing a message to the agent. */
-  private composer: Input | undefined;
+  /** Multiline steering composer — present while the user is typing a message to the agent. */
+  private composer: Editor | undefined;
 
   /**
    * Transcript message components, keyed by message object identity. Every
@@ -270,10 +306,14 @@ export class ConversationViewer implements Component {
   }
 
   handleInput(data: string): void {
-    // While composing a steer message, the input owns all keys (Enter sends,
-    // Esc cancels — both wired in openComposer()). Editing keys flow through.
+    // While composing, the editor owns all keys: Enter sends, Shift+Enter or
+    // Ctrl+J inserts a newline, and Esc cancels the draft.
     if (this.composer) {
-      this.composer.handleInput(data);
+      if (matchesKey(data, "escape") && !this.composer.isShowingAutocomplete()) {
+        this.composer = undefined;
+      } else {
+        this.composer.handleInput(data);
+      }
       this.tui.requestRender();
       return;
     }
@@ -454,10 +494,13 @@ export class ConversationViewer implements Component {
 
     // Content area — rebuild every render (live data, no cache needed)
     const contentLines = this.buildContentLines(innerW);
+    const composerLines = this.composer
+      ? fitComposerLines(this.composer.render(innerW), this.composerRowBudget())
+      : [];
     // Pi's main transcript already owns clipping, native scrolling and follow-
     // end behavior. In focus mode give it the whole subagent transcript instead
     // of imposing the modal's 70% viewport inside that scroll view.
-    const viewportHeight = this.viewportHeight();
+    const viewportHeight = this.viewportHeight(composerLines.length);
     const maxScroll = Math.max(0, contentLines.length - viewportHeight);
 
     if (this.autoScroll) {
@@ -474,9 +517,9 @@ export class ConversationViewer implements Component {
     // Footer
     lines.push(hrMid);
     if (this.composer) {
-      // Composer row: the Input renders its own `> ` prompt and cursor.
-      lines.push(row(this.composer.render(innerW)[0] ?? ""));
-      const composeHint = th.fg("dim", "Enter send · Esc cancel");
+      // Text rows only: the editor's wrapped text and cursor, no rule rows.
+      for (const line of composerLines) lines.push(row(line));
+      const composeHint = th.fg("dim", "Enter send · Shift+Enter newline · Esc cancel");
       const composeLeft = th.fg("accent", `✎ ${this.replyLabel}`);
       const composeGap = Math.max(
         1,
@@ -536,19 +579,16 @@ export class ConversationViewer implements Component {
 
   /** Open the inline steering composer and route subsequent input to it. */
   private openComposer(): void {
-    const input = new Input();
-    input.focused = true;
-    input.onSubmit = (value: string) => {
+    const editor = new Editor(this.tui, composerTheme(this.theme));
+    editor.focused = true;
+    // pi-tui expands paste markers and trims before calling this.
+    editor.onSubmit = (value: string) => {
       const message = value.trim();
       this.composer = undefined;
       if (message) this.onSteer?.(message);
       this.tui.requestRender();
     };
-    input.onEscape = () => {
-      this.composer = undefined;
-      this.tui.requestRender();
-    };
-    this.composer = input;
+    this.composer = editor;
     this.tui.requestRender();
   }
 
@@ -682,16 +722,25 @@ export class ConversationViewer implements Component {
     return messages.filter((message) => message.timestamp >= start);
   }
 
-  private viewportHeight(): number {
+  private overlayRows(): number {
+    return Math.floor((this.tui.terminal.rows * VIEWPORT_HEIGHT_PCT) / 100);
+  }
+
+  private viewportHeight(composerRows = 0): number {
     // Cap mirrors the overlay's maxHeight — otherwise the viewer would render
     // more lines than the overlay shows and clip the footer.
-    const maxRows = Math.floor((this.tui.terminal.rows * VIEWPORT_HEIGHT_PCT) / 100);
-    return Math.max(MIN_VIEWPORT, maxRows - this.chromeLines());
+    return Math.max(MIN_VIEWPORT, this.overlayRows() - this.chromeLines() - composerRows);
+  }
+
+  /** Rows the composer may use while the transcript keeps its minimum viewport. */
+  private composerRowBudget(): number {
+    return Math.max(1, this.overlayRows() - this.chromeLines() - MIN_VIEWPORT);
   }
 
   private chromeLines(): number {
-    // The composer adds one row above the footer hint while it's open.
-    return CHROME_LINES_BASE + (this.invocationLine() ? 1 : 0) + (this.composer ? 1 : 0);
+    // While composing, the hint row replaces the footer; the editor rows are
+    // counted separately because their height follows the draft.
+    return CHROME_LINES_BASE + (this.invocationLine() ? 1 : 0);
   }
 
   private invocationLine(): string | undefined {
