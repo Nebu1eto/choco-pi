@@ -234,62 +234,79 @@ function harness(manager = SessionManager.inMemory()) {
   return { manager, runtime, ctx, invoke, activate, context };
 }
 
+async function withIsolatedAgentDir(run: () => Promise<void>): Promise<void> {
+  const agentDir = await mkdtemp(join(tmpdir(), "codex-legacy-gate-"));
+  const previous = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+  try {
+    await run();
+  } finally {
+    if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previous;
+    await rm(agentDir, { recursive: true, force: true });
+  }
+}
+
 test("wire hooks persist once, restore maximum epoch cut, and reset after compaction", async () => {
-  const first = harness();
-  for (const message of history()) first.manager.appendMessage(fixture(message));
-  await first.invoke("session_start", { reason: "resume" });
-  first.activate();
-  const originals = first.manager.buildSessionContext().messages;
-  assert.equal(first.invoke("turn_start"), undefined);
-  const persisted = first.manager.getLeafEntry();
-  assert.ok(persisted?.type === "custom");
-  assert.equal(persisted.customType, "codex-context-elision");
-  assert.deepEqual(persisted.data, { epoch: "", cut: 2 });
-  const rewritten = first.context();
-  assert.notDeepEqual(rewritten[1], originals[1]);
-  first.invoke("turn_start");
-  assert.equal(first.manager.getLeafEntry(), persisted);
-  assert.deepEqual(first.manager.buildSessionContext().messages, originals);
-  first.manager.appendCustomEntry("codex-context-elision", { epoch: "", cut: 0 });
-  first.manager.appendCustomEntry("codex-context-elision", { epoch: "unrelated", cut: 999 });
-  const resumed = harness(first.manager);
-  await resumed.invoke("session_start", { reason: "resume" });
-  resumed.activate();
-  assert.deepEqual(resumed.context(), rewritten);
-  const kept = first.manager.getBranch().find((entry) => entry.type === "message");
-  assert.ok(kept);
-  const compactionId = first.manager.appendCompaction("summary", kept.id, 100);
-  await resumed.invoke("session_compact", {
-    compactionEntry: first.manager.getEntry(compactionId),
-    fromExtension: false,
+  await withIsolatedAgentDir(async () => {
+    const first = harness();
+    for (const message of history()) first.manager.appendMessage(fixture(message));
+    await first.invoke("session_start", { reason: "resume" });
+    first.activate();
+    const originals = first.manager.buildSessionContext().messages;
+    assert.equal(first.invoke("turn_start"), undefined);
+    const persisted = first.manager.getLeafEntry();
+    assert.ok(persisted?.type === "custom");
+    assert.equal(persisted.customType, "codex-context-elision");
+    assert.deepEqual(persisted.data, { epoch: "", cut: 2 });
+    const rewritten = first.context();
+    assert.notDeepEqual(rewritten[1], originals[1]);
+    first.invoke("turn_start");
+    assert.equal(first.manager.getLeafEntry(), persisted);
+    assert.deepEqual(first.manager.buildSessionContext().messages, originals);
+    first.manager.appendCustomEntry("codex-context-elision", { epoch: "", cut: 0 });
+    first.manager.appendCustomEntry("codex-context-elision", { epoch: "unrelated", cut: 999 });
+    const resumed = harness(first.manager);
+    await resumed.invoke("session_start", { reason: "resume" });
+    resumed.activate();
+    assert.deepEqual(resumed.context(), rewritten);
+    const kept = first.manager.getBranch().find((entry) => entry.type === "message");
+    assert.ok(kept);
+    const compactionId = first.manager.appendCompaction("summary", kept.id, 100);
+    await resumed.invoke("session_compact", {
+      compactionEntry: first.manager.getEntry(compactionId),
+      fromExtension: false,
+    });
+    assert.deepEqual(resumed.context(), first.manager.buildSessionContext().messages);
+    resumed.invoke("turn_start");
+    const next = first.manager.getLeafEntry();
+    assert.ok(next?.type === "custom");
+    assert.deepEqual(next.data, { epoch: compactionId, cut: 3 });
+    const afterCompaction = harness(first.manager);
+    await afterCompaction.invoke("session_start", { reason: "resume" });
+    afterCompaction.activate();
+    assert.deepEqual(afterCompaction.context(), resumed.context());
   });
-  assert.deepEqual(resumed.context(), first.manager.buildSessionContext().messages);
-  resumed.invoke("turn_start");
-  const next = first.manager.getLeafEntry();
-  assert.ok(next?.type === "custom");
-  assert.deepEqual(next.data, { epoch: compactionId, cut: 3 });
-  const afterCompaction = harness(first.manager);
-  await afterCompaction.invoke("session_start", { reason: "resume" });
-  afterCompaction.activate();
-  assert.deepEqual(afterCompaction.context(), resumed.context());
 });
 
 test("branch navigation cannot carry a cut from a different branch", async () => {
-  const host = harness();
-  for (const message of history()) host.manager.appendMessage(fixture(message));
-  const branchPoint = host.manager.getLeafId();
-  assert.ok(branchPoint);
-  host.activate();
-  host.invoke("turn_start");
-  const elidedLeaf = host.manager.getLeafId();
-  assert.ok(elidedLeaf);
-  const rewritten = host.context();
-  host.manager.branch(branchPoint);
-  await host.invoke("session_tree");
-  assert.deepEqual(host.context(), host.manager.buildSessionContext().messages);
-  host.manager.branch(elidedLeaf);
-  await host.invoke("session_tree");
-  assert.deepEqual(host.context(), rewritten);
+  await withIsolatedAgentDir(async () => {
+    const host = harness();
+    for (const message of history()) host.manager.appendMessage(fixture(message));
+    const branchPoint = host.manager.getLeafId();
+    assert.ok(branchPoint);
+    host.activate();
+    host.invoke("turn_start");
+    const elidedLeaf = host.manager.getLeafId();
+    assert.ok(elidedLeaf);
+    const rewritten = host.context();
+    host.manager.branch(branchPoint);
+    await host.invoke("session_tree");
+    assert.deepEqual(host.context(), host.manager.buildSessionContext().messages);
+    host.manager.branch(elidedLeaf);
+    await host.invoke("session_tree");
+    assert.deepEqual(host.context(), rewritten);
+  });
 });
 
 class Socket implements WebSocketLike {
@@ -410,19 +427,6 @@ test("message_end persists an observedAt-only usage-limit entry for openai sign-
   });
   assert.equal(host.manager.getLeafEntry(), entry);
 });
-
-async function withIsolatedAgentDir(run: () => Promise<void>): Promise<void> {
-  const agentDir = await mkdtemp(join(tmpdir(), "codex-legacy-gate-"));
-  const previous = process.env.PI_CODING_AGENT_DIR;
-  process.env.PI_CODING_AGENT_DIR = agentDir;
-  try {
-    await run();
-  } finally {
-    if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
-    else process.env.PI_CODING_AGENT_DIR = previous;
-    await rm(agentDir, { recursive: true, force: true });
-  }
-}
 
 test("a cancelled session switch keeps the legacy request rewrite while background compaction is off", async () => {
   await withIsolatedAgentDir(async () => {
