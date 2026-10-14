@@ -38,82 +38,15 @@ export const EFFORT_PICKER_FOCUS: NativeSettingsFocus = {
  */
 const PI_ROW_LABELS = new Map<string, string>([["thinking", "Reasoning effort"]]);
 
-/** Sections the profile adds for settings that no built-in choco-ui section covers. */
+/** Tabs the profile layout adds for settings that no built-in choco-ui section covers. */
 export const TERMINAL_SECTION_ID = "terminal";
 export const SESSION_SECTION_ID = "session";
 export const MODEL_SECTION_ID = "model";
 export const TOOLS_SECTION_ID = "tools";
 
-/**
- * Where each of Pi's settings rows belongs, by topic rather than by the order
- * Pi happens to build them in. A row Pi adds in a later version is unlisted and
- * falls back to its own section, so an upgrade never drops a setting.
- */
-const PI_ROW_LAYOUT: ReadonlyArray<{ section: string; rows: readonly string[] }> = [
-  {
-    section: "appearance",
-    rows: [
-      "theme",
-      "mermaid-rendering",
-      "hide-thinking",
-      "show-images",
-      "image-width-cells",
-      "auto-resize-images",
-    ],
-  },
-  {
-    section: "editor",
-    rows: ["editor-padding", "autocomplete-max-visible", "double-escape-action"],
-  },
-  { section: "userMessages", rows: ["output-padding"] },
-  {
-    section: TERMINAL_SECTION_ID,
-    rows: [
-      "tui-mode",
-      "fullscreen-exit-output",
-      "fullscreen-scrollbar",
-      "terminal-progress",
-      "clear-on-shrink",
-      "show-hardware-cursor",
-    ],
-  },
-  {
-    section: SESSION_SECTION_ID,
-    rows: [
-      "autocompact",
-      "cache-miss-notices",
-      "steering-mode",
-      "follow-up-mode",
-      "tree-filter-mode",
-      "block-images",
-      "default-project-trust",
-      "quiet-startup",
-      "collapse-changelog",
-      "install-telemetry",
-      "warnings",
-    ],
-  },
-  {
-    section: MODEL_SECTION_ID,
-    rows: [
-      MODEL_ROW_ID,
-      SCOPED_MODELS_ROW_ID,
-      "thinking",
-      "model-thinking",
-      "transport",
-      "http-idle-timeout",
-    ],
-  },
-  { section: TOOLS_SECTION_ID, rows: ["skill-commands"] },
-];
-
-/** Sections this module owns a tab for, in tab order. */
-const PI_OWNED_SECTIONS: ReadonlyArray<{ id: string; label: string }> = [
-  { id: TERMINAL_SECTION_ID, label: "Terminal" },
-  { id: SESSION_SECTION_ID, label: "Session" },
-  { id: MODEL_SECTION_ID, label: "Model" },
-  { id: TOOLS_SECTION_ID, label: "Tools" },
-];
+/** Row ids this module adds next to the rows Pi builds itself. */
+export const PI_MODEL_ROW_ID = MODEL_ROW_ID;
+export const PI_SCOPED_MODELS_ROW_ID = SCOPED_MODELS_ROW_ID;
 
 /**
  * Bridge state lives on `globalThis` rather than in module scope because
@@ -479,40 +412,25 @@ function relabelSubmenu(component: Component, from: string, to: string): Compone
   };
 }
 
-function sectionRows(rows: SettingItem[], section: string): SettingItem[] {
-  const wanted = PI_ROW_LAYOUT.find((entry) => entry.section === section)?.rows ?? [];
-  const byId = new Map(rows.map((row) => [row.id, row]));
-  const placed: SettingItem[] = [];
-  for (const id of wanted) {
-    const row = byId.get(id);
-    if (!row) continue;
-    const label = PI_ROW_LABELS.get(row.id);
-    if (label === undefined) {
-      placed.push(row);
-      continue;
-    }
-    const submenu = row.submenu;
-    const renamed: SettingItem = { ...row, label };
-    if (submenu !== undefined) {
-      renamed.submenu = (currentValue, done) =>
-        relabelSubmenu(submenu(currentValue, done), row.label, label);
-    }
-    placed.push(renamed);
+/** Applies this panel's wording to a row, including the submenu it opens. */
+function relabeled(row: SettingItem): SettingItem {
+  const label = PI_ROW_LABELS.get(row.id);
+  if (label === undefined) return row;
+  const submenu = row.submenu;
+  const renamed: SettingItem = { ...row, label };
+  if (submenu !== undefined) {
+    renamed.submenu = (currentValue, done) =>
+      relabelSubmenu(submenu(currentValue, done), row.label, label);
   }
-  return placed;
-}
-
-/** Rows Pi built that no layout entry claims; they keep their own tab. */
-function unclaimedRows(rows: SettingItem[]): SettingItem[] {
-  const claimed = new Set(PI_ROW_LAYOUT.flatMap((entry) => entry.rows));
-  return rows.filter((row) => !claimed.has(row.id));
+  return renamed;
 }
 
 /**
- * Spreads Pi's settings rows over the preferences panel by topic: some merge
- * into choco-ui sections, the rest own the Terminal, Session, Model, and Tools
- * tabs. Returns an empty list when no interactive mode is available (non-TUI
- * runs), and a single fallback tab when Pi's rows could not be read.
+ * Pi's settings rows as one source section. The host layout places each row
+ * by id; a row it neither places nor hides stays on this section's own "Pi"
+ * tab, so a row a later Pi adds is never dropped. Returns an empty list when
+ * no interactive mode is available (non-TUI runs), and a single explanatory
+ * row when Pi's rows could not be read.
  */
 export function buildNativeSettingsSections(): PreferencesExtraSection[] {
   const host = readBridge()?.host;
@@ -528,7 +446,7 @@ export function buildNativeSettingsSections(): PreferencesExtraSection[] {
       modelRow(host),
       scopedModelsRow(host),
       ...(nativeThinkingRow ? [] : [thinkingRow(host)]),
-      ...rows.items,
+      ...rows.items.map(relabeled),
     ];
   };
   const handleChange = (id: string, newValue: string): PreferencesSectionChange => {
@@ -538,39 +456,21 @@ export function buildNativeSettingsSections(): PreferencesExtraSection[] {
     }
     if (!onChange) return { kind: "update" };
     onChange(id, newValue);
-    // A refused TUI mode switch only updates Pi's own detached list, so the
-    // row has to be re-read to stay truthful.
-    return id === "tui-mode" ? { kind: "rebuild" } : { kind: "update" };
+    // The TUI mode row used to need a re-read after a refused switch; the
+    // profile pins that setting and the layout hides the row, so every
+    // remaining row redraws from the value it was given.
+    return { kind: "update" };
   };
 
-  const merged = PI_ROW_LAYOUT.filter(
-    (entry) => !PI_OWNED_SECTIONS.some((owned) => owned.id === entry.section),
-  ).map(({ section }) => ({
-    id: `${NATIVE_SETTINGS_SECTION_ID}:${section}`,
-    label: "Pi",
-    mergeInto: section,
-    buildItems: (): SettingItem[] => sectionRows(readRows(), section),
-    handleChange,
-  }));
-
-  const owned = PI_OWNED_SECTIONS.map(({ id, label }) => ({
-    id,
-    label,
-    buildItems: (): SettingItem[] => sectionRows(readRows(), id),
-    handleChange,
-  }));
-
-  const fallback: PreferencesExtraSection = {
-    id: NATIVE_SETTINGS_SECTION_ID,
-    label: "Pi",
-    buildItems: (): SettingItem[] => {
-      const rows = readRows();
-      if (rows.length === 0) return [unavailableRow()];
-      return unclaimedRows(rows);
+  return [
+    {
+      id: NATIVE_SETTINGS_SECTION_ID,
+      label: "Pi",
+      buildItems: (): SettingItem[] => {
+        const rows = readRows();
+        return rows.length === 0 ? [unavailableRow()] : rows;
+      },
+      handleChange,
     },
-    handleChange,
-  };
-
-  const fallbackRows = fallback.buildItems();
-  return [...merged, ...owned, ...(fallbackRows.length > 0 ? [fallback] : [])];
+  ];
 }

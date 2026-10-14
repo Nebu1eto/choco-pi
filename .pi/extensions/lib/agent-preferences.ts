@@ -512,6 +512,22 @@ export interface PreferencesExtraSection {
   handleChange: (id: string, newValue: string) => PreferencesSectionChange;
 }
 
+/**
+ * One headed block of a preferences tab. Entries are row ids, or
+ * `section:<source id>` for every remaining row of one source section.
+ */
+export interface PreferencesLayoutGroup {
+  label?: string;
+  rows: readonly string[];
+}
+
+/** One tab of the host layout the preferences panel renders. */
+export interface PreferencesLayoutTab {
+  id: string;
+  label: string;
+  groups: readonly PreferencesLayoutGroup[];
+}
+
 export interface PreferencesPanelHandle {
   render: (width: number) => string[];
   invalidate: () => void;
@@ -546,6 +562,8 @@ export interface PreferencesProvider {
     extraSections: PreferencesExtraSection[];
     mergeSections?: Record<string, string>;
     sectionOrder?: string[];
+    layout?: readonly PreferencesLayoutTab[];
+    hiddenRows?: readonly string[];
     initialSection?: string;
     initialFocusId?: string;
     openInitialSubmenu?: boolean;

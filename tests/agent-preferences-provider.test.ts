@@ -125,10 +125,13 @@ test(
     assert.deepEqual(section.handleChange("agentPersona", "critical"), { kind: "update" });
     assert.deepEqual(section.handleChange("agentOnUsageLimit", "fallback"), { kind: "update" });
     assert.deepEqual(section.handleChange("daybreakDefault", "on"), { kind: "update" });
-    assert.deepEqual(section.handleChange("sessionAutoName", "Disabled"), { kind: "update" });
     assert.deepEqual(section.handleChange("sessionAutoNameModel", "openai/gpt-5.6-luna"), {
       kind: "update",
     });
+    // Turning automatic naming off rebuilds the list without the model row,
+    // before the asynchronous write has landed.
+    assert.deepEqual(section.handleChange("sessionAutoName", "Disabled"), { kind: "rebuild" });
+    assert.ok(!section.buildItems().some((item) => item.id === "sessionAutoNameModel"));
     await settleWrites();
     const settings: unknown = JSON.parse(
       await readFile(path.join(agentDir, "settings.json"), "utf8"),
@@ -141,6 +144,12 @@ test(
     assert.equal(settings.daybreakDefault, true);
     assert.equal(settings.sessionAutoName, false);
     assert.equal(settings.sessionAutoNameModel, "openai/gpt-5.6-luna");
+    assert.ok(
+      !section.buildItems().some((item) => item.id === "sessionAutoNameModel"),
+      "the naming model row stays hidden while automatic naming is off",
+    );
+    assert.deepEqual(section.handleChange("sessionAutoName", "Enabled"), { kind: "rebuild" });
+    assert.equal(section.buildItems()[6].id, "sessionAutoNameModel");
     assert.deepEqual(section.handleChange("sessionAutoNameModel", "openai-codex/gpt-5.6-luna"), {
       kind: "update",
     });

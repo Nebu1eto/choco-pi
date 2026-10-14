@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync } from "node:fs";
-import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { SettingItem } from "@earendil-works/pi-tui";
 import type { CodexConversionConfig } from "../../adapter/activation/config.ts";
 import {
@@ -32,8 +32,6 @@ export type CodexSectionChange =
 export interface CodexPreferencesSection {
   id: string;
   label: string;
-  /** When set, the rows are appended to the named host section instead of owning a tab. */
-  mergeInto?: string;
   buildItems: () => SettingItem[];
   handleChange: (id: string, newValue: string) => CodexSectionChange;
 }
@@ -63,61 +61,16 @@ export interface CodexPreferencesDeps {
 }
 
 /**
- * Where each Codex row belongs in the preferences panel, by topic. A row a
- * later adapter version adds is unlisted and falls back to its own Codex tab,
- * so an upgrade never hides a setting.
+ * Dim heading rows `/codex` draws between its own groups. The host panel
+ * places Codex rows into its own headed groups, so these would only repeat
+ * them as focusable blank rows.
  */
-const CODEX_ROW_LAYOUT: ReadonlyArray<{ section: string; rows: readonly string[] }> = [
-  {
-    section: "appearance",
-    rows: ["toolRenaming", "compactTools", "codeModeDetails", "steeringDeliveryStatus"],
-  },
-  {
-    section: "model",
-    rows: [
-      EXECUTION_MODE_ITEM_ID,
-      "midTurnSteering",
-      "asyncCodeMode",
-      "fast",
-      "cacheKeepalive",
-      "verbosity",
-      "transportHeader",
-      "responsesLite",
-      "forceCachedWebSockets",
-      "compactionHeader",
-      "responsesCompaction",
-      "v2UserMessageRetention",
-      "diagnosticsHeader",
-      "cacheDiagnosticsStatus",
-      "cacheDiagnosticsLog",
-    ],
-  },
-  {
-    section: "tools",
-    rows: [
-      "viewImageFallback",
-      "webRun",
-      "webSearchModel",
-      "imageGeneration",
-      "activateOnlyHeader",
-      "applyPatchOnly",
-      "viewImageOnly",
-      "webRunOnly",
-      "imageGenerationOnly",
-      "customRustBinariesHelp",
-      "customRustBinariesPath",
-    ],
-  },
-  { section: "agent", rows: ["additionalProviders", "editConfig"] },
-];
-
-/**
- * Marks where the Codex rows begin inside a section it shares with choco-ui or
- * Pi rows, so the merged list still says which system stores the value.
- */
-function sourceHeader(section: string, theme: Theme): SettingItem {
-  return { id: `codexSourceHeader:${section}`, label: theme.fg("dim", "Codex"), currentValue: "" };
-}
+const SCREEN_HEADER_ROW_IDS: ReadonlySet<string> = new Set([
+  "transportHeader",
+  "compactionHeader",
+  "diagnosticsHeader",
+  "activateOnlyHeader",
+]);
 
 /**
  * Restates the Edit config row for this panel. `/codex` handed the file to
@@ -137,9 +90,11 @@ function withInPlaceEditor(setting: ConfigSetting, path: string): ConfigSetting 
 }
 
 /**
- * Spreads every row `/codex` showed across its General, Tools, OpenAI, Display,
- * and About tabs over the preferences panel by topic. All sections share one
- * draft and one scope, so a change made on any tab writes the same document.
+ * Every row `/codex` shows across its General, Tools, OpenAI, Display, and
+ * About tabs, as one source section. The host layout places each row by id
+ * into its own tabs; a row it neither places nor hides keeps a Codex tab, so
+ * an upgrade never hides a setting. All rows share one draft and one scope,
+ * so a change made on any tab writes the same document.
  *
  * The Usage tab is deliberately left out: the host dialog already reports Codex
  * usage on its own Usage tab.
@@ -237,42 +192,14 @@ export function buildCodexPreferencesSections(
     return { kind: "rebuild" };
   };
 
-  const rowsFor = (section: string): SettingItem[] => {
+  const rows = (): SettingItem[] => {
     draft = readDraft();
-    const wanted = CODEX_ROW_LAYOUT.find((entry) => entry.section === section)?.rows ?? [];
-    const byId = new Map(buildSettings().map(({ item }) => [item.id, item]));
-    const placed: SettingItem[] = [];
-    for (const id of wanted) {
-      const item = byId.get(id);
-      if (item) placed.push(item);
-    }
-    return placed.length > 0 ? [sourceHeader(section, ctx.ui.theme), ...placed] : [];
-  };
-
-  const unclaimedRows = (): SettingItem[] => {
-    draft = readDraft();
-    const claimed = new Set(CODEX_ROW_LAYOUT.flatMap((entry) => entry.rows));
     return buildSettings()
       .map(({ item }) => item)
-      .filter((item) => !claimed.has(item.id));
+      .filter((item) => !SCREEN_HEADER_ROW_IDS.has(item.id));
   };
 
-  const merged = CODEX_ROW_LAYOUT.map(({ section }) => ({
-    id: `${CODEX_SECTION_ID}:${section}`,
-    label: "Codex",
-    mergeInto: section,
-    buildItems: () => rowsFor(section),
-    handleChange,
-  }));
-
-  const fallback: CodexPreferencesSection = {
-    id: CODEX_SECTION_ID,
-    label: "Codex",
-    buildItems: unclaimedRows,
-    handleChange,
-  };
-
-  return [...merged, ...(unclaimedRows().length > 0 ? [fallback] : [])];
+  return [{ id: CODEX_SECTION_ID, label: "Codex", buildItems: rows, handleChange }];
 }
 
 /**
@@ -339,7 +266,8 @@ export function registerCodexPreferencesProvider(deps: CodexPreferencesDeps): vo
     runOutcome: async (outcome, ctx) => {
       if (outcome !== CODEX_EDIT_CONFIG_OUTCOME) return undefined;
       await runEditConfigOutcome(ctx, deps);
-      return { section: "agent", focusId: "editConfig" };
+      // The host panel resolves the tab from the focused row.
+      return { section: CODEX_SECTION_ID, focusId: "editConfig" };
     },
   };
   Object.defineProperty(globalThis, CODEX_PREFERENCES_PROVIDER_SYMBOL, {

@@ -278,11 +278,15 @@ function handleAgentPreferenceChange(
 export function buildAgentPreferencesSection(
   ctx: ExtensionCommandContext,
 ): PreferencesExtraSection {
+  // The auto-name write lands asynchronously, so the rebuild that adds or
+  // drops the naming-model row reads the value the user just chose.
+  let chosenAutoName: boolean | undefined;
   return {
     id: AGENT_SECTION_ID,
     label: "Agent",
     buildItems(): SettingItem[] {
       const preferences = readAgentPreferences();
+      const autoName = chosenAutoName ?? preferences.sessionAutoName !== false;
       const styles = discoverAgentStyles();
       const styleNames = styles.map((style) => style.name);
       const styleValues = [DEFAULT_STYLE_LABEL, ...styleNames];
@@ -296,7 +300,7 @@ export function buildAgentPreferencesSection(
         : (activeStyle?.description ??
           "Prompt style injected on every turn; add styles as .md files under ~/.pi/agent/agent-styles.");
       const namingModel = preferences.sessionAutoNameModel ?? DEFAULT_SESSION_AUTO_NAME_MODEL;
-      return [
+      const items: SettingItem[] = [
         {
           id: "agentLanguage",
           label: "Agent language",
@@ -341,10 +345,13 @@ export function buildAgentPreferencesSection(
           label: "Auto-name sessions",
           description:
             "Generate a short display name after the first successful agent turn. An explicit /name always wins.",
-          currentValue: preferences.sessionAutoName === false ? DISABLED_LABEL : ENABLED_LABEL,
+          currentValue: autoName ? ENABLED_LABEL : DISABLED_LABEL,
           values: [ENABLED_LABEL, DISABLED_LABEL],
         },
-        {
+      ];
+      // The naming model only matters while sessions are named automatically.
+      if (autoName) {
+        items.push({
           id: SESSION_AUTO_NAME_MODEL_KEY,
           label: "Session naming model",
           description: `Low-latency model used without reasoning. If unavailable or unsuccessful, ${SESSION_AUTO_NAME_FALLBACK_MODEL} is tried once.`,
@@ -358,18 +365,24 @@ export function buildAgentPreferencesSection(
               void writeSessionAutoNameModel(ctx, value);
             },
           }),
-        },
-        {
-          id: PROMPT_SUGGESTION_KEY,
-          label: "Prompt suggestions",
-          description:
-            "After each completed agent turn, predict your next prompt and show it as dim text in the empty editor; Tab fills it in. Uses openai-codex/gpt-6-luna, falling back to anthropic/claude-haiku-5-5, and costs one small request per turn. On by default.",
-          currentValue: preferences.promptSuggestion === false ? DISABLED_LABEL : ENABLED_LABEL,
-          values: [ENABLED_LABEL, DISABLED_LABEL],
-        },
-      ];
+        });
+      }
+      items.push({
+        id: PROMPT_SUGGESTION_KEY,
+        label: "Prompt suggestions",
+        description:
+          "After each completed agent turn, predict your next prompt and show it as dim text in the empty editor; Tab fills it in. Uses openai-codex/gpt-6-luna, falling back to anthropic/claude-haiku-5-5, and costs one small request per turn. On by default.",
+        currentValue: preferences.promptSuggestion === false ? DISABLED_LABEL : ENABLED_LABEL,
+        values: [ENABLED_LABEL, DISABLED_LABEL],
+      });
+      return items;
     },
-    handleChange: (id, newValue) => handleAgentPreferenceChange(ctx, id, newValue),
+    handleChange: (id, newValue) => {
+      const change = handleAgentPreferenceChange(ctx, id, newValue);
+      if (id !== SESSION_AUTO_NAME_KEY) return change;
+      chosenAutoName = newValue === ENABLED_LABEL;
+      return { kind: "rebuild" };
+    },
   };
 }
 

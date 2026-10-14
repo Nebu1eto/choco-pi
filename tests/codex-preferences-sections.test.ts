@@ -94,18 +94,15 @@ function findSection(
 }
 
 test(
-  "every /codex settings row lands in a topical section",
+  "every /codex settings row is published in one section without /codex's own headings",
   withCodexDirs(({ ctx, deps }) => {
     // SAFETY: the fixture supplies every host member the section touches.
     const sections = buildCodexPreferencesSections(ctx as never, deps);
 
-    // No Codex section owns a tab: every row joins an existing one.
-    for (const section of sections) {
-      assert.ok(section.mergeInto, `${section.id} must merge into a host section`);
-    }
+    // The host layout places each row by id; Codex publishes one source.
     assert.deepEqual(
-      sections.map((section) => section.mergeInto),
-      ["appearance", "model", "tools", "agent"],
+      sections.map((section) => section.id),
+      [CODEX_SECTION_ID],
     );
 
     const placed = sections.flatMap((section) => section.buildItems().map((item) => item.id));
@@ -137,18 +134,19 @@ test(
       assert.ok(!placed.includes(removed), `${removed} must no longer render`);
     }
     assert.equal(new Set(placed).size, placed.length, "row ids must stay unique across sections");
-    assert.deepEqual(sectionRowIds(sections, `${CODEX_SECTION_ID}:appearance`), [
-      "codexSourceHeader:appearance",
-      "toolRenaming",
-      "compactTools",
-      "codeModeDetails",
-      "steeringDeliveryStatus",
-    ]);
-    assert.deepEqual(sectionRowIds(sections, `${CODEX_SECTION_ID}:agent`), [
-      "codexSourceHeader:agent",
-      "additionalProviders",
-      "editConfig",
-    ]);
+    // The panel draws its own group headings, so /codex's dim heading rows
+    // would only add focusable blank rows.
+    for (const heading of [
+      "transportHeader",
+      "compactionHeader",
+      "diagnosticsHeader",
+      "activateOnlyHeader",
+    ]) {
+      assert.ok(!placed.includes(heading), `${heading} must not be published`);
+    }
+    assert.ok(
+      sectionRowIds(sections, CODEX_SECTION_ID).every((id) => !id.startsWith("codexSourceHeader")),
+    );
   }),
 );
 
@@ -157,7 +155,7 @@ test(
   withCodexDirs(({ ctx, deps, saved }) => {
     // SAFETY: the fixture supplies every host member the section touches.
     const sections = buildCodexPreferencesSections(ctx as never, deps);
-    const appearance = findSection(sections, `${CODEX_SECTION_ID}:appearance`);
+    const appearance = findSection(sections, CODEX_SECTION_ID);
     assert.ok(appearance);
     const row = appearance.buildItems().find((item) => item.id === "steeringDeliveryStatus");
     assert.equal(row?.currentValue, "off");
@@ -180,7 +178,7 @@ test(
     try {
       // SAFETY: the fixture supplies every host member the section touches.
       const sections = buildCodexPreferencesSections(ctx as never, deps);
-      const section = findSection(sections, `${CODEX_SECTION_ID}:agent`);
+      const section = findSection(sections, CODEX_SECTION_ID);
       const row = section?.buildItems().find((item) => item.id === "editConfig");
       assert.deepEqual(row?.values, ["Open"]);
       assert.equal(row?.currentValue, "Open");
@@ -202,7 +200,7 @@ test(
   withCodexDirs(({ ctx, deps, saved }) => {
     // SAFETY: the fixture supplies every host member the section touches.
     const sections = buildCodexPreferencesSections(ctx as never, deps);
-    const model = findSection(sections, `${CODEX_SECTION_ID}:model`);
+    const model = findSection(sections, CODEX_SECTION_ID);
     assert.ok(model);
     model.buildItems();
 
@@ -224,7 +222,7 @@ test(
   withCodexDirs(({ ctx, deps, saved }) => {
     // SAFETY: the fixture supplies every host member the section touches.
     const sections = buildCodexPreferencesSections(ctx as never, deps);
-    const model = findSection(sections, `${CODEX_SECTION_ID}:model`);
+    const model = findSection(sections, CODEX_SECTION_ID);
     assert.ok(model);
     const items = model.buildItems();
     assert.equal(items.find((item) => item.id === "midTurnSteering")?.label, "Mid-turn Steering");
@@ -249,7 +247,7 @@ test(
     const untrusted = createFixture(cwd, false);
     // SAFETY: the fixture supplies every host member the section touches.
     const sections = buildCodexPreferencesSections(untrusted.ctx as never, untrusted.deps);
-    const model = findSection(sections, `${CODEX_SECTION_ID}:model`);
+    const model = findSection(sections, CODEX_SECTION_ID);
     assert.ok(model);
     model.buildItems();
     model.handleChange("fast", "on");
@@ -266,8 +264,8 @@ test(
       assert.deepEqual(readPublishedSections(ctx), []);
       registerCodexPreferencesProvider(deps);
       assert.deepEqual(
-        readPublishedSections(ctx).map((section) => section.mergeInto),
-        ["appearance", "model", "tools", "agent"],
+        readPublishedSections(ctx).map((section) => section.id),
+        [CODEX_SECTION_ID],
       );
     } finally {
       if (previous === undefined) delete store[CODEX_PROVIDER_SYMBOL];
@@ -286,7 +284,7 @@ test(
     const fixture = createFixture(cwd, true);
     // SAFETY: the fixture supplies every host member the section touches.
     const sections = buildCodexPreferencesSections(fixture.ctx as never, fixture.deps);
-    const model = findSection(sections, `${CODEX_SECTION_ID}:model`);
+    const model = findSection(sections, CODEX_SECTION_ID);
     assert.ok(model);
     model.buildItems();
     model.handleChange("fast", "on");

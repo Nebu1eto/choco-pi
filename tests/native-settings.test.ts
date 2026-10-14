@@ -113,7 +113,7 @@ test(
 );
 
 test(
-  "Pi's rows are spread over the panel by topic and unknown rows keep their own tab",
+  "Pi's rows form one source the host layout places by id",
   withPatchedPrototype(fakeNativeSettings(ROWS, []), () => {
     const changes: [string, string][] = [];
     const prototype = prototypeRecord();
@@ -127,36 +127,20 @@ test(
 
     const sections = buildNativeSettingsSections();
 
-    // Merged sections contribute rows to an existing tab and own none.
-    for (const [id, target] of [
-      ["pi:appearance", "appearance"],
-      ["pi:editor", "editor"],
-      ["pi:userMessages", "userMessages"],
-    ] as const) {
-      assert.equal(sections.find((section) => section.id === id)?.mergeInto, target);
-    }
-    for (const id of ["terminal", "session", "model", "tools", "pi"]) {
-      assert.equal(sections.find((section) => section.id === id)?.mergeInto, undefined);
-    }
-
-    assert.deepEqual(sectionRowIds(sections, "pi:appearance"), ["theme", "hide-thinking"]);
-    assert.deepEqual(sectionRowIds(sections, "pi:editor"), ["editor-padding"]);
-    // A section Pi owns needs no source header: its rows come first.
-    assert.deepEqual(sectionRowIds(sections, "terminal"), ["tui-mode"]);
-    // The cache hit/miss warning lives with the session behavior settings.
-    assert.deepEqual(sectionRowIds(sections, "session"), ["autocompact", "cache-miss-notices"]);
-    assert.deepEqual(sectionRowIds(sections, "model"), [
+    // One standalone source: the panel's fallback keeps any row the layout
+    // does not place on this section's own "Pi" tab.
+    assert.deepEqual(
+      sections.map((section) => [section.id, section.label, section.mergeInto]),
+      [["pi", "Pi", undefined]],
+    );
+    assert.deepEqual(sectionRowIds(sections, "pi"), [
       "piModel",
       "piScopedModels",
-      "thinking",
-      "model-thinking",
+      ...ROWS.map((row) => row.id),
     ]);
-    assert.deepEqual(sectionRowIds(sections, "tools"), ["skill-commands"]);
-    // A row no layout entry claims must stay reachable.
-    assert.deepEqual(sectionRowIds(sections, "pi"), ["future-row"]);
 
     // The reasoning row keeps Pi's id but reads with this panel's wording.
-    const model = sections.find((section) => section.id === "model");
+    const model = sections.find((section) => section.id === "pi");
     assert.equal(
       model?.buildItems().find((item) => item.id === "thinking")?.label,
       "Reasoning effort",
@@ -166,10 +150,11 @@ test(
     assert.ok(modelItem?.submenu instanceof Function, "the picker opens inside the panel");
     assert.deepEqual(model?.handleChange("piModel", "gpt-5.6-luna"), { kind: "update" });
 
-    const appearance = sections.find((section) => section.id === "pi:appearance");
-    const terminal = sections.find((section) => section.id === "terminal");
-    assert.deepEqual(appearance?.handleChange("hide-thinking", "true"), { kind: "update" });
-    assert.deepEqual(terminal?.handleChange("tui-mode", "fullscreen"), { kind: "rebuild" });
+    // Every Pi row applies through Pi's own handler and redraws in place. The
+    // former re-read after a refused TUI mode switch is gone with the row,
+    // which the profile pins and the layout hides.
+    assert.deepEqual(model?.handleChange("hide-thinking", "true"), { kind: "update" });
+    assert.deepEqual(model?.handleChange("tui-mode", "fullscreen"), { kind: "update" });
     assert.deepEqual(changes, [
       ["hide-thinking", "true"],
       ["tui-mode", "fullscreen"],
@@ -257,7 +242,7 @@ test(
     ).call(host);
 
     const row = buildNativeSettingsSections()
-      .find((section) => section.id === "model")
+      .find((section) => section.id === "pi")
       ?.buildItems()
       .find((item) => item.id === "piModel");
     assert.equal(row?.currentValue, "gpt-5.6-luna");
@@ -291,7 +276,7 @@ test(
       ).call(host);
 
       const row = buildNativeSettingsSections()
-        .find((section) => section.id === "model")
+        .find((section) => section.id === "pi")
         ?.buildItems()
         .find((item) => item.id === "thinking");
       assert.equal(row?.label, "Reasoning effort");

@@ -265,7 +265,7 @@ registered tool name (an override applies to both states):
 }
 ```
 
-The interactive `/preferences` menu contributes exactly eight component-oriented sections, in this order. Use `←` and `→` to switch sections; the host may append its own sections after these. `Tab` and `Shift+Tab` belong to the host and switch between its Status, Usage, and Preferences tabs, as do `1`/`2`/`3`:
+The interactive `/preferences` menu contributes exactly eight component-oriented sections, in this order. Use `←` and `→` to switch sections; the host may append its own sections after these, or pass a `layout` that arranges every row into its own tabs of headed groups (the choco-pi profile folds these sections into its Appearance, Editor, and Statusline tabs). Group headings are never focused. `Tab` and `Shift+Tab` belong to the host and switch between its Status, Usage, and Preferences tabs, as do `1`/`2`/`3`:
 
 1. **Appearance** — selector-border enablement, style, and colors; icon mode.
 2. **Editor** — editor enablement, style, colors, model label, border behavior, viewport indicators, the padding row, settings for the selected editor style, and a static synthetic preview.
@@ -295,6 +295,7 @@ Useful slash-command shortcuts:
 /preferences messages
 /preferences user-messages
 /preferences working-line
+/preferences statusline
 /preferences viewport-indicators enable
 /preferences viewport-indicators disable
 /preferences viewport-indicators toggle

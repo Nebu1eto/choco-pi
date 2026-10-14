@@ -36,9 +36,9 @@ optional `mergeInto`. A section that sets it contributes no tab: its rows are
 appended to the named section, built-in or host-provided. Supporting that
 needed three further edits in the same file:
 
-- `buildSectionItems` no longer takes the host sections; the new
-  `collectSectionItems` wraps it, appends every merged section's rows, and
-  records the owning section per row id.
+- `buildSectionItems` no longer takes the host sections; the placement code
+  (`rowSources`/`placeRows`, see "host layout, hidden rows, and headings"
+  below) builds every section and records the owning section per row id.
 - `sectionOrder` and `sectionLabel` skip merged sections through
   `standaloneExtras`, so a merged section never appears in the tab strip.
 - the settings-list `onChange` dispatches a row to its owner by row id before
@@ -54,7 +54,7 @@ topical tabs instead of parking them in two catch-all sections.
 gained two optional fields:
 
 - `mergeSections`, a source-to-target map. A source section keeps no tab and
-  `collectSectionItems` renders its rows inside the target under a dim heading,
+  its rows render inside the target under a dim heading,
   after the target's own rows and in key order.
 - `sectionOrder`, a list of section ids. Listed sections lead the tab strip in
   that order and everything else keeps its natural position after them, so an
@@ -64,6 +64,37 @@ gained two optional fields:
 `nextSection`, `previousSection`, and `formatSectionTabs` take the resolved
 order instead of recomputing it, and the panel opens on the first visible
 section rather than a hardcoded `appearance`.
+
+### choco-pi change: host layout, hidden rows, and headings
+
+`ZentuiPreferencesPanelOptions` gained `layout` (tabs of headed groups that
+place rows by id, or `section:<source id>` for every remaining row of one
+source) and `hiddenRows` (ids never shown, not even in search). With `layout`
+set, `mergeSections` and `sectionOrder` are ignored; without it the panel
+synthesizes the equivalent layout from them (`legacyLayout`), so both paths
+share one placement routine. In `extensions/zentui/settings-command.ts`:
+
+- `collectSectionItems` is replaced by `rowSources`, `placeRows`, and
+  `tabItems`. Explicit ids win over `section:` entries. With a host layout,
+  every source is built and a row that is neither placed nor hidden is appended
+  to its source's home tab (`mergeInto` or its own id): an existing tab gains
+  a group headed by the source label, any other home becomes its own tab.
+  Layout tabs without rows are left out; the tab set is fixed when the panel
+  opens.
+- Group headings (`sectionHeader:<tab>:<index>`) are not focusable. In the
+  section view the panel moves the selection itself on `tui.select.up/down`
+  and calls `SettingsList.selectItem`, skipping headings; initial focus and
+  rebuild focus use `selectItem` instead of replaying Down keys. Search lists
+  still own their keys and keep the changed row selected after a rebuild.
+- `initialSection` may name a source section; it resolves to the tab holding
+  that source's rows, and `initialFocusId` wins when it names a placed row.
+  `openInitialSubmenu` fires only when that row actually holds the cursor.
+- The editor, user-message, and working-line previews follow the source rows
+  on the shown tab instead of the tab id; `formatSectionTabs` takes a label
+  lookup.
+- `directSection` maps a bare `statusline` (also `status-line`,
+  `status line`) to `footer`; `statusline enable|disable|toggle` is still
+  parsed first as the direct operation. `statusline` joined the completions.
 
 ### choco-pi change: a switch per footer status
 

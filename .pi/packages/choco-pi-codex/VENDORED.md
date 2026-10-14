@@ -393,7 +393,7 @@ the baseline suite; the real Pi host `.e2e.ts` suite remains opt-in.
 
 ## Native Mid-turn Steering and Async Code Mode (choco-pi addition)
 
-The production config and `/preferences` Model section expose independent Auto
+The production config and `/preferences` Model tab expose independent Auto
 defaults and Off overrides for `openai.midTurnSteering` (label **Mid-turn
 Steering**) and `openai.asyncCodeMode` (**Async Code Mode**). The native path is
 limited to `gpt-6-astra` Responses WebSocket requests. Other models and SSE keep
@@ -862,3 +862,19 @@ Files: `adapter/codex-tool-provider.ts`, `tools/web-run/{backend,tool}.ts`,
   credential provider, is labelled "(openai-codex legacy only)" on `openai`, and
   accepts either prefix while storing the bare model id.
   Test: `tests/codex-tool-provider-openai.test.ts`.
+
+## choco-pi patch: one preferences source, no screen headings
+
+`src/ui/settings/preferences-sections.ts` publishes every Codex row as a single
+`codex` section instead of spreading rows over host sections through
+`CODEX_ROW_LAYOUT` and `mergeInto`; `CodexPreferencesSection` no longer has
+`mergeInto`. The profile's `.pi/extensions/lib/preferences-layout.ts` places
+each row by id, and a row it neither places nor hides keeps a Codex tab. The
+dim `/codex` screen headings (`transportHeader`, `compactionHeader`,
+`diagnosticsHeader`, `activateOnlyHeader`) and the per-section
+`codexSourceHeader:*` rows are not published, because the host panel draws its
+own group headings; `config-items-*.ts` still emits them for `/codex`. The
+Edit config outcome reopens with `focusId: "editConfig"`, which the host panel
+resolves to the tab that holds it. The profile hides `executionMode`,
+`customRustBinariesHelp`, and `customRustBinariesPath`.
+Test: `tests/codex-preferences-sections.test.ts`, `tests/preferences-layout.test.ts`.

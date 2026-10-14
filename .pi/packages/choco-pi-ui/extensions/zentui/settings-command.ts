@@ -2,6 +2,7 @@ import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/
 import { getSettingsListTheme } from "@earendil-works/pi-coding-agent";
 import {
   type AutocompleteItem,
+  getKeybindings,
   matchesKey,
   type SettingItem,
   SettingsList,
@@ -195,6 +196,24 @@ export interface PreferencesExtraSection {
   ) => { kind: "update" } | { kind: "rebuild" } | { kind: "outcome"; outcome: string };
 }
 
+/**
+ * One headed block of a layout tab. Each entry is either a row id or
+ * `section:<source id>`, which takes every remaining row of that source (a
+ * built-in section or a host section) in the order the source builds them.
+ * A row id placed explicitly anywhere wins over a `section:` entry.
+ */
+export interface PreferencesLayoutGroup {
+  label?: string;
+  rows: readonly string[];
+}
+
+/** One tab of a host-defined layout: its groups render in order under dim headings. */
+export interface PreferencesLayoutTab {
+  id: string;
+  label: string;
+  groups: readonly PreferencesLayoutGroup[];
+}
+
 export interface ZentuiPreferencesFocus {
   section?: string;
   focusId?: string;
@@ -223,6 +242,19 @@ export interface ZentuiPreferencesPanelOptions {
    * harmless.
    */
   sectionOrder?: string[];
+  /**
+   * Host-defined tabs. When set it replaces `mergeSections` and
+   * `sectionOrder`: every row from every section is placed by id into a tab
+   * group. A row neither placed nor hidden still renders, appended to the tab
+   * its source would have owned, so a new upstream row is never lost.
+   */
+  layout?: readonly PreferencesLayoutTab[];
+  /** Row ids the panel never shows, not even in search. */
+  hiddenRows?: readonly string[];
+  /**
+   * Where the panel opens. A tab id, or a source section id resolved to the
+   * tab that holds its rows; `initialFocusId` wins when it names a placed row.
+   */
   initialSection?: string;
   initialFocusId?: string;
   /**
@@ -352,6 +384,7 @@ const directCommandSuggestions = [
   "statusline enable",
   "statusline disable",
   "statusline toggle",
+  "statusline",
   "viewport-indicators enable",
   "viewport-indicators disable",
   "viewport-indicators toggle",
@@ -491,6 +524,10 @@ function directSection(args: string): SettingsSection | undefined {
     return "userMessages";
   }
   if (normalized === "working-line" || normalized === "working line") return "workingLine";
+  // Bare `statusline` opens the footer rows; with an action word it is the
+  // direct enable/disable/toggle operation parsed before this.
+  if (normalized === "statusline" || normalized === "status-line" || normalized === "status line")
+    return "footer";
   return undefined;
 }
 
@@ -1103,54 +1140,215 @@ function standaloneExtras(extras: PreferencesExtraSection[]): PreferencesExtraSe
 /** Source-to-target map of sections rendered inside another section. */
 type SectionMerges = Readonly<Record<string, string>>;
 
-/** One section's rows in render order, with the host section each contributed row belongs to. */
-interface SectionItems {
-  items: SettingItem[];
-  owners: Map<string, PreferencesExtraSection>;
+/** Layout entry prefix that takes every remaining row of one source section. */
+const SECTION_ROW_PREFIX = "section:";
+
+/** A section that builds rows: built-in, or contributed by the host. */
+interface RowSource {
+  id: string;
+  label: string;
+  /** The tab an unplaced row of this source falls back to. */
+  home: string;
+  owner?: PreferencesExtraSection;
+  build: () => SettingItem[];
 }
 
-/**
- * Rows of one section, in render order, plus the host section each contributed
- * row belongs to. The owner map is what lets merged rows live next to built-in
- * rows: a change is dispatched by row id instead of by the active section.
- */
-function collectSectionItems(
-  section: string,
+function rowSources(
   config: PolishedTuiConfig,
   active: ReadonlyMap<string, string>,
   extras: PreferencesExtraSection[],
-  merges: SectionMerges,
-  theme: ExtensionContext["ui"]["theme"],
-): SectionItems {
-  const owners = new Map<string, PreferencesExtraSection>();
-  const own = (extra: PreferencesExtraSection): SettingItem[] => {
-    const built = extra.buildItems();
-    for (const item of built) owners.set(item.id, extra);
-    return built;
-  };
-  const rowsOf = (target: string): SettingItem[] => {
-    const sectionOwner = standaloneExtras(extras).find((candidate) => candidate.id === target);
-    const rows = sectionOwner ? own(sectionOwner) : buildSectionItems(target, config, active);
-    for (const extra of extras) {
-      if (extra.mergeInto === target) rows.push(...own(extra));
+): RowSource[] {
+  // A standalone host section that reuses a built-in id replaces that section.
+  const replaced = new Set(standaloneExtras(extras).map((extra) => extra.id));
+  const builtin: RowSource[] = settingsSections
+    .filter((section) => !replaced.has(section))
+    .map((section) => ({
+      id: section,
+      label: sectionLabels[section],
+      home: section,
+      build: () => buildSectionItems(section, config, active),
+    }));
+  const hosted: RowSource[] = extras.map((extra) => ({
+    id: extra.id,
+    label: extra.label,
+    home: extra.mergeInto ?? extra.id,
+    owner: extra,
+    build: () => extra.buildItems(),
+  }));
+  return [...builtin, ...hosted];
+}
+
+interface PlacedGroup {
+  label?: string;
+  rows: SettingItem[];
+}
+
+interface PlacedTab {
+  id: string;
+  label: string;
+  groups: PlacedGroup[];
+}
+
+/** Every placed row by tab and group, plus where each row came from. */
+interface Placement {
+  tabs: PlacedTab[];
+  /** Host section that owns each contributed row; changes dispatch by row id. */
+  owners: Map<string, PreferencesExtraSection>;
+  rowSource: Map<string, string>;
+}
+
+/**
+ * Places rows into tab groups. Explicit row ids win over `section:` entries,
+ * hidden rows are dropped, and with `withFallback` every row left over is
+ * appended to its source's home tab — an existing tab gains a group headed by
+ * the source label, any other home becomes a tab of its own.
+ *
+ * Without explicit entries or fallback only the sources the given tabs name
+ * are built, which keeps a single-tab placement as cheap as the tab itself.
+ */
+function placeRows(
+  specs: readonly PreferencesLayoutTab[],
+  sources: readonly RowSource[],
+  hidden: ReadonlySet<string>,
+  withFallback: boolean,
+): Placement {
+  const built = new Map<string, SettingItem[]>();
+  const rowsOf = (source: RowSource): SettingItem[] => {
+    let rows = built.get(source.id);
+    if (rows === undefined) {
+      rows = source.build();
+      built.set(source.id, rows);
     }
     return rows;
   };
-  const items = rowsOf(section);
-  for (const [source, target] of Object.entries(merges)) {
-    if (target !== section) continue;
-    const rows = rowsOf(source);
-    if (rows.length === 0) continue;
-    items.push(
-      {
-        id: `sectionHeader:${source}`,
-        label: safeThemeFg(theme, "dim", sectionLabel(source, extras)),
-        currentValue: "",
-      },
-      ...rows,
-    );
+  const byId = new Map<string, SettingItem>();
+  const rowSource = new Map<string, string>();
+  const owners = new Map<string, PreferencesExtraSection>();
+  const indexed = new Set<string>();
+  const index = (source: RowSource): void => {
+    if (indexed.has(source.id)) return;
+    indexed.add(source.id);
+    for (const item of rowsOf(source)) {
+      // The first source to build an id owns it; a duplicate never renders twice.
+      if (rowSource.has(item.id)) continue;
+      byId.set(item.id, item);
+      rowSource.set(item.id, source.id);
+      if (source.owner) owners.set(item.id, source.owner);
+    }
+  };
+  const explicit = new Set(
+    specs.flatMap((tab) =>
+      tab.groups.flatMap((group) =>
+        group.rows.filter((row) => !row.startsWith(SECTION_ROW_PREFIX)),
+      ),
+    ),
+  );
+  if (explicit.size > 0 || withFallback) for (const source of sources) index(source);
+  const sourceById = new Map(sources.map((source) => [source.id, source]));
+  const taken = new Set<string>();
+  const take = (item: SettingItem, rows: SettingItem[]): void => {
+    taken.add(item.id);
+    rows.push(item);
+  };
+  const tabs: PlacedTab[] = specs.map((spec) => ({
+    id: spec.id,
+    label: spec.label,
+    groups: spec.groups.map((group) => {
+      const rows: SettingItem[] = [];
+      for (const entry of group.rows) {
+        if (entry.startsWith(SECTION_ROW_PREFIX)) {
+          const source = sourceById.get(entry.slice(SECTION_ROW_PREFIX.length));
+          if (source === undefined) continue;
+          index(source);
+          for (const item of rowsOf(source)) {
+            if (rowSource.get(item.id) !== source.id) continue;
+            if (taken.has(item.id) || explicit.has(item.id) || hidden.has(item.id)) continue;
+            take(item, rows);
+          }
+          continue;
+        }
+        const item = byId.get(entry);
+        if (item === undefined || taken.has(entry) || hidden.has(entry)) continue;
+        take(item, rows);
+      }
+      const placed: PlacedGroup = { rows };
+      if (group.label !== undefined) placed.label = group.label;
+      return placed;
+    }),
+  }));
+  if (withFallback) {
+    for (const source of sources) {
+      const rest = rowsOf(source).filter(
+        (item) =>
+          rowSource.get(item.id) === source.id && !taken.has(item.id) && !hidden.has(item.id),
+      );
+      if (rest.length === 0) continue;
+      for (const item of rest) taken.add(item.id);
+      const existing = tabs.find((tab) => tab.id === source.home);
+      if (existing) {
+        existing.groups.push({ label: source.label, rows: rest });
+        continue;
+      }
+      const homeSource = sourceById.get(source.home);
+      tabs.push({
+        id: source.home,
+        label: homeSource?.label ?? source.label,
+        groups: [{ rows: rest }],
+      });
+    }
   }
-  return { items, owners };
+  return { tabs, owners, rowSource };
+}
+
+/**
+ * The layout the panel used before hosts could define one: one tab per
+ * section, merged host sections folded into their target, and each
+ * `mergeSections` source rendered as a headed block of its target.
+ */
+function legacyLayout(
+  extras: PreferencesExtraSection[],
+  merges: SectionMerges,
+  override?: readonly string[],
+): PreferencesLayoutTab[] {
+  const tokensFor = (section: string): string[] => [
+    `${SECTION_ROW_PREFIX}${section}`,
+    ...extras
+      .filter((extra) => extra.mergeInto === section)
+      .map((extra) => `${SECTION_ROW_PREFIX}${extra.id}`),
+  ];
+  return sectionOrder(extras, merges, override).map((id) => ({
+    id,
+    label: sectionLabel(id, extras),
+    groups: [
+      { rows: tokensFor(id) },
+      ...Object.entries(merges)
+        .filter(([, target]) => target === id)
+        .map(([source]) => ({ label: sectionLabel(source, extras), rows: tokensFor(source) })),
+    ],
+  }));
+}
+
+/** One tab's rows in render order and the ids of its heading rows. */
+interface TabItems {
+  items: SettingItem[];
+  headers: Set<string>;
+}
+
+/** One tab's rows in render order; each labeled group opens with a dim heading. */
+function tabItems(tab: PlacedTab | undefined, theme: ExtensionContext["ui"]["theme"]): TabItems {
+  const items: SettingItem[] = [];
+  const headers = new Set<string>();
+  if (tab === undefined) return { items, headers };
+  tab.groups.forEach((group, index) => {
+    if (group.rows.length === 0) return;
+    if (group.label !== undefined) {
+      const id = `sectionHeader:${tab.id}:${index}`;
+      headers.add(id);
+      items.push({ id, label: safeThemeFg(theme, "dim", group.label), currentValue: "" });
+    }
+    items.push(...group.rows);
+  });
+  return { items, headers };
 }
 
 function sectionOrder(
@@ -1188,19 +1386,19 @@ function previousSection(section: string, order: readonly string[]): string {
 }
 function formatSectionTabs(
   active: string,
-  extras: PreferencesExtraSection[],
+  labelOf: (section: string) => string,
   theme: ExtensionContext["ui"]["theme"],
   width: number,
   order: readonly string[],
 ): string {
   const rendered = order.map((section) =>
     section === active
-      ? theme.bold(sectionLabel(section, extras))
-      : safeThemeFg(theme, "muted", sectionLabel(section, extras)),
+      ? theme.bold(labelOf(section))
+      : safeThemeFg(theme, "muted", labelOf(section)),
   );
   const full = `  ${rendered.join(safeThemeFg(theme, "muted", " / "))}`;
   if (visibleWidth(full) <= width) return full;
-  return `  ${theme.bold(sectionLabel(active, extras))} (${order.indexOf(active) + 1}/${order.length})`;
+  return `  ${theme.bold(labelOf(active))} (${order.indexOf(active) + 1}/${order.length})`;
 }
 function withSectionFooter(
   lines: string[],
@@ -1417,11 +1615,52 @@ export function createZentuiPreferencesComponent(
   const { setEditor, setMessages, setFooter } = createSettingsAppliers(deps);
   const extraSections = options.extraSections ?? [];
   const sectionMerges: SectionMerges = options.mergeSections ?? {};
-  const visibleSections = sectionOrder(extraSections, sectionMerges, options.sectionOrder);
-  const initialSection =
-    options.initialSection && visibleSections.includes(options.initialSection)
-      ? options.initialSection
-      : (visibleSections[0] ?? "appearance");
+  // A host layout places every row by id, which needs every source built;
+  // the legacy layout builds only the sections the shown tab names.
+  const layoutMode = options.layout !== undefined;
+  const layoutSpecs =
+    options.layout ?? legacyLayout(extraSections, sectionMerges, options.sectionOrder);
+  const hiddenRows = new Set(options.hiddenRows ?? []);
+  const placeTabs = (only?: string): Placement =>
+    placeRows(
+      layoutMode || only === undefined
+        ? layoutSpecs
+        : layoutSpecs.filter((spec) => spec.id === only),
+      rowSources(deps.getConfig(), deps.getActiveExtensionStatuses(), extraSections),
+      hiddenRows,
+      layoutMode,
+    );
+  const initialPlacement = layoutMode ? placeTabs() : undefined;
+  // Tabs are fixed for the panel's lifetime; an empty host tab is left out.
+  const visibleSections = initialPlacement
+    ? initialPlacement.tabs
+        .filter((tab) => tab.groups.some((group) => group.rows.length > 0))
+        .map((tab) => tab.id)
+    : layoutSpecs.map((spec) => spec.id);
+  const tabLabels = new Map(
+    (initialPlacement?.tabs ?? layoutSpecs).map((tab) => [tab.id, tab.label]),
+  );
+  const labelOf = (section: string): string => tabLabels.get(section) ?? section;
+  /** The tab holding the first placed row that matches, among the visible tabs. */
+  const tabHolding = (matches: (id: string) => boolean): string | undefined =>
+    initialPlacement?.tabs.find(
+      (tab) =>
+        visibleSections.includes(tab.id) &&
+        tab.groups.some((group) => group.rows.some((row) => matches(row.id))),
+    )?.id;
+  const resolveInitialSection = (): string => {
+    const focusId = options.initialFocusId;
+    const requested = options.initialSection;
+    const focused = focusId === undefined ? undefined : tabHolding((id) => id === focusId);
+    if (focused !== undefined) return focused;
+    if (requested !== undefined && visibleSections.includes(requested)) return requested;
+    const hosting =
+      requested === undefined
+        ? undefined
+        : tabHolding((id) => initialPlacement?.rowSource.get(id) === requested);
+    return hosting ?? visibleSections[0] ?? "appearance";
+  };
+  const initialSection = resolveInitialSection();
   const listTheme = deps.settingsListTheme ?? getSettingsListTheme();
   let activeSection = initialSection;
   // A submenu owns every key while it is open, so the panel's own section
@@ -1432,6 +1671,14 @@ export function createZentuiPreferencesComponent(
   // shortcuts.
   let searchQuery: string | undefined;
   let settingsList: SettingsList;
+  // Section-view navigation: the shown rows, which of them are headings, and
+  // the selected row. The panel moves the selection itself so headings are
+  // never focused.
+  let navItems: SettingItem[] = [];
+  let navHeaders = new Set<string>();
+  let navSelectedId: string | undefined;
+  // Sources with rows on the shown tab; they decide which preview renders.
+  let activeSources = new Set<string>();
   let preview: WorkingLineFrames | undefined;
   let previewFrameIndex = 0;
   let cancelPreview = () => {};
@@ -1447,7 +1694,7 @@ export function createZentuiPreferencesComponent(
     const previous = preview;
     const previousState = previous?.frameStates[previewFrameIndex];
     stopPreview(false);
-    if (activeSection !== "workingLine") return;
+    if (previewSource() !== "workingLine") return;
     try {
       const config = deps.getConfig();
       const spinnerTick = previousState?.spinnerTick ?? 0;
@@ -1480,7 +1727,7 @@ export function createZentuiPreferencesComponent(
       preview = generated;
       previewFrameIndex = 0;
       const advance = () => {
-        if (activeSection !== "workingLine" || !preview || preview.frames.length === 0) return;
+        if (previewSource() !== "workingLine" || !preview || preview.frames.length === 0) return;
         previewFrameIndex = (previewFrameIndex + 1) % preview.frames.length;
         tui.requestRender();
         cancelPreview = deps.sessionLifecycle.defer(advance, preview.intervalMs);
@@ -1524,7 +1771,6 @@ export function createZentuiPreferencesComponent(
   const makeListForItems = (
     items: SettingItem[],
     owners: Map<string, PreferencesExtraSection>,
-    focusId: string | undefined,
     onCancel: () => void,
     enableSearch: boolean,
   ): SettingsList => {
@@ -1973,22 +2219,50 @@ export function createZentuiPreferencesComponent(
       onCancel,
       enableSearch ? { enableSearch: true } : undefined,
     );
-    if (focusId) {
-      const target = items.findIndex((item) => item.id === focusId);
-      for (let index = 0; index < target; index += 1) list.handleInput("\x1b[B");
-    }
     return list;
   };
+  /** Whether a section-view row can hold the selection; headings cannot. */
+  const selectable = (item: SettingItem | undefined): item is SettingItem =>
+    item !== undefined && !navHeaders.has(item.id);
+  /** Moves the section-view selection one selectable row, wrapping like the list does. */
+  const moveSelection = (step: 1 | -1): void => {
+    const count = navItems.length;
+    if (count === 0) return;
+    const current = navItems.findIndex((item) => item.id === navSelectedId);
+    for (let offset = 1; offset <= count; offset += 1) {
+      const candidate = navItems[(((current + step * offset) % count) + count) % count];
+      if (!selectable(candidate)) continue;
+      navSelectedId = candidate.id;
+      settingsList.selectItem(candidate.id);
+      return;
+    }
+  };
+  /** Which section's live preview the shown tab carries, if any. */
+  const previewSource = (): "editor" | "userMessages" | "workingLine" | undefined => {
+    if (searchQuery !== undefined) return undefined;
+    if (activeSources.has("editor")) return "editor";
+    if (activeSources.has("userMessages")) return "userMessages";
+    if (activeSources.has("workingLine")) return "workingLine";
+    return undefined;
+  };
   const makeSettingsList = (focusId?: string): SettingsList => {
-    const { items, owners } = collectSectionItems(
-      activeSection,
-      deps.getConfig(),
-      deps.getActiveExtensionStatuses(),
-      extraSections,
-      sectionMerges,
-      theme,
+    const placement = placeTabs(activeSection);
+    const tab = placement.tabs.find((candidate) => candidate.id === activeSection);
+    const { items, headers } = tabItems(tab, theme);
+    navItems = items;
+    navHeaders = headers;
+    activeSources = new Set(
+      items.flatMap((item) => {
+        const source = placement.rowSource.get(item.id);
+        return source === undefined ? [] : [source];
+      }),
     );
-    return makeListForItems(items, owners, focusId, () => finishSettings("close"), false);
+    const list = makeListForItems(items, placement.owners, () => finishSettings("close"), false);
+    const focused = items.find((item) => item.id === focusId);
+    const initial = selectable(focused) ? focused : items.find(selectable);
+    navSelectedId = initial?.id;
+    if (initial !== undefined) list.selectItem(initial.id);
+    return list;
   };
 
   /** The search field SettingsList keeps private, read to preserve an active query. */
@@ -2020,24 +2294,17 @@ export function createZentuiPreferencesComponent(
    */
   const collectSearchItems = (): SearchItems => {
     const items: SettingItem[] = [];
-    const owners = new Map<string, PreferencesExtraSection>();
+    const placement = placeTabs();
     for (const section of visibleSections) {
-      const { items: sectionItems, owners: sectionOwners } = collectSectionItems(
-        section,
-        deps.getConfig(),
-        deps.getActiveExtensionStatuses(),
-        extraSections,
-        sectionMerges,
-        theme,
-      );
-      for (const item of sectionItems) {
-        if (item.values === undefined && item.submenu === undefined) continue;
-        const owner = sectionOwners.get(item.id);
-        if (owner !== undefined) owners.set(item.id, owner);
-        items.push({ ...item, label: `${sectionLabel(section, extraSections)}: ${item.label}` });
+      const tab = placement.tabs.find((candidate) => candidate.id === section);
+      for (const group of tab?.groups ?? []) {
+        for (const item of group.rows) {
+          if (item.values === undefined && item.submenu === undefined) continue;
+          items.push({ ...item, label: `${labelOf(section)}: ${item.label}` });
+        }
       }
     }
-    return { items, owners };
+    return { items, owners: placement.owners };
   };
 
   const exitSearch = (): void => {
@@ -2051,7 +2318,7 @@ export function createZentuiPreferencesComponent(
     const { items, owners } = collectSearchItems();
     // SAFETY: searchQuery is defined whenever a search list is built.
     const query = searchQuery ?? "";
-    const list = makeListForItems(items, owners, focusId, exitSearch, true);
+    const list = makeListForItems(items, owners, exitSearch, true);
     const internals = searchInternals(list);
     // Restores the query after a change rebuilt the list and lights the
     // cursor, which the field only draws while it believes it holds focus.
@@ -2060,6 +2327,8 @@ export function createZentuiPreferencesComponent(
       internals.searchInput.setValue(query);
       internals.applyFilter(query);
     }
+    // The filter resets the selection; a change keeps the row it changed.
+    if (focusId !== undefined) list.selectItem(focusId);
     return list;
   };
 
@@ -2072,12 +2341,16 @@ export function createZentuiPreferencesComponent(
 
   /** Rebuilds the shown list after a change, keeping the active search's filter and section. */
   const rebuildCurrentList = (focusId?: string): SettingsList => {
-    settingsList = searchQuery !== undefined ? makeSearchList(focusId) : makeSettingsList(focusId);
+    settingsList = searchQuery === undefined ? makeSettingsList(focusId) : makeSearchList(focusId);
     return settingsList;
   };
 
   settingsList = makeSettingsList(options.initialFocusId);
-  if (options.initialFocusId !== undefined && options.openInitialSubmenu) {
+  if (
+    options.initialFocusId !== undefined &&
+    navSelectedId === options.initialFocusId &&
+    options.openInitialSubmenu
+  ) {
     // Activating the focused row is what opens its submenu; the list owns that
     // step, so replay the key rather than reaching into it.
     settingsList.handleInput("\r");
@@ -2085,11 +2358,12 @@ export function createZentuiPreferencesComponent(
   startPreview();
   const renderPreviewRows = (previewWidth: number): string[] => {
     if (previewWidth <= 0) return [];
-    if (activeSection === "editor")
+    const source = previewSource();
+    if (source === "editor")
       return renderEditorSettingsPreview(deps.getConfig(), theme, previewWidth);
-    if (activeSection === "userMessages")
+    if (source === "userMessages")
       return renderUserMessageSettingsPreview(deps.getConfig(), theme, previewWidth);
-    if (activeSection === "workingLine" && preview && preview.frames.length > 0)
+    if (source === "workingLine" && preview && preview.frames.length > 0)
       return [
         truncateToWidth(
           preview.frames[previewFrameIndex] ?? preview.frames[0],
@@ -2115,7 +2389,7 @@ export function createZentuiPreferencesComponent(
         return [
           truncateToWidth(border, width, ""),
           truncateToWidth(
-            formatSectionTabs(activeSection, extraSections, theme, width, visibleSections),
+            formatSectionTabs(activeSection, labelOf, theme, width, visibleSections),
             width,
             "",
           ),
@@ -2139,7 +2413,7 @@ export function createZentuiPreferencesComponent(
       return [
         truncateToWidth(border, width, ""),
         truncateToWidth(
-          formatSectionTabs(activeSection, extraSections, theme, width, visibleSections),
+          formatSectionTabs(activeSection, labelOf, theme, width, visibleSections),
           width,
           "",
         ),
@@ -2167,6 +2441,18 @@ export function createZentuiPreferencesComponent(
       if (!submenuOpen && data === "/") {
         enterSearch();
         return;
+      }
+      // The panel owns section-view selection so a heading is never focused.
+      if (!submenuOpen) {
+        const keybindings = getKeybindings();
+        let step: 1 | -1 | undefined;
+        if (keybindings.matches(data, "tui.select.up")) step = -1;
+        else if (keybindings.matches(data, "tui.select.down")) step = 1;
+        if (step !== undefined) {
+          moveSelection(step);
+          tui.requestRender();
+          return;
+        }
       }
       if (!submenuOpen && matchesKey(data, "right")) {
         stopPreview();

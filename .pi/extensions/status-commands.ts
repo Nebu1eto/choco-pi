@@ -33,6 +33,7 @@ import {
 import { buildSubagentPreferencesSections } from "./lib/subagent-preferences.ts";
 import { buildAdvisorPreferencesSections } from "./lib/advisor-preferences.ts";
 import { buildBackgroundCompactionPreferencesSections } from "./lib/background-compaction-preferences.ts";
+import { PREFERENCES_HIDDEN_ROWS, PREFERENCES_LAYOUT } from "./lib/preferences-layout.ts";
 import {
   buildNativeSettingsSections,
   createHostCommandContext,
@@ -655,19 +656,12 @@ function closeOpenDialogs(): void {
 }
 
 const PREFERENCES_USAGE =
-  "Usage: /preferences [editor|messages|statusline|viewport-indicators] [enable|disable|toggle], /preferences [messages|user-messages|working-line|agent], /preferences [language <name>|style <name>|daybreak on|off], or /preferences format <template>";
+  "Usage: /preferences [editor|messages|statusline|viewport-indicators] [enable|disable|toggle], /preferences [messages|user-messages|working-line|statusline|agent], /preferences [language <name>|style <name>|daybreak on|off], or /preferences format <template>";
 
 /**
- * Every section the Preferences tab hosts on top of the panel's own choco-ui
- * sections. Most contribute rows to an existing section; the ones that own a
- * tab follow PREFERENCES_SECTION_ORDER: Model, Agent, Session, Terminal,
- * Tools. The agent section goes last in the extra list because merged blocks
- * append after its own rows: the Codex adapter rows, then the Subagents
- * settings folded in by PREFERENCES_SECTION_MERGES.
- *
- * Pi's rows come before the Codex ones in every shared section: they read as
- * the section's own settings, which leaves the Codex heading as the only
- * marker a merged block needs.
+ * Every row source the Preferences tab hosts on top of the panel's own
+ * choco-ui sections. PREFERENCES_LAYOUT places their rows by id, so the order
+ * here only decides which source owns an id two sources might both build.
  */
 function buildPreferencesExtraSections(ctx: ExtensionCommandContext): PreferencesExtraSection[] {
   return [
@@ -680,32 +674,6 @@ function buildPreferencesExtraSections(ctx: ExtensionCommandContext): Preference
     buildAgentPreferencesSection(ctx),
   ];
 }
-
-/**
- * Sections rendered inside another one, source to target. Subagent settings
- * are Agent settings with a separate dial, and user messages and the footer
- * describe the same screen furniture as Appearance, so all of them read
- * better as headed blocks of one tab than as their own tabs.
- */
-const PREFERENCES_SECTION_MERGES = {
-  subagents: "agent",
-  // Advisor is an agent-level capability, so its settings belong with the other agent settings.
-  advisor: "agent",
-  userMessages: "appearance",
-  footer: "appearance",
-  extensions: "appearance",
-} satisfies Record<string, string>;
-
-/** Tab order; sections left out keep their natural position after these. */
-const PREFERENCES_SECTION_ORDER = [
-  "model",
-  "agent",
-  "session",
-  "appearance",
-  "editor",
-  "terminal",
-  "tools",
-];
 
 /** Non-TUI surface for /preferences: a text summary of the agent preferences. */
 function preferencesSummary(ctx: ExtensionCommandContext): void {
@@ -869,8 +837,8 @@ async function showTabOnce(
         tui,
         theme,
         extraSections: buildPreferencesExtraSections(ctx),
-        mergeSections: PREFERENCES_SECTION_MERGES,
-        sectionOrder: PREFERENCES_SECTION_ORDER,
+        layout: PREFERENCES_LAYOUT,
+        hiddenRows: PREFERENCES_HIDDEN_ROWS,
         onOutcome: (outcome) => {
           finish(outcome === "close" ? undefined : outcome);
         },
