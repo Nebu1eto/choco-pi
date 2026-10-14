@@ -24,6 +24,10 @@ import {
 import type { PreferencesExtraSection } from "../../../extensions/lib/agent-preferences.ts";
 import { buildBackgroundCompactionPreferencesSections } from "../../../extensions/lib/background-compaction-preferences.ts";
 import { resolveChildCompactionProvider } from "../../choco-pi-subagents/src/child-compaction-bridge.ts";
+import {
+  type AnthropicCompactionMode,
+  readAnthropicCompactionMode,
+} from "../src/anthropic/mode.ts";
 import { getCoordinator } from "../src/background/registry.ts";
 import {
   backgroundSettingsPaths,
@@ -39,6 +43,9 @@ import { compactionEntries, createHost, type Host, reply } from "./host-boundary
 
 const AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
 const ROW_ID = "backgroundCompaction.enabled";
+const ANTHROPIC_ROW_ID = "compactionAnthropic";
+/** Backend switches derived with both vendor rows on choco-pi (the injected test mode). */
+const LOCAL_LANES = { text: true, codexNative: false, anthropicNative: false };
 /** A global sidecar ready for text candidates except for the master switch. */
 const SWITCHED_OFF = {
   enabled: false,
@@ -114,6 +121,10 @@ function closedGate(): Gate {
   return { open: () => resolve(), opened: promise };
 }
 
+async function localMode(): Promise<AnthropicCompactionMode> {
+  return "choco-pi";
+}
+
 /** What the extensions under test observed. */
 interface Probe {
   /** The session context, standing in for the Preferences command's context. */
@@ -164,18 +175,29 @@ function recordSession(probe: Probe): ExtensionFactory {
   };
 }
 
-/** The real extension with the real settings lookup; only the summarizer is injected. */
-function compactionExtension(probe: Probe): ExtensionFactory {
+/**
+ * The real extension with the real settings lookup; only the summarizer is
+ * injected. The Anthropic mode is the injected local summarizer unless
+ * `realMode` reads it from the agent directory as production does.
+ */
+function compactionExtension(probe: Probe, realMode: boolean): ExtensionFactory {
   return (pi) => {
     registerCompaction(pi, {
       retryPolicy: { enabled: false, maxRetries: 0, baseDelayMs: 0, maxAgentDelayMs: 0 },
       compactionPolicy: () => ({ keepRecentTokens: 1, reserveTokens: 0 }),
-      background: { createTextSummarizer: (model) => textSummarizer(model, probe) },
+      background: {
+        createTextSummarizer: (model) => textSummarizer(model, probe),
+        anthropic: { readMode: realMode ? readAnthropicCompactionMode : localMode },
+      },
     });
   };
 }
 
-async function withSession(project: string, run: (rig: Rig) => Promise<void>): Promise<void> {
+async function withSession(
+  project: string,
+  run: (rig: Rig) => Promise<void>,
+  options: { readonly realMode?: boolean } = {},
+): Promise<void> {
   const probe: Probe = {
     ctx: undefined,
     notices: [],
@@ -186,7 +208,7 @@ async function withSession(project: string, run: (rig: Rig) => Promise<void>): P
     dir: project,
     contextWindow: 100_000,
     respond: async (index) => reply(`R${index}`, { usageInput: index === 0 ? 60_000 : 20_000 }),
-    extensions: [recordSession(probe), compactionExtension(probe)],
+    extensions: [recordSession(probe), compactionExtension(probe, options.realMode === true)],
   });
   try {
     await run({ host, ownerKey: mainOwnerKey(host.manager.getSessionId()), probe });
@@ -206,6 +228,22 @@ function sectionOf(rig: Rig): PreferencesExtraSection {
 
 function rowValue(section: PreferencesExtraSection): string | undefined {
   return section.buildItems().find((item) => item.id === ROW_ID)?.currentValue;
+}
+
+function modeValue(section: PreferencesExtraSection): string | undefined {
+  return section.buildItems().find((item) => item.id === ANTHROPIC_ROW_ID)?.currentValue;
+}
+
+/** Change the Anthropic row as the panel does and wait until the change is applied. */
+async function chooseMode(
+  rig: Rig,
+  mode: AnthropicCompactionMode,
+): Promise<PreferencesExtraSection> {
+  const section = sectionOf(rig);
+  assert.deepEqual(section.handleChange(ANTHROPIC_ROW_ID, mode), { kind: "rebuild" });
+  assert.equal(modeValue(section), mode, "the row shows the choice at once");
+  await waitForBackgroundCompactionPreferenceChanges();
+  return section;
 }
 
 /** Change the row as the panel does and wait until the change is applied. */
@@ -257,7 +295,11 @@ test(
         assert.equal(getCoordinator(rig.ownerKey), undefined, "off at start");
         assert.equal(rowValue(await toggle(rig, "on")), "on");
         const saved: unknown = JSON.parse(await readFile(sidecar, "utf8"));
-        assert.deepEqual(saved, { ...SWITCHED_OFF, enabled: true }, "only the switch changed");
+        assert.deepEqual(
+          saved,
+          { ...SWITCHED_OFF, ...LOCAL_LANES, enabled: true },
+          "only the switch and the derived backend switches changed",
+        );
         const coordinator = getCoordinator(rig.ownerKey);
         assert.ok(coordinator, "the running session got a coordinator");
         await rig.host.session.prompt("GO");
@@ -283,22 +325,122 @@ test("switching on with no backend on also turns on text", { timeout: 20_000 }, 
     await withSession(project, async (rig) => {
       assert.equal(rowValue(await toggle(rig, "on")), "on");
       const saved: unknown = JSON.parse(await readFile(sidecar, "utf8"));
-      assert.deepEqual(saved, { enabled: true, text: true });
+      assert.deepEqual(saved, { ...LOCAL_LANES, enabled: true });
       assert.ok(getCoordinator(rig.ownerKey), "the text backend got a coordinator");
     });
   });
 });
 
-test("switching on keeps a backend switch that is already on", { timeout: 20_000 }, async () => {
+test(
+  "the backend switches follow the vendor rows, not a stale global sidecar",
+  { timeout: 20_000 },
+  async () => {
+    await withFreshDirs(async ({ agentDir, project, sidecar }) => {
+      await writeSidecar(sidecar, JSON.stringify({ anthropicNative: true, text: false }));
+      // OpenAI row on server-side; Anthropic row at its server-side default.
+      await writeFile(
+        join(agentDir, "choco-pi-codex.json"),
+        JSON.stringify({ compaction: { responsesCompaction: true } }),
+      );
+      await withSession(
+        project,
+        async (rig) => {
+          const started: unknown = JSON.parse(await readFile(sidecar, "utf8"));
+          assert.deepEqual(
+            started,
+            { anthropicNative: true, text: true, codexNative: true },
+            "session start re-derived the existing sidecar's switches",
+          );
+          await toggle(rig, "on");
+          const saved: unknown = JSON.parse(await readFile(sidecar, "utf8"));
+          assert.deepEqual(saved, {
+            anthropicNative: true,
+            text: true,
+            codexNative: true,
+            enabled: true,
+          });
+        },
+        { realMode: true },
+      );
+    });
+  },
+);
+
+test("session start leaves a missing global sidecar missing", { timeout: 20_000 }, async () => {
   await withFreshDirs(async ({ project, sidecar }) => {
-    await writeSidecar(sidecar, JSON.stringify({ anthropicNative: true }));
-    await withSession(project, async (rig) => {
-      await toggle(rig, "on");
-      const saved: unknown = JSON.parse(await readFile(sidecar, "utf8"));
-      assert.deepEqual(saved, { anthropicNative: true, enabled: true }, "text is not added");
+    await withSession(project, async () => {
+      await assert.rejects(readFile(sidecar, "utf8"), { code: "ENOENT" });
     });
   });
 });
+
+test(
+  "the Anthropic row saves the mode, keeps other settings and re-derives the running session",
+  { timeout: 20_000 },
+  async () => {
+    await withFreshDirs(async ({ agentDir, project, sidecar }) => {
+      const settingsPath = join(agentDir, "settings.json");
+      await writeSidecar(
+        settingsPath,
+        JSON.stringify({ agentPersona: "pessimistic", contextSoftCap: "400k" }),
+      );
+      await writeSidecar(sidecar, JSON.stringify({ ...SWITCHED_OFF, enabled: true }));
+      await withSession(
+        project,
+        async (rig) => {
+          assert.equal(modeValue(sectionOf(rig)), "server-side", "the default mode");
+          const started: unknown = JSON.parse(await readFile(sidecar, "utf8"));
+          assert.deepEqual(
+            started,
+            { ...SWITCHED_OFF, ...LOCAL_LANES, anthropicNative: true, enabled: true },
+            "server-side turns the Anthropic lane on",
+          );
+
+          assert.equal(modeValue(await chooseMode(rig, "choco-pi")), "choco-pi");
+          const settings: unknown = JSON.parse(await readFile(settingsPath, "utf8"));
+          assert.deepEqual(settings, {
+            agentPersona: "pessimistic",
+            contextSoftCap: "400k",
+            compactionAnthropic: "choco-pi",
+          });
+          const switched: unknown = JSON.parse(await readFile(sidecar, "utf8"));
+          assert.deepEqual(switched, { ...SWITCHED_OFF, ...LOCAL_LANES, enabled: true });
+          assert.ok(getCoordinator(rig.ownerKey), "the running session kept a coordinator");
+          assert.equal(modeValue(sectionOf(rig)), "choco-pi", "a fresh panel shows the new mode");
+
+          await chooseMode(rig, "server-side");
+          const back: unknown = JSON.parse(await readFile(sidecar, "utf8"));
+          assert.deepEqual(back, {
+            ...SWITCHED_OFF,
+            ...LOCAL_LANES,
+            anthropicNative: true,
+            enabled: true,
+          });
+          assert.deepEqual(rig.probe.notices, []);
+        },
+        { realMode: true },
+      );
+    });
+  },
+);
+
+test(
+  "a trusted project sidecar that overrides the derived switches warns once at session start",
+  { timeout: 20_000 },
+  async () => {
+    await withFreshDirs(async ({ project }) => {
+      const projectSidecar = join(project, ".pi", "extensions", "background-compaction.json");
+      await writeSidecar(projectSidecar, JSON.stringify({ ...SWITCHED_OFF, text: false }));
+      await withSession(project, async (rig) => {
+        assert.ok(rig.probe.ctx?.isProjectTrusted(), "the fixture project is trusted");
+        assert.equal(rig.probe.notices.length, 1, rig.probe.notices.join("\n"));
+        const notice = rig.probe.notices[0] ?? "";
+        assert.ok(notice.includes(projectSidecar), notice);
+        assert.ok(notice.includes("overrides the OpenAI and Anthropic compaction rows"), notice);
+      });
+    });
+  },
+);
 
 test(
   "a malformed global sidecar keeps the row off, warns once and is never overwritten",

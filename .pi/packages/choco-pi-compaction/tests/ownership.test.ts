@@ -101,6 +101,48 @@ test("a codex transport is codex-owned regardless of the codex config", () => {
 test("no selected model means no owner", () => {
   assert.equal(resolveOwner({ model: undefined }), "none");
   assert.equal(resolveOwner({ model: undefined }, CONFIGURED), "none");
+  assert.equal(
+    resolveOwner({ model: undefined }, CONFIGURED, { anthropicServerSide: true }),
+    "none",
+  );
+});
+
+test("server-side mode claims anthropic-messages models only after every Codex rule", () => {
+  const serverSide = { anthropicServerSide: true };
+  assert.equal(resolveOwner({ model: model({}) }, undefined, serverSide), "anthropic-native");
+  assert.equal(resolveOwner({ model: model({}) }, CONFIGURED, serverSide), "anthropic-native");
+  assert.equal(
+    resolveOwner({ model: model({}) }, undefined, { anthropicServerSide: false }),
+    "local",
+    "choco-pi mode stays local",
+  );
+  assert.equal(resolveOwner({ model: model({}) }), "local", "the summarizer's own view is local");
+  // Codex keeps winning wherever it owns the summary.
+  assert.equal(
+    resolveOwner(
+      { model: model({ provider: "openai-codex", api: "openai-codex-responses" }) },
+      undefined,
+      serverSide,
+    ),
+    "codex-native",
+  );
+  assert.equal(
+    resolveOwner(
+      { model: model({ provider: "OpenRouter", api: "openai-responses" }) },
+      CONFIGURED,
+      serverSide,
+    ),
+    "codex-native",
+  );
+  assert.equal(
+    resolveOwner(
+      { model: model({ provider: "openai", api: "openai-responses" }) },
+      undefined,
+      serverSide,
+    ),
+    "local",
+    "a non-Anthropic API is never claimed",
+  );
 });
 
 test("on a codex transport the handler abstains and the host summarizes", async () => {

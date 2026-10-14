@@ -5,6 +5,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  AUTO_COMPACTION_POINT_KEY,
+  CONTEXT_PRESET_VALUES,
+  CONTEXT_SOFT_CAP_KEY,
+  DEFAULT_AUTO_COMPACTION_POINT,
+  DEFAULT_CONTEXT_SOFT_CAP,
   DEFAULT_ON_USAGE_LIMIT,
   DEFAULT_PERSONA,
   AGENT_PREFERENCES_MARKER,
@@ -17,6 +22,8 @@ import {
   discoverAgentStyles,
   flushAgentPreferenceWrites,
   parseAgentStyleDocument,
+  parseAutoCompactionPoint,
+  parseContextSoftCap,
   parsePersona,
   personaDirectiveFromPrompt,
   readAgentPreferences,
@@ -116,6 +123,8 @@ test(
       persona: DEFAULT_PERSONA,
       onUsageLimit: DEFAULT_ON_USAGE_LIMIT,
       daybreak: false,
+      contextSoftCap: "standard",
+      autoCompactionPoint: "standard",
     };
     assert.deepEqual(readAgentPreferences(agent), defaults);
     assert.deepEqual(await readAgentPreferencesAsync(agent), defaults);
@@ -128,6 +137,63 @@ test(
     );
     assert.deepEqual(readAgentPreferences(agent), defaults);
     assert.deepEqual(await readAgentPreferencesAsync(agent), defaults);
+  }),
+);
+
+test(
+  "context presets default to standard, round-trip every value, and reject invalid values",
+  withTempDirs(async ({ agent }) => {
+    assert.equal(DEFAULT_CONTEXT_SOFT_CAP, "standard");
+    assert.equal(DEFAULT_AUTO_COMPACTION_POINT, "standard");
+    assert.deepEqual(CONTEXT_PRESET_VALUES, [
+      "strictest",
+      "strict",
+      "standard",
+      "permissive",
+      "unlimited",
+    ]);
+    const initial = await readAgentPreferencesAsync(agent);
+    assert.equal(initial.contextSoftCap, "standard");
+    assert.equal(initial.autoCompactionPoint, "standard");
+
+    for (const value of CONTEXT_PRESET_VALUES) {
+      await writeAgentPreference(CONTEXT_SOFT_CAP_KEY, value, agent);
+      await writeAgentPreference(AUTO_COMPACTION_POINT_KEY, value, agent);
+      assert.equal(readAgentPreferences(agent).contextSoftCap, value);
+      assert.equal((await readAgentPreferencesAsync(agent)).autoCompactionPoint, value);
+    }
+
+    assert.equal(parseContextSoftCap(" Strict "), "strict");
+    assert.equal(parseAutoCompactionPoint("UNLIMITED"), "unlimited");
+    for (const invalid of ["", "loose", 600_000, null, undefined]) {
+      assert.equal(parseContextSoftCap(invalid), undefined);
+      assert.equal(parseAutoCompactionPoint(invalid), undefined);
+    }
+    writeFileSync(
+      path.join(agent, "settings.json"),
+      JSON.stringify({ contextSoftCap: 600_000, autoCompactionPoint: "loose" }),
+    );
+    const fallback = await readAgentPreferencesAsync(agent);
+    assert.equal(fallback.contextSoftCap, "standard");
+    assert.equal(fallback.autoCompactionPoint, "standard");
+  }),
+);
+
+test(
+  "a preference write preserves unknown top-level keys written by other packages",
+  withTempDirs(async ({ agent }) => {
+    await mkdir(agent, { recursive: true });
+    const foreign = {
+      compactionAnthropic: { mode: "native", nested: { list: [1, 2, 3], flag: true } },
+      someFutureKey: "kept",
+    };
+    await writeFile(path.join(agent, "settings.json"), JSON.stringify(foreign, null, 2));
+    await writeAgentPreference(CONTEXT_SOFT_CAP_KEY, "strict", agent);
+    await writeAgentPreference(AUTO_COMPACTION_POINT_KEY, "permissive", agent);
+    await writeAgentPreference(CONTEXT_SOFT_CAP_KEY, undefined, agent);
+
+    const settings = JSON.parse(await readFile(path.join(agent, "settings.json"), "utf8"));
+    assert.deepEqual(settings, { ...foreign, autoCompactionPoint: "permissive" });
   }),
 );
 

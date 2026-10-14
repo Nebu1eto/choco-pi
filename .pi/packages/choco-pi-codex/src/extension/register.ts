@@ -19,12 +19,36 @@ import { resolveCodexRuntimePlan } from "../adapter/activation/runtime-plan.ts";
 import { captureActiveProviderSystemPrompt } from "../adapter/provider-prompt-capture.ts";
 import { withLiveCtx } from "./live-context.ts";
 import { registerCodexWebRunSearchAdapter } from "./search-adapter.ts";
+import {
+  createNativeCompactionBudgetHook,
+  type NativeCompactionModelLookup,
+  publishNativeCompactionBudgetHook,
+} from "./native-compaction-budget.ts";
 
 export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
   registerCodexTransportCleanup();
   registerNativeSteeringBridge();
   registerApplyPatchDisplayBroker(pi);
   const runtime = createCodexExtensionRuntime(pi);
+  // The budget follows the live adapter config, so a compaction-row change
+  // (which also resets the transport below) applies on the consumer's next read.
+  let findModel: NativeCompactionModelLookup | undefined;
+  const budgetHook = createNativeCompactionBudgetHook({
+    state: () => runtime.state,
+    findModel: () => findModel,
+  });
+  let unpublishBudget: (() => void) | undefined = publishNativeCompactionBudgetHook(budgetHook);
+  pi.on("session_start", (_event, ctx) => {
+    const registry = ctx.modelRegistry;
+    findModel = (provider, id) => registry.find(provider, id);
+    unpublishBudget ??= publishNativeCompactionBudgetHook(budgetHook);
+  });
+  pi.on("session_shutdown", () => {
+    findModel = undefined;
+    const unpublish = unpublishBudget;
+    unpublishBudget = undefined;
+    unpublish?.();
+  });
   const nativeFeatures = registerNativeFeatures(
     pi,
     () => runtime.state.config.openai.midTurnSteering,
@@ -38,6 +62,7 @@ export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
     codeMode = await registerCodexCodeMode(pi, runtime);
   } catch (error) {
     searchAdapter.unregister();
+    unpublishBudget?.();
     throw error;
   }
   let cleanupProxyProvider: ReturnType<typeof registerCodeModeProxyProvider> | undefined;
@@ -124,6 +149,7 @@ export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
     registerCodexEvents(pi, runtime, tools, ui, codeMode, proxyProvider);
   } catch (registrationError) {
     searchAdapter.unregister();
+    unpublishBudget?.();
     try {
       try {
         cleanupProxyProvider?.shutdown();

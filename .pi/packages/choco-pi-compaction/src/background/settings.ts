@@ -15,6 +15,10 @@
  * The Preferences row changes the master switch in the agent directory's
  * sidecar, so a trusted project's sidecar still wins. Switching on a file with
  * no backend switch on also turns on the text backend.
+ *
+ * The backend switches of the global sidecar are derived from the vendor
+ * compaction rows (`deriveBackgroundLanes`): text is always on, and each native
+ * lane follows its vendor's server-side mode.
  */
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
@@ -84,10 +88,88 @@ export async function writeGlobalBackgroundEnabled(
   enabled: boolean,
 ): Promise<void> {
   const path = globalBackgroundSettingsPath(agentDir);
-  const current = await readSidecarForWrite(path);
+  const current = (await readSidecarForWrite(path)) ?? {};
   const next = { ...current, enabled };
   const anyBackendOn = Boolean(current.text || current.anthropicNative || current.codexNative);
   if (enabled && !anyBackendOn && current.text === undefined) next.text = true;
+  await writeSidecarAtomic(path, next);
+}
+
+/** Whether each vendor's compaction mode is server-side. */
+export interface VendorCompactionModes {
+  /** OpenAI row: codex `compaction.responsesCompaction`. */
+  readonly openaiServerSide: boolean;
+  /** Anthropic row: `compactionAnthropic === "server-side"`. */
+  readonly anthropicServerSide: boolean;
+}
+
+/** Backend switches the global sidecar carries, derived from the vendor rows. */
+export interface BackgroundLaneSwitches {
+  readonly text: true;
+  readonly codexNative: boolean;
+  readonly anthropicNative: boolean;
+}
+
+/** Text always runs; each native lane runs when its vendor compacts server-side. */
+export function deriveBackgroundLanes(modes: VendorCompactionModes): BackgroundLaneSwitches {
+  return {
+    text: true,
+    codexNative: modes.openaiServerSide,
+    anthropicNative: modes.anthropicServerSide,
+  };
+}
+
+/** The global sidecar is malformed and was left untouched. */
+export class SidecarRefusedError extends Error {
+  override name = "SidecarRefusedError";
+}
+
+export interface GlobalBackgroundUpdate {
+  /** New master switch; undefined keeps the file's value. */
+  readonly enabled?: boolean | undefined;
+  readonly lanes: BackgroundLaneSwitches;
+  /** Leave a missing sidecar missing instead of creating it. */
+  readonly onlyIfExists?: boolean | undefined;
+}
+
+/**
+ * Write the master switch and the derived backend switches to the global
+ * sidecar, keeping every other key. Atomic and owner-only; a file that is not
+ * valid JSON or fails the sidecar schema is left untouched and the write is
+ * refused with {@link SidecarRefusedError}. Returns whether the file changed.
+ */
+export async function writeGlobalBackgroundSettings(
+  agentDir: string,
+  update: GlobalBackgroundUpdate,
+): Promise<boolean> {
+  const path = globalBackgroundSettingsPath(agentDir);
+  const existing = await readSidecarForWrite(path);
+  if (existing === undefined && update.onlyIfExists === true) return false;
+  const current = existing ?? {};
+  const next: Partial<BackgroundCompactionSettings> = {
+    ...current,
+    text: update.lanes.text,
+    codexNative: update.lanes.codexNative,
+    anthropicNative: update.lanes.anthropicNative,
+  };
+  if (update.enabled !== undefined) next.enabled = update.enabled;
+  if (
+    existing !== undefined &&
+    existing.enabled === next.enabled &&
+    existing.text === next.text &&
+    existing.codexNative === next.codexNative &&
+    existing.anthropicNative === next.anthropicNative
+  ) {
+    return false;
+  }
+  await writeSidecarAtomic(path, next);
+  return true;
+}
+
+async function writeSidecarAtomic(
+  path: string,
+  next: Partial<BackgroundCompactionSettings>,
+): Promise<void> {
   const directory = dirname(path);
   await mkdir(directory, { recursive: true });
   const temporary = join(directory, `.background-compaction-${randomUUID()}.tmp`);
@@ -99,22 +181,25 @@ export async function writeGlobalBackgroundEnabled(
   }
 }
 
-async function readSidecarForWrite(path: string): Promise<Partial<BackgroundCompactionSettings>> {
+/** The sidecar's keys, or undefined when the file does not exist. */
+async function readSidecarForWrite(
+  path: string,
+): Promise<Partial<BackgroundCompactionSettings> | undefined> {
   let text: string;
   try {
     text = await readFile(path, "utf8");
   } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return {};
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
     throw error;
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    throw new Error(`${path} is not valid JSON; it was not changed`);
+    throw new SidecarRefusedError(`${path} is not valid JSON; it was not changed`);
   }
   if (!Value.Check(BackgroundCompactionSidecarSchema, parsed)) {
-    throw new Error(`${path} failed validation; it was not changed`);
+    throw new SidecarRefusedError(`${path} failed validation; it was not changed`);
   }
   return parsed;
 }

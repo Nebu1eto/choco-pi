@@ -15,6 +15,13 @@ import {
 
 export { RESPONSE_MARGIN_TOKENS } from "./budget.ts";
 export {
+  ANTHROPIC_COMPACTION_MODE_KEY,
+  type AnthropicCompactionMode,
+  DEFAULT_ANTHROPIC_COMPACTION_MODE,
+  readAnthropicCompactionMode,
+  writeAnthropicCompactionMode,
+} from "./anthropic/mode.ts";
+export {
   type LocalCompactionDetails,
   LocalCompactionDetailsSchema,
   parseLocalCompactionDetails,
@@ -134,10 +141,7 @@ export default function registerCompaction(
     state = { ...state, generation: state.generation + 1 };
   });
   const summarize = createBeforeCompactHandler(readState);
-  // Injected registrations (tests) never read real background settings either.
-  const backgroundOptions =
-    options.background ??
-    (injectedRetryPolicy === undefined ? undefined : { settingsPaths: () => [] });
+  const backgroundOptions = injectedBackgroundOptions(options);
   const background = registerBackgroundCompaction(pi, readState, backgroundOptions);
   pi.on("session_before_compact", async (event, ctx) => {
     // A ready, still-valid background candidate replaces the summarizer.
@@ -145,6 +149,26 @@ export default function registerCompaction(
     if (adopted !== undefined) return adopted;
     // A child's runner bridge commits its own adoption after this handler.
     if (await background.childAdopts(event, ctx)) return undefined;
+    // Anthropic server-side compaction; any failure falls through to the summarizer.
+    const native = await background.foregroundCompact(event, ctx);
+    if (native !== undefined) return native;
     return summarize(event, ctx);
   });
+}
+
+/**
+ * Injected registrations (tests) never read real background settings or the
+ * real Anthropic compaction mode: unless a test supplies its own reader, the
+ * mode is the local summarizer ("choco-pi").
+ */
+function injectedBackgroundOptions(
+  options: RegisterCompactionOptions,
+): BackgroundCompactionOptions | undefined {
+  if (options.retryPolicy === undefined) return options.background;
+  const background = options.background ?? { settingsPaths: () => [] };
+  if (background.anthropic?.readMode !== undefined) return background;
+  return {
+    ...background,
+    anthropic: { ...background.anthropic, readMode: async () => "choco-pi" },
+  };
 }

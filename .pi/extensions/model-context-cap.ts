@@ -1,4 +1,4 @@
-import { isNumber, isObject, type RuntimeValue } from "./lib/runtime-values.ts";
+import { isJsonRecord, isNumber, isObject, type RuntimeValue } from "./lib/runtime-values.ts";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,29 +12,76 @@ import {
 import type { SettingItem } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import type { PreferencesExtraSection } from "./lib/agent-preferences.ts";
+import {
+  AUTO_COMPACTION_POINT_KEY,
+  AUTO_COMPACTION_POINT_TOKENS,
+  CONTEXT_SOFT_CAP_KEY,
+  CONTEXT_SOFT_CAP_TOKENS,
+  DEFAULT_AUTO_COMPACTION_POINT,
+  DEFAULT_CONTEXT_SOFT_CAP,
+  onAgentPreferenceChange,
+  parseAutoCompactionPoint,
+  parseContextSoftCap,
+  readAgentPreferencesAsync,
+  type AutoCompactionPoint,
+  type ContextPreset,
+  type ContextSoftCap,
+  type PreferencesExtraSection,
+} from "./lib/agent-preferences.ts";
+import {
+  computeContextPolicy,
+  DEFAULT_HOST_RESERVE_TOKENS,
+  readNativeCompactionBudget,
+  type HeadroomConfig,
+  type ModelContextOverride,
+} from "./lib/context-policy.ts";
 import { MODEL_SECTION_ID } from "./lib/native-settings.ts";
 
 type ContextCapConfig = {
-  defaultCap?: number;
-  defaultCompactAt?: number;
-  appliesOver?: number;
-  models?: Record<string, number | null | ModelContextPolicy>;
+  headroom?: Partial<HeadroomConfig>;
+  models?: Record<string, ModelContextOverride>;
+  /** Retired keys present in the file; accepted and ignored. */
+  legacyKeys?: string[];
 };
 
-type ModelContextPolicy = {
-  cap?: number | null;
-  compactAt?: number | null;
-};
+/** Everything besides the model that decides its policy. */
+export interface ContextCapSettings {
+  config: ContextCapConfig;
+  softCap: ContextSoftCap;
+  compactionPoint: AutoCompactionPoint;
+  hostReserve: number;
+}
+
+type PolicySource = "preset" | "override";
 
 type ResolvedContextPolicy = {
   cap?: number;
   compactAt?: number;
+  source?: PolicySource;
 };
 
+type AppliedPolicy = {
+  key: string;
+  original: number;
+  cap: number;
+  compactAt?: number;
+  source: PolicySource;
+};
+
+/** Keys of the static 600K/550K policy; installed agent-dir copies still carry them. */
+const LEGACY_KEYS = ["defaultCap", "defaultCompactAt", "appliesOver"];
+
 const nativeWindows = new WeakMap<Model<Api>, number>();
-let appliedPolicies: Array<{ key: string; original: number; cap: number; compactAt?: number }> = [];
-let cachedConfig: ContextCapConfig | undefined;
+let appliedPolicies: AppliedPolicy[] = [];
+let cachedSettings: ContextCapSettings | undefined;
+/** Latest known presets; updated by preference-change events between reads. */
+let currentSoftCap: ContextSoftCap = DEFAULT_CONTEXT_SOFT_CAP;
+let currentCompactionPoint: AutoCompactionPoint = DEFAULT_AUTO_COMPACTION_POINT;
+/** Bumped on every relevant preference event, so a slower file read cannot overwrite it. */
+let preferenceRevision = 0;
+/** Bumped whenever a session starts or ends, invalidating in-flight session work. */
+let sessionGeneration = 0;
+let unsubscribePreferences: (() => void) | undefined;
 let compactionRequested = false;
 const PROFILE_CONFIG_PATH = fileURLToPath(new URL("./context-cap.json", import.meta.url));
 // The interactive startup refresh replaces registry model objects a few seconds
@@ -56,7 +103,27 @@ function positiveInteger(value: RuntimeValue, name: string): number | undefined 
   return value as number;
 }
 
-async function readConfig(cwd: string): Promise<ContextCapConfig> {
+function nonNegativeInteger(value: RuntimeValue): number | undefined {
+  return isNumber(value) && Number.isInteger(value) && value >= 0 ? value : undefined;
+}
+
+function parseHeadroom(value: RuntimeValue): Partial<HeadroomConfig> | undefined {
+  if (value === undefined) return undefined;
+  if (!isJsonRecord(value)) throw new Error("headroom must be a JSON object");
+  const headroom: Partial<HeadroomConfig> = {};
+  const tokens = positiveInteger(value.tokens, "headroom.tokens");
+  if (tokens !== undefined) headroom.tokens = tokens;
+  const ratio = value.ratio;
+  if (ratio !== undefined) {
+    if (!isNumber(ratio) || !(ratio > 0 && ratio < 1)) {
+      throw new Error("headroom.ratio must be a number between 0 and 1");
+    }
+    headroom.ratio = ratio;
+  }
+  return headroom;
+}
+
+export async function readConfig(cwd: string): Promise<ContextCapConfig> {
   const configPaths = [
     join(cwd, ".pi", "extensions", "context-cap.json"),
     join(getAgentDir(), "extensions", "context-cap.json"),
@@ -83,23 +150,15 @@ async function readConfig(cwd: string): Promise<ContextCapConfig> {
     throw new Error("context-cap.json must contain a JSON object");
   }
 
-  const defaultCap = positiveInteger(parsed.defaultCap, "defaultCap");
-  const defaultCompactAt = positiveInteger(parsed.defaultCompactAt, "defaultCompactAt");
-  const appliesOver = positiveInteger(parsed.appliesOver, "appliesOver");
-  if (
-    defaultCap !== undefined &&
-    defaultCompactAt !== undefined &&
-    defaultCompactAt >= defaultCap
-  ) {
-    throw new Error("defaultCompactAt must be lower than defaultCap");
-  }
+  const legacyKeys = LEGACY_KEYS.filter((key) => Object.hasOwn(parsed, key));
+  const headroom = parseHeadroom(parsed.headroom);
   if (
     parsed.models !== undefined &&
     (!parsed.models || !isObject(parsed.models) || Array.isArray(parsed.models))
   ) {
     throw new Error("models must be a JSON object");
   }
-  const models: Record<string, number | null | ModelContextPolicy> = {};
+  const models: Record<string, ModelContextOverride> = {};
   for (const [key, value] of Object.entries(parsed.models ?? {})) {
     if (value === null) {
       models[key] = null;
@@ -123,38 +182,91 @@ async function readConfig(cwd: string): Promise<ContextCapConfig> {
     }
     models[key] = { cap, compactAt };
   }
-  return { defaultCap, defaultCompactAt, appliesOver, models };
+  return { headroom, models, legacyKeys };
 }
 
+/** First readable `compaction.reserveTokens`: project settings, then agent settings. */
+async function readHostReserve(cwd: string): Promise<number> {
+  for (const settingsPath of [
+    join(cwd, ".pi", "settings.json"),
+    join(getAgentDir(), "settings.json"),
+  ]) {
+    let settings: RuntimeValue;
+    try {
+      settings = JSON.parse(await readFile(settingsPath, "utf8"));
+    } catch {
+      continue;
+    }
+    if (!isJsonRecord(settings)) continue;
+    const compaction = settings.compaction;
+    if (!isJsonRecord(compaction)) continue;
+    const reserve = nonNegativeInteger(compaction.reserveTokens);
+    if (reserve !== undefined) return reserve;
+  }
+  return DEFAULT_HOST_RESERVE_TOKENS;
+}
+
+/**
+ * Reads the two presets. A preference event that lands during the read is
+ * newer than what the read may have seen, so the read repeats until no event
+ * interleaves; an unreadable settings file falls back to the defaults.
+ */
+async function readPresets(): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const revision = preferenceRevision;
+    let softCap: ContextSoftCap = DEFAULT_CONTEXT_SOFT_CAP;
+    let compactionPoint: AutoCompactionPoint = DEFAULT_AUTO_COMPACTION_POINT;
+    try {
+      const preferences = await readAgentPreferencesAsync();
+      softCap = preferences.contextSoftCap;
+      compactionPoint = preferences.autoCompactionPoint;
+    } catch {
+      // A malformed settings file leaves the defaults in force.
+    }
+    if (revision === preferenceRevision) {
+      currentSoftCap = softCap;
+      currentCompactionPoint = compactionPoint;
+      return;
+    }
+  }
+  // Events kept arriving; their values are already current.
+}
+
+function overrideFor(
+  model: Model<Api>,
+  config: ContextCapConfig,
+): ModelContextOverride | undefined {
+  const key = modelKey(model);
+  if (!config.models) return undefined;
+  if (Object.hasOwn(config.models, key)) return config.models[key];
+  return Object.hasOwn(config.models, model.id) ? config.models[model.id] : undefined;
+}
+
+/**
+ * Effective policy for `model`: a per-model `context-cap.json` entry wins,
+ * otherwise the user's presets apply. The compaction point is lowered under a
+ * native-compaction budget when a provider publishes one.
+ */
 export function resolvePolicy(
   model: Model<Api>,
   nativeWindow: number,
-  config: ContextCapConfig,
+  settings: ContextCapSettings,
 ): ResolvedContextPolicy {
-  const key = modelKey(model);
-  const exact =
-    config.models && Object.hasOwn(config.models, key)
-      ? config.models[key]
-      : config.models?.[model.id];
-  if (exact === null) return {};
-  if (exact !== undefined) {
-    const policy = isNumber(exact) ? { cap: exact } : exact;
-    const cap =
-      policy.cap === null ? nativeWindow : Math.min(policy.cap ?? nativeWindow, nativeWindow);
-    const compactAt =
-      policy.compactAt === null ? undefined : (policy.compactAt ?? config.defaultCompactAt);
-    return { cap, compactAt: compactAt !== undefined && compactAt < cap ? compactAt : undefined };
-  }
-  if (config.defaultCap === undefined || nativeWindow <= (config.appliesOver ?? config.defaultCap))
-    return {};
-  const cap = Math.min(config.defaultCap, nativeWindow);
-  return {
-    cap,
-    compactAt:
-      config.defaultCompactAt !== undefined && config.defaultCompactAt < cap
-        ? config.defaultCompactAt
-        : undefined,
-  };
+  const policy = computeContextPolicy({
+    nativeWindow,
+    softCap: CONTEXT_SOFT_CAP_TOKENS[settings.softCap],
+    compactionPoint: AUTO_COMPACTION_POINT_TOKENS[settings.compactionPoint],
+    hostReserve: settings.hostReserve,
+    headroom: settings.config.headroom,
+    budget: readNativeCompactionBudget({
+      provider: model.provider,
+      id: model.id,
+      contextWindow: nativeWindow,
+    }),
+    override: overrideFor(model, settings.config),
+  });
+  if (!policy.apply) return {};
+  return { cap: policy.cap, compactAt: policy.compactAt, source: policy.source };
 }
 
 export function shouldRequestCompaction(
@@ -214,11 +326,12 @@ function cappedModels(ctx: ExtensionContext, extra?: Model<Api>): Model<Api>[] {
   return models;
 }
 
-function applyPolicies(ctx: ExtensionContext, config: ContextCapConfig, extra?: Model<Api>): void {
-  const applied = new Map<
-    string,
-    { key: string; original: number; cap: number; compactAt?: number }
-  >();
+function applyPolicies(
+  ctx: ExtensionContext,
+  settings: ContextCapSettings,
+  extra?: Model<Api>,
+): void {
+  const applied = new Map<string, AppliedPolicy>();
 
   for (const model of cappedModels(ctx, extra)) {
     const key = modelKey(model);
@@ -226,31 +339,88 @@ function applyPolicies(ctx: ExtensionContext, config: ContextCapConfig, extra?: 
     nativeWindows.set(model, nativeWindow);
     model.contextWindow = nativeWindow;
 
-    const policy = resolvePolicy(model, nativeWindow, config);
+    const policy = resolvePolicy(model, nativeWindow, settings);
     if (policy.cap !== undefined) {
       model.contextWindow = policy.cap;
-      if (policy.cap < nativeWindow || policy.compactAt !== undefined) {
-        applied.set(key, {
-          key,
-          original: nativeWindow,
-          cap: policy.cap,
-          compactAt: policy.compactAt,
-        });
-      }
+      applied.set(key, {
+        key,
+        original: nativeWindow,
+        cap: policy.cap,
+        compactAt: policy.compactAt,
+        source: policy.source ?? "preset",
+      });
     }
   }
   appliedPolicies = [...applied.values()];
 }
 
-async function applyContextCaps(ctx: ExtensionContext): Promise<void> {
-  cachedConfig = await readConfig(ctx.cwd);
+/**
+ * Reads the configuration, host reserve, and presets, then applies them.
+ * Returns false without touching host objects when the session changed while
+ * reading.
+ */
+async function applyContextCaps(ctx: ExtensionContext, generation: number): Promise<boolean> {
+  const [config, hostReserve] = await Promise.all([readConfig(ctx.cwd), readHostReserve(ctx.cwd)]);
+  if (generation !== sessionGeneration) return false;
+  await readPresets();
+  if (generation !== sessionGeneration) return false;
+  cachedSettings = {
+    config,
+    softCap: currentSoftCap,
+    compactionPoint: currentCompactionPoint,
+    hostReserve,
+  };
   compactionRequested = false;
-  applyPolicies(ctx, cachedConfig);
+  applyPolicies(ctx, cachedSettings);
+  return true;
 }
 
-/** Re-apply the cached policy to model objects created after the last pass. */
+/**
+ * Re-apply the cached policy to model objects created after the last pass.
+ * The presets are taken from the live values, never from a snapshot captured
+ * when a timer was scheduled.
+ */
 function reapplyContextCaps(ctx: ExtensionContext, extra?: Model<Api>): void {
-  if (cachedConfig) applyPolicies(ctx, cachedConfig, extra);
+  if (!cachedSettings) return;
+  cachedSettings = {
+    ...cachedSettings,
+    softCap: currentSoftCap,
+    compactionPoint: currentCompactionPoint,
+  };
+  applyPolicies(ctx, cachedSettings, extra);
+}
+
+/**
+ * Follow preset changes from `/preferences` for the current session, so a
+ * new cap applies without a restart.
+ */
+function subscribeToPresets(ctx: ExtensionContext, generation: number): void {
+  unsubscribePreferences?.();
+  unsubscribePreferences = onAgentPreferenceChange((change) => {
+    if (change.key === CONTEXT_SOFT_CAP_KEY) {
+      currentSoftCap = parseContextSoftCap(change.value) ?? DEFAULT_CONTEXT_SOFT_CAP;
+    } else if (change.key === AUTO_COMPACTION_POINT_KEY) {
+      currentCompactionPoint =
+        parseAutoCompactionPoint(change.value) ?? DEFAULT_AUTO_COMPACTION_POINT;
+    } else {
+      return;
+    }
+    preferenceRevision += 1;
+    if (generation !== sessionGeneration) return;
+    try {
+      reapplyContextCaps(ctx);
+    } catch {
+      // A replaced session rejects its captured context; the next
+      // session_start applies the new presets.
+    }
+  });
+}
+
+function endSession(): void {
+  sessionGeneration += 1;
+  clearPendingReapplies();
+  unsubscribePreferences?.();
+  unsubscribePreferences = undefined;
 }
 
 /** Cancel scheduled re-applications, whose captured context is about to expire. */
@@ -281,11 +451,21 @@ function scheduleReapplies(ctx: ExtensionContext): void {
 
 export default function modelContextCap(pi: ExtensionAPI): void {
   pi.on("session_start", async (_event, ctx) => {
-    clearPendingReapplies();
+    endSession();
+    const generation = sessionGeneration;
+    subscribeToPresets(ctx, generation);
     try {
-      await applyContextCaps(ctx);
+      if (!(await applyContextCaps(ctx, generation))) return;
       scheduleReapplies(ctx);
+      const legacyKeys = cachedSettings?.config.legacyKeys ?? [];
+      if (legacyKeys.length > 0) {
+        ctx.ui.notify(
+          `context-cap.json: ${legacyKeys.join(", ")} no longer apply and are ignored; set the context soft cap and auto-compaction point in /preferences.`,
+          "warning",
+        );
+      }
     } catch (error) {
+      if (generation !== sessionGeneration) return;
       ctx.ui.notify(
         `Failed to apply context caps: ${error instanceof Error ? error.message : String(error)}`,
         "error",
@@ -293,10 +473,10 @@ export default function modelContextCap(pi: ExtensionAPI): void {
     }
   });
   pi.on("session_before_switch", () => {
-    clearPendingReapplies();
+    endSession();
   });
   pi.on("session_shutdown", () => {
-    clearPendingReapplies();
+    endSession();
   });
   pi.on("model_select", (event, ctx) => {
     reapplyContextCaps(ctx, event.model);
@@ -337,6 +517,14 @@ export default function modelContextCap(pi: ExtensionAPI): void {
 
 export const CONTEXT_CAP_ROW_ID = "contextCap";
 
+function formatTokens(tokens: number): string {
+  return tokens.toLocaleString("en-US");
+}
+
+function presetLabel(preset: ContextPreset): string {
+  return preset.charAt(0).toUpperCase() + preset.slice(1);
+}
+
 /** What the Model tab reports for the active model's context window. */
 export function contextCapSummary(ctx: ExtensionCommandContext): string {
   const model = ctx.model;
@@ -347,16 +535,24 @@ export function contextCapSummary(ctx: ExtensionCommandContext): string {
     // A stale context only means the row reports the last applied policy.
   }
   const applied = appliedPolicies.find((entry) => entry.key === modelKey(model));
-  if (!applied) return `${model.contextWindow.toLocaleString()} (native)`;
-  const compaction = applied.compactAt ? ` · compact at ${applied.compactAt.toLocaleString()}` : "";
-  return `${applied.original.toLocaleString()} → ${applied.cap.toLocaleString()}${compaction}`;
+  if (!applied) return `${formatTokens(model.contextWindow)} (native)`;
+  const window =
+    applied.cap < applied.original
+      ? `${formatTokens(applied.original)} → ${formatTokens(applied.cap)}`
+      : `${formatTokens(applied.cap)} (native)`;
+  const compaction =
+    applied.compactAt === undefined ? "" : ` · compact at ${formatTokens(applied.compactAt)}`;
+  const source =
+    applied.source === "override"
+      ? "per-model override"
+      : `${presetLabel(currentSoftCap)} / ${presetLabel(currentCompactionPoint)}`;
+  return `${window}${compaction} (${source})`;
 }
 
 /**
  * The Model tab row that replaced the `/context-cap` command. It reports the
- * cap rather than setting it: the policy is per model and lives in
- * `context-cap.json`, which a single row could not express without hiding the
- * rest of the configuration.
+ * effective cap rather than setting it: the presets are separate rows, and
+ * per-model overrides and headroom live in `context-cap.json`.
  */
 export function buildContextCapSection(ctx: ExtensionCommandContext): PreferencesExtraSection {
   return {
@@ -368,7 +564,7 @@ export function buildContextCapSection(ctx: ExtensionCommandContext): Preference
         id: CONTEXT_CAP_ROW_ID,
         label: "Context cap",
         description:
-          "Soft context window applied to this model, and the token count that triggers compaction. Configure it in .pi/extensions/context-cap.json.",
+          "Effective context window for this model and the token count that triggers compaction, from the Context soft cap and Auto-compaction point preferences (Soft cap / Compaction point). Per-model overrides and headroom live in .pi/extensions/context-cap.json.",
         currentValue: contextCapSummary(ctx),
       },
     ],

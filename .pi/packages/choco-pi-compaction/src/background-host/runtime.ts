@@ -6,6 +6,9 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import type { LoadedBackgroundSettings } from "../background/settings.ts";
+import type { AnthropicCapabilityGate } from "../anthropic/capability.ts";
+import type { AnthropicCompactionMode, AnthropicServerSideSession } from "../anthropic/mode.ts";
+import type { AnthropicReplayBinder } from "../anthropic/replay-binding.ts";
 import type { CompactionSessionState, SessionStateReader } from "../session-state.ts";
 import { errorText, type Notifier } from "./notices.ts";
 import type { OwnerCore } from "./owner-core.ts";
@@ -60,10 +63,18 @@ export interface HostRuntime {
   unpublishProvider: (() => void) | undefined;
   /** Removes this registration's Preferences row provider. */
   unpublishPreferences: (() => void) | undefined;
-  captureRegistered: boolean;
   unregisterResourceCleanup: (() => void) | undefined;
-  replayActive: boolean;
   parent: ParentHost | undefined;
+  /** Anthropic compaction mode read at session start. */
+  anthropicMode: AnthropicCompactionMode;
+  /** Session-scoped server-side switch (disabled after a replay rejection). */
+  readonly serverSide: AnthropicServerSideSession;
+  /** Capability gate (and cooldowns) of the foreground server-side path. */
+  readonly foregroundGate: AnthropicCapabilityGate;
+  /** Capture, projection and replay rewrite shared by foreground and background. */
+  readonly replay: AnthropicReplayBinder;
+  /** Unbinds the current session's replay binding. */
+  unbindReplay: (() => void) | undefined;
 }
 
 export function isCurrent(rt: HostRuntime, owner: MainOwner): boolean {
@@ -102,8 +113,8 @@ function runReportedCleanup(rt: HostRuntime, owner: MainOwner, cleanup: () => vo
 export function shutdown(rt: HostRuntime): void {
   rt.lifecycle += 1;
   teardownMain(rt);
+  unbindReplay(rt);
   rt.parent = undefined;
-  rt.replayActive = false;
   const unregister = rt.unregisterResourceCleanup;
   rt.unregisterResourceCleanup = undefined;
   unregister?.();
@@ -113,4 +124,10 @@ export function shutdown(rt: HostRuntime): void {
   const unpublishPreferences = rt.unpublishPreferences;
   rt.unpublishPreferences = undefined;
   unpublishPreferences?.();
+}
+
+export function unbindReplay(rt: HostRuntime): void {
+  const unbind = rt.unbindReplay;
+  rt.unbindReplay = undefined;
+  unbind?.();
 }

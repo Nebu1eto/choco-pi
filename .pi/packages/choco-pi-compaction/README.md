@@ -11,6 +11,33 @@ answers `session_before_compact` for locally summarized models and gives the
 summarizer the retained tail as current-state evidence. Codex-owned models are
 left to the Codex package.
 
+## Anthropic server-side compaction (foreground)
+
+The **Anthropic compaction** row (Preferences, Session → Compaction) stores
+`compactionAnthropic` in `<agent dir>/settings.json`: `server-side` (default;
+a missing or invalid value means the default) or `choco-pi`.
+
+Eligibility is a static local decision with no network probe: provider
+`anthropic` at `https://api.anthropic.com`, OAuth credentials (API keys are
+refused), and a model at or above its family floor: Fable 5, Mythos 5 (and
+`claude-mythos-preview`), Opus 4.6, Sonnet 4.6, Haiku 5.5. Failures put the
+combination on a bounded cooldown (transient ones after three in a row).
+
+In `server-side` mode the extension answers the host's own
+`session_before_compact` (threshold, overflow or `/compact`) for an admitted
+model with a signed `compaction` block from a separate lane, cut at the latest
+legal wire position at or before the host's cut. Any failure returns nothing,
+so the local reconciled summarizer answers the same compaction; the first
+fallback in a session is reported once. The handler never cancels.
+
+The replay binding (provider-stream capture, session projection and replay
+rewrite) is bound whenever the mode is `server-side`, and also when the
+background `anthropic-native` lane is on. A replayed request the provider
+rejects with HTTP 400 and a `compaction_*` error code (or the OAuth extra-usage
+refusal) turns server-side compaction off for the rest of that session: later
+requests send the checkpoint's summary text and later compactions are
+summarized locally.
+
 ## Background compaction (off by default)
 
 Nothing changes unless a settings sidecar turns it on. With the feature off,
@@ -34,7 +61,7 @@ file and the problem. Settings are read at session start.
 | ------------------------------------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | `enabled`                                               | `false`                       | Master switch. Every backend switch is ignored while it is off.                                                      |
 | `text`                                                  | `false`                       | Text backend: summarizes the frozen prefix with the session model. Also the only backend subagent children use.      |
-| `anthropicNative`                                       | `false`                       | Anthropic on-demand native compaction for allow-listed provider/model/endpoint/auth combinations.                    |
+| `anthropicNative`                                       | `false`                       | Anthropic on-demand native compaction for combinations the foreground gate admits.                                   |
 | `codexNative`                                           | `false`                       | Codex native lane, supplied by the Codex package through the backend registry.                                       |
 | `prepareAt`                                             | `0.7`                         | Start preparing when context tokens reach this fraction of the host trigger point (`contextWindow - reserveTokens`). |
 | `hysteresis`                                            | `0.1`                         | After a preparation, usage must fall below `prepareAt - hysteresis` before another starts.                           |
@@ -51,15 +78,17 @@ Example that enables only the text backend:
 { "enabled": true, "text": true }
 ```
 
-The Preferences panel's Agent tab has a **Background compaction
-(Experimental)** row (`off` by default) that flips `enabled` in the agent
-directory's sidecar, keeping its other keys, and applies the change to the
-running session: switching on starts a coordinator, switching off discards any
-prepared candidate before it can be adopted. It refuses to rewrite a file that
-is not valid JSON or fails the schema. It turns on text background compaction:
-switching on a file with no backend switch on also sets `text: true`. Native
-Codex/Anthropic lanes are switched in `background-compaction.json`, and a
-trusted project's sidecar still wins.
+The Preferences panel's Session → Compaction group has a **Background
+compaction (Experimental)** row (`off` by default) that flips `enabled` in the
+agent directory's sidecar, keeping its other keys, and applies the change to
+the running session: switching on starts a coordinator, switching off discards
+any prepared candidate before it can be adopted. It refuses to rewrite a file
+that is not valid JSON or fails the schema. The backend switches are derived
+from the vendor rows, not set by hand: `text` is always on, `codexNative`
+follows **OpenAI compaction** = `server-side`, and `anthropicNative` follows
+**Anthropic compaction** = `server-side`. The row writes them with `enabled`,
+and session start rewrites them in an existing global sidecar (a missing one
+stays missing). A trusted project's sidecar still wins.
 
 ### How a checkpoint is prepared
 
@@ -139,7 +168,7 @@ keeps it.
 | Backend ID         | Switch            | Scope                                                                                                                                                |
 | ------------------ | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `text`             | `text`            | Any locally summarized model; summarizes the frozen prefix with the session model.                                                                   |
-| `anthropic-native` | `anthropicNative` | Allow-listed provider/endpoint/model/auth combinations only; on-demand native compaction on a separate lane, replayed byte-exact at the transport.   |
+| `anthropic-native` | `anthropicNative` | Combinations the foreground gate admits; on-demand native compaction on a separate lane, replayed byte-exact at the transport.                       |
 | `codex-native-v2`  | `codexNative`     | Codex-owned models; registered by the Codex package. Prepares on a detached SSE lane from a frozen canonical request and installs only after commit. |
 
 Backends are created through the neutral registry (`registerBackendFactory`).
@@ -169,8 +198,9 @@ session; the host's existing compaction path is then used.
 - Anthropic native replay is refused with `binding-mismatch` when the system
   prompt or tools changed while the retained messages carry thinking bound to
   them; the summary text is used instead.
-- Anthropic native support is limited to the allow-listed combination with live
-  evidence (first-party API, OAuth, `claude-haiku-5-5`).
+- Anthropic native support follows a static family table; live evidence covers
+  only `claude-haiku-5-5` (first-party API, OAuth). Other admitted families
+  rely on the documented compatibility list.
 - A canceled or timed-out subagent run detaches its coordinator permanently;
   resuming that child continues without background compaction.
 - Runs started without `prompt()` (for example `sendMessage(..., { triggerTurn: true })`)
@@ -204,8 +234,11 @@ session; the host's existing compaction path is then used.
 
 Pure logic is unit-tested in `tests/`; host and provider behavior is checked by
 real-SDK integration tests and the end-to-end harness
-(`tests/live/background-compaction/`), whose five offline scenarios pass. Live
-runs are blocked:
+(`tests/live/background-compaction/`), whose five offline scenarios pass. The
+foreground server-side path, the family gate and the session disable are
+covered by unit and real-SDK tests with scripted transports. No new live run
+was performed for that change; the earlier Haiku 5.5 evidence below stands.
+Live runs are blocked:
 
 - **Anthropic OAuth entitlement.** With a subscription OAuth credential, every
   full-profile foreground request to `claude-haiku-5-5` returned HTTP 400

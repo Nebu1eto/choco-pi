@@ -83,9 +83,20 @@ export function isChildSession(sessionId: string): boolean {
   return entry.isChildSessionId(sessionId) === true;
 }
 
+/** Owner inputs beyond the Codex snapshot. */
+export interface OwnerOptions {
+  /**
+   * Anthropic server-side compaction is selected for this session. It claims
+   * `anthropic-messages` models only after every Codex rule declined; its
+   * handler falls back to the local summarizer whenever it cannot answer.
+   */
+  readonly anthropicServerSide?: boolean;
+}
+
 export function resolveOwner(
   ctx: Pick<ExtensionContext, "model">,
   snapshot?: CodexCompactionSnapshot | undefined,
+  options: OwnerOptions = {},
 ): CompactionOwner {
   const model = ctx.model;
   if (!model) {
@@ -99,6 +110,9 @@ export function resolveOwner(
     if (provider.length > 0 && snapshot.additionalProviders.includes(provider)) {
       return "codex-native";
     }
+  }
+  if (options.anthropicServerSide === true && model.api === "anthropic-messages") {
+    return "anthropic-native";
   }
   return "local";
 }

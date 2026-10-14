@@ -87,13 +87,18 @@ export function buildOpenAISettings(config: CodexConversionConfig, theme: Theme)
       label: theme.fg("dim", "Compaction"),
       currentValue: "",
     }),
-    toggle(
-      "responsesCompaction",
-      "Responses compaction V2",
-      config.compaction.responsesCompaction,
-      (enabled, current) => ({
+    setting(
+      {
+        id: "responsesCompaction",
+        label: "OpenAI compaction",
+        description:
+          "server-side uses OpenAI's remote compaction for Codex transport and configured Responses providers; choco-pi summarizes locally.",
+        currentValue: config.compaction.responsesCompaction ? "server-side" : "choco-pi",
+        values: ["server-side", "choco-pi"],
+      },
+      (value, current) => ({
         ...current,
-        compaction: { ...current.compaction, responsesCompaction: enabled },
+        compaction: { ...current.compaction, responsesCompaction: value === "server-side" },
       }),
     ),
     setting(

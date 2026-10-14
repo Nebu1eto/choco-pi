@@ -1,22 +1,50 @@
 import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
 import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import {
   buildContextCapSection,
   CONTEXT_CAP_ROW_ID,
+  contextCapSummary,
   default as modelContextCap,
+  readConfig,
   resolvePolicy,
   shouldRequestCompaction,
 } from "../.pi/extensions/model-context-cap.ts";
+import {
+  AUTO_COMPACTION_POINT_KEY,
+  CONTEXT_SOFT_CAP_KEY,
+  flushAgentPreferenceWrites,
+  writeAgentPreference,
+} from "../.pi/extensions/lib/agent-preferences.ts";
 
-const config: Parameters<typeof resolvePolicy>[2] = {
-  defaultCap: 600_000,
-  defaultCompactAt: 550_000,
-  appliesOver: 999_999,
-  models: {},
+// Every test reads presets from an isolated agent directory, never the user's.
+const agentDir = await mkdtemp(path.join(tmpdir(), "model-context-cap-"));
+const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+process.env.PI_CODING_AGENT_DIR = agentDir;
+test.after(async () => {
+  if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+  else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+  await rm(agentDir, { recursive: true, force: true });
+});
+
+/** Reset both presets to their defaults on disk. */
+async function resetPresets(): Promise<void> {
+  await writeAgentPreference(CONTEXT_SOFT_CAP_KEY, undefined, agentDir);
+  await writeAgentPreference(AUTO_COMPACTION_POINT_KEY, undefined, agentDir);
+  await flushAgentPreferenceWrites();
+}
+
+const settings: Parameters<typeof resolvePolicy>[2] = {
+  config: { models: {} },
+  softCap: "standard",
+  compactionPoint: "standard",
+  hostReserve: 16_384,
 };
 
 function model(contextWindow: number): Model<Api> {
@@ -34,7 +62,7 @@ function model(contextWindow: number): Model<Api> {
   };
 }
 
-/** A host context whose usage sits just past the 550K compaction threshold. */
+/** A host context whose usage sits past the default 450K compaction point. */
 function overThresholdContext(options: { model: Model<Api>; onCompact: () => void }) {
   return {
     cwd: process.cwd(),
@@ -46,20 +74,165 @@ function overThresholdContext(options: { model: Model<Api>; onCompact: () => voi
   };
 }
 
-test("one-million-token models use the 600K cap and 550K compaction threshold", () => {
-  assert.deepEqual(resolvePolicy(model(1_000_000), 1_000_000, config), {
+test("standard presets cap a one-million-token model at 600K and compact at 450K", () => {
+  assert.deepEqual(resolvePolicy(model(1_000_000), 1_000_000, settings), {
     cap: 600_000,
-    compactAt: 550_000,
+    compactAt: 450_000,
+    source: "preset",
   });
 });
 
-test("models below one million tokens keep their native context window", () => {
-  assert.deepEqual(resolvePolicy(model(999_999), 999_999, config), {});
+test("smaller models keep their native window with a headroom-bounded compaction point", () => {
+  assert.deepEqual(resolvePolicy(model(272_000), 272_000, settings), {
+    cap: 272_000,
+    compactAt: 231_200,
+    source: "preset",
+  });
+  assert.deepEqual(resolvePolicy(model(32_000), 32_000, settings), {});
 });
 
-test("policy compaction starts only after 550K tokens", () => {
-  assert.equal(shouldRequestCompaction(550_000, 550_000), false);
-  assert.equal(shouldRequestCompaction(550_001, 550_000), true);
+test("a per-model override wins over the presets", () => {
+  const overridden = {
+    ...settings,
+    config: { models: { "test-provider/one-million-context-model": { cap: 700_000 } } },
+  };
+  assert.deepEqual(resolvePolicy(model(1_000_000), 1_000_000, overridden), {
+    cap: 700_000,
+    compactAt: 450_000,
+    source: "override",
+  });
+  const optedOut = { ...settings, config: { models: { "one-million-context-model": null } } };
+  assert.deepEqual(resolvePolicy(model(1_000_000), 1_000_000, optedOut), {});
+});
+
+test("policy compaction starts only past the compaction point", () => {
+  assert.equal(shouldRequestCompaction(450_000, 450_000), false);
+  assert.equal(shouldRequestCompaction(450_001, 450_000), true);
+});
+
+test("the shipped profile config has headroom and no legacy keys", async () => {
+  const empty = await mkdtemp(path.join(tmpdir(), "model-context-cap-cwd-"));
+  try {
+    assert.deepEqual(await readConfig(empty), {
+      headroom: { tokens: 100_000, ratio: 0.15 },
+      models: {},
+      legacyKeys: [],
+    });
+  } finally {
+    await rm(empty, { recursive: true, force: true });
+  }
+});
+
+/** A cwd whose `.pi/extensions/context-cap.json` holds `config`. */
+async function withProjectConfig(
+  config: Record<string, RuntimeValue>,
+  run: (cwd: string) => Promise<void>,
+): Promise<void> {
+  const cwd = await mkdtemp(path.join(tmpdir(), "model-context-cap-cwd-"));
+  try {
+    await mkdir(path.join(cwd, ".pi", "extensions"), { recursive: true });
+    await writeFile(
+      path.join(cwd, ".pi", "extensions", "context-cap.json"),
+      JSON.stringify(config),
+    );
+    await run(cwd);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+}
+
+test("legacy static-cap keys are accepted, ignored, and noticed once per session", async () => {
+  await resetPresets();
+  await withProjectConfig(
+    { defaultCap: 600_000, defaultCompactAt: 550_000, appliesOver: 999_999, models: {} },
+    async (cwd) => {
+      const config = await readConfig(cwd);
+      assert.deepEqual(config.legacyKeys, ["defaultCap", "defaultCompactAt", "appliesOver"]);
+
+      const handlers = registerCap();
+      const activeModel = model(1_000_000);
+      const notices: [string, string][] = [];
+      const context = {
+        cwd,
+        model: activeModel,
+        modelRegistry: { getAll: () => [activeModel] },
+        getContextUsage: () => ({ tokens: 0, contextWindow: 600_000, percent: 0 }),
+        compact: () => {},
+        ui: { notify: (message: string, level: string) => notices.push([message, level]) },
+      };
+      await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, context);
+      // The legacy 550K point is ignored: standard presets govern.
+      assert.equal(activeModel.contextWindow, 600_000);
+      await handlers.get("before_agent_start")?.({ type: "before_agent_start" }, context);
+      await handlers.get("agent_settled")?.({ type: "agent_settled" }, context);
+      assert.equal(notices.length, 1);
+      assert.equal(notices[0][1], "warning");
+      assert.match(notices[0][0], /defaultCap, defaultCompactAt, appliesOver/);
+      handlers.get("session_shutdown")?.({ type: "session_shutdown" }, context);
+    },
+  );
+});
+
+test("changing a preset re-applies the cap without a restart", async (t) => {
+  await resetPresets();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const handlers = registerCap();
+  const activeModel = model(1_000_000);
+  let registryModel = activeModel;
+  const context = {
+    cwd: process.cwd(),
+    model: activeModel,
+    modelRegistry: { getAll: () => [registryModel] },
+    getContextUsage: () => ({ tokens: 0, contextWindow: 600_000, percent: 0 }),
+    compact: () => {},
+    ui: { notify: () => {} },
+  };
+  await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, context);
+  assert.equal(activeModel.contextWindow, 600_000);
+
+  await writeAgentPreference(CONTEXT_SOFT_CAP_KEY, "strict", agentDir);
+  assert.equal(activeModel.contextWindow, 400_000);
+  await writeAgentPreference(AUTO_COMPACTION_POINT_KEY, "strictest", agentDir);
+  // SAFETY: The fixture supplies every host member exercised by this test.
+  const summary = contextCapSummary(context as never);
+  assert.equal(summary, "1,000,000 → 400,000 · compact at 200,000 (Strict / Strictest)");
+
+  // A scheduled re-application uses the live presets, not ones captured at session start.
+  registryModel = model(1_000_000);
+  t.mock.timers.tick(2_000);
+  assert.equal(registryModel.contextWindow, 400_000);
+
+  // After a session switch the old context no longer follows preference changes.
+  handlers.get("session_before_switch")?.({ type: "session_before_switch" }, context);
+  await writeAgentPreference(CONTEXT_SOFT_CAP_KEY, "permissive", agentDir);
+  assert.equal(activeModel.contextWindow, 400_000);
+  t.mock.timers.tick(20_000);
+  assert.equal(registryModel.contextWindow, 400_000);
+  await resetPresets();
+});
+
+test("a per-model override is reported as such in the summary", async () => {
+  await resetPresets();
+  await withProjectConfig(
+    { models: { "test-provider/one-million-context-model": { cap: 700_000, compactAt: 500_000 } } },
+    async (cwd) => {
+      const handlers = registerCap();
+      const activeModel = model(1_000_000);
+      const context = {
+        cwd,
+        model: activeModel,
+        modelRegistry: { getAll: () => [activeModel] },
+        getContextUsage: () => ({ tokens: 0, contextWindow: 700_000, percent: 0 }),
+        compact: () => {},
+        ui: { notify: () => {} },
+      };
+      await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, context);
+      // SAFETY: The fixture supplies every host member exercised by this test.
+      const summary = contextCapSummary(context as never);
+      assert.equal(summary, "1,000,000 → 700,000 · compact at 500,000 (per-model override)");
+      handlers.get("session_shutdown")?.({ type: "session_shutdown" }, context);
+    },
+  );
 });
 
 test("compaction is requested only after the agent run settles", async () => {
@@ -244,7 +417,7 @@ test("the cap is a Model preference row instead of a command", async () => {
   assert.equal(section.mergeInto, "model");
   const [row] = section.buildItems();
   assert.equal(row.id, CONTEXT_CAP_ROW_ID);
-  assert.equal(row.currentValue, "1,000,000 → 600,000 · compact at 550,000");
+  assert.equal(row.currentValue, "1,000,000 → 600,000 · compact at 450,000 (Standard / Standard)");
   assert.equal(row.values, undefined, "the row reports the policy rather than editing it");
 });
 

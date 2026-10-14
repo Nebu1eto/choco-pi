@@ -51,7 +51,6 @@ import {
   AnthropicCapabilityGate,
   type AnthropicSupportEntry,
   authModeOf,
-  TESTED_ANTHROPIC_COMBINATIONS,
 } from "../src/anthropic/capability.ts";
 import {
   bindSessionProjection,
@@ -478,7 +477,7 @@ test("capability gating refuses unlisted combinations without any request", asyn
       scope: SCOPE,
     },
     {
-      name: "default allow-list (tested OAuth Haiku only)",
+      name: "default policy (first-party OAuth only)",
       deps: { gate: new AnthropicCapabilityGate({ enabled: true, cooldownMs: 0 }) },
       scope: SCOPE,
     },
@@ -499,14 +498,6 @@ test("capability gating refuses unlisted combinations without any request", asyn
     assert.deepEqual(result, { ok: false, reason: "unsupported", retryable: false }, item.name);
     assert.equal(lane.sent.length, 0, `${item.name}: no network`);
   }
-  assert.deepEqual(TESTED_ANTHROPIC_COMBINATIONS, [
-    {
-      provider: "anthropic",
-      model: "claude-haiku-5-5",
-      baseUrl: "https://api.anthropic.com",
-      authMode: "oauth",
-    },
-  ]);
   assert.equal(authModeOf("sk-ant-oat01-placeholder"), "oauth");
   assert.equal(authModeOf("sk-ant-api03-placeholder"), "api-key");
   assert.equal(authModeOf(undefined), undefined);

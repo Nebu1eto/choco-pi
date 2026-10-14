@@ -1,6 +1,7 @@
 {
-  "defaultCap": 600000,
-  "defaultCompactAt": 550000,
-  "appliesOver": 999999,
+  "headroom": {
+    "tokens": 100000,
+    "ratio": 0.15
+  },
   "models": {}
 }

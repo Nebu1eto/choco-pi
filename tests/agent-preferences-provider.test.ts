@@ -100,6 +100,8 @@ test(
         "sessionAutoName",
         "sessionAutoNameModel",
         "promptSuggestion",
+        "contextSoftCap",
+        "autoCompactionPoint",
       ],
     );
     assert.equal(items[0].currentValue, "Match user");
@@ -119,12 +121,33 @@ test(
     assert.ok(items[6].submenu, "model picker remains available for both providers");
     assert.ok(items[7].description?.includes("Uses openai-codex/gpt-6-luna"));
     assert.equal(items[7].currentValue, "Enabled", "prompt suggestions default to on when unset");
+    assert.equal(items[8].label, "Context soft cap");
+    assert.equal(items[8].currentValue, "standard");
+    assert.deepEqual(items[8].values, [
+      "strictest",
+      "strict",
+      "standard",
+      "permissive",
+      "unlimited",
+    ]);
+    for (const tokens of ["250,000", "400,000", "600,000", "800,000"]) {
+      assert.ok(items[8].description?.includes(tokens), `soft-cap description states ${tokens}`);
+    }
+    assert.equal(items[9].label, "Auto-compaction point");
+    assert.equal(items[9].currentValue, "standard");
+    assert.deepEqual(items[9].values, items[8].values);
+    for (const tokens of ["200,000", "300,000", "450,000", "600,000"]) {
+      assert.ok(items[9].description?.includes(tokens), `point description states ${tokens}`);
+    }
 
     assert.deepEqual(section.handleChange("agentLanguage", "Korean"), { kind: "update" });
     assert.deepEqual(section.handleChange("agentStyle", "concise"), { kind: "update" });
     assert.deepEqual(section.handleChange("agentPersona", "critical"), { kind: "update" });
     assert.deepEqual(section.handleChange("agentOnUsageLimit", "fallback"), { kind: "update" });
     assert.deepEqual(section.handleChange("daybreakDefault", "on"), { kind: "update" });
+    assert.deepEqual(section.handleChange("contextSoftCap", "strict"), { kind: "update" });
+    assert.deepEqual(section.handleChange("autoCompactionPoint", "unlimited"), { kind: "update" });
+    assert.deepEqual(section.handleChange("contextSoftCap", "bogus"), { kind: "update" });
     assert.deepEqual(section.handleChange("sessionAutoNameModel", "openai/gpt-5.6-luna"), {
       kind: "update",
     });
@@ -142,6 +165,8 @@ test(
     assert.equal(settings.agentPersona, "critical");
     assert.equal(settings.agentOnUsageLimit, "fallback");
     assert.equal(settings.daybreakDefault, true);
+    assert.equal(settings.contextSoftCap, "strict", "an invalid value is not persisted");
+    assert.equal(settings.autoCompactionPoint, "unlimited");
     assert.equal(settings.sessionAutoName, false);
     assert.equal(settings.sessionAutoNameModel, "openai/gpt-5.6-luna");
     assert.ok(

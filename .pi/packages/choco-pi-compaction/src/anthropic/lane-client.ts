@@ -53,6 +53,19 @@ interface LanePayloadOptions {
   /** Betas the captured request was sent with (from its `anthropic-beta` header). */
   readonly betas: readonly string[];
   readonly maxOutputTokens: number;
+  /**
+   * Summarization prompt replacing the API's own (`compaction.instructions`).
+   * Blank text is omitted; callers keep it within MAX_COMPACTION_INSTRUCTIONS.
+   */
+  readonly instructions?: string;
+}
+
+/** Documented upper bound of `compaction.instructions`, in characters. */
+export const MAX_COMPACTION_INSTRUCTIONS = 16_384;
+
+/** Character count as the API counts it (code points, not UTF-16 units). */
+export function instructionLength(text: string): number {
+  return [...text].length;
 }
 
 interface LanePayload {
@@ -128,7 +141,17 @@ export function buildLanePayload(
     if (Value.Check(JsonValueSchema, value)) payload[name] = structuredClone(value);
   }
   payload.max_tokens = options.maxOutputTokens;
-  payload.compaction = { type: "summarize" };
+  const instructions = options.instructions;
+  if (instructions !== undefined && instructions.trim().length > 0) {
+    if (instructionLength(instructions) > MAX_COMPACTION_INSTRUCTIONS) {
+      throw new RangeError(
+        `compaction instructions exceed ${MAX_COMPACTION_INSTRUCTIONS} characters`,
+      );
+    }
+    payload.compaction = { type: "summarize", instructions };
+  } else {
+    payload.compaction = { type: "summarize" };
+  }
   const betas = [...new Set([...options.betas, COMPACT_BETA])];
   payload.betas = [...betas];
   return { payload, betas, removed };

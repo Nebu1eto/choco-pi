@@ -138,6 +138,9 @@ async function withProviders(run: (providers: Providers) => Promise<void>): Prom
   const unpublish = publishBackgroundCompactionPreferences({
     enabled: () => false,
     setEnabled: async () => {},
+    // The Anthropic row exists only with a mode switch; build it so the
+    // layout's placement of it is checked against a real row.
+    anthropic: { mode: () => "server-side", set: async () => {} },
   });
   try {
     installNativeSettingsBridge(() => {});
@@ -262,8 +265,28 @@ test("every provider row is placed in exactly one group or explicitly hidden", a
     );
     // The context cap and background compaction rows use their own ids.
     assert.ok(rows.get("contextCapPolicy")?.includes(CONTEXT_CAP_ROW_ID));
-    assert.deepEqual(rows.get("backgroundCompaction"), ["backgroundCompaction.enabled"]);
+    assert.deepEqual(rows.get("backgroundCompaction"), [
+      "backgroundCompaction.enabled",
+      "compactionAnthropic",
+    ]);
   });
+});
+
+test("the Session tab groups context limits and every compaction row", () => {
+  const session = PREFERENCES_LAYOUT.find((tab) => tab.id === "session");
+  assert.ok(session, "the layout has a Session tab");
+  const group = (label: string) => session.groups.find((entry) => entry.label === label)?.rows;
+  assert.deepEqual(group("Context"), [
+    "autocompact",
+    "contextSoftCap",
+    "autoCompactionPoint",
+    "cache-miss-notices",
+  ]);
+  assert.deepEqual(group("Compaction"), [
+    "responsesCompaction",
+    "compactionAnthropic",
+    "backgroundCompaction.enabled",
+  ]);
 });
 
 test("with Pi 1.0.4's rows nothing falls back to the Pi tab", async () => {

@@ -8,6 +8,9 @@ import {
   AGENT_ON_USAGE_LIMIT_KEY,
   AGENT_PERSONA_KEY,
   AGENT_STYLE_KEY,
+  AUTO_COMPACTION_POINT_KEY,
+  CONTEXT_PRESET_VALUES,
+  CONTEXT_SOFT_CAP_KEY,
   DAYBREAK_DEFAULT_KEY,
   DEFAULT_SESSION_AUTO_NAME_MODEL,
   ON_USAGE_LIMIT_VALUES,
@@ -17,12 +20,16 @@ import {
   SESSION_AUTO_NAME_FALLBACK_MODEL,
   PERSONA_VALUES,
   discoverAgentStyles,
+  parseAutoCompactionPoint,
+  parseContextSoftCap,
   parseOnUsageLimit,
   parsePersona,
   readAgentPreferences,
   resolveAgentStyle,
   writeAgentPreference,
   writeAgentPreferenceIfChanged,
+  type AutoCompactionPoint,
+  type ContextSoftCap,
   type DaybreakPreference,
   type OnUsageLimit,
   type PreferencesExtraSection,
@@ -226,6 +233,37 @@ async function writeSessionAutoNameModel(
   if (changed) notifyIfContextActive(ctx, `Session naming model: ${model}`, "info");
 }
 
+async function writeContextSoftCap(
+  ctx: ExtensionCommandContext,
+  value: ContextSoftCap,
+): Promise<void> {
+  await writeAndNotify(
+    ctx,
+    // An unchanged value neither writes nor emits, so it cannot trigger a needless re-apply.
+    async () => {
+      await writeAgentPreferenceIfChanged(CONTEXT_SOFT_CAP_KEY, value);
+    },
+    `Context soft cap: ${value}`,
+    (error) =>
+      `Could not update the context soft cap: ${error instanceof Error ? error.message : String(error)}`,
+  );
+}
+
+async function writeAutoCompactionPoint(
+  ctx: ExtensionCommandContext,
+  value: AutoCompactionPoint,
+): Promise<void> {
+  await writeAndNotify(
+    ctx,
+    async () => {
+      await writeAgentPreferenceIfChanged(AUTO_COMPACTION_POINT_KEY, value);
+    },
+    `Auto-compaction point: ${value}`,
+    (error) =>
+      `Could not update the auto-compaction point: ${error instanceof Error ? error.message : String(error)}`,
+  );
+}
+
 function handleAgentPreferenceChange(
   ctx: ExtensionCommandContext,
   id: string,
@@ -254,6 +292,16 @@ function handleAgentPreferenceChange(
   if (id === DAYBREAK_DEFAULT_KEY) {
     const daybreak = parseDaybreakValue(newValue);
     if (daybreak !== undefined) void writeDaybreakDefault(ctx, daybreak);
+    return { kind: "update" };
+  }
+  if (id === CONTEXT_SOFT_CAP_KEY) {
+    const softCap = parseContextSoftCap(newValue);
+    if (softCap) void writeContextSoftCap(ctx, softCap);
+    return { kind: "update" };
+  }
+  if (id === AUTO_COMPACTION_POINT_KEY) {
+    const point = parseAutoCompactionPoint(newValue);
+    if (point) void writeAutoCompactionPoint(ctx, point);
     return { kind: "update" };
   }
   if (id === SESSION_AUTO_NAME_KEY) {
@@ -375,6 +423,24 @@ export function buildAgentPreferencesSection(
         currentValue: preferences.promptSuggestion === false ? DISABLED_LABEL : ENABLED_LABEL,
         values: [ENABLED_LABEL, DISABLED_LABEL],
       });
+      items.push(
+        {
+          id: CONTEXT_SOFT_CAP_KEY,
+          label: "Context soft cap",
+          description:
+            "Usable context window for large-window models: strictest 250,000, strict 400,000, standard 600,000 (default), permissive 800,000 tokens; unlimited keeps the model's native window. Models under 64,000 tokens and per-model entries in context-cap.json are unaffected. Applies immediately.",
+          currentValue: preferences.contextSoftCap,
+          values: [...CONTEXT_PRESET_VALUES],
+        },
+        {
+          id: AUTO_COMPACTION_POINT_KEY,
+          label: "Auto-compaction point",
+          description:
+            "Context size that triggers compaction after a run settles: strictest 200,000, strict 300,000, standard 450,000 (default), permissive 600,000 tokens; unlimited compacts as late as headroom allows. Always lowered to keep headroom (15% of the window, 24,384 to 100,000 tokens) below the soft cap. Applies immediately.",
+          currentValue: preferences.autoCompactionPoint,
+          values: [...CONTEXT_PRESET_VALUES],
+        },
+      );
       return items;
     },
     handleChange: (id, newValue) => {

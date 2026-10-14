@@ -8,12 +8,7 @@ import {
   type ChildCompactionProvider,
 } from "../../../choco-pi-subagents/src/child-compaction-bridge.ts";
 import { ANTHROPIC_BACKEND_ID } from "../anthropic/backend.ts";
-import { TESTED_ANTHROPIC_COMBINATIONS } from "../anthropic/capability.ts";
-import {
-  bindSessionProjection,
-  registerAnthropicCapture,
-  releaseSessionCaptures,
-} from "../anthropic/capture.ts";
+import { readAnthropicCompactionMode } from "../anthropic/mode.ts";
 import type { BackgroundCompactionSettings, ProviderScope } from "../background/contract.ts";
 import { ANCHOR_ENTRY_TYPE } from "../background/entry-types.ts";
 import { release, setCoordinator } from "../background/registry.ts";
@@ -40,6 +35,7 @@ import {
   runCleanup,
   shutdown,
   teardownMain,
+  unbindReplay,
 } from "./runtime.ts";
 
 // ---------------------------------------------------------------------------
@@ -93,18 +89,27 @@ export async function startMainSession(
   // Invalidate synchronously, then snapshot every scalar before awaiting.
   const generation = ++rt.lifecycle;
   teardownMain(rt);
+  unbindReplay(rt);
   const session = snapshotSession(ctx, generation);
   if (start.reloadSettings) {
     const paths =
       rt.options.settingsPaths?.(session.location) ?? backgroundSettingsPaths(session.location);
-    rt.loaded = await loadBackgroundSettings(paths);
+    const readMode = rt.options.anthropic?.readMode ?? readAnthropicCompactionMode;
+    const [loaded, mode] = await Promise.all([
+      loadBackgroundSettings(paths),
+      readMode(session.location.agentDir),
+    ]);
     if (generation !== rt.lifecycle) return;
+    rt.loaded = loaded;
+    rt.anthropicMode = mode;
     if (rt.loaded.diagnostic !== undefined) rt.notify(ctx, rt.loaded.diagnostic);
   }
   // Inside a child the runner's bridge owns attachment; stay inert.
   if (session.child) return;
   const state = bindParentSession(rt, ctx, session, start.childProvider);
   const settings = rt.loaded.settings;
+  rt.serverSide.bind(session.sessionId);
+  bindAnthropicReplay(rt, session, settings);
   const model = session.model;
   if (!backgroundCompactionActive(settings) || model === undefined) return;
   await attachMainOwner(rt, ctx, { session, model, state, settings });
@@ -154,7 +159,7 @@ async function attachMainOwner(
 ): Promise<void> {
   const { session } = binding;
   const generation = session.generation;
-  const cleanup = bindAnthropicReplay(rt, binding);
+  const cleanup: (() => void)[] = [];
   const scope = await resolveScopeOrRelease(rt, ctx, binding, cleanup);
   if (scope === undefined) return;
   if (generation !== rt.lifecycle) {
@@ -181,31 +186,20 @@ async function attachMainOwner(
   await recoverMainCandidates(rt, ctx, { owner, sessionManager: session.sessionManager });
 }
 
-function ensureAnthropicCapture(rt: HostRuntime): void {
-  if (rt.captureRegistered) return;
-  rt.captureRegistered = true;
-  const anthropic = rt.options.anthropic;
-  const providers = new Set(
-    (anthropic?.allowList ?? TESTED_ANTHROPIC_COMBINATIONS).map((entry) => entry.provider),
-  );
-  for (const provider of providers) {
-    registerAnthropicCapture(rt.pi, provider, anthropic?.capture ?? {});
-  }
-}
-
-/** Capture and project this session for Anthropic replay; returns the owner's cleanup list. */
-function bindAnthropicReplay(rt: HostRuntime, binding: MainBinding): (() => void)[] {
-  const cleanup: (() => void)[] = [];
-  if (!isBackendEnabled(ANTHROPIC_BACKEND_ID, binding.settings)) return cleanup;
-  const { sessionId, sessionManager } = binding.session;
-  ensureAnthropicCapture(rt);
-  rt.replayActive = true;
-  const unbind = bindSessionProjection(
-    sessionId,
-    () => sessionManager.buildSessionProjection().entries,
-  );
-  cleanup.push(unbind, () => releaseSessionCaptures(sessionId));
-  return cleanup;
+/**
+ * Capture and project this main session for Anthropic replay whenever either
+ * native path can produce a checkpoint: server-side mode (foreground) or the
+ * background `anthropic-native` backend. Unbound at the next session start,
+ * model change or shutdown.
+ */
+function bindAnthropicReplay(
+  rt: HostRuntime,
+  session: SessionSnapshot,
+  settings: Readonly<BackgroundCompactionSettings>,
+): void {
+  const serverSide = rt.anthropicMode === "server-side";
+  if (!serverSide && !isBackendEnabled(ANTHROPIC_BACKEND_ID, settings)) return;
+  rt.unbindReplay = rt.replay.bindSession(session.sessionId, session.sessionManager);
 }
 
 async function resolveScopeOrRelease(

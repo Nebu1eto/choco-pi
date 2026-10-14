@@ -24,6 +24,8 @@ export const ADVANCED_SECTION_ID = "advanced";
 const CONTEXT_CAP_ROW = "contextCap";
 /** Row id the background compaction package builds. */
 const BACKGROUND_COMPACTION_ROW = "backgroundCompaction.enabled";
+/** Row id of the Anthropic compaction mode row the compaction package builds. */
+const ANTHROPIC_COMPACTION_ROW = "compactionAnthropic";
 
 /** Every row of one source section, in the order that source builds them. */
 function section(id: string): string {
@@ -46,7 +48,7 @@ export const PREFERENCES_LAYOUT: readonly PreferencesLayoutTab[] = [
       { label: "Behavior", rows: ["agentLanguage", "agentStyle", "agentPersona"] },
       {
         label: "Limits & recovery",
-        rows: [AGENT_ON_USAGE_LIMIT_KEY, DAYBREAK_DEFAULT_KEY, BACKGROUND_COMPACTION_ROW],
+        rows: [AGENT_ON_USAGE_LIMIT_KEY, DAYBREAK_DEFAULT_KEY],
       },
       {
         label: "Session helpers",
@@ -89,7 +91,14 @@ export const PREFERENCES_LAYOUT: readonly PreferencesLayoutTab[] = [
     id: SESSION_SECTION_ID,
     label: "Session",
     groups: [
-      { label: "Context", rows: ["autocompact", "cache-miss-notices"] },
+      {
+        label: "Context",
+        rows: ["autocompact", "contextSoftCap", "autoCompactionPoint", "cache-miss-notices"],
+      },
+      {
+        label: "Compaction",
+        rows: ["responsesCompaction", ANTHROPIC_COMPACTION_ROW, BACKGROUND_COMPACTION_ROW],
+      },
       { label: "Input queue", rows: ["steering-mode", "follow-up-mode"] },
       { label: "Images", rows: ["block-images"] },
       {
@@ -196,7 +205,7 @@ export const PREFERENCES_LAYOUT: readonly PreferencesLayoutTab[] = [
     label: "Advanced",
     groups: [
       { label: "Codex transport", rows: ["responsesLite", "forceCachedWebSockets"] },
-      { label: "Codex compaction", rows: ["responsesCompaction", "v2UserMessageRetention"] },
+      { label: "Codex compaction", rows: ["v2UserMessageRetention"] },
       {
         label: "Codex diagnostics",
         rows: ["cacheDiagnosticsStatus", "cacheDiagnosticsLog", "cacheKeepalive"],

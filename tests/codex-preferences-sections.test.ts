@@ -169,6 +169,26 @@ test(
 );
 
 test(
+  "the OpenAI compaction row maps server-side and choco-pi onto responsesCompaction",
+  withCodexDirs(({ ctx, deps, saved }) => {
+    // SAFETY: the fixture supplies every host member the section touches.
+    const sections = buildCodexPreferencesSections(ctx as never, deps);
+    const section = findSection(sections, CODEX_SECTION_ID);
+    assert.ok(section);
+    const row = section.buildItems().find((item) => item.id === "responsesCompaction");
+    assert.equal(row?.label, "OpenAI compaction");
+    assert.deepEqual(row?.values, ["server-side", "choco-pi"]);
+    for (const [value, enabled] of [
+      ["server-side", true],
+      ["choco-pi", false],
+    ] as const) {
+      section.handleChange("responsesCompaction", value);
+      assert.equal(saved.at(-1)?.config.compaction.responsesCompaction, enabled);
+    }
+  }),
+);
+
+test(
   "the Edit config row opens in Pi's editor regardless of $EDITOR",
   withCodexDirs(({ ctx, deps }) => {
     const previous = process.env.EDITOR;

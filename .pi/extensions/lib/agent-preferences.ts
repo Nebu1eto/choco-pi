@@ -34,6 +34,64 @@ export const AGENT_ON_USAGE_LIMIT_KEY = "agentOnUsageLimit";
 export const DAYBREAK_DEFAULT_KEY = "daybreakDefault";
 export type DaybreakPreference = boolean | "auto";
 export const DEFAULT_DAYBREAK = false;
+
+/** Soft context window applied to large-window models; see lib/context-policy.ts. */
+export const CONTEXT_SOFT_CAP_KEY = "contextSoftCap";
+/** Token count past which the context cap requests compaction. */
+export const AUTO_COMPACTION_POINT_KEY = "autoCompactionPoint";
+export type ContextPreset = "strictest" | "strict" | "standard" | "permissive" | "unlimited";
+export type ContextSoftCap = ContextPreset;
+export type AutoCompactionPoint = ContextPreset;
+export const CONTEXT_PRESET_VALUES: readonly ContextPreset[] = [
+  "strictest",
+  "strict",
+  "standard",
+  "permissive",
+  "unlimited",
+];
+export const DEFAULT_CONTEXT_SOFT_CAP: ContextSoftCap = "standard";
+export const DEFAULT_AUTO_COMPACTION_POINT: AutoCompactionPoint = "standard";
+/** Token counts per preset; `unlimited` defers to the model's own window. */
+export const CONTEXT_SOFT_CAP_TOKENS = {
+  strictest: 250_000,
+  strict: 400_000,
+  standard: 600_000,
+  permissive: 800_000,
+  unlimited: "unlimited",
+} as const satisfies Readonly<Record<ContextSoftCap, number | "unlimited">>;
+export const AUTO_COMPACTION_POINT_TOKENS = {
+  strictest: 200_000,
+  strict: 300_000,
+  standard: 450_000,
+  permissive: 600_000,
+  unlimited: "unlimited",
+} as const satisfies Readonly<Record<AutoCompactionPoint, number | "unlimited">>;
+
+function parseContextPreset(value: RuntimeValue): ContextPreset | undefined {
+  if (!isString(value)) return undefined;
+  switch (value.trim().toLowerCase()) {
+    case "strictest":
+      return "strictest";
+    case "strict":
+      return "strict";
+    case "standard":
+      return "standard";
+    case "permissive":
+      return "permissive";
+    case "unlimited":
+      return "unlimited";
+    default:
+      return undefined;
+  }
+}
+
+export function parseContextSoftCap(value: RuntimeValue): ContextSoftCap | undefined {
+  return parseContextPreset(value);
+}
+
+export function parseAutoCompactionPoint(value: RuntimeValue): AutoCompactionPoint | undefined {
+  return parseContextPreset(value);
+}
 export const PERSONA_MESSAGE_TYPE = "choco-pi-agent-persona";
 export const PERSONA_DEFINITIONS_HEADING = "## Agent persona";
 export const SESSION_AUTO_NAME_KEY = "sessionAutoName";
@@ -71,6 +129,10 @@ export interface AgentPreferences {
   onUsageLimit?: OnUsageLimit;
   /** Always set by the readers; optional so partial fallbacks stay valid. */
   daybreak?: DaybreakPreference;
+  /** Always set by the readers; optional so partial fallbacks stay valid. */
+  contextSoftCap?: ContextSoftCap;
+  /** Always set by the readers; optional so partial fallbacks stay valid. */
+  autoCompactionPoint?: AutoCompactionPoint;
   language?: string;
   style?: string;
   sessionAutoName?: boolean;
@@ -82,12 +144,16 @@ export interface AgentPreferences {
 export interface ResolvedAgentPreferences extends AgentPreferences {
   onUsageLimit: OnUsageLimit;
   daybreak: DaybreakPreference;
+  contextSoftCap: ContextSoftCap;
+  autoCompactionPoint: AutoCompactionPoint;
 }
 
 interface AgentPreferenceValues {
   agentPersona: string;
   agentOnUsageLimit: OnUsageLimit;
   daybreakDefault: DaybreakPreference;
+  contextSoftCap: ContextSoftCap;
+  autoCompactionPoint: AutoCompactionPoint;
   agentLanguage: string;
   agentStyle: string;
   sessionAutoName: boolean;
@@ -176,6 +242,10 @@ function preferencesFromSettings(settings: JsonRecord): ResolvedAgentPreferences
     persona: parsePersona(settings[AGENT_PERSONA_KEY]) ?? DEFAULT_PERSONA,
     onUsageLimit: parseOnUsageLimit(settings[AGENT_ON_USAGE_LIMIT_KEY]) ?? DEFAULT_ON_USAGE_LIMIT,
     daybreak: parseDaybreakPreference(settings[DAYBREAK_DEFAULT_KEY]) ?? DEFAULT_DAYBREAK,
+    contextSoftCap: parseContextSoftCap(settings[CONTEXT_SOFT_CAP_KEY]) ?? DEFAULT_CONTEXT_SOFT_CAP,
+    autoCompactionPoint:
+      parseAutoCompactionPoint(settings[AUTO_COMPACTION_POINT_KEY]) ??
+      DEFAULT_AUTO_COMPACTION_POINT,
   };
   const language = settings[AGENT_LANGUAGE_KEY];
   if (isString(language) && language !== "") {

@@ -439,11 +439,17 @@ export type TransportVerdict =
   | { readonly ok: true }
   | { readonly ok: false; readonly code: string };
 type TransportCheck = (request: TransportRequest) => TransportVerdict;
+/**
+ * Observes the provider's response to a transmitted request before the
+ * adapter reads it. Observers must read a clone and must not throw.
+ */
+export type TransportResponseObserver = (response: Response) => Promise<void>;
 
 /** Per provider-call context, visible to before_provider_request handlers of that call. */
 interface TransportCall {
   readonly sessionId: string | undefined;
   readonly checks: TransportCheck[];
+  readonly responseObservers: TransportResponseObserver[];
   readonly refusals: string[];
 }
 
@@ -693,7 +699,12 @@ function streamWithCapture(
   if (!isAnthropicMessagesModel(model)) {
     throw new Error(`Anthropic capture cannot serve api ${model.api}`);
   }
-  const call: TransportCall = { sessionId: streamOptions?.sessionId, checks: [], refusals: [] };
+  const call: TransportCall = {
+    sessionId: streamOptions?.sessionId,
+    checks: [],
+    responseObservers: [],
+    refusals: [],
+  };
   const base = settings.fetch ?? streamOptions?.fetch ?? globalThis.fetch;
   const capture: CaptureCall = { settings, model, call, base };
   const capturingFetch: typeof globalThis.fetch = (input, init) =>
@@ -747,6 +758,7 @@ async function captureAndForward(
       : mapWireToEntries(request.body.messages, entries);
   const response = await capture.base(input, init);
   recordCapture(capture, { url, request, mapping, status: response.status });
+  for (const observe of capture.call.responseObservers) await observe(response);
   return response;
 }
 

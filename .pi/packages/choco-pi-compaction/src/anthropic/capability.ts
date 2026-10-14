@@ -1,8 +1,9 @@
 /**
  * Explicit support policy for Anthropic native on-demand compaction.
  *
- * Eligibility is a static allow-list of tested provider/baseUrl/model/auth-mode
- * combinations behind the settings flag. Nothing is probed over the network,
+ * Eligibility is a static, local decision: the first-party Anthropic provider
+ * at `https://api.anthropic.com`, OAuth credentials, and a model whose family
+ * and version reach the documented floor. Nothing is probed over the network,
  * on session start or otherwise. Failures put the combination on a bounded
  * cooldown so a broken combination cannot cause a paid retry loop.
  */
@@ -14,6 +15,7 @@ import type {
 } from "../background/contract.ts";
 import type { AnthropicAuthMode } from "./details.ts";
 
+/** One exact provider/model/endpoint/auth combination (test and harness override). */
 export interface AnthropicSupportEntry {
   readonly provider: string;
   readonly model: string;
@@ -21,15 +23,64 @@ export interface AnthropicSupportEntry {
   readonly authMode: AnthropicAuthMode;
 }
 
-/** The only combination with live evidence (E11/E12): OAuth + Haiku 5.5 on the first-party API. */
-export const TESTED_ANTHROPIC_COMBINATIONS: readonly AnthropicSupportEntry[] = [
-  {
-    provider: "anthropic",
-    model: "claude-haiku-5-5",
-    baseUrl: "https://api.anthropic.com",
-    authMode: "oauth",
-  },
+/** Minimum version of one model family that supports on-demand compaction. */
+export interface AnthropicFamilyFloor {
+  readonly family: string;
+  readonly minMajor: number;
+  readonly minMinor: number;
+}
+
+/** The only provider, endpoint and auth mode the default policy admits. */
+export const ANTHROPIC_PROVIDER = "anthropic";
+export const ANTHROPIC_FIRST_PARTY_BASE_URL = "https://api.anthropic.com";
+const ADMITTED_AUTH_MODE: AnthropicAuthMode = "oauth";
+
+/**
+ * Documented supported models (compaction-on-demand "Compatibility"): Fable 5+,
+ * Mythos 5+ and Preview, Opus 4.6+, Sonnet 4.6+, Haiku 5.5+.
+ */
+export const SERVER_SIDE_COMPACTION_FAMILIES: readonly AnthropicFamilyFloor[] = [
+  { family: "fable", minMajor: 5, minMinor: 0 },
+  { family: "mythos", minMajor: 5, minMinor: 0 },
+  { family: "opus", minMajor: 4, minMinor: 6 },
+  { family: "sonnet", minMajor: 4, minMinor: 6 },
+  { family: "haiku", minMajor: 5, minMinor: 5 },
 ];
+
+/** Supported model IDs outside the numeric grammar. */
+export const SERVER_SIDE_COMPACTION_LITERAL_MODELS: readonly string[] = ["claude-mythos-preview"];
+
+/** `claude-<family>-<major>(-<minor>)?(-<yyyymmdd>)?` */
+const MODEL_ID_PATTERN = /^claude-([a-z]+)-(\d{1,3})(?:-(\d{1,2}))?(?:-(\d{8}))?$/u;
+
+interface ParsedModelId {
+  readonly family: string;
+  readonly major: number;
+  readonly minor: number;
+}
+
+export function parseAnthropicModelId(model: string): ParsedModelId | undefined {
+  const match = MODEL_ID_PATTERN.exec(model);
+  if (match === null) return undefined;
+  const [, family, major, minor] = match;
+  if (family === undefined || major === undefined) return undefined;
+  return { family, major: Number(major), minor: minor === undefined ? 0 : Number(minor) };
+}
+
+/** Whether a model ID meets the family floor table (numeric version compare). */
+export function modelSupportsServerSideCompaction(
+  model: string,
+  families: readonly AnthropicFamilyFloor[] = SERVER_SIDE_COMPACTION_FAMILIES,
+  literals: readonly string[] = SERVER_SIDE_COMPACTION_LITERAL_MODELS,
+): boolean {
+  if (literals.includes(model)) return true;
+  const parsed = parseAnthropicModelId(model);
+  if (parsed === undefined) return false;
+  const floor = families.find((entry) => entry.family === parsed.family);
+  if (floor === undefined) return false;
+  if (parsed.major !== floor.minMajor) return parsed.major > floor.minMajor;
+  return parsed.minor >= floor.minMinor;
+}
 
 /** The installed adapter sends OAuth (Bearer) auth exactly when the key carries this marker. */
 const OAUTH_TOKEN_MARKER = "sk-ant-oat";
@@ -56,7 +107,14 @@ const TRANSIENT_STREAK = 3;
 interface CapabilityGateOptions {
   readonly enabled: boolean;
   readonly cooldownMs: number;
+  /**
+   * Exact combinations admitted instead of the default policy (tests and
+   * harnesses that use a synthetic provider or endpoint). When set, only these
+   * entries match.
+   */
   readonly allowList?: readonly AnthropicSupportEntry[];
+  /** Family floors of the default policy; defaults to {@link SERVER_SIDE_COMPACTION_FAMILIES}. */
+  readonly families?: readonly AnthropicFamilyFloor[];
   readonly maxCooldownMs?: number;
   readonly maxTrackedScopes?: number;
   readonly now?: () => number;
@@ -70,7 +128,8 @@ interface CooldownState {
 
 export class AnthropicCapabilityGate {
   private readonly enabled: boolean;
-  private readonly allowList: readonly AnthropicSupportEntry[];
+  private readonly allowList: readonly AnthropicSupportEntry[] | undefined;
+  private readonly families: readonly AnthropicFamilyFloor[];
   private readonly cooldownMs: number;
   private readonly maxCooldownMs: number;
   private readonly maxTrackedScopes: number;
@@ -79,7 +138,8 @@ export class AnthropicCapabilityGate {
 
   constructor(options: CapabilityGateOptions) {
     this.enabled = options.enabled;
-    this.allowList = options.allowList ?? TESTED_ANTHROPIC_COMBINATIONS;
+    this.allowList = options.allowList;
+    this.families = options.families ?? SERVER_SIDE_COMPACTION_FAMILIES;
     this.cooldownMs = Math.max(0, options.cooldownMs);
     this.maxCooldownMs = Math.max(this.cooldownMs, options.maxCooldownMs ?? 3_600_000);
     this.maxTrackedScopes = Math.max(1, options.maxTrackedScopes ?? 64);
@@ -98,17 +158,33 @@ export class AnthropicCapabilityGate {
     return { supported: true };
   }
 
-  /** The allow-listed entry for a scope, or undefined when the combination is not listed. */
+  /** The admitted combination for a scope, or undefined when the policy refuses it. */
   match(scope: ProviderScope): AnthropicSupportEntry | undefined {
     if (scope.authMode === undefined || scope.baseUrl === undefined) return undefined;
     const baseUrl = normalizeBaseUrl(scope.baseUrl);
-    return this.allowList.find(
-      (entry) =>
-        entry.provider === scope.provider &&
-        entry.model === scope.model &&
-        entry.authMode === scope.authMode &&
-        normalizeBaseUrl(entry.baseUrl) === baseUrl,
-    );
+    if (this.allowList !== undefined) {
+      return this.allowList.find(
+        (entry) =>
+          entry.provider === scope.provider &&
+          entry.model === scope.model &&
+          entry.authMode === scope.authMode &&
+          normalizeBaseUrl(entry.baseUrl) === baseUrl,
+      );
+    }
+    if (
+      scope.provider !== ANTHROPIC_PROVIDER ||
+      scope.authMode !== ADMITTED_AUTH_MODE ||
+      baseUrl !== ANTHROPIC_FIRST_PARTY_BASE_URL ||
+      !modelSupportsServerSideCompaction(scope.model, this.families)
+    ) {
+      return undefined;
+    }
+    return {
+      provider: ANTHROPIC_PROVIDER,
+      model: scope.model,
+      baseUrl: ANTHROPIC_FIRST_PARTY_BASE_URL,
+      authMode: ADMITTED_AUTH_MODE,
+    };
   }
 
   recordFailure(scope: ProviderScope, reason: FailureReason, retryAfterMs?: number): void {
@@ -146,6 +222,12 @@ export class AnthropicCapabilityGate {
     const cooldown = this.cooldowns.get(scopeKey(entry));
     return cooldown === undefined ? 0 : Math.max(0, cooldown.until - this.now());
   }
+}
+
+/** Providers whose Anthropic stream must be captured for replay under a policy. */
+export function capturedProviders(allowList?: readonly AnthropicSupportEntry[]): string[] {
+  if (allowList === undefined) return [ANTHROPIC_PROVIDER];
+  return [...new Set(allowList.map((entry) => entry.provider))];
 }
 
 /** Length-prefixed fields: each part is self-delimiting, so distinct tuples never collide. */

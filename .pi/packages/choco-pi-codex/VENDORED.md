@@ -878,3 +878,28 @@ Edit config outcome reopens with `focusId: "editConfig"`, which the host panel
 resolves to the tab that holds it. The profile hides `executionMode`,
 `customRustBinariesHelp`, and `customRustBinariesPath`.
 Test: `tests/codex-preferences-sections.test.ts`, `tests/preferences-layout.test.ts`.
+
+## choco-pi patch: OpenAI compaction row and native-compaction budget hook
+
+`src/ui/settings/config-items-openai.ts`: the `responsesCompaction` row keeps
+its id but is labelled "OpenAI compaction" with values `server-side` (stores
+`compaction.responsesCompaction: true`) and `choco-pi` (`false`) instead of the
+`off`/`on` "Responses compaction V2" toggle. The config default stays `false`;
+the profile's `.pi/choco-pi-codex.json` sets `true`. choco-pi-compaction reads
+the same key to derive the background `codexNative` lane.
+
+`src/extension/native-compaction-budget.ts` (new) publishes
+`Symbol.for("choco-pi.native-compaction-budget")` as
+`{ version: 1, budgetFor({ provider, id, contextWindow }) }`, read by the
+profile's `.pi/extensions/lib/context-policy.ts`. `budgetFor` resolves the
+provider/id through the session's model registry and returns
+`resolveNativeCompactionRequestBudget` (872k on Codex transport for
+Responses Lite ids, else 95% of the passed window) only when the live runtime
+plan has `nativeCompaction`; otherwise `undefined`. It reads the adapter's live
+config on every call, so the row change (which also resets the transport)
+applies on the consumer's next read. `src/extension/register.ts` publishes it at
+registration and on `session_start` when the slot is free, never replaces
+another publisher, and removes it on `session_shutdown` or failed registration
+only while the slot still holds it.
+Test: `tests/native-compaction-budget.test.ts`,
+`../../../tests/codex-preferences-sections.test.ts`.

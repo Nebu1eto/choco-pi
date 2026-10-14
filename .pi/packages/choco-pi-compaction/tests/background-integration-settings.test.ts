@@ -20,11 +20,14 @@ import {
   backgroundCompactionActive,
   backgroundSettingsPaths,
   CODEX_BACKEND_SETTING_ID,
+  deriveBackgroundLanes,
   globalBackgroundSettingsPath,
   isBackendEnabled,
   loadBackgroundSettings,
+  SidecarRefusedError,
   TEXT_BACKEND_SETTING_ID,
   writeGlobalBackgroundEnabled,
+  writeGlobalBackgroundSettings,
 } from "../src/background/settings.ts";
 import { TEXT_BACKEND_ID } from "../src/background/text-backend.ts";
 import { resolveProviderScope } from "../src/extension.ts";
@@ -113,6 +116,74 @@ test("the Preferences switch writes an owner-only global sidecar a trusted proje
     const loaded = await loadBackgroundSettings(paths);
     assert.equal(loaded.source, project);
     assert.equal(loaded.settings.enabled, false);
+  });
+});
+
+test("the vendor compaction rows derive the backend switches", () => {
+  const table: readonly [boolean, boolean, boolean, boolean][] = [
+    // openai server-side, anthropic server-side -> codexNative, anthropicNative
+    [true, true, true, true],
+    [true, false, true, false],
+    [false, true, false, true],
+    [false, false, false, false],
+  ];
+  for (const [openaiServerSide, anthropicServerSide, codexNative, anthropicNative] of table) {
+    assert.deepEqual(
+      deriveBackgroundLanes({ openaiServerSide, anthropicServerSide }),
+      { text: true, codexNative, anthropicNative },
+      `openai=${openaiServerSide} anthropic=${anthropicServerSide}`,
+    );
+  }
+});
+
+test("the derived writer keeps other keys, skips unchanged files and refuses malformed ones", async () => {
+  await withDir(async (dir) => {
+    const agentDir = join(dir, "agent");
+    const global = globalBackgroundSettingsPath(agentDir);
+    const lanes = deriveBackgroundLanes({ openaiServerSide: true, anthropicServerSide: false });
+    assert.equal(
+      await writeGlobalBackgroundSettings(agentDir, { lanes, onlyIfExists: true }),
+      false,
+      "a missing sidecar stays missing",
+    );
+    await assert.rejects(readFile(global, "utf8"), { code: "ENOENT" });
+
+    assert.equal(await writeGlobalBackgroundSettings(agentDir, { enabled: true, lanes }), true);
+    assert.deepEqual(JSON.parse(await readFile(global, "utf8")), {
+      text: true,
+      codexNative: true,
+      anthropicNative: false,
+      enabled: true,
+    });
+    assert.equal((await stat(global)).mode & 0o777, 0o600);
+
+    await writeFile(
+      global,
+      JSON.stringify({ enabled: true, prepareAt: 0.6, anthropicNative: true }),
+    );
+    assert.equal(await writeGlobalBackgroundSettings(agentDir, { lanes }), true);
+    assert.deepEqual(
+      JSON.parse(await readFile(global, "utf8")),
+      { enabled: true, prepareAt: 0.6, anthropicNative: false, text: true, codexNative: true },
+      "the master switch and tunables are kept",
+    );
+    assert.equal(
+      await writeGlobalBackgroundSettings(agentDir, { lanes, onlyIfExists: true }),
+      false,
+      "an unchanged file is not rewritten",
+    );
+
+    await writeFile(global, "{ enabled: true");
+    await assert.rejects(
+      writeGlobalBackgroundSettings(agentDir, { lanes }),
+      (error) => error instanceof SidecarRefusedError,
+    );
+    assert.equal(await readFile(global, "utf8"), "{ enabled: true", "file untouched");
+    assert.deepEqual(
+      await readdir(dirname(global)),
+      ["background-compaction.json"],
+      "no temp file",
+    );
   });
 });
 

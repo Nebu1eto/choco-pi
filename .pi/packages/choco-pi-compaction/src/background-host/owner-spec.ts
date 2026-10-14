@@ -4,6 +4,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AnthropicSupportEntry } from "../anthropic/capability.ts";
 import type { CapturingProviderOptions } from "../anthropic/capture.ts";
 import type { LaneStream } from "../anthropic/lane-client.ts";
+import type { AnthropicCompactionMode } from "../anthropic/mode.ts";
 import type {
   AppendRecord,
   BackgroundCompactionSettings,
@@ -26,6 +27,11 @@ export interface BackgroundCompactionOptions {
     readonly fetch?: typeof globalThis.fetch;
     readonly stream?: LaneStream;
     readonly capture?: CapturingProviderOptions;
+    /**
+     * Compaction mode reader replacing `<agentDir>/settings.json`
+     * (`compactionAnthropic`); read at every session start.
+     */
+    readonly readMode?: (agentDir: string) => Promise<AnthropicCompactionMode>;
   };
   readonly clock?: SchedulerClock;
 }
