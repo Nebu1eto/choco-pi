@@ -1,4 +1,4 @@
-import { rm, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { InMemoryModelsStore, type Credential, type Model } from "@earendil-works/pi-ai";
 import {
@@ -54,14 +54,18 @@ import { LiveLedger } from "./live-ledger.ts";
 import {
   credentialSecrets,
   isAnthropicModel,
-  LIVE_HAIKU_MODEL,
+  LIVE_SEEDED_MODELS,
   parseLiveSpec,
   readLiveCredential,
 } from "./live-source.ts";
 import { liveFetch, requestOrigin } from "./live-transport.ts";
 import { seedPrefix } from "./host-seed.ts";
 import { HostState, type ForegroundObserver, type ResponseOverride } from "./host-state.ts";
-import { installAnthropicFakeFactory, NATIVE_SIGNATURE } from "./native-factory.ts";
+import {
+  installAnthropicFakeFactory,
+  NATIVE_SIGNATURE,
+  scriptedLaneFetch,
+} from "./native-factory.ts";
 import { WORKTREE } from "./profile.ts";
 import { installTextFakeFactory } from "./text-factory.ts";
 import { capturePayload, recordBranch } from "./transport-capture.ts";
@@ -82,6 +86,14 @@ export interface LaunchOptions {
   keepRecentTokens?: number;
   /** Enable Pi's own compaction (needed for host overflow recovery); default off. */
   hostCompaction?: boolean;
+  /**
+   * Serve the Anthropic model (offline: the OAuth-shaped mirror over the
+   * production capturing stream and a scripted lane) with background compaction
+   * off, for the foreground server-side path.
+   */
+  anthropicForeground?: boolean;
+  /** Project `.pi/extensions/context-cap.json` (per-model cap and compaction point). */
+  contextCap?: ContextCapFile;
   /** Live tier: real provider transport for this approved provider/model. */
   live?: LiveLaunch;
   /** Reuse a caller-owned runtime tree (agent/project/sessions/home) across launches. */
@@ -96,6 +108,10 @@ export interface LiveLaunch {
   readonly model: string;
   /** The real agent dir holding auth.json, resolved before any launcher scoped the env. */
   readonly sourceAgentDir: string;
+}
+
+export interface ContextCapFile {
+  readonly models: Readonly<Record<string, { readonly cap: number; readonly compactAt: number }>>;
 }
 
 /** Live inputs read once before the launcher scopes the process. */
@@ -148,12 +164,16 @@ function blockedFetch(state: HostState): typeof globalThis.fetch {
 
 function globalFetchFor(
   state: HostState,
-  live: LiveInputs | undefined,
-  model: Model<"anthropic-messages">,
-  realFetch: typeof globalThis.fetch,
+  route: {
+    readonly live: LiveInputs | undefined;
+    readonly model: Model<"anthropic-messages">;
+    readonly realFetch: typeof globalThis.fetch;
+    readonly scriptedLane: boolean;
+  },
 ): typeof globalThis.fetch {
+  const { live, model, realFetch } = route;
   const block = blockedFetch(state);
-  if (!live) return block;
+  if (!live) return route.scriptedLane ? scriptedLaneFetch(state.recorder, model, block) : block;
   return liveFetch({
     state,
     origin: new URL(model.baseUrl).origin,
@@ -166,10 +186,13 @@ function globalFetchFor(
 async function liveRuntime(credentials: ReadOnlyMemoryCredentials, live: LiveInputs) {
   await credentials.seedAndSeal(live.provider, live.credential);
   const modelsStore = new InMemoryModelsStore();
-  if (live.provider === LIVE_HAIKU_MODEL.provider && live.modelId === LIVE_HAIKU_MODEL.id)
+  const seeded = LIVE_SEEDED_MODELS.find(
+    (model) => model.provider === live.provider && model.id === live.modelId,
+  );
+  if (seeded)
     // The runtime prefers a stored catalog only when it is newer than the built-in data.
     await modelsStore.write(live.provider, {
-      models: [LIVE_HAIKU_MODEL],
+      models: [seeded],
       checkedAt: Date.now(),
       lastModified: Date.now(),
     });
@@ -233,14 +256,44 @@ async function writeConfig(
   dirs: RuntimeDirs,
   sidecarText: string,
   settings: SettingsManager,
+  contextCap: ContextCapFile | undefined,
 ): Promise<void> {
   const hostSettingsText = `${JSON.stringify(settings.getSettings())}\n`;
   const sidecarPath = join(dirs.projectDir, ".pi", "extensions", "background-compaction.json");
+  const capPath = join(dirs.projectDir, ".pi", "extensions", "context-cap.json");
   await Promise.all([
     writeFile(sidecarPath, sidecarText, { mode: 0o600 }),
     writeFile(join(dirs.projectDir, ".pi", "settings.json"), hostSettingsText, { mode: 0o600 }),
     writeFile(join(dirs.agentDir, "settings.json"), hostSettingsText, { mode: 0o600 }),
+    ...(contextCap === undefined
+      ? []
+      : [writeFile(capPath, `${JSON.stringify(contextCap)}\n`, { mode: 0o600 })]),
   ]);
+}
+
+/**
+ * Live parity with a real session on the same credential: the user's
+ * `SYSTEM.md` replaces Pi's default harness preamble. Read from the source agent
+ * dir (not a secret: it resolves to the tracked profile prompt) and copied into
+ * the isolated agent dir; recorded by digest only.
+ */
+async function copyLiveSystemPrompt(state: HostState, dirs: RuntimeDirs, live: LiveInputs) {
+  let text: string;
+  try {
+    text = await readFile(join(live.launch.sourceAgentDir, "SYSTEM.md"), "utf8");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      state.recorder.record("live-parity", { systemPrompt: "pi-default", builtinTools: true });
+      return;
+    }
+    throw error;
+  }
+  await writeFile(join(dirs.agentDir, "SYSTEM.md"), text, { mode: 0o600 });
+  state.recorder.record("live-parity", {
+    systemPrompt: "source-agent-SYSTEM.md",
+    systemPromptDigest: digest(text),
+    builtinTools: true,
+  });
 }
 
 function openManager(options: LaunchOptions, dirs: RuntimeDirs): SessionManager {
@@ -588,23 +641,31 @@ export async function launch(input: LaunchOptions) {
     const sidecar = { ...DEFAULT_BACKGROUND_COMPACTION_SETTINGS, ...options.settings };
     const problem = crossFieldProblem(sidecar);
     if (problem) throw new Error(`Scenario sidecar rejected by production policy: ${problem}`);
-    const apiKey = sidecar.anthropicNative ? FAKE_ANTHROPIC_KEY : FAKE_OFFLINE_KEY;
+    // Offline Anthropic mirror: the background native lane or the foreground server-side path.
+    const anthropic = sidecar.anthropicNative || options.anthropicForeground === true;
+    const apiKey = anthropic ? FAKE_ANTHROPIC_KEY : FAKE_OFFLINE_KEY;
     const sidecarText = JSON.stringify(sidecar);
     const settings = trustedSettings({
       keepRecentTokens: options.keepRecentTokens ?? 1,
       hostCompaction: options.hostCompaction ?? false,
     });
-    await writeConfig(dirs, sidecarText, settings);
+    await writeConfig(dirs, sidecarText, settings, options.contextCap);
+    if (live) await copyLiveSystemPrompt(state, dirs, live);
     current();
     const credentials = new ReadOnlyMemoryCredentials();
     const runtime = await createRuntime(credentials, live);
     current();
     const model: Model<"anthropic-messages"> = live
       ? liveModel(runtime, live)
-      : sidecar.anthropicNative
+      : anthropic
         ? FAKE_ANTHROPIC_MODEL
         : FAKE_MODEL;
-    globalThis.fetch = globalFetchFor(state, live, model, realFetch);
+    globalThis.fetch = globalFetchFor(state, {
+      live,
+      model,
+      realFetch,
+      scriptedLane: options.anthropicForeground === true,
+    });
     const modelRegistry = new ModelRegistry(runtime);
     const manager = openManager(options, dirs);
     state.mainSessionId = manager.getSessionId();
@@ -630,7 +691,7 @@ export async function launch(input: LaunchOptions) {
           state,
           model,
           apiKey,
-          nativeCapture: sidecar.anthropicNative,
+          nativeCapture: anthropic,
           toolCycles: options.cycles ?? 2,
         });
     const plan = await loadPlan(options);
@@ -679,7 +740,8 @@ export async function launch(input: LaunchOptions) {
       resourceLoader: loader,
       sessionManager: manager,
       settingsManager: settings,
-      noTools: "builtin",
+      // Live keeps the built-in tools a real session declares (parity); offline omits them.
+      noTools: live ? undefined : "builtin",
     });
     owned.session = session;
     current();

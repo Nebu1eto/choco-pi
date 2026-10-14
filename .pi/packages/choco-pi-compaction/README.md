@@ -198,8 +198,9 @@ session; the host's existing compaction path is then used.
 - Anthropic native replay is refused with `binding-mismatch` when the system
   prompt or tools changed while the retained messages carry thinking bound to
   them; the summary text is used instead.
-- Anthropic native support follows a static family table; live evidence covers
-  only `claude-haiku-5-5` (first-party API, OAuth). Other admitted families
+- Anthropic native support follows a static family table. Live acceptance
+  evidence covers only foreground `/compact` on `claude-fable-5-1`
+  (first-party API, OAuth); other admitted families and the background lanes
   rely on the documented compatibility list.
 - A canceled or timed-out subagent run detaches its coordinator permanently;
   resuming that child continues without background compaction.
@@ -234,19 +235,33 @@ session; the host's existing compaction path is then used.
 
 Pure logic is unit-tested in `tests/`; host and provider behavior is checked by
 real-SDK integration tests and the end-to-end harness
-(`tests/live/background-compaction/`), whose five offline scenarios pass. The
+(`tests/live/background-compaction/`), whose seven offline scenarios pass. The
 foreground server-side path, the family gate and the session disable are
-covered by unit and real-SDK tests with scripted transports. No new live run
-was performed for that change; the earlier Haiku 5.5 evidence below stands.
-Live runs are blocked:
+covered by unit and real-SDK tests with scripted transports, and by two harness
+scenarios: `anthropic-foreground-compaction` (`/compact <instructions>`) and
+`anthropic-foreground-auto-compaction` (the context cap's `compactAt` route,
+no instructions). Offline, both send the same lane request (the
+`compact-2026-09-04` beta and `compaction.summarize`, with instructions only
+for `/compact`), persist `AnthropicDetails` and replay the block on the next
+request.
 
-- **Anthropic OAuth entitlement.** With a subscription OAuth credential, every
-  full-profile foreground request to `claude-haiku-5-5` returned HTTP 400
-  `invalid_request_error` ("Third-party apps now draw from your extra usage,
-  not your plan limits"); the tool-less summarizer request returned 200. The
-  live idle-input run prepared and adopted the checkpoint and the next request
-  carried it, but the provider rejected that request. This is account policy,
-  not a feature defect; a pass needs extra usage or an API-key credential.
+Live status:
+
+- **Foreground, `claude-fable-5-1` (2026-10-14, subscription OAuth, one run,
+  exit 0).** Two foreground turns returned 200; `/compact <instructions>` sent
+  one lane request with the compaction beta and instructions, answered 200
+  with `stop_reason: "compaction"`; the compaction entry carried
+  `AnthropicDetails`; the next foreground request started with the persisted
+  block under the same beta and returned 200. No fallback notice and no local
+  summarizer request. The automatic route was not run live, and the
+  session-disable path was not exercised live because nothing was rejected.
+- **Earlier `claude-haiku-5-5` runs (background lanes).** Every full-profile
+  foreground request returned HTTP 400 `invalid_request_error` ("Third-party
+  apps now draw from your extra usage, not your plan limits"); the tool-less
+  summarizer request returned 200. Those runs sent Pi's default system
+  preamble without built-in tools; live mode now sends the user's `SYSTEM.md`
+  and the built-in tools, as a real session does. Which difference caused the
+  refusal is not isolated, and the Haiku scenarios have not been rerun.
 - **Codex.** No live driver: Codex foreground traffic uses the cached
   WebSocket, not `fetch`, and the harness transport checks are
   Anthropic-shaped. The Codex lane is covered by unit tests with fake

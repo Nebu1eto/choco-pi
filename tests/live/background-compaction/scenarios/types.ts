@@ -1,6 +1,6 @@
 import type { BackgroundCompactionSettings } from "../../../../.pi/packages/choco-pi-compaction/src/background/contract.ts";
 import type { CheckEvidence, ObservedCheck } from "../checks.ts";
-import type { launch } from "../launch.ts";
+import type { ContextCapFile, launch } from "../launch.ts";
 export type Host = Awaited<ReturnType<typeof launch>>;
 
 /** A scenario the offline (or approved live) harness drives end to end. */
@@ -13,6 +13,10 @@ export interface Scenario {
   keepRecentTokens?: number;
   /** Enable Pi's own compaction for this scenario (host overflow recovery). */
   hostCompaction?: boolean;
+  /** Serve the Anthropic model with background compaction off (foreground server-side path). */
+  anthropicForeground?: boolean;
+  /** Project context-cap.json written before launch. */
+  contextCap?: ContextCapFile;
   checks: readonly ObservedCheck[];
   /** Unique texts mapping branch entries to wire payloads (recorded in the manifest). */
   markers: readonly string[];

@@ -349,6 +349,7 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 Pi 1.0.3부터 `Home`/`End`는 편집기 커서를 이동합니다. 대화 기록의 맨 위/아래로 이동하려면 `Ctrl+Home`/`Ctrl+End`를 사용하세요.
 
 `npm run install:profile`은 정책 파일, `subagents.json`, `choco-pi-codex.json`, `models.json`, `keybindings.json`, 에이전트 정의, 확장 JSON 파일 3개를 `~/.pi/agent`에 연결합니다. `zentui.json`은 `choco-pi-ui.json`이라는 이름으로 연결됩니다.
+기존 `~/.pi/agent/extensions/background-compaction.json`도 현재 구조로 이전합니다. 백엔드 스위치는 OpenAI·Anthropic 압축 모드에서 다시 계산하고, `enabled`와 다른 키는 유지하며, 파일이 없으면 만들지 않습니다.
 
 ### 전역 설정 예시
 

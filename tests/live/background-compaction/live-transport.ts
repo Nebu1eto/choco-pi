@@ -21,6 +21,19 @@ export function requestOrigin(input: Parameters<typeof globalThis.fetch>[0]): st
 }
 
 const LaneSchema = Type.Object({ compaction: Type.Unknown() }, { additionalProperties: true });
+const LaneFieldSchema = Type.Object({ compaction: InputSchema }, { additionalProperties: true });
+
+/** The lane request's `compaction` field and `anthropic-beta` values (no other header). */
+export function recordLaneRequest(
+  recorder: HostState["recorder"],
+  compaction: ArtifactInput,
+  init: RequestInit | undefined,
+): void {
+  recorder.record("lane-request", {
+    compaction,
+    betas: parseBetaHeader(new Headers(init?.headers).get("anthropic-beta")),
+  });
+}
 const ToolsSchema = Type.Object(
   {
     tools: Type.Array(Type.Object({ name: Type.String() }, { additionalProperties: true })),
@@ -106,6 +119,8 @@ export function liveFetch(options: LiveFetchOptions): typeof globalThis.fetch {
     const payload: unknown = bodyText.length ? JSON.parse(bodyText) : null;
     if (!Value.Check(InputSchema, payload)) throw new Error("Invalid serialized live transport");
     const sent = recordRequest(state, bodyText, payload);
+    if (sent.kind === "lane" && Value.Check(LaneFieldSchema, payload))
+      recordLaneRequest(state.recorder, payload.compaction, init);
     const id = ledger.reserve(sent.kind, estimateTokens(bodyText));
     const observer = state.foregroundObserver;
     if (sent.kind === "foreground" && observer) await observer(sent.dispatch);

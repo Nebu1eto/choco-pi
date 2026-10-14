@@ -1,11 +1,19 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, readlink, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { lstat, mkdir, mkdtemp, readFile, readlink, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
+import { promisify } from "node:util";
 import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
-import { buildGlobalSettings, installProfile } from "../scripts/install-profile.ts";
+import { deriveBackgroundLanes } from "../.pi/packages/choco-pi-compaction/src/background/settings.ts";
+import {
+  buildGlobalSettings,
+  installProfile,
+  MIGRATED_SIDECARS,
+  PROFILE_LINKS,
+} from "../scripts/install-profile.ts";
 
 const CodexConfigSchema = Type.Object({
   openai: Type.Object({ fast: Type.Boolean() }),
@@ -16,6 +24,50 @@ function parseJson<T extends TSchema>(contents: string, schema: T): Static<T> {
   assert.ok(Value.Check(schema, parsed), "JSON fixture must match its expected schema");
   return parsed;
 }
+
+const SidecarSchema = Type.Record(Type.String(), Type.Unknown());
+
+type SidecarFixture = {
+  sidecar?: string;
+  responsesCompaction?: boolean;
+  compactionAnthropic?: string;
+};
+
+/**
+ * A minimal profile root plus agent directory. The codex config is linked from
+ * the root, as in a real install, so `responsesCompaction` reaches the
+ * installer through the link.
+ */
+async function sidecarFixture(
+  context: TestContext,
+  { sidecar, responsesCompaction, compactionAnthropic }: SidecarFixture,
+) {
+  const root = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-sidecar-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const agentDir = path.join(root, "agent");
+  await mkdir(path.join(root, ".pi"), { recursive: true });
+  await writeFile(path.join(root, ".pi", "settings.json"), '{"packages":[]}\n', "utf8");
+  const codex = responsesCompaction === undefined ? {} : { compaction: { responsesCompaction } };
+  await writeFile(path.join(root, ".pi", "choco-pi-codex.json"), JSON.stringify(codex), "utf8");
+  await mkdir(path.join(agentDir, "extensions"), { recursive: true });
+  if (compactionAnthropic !== undefined) {
+    await writeFile(
+      path.join(agentDir, "settings.json"),
+      JSON.stringify({ compactionAnthropic }),
+      "utf8",
+    );
+  }
+  const sidecarPath = path.join(agentDir, "extensions", "background-compaction.json");
+  if (sidecar !== undefined) await writeFile(sidecarPath, sidecar, "utf8");
+  return { root, agentDir, sidecarPath };
+}
+
+const LEGACY_SIDECAR = JSON.stringify({
+  enabled: true,
+  text: true,
+  codexNative: true,
+  anthropicNative: false,
+});
 
 test("global settings preserve user preferences and dedupe every tracked local package", () => {
   const root = process.cwd();
@@ -359,4 +411,179 @@ test("built-in exclusion removal preserves arbitrary unrelated JSON fields", () 
     "/user/extension.ts",
     "+builtin:other",
   ]);
+});
+
+test("install migrates the background sidecar lanes and keeps the master switch", async (context) => {
+  const { root, agentDir, sidecarPath } = await sidecarFixture(context, {
+    sidecar: `${LEGACY_SIDECAR}\n`,
+    responsesCompaction: true,
+  });
+
+  const first = await installProfile({ root, agentDir });
+  assert.deepEqual(first.migrations, [{ target: sidecarPath, action: "migrated" }]);
+  assert.deepEqual(parseJson(await readFile(sidecarPath, "utf8"), SidecarSchema), {
+    enabled: true,
+    text: true,
+    codexNative: true,
+    anthropicNative: true,
+  });
+  assert.equal((await lstat(sidecarPath)).mode & 0o777, 0o600);
+
+  const second = await installProfile({ root, agentDir });
+  assert.deepEqual(second.migrations, [{ target: sidecarPath, action: "unchanged" }]);
+});
+
+test("install derives the sidecar lanes from every vendor mode combination", async (context) => {
+  for (const openaiServerSide of [true, false]) {
+    for (const anthropicServerSide of [true, false]) {
+      const { root, agentDir, sidecarPath } = await sidecarFixture(context, {
+        sidecar: JSON.stringify({ enabled: false, text: false, maxQueued: 7 }),
+        responsesCompaction: openaiServerSide,
+        compactionAnthropic: anthropicServerSide ? "server-side" : "choco-pi",
+      });
+
+      await installProfile({ root, agentDir });
+
+      const lanes = deriveBackgroundLanes({ openaiServerSide, anthropicServerSide });
+      assert.deepEqual(parseJson(await readFile(sidecarPath, "utf8"), SidecarSchema), {
+        enabled: false,
+        maxQueued: 7,
+        ...lanes,
+      });
+      assert.equal(lanes.codexNative, openaiServerSide);
+      assert.equal(lanes.anthropicNative, anthropicServerSide);
+    }
+  }
+});
+
+test("choco-pi Anthropic compaction turns the anthropic-native lane off", async (context) => {
+  const { root, agentDir, sidecarPath } = await sidecarFixture(context, {
+    sidecar: LEGACY_SIDECAR,
+    responsesCompaction: true,
+    compactionAnthropic: "choco-pi",
+  });
+
+  await installProfile({ root, agentDir });
+
+  const sidecar = parseJson(await readFile(sidecarPath, "utf8"), SidecarSchema);
+  assert.equal(sidecar.anthropicNative, false);
+  assert.equal(sidecar.enabled, true);
+  const settings = parseJson(
+    await readFile(path.join(agentDir, "settings.json"), "utf8"),
+    SidecarSchema,
+  );
+  assert.equal(settings.compactionAnthropic, "choco-pi");
+});
+
+test("disabled responses compaction turns the codex-native lane off", async (context) => {
+  for (const responsesCompaction of [false, undefined]) {
+    const { root, agentDir, sidecarPath } = await sidecarFixture(context, {
+      sidecar: LEGACY_SIDECAR,
+      responsesCompaction,
+    });
+
+    await installProfile({ root, agentDir });
+
+    const sidecar = parseJson(await readFile(sidecarPath, "utf8"), SidecarSchema);
+    assert.equal(sidecar.codexNative, false);
+    assert.equal(sidecar.anthropicNative, true);
+  }
+});
+
+test("a missing background sidecar stays missing", async (context) => {
+  const { root, agentDir, sidecarPath } = await sidecarFixture(context, {
+    responsesCompaction: true,
+  });
+
+  const result = await installProfile({ root, agentDir });
+
+  assert.deepEqual(result.migrations, [{ target: sidecarPath, action: "absent" }]);
+  await assert.rejects(lstat(sidecarPath), { code: "ENOENT" });
+});
+
+test("a malformed background sidecar is left untouched with a warning", async (context) => {
+  for (const contents of ["{ not json", JSON.stringify({ enabled: "yes" })]) {
+    const { root, agentDir, sidecarPath } = await sidecarFixture(context, {
+      sidecar: contents,
+      responsesCompaction: true,
+    });
+
+    const result = await installProfile({ root, agentDir });
+
+    assert.deepEqual(result.migrations, [{ target: sidecarPath, action: "skipped" }]);
+    assert.equal(await readFile(sidecarPath, "utf8"), contents);
+    assert.ok(
+      result.warnings.some((warning) => warning.includes(sidecarPath)),
+      "the warning names the sidecar",
+    );
+  }
+});
+
+test("an unreadable codex config skips the sidecar migration with a warning", async (context) => {
+  const { root, agentDir, sidecarPath } = await sidecarFixture(context, {
+    sidecar: LEGACY_SIDECAR,
+  });
+  await writeFile(path.join(root, ".pi", "choco-pi-codex.json"), "{ not json", "utf8");
+
+  const result = await installProfile({ root, agentDir });
+
+  assert.deepEqual(result.migrations, [{ target: sidecarPath, action: "skipped" }]);
+  assert.equal(await readFile(sidecarPath, "utf8"), LEGACY_SIDECAR);
+  assert.ok(result.warnings.some((warning) => warning.includes("choco-pi-codex.json")));
+});
+
+test("a legacy context-cap.json copy is refused without backup and replaced with it", async (context) => {
+  const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-context-cap-"));
+  context.after(() => rm(agentDir, { recursive: true, force: true }));
+  const target = path.join(agentDir, "extensions", "context-cap.json");
+  const legacy = `${JSON.stringify({ defaultCap: 200000, defaultCompactAt: 0.8, appliesOver: 272000 })}\n`;
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeFile(target, legacy, "utf8");
+
+  await assert.rejects(
+    installProfile({ root: process.cwd(), agentDir }),
+    /context-cap\.json already exists; rerun with --backup/,
+  );
+  assert.equal(await readFile(target, "utf8"), legacy);
+  assert.ok((await lstat(target)).isFile());
+
+  const result = await installProfile({ root: process.cwd(), agentDir, backup: true });
+  const replaced = result.links.find((link) => link.target === target);
+  assert.equal(replaced?.action, "backed-up");
+  assert.equal(await readFile(replaced?.backup ?? "", "utf8"), legacy);
+  assert.equal(await readlink(target), path.resolve(".pi/extensions/context-cap.json"));
+  const current = parseJson(await readFile(target, "utf8"), SidecarSchema);
+  assert.ok("headroom" in current && "models" in current, "the link exposes the current shape");
+  assert.ok(!("defaultCap" in current));
+});
+
+test("every profile extension sidecar is linked or migrated by the installer", async () => {
+  // Tracked and untracked-but-not-ignored files: a new sidecar fails here
+  // before it is committed. Ignored files (such as synthetic.json) are user state.
+  const { stdout } = await promisify(execFile)("git", [
+    "ls-files",
+    "--cached",
+    "--others",
+    "--exclude-standard",
+    "--",
+    ".pi/extensions",
+  ]);
+  const sidecars = stdout
+    .split("\n")
+    .filter((file) => path.posix.dirname(file) === ".pi/extensions" && file.endsWith(".json"));
+  assert.ok(sidecars.length > 0, "the profile ships extension sidecars");
+  const linked = new Set(PROFILE_LINKS.map(([source]) => source));
+  const migrated = new Set(MIGRATED_SIDECARS.map((target) => `.pi/${target}`));
+  for (const sidecar of sidecars) {
+    assert.ok(
+      linked.has(sidecar) || migrated.has(sidecar),
+      `${sidecar} must be listed in PROFILE_LINKS or MIGRATED_SIDECARS in scripts/install-profile.ts`,
+    );
+  }
+  for (const target of MIGRATED_SIDECARS) {
+    assert.ok(
+      !PROFILE_LINKS.some(([, linkedTarget]) => linkedTarget === target),
+      `${target} cannot be both linked and migrated`,
+    );
+  }
 });

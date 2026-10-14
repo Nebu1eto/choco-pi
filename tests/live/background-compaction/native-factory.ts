@@ -19,6 +19,7 @@ import {
 import { sseResponse, type SseFrame } from "./fake-sse.ts";
 import type { Recorder } from "./artifacts.ts";
 import { sessionIdForOwner } from "./host-provider.ts";
+import { recordLaneRequest, requestOrigin } from "./live-transport.ts";
 import { capturingFetch } from "./transport-capture.ts";
 
 /** Synthetic signed block the scripted lane issues; the fake server accepts it on replay. */
@@ -75,6 +76,7 @@ function laneResponse(
   if (!Value.Check(LaneRequestSchema, parsed))
     throw new Error("Lane did not request native compaction");
   recorder.record("native-lane-response", {
+    status: 200,
     blockType: "compaction",
     content: NATIVE_BLOCK.content,
     nativeBlockBytes: Buffer.byteLength(NATIVE_BLOCK.signature),
@@ -82,6 +84,29 @@ function laneResponse(
     stopReason: "compaction",
   });
   return sseResponse(compactionFrames(model));
+}
+
+/**
+ * Offline global fetch for the foreground server-side path, whose lane uses
+ * production's default transport (global fetch): a native compaction request
+ * to the model origin gets the scripted block, everything else goes to
+ * `fallback` (the blocker).
+ */
+export function scriptedLaneFetch(
+  recorder: Recorder,
+  model: Model<"anthropic-messages">,
+  fallback: typeof globalThis.fetch,
+): typeof globalThis.fetch {
+  const origin = new URL(model.baseUrl).origin;
+  return async (input, init) => {
+    const body = init?.body;
+    if (requestOrigin(input) !== origin || !Value.Check(Type.String(), body))
+      return fallback(input, init);
+    const parsed: unknown = JSON.parse(body);
+    if (!Value.Check(LaneRequestSchema, parsed)) return fallback(input, init);
+    recordLaneRequest(recorder, parsed.compaction, init);
+    return laneResponse(recorder, model, init);
+  };
 }
 
 /** Real production backend + installed adapter; only the lane HTTP response is scripted. */

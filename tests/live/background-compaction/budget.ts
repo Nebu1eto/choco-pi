@@ -15,6 +15,7 @@ interface ExpectationTable {
 export const APPROVED_LIVE_MODELS: readonly string[] = [
   "anthropic/claude-haiku-5-5",
   "anthropic/claude-sonnet-5-5",
+  "anthropic/claude-fable-5-1",
   "openai-codex/gpt-6-luna",
   "openai-codex/gpt-6.1-sol",
 ];
@@ -28,6 +29,11 @@ export const LIVE_EXPECTATIONS: ExpectationTable = {
   "anthropic-native-adoption": { requests: 8, inputTokens: 260_000, outputTokens: 24_000 },
   "idle-input-adoption": { requests: 3, inputTokens: 90_000, outputTokens: 8_000 },
   "restart-recovery": { requests: 4, inputTokens: 130_000, outputTokens: 10_000 },
+  // No seeded padding: three short turns, one lane request and at most one
+  // fallback turn, each ~15k tokens of system prompt and tool schemas. Sized for
+  // claude-fable-5-1 ($10/$50 per MTok, 100x Haiku 5.5): about $0.80 expected,
+  // so the 10x runaway stop bounds one run near $8.
+  "anthropic-foreground-compaction": { requests: 5, inputTokens: 70_000, outputTokens: 4_000 },
 };
 export const RUNAWAY_FACTOR = 10;
 

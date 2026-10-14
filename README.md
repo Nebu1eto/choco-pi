@@ -373,6 +373,7 @@ The [RPC host bridge](docs/rpc-host-bridge.md) lets Waku identify the installed 
 Pi 1.0.3 changed `Home`/`End` to move the editor cursor. Use `Ctrl+Home`/`Ctrl+End` to jump to the transcript top/bottom.
 
 `npm run install:profile` links the policy files, `subagents.json`, `choco-pi-codex.json`, `models.json`, `keybindings.json`, the agent definitions, and the three extension JSON files into `~/.pi/agent`; `zentui.json` is linked as `choco-pi-ui.json`.
+It also migrates an existing `~/.pi/agent/extensions/background-compaction.json` to the current layout: the backend switches are rederived from the OpenAI and Anthropic compaction modes, while `enabled` and other keys are kept, and a missing file is not created.
 
 ### Example global settings
 

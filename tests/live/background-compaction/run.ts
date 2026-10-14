@@ -9,6 +9,10 @@ import { requireLiveRun } from "./budget.ts";
 import { launch, WORKTREE } from "./launch.ts";
 import { sourceAgentDir } from "./live-source.ts";
 import { scenario as anthropicNative } from "./scenarios/anthropic-native-adoption.ts";
+import {
+  automaticScenario as anthropicForegroundAuto,
+  scenario as anthropicForeground,
+} from "./scenarios/anthropic-foreground-compaction.ts";
 import { scenario as childSession } from "./scenarios/child-session-adoption.ts";
 import { scenario as arbitration } from "./scenarios/host-compaction-arbitration.ts";
 import { scenario as idleInput } from "./scenarios/idle-input-adoption.ts";
@@ -28,6 +32,8 @@ const SCENARIOS: readonly Scenario[] = [
   restart,
   arbitration,
   childSession,
+  anthropicForeground,
+  anthropicForegroundAuto,
 ];
 const FOREGROUND_TOOL_CYCLES = 6;
 const EXIT_CODES = { pass: 0, fail: 1, pending: 2 } as const;
@@ -153,6 +159,8 @@ else {
     seedNamespace: scenario.name.toUpperCase(),
     keepRecentTokens: scenario.keepRecentTokens,
     hostCompaction: scenario.hostCompaction,
+    anthropicForeground: scenario.anthropicForeground,
+    contextCap: scenario.contextCap,
     cycles: FOREGROUND_TOOL_CYCLES,
     live,
   });

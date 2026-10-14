@@ -18,7 +18,11 @@ export type ObservedCheck =
   | "durable-across-reopen"
   | "disable-stops-adoption"
   | "lane-usage-persisted"
-  | "thinking-binding-strict";
+  | "thinking-binding-strict"
+  | "foreground-lane-request"
+  | "foreground-checkpoint"
+  | "foreground-replay"
+  | "no-local-fallback";
 /** Checks every scenario requires, computed from launcher counters and records. */
 export type HarnessCheck = "no-secret-leak" | "no-abort" | "zero-network" | "live-accepted";
 export type CheckName = ObservedCheck | HarnessCheck;

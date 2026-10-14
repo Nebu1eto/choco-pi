@@ -1,3 +1,19 @@
+/**
+ * Installs this checkout as the user's Pi profile.
+ *
+ * An installed agent directory must always match the profile layout at HEAD.
+ * Every profile-owned file under `<agentDir>` is therefore handled here in one
+ * of two ways:
+ *
+ * - Linked: listed in `PROFILE_LINKS`, so the installed path is a symlink to
+ *   the tracked source and always has its current shape.
+ * - Migrated: user-owned state whose profile-derived keys change with the
+ *   layout, listed in `MIGRATED_SIDECARS` and rewritten by a migration step
+ *   below that keeps the user's own keys.
+ *
+ * A new `.pi/extensions/*.json` sidecar must join one of the two lists; a test
+ * fails until it does.
+ */
 import { constants } from "node:fs";
 import {
   access,
@@ -21,6 +37,13 @@ import {
   resolvePiLauncher,
   writeProfileMarker,
 } from "../.pi/extensions/lib/profile-marker.ts";
+import { readAnthropicCompactionMode } from "../.pi/packages/choco-pi-compaction/src/anthropic/mode.ts";
+import {
+  deriveBackgroundLanes,
+  globalBackgroundSettingsPath,
+  SidecarRefusedError,
+  writeGlobalBackgroundSettings,
+} from "../.pi/packages/choco-pi-compaction/src/background/settings.ts";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 
@@ -47,10 +70,14 @@ export type InstallProfileOptions = {
   backup?: boolean;
   piLauncher?: string;
 };
+export type SidecarMigrationResult = {
+  target: string;
+  action: "migrated" | "unchanged" | "absent" | "skipped";
+};
 
 const SCRIPT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-const PROFILE_LINKS: readonly (readonly [string, string])[] = [
+export const PROFILE_LINKS: readonly (readonly [string, string])[] = [
   [".pi/SYSTEM.md", "SYSTEM.md"],
   [".pi/writing-policy.md", "writing-policy.md"],
   [".pi/review-policy.md", "review-policy.md"],
@@ -70,6 +97,96 @@ const PROFILE_LINKS: readonly (readonly [string, string])[] = [
   [".pi/extensions/context-cap.json", "extensions/context-cap.json"],
   [".pi/extensions/review.json", "extensions/review.json"],
 ];
+
+/**
+ * Agent-directory sidecars the installer migrates in place instead of linking,
+ * relative to the agent directory. They hold user choices (such as the
+ * background-compaction master switch), so they cannot be links.
+ */
+export const MIGRATED_SIDECARS: readonly string[] = ["extensions/background-compaction.json"];
+
+const CodexCompactionSchema = Type.Object(
+  {
+    compaction: Type.Optional(
+      Type.Object(
+        { responsesCompaction: Type.Optional(Type.Unknown()) },
+        { additionalProperties: Type.Unknown() },
+      ),
+    ),
+  },
+  { additionalProperties: Type.Unknown() },
+);
+
+/**
+ * Whether the installed codex config compacts server-side. Mirrors the codex
+ * adapter: `compaction.responsesCompaction` must be a boolean, and anything
+ * else (including a missing file or key) is the default `false`. Throws when
+ * the file exists but is not a JSON object, so the caller can skip migration
+ * instead of deriving lanes from a file it could not read.
+ */
+async function readCodexResponsesCompaction(agentDir: string): Promise<boolean> {
+  const target = path.join(agentDir, "choco-pi-codex.json");
+  let contents: string;
+  try {
+    contents = await readFile(target, "utf8");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+    throw error;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(contents);
+  } catch (error) {
+    throw new Error(`${target} does not contain valid JSON`, { cause: error });
+  }
+  if (!Value.Check(CodexCompactionSchema, parsed)) {
+    throw new Error(`${target} is not a codex config object`);
+  }
+  // Only a literal `true` turns it on; any non-boolean is the default `false`.
+  return parsed.compaction?.responsesCompaction === true;
+}
+
+/**
+ * Bring the global background-compaction sidecar's backend switches in line
+ * with the vendor compaction modes: text always on, codex-native from
+ * `compaction.responsesCompaction` in the installed codex config,
+ * anthropic-native when `compactionAnthropic` is server-side (the default).
+ * The master switch and every other key are kept; a missing sidecar stays
+ * missing (background compaction stays off). A malformed sidecar is left
+ * untouched and reported as a warning.
+ */
+export async function migrateBackgroundCompactionSidecar(
+  agentDir: string,
+  warnings: string[],
+): Promise<SidecarMigrationResult> {
+  const target = globalBackgroundSettingsPath(agentDir);
+  let openaiServerSide: boolean;
+  try {
+    openaiServerSide = await readCodexResponsesCompaction(agentDir);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    warnings.push(`${target} was not migrated: ${reason}`);
+    return { target, action: "skipped" };
+  }
+  const anthropicServerSide = (await readAnthropicCompactionMode(agentDir)) === "server-side";
+  const lanes = deriveBackgroundLanes({ openaiServerSide, anthropicServerSide });
+  try {
+    await lstat(target);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return { target, action: "absent" };
+    }
+    throw error;
+  }
+  try {
+    const changed = await writeGlobalBackgroundSettings(agentDir, { lanes, onlyIfExists: true });
+    return { target, action: changed ? "migrated" : "unchanged" };
+  } catch (error) {
+    if (!(error instanceof SidecarRefusedError)) throw error;
+    warnings.push(error.message);
+    return { target, action: "skipped" };
+  }
+}
 
 async function exists(target: string) {
   try {
@@ -385,12 +502,13 @@ export async function installProfile({
   const pi = await resolvePiLauncher(piLauncher);
   const markerPath = await writeProfileMarker(agentDir, root, pi);
   const warnings: string[] = [];
+  const migrations = [await migrateBackgroundCompactionSidecar(agentDir, warnings)];
   if (pi.launcher === null || pi.version !== PROFILE_PI_TARGET) {
     warnings.push(
       `No compatible Pi ${PROFILE_PI_TARGET} launcher: ${pi.launcher ?? "none found"} (${pi.version ?? "unavailable"}). Set --pi-launcher or CHOCO_PI_LAUNCHER.`,
     );
   }
-  return { agentDir, settingsPath, markerPath, warnings, links: results };
+  return { agentDir, settingsPath, markerPath, warnings, links: results, migrations };
 }
 
 function parseArgs(args: string[]) {
@@ -416,6 +534,9 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     }
     console.log(`updated: ${result.settingsPath}`);
     console.log(`updated: ${result.markerPath}`);
+    for (const migration of result.migrations) {
+      console.log(`${migration.action}: ${migration.target}`);
+    }
     for (const warning of result.warnings) console.warn(`warning: ${warning}`);
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));

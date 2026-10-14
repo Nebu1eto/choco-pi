@@ -41,6 +41,39 @@ export const LIVE_HAIKU_MODEL: Model<"anthropic-messages"> = {
   promptCache: { short: 300, long: 3600 },
 };
 
+/**
+ * Mirrors the user's refreshed catalog entry for `anthropic/claude-fable-5-1`
+ * (`<agent dir>/models-store.json`; absent from the installed SDK's built-in
+ * catalog). Typed fields only; seeded like {@link LIVE_HAIKU_MODEL}.
+ */
+export const LIVE_FABLE_MODEL: Model<"anthropic-messages"> = {
+  id: "claude-fable-5-1",
+  name: "Claude Fable 5.1",
+  api: "anthropic-messages",
+  provider: "anthropic",
+  baseUrl: "https://api.anthropic.com",
+  reasoning: true,
+  input: ["text", "image"],
+  cost: { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },
+  contextWindow: 1_000_000,
+  maxTokens: 128_000,
+  thinkingLevelMap: { off: null, xhigh: "xhigh", max: "max" },
+  compat: {
+    supportsMidConvoEffort: true,
+    supportsMidConvoSystemMessages: true,
+    supportsMidConvoToolChanges: true,
+    forceAdaptiveThinking: true,
+    supportsStrictTools: true,
+  },
+  promptCache: { short: 300, long: 3600 },
+};
+
+/** Live subjects seeded into the isolated in-memory models store. */
+export const LIVE_SEEDED_MODELS: readonly Model<"anthropic-messages">[] = [
+  LIVE_HAIKU_MODEL,
+  LIVE_FABLE_MODEL,
+];
+
 export interface LiveSpec {
   readonly provider: string;
   readonly modelId: string;
