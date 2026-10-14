@@ -34,7 +34,7 @@
     "v2UserMessageRetention": 64
   },
   "openai": {
-    "fast": false,
+    "fast": true,
     "verbosity": "low",
     "forceCachedWebSockets": true,
     "cacheKeepalive": true,
