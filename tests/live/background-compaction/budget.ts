@@ -18,6 +18,9 @@ export const APPROVED_LIVE_MODELS: readonly string[] = [
   "anthropic/claude-fable-5-1",
   "openai-codex/gpt-6-luna",
   "openai-codex/gpt-6.1-sol",
+  // Synthetic, $3/$15 per MTok (catalog): the context-window-presets estimate
+  // (40k in / 2k out) is about $0.15 a run; the 10x runaway stop near $1.50.
+  "synthetic/hf:moonshotai/Kimi-K3",
 ];
 /**
  * Expected usage per process (restart-recovery: per worker phase). Full worktree profile:
@@ -34,6 +37,10 @@ export const LIVE_EXPECTATIONS: ExpectationTable = {
   // claude-fable-5-1 ($10/$50 per MTok, 100x Haiku 5.5): about $0.80 expected,
   // so the 10x runaway stop bounds one run near $8.
   "anthropic-foreground-compaction": { requests: 5, inputTokens: 70_000, outputTokens: 4_000 },
+  // One short turn; preset changes and /status, /context are local (no request).
+  // Codex traffic rides choco-pi-codex's WebSocket, outside this fetch ledger;
+  // Synthetic (OpenAI-compatible) rides fetch, but its SSE usage is not parsed.
+  "context-window-presets": { requests: 1, inputTokens: 40_000, outputTokens: 2_000 },
 };
 export const RUNAWAY_FACTOR = 10;
 

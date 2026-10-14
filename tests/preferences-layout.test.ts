@@ -16,6 +16,7 @@ import { buildBackgroundCompactionPreferencesSections } from "../.pi/extensions/
 import {
   buildNativeSettingsSections,
   installNativeSettingsBridge,
+  MODEL_SECTION_ID,
   type NativeSettingsHost,
 } from "../.pi/extensions/lib/native-settings.ts";
 import {
@@ -23,7 +24,6 @@ import {
   PREFERENCES_LAYOUT,
 } from "../.pi/extensions/lib/preferences-layout.ts";
 import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
-import { buildContextCapSection, CONTEXT_CAP_ROW_ID } from "../.pi/extensions/model-context-cap.ts";
 import { buildAdvisorPreferencesSection } from "../.pi/packages/choco-pi-advisor/src/preferences-section.ts";
 import { DEFAULT_SETTINGS } from "../.pi/packages/choco-pi-advisor/src/settings.ts";
 import { DEFAULT_CODEX_CONVERSION_CONFIG } from "../.pi/packages/choco-pi-codex/src/adapter/activation/config.ts";
@@ -188,7 +188,6 @@ async function withProviders(run: (providers: Providers) => Promise<void>): Prom
     };
     const sections: PreferencesExtraSection[] = [
       ...buildNativeSettingsSections(),
-      buildContextCapSection(ctx),
       ...codex,
       subagents,
       advisor,
@@ -263,8 +262,11 @@ test("every provider row is placed in exactly one group or explicitly hidden", a
       [...entries, ...PREFERENCES_HIDDEN_ROWS].filter((id) => !known.has(id)),
       [],
     );
-    // The context cap and background compaction rows use their own ids.
-    assert.ok(rows.get("contextCapPolicy")?.includes(CONTEXT_CAP_ROW_ID));
+    // The retired read-only Context cap row is gone; the presets configure it.
+    assert.ok(!rows.has("contextCapPolicy"));
+    assert.ok(!providerIds.includes("contextCap"));
+    assert.ok(!entries.includes("contextCap"));
+    // The background compaction rows use their own ids.
     assert.deepEqual(rows.get("backgroundCompaction"), [
       "backgroundCompaction.enabled",
       "compactionAnthropic",
@@ -276,16 +278,21 @@ test("the Session tab groups context limits and every compaction row", () => {
   const session = PREFERENCES_LAYOUT.find((tab) => tab.id === "session");
   assert.ok(session, "the layout has a Session tab");
   const group = (label: string) => session.groups.find((entry) => entry.label === label)?.rows;
-  assert.deepEqual(group("Context"), [
-    "autocompact",
-    "contextSoftCap",
-    "autoCompactionPoint",
-    "cache-miss-notices",
-  ]);
+  assert.deepEqual(group("Context"), ["contextSoftCap", "cache-miss-notices"]);
   assert.deepEqual(group("Compaction"), [
+    "autocompact",
+    "autoCompactionPoint",
     "responsesCompaction",
     "compactionAnthropic",
     "backgroundCompaction.enabled",
+  ]);
+});
+
+test("the Model tab's Defaults group holds only the model thinking default", () => {
+  const model = PREFERENCES_LAYOUT.find((tab) => tab.id === MODEL_SECTION_ID);
+  assert.ok(model, "the layout has a Model tab");
+  assert.deepEqual(model.groups.find((entry) => entry.label === "Defaults")?.rows, [
+    "model-thinking",
   ]);
 });
 

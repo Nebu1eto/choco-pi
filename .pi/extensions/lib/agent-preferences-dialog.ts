@@ -428,7 +428,7 @@ export function buildAgentPreferencesSection(
           id: CONTEXT_SOFT_CAP_KEY,
           label: "Context soft cap",
           description:
-            "Usable context window for large-window models: strictest 250,000, strict 400,000, standard 600,000 (default), permissive 800,000 tokens; unlimited keeps the model's native window. Models under 64,000 tokens and per-model entries in context-cap.json are unaffected. Applies immediately.",
+            "Usable context window for large-window models: strictest 250,000, strict 400,000, standard 600,000 (default), permissive 800,000 tokens; unlimited keeps the model's native window. Models under 64,000 tokens are unaffected. Applies immediately.",
           currentValue: preferences.contextSoftCap,
           values: [...CONTEXT_PRESET_VALUES],
         },

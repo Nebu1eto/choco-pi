@@ -40,6 +40,8 @@ export class HostState {
   mainSessionId = "";
   foregroundObserver: ForegroundObserver | undefined;
   responseOverride: ResponseOverride | undefined;
+  /** Input tokens the default foreground response reports; undefined keeps the fixture's 10. */
+  reportedInputTokens: number | undefined;
   readonly requestBranches: RequestBranch[] = [];
   readonly wire: WireRequest[] = [];
   /** Signatures the fake server issued; any other signature is a tamper (400). */

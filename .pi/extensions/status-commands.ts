@@ -63,7 +63,6 @@ import {
   type CacheWarmingInfo,
   type StatusRow,
 } from "./session-status.ts";
-import { buildContextCapSection } from "./model-context-cap.ts";
 import {
   formatUsageReport,
   readProviderUsages,
@@ -666,7 +665,6 @@ const PREFERENCES_USAGE =
 function buildPreferencesExtraSections(ctx: ExtensionCommandContext): PreferencesExtraSection[] {
   return [
     ...buildNativeSettingsSections(),
-    buildContextCapSection(ctx),
     ...buildCodexPreferencesSections(ctx),
     ...buildSubagentPreferencesSections(ctx),
     ...buildAdvisorPreferencesSections(ctx),

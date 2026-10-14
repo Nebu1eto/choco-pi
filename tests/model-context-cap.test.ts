@@ -8,11 +8,7 @@ import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import {
-  buildContextCapSection,
-  CONTEXT_CAP_ROW_ID,
-  contextCapSummary,
   default as modelContextCap,
-  readConfig,
   resolvePolicy,
   shouldRequestCompaction,
 } from "../.pi/extensions/model-context-cap.ts";
@@ -41,7 +37,6 @@ async function resetPresets(): Promise<void> {
 }
 
 const settings: Parameters<typeof resolvePolicy>[2] = {
-  config: { models: {} },
   softCap: "standard",
   compactionPoint: "standard",
   hostReserve: 16_384,
@@ -78,7 +73,6 @@ test("standard presets cap a one-million-token model at 600K and compact at 450K
   assert.deepEqual(resolvePolicy(model(1_000_000), 1_000_000, settings), {
     cap: 600_000,
     compactAt: 450_000,
-    source: "preset",
   });
 });
 
@@ -86,41 +80,13 @@ test("smaller models keep their native window with a headroom-bounded compaction
   assert.deepEqual(resolvePolicy(model(272_000), 272_000, settings), {
     cap: 272_000,
     compactAt: 231_200,
-    source: "preset",
   });
   assert.deepEqual(resolvePolicy(model(32_000), 32_000, settings), {});
-});
-
-test("a per-model override wins over the presets", () => {
-  const overridden = {
-    ...settings,
-    config: { models: { "test-provider/one-million-context-model": { cap: 700_000 } } },
-  };
-  assert.deepEqual(resolvePolicy(model(1_000_000), 1_000_000, overridden), {
-    cap: 700_000,
-    compactAt: 450_000,
-    source: "override",
-  });
-  const optedOut = { ...settings, config: { models: { "one-million-context-model": null } } };
-  assert.deepEqual(resolvePolicy(model(1_000_000), 1_000_000, optedOut), {});
 });
 
 test("policy compaction starts only past the compaction point", () => {
   assert.equal(shouldRequestCompaction(450_000, 450_000), false);
   assert.equal(shouldRequestCompaction(450_001, 450_000), true);
-});
-
-test("the shipped profile config has headroom and no legacy keys", async () => {
-  const empty = await mkdtemp(path.join(tmpdir(), "model-context-cap-cwd-"));
-  try {
-    assert.deepEqual(await readConfig(empty), {
-      headroom: { tokens: 100_000, ratio: 0.15 },
-      models: {},
-      legacyKeys: [],
-    });
-  } finally {
-    await rm(empty, { recursive: true, force: true });
-  }
 });
 
 /** A cwd whose `.pi/extensions/context-cap.json` holds `config`. */
@@ -141,33 +107,37 @@ async function withProjectConfig(
   }
 }
 
-test("legacy static-cap keys are accepted, ignored, and noticed once per session", async () => {
+test("a context-cap.json left in a project is ignored without a notice", async () => {
   await resetPresets();
   await withProjectConfig(
-    { defaultCap: 600_000, defaultCompactAt: 550_000, appliesOver: 999_999, models: {} },
+    {
+      defaultCap: 200_000,
+      headroom: { tokens: 10_000, ratio: 0.5 },
+      models: { "test-provider/one-million-context-model": { cap: 700_000, compactAt: 500_000 } },
+    },
     async (cwd) => {
-      const config = await readConfig(cwd);
-      assert.deepEqual(config.legacyKeys, ["defaultCap", "defaultCompactAt", "appliesOver"]);
-
       const handlers = registerCap();
       const activeModel = model(1_000_000);
       const notices: [string, string][] = [];
+      let tokens = 0;
+      let compactionRequests = 0;
       const context = {
         cwd,
         model: activeModel,
         modelRegistry: { getAll: () => [activeModel] },
-        getContextUsage: () => ({ tokens: 0, contextWindow: 600_000, percent: 0 }),
-        compact: () => {},
+        getContextUsage: () => ({ tokens, contextWindow: 600_000, percent: 0 }),
+        compact: () => {
+          compactionRequests++;
+        },
         ui: { notify: (message: string, level: string) => notices.push([message, level]) },
       };
       await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, context);
-      // The legacy 550K point is ignored: standard presets govern.
+      // Standard presets govern: neither the override cap nor its point applies.
       assert.equal(activeModel.contextWindow, 600_000);
-      await handlers.get("before_agent_start")?.({ type: "before_agent_start" }, context);
+      tokens = 500_001;
       await handlers.get("agent_settled")?.({ type: "agent_settled" }, context);
-      assert.equal(notices.length, 1);
-      assert.equal(notices[0][1], "warning");
-      assert.match(notices[0][0], /defaultCap, defaultCompactAt, appliesOver/);
+      assert.equal(compactionRequests, 1, "the preset 450K point, not the 500K override, applies");
+      assert.deepEqual(notices, []);
       handlers.get("session_shutdown")?.({ type: "session_shutdown" }, context);
     },
   );
@@ -179,12 +149,17 @@ test("changing a preset re-applies the cap without a restart", async (t) => {
   const handlers = registerCap();
   const activeModel = model(1_000_000);
   let registryModel = activeModel;
+  let tokens = 0;
+  let compactionRequests = 0;
   const context = {
     cwd: process.cwd(),
     model: activeModel,
     modelRegistry: { getAll: () => [registryModel] },
-    getContextUsage: () => ({ tokens: 0, contextWindow: 600_000, percent: 0 }),
-    compact: () => {},
+    getContextUsage: () => ({ tokens, contextWindow: 600_000, percent: 0 }),
+    compact: (options: { onComplete?: () => void }) => {
+      compactionRequests++;
+      options.onComplete?.();
+    },
     ui: { notify: () => {} },
   };
   await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, context);
@@ -193,9 +168,13 @@ test("changing a preset re-applies the cap without a restart", async (t) => {
   await writeAgentPreference(CONTEXT_SOFT_CAP_KEY, "strict", agentDir);
   assert.equal(activeModel.contextWindow, 400_000);
   await writeAgentPreference(AUTO_COMPACTION_POINT_KEY, "strictest", agentDir);
-  // SAFETY: The fixture supplies every host member exercised by this test.
-  const summary = contextCapSummary(context as never);
-  assert.equal(summary, "1,000,000 → 400,000 · compact at 200,000 (Strict / Strictest)");
+  // The strictest point (200K) now triggers compaction below the old 450K point.
+  tokens = 200_000;
+  await handlers.get("agent_settled")?.({ type: "agent_settled" }, context);
+  assert.equal(compactionRequests, 0);
+  tokens = 200_001;
+  await handlers.get("agent_settled")?.({ type: "agent_settled" }, context);
+  assert.equal(compactionRequests, 1);
 
   // A scheduled re-application uses the live presets, not ones captured at session start.
   registryModel = model(1_000_000);
@@ -209,30 +188,6 @@ test("changing a preset re-applies the cap without a restart", async (t) => {
   t.mock.timers.tick(20_000);
   assert.equal(registryModel.contextWindow, 400_000);
   await resetPresets();
-});
-
-test("a per-model override is reported as such in the summary", async () => {
-  await resetPresets();
-  await withProjectConfig(
-    { models: { "test-provider/one-million-context-model": { cap: 700_000, compactAt: 500_000 } } },
-    async (cwd) => {
-      const handlers = registerCap();
-      const activeModel = model(1_000_000);
-      const context = {
-        cwd,
-        model: activeModel,
-        modelRegistry: { getAll: () => [activeModel] },
-        getContextUsage: () => ({ tokens: 0, contextWindow: 700_000, percent: 0 }),
-        compact: () => {},
-        ui: { notify: () => {} },
-      };
-      await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, context);
-      // SAFETY: The fixture supplies every host member exercised by this test.
-      const summary = contextCapSummary(context as never);
-      assert.equal(summary, "1,000,000 → 700,000 · compact at 500,000 (per-model override)");
-      handlers.get("session_shutdown")?.({ type: "session_shutdown" }, context);
-    },
-  );
 });
 
 test("compaction is requested only after the agent run settles", async () => {
@@ -387,7 +342,7 @@ test("session shutdown stops scheduled re-applications", async (t) => {
   assert.equal(registryReads, readsAfterStart);
 });
 
-test("the cap is a Model preference row instead of a command", async () => {
+test("the cap registers no command; the presets are its only configuration", () => {
   const handlers = new Map<
     string,
     (event: RuntimeValue, context: RuntimeValue) => RuntimeValue | Promise<RuntimeValue>
@@ -400,25 +355,7 @@ test("the cap is a Model preference row instead of a command", async () => {
   });
   modelContextCap(pi);
   assert.deepEqual(commands, [], "the retired /context-cap command must not come back");
-
-  const activeModel = model(1_000_000);
-  const context = {
-    cwd: process.cwd(),
-    model: activeModel,
-    modelRegistry: { getAll: () => [activeModel] },
-    getContextUsage: () => ({ tokens: 0, contextWindow: 600_000, percent: 0 }),
-    compact: () => {},
-    ui: { notify: () => {} },
-  };
-  await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, context);
-
-  // SAFETY: The fixture supplies every host member exercised by this test.
-  const section = buildContextCapSection(context as never);
-  assert.equal(section.mergeInto, "model");
-  const [row] = section.buildItems();
-  assert.equal(row.id, CONTEXT_CAP_ROW_ID);
-  assert.equal(row.currentValue, "1,000,000 → 600,000 · compact at 450,000 (Standard / Standard)");
-  assert.equal(row.values, undefined, "the row reports the policy rather than editing it");
+  assert.ok(handlers.has("session_start"));
 });
 
 type CapHandler = (

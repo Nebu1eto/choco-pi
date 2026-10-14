@@ -13,6 +13,9 @@
  *
  * A new `.pi/extensions/*.json` sidecar must join one of the two lists; a test
  * fails until it does.
+ *
+ * A file an earlier profile installed and HEAD no longer ships is listed in
+ * `RETIRED_PROFILE_FILES` and removed on install.
  */
 import { constants } from "node:fs";
 import {
@@ -94,7 +97,6 @@ export const PROFILE_LINKS: readonly (readonly [string, string])[] = [
   [".pi/agents/handoff.md", "agents/handoff.md"],
   [".pi/agents/explore.md", "agents/explore.md"],
   [".pi/extensions/apex-provider.json", "extensions/apex-provider.json"],
-  [".pi/extensions/context-cap.json", "extensions/context-cap.json"],
   [".pi/extensions/review.json", "extensions/review.json"],
 ];
 
@@ -104,6 +106,41 @@ export const PROFILE_LINKS: readonly (readonly [string, string])[] = [
  * background-compaction master switch), so they cannot be links.
  */
 export const MIGRATED_SIDECARS: readonly string[] = ["extensions/background-compaction.json"];
+
+/**
+ * Agent-directory files earlier profiles installed that HEAD no longer ships,
+ * relative to the agent directory. `extensions/context-cap.json` was replaced
+ * by the `contextSoftCap` and `autoCompactionPoint` preferences; a stale copy
+ * or link would otherwise suggest it still configures the cap.
+ */
+export const RETIRED_PROFILE_FILES: readonly string[] = ["extensions/context-cap.json"];
+
+/**
+ * Remove each retired file that is still a symlink (dangling or not) or a
+ * regular file. Anything else at that path is left in place with a warning.
+ * Returns the removed paths.
+ */
+async function removeRetiredProfileFiles(agentDir: string, warnings: string[]): Promise<string[]> {
+  const removed: string[] = [];
+  for (const relative of RETIRED_PROFILE_FILES) {
+    const target = path.resolve(agentDir, relative);
+    let isRemovable: boolean;
+    try {
+      const status = await lstat(target);
+      isRemovable = status.isSymbolicLink() || status.isFile();
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") continue;
+      throw error;
+    }
+    if (!isRemovable) {
+      warnings.push(`${target} is retired but is not a file or symlink; left in place.`);
+      continue;
+    }
+    await rm(target);
+    removed.push(target);
+  }
+  return removed;
+}
 
 const CodexCompactionSchema = Type.Object(
   {
@@ -503,12 +540,13 @@ export async function installProfile({
   const markerPath = await writeProfileMarker(agentDir, root, pi);
   const warnings: string[] = [];
   const migrations = [await migrateBackgroundCompactionSidecar(agentDir, warnings)];
+  const removed = await removeRetiredProfileFiles(agentDir, warnings);
   if (pi.launcher === null || pi.version !== PROFILE_PI_TARGET) {
     warnings.push(
       `No compatible Pi ${PROFILE_PI_TARGET} launcher: ${pi.launcher ?? "none found"} (${pi.version ?? "unavailable"}). Set --pi-launcher or CHOCO_PI_LAUNCHER.`,
     );
   }
-  return { agentDir, settingsPath, markerPath, warnings, links: results, migrations };
+  return { agentDir, settingsPath, markerPath, warnings, links: results, migrations, removed };
 }
 
 function parseArgs(args: string[]) {
@@ -537,6 +575,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     for (const migration of result.migrations) {
       console.log(`${migration.action}: ${migration.target}`);
     }
+    for (const target of result.removed) console.log(`removed: ${target}`);
     for (const warning of result.warnings) console.warn(`warning: ${warning}`);
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));

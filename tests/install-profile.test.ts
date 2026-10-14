@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { lstat, mkdir, mkdtemp, readFile, readlink, rm, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readlink,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
@@ -13,6 +22,7 @@ import {
   installProfile,
   MIGRATED_SIDECARS,
   PROFILE_LINKS,
+  RETIRED_PROFILE_FILES,
 } from "../scripts/install-profile.ts";
 
 const CodexConfigSchema = Type.Object({
@@ -532,29 +542,53 @@ test("an unreadable codex config skips the sidecar migration with a warning", as
   assert.ok(result.warnings.some((warning) => warning.includes("choco-pi-codex.json")));
 });
 
-test("a legacy context-cap.json copy is refused without backup and replaced with it", async (context) => {
+test("install removes a stale context-cap.json link and reports it once", async (context) => {
   const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-context-cap-"));
   context.after(() => rm(agentDir, { recursive: true, force: true }));
   const target = path.join(agentDir, "extensions", "context-cap.json");
-  const legacy = `${JSON.stringify({ defaultCap: 200000, defaultCompactAt: 0.8, appliesOver: 272000 })}\n`;
   await mkdir(path.dirname(target), { recursive: true });
-  await writeFile(target, legacy, "utf8");
+  // An earlier install linked the tracked file, which no longer exists: dangling.
+  await symlink(path.resolve(".pi/extensions/context-cap.json"), target);
 
-  await assert.rejects(
-    installProfile({ root: process.cwd(), agentDir }),
-    /context-cap\.json already exists; rerun with --backup/,
-  );
-  assert.equal(await readFile(target, "utf8"), legacy);
-  assert.ok((await lstat(target)).isFile());
+  const first = await installProfile({ root: process.cwd(), agentDir });
+  assert.deepEqual(first.removed, [target]);
+  assert.ok(!first.links.some((link) => link.target === target), "it is no longer linked");
+  await assert.rejects(lstat(target), { code: "ENOENT" });
 
-  const result = await installProfile({ root: process.cwd(), agentDir, backup: true });
-  const replaced = result.links.find((link) => link.target === target);
-  assert.equal(replaced?.action, "backed-up");
-  assert.equal(await readFile(replaced?.backup ?? "", "utf8"), legacy);
-  assert.equal(await readlink(target), path.resolve(".pi/extensions/context-cap.json"));
-  const current = parseJson(await readFile(target, "utf8"), SidecarSchema);
-  assert.ok("headroom" in current && "models" in current, "the link exposes the current shape");
-  assert.ok(!("defaultCap" in current));
+  const second = await installProfile({ root: process.cwd(), agentDir });
+  assert.deepEqual(second.removed, []);
+});
+
+test("install removes a stale context-cap.json copy without needing --backup", async (context) => {
+  const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-context-cap-"));
+  context.after(() => rm(agentDir, { recursive: true, force: true }));
+  const target = path.join(agentDir, "extensions", "context-cap.json");
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeFile(target, `${JSON.stringify({ headroom: { tokens: 1 }, models: {} })}\n`, "utf8");
+
+  const result = await installProfile({ root: process.cwd(), agentDir });
+  assert.deepEqual(result.removed, [target]);
+  await assert.rejects(lstat(target), { code: "ENOENT" });
+});
+
+test("a directory at a retired path is left in place with a warning", async (context) => {
+  const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-context-cap-"));
+  context.after(() => rm(agentDir, { recursive: true, force: true }));
+  const target = path.join(agentDir, "extensions", "context-cap.json");
+  await mkdir(target, { recursive: true });
+
+  const result = await installProfile({ root: process.cwd(), agentDir });
+  assert.deepEqual(result.removed, []);
+  assert.ok((await lstat(target)).isDirectory());
+  assert.ok(result.warnings.some((warning) => warning.includes(target)));
+});
+
+test("retired profile files are neither shipped, linked, nor migrated", async () => {
+  for (const target of RETIRED_PROFILE_FILES) {
+    await assert.rejects(lstat(path.resolve(".pi", target)), { code: "ENOENT" });
+    assert.ok(!PROFILE_LINKS.some(([, linkedTarget]) => linkedTarget === target));
+    assert.ok(!MIGRATED_SIDECARS.includes(target));
+  }
 });
 
 test("every profile extension sidecar is linked or migrated by the installer", async () => {
@@ -568,9 +602,20 @@ test("every profile extension sidecar is linked or migrated by the installer", a
     "--",
     ".pi/extensions",
   ]);
+  // A tracked file deleted in the working tree is no longer shipped.
+  const deleted = new Set(
+    (
+      await promisify(execFile)("git", ["ls-files", "--deleted", "--", ".pi/extensions"])
+    ).stdout.split("\n"),
+  );
   const sidecars = stdout
     .split("\n")
-    .filter((file) => path.posix.dirname(file) === ".pi/extensions" && file.endsWith(".json"));
+    .filter(
+      (file) =>
+        path.posix.dirname(file) === ".pi/extensions" &&
+        file.endsWith(".json") &&
+        !deleted.has(file),
+    );
   assert.ok(sidecars.length > 0, "the profile ships extension sidecars");
   const linked = new Set(PROFILE_LINKS.map(([source]) => source));
   const migrated = new Set(MIGRATED_SIDECARS.map((target) => `.pi/${target}`));

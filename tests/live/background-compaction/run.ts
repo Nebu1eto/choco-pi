@@ -14,6 +14,7 @@ import {
   scenario as anthropicForeground,
 } from "./scenarios/anthropic-foreground-compaction.ts";
 import { scenario as childSession } from "./scenarios/child-session-adoption.ts";
+import { scenario as contextWindowPresets } from "./scenarios/context-window-presets.ts";
 import { scenario as arbitration } from "./scenarios/host-compaction-arbitration.ts";
 import { scenario as idleInput } from "./scenarios/idle-input-adoption.ts";
 import { PENDING_SCENARIOS } from "./scenarios/pending.ts";
@@ -34,6 +35,7 @@ const SCENARIOS: readonly Scenario[] = [
   childSession,
   anthropicForeground,
   anthropicForegroundAuto,
+  contextWindowPresets,
 ];
 const FOREGROUND_TOOL_CYCLES = 6;
 const EXIT_CODES = { pass: 0, fail: 1, pending: 2 } as const;
@@ -131,13 +133,27 @@ async function recordFailure(host: Host, out: string, message: string): Promise<
 }
 
 const { values } = parseArgs({
-  options: { scenario: { type: "string" }, out: { type: "string" }, live: { type: "string" } },
+  options: {
+    scenario: { type: "string" },
+    out: { type: "string" },
+    live: { type: "string" },
+    "offline-model": { type: "string" },
+  },
   strict: true,
 });
 const names = [...SCENARIOS, ...PENDING_SCENARIOS].map((item) => item.name);
 const scratch = join("/tmp/choco-pi", process.env.PI_SESSION_ID ?? "background-compaction", "e2e");
 const pending = PENDING_SCENARIOS.find((item) => item.name === values.scenario);
 const scenario = SCENARIOS.find((item) => item.name === values.scenario);
+
+/** The offline subject a scenario offers; refuses a name it does not declare. */
+function offlineModelFor(item: Scenario, requested: string | undefined) {
+  if (requested === undefined) return item.offlineModels?.values().next().value;
+  const model = item.offlineModels?.get(requested);
+  if (!model) throw new Error(`${item.name} offers no offline model ${requested}`);
+  return model;
+}
+
 if (pending) await reportPending(pending, values.out ?? join(scratch, pending.name));
 else if (!scenario) throw new Error(`Use --scenario with one of: ${names.join(", ")}`);
 else {
@@ -147,6 +163,9 @@ else {
       ? undefined
       : { model: values.live, sourceAgentDir: sourceAgentDir() };
   if (live) requireLiveRun(scenario.name, live.model);
+  if (live && values["offline-model"] !== undefined)
+    throw new Error("--offline-model applies to offline runs only");
+  const offlineModel = live ? undefined : offlineModelFor(scenario, values["offline-model"]);
   const out =
     values.out ?? (live ? join(scratch, "live", scenario.name) : join(scratch, scenario.name));
   const host = await launch({
@@ -160,7 +179,11 @@ else {
     keepRecentTokens: scenario.keepRecentTokens,
     hostCompaction: scenario.hostCompaction,
     anthropicForeground: scenario.anthropicForeground,
-    contextCap: scenario.contextCap,
+    agentSettings: scenario.agentSettings,
+    catalog: scenario.catalog,
+    offlineModel,
+    providerOwnedTransport: scenario.providerOwnedTransport,
+    factories: scenario.factories,
     cycles: FOREGROUND_TOOL_CYCLES,
     live,
   });

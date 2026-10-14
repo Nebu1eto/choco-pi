@@ -13,7 +13,9 @@ import {
   NATIVE_COMPACTION_BUDGET_SYMBOL,
   readNativeCompactionBudget,
   type ContextPolicy,
-  type ModelContextOverride,
+  HEADROOM_MARGIN_TOKENS,
+  HEADROOM_MAX_TOKENS,
+  HEADROOM_RATIO,
 } from "../.pi/extensions/lib/context-policy.ts";
 
 interface PolicyCase {
@@ -22,7 +24,6 @@ interface PolicyCase {
   softCap: ContextSoftCap;
   point: AutoCompactionPoint;
   budget?: number;
-  override?: ModelContextOverride;
   expected: ContextPolicy;
 }
 
@@ -35,7 +36,7 @@ const cases: PolicyCase[] = [
     softCap: "standard",
     point: "standard",
     // headroom = min(0.15 × 600_000 = 90_000, 100_000) = 90_000; 450_000 < 510_000.
-    expected: { apply: true, cap: 600_000, compactAt: 450_000, headroom: 90_000, source: "preset" },
+    expected: { apply: true, cap: 600_000, compactAt: 450_000, headroom: 90_000 },
   },
   {
     name: "permissive presets above the native window collapse to it",
@@ -43,7 +44,7 @@ const cases: PolicyCase[] = [
     softCap: "permissive",
     point: "permissive",
     // cap = native; headroom = 0.15 × 500_000 = 75_000; 600_000 ≥ 425_000 → 425_000.
-    expected: { apply: true, cap: 500_000, compactAt: 425_000, headroom: 75_000, source: "preset" },
+    expected: { apply: true, cap: 500_000, compactAt: 425_000, headroom: 75_000 },
   },
   {
     name: "272K model keeps its window and compacts at cap − 15%",
@@ -51,7 +52,7 @@ const cases: PolicyCase[] = [
     softCap: "standard",
     point: "standard",
     // headroom = 0.15 × 272_000 = 40_800; 450_000 ≥ 231_200 → 231_200.
-    expected: { apply: true, cap: 272_000, compactAt: 231_200, headroom: 40_800, source: "preset" },
+    expected: { apply: true, cap: 272_000, compactAt: 231_200, headroom: 40_800 },
   },
   {
     name: "200K model: the ratio beats the host-reserve floor",
@@ -59,7 +60,7 @@ const cases: PolicyCase[] = [
     softCap: "standard",
     point: "standard",
     // headroom = max(16_384 + 8_000 = 24_384, 0.15 × 200_000 = 30_000) = 30_000.
-    expected: { apply: true, cap: 200_000, compactAt: 170_000, headroom: 30_000, source: "preset" },
+    expected: { apply: true, cap: 200_000, compactAt: 170_000, headroom: 30_000 },
   },
   {
     name: "unlimited presets are bounded by a published native-compaction budget",
@@ -73,7 +74,6 @@ const cases: PolicyCase[] = [
       cap: 1_050_000,
       compactAt: 772_000,
       headroom: 100_000,
-      source: "preset",
     },
   },
   {
@@ -82,66 +82,6 @@ const cases: PolicyCase[] = [
     softCap: "standard",
     point: "standard",
     expected: { apply: false },
-  },
-  {
-    name: "a per-model cap override wins over the soft-cap preset",
-    native: 1_050_000,
-    softCap: "strictest",
-    point: "standard",
-    override: { cap: 900_000 },
-    // headroom = min(135_000, 100_000) = 100_000; 450_000 < 800_000.
-    expected: {
-      apply: true,
-      cap: 900_000,
-      compactAt: 450_000,
-      headroom: 100_000,
-      source: "override",
-    },
-  },
-  {
-    name: "a per-model compaction override wins over the point preset",
-    native: 1_050_000,
-    softCap: "standard",
-    point: "strictest",
-    override: { compactAt: 500_000 },
-    expected: {
-      apply: true,
-      cap: 600_000,
-      compactAt: 500_000,
-      headroom: 90_000,
-      source: "override",
-    },
-  },
-  {
-    name: "a numeric override applies even below 64K",
-    native: 32_000,
-    softCap: "standard",
-    point: "standard",
-    override: 30_000,
-    // headroom floor 24_384 leaves 5_616 below the cap.
-    expected: { apply: true, cap: 30_000, compactAt: 5_616, headroom: 24_384, source: "override" },
-  },
-  {
-    name: "a null override opts the model out",
-    native: 1_050_000,
-    softCap: "standard",
-    point: "standard",
-    override: null,
-    expected: { apply: false },
-  },
-  {
-    name: "a null compactAt override disables the cap's compaction",
-    native: 1_050_000,
-    softCap: "standard",
-    point: "standard",
-    override: { cap: null, compactAt: null },
-    expected: {
-      apply: true,
-      cap: 1_050_000,
-      compactAt: undefined,
-      headroom: 100_000,
-      source: "override",
-    },
   },
 ];
 
@@ -154,7 +94,6 @@ for (const entry of cases) {
         compactionPoint: AUTO_COMPACTION_POINT_TOKENS[entry.point],
         hostReserve: HOST_RESERVE,
         budget: entry.budget,
-        override: entry.override,
       }),
       entry.expected,
     );
@@ -178,11 +117,17 @@ test("preset token tables match the documented values", () => {
   });
 });
 
-test("headroom follows context-cap.json overrides and never drops below the host reserve", () => {
-  assert.equal(computeHeadroom(600_000, HOST_RESERVE, { tokens: 50_000, ratio: 0.2 }), 50_000);
-  assert.equal(computeHeadroom(600_000, HOST_RESERVE, { ratio: 0.05 }), 30_000);
-  assert.equal(computeHeadroom(600_000, HOST_RESERVE, { tokens: 10_000 }), 24_384);
+test("headroom is fixed at min(100K, 15% of the cap) with a host-reserve floor", () => {
+  assert.equal(HEADROOM_RATIO, 0.15);
+  assert.equal(HEADROOM_MAX_TOKENS, 100_000);
+  assert.equal(HEADROOM_MARGIN_TOKENS, 8_000);
+  assert.equal(computeHeadroom(600_000, HOST_RESERVE), 90_000);
+  assert.equal(computeHeadroom(1_050_000, HOST_RESERVE), 100_000);
+  assert.equal(computeHeadroom(100_000, HOST_RESERVE), 24_384);
   assert.equal(computeHeadroom(100_000, 32_000), 40_000);
+  // The floor wins over the maximum when the host reserve is very large.
+  assert.equal(computeHeadroom(1_050_000, 120_000), 128_000);
+  assert.equal(computeHeadroom(200_000), 30_000, "Pi's default reserve applies when omitted");
 });
 
 test("a budget that leaves no room under the headroom is ignored", () => {
@@ -193,7 +138,7 @@ test("a budget that leaves no room under the headroom is ignored", () => {
       compactionPoint: 450_000,
       budget: 50_000,
     }),
-    { apply: true, cap: 600_000, compactAt: 450_000, headroom: 90_000, source: "preset" },
+    { apply: true, cap: 600_000, compactAt: 450_000, headroom: 90_000 },
   );
 });
 

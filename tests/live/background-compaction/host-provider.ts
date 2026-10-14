@@ -102,6 +102,7 @@ function defaultResponse(options: OfflineProviderOptions, dispatch: ResponseDisp
     summaryText: dispatch.summary ? fakeSummary(dispatch.index) : undefined,
     thinking: thinkingFor(options, dispatch),
     modelId: options.model.id,
+    inputTokens: dispatch.summary ? undefined : options.state.reportedInputTokens,
   });
 }
 

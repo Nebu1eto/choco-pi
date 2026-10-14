@@ -16,6 +16,10 @@ import {
 import { JsonSchema, type EvidenceRecord } from "../artifacts.ts";
 import type { CheckEvidence, Observation } from "../checks.ts";
 import type { WireRequest } from "../host-state.ts";
+import {
+  AUTO_COMPACTION_POINT_KEY,
+  CONTEXT_SOFT_CAP_KEY,
+} from "../../../../.pi/extensions/lib/agent-preferences.ts";
 import { replyPrompt } from "./prompts.ts";
 import { evidence, type Host, type Scenario } from "./types.ts";
 
@@ -25,6 +29,15 @@ const FALLBACK_NOTICE = "Anthropic server-side compaction";
 const DISABLED_NOTICE = "rejected the replayed checkpoint";
 const SETTLE_TIMEOUT_MS = 10_000;
 const SEED_BYTES = 400;
+/**
+ * The offline Anthropic mirror is a 1,000,000-token native window. Under
+ * Standard / Standard the soft cap is 600,000 and the compaction point
+ * min(450,000, 600,000 - 90,000 headroom) = 450,000 (no native budget hook
+ * answers for Anthropic). Written out, not recomputed.
+ */
+const AUTO_POINT = 450_000;
+/** Input tokens each automatic-route answer reports: past the point, under the cap. */
+const AUTO_REPORTED_INPUT = AUTO_POINT + 10_000;
 
 const LaneRequestSchema = Type.Object(
   { compaction: JsonSchema, betas: Type.Array(Type.String()) },
@@ -330,18 +343,27 @@ async function runManual(host: Host): Promise<CheckEvidence> {
 }
 
 /**
- * Automatic route: the context cap's `compactAt` (agent_settled → ctx.compact()
- * with no instructions) must reach the same foreground handler and lane.
+ * Automatic route: the preset compaction point (model-context-cap's
+ * agent_settled → ctx.compact() with no instructions) must reach the same
+ * foreground handler and lane. Offline answers report input tokens past the
+ * point, so the real policy, not a test override, requests each compaction.
  */
 async function runAutomatic(host: Host): Promise<CheckEvidence> {
   const from = mark(host);
-  await prompt(host, "HARNESS-FG-AUTO-TURN-A", "HARNESS-FG-AUTO-ACK-A");
-  await settleCompaction(host, from.checkpoints + 1);
-  await prompt(host, "HARNESS-FG-AUTO-TURN-B", "HARNESS-FG-AUTO-ACK-B");
-  // The cap fires again after turn B; let it finish before verdicts and cleanup.
-  await settleCompaction(host, from.checkpoints + 2);
+  if (host.mode === "fake") host.setReportedInputTokens(AUTO_REPORTED_INPUT);
+  try {
+    await prompt(host, "HARNESS-FG-AUTO-TURN-A", "HARNESS-FG-AUTO-ACK-A");
+    await settleCompaction(host, from.checkpoints + 1);
+    await prompt(host, "HARNESS-FG-AUTO-TURN-B", "HARNESS-FG-AUTO-ACK-B");
+    // The point is passed again after turn B; let it finish before verdicts and cleanup.
+    await settleCompaction(host, from.checkpoints + 2);
+  } finally {
+    if (host.mode === "fake") host.setReportedInputTokens(undefined);
+  }
   const { result, added } = phaseEvidence(host, from, { type: "summarize" });
   host.recorder.record("automatic-route", {
+    point: AUTO_POINT,
+    reportedInput: host.mode === "fake" ? AUTO_REPORTED_INPUT : null,
     compactions: added.length,
     reasons: recordsSince(host, from, "session_compact").length,
   });
@@ -371,11 +393,11 @@ export const scenario: Scenario = {
 export const automaticScenario: Scenario = {
   name: "anthropic-foreground-auto-compaction",
   description:
-    "Same foreground path reached automatically through the context cap's compaction point",
+    "Same foreground path reached automatically through the Standard / Standard preset compaction point",
   settings: {},
+  agentSettings: { [CONTEXT_SOFT_CAP_KEY]: "standard", [AUTO_COMPACTION_POINT_KEY]: "standard" },
   anthropicForeground: true,
   seedBytes: SEED_BYTES,
-  contextCap: { models: { "anthropic/claude-opus-5-5": { cap: 200_000, compactAt: 1 } } },
   checks: CHECKS,
   markers: ["HARNESS-FG-AUTO-TURN-A", "HARNESS-FG-AUTO-TURN-B"],
   execute: runAutomatic,

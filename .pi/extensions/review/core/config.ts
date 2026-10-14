@@ -2,8 +2,7 @@ import { isBoolean, isObject, isString, type RuntimeValue } from "../../lib/runt
 /**
  * Loading and validation for `review.json`.
  *
- * Precedence mirrors `model-context-cap.ts`: the project file
- * `<cwd>/.pi/extensions/review.json` wins, then
+ * Precedence: the project file `<cwd>/.pi/extensions/review.json` wins, then
  * `<agentDir>/extensions/review.json`, then the built-in defaults. The first
  * file that exists is used whole; files are not merged field by field.
  *

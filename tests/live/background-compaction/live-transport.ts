@@ -55,6 +55,12 @@ export function classify(payload: ArtifactInput): RequestKind {
 export interface LiveFetchOptions {
   readonly state: HostState;
   readonly origin: string;
+  /**
+   * The model's API base URL. Only requests under its path pass: a provider
+   * whose utility endpoints share the model origin (Synthetic `/v2/quotas`)
+   * keeps them blocked, so they neither reach the network nor the ledger.
+   */
+  readonly endpoint?: string;
   readonly ledger: LiveLedger;
   readonly realFetch: typeof globalThis.fetch;
   readonly block: typeof globalThis.fetch;
@@ -111,10 +117,23 @@ function rememberWire(state: HostState, sent: Sent, init: RequestInit | undefine
  * after capture, the runaway guard and the foreground observer; every other
  * origin is refused through `block`.
  */
+function withinEndpoint(
+  input: Parameters<typeof globalThis.fetch>[0],
+  endpoint: string | undefined,
+): boolean {
+  if (endpoint === undefined) return true;
+  const raw = input instanceof Request ? input.url : String(input);
+  if (!URL.canParse(raw)) return false;
+  const base = new URL(endpoint).pathname.replace(/\/+$/u, "");
+  const path = new URL(raw).pathname;
+  return base === "" || path === base || path.startsWith(`${base}/`);
+}
+
 export function liveFetch(options: LiveFetchOptions): typeof globalThis.fetch {
   const { state, ledger } = options;
   return async (input, init) => {
-    if (requestOrigin(input) !== options.origin) return options.block(input, init);
+    if (requestOrigin(input) !== options.origin || !withinEndpoint(input, options.endpoint))
+      return options.block(input, init);
     const bodyText = await bodyTextOf(input, init);
     const payload: unknown = bodyText.length ? JSON.parse(bodyText) : null;
     if (!Value.Check(InputSchema, payload)) throw new Error("Invalid serialized live transport");

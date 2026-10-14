@@ -1,6 +1,8 @@
 import type { BackgroundCompactionSettings } from "../../../../.pi/packages/choco-pi-compaction/src/background/contract.ts";
+import type { Model } from "@earendil-works/pi-ai";
+import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import type { CheckEvidence, ObservedCheck } from "../checks.ts";
-import type { ContextCapFile, launch } from "../launch.ts";
+import type { launch } from "../launch.ts";
 export type Host = Awaited<ReturnType<typeof launch>>;
 
 /** A scenario the offline (or approved live) harness drives end to end. */
@@ -15,8 +17,16 @@ export interface Scenario {
   hostCompaction?: boolean;
   /** Serve the Anthropic model with background compaction off (foreground server-side path). */
   anthropicForeground?: boolean;
-  /** Project context-cap.json written before launch. */
-  contextCap?: ContextCapFile;
+  /** Extra keys merged into the isolated agent settings.json. */
+  agentSettings?: Readonly<Record<string, string>>;
+  /** Seed every live catalog mirror and apply the worktree models.json overrides. */
+  catalog?: boolean;
+  /** Offline subjects selectable with --offline-model (first is the default). */
+  offlineModels?: ReadonlyMap<string, Model<"anthropic-messages">>;
+  /** Live: allow a model served by its own provider transport (Codex WebSocket). */
+  providerOwnedTransport?: boolean;
+  /** Extra in-host extension factories (probes) loaded after the harness tail. */
+  factories?: readonly ExtensionFactory[];
   checks: readonly ObservedCheck[];
   /** Unique texts mapping branch entries to wire payloads (recorded in the manifest). */
   markers: readonly string[];

@@ -20,8 +20,6 @@ import {
 export const STATUSLINE_SECTION_ID = "statusline";
 export const ADVANCED_SECTION_ID = "advanced";
 
-/** Row id of the Context cap row; mirrors `CONTEXT_CAP_ROW_ID` in model-context-cap.ts. */
-const CONTEXT_CAP_ROW = "contextCap";
 /** Row id the background compaction package builds. */
 const BACKGROUND_COMPACTION_ROW = "backgroundCompaction.enabled";
 /** Row id of the Anthropic compaction mode row the compaction package builds. */
@@ -83,7 +81,7 @@ export const PREFERENCES_LAYOUT: readonly PreferencesLayoutTab[] = [
         label: "Session",
         rows: [PI_MODEL_ROW_ID, THINKING_ROW_ID, PI_SCOPED_MODELS_ROW_ID, "fast"],
       },
-      { label: "Defaults", rows: ["model-thinking", CONTEXT_CAP_ROW] },
+      { label: "Defaults", rows: ["model-thinking"] },
       { label: "Codex execution", rows: ["midTurnSteering", "asyncCodeMode", "verbosity"] },
     ],
   },
@@ -91,13 +89,16 @@ export const PREFERENCES_LAYOUT: readonly PreferencesLayoutTab[] = [
     id: SESSION_SECTION_ID,
     label: "Session",
     groups: [
-      {
-        label: "Context",
-        rows: ["autocompact", "contextSoftCap", "autoCompactionPoint", "cache-miss-notices"],
-      },
+      { label: "Context", rows: ["contextSoftCap", "cache-miss-notices"] },
       {
         label: "Compaction",
-        rows: ["responsesCompaction", ANTHROPIC_COMPACTION_ROW, BACKGROUND_COMPACTION_ROW],
+        rows: [
+          "autocompact",
+          "autoCompactionPoint",
+          "responsesCompaction",
+          ANTHROPIC_COMPACTION_ROW,
+          BACKGROUND_COMPACTION_ROW,
+        ],
       },
       { label: "Input queue", rows: ["steering-mode", "follow-up-mode"] },
       { label: "Images", rows: ["block-images"] },

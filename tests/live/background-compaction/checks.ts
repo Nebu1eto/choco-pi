@@ -22,7 +22,10 @@ export type ObservedCheck =
   | "foreground-lane-request"
   | "foreground-checkpoint"
   | "foreground-replay"
-  | "no-local-fallback";
+  | "no-local-fallback"
+  | "context-window-displayed"
+  | "context-window-preset-change"
+  | "compaction-point";
 /** Checks every scenario requires, computed from launcher counters and records. */
 export type HarnessCheck = "no-secret-leak" | "no-abort" | "zero-network" | "live-accepted";
 export type CheckName = ObservedCheck | HarnessCheck;
@@ -117,6 +120,15 @@ const LiveResponseSchema = Type.Object(
   { kind: Type.String(), status: Type.Integer() },
   { additionalProperties: true },
 );
+/**
+ * A live turn whose transport the provider package owns (Codex WebSocket):
+ * no fetch response exists, so acceptance is the turn's own stop reason.
+ */
+const ProviderTurnSchema = Type.Object(
+  { transport: Type.String(), stopReason: Type.String() },
+  { additionalProperties: true },
+);
+const ACCEPTED_STOP_REASONS: ReadonlySet<string> = new Set(["stop", "length", "toolUse"]);
 
 function rejectedResponse(record: EvidenceRecord): string[] {
   if (!Value.Check(LiveResponseSchema, record.data)) return [];
@@ -132,12 +144,24 @@ function liveAccepted(evidence: CheckEvidence): Verdict {
   const responses = evidence.records.filter(
     (record) => record.kind === "live-response" && Value.Check(LiveResponseSchema, record.data),
   );
+  const turns = evidence.records.filter(
+    (record) =>
+      record.kind === "live-provider-turn" && Value.Check(ProviderTurnSchema, record.data),
+  );
   const reasons = responses.flatMap(rejectedResponse);
-  if (!responses.length) reasons.push("No live provider response observed");
+  for (const turn of turns)
+    if (
+      Value.Check(ProviderTurnSchema, turn.data) &&
+      !ACCEPTED_STOP_REASONS.has(turn.data.stopReason)
+    )
+      reasons.push(
+        `${turn.data.transport} turn #${turn.sequence} ended with stop reason ${turn.data.stopReason}`,
+      );
+  if (!responses.length && !turns.length) reasons.push("No live provider response observed");
   return verdict(
     "live-accepted",
     reasons,
-    responses.map((record) => record.sequence),
+    [...responses, ...turns].map((record) => record.sequence),
   );
 }
 

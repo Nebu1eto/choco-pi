@@ -1,4 +1,4 @@
-import type { AssistantMessage, JsonObject, Model } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, JsonObject, Model } from "@earendil-works/pi-ai";
 
 /** Deterministic Anthropic SSE fixtures served by the scoped fake transport only. */
 export const FAKE_MODEL: Model<"anthropic-messages"> = {
@@ -66,10 +66,7 @@ export function fakeSummary(index: number): string {
   return TEXT_SUMMARY.replace(FAKE_CHECKPOINT_MARKER, `${FAKE_CHECKPOINT_MARKER}-${index}`);
 }
 
-export function assistantMessage(
-  text: string,
-  model: Model<"anthropic-messages"> = FAKE_MODEL,
-): AssistantMessage {
+export function assistantMessage(text: string, model: Model<Api> = FAKE_MODEL): AssistantMessage {
   return {
     role: "assistant",
     content: [{ type: "text", text }],
@@ -114,6 +111,8 @@ export interface FakeTurn {
   /** Signed thinking emitted before the text block (thinking-enabled sessions). */
   readonly thinking?: { readonly text: string; readonly signature: string };
   readonly modelId: string;
+  /** `usage.input_tokens` the response reports (default 10). */
+  readonly inputTokens?: number;
 }
 
 function stepLabel(turn: FakeTurn): string {
@@ -179,7 +178,7 @@ export function fakeResponse(turn: FakeTurn): Response {
         model: turn.modelId,
         content: [],
         stop_reason: null,
-        usage: { input_tokens: 10, output_tokens: 0 },
+        usage: { input_tokens: turn.inputTokens ?? 10, output_tokens: 0 },
       },
     },
     ...thinkingFrames(turn),

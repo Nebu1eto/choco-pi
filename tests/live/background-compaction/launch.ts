@@ -1,6 +1,6 @@
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, readFile, rm, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
-import { InMemoryModelsStore, type Credential, type Model } from "@earendil-works/pi-ai";
+import { InMemoryModelsStore, type Api, type Credential, type Model } from "@earendil-works/pi-ai";
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -54,6 +54,7 @@ import { LiveLedger } from "./live-ledger.ts";
 import {
   credentialSecrets,
   isAnthropicModel,
+  LIVE_PROVIDER_MIRRORS,
   LIVE_SEEDED_MODELS,
   parseLiveSpec,
   readLiveCredential,
@@ -92,8 +93,21 @@ export interface LaunchOptions {
    * off, for the foreground server-side path.
    */
   anthropicForeground?: boolean;
-  /** Project `.pi/extensions/context-cap.json` (per-model cap and compaction point). */
-  contextCap?: ContextCapFile;
+  /** Extra keys merged into the isolated agent `settings.json` (e.g. context presets). */
+  agentSettings?: Readonly<Record<string, string>>;
+  /**
+   * Seed every live catalog mirror into the in-memory models store and apply the
+   * worktree `.pi/models.json` overrides (the real agent dir symlinks it), copied
+   * into the isolated agent dir. Both tiers.
+   */
+  catalog?: boolean;
+  /** Offline: serve this model instead of the default fixture (harness-offline provider only). */
+  offlineModel?: Model<"anthropic-messages">;
+  /**
+   * Live: allow a non-Anthropic model served by its own provider transport (for
+   * Codex, choco-pi-codex's WebSocket, which global fetch does not see).
+   */
+  providerOwnedTransport?: boolean;
   /** Live tier: real provider transport for this approved provider/model. */
   live?: LiveLaunch;
   /** Reuse a caller-owned runtime tree (agent/project/sessions/home) across launches. */
@@ -108,10 +122,6 @@ export interface LiveLaunch {
   readonly model: string;
   /** The real agent dir holding auth.json, resolved before any launcher scoped the env. */
   readonly sourceAgentDir: string;
-}
-
-export interface ContextCapFile {
-  readonly models: Readonly<Record<string, { readonly cap: number; readonly compactAt: number }>>;
 }
 
 /** Live inputs read once before the launcher scopes the process. */
@@ -142,6 +152,9 @@ function copyOptions(input: LaunchOptions): LaunchOptions {
     ...input,
     factories: [...(input.factories ?? [])],
     settings: structuredClone(input.settings ?? {}),
+    agentSettings: input.agentSettings === undefined ? undefined : { ...input.agentSettings },
+    offlineModel:
+      input.offlineModel === undefined ? undefined : structuredClone(input.offlineModel),
     live: input.live === undefined ? undefined : { ...input.live },
   };
 }
@@ -166,48 +179,91 @@ function globalFetchFor(
   state: HostState,
   route: {
     readonly live: LiveInputs | undefined;
-    readonly model: Model<"anthropic-messages">;
+    readonly model: Model<Api>;
+    readonly offline: Model<"anthropic-messages"> | undefined;
     readonly realFetch: typeof globalThis.fetch;
     readonly scriptedLane: boolean;
   },
 ): typeof globalThis.fetch {
   const { live, model, realFetch } = route;
   const block = blockedFetch(state);
-  if (!live) return route.scriptedLane ? scriptedLaneFetch(state.recorder, model, block) : block;
+  if (!live)
+    return route.scriptedLane && route.offline
+      ? scriptedLaneFetch(state.recorder, route.offline, block)
+      : block;
   return liveFetch({
     state,
     origin: new URL(model.baseUrl).origin,
+    endpoint: model.baseUrl,
     ledger: live.ledger,
     realFetch,
     block,
   });
 }
 
-async function liveRuntime(credentials: ReadOnlyMemoryCredentials, live: LiveInputs) {
-  await credentials.seedAndSeal(live.provider, live.credential);
+/** Writes the given catalog mirrors into an in-memory store, one entry per provider. */
+async function seededStore(models: readonly Model<Api>[]): Promise<InMemoryModelsStore> {
   const modelsStore = new InMemoryModelsStore();
-  const seeded = LIVE_SEEDED_MODELS.find(
-    (model) => model.provider === live.provider && model.id === live.modelId,
-  );
-  if (seeded)
+  const byProvider = new Map<string, Model<Api>[]>();
+  for (const model of models)
+    byProvider.set(model.provider, [...(byProvider.get(model.provider) ?? []), model]);
+  for (const [provider, list] of byProvider)
     // The runtime prefers a stored catalog only when it is newer than the built-in data.
-    await modelsStore.write(live.provider, {
-      models: [seeded],
+    await modelsStore.write(provider, {
+      models: list,
       checkedAt: Date.now(),
       lastModified: Date.now(),
     });
-  // Loads the in-memory store; allowModelNetwork=false keeps catalogs off the network.
-  return ModelRuntime.create({
-    credentials,
-    modelsStore,
-    allowModelNetwork: false,
-    modelsPath: null,
-  });
+  return modelsStore;
 }
 
-async function createRuntime(credentials: ReadOnlyMemoryCredentials, live: LiveInputs | undefined) {
-  if (live) return liveRuntime(credentials, live);
+interface CatalogPlan {
+  /** Seed every live mirror (not only the live subject). */
+  readonly all: boolean;
+  /** Isolated copy of the worktree models.json, or null for none. */
+  readonly modelsPath: string | null;
+}
+
+async function liveRuntime(
+  credentials: ReadOnlyMemoryCredentials,
+  live: LiveInputs,
+  catalog: CatalogPlan,
+) {
+  await credentials.seedAndSeal(live.provider, live.credential);
+  const seeded = catalog.all
+    ? LIVE_SEEDED_MODELS
+    : LIVE_SEEDED_MODELS.filter(
+        (model) => model.provider === live.provider && model.id === live.modelId,
+      );
+  // Loads the in-memory store; allowModelNetwork=false keeps catalogs off the network.
+  const runtime = await ModelRuntime.create({
+    credentials,
+    modelsStore: await seededStore(seeded),
+    allowModelNetwork: false,
+    modelsPath: catalog.modelsPath,
+  });
+  // An extension-owned provider (Synthetic) exists only once its extension
+  // registers it; register its static mirror so the live model resolves first.
+  const mirror = LIVE_PROVIDER_MIRRORS.get(live.provider);
+  if (mirror && !runtime.getModel(live.provider, live.modelId))
+    runtime.registerProvider(live.provider, mirror);
+  return runtime;
+}
+
+async function createRuntime(
+  credentials: ReadOnlyMemoryCredentials,
+  live: LiveInputs | undefined,
+  catalog: CatalogPlan,
+) {
+  if (live) return liveRuntime(credentials, live, catalog);
   credentials.seal();
+  if (catalog.all)
+    return ModelRuntime.create({
+      credentials,
+      modelsStore: await seededStore(LIVE_SEEDED_MODELS),
+      allowModelNetwork: false,
+      modelsPath: catalog.modelsPath,
+    });
   return ModelRuntime.create({
     credentials,
     modelsStore: new InMemoryModelsStore(),
@@ -217,11 +273,15 @@ async function createRuntime(credentials: ReadOnlyMemoryCredentials, live: LiveI
   });
 }
 
-function liveModel(runtime: ModelRuntime, live: LiveInputs): Model<"anthropic-messages"> {
+function liveModel(
+  runtime: ModelRuntime,
+  live: LiveInputs,
+  providerOwnedTransport: boolean,
+): Model<Api> {
   const model = runtime.getModel(live.provider, live.modelId);
   if (!model)
     throw new Error(`Live model ${live.launch.model} unavailable in the isolated runtime`);
-  if (!isAnthropicModel(model))
+  if (!isAnthropicModel(model) && !providerOwnedTransport)
     throw new Error("Live driver serves anthropic-messages models only");
   return model;
 }
@@ -256,18 +316,18 @@ async function writeConfig(
   dirs: RuntimeDirs,
   sidecarText: string,
   settings: SettingsManager,
-  contextCap: ContextCapFile | undefined,
+  agentSettings: Readonly<Record<string, string>> | undefined,
 ): Promise<void> {
   const hostSettingsText = `${JSON.stringify(settings.getSettings())}\n`;
+  const agentSettingsText =
+    agentSettings === undefined
+      ? hostSettingsText
+      : `${JSON.stringify({ ...settings.getSettings(), ...agentSettings })}\n`;
   const sidecarPath = join(dirs.projectDir, ".pi", "extensions", "background-compaction.json");
-  const capPath = join(dirs.projectDir, ".pi", "extensions", "context-cap.json");
   await Promise.all([
     writeFile(sidecarPath, sidecarText, { mode: 0o600 }),
     writeFile(join(dirs.projectDir, ".pi", "settings.json"), hostSettingsText, { mode: 0o600 }),
-    writeFile(join(dirs.agentDir, "settings.json"), hostSettingsText, { mode: 0o600 }),
-    ...(contextCap === undefined
-      ? []
-      : [writeFile(capPath, `${JSON.stringify(contextCap)}\n`, { mode: 0o600 })]),
+    writeFile(join(dirs.agentDir, "settings.json"), agentSettingsText, { mode: 0o600 }),
   ]);
 }
 
@@ -468,7 +528,7 @@ interface LaunchedParts {
   readonly session: AgentSession;
   readonly manager: SessionManager;
   readonly credentials: ReadOnlyMemoryCredentials;
-  readonly model: Model<"anthropic-messages">;
+  readonly model: Model<Api>;
   readonly dirs: RuntimeDirs;
   readonly markers: ReturnType<HostState["book"]["attach"]>;
   readonly consumerProbe: ReturnType<typeof installConsumerProbe>;
@@ -542,6 +602,11 @@ function launchedHost(parts: LaunchedParts) {
     setResponseOverride: (override: ResponseOverride | undefined) => {
       current();
       state.responseOverride = override;
+    },
+    /** Offline: `usage.input_tokens` of default foreground responses (undefined restores 10). */
+    setReportedInputTokens: (tokens: number | undefined) => {
+      current();
+      state.reportedInputTokens = tokens;
     },
     reload: async () => {
       current();
@@ -649,20 +714,31 @@ export async function launch(input: LaunchOptions) {
       keepRecentTokens: options.keepRecentTokens ?? 1,
       hostCompaction: options.hostCompaction ?? false,
     });
-    await writeConfig(dirs, sidecarText, settings, options.contextCap);
+    await writeConfig(dirs, sidecarText, settings, options.agentSettings);
+    const catalog: CatalogPlan = {
+      all: options.catalog === true,
+      modelsPath: options.catalog === true ? join(dirs.agentDir, "models.json") : null,
+    };
+    // The real agent dir's models.json is a symlink to the worktree copy.
+    if (catalog.modelsPath !== null)
+      await copyFile(join(WORKTREE, ".pi", "models.json"), catalog.modelsPath);
     if (live) await copyLiveSystemPrompt(state, dirs, live);
     current();
     const credentials = new ReadOnlyMemoryCredentials();
-    const runtime = await createRuntime(credentials, live);
+    const runtime = await createRuntime(credentials, live, catalog);
     current();
-    const model: Model<"anthropic-messages"> = live
-      ? liveModel(runtime, live)
+    const offline: Model<"anthropic-messages"> | undefined = live
+      ? undefined
       : anthropic
         ? FAKE_ANTHROPIC_MODEL
-        : FAKE_MODEL;
+        : (options.offlineModel ?? FAKE_MODEL);
+    const model: Model<Api> = live
+      ? liveModel(runtime, live, options.providerOwnedTransport === true)
+      : (offline ?? FAKE_MODEL);
     globalThis.fetch = globalFetchFor(state, {
       live,
       model,
+      offline,
       realFetch,
       scriptedLane: options.anthropicForeground === true,
     });
@@ -683,13 +759,13 @@ export async function launch(input: LaunchOptions) {
     state.issuedSignatures.add(NATIVE_SIGNATURE);
     if (sidecar.text) owned.releases.push(installTextFakeFactory(recorder, modelRegistry));
     // Live: production's default native factory, capture and lane transport run unmodified.
-    if (sidecar.anthropicNative && !live)
-      owned.releases.push(installAnthropicFakeFactory(recorder, model, apiKey));
-    const reregister = live
+    if (sidecar.anthropicNative && offline)
+      owned.releases.push(installAnthropicFakeFactory(recorder, offline, apiKey));
+    const reregister = !offline
       ? () => {}
       : registerOfflineProvider(runtime, {
           state,
-          model,
+          model: offline,
           apiKey,
           nativeCapture: anthropic,
           toolCycles: options.cycles ?? 2,

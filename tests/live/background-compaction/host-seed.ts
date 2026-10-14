@@ -1,4 +1,4 @@
-import type { Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import type { SessionEntry, SessionManager } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
@@ -65,7 +65,7 @@ function addEntryTexts(list: EntryMarker[], entry: SessionEntry): void {
 export interface SeedOptions {
   readonly namespace?: string;
   readonly bytes?: number;
-  readonly model: Model<"anthropic-messages">;
+  readonly model: Model<Api>;
 }
 
 /** Seeds the frozen prefix through the real SessionManager; returns markers in branch order. */
