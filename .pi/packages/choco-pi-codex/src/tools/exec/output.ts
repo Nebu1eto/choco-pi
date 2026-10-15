@@ -42,17 +42,22 @@ function stripTerminalControlSequences(text: string): string {
     .replaceAll(ESCAPE, "");
 }
 
+// C0 controls except tab, newline and carriage return, plus the interlinear
+// annotation characters U+FFF9..U+FFFB. Built like the escape patterns above
+// so no control character appears in a regex literal.
+const BINARY_OUTPUT_CLASS = `[${String.fromCodePoint(0)}-${String.fromCodePoint(8)}${String.fromCodePoint(0x0b)}${String.fromCodePoint(0x0c)}${String.fromCodePoint(0x0e)}-${String.fromCodePoint(0x1f)}\\ufff9-\\ufffb]`;
+const BINARY_OUTPUT_CHARS = new RegExp(BINARY_OUTPUT_CLASS, "u");
+const BINARY_OUTPUT_CHARS_GLOBAL = new RegExp(BINARY_OUTPUT_CLASS, "gu");
+
+/**
+ * Drop control characters that corrupt a transcript. One regex pass: the
+ * former `Array.from(text).filter(...)` built an array of one-char strings per
+ * chunk, ~250 MB of transient heap for an 8 MB read, and that stall let the
+ * bridge's bounded unread window overflow.
+ */
 function sanitizeBinaryOutput(text: string): string {
-  return Array.from(text)
-    .filter((char) => {
-      const code = char.codePointAt(0);
-      if (code === undefined) return false;
-      if (code === 0x09 || code === 0x0a || code === 0x0d) return true;
-      if (code <= 0x1f) return false;
-      if (code >= 0xfff9 && code <= 0xfffb) return false;
-      return true;
-    })
-    .join("");
+  if (!BINARY_OUTPUT_CHARS.test(text)) return text;
+  return text.replace(BINARY_OUTPUT_CHARS_GLOBAL, "");
 }
 
 export function normalizePipeOutput(text: string): string {

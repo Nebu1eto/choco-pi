@@ -109,7 +109,20 @@ const MAX_COMPLETED_SESSION_HISTORY = 32;
 const MAX_COMPLETED_SESSION_OUTPUT_CHARS = 64 * 1024;
 const MAX_COMPLETED_SESSION_OUTPUT_TOKENS = MAX_COMPLETED_SESSION_OUTPUT_CHARS / 4;
 const DEFAULT_MAX_TTY_SESSION_BUFFER_CHARS = 1024 * 1024;
-const DEFAULT_MAX_PIPE_SESSION_BUFFER_CHARS = 256 * 1024 * 1024;
+/**
+ * Retained output of a pipe session, in chars.
+ *
+ * The buffer is a JS string grown by concatenation and trimmed by slicing, so
+ * V8 flattens it on every trim and briefly holds the old and new copies plus
+ * the pending chunks. At the former 256 MiB cap a child writing ~1.2 GB
+ * (a perl pass over a 1 GB disassembly) pushed the heap past 2 GB and, on a
+ * host already carrying a large session, past the 4 GB V8 limit: the process
+ * died in `String::SlowFlatten` (2026-10-16). Readers only ever receive
+ * `max_output_tokens` x 4 chars of tail and `original_token_count` is
+ * offset-based, so dropping the head early loses nothing observable. 8 MiB
+ * covers a 2M-token read, eight times the tty cap.
+ */
+const DEFAULT_MAX_PIPE_SESSION_BUFFER_CHARS = 8 * 1024 * 1024;
 const TERMINATE_ESCALATE_MS = 2_000;
 
 export function createExecSessionManager(
@@ -230,13 +243,29 @@ export function createExecSessionManager(
 
   function appendOutput(session: ExecSession, text: string): void {
     if (text.length === 0) return;
-    const output = session.tty ? text : normalizePipeOutput(text);
-    session.buffer += output;
-    session.outputVersion += 1;
     const maxSessionBufferChars =
       configuredMaxSessionBufferChars ??
       (session.tty ? DEFAULT_MAX_TTY_SESSION_BUFFER_CHARS : DEFAULT_MAX_PIPE_SESSION_BUFFER_CHARS);
-    if (session.buffer.length > maxSessionBufferChars) {
+    // Only the last `maxSessionBufferChars` of a read can survive the trim
+    // below, so drop the head before normalizing it. Normalizing is linear in
+    // the chunk and this keeps the poll loop ahead of the bridge's bounded
+    // unread window; the dropped head still counts toward the offsets.
+    let raw = text;
+    if (!session.tty && raw.length > maxSessionBufferChars) {
+      const bounded = truncateToTail(raw, maxSessionBufferChars);
+      session.bufferStartOffset += session.buffer.length + bounded.removed;
+      session.buffer = "";
+      raw = bounded.output;
+    }
+    const output = session.tty ? raw : normalizePipeOutput(raw);
+    session.buffer += output;
+    session.outputVersion += 1;
+    // Trim only once the buffer has doubled: V8 copies the whole string on
+    // each trim, so trimming on every read once the buffer is full copies
+    // the full cap per small read (about 1000x write amplification at 8 KiB
+    // reads). That stall let the bridge drop unread output. Readers tail the
+    // buffer anyway, so up to 2x the cap may be retained between trims.
+    if (session.buffer.length > maxSessionBufferChars * 2) {
       const bounded = truncateToTail(session.buffer, maxSessionBufferChars);
       session.buffer = bounded.output;
       session.bufferStartOffset += bounded.removed;
