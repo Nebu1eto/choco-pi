@@ -1,6 +1,7 @@
 import type { ExecSessionSnapshot, UnifiedExecResult } from "./session-manager.ts";
 import {
   consumeOutput,
+  formatDroppedOutputNotice,
   generateChunkId,
   peekOutputSince,
   peekUnconsumedOutput,
@@ -15,17 +16,32 @@ export interface ExecResultSessionState extends ExecOutputSessionState {
   startedAt: number;
   updatedAt: number;
   terminating: boolean;
+  /** Output chunks the bridge discarded unread; undefined for sessions that cannot know. */
+  droppedChunks?: number | undefined;
+  /** `droppedChunks` already reported in a result; the rest is reported once more. */
+  droppedChunksReported?: number | undefined;
 }
 
 function fromSnapshot(
   session: ExecResultSessionState,
   waitMs: number,
   snapshot: { output: string; original_token_count?: number | undefined },
+  consume = false,
 ): UnifiedExecResult {
+  let output = snapshot.output;
+  // The in-stream notice can fall outside the returned tail, so repeat the
+  // not-yet-reported drops at the head of this result. Only a consuming
+  // result marks them reported; peeks and progress snapshots repeat them.
+  const dropped = session.droppedChunks ?? 0;
+  const reported = session.droppedChunksReported ?? 0;
+  if (dropped > reported) {
+    output = formatDroppedOutputNotice(dropped - reported).trimStart() + output;
+    if (consume) session.droppedChunksReported = dropped;
+  }
   const result: UnifiedExecResult = {
     chunk_id: generateChunkId(),
     wall_time_seconds: waitMs / 1000,
-    output: snapshot.output,
+    output,
   };
   if (snapshot.original_token_count !== undefined)
     result.original_token_count = snapshot.original_token_count;
@@ -42,7 +58,7 @@ export function makeExecResult<TSession extends ExecResultSessionState>(
   deleteSessionIfDrained: (sessionId: number) => void,
 ): UnifiedExecResult {
   const consumed = consumeOutput(session, maxOutputTokens);
-  const result = fromSnapshot(session, waitMs, consumed);
+  const result = fromSnapshot(session, waitMs, consumed, true);
   if (session.exitCode === undefined || session.exitCode === null) {
     exposeSession(session);
   } else if (session.emittedOffset === session.bufferStartOffset + session.buffer.length) {

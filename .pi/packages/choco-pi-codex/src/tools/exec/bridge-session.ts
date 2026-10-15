@@ -1,6 +1,7 @@
 import { StringDecoder } from "node:string_decoder";
 import { getCodexShellArgs } from "../../adapter/prompt/runtime-shell.ts";
 import { chunkToBytes, createExecBridgeClient, type BridgeReadResponse } from "./bridge-client.ts";
+import { formatDroppedOutputNotice } from "./output.ts";
 
 const EXIT_OUTPUT_GRACE_MS = 100;
 
@@ -28,6 +29,8 @@ export interface BridgeExecSession {
   interactive: boolean;
   nextEmptyPollYieldMs?: number | undefined;
   lastSeq: number;
+  /** Chunks the bridge discarded before the host read them (see {@link poll}). */
+  droppedChunks: number;
   startedAt: number;
   updatedAt: number;
   finalized: boolean;
@@ -100,7 +103,22 @@ export function createBridgeSessionRuntime(
       wait_ms: waitMs,
     });
     let receivedOutput = false;
-    for (const chunk of response.chunks ?? []) {
+    const chunks = response.chunks ?? [];
+    // The bridge keeps a bounded ring (about 8 MiB) of unread output per
+    // process and discards the oldest chunks when the host does not read in
+    // time, for example while the event loop is stalled. The discard is only
+    // visible as a gap before the first returned chunk; surface it in the
+    // transcript so the reader never mistakes a truncated head for the whole
+    // output. `nextSeq` alone is not evidence: the bridge spends sequence
+    // numbers on exit records that never arrive as chunks.
+    const firstSeq = chunks[0]?.seq;
+    if (firstSeq !== undefined && firstSeq > session.lastSeq + 1) {
+      const dropped = firstSeq - session.lastSeq - 1;
+      session.droppedChunks += dropped;
+      hooks.onOutput(session, formatDroppedOutputNotice(dropped));
+      session.lastSeq = firstSeq - 1;
+    }
+    for (const chunk of chunks) {
       hooks.onOutput(
         session,
         session.outputDecoders[chunk.stream].write(chunkToBytes(chunk.chunk)),
@@ -178,6 +196,7 @@ export function createBridgeSessionRuntime(
       listeners: new Set(),
       interactive: Boolean(input.tty),
       lastSeq: 0,
+      droppedChunks: 0,
       startedAt: Date.now(),
       updatedAt: Date.now(),
       finalized: false,

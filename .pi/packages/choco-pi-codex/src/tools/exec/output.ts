@@ -1,12 +1,23 @@
 import { randomBytes } from "node:crypto";
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 10_000;
+/** Upper bound of one exec_bridge output chunk, in bytes (observed 8193). */
+const BRIDGE_CHUNK_BYTES = 8 * 1024;
 const ESCAPE = String.fromCodePoint(0x1b);
 const BELL = String.fromCodePoint(0x07);
 const OSC_SEQUENCE = new RegExp(`${ESCAPE}\\][^${BELL}${ESCAPE}]*(?:${BELL}|${ESCAPE}\\\\)`, "g");
 const DCS_SEQUENCE = new RegExp(`${ESCAPE}[P_X^][\\s\\S]*?${ESCAPE}\\\\`, "g");
 const CSI_SEQUENCE = new RegExp(`${ESCAPE}\\[[0-?]*[ -/]*[@-~]`, "g");
 const TWO_BYTE_ESCAPE = new RegExp(`${ESCAPE}[@-_]`, "g");
+
+/**
+ * Transcript line for output the bridge discarded before the host read it.
+ * Chunk count is exact; the byte figure is an upper bound.
+ */
+export function formatDroppedOutputNotice(droppedChunks: number): string {
+  const kib = Math.ceil((droppedChunks * BRIDGE_CHUNK_BYTES) / 1024);
+  return `\n[exec_bridge discarded ${droppedChunks} unread output chunk${droppedChunks === 1 ? "" : "s"} (up to ${kib} KiB) while the host was busy; this output is incomplete]\n`;
+}
 
 export interface ExecOutputSessionState {
   buffer: string;
