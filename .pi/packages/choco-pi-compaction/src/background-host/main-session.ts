@@ -303,7 +303,7 @@ function installMainOwner(
     pendingRoute: undefined,
     manualCandidate: undefined,
     manualSerial: 0,
-    manualFollow: undefined,
+    hostCompactUnwinding: false,
     lastCtx: ctx,
     cleanup,
   };

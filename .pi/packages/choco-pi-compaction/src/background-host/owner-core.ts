@@ -17,14 +17,17 @@ import {
   type CoordinatorPort,
   createCoordinator,
   type SnapshotContext,
+  type SnapshotRefused,
 } from "../background/coordinator.ts";
 import { isBackendEnabled } from "../background/settings.ts";
+import { TEXT_BACKEND_ID } from "../background/text-backend.ts";
 import { deliveredAdoptionsFor } from "../background/registry.ts";
 import {
   findPrefixInvalidation,
   freezeSnapshot,
   isSnapshotRefusal,
   type PrefixSnapshot,
+  type SnapshotRefusal,
 } from "../background/snapshot.ts";
 import { isStaleContextError } from "../lifecycle.ts";
 import { type AdoptionRoute, readAdoptionIdentity } from "./adoption-signal.ts";
@@ -86,6 +89,8 @@ interface OwnerCoreState {
   readonly spec: OwnerSpec;
   readonly options: BackgroundCompactionOptions;
   readonly backendId: string | undefined;
+  /** Every resolved lane; the threshold route may fall back from a native lane to text. */
+  readonly backendIds: readonly string[];
   readonly snapshots: Map<string, PrefixSnapshot>;
   branchEpoch: number;
   lastLeaf: string | undefined;
@@ -106,6 +111,7 @@ export async function createOwnerCore(
     spec,
     options,
     backendId,
+    backendIds: [...backends.keys()],
     snapshots: new Map(),
     branchEpoch: 0,
     lastLeaf: undefined,
@@ -223,25 +229,33 @@ function freezeAt(
   return result;
 }
 
-function freeze(state: OwnerCoreState, context: SnapshotContext): FrozenSnapshot | null {
+function freeze(state: OwnerCoreState, context: SnapshotContext): FrozenSnapshot | SnapshotRefused {
   const record = context.recoveryRecord;
   // Recovery reconstructs the recorded cut from the full branch; it never
   // reselects a later cut and never starts a paid preparation.
   const selected =
     record === undefined
       ? freezeFresh(state, context)
-      : freezeAt(state, state.spec.sessionManager.getBranch(), record.identity.cutEntryId, context);
-  if (selected === undefined) return null;
+      : (freezeAt(
+          state,
+          state.spec.sessionManager.getBranch(),
+          record.identity.cutEntryId,
+          context,
+        ) ?? refusedCut("no-legal-cut", false));
+  if (isSnapshotRefusal(selected)) return { refused: true, detail: selected.detail };
   state.snapshots.set(selected.prefixFingerprint, selected);
   return selected;
 }
 
-function freezeFresh(state: OwnerCoreState, context: SnapshotContext): PrefixSnapshot | undefined {
+function freezeFresh(
+  state: OwnerCoreState,
+  context: SnapshotContext,
+): PrefixSnapshot | SnapshotRefusal {
   const base = freezeSnapshot(
     context.entries,
     freezeOptions(state, context, { keepRecentTokens: keepRecentTokens(state.spec) }),
   );
-  if (isSnapshotRefusal(base)) return undefined;
+  if (isSnapshotRefusal(base)) return base;
   // Wire-replay cut rules bind only the lane that replays the wire.
   if (context.backendId !== ANTHROPIC_BACKEND_ID) return base;
   return legalAnthropicCut(state, base, context);
@@ -252,7 +266,7 @@ function legalAnthropicCut(
   state: OwnerCoreState,
   base: PrefixSnapshot,
   context: SnapshotContext,
-): PrefixSnapshot | undefined {
+): PrefixSnapshot | SnapshotRefusal {
   const capture = selectCapture(
     capturesFor(state.spec.sessionId),
     base.cutEntryId,
@@ -260,9 +274,18 @@ function legalAnthropicCut(
   );
   if (capture === undefined) return base;
   const legal = chooseLegalCutEntry(capture, base.cutEntryId);
-  if (legal === "defer") return undefined;
+  if (legal === "defer") return refusedCut("no-legal-cut", true);
   if (legal === base.cutEntryId) return base;
-  return freezeAt(state, context.entries, legal, context);
+  return (
+    freezeAt(state, context.entries, legal, context) ?? refusedCut("nothing-to-summarize", true)
+  );
+}
+
+function refusedCut(
+  detail: "no-legal-cut" | "nothing-to-summarize",
+  retryable: boolean,
+): SnapshotRefusal {
+  return { ok: false, reason: "no-legal-cut", retryable, detail };
 }
 
 function observeUsage(
@@ -282,7 +305,35 @@ function observeUsage(
   rearmAfterFailure(state, status);
   if (!state.armed || ratio < settings.prepareAt || now(state) < state.retryAfter) return;
   if (OUTSTANDING.has(status.state)) return;
-  requestThresholdPreparation(state, coordinator, backendId);
+  const lane = thresholdLane({
+    selected: backendId,
+    backendIds: state.backendIds,
+    hasAnthropicCapture: capturesFor(state.spec.sessionId).length > 0,
+    status,
+  });
+  requestThresholdPreparation(state, coordinator, lane);
+}
+
+/**
+ * The lane for the next threshold preparation. A native lane that cannot
+ * serve (Anthropic without a wire capture of this session, or a native lane
+ * whose last attempt refused the cut) yields to the text lane when enabled,
+ * so the automatic route does not keep re-requesting a lane that refuses.
+ */
+export function thresholdLane(input: {
+  readonly selected: string;
+  readonly backendIds: readonly string[];
+  readonly hasAnthropicCapture: boolean;
+  readonly status: CoordinatorStatus;
+}): string {
+  const { selected, backendIds, hasAnthropicCapture, status } = input;
+  if (selected === TEXT_BACKEND_ID || !backendIds.includes(TEXT_BACKEND_ID)) return selected;
+  if (selected === ANTHROPIC_BACKEND_ID && !hasAnthropicCapture) return TEXT_BACKEND_ID;
+  const refusedHere =
+    status.state === "failed" &&
+    status.backendId === selected &&
+    (status.reason === "no-legal-cut" || status.reason === "incompatible");
+  return refusedHere ? TEXT_BACKEND_ID : selected;
 }
 
 /**

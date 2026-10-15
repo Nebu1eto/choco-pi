@@ -47,13 +47,14 @@ export interface MainOwner {
   /** Bumped by every new manual request; a follower whose serial moved is superseded and stops. */
   manualSerial: number;
   /**
-   * Follower of a manual candidate started from the `session_before_compact`
-   * hook, held until the cancelled host compaction has fully ended: the host
-   * clears `isCompacting` before it emits `session_compact_failed`, so an
-   * instant preparation could otherwise adopt in that gap and be reconciled
-   * as the refused one.
+   * Set when the `session_before_compact` hook answers `cancel`: the host's
+   * `compact()` is still unwinding (it clears the shared compaction controller
+   * in its `finally`, after every `session_compact_failed` handler), so the
+   * manual follower must not adopt through `ctx.compact()` until a later host
+   * boundary (`turn_end`, `agent_settled`, `input`), which the host emits
+   * only after that invocation returned. Cleared at that boundary.
    */
-  manualFollow: (() => void) | undefined;
+  hostCompactUnwinding: boolean;
   lastCtx: ExtensionContext;
   readonly cleanup: (() => void)[];
 }

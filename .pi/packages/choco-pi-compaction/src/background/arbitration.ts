@@ -5,7 +5,12 @@ export interface HostCompactionTrigger {
   readonly customInstructions?: string;
 }
 
-type ArbitrationIntent = "adopt" | "proceed" | "discard-instructions" | "cancel-overflow";
+type ArbitrationIntent =
+  | "adopt"
+  | "proceed"
+  | "discard-instructions"
+  | "cancel-overflow"
+  | "await-outstanding";
 
 export function arbitrationIntent(
   state: CandidateState,
@@ -19,5 +24,9 @@ export function arbitrationIntent(
   if (state === "ready") return "adopt";
   if (event.reason === "overflow" && (state === "queued" || state === "preparing"))
     return "cancel-overflow";
+  // The host blocks the user at its threshold anyway: finishing the summary
+  // already in flight is cheaper than starting a second one in the foreground.
+  if (event.reason === "threshold" && (state === "queued" || state === "preparing"))
+    return "await-outstanding";
   return "proceed";
 }

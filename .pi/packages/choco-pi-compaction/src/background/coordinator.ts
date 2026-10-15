@@ -82,8 +82,11 @@ interface CoordinatorDependencies {
   readonly port: CoordinatorPort;
   readonly backends: ReadonlyMap<string, Backend>;
   readonly settings: Readonly<BackgroundCompactionSettings>;
-  /** The host adapts the pure snapshot builder; the coordinator overrides its runtime identity. */
-  readonly freezeSnapshot: (context: SnapshotContext) => FrozenSnapshot | null;
+  /**
+   * The host adapts the pure snapshot builder; the coordinator overrides its
+   * runtime identity. A refusal names why no cut was frozen.
+   */
+  readonly freezeSnapshot: (context: SnapshotContext) => FrozenSnapshot | SnapshotRefused;
   readonly clock?: SchedulerClock;
   readonly createCandidateId?: () => string;
   readonly headroom?: () => number;
@@ -451,11 +454,20 @@ async function runParticipants(
   return active(state, current) ? appendedEntryIds : undefined;
 }
 
+/** No cut could be frozen; `detail` is the builder's refusal code. */
+export interface SnapshotRefused {
+  readonly refused: true;
+  readonly detail: string;
+}
+
+function isRefused(value: FrozenSnapshot | SnapshotRefused): value is SnapshotRefused {
+  return "refused" in value;
+}
+
 function selectionFailure(
   captured: SnapshotContext,
-  selected: FrozenSnapshot | null,
+  selected: FrozenSnapshot,
 ): ReasonCode | undefined {
-  if (!selected) return "no-legal-cut";
   const fingerprint = fingerprintPrefix(captured.entries, selected.cutEntryId);
   const capturedIds = new Set(captured.entries.map((entry) => entry.id));
   if (
@@ -480,9 +492,14 @@ function selectSnapshot(
   const captured = { ...captureContext(state, current.backendId), participantEntryIds };
   current.branchKey = state.deps.port.getBranchKey();
   const selected = state.deps.freezeSnapshot(captured);
+  if (isRefused(selected)) {
+    // A refused cut is a property of this branch, not of the provider scope: no cooldown.
+    fail(state, current, { reason: "no-legal-cut", detail: selected.detail, cool: false });
+    return undefined;
+  }
   const failure = selectionFailure(captured, selected);
-  if (failure || !selected) {
-    failAndCool(state, current, failure ?? "no-legal-cut");
+  if (failure) {
+    fail(state, current, { reason: failure, detail: "prefix-mismatch", cool: false });
     return undefined;
   }
   const snapshot = frozenCopy({
@@ -889,7 +906,23 @@ function arbitrateCandidate(
   if (intent === "discard-instructions" && current)
     finish(state, current, "discarded-stale", "manual-instructions");
   if (intent === "cancel-overflow" && current) finish(state, current, "canceled", "canceled");
+  if (intent === "await-outstanding" && current) return awaitOutstanding(state, current);
   if (intent !== "adopt" || !current) return Promise.resolve(PROCEED);
+  return proposeAdoption(state, current);
+}
+
+/**
+ * Wait for the in-flight preparation (bounded by its own deadline), then adopt
+ * it if it is still this owner's ready candidate; otherwise the host proceeds
+ * with its own summary exactly as before.
+ */
+async function awaitOutstanding(
+  state: CoordinatorState,
+  current: Candidate,
+): Promise<CoordinatorArbitrationResult> {
+  const result = await state.preparation;
+  if (!ownerCurrent(state) || !result.ok) return PROCEED;
+  if (state.candidate !== current || current.machine.state !== "ready") return PROCEED;
   return proposeAdoption(state, current);
 }
 
@@ -971,7 +1004,7 @@ function recoverySnapshot(context: RecoveryContext): FrozenSnapshot | undefined 
   const { state, record, captured } = context;
   const entries = entriesThrough(captured.entries, record.identity.cutEntryId);
   const selected = state.deps.freezeSnapshot({ ...captured, entries, recoveryRecord: record });
-  if (!selected || selected.cutEntryId !== record.identity.cutEntryId) return undefined;
+  if (isRefused(selected) || selected.cutEntryId !== record.identity.cutEntryId) return undefined;
   return frozenCopy({
     ...selected,
     ...record.identity,

@@ -1,4 +1,4 @@
-import { Type } from "typebox";
+import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 import { isCandidateRecord } from "../../../../.pi/packages/choco-pi-compaction/src/background/contract.ts";
 import { InputSchema, type ArtifactInput } from "../artifacts.ts";
@@ -245,10 +245,23 @@ function providerOwnedTransportObservations(host: Host): Observation[] {
   const cut = branch.findIndex((entry) => entry.id === checkpoint.firstKeptEntryId);
   const prefixEntries = branch.slice(0, Math.max(cut, 0));
   // Text of every summarized user turn; none of it may survive verbatim in the context.
-  const UserTextSchema = Type.Object({ role: Type.Literal("user"), content: Type.String() });
+  // The host stores prompted user text either as a string or as text blocks.
+  const UserTextSchema = Type.Object({
+    role: Type.Literal("user"),
+    content: Type.Union([
+      Type.String(),
+      Type.Array(Type.Object({ type: Type.String(), text: Type.Optional(Type.String()) })),
+    ]),
+  });
+  const textOf = (content: Static<typeof UserTextSchema>["content"]): string =>
+    Value.Check(Type.String(), content)
+      ? content
+      : content
+          .flatMap((block) => (block.type === "text" && block.text ? [block.text] : []))
+          .join("\n");
   const prefixTexts = prefixEntries.flatMap((entry) =>
     entry.type === "message" && Value.Check(UserTextSchema, entry.message)
-      ? [entry.message.content]
+      ? [textOf(entry.message.content)]
       : [],
   );
   const projection = host.manager.buildSessionProjection();
@@ -257,7 +270,8 @@ function providerOwnedTransportObservations(host: Host): Observation[] {
     (message) => message.role === "compactionSummary" && message.summary === checkpoint.summary,
   );
   const rawPrefixPresent = conversational.some(
-    (message) => Value.Check(UserTextSchema, message) && prefixTexts.includes(message.content),
+    (message) =>
+      Value.Check(UserTextSchema, message) && prefixTexts.includes(textOf(message.content)),
   );
   const ref = host.recorder.record("provider-owned-request-context", {
     transport: last.api,

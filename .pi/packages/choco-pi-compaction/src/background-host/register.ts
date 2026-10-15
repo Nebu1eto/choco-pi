@@ -52,8 +52,8 @@ import {
   decide,
   manualBypassesHost,
   observeSettled,
-  releaseManualFollow,
   reportHostRefused,
+  scheduleHookAdoption,
   startManualPreparation,
 } from "./routes.ts";
 import { type HostRuntime, isCurrent, shutdown, touchCurrentOwner } from "./runtime.ts";
@@ -142,7 +142,7 @@ export function registerBackgroundCompaction(
     const owner = rt.main;
     if (owner === undefined || owner.core.sessionId !== host.session.sessionId) return false;
     if (!manualBypassesHost(rt, owner, customInstructions)) return false;
-    return startManualPreparation(rt, owner, "now", customInstructions);
+    return startManualPreparation(rt, owner, customInstructions);
   };
   installCompactCommandBridge(deferTypedCompact);
 
@@ -156,6 +156,12 @@ export function registerBackgroundCompaction(
       "Compact in the background when enabled (optional focus instructions); otherwise compact now",
     handler: async (args, ctx) => {
       const customInstructions = args.trim().length === 0 ? undefined : args.trim();
+      // Extension commands run before the host's "compaction in progress" check;
+      // a second manual compaction would overwrite the host's shared controller.
+      if (!ctx.isIdle()) {
+        ctx.ui.notify("Compaction: wait for the current turn or compaction to finish", "warning");
+        return;
+      }
       const owner = touchCurrentOwner(rt, ctx);
       const sessionId = ctx.sessionManager.getSessionId();
       const deferred =
@@ -163,6 +169,8 @@ export function registerBackgroundCompaction(
           ? await deferTypedCompact({ session: { sessionId } }, customInstructions)
           : false;
       if (deferred) return;
+      // The manual route awaited; the host may have started a turn or compaction meanwhile.
+      if (!ctx.isIdle()) return;
       await new Promise<void>((resolve, reject) => {
         try {
           ctx.compact({
@@ -445,7 +453,7 @@ async function onCompactFailed(rt: HostRuntime, ctx: ExtensionContext): Promise<
   if (owner === undefined) return;
   await reportHostRefused(rt, owner, ctx);
   if (!isCurrent(rt, owner)) return;
-  releaseManualFollow(rt, owner);
+  if (owner.hostCompactUnwinding) scheduleHookAdoption(rt, owner);
 }
 
 function reportReplayDiagnostic(

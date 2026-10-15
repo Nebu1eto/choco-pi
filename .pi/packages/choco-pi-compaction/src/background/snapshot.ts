@@ -82,7 +82,7 @@ type SnapshotRefusalDetail =
   | "split-turn-without-governing-request";
 
 /** Typed refusal; history is untouched and nothing was captured. */
-interface SnapshotRefusal extends PrepareFailure {
+export interface SnapshotRefusal extends PrepareFailure {
   readonly detail: SnapshotRefusalDetail;
 }
 

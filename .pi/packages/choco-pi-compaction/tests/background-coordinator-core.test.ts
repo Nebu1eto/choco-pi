@@ -204,7 +204,7 @@ function fixture(
           capturedAt: context.capturedAt,
           keepRecentTokens: 0,
         });
-        return isSnapshotRefusal(selected) ? null : selected;
+        return isSnapshotRefusal(selected) ? { refused: true, detail: selected.detail } : selected;
       }
       return buildSnapshot({
         entries: context.entries,

@@ -113,26 +113,22 @@ async function deferManual(
   event: SessionBeforeCompactEvent,
 ): Promise<Decision> {
   if (!isUserManual(owner, event)) return PROCEED;
-  const started = await startManualPreparation(
-    rt,
-    owner,
-    "after-host-end",
-    event.customInstructions,
-  );
-  return started ? CANCEL : PROCEED;
+  const started = await startManualPreparation(rt, owner, event.customInstructions);
+  if (!started) return PROCEED;
+  owner.hostCompactUnwinding = true;
+  return CANCEL;
 }
 
 /**
  * Start (or join) the background preparation a `/compact` stands for.
  * True when the request is now owned by the manual follower; false when the
  * foreground path has to run instead. Shared by the `session_before_compact`
- * hook (which must hold the follower until the host compaction has ended) and
- * the TUI command bridge (no host compaction: follow at once).
+ * hook and the TUI command bridge. The follower starts at once; on the hook
+ * path its adoption waits for the next host boundary (`hostCompactUnwinding`).
  */
 export async function startManualPreparation(
   rt: HostRuntime,
   owner: MainOwner,
-  follow: "now" | "after-host-end",
   customInstructions?: string,
 ): Promise<boolean> {
   if (owner.pendingRoute !== undefined) return false;
@@ -151,43 +147,44 @@ export async function startManualPreparation(
     "continuing in the background; the context switches when it is ready",
     "info",
   );
-  const start = (): void => {
-    owner.manualFollow = undefined;
-    void followManual(rt, owner, { candidateId, serial, customInstructions }, lanes.slice(1));
-  };
-  if (follow === "now") start();
-  else owner.manualFollow = start;
+  void followManual(rt, owner, { candidateId, serial, customInstructions }, lanes.slice(1));
   return true;
 }
 
+/** A host boundary reached: the cancelled host compaction, if any, has returned. */
+export function hostBoundaryReached(owner: MainOwner): void {
+  owner.hostCompactUnwinding = false;
+}
+
 /**
- * Start a follower held back by the hook path. `session_compact_failed` is
- * emitted inside the host's `compact()` before its `finally` clears the
- * compaction controller, so the release waits for the host to report idle on a
- * later tick; a follower that adopted inside that window would have its own
- * controller wiped by the cancelled invocation's cleanup.
+ * After our `session_compact_failed` handler returned, the host's `compact()`
+ * returns as soon as the remaining handlers settle. Without a user action no
+ * boundary event follows, so the hook path checks on two later macrotasks
+ * that the host is idle and then adopts. Should a slow third-party handler
+ * still be pending, the host's cleanup clobbers the adoption's controller;
+ * that surfaces as a host refusal, leaves the candidate ready, and the next
+ * boundary adopts it, so the worst case is a deferral, never a lost checkpoint.
  */
-export function releaseManualFollow(rt: HostRuntime, owner: MainOwner): void {
-  const start = owner.manualFollow;
-  if (start === undefined) return;
-  owner.manualFollow = undefined;
+export function scheduleHookAdoption(rt: HostRuntime, owner: MainOwner): void {
   const serial = owner.manualSerial;
-  const attempt = (remaining: number): void => {
-    if (!isCurrent(rt, owner) || owner.manualSerial !== serial) return;
-    let idle = false;
+  const idleNow = (): boolean => {
     try {
-      idle = owner.lastCtx.isIdle();
+      return owner.lastCtx.isIdle();
     } catch (cause) {
       if (!(cause instanceof Error && isStaleContextError(cause))) throw cause;
-      return;
+      return false;
     }
-    if (idle || remaining === 0) {
-      start();
-      return;
-    }
-    setTimeout(() => attempt(remaining - 1), 10);
   };
-  setTimeout(() => attempt(50), 0);
+  const live = (): boolean =>
+    isCurrent(rt, owner) && owner.manualSerial === serial && owner.hostCompactUnwinding;
+  setTimeout(() => {
+    if (!live() || !idleNow()) return;
+    setTimeout(() => {
+      if (!live() || !idleNow()) return;
+      hostBoundaryReached(owner);
+      void adoptManualIfIdle(rt, owner, owner.lastCtx);
+    }, 20);
+  }, 0);
 }
 
 /**
@@ -315,9 +312,14 @@ async function followManual(
   }
   owner.manualCandidate = undefined;
   setStatus(ctx, undefined);
+  const detail = status.candidateId === candidateId ? status.detail : undefined;
+  if (detail === "nothing-to-summarize") {
+    tell(ctx, "nothing to compact yet; the recent turns are kept as they are", "info");
+    return;
+  }
   tell(
     ctx,
-    `manual compaction did not produce a checkpoint (${reason}); run /compact again`,
+    `manual compaction did not produce a checkpoint (${reason}${detail ? `: ${detail}` : ""}); run /compact again`,
     "warning",
   );
 }
@@ -336,6 +338,8 @@ async function adoptManualIfIdle(
     setStatus(ctx, undefined);
     return;
   }
+  // The cancelled host compaction has not returned yet: adopt at the next boundary instead.
+  if (owner.hostCompactUnwinding) return;
   if (idleCandidate(rt, owner, ctx) !== candidateId) return;
   const installed = await adoptIdle(rt, owner, ctx, { candidateId, trigger: "manual" });
   if (!isCurrent(rt, owner)) return;
@@ -505,6 +509,7 @@ export async function adoptAtBoundary(
   if (owner === undefined) return undefined;
   await owner.core.settle();
   if (!isCurrent(rt, owner)) return undefined;
+  hostBoundaryReached(owner);
   owner.core.observeUsage(ctx.getContextUsage());
   if (owner.pendingRoute !== undefined) return undefined;
   if (owner.core.coordinator.status().state !== "ready") return undefined;
@@ -527,7 +532,7 @@ export async function observeSettled(rt: HostRuntime, ctx: ExtensionContext): Pr
   await owner.core.settle();
   if (!isCurrent(rt, owner)) return;
   owner.core.observeUsage(ctx.getContextUsage());
-  releaseManualFollow(rt, owner);
+  hostBoundaryReached(owner);
   settleManual(owner, ctx);
   // A candidate that became ready late in the run is adopted now rather than at the next prompt.
   await adoptManualIfIdle(rt, owner, ctx);
@@ -539,6 +544,7 @@ export async function adoptOnIdleInput(rt: HostRuntime, ctx: ExtensionContext): 
   if (owner === undefined) return;
   await owner.core.settle();
   if (!isCurrent(rt, owner)) return;
+  hostBoundaryReached(owner);
   settleManual(owner, ctx);
   const candidateId = idleCandidate(rt, owner, ctx);
   if (candidateId === undefined) return;

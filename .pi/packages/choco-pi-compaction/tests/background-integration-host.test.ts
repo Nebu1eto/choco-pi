@@ -765,6 +765,40 @@ test(
 );
 
 test(
+  "the host threshold waits for the in-flight preparation and adopts it instead of summarizing",
+  { timeout: 20_000 },
+  async () => {
+    await withDir(async (dir) => {
+      const summarizerGate = gate(false);
+      const rig = await createRig({
+        dir,
+        sidecar: ENABLED_SIDECAR,
+        summarizerGate,
+        // Host threshold at 70k; the preparer fires at 50k (prepareAt 0.5 of the window).
+        hostCompaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 30_000 },
+        respond: async (index) =>
+          reply(`R${index}`, { usageInput: index === 0 ? HIGH_USAGE : 75_000 }),
+      });
+      try {
+        await rig.session.prompt("GO");
+        assert.equal(stateOf(rig), "preparing", "the preparer is still running");
+        // Finish the background summary only after the host has reached its threshold.
+        setTimeout(() => summarizerGate.open(), 200);
+        await rig.session.prompt("PAST-THRESHOLD");
+        await waitFor(() => stateOf(rig) === "installed", "background candidate adopted");
+        assert.equal(rig.hostSummarizerCalls.length, 0, "no second summary in the foreground");
+        assert.deepEqual(
+          rig.compactEvents.map((event) => [event.reason, event.fromExtension]),
+          [["threshold", true]],
+        );
+      } finally {
+        await rig.dispose();
+      }
+    });
+  },
+);
+
+test(
   "the context-cap route adopts a ready candidate through the adoption signal",
   { timeout: 20_000 },
   async () => {

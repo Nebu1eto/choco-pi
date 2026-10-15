@@ -154,6 +154,13 @@ export function release(
   )
     return false;
   const removed = coordinators.delete(ownerKey);
+  // The departing owner's ledger becomes the newest departed entry so the
+  // retention window starts at departure (a reload re-acquires it next).
+  const ledger = getRegistry().delivered.get(ownerKey);
+  if (ledger !== undefined) {
+    getRegistry().delivered.delete(ownerKey);
+    getRegistry().delivered.set(ownerKey, ledger);
+  }
   pruneDepartedLedgers();
   return removed;
 }

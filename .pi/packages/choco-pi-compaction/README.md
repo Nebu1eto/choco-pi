@@ -154,8 +154,14 @@ host event.
   compaction hook runs for it or for its later adoption.
 - **Paths that stay foreground, and why.** Threshold compaction runs inside
   request preparation: the host blocks the request until compaction ends and
-  cancelling it would abort the user's turn, so the background feature only
-  prepares ahead (`prepareAt`) and adopts a ready candidate there. Overflow
+  cancelling it would abort the user's turn, so the background feature
+  prepares ahead (`prepareAt`) and adopts a ready candidate there. A
+  preparation still in flight at the threshold is awaited (bounded by its own
+  timeout) and adopted, rather than paying for a second summary in the
+  foreground; only a failed or missing preparation leaves the host's own
+  summary to run. The threshold route also skips a native lane that cannot
+  serve (Anthropic without a wire capture, or a lane that just refused the
+  cut) in favor of the text lane. Overflow
   recovery must shrink the next request before it can be sent at all, so an
   in-flight preparation is cancelled and the foreground summarizer recovers.
   `navigateTree({ summarize })` produces a branch summary, not a compaction.
