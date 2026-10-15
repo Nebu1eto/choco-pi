@@ -11,10 +11,17 @@ const MIN_YIELD_TIME_MS = 250;
 const MIN_NON_INTERACTIVE_EXEC_YIELD_TIME_MS = 5_000;
 const MIN_EMPTY_WRITE_YIELD_TIME_MS = 30_000;
 const MAX_YIELD_TIME_MS = 30_000;
-export const MAX_EXEC_YIELD_TIME_MS = 1_800_000;
+/**
+ * Longest single wait any code-mode call may block: exec_command yields,
+ * write_stdin empty polls, cell waits and the outer cell deadline all clamp to
+ * it. Work expected to outlast it belongs in a managed shell (shell_start),
+ * which reports completion instead of holding a tool call open.
+ */
+export const MAX_CODE_MODE_WAIT_MS = 300_000;
+export const MAX_EXEC_YIELD_TIME_MS = MAX_CODE_MODE_WAIT_MS;
 export const DEFAULT_EXEC_YIELD_TIME_MS = 10_000;
 export const DEFAULT_WRITE_YIELD_TIME_MS = 250;
-export const DEFAULT_MAX_EMPTY_WRITE_YIELD_TIME_MS = 1_800_000;
+export const DEFAULT_MAX_EMPTY_WRITE_YIELD_TIME_MS = MAX_CODE_MODE_WAIT_MS;
 
 export interface ResolvedExecution {
   shell: string;

@@ -917,3 +917,24 @@ leaves the release-age exclusions because 1.2.0 no longer depends on it.
 The `exec` tool declares `reachesTools` like Pi 1.2.0 codemode: `"all"` when a
 script reads `ALL_TOOLS`, else its words, so the built-in MCP extension waits for
 servers a script names before the call runs.
+
+## 2026-10-15 choco-pi patch: long-command guidance in the code-mode prompt
+
+`CODE_MODE_ROUTING_GUIDANCE` in `src/tools/code-mode/custom-tool-prompt.ts`
+gains one line telling the model to keep the default `yield_time_ms` for long
+commands, resume the returned `session_id` with `write_stdin`, and avoid
+exit-buffering pipes (`| tail`, `| sort`) when progress matters. The harness
+already streams partial output every 250 ms and yields with a session id; a
+buffering pipe plus a multi-minute yield hid both, so the fix is guidance, not a
+yield cap.
+
+## 2026-10-15 choco-pi patch: five-minute code-mode wait cap
+
+`MAX_CODE_MODE_WAIT_MS` (300 000 ms) in `src/tools/exec/shell.ts` replaces the
+four separate 1 800 000 ms constants: `MAX_EXEC_YIELD_TIME_MS`,
+`DEFAULT_MAX_EMPTY_WRITE_YIELD_TIME_MS`, the `wait` tool's adaptive ceiling and
+the outer cell deadline for `exec_command`/`write_stdin`. The cell's
+`// @exec: yield_time_ms`, the `wait` tool's `yield_time_ms` and the adaptive
+wait's requested value clamp to it as well. The prompt says so and routes work
+expected to exceed five minutes to `shell_start`/`shell_read`.
+`tests/code-mode-wait-cap.test.ts` pins the cap and the guidance.

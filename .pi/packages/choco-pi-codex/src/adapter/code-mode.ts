@@ -30,6 +30,7 @@ import {
 import { prepareCodeModeApplyPatchInput } from "../tools/apply-patch/code-mode-input.ts";
 import { createApplyPatchTool } from "../tools/apply-patch/tool.ts";
 import { createExecCommandTool } from "../tools/exec/command-tool.ts";
+import { MAX_CODE_MODE_WAIT_MS } from "../tools/exec/shell.ts";
 import { createWriteStdinTool } from "../tools/exec/write-stdin-tool.ts";
 import { createImageGenerationTool } from "../tools/imagegen/tool.ts";
 import { createViewImageTool } from "../tools/view-image/tool.ts";
@@ -51,7 +52,7 @@ import {
   scopeCodeModeToolsToSessionPermissions,
 } from "./code-mode/session-tool-permissions.ts";
 
-const LONG_RUNNING_TOOL_OUTER_YIELD_MS = 1_800_000;
+const LONG_RUNNING_TOOL_OUTER_YIELD_MS = MAX_CODE_MODE_WAIT_MS;
 
 export function createCodeModeWebSearchTool(
   config: CodexConversionConfig,

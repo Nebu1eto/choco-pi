@@ -3,6 +3,7 @@ import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-age
 import { Type } from "typebox";
 import { getExperimentalToolSampling } from "../tool-sampling.ts";
 import { DEFAULT_CODE_MODE_OUTPUT_TOKENS, MAX_CODE_MODE_OUTPUT_TOKENS } from "./host-protocol.ts";
+import { MAX_CODE_MODE_WAIT_MS } from "../exec/shell.ts";
 import { EXEC_DESCRIPTION, WAIT_DESCRIPTION } from "./custom-tool-prompt.ts";
 import { createCodeModeRenderTracker } from "./render-tracker.ts";
 import { renderExecCall, renderWaitCall } from "./call-rendering.ts";
@@ -21,7 +22,7 @@ import {
 
 const DEFAULT_WAIT_MS = 10_000;
 const MIN_ADAPTIVE_WAIT_MS = 5_000;
-const MAX_ADAPTIVE_WAIT_MS = 1_800_000;
+const MAX_ADAPTIVE_WAIT_MS = MAX_CODE_MODE_WAIT_MS;
 type RenderTracker = ReturnType<typeof createCodeModeRenderTracker>;
 interface WriteStdinResumeInput {
   session_id: number;
@@ -36,6 +37,7 @@ const WAIT_PARAMETERS = Type.Object({
   yield_time_ms: Type.Optional(
     Type.Integer({
       minimum: 0,
+      maximum: MAX_CODE_MODE_WAIT_MS,
       default: DEFAULT_WAIT_MS,
     }),
   ),
@@ -293,13 +295,14 @@ async function continueExecSessionFromMistakenWait(
 }
 
 function adaptiveWaitMs(requestedMs: number, previousIncompleteWaits: number): number {
+  const requested = Math.min(MAX_ADAPTIVE_WAIT_MS, requestedMs);
   const multiplier = 2 ** previousIncompleteWaits;
-  const grown = requestedMs * multiplier * 2;
+  const grown = requested * multiplier * 2;
   const adaptive = Math.min(
     MAX_ADAPTIVE_WAIT_MS,
     Math.max(MIN_ADAPTIVE_WAIT_MS * multiplier, grown),
   );
-  return Math.max(requestedMs, adaptive);
+  return Math.max(requested, adaptive);
 }
 
 function createResultRenderer(runtime: SharedCodeModeRuntime, tracker: RenderTracker) {

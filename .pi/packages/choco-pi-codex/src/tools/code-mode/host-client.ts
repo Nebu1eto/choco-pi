@@ -8,6 +8,7 @@ import {
   parseRuntimeResponse,
   toWireToolDefinition,
 } from "./host-protocol.ts";
+import { MAX_CODE_MODE_WAIT_MS } from "../exec/shell.ts";
 import { CodeModeHostSession } from "./host-session.ts";
 import { directToolYieldTime, scopeAllToolsToDeferredCustom } from "./tool-source.ts";
 import type { CodeModeToolDefinition, RuntimeResponse, ToolExecutionContext } from "./types.ts";
@@ -54,11 +55,13 @@ export class CodeModeHostClient {
     await this.start();
     throwIfAborted(signal);
     const { code, yieldTimeMs, maxOutputTokens } = parseExecSource(source);
-    const effectiveYieldTimeMs =
+    const effectiveYieldTimeMs = Math.min(
+      MAX_CODE_MODE_WAIT_MS,
       directToolYieldTime(code, tools) ??
-      yieldTimeMs ??
-      context.defaultYieldTimeMs ??
-      DEFAULT_CODE_MODE_EXEC_YIELD_MS;
+        yieldTimeMs ??
+        context.defaultYieldTimeMs ??
+        DEFAULT_CODE_MODE_EXEC_YIELD_MS,
+    );
     const id = this.session.nextRequestId();
     const initial = this.session.expectInitial(id);
     void initial.catch(() => undefined);

@@ -16,7 +16,7 @@ export const EXEC_DESCRIPTION = `Run JavaScript source only; no JSON/fences
 Follow the <code_mode_tools> system block for routing and composition guidance.
 Code: fresh restricted JS in every cell with no Deno, console, imports, Node, filesystem/network, or browser globals. Notebook: persistent shared Deno TypeScript globals with console, imports/npm, Deno, and Web APIs
 Source preflight rejects malformed restricted JavaScript, unsupported restricted globals, and unconditional top-level tools.<name> typos absent from both code mode and direct Pi tools; guarded or real unbridged references run to the runtime guard; command strings and non-zero exec_command exits are not rewritten
-Optional // @exec: {"yield_time_ms":10000,"max_output_tokens":1000}; defaults 30000 ms/10000 tokens
+Optional // @exec: {"yield_time_ms":10000,"max_output_tokens":1000}; defaults 30000 ms/10000 tokens; every code-mode wait caps at 300000 ms
 Optional first-line // @description: short intent for the collapsed code call; otherwise the first exec_command description labels it
 Await work; bare values are discarded. Restricted globals: tools, image, generatedImage, store, load, exit, setTimeout, clearTimeout, ALL_TOOLS; do not declare a local tools variable that shadows the injected namespace. text(value) and notify(value) EMIT output and return nothing — never nest them in an expression, use String()/JSON.stringify() to build one; yield_control() yields
 ${CODE_MODE_RUNTIME_CONTRACTS}`;
@@ -37,6 +37,7 @@ const CODE_MODE_ROUTING_GUIDANCE = `Composition: ${CODE_MODE_DEFAULT_ROUTING}.
 Parallelize only independent calls; sequence dependent work. Preserve Promise.allSettled failures instead of hiding them.
 ${CODE_MODE_DIRECT_EXCEPTIONS}. Inspect one unfamiliar schema in ALL_TOOLS; never dump the catalog.
 UI refs are not file paths. Never repeat writes or keep cells alive only to poll.
+Long commands: keep the default yield_time_ms, resume the returned session_id with write_stdin, and when progress matters avoid pipes that buffer until exit (\`| tail\`, \`| sort\`); bound size with max_output_tokens or a log file instead. No code-mode wait exceeds 5 minutes; run work expected to take longer through shell_start and read it with shell_read.
 ${CODE_MODE_RUNTIME_CONTRACTS}`;
 
 function buildCapabilityGuidance(tools: CodeModeToolDefinition[]): string {
