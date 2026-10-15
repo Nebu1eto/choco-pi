@@ -301,6 +301,7 @@ function installMainOwner(
     decisions: new WeakMap(),
     refusedIdle: new Set(),
     pendingRoute: undefined,
+    manualCandidate: undefined,
     lastCtx: ctx,
     cleanup,
   };

@@ -79,6 +79,18 @@ const ENABLED_SIDECAR = JSON.stringify({
 });
 const CONTEXT_WINDOW = 100_000;
 const HIGH_USAGE = 60_000;
+/** Background on, but the usage threshold is never crossed: only /compact starts a preparation. */
+const MANUAL_ONLY_SIDECAR = JSON.stringify({
+  enabled: true,
+  text: true,
+  prepareAt: 0.99,
+  hysteresis: 0,
+  reserveTokens: 0,
+  retryBaseMs: 0,
+  cooldownMs: 0,
+  timeoutMs: 20_000,
+  maxOutputTokens: 1_000,
+});
 
 interface Gate {
   open(): void;
@@ -566,6 +578,94 @@ test(
         assert.equal(status?.reason, "manual-instructions");
         assert.equal(rig.compactEvents.length, 1);
         assert.equal(rig.notices.length, 0);
+      } finally {
+        await rig.dispose();
+      }
+    });
+  },
+);
+
+test(
+  "a plain /compact continues in the background and is adopted once ready while idle",
+  { timeout: 20_000 },
+  async () => {
+    await withDir(async (dir) => {
+      const summarizerGate = gate(false);
+      const notices: string[] = [];
+      const rig = await createRig({
+        dir,
+        sidecar: MANUAL_ONLY_SIDECAR,
+        summarizerGate,
+        firstExtensions: [recordNotices(notices)],
+        respond: async (index) =>
+          reply(`R${index}`, { usageInput: index === 0 ? HIGH_USAGE : 20_000 }),
+      });
+      try {
+        await rig.session.prompt("GO");
+        assert.equal(stateOf(rig), "idle", "the threshold never started a preparation");
+        // The host compaction returns at once instead of blocking on the summarizer.
+        await assert.rejects(rig.session.compact(), /Compaction cancelled/);
+        assert.equal(stateOf(rig), "preparing", "the manual request runs in the background");
+        assert.equal(rig.hostSummarizerCalls.length, 0, "the foreground summarizer never ran");
+        assert.equal(rig.compactEvents.length, 0, "nothing was committed yet");
+        assert.ok(
+          notices.some((notice) => notice.includes("continuing in the background")),
+          "the user is told the compaction continues",
+        );
+        // A second /compact during the same preparation attaches to it.
+        await assert.rejects(rig.session.compact(), /Compaction cancelled/);
+        assert.equal(rig.backgroundCalls(), 1, "no second paid preparation");
+        summarizerGate.open();
+        await waitFor(() => stateOf(rig) === "installed", "installed candidate");
+        const own = ownEntries(rig);
+        assert.equal(own.length, 1, "the ready checkpoint was adopted without a prompt");
+        const entry = own[0];
+        assert.ok(entry);
+        assert.deepEqual(rig.compactEvents, [
+          { reason: "manual", fromExtension: true, entryId: entry.id },
+        ]);
+        assert.deepEqual(
+          rig.notices.map((notice) => [notice.route, notice.committedEntryId]),
+          [["host", entry.id]],
+        );
+        assert.equal(rig.hostSummarizerCalls.length, 0);
+        await rig.session.prompt("NEXT");
+        const last = rig.calls.at(-1);
+        assert.ok(mentions(last, CHECKPOINT), "the next request carries the checkpoint");
+        assert.equal(mentions(last, PREFIX_A), false);
+      } finally {
+        await rig.dispose();
+      }
+    });
+  },
+);
+
+test(
+  "a plain /compact while a threshold preparation runs waits for it instead of summarizing",
+  { timeout: 20_000 },
+  async () => {
+    await withDir(async (dir) => {
+      const summarizerGate = gate(false);
+      const rig = await createRig({
+        dir,
+        sidecar: ENABLED_SIDECAR,
+        summarizerGate,
+        respond: async (index) =>
+          reply(`R${index}`, { usageInput: index === 0 ? HIGH_USAGE : 20_000 }),
+      });
+      try {
+        await rig.session.prompt("GO");
+        assert.equal(stateOf(rig), "preparing", "the threshold started a preparation");
+        await assert.rejects(rig.session.compact(), /Compaction cancelled/);
+        assert.equal(rig.backgroundCalls(), 1, "the running preparation is reused");
+        assert.equal(rig.hostSummarizerCalls.length, 0);
+        summarizerGate.open();
+        await waitFor(() => stateOf(rig) === "installed", "installed candidate");
+        assert.equal(ownEntries(rig).length, 1);
+        assert.deepEqual(
+          rig.compactEvents.map((event) => [event.reason, event.fromExtension]),
+          [["manual", true]],
+        );
       } finally {
         await rig.dispose();
       }

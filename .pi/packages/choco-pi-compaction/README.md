@@ -131,6 +131,17 @@ host event.
   instead of the summarizer. `/compact` with custom instructions discards the
   candidate and runs the normal summarizer. Overflow recovery with no ready
   candidate cancels any preparation and proceeds unchanged.
+- **Manual (plain `/compact`, no ready candidate).** The extension starts a
+  background preparation (or waits on the one already running), answers the
+  host with `cancel` so input is accepted again, and shows a
+  "compacting in background" status. The host prints its own
+  "Compaction cancelled" line because the built-in command cannot be
+  intercepted. When the checkpoint is ready it is adopted through the idle
+  route if the session is idle, otherwise at the next boundary; a failed
+  preparation is reported and nothing is summarized. `/compact` with custom
+  instructions still runs the foreground summarizer. Consumers see the
+  deferred request as answered by the feature (`willAdopt` is true), so no
+  compaction hook runs for it or for its later adoption.
 - **Context cap.** When `.pi/extensions/model-context-cap.ts` reaches its
   compaction threshold and a ready candidate exists, it hands the compaction to
   the idle route instead of requesting a summary. Otherwise it behaves as before.

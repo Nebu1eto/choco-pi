@@ -11,7 +11,7 @@ import type {
 import type { HostCompactionTrigger } from "../background/arbitration.ts";
 import { type BackgroundAdoptionOwner, readAdoptionIdentity } from "./adoption-signal.ts";
 import { boundaryDraft } from "./branch.ts";
-import { errorText } from "./notices.ts";
+import { errorText, setStatus, tell } from "./notices.ts";
 import {
   type Decision,
   type HostRuntime,
@@ -26,6 +26,8 @@ import {
 // ---------------------------------------------------------------------------
 
 const PROCEED: Decision = { action: "proceed" };
+const CANCEL: Decision = { action: "cancel" };
+const MANUAL_STATUS = "compacting in background";
 
 /** Idle-route refusals the host reports without running any handler. */
 function isHostRefusal(message: string): boolean {
@@ -66,7 +68,8 @@ async function arbitrate(
 ): Promise<Decision> {
   if (!isCurrent(rt, owner) || event.signal.aborted) return PROCEED;
   const result = await owner.core.coordinator.arbitrateHostCompaction(hostTrigger(owner, event));
-  if (!isCurrent(rt, owner) || result.action !== "adopt") return PROCEED;
+  if (!isCurrent(rt, owner)) return PROCEED;
+  if (result.action !== "adopt") return deferManual(rt, owner, event);
   // An aborted compaction fails and is reconciled back to ready afterwards.
   if (event.signal.aborted) return PROCEED;
   if (!owner.core.vet(result.draft, event.branchEntries)) {
@@ -82,6 +85,141 @@ async function arbitrate(
   };
   if (result.compaction.usage !== undefined) compaction.usage = result.compaction.usage;
   return { action: "adopt", candidateId: result.candidateId, compaction };
+}
+
+/** A plain `/compact` typed by the user: not a route of ours, no custom instructions. */
+function isPlainManual(owner: MainOwner, event: SessionBeforeCompactEvent): boolean {
+  return (
+    event.reason === "manual" &&
+    event.customInstructions === undefined &&
+    owner.pendingRoute === undefined &&
+    !event.signal.aborted
+  );
+}
+
+/**
+ * Manual route: a plain `/compact` with no ready candidate continues in the
+ * background instead of blocking the session on the summarizer. The host
+ * compaction is cancelled so input is accepted again; the candidate is adopted
+ * as soon as it is ready (idle route when idle, otherwise the next boundary).
+ * Custom instructions, an owner without a backend, or a refused request keep
+ * the existing foreground path.
+ */
+async function deferManual(
+  rt: HostRuntime,
+  owner: MainOwner,
+  event: SessionBeforeCompactEvent,
+): Promise<Decision> {
+  if (!isPlainManual(owner, event)) return PROCEED;
+  const candidateId = await manualCandidate(rt, owner);
+  if (candidateId === undefined) return PROCEED;
+  // A repeated /compact during the same preparation waits on the existing follower.
+  if (owner.manualCandidate === candidateId) return CANCEL;
+  owner.manualCandidate = candidateId;
+  setStatus(owner.lastCtx, MANUAL_STATUS);
+  tell(
+    owner.lastCtx,
+    "continuing in the background; the context switches when it is ready",
+    "info",
+  );
+  void followManual(rt, owner, candidateId);
+  return CANCEL;
+}
+
+/** The outstanding preparation to wait on, or a newly requested one; undefined when none can run. */
+async function manualCandidate(rt: HostRuntime, owner: MainOwner): Promise<string | undefined> {
+  const backendId = owner.core.backendId;
+  if (backendId === undefined) return undefined;
+  const status = owner.core.coordinator.status();
+  if (status.state === "queued" || status.state === "preparing") return status.candidateId;
+  if (status.state === "adopting") return undefined;
+  const requested = await owner.core.coordinator.requestPreparation({
+    trigger: "manual",
+    backendId,
+  });
+  if (!isCurrent(rt, owner) || !requested.accepted) return undefined;
+  return requested.candidateId;
+}
+
+/** Wait for the manual candidate; adopt it while idle, otherwise leave it to the next boundary. */
+async function followManual(rt: HostRuntime, owner: MainOwner, candidateId: string): Promise<void> {
+  let failure: unknown;
+  try {
+    await owner.core.coordinator.waitForPreparation();
+  } catch (cause) {
+    failure = cause;
+  }
+  if (!isCurrent(rt, owner) || owner.manualCandidate !== candidateId) return;
+  const ctx = owner.lastCtx;
+  const status = owner.core.coordinator.status();
+  if (status.candidateId === candidateId) {
+    if (status.state === "ready") {
+      await adoptManualIfIdle(rt, owner, ctx);
+      return;
+    }
+    // Already proposed or committed by a boundary that ran while we waited.
+    if (status.state === "adopting" || status.state === "installed") {
+      settleManual(owner, ctx);
+      return;
+    }
+  }
+  owner.manualCandidate = undefined;
+  setStatus(ctx, undefined);
+  const reason = failure === undefined ? (status.reason ?? status.state) : errorText(failure);
+  tell(
+    ctx,
+    `manual compaction did not produce a checkpoint (${reason}); run /compact again`,
+    "warning",
+  );
+}
+
+/** Adopt the manual candidate now when it is ready and the session is idle. */
+async function adoptManualIfIdle(
+  rt: HostRuntime,
+  owner: MainOwner,
+  ctx: ExtensionContext,
+): Promise<void> {
+  const candidateId = owner.manualCandidate;
+  if (candidateId === undefined) return;
+  const status = owner.core.coordinator.status();
+  if (status.candidateId !== candidateId) {
+    owner.manualCandidate = undefined;
+    setStatus(ctx, undefined);
+    return;
+  }
+  if (idleCandidate(rt, owner, ctx) !== candidateId) return;
+  const installed = await adoptIdle(rt, owner, ctx, { candidateId, trigger: "manual" });
+  if (!isCurrent(rt, owner)) return;
+  if (installed) {
+    settleManual(owner, ctx);
+    return;
+  }
+  if (owner.refusedIdle.has(candidateId)) {
+    // Fail closed like the idle route; the checkpoint stays available to a later boundary.
+    owner.manualCandidate = undefined;
+    setStatus(ctx, undefined);
+    tell(
+      ctx,
+      "the host refused the checkpoint now; it is applied at the next turn boundary",
+      "info",
+    );
+  }
+}
+
+/** Clear the manual bookkeeping once its candidate is installed or gone. */
+function settleManual(owner: MainOwner, ctx: ExtensionContext): void {
+  const candidateId = owner.manualCandidate;
+  if (candidateId === undefined) return;
+  const status = owner.core.coordinator.status();
+  const waiting =
+    status.candidateId === candidateId &&
+    (status.state === "queued" ||
+      status.state === "preparing" ||
+      status.state === "ready" ||
+      status.state === "adopting");
+  if (waiting) return;
+  owner.manualCandidate = undefined;
+  setStatus(ctx, undefined);
 }
 
 /** Whether the idle route may start now for the ready candidate. */
@@ -194,10 +332,15 @@ function isOwnAdoption(owner: MainOwner, entry: CompactionEntry): boolean {
   );
 }
 
-/** The owner as the process-global adoption signal exposes it to consumers. */
+/**
+ * The owner as the process-global adoption signal exposes it to consumers.
+ * `willAdopt` is true whenever the background feature answers the request:
+ * an adoption now, or a plain /compact deferred to a background preparation
+ * (cancelled for the host, adopted later without further host hooks).
+ */
 export function ownerApi(rt: HostRuntime, owner: MainOwner): BackgroundAdoptionOwner {
   return {
-    willAdopt: async (event) => (await decide(rt, owner, event)).action === "adopt",
+    willAdopt: async (event) => (await decide(rt, owner, event)).action !== "proceed",
     isAdoption: (entry) => isOwnAdoption(owner, entry),
     adoptReady: (ctx, onSettled) => adoptReadyForContextCap(rt, owner, ctx, onSettled),
   };
@@ -235,6 +378,9 @@ export async function observeSettled(rt: HostRuntime, ctx: ExtensionContext): Pr
   await owner.core.settle();
   if (!isCurrent(rt, owner)) return;
   owner.core.observeUsage(ctx.getContextUsage());
+  settleManual(owner, ctx);
+  // A candidate that became ready late in the run is adopted now rather than at the next prompt.
+  await adoptManualIfIdle(rt, owner, ctx);
 }
 
 /** input: adopt a ready candidate through ctx.compact while idle. */
@@ -242,6 +388,7 @@ export async function adoptOnIdleInput(rt: HostRuntime, ctx: ExtensionContext): 
   const owner = touchCurrentOwner(rt, ctx);
   if (owner === undefined) return;
   await owner.core.settle();
+  settleManual(owner, ctx);
   const candidateId = idleCandidate(rt, owner, ctx);
   if (candidateId === undefined) return;
   await adoptIdle(rt, owner, ctx, { candidateId, trigger: "idle" });

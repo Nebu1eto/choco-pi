@@ -56,8 +56,10 @@ when a new user task or lifecycle generation supersedes their owner.
 ## choco-pi patch: no compaction hooks for background adoption
 
 Background compaction (`choco-pi-compaction`, off by default) adopts prepared
-checkpoints without running `PreCompact` or `PostCompact`; host and manual
-compactions still run each once. No new hook event type exists.
+checkpoints without running `PreCompact` or `PostCompact`; this includes a
+plain `/compact` that the feature defers to a background preparation. Host
+compactions the feature does not answer (and `/compact` with custom
+instructions) still run each hook once. No new hook event type exists.
 
 - `src/extension.ts`: `session_before_compact` and `session_compact` first
   consult the compaction package's adoption signal

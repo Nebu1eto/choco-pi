@@ -3,6 +3,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isStaleContextError } from "../lifecycle.ts";
 
 const NOTICE_PREFIX = "Background compaction";
+const STATUS_KEY = "choco-pi-compaction";
 
 /** Shows each distinct background-compaction warning at most once per registration. */
 export type Notifier = (ctx: ExtensionContext | undefined, message: string) => void;
@@ -25,6 +26,28 @@ function notifyOnce(
   notified.add(message);
   try {
     ctx.ui.notify(`${NOTICE_PREFIX}: ${message}`, "warning");
+  } catch (cause) {
+    if (!(cause instanceof Error && isStaleContextError(cause))) throw cause;
+  }
+}
+
+/** Show a user-facing notice every time it happens (progress of a requested compaction). */
+export function tell(
+  ctx: ExtensionContext,
+  message: string,
+  type: "info" | "warning" | "error",
+): void {
+  try {
+    ctx.ui.notify(`${NOTICE_PREFIX}: ${message}`, type);
+  } catch (cause) {
+    if (!(cause instanceof Error && isStaleContextError(cause))) throw cause;
+  }
+}
+
+/** Set or clear this extension's status-line entry. */
+export function setStatus(ctx: ExtensionContext, text: string | undefined): void {
+  try {
+    ctx.ui.setStatus(STATUS_KEY, text);
   } catch (cause) {
     if (!(cause instanceof Error && isStaleContextError(cause))) throw cause;
   }

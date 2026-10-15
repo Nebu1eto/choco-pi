@@ -203,11 +203,17 @@ test(
         assert.equal(context.state(), "installed", "adopted through the idle route");
         assert.ok(context.host.events.includes("compaction_end"), "the host emitted its events");
         assert.deepEqual(await context.hookLog(), [], "PreCompact and PostCompact skipped");
-        await context.host.session.compact();
+        // A later plain /compact is deferred to the background: no hook runs for
+        // the cancelled host request nor for the adoption that follows.
+        await assert.rejects(context.host.session.compact(), /Compaction cancelled/);
+        await waitFor(() => context.state() === "installed", "manual candidate adopted");
+        assert.deepEqual(await context.hookLog(), [], "deferred manual compaction skips hooks");
+        await context.host.session.prompt("MORE");
+        await context.host.session.compact("Focus on the audit");
         assert.deepEqual(
           await context.hookLog(),
           ["PreCompact", "PostCompact"],
-          "a later plain host compaction without a candidate runs each hook once",
+          "a foreground host compaction (custom instructions) runs each hook once",
         );
       } finally {
         await context.host.dispose();

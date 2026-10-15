@@ -21,11 +21,13 @@ import type { BackgroundCompactionOptions } from "./owner-spec.ts";
 
 export interface PendingRoute {
   readonly candidateId: string;
-  readonly trigger: "idle" | "context-cap";
+  readonly trigger: "idle" | "context-cap" | "manual";
 }
 
 export type Decision =
   | { readonly action: "proceed" }
+  /** A plain `/compact` continues in the background; the host compaction is cancelled. */
+  | { readonly action: "cancel" }
   | {
       readonly action: "adopt";
       readonly candidateId: string;
@@ -40,6 +42,8 @@ export interface MainOwner {
   /** Candidates the host refused on the idle route; boundary adoption remains possible. */
   readonly refusedIdle: Set<string>;
   pendingRoute: PendingRoute | undefined;
+  /** Candidate a plain `/compact` is waiting on; adopted as soon as it is ready and the session is idle. */
+  manualCandidate: string | undefined;
   lastCtx: ExtensionContext;
   readonly cleanup: (() => void)[];
 }

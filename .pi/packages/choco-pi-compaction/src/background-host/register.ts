@@ -432,7 +432,9 @@ async function answerBeforeCompact(
   const owner = touchCurrentOwner(rt, ctx);
   if (owner === undefined) return undefined;
   const decision = await decide(rt, owner, event);
-  return decision.action === "adopt" ? { compaction: decision.compaction } : undefined;
+  if (decision.action === "adopt") return { compaction: decision.compaction };
+  if (decision.action === "cancel") return { cancel: true };
+  return undefined;
 }
 
 async function childAdopts(
