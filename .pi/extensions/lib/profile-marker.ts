@@ -65,7 +65,7 @@ export async function checkoutRevision(checkout: string): Promise<string | null>
   }
 }
 
-export const PROFILE_PI_TARGET = "1.0.4";
+export const PROFILE_PI_TARGET = "1.2.0";
 
 export async function launcherVersion(launcher: string): Promise<string | null> {
   try {

@@ -155,7 +155,7 @@ test("default extension registers a host-authenticated schema and reports failur
     context("session-a"),
   );
   assert.equal(observedSource, "active-host");
-  assert.equal(observedVersion, "1.0.4");
+  assert.equal(observedVersion, "1.2.0");
   assert.equal(result.isError, true);
 });
 

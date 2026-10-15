@@ -10,7 +10,7 @@ OAuth 토큰, API 키, 컴퓨터별 로컬 설정은 Git 밖에 보관하세요.
 
 - Node.js 24 이상
 - pnpm `11.11.0` (다른 버전은 사용할 수 없음)
-- Pi `1.0.4` (이 체크아웃이 고정한 SDK 패키지와 동일한 버전)
+- Pi `1.2.0` (이 체크아웃이 고정한 SDK 패키지와 동일한 버전)
 - Git
 - 선택 사항: 브라우저 자동화를 위한 [`agent-browser`](https://github.com/vercel-labs/agent-browser). 0.34.0, 0.35.2, 0.36.0, 0.37.1, 0.38.1 버전을 검증했으며, 그 외 버전은 경고만 표시하고 실행합니다.
 - 선택 사항: 데스크톱 조작(computer use)을 위한 macOS 14 이상([computer use 설정하기](#computer-use-설정하기-macos) 참고)
@@ -44,14 +44,14 @@ pi
 Homebrew의 `pi-coding-agent` formula는 지원 버전보다 늦게 갱신됩니다. 다음과 같이 버전별 로컬 경로에 Pi를 설치하세요.
 
 ```sh
-npm install --prefix ~/.local/pi-1.0.4 --ignore-scripts @earendil-works/pi-coding-agent@1.0.4
+npm install --prefix ~/.local/pi-1.2.0 --ignore-scripts @earendil-works/pi-coding-agent@1.2.0
 ```
 
 `~/.local/pi-shim/pi` 파일을 만들고 실행 권한을 부여하세요.
 
 ```sh
 #!/bin/sh
-PI_SKIP_VERSION_CHECK=1 exec "$HOME/.local/pi-1.0.4/node_modules/.bin/pi" "$@"
+PI_SKIP_VERSION_CHECK=1 exec "$HOME/.local/pi-1.2.0/node_modules/.bin/pi" "$@"
 ```
 
 셸 설정에서 이 shim 경로를 `/opt/homebrew/bin`보다 앞에 두세요.
@@ -60,7 +60,7 @@ PI_SKIP_VERSION_CHECK=1 exec "$HOME/.local/pi-1.0.4/node_modules/.bin/pi" "$@"
 export PATH="$HOME/.local/pi-shim:$PATH"
 ```
 
-Pi 1.0.4의 `cli.js` 실행기는 Node 컴파일 캐시를 활성화합니다. 원인을 알 수 없는 모듈 로드 오류를 조사할 때는 `NODE_DISABLE_COMPILE_CACHE=1`로 설정해 캐시를 끌 수 있습니다.
+Pi 1.2.0의 `cli.js` 실행기는 Node 컴파일 캐시를 활성화합니다. 원인을 알 수 없는 모듈 로드 오류를 조사할 때는 `NODE_DISABLE_COMPILE_CACHE=1`로 설정해 캐시를 끌 수 있습니다.
 
 Pi가 열리면 `/login`을 실행하고 공급자를 선택하세요. 설치 스크립트는 인증을 수행하거나 로그인 화면을 열지 않으며, 인증 정보를 저장소에 복사하지 않습니다.
 
@@ -94,7 +94,7 @@ npm run install:profile
 
 ### 내장 확장
 
-Pi 1.0.4에는 `codemode`, `tool-search`, `mcp`, `llama.cpp` 확장이 내장되어 있습니다. choco-pi는 Pi에 내장된 도구 검색과 MCP를 그대로 쓰고, 자체 `exec` 코드 모드 브리지를 유지하기 위해 `"extensions": ["-builtin:codemode"]`로 `codemode`만 비활성화합니다. 프로필 설치 프로그램은 이 정책을 전역 설정에 반영하고 그 밖의 내장 확장 비활성화 항목은 제거합니다.
+Pi 1.2.0에는 `codemode`, `tool-search`, `mcp`, `llama.cpp` 확장이 내장되어 있습니다. choco-pi는 Pi에 내장된 도구 검색과 MCP를 그대로 쓰고, 자체 `exec` 코드 모드 브리지를 유지하기 위해 `"extensions": ["-builtin:codemode"]`로 `codemode`만 비활성화합니다. 프로필 설치 프로그램은 이 정책을 전역 설정에 반영하고 그 밖의 내장 확장 비활성화 항목은 제거합니다.
 
 MCP 서버는 Pi의 `~/.pi/agent/mcp.json` 형식으로 설정합니다. 폐기된 `pi-mcp-adapter` 포크용으로 작성한 파일은 `node scripts/translate-mcp-config.ts`로 변환하세요. 이 스크립트는 값을 가린 dry-run diff를 출력하며, `--apply`를 줄 때만 시각이 붙은 백업을 남기고 파일을 씁니다.
 

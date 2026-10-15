@@ -43,7 +43,7 @@ async function fakeLauncher(directory: string, version: string): Promise<string>
 
 test("launcher selection prefers explicit override, then environment, then compatible PATH candidates", async () => {
   await fixture(async (directory) => {
-    const compatible = await fakeLauncher(path.join(directory, "compatible"), "1.0.4");
+    const compatible = await fakeLauncher(path.join(directory, "compatible"), "1.2.0");
     const incompatible = await fakeLauncher(path.join(directory, "incompatible"), "0.87.1");
     const previousPath = process.env.PATH;
     const previousLauncher = process.env.CHOCO_PI_LAUNCHER;
@@ -52,11 +52,11 @@ test("launcher selection prefers explicit override, then environment, then compa
     try {
       assert.deepEqual(await resolvePiLauncher(compatible), {
         launcher: compatible,
-        version: "1.0.4",
+        version: "1.2.0",
       });
       assert.deepEqual(await resolvePiLauncher(), { launcher: incompatible, version: "0.87.1" });
       delete process.env.CHOCO_PI_LAUNCHER;
-      assert.deepEqual(await resolvePiLauncher(), { launcher: compatible, version: "1.0.4" });
+      assert.deepEqual(await resolvePiLauncher(), { launcher: compatible, version: "1.2.0" });
       process.env.PATH = path.dirname(incompatible);
       assert.deepEqual(await resolvePiLauncher(), { launcher: null, version: null });
     } finally {
@@ -73,7 +73,7 @@ test("installer records an explicitly selected launcher and harness rechecks it 
     const root = path.join(directory, "checkout");
     await mkdir(path.join(root, ".pi"), { recursive: true });
     await writeFile(path.join(root, ".pi", "settings.json"), JSON.stringify({ packages: [] }));
-    const launcher = await fakeLauncher(path.join(directory, "launcher"), "1.0.4");
+    const launcher = await fakeLauncher(path.join(directory, "launcher"), "1.2.0");
     const agentDir = path.join(directory, "agent");
     const result = await installProfile({ root, agentDir, piLauncher: launcher });
     assert.deepEqual(result.warnings, []);
@@ -90,7 +90,7 @@ test("installer records an explicitly selected launcher and harness rechecks it 
     assert.equal(healthy.status, "pass");
     assert.ok(healthy.checks.every((check) => check.status === "pass"));
     if (healthy.profileMarker?.status === "valid")
-      assert.deepEqual(healthy.profileMarker.marker.pi, { launcher, version: "1.0.4" });
+      assert.deepEqual(healthy.profileMarker.marker.pi, { launcher, version: "1.2.0" });
     await fakeLauncher(path.dirname(launcher), "0.87.1");
     const stale = await executeHarnessCheck({ mode: "automatic" }, undefined, dependencies);
     assert.equal(stale.status, "warn");

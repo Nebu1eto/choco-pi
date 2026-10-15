@@ -407,7 +407,7 @@ async function createHarness(
     )
     .map(({ definition }) => definition.name);
   await runner.emit({ type: "session_start", reason: "startup" });
-  await runner.emitBeforeAgentStart("", undefined, { cwd });
+  await runner.emitBeforeAgentStart({ messageType: "user", prompt: "" }, { cwd });
 
   const scope = getSearchScope(eventBus);
   assert.equal(hasCanonicalSearch(scope), true);

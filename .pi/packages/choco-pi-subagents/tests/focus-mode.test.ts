@@ -545,7 +545,7 @@ test("focus survives Esc and restores exact predecessors on exit", async (t) => 
   assert.deepEqual(steerCalls, [], "focused commands are not sent to the model as steering text");
 
   session.messages.push(makeAssistantMessage("streamed progress"));
-  for (const listener of listeners) listener({ type: "agent_settled" });
+  for (const listener of listeners) listener({ type: "agent_settled", aborted: false });
   assert.match(document.render(100).join("\n"), /streamed progress/);
   assert.equal(renderRequests.length > 0, true);
 
@@ -730,7 +730,7 @@ test("focus switch isolates expansion, dequeue, pending UI, subscriptions, and i
       session,
       listeners,
       fire: () => {
-        for (const listener of listeners) listener({ type: "agent_settled" });
+        for (const listener of listeners) listener({ type: "agent_settled", aborted: false });
       },
     };
   };

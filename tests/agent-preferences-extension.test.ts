@@ -85,7 +85,7 @@ test(
     const handler = handlers.get("before_agent_start");
     assert.ok(handler);
     const result = handler(
-      { prompt: "Root request", systemPrompt: SYSTEM_PROMPT_WITH_PERSONAS },
+      { messageType: "user", prompt: "Root request", systemPrompt: SYSTEM_PROMPT_WITH_PERSONAS },
       { cwd: agentDir },
     );
     const patched = asBeforeAgentStartResult(result)?.systemPrompt;
@@ -96,7 +96,10 @@ test(
     assert.ok(patched.includes("Agent style: house-style"));
     assert.ok(patched.includes("Always answer with a numbered checklist."));
 
-    const repeated = handler({ prompt: "Next request", systemPrompt: patched }, { cwd: agentDir });
+    const repeated = handler(
+      { messageType: "user", prompt: "Next request", systemPrompt: patched },
+      { cwd: agentDir },
+    );
     assert.equal(
       asBeforeAgentStartResult(repeated)?.systemPrompt,
       undefined,
@@ -116,7 +119,7 @@ test(
     assert.ok(handler);
     const patched = asBeforeAgentStartResult(
       handler(
-        { prompt: "Root request", systemPrompt: SYSTEM_PROMPT_WITH_PERSONAS },
+        { messageType: "user", prompt: "Root request", systemPrompt: SYSTEM_PROMPT_WITH_PERSONAS },
         { cwd: agentDir },
       ),
     )?.systemPrompt;
@@ -137,7 +140,7 @@ test(
     assert.ok(before);
     assert.equal(
       before(
-        { prompt: "Root request", systemPrompt: SYSTEM_PROMPT_WITH_PERSONAS },
+        { messageType: "user", prompt: "Root request", systemPrompt: SYSTEM_PROMPT_WITH_PERSONAS },
         { cwd: agentDir },
       ),
       undefined,
@@ -146,7 +149,7 @@ test(
     writeSettings(agentDir, { agentPersona: "unset", agentStyle: "does-not-exist" });
     assert.equal(
       before(
-        { prompt: "Root request", systemPrompt: SYSTEM_PROMPT_WITH_PERSONAS },
+        { messageType: "user", prompt: "Root request", systemPrompt: SYSTEM_PROMPT_WITH_PERSONAS },
         { cwd: agentDir },
       ),
       undefined,
@@ -180,7 +183,7 @@ test(
     assert.ok(handler);
     const result = asBeforeAgentStartResult(
       handler(
-        { prompt: "Root request", systemPrompt: SYSTEM_PROMPT_WITH_PERSONAS },
+        { messageType: "user", prompt: "Root request", systemPrompt: SYSTEM_PROMPT_WITH_PERSONAS },
         { cwd: agentDir },
       ),
     );
@@ -205,7 +208,7 @@ test(
     assert.ok(handler);
     const result = asBeforeAgentStartResult(
       handler(
-        { prompt: "Root request", systemPrompt: SYSTEM_PROMPT_WITH_PERSONAS },
+        { messageType: "user", prompt: "Root request", systemPrompt: SYSTEM_PROMPT_WITH_PERSONAS },
         { cwd: agentDir },
       ),
     );
@@ -232,7 +235,7 @@ test(
 
     const defaultResult = asBeforeAgentStartResult(
       handler(
-        { prompt: "Root request", systemPrompt: SYSTEM_PROMPT_WITH_PERSONAS },
+        { messageType: "user", prompt: "Root request", systemPrompt: SYSTEM_PROMPT_WITH_PERSONAS },
         { cwd: agentDir },
       ),
     );
@@ -247,7 +250,7 @@ test(
     writeSettings(agentDir, { agentPersona: configured });
     const configuredResult = asBeforeAgentStartResult(
       handler(
-        { prompt: "Root request", systemPrompt: SYSTEM_PROMPT_WITH_PERSONAS },
+        { messageType: "user", prompt: "Root request", systemPrompt: SYSTEM_PROMPT_WITH_PERSONAS },
         { cwd: agentDir },
       ),
     );
@@ -255,7 +258,7 @@ test(
 
     writeSettings(agentDir, { agentPersona: "unset" });
     const unsetResult = handler(
-      { prompt: "Root request", systemPrompt: SYSTEM_PROMPT_WITH_PERSONAS },
+      { messageType: "user", prompt: "Root request", systemPrompt: SYSTEM_PROMPT_WITH_PERSONAS },
       { cwd: agentDir },
     );
     assert.equal(unsetResult, undefined);
@@ -272,7 +275,7 @@ test(
     const systemPrompt = `${SYSTEM_PROMPT_WITH_PERSONAS}\n\n<choco_pi_agent_preferences>\nInherited\n</choco_pi_agent_preferences>`;
 
     const result = asBeforeAgentStartResult(
-      handler({ prompt: "Root request", systemPrompt }, { cwd: agentDir }),
+      handler({ messageType: "user", prompt: "Root request", systemPrompt }, { cwd: agentDir }),
     );
     assert.ok(result?.message);
     assert.equal(result.systemPrompt, undefined);
@@ -297,6 +300,7 @@ test(
       asBeforeAgentStartResult(
         handler(
           {
+            messageType: "user",
             prompt: directive || "Review the change.",
             systemPrompt: `${SYSTEM_PROMPT_WITH_PERSONAS}\n\n<active_agent name="reviewer"/>`,
           },
@@ -325,7 +329,7 @@ test(
 
     const first = asBeforeAgentStartResult(
       handler(
-        { prompt: "Review the change.", systemPrompt: replaceSystemPrompt },
+        { messageType: "user", prompt: "Review the change.", systemPrompt: replaceSystemPrompt },
         { cwd: agentDir },
       ),
     );
@@ -335,7 +339,7 @@ test(
 
     assert.equal(
       handler(
-        { prompt: "Review the change.", systemPrompt: first.systemPrompt },
+        { messageType: "user", prompt: "Review the change.", systemPrompt: first.systemPrompt },
         { cwd: agentDir },
       ),
       undefined,

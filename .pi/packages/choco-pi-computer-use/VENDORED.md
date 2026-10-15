@@ -171,3 +171,8 @@ forbids native calls; no browser or helper installation is involved.
 Review corrections preserve the original key-up modifier payload and make all
 externally parsed window-bound fields optional; `windowBounds` requires numeric
 left, top, width, and height before returning a complete frame.
+
+## 2026-10-09 choco-pi patch: Pi SDK 1.2.0
+
+Pi SDK peer and development pins move from `1.0.4` to exactly `1.2.0`. The isolated e2e harness requires the Pi `1.2.0`
+launcher.

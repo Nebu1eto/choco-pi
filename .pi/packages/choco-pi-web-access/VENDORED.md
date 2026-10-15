@@ -179,3 +179,8 @@ Test fixtures follow the 1.0.4 extension contract. Tool calls receive a real
   `openai-codex` entries.
 - Added `tests/openai-signin-provider.test.ts` (fixture registry, mocked fetch)
   and updated `openai-transport-boundary.test.ts` order expectations.
+
+## 2026-10-09 choco-pi patch: Pi SDK 1.2.0
+
+Pi SDK peer and development pins move from `1.0.4` to exactly `1.2.0`. The package-local workspace and frozen lock follow; `@earendil-works/chord`
+leaves the release-age exclusions because 1.2.0 no longer depends on it.

@@ -273,3 +273,9 @@ form (`formatModelRef`). `format.ts` re-exports `formatProviderLabel` under the
 same name, and `ui.ts` drops its duplicate `focusedProviderLabel` in favor of the
 leaf. choco-pi-subagents and root extensions import the leaf by relative path, so
 it must stay free of imports.
+
+## 2026-10-09 choco-pi patch: Pi SDK 1.2.0
+
+Pi SDK peer and development pins move from `1.0.4` to exactly `1.2.0`.
+Themes point `$schema` at `https://pi.dev/schemas/theme.schema.json`; the theme
+test imports the validator from its 1.2.0 module, `theme-schema.js`.

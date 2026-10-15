@@ -903,3 +903,8 @@ another publisher, and removes it on `session_shutdown` or failed registration
 only while the slot still holds it.
 Test: `tests/native-compaction-budget.test.ts`,
 `../../../tests/codex-preferences-sections.test.ts`.
+
+## 2026-10-09 choco-pi patch: Pi SDK 1.2.0
+
+Pi SDK peer and development pins move from `1.0.4` to exactly `1.2.0`. The package-local workspace and frozen lock follow; `@earendil-works/chord`
+leaves the release-age exclusions because 1.2.0 no longer depends on it.

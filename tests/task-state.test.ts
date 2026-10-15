@@ -284,7 +284,7 @@ test("task boundaries isolate child resources, completion, index state, and the 
     }),
   );
   await harness.emit("agent_end", agentEnd("stop"));
-  await harness.emit("agent_settled", event({ type: "agent_settled" }));
+  await harness.emit("agent_settled", event({ type: "agent_settled", aborted: false }));
 
   assert.deepEqual(
     records(harness, TASK_BOUNDARY_CUSTOM_TYPE).map((entry) => entry.event),
@@ -347,8 +347,8 @@ test("reload reconstructs an active task and terminalizes each boundary once", a
   );
   await harness.emit("session_shutdown", event({ type: "session_shutdown", reason: "reload" }));
   await harness.emit("session_start", event({ type: "session_start", reason: "reload" }));
-  await harness.emit("agent_settled", event({ type: "agent_settled" }));
-  await harness.emit("agent_settled", event({ type: "agent_settled" }));
+  await harness.emit("agent_settled", event({ type: "agent_settled", aborted: false }));
+  await harness.emit("agent_settled", event({ type: "agent_settled", aborted: false }));
 
   assert.equal(
     records(harness, TASK_BOUNDARY_CUSTOM_TYPE).filter((entry) => entry.event === "start").length,
@@ -436,7 +436,7 @@ test("a child reads real parent JSONL, classifies itself, and writes only its ou
     },
   });
   await harness.emit("session_start", event({ type: "session_start", reason: "startup" }));
-  await harness.emit("agent_settled", event({ type: "agent_settled" }));
+  await harness.emit("agent_settled", event({ type: "agent_settled", aborted: false }));
   const secondChild = createHarness({
     sessionId: "parallel-child",
     sessionFile: path.join(directory, "parallel-child.jsonl"),
@@ -543,7 +543,7 @@ test("an unavailable Agent child remains explicit in the written summary", async
       input: { subagent_type: "implementer", prompt: "never persisted" },
     }),
   );
-  await harness.emit("agent_settled", event({ type: "agent_settled" }));
+  await harness.emit("agent_settled", event({ type: "agent_settled", aborted: false }));
   assert.deepEqual(harness.writes[0]?.summary.coverage.entries, [
     {
       toolCallId: "agent-gap",
@@ -599,7 +599,7 @@ test("finding counts accept only recognized records in the active task window", 
       },
     },
   );
-  await harness.emit("agent_settled", event({ type: "agent_settled" }));
+  await harness.emit("agent_settled", event({ type: "agent_settled", aborted: false }));
   assert.deepEqual(records(harness, TASK_OUTCOME_CUSTOM_TYPE)[0]?.findings, {
     critical: 0,
     high: 0,
@@ -662,7 +662,7 @@ test("prompt, credential, tool output, and unrestricted descriptions never enter
       isError: false,
     }),
   );
-  await harness.emit("agent_settled", event({ type: "agent_settled" }));
+  await harness.emit("agent_settled", event({ type: "agent_settled", aborted: false }));
   const persisted = JSON.stringify({ entries: harness.entries, writes: harness.writes });
   for (const secret of secrets) assert.equal(persisted.includes(secret), false);
 });
@@ -686,7 +686,7 @@ test("three Agent resumes emitted by the extension aggregate as exactly three re
     );
   }
   await harness.emit("agent_end", agentEnd("stop"));
-  await harness.emit("agent_settled", event({ type: "agent_settled" }));
+  await harness.emit("agent_settled", event({ type: "agent_settled", aborted: false }));
   await writeFile(
     sessionFile,
     [
@@ -729,7 +729,7 @@ test("records a stale index state when the summary lock times out", async () => 
   });
   await harness.emit("session_start", event({ type: "session_start", reason: "startup" }));
   await startRootTask(harness, "lock timeout");
-  await harness.emit("agent_settled", event({ type: "agent_settled" }));
+  await harness.emit("agent_settled", event({ type: "agent_settled", aborted: false }));
   assert.deepEqual(records(harness, "choco-pi:task-state:resource"), [
     {
       schemaVersion: 1,

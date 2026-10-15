@@ -72,12 +72,17 @@ export default function runtimeAgentPreferences(pi: ExtensionAPI): void {
   pi.on("before_agent_start", (event, ctx) => {
     const preferences = readPreferences();
     const configured = preferences.persona ?? DEFAULT_PERSONA;
-    const resolved = resolvePersona({
-      configured,
-      systemPrompt: event.systemPrompt,
-      prompt: event.prompt,
-      cwd: ctx.cwd,
-    });
+    // Runs started by an extension's custom message carry no user directive, and
+    // the persona announcement from the user's run is still in context.
+    const resolved =
+      event.messageType === "user"
+        ? resolvePersona({
+            configured,
+            systemPrompt: event.systemPrompt,
+            prompt: event.prompt,
+            cwd: ctx.cwd,
+          })
+        : "unset";
     let systemPrompt = event.systemPrompt;
 
     if (!systemPrompt.includes(AGENT_PREFERENCES_MARKER)) {

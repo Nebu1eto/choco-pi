@@ -120,7 +120,7 @@ class Branch {
   calls(ids: readonly string[], text: string): string {
     return this.assistant(
       [
-        { type: "thinking", thinking: text, thinkingSignature: "sig" },
+        { type: "text", text },
         ...ids.map((id) => ({
           type: "toolCall" as const,
           id,

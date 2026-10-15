@@ -1606,3 +1606,10 @@ the hint row, and clamps them so the transcript keeps its minimum viewport.
 
 Tests: `tests/conversation-viewer.test.ts` (multiline send, Esc cancel, no
 margin rows around the draft).
+
+## 2026-10-09 choco-pi patch: Pi SDK 1.2.0
+
+Pi SDK peer and development pins move from `1.0.4` to exactly `1.2.0`. The package-local workspace and frozen lock follow; `@earendil-works/chord`
+leaves the release-age exclusions because 1.2.0 no longer depends on it.
+Test fixtures add `agent_settled.aborted` and the tool render context's
+`durationMs`/`outputPad`; e2e-revival requires the Pi `1.2.0` launcher.

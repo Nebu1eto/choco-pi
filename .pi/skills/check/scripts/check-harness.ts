@@ -21,7 +21,7 @@ import { promisify } from "node:util";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 
 export type Capability = "tui" | "subagents" | "resources" | "lsp";
-export const PI_SDK_TARGET = "1.0.4";
+export const PI_SDK_TARGET = "1.2.0";
 type CheckStatus = "pass" | "warn" | "fail";
 
 type Check = { id: string; status: CheckStatus; detail: string };

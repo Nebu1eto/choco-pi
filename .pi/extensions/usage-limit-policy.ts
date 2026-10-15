@@ -117,7 +117,10 @@ export type UsageLimitHostEvents<M extends UsageLimitModel> = {
   };
   session_before_tree: { readonly type: "session_before_tree" };
   session_tree: { readonly type: "session_tree" };
-  before_agent_start: { readonly type: "before_agent_start" };
+  before_agent_start: {
+    readonly type: "before_agent_start";
+    readonly messageType: "user" | "custom";
+  };
   agent_start: { readonly type: "agent_start" };
   model_select: {
     readonly type: "model_select";
@@ -996,12 +999,15 @@ export function registerUsageLimitController<
 
   pi.on("session_tree", () => contained(() => interrupt()));
 
-  pi.on("before_agent_start", () =>
+  pi.on("before_agent_start", (event) =>
     contained(() => {
       if (state.ownTurnPending) {
         state.ownTurnPending = false;
         return;
       }
+      // Only a user prompt supersedes recovery; another extension's custom
+      // message run must not cancel it or refill the fallback budgets.
+      if (event.messageType !== "user") return;
       interrupt();
       cancelRecovery();
       resetBudgets();

@@ -256,3 +256,9 @@ excluded. To re-enable `low`, set the static entry back to `low: "low"`,
 remove the override, and update the test special cases. The live refresh
 already discovered the model; this entry updates the offline fallback, the
 override, and the live parity test.
+
+## 2026-10-09 choco-pi patch: Pi SDK 1.2.0
+
+Pi SDK peer and development pins move from `1.0.4` to exactly `1.2.0`. The package-local workspace and frozen lock follow; `@earendil-works/chord`
+leaves the release-age exclusions because 1.2.0 no longer depends on it.
+The workspace `overrides` for `pi-ai` and `pi-tui` move to `1.2.0`.

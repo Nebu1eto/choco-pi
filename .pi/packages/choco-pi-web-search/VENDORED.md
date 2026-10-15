@@ -18,3 +18,7 @@ matching the harness target. Other dependency contracts are unchanged.
 The cross-loader test fixture's `ExtensionActions` implement `getSettings()`
 from the in-memory `SettingsManager` given to its resource loader. Runtime code
 is unchanged.
+
+## 2026-10-09 choco-pi patch: Pi SDK 1.2.0
+
+Pi SDK peer and development pins move from `1.0.4` to exactly `1.2.0`.

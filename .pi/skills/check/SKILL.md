@@ -19,7 +19,7 @@ Use a capability-relevant check before `task-inline`, `task`, or `task-hotfix`. 
 
 Never read or print `auth.json`, API keys, OAuth tokens, environment secrets, or credential-bearing configuration.
 
-Core readiness requires Node `>=24` and the actual runtime source exactly Pi `1.0.4`, matching the repository's SDK contracts. In-host checks name `active-host`; standalone checks name `imported-sdk`. Older, newer, prerelease, missing, or malformed actual runtime versions fail. A different or unavailable direct PATH launcher does not override a verified runtime and warns only in a full diagnostic.
+Core readiness requires Node `>=24` and the actual runtime source exactly Pi `1.2.0`, matching the repository's SDK contracts. In-host checks name `active-host`; standalone checks name `imported-sdk`. Older, newer, prerelease, missing, or malformed actual runtime versions fail. A different or unavailable direct PATH launcher does not override a verified runtime and warns only in a full diagnostic.
 
 The `builtin-extensions` check requires `-builtin:codemode` and warns if project settings exclude `builtin:tool-search` or `builtin:mcp`. In-host, it requires the built-in `tool_search` tool and warns if custom `mcp` or `mcpScript` adapter tools or built-in codemode resources are registered. choco-pi uses Pi's built-in tool search and MCP and keeps its own `exec` code-mode bridge. Pi does not expose extension load warnings to extensions; when this check warns, ask the user what `[Extension issues]` reported at startup. Run `pnpm install:profile` to carry the policy into the global settings.
 
@@ -29,7 +29,7 @@ where `agentDir` is `PI_CODING_AGENT_DIR` or `~/.pi/agent`. Its status is `valid
 revision (possibly null), installation time, observed Pi version and launcher
 (both nullable), and host-bridge schema. The tool warns if the marker is absent,
 invalid, points to a different checkout, has no launcher, or its launcher no longer
-reports exactly `1.0.4`. This is installation evidence, not proof that the active
+reports exactly `1.2.0`. This is installation evidence, not proof that the active
 host loaded the bridge. A missing or invalid marker can be repaired with
 an approved `pnpm install:profile` run; the standalone fallback does not report it.
 

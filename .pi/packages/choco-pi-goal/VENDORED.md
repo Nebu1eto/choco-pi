@@ -206,3 +206,9 @@ checkpoint at a `turn_end`/`agent_before_settle` boundary, which emits no
   real compaction extension. A boundary adoption, loaded in production order
   (goal first, no pre-existing slot), notifies once and a later host compaction
   once more; an idle-route adoption notifies once through its `session_compact`.
+
+## 2026-10-09 choco-pi patch: Pi SDK 1.2.0
+
+Pi SDK peer and development pins move from `1.0.4` to exactly `1.2.0`.
+`before_agent_start` now also fires for custom-message runs, including this
+package's own continuation; those runs no longer clear continuation state.

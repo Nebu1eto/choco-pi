@@ -75,3 +75,9 @@ compactions still run each once. No new hook event type exists.
   real hooks and compaction extensions and temporary HOME/agent dir; an
   idle-route adoption runs no hook despite its real host events, and a later
   host compaction runs PreCompact and PostCompact once each.
+
+## 2026-10-09 choco-pi patch: Pi SDK 1.2.0
+
+Pi SDK peer and development pins move from `1.0.4` to exactly `1.2.0`.
+A SessionStart `initialUserMessage` is sent with `deliverAs: "followUp"`, which
+1.2.0 requires while a run is starting.

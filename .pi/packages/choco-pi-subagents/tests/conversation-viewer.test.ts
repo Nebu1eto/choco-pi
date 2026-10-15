@@ -129,7 +129,7 @@ function makeSession(messages: unknown[]) {
   });
   return {
     session,
-    fire: (event: AgentSessionEvent = { type: "agent_settled" }) =>
+    fire: (event: AgentSessionEvent = { type: "agent_settled", aborted: false }) =>
       listeners.forEach((listener) => listener(event)),
   };
 }

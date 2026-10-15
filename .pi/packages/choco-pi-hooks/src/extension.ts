@@ -422,7 +422,9 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
     });
     if (result.watchPaths) watchers.replaceDynamicPaths(result.watchPaths);
     if (result.sessionTitle) pi.setSessionName(result.sessionTitle);
-    if (result.initialUserMessage) pi.sendUserMessage(result.initialUserMessage);
+    // A user prompt may start a run while SessionStart hooks are awaited.
+    if (result.initialUserMessage)
+      pi.sendUserMessage(result.initialUserMessage, { deliverAs: "followUp" });
     if (result.additionalContext.length)
       pi.sendMessage({
         customType: "choco-pi-hooks",

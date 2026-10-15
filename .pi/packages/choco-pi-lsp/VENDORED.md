@@ -232,3 +232,8 @@ The package workspace release-age exceptions now list eight exact
 `@earendil-works/*@1.0.4` packages and the existing `typebox@1.3.29` exception.
 `@earendil-works/pi-codemode@1.0.4` and `@earendil-works/pi-mcp@1.0.4` now appear
 in the frozen lock as transitive dependencies of `pi-coding-agent`.
+
+## 2026-10-09 choco-pi patch: Pi SDK 1.2.0
+
+Pi SDK peer and development pins move from `1.0.4` to exactly `1.2.0`. The package-local workspace and frozen lock follow; `@earendil-works/chord`
+leaves the release-age exclusions because 1.2.0 no longer depends on it.

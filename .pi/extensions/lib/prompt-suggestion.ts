@@ -1,7 +1,12 @@
 import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
 import type { ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
-import { CURSOR_MARKER, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import {
+  CURSOR_MARKER,
+  renderFakeCursor,
+  truncateToWidth,
+  visibleWidth,
+} from "@earendil-works/pi-tui";
 import { readAgentPreferencesAsync } from "./agent-preferences.ts";
 import { isStaleContextError } from "./lifecycle.ts";
 import { isString, type RuntimeValue } from "./runtime-values.ts";
@@ -108,7 +113,7 @@ export function sanitizePromptSuggestion(raw: string): string | undefined {
   return text;
 }
 
-const CURSOR_CELL = "\x1b[7m \x1b[0m";
+const CURSOR_CELL = renderFakeCursor(" ");
 const GHOST_START = "\x1b[2m";
 const GHOST_END = "\x1b[22m";
 

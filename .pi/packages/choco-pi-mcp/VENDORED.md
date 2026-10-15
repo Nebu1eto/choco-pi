@@ -257,3 +257,8 @@ still strips both from the global profile; frozen dependency pins and locks are
 unchanged. The root `scripts/translate-mcp-config.ts` converts the legacy
 `~/.pi/agent/mcp.json` shape to the built-in schema with redacted dry runs.
 The provenance sections above describe the retired fork's history.
+
+## 2026-10-09 choco-pi patch: Pi SDK 1.2.0
+
+Pi SDK peer and development pins move from `1.0.4` to exactly `1.2.0`. The package-local workspace and frozen lock follow; `@earendil-works/chord`
+leaves the release-age exclusions because 1.2.0 no longer depends on it.

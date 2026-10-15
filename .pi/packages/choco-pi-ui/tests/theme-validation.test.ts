@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import { test } from "node:test";
-import { validateThemeJson } from "../../../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme-json.js";
+import { validateThemeJson } from "../../../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme-schema.js";
 
 const themeDirectory = new URL("../themes/", import.meta.url);
 const piPackage = new URL(
@@ -9,8 +9,8 @@ const piPackage = new URL(
   import.meta.url,
 );
 
-test("every Nord theme passes Pi 1.0.4 theme validation", async () => {
-  assert.match(await readFile(piPackage, "utf8"), /^\s*"version": "1\.0\.4",?$/m);
+test("every Nord theme passes Pi 1.2.0 theme validation", async () => {
+  assert.match(await readFile(piPackage, "utf8"), /^\s*"version": "1\.2\.0",?$/m);
 
   const files = (await readdir(themeDirectory)).filter((name) => name.endsWith(".json"));
   assert.ok(files.length > 0, "expected at least one Nord theme");

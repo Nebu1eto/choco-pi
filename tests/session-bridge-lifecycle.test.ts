@@ -124,7 +124,7 @@ test("fresh SDK contexts update one owned session from busy to idle", async () =
     assert.equal((await dependencies.state(sessionId)).status, "idle");
     await fixture.session.extensionRunner.emit({ type: "agent_start" });
     assert.equal((await dependencies.state(sessionId)).status, "busy");
-    await fixture.session.extensionRunner.emit({ type: "agent_settled" });
+    await fixture.session.extensionRunner.emit({ type: "agent_settled", aborted: false });
     assert.equal((await dependencies.state(sessionId)).status, "idle");
     assert.equal(fixture.contexts.length, 3);
     assert.notEqual(fixture.contexts[0], fixture.contexts[1]);

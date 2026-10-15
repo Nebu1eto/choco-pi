@@ -150,3 +150,9 @@ dependencies retain their existing contracts.
 
 Pi SDK peer and development pins move from `0.87.1` to exactly `1.0.4`,
 matching the harness target. Other dependency contracts are unchanged.
+
+## 2026-10-09 choco-pi patch: Pi SDK 1.2.0
+
+Pi SDK peer and development pins move from `1.0.4` to exactly `1.2.0`.
+A `before_agent_start` run started by a custom message has no prompt in 1.2.0;
+the browser-guidance decision uses the latest user prompt on the branch instead.

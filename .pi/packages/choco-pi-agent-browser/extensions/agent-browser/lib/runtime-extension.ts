@@ -2432,7 +2432,13 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
-    if (!shouldAppendBrowserSystemPrompt(event.prompt)) {
+    // A run started by a custom message keeps the latest user prompt's decision,
+    // so its system prompt matches the user run before it.
+    const prompt =
+      event.messageType === "user"
+        ? event.prompt
+        : getLatestUserPrompt(ctx.sessionManager.getBranch());
+    if (!shouldAppendBrowserSystemPrompt(prompt)) {
       return undefined;
     }
     const runtimeConfig = loadAgentBrowserConfigSync({

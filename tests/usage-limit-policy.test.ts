@@ -572,7 +572,7 @@ test("a user turn cancels the armed recovery with a durable entry", async () => 
   await harness.settle();
   const [pending] = harness.pending();
   assert.ok(pending);
-  await harness.fire("before_agent_start", { type: "before_agent_start" });
+  await harness.fire("before_agent_start", { type: "before_agent_start", messageType: "user" });
   assert.deepEqual(harness.resolved(), [{ recoveryId: pending.recoveryId, outcome: "cancelled" }]);
   assert.equal(harness.liveTimers.length, 0);
 });
@@ -809,7 +809,8 @@ const CANCELLATIONS: readonly { name: string; fire: (harness: Harness) => Promis
   { name: "model_select", fire: (harness) => harness.selectModel(SOL) },
   {
     name: "before_agent_start",
-    fire: (harness) => harness.fire("before_agent_start", { type: "before_agent_start" }),
+    fire: (harness) =>
+      harness.fire("before_agent_start", { type: "before_agent_start", messageType: "user" }),
   },
   {
     name: "session_before_tree",
@@ -869,11 +870,26 @@ test("a user turn during a wake-up's preference read prevents the continuation",
   harness.snapshot = available(T0 + HOUR_MS + RESET_MARGIN_MS);
   const release = harness.holdPreference();
   await harness.advance(HOUR_MS + RESET_MARGIN_MS);
-  await harness.fire("before_agent_start", { type: "before_agent_start" });
+  await harness.fire("before_agent_start", { type: "before_agent_start", messageType: "user" });
   release();
   await harness.flush();
   assert.equal(harness.sent.length, 0);
   assert.deepEqual(harness.resolved(), [{ recoveryId: pending.recoveryId, outcome: "cancelled" }]);
+});
+
+test("another extension's custom-message run leaves a pending recovery armed", async () => {
+  const harness = await started((h) => {
+    h.preferences = ["auto-resume"];
+  });
+  harness.snapshot = exhausted(T0 + HOUR_MS, T0);
+  harness.pushAssistant("anthropic", "claude-opus-5-5", ANTHROPIC_429);
+  await harness.settle();
+  const [pending] = harness.pending();
+  assert.ok(pending);
+  await harness.fire("before_agent_start", { type: "before_agent_start", messageType: "custom" });
+  await harness.flush();
+  assert.equal(harness.resolved().length, 0, "the recovery is not cancelled");
+  assert.equal(harness.liveTimers.length, 1, "the wake-up timer stays armed");
 });
 
 test("an inferred limit that live data shows has capacity is transient", async () => {
@@ -1057,7 +1073,7 @@ test("fallback: a switch invalidated without a user model choice is not reverted
   const releaseAuth = harness.auth.hold();
   const settling = harness.settle();
   await harness.flush();
-  await harness.fire("before_agent_start", { type: "before_agent_start" });
+  await harness.fire("before_agent_start", { type: "before_agent_start", messageType: "user" });
   releaseAuth();
   await settling;
   await harness.flush();
@@ -1309,7 +1325,7 @@ test("a cancellation or shutdown during replay's preference read is respected", 
   let release = userTurn.holdPreference();
   let starting = userTurn.start("startup");
   await userTurn.flush();
-  await userTurn.fire("before_agent_start", { type: "before_agent_start" });
+  await userTurn.fire("before_agent_start", { type: "before_agent_start", messageType: "user" });
   release();
   await starting;
   assert.deepEqual(userTurn.resolved(), [{ recoveryId: "turn", outcome: "cancelled" }]);
