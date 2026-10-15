@@ -75,6 +75,9 @@ function createExecTool(
     promptSnippet: "Compose tools with JavaScript",
     parameters: EXEC_PARAMETERS,
     constrainedSampling: CODE_MODE_EXEC_CONSTRAINED_SAMPLING,
+    // Lets Pi's MCP extension wait for servers a script names, as codemode does.
+    reachesTools: ({ code }) =>
+      isStringValue(code) ? (/\bALL_TOOLS\b/.test(code) ? "all" : (code.match(/\w+/g) ?? [])) : [],
     async execute(id, params, signal, onUpdate, ctx) {
       const owner = ctx.sessionManager.getSessionId();
       const cwd = ctx.cwd;

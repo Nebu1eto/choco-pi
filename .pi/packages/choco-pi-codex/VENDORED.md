@@ -908,3 +908,9 @@ Test: `tests/native-compaction-budget.test.ts`,
 
 Pi SDK peer and development pins move from `1.0.4` to exactly `1.2.0`. The package-local workspace and frozen lock follow; `@earendil-works/chord`
 leaves the release-age exclusions because 1.2.0 no longer depends on it.
+
+## 2026-10-09 choco-pi patch: exec declares reachesTools
+
+The `exec` tool declares `reachesTools` like Pi 1.2.0 codemode: `"all"` when a
+script reads `ALL_TOOLS`, else its words, so the built-in MCP extension waits for
+servers a script names before the call runs.
