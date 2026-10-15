@@ -9,6 +9,9 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import type { HostCompactionTrigger } from "../background/arbitration.ts";
+import { ANTHROPIC_BACKEND_ID } from "../anthropic/backend.ts";
+import { capturesFor } from "../anthropic/capture.ts";
+import { TEXT_BACKEND_ID } from "../background/text-backend.ts";
 import { type BackgroundAdoptionOwner, readAdoptionIdentity } from "./adoption-signal.ts";
 import { boundaryDraft } from "./branch.ts";
 import { errorText, setStatus, tell } from "./notices.ts";
@@ -111,7 +114,8 @@ async function deferManual(
   event: SessionBeforeCompactEvent,
 ): Promise<Decision> {
   if (!isPlainManual(owner, event)) return PROCEED;
-  const candidateId = await manualCandidate(rt, owner);
+  const lanes = manualLanes(owner);
+  const candidateId = await manualCandidate(rt, owner, lanes[0]);
   if (candidateId === undefined) return PROCEED;
   // A repeated /compact during the same preparation waits on the existing follower.
   if (owner.manualCandidate === candidateId) return CANCEL;
@@ -122,13 +126,32 @@ async function deferManual(
     "continuing in the background; the context switches when it is ready",
     "info",
   );
-  void followManual(rt, owner, candidateId);
+  void followManual(rt, owner, candidateId, lanes.slice(1));
   return CANCEL;
 }
 
+/**
+ * Backend lanes a manual request may use, preferred first. The Anthropic lane
+ * needs a wire capture of this session's latest request; right after a
+ * reload or resume there is none, so the text lane goes first and the
+ * Anthropic lane is skipped rather than failing with `incompatible`.
+ */
+function manualLanes(owner: MainOwner): string[] {
+  const selected = owner.core.backendId;
+  if (selected === undefined) return [];
+  const lanes = [selected, ...owner.core.backendIds.filter((id) => id !== selected)];
+  const anthropicUsable =
+    selected !== ANTHROPIC_BACKEND_ID || capturesFor(owner.core.sessionId).length > 0;
+  if (anthropicUsable) return lanes.filter((id) => id === selected || id === TEXT_BACKEND_ID);
+  return lanes.filter((id) => id === TEXT_BACKEND_ID);
+}
+
 /** The outstanding preparation to wait on, or a newly requested one; undefined when none can run. */
-async function manualCandidate(rt: HostRuntime, owner: MainOwner): Promise<string | undefined> {
-  const backendId = owner.core.backendId;
+async function manualCandidate(
+  rt: HostRuntime,
+  owner: MainOwner,
+  backendId: string | undefined,
+): Promise<string | undefined> {
   if (backendId === undefined) return undefined;
   const status = owner.core.coordinator.status();
   if (status.state === "queued" || status.state === "preparing") return status.candidateId;
@@ -141,8 +164,16 @@ async function manualCandidate(rt: HostRuntime, owner: MainOwner): Promise<strin
   return requested.candidateId;
 }
 
-/** Wait for the manual candidate; adopt it while idle, otherwise leave it to the next boundary. */
-async function followManual(rt: HostRuntime, owner: MainOwner, candidateId: string): Promise<void> {
+/**
+ * Wait for the manual candidate; adopt it while idle, otherwise leave it to
+ * the next boundary. A failed lane retries once per remaining fallback lane.
+ */
+async function followManual(
+  rt: HostRuntime,
+  owner: MainOwner,
+  candidateId: string,
+  fallbacks: readonly string[],
+): Promise<void> {
   let failure: unknown;
   try {
     await owner.core.coordinator.waitForPreparation();
@@ -163,9 +194,20 @@ async function followManual(rt: HostRuntime, owner: MainOwner, candidateId: stri
       return;
     }
   }
+  const reason = failure === undefined ? (status.reason ?? status.state) : errorText(failure);
+  const [next, ...rest] = fallbacks;
+  if (next !== undefined && failure === undefined) {
+    const retried = await manualCandidate(rt, owner, next);
+    if (!isCurrent(rt, owner) || owner.manualCandidate !== candidateId) return;
+    if (retried !== undefined) {
+      owner.manualCandidate = retried;
+      tell(ctx, `${status.backendId ?? "lane"} failed (${reason}); retrying on ${next}`, "info");
+      void followManual(rt, owner, retried, rest);
+      return;
+    }
+  }
   owner.manualCandidate = undefined;
   setStatus(ctx, undefined);
-  const reason = failure === undefined ? (status.reason ?? status.state) : errorText(failure);
   tell(
     ctx,
     `manual compaction did not produce a checkpoint (${reason}); run /compact again`,

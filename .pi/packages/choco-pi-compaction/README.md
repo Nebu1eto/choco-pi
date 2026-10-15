@@ -134,7 +134,10 @@ host event.
 - **Manual (plain `/compact`, no ready candidate).** The extension starts a
   background preparation (or waits on the one already running), answers the
   host with `cancel` so input is accepted again, and shows a
-  "compacting in background" status. The host prints its own
+  "compacting in background" status. The Anthropic lane needs a wire capture
+  of the session's latest request, so right after a reload or resume the
+  request goes to the text lane instead; a lane that fails is retried once on
+  the remaining lane before the failure is reported. The host prints its own
   "Compaction cancelled" line because the built-in command cannot be
   intercepted. When the checkpoint is ready it is adopted through the idle
   route if the session is idle, otherwise at the next boundary; a failed

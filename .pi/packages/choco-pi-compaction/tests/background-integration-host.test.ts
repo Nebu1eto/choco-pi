@@ -27,7 +27,8 @@ import {
   resolveChildCompactionProvider,
 } from "../../choco-pi-subagents/src/child-compaction-bridge.ts";
 import { getCoordinator } from "../src/background/registry.ts";
-import type { TextSummarizer } from "../src/background/text-backend.ts";
+import { TEXT_BACKEND_ID, type TextSummarizer } from "../src/background/text-backend.ts";
+import type { AnthropicSupportEntry } from "../src/anthropic/capability.ts";
 import registerCompaction, {
   type BackgroundAdoptionNotice,
   getBackgroundAdoptionSignal,
@@ -136,6 +137,8 @@ interface RigOptions {
   readonly hostCompaction?: HostOptions["compaction"];
   readonly summarizerGate?: Gate;
   readonly baseUrl?: string;
+  /** Admit the rig's fake model to the Anthropic native lane (no capture is ever produced). */
+  readonly anthropicAllowList?: readonly AnthropicSupportEntry[];
 }
 
 function textSummarizer(model: Model<Api>, onCall: () => void, wait: Gate): TextSummarizer {
@@ -172,11 +175,13 @@ function compactionExtension(
   settingsFile: string,
   log: RigLog,
   summarizerGate: Gate,
+  anthropicAllowList?: readonly AnthropicSupportEntry[],
 ): ExtensionFactory {
-  const background = {
+  const background: NonNullable<Parameters<typeof registerCompaction>[1]>["background"] = {
     settingsPaths: () => [settingsFile],
     createTextSummarizer: (active: Model<Api>) =>
       textSummarizer(active, () => (log.backgroundCalls += 1), summarizerGate),
+    anthropic: anthropicAllowList === undefined ? undefined : { allowList: anthropicAllowList },
   };
   return (pi: ExtensionAPI) => {
     registerCompaction(pi, {
@@ -208,7 +213,12 @@ async function createRig(options: RigOptions): Promise<Rig> {
     respond: options.respond,
     extensions: [
       ...(options.firstExtensions ?? []),
-      compactionExtension(settingsFile, log, options.summarizerGate ?? gate()),
+      compactionExtension(
+        settingsFile,
+        log,
+        options.summarizerGate ?? gate(),
+        options.anthropicAllowList,
+      ),
       ...(options.extraExtensions ?? []),
     ],
   });
@@ -665,6 +675,47 @@ test(
         assert.deepEqual(
           rig.compactEvents.map((event) => [event.reason, event.fromExtension]),
           [["manual", true]],
+        );
+      } finally {
+        await rig.dispose();
+      }
+    });
+  },
+);
+
+test(
+  "a plain /compact with the Anthropic lane selected but no capture uses the text lane",
+  { timeout: 20_000 },
+  async () => {
+    await withDir(async (dir) => {
+      const model = fakeModel(CONTEXT_WINDOW);
+      const rig = await createRig({
+        dir,
+        sidecar: JSON.stringify({ ...JSON.parse(MANUAL_ONLY_SIDECAR), anthropicNative: true }),
+        anthropicAllowList: [
+          {
+            provider: model.provider,
+            model: model.id,
+            baseUrl: model.baseUrl,
+            authMode: "api-key",
+          },
+        ],
+        respond: async (index) =>
+          reply(`R${index}`, { usageInput: index === 0 ? HIGH_USAGE : 20_000 }),
+      });
+      try {
+        await rig.session.prompt("GO");
+        assert.equal(getCoordinator(rig.ownerKey)?.status().state, "idle");
+        await assert.rejects(rig.session.compact(), /Compaction cancelled/);
+        await waitFor(() => stateOf(rig) === "installed", "installed candidate");
+        assert.equal(rig.backgroundCalls(), 1, "the text lane prepared the checkpoint");
+        assert.equal(rig.hostSummarizerCalls.length, 0);
+        const own = ownEntries(rig);
+        assert.equal(own.length, 1);
+        assert.equal(
+          getCoordinator(rig.ownerKey)?.status().backendId,
+          TEXT_BACKEND_ID,
+          "the Anthropic lane was skipped rather than failing with incompatible",
         );
       } finally {
         await rig.dispose();

@@ -60,6 +60,8 @@ export interface OwnerCore {
   readonly coordinator: CoordinatorHandle;
   /** Backend chosen for this owner's model, or undefined when none applies. */
   readonly backendId: string | undefined;
+  /** Backend IDs resolved for this owner; the chosen one may fall back to another at request time. */
+  readonly backendIds: readonly string[];
   /** candidateId -> route of every proposal this owner handed to the host. */
   readonly proposals: Map<string, AdoptionRoute>;
   /** Branch switch observed outside the per-read leaf check. */
@@ -125,16 +127,21 @@ export async function createOwnerCore(
     isStaleContextError: (cause) => cause instanceof Error && isStaleContextError(cause),
     clock: options.clock,
   });
-  return assembleCore(state, coordinator);
+  return assembleCore(state, coordinator, [...backends.keys()]);
 }
 
-function assembleCore(state: OwnerCoreState, coordinator: CoordinatorHandle): OwnerCore {
+function assembleCore(
+  state: OwnerCoreState,
+  coordinator: CoordinatorHandle,
+  backendIds: readonly string[],
+): OwnerCore {
   const spec = state.spec;
   return {
     ownerKey: spec.ownerKey,
     sessionId: spec.sessionId,
     coordinator,
     backendId: state.backendId,
+    backendIds,
     proposals: new Map(),
     bumpBranch: () => {
       state.branchEpoch += 1;
