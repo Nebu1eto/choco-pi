@@ -29,6 +29,8 @@ import { toolContext } from "./fixtures/tool-context.ts";
 import {
   cleanupProviders,
   createUsageLimitEnv,
+  type Deferred,
+  deferred,
   flush,
   installPolicy,
   policyState,
@@ -96,6 +98,11 @@ interface Env {
   journal(id: string, sm?: SessionManager): SubagentJournalData[];
   seed(agent: JournalAgentSnapshot, suspended: boolean): void;
   childFile(name: string): Promise<string>;
+  /**
+   * Resolves once the `run`-th fake run of agent `id` (1-based) has installed
+   * its abort handling and pending settlement, i.e. it observes abort/finishAll.
+   */
+  ready(id: string, run?: number): Promise<void>;
   /** Settle every pending fake run as completed. */
   finishAll(): void;
 }
@@ -126,8 +133,22 @@ async function setup(t: TestContext): Promise<Env> {
   const aborted: string[] = [];
   const atAbort = new Map<string, SubagentJournalData | undefined>();
   const pending: Array<() => void> = [];
+  const readiness = new Map<string, Deferred<void>[]>();
+  const started = new Map<string, number>();
   const managers: AgentManager[] = [];
   const childSessions = new Map<string, AgentSession>();
+
+  function readySlot(id: string, run: number): Deferred<void> {
+    let slots = readiness.get(id);
+    if (slots === undefined) {
+      slots = [];
+      readiness.set(id, slots);
+    }
+    while (slots.length < run) slots.push(deferred<void>());
+    const slot = slots[run - 1];
+    assert.ok(slot, `readiness slot ${id}#${run}`);
+    return slot;
+  }
 
   const journalOf = (id: string, manager = sm) =>
     manager
@@ -149,6 +170,8 @@ async function setup(t: TestContext): Promise<Env> {
     async runAgent(_ctx, _type, prompt, options) {
       runs.push({ prompt, options });
       const id = options.agentId ?? "unknown";
+      const ordinal = (started.get(id) ?? 0) + 1;
+      started.set(id, ordinal);
       const file = options.resumeSessionFile ?? (await childFile(`child-${id}.jsonl`));
       let session = childSessions.get(file);
       if (session === undefined) {
@@ -163,16 +186,16 @@ async function setup(t: TestContext): Promise<Env> {
         const signal = options.signal;
         const settle = (aborted: boolean) =>
           resolve({ responseText: aborted ? "" : "done", session: live, aborted, steered: false });
-        signal?.addEventListener(
-          "abort",
-          () => {
-            aborted.push(id);
-            atAbort.set(id, journalOf(id).at(-1));
-            settle(true);
-          },
-          { once: true },
-        );
+        const onAbort = () => {
+          aborted.push(id);
+          atAbort.set(id, journalOf(id).at(-1));
+          settle(true);
+        };
+        // A real runner honors a signal that aborted during its async setup.
+        if (signal?.aborted === true) onAbort();
+        else signal?.addEventListener("abort", onAbort, { once: true });
         pending.push(() => settle(false));
+        readySlot(id, ordinal).resolve();
       });
     },
     async resumeAgent() {
@@ -301,6 +324,7 @@ async function setup(t: TestContext): Promise<Env> {
       );
     },
     childFile,
+    ready: (id, run = 1) => readySlot(id, run).promise,
     finishAll() {
       for (const settle of pending.splice(0)) settle();
     },
@@ -325,7 +349,7 @@ for (const reason of ["reload", "quit", "resume", "fork"]) {
     const a = s.activate();
     await a.start();
     const id = await spawnBackground(a);
-    await flush();
+    await s.ready(id);
     assert.equal(s.journal(id).at(-1)?.agent.status, "running");
 
     await a.shutdown(reason);
@@ -348,7 +372,7 @@ test("startup revives an interrupted agent under its id, after session_start ret
   const first = s.activate();
   await first.start();
   const id = await spawnBackground(first);
-  await flush();
+  await s.ready(id);
   await first.shutdown("reload");
   const file = s.journal(id).at(-1)?.agent.sessionFile;
   assert.ok(file);
@@ -369,6 +393,7 @@ test("startup revives an interrupted agent under its id, after session_start ret
   assert.equal(latest?.agent.revivals, 0);
   assert.equal(latest?.agent.handle, s.journal(id)[0]?.agent.handle);
 
+  await s.ready(id, 2);
   s.finishAll();
   await sleep(50);
   assert.equal(s.journal(id).at(-1)?.agent.status, "completed");
@@ -391,7 +416,7 @@ test("print mode and in-memory roots do not journal and abort as before", async 
   const print = s.activate({ mode: "print" });
   await print.start();
   const id = await spawnBackground(print);
-  await flush();
+  await s.ready(id);
   await print.shutdown("quit");
   assert.deepEqual(s.journal(id), []);
   assert.deepEqual(s.aborted, [id]);
@@ -400,7 +425,7 @@ test("print mode and in-memory roots do not journal and abort as before", async 
   const inMemory = s.activate({ sm: memory });
   await inMemory.start();
   const other = await spawnBackground(inMemory);
-  await flush();
+  await s.ready(other);
   await inMemory.shutdown("quit");
   assert.deepEqual(s.journal(other, memory), []);
   assert.deepEqual(s.aborted, [id, other]);
@@ -514,6 +539,8 @@ test("dormant agents: result read, stop before revival, Agent resume and @handle
   });
   assert.match(unknown, /Agent not found: "missing"/);
 
+  await s.ready("done");
+  await s.ready("talk");
   s.finishAll();
   await sleep(50);
   await a.shutdown("quit");
@@ -589,7 +616,7 @@ test("Agent resume of a dormant agent with model: switches and journals, or refu
   assert.equal(run?.options.agentId, "mod");
   assert.equal(run?.options.resumeSessionFile, file);
   assert.equal(`${run?.options.model?.provider}/${run?.options.model?.id}`, "openai/gpt-5.6-sol");
-  await flush();
+  await s.ready("mod");
   // Every entry of the resumed run names the chosen model (the first one is
   // written before the runner starts), so a later revival reopens on it.
   const entries = s.journal("mod").filter((entry) => entry.agent.status !== "completed");
