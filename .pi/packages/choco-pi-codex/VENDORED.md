@@ -102,12 +102,15 @@ rewrite.
 
 ## Daybreak Auto preference (choco-pi addition)
 
-Daybreak request state accepts `"auto"` alongside existing booleans. Auto uses
-the existing account and model lookups but requires a confirmed Blue/Red grant
-before adding `access_programs`; denial and lookup failure remain inactive.
-Explicit On retains its best-effort behavior. Request ownership, revisions,
-model-support gates, and finalizer validation remain unchanged. Decision tests
-cover Auto grants, denial, failure, unsupported models, and On compatibility.
+Daybreak request state accepts `"auto"` alongside existing booleans. Auto and On
+share one decision path: the model catalog gates the request and the server echo
+is final (see "Gate order" below). `verified_access` only selects red over blue;
+an `inactive`/empty-grant answer never blocks, because the backend reports that
+for accounts it still serves Daybreak Blue to (observed live 2026-10-15; an earlier
+Auto-only grant gate wrongly reported `not-granted` on such accounts). Request
+ownership, revisions, model-support gates, and finalizer validation remain
+unchanged. Decision tests cover Auto/On grants, inactive and failed entitlement
+lookups, and unsupported models.
 
 This directory is a **vendored, renamed, stripped fork** of the upstream
 open-source package **@howaboua/pi-codex-conversion**. This is not the original

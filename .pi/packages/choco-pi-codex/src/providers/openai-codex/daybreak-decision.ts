@@ -295,8 +295,9 @@ async function resolveTicket(record: TicketRecord): Promise<CodexDaybreakDecisio
   if (record.turnedOn) invalidateCodexDaybreakAccount(account);
   // Codex's own contract (observed in codex-cli 0.161): the model catalog is the gate. If the
   // selected model advertises a Daybreak program, the request is sent and the server's echo
-  // is the final word. `verified_access` only chooses red over blue; it is not a gate, because
-  // it reports "inactive" for accounts the backend still serves Daybreak to.
+  // is the final word. `verified_access` only chooses red over blue; it is not a gate for
+  // either `on` or `auto`, because it reports "inactive" (empty grants) for accounts the
+  // backend still serves Daybreak to (observed live 2026-10-15 on a Daybreak Blue account).
   const availability = await lookupCodexDaybreakModelSupport(account, credentials, modelId, "any");
   if (availability !== "supported")
     return publish(
@@ -311,8 +312,6 @@ async function resolveTicket(record: TicketRecord): Promise<CodexDaybreakDecisio
   if (record.isCurrent?.() === false || !ownerCurrent(owner.controller, checked))
     return publish(owner, checked);
   const result = await lookupCodexDaybreakEntitlement(account, credentials, record.turnedOn);
-  if (state.requested === "auto" && result.entitlement !== "blue" && result.entitlement !== "red")
-    return publish(owner, decisionFrom(sessionId, state, result.entitlement));
   const preferred: DaybreakTargetProgram =
     result.entitlement === "red" ? "daybreak_red" : "daybreak_blue";
   const current = decisionFrom(sessionId, state, "off");

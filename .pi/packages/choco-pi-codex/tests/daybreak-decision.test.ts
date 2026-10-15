@@ -264,40 +264,41 @@ function cleanup() {
   configureCodexDaybreakModelSupportForTest(undefined);
 }
 
-test("auto requires confirmed eligibility and model support; on remains best effort", async (t) => {
+test("auto and on both follow the catalog gate; verified_access only picks red over blue", async (t) => {
   t.after(cleanup);
   const bridge = installBridge();
-  for (const eligibility of ["blue", "red", "none", "failure"] as const) {
+  // Live shape observed 2026-10-15 for an account that ChatGPT Codex serves Daybreak Blue to.
+  const inactivePayload = {
+    programs: [
+      {
+        program: "cyber",
+        state: "inactive",
+        grants: [],
+        individual_blue_security_setup_required: false,
+      },
+    ],
+  };
+  for (const eligibility of ["blue", "red", "none", "inactive", "failure"] as const) {
     fakeLookup(() =>
       eligibility === "failure"
         ? new Response(null, { status: 503 })
-        : Response.json(
-            grantsPayload(
-              ...(eligibility === "none" ? [] : [eligibility === "red" ? "tac3" : "tac1"]),
+        : eligibility === "inactive"
+          ? Response.json(inactivePayload)
+          : Response.json(
+              grantsPayload(
+                ...(eligibility === "none" ? [] : [eligibility === "red" ? "tac3" : "tac1"]),
+              ),
             ),
-          ),
     );
     const id = `auto-${eligibility}`;
     bridge.add(id, "auto");
     const decision = await resolve(ticket(id));
     assert.equal(decision.requested, "auto");
-    assert.equal(
-      decision.outcome,
-      eligibility === "none"
-        ? "not-granted"
-        : eligibility === "failure"
-          ? "lookup-failed"
-          : eligibility,
-    );
-    assert.equal(
-      cyberOf(applyCodexDaybreakAccessPrograms({}, decision)),
-      eligibility === "blue" || eligibility === "red" ? `daybreak_${eligibility}` : undefined,
-    );
+    const expected = eligibility === "red" ? "red" : "blue";
+    assert.equal(decision.outcome, expected);
+    assert.equal(cyberOf(applyCodexDaybreakAccessPrograms({}, decision)), `daybreak_${expected}`);
     bridge.add(`on-${eligibility}`, true);
-    assert.equal(
-      (await resolve(ticket(`on-${eligibility}`))).outcome,
-      eligibility === "red" ? "red" : "blue",
-    );
+    assert.equal((await resolve(ticket(`on-${eligibility}`))).outcome, expected);
   }
   const calls = fakeLookup(() => Response.json(grantsPayload("tac3")));
   configureCodexDaybreakModelSupportForTest({ fetch: async () => Response.json({ models: [] }) });

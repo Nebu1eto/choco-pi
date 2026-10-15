@@ -1258,7 +1258,7 @@ process pair per finished subagent.
 The Daybreak bridge, manager record types, and focused runtime metadata retain
 `"auto"` in parent snapshots, child initialization, reconciliation, and replay.
 Explicit boolean overrides remain unchanged. The provider owns entitlement and
-model-support checks; inherited Auto must not become best-effort On.
+model-support checks; this package only preserves the requested value verbatim.
 Focused Daybreak tests cover snapshot preservation and explicit overrides.
 
 ## 2026-10-08 choco-pi patch: resumed turn limits
