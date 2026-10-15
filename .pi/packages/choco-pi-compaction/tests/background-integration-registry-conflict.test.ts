@@ -8,7 +8,7 @@
  * feature off for the process (one notice, host compaction only) instead of
  * failing the extension load.
  *
- * Both tests run the real extension registration through the real SDK host
+ * Every test runs the real extension registration through the real SDK host
  * and plant their slot before the host is created.
  */
 import assert from "node:assert/strict";
@@ -273,6 +273,69 @@ test(
       } finally {
         restoreSlot(V2_SYMBOL, previous);
       }
+    }
+  },
+);
+
+test(
+  "a v2 slot whose getter throws is a conflict, left untouched, and the extension still loads",
+  { timeout: 30_000 },
+  async () => {
+    const previous = Object.getOwnPropertyDescriptor(globalThis, V2_SYMBOL);
+    let reads = 0;
+    const slot = {
+      get schemaVersion(): number {
+        reads += 1;
+        throw new Error("foreign getter");
+      },
+      backendFactories: new Map(),
+      coordinators: new Map(),
+      delivered: new Map(),
+    };
+    const getter = Object.getOwnPropertyDescriptor(slot, "schemaVersion")?.get;
+    Object.defineProperty(globalThis, V2_SYMBOL, { value: slot, configurable: true });
+    try {
+      assert.deepEqual(registryAvailability(), { status: "conflict" }, "probe does not throw");
+      assert.ok(reads > 0, "validation reached the throwing getter");
+      await withSidecar(async (file) => {
+        const notices: string[] = [];
+        const host = await createHost({
+          contextWindow: 100_000,
+          extensions: [recordNotices(notices), compactionWithSidecar(file)],
+          respond: async (index) => reply(`R${index}`, { usageInput: 60_000 + index }),
+        });
+        try {
+          const ownerKey = mainOwnerKey(host.manager.getSessionId());
+          assert.equal(getCoordinator(ownerKey), undefined, "no coordinator");
+          await host.session.prompt("GO");
+          const result = await host.session.compact();
+          assert.ok(result, "compact() ran on the host path");
+          assert.equal(compactionEntries(host.manager.getBranch()).length, 1);
+          assert.deepEqual(
+            notices.filter((notice) => notice.includes("registry conflict")),
+            [
+              "Background compaction: background compaction unavailable: registry conflict; restart pi",
+            ],
+            "the extension loaded and showed exactly one conflict notice",
+          );
+        } finally {
+          await host.dispose();
+        }
+      });
+      const after = Object.getOwnPropertyDescriptor(globalThis, V2_SYMBOL);
+      assert.equal(after?.value, slot, "the slot keeps its identity");
+      assert.equal(Object.getOwnPropertyDescriptor(slot, "schemaVersion")?.get, getter);
+      assert.deepEqual(Object.keys(slot), [
+        "schemaVersion",
+        "backendFactories",
+        "coordinators",
+        "delivered",
+      ]);
+      assert.equal(slot.backendFactories.size, 0, "nothing was registered into the slot");
+      assert.equal(slot.coordinators.size, 0);
+      assert.equal(slot.delivered.size, 0);
+    } finally {
+      restoreSlot(V2_SYMBOL, previous);
     }
   },
 );

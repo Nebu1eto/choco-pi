@@ -98,8 +98,15 @@ export function registryAvailability(): RegistryAvailability {
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, REGISTRY_SYMBOL);
   if (descriptor !== undefined) {
     // An accessor slot has no `value` and fails validation like any foreign value.
+    // A foreign value whose own getters throw is a conflict too: validation
+    // must not fail the extension load.
     const found: unknown = descriptor.value;
-    return isRegistry(found) ? { status: "available", registry: found } : { status: "conflict" };
+    try {
+      if (isRegistry(found)) return { status: "available", registry: found };
+    } catch {
+      return { status: "conflict" };
+    }
+    return { status: "conflict" };
   }
   const registry = emptyRegistry();
   try {

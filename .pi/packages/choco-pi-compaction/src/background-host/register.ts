@@ -56,10 +56,17 @@ import {
   reportHostRefused,
   startManualPreparation,
 } from "./routes.ts";
-import { type HostRuntime, registryUsable, shutdown, touchCurrentOwner } from "./runtime.ts";
+import {
+  type HostRuntime,
+  isCurrent,
+  registryUsable,
+  shutdown,
+  touchCurrentOwner,
+} from "./runtime.ts";
 import {
   installSessionCompactBridge,
   releaseSessionCompactBridge,
+  type SessionCompactOutcome,
   type SessionCompactHost,
 } from "./session-compact.ts";
 
@@ -155,14 +162,20 @@ export function registerBackgroundCompaction(
   // session continues in the background and resolves at once, without aborting
   // the agent or starting a host compaction. A busy session, the feature off,
   // a registry conflict, or a declined request runs the host's own compact().
+  // An owner that retires while the preparation starts (shutdown, reload,
+  // replacement) reports the request stale: it settles without any compaction.
   const deferSessionCompact = async (
     host: SessionCompactHost,
     customInstructions?: string,
-  ): Promise<boolean> => {
-    if (!host.isIdle) return false;
-    if (!backgroundCompactionActive(rt.loaded.settings)) return false;
-    if (!registryUsable(rt, undefined)) return false;
-    return deferTypedCompact({ session: { sessionId: host.sessionId } }, customInstructions);
+  ): Promise<SessionCompactOutcome> => {
+    if (!host.isIdle) return "declined";
+    if (!backgroundCompactionActive(rt.loaded.settings)) return "declined";
+    if (!registryUsable(rt, undefined)) return "declined";
+    const owner = rt.main;
+    if (owner === undefined || owner.core.sessionId !== host.sessionId) return "declined";
+    if (!manualBypassesHost(rt, owner, customInstructions)) return "declined";
+    if (await startManualPreparation(rt, owner, customInstructions)) return "handled";
+    return isCurrent(rt, owner) ? "declined" : "stale";
   };
   installSessionCompactBridge(deferSessionCompact);
 

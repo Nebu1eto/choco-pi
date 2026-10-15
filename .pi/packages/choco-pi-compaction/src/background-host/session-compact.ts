@@ -2,6 +2,8 @@ import { AgentSession, type CompactionResult } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 
+import { isStaleContextError } from "../lifecycle.ts";
+
 // ---------------------------------------------------------------------------
 // Programmatic compact bridge (RPC `compact`, SDK, extension `ctx.compact()`)
 // ---------------------------------------------------------------------------
@@ -22,11 +24,23 @@ export interface SessionCompactHost {
   readonly isIdle: boolean;
 }
 
-/** Decides whether a `compact()` on `host` (with optional instructions) was taken over. */
+/**
+ * What a defer did with a `compact()` request:
+ * - `handled`: taken over; the request resolves `undefined` at once.
+ * - `declined`: not this registration's request; the next one (or the host) gets it.
+ * - `stale`: the request was this registration's, but its owner retired while
+ *   deciding (shutdown, reload, session replaced). The request resolves
+ *   `undefined` without a host compaction: the session it was made against is
+ *   gone, and compacting whatever session the `AgentSession` now holds would
+ *   act on a session nobody asked to compact.
+ */
+export type SessionCompactOutcome = "handled" | "declined" | "stale";
+
+/** Decides what happens to a `compact()` on `host` (with optional instructions). */
 export type SessionCompactDefer = (
   host: SessionCompactHost,
   customInstructions?: string,
-) => Promise<boolean>;
+) => Promise<SessionCompactOutcome>;
 
 type CompactMethod = (
   this: AgentSession,
@@ -79,23 +93,33 @@ function readScalars(session: AgentSession): SessionCompactHost | undefined {
   return Value.Check(SessionScalarsSchema, scalars) ? scalars : undefined;
 }
 
-/** Offer the request to each live defer; true when one took it. */
+/**
+ * Offer the request to each live defer until one handles it or reports it
+ * stale. After every await the session identity is read again: a session
+ * replaced while a defer was deciding makes the request stale. A registration
+ * whose owner retired while deciding reports `stale` itself. Only
+ * stale-context errors are contained (as stale); any other failure reaches
+ * the caller.
+ */
 async function offer(
   bridge: SessionCompactBridge,
+  session: AgentSession,
   host: SessionCompactHost,
   customInstructions: string | undefined,
-): Promise<boolean> {
-  // A registration released mid-offer is skipped; Set iteration tolerates deletes.
+): Promise<SessionCompactOutcome> {
+  // A registration released before its turn is skipped; Set iteration tolerates deletes.
   for (const current of bridge.defers) {
-    let handled = false;
+    let outcome: SessionCompactOutcome;
     try {
-      handled = await current(host, customInstructions);
-    } catch {
-      handled = false;
+      outcome = await current(host, customInstructions);
+    } catch (cause) {
+      if (!(cause instanceof Error && isStaleContextError(cause))) throw cause;
+      outcome = "stale";
     }
-    if (handled) return true;
+    if (outcome !== "declined") return outcome;
+    if (readScalars(session)?.sessionId !== host.sessionId) return "stale";
   }
-  return false;
+  return "declined";
 }
 
 /**
@@ -116,7 +140,11 @@ export function installSessionCompactBridge(defer: SessionCompactDefer): void {
     customInstructions?: string,
   ): Promise<CompactionResult | undefined> {
     const host = readScalars(this);
-    if (host !== undefined && (await offer(bridge, host, customInstructions))) return undefined;
+    if (host === undefined) return original.call(this, customInstructions);
+    const outcome = await offer(bridge, this, host, customInstructions);
+    // Handled requests continue in the background; stale ones settle without
+    // compacting (see `SessionCompactOutcome`). Both resolve like a request taken over.
+    if (outcome !== "declined") return undefined;
     return original.call(this, customInstructions);
   };
   const bridge: SessionCompactBridge = { original, patched, defers };

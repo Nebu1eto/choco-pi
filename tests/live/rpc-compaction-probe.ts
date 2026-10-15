@@ -40,13 +40,16 @@ import {
   type Cell,
   copyAgentFiles,
   DEFAULT_RESERVE_TOKENS,
+  DRY_RUN_CALIBRATION,
   type LaunchSettings,
   nativeLaneFor,
   type NativeLane,
   parseCli,
   planAuto,
+  preparerPoints,
   type ProbeOptions,
   resolveCells,
+  SYSTEM_PROMPT_FIRST_LINE,
   USAGE,
 } from "./rpc-compaction-probe-config.ts";
 
@@ -80,6 +83,8 @@ const AssistantMessageSchema = Type.Object(
     role: Type.Literal("assistant"),
     stopReason: Type.Optional(Type.String()),
     errorMessage: Type.Optional(Type.String()),
+    timestamp: Type.Optional(Type.Number()),
+    responseId: Type.Optional(Type.String()),
   },
   { additionalProperties: true },
 );
@@ -103,6 +108,7 @@ const CompactionEntrySchema = Type.Object(
     id: Type.String(),
     type: Type.Literal("compaction"),
     summary: Type.String(),
+    tokensBefore: Type.Optional(Type.Number()),
     fromHook: Type.Optional(Type.Boolean()),
     details: Type.Optional(Type.Unknown()),
   },
@@ -113,6 +119,12 @@ const CandidateDetailsSchema = Type.Object(
   { candidateId: Type.String({ minLength: 1 }) },
   { additionalProperties: true },
 );
+/** Text-lane checkpoints carry a frozen-prefix `background` block; native lanes do not. */
+const BackgroundBlockSchema = Type.Object(
+  { background: Type.Object({ mode: Type.String() }, { additionalProperties: true }) },
+  { additionalProperties: true },
+);
+const OwnerKeySchema = Type.Object({ ownerKey: Type.String() }, { additionalProperties: true });
 const StrategySchema = Type.Object({ strategy: Type.String() }, { additionalProperties: true });
 /** `choco-compaction-candidate` record (background/contract.ts CandidateRecordSchema). */
 const CandidateRecordDataSchema = Type.Object(
@@ -170,11 +182,14 @@ const StatusRowSchema = Type.Object(
     backendId: Type.Optional(Type.String()),
     reason: Type.Optional(Type.String()),
     detail: Type.Optional(Type.String()),
+    customInstructions: Type.Optional(Type.String()),
+    committedEntryId: Type.Optional(Type.String()),
   },
   { additionalProperties: true },
 );
 type StatusRow = Static<typeof StatusRowSchema>;
 const NullableNumber = Type.Union([Type.Number(), Type.Null()]);
+const NullableString = Type.Union([Type.String(), Type.Null()]);
 const ProbeStatusSchema = Type.Object({
   rows: Type.Array(StatusRowSchema),
   captures: Type.Array(
@@ -188,8 +203,23 @@ const ProbeStatusSchema = Type.Object({
   nativeWindow: NullableNumber,
   cap: NullableNumber,
   compactAt: NullableNumber,
+  /** First 80 characters of `system[0].text` in the latest Anthropic wire capture. */
+  captureSystemHead: NullableString,
+  /** The same from the latest `before_provider_request` payload. */
+  requestSystemHead: NullableString,
 });
 type ProbeStatus = Static<typeof ProbeStatusSchema>;
+const SidecarSchema = Type.Object(
+  { prepareAt: Type.Number(), hysteresis: Type.Number(), reserveTokens: Type.Number() },
+  { additionalProperties: true },
+);
+type Sidecar = Static<typeof SidecarSchema>;
+
+function parseSidecar(text: string): Sidecar {
+  const value: unknown = JSON.parse(text);
+  assert(Value.Check(SidecarSchema, value), "background sidecar lacks prepareAt/reserveTokens");
+  return value;
+}
 
 type Command = {
   id?: string;
@@ -267,6 +297,32 @@ async function dryRun(): Promise<void> {
       );
     else write("  cases: calibrate, seed, prompt until the cap point fires, one follow-up prompt");
     const variants = cell.point === "manual" ? [false, true] : [false];
+    if (cell.point === "auto") {
+      // Example points only: the live run calibrates and logs its own.
+      const plan = planAuto(options, DRY_RUN_CALIBRATION);
+      const sidecar = parseSidecar(
+        (
+          await buildAgentFiles(
+            options,
+            {
+              background: cell.background,
+              reserveTokens: plan.reserveTokens,
+              sidecarReserveTokens: plan.sidecarReserveTokens,
+            },
+            join(options.source, "choco-pi-codex.json"),
+          )
+        ).backgroundSidecar,
+      );
+      const points = preparerPoints(plan.window, sidecar.reserveTokens, sidecar.prepareAt);
+      write(
+        `  points (example calibration ${JSON.stringify(DRY_RUN_CALIBRATION)}): window ${plan.window}, backgroundTrigger ${points.backgroundTrigger}, preparePoint ${points.preparePoint}, prepareAt ${sidecar.prepareAt}, capPoint ${plan.capPoint ?? `none (host threshold ${plan.hostThreshold})`}, hostThreshold ${plan.hostThreshold}`,
+      );
+      write(
+        cell.background
+          ? `  pass: new threshold candidate adopted (details.candidateId), no compact RPC, tokensBefore >= preparePoint ${points.preparePoint}; the cap point need not be crossed`
+          : `  pass: compaction_start/end:${plan.capApplies ? "manual" : "threshold"}, no compact RPC, tokensBefore >= capPoint ${plan.capPoint ?? plan.hostThreshold}`,
+      );
+    }
     for (const withInstructions of variants) {
       const expected = caseLane(cell.background, withInstructions);
       const name = cell.point === "manual" ? (withInstructions ? "instructions" : "plain") : "auto";
@@ -311,6 +367,8 @@ function log<T extends object>(record: T): void {
 interface Session {
   readonly label: string;
   readonly records: WireRecord[];
+  /** The background sidecar this launch wrote (preparer prepareAt/reserveTokens). */
+  readonly sidecar: Sidecar;
   command(type: string, extra?: Partial<Command>): Promise<WireRecord>;
   waitFor(predicate: (value: WireRecord) => boolean, since: number): Promise<WireRecord>;
   close(): Promise<void>;
@@ -335,13 +393,33 @@ import { capturesFor, transportRefusals } from ${JSON.stringify(imports.capture)
 import { resolvePolicy } from ${JSON.stringify(imports.cap)};
 import { readNativeContextWindow } from ${JSON.stringify(imports.policy)};
 const SETTINGS = ${JSON.stringify(settings)};
+const HEAD_CHARS = 80;
+/** First characters of system[0].text (or a string system); never headers or auth. */
+function systemHead(body: unknown): string | null {
+  if (typeof body !== "object" || body === null || !("system" in body)) return null;
+  const system: unknown = body.system;
+  if (typeof system === "string") return system.slice(0, HEAD_CHARS);
+  if (!Array.isArray(system)) return null;
+  const first: unknown = system[0];
+  if (typeof first !== "object" || first === null || !("text" in first)) return null;
+  return typeof first.text === "string" ? first.text.slice(0, HEAD_CHARS) : null;
+}
+let requestSystemHead: string | null = null;
 export default function (pi: ExtensionAPI) {
+  pi.on("before_provider_request", (event) => {
+    const head = systemHead(event.payload);
+    if (head !== null) requestSystemHead = head;
+    return undefined;
+  });
   pi.registerCommand("probe-compaction-status", {
     description: "Probe: coordinator status, Anthropic captures and the context cap policy",
     handler: async (_args, ctx) => {
       const rows = [...getRegistry().coordinators.values()].map((coordinator) => coordinator.status());
       const sessionId = ctx.sessionManager.getSessionId();
-      const captures = capturesFor(sessionId).map((capture) => ({ status: capture.status, mapped: capture.mapping !== undefined, endpoint: capture.endpoint }));
+      const all = capturesFor(sessionId);
+      const captures = all.map((capture) => ({ status: capture.status, mapped: capture.mapping !== undefined, endpoint: capture.endpoint }));
+      const latest = all.at(-1);
+      const captureSystemHead = latest === undefined ? null : systemHead(latest.body);
       const refusals = transportRefusals(sessionId).length;
       const model = ctx.model;
       const nativeWindow = model ? (readNativeContextWindow(model) ?? model.contextWindow) : null;
@@ -352,6 +430,8 @@ export default function (pi: ExtensionAPI) {
         nativeWindow,
         cap: policy.cap ?? null,
         compactAt: policy.compactAt ?? null,
+        captureSystemHead,
+        requestSystemHead,
       }), "info");
     },
   });
@@ -503,7 +583,8 @@ async function launch(label: string, settings: LaunchSettings): Promise<Session>
     while (alive && Date.now() < deadline) await delay(50);
     if (alive) child.kill("SIGKILL");
   }
-  const session: Session = { label, records, command, waitFor, close };
+  const sidecar = parseSidecar(files.backgroundSidecar);
+  const session: Session = { label, records, sidecar, command, waitFor, close };
   try {
     const state = await command("get_state");
     assert.equal(state.success, true, `get_state failed: ${state.error ?? ""}`);
@@ -566,28 +647,42 @@ function recordedBackend(entries: readonly Entry[], candidateId: string): string
   return null;
 }
 
-/** Errored assistant turns (stopReason "error" or an errorMessage) and compaction errors since `since`. */
+/**
+ * Errored assistant turns (stopReason "error" or an errorMessage) and compaction
+ * errors since `since`. Every assistant message record counts: `message_end`,
+ * `turn_end` and `agent_end.messages`; one message seen in several records counts once.
+ */
 interface ErrorTally {
   readonly count: number;
   readonly first: string | null;
 }
 function errorsSince(session: Session, since: number): ErrorTally {
-  let count = 0;
+  const seen = new Set<string>();
   let first: string | null = null;
+  let compactionErrors = 0;
   for (const value of session.records.slice(since)) {
-    const messages = value.type === "agent_end" ? (value.messages ?? []) : [];
+    const messages: unknown[] = [];
+    if (value.type === "agent_end") messages.push(...(value.messages ?? []));
+    if (value.type === "message_end" || value.type === "turn_end") messages.push(value.message);
     for (const message of messages) {
       if (!Value.Check(AssistantMessageSchema, message)) continue;
       if (message.stopReason !== "error" && message.errorMessage === undefined) continue;
-      count += 1;
+      seen.add(
+        JSON.stringify([
+          message.timestamp ?? null,
+          message.responseId ?? null,
+          message.stopReason ?? null,
+          message.errorMessage ?? null,
+        ]),
+      );
       first ??= message.errorMessage ?? `stopReason ${message.stopReason ?? ""}`;
     }
     if (value.type === "compaction_end" && value.errorMessage !== undefined) {
-      count += 1;
+      compactionErrors += 1;
       first ??= `compaction: ${value.errorMessage}`;
     }
   }
-  return { count, first };
+  return { count: seen.size + compactionErrors, first };
 }
 
 async function waitIdle(session: Session): Promise<void> {
@@ -623,8 +718,8 @@ class SeedTurnError extends Error {
 
 const FILLER = "The quick brown fox jumps over the lazy dog. ".repeat(60);
 /** Seed turns must succeed: an errored seed aborts the whole run with the provider's message. */
-async function seed(session: Session, turns: number, tag: string): Promise<void> {
-  for (let index = 0; index < turns; index += 1) {
+async function seed(session: Session, turns: number, tag: string, from = 0): Promise<void> {
+  for (let index = from; index < from + turns; index += 1) {
     const since = session.records.length;
     await prompt(session, `${tag}-${index}: ${FILLER}\nReply with exactly: ACK-${index}`);
     const errors = errorsSince(session, since);
@@ -819,11 +914,53 @@ function caseLane(background: boolean, withInstructions: boolean): CaseLane {
   return { lane: laneFor(), laneRule: undefined };
 }
 
+/**
+ * The identity line on the outbound request, read after the first seed turn.
+ * Anthropic only: the source is the latest wire capture's `system[0].text`
+ * (the exact sent body; server-side logic) and the probe's own
+ * `before_provider_request` hook (the payload handed to the transport; every
+ * logic). Each source present must start with the line, and at least one must
+ * be present. Only the first 80 characters are read; no headers.
+ */
+async function identityProof(session: Session): Promise<Provenance> {
+  if (options.provider !== "anthropic")
+    return {
+      pass: true,
+      detail: new Map<string, DetailValue>([
+        ["identity", `not applicable: provider ${options.provider}`],
+      ]),
+    };
+  const status = await probeStatus(session);
+  const heads = [status.captureSystemHead, status.requestSystemHead].filter(
+    (head): head is string => head !== null,
+  );
+  const pass = heads.length > 0 && heads.every((head) => head.startsWith(SYSTEM_PROMPT_FIRST_LINE));
+  return {
+    pass,
+    detail: new Map<string, DetailValue>([
+      ["identityLine", SYSTEM_PROMPT_FIRST_LINE],
+      ["captureSystemHead", status.captureSystemHead],
+      ["requestSystemHead", status.requestSystemHead],
+      ["identityOnRequest", pass],
+    ]),
+  };
+}
+
+/** Seed `turns` turns, proving the identity line on the first request. */
+async function seedWithIdentity(session: Session, cell: Cell, turns: number): Promise<Provenance> {
+  await seed(session, 1, "SEED");
+  const identity = await identityProof(session);
+  log({ seed: cell.key, identity: Object.fromEntries(identity.detail) });
+  await seed(session, turns - 1, "SEED", 1);
+  return identity;
+}
+
 async function manualCase(
   session: Session,
   cell: Cell,
   name: string,
   instructions: string | undefined,
+  identity: Provenance,
 ): Promise<void> {
   const { lane, laneRule } = caseLane(cell.background, instructions !== undefined);
   const since = session.records.length;
@@ -846,6 +983,7 @@ async function manualCase(
       response.data === undefined ? "undefined" : JSON.stringify(response.data).slice(0, 200),
     ],
     ["commandEvents", commandEvents],
+    ...identity.detail,
   ]);
   if (laneRule !== undefined) detail.set("laneRule", laneRule);
   let pass: boolean;
@@ -905,7 +1043,7 @@ async function manualCase(
   const errors = errorsSince(session, since);
   detail.set("erroredTurns", errors.count);
   detail.set("firstError", errors.first);
-  record(cell, name, pass && errors.count === 0 ? "pass" : "fail", detail);
+  record(cell, name, pass && identity.pass && errors.count === 0 ? "pass" : "fail", detail);
 }
 
 async function runManualCell(cell: Cell): Promise<void> {
@@ -915,14 +1053,15 @@ async function runManualCell(cell: Cell): Promise<void> {
     sidecarReserveTokens: 0,
   });
   try {
-    await seed(session, options.seedTurns, "SEED");
-    await manualCase(session, cell, `${cell.key}:plain`, undefined);
+    const identity = await seedWithIdentity(session, cell, options.seedTurns);
+    await manualCase(session, cell, `${cell.key}:plain`, undefined, identity);
     await seed(session, 2, "SEED-B");
     await manualCase(
       session,
       cell,
       `${cell.key}:instructions`,
       "FOCUS-MARKER list every SEED index you saw",
+      identity,
     );
   } finally {
     await session.close();
@@ -969,8 +1108,11 @@ async function runAutoCell(cell: Cell): Promise<void> {
     sidecarReserveTokens: plan.sidecarReserveTokens,
   });
   try {
-    await seed(session, options.seedTurns, "SEED");
+    const identity = await seedWithIdentity(session, cell, options.seedTurns);
     const start = await probeStatus(session);
+    const prior = new Set(
+      start.rows.flatMap((row) => (row.candidateId === undefined ? [] : [row.candidateId])),
+    );
     const before = await branchCompactionCount(session);
     const since = session.records.length;
     let fired = false;
@@ -992,17 +1134,34 @@ async function runAutoCell(cell: Cell): Promise<void> {
       if (errorsSince(session, since).count > 0) break;
     }
     const entry = fired ? await waitForNewCompaction(session, before, 60_000) : undefined;
+    // Read the coordinator before the follow-up turn can start another candidate.
+    const adoptedStatus = entry === undefined ? undefined : await probeStatus(session);
     const events = compactionEvents(session, since);
+    // The probe never sends RPC `compact` here; a "manual" reason is ctx.compact() from the cap.
+    const compactRpcCalls = session.records
+      .slice(since)
+      .filter((value) => value.type === "response" && value.command === "compact").length;
     await prompt(session, "AFTER-AUTO: reply with exactly ACK-AUTO");
     const point = start.compactAt;
-    // The cap's point fires through ctx.compact() ("manual") or a ready candidate (no event);
-    // without a cap (window < 64k) Pi's own threshold is the auto point.
+    // The cap's point fires through ctx.compact() ("manual"); without a cap
+    // (window < 64k) Pi's own threshold (window - reserve) is the auto point.
     const expectedReason = point !== null ? "manual" : "threshold";
+    const capPoint = point ?? plan.hostThreshold;
+    const window = start.window ?? plan.window;
+    const points = preparerPoints(window, session.sidecar.reserveTokens, session.sidecar.prepareAt);
+    const adoptedAt = entry?.tokensBefore ?? null;
+    const candidate = entry === undefined ? null : (backgroundCandidate(entry) ?? null);
     const detail: DetailMap = new Map<string, DetailValue>([
       ["fired", fired],
-      ["window", start.window],
+      ["window", window],
       ["nativeWindow", start.nativeWindow],
       ["point", point],
+      ["capPoint", capPoint],
+      ["backgroundTrigger", points.backgroundTrigger],
+      ["preparePoint", points.preparePoint],
+      ["prepareAt", session.sidecar.prepareAt],
+      ["adoptedAt", adoptedAt],
+      ["compactRpcCalls", compactRpcCalls],
       ["plannedPoint", plan.plannedPoint],
       ["reserveTokens", plan.reserveTokens],
       ["hostThreshold", plan.hostThreshold],
@@ -1012,14 +1171,60 @@ async function runAutoCell(cell: Cell): Promise<void> {
       ["tokensAtFire", tokensAtFire],
       ["events", events.slice(0, 6)],
       ["expectedReason", expectedReason],
+      ...identity.detail,
     ]);
-    let pass = fired && entry !== undefined;
+    let pass = fired && entry !== undefined && compactRpcCalls === 0;
     if (cell.background) {
-      pass &&= events.every((event) => event.endsWith(`:${expectedReason}`));
+      // Background adoption precedes the cap by design: the preparer requests a
+      // candidate at preparePoint and adopts it at the next boundary once ready,
+      // so the cap point need not be crossed. The coordinator status carries no
+      // route field; the automatic (threshold) route is attributed by a new
+      // candidate with no customInstructions, no RPC `compact` in the case, the
+      // entry naming that candidate, and pre-adoption usage at or past preparePoint.
+      const row = adoptedStatus?.rows.find(
+        (item) => candidate !== null && item.candidateId === candidate,
+      );
+      const expectedBackend = lane?.backendId ?? "text";
+      const newCandidate = candidate !== null && !prior.has(candidate);
+      const automaticRoute = row !== undefined && row.customInstructions === undefined;
+      const reachedPreparePoint = adoptedAt !== null && adoptedAt >= points.preparePoint;
+      const cleanEvents = events.every(
+        (event) => !event.endsWith(":aborted") && !event.endsWith(":error"),
+      );
+      detail.set("statusCandidate", row?.candidateId ?? null);
+      detail.set("statusState", row?.state ?? null);
+      detail.set("statusBackend", row?.backendId ?? null);
+      detail.set("statusCommittedEntryId", row?.committedEntryId ?? null);
+      detail.set("newCandidate", newCandidate);
+      detail.set("automaticRoute", automaticRoute);
+      detail.set("reachedPreparePoint", reachedPreparePoint);
+      detail.set("adoptedBeforeCap", adoptedAt !== null && adoptedAt < capPoint);
+      detail.set(
+        "backgroundBlock",
+        entry !== undefined && Value.Check(BackgroundBlockSchema, entry.details),
+      );
+      detail.set(
+        "ownerKey",
+        entry !== undefined && Value.Check(OwnerKeySchema, entry.details)
+          ? entry.details.ownerKey
+          : null,
+      );
+      pass &&=
+        newCandidate &&
+        automaticRoute &&
+        row !== undefined &&
+        READY_STATES.includes(row.state) &&
+        row.backendId === expectedBackend &&
+        (row.committedEntryId === undefined || row.committedEntryId === entry?.id) &&
+        reachedPreparePoint &&
+        cleanEvents;
     } else {
+      const reachedCap = adoptedAt !== null && adoptedAt >= capPoint;
+      detail.set("reachedCapPoint", reachedCap);
       pass &&=
         events.includes(`compaction_start:${expectedReason}`) &&
-        events.includes(`compaction_end:${expectedReason}`);
+        events.includes(`compaction_end:${expectedReason}`) &&
+        reachedCap;
     }
     if (entry !== undefined) {
       const proof = await provenance(session, entry, cell.background, lane);
@@ -1029,7 +1234,7 @@ async function runAutoCell(cell: Cell): Promise<void> {
     const errors = errorsSince(session, since);
     detail.set("erroredTurns", errors.count);
     detail.set("firstError", errors.first);
-    record(cell, cell.key, pass && errors.count === 0 ? "pass" : "fail", detail);
+    record(cell, cell.key, pass && identity.pass && errors.count === 0 ? "pass" : "fail", detail);
   } finally {
     await session.close();
   }

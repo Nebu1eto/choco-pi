@@ -96,7 +96,8 @@ export function installCompactCommandBridge(defer: CompactCommandDefer): void {
     customInstructions?: string,
   ): Promise<void> {
     if (isCompactCommandHost(this)) {
-      for (const current of [...bridge.defers]) {
+      // A registration released before its turn is skipped; Set iteration tolerates deletes.
+      for (const current of bridge.defers) {
         let handled = false;
         try {
           handled = await current(this, customInstructions);

@@ -327,8 +327,8 @@ export async function buildAgentFiles(
         text: switches.text,
         codexNative: switches.codexNative,
         anthropicNative: switches.anthropicNative,
-        prepareAt: 0.5,
-        hysteresis: 0,
+        prepareAt: SIDECAR_PREPARE_AT,
+        hysteresis: SIDECAR_HYSTERESIS,
         minReductionTokens: 0,
         reserveTokens: launch.sidecarReserveTokens,
         cooldownMs: 0,
@@ -346,6 +346,39 @@ export async function buildAgentFiles(
 
 /** Host reserve for the manual cells and calibration: Pi's default. */
 export const DEFAULT_RESERVE_TOKENS = 16_384;
+
+/** Background sidecar `prepareAt` and `hysteresis` every launch writes. */
+export const SIDECAR_PREPARE_AT = 0.5;
+export const SIDECAR_HYSTERESIS = 0;
+
+export interface PreparerPoints {
+  /** owner-core.ts `trigger`: `max(1, contextWindow - reserveTokens)`. */
+  readonly backgroundTrigger: number;
+  /** Usage at which the preparer requests a candidate: `trigger * prepareAt`. */
+  readonly preparePoint: number;
+}
+
+/**
+ * The background preparer's points as choco-pi-compaction
+ * background-host/owner-core.ts `observeUsage` computes them: it requests a
+ * threshold preparation once `tokens / trigger >= prepareAt`, so the first
+ * usage that can start one is `trigger * prepareAt`. The candidate is adopted
+ * at the next boundary after it is ready, never before that point.
+ */
+export function preparerPoints(
+  window: number,
+  sidecarReserveTokens: number,
+  prepareAt: number,
+): PreparerPoints {
+  const backgroundTrigger = Math.max(1, window - sidecarReserveTokens);
+  return { backgroundTrigger, preparePoint: backgroundTrigger * prepareAt };
+}
+
+/**
+ * Example calibration for `--dry-run` only (the opus 400k-window measurement of
+ * 2026-10-15); a live run measures its own and reports it.
+ */
+export const DRY_RUN_CALIBRATION: Calibration = { window: 400_000, first: 7231, perTurn: 1124 };
 
 export interface Calibration {
   /** Effective (capped) context window. */
@@ -409,8 +442,8 @@ export function planAuto(options: ProbeOptions, calibration: Calibration): AutoP
   const capPoint = policy.apply ? (policy.compactAt ?? null) : null;
   if (capApplies && capPoint !== plannedPoint)
     throw new Error(`cap point ${capPoint ?? "none"} != planned ${plannedPoint}`);
-  // The preparer fires at prepareAt (0.5) of its trigger: about 1.5 turns past the seed.
-  const preparerTrigger = Math.round((base + perTurn * 1.5) / 0.5);
+  // The preparer fires at prepareAt of its trigger: about 1.5 turns past the seed.
+  const preparerTrigger = Math.round((base + perTurn * 1.5) / SIDECAR_PREPARE_AT);
   const sidecarReserveTokens = window - preparerTrigger;
   if (sidecarReserveTokens <= 0)
     throw new Error(`window ${window} is below the preparer trigger ${preparerTrigger}`);

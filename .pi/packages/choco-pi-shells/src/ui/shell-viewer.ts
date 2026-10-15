@@ -20,8 +20,13 @@ const DRAIN_POLL_MS = 10;
 const READ_BYTES = 262_144;
 export const SHELL_VIEWER_MAX_LINES = 2_000;
 export const SHELL_VIEWER_MAX_CHARS = 262_144;
-const TERMINAL_ESCAPE_PATTERN =
-  /\u001B(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*?(?:\u0007|\u001B\\)|[PX^_][\s\S]*?\u001B\\|[@-_])/g;
+const ESC = String.fromCharCode(0x1b);
+const BEL = String.fromCharCode(0x07);
+/** CSI, OSC (BEL or ST), DCS/SOS/PM/APC (ST), and single-byte Fe escape sequences. */
+export const TERMINAL_ESCAPE_PATTERN = new RegExp(
+  String.raw`${ESC}(?:\[[0-?]*[ -/]*[@-~]|\][^${BEL}]*?(?:${BEL}|${ESC}\\)|[PX^_][\s\S]*?${ESC}\\|[@-_])`,
+  "g",
+);
 
 type StreamName = "stdout" | "stderr";
 
