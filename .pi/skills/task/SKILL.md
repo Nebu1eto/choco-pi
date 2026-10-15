@@ -19,9 +19,27 @@ When the user explicitly invokes `task-dynamic`, that workflow supersedes this o
 
 ## 2. Plan
 
-Spawn one fresh `planner` with the objective, instructions, direct and indirect write risks, acceptance ledger, and available model/reasoning choices, using `.pi/model-guidance.md` resolved relative to the repository as the selection reference. Require a dependency-aware plan and spawn manifest containing each unit's objective, read/write scope, indirect effects, dependencies, done criteria, and verification plan.
+Settle the plan owner once, when this step starts, by the first rule that applies:
+
+1. **User request:** when the user explicitly asks for a `planner` subagent, spawn one fresh `planner`.
+2. **Prior plan:** when the current conversation or a file the user names holds a plan that decides the approach for this objective, the orchestrator conforms it, whatever the current model. A plan known only through a compaction summary qualifies only when its full text is in a readable file. An analysis without a chosen approach is evidence, not a plan.
+3. **Flagship model:** when `../../model-guidance.md`, resolved relative to this skill, places the runtime `Current model` in the Flagship tier, the orchestrator plans. Astra qualifies under both `openai-codex/` and `openai/`.
+4. **Planner:** otherwise, including an `"unknown"` model, spawn one fresh `planner`.
+
+When a prior plan leaves part of the objective uncovered, rules 3 and 4 decide who plans that remainder. A spawned `planner` receives the objective, instructions, direct and indirect write risks, acceptance ledger, available model/reasoning choices, and any prior or conformed plan, whose recorded user decisions and exclusions are binding.
+
+Every plan owner uses `../../model-guidance.md` as the selection reference and produces the smallest dependency-aware plan and spawn manifest containing each unit's objective, read/write scope, indirect effects, dependencies, done criteria, and verification plan. The plan preserves explicit exclusions, identifies direct and indirect write conflicts, and names each material ambiguity that repository evidence cannot resolve.
 
 Require the plan to carry a `mermaid` flowchart of the units, their dependencies, and the waves that run in parallel. Disjoint write scopes and wave ordering are what this workflow gets wrong most often, and both are easier to check as a graph than as a list.
+
+To conform a prior plan, keep its recorded user decisions and exclusions; requests added after it form the uncovered remainder. Re-verify its load-bearing evidence against `review_base` and the dirty tree. When current evidence contradicts a recorded decision, present the conflict as a material user decision instead of changing it. Add what this contract requires and the plan lacks: units, scopes, indirect effects, dependencies, done criteria, verification, the flowchart, role and model choices, and acceptance-ledger rows.
+
+When the orchestrator plans or conforms:
+
+- Make no implementation or checkout change until the plan is final; session scratch is allowed.
+- Send broad read-only discovery to `explore` leaves with exact questions, and keep the synthesis.
+- Write the final plan to `/tmp/choco-pi/${PI_SESSION_ID}/` and record its path in the acceptance ledger.
+- Under rule 3 only, if the current model leaves the Flagship tier before the plan is final, spawn the `planner` with the gathered evidence and the draft. A model change after the plan is final does not reopen it.
 
 Select each role from the unit's work before considering a model or reasoning override; an override must never replace a specialized role with `general`. The role file's `default_model` and `default_thinking` apply when the spawn omits those fields. Pass an override only for a reason allowed by `.pi/model-guidance.md`, and record that reason. Present the plan only when it contains a material user decision.
 

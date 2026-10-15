@@ -16,7 +16,7 @@ Explicit invocation authorizes the orchestrator to set `maxSubagentDepth` to the
 
 ## 2. Decompose recursively
 
-The orchestrator splits the objective into coarse units with exclusive direct and indirect write scopes. Any parent may recursively partition only its own scope among children; scopes narrow down the tree, preserving disjointness by construction. Each parent integrates and verifies its children's actual work before reporting up; a child report is not proof.
+The orchestrator splits the objective into coarse units with exclusive direct and indirect write scopes. The `task` skill's plan-owner rules, including prior-plan conformance, apply to the root orchestrator only; that plan sets the coarse units and the planned depth. Any parent may recursively partition only its own scope among children; scopes narrow down the tree, preserving disjointness by construction. Each parent integrates and verifies its children's actual work before reporting up; a child report is not proof.
 
 ```mermaid
 flowchart TD

@@ -13,9 +13,11 @@ This file solely owns choco-pi model routing and model-specific behavioral advic
 
 On capacity errors, retry the same model three times with bounded backoff, then use the comparable other provider. On rate limits, move Fable to Opus, another Anthropic model to comparable OpenAI or Kimi K3, and OpenAI to comparable Anthropic or Kimi K3. `splitDeferredTools` is available only for `openai-codex` and `openai-responses`; compact descriptions benefit all providers, but deferred loading must not alter shared tool semantics.
 
-`.pi/model-fallbacks.json` mirrors the tier list above for usage-limit fallback; update both together. The OpenAI tier is `openai-codex/*` (preferred: Codex login, supports Fast and Daybreak). `openai/*` (Sign in with ChatGPT) remains a supported manual choice but is not a default or fallback.
+`.pi/model-fallbacks.json` mirrors the tier list above for usage-limit fallback; update both together. The OpenAI tier is `openai-codex/*` (preferred: Codex login, supports Fast and Daybreak). `openai/*` (Sign in with ChatGPT) remains a supported manual choice but is not a default or fallback. For tier classification, `openai/<id>` belongs to the tier of `openai-codex/<id>`, so `openai/gpt-6-astra` is Flagship.
 
 Routing provenance only: Pi 1.0.4's `/Users/Nebuleto/.local/pi-1.0.4/node_modules/@earendil-works/pi-coding-agent/CHANGELOG.md`, section 0.99.0, adds “Sign in with ChatGPT” to `openai` and renames OpenAI Codex to “OpenAI Codex (legacy)”. This routing update does not refresh model source guides or behavioral advice.
+
+Routing provenance only: the `openai/<id>` classification records the existing `fallbackCandidates` lookup in `.pi/extensions/lib/usage-limit.ts`, which finds an `openai/<id>` model's tier through `openai-codex/<id>`. The `task` skill's plan-owner rule reads it. This routing update does not refresh model source guides or behavioral advice.
 
 ## Runtime sections
 
