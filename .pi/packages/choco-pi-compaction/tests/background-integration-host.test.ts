@@ -616,6 +616,9 @@ test(
         await waitFor(() => stateOf(rig) === "ready", "ready candidate");
         const plain = getCoordinator(rig.ownerKey)?.status().candidateId;
         await assert.rejects(rig.session.compact("Focus on the audit"), /Compaction cancelled/);
+        await waitFor(() => stateOf(rig) === "ready", "candidate ready");
+        // Hook path: the checkpoint is adopted when the next prompt arrives, before it is sent.
+        await rig.session.prompt("NEXT-PROMPT");
         await waitFor(() => stateOf(rig) === "installed", "focused candidate installed");
         const status = getCoordinator(rig.ownerKey)?.status();
         assert.notEqual(status?.candidateId, plain, "the plain candidate was not adopted");
@@ -666,6 +669,9 @@ test(
         await assert.rejects(rig.session.compact(), /Compaction cancelled/);
         assert.equal(rig.backgroundCalls(), 1, "no second paid preparation");
         summarizerGate.open();
+        await waitFor(() => stateOf(rig) === "ready", "candidate ready");
+        // Hook path: the checkpoint is adopted when the next prompt arrives, before it is sent.
+        await rig.session.prompt("NEXT-PROMPT");
         await waitFor(() => stateOf(rig) === "installed", "installed candidate");
         const own = ownEntries(rig);
         assert.equal(own.length, 1, "the ready checkpoint was adopted without a prompt");
@@ -710,6 +716,9 @@ test(
         assert.equal(rig.backgroundCalls(), 1, "the running preparation is reused");
         assert.equal(rig.hostSummarizerCalls.length, 0);
         summarizerGate.open();
+        await waitFor(() => stateOf(rig) === "ready", "candidate ready");
+        // Hook path: the checkpoint is adopted when the next prompt arrives, before it is sent.
+        await rig.session.prompt("NEXT-PROMPT");
         await waitFor(() => stateOf(rig) === "installed", "installed candidate");
         assert.equal(ownEntries(rig).length, 1);
         assert.deepEqual(
@@ -747,6 +756,9 @@ test(
         await rig.session.prompt("GO");
         assert.equal(getCoordinator(rig.ownerKey)?.status().state, "idle");
         await assert.rejects(rig.session.compact(), /Compaction cancelled/);
+        await waitFor(() => stateOf(rig) === "ready", "candidate ready");
+        // Hook path: the checkpoint is adopted when the next prompt arrives, before it is sent.
+        await rig.session.prompt("NEXT-PROMPT");
         await waitFor(() => stateOf(rig) === "installed", "installed candidate");
         assert.equal(rig.backgroundCalls(), 1, "the text lane prepared the checkpoint");
         assert.equal(rig.hostSummarizerCalls.length, 0);

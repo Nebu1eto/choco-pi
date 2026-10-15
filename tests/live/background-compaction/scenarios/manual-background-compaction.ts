@@ -84,13 +84,22 @@ async function hostCompactionEventsDuring(host: Host, run: () => Promise<void>):
  * remaining lane, so `failed` only counts once it has stayed put.
  */
 async function awaitInstalled(host: Host, label: string): Promise<string> {
+  return awaitState(host, label, ["installed"]);
+}
+
+/** As `awaitInstalled`, but stops at a ready candidate (the hook path adopts at the next prompt). */
+async function awaitReady(host: Host, label: string): Promise<string> {
+  return awaitState(host, label, ["ready", "installed"]);
+}
+
+async function awaitState(host: Host, label: string, targets: readonly string[]): Promise<string> {
   const budget = host.mode === "live" ? LIVE_SETTLE_DEADLINE_MS : SETTLE_DEADLINE_MS;
   const grace = host.mode === "live" ? 2000 : 200;
   const deadline = performance.now() + budget;
   let terminalSince: number | undefined;
   for (;;) {
     const current = state(host);
-    if (current === "installed") break;
+    if (targets.includes(current)) break;
     if (current === "failed" || current === "idle") {
       terminalSince ??= performance.now();
       if (performance.now() - terminalSince > grace) break;
@@ -281,15 +290,17 @@ async function programmaticCompact(host: Host): Promise<Observation[]> {
     rejection,
     state: afterCall,
   });
-  const settled = await awaitInstalled(host, "session.compact()");
+  // Hook path: the checkpoint is adopted when the next prompt arrives, before it is sent.
+  await awaitReady(host, "session.compact()");
+  const requestsBefore = host.requestBranches.length;
+  await nextTurn(host, TURN_3, "HARNESS-MANUAL-ACK-3", "the programmatic compaction turn");
+  const settled = state(host);
   const added = checkpoints(host).slice(before);
   const settledRef = host.recorder.record("manual-programmatic-settled", {
     state: settled,
     status: statusOf(host),
     checkpoints: added,
   });
-  const requestsBefore = host.requestBranches.length;
-  await nextTurn(host, TURN_3, "HARNESS-MANUAL-ACK-3", "the programmatic compaction turn");
   return [
     {
       actual: { hostEvents, rejection, state: afterCall },

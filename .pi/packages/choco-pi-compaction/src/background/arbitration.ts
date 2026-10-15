@@ -3,6 +3,8 @@ import type { CandidateState } from "./contract.ts";
 export interface HostCompactionTrigger {
   readonly reason: "threshold" | "overflow" | "manual" | "context-cap" | "idle";
   readonly customInstructions?: string;
+  /** The host's own abort for this compaction; a wait on its behalf ends with it. */
+  readonly signal?: AbortSignal;
 }
 
 type ArbitrationIntent =

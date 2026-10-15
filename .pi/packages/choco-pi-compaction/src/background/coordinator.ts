@@ -906,24 +906,58 @@ function arbitrateCandidate(
   if (intent === "discard-instructions" && current)
     finish(state, current, "discarded-stale", "manual-instructions");
   if (intent === "cancel-overflow" && current) finish(state, current, "canceled", "canceled");
-  if (intent === "await-outstanding" && current) return awaitOutstanding(state, current);
+  if (intent === "await-outstanding" && current) return awaitOutstanding(state, current, event);
   if (intent !== "adopt" || !current) return Promise.resolve(PROCEED);
   return proposeAdoption(state, current);
 }
 
 /**
- * Wait for the in-flight preparation (bounded by its own deadline), then adopt
- * it if it is still this owner's ready candidate; otherwise the host proceeds
- * with its own summary exactly as before.
+ * Wait for the in-flight preparation, then adopt it if it is still this
+ * owner's ready candidate; otherwise the host proceeds with its own summary
+ * exactly as before. The wait ends at the first of: the preparation settling,
+ * the candidate being finished (its abort fires on timeout, cancellation or
+ * owner invalidation), the host aborting its compaction, or the preparation
+ * timeout. The physical work keeps running and settles its own scheduler slot.
  */
 async function awaitOutstanding(
   state: CoordinatorState,
   current: Candidate,
+  event: HostCompactionTrigger,
 ): Promise<CoordinatorArbitrationResult> {
-  const result = await state.preparation;
-  if (!ownerCurrent(state) || !result.ok) return PROCEED;
+  const settled = await firstOf(state, state.preparation, [current.abort.signal, event.signal]);
+  if (!settled || !ownerCurrent(state)) return PROCEED;
   if (state.candidate !== current || current.machine.state !== "ready") return PROCEED;
   return proposeAdoption(state, current);
+}
+
+/** Resolves true when `work` settles first; false on any abort or the preparation timeout. */
+function firstOf(
+  state: CoordinatorState,
+  work: Promise<WorkSettlement>,
+  signals: readonly (AbortSignal | undefined)[],
+): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    let done = false;
+    const cleanups: (() => void)[] = [];
+    const finishWith = (value: boolean): void => {
+      if (done) return;
+      done = true;
+      for (const cleanup of cleanups) cleanup();
+      resolve(value);
+    };
+    for (const signal of signals) {
+      if (signal === undefined) continue;
+      if (signal.aborted) return finishWith(false);
+      const onAbort = (): void => finishWith(false);
+      signal.addEventListener("abort", onAbort, { once: true });
+      cleanups.push(() => signal.removeEventListener("abort", onAbort));
+    }
+    cleanups.push(state.clock.setTimer(() => finishWith(false), state.settings.timeoutMs));
+    work.then(
+      (result) => finishWith(result.ok),
+      () => finishWith(false),
+    );
+  });
 }
 
 async function arbitrate(

@@ -10,7 +10,6 @@ import type {
 
 import type { HostCompactionTrigger } from "../background/arbitration.ts";
 import { ANTHROPIC_BACKEND_ID } from "../anthropic/backend.ts";
-import { isStaleContextError } from "../lifecycle.ts";
 import { capturesFor } from "../anthropic/capture.ts";
 import { TEXT_BACKEND_ID } from "../background/text-backend.ts";
 import { type BackgroundAdoptionOwner, readAdoptionIdentity } from "./adoption-signal.ts";
@@ -65,7 +64,9 @@ function hostTrigger(owner: MainOwner, event: SessionBeforeCompactEvent): HostCo
   const customInstructions = ownRoute
     ? owner.core.coordinator.status().customInstructions
     : event.customInstructions;
-  return customInstructions === undefined ? { reason } : { reason, customInstructions };
+  return customInstructions === undefined
+    ? { reason, signal: event.signal }
+    : { reason, customInstructions, signal: event.signal };
 }
 
 async function arbitrate(
@@ -154,37 +155,6 @@ export async function startManualPreparation(
 /** A host boundary reached: the cancelled host compaction, if any, has returned. */
 export function hostBoundaryReached(owner: MainOwner): void {
   owner.hostCompactUnwinding = false;
-}
-
-/**
- * After our `session_compact_failed` handler returned, the host's `compact()`
- * returns as soon as the remaining handlers settle. Without a user action no
- * boundary event follows, so the hook path checks on two later macrotasks
- * that the host is idle and then adopts. Should a slow third-party handler
- * still be pending, the host's cleanup clobbers the adoption's controller;
- * that surfaces as a host refusal, leaves the candidate ready, and the next
- * boundary adopts it, so the worst case is a deferral, never a lost checkpoint.
- */
-export function scheduleHookAdoption(rt: HostRuntime, owner: MainOwner): void {
-  const serial = owner.manualSerial;
-  const idleNow = (): boolean => {
-    try {
-      return owner.lastCtx.isIdle();
-    } catch (cause) {
-      if (!(cause instanceof Error && isStaleContextError(cause))) throw cause;
-      return false;
-    }
-  };
-  const live = (): boolean =>
-    isCurrent(rt, owner) && owner.manualSerial === serial && owner.hostCompactUnwinding;
-  setTimeout(() => {
-    if (!live() || !idleNow()) return;
-    setTimeout(() => {
-      if (!live() || !idleNow()) return;
-      hostBoundaryReached(owner);
-      void adoptManualIfIdle(rt, owner, owner.lastCtx);
-    }, 20);
-  }, 0);
 }
 
 /**

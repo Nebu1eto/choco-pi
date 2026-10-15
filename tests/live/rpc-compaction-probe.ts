@@ -126,7 +126,14 @@ async function launch(
   const workspace = join(scratch, `${label}-workspace`);
   const sessionsDir = join(scratch, `${label}-sessions`);
   await Promise.all([mkdir(agentDir), mkdir(workspace), mkdir(sessionsDir)]);
-  for (const name of ["auth.json", "models.json", "agents", "themes", "choco-pi"]) {
+  for (const name of [
+    "auth.json",
+    "models.json",
+    "agents",
+    "themes",
+    "choco-pi",
+    "choco-pi-codex.json",
+  ]) {
     try {
       await cp(join(source, name), join(agentDir, name), { recursive: true, dereference: true });
     } catch (error) {
@@ -142,7 +149,11 @@ async function launch(
     JSON.stringify(
       {
         ...settings,
-        packages: [join(checkout, ".pi/packages/choco-pi-compaction")],
+        packages: [
+          join(checkout, ".pi/packages/choco-pi-compaction"),
+          // Codex-owned models are served only by the Codex lane this package registers.
+          join(checkout, ".pi/packages/choco-pi-codex"),
+        ],
         extensions: [],
         compaction: { enabled: true, reserveTokens, keepRecentTokens: 1 },
       },
@@ -497,8 +508,11 @@ async function manualCases(session: Session, on: boolean): Promise<void> {
     });
     rpcError = response.success ? "" : (response.error ?? "failed");
   });
-  entry = await waitForNewCompaction(session, before, "rpc compact");
+  // Through the host hook the checkpoint is adopted when the client's next prompt
+  // arrives (before it is sent): wait for the candidate, then send that prompt.
+  if (on) await waitForCandidate(session, ["ready", "installed"]);
   await prompt(session, "AFTER-3: reply with exactly ACK-A3");
+  entry = await waitForNewCompaction(session, before, "rpc compact");
   record(
     `${tag}/rpc compact`,
     on
@@ -525,6 +539,32 @@ async function coordinatorStatus(session: Session, label: string): Promise<void>
   });
 }
 
+const ProbeStatusSchema = Type.Object(
+  { rows: Type.Array(Type.Object({ state: Type.String() }, { additionalProperties: true })) },
+  { additionalProperties: true },
+);
+/** Poll the diagnostic command until the session's coordinator reaches one of `states`. */
+async function waitForCandidate(session: Session, states: readonly string[]): Promise<void> {
+  const deadline = Date.now() + perCaseTimeout;
+  while (Date.now() < deadline) {
+    const since = session.records.length;
+    await session.command("prompt", { message: "/probe-compaction-status" });
+    const notice = session.records
+      .slice(since)
+      .find((value) => value.method === "notify" && value.message?.startsWith("PROBE-STATUS "));
+    const parsed: unknown = notice?.message
+      ? JSON.parse(notice.message.slice("PROBE-STATUS ".length))
+      : undefined;
+    if (
+      Value.Check(ProbeStatusSchema, parsed) &&
+      parsed.rows.some((row) => states.includes(row.state))
+    )
+      return;
+    await delay(500);
+  }
+  throw new Error(`candidate never reached ${states.join("/")}`);
+}
+
 async function autoCase(session: Session, on: boolean): Promise<void> {
   const tag = on ? "bg-on" : "bg-off";
   const before = compactions(await branchEntries(session)).length;
@@ -546,7 +586,10 @@ async function autoCase(session: Session, on: boolean): Promise<void> {
   await prompt(session, "AFTER-AUTO: reply with exactly ACK-AUTO");
   record(
     `${tag}/auto point`,
-    added >= 1 &&
+    fired &&
+      events.includes("compaction_start:threshold") &&
+      events.includes("compaction_end:threshold") &&
+      added >= 1 &&
       entry !== undefined &&
       (on ? backgroundCandidate(entry) !== undefined : backgroundCandidate(entry) === undefined),
     {

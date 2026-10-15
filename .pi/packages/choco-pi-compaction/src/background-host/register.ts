@@ -53,7 +53,6 @@ import {
   manualBypassesHost,
   observeSettled,
   reportHostRefused,
-  scheduleHookAdoption,
   startManualPreparation,
 } from "./routes.ts";
 import { type HostRuntime, isCurrent, shutdown, touchCurrentOwner } from "./runtime.ts";
@@ -452,8 +451,6 @@ async function onCompactFailed(rt: HostRuntime, ctx: ExtensionContext): Promise<
   const owner = touchCurrentOwner(rt, ctx);
   if (owner === undefined) return;
   await reportHostRefused(rt, owner, ctx);
-  if (!isCurrent(rt, owner)) return;
-  if (owner.hostCompactUnwinding) scheduleHookAdoption(rt, owner);
 }
 
 function reportReplayDiagnostic(

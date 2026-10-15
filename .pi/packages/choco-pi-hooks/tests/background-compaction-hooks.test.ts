@@ -206,6 +206,8 @@ test(
         // A later plain /compact is deferred to the background: no hook runs for
         // the cancelled host request nor for the adoption that follows.
         await assert.rejects(context.host.session.compact(), /Compaction cancelled/);
+        await waitFor(() => context.state() === "ready", "candidate ready");
+        await context.host.session.prompt("NEXT-PROMPT");
         await waitFor(() => context.state() === "installed", "manual candidate adopted");
         assert.deepEqual(await context.hookLog(), [], "deferred manual compaction skips hooks");
         await context.host.session.prompt("MORE");
@@ -215,6 +217,8 @@ test(
           context.host.session.compact("Focus on the audit"),
           /Compaction cancelled/,
         );
+        await waitFor(() => context.state() === "ready", "candidate ready");
+        await context.host.session.prompt("NEXT-PROMPT");
         await waitFor(() => context.state() === "installed", "focused candidate adopted");
         assert.deepEqual(
           await context.hookLog(),

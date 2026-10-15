@@ -244,6 +244,8 @@ test(
           context.host.session.compact("host compaction with instructions"),
           /Compaction cancelled/,
         );
+        await waitFor(() => context.state() === "ready", "focused candidate ready");
+        await context.host.session.prompt("NEXT-PROMPT");
         await waitFor(() => context.probe.compactions === 2, "focused adoption notifies once");
         assert.equal(context.probe.continuations, 2);
       } finally {
