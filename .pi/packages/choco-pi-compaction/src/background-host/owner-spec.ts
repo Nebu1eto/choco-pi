@@ -9,6 +9,7 @@ import type {
   AppendRecord,
   BackgroundCompactionSettings,
   ProviderScope,
+  TokenCounter,
 } from "../background/contract.ts";
 import type { SchedulerClock } from "../background/scheduler.ts";
 import type { SettingsLocation } from "../background/settings.ts";
@@ -34,6 +35,8 @@ export interface BackgroundCompactionOptions {
     readonly readMode?: (agentDir: string) => Promise<AnthropicCompactionMode>;
   };
   readonly clock?: SchedulerClock;
+  /** Provider prompt counter for admission; unset means the calibrated estimate decides. */
+  readonly tokenCounter?: TokenCounter;
 }
 
 /** Everything one owner (main session or child) binds its coordinator to. */

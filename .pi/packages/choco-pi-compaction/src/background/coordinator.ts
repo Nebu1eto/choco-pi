@@ -6,25 +6,31 @@ import type {
   CompactionResult,
   SessionEntry,
 } from "@earendil-works/pi-coding-agent";
-import {
-  type AdoptionConsumer,
-  type AppendRecord,
-  type Backend,
-  type BackgroundCompactionSettings,
-  type BackgroundUsage,
-  type CandidateFailure,
-  type CandidateRecord,
-  type CoordinatorApi,
-  type CoordinatorStatus,
-  type FrozenSnapshot,
-  type PreparationRequest,
-  type PreparationRequestResult,
-  type PreparedCheckpoint,
-  type PrepareFailure,
-  type PreSnapshotParticipant,
-  type ProviderScope,
-  type ReasonCode,
+import type {
+  AdmissionRecord,
+  AdoptionConsumer,
+  AppendRecord,
+  Backend,
+  BackgroundCompactionSettings,
+  BackgroundUsage,
+  CandidateFailure,
+  CandidateRecord,
+  CoordinatorApi,
+  CoordinatorStatus,
+  EstimateSource,
+  FrozenSnapshot,
+  ModelRef,
+  PreparationRequest,
+  PreparationRequestResult,
+  PreparedCheckpoint,
+  PrepareFailure,
+  PreSnapshotParticipant,
+  ProviderScope,
+  ReasonCode,
+  TokenCounter,
 } from "./contract.ts";
+import { type ModelBudget, resolveBackgroundLimits } from "../budget.ts";
+import { renderFrozenPrefixPrompt } from "./snapshot.ts";
 import {
   AdoptionDelivery,
   adoptionDraft,
@@ -98,6 +104,14 @@ interface CoordinatorDependencies {
   readonly isStaleContextError?: (cause: unknown) => boolean;
   /** In-process delivery ledger shared across reloads of the same owner; a fresh process starts empty. */
   readonly delivered?: DeliveredAdoptions;
+  /**
+   * Window and output cap of the owner's model. Admission and the backend
+   * budget use `min(maxInputTokens, contextWindow - output cap - margin)`;
+   * without it only the configured ceiling applies.
+   */
+  readonly modelBudget?: ModelBudget;
+  /** Provider prompt counter; when it returns a count, it replaces the estimate. */
+  readonly tokenCounter?: { readonly counter: TokenCounter; readonly model: ModelRef };
 }
 
 interface DetailedCoordinatorStatus extends CoordinatorStatus {
@@ -109,6 +123,8 @@ interface DetailedCoordinatorStatus extends CoordinatorStatus {
   /** Estimate only: tokenEstimate minus usage.output. Real usefulness is backend-owned. */
   readonly estimatedReductionTokens?: number;
   readonly committedEntryId?: string;
+  /** How admission sized the prompt of the current candidate. */
+  readonly admission?: AdmissionRecord;
 }
 
 type CoordinatorArbitrationResult =
@@ -152,6 +168,7 @@ interface Candidate {
   committedEntryId?: string;
   /** Backend detail code behind the terminal failure reason. */
   detail?: string;
+  admission?: AdmissionRecord;
   cancelDeadline: () => void;
 }
 
@@ -300,10 +317,13 @@ function fail(
 }
 
 /** Fail the candidate and start the scope cooldown so the next attempt waits. */
-function failAndCool(state: CoordinatorState, current: Candidate, reason: ReasonCode): void {
-  finish(state, current, "failed", reason);
-  rememberFailure(state, current, reason, undefined);
-  cool(state, current);
+function failAndCool(
+  state: CoordinatorState,
+  current: Candidate,
+  reason: ReasonCode,
+  detail?: string,
+): void {
+  fail(state, current, { reason, detail, cool: true });
 }
 
 const RECENT_FAILURES = 8;
@@ -427,10 +447,12 @@ function cool(
   cooldownMap(state.clock).set(coolingKey(current), until);
 }
 
-/** Fails with "quota" (no extra cooldown) while the scope is cooling down. */
+/** Fails with "cooling" (no extra cooldown, no request sent) while the scope is cooling down. */
 function refuseWhileCooling(state: CoordinatorState, current: Candidate): boolean {
   if (!coolingDown(state, current)) return false;
-  finish(state, current, "failed", "quota");
+  const seconds = Math.ceil((cooldownUntil(state, current) - state.clock.now()) / 1000);
+  current.detail = `cooling-down ${seconds}s`;
+  finish(state, current, "failed", "cooling");
   return true;
 }
 
@@ -516,15 +538,98 @@ function selectSnapshot(
   return snapshot;
 }
 
+/** Effective limits: the configured ceiling narrowed by the owner model's window. */
+function effectiveLimits(state: CoordinatorState): {
+  maxInputTokens: number;
+  maxOutputTokens: number;
+} {
+  return (
+    resolveBackgroundLimits(state.deps.modelBudget, state.settings) ?? {
+      maxInputTokens: 0,
+      maxOutputTokens: state.settings.maxOutputTokens,
+    }
+  );
+}
+
+function counterActive(state: CoordinatorState): boolean {
+  return state.settings.countTokens && state.deps.tokenCounter !== undefined;
+}
+
+/** A provider count, or none plus the counter's fallback note. */
+interface PromptCount {
+  readonly counted: number | undefined;
+  readonly detail?: string;
+}
+
+/**
+ * Admit the snapshot when its prompt fits the effective input budget. A
+ * provider count replaces the estimate; otherwise the rendered-prompt
+ * estimate is used, then the raw estimate for snapshots that carry none. An
+ * oversized prefix refuses this cut only: it does not cool the scope.
+ */
+function admitTokens(
+  state: CoordinatorState,
+  current: Candidate,
+  snapshot: FrozenSnapshot,
+  count: PromptCount,
+): boolean {
+  const counted = count.counted;
+  const budget = effectiveLimits(state).maxInputTokens;
+  const source: EstimateSource =
+    counted === undefined ? (snapshot.estimateSource ?? "chars") : "counted";
+  const tokens = counted ?? snapshot.promptTokenEstimate ?? snapshot.tokenEstimate;
+  const ratio = counted === undefined ? snapshot.estimateRatio : undefined;
+  const detail = counted === undefined ? count.detail : undefined;
+  const admission: AdmissionRecord = { promptTokens: tokens, budget, source };
+  if (ratio !== undefined) admission.ratio = ratio;
+  if (detail !== undefined) admission.detail = detail;
+  current.admission = admission;
+  if (tokens <= budget) return true;
+  fail(state, current, {
+    reason: "oversized",
+    detail:
+      detail === undefined
+        ? `prompt ${tokens} > budget ${budget} (${source})`
+        : `prompt ${tokens} > budget ${budget} (${source}; ${detail})`,
+    cool: false,
+  });
+  return false;
+}
+
+/**
+ * Provider count of the rendered prompt, or an undefined count (with the
+ * counter's last diagnostic, if any) to fall back to the estimate.
+ */
+async function countPromptTokens(
+  state: CoordinatorState,
+  current: Candidate,
+  snapshot: FrozenSnapshot,
+): Promise<PromptCount> {
+  const hook = state.deps.tokenCounter;
+  if (hook === undefined) return { counted: undefined };
+  const prompt = renderFrozenPrefixPrompt(snapshot);
+  let detail: string | undefined;
+  const counted = await hook.counter.countTokens({
+    system: prompt.system,
+    promptText: prompt.promptText,
+    model: hook.model,
+    signal: current.abort.signal,
+    onDiagnostic: (note) => {
+      if (note.trim().length > 0) detail = note;
+    },
+  });
+  const valid = counted !== undefined && Number.isSafeInteger(counted) && counted >= 0;
+  return valid ? { counted } : { counted: undefined, detail };
+}
+
+/** Synchronous admission; with a counter the token gate runs inside the scheduled slot instead. */
 function admitSnapshot(
   state: CoordinatorState,
   current: Candidate,
   snapshot: FrozenSnapshot,
 ): boolean {
   if (!validate(state, current) || refuseWhileCooling(state, current)) return false;
-  if (snapshot.tokenEstimate <= state.settings.maxInputTokens) return true;
-  failAndCool(state, current, "oversized");
-  return false;
+  return counterActive(state) || admitTokens(state, current, snapshot, { counted: undefined });
 }
 
 async function prepare(
@@ -580,6 +685,11 @@ async function runPreparation(
   const legality = backend.isLegalCut(snapshot);
   if (!legality.legal)
     return fail(state, current, { reason: legality.reason, detail: legality.detail, cool: false });
+  if (counterActive(state)) {
+    const count = await countPromptTokens(state, current, snapshot);
+    if (!validate(state, current)) return;
+    if (!admitTokens(state, current, snapshot, count)) return;
+  }
   const attempt: AttemptContext = {
     state,
     current,
@@ -601,12 +711,13 @@ async function runAttempt(context: AttemptContext, attempt: number): Promise<Att
   }
   if (refuseWhileCooling(state, current)) return "stop";
   current.attempts = attempt;
+  const limits = effectiveLimits(state);
   const result = await context.backend.prepare(snapshot, {
     signal: current.abort.signal,
     candidateId: current.id,
     customInstructions: current.customInstructions,
     budget: {
-      maxInputTokens: state.settings.maxInputTokens,
+      maxInputTokens: limits.maxInputTokens,
       maxOutputTokens: state.settings.maxOutputTokens,
       maxResultBytes: state.settings.maxResultBytes,
       maxAttempts: state.settings.maxAttempts,
@@ -654,17 +765,22 @@ async function retryAfterFailure(
 function recordForCheckpoint(
   context: AttemptContext,
   checkpoint: PreparedCheckpoint,
-): { readonly record: CandidateRecord } | { readonly reason: ReasonCode } {
+):
+  | { readonly record: CandidateRecord }
+  | { readonly reason: ReasonCode; readonly detail?: string } {
   const { state, current, snapshot } = context;
   if (checkpoint.candidateId !== current.id || checkpoint.backendId !== current.backendId)
     return { reason: "malformed" };
-  const record = buildRecord(snapshot, checkpoint, state.clock.now(), current.customInstructions);
+  const record = buildRecord(snapshot, checkpoint, state.clock.now(), {
+    customInstructions: current.customInstructions,
+    admission: current.admission,
+  });
   if (!record) return { reason: "malformed" };
-  if (
-    Buffer.byteLength(JSON.stringify(record), "utf8") > state.settings.maxResultBytes ||
-    checkpoint.usage.output > state.settings.maxOutputTokens
-  )
-    return { reason: "oversized" };
+  if (Buffer.byteLength(JSON.stringify(record), "utf8") > state.settings.maxResultBytes)
+    return { reason: "oversized", detail: "result-bytes" };
+  // The reasoning reserve is part of the output cap the backend was allowed to send.
+  if (checkpoint.usage.output > effectiveLimits(state).maxOutputTokens)
+    return { reason: "oversized", detail: "output-over-budget" };
   return { record };
 }
 
@@ -675,7 +791,7 @@ async function recordPreparedCheckpoint(
 ): Promise<void> {
   const { state, current } = context;
   const checked = recordForCheckpoint(context, checkpoint);
-  if ("reason" in checked) return failAndCool(state, current, checked.reason);
+  if ("reason" in checked) return failAndCool(state, current, checked.reason, checked.detail);
   if (!validate(state, current)) return;
   await state.deps.appendRecord(checked.record);
   if (!validate(state, current)) return;
@@ -1188,6 +1304,7 @@ function status(state: CoordinatorState): DetailedCoordinatorStatus {
         ? Math.max(0, current.snapshot.tokenEstimate - current.checkpoint.usage.output)
         : undefined,
     committedEntryId: current.committedEntryId,
+    admission: current.admission,
   };
 }
 

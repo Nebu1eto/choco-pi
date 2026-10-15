@@ -32,6 +32,7 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 
 import { parseTextCheckpointDetails } from "../details.ts";
+import { BACKGROUND_COMPACTION_SYSTEM_PROMPT, buildFrozenPrefixPrompt } from "../prompt.ts";
 import { estimateTextTokens } from "../serialize.ts";
 import type { CompactionFileOperations, CompactionMessage, EntryIdRange } from "../types.ts";
 import type {
@@ -42,6 +43,7 @@ import type {
   ProviderScope,
   ReasonCode,
 } from "./contract.ts";
+import { estimatePromptTokens, usageCalibration } from "./token-estimate.ts";
 
 /** Longest governing request kept verbatim in a checkpoint. */
 const GOVERNING_REQUEST_MAX_CHARS = 8000;
@@ -71,6 +73,9 @@ export interface FreezeOptions {
  */
 export interface PrefixSnapshot extends FrozenSnapshot {
   readonly firstKeptEntryId: string;
+  readonly promptTokenEstimate: number;
+  readonly estimateSource: "usage-calibrated" | "chars";
+  readonly estimateRatio: number;
 }
 
 type SnapshotRefusalDetail =
@@ -634,7 +639,7 @@ export function freezeSnapshot(
   const previous = prefix[analysis.compactionIndex];
   const previousTokens = previous?.type === "compaction" ? estimateTextTokens(previous.summary) : 0;
 
-  const snapshot: PrefixSnapshot = {
+  const base = {
     cutEntryId: cutEntry.id,
     firstKeptEntryId: firstKept.id,
     prefixFingerprint: fingerprintEntries(prefix),
@@ -650,7 +655,47 @@ export function freezeSnapshot(
     tokenEstimate: messageTokens(range.map((tagged) => tagged.message)) + previousTokens,
     capturedAt: options.capturedAt,
   };
+  const prompt = renderFrozenPrefixPrompt(base);
+  const estimate = estimatePromptTokens(
+    prompt.system.length + prompt.promptText.length,
+    usageCalibration({
+      entries: prefix,
+      range,
+      baseChars: previous?.type === "compaction" ? previous.summary.length : 0,
+    }),
+  );
+  const snapshot: PrefixSnapshot = {
+    ...base,
+    promptTokenEstimate: estimate.tokens,
+    estimateSource: estimate.source,
+    estimateRatio: estimate.ratio,
+  };
   return Object.freeze(snapshot);
+}
+
+/** System prompt and single-pass prompt text the text backend sends for a snapshot. */
+export interface RenderedPrefixPrompt {
+  readonly system: string;
+  readonly promptText: string;
+}
+
+/**
+ * Render the complete single-pass prompt over a frozen prefix, without user
+ * focus instructions. This is what admission sizes and a token counter counts.
+ */
+export function renderFrozenPrefixPrompt(snapshot: FrozenSnapshot): RenderedPrefixPrompt {
+  const evidence = collectPrefixEvidence(snapshot);
+  const governing = snapshot.splitTurn ? snapshot.governingUserRequest : null;
+  return {
+    system: BACKGROUND_COMPACTION_SYSTEM_PROMPT,
+    promptText: buildFrozenPrefixPrompt({
+      previousSummary: evidence.previousSummary,
+      history: evidence.history.map((item) => item.message),
+      turnPrefix: evidence.turnPrefix.map((item) => item.message),
+      governingRequest: governing?.content,
+      scope: "complete",
+    }),
+  };
 }
 
 function collectRange(

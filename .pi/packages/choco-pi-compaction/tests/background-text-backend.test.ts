@@ -452,7 +452,7 @@ test("deadline and oversized input fail before any call", async () => {
       budget: { ...BUDGET, maxOutputTokens: 1_000 },
       candidateId: "tiny",
     }),
-    { ok: false, reason: "oversized", retryable: false },
+    { ok: false, reason: "oversized", retryable: false, detail: "no-pass-plan" },
   );
   assert.equal(summarizer.requests.length, 0);
 });
@@ -469,7 +469,7 @@ test("oversized, malformed, empty, truncated, and tool-calling results fail type
           stopReason: "stop",
           toolCallCount: 0,
         },
-        expected: { ok: false, reason: "oversized", retryable: false },
+        expected: { ok: false, reason: "oversized", retryable: false, detail: "result-bytes" },
       },
       {
         name: "missing headings",
@@ -489,7 +489,7 @@ test("oversized, malformed, empty, truncated, and tool-calling results fail type
           stopReason: "length",
           toolCallCount: 0,
         },
-        expected: { ok: false, reason: "oversized", retryable: false },
+        expected: { ok: false, reason: "oversized", retryable: false, detail: "summary-truncated" },
       },
       {
         name: "tool call",

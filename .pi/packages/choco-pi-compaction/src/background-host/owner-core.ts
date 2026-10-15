@@ -31,7 +31,12 @@ import {
 } from "../background/snapshot.ts";
 import { isStaleContextError } from "../lifecycle.ts";
 import { type AdoptionRoute, readAdoptionIdentity } from "./adoption-signal.ts";
-import { resolveBackends, selectBackendId } from "./backends.ts";
+import {
+  ownerModelBudget,
+  ownerTokenCounter,
+  resolveBackends,
+  selectBackendId,
+} from "./backends.ts";
 import { findCommittedAdoption, latestCompactionOf } from "./branch.ts";
 import { errorText } from "./notices.ts";
 import type { BackgroundCompactionOptions, OwnerSpec } from "./owner-spec.ts";
@@ -134,6 +139,8 @@ export async function createOwnerCore(
     isStaleContextError: (cause) => cause instanceof Error && isStaleContextError(cause),
     clock: options.clock,
     delivered: deliveredAdoptionsFor(spec.ownerKey),
+    modelBudget: ownerModelBudget(spec),
+    tokenCounter: ownerTokenCounter(spec, options),
   });
   return assembleCore(state, coordinator, [...backends.keys()]);
 }

@@ -1,6 +1,7 @@
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { fingerprintEntries, prefixReferences, touchesPrefix } from "./snapshot.ts";
 import {
+  type AdmissionRecord,
   isCandidateRecord,
   type CandidateRecord,
   type FrozenSnapshot,
@@ -42,13 +43,26 @@ function snapshotIdentity(snapshot: FrozenSnapshot): SnapshotIdentity {
   };
 }
 
+/** Unvalidated record shape; {@link parseRecord} decides whether it is a candidate record. */
+interface RecordDraft {
+  readonly customType: string;
+  readonly schemaVersion: number;
+  readonly candidateId: string;
+  readonly backendId: string;
+  readonly identity: SnapshotIdentity;
+  readonly createdAt: number;
+  readonly checkpoint: PreparedCheckpoint;
+  customInstructions?: string;
+  admission?: AdmissionRecord;
+}
+
 export function buildRecord(
   snapshot: FrozenSnapshot,
   checkpoint: PreparedCheckpoint,
   createdAt: number,
-  customInstructions?: string,
+  extra: { readonly customInstructions?: string; readonly admission?: AdmissionRecord } = {},
 ): CandidateRecord | undefined {
-  const record = {
+  const record: RecordDraft = {
     customType: "choco-compaction-candidate",
     schemaVersion: 1,
     candidateId: checkpoint.candidateId,
@@ -57,9 +71,9 @@ export function buildRecord(
     createdAt,
     checkpoint: { ...checkpoint, reasonCodes: [...checkpoint.reasonCodes] },
   };
-  return customInstructions === undefined
-    ? parseRecord(record)
-    : parseRecord({ ...record, customInstructions });
+  if (extra.customInstructions !== undefined) record.customInstructions = extra.customInstructions;
+  if (extra.admission !== undefined) record.admission = { ...extra.admission };
+  return parseRecord(record);
 }
 
 export function parseRecord<T>(value: T): CandidateRecord | undefined {

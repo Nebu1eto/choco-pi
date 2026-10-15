@@ -62,20 +62,21 @@ values, `hysteresis >= prepareAt`, `maxOutputTokens > maxInputTokens`, or
 `maxQueued < maxConcurrent` disable the feature and show one warning naming the
 file and the problem. Settings are read at session start.
 
-| Key                                                     | Default                       | Meaning                                                                                                              |
-| ------------------------------------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `enabled`                                               | `false`                       | Master switch. Every backend switch is ignored while it is off.                                                      |
-| `text`                                                  | `false`                       | Text backend: summarizes the frozen prefix with the session model. Also the only backend subagent children use.      |
-| `anthropicNative`                                       | `false`                       | Anthropic on-demand native compaction for combinations the foreground gate admits.                                   |
-| `codexNative`                                           | `false`                       | Codex native lane, supplied by the Codex package through the backend registry.                                       |
-| `prepareAt`                                             | `0.7`                         | Start preparing when context tokens reach this fraction of the host trigger point (`contextWindow - reserveTokens`). |
-| `hysteresis`                                            | `0.1`                         | After a preparation, usage must fall below `prepareAt - hysteresis` before another starts.                           |
-| `reserveTokens`                                         | `8192`                        | Headroom subtracted from the context window to get the trigger point; also orders the shared preparation queue.      |
-| `maxConcurrent` / `maxQueued`                           | `2` / `32`                    | Process-wide preparation limits.                                                                                     |
-| `maxAttempts` / `retryBaseMs` / `cooldownMs`            | `2` / `1000` / `60000`        | Retries per candidate, backoff base, and cooldown after a failure before the same owner tries again.                 |
-| `timeoutMs`                                             | `120000`                      | Deadline per candidate.                                                                                              |
-| `maxInputTokens` / `maxOutputTokens` / `maxResultBytes` | `200000` / `8192` / `1048576` | Preparation budget; larger prefixes or results fail as `oversized`.                                                  |
-| `minReductionTokens`                                    | `1024`                        | Accepted for forward compatibility; usefulness is decided by each backend.                                           |
+| Key                                                     | Default                        | Meaning                                                                                                                                                                                                                           |
+| ------------------------------------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enabled`                                               | `false`                        | Master switch. Every backend switch is ignored while it is off.                                                                                                                                                                   |
+| `text`                                                  | `false`                        | Text backend: summarizes the frozen prefix with the session model. Also the only backend subagent children use.                                                                                                                   |
+| `anthropicNative`                                       | `false`                        | Anthropic on-demand native compaction for combinations the foreground gate admits.                                                                                                                                                |
+| `codexNative`                                           | `false`                        | Codex native lane, supplied by the Codex package through the backend registry.                                                                                                                                                    |
+| `prepareAt`                                             | `0.7`                          | Start preparing when context tokens reach this fraction of the host trigger point (`contextWindow - reserveTokens`).                                                                                                              |
+| `hysteresis`                                            | `0.1`                          | After a preparation, usage must fall below `prepareAt - hysteresis` before another starts.                                                                                                                                        |
+| `reserveTokens`                                         | `8192`                         | Headroom subtracted from the context window to get the trigger point; also orders the shared preparation queue.                                                                                                                   |
+| `maxConcurrent` / `maxQueued`                           | `2` / `32`                     | Process-wide preparation limits.                                                                                                                                                                                                  |
+| `maxAttempts` / `retryBaseMs` / `cooldownMs`            | `2` / `1000` / `60000`         | Retries per candidate, backoff base, and cooldown after a failure before the same owner tries again.                                                                                                                              |
+| `timeoutMs`                                             | `120000`                       | Deadline per candidate.                                                                                                                                                                                                           |
+| `maxInputTokens` / `maxOutputTokens` / `maxResultBytes` | `1000000` / `8192` / `1048576` | Preparation budget. `maxInputTokens` is a ceiling; the effective input budget is `min(maxInputTokens, contextWindow - output cap - 512)` of the session model. Larger prefixes or results fail as `oversized` with a detail code. |
+| `countTokens`                                           | `true`                         | Let a provider token counter, when one is wired for the model, size the prompt instead of the estimate.                                                                                                                           |
+| `minReductionTokens`                                    | `1024`                         | Accepted for forward compatibility; usefulness is decided by each backend.                                                                                                                                                        |
 
 Example that enables only the text backend:
 
@@ -94,6 +95,34 @@ follows **OpenAI compaction** = `server-side`, and `anthropicNative` follows
 **Anthropic compaction** = `server-side`. The row writes them with `enabled`,
 and session start rewrites them in an existing global sidecar (a missing one
 stays missing). A trusted project's sidecar still wins.
+
+### Admission and failure details
+
+Admission sizes the summarization prompt actually sent, with tool results
+truncated as the serializer renders them, not the raw prefix. The character
+count is scaled by the tokens-per-character rate of the last valid assistant
+usage in the prefix (prompt tokens over the characters sent, clamped to
+1/6..1/2; usage before a later `compaction` or `context_edit` is ignored),
+else by chars/4. With `countTokens` on, Synthetic and Anthropic (API-key auth)
+owner models are counted by the provider's free `messages/count_tokens`
+endpoint inside the preparation slot (10 s timeout); the count replaces the
+estimate. Other providers are not counted. A failed count falls back to the
+estimate and records `detail` such as `count-tokens: http 500`; a 5xx,
+malformed, or auth failure suppresses further requests for that
+`provider|baseUrl|model` for 10 minutes (`(cached)`), while timeouts, network
+errors, and 429s are retried next time. The candidate record and status carry
+`admission` (`promptTokens`, `budget`, `source`, `ratio`, `detail`).
+
+An over-budget prefix fails `oversized` with `prompt N > budget M (source)`
+(`(source; count-tokens: <code>)` after a failed count) and does not cool the scope. Text-backend `oversized` details are
+`prefix-over-budget`, `no-pass-plan`, `second-pass-over-budget`,
+`summary-truncated` (generation stopped at the output cap) and
+`result-bytes`. A request refused during a cooldown reports `cooling` with
+`cooling-down <n>s`, not `quota`.
+
+On a reasoning model the summary output cap is `maxOutputTokens + 6553`
+(0.8 x 8192), bounded by the model's own cap, because reasoning shares the
+cap on OpenAI-compatible endpoints. The thinking level is left unchanged.
 
 ### How a checkpoint is prepared
 

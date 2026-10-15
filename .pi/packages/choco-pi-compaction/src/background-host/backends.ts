@@ -5,7 +5,14 @@ import {
 } from "../anthropic/backend.ts";
 import { AnthropicCapabilityGate } from "../anthropic/capability.ts";
 import { capturesFor } from "../anthropic/capture.ts";
-import type { Backend, BackendFactory, BackendFactoryContext } from "../background/contract.ts";
+import type { ModelBudget } from "../budget.ts";
+import type {
+  Backend,
+  BackendFactory,
+  BackendFactoryContext,
+  ModelRef,
+  TokenCounter,
+} from "../background/contract.ts";
 import { getRegistry, registerBackendFactory } from "../background/registry.ts";
 import { CODEX_BACKEND_SETTING_ID, isBackendEnabled } from "../background/settings.ts";
 import {
@@ -16,6 +23,11 @@ import {
 import { resolveOwner } from "../ownership.ts";
 import { errorText } from "./notices.ts";
 import type { BackgroundCompactionOptions, OwnerSpec } from "./owner-spec.ts";
+import {
+  type CountRegistry,
+  type CountTokensNegativeCache,
+  createProviderTokenCounter,
+} from "./token-counters.ts";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 
@@ -103,6 +115,43 @@ function ownerInputs(context: BackendFactoryContext): OwnerBackendInputs {
   return inputs;
 }
 
+/** Window, output cap, and reasoning flag of the owner's model; admission and the text backend share it. */
+export function ownerModelBudget(spec: Pick<BackendOwnerSpec, "model">): ModelBudget {
+  return {
+    contextWindow: spec.model.contextWindow,
+    maxTokens: spec.model.maxTokens,
+    reasoning: spec.model.reasoning,
+  };
+}
+
+/**
+ * Negative count results shared by every owner of this module instance, so a
+ * model whose endpoint fails (Synthetic GLM-5.3/Kimi-K3 return 500) costs one
+ * request per TTL rather than one per preparation.
+ */
+const SHARED_COUNT_CACHE: CountTokensNegativeCache = new Map();
+
+/**
+ * Provider prompt counter for this owner's admission, or undefined when the
+ * `countTokens` setting is off. An injected seam wins; otherwise the
+ * provider counter (Synthetic, Anthropic; others uncounted) is used.
+ */
+export function ownerTokenCounter(
+  spec: Pick<BackendOwnerSpec, "model" | "settings"> & { readonly modelRegistry: CountRegistry },
+  options: BackgroundCompactionOptions,
+): { readonly counter: TokenCounter; readonly model: ModelRef } | undefined {
+  if (!spec.settings.countTokens) return undefined;
+  const clock = options.clock;
+  const counter =
+    options.tokenCounter ??
+    createProviderTokenCounter({
+      registry: spec.modelRegistry,
+      now: clock === undefined ? undefined : () => clock.now(),
+      cache: SHARED_COUNT_CACHE,
+    });
+  return { counter, model: spec.model };
+}
+
 /** Default text backend: summarizes with the owner's own session model. */
 const defaultTextBackendFactory: BackendFactory = (context) => {
   const { spec, options } = ownerInputs(context);
@@ -117,7 +166,7 @@ const defaultTextBackendFactory: BackendFactory = (context) => {
   const clock = options.clock;
   return createTextBackend({
     summarize: summarizer,
-    budget: { contextWindow: spec.model.contextWindow, maxTokens: spec.model.maxTokens },
+    budget: ownerModelBudget(spec),
     now: clock === undefined ? undefined : () => clock.now(),
   });
 };

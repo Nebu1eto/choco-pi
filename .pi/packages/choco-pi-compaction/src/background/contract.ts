@@ -1,3 +1,4 @@
+import type { Api, Model } from "@earendil-works/pi-ai";
 import type { CompactionEntryDraft, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
@@ -71,7 +72,17 @@ export interface FrozenSnapshot extends SnapshotIdentity {
   readonly splitTurn: boolean;
   readonly governingUserRequest: { readonly entryId: string; readonly content: string } | null;
   readonly fileOps: CompactionFileOperations;
+  /** Raw chars/4 estimate of every summarized message, untruncated; reported as `tokensBefore`. */
   readonly tokenEstimate: number;
+  /**
+   * Estimate of the summarization prompt actually sent (tool results truncated
+   * as the serializer renders them), calibrated by provider usage when the
+   * prefix carries it. Admission gates on this; absent means `tokenEstimate`.
+   */
+  readonly promptTokenEstimate?: number;
+  readonly estimateSource?: EstimateSource;
+  /** Tokens per character applied to the rendered prompt. */
+  readonly estimateRatio?: number;
   readonly capturedAt: number;
   /** Backend-specific, immutable request evidence (full canonical prefix for Codex). */
   readonly backendCapture?: unknown;
@@ -90,6 +101,8 @@ export type FailureReason =
   | "incompatible";
 export type ReasonCode =
   | FailureReason
+  /** The provider scope is cooling down after an earlier failure; no request was sent. */
+  | "cooling"
   | "stale-prefix"
   | "owner-changed"
   | "checkpoint-changed"
@@ -145,6 +158,24 @@ export interface PreparationBudget {
   readonly maxResultBytes: number;
   readonly deadlineMs: number;
   readonly maxAttempts: number;
+}
+/** Where an admission token figure came from. */
+export type EstimateSource = "usage-calibrated" | "chars" | "counted";
+/** The model a token counter counts for; the owner's own session model. */
+export type ModelRef = Model<Api>;
+/**
+ * Provider-side prompt token counter. Returns undefined when it cannot count
+ * (unsupported provider, transport failure, timeout); it must never throw.
+ */
+export interface TokenCounter {
+  countTokens(input: {
+    readonly system: string;
+    readonly promptText: string;
+    readonly model: ModelRef;
+    readonly signal: AbortSignal;
+    /** Receives a short `count-tokens: <code>` note when the count falls back. */
+    readonly onDiagnostic?: (detail: string) => void;
+  }): Promise<number | undefined>;
 }
 export interface Backend<Details = unknown> {
   readonly id: string;
@@ -253,6 +284,7 @@ export const BackgroundCompactionSettingsSchema = Type.Object(
     maxOutputTokens: PositiveInteger,
     maxResultBytes: PositiveInteger,
     timeoutMs: PositiveInteger,
+    countTokens: Type.Boolean(),
   },
   Strict,
 );
@@ -276,10 +308,11 @@ export const DEFAULT_BACKGROUND_COMPACTION_SETTINGS: Readonly<BackgroundCompacti
   hysteresis: 0.1,
   minReductionTokens: 1024,
   reserveTokens: 8192,
-  maxInputTokens: 200000,
+  maxInputTokens: 1000000,
   maxOutputTokens: 8192,
   maxResultBytes: 1048576,
   timeoutMs: 120000,
+  countTokens: true,
 };
 export const JsonValueSchema = Type.Cyclic(
   {
@@ -338,6 +371,7 @@ const ReasonCodeSchema = Type.Union([
   Type.Literal("unsupported"),
   Type.Literal("canceled"),
   Type.Literal("incompatible"),
+  Type.Literal("cooling"),
   Type.Literal("stale-prefix"),
   Type.Literal("owner-changed"),
   Type.Literal("checkpoint-changed"),
@@ -358,6 +392,24 @@ export const CandidateRecordSchema = Type.Object(
     identity: SnapshotIdentitySchema,
     createdAt: NonNegative,
     customInstructions: Type.Optional(Type.String()),
+    /** How admission sized the prompt, for diagnosis only. */
+    admission: Type.Optional(
+      Type.Object(
+        {
+          promptTokens: NonNegative,
+          budget: NonNegative,
+          source: Type.Union([
+            Type.Literal("usage-calibrated"),
+            Type.Literal("chars"),
+            Type.Literal("counted"),
+          ]),
+          ratio: Type.Optional(NonNegative),
+          /** Why a provider count fell back to the estimate, e.g. `count-tokens: http 500`. */
+          detail: Type.Optional(NonEmptyString),
+        },
+        Strict,
+      ),
+    ),
     checkpoint: Type.Object(
       {
         candidateId: NonEmptyString,
@@ -383,6 +435,8 @@ export const CandidateRecordSchema = Type.Object(
   Strict,
 );
 export type CandidateRecord = Static<typeof CandidateRecordSchema>;
+/** Admission sizing persisted with a candidate record and shown in status. */
+export type AdmissionRecord = NonNullable<CandidateRecord["admission"]>;
 export function isCandidateRecord<T>(value: T): value is T & CandidateRecord {
   return (
     Value.Check(CandidateRecordSchema, value) &&

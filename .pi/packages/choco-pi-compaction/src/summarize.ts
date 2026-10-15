@@ -18,6 +18,18 @@ export class CompactionAbortedError extends Error {
   }
 }
 
+/**
+ * Raised when a summarization call stopped at its output cap (`stopReason`
+ * "length"): the summary is incomplete, which on a reasoning model usually
+ * means reasoning consumed the cap. Callers map it to "summary-truncated".
+ */
+export class SummaryTruncatedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SummaryTruncatedError";
+  }
+}
+
 /** One summarization request against the session's active model. */
 export interface SummaryCallRequest {
   readonly modelRegistry: ExtensionContext["modelRegistry"];
@@ -91,7 +103,7 @@ export async function runSummaryCall(request: SummaryCallRequest): Promise<Summa
     throw new Error(`${request.label} failed: ${response.errorMessage || "Unknown error"}`);
   }
   if (response.stopReason === "length") {
-    throw new Error(
+    throw new SummaryTruncatedError(
       `${request.label} failed: generation hit the token cap and the summary is incomplete`,
     );
   }

@@ -16,7 +16,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 
-import { type ModelBudget, RESPONSE_MARGIN_TOKENS } from "../budget.ts";
+import { type BackgroundLimits, type ModelBudget, resolveBackgroundLimits } from "../budget.ts";
 import {
   parseCarriedFileLists,
   type TextCheckpointDetails,
@@ -31,7 +31,12 @@ import {
   SUMMARY_SECTION_HEADINGS,
 } from "../prompt.ts";
 import { estimateTextTokens, serializeMessages } from "../serialize.ts";
-import { CompactionAbortedError, runSummaryCall, type SessionThinkingLevel } from "../summarize.ts";
+import {
+  CompactionAbortedError,
+  runSummaryCall,
+  type SessionThinkingLevel,
+  SummaryTruncatedError,
+} from "../summarize.ts";
 import type { CompactionMessage, EntryIdRange } from "../types.ts";
 import { combineUsage } from "../usage.ts";
 import type {
@@ -57,6 +62,21 @@ import {
 } from "./snapshot.ts";
 
 export const TEXT_BACKEND_ID = "text";
+
+/**
+ * Stable detail codes behind an "oversized" text-backend failure:
+ * - prefix-over-budget: no input budget remains, or the provider rejected the prompt as too long;
+ * - no-pass-plan: neither one pass nor the bounded two-pass split fits the budget;
+ * - second-pass-over-budget: the reconciliation prompt outgrew the budget after pass one;
+ * - summary-truncated: generation stopped at the output cap;
+ * - result-bytes: the summary or draft exceeds `maxResultBytes`.
+ */
+export type OversizedDetail =
+  | "prefix-over-budget"
+  | "no-pass-plan"
+  | "second-pass-over-budget"
+  | "summary-truncated"
+  | "result-bytes";
 
 /** Largest delay `setTimeout` honors; longer deadlines are checked by clock only. */
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
@@ -138,6 +158,10 @@ function failure(reason: FailureReason, retryable: boolean): PrepareFailure {
   return { ok: false, reason, retryable };
 }
 
+function oversized(detail: OversizedDetail): PrepareFailure {
+  return { ok: false, reason: "oversized", retryable: false, detail };
+}
+
 /** Two optional scope fields conflict only when both are named and differ. */
 function conflicting(left: string | undefined, right: string | undefined): boolean {
   return left !== undefined && right !== undefined && left !== right;
@@ -165,6 +189,7 @@ function summarizerScopeCompatible(summarizer: ProviderScope, session: ProviderS
  */
 export function classifySummarizerError(error: Error): PrepareFailure {
   if (error instanceof CompactionAbortedError) return failure("canceled", false);
+  if (error instanceof SummaryTruncatedError) return oversized("summary-truncated");
   const message = error.message;
   if (/\b429\b|rate[ -]?limit|too many requests/iu.test(message)) return failure("429", true);
   if (/\b529\b|overloaded/iu.test(message)) return failure("529", true);
@@ -172,8 +197,9 @@ export function classifySummarizerError(error: Error): PrepareFailure {
   if (/\b40[13]\b|unauthori[sz]ed|forbidden|authentication|api key/iu.test(message)) {
     return failure("auth", false);
   }
-  if (/token cap|context (?:length|window)|too long|maximum context/iu.test(message)) {
-    return failure("oversized", false);
+  if (/token cap/iu.test(message)) return oversized("summary-truncated");
+  if (/context (?:length|window)|too long|maximum context/iu.test(message)) {
+    return oversized("prefix-over-budget");
   }
   if (/timed? ?out|timeout|deadline/iu.test(message)) return failure("timeout", true);
   return failure("malformed", true);
@@ -272,25 +298,11 @@ function copyRange(range: EntryIdRange | null): [string, string] | null {
   return range === null ? null : [range[0], range[1]];
 }
 
-interface Limits {
-  readonly maxOutputTokens: number;
-  readonly maxInputTokens: number;
-}
+type Limits = BackgroundLimits;
 
+/** Same effective limits the coordinator admits against; reasoning models get output headroom. */
 function resolveLimits(model: ModelBudget, budget: PreparationBudget): Limits | undefined {
-  const maxOutputTokens =
-    model.maxTokens > 0
-      ? Math.min(budget.maxOutputTokens, model.maxTokens)
-      : budget.maxOutputTokens;
-  const windowLimit =
-    model.contextWindow > 0
-      ? model.contextWindow - maxOutputTokens - RESPONSE_MARGIN_TOKENS
-      : Number.POSITIVE_INFINITY;
-  const maxInputTokens = Math.min(budget.maxInputTokens, windowLimit);
-  if (!(maxOutputTokens > 0) || !(maxInputTokens > 0)) {
-    return undefined;
-  }
-  return { maxOutputTokens, maxInputTokens };
+  return resolveBackgroundLimits(model, budget);
 }
 
 type PassPlan =
@@ -423,13 +435,13 @@ function resolvePrepareInputs(
   const firstKeptEntryId = readFirstKeptEntryId(snapshot);
   if (firstKeptEntryId === undefined) return failure("incompatible", false);
   const limits = resolveLimits(options.budget, request.budget);
-  if (!limits) return failure("oversized", false);
+  if (!limits) return oversized("prefix-over-budget");
   const remainingMs = request.budget.deadlineMs - now();
   if (!(remainingMs > 0)) return failure("timeout", true);
   const evidence = collectPrefixEvidence(snapshot);
   const governing = snapshot.splitTurn ? snapshot.governingUserRequest : null;
   const plan = planPasses(evidence, governing?.content, limits, request.customInstructions);
-  if (!plan) return failure("oversized", false);
+  if (!plan) return oversized("no-pass-plan");
   return {
     summarizer,
     onPromptInput,
@@ -594,7 +606,8 @@ async function runTwoPasses(
   });
   const secondTokens =
     estimateTextTokens(BACKGROUND_COMPACTION_SYSTEM_PROMPT) + estimateTextTokens(secondPrompt);
-  if (secondTokens > runner.inputs.limits.maxInputTokens) return failure("oversized", false);
+  if (secondTokens > runner.inputs.limits.maxInputTokens)
+    return oversized("second-pass-over-budget");
   const second = await runPass(runner, {
     pass: 2,
     promptText: secondPrompt,
@@ -708,7 +721,7 @@ function buildCheckpoint(
     usage: draftUsage(outcome.usage),
   };
   if (Buffer.byteLength(JSON.stringify(draft), "utf8") > request.budget.maxResultBytes)
-    return failure("oversized", false);
+    return oversized("result-bytes");
   return {
     candidateId: request.candidateId,
     backendId: context.backendId,
@@ -778,7 +791,7 @@ function validatePass(
     case "stop":
       break;
     case "length":
-      return failure("oversized", false);
+      return oversized("summary-truncated");
     case "aborted":
       return failure("canceled", false);
     default:
@@ -792,7 +805,7 @@ function validatePass(
     return failure("malformed", true);
   }
   if (Buffer.byteLength(text, "utf8") > maxResultBytes) {
-    return failure("oversized", false);
+    return oversized("result-bytes");
   }
   return { text, usage: response.usage };
 }

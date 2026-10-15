@@ -502,7 +502,8 @@ test("retry, backoff and quota cooldown are bounded with no sleeps or new paid w
   await f.coordinator.requestPreparation();
   await f.coordinator.waitForPreparation();
   assert.equal(f.backend.calls.length, 2);
-  assert.equal(f.coordinator.status().reason, "quota");
+  assert.equal(f.coordinator.status().reason, "cooling");
+  assert.match(f.coordinator.status().detail ?? "", /^cooling-down \d+s$/);
   f.coordinator.dispose();
 });
 
@@ -555,7 +556,8 @@ test("a non-retryable auth failure still cools the scope for its retry delay", a
   f.backend.result = buildCheckpoint("candidate-2");
   await f.coordinator.requestPreparation();
   await f.coordinator.waitForPreparation();
-  assert.equal(f.coordinator.status().reason, "quota", "the scope is cooling");
+  assert.equal(f.coordinator.status().reason, "cooling", "the scope is cooling");
+  assert.equal(f.coordinator.status().detail, "cooling-down 60s");
   assert.equal(f.backend.calls.length, 1, "no second paid call during the cooldown");
   f.coordinator.dispose();
 });
@@ -1036,7 +1038,7 @@ test("an owner queued before another owner's rate limit rechecks shared cooldown
     queued.coordinator.waitForPreparation(),
   ]);
   assert.equal(queued.coordinator.status().state, "failed");
-  assert.equal(queued.coordinator.status().reason, "quota");
+  assert.equal(queued.coordinator.status().reason, "cooling");
   assert.equal(queued.backend.calls.length, 0);
   first.coordinator.dispose();
   queued.coordinator.dispose();
