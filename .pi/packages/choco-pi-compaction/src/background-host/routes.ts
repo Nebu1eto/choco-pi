@@ -239,7 +239,7 @@ async function followManual(
     if (!isCurrent(rt, owner) || owner.manualCandidate !== candidateId) return;
     if (retried !== undefined) {
       owner.manualCandidate = retried;
-      tell(ctx, `${status.backendId ?? "lane"} failed (${reason}); retrying on ${next}`, "info");
+      // Expected lane fallback: recorded on the failed candidate's status, not shown to the user.
       void followManual(rt, owner, retried, rest);
       return;
     }

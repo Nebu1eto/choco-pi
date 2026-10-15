@@ -344,8 +344,8 @@ export function consumeCodexBackgroundAdoption(
   adopted: Set<string>,
 ): void {
   if (adopted.has(adoption.adoptionId) || !binding.isCurrent()) return;
-  if (adoption.backendId !== CODEX_BACKGROUND_BACKEND_ID)
-    throw new Error("Codex background adoption targets a different backend");
+  // A text-lane checkpoint on a Codex model is an expected fallback; nothing native to install.
+  if (adoption.backendId !== CODEX_BACKGROUND_BACKEND_ID) return;
   const entry = binding.ctx.sessionManager
     .getBranch()
     .find((item) => item.id === adoption.committedEntryId);
