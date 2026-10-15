@@ -91,6 +91,41 @@ export function computeContextPolicy(input: ContextPolicyInput): ContextPolicy {
 }
 
 /**
+ * Property under which the cap records a model's native window on the model
+ * object itself. Registry model objects outlive an extension reload while the
+ * reloaded module starts with empty state, so a capped `contextWindow` would
+ * otherwise be mistaken for the native one. `Symbol.for` keeps every module
+ * copy on the same key.
+ */
+export const NATIVE_CONTEXT_WINDOW_SYMBOL = Symbol.for("choco-pi.native-context-window");
+
+const NativeWindowSchema = Type.Integer({ exclusiveMinimum: 0 });
+
+/** The part of a model object the native-window record attaches to. */
+export interface ContextWindowOwner {
+  readonly contextWindow?: number;
+}
+
+/** The recorded native window of `model`, or `undefined` when none was recorded. */
+export function readNativeContextWindow(model: ContextWindowOwner): number | undefined {
+  const value: RuntimeValue = Object.getOwnPropertyDescriptor(
+    model,
+    NATIVE_CONTEXT_WINDOW_SYMBOL,
+  )?.value;
+  return Value.Check(NativeWindowSchema, value) ? value : undefined;
+}
+
+/** Record `nativeWindow` on `model`; later records overwrite earlier ones. */
+export function recordNativeContextWindow(model: ContextWindowOwner, nativeWindow: number): void {
+  Object.defineProperty(model, NATIVE_CONTEXT_WINDOW_SYMBOL, {
+    value: nativeWindow,
+    configurable: true,
+    enumerable: false,
+    writable: true,
+  });
+}
+
+/**
  * Global hook a provider package publishes to bound the compaction point by
  * the provider's native compaction budget. Consumers only read it.
  */

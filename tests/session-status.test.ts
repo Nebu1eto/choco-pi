@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   agentLabels,
   condenseStatusRows,
+  contextWindowLabel,
   describePath,
   formatStatus,
   formatCacheWarming,
@@ -15,6 +16,7 @@ import {
   summarizeStatusRows,
   summarizeMcpServers,
 } from "../.pi/extensions/session-status.ts";
+import { recordNativeContextWindow } from "../.pi/extensions/lib/context-policy.ts";
 
 test("MCP status counts merged config and registrations without adapter cache", async (context) => {
   const directory = await mkdtemp(path.join(tmpdir(), "choco-pi-status-mcp-"));
@@ -321,4 +323,16 @@ test("context files report a count so the concise Status tab has a headline", as
   const files = rows.find((row) => row.label === "Context files");
   assert.equal(files?.value.split("\n")[0], "2 loaded");
   assert.match(formatStatus(condenseStatusRows(rows)), /Context files:\s+2 loaded$/m);
+});
+
+test("the context window label shows the soft cap from the model's recorded native window", () => {
+  const model = { provider: "anthropic", id: "claude-opus-5-5", contextWindow: 800_000 };
+  // The cap writes to the registry entry too, so the registry cannot reveal the native window.
+  const registry = { find: () => ({ contextWindow: 800_000 }) };
+  assert.equal(contextWindowLabel(registry, model), "800,000 tokens");
+  recordNativeContextWindow(model, 1_000_000);
+  assert.equal(contextWindowLabel(registry, model), "800,000 tokens · soft cap (native 1,000,000)");
+  // An uncapped model prints its window alone.
+  model.contextWindow = 1_000_000;
+  assert.equal(contextWindowLabel(registry, model), "1,000,000 tokens");
 });

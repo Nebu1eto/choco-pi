@@ -10,6 +10,7 @@ import type {
   ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
 import { VERSION } from "@earendil-works/pi-coding-agent";
+import { readNativeContextWindow } from "./lib/context-policy.ts";
 
 type ModelRecord = { baseUrl?: unknown; name?: unknown };
 
@@ -221,16 +222,18 @@ function usesOAuth(
   }
 }
 
-function contextWindowLabel(
+export function contextWindowLabel(
   modelRegistry: {
     find(provider: string, modelId: string): { contextWindow?: number } | undefined;
   },
   model: { provider?: string; id?: string; contextWindow?: number } | undefined,
 ): string | undefined {
   if (!model || model.contextWindow === undefined) return undefined;
+  // The cap records the native window on the model object; the registry entry
+  // is only a fallback, since the cap writes to that object as well.
   const registryModel =
     model.provider && model.id ? modelRegistry.find(model.provider, model.id) : undefined;
-  const native = registryModel?.contextWindow;
+  const native = readNativeContextWindow(model) ?? registryModel?.contextWindow;
   if (native !== undefined && model.contextWindow < native) {
     return `${model.contextWindow.toLocaleString()} tokens · soft cap (native ${native.toLocaleString()})`;
   }

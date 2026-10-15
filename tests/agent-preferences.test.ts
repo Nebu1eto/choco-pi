@@ -33,8 +33,22 @@ import {
   resolvePersona,
   onAgentPreferenceChange,
   writeAgentPreference,
+  type AgentPreferenceChange,
   type AgentStyle,
 } from "../.pi/extensions/lib/agent-preferences.ts";
+import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
+
+const PreferenceModuleCopySchema = Type.Object({
+  onAgentPreferenceChange: Type.Function([Type.Unknown()], Type.Unknown()),
+});
+
+function isPreferenceModuleCopy<Candidate>(
+  value: Candidate,
+): value is Candidate & { onAgentPreferenceChange: typeof onAgentPreferenceChange } {
+  return Value.Check(PreferenceModuleCopySchema, value);
+}
 
 function withTempDirs(
   run: (dirs: { agent: string; presets: string }) => void | Promise<void>,
@@ -194,6 +208,32 @@ test(
 
     const settings = JSON.parse(await readFile(path.join(agent, "settings.json"), "utf8"));
     assert.deepEqual(settings, { ...foreign, autoCompactionPoint: "permissive" });
+  }),
+);
+
+test(
+  "a preference write reaches subscribers in another module copy",
+  withTempDirs(async ({ agent }) => {
+    await mkdir(agent, { recursive: true });
+    // Pi loads each extension through its own module loader, so the dialog
+    // and its subscribers hold separate copies of this module. The query
+    // string defeats the ESM module cache the same way.
+    const specifier = new URL("../.pi/extensions/lib/agent-preferences.ts?copy=1", import.meta.url)
+      .href;
+    const copy: RuntimeValue = await import(specifier);
+    assert.ok(isPreferenceModuleCopy(copy), "the module copy exposes the subscription API");
+    const seen: { key: string; value: unknown }[] = [];
+    const unsubscribe = copy.onAgentPreferenceChange((change: AgentPreferenceChange) => {
+      seen.push({ key: change.key, value: change.value });
+    });
+    try {
+      await writeAgentPreference(CONTEXT_SOFT_CAP_KEY, "permissive", agent);
+      assert.deepEqual(seen, [{ key: CONTEXT_SOFT_CAP_KEY, value: "permissive" }]);
+    } finally {
+      unsubscribe();
+    }
+    await writeAgentPreference(CONTEXT_SOFT_CAP_KEY, "strict", agent);
+    assert.equal(seen.length, 1, "an unsubscribed copy no longer observes writes");
   }),
 );
 

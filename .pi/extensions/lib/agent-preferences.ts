@@ -4,6 +4,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import type { SettingItem } from "@earendil-works/pi-tui";
+import { Type } from "typebox";
+import { Value as TypeboxValue } from "typebox/value";
 import {
   isJsonRecord,
   isBoolean,
@@ -163,17 +165,57 @@ interface AgentPreferenceValues {
 
 export type AgentPreferenceChange = { key: keyof AgentPreferenceValues; value: unknown };
 
-const agentPreferenceChangeListeners = new Set<(change: AgentPreferenceChange) => void>();
+type AgentPreferenceChangeListener = (change: AgentPreferenceChange) => void;
 
-export function onAgentPreferenceChange(
-  listener: (change: AgentPreferenceChange) => void,
-): () => void {
-  agentPreferenceChangeListeners.add(listener);
-  return () => agentPreferenceChangeListeners.delete(listener);
+/**
+ * Pi evaluates every extension through its own module loader without a shared
+ * module cache, so each extension runs its own copy of this file. The listener
+ * set lives on `globalThis` so a write from one copy (the preferences dialog)
+ * reaches subscribers in every other copy (context cap, usage-limit policy,
+ * Daybreak default).
+ */
+const AGENT_PREFERENCE_LISTENERS_SYMBOL = Symbol.for("choco-pi.agent-preference-listeners");
+
+function isRuntimeSet<Value>(value: Value): value is Value & Set<RuntimeValue> {
+  return value instanceof Set;
+}
+
+const AgentPreferenceChangeListenerSchema = Type.Function([Type.Unknown()], Type.Unknown());
+
+function isAgentPreferenceChangeListener<Value>(
+  value: Value,
+): value is Value & AgentPreferenceChangeListener {
+  return TypeboxValue.Check(AgentPreferenceChangeListenerSchema, value);
+}
+
+function agentPreferenceChangeListeners(): Set<RuntimeValue> {
+  const existing: RuntimeValue = Object.getOwnPropertyDescriptor(
+    globalThis,
+    AGENT_PREFERENCE_LISTENERS_SYMBOL,
+  )?.value;
+  if (isRuntimeSet(existing)) return existing;
+  const created = new Set<RuntimeValue>();
+  Object.defineProperty(globalThis, AGENT_PREFERENCE_LISTENERS_SYMBOL, {
+    value: created,
+    configurable: true,
+    enumerable: false,
+    writable: false,
+  });
+  return created;
+}
+
+export function onAgentPreferenceChange(listener: AgentPreferenceChangeListener): () => void {
+  const listeners = agentPreferenceChangeListeners();
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
 }
 
 function emitAgentPreferenceChange(change: AgentPreferenceChange): void {
-  for (const listener of agentPreferenceChangeListeners) {
+  for (const listener of agentPreferenceChangeListeners()) {
+    // The set is shared across module copies; skip anything that is not callable.
+    if (!isAgentPreferenceChangeListener(listener)) continue;
     try {
       listener(change);
     } catch {

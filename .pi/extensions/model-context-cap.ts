@@ -27,7 +27,10 @@ import {
   computeContextPolicy,
   DEFAULT_HOST_RESERVE_TOKENS,
   readNativeCompactionBudget,
+  readNativeContextWindow,
+  recordNativeContextWindow,
 } from "./lib/context-policy.ts";
+import { rethrowUnlessStaleContext } from "./lib/lifecycle.ts";
 
 /** Everything besides the model that decides its policy. */
 export interface ContextCapSettings {
@@ -47,7 +50,6 @@ type AppliedPolicy = {
   compactAt?: number;
 };
 
-const nativeWindows = new WeakMap<Model<Api>, number>();
 let appliedPolicies: AppliedPolicy[] = [];
 let cachedSettings: ContextCapSettings | undefined;
 /** Latest known presets; updated by preference-change events between reads. */
@@ -209,8 +211,11 @@ function applyPolicies(
 
   for (const model of cappedModels(ctx, extra)) {
     const key = modelKey(model);
-    const nativeWindow = nativeWindows.get(model) ?? model.contextWindow;
-    nativeWindows.set(model, nativeWindow);
+    // The record lives on the model object: registry objects outlive a
+    // reload of this extension, and a fresh module must not take a window it
+    // capped earlier for the native one.
+    const nativeWindow = readNativeContextWindow(model) ?? model.contextWindow;
+    recordNativeContextWindow(model, nativeWindow);
     model.contextWindow = nativeWindow;
 
     const policy = resolvePolicy(model, nativeWindow, settings);
@@ -220,6 +225,26 @@ function applyPolicies(
     }
   }
   appliedPolicies = [...applied.values()];
+}
+
+/**
+ * Put every model's native window back. Runs when this session ends so a
+ * reloaded module, or Pi itself once the extension is gone, sees the native
+ * window rather than the previous cap.
+ */
+function restoreNativeWindows(ctx: ExtensionContext): void {
+  let models: Model<Api>[];
+  try {
+    models = cappedModels(ctx);
+  } catch (error) {
+    rethrowUnlessStaleContext(error);
+    return;
+  }
+  for (const model of models) {
+    const nativeWindow = readNativeContextWindow(model);
+    if (nativeWindow !== undefined) model.contextWindow = nativeWindow;
+  }
+  appliedPolicies = [];
 }
 
 /**
@@ -335,8 +360,11 @@ export default function modelContextCap(pi: ExtensionAPI): void {
   pi.on("session_before_switch", () => {
     endSession();
   });
-  pi.on("session_shutdown", () => {
+  pi.on("session_shutdown", (_event, ctx) => {
     endSession();
+    // Pi re-evaluates extensions after this event on /reload; a switch keeps
+    // this module and its records, so only shutdown hands the windows back.
+    restoreNativeWindows(ctx);
   });
   pi.on("model_select", (event, ctx) => {
     reapplyContextCaps(ctx, event.model);

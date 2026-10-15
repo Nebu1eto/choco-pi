@@ -7,6 +7,8 @@ import path from "node:path";
 import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import {
   default as modelContextCap,
   resolvePolicy,
@@ -336,10 +338,70 @@ test("session shutdown stops scheduled re-applications", async (t) => {
   };
 
   await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, context);
-  const readsAfterStart = registryReads;
   handlers.get("session_shutdown")?.({ type: "session_shutdown" }, context);
+  // Shutdown itself reads the registry once to restore native windows.
+  const readsAfterShutdown = registryReads;
   t.mock.timers.tick(20_000);
-  assert.equal(registryReads, readsAfterStart);
+  assert.equal(registryReads, readsAfterShutdown);
+});
+
+test("session end restores native windows so a reloaded module sees them", async () => {
+  await resetPresets();
+  const handlers = registerCap();
+  const activeModel = model(1_000_000);
+  const context = {
+    cwd: process.cwd(),
+    model: activeModel,
+    modelRegistry: { getAll: () => [activeModel] },
+    getContextUsage: () => ({ tokens: 0, contextWindow: 600_000, percent: 0 }),
+    compact: () => {},
+    ui: { notify: () => {} },
+  };
+  await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, context);
+  assert.equal(activeModel.contextWindow, 600_000);
+
+  // Pi emits session_shutdown before it re-evaluates extensions on /reload.
+  handlers.get("session_shutdown")?.({ type: "session_shutdown", reason: "reload" }, context);
+  assert.equal(activeModel.contextWindow, 1_000_000);
+
+  await writeAgentPreference(CONTEXT_SOFT_CAP_KEY, "permissive", agentDir);
+  const reloadedHandlers = await registerReloadedCap("after-shutdown");
+  await reloadedHandlers.get("session_start")?.(
+    { type: "session_start", reason: "reload" },
+    context,
+  );
+  assert.equal(activeModel.contextWindow, 800_000);
+  reloadedHandlers.get("session_shutdown")?.({ type: "session_shutdown" }, context);
+  await resetPresets();
+});
+
+test("a reloaded module never takes a capped window for the native one", async () => {
+  await resetPresets();
+  const handlers = registerCap();
+  const activeModel = model(1_000_000);
+  const context = {
+    cwd: process.cwd(),
+    model: activeModel,
+    modelRegistry: { getAll: () => [activeModel] },
+    getContextUsage: () => ({ tokens: 0, contextWindow: 600_000, percent: 0 }),
+    compact: () => {},
+    ui: { notify: () => {} },
+  };
+  await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, context);
+  assert.equal(activeModel.contextWindow, 600_000);
+
+  // Even when the old module's shutdown never ran (a crash or a host that
+  // skips the event), the recorded native window on the object survives.
+  await writeAgentPreference(CONTEXT_SOFT_CAP_KEY, "permissive", agentDir);
+  const reloadedHandlers = await registerReloadedCap("without-shutdown");
+  await reloadedHandlers.get("session_start")?.(
+    { type: "session_start", reason: "reload" },
+    context,
+  );
+  assert.equal(activeModel.contextWindow, 800_000);
+  reloadedHandlers.get("session_shutdown")?.({ type: "session_shutdown" }, context);
+  handlers.get("session_shutdown")?.({ type: "session_shutdown" }, context);
+  await resetPresets();
 });
 
 test("the cap registers no command; the presets are its only configuration", () => {
@@ -371,6 +433,34 @@ function registerCap(): Map<string, CapHandler> {
     registerCommand: () => {},
   });
   modelContextCap(pi);
+  return handlers;
+}
+
+const CapModuleSchema = Type.Object({ default: Type.Function([Type.Unknown()], Type.Unknown()) });
+
+function isCapModule<Candidate>(
+  value: Candidate,
+): value is Candidate & { default: typeof modelContextCap } {
+  return Value.Check(CapModuleSchema, value);
+}
+
+/**
+ * A fresh instance of the extension module with empty state, as Pi's
+ * per-extension loader produces after a reload. The query string defeats the
+ * ESM module cache.
+ */
+async function registerReloadedCap(tag: string): Promise<Map<string, CapHandler>> {
+  const specifier = new URL(`../.pi/extensions/model-context-cap.ts?reload=${tag}`, import.meta.url)
+    .href;
+  const loaded: RuntimeValue = await import(specifier);
+  assert.ok(isCapModule(loaded), "the reloaded module exports the extension factory");
+  const handlers = new Map<string, CapHandler>();
+  loaded.default(
+    reinterpretHostValue<ExtensionAPI>({
+      on: (event: string, handler: CapHandler) => handlers.set(event, handler),
+      registerCommand: () => {},
+    }),
+  );
   return handlers;
 }
 
