@@ -232,12 +232,21 @@ test(
             // Past the prepare threshold: the threshold path stays inert.
             await host.session.prompt("GO");
             assert.equal(getCoordinator(ownerKey), undefined, `${name}: still no coordinator`);
-            // The RPC route declines and runs the host's compaction.
-            await host.session.prompt("/compact-background", { source: "rpc" });
+            // The programmatic (RPC) compact bridge declines and runs the host's compaction.
+            const hostEvents: string[] = [];
+            const unsubscribe = host.session.subscribe((event) => {
+              if (event.type === "compaction_start" || event.type === "compaction_end") {
+                hostEvents.push(event.type);
+              }
+            });
+            const result = await host.session.compact();
+            unsubscribe();
+            assert.ok(result, `${name}: the host returned its compaction result`);
+            assert.deepEqual(hostEvents, ["compaction_start", "compaction_end"], name);
             assert.equal(
               compactionEntries(host.manager.getBranch()).length,
               1,
-              `${name}: /compact-background ran on the host path`,
+              `${name}: compact() ran on the host path`,
             );
             await host.session.prompt("NEXT");
             await host.session.compact();

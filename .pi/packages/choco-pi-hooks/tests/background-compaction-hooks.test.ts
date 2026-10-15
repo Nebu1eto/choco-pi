@@ -203,22 +203,16 @@ test(
         assert.equal(context.state(), "installed", "adopted through the idle route");
         assert.ok(context.host.events.includes("compaction_end"), "the host emitted its events");
         assert.deepEqual(await context.hookLog(), [], "PreCompact and PostCompact skipped");
-        // A later plain /compact is deferred to the background: no hook runs for
-        // the cancelled host request nor for the adoption that follows.
-        await assert.rejects(context.host.session.compact(), /Compaction cancelled/);
-        await waitFor(() => context.state() === "ready", "candidate ready");
-        await context.host.session.prompt("NEXT-PROMPT");
+        // A later plain compact on the idle session is taken over by the
+        // background feature before any host compaction starts; no hook runs for
+        // it nor for the adoption that follows.
+        assert.equal(await context.host.session.compact(), undefined);
         await waitFor(() => context.state() === "installed", "manual candidate adopted");
         assert.deepEqual(await context.hookLog(), [], "deferred manual compaction skips hooks");
         await context.host.session.prompt("MORE");
         // Instructions also go to the background text lane now; the foreground
         // path (and its hooks) only runs when the feature declines, e.g. no lane.
-        await assert.rejects(
-          context.host.session.compact("Focus on the audit"),
-          /Compaction cancelled/,
-        );
-        await waitFor(() => context.state() === "ready", "candidate ready");
-        await context.host.session.prompt("NEXT-PROMPT");
+        assert.equal(await context.host.session.compact("Focus on the audit"), undefined);
         await waitFor(() => context.state() === "installed", "focused candidate adopted");
         assert.deepEqual(
           await context.hookLog(),

@@ -21,6 +21,7 @@ import { createAnthropicReplayBinder } from "../anthropic/replay-binding.ts";
 import type { ReplayDiagnostic } from "../anthropic/replay-rewrite.ts";
 import { DEFAULT_BACKGROUND_COMPACTION_SETTINGS } from "../background/contract.ts";
 import {
+  backgroundCompactionActive,
   type BackgroundLaneSwitches,
   backgroundSettingsPaths,
   deriveBackgroundLanes,
@@ -55,7 +56,12 @@ import {
   reportHostRefused,
   startManualPreparation,
 } from "./routes.ts";
-import { type HostRuntime, isCurrent, shutdown, touchCurrentOwner } from "./runtime.ts";
+import { type HostRuntime, registryUsable, shutdown, touchCurrentOwner } from "./runtime.ts";
+import {
+  installSessionCompactBridge,
+  releaseSessionCompactBridge,
+  type SessionCompactHost,
+} from "./session-compact.ts";
 
 // ===========================================================================
 // Background compaction host integration
@@ -145,44 +151,20 @@ export function registerBackgroundCompaction(
   };
   installCompactCommandBridge(deferTypedCompact);
 
-  // Clients without the TUI (RPC hosts such as Waku) reach the same manual
-  // route through an extension command: it is listed by RPC `get_commands` and
-  // runs as `prompt "/compact-background [instructions]"`. When the background
-  // feature declines (off, no lane, a matching ready candidate) the host's own
-  // compaction runs, so the command always compacts.
-  pi.registerCommand("compact-background", {
-    description:
-      "Compact in the background when enabled (optional focus instructions); otherwise compact now",
-    handler: async (args, ctx) => {
-      const customInstructions = args.trim().length === 0 ? undefined : args.trim();
-      // Extension commands run before the host's "compaction in progress" check;
-      // a second manual compaction would overwrite the host's shared controller.
-      if (!ctx.isIdle()) {
-        ctx.ui.notify("Compaction: wait for the current turn or compaction to finish", "warning");
-        return;
-      }
-      const owner = touchCurrentOwner(rt, ctx);
-      const sessionId = ctx.sessionManager.getSessionId();
-      const deferred =
-        owner !== undefined && owner.core.sessionId === sessionId
-          ? await deferTypedCompact({ session: { sessionId } }, customInstructions)
-          : false;
-      if (deferred) return;
-      // The manual route awaited; the host may have started a turn or compaction meanwhile.
-      if (!ctx.isIdle()) return;
-      await new Promise<void>((resolve, reject) => {
-        try {
-          ctx.compact({
-            customInstructions,
-            onComplete: () => resolve(),
-            onError: (error) => reject(error),
-          });
-        } catch (cause) {
-          reject(cause instanceof Error ? cause : new Error(String(cause)));
-        }
-      });
-    },
-  });
+  // A programmatic compact (RPC `compact`, SDK, `ctx.compact()`) on an idle
+  // session continues in the background and resolves at once, without aborting
+  // the agent or starting a host compaction. A busy session, the feature off,
+  // a registry conflict, or a declined request runs the host's own compact().
+  const deferSessionCompact = async (
+    host: SessionCompactHost,
+    customInstructions?: string,
+  ): Promise<boolean> => {
+    if (!host.isIdle) return false;
+    if (!backgroundCompactionActive(rt.loaded.settings)) return false;
+    if (!registryUsable(rt, undefined)) return false;
+    return deferTypedCompact({ session: { sessionId: host.sessionId } }, customInstructions);
+  };
+  installSessionCompactBridge(deferSessionCompact);
 
   pi.on("session_start", async (_event, ctx) => {
     publishPreferences(rt, ctx, childProvider);
@@ -201,6 +183,7 @@ export function registerBackgroundCompaction(
   pi.on("session_shutdown", () => {
     shutdowns.count += 1;
     releaseCompactCommandBridge(deferTypedCompact);
+    releaseSessionCompactBridge(deferSessionCompact);
     shutdown(rt);
   });
   pi.on("turn_start", (_event, ctx) => settleCurrentOwner(rt, ctx));

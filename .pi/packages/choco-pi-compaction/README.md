@@ -145,14 +145,19 @@ host event.
   over at `InteractiveMode.prototype.handleCompactCommand` (the same way the
   settings dialog takes over `/settings`), so no host compaction starts: no
   "Compaction cancelled" line, and a running agent is not aborted. A
-  programmatic `session.compact()` (RPC, SDK, tests) still reaches the
-  `session_before_compact` hook, which answers `cancel` and lets the host
-  print its own line. The Anthropic lane needs a wire capture
+  programmatic `compact()` (RPC `compact`, SDK, extension `ctx.compact()`)
+  on an idle session is taken over at `AgentSession.prototype.compact` the
+  same way: it resolves at once with no result, without aborting anything or
+  starting a host compaction. On a busy session, or whenever the feature
+  declines, the host's own `compact()` runs unchanged; its
+  `session_before_compact` hook may still defer a plain request with
+  `cancel` (the host reports `Compaction cancelled`). The Anthropic lane needs a wire capture
   of the session's latest request, so right after a reload or resume the
   request goes to the text lane instead; a lane that fails is retried once on
-  the remaining lane before the failure is reported. When the checkpoint is
-  ready it is adopted through the idle
-  route if the session is idle, otherwise at the next boundary; a failed
+  the remaining lane before the failure is reported. The prepared checkpoint
+  is adopted when the next prompt or turn end arrives; a session that is
+  already idle when the checkpoint becomes ready adopts it then through the
+  idle route, unless a cancelled host compaction is still unwinding; a failed
   preparation is reported and nothing is summarized. `/compact <instructions>`
   takes the same path on the text lane only (the native lanes cannot apply
   instructions); the candidate carries the instructions, a ready candidate
@@ -173,16 +178,14 @@ host event.
   recovery must shrink the next request before it can be sent at all, so an
   in-flight preparation is cancelled and the foreground summarizer recovers.
   `navigateTree({ summarize })` produces a branch summary, not a compaction.
-  RPC `compact` and extension `ctx.compact()` reach the same hook as a typed
-  `/compact` and are deferred the same way.
 - **RPC and GUI clients.** Hosts without the TUI (Waku and other RPC clients)
-  use the `/compact-background [instructions]` extension command, listed by
-  RPC `get_commands` and sent as a prompt. It runs the same manual route as
-  the typed command and, when the feature declines (off, no lane, a matching
-  ready candidate), runs the host's own compaction, so the command always
-  compacts. The RPC `compact` command still works and is deferred through the
-  hook (the client sees the host's cancelled compaction, then the later
-  checkpoint).
+  send the RPC `compact` command (with optional `customInstructions`). With
+  the feature on and the session idle it starts the background preparation and
+  answers success at once with no data. It falls through to the host's own
+  compaction (the normal blocking result) when the feature is off, the
+  coordinator registry is in conflict, the session is busy, or the feature
+  declines the request (no usable lane, a ready candidate that already answers
+  it, or a preparation it cannot start).
 - **Context cap.** When `.pi/extensions/model-context-cap.ts` reaches its
   compaction threshold and a ready candidate exists, it hands the compaction to
   the idle route instead of requesting a summary. Otherwise it behaves as before.

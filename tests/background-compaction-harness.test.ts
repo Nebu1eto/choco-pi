@@ -116,7 +116,8 @@ test("live runs are opt-in and the ledger counts real SSE usage, stopping runawa
   const env = { CHOCO_PI_LIVE_E2E: "1" };
   const haiku = "anthropic/claude-haiku-5-5";
   assert.throws(() => requireLiveRun("text-boundary-adoption", haiku, {}));
-  assert.throws(() => requireLiveRun("text-boundary-adoption", "anthropic/claude-opus-5-5", env));
+  // An id outside APPROVED_LIVE_MODELS (Opus 5.5 is approved for the RPC probe matrix).
+  assert.throws(() => requireLiveRun("text-boundary-adoption", "anthropic/claude-opus-4-1", env));
   assert.throws(() => requireLiveRun("host-compaction-arbitration", haiku, env));
   assert.equal(requireLiveRun("text-boundary-adoption", haiku, env).requests, 7);
   const sse = [

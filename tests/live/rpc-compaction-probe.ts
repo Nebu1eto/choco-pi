@@ -2,28 +2,52 @@
  * Manual, billable real-Pi RPC probe for compaction. Never run by the unit suite.
  *
  * Spawns `pi --mode rpc` as a separate process with its own agent directory and
- * drives, for background compaction ON and OFF:
- *   1. `/compact-background` (extension command; the route RPC/GUI hosts use),
- *   2. `/compact-background <instructions>`,
- *   3. RPC `compact` (host command; reaches the session_before_compact hook),
- *   4. the host's auto-compaction point (reserveTokens raised so a short seeded
- *      conversation crosses it).
- * Evidence is the RPC event stream plus the persisted session file; no UI.
+ * drives one matrix cell per (background on/off) x (point manual/auto) for one
+ * model and one compaction logic (`server-side` or `choco-pi`):
+ *   - manual: RPC `compact` without and with instructions, then one follow-up prompt;
+ *   - auto: the context cap's compaction point (presets from `--soft-cap` and
+ *     `--compaction-point`, `reserveTokens` calibrated so a short seed crosses it).
+ * Evidence is the RPC event stream, the session entries, and the in-process
+ * coordinator/capture status; no UI. Any errored assistant turn fails its case,
+ * and an errored seed turn aborts the run.
  *
- * Usage:
- *   node tests/live/rpc-compaction-probe.ts --model anthropic/claude-sonnet-5-5 \
- *     --pi-launcher /opt/homebrew/bin/pi --capture /tmp/choco-pi/rpc-probe/sonnet.jsonl
+ * Usage: `node tests/live/rpc-compaction-probe.ts --help`.
  */
 import assert from "node:assert/strict";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { cp, mkdir, mkdtemp, open, readFile, rm, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { mkdir, mkdtemp, open, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
+
+import {
+  AUTO_COMPACTION_POINT_TOKENS,
+  CONTEXT_SOFT_CAP_TOKENS,
+} from "../../.pi/extensions/lib/agent-preferences.ts";
+import { isString } from "../../.pi/extensions/lib/runtime-values.ts";
+import {
+  buildAgentFiles,
+  type Calibration,
+  type Cell,
+  copyAgentFiles,
+  DEFAULT_RESERVE_TOKENS,
+  type LaunchSettings,
+  nativeLaneFor,
+  type NativeLane,
+  parseCli,
+  planAuto,
+  type ProbeOptions,
+  resolveCells,
+  USAGE,
+} from "./rpc-compaction-probe-config.ts";
+
+// ---------------------------------------------------------------------------
+// Wire and entry schemas
+// ---------------------------------------------------------------------------
 
 const WireSchema = Type.Object(
   {
@@ -34,8 +58,10 @@ const WireSchema = Type.Object(
     error: Type.Optional(Type.String()),
     reason: Type.Optional(Type.String()),
     aborted: Type.Optional(Type.Boolean()),
+    errorMessage: Type.Optional(Type.String()),
     method: Type.Optional(Type.String()),
-    message: Type.Optional(Type.String()),
+    message: Type.Optional(Type.Unknown()),
+    messages: Type.Optional(Type.Array(Type.Unknown())),
     statusKey: Type.Optional(Type.String()),
     statusText: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     data: Type.Optional(Type.Unknown()),
@@ -44,8 +70,27 @@ const WireSchema = Type.Object(
   { additionalProperties: true },
 );
 type WireRecord = Static<typeof WireSchema>;
+const AssistantMessageSchema = Type.Object(
+  {
+    role: Type.Literal("assistant"),
+    stopReason: Type.Optional(Type.String()),
+    errorMessage: Type.Optional(Type.String()),
+  },
+  { additionalProperties: true },
+);
 const EntrySchema = Type.Object(
-  { id: Type.String(), type: Type.String(), customType: Type.Optional(Type.String()) },
+  {
+    id: Type.String(),
+    type: Type.String(),
+    parentId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+    customType: Type.Optional(Type.String()),
+    data: Type.Optional(Type.Unknown()),
+  },
+  { additionalProperties: true },
+);
+type Entry = Static<typeof EntrySchema>;
+const EntriesSchema = Type.Object(
+  { entries: Type.Array(Type.Unknown()), leafId: Type.Union([Type.String(), Type.Null()]) },
   { additionalProperties: true },
 );
 const CompactionEntrySchema = Type.Object(
@@ -53,154 +98,285 @@ const CompactionEntrySchema = Type.Object(
     id: Type.String(),
     type: Type.Literal("compaction"),
     summary: Type.String(),
-    fromExtension: Type.Optional(Type.Boolean()),
+    fromHook: Type.Optional(Type.Boolean()),
     details: Type.Optional(Type.Unknown()),
   },
   { additionalProperties: true },
 );
-const DetailsSchema = Type.Object(
-  { candidateId: Type.String(), backendId: Type.Optional(Type.String()) },
+type CompactionEntry = Static<typeof CompactionEntrySchema>;
+const CandidateDetailsSchema = Type.Object(
+  { candidateId: Type.String({ minLength: 1 }) },
   { additionalProperties: true },
 );
-const CommandsSchema = Type.Object({
-  commands: Type.Array(Type.Object({ name: Type.String() }, { additionalProperties: true })),
+const StrategySchema = Type.Object({ strategy: Type.String() }, { additionalProperties: true });
+/** `choco-compaction-candidate` record (background/contract.ts CandidateRecordSchema). */
+const CandidateRecordDataSchema = Type.Object(
+  { candidateId: Type.String({ minLength: 1 }), backendId: Type.String({ minLength: 1 }) },
+  { additionalProperties: true },
+);
+/** Anthropic server-side checkpoint (anthropic/details.ts): signed block from the lane. */
+const AnthropicNativeDetailsSchema = Type.Object(
+  {
+    strategy: Type.Literal("anthropic-compaction-on-demand-v1"),
+    block: Type.Object(
+      {
+        type: Type.Literal("compaction"),
+        content: Type.String({ minLength: 1 }),
+        signature: Type.String({ minLength: 1 }),
+      },
+      { additionalProperties: true },
+    ),
+    stopReason: Type.Literal("compaction"),
+  },
+  { additionalProperties: true },
+);
+/** Codex server-side checkpoint (choco-pi-codex adapter/compaction/types.ts). */
+const CodexNativeDetailsSchema = Type.Object(
+  {
+    strategy: Type.Literal("openai-responses-compaction-v2"),
+    compactedWindow: Type.Array(Type.Unknown(), { minItems: 1 }),
+  },
+  { additionalProperties: true },
+);
+const CodexDisplayDataSchema = Type.Object(
+  { compactionEntryId: Type.String() },
+  { additionalProperties: true },
+);
+const StateSchema = Type.Object(
+  { isStreaming: Type.Boolean(), isCompacting: Type.Boolean() },
+  { additionalProperties: true },
+);
+const StatsSchema = Type.Object(
+  {
+    contextUsage: Type.Object(
+      {
+        tokens: Type.Union([Type.Number(), Type.Null()]),
+        contextWindow: Type.Number(),
+      },
+      { additionalProperties: true },
+    ),
+  },
+  { additionalProperties: true },
+);
+const StatusRowSchema = Type.Object(
+  {
+    state: Type.String(),
+    candidateId: Type.Optional(Type.String()),
+    backendId: Type.Optional(Type.String()),
+    reason: Type.Optional(Type.String()),
+    detail: Type.Optional(Type.String()),
+  },
+  { additionalProperties: true },
+);
+type StatusRow = Static<typeof StatusRowSchema>;
+const NullableNumber = Type.Union([Type.Number(), Type.Null()]);
+const ProbeStatusSchema = Type.Object({
+  rows: Type.Array(StatusRowSchema),
+  captures: Type.Array(
+    Type.Object(
+      { status: Type.Number(), mapped: Type.Boolean(), endpoint: Type.String() },
+      { additionalProperties: true },
+    ),
+  ),
+  refusals: Type.Number(),
+  window: NullableNumber,
+  nativeWindow: NullableNumber,
+  cap: NullableNumber,
+  compactAt: NullableNumber,
 });
-const ErrnoSchema = Type.Object({ code: Type.Literal("ENOENT") });
+type ProbeStatus = Static<typeof ProbeStatusSchema>;
+
 type Command = {
   id?: string;
   type: string;
   message?: string;
   customInstructions?: string;
-  enabled?: boolean;
   cancelled?: boolean;
 };
 
-function option(name: string, fallback?: string): string {
-  const index = process.argv.indexOf(name);
-  const value = index < 0 ? fallback : process.argv[index + 1];
-  assert(value && !value.startsWith("--"), `Missing ${name}`);
-  return value;
-}
+// ---------------------------------------------------------------------------
+// Options and evidence
+// ---------------------------------------------------------------------------
+
 const checkout = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const source = resolve(option("--source-agent-dir", join(homedir(), ".pi/agent")));
-const model = option("--model");
-const separator = model.indexOf("/");
-assert(separator > 0, "--model must be provider/model");
-const launcher = resolve(option("--pi-launcher"));
-const capture = resolve(option("--capture"));
-const perCaseTimeout = Number(option("--case-timeout-ms", "240000"));
-const seedTurns = Number(option("--seed-turns", "6"));
+let parsed: ReturnType<typeof parseCli>;
+try {
+  parsed = parseCli(process.argv.slice(2), checkout);
+} catch (error) {
+  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n\n${USAGE}`);
+  process.exit(2);
+}
+if (parsed.help) {
+  process.stdout.write(USAGE);
+  process.exit(0);
+}
+const options: ProbeOptions = parsed.options;
+const cells = resolveCells(options);
+const STATUS_PREFIX = "PROBE-STATUS ";
+
+if (options.dryRun) {
+  await dryRun();
+  process.exit(0);
+}
+
+async function dryRun(): Promise<void> {
+  const write = (line: string): void => {
+    process.stdout.write(`${line}\n`);
+  };
+  write(`model ${options.model} logic ${options.logic} (approved)`);
+  write(
+    `contextSoftCap ${options.softCap} (${CONTEXT_SOFT_CAP_TOKENS[options.softCap]}), autoCompactionPoint ${options.compactionPoint} (${AUTO_COMPACTION_POINT_TOKENS[options.compactionPoint]})`,
+  );
+  const lane = nativeLaneFor(options.provider);
+  for (const cell of cells) {
+    const unprovable = options.logic === "server-side" && lane === undefined;
+    write(`\ncell ${cell.key}${unprovable ? " (unprovable: no native lane; not launched)" : ""}`);
+    const reserve =
+      cell.point === "manual"
+        ? `${DEFAULT_RESERVE_TOKENS}`
+        : "calibrated: window - plannedPoint - 8000 (planAuto)";
+    const files = await buildAgentFiles(
+      options,
+      {
+        background: cell.background,
+        reserveTokens: DEFAULT_RESERVE_TOKENS,
+        sidecarReserveTokens: 0,
+      },
+      join(options.source, "choco-pi-codex.json"),
+    );
+    write(`  compaction.reserveTokens: ${reserve}`);
+    write(`  settings.json overrides: ${JSON.stringify(files.settingsOverrides)}`);
+    write(
+      `  extensions/background-compaction.json: ${JSON.stringify(JSON.parse(files.backgroundSidecar))}`,
+    );
+    const codex: unknown = JSON.parse(files.codexConfig);
+    write(
+      `  choco-pi-codex.json compaction: ${JSON.stringify(Value.Check(Type.Object({ compaction: Type.Unknown() }), codex) ? codex.compaction : null)}`,
+    );
+    write(
+      `  SYSTEM.md: first line ${JSON.stringify(files.systemPrompt.split("\n")[0])}, ${Buffer.byteLength(files.systemPrompt)} bytes, source ${files.systemPromptSource}`,
+    );
+    if (cell.point === "manual")
+      write(
+        "  cases: RPC compact (plain), RPC compact (instructions), each + one follow-up prompt",
+      );
+    else write("  cases: calibrate, seed, prompt until the cap point fires, one follow-up prompt");
+  }
+}
+
+const launcherPath = options.launcher;
+const capturePath = options.capture;
+assert(launcherPath !== undefined && capturePath !== undefined, "launcher and capture required");
+const launcher: string = launcherPath;
+const capture: string = capturePath;
 const runFile = promisify(execFile);
 const version = await runFile(launcher, ["--version"], { timeout: 5000, maxBuffer: 4096 });
 assert.equal(version.stdout.trim(), "1.2.0", "Probe requires Pi 1.2.0");
 
 const scratch = await mkdtemp(join(tmpdir(), "choco-pi-rpc-compaction-"));
 const evidence = await open(capture, "wx", 0o600);
-type Detail = Record<string, string | number | boolean | null | readonly string[]>;
-type LogRecord =
-  | Detail
-  | { readonly label: string; readonly wire: WireRecord }
-  | { readonly label: string; readonly stderr: string }
-  | { readonly results: readonly CaseResult[] };
-const log = async (record: LogRecord): Promise<void> => {
-  await evidence.write(`${JSON.stringify({ at: Date.now(), ...record })}\n`);
-};
+type DetailValue = string | number | boolean | null | readonly string[];
+type Detail = { readonly [key: string]: DetailValue };
+/** Signatures stay in the protected session file; evidence keeps their length only. */
+function redact<T>(key: string, value: T): T | string {
+  return key === "signature" && isString(value) ? `<redacted:${value.length}>` : value;
+}
+let logQueue: Promise<void> = Promise.resolve();
+/** Serialized appends: concurrent FileHandle writes could interleave records. */
+function log<T extends object>(record: T): void {
+  const line = `${JSON.stringify({ at: Date.now(), ...record }, redact)}\n`;
+  logQueue = logQueue.then(async () => {
+    await evidence.write(line);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Pi process
+// ---------------------------------------------------------------------------
 
 interface Session {
-  readonly child: ChildProcess;
+  readonly label: string;
   readonly records: WireRecord[];
-  readonly sessionsDir: string;
-  send(value: Command): Promise<void>;
   command(type: string, extra?: Partial<Command>): Promise<WireRecord>;
   waitFor(predicate: (value: WireRecord) => boolean, since: number): Promise<WireRecord>;
   close(): Promise<void>;
 }
 
-async function launch(
-  label: string,
-  backgroundOn: boolean,
-  reserveTokens: number,
-  sidecarReserveTokens = 0,
-): Promise<Session> {
-  const agentDir = join(scratch, `${label}-agent`);
-  const workspace = join(scratch, `${label}-workspace`);
-  const sessionsDir = join(scratch, `${label}-sessions`);
-  await Promise.all([mkdir(agentDir), mkdir(workspace), mkdir(sessionsDir)]);
-  for (const name of [
-    "auth.json",
-    "models.json",
-    "agents",
-    "themes",
-    "choco-pi",
-    "choco-pi-codex.json",
-  ]) {
-    try {
-      await cp(join(source, name), join(agentDir, name), { recursive: true, dereference: true });
-    } catch (error) {
-      if (!Value.Check(ErrnoSchema, error)) throw error;
-    }
-  }
-  const sourceSettings: unknown = JSON.parse(await readFile(join(source, "settings.json"), "utf8"));
-  const settings = Value.Check(Type.Object({}, { additionalProperties: true }), sourceSettings)
-    ? sourceSettings
-    : {};
-  await writeFile(
-    join(agentDir, "settings.json"),
-    JSON.stringify(
-      {
-        ...settings,
-        packages: [
-          join(checkout, ".pi/packages/choco-pi-compaction"),
-          // Codex-owned models are served only by the Codex lane this package registers.
-          join(checkout, ".pi/packages/choco-pi-codex"),
-        ],
-        extensions: [],
-        compaction: { enabled: true, reserveTokens, keepRecentTokens: 1 },
-      },
-      null,
-      2,
-    ),
-  );
-  await mkdir(join(agentDir, "extensions"), { recursive: true });
-  await writeFile(
-    join(agentDir, "extensions", "background-compaction.json"),
-    JSON.stringify({
-      enabled: backgroundOn,
-      text: true,
-      codexNative: true,
-      anthropicNative: true,
-      prepareAt: 0.5,
-      hysteresis: 0,
-      minReductionTokens: 0,
-      reserveTokens: sidecarReserveTokens,
-      cooldownMs: 0,
-      retryBaseMs: 0,
-      timeoutMs: 180_000,
-    }),
-  );
-  // Diagnostic command: the coordinators' own status, read from the shared
-  // process registry (the compaction package registers there by Symbol.for).
-  const probeExtension = join(agentDir, "probe-compaction-status.ts");
-  await writeFile(
-    probeExtension,
-    `import type { ExtensionAPI } from ${JSON.stringify(join(checkout, "node_modules/@earendil-works/pi-coding-agent/dist/index.js"))};
-import { getRegistry } from ${JSON.stringify(join(checkout, ".pi/packages/choco-pi-compaction/src/background/registry.ts"))};
-import { capturesFor, transportRefusals } from ${JSON.stringify(join(checkout, ".pi/packages/choco-pi-compaction/src/anthropic/capture.ts"))};
+function probeExtensionSource(hostReserve: number): string {
+  const imports = {
+    api: join(checkout, "node_modules/@earendil-works/pi-coding-agent/dist/index.js"),
+    registry: join(checkout, ".pi/packages/choco-pi-compaction/src/background/registry.ts"),
+    capture: join(checkout, ".pi/packages/choco-pi-compaction/src/anthropic/capture.ts"),
+    cap: join(checkout, ".pi/extensions/model-context-cap.ts"),
+    policy: join(checkout, ".pi/extensions/lib/context-policy.ts"),
+  };
+  const settings = {
+    softCap: options.softCap,
+    compactionPoint: options.compactionPoint,
+    hostReserve,
+  };
+  return `import type { ExtensionAPI } from ${JSON.stringify(imports.api)};
+import { getRegistry } from ${JSON.stringify(imports.registry)};
+import { capturesFor, transportRefusals } from ${JSON.stringify(imports.capture)};
+import { resolvePolicy } from ${JSON.stringify(imports.cap)};
+import { readNativeContextWindow } from ${JSON.stringify(imports.policy)};
+const SETTINGS = ${JSON.stringify(settings)};
 export default function (pi: ExtensionAPI) {
   pi.registerCommand("probe-compaction-status", {
-    description: "Probe: report background compaction coordinator status",
+    description: "Probe: coordinator status, Anthropic captures and the context cap policy",
     handler: async (_args, ctx) => {
       const rows = [...getRegistry().coordinators.values()].map((coordinator) => coordinator.status());
       const sessionId = ctx.sessionManager.getSessionId();
-      const captures = capturesFor(sessionId).map((capture) => ({ status: capture.status, mapped: capture.mapping !== undefined, url: capture.url }));
-      const refusals = transportRefusals(sessionId);
-      ctx.ui.notify("PROBE-STATUS " + JSON.stringify({ rows, captures, refusals }), "info");
+      const captures = capturesFor(sessionId).map((capture) => ({ status: capture.status, mapped: capture.mapping !== undefined, endpoint: capture.endpoint }));
+      const refusals = transportRefusals(sessionId).length;
+      const model = ctx.model;
+      const nativeWindow = model ? (readNativeContextWindow(model) ?? model.contextWindow) : null;
+      const policy = model && nativeWindow !== null ? resolvePolicy(model, nativeWindow, SETTINGS) : {};
+      ctx.ui.notify(${JSON.stringify(STATUS_PREFIX)} + JSON.stringify({
+        rows, captures, refusals,
+        window: model ? model.contextWindow : null,
+        nativeWindow,
+        cap: policy.cap ?? null,
+        compactAt: policy.compactAt ?? null,
+      }), "info");
     },
   });
 }
-`,
-  );
-  const child = spawn(
+`;
+}
+
+let launches = 0;
+async function launch(label: string, settings: LaunchSettings): Promise<Session> {
+  const dir = `${String(++launches).padStart(2, "0")}-${label.replace(/[^A-Za-z0-9.-]+/g, "_")}`;
+  const agentDir = join(scratch, dir, "agent");
+  const workspace = join(scratch, dir, "workspace");
+  const sessionsDir = join(scratch, dir, "sessions");
+  await Promise.all([
+    mkdir(join(agentDir, "extensions"), { recursive: true }),
+    mkdir(workspace, { recursive: true }),
+    mkdir(sessionsDir, { recursive: true }),
+  ]);
+  await copyAgentFiles(options.source, agentDir);
+  const files = await buildAgentFiles(options, settings, join(agentDir, "choco-pi-codex.json"));
+  await Promise.all([
+    writeFile(join(agentDir, "settings.json"), files.settings),
+    writeFile(join(agentDir, "extensions", "background-compaction.json"), files.backgroundSidecar),
+    writeFile(join(agentDir, "choco-pi-codex.json"), files.codexConfig),
+    writeFile(join(agentDir, "SYSTEM.md"), files.systemPrompt),
+  ]);
+  const probeExtension = join(agentDir, "probe-compaction-status.ts");
+  await writeFile(probeExtension, probeExtensionSource(settings.reserveTokens));
+  log({
+    label,
+    launch: {
+      background: settings.background,
+      reserveTokens: settings.reserveTokens,
+      sidecarReserveTokens: settings.sidecarReserveTokens,
+      settingsOverrides: files.settingsOverrides,
+      systemPromptSource: files.systemPromptSource,
+    },
+  });
+  const child: ChildProcess = spawn(
     launcher,
     [
       "--mode",
@@ -209,9 +385,9 @@ export default function (pi: ExtensionAPI) {
       "--session-dir",
       sessionsDir,
       "--provider",
-      model.slice(0, separator),
+      options.provider,
       "--model",
-      model.slice(separator + 1),
+      options.modelId,
       "--thinking",
       "off",
       "--extension",
@@ -233,9 +409,14 @@ export default function (pi: ExtensionAPI) {
   let pending = "";
   let failure: Error | undefined;
   let alive = true;
+  let closing = false;
+  child.once("error", (error) => {
+    alive = false;
+    failure ??= error;
+  });
   child.once("exit", (code, signal) => {
     alive = false;
-    if (code !== 0 && code !== null) failure = new Error(`pi exited: ${code ?? signal}`);
+    if (!closing) failure ??= new Error(`pi exited unexpectedly: ${code ?? signal}`);
   });
   child.stdout?.setEncoding("utf8");
   child.stdout?.on("data", (chunk: string) => {
@@ -244,40 +425,40 @@ export default function (pi: ExtensionAPI) {
     while (boundary >= 0) {
       const line = pending.slice(0, boundary).replace(/\r$/, "");
       pending = pending.slice(boundary + 1);
-      try {
-        const value: unknown = JSON.parse(line);
-        if (Value.Check(WireSchema, value)) {
-          records.push(value);
-          void log({ label, wire: value });
-          if (
-            value.type === "extension_ui_request" &&
-            value.id &&
-            ["select", "input", "editor", "confirm"].includes(value.method ?? "")
-          ) {
-            void send({
-              type: "extension_ui_response",
-              id: value.id,
-              cancelled: true,
-            });
-          }
-        }
-      } catch (error) {
-        failure = error instanceof Error ? error : new Error(String(error));
-      }
       boundary = pending.indexOf("\n");
+      let value: unknown;
+      try {
+        value = JSON.parse(line);
+      } catch (error) {
+        failure ??= error instanceof Error ? error : new Error(String(error));
+        continue;
+      }
+      if (!Value.Check(WireSchema, value)) continue;
+      records.push(value);
+      log({ label, wire: value });
+      if (
+        value.type === "extension_ui_request" &&
+        value.id &&
+        ["select", "input", "editor", "confirm"].includes(value.method ?? "")
+      ) {
+        send({ type: "extension_ui_response", id: value.id, cancelled: true }).catch(
+          (error: Error) => {
+            failure ??= error;
+          },
+        );
+      }
     }
   });
-  const stderr: string[] = [];
   child.stderr?.setEncoding("utf8");
   child.stderr?.on("data", (chunk: string) => {
-    stderr.push(chunk);
-    void log({ label, stderr: chunk });
+    log({ label, stderr: chunk });
   });
   let nextId = 0;
   async function send(value: Command): Promise<void> {
-    assert(alive && child.stdin, "pi is not writable");
+    const stdin = child.stdin;
+    assert(alive && stdin, `${label}: pi is not writable`);
     await new Promise<void>((resolveWrite, reject) => {
-      child.stdin?.write(`${JSON.stringify(value)}\n`, (error) =>
+      stdin.write(`${JSON.stringify(value)}\n`, (error) =>
         error ? reject(error) : resolveWrite(),
       );
     });
@@ -286,7 +467,7 @@ export default function (pi: ExtensionAPI) {
     predicate: (value: WireRecord) => boolean,
     since: number,
   ): Promise<WireRecord> {
-    const deadline = Date.now() + perCaseTimeout;
+    const deadline = Date.now() + options.caseTimeoutMs;
     while (Date.now() < deadline) {
       if (failure) throw failure;
       const found = records.slice(since).find(predicate);
@@ -299,37 +480,111 @@ export default function (pi: ExtensionAPI) {
     const id = `probe-${++nextId}`;
     const since = records.length;
     await send({ id, type, ...extra });
-    const result = await waitFor((value) => value.type === "response" && value.id === id, since);
-    return result;
+    return waitFor((value) => value.type === "response" && value.id === id, since);
   }
   async function close(): Promise<void> {
+    closing = true;
     child.stdin?.end();
     const deadline = Date.now() + 15_000;
     while (alive && Date.now() < deadline) await delay(50);
     if (alive) child.kill("SIGKILL");
   }
-  const session: Session = { child, records, sessionsDir, send, command, waitFor, close };
-  const state = await command("get_state");
-  assert.equal(state.success, true, `get_state failed: ${state.error ?? ""}`);
+  const session: Session = { label, records, command, waitFor, close };
+  try {
+    const state = await command("get_state");
+    assert.equal(state.success, true, `get_state failed: ${state.error ?? ""}`);
+  } catch (error) {
+    await close();
+    throw error;
+  }
   return session;
 }
 
-async function branchEntries(session: Session): Promise<Static<typeof EntrySchema>[]> {
+// ---------------------------------------------------------------------------
+// Evidence readers
+// ---------------------------------------------------------------------------
+
+async function allEntries(session: Session): Promise<{ entries: Entry[]; branch: Entry[] }> {
   const result = await session.command("get_entries");
   assert.equal(result.success, true, "get_entries failed");
-  const data: unknown = result.data;
-  const entries = Value.Check(Type.Object({ entries: Type.Array(Type.Unknown()) }), data)
-    ? data.entries
-    : [];
-  return entries.filter((entry): entry is Static<typeof EntrySchema> =>
+  assert(Value.Check(EntriesSchema, result.data), "get_entries returned no entries");
+  const entries = result.data.entries.filter((entry): entry is Entry =>
     Value.Check(EntrySchema, entry),
+  );
+  const byId = new Map(entries.map((entry) => [entry.id, entry]));
+  const branch: Entry[] = [];
+  let cursor = result.data.leafId === null ? undefined : byId.get(result.data.leafId);
+  while (cursor !== undefined) {
+    branch.unshift(cursor);
+    cursor = cursor.parentId ? byId.get(cursor.parentId) : undefined;
+  }
+  return { entries, branch };
+}
+
+function compactions(entries: readonly Entry[]): CompactionEntry[] {
+  return entries.filter((entry): entry is Entry & CompactionEntry =>
+    Value.Check(CompactionEntrySchema, entry),
   );
 }
 
-function compactions(entries: readonly unknown[]): Static<typeof CompactionEntrySchema>[] {
-  return entries.filter((entry): entry is Static<typeof CompactionEntrySchema> =>
-    Value.Check(CompactionEntrySchema, entry),
-  );
+async function branchCompactionCount(session: Session): Promise<number> {
+  return compactions((await allEntries(session)).branch).length;
+}
+
+function backgroundCandidate(entry: CompactionEntry): string | undefined {
+  return Value.Check(CandidateDetailsSchema, entry.details) ? entry.details.candidateId : undefined;
+}
+
+function strategyOf(entry: CompactionEntry): string | null {
+  return Value.Check(StrategySchema, entry.details) ? entry.details.strategy : null;
+}
+
+/** Backend id persisted by the coordinator's candidate record for `candidateId`. */
+function recordedBackend(entries: readonly Entry[], candidateId: string): string | null {
+  for (const entry of entries) {
+    if (entry.type !== "custom" || entry.customType !== "choco-compaction-candidate") continue;
+    if (
+      Value.Check(CandidateRecordDataSchema, entry.data) &&
+      entry.data.candidateId === candidateId
+    )
+      return entry.data.backendId;
+  }
+  return null;
+}
+
+/** Errored assistant turns (stopReason "error" or an errorMessage) and compaction errors since `since`. */
+interface ErrorTally {
+  readonly count: number;
+  readonly first: string | null;
+}
+function errorsSince(session: Session, since: number): ErrorTally {
+  let count = 0;
+  let first: string | null = null;
+  for (const value of session.records.slice(since)) {
+    const messages = value.type === "agent_end" ? (value.messages ?? []) : [];
+    for (const message of messages) {
+      if (!Value.Check(AssistantMessageSchema, message)) continue;
+      if (message.stopReason !== "error" && message.errorMessage === undefined) continue;
+      count += 1;
+      first ??= message.errorMessage ?? `stopReason ${message.stopReason ?? ""}`;
+    }
+    if (value.type === "compaction_end" && value.errorMessage !== undefined) {
+      count += 1;
+      first ??= `compaction: ${value.errorMessage}`;
+    }
+  }
+  return { count, first };
+}
+
+async function waitIdle(session: Session): Promise<void> {
+  const deadline = Date.now() + options.caseTimeoutMs;
+  while (Date.now() < deadline) {
+    const state = await session.command("get_state");
+    if (Value.Check(StateSchema, state.data) && !state.data.isStreaming && !state.data.isCompacting)
+      return;
+    await delay(100);
+  }
+  throw new Error(`${session.label}: host never became idle`);
 }
 
 async function prompt(session: Session, text: string): Promise<void> {
@@ -348,298 +603,468 @@ async function prompt(session: Session, text: string): Promise<void> {
   await waitIdle(session);
 }
 
-const StateSchema = Type.Object(
-  { isStreaming: Type.Boolean(), isCompacting: Type.Boolean() },
-  { additionalProperties: true },
-);
-/** The host accepts a new prompt only when it is neither streaming nor compacting. */
-async function waitIdle(session: Session): Promise<void> {
-  const deadline = Date.now() + perCaseTimeout;
-  while (Date.now() < deadline) {
-    const state = await session.command("get_state");
-    if (Value.Check(StateSchema, state.data) && !state.data.isStreaming && !state.data.isCompacting)
-      return;
-    await delay(100);
-  }
-  throw new Error("host never became idle");
+class SeedTurnError extends Error {
+  override name = "SeedTurnError";
 }
 
 const FILLER = "The quick brown fox jumps over the lazy dog. ".repeat(60);
-async function seed(session: Session, turns: number): Promise<void> {
+/** Seed turns must succeed: an errored seed aborts the whole run with the provider's message. */
+async function seed(session: Session, turns: number, tag: string): Promise<void> {
   for (let index = 0; index < turns; index += 1) {
-    await prompt(session, `SEED-${index}: ${FILLER}\nReply with exactly: ACK-${index}`);
+    const since = session.records.length;
+    await prompt(session, `${tag}-${index}: ${FILLER}\nReply with exactly: ACK-${index}`);
+    const errors = errorsSince(session, since);
+    if (errors.count > 0)
+      throw new SeedTurnError(
+        `${session.label}: seed turn ${tag}-${index} errored: ${errors.first}`,
+      );
   }
 }
 
-async function compactionEventsDuring(
-  session: Session,
-  run: () => Promise<void>,
-): Promise<string[]> {
+async function probeStatus(session: Session): Promise<ProbeStatus> {
   const since = session.records.length;
-  await run();
-  return session.records
+  const response = await session.command("prompt", { message: "/probe-compaction-status" });
+  assert.equal(response.success, true, `/probe-compaction-status failed: ${response.error ?? ""}`);
+  const notice = session.records
     .slice(since)
-    .filter((value) => value.type === "compaction_start" || value.type === "compaction_end")
-    .map((value) => `${value.type}${value.aborted ? ":aborted" : ""}`);
+    .find(
+      (value) =>
+        value.method === "notify" &&
+        isString(value.message) &&
+        value.message.startsWith(STATUS_PREFIX),
+    );
+  const text = notice !== undefined && isString(notice.message) ? notice.message : undefined;
+  assert(text !== undefined, "/probe-compaction-status printed nothing");
+  const status: unknown = JSON.parse(text.slice(STATUS_PREFIX.length));
+  assert(Value.Check(ProbeStatusSchema, status), `invalid probe status: ${text}`);
+  return status;
+}
+
+const READY_STATES: readonly string[] = ["ready", "adopting", "installed"];
+const FAILED_STATES: readonly string[] = ["failed", "canceled", "discarded-stale"];
+/** Poll until a candidate not in `prior` reaches ready (or a terminal failure). */
+async function waitForNewCandidate(
+  session: Session,
+  prior: ReadonlySet<string>,
+): Promise<StatusRow> {
+  const deadline = Date.now() + options.caseTimeoutMs;
+  let last = "";
+  while (Date.now() < deadline) {
+    const status = await probeStatus(session);
+    last = JSON.stringify(status.rows);
+    const row = status.rows.find(
+      (item) =>
+        item.candidateId !== undefined &&
+        !prior.has(item.candidateId) &&
+        (READY_STATES.includes(item.state) || FAILED_STATES.includes(item.state)),
+    );
+    if (row !== undefined) return row;
+    await delay(500);
+  }
+  throw new Error(`no new background candidate became ready; last rows ${last}`);
 }
 
 async function waitForNewCompaction(
   session: Session,
   before: number,
-  label: string,
-): Promise<Static<typeof CompactionEntrySchema>> {
-  const deadline = Date.now() + perCaseTimeout;
+  timeoutMs: number,
+): Promise<CompactionEntry | undefined> {
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const now = compactions(await branchEntries(session));
+    const now = compactions((await allEntries(session)).branch);
     const latest = now.at(-1);
     if (now.length > before && latest !== undefined) return latest;
     await delay(500);
   }
-  throw new Error(`${label}: no new compaction entry`);
+  return undefined;
 }
 
-function backgroundCandidate(entry: Static<typeof CompactionEntrySchema>): string | undefined {
-  return Value.Check(DetailsSchema, entry.details) ? entry.details.candidateId : undefined;
+function compactionEvents(session: Session, since: number): string[] {
+  return session.records
+    .slice(since)
+    .filter((value) => value.type === "compaction_start" || value.type === "compaction_end")
+    .map(
+      (value) =>
+        `${value.type}:${value.reason ?? ""}${value.aborted ? ":aborted" : ""}${value.errorMessage ? ":error" : ""}`,
+    );
 }
 
-interface CaseResult {
-  readonly name: string;
+// ---------------------------------------------------------------------------
+// Checkpoint provenance
+// ---------------------------------------------------------------------------
+
+type DetailMap = Map<string, DetailValue>;
+
+interface Provenance {
   readonly pass: boolean;
+  readonly detail: DetailMap;
+}
+
+/**
+ * Who produced `entry`, against what the cell's logic claims. Background:
+ * the candidate's persisted record names the backend. Foreground server-side:
+ * the lane's own details (signed Anthropic block, or Codex compacted window
+ * plus its display entry) on an extension-supplied checkpoint. Anthropic lanes
+ * also need a 200 wire capture, the only input they cut from.
+ */
+async function provenance(
+  session: Session,
+  entry: CompactionEntry,
+  background: boolean,
+  lane: NativeLane | undefined,
+): Promise<Provenance> {
+  const { entries } = await allEntries(session);
+  const candidate = backgroundCandidate(entry) ?? null;
+  const strategy = strategyOf(entry);
+  const expectedStrategy = lane?.strategy ?? "local-reconciled";
+  const checks = new Map<string, boolean>([["strategy", strategy === expectedStrategy]]);
+  const detail = new Map<string, DetailValue>([
+    ["candidate", candidate],
+    ["strategy", strategy],
+    ["expectedStrategy", expectedStrategy],
+    ["fromHook", entry.fromHook ?? false],
+  ]);
+  if (background) {
+    const backend = candidate === null ? null : recordedBackend(entries, candidate);
+    const expectedBackend = lane?.backendId ?? "text";
+    detail.set("recordedBackend", backend);
+    detail.set("expectedBackend", expectedBackend);
+    checks.set("candidate", candidate !== null);
+    checks.set("backend", backend === expectedBackend);
+  } else {
+    checks.set("noCandidate", candidate === null);
+    if (lane !== undefined) {
+      // The host records a hook-supplied compaction as `fromHook`.
+      checks.set("fromHook", entry.fromHook === true);
+      if (lane.backendId === "anthropic-native") {
+        checks.set("signedBlock", Value.Check(AnthropicNativeDetailsSchema, entry.details));
+      } else {
+        checks.set("compactedWindow", Value.Check(CodexNativeDetailsSchema, entry.details));
+        checks.set(
+          "displayEntry",
+          entries.some(
+            (item) =>
+              item.customType === "codex-native-compaction-display" &&
+              Value.Check(CodexDisplayDataSchema, item.data) &&
+              item.data.compactionEntryId === entry.id,
+          ),
+        );
+      }
+    }
+  }
+  if (lane?.needsCapture) {
+    const status = await probeStatus(session);
+    const ok = status.captures.filter((item) => item.status === 200).length;
+    detail.set("captures200", ok);
+    detail.set("refusals", status.refusals);
+    checks.set("capture200", ok > 0);
+  }
+  const failed = [...checks].filter(([, value]) => !value).map(([key]) => key);
+  detail.set("failedChecks", failed);
+  return { pass: failed.length === 0, detail };
+}
+
+// ---------------------------------------------------------------------------
+// Cases
+// ---------------------------------------------------------------------------
+
+type Outcome = "pass" | "fail" | "unprovable";
+interface CaseResult {
+  readonly cell: string;
+  readonly name: string;
+  readonly outcome: Outcome;
   readonly detail: Detail;
 }
+const results: CaseResult[] = [];
+function record(cell: Cell, name: string, outcome: Outcome, details: Detail | DetailMap): void {
+  const detail: Detail = details instanceof Map ? Object.fromEntries(details) : details;
+  results.push({ cell: cell.key, name, outcome, detail });
+  log({ case: name, cell: cell.key, outcome, detail });
+  process.stdout.write(`${outcome.toUpperCase()} ${name} ${JSON.stringify(detail)}\n`);
+}
 
-const StatsSchema = Type.Object(
-  {
-    contextUsage: Type.Object({
-      tokens: Type.Union([Type.Number(), Type.Null()]),
-      contextWindow: Type.Number(),
-    }),
-  },
-  { additionalProperties: true },
-);
-/**
- * Context after one seed turn (fixed prompt and tools included) and the growth
- * of one more turn, plus the model's window, from a throwaway process.
- */
-async function calibrate(
-  label: string,
-): Promise<{ window: number; first: number; perTurn: number }> {
-  const session = await launch(label, false, 16_384);
+function laneFor(): NativeLane | undefined {
+  return options.logic === "server-side" ? nativeLaneFor(options.provider) : undefined;
+}
+
+async function manualCase(
+  session: Session,
+  cell: Cell,
+  name: string,
+  instructions: string | undefined,
+): Promise<void> {
+  const lane = laneFor();
+  const since = session.records.length;
+  const before = await branchCompactionCount(session);
+  const prior = new Set<string>();
+  if (cell.background)
+    for (const row of (await probeStatus(session)).rows)
+      if (row.candidateId !== undefined) prior.add(row.candidateId);
+  const commandSince = session.records.length;
+  const extra: Partial<Command> = {};
+  if (instructions !== undefined) extra.customInstructions = instructions;
+  const response = await session.command("compact", extra);
+  const commandEvents = compactionEvents(session, commandSince);
+  const detail: DetailMap = new Map<string, DetailValue>([
+    ["instructions", instructions ?? null],
+    ["rpcSuccess", response.success === true],
+    ["rpcError", response.error ?? null],
+    [
+      "rpcData",
+      response.data === undefined ? "undefined" : JSON.stringify(response.data).slice(0, 200),
+    ],
+    ["commandEvents", commandEvents],
+  ]);
+  let pass: boolean;
+  if (cell.background) {
+    const accepted =
+      response.success === true && response.data === undefined && commandEvents.length === 0;
+    detail.set("accepted", accepted);
+    if (!accepted) {
+      // The host ran or refused the compaction itself: no candidate to wait for.
+      await prompt(session, `AFTER-${name}: reply with exactly ACK-AFTER`);
+      const errors = errorsSince(session, since);
+      detail.set("erroredTurns", errors.count);
+      detail.set("firstError", errors.first);
+      record(cell, name, "fail", detail);
+      return;
+    }
+    const row = await waitForNewCandidate(session, prior);
+    const adoptedBeforePrompt = (await branchCompactionCount(session)) > before;
+    detail.set("candidateState", row.state);
+    detail.set("statusBackend", row.backendId ?? null);
+    detail.set("statusReason", row.reason ?? null);
+    detail.set("adoptedBeforePrompt", adoptedBeforePrompt);
+    const promptSince = session.records.length;
+    await prompt(session, `AFTER-${name}: reply with exactly ACK-AFTER`);
+    detail.set("followUpEvents", compactionEvents(session, promptSince));
+    const entry = await waitForNewCompaction(session, before, 30_000);
+    detail.set("adopted", entry !== undefined);
+    // An idle session adopts a ready checkpoint at once ("installed"); a busy
+    // one holds it "ready" until the next prompt or turn end.
+    const settled = row.state === "ready" || row.state === "installed";
+    pass = settled && entry !== undefined;
+    if (entry !== undefined) {
+      const proof = await provenance(session, entry, true, lane);
+      for (const [key, value] of proof.detail) detail.set(key, value);
+      const expectedBackend = lane?.backendId ?? "text";
+      detail.set("statusNamesBackend", row.backendId === expectedBackend);
+      pass &&=
+        proof.pass &&
+        row.backendId === expectedBackend &&
+        backgroundCandidate(entry) === row.candidateId;
+    }
+  } else {
+    const entry = await waitForNewCompaction(session, before, 30_000);
+    const hostRan =
+      commandEvents.includes("compaction_start:manual") &&
+      commandEvents.includes("compaction_end:manual");
+    detail.set("hostRan", hostRan);
+    detail.set("compacted", entry !== undefined);
+    await prompt(session, `AFTER-${name}: reply with exactly ACK-AFTER`);
+    pass = response.success === true && hostRan && entry !== undefined;
+    if (entry !== undefined) {
+      const proof = await provenance(session, entry, false, lane);
+      for (const [key, value] of proof.detail) detail.set(key, value);
+      pass &&= proof.pass;
+    }
+  }
+  const errors = errorsSince(session, since);
+  detail.set("erroredTurns", errors.count);
+  detail.set("firstError", errors.first);
+  record(cell, name, pass && errors.count === 0 ? "pass" : "fail", detail);
+}
+
+async function runManualCell(cell: Cell): Promise<void> {
+  const session = await launch(cell.key, {
+    background: cell.background,
+    reserveTokens: DEFAULT_RESERVE_TOKENS,
+    sidecarReserveTokens: 0,
+  });
   try {
-    const usage = async (): Promise<{ tokens: number; window: number }> => {
-      const stats = await session.command("get_session_stats");
-      assert.ok(Value.Check(StatsSchema, stats.data), "session stats unavailable");
-      const tokens = stats.data.contextUsage.tokens;
-      assert.ok(tokens !== null && tokens > 0, "context usage unavailable");
-      return { tokens, window: stats.data.contextUsage.contextWindow };
-    };
-    await seed(session, 1);
-    const one = await usage();
-    await prompt(session, `SEED-X: ${FILLER}\nReply with exactly: ACK-X`);
-    const two = await usage();
-    assert.ok(two.tokens > one.tokens, "context did not grow between turns");
-    return { window: one.window, first: one.tokens, perTurn: two.tokens - one.tokens };
+    await seed(session, options.seedTurns, "SEED");
+    await manualCase(session, cell, `${cell.key}:plain`, undefined);
+    await seed(session, 2, "SEED-B");
+    await manualCase(
+      session,
+      cell,
+      `${cell.key}:instructions`,
+      "FOCUS-MARKER list every SEED index you saw",
+    );
   } finally {
     await session.close();
   }
 }
-const results: CaseResult[] = [];
-function record(name: string, pass: boolean, detail: Detail): void {
-  results.push({ name, pass, detail });
-  void log({ case: name, pass, ...detail });
-  process.stdout.write(`${pass ? "PASS" : "FAIL"} ${name} ${JSON.stringify(detail)}\n`);
+
+/** Effective window and per-turn growth from a throwaway process with the cell's presets. */
+async function calibrate(cell: Cell): Promise<Calibration> {
+  const session = await launch(`${cell.key}:calibrate`, {
+    background: false,
+    reserveTokens: DEFAULT_RESERVE_TOKENS,
+    sidecarReserveTokens: 0,
+  });
+  try {
+    const usage = async (): Promise<number> => {
+      const stats = await session.command("get_session_stats");
+      assert.ok(Value.Check(StatsSchema, stats.data), "session stats unavailable");
+      const tokens = stats.data.contextUsage.tokens;
+      assert.ok(tokens !== null && tokens > 0, "context usage unavailable");
+      return tokens;
+    };
+    await seed(session, 1, "CAL");
+    const first = await usage();
+    await seed(session, 1, "CAL-X");
+    const second = await usage();
+    assert.ok(second > first, "context did not grow between turns");
+    const status = await probeStatus(session);
+    assert.ok(status.window !== null, "model window unavailable");
+    log({ label: cell.key, calibrationStatus: status });
+    return { window: status.window, first, perTurn: second - first };
+  } finally {
+    await session.close();
+  }
 }
 
-async function manualCases(session: Session, on: boolean): Promise<void> {
-  const tag = on ? "bg-on" : "bg-off";
-  const commands = await session.command("get_commands");
-  const names = Value.Check(CommandsSchema, commands.data)
-    ? commands.data.commands.map((item) => item.name)
-    : [];
-  record(`${tag}/get_commands lists compact-background`, names.includes("compact-background"), {
-    names: names.filter((n) => n.includes("compact")),
+async function runAutoCell(cell: Cell): Promise<void> {
+  const lane = laneFor();
+  const calibration = await calibrate(cell);
+  const plan = planAuto(options, calibration);
+  log({ label: cell.key, calibration: { ...calibration }, plan: { ...plan } });
+  const session = await launch(cell.key, {
+    background: cell.background,
+    reserveTokens: plan.reserveTokens,
+    sidecarReserveTokens: plan.sidecarReserveTokens,
   });
-
-  // 1. /compact-background
-  let before = compactions(await branchEntries(session)).length;
-  let events = await compactionEventsDuring(session, async () => {
-    const response = await session.command("prompt", { message: "/compact-background" });
-    assert.equal(response.success, true, response.error ?? "prompt failed");
-  });
-  let entry = await waitForNewCompaction(session, before, "/compact-background");
-  await prompt(session, "AFTER-1: reply with exactly ACK-A1");
-  record(
-    `${tag}/compact-background`,
-    on
-      ? events.length === 0 && backgroundCandidate(entry) !== undefined
-      : events.includes("compaction_start") && backgroundCandidate(entry) === undefined,
-    { events, candidate: backgroundCandidate(entry) ?? null, summaryChars: entry.summary.length },
-  );
-
-  // 2. /compact-background <instructions>
-  await seed(session, 2);
-  before = compactions(await branchEntries(session)).length;
-  const focus = "FOCUS-MARKER list every SEED index you saw";
-  events = await compactionEventsDuring(session, async () => {
-    const response = await session.command("prompt", { message: `/compact-background ${focus}` });
-    assert.equal(response.success, true, response.error ?? "prompt failed");
-  });
-  entry = await waitForNewCompaction(session, before, "/compact-background <instructions>");
-  await prompt(session, "AFTER-2: reply with exactly ACK-A2");
-  record(
-    `${tag}/compact-background <instructions>`,
-    on
-      ? events.length === 0 && backgroundCandidate(entry) !== undefined
-      : events.includes("compaction_start") && backgroundCandidate(entry) === undefined,
-    {
-      events,
-      candidate: backgroundCandidate(entry) ?? null,
-      summaryMentionsSeed: /SEED/.test(entry.summary),
-    },
-  );
-
-  // 3. RPC compact (host command through the hook)
-  await seed(session, 2);
-  before = compactions(await branchEntries(session)).length;
-  let rpcError = "";
-  events = await compactionEventsDuring(session, async () => {
-    const response = await session.command("compact", {
-      customInstructions: "RPC-FOCUS keep the ACK lines",
-    });
-    rpcError = response.success ? "" : (response.error ?? "failed");
-  });
-  // Through the host hook the checkpoint is adopted when the client's next prompt
-  // arrives (before it is sent): wait for the candidate, then send that prompt.
-  if (on) await waitForCandidate(session, ["ready", "installed"]);
-  await prompt(session, "AFTER-3: reply with exactly ACK-A3");
-  entry = await waitForNewCompaction(session, before, "rpc compact");
-  record(
-    `${tag}/rpc compact`,
-    on
-      ? rpcError === "Compaction cancelled" && backgroundCandidate(entry) !== undefined
-      : rpcError === "" && backgroundCandidate(entry) === undefined,
-    { events, rpcError, candidate: backgroundCandidate(entry) ?? null },
-  );
-}
-
-/** Ask the diagnostic command for every coordinator's status and log it with the context usage. */
-async function coordinatorStatus(session: Session, label: string): Promise<void> {
-  const since = session.records.length;
-  const response = await session.command("prompt", { message: "/probe-compaction-status" });
-  const notice = session.records
-    .slice(since)
-    .find((value) => value.method === "notify" && value.message?.startsWith("PROBE-STATUS "));
-  const stats = await session.command("get_session_stats");
-  const tokens = Value.Check(StatsSchema, stats.data) ? stats.data.contextUsage.tokens : null;
-  await log({
-    probe: label,
-    handled: response.success === true,
-    tokens,
-    status: notice?.message?.slice("PROBE-STATUS ".length) ?? "missing",
-  });
-}
-
-const ProbeStatusSchema = Type.Object(
-  { rows: Type.Array(Type.Object({ state: Type.String() }, { additionalProperties: true })) },
-  { additionalProperties: true },
-);
-/** Poll the diagnostic command until the session's coordinator reaches one of `states`. */
-async function waitForCandidate(session: Session, states: readonly string[]): Promise<void> {
-  const deadline = Date.now() + perCaseTimeout;
-  while (Date.now() < deadline) {
+  try {
+    await seed(session, options.seedTurns, "SEED");
+    const start = await probeStatus(session);
+    const before = await branchCompactionCount(session);
     const since = session.records.length;
-    await session.command("prompt", { message: "/probe-compaction-status" });
-    const notice = session.records
-      .slice(since)
-      .find((value) => value.method === "notify" && value.message?.startsWith("PROBE-STATUS "));
-    const parsed: unknown = notice?.message
-      ? JSON.parse(notice.message.slice("PROBE-STATUS ".length))
-      : undefined;
-    if (
-      Value.Check(ProbeStatusSchema, parsed) &&
-      parsed.rows.some((row) => states.includes(row.state))
-    )
-      return;
-    await delay(500);
-  }
-  throw new Error(`candidate never reached ${states.join("/")}`);
-}
-
-async function autoCase(session: Session, on: boolean): Promise<void> {
-  const tag = on ? "bg-on" : "bg-off";
-  const before = compactions(await branchEntries(session)).length;
-  const since = session.records.length;
-  // Seed until the host's threshold fires (reserveTokens leaves little room).
-  let fired = false;
-  for (let index = 0; index < 12 && !fired; index += 1) {
-    await prompt(session, `AUTO-SEED-${index}: ${FILLER}\nReply with exactly: ACK-${index}`);
-    fired = session.records.slice(since).some((value) => value.type === "compaction_start");
-    await coordinatorStatus(session, `${tag}/auto turn ${index}`);
-  }
-  const entries = compactions(await branchEntries(session));
-  const entry = entries.at(-1);
-  const events = session.records
-    .slice(since)
-    .filter((value) => value.type === "compaction_start" || value.type === "compaction_end")
-    .map((value) => `${value.type}:${value.reason ?? ""}`);
-  const added = entries.length - before;
-  await prompt(session, "AFTER-AUTO: reply with exactly ACK-AUTO");
-  record(
-    `${tag}/auto point`,
-    fired &&
-      events.includes("compaction_start:threshold") &&
-      events.includes("compaction_end:threshold") &&
-      added >= 1 &&
-      entry !== undefined &&
-      (on ? backgroundCandidate(entry) !== undefined : backgroundCandidate(entry) === undefined),
-    {
-      fired,
-      added,
-      events: events.slice(0, 6),
-      candidate: entry ? (backgroundCandidate(entry) ?? null) : null,
-    },
-  );
-}
-
-try {
-  for (const on of [true, false]) {
-    const label = on ? "bg-on" : "bg-off";
-    // Manual cases: an ordinary reserve so the host threshold stays out of the way.
-    const manual = await launch(`${label}-manual`, on, 16_384);
-    try {
-      await seed(manual, seedTurns);
-      await manualCases(manual, on);
-    } finally {
-      await manual.close();
+    let fired = false;
+    let tokensAtFire: number | null = null;
+    for (let index = 0; index < 12 && !fired; index += 1) {
+      const turnSince = session.records.length;
+      await prompt(session, `AUTO-SEED-${index}: ${FILLER}\nReply with exactly: ACK-${index}`);
+      // The cap compacts from agent_settled; let that start before reading idle state.
+      await delay(1000);
+      await waitIdle(session);
+      const status = await probeStatus(session);
+      const stats = await session.command("get_session_stats");
+      const tokens = Value.Check(StatsSchema, stats.data) ? stats.data.contextUsage.tokens : null;
+      log({ probe: `${cell.key} auto turn ${index}`, tokens, status });
+      fired =
+        compactionEvents(session, turnSince).length > 0 ||
+        (await branchCompactionCount(session)) > before;
+      if (fired) tokensAtFire = tokens;
+      if (errorsSince(session, since).count > 0) break;
     }
-    // Auto case: reserve close to the window so a few seed turns cross the threshold.
-    // Calibrate on the real per-turn context growth, then place the preparer
-    // trigger one turn past the seed and the host threshold several turns later.
-    const { window, first, perTurn } = await calibrate(`${label}-calibrate`);
-    const base = first + perTurn * (seedTurns - 1);
-    // The preparer fires at prepareAt (0.5) of its trigger: about 1.5 turns past the seed.
-    const preparerTrigger = Math.round((base + perTurn * 1.5) / 0.5);
-    // The host compacts about 6 turns past the seed, after the preparation had time.
-    const hostTrigger = Math.round(base + perTurn * 6);
-    await log({
-      label,
-      calibration: `window=${window} perTurn=${perTurn} preparer=${preparerTrigger} host=${hostTrigger}`,
-    });
-    const auto = await launch(`${label}-auto`, on, window - hostTrigger, window - preparerTrigger);
+    const entry = fired ? await waitForNewCompaction(session, before, 60_000) : undefined;
+    const events = compactionEvents(session, since);
+    await prompt(session, "AFTER-AUTO: reply with exactly ACK-AUTO");
+    const point = start.compactAt;
+    // The cap's point fires through ctx.compact() ("manual") or a ready candidate (no event);
+    // without a cap (window < 64k) Pi's own threshold is the auto point.
+    const expectedReason = point !== null ? "manual" : "threshold";
+    const detail: DetailMap = new Map<string, DetailValue>([
+      ["fired", fired],
+      ["window", start.window],
+      ["nativeWindow", start.nativeWindow],
+      ["point", point],
+      ["plannedPoint", plan.plannedPoint],
+      ["reserveTokens", plan.reserveTokens],
+      ["hostThreshold", plan.hostThreshold],
+      ["sidecarReserveTokens", plan.sidecarReserveTokens],
+      ["softCap", options.softCap],
+      ["compactionPoint", options.compactionPoint],
+      ["tokensAtFire", tokensAtFire],
+      ["events", events.slice(0, 6)],
+      ["expectedReason", expectedReason],
+    ]);
+    let pass = fired && entry !== undefined;
+    if (cell.background) {
+      pass &&= events.every((event) => event.endsWith(`:${expectedReason}`));
+    } else {
+      pass &&=
+        events.includes(`compaction_start:${expectedReason}`) &&
+        events.includes(`compaction_end:${expectedReason}`);
+    }
+    if (entry !== undefined) {
+      const proof = await provenance(session, entry, cell.background, lane);
+      for (const [key, value] of proof.detail) detail.set(key, value);
+      pass &&= proof.pass;
+    }
+    const errors = errorsSince(session, since);
+    detail.set("erroredTurns", errors.count);
+    detail.set("firstError", errors.first);
+    record(cell, cell.key, pass && errors.count === 0 ? "pass" : "fail", detail);
+  } finally {
+    await session.close();
+  }
+}
+
+function caseNames(cell: Cell): string[] {
+  return cell.point === "manual" ? [`${cell.key}:plain`, `${cell.key}:instructions`] : [cell.key];
+}
+
+// ---------------------------------------------------------------------------
+// Run
+// ---------------------------------------------------------------------------
+
+let aborted: string | undefined;
+try {
+  log({
+    options: { ...options, backgrounds: options.backgrounds.map(String) },
+    cells: cells.map((cell) => cell.key),
+  });
+  for (const cell of cells) {
+    if (aborted !== undefined) {
+      for (const name of caseNames(cell))
+        record(cell, name, "fail", { notRun: true, reason: `run aborted: ${aborted}` });
+      continue;
+    }
+    if (options.logic === "server-side" && laneFor() === undefined) {
+      for (const name of caseNames(cell))
+        record(cell, name, "unprovable", {
+          reason: `provider ${options.provider} has no server-side compaction lane in this profile (anthropic-native and codex-native-v2 serve anthropic and openai-codex only); nothing could show server-side logic ran`,
+        });
+      continue;
+    }
+    const recorded = results.length;
     try {
-      await seed(auto, seedTurns);
-      await autoCase(auto, on);
-    } finally {
-      await auto.close();
+      if (cell.point === "manual") await runManualCell(cell);
+      else await runAutoCell(cell);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (error instanceof SeedTurnError) aborted = message;
+      const done = new Set(results.slice(recorded).map((item) => item.name));
+      for (const name of caseNames(cell))
+        if (!done.has(name)) record(cell, name, "fail", { error: message });
+      if (error instanceof SeedTurnError) process.stderr.write(`ABORT: ${message}\n`);
     }
   }
 } finally {
-  await log({ results });
+  log({ results: results.map((item) => ({ ...item })) });
+  await logQueue;
   await evidence.close();
-  await rm(scratch, { recursive: true, force: true });
+  await rm(scratch, { recursive: true, force: true, maxRetries: 8, retryDelay: 125 });
 }
-const failed = results.filter((item) => !item.pass);
+
+const totals = { pass: 0, fail: 0, unprovable: 0 };
+process.stdout.write("\n");
+for (const cell of cells) {
+  const cases = results.filter((item) => item.cell === cell.key);
+  const outcome: Outcome =
+    cases.length === 0 || cases.some((item) => item.outcome === "fail")
+      ? "fail"
+      : cases.some((item) => item.outcome === "unprovable")
+        ? "unprovable"
+        : "pass";
+  totals[outcome] += 1;
+  process.stdout.write(
+    `${outcome.toUpperCase()} ${cell.key} ${cases.map((item) => `${item.name.slice(cell.key.length) || "auto"}=${item.outcome}`).join(" ")}\n`,
+  );
+}
 process.stdout.write(
-  `\n${results.length - failed.length}/${results.length} passed; evidence ${capture}\n`,
+  `cells: ${totals.pass} pass, ${totals.fail} fail, ${totals.unprovable} unprovable of ${cells.length}; cases: ${results.filter((item) => item.outcome === "pass").length}/${results.length} pass; evidence ${capture}\n`,
 );
-process.exitCode = failed.length === 0 ? 0 : 1;
+process.exitCode = totals.fail === 0 && totals.unprovable === 0 ? 0 : 1;

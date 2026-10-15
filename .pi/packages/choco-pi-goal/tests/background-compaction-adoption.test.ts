@@ -238,14 +238,13 @@ test(
         assert.equal(context.state(), "installed");
         assert.equal(context.probe.compactions, 1, "exactly one goal notification for adoption");
         assert.equal(context.probe.continuations, 1);
-        // Instructions are a background text-lane request too: the host
-        // compaction is cancelled and the focused checkpoint is adopted later.
-        await assert.rejects(
-          context.host.session.compact("host compaction with instructions"),
-          /Compaction cancelled/,
+        // Instructions are a background text-lane request too: compact() is
+        // taken over before any host compaction starts, and the focused
+        // checkpoint is adopted once ready while the session is idle.
+        assert.equal(
+          await context.host.session.compact("host compaction with instructions"),
+          undefined,
         );
-        await waitFor(() => context.state() === "ready", "focused candidate ready");
-        await context.host.session.prompt("NEXT-PROMPT");
         await waitFor(() => context.probe.compactions === 2, "focused adoption notifies once");
         assert.equal(context.probe.continuations, 2);
       } finally {

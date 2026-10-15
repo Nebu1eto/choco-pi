@@ -57,9 +57,11 @@ when a new user task or lifecycle generation supersedes their owner.
 
 Background compaction (`choco-pi-compaction`, off by default) adopts prepared
 checkpoints without running `PreCompact` or `PostCompact`; this includes a
-plain `/compact` that the feature defers to a background preparation. Host
-compactions the feature does not answer (and `/compact` with custom
-instructions) still run each hook once. No new hook event type exists.
+`/compact` or programmatic `compact()` (RPC, SDK, `ctx.compact()`) that the
+feature defers to a background preparation. The prepared checkpoint is adopted
+when the next prompt or turn end arrives (an idle session adopts it as soon as
+it is ready), still without either hook. Host compactions the feature does not
+answer still run each hook once. No new hook event type exists.
 
 - `src/extension.ts`: `session_before_compact` and `session_compact` first
   consult the compaction package's adoption signal
@@ -77,6 +79,10 @@ instructions) still run each hook once. No new hook event type exists.
   real hooks and compaction extensions and temporary HOME/agent dir; an
   idle-route adoption runs no hook despite its real host events, and a later
   host compaction runs PreCompact and PostCompact once each.
+  Updated when `choco-pi-compaction` began taking over an idle session's
+  `AgentSession.prototype.compact`: the deferred plain and instructed
+  `compact()` calls now resolve `undefined` instead of rejecting with
+  `Compaction cancelled`, and their adoption is still hook-free. Test-only.
 
 ## 2026-10-09 choco-pi patch: Pi SDK 1.2.0
 

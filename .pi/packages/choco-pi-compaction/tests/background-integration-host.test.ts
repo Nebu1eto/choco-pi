@@ -656,8 +656,17 @@ test(
       try {
         await rig.session.prompt("GO");
         assert.equal(stateOf(rig), "idle", "the threshold never started a preparation");
-        // The host compaction returns at once instead of blocking on the summarizer.
-        await assert.rejects(rig.session.compact(), /Compaction cancelled/);
+        const hostEvents: string[] = [];
+        const unsubscribe = rig.session.subscribe((event) => {
+          if (event.type === "compaction_start" || event.type === "compaction_end") {
+            hostEvents.push(event.type);
+          }
+        });
+        // The programmatic compact resolves at once instead of blocking on the summarizer.
+        assert.equal(await rig.session.compact(), undefined);
+        unsubscribe();
+        assert.deepEqual(hostEvents, [], "no host compaction started");
+        assert.equal(rig.aborts(), 0, "the agent was not aborted");
         assert.equal(stateOf(rig), "preparing", "the manual request runs in the background");
         assert.equal(rig.hostSummarizerCalls.length, 0, "the foreground summarizer never ran");
         assert.equal(rig.compactEvents.length, 0, "nothing was committed yet");
@@ -666,12 +675,10 @@ test(
           "the user is told the compaction continues",
         );
         // A second /compact during the same preparation attaches to it.
-        await assert.rejects(rig.session.compact(), /Compaction cancelled/);
+        assert.equal(await rig.session.compact(), undefined);
         assert.equal(rig.backgroundCalls(), 1, "no second paid preparation");
         summarizerGate.open();
-        await waitFor(() => stateOf(rig) === "ready", "candidate ready");
-        // Hook path: the checkpoint is adopted when the next prompt arrives, before it is sent.
-        await rig.session.prompt("NEXT-PROMPT");
+        // Nothing cancelled a host compaction, so the idle session adopts as soon as it is ready.
         await waitFor(() => stateOf(rig) === "installed", "installed candidate");
         const own = ownEntries(rig);
         assert.equal(own.length, 1, "the ready checkpoint was adopted without a prompt");
@@ -712,13 +719,10 @@ test(
       try {
         await rig.session.prompt("GO");
         assert.equal(stateOf(rig), "preparing", "the threshold started a preparation");
-        await assert.rejects(rig.session.compact(), /Compaction cancelled/);
+        assert.equal(await rig.session.compact(), undefined);
         assert.equal(rig.backgroundCalls(), 1, "the running preparation is reused");
         assert.equal(rig.hostSummarizerCalls.length, 0);
         summarizerGate.open();
-        await waitFor(() => stateOf(rig) === "ready", "candidate ready");
-        // Hook path: the checkpoint is adopted when the next prompt arrives, before it is sent.
-        await rig.session.prompt("NEXT-PROMPT");
         await waitFor(() => stateOf(rig) === "installed", "installed candidate");
         assert.equal(ownEntries(rig).length, 1);
         assert.deepEqual(
@@ -755,10 +759,7 @@ test(
       try {
         await rig.session.prompt("GO");
         assert.equal(getCoordinator(rig.ownerKey)?.status().state, "idle");
-        await assert.rejects(rig.session.compact(), /Compaction cancelled/);
-        await waitFor(() => stateOf(rig) === "ready", "candidate ready");
-        // Hook path: the checkpoint is adopted when the next prompt arrives, before it is sent.
-        await rig.session.prompt("NEXT-PROMPT");
+        assert.equal(await rig.session.compact(), undefined);
         await waitFor(() => stateOf(rig) === "installed", "installed candidate");
         assert.equal(rig.backgroundCalls(), 1, "the text lane prepared the checkpoint");
         assert.equal(rig.hostSummarizerCalls.length, 0);
@@ -970,42 +971,72 @@ test(
   },
 );
 
+/** The host's own compaction events, recorded until `stop` is called. */
+interface HostCompactionLog {
+  readonly events: string[];
+  stop(): void;
+}
+
+/** Record the host's own compaction events on `rig` until the returned stop is called. */
+function recordHostCompactions(rig: Rig): HostCompactionLog {
+  const events: string[] = [];
+  const stop = rig.session.subscribe((event) => {
+    if (event.type === "compaction_start" || event.type === "compaction_end") {
+      events.push(event.type);
+    }
+  });
+  return { events, stop };
+}
+
 test(
-  "the /compact-background command serves RPC clients: background when on, host compaction when off",
+  "a programmatic compact (RPC) with instructions continues in the background and resolves at once",
   { timeout: 20_000 },
   async () => {
     await withDir(async (dir) => {
       const summarizerGate = gate(false);
+      const notices: string[] = [];
       const rig = await createRig({
         dir,
         sidecar: MANUAL_ONLY_SIDECAR,
         summarizerGate,
+        firstExtensions: [recordNotices(notices)],
         respond: async (index) =>
           reply(`R${index}`, { usageInput: index === 0 ? HIGH_USAGE : 20_000 }),
       });
       try {
         await rig.session.prompt("GO");
-        const hostEvents: string[] = [];
-        const unsubscribe = rig.session.subscribe((event) => {
-          if (event.type === "compaction_start" || event.type === "compaction_end")
-            hostEvents.push(event.type);
-        });
-        await rig.session.prompt("/compact-background Focus on the audit", { source: "rpc" });
-        unsubscribe();
-        assert.deepEqual(hostEvents, [], "no host compaction while the feature serves the request");
+        const host = recordHostCompactions(rig);
+        assert.equal(await rig.session.compact("Focus on the audit"), undefined);
+        host.stop();
+        assert.deepEqual(host.events, [], "no host compaction while the feature serves it");
+        assert.equal(rig.aborts(), 0, "the agent was not aborted");
         assert.equal(stateOf(rig), "preparing");
         assert.equal(
           getCoordinator(rig.ownerKey)?.status().customInstructions,
           "Focus on the audit",
+          "the instructions reached the preparation",
         );
+        assert.ok(notices.some((notice) => notice.includes("continuing in the background")));
         summarizerGate.open();
         await waitFor(() => stateOf(rig) === "installed", "focused candidate installed");
         assert.equal(rig.hostSummarizerCalls.length, 0);
         assert.equal(ownEntries(rig).length, 1);
+        assert.ok(
+          rig.backgroundPrompts.some((prompt) =>
+            prompt.includes("Additional focus: Focus on the audit"),
+          ),
+        );
       } finally {
         await rig.dispose();
       }
     });
+  },
+);
+
+test(
+  "a programmatic compact runs the host's own compact when the feature is off",
+  { timeout: 20_000 },
+  async () => {
     await withDir(async (dir) => {
       const rig = await createRig({
         dir,
@@ -1014,7 +1045,11 @@ test(
       });
       try {
         await rig.session.prompt("GO");
-        await rig.session.prompt("/compact-background", { source: "rpc" });
+        const host = recordHostCompactions(rig);
+        const result = await rig.session.compact();
+        host.stop();
+        assert.ok(result, "the host returned its compaction result");
+        assert.deepEqual(host.events, ["compaction_start", "compaction_end"]);
         assert.equal(
           rig.hostSummarizerCalls.length,
           1,
@@ -1026,6 +1061,75 @@ test(
         );
         assert.equal(getCoordinator(rig.ownerKey), undefined, "no background coordinator");
         assert.equal(rig.backgroundCalls(), 0);
+      } finally {
+        await rig.dispose();
+      }
+    });
+  },
+);
+
+test(
+  "a programmatic compact on a busy session runs the host's own compact",
+  { timeout: 20_000 },
+  async () => {
+    await withDir(async (dir) => {
+      const turnGate = gate(false);
+      const started = gate(false);
+      const rig = await createRig({
+        dir,
+        sidecar: MANUAL_ONLY_SIDECAR,
+        respond: async (index) => {
+          if (index === 1) {
+            started.open();
+            await turnGate.opened;
+          }
+          return reply(`R${index}`, { usageInput: index === 0 ? HIGH_USAGE : 20_000 });
+        },
+      });
+      try {
+        await rig.session.prompt("GO");
+        const running = rig.session.prompt("BUSY").catch(() => undefined);
+        await started.opened;
+        assert.equal(rig.session.isIdle, false, "a run is active");
+        const host = recordHostCompactions(rig);
+        // The host's compact aborts the run; its hook still defers a plain request.
+        await assert.rejects(rig.session.compact(), /Compaction cancelled/);
+        host.stop();
+        assert.equal(host.events[0], "compaction_start", "the host compaction started");
+        assert.equal(rig.aborts(), 1, "the host aborted the run, as it always does");
+        turnGate.open();
+        await running;
+      } finally {
+        turnGate.open();
+        await rig.dispose();
+      }
+    });
+  },
+);
+
+test(
+  "a programmatic compact the feature declines (matching ready candidate) runs the host's own compact",
+  { timeout: 20_000 },
+  async () => {
+    await withDir(async (dir) => {
+      const summarizerGate = gate(false);
+      const rig = await createRig({
+        dir,
+        sidecar: ENABLED_SIDECAR,
+        summarizerGate,
+        respond: async (index) => reply(`R${index}`, { usageInput: index === 0 ? HIGH_USAGE : 1 }),
+      });
+      try {
+        await rig.session.prompt("GO");
+        summarizerGate.open();
+        await waitFor(() => stateOf(rig) === "ready", "ready candidate");
+        const host = recordHostCompactions(rig);
+        const result = await rig.session.compact();
+        host.stop();
+        assert.ok(result, "the host returned its compaction result");
+        assert.deepEqual(host.events, ["compaction_start", "compaction_end"]);
+        assert.equal(stateOf(rig), "installed", "the host hook adopted the ready candidate");
+        assert.equal(rig.hostSummarizerCalls.length, 0);
       } finally {
         await rig.dispose();
       }

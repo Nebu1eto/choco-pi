@@ -206,6 +206,11 @@ checkpoint at a `turn_end`/`agent_before_settle` boundary, which emits no
   real compaction extension. A boundary adoption, loaded in production order
   (goal first, no pre-existing slot), notifies once and a later host compaction
   once more; an idle-route adoption notifies once through its `session_compact`.
+  The later compaction carries instructions, which `choco-pi-compaction` now
+  takes over at `AgentSession.prototype.compact` (`compact()` resolves at
+  once, no host compaction starts) and adopts through the idle route; the test
+  asserts that resolution instead of the former `Compaction cancelled`
+  rejection. Test-only; goal behavior is unchanged.
 
 ## 2026-10-09 choco-pi patch: Pi SDK 1.2.0
 

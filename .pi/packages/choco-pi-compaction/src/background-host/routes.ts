@@ -145,7 +145,7 @@ export async function startManualPreparation(
   setStatus(owner.lastCtx, MANUAL_STATUS);
   tell(
     owner.lastCtx,
-    "continuing in the background; the context switches when it is ready",
+    "continuing in the background; the checkpoint is adopted when the next prompt or turn end arrives, or as soon as it is ready while idle",
     "info",
   );
   void followManual(rt, owner, { candidateId, serial, customInstructions }, lanes.slice(1));
