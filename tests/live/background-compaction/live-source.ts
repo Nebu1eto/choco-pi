@@ -114,6 +114,12 @@ export const LIVE_LUNA_MODEL: Model<"openai-codex-responses"> = {
  * store entry resolves to nothing before the extension loads; the launcher
  * registers this mirror of `registerSyntheticProvider`'s static fields first,
  * and the real provider extension re-registers over it when it loads.
+ *
+ * `hf:zai-org/GLM-5.3` mirrors the provider package's static catalog entry
+ * (`extensions/provider/models.ts`: 524,288 window, 65,536 output, $1.4/$4.4 per
+ * MTok, reasoning always on with `high`/`max` only) with the package's
+ * `applyDefaultCompat` defaults (`supportsDeveloperRole: false`,
+ * `maxTokensField: "max_tokens"`).
  */
 export const LIVE_SYNTHETIC_PROVIDER: ProviderConfig = {
   baseUrl: "https://api.synthetic.new/openai/v1",
@@ -133,6 +139,29 @@ export const LIVE_SYNTHETIC_PROVIDER: ProviderConfig = {
         off: null,
         minimal: null,
         low: "low",
+        medium: null,
+        high: "high",
+        xhigh: null,
+        max: "max",
+      },
+      compat: {
+        supportsDeveloperRole: false,
+        maxTokensField: "max_tokens",
+        supportsReasoningEffort: true,
+      },
+    },
+    {
+      id: "hf:zai-org/GLM-5.3",
+      name: "zai-org/GLM-5.3",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 1.4, output: 4.4, cacheRead: 0.26, cacheWrite: 0 },
+      contextWindow: 524_288,
+      maxTokens: 65_536,
+      thinkingLevelMap: {
+        off: null,
+        minimal: null,
+        low: null,
         medium: null,
         high: "high",
         xhigh: null,

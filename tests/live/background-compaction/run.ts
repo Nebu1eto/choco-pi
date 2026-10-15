@@ -17,7 +17,10 @@ import { scenario as childSession } from "./scenarios/child-session-adoption.ts"
 import { scenario as contextWindowPresets } from "./scenarios/context-window-presets.ts";
 import { scenario as arbitration } from "./scenarios/host-compaction-arbitration.ts";
 import { scenario as idleInput } from "./scenarios/idle-input-adoption.ts";
-import { scenario as manualBackground } from "./scenarios/manual-background-compaction.ts";
+import {
+  largeScenario as manualBackgroundLarge,
+  scenario as manualBackground,
+} from "./scenarios/manual-background-compaction.ts";
 import { PENDING_SCENARIOS } from "./scenarios/pending.ts";
 import {
   PHASE_RECORD,
@@ -34,6 +37,7 @@ const SCENARIOS: readonly Scenario[] = [
   restart,
   arbitration,
   manualBackground,
+  manualBackgroundLarge,
   childSession,
   anthropicForeground,
   anthropicForegroundAuto,
@@ -177,6 +181,7 @@ else {
     profile: "worktree",
     settings: scenario.settings,
     seedBytes: scenario.seedBytes,
+    seedToolResults: scenario.seedToolResults,
     seedNamespace: scenario.name.toUpperCase(),
     keepRecentTokens: scenario.keepRecentTokens,
     hostCompaction: scenario.hostCompaction,

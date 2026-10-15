@@ -19,7 +19,18 @@ import {
   type CheckName,
 } from "./live/background-compaction/checks.ts";
 import { launch } from "./live/background-compaction/launch.ts";
-import { LiveLedger, usageFromSse } from "./live/background-compaction/live-ledger.ts";
+import { seedToolResultText } from "./live/background-compaction/host-seed.ts";
+import {
+  LiveLedger,
+  usageFromBody,
+  usageFromSse,
+} from "./live/background-compaction/live-ledger.ts";
+import { LIVE_SYNTHETIC_PROVIDER } from "./live/background-compaction/live-source.ts";
+import { MANUAL_LARGE_SEED } from "./live/background-compaction/scenarios/manual-background-compaction.ts";
+import {
+  PRE_FIX_MAX_INPUT_TOKENS,
+  RENDERED_TOOL_RESULT_CHARS,
+} from "./live/background-compaction/scenarios/manual-compaction-verdicts.ts";
 import { containsText, mapPayload } from "./live/background-compaction/transport-capture.ts";
 
 const scratchRoot = "/tmp/choco-pi/01a12ed9-8477-76d1-b5cd-928b54b5cd15/harness-tests";
@@ -145,6 +156,101 @@ test("live runs are opt-in and the ledger counts real SSE usage, stopping runawa
   busy.observe(busy.reserve("summary", 1), new Response("", { status: 529 }));
   await busy.drain();
   assert.throws(() => busy.reserve("summary", 1), /provider-unavailable/u);
+});
+
+/** Fake OpenAI-compatible chat-completions stream as Synthetic sends it (include_usage on). */
+function openAiSse(usage: string | null): string {
+  const chunks = [
+    '{"id":"c1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"HARNESS"},"finish_reason":null}],"usage":null}',
+    '{"id":"c1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+  ];
+  if (usage !== null)
+    chunks.push(`{"id":"c1","object":"chat.completion.chunk","choices":[],"usage":${usage}}`);
+  return [...chunks.map((chunk) => `data: ${chunk}`), "data: [DONE]"].join("\n\n");
+}
+
+test("the ledger counts OpenAI-compatible (Synthetic) usage from SSE and JSON bodies", async () => {
+  const final =
+    '{"prompt_tokens":1200,"completion_tokens":30,"total_tokens":1230,"prompt_tokens_details":{"cached_tokens":200},"completion_tokens_details":{"reasoning_tokens":20}}';
+  assert.deepEqual(usageFromSse(openAiSse(final)), {
+    input: 1000,
+    cacheRead: 200,
+    cacheWrite: 0,
+    output: 30,
+    stopReason: "stop",
+  });
+  // Kimi-style top-level cached_tokens.
+  const kimi = usageFromSse(
+    openAiSse('{"prompt_tokens":50,"completion_tokens":5,"cached_tokens":40}'),
+  );
+  assert.equal(kimi?.cacheRead, 40);
+  assert.equal(kimi?.input, 10);
+  assert.equal(usageFromSse(openAiSse(null)), undefined, "a stream without usage stays unreported");
+  const json = usageFromBody(
+    JSON.stringify({
+      id: "c2",
+      object: "chat.completion",
+      choices: [
+        { index: 0, message: { role: "assistant", content: "x" }, finish_reason: "length" },
+      ],
+      usage: { prompt_tokens: 70, completion_tokens: 7 },
+    }),
+  );
+  assert.deepEqual(json, {
+    input: 70,
+    cacheRead: 0,
+    cacheWrite: 0,
+    output: 7,
+    stopReason: "length",
+  });
+  assert.equal(usageFromSse("data: {not json\n\ndata: [DONE]"), undefined, "malformed lines skip");
+
+  const ledger = new LiveLedger(new Recorder(), {
+    requests: 3,
+    inputTokens: 10_000,
+    outputTokens: 100,
+  });
+  const sse = { headers: { "content-type": "text/event-stream" } };
+  ledger.observe(ledger.reserve("other", 500), new Response(openAiSse(final), sse));
+  ledger.observe(ledger.reserve("other", 500), new Response(openAiSse(null), sse));
+  await ledger.drain();
+  const report = ledger.report();
+  assert.equal(report.inputTokens, 1200, "cache reads are billed input");
+  assert.equal(report.outputTokens, 30);
+  assert.equal(report.unreported, 1);
+  // Guard: 1,200 reported + 500 estimated (unreported) + 100,000 > the 100,000 limit.
+  assert.throws(() => ledger.reserve("other", 100_000), /runaway-guard/u);
+  const limited = new LiveLedger(new Recorder(), {
+    requests: 5,
+    inputTokens: 100,
+    outputTokens: 10,
+  });
+  const error = JSON.stringify({ error: { message: "slow down", code: "rate_limit_exceeded" } });
+  limited.observe(limited.reserve("other", 1), new Response(error, { status: 400 }));
+  await limited.drain();
+  assert.throws(() => limited.reserve("other", 1), /provider-unavailable \(rate_limit_exceeded\)/u);
+});
+
+test("GLM-5.3 is approved with a mirror and the large seed exceeds the pre-fix gate", () => {
+  const env = { CHOCO_PI_LIVE_E2E: "1" };
+  for (const model of ["synthetic/hf:zai-org/GLM-5.3", "synthetic/hf:moonshotai/Kimi-K3"]) {
+    assert.equal(requireLiveRun("manual-background-compaction", model, env).requests, 8);
+    assert.ok(requireLiveRun("manual-background-compaction-large", model, env).inputTokens > 0);
+  }
+  const glm = LIVE_SYNTHETIC_PROVIDER.models?.find((model) => model.id === "hf:zai-org/GLM-5.3");
+  assert.ok(glm !== undefined && "contextWindow" in glm && "maxTokens" in glm);
+  assert.equal(glm.contextWindow, 524_288);
+  assert.equal(glm.maxTokens, 65_536);
+  const first = seedToolResultText("NS", 0, MANUAL_LARGE_SEED.chars);
+  assert.equal(first, seedToolResultText("NS", 0, MANUAL_LARGE_SEED.chars), "deterministic");
+  assert.notEqual(first, seedToolResultText("NS", 1, MANUAL_LARGE_SEED.chars), "unique");
+  assert.equal(first.length, MANUAL_LARGE_SEED.chars);
+  assert.ok(MANUAL_LARGE_SEED.chars > RENDERED_TOOL_RESULT_CHARS * 5);
+  assert.deepEqual(artifactLeaks(first), [], "seeded output is redaction-safe");
+  assert.ok(new Set(first.split(/\s+/u)).size > 30, "varied prose, not one repeated token");
+  // Tool output alone already puts the raw chars/4 estimate past the old flat gate.
+  const rawTokens = (MANUAL_LARGE_SEED.count * MANUAL_LARGE_SEED.chars) / 4;
+  assert.ok(rawTokens > PRE_FIX_MAX_INPUT_TOKENS, `raw ${rawTokens} tokens`);
 });
 
 test("marker mapping follows wire order and refuses ambiguous markers", () => {

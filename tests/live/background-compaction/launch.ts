@@ -60,7 +60,7 @@ import {
   readLiveCredential,
 } from "./live-source.ts";
 import { liveFetch, requestOrigin } from "./live-transport.ts";
-import { seedPrefix } from "./host-seed.ts";
+import { seedPrefix, type SeedToolResults } from "./host-seed.ts";
 import { HostState, type ForegroundObserver, type ResponseOverride } from "./host-state.ts";
 import {
   installAnthropicFakeFactory,
@@ -82,6 +82,8 @@ export interface LaunchOptions {
   profile?: "boundary-only" | "worktree";
   cycles?: number;
   seedBytes?: number;
+  /** Seeded step-tool exchanges (count x chars of tool output) before the first turn. */
+  seedToolResults?: SeedToolResults;
   seedNamespace?: string;
   /** Host compaction keepRecentTokens, which production reads for the snapshot cut (default 1). */
   keepRecentTokens?: number;
@@ -156,6 +158,7 @@ function copyOptions(input: LaunchOptions): LaunchOptions {
     offlineModel:
       input.offlineModel === undefined ? undefined : structuredClone(input.offlineModel),
     live: input.live === undefined ? undefined : { ...input.live },
+    seedToolResults: input.seedToolResults === undefined ? undefined : { ...input.seedToolResults },
   };
 }
 
@@ -753,6 +756,7 @@ export async function launch(input: LaunchOptions) {
         ...seedPrefix(manager, {
           namespace: options.seedNamespace,
           bytes: options.seedBytes,
+          toolResults: options.seedToolResults,
           model,
         }),
       );

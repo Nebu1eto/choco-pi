@@ -49,12 +49,60 @@ const StreamErrorSchema = Type.Object(
 type Counts = Static<typeof CountsSchema>;
 const SseEventSchema = Type.Union([StartSchema, DeltaSchema, StreamErrorSchema]);
 type SseEvent = Static<typeof SseEventSchema>;
-const ErrorBodySchema = Type.Object(
+/** Anthropic errors carry `type`; OpenAI-compatible errors carry `type` and/or `code`. */
+const ErrorObjectSchema = Type.Object(
   {
-    error: Type.Object(
-      { type: Type.String(), message: Type.Optional(Type.String()) },
-      { additionalProperties: true },
+    type: Type.Optional(Type.String()),
+    code: Type.Optional(Type.Union([Type.String(), Type.Number(), Type.Null()])),
+    message: Type.Optional(Type.String()),
+  },
+  { additionalProperties: true },
+);
+const ErrorBodySchema = Type.Object({ error: ErrorObjectSchema }, { additionalProperties: true });
+
+/**
+ * OpenAI-compatible chat-completions usage (Synthetic). pi-ai requests it with
+ * `stream_options: { include_usage: true }`; it arrives on the final chunk
+ * (often with `choices: []`), or on a non-stream JSON body. Cache-read counts
+ * sit in `prompt_tokens_details.cached_tokens`, `prompt_cache_hit_tokens` or a
+ * top-level `cached_tokens` depending on the upstream (pi-ai parseChunkUsage).
+ */
+const OpenAIUsageSchema = Type.Object(
+  {
+    prompt_tokens: Type.Integer({ minimum: 0 }),
+    completion_tokens: Count,
+    cached_tokens: Count,
+    prompt_cache_hit_tokens: Count,
+    prompt_tokens_details: Type.Optional(
+      Type.Union([
+        Type.Object(
+          { cached_tokens: Count, cache_write_tokens: Count },
+          { additionalProperties: true },
+        ),
+        Type.Null(),
+      ]),
     ),
+  },
+  { additionalProperties: true },
+);
+const OpenAIChoiceSchema = Type.Object(
+  { finish_reason: Type.Optional(Type.Union([Type.String(), Type.Null()])) },
+  { additionalProperties: true },
+);
+/** One chat-completions chunk or non-stream body; `usage` is null until the final chunk. */
+const OpenAIChunkSchema = Type.Object(
+  {
+    choices: Type.Optional(Type.Array(OpenAIChoiceSchema)),
+    usage: Type.Optional(Type.Union([OpenAIUsageSchema, Type.Null()])),
+  },
+  { additionalProperties: true },
+);
+/** Anthropic non-stream message body. */
+const AnthropicBodySchema = Type.Object(
+  {
+    type: Type.Literal("message"),
+    usage: CountsSchema,
+    stop_reason: Type.Optional(Type.Union([Type.String(), Type.Null()])),
   },
   { additionalProperties: true },
 );
@@ -111,7 +159,89 @@ function applyDelta(usage: Usage, data: Static<typeof DeltaSchema>): void {
   }));
 }
 
-/** Anthropic SSE usage: message_start counts, overridden by message_delta counts. */
+function errorCode(error: Static<typeof ErrorObjectSchema>): string {
+  if (error.type !== undefined) return error.type;
+  if (error.code !== undefined && error.code !== null) return String(error.code);
+  return "error";
+}
+
+/** Replaces the counts with one OpenAI-compatible usage object (input excludes cache reads/writes). */
+function applyOpenAIUsage(usage: Usage, raw: Static<typeof OpenAIUsageSchema>): void {
+  const cacheRead =
+    raw.prompt_tokens_details?.cached_tokens ??
+    raw.prompt_cache_hit_tokens ??
+    raw.cached_tokens ??
+    0;
+  const cacheWrite = raw.prompt_tokens_details?.cache_write_tokens ?? 0;
+  usage.input = Math.max(0, raw.prompt_tokens - cacheRead - cacheWrite);
+  usage.cacheRead = cacheRead;
+  usage.cacheWrite = cacheWrite;
+  // completion_tokens already includes reasoning tokens.
+  usage.output = raw.completion_tokens ?? 0;
+}
+
+/** One parsed wire object: an Anthropic event or message, an OpenAI chunk, or an error. */
+type WireObject =
+  | { readonly kind: "anthropic-event"; readonly event: SseEvent }
+  | { readonly kind: "anthropic-body"; readonly body: Static<typeof AnthropicBodySchema> }
+  | { readonly kind: "error"; readonly error: Static<typeof ErrorObjectSchema> }
+  | { readonly kind: "openai"; readonly chunk: Static<typeof OpenAIChunkSchema> };
+
+/** Parses one JSON text at the I/O boundary; undefined for malformed or unrecognized input. */
+function parseWireObject(text: string): WireObject | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  // First: Anthropic error events/bodies (`type: "error"`) and OpenAI error bodies alike.
+  if (Value.Check(ErrorBodySchema, parsed)) return { kind: "error", error: parsed.error };
+  if (Value.Check(SseEventSchema, parsed)) return { kind: "anthropic-event", event: parsed };
+  if (Value.Check(AnthropicBodySchema, parsed)) return { kind: "anthropic-body", body: parsed };
+  if (Value.Check(OpenAIChunkSchema, parsed)) return { kind: "openai", chunk: parsed };
+  return undefined;
+}
+
+/**
+ * Applies one OpenAI-compatible chunk. Returns true only when it carried usage:
+ * a stream whose chunks never report usage stays unreported, so the ledger
+ * never mistakes a blind stream for a zero-token one.
+ */
+function applyOpenAIChunk(usage: Usage, chunk: Static<typeof OpenAIChunkSchema>): boolean {
+  for (const choice of chunk.choices ?? [])
+    if (choice.finish_reason !== undefined && choice.finish_reason !== null)
+      usage.stopReason = choice.finish_reason;
+  if (chunk.usage === undefined || chunk.usage === null) return false;
+  applyOpenAIUsage(usage, chunk.usage);
+  return true;
+}
+
+/** Applies one wire object; true when it reported usage, an error or an Anthropic event. */
+function applyWireObject(usage: Usage, wire: WireObject): boolean {
+  switch (wire.kind) {
+    case "anthropic-event":
+      applyEvent(usage, wire.event);
+      return true;
+    case "anthropic-body":
+      merge(usage, wire.body.usage);
+      if (wire.body.stop_reason !== undefined && wire.body.stop_reason !== null)
+        usage.stopReason = wire.body.stop_reason;
+      return true;
+    case "error":
+      usage.streamError = errorCode(wire.error);
+      return true;
+    case "openai":
+      return applyOpenAIChunk(usage, wire.chunk);
+  }
+}
+
+/**
+ * Streamed usage from either wire format: Anthropic events (message_start
+ * counts, overridden by message_delta counts) or OpenAI-compatible
+ * chat-completions chunks (usage on the final chunk). Unparsable lines and
+ * `[DONE]` are skipped.
+ */
 export function usageFromSse(text: string): Usage | undefined {
   const usage: Usage = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
   let seen = false;
@@ -119,12 +249,20 @@ export function usageFromSse(text: string): Usage | undefined {
     if (!line.startsWith("data:")) continue;
     const raw = line.slice(5).trim();
     if (!raw.startsWith("{")) continue;
-    const event: unknown = JSON.parse(raw);
-    if (!Value.Check(SseEventSchema, event)) continue;
-    applyEvent(usage, event);
-    seen = true;
+    const wire = parseWireObject(raw);
+    if (wire !== undefined && wire.kind !== "anthropic-body" && applyWireObject(usage, wire))
+      seen = true;
   }
   return seen ? usage : undefined;
+}
+
+/** Usage from a response body: SSE (either format) or a non-stream JSON message/completion. */
+export function usageFromBody(text: string): Usage | undefined {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("{")) return usageFromSse(text);
+  const wire = parseWireObject(trimmed);
+  const usage: Usage = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
+  return wire !== undefined && applyWireObject(usage, wire) ? usage : undefined;
 }
 
 /** Every token the provider processed: iterations when reported, else top-level counts. */
@@ -146,7 +284,12 @@ interface LedgerEntry {
 }
 
 const UNAVAILABLE_STATUS = new Set([429, 529]);
-const UNAVAILABLE_STREAM_ERRORS = new Set(["overloaded_error", "rate_limit_error"]);
+const UNAVAILABLE_STREAM_ERRORS = new Set([
+  "overloaded_error",
+  "rate_limit_error",
+  // OpenAI-compatible spelling.
+  "rate_limit_exceeded",
+]);
 
 /**
  * Per-request real-usage ledger with the runaway safety stop. Not a tuning cap:
@@ -195,7 +338,7 @@ export class LiveLedger {
       .text()
       .then((text) =>
         response.ok
-          ? this.#settle(entry, usageFromSse(text), onUsage)
+          ? this.#settle(entry, usageFromBody(text), onUsage)
           : this.#rejected(entry, text),
       )
       .catch(() => {
@@ -243,14 +386,15 @@ export class LiveLedger {
   }
   /** Provider error bodies carry no credential; type and a bounded message are recorded. */
   #rejected(entry: LedgerEntry, text: string): void {
-    const parsed: unknown = text.trim().startsWith("{") ? JSON.parse(text) : undefined;
-    const error = Value.Check(ErrorBodySchema, parsed) ? parsed.error : undefined;
-    if (error && UNAVAILABLE_STREAM_ERRORS.has(error.type)) this.#markUnavailable(error.type);
+    const wire = text.trim().startsWith("{") ? parseWireObject(text) : undefined;
+    const error = wire?.kind === "error" ? wire.error : undefined;
+    const type = error === undefined ? "unparsed" : errorCode(error);
+    if (UNAVAILABLE_STREAM_ERRORS.has(type)) this.#markUnavailable(type);
     this.#recorder.record("live-error", {
       id: entry.id,
       kind: entry.kind,
       status: entry.status ?? null,
-      type: error?.type ?? "unparsed",
+      type,
       message: (error?.message ?? "").slice(0, ERROR_MESSAGE_LIMIT),
     });
   }

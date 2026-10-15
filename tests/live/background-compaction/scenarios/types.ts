@@ -3,6 +3,7 @@ import type { Model } from "@earendil-works/pi-ai";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import type { CheckEvidence, ObservedCheck } from "../checks.ts";
 import type { launch } from "../launch.ts";
+import type { SeedToolResults } from "../host-seed.ts";
 export type Host = Awaited<ReturnType<typeof launch>>;
 
 /** A scenario the offline (or approved live) harness drives end to end. */
@@ -11,6 +12,8 @@ export interface Scenario {
   description: string;
   settings: Partial<BackgroundCompactionSettings>;
   seedBytes?: number;
+  /** Seeded step-tool exchanges with large results, after the padded prefix. */
+  seedToolResults?: SeedToolResults;
   /** Host compaction keepRecentTokens; production derives the snapshot cut from it. */
   keepRecentTokens?: number;
   /** Enable Pi's own compaction for this scenario (host overflow recovery). */

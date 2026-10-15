@@ -1,8 +1,8 @@
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import type { SessionEntry, SessionManager } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { assistantMessage } from "./fake-sse.ts";
+import { assistantMessage, STEP_TOOL } from "./fake-sse.ts";
 import type { EntryMarker } from "./transport-capture.ts";
 
 /**
@@ -62,10 +62,129 @@ function addEntryTexts(list: EntryMarker[], entry: SessionEntry): void {
     if (!isKnown(list, entry, text)) list.push({ entryId: entry.id, text });
 }
 
+/** Seeded tool exchanges: `count` step calls, each answered by a `chars`-long result. */
+export interface SeedToolResults {
+  readonly count: number;
+  readonly chars: number;
+}
+
 export interface SeedOptions {
   readonly namespace?: string;
   readonly bytes?: number;
+  readonly toolResults?: SeedToolResults;
   readonly model: Model<Api>;
+}
+
+/**
+ * Plain English vocabulary for seeded tool output: realistic tokenization
+ * (roughly one token per word) and nothing the artifact redactor treats as a
+ * credential (no `sk-` words, no `Bearer`, no key blocks).
+ */
+const SEED_WORDS = [
+  "the",
+  "build",
+  "step",
+  "compiled",
+  "module",
+  "and",
+  "wrote",
+  "a",
+  "cache",
+  "entry",
+  "for",
+  "each",
+  "source",
+  "file",
+  "after",
+  "checking",
+  "its",
+  "imports",
+  "against",
+  "lock",
+  "manifest",
+  "while",
+  "reporter",
+  "counted",
+  "warnings",
+  "in",
+  "parser",
+  "output",
+  "table",
+  "row",
+  "value",
+  "changed",
+  "between",
+  "runs",
+  "so",
+  "index",
+  "was",
+  "rebuilt",
+  "from",
+  "scratch",
+];
+const WORDS_PER_LINE = 14;
+
+/** Deterministic tool output of exactly `chars` characters, headed by a unique marker line. */
+export function seedToolResultText(namespace: string, index: number, chars: number): string {
+  const header = `HARNESS-${namespace}-SEED-RESULT-${String(index).padStart(3, "0")}\n`;
+  const parts = [header];
+  let length = header.length;
+  // 32-bit linear congruential sequence seeded by the index: same text every run.
+  let state = Math.imul(index + 1, 0x9e_37_79_b1) >>> 0;
+  let line = 0;
+  while (length < chars) {
+    const words: string[] = [`line ${index}.${line}:`];
+    for (let word = 0; word < WORDS_PER_LINE; word++) {
+      state = (Math.imul(state, 1_664_525) + 1_013_904_223) >>> 0;
+      words.push(SEED_WORDS[(state >>> 16) % SEED_WORDS.length] ?? "the");
+    }
+    const text = `${words.join(" ")}.\n`;
+    parts.push(text);
+    length += text.length;
+    line++;
+  }
+  return parts.join("").slice(0, chars);
+}
+
+/** The step call a seeded result answers (history only; the harness tool is declared). */
+function seedToolCall(namespace: string, index: number, model: Model<Api>): AssistantMessage {
+  const base = assistantMessage("", model);
+  return {
+    ...base,
+    content: [
+      {
+        type: "toolCall",
+        id: `seed_call_${index}`,
+        name: STEP_TOOL,
+        arguments: { label: `HARNESS-${namespace}-SEED-STEP-${index}` },
+      },
+    ],
+    stopReason: "toolUse",
+  };
+}
+
+function seedToolExchanges(
+  manager: SessionManager,
+  namespace: string,
+  options: SeedOptions,
+): EntryMarker[] {
+  const spec = options.toolResults;
+  if (!spec) return [];
+  const markers: EntryMarker[] = [];
+  for (let index = 0; index < spec.count; index++) {
+    manager.appendMessage(seedToolCall(namespace, index, options.model));
+    const text = seedToolResultText(namespace, index, spec.chars);
+    const entryId = manager.appendMessage({
+      role: "toolResult",
+      toolCallId: `seed_call_${index}`,
+      toolName: STEP_TOOL,
+      content: [{ type: "text", text }],
+      isError: false,
+      timestamp: Date.now(),
+    });
+    markers.push({ entryId, text });
+  }
+  return markers;
 }
 
 /** Seeds the frozen prefix through the real SessionManager; returns markers in branch order. */
@@ -83,8 +202,9 @@ export function seedPrefix(manager: SessionManager, options: SeedOptions): Entry
     { entryId: user(a), text: a },
     { entryId: manager.appendMessage(assistantMessage(b + padding, options.model)), text: b },
     { entryId: user(c), text: c },
+    ...seedToolExchanges(manager, namespace, options),
   ];
-  if (!options.bytes) return seeded;
+  if (!options.bytes && !options.toolResults) return seeded;
   const complete = `HARNESS-${namespace}-SEED-COMPLETE`;
   seeded.push({
     entryId: manager.appendMessage(assistantMessage(complete, options.model)),

@@ -5,6 +5,14 @@ import { Value } from "typebox/value";
 import type { CompactCommandHost } from "../../../../.pi/packages/choco-pi-compaction/src/background-host/host-command.ts";
 import { statusArtifact, type ArtifactInput } from "../artifacts.ts";
 import type { CheckEvidence, Observation } from "../checks.ts";
+import type { SeedToolResults } from "../host-seed.ts";
+import {
+  candidateRecordObservation,
+  largePrefixObservations,
+  liveUsageObservations,
+  regressionFailureObservation,
+  regressionNoticeObservation,
+} from "./manual-compaction-verdicts.ts";
 import { replyPrompt } from "./prompts.ts";
 import { textAdoptionEvidence } from "./text-adoption-checks.ts";
 import type { Host, Scenario } from "./types.ts";
@@ -15,8 +23,10 @@ import type { Host, Scenario } from "./types.ts";
  * 1. the typed TUI command, which the compaction extension takes over at
  *    `InteractiveMode.prototype.handleCompactCommand` (no host compaction, so no
  *    "Compaction cancelled" line and no agent abort), and
- * 2. a programmatic `session.compact()` (RPC/SDK), which reaches the
- *    `session_before_compact` hook and is cancelled there.
+ * 2. a programmatic `session.compact()` (RPC/SDK), which the extension's
+ *    `AgentSession.prototype.compact` bridge takes over while idle: it resolves
+ *    at once with no host compaction and no rejection (since 8003a763; it was
+ *    cancelled in `session_before_compact` before).
  *
  * Both must leave a committed checkpoint that the next foreground turn carries.
  */
@@ -305,13 +315,13 @@ async function programmaticCompact(host: Host): Promise<Observation[]> {
     {
       actual: { hostEvents, rejection, state: afterCall },
       expected: {
-        hostEvents: ["compaction_start", "compaction_end"],
-        rejection: "Compaction cancelled",
+        hostEvents: [],
+        rejection: "",
         state: afterCall === "failed" ? "failed" : "preparing",
       },
       evidenceRefs: [callRef],
       description:
-        "session.compact() was cancelled by the hook and a background preparation started",
+        "session.compact() resolved at once with no host compaction and a background preparation started",
     },
     {
       actual: {
@@ -358,7 +368,7 @@ async function reloadedCompact(host: Host): Promise<Observation[]> {
   ];
 }
 
-async function runManual(host: Host): Promise<CheckEvidence> {
+async function runManual(host: Host, seed: SeedToolResults | undefined): Promise<CheckEvidence> {
   await nextTurn(host, TURN_1, "HARNESS-MANUAL-ACK-1", "the first turn");
   const typed = await typedCompact(host);
   const programmatic = await programmaticCompact(host);
@@ -383,29 +393,63 @@ async function runManual(host: Host): Promise<CheckEvidence> {
     ...programmatic,
     ...reloaded,
     delivered,
+    regressionNoticeObservation(host),
+    regressionFailureObservation(host),
+    candidateRecordObservation(host),
+    ...(seed === undefined ? [] : largePrefixObservations(host, seed)),
+    ...(await liveUsageObservations(host)),
   ];
   return result;
 }
 
-export const scenario: Scenario = {
-  name: "manual-background-compaction",
-  description:
-    "Typed /compact (TUI bridge) and session.compact() (hook) both continue in the background",
-  // prepareAt 0.99: only the manual requests start a preparation. Every native
-  // lane is on, as the vendor rows derive them in production: a Codex-owned
-  // model has no background lane at all when codexNative is off.
-  settings: {
-    enabled: true,
-    text: true,
-    codexNative: true,
-    anthropicNative: true,
-    minReductionTokens: 0,
-    prepareAt: 0.99,
-  },
-  seedBytes: 20000,
-  hostCompaction: true,
-  providerOwnedTransport: true,
-  checks: ["manual-background-compaction", "consumers-notified-once"],
-  markers: [TURN_1, TURN_2, TURN_3, TURN_4, TURN_5],
-  execute: runManual,
-};
+/**
+ * Large seed: 40 step results of 22,000 chars (880,000 chars) after the
+ * 3 x 20,000-char padded prefix, a raw chars/4 estimate near 235,000 tokens.
+ * The pre-fix gate compared that raw figure with a flat 200,000 and refused
+ * the cut as `oversized`; the rendered summary prompt cuts each result to
+ * 2,000 chars (~140,000 chars in all), which fits every subject's window.
+ */
+export const MANUAL_LARGE_SEED: SeedToolResults = { count: 40, chars: 22_000 };
+const SEED_BYTES = 20_000;
+
+function manualScenario(
+  name: string,
+  description: string,
+  seed: SeedToolResults | undefined,
+): Scenario {
+  const result: Scenario = {
+    name,
+    description,
+    // prepareAt 0.99: only the manual requests start a preparation. Every native
+    // lane is on, as the vendor rows derive them in production: a Codex-owned
+    // model has no background lane at all when codexNative is off.
+    settings: {
+      enabled: true,
+      text: true,
+      codexNative: true,
+      anthropicNative: true,
+      minReductionTokens: 0,
+      prepareAt: 0.99,
+    },
+    seedBytes: SEED_BYTES,
+    hostCompaction: true,
+    providerOwnedTransport: true,
+    checks: ["manual-background-compaction", "consumers-notified-once"],
+    markers: [TURN_1, TURN_2, TURN_3, TURN_4, TURN_5],
+    execute: (host) => runManual(host, seed),
+  };
+  if (seed !== undefined) result.seedToolResults = { ...seed };
+  return result;
+}
+
+export const scenario: Scenario = manualScenario(
+  "manual-background-compaction",
+  "Typed /compact (TUI bridge) and session.compact() (hook) both continue in the background",
+  undefined,
+);
+
+export const largeScenario: Scenario = manualScenario(
+  "manual-background-compaction-large",
+  "The manual flow over a prefix whose raw estimate exceeds the pre-fix flat 200,000-token gate",
+  MANUAL_LARGE_SEED,
+);
