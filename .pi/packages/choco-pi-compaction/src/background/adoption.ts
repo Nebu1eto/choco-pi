@@ -45,10 +45,22 @@ export function adoptionDraft(
   };
 }
 
-/** Delivery IDs are marked before invoking user code, including throws and late callbacks. */
+/** Delivered consumer IDs per adoption ID; shareable across coordinator instances of one owner. */
+export type DeliveredAdoptions = Map<string, Set<string>>;
+
+/**
+ * Delivery IDs are marked before invoking user code, including throws and
+ * late callbacks. A caller that replaces the coordinator in-process (reload)
+ * passes its `delivered` ledger on so recovery of the already-committed record
+ * does not deliver the same adoption to re-registered consumers again.
+ */
 export class AdoptionDelivery {
-  private readonly delivered = new Map<string, Set<string>>();
+  private readonly delivered: DeliveredAdoptions;
   readonly associations = new Map<string, string>();
+
+  constructor(delivered: DeliveredAdoptions = new Map()) {
+    this.delivered = delivered;
+  }
 
   async deliver(
     adoption: Adoption,

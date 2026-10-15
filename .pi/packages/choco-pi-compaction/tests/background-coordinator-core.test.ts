@@ -96,6 +96,7 @@ function fixture(
     ownerKey?: string;
     staleError?: Error;
     settings?: Partial<BackgroundCompactionSettings>;
+    delivered?: Map<string, Set<string>>;
   } = {},
 ) {
   const clock = options.clock ?? new Clock();
@@ -175,6 +176,7 @@ function fixture(
     },
     isStaleContextError: (cause) =>
       options.staleError !== undefined && cause === options.staleError,
+    delivered: options.delivered,
     settings: {
       ...DEFAULT_BACKGROUND_COMPACTION_SETTINGS,
       enabled: true,
@@ -787,6 +789,35 @@ test("reload after a committed candidate reconstructs installation and delivers 
   assert.equal(consumer.adoptions.length, 1);
   assert.equal(await after.coordinator.recover([record]), true);
   assert.equal(consumer.adoptions.length, 1);
+  after.coordinator.dispose();
+});
+
+test("an in-process reload sharing the delivery ledger does not redeliver the committed adoption", async () => {
+  const delivered = new Map<string, Set<string>>();
+  const before = fixture({ delivered });
+  const relay = new FakeConsumer();
+  before.coordinator.registerConsumer(relay);
+  await ready(before);
+  before.appendSuffix();
+  await before.coordinator.arbitrateHostCompaction();
+  before.commit();
+  await before.coordinator.reconcileCommit();
+  assert.equal(relay.adoptions.length, 1);
+  const record = before.sink.records[0];
+  assert.ok(record);
+  const branch = structuredClone(before.state.entries);
+  const { committed, latest } = before.state;
+  before.coordinator.dispose();
+  // Reload: a new coordinator generation, the same consumer ID re-registered.
+  const after = fixture({ generation: 2, delivered });
+  after.state.entries = branch;
+  after.state.committed = committed;
+  after.state.latest = latest;
+  const reloadedRelay = new FakeConsumer();
+  after.coordinator.registerConsumer(reloadedRelay);
+  assert.equal(await after.coordinator.recover([record]), true);
+  assert.equal(after.coordinator.status().state, "installed");
+  assert.equal(reloadedRelay.adoptions.length, 0, "already delivered in this process");
   after.coordinator.dispose();
 });
 

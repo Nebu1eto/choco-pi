@@ -365,11 +365,7 @@ export const scenario: Scenario = {
   seedBytes: 20000,
   hostCompaction: true,
   providerOwnedTransport: true,
-  // consumers-notified-once is not required: an in-process reload re-delivers
-  // the last committed adoption to the re-registered relay consumer (recovery
-  // re-installs it under the same adoption ID). Pre-existing host behavior,
-  // visible in the artifact, outside this scenario's claim.
-  checks: ["manual-background-compaction"],
+  checks: ["manual-background-compaction", "consumers-notified-once"],
   markers: [TURN_1, TURN_2, TURN_3, TURN_4, TURN_5],
   execute: runManual,
 };

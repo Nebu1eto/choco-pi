@@ -19,6 +19,7 @@ import {
   type SnapshotContext,
 } from "../background/coordinator.ts";
 import { isBackendEnabled } from "../background/settings.ts";
+import { deliveredAdoptionsFor } from "../background/registry.ts";
 import {
   findPrefixInvalidation,
   freezeSnapshot,
@@ -126,6 +127,7 @@ export async function createOwnerCore(
     isBackendEnabled,
     isStaleContextError: (cause) => cause instanceof Error && isStaleContextError(cause),
     clock: options.clock,
+    delivered: deliveredAdoptionsFor(spec.ownerKey),
   });
   return assembleCore(state, coordinator, [...backends.keys()]);
 }

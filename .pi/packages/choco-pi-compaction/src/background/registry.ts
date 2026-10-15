@@ -7,6 +7,8 @@ export interface CoordinatorRegistry {
   readonly schemaVersion: 1;
   readonly backendFactories: Map<string, BackendFactory>;
   readonly coordinators: Map<string, CoordinatorApi>;
+  /** Per owner key: consumer IDs already given each adoption ID in this process (survives reload). */
+  readonly delivered: Map<string, Map<string, Set<string>>>;
 }
 const CallableSchema = Type.Function([], Type.Unknown());
 const CoordinatorRegistrationSchema = Type.Object({
@@ -25,6 +27,7 @@ const RegistrySlotSchema = Type.Object({
   schemaVersion: Type.Literal(1),
   backendFactories: Type.Unknown(),
   coordinators: Type.Unknown(),
+  delivered: Type.Unknown(),
 });
 /** Validate callable presence; factories/coordinators themselves own their domain behavior. */
 function isCoordinator<T>(value: T): value is T & CoordinatorApi {
@@ -54,7 +57,8 @@ function isRegistry<T>(value: T): value is T & CoordinatorRegistry {
   return (
     Value.Check(RegistrySlotSchema, value) &&
     isFactoryMap(value.backendFactories) &&
-    isCoordinatorMap(value.coordinators)
+    isCoordinatorMap(value.coordinators) &&
+    value.delivered instanceof Map
   );
 }
 /** Share factory availability, not one global active session. Reject foreign/corrupt slots. */
@@ -69,9 +73,20 @@ export function getRegistry(): CoordinatorRegistry {
     schemaVersion: 1,
     backendFactories: new Map(),
     coordinators: new Map(),
+    delivered: new Map(),
   };
   Object.defineProperty(globalThis, REGISTRY_SYMBOL, { value: registry, configurable: true });
   return registry;
+}
+/** The in-process delivery ledger for one owner key, created on first use. */
+export function deliveredAdoptionsFor(ownerKey: string): Map<string, Set<string>> {
+  const ledger = getRegistry().delivered;
+  let owned = ledger.get(ownerKey);
+  if (owned === undefined) {
+    owned = new Map();
+    ledger.set(ownerKey, owned);
+  }
+  return owned;
 }
 /** First registration wins, including repeated imports in either extension load order. */
 export function registerBackendFactory(id: string, factory: BackendFactory): BackendFactory {

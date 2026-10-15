@@ -29,6 +29,7 @@ import {
   adoptionDraft,
   firstRetainedEntry,
   type CommittedCandidate,
+  type DeliveredAdoptions,
 } from "./adoption.ts";
 import { arbitrationIntent, type HostCompactionTrigger } from "./arbitration.ts";
 import {
@@ -89,6 +90,8 @@ interface CoordinatorDependencies {
     settings: Readonly<BackgroundCompactionSettings>,
   ) => boolean;
   readonly isStaleContextError?: (cause: unknown) => boolean;
+  /** In-process delivery ledger shared across reloads of the same owner; a fresh process starts empty. */
+  readonly delivered?: DeliveredAdoptions;
 }
 
 interface DetailedCoordinatorStatus extends CoordinatorStatus {
@@ -1093,7 +1096,7 @@ function initialState(deps: CoordinatorDependencies): CoordinatorState {
     settings,
     participants: new Map(),
     consumers: new Map(),
-    delivery: new AdoptionDelivery(),
+    delivery: new AdoptionDelivery(deps.delivered),
     enabled: settings.enabled,
     disposed: false,
     invalidated: false,
