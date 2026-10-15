@@ -170,7 +170,11 @@ export function chooseLegalCutEntry(
   const preferred = projection.findIndex((ref) => ref.entryId === preferredCutEntryId);
   for (let index = preferred; index >= 0; index--) {
     const entryId = projection[index]?.entryId;
-    if (entryId !== undefined && resolveEntryCut(capture, entryId).ok) return entryId;
+    if (entryId === undefined) continue;
+    const cut = resolveEntryCut(capture, entryId);
+    // A legal cut at the capture's tail retains nothing; `prepare` would refuse it
+    // with no-retained-entry, so keep walking back to a cut with a successor.
+    if (cut.ok && cut.projectedSuccessor !== undefined) return entryId;
   }
   return "defer";
 }
@@ -237,9 +241,11 @@ function prepareFailure(
   reason: FailureReason,
   retryable: boolean,
   retryAfterMs?: number,
+  detail?: string,
 ): PrepareFailure {
-  if (retryAfterMs === undefined) return { ok: false, reason, retryable };
-  return { ok: false, reason, retryable, retryAfterMs };
+  const base = { ok: false as const, reason, retryable };
+  const timed = retryAfterMs === undefined ? base : { ...base, retryAfterMs };
+  return detail === undefined ? timed : { ...timed, detail };
 }
 
 function isAnthropicMessagesModel(model: Model<Api>): model is Model<"anthropic-messages"> {
@@ -273,10 +279,16 @@ class AnthropicNativeBackend implements Backend<AnthropicDetails> {
   isLegalCut(snapshot: FrozenSnapshot): LegalityVerdict {
     const capture = this.captureFor(snapshot);
     if (capture === undefined || !captureMatchesWireScope(capture, snapshot.providerScope)) {
-      return { legal: false, reason: "incompatible" };
+      return {
+        legal: false,
+        reason: "incompatible",
+        detail: capture === undefined ? "no-capture" : "scope-mismatch",
+      };
     }
     const resolution = resolveEntryCut(capture, snapshot.cutEntryId);
-    return resolution.ok ? { legal: true } : { legal: false, reason: resolution.reason };
+    return resolution.ok
+      ? { legal: true }
+      : { legal: false, reason: resolution.reason, detail: resolution.code };
   }
 
   async prepare(
@@ -373,16 +385,21 @@ function resolveNativeRequest(
   if (authMode !== "oauth" && authMode !== "api-key") return prepareFailure("unsupported", false);
   const capture = request.capture();
   if (capture === undefined || !captureMatchesWireScope(capture, scope)) {
-    return prepareFailure("incompatible", false);
+    return prepareFailure(
+      "incompatible",
+      false,
+      undefined,
+      capture === undefined ? "no-capture" : "scope-mismatch",
+    );
   }
   const cut = resolveEntryCut(capture, cutEntryId);
-  if (!cut.ok) return prepareFailure(cut.reason, false);
+  if (!cut.ok) return prepareFailure(cut.reason, false, undefined, cut.code);
   const cutPosition = entryIds.indexOf(cutEntryId);
   const firstKeptEntryId =
     (cutPosition >= 0 ? entryIds[cutPosition + 1] : undefined) ?? cut.projectedSuccessor;
   // No retained entry exists yet: defer before any request (never a null pointer).
   if (firstKeptEntryId === undefined || firstKeptEntryId === cutEntryId) {
-    return prepareFailure("no-legal-cut", true);
+    return prepareFailure("no-legal-cut", true, undefined, "no-retained-entry");
   }
   if (
     request.instructions !== undefined &&

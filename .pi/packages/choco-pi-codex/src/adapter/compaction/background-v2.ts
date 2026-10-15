@@ -68,6 +68,25 @@ export function isCodexBackgroundCapture<T>(value: T): value is T & CodexBackgro
   );
 }
 
+/** Why a capture at the cut was refused; surfaces as the failure's detail code. */
+export type CodexCaptureRefusal =
+  | "no-base-url"
+  | "unsupported-scope"
+  | "account-scope-mismatch"
+  | "no-canonical-body"
+  | "no_state"
+  | "model_mismatch"
+  | "identity_mismatch"
+  | "input_shorter_than_baseline"
+  | "request_prefix_mismatch"
+  | "response_prefix_mismatch"
+  | "not_applicable"
+  | "capture-shape";
+
+export type CodexCaptureResult =
+  | { readonly ok: true; readonly capture: CodexBackgroundCapture }
+  | { readonly ok: false; readonly refusal: CodexCaptureRefusal };
+
 /** Synchronous capture at the cut, with lineage validation against the complete prefix. */
 export function captureCodexBackgroundRequest(args: {
   sessionId: string;
@@ -75,13 +94,22 @@ export function captureCodexBackgroundRequest(args: {
   accountId: string;
   reconstructedInput: readonly ResponsesInputItem[];
 }): CodexBackgroundCapture | undefined {
+  const result = resolveCodexBackgroundCapture(args);
+  return result.ok ? result.capture : undefined;
+}
+
+/** `captureCodexBackgroundRequest` with the refusal named. */
+export function resolveCodexBackgroundCapture(args: {
+  sessionId: string;
+  providerScope: ProviderScope;
+  accountId: string;
+  reconstructedInput: readonly ResponsesInputItem[];
+}): CodexCaptureResult {
   const { sessionId, providerScope, accountId, reconstructedInput } = args;
-  if (
-    !providerScope.baseUrl ||
-    !supportedScope(providerScope) ||
-    codexBackgroundAccountScope(accountId) !== providerScope.accountScope
-  )
-    return undefined;
+  if (!providerScope.baseUrl) return { ok: false, refusal: "no-base-url" };
+  if (!supportedScope(providerScope)) return { ok: false, refusal: "unsupported-scope" };
+  if (codexBackgroundAccountScope(accountId) !== providerScope.accountScope)
+    return { ok: false, refusal: "account-scope-mismatch" };
   const identity = { url: resolveCodexWebSocketUrl(providerScope.baseUrl), accountId };
   const resolved = resolveCanonicalCompactionPromptInput(
     sessionId,
@@ -90,13 +118,16 @@ export function captureCodexBackgroundRequest(args: {
     reconstructedInput,
   );
   const body = canonicalCompactionRequestBody(sessionId, providerScope.model, identity);
-  if (!body || resolved.decision !== "validated" || !resolved.input) return undefined;
+  if (resolved.decision !== "validated") return { ok: false, refusal: resolved.decision };
+  if (!body || !resolved.input) return { ok: false, refusal: "no-canonical-body" };
   const detached = cloneCodexCompactionJson({
     sessionId,
     providerScope,
     body: { ...body, input: resolved.input },
   });
-  return isCodexBackgroundCapture(detached) ? detached : undefined;
+  return isCodexBackgroundCapture(detached)
+    ? { ok: true, capture: detached }
+    : { ok: false, refusal: "capture-shape" };
 }
 
 export interface CodexBackgroundBackendOptions {
@@ -212,20 +243,18 @@ function acceptLegalCutItem(
   return true;
 }
 
-function legalCapture(snapshot: FrozenSnapshot): boolean {
+/** Undefined when the captured input can be cut; otherwise the reason it cannot. */
+function illegalCaptureDetail(snapshot: FrozenSnapshot): string | undefined {
   const capture = snapshot.backendCapture;
-  if (
-    !isCodexBackgroundCapture(capture) ||
-    !Value.Equal(capture.providerScope, snapshot.providerScope)
-  )
-    return false;
+  if (!isCodexBackgroundCapture(capture)) return "no-capture";
+  if (!Value.Equal(capture.providerScope, snapshot.providerScope)) return "scope-mismatch";
   // Never summarize an open function/custom-tool group or an in-progress message.
   const open = new Set<string>();
   const seen = new Set<string>();
   for (const item of capture.body.input) {
-    if (!acceptLegalCutItem(item, open, seen)) return false;
+    if (!acceptLegalCutItem(item, open, seen)) return "illegal-input-item";
   }
-  return open.size === 0;
+  return open.size === 0 ? undefined : "open-tool-call";
 }
 
 type PrepareRequest = Parameters<Backend<BackgroundNativeCompactionDetails>["prepare"]>[1];
@@ -305,8 +334,16 @@ function freezePreparation(
   const { candidateId, signal: callerSignal } = request;
   if (callerSignal.aborted) return rejected("canceled");
   if (!supportedScope(scope)) return rejected("unsupported");
-  if (!legalCapture(snapshot) || !isCodexBackgroundCapture(snapshot.backendCapture))
-    return rejected("no-legal-cut");
+  const illegal = illegalCaptureDetail(snapshot);
+  if (illegal !== undefined || !isCodexBackgroundCapture(snapshot.backendCapture)) {
+    const failure: PrepareFailure = {
+      ok: false,
+      reason: "no-legal-cut",
+      retryable: false,
+      detail: illegal ?? "no-capture",
+    };
+    return failure;
+  }
   const capture = structuredClone(snapshot.backendCapture);
   const body = capture.body;
   if (body.access_programs !== undefined) return unsupportedCooldownFailure();
@@ -551,8 +588,12 @@ export function createCodexBackgroundBackend(
       Promise.resolve(
         supportedScope(scope) ? { supported: true } : { supported: false, reason: "unsupported" },
       ),
-    isLegalCut: (snapshot) =>
-      legalCapture(snapshot) ? { legal: true } : { legal: false, reason: "no-legal-cut" },
+    isLegalCut: (snapshot) => {
+      const illegal = illegalCaptureDetail(snapshot);
+      return illegal === undefined
+        ? { legal: true }
+        : { legal: false, reason: "no-legal-cut", detail: illegal };
+    },
     prepare: (snapshot, request) => prepareBackgroundCheckpoint(frozenOptions, snapshot, request),
   };
 }

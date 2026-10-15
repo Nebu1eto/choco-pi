@@ -519,6 +519,27 @@ for (const failure of ["oversized", "malformed", "unsupported", "no-legal-cut", 
   });
 }
 
+test("a legality refusal is diagnosable and does not cool the scope", async () => {
+  const f = fixture();
+  f.backend.legalityVerdict = { legal: false, reason: "no-legal-cut", detail: "no-retained-entry" };
+  await f.coordinator.requestPreparation();
+  await f.coordinator.waitForPreparation();
+  const refused = f.coordinator.status();
+  assert.equal(refused.state, "failed");
+  assert.equal(refused.detail, "no-retained-entry");
+  assert.deepEqual(
+    refused.recentFailures?.map((row) => [row.backendId, row.reason, row.detail]),
+    [["fake", "no-legal-cut", "no-retained-entry"]],
+  );
+  // The next request on the same scope must run at once, not report quota.
+  f.backend.legalityVerdict = { legal: true };
+  await f.coordinator.requestPreparation();
+  await f.coordinator.waitForPreparation();
+  assert.equal(f.coordinator.status().state, "ready");
+  assert.equal(f.backend.calls.length, 1);
+  f.coordinator.dispose();
+});
+
 test("participants finish before snapshot selection; appended entries belong exactly once to the prefix", async () => {
   const f = fixture();
   const participant = new FakeParticipant(["participant-entry"]);

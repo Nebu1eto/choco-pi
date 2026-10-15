@@ -28,7 +28,7 @@ import {
 } from "../../../choco-pi-compaction/src/background/registry.ts";
 import {
   buildCodexBackgroundReplay,
-  captureCodexBackgroundRequest,
+  resolveCodexBackgroundCapture,
   CODEX_BACKGROUND_BACKEND_ID,
   codexBackgroundAccountScope,
   createCodexBackgroundBackend,
@@ -269,30 +269,36 @@ function createNativeBackend(
 }
 
 /** Serialize the frozen cut and attach the canonical request; null when it cannot be captured. */
+/** The frozen cut with its Codex capture, or the refusal to record on the failure. */
 function captureFrozenCut(
   context: BackendFactoryContext,
   binding: CodexBackgroundBinding,
   snapshot: FrozenSnapshot,
-): FrozenSnapshot | null {
+): { readonly snapshot: FrozenSnapshot } | { readonly refusal: string } {
   if (
     !binding.isCurrent() ||
     snapshot.ownerKey !== context.ownerKey ||
     snapshot.ownerGeneration !== context.ownerGeneration
   )
-    return null;
+    return { refusal: "owner-changed" };
   const input = serializeActiveSessionToResponsesInput({
     model: binding.model,
     entries: [...snapshot.entries],
     options: { blockImages: binding.blockImages },
   });
-  const request = captureCodexBackgroundRequest({
+  const request = resolveCodexBackgroundCapture({
     sessionId: binding.sessionId,
     providerScope: snapshot.providerScope,
     accountId: binding.accountId,
     reconstructedInput: input,
   });
-  if (request === undefined) return null;
-  return Object.freeze({ ...snapshot, backendCapture: freezeDetachedCapture(request) });
+  if (!request.ok) return { refusal: request.refusal };
+  return {
+    snapshot: Object.freeze({
+      ...snapshot,
+      backendCapture: freezeDetachedCapture(request.capture),
+    }),
+  };
 }
 
 /** Captures once per frozen cut; prepare never replaces it with newer foreground history. */
@@ -300,7 +306,7 @@ export function createCapturedCodexBackend(
   context: BackendFactoryContext,
   binding: CodexBackgroundBinding,
 ): Backend {
-  const captures = new WeakMap<FrozenSnapshot, FrozenSnapshot | null>();
+  const captures = new WeakMap<FrozenSnapshot, ReturnType<typeof captureFrozenCut>>();
   const slot: AdoptionConsumerSlot = {
     coordinator: undefined,
     removeConsumer: undefined,
@@ -308,8 +314,9 @@ export function createCapturedCodexBackend(
   };
   binding.cleanup.add(() => detachAdoptionConsumer(slot));
   const native = createNativeBackend(context, binding, slot);
-  const capture = (snapshot: FrozenSnapshot): FrozenSnapshot | null => {
-    if (captures.has(snapshot)) return captures.get(snapshot) ?? null;
+  const capture = (snapshot: FrozenSnapshot): ReturnType<typeof captureFrozenCut> => {
+    const known = captures.get(snapshot);
+    if (known !== undefined) return known;
     attachAdoptionConsumer(slot, context, binding);
     const result = captureFrozenCut(context, binding, snapshot);
     captures.set(snapshot, result);
@@ -323,15 +330,20 @@ export function createCapturedCodexBackend(
     },
     isLegalCut: (snapshot) => {
       const augmented = capture(snapshot);
-      return augmented === null
-        ? { legal: false, reason: "no-legal-cut" }
-        : native.isLegalCut(augmented);
+      return "refusal" in augmented
+        ? { legal: false, reason: "no-legal-cut", detail: augmented.refusal }
+        : native.isLegalCut(augmented.snapshot);
     },
     prepare: (snapshot, request) => {
       const augmented = capture(snapshot);
-      return augmented === null
-        ? Promise.resolve({ ok: false, reason: "no-legal-cut", retryable: false })
-        : native.prepare(augmented, request);
+      return "refusal" in augmented
+        ? Promise.resolve({
+            ok: false,
+            reason: "no-legal-cut",
+            retryable: false,
+            detail: augmented.refusal,
+          })
+        : native.prepare(augmented.snapshot, request);
     },
   };
 }

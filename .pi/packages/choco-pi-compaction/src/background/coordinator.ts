@@ -12,6 +12,7 @@ import {
   type Backend,
   type BackgroundCompactionSettings,
   type BackgroundUsage,
+  type CandidateFailure,
   type CandidateRecord,
   type CoordinatorApi,
   type CoordinatorStatus,
@@ -144,6 +145,8 @@ interface Candidate {
   finishedAt?: number;
   attempts: number;
   committedEntryId?: string;
+  /** Backend detail code behind the terminal failure reason. */
+  detail?: string;
   cancelDeadline: () => void;
 }
 
@@ -229,6 +232,8 @@ interface CoordinatorState {
   enabled: boolean;
   disposed: boolean;
   invalidated: boolean;
+  /** Bounded, newest last. */
+  readonly recentFailures: CandidateFailure[];
   arbitrating: boolean;
   candidate: Candidate | undefined;
   preparation: Promise<WorkSettlement>;
@@ -271,10 +276,45 @@ function finish(
   current.abort.abort();
 }
 
+/**
+ * Fail the candidate. A transport-class failure (retryable or rate-limited)
+ * also starts the scope cooldown; a legality or compatibility refusal of one
+ * cut must not throttle the next request on the same scope.
+ */
+function fail(
+  state: CoordinatorState,
+  current: Candidate,
+  failure: { readonly reason: ReasonCode; readonly detail?: string; readonly cool: boolean },
+): void {
+  current.detail = failure.detail;
+  finish(state, current, "failed", failure.reason);
+  rememberFailure(state, current, failure.reason, failure.detail);
+  if (failure.cool) cool(state, current);
+}
+
 /** Fail the candidate and start the scope cooldown so the next attempt waits. */
 function failAndCool(state: CoordinatorState, current: Candidate, reason: ReasonCode): void {
   finish(state, current, "failed", reason);
+  rememberFailure(state, current, reason, undefined);
   cool(state, current);
+}
+
+const RECENT_FAILURES = 8;
+function rememberFailure(
+  state: CoordinatorState,
+  current: Candidate,
+  reason: ReasonCode,
+  detail: string | undefined,
+): void {
+  const entry: CandidateFailure = {
+    candidateId: current.id,
+    backendId: current.backendId,
+    reason,
+    detail: detail ?? null,
+    at: state.clock.now(),
+  };
+  state.recentFailures.push(entry);
+  if (state.recentFailures.length > RECENT_FAILURES) state.recentFailures.shift();
 }
 
 function invalidate(state: CoordinatorState, reason: ReasonCode = "owner-changed"): void {
@@ -516,7 +556,8 @@ async function runPreparation(
   if (!validate(state, current)) return;
   if (!capability.supported) return failAndCool(state, current, capability.reason);
   const legality = backend.isLegalCut(snapshot);
-  if (!legality.legal) return failAndCool(state, current, legality.reason);
+  if (!legality.legal)
+    return fail(state, current, { reason: legality.reason, detail: legality.detail, cool: false });
   const attempt: AttemptContext = {
     state,
     current,
@@ -565,7 +606,11 @@ async function retryAfterFailure(
   if (RATE_LIMIT_REASONS.has(failure.reason))
     cool(state, current, Math.max(settings.cooldownMs, failure.retryAfterMs ?? 0));
   if (!failure.retryable || attempt === settings.maxAttempts) {
-    failAndCool(state, current, failure.reason);
+    fail(state, current, {
+      reason: failure.reason,
+      detail: failure.detail,
+      cool: failure.retryable || RATE_LIMIT_REASONS.has(failure.reason),
+    });
     return "stop";
   }
   const delay = Math.max(
@@ -1027,6 +1072,7 @@ function status(state: CoordinatorState): DetailedCoordinatorStatus {
       ownerKey,
       ownerGeneration,
       state: "idle",
+      recentFailures: [...state.recentFailures],
       durationMs: 0,
       queueDelayMs: 0,
       preparationMs: 0,
@@ -1040,6 +1086,8 @@ function status(state: CoordinatorState): DetailedCoordinatorStatus {
     candidateId: current.id,
     backendId: current.backendId,
     reason: current.machine.reason,
+    detail: current.detail,
+    recentFailures: [...state.recentFailures],
     durationMs: Math.max(0, end - current.createdAt),
     queueDelayMs: Math.max(0, (current.startedAt ?? end) - current.createdAt),
     preparationMs:
@@ -1100,6 +1148,7 @@ function initialState(deps: CoordinatorDependencies): CoordinatorState {
     enabled: settings.enabled,
     disposed: false,
     invalidated: false,
+    recentFailures: [],
     arbitrating: false,
     candidate: undefined,
     preparation: Promise.resolve({ ok: true }),

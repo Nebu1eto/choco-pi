@@ -1,4 +1,5 @@
 import { setTimeout } from "node:timers/promises";
+import { statusArtifact } from "../artifacts.ts";
 import type { Host } from "./types.ts";
 
 type Coordinator = NonNullable<ReturnType<Host["mainCoordinator"]>>;
@@ -56,7 +57,7 @@ export async function awaitPreparation(host: Host, handle: PreparationHandle): P
     await setTimeout(host.mode === "live" ? 100 : 5);
     assertSameOwner(host, handle);
   }
-  host.recorder.record("preparation-settled", { ...handle.coordinator.status() });
+  host.recorder.record("preparation-settled", statusArtifact(handle.coordinator.status()));
   const state = handle.coordinator.status().state;
   return state === "ready" || state === "installed";
 }

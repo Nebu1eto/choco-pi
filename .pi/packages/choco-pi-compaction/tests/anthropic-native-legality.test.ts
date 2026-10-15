@@ -215,6 +215,24 @@ test(
 );
 
 test("entry-level cuts are judged on the mapped wire", { timeout: 20_000 }, async () => {
+  // Short no-tool session, cut preferred at the branch tip (a manual /compact with
+  // keepRecentTokens 1): the chooser must retain the last exchange, not refuse.
+  const PLAIN: readonly Message[] = [
+    user("PLAIN-ONE"), // e1
+    assistant("PLAIN-ONE-REPLY"), // e2
+    user("PLAIN-TWO"), // e3
+    assistant("PLAIN-TWO-REPLY"), // e4
+  ];
+  {
+    const wire = await wireFor(PLAIN);
+    const capture = captureOf(wire, project(PLAIN));
+    const tail = resolveEntryCut(capture, "e4");
+    assert.ok(tail.ok && tail.projectedSuccessor === undefined, "the tail cut retains nothing");
+    assert.equal(chooseLegalCutEntry(capture, "e4"), "e2");
+    const chosen = resolveEntryCut(capture, "e2");
+    assert.ok(chosen.ok);
+    assert.equal(chosen.projectedSuccessor, "e3");
+  }
   const wire = await wireFor(TRANSCRIPT);
   const entries = project(TRANSCRIPT);
   const capture = captureOf(wire, entries);
@@ -255,9 +273,10 @@ test("entry-level cuts are judged on the mapped wire", { timeout: 20_000 }, asyn
   assert.ok(kept.ok);
   assert.equal(kept.projectedSuccessor, "e9");
   assert.equal(kept.unmappedPrefixKeys, 0);
-  // Choose the latest legal cut at or before the preference, else defer.
+  // Choose the latest legal cut at or before the preference that still retains
+  // a successor (prepare refuses a tail cut with no-retained-entry), else defer.
   assert.equal(chooseLegalCutEntry(capture, "e7"), "e4");
-  assert.equal(chooseLegalCutEntry(capture, "e9"), "e9");
+  assert.equal(chooseLegalCutEntry(capture, "e9"), "e8");
   assert.equal(chooseLegalCutEntry(capture, "e3"), "defer");
   assert.deepEqual(capture.body, before, "the captured wire is never edited");
 });

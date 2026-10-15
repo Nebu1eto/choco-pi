@@ -104,13 +104,15 @@ export interface PrepareFailure {
   readonly reason: FailureReason;
   readonly retryable: boolean;
   readonly retryAfterMs?: number;
+  /** Backend-specific detail code behind `reason`, for diagnosis only. */
+  readonly detail?: string;
 }
 export type CapabilityVerdict =
   | { readonly supported: true }
   | { readonly supported: false; readonly reason: FailureReason };
 export type LegalityVerdict =
   | { readonly legal: true }
-  | { readonly legal: false; readonly reason: FailureReason };
+  | { readonly legal: false; readonly reason: FailureReason; readonly detail?: string };
 export const BackgroundUsageSchema = Type.Object(
   {
     input: NonNegative,
@@ -193,6 +195,17 @@ export interface CoordinatorStatus {
   readonly candidateId?: string;
   readonly backendId?: string;
   readonly reason?: ReasonCode;
+  /** Backend detail code behind a failure `reason`. */
+  readonly detail?: string;
+  /** Most recent failed candidates of this owner, newest last, for diagnosis after a fallback. */
+  readonly recentFailures?: readonly CandidateFailure[];
+}
+export interface CandidateFailure {
+  readonly candidateId: string;
+  readonly backendId: string;
+  readonly reason: ReasonCode;
+  readonly detail: string | null;
+  readonly at: number;
 }
 export type PreparationRequestResult =
   | { readonly accepted: true; readonly candidateId: string }

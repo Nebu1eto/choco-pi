@@ -284,10 +284,15 @@ test("cut capture is detached and reused after foreground lineage disappears", a
   assert.ok(isBackgroundNativeCompactionDetails(prepared.details));
   assert.equal(prepared.details.prefixFingerprint, setup.snapshot.prefixFingerprint);
   const unseen = { ...setup.snapshot };
-  assert.deepEqual(backend.isLegalCut(unseen), { legal: false, reason: "no-legal-cut" });
+  assert.deepEqual(backend.isLegalCut(unseen), {
+    legal: false,
+    reason: "no-legal-cut",
+    detail: "no_state",
+  });
   assert.deepEqual(await backend.prepare(unseen, setup.request()), {
     ok: false,
     reason: "no-legal-cut",
+    detail: "no_state",
     retryable: false,
   });
   assert.equal(setup.fetchCalls(), 1);
@@ -296,9 +301,14 @@ test("cut capture is detached and reused after foreground lineage disappears", a
 test("incomplete canonical lineage fails closed before paid transport", async () => {
   const setup = await fixture();
   const backend = createCapturedCodexBackend(setup.context, setup.binding);
-  assert.deepEqual(backend.isLegalCut(setup.snapshot), { legal: false, reason: "no-legal-cut" });
+  assert.deepEqual(backend.isLegalCut(setup.snapshot), {
+    legal: false,
+    reason: "no-legal-cut",
+    detail: "no_state",
+  });
   assert.deepEqual(await backend.prepare(setup.snapshot, setup.request()), {
     ok: false,
+    detail: "no_state",
     reason: "no-legal-cut",
     retryable: false,
   });

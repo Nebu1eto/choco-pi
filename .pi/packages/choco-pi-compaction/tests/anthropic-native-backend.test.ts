@@ -567,17 +567,22 @@ test("preparation refusals happen before any request", async () => {
     {
       name: "no retained entry yet: defer, never null",
       snapshot: { cutEntryId: "e4", entries: entriesOf(TRANSCRIPT) },
-      expected: { ok: false, reason: "no-legal-cut", retryable: true },
+      expected: { ok: false, reason: "no-legal-cut", retryable: true, detail: "no-retained-entry" },
     },
     {
       name: "illegal wire cut",
       snapshot: { cutEntryId: "e1" },
-      expected: { ok: false, reason: "no-legal-cut", retryable: false },
+      expected: {
+        ok: false,
+        reason: "no-legal-cut",
+        retryable: false,
+        detail: "first-kept-not-user",
+      },
     },
     {
       name: "opaque capture of the wrong kind",
       snapshot: { backendCapture: { not: "a capture" } },
-      expected: { ok: false, reason: "incompatible", retryable: false },
+      expected: { ok: false, reason: "incompatible", retryable: false, detail: "no-capture" },
     },
     {
       name: "input over budget",

@@ -17,6 +17,7 @@ export const APPROVED_LIVE_MODELS: readonly string[] = [
   "anthropic/claude-sonnet-5-5",
   "anthropic/claude-fable-5-1",
   "openai-codex/gpt-6-luna",
+  "openai-codex/gpt-6-sol",
   "openai-codex/gpt-6.1-sol",
   // Synthetic, $3/$15 per MTok (catalog): the context-window-presets estimate
   // (40k in / 2k out) is about $0.15 a run; the 10x runaway stop near $1.50.

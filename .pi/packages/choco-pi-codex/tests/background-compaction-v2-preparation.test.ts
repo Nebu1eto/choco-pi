@@ -683,7 +683,7 @@ test("pre-flight budget failures keep their reason codes and cooldowns", async (
         candidateId: "preflight",
       },
     ),
-    { ok: false, reason: "no-legal-cut", retryable: false },
+    { ok: false, reason: "no-legal-cut", retryable: false, detail: "no-capture" },
   );
 });
 for (const [name, terminalItems] of [

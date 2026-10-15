@@ -134,3 +134,17 @@ export class Recorder {
     return sequence;
   }
 }
+
+/** A coordinator status as recorder input: readonly failure rows become plain JSON rows. */
+export function statusArtifact(status: {
+  readonly recentFailures?: readonly {
+    readonly candidateId: string;
+    readonly backendId: string;
+    readonly reason: string;
+    readonly detail: string | null;
+    readonly at: number;
+  }[];
+}): ArtifactInput {
+  const { recentFailures, ...rest } = status;
+  return { ...rest, recentFailures: (recentFailures ?? []).map((row) => ({ ...row })) };
+}

@@ -30,7 +30,7 @@ import {
 import { crossFieldProblem } from "../../../.pi/packages/choco-pi-compaction/src/background/settings.ts";
 import { mainOwnerKey } from "../../../.pi/packages/choco-pi-compaction/src/index.ts";
 import { installAdoptionProbe } from "./adoption-probe.ts";
-import { digest, InputSchema, Recorder, writeArtifact } from "./artifacts.ts";
+import { digest, InputSchema, Recorder, statusArtifact, writeArtifact } from "./artifacts.ts";
 import { requireLiveRun } from "./budget.ts";
 import { installConsumerProbe } from "./consumer-probe.ts";
 import { loadWorktreeProfilePlan, type WorktreeProfilePlan } from "./esm-entry-loaders.ts";
@@ -453,7 +453,7 @@ function observeCoordinatorsFor(state: HostState, attached: Set<string>, owned: 
   state.assertCurrent();
   for (const coordinator of getRegistry().coordinators.values()) {
     const key = `${coordinator.ownerKey}:${coordinator.ownerGeneration}`;
-    state.recorder.record("coordinator-status", { ...coordinator.status() });
+    state.recorder.record("coordinator-status", statusArtifact(coordinator.status()));
     if (attached.has(key)) continue;
     attached.add(key);
     const onAdopted = (adoption: Adoption) => recordAdoption(state, coordinator.ownerKey, adoption);

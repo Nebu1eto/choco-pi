@@ -3,6 +3,7 @@ import { InteractiveMode } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import type { CompactCommandHost } from "../../../../.pi/packages/choco-pi-compaction/src/background-host/host-command.ts";
+import { statusArtifact, type ArtifactInput } from "../artifacts.ts";
 import type { CheckEvidence, Observation } from "../checks.ts";
 import { replyPrompt } from "./prompts.ts";
 import { textAdoptionEvidence } from "./text-adoption-checks.ts";
@@ -48,6 +49,11 @@ function checkpoints(host: Host): Checkpoint[] {
     const candidateId = Value.Check(DetailsSchema, details) ? details.candidateId : undefined;
     return [{ id: entry.id, candidateId }];
   });
+}
+
+function statusOf(host: Host): ArtifactInput {
+  const status = host.mainCoordinator()?.status();
+  return status === undefined ? null : statusArtifact(status);
 }
 
 function state(host: Host): string {
@@ -212,12 +218,16 @@ async function typedCompact(host: Host): Promise<Observation[]> {
   const noticesBefore = host.adoptionNotices.length;
   const hostEvents = await hostCompactionEventsDuring(host, () => typeCompact(host));
   const afterTyped = state(host);
-  const typedRef = host.recorder.record("manual-typed-compact", { hostEvents, state: afterTyped });
+  const typedRef = host.recorder.record("manual-typed-compact", {
+    hostEvents,
+    state: afterTyped,
+    status: statusOf(host),
+  });
   const settled = await awaitInstalled(host, "typed /compact");
   const added = checkpoints(host).slice(before);
   const settledRef = host.recorder.record("manual-typed-settled", {
     state: settled,
-    status: { ...host.mainCoordinator()?.status() },
+    status: statusOf(host),
     checkpoints: added,
   });
   const requestsBefore = host.requestBranches.length;
@@ -275,7 +285,7 @@ async function programmaticCompact(host: Host): Promise<Observation[]> {
   const added = checkpoints(host).slice(before);
   const settledRef = host.recorder.record("manual-programmatic-settled", {
     state: settled,
-    status: { ...host.mainCoordinator()?.status() },
+    status: statusOf(host),
     checkpoints: added,
   });
   const requestsBefore = host.requestBranches.length;
@@ -320,7 +330,7 @@ async function reloadedCompact(host: Host): Promise<Observation[]> {
   const status = host.mainCoordinator()?.status();
   const settledRef = host.recorder.record("manual-reload-settled", {
     state: settled,
-    status: { ...status },
+    status: statusOf(host),
     checkpoints: added,
   });
   const requestsBefore = host.requestBranches.length;
