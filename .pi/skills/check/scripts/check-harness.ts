@@ -394,7 +394,6 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
     "extensions/runtime-model-prompt.ts",
     "extensions/runtime-writing-prompt.ts",
     "extensions/model-context-cap.ts",
-    "extensions/context-cap.json",
     "extensions/review.json",
     "extensions/review/index.ts",
     "extensions/model-controls.ts",
