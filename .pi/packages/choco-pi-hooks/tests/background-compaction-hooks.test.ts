@@ -209,11 +209,17 @@ test(
         await waitFor(() => context.state() === "installed", "manual candidate adopted");
         assert.deepEqual(await context.hookLog(), [], "deferred manual compaction skips hooks");
         await context.host.session.prompt("MORE");
-        await context.host.session.compact("Focus on the audit");
+        // Instructions also go to the background text lane now; the foreground
+        // path (and its hooks) only runs when the feature declines, e.g. no lane.
+        await assert.rejects(
+          context.host.session.compact("Focus on the audit"),
+          /Compaction cancelled/,
+        );
+        await waitFor(() => context.state() === "installed", "focused candidate adopted");
         assert.deepEqual(
           await context.hookLog(),
-          ["PreCompact", "PostCompact"],
-          "a foreground host compaction (custom instructions) runs each hook once",
+          [],
+          "a deferred manual compaction with instructions skips the hooks too",
         );
       } finally {
         await context.host.dispose();

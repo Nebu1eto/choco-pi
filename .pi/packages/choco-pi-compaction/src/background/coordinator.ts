@@ -57,6 +57,8 @@ export interface SnapshotContext {
   readonly capturedAt: number;
   readonly participantEntryIds: readonly string[];
   readonly recoveryRecord?: CandidateRecord;
+  /** Backend that will prepare this snapshot; lane-specific cut rules apply only to it. */
+  readonly backendId: string;
 }
 
 /** Synchronous reads must refer to one currently held owner. No method starts a foreground run. */
@@ -352,7 +354,7 @@ async function containStaleOwner<T>(
   }
 }
 
-function captureContext(state: CoordinatorState): SnapshotContext {
+function captureContext(state: CoordinatorState, backendId: string): SnapshotContext {
   const { port } = state.deps;
   requireOwner(state);
   const entries = structuredClone(port.getBranch());
@@ -367,6 +369,7 @@ function captureContext(state: CoordinatorState): SnapshotContext {
     entries,
     providerScope,
     latestCheckpoint,
+    backendId,
     capturedAt: state.clock.now(),
     participantEntryIds: [],
   };
@@ -378,7 +381,7 @@ function validate(state: CoordinatorState, current: Candidate): boolean {
     finish(state, current, "discarded-stale", "stale-prefix");
     return false;
   }
-  const reason = revalidateIdentity(current.snapshot, captureContext(state));
+  const reason = revalidateIdentity(current.snapshot, captureContext(state, current.backendId));
   if (!reason) return true;
   finish(state, current, "discarded-stale", reason);
   return false;
@@ -472,7 +475,7 @@ function selectSnapshot(
   current: Candidate,
   participantEntryIds: readonly string[],
 ): FrozenSnapshot | undefined {
-  const captured = { ...captureContext(state), participantEntryIds };
+  const captured = { ...captureContext(state, current.backendId), participantEntryIds };
   current.branchKey = state.deps.port.getBranchKey();
   const selected = state.deps.freezeSnapshot(captured);
   const failure = selectionFailure(captured, selected);
@@ -582,6 +585,7 @@ async function runAttempt(context: AttemptContext, attempt: number): Promise<Att
   const result = await context.backend.prepare(snapshot, {
     signal: current.abort.signal,
     candidateId: current.id,
+    customInstructions: current.customInstructions,
     budget: {
       maxInputTokens: state.settings.maxInputTokens,
       maxOutputTokens: state.settings.maxOutputTokens,
@@ -819,7 +823,11 @@ async function arbitrateAdopting(
   await reconcileCommit(state);
   if (!ownerCurrent(state)) return PROCEED;
   // Even an uncommitted proposal does not indefinitely block hard-limit recovery.
-  if (event.customInstructions !== undefined && current.machine.state === "adopting")
+  if (
+    event.customInstructions !== undefined &&
+    event.customInstructions !== current.customInstructions &&
+    current.machine.state === "adopting"
+  )
     finish(state, current, "discarded-stale", "manual-instructions");
   return PROCEED;
 }
@@ -869,7 +877,11 @@ function arbitrateCandidate(
   event: HostCompactionTrigger,
 ): Promise<CoordinatorArbitrationResult> {
   if (current?.machine.state === "adopting") return arbitrateAdopting(state, current, event);
-  const intent = arbitrationIntent(current?.machine.state ?? "idle", event);
+  const intent = arbitrationIntent(
+    current?.machine.state ?? "idle",
+    event,
+    current?.customInstructions,
+  );
   if (intent === "discard-instructions" && current)
     finish(state, current, "discarded-stale", "manual-instructions");
   if (intent === "cancel-overflow" && current) finish(state, current, "canceled", "canceled");
@@ -884,7 +896,10 @@ async function arbitrate(
   if (!ownerCurrent(state)) return PROCEED;
   if (state.arbitrating) {
     // A manual request can invalidate an automatic proposal awaiting its anchor.
-    if (event.customInstructions !== undefined)
+    if (
+      event.customInstructions !== undefined &&
+      event.customInstructions !== state.candidate?.customInstructions
+    )
       finishCurrent(state, "discarded-stale", "manual-instructions");
     return PROCEED;
   }
@@ -932,7 +947,7 @@ function recoveryContext(
   record: CandidateRecord,
 ): RecoveryContext | "next" | "refused" {
   const backend = state.deps.backends.get(record.backendId);
-  const captured = captureContext(state);
+  const captured = captureContext(state, record.backendId);
   const committed = findCommit(state, record.candidateId, record.identity.prefixFingerprint);
   if (!ownerCurrent(state)) return "refused";
   // A committed record is compared against the checkpoint that preceded its own commit.
@@ -971,7 +986,7 @@ function committedRecoveryCurrent(
   const snapshot = current.snapshot;
   if (!snapshot) return false;
   const reason = revalidateIdentity(snapshot, {
-    ...captureContext(state),
+    ...captureContext(state, current.backendId),
     latestCheckpoint: comparison.latestCheckpoint,
   });
   if (reason || state.deps.port.getBranchKey() !== current.branchKey) {
@@ -1087,6 +1102,7 @@ function status(state: CoordinatorState): DetailedCoordinatorStatus {
     backendId: current.backendId,
     reason: current.machine.reason,
     detail: current.detail,
+    customInstructions: current.customInstructions,
     recentFailures: [...state.recentFailures],
     durationMs: Math.max(0, end - current.createdAt),
     queueDelayMs: Math.max(0, (current.startedAt ?? end) - current.createdAt),

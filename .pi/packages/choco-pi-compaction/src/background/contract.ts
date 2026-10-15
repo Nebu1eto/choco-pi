@@ -157,6 +157,8 @@ export interface Backend<Details = unknown> {
       readonly signal: AbortSignal;
       readonly budget: PreparationBudget;
       readonly candidateId: string;
+      /** User focus from `/compact <instructions>`; a backend that cannot honor it declines. */
+      readonly customInstructions?: string;
     },
   ): Promise<PreparedCheckpoint<Details> | PrepareFailure>;
 }
@@ -197,6 +199,8 @@ export interface CoordinatorStatus {
   readonly reason?: ReasonCode;
   /** Backend detail code behind a failure `reason`. */
   readonly detail?: string;
+  /** Instructions the candidate was requested with (`/compact <instructions>`). */
+  readonly customInstructions?: string;
   /** Most recent failed candidates of this owner, newest last, for diagnosis after a fallback. */
   readonly recentFailures?: readonly CandidateFailure[];
 }

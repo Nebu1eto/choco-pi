@@ -135,11 +135,14 @@ export function registerBackgroundCompaction(
 
   // A typed /compact in the TUI continues in the background without the host's
   // "Compaction cancelled" line; every other case falls back to Pi's handler.
-  const deferTypedCompact = async (host: CompactCommandHost): Promise<boolean> => {
+  const deferTypedCompact = async (
+    host: CompactCommandHost,
+    customInstructions?: string,
+  ): Promise<boolean> => {
     const owner = rt.main;
     if (owner === undefined || owner.core.sessionId !== host.session.sessionId) return false;
-    if (!manualBypassesHost(rt, owner)) return false;
-    return startManualPreparation(rt, owner, "now");
+    if (!manualBypassesHost(rt, owner, customInstructions)) return false;
+    return startManualPreparation(rt, owner, "now", customInstructions);
   };
   installCompactCommandBridge(deferTypedCompact);
 

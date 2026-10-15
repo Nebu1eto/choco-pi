@@ -21,8 +21,11 @@ export interface CompactCommandHost {
   readonly session: { readonly sessionId: string };
 }
 
-/** Decides whether a plain `/compact` typed in `host` was taken over. */
-export type CompactCommandDefer = (host: CompactCommandHost) => Promise<boolean>;
+/** Decides whether a `/compact` typed in `host` (with optional instructions) was taken over. */
+export type CompactCommandDefer = (
+  host: CompactCommandHost,
+  customInstructions?: string,
+) => Promise<boolean>;
 
 type OriginalHandler = (this: CompactCommandHost, customInstructions?: string) => Promise<void>;
 
@@ -82,10 +85,10 @@ export function installCompactCommandBridge(defer: CompactCommandDefer): void {
     customInstructions?: string,
   ): Promise<void> {
     const current = bridge.defer;
-    if (customInstructions === undefined && current !== undefined && isCompactCommandHost(this)) {
+    if (current !== undefined && isCompactCommandHost(this)) {
       let handled = false;
       try {
-        handled = await current(this);
+        handled = await current(this, customInstructions);
       } catch {
         handled = false;
       }

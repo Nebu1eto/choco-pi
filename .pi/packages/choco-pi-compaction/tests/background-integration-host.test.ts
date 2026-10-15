@@ -138,6 +138,8 @@ interface Rig {
   readonly compactEvents: CompactEvent[];
   readonly notices: BackgroundAdoptionNotice[];
   backgroundCalls(): number;
+  /** Prompt text of every background summarizer pass, in order. */
+  readonly backgroundPrompts: string[];
   aborts(): number;
   dispose(): Promise<void>;
 }
@@ -160,11 +162,15 @@ interface RigOptions {
   readonly anthropicAllowList?: readonly AnthropicSupportEntry[];
 }
 
-function textSummarizer(model: Model<Api>, onCall: () => void, wait: Gate): TextSummarizer {
+function textSummarizer(
+  model: Model<Api>,
+  onCall: (promptText: string) => void,
+  wait: Gate,
+): TextSummarizer {
   return {
     scope: { provider: model.provider, model: model.id, baseUrl: model.baseUrl },
-    summarize: async () => {
-      onCall();
+    summarize: async (request) => {
+      onCall(request.promptText);
       await wait.opened;
       return {
         text: SUMMARY,
@@ -187,6 +193,7 @@ function textSummarizer(model: Model<Api>, onCall: () => void, wait: Gate): Text
 interface RigLog {
   readonly compactEvents: CompactEvent[];
   backgroundCalls: number;
+  readonly backgroundPrompts: string[];
 }
 
 /** The real compaction extension reading `settingsFile`, with an injected background summarizer. */
@@ -199,7 +206,14 @@ function compactionExtension(
   const background: NonNullable<Parameters<typeof registerCompaction>[1]>["background"] = {
     settingsPaths: () => [settingsFile],
     createTextSummarizer: (active: Model<Api>) =>
-      textSummarizer(active, () => (log.backgroundCalls += 1), summarizerGate),
+      textSummarizer(
+        active,
+        (promptText) => {
+          log.backgroundCalls += 1;
+          log.backgroundPrompts.push(promptText);
+        },
+        summarizerGate,
+      ),
     anthropic: anthropicAllowList === undefined ? undefined : { allowList: anthropicAllowList },
   };
   return (pi: ExtensionAPI) => {
@@ -221,7 +235,7 @@ function compactionExtension(
 async function createRig(options: RigOptions): Promise<Rig> {
   const settingsFile = join(options.dir, "background-compaction.json");
   await writeFile(settingsFile, options.sidecar);
-  const log: RigLog = { compactEvents: [], backgroundCalls: 0 };
+  const log: RigLog = { compactEvents: [], backgroundCalls: 0, backgroundPrompts: [] };
   const host = await createHost({
     dir: options.dir,
     contextWindow: CONTEXT_WINDOW,
@@ -255,6 +269,7 @@ async function createRig(options: RigOptions): Promise<Rig> {
     compactEvents: log.compactEvents,
     notices,
     backgroundCalls: () => log.backgroundCalls,
+    backgroundPrompts: log.backgroundPrompts,
     aborts: () => host.aborts(),
     async dispose() {
       unsubscribe();
@@ -583,7 +598,7 @@ test(
 );
 
 test(
-  "manual compaction with custom instructions discards the candidate and proceeds",
+  "manual compaction with custom instructions discards the plain candidate and prepares a focused one",
   { timeout: 20_000 },
   async () => {
     await withDir(async (dir) => {
@@ -599,14 +614,20 @@ test(
         await rig.session.prompt("GO");
         summarizerGate.open();
         await waitFor(() => stateOf(rig) === "ready", "ready candidate");
-        await rig.session.compact("Focus on the audit");
-        assert.equal(ownEntries(rig).length, 0, "the candidate was not adopted");
-        assert.ok(rig.hostSummarizerCalls.length > 0, "the existing summarizer ran");
+        const plain = getCoordinator(rig.ownerKey)?.status().candidateId;
+        await assert.rejects(rig.session.compact("Focus on the audit"), /Compaction cancelled/);
+        await waitFor(() => stateOf(rig) === "installed", "focused candidate installed");
         const status = getCoordinator(rig.ownerKey)?.status();
-        assert.equal(status?.state, "discarded-stale");
-        assert.equal(status?.reason, "manual-instructions");
-        assert.equal(rig.compactEvents.length, 1);
-        assert.equal(rig.notices.length, 0);
+        assert.notEqual(status?.candidateId, plain, "the plain candidate was not adopted");
+        assert.equal(status?.customInstructions, "Focus on the audit");
+        assert.equal(rig.hostSummarizerCalls.length, 0, "the foreground summarizer never ran");
+        assert.ok(
+          rig.backgroundPrompts.some((prompt) =>
+            prompt.includes("Additional focus: Focus on the audit"),
+          ),
+          "the text lane applied the instructions",
+        );
+        assert.equal(ownEntries(rig).length, 1);
       } finally {
         await rig.dispose();
       }
@@ -885,11 +906,17 @@ test(
           rig.compactEvents.map((event) => [event.reason, event.fromExtension]),
           [["manual", true]],
         );
-        // Custom instructions: the foreground summarizer, never the background lane.
+        // Custom instructions: the text lane with the focus applied, no host compaction.
         await rig.session.prompt("MORE");
         await typeCompact(rig, "Focus on the audit");
-        assert.equal(rig.hostSummarizerCalls.length, 1);
-        assert.equal(rig.compactEvents.length, 2);
+        await waitFor(() => stateOf(rig) === "installed", "focused candidate installed");
+        assert.equal(rig.hostSummarizerCalls.length, 0);
+        assert.equal(ownEntries(rig).length, 2);
+        assert.ok(
+          rig.backgroundPrompts.some((prompt) =>
+            prompt.includes("Additional focus: Focus on the audit"),
+          ),
+        );
       } finally {
         await rig.dispose();
       }

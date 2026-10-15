@@ -314,6 +314,7 @@ function planPasses(
   evidence: PrefixEvidence,
   governing: string | undefined,
   limits: Limits,
+  customInstructions: string | undefined,
 ): PassPlan | undefined {
   const systemTokens = estimateTextTokens(BACKGROUND_COMPACTION_SYSTEM_PROMPT);
   const fits = (prompt: string): boolean =>
@@ -325,6 +326,7 @@ function planPasses(
     turnPrefix: messagesOf(evidence.turnPrefix),
     governingRequest: governing,
     scope: "complete",
+    customInstructions,
   });
   if (fits(single)) {
     return { kind: "single", prompt: single, entryIds: idsOf(all) };
@@ -340,6 +342,7 @@ function planPasses(
       historySummary: placeholder,
       evidence: messagesOf(slice),
       governingRequest: governing,
+      customInstructions,
     });
   const baseTokens = systemTokens + estimateTextTokens(renderSecond([]));
   const costs = all.map((item) => estimateTextTokens(serializeMessages([item.message])));
@@ -364,6 +367,7 @@ function planPasses(
     turnPrefix: [],
     governingRequest: governing,
     scope: "older-part",
+    customInstructions,
   });
   if (!fits(firstPrompt)) {
     return undefined;
@@ -385,6 +389,7 @@ interface PrepareOptions {
   readonly signal: AbortSignal;
   readonly budget: PreparationBudget;
   readonly candidateId: string;
+  readonly customInstructions?: string;
 }
 
 /** Everything `prepare` resolved synchronously before its first await. */
@@ -397,6 +402,7 @@ interface PreparedInputs {
   readonly evidence: PrefixEvidence;
   readonly governing: FrozenSnapshot["governingUserRequest"];
   readonly plan: PassPlan;
+  readonly customInstructions: string | undefined;
 }
 
 /** Synchronous checks and planning; returns a typed failure instead of starting a call. */
@@ -422,7 +428,7 @@ function resolvePrepareInputs(
   if (!(remainingMs > 0)) return failure("timeout", true);
   const evidence = collectPrefixEvidence(snapshot);
   const governing = snapshot.splitTurn ? snapshot.governingUserRequest : null;
-  const plan = planPasses(evidence, governing?.content, limits);
+  const plan = planPasses(evidence, governing?.content, limits, request.customInstructions);
   if (!plan) return failure("oversized", false);
   return {
     summarizer,
@@ -433,6 +439,7 @@ function resolvePrepareInputs(
     evidence,
     governing,
     plan,
+    customInstructions: request.customInstructions,
   };
 }
 
@@ -583,6 +590,7 @@ async function runTwoPasses(
     historySummary: first.text,
     evidence: messagesOf(plan.evidence),
     governingRequest: runner.inputs.governing?.content,
+    customInstructions: runner.inputs.customInstructions,
   });
   const secondTokens =
     estimateTextTokens(BACKGROUND_COMPACTION_SYSTEM_PROMPT) + estimateTextTokens(secondPrompt);

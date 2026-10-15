@@ -209,6 +209,8 @@ export interface FrozenPrefixPromptRequest {
   readonly governingRequest: string | undefined;
   /** "older-part" when a second pass will reconcile the newer part. */
   readonly scope: "complete" | "older-part";
+  /** User focus from `/compact <instructions>`. */
+  readonly customInstructions?: string;
 }
 
 export function buildFrozenPrefixPrompt(request: FrozenPrefixPromptRequest): string {
@@ -218,7 +220,7 @@ export function buildFrozenPrefixPrompt(request: FrozenPrefixPromptRequest): str
     governingBlock(request.governingRequest) +
     conversationBlock(request.history) +
     turnPrefixBlock(request.turnPrefix) +
-    `${rules}${splitTurnRules(request.governingRequest)}\n\n${FORMAT_BLOCK}`
+    `${rules}${splitTurnRules(request.governingRequest)}\n\n${FORMAT_BLOCK}${focusBlock(request.customInstructions)}`
   );
 }
 
@@ -227,6 +229,7 @@ export interface FrozenPrefixReconciliationRequest {
   readonly historySummary: string;
   readonly evidence: readonly CompactionMessage[];
   readonly governingRequest: string | undefined;
+  readonly customInstructions?: string;
 }
 
 export function buildFrozenPrefixReconciliationPrompt(
@@ -239,6 +242,6 @@ export function buildFrozenPrefixReconciliationPrompt(
     governingBlock(request.governingRequest) +
     `<pre-cut-evidence>\n${evidence}\n</pre-cut-evidence>\n\n` +
     `The <history-summary> block summarizes the older part of the material and may be stale. The <pre-cut-evidence> block is the newest part of the material before the cut; where the two disagree, it wins. Produce one reconciled summary of all of it.\n\n` +
-    `${FROZEN_PREFIX_RULES}${splitTurnRules(request.governingRequest)}\n\n${FORMAT_BLOCK}`
+    `${FROZEN_PREFIX_RULES}${splitTurnRules(request.governingRequest)}\n\n${FORMAT_BLOCK}${focusBlock(request.customInstructions)}`
   );
 }

@@ -145,10 +145,22 @@ host event.
   the remaining lane before the failure is reported. When the checkpoint is
   ready it is adopted through the idle
   route if the session is idle, otherwise at the next boundary; a failed
-  preparation is reported and nothing is summarized. `/compact` with custom
-  instructions still runs the foreground summarizer. Consumers see the
+  preparation is reported and nothing is summarized. `/compact <instructions>`
+  takes the same path on the text lane only (the native lanes cannot apply
+  instructions); the candidate carries the instructions, a ready candidate
+  answers a later request only when its instructions match, and a request
+  with different instructions supersedes the one in flight. Consumers see the
   deferred request as answered by the feature (`willAdopt` is true), so no
   compaction hook runs for it or for its later adoption.
+- **Paths that stay foreground, and why.** Threshold compaction runs inside
+  request preparation: the host blocks the request until compaction ends and
+  cancelling it would abort the user's turn, so the background feature only
+  prepares ahead (`prepareAt`) and adopts a ready candidate there. Overflow
+  recovery must shrink the next request before it can be sent at all, so an
+  in-flight preparation is cancelled and the foreground summarizer recovers.
+  `navigateTree({ summarize })` produces a branch summary, not a compaction.
+  RPC `compact` and extension `ctx.compact()` reach the same hook as a typed
+  `/compact` and are deferred the same way.
 - **Context cap.** When `.pi/extensions/model-context-cap.ts` reaches its
   compaction threshold and a ready candidate exists, it hands the compaction to
   the idle route instead of requesting a summary. Otherwise it behaves as before.

@@ -242,7 +242,8 @@ function freezeFresh(state: OwnerCoreState, context: SnapshotContext): PrefixSna
     freezeOptions(state, context, { keepRecentTokens: keepRecentTokens(state.spec) }),
   );
   if (isSnapshotRefusal(base)) return undefined;
-  if (state.backendId !== ANTHROPIC_BACKEND_ID) return base;
+  // Wire-replay cut rules bind only the lane that replays the wire.
+  if (context.backendId !== ANTHROPIC_BACKEND_ID) return base;
   return legalAnthropicCut(state, base, context);
 }
 

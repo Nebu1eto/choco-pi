@@ -10,8 +10,11 @@ type ArbitrationIntent = "adopt" | "proceed" | "discard-instructions" | "cancel-
 export function arbitrationIntent(
   state: CandidateState,
   event: HostCompactionTrigger,
+  candidateInstructions?: string,
 ): ArbitrationIntent {
-  if (event.customInstructions !== undefined) return "discard-instructions";
+  // Instructions select the candidate prepared with the same text; any other candidate is stale for them.
+  if (event.customInstructions !== undefined && event.customInstructions !== candidateInstructions)
+    return "discard-instructions";
   if (state === "ready") return "adopt";
   if (event.reason === "overflow" && (state === "queued" || state === "preparing"))
     return "cancel-overflow";

@@ -80,29 +80,59 @@ function manualSummaryCarriesInstructions(host: Host, fromRequest: number): bool
   });
 }
 
-/** /compact with custom instructions must discard the ready background candidate. */
+/**
+ * /compact with custom instructions discards the ready plain candidate and
+ * prepares a focused one on the background text lane (the host compaction is
+ * cancelled); the focused summary request carries the instructions.
+ */
 async function manualInstructions(host: Host): Promise<Observation[]> {
   await host.session.prompt("HARNESS-ARBITRATION-BEFORE-MANUAL");
   const ready = await prepare(host);
   const discarded = candidateId(host);
   const before = { checkpoints: checkpoints(host).length, requests: host.requestBranches.length };
-  await host.session.compact(MANUAL_INSTRUCTIONS);
+  let rejection = "";
+  try {
+    await host.session.compact(MANUAL_INSTRUCTIONS);
+  } catch (cause) {
+    rejection = cause instanceof Error ? cause.message : String(cause);
+  }
+  const deadline = performance.now() + ROUTE_TIMEOUT_MS;
+  while (performance.now() < deadline) {
+    const status = host.mainCoordinator()?.status();
+    if (status?.state === "installed" || status?.state === "failed") break;
+    await setTimeout(5);
+  }
+  while (host.session.isCompacting && performance.now() < deadline) await setTimeout(5);
   const added = newCheckpoints(host, before.checkpoints);
+  const status = host.mainCoordinator()?.status();
   const ref = host.recorder.record("arbitration-manual", {
     ready,
     discarded: discarded ?? null,
-    state: host.mainCoordinator()?.status().state ?? "missing",
+    rejection,
+    state: status?.state ?? "missing",
+    candidateId: status?.candidateId ?? null,
+    customInstructions: status?.customInstructions ?? null,
   });
   return [
     {
-      description: "Manual compaction with instructions is host-summarized, not the candidate",
+      description:
+        "Manual compaction with instructions is a focused background checkpoint, not the plain candidate",
       actual: {
         ready,
+        rejection,
         checkpoints: added.length,
-        adoptedCandidate: added.some((item) => item.candidateId !== undefined),
+        adoptedPlain: added.some((item) => item.candidateId === discarded),
+        focused: status?.customInstructions === MANUAL_INSTRUCTIONS && status.state === "installed",
         instructionsSent: manualSummaryCarriesInstructions(host, before.requests),
       },
-      expected: { ready: true, checkpoints: 1, adoptedCandidate: false, instructionsSent: true },
+      expected: {
+        ready: true,
+        rejection: "Compaction cancelled",
+        checkpoints: 1,
+        adoptedPlain: false,
+        focused: true,
+        instructionsSent: true,
+      },
       evidenceRefs: [ref, host.snapshot()],
     },
   ];

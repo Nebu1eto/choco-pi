@@ -90,35 +90,36 @@ async function arbitrate(
   return { action: "adopt", candidateId: result.candidateId, compaction };
 }
 
-/** A plain `/compact` typed by the user: not a route of ours, no custom instructions. */
-function isPlainManual(owner: MainOwner, event: SessionBeforeCompactEvent): boolean {
-  return (
-    event.reason === "manual" &&
-    event.customInstructions === undefined &&
-    owner.pendingRoute === undefined &&
-    !event.signal.aborted
-  );
+/** A `/compact` typed by the user (with or without instructions): not a route of ours. */
+function isUserManual(owner: MainOwner, event: SessionBeforeCompactEvent): boolean {
+  return event.reason === "manual" && owner.pendingRoute === undefined && !event.signal.aborted;
 }
 
 /**
- * Manual route: a plain `/compact` with no ready candidate continues in the
+ * Manual route: a `/compact` with no ready candidate continues in the
  * background instead of blocking the session on the summarizer. The host
  * compaction is cancelled so input is accepted again; the candidate is adopted
  * as soon as it is ready (idle route when idle, otherwise the next boundary).
- * Custom instructions, an owner without a backend, or a refused request keep
- * the existing foreground path.
+ * Custom instructions go to the text lane only (the native lanes cannot apply
+ * them). An owner without a backend or a refused request keeps the foreground path.
  */
 async function deferManual(
   rt: HostRuntime,
   owner: MainOwner,
   event: SessionBeforeCompactEvent,
 ): Promise<Decision> {
-  if (!isPlainManual(owner, event)) return PROCEED;
-  return (await startManualPreparation(rt, owner, "after-host-end")) ? CANCEL : PROCEED;
+  if (!isUserManual(owner, event)) return PROCEED;
+  const started = await startManualPreparation(
+    rt,
+    owner,
+    "after-host-end",
+    event.customInstructions,
+  );
+  return started ? CANCEL : PROCEED;
 }
 
 /**
- * Start (or join) the background preparation a plain `/compact` stands for.
+ * Start (or join) the background preparation a `/compact` stands for.
  * True when the request is now owned by the manual follower; false when the
  * foreground path has to run instead. Shared by the `session_before_compact`
  * hook (which must hold the follower until the host compaction has ended) and
@@ -128,10 +129,11 @@ export async function startManualPreparation(
   rt: HostRuntime,
   owner: MainOwner,
   follow: "now" | "after-host-end",
+  customInstructions?: string,
 ): Promise<boolean> {
   if (owner.pendingRoute !== undefined) return false;
-  const lanes = manualLanes(owner);
-  const candidateId = await manualCandidate(rt, owner, lanes[0]);
+  const lanes = manualLanes(owner, customInstructions);
+  const candidateId = await manualCandidate(rt, owner, lanes[0], customInstructions);
   if (candidateId === undefined) return false;
   // A repeated /compact during the same preparation waits on the existing follower.
   if (owner.manualCandidate === candidateId) return true;
@@ -144,7 +146,7 @@ export async function startManualPreparation(
   );
   const start = (): void => {
     owner.manualFollow = undefined;
-    void followManual(rt, owner, candidateId, lanes.slice(1));
+    void followManual(rt, owner, candidateId, lanes.slice(1), customInstructions);
   };
   if (follow === "now") start();
   else owner.manualFollow = start;
@@ -161,23 +163,34 @@ export function releaseManualFollow(owner: MainOwner): void {
  * is left to the host (its hook adopts it with no error line); otherwise the
  * owner must be current and able to start a preparation.
  */
-export function manualBypassesHost(rt: HostRuntime, owner: MainOwner): boolean {
+export function manualBypassesHost(
+  rt: HostRuntime,
+  owner: MainOwner,
+  customInstructions?: string,
+): boolean {
   if (!isCurrent(rt, owner) || owner.pendingRoute !== undefined) return false;
   const status = owner.core.coordinator.status();
-  if (status.state === "ready" || status.state === "adopting") return false;
-  return manualLanes(owner).length > 0;
+  // A ready candidate is left to the host hook only when it answers this request.
+  if (
+    (status.state === "ready" || status.state === "adopting") &&
+    status.customInstructions === customInstructions
+  )
+    return false;
+  return manualLanes(owner, customInstructions).length > 0;
 }
 
 /**
  * Backend lanes a manual request may use, preferred first. The Anthropic lane
  * needs a wire capture of this session's latest request; right after a
  * reload or resume there is none, so the text lane goes first and the
- * Anthropic lane is skipped rather than failing with `incompatible`.
+ * Anthropic lane is skipped rather than failing with `incompatible`. Custom
+ * instructions can only be applied by the text lane.
  */
-function manualLanes(owner: MainOwner): string[] {
+function manualLanes(owner: MainOwner, customInstructions?: string): string[] {
   const selected = owner.core.backendId;
   if (selected === undefined) return [];
   const lanes = [selected, ...owner.core.backendIds.filter((id) => id !== selected)];
+  if (customInstructions !== undefined) return lanes.filter((id) => id === TEXT_BACKEND_ID);
   const anthropicUsable =
     selected !== ANTHROPIC_BACKEND_ID || capturesFor(owner.core.sessionId).length > 0;
   if (anthropicUsable) return lanes.filter((id) => id === selected || id === TEXT_BACKEND_ID);
@@ -189,14 +202,19 @@ async function manualCandidate(
   rt: HostRuntime,
   owner: MainOwner,
   backendId: string | undefined,
+  customInstructions?: string,
 ): Promise<string | undefined> {
   if (backendId === undefined) return undefined;
   const status = owner.core.coordinator.status();
-  if (status.state === "queued" || status.state === "preparing") return status.candidateId;
+  const outstanding = status.state === "queued" || status.state === "preparing";
+  if (outstanding && status.customInstructions === customInstructions) return status.candidateId;
+  // A request with different instructions supersedes the one in flight.
+  if (outstanding) owner.core.coordinator.cancel("manual-instructions");
   if (status.state === "adopting") return undefined;
   const requested = await owner.core.coordinator.requestPreparation({
     trigger: "manual",
     backendId,
+    customInstructions,
   });
   if (!isCurrent(rt, owner) || !requested.accepted) return undefined;
   return requested.candidateId;
@@ -211,6 +229,7 @@ async function followManual(
   owner: MainOwner,
   candidateId: string,
   fallbacks: readonly string[],
+  customInstructions?: string,
 ): Promise<void> {
   let failure: unknown;
   try {
@@ -235,12 +254,12 @@ async function followManual(
   const reason = failure === undefined ? (status.reason ?? status.state) : errorText(failure);
   const [next, ...rest] = fallbacks;
   if (next !== undefined && failure === undefined) {
-    const retried = await manualCandidate(rt, owner, next);
+    const retried = await manualCandidate(rt, owner, next, customInstructions);
     if (!isCurrent(rt, owner) || owner.manualCandidate !== candidateId) return;
     if (retried !== undefined) {
       owner.manualCandidate = retried;
       // Expected lane fallback: recorded on the failed candidate's status, not shown to the user.
-      void followManual(rt, owner, retried, rest);
+      void followManual(rt, owner, retried, rest, customInstructions);
       return;
     }
   }
