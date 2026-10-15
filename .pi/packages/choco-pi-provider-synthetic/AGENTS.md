@@ -52,6 +52,8 @@ src/
   client/
     index.ts                    # Barrel re-exporting the public client surface
     index.test.ts              # Client + resolveSyntheticClientOptions tests
+    count-tokens.ts             # countSyntheticTokens: Anthropic-compatible /messages/count_tokens
+    count-tokens.test.ts        # count_tokens client tests (stubbed fetch)
     synthetic-client.ts         # SyntheticClient: quotas, web search, model-list calls
     utility-api.ts              # Utility API base URL resolution, proxy + auth detection
     utils.ts                    # Fetch timeout, auth headers, error parsing
@@ -81,6 +83,7 @@ src/
 - Credentials come from Pi's provider auth resolution: `~/.pi/agent/auth.json` (recommended), `SYNTHETIC_API_KEY` environment variable, or the `apiKey: "$SYNTHETIC_API_KEY"` configured on the provider
 - Provider uses OpenAI-compatible API at `https://api.synthetic.new/openai/v1`
 - Non-provider Synthetic endpoints (`/v2/quotas`, `/v2/search`, `/openai/v1/models`) go through `src/client/synthetic-client.ts`
+- Token counting (`/anthropic/v1/messages/count_tokens`) goes through `countSyntheticTokens` in `src/client/count-tokens.ts`; it maps an OpenAI (`/openai/v1`), Anthropic (`/anthropic/v1`), or root/proxy base URL to `<root>/anthropic/v1` on the same origin and returns a typed result instead of throwing on provider/network failures
 - Models are fetched dynamically from `https://api.synthetic.new/openai/v1/models` via `ProviderConfig.refreshModels` (Pi 0.80.8+) and cached in `context.store` with a 4-hour TTL; see `extensions/provider/refresh-models.ts`
 - The hardcoded catalog in `extensions/provider/models.ts` is kept as an offline fallback and as the override source for model-specific compatibility settings (`thinkingLevelMap`, `compat`) that the API does not expose
 - All user-facing model selection still uses the Pi provider name `synthetic`

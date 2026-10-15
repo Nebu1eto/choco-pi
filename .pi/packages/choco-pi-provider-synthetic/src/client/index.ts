@@ -1,3 +1,13 @@
+export {
+  type CountSyntheticTokensOptions,
+  type CountTokensErrorCode,
+  type CountTokensResponse,
+  CountTokensResponseSchema,
+  type CountTokensResult,
+  countSyntheticTokens,
+  DEFAULT_COUNT_TOKENS_TIMEOUT_MS,
+  resolveSyntheticAnthropicBaseUrl,
+} from "./count-tokens";
 export { SyntheticClient } from "./synthetic-client";
 export type {
   SyntheticClientOptions,

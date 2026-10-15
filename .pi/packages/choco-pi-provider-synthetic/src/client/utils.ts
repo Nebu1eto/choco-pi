@@ -11,8 +11,11 @@ export function isTimeoutReason(reason: Error | DOMException | undefined): boole
   );
 }
 
-export function combineWithTimeout(signal?: AbortSignal): AbortSignal {
-  const signals: AbortSignal[] = [AbortSignal.timeout(FETCH_TIMEOUT_MS)];
+export function combineWithTimeout(
+  signal?: AbortSignal,
+  timeoutMs: number = FETCH_TIMEOUT_MS,
+): AbortSignal {
+  const signals: AbortSignal[] = [AbortSignal.timeout(timeoutMs)];
   if (signal) signals.push(signal);
   return AbortSignal.any(signals);
 }
