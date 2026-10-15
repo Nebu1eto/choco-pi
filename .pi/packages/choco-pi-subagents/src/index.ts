@@ -4035,6 +4035,7 @@ default_model: <optional model as "provider/modelId" used when the caller passes
 thinking: <optional pinned thinking level: ${THINKING_LEVELS.join(", ")}; callers cannot override it>
 default_thinking: <optional thinking level used when the caller passes none. Omit both to inherit>
 max_turns: <optional max agentic turns. 0 or omit for unlimited (default)>
+internal: <true hides the agent from every caller-supplied type (Agent tool, workflows, @mentions, /btw); only first-party code spawns it by name. Default: false>
 prompt_mode: <"replace" (body IS the full system prompt) or "append" (body is appended to default prompt). Default: replace>
 extensions: <true (inherit all MCP/extension tools), false (none), or comma-separated names. Default: true>
 skills: <true (inherit all), false (none), or comma-separated skill names to preload into prompt. Default: true>

@@ -62,6 +62,7 @@ interface AgentFrontmatter {
   memory?: FrontmatterValue;
   isolation?: FrontmatterValue;
   enabled?: FrontmatterValue;
+  internal?: FrontmatterValue;
 }
 
 interface ParsedAgentFile {
@@ -193,6 +194,7 @@ function loadFromDir(
       memory: parseMemory(fm.memory),
       isolation: parseIsolation(fm.isolation),
       enabled: fm.enabled !== false, // default true; explicitly false disables
+      internal: fm.internal === true,
       source,
       sourcePath: path,
     });

@@ -527,6 +527,17 @@ to omit the fields unless there is a task-specific reason. `/btw` side
 conversations are unaffected: `runAgent` applies the forked main-session
 runtime before any frontmatter or caller value.
 
+### Internal roles
+
+Frontmatter `internal: true` keeps an agent in the registry but makes every
+caller-supplied type resolution treat it as unknown: `resolveSpawnTypeIn`,
+`resolveEnabledTypeIn`, `isValidTypeIn`, `getAvailableTypesIn` and the
+configured-fallback check all require `isCallerSpawnable`. First-party code
+that passes a literal type to `manager.spawn` (the advisor tool) still reaches
+`getConfig`. The advisor role is internal because the advisor tool owns its
+model and effort; a direct `Agent` spawn would inherit the parent model.
+`tests/subagent-config.test.ts` pins it.
+
 ### No prompt-mode label on append-mode agents
 
 The fork removes upstream's `twin` UI label from append-mode agents. Every

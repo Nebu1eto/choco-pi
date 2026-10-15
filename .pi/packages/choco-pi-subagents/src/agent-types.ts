@@ -120,17 +120,27 @@ export function getAgentConfigIn(
   return key ? registry.get(key) : undefined;
 }
 
-/** Check if a type is valid and enabled (case-insensitive) in a registry. */
+/**
+ * Whether a caller may name this agent. Disabled and internal agents both
+ * fail: a disabled one is hidden everywhere, an internal one only from
+ * caller-supplied type resolution (`getConfig` still serves it to first-party
+ * spawns by literal name).
+ */
+function isCallerSpawnable(config: AgentConfig | undefined): boolean {
+  return config !== undefined && config.enabled !== false && config.internal !== true;
+}
+
+/** Check if a type is valid and caller-spawnable (case-insensitive) in a registry. */
 export function isValidTypeIn(registry: Map<string, AgentConfig>, type: string): boolean {
   const key = resolveKeyIn(registry, type);
   if (!key) return false;
-  return registry.get(key)?.enabled !== false;
+  return isCallerSpawnable(registry.get(key));
 }
 
-/** Get all enabled type names in a registry (for spawning and tool descriptions). */
+/** Get all caller-spawnable type names in a registry (for spawning and tool descriptions). */
 export function getAvailableTypesIn(registry: Map<string, AgentConfig>): string[] {
   return [...registry.entries()]
-    .filter(([, config]) => config.enabled !== false)
+    .filter(([, config]) => isCallerSpawnable(config))
     .map(([name]) => name);
 }
 
@@ -153,7 +163,7 @@ function resolveUnambiguousKeyIn(
 
 /**
  * The canonical key for a caller-supplied name that identifies exactly one
- * ENABLED agent, or undefined. Strict by construction: no fallback, no guessing
+ * caller-spawnable agent, or undefined. Strict by construction: no fallback, no guessing
  * between case-variants. Nested delegation resolves with this directly, since
  * "unknown types are rejected rather than falling back" is its own contract.
  */
@@ -164,7 +174,7 @@ export function resolveEnabledTypeIn(
   const raw = requested?.trim() ?? "";
   if (!raw) return undefined;
   const key = resolveUnambiguousKeyIn(registry, raw);
-  return key !== undefined && registry.get(key)?.enabled !== false ? key : undefined;
+  return key !== undefined && isCallerSpawnable(registry.get(key)) ? key : undefined;
 }
 
 /** Outcome of resolving a caller-supplied `subagent_type` into a spawnable type. */
@@ -216,12 +226,12 @@ export function resolveSpawnTypeIn(
     // misconfiguration, not a second chance to guess — say so rather than
     // quietly dropping to general-purpose.
     const fallbackKey = resolveUnambiguousKeyIn(registry, configured);
-    if (fallbackKey === undefined || registry.get(fallbackKey)?.enabled === false) {
+    if (fallbackKey === undefined || !isCallerSpawnable(registry.get(fallbackKey))) {
       return {
         ok: false,
         message:
           `${reason} The configured fallbackSubagent "${configured}" is itself ` +
-          `unknown or disabled. Available: ${available()}.`,
+          `unknown, disabled or internal. Available: ${available()}.`,
       };
     }
     return { ok: true, type: fallbackKey, fellBackFrom: raw };

@@ -4,6 +4,7 @@ prompt_mode: replace
 extensions: false
 skills: false
 inherit_context: false
+internal: true
 tools: read, grep, find, ls
 ---
 

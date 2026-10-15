@@ -94,6 +94,14 @@ export interface AgentConfig {
   isDefault?: boolean;
   /** false = agent is hidden from the registry */
   enabled?: boolean;
+  /**
+   * true = only first-party code may spawn this agent by its literal name
+   * (`manager.spawn`); every caller-supplied type resolution — the Agent and
+   * nested tools, workflows, the scheduler, RPC, mentions, resume and BTW —
+   * treats it as unknown. The advisor role is internal: the advisor tool owns
+   * its model, effort and prompt, and a direct spawn would inherit the parent.
+   */
+  internal?: boolean;
   /** Where this agent was loaded from */
   source?: "default" | "project" | "global";
   /** Path of the .md it was loaded from. Unset for embedded defaults. */

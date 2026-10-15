@@ -288,7 +288,7 @@ test("every first-party package tool has a bounded catalog snippet", async () =>
   const agent = toolsByPackage.get("subagents")?.find((tool) => tool.name === "Agent");
   assert.match(
     agent?.description ?? "",
-    /Available types: advisor, explore, general, handoff, implementer, planner, reviewer/,
+    /Available types: explore, general, handoff, implementer, planner, reviewer/,
   );
   const agentParameters = schemaNode(agent?.parameters);
   const runInBackground = schemaNode(agentParameters?.properties?.run_in_background);

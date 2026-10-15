@@ -150,3 +150,28 @@ test("fallbacks and role defaults route OpenAI through openai-codex only", async
     if (defaultModel) assert.match(defaultModel, /^(?:openai-codex|anthropic)\//u, file);
   }
 });
+
+test("the advisor role is internal: only the advisor tool may spawn it", async () => {
+  const packageRoot = resolve(".pi/packages/choco-pi-subagents/src");
+  const { loadCustomAgents } = await import(
+    pathToFileURL(resolve(packageRoot, "custom-agents.ts")).href
+  );
+  const {
+    buildAgentRegistry,
+    getAgentConfigIn,
+    getAvailableTypesIn,
+    resolveEnabledTypeIn,
+    resolveSpawnTypeIn,
+  } = await import(pathToFileURL(resolve(packageRoot, "agent-types.ts")).href);
+  const registry = buildAgentRegistry(loadCustomAgents(process.cwd()));
+
+  const advisor = getAgentConfigIn(registry, "advisor");
+  assert.ok(advisor, "advisor stays in the registry for first-party spawns");
+  assert.equal(advisor.internal, true);
+  assert.notEqual(advisor.enabled, false);
+
+  assert.ok(!getAvailableTypesIn(registry).includes("advisor"), "hidden from callers");
+  assert.equal(resolveEnabledTypeIn(registry, "advisor"), undefined, "nested tools reject it");
+  const dispatch = resolveSpawnTypeIn(registry, "Advisor");
+  assert.ok(!dispatch.ok || dispatch.type !== "advisor", "Agent tool never dispatches it");
+});
