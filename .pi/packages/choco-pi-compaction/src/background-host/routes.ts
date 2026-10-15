@@ -114,11 +114,27 @@ async function deferManual(
   event: SessionBeforeCompactEvent,
 ): Promise<Decision> {
   if (!isPlainManual(owner, event)) return PROCEED;
+  return (await startManualPreparation(rt, owner, "after-host-end")) ? CANCEL : PROCEED;
+}
+
+/**
+ * Start (or join) the background preparation a plain `/compact` stands for.
+ * True when the request is now owned by the manual follower; false when the
+ * foreground path has to run instead. Shared by the `session_before_compact`
+ * hook (which must hold the follower until the host compaction has ended) and
+ * the TUI command bridge (no host compaction: follow at once).
+ */
+export async function startManualPreparation(
+  rt: HostRuntime,
+  owner: MainOwner,
+  follow: "now" | "after-host-end",
+): Promise<boolean> {
+  if (owner.pendingRoute !== undefined) return false;
   const lanes = manualLanes(owner);
   const candidateId = await manualCandidate(rt, owner, lanes[0]);
-  if (candidateId === undefined) return PROCEED;
+  if (candidateId === undefined) return false;
   // A repeated /compact during the same preparation waits on the existing follower.
-  if (owner.manualCandidate === candidateId) return CANCEL;
+  if (owner.manualCandidate === candidateId) return true;
   owner.manualCandidate = candidateId;
   setStatus(owner.lastCtx, MANUAL_STATUS);
   tell(
@@ -126,8 +142,30 @@ async function deferManual(
     "continuing in the background; the context switches when it is ready",
     "info",
   );
-  void followManual(rt, owner, candidateId, lanes.slice(1));
-  return CANCEL;
+  const start = (): void => {
+    owner.manualFollow = undefined;
+    void followManual(rt, owner, candidateId, lanes.slice(1));
+  };
+  if (follow === "now") start();
+  else owner.manualFollow = start;
+  return true;
+}
+
+/** Start a follower held back by the hook path, once the host compaction has ended. */
+export function releaseManualFollow(owner: MainOwner): void {
+  owner.manualFollow?.();
+}
+
+/**
+ * Whether a typed `/compact` should bypass the host entirely. A ready candidate
+ * is left to the host (its hook adopts it with no error line); otherwise the
+ * owner must be current and able to start a preparation.
+ */
+export function manualBypassesHost(rt: HostRuntime, owner: MainOwner): boolean {
+  if (!isCurrent(rt, owner) || owner.pendingRoute !== undefined) return false;
+  const status = owner.core.coordinator.status();
+  if (status.state === "ready" || status.state === "adopting") return false;
+  return manualLanes(owner).length > 0;
 }
 
 /**
@@ -420,6 +458,7 @@ export async function observeSettled(rt: HostRuntime, ctx: ExtensionContext): Pr
   await owner.core.settle();
   if (!isCurrent(rt, owner)) return;
   owner.core.observeUsage(ctx.getContextUsage());
+  releaseManualFollow(owner);
   settleManual(owner, ctx);
   // A candidate that became ready late in the run is adopted now rather than at the next prompt.
   await adoptManualIfIdle(rt, owner, ctx);

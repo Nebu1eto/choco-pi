@@ -26,7 +26,10 @@ import {
   type ChildCoordinatorContext,
   resolveChildCompactionProvider,
 } from "../../choco-pi-subagents/src/child-compaction-bridge.ts";
+import { InteractiveMode } from "@earendil-works/pi-coding-agent";
+
 import { getCoordinator } from "../src/background/registry.ts";
+import type { CompactCommandHost } from "../src/background-host/host-command.ts";
 import { TEXT_BACKEND_ID, type TextSummarizer } from "../src/background/text-backend.ts";
 import type { AnthropicSupportEntry } from "../src/anthropic/capability.ts";
 import registerCompaction, {
@@ -80,6 +83,22 @@ const ENABLED_SIDECAR = JSON.stringify({
 });
 const CONTEXT_WINDOW = 100_000;
 const HIGH_USAGE = 60_000;
+
+/** Pi's (patched) typed-command handler, invoked the way the interactive mode does. */
+interface TypedCompactPrototype {
+  handleCompactCommand: (
+    this: CompactCommandHost & { clearStatusIndicator(): void },
+    customInstructions?: string,
+  ) => Promise<void>;
+}
+
+/** Type `/compact` into the TUI: run the prototype method on the rig's session. */
+async function typeCompact(rig: Rig, customInstructions?: string): Promise<void> {
+  const prototype: object = InteractiveMode.prototype;
+  // SAFETY: the test reaches the private method the bridge swaps.
+  const handler = (prototype as TypedCompactPrototype).handleCompactCommand;
+  await handler.call({ session: rig.session, clearStatusIndicator: () => {} }, customInstructions);
+}
 /** Background on, but the usage threshold is never crossed: only /compact starts a preparation. */
 const MANUAL_ONLY_SIDECAR = JSON.stringify({
   enabled: true,
@@ -795,6 +814,88 @@ test("plain /compact with a ready candidate adopts it", { timeout: 20_000 }, asy
     }
   });
 });
+
+test(
+  "a typed /compact bypasses the host compaction entirely while a preparation runs",
+  { timeout: 20_000 },
+  async () => {
+    await withDir(async (dir) => {
+      const summarizerGate = gate(false);
+      const notices: string[] = [];
+      const rig = await createRig({
+        dir,
+        sidecar: MANUAL_ONLY_SIDECAR,
+        summarizerGate,
+        firstExtensions: [recordNotices(notices)],
+        respond: async (index) =>
+          reply(`R${index}`, { usageInput: index === 0 ? HIGH_USAGE : 20_000 }),
+      });
+      try {
+        await rig.session.prompt("GO");
+        const hostEvents: string[] = [];
+        const unsubscribe = rig.session.subscribe((event) => {
+          if (event.type === "compaction_start" || event.type === "compaction_end") {
+            hostEvents.push(event.type);
+          }
+        });
+        await typeCompact(rig);
+        unsubscribe();
+        assert.equal(stateOf(rig), "preparing", "the typed command started a preparation");
+        assert.deepEqual(hostEvents, [], "no host compaction was started, so no cancel line");
+        assert.equal(rig.compactEvents.length, 0);
+        assert.equal(rig.aborts(), 0, "the agent was not aborted");
+        assert.equal(rig.hostSummarizerCalls.length, 0);
+        assert.equal(
+          notices.some((notice) => notice.includes("continuing in the background")),
+          true,
+        );
+        summarizerGate.open();
+        await waitFor(() => stateOf(rig) === "installed", "installed candidate");
+        assert.equal(ownEntries(rig).length, 1);
+        assert.equal(rig.notices[0]?.route, "host");
+      } finally {
+        await rig.dispose();
+      }
+    });
+  },
+);
+
+test(
+  "a typed /compact with instructions or a ready candidate runs Pi's own handler",
+  { timeout: 20_000 },
+  async () => {
+    await withDir(async (dir) => {
+      const summarizerGate = gate(false);
+      const rig = await createRig({
+        dir,
+        sidecar: ENABLED_SIDECAR,
+        summarizerGate,
+        respond: async (index) => reply(`R${index}`, { usageInput: index === 0 ? HIGH_USAGE : 1 }),
+      });
+      try {
+        await rig.session.prompt("GO");
+        summarizerGate.open();
+        await waitFor(() => stateOf(rig) === "ready", "ready candidate");
+        // Ready candidate: the host compaction runs and its hook adopts the checkpoint.
+        await typeCompact(rig);
+        assert.equal(stateOf(rig), "installed");
+        assert.equal(ownEntries(rig).length, 1);
+        assert.equal(rig.hostSummarizerCalls.length, 0);
+        assert.deepEqual(
+          rig.compactEvents.map((event) => [event.reason, event.fromExtension]),
+          [["manual", true]],
+        );
+        // Custom instructions: the foreground summarizer, never the background lane.
+        await rig.session.prompt("MORE");
+        await typeCompact(rig, "Focus on the audit");
+        assert.equal(rig.hostSummarizerCalls.length, 1);
+        assert.equal(rig.compactEvents.length, 2);
+      } finally {
+        await rig.dispose();
+      }
+    });
+  },
+);
 
 test(
   "reload binds the persisted ready candidate without a paid prepare",

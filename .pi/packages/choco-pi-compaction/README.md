@@ -132,14 +132,18 @@ host event.
   candidate and runs the normal summarizer. Overflow recovery with no ready
   candidate cancels any preparation and proceeds unchanged.
 - **Manual (plain `/compact`, no ready candidate).** The extension starts a
-  background preparation (or waits on the one already running), answers the
-  host with `cancel` so input is accepted again, and shows a
-  "compacting in background" status. The Anthropic lane needs a wire capture
+  background preparation (or waits on the one already running) and shows a
+  "compacting in background" status. In the TUI the typed command is taken
+  over at `InteractiveMode.prototype.handleCompactCommand` (the same way the
+  settings dialog takes over `/settings`), so no host compaction starts: no
+  "Compaction cancelled" line, and a running agent is not aborted. A
+  programmatic `session.compact()` (RPC, SDK, tests) still reaches the
+  `session_before_compact` hook, which answers `cancel` and lets the host
+  print its own line. The Anthropic lane needs a wire capture
   of the session's latest request, so right after a reload or resume the
   request goes to the text lane instead; a lane that fails is retried once on
-  the remaining lane before the failure is reported. The host prints its own
-  "Compaction cancelled" line because the built-in command cannot be
-  intercepted. When the checkpoint is ready it is adopted through the idle
+  the remaining lane before the failure is reported. When the checkpoint is
+  ready it is adopted through the idle
   route if the session is idle, otherwise at the next boundary; a failed
   preparation is reported and nothing is summarized. `/compact` with custom
   instructions still runs the foreground summarizer. Consumers see the

@@ -38,6 +38,11 @@ import {
   publishBackgroundAdoptionSignalSlot,
 } from "./adoption-signal.ts";
 import { createChildProvider } from "./child-provider.ts";
+import {
+  type CompactCommandHost,
+  installCompactCommandBridge,
+  releaseCompactCommandBridge,
+} from "./host-command.ts";
 import { startMainSession } from "./main-session.ts";
 import { createNotifier, errorText } from "./notices.ts";
 import type { BackgroundCompactionOptions } from "./owner-spec.ts";
@@ -45,10 +50,13 @@ import {
   adoptAtBoundary,
   adoptOnIdleInput,
   decide,
+  manualBypassesHost,
   observeSettled,
+  releaseManualFollow,
   reportHostRefused,
+  startManualPreparation,
 } from "./routes.ts";
-import { type HostRuntime, shutdown, touchCurrentOwner } from "./runtime.ts";
+import { type HostRuntime, isCurrent, shutdown, touchCurrentOwner } from "./runtime.ts";
 
 // ===========================================================================
 // Background compaction host integration
@@ -125,6 +133,16 @@ export function registerBackgroundCompaction(
   /** Bumped by every session_shutdown; a session start awaiting I/O stops when it moved. */
   const shutdowns = { count: 0 };
 
+  // A typed /compact in the TUI continues in the background without the host's
+  // "Compaction cancelled" line; every other case falls back to Pi's handler.
+  const deferTypedCompact = async (host: CompactCommandHost): Promise<boolean> => {
+    const owner = rt.main;
+    if (owner === undefined || owner.core.sessionId !== host.session.sessionId) return false;
+    if (!manualBypassesHost(rt, owner)) return false;
+    return startManualPreparation(rt, owner, "now");
+  };
+  installCompactCommandBridge(deferTypedCompact);
+
   pi.on("session_start", async (_event, ctx) => {
     publishPreferences(rt, ctx, childProvider);
     const shutdownCount = shutdowns.count;
@@ -141,6 +159,7 @@ export function registerBackgroundCompaction(
   pi.on("session_tree", (_event, ctx) => onSessionTree(rt, ctx));
   pi.on("session_shutdown", () => {
     shutdowns.count += 1;
+    releaseCompactCommandBridge(deferTypedCompact);
     shutdown(rt);
   });
   pi.on("turn_start", (_event, ctx) => settleCurrentOwner(rt, ctx));
@@ -391,6 +410,8 @@ async function onCompactFailed(rt: HostRuntime, ctx: ExtensionContext): Promise<
   const owner = touchCurrentOwner(rt, ctx);
   if (owner === undefined) return;
   await reportHostRefused(rt, owner, ctx);
+  if (!isCurrent(rt, owner)) return;
+  releaseManualFollow(owner);
 }
 
 function reportReplayDiagnostic(
