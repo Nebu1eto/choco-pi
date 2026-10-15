@@ -13,7 +13,41 @@ interface IdleRefs {
   preparedRef: number;
 }
 
+/** Codex rides choco-pi-codex's WebSocket, outside the fetch ledger: the built context is the observable request. */
+function providerOwnedRequestObservation(host: Host): Observation | undefined {
+  const last = host.session.messages.findLast((message) => message.role === "assistant");
+  if (host.mode !== "live" || last?.role !== "assistant" || last.api === "anthropic-messages")
+    return undefined;
+  const first = host.manager
+    .buildSessionProjection()
+    .messages.find((message) => message.role !== "system");
+  const checkpoint = host.manager.getBranch().findLast((entry) => entry.type === "compaction");
+  const ref = host.recorder.record("provider-owned-request-context", {
+    transport: last.api,
+    firstRole: first?.role ?? null,
+    checkpointId: checkpoint?.id ?? null,
+  });
+  host.recorder.record("live-provider-turn", {
+    transport: `${last.api} (usage from the assistant message, not the fetch ledger)`,
+    stopReason: last.stopReason,
+    errorMessage: last.errorMessage ?? null,
+    usage: { input: last.usage.input, output: last.usage.output, cacheRead: last.usage.cacheRead },
+  });
+  return {
+    actual:
+      first?.role === "compactionSummary" && checkpoint?.type === "compaction"
+        ? first.summary === checkpoint.summary
+        : false,
+    expected: true,
+    evidenceRefs: [ref],
+    description:
+      "Context built for the first turn after idle adoption opens with the committed checkpoint (provider-owned transport)",
+  };
+}
+
 function firstRequestObservation(host: Host, refs: IdleRefs): Observation {
+  const providerOwned = providerOwnedRequestObservation(host);
+  if (providerOwned) return providerOwned;
   const first = host.requestBranches
     .slice(refs.requestsBefore)
     .find((item) => item.sessionId === refs.sessionId && !item.summary);
@@ -87,6 +121,7 @@ export const scenario: Scenario = {
   settings: { enabled: true, text: true, minReductionTokens: 0 },
   seedBytes: 20000,
   checks: ["idle-adoption", "post-adoption-transport", "consumers-notified-once"],
+  providerOwnedTransport: true,
   markers: [NEXT_PROMPT],
   execute: runIdleAdoption,
 };

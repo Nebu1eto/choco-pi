@@ -183,7 +183,7 @@ function activeObservations(host: Host, activeRef: number, signalRefs: number[])
 
 function transportObservations(host: Host): Observation[] {
   const request = host.requestBranches.find((item) => !item.summary && item.checkpointId);
-  if (!request) return [];
+  if (!request) return providerOwnedTransportObservations(host);
   const body = host.recorder.records[request.bodyEvidenceRef];
   if (!body) throw new Error("Missing post-adoption transport");
   const marker = checkpointMarker(host);
@@ -229,4 +229,46 @@ export function textAdoptionEvidence(host: Host, activeRef?: number): CheckEvide
   result.observations["post-adoption-transport"] = transportObservations(host);
   notificationEvidence(host, result);
   return result;
+}
+/**
+ * Codex rides choco-pi-codex's WebSocket, outside the fetch ledger. The
+ * context the host built for the post-adoption turn is the observable request:
+ * it must open with the committed checkpoint and carry no frozen-prefix entry.
+ */
+function providerOwnedTransportObservations(host: Host): Observation[] {
+  const last = host.session.messages.findLast((message) => message.role === "assistant");
+  if (host.mode !== "live" || last?.role !== "assistant" || last.api === "anthropic-messages")
+    return [];
+  const checkpoint = lastCheckpoint(host);
+  if (!checkpoint) return [];
+  const branch = host.manager.getBranch();
+  const cut = branch.findIndex((entry) => entry.id === checkpoint.firstKeptEntryId);
+  const prefixIds = new Set(branch.slice(0, Math.max(cut, 0)).map((entry) => entry.id));
+  const projection = host.manager.buildSessionProjection();
+  const conversational = projection.messages.filter((message) => message.role !== "system");
+  const summaries = conversational.filter(
+    (message) => message.role === "compactionSummary" && message.summary === checkpoint.summary,
+  );
+  const ref = host.recorder.record("provider-owned-request-context", {
+    transport: last.api,
+    roles: conversational.map((message) => message.role),
+    checkpointId: checkpoint.id,
+    prefixEntries: prefixIds.size,
+  });
+  return [
+    {
+      actual: summaries.length,
+      expected: 1,
+      evidenceRefs: [ref],
+      description:
+        "Context built for the post-adoption turn carries the text checkpoint exactly once",
+    },
+    {
+      actual: conversational[0]?.role ?? null,
+      expected: "compactionSummary",
+      evidenceRefs: [ref],
+      description:
+        "Context built for the post-adoption turn opens with the checkpoint, no raw prefix",
+    },
+  ];
 }
