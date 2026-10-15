@@ -11,20 +11,23 @@ import type { CompactionMessage, CompactionSettings } from "./types.ts";
 export const RESPONSE_MARGIN_TOKENS = 512;
 
 /**
- * Extra output tokens granted to a background summary on a reasoning model.
+ * Output cap granted to a summary request on a reasoning model, in tokens.
  *
- * Reasoning shares the output cap on OpenAI-compatible endpoints, so a model
- * that always reasons can spend the whole summary cap before writing the
- * summary. The reserve is 0.8 x 8192, the host's own reserve-to-output ratio
- * applied to its default reserve. The thinking level itself is not changed.
+ * Reasoning shares the output cap on OpenAI-compatible and Anthropic
+ * endpoints, so a model that always reasons can spend the whole summary cap
+ * before writing the summary. A live GLM-5.3 compaction of a 290k-token
+ * session hit the host-derived 13,107-token cap after nine minutes of
+ * reasoning (2026-10-16). Both lanes therefore grant at least this much to a
+ * reasoning model, clamped to the model's own output limit; the summary call
+ * also asks for the lowest thinking level the model supports.
  */
-export const REASONING_OUTPUT_RESERVE_TOKENS = 6553;
+export const REASONING_SUMMARY_OUTPUT_TOKENS = 32_768;
 
 /** The active model's request limits, as the fit test needs them. */
 export interface ModelBudget {
   readonly contextWindow: number;
   readonly maxTokens: number;
-  /** Whether the model reasons; adds {@link REASONING_OUTPUT_RESERVE_TOKENS} to a background summary cap. */
+  /** Whether the model reasons; raises a summary cap to {@link REASONING_SUMMARY_OUTPUT_TOKENS}. */
   readonly reasoning?: boolean;
 }
 
@@ -43,8 +46,7 @@ export function resolveBackgroundLimits(
   model: ModelBudget | undefined,
   budget: { readonly maxInputTokens: number; readonly maxOutputTokens: number },
 ): BackgroundLimits | undefined {
-  const requested =
-    budget.maxOutputTokens + (model?.reasoning === true ? REASONING_OUTPUT_RESERVE_TOKENS : 0);
+  const requested = reasoningOutputCap(model, budget.maxOutputTokens);
   const maxOutputTokens =
     model !== undefined && model.maxTokens > 0 ? Math.min(requested, model.maxTokens) : requested;
   const windowLimit =
@@ -59,7 +61,13 @@ export function resolveBackgroundLimits(
 /** Output cap for a summarization request, computed like the host's. */
 export function resolveMaxTokens(model: ModelBudget, settings: CompactionSettings): number {
   const reserveCap = Math.floor(0.8 * settings.reserveTokens);
-  return model.maxTokens > 0 ? Math.min(reserveCap, model.maxTokens) : reserveCap;
+  const requested = reasoningOutputCap(model, reserveCap);
+  return model.maxTokens > 0 ? Math.min(requested, model.maxTokens) : requested;
+}
+
+/** `base`, or the reasoning summary cap when it is larger and the model reasons. */
+function reasoningOutputCap(model: ModelBudget | undefined, base: number): number {
+  return model?.reasoning === true ? Math.max(base, REASONING_SUMMARY_OUTPUT_TOKENS) : base;
 }
 
 /** Whether a request fits: prompt plus reserved output plus margin. */

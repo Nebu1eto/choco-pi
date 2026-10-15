@@ -7,8 +7,38 @@ import {
 } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+/** Pi thinking levels from least to most reasoning, "off" excluded. */
+const THINKING_LEVELS_ASCENDING = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+type ActiveThinkingLevel = (typeof THINKING_LEVELS_ASCENDING)[number];
+
 /** Thinking level as the host hands it to extensions, including "off". */
 export type SessionThinkingLevel = NonNullable<ExtensionContext["thinkingLevel"]>;
+
+/**
+ * The thinking level a summary call sends: the lowest level the model
+ * supports, never above the session's own level.
+ *
+ * A summary is a structured transcription, not a reasoning task, and on
+ * endpoints where reasoning shares the output cap every reasoning token is
+ * taken from the summary. A model's `thinkingLevelMap` marks unsupported
+ * levels with `null` (GLM-5.3 supports only "high" and "max"); undefined
+ * keys use the provider default and count as supported. "off" stays "off",
+ * and a non-reasoning model gets no level at all.
+ */
+export function summaryThinkingLevel(
+  model: Pick<SummaryCallRequest["model"], "reasoning" | "thinkingLevelMap">,
+  sessionLevel: SessionThinkingLevel | undefined,
+): ActiveThinkingLevel | undefined {
+  if (!model.reasoning || sessionLevel === undefined || sessionLevel === "off") return undefined;
+  const sessionIndex = THINKING_LEVELS_ASCENDING.indexOf(sessionLevel);
+  const ceiling = sessionIndex >= 0 ? sessionIndex : THINKING_LEVELS_ASCENDING.length - 1;
+  for (let index = 0; index <= ceiling; index++) {
+    const level = THINKING_LEVELS_ASCENDING[index];
+    if (level !== undefined && model.thinkingLevelMap?.[level] !== null) return level;
+  }
+  return sessionLevel;
+}
 
 /** Raised when a summarization call ended because the caller aborted it. */
 export class CompactionAbortedError extends Error {
@@ -73,9 +103,8 @@ export async function runSummaryCall(request: SummaryCallRequest): Promise<Summa
     maxTokens: request.maxTokens,
     cacheRetention: "none",
   };
-  if (request.model.reasoning && request.thinkingLevel && request.thinkingLevel !== "off") {
-    options.reasoning = request.thinkingLevel;
-  }
+  const reasoning = summaryThinkingLevel(request.model, request.thinkingLevel);
+  if (reasoning !== undefined) options.reasoning = reasoning;
 
   const produce = async (): Promise<AssistantMessage> =>
     await request.modelRegistry

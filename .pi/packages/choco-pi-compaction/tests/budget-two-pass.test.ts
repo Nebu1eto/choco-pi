@@ -134,6 +134,21 @@ test("the fit test accounts for the output reserve and margin", () => {
     resolveMaxTokens(model, { enabled: true, reserveTokens: 1_000, keepRecentTokens: 1 }),
     800,
   );
+  // A reasoning model gets the reasoning summary cap, still bounded by its own limit.
+  assert.equal(
+    resolveMaxTokens(
+      { contextWindow: 524_288, maxTokens: 65_536, reasoning: true },
+      { enabled: true, reserveTokens: 16_384, keepRecentTokens: 1 },
+    ),
+    32_768,
+  );
+  assert.equal(
+    resolveMaxTokens(
+      { contextWindow: 200_000, maxTokens: 8_192, reasoning: true },
+      { enabled: true, reserveTokens: 16_384, keepRecentTokens: 1 },
+    ),
+    8_192,
+  );
   assert.equal(
     resolveMaxTokens(
       { contextWindow: 1_000, maxTokens: 100 },

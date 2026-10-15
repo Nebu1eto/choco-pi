@@ -18,7 +18,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { ModelRegistry, ModelRuntime, type SessionEntry } from "@earendil-works/pi-coding-agent";
 
-import { REASONING_OUTPUT_RESERVE_TOKENS, type ModelBudget } from "../src/budget.ts";
+import { REASONING_SUMMARY_OUTPUT_TOKENS, type ModelBudget } from "../src/budget.ts";
 import {
   type BackgroundCompactionSettings,
   DEFAULT_BACKGROUND_COMPACTION_SETTINGS,
@@ -248,7 +248,7 @@ test("A1: a 524288-window prefix over the old 200k raw estimate is admitted with
   await prepareOnce(f);
   const status = f.coordinator.status();
   assert.equal(status.state, "ready", `${status.reason}: ${status.detail}`);
-  const budget = GLM_WINDOW - (8192 + REASONING_OUTPUT_RESERVE_TOKENS) - 512;
+  const budget = GLM_WINDOW - REASONING_SUMMARY_OUTPUT_TOKENS - 512;
   assert.equal(f.backend.calls[0]?.budget.maxInputTokens, budget);
   assert.equal(status.admission?.budget, budget);
   assert.equal(status.admission?.source, "chars");
@@ -464,7 +464,7 @@ test("A3: a frozen snapshot applies the calibrated ratio to the rendered prompt"
 // A4: summary truncation and reasoning output headroom
 // ---------------------------------------------------------------------------
 
-test("A4: a reasoning model's summary cap gains the reasoning reserve, bounded by the model cap", async () => {
+test("A4: a reasoning model's summary cap rises to the reasoning cap, bounded by the model cap", async () => {
   const snapshot = freeze(largeToolBranch(4, 200).entries);
   const caps = async (budget: ModelBudget): Promise<number | undefined> => {
     const requests: TextSummaryRequest[] = [];
@@ -497,8 +497,8 @@ test("A4: a reasoning model's summary cap gains the reasoning reserve, bounded b
     assert.ok(!("ok" in result));
     return requests[0]?.maxTokens;
   };
-  assert.equal(REASONING_OUTPUT_RESERVE_TOKENS, 6553);
-  assert.equal(await caps(GLM_BUDGET), 8_192 + 6_553);
+  assert.equal(REASONING_SUMMARY_OUTPUT_TOKENS, 32_768);
+  assert.equal(await caps(GLM_BUDGET), 32_768);
   assert.equal(await caps({ ...GLM_BUDGET, maxTokens: 10_000 }), 10_000);
   assert.equal(await caps({ ...GLM_BUDGET, reasoning: false }), 8_192);
 });

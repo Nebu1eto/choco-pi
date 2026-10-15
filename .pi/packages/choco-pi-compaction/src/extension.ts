@@ -182,6 +182,7 @@ async function summarizeRun(run: CompactionRun): Promise<Summarized | undefined>
   const budget: ModelBudget = {
     contextWindow: model.contextWindow,
     maxTokens: model.maxTokens,
+    reasoning: model.reasoning,
   };
   const maxTokens = resolveMaxTokens(budget, run.preparation.settings);
   const singlePassPrompt = buildSinglePassPrompt({

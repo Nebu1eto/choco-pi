@@ -272,10 +272,13 @@ async function attemptCompaction(
 
 function foregroundBudget(deps: ForegroundCompactionDeps, run: ForegroundRun): PreparationBudget {
   const now = deps.now ?? Date.now;
-  const { contextWindow, maxTokens } = run.model;
+  const { contextWindow, maxTokens, reasoning } = run.model;
   return {
     maxInputTokens: contextWindow > 0 ? contextWindow : Number.MAX_SAFE_INTEGER,
-    maxOutputTokens: resolveMaxTokens({ contextWindow, maxTokens }, run.preparation.settings),
+    maxOutputTokens: resolveMaxTokens(
+      { contextWindow, maxTokens, reasoning },
+      run.preparation.settings,
+    ),
     maxResultBytes: FOREGROUND_MAX_RESULT_BYTES,
     deadlineMs: now() + FOREGROUND_TIMEOUT_MS,
     maxAttempts: 1,
