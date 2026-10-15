@@ -243,17 +243,28 @@ function providerOwnedTransportObservations(host: Host): Observation[] {
   if (!checkpoint) return [];
   const branch = host.manager.getBranch();
   const cut = branch.findIndex((entry) => entry.id === checkpoint.firstKeptEntryId);
-  const prefixIds = new Set(branch.slice(0, Math.max(cut, 0)).map((entry) => entry.id));
+  const prefixEntries = branch.slice(0, Math.max(cut, 0));
+  // Text of every summarized user turn; none of it may survive verbatim in the context.
+  const UserTextSchema = Type.Object({ role: Type.Literal("user"), content: Type.String() });
+  const prefixTexts = prefixEntries.flatMap((entry) =>
+    entry.type === "message" && Value.Check(UserTextSchema, entry.message)
+      ? [entry.message.content]
+      : [],
+  );
   const projection = host.manager.buildSessionProjection();
   const conversational = projection.messages.filter((message) => message.role !== "system");
   const summaries = conversational.filter(
     (message) => message.role === "compactionSummary" && message.summary === checkpoint.summary,
   );
+  const rawPrefixPresent = conversational.some(
+    (message) => Value.Check(UserTextSchema, message) && prefixTexts.includes(message.content),
+  );
   const ref = host.recorder.record("provider-owned-request-context", {
     transport: last.api,
     roles: conversational.map((message) => message.role),
     checkpointId: checkpoint.id,
-    prefixEntries: prefixIds.size,
+    prefixEntries: prefixEntries.length,
+    rawPrefixPresent,
   });
   return [
     {
@@ -269,6 +280,12 @@ function providerOwnedTransportObservations(host: Host): Observation[] {
       evidenceRefs: [ref],
       description:
         "Context built for the post-adoption turn opens with the checkpoint, no raw prefix",
+    },
+    {
+      actual: rawPrefixPresent,
+      expected: false,
+      evidenceRefs: [ref],
+      description: "No summarized user turn survives verbatim in the post-adoption context",
     },
   ];
 }

@@ -10,6 +10,7 @@ import type {
 
 import type { HostCompactionTrigger } from "../background/arbitration.ts";
 import { ANTHROPIC_BACKEND_ID } from "../anthropic/backend.ts";
+import { isStaleContextError } from "../lifecycle.ts";
 import { capturesFor } from "../anthropic/capture.ts";
 import { TEXT_BACKEND_ID } from "../background/text-backend.ts";
 import { type BackgroundAdoptionOwner, readAdoptionIdentity } from "./adoption-signal.ts";
@@ -59,9 +60,12 @@ function hostTrigger(owner: MainOwner, event: SessionBeforeCompactEvent): HostCo
   const ownRoute =
     route !== undefined && event.reason === "manual" && event.customInstructions === undefined;
   const reason: HostCompactionTrigger["reason"] = ownRoute ? route.trigger : event.reason;
-  return event.customInstructions === undefined
-    ? { reason }
-    : { reason, customInstructions: event.customInstructions };
+  // An own route adopts the exact candidate it proposed, so it carries that
+  // candidate's instructions; a user request carries the user's.
+  const customInstructions = ownRoute
+    ? owner.core.coordinator.status().customInstructions
+    : event.customInstructions;
+  return customInstructions === undefined ? { reason } : { reason, customInstructions };
 }
 
 async function arbitrate(
@@ -133,10 +137,13 @@ export async function startManualPreparation(
 ): Promise<boolean> {
   if (owner.pendingRoute !== undefined) return false;
   const lanes = manualLanes(owner, customInstructions);
+  // Joining the outstanding candidate keeps its follower; anything else supersedes it.
+  const joining = joinableCandidate(owner, customInstructions);
+  if (joining !== undefined && owner.manualCandidate === joining) return true;
+  const serial = ++owner.manualSerial;
   const candidateId = await manualCandidate(rt, owner, lanes[0], customInstructions);
-  if (candidateId === undefined) return false;
-  // A repeated /compact during the same preparation waits on the existing follower.
-  if (owner.manualCandidate === candidateId) return true;
+  if (candidateId === undefined || !isCurrent(rt, owner) || owner.manualSerial !== serial)
+    return false;
   owner.manualCandidate = candidateId;
   setStatus(owner.lastCtx, MANUAL_STATUS);
   tell(
@@ -146,16 +153,41 @@ export async function startManualPreparation(
   );
   const start = (): void => {
     owner.manualFollow = undefined;
-    void followManual(rt, owner, candidateId, lanes.slice(1), customInstructions);
+    void followManual(rt, owner, { candidateId, serial, customInstructions }, lanes.slice(1));
   };
   if (follow === "now") start();
   else owner.manualFollow = start;
   return true;
 }
 
-/** Start a follower held back by the hook path, once the host compaction has ended. */
-export function releaseManualFollow(owner: MainOwner): void {
-  owner.manualFollow?.();
+/**
+ * Start a follower held back by the hook path. `session_compact_failed` is
+ * emitted inside the host's `compact()` before its `finally` clears the
+ * compaction controller, so the release waits for the host to report idle on a
+ * later tick; a follower that adopted inside that window would have its own
+ * controller wiped by the cancelled invocation's cleanup.
+ */
+export function releaseManualFollow(rt: HostRuntime, owner: MainOwner): void {
+  const start = owner.manualFollow;
+  if (start === undefined) return;
+  owner.manualFollow = undefined;
+  const serial = owner.manualSerial;
+  const attempt = (remaining: number): void => {
+    if (!isCurrent(rt, owner) || owner.manualSerial !== serial) return;
+    let idle = false;
+    try {
+      idle = owner.lastCtx.isIdle();
+    } catch (cause) {
+      if (!(cause instanceof Error && isStaleContextError(cause))) throw cause;
+      return;
+    }
+    if (idle || remaining === 0) {
+      start();
+      return;
+    }
+    setTimeout(() => attempt(remaining - 1), 10);
+  };
+  setTimeout(() => attempt(50), 0);
 }
 
 /**
@@ -197,6 +229,15 @@ function manualLanes(owner: MainOwner, customInstructions?: string): string[] {
   return lanes.filter((id) => id === TEXT_BACKEND_ID);
 }
 
+/** The outstanding candidate a request with these instructions can wait on. */
+function joinableCandidate(owner: MainOwner, customInstructions?: string): string | undefined {
+  const status = owner.core.coordinator.status();
+  const outstanding = status.state === "queued" || status.state === "preparing";
+  return outstanding && status.customInstructions === customInstructions
+    ? status.candidateId
+    : undefined;
+}
+
 /** The outstanding preparation to wait on, or a newly requested one; undefined when none can run. */
 async function manualCandidate(
   rt: HostRuntime,
@@ -207,6 +248,7 @@ async function manualCandidate(
   if (backendId === undefined) return undefined;
   const status = owner.core.coordinator.status();
   const outstanding = status.state === "queued" || status.state === "preparing";
+  // Joining: no await, so the caller's ownership check stays valid.
   if (outstanding && status.customInstructions === customInstructions) return status.candidateId;
   // A request with different instructions supersedes the one in flight.
   if (outstanding) owner.core.coordinator.cancel("manual-instructions");
@@ -220,6 +262,12 @@ async function manualCandidate(
   return requested.candidateId;
 }
 
+interface ManualFollow {
+  readonly candidateId: string;
+  readonly serial: number;
+  readonly customInstructions: string | undefined;
+}
+
 /**
  * Wait for the manual candidate; adopt it while idle, otherwise leave it to
  * the next boundary. A failed lane retries once per remaining fallback lane.
@@ -227,17 +275,19 @@ async function manualCandidate(
 async function followManual(
   rt: HostRuntime,
   owner: MainOwner,
-  candidateId: string,
+  follow: ManualFollow,
   fallbacks: readonly string[],
-  customInstructions?: string,
 ): Promise<void> {
+  const { candidateId, serial, customInstructions } = follow;
+  const live = (): boolean =>
+    isCurrent(rt, owner) && owner.manualSerial === serial && owner.manualCandidate === candidateId;
   let failure: unknown;
   try {
     await owner.core.coordinator.waitForPreparation();
   } catch (cause) {
     failure = cause;
   }
-  if (!isCurrent(rt, owner) || owner.manualCandidate !== candidateId) return;
+  if (!live()) return;
   const ctx = owner.lastCtx;
   const status = owner.core.coordinator.status();
   if (status.candidateId === candidateId) {
@@ -255,11 +305,11 @@ async function followManual(
   const [next, ...rest] = fallbacks;
   if (next !== undefined && failure === undefined) {
     const retried = await manualCandidate(rt, owner, next, customInstructions);
-    if (!isCurrent(rt, owner) || owner.manualCandidate !== candidateId) return;
+    if (!live()) return;
     if (retried !== undefined) {
       owner.manualCandidate = retried;
       // Expected lane fallback: recorded on the failed candidate's status, not shown to the user.
-      void followManual(rt, owner, retried, rest, customInstructions);
+      void followManual(rt, owner, { candidateId: retried, serial, customInstructions }, rest);
       return;
     }
   }
@@ -477,7 +527,7 @@ export async function observeSettled(rt: HostRuntime, ctx: ExtensionContext): Pr
   await owner.core.settle();
   if (!isCurrent(rt, owner)) return;
   owner.core.observeUsage(ctx.getContextUsage());
-  releaseManualFollow(owner);
+  releaseManualFollow(rt, owner);
   settleManual(owner, ctx);
   // A candidate that became ready late in the run is adopted now rather than at the next prompt.
   await adoptManualIfIdle(rt, owner, ctx);
@@ -488,6 +538,7 @@ export async function adoptOnIdleInput(rt: HostRuntime, ctx: ExtensionContext): 
   const owner = touchCurrentOwner(rt, ctx);
   if (owner === undefined) return;
   await owner.core.settle();
+  if (!isCurrent(rt, owner)) return;
   settleManual(owner, ctx);
   const candidateId = idleCandidate(rt, owner, ctx);
   if (candidateId === undefined) return;

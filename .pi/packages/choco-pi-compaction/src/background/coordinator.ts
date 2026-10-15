@@ -243,6 +243,8 @@ interface CoordinatorState {
 
 const PROCEED: CoordinatorArbitrationResult = { action: "proceed" };
 const RATE_LIMIT_REASONS: ReadonlySet<string> = new Set(["quota", "429", "529"]);
+/** Refusals of one specific cut; the next request on the same scope may legally differ. */
+const CUT_REFUSALS: ReadonlySet<string> = new Set(["no-legal-cut", "incompatible"]);
 
 function ownerCurrent(state: CoordinatorState): boolean {
   if (state.disposed || state.invalidated) return false;
@@ -610,11 +612,13 @@ async function retryAfterFailure(
   if (RATE_LIMIT_REASONS.has(failure.reason))
     cool(state, current, Math.max(settings.cooldownMs, failure.retryAfterMs ?? 0));
   if (!failure.retryable || attempt === settings.maxAttempts) {
-    fail(state, current, {
-      reason: failure.reason,
-      detail: failure.detail,
-      cool: failure.retryable || RATE_LIMIT_REASONS.has(failure.reason),
-    });
+    // Only a refusal of this particular cut leaves the scope uncooled; every
+    // other terminal failure (auth, unsupported, oversized, transport) cools it
+    // so the next request waits, honoring a reported retry delay.
+    const refusal = CUT_REFUSALS.has(failure.reason);
+    fail(state, current, { reason: failure.reason, detail: failure.detail, cool: !refusal });
+    if (!refusal && failure.retryAfterMs !== undefined)
+      cool(state, current, Math.max(settings.cooldownMs, failure.retryAfterMs));
     return "stop";
   }
   const delay = Math.max(

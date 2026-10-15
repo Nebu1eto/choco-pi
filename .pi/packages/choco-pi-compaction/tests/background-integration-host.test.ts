@@ -925,6 +925,69 @@ test(
 );
 
 test(
+  "the /compact-background command serves RPC clients: background when on, host compaction when off",
+  { timeout: 20_000 },
+  async () => {
+    await withDir(async (dir) => {
+      const summarizerGate = gate(false);
+      const rig = await createRig({
+        dir,
+        sidecar: MANUAL_ONLY_SIDECAR,
+        summarizerGate,
+        respond: async (index) =>
+          reply(`R${index}`, { usageInput: index === 0 ? HIGH_USAGE : 20_000 }),
+      });
+      try {
+        await rig.session.prompt("GO");
+        const hostEvents: string[] = [];
+        const unsubscribe = rig.session.subscribe((event) => {
+          if (event.type === "compaction_start" || event.type === "compaction_end")
+            hostEvents.push(event.type);
+        });
+        await rig.session.prompt("/compact-background Focus on the audit", { source: "rpc" });
+        unsubscribe();
+        assert.deepEqual(hostEvents, [], "no host compaction while the feature serves the request");
+        assert.equal(stateOf(rig), "preparing");
+        assert.equal(
+          getCoordinator(rig.ownerKey)?.status().customInstructions,
+          "Focus on the audit",
+        );
+        summarizerGate.open();
+        await waitFor(() => stateOf(rig) === "installed", "focused candidate installed");
+        assert.equal(rig.hostSummarizerCalls.length, 0);
+        assert.equal(ownEntries(rig).length, 1);
+      } finally {
+        await rig.dispose();
+      }
+    });
+    await withDir(async (dir) => {
+      const rig = await createRig({
+        dir,
+        sidecar: JSON.stringify({ enabled: false }),
+        respond: async (index) => reply(`R${index}`, { usageInput: index === 0 ? HIGH_USAGE : 1 }),
+      });
+      try {
+        await rig.session.prompt("GO");
+        await rig.session.prompt("/compact-background", { source: "rpc" });
+        assert.equal(
+          rig.hostSummarizerCalls.length,
+          1,
+          "the host compaction ran in the foreground",
+        );
+        assert.deepEqual(
+          rig.compactEvents.map((event) => event.reason),
+          ["manual"],
+        );
+        assert.equal(getCoordinator(rig.ownerKey), undefined, "no background coordinator");
+        assert.equal(rig.backgroundCalls(), 0);
+      } finally {
+        await rig.dispose();
+      }
+    });
+  },
+);
+
+test(
   "reload binds the persisted ready candidate without a paid prepare",
   { timeout: 20_000 },
   async () => {

@@ -44,6 +44,8 @@ export interface MainOwner {
   pendingRoute: PendingRoute | undefined;
   /** Candidate a plain `/compact` is waiting on; adopted as soon as it is ready and the session is idle. */
   manualCandidate: string | undefined;
+  /** Bumped by every new manual request; a follower whose serial moved is superseded and stops. */
+  manualSerial: number;
   /**
    * Follower of a manual candidate started from the `session_before_compact`
    * hook, held until the cancelled host compaction has fully ended: the host

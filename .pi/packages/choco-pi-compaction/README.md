@@ -161,6 +161,14 @@ host event.
   `navigateTree({ summarize })` produces a branch summary, not a compaction.
   RPC `compact` and extension `ctx.compact()` reach the same hook as a typed
   `/compact` and are deferred the same way.
+- **RPC and GUI clients.** Hosts without the TUI (Waku and other RPC clients)
+  use the `/compact-background [instructions]` extension command, listed by
+  RPC `get_commands` and sent as a prompt. It runs the same manual route as
+  the typed command and, when the feature declines (off, no lane, a matching
+  ready candidate), runs the host's own compaction, so the command always
+  compacts. The RPC `compact` command still works and is deferred through the
+  hook (the client sees the host's cancelled compaction, then the later
+  checkpoint).
 - **Context cap.** When `.pi/extensions/model-context-cap.ts` reaches its
   compaction threshold and a ready candidate exists, it hands the compaction to
   the idle route instead of requesting a summary. Otherwise it behaves as before.

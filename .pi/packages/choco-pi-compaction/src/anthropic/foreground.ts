@@ -207,7 +207,7 @@ function chooseCapture(
     matched = true;
     const preferred = preferredCut(capture, run.preparation.firstKeptEntryId, run.branchEntryIds);
     if (preferred === undefined) continue;
-    const cut = chooseLegalCutEntry(capture, preferred);
+    const cut = chooseLegalCutEntry(capture, preferred, { branchExtendsCapture: true });
     if (cut !== "defer") return { ok: true, capture, cutEntryId: cut };
   }
   return { ok: false, reason: matched ? "no-legal-cut" : "no-capture" };

@@ -302,6 +302,7 @@ function installMainOwner(
     refusedIdle: new Set(),
     pendingRoute: undefined,
     manualCandidate: undefined,
+    manualSerial: 0,
     manualFollow: undefined,
     lastCtx: ctx,
     cleanup,

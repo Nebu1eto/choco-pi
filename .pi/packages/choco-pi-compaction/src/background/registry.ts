@@ -78,15 +78,34 @@ export function getRegistry(): CoordinatorRegistry {
   Object.defineProperty(globalThis, REGISTRY_SYMBOL, { value: registry, configurable: true });
   return registry;
 }
+/**
+ * Delivery ledgers kept for owners that no longer have a coordinator. A
+ * reload releases the owner before its replacement registers, so a ledger
+ * must outlive its owner briefly; one that is never reclaimed is dropped
+ * once this many newer departed owners exist.
+ */
+const DEPARTED_LEDGERS = 16;
+
 /** The in-process delivery ledger for one owner key, created on first use. */
 export function deliveredAdoptionsFor(ownerKey: string): Map<string, Set<string>> {
   const ledger = getRegistry().delivered;
   let owned = ledger.get(ownerKey);
   if (owned === undefined) {
     owned = new Map();
-    ledger.set(ownerKey, owned);
   }
+  // Re-insert so the map's order tracks most recent use.
+  ledger.delete(ownerKey);
+  ledger.set(ownerKey, owned);
   return owned;
+}
+
+/** Drop the oldest departed owners' ledgers beyond the retention window. */
+function pruneDepartedLedgers(): void {
+  const registry = getRegistry();
+  const departed = [...registry.delivered.keys()].filter((key) => !registry.coordinators.has(key));
+  for (const key of departed.slice(0, Math.max(0, departed.length - DEPARTED_LEDGERS))) {
+    registry.delivered.delete(key);
+  }
 }
 /** First registration wins, including repeated imports in either extension load order. */
 export function registerBackendFactory(id: string, factory: BackendFactory): BackendFactory {
@@ -134,5 +153,7 @@ export function release(
     (expected !== undefined && coordinator !== expected)
   )
     return false;
-  return coordinators.delete(ownerKey);
+  const removed = coordinators.delete(ownerKey);
+  pruneDepartedLedgers();
+  return removed;
 }

@@ -32,8 +32,13 @@ type OriginalHandler = (this: CompactCommandHost, customInstructions?: string) =
 interface CompactCommandBridge {
   /** Pi's own handler, kept for custom instructions and every refused request. */
   readonly original: OriginalHandler;
-  /** Replaced on every extension load; undefined while no registration is live. */
-  defer: CompactCommandDefer | undefined;
+  /**
+   * One entry per live registration (root and child sessions share the
+   * process). A typed command is offered to each in registration order; the
+   * first that owns the host's session takes it. A departing registration
+   * removes only its own entry.
+   */
+  readonly defers: Set<CompactCommandDefer>;
 }
 
 /** The host prototype as this module reaches it: one private method it swaps. */
@@ -42,14 +47,17 @@ interface CompactCommandPrototype {
 }
 
 const HostSessionSchema = Type.Object({ session: Type.Object({ sessionId: Type.String() }) });
-const BridgeSlotSchema = Type.Object({ original: Type.Function([], Type.Unknown()) });
+const BridgeSlotSchema = Type.Object({
+  original: Type.Function([], Type.Unknown()),
+  defers: Type.Unknown(),
+});
 
 function isCompactCommandHost<T>(value: T): value is T & CompactCommandHost {
   return Value.Check(HostSessionSchema, value);
 }
 
 function isBridge<T>(value: T): value is T & CompactCommandBridge {
-  return Value.Check(BridgeSlotSchema, value);
+  return Value.Check(BridgeSlotSchema, value) && value.defers instanceof Set;
 }
 
 function hostPrototype(): CompactCommandPrototype {
@@ -64,17 +72,20 @@ function readBridge(): CompactCommandBridge | undefined {
 }
 
 /**
- * Install the prototype patch once per process and bind `defer` for this
- * registration. Later installs (after `/reload`) only replace `defer`.
+ * Install the prototype patch once per process and add `defer` for this
+ * registration. Later installs (after `/reload`, or a child session) only add.
  */
 export function installCompactCommandBridge(defer: CompactCommandDefer): void {
   const existing = readBridge();
   if (existing !== undefined) {
-    existing.defer = defer;
+    existing.defers.add(defer);
     return;
   }
   const prototype = hostPrototype();
-  const bridge: CompactCommandBridge = { original: prototype.handleCompactCommand, defer };
+  const bridge: CompactCommandBridge = {
+    original: prototype.handleCompactCommand,
+    defers: new Set([defer]),
+  };
   Object.defineProperty(globalThis, BRIDGE_SYMBOL, {
     configurable: true,
     writable: true,
@@ -84,27 +95,32 @@ export function installCompactCommandBridge(defer: CompactCommandDefer): void {
     this: CompactCommandHost,
     customInstructions?: string,
   ): Promise<void> {
-    const current = bridge.defer;
-    if (current !== undefined && isCompactCommandHost(this)) {
-      let handled = false;
-      try {
-        handled = await current(this, customInstructions);
-      } catch {
-        handled = false;
+    if (isCompactCommandHost(this)) {
+      for (const current of [...bridge.defers]) {
+        let handled = false;
+        try {
+          handled = await current(this, customInstructions);
+        } catch {
+          handled = false;
+        }
+        if (handled) return;
       }
-      if (handled) return;
     }
     await bridge.original.call(this, customInstructions);
   };
 }
 
-/** Drop `defer` when it is still the one this registration installed. */
+/** Remove this registration's `defer`; other live registrations keep theirs. */
 export function releaseCompactCommandBridge(defer: CompactCommandDefer): void {
-  const bridge = readBridge();
-  if (bridge !== undefined && bridge.defer === defer) bridge.defer = undefined;
+  readBridge()?.defers.delete(defer);
 }
 
 /** Whether the prototype patch is installed in this process. */
 export function compactCommandBridgeInstalled(): boolean {
   return readBridge() !== undefined;
+}
+
+/** Number of registrations currently offered a typed command (test seam). */
+export function liveCompactCommandDefers(): number {
+  return readBridge()?.defers.size ?? 0;
 }

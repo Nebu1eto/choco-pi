@@ -12,8 +12,9 @@ export function arbitrationIntent(
   event: HostCompactionTrigger,
   candidateInstructions?: string,
 ): ArbitrationIntent {
-  // Instructions select the candidate prepared with the same text; any other candidate is stale for them.
-  if (event.customInstructions !== undefined && event.customInstructions !== candidateInstructions)
+  // A manual request answers only with a candidate prepared for the same
+  // instructions (none for a plain /compact); automatic triggers take any.
+  if (event.reason === "manual" && event.customInstructions !== candidateInstructions)
     return "discard-instructions";
   if (state === "ready") return "adopt";
   if (event.reason === "overflow" && (state === "queued" || state === "preparing"))

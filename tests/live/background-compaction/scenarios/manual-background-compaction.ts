@@ -353,7 +353,26 @@ async function runManual(host: Host): Promise<CheckEvidence> {
   const programmatic = await programmaticCompact(host);
   const reloaded = await reloadedCompact(host);
   const result = textAdoptionEvidence(host);
-  result.observations["manual-background-compaction"] = [...typed, ...programmatic, ...reloaded];
+  // Every committed checkpoint of this scenario must have reached the relay consumer;
+  // the shared roster is built from received notices and cannot see a lost one.
+  const committed = checkpoints(host).map((item) => item.id);
+  const notified = new Set(
+    host.notifications
+      .filter((notice) => notice.consumer === "choco-pi-compaction:adoption-relay")
+      .map((notice) => notice.adoptionId.split(":").at(-2)),
+  );
+  const delivered: Observation = {
+    actual: committed.filter((id) => !notified.has(id)),
+    expected: [],
+    evidenceRefs: [host.snapshot()],
+    description: "Every committed manual checkpoint was delivered to the relay consumer",
+  };
+  result.observations["manual-background-compaction"] = [
+    ...typed,
+    ...programmatic,
+    ...reloaded,
+    delivered,
+  ];
   return result;
 }
 

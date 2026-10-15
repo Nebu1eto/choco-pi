@@ -146,6 +146,37 @@ export function registerBackgroundCompaction(
   };
   installCompactCommandBridge(deferTypedCompact);
 
+  // Clients without the TUI (RPC hosts such as Waku) reach the same manual
+  // route through an extension command: it is listed by RPC `get_commands` and
+  // runs as `prompt "/compact-background [instructions]"`. When the background
+  // feature declines (off, no lane, a matching ready candidate) the host's own
+  // compaction runs, so the command always compacts.
+  pi.registerCommand("compact-background", {
+    description:
+      "Compact in the background when enabled (optional focus instructions); otherwise compact now",
+    handler: async (args, ctx) => {
+      const customInstructions = args.trim().length === 0 ? undefined : args.trim();
+      const owner = touchCurrentOwner(rt, ctx);
+      const sessionId = ctx.sessionManager.getSessionId();
+      const deferred =
+        owner !== undefined && owner.core.sessionId === sessionId
+          ? await deferTypedCompact({ session: { sessionId } }, customInstructions)
+          : false;
+      if (deferred) return;
+      await new Promise<void>((resolve, reject) => {
+        try {
+          ctx.compact({
+            customInstructions,
+            onComplete: () => resolve(),
+            onError: (error) => reject(error),
+          });
+        } catch (cause) {
+          reject(cause instanceof Error ? cause : new Error(String(cause)));
+        }
+      });
+    },
+  });
+
   pi.on("session_start", async (_event, ctx) => {
     publishPreferences(rt, ctx, childProvider);
     const shutdownCount = shutdowns.count;
@@ -414,7 +445,7 @@ async function onCompactFailed(rt: HostRuntime, ctx: ExtensionContext): Promise<
   if (owner === undefined) return;
   await reportHostRefused(rt, owner, ctx);
   if (!isCurrent(rt, owner)) return;
-  releaseManualFollow(owner);
+  releaseManualFollow(rt, owner);
 }
 
 function reportReplayDiagnostic(

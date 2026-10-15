@@ -19,6 +19,12 @@ import {
 import { type SchedulerClock } from "../src/background/scheduler.ts";
 import { parseRecord } from "../src/background/candidate-record.ts";
 import {
+  deliveredAdoptionsFor,
+  getRegistry,
+  release,
+  setCoordinator,
+} from "../src/background/registry.ts";
+import {
   fingerprintEntries,
   freezeSnapshot,
   isSnapshotRefusal,
@@ -538,6 +544,38 @@ test("a legality refusal is diagnosable and does not cool the scope", async () =
   assert.equal(f.coordinator.status().state, "ready");
   assert.equal(f.backend.calls.length, 1);
   f.coordinator.dispose();
+});
+
+test("a non-retryable auth failure still cools the scope for its retry delay", async () => {
+  const f = fixture();
+  f.backend.result = { ok: false, reason: "auth", retryable: false, retryAfterMs: 60_000 };
+  await f.coordinator.requestPreparation();
+  await f.coordinator.waitForPreparation();
+  assert.equal(f.coordinator.status().reason, "auth");
+  f.backend.result = buildCheckpoint("candidate-2");
+  await f.coordinator.requestPreparation();
+  await f.coordinator.waitForPreparation();
+  assert.equal(f.coordinator.status().reason, "quota", "the scope is cooling");
+  assert.equal(f.backend.calls.length, 1, "no second paid call during the cooldown");
+  f.coordinator.dispose();
+});
+
+test("departed owners' delivery ledgers are bounded while the newest survive for reload", () => {
+  const registry = getRegistry();
+  for (let index = 0; index < 40; index += 1) {
+    const ownerKey = `ledger-test:${index}`;
+    const f = fixture({ ownerKey, delivered: deliveredAdoptionsFor(ownerKey) });
+    setCoordinator(ownerKey, f.coordinator);
+    deliveredAdoptionsFor(ownerKey).set(`adoption-${index}`, new Set(["consumer"]));
+    release(ownerKey, 1, f.coordinator);
+    f.coordinator.dispose();
+  }
+  const departed = [...registry.delivered.keys()].filter(
+    (key) => key.startsWith("ledger-test:") && !registry.coordinators.has(key),
+  );
+  assert.ok(departed.length <= 16, `retained ${departed.length} departed ledgers`);
+  assert.ok(departed.includes("ledger-test:39"), "the newest departed ledger is kept for reload");
+  for (const key of departed) registry.delivered.delete(key);
 });
 
 test("participants finish before snapshot selection; appended entries belong exactly once to the prefix", async () => {

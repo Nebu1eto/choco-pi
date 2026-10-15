@@ -165,6 +165,15 @@ export function resolveEntryCut(capture: WireCapture, cutEntryId: string): CutRe
 export function chooseLegalCutEntry(
   capture: WireCapture,
   preferredCutEntryId: string,
+  options: {
+    /**
+     * Whether a cut at the capture's tail retains something the capture cannot
+     * see (the foreground caller cuts a branch that already extends past the
+     * captured request). The background caller freezes the branch as captured,
+     * so a tail cut there retains nothing and `prepare` would refuse it.
+     */
+    readonly branchExtendsCapture?: boolean;
+  } = {},
 ): string | "defer" {
   const projection = capture.mapping?.projection ?? [];
   const preferred = projection.findIndex((ref) => ref.entryId === preferredCutEntryId);
@@ -172,9 +181,9 @@ export function chooseLegalCutEntry(
     const entryId = projection[index]?.entryId;
     if (entryId === undefined) continue;
     const cut = resolveEntryCut(capture, entryId);
-    // A legal cut at the capture's tail retains nothing; `prepare` would refuse it
-    // with no-retained-entry, so keep walking back to a cut with a successor.
-    if (cut.ok && cut.projectedSuccessor !== undefined) return entryId;
+    if (!cut.ok) continue;
+    if (cut.projectedSuccessor !== undefined || options.branchExtendsCapture === true)
+      return entryId;
   }
   return "defer";
 }

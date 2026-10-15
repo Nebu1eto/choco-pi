@@ -200,9 +200,12 @@ export class ShellOutputViewer implements Component {
     const inner = width - 4;
     const notice = this.actionNotice ?? this.readNotice;
     // Frame rows: border, status, command, two pane labels, divider, divider, help, border.
+    // On a short terminal the command row yields so the help and confirmation rows stay visible.
+    const maxHeight = Math.floor((this.tui.terminal.rows * 70) / 100);
+    const showCommand = maxHeight >= 12;
     const availableRows = Math.max(
       2,
-      Math.floor((this.tui.terminal.rows * 70) / 100) - (notice || this.evicted ? 10 : 9),
+      maxHeight - (notice || this.evicted ? 9 : 8) - (showCommand ? 1 : 0),
     );
     const activeRows = Math.min(availableRows - 1, Math.ceil((availableRows * 2) / 3));
     const paneRows = {
@@ -218,7 +221,10 @@ export class ShellOutputViewer implements Component {
     lines.push(
       this.row(`${this.shell.state} · ${name} · ${pid}${exit} · ${duration(this.shell)}`, inner),
     );
-    lines.push(this.row(this.theme.fg("dim", `$ ${sanitizeShellText(this.shell.command)}`), inner));
+    if (showCommand)
+      lines.push(
+        this.row(this.theme.fg("dim", `$ ${sanitizeShellText(this.shell.command)}`), inner),
+      );
     this.renderPane(lines, "stdout", paneRows.stdout, inner);
     lines.push(this.row(this.theme.fg("dim", "─".repeat(inner)), inner));
     this.renderPane(lines, "stderr", paneRows.stderr, inner);
