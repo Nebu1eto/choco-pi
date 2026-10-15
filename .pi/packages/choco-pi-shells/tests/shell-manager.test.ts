@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { ShellManager, type ShellChangeEvent, type ShellResult } from "../src/shell-manager.ts";
+import {
+  ShellManager,
+  type CancelScheduledTimer,
+  type ShellChangeEvent,
+  type ShellResult,
+} from "../src/shell-manager.ts";
 
 const cwd = process.cwd();
 
@@ -32,20 +37,67 @@ function isTerminal(shell: ShellResult): boolean {
   return shell.state !== "running";
 }
 
+interface ManualTimer {
+  delayMs: number;
+  callback: () => void;
+  cancelled: boolean;
+  fired: boolean;
+}
+
+/** Scheduler whose callbacks run only when a test fires them, so escalation order is explicit. */
+class ManualScheduler {
+  readonly timers: ManualTimer[] = [];
+
+  readonly schedule = (callback: () => void, delayMs: number): CancelScheduledTimer => {
+    const timer: ManualTimer = { delayMs, callback, cancelled: false, fired: false };
+    this.timers.push(timer);
+    return () => {
+      timer.cancelled = true;
+    };
+  };
+
+  pending(delayMs: number): ManualTimer[] {
+    return this.timers.filter(
+      (timer) => timer.delayMs === delayMs && !timer.cancelled && !timer.fired,
+    );
+  }
+
+  fire(delayMs: number): void {
+    const [timer, ...rest] = this.pending(delayMs);
+    assert.ok(timer, `no pending timer with delay ${delayMs}ms`);
+    assert.equal(rest.length, 0, `ambiguous pending timers with delay ${delayMs}ms`);
+    timer.fired = true;
+    timer.callback();
+  }
+
+  /** Runs pending callbacks, including any they schedule, so cleanup cannot wait forever. */
+  drain(): void {
+    for (let timer = this.nextPending(); timer; timer = this.nextPending()) {
+      timer.fired = true;
+      timer.callback();
+    }
+  }
+
+  private nextPending(): ManualTimer | undefined {
+    return this.timers.find((timer) => !timer.cancelled && !timer.fired);
+  }
+}
+
 function escapedDescendantCommand(parentKeepsRunning: boolean): string {
   const descendant = "setInterval(() => {}, 1000)";
+  // Install the SIGTERM handler before printing readiness so a stop can never precede it.
   return [
+    ...(parentKeepsRunning ? ['process.on("SIGTERM", () => {})'] : []),
     'const { spawn } = require("node:child_process")',
     `const child = spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], { detached: true, stdio: ["ignore", 1, 2] })`,
     'process.stdout.write(String(child.pid) + "\\n")',
     "child.unref()",
-    ...(parentKeepsRunning
-      ? ['process.on("SIGTERM", () => {})', "setInterval(() => {}, 1000)"]
-      : []),
+    ...(parentKeepsRunning ? ["setInterval(() => {}, 1000)"] : []),
   ].join(";");
 }
 
-function killFixture(pid: number | undefined): void {
+/** SIGKILLs a fixture process and waits until it is gone so nothing outlives the run. */
+async function killFixture(pid: number | undefined): Promise<void> {
   if (pid === undefined) return;
   try {
     process.kill(pid, "SIGKILL");
@@ -53,6 +105,10 @@ function killFixture(pid: number | undefined): void {
     assert.ok(error instanceof Error);
     assert.equal("code" in error ? error.code : undefined, "ESRCH");
   }
+  await waitFor(
+    () => processExists(pid),
+    (exists) => !exists,
+  );
 }
 
 function processExists(pid: number): boolean {
@@ -247,7 +303,7 @@ test(
       assert.notEqual(readShell(manager, disposingShell.shellId).shell.state, "running");
     } finally {
       await manager.dispose();
-      for (const pid of escapedPids) killFixture(pid);
+      for (const pid of escapedPids) await killFixture(pid);
     }
   },
 );
@@ -290,7 +346,7 @@ test(
       );
     } finally {
       await manager.dispose();
-      killFixture(backgroundPid);
+      await killFixture(backgroundPid);
     }
   },
 );
@@ -332,21 +388,45 @@ test(
       assert.equal(processExists(pid), false);
     } finally {
       await manager.dispose();
-      killFixture(backgroundPid);
+      await killFixture(backgroundPid);
     }
   },
 );
+
+const STOP_GRACE_MS = 1_000;
+const KILL_FINALIZE_MS = 2_000;
+const OUTPUT_DRAIN_MS = 3_000;
+
+function manualEscalationManager(scheduler: ManualScheduler): ShellManager {
+  // Distinct delays identify each stage; the manual scheduler never consults real time.
+  return new ShellManager({
+    shell: process.execPath,
+    shellArgs: ["-e"],
+    stopGraceMs: STOP_GRACE_MS,
+    killFinalizeMs: KILL_FINALIZE_MS,
+    outputDrainMs: OUTPUT_DRAIN_MS,
+    scheduleTimer: scheduler.schedule,
+  });
+}
+
+async function disposeWithManualTimers(
+  manager: ShellManager,
+  scheduler: ManualScheduler,
+): Promise<void> {
+  const disposing = manager.dispose();
+  scheduler.drain();
+  await disposing;
+}
 
 test(
   "SIGKILL escalation force-finalizes once when an escaped descendant prevents close",
   { skip: process.platform === "win32" },
   async () => {
-    const manager = new ShellManager({
-      shell: process.execPath,
-      shellArgs: ["-e"],
-      stopGraceMs: 75,
-      killFinalizeMs: 75,
-      outputDrainMs: 5_000,
+    const scheduler = new ManualScheduler();
+    const manager = manualEscalationManager(scheduler);
+    const endEvents: ShellChangeEvent[] = [];
+    manager.onChange((event) => {
+      if (event.type === "end") endEvents.push(event);
     });
     let escapedPid: number | undefined;
     try {
@@ -361,24 +441,101 @@ test(
       );
       escapedPid = Number.parseInt(withPid.stdout.data, 10);
 
-      const stopStartedAt = performance.now();
-      const stopped = await manager.stop({
+      // stop() sends SIGTERM synchronously; the fixture ignores it, so only escalation remains.
+      const stopping = manager.stop({
         requesterId: "owner",
         isAdmin: false,
         shellId: started.shellId,
       });
+      assert.equal(scheduler.pending(STOP_GRACE_MS).length, 1);
+      scheduler.fire(STOP_GRACE_MS);
+      assert.equal(scheduler.pending(KILL_FINALIZE_MS).length, 1);
+
+      // The exit listener is the only writer of signal, and close cannot fire while the
+      // escaped descendant holds the pipes; a recorded signal is the observed exit.
+      const exited = await waitFor(
+        () => readShell(manager, started.shellId).shell,
+        (shell) => shell.signal !== undefined,
+      );
+      assert.equal(exited.signal, "SIGKILL");
+      assert.equal(exited.state, "running");
+      assert.equal(scheduler.pending(OUTPUT_DRAIN_MS).length, 1);
+      assert.equal(endEvents.length, 0);
+
+      scheduler.fire(KILL_FINALIZE_MS);
+      const stopped = await stopping;
       assert.equal(stopped.state, "stopped");
       assert.equal(stopped.signal, "SIGKILL");
-      assert.ok(performance.now() - stopStartedAt < 1_000);
+      assert.equal(endEvents.length, 1);
+      assert.deepEqual(endEvents[0]?.shell, stopped);
+      assert.equal(scheduler.pending(OUTPUT_DRAIN_MS).length, 0);
+      assert.equal(processExists(escapedPid), true);
 
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      // Release the inherited pipes, then run every callback, cancelled or not, so any
+      // late close or timer would have to pass the finalized guard.
+      await killFixture(escapedPid);
+      for (const timer of scheduler.timers) timer.callback();
       const afterLateEvents = readShell(manager, started.shellId);
-      assert.equal(afterLateEvents.shell.endedAt, stopped.endedAt);
-      assert.equal(afterLateEvents.shell.state, "stopped");
+      assert.deepEqual(afterLateEvents.shell, stopped);
       assert.equal(afterLateEvents.stdout.data, `${escapedPid}\n`);
+      assert.equal(endEvents.length, 1);
     } finally {
-      await manager.dispose();
-      killFixture(escapedPid);
+      await disposeWithManualTimers(manager, scheduler);
+      await killFixture(escapedPid);
+    }
+  },
+);
+
+test(
+  "exit metadata observed after SIGKILL force-finalization is not recorded",
+  { skip: process.platform === "win32" },
+  async () => {
+    const scheduler = new ManualScheduler();
+    const manager = manualEscalationManager(scheduler);
+    const endEvents: ShellChangeEvent[] = [];
+    manager.onChange((event) => {
+      if (event.type === "end") endEvents.push(event);
+    });
+    let escapedPid: number | undefined;
+    try {
+      const started = manager.start({
+        ownerId: "owner",
+        cwd,
+        command: escapedDescendantCommand(true),
+      });
+      const parentPid = started.pid;
+      assert.ok(parentPid !== undefined);
+      const withPid = await waitFor(
+        () => readShell(manager, started.shellId),
+        (result) => /^\d+\n$/.test(result.stdout.data),
+      );
+      escapedPid = Number.parseInt(withPid.stdout.data, 10);
+
+      const stopping = manager.stop({
+        requesterId: "owner",
+        isAdmin: false,
+        shellId: started.shellId,
+      });
+      // Both stages run in one synchronous turn, so the SIGKILL exit cannot be delivered
+      // before force-finalization removes the child listeners.
+      scheduler.fire(STOP_GRACE_MS);
+      scheduler.fire(KILL_FINALIZE_MS);
+      const stopped = await stopping;
+      assert.equal(stopped.state, "stopped");
+      assert.equal(stopped.signal, undefined);
+      assert.equal(stopped.exitCode, undefined);
+      assert.equal(endEvents.length, 1);
+
+      // Once the parent is reaped, Node has delivered its exit; the record must not change.
+      await waitFor(
+        () => processExists(parentPid),
+        (exists) => !exists,
+      );
+      assert.deepEqual(readShell(manager, started.shellId).shell, stopped);
+      assert.equal(endEvents.length, 1);
+    } finally {
+      await disposeWithManualTimers(manager, scheduler);
+      await killFixture(escapedPid);
     }
   },
 );

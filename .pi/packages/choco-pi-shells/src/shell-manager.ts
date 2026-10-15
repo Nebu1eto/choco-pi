@@ -13,6 +13,15 @@ const DEFAULT_COMPLETED_RECORD_CAP = 64;
 
 export type ShellState = "running" | "exited" | "stopped" | "failed";
 
+/** Cancels a scheduled callback; calling it after the callback ran is a no-op. */
+export type CancelScheduledTimer = () => void;
+
+/**
+ * Schedules stop escalation and output-drain callbacks. The default uses an unref'd
+ * `setTimeout`; tests inject a scheduler to drive each stage explicitly.
+ */
+export type ShellTimerScheduler = (callback: () => void, delayMs: number) => CancelScheduledTimer;
+
 export interface ShellManagerOptions {
   shell?: string;
   shellArgs?: readonly string[];
@@ -21,6 +30,7 @@ export interface ShellManagerOptions {
   outputDrainMs?: number;
   killFinalizeMs?: number;
   completedRecordCap?: number;
+  scheduleTimer?: ShellTimerScheduler;
 }
 
 export interface StartShellInput {
@@ -121,9 +131,9 @@ interface ShellRecord {
   stdout: StreamBuffer;
   stderr: StreamBuffer;
   stopRequested: boolean;
-  killTimer?: ReturnType<typeof setTimeout>;
-  drainTimer?: ReturnType<typeof setTimeout>;
-  forceFinalizeTimer?: ReturnType<typeof setTimeout>;
+  cancelKillTimer?: CancelScheduledTimer;
+  cancelDrainTimer?: CancelScheduledTimer;
+  cancelForceFinalizeTimer?: CancelScheduledTimer;
   terminal: Promise<void>;
   resolveTerminal: () => void;
   finalized: boolean;
@@ -139,6 +149,7 @@ export class ShellManager {
   private readonly outputDrainMs: number;
   private readonly killFinalizeMs: number;
   private readonly completedRecordCap: number;
+  private readonly scheduleTimer: ShellTimerScheduler;
   private readonly completedRecordIds: string[] = [];
   private readonly pendingByOwner = new Map<string, Map<string, ShellResult>>();
   private readonly acknowledgedCompletions = new Set<string>();
@@ -179,6 +190,7 @@ export class ShellManager {
       0,
       10_000,
     );
+    this.scheduleTimer = options.scheduleTimer ?? scheduleUnrefTimeout;
   }
 
   onChange(listener: (event: ShellChangeEvent) => void): () => void {
@@ -392,9 +404,9 @@ export class ShellManager {
     if (record.finalized) return;
     record.finalized = true;
     this.signalRecord(record, "SIGKILL");
-    if (record.killTimer) clearTimeout(record.killTimer);
-    if (record.drainTimer) clearTimeout(record.drainTimer);
-    if (record.forceFinalizeTimer) clearTimeout(record.forceFinalizeTimer);
+    record.cancelKillTimer?.();
+    record.cancelDrainTimer?.();
+    record.cancelForceFinalizeTimer?.();
     this.flushDecoder(record.stdout);
     this.flushDecoder(record.stderr);
     record.endedAt = Date.now();
@@ -418,9 +430,11 @@ export class ShellManager {
   }
 
   private beginOutputDrain(record: ShellRecord): void {
-    if (record.finalized || record.drainTimer) return;
-    record.drainTimer = setTimeout(() => this.forceFinalize(record), this.outputDrainMs);
-    record.drainTimer.unref();
+    if (record.finalized || record.cancelDrainTimer) return;
+    record.cancelDrainTimer = this.scheduleTimer(
+      () => this.forceFinalize(record),
+      this.outputDrainMs,
+    );
   }
 
   private forceFinalize(record: ShellRecord): void {
@@ -451,16 +465,14 @@ export class ShellManager {
       this.emitChange("update", record);
       this.signalRecord(record, "SIGTERM");
       if (!record.finalized) {
-        record.killTimer = setTimeout(() => {
+        record.cancelKillTimer = this.scheduleTimer(() => {
           if (record.finalized) return;
           this.signalRecord(record, "SIGKILL");
-          record.forceFinalizeTimer = setTimeout(
+          record.cancelForceFinalizeTimer = this.scheduleTimer(
             () => this.forceFinalize(record),
             this.killFinalizeMs,
           );
-          record.forceFinalizeTimer.unref();
         }, this.stopGraceMs);
-        record.killTimer.unref();
       }
     }
     await record.terminal;
@@ -495,6 +507,12 @@ export class ShellManager {
       }
     }
   }
+}
+
+function scheduleUnrefTimeout(callback: () => void, delayMs: number): CancelScheduledTimer {
+  const timer = setTimeout(callback, delayMs);
+  timer.unref();
+  return () => clearTimeout(timer);
 }
 
 function createStreamBuffer(): StreamBuffer {
