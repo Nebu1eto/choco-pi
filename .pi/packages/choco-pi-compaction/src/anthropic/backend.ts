@@ -23,6 +23,7 @@ import type {
   PrepareFailure,
   ProviderScope,
 } from "../background/contract.ts";
+import { readFirstKeptEntryId } from "../background/snapshot.ts";
 import { type AnthropicCapabilityGate, authModeOf, normalizeBaseUrl } from "./capability.ts";
 import {
   bindingDigests,
@@ -167,10 +168,13 @@ export function chooseLegalCutEntry(
   preferredCutEntryId: string,
   options: {
     /**
-     * Whether a cut at the capture's tail retains something the capture cannot
-     * see (the foreground caller cuts a branch that already extends past the
-     * captured request). The background caller freezes the branch as captured,
-     * so a tail cut there retains nothing and `prepare` would refuse it.
+     * Whether the branch being cut holds an entry after the capture's last
+     * projected entry, so a cut at the capture's tail still retains something
+     * the capture cannot see. A capture is taken when its request is sent, so
+     * once that turn ends the branch extends past it by at least the assistant
+     * reply. Each caller computes this from the branch it cuts; without such an
+     * entry a tail cut has nothing to retain and `prepare` refuses it with
+     * `no-retained-entry`.
      */
     readonly branchExtendsCapture?: boolean;
   } = {},
@@ -309,11 +313,17 @@ class AnthropicNativeBackend implements Backend<AnthropicDetails> {
     },
   ): Promise<PreparedCheckpoint<AnthropicDetails> | PrepareFailure> {
     const { candidateId } = options;
+    // The frozen prefix ends at the cut; the snapshot's first retained branch
+    // entry (when carried) follows it, so a cut at the capture's tail still
+    // names the entry it retains even though the capture never saw it.
+    const firstKept = readFirstKeptEntryId(snapshot);
+    const entryIds = snapshot.entries.map((entry) => entry.id);
+    if (firstKept !== undefined) entryIds.push(firstKept);
     const outcome = await runNativeCompaction(this.deps, {
       scope: snapshot.providerScope,
       capture: () => this.captureFor(snapshot),
       cutEntryId: snapshot.cutEntryId,
-      entryIds: snapshot.entries.map((entry) => entry.id),
+      entryIds,
       signal: options.signal,
       budget: options.budget,
     });

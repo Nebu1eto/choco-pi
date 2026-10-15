@@ -316,8 +316,20 @@ test("mapping failures refuse instead of guessing", { timeout: 20_000 }, async (
   const transcript: Message[] = [user("DUP"), assistant("MID"), user("DUP"), assistant("END")];
   const wire = await wireFor(transcript);
   const entries = project(transcript);
-  // Identical text on both sides of the cut: the alignment is ambiguous across it.
-  assert.deepEqual(resolveEntryCut(captureOf(wire, entries), "e2"), {
+  // Identical text on both sides of the cut, both copies sent: each wire copy
+  // owns the next unclaimed entry in order, so the cut is resolved by position
+  // (formerly refused as ambiguous-cut).
+  const positional = resolveEntryCut(captureOf(wire, entries), "e2");
+  assert.ok(positional.ok, JSON.stringify(positional));
+  const secondCopy = wire.findLastIndex((message) =>
+    JSON.stringify(message.content).includes("DUP"),
+  );
+  assert.ok(secondCopy > indexOfText(wire, "DUP"), "both copies were sent");
+  assert.equal(positional.prefixLength, secondCopy, "the second copy is the first kept message");
+  // Only one copy was sent and MID is missing: the copy could be either entry,
+  // so the alignment stays ambiguous across the cut.
+  const oneCopy = await wireFor([user("DUP"), assistant("END")]);
+  assert.deepEqual(resolveEntryCut(captureOf(oneCopy, entries), "e2"), {
     ok: false,
     reason: "incompatible",
     code: "ambiguous-cut",

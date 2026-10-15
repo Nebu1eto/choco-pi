@@ -9,7 +9,12 @@ working and adopts it at a safe point.
 Pi's default summarizer sees only the messages it discards. This extension
 answers `session_before_compact` for locally summarized models and gives the
 summarizer the retained tail as current-state evidence. Codex-owned models are
-left to the Codex package.
+left to the Codex package: a model is Codex-owned only when Codex's own
+handler would summarize it, i.e. Codex `compaction.responsesCompaction` is on
+and the model is a Codex transport or a responses model of a provider in
+Codex `scope.additionalProviders`. With `responsesCompaction` off, a Codex
+transport (`openai-codex`) is summarized here, and the background `text` lane
+serves it.
 
 ## Anthropic server-side compaction (foreground)
 

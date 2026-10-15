@@ -366,7 +366,7 @@ test(
 );
 
 test(
-  "ambiguous alignment is surfaced with every viable owner, not hidden",
+  "repeated identical content resolves by position when the wire claims every owner",
   { timeout: 20_000 },
   async () => {
     const host = await createHost(
@@ -380,13 +380,11 @@ test(
       assert.ok(capture?.mapping);
       const [first, , third] = capture.mapping.messages;
       assert.deepEqual(first?.entryIds, [host.seed.a], "order-preserving pick");
-      assert.deepEqual(first?.ambiguous, [
-        {
-          key: keyRef("text", "NATIVE-SAME"),
-          candidates: [host.seed.a, host.seed.c],
-          outOfOrder: false,
-        },
-      ]);
+      // Formerly every viable owner was recorded here. Both wire copies claim
+      // both projected owners in order, so the monotone assignment is unique
+      // and nothing is ambiguous; an unclaimed owner still is (see the
+      // legality test "mapping failures refuse instead of guessing").
+      assert.deepEqual(first?.ambiguous, []);
       assert.deepEqual(third?.entryIds, [host.seed.c]);
       assert.deepEqual(third?.ambiguous, [], "only one owner remains after the first");
     } finally {

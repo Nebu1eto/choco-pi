@@ -5,7 +5,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import { ANTHROPIC_BACKEND_ID, chooseLegalCutEntry, selectCapture } from "../anthropic/backend.ts";
-import { capturesFor } from "../anthropic/capture.ts";
+import { capturesFor, type WireCapture } from "../anthropic/capture.ts";
 import type {
   CandidateState,
   CoordinatorStatus,
@@ -273,12 +273,26 @@ function legalAnthropicCut(
     context.providerScope,
   );
   if (capture === undefined) return base;
-  const legal = chooseLegalCutEntry(capture, base.cutEntryId);
+  const legal = chooseLegalCutEntry(capture, base.cutEntryId, {
+    branchExtendsCapture: branchExtendsCapture(capture, context.entries),
+  });
   if (legal === "defer") return refusedCut("no-legal-cut", true);
   if (legal === base.cutEntryId) return base;
   return (
     freezeAt(state, context.entries, legal, context) ?? refusedCut("nothing-to-summarize", true)
   );
+}
+
+/**
+ * Whether the branch holds an entry after the capture's last projected entry.
+ * The capture is taken when its request is sent, so the turn's reply and any
+ * later entries lie past it; a cut at the capture's tail then retains them.
+ */
+function branchExtendsCapture(capture: WireCapture, entries: readonly SessionEntry[]): boolean {
+  const tail = capture.mapping?.projection.at(-1)?.entryId;
+  if (tail === undefined) return false;
+  const position = entries.findIndex((entry) => entry.id === tail);
+  return position >= 0 && position + 1 < entries.length;
 }
 
 function refusedCut(

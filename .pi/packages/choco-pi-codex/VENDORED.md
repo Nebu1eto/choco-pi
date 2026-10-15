@@ -74,7 +74,11 @@ The backend factory registers at extension load (first registration wins; an
 unbound factory reports unsupported; a conflicting compaction registry slot
 registers nothing and never throws). The legal-cut hook serializes only the
 frozen prefix with the image policy snapshotted at session start; incomplete
-canonical lineage refuses the cut before transport. The adoption consumer
+canonical lineage refuses the cut before transport. Unlike the foreground replay,
+the cut may end before the latest response (`resolveCanonicalCompactionPrefixInput`):
+a shorter cut must equal the canonical request-plus-response items item by item
+after the responses-lite request prefix, and the capture carries those canonical
+items; divergence, an empty cut, or an open tool group still refuse. The adoption consumer
 verifies strategy, candidate ID and fingerprint before the guarded install;
 duplicate adoption IDs install once and elision epoch/cut state is
 session-keyed. Session start, tree and model changes and the host compaction
@@ -94,7 +98,7 @@ the `session_start`/`model_select` tail. Settings and owner identity use the
 compaction package's exports; the adoption signal is read through its validated
 process-global symbol. Without a child-owner binding, preparation is refused.
 
-Tests: `tests/background-compaction-{v2-preparation,v2-transport,adoption-runtime}.test.ts`
+Tests: `tests/background-compaction-{v2-preparation,v2-transport,v2-prefix-capture,adoption-runtime}.test.ts`
 use fake SSE/WebSocket transports, `InMemoryCredentialStore`, synthetic opaque
 placeholders and a throwing global-fetch guard; no live behavior is inferred
 from them. `tests/context-elision.test.ts` runs every handler registered for an

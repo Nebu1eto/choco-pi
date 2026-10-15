@@ -28,24 +28,6 @@ export interface CodexCompactionSnapshot {
   readonly additionalProviders: readonly string[];
 }
 
-/**
- * Resolve the owner of the compaction summary for this context.
- *
- * Codex owns the summary whenever its own handler would produce one, because
- * that handler runs after this one and its result would replace anything
- * produced here; worse, cancelling here on a failure would stop the codex
- * handler from ever running. Codex's condition is
- * `responsesCompaction && (codex transport || configured extra provider)`
- * (`choco-pi-codex` `resolveCodexRuntimePlan`), where a configured extra
- * provider is a responses-API model whose provider is listed in
- * `scope.additionalProviders`. A codex transport abstains unconditionally:
- * even when codex falls back, the host then runs its own default compaction.
- *
- * `snapshot` is passed in rather than read here so this function stays pure
- * and the configuration read happens once per session, off the hot path. An
- * absent snapshot means no configuration was loaded yet, which only leaves the
- * transport rule in force.
- */
 /** Owner key prefix of a main (non-child) session's background coordinator. */
 const MAIN_OWNER_KEY_PREFIX = "main-session:";
 
@@ -93,6 +75,31 @@ export interface OwnerOptions {
   readonly anthropicServerSide?: boolean;
 }
 
+/**
+ * Resolve the owner of the compaction summary for this context.
+ *
+ * Codex owns the summary exactly when its own handler would produce one,
+ * because that handler runs after this one and its result would replace
+ * anything produced here; worse, cancelling here on a failure would stop the
+ * codex handler from ever running. Codex's condition is
+ * `responsesCompaction && (codex transport || configured extra provider)`
+ * (`choco-pi-codex` `resolveCodexRuntimePlan`), where a configured extra
+ * provider is a responses-API model whose provider is listed in
+ * `scope.additionalProviders`.
+ *
+ * A codex transport with `responsesCompaction` off is summarized here. The
+ * former unconditional abstention for codex transports left that case to the
+ * host's default summarizer; it is gone because codex's handler abstains
+ * whenever native compaction is off, so nothing replaces this result and a
+ * cancellation here stops no codex summary.
+ *
+ * `snapshot` is passed in rather than read here so this function stays pure
+ * and the configuration read happens once per session, off the hot path. An
+ * absent snapshot means no configuration was loaded yet; a codex transport
+ * then still abstains, because codex may be configured for native compaction
+ * and a failure here would cancel its handler, while abstaining is safe either
+ * way (codex summarizes, or the host default does).
+ */
 export function resolveOwner(
   ctx: Pick<ExtensionContext, "model">,
   snapshot?: CodexCompactionSnapshot | undefined,
@@ -102,7 +109,7 @@ export function resolveOwner(
   if (!model) {
     return "none";
   }
-  if (isCodexTransportContext(ctx)) {
+  if (isCodexTransportContext(ctx) && (snapshot === undefined || snapshot.responsesCompaction)) {
     return "codex-native";
   }
   if (snapshot?.responsesCompaction && isResponsesContext(ctx)) {

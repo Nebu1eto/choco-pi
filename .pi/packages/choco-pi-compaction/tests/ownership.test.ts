@@ -3,13 +3,20 @@
  *
  * The codex package registers its own native compaction and runs after this
  * one, so its result would replace anything produced here. Abstaining avoids a
- * wasted provider call.
+ * wasted provider call. Codex's handler only summarizes with its
+ * `responsesCompaction` flag on; with it off a codex transport is summarized
+ * here (the former unconditional codex-transport abstention is gone).
  */
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import type { Api, Model } from "@earendil-works/pi-ai";
 
+import { getCodexConversionConfigPath } from "../../choco-pi-codex/src/adapter/activation/config-store.ts";
+import { parseLocalCompactionDetails } from "../src/details.ts";
 import { type CodexCompactionSnapshot, resolveOwner } from "../src/ownership.ts";
 import { ordinaryCut } from "./fixtures.ts";
 import { compactionExtension, createCompactionHost } from "./host-harness.ts";
@@ -30,14 +37,14 @@ function model(overrides: Partial<Model<Api>>): Model<Api> {
   };
 }
 
-test("an openai-codex provider leaves the summary to the codex package", () => {
+test("an openai-codex provider abstains while no codex configuration is loaded, since codex may compact natively", () => {
   assert.equal(
     resolveOwner({ model: model({ provider: "openai-codex", api: "openai-codex-responses" }) }),
     "codex-native",
   );
 });
 
-test("a canonical codex subscription base URL is codex-owned", () => {
+test("a canonical codex subscription base URL is codex-owned while no codex configuration is loaded", () => {
   assert.equal(
     resolveOwner({
       model: model({
@@ -88,13 +95,31 @@ test("the configured-provider rule needs a responses model", () => {
   );
 });
 
-test("a codex transport is codex-owned regardless of the codex config", () => {
+// Replaces the former "codex-owned regardless of the codex config" rule: codex's
+// handler abstains with native compaction off, so the summary is local there.
+test("a codex transport is codex-owned only while codex native compaction is on", () => {
+  const codex = { model: model({ provider: "openai-codex", api: "openai-codex-responses" }) };
+  assert.equal(
+    resolveOwner(codex, { responsesCompaction: false, additionalProviders: [] }),
+    "local",
+  );
+  assert.equal(
+    resolveOwner(codex, { responsesCompaction: true, additionalProviders: [] }),
+    "codex-native",
+  );
   assert.equal(
     resolveOwner(
-      { model: model({ provider: "openai-codex", api: "openai-codex-responses" }) },
+      {
+        model: model({
+          provider: "custom",
+          api: "openai-codex-responses",
+          baseUrl: "https://chatgpt.com/backend-api/codex",
+        }),
+      },
       { responsesCompaction: false, additionalProviders: [] },
     ),
-    "codex-native",
+    "local",
+    "a canonical subscription base URL follows the same flag",
   );
 });
 
@@ -117,7 +142,8 @@ test("server-side mode claims anthropic-messages models only after every Codex r
     "choco-pi mode stays local",
   );
   assert.equal(resolveOwner({ model: model({}) }), "local", "the summarizer's own view is local");
-  // Codex keeps winning wherever it owns the summary.
+  // Codex keeps winning wherever it owns the summary (an absent snapshot keeps
+  // the codex-transport abstention).
   assert.equal(
     resolveOwner(
       { model: model({ provider: "openai-codex", api: "openai-codex-responses" }) },
@@ -143,9 +169,45 @@ test("server-side mode claims anthropic-messages models only after every Codex r
     "local",
     "a non-Anthropic API is never claimed",
   );
+  assert.equal(
+    resolveOwner(
+      { model: model({ provider: "openai-codex", api: "openai-codex-responses" }) },
+      { responsesCompaction: false, additionalProviders: [] },
+      serverSide,
+    ),
+    "local",
+    "a codex transport with native off is local, never anthropic-native",
+  );
 });
 
-test("on a codex transport the handler abstains and the host summarizes", async () => {
+const AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
+
+/**
+ * Run with a temporary agent directory holding a codex config, so
+ * `session_start` reads this flag instead of the developer's real one.
+ */
+async function withCodexConfig(
+  responsesCompaction: boolean,
+  run: () => Promise<void>,
+): Promise<void> {
+  const agentDir = await mkdtemp(join(tmpdir(), "choco-pi-compaction-codex-"));
+  const previous = process.env[AGENT_DIR_ENV];
+  try {
+    await writeFile(
+      getCodexConversionConfigPath(agentDir),
+      JSON.stringify({ compaction: { responsesCompaction } }),
+    );
+    process.env[AGENT_DIR_ENV] = agentDir;
+    await run();
+  } finally {
+    if (previous === undefined) delete process.env[AGENT_DIR_ENV];
+    else process.env[AGENT_DIR_ENV] = previous;
+    await rm(agentDir, { recursive: true, force: true });
+  }
+}
+
+/** A codex-provider host whose `session_start` has read the codex config. */
+async function codexHost() {
   const host = await createCompactionHost({
     provider: "openai-codex",
     keepRecentTokens: 200,
@@ -155,23 +217,59 @@ test("on a codex transport the handler abstains and the host summarizes", async 
     extensionFactories: [compactionExtension()],
   });
   try {
-    const fixture = ordinaryCut(host.sessionManager);
-    await host.session.compact();
-
-    assert.equal(host.calls.length, 1);
-    const prompt = host.calls[0]?.promptText ?? "";
-    assert.ok(prompt.startsWith("<conversation>"), "the host's own prompt was used");
-    assert.equal(prompt.includes("<current-state-evidence>"), false);
-    const committed = host.sessionManager
-      .getEntries()
-      .filter((entry) => entry.type === "compaction")
-      .at(-1);
-    assert.ok(committed);
-    assert.notEqual(committed.fromHook, true);
-    for (const sentinel of fixture.completionSentinels) {
-      assert.equal(prompt.includes(sentinel), false);
-    }
-  } finally {
+    await host.session.bindExtensions({});
+  } catch (error) {
     await host.dispose();
+    throw error;
   }
+  return host;
+}
+
+test("on a codex transport with native compaction on the handler abstains and the host summarizes", async () => {
+  await withCodexConfig(true, async () => {
+    const host = await codexHost();
+    try {
+      const fixture = ordinaryCut(host.sessionManager);
+      await host.session.compact();
+
+      assert.equal(host.calls.length, 1);
+      const prompt = host.calls[0]?.promptText ?? "";
+      assert.ok(prompt.startsWith("<conversation>"), "the host's own prompt was used");
+      assert.equal(prompt.includes("<current-state-evidence>"), false);
+      const committed = host.sessionManager
+        .getEntries()
+        .filter((entry) => entry.type === "compaction")
+        .at(-1);
+      assert.ok(committed);
+      assert.notEqual(committed.fromHook, true);
+      for (const sentinel of fixture.completionSentinels) {
+        assert.equal(prompt.includes(sentinel), false);
+      }
+    } finally {
+      await host.dispose();
+    }
+  });
+});
+
+test("on a codex transport with native compaction off the reconciled summarizer answers", async () => {
+  await withCodexConfig(false, async () => {
+    const host = await codexHost();
+    try {
+      ordinaryCut(host.sessionManager);
+      await host.session.compact();
+
+      assert.equal(host.calls.length, 1);
+      const prompt = host.calls[0]?.promptText ?? "";
+      assert.ok(prompt.includes("<current-state-evidence>"), "the reconciled prompt was used");
+      const committed = host.sessionManager
+        .getEntries()
+        .filter((entry) => entry.type === "compaction")
+        .at(-1);
+      assert.ok(committed);
+      assert.equal(committed.fromHook, true);
+      assert.equal(parseLocalCompactionDetails(committed)?.strategy, "local-reconciled");
+    } finally {
+      await host.dispose();
+    }
+  });
 });

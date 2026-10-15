@@ -187,6 +187,71 @@ export function resolveCanonicalCompactionPromptInput(
   return result;
 }
 
+/** Why a background cut could not be aligned with the canonical history. */
+export type CanonicalCompactionPrefixDecision =
+  | Exclude<CodexCompactionReplayDecision, "not_applicable">
+  | "empty_cut";
+
+interface CanonicalCompactionPrefixResult {
+  input?: ProtocolValue[] | undefined;
+  decision: CanonicalCompactionPrefixDecision;
+}
+
+/**
+ * A cut shorter than the recorded baseline must equal the canonical materialized input
+ * item-by-item from the responses-lite request prefix; the result is that canonical prefix.
+ */
+function replayCanonicalPrefix(
+  state: CanonicalSessionState,
+  preparedInput: readonly ProtocolValue[],
+): CanonicalCompactionPrefixResult {
+  const canonical = materializedInput(state);
+  const requestPrefixLength = responsesLiteRequestPrefixLength(state.requestBody.input);
+  const requestEnd = state.requestBody.input.length;
+  for (const [index, item] of preparedInput.entries()) {
+    const canonicalIndex = requestPrefixLength + index;
+    if (!responseInputsEqual([item], canonical.slice(canonicalIndex, canonicalIndex + 1))) {
+      return {
+        decision:
+          canonicalIndex < requestEnd ? "request_prefix_mismatch" : "response_prefix_mismatch",
+      };
+    }
+  }
+  return {
+    input: structuredClone(canonical.slice(0, requestPrefixLength + preparedInput.length)),
+    decision: "validated",
+  };
+}
+
+/**
+ * Background cuts may end before the latest response. A cut covering the whole baseline keeps
+ * the foreground replay; a shorter one must be a proper prefix of the canonical history.
+ */
+export function resolveCanonicalCompactionPrefixInput(
+  sessionId: string,
+  model: string,
+  identity: { url: string; accountId: string },
+  reconstructedInput: readonly ProtocolValue[],
+): CanonicalCompactionPrefixResult {
+  const state = canonicalSessions.get(sessionId);
+  if (!state) return { decision: "no_state" };
+  if (state.requestBody.model !== model) return { decision: "model_mismatch" };
+  if (state.url !== identity.url || state.accountId !== identity.accountId)
+    return { decision: "identity_mismatch" };
+  if (reconstructedInput.length === 0) return { decision: "empty_cut" };
+  const requestPrefixLength = responsesLiteRequestPrefixLength(state.reconstructedRequestInput);
+  const baselineLength =
+    state.reconstructedRequestInput.length - requestPrefixLength + state.responseItems.length;
+  if (reconstructedInput.length < baselineLength)
+    return replayCanonicalPrefix(state, reconstructedInput);
+  const replay = replayCanonicalInput(state, reconstructedInput, requestPrefixLength);
+  const result: CanonicalCompactionPrefixResult = {
+    decision: replay.decision === "compaction" ? "validated" : replay.decision,
+  };
+  if (replay.input) result.input = replay.input;
+  return result;
+}
+
 export function canonicalCompactionRequestBody(
   sessionId: string,
   model: string,

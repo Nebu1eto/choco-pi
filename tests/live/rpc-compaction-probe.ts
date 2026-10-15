@@ -5,6 +5,11 @@
  * drives one matrix cell per (background on/off) x (point manual/auto) for one
  * model and one compaction logic (`server-side` or `choco-pi`):
  *   - manual: RPC `compact` without and with instructions, then one follow-up prompt;
+ *     background on with instructions expects the text lane (`text`,
+ *     `local-reconciled`): server-side compaction takes no instructions, so the
+ *     background host serves that request only by text (background-host/routes.ts
+ *     `manualLanes`). Background on without instructions, every auto case, and every
+ *     background-off case expect the logic's native lane (server-side) or text (choco-pi);
  *   - auto: the context cap's compaction point (presets from `--soft-cap` and
  *     `--compaction-point`, `reserveTokens` calibrated so a short seed crosses it).
  * Evidence is the RPC event stream, the session entries, and the in-process
@@ -261,6 +266,15 @@ async function dryRun(): Promise<void> {
         "  cases: RPC compact (plain), RPC compact (instructions), each + one follow-up prompt",
       );
     else write("  cases: calibrate, seed, prompt until the cap point fires, one follow-up prompt");
+    const variants = cell.point === "manual" ? [false, true] : [false];
+    for (const withInstructions of variants) {
+      const expected = caseLane(cell.background, withInstructions);
+      const name = cell.point === "manual" ? (withInstructions ? "instructions" : "plain") : "auto";
+      const backend = cell.background ? (expected.lane?.backendId ?? "text") : "none (foreground)";
+      write(
+        `  expect ${name}: backend ${backend}, strategy ${expected.lane?.strategy ?? "local-reconciled"}${expected.laneRule === undefined ? "" : `, laneRule ${expected.laneRule}`}`,
+      );
+    }
   }
 }
 
@@ -787,13 +801,31 @@ function laneFor(): NativeLane | undefined {
   return options.logic === "server-side" ? nativeLaneFor(options.provider) : undefined;
 }
 
+/** The lane a case expects, and the routing rule that overrode the logic's lane. */
+interface CaseLane {
+  readonly lane: NativeLane | undefined;
+  readonly laneRule: "instructions-text-only" | undefined;
+}
+
+/**
+ * The lane one case must be served by. A background manual request with
+ * custom instructions may only use the text lane (background-host/routes.ts
+ * `manualLanes`), because server-side compaction takes no instructions; the
+ * foreground path applies instructions natively, so it keeps the logic's lane.
+ */
+function caseLane(background: boolean, withInstructions: boolean): CaseLane {
+  if (background && withInstructions)
+    return { lane: undefined, laneRule: "instructions-text-only" };
+  return { lane: laneFor(), laneRule: undefined };
+}
+
 async function manualCase(
   session: Session,
   cell: Cell,
   name: string,
   instructions: string | undefined,
 ): Promise<void> {
-  const lane = laneFor();
+  const { lane, laneRule } = caseLane(cell.background, instructions !== undefined);
   const since = session.records.length;
   const before = await branchCompactionCount(session);
   const prior = new Set<string>();
@@ -815,6 +847,7 @@ async function manualCase(
     ],
     ["commandEvents", commandEvents],
   ]);
+  if (laneRule !== undefined) detail.set("laneRule", laneRule);
   let pass: boolean;
   if (cell.background) {
     const accepted =

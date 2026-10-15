@@ -5,7 +5,10 @@ import type {
   ResponseCreateParamsStreaming,
   ResponseOutputItem,
 } from "openai/resources/responses/responses.js";
-import type { CodexCompactionDiagnostic } from "../../adapter/compaction/diagnostics.ts";
+import type {
+  CodexCompactionContinuation,
+  CodexCompactionDiagnostic,
+} from "../../adapter/compaction/diagnostics.ts";
 import type { CodexFastModeDecision } from "./fast-mode-decision.ts";
 import type { CodexAccessPrograms, CodexDaybreakTicket } from "./daybreak-decision.ts";
 
@@ -107,16 +110,13 @@ export interface CachedWebSocketContinuationState {
   lastResponseItems: ProtocolValue[];
 }
 
-export type WebSocketContinuationDecision =
-  | "disabled"
-  | "native_steering_full"
-  | "no_session_cache_entry"
-  | "no_continuation"
-  | "body_mismatch"
-  | "input_shorter_than_baseline"
-  | "input_prefix_mismatch"
-  | "missing_previous_response_id"
-  | "delta";
+/**
+ * Every decision is also a valid `CodexCompactionDiagnostic.continuation`: the
+ * websocket stream copies it into the compaction diagnostic, and the details
+ * validator rejects any value outside that list, hiding the compaction from
+ * the native display path.
+ */
+export type WebSocketContinuationDecision = CodexCompactionContinuation;
 
 export type CanonicalHistoryDecision =
   | "compaction"

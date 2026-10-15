@@ -260,7 +260,15 @@ export interface WireMapping {
 /**
  * Order-preserving alignment. Each keyed wire message is owned by projected
  * entries after the previous message's owners; within a message, owners never
- * move backwards. Multiple viable owners are reported, not hidden.
+ * move backwards. A key with several viable owners takes the earliest one.
+ *
+ * Repeated identical content (for example a persona message appended every
+ * turn) resolves by position: when the wire messages carrying a key claim
+ * every projected owner of that key exactly once, the monotone assignment of
+ * two equally long ordered sequences is unique, so those choices are not
+ * ambiguous. Any other multi-owner choice (an owner left unclaimed, so the
+ * wire could have skipped a different one) stays reported, and a key with no
+ * owner at or after the floor stays out of order.
  */
 export function mapWireToEntries(
   messages: readonly WireMessage[],
@@ -268,18 +276,59 @@ export function mapWireToEntries(
 ): WireMapping {
   const owners = indexKeyOwners(entries);
   let floor = 0;
-  const mapped = messages.map((message, index): WireMessageMapping => {
+  const alignments = messages.map((message) => {
     const alignment = alignWireMessage(message, owners, floor);
     if (alignment.entryIndexes.length > 0) floor = Math.max(...alignment.entryIndexes) + 1;
+    return alignment;
+  });
+  const positional = positionallyResolvedKeys(alignments, owners);
+  const mapped = messages.map((message, index): WireMessageMapping => {
+    const alignment = alignments[index];
+    const ambiguous = (alignment?.ambiguous ?? []).filter(
+      (record) => record.outOfOrder || !positional.has(record.keyId),
+    );
     return {
       index,
       role: message.role,
-      entryIds: entryIdsAt(owners.projection, alignment.entryIndexes),
-      unmapped: alignment.unmapped,
-      ambiguous: alignment.ambiguous,
+      entryIds: entryIdsAt(owners.projection, alignment?.entryIndexes ?? []),
+      unmapped: alignment?.unmapped ?? [],
+      ambiguous: ambiguous.map(({ key: ref, candidates, outOfOrder }) => ({
+        key: ref,
+        candidates,
+        outOfOrder,
+      })),
     };
   });
   return { projection: owners.projection, messages: mapped };
+}
+
+/**
+ * Keys whose every projected owner was claimed, in order, by the wire. Picks
+ * of distinct messages strictly increase (the floor moves past each message's
+ * owners), so claiming all owners means a bijection between the key's wire
+ * occurrences and its owners. A key that also went out of order is excluded.
+ */
+function positionallyResolvedKeys(
+  alignments: readonly MessageAlignment[],
+  owners: KeyOwners,
+): ReadonlySet<string> {
+  const picked = new Map<string, Set<number>>();
+  const outOfOrder = new Set<string>();
+  for (const alignment of alignments) {
+    for (const { keyId, pick } of alignment.picks) {
+      const set = picked.get(keyId);
+      if (set === undefined) picked.set(keyId, new Set([pick]));
+      else set.add(pick);
+    }
+    for (const record of alignment.ambiguous) if (record.outOfOrder) outOfOrder.add(record.keyId);
+  }
+  const resolved = new Set<string>();
+  for (const [keyId, picks] of picked) {
+    const all = owners.owners.get(keyId) ?? [];
+    if (outOfOrder.has(keyId) || picks.size !== all.length) continue;
+    if (all.every((index) => picks.has(index))) resolved.add(keyId);
+  }
+  return resolved;
 }
 
 /** Projection refs plus, per wire key, the ascending projection indexes that produce it. */
@@ -312,10 +361,17 @@ function entryIdsAt(projection: readonly ProjectionRef[], indexes: readonly numb
   return indexes.map((index) => projection[index]?.entryId ?? "");
 }
 
+/** An ambiguity record plus the internal key it belongs to. */
+interface KeyedAmbiguity extends AmbiguousKey {
+  readonly keyId: string;
+}
+
 interface MessageAlignment {
   readonly entryIndexes: number[];
   readonly unmapped: WireKeyRef[];
-  readonly ambiguous: AmbiguousKey[];
+  readonly ambiguous: KeyedAmbiguity[];
+  /** Owner chosen for each placed key occurrence. */
+  readonly picks: { readonly keyId: string; readonly pick: number }[];
 }
 
 /** Align one wire message's keys to owners at or after `floor`, never moving backwards. */
@@ -324,7 +380,7 @@ function alignWireMessage(
   owners: KeyOwners,
   floor: number,
 ): MessageAlignment {
-  const alignment: MessageAlignment = { entryIndexes: [], unmapped: [], ambiguous: [] };
+  const alignment: MessageAlignment = { entryIndexes: [], unmapped: [], ambiguous: [], picks: [] };
   let localFloor = floor;
   for (const wireKey of wireMessageKeys(message)) {
     const candidates = owners.owners.get(wireKey.id) ?? [];
@@ -336,6 +392,7 @@ function alignWireMessage(
     const [pick] = viable;
     if (pick === undefined) {
       alignment.ambiguous.push({
+        keyId: wireKey.id,
         key: wireKey.ref,
         candidates: entryIdsAt(owners.projection, candidates),
         outOfOrder: true,
@@ -344,10 +401,12 @@ function alignWireMessage(
     }
     if (viable.length > 1)
       alignment.ambiguous.push({
+        keyId: wireKey.id,
         key: wireKey.ref,
         candidates: entryIdsAt(owners.projection, viable),
         outOfOrder: false,
       });
+    alignment.picks.push({ keyId: wireKey.id, pick });
     if (!alignment.entryIndexes.includes(pick)) alignment.entryIndexes.push(pick);
     localFloor = pick;
   }

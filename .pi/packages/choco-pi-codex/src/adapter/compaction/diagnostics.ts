@@ -6,6 +6,7 @@ export type CodexCompactionInputSource = "canonical" | "reconstructed";
 
 export type CodexCompactionContinuation =
   | "disabled"
+  | "native_steering_full"
   | "no_session_cache_entry"
   | "no_continuation"
   | "body_mismatch"
@@ -41,6 +42,7 @@ export type CodexCompactionDiagnostic = {
 const COMPACTION_INPUT_SOURCES = ["canonical", "reconstructed"] as const;
 const COMPACTION_CONTINUATIONS = [
   "disabled",
+  "native_steering_full",
   "no_session_cache_entry",
   "no_continuation",
   "body_mismatch",

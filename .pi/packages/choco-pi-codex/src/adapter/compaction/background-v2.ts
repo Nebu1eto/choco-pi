@@ -37,7 +37,7 @@ import type { ResponsesInputItem } from "./serializer.ts";
 import { isCanonicalCodexBaseUrl } from "../prompt/codex-model.ts";
 import {
   canonicalCompactionRequestBody,
-  resolveCanonicalCompactionPromptInput,
+  resolveCanonicalCompactionPrefixInput,
 } from "../../providers/openai-codex/session-continuity.ts";
 import {
   extractAccountId,
@@ -74,6 +74,7 @@ export type CodexCaptureRefusal =
   | "unsupported-scope"
   | "account-scope-mismatch"
   | "no-canonical-body"
+  | "empty_cut"
   | "no_state"
   | "model_mismatch"
   | "identity_mismatch"
@@ -87,7 +88,10 @@ export type CodexCaptureResult =
   | { readonly ok: true; readonly capture: CodexBackgroundCapture }
   | { readonly ok: false; readonly refusal: CodexCaptureRefusal };
 
-/** Synchronous capture at the cut, with lineage validation against the complete prefix. */
+/**
+ * Synchronous capture at the cut. The cut must be a prefix of the canonical history (it may end
+ * before the latest response); the captured input is the canonical items for that prefix.
+ */
 export function captureCodexBackgroundRequest(args: {
   sessionId: string;
   providerScope: ProviderScope;
@@ -111,7 +115,7 @@ export function resolveCodexBackgroundCapture(args: {
   if (codexBackgroundAccountScope(accountId) !== providerScope.accountScope)
     return { ok: false, refusal: "account-scope-mismatch" };
   const identity = { url: resolveCodexWebSocketUrl(providerScope.baseUrl), accountId };
-  const resolved = resolveCanonicalCompactionPromptInput(
+  const resolved = resolveCanonicalCompactionPrefixInput(
     sessionId,
     providerScope.model,
     identity,

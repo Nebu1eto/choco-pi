@@ -893,6 +893,18 @@ test("model/account change during preparation invalidates; committed checkpoint 
   const legacy = { ...checkpoint.details, strategy: "openai-native-compact-v1" };
   assert.ok(isNativeCompactionDetails(legacy));
   assert.equal(isBackgroundNativeCompactionDetails(legacy), false);
+  // The websocket stream copies its continuation decision into the usage
+  // diagnostic; a native-steering request produced "native_steering_full",
+  // which the validator once rejected, hiding a real checkpoint (live probe
+  // sol-server-side-1792063683).
+  const steered = {
+    ...checkpoint.details,
+    usage: {
+      ...checkpoint.details.usage,
+      diagnostic: { ...checkpoint.details.usage?.diagnostic, continuation: "native_steering_full" },
+    },
+  };
+  assert.ok(isNativeCompactionDetails(steered));
 });
 for (const stop of ["canceled", "timeout"] as const) {
   test(`${stop} while auth ignores AbortSignal still settles exactly once`, async () => {
