@@ -6,6 +6,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import type { LoadedBackgroundSettings } from "../background/settings.ts";
+import { registryAvailability } from "../background/registry.ts";
 import type { AnthropicCapabilityGate } from "../anthropic/capability.ts";
 import type { AnthropicCompactionMode, AnthropicServerSideSession } from "../anthropic/mode.ts";
 import type { AnthropicReplayBinder } from "../anthropic/replay-binding.ts";
@@ -94,6 +95,22 @@ export interface HostRuntime {
 
 export function isCurrent(rt: HostRuntime, owner: MainOwner): boolean {
   return rt.main === owner && rt.lifecycle === owner.generation;
+}
+
+/** Shown (once per registration, by the notifier) when the coordinator registry is in conflict. */
+export const REGISTRY_CONFLICT_NOTICE =
+  "background compaction unavailable: registry conflict; restart pi";
+
+/**
+ * Whether the process-wide coordinator registry is usable. A conflicting slot
+ * (left by incompatible code in this process) turns the background feature off
+ * exactly like the master switch: no owner attaches and every route falls
+ * through to host compaction until pi restarts.
+ */
+export function registryUsable(rt: HostRuntime, ctx: ExtensionContext | undefined): boolean {
+  if (registryAvailability().status === "available") return true;
+  rt.notify(ctx, REGISTRY_CONFLICT_NOTICE);
+  return false;
 }
 
 /** The current main owner, recording ctx as its latest context; undefined when none is current. */

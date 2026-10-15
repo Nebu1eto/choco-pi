@@ -23,8 +23,8 @@ import type {
 } from "../../../choco-pi-compaction/src/background/contract.ts";
 import {
   getCoordinator,
-  getRegistry,
   registerBackendFactory,
+  registryAvailability,
 } from "../../../choco-pi-compaction/src/background/registry.ts";
 import {
   buildCodexBackgroundReplay,
@@ -176,9 +176,19 @@ export interface CodexBackgroundBinding {
 }
 const bindings = new Map<string, CodexBackgroundBinding>();
 
-/** Register once per ID, yielding to any host-owned factory already registered. */
+/**
+ * Register once per ID, yielding to any host-owned factory already registered.
+ * A conflicting registry slot registers nothing; the host then keeps the
+ * background feature off for this process.
+ */
 export function registerCodexBackgroundFactory(enabled: boolean): boolean {
-  if (!enabled || getRegistry().backendFactories.has(CODEX_BACKGROUND_BACKEND_ID)) return false;
+  if (!enabled) return false;
+  const availability = registryAvailability();
+  if (
+    availability.status !== "available" ||
+    availability.registry.backendFactories.has(CODEX_BACKGROUND_BACKEND_ID)
+  )
+    return false;
   registerBackendFactory(CODEX_BACKGROUND_BACKEND_ID, (context) => {
     let selected: CodexBackgroundBinding | undefined;
     let backend: Backend | undefined;

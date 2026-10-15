@@ -3,9 +3,11 @@ import test from "node:test";
 
 import { type CoordinatorApi, isCandidateRecord } from "../src/background/contract.ts";
 import {
+  deliveredAdoptionsFor,
   getCoordinator,
   getRegistry,
   registerBackendFactory,
+  registryAvailability,
   release,
   setCoordinator,
 } from "../src/background/registry.ts";
@@ -107,19 +109,34 @@ test("registry separates factory load order from session attachment and guards l
   }
 });
 
-test("registry refuses a corrupt global slot instead of unchecked reuse", () => {
-  const symbol = Symbol.for("choco-pi:compaction-coordinator");
+test("registry refuses a corrupt global slot without throwing, reusing or repairing it", () => {
+  const symbol = Symbol.for("choco-pi:compaction-coordinator:v2");
   const existing = getRegistry();
+  const corrupt = {
+    schemaVersion: 2,
+    backendFactories: new Map([["bad", 42]]),
+    coordinators: new Map(),
+    delivered: new Map(),
+  };
   try {
-    Object.defineProperty(globalThis, symbol, {
-      value: {
-        schemaVersion: 1,
-        backendFactories: new Map([["bad", 42]]),
-        coordinators: new Map(),
-      },
-      configurable: true,
-    });
-    assert.throws(() => getRegistry(), /Invalid background compaction registry/);
+    Object.defineProperty(globalThis, symbol, { value: corrupt, configurable: true });
+    assert.deepEqual(registryAvailability(), { status: "conflict" });
+    const detached = getRegistry();
+    assert.notEqual(detached, corrupt);
+    const factory = () => new FakeBackend();
+    assert.equal(registerBackendFactory("contract-conflict", factory), factory);
+    assert.equal(getRegistry().backendFactories.has("contract-conflict"), false);
+    const owner = coordinator("contract-conflict-owner", 1);
+    assert.equal(setCoordinator(owner.ownerKey, owner), false);
+    assert.equal(getCoordinator(owner.ownerKey), undefined);
+    assert.equal(release(owner.ownerKey, 1, owner), false);
+    const ledger = deliveredAdoptionsFor(owner.ownerKey);
+    ledger.set("adoption", new Set(["consumer"]));
+    assert.equal(deliveredAdoptionsFor(owner.ownerKey).size, 0, "the ledger is detached");
+    assert.equal(Object.getOwnPropertyDescriptor(globalThis, symbol)?.value, corrupt);
+    assert.deepEqual([...corrupt.backendFactories], [["bad", 42]]);
+    assert.equal(corrupt.coordinators.size, 0);
+    assert.equal(corrupt.delivered.size, 0);
   } finally {
     Object.defineProperty(globalThis, symbol, { value: existing, configurable: true });
   }

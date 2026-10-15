@@ -541,7 +541,12 @@ function registerAttachment(
     throw new Error("Child coordinator owner does not match the child session");
   }
   try {
-    setCoordinator(ownerKey, coordinator);
+    if (!setCoordinator(ownerKey, coordinator)) {
+      // The compaction registry slot is in conflict: run without a coordinator.
+      disposeCoordinator(state, coordinator, "disposed");
+      report(state, `owner ${ownerKey} not attached: compaction registry unavailable`);
+      return;
+    }
   } catch (error) {
     disposeCoordinator(state, coordinator, "owner-changed");
     throw error;

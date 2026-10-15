@@ -32,6 +32,8 @@ import {
   type HostRuntime,
   isCurrent,
   type MainOwner,
+  REGISTRY_CONFLICT_NOTICE,
+  registryUsable,
   runCleanup,
   shutdown,
   teardownMain,
@@ -112,6 +114,8 @@ export async function startMainSession(
   bindAnthropicReplay(rt, session, settings);
   const model = session.model;
   if (!backgroundCompactionActive(settings) || model === undefined) return;
+  // A conflicting registry slot is the same "off" as the master switch.
+  if (!registryUsable(rt, ctx)) return;
   await attachMainOwner(rt, ctx, { session, model, state, settings });
 }
 
@@ -273,14 +277,14 @@ function registerMainCoordinator(
   registration: CoreRegistration,
 ): boolean {
   try {
-    setCoordinator(registration.identity.ownerKey, registration.core.coordinator);
-    return true;
+    if (setCoordinator(registration.identity.ownerKey, registration.core.coordinator)) return true;
+    rt.notify(ctx, REGISTRY_CONFLICT_NOTICE);
   } catch (cause) {
     rt.notify(ctx, `coordinator registration refused: ${errorText(cause)}`);
-    registration.core.dispose();
-    runCleanup(registration.cleanup);
-    return false;
   }
+  registration.core.dispose();
+  runCleanup(registration.cleanup);
+  return false;
 }
 
 function installMainOwner(

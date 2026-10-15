@@ -11,7 +11,7 @@ import { TEXT_BACKEND_ID } from "../background/text-backend.ts";
 import { candidateRecordsOf } from "./branch.ts";
 import { errorText } from "./notices.ts";
 import { createOwnerCore, type OwnerCore } from "./owner-core.ts";
-import type { HostRuntime } from "./runtime.ts";
+import { type HostRuntime, registryUsable } from "./runtime.ts";
 
 // ---------------------------------------------------------------------------
 // Child sessions: the subagent runner's bridge attaches a coordinator per child
@@ -28,7 +28,11 @@ export function createChildProvider(rt: HostRuntime): ChildCompactionProvider {
 
 function childCompactionEnabled(rt: HostRuntime): boolean {
   const settings = rt.loaded.settings;
-  return backgroundCompactionActive(settings) && isBackendEnabled(TEXT_BACKEND_ID, settings);
+  return (
+    backgroundCompactionActive(settings) &&
+    isBackendEnabled(TEXT_BACKEND_ID, settings) &&
+    registryUsable(rt, rt.parent?.ctx)
+  );
 }
 
 /** Children use the text backend only, scoped to provider, model and endpoint. */

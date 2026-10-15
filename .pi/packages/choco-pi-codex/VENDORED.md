@@ -71,7 +71,8 @@ no usage.
 
 **Adoption runtime** (`extension/background-compaction.ts`, `extension/events.ts`).
 The backend factory registers at extension load (first registration wins; an
-unbound factory reports unsupported). The legal-cut hook serializes only the
+unbound factory reports unsupported; a conflicting compaction registry slot
+registers nothing and never throws). The legal-cut hook serializes only the
 frozen prefix with the image policy snapshotted at session start; incomplete
 canonical lineage refuses the cut before transport. The adoption consumer
 verifies strategy, candidate ID and fingerprint before the guarded install;

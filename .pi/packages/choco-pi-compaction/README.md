@@ -106,6 +106,14 @@ bound again only when its scope, prior checkpoint and prefix fingerprint still
 match; recovery never starts a paid preparation. Anything else is discarded
 with a reason.
 
+The registry lives on `globalThis` under the versioned key
+`Symbol.for("choco-pi:compaction-coordinator:v2")` so it survives `/reload`. A
+slot an older build left under an earlier key is ignored and left untouched. If
+the current key holds a slot this code cannot validate, nothing throws and the
+slot is not modified: background compaction stays off for the rest of the
+process, every compaction uses the host path, and one warning reads
+`background compaction unavailable: registry conflict; restart pi`.
+
 ### How a checkpoint is adopted
 
 A ready candidate is installed by exactly one of these routes. None forges a

@@ -1598,6 +1598,14 @@ Tests: `tests/child-compaction-bridge.test.ts` runs the real `runAgent` and
 `resumeAgent` with a scripted provider, a temporary `PI_CODING_AGENT_DIR` and the
 real registry.
 
+Registry conflict (2026-10-15): the compaction registry is versioned and never
+throws on a conflicting global slot; `setCoordinator` then returns `false`
+without storing, `getCoordinator` returns `undefined` and `release` returns
+`false`. `registerAttachment` treats `false` as "not attached": it disposes the
+child coordinator, reports through the existing channel and leaves the child on
+the host compaction path. The compaction provider's `isEnabled()` is already
+false in that state, so this is a race guard.
+
 ## 2026-10-14 choco-pi patch: `/btw` transcript starts at the question
 
 A `/btw` child runs on a fork of the main conversation, so the overlay and
