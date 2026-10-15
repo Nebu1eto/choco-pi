@@ -9,6 +9,7 @@ export type ObservedCheck =
   | "single-checkpoint"
   | "idle-adoption"
   | "host-compaction-arbitration"
+  | "manual-background-compaction"
   | "text-summary-prefix-only"
   | "post-adoption-transport"
   | "native-block-replayed"

@@ -31,6 +31,8 @@ export const LIVE_EXPECTATIONS: ExpectationTable = {
   "text-boundary-adoption": { requests: 7, inputTokens: 220_000, outputTokens: 12_000 },
   "anthropic-native-adoption": { requests: 8, inputTokens: 260_000, outputTokens: 24_000 },
   "idle-input-adoption": { requests: 3, inputTokens: 90_000, outputTokens: 8_000 },
+  // Five short turns and three background summaries over the seeded prefix.
+  "manual-background-compaction": { requests: 8, inputTokens: 220_000, outputTokens: 14_000 },
   "restart-recovery": { requests: 4, inputTokens: 130_000, outputTokens: 10_000 },
   // No seeded padding: three short turns, one lane request and at most one
   // fallback turn, each ~15k tokens of system prompt and tool schemas. Sized for
