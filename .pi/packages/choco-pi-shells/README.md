@@ -4,6 +4,12 @@ First-party managed background processes with bounded, in-memory output buffers.
 The `shell_start` tool retains its originating `toolCallId` while the shell record
 is retained; it does not change the tool-result or persisted-entry format.
 
+The manager captures the process's own stdout and stderr; `shell_read` and the
+Shells viewer (which shows the state line, the command, and both streams) read
+those buffers. A command that redirects its output to a file therefore shows
+"(no output)" in the viewer; the tool description tells the agent to leave the
+streams unredirected and use `| tee` when a file copy is also wanted.
+
 ## Lifecycle events
 
 Each activation emits `pi.events` notifications only for its owning session:

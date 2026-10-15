@@ -372,9 +372,10 @@ test("extension registers documented portable tool schemas and the /shells comma
     const readTool = tool(root, "shell_read");
     assert.equal(
       startTool.description,
-      "Start a managed long-running background process. Exit is delivered as a shell-completion notification; do not poll.",
+      "Start a managed long-running background process. Exit is delivered as a shell-completion notification; do not poll. Keep stdout and stderr on the process (no `> file` redirection); the manager captures both and the Shells viewer shows them live.",
     );
     assert.match(startTool.parameters.properties?.command?.description ?? "", /long-running/i);
+    assert.match(startTool.parameters.properties?.command?.description ?? "", /unredirected/);
     assert.match(startTool.parameters.properties?.cwd?.description ?? "", /calling session cwd/);
     assert.match(readTool.parameters.properties?.stdout_offset?.description ?? "", /nextOffset/);
     assert.match(readTool.parameters.properties?.stderr_offset?.description ?? "", /nextOffset/);

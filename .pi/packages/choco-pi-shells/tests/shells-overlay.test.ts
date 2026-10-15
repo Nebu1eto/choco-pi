@@ -172,6 +172,8 @@ test("ShellOutputViewer tails both panes with absolute cursors and confirms stop
   };
   const component = new ShellOutputViewer(tui(), manager, "admin", running, theme, () => {});
   const initial = rendered(component);
+  assert.match(initial, /running · shell-1 · pid 101/);
+  assert.match(initial, /\$ command-1/, "the command runs under the status line");
   assert.match(initial, /stdout/);
   assert.match(initial, /out/);
   assert.match(initial, /stderr/);

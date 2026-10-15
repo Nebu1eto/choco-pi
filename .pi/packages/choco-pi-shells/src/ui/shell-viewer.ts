@@ -20,10 +20,8 @@ const DRAIN_POLL_MS = 10;
 const READ_BYTES = 262_144;
 export const SHELL_VIEWER_MAX_LINES = 2_000;
 export const SHELL_VIEWER_MAX_CHARS = 262_144;
-const TERMINAL_ESCAPE_PATTERN = new RegExp(
-  String.raw`\u001B(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*?(?:\u0007|\u001B\\)|[PX^_][\s\S]*?\u001B\\|[@-_])`,
-  "g",
-);
+const TERMINAL_ESCAPE_PATTERN =
+  /\u001B(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*?(?:\u0007|\u001B\\)|[PX^_][\s\S]*?\u001B\\|[@-_])/g;
 
 type StreamName = "stdout" | "stderr";
 
@@ -201,9 +199,10 @@ export class ShellOutputViewer implements Component {
     if (width < 8) return [];
     const inner = width - 4;
     const notice = this.actionNotice ?? this.readNotice;
+    // Frame rows: border, status, command, two pane labels, divider, divider, help, border.
     const availableRows = Math.max(
       2,
-      Math.floor((this.tui.terminal.rows * 70) / 100) - (notice || this.evicted ? 9 : 8),
+      Math.floor((this.tui.terminal.rows * 70) / 100) - (notice || this.evicted ? 10 : 9),
     );
     const activeRows = Math.min(availableRows - 1, Math.ceil((availableRows * 2) / 3));
     const paneRows = {
@@ -219,6 +218,7 @@ export class ShellOutputViewer implements Component {
     lines.push(
       this.row(`${this.shell.state} · ${name} · ${pid}${exit} · ${duration(this.shell)}`, inner),
     );
+    lines.push(this.row(this.theme.fg("dim", `$ ${sanitizeShellText(this.shell.command)}`), inner));
     this.renderPane(lines, "stdout", paneRows.stdout, inner);
     lines.push(this.row(this.theme.fg("dim", "─".repeat(inner)), inner));
     this.renderPane(lines, "stderr", paneRows.stderr, inner);

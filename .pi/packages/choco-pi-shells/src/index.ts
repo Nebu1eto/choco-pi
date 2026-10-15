@@ -185,7 +185,8 @@ const StartSchema = Type.Object(
   {
     command: Type.String({
       minLength: 1,
-      description: "Long-running shell command to run in the background.",
+      description:
+        "Long-running shell command to run in the background. Leave stdout and stderr unredirected: the manager captures both for shell_read and the Shells viewer, and output redirected to a file is invisible there. Use `| tee file` when a file copy is also needed.",
     }),
     cwd: Type.Optional(
       Type.String({
@@ -411,7 +412,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
       name: "shell_start",
       label: "Start Shell",
       description:
-        "Start a managed long-running background process. Exit is delivered as a shell-completion notification; do not poll.",
+        "Start a managed long-running background process. Exit is delivered as a shell-completion notification; do not poll. Keep stdout and stderr on the process (no `> file` redirection); the manager captures both and the Shells viewer shows them live.",
       promptSnippet: "Start a managed long-running background process.",
       parameters: StartSchema,
       execute: async (toolCallId, params, _signal, _onUpdate, ctx) => {

@@ -37,7 +37,7 @@ const CODE_MODE_ROUTING_GUIDANCE = `Composition: ${CODE_MODE_DEFAULT_ROUTING}.
 Parallelize only independent calls; sequence dependent work. Preserve Promise.allSettled failures instead of hiding them.
 ${CODE_MODE_DIRECT_EXCEPTIONS}. Inspect one unfamiliar schema in ALL_TOOLS; never dump the catalog.
 UI refs are not file paths. Never repeat writes or keep cells alive only to poll.
-Long commands: keep the default yield_time_ms, resume the returned session_id with write_stdin, and when progress matters avoid pipes that buffer until exit (\`| tail\`, \`| sort\`); bound size with max_output_tokens or a log file instead. No code-mode wait exceeds 5 minutes; run work expected to take longer through shell_start and read it with shell_read.
+Long commands: keep the default yield_time_ms, resume the returned session_id with write_stdin, and when progress matters avoid pipes that buffer until exit (\`| tail\`, \`| sort\`); bound exec_command size with max_output_tokens or a log file instead. No code-mode wait exceeds 5 minutes; run work expected to take longer through shell_start and read it with shell_read. A shell_start command must keep stdout and stderr unredirected (use \`| tee file\` for a copy): the manager captures both streams and the Shells viewer shows them live.
 ${CODE_MODE_RUNTIME_CONTRACTS}`;
 
 function buildCapabilityGuidance(tools: CodeModeToolDefinition[]): string {
