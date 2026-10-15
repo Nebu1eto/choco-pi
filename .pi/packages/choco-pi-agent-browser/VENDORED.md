@@ -156,3 +156,11 @@ matching the harness target. Other dependency contracts are unchanged.
 Pi SDK peer and development pins move from `1.0.4` to exactly `1.2.0`.
 A `before_agent_start` run started by a custom message has no prompt in 1.2.0;
 the browser-guidance decision uses the latest user prompt on the branch instead.
+
+## 2026-10-15 choco-pi patch: default viewport guidance
+
+Added one always-on `agent_browser` prompt guideline: set a 1920x1080
+viewport once per new local browser session, and for small-screen QA also
+check 1280x720 and 1024x600 before restoring 1920x1080. Attached CDP
+sessions, Electron, iOS, and user-specified sizes are exempt. Guidance only;
+argv construction and launch behavior are unchanged.
