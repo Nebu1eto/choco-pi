@@ -41,7 +41,7 @@ When the orchestrator plans or conforms:
 - Write the final plan to `/tmp/choco-pi/${PI_SESSION_ID}/` and record its path in the acceptance ledger.
 - Under rule 3 only, if the current model leaves the Flagship tier before the plan is final, spawn the `planner` with the gathered evidence and the draft. A model change after the plan is final does not reopen it.
 
-Select each role from the unit's work before considering a model or reasoning override; an override must never replace a specialized role with `general`. The role file's `default_model` and `default_thinking` apply when the spawn omits those fields. Pass an override only for a reason allowed by `.pi/model-guidance.md`, and record that reason. Present the plan only when it contains a material user decision.
+Select each role from the unit's work before considering a model or reasoning override; an override must never replace a specialized role with `general`. Omit `model` and `thinking` in every spawn so the role file's `default_model` and `default_thinking` apply; the spawn manifest records a model or effort only as an override. Pass an override only for a reason allowed by `.pi/model-guidance.md`, and record that reason. Restating the role default, the orchestrator's own model, or the plan owner's preference is not a reason. Present the plan only when it contains a material user decision.
 
 When the advisor tool is enabled, the orchestrator may consult it before presenting a complex plan and before final acceptance; advisor output is advice, not evidence.
 

@@ -17,7 +17,11 @@ import {
 } from "./agent-types.ts";
 import { loadCustomAgents } from "./custom-agents.ts";
 import { buildRecordDetails, delegationRenderers } from "./delegation-render.ts";
-import { isolationParam, resolveAgentInvocationConfig } from "./invocation-config.ts";
+import {
+  describeModelResolution,
+  isolationParam,
+  resolveAgentInvocationConfig,
+} from "./invocation-config.ts";
 import { SUBAGENT_DEPTH_CEILING } from "./limits.ts";
 import { formatSteerMessage, getAgentIdentity } from "./messaging.ts";
 import { resolveModel } from "./model-resolver.ts";
@@ -282,12 +286,13 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
       }),
       model: Type.Optional(
         Type.String({
-          description: "Optional provider/model; applies unless the agent definition pins it.",
+          description:
+            "Optional provider/model. Omit to use the agent definition's default model; pass one only for a task-specific reason. Ignored when the agent definition pins a model.",
         }),
       ),
       thinking: Type.Optional(
         thinkingLevelSchema(
-          "Optional thinking level; applies unless the agent definition pins it.",
+          "Optional thinking level. Omit to use the agent definition's default; pass one only for a task-specific reason. Ignored when the agent definition pins it.",
         ),
       ),
       max_turns: Type.Optional(
@@ -435,17 +440,27 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
         }
       ).__choco_hook_worktree_path;
       let model = ctx.model;
+      let modelUnavailable = false;
       if (invocation.modelInput) {
         const resolution = resolveModel(invocation.modelInput, ctx.modelRegistry);
         switch (resolution.tag) {
           case "error":
             if (invocation.modelFromParams) return textResult(resolution.message, true);
+            modelUnavailable = true;
             break;
           case "resolved":
             model = resolution.model;
             break;
         }
       }
+      // Child sessions have no UI surface to toast to, so the result text is
+      // the only place a discarded override or an unavailable default shows up.
+      const modelNote = describeModelResolution({
+        agentLabel: config?.displayName ?? resolvedType,
+        resolved: invocation,
+        modelUnavailable,
+        parentModel: ctx.model,
+      });
 
       // Same scopeModels policy as the top-level Agent tool — a nested spawn
       // must not escape the allowlist. A "warn" verdict proceeds silently:
@@ -568,7 +583,7 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
           attachTranscript(id);
           const record = context.manager.getRecord(id);
           return textResult(
-            `Nested agent started in background. Agent ID: ${id}\n` +
+            `${modelNote}Nested agent started in background. Agent ID: ${id}\n` +
               `${TERMINAL_RESULT_RETRIEVAL_GUIDANCE} Use steer_subagent to send it a message mid-run.`,
             false,
             record ? buildRecordDetails(record, true) : {},
@@ -584,7 +599,7 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
           attachTranscript,
         );
         return textResult(
-          formatRecord(record, "inline"),
+          `${modelNote}${formatRecord(record, "inline")}`,
           record.status === "error",
           buildRecordDetails(record),
         );

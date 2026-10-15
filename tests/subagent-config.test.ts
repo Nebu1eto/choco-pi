@@ -44,11 +44,15 @@ test("role model and thinking follow hard pin, caller, then default precedence",
   const defaults = resolveAgentInvocationConfig(implementer, {});
   assert.equal(defaults.modelInput, implementer.defaultModel);
   assert.equal(defaults.modelFromParams, false);
+  assert.equal(defaults.modelSource, "default");
+  assert.deepEqual(defaults.overriddenCallerFields, []);
   assert.equal(defaults.thinking, implementer.defaultThinking);
 
   const fromCaller = resolveAgentInvocationConfig(implementer, caller);
   assert.equal(fromCaller.modelInput, caller.model);
   assert.equal(fromCaller.modelFromParams, true);
+  assert.equal(fromCaller.modelSource, "caller");
+  assert.deepEqual(fromCaller.overriddenCallerFields, []);
   assert.equal(fromCaller.thinking, caller.thinking);
 
   const pinned = resolveAgentInvocationConfig(
@@ -57,7 +61,70 @@ test("role model and thinking follow hard pin, caller, then default precedence",
   );
   assert.equal(pinned.modelInput, "test/pinned-model");
   assert.equal(pinned.modelFromParams, false);
+  assert.equal(pinned.modelSource, "pin");
+  assert.deepEqual(pinned.overriddenCallerFields, ["model", "thinking"]);
   assert.equal(pinned.thinking, "xhigh");
+
+  const unconfigured = resolveAgentInvocationConfig(
+    { ...implementer, defaultModel: undefined, defaultThinking: undefined },
+    {},
+  );
+  assert.equal(unconfigured.modelInput, undefined);
+  assert.equal(unconfigured.modelSource, undefined);
+  assert.equal(unconfigured.thinking, undefined);
+});
+
+test("spawn results explain discarded overrides and unavailable role models", async () => {
+  const packageRoot = resolve(".pi/packages/choco-pi-subagents/src");
+  const { describeModelResolution, resolveAgentInvocationConfig } = await import(
+    pathToFileURL(resolve(packageRoot, "invocation-config.ts")).href
+  );
+  const parentModel = { provider: "anthropic", id: "parent-model" };
+  const defaultModel = "openai-codex/role-default";
+  const role = { defaultModel, defaultThinking: "medium" };
+
+  const honored = describeModelResolution({
+    agentLabel: "reviewer",
+    resolved: resolveAgentInvocationConfig(role, {}),
+    modelUnavailable: false,
+    parentModel,
+  });
+  assert.equal(honored, "", "a resolved default produces no note");
+
+  const unavailable = describeModelResolution({
+    agentLabel: "reviewer",
+    resolved: resolveAgentInvocationConfig(role, {}),
+    modelUnavailable: true,
+    parentModel,
+  });
+  assert.match(unavailable, /default model "openai-codex\/role-default" is not available/u);
+  assert.match(unavailable, /running on anthropic\/parent-model instead/u);
+
+  const pinnedIgnored = describeModelResolution({
+    agentLabel: "reviewer",
+    resolved: resolveAgentInvocationConfig(
+      { ...role, model: "test/pinned", thinking: "high" },
+      { model: "other/model", thinking: "low" },
+    ),
+    modelUnavailable: false,
+    parentModel,
+  });
+  assert.match(
+    pinnedIgnored,
+    /pins model and thinking; the caller-supplied model and thinking was ignored/u,
+  );
+  assert.doesNotMatch(pinnedIgnored, /not available/u);
+
+  const noParent = describeModelResolution({
+    agentLabel: "reviewer",
+    resolved: resolveAgentInvocationConfig({ ...role, model: "test/pinned" }, {}),
+    modelUnavailable: true,
+    parentModel: undefined,
+  });
+  assert.match(
+    noParent,
+    /pinned model "test\/pinned" is not available; running on the parent model instead/u,
+  );
 });
 
 test("fallbacks and role defaults route OpenAI through openai-codex only", async () => {

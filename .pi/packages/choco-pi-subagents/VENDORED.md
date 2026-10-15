@@ -515,6 +515,18 @@ preference. An explicit caller value still wins, which preserves provider
 fallback on overload. `tests/subagent-config.test.ts` pins the parsed fields and
 the resolution order.
 
+The resolver also reports `modelSource` (`pin`, `caller`, `default`) and
+`overriddenCallerFields`, and `describeModelResolution` turns them into result
+notes that the `Agent` tool and the nested delegation tool prepend to every
+spawn result. Two outcomes that were silent upstream now surface: a frontmatter
+pin discarding a caller's `model`/`thinking`, and a pinned or default model that
+fails to resolve (the parent model runs; the top-level tool also toasts a
+warning). The `model`/`thinking` parameter descriptions and the generated
+agent-file template name `default_model`/`default_thinking` and tell callers
+to omit the fields unless there is a task-specific reason. `/btw` side
+conversations are unaffected: `runAgent` applies the forked main-session
+runtime before any frontmatter or caller value.
+
 ### No prompt-mode label on append-mode agents
 
 The fork removes upstream's `twin` UI label from append-mode agents. Every

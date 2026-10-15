@@ -77,9 +77,23 @@ interface AgentInvocationParams {
   isolation?: unknown;
 }
 
+/** Where the effective model string came from, when there is one. */
+export type ModelInputSource = "pin" | "caller" | "default";
+
+/** Caller fields a frontmatter pin overrode. */
+export type OverriddenCallerField = "model" | "thinking";
+
 interface ResolvedAgentInvocationConfig {
   modelInput?: string;
   modelFromParams: boolean;
+  /** Undefined when nothing chose a model and the parent runtime applies. */
+  modelSource?: ModelInputSource;
+  /**
+   * Caller-supplied fields the agent definition's hard pin discarded. Spawn
+   * paths report these so an orchestrator learns its override did not apply
+   * instead of assuming it did.
+   */
+  overriddenCallerFields: OverriddenCallerField[];
   thinking?: ThinkingLevel;
   maxTurns?: number;
   timeoutMs?: number;
@@ -138,9 +152,25 @@ export function resolveAgentInvocationConfig(
       : undefined
   ) as ThinkingLevel | undefined;
 
+  const modelInput = agentConfig?.model ?? params.model ?? agentConfig?.defaultModel;
+  const modelSource: ModelInputSource | undefined =
+    agentConfig?.model == null
+      ? params.model == null
+        ? agentConfig?.defaultModel == null
+          ? undefined
+          : "default"
+        : "caller"
+      : "pin";
+  const overriddenCallerFields: OverriddenCallerField[] = [];
+  if (agentConfig?.model != null && params.model != null) overriddenCallerFields.push("model");
+  if (agentConfig?.thinking != null && params.thinking != null)
+    overriddenCallerFields.push("thinking");
+
   return {
-    modelInput: agentConfig?.model ?? params.model ?? agentConfig?.defaultModel,
-    modelFromParams: agentConfig?.model == null && params.model != null,
+    modelInput,
+    modelFromParams: modelSource === "caller",
+    modelSource,
+    overriddenCallerFields,
     thinking,
     maxTurns: agentConfig?.maxTurns ?? params.max_turns,
     timeoutMs: params.timeout_ms,
@@ -165,4 +195,40 @@ export function resolveJoinMode(
   runInBackground: boolean,
 ): JoinMode | undefined {
   return runInBackground ? defaultJoinMode : undefined;
+}
+
+/**
+ * Notes a spawn result carries about model and effort resolution. Both the
+ * top-level Agent tool and the nested delegation tool prepend these, so an
+ * orchestrator learns when its override was discarded by a frontmatter pin or
+ * when the agent definition's model was unavailable and the parent runtime ran
+ * instead. Without them both outcomes are silent and indistinguishable from the
+ * requested one.
+ */
+export function describeModelResolution(args: {
+  agentLabel: string;
+  resolved: Pick<
+    ResolvedAgentInvocationConfig,
+    "modelInput" | "modelSource" | "overriddenCallerFields"
+  >;
+  /** True when `modelInput` failed to resolve and the parent model runs. */
+  modelUnavailable: boolean;
+  parentModel: { provider: string; id: string } | undefined;
+}): string {
+  const { agentLabel, resolved, modelUnavailable, parentModel } = args;
+  const notes: string[] = [];
+  if (resolved.overriddenCallerFields.length > 0) {
+    const fields = resolved.overriddenCallerFields.join(" and ");
+    notes.push(
+      `Note: agent "${agentLabel}" pins ${fields}; the caller-supplied ${fields} was ignored.`,
+    );
+  }
+  if (modelUnavailable && resolved.modelInput !== undefined && resolved.modelSource !== undefined) {
+    const origin = resolved.modelSource === "default" ? "default model" : "pinned model";
+    const parent = parentModel ? `${parentModel.provider}/${parentModel.id}` : "the parent model";
+    notes.push(
+      `Note: agent "${agentLabel}" ${origin} "${resolved.modelInput}" is not available; running on ${parent} instead.`,
+    );
+  }
+  return notes.length > 0 ? `${notes.join("\n")}\n\n` : "";
 }

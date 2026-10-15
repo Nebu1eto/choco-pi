@@ -85,6 +85,7 @@ import { type RpcHandle, registerRpcHandlers } from "./cross-extension-rpc.ts";
 import { loadCustomAgents } from "./custom-agents.ts";
 import { GroupJoinManager } from "./group-join.ts";
 import {
+  describeModelResolution,
   isolationParam,
   resolveAgentInvocationConfig,
   resolveJoinMode,
@@ -2226,11 +2227,13 @@ export default function (pi: ExtensionAPI) {
       model: Type.Optional(
         Type.String({
           description:
-            'Model as "provider/modelId" or a fuzzy name; applies unless the agent definition pins it. With resume: continue a usage-limited child on another model.',
+            'Model as "provider/modelId" or a fuzzy name. Omit to use the agent definition\'s default model; pass one only for a reason .pi/model-guidance.md allows. Ignored when the agent definition pins a model. With resume: continue a usage-limited child on another model.',
         }),
       ),
       thinking: Type.Optional(
-        thinkingLevelSchema("Thinking level; applies unless the agent definition pins it."),
+        thinkingLevelSchema(
+          "Thinking level. Omit to use the agent definition's default; pass one only for a task-specific reason. Ignored when the agent definition pins it.",
+        ),
       ),
       max_turns: Type.Optional(
         Type.Number({
@@ -2338,7 +2341,7 @@ export default function (pi: ExtensionAPI) {
       // foreground path. Resume deliberately doesn't: it replays the stored
       // session and ignores `subagent_type` entirely, so a note about type
       // substitution would be describing something that didn't happen.
-      const fallbackNote =
+      const typeNote =
         dispatch.ok && dispatch.fellBackFrom !== undefined
           ? `Note: Unknown agent type "${dispatch.fellBackFrom}" — using ${resolveType(subagentType) ? subagentType : "the fallback agent config"}.\n\n`
           : "";
@@ -2361,18 +2364,29 @@ export default function (pi: ExtensionAPI) {
 
       // Resolve model from agent config first; tool-call params only fill gaps.
       let model = ctx.model;
+      let modelUnavailable = false;
       if (resolvedConfig.modelInput) {
         const resolution = resolveModel(resolvedConfig.modelInput, ctx.modelRegistry);
         switch (resolution.tag) {
           case "error":
             if (resolvedConfig.modelFromParams) return textResult(resolution.message);
-            // config-specified: silent fallback to parent
+            // config-specified: fall back to the parent, but say so — the
+            // result note and toast below are the only trace of this.
+            modelUnavailable = true;
             break;
           case "resolved":
             model = resolution.model;
             break;
         }
       }
+      const modelNote = describeModelResolution({
+        agentLabel: customConfig?.displayName ?? subagentType,
+        resolved: resolvedConfig,
+        modelUnavailable,
+        parentModel: ctx.model,
+      });
+      if (modelUnavailable) ctx.ui.notify(modelNote.trim(), "warning");
+      const fallbackNote = typeNote + modelNote;
 
       // Scope validation: the effective resolved model is checked against the
       // user's enabledModels list. Policy (hard error vs warn-and-proceed) lives
@@ -4016,8 +4030,10 @@ The file format is a markdown file with YAML frontmatter and a system prompt bod
 description: <one-line description shown in UI>
 color: <optional agent name badge color: red, blue, green, yellow, purple, orange, pink, cyan, an Agency Agents alias, or quoted "#RRGGBB">
 tools: <comma-separated built-in tools: read, bash, edit, write, grep, find, ls. Use "none" for no tools. Omit for all tools>
-model: <optional model as "provider/modelId", e.g. "anthropic/claude-haiku-4-5". Omit to inherit parent model>
-thinking: <optional thinking level: ${THINKING_LEVELS.join(", ")}. Omit to inherit>
+model: <optional pinned model as "provider/modelId"; callers cannot override it>
+default_model: <optional model as "provider/modelId" used when the caller passes none. Omit both to inherit the parent model>
+thinking: <optional pinned thinking level: ${THINKING_LEVELS.join(", ")}; callers cannot override it>
+default_thinking: <optional thinking level used when the caller passes none. Omit both to inherit>
 max_turns: <optional max agentic turns. 0 or omit for unlimited (default)>
 prompt_mode: <"replace" (body IS the full system prompt) or "append" (body is appended to default prompt). Default: replace>
 extensions: <true (inherit all MCP/extension tools), false (none), or comma-separated names. Default: true>
