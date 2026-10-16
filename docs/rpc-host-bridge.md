@@ -1,6 +1,6 @@
 # RPC host bridge
 
-Waku launches choco-pi through the installed Pi 1.2.0 RPC driver. The bridge
+Waku launches choco-pi through the installed Pi 1.3.0 RPC driver. The bridge
 adds durable background-work and goal entries to Pi sessions and transient
 progress frames to RPC stdout. It does not replace Pi's RPC protocol.
 
@@ -17,7 +17,7 @@ observed Pi version, launcher, and bridge schema:
   "checkout": "/absolute/path/to/choco-pi",
   "revision": "<git-revision-or-null>",
   "installedAt": "<ISO-8601-time>",
-  "pi": { "version": "1.2.0", "launcher": "/absolute/path/to/pi" },
+  "pi": { "version": "1.3.0", "launcher": "/absolute/path/to/pi" },
   "hostBridge": {
     "schema": 1,
     "entryPrefix": "choco-pi:host-bridge",
@@ -31,7 +31,7 @@ observed Pi version, launcher, and bridge schema:
 Markers written before it existed omit it and remain valid.
 
 The installer resolves the launcher from `--pi-launcher`, then
-`CHOCO_PI_LAUNCHER`, then the first `pi` on `PATH` reporting version 1.2.0.
+`CHOCO_PI_LAUNCHER`, then the first `pi` on `PATH` reporting version 1.3.0.
 Both `pi.version` and `pi.launcher` are nullable: if no compatible PATH candidate
 is found, both are null and installation warns. An explicit launcher override
 retains its absolute path and observed version (or null if unavailable), even
@@ -263,7 +263,7 @@ Use Node 24 or later and an explicit compatible launcher and model:
 
 ```sh
 node tests/live/rpc-host-bridge.ts \
-  --pi-launcher "$HOME/.local/pi-shim/pi" \
+  --pi-launcher "$HOME/.pi/agent/bin/pi" \
   --model openai/gpt-6.1-sol \
   --scratch-dir /tmp/choco-pi/<approved-task>/probe \
   --capture /tmp/choco-pi/<approved-task>/probe/bridge-manual.jsonl \
