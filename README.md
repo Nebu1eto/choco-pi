@@ -194,8 +194,8 @@ before each computer-use tool call, so a missing grant appears as the menu above
 
 ### Update the helper
 
-- Pi installs the helper only when the app is missing; it never replaces an existing one. After pulling a change under `native/macos`, run the setup script again and restart Pi. The script skips the build when the installed helper was built from the same sources.
-- Pi checks the helper protocol version (currently 7) when it connects. It relaunches a mismatched helper once; if the version still differs, it stops with a "helper mismatch after relaunch" error. Run the setup script again.
+- Pi installs the helper only when the app is missing; it never replaces an existing one. After pulling a change under `native/macos`, run the setup script again. The script skips the build when the installed helper was built from the same sources.
+- The helper daemon outlives Pi. When Pi connects, it compares the daemon's protocol version (currently 7), executable path, and start time with the installed app; a daemon that is older than the installed binary is relaunched once, so a reinstalled helper takes effect on the next tool call without restarting Pi. If the relaunched daemon still does not match, Pi stops with a "helper mismatch after relaunch" error that names the reason. Run the setup script again.
 - Replacing the helper re-signs the app, and macOS may invalidate earlier grants. If Pi reports a missing permission while the toggle is on, turn the toggle off and on again.
 - When only ad-hoc signing is available, the script refuses to replace an installed helper, because macOS may reset its permissions. Install a Developer ID identity, or set `PI_COMPUTER_USE_ALLOW_ADHOC_UPDATE=1` and grant the permissions again.
 
