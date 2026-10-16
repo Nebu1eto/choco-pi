@@ -32,6 +32,7 @@ import { Value } from "typebox/value";
 import type {
   AppendRecord,
   ArbitrationResult,
+  CandidateState,
   CoordinatorApi,
   ReasonCode,
 } from "../../choco-pi-compaction/src/background/contract.ts";
@@ -122,6 +123,11 @@ interface ChildCompactionBridge {
   bindSession(session: AgentSession): void;
   /** Adoption notifications for commits that produce no host `compaction_end`. */
   onAdoption(listener: (info: ChildAdoptionInfo) => void): () => void;
+  /**
+   * Whether the attached coordinator's candidate is queued, preparing, or
+   * adopting. The coordinator publishes no status events, so callers poll this.
+   */
+  isPreparing(): boolean;
   /** End of one prompt invocation; never throws and never awaits. */
   settle(outcome: { readonly canceled: boolean; readonly timedOut: boolean }): void;
   /** The runner gave up the session; detach permanently. Never throws. */
@@ -295,6 +301,7 @@ export function createChildCompactionBridge(
     },
     bindSession: (session) => bindBridgeSession(state, bridge, session),
     onAdoption: (listener) => addAdoptionListener(state, listener),
+    isPreparing: () => isBridgePreparing(state),
     settle: (outcome) => settleBridge(state, outcome),
     dispose: (reason = "disposed") => disposeBridge(state, reason),
   };
@@ -415,6 +422,19 @@ function addAdoptionListener(
   return () => {
     state.listeners.delete(listener);
   };
+}
+
+const PREPARING_STATES: ReadonlySet<CandidateState> = new Set(["queued", "preparing", "adopting"]);
+
+/** Poll the live coordinator; a detached bridge or a failing foreign status reads as idle. */
+function isBridgePreparing(state: BridgeState): boolean {
+  const current = state.active;
+  if (state.disposed || !current) return false;
+  try {
+    return PREPARING_STATES.has(current.attachment.coordinator.status().state);
+  } catch {
+    return false;
+  }
 }
 
 function settleBridge(

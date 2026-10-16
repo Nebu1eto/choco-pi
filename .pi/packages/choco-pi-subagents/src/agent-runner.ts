@@ -34,6 +34,7 @@ import {
   createChildCompactionBridge,
   getChildCompactionBridge,
 } from "./child-compaction-bridge.ts";
+import { trackSessionCompaction } from "./compaction-activity.ts";
 import {
   registerChildSessionId,
   runInChildSessionContext,
@@ -1777,6 +1778,8 @@ export async function runAgent(
   const startLen = session.messages.length;
   // Boundary adoptions emit no compaction_end; the bridge reports them once.
   const stopChildAdoptions = childCompaction?.onAdoption((info) => options.onCompaction?.(info));
+  // Fleet view compaction window, scoped to this run.
+  const stopCompactionTracking = trackSessionCompaction(session);
   try {
     if (!options.signal?.aborted) await session.prompt(effectivePrompt);
     await turnLimit.settleCorrections();
@@ -1786,6 +1789,7 @@ export async function runAgent(
     collector.unsubscribe();
     cleanupAbort();
     stopChildAdoptions?.();
+    stopCompactionTracking();
     childCompaction?.settle({
       canceled: options.signal?.aborted === true,
       timedOut: turnLimit.getAborted(),
@@ -1864,6 +1868,8 @@ export async function resumeAgent(
       : () => {};
   const childCompaction = getChildCompactionBridge(session);
   const stopChildAdoptions = childCompaction?.onAdoption((info) => options.onCompaction?.(info));
+  // Fleet view compaction window, scoped to this run.
+  const stopCompactionTracking = trackSessionCompaction(session);
 
   try {
     if (!options.signal?.aborted) await session.prompt(prompt);
@@ -1874,6 +1880,7 @@ export async function resumeAgent(
     unsubEvents();
     cleanupAbort();
     stopChildAdoptions?.();
+    stopCompactionTracking();
     childCompaction?.settle({
       canceled: options.signal?.aborted === true,
       timedOut: turnLimit?.getAborted() === true,

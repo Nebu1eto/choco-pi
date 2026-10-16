@@ -72,6 +72,28 @@ source package cannot use:
 
 ## What was changed
 
+- Fleet view per-agent compaction marker: `src/compaction-activity.ts` (new)
+  keys a compaction window by child `AgentSession`. `runAgent` and
+  `resumeAgent` call `trackSessionCompaction` immediately before their prompt
+  `try` and its returned stop in the `finally`, so the subscription is
+  run-scoped (completion, error, cancel, timeout) and settlement closes the
+  window. While the run lives it holds the window open from
+  `compaction_start` to `compaction_end` (completed, failed, or aborted). A
+  session already tracked by an outer run gets a no-op stop.
+  `child-compaction-bridge.ts` adds `isPreparing()`, polling the attached
+  coordinator's `status().state` for `queued`/`preparing`/`adopting` (the
+  coordinator publishes no status events; `ready` is excluded because an
+  unadoptable ready candidate can persist for a whole run). A detached or
+  disposed bridge reads as idle. `fleet-panel.ts` `renderAgentRow` prefixes the
+  right-hand `elapsed · tokens` segment with `theme.fg("warning", "Compacting…")`
+  only while the record is `running`, so terminal states never show it; leading
+  the right segment keeps the marker when narrow rows clip. No manager
+  callback, `subagents:*` event, or registry symbol changed. Child compaction
+  never surfaced in a root-level status, so none was removed.
+  `tests/fleet-compaction.test.ts` covers the host window, aborted ends,
+  terminal statuses, narrow rows, background preparation through a real
+  bridge, listener removal on stop, and run-scoped runner wiring (including a
+  throwing prompt) on a real SDK session.
 - 2026-10-09: Treat Pi "Sign in with ChatGPT" on provider `openai`
   (`https://api.openai.com/v1`, `ModelRegistry.isUsingOAuth`) like
   `openai-codex` for the child's structured usage-limit entry, but only when

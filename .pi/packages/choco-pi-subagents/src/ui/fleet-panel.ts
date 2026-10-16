@@ -10,6 +10,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { hasAgentBadge } from "../agent-color.ts";
 import type { AgentManager } from "../agent-manager.ts";
+import { isSessionCompacting } from "../compaction-activity.ts";
 import type { AgentRecord, WidgetMode } from "../types.ts";
 import { formatResetAt } from "../usage-limit-seam.ts";
 import { getLifetimeTotal, getSessionContextPercent } from "../usage.ts";
@@ -839,10 +840,16 @@ export class FleetPanel {
     const left = `  ${this.bullet(rosterIndex, selectedIndex, theme)} ${treePrefix}${status} ${sideTag}${workflowTag}${name}  ${record.description}${errorText}`;
     const usage = this.agentActivity.get(record.id)?.lifetimeUsage ?? record.lifetimeUsage;
     const elapsed = (record.completedAt ?? Date.now()) - record.startedAt;
-    const right = theme.fg(
+    const stats = theme.fg(
       "dim",
       `${formatFleetElapsed(elapsed)} · ${formatFleetTokens(getLifetimeTotal(usage))}`,
     );
+    // Leading the right segment keeps the marker when a narrow row clips it.
+    const compacting =
+      record.status === "running" && isSessionCompacting(record.session)
+        ? `${theme.fg("warning", "Compacting…")} `
+        : "";
+    const right = compacting + stats;
     return rightAlign(left, right, width);
   }
 
