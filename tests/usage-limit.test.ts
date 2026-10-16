@@ -152,6 +152,63 @@ test("an openai quota without usage data closes for the default window, never co
   assert.deepEqual(result, { ready: false, classification: classified, evidence: "unavailable" });
 });
 
+// pi-ai openai-responses.js: `${model.provider} API error (${status}): ${message}`, where the OpenAI
+// SDK message for an empty body is `429 status code (no body)` (the live xAI 429 had no body).
+const XAI_429 = "xai API error (429): 429 status code (no body)";
+
+test("xai 429 is an inferred quota without a reset; the retry-delay wrapper depends on its inner status", () => {
+  assert.deepEqual(classify("xai", XAI_429), {
+    provider: "xai",
+    modelId: "m",
+    kind: "quota",
+    confidence: "inferred",
+  });
+  assert.equal(
+    classify("xai", 'xai API error (429): 429 {"code":"Too many requests","error":"Rate limit"}')
+      ?.kind,
+    "quota",
+  );
+  assert.equal(classify("xai", "429 status code (no body)")?.kind, "quota");
+
+  // provider-retry.js wraps the SDK message (no provider prefix) when retry-after exceeds the cap.
+  const wrapped429 = classify("xai", wrap(90, "429 status code (no body)"));
+  assert.equal(wrapped429?.kind, "quota");
+  assert.equal(wrapped429?.resetAt, NOW + 90 * 1000);
+  assert.equal(classify("xai", wrap(120, "503 status code (no body)"))?.kind, "transient");
+
+  assert.equal(classify("xai", "xai API error (500): 500 status code (no body)"), undefined);
+  assert.equal(
+    classify("xai", "xai API error (400): rate limit mentioned in a bad request"),
+    undefined,
+  );
+  assert.equal(classify("xai", "Connection error."), undefined);
+  assert.equal(
+    classify("xai", 'xai API error (429): {"error":"insufficient_quota"}')?.kind,
+    "billing",
+  );
+  // xAI text on another provider is not an xAI limit.
+  assert.equal(classify("some-other", XAI_429), undefined);
+});
+
+test("an xai quota has no usage data: corroboration degrades to unavailable without reading", async () => {
+  const classified = classify("xai", XAI_429);
+  assert.ok(classified);
+  const events: SyntheticQuotaEvents = {
+    emit: () => {
+      throw new Error("must not be emitted");
+    },
+  };
+  const result = await corroborateUsageLimit(
+    {
+      now: () => NOW,
+      events,
+      usageSnapshot: () => Promise.reject(new Error("must not be read")),
+    },
+    classified,
+  );
+  assert.deepEqual(result, { ready: false, classification: classified, evidence: "unavailable" });
+});
+
 test("limited OpenAI models on either provider fall back to comparable Anthropic", () => {
   const table: ModelFallbacks = {
     tiers: {
@@ -584,6 +641,106 @@ test("pickFallback walks primaries, secondaries, then the last resort", () => {
   );
 });
 
+test("the repository table offers xai/grok-4.7 only after every first-party candidate", async () => {
+  const agentDir = await mkdtemp(join(tmpdir(), "choco-pi-fallbacks-xai-"));
+  try {
+    const table = await loadModelFallbacks(agentDir);
+    const refs = [
+      ...Object.values(table.tiers).flatMap((tier) => [...tier.primary, ...(tier.secondary ?? [])]),
+      ...table.lastResort,
+    ];
+    const available = refs.map((ref) => {
+      const slash = ref.indexOf("/");
+      return { provider: ref.slice(0, slash), id: ref.slice(slash + 1) };
+    });
+    const grok = { provider: "xai", id: "grok-4.7" };
+    const kimi = { provider: "synthetic", id: "hf:moonshotai/Kimi-K3" };
+    const closedOnly =
+      (...providers: string[]) =>
+      (provider: string): boolean =>
+        providers.includes(provider);
+
+    // (a) One first-party provider closed: the other one wins in every tier, never xai.
+    for (const current of available.filter((ref) => ref.provider === "anthropic")) {
+      const picked = pickFallback(table, current, {
+        available,
+        scoped: [],
+        isClosed: closedOnly("anthropic"),
+      });
+      assert.equal(picked?.provider, "openai-codex", `${current.id} -> ${JSON.stringify(picked)}`);
+    }
+    for (const current of available.filter((ref) => ref.provider === "openai-codex")) {
+      const picked = pickFallback(table, current, {
+        available,
+        scoped: [],
+        isClosed: closedOnly("openai-codex"),
+      });
+      assert.equal(picked?.provider, "anthropic", `${current.id} -> ${JSON.stringify(picked)}`);
+    }
+    // A limited openai/* model with the Anthropic account also closed stays first-party.
+    assert.deepEqual(
+      pickFallback(
+        table,
+        { provider: "openai", id: "gpt-6.1-sol" },
+        { available, scoped: [], isClosed: closedOnly("openai", "anthropic") },
+      ),
+      { provider: "openai-codex", id: "gpt-6.1-sol" },
+    );
+
+    // (b) Every tier candidate closed: Grok 4.7 before Kimi K3.
+    const opus = { provider: "anthropic", id: "claude-opus-5-5" };
+    const firstPartyClosed = closedOnly("anthropic", "openai-codex");
+    assert.deepEqual(
+      pickFallback(table, opus, { available, scoped: [], isClosed: firstPartyClosed }),
+      grok,
+    );
+    // An unavailable tier candidate counts like a closed one.
+    assert.deepEqual(
+      pickFallback(table, opus, {
+        available: [grok, kimi],
+        scoped: [],
+        isClosed: closedOnly(),
+      }),
+      grok,
+    );
+
+    // (c) xai not available, or its account closed: Kimi K3.
+    assert.deepEqual(
+      pickFallback(table, opus, {
+        available: available.filter((ref) => ref.provider !== "xai"),
+        scoped: [],
+        isClosed: firstPartyClosed,
+      }),
+      kimi,
+    );
+    assert.deepEqual(
+      pickFallback(table, opus, {
+        available,
+        scoped: [],
+        isClosed: closedOnly("anthropic", "openai-codex", "xai"),
+      }),
+      kimi,
+    );
+
+    // (d) A manually selected Grok 4.7 is in no tier: its limit falls back to the rest of the
+    // last-resort list only, even while first-party providers are open.
+    assert.deepEqual(
+      pickFallback(table, grok, { available, scoped: [], isClosed: closedOnly("xai") }),
+      kimi,
+    );
+    assert.equal(
+      pickFallback(table, grok, {
+        available,
+        scoped: [],
+        isClosed: closedOnly("xai", "synthetic"),
+      }),
+      undefined,
+    );
+  } finally {
+    await rm(agentDir, { recursive: true, force: true });
+  }
+});
+
 test("pickFallback consults the closed map with the resolved account", () => {
   const seen: string[] = [];
   const result = pickFallback(
@@ -941,10 +1098,11 @@ test("the repository fallback table loads and mirrors the model-guidance tiers",
       "openai-codex/gpt-6-luna",
       "anthropic/claude-haiku-5-5",
     ]);
-    assert.deepEqual(table.lastResort, ["synthetic/hf:moonshotai/Kimi-K3"]);
+    assert.deepEqual(table.lastResort, ["xai/grok-4.7", "synthetic/hf:moonshotai/Kimi-K3"]);
     for (const refs of Object.values(table.tiers)) {
       for (const ref of [...refs.primary, ...(refs.secondary ?? [])]) {
         assert.equal(ref.startsWith("openai/"), false, `openai/* is no default fallback: ${ref}`);
+        assert.equal(ref.startsWith("xai/"), false, `xai/* is last resort only: ${ref}`);
       }
     }
 

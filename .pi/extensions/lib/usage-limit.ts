@@ -55,6 +55,13 @@ const RETRY_DELAY_WRAPPER_PATTERN =
   /^Server requested (\d+)s retry delay \(max: \d+s\)\. ?([\s\S]*)$/;
 const SYNTHETIC_LIMIT_PATTERN = /^429\b/;
 /**
+ * xAI rate limit (HTTP 429, RPS/TPM per model, https://docs.x.ai/developers/rate-limits).
+ * Provider `xai` uses the `openai-responses` API, which reports
+ * `xai API error (429): <SDK message>`; a live 429 carried an empty body, so only
+ * the status is matched. xAI reports no reset time here.
+ */
+const XAI_LIMIT_PATTERN = /^(?:xai API error \(429\)|429\b)/;
+/**
  * Error code of the Sign in with ChatGPT shared subscription limit on provider
  * `openai` (`pi-ai/dist/api/openai-responses.js`). It reaches the session as
  * `OpenAI API error (429): <body>`, `Error Code <code>: <message>` or
@@ -80,11 +87,35 @@ function codexResetAt(message: string, now: number): number | undefined {
 }
 
 /**
+ * The `provider-retry.js` wrapper on a provider whose limit is a bare 429: a
+ * wrapped limit takes the requested delay as a candidate reset, and any other
+ * wrapped failure is transient. `undefined` when the message is not wrapped.
+ */
+function classifyRetryDelayWrapper(
+  base: { provider: string; modelId: string },
+  errorMessage: string,
+  limitPattern: RegExp,
+  now: number,
+): UsageLimitClassification | undefined {
+  const wrapped = RETRY_DELAY_WRAPPER_PATTERN.exec(errorMessage);
+  if (!wrapped) return undefined;
+  const inner = wrapped[2] ?? "";
+  if (!limitPattern.test(inner)) {
+    return { ...base, kind: "transient", confidence: "inferred" };
+  }
+  const seconds = Number(wrapped[1]);
+  return Number.isFinite(seconds)
+    ? { ...base, kind: "quota", confidence: "inferred", resetAt: now + seconds * 1000 }
+    : { ...base, kind: "quota", confidence: "inferred" };
+}
+
+/**
  * Classifies a settled provider error. Returns `undefined` when the message is
  * not a usage limit. `resetAt` from a Codex message is a lower bound because the
- * provider rounds it; an Anthropic wrapper delay only proves a long requested
- * delay, so it is a candidate reset for a 429 and a transient failure otherwise.
- * Provider `openai` reports no reset time, so its limits never carry `resetAt`.
+ * provider rounds it; an Anthropic or xAI wrapper delay only proves a long
+ * requested delay, so it is a candidate reset for a 429 and a transient failure
+ * otherwise. Providers `openai` and `xai` report no reset time, so their
+ * unwrapped limits never carry `resetAt`.
  */
 export function classifyUsageLimit(
   input: ClassifyUsageLimitInput,
@@ -104,18 +135,16 @@ export function classifyUsageLimit(
       : { ...base, kind: "quota", confidence: "parsed", resetAt };
   }
   if (provider === "anthropic") {
-    const wrapped = RETRY_DELAY_WRAPPER_PATTERN.exec(errorMessage);
-    if (wrapped) {
-      const inner = wrapped[2] ?? "";
-      if (!ANTHROPIC_LIMIT_PATTERN.test(inner)) {
-        return { ...base, kind: "transient", confidence: "inferred" };
-      }
-      const seconds = Number(wrapped[1]);
-      return Number.isFinite(seconds)
-        ? { ...base, kind: "quota", confidence: "inferred", resetAt: now + seconds * 1000 }
-        : { ...base, kind: "quota", confidence: "inferred" };
-    }
+    const wrapped = classifyRetryDelayWrapper(base, errorMessage, ANTHROPIC_LIMIT_PATTERN, now);
+    if (wrapped) return wrapped;
     return ANTHROPIC_LIMIT_PATTERN.test(errorMessage)
+      ? { ...base, kind: "quota", confidence: "inferred" }
+      : undefined;
+  }
+  if (provider === "xai") {
+    const wrapped = classifyRetryDelayWrapper(base, errorMessage, XAI_LIMIT_PATTERN, now);
+    if (wrapped) return wrapped;
+    return XAI_LIMIT_PATTERN.test(errorMessage)
       ? { ...base, kind: "quota", confidence: "inferred" }
       : undefined;
   }
