@@ -534,6 +534,9 @@ func walkAncestry<Node>(
 
 final class Bridge {
 	private let protocolVersion = 7
+	/// Epoch seconds when this process started (Bridge is created once at launch).
+	/// Clients compare it with the installed executable's mtime to detect a rebuild.
+	private let startedAt = Date().timeIntervalSince1970
 	private let refStore = AXRefStore()
 	private let inputSuppressionGuard = InputSuppressionGuard()
 	private let physicalInputLock = NSRecursiveLock()
@@ -1215,6 +1218,7 @@ final class Bridge {
 			"pid": Int32(getpid()),
 			"parentPid": parentPid,
 			"executablePath": CommandLine.arguments.first ?? "",
+			"startedAt": startedAt,
 			"macOS": ProcessInfo.processInfo.operatingSystemVersionString,
 			"arch": arch,
 			"accessibility": permissions["accessibility"] ?? false,

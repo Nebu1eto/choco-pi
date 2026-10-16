@@ -106,6 +106,12 @@ export interface FakeHelperDaemonOptions {
   executablePath?: string;
   /** Protocol reported until the first `shutdown`; afterwards 7. Default 7. */
   initialProtocolVersion?: number;
+  /**
+   * `diagnostics.startedAt` (epoch seconds) reported until the first
+   * `shutdown`; `null` omits it like a pre-startedAt helper. Default: the
+   * fake's start time. A "relaunched" fake reports its shutdown time.
+   */
+  initialStartedAt?: number | null;
   /** s4-slow-type delay before each chunk after the hold. Default 5000 ms. */
   slowChunkMs?: number;
   /** s4-slow-type hold after the first chunk. Default `defaultSlowHoldMs(text)`. */
@@ -265,6 +271,7 @@ function sessionOf(request: JsonObject): Session | undefined {
 class FakeHelperState {
   readonly script: FakeScript;
   private protocolVersion: number;
+  private startedAt?: number;
   private readonly executablePath?: string;
   private readonly slowChunkMs: number;
   private readonly slowHoldMs?: number;
@@ -291,6 +298,10 @@ class FakeHelperState {
   constructor(options: FakeHelperDaemonOptions) {
     this.script = resolveFakeScript(options.script);
     this.protocolVersion = options.initialProtocolVersion ?? FAKE_PROTOCOL_VERSION;
+    this.startedAt =
+      options.initialStartedAt === null
+        ? undefined
+        : (options.initialStartedAt ?? Date.now() / 1000);
     this.executablePath = options.executablePath;
     this.slowChunkMs = options.slowChunkMs ?? 5_000;
     this.slowHoldMs = options.slowHoldMs;
@@ -332,6 +343,7 @@ class FakeHelperState {
         // The fake keeps running (the harness owns its lifetime); a
         // "relaunched" helper reports the current protocol and no owner.
         this.protocolVersion = FAKE_PROTOCOL_VERSION;
+        this.startedAt = Date.now() / 1000;
         this.owner = undefined;
         return { shuttingDown: true };
       case "claim":
@@ -462,6 +474,7 @@ class FakeHelperState {
       script: this.script,
     };
     if (this.executablePath) output.executablePath = this.executablePath;
+    if (this.startedAt !== undefined) output.startedAt = this.startedAt;
     return output;
   }
 
@@ -1179,6 +1192,7 @@ async function main(args: readonly string[]): Promise<void> {
       "Usage: fake-helper-daemon.ts --socket <path> --script <name> [--log <jsonl>] [--executable-path <path>] [--protocol-version <n>]",
     );
   const protocolArg = argValue(args, "--protocol-version");
+  const startedAtArg = argValue(args, "--started-at");
   let daemon: FakeHelperDaemon | undefined;
   let stopping = false;
   const stop = () => {
@@ -1207,6 +1221,12 @@ async function main(args: readonly string[]): Promise<void> {
     logPath: argValue(args, "--log"),
     executablePath: argValue(args, "--executable-path"),
     initialProtocolVersion: protocolArg === undefined ? undefined : Number(protocolArg),
+    initialStartedAt:
+      startedAtArg === undefined
+        ? undefined
+        : startedAtArg === "none"
+          ? null
+          : Number(startedAtArg),
   });
   if (stopping) {
     await daemon.close();

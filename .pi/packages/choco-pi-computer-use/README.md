@@ -12,11 +12,11 @@ The installer may modify `/Applications` or `~/Applications`, register the app w
 
 ## Helper protocol and test environment
 
-The TypeScript client requires helper protocol 7: request cancellation, cross-process session ownership, and native enforcement of the foreground grant. The committed prebuilts report protocol 7. A daemon that reports another protocol is shut down and relaunched once. Cancelling a browser tool call stops the remaining actions in its batch and releases any pressed key or mouse button.
+The TypeScript client requires helper protocol 7: request cancellation, cross-process session ownership, and native enforcement of the foreground grant. The committed prebuilts report protocol 7. A daemon that reports another protocol is shut down and relaunched once. The daemon outlives Pi and reinstalls, so it is also relaunched once when it runs from another executable path, reports no `startedAt` (a helper built before that field existed), or started before the installed executable's last modification (a same-protocol rebuild); the error names the reason if the relaunched daemon is still stale. Cancelling a browser tool call stops the remaining actions in its batch and releases any pressed key or mouse button.
 
 - `PI_CU_SOCKET_PATH` points the client at another helper socket. With it set, the client never installs or launches the helper app.
 - `PI_COMPUTER_USE_HELPER_APP_PATH` overrides the helper app bundle whose executable `diagnostics.executablePath` must match.
-- `tests/helpers/fake-helper-daemon.ts` serves the protocol without touching Accessibility, screen capture, or input: `node --experimental-strip-types tests/helpers/fake-helper-daemon.ts --socket <path> --script <s1-ok|s2-foreground-required|s3-didnt|s4-slow-type|s5-stale|s6-grant|s7-ownership> [--log <requests.jsonl>] [--executable-path <path>] [--protocol-version <n>]`. Tests import `startFakeHelperDaemon` from the same file.
+- `tests/helpers/fake-helper-daemon.ts` serves the protocol without touching Accessibility, screen capture, or input: `node --experimental-strip-types tests/helpers/fake-helper-daemon.ts --socket <path> --script <s1-ok|s2-foreground-required|s3-didnt|s4-slow-type|s5-stale|s6-grant|s7-ownership> [--log <requests.jsonl>] [--executable-path <path>] [--protocol-version <n>] [--started-at <epoch-seconds|none>]`. Tests import `startFakeHelperDaemon` from the same file.
 
 ## Foreground grants
 

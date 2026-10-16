@@ -49,6 +49,7 @@ interface DiagnosticsResponse {
   parentBundleId?: string;
   parentPath?: string;
   executablePath?: string;
+  startedAt?: number;
   macOS?: string;
   arch?: string;
   accessibility?: boolean;
@@ -284,6 +285,34 @@ async function isResolvedHelperExecutable(filePath?: string): Promise<boolean> {
     realpath(HELPER_APP_EXECUTABLE_PATH).catch(() => path.resolve(HELPER_APP_EXECUTABLE_PATH)),
   ]);
   return actualPath === expectedPath;
+}
+
+/** Finite positive epoch seconds, or undefined (absent, malformed, or non-positive). */
+function toStartedAt(value: JsonField): number | undefined {
+  const seconds = toFiniteNumber(value, 0);
+  return seconds > 0 ? seconds : undefined;
+}
+
+/**
+ * Why a live daemon cannot serve this client, or undefined when it can. The
+ * daemon outlives Pi and reinstalls, so a same-protocol rebuild is caught by
+ * comparing the installed executable's mtime with the daemon's start time.
+ */
+async function helperStaleReason(diagnostics: PlatformDiagnostics): Promise<string | undefined> {
+  if (diagnostics.protocolVersion !== HELPER_PROTOCOL_VERSION)
+    return `protocol ${diagnostics.protocolVersion} (expected ${HELPER_PROTOCOL_VERSION})`;
+  if (!(await isResolvedHelperExecutable(diagnostics.executablePath)))
+    return `executable ${diagnostics.executablePath ?? "unknown"} (expected ${HELPER_APP_EXECUTABLE_PATH})`;
+  if (diagnostics.startedAt === undefined)
+    return "no startedAt in diagnostics (daemon predates the rebuild check)";
+  // An unreadable executable is not evidence of a rebuild on its own.
+  const mtimeMs = await stat(HELPER_APP_EXECUTABLE_PATH).then(
+    (stats) => stats.mtimeMs,
+    () => undefined,
+  );
+  if (mtimeMs !== undefined && mtimeMs > diagnostics.startedAt * 1000)
+    return `executable ${HELPER_APP_EXECUTABLE_PATH} modified at ${new Date(mtimeMs).toISOString()}, after the daemon started at ${new Date(diagnostics.startedAt * 1000).toISOString()}`;
+  return undefined;
 }
 
 export async function runProcess(
@@ -688,6 +717,7 @@ export class MacosHelperClient {
       parentBundleId: toOptionalString(result?.parentBundleId),
       parentPath: toOptionalString(result?.parentPath),
       executablePath: toOptionalString(result?.executablePath),
+      startedAt: toStartedAt(result?.startedAt),
       os: toOptionalString(result?.macOS),
       arch: toOptionalString(result?.arch),
       accessibility: toBoolean(result?.accessibility),
@@ -699,23 +729,20 @@ export class MacosHelperClient {
 
   async ensureProtocol(signal?: AbortSignal): Promise<PlatformDiagnostics> {
     let diagnostics = await this.diagnosticsCommand(signal);
-    const executableMatches = await isResolvedHelperExecutable(diagnostics.executablePath);
-    if (diagnostics.protocolVersion === HELPER_PROTOCOL_VERSION && executableMatches)
-      return diagnostics;
+    if ((await helperStaleReason(diagnostics)) === undefined) return diagnostics;
 
     // The helper daemon outlives Pi, so restarting/reloading Pi alone does not
-    // replace a stale daemon or one launched from the legacy system location.
+    // replace a stale daemon, one launched from the legacy system location, or
+    // one still running code from before the installed binary was rebuilt.
     // Stop it through the backwards-compatible command channel and relaunch
     // the exact app bundle that ensureInstalled() resolved.
     await this.restart(signal);
     diagnostics = await this.diagnosticsCommand(signal);
-    const relaunchedExecutableMatches = await isResolvedHelperExecutable(
-      diagnostics.executablePath,
-    );
-    if (diagnostics.protocolVersion !== HELPER_PROTOCOL_VERSION || !relaunchedExecutableMatches) {
+    const relaunchedStaleReason = await helperStaleReason(diagnostics);
+    if (relaunchedStaleReason !== undefined) {
       this.daemonAvailable = false;
       throw new Error(
-        `pi-computer-use helper mismatch after relaunch: expected protocol ${HELPER_PROTOCOL_VERSION} and executable ${HELPER_APP_EXECUTABLE_PATH}; got protocol ${diagnostics.protocolVersion} and executable ${diagnostics.executablePath ?? "unknown"}. Reinstall or rebuild the helper app at ${HELPER_APP_PATH}.`,
+        `pi-computer-use helper mismatch after relaunch: ${relaunchedStaleReason}. Expected protocol ${HELPER_PROTOCOL_VERSION} and executable ${HELPER_APP_EXECUTABLE_PATH}; got protocol ${diagnostics.protocolVersion} and executable ${diagnostics.executablePath ?? "unknown"}. Reinstall or rebuild the helper app at ${HELPER_APP_PATH}.`,
       );
     }
     return diagnostics;

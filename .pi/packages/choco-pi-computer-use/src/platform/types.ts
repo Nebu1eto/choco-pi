@@ -24,6 +24,8 @@ export interface PlatformDiagnostics {
   parentBundleId?: string;
   parentPath?: string;
   executablePath?: string;
+  /** Helper process start time, epoch seconds; absent from pre-startedAt helpers. */
+  startedAt?: number;
   os?: string;
   arch?: string;
   accessibility?: boolean;

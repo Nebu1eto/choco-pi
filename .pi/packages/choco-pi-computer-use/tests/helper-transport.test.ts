@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { access, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -30,10 +30,19 @@ import {
 
 // helper.ts reads PI_CU_SOCKET_PATH at import time, so the scratch socket is
 // configured before the dynamic import below. Nothing here can reach the real
-// helper daemon's socket.
+// helper daemon's socket. The helper app path is a scratch bundle too, so the
+// rebuild check stats a fake executable instead of the installed helper.
 const scratch = await mkdtemp(path.join(os.tmpdir(), "cu-helper-"));
 const socketPath = path.join(scratch, "bridge.sock");
 process.env.PI_CU_SOCKET_PATH = socketPath;
+const scratchAppPath = path.join(scratch, "pi-computer-use.app");
+const scratchExecutablePath = path.join(scratchAppPath, "Contents", "MacOS", "bridge");
+await mkdir(path.dirname(scratchExecutablePath), { recursive: true });
+await writeFile(scratchExecutablePath, "");
+/** The scratch executable's mtime (epoch seconds), a day before any fake starts. */
+const scratchExecutableMtime = Math.floor(Date.now() / 1000) - 86_400;
+await utimes(scratchExecutablePath, scratchExecutableMtime, scratchExecutableMtime);
+process.env.PI_COMPUTER_USE_HELPER_APP_PATH = scratchAppPath;
 const helper = await import("../src/platform/macos/helper.ts");
 const { macosBackend } = await import("../src/platform/macos/backend.ts");
 const { ensureMacosReady, releaseMacosOwnership } =
@@ -584,6 +593,64 @@ test("ensureProtocol restarts a protocol-6 fake and accepts protocol 7", async (
   assert.ok(shutdownAt > 0, "the mismatch triggers shutdown");
   assert.equal(commands[0], "diagnostics");
   assert.ok(commands.slice(shutdownAt + 1).includes("diagnostics"));
+});
+
+test("ensureProtocol restarts a same-protocol daemon that reports no startedAt", async () => {
+  const fake = await startDaemon({ script: "s1-ok", initialStartedAt: null });
+  const client = new helper.MacosHelperClient();
+  const diagnostics = await client.ensureProtocol();
+
+  const commands = fake.requests.map((request) => request.cmd);
+  const shutdownAt = commands.indexOf("shutdown");
+  assert.ok(shutdownAt > 0, "a pre-startedAt daemon is restarted");
+  assert.ok(commands.slice(shutdownAt + 1).includes("diagnostics"));
+  assert.equal(diagnostics.protocolVersion, 7);
+  assert.ok(diagnostics.startedAt !== undefined && diagnostics.startedAt > scratchExecutableMtime);
+});
+
+test("ensureProtocol restarts a daemon started before the executable was rebuilt", async () => {
+  const fake = await startDaemon({
+    script: "s1-ok",
+    initialStartedAt: scratchExecutableMtime - 3_600,
+  });
+  const client = new helper.MacosHelperClient();
+  const diagnostics = await client.ensureProtocol();
+
+  const commands = fake.requests.map((request) => request.cmd);
+  const shutdownAt = commands.indexOf("shutdown");
+  assert.ok(shutdownAt > 0, "a daemon older than the executable is restarted");
+  assert.ok(commands.slice(shutdownAt + 1).includes("diagnostics"));
+  assert.ok(diagnostics.startedAt !== undefined && diagnostics.startedAt > scratchExecutableMtime);
+});
+
+test("ensureProtocol keeps a daemon started after the executable was written", async () => {
+  const fake = await startDaemon({ script: "s1-ok" });
+  const client = new helper.MacosHelperClient();
+  const diagnostics = await client.ensureProtocol();
+
+  const commands = fake.requests.map((request) => request.cmd);
+  assert.ok(commands.includes("diagnostics"));
+  assert.ok(!commands.includes("shutdown"), "a fresh daemon is not restarted");
+  assert.equal(diagnostics.protocolVersion, 7);
+  assert.ok(diagnostics.startedAt !== undefined && diagnostics.startedAt > scratchExecutableMtime);
+});
+
+test("ensureProtocol reports the stale reason when a relaunch stays stale", async () => {
+  // An executable mtime later than the relaunch keeps even the relaunched
+  // daemon stale, so the second check fails and names the reason.
+  await startDaemon({ script: "s1-ok", initialStartedAt: scratchExecutableMtime - 3_600 });
+  const future = Math.floor(Date.now() / 1000) + 3_600;
+  await utimes(scratchExecutablePath, future, future);
+  try {
+    const client = new helper.MacosHelperClient();
+    const error = await rejection(client.ensureProtocol());
+    assert.match(
+      error.message,
+      /mismatch after relaunch: executable .* modified at .* after the daemon started/,
+    );
+  } finally {
+    await utimes(scratchExecutablePath, scratchExecutableMtime, scratchExecutableMtime);
+  }
 });
 
 test("effectPossible:false from a helper error reaches HelperCommandError", async () => {
