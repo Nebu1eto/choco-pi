@@ -27,3 +27,17 @@ Pi SDK peer and development pins move from `1.0.4` to exactly `1.2.0`.
 
 Pi SDK peer and development pins move from `1.2.0` to exactly `1.3.0`.
 Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.
+
+## 2026-10-16 choco-pi patch: xAI provider family
+
+`searchProviderFamilies` appends `xai` as the last family, so the default order is OpenAI,
+Exa, Kagi, Synthetic, Brave, xAI and `auto` reaches xAI only after every earlier family.
+The core still imports no backend; the adapter lives in `.pi/extensions/lib/xai-search.ts`.
+
+Follow-up (same day): `SearchAdapter.explicitOnly?: boolean` is added because the router
+treats a `disabled` adapter as a route miss even under explicit selection. Plans built from
+the default order (`auto` without routing, and `all`) skip explicit-only adapters, record
+them as `disabled` attempts with reason "explicit selection only", and drop families whose
+registered adapters are all explicit-only. Explicit family selection, request provider
+lists, and `routing.providers` that name the family still reach them. The xAI adapter is
+explicit-only, so `auto` never reaches xAI despite its last-place order.

@@ -1,6 +1,6 @@
 # Web search
 
-choco-pi presents one model-facing `web_search` tool in an integrated profile. The conversation model does not select or authenticate the search service: an Anthropic, Synthetic, or other conversation can use an independently configured OpenAI, Exa, Kagi, Synthetic, or Brave search backend.
+choco-pi presents one model-facing `web_search` tool in an integrated profile. The conversation model does not select or authenticate the search service: an Anthropic, Synthetic, or other conversation can use an independently configured OpenAI, Exa, Kagi, Synthetic, Brave, or xAI search backend.
 
 `web_search` is deferred, so use `tool_search` when it is not already visible. Page extraction and `agent_browser` remain separate tools for reading a result or interacting with a site.
 
@@ -16,6 +16,7 @@ flowchart LR
   R --> K[Kagi API]
   R --> S[Synthetic search]
   R --> B[Brave API]
+  R --> X[xAI Responses API]
   M --> C[source_check and curator workflow]
   C --> R
 ```
@@ -24,7 +25,7 @@ The OpenAI Codex and OpenAI Responses routes are distinct transports in the same
 
 ## Provider selection and precedence
 
-The request's `provider` field has the highest routing precedence. It accepts `auto`, `all`, one family, or a non-empty family list. The public families are `openai`, `exa`, `kagi`, `synthetic`, and `brave`. An explicit family array and `all` fan out across providers; `searchRouting.providers` is an ordered fallback sequence and does not fan out.
+The request's `provider` field has the highest routing precedence. It accepts `auto`, `all`, one family, or a non-empty family list. The public families are `openai`, `exa`, `kagi`, `synthetic`, `brave`, and `xai`. An explicit family array and `all` fan out across providers; `searchRouting.providers` is an ordered fallback sequence and does not fan out.
 
 Without a request override, `web-search.json` can set either a fixed `searchProvider` (the legacy `provider` key is also accepted) or `searchRouting`. Setting both is an error. If neither is configured, automatic routing prefers families in this order:
 
@@ -37,6 +38,10 @@ Without a request override, `web-search.json` can set either a fixed `searchProv
 This conflict check is an intentional migration break. For a configuration that currently contains both `searchProvider`/`provider` and `searchRouting`, remove `searchRouting` to keep the old fixed provider, or remove the fixed provider key to use ordered routing.
 
 Adapter availability, required request capabilities, and transport priority determine the actual attempt within that order. Synthetic search is never enabled automatically; its own extension setting and entitlement still apply.
+
+## xAI (Grok) search
+
+The `xai` family is explicit-only: automatic routing and `all` never use it, and it runs only when a request's `provider` (a single family or a family list) or `searchRouting.providers` names `xai`. Its adapter is registered only while Pi's model registry reports configured `xai` credentials, from `/login xai` (OAuth) or `XAI_API_KEY`; a sign-in made mid-session is picked up at the next session start, tree navigation, or model selection. It sends one Responses request with the `web_search` tool to `grok-4.3` at the `xai` provider's base URL and returns the cited sources. Domain filters accept up to five allowed or five excluded domains, never both in one request. Every call is billed by xAI, which is why it is never chosen automatically.
 
 The configuration file is `$PI_CODING_AGENT_DIR/web-search.json` when `PI_CODING_AGENT_DIR` is set, `$XDG_CONFIG_HOME/pi/web-search.json` when only `XDG_CONFIG_HOME` is set, and `~/.pi/web-search.json` otherwise. For example:
 

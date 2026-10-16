@@ -466,7 +466,8 @@ function providerLabel(provider: ResolvedSearchProvider): string {
   if (provider === "kagi") return "Kagi";
   if (provider === "exa") return "Exa";
   if (provider === "synthetic") return "Synthetic";
-  return "Brave";
+  if (provider === "brave") return "Brave";
+  return "xAI";
 }
 
 async function searchWithProviders(

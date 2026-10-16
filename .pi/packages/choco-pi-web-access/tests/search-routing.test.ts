@@ -93,8 +93,16 @@ test("search provider lists expose shared logical families", async () => {
     "kagi",
     "synthetic",
     "brave",
+    "xai",
   ]);
-  assert.deepEqual(RESOLVED_SEARCH_PROVIDERS, ["openai", "exa", "kagi", "synthetic", "brave"]);
+  assert.deepEqual(RESOLVED_SEARCH_PROVIDERS, [
+    "openai",
+    "exa",
+    "kagi",
+    "synthetic",
+    "brave",
+    "xai",
+  ]);
 });
 
 test("selection normalization accepts shared values and rejects unknown values", async () => {
@@ -131,7 +139,7 @@ test("persisted provider rejects unknown strings", async () => {
 });
 
 test("persisted provider accepts auto and every provider keyword", async () => {
-  for (const provider of ["auto", "all", "openai", "exa", "kagi", "synthetic", "brave"]) {
+  for (const provider of ["auto", "all", "openai", "exa", "kagi", "synthetic", "brave", "xai"]) {
     const child = await run(
       { searchProvider: provider },
       `
@@ -184,7 +192,7 @@ test("registered search schemas expose canonical logical providers and actions",
     schemas: Array<{ provider: { anyOf: Array<{ enum?: string[]; items?: { enum: string[] } }> } }>;
     properties: string[];
   } = JSON.parse(child.stdout.trim());
-  const expected = ["auto", "all", "openai", "exa", "kagi", "synthetic", "brave"];
+  const expected = ["auto", "all", "openai", "exa", "kagi", "synthetic", "brave", "xai"];
   for (const schema of output.schemas) {
     assert.deepEqual(schema.provider.anyOf[0]?.enum, expected);
     assert.deepEqual(schema.provider.anyOf[1]?.items?.enum, expected.slice(2));

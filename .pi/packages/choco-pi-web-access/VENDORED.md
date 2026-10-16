@@ -199,3 +199,21 @@ the models actually enabled in this install, so `defaultSummaryModel` resolved t
 the curator fell back to the conversation model. Both lists now try, in order,
 `anthropic/claude-haiku-5-5`, `openai/gpt-6-luna`, `openai-codex/gpt-6-luna`, and
 `synthetic/hf:deepseek-ai/DeepSeek-V4.1-Flash` before the unchanged legacy entries.
+
+## 2026-10-16 choco-pi patch: xAI logical search family
+
+The shared core adds `xai` as the last logical provider family. This package gains no xAI
+transport, credential, or configuration; the `xai.responses` adapter is registered from the
+root `.pi/extensions/xai-search.ts` extension and is reached only through the shared router.
+Display-only edits so the new family type-checks and renders:
+
+- `index.ts`: `ProviderAvailability.xai` (true when an `xai` adapter is registered in the
+  session scope, matching Synthetic/Brave; the root extension registers it only while Pi
+  reports xai credentials configured, so an unconfigured xAI never shows in the curator).
+  The xAI adapter is explicit-only in the shared router, so `xai` is excluded from the
+  `all` availability flag and from `firstAvailableProvider`: the curator never defaults to it.
+- `gemini-search.ts`: `providerLabel` returns "xAI" for `xai` instead of falling through to
+  "Brave".
+- `curator-page.ts` / `curator-server.ts`: xAI provider button, client provider list and
+  label, and server-side availability check.
+- `tests/search-routing.test.ts`: provider-list and schema expectations include `xai`.

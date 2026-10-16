@@ -9,6 +9,7 @@ export const searchProviderFamilies = Object.freeze([
   "kagi",
   "synthetic",
   "brave",
+  "xai",
 ] as const);
 export const defaultSearchFamilyOrder: readonly SearchProviderFamily[] = searchProviderFamilies;
 export const searchProviderSelections = Object.freeze([
@@ -313,6 +314,8 @@ export interface SearchAdapter {
   transport: string;
   priority?: number;
   billing?: SearchBilling;
+  /** Never selected by `auto` default order or `all`; only when a caller names the family. */
+  explicitOnly?: boolean;
   capabilities: SearchCapabilities;
   availability(context: SearchAdapterContext): SearchAvailability | Promise<SearchAvailability>;
   execute(request: SearchRequest, context: SearchAdapterContext): Promise<SearchAdapterResponse>;
@@ -932,42 +935,60 @@ interface SearchPlan {
   families: SearchProviderFamily[];
   fanout: boolean;
   explicit: boolean;
+  /** True when families came from the default order (`auto` without routing, or `all`). */
+  implicit: boolean;
 }
 
 function createSearchPlan(request: SearchRequest, options: SearchOptions): SearchPlan {
   if (request.provider === undefined || request.provider === "auto") {
     if (!options.routing) {
-      return { families: [...defaultSearchFamilyOrder], fanout: false, explicit: false };
+      return {
+        families: [...defaultSearchFamilyOrder],
+        fanout: false,
+        explicit: false,
+        implicit: true,
+      };
     }
     if (options.routing.providers.length === 0) {
       throw new SearchError("config", "search routing providers must be non-empty");
     }
-    return { families: [...options.routing.providers], fanout: false, explicit: false };
+    return {
+      families: [...options.routing.providers],
+      fanout: false,
+      explicit: false,
+      implicit: false,
+    };
   }
   if (request.provider === "all") {
-    return { families: [...defaultSearchFamilyOrder], fanout: true, explicit: true };
+    return {
+      families: [...defaultSearchFamilyOrder],
+      fanout: true,
+      explicit: true,
+      implicit: true,
+    };
   }
   if (Array.isArray(request.provider)) {
     if (request.provider.length === 0)
       throw new SearchError("config", "provider list must be non-empty");
-    return { families: [...request.provider], fanout: true, explicit: true };
+    return { families: [...request.provider], fanout: true, explicit: true, implicit: false };
   }
-  return { families: [request.provider], fanout: false, explicit: true };
+  return { families: [request.provider], fanout: false, explicit: true, implicit: false };
 }
 
 function candidates(
   scope: SearchScope,
   families: readonly SearchProviderFamily[],
+  implicit = false,
 ): SearchAdapter[] {
   const familyIndex = new Map(families.map((family, index) => [family, index]));
   return [...scope.adapters.values()]
-    .filter((adapter) => familyIndex.has(adapter.family))
+    .filter((adapter) => familyIndex.has(adapter.family) && !(implicit && adapter.explicitOnly))
     .sort((left, right) => {
       const familyOrder =
         (familyIndex.get(left.family) ?? 0) - (familyIndex.get(right.family) ?? 0);
       if (familyOrder !== 0) return familyOrder;
       const priority = (left.priority ?? 100) - (right.priority ?? 100);
-      return priority !== 0 ? priority : left.id.localeCompare(right.id);
+      return priority === 0 ? left.id.localeCompare(right.id) : priority;
     });
 }
 
@@ -1113,7 +1134,7 @@ function constrainPlanToReferenceOwner(
       { family: owner.family, adapterId: owner.id },
     );
   }
-  return { families: [owner.family], fanout: false, explicit: plan.explicit };
+  return { families: [owner.family], fanout: false, explicit: plan.explicit, implicit: false };
 }
 
 function retryKinds(options: SearchOptions): ReadonlySet<SearchErrorKind> {
@@ -1352,6 +1373,33 @@ async function attemptAdapter(
   }
 }
 
+/**
+ * Default-order plans (`auto` without routing, `all`) never consider explicit-only adapters.
+ * Families whose registered adapters are all explicit-only are dropped and each skipped
+ * adapter is recorded as a disabled attempt.
+ */
+function implicitFamilies(
+  scope: SearchScope,
+  families: readonly SearchProviderFamily[],
+  attempts: SearchAttemptDiagnostic[],
+): SearchProviderFamily[] {
+  const registered = [...scope.adapters.values()];
+  for (const adapter of candidates(scope, families)) {
+    if (!adapter.explicitOnly) continue;
+    attempts.push({
+      adapterId: adapter.id,
+      family: adapter.family,
+      transport: adapter.transport,
+      outcome: "disabled",
+      reason: "explicit selection only",
+    });
+  }
+  return families.filter((family) => {
+    const adapters = registered.filter((adapter) => adapter.family === family);
+    return adapters.length === 0 || adapters.some((adapter) => !adapter.explicitOnly);
+  });
+}
+
 async function searchFamily(
   family: SearchProviderFamily,
   request: SearchRequest,
@@ -1360,8 +1408,9 @@ async function searchFamily(
   totalSignal: AbortSignal,
   attempts: SearchAttemptDiagnostic[],
   billingState: { attemptedSubscription: boolean },
+  implicit: boolean,
 ): Promise<SearchResponse> {
-  const familyCandidates = candidates(invocation.scope, [family]);
+  const familyCandidates = candidates(invocation.scope, [family], implicit);
   if (familyCandidates.length === 0)
     throw new SearchRouteMiss(family, `No ${family} search adapter is registered`);
   const allowed = retryKinds(options);
@@ -1444,7 +1493,10 @@ export async function search(
       request,
       invocation,
     );
-    const { families, fanout } = plan;
+    const { fanout, implicit } = plan;
+    const families = implicit
+      ? implicitFamilies(invocation.scope, plan.families, attempts)
+      : plan.families;
     if (fanout) {
       const responses: SearchResponse[] = [];
       const failures: Array<{
@@ -1455,9 +1507,16 @@ export async function search(
       for (const family of families) {
         try {
           responses.push(
-            await searchFamily(family, request, invocation, options, total.signal, attempts, {
-              attemptedSubscription: false,
-            }),
+            await searchFamily(
+              family,
+              request,
+              invocation,
+              options,
+              total.signal,
+              attempts,
+              { attemptedSubscription: false },
+              implicit,
+            ),
           );
           assertCurrent(invocation.scope, invocation.session, generation);
         } catch (cause) {
@@ -1482,9 +1541,16 @@ export async function search(
     if (plan.explicit) {
       const family = families[0];
       if (!family) throw new SearchError("config", "provider selection must be non-empty");
-      return await searchFamily(family, request, invocation, options, total.signal, attempts, {
-        attemptedSubscription: false,
-      });
+      return await searchFamily(
+        family,
+        request,
+        invocation,
+        options,
+        total.signal,
+        attempts,
+        { attemptedSubscription: false },
+        implicit,
+      );
     }
     const billingState = { attemptedSubscription: false };
     let substantiveError: SearchError | undefined;
@@ -1499,6 +1565,7 @@ export async function search(
           total.signal,
           attempts,
           billingState,
+          implicit,
         );
       } catch (cause) {
         const error = normalizeError(cause);

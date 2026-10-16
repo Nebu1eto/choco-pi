@@ -196,6 +196,7 @@ export interface ProviderAvailability {
   kagi: boolean;
   synthetic: boolean;
   brave: boolean;
+  xai: boolean;
 }
 
 type WebSearchWorkflow = "none" | "summary-review" | "auto-summary";
@@ -586,8 +587,11 @@ async function getProviderAvailability(ctx: ExtensionContext): Promise<ProviderA
       (adapter) => adapter.family === "synthetic",
     ),
     brave: [...(scope?.adapters.values() ?? [])].some((adapter) => adapter.family === "brave"),
+    xai: [...(scope?.adapters.values() ?? [])].some((adapter) => adapter.family === "xai"),
   };
-  return { all: Object.values(providers).some(Boolean), ...providers };
+  // xAI is explicit-only: the shared router never includes it in "all", so it cannot enable "all".
+  const { xai: _explicitOnlyXai, ...fanoutProviders } = providers;
+  return { all: Object.values(fanoutProviders).some(Boolean), ...providers };
 }
 
 async function loadCuratorBootstrap<Value>(
@@ -2271,9 +2275,9 @@ export default function (pi: ExtensionAPI) {
         }
         const rawQueryList: unknown[] = Array.isArray(params.queries)
           ? params.queries
-          : params.query !== undefined
-            ? [params.query]
-            : [];
+          : params.query === undefined
+            ? []
+            : [params.query];
         const queryList = normalizeQueryList(rawQueryList);
         const configWorkflow = loadConfigForExtensionInit().workflow;
         const workflow = resolveWorkflow(params.workflow ?? configWorkflow, ctx?.hasUI !== false);
@@ -2663,9 +2667,9 @@ export default function (pi: ExtensionAPI) {
         const input = args as { query?: unknown; queries?: unknown };
         const rawQueryList: unknown[] = Array.isArray(input.queries)
           ? input.queries
-          : input.query !== undefined
-            ? [input.query]
-            : [];
+          : input.query === undefined
+            ? []
+            : [input.query];
         const queryList = normalizeQueryList(rawQueryList);
         if (queryList.length === 0) {
           return new Text(
@@ -3707,7 +3711,18 @@ export default function (pi: ExtensionAPI) {
                 details: { error: "Query not found" },
               };
             }
-          } else if (params.queryIndex !== undefined) {
+          } else if (params.queryIndex === undefined) {
+            const available = data.queries.map((q, i) => `${i}: "${q.query}"`).join(", ");
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Specify query or queryIndex for responseId ${formatInputValue(params.responseId)}. Available queries: ${available || "none"}.`,
+                },
+              ],
+              details: { error: "No query specified" },
+            };
+          } else {
             queryData = data.queries[params.queryIndex];
             if (!queryData) {
               const available = data.queries.map((q, i) => `${i}: "${q.query}"`).join(", ");
@@ -3721,17 +3736,6 @@ export default function (pi: ExtensionAPI) {
                 details: { error: "Index out of range" },
               };
             }
-          } else {
-            const available = data.queries.map((q, i) => `${i}: "${q.query}"`).join(", ");
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `Specify query or queryIndex for responseId ${formatInputValue(params.responseId)}. Available queries: ${available || "none"}.`,
-                },
-              ],
-              details: { error: "No query specified" },
-            };
           }
 
           if (queryData.error) {
@@ -3815,7 +3819,18 @@ export default function (pi: ExtensionAPI) {
                 details: { error: "URL not found" },
               };
             }
-          } else if (params.urlIndex !== undefined) {
+          } else if (params.urlIndex === undefined) {
+            const available = data.urls.map((u, i) => `${i}: ${u.url}`).join("\n  ");
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Specify url or urlIndex for responseId ${formatInputValue(params.responseId)}. Available URLs:\n  ${available || "  none"}`,
+                },
+              ],
+              details: { error: "No URL specified" },
+            };
+          } else {
             selectedUrlIndex = params.urlIndex;
             urlData = data.urls[selectedUrlIndex];
             if (!urlData) {
@@ -3830,17 +3845,6 @@ export default function (pi: ExtensionAPI) {
                 details: { error: "Index out of range" },
               };
             }
-          } else {
-            const available = data.urls.map((u, i) => `${i}: ${u.url}`).join("\n  ");
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `Specify url or urlIndex for responseId ${formatInputValue(params.responseId)}. Available URLs:\n  ${available || "  none"}`,
-                },
-              ],
-              details: { error: "No URL specified" },
-            };
           }
 
           if (urlData.error) {
@@ -4242,9 +4246,7 @@ export default function (pi: ExtensionAPI) {
           commandHandle = handle;
           activeCurators.set(commandCallId, handle);
           let browserOpenError: string | null = null;
-          if (!shouldAutoOpenCuratorBrowser(loadConfig())) {
-            ctx.ui.notify(`Search curator is running. Open manually: ${handle.url}`, "info");
-          } else {
+          if (shouldAutoOpenCuratorBrowser(loadConfig())) {
             const open = platform() === "darwin" ? await getGlimpseOpen() : null;
             if (open) {
               try {
@@ -4282,6 +4284,8 @@ export default function (pi: ExtensionAPI) {
                 "info",
               );
             }
+          } else {
+            ctx.ui.notify(`Search curator is running. Open manually: ${handle.url}`, "info");
           }
 
           if (queries.length > 0) {
@@ -4347,9 +4351,7 @@ export default function (pi: ExtensionAPI) {
               }
               if (!aborted && isCommandActive()) handle.searchesDone();
             })();
-          } else {
-            if (isCommandActive()) handle.searchesDone();
-          }
+          } else if (isCommandActive()) handle.searchesDone();
         } catch (err) {
           closeCurator(commandCallId);
           const message = err instanceof Error ? err.message : String(err);

@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { Check } from "typebox/value";
 import {
   createEventBus,
   createExtensionRuntime,
@@ -18,6 +19,7 @@ import {
   canonicalSearchParams,
   confirmCanonicalSearchRegistration,
   createSearchScope,
+  defaultSearchFamilyOrder,
   getSearchScope,
   hasCanonicalSearch,
   invalidateSearchSession,
@@ -29,6 +31,7 @@ import {
   resolveSearchSession,
   search,
   searchProviderSchema,
+  searchProviderFamilies,
   SearchError,
   type SearchAdapter,
   type SearchAdapterResponse,
@@ -1496,4 +1499,96 @@ test("negative domain filters require an exclusion-capable adapter", async () =>
     search({ query: "fixture", domainFilter: ["-https://example.com"] }, { scope }),
     "invalid-request",
   );
+});
+
+test("xai is the last default family and its explicit-only adapter never runs implicitly", async () => {
+  assert.deepEqual(defaultSearchFamilyOrder, [
+    "openai",
+    "exa",
+    "kagi",
+    "synthetic",
+    "brave",
+    "xai",
+  ]);
+  assert.equal(searchProviderFamilies.at(-1), "xai");
+  assert.equal(Check(canonicalSearchParams, { query: "q", provider: "xai" }), true);
+  assert.equal(Check(canonicalSearchParams, { query: "q", provider: ["brave", "xai"] }), true);
+
+  const { scope } = setup();
+  const calls: string[] = [];
+  const unavailable = new Set<SearchProviderFamily>([
+    "openai",
+    "exa",
+    "kagi",
+    "synthetic",
+    "brave",
+  ]);
+  for (const family of ["xai", "brave", "synthetic", "kagi", "exa", "openai"] as const) {
+    registerSearchAdapter(
+      scope,
+      adapter(`${family}-fixture`, family, {
+        explicitOnly: family === "xai",
+        availability: () =>
+          unavailable.has(family)
+            ? { status: "unavailable", reason: `${family} unavailable` }
+            : { status: "available" },
+        execute: async () => {
+          calls.push(family);
+          return result(family);
+        },
+      }),
+    );
+  }
+
+  let autoError: SearchError | undefined;
+  try {
+    await search({ query: "fixture" }, { scope });
+  } catch (cause) {
+    if (isSearchError(cause)) autoError = cause;
+  }
+  assert.ok(autoError, "auto must not fall through to the explicit-only xai adapter");
+  assert.deepEqual(calls, []);
+  assert.deepEqual(
+    autoError.attempts?.map(({ family, outcome, reason }) => ({ family, outcome, reason })),
+    [
+      { family: "xai", outcome: "disabled", reason: "explicit selection only" },
+      { family: "openai", outcome: "unavailable", reason: "openai unavailable" },
+      { family: "exa", outcome: "unavailable", reason: "exa unavailable" },
+      { family: "kagi", outcome: "unavailable", reason: "kagi unavailable" },
+      { family: "synthetic", outcome: "unavailable", reason: "synthetic unavailable" },
+      { family: "brave", outcome: "unavailable", reason: "brave unavailable" },
+    ],
+  );
+
+  unavailable.delete("brave");
+  const all = await search({ query: "fixture", provider: "all" }, { scope });
+  assert.deepEqual(calls, ["brave"]);
+  assert.equal(
+    all.providerErrors?.some(({ provider }) => provider === "xai"),
+    false,
+  );
+  assert.equal(
+    all.attempts.some(({ family, outcome }) => family === "xai" && outcome === "success"),
+    false,
+  );
+
+  calls.length = 0;
+  const explicit = await search({ query: "fixture", provider: "xai" }, { scope });
+  assert.equal(explicit.provider, "xai");
+  assert.equal(explicit.adapterId, "xai-fixture");
+  assert.deepEqual(calls, ["xai"]);
+
+  calls.length = 0;
+  const listed = await search({ query: "fixture", provider: ["brave", "xai"] }, { scope });
+  assert.deepEqual(calls, ["brave", "xai"]);
+  assert.equal(listed.provider, "all");
+
+  calls.length = 0;
+  unavailable.add("brave");
+  const routed = await search(
+    { query: "fixture" },
+    { scope, routing: { providers: ["brave", "xai"] } },
+  );
+  assert.equal(routed.provider, "xai");
+  assert.deepEqual(calls, ["xai"]);
 });

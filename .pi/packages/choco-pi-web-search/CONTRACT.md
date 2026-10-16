@@ -20,10 +20,11 @@ Import public values and types from `../choco-pi-web-search/index.ts`. The packa
 ```ts
 interface SearchAdapter {
   id: string; // e.g. codex.web_run, web-access.openai
-  family: "openai" | "exa" | "kagi" | "synthetic" | "brave";
+  family: "openai" | "exa" | "kagi" | "synthetic" | "brave" | "xai";
   transport: string;
   priority?: number; // lower first; codex should precede Responses
   billing?: "subscription" | "api" | "free" | "unknown";
+  explicitOnly?: boolean; // excluded from default-order auto and "all"
   capabilities: SearchCapabilities;
   availability(context: SearchAdapterContext): SearchAvailability | Promise<SearchAvailability>;
   execute(request: SearchRequest, context: SearchAdapterContext): Promise<SearchAdapterResponse>;
@@ -38,7 +39,7 @@ Availability is `{ status: "available" | "unavailable" | "disabled" | "error", r
 
 `search(request, options)` accepts `options.scope`, `options.context`, or `options.session` (exactly one effective bound session is required). Provider selection is `auto` (default), one family, `all`, or a non-empty family list. `request.provider: "all"` and request provider arrays are intentional fanout. `options.routing.providers` is an ordered sequential fallback list, including when request provider is absent or `auto`; it is never fanout. Empty routing/list configuration is a typed config error.
 
-Default family order is OpenAI, Exa, Kagi, Synthetic, Brave; adapter `priority` orders transports within a family. Explicit OpenAI never crosses families. `all` and family lists intentionally fan out one successful transport per family. Auto skips unavailable/disabled adapters and incompatible capabilities. Explicit incompatible selection fails. Navigation accepts only a router-owned `reference`; raw backend ref ids are never routing authority.
+Default family order is OpenAI, Exa, Kagi, Synthetic, Brave, xAI; adapter `priority` orders transports within a family. An adapter with `explicitOnly: true` is never a candidate when families come from the default order (`auto` without `routing`, or `all`): it is recorded as a `disabled` attempt with reason "explicit selection only", and a family whose registered adapters are all explicit-only is dropped from that plan (no fanout failure entry). It remains selectable by an explicit family (`provider: "xai"`), a request provider list naming its family, or `routing.providers` naming its family. The xAI adapter is explicit-only. Explicit OpenAI never crosses families. `all` and family lists intentionally fan out one successful transport per family. Auto skips unavailable/disabled adapters and incompatible capabilities. Explicit incompatible selection fails. Navigation accepts only a router-owned `reference`; raw backend ref ids are never routing authority.
 
 `numResults` is a hint unless `requiredCapabilities` includes `numResults`; an adapter that cannot honor it adds a warning rather than being skipped. Other supplied filters/actions are hard constraints. In addition to the base fields, requests support `url` (absolute HTTP/HTTPS without credentials), zero-based `lineno`, arbitrary `recencyDays` from 1 through 3650, `searchContextSize` (`low | medium | high`), and Exa search types `auto | fast | instant | deep-lite | deep | deep-reasoning`. Their matching capability names are `url`, `lineno`, `recencyDays`, and `searchContextSize`. A URL open needs no prior reference but routes only to an adapter declaring URL support. Reference open, click, and find require router-owned identity. Domains are bare valid DNS names; URL/path/protocol values are rejected. A leading `-` denotes a validated excluded domain and additionally requires `domainExclusions`; adapters that support only positive filters must not claim it. Valid empty results succeed. Default fallback kinds are transient, network, invalid-response, capability, and attempt deadline. An explicit `fallbackOn` (directly or in routing) remains authoritative. Auth, config, invalid-request, cancellation, stale-context, entitlement, conflict, total deadline, and user cancellation never fall back. Quota falls back only when configured and adapter-retryable; `retryable: false` always stops. A failed subscription attempt cannot fall through to billed API transport unless `allowBilledApiFallback` is true; an initially available API-only connection is allowed.
 
