@@ -4,6 +4,8 @@ import { Value } from "typebox/value";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   formatUsageReport,
+  grokPlanLabel,
+  grokSubscription,
   grokPeriodLabel,
   grokUsage,
   normalizeGrokUsage,
@@ -17,6 +19,7 @@ import { ReportFrameSchema } from "../.pi/extensions/lib/host-bridge/report-sche
 import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 
 const BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
+const USER_URL = "https://cli-chat-proxy.grok.com/v1/user?include=subscription";
 const XAI_TOKEN = "fake-xai-oauth-token";
 
 /** Fields of the Grok billing `config` object a test may replace. */
@@ -183,12 +186,20 @@ test("a Grok OAuth sign-in reads the billing endpoint with its bearer token", as
   );
   const { ctx, tokenRequests } = registry({ xai: "oauth" });
   const report = await grokReading(ctx);
-  assert.deepEqual(calls, [{ url: BILLING_URL, authorization: `Bearer fake-xai-token` }]);
+  assert.deepEqual(
+    calls.toSorted((left, right) => left.url.localeCompare(right.url)),
+    [
+      { url: BILLING_URL, authorization: `Bearer fake-xai-token` },
+      { url: USER_URL, authorization: `Bearer fake-xai-token` },
+    ],
+  );
   assert.deepEqual(tokenRequests, ["xai"]);
   assert.equal(report.providers.length, 1);
   const grok = report.providers[0];
   assert.ok(grok?.ok);
   assert.equal(grok.usage.name, "Grok");
+  // The user endpoint failed here, so the plan is simply omitted.
+  assert.equal(grok.usage.plan, undefined);
   assert.equal(grok.usage.windows[0]?.label, "Weekly");
   assert.equal(grok.usage.windows[0]?.percent, 2);
   assert.deepEqual(report.absent, ["Claude", "ChatGPT", "Synthetic"]);
@@ -198,6 +209,106 @@ test("a Grok OAuth sign-in reads the billing endpoint with its bearer token", as
   assert.match(text, /2% used/);
   assert.match(text, /\n\nNot signed in: Claude, ChatGPT, Synthetic$/);
   assert.doesNotMatch(text, new RegExp(XAI_TOKEN));
+});
+
+/** A `/v1/user` response carrying personal fields next to the subscription tier. */
+function user(tier?: string): RuntimeValue {
+  const personal = {
+    email: "person@example.invalid",
+    givenName: "Given",
+    familyName: "Family",
+    userId: "user-id-123",
+    hasGrokCodeAccess: true,
+  };
+  return tier === undefined ? personal : { ...personal, subscriptionTier: tier };
+}
+
+async function grokWithUser(t: TestContext, respond: Responder): Promise<ProviderUsageReport> {
+  mockFetch(t, (url) => (url === BILLING_URL ? json(billing()) : respond(url)));
+  return grokReading(registry({ xai: "oauth" }).ctx);
+}
+
+test("maps Grok subscription tiers to plan labels and passes unknown tiers through", () => {
+  assert.equal(grokPlanLabel("SuperGrokPlus"), "SuperGrok Plus");
+  assert.equal(grokPlanLabel("SuperGrokLite"), "SuperGrok Lite");
+  assert.equal(grokPlanLabel("SuperGrokPro"), "SuperGrok Pro");
+  assert.equal(grokPlanLabel("GrokPro"), "SuperGrok");
+  assert.equal(grokPlanLabel("XBasic"), "X Basic");
+  assert.equal(grokPlanLabel("XPremium"), "X Premium");
+  assert.equal(grokPlanLabel("XPremiumPlus"), "X Premium+");
+  assert.equal(grokPlanLabel("EnterpriseMystery"), "EnterpriseMystery");
+  assert.equal(grokPlanLabel("7"), "7");
+  assert.equal(grokPlanLabel("toString"), "toString");
+  assert.equal(grokPlanLabel(""), undefined);
+  assert.equal(grokPlanLabel(undefined), undefined);
+  // Only the tier survives parsing; a non-string tier or a non-object is dropped.
+  assert.deepEqual(grokSubscription(user("SuperGrokPlus")), { subscriptionTier: "SuperGrokPlus" });
+  assert.deepEqual(grokSubscription({ subscriptionTier: 3 }), {});
+  assert.deepEqual(grokSubscription(null), {});
+});
+
+test("the Grok row shows the subscription plan and keeps no personal fields", async (t) => {
+  const report = await grokWithUser(t, () => json(user("SuperGrokPlus")));
+  const grok = report.providers[0];
+  assert.ok(grok?.ok);
+  assert.equal(grok.usage.plan, "SuperGrok Plus");
+  assert.equal(grok.usage.windows[0]?.percent, 2);
+  assert.match(formatUsageReport(report), /^Grok — SuperGrok Plus\n {2}Weekly\n/);
+  const serialized = JSON.stringify(report);
+  assert.ok(!("email" in grok.usage));
+  for (const field of ["email", "person@example.invalid", "Given", "user-id-123"]) {
+    assert.ok(!serialized.includes(field), `the reading must not retain ${field}`);
+  }
+  const frame = usageReportFrame("session-xai", report);
+  assert.ok(Value.Check(ReportFrameSchema, frame));
+  assert.deepEqual(frame.sections[0]?.rows[0], { label: "Plan", value: "SuperGrok Plus" });
+  assert.ok(!JSON.stringify(frame).includes("person@example.invalid"));
+});
+
+test("the Grok cache stores only the subscription tier from the user endpoint", async (t) => {
+  mockFetch(t, (url) => (url === BILLING_URL ? json(billing()) : json(user("SuperGrokPro"))));
+  const written: string[] = [];
+  const cache = createUsageCache({
+    storage: {
+      read: () => Promise.resolve({}),
+      write: (entries) => {
+        written.push(JSON.stringify(entries));
+        return Promise.resolve();
+      },
+    },
+  });
+  const usage = await grokUsage(registry({ xai: "oauth" }).ctx, cache);
+  await cache.flush();
+  assert.equal(usage?.plan, "SuperGrok Pro");
+  assert.ok(written.length > 0);
+  for (const entry of written) {
+    assert.ok(!entry.includes("person@example.invalid") && !entry.includes("user-id-123"));
+  }
+  assert.ok(written.some((entry) => entry.includes('"subscriptionTier":"SuperGrokPro"')));
+});
+
+test("a Grok user response without subscriptionTier shows no plan", async (t) => {
+  const report = await grokWithUser(t, () => json(user()));
+  const grok = report.providers[0];
+  assert.ok(grok?.ok);
+  assert.equal(grok.usage.plan, undefined);
+  assert.match(formatUsageReport(report), /^Grok\n {2}Weekly\n/);
+});
+
+test("a failing Grok user endpoint still renders the billing reading", async (t) => {
+  const report = await grokWithUser(t, () => json({ error: "boom" }, 500));
+  const grok = report.providers[0];
+  assert.ok(grok?.ok);
+  assert.equal(grok.usage.plan, undefined);
+  assert.equal(grok.usage.windows[0]?.label, "Weekly");
+  assert.doesNotMatch(formatUsageReport(report), /unavailable/);
+});
+
+test("an unknown Grok subscription tier is shown verbatim", async (t) => {
+  const report = await grokWithUser(t, () => json(user("EnterpriseMystery")));
+  const grok = report.providers[0];
+  assert.ok(grok?.ok);
+  assert.equal(grok.usage.plan, "EnterpriseMystery");
 });
 
 const FAILURES: Array<[string, Responder, RegExp]> = [
@@ -287,6 +398,7 @@ test("an absent xai credential is neither fetched nor shown as a row", async (t)
 /** Every provider endpoint answers, so only the credential set decides the rows. */
 function allEndpoints(url: string): Promise<Response> {
   if (url === BILLING_URL) return json(billing());
+  if (url === USER_URL) return json(user("SuperGrokPlus"));
   if (url === "https://api.anthropic.com/api/oauth/usage") {
     return json({ five_hour: { utilization: 10 } });
   }

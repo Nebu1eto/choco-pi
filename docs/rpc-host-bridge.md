@@ -182,8 +182,9 @@ A usage report has one section per signed-in provider (`Claude`, `ChatGPT`, `Syn
 `Status`, and `Snapshot` rows when present and one row per quota window. Providers without
 credentials get no provider section and no `usage.providers` entry; when there are any, a last
 section titled `Not signed in` lists one row per provider (`label` the provider name, `value`
-`not signed in`). `Grok` carries the subscription credit window (such as `Weekly`) with an OAuth
-sign-in and only a `Status` row with an API key. `ChatGPT` reports the
+`not signed in`). `Grok` carries the subscription credit window (such as `Weekly`) and, when the
+account reports one, a `Plan` row (such as `SuperGrok Plus`) with an OAuth sign-in, and only a
+`Status` row with an API key. `ChatGPT` reports the
 active model's provider when it is a configured `openai-codex` or `openai`, else `openai-codex`
 (Codex usage windows), else `openai` (signed in, no quota window). Each quota window row has (`value` such as `42% used`; `hint` the reset time, pace,
 and provider detail as the Usage tab prints them). The `usage` block:
