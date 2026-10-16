@@ -107,7 +107,7 @@ Pi 세션에서 인증하세요.
 
 Pi는 인증 정보를 저장소 밖에 보관합니다. 인증 정보가 담긴 파일을 Git에 복사하지 마세요.
 
-`/login openai`는 Pi의 "Sign in with ChatGPT"이며 `openai` 공급자(api.openai.com)를 사용합니다. 기존 `openai-codex` 공급자(chatgpt.com 백엔드)는 선택형 레거시로 남아 있으며 `/login openai-codex`로 로그인합니다. `openai` 로그인에서는 Fast 모드가 수락되지만 적용되지 않고 전송되지도 않으며, Daybreak은 사용할 수 없고, 서버 측 압축은 시도하지 않고(로컬 압축 실행), 네이티브 `web_run` 검색도 쓸 수 없습니다(웹 검색은 `choco-pi-web-access`를 거칩니다). `imagegen`과 `view_image`는 `openai` 인증 정보를 찾지만 실제 환경에서는 검증되지 않았습니다. Pi에 내장된 `xai` 공급자(Grok)는 `/login xai`(SuperGrok 또는 X Premium)로 로그인하거나 `XAI_API_KEY`를 읽으며, choco-pi는 이 공급자에 Fast 모드를 제공하지 않습니다. choco-pi는 Pi에 내장된 Anthropic, OpenAI, xAI 로그인 외에 Synthetic 공급자를 추가하고, [`apex-provider.json`](.pi/extensions/apex-provider.json)을 통해 Callstack Apex 모델을 찾습니다.
+`/login openai`는 Pi의 "Sign in with ChatGPT"이며 `openai` 공급자(api.openai.com)를 사용합니다. 기존 `openai-codex` 공급자(chatgpt.com 백엔드)는 선택형 레거시로 남아 있으며 `/login openai-codex`로 로그인합니다. `openai` 로그인에서는 Fast 모드가 수락되지만 적용되지 않고 전송되지도 않으며, Daybreak은 사용할 수 없고, 서버 측 압축은 시도하지 않고(로컬 압축 실행), 네이티브 `web_run` 검색도 쓸 수 없습니다(웹 검색은 `choco-pi-web-access`를 거칩니다). `imagegen`과 `view_image`는 `openai` 인증 정보를 찾지만 실제 환경에서는 검증되지 않았습니다. Pi에 내장된 `xai` 공급자(Grok)는 `/login xai`(SuperGrok 또는 X Premium)로 로그인하거나 `XAI_API_KEY`를 읽으며, Fast 모드는 api.x.ai의 `xai/grok-4.7`에만 적용됩니다. choco-pi는 Pi에 내장된 Anthropic, OpenAI, xAI 로그인 외에 Synthetic 공급자를 추가하고, [`apex-provider.json`](.pi/extensions/apex-provider.json)을 통해 Callstack Apex 모델을 찾습니다.
 
 ## computer use 설정하기 (macOS)
 
@@ -264,7 +264,7 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 
 ### 모델과 사용량
 
-- `/effort`는 추론 effort를, `/fast`는 세션의 Fast 모드 설정을 바꿉니다. 설정의 `modelThinkingLevels`는 모델별 기본 thinking 수준을 지정합니다.
+- `/effort`는 추론 effort를, `/fast`는 세션의 Fast 모드 설정을 바꿉니다. OpenAI 모델에서는 priority 서비스 티어로 보내고, `xai/grok-4.7`(api.x.ai)에서는 Grok 4.7 Fast 변형인 `grok-4.7-build-fast`로 보내며 해당 턴 비용을 기본 가격의 두 배로 기록합니다. 다른 Grok 모델에서는 저장된 설정이 비활성으로 남고 `/fast status`가 이유를 알려 줍니다. 설정의 `modelThinkingLevels`는 모델별 기본 thinking 수준을 지정합니다.
 - choco-pi는 `PI_CACHE_RETENTION`의 기본값을 `long`으로 설정해, 지원하는 공급자에 1시간 프롬프트 캐시 유지를 요청합니다. 명시적으로 지정한 값이 우선합니다.
 - `/usage`(별칭 `/quota`)는 Claude, ChatGPT, Synthetic, Grok의 사용량과 초기화 시각을, `/synthetic:quotas`는 Synthetic 할당량을 보여 줍니다. Grok은 OAuth 로그인이면 구독 크레딧 창을, API 키면 상태만 담은 행을 보여 줍니다. 인증 정보가 없는 공급자는 생략하고 흐린 `Not signed in: …` 한 줄에 나열합니다.
 

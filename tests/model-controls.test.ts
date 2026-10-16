@@ -82,6 +82,8 @@ function fastModeSession(id: string, enabled?: boolean, oauth = false) {
   );
   return {
     notices,
+    handlers,
+    ctx,
     start: () => handlers.get("session_start")?.({}, ctx),
     stop: () => handlers.get("session_shutdown")?.({}, ctx),
     toggle: (action: string) => commands.get("fast")?.(action, ctx),
@@ -162,6 +164,72 @@ function model(provider: "openai" | "openai-codex" | "synthetic"): Model<Api> {
     maxTokens: 100_000,
   };
 }
+
+test("xAI grok-4.7 Fast swaps the request model, reprices confirmed turns, and names other models", async () => {
+  const session = fastModeSession("fast-xai", true);
+  session.start();
+  const grok = (id: string): Model<Api> => ({
+    ...model("synthetic"),
+    id,
+    provider: "xai",
+    baseUrl: "https://api.x.ai/v1",
+  });
+  const request = (id: string) =>
+    session.handlers.get("before_provider_request")?.(
+      { payload: { model: id, input: [] } },
+      { ...session.ctx, model: grok(id) },
+    );
+  try {
+    assert.deepEqual(request("grok-4.7"), { model: "grok-4.7-build-fast", input: [] });
+    assert.equal(request("grok-4.5"), undefined);
+    await session.toggle("off");
+    assert.equal(request("grok-4.7"), undefined);
+    await session.toggle("on");
+
+    session.handlers.get("provider_stream_event")?.(
+      {
+        provider: "xai",
+        data: {
+          type: "response.completed",
+          response: { id: "resp", model: "grok-4.7-build-fast" },
+        },
+      },
+      session.ctx,
+    );
+    const cost = { input: 1, output: 2, cacheRead: 0.5, cacheWrite: 0, total: 3.5 };
+    const result = session.handlers.get("message_end")?.(
+      {
+        message: {
+          role: "assistant",
+          provider: "xai",
+          model: "grok-4.7",
+          responseId: "resp",
+          usage: { cost },
+        },
+      },
+      session.ctx,
+    );
+    assert.ok(isJsonRecord(result) && isJsonRecord(result.message));
+    assert.equal(result.message.responseModel, "grok-4.7-build-fast");
+    assert.ok(isJsonRecord(result.message.usage));
+    assert.deepEqual(result.message.usage.cost, {
+      input: 2,
+      output: 4,
+      cacheRead: 1,
+      cacheWrite: 0,
+      total: 7,
+    });
+
+    session.ctx.model = grok("grok-4.5");
+    await session.toggle("status");
+    assert.equal(
+      session.notices.at(-1),
+      "Fast mode: on (saved; xAI Fast exists only for grok-4.7)",
+    );
+  } finally {
+    session.stop();
+  }
+});
 
 test("OpenAI Codex editor metadata shows only fast with a two-column right margin", () => {
   const lines = ["─".repeat(80), "", " gpt-5.6-sol  OpenAI  high", "─".repeat(80)];

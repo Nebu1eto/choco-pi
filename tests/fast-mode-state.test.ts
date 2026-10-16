@@ -1,14 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { cleanupSessionResources, type Model } from "@earendil-works/pi-ai";
+import { cleanupSessionResources, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
 import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 import {
+  applyFastModeRequest,
+  createXaiFastPricing,
   createFastModeBridge,
   decideFastMode,
   installFastModeExtension,
   isOpenAISubscriptionSignIn,
   OPENAI_SIGN_IN_FAST_REASON,
   supportsFastMode,
+  XAI_FAST_HOST_REASON,
+  XAI_FAST_MODEL_REASON,
   type FastModeExtensionContext,
 } from "../.pi/extensions/lib/fast-mode-state.ts";
 
@@ -345,4 +349,118 @@ test("provider request hook injects no service_tier for sign-in and keeps it for
     service_tier: "priority",
   });
   bridge.get("hook")?.dispose();
+});
+
+const xai = (id: string, baseUrl = "https://api.x.ai/v1"): Model<"openai-responses"> => ({
+  ...model("xai"),
+  id,
+  baseUrl,
+});
+
+test("xAI Fast is a model variant on api.x.ai grok-4.7 only, with a reason elsewhere", () => {
+  const state = { sessionId: "s", requested: true, source: "explicit" as const, revision: 1 };
+  assert.deepEqual(decideFastMode(state, xai("grok-4.7")), {
+    ...state,
+    supported: true,
+    active: true,
+    serviceTier: undefined,
+    fastModelId: "grok-4.7-build-fast",
+  });
+  assert.equal(decideFastMode({ ...state, requested: false }, xai("grok-4.7")).active, false);
+  assert.equal(supportsFastMode(xai("grok-4.7")), true);
+  assert.deepEqual(decideFastMode(state, xai("grok-4.5")), {
+    ...state,
+    supported: false,
+    active: false,
+    serviceTier: undefined,
+    reason: XAI_FAST_MODEL_REASON,
+  });
+  assert.match(XAI_FAST_MODEL_REASON, /grok-4\.7/);
+  const foreign = decideFastMode(state, xai("grok-4.7", "https://proxy.example/v1"));
+  assert.equal(foreign.supported, false);
+  assert.equal(foreign.reason, XAI_FAST_HOST_REASON);
+  assert.equal(supportsFastMode(xai("grok-4.7", "https://proxy.example/v1")), false);
+  assert.equal(supportsFastMode(xai("grok-4.7", "not a url")), false);
+  assert.equal(supportsFastMode(xai("constructor")), false);
+});
+
+test("xAI request swaps the model id only when active and never adds service_tier", () => {
+  const state = { sessionId: "s", requested: true, source: "explicit" as const, revision: 1 };
+  const base = xai("grok-4.7");
+  const on = decideFastMode(state, base);
+  const off = decideFastMode({ ...state, requested: false }, base);
+  assert.deepEqual(applyFastModeRequest({ model: "grok-4.7", input: [] }, on, base), {
+    model: "grok-4.7-build-fast",
+    input: [],
+  });
+  assert.equal(applyFastModeRequest({ model: "grok-4.7" }, off, base), undefined);
+  // An existing tier is neither added nor stripped for xAI.
+  assert.equal(
+    applyFastModeRequest({ model: "grok-4.7", service_tier: "auto" }, off, base),
+    undefined,
+  );
+  assert.deepEqual(applyFastModeRequest({ model: "grok-4.7", service_tier: "auto" }, on, base), {
+    model: "grok-4.7-build-fast",
+    service_tier: "auto",
+  });
+  // A payload already rewritten to another model is left alone.
+  assert.equal(applyFastModeRequest({ model: "other" }, on, base), undefined);
+  const older = xai("grok-4.5");
+  assert.equal(
+    applyFastModeRequest(
+      { model: "grok-4.5", service_tier: "auto" },
+      decideFastMode(state, older),
+      older,
+    ),
+    undefined,
+  );
+});
+
+test("xAI Fast pricing doubles only server-confirmed Fast responses, once", () => {
+  const pricing = createXaiFastPricing();
+  const message = (responseId: string, modelId = "grok-4.7"): AssistantMessage => ({
+    role: "assistant",
+    content: [],
+    api: "openai-responses",
+    provider: "xai",
+    model: modelId,
+    responseId,
+    usage: {
+      input: 10,
+      output: 5,
+      cacheRead: 2,
+      cacheWrite: 0,
+      totalTokens: 17,
+      cost: { input: 0.25, output: 0.5, cacheRead: 0.125, cacheWrite: 0, total: 0.875 },
+    },
+    stopReason: "stop",
+    timestamp: 0,
+  });
+  pricing.observe("xai", {
+    type: "response.completed",
+    response: { id: "r1", model: "grok-4.7-build-fast" },
+  });
+  pricing.observe("xai", { type: "response.completed", response: { id: "r2", model: "grok-4.7" } });
+  pricing.observe("openai", {
+    type: "response.completed",
+    response: { id: "r3", model: "grok-4.7-build-fast" },
+  });
+  const priced = pricing.apply(message("r1"));
+  assert.equal(priced?.responseModel, "grok-4.7-build-fast");
+  assert.deepEqual(priced?.usage.cost, {
+    input: 0.5,
+    output: 1,
+    cacheRead: 0.25,
+    cacheWrite: 0,
+    total: 1.75,
+  });
+  assert.equal(priced?.usage.input, 10);
+  assert.equal(pricing.apply(message("r1")), undefined, "consumed once");
+  assert.equal(pricing.apply(message("r2")), undefined);
+  assert.equal(pricing.apply(message("r3")), undefined);
+  pricing.observe("xai", { response: { id: "r4", model: "grok-4.7-build-fast" } });
+  assert.equal(
+    pricing.apply({ ...message("r4"), responseModel: "grok-4.7-build-fast" }),
+    undefined,
+  );
 });

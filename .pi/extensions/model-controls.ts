@@ -17,6 +17,8 @@ import {
 import { EFFORT_PICKER_FOCUS } from "./lib/native-settings.ts";
 import { openPreferencesPicker } from "./status-commands.ts";
 import {
+  applyFastModeRequest,
+  createXaiFastPricing,
   FAST_MODE_ENTRY,
   getFastModeBridge,
   supportsFastMode,
@@ -646,7 +648,7 @@ export default function modelControls(pi: ExtensionAPI): void {
         if (
           ctx.mode !== "tui" ||
           args.trim().toLowerCase() === "status" ||
-          status.includes("inactive")
+          status.includes("(saved; ")
         )
           ctx.ui.notify(status, "info");
       } catch (error) {
@@ -684,16 +686,16 @@ export default function modelControls(pi: ExtensionAPI): void {
     const decision = (
       registeredSessionId ? bridge.get(registeredSessionId) : fastController
     )?.decide(ctx.model, ctx.modelRegistry);
-    // Subscription sign-in accepts but ignores the tier: send none at all.
-    if (decision?.reason !== undefined && isRecord(payload) && "service_tier" in payload) {
-      const { service_tier: _ignored, ...rest } = payload;
-      return rest;
-    }
-    if (!decision?.supported || !isRecord(payload))
-      return payload === event.payload ? undefined : payload;
-    if (decision.active) return { ...payload, service_tier: "priority" };
-    // Codex omits the tier for standard requests instead of sending "default".
-    const { service_tier: _standard, ...standard } = payload;
-    return standard;
+    const rewritten = applyFastModeRequest(payload, decision, ctx.model);
+    if (rewritten !== undefined) return rewritten;
+    return payload === event.payload ? undefined : payload;
+  });
+
+  // Pi prices an xAI Fast turn at the base model rate; reprice server-confirmed Fast responses.
+  const xaiFastPricing = createXaiFastPricing();
+  pi.on("provider_stream_event", (event) => xaiFastPricing.observe(event.provider, event.data));
+  pi.on("message_end", (event) => {
+    const message = xaiFastPricing.apply(event.message);
+    return message ? { message } : undefined;
   });
 }

@@ -128,7 +128,7 @@ Authenticate from a Pi session:
 
 Pi stores credentials outside the repository; do not copy credential files into Git.
 
-`/login openai` is Pi's "Sign in with ChatGPT" on provider `openai` (api.openai.com). The legacy `openai-codex` provider (chatgpt.com backend) stays available as an opt-in: `/login openai-codex`. On `openai` sign-in, Fast mode is accepted but not honored and never sent, Daybreak is unavailable, server-side compaction is never attempted (local compaction runs), and native `web_run` search is unavailable (web search goes through `choco-pi-web-access`). `imagegen` and `view_image` resolve `openai` credentials but are unverified live. Pi's built-in `xai` provider (Grok) signs in with `/login xai` (SuperGrok or X Premium) or reads `XAI_API_KEY`; choco-pi does not offer Fast mode for it. Besides Pi's built-in Anthropic, OpenAI, and xAI logins, choco-pi adds a Synthetic provider and discovers Callstack Apex models from [`apex-provider.json`](.pi/extensions/apex-provider.json).
+`/login openai` is Pi's "Sign in with ChatGPT" on provider `openai` (api.openai.com). The legacy `openai-codex` provider (chatgpt.com backend) stays available as an opt-in: `/login openai-codex`. On `openai` sign-in, Fast mode is accepted but not honored and never sent, Daybreak is unavailable, server-side compaction is never attempted (local compaction runs), and native `web_run` search is unavailable (web search goes through `choco-pi-web-access`). `imagegen` and `view_image` resolve `openai` credentials but are unverified live. Pi's built-in `xai` provider (Grok) signs in with `/login xai` (SuperGrok or X Premium) or reads `XAI_API_KEY`; Fast mode applies only to `xai/grok-4.7` on api.x.ai. Besides Pi's built-in Anthropic, OpenAI, and xAI logins, choco-pi adds a Synthetic provider and discovers Callstack Apex models from [`apex-provider.json`](.pi/extensions/apex-provider.json).
 
 ## Set up computer use (macOS)
 
@@ -292,7 +292,7 @@ The [RPC host bridge](docs/rpc-host-bridge.md) lets Waku identify the installed 
 
 ### Models and usage
 
-- `/effort` sets reasoning effort and `/fast` sets the session Fast mode preference. `modelThinkingLevels` in settings assigns a default thinking level per model.
+- `/effort` sets reasoning effort and `/fast` sets the session Fast mode preference. OpenAI models send it as the priority service tier; on `xai/grok-4.7` (api.x.ai) it sends the Grok 4.7 Fast variant `grok-4.7-build-fast` and records its turns at twice the base price. Other Grok models keep the saved preference inactive and `/fast status` names why. `modelThinkingLevels` in settings assigns a default thinking level per model.
 - choco-pi defaults `PI_CACHE_RETENTION` to `long`, requesting one-hour prompt-cache retention from providers that support it. An explicit value wins.
 - `/usage` (alias `/quota`) shows provider usage and reset times for Claude, ChatGPT, Synthetic, and Grok; `/synthetic:quotas` shows Synthetic quotas. Grok shows its subscription credit window with an OAuth sign-in and a status-only row with an API key. Providers without credentials are omitted and listed on one dim `Not signed in: …` line.
 
