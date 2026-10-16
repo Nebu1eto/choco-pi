@@ -195,6 +195,9 @@ export const windowsBackend: ComputerUsePlatformBackend = {
       { signal },
     );
   },
+  async restoreUserFocus(): Promise<never> {
+    throw new Error("pi-computer-use does not support restoreUserFocus on platform 'win32' yet.");
+  },
   async observe(
     request: PlatformObserveRequest,
     options?: { timeoutMs?: number; signal?: AbortSignal },

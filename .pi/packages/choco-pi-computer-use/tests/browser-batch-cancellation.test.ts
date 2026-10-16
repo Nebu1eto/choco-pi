@@ -66,6 +66,9 @@ test(
       async focusWindow() {
         return forbidden();
       },
+      async restoreUserFocus() {
+        return forbidden();
+      },
       async observe() {
         return forbidden();
       },

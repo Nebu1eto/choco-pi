@@ -202,6 +202,9 @@ export const linuxBackend: ComputerUsePlatformBackend = {
   ): Promise<PlatformFocusWindowResult> {
     return await linuxHelper.command("focusWindow", { ...target }, { signal });
   },
+  async restoreUserFocus(): Promise<never> {
+    throw new Error("pi-computer-use does not support restoreUserFocus on platform 'linux' yet.");
+  },
   async observe(
     request: PlatformObserveRequest,
     options?: { timeoutMs?: number; signal?: AbortSignal },

@@ -20,8 +20,12 @@
  * `src/actions.ts` (a node with only incidental actions would fall back to
  * coordinates, which need an image-bearing look the fake never returns).
  * As in the helper, in every script an ungranted click or press on a ref
- * with no AX press action that is not a text input is refused with
- * `foreground_required` (`effectPossible: false`) before any delivery; the
+ * with no AX press action that is not a text input is, under `background`,
+ * posted by pid and verified: the custom view shows no change, so it is
+ * refused with `foreground_required`, `effectPossible` from earlier work only
+ * (`false` for a single act), and `error.evidence: {deliveryUsed:
+ * "pid_pointer", pidPointerAttempted: true, observableChange: false}`. Under
+ * `ax_only` it is refused before any delivery without evidence. The
  * button (`button-1`) is pressed through AX with or without a grant. A
  * granted click on `custom-1` is HID coordinates with activation and
  * answers `unknown` (no AX-visible change); with `params.delivery: "pid"`
@@ -152,6 +156,8 @@ const PRESSABLE_REFS = new Set(["button-1"]);
 const TEXT_REFS = new Set(["field-1"]);
 const NO_AX_ACTION_REASON =
   "target has no accessibility action; pointer delivery needs a host foreground grant";
+export const PID_NO_CHANGE_REASON =
+  "Pid-targeted pointer input produced no observable change; pointer delivery needs a host foreground grant";
 
 function framesDiffer(left: Frame, right: Frame): boolean {
   return (
@@ -380,6 +386,29 @@ class FakeHelperState {
           );
         this.frontmost = FAKE_APP;
         return { focused: true };
+      case "restoreUserFocus": {
+        if (request.foregroundGrant !== true)
+          throw new FakeFailure(
+            "foreground_required",
+            "restoreUserFocus requires a host foreground grant",
+            false,
+          );
+        const pid = numberField(request, "pid");
+        const app = [FAKE_APP, USER_APP].find((candidate) => candidate.pid === pid);
+        if (!app)
+          throw new FakeFailure("app_not_found", `App with pid ${pid} is no longer running`);
+        this.frontmost = app;
+        const windowTitle = stringField(request, "windowTitle") ?? "";
+        const expectedTitle = app.pid === USER_APP.pid ? "Terminal" : FAKE_WINDOW_TITLE;
+        const windowRestored = windowTitle.toLowerCase() === expectedTitle.toLowerCase();
+        return {
+          restored: true,
+          appRestored: true,
+          windowRestored,
+          appName: app.appName,
+          windowTitle: windowRestored ? expectedTitle : "",
+        };
+      }
       default:
         throw new FakeFailure("unknown_command", `Unknown command '${cmd}'`);
     }
@@ -799,8 +828,21 @@ class FakeHelperState {
     // unless the request carries a foreground grant.
     const noAxAction =
       clicks && ref !== undefined && !PRESSABLE_REFS.has(ref) && !TEXT_REFS.has(ref);
-    if (noAxAction && !granted)
-      throw new FakeFailure("foreground_required", NO_AX_ACTION_REASON, tracked.effect);
+    if (noAxAction && !granted) {
+      if (policy !== "background")
+        throw new FakeFailure("foreground_required", NO_AX_ACTION_REASON, tracked.effect);
+      // Background: pid pointer attempt, then a settle window that sees no change.
+      const effectBefore = tracked.effect;
+      this.checkpoint(tracked);
+      effect();
+      throw new FakeFailure("foreground_required", PID_NO_CHANGE_REASON, effectBefore, undefined, {
+        evidence: {
+          deliveryUsed: "pid_pointer",
+          pidPointerAttempted: true,
+          observableChange: false,
+        },
+      });
+    }
 
     if (action === "setText") {
       if (ref !== "field-1")

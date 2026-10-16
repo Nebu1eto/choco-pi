@@ -1,10 +1,27 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { runComputerUseCommand } from "../extensions/computer-use.ts";
 import { executeAct, executeObserve, shutdownComputerUseSession } from "../src/bridge.ts";
+import { getSessionGrants } from "../src/config.ts";
+import {
+  GRANT_OPTION_ALWAYS,
+  GRANT_OPTION_DENY,
+  GRANT_OPTION_SESSION,
+} from "../src/grant-prompt.ts";
 import type { UiAction } from "../src/contract.ts";
 import { isJsonObject, isString, type JsonObject, type JsonValue } from "../src/json.ts";
 import { restoreOutline, type LookResponse, type SerializedOutlineNode } from "../src/outline.ts";
@@ -12,10 +29,13 @@ import { replacePlatformBackendForTest } from "../src/platform/index.ts";
 import type {
   ComputerUsePlatformBackend,
   HelperActResult,
+  HelperRefusalEvidence,
   PlatformActRequest,
+  PlatformRestoreUserFocusRequest,
   PlatformRoot,
 } from "../src/platform/types.ts";
-import { createTestExtensionContext } from "./helpers/extension-context.ts";
+import { PlatformCommandError } from "../src/platform/types.ts";
+import { createTestExtensionContext, type TestUiOptions } from "./helpers/extension-context.ts";
 
 const BUNDLE_ID = "test.foreground-fixture";
 
@@ -110,12 +130,12 @@ function outlineRoot(): SerializedOutlineNode {
 
 type Responder = (request: PlatformActRequest) => HelperActResult;
 
-class ForegroundRequiredFixtureError extends Error {
+class ForegroundRequiredFixtureError extends PlatformCommandError {
   readonly code = "foreground_required";
   readonly effectPossible?: boolean;
 
-  constructor(message: string, effectPossible?: boolean) {
-    super(message);
+  constructor(message: string, effectPossible?: boolean, evidence?: HelperRefusalEvidence) {
+    super(message, evidence);
     this.effectPossible = effectPossible;
   }
 }
@@ -124,6 +144,9 @@ function fakeBackend(
   respond: Responder,
   requests: PlatformActRequest[],
   outlineOnly = false,
+  restores: PlatformRestoreUserFocusRequest[] = [],
+  restoreFails = false,
+  frontmost: { pid: number } = { pid: root.pid! },
 ): ComputerUsePlatformBackend {
   let observationCount = 0;
   return {
@@ -138,6 +161,8 @@ function fakeBackend(
       return [root];
     },
     async getFrontmost() {
+      if (frontmost.pid !== root.pid)
+        return { appName: "User App", pid: frontmost.pid, windowTitle: "User Window" };
       return {
         appName: root.appName!,
         bundleId: root.bundleId,
@@ -149,6 +174,11 @@ function fakeBackend(
     },
     async focusWindow() {
       throw new Error("Foreground policy tests must never focus a window.");
+    },
+    async restoreUserFocus(request) {
+      restores.push(request);
+      if (restoreFails) throw new Error("restore fixture failure");
+      return { restored: true, appRestored: true, windowRestored: false, appName: "User App" };
     },
     async observe(): Promise<LookResponse> {
       observationCount += 1;
@@ -230,6 +260,8 @@ const ENV_KEYS = [
   "PI_COMPUTER_USE_DELIVERY_POLICY",
   "PI_COMPUTER_USE_EVENT_DELIVERY",
   "PI_COMPUTER_USE_FOREGROUND_GRANT",
+  "PI_COMPUTER_USE_FOREGROUND_PROMPT",
+  "PI_COMPUTER_USE_RESTORE_FOCUS",
 ] as const;
 
 interface Scenario {
@@ -238,16 +270,32 @@ interface Scenario {
   configGrant?: string[];
   /** Observations carry no image, like a semantic (outline-only) observation. */
   outlineOnly?: boolean;
+  /** Host UI for the tool context; omitted means no UI (`hasUI` false). */
+  ui?: TestUiOptions;
+  promptMode?: string;
+  restoreFocus?: string;
+  /** Initial contents of the user-level config file in the temp agent dir. */
+  userConfig?: JsonObject;
+  /** Make the user config directory read-only so writing the file fails. */
+  readOnlyUserConfig?: boolean;
+  restoreFails?: boolean;
+  /** Mutable frontmost app reported by getFrontmost; defaults to the target. */
+  frontmost?: { pid: number };
+}
+
+interface FixtureContext {
+  ctx: ExtensionContext;
+  signal: AbortSignal;
+  requests: PlatformActRequest[];
+  restores: PlatformRestoreUserFocusRequest[];
+  userConfigPath: string;
+  cwd: string;
 }
 
 async function withFixture<T>(
   scenario: Scenario,
   respond: Responder,
-  run: (context: {
-    ctx: ExtensionContext;
-    signal: AbortSignal;
-    requests: PlatformActRequest[];
-  }) => Promise<T>,
+  run: (context: FixtureContext) => Promise<T>,
 ): Promise<T> {
   const saved = new Map(ENV_KEYS.map((key) => [key, process.env[key]]));
   const scratch = await mkdtemp(path.join(os.tmpdir(), "cu-foreground-policy-"));
@@ -255,6 +303,17 @@ async function withFixture<T>(
   const cwd = path.join(scratch, "project");
   await mkdir(agentDir, { recursive: true });
   await mkdir(path.join(cwd, ".pi"), { recursive: true });
+  const userConfigDir = path.join(agentDir, "extensions");
+  const userConfigPath = path.join(userConfigDir, "pi-computer-use.json");
+  if (scenario.userConfig || scenario.readOnlyUserConfig) {
+    await mkdir(userConfigDir, { recursive: true });
+    if (scenario.userConfig)
+      await writeFile(userConfigPath, JSON.stringify(scenario.userConfig, null, 2));
+    if (scenario.readOnlyUserConfig) {
+      if (scenario.userConfig) await chmod(userConfigPath, 0o444);
+      await chmod(userConfigDir, 0o555);
+    }
+  }
   if (scenario.configGrant) {
     await writeFile(
       path.join(cwd, ".pi", "computer-use.json"),
@@ -269,15 +328,34 @@ async function withFixture<T>(
   else process.env.PI_COMPUTER_USE_DELIVERY_POLICY = scenario.deliveryPolicy;
   if (scenario.grant === undefined) delete process.env.PI_COMPUTER_USE_FOREGROUND_GRANT;
   else process.env.PI_COMPUTER_USE_FOREGROUND_GRANT = scenario.grant;
+  if (scenario.promptMode === undefined) delete process.env.PI_COMPUTER_USE_FOREGROUND_PROMPT;
+  else process.env.PI_COMPUTER_USE_FOREGROUND_PROMPT = scenario.promptMode;
+  if (scenario.restoreFocus === undefined) delete process.env.PI_COMPUTER_USE_RESTORE_FOCUS;
+  else process.env.PI_COMPUTER_USE_RESTORE_FOCUS = scenario.restoreFocus;
 
   const requests: PlatformActRequest[] = [];
+  const restores: PlatformRestoreUserFocusRequest[] = [];
   const restoreBackend = replacePlatformBackendForTest(
-    fakeBackend(respond, requests, scenario.outlineOnly === true),
+    fakeBackend(
+      respond,
+      requests,
+      scenario.outlineOnly === true,
+      restores,
+      scenario.restoreFails === true,
+      scenario.frontmost,
+    ),
   );
   try {
-    const ctx = await createTestExtensionContext(cwd);
+    const ctx = await createTestExtensionContext(cwd, scenario.ui);
     await shutdownComputerUseSession();
-    return await run({ ctx, signal: new AbortController().signal, requests });
+    return await run({
+      ctx,
+      signal: new AbortController().signal,
+      requests,
+      restores,
+      userConfigPath,
+      cwd,
+    });
   } finally {
     await shutdownComputerUseSession();
     restoreBackend();
@@ -285,6 +363,7 @@ async function withFixture<T>(
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
+    if (scenario.readOnlyUserConfig) await chmod(userConfigDir, 0o755);
     await rm(scratch, { recursive: true, force: true });
   }
 }
@@ -926,6 +1005,607 @@ test("aggregated trace has no top-level delivery policy when steps differ", asyn
       assert.ok(Array.isArray(steps) && isJsonObject(steps[0]) && isJsonObject(steps[1]));
       assert.equal(steps[0].deliveryPolicy, "background");
       assert.equal(steps[1].deliveryPolicy, "foreground");
+    },
+  );
+});
+
+// --- Session grants, the grant prompt, and focus restoration ---
+
+const USER_PID = 4141;
+
+/** Background refuses with proof of non-delivery; a granted foreground attempt works and takes focus. */
+const refuseUntilGranted: Responder = (request) => {
+  if (request.policy === "background")
+    throw new ForegroundRequiredFixtureError("background refused", false);
+  return { outcome: "worked", frontmostBefore: USER_PID, frontmostAfter: root.pid };
+};
+
+interface SelectCall {
+  title: string;
+  options: string[];
+}
+
+function selectStub(answer: string | undefined, calls: SelectCall[]): TestUiOptions["select"] {
+  return async (title, options) => {
+    calls.push({ title, options });
+    return answer;
+  };
+}
+
+function forbiddenSelect(): TestUiOptions["select"] {
+  return async () => {
+    throw new Error("no grant dialog may be shown");
+  };
+}
+
+test("ask + TUI: allowing for the session retries once in foreground as user_grant, then asks no more", async () => {
+  const calls: SelectCall[] = [];
+  await withFixture(
+    { ui: { select: selectStub(GRANT_OPTION_SESSION, calls) } },
+    refuseUntilGranted,
+    async (context) => {
+      const details = await actOnce(context, refTypeText);
+      assert.equal(calls.length, 1, "one prompt");
+      assert.ok(calls[0]!.title.includes(BUNDLE_ID) && calls[0]!.title.includes(root.appName!));
+      assert.ok(!calls[0]!.title.includes("background input"), "no pid attempt was reported");
+      assert.deepEqual(calls[0]!.options, [
+        GRANT_OPTION_SESSION,
+        GRANT_OPTION_ALWAYS,
+        GRANT_OPTION_DENY,
+      ]);
+      assert.deepEqual(
+        context.requests.map((request) => [request.policy, request.foregroundGrant]),
+        [
+          ["background", undefined],
+          ["foreground", true],
+        ],
+      );
+      assert.equal(details.status, "ok");
+      const execution = objectField(details, "execution");
+      assert.equal(execution.escalatedToForeground, true);
+      assert.equal(execution.escalationReason, "user_grant");
+      assert.equal(objectField(execution, "grantPrompt").decision, "session");
+      assert.deepEqual(getSessionGrants(), [BUNDLE_ID]);
+
+      const again = objectField(await actOnce(context, refTypeText), "execution");
+      assert.equal(calls.length, 1, "the session grant covers later calls without a prompt");
+      assert.equal(again.escalationReason, "foreground_required");
+      assert.equal(context.requests.length, 4);
+    },
+  );
+});
+
+test("ask + TUI: Not now refuses without retry and is not asked again this session", async () => {
+  const calls: SelectCall[] = [];
+  await withFixture(
+    { ui: { select: selectStub(GRANT_OPTION_DENY, calls) } },
+    refuseUntilGranted,
+    async (context) => {
+      const first = await actOnce(context, refTypeText);
+      assert.equal(calls.length, 1);
+      assert.equal(context.requests.length, 1);
+      assertNoUngrantedForeground(context.requests);
+      assert.equal(first.status, "foreground_required");
+      const execution = objectField(first, "execution");
+      assert.equal(objectField(execution, "grantPrompt").decision, "denied");
+      const refusal = objectField(execution, "refusal");
+      assert.ok(isString(refusal.grantHint) && refusal.grantHint.includes("declined"));
+
+      const second = await actOnce(context, refTypeText);
+      assert.equal(calls.length, 1, "no second prompt for the same bundle id");
+      assert.equal(context.requests.length, 2);
+      assertNoUngrantedForeground(context.requests);
+      assert.equal(second.status, "foreground_required");
+    },
+  );
+});
+
+for (const variant of [
+  { name: "no UI", scenario: {} },
+  { name: "rpc mode", scenario: { ui: { select: forbiddenSelect(), mode: "rpc" as const } } },
+  { name: "prompt off", scenario: { ui: { select: forbiddenSelect() }, promptMode: "off" } },
+]) {
+  test(`no grant prompt with ${variant.name}: refused once, no retry`, async () => {
+    await withFixture(variant.scenario, refuseUntilGranted, async (context) => {
+      const details = await actOnce(context, refTypeText);
+      assert.equal(context.requests.length, 1);
+      assertNoUngrantedForeground(context.requests);
+      assert.equal(details.status, "foreground_required");
+      assert.deepEqual(getSessionGrants(), []);
+    });
+  });
+}
+
+test("effectPossible true never prompts", async () => {
+  await withFixture(
+    { ui: { select: forbiddenSelect() } },
+    () => {
+      throw new ForegroundRequiredFixtureError("maybe delivered", true);
+    },
+    async (context) => {
+      const details = await actOnce(context, refTypeText);
+      assert.equal(context.requests.length, 1);
+      assert.equal(details.status, "foreground_required");
+      assert.equal(objectField(details, "execution").grantPrompt, undefined);
+    },
+  );
+});
+
+test("Always allow saves the bundle id to the user config and keeps unrelated keys", async () => {
+  const calls: SelectCall[] = [];
+  await withFixture(
+    {
+      ui: { select: selectStub(GRANT_OPTION_ALWAYS, calls) },
+      userConfig: { custom_key: "keep", cursor_overlay: false, foreground_grant: ["other.app"] },
+    },
+    refuseUntilGranted,
+    async (context) => {
+      const details = await actOnce(context, refTypeText);
+      assert.equal(details.status, "ok");
+      const execution = objectField(details, "execution");
+      assert.equal(execution.escalationReason, "user_grant");
+      const prompt = objectField(execution, "grantPrompt");
+      assert.equal(prompt.decision, "always");
+      assert.equal(prompt.persisted, true);
+      const saved: JsonValue = JSON.parse(await readFile(context.userConfigPath, "utf-8"));
+      assert.deepEqual(saved, {
+        custom_key: "keep",
+        cursor_overlay: false,
+        foreground_grant: ["other.app", BUNDLE_ID],
+      });
+    },
+  );
+});
+
+test("Always allow still grants for the session when saving fails and says so", async () => {
+  const calls: SelectCall[] = [];
+  const notices: string[] = [];
+  const original = { custom_key: "keep" };
+  await withFixture(
+    {
+      ui: {
+        select: selectStub(GRANT_OPTION_ALWAYS, calls),
+        notify: (message) => {
+          notices.push(message);
+        },
+      },
+      userConfig: original,
+      readOnlyUserConfig: true,
+    },
+    refuseUntilGranted,
+    async (context) => {
+      const details = await actOnce(context, refTypeText);
+      assert.equal(details.status, "ok");
+      const execution = objectField(details, "execution");
+      assert.equal(execution.escalationReason, "user_grant");
+      const prompt = objectField(execution, "grantPrompt");
+      assert.equal(prompt.persisted, false);
+      assert.ok(isString(prompt.error) && prompt.error.length > 0);
+      assert.ok(notices.some((notice) => notice.includes("this session only")));
+      assert.deepEqual(getSessionGrants(), [BUNDLE_ID]);
+      const saved: JsonValue = JSON.parse(await readFile(context.userConfigPath, "utf-8"));
+      assert.deepEqual(saved, original, "a failed save leaves the file untouched");
+    },
+  );
+});
+
+/** Links the user config to a real file in a separate directory and returns that file. */
+async function linkUserConfig(userConfigPath: string, content: JsonObject): Promise<string> {
+  const realDir = path.join(path.dirname(path.dirname(userConfigPath)), "real-config");
+  const realPath = path.join(realDir, "pi-computer-use.json");
+  await mkdir(realDir, { recursive: true });
+  await writeFile(realPath, JSON.stringify(content, null, 2));
+  await mkdir(path.dirname(userConfigPath), { recursive: true });
+  await symlink(realPath, userConfigPath);
+  return realPath;
+}
+
+test("Always allow keeps a symlinked user config a symlink and writes its real file", async () => {
+  const calls: SelectCall[] = [];
+  await withFixture(
+    { ui: { select: selectStub(GRANT_OPTION_ALWAYS, calls) } },
+    refuseUntilGranted,
+    async (context) => {
+      const realPath = await linkUserConfig(context.userConfigPath, { custom_key: "keep" });
+      const details = await actOnce(context, refTypeText);
+      assert.equal(objectField(objectField(details, "execution"), "grantPrompt").persisted, true);
+      assert.ok((await lstat(context.userConfigPath)).isSymbolicLink());
+      const saved: JsonValue = JSON.parse(await readFile(realPath, "utf-8"));
+      assert.deepEqual(saved, { custom_key: "keep", foreground_grant: [BUNDLE_ID] });
+      assert.deepEqual(await readdir(path.dirname(realPath)), ["pi-computer-use.json"]);
+    },
+  );
+});
+
+test("Always allow: a failed temp write leaves the original config intact", async () => {
+  await assertFailedTempWriteKeepsOriginal();
+});
+
+test("Always allow writes through a dangling symlinked user config and keeps the link", async () => {
+  const calls: SelectCall[] = [];
+  await withFixture(
+    { ui: { select: selectStub(GRANT_OPTION_ALWAYS, calls) } },
+    refuseUntilGranted,
+    async (context) => {
+      const realDir = path.join(path.dirname(path.dirname(context.userConfigPath)), "real-config");
+      const realPath = path.join(realDir, "pi-computer-use.json");
+      await mkdir(realDir, { recursive: true });
+      await mkdir(path.dirname(context.userConfigPath), { recursive: true });
+      await symlink(realPath, context.userConfigPath);
+      const details = await actOnce(context, refTypeText);
+      assert.equal(objectField(objectField(details, "execution"), "grantPrompt").persisted, true);
+      assert.ok((await lstat(context.userConfigPath)).isSymbolicLink());
+      const saved: JsonValue = JSON.parse(await readFile(realPath, "utf-8"));
+      assert.deepEqual(saved, { foreground_grant: [BUNDLE_ID] });
+      assert.deepEqual(await readdir(realDir), ["pi-computer-use.json"]);
+    },
+  );
+});
+
+async function assertFailedTempWriteKeepsOriginal(): Promise<void> {
+  const calls: SelectCall[] = [];
+  const original = { custom_key: "keep", foreground_grant: ["other.app"] };
+  await withFixture(
+    { ui: { select: selectStub(GRANT_OPTION_ALWAYS, calls) } },
+    refuseUntilGranted,
+    async (context) => {
+      // The real file stays writable, but its directory cannot take the temp sibling.
+      const realPath = await linkUserConfig(context.userConfigPath, original);
+      await chmod(path.dirname(realPath), 0o555);
+      try {
+        const details = await actOnce(context, refTypeText);
+        const execution = objectField(details, "execution");
+        assert.equal(execution.escalationReason, "user_grant");
+        const prompt = objectField(execution, "grantPrompt");
+        assert.equal(prompt.persisted, false);
+        assert.ok(isString(prompt.error) && prompt.error.includes("could not write"));
+        const saved: JsonValue = JSON.parse(await readFile(realPath, "utf-8"));
+        assert.deepEqual(saved, original);
+        assert.deepEqual(await readdir(path.dirname(realPath)), ["pi-computer-use.json"]);
+      } finally {
+        await chmod(path.dirname(realPath), 0o755);
+      }
+    },
+  );
+}
+
+for (const variant of [
+  { name: "TUI", ui: { select: forbiddenSelect() } },
+  { name: "non-TUI", ui: undefined },
+]) {
+  test(`foreground_prompt always (${variant.name}): one foreground retry as auto_grant without a dialog`, async () => {
+    await withFixture(
+      { ui: variant.ui, promptMode: "always" },
+      refuseUntilGranted,
+      async (context) => {
+        const details = await actOnce(context, refTypeText);
+        assert.deepEqual(
+          context.requests.map((request) => request.policy),
+          ["background", "foreground"],
+        );
+        assert.equal(context.requests[1]!.foregroundGrant, true);
+        assert.equal(details.status, "ok");
+        const execution = objectField(details, "execution");
+        assert.equal(execution.escalationReason, "auto_grant");
+        assert.equal(objectField(execution, "grantPrompt").decision, "auto");
+        assert.deepEqual(getSessionGrants(), [BUNDLE_ID]);
+      },
+    );
+  });
+}
+
+test("/computer-use grant always persists, overrides an earlier Not now, and applies to the next act without reload", async () => {
+  const calls: SelectCall[] = [];
+  await withFixture(
+    { ui: { select: selectStub(GRANT_OPTION_DENY, calls) }, userConfig: { custom_key: 1 } },
+    refuseUntilGranted,
+    async (context) => {
+      const denied = await actOnce(context, refTypeText);
+      assert.equal(denied.status, "foreground_required");
+      assert.equal(calls.length, 1);
+
+      const result = await runComputerUseCommand("grant always", context.cwd);
+      assert.equal(result.level, "info");
+      assert.match(result.message, /foreground_prompt: always/);
+      const saved: JsonValue = JSON.parse(await readFile(context.userConfigPath, "utf-8"));
+      assert.deepEqual(saved, { custom_key: 1, foreground_prompt: "always" });
+
+      const granted = await actOnce(context, refTypeText);
+      assert.equal(calls.length, 1, "always never shows a dialog");
+      assert.equal(granted.status, "ok");
+      assert.equal(objectField(granted, "execution").escalationReason, "auto_grant");
+
+      // A new session drops the session choice and grants; the saved file still applies.
+      await shutdownComputerUseSession();
+      const afterRestart = await actOnce(context, refTypeText);
+      assert.equal(objectField(afterRestart, "execution").escalationReason, "auto_grant");
+      assert.equal(calls.length, 1);
+
+      const status = await runComputerUseCommand("", context.cwd);
+      assert.match(status.message, /foreground_prompt: always/);
+      assert.match(
+        status.message,
+        new RegExp(`session grants: ${BUNDLE_ID.replaceAll(".", "\\.")}`),
+      );
+      assert.match(status.message, /restore_focus: enabled/);
+      const usage = await runComputerUseCommand("grant sometimes", context.cwd);
+      assert.equal(usage.level, "error");
+    },
+  );
+});
+
+const coordinateClicks: UiAction[] = [
+  { action: "click", x: 100, y: 100 },
+  { action: "click", x: 110, y: 110 },
+];
+
+function grantedResponder(frontmostBefore: number, frontmostAfter: number): Responder {
+  return () => ({ outcome: "worked", frontmostBefore, frontmostAfter });
+}
+
+test("after a granted batch that took focus, focus goes back to the user's app once", async () => {
+  await withFixture(
+    { grant: BUNDLE_ID },
+    grantedResponder(USER_PID, root.pid!),
+    async (context) => {
+      const details = await actOnce(context, coordinateClicks);
+      assert.equal(context.requests.length, 2);
+      assert.equal(context.restores.length, 1);
+      assert.equal(context.restores[0]!.pid, USER_PID);
+      const execution = objectField(details, "execution");
+      assert.equal(details.status, "ok");
+      assert.equal(execution.outcome, "worked");
+      assert.equal(execution.focusRestored, true);
+      assert.equal(execution.focusRestoreReason, "restored");
+    },
+  );
+});
+
+for (const variant of [
+  {
+    name: "the user switched to a third app",
+    respond: grantedResponder(USER_PID, 5151),
+    scenario: { grant: BUNDLE_ID },
+    reason: "user_switched",
+  },
+  {
+    name: "the target was already frontmost",
+    respond: grantedResponder(root.pid!, root.pid!),
+    scenario: { grant: BUNDLE_ID },
+    reason: "target_was_frontmost",
+  },
+  {
+    name: "restore_focus is off",
+    respond: grantedResponder(USER_PID, root.pid!),
+    scenario: { grant: BUNDLE_ID, restoreFocus: "0" },
+    reason: "disabled",
+  },
+]) {
+  test(`focus is not restored when ${variant.name}`, async () => {
+    await withFixture(variant.scenario, variant.respond, async (context) => {
+      const details = await actOnce(context, coordinateClicks);
+      assert.equal(context.restores.length, 0);
+      assert.equal(details.status, "ok");
+      const execution = objectField(details, "execution");
+      assert.equal(execution.outcome, "worked");
+      assert.equal(execution.focusRestored, false);
+      assert.equal(execution.focusRestoreReason, variant.reason);
+    });
+  });
+}
+
+test("focus is not restored when the user switches apps after the last granted step replied", async () => {
+  const frontmost = { pid: root.pid! };
+  await withFixture(
+    { grant: BUNDLE_ID, frontmost },
+    () => {
+      // The click took focus; afterwards (as during a later wait) the user moves to a third app.
+      frontmost.pid = 5151;
+      return { outcome: "worked", frontmostBefore: USER_PID, frontmostAfter: root.pid };
+    },
+    async (context) => {
+      const details = await actOnce(context, [{ action: "click", x: 100, y: 100 }]);
+      assert.equal(context.requests.length, 1);
+      assert.equal(context.requests[0]?.foregroundGrant, true);
+      assert.equal(context.restores.length, 0, "the user's new app is never overridden");
+      assert.equal(details.status, "ok");
+      const execution = objectField(details, "execution");
+      assert.equal(execution.outcome, "worked");
+      assert.equal(execution.focusRestored, false);
+      assert.equal(execution.focusRestoreReason, "user_switched");
+    },
+  );
+});
+
+test("a failed focus restore never changes the act outcome", async () => {
+  await withFixture(
+    { grant: BUNDLE_ID, restoreFails: true },
+    grantedResponder(USER_PID, root.pid!),
+    async (context) => {
+      const details = await actOnce(context, coordinateClicks);
+      assert.equal(context.restores.length, 1);
+      assert.equal(details.status, "ok");
+      const execution = objectField(details, "execution");
+      assert.equal(execution.outcome, "worked");
+      assert.equal(execution.focusRestored, false);
+      assert.ok(
+        isString(execution.focusRestoreReason) &&
+          execution.focusRestoreReason.startsWith("restore_failed"),
+      );
+    },
+  );
+});
+
+test("background-only acts never restore focus", async () => {
+  await withFixture({}, grantedResponder(USER_PID, root.pid!), async (context) => {
+    const details = await actOnce(context, [{ action: "click", ref: "@e3" }]);
+    assert.equal(context.restores.length, 0);
+    assert.equal(objectField(details, "execution").focusRestored, undefined);
+  });
+});
+
+// --- Background pid pointer attempt verified by the helper ---
+
+const NO_CHANGE_EVIDENCE: HelperRefusalEvidence = {
+  deliveryUsed: "pid_pointer",
+  pidPointerAttempted: true,
+  observableChange: false,
+};
+
+/** Background posts by pid and observes no change; a granted foreground attempt works. */
+const pidNoChangeUntilGranted: Responder = (request) => {
+  if (request.policy === "background")
+    throw new ForegroundRequiredFixtureError(
+      "Pid-targeted pointer input produced no observable change; pointer delivery needs a host foreground grant",
+      false,
+      NO_CHANGE_EVIDENCE,
+    );
+  return { outcome: "worked", frontmostBefore: USER_PID, frontmostAfter: root.pid };
+};
+
+for (const variant of [
+  { name: "a ref without an AX action", actions: customClick },
+  { name: "a raw coordinate click", actions: [{ action: "click", x: 100, y: 100 }] },
+] satisfies Array<{ name: string; actions: UiAction[] }>) {
+  test(`pid pointer attempt that changed something on ${variant.name}: worked, no refusal, no prompt`, async () => {
+    await withFixture(
+      { ui: { select: forbiddenSelect() } },
+      () => ({
+        outcome: "worked",
+        performed: { delivery: "pid", grounding: "coordinates" },
+        evidence: {
+          deliveryUsed: "pid_pointer",
+          pidPointerAttempted: true,
+          observableChange: true,
+        },
+      }),
+      async (context) => {
+        const details = await actOnce(context, variant.actions);
+        assert.equal(context.requests.length, 1);
+        assertNoUngrantedForeground(context.requests);
+        assert.equal(context.requests[0]?.policy, "background");
+        assert.equal(details.status, "ok");
+        const execution = objectField(details, "execution");
+        assert.equal(execution.refusal, undefined);
+        assert.notEqual(execution.escalatedToForeground, true);
+        assert.equal(execution.grantPrompt, undefined);
+        assert.equal(execution.pidPointerAttempted, true);
+        const steps = execution.steps;
+        assert.ok(Array.isArray(steps) && isJsonObject(steps[0]));
+        assert.equal(objectField(steps[0], "evidence").deliveryUsed, "pid_pointer");
+        assert.equal(steps[0].delivery, "pid");
+      },
+    );
+  });
+}
+
+test("pid pointer attempt with no change: refusal carries the evidence and says so", async () => {
+  await withFixture({}, pidNoChangeUntilGranted, async (context) => {
+    const details = await actOnce(context, customClick);
+    assert.equal(context.requests.length, 1, "no grant, no UI: no retry");
+    assert.equal(details.status, "foreground_required");
+    const execution = objectField(details, "execution");
+    assert.equal(execution.pidPointerAttempted, true);
+    const refusal = objectField(execution, "refusal");
+    assert.equal(refusal.effectPossible, false);
+    assert.equal(refusal.pidPointerAttempted, true);
+    assert.equal(refusal.observableChange, false);
+    assert.ok(isString(refusal.grantHint) && refusal.grantHint.includes("observed no change"));
+  });
+});
+
+test("pid pointer attempt with no change: ask + TUI grant retries once in foreground", async () => {
+  const calls: SelectCall[] = [];
+  await withFixture(
+    { ui: { select: selectStub(GRANT_OPTION_SESSION, calls) } },
+    pidNoChangeUntilGranted,
+    async (context) => {
+      const details = await actOnce(context, [{ action: "click", x: 100, y: 100 }]);
+      assert.equal(calls.length, 1, "one prompt");
+      const title = calls[0]!.title;
+      assert.ok(
+        title.includes("already sent this click") && title.includes("saw no visible change"),
+        "the prompt says a background attempt was sent and showed nothing",
+      );
+      assert.ok(title.includes("sends it again"), "the prompt says allowing repeats the input");
+      assert.deepEqual(
+        context.requests.map((request) => [request.policy, request.foregroundGrant]),
+        [
+          ["background", undefined],
+          ["foreground", true],
+        ],
+      );
+      assert.equal(details.status, "ok");
+      const execution = objectField(details, "execution");
+      assert.equal(execution.escalationReason, "user_grant");
+      assert.equal(execution.pidPointerAttempted, true);
+    },
+  );
+});
+
+test("pid pointer attempt with no change: a covering grant retries once in foreground", async () => {
+  await withFixture({ grant: BUNDLE_ID }, pidNoChangeUntilGranted, async (context) => {
+    const details = await actOnce(context, customClick);
+    assert.deepEqual(
+      context.requests.map((request) => request.policy),
+      ["background", "foreground"],
+    );
+    const execution = objectField(details, "execution");
+    assert.equal(execution.escalationReason, "foreground_required");
+    assert.equal(execution.pidPointerAttempted, true);
+  });
+});
+
+for (const variant of [
+  { name: "a covering grant", scenario: { grant: BUNDLE_ID } },
+  { name: "ask + TUI", scenario: { ui: { select: forbiddenSelect() } } },
+  { name: "foreground_prompt always", scenario: { promptMode: "always" } },
+] satisfies Array<{ name: string; scenario: Scenario }>) {
+  test(`inconsistent evidence (effectPossible false, observableChange true) never retries with ${variant.name}`, async () => {
+    await withFixture(
+      variant.scenario,
+      (request) => {
+        if (request.policy === "background")
+          throw new ForegroundRequiredFixtureError("inconsistent", false, {
+            pidPointerAttempted: true,
+            observableChange: true,
+          });
+        return { outcome: "worked" };
+      },
+      async (context) => {
+        const details = await actOnce(context, customClick);
+        assert.equal(context.requests.length, 1, "no retry");
+        assertNoUngrantedForeground(context.requests);
+        assert.deepEqual(getSessionGrants(), [], "no auto grant");
+        const refusal = objectField(objectField(details, "execution"), "refusal");
+        assert.equal(refusal.effectPossible, true, "a possible effect is reported");
+      },
+    );
+  });
+}
+
+test("a returned (batch-step style) refusal with no-change evidence is recognized", async () => {
+  await withFixture(
+    { grant: BUNDLE_ID },
+    (request) =>
+      request.policy === "background"
+        ? {
+            outcome: "didnt",
+            error: {
+              code: "foreground_required",
+              message: "no observable change",
+              effectPossible: false,
+              evidence: NO_CHANGE_EVIDENCE,
+            },
+          }
+        : { outcome: "worked" },
+    async (context) => {
+      const details = await actOnce(context, customClick);
+      assert.deepEqual(
+        context.requests.map((request) => request.policy),
+        ["background", "foreground"],
+      );
+      assert.equal(objectField(details, "execution").pidPointerAttempted, true);
     },
   );
 });

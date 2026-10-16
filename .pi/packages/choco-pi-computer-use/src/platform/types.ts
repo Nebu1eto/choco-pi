@@ -94,6 +94,20 @@ export interface PlatformFocusWindowResult {
   reason?: string;
 }
 
+/** Grant-gated return of focus to the app (and window) the user had in front. */
+export interface PlatformRestoreUserFocusRequest {
+  pid: number;
+  windowTitle?: string;
+}
+
+export interface PlatformRestoreUserFocusResult {
+  restored: boolean;
+  appRestored?: boolean;
+  windowRestored?: boolean;
+  appName?: string;
+  windowTitle?: string;
+}
+
 export interface HelperActPerformed {
   grounding?: "description" | "coordinates" | "keyboard-events" | "focus";
   /** `ax` means the platform accessibility API (AX on macOS, UIA on Windows). */
@@ -121,12 +135,45 @@ export interface PlatformRootDelta {
   metadata?: JsonObject;
 }
 
+/**
+ * Evidence on a helper `foreground_required` refusal (protocol 7, additive).
+ * `pidPointerAttempted: true` with `observableChange: false` means pid-targeted
+ * pointer input was posted and no change was observed within the settle window;
+ * `effectPossible: false` then covers only work before that attempt. Absent
+ * evidence means the helper refused before any delivery.
+ */
+export interface HelperRefusalEvidence {
+  pidPointerAttempted?: boolean;
+  observableChange?: boolean;
+  deliveryUsed?: string;
+}
+
+/**
+ * Base of platform helper command errors. `evidence` is parsed at the
+ * transport boundary, so platform-neutral callers can read it typed.
+ */
+export class PlatformCommandError extends Error {
+  readonly evidence?: HelperRefusalEvidence;
+
+  constructor(message: string, evidence?: HelperRefusalEvidence) {
+    super(message);
+    this.name = "PlatformCommandError";
+    this.evidence = evidence;
+  }
+}
+
 export interface HelperActResult {
   outcome: ActOutcome;
   performed?: HelperActPerformed;
   evidence?: JsonObject;
   /** `effectPossible: false` means the helper proved nothing was delivered. */
-  error?: { code?: string; message?: string; whatIsThere?: JsonValue; effectPossible?: boolean };
+  error?: {
+    code?: string;
+    message?: string;
+    whatIsThere?: JsonValue;
+    effectPossible?: boolean;
+    evidence?: HelperRefusalEvidence;
+  };
   rootDelta?: PlatformRootDelta[];
   steps?: HelperActResult[];
   stoppedAt?: number;
@@ -341,6 +388,11 @@ export interface ComputerUsePlatformBackend {
   listRoots(query: PlatformRootQuery, signal?: AbortSignal): Promise<PlatformRoot[]>;
   getFrontmost(signal?: AbortSignal): Promise<PlatformFrontmostResult>;
   focusWindow(target: PlatformTarget, signal?: AbortSignal): Promise<PlatformFocusWindowResult>;
+  /** Reactivate a prior frontmost app; only sent with a host foreground grant. */
+  restoreUserFocus(
+    request: PlatformRestoreUserFocusRequest,
+    signal?: AbortSignal,
+  ): Promise<PlatformRestoreUserFocusResult>;
   observe(
     request: PlatformObserveRequest,
     options?: { timeoutMs?: number; signal?: AbortSignal },

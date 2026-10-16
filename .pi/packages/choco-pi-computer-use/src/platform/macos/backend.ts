@@ -13,6 +13,8 @@ import type {
   PlatformObserveRequest,
   PlatformReadTextRequest,
   PlatformReadTextResponse,
+  PlatformRestoreUserFocusRequest,
+  PlatformRestoreUserFocusResult,
   PlatformRoot,
   PlatformRootKind,
   PlatformRootQuery,
@@ -25,6 +27,13 @@ import { macosHelper } from "./helper.ts";
 interface ListRootsArgs {
   pid?: number;
   title?: string;
+}
+
+/** Wire arguments of the grant-gated helper `restoreUserFocus` command. */
+interface RestoreUserFocusArgs {
+  pid: number;
+  windowTitle?: string;
+  foregroundGrant: true;
 }
 
 interface FrontmostResponse {
@@ -127,6 +136,7 @@ export const macosBackend: Pick<
   | "listRoots"
   | "getFrontmost"
   | "focusWindow"
+  | "restoreUserFocus"
   | "observe"
   | "act"
   | "actBatch"
@@ -168,6 +178,27 @@ export const macosBackend: Pick<
       { ...target },
       { signal },
     );
+  },
+
+  async restoreUserFocus(
+    request: PlatformRestoreUserFocusRequest,
+    signal?: AbortSignal,
+  ): Promise<PlatformRestoreUserFocusResult> {
+    const args: RestoreUserFocusArgs = {
+      pid: Math.trunc(request.pid),
+      foregroundGrant: true,
+    };
+    const windowTitle = request.windowTitle?.trim();
+    if (windowTitle) args.windowTitle = windowTitle;
+    const raw: JsonValue = await macosHelper.command("restoreUserFocus", args, { signal });
+    if (!isJsonObject(raw)) throw new Error("Helper restoreUserFocus returned an invalid result.");
+    return {
+      restored: toBoolean(raw.restored),
+      appRestored: toBoolean(raw.appRestored),
+      windowRestored: toBoolean(raw.windowRestored),
+      appName: toOptionalString(raw.appName),
+      windowTitle: toOptionalString(raw.windowTitle),
+    };
   },
 
   async observe(

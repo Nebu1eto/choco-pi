@@ -2514,6 +2514,44 @@ final class Bridge {
 		// exposes no AX action; together they drive the settle check below.
 		var pidPointerPosted = false
 		var pointerWithoutAXAction = false
+
+		// Bounded settle window shared by every pid pointer check: 6 x 50 ms,
+		// with a cancellation/deadline checkpoint on each iteration.
+		func settlePointerChange(_ observe: () -> Bool) throws -> Bool {
+			for _ in 0..<6 {
+				try checkpoint()
+				usleep(50_000)
+				if observe() { return true }
+			}
+			return false
+		}
+
+		// Signals shared by every pid pointer check: the element's value and
+		// selection, the focused window, sheets, onscreen windows, frontmost app.
+		func pointerChangeObserved(_ target: AXUIElement?, baselineCg: Set<UInt32>) -> Bool {
+			if let target {
+				if stringAttribute(target, attribute: kAXValueAttribute as CFString) != beforeValue { return true }
+				if stringAttribute(target, attribute: kAXSelectedTextAttribute as CFString) != beforeSelected { return true }
+			}
+			if focusedWindowSummary(pid: pid) != beforeFocusedWindow { return true }
+			let sheets = windowElement(pid: pid, windowId: record.windowId).map { sheetElements(of: $0).count } ?? beforeSheetCount
+			if sheets != beforeSheetCount { return true }
+			if cgRootSignature(pid: pid) != baselineCg { return true }
+			return NSWorkspace.shared.frontmostApplication?.processIdentifier != frontmostBefore
+		}
+
+		// Ungranted background pointer attempt: a click/press on a native element
+		// without AXPress, or a coordinate click/scroll/drag, is posted by pid and
+		// then verified. Without an observable change the request is refused with
+		// `foreground_required`, reporting only effects from earlier work as
+		// possible plus `pidPointerAttempted`/`observableChange: false` evidence.
+		var attemptProbe: PointerProbe?
+		var effectBeforeAttempt = false
+		/// Baseline taken right before the first pid event of the attempt.
+		func beginBackgroundPidAttempt(at point: CGPoint) {
+			effectBeforeAttempt = context?.effectPossible ?? false
+			attemptProbe = capturePointerProbe(pid: pid, element: element, point: point)
+		}
 		func executeCoordinates(_ point: CGPoint) throws {
 			guard element != nil || record.hasImage else {
 				throw BridgeFailure(message: "Coordinate grounding is unavailable for this outline-only root", code: "coordinate_unavailable_for_root")
@@ -2635,16 +2673,23 @@ final class Bridge {
 			} else {
 				// No AX action can realize this click, so only pointer input
 				// remains, and AppKit views often ignore pid-targeted events.
-				// Without a grant the refusal is decided here, before any
-				// checkpoint, markEffect, or event (effectPossible reflects only
-				// earlier work, such as a failed ax_only text focus write). A
-				// granted foreground request takes the HID path; confirmed or
-				// inconclusive web content keeps its prior ax_only pointer path.
+				// Ungranted background: post by pid and verify (below). Ungranted
+				// ax_only: refused here, before any checkpoint, markEffect, or
+				// event (effectPossible reflects only earlier work, such as a
+				// failed ax_only text focus write). A granted foreground request
+				// takes the HID path; confirmed or inconclusive web content keeps
+				// its prior ax_only pointer path.
 				if !foregroundGranted && !inWebArea {
-					throw foregroundRequired("target has no accessibility action; pointer delivery needs a host foreground grant")
+					guard policy == "background" else {
+						throw foregroundRequired("target has no accessibility action; pointer delivery needs a host foreground grant")
+					}
+					let point = try coordinatePoint()
+					beginBackgroundPidAttempt(at: point)
+					try executeCoordinates(point)
+				} else {
+					pointerWithoutAXAction = true
+					try executeCoordinates(coordinatePoint())
 				}
-				pointerWithoutAXAction = true
-				try executeCoordinates(coordinatePoint())
 			}
 		} else if let element, action == "setText" {
 			let text = params["text"] as? String ?? ""
@@ -2754,7 +2799,30 @@ final class Bridge {
 			}
 			try executeCoordinates(coordinatePoint())
 		} else {
-			try executeCoordinates(coordinatePoint())
+			let point = try coordinatePoint()
+			if policy == "background" && !foregroundGranted && ["press", "click", "scroll", "drag"].contains(action) {
+				beginBackgroundPidAttempt(at: point)
+			}
+			try executeCoordinates(point)
+		}
+
+		if let probe = attemptProbe {
+			let changed = try settlePointerChange {
+				pointerChangeObserved(element, baselineCg: probe.baselineCg) || pointerProbeChanged(probe)
+			}
+			if changed {
+				var evidence: [String: Any] = ["deliveryUsed": "pid_pointer", "pidPointerAttempted": true, "observableChange": true]
+				if beforeFocusedWindow != focusedWindowSummary(pid: pid) { evidence["windowChanged"] = true }
+				return try finish(["outcome": "worked", "performed": performed, "evidence": evidence])
+			}
+			// Verified no observable change: the events this attempt posted do not
+			// count toward effectPossible; earlier work in the request still does.
+			throw BridgeFailure(
+				message: "Pid-targeted pointer input produced no observable change; pointer delivery needs a host foreground grant",
+				code: "foreground_required",
+				effectPossible: effectBeforeAttempt,
+				details: ["evidence": ["deliveryUsed": "pid_pointer", "pidPointerAttempted": true, "observableChange": false]]
+			)
 		}
 
 		let afterSheetCount = windowElement(pid: pid, windowId: record.windowId).map { sheetElements(of: $0).count } ?? beforeSheetCount
@@ -2779,21 +2847,7 @@ final class Bridge {
 			if pidPointerPosted && pointerWithoutAXAction && axFocusedTarget == nil && outcome != "worked" {
 				// Bounded settle window (6 x 50 ms, checkpointed): value,
 				// selection, focused window, sheets, onscreen windows, frontmost.
-				func changeObserved() -> Bool {
-					if stringAttribute(element, attribute: kAXValueAttribute as CFString) != beforeValue { return true }
-					if stringAttribute(element, attribute: kAXSelectedTextAttribute as CFString) != beforeSelected { return true }
-					if focusedWindowSummary(pid: pid) != beforeFocusedWindow { return true }
-					let sheets = windowElement(pid: pid, windowId: record.windowId).map { sheetElements(of: $0).count } ?? beforeSheetCount
-					if sheets != beforeSheetCount { return true }
-					if cgRootSignature(pid: pid) != pointerBaselineCg { return true }
-					return NSWorkspace.shared.frontmostApplication?.processIdentifier != frontmostBefore
-				}
-				var changed = false
-				for _ in 0..<6 where !changed {
-					try checkpoint()
-					usleep(50_000)
-					changed = changeObserved()
-				}
+				let changed = try settlePointerChange { pointerChangeObserved(element, baselineCg: pointerBaselineCg) }
 				evidence["observableChange"] = changed
 				if changed {
 					outcome = "worked"
@@ -2841,6 +2895,92 @@ final class Bridge {
 			output["evidence"] = upgraded
 		}
 		return output
+	}
+
+	/// Baseline for an ungranted background pid pointer attempt. The probe is
+	/// the ref element, else the target app's element under the point.
+	private struct PointerProbe {
+		let pid: Int32
+		let point: CGPoint
+		let baselineCg: Set<UInt32>
+		let hit: AXUIElement?
+		let probe: AXUIElement?
+		let value: String?
+		let selected: String?
+		let frame: CGRect?
+		let scroll: String?
+		let focused: AXUIElement?
+	}
+
+	private func capturePointerProbe(pid: Int32, element: AXUIElement?, point: CGPoint) -> PointerProbe {
+		let hit = hitTestElement(at: point)
+		let probe = element ?? hit.flatMap { pidForElement($0) == pid ? $0 : nil }
+		return PointerProbe(
+			pid: pid,
+			point: point,
+			baselineCg: cgRootSignature(pid: pid),
+			hit: hit,
+			probe: probe,
+			value: probe.flatMap { stringAttribute($0, attribute: kAXValueAttribute as CFString) },
+			selected: probe.flatMap { stringAttribute($0, attribute: kAXSelectedTextAttribute as CFString) },
+			frame: probe.flatMap { frameForElement($0) },
+			scroll: probe.flatMap { scrollAreaSignature(from: $0) },
+			focused: appFocusedElement(pid: pid)
+		)
+	}
+
+	/// Probe value, selection, frame, enclosing scroll position, the element
+	/// under the point, and the app's focused element. Any doubt counts as a
+	/// change: a false change only forgoes the foreground retry.
+	private func pointerProbeChanged(_ base: PointerProbe) -> Bool {
+		if let probe = base.probe {
+			if stringAttribute(probe, attribute: kAXValueAttribute as CFString) != base.value { return true }
+			if stringAttribute(probe, attribute: kAXSelectedTextAttribute as CFString) != base.selected { return true }
+			if frameForElement(probe) != base.frame { return true }
+			if scrollAreaSignature(from: probe) != base.scroll { return true }
+		}
+		if !optionalSameElement(base.hit, hitTestElement(at: base.point)) { return true }
+		return !optionalSameElement(base.focused, appFocusedElement(pid: base.pid))
+	}
+
+	private func appFocusedElement(pid: Int32) -> AXUIElement? {
+		let app = AXUIElementCreateApplication(pid)
+		return copyAttribute(app, attribute: kAXFocusedUIElementAttribute as CFString).flatMap(asAXElement)
+	}
+
+	private func optionalSameElement(_ lhs: AXUIElement?, _ rhs: AXUIElement?) -> Bool {
+		switch (lhs, rhs) {
+		case (nil, nil): return true
+		case let (left?, right?): return sameElement(left, right)
+		default: return false
+		}
+	}
+
+	/// Scroll-bar values of the nearest enclosing `AXScrollArea` (12 parents),
+	/// or nil when there is none.
+	private func scrollAreaSignature(from element: AXUIElement) -> String? {
+		var current: AXUIElement? = element
+		var depth = 0
+		while let candidate = current, depth < 12 {
+			if stringAttribute(candidate, attribute: kAXRoleAttribute as CFString) == "AXScrollArea" {
+				return ["AXVerticalScrollBar", "AXHorizontalScrollBar"].map { name -> String in
+					guard let bar = copyAttribute(candidate, attribute: name as CFString).flatMap(asAXElement),
+						let value = copyAttribute(bar, attribute: kAXValueAttribute as CFString)
+					else { return "-" }
+					return String(describing: value)
+				}.joined(separator: "|")
+			}
+			current = parentElement(candidate)
+			depth += 1
+		}
+		return nil
+	}
+
+	/// Wire error of a failed `actBatch` step, with any refusal evidence.
+	private func batchStepError(_ failure: BridgeFailure, context: RequestContext?) -> [String: Any] {
+		var stepError: [String: Any] = ["code": failure.code, "message": failure.message, "effectPossible": failure.effectPossible ?? context?.effectPossible ?? true]
+		if let evidence = failure.details?["evidence"] { stepError["evidence"] = evidence }
+		return stepError
 	}
 
 	private func attachFrontmost(to response: inout [String: Any], before: pid_t?) {
@@ -2891,7 +3031,7 @@ final class Bridge {
 					failure.result = partial
 					throw failure
 				}
-				steps.append(["outcome": "didnt", "error": ["code": failure.code, "message": failure.message, "effectPossible": failure.effectPossible ?? context?.effectPossible ?? true]])
+				steps.append(["outcome": "didnt", "error": batchStepError(failure, context: context)])
 				stoppedAt = index
 				break
 			}

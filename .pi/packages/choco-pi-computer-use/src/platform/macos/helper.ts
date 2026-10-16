@@ -20,6 +20,8 @@ import {
   type HelperCancelledResult,
   type HelperCancelState,
   type HelperClaimResult,
+  type HelperRefusalEvidence,
+  PlatformCommandError,
   type PlatformDiagnostics,
   type PlatformRequestSession,
 } from "../types.ts";
@@ -28,7 +30,13 @@ import { resolveMacosHelperAppPath } from "./helper-path.mjs";
 interface HelperResponseEnvelope {
   ok?: boolean;
   result: JsonValue;
-  error?: { message?: string; code?: string; effectPossible?: boolean; activeRequests?: number };
+  error?: {
+    message?: string;
+    code?: string;
+    effectPossible?: boolean;
+    activeRequests?: number;
+    evidence?: JsonValue;
+  };
 }
 
 interface DiagnosticsResponse {
@@ -114,7 +122,7 @@ export class HelperAbortedError extends Error {
   }
 }
 
-export class HelperCommandError extends Error {
+export class HelperCommandError extends PlatformCommandError {
   readonly code?: string;
   /** From `error.effectPossible`; false only when the helper proved nothing was delivered. */
   readonly effectPossible?: boolean;
@@ -128,9 +136,14 @@ export class HelperCommandError extends Error {
   constructor(
     message: string,
     code?: string,
-    details?: { effectPossible?: boolean; result?: JsonValue; activeRequests?: number },
+    details?: {
+      effectPossible?: boolean;
+      result?: JsonValue;
+      activeRequests?: number;
+      evidence?: HelperRefusalEvidence;
+    },
   ) {
-    super(message);
+    super(message, details?.evidence);
     this.name = "HelperCommandError";
     this.code = code;
     this.effectPossible = details?.effectPossible;
@@ -166,6 +179,18 @@ function booleanField(value: JsonField): boolean | undefined {
 
 function numberField(value: JsonField): number | undefined {
   return isNumber(value) && Number.isFinite(value) ? value : undefined;
+}
+
+/** Typed `error.evidence` of a refusal; undefined when absent or carrying no known field. */
+export function parseRefusalEvidence(value: JsonField): HelperRefusalEvidence | undefined {
+  if (!isJsonObject(value)) return undefined;
+  const evidence: HelperRefusalEvidence = {};
+  const attempted = booleanField(value.pidPointerAttempted);
+  if (attempted !== undefined) evidence.pidPointerAttempted = attempted;
+  const changed = booleanField(value.observableChange);
+  if (changed !== undefined) evidence.observableChange = changed;
+  if (isString(value.deliveryUsed)) evidence.deliveryUsed = value.deliveryUsed;
+  return Object.keys(evidence).length > 0 ? evidence : undefined;
 }
 
 function parseCancelAck(value: JsonField): HelperCancelAck {
@@ -487,6 +512,7 @@ export class MacosHelperClient {
                   effectPossible: booleanField(parsed?.error?.effectPossible),
                   result: parsed.result ?? undefined,
                   activeRequests: numberField(parsed?.error?.activeRequests),
+                  evidence: parseRefusalEvidence(parsed?.error?.evidence),
                 },
               ),
             );

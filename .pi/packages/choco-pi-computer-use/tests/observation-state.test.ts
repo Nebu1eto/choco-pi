@@ -105,6 +105,9 @@ test("observation prerequisites self-heal for reads and fail safely for actions"
     async focusWindow() {
       throw new Error("Read-only auto-observation must not focus a window.");
     },
+    async restoreUserFocus() {
+      throw new Error("Read-only auto-observation must not restore focus.");
+    },
     async observe(request): Promise<LookResponse> {
       observationCount += 1;
       if (observationCount === 1) {

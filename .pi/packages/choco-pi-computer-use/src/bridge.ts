@@ -36,13 +36,21 @@ import {
   type CdpPageSnapshot,
 } from "./cdp.ts";
 import {
+  clearSessionGrants,
   foregroundGrantCovers,
+  foregroundPromptMode,
   getComputerUseConfig,
   isBrowserUseEnabled,
   isHeadlessMode,
+  isSessionDenied,
   loadComputerUseConfig,
   type ComputerUseConfig,
 } from "./config.ts";
+import {
+  grantPromptGranted,
+  promptForegroundGrant,
+  type GrantPromptOutcome,
+} from "./grant-prompt.ts";
 import {
   isJsonObject,
   isNumber,
@@ -114,6 +122,7 @@ import {
   type FramePoints,
   type HelperActPerformed,
   type HelperActResult,
+  type HelperRefusalEvidence,
   type NativeInputDelivery,
   type PlatformActRequest,
   type PlatformActRequestBase,
@@ -123,6 +132,7 @@ import {
   type PlatformFrontmostResult as FrontmostResult,
   type PlatformPoint,
   type PlatformRoot as HelperWindow,
+  PlatformCommandError,
 } from "./platform/types.ts";
 import type { PermissionStatus } from "./permissions.ts";
 import { ResourceScheduler, StaleResourceStateError, type StoredState } from "./runtime.ts";
@@ -178,6 +188,10 @@ interface ForegroundRefusal {
   capability: string;
   /** False only when the helper proved nothing was delivered. */
   effectPossible: boolean;
+  /** The helper posted pid-targeted pointer input before refusing. */
+  pidPointerAttempted?: boolean;
+  /** With `pidPointerAttempted`: whether the settle window observed a change. */
+  observableChange?: boolean;
   grantHint: string;
   reason: string;
 }
@@ -227,13 +241,21 @@ interface ExecutionTrace {
   backgroundFirst?: boolean;
   /** True only after a granted retry: a covered background attempt was refused with proof of no delivery. */
   escalatedToForeground?: boolean;
-  escalationReason?: string;
+  /** `foreground_required`: a config/env or earlier session grant covered the target; `user_grant`: the user granted it at the prompt; `auto_grant`: `foreground_prompt: "always"` granted it. */
+  escalationReason?: "foreground_required" | "user_grant" | "auto_grant";
+  /** The host grant prompt shown (or skipped) after a refusal that proved non-delivery. */
+  grantPrompt?: GrantPromptOutcome;
   backgroundAttempt?: { outcome: "foreground_required" | "didnt"; reason: string };
+  /** A background refusal followed a pid-targeted pointer attempt that showed no change. */
+  pidPointerAttempted?: boolean;
   requestId?: string;
   foregroundGrant?: true;
   refusal?: ForegroundRefusal;
   frontmostBefore?: JsonValue;
   frontmostAfter?: JsonValue;
+  /** Set after granted foreground input: whether focus went back to the user's previous app. */
+  focusRestored?: boolean;
+  focusRestoreReason?: string;
   verification?: {
     status: "verified" | "preexisting" | "failed";
     text?: string;
@@ -576,6 +598,7 @@ const helperRequestSession = { id: randomUUID(), generation: 0 };
 /** Release handles and state owned by the current Pi session. */
 export async function shutdownComputerUseSession(): Promise<void> {
   helperRequestSession.generation += 1;
+  clearSessionGrants();
   await resourceScheduler.close();
   resourceScheduler = new ResourceScheduler();
   disconnectCdp();
@@ -1646,6 +1669,20 @@ function errorEffectPossible(error: Error): boolean {
   return !("effectPossible" in error && error.effectPossible === false);
 }
 
+/**
+ * Whether a refusal proves nothing took effect: `effectPossible: false`, and
+ * either no pid pointer attempt preceded it or that attempt verifiably showed
+ * no change. An attempt with a change or without a verdict (inconsistent
+ * evidence) counts as a possible effect, so it is never retried or prompted.
+ */
+function refusalProvesNoEffect(
+  effectPossibleFlag: boolean | undefined,
+  evidence: HelperRefusalEvidence | undefined,
+): boolean {
+  if (effectPossibleFlag !== false) return false;
+  return evidence?.pidPointerAttempted !== true || evidence.observableChange === false;
+}
+
 function foregroundCapability(action: NativePreparedAction): string {
   if ((action.action === "click" || action.action === "press") && "x" in action.target)
     return "coordinate_pointer_input";
@@ -1670,7 +1707,14 @@ function foregroundGrantHint(
       ? "A host foreground grant covers this app, and the helper still could not deliver this action. Observe the current state before choosing another approach."
       : "A host foreground grant covers this app, but the background attempt may have had an effect, so it was not retried in the foreground. Observe the current state; setText on an editable ref needs no foreground input.";
   const grantValue = target.bundleId ?? "*";
-  return `Foreground input for ${target.appName} needs a host-issued grant that the model cannot issue: the user can set PI_COMPUTER_USE_FOREGROUND_GRANT=${grantValue} (comma-separated bundle ids) or add "${grantValue}" to "foreground_grant" in .pi/computer-use.json, then restart pi.`;
+  const fileHint = `add "${grantValue}" to "foreground_grant" in ~/.pi/agent/extensions/pi-computer-use.json or .pi/computer-use.json (applies on the next call, no restart), set PI_COMPUTER_USE_FOREGROUND_GRANT before starting pi, or run /computer-use grant always to allow every app without asking; /computer-use shows the active grants`;
+  if (isSessionDenied(target.bundleId))
+    return `The user declined foreground input for ${target.appName} in this session, so pi will not ask again; do not retry this action. Only the user can change this: ${fileHint}.`;
+  const prompt =
+    foregroundPromptMode() === "ask"
+      ? "In an interactive pi TUI session the user is asked once per app when a refusal proves nothing was delivered; otherwise the user can"
+      : "The user can";
+  return `Foreground input for ${target.appName} needs a host-issued grant that the model cannot issue. ${prompt} ${fileHint}.`;
 }
 
 function foregroundRefusal(
@@ -1680,8 +1724,11 @@ function foregroundRefusal(
   policy: DeliveryPolicy,
   effectPossible: boolean,
   reason: string,
+  evidence?: HelperRefusalEvidence,
 ): ForegroundRefusal {
-  return {
+  const attempted = evidence?.pidPointerAttempted === true;
+  const hint = foregroundGrantHint(target, action, headless, policy);
+  const refusal: ForegroundRefusal = {
     code: "foreground_required",
     target: {
       app: target.appName,
@@ -1692,9 +1739,18 @@ function foregroundRefusal(
     action: action.action,
     capability: foregroundCapability(action),
     effectPossible,
-    grantHint: foregroundGrantHint(target, action, headless, policy),
+    grantHint:
+      attempted && evidence?.observableChange === false
+        ? `The helper delivered this action as background pid-targeted pointer input and observed no change within its settle window. ${hint}`
+        : hint,
     reason,
   };
+  if (attempted) {
+    refusal.pidPointerAttempted = true;
+    if (evidence?.observableChange !== undefined)
+      refusal.observableChange = evidence.observableChange;
+  }
+  return refusal;
 }
 
 function isKeyboardAction(action: NativePreparedAction): boolean {
@@ -1707,15 +1763,103 @@ function isPointerOnlyClick(action: NativePreparedAction): boolean {
 }
 
 /**
+ * Per-transaction host context for foreground decisions: the tool call's
+ * extension context (for the user grant prompt) and the user's frontmost app
+ * captured once before the first granted foreground attempt.
+ */
+interface ForegroundSession {
+  ctx?: ExtensionContext;
+  focusCaptured: boolean;
+  focusBefore?: { pid: number; windowTitle?: string };
+}
+
+/** Best effort: records the user's frontmost app and window before granted input steals focus. */
+async function captureUserFocus(
+  session: ForegroundSession | undefined,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!session || session.focusCaptured) return;
+  session.focusCaptured = true;
+  if (!getComputerUseConfig().restore_focus) return;
+  try {
+    const front = await currentPlatformBackend.getFrontmost(signal);
+    session.focusBefore = { pid: front.pid, windowTitle: front.windowTitle };
+  } catch {
+    // The window title is optional evidence; the act reply still carries frontmostBefore.
+  }
+  throwIfAborted(signal);
+}
+
+/**
+ * After a transaction that delivered granted foreground input, return focus to
+ * the app the user had in front. Best effort: never changes the act outcome.
+ * Skipped when the target was already frontmost, when the target did not end
+ * frontmost, or when the user moved to a third app meanwhile.
+ */
+async function restoreFocusAfterGrantedInput(
+  execution: ExecutionTrace,
+  target: ResolvedTarget,
+  session: ForegroundSession | undefined,
+  signal?: AbortSignal,
+): Promise<void> {
+  const steps = execution.steps ?? [execution];
+  if (!steps.some((step) => step.foregroundGrant === true)) return;
+  const record = (restored: boolean, reason: string): void => {
+    execution.focusRestored = restored;
+    execution.focusRestoreReason = reason;
+  };
+  if (!getComputerUseConfig().restore_focus) return record(false, "disabled");
+  const before = steps.map((step) => step.frontmostBefore).find(isNumber);
+  const after = steps
+    .map((step) => step.frontmostAfter)
+    .filter(isNumber)
+    .at(-1);
+  if (before === undefined || after === undefined) return record(false, "no_frontmost_evidence");
+  if (before === target.pid) return record(false, "target_was_frontmost");
+  if (after !== target.pid)
+    return record(false, after === before ? "focus_not_taken" : "user_switched");
+  if (signal?.aborted) return record(false, "aborted");
+  // The last act reply can be stale (a later wait step, or slow settling):
+  // confirm the target is still frontmost right now so a user who moved to
+  // another app meanwhile is never pulled back.
+  let current: number;
+  try {
+    current = (await currentPlatformBackend.getFrontmost(signal)).pid;
+  } catch (error) {
+    if (signal?.aborted) return record(false, "aborted");
+    return record(
+      false,
+      `frontmost_check_failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (signal?.aborted) return record(false, "aborted");
+  if (current !== target.pid) return record(false, "user_switched");
+  const windowTitle =
+    session?.focusBefore?.pid === before ? session.focusBefore.windowTitle : undefined;
+  try {
+    const result = await currentPlatformBackend.restoreUserFocus(
+      windowTitle ? { pid: before, windowTitle } : { pid: before },
+      signal,
+    );
+    record(result.restored, result.restored ? "restored" : "helper_did_not_restore");
+  } catch (error) {
+    record(false, `restore_failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+/**
  * Delivers one action exactly once. Foreground delivery is used only when the
  * action wants it and a host-issued grant covers the target; otherwise the
- * helper's foreground need becomes a structured refusal, never a retry.
+ * helper's foreground need becomes a structured refusal. The one retry happens
+ * after a background refusal that proved non-delivery, when a grant covers the
+ * target or the user grants it at the host prompt.
  */
 async function helperAct(
   target: ResolvedTarget,
   action: NativePreparedAction,
   headless: boolean,
   signal?: AbortSignal,
+  session?: ForegroundSession,
 ): Promise<ExecutionTrace> {
   const checked = (candidate: HelperActResult): HelperActResult => {
     if (!candidate || !["worked", "didnt", "unknown"].includes(candidate.outcome)) {
@@ -1737,49 +1881,88 @@ async function helperAct(
       const result = checked(await currentPlatformBackend.act(request, { signal, timeoutMs }));
       return { request, result };
     } catch (error) {
+      const evidence = error instanceof PlatformCommandError ? error.evidence : undefined;
       if (!(error instanceof Error && "code" in error && error.code === "foreground_required"))
         throw error;
       return {
         request,
-        thrown: { message: error.message, effectPossible: errorEffectPossible(error) },
+        thrown: {
+          message: error.message,
+          effectPossible: !refusalProvesNoEffect(
+            errorEffectPossible(error) ? undefined : false,
+            evidence,
+          ),
+          evidence,
+        },
       };
     }
   };
+  if (policy === "foreground") await captureUserFocus(session, signal);
   const first = await attempt(policy);
   const firstRefusal = helperRefusalSignal(first);
-  // The only escalation: a host grant covers the target, the helper refused a
-  // background attempt, and it proved nothing was delivered. Exactly one retry.
-  if (
-    policy === "background" &&
-    firstRefusal?.effectPossible === false &&
-    foregroundGrantCovers(target.bundleId)
-  ) {
-    const second = await attempt("foreground");
-    const trace = attemptTrace(target, action, headless, "foreground", second);
-    trace.backgroundFirst = true;
-    trace.escalatedToForeground = true;
-    trace.escalationReason = "foreground_required";
-    trace.backgroundAttempt = { outcome: "foreground_required", reason: firstRefusal.message };
-    return trace;
+  // The only escalation: the helper refused a background attempt and proved
+  // nothing took effect (no delivery, or a pid pointer attempt that verifiably
+  // changed nothing), and a host grant covers the target (from config, env, or
+  // an earlier session answer) or the user grants it now. Exactly one retry.
+  if (policy !== "background" || firstRefusal?.effectPossible !== false)
+    return attemptTrace(target, action, headless, policy, first);
+  let escalationReason: ExecutionTrace["escalationReason"];
+  let prompt: GrantPromptOutcome | undefined;
+  if (foregroundGrantCovers(target.bundleId)) escalationReason = "foreground_required";
+  else if (session) {
+    prompt = await promptForegroundGrant(
+      session.ctx,
+      { bundleId: target.bundleId, appName: target.appName },
+      {
+        action: action.action,
+        capability: foregroundCapability(action),
+        pidPointerAttempted: firstRefusal.evidence?.pidPointerAttempted === true,
+      },
+      signal,
+    );
+    throwIfAborted(signal);
+    if (grantPromptGranted(prompt) && foregroundGrantCovers(target.bundleId))
+      escalationReason = prompt.decision === "auto" ? "auto_grant" : "user_grant";
   }
-  return attemptTrace(target, action, headless, policy, first);
+  if (!escalationReason) {
+    const refused = attemptTrace(target, action, headless, policy, first);
+    if (prompt) refused.grantPrompt = prompt;
+    return refused;
+  }
+  await captureUserFocus(session, signal);
+  const second = await attempt("foreground");
+  const trace = attemptTrace(target, action, headless, "foreground", second);
+  trace.backgroundFirst = true;
+  trace.escalatedToForeground = true;
+  trace.escalationReason = escalationReason;
+  trace.backgroundAttempt = { outcome: "foreground_required", reason: firstRefusal.message };
+  if (firstRefusal.evidence?.pidPointerAttempted === true) trace.pidPointerAttempted = true;
+  if (prompt) trace.grantPrompt = prompt;
+  return trace;
+}
+
+interface HelperRefusalSignal {
+  message: string;
+  /** False only when the refusal proves nothing took effect (see `refusalProvesNoEffect`). */
+  effectPossible: boolean;
+  evidence?: HelperRefusalEvidence;
 }
 
 type HelperAttempt = { request: PlatformActRequest } & (
   | { result: HelperActResult; thrown?: undefined }
-  | { result?: undefined; thrown: { message: string; effectPossible: boolean } }
+  | { result?: undefined; thrown: HelperRefusalSignal }
 );
 
 /** A helper foreground_required refusal, thrown or returned, with its delivery evidence. */
-function helperRefusalSignal(
-  attempt: HelperAttempt,
-): { message: string; effectPossible: boolean } | undefined {
+function helperRefusalSignal(attempt: HelperAttempt): HelperRefusalSignal | undefined {
   if (attempt.thrown) return attempt.thrown;
   const error = attempt.result.error;
   if (error?.code !== "foreground_required") return undefined;
+  const { evidence } = error;
   return {
     message: error.message ?? "The helper requires foreground delivery for this action.",
-    effectPossible: error.effectPossible !== false,
+    effectPossible: !refusalProvesNoEffect(error.effectPossible, evidence),
+    evidence,
   };
 }
 
@@ -1792,16 +1975,25 @@ function attemptTrace(
 ): ExecutionTrace {
   const { request } = attempt;
   if (attempt.thrown) {
-    const { message, effectPossible } = attempt.thrown;
+    const { message, effectPossible, evidence } = attempt.thrown;
     return executionTrace("act", policy === "ax_only" ? "stealth" : "default", {
       outcome: "didnt",
       deliveryPolicy: policy,
       error: { code: "foreground_required", message },
       backgroundFirst: policy !== "foreground",
       backgroundAttempt: { outcome: "foreground_required", reason: message },
+      pidPointerAttempted: evidence?.pidPointerAttempted === true ? true : undefined,
       requestId: request.requestId,
       foregroundGrant: request.foregroundGrant,
-      refusal: foregroundRefusal(target, action, headless, policy, effectPossible, message),
+      refusal: foregroundRefusal(
+        target,
+        action,
+        headless,
+        policy,
+        effectPossible,
+        message,
+        evidence,
+      ),
     });
   }
   const { result } = attempt;
@@ -1809,10 +2001,12 @@ function attemptTrace(
   trace.requestId = request.requestId;
   trace.foregroundGrant = request.foregroundGrant;
   trace.backgroundFirst = policy !== "foreground";
+  if (result.evidence?.pidPointerAttempted === true) trace.pidPointerAttempted = true;
   const refusal = refusalForResult(target, action, headless, policy, result);
   if (refusal) {
     trace.outcome = "didnt";
     trace.refusal = refusal;
+    if (refusal.pidPointerAttempted) trace.pidPointerAttempted = true;
     trace.backgroundAttempt = {
       outcome: result.error?.code === "foreground_required" ? "foreground_required" : "didnt",
       reason: refusal.reason,
@@ -1829,13 +2023,15 @@ function refusalForResult(
   result: HelperActResult,
 ): ForegroundRefusal | undefined {
   if (result.error?.code === "foreground_required") {
+    const { evidence } = result.error;
     return foregroundRefusal(
       target,
       action,
       headless,
       policy,
-      result.error.effectPossible !== false,
+      !refusalProvesNoEffect(result.error.effectPossible, evidence),
       result.error.message ?? "The helper requires foreground delivery for this action.",
+      evidence,
     );
   }
   // A `didnt` is a foreground need for foreground-wanting, keyboard, and
@@ -2863,13 +3059,14 @@ async function dispatchUiAction(
   headless: boolean,
   state: ActionState,
   signal?: AbortSignal,
+  session?: ForegroundSession,
 ): Promise<ExecutionTrace> {
   const prepared = prepareUiAction(action, state, look, headless);
   if (prepared.action === "wait") {
     await sleep(prepared.params.ms, signal);
     return executionTrace("wait", "stealth", { outcome: "worked" });
   }
-  const trace = await helperAct(target, prepared, headless, signal);
+  const trace = await helperAct(target, prepared, headless, signal, session);
   if (
     !headless &&
     (prepared.establishesFocus || (prepared.action === "click" && "x" in prepared.target))
@@ -2885,6 +3082,7 @@ async function dispatchUiTransaction(
   look: LookResponse,
   headless: boolean,
   signal?: AbortSignal,
+  ctx?: ExtensionContext,
 ): Promise<ExecutionTrace> {
   // Strict-headless batches have one immutable delivery class. Otherwise each
   // action is delivered once, independently; the first refusal stops the
@@ -2932,12 +3130,23 @@ async function dispatchUiTransaction(
   }
   const steps: ExecutionTrace[] = [];
   const actionState: ActionState = { currentFocus: false };
+  const session: ForegroundSession = { ctx, focusCaptured: false };
   for (const action of actions) {
-    const step = await dispatchUiAction(action, target, look, headless, actionState, signal);
+    const step = await dispatchUiAction(
+      action,
+      target,
+      look,
+      headless,
+      actionState,
+      signal,
+      session,
+    );
     steps.push(step);
     if (step.refusal || step.outcome === "didnt") break;
   }
-  return aggregateExecutions(steps);
+  const execution = aggregateExecutions(steps);
+  await restoreFocusAfterGrantedInput(execution, target, session, signal);
+  return execution;
 }
 
 interface UnverifiedAction {
@@ -3019,7 +3228,11 @@ function aggregateExecutions(steps: ExecutionTrace[]): ExecutionTrace {
       stoppedAt: refused ? refusedAt : undefined,
       escalatedToForeground: escalated ? true : undefined,
       escalationReason: escalated?.escalationReason,
+      grantPrompt: steps.find((step) => step.grantPrompt !== undefined)?.grantPrompt,
       backgroundAttempt: refused?.backgroundAttempt ?? escalated?.backgroundAttempt,
+      pidPointerAttempted: steps.some((step) => step.pidPointerAttempted === true)
+        ? true
+        : undefined,
       frontmostBefore: steps[0]?.frontmostBefore,
       frontmostAfter: steps.at(-1)?.frontmostAfter,
     },
@@ -3163,9 +3376,12 @@ function foregroundRequiredResult(
     config: detailsConfig(),
   };
   const step = execution.stoppedAt !== undefined ? ` (action ${execution.stoppedAt + 1})` : "";
+  const noEffect = refusal.pidPointerAttempted
+    ? "The refused action was posted as background pointer input and produced no observable change."
+    : "The refused action delivered no input.";
   const effect = refusal.effectPossible
     ? "The refused action may still have reached the app; observe before continuing."
-    : "The refused action delivered no input.";
+    : noEffect;
   const prefix =
     execution.stoppedAt !== undefined && execution.stoppedAt > 0
       ? " Earlier actions in this call were delivered."
@@ -3288,6 +3504,7 @@ async function performDesktopTransaction(
   params: ActParams,
   actions: UiAction[],
   signal?: AbortSignal,
+  ctx?: ExtensionContext,
 ): Promise<AgentToolResult<ComputerUseDetails | TerminalDesktopActionDetails>> {
   const state = operationState();
   state.currentImageMode = "auto";
@@ -3302,7 +3519,7 @@ async function performDesktopTransaction(
     const headless = getComputerUseConfig().headless;
     let execution: ExecutionTrace;
     try {
-      execution = await dispatchUiTransaction(actions, target, look, headless, signal);
+      execution = await dispatchUiTransaction(actions, target, look, headless, signal, ctx);
     } catch (error) {
       const interruption =
         signal?.aborted || !(error instanceof Error) ? undefined : helperInterruption(error);
@@ -3563,6 +3780,7 @@ function validateActionTarget(action: UiAction): void {
 async function performAct(
   params: ActParams,
   signal?: AbortSignal,
+  ctx?: ExtensionContext,
 ): Promise<
   AgentToolResult<ComputerUseDetails | TerminalDesktopActionDetails | BrowserObservationDetails>
 > {
@@ -3571,7 +3789,7 @@ async function performAct(
   if (actions.length > 20) throw new Error("act_ui supports at most 20 actions per transaction.");
   for (const action of actions) validateActionTarget(action);
   if (operationState().contextId) return await performBrowserTransaction(params, actions, signal);
-  return await performDesktopTransaction(params, actions, signal);
+  return await performDesktopTransaction(params, actions, signal, ctx);
 }
 
 function managedBrowserExecutableCandidates(browser: "helium" | "chrome"): string[] {
@@ -3905,7 +4123,11 @@ async function executeTool<P, T>(
 
 function makeToolExecutor<P, D>(
   tool: string,
-  perform: (params: P, signal?: AbortSignal) => Promise<AgentToolResult<D>>,
+  perform: (
+    params: P,
+    signal: AbortSignal | undefined,
+    ctx: ExtensionContext,
+  ) => Promise<AgentToolResult<D>>,
 ) {
   return async (
     _toolCallId: string,
@@ -3917,7 +4139,7 @@ function makeToolExecutor<P, D>(
     try {
       return applyOutputEnvelope(
         tool,
-        await executeTool(tool, ctx, params, signal, () => perform(params, signal)),
+        await executeTool(tool, ctx, params, signal, () => perform(params, signal, ctx)),
       );
     } catch (error) {
       throw boundToolError(tool, error);

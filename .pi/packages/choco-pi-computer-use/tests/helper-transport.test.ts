@@ -96,6 +96,7 @@ function wireBackend(act?: ComputerUsePlatformBackend["act"]): ComputerUsePlatfo
     listRoots: macosBackend.listRoots,
     getFrontmost: macosBackend.getFrontmost,
     focusWindow: macosBackend.focusWindow,
+    restoreUserFocus: macosBackend.restoreUserFocus,
     observe: macosBackend.observe,
     act: act ?? macosBackend.act,
     actBatch: macosBackend.actBatch,
@@ -595,7 +596,29 @@ test("effectPossible:false from a helper error reaches HelperCommandError", asyn
   assert.ok(custom instanceof helper.HelperCommandError);
   assert.equal(custom.code, "foreground_required", "S2 refuses the custom view");
   assert.equal(custom.effectPossible, false);
-  assert.match(custom.message, /no accessibility action/);
+  assert.match(custom.message, /no observable change/);
+  assert.deepEqual(custom.evidence, {
+    deliveryUsed: "pid_pointer",
+    pidPointerAttempted: true,
+    observableChange: false,
+  });
+
+  // ax_only keeps the refusal before delivery, with no attempt evidence.
+  const axOnly = await rejection(
+    client.command(
+      "act",
+      actArgs(owner, look, {
+        action: "click",
+        target: { ref: CUSTOM_VIEW_REF },
+        policy: "ax_only",
+      }),
+    ),
+  );
+  assert.ok(axOnly instanceof helper.HelperCommandError);
+  assert.equal(axOnly.code, "foreground_required");
+  assert.equal(axOnly.effectPossible, false);
+  assert.match(axOnly.message, /no accessibility action/);
+  assert.equal(axOnly.evidence, undefined);
 
   // Like the helper, a button with AXPress is pressed through AX in the background.
   const pressed = await client.command<JsonObject>(
@@ -787,6 +810,13 @@ test("bridge: an S6 custom-view ref click reaches the fake by ref and escalates 
   const execution = field(details, "execution");
   assert.equal(execution.outcome, "unknown");
   assert.equal(execution.escalatedToForeground, true);
+  const restores = fake.requests.filter((request) => request.cmd === "restoreUserFocus");
+  assert.equal(restores.length, 1, "focus goes back to the user's app once");
+  assert.equal(restores[0]?.pid, 4141);
+  assert.equal(restores[0]?.windowTitle, "Terminal");
+  assert.equal(restores[0]?.foregroundGrant, true);
+  assert.equal(execution.focusRestored, true);
+  assert.equal(execution.focusRestoreReason, "restored");
   assert.match(text, /Effect not verified for action 1 \(click: unknown\)/);
   const regions = field(details, "note").regions;
   assert.ok(Array.isArray(regions));
@@ -807,9 +837,11 @@ test("bridge: an S2 custom-view ref click reaches the fake by ref and is refused
   assert.equal(acts[0]?.policy, "background");
   const error = field(field(acts[0]!, "response"), "error");
   assert.equal(error.code, "foreground_required");
-  assert.equal(error.effectPossible, false, "refused before any delivery");
+  assert.equal(error.effectPossible, false, "the pid attempt verifiably changed nothing");
+  assert.equal(field(error, "evidence").pidPointerAttempted, true);
+  assert.equal(field(error, "evidence").observableChange, false);
   assert.match(text, /foreground/i);
-  assert.match(text, /delivered no input/);
+  assert.match(text, /produced no observable change/);
 });
 
 test("bridge maps an ownership refusal to a structured owned_by_other_session result", async () => {

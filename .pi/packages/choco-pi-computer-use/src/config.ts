@@ -14,6 +14,15 @@ export interface ComputerUseConfig {
    * parameter can, so a model can never grant itself focus-stealing input.
    */
   foreground_grant: string[];
+  /**
+   * What happens after a background refusal that proved nothing was delivered
+   * and no grant covers the app: "ask" prompts once per app in an interactive
+   * TUI session; "always" grants that app for the session without asking (an
+   * explicit user opt-in, any host mode); "off" never prompts.
+   */
+  foreground_prompt: ForegroundPromptMode;
+  /** Return focus to the user's previous frontmost app after granted foreground input. */
+  restore_focus: boolean;
 }
 
 export interface ComputerUseConfigSource {
@@ -35,6 +44,8 @@ const DEFAULT_CONFIG: ComputerUseConfig = {
   cursor_overlay: true,
   managed_browser: "chrome",
   foreground_grant: [],
+  foreground_prompt: "ask",
+  restore_focus: true,
 };
 
 let activeConfig: ComputerUseConfig = { ...DEFAULT_CONFIG, foreground_grant: [] };
@@ -65,6 +76,20 @@ function parseForegroundGrant(value: JsonField): string[] | undefined {
   return normalizeGrantEntries(value.filter(isString));
 }
 
+export type ForegroundPromptMode = "ask" | "always" | "off";
+
+export function parseForegroundPrompt(value: JsonField): ForegroundPromptMode | undefined {
+  if (isString(value)) {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "ask") return "ask";
+    if (normalized === "always") return "always";
+    if (normalized === "off" || normalized === "never") return "off";
+  }
+  const enabled = parseBoolean(value);
+  if (enabled === undefined) return undefined;
+  return enabled ? "ask" : "off";
+}
+
 function normalizePartial(raw: JsonValue): Partial<ComputerUseConfig> {
   if (!isJsonObject(raw)) return {};
   const source = isJsonObject(raw.computer_use) ? raw.computer_use : raw;
@@ -80,6 +105,10 @@ function normalizePartial(raw: JsonValue): Partial<ComputerUseConfig> {
     out.managed_browser = managedBrowser;
   const foregroundGrant = parseForegroundGrant(source.foreground_grant);
   if (foregroundGrant !== undefined) out.foreground_grant = foregroundGrant;
+  const foregroundPrompt = parseForegroundPrompt(source.foreground_prompt);
+  if (foregroundPrompt !== undefined) out.foreground_prompt = foregroundPrompt;
+  const restoreFocus = parseBoolean(source.restore_focus);
+  if (restoreFocus !== undefined) out.restore_focus = restoreFocus;
   return out;
 }
 
@@ -111,12 +140,21 @@ function readEnv(): Partial<ComputerUseConfig> {
   const foregroundGrant = process.env.PI_COMPUTER_USE_FOREGROUND_GRANT;
   if (foregroundGrant !== undefined)
     out.foreground_grant = normalizeGrantEntries(foregroundGrant.split(","));
+  const foregroundPrompt = parseForegroundPrompt(process.env.PI_COMPUTER_USE_FOREGROUND_PROMPT);
+  if (foregroundPrompt !== undefined) out.foreground_prompt = foregroundPrompt;
+  const restoreFocus = parseBoolean(process.env.PI_COMPUTER_USE_RESTORE_FOCUS);
+  if (restoreFocus !== undefined) out.restore_focus = restoreFocus;
   return out;
+}
+
+/** Path of the user-level config file, the only file "Always allow" writes. */
+export function userComputerUseConfigPath(): string {
+  return path.join(getAgentDir(), "extensions", "pi-computer-use.json");
 }
 
 export function loadComputerUseConfig(cwd: string): LoadedComputerUseConfig {
   const sources = [
-    readConfigFile(path.join(getAgentDir(), "extensions", "pi-computer-use.json")),
+    readConfigFile(userComputerUseConfigPath()),
     readConfigFile(path.join(cwd, ".pi", "computer-use.json")),
   ];
   const env = readEnv();
@@ -146,11 +184,80 @@ export function isBrowserUseEnabled(): boolean {
   return activeConfig.browser_use;
 }
 
-/** True only when the host-issued grant names this bundle id exactly, or is "*". */
+/**
+ * Session grants and denials: issued only by the user answering the host's
+ * grant prompt, never by a tool parameter. Keyed by trimmed bundle id; cleared
+ * on session start and shutdown (which also bumps the generation so a prompt
+ * answered after its session ended grants nothing).
+ */
+const sessionGrants = new Set<string>();
+const sessionDenials = new Set<string>();
+let sessionGrantEpoch = 0;
+/** Mode chosen by the user with `/computer-use grant` for this session; wins over files and env. */
+let sessionPromptMode: ForegroundPromptMode | undefined;
+
+export function setSessionForegroundPromptMode(mode: ForegroundPromptMode): void {
+  sessionPromptMode = mode;
+}
+
+export function getSessionForegroundPromptMode(): ForegroundPromptMode | undefined {
+  return sessionPromptMode;
+}
+
+/** The effective prompt mode: the session choice, else the loaded config. */
+export function foregroundPromptMode(): ForegroundPromptMode {
+  return sessionPromptMode ?? activeConfig.foreground_prompt;
+}
+
+export function normalizeBundleId(bundleId: string | undefined): string | undefined {
+  const normalized = bundleId?.trim();
+  return normalized && normalized !== "*" ? normalized : undefined;
+}
+
+export function grantForSession(bundleId: string | undefined): boolean {
+  const normalized = normalizeBundleId(bundleId);
+  if (!normalized) return false;
+  sessionDenials.delete(normalized);
+  sessionGrants.add(normalized);
+  return true;
+}
+
+export function denyForSession(bundleId: string | undefined): boolean {
+  const normalized = normalizeBundleId(bundleId);
+  if (!normalized) return false;
+  sessionDenials.add(normalized);
+  return true;
+}
+
+export function isSessionDenied(bundleId: string | undefined): boolean {
+  const normalized = normalizeBundleId(bundleId);
+  return normalized !== undefined && sessionDenials.has(normalized);
+}
+
+export function getSessionGrants(): string[] {
+  return [...sessionGrants];
+}
+
+export function getSessionDenials(): string[] {
+  return [...sessionDenials];
+}
+
+export function sessionGrantGeneration(): number {
+  return sessionGrantEpoch;
+}
+
+export function clearSessionGrants(): void {
+  sessionGrants.clear();
+  sessionDenials.clear();
+  sessionPromptMode = undefined;
+  sessionGrantEpoch += 1;
+}
+
+/** True when the host-issued grant names this bundle id exactly or is "*", or the user granted it for this session. */
 export function foregroundGrantCovers(bundleId: string | undefined): boolean {
   const grant = activeConfig.foreground_grant;
   if (grant.includes("*")) return true;
   const normalized = bundleId?.trim();
   if (!normalized) return false;
-  return grant.includes(normalized);
+  return grant.includes(normalized) || sessionGrants.has(normalized);
 }

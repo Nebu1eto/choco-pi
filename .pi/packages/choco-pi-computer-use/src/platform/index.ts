@@ -37,6 +37,7 @@ const macosPlatformBackend: ComputerUsePlatformBackend = {
   listRoots: macosBackend.listRoots,
   getFrontmost: macosBackend.getFrontmost,
   focusWindow: macosBackend.focusWindow,
+  restoreUserFocus: macosBackend.restoreUserFocus,
   observe: macosBackend.observe,
   act: macosBackend.act,
   actBatch: macosBackend.actBatch,
@@ -73,6 +74,9 @@ class UnsupportedPlatformBackend implements ComputerUsePlatformBackend {
     this.unsupported();
   }
   async focusWindow(): Promise<never> {
+    this.unsupported();
+  }
+  async restoreUserFocus(): Promise<never> {
     this.unsupported();
   }
   async observe(): Promise<never> {
@@ -130,6 +134,9 @@ export const currentPlatformBackend: ComputerUsePlatformBackend = {
   },
   focusWindow(target, signal) {
     return activePlatformBackend.focusWindow(target, signal);
+  },
+  restoreUserFocus(request, signal) {
+    return activePlatformBackend.restoreUserFocus(request, signal);
   },
   observe(request, options) {
     return activePlatformBackend.observe(request, options);

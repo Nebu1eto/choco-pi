@@ -16,7 +16,22 @@ import {
   reconstructStateFromBranch,
   shutdownComputerUseSession,
 } from "../src/bridge.ts";
-import { getLoadedComputerUseConfig, loadComputerUseConfig } from "../src/config.ts";
+import {
+  clearSessionGrants,
+  foregroundPromptMode,
+  getLoadedComputerUseConfig,
+  getSessionDenials,
+  getSessionForegroundPromptMode,
+  getSessionGrants,
+  loadComputerUseConfig,
+  sessionGrantGeneration,
+  type ForegroundPromptMode,
+} from "../src/config.ts";
+import {
+  describePersist,
+  notifyUnlessStale,
+  setForegroundPromptMode,
+} from "../src/grant-prompt.ts";
 
 const stateId = Type.String({
   description: "Required state id owning every @e ref used by this operation",
@@ -294,12 +309,19 @@ const evaluateBrowserTool = defineTool({
 
 function formatConfigStatus(): string {
   const loaded = getLoadedComputerUseConfig();
+  const sessionMode = getSessionForegroundPromptMode();
   return [
     "pi-computer-use configuration",
     `browser_use: ${loaded.config.browser_use ? "enabled" : "disabled"}`,
     `managed_browser: ${loaded.config.managed_browser}`,
     `headless: ${loaded.config.headless ? "enabled" : "disabled"}`,
     `cursor_overlay: ${loaded.config.cursor_overlay ? "enabled" : "disabled"}`,
+    `foreground_grant: ${loaded.config.foreground_grant.join(", ") || "none"}`,
+    `foreground_prompt: ${foregroundPromptMode()}${sessionMode ? " (set for this session)" : ""}`,
+    `restore_focus: ${loaded.config.restore_focus ? "enabled" : "disabled"}`,
+    `session grants: ${getSessionGrants().join(", ") || "none"}`,
+    `session denials: ${getSessionDenials().join(", ") || "none"}`,
+    "Change the prompt mode with /computer-use grant ask|always|off.",
     "",
     "Sources:",
     ...loaded.sources.map(
@@ -308,6 +330,42 @@ function formatConfigStatus(): string {
     ),
     `- env overrides: ${Object.keys(loaded.env).join(", ") || "none"}`,
   ].join("\n");
+}
+
+const PROMPT_MODE_EFFECTS = {
+  ask: "pi asks once per app in the TUI before foreground input",
+  always:
+    "the agent may activate and send input to any app after a background refusal, without asking",
+  off: "pi never asks; only foreground_grant entries and earlier session grants apply",
+} satisfies Record<ForegroundPromptMode, string>;
+
+function promptModeArgument(words: string[]): ForegroundPromptMode | undefined {
+  if (words.length !== 2 || words[0] !== "grant") return undefined;
+  const value = words[1];
+  return value === "ask" || value === "always" || value === "off" ? value : undefined;
+}
+
+/**
+ * `/computer-use` shows the status; `/computer-use grant ask|always|off` sets
+ * the foreground prompt mode for this session and saves it to the user config.
+ */
+export async function runComputerUseCommand(
+  args: string,
+  cwd: string,
+): Promise<{ message: string; level: "info" | "warning" | "error" }> {
+  loadComputerUseConfig(cwd);
+  const words = args
+    .trim()
+    .split(/\s+/)
+    .filter((word) => word.length > 0);
+  if (words.length === 0) return { message: formatConfigStatus(), level: "info" };
+  const mode = promptModeArgument(words);
+  if (!mode) return { message: "Usage: /computer-use [grant ask|always|off]", level: "error" };
+  const persisted = await setForegroundPromptMode(mode);
+  return {
+    message: `foreground_prompt: ${mode} for this session (${PROMPT_MODE_EFFECTS[mode]}); ${describePersist(persisted)}.`,
+    level: persisted.persisted && !persisted.shadowedBy ? "info" : "warning",
+  };
 }
 
 export default function computerUseExtension(pi: ExtensionAPI): void {
@@ -327,14 +385,20 @@ export default function computerUseExtension(pi: ExtensionAPI): void {
     pi.registerTool(tool);
 
   pi.registerCommand("computer-use", {
-    description: "Show pi-computer-use configuration",
-    handler: async (_args, ctx) => {
-      loadComputerUseConfig(ctx.cwd);
-      ctx.ui.notify(formatConfigStatus(), "info");
+    description: "Show pi-computer-use configuration; 'grant ask|always|off' sets the prompt mode",
+    handler: async (args, ctx) => {
+      const cwd = ctx.cwd;
+      const ui = ctx.ui;
+      const generation = sessionGrantGeneration();
+      const { message, level } = await runComputerUseCommand(args, cwd);
+      // The session may have ended while saving; its UI must not be touched then.
+      if (sessionGrantGeneration() !== generation) return;
+      notifyUnlessStale(ui, message, level);
     },
   });
 
   pi.on("session_start", async (_event, ctx) => {
+    clearSessionGrants();
     loadComputerUseConfig(ctx.cwd);
     reconstructStateFromBranch(ctx);
     if (!ctx.hasUI) return;
