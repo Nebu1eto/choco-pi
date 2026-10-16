@@ -70,7 +70,9 @@ const OWNER_GATED_COMMANDS = new Set([
   "endInputSuppression",
   "restoreUserFocus",
 ]);
-const HELPER_SETUP_TIMEOUT_MS = 60_000;
+// The installer compiles the helper from Swift sources (about 15 s warm here;
+// a cold module cache or a slow Mac takes longer), then signs and installs it.
+const HELPER_SETUP_TIMEOUT_MS = 180_000;
 
 export const HELPER_BUNDLE_ID = "com.injaneity.pi-computer-use";
 export const HELPER_APP_PATH = resolveMacosHelperAppPath();

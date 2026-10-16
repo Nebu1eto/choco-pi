@@ -6,13 +6,21 @@ Vendored, private fork of [`@injaneity/pi-computer-use`](https://github.com/inja
 
 This fork supports native helper installation on macOS only. The Linux and Windows TypeScript backends remain for dispatch compatibility, but their native helpers, prebuilts, and build paths are not included.
 
-The arm64 and x64 macOS helper binaries are committed under `prebuilt/macos/`. At runtime, a UI session setup or tool operation checks the helper. If it is missing, `src/platform/macos/helper.ts` launches `scripts/setup-helper.mjs`, which installs the matching binary as an app bundle. Set `PI_COMPUTER_USE_ALLOW_BUILD=1` to permit the retained Swift-source fallback.
+No helper binaries are tracked. `scripts/setup-helper.mjs` compiles `native/macos/{agent_cursor,agent_cursor_motion,bridge}.swift` for the host architecture with `xcrun swiftc -target <arm64|x86_64>-apple-macosx14.0 -O` into a scratch directory under the system temporary directory, then wraps, signs, and registers the app bundle. At runtime, a UI session setup or tool operation checks the helper; if it is missing, `src/platform/macos/helper.ts` launches the script.
+
+### Installing
+
+- Requires the Xcode Command Line Tools (or Xcode), which provide `xcrun swiftc`; install them with `xcode-select --install`. Without `swiftc`, the script fails and says so.
+- A build takes tens of seconds (about 13 s on Apple silicon with a cold module cache). Compiler warnings are printed and do not fail the build.
+- The bundle's `Contents/Resources/source.sha256` is `helperSourceHash` from `src/platform/macos/helper-source.mjs`: sha256 over the scheme tag, the architecture, and each compiled Swift source's relative path, byte length, and contents. When it and `Info.plist` match, the script skips the build and leaves the installed helper unchanged.
+- `--arch arm64|x64` overrides the host architecture. Cross-compilation (x64 on Apple silicon or the reverse) is untested.
+- `--build-only --out <dir>` writes `<dir>/bridge` and installs, signs, and registers nothing.
 
 The installer may modify `/Applications` or `~/Applications`, register the app with LaunchServices, and codesign it. Do not run it during static validation.
 
 ## Helper protocol and test environment
 
-The TypeScript client requires helper protocol 7: request cancellation, cross-process session ownership, and native enforcement of the foreground grant. The committed prebuilts report protocol 7. A daemon that reports another protocol is shut down and relaunched once. The daemon outlives Pi and reinstalls, so it is also relaunched once when it runs from another executable path, reports no `startedAt` (a helper built before that field existed), or started before the installed executable's last modification (a same-protocol rebuild); the error names the reason if the relaunched daemon is still stale. Cancelling a browser tool call stops the remaining actions in its batch and releases any pressed key or mouse button.
+The TypeScript client requires helper protocol 7: request cancellation, cross-process session ownership, and native enforcement of the foreground grant. The Swift sources implement protocol 7. A daemon that reports another protocol is shut down and relaunched once. The daemon outlives Pi and reinstalls, so it is also relaunched once when it runs from another executable path, reports no `startedAt` (a helper built before that field existed), or started before the installed executable's last modification (a same-protocol rebuild); the error names the reason if the relaunched daemon is still stale. Cancelling a browser tool call stops the remaining actions in its batch and releases any pressed key or mouse button.
 
 - `PI_CU_SOCKET_PATH` points the client at another helper socket. With it set, the client never installs or launches the helper app.
 - `PI_COMPUTER_USE_HELPER_APP_PATH` overrides the helper app bundle whose executable `diagnostics.executablePath` must match.

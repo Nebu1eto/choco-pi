@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import { access, readFile, readlink, realpath, lstat } from "node:fs/promises";
 import { homedir, arch } from "node:os";
 import { join, resolve } from "node:path";
+import { helperSourceHash } from "../src/platform/macos/helper-source.mjs";
 import { packagePath } from "./isolation.ts";
 import { isJsonObject, isString, type JsonValue } from "../src/json.ts";
 import { connect } from "node:net";
@@ -189,10 +189,10 @@ export async function preflight(options: {
       const app = helper.app;
       const signed = await command("codesign", ["--verify", "--strict", app]);
       if (signed.code !== 0) throw new GateError("HELPER_SIGNATURE", signed.stderr);
-      const prebuilt = await readFile(join(packagePath, "prebuilt/macos/arm64/bridge"));
+      // The app must be built from the current checkout's Swift sources.
+      const expected = await helperSourceHash("arm64", packagePath);
       const source = (await readFile(join(app, "Contents/Resources/source.sha256"), "utf8")).trim();
-      if (source !== createHash("sha256").update(prebuilt).digest("hex"))
-        throw new GateError("HELPER_PROVENANCE", "source hash mismatch");
+      if (source !== expected) throw new GateError("HELPER_PROVENANCE", "source hash mismatch");
       await realpath(join(app, "Contents/MacOS/bridge"));
       if (!(await socketBusy(helper.socket)))
         throw new GateError("HELPER_SOCKET", `no dev helper daemon at ${helper.socket}`);

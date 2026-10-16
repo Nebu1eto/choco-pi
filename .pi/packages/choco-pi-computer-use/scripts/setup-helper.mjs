@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 
-import { createHash } from "node:crypto";
 import { spawn, execFile as execFileCallback } from "node:child_process";
 import { constants as fsConstants, realpathSync } from "node:fs";
-import { promisify } from "node:util";
+import { parseArgs, promisify } from "node:util";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveMacosHelperAppPath } from "../src/platform/macos/helper-path.mjs";
+import { helperSourceHash, helperSourcePaths } from "../src/platform/macos/helper-source.mjs";
 
 const execFile = promisify(execFileCallback);
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -16,9 +16,6 @@ const helperAppPath = resolveMacosHelperAppPath();
 const helperAppExecutablePath = path.join(helperAppPath, "Contents", "MacOS", "bridge");
 const helperSourceHashPath = path.join(helperAppPath, "Contents", "Resources", "source.sha256");
 const helperBundleId = "com.injaneity.pi-computer-use";
-const helperSourcePaths = ["agent_cursor.swift", "agent_cursor_motion.swift", "bridge.swift"].map(
-  (file) => path.join(rootDir, "native", "macos", file),
-);
 const packageJsonPath = path.join(rootDir, "package.json");
 const localCodeSignCommonName = "pi-computer-use Local Signing (com.injaneity.pi-computer-use)";
 const localSigningLockPath = path.join(
@@ -26,11 +23,22 @@ const localSigningLockPath = path.join(
   `pi-computer-use-local-signing-${process.getuid !== undefined ? process.getuid() : "user"}.lock`,
 );
 
-const args = new Set(process.argv.slice(2));
-const allowBuildFallback =
-  args.has("--allow-build") || process.env.PI_COMPUTER_USE_ALLOW_BUILD === "1";
-const allowAdhocUpdate =
-  args.has("--allow-adhoc-update") || process.env.PI_COMPUTER_USE_ALLOW_ADHOC_UPDATE === "1";
+// --runtime marks the call from src/platform/macos/helper.ts; it changes nothing.
+// --arch overrides the host architecture (cross-compilation is untested).
+// --build-only --out <dir> compiles <dir>/bridge and installs nothing.
+function parseOptions(argv) {
+  return parseArgs({
+    args: argv,
+    options: {
+      runtime: { type: "boolean" },
+      "allow-adhoc-update": { type: "boolean" },
+      arch: { type: "string" },
+      "build-only": { type: "boolean" },
+      out: { type: "string" },
+    },
+    strict: true,
+  }).values;
+}
 const archTriples = {
   arm64: "arm64-apple-macosx",
   x64: "x86_64-apple-macosx",
@@ -42,14 +50,6 @@ const defaultCodeSignIdentifier = "com.injaneity.pi-computer-use";
 function normalizeArch(arch) {
   if (arch === "arm64" || arch === "x64") return arch;
   throw new Error(`Unsupported architecture '${arch}'. Supported: arm64, x64.`);
-}
-
-function prebuiltPathForArch(arch) {
-  return path.join(rootDir, "prebuilt", "macos", arch, "bridge");
-}
-
-function prebuiltAppPathForArch(arch) {
-  return path.join(rootDir, "prebuilt", "macos", arch, "pi-computer-use.app");
 }
 
 function isPrimitiveString(value) {
@@ -87,10 +87,6 @@ async function run(command, commandArgs) {
       reject(new Error(`Command failed (${code}): ${command} ${commandArgs.join(" ")}`));
     });
   });
-}
-
-function moduleCachePath(arch) {
-  return path.join(os.tmpdir(), `pi-computer-use-swift-module-cache-${arch}`);
 }
 
 async function commandOutput(command, commandArgs) {
@@ -347,38 +343,9 @@ async function ensureHelperParentDirectory() {
   await fs.access(parentPath, fsConstants.W_OK);
 }
 
-async function installPrebuiltHelperApp(sourceAppPath) {
-  await ensureHelperParentDirectory();
-  const sourceExecutablePath = path.join(sourceAppPath, "Contents", "MacOS", "bridge");
-  const sourceInfoPath = path.join(sourceAppPath, "Contents", "Info.plist");
-  const existingExecutable = await fs.readFile(helperAppExecutablePath).catch(() => undefined);
-  const sourceExecutable = await fs.readFile(sourceExecutablePath);
-  const existingInfo = await fs
-    .readFile(path.join(helperAppPath, "Contents", "Info.plist"), "utf8")
-    .catch(() => undefined);
-  const sourceInfo = await fs.readFile(sourceInfoPath, "utf8");
-  if (existingExecutable?.equals(sourceExecutable) && existingInfo === sourceInfo) {
-    await registerHelperApp();
-    return false;
-  }
-  // The sealed bundle must arrive intact — a broken signature would burn
-  // the user's TCC grants on an identity that can never validate.
-  await run("codesign", ["--verify", "--strict", sourceAppPath]);
-  await fs.rm(helperAppPath, { force: true, recursive: true });
-  // ditto preserves the bundle byte-for-byte (signature + stapled
-  // notarization ticket). The sealed app is NEVER re-signed here: its
-  // Developer ID designated requirement (identifier + team) is exactly
-  // what gives release builds their best chance of retaining TCC grants.
-  await run("/usr/bin/ditto", [sourceAppPath, helperAppPath]);
-  await registerHelperApp();
-  return true;
-}
-
-async function installHelperApp(sourcePath) {
-  await ensureHelperParentDirectory();
+async function helperInfoPlist() {
   const version = await packageVersion();
-  const infoPlistPath = path.join(helperAppPath, "Contents", "Info.plist");
-  const infoPlist = `<?xml version="1.0" encoding="UTF-8"?>
+  return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>CFBundleIdentifier</key><string>${helperBundleId}</string>
@@ -391,34 +358,45 @@ async function installHelperApp(sourcePath) {
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>LSUIElement</key><true/>
 </dict></plist>\n`;
+}
 
-  const sourceExecutable = await fs.readFile(sourcePath);
-  const sourceHash = createHash("sha256").update(sourceExecutable).digest("hex");
+const infoPlistPath = path.join(helperAppPath, "Contents", "Info.plist");
+
+/**
+ * Short-circuit before compiling: an installed helper whose source hash and
+ * Info.plist match is current. It is only re-signed when a real identity can
+ * replace an older ad-hoc signature. Returns undefined when a build is needed.
+ */
+async function refreshCurrentHelperApp(sourceHash, infoPlist) {
   const existingSourceHash = await fs.readFile(helperSourceHashPath, "utf8").catch(() => undefined);
   const existingInfoPlist = await fs.readFile(infoPlistPath, "utf8").catch(() => undefined);
-  if (existingSourceHash?.trim() === sourceHash && existingInfoPlist === infoPlist) {
-    // If a real signing identity is available, upgrade older ad-hoc installs
-    // in place so local builds have a consistent identity. macOS may still
-    // require permission review after native code changes.
-    const signingIdentity =
-      process.env.PI_COMPUTER_USE_NO_SIGN === "1" ? "-" : await resolveCodeSignIdentity();
-    if (signingIdentity !== "-" && (await helperHasAdhocSignature())) {
-      await signHelper(helperAppPath, helperBundleId);
-      await registerHelperApp();
-      return true;
-    }
-    await registerHelperApp();
-    return false;
-  }
-
+  if (existingSourceHash?.trim() !== sourceHash || existingInfoPlist !== infoPlist)
+    return undefined;
+  // If a real signing identity is available, upgrade older ad-hoc installs
+  // in place so local builds have a consistent identity. macOS may still
+  // require permission review after native code changes.
   const signingIdentity =
     process.env.PI_COMPUTER_USE_NO_SIGN === "1" ? "-" : await resolveCodeSignIdentity();
-  if (signingIdentity === "-" && existingSourceHash !== undefined && !allowAdhocUpdate) {
+  if (signingIdentity !== "-" && (await helperHasAdhocSignature())) {
+    await signHelper(helperAppPath, helperBundleId);
+    await registerHelperApp();
+    return true;
+  }
+  await registerHelperApp();
+  return false;
+}
+
+async function assertReplaceAllowed(allowAdhocUpdate) {
+  const signingIdentity =
+    process.env.PI_COMPUTER_USE_NO_SIGN === "1" ? "-" : await resolveCodeSignIdentity();
+  if (signingIdentity === "-" && (await exists(helperSourceHashPath)) && !allowAdhocUpdate) {
     throw new Error(
-      "Refusing to replace an installed helper with an ad-hoc signed rebuild because macOS may reset Accessibility/Screen Recording grants. Use a pre-signed helper app, install a Developer ID identity, or set PI_COMPUTER_USE_ALLOW_ADHOC_UPDATE=1 for local development.",
+      "Refusing to replace an installed helper with an ad-hoc signed rebuild because macOS may reset Accessibility/Screen Recording grants. Install a Developer ID identity, set PI_COMPUTER_USE_CODESIGN_IDENTITY, or set PI_COMPUTER_USE_ALLOW_ADHOC_UPDATE=1 for local development.",
     );
   }
+}
 
+async function installHelperApp(sourcePath, sourceHash, infoPlist) {
   await fs.mkdir(path.dirname(helperAppExecutablePath), { recursive: true });
   await fs.mkdir(path.dirname(helperSourceHashPath), { recursive: true });
   await fs.copyFile(sourcePath, helperAppExecutablePath);
@@ -427,14 +405,29 @@ async function installHelperApp(sourcePath) {
   await fs.writeFile(helperSourceHashPath, `${sourceHash}\n`);
   await signHelper(helperAppPath, helperBundleId);
   await registerHelperApp();
-  return true;
 }
 
-async function buildHelper(arch, outputPath) {
-  for (const sourcePath of helperSourcePaths) {
+async function assertSwiftcAvailable() {
+  const swiftcPath = await commandOutput("xcrun", ["--find", "swiftc"]).catch(() => "");
+  if (!swiftcPath.trim()) {
+    throw new Error(
+      "Building the pi-computer-use helper requires `xcrun swiftc`, which was not found. Install the Xcode Command Line Tools with `xcode-select --install` (or Xcode), then run this script again.",
+    );
+  }
+}
+
+/**
+ * Compile the helper into `outputPath` with a module cache under
+ * `scratchDir`. Compiler warnings are printed and do not fail the build.
+ * The loose binary is not signed here; the installed app bundle is.
+ */
+async function buildHelper(arch, outputPath, scratchDir) {
+  const sourcePaths = helperSourcePaths(rootDir);
+  for (const sourcePath of sourcePaths) {
     if (!(await exists(sourcePath)))
       throw new Error(`Native helper source not found at ${sourcePath}`);
   }
+  await assertSwiftcAvailable();
 
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
   const swiftArgs = [
@@ -442,15 +435,19 @@ async function buildHelper(arch, outputPath) {
     "-target",
     `${archTriples[arch]}${deploymentTarget}`,
     "-module-cache-path",
-    moduleCachePath(arch),
+    path.join(scratchDir, "module-cache"),
     "-O",
   ];
   for (const framework of frameworks) swiftArgs.push("-framework", framework);
-  swiftArgs.push(...helperSourcePaths, "-o", outputPath);
+  swiftArgs.push(...sourcePaths, "-o", outputPath);
 
+  const startedAt = Date.now();
+  console.log(`[pi-computer-use] compiling helper (${arch}) with xcrun swiftc...`);
   await run("xcrun", swiftArgs);
   await fs.chmod(outputPath, 0o755);
-  await signHelper(outputPath);
+  console.log(
+    `[pi-computer-use] compiled ${outputPath} in ${Math.round((Date.now() - startedAt) / 1000)} s`,
+  );
 }
 
 async function setup() {
@@ -458,59 +455,56 @@ async function setup() {
     throw new Error("This choco-pi fork supports helper installation on macOS only.");
   }
 
-  const arch = normalizeArch(process.arch);
-  // Prefer a pre-signed universal bundle over a per-arch bundle, then fall
-  // back to wrapping the committed loose binary.
-  const universalAppPath = prebuiltAppPathForArch("universal");
-  const prebuiltAppPath = (await exists(universalAppPath))
-    ? universalAppPath
-    : prebuiltAppPathForArch(arch);
-  const prebuiltPath = prebuiltPathForArch(arch);
-  const prebuiltAppExists = await exists(prebuiltAppPath);
-  const prebuiltExists = await exists(prebuiltPath);
+  const options = parseOptions(process.argv.slice(2));
+  const arch = normalizeArch(options.arch ?? process.arch);
+  if (options.arch !== undefined && arch !== normalizeArch(process.arch)) {
+    console.warn(
+      `[pi-computer-use] warning: cross-compiling the helper for ${arch} on ${process.arch} is untested.`,
+    );
+  }
 
-  if (prebuiltAppExists) {
-    const installed = await installPrebuiltHelperApp(prebuiltAppPath);
+  if (options["build-only"] === true) {
+    if (options.out === undefined) throw new Error("--build-only requires --out <dir>.");
+    const outDir = path.resolve(options.out);
+    const scratchDir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-computer-use-build-"));
+    try {
+      await buildHelper(arch, path.join(outDir, "bridge"), scratchDir);
+    } finally {
+      await fs.rm(scratchDir, { force: true, recursive: true }).catch(() => {});
+    }
     console.log(
-      installed
-        ? `[pi-computer-use] installed pre-signed helper app (${arch}) at ${helperAppPath}`
-        : `[pi-computer-use] pre-signed helper app (${arch}) already current at ${helperAppPath}`,
+      `[pi-computer-use] built ${path.join(outDir, "bridge")} (source.sha256 ${await helperSourceHash(arch, rootDir)}); nothing installed`,
     );
     return;
   }
+  if (options.out !== undefined) throw new Error("--out is only valid with --build-only.");
 
-  if (prebuiltExists) {
-    const installed = await installHelperApp(prebuiltPath);
+  await ensureHelperParentDirectory();
+  const sourceHash = await helperSourceHash(arch, rootDir);
+  const infoPlist = await helperInfoPlist();
+  const refreshed = await refreshCurrentHelperApp(sourceHash, infoPlist);
+  if (refreshed !== undefined) {
     console.log(
-      installed
-        ? `[pi-computer-use] installed helper app (${arch}) at ${helperAppPath}`
+      refreshed
+        ? `[pi-computer-use] re-signed current helper app (${arch}) at ${helperAppPath}`
         : `[pi-computer-use] helper app (${arch}) already current at ${helperAppPath}`,
     );
     return;
   }
-
-  if (allowBuildFallback) {
-    const tempPath = path.join(os.tmpdir(), `pi-computer-use-bridge-${process.pid}-${Date.now()}`);
-    try {
-      console.log(
-        "[pi-computer-use] prebuilt helper missing; attempting source build with xcrun swiftc...",
-      );
-      await buildHelper(arch, tempPath);
-      const installed = await installHelperApp(tempPath);
-      console.log(
-        installed
-          ? `[pi-computer-use] built helper app at ${helperAppPath}`
-          : `[pi-computer-use] built helper app; installed app already current at ${helperAppPath}`,
-      );
-    } finally {
-      await fs.rm(tempPath, { force: true }).catch(() => {});
-    }
-    return;
-  }
-
-  throw new Error(
-    `No prebuilt helper found for ${arch} at ${prebuiltPath}. Set PI_COMPUTER_USE_ALLOW_BUILD=1 to build from the committed Swift sources.`,
+  await assertReplaceAllowed(
+    options["allow-adhoc-update"] === true ||
+      process.env.PI_COMPUTER_USE_ALLOW_ADHOC_UPDATE === "1",
   );
+
+  const scratchDir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-computer-use-build-"));
+  try {
+    const builtPath = path.join(scratchDir, "bridge");
+    await buildHelper(arch, builtPath, scratchDir);
+    await installHelperApp(builtPath, sourceHash, infoPlist);
+  } finally {
+    await fs.rm(scratchDir, { force: true, recursive: true }).catch(() => {});
+  }
+  console.log(`[pi-computer-use] built and installed helper app (${arch}) at ${helperAppPath}`);
 }
 
 const isMain =

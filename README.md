@@ -133,22 +133,23 @@ Pi stores credentials outside the repository; do not copy credential files into 
 
 The computer-use tools (`observe_ui`, `act_ui`, and related tools) work through
 a native helper app, `pi-computer-use.app`. The helper reads accessibility
-trees, captures windows, and delivers input. Prebuilt helper binaries for Apple
-silicon and Intel are committed under
-`.pi/packages/choco-pi-computer-use/prebuilt/macos`, so installation downloads
-nothing. Other operating systems cannot install the helper.
+trees, captures windows, and delivers input. No helper binary is committed: the
+setup script compiles the Swift sources in
+`.pi/packages/choco-pi-computer-use/native/macos` for your Mac's architecture on
+every install, and downloads nothing. Other operating systems cannot install the
+helper.
 
 ### Requirements
 
 - macOS 14 or later
 - An interactive Pi session for the first permission grant
-- Only for building from source: Xcode or the Command Line Tools, which provide `xcrun swiftc`
+- Xcode or the Command Line Tools, which provide `xcrun swiftc` (`xcode-select --install`)
 
 ### 1. Install the helper
 
 When an interactive Pi session starts and `pi-computer-use.app` is missing, Pi
-installs it from the prebuilt binary. To install it ahead of time, or to
-reinstall it, run this from the checkout:
+builds and installs it, which takes tens of seconds. To install it ahead of
+time, or to reinstall it, run this from the checkout:
 
 ```sh
 node .pi/packages/choco-pi-computer-use/scripts/setup-helper.mjs
@@ -193,18 +194,18 @@ before each computer-use tool call, so a missing grant appears as the menu above
 
 ### Update the helper
 
-- Pi installs the helper only when the app is missing; it never replaces an existing one. After pulling a change under `prebuilt/macos`, run the setup script again and restart Pi.
+- Pi installs the helper only when the app is missing; it never replaces an existing one. After pulling a change under `native/macos`, run the setup script again and restart Pi. The script skips the build when the installed helper was built from the same sources.
 - Pi checks the helper protocol version (currently 7) when it connects. It relaunches a mismatched helper once; if the version still differs, it stops with a "helper mismatch after relaunch" error. Run the setup script again.
 - Replacing the helper re-signs the app, and macOS may invalidate earlier grants. If Pi reports a missing permission while the toggle is on, turn the toggle off and on again.
 - When only ad-hoc signing is available, the script refuses to replace an installed helper, because macOS may reset its permissions. Install a Developer ID identity, or set `PI_COMPUTER_USE_ALLOW_ADHOC_UPDATE=1` and grant the permissions again.
 
 ### Build from source
 
-The script always uses the prebuilt binary for your architecture when it
-exists. Only when it is missing does `PI_COMPUTER_USE_ALLOW_BUILD=1` (or
-`--allow-build`) let the script compile the Swift sources in
-`.pi/packages/choco-pi-computer-use/native/macos` with `xcrun swiftc`. Without
-that setting, a missing prebuilt is an error.
+The script always compiles the helper with `xcrun swiftc` for the host
+architecture; compiler warnings are printed and do not stop it. Pass
+`--arch arm64` or `--arch x64` to cross-compile (untested), or
+`--build-only --out <dir>` to write `<dir>/bridge` without installing or
+signing anything.
 
 ### Configure computer use
 

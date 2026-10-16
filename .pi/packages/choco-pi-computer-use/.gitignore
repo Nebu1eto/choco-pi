@@ -1,0 +1,2 @@
+# Helper binaries are built on install and never tracked.
+prebuilt/

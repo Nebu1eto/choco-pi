@@ -112,20 +112,21 @@ Pi는 인증 정보를 저장소 밖에 보관합니다. 인증 정보가 담긴
 
 computer-use 도구(`observe_ui`, `act_ui` 등)는 네이티브 helper 앱인
 `pi-computer-use.app`을 통해 동작합니다. helper는 접근성 트리를 읽고, 창을 캡처하고,
-입력을 전달합니다. Apple silicon과 Intel용 helper 바이너리가
-`.pi/packages/choco-pi-computer-use/prebuilt/macos`에 커밋되어 있으므로 설치 중에
-내려받는 파일은 없습니다. macOS가 아닌 운영체제에는 helper를 설치할 수 없습니다.
+입력을 전달합니다. helper 바이너리는 커밋되어 있지 않습니다. 설치 스크립트가 설치할
+때마다 `.pi/packages/choco-pi-computer-use/native/macos`의 Swift 소스를 현재 Mac의
+아키텍처용으로 컴파일하며, 내려받는 파일은 없습니다. macOS가 아닌 운영체제에는
+helper를 설치할 수 없습니다.
 
 ### 요구 사항
 
 - macOS 14 이상
 - 처음 권한을 부여할 때 사용할 대화형 Pi 세션
-- 소스에서 빌드할 때만: `xcrun swiftc`를 제공하는 Xcode 또는 Command Line Tools
+- `xcrun swiftc`를 제공하는 Xcode 또는 Command Line Tools(`xcode-select --install`)
 
 ### 1. helper 설치
 
-대화형 Pi 세션이 시작될 때 `pi-computer-use.app`이 없으면 Pi가 미리 빌드된
-바이너리로 설치합니다. 미리 설치하거나 다시 설치하려면 체크아웃에서 다음을 실행하세요.
+대화형 Pi 세션이 시작될 때 `pi-computer-use.app`이 없으면 Pi가 helper를 빌드해
+설치하며, 수십 초가 걸립니다. 미리 설치하거나 다시 설치하려면 체크아웃에서 다음을 실행하세요.
 
 ```sh
 node .pi/packages/choco-pi-computer-use/scripts/setup-helper.mjs
@@ -168,17 +169,17 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 
 ### helper 업데이트
 
-- Pi는 앱이 없을 때만 helper를 설치하고, 이미 있는 helper는 바꾸지 않습니다. `prebuilt/macos` 아래가 바뀐 변경 사항을 pull했다면 설치 스크립트를 다시 실행하고 Pi를 다시 시작하세요.
+- Pi는 앱이 없을 때만 helper를 설치하고, 이미 있는 helper는 바꾸지 않습니다. `native/macos` 아래가 바뀐 변경 사항을 pull했다면 설치 스크립트를 다시 실행하고 Pi를 다시 시작하세요. 설치된 helper가 같은 소스로 빌드되었다면 스크립트는 빌드를 건너뜁니다.
 - Pi는 helper에 연결할 때 프로토콜 버전(현재 7)을 확인합니다. 버전이 다르면 helper를 한 번 다시 실행하고, 그래도 다르면 "helper mismatch after relaunch" 오류로 중단합니다. 이때는 설치 스크립트를 다시 실행하세요.
 - helper를 교체하면 앱이 다시 서명되므로 macOS가 이전 권한을 무효화할 수 있습니다. 토글이 켜져 있는데도 Pi가 권한이 없다고 하면 토글을 껐다가 다시 켜세요.
 - ad-hoc 서명만 가능한 환경에서는 macOS가 권한을 초기화할 수 있어 스크립트가 설치된 helper의 교체를 거부합니다. Developer ID 인증서를 설치하거나, `PI_COMPUTER_USE_ALLOW_ADHOC_UPDATE=1`을 설정한 뒤 권한을 다시 부여하세요.
 
 ### 소스에서 빌드
 
-스크립트는 현재 아키텍처용 prebuilt 바이너리가 있으면 항상 그것을 사용합니다.
-바이너리가 없을 때만 `PI_COMPUTER_USE_ALLOW_BUILD=1`(또는 `--allow-build`)을 설정하면
-`.pi/packages/choco-pi-computer-use/native/macos`의 Swift 소스를 `xcrun swiftc`로
-컴파일합니다. 이 설정이 없으면 바이너리가 없을 때 오류로 끝납니다.
+스크립트는 항상 `xcrun swiftc`로 현재 아키텍처용 helper를 컴파일합니다. 컴파일러
+경고는 출력되지만 빌드를 멈추지 않습니다. `--arch arm64` 또는 `--arch x64`로
+크로스 컴파일할 수 있지만 검증되지 않았습니다. `--build-only --out <dir>`은 설치나
+서명 없이 `<dir>/bridge`만 만듭니다.
 
 ### computer use 설정
 
