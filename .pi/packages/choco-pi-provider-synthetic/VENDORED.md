@@ -262,3 +262,13 @@ override, and the live parity test.
 Pi SDK peer and development pins move from `1.0.4` to exactly `1.2.0`. The package-local workspace and frozen lock follow; `@earendil-works/chord`
 leaves the release-age exclusions because 1.2.0 no longer depends on it.
 The workspace `overrides` for `pi-ai` and `pi-tui` move to `1.2.0`.
+
+## 2026-10-16 choco-pi patch: Pi SDK target 1.3.0
+
+Pi SDK peer and development pins move from `1.2.0` to exactly `1.3.0`. The package-local workspace
+`minimumReleaseAgeExclude` entries move to `@1.3.0`; the lock was regenerated with
+`pnpm install --ignore-scripts` and restored with `pnpm install:vendored` (frozen).
+The workspace `overrides` for `pi-ai` and `pi-tui` move to `1.3.0`. The pre-existing unmet peer
+warning from `@aliou/pi-utils-settings@0.15.1` and `@aliou/pi-utils-ui@0.4.1`
+(`pi-coding-agent >=0.74.0 <1`) is unchanged by this move.
+Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.

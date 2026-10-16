@@ -89,3 +89,8 @@ answer still run each hook once. No new hook event type exists.
 Pi SDK peer and development pins move from `1.0.4` to exactly `1.2.0`.
 A SessionStart `initialUserMessage` is sent with `deliverAs: "followUp"`, which
 1.2.0 requires while a run is starting.
+
+## 2026-10-16 choco-pi patch: Pi SDK target 1.3.0
+
+Pi SDK peer and development pins move from `1.2.0` to exactly `1.3.0`.
+Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.

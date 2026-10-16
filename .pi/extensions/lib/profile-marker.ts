@@ -6,6 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
+import { PI_SDK_TARGET } from "./pi-target.ts";
 
 export const ProfileMarkerSchema = Type.Object(
   {
@@ -65,7 +66,7 @@ export async function checkoutRevision(checkout: string): Promise<string | null>
   }
 }
 
-export const PROFILE_PI_TARGET = "1.2.0";
+export const PROFILE_PI_TARGET = PI_SDK_TARGET;
 
 export async function launcherVersion(launcher: string): Promise<string | null> {
   try {

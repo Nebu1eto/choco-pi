@@ -948,3 +948,10 @@ the outer cell deadline for `exec_command`/`write_stdin`. The cell's
 wait's requested value clamp to it as well. The prompt says so and routes work
 expected to exceed five minutes to `shell_start`/`shell_read`.
 `tests/code-mode-wait-cap.test.ts` pins the cap and the guidance.
+
+## 2026-10-16 choco-pi patch: Pi SDK target 1.3.0
+
+Pi SDK peer and development pins move from `1.2.0` to exactly `1.3.0`. The package-local workspace
+`minimumReleaseAgeExclude` entries move to `@1.3.0`; the lock was regenerated with
+`pnpm install --ignore-scripts` and restored with `pnpm install:vendored` (frozen).
+Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.

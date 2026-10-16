@@ -341,7 +341,7 @@ const launcher: string = launcherPath;
 const capture: string = capturePath;
 const runFile = promisify(execFile);
 const version = await runFile(launcher, ["--version"], { timeout: 5000, maxBuffer: 4096 });
-assert.equal(version.stdout.trim(), "1.2.0", "Probe requires Pi 1.2.0");
+assert.equal(version.stdout.trim(), "1.3.0", "Probe requires Pi 1.3.0");
 
 const scratch = await mkdtemp(join(tmpdir(), "choco-pi-rpc-compaction-"));
 const evidence = await open(capture, "wx", 0o600);

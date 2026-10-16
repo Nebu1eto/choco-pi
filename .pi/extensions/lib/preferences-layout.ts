@@ -102,6 +102,7 @@ export const PREFERENCES_LAYOUT: readonly PreferencesLayoutTab[] = [
       },
       { label: "Input queue", rows: ["steering-mode", "follow-up-mode"] },
       { label: "Images", rows: ["block-images"] },
+      { label: "Sharing", rows: ["share-destination"] },
       {
         label: "Startup & trust",
         rows: ["default-project-trust", "quiet-startup", "warnings"],

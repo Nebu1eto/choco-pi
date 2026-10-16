@@ -296,10 +296,10 @@ test("the Model tab's Defaults group holds only the model thinking default", () 
   ]);
 });
 
-test("with Pi 1.0.4's rows nothing falls back to the Pi tab", async () => {
+test("with the installed Pi's rows nothing falls back to the Pi tab", async () => {
   await withProviders(async ({ rows }) => {
     const pi = rows.get("pi") ?? [];
-    // The real selector, not a fixture: these are the ids Pi 1.0.4 builds.
+    // The real selector, not a fixture: these ids come from the installed Pi (1.3.0 adds share-destination).
     for (const id of [
       "cache-warming-mode",
       "fullscreen-copy-on-select",
@@ -307,7 +307,7 @@ test("with Pi 1.0.4's rows nothing falls back to the Pi tab", async () => {
       "show-images",
       "theme",
     ]) {
-      assert.ok(pi.includes(id), `Pi 1.0.4 builds ${id}`);
+      assert.ok(pi.includes(id), `the installed Pi builds ${id}`);
     }
     const claimed = new Set([...explicitEntries(), ...PREFERENCES_HIDDEN_ROWS]);
     assert.deepEqual(

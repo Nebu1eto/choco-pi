@@ -279,3 +279,9 @@ it must stay free of imports.
 Pi SDK peer and development pins move from `1.0.4` to exactly `1.2.0`.
 Themes point `$schema` at `https://pi.dev/schemas/theme.schema.json`; the theme
 test imports the validator from its 1.2.0 module, `theme-schema.js`.
+
+## 2026-10-16 choco-pi patch: Pi SDK target 1.3.0
+
+Pi SDK peer and development pins move from `1.2.0` to exactly `1.3.0`.
+The theme test asserts the host `pi-coding-agent` is `1.3.0`; its `theme-schema.js` validator path is unchanged.
+Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.

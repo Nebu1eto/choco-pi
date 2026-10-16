@@ -164,3 +164,8 @@ viewport once per new local browser session, and for small-screen QA also
 check 1280x720 and 1024x600 before restoring 1920x1080. Attached CDP
 sessions, Electron, iOS, and user-specified sizes are exempt. Guidance only;
 argv construction and launch behavior are unchanged.
+
+## 2026-10-16 choco-pi patch: Pi SDK target 1.3.0
+
+Pi SDK peer and development pins move from `1.2.0` to exactly `1.3.0`.
+Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.

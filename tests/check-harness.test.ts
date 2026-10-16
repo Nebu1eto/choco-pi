@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  PI_SDK_TARGET,
   checkHarness,
   parseCliArgs,
   type HarnessOptions,
@@ -29,13 +30,13 @@ function fixture(overrides: Partial<HarnessOptions> = {}) {
       nodeVersion: "v24.0.0",
       runtimeIdentity: {
         source: "active-host" as const,
-        version: "1.2.0",
+        version: PI_SDK_TARGET,
         path: "/active/pi-sdk",
         authoritative: true,
       },
       readImportedRuntime: async () => ({
         source: "imported-sdk" as const,
-        version: "1.2.0",
+        version: PI_SDK_TARGET,
         path: "/checkout/pi-sdk",
         authoritative: true,
       }),
@@ -46,14 +47,14 @@ function fixture(overrides: Partial<HarnessOptions> = {}) {
         return value;
       },
       pathExists: async () => true,
-      runCommand: async () => ({ status: 0, stdout: "1.2.0\n", stderr: "" }),
+      runCommand: async () => ({ status: 0, stdout: `${PI_SDK_TARGET}\n`, stderr: "" }),
       ...overrides,
     },
   };
 }
 
 test("active host readiness requires exactly the supported SDK release", async () => {
-  for (const version of ["1.0.4", "1.1.0", "1.2.0", "1.2.1", "1.2.0-rc.1", "garbage"]) {
+  for (const version of ["1.0.4", "1.2.0", "1.3.0", "1.3.1", "1.3.0-rc.1", "garbage"]) {
     const { options } = fixture({
       runtimeIdentity: {
         source: "active-host",
@@ -64,7 +65,7 @@ test("active host readiness requires exactly the supported SDK release", async (
     const report = await checkHarness(options);
     assert.equal(
       report.checks.find((check) => check.id === "active-host")?.status,
-      version === "1.2.0" ? "pass" : "fail",
+      version === "1.3.0" ? "pass" : "fail",
       version,
     );
   }
@@ -95,7 +96,7 @@ test("compatible active host ignores an old or missing PATH launcher automatical
 test("incompatible active host fails despite a correct PATH launcher", async () => {
   const { options } = fixture({
     runtimeIdentity: { source: "active-host", version: "0.85.1", authoritative: true },
-    runCommand: async () => ({ status: 0, stdout: "1.2.0\n", stderr: "" }),
+    runCommand: async () => ({ status: 0, stdout: `${PI_SDK_TARGET}\n`, stderr: "" }),
   });
   const report = await checkHarness(options);
   assert.equal(report.status, "fail");
@@ -133,7 +134,7 @@ test("malformed host metadata is not guessed from a valid launcher", async () =>
       authoritative: true,
       error: "host metadata malformed",
     },
-    runCommand: async () => ({ status: 0, stdout: "1.2.0\n", stderr: "" }),
+    runCommand: async () => ({ status: 0, stdout: `${PI_SDK_TARGET}\n`, stderr: "" }),
   });
   const report = await checkHarness(options);
   assert.equal(report.checks.find((check) => check.id === "active-host")?.status, "fail");
@@ -153,7 +154,7 @@ test("matching launcher evidence cannot impersonate an active host", async () =>
   const { options } = fixture({
     runtimeIdentity: {
       source: "launcher",
-      version: "1.2.0",
+      version: PI_SDK_TARGET,
       authoritative: false,
     },
   });
@@ -171,7 +172,7 @@ test("non-authoritative imported SDK evidence cannot pass standalone readiness",
     runtimeIdentity: undefined,
     readImportedRuntime: async () => ({
       source: "imported-sdk",
-      version: "1.2.0",
+      version: PI_SDK_TARGET,
       authoritative: false,
     }),
   });

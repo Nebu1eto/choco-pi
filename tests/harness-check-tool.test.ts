@@ -9,7 +9,7 @@ import {
   type HarnessCheckRegistration,
   type HarnessCheckExecutionDependencies,
 } from "../.pi/extensions/harness-check.ts";
-import type { HarnessReport } from "../.pi/skills/check/scripts/check-harness.ts";
+import { PI_SDK_TARGET, type HarnessReport } from "../.pi/skills/check/scripts/check-harness.ts";
 
 const report: HarnessReport = {
   status: "pass",
@@ -155,7 +155,7 @@ test("default extension registers a host-authenticated schema and reports failur
     context("session-a"),
   );
   assert.equal(observedSource, "active-host");
-  assert.equal(observedVersion, "1.2.0");
+  assert.equal(observedVersion, PI_SDK_TARGET);
   assert.equal(result.isError, true);
 });
 

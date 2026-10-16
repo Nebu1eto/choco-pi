@@ -17,30 +17,30 @@ const COMMON_WORKSPACE = `packages:
   - .
 
 minimumReleaseAgeExclude:
-  - "@earendil-works/pi-agent-core@1.2.0"
-  - "@earendil-works/pi-ai@1.2.0"
-  - "@earendil-works/pi-codemode@1.2.0"
-  - "@earendil-works/pi-coding-agent@1.2.0"
-  - "@earendil-works/pi-mcp@1.2.0"
-  - "@earendil-works/pi-telemetry@1.2.0"
-  - "@earendil-works/pi-tui@1.2.0"
+  - "@earendil-works/pi-agent-core@1.3.0"
+  - "@earendil-works/pi-ai@1.3.0"
+  - "@earendil-works/pi-codemode@1.3.0"
+  - "@earendil-works/pi-coding-agent@1.3.0"
+  - "@earendil-works/pi-mcp@1.3.0"
+  - "@earendil-works/pi-telemetry@1.3.0"
+  - "@earendil-works/pi-tui@1.3.0"
   - typebox@1.3.29
 `;
 const SYNTHETIC_WORKSPACE = `packages:
   - .
 
 overrides:
-  "@earendil-works/pi-ai": 1.2.0
-  "@earendil-works/pi-tui": 1.2.0
+  "@earendil-works/pi-ai": 1.3.0
+  "@earendil-works/pi-tui": 1.3.0
 
 minimumReleaseAgeExclude:
-  - "@earendil-works/pi-agent-core@1.2.0"
-  - "@earendil-works/pi-ai@1.2.0"
-  - "@earendil-works/pi-codemode@1.2.0"
-  - "@earendil-works/pi-coding-agent@1.2.0"
-  - "@earendil-works/pi-mcp@1.2.0"
-  - "@earendil-works/pi-telemetry@1.2.0"
-  - "@earendil-works/pi-tui@1.2.0"
+  - "@earendil-works/pi-agent-core@1.3.0"
+  - "@earendil-works/pi-ai@1.3.0"
+  - "@earendil-works/pi-codemode@1.3.0"
+  - "@earendil-works/pi-coding-agent@1.3.0"
+  - "@earendil-works/pi-mcp@1.3.0"
+  - "@earendil-works/pi-telemetry@1.3.0"
+  - "@earendil-works/pi-tui@1.3.0"
   - typebox@1.3.29
 `;
 
@@ -81,7 +81,7 @@ test("the synthetic frozen lock retains exact SDK overrides and TypeBox", async 
   const lock = await readText(".pi/packages/choco-pi-provider-synthetic/pnpm-lock.yaml");
   assert.match(
     lock,
-    /overrides:\n  '@earendil-works\/pi-ai': 1\.2\.0\n  '@earendil-works\/pi-tui': 1\.2\.0/,
+    /overrides:\n  '@earendil-works\/pi-ai': 1\.3\.0\n  '@earendil-works\/pi-tui': 1\.3\.0/,
   );
   assert.match(lock, /typebox:\n        specifier: \^1\.3\.29\n        version: 1\.3\.29/);
 });

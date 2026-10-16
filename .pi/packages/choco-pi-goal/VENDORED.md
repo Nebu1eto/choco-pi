@@ -217,3 +217,8 @@ checkpoint at a `turn_end`/`agent_before_settle` boundary, which emits no
 Pi SDK peer and development pins move from `1.0.4` to exactly `1.2.0`.
 `before_agent_start` now also fires for custom-message runs, including this
 package's own continuation; those runs no longer clear continuation state.
+
+## 2026-10-16 choco-pi patch: Pi SDK target 1.3.0
+
+Pi SDK peer and development pins move from `1.2.0` to exactly `1.3.0`.
+Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.

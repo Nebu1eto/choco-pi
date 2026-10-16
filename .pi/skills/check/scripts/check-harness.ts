@@ -12,6 +12,7 @@ import {
   probeLauncherVersion,
   readImportedSdkVersion,
 } from "../../../extensions/lib/pi-runtime-identity.ts";
+import { PI_SDK_TARGET } from "../../../extensions/lib/pi-target.ts";
 
 import { execFile } from "node:child_process";
 import { access, readFile, realpath } from "node:fs/promises";
@@ -21,7 +22,7 @@ import { promisify } from "node:util";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 
 export type Capability = "tui" | "subagents" | "resources" | "lsp";
-export const PI_SDK_TARGET = "1.2.0";
+export { PI_SDK_TARGET };
 type CheckStatus = "pass" | "warn" | "fail";
 
 type Check = { id: string; status: CheckStatus; detail: string };

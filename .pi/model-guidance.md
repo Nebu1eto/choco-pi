@@ -19,6 +19,8 @@ Routing provenance only: Pi 1.0.4's `/Users/Nebuleto/.local/pi-1.0.4/node_module
 
 Routing provenance only: the `openai/<id>` classification records the existing `fallbackCandidates` lookup in `.pi/extensions/lib/usage-limit.ts`, which finds an `openai/<id>` model's tier through `openai-codex/<id>`. The `task` skill's plan-owner rule reads it. This routing update does not refresh model source guides or behavioral advice.
 
+Routing provenance only (2026-10-16): Pi 1.3.0's `~/.pi/agent/install/releases/1.3.0/node_modules/@earendil-works/pi-coding-agent/CHANGELOG.md`, section `[1.3.0] - 2026-10-15`, keeps the prompt cache when the thinking level changes mid-session on OpenAI GPT-6 models with an API key, drops thinking blocks produced by a different model on model switch instead of sending them as text, and corrects `openai-codex/gpt-6.1-sol` to a 500K native context window. choco-pi's `.pi/models.json` (linked into the agent directory by `scripts/install-profile.ts`) still overrides that window to 1,050,000 for both `openai` and `openai-codex`, so the override wins; `.pi/extensions/model-context-cap.ts` treats the overridden window as native and applies the configured soft cap (default `standard`, 600,000 tokens) below it. This routing update does not refresh model source guides or behavioral advice.
+
 ## Runtime sections
 
 The runtime hook injects `shared` plus only the exact active provider/model section. Models without an exact section receive only the neutral shared rules, never another model's advice.

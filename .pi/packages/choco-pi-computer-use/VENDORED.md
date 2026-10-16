@@ -2,7 +2,7 @@
 
 This directory is a **vendored, renamed fork** of the upstream open-source package **@injaneity/pi-computer-use**. It is not the original repository.
 
-- Original source: https://github.com/injaneity/pi-computer-use
+- Original source: <https://github.com/injaneity/pi-computer-use>
 - Base commit: `de72583`
 - Base version: `0.5.0`
 - Forked on: 2026-08-22
@@ -200,3 +200,13 @@ Supersedes the "Tier-B findings (Run B1)" statement that an ungranted click on a
 - **Prebuilts.** Built with Apple Swift 6.4 (swiftlang-6.4.0.34.1) via `xcrun swiftc -target {arm64,x86_64}-apple-macosx14.0 -module-cache-path /tmp/choco-pi/build/modcache -O`, using the `setup-helper.mjs` frameworks and sources; zero compiler warnings, as at HEAD; SwiftLint rule-violation counts match HEAD (only the sizes of the pre-existing `act`, class, and file violations grew). Source revision `5b11effb` plus uncommitted `native/macos/bridge.swift`. `native/macos/bridge.swift` sha256 `26af2b67c275983665abf354f4c708c7af7a43d6ce76ec86f010528db916c920`; bridge sha256 arm64 `4477318cf98178e881e80513c6bd6a988699264f9e138393e454259a2aee2495`, x64 `4af49de42e473eb550c0a8b5af06280c40dc39594fed1d3299aa373e9cf18124` (x64 compiled only, never run). On an isolated socket (`serve --socket /tmp/choco-pi/smoke/bridge.sock`), the arm64 binary answered `diagnostics` with protocol 7 and exited 0 on `shutdown`. The pid attempt, its settle verdict, and its evidence need a real target window and Accessibility trust and were not exercised natively; they are covered only by the fakes.
 - **Known limits.** "No observable change" is not proof of no effect: a custom view can change internal or pixel-only state that none of the signals expose, and a granted retry would then repeat the input (for example a second toggle or scroll). Signal noise biases the other way: any unrelated change in the window during the settle window reads as `worked` and forgoes the retry.
 - **Review fixes.** Focus restoration now queries `getFrontmost` right before `restoreUserFocus` and restores only while the target is still frontmost (else `user_switched`; a failed query records `frontmost_check_failed: …`), because the last act reply's `frontmostAfter` can be stale. User config writes (`updateUserConfig`) go to a temp sibling of the `realpath`-resolved file (mode preserved) and `rename` over it, so a failed write never truncates the config and a symlinked config stays a link (a dangling symlink is written at its `readlink` target so the link survives instead of being replaced by a regular file). Under `ask`, when the refusal reports `pidPointerAttempted`, the dialog says the input was already sent in the background with no visible change and that allowing foreground sends it again. After saving, the grant prompt and `/computer-use grant` notify only if the session generation is unchanged and contain only the host's stale-context error. Treating a no-observable-change pid attempt as `effectPossible: false` (so it can be retried in the foreground) is a deliberate, user-approved divergence that accepts the double-input risk described under Known limits. Tests: a switch after the last granted reply skips restoration; a symlinked config stays a link; a failed temp write leaves the original intact; the prompt text is asserted for both cases.
+
+## 2026-10-16 choco-pi patch: Pi SDK target 1.3.0
+
+Pi SDK peer and development pins move from `1.2.0` to exactly `1.3.0`.
+The isolated e2e harness (`e2e/isolation.ts`, `e2e/preflight.ts`) requires the Pi `1.3.0`
+launcher, now the official installer's managed `~/.pi/agent/bin/pi` (`piPath` resolves
+`homedir()` at runtime); any other executable is still refused with `PI_VERSION_MISMATCH`.
+Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass; the
+`--tier a --dry-run --preflight-only` preflight passes and `--pi /opt/homebrew/bin/pi` exits 2
+with `PI_VERSION_MISMATCH`.

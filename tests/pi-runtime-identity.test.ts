@@ -6,11 +6,12 @@ import {
   probeLauncherVersion,
   readImportedSdkVersion,
 } from "../.pi/extensions/lib/pi-runtime-identity.ts";
+import { PI_SDK_TARGET } from "../.pi/extensions/lib/pi-target.ts";
 
 test("imported SDK identity uses supported public exports", async () => {
   const observation = await readImportedSdkVersion();
   assert.equal(observation.source, "imported-sdk");
-  assert.equal(observation.version, "1.2.0");
+  assert.equal(observation.version, PI_SDK_TARGET);
   assert.equal(observation.authoritative, true);
   assert.match(observation.path ?? "", /pi-coding-agent/);
 });

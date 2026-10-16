@@ -1692,3 +1692,12 @@ Pi SDK peer and development pins move from `1.0.4` to exactly `1.2.0`. The packa
 leaves the release-age exclusions because 1.2.0 no longer depends on it.
 Test fixtures add `agent_settled.aborted` and the tool render context's
 `durationMs`/`outputPad`; e2e-revival requires the Pi `1.2.0` launcher.
+
+## 2026-10-16 choco-pi patch: Pi SDK target 1.3.0
+
+Pi SDK peer and development pins move from `1.2.0` to exactly `1.3.0`. The package-local workspace
+`minimumReleaseAgeExclude` entries move to `@1.3.0`; the lock was regenerated with
+`pnpm install --ignore-scripts` and restored with `pnpm install:vendored` (frozen).
+e2e-revival (`tests/e2e-revival/run.ts` and its README) requires the Pi `1.3.0` launcher at
+`~/.local/pi-1.3.0`.
+Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.
