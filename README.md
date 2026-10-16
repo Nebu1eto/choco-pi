@@ -254,7 +254,7 @@ The [RPC host bridge](docs/rpc-host-bridge.md) lets Waku identify the installed 
 - Specialist roles in [`.pi/agents`](.pi/agents) (`advisor`, `explore`, `general`, `handoff`, `implementer`, `planner`, `reviewer`) run as background subagents, as scheduled runs, in isolated Git worktrees, or as dependency-ordered workflows through `workflow_run`. `/agents` manages them.
 - `max_turns` also limits resumed runs, and an agent with a token budget is told to conclude before the budget stops it.
 - A fleet panel shows running subagents and managed background shells together. Selecting a subagent focuses its transcript, which streams text, tool progress, and custom messages; the thinking toggle there affects only the focused view. Shells are owner-scoped and managed with `shell_start` and `/shells`; a completion that arrives while its owning session is inactive is delivered when that session becomes active again.
-- `/btw` opens a parallel read-only side conversation.
+- `/btw` opens a parallel read-only side conversation on the main session's model and thinking level. It runs as the internal `side-chat` agent, named `side-chat`, `side-chat-2`, and so on; other callers cannot spawn that role.
 - The blocking `advisor` tool gives root or child agents a fresh, read-only second opinion from a configured higher-intelligence model using a bounded excerpt of the live session. It is disabled by default and skips consults when the advisor and session models match. Configure it in `/preferences` under Agent → Advisor Agent or in [`advisor.json`](#advisor-settings).
 
 ### Sessions, context, and goals

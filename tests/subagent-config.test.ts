@@ -174,4 +174,18 @@ test("the advisor role is internal: only the advisor tool may spawn it", async (
   assert.equal(resolveEnabledTypeIn(registry, "advisor"), undefined, "nested tools reject it");
   const dispatch = resolveSpawnTypeIn(registry, "Advisor");
   assert.ok(!dispatch.ok || dispatch.type !== "advisor", "Agent tool never dispatches it");
+
+  // /btw's side-chat role: internal, and model-free because the fork pins the
+  // main session's model and thinking level.
+  const sideChat = getAgentConfigIn(registry, "side-chat");
+  assert.ok(sideChat, "side-chat stays in the registry for /btw");
+  assert.equal(sideChat.internal, true);
+  assert.notEqual(sideChat.enabled, false);
+  assert.equal(sideChat.defaultModel, undefined);
+  assert.equal(sideChat.defaultThinking, undefined);
+  assert.equal(sideChat.model, undefined);
+  assert.ok(!getAvailableTypesIn(registry).includes("side-chat"), "hidden from callers");
+  assert.equal(resolveEnabledTypeIn(registry, "side-chat"), undefined);
+  const sideDispatch = resolveSpawnTypeIn(registry, "side-chat");
+  assert.ok(!sideDispatch.ok || sideDispatch.type !== "side-chat");
 });

@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { AssistantMessage, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
+import type {
+  Api,
+  AssistantMessage,
+  Model,
+  ToolResultMessage,
+  UserMessage,
+} from "@earendil-works/pi-ai";
 import {
   type AgentSession,
   type AgentSessionEventListener,
@@ -13,9 +19,17 @@ import {
   buildEffectivePrompt,
   captureMainSessionFork,
   type MainSessionFork,
+  runAgent,
 } from "../src/agent-runner.ts";
-import type { AgentRecord } from "../src/types.ts";
-import { SideConversationController } from "../src/ui/side-conversation.ts";
+import * as agentTypes from "../src/agent-types.ts";
+import { unregisterChildSessionId } from "../src/child-context.ts";
+import type { AgentConfig, AgentRecord } from "../src/types.ts";
+import {
+  resolveBtwType,
+  SIDE_CHAT_TYPE,
+  SideConversationController,
+} from "../src/ui/side-conversation.ts";
+import { createSdkFixture } from "./sdk-fixture.ts";
 
 initTheme("dark", false);
 
@@ -118,8 +132,8 @@ function makeSession(answer = "side answer") {
 function makeRecord(session = makeSession()): AgentRecord {
   return {
     id: "btw-1",
-    type: "general-purpose",
-    handle: "general-purpose",
+    type: "side-chat",
+    handle: "side-chat",
     description: "btw: quick question",
     status: "running",
     toolUses: 0,
@@ -338,16 +352,171 @@ test("without a terminal, BTW never opens an overlay and posts the answer as not
   );
 
   assert.equal(controller.open(record), true);
-  assert.match(
-    harness.notifications[0] ?? "",
-    /^BTW @general-purpose · running\n\nNo answer yet\./,
-  );
+  assert.match(harness.notifications[0] ?? "", /^BTW @side-chat · running\n\nNo answer yet\./);
   assert.match(harness.notifications[0] ?? "", /needs the terminal UI/);
 
   record.status = "completed";
   record.result = "rpc answer";
   controller.onAgentComplete(record);
-  assert.equal(harness.notifications[1], "BTW @general-purpose finished.\n\nrpc answer");
+  assert.equal(harness.notifications[1], "BTW @side-chat finished.\n\nrpc answer");
   assert.equal(customCalls, 0);
   assert.equal(controller.isOpen(), false);
+});
+
+function sideChatConfig(overrides: Partial<AgentConfig> = {}): AgentConfig {
+  return {
+    name: SIDE_CHAT_TYPE,
+    description: "Read-only parallel side conversation opened by /btw",
+    builtinToolNames: ["read", "grep", "find", "ls"],
+    extensions: false,
+    skills: false,
+    inheritContext: false,
+    systemPrompt: "side-chat body that a fork must not use",
+    promptMode: "replace",
+    internal: true,
+    ...overrides,
+  };
+}
+
+function resetRegistry(): void {
+  agentTypes.setDefaultsDisabled(false);
+  agentTypes.setFallbackSubagent(undefined);
+  agentTypes.registerAgents(new Map());
+}
+
+test("btw resolves the internal side-chat agent, which callers cannot name", async () => {
+  const { DEFAULT_AGENTS } = await import("../src/default-agents.ts");
+  const general = DEFAULT_AGENTS.get("general-purpose");
+  assert.ok(general);
+  try {
+    agentTypes.setDefaultsDisabled(true);
+    agentTypes.setFallbackSubagent("general");
+    agentTypes.registerAgents(
+      new Map([
+        ["general", { ...general, name: "general" }],
+        [SIDE_CHAT_TYPE, sideChatConfig()],
+      ]),
+    );
+
+    assert.deepEqual(resolveBtwType(), { ok: true, type: SIDE_CHAT_TYPE });
+
+    // Caller-facing dispatch still refuses it: no Agent tool enum, no @side-chat
+    // type mention, no workflow step, no fallback substitution to it.
+    assert.ok(!agentTypes.getAvailableTypes().includes(SIDE_CHAT_TYPE));
+    const dispatch = agentTypes.resolveSpawnType(SIDE_CHAT_TYPE);
+    assert.ok(!dispatch.ok || dispatch.type !== SIDE_CHAT_TYPE);
+    agentTypes.setFallbackSubagent("none");
+    assert.equal(agentTypes.resolveSpawnType(SIDE_CHAT_TYPE).ok, false);
+    agentTypes.setFallbackSubagent("general");
+
+    // A disabled side-chat file restores the previous fallback chain.
+    agentTypes.registerAgents(
+      new Map([
+        ["general", { ...general, name: "general" }],
+        [SIDE_CHAT_TYPE, sideChatConfig({ enabled: false })],
+      ]),
+    );
+    const fallback = resolveBtwType();
+    assert.equal(fallback.ok && fallback.type, "general");
+  } finally {
+    resetRegistry();
+  }
+});
+
+test("btw launches are named side-chat, then side-chat-2", async () => {
+  const fixture = await createSdkFixture();
+  const manager = new AgentManager();
+  Reflect.set(manager, "startAgent", () => undefined);
+  const controller = new SideConversationController(manager);
+  try {
+    agentTypes.registerAgents(new Map([[SIDE_CHAT_TYPE, sideChatConfig()]]));
+    const resolved = resolveBtwType();
+    assert.ok(resolved.ok);
+    const first = controller.launch(fixture.pi, makeMainContext(), resolved.type, "one?");
+    const second = controller.launch(fixture.pi, makeMainContext(), resolved.type, "two?");
+    assert.equal(manager.getRecord(first)?.handle, "side-chat");
+    assert.equal(manager.getRecord(second)?.handle, "side-chat-2");
+    assert.equal(manager.getRecord(second)?.type, SIDE_CHAT_TYPE);
+  } finally {
+    manager.dispose();
+    fixture.session.dispose();
+    resetRegistry();
+  }
+});
+
+function reasoningModel(id: string): Model<Api> {
+  return {
+    id,
+    name: id,
+    provider: "openai-codex",
+    api: "openai-codex-responses",
+    baseUrl: "https://chatgpt.com/backend-api/codex",
+    reasoning: true,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 200_000,
+    maxTokens: 32_000,
+  };
+}
+
+test("a btw fork runs on the main model and thinking level, not side-chat defaults", async () => {
+  const mainModel = reasoningModel("main-fork-model");
+  const roleModel = reasoningModel("side-chat-default-model");
+  const fixture = await createSdkFixture(mainModel);
+  fixture.session.setThinkingLevel("low");
+  // The fixture's catalog is empty; expose the role default so the control run
+  // proves the agent file's default_model would otherwise win.
+  const ctx = fixture.ctx;
+  const registry = ctx.modelRegistry;
+  const find = registry.find.bind(registry);
+  registry.find = (provider, id) =>
+    provider === roleModel.provider && id === roleModel.id ? roleModel : find(provider, id);
+  registry.getAvailable = () => [mainModel, roleModel];
+  assert.equal(ctx.model?.id, mainModel.id);
+  assert.equal(ctx.thinkingLevel, "low");
+
+  agentTypes.registerAgents(
+    new Map([
+      [
+        SIDE_CHAT_TYPE,
+        sideChatConfig({
+          defaultModel: `${roleModel.provider}/${roleModel.id}`,
+          defaultThinking: "high",
+        }),
+      ],
+    ]),
+  );
+  const sessions: AgentSession[] = [];
+  const run = async (options: { mainSessionFork?: MainSessionFork; readOnly?: boolean }) => {
+    const controller = new AbortController();
+    // Aborted before the prompt: runAgent builds the session and skips the turn.
+    controller.abort();
+    const result = await runAgent(ctx, SIDE_CHAT_TYPE, "side question", {
+      pi: fixture.pi,
+      signal: controller.signal,
+      ...options,
+    });
+    sessions.push(result.session);
+    return result.session;
+  };
+  try {
+    const control = await run({});
+    assert.equal(control.model?.id, roleModel.id, "control: the role default applies off-fork");
+    assert.equal(control.thinkingLevel, "high");
+
+    const fork = await run({ mainSessionFork: captureMainSessionFork(ctx), readOnly: true });
+    assert.equal(fork.model?.provider, mainModel.provider);
+    assert.equal(fork.model?.id, mainModel.id);
+    assert.equal(fork.thinkingLevel, "low");
+    assert.ok(fork.systemPrompt.startsWith(ctx.getSystemPrompt()), "main prompt kept verbatim");
+    assert.match(fork.systemPrompt, /<read_only_side_conversation>/);
+    assert.doesNotMatch(fork.systemPrompt, /side-chat body that a fork must not use/);
+  } finally {
+    for (const session of sessions) {
+      unregisterChildSessionId(session.sessionManager.getSessionId());
+      session.dispose();
+    }
+    fixture.session.dispose();
+    resetRegistry();
+  }
 });

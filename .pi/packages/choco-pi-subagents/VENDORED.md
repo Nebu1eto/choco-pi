@@ -558,7 +558,8 @@ configured-fallback check all require `isCallerSpawnable`. First-party code
 that passes a literal type to `manager.spawn` (the advisor tool) still reaches
 `getConfig`. The advisor role is internal because the advisor tool owns its
 model and effort; a direct `Agent` spawn would inherit the parent model.
-`tests/subagent-config.test.ts` pins it.
+`tests/subagent-config.test.ts` pins it. The `side-chat` role is internal for
+the same reason: only `/btw` spawns it (see the `side-chat` patch below).
 
 ### No prompt-mode label on append-mode agents
 
@@ -1659,6 +1660,31 @@ the hint row, and clamps them so the transcript keeps its minimum viewport.
 
 Tests: `tests/conversation-viewer.test.ts` (multiline send, Esc cancel, no
 margin rows around the draft).
+
+## choco-pi patch: dedicated `side-chat` agent for `/btw`
+
+`/btw` resolved its record type through the caller fallback chain
+(`general-purpose` → `fallbackSubagent` → `general` → any type), so side
+conversations were named `@general` and occupied that role's handle space.
+`resolveBtwType()` (`src/ui/side-conversation.ts`) now returns the literal type
+`side-chat` (exported as `SIDE_CHAT_TYPE`) whenever `getAgentConfig("side-chat")`
+exists and is enabled; the old chain applies only when it is absent or
+disabled. `.pi/agents/side-chat.md` is `internal: true`, so it stays out of the
+Agent tool enum, `@type` mentions, workflow steps and caller dispatch;
+`isCallerSpawnable` is unchanged. `/btw` is a first-party spawn like the
+advisor: `handleBtwCommand` passes the type straight to
+`SideConversationController.launch` → `AgentManager.spawn`, and neither
+re-resolves it. Handles follow `assignHandle`: `side-chat`, `side-chat-2`, ....
+
+The agent file sets identity, visibility and the read-only tool allowlist only.
+A fork's system prompt, model and thinking level still come from the main
+session (`runAgent` applies `mainSessionFork` before any frontmatter), so the
+file deliberately has no `default_model` or `default_thinking`.
+
+Tests: `tests/side-conversation.test.ts` (internal `side-chat` preferred and
+refused by caller dispatch, disabled file falls back, `side-chat`/`side-chat-2`
+handles, and a real `runAgent` session proving a fork keeps the main model and
+thinking level while the same config off-fork takes its `default_model`).
 
 ## 2026-10-09 choco-pi patch: Pi SDK 1.2.0
 

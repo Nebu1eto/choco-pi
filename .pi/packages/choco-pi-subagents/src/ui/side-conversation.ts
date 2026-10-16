@@ -11,6 +11,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import type { AgentManager } from "../agent-manager.ts";
 import { captureMainSessionFork } from "../agent-runner.ts";
 import {
+  getAgentConfig,
   getAvailableTypes,
   getFallbackSubagent,
   NO_FALLBACK,
@@ -41,13 +42,25 @@ export type SideConversationOptions = {
   focusAgent?: (record: AgentRecord, tui: any, theme: Theme) => boolean;
 };
 
+/** Dedicated internal agent for `/btw`; its records are named `side-chat`, `side-chat-2`, .... */
+export const SIDE_CHAT_TYPE = "side-chat";
+
 /**
- * Pick the agent type for a side conversation. `general-purpose` is preferred,
- * but harnesses run with default agents disabled (`fallbackSubagent: "none"`),
- * so fall through the configured fallback, then `general`, then every
- * registered type. A BTW conversation must work in any viable fleet.
+ * Pick the agent type for a side conversation. The dedicated `side-chat` agent
+ * wins when registered and enabled. It is normally `internal: true`, hidden from
+ * caller-supplied dispatch, so it is looked up by literal name here: `/btw` is a
+ * first-party spawn, like the advisor tool spawning `advisor`. The manager and
+ * runner serve internal types by name; nothing on this path re-validates them.
+ *
+ * Without it, `general-purpose` is preferred, but harnesses run with default
+ * agents disabled (`fallbackSubagent: "none"`), so fall through the configured
+ * fallback, then `general`, then every caller-spawnable type. A BTW
+ * conversation must work in any viable fleet.
  */
 export function resolveBtwType(): SpawnTypeResolution {
+  const sideChat = getAgentConfig(SIDE_CHAT_TYPE);
+  if (sideChat && sideChat.enabled !== false) return { ok: true, type: SIDE_CHAT_TYPE };
+
   const candidates: string[] = ["general-purpose"];
   const configured = getFallbackSubagent();
   if (configured && configured.toLowerCase() !== NO_FALLBACK) candidates.push(configured);

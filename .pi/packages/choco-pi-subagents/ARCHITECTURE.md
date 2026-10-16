@@ -243,8 +243,11 @@ linger window expires.
 ## Seam B — dismissible side-conversation overlay
 
 `/btw <question>` launches an ordinary top-level `AgentRecord` with
-`sideConversation: true`. It uses the resolved `general-purpose` type for record
-naming, is prefixed with `[btw]` in FleetView and conversation views, carries no
+`sideConversation: true`. Its record type is the internal `side-chat` agent
+(`.pi/agents/side-chat.md`), so records are named `side-chat`, `side-chat-2`,
+...; without that file it falls back through `general-purpose`, the configured
+fallback, `general`, then any caller-spawnable type. It is prefixed with
+`[btw]` in FleetView and conversation views, carries no
 `parentAgentId` (the package's representation of
 orchestrator ownership), and sets `isBackground: true`, so `AgentManager` applies
 the same `maxConcurrent` queue as every other root background agent. Its runtime
@@ -277,7 +280,8 @@ Side conversations set the internal `readOnly` spawn option. The runner:
 
 `spawnTopLevel` strips both `sideConversation` and `readOnly`, so RPC and global
 registry callers cannot forge the marker to suppress ordinary result delivery.
-The `/btw` controller calls the manager directly after resolving the type.
+The `/btw` controller calls the manager directly after resolving the type, so
+the internal `side-chat` type never passes caller dispatch.
 
 ### Overlay lifecycle
 
