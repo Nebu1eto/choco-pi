@@ -14,6 +14,7 @@ import type { CodexConversionConfig } from "../adapter/activation/config.ts";
 import type { ExecutionMode } from "../adapter/activation/execution-mode.ts";
 import { isCodeModeRuntime, resolveCodexRuntimePlan } from "../adapter/activation/runtime-plan.ts";
 import type { CodexStreamEvent, ResponsesBody } from "./openai-codex/types.ts";
+import { supportsResponsesLiteModel } from "./openai-codex/responses-lite.ts";
 
 function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
   let promise: Promise<Module> | undefined;
@@ -117,6 +118,7 @@ export function streamCodeModeResponsesProxy<TApi extends Api>(
 ) {
   const stream = createAssistantMessageEventStream();
   const output = initialAssistantMessage(model);
+  const responsesLite = supportsResponsesLiteModel(model);
 
   void (async () => {
     try {
@@ -152,11 +154,13 @@ export function streamCodeModeResponsesProxy<TApi extends Api>(
         // preserve that request representation for the host provider API.
         body = rewritten as ResponsesBody;
       }
-      body = isResponsesLiteRequest(body)
-        ? namespaceExistingResponsesLiteRequest({ ...body, parallel_tool_calls: false })
-        : applyResponsesLiteRequest(body);
-      body = await prepareResponsesLiteRequestImages(body);
-      headers = mergeHeaders(headers, { [RESPONSES_LITE_HEADER]: "true" });
+      if (responsesLite) {
+        body = isResponsesLiteRequest(body)
+          ? namespaceExistingResponsesLiteRequest({ ...body, parallel_tool_calls: false })
+          : applyResponsesLiteRequest(body);
+        body = await prepareResponsesLiteRequestImages(body);
+        headers = mergeHeaders(headers, { [RESPONSES_LITE_HEADER]: "true" });
+      }
 
       const auth = clientAuth(model.provider, options?.apiKey, headers);
       const client = new OpenAI({

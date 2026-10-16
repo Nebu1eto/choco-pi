@@ -29,6 +29,7 @@ import {
 import {
   applyResponsesLiteRequest,
   RESPONSES_LITE_HEADER,
+  supportsResponsesLiteModel,
   type ResponsesLiteCompatibleBody,
 } from "../providers/openai-codex/responses-lite.ts";
 import {
@@ -60,6 +61,7 @@ function prepareCodexProviderRequest(
   );
   return {
     plan,
+    responsesLite: isCodeModeRuntime(plan) && supportsResponsesLiteModel(model),
     fastModeDecision,
     configuredPayload: applyCodexRequestOptions(
       applyVoiceSystemPrompt(payload, state.voiceSystemPromptOverride),
@@ -196,7 +198,7 @@ async function rewriteCodexProviderRequestBody(
   const prepared = prepareCodexProviderRequest(payload, ctx, state);
   if (!prepared) return undefined;
   if (!hasCanonicalAliasEndpoint(ctx, state)) return undefined;
-  const { plan, fastModeDecision, configuredPayload } = prepared;
+  const { plan, responsesLite, fastModeDecision, configuredPayload } = prepared;
   let rewrittenPayload = configuredPayload;
   if (plan.nativeCompaction || state.pendingPiCompactionNativeWindow) {
     const piCompactionPayload = await injectPendingNativeWindowIntoPiCompactionRequest(
@@ -210,7 +212,7 @@ async function rewriteCodexProviderRequestBody(
       configuredPayload;
   }
   const finalPayload = applyAuthoritativeServiceTier(
-    applyCodexRuntimePayload(rewrittenPayload, isCodeModeRuntime(plan)),
+    applyCodexRuntimePayload(rewrittenPayload, responsesLite),
     fastModeDecision,
   );
   // Stock Responses providers and configured Code Mode overlays have no
@@ -230,7 +232,7 @@ export function rewriteCodexPrewarmProviderRequest(
   const prepared = prepareCodexProviderRequest(payload, ctx, state);
   const rewritten = prepared
     ? applyAuthoritativeServiceTier(
-        applyCodexRuntimePayload(prepared.configuredPayload, isCodeModeRuntime(prepared.plan)),
+        applyCodexRuntimePayload(prepared.configuredPayload, prepared.responsesLite),
         prepared.fastModeDecision,
       )
     : undefined;

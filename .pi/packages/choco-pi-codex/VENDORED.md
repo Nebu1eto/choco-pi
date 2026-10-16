@@ -1,5 +1,15 @@
 # Vendored: choco-pi-codex
 
+## Responses Lite capability gate (choco-pi addition)
+
+`adapter/provider-request.ts` (foreground and prewarm) and
+`providers/code-mode-proxy-provider.ts` apply Responses Lite only to the Codex
+Responses API or models advertising `compat.supportsAdditionalTools: true`.
+Code Mode activation alone no longer authorizes its `additional_tools` prefix.
+Plain Responses providers retain top-level instructions and tools; Codex keeps
+its existing transform. `tests/openai-sign-in-request.test.ts` covers xAI and a
+generic Responses proxy without the capability, plus compatible OpenAI bodies.
+
 ## Codex Fast wire parity (choco-pi addition)
 
 Fast and standard requests follow openai/codex `service_tier_for_request` and

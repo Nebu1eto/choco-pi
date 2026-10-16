@@ -14,10 +14,20 @@ import {
 import {
   InMemoryCredentialStore,
   InMemoryModelsStore,
+  normalizeContext,
   type Credential,
   type Model,
 } from "@earendil-works/pi-ai";
-import { rewriteCodexProviderRequest } from "../src/adapter/provider-request.ts";
+import {
+  rewriteCodexProviderRequest,
+  rewriteCodexPrewarmProviderRequest,
+} from "../src/adapter/provider-request.ts";
+import { buildRequestBody } from "../src/providers/openai-codex/request-body.ts";
+import {
+  applyResponsesLiteRequest,
+  supportsResponsesLiteModel,
+} from "../src/providers/openai-codex/responses-lite.ts";
+import { streamCodeModeResponsesProxy } from "../src/providers/code-mode-proxy-provider.ts";
 import { DEFAULT_CODEX_CONVERSION_CONFIG } from "../src/adapter/activation/config.ts";
 import type { AdapterState } from "../src/adapter/activation/state.ts";
 import type { BoundaryValue } from "../src/adapter/runtime-values.ts";
@@ -60,7 +70,10 @@ function parsePayload(value: BoundaryValue | undefined): Static<typeof PayloadSc
   return value;
 }
 
-async function contextFor(credential: Credential): Promise<{
+async function contextFor(
+  credential: Credential,
+  model = openaiModel,
+): Promise<{
   ctx: ExtensionContext;
   dispose: () => void;
 }> {
@@ -99,7 +112,7 @@ async function contextFor(credential: Credential): Promise<{
     sessionManager: SessionManager.inMemory(cwd),
     settingsManager: settings,
     noTools: "all",
-    model: openaiModel,
+    model,
   });
   await created.session.bindExtensions({});
   if (!ctx) {
@@ -175,6 +188,98 @@ test("subscription sign-in requests never carry service_tier or access_programs"
     }
   } finally {
     dispose();
+  }
+});
+
+test("Code Mode preserves plain Responses for models without additional-tools support", async () => {
+  const transcript = normalizeContext({
+    systemPrompt: "Instructions.",
+    messages: [
+      { role: "user", content: "Reply OK.", timestamp: 1 },
+      {
+        role: "system",
+        content: "Tools loaded.",
+        timestamp: 2,
+        toolsAdded: [
+          {
+            name: "read",
+            description: "Read a file",
+            parameters: Type.Object({ path: Type.String() }),
+          },
+        ],
+      },
+    ],
+  });
+  for (const provider of ["xai", "responses-proxy", "openai"]) {
+    for (const supportsAdditionalTools of [false, true]) {
+      const model: Model<"openai-responses"> = {
+        ...openaiModel,
+        provider,
+        compat: supportsAdditionalTools
+          ? { supportsAdditionalTools: true }
+          : { supportsLongCacheRetention: false },
+      };
+      const { ctx, dispose } = await contextFor(apiKeyCredential, model);
+      try {
+        const state = adapterState(false);
+        state.executionMode = "code";
+        state.config = { ...state.config, scope: { ...state.config.scope, allProviders: "on" } };
+        const body = buildRequestBody(model, transcript);
+        const expected = supportsAdditionalTools ? applyResponsesLiteRequest(body) : body;
+        assert.deepEqual(await rewriteCodexProviderRequest(body, ctx, state), expected);
+        assert.deepEqual(rewriteCodexPrewarmProviderRequest(body, ctx, state), expected);
+        if (!supportsAdditionalTools) {
+          assert.doesNotMatch(JSON.stringify(body.input), /additional_tools|tool_search_/);
+          assert.match(JSON.stringify(body.tools), /"name":"read"/);
+        }
+      } finally {
+        dispose();
+      }
+    }
+  }
+});
+
+test("Code Mode proxy gates its final wire body and header on additional-tools support", async (t) => {
+  assert.equal(supportsResponsesLiteModel({ ...openaiModel, api: "openai-codex-responses" }), true);
+  for (const supportsAdditionalTools of [false, true]) {
+    let capturedBody: string | undefined;
+    let capturedHeaders: Headers | undefined;
+    const fetch = t.mock.method(
+      globalThis,
+      "fetch",
+      async (_input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => {
+        assert.ok(Value.Check(Type.String(), init?.body));
+        capturedBody = init.body;
+        capturedHeaders = new Headers(init?.headers);
+        throw new Error("Request captured without network access");
+      },
+    );
+    try {
+      const model: Model<"openai-responses"> = {
+        ...openaiModel,
+        provider: "xai",
+        compat: { supportsAdditionalTools, supportsLongCacheRetention: false },
+      };
+      const context = normalizeContext({
+        systemPrompt: "Reply OK.",
+        tools: [{ name: "read", description: "Read a file", parameters: Type.Object({}) }],
+        messages: [{ role: "user", content: "Reply OK.", timestamp: 1 }],
+      });
+      await streamCodeModeResponsesProxy(model, context, {
+        apiKey: "test",
+        maxRetries: 0,
+      }).result();
+      assert.ok(capturedBody, "proxy must reach the intercepted wire boundary");
+      assert.equal(capturedBody.includes('"type":"additional_tools"'), supportsAdditionalTools);
+      assert.equal(capturedBody.includes('"tools":'), true);
+      assert.equal(capturedBody.includes('"instructions":'), !supportsAdditionalTools);
+      assert.equal(
+        capturedHeaders?.get("x-openai-internal-codex-responses-lite"),
+        supportsAdditionalTools ? "true" : null,
+      );
+    } finally {
+      fetch.mock.restore();
+    }
   }
 });
 

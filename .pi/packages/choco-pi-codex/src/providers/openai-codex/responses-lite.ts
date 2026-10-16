@@ -1,3 +1,4 @@
+import type { Api, Model } from "@earendil-works/pi-ai";
 import { resizeImage } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 import { Check } from "typebox/value";
@@ -25,6 +26,16 @@ export interface ResponsesLiteCompatibleBody {
   reasoning?: ProtocolValue | undefined;
   client_metadata?: Record<string, string> | undefined;
   [key: string]: ProtocolPropertyValue;
+}
+
+export function supportsResponsesLiteModel(model: Model<Api> | undefined): boolean {
+  if (model?.api === "openai-codex-responses") return true;
+  const compat = model?.compat;
+  return (
+    compat !== undefined &&
+    "supportsAdditionalTools" in compat &&
+    compat.supportsAdditionalTools === true
+  );
 }
 
 export function isResponsesLiteRequest(body: ResponsesLiteCompatibleBody): boolean {
