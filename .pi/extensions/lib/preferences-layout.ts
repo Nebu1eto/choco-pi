@@ -24,6 +24,8 @@ export const ADVANCED_SECTION_ID = "advanced";
 const BACKGROUND_COMPACTION_ROW = "backgroundCompaction.enabled";
 /** Row id of the Anthropic compaction mode row the compaction package builds. */
 const ANTHROPIC_COMPACTION_ROW = "compactionAnthropic";
+/** Row id of the xAI compaction mode row the compaction package builds. */
+const XAI_COMPACTION_ROW = "compactionXai";
 
 /** Every row of one source section, in the order that source builds them. */
 function section(id: string): string {
@@ -97,6 +99,7 @@ export const PREFERENCES_LAYOUT: readonly PreferencesLayoutTab[] = [
           "autoCompactionPoint",
           "responsesCompaction",
           ANTHROPIC_COMPACTION_ROW,
+          XAI_COMPACTION_ROW,
           BACKGROUND_COMPACTION_ROW,
         ],
       },

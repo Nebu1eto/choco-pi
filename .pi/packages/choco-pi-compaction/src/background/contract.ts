@@ -141,7 +141,8 @@ export type CheckpointStrategy =
   | "local-reconciled"
   | "openai-native-compact-v1"
   | "openai-responses-compaction-v2"
-  | "anthropic-compaction-on-demand-v1";
+  | "anthropic-compaction-on-demand-v1"
+  | "xai-responses-compaction-v1";
 /** Backend validates its own payload; coordinator never interprets native contents. */
 export interface PreparedCheckpoint<Details = unknown> {
   readonly candidateId: string;
@@ -335,6 +336,7 @@ export const CheckpointDetailsSchema = Type.Object(
       Type.Literal("openai-native-compact-v1"),
       Type.Literal("openai-responses-compaction-v2"),
       Type.Literal("anthropic-compaction-on-demand-v1"),
+      Type.Literal("xai-responses-compaction-v1"),
     ]),
   },
   { additionalProperties: JsonValueSchema },

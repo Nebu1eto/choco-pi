@@ -138,9 +138,10 @@ async function withProviders(run: (providers: Providers) => Promise<void>): Prom
   const unpublish = publishBackgroundCompactionPreferences({
     enabled: () => false,
     setEnabled: async () => {},
-    // The Anthropic row exists only with a mode switch; build it so the
-    // layout's placement of it is checked against a real row.
+    // The Anthropic and xAI rows exist only with a mode switch; build both so
+    // the layout's placement of them is checked against real rows.
     anthropic: { mode: () => "server-side", set: async () => {} },
+    xai: { mode: () => "server-side", set: async () => {} },
   });
   try {
     installNativeSettingsBridge(() => {});
@@ -270,6 +271,7 @@ test("every provider row is placed in exactly one group or explicitly hidden", a
     assert.deepEqual(rows.get("backgroundCompaction"), [
       "backgroundCompaction.enabled",
       "compactionAnthropic",
+      "compactionXai",
     ]);
   });
 });
@@ -284,6 +286,7 @@ test("the Session tab groups context limits and every compaction row", () => {
     "autoCompactionPoint",
     "responsesCompaction",
     "compactionAnthropic",
+    "compactionXai",
     "backgroundCompaction.enabled",
   ]);
 });

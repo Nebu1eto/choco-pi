@@ -22,6 +22,13 @@ export {
   writeAnthropicCompactionMode,
 } from "./anthropic/mode.ts";
 export {
+  DEFAULT_XAI_COMPACTION_MODE,
+  readXaiCompactionMode,
+  writeXaiCompactionMode,
+  XAI_COMPACTION_MODE_KEY,
+  type XaiCompactionMode,
+} from "./xai/mode.ts";
+export {
   type LocalCompactionDetails,
   LocalCompactionDetailsSchema,
   parseLocalCompactionDetails,
@@ -149,7 +156,7 @@ export default function registerCompaction(
     if (adopted !== undefined) return adopted;
     // A child's runner bridge commits its own adoption after this handler.
     if (await background.childAdopts(event, ctx)) return undefined;
-    // Anthropic server-side compaction; any failure falls through to the summarizer.
+    // Anthropic or xAI server-side compaction; any failure falls through to the summarizer.
     const native = await background.foregroundCompact(event, ctx);
     if (native !== undefined) return native;
     return summarize(event, ctx);
@@ -158,17 +165,21 @@ export default function registerCompaction(
 
 /**
  * Injected registrations (tests) never read real background settings or the
- * real Anthropic compaction mode: unless a test supplies its own reader, the
- * mode is the local summarizer ("choco-pi").
+ * real Anthropic or xAI compaction mode: unless a test supplies its own
+ * reader, each mode is the local summarizer ("choco-pi").
  */
 function injectedBackgroundOptions(
   options: RegisterCompactionOptions,
 ): BackgroundCompactionOptions | undefined {
   if (options.retryPolicy === undefined) return options.background;
   const background = options.background ?? { settingsPaths: () => [] };
-  if (background.anthropic?.readMode !== undefined) return background;
-  return {
-    ...background,
-    anthropic: { ...background.anthropic, readMode: async () => "choco-pi" },
-  };
+  const anthropic =
+    background.anthropic?.readMode === undefined
+      ? { ...background.anthropic, readMode: async () => "choco-pi" as const }
+      : background.anthropic;
+  const xai =
+    background.xai?.readMode === undefined
+      ? { ...background.xai, readMode: async () => "choco-pi" as const }
+      : background.xai;
+  return { ...background, anthropic, xai };
 }

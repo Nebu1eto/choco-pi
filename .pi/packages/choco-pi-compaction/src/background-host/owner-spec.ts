@@ -16,6 +16,8 @@ import type { SettingsLocation } from "../background/settings.ts";
 import type { TextSummarizer } from "../background/text-backend.ts";
 import type { CodexCompactionSnapshot } from "../ownership.ts";
 import type { HostCompactionPolicyReader } from "../session-state.ts";
+import type { XaiCapturingOptions } from "../xai/capture.ts";
+import type { XaiCompactionMode } from "../xai/mode.ts";
 
 /** Test and integration seams. Production registers with none of them. */
 export interface BackgroundCompactionOptions {
@@ -33,6 +35,14 @@ export interface BackgroundCompactionOptions {
      * (`compactionAnthropic`); read at every session start.
      */
     readonly readMode?: (agentDir: string) => Promise<AnthropicCompactionMode>;
+  };
+  readonly xai?: {
+    /** Exact combinations replacing the default xAI policy (tests, synthetic endpoints). */
+    readonly allowList?: readonly AnthropicSupportEntry[];
+    readonly fetch?: typeof globalThis.fetch;
+    readonly capture?: XaiCapturingOptions;
+    /** Mode reader replacing `<agentDir>/settings.json` (`compactionXai`); read at every session start. */
+    readonly readMode?: (agentDir: string) => Promise<XaiCompactionMode>;
   };
   readonly clock?: SchedulerClock;
   /** Provider prompt counter for admission; unset means the calibrated estimate decides. */
@@ -58,5 +68,11 @@ export interface OwnerSpec {
   readonly isOwnerCurrent: () => boolean;
   readonly allowAnthropic: boolean;
   readonly allowForeign: boolean;
+  /**
+   * xAI server-side compaction owns this model's compactions (server-side mode
+   * and an admitted model). Background lanes then stay off: a text candidate
+   * adopted over an opaque xAI checkpoint would only see its placeholder.
+   */
+  readonly xaiServerSide?: boolean;
   readonly report: (message: string) => void;
 }

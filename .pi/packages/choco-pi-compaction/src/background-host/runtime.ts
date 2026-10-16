@@ -11,6 +11,8 @@ import type { AnthropicCapabilityGate } from "../anthropic/capability.ts";
 import type { AnthropicCompactionMode, AnthropicServerSideSession } from "../anthropic/mode.ts";
 import type { AnthropicReplayBinder } from "../anthropic/replay-binding.ts";
 import type { CompactionSessionState, SessionStateReader } from "../session-state.ts";
+import type { XaiCompactionMode } from "../xai/mode.ts";
+import type { XaiReplayBinder } from "../xai/replay.ts";
 import { errorText, type Notifier } from "./notices.ts";
 import type { OwnerCore } from "./owner-core.ts";
 import type { BackgroundCompactionOptions } from "./owner-spec.ts";
@@ -91,6 +93,15 @@ export interface HostRuntime {
   readonly replay: AnthropicReplayBinder;
   /** Unbinds the current session's replay binding. */
   unbindReplay: (() => void) | undefined;
+  /** xAI compaction mode read at session start. */
+  xaiMode: XaiCompactionMode;
+  /** Session-scoped xAI server-side switch (disabled after a replay refusal or rejection). */
+  readonly xaiServerSide: AnthropicServerSideSession;
+  /** Capability gate (and cooldowns) of the xAI foreground path. */
+  readonly xaiGate: AnthropicCapabilityGate;
+  /** xAI capture, projection and replay rewrite. */
+  readonly xaiReplay: XaiReplayBinder;
+  unbindXaiReplay: (() => void) | undefined;
 }
 
 export function isCurrent(rt: HostRuntime, owner: MainOwner): boolean {
@@ -162,4 +173,7 @@ export function unbindReplay(rt: HostRuntime): void {
   const unbind = rt.unbindReplay;
   rt.unbindReplay = undefined;
   unbind?.();
+  const unbindXai = rt.unbindXaiReplay;
+  rt.unbindXaiReplay = undefined;
+  unbindXai?.();
 }

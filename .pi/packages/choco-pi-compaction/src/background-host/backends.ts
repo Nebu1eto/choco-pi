@@ -50,6 +50,7 @@ export type BackendOwnerSpec = Pick<
   | "scope"
   | "allowAnthropic"
   | "allowForeign"
+  | "xaiServerSide"
   | "report"
 >;
 
@@ -264,6 +265,10 @@ export async function selectBackendId(
   if (resolveOwner({ model: spec.model }, spec.codexCompaction) === "codex-native") {
     return backends.has(CODEX_BACKEND_SETTING_ID) ? CODEX_BACKEND_SETTING_ID : undefined;
   }
+  // xAI server-side owns this model: its foreground handler compacts, and a
+  // background text candidate adopted over an opaque xAI checkpoint would
+  // summarize only the checkpoint's placeholder.
+  if (spec.xaiServerSide === true) return undefined;
   const anthropic = backends.get(ANTHROPIC_BACKEND_ID);
   if (anthropic !== undefined) {
     try {

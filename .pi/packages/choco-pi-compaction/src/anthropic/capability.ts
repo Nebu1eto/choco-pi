@@ -113,6 +113,11 @@ interface CapabilityGateOptions {
    * entries match.
    */
   readonly allowList?: readonly AnthropicSupportEntry[];
+  /**
+   * Default policy replacing the Anthropic first-party policy when no
+   * allow-list is set (another vendor's static support policy).
+   */
+  readonly policy?: (scope: ProviderScope) => AnthropicSupportEntry | undefined;
   /** Family floors of the default policy; defaults to {@link SERVER_SIDE_COMPACTION_FAMILIES}. */
   readonly families?: readonly AnthropicFamilyFloor[];
   readonly maxCooldownMs?: number;
@@ -129,6 +134,9 @@ interface CooldownState {
 export class AnthropicCapabilityGate {
   private readonly enabled: boolean;
   private readonly allowList: readonly AnthropicSupportEntry[] | undefined;
+  private readonly policy:
+    | ((scope: ProviderScope) => AnthropicSupportEntry | undefined)
+    | undefined;
   private readonly families: readonly AnthropicFamilyFloor[];
   private readonly cooldownMs: number;
   private readonly maxCooldownMs: number;
@@ -139,6 +147,7 @@ export class AnthropicCapabilityGate {
   constructor(options: CapabilityGateOptions) {
     this.enabled = options.enabled;
     this.allowList = options.allowList;
+    this.policy = options.policy;
     this.families = options.families ?? SERVER_SIDE_COMPACTION_FAMILIES;
     this.cooldownMs = Math.max(0, options.cooldownMs);
     this.maxCooldownMs = Math.max(this.cooldownMs, options.maxCooldownMs ?? 3_600_000);
@@ -171,6 +180,7 @@ export class AnthropicCapabilityGate {
           normalizeBaseUrl(entry.baseUrl) === baseUrl,
       );
     }
+    if (this.policy !== undefined) return this.policy(scope);
     if (
       scope.provider !== ANTHROPIC_PROVIDER ||
       scope.authMode !== ADMITTED_AUTH_MODE ||

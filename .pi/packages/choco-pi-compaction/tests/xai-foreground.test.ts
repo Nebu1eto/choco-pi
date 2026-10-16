@@ -1,0 +1,548 @@
+/**
+ * Foreground xAI server-side compaction through a real `createAgentSession`
+ * (INSTALLED openai-responses adapter, fake transports, no network): the
+ * host's compaction is answered with an opaque compaction item, replay sends
+ * it first (before the system prompt) with no summary text, failures fall back
+ * to the local summarizer with a single notice and a cooldown, and a replay
+ * the transport refuses turns server-side off for the session.
+ */
+import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+
+import {
+  type AssistantMessage,
+  InMemoryCredentialStore,
+  InMemoryModelsStore,
+  type JsonObject,
+  type Model,
+} from "@earendil-works/pi-ai";
+import { streamSimple as installedStreamSimple } from "@earendil-works/pi-ai/api/openai-responses";
+import {
+  type AgentSession,
+  type CompactionEntry,
+  createAgentSession,
+  DefaultResourceLoader,
+  type ExtensionAPI,
+  type ExtensionContext,
+  type ExtensionFactory,
+  ModelRuntime,
+  SessionManager,
+  SettingsManager,
+} from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
+
+import { buildBackgroundCompactionPreferencesSections } from "../../../extensions/lib/background-compaction-preferences.ts";
+import registerCompaction from "../src/index.ts";
+import { publishBackgroundCompactionPreferences } from "../src/preferences-section.ts";
+import {
+  DEFAULT_XAI_COMPACTION_INSTRUCTIONS,
+  xaiCompactionInstructions,
+} from "../src/xai/backend.ts";
+import { waitForBackgroundCompactionPreferenceChanges } from "../src/preferences-section.ts";
+import {
+  parseXaiWireBody,
+  releaseXaiSessionCaptures,
+  xaiTransportRefusals,
+  type XaiWireBody,
+  XaiWireBodySchema,
+} from "../src/xai/capture.ts";
+import { isXaiDetails, placeholderSummary } from "../src/xai/details.ts";
+import type { XaiCompactionMode } from "../src/xai/mode.ts";
+import { BACKGROUND_OFF_SETTINGS_PATHS } from "./host-harness.ts";
+
+const API_KEY = "xai-foreground-non-secret-placeholder";
+const MODEL: Model<"openai-responses"> = {
+  id: "grok-test-1",
+  name: "Synthetic Grok",
+  api: "openai-responses",
+  provider: "xai",
+  baseUrl: "https://api.x.ai/v1",
+  reasoning: false,
+  input: ["text"],
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  contextWindow: 200_000,
+  maxTokens: 4_096,
+};
+const ITEM = { type: "compaction", encrypted_content: "xai-foreground-synthetic-opaque" };
+const NOTICE_PREFIX = "xAI server-side compaction";
+
+type Frame = JsonObject & { readonly type: string };
+
+function textResponse(text: string): Response {
+  const message = { type: "message", id: "msg_fg", role: "assistant" };
+  const frames: Frame[] = [
+    { type: "response.created", response: { id: "resp_fg", status: "in_progress" } },
+    {
+      type: "response.output_item.added",
+      output_index: 0,
+      item: { ...message, status: "in_progress", content: [] },
+    },
+    {
+      type: "response.output_text.delta",
+      output_index: 0,
+      item_id: "msg_fg",
+      content_index: 0,
+      delta: text,
+    },
+    {
+      type: "response.output_item.done",
+      output_index: 0,
+      item: {
+        ...message,
+        status: "completed",
+        content: [{ type: "output_text", text, annotations: [] }],
+      },
+    },
+    {
+      type: "response.completed",
+      response: {
+        id: "resp_fg",
+        status: "completed",
+        usage: {
+          input_tokens: 1,
+          output_tokens: 1,
+          total_tokens: 2,
+          input_tokens_details: { cached_tokens: 0 },
+        },
+      },
+    },
+  ];
+  return new Response(
+    frames.map((frame) => `event: ${frame.type}\ndata: ${JSON.stringify(frame)}\n\n`).join(""),
+    { status: 200, headers: { "content-type": "text/event-stream" } },
+  );
+}
+
+function compactResponse(): Response {
+  return new Response(
+    JSON.stringify({
+      object: "response.compaction",
+      id: "cmp_fg",
+      created_at: 1,
+      model: MODEL.id,
+      output: [ITEM],
+      usage: { input_tokens: 90, output_tokens: 30, total_tokens: 120, dropped_message_count: 2 },
+    }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+}
+
+interface Sent {
+  readonly url: string;
+  readonly headers: Headers;
+  readonly text: string;
+  readonly body: XaiWireBody | undefined;
+}
+
+interface RecordingFetch {
+  readonly sent: Sent[];
+  readonly fetch: typeof globalThis.fetch;
+}
+
+function recordingFetch(respond: (index: number, sent: Sent) => Response): RecordingFetch {
+  const sent: Sent[] = [];
+  return {
+    sent,
+    fetch: async (input, init) => {
+      const text = String(init?.body ?? "");
+      const entry: Sent = {
+        url: String(input),
+        headers: new Headers(init?.headers),
+        text,
+        body: parseXaiWireBody(text),
+      };
+      sent.push(entry);
+      return respond(sent.length - 1, entry);
+    },
+  };
+}
+
+/** Foreground: first answer, later recognizable local summaries. */
+function textForeground(): RecordingFetch {
+  return recordingFetch((index) =>
+    textResponse(index === 0 ? "XG-ANSWER" : `XG-LOCAL-SUMMARY-${index}`),
+  );
+}
+
+const usage = {
+  input: 1,
+  output: 1,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 2,
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
+
+function assistantMessage(text: string): AssistantMessage {
+  return {
+    role: "assistant",
+    content: [{ type: "text", text }],
+    api: MODEL.api,
+    provider: MODEL.provider,
+    model: MODEL.id,
+    usage,
+    stopReason: "stop",
+    timestamp: 0,
+  };
+}
+
+interface Rig {
+  readonly session: AgentSession;
+  readonly manager: SessionManager;
+  readonly notices: string[];
+  readonly ctx: () => ExtensionContext;
+  dispose(): Promise<void>;
+}
+
+interface RigOptions {
+  readonly foreground: RecordingFetch;
+  readonly lane: RecordingFetch;
+  readonly mode?: XaiCompactionMode;
+  readonly after?: readonly ExtensionFactory[];
+}
+
+async function createRig(options: RigOptions): Promise<Rig> {
+  const dir = await mkdtemp(join(tmpdir(), "choco-pi-xai-foreground-"));
+  const runtime = await ModelRuntime.create({
+    credentials: new InMemoryCredentialStore(),
+    modelsStore: new InMemoryModelsStore(),
+    allowModelNetwork: false,
+    refreshOnCreate: false,
+    modelsPath: null,
+  });
+  runtime.registerProvider("xai", {
+    api: "openai-responses",
+    apiKey: API_KEY,
+    models: [MODEL],
+    // Uncaptured path (choco-pi mode): the installed adapter on the same fake transport.
+    streamSimple: (active, context, streamOptions) => {
+      assert.equal(active.id, MODEL.id);
+      return installedStreamSimple(MODEL, context, {
+        ...streamOptions,
+        fetch: options.foreground.fetch,
+      });
+    },
+  });
+  const settings = SettingsManager.inMemory({
+    compaction: { enabled: false, keepRecentTokens: 1, reserveTokens: 16_384 },
+    retry: { enabled: false },
+  });
+  const notices: string[] = [];
+  let captured: ExtensionContext | undefined;
+  const extension = (pi: ExtensionAPI): void => {
+    pi.on("session_start", (_event, ctx) => {
+      captured = ctx;
+      ctx.ui.notify = (message) => {
+        notices.push(message);
+      };
+    });
+    registerCompaction(pi, {
+      retryPolicy: { enabled: false, maxRetries: 0, baseDelayMs: 0, maxAgentDelayMs: 0 },
+      compactionPolicy: () => ({ keepRecentTokens: 1, reserveTokens: 16_384 }),
+      background: {
+        settingsPaths: () => BACKGROUND_OFF_SETTINGS_PATHS,
+        xai: {
+          readMode: async () => options.mode ?? "server-side",
+          fetch: options.lane.fetch,
+          capture: { fetch: options.foreground.fetch },
+        },
+      },
+    });
+  };
+  const loader = new DefaultResourceLoader({
+    cwd: dir,
+    agentDir: dir,
+    settingsManager: settings,
+    noExtensions: true,
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    noContextFiles: true,
+    extensionFactories: [extension, ...(options.after ?? [])],
+  });
+  await loader.reload();
+  const manager = SessionManager.inMemory(dir);
+  manager.appendMessage({ role: "user", content: "XG-PREFIX-A", timestamp: 0 });
+  manager.appendMessage(assistantMessage("XG-PREFIX-B"));
+  manager.appendMessage({ role: "user", content: "XG-KEPT-C", timestamp: 0 });
+  manager.appendMessage(assistantMessage("XG-KEPT-D"));
+  const { session } = await createAgentSession({
+    cwd: dir,
+    agentDir: dir,
+    model: MODEL,
+    modelRuntime: runtime,
+    resourceLoader: loader,
+    sessionManager: manager,
+    settingsManager: settings,
+    noTools: "builtin",
+  });
+  await session.bindExtensions({});
+  const sessionId = manager.getSessionId();
+  return {
+    session,
+    manager,
+    notices,
+    ctx: () => {
+      assert.ok(captured, "session_start ran");
+      return captured;
+    },
+    async dispose() {
+      session.dispose();
+      releaseXaiSessionCaptures(sessionId);
+      await rm(dir, { recursive: true, force: true });
+    },
+  };
+}
+
+function compactions(manager: SessionManager): CompactionEntry[] {
+  return manager
+    .getBranch()
+    .filter((entry): entry is CompactionEntry => entry.type === "compaction");
+}
+
+function noticesOf(rig: Rig): string[] {
+  return rig.notices.filter((notice) => notice.startsWith(NOTICE_PREFIX));
+}
+
+function roleOf(item: JsonObject | undefined): string | undefined {
+  const role = item?.role;
+  return Value.Check(Type.String(), role) ? role : undefined;
+}
+
+test(
+  "server-side success commits the opaque item; replay sends it first, then the system prompt",
+  { timeout: 30_000 },
+  async () => {
+    const foreground = textForeground();
+    const lane = recordingFetch(() => compactResponse());
+    const rig = await createRig({ foreground, lane });
+    try {
+      await rig.session.prompt("XG-GO");
+      assert.equal(foreground.sent.length, 1);
+      const captured = foreground.sent[0]?.body;
+      assert.ok(captured);
+      assert.equal(
+        roleOf(captured.input[0]),
+        "system",
+        "the adapter sends the system prompt first",
+      );
+
+      const result = await rig.session.compact("XG focus");
+      assert.equal(lane.sent.length, 1, "one compact request");
+      const request = lane.sent[0];
+      assert.equal(request?.url, "https://api.x.ai/v1/responses/compact");
+      assert.equal(request?.headers.get("authorization"), `Bearer ${API_KEY}`);
+      assert.ok(request?.body);
+      assert.equal(request.body.model, MODEL.id);
+      assert.equal(request.body.instructions, xaiCompactionInstructions("XG focus"));
+      assert.ok(String(request.body.instructions).startsWith(DEFAULT_XAI_COMPACTION_INSTRUCTIONS));
+      assert.ok(String(request.body.instructions).endsWith("XG focus"), "custom focus appended");
+      assert.notEqual(roleOf(request.body.input[0]), "system", "system prompt not compacted");
+      assert.ok(request.text.includes("XG-PREFIX-A"));
+      // The compacted prefix is exactly the captured items it came from.
+      const prefix = captured.input.slice(1, request.body.input.length + 1);
+      assert.deepEqual(request.body.input, prefix);
+      assert.equal(foreground.sent.length, 1, "the local summarizer never ran");
+
+      const [entry, ...extra] = compactions(rig.manager);
+      assert.ok(entry);
+      assert.equal(extra.length, 0);
+      assert.ok(isXaiDetails(entry.details));
+      assert.deepEqual(entry.details.item, ITEM);
+      assert.equal(entry.details.compactionId, "cmp_fg");
+      assert.equal(entry.details.cut.firstKeptEntryId, entry.firstKeptEntryId);
+      assert.equal(result.summary, placeholderSummary(entry.details.wire.compactedItems));
+      assert.equal(result.summary.includes(ITEM.encrypted_content), false);
+      assert.deepEqual(noticesOf(rig), []);
+
+      await rig.session.prompt("XG-NEXT");
+      const replay = foreground.sent.at(-1);
+      assert.ok(replay?.body);
+      assert.deepEqual(replay.body.input[0], ITEM, "the item is the head of the input");
+      assert.equal(roleOf(replay.body.input[1]), "system", "the current system prompt follows it");
+      assert.equal(replay.text.includes("XG-PREFIX-A"), false, "compacted prefix not resent");
+      assert.equal(replay.text.includes("xAI server-side compaction checkpoint"), false);
+      assert.ok(replay.text.includes("XG-NEXT"));
+      assert.equal(replay.body.store, false);
+      assert.deepEqual(xaiTransportRefusals(rig.manager.getSessionId()), []);
+
+      // Re-compaction carries the earlier item forward inside the new prefix.
+      await rig.session.compact();
+      assert.equal(lane.sent.length, 2);
+      assert.deepEqual(lane.sent[1]?.body?.input[0], ITEM);
+      assert.equal(
+        lane.sent[1]?.body?.instructions,
+        DEFAULT_XAI_COMPACTION_INSTRUCTIONS,
+        "the default is sent when no custom instructions are given",
+      );
+    } finally {
+      await rig.dispose();
+    }
+  },
+);
+
+test(
+  "an HTTP 4xx falls back to the local summarizer once, then cools down without requests",
+  { timeout: 30_000 },
+  async () => {
+    const foreground = textForeground();
+    const lane = recordingFetch(
+      () => new Response(JSON.stringify({ error: "bad request" }), { status: 400 }),
+    );
+    const rig = await createRig({ foreground, lane });
+    try {
+      await rig.session.prompt("XG-GO");
+      const first = await rig.session.compact();
+      assert.equal(lane.sent.length, 1);
+      assert.match(first.summary, /XG-LOCAL-SUMMARY/u, "the local summarizer answered");
+      const [entry] = compactions(rig.manager);
+      assert.equal(isXaiDetails(entry?.details), false);
+      assert.equal(noticesOf(rig).length, 1, "one fallback notice");
+      assert.match(noticesOf(rig)[0] ?? "", /incompatible/u);
+
+      await rig.session.prompt("XG-AGAIN");
+      await rig.session.compact();
+      assert.equal(lane.sent.length, 1, "the cooled-down scope sends nothing");
+      assert.equal(noticesOf(rig).length, 1, "later fallbacks are silent");
+    } finally {
+      await rig.dispose();
+    }
+  },
+);
+
+test("choco-pi mode never calls the compact endpoint", { timeout: 30_000 }, async () => {
+  const foreground = textForeground();
+  const lane = recordingFetch(() => compactResponse());
+  const rig = await createRig({ foreground, lane, mode: "choco-pi" });
+  try {
+    await rig.session.prompt("XG-GO");
+    const result = await rig.session.compact();
+    assert.equal(lane.sent.length, 0);
+    assert.match(result.summary, /XG-LOCAL-SUMMARY/u);
+  } finally {
+    await rig.dispose();
+  }
+});
+
+test(
+  "a later handler that drops the item is refused at the transport and turns server-side off",
+  { timeout: 30_000 },
+  async () => {
+    const foreground = textForeground();
+    const lane = recordingFetch(() => compactResponse());
+    let hostile = false;
+    const stripper: ExtensionFactory = (pi) => {
+      pi.on("before_provider_request", (event) => {
+        if (!hostile || !Value.Check(XaiWireBodySchema, event.payload)) return undefined;
+        return { ...event.payload, input: event.payload.input.slice(1) };
+      });
+    };
+    const rig = await createRig({ foreground, lane, after: [stripper] });
+    try {
+      await rig.session.prompt("XG-GO");
+      await rig.session.compact();
+      assert.ok(isXaiDetails(compactions(rig.manager)[0]?.details));
+      hostile = true;
+      const before = foreground.sent.length;
+      await rig.session.prompt("XG-STRIPPED");
+      assert.equal(foreground.sent.length, before, "the stripped request was never transmitted");
+      assert.deepEqual(
+        xaiTransportRefusals(rig.manager.getSessionId()).map((refusal) => refusal.code),
+        ["item-missing"],
+      );
+      assert.equal(noticesOf(rig).length, 1, "one disable notice");
+      assert.match(noticesOf(rig)[0] ?? "", /off for this session/u);
+
+      hostile = false;
+      await rig.session.prompt("XG-AFTER");
+      const sent = foreground.sent.at(-1);
+      assert.ok(sent?.body);
+      assert.equal(sent.text.includes(ITEM.encrypted_content), false, "replay is off");
+      assert.ok(sent.text.includes("xAI server-side compaction checkpoint"), "placeholder sent");
+
+      await rig.session.compact();
+      assert.equal(lane.sent.length, 1, "later compactions are local");
+    } finally {
+      await rig.dispose();
+    }
+  },
+);
+
+test(
+  "a provider 400 naming the compaction item turns server-side off for the session",
+  { timeout: 30_000 },
+  async () => {
+    let reject = false;
+    const foreground = recordingFetch((index) =>
+      reject
+        ? new Response(JSON.stringify({ error: { message: "invalid compaction item" } }), {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          })
+        : textResponse(index === 0 ? "XG-ANSWER" : `XG-LOCAL-SUMMARY-${index}`),
+    );
+    const lane = recordingFetch(() => compactResponse());
+    const rig = await createRig({ foreground, lane });
+    try {
+      await rig.session.prompt("XG-GO");
+      await rig.session.compact();
+      reject = true;
+      await rig.session.prompt("XG-REJECTED");
+      assert.equal(noticesOf(rig).length, 1);
+      assert.match(noticesOf(rig)[0] ?? "", /provider-400/u);
+      reject = false;
+      await rig.session.prompt("XG-AFTER");
+      assert.equal(foreground.sent.at(-1)?.text.includes(ITEM.encrypted_content), false);
+    } finally {
+      await rig.dispose();
+    }
+  },
+);
+
+test("the xAI Preferences row reaches the profile panel and applies in order", async () => {
+  const foreground = textForeground();
+  const lane = recordingFetch(() => compactResponse());
+  const rig = await createRig({ foreground, lane });
+  let mode: XaiCompactionMode = "server-side";
+  const applied: XaiCompactionMode[] = [];
+  const unpublish = publishBackgroundCompactionPreferences({
+    enabled: () => true,
+    setEnabled: async () => undefined,
+    anthropic: { mode: () => "server-side", set: async () => undefined },
+    xai: {
+      mode: () => mode,
+      set: async (next) => {
+        applied.push(next);
+        mode = next;
+      },
+    },
+  });
+  try {
+    const [section] = buildBackgroundCompactionPreferencesSections(rig.ctx());
+    assert.ok(section);
+    const items = section.buildItems();
+    assert.deepEqual(
+      items.map((item) => item.id),
+      ["backgroundCompaction.enabled", "compactionAnthropic", "compactionXai"],
+    );
+    const row = items.find((item) => item.id === "compactionXai");
+    assert.equal(row?.label, "xAI compaction");
+    assert.equal(row?.currentValue, "server-side");
+    assert.deepEqual(row?.values, ["server-side", "choco-pi"]);
+    assert.deepEqual(section.handleChange("compactionXai", "bogus"), { kind: "rebuild" });
+    section.handleChange("compactionXai", "choco-pi");
+    await waitForBackgroundCompactionPreferenceChanges();
+    assert.deepEqual(applied, ["choco-pi"]);
+    assert.equal(
+      section.buildItems().find((item) => item.id === "compactionXai")?.currentValue,
+      "choco-pi",
+    );
+  } finally {
+    unpublish();
+    await rig.dispose();
+  }
+});

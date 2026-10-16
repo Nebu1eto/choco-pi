@@ -151,13 +151,13 @@ export function countCompactionBlocks(messages: readonly WireMessage[]): number 
 // Key alignment (wire message <-> projected entry)
 // ---------------------------------------------------------------------------
 
-type WireKeyKind = "text" | "tool_use" | "tool_result" | "image" | "compaction";
+export type WireKeyKind = "text" | "tool_use" | "tool_result" | "image" | "compaction";
 /** Non-secret reference to a wire key: kind plus digest prefix, never raw content. */
 interface WireKeyRef {
   readonly kind: WireKeyKind;
   readonly digest: string;
 }
-interface WireKey {
+export interface WireKey {
   readonly id: string;
   readonly ref: WireKeyRef;
 }
@@ -166,9 +166,11 @@ export function keyRef(kind: WireKeyKind, value: string): WireKeyRef {
   return { kind, digest: sha256(value).slice(0, 16) };
 }
 
-function key(kind: WireKeyKind, value: string): WireKey {
+export function wireKey(kind: WireKeyKind, value: string): WireKey {
   return { id: `${kind}\u0000${value}`, ref: keyRef(kind, value) };
 }
+
+const key = wireKey;
 
 /** The installed adapter's tool-call ID normalization (Anthropic ID pattern and length). */
 function normalizeToolCallId(id: string): string {
@@ -257,6 +259,19 @@ export interface WireMapping {
   readonly messages: readonly WireMessageMapping[];
 }
 
+/** One transport message (or item) reduced to its role and alignment keys. */
+export interface KeyedWireMessage {
+  readonly role: string;
+  readonly keys: readonly WireKey[];
+}
+
+/** One projected entry reduced to its identity, visibility and alignment keys. */
+export interface KeyedProjection {
+  readonly entryId: string;
+  readonly visible: boolean;
+  readonly keys: readonly WireKey[];
+}
+
 /**
  * Order-preserving alignment. Each keyed wire message is owned by projected
  * entries after the previous message's owners; within a message, owners never
@@ -273,6 +288,21 @@ export interface WireMapping {
 export function mapWireToEntries(
   messages: readonly WireMessage[],
   entries: readonly ProjectedSessionEntry[],
+): WireMapping {
+  return alignKeyedWire(
+    messages.map((message) => ({ role: message.role, keys: wireMessageKeys(message) })),
+    entries.map((entry) => ({
+      entryId: entry.sourceEntry.id,
+      visible: entry.messages.length > 0,
+      keys: projectedEntryKeys(entry),
+    })),
+  );
+}
+
+/** {@link mapWireToEntries} over pre-keyed wire messages and projected entries (any wire format). */
+export function alignKeyedWire(
+  messages: readonly KeyedWireMessage[],
+  entries: readonly KeyedProjection[],
 ): WireMapping {
   const owners = indexKeyOwners(entries);
   let floor = 0;
@@ -337,15 +367,14 @@ interface KeyOwners {
   readonly owners: ReadonlyMap<string, readonly number[]>;
 }
 
-function indexKeyOwners(entries: readonly ProjectedSessionEntry[]): KeyOwners {
+function indexKeyOwners(entries: readonly KeyedProjection[]): KeyOwners {
   const owners = new Map<string, number[]>();
   const projection = entries.map((entry, index): ProjectionRef => {
-    const keys = projectedEntryKeys(entry);
-    for (const entryKey of keys) addKeyOwner(owners, entryKey.id, index);
+    for (const entryKey of entry.keys) addKeyOwner(owners, entryKey.id, index);
     return {
-      entryId: entry.sourceEntry.id,
-      visible: entry.messages.length > 0,
-      keyed: keys.length > 0,
+      entryId: entry.entryId,
+      visible: entry.visible,
+      keyed: entry.keys.length > 0,
     };
   });
   return { projection, owners };
@@ -376,24 +405,24 @@ interface MessageAlignment {
 
 /** Align one wire message's keys to owners at or after `floor`, never moving backwards. */
 function alignWireMessage(
-  message: WireMessage,
+  message: KeyedWireMessage,
   owners: KeyOwners,
   floor: number,
 ): MessageAlignment {
   const alignment: MessageAlignment = { entryIndexes: [], unmapped: [], ambiguous: [], picks: [] };
   let localFloor = floor;
-  for (const wireKey of wireMessageKeys(message)) {
-    const candidates = owners.owners.get(wireKey.id) ?? [];
+  for (const messageKey of message.keys) {
+    const candidates = owners.owners.get(messageKey.id) ?? [];
     if (candidates.length === 0) {
-      alignment.unmapped.push(wireKey.ref);
+      alignment.unmapped.push(messageKey.ref);
       continue;
     }
     const viable = candidates.filter((candidate) => candidate >= localFloor);
     const [pick] = viable;
     if (pick === undefined) {
       alignment.ambiguous.push({
-        keyId: wireKey.id,
-        key: wireKey.ref,
+        keyId: messageKey.id,
+        key: messageKey.ref,
         candidates: entryIdsAt(owners.projection, candidates),
         outOfOrder: true,
       });
@@ -401,12 +430,12 @@ function alignWireMessage(
     }
     if (viable.length > 1)
       alignment.ambiguous.push({
-        keyId: wireKey.id,
-        key: wireKey.ref,
+        keyId: messageKey.id,
+        key: messageKey.ref,
         candidates: entryIdsAt(owners.projection, viable),
         outOfOrder: false,
       });
-    alignment.picks.push({ keyId: wireKey.id, pick });
+    alignment.picks.push({ keyId: messageKey.id, pick });
     if (!alignment.entryIndexes.includes(pick)) alignment.entryIndexes.push(pick);
     localFloor = pick;
   }
@@ -447,7 +476,7 @@ const KeyRefSchema = Type.Object({
   ]),
   digest: Type.String(),
 });
-const WireMappingSchema = Type.Object({
+export const WireMappingSchema = Type.Object({
   projection: Type.Array(
     Type.Object({ entryId: Type.String(), visible: Type.Boolean(), keyed: Type.Boolean() }),
   ),
@@ -657,7 +686,7 @@ export function parseBetaHeader(value: string | null): string[] {
   ];
 }
 
-function freezeJson(value: JsonValue): void {
+export function freezeJson(value: JsonValue): void {
   if (Array.isArray(value)) {
     for (const item of value) freezeJson(item);
     Object.freeze(value);

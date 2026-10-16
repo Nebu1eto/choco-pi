@@ -34,6 +34,15 @@ import { isStaleContextError } from "../lifecycle.ts";
 import { isChildSession } from "../ownership.ts";
 import { publishBackgroundCompactionPreferences } from "../preferences-section.ts";
 import { readCodexCompactionSnapshot, type SessionStateReader } from "../session-state.ts";
+import { createXaiCapabilityGate, xaiCapturedProviders } from "../xai/capability.ts";
+import { xaiCapturesFor } from "../xai/capture.ts";
+import { createXaiForegroundCompactHandler } from "../xai/foreground.ts";
+import {
+  DEFAULT_XAI_COMPACTION_MODE,
+  type XaiCompactionMode,
+  writeXaiCompactionMode,
+} from "../xai/mode.ts";
+import { createXaiReplayBinder, type XaiReplayDiagnostic } from "../xai/replay.ts";
 import {
   getBackgroundAdoptionSignal,
   publishBackgroundAdoptionSignalSlot,
@@ -105,8 +114,9 @@ export interface BackgroundCompaction {
    */
   childAdopts(event: SessionBeforeCompactEvent, ctx: ExtensionContext): Promise<boolean>;
   /**
-   * Answer session_before_compact with Anthropic server-side compaction, or
-   * undefined to let the local summarizer answer the same compaction.
+   * Answer session_before_compact with Anthropic or xAI server-side
+   * compaction, or undefined to let the local summarizer answer the same
+   * compaction.
    */
   foregroundCompact(
     event: SessionBeforeCompactEvent,
@@ -140,6 +150,16 @@ export function registerBackgroundCompaction(
     captures: capturesFor,
     fetch: options.anthropic?.fetch,
     stream: options.anthropic?.stream,
+    now: clock === undefined ? undefined : () => clock.now(),
+  });
+  const xaiForeground = createXaiForegroundCompactHandler({
+    gate: rt.xaiGate,
+    session: rt.xaiServerSide,
+    mode: () => rt.xaiMode,
+    codexCompaction: () => rt.readState().codexCompaction,
+    generation: () => rt.lifecycle,
+    captures: xaiCapturesFor,
+    fetch: options.xai?.fetch,
     now: clock === undefined ? undefined : () => clock.now(),
   });
   /** Bumped by every session_shutdown; a session start awaiting I/O stops when it moved. */
@@ -214,11 +234,14 @@ export function registerBackgroundCompaction(
   pi.on("session_compact_failed", (_event, ctx) => onCompactFailed(rt, ctx));
   // Registered last among this extension's before_provider_request handlers.
   pi.on("before_provider_request", (event, ctx) => rt.replay.handler(event, ctx));
+  pi.on("before_provider_request", (event, ctx) => rt.xaiReplay.handler(event, ctx));
 
   return {
     beforeCompact: (event, ctx) => answerBeforeCompact(rt, event, ctx),
     childAdopts: (event, ctx) => childAdopts(event, ctx),
-    foregroundCompact: (event, ctx) => foreground(event, ctx),
+    // The two owners are disjoint (anthropic-messages vs the xai provider), so at most one answers.
+    foregroundCompact: async (event, ctx) =>
+      (await foreground(event, ctx)) ?? (await xaiForeground(event, ctx)),
     settings: () => rt.loaded,
   };
 }
@@ -230,7 +253,9 @@ function createRuntime(
 ): HostRuntime {
   const notify = createNotifier();
   const serverSide = new AnthropicServerSideSession();
+  const xaiServerSide = new AnthropicServerSideSession();
   const clock = options.clock;
+  const now = clock === undefined ? undefined : () => clock.now();
   const rt: HostRuntime = {
     pi,
     readState,
@@ -263,6 +288,21 @@ function createRuntime(
       onDisabled: (ctx, code) => reportServerSideDisabled(ctx, code),
     }),
     unbindReplay: undefined,
+    xaiMode: DEFAULT_XAI_COMPACTION_MODE,
+    xaiServerSide,
+    xaiGate: createXaiCapabilityGate({
+      cooldownMs: DEFAULT_BACKGROUND_COMPACTION_SETTINGS.cooldownMs,
+      allowList: options.xai?.allowList,
+      now,
+    }),
+    xaiReplay: createXaiReplayBinder(pi, {
+      providers: xaiCapturedProviders(options.xai?.allowList),
+      capture: options.xai?.capture,
+      session: xaiServerSide,
+      onDiagnostic: (ctx, diagnostic) => reportXaiReplayDiagnostic(notify, ctx, diagnostic),
+      onDisabled: (ctx, code) => reportXaiServerSideDisabled(ctx, code),
+    }),
+    unbindXaiReplay: undefined,
   };
   return rt;
 }
@@ -281,6 +321,10 @@ function publishPreferences(
     anthropic: {
       mode: () => rt.anthropicMode,
       set: (mode, commandCtx) => applyAnthropicMode(rt, { mode, commandCtx, childProvider }),
+    },
+    xai: {
+      mode: () => rt.xaiMode,
+      set: (mode, commandCtx) => applyXaiMode(rt, { mode, commandCtx, childProvider }),
     },
   });
 }
@@ -437,6 +481,33 @@ function onSessionTree(rt: HostRuntime, ctx: ExtensionContext): void {
   owner.core.coordinator.cancel("stale-prefix");
 }
 
+/**
+ * Save the xAI compaction mode, then reload and replace the main owner in
+ * place so the foreground path, the replay binding and the background lane
+ * selection follow the new mode in the running session.
+ */
+async function applyXaiMode(
+  rt: HostRuntime,
+  change: {
+    readonly mode: XaiCompactionMode;
+    readonly commandCtx: ExtensionContext;
+    readonly childProvider: ChildCompactionProvider;
+  },
+): Promise<void> {
+  try {
+    const location = locationOf(change.commandCtx);
+    const lifecycle = rt.lifecycle;
+    await writeXaiCompactionMode(location.agentDir, change.mode);
+    if (lifecycle === rt.lifecycle) rt.xaiMode = change.mode;
+    const ctx = rt.parent?.ctx;
+    if (ctx === undefined) return;
+    await startMainSession(rt, ctx, { reloadSettings: true, childProvider: change.childProvider });
+  } catch (cause) {
+    if (cause instanceof Error && isStaleContextError(cause)) return;
+    rt.notify(change.commandCtx, `xAI compaction not applied: ${errorText(cause)}`);
+  }
+}
+
 async function settleCurrentOwner(rt: HostRuntime, ctx: ExtensionContext): Promise<void> {
   const owner = touchCurrentOwner(rt, ctx);
   if (owner === undefined) return;
@@ -473,6 +544,37 @@ function reportServerSideDisabled(ctx: ExtensionContext, code: string): void {
   try {
     ctx.ui.notify(
       `Anthropic server-side compaction: the provider rejected the replayed checkpoint (${code}); server-side compaction is off for this session, its summary text is sent instead and later compactions are summarized locally.`,
+      "warning",
+    );
+  } catch (cause) {
+    if (!(cause instanceof Error && isStaleContextError(cause))) throw cause;
+  }
+}
+
+function reportXaiReplayDiagnostic(
+  notify: HostRuntime["notify"],
+  ctx: ExtensionContext,
+  diagnostic: XaiReplayDiagnostic,
+): void {
+  if (diagnostic.kind === "rewritten") return;
+  if (diagnostic.kind === "unverifiable") {
+    notify(
+      ctx,
+      `xAI native checkpoint ${diagnostic.entryId} could not be verified at the transport; only its placeholder summary is sent`,
+    );
+    return;
+  }
+  notify(
+    ctx,
+    `xAI native replay refused (${diagnostic.code ?? "unknown"}) for checkpoint ${diagnostic.entryId}`,
+  );
+}
+
+/** One notice per session when a replay refusal or provider rejection turned xAI server-side off. */
+function reportXaiServerSideDisabled(ctx: ExtensionContext, code: string): void {
+  try {
+    ctx.ui.notify(
+      `xAI server-side compaction: the replayed checkpoint was refused (${code}); server-side compaction is off for this session. Later requests carry only the checkpoint's placeholder summary (the compacted history is no longer sent) and later compactions are summarized locally.`,
       "warning",
     );
   } catch (cause) {

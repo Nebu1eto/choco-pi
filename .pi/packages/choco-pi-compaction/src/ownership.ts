@@ -13,7 +13,7 @@ import {
  * The union stays open on purpose: a future native Anthropic compaction path
  * becomes another owner value instead of a second boolean.
  */
-export type CompactionOwner = "none" | "codex-native" | "anthropic-native" | "local";
+export type CompactionOwner = "none" | "codex-native" | "anthropic-native" | "xai-native" | "local";
 
 /**
  * The codex configuration that decides native compaction, read once per session.
@@ -73,6 +73,13 @@ export interface OwnerOptions {
    * handler falls back to the local summarizer whenever it cannot answer.
    */
   readonly anthropicServerSide?: boolean;
+  /**
+   * xAI server-side compaction is selected for this session. It claims the
+   * `xai` provider's `openai-responses` models only after every Codex rule
+   * declined; its handler falls back to the local summarizer whenever it
+   * cannot answer.
+   */
+  readonly xaiServerSide?: boolean;
 }
 
 /**
@@ -120,6 +127,13 @@ export function resolveOwner(
   }
   if (options.anthropicServerSide === true && model.api === "anthropic-messages") {
     return "anthropic-native";
+  }
+  if (
+    options.xaiServerSide === true &&
+    model.api === "openai-responses" &&
+    model.provider === "xai"
+  ) {
+    return "xai-native";
   }
   return "local";
 }

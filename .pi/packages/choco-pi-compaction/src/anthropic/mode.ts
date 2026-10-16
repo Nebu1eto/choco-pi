@@ -65,19 +65,31 @@ export function parseAnthropicCompactionMode(
     : DEFAULT_ANTHROPIC_COMPACTION_MODE;
 }
 
-/** The configured mode; unreadable, malformed or missing settings yield the default. */
-export async function readAnthropicCompactionMode(
+/**
+ * One top-level value of `<agentDir>/settings.json`; undefined when the file
+ * is missing, unreadable, not a JSON object, or lacks the key.
+ */
+export async function readTopLevelSetting(
   agentDir: string,
-): Promise<AnthropicCompactionMode> {
+  key: string,
+): Promise<JsonValue | undefined> {
   let text: string | undefined;
   try {
     text = await readText(settingsPath(agentDir));
   } catch {
-    return DEFAULT_ANTHROPIC_COMPACTION_MODE;
+    return undefined;
   }
-  if (text === undefined) return DEFAULT_ANTHROPIC_COMPACTION_MODE;
-  const settings = parseObject(text);
-  return parseAnthropicCompactionMode(settings?.[ANTHROPIC_COMPACTION_MODE_KEY]);
+  if (text === undefined) return undefined;
+  return parseObject(text)?.[key];
+}
+
+/** The configured mode; unreadable, malformed or missing settings yield the default. */
+export async function readAnthropicCompactionMode(
+  agentDir: string,
+): Promise<AnthropicCompactionMode> {
+  return parseAnthropicCompactionMode(
+    await readTopLevelSetting(agentDir, ANTHROPIC_COMPACTION_MODE_KEY),
+  );
 }
 
 /**
@@ -92,13 +104,26 @@ export async function writeAnthropicCompactionMode(
   if (!Value.Check(AnthropicCompactionModeSchema, mode)) {
     throw new Error(`invalid ${ANTHROPIC_COMPACTION_MODE_KEY} value`);
   }
+  await writeTopLevelSetting(agentDir, ANTHROPIC_COMPACTION_MODE_KEY, mode);
+}
+
+/**
+ * Set one top-level key with an atomic read-modify-write that keeps every
+ * other key. A settings file that is not a JSON object is left untouched and
+ * the write is refused.
+ */
+export async function writeTopLevelSetting(
+  agentDir: string,
+  key: string,
+  value: JsonValue,
+): Promise<void> {
   const path = settingsPath(agentDir);
   const text = await readText(path);
   const current = text === undefined ? {} : parseObject(text);
   if (current === undefined) {
     throw new Error(`${path} is not a JSON object; it was not changed`);
   }
-  const next: SettingsObject = { ...current, [ANTHROPIC_COMPACTION_MODE_KEY]: mode };
+  const next: SettingsObject = { ...current, [key]: value };
   const fileMode = text === undefined ? 0o600 : (await stat(path)).mode & 0o777;
   const directory = dirname(path);
   await mkdir(directory, { recursive: true });

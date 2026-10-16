@@ -10,6 +10,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import type { AnthropicCompactionMode } from "./anthropic/mode.ts";
+import type { XaiCompactionMode } from "./xai/mode.ts";
 
 export const BACKGROUND_COMPACTION_PREFERENCES_PROVIDER_SYMBOL = Symbol.for(
   "choco-pi.background-compaction-preferences-provider",
@@ -18,6 +19,8 @@ export const BACKGROUND_COMPACTION_PREFERENCES_PROVIDER_SYMBOL = Symbol.for(
 const ROW_ID = "backgroundCompaction.enabled";
 const ANTHROPIC_ROW_ID = "compactionAnthropic";
 const ANTHROPIC_VALUES: readonly AnthropicCompactionMode[] = ["server-side", "choco-pi"];
+const XAI_ROW_ID = "compactionXai";
+const XAI_VALUES: readonly XaiCompactionMode[] = ["server-side", "choco-pi"];
 
 /** One Preferences row, shaped like the panel's setting item. */
 export interface BackgroundCompactionPreferenceItem {
@@ -50,14 +53,22 @@ export interface AnthropicModeSwitch {
   set(mode: AnthropicCompactionMode, ctx: ExtensionContext): Promise<void>;
 }
 
+/** The xAI compaction mode. `set` reports its own failures and never rejects. */
+export interface XaiModeSwitch {
+  mode(): XaiCompactionMode;
+  set(mode: XaiCompactionMode, ctx: ExtensionContext): Promise<void>;
+}
+
 /**
  * The running extension's settings. `setEnabled` reports its own failures and
- * never rejects. The Anthropic row is offered only with `anthropic`.
+ * never rejects. The Anthropic and xAI rows are offered only with
+ * `anthropic` and `xai`.
  */
 export interface BackgroundCompactionSwitch {
   enabled(): boolean;
   setEnabled(enabled: boolean, ctx: ExtensionContext): Promise<void>;
   readonly anthropic?: AnthropicModeSwitch | undefined;
+  readonly xai?: XaiModeSwitch | undefined;
 }
 
 let changes: Promise<void> = Promise.resolve();
@@ -71,6 +82,10 @@ function anthropicModeOf(value: string): AnthropicCompactionMode | undefined {
   return ANTHROPIC_VALUES.find((mode) => mode === value);
 }
 
+function xaiModeOf(value: string): XaiCompactionMode | undefined {
+  return XAI_VALUES.find((mode) => mode === value);
+}
+
 function buildSection(
   feature: BackgroundCompactionSwitch,
   ctx: ExtensionContext,
@@ -78,6 +93,8 @@ function buildSection(
   let shown = feature.enabled();
   const anthropic = feature.anthropic;
   let shownMode = anthropic?.mode();
+  const xai = feature.xai;
+  let shownXaiMode = xai?.mode();
   const anthropicRows = (): BackgroundCompactionPreferenceItem[] =>
     shownMode === undefined
       ? []
@@ -89,6 +106,19 @@ function buildSection(
               "server-side uses Anthropic's on-demand compaction (OAuth, supported Claude models) and falls back to choco-pi's local summary on failure; choco-pi summarizes locally.",
             currentValue: shownMode,
             values: [...ANTHROPIC_VALUES],
+          },
+        ];
+  const xaiRows = (): BackgroundCompactionPreferenceItem[] =>
+    shownXaiMode === undefined
+      ? []
+      : [
+          {
+            id: XAI_ROW_ID,
+            label: "xAI compaction",
+            description:
+              "server-side uses xAI's /responses/compact (Grok models on api.x.ai) and falls back to choco-pi's local summary on failure; choco-pi summarizes locally.",
+            currentValue: shownXaiMode,
+            values: [...XAI_VALUES],
           },
         ];
   return {
@@ -105,8 +135,22 @@ function buildSection(
         values: ["off", "on"],
       },
       ...anthropicRows(),
+      ...xaiRows(),
     ],
     handleChange: (id, newValue) => {
+      if (id === XAI_ROW_ID) {
+        const mode = xaiModeOf(newValue);
+        if (mode === undefined || xai === undefined) return { kind: "rebuild" };
+        shownXaiMode = mode;
+        // Once applied, the row shows the effective mode: a refused write keeps it unchanged.
+        changes = changes
+          .then(() => xai.set(mode, ctx))
+          .then(() => {
+            shownXaiMode = xai.mode();
+            shown = feature.enabled();
+          });
+        return { kind: "rebuild" };
+      }
       if (id === ANTHROPIC_ROW_ID) {
         const mode = anthropicModeOf(newValue);
         if (mode === undefined || anthropic === undefined) return { kind: "rebuild" };

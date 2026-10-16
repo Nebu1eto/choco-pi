@@ -23,6 +23,8 @@ import {
 } from "../background/settings.ts";
 import { isChildSession, mainOwnerKey } from "../ownership.ts";
 import type { CompactionSessionState } from "../session-state.ts";
+import { xaiGateAdmitsModel } from "../xai/capability.ts";
+import { readXaiCompactionMode } from "../xai/mode.ts";
 import { type BackgroundAdoptionSignal, getBackgroundAdoptionSignal } from "./adoption-signal.ts";
 import { candidateRecordsOf } from "./branch.ts";
 import { errorText } from "./notices.ts";
@@ -99,10 +101,12 @@ export async function startMainSession(
     const paths =
       rt.options.settingsPaths?.(session.location) ?? backgroundSettingsPaths(session.location);
     const readMode = rt.options.anthropic?.readMode ?? readAnthropicCompactionMode;
+    const readXaiMode = rt.options.xai?.readMode ?? readXaiCompactionMode;
     const openaiServerSide = rt.readState().codexCompaction?.responsesCompaction ?? false;
-    const [loaded, mode] = await Promise.all([
+    const [loaded, mode, xaiMode] = await Promise.all([
       loadBackgroundSettings(paths),
       readMode(session.location.agentDir),
+      readXaiMode(session.location.agentDir),
     ]);
     if (generation !== rt.lifecycle) return;
     rt.loaded = withDerivedDefaultLanes(
@@ -110,6 +114,7 @@ export async function startMainSession(
       deriveBackgroundLanes({ openaiServerSide, anthropicServerSide: mode === "server-side" }),
     );
     rt.anthropicMode = mode;
+    rt.xaiMode = xaiMode;
     if (rt.loaded.diagnostic !== undefined) rt.notify(ctx, rt.loaded.diagnostic);
   }
   // Inside a child the runner's bridge owns attachment; stay inert.
@@ -117,7 +122,9 @@ export async function startMainSession(
   const state = bindParentSession(rt, ctx, session, start.childProvider);
   const settings = rt.loaded.settings;
   rt.serverSide.bind(session.sessionId);
+  rt.xaiServerSide.bind(session.sessionId);
   bindAnthropicReplay(rt, session, settings);
+  bindXaiReplay(rt, session);
   const model = session.model;
   if (!backgroundCompactionActive(settings) || model === undefined) return;
   // A conflicting registry slot is the same "off" as the master switch.
@@ -212,6 +219,12 @@ function bindAnthropicReplay(
   rt.unbindReplay = rt.replay.bindSession(session.sessionId, session.sessionManager);
 }
 
+/** Capture and project this main session for xAI replay while xAI server-side mode is selected. */
+function bindXaiReplay(rt: HostRuntime, session: SessionSnapshot): void {
+  if (rt.xaiMode !== "server-side") return;
+  rt.unbindXaiReplay = rt.xaiReplay.bindSession(session.sessionId, session.sessionManager);
+}
+
 async function resolveScopeOrRelease(
   rt: HostRuntime,
   ctx: ExtensionContext,
@@ -266,6 +279,10 @@ function mainOwnerSpec(
     isOwnerCurrent: ownerCurrent,
     allowAnthropic: true,
     allowForeign: true,
+    xaiServerSide:
+      rt.xaiMode === "server-side" &&
+      binding.model.api === "openai-responses" &&
+      xaiGateAdmitsModel(rt.xaiGate, binding.model),
     report: (message) => rt.notify(rt.main?.lastCtx ?? ctx, message),
   };
 }
