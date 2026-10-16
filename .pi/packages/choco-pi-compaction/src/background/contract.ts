@@ -295,8 +295,8 @@ export const BackgroundCompactionSidecarSchema = Type.Partial(
   Strict,
 );
 export const DEFAULT_BACKGROUND_COMPACTION_SETTINGS: Readonly<BackgroundCompactionSettings> = {
-  enabled: false,
-  text: false,
+  enabled: true,
+  text: true,
   codexNative: false,
   anthropicNative: false,
   maxConcurrent: 2,

@@ -5,8 +5,8 @@
  * production, and only the background summarizer is injected.
  *
  * Feature-off behavior matching the summarizer alone is proven by the
- * background-integration off test for a missing sidecar; the first test here
- * proves a fresh agent directory and project resolve to exactly that case.
+ * background-integration off test; the first test here proves a fresh agent
+ * directory and project resolve to the feature on, with derived lanes.
  */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -264,23 +264,24 @@ async function waitFor(predicate: () => boolean, label: string): Promise<void> {
 }
 
 test(
-  "background compaction is off in a fresh agent directory and project",
+  "background compaction is on in a fresh agent directory and project",
   { timeout: 20_000 },
   async () => {
-    await withFreshDirs(async ({ agentDir, project }) => {
+    await withFreshDirs(async ({ agentDir, project, sidecar }) => {
       const location = { cwd: project, agentDir, projectTrusted: true };
       const loaded = await loadBackgroundSettings(backgroundSettingsPaths(location));
-      assert.equal(loaded.settings.enabled, false);
+      assert.equal(loaded.settings.enabled, true);
+      assert.equal(loaded.settings.text, true);
       assert.equal(loaded.source, undefined, "no sidecar anywhere: the shipped defaults");
       assert.equal(loaded.diagnostic, undefined);
       await withSession(project, async (rig) => {
-        assert.equal(rowValue(sectionOf(rig)), "off");
+        assert.equal(rowValue(sectionOf(rig)), "on");
         await rig.host.session.prompt("GO");
-        assert.equal(getCoordinator(rig.ownerKey), undefined, "no coordinator");
-        assert.equal(resolveChildCompactionProvider()?.isEnabled(), false, "children stay off");
-        assert.equal(rig.probe.backgroundCalls, 0, "no background work");
+        assert.ok(getCoordinator(rig.ownerKey), "a coordinator runs without a sidecar");
+        assert.equal(resolveChildCompactionProvider()?.isEnabled(), true, "children follow");
         assert.deepEqual(rig.probe.notices, []);
       });
+      await assert.rejects(readFile(sidecar, "utf8"), { code: "ENOENT" }, "no sidecar written");
     });
   },
 );

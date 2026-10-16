@@ -15,9 +15,11 @@ import { release, setCoordinator } from "../background/registry.ts";
 import {
   backgroundCompactionActive,
   backgroundSettingsPaths,
+  deriveBackgroundLanes,
   isBackendEnabled,
   loadBackgroundSettings,
   type SettingsLocation,
+  withDerivedDefaultLanes,
 } from "../background/settings.ts";
 import { isChildSession, mainOwnerKey } from "../ownership.ts";
 import type { CompactionSessionState } from "../session-state.ts";
@@ -97,12 +99,16 @@ export async function startMainSession(
     const paths =
       rt.options.settingsPaths?.(session.location) ?? backgroundSettingsPaths(session.location);
     const readMode = rt.options.anthropic?.readMode ?? readAnthropicCompactionMode;
+    const openaiServerSide = rt.readState().codexCompaction?.responsesCompaction ?? false;
     const [loaded, mode] = await Promise.all([
       loadBackgroundSettings(paths),
       readMode(session.location.agentDir),
     ]);
     if (generation !== rt.lifecycle) return;
-    rt.loaded = loaded;
+    rt.loaded = withDerivedDefaultLanes(
+      loaded,
+      deriveBackgroundLanes({ openaiServerSide, anthropicServerSide: mode === "server-side" }),
+    );
     rt.anthropicMode = mode;
     if (rt.loaded.diagnostic !== undefined) rt.notify(ctx, rt.loaded.diagnostic);
   }

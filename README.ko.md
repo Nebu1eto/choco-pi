@@ -241,8 +241,8 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 - 다른 세션에서 프로젝트 대화를 나열, 생성, 읽기, 조정, 대기할 수 있습니다(`/sessions`, `/session-new`, `/session-read`, `/session-send`, `/session-wait`).
 - `/goal`은 여러 턴과 compaction에 걸쳐 지속되는 목표를 유지합니다.
 - `/rewind`는 체크포인트가 있는 턴 기준으로 파일을 롤백하거나, 세션을 되감거나, 분기합니다.
-- 컨텍스트 한도는 `/preferences`에서 프리셋으로 고릅니다. soft cap은 Session → Context에, compaction 지점은 Session → Compaction에 있습니다. **Context soft cap**은 사용 가능한 컨텍스트 상한으로 strictest 250K, strict 400K, standard 600K, permissive 800K, unlimited 중 하나이고, **Auto-compaction point**는 compaction이 시작되는 지점으로 strictest 200K, strict 300K, standard 450K, permissive 600K, unlimited 중 하나입니다. 둘 다 기본값은 standard입니다. 각 프리셋은 모델의 네이티브 창에 맞춰 조정됩니다. 상한은 네이티브 창을 넘지 않고, compaction 지점은 상한보다 `min(100K, 상한의 15%)`(최소 host reserve + 8K)만큼 아래에 머뭅니다. 네이티브 창이 64K 미만인 모델은 Pi 자체 트리거에 맡기며, OpenAI 네이티브 compaction 예산이 게시되어 있으면 compaction 지점도 그 안으로 제한됩니다. 설정은 이 두 프리셋뿐이며 headroom은 고정값입니다.
-- compaction 방식은 `/preferences`의 Session → Compaction에서 정합니다. **OpenAI compaction**은 Codex 전송과 설정된 Responses 공급자에서 OpenAI 원격 compaction을 쓰며, 이 프로필의 [`.pi/choco-pi-codex.json`](.pi/choco-pi-codex.json)은 server-side로 설정합니다. **Anthropic compaction**은 기본값이 server-side이며, `api.anthropic.com`에 OAuth로 접속한 Fable 5+, Mythos 5+와 Preview, Opus 4.6+, Sonnet 4.6+, Haiku 5.5+에서만 Anthropic on-demand compaction을 씁니다. 어떤 실패든 최근 메시지와 대조하는 choco-pi 로컬 요약으로 대체됩니다. 백그라운드 compaction은 기본적으로 꺼져 있고, 켜면 텍스트 레인은 항상 돌며 각 네이티브 레인은 해당 공급자 행이 server-side일 때만 돕니다.
+- 컨텍스트 한도는 `/preferences`에서 프리셋으로 고릅니다. soft cap은 Session → Context에, compaction 지점은 Session → Compaction에 있습니다. **Context soft cap**은 사용 가능한 컨텍스트 상한으로 strictest 250K, strict 400K, standard 600K, permissive 800K, unlimited 중 하나이고, **Auto-compaction point**는 compaction이 시작되는 지점으로 strictest 200K, strict 300K, standard 450K, permissive 600K, unlimited 중 하나입니다. soft cap 기본값은 unlimited, compaction 지점 기본값은 standard입니다. 각 프리셋은 모델의 네이티브 창에 맞춰 조정됩니다. 상한은 네이티브 창을 넘지 않고, compaction 지점은 상한보다 `min(100K, 상한의 15%)`(최소 host reserve + 8K)만큼 아래에 머뭅니다. 네이티브 창이 64K 미만인 모델은 Pi 자체 트리거에 맡기며, OpenAI 네이티브 compaction 예산이 게시되어 있으면 compaction 지점도 그 안으로 제한됩니다. 설정은 이 두 프리셋뿐이며 headroom은 고정값입니다.
+- compaction 방식은 `/preferences`의 Session → Compaction에서 정합니다. **OpenAI compaction**은 Codex 전송과 설정된 Responses 공급자에서 OpenAI 원격 compaction을 쓰며, 이 프로필의 [`.pi/choco-pi-codex.json`](.pi/choco-pi-codex.json)은 server-side로 설정합니다. **Anthropic compaction**은 기본값이 server-side이며, `api.anthropic.com`에 OAuth로 접속한 Fable 5+, Mythos 5+와 Preview, Opus 4.6+, Sonnet 4.6+, Haiku 5.5+에서만 Anthropic on-demand compaction을 씁니다. 어떤 실패든 최근 메시지와 대조하는 choco-pi 로컬 요약으로 대체됩니다. 백그라운드 compaction은 기본적으로 켜져 있고, 켜져 있으면 텍스트 레인은 항상 돌며 각 네이티브 레인은 해당 공급자 행이 server-side일 때만 돕니다.
 - 새 세션에는 이름이 자동으로 붙습니다. 이름을 짓는 모델은 `sessionAutoNameModel`로 정하며 기본값은 `openai/gpt-6-luna`입니다. 끄려면 `sessionAutoName`을 `false`로 설정하세요.
 - 에이전트 턴이 끝날 때마다 `openai/gpt-6-luna`(실패 시 `anthropic/claude-haiku-5-5`)로 다음 프롬프트를 예측해 빈 입력창에 흐린 글자로 보여 줍니다. Tab을 누르면 채워지며, Enter를 누르기 전에는 전송되지 않습니다. 턴마다 최근 대화 내용을 담은 작은 요청이 제안 모델로 한 번 나갑니다. 끄려면 `promptSuggestion`을 `false`로 설정하세요.
 
@@ -423,7 +423,7 @@ Pi 1.0.3부터 `Home`/`End`는 편집기 커서를 이동합니다. 대화 기�
   },
 
   "defaultProvider": "anthropic",
-  "defaultModel": "claude-fable-5-1",
+  "defaultModel": "claude-opus-5-5",
   "defaultThinkingLevel": "low",
   "enabledModels": [
     "anthropic/claude-fable-5-1",

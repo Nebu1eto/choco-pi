@@ -45,6 +45,7 @@ import { getCoordinator } from "../src/background/registry.ts";
 import type { TextSummarizer } from "../src/background/text-backend.ts";
 import registerCompaction from "../src/index.ts";
 import { mainOwnerKey } from "../src/ownership.ts";
+import { BACKGROUND_OFF_SETTINGS_PATHS } from "./host-harness.ts";
 
 const OAUTH_KEY = "sk-ant-oat01-foreground-non-secret-placeholder";
 const MODEL: Model<"anthropic-messages"> = {
@@ -291,7 +292,7 @@ async function createRig(options: RigOptions): Promise<Rig> {
       retryPolicy: { enabled: false, maxRetries: 0, baseDelayMs: 0, maxAgentDelayMs: 0 },
       compactionPolicy: () => ({ keepRecentTokens: 1, reserveTokens: 16_384 }),
       background: {
-        settingsPaths: () => (sidecar === undefined ? [] : [sidecar]),
+        settingsPaths: () => (sidecar === undefined ? BACKGROUND_OFF_SETTINGS_PATHS : [sidecar]),
         createTextSummarizer: summarizer === undefined ? undefined : () => summarizer,
         anthropic: {
           readMode: async () => options.mode ?? "server-side",

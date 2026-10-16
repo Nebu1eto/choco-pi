@@ -31,9 +31,9 @@ test.after(async () => {
   await rm(agentDir, { recursive: true, force: true });
 });
 
-/** Reset both presets to their defaults on disk. */
+/** Reset the presets on disk: the soft cap to standard (the default is unlimited), the point to its default. */
 async function resetPresets(): Promise<void> {
-  await writeAgentPreference(CONTEXT_SOFT_CAP_KEY, undefined, agentDir);
+  await writeAgentPreference(CONTEXT_SOFT_CAP_KEY, "standard", agentDir);
   await writeAgentPreference(AUTO_COMPACTION_POINT_KEY, undefined, agentDir);
   await flushAgentPreferenceWrites();
 }

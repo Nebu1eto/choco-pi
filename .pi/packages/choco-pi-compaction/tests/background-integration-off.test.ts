@@ -1,6 +1,6 @@
 /**
- * With background compaction off (the shipped default, a malformed sidecar,
- * or the master switch off) the extension behaves exactly like the summarizer
+ * With background compaction off (a malformed sidecar or the master switch
+ * off) the extension behaves exactly like the summarizer
  * alone: same provider requests, same entries, no coordinator. The adoption
  * signal slot exists from registration (so consumers loaded earlier can bind
  * at their session_start) but stays inert: no owner answers and no notice is
@@ -145,7 +145,6 @@ test(
       const notices: BackgroundAdoptionNotice[] = [];
       const unsubscribe = getBackgroundAdoptionSignal().subscribe((notice) => notices.push(notice));
       const variants = [
-        { name: "missing", paths: [join(dir, "absent.json")] },
         { name: "malformed", paths: [malformed] },
         { name: "master switch off", paths: [switchedOff] },
       ];

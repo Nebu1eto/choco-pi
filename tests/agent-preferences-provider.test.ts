@@ -122,7 +122,7 @@ test(
     assert.ok(items[7].description?.includes("Uses openai-codex/gpt-6-luna"));
     assert.equal(items[7].currentValue, "Enabled", "prompt suggestions default to on when unset");
     assert.equal(items[8].label, "Context soft cap");
-    assert.equal(items[8].currentValue, "standard");
+    assert.equal(items[8].currentValue, "unlimited");
     assert.deepEqual(items[8].values, [
       "strictest",
       "strict",

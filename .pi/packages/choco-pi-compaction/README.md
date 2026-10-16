@@ -43,9 +43,9 @@ refusal) turns server-side compaction off for the rest of that session: later
 requests send the checkpoint's summary text and later compactions are
 summarized locally.
 
-## Background compaction (off by default)
+## Background compaction (on by default)
 
-Nothing changes unless a settings sidecar turns it on. With the feature off,
+The feature runs unless a settings sidecar turns it off. With the feature off,
 or with a malformed sidecar, provider requests, session entries and hook runs
 are the same as with the reconciled summarizer alone.
 
@@ -57,15 +57,16 @@ The sidecar is `background-compaction.json`. The first file found wins:
 2. `<agent dir>/extensions/background-compaction.json`
 3. the profile's own `.pi/extensions/background-compaction.json`
 
-No file means the defaults below. Unknown keys, wrong types, out-of-range
+No file means the defaults below, except that the native lanes follow the
+vendor rows as described for the Preferences row. Unknown keys, wrong types, out-of-range
 values, `hysteresis >= prepareAt`, `maxOutputTokens > maxInputTokens`, or
 `maxQueued < maxConcurrent` disable the feature and show one warning naming the
 file and the problem. Settings are read at session start.
 
 | Key                                                     | Default                        | Meaning                                                                                                                                                                                                                           |
 | ------------------------------------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `enabled`                                               | `false`                        | Master switch. Every backend switch is ignored while it is off.                                                                                                                                                                   |
-| `text`                                                  | `false`                        | Text backend: summarizes the frozen prefix with the session model. Also the only backend subagent children use.                                                                                                                   |
+| `enabled`                                               | `true`                         | Master switch. Every backend switch is ignored while it is off.                                                                                                                                                                   |
+| `text`                                                  | `true`                         | Text backend: summarizes the frozen prefix with the session model. Also the only backend subagent children use.                                                                                                                   |
 | `anthropicNative`                                       | `false`                        | Anthropic on-demand native compaction for combinations the foreground gate admits.                                                                                                                                                |
 | `codexNative`                                           | `false`                        | Codex native lane, supplied by the Codex package through the backend registry.                                                                                                                                                    |
 | `prepareAt`                                             | `0.7`                          | Start preparing when context tokens reach this fraction of the host trigger point (`contextWindow - reserveTokens`).                                                                                                              |
@@ -85,7 +86,7 @@ Example that enables only the text backend:
 ```
 
 The Preferences panel's Session → Compaction group has a **Background
-compaction (Experimental)** row (`off` by default) that flips `enabled` in the
+compaction** row (`on` by default) that flips `enabled` in the
 agent directory's sidecar, keeping its other keys, and applies the change to
 the running session: switching on starts a coordinator, switching off discards
 any prepared candidate before it can be adopted. It refuses to rewrite a file

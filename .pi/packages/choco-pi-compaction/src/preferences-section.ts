@@ -98,7 +98,7 @@ function buildSection(
     buildItems: () => [
       {
         id: ROW_ID,
-        label: "Background compaction (Experimental)",
+        label: "Background compaction",
         description:
           "Turns on background compaction. Text summaries always run; the native Codex and Anthropic lanes follow the OpenAI and Anthropic compaction rows. A trusted project's background-compaction.json takes precedence.",
         currentValue: shown ? "on" : "off",

@@ -5,8 +5,9 @@
  * profile's other extension sidecars (the same lookup order as
  * `context-cap.json`): the trusted project's `.pi/extensions/`, then the agent
  * directory's `extensions/`, then the profile's own `.pi/extensions/`. The
- * first file found wins; no file means the documented defaults, which keep
- * every switch off.
+ * first file found wins; no file means the documented defaults: the master
+ * switch and the text backend are on, and the native lanes follow the vendor
+ * compaction rows (`withDerivedDefaultLanes`).
  *
  * A file that is not valid JSON, fails the frozen sidecar schema in `contract.ts`, or breaks a
  * cross-field rule disables the feature and yields a diagnostic for the
@@ -117,6 +118,19 @@ export function deriveBackgroundLanes(modes: VendorCompactionModes): BackgroundL
     codexNative: modes.openaiServerSide,
     anthropicNative: modes.anthropicServerSide,
   };
+}
+
+/**
+ * With no sidecar anywhere, the backend switches follow the vendor rows, the
+ * same as after switching the Preferences row on. Settings from a file,
+ * including a rejected one, are returned unchanged.
+ */
+export function withDerivedDefaultLanes(
+  loaded: LoadedBackgroundSettings,
+  lanes: BackgroundLaneSwitches,
+): LoadedBackgroundSettings {
+  if (loaded.source !== undefined || loaded.diagnostic !== undefined) return loaded;
+  return { ...loaded, settings: { ...loaded.settings, ...lanes } };
 }
 
 /** The global sidecar is malformed and was left untouched. */
@@ -258,7 +272,7 @@ export function parseBackgroundSettings(
   return { settings: merged, source, diagnostic: undefined };
 }
 
-/** Read the first sidecar found. Missing everywhere means defaults (all off). */
+/** Read the first sidecar found. Missing everywhere means the defaults. */
 export async function loadBackgroundSettings(
   paths: readonly string[],
 ): Promise<LoadedBackgroundSettings> {

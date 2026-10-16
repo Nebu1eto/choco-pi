@@ -28,6 +28,7 @@ import {
   TEXT_BACKEND_SETTING_ID,
   writeGlobalBackgroundEnabled,
   writeGlobalBackgroundSettings,
+  withDerivedDefaultLanes,
 } from "../src/background/settings.ts";
 import { TEXT_BACKEND_ID } from "../src/background/text-backend.ts";
 import { resolveProviderScope } from "../src/extension.ts";
@@ -136,6 +137,40 @@ test("the vendor compaction rows derive the backend switches", () => {
   }
 });
 
+test("with no sidecar the default switches are on and the native lanes follow the vendor rows", async () => {
+  await withDir(async (dir) => {
+    const defaults = await loadBackgroundSettings([join(dir, "absent.json")]);
+    assert.equal(defaults.source, undefined);
+    assert.equal(backgroundCompactionActive(defaults.settings), true, "on by default");
+    const lanes = deriveBackgroundLanes({ openaiServerSide: true, anthropicServerSide: true });
+    const derived = withDerivedDefaultLanes(defaults, lanes).settings;
+    assert.deepEqual(
+      {
+        text: derived.text,
+        codexNative: derived.codexNative,
+        anthropicNative: derived.anthropicNative,
+      },
+      lanes,
+    );
+
+    const file = join(dir, "background-compaction.json");
+    await writeFile(file, JSON.stringify({ enabled: true }));
+    const fromFile = await loadBackgroundSettings([file]);
+    assert.equal(
+      withDerivedDefaultLanes(fromFile, lanes),
+      fromFile,
+      "a file keeps its own switches",
+    );
+    await writeFile(file, "{ not json");
+    const rejected = await loadBackgroundSettings([file]);
+    assert.equal(
+      withDerivedDefaultLanes(rejected, lanes).settings.enabled,
+      false,
+      "rejected stays off",
+    );
+  });
+});
+
 test("the derived writer keeps other keys, skips unchanged files and refuses malformed ones", async () => {
   await withDir(async (dir) => {
     const agentDir = join(dir, "agent");
@@ -193,6 +228,7 @@ test("backend switches map onto backend IDs and require the master switch", () =
   assert.equal(CODEX_BACKEND_SETTING_ID, "codex-native-v2");
   const all = {
     ...DEFAULT_BACKGROUND_COMPACTION_SETTINGS,
+    enabled: false,
     text: true,
     codexNative: true,
     anthropicNative: true,

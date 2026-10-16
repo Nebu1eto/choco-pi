@@ -110,7 +110,7 @@ export interface RegisterCompactionOptions {
  * needs — the summarization retry policy and codex's native-compaction
  * settings — so no configuration file is read on the compaction path.
  *
- * Background compaction (off by default) is wired by
+ * Background compaction (on by default) is wired by
  * `registerBackgroundCompaction`; a ready background candidate answers
  * `session_before_compact` before the summarizer runs.
  */

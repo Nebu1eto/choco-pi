@@ -10,6 +10,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   type AssistantMessage,
@@ -54,10 +55,21 @@ export const TEST_RETRY_POLICY: RetryPolicy = {
   maxAgentDelayMs: 1,
 };
 
-/** Register the compaction extension with a test-owned retry policy. */
+/**
+ * Background-compaction sidecar paths that switch the feature off, for tests
+ * of the foreground path: background compaction is on by default.
+ */
+export const BACKGROUND_OFF_SETTINGS_PATHS: readonly string[] = [
+  fileURLToPath(new URL("./background-off.json", import.meta.url)),
+];
+
+/** Register the compaction extension with a test-owned retry policy and background off. */
 export function compactionExtension(retryPolicy: RetryPolicy = TEST_RETRY_POLICY): InlineExtension {
   return (pi: ExtensionAPI): void => {
-    registerCompaction(pi, { retryPolicy });
+    registerCompaction(pi, {
+      retryPolicy,
+      background: { settingsPaths: () => BACKGROUND_OFF_SETTINGS_PATHS },
+    });
   };
 }
 
