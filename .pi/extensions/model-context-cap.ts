@@ -211,11 +211,11 @@ function applyPolicies(
 
   for (const model of cappedModels(ctx, extra)) {
     const key = modelKey(model);
-    // The record lives on the model object: registry objects outlive a
-    // reload of this extension, and a fresh module must not take a window it
-    // capped earlier for the native one.
+    // The record lives on the model object and travels with its copies:
+    // registry objects outlive a reload of this extension, and the host
+    // persists capped objects, so neither a fresh module nor a restored copy
+    // may take a window it capped earlier for the native one.
     const nativeWindow = readNativeContextWindow(model) ?? model.contextWindow;
-    recordNativeContextWindow(model, nativeWindow);
     model.contextWindow = nativeWindow;
 
     const policy = resolvePolicy(model, nativeWindow, settings);
@@ -223,6 +223,7 @@ function applyPolicies(
       model.contextWindow = policy.cap;
       applied.set(key, { key, cap: policy.cap, compactAt: policy.compactAt });
     }
+    recordNativeContextWindow(model, nativeWindow);
   }
   appliedPolicies = [...applied.values()];
 }

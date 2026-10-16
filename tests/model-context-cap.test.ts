@@ -404,6 +404,89 @@ test("a reloaded module never takes a capped window for the native one", async (
   await resetPresets();
 });
 
+/** A host context whose registry holds only `activeModel`. */
+function singleModelContext(activeModel: Model<Api>) {
+  return {
+    cwd: process.cwd(),
+    model: activeModel,
+    modelRegistry: { getAll: () => [activeModel] },
+    getContextUsage: () => ({ tokens: 0, contextWindow: activeModel.contextWindow, percent: 0 }),
+    compact: () => {},
+    ui: { notify: () => {} },
+  };
+}
+
+test("unlimited restores the native window of a capped model the host persisted and restored", async () => {
+  await resetPresets();
+  await writeAgentPreference(CONTEXT_SOFT_CAP_KEY, "permissive", agentDir);
+  const handlers = registerCap();
+  const liveModel = model(1_000_000);
+  const liveContext = singleModelContext(liveModel);
+  await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, liveContext);
+  assert.equal(liveModel.contextWindow, 800_000);
+
+  // Pi's remote catalog keeps the stored model objects as live registry
+  // entries and persists them again (a 304 revalidation) after the cap has
+  // mutated them; the models store serializes with structuredClone.
+  const persisted = structuredClone(liveModel);
+  handlers.get("session_shutdown")?.({ type: "session_shutdown" }, liveContext);
+
+  // The next Pi process restores that entry with a fresh module.
+  const restoredModel = structuredClone(persisted);
+  const restoredContext = singleModelContext(restoredModel);
+  const reloadedHandlers = await registerReloadedCap("persisted-restore");
+  await reloadedHandlers.get("session_start")?.(
+    { type: "session_start", reason: "startup" },
+    restoredContext,
+  );
+  assert.equal(restoredModel.contextWindow, 800_000);
+
+  await writeAgentPreference(CONTEXT_SOFT_CAP_KEY, "unlimited", agentDir);
+  assert.equal(restoredModel.contextWindow, 1_000_000, "unlimited returns to the native window");
+  reloadedHandlers.get("session_shutdown")?.({ type: "session_shutdown" }, restoredContext);
+  await resetPresets();
+});
+
+test("a copy of a capped model keeps its native window unless the copy sets its own", async () => {
+  await resetPresets();
+  await writeAgentPreference(CONTEXT_SOFT_CAP_KEY, "permissive", agentDir);
+  const handlers = registerCap();
+  const original = model(1_000_000);
+  const context = singleModelContext(original);
+  await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, context);
+  assert.equal(original.contextWindow, 800_000);
+
+  // A spread copy (registry recomposition) carries the capped window.
+  const copy: Model<Api> = { ...original, baseUrl: "https://copy.example.com" };
+  // A copy that sets its own window (a models.json override) is native at that window.
+  const overridden: Model<Api> = { ...original, contextWindow: 500_000 };
+  handlers.get("model_select")?.({ type: "model_select", model: copy, source: "set" }, context);
+  handlers.get("model_select")?.(
+    { type: "model_select", model: overridden, source: "set" },
+    context,
+  );
+
+  await writeAgentPreference(CONTEXT_SOFT_CAP_KEY, "unlimited", agentDir);
+  handlers.get("model_select")?.({ type: "model_select", model: copy, source: "set" }, context);
+  assert.equal(copy.contextWindow, 1_000_000);
+  handlers.get("model_select")?.(
+    { type: "model_select", model: overridden, source: "set" },
+    context,
+  );
+  assert.equal(overridden.contextWindow, 500_000);
+  assert.equal(original.contextWindow, 1_000_000);
+
+  // A model whose native window is the permissive cap stays there.
+  const nativeAtCap = model(800_000);
+  handlers.get("model_select")?.(
+    { type: "model_select", model: nativeAtCap, source: "set" },
+    context,
+  );
+  assert.equal(nativeAtCap.contextWindow, 800_000);
+  handlers.get("session_shutdown")?.({ type: "session_shutdown" }, context);
+  await resetPresets();
+});
+
 test("the cap registers no command; the presets are its only configuration", () => {
   const handlers = new Map<
     string,

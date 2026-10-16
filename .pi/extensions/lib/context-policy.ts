@@ -92,35 +92,59 @@ export function computeContextPolicy(input: ContextPolicyInput): ContextPolicy {
 
 /**
  * Property under which the cap records a model's native window on the model
- * object itself. Registry model objects outlive an extension reload while the
- * reloaded module starts with empty state, so a capped `contextWindow` would
- * otherwise be mistaken for the native one. `Symbol.for` keeps every module
- * copy on the same key.
+ * object itself. A capped `contextWindow` must never be mistaken for the
+ * native one, yet capped objects outlive this module: registry objects survive
+ * an extension reload, the host copies them with object spread, and its models
+ * store persists them with `structuredClone` and restores them in the next
+ * process. The record is therefore a plain, enumerable, string-keyed value
+ * that every one of those copies carries.
  */
-export const NATIVE_CONTEXT_WINDOW_SYMBOL = Symbol.for("choco-pi.native-context-window");
+export const NATIVE_CONTEXT_WINDOW_KEY = "chocoPiNativeContextWindow";
+/** Record key used before the record had to survive copies; still read so a reload keeps it. */
+const LEGACY_NATIVE_CONTEXT_WINDOW_SYMBOL = Symbol.for("choco-pi.native-context-window");
 
 const NativeWindowSchema = Type.Integer({ exclusiveMinimum: 0 });
+const NativeWindowRecordSchema = Type.Object({
+  native: NativeWindowSchema,
+  /** The window the cap left on the object when it wrote the record. */
+  applied: NativeWindowSchema,
+});
 
 /** The part of a model object the native-window record attaches to. */
 export interface ContextWindowOwner {
   readonly contextWindow?: number;
 }
 
-/** The recorded native window of `model`, or `undefined` when none was recorded. */
-export function readNativeContextWindow(model: ContextWindowOwner): number | undefined {
-  const value: RuntimeValue = Object.getOwnPropertyDescriptor(
-    model,
-    NATIVE_CONTEXT_WINDOW_SYMBOL,
-  )?.value;
-  return Value.Check(NativeWindowSchema, value) ? value : undefined;
+function ownValue(model: ContextWindowOwner, key: string | symbol): RuntimeValue {
+  return Object.getOwnPropertyDescriptor(model, key)?.value;
 }
 
-/** Record `nativeWindow` on `model`; later records overwrite earlier ones. */
+/**
+ * The recorded native window of `model`, or `undefined` when none was
+ * recorded. A record only holds while the window is still one the cap left
+ * (the cap or the native window); a copy that set its own window, such as a
+ * models.json override, is native at that window.
+ */
+export function readNativeContextWindow(model: ContextWindowOwner): number | undefined {
+  const record = ownValue(model, NATIVE_CONTEXT_WINDOW_KEY);
+  if (Value.Check(NativeWindowRecordSchema, record)) {
+    return model.contextWindow === record.applied || model.contextWindow === record.native
+      ? record.native
+      : undefined;
+  }
+  const legacy = ownValue(model, LEGACY_NATIVE_CONTEXT_WINDOW_SYMBOL);
+  return Value.Check(NativeWindowSchema, legacy) ? legacy : undefined;
+}
+
+/**
+ * Record `nativeWindow` on `model` together with its current window, which the
+ * caller has already set; later records overwrite earlier ones.
+ */
 export function recordNativeContextWindow(model: ContextWindowOwner, nativeWindow: number): void {
-  Object.defineProperty(model, NATIVE_CONTEXT_WINDOW_SYMBOL, {
-    value: nativeWindow,
+  Object.defineProperty(model, NATIVE_CONTEXT_WINDOW_KEY, {
+    value: { native: nativeWindow, applied: model.contextWindow ?? nativeWindow },
     configurable: true,
-    enumerable: false,
+    enumerable: true,
     writable: true,
   });
 }
