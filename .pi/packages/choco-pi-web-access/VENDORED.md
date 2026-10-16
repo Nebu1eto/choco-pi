@@ -191,3 +191,11 @@ Pi SDK peer and development pins move from `1.2.0` to exactly `1.3.0`. The packa
 `minimumReleaseAgeExclude` entries move to `@1.3.0`; the lock was regenerated with
 `pnpm install --ignore-scripts` and restored with `pnpm install:vendored` (frozen).
 Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.
+
+## 2026-10-20 choco-pi patch: current fast summary models
+
+The preferred summary-model lists in `summary-review.ts` and `index.ts` were stale against
+the models actually enabled in this install, so `defaultSummaryModel` resolved to `null` and
+the curator fell back to the conversation model. Both lists now try, in order,
+`anthropic/claude-haiku-5-5`, `openai/gpt-6-luna`, `openai-codex/gpt-6-luna`, and
+`synthetic/hf:deepseek-ai/DeepSeek-V4.1-Flash` before the unchanged legacy entries.

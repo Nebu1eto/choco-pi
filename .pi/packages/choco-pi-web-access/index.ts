@@ -1615,6 +1615,10 @@ export default function (pi: ExtensionAPI) {
       ? config.summaryModel.trim()
       : "";
     const preferredDefaults = [
+      { provider: "anthropic", id: "claude-haiku-5-5" },
+      { provider: "openai", id: "gpt-6-luna" },
+      { provider: "openai-codex", id: "gpt-6-luna" },
+      { provider: "synthetic", id: "hf:deepseek-ai/DeepSeek-V4.1-Flash" },
       { provider: "anthropic", id: "claude-haiku-4-5" },
       { provider: "openai", id: "gpt-5.6-luna" },
       { provider: "openai", id: "gpt-5.6-terra" },
