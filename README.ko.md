@@ -102,11 +102,12 @@ Pi 세션에서 인증하세요.
 /login openai
 /login anthropic
 /login synthetic
+/login xai
 ```
 
 Pi는 인증 정보를 저장소 밖에 보관합니다. 인증 정보가 담긴 파일을 Git에 복사하지 마세요.
 
-`/login openai`는 Pi의 "Sign in with ChatGPT"이며 `openai` 공급자(api.openai.com)를 사용합니다. 기존 `openai-codex` 공급자(chatgpt.com 백엔드)는 선택형 레거시로 남아 있으며 `/login openai-codex`로 로그인합니다. `openai` 로그인에서는 Fast 모드가 수락되지만 적용되지 않고 전송되지도 않으며, Daybreak은 사용할 수 없고, 서버 측 압축은 시도하지 않고(로컬 압축 실행), 네이티브 `web_run` 검색도 쓸 수 없습니다(웹 검색은 `choco-pi-web-access`를 거칩니다). `imagegen`과 `view_image`는 `openai` 인증 정보를 찾지만 실제 환경에서는 검증되지 않았습니다. choco-pi는 Pi에 내장된 Anthropic, OpenAI 로그인 외에 Synthetic 공급자를 추가하고, [`apex-provider.json`](.pi/extensions/apex-provider.json)을 통해 Callstack Apex 모델을 찾습니다.
+`/login openai`는 Pi의 "Sign in with ChatGPT"이며 `openai` 공급자(api.openai.com)를 사용합니다. 기존 `openai-codex` 공급자(chatgpt.com 백엔드)는 선택형 레거시로 남아 있으며 `/login openai-codex`로 로그인합니다. `openai` 로그인에서는 Fast 모드가 수락되지만 적용되지 않고 전송되지도 않으며, Daybreak은 사용할 수 없고, 서버 측 압축은 시도하지 않고(로컬 압축 실행), 네이티브 `web_run` 검색도 쓸 수 없습니다(웹 검색은 `choco-pi-web-access`를 거칩니다). `imagegen`과 `view_image`는 `openai` 인증 정보를 찾지만 실제 환경에서는 검증되지 않았습니다. Pi에 내장된 `xai` 공급자(Grok)는 `/login xai`(SuperGrok 또는 X Premium)로 로그인하거나 `XAI_API_KEY`를 읽으며, choco-pi는 이 공급자에 Fast 모드를 제공하지 않습니다. choco-pi는 Pi에 내장된 Anthropic, OpenAI, xAI 로그인 외에 Synthetic 공급자를 추가하고, [`apex-provider.json`](.pi/extensions/apex-provider.json)을 통해 Callstack Apex 모델을 찾습니다.
 
 ## computer use 설정하기 (macOS)
 
@@ -226,7 +227,7 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 - 루트와 경로별 `AGENTS.md` 파일은 에이전트가 하위 디렉터리에서 작업할 때 함께 불러옵니다.
 - 작업 절차 스킬은 직접 구현(`task-inline`), 병렬 구현 단위(`task`), 동적 분해 작업(`task-dynamic`), 긴급 수정(`task-hotfix`), 적대적 리뷰(`review`), 환경 점검(`check`), 서명된 로컬 커밋(`commit`), 문서 작성(`effective-writing`)을 다룹니다. 구현 절차는 체크아웃 변경 lease를 잡고 인수 기준표로 검증하며, 푸시하지 않습니다.
 - `/preferences`에서 응답 언어, 응답 스타일(`concise` 또는 `explanatory`), 에이전트 페르소나(`unset`, `critical`, 기본값인 `pessimistic`)를 설정합니다. 페르소나는 에이전트가 자신의 주장과 계획을 얼마나 엄격하게 검증할지 정합니다.
-- `/preferences` → Agent → On usage limit(`agentOnUsageLimit`)은 현재 provider가 사용량 한도를 보고했을 때의 동작을 정합니다. `none`(기본값)은 오류로 종료된 상태를 그대로 둡니다. `fallback`은 [`.pi/model-fallbacks.json`](.pi/model-fallbacks.json)의 같은 등급 다른 provider 모델로 전환한 뒤 작업을 이어갑니다. `auto-resume`은 한도가 초기화될 때까지 기다린 뒤 이어갑니다. 하위 에이전트는 한도에 걸리면 초기화 예정 시각과 범위 안의 추천 모델을 부모 에이전트에 보고하며, `auto-resume`일 때만 대기했다가 초기화 후 자동으로 재개됩니다. `/goal`이 active 또는 paused 상태이면 복구 주도권은 goal 런타임이 가집니다.
+- `/preferences` → Agent → On usage limit(`agentOnUsageLimit`)은 현재 provider가 사용량 한도를 보고했을 때의 동작을 정합니다. `none`(기본값)은 오류로 종료된 상태를 그대로 둡니다. `fallback`은 [`.pi/model-fallbacks.json`](.pi/model-fallbacks.json)의 같은 등급 다른 provider 모델로 전환하거나, 열린 등급 후보가 없으면 최후 수단인 `xai/grok-4.7`, 그다음 `synthetic/hf:moonshotai/Kimi-K3`로 전환한 뒤 작업을 이어갑니다. `auto-resume`은 한도가 초기화될 때까지 기다린 뒤 이어갑니다. 하위 에이전트는 한도에 걸리면 초기화 예정 시각과 범위 안의 추천 모델을 부모 에이전트에 보고하며, `auto-resume`일 때만 대기했다가 초기화 후 자동으로 재개됩니다. `/goal`이 active 또는 paused 상태이면 복구 주도권은 goal 런타임이 가집니다.
 
 ### 에이전트와 오케스트레이션
 
@@ -242,7 +243,7 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 - `/goal`은 여러 턴과 compaction에 걸쳐 지속되는 목표를 유지합니다.
 - `/rewind`는 체크포인트가 있는 턴 기준으로 파일을 롤백하거나, 세션을 되감거나, 분기합니다.
 - 컨텍스트 한도는 `/preferences`에서 프리셋으로 고릅니다. soft cap은 Session → Context에, compaction 지점은 Session → Compaction에 있습니다. **Context soft cap**은 사용 가능한 컨텍스트 상한으로 strictest 250K, strict 400K, standard 600K, permissive 800K, unlimited 중 하나이고, **Auto-compaction point**는 compaction이 시작되는 지점으로 strictest 200K, strict 300K, standard 450K, permissive 600K, unlimited 중 하나입니다. soft cap 기본값은 unlimited, compaction 지점 기본값은 standard입니다. 각 프리셋은 모델의 네이티브 창에 맞춰 조정됩니다. 상한은 네이티브 창을 넘지 않고, compaction 지점은 상한보다 `min(100K, 상한의 15%)`(최소 host reserve + 8K)만큼 아래에 머뭅니다. 네이티브 창이 64K 미만인 모델은 Pi 자체 트리거에 맡기며, OpenAI 네이티브 compaction 예산이 게시되어 있으면 compaction 지점도 그 안으로 제한됩니다. 설정은 이 두 프리셋뿐이며 headroom은 고정값입니다.
-- compaction 방식은 `/preferences`의 Session → Compaction에서 정합니다. **OpenAI compaction**은 Codex 전송과 설정된 Responses 공급자에서 OpenAI 원격 compaction을 쓰며, 이 프로필의 [`.pi/choco-pi-codex.json`](.pi/choco-pi-codex.json)은 server-side로 설정합니다. **Anthropic compaction**은 기본값이 server-side이며, `api.anthropic.com`에 OAuth로 접속한 Fable 5+, Mythos 5+와 Preview, Opus 4.6+, Sonnet 4.6+, Haiku 5.5+에서만 Anthropic on-demand compaction을 씁니다. 어떤 실패든 최근 메시지와 대조하는 choco-pi 로컬 요약으로 대체됩니다. 백그라운드 compaction은 기본적으로 켜져 있고, 켜져 있으면 텍스트 레인은 항상 돌며 각 네이티브 레인은 해당 공급자 행이 server-side일 때만 돕니다.
+- compaction 방식은 `/preferences`의 Session → Compaction에서 정합니다. **OpenAI compaction**은 Codex 전송과 설정된 Responses 공급자에서 OpenAI 원격 compaction을 쓰며, 이 프로필의 [`.pi/choco-pi-codex.json`](.pi/choco-pi-codex.json)은 server-side로 설정합니다. **Anthropic compaction**은 기본값이 server-side이며, `api.anthropic.com`에 OAuth로 접속한 Fable 5+, Mythos 5+와 Preview, Opus 4.6+, Sonnet 4.6+, Haiku 5.5+에서만 Anthropic on-demand compaction을 씁니다. **xAI compaction**은 기본값이 server-side이며, `api.x.ai`의 `grok-*` 모델에서 OAuth나 API 키로 xAI `/responses/compact`를 씁니다. 포그라운드 compaction에만 적용됩니다. 어떤 실패든 최근 메시지와 대조하는 choco-pi 로컬 요약으로 대체됩니다. 백그라운드 compaction은 기본적으로 켜져 있고, 켜져 있으면 텍스트 레인은 항상 돌며 각 네이티브 레인(OpenAI, Anthropic)은 해당 공급자 행이 server-side일 때만 돕니다.
 - 새 세션에는 이름이 자동으로 붙습니다. 이름을 짓는 모델은 `sessionAutoNameModel`로 정하며 기본값은 `openai/gpt-6-luna`입니다. 끄려면 `sessionAutoName`을 `false`로 설정하세요.
 - 에이전트 턴이 끝날 때마다 `openai/gpt-6-luna`(실패 시 `anthropic/claude-haiku-5-5`)로 다음 프롬프트를 예측해 빈 입력창에 흐린 글자로 보여 줍니다. Tab을 누르면 채워지며, Enter를 누르기 전에는 전송되지 않습니다. 턴마다 최근 대화 내용을 담은 작은 요청이 제안 모델로 한 번 나갑니다. 끄려면 `promptSuggestion`을 `false`로 설정하세요.
 
@@ -254,7 +255,7 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 
 ### 조사와 연동
 
-- 웹 조사는 대화 모델과 관계없이 지연 로딩되는 단일 `web_search` 도구를 사용합니다. 검색 인증 정보와 요금은 대화 공급자가 아니라 선택된 검색 백엔드(OpenAI, Exa, Kagi, Synthetic, Brave)에서 결정됩니다. 공급자, 라우팅, 개인정보 보호, fallback 동작은 [웹 검색 안내](docs/web-search.md)를 참고하세요.
+- 웹 조사는 대화 모델과 관계없이 지연 로딩되는 단일 `web_search` 도구를 사용합니다. 검색 인증 정보와 요금은 대화 공급자가 아니라 선택된 검색 백엔드(OpenAI, Exa, Kagi, Synthetic, Brave, xAI)에서 결정됩니다. xAI(Grok) 백엔드는 요청이나 라우팅 설정이 `xai`를 지정할 때, 그리고 xAI에 로그인되어 있을 때만 실행되며 호출마다 요금이 부과됩니다. 공급자, 라우팅, 개인정보 보호, fallback 동작은 [웹 검색 안내](docs/web-search.md)를 참고하세요.
 - `fetch_content`는 페이지 내용을 추출하고, `source_check`는 인용된 구절로 주장을 검증합니다. `/search`는 저장된 검색 결과를 보여 주고, `/websearch`와 `/curator`는 검색 curator 작업 절차를 실행합니다.
 - 서버 설정, 인증, 실행은 Pi에 내장된 MCP가 맡습니다. 에이전트는 `tool_search`로 MCP 도구를 찾아 `mcp__<server>__<tool>` 이름으로 호출합니다. 네이티브 Figma 도구는 별개이며 파일, 컴포넌트, 변수, 렌더링 결과를 읽습니다.
 - `agent_browser`는 선택 사항인 `agent-browser` CLI로 웹 페이지를 자동화합니다.
@@ -265,7 +266,7 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 
 - `/effort`는 추론 effort를, `/fast`는 세션의 Fast 모드 설정을 바꿉니다. 설정의 `modelThinkingLevels`는 모델별 기본 thinking 수준을 지정합니다.
 - choco-pi는 `PI_CACHE_RETENTION`의 기본값을 `long`으로 설정해, 지원하는 공급자에 1시간 프롬프트 캐시 유지를 요청합니다. 명시적으로 지정한 값이 우선합니다.
-- `/usage`(별칭 `/quota`)는 공급자 사용량과 초기화 시각을, `/synthetic:quotas`는 Synthetic 할당량을 보여 줍니다.
+- `/usage`(별칭 `/quota`)는 Claude, ChatGPT, Synthetic, Grok의 사용량과 초기화 시각을, `/synthetic:quotas`는 Synthetic 할당량을 보여 줍니다. Grok은 OAuth 로그인이면 구독 크레딧 창을, API 키면 상태만 담은 행을 보여 줍니다. 인증 정보가 없는 공급자는 생략하고 흐린 `Not signed in: …` 한 줄에 나열합니다.
 
 ### 인터페이스
 

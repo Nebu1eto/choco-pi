@@ -123,11 +123,12 @@ Authenticate from a Pi session:
 /login openai
 /login anthropic
 /login synthetic
+/login xai
 ```
 
 Pi stores credentials outside the repository; do not copy credential files into Git.
 
-`/login openai` is Pi's "Sign in with ChatGPT" on provider `openai` (api.openai.com). The legacy `openai-codex` provider (chatgpt.com backend) stays available as an opt-in: `/login openai-codex`. On `openai` sign-in, Fast mode is accepted but not honored and never sent, Daybreak is unavailable, server-side compaction is never attempted (local compaction runs), and native `web_run` search is unavailable (web search goes through `choco-pi-web-access`). `imagegen` and `view_image` resolve `openai` credentials but are unverified live. Besides Pi's built-in Anthropic and OpenAI logins, choco-pi adds a Synthetic provider and discovers Callstack Apex models from [`apex-provider.json`](.pi/extensions/apex-provider.json).
+`/login openai` is Pi's "Sign in with ChatGPT" on provider `openai` (api.openai.com). The legacy `openai-codex` provider (chatgpt.com backend) stays available as an opt-in: `/login openai-codex`. On `openai` sign-in, Fast mode is accepted but not honored and never sent, Daybreak is unavailable, server-side compaction is never attempted (local compaction runs), and native `web_run` search is unavailable (web search goes through `choco-pi-web-access`). `imagegen` and `view_image` resolve `openai` credentials but are unverified live. Pi's built-in `xai` provider (Grok) signs in with `/login xai` (SuperGrok or X Premium) or reads `XAI_API_KEY`; choco-pi does not offer Fast mode for it. Besides Pi's built-in Anthropic, OpenAI, and xAI logins, choco-pi adds a Synthetic provider and discovers Callstack Apex models from [`apex-provider.json`](.pi/extensions/apex-provider.json).
 
 ## Set up computer use (macOS)
 
@@ -254,7 +255,7 @@ The [RPC host bridge](docs/rpc-host-bridge.md) lets Waku identify the installed 
 - Root and path-scoped `AGENTS.md` files are loaded as the agent works in subdirectories.
 - Workflow skills cover direct implementation (`task-inline`), parallel units (`task`), dynamically decomposed work (`task-dynamic`), urgent fixes (`task-hotfix`), adversarial review (`review`), environment readiness (`check`), signed local commits (`commit`), and prose (`effective-writing`). Implementation workflows hold a checkout mutation lease, validate against an acceptance ledger, and never push.
 - `/preferences` sets the response language, response style (`concise` or `explanatory`), and agent persona (`unset`, `critical`, or the default `pessimistic`), which controls how strictly the agent tests its own claims and plans.
-- `/preferences` → Agent → On usage limit (`agentOnUsageLimit`) decides what happens when the active provider reports a usage quota: `none` (default) leaves the run settled with the error; `fallback` switches to a similar-tier model on another provider from [`.pi/model-fallbacks.json`](.pi/model-fallbacks.json) and continues; `auto-resume` waits for the quota reset, then continues. Sub-agents report a limit to their parent with the reset estimate and a suggested in-scope model; under `auto-resume` they are parked and resumed after the reset. When a `/goal` is active or paused, the goal runtime keeps ownership of recovery.
+- `/preferences` → Agent → On usage limit (`agentOnUsageLimit`) decides what happens when the active provider reports a usage quota: `none` (default) leaves the run settled with the error; `fallback` switches to a similar-tier model on another provider from [`.pi/model-fallbacks.json`](.pi/model-fallbacks.json), or, when no tier candidate is open, to the last-resort `xai/grok-4.7` and then `synthetic/hf:moonshotai/Kimi-K3`, and continues; `auto-resume` waits for the quota reset, then continues. Sub-agents report a limit to their parent with the reset estimate and a suggested in-scope model; under `auto-resume` they are parked and resumed after the reset. When a `/goal` is active or paused, the goal runtime keeps ownership of recovery.
 
 ### Agents and orchestration
 
@@ -270,7 +271,7 @@ The [RPC host bridge](docs/rpc-host-bridge.md) lets Waku identify the installed 
 - `/goal` keeps a persistent objective across turns and compaction.
 - `/rewind` rolls back files, rewinds, or forks the session at a checkpointed turn.
 - Context limits are presets in `/preferences`: the soft cap under Session → Context and the compaction point under Session → Compaction. **Context soft cap** caps usable context: strictest 250K, strict 400K, standard 600K, permissive 800K, or unlimited. **Auto-compaction point** sets where compaction starts: strictest 200K, strict 300K, standard 450K, permissive 600K, or unlimited. The soft cap defaults to unlimited and the compaction point to standard. Each preset is fitted to the model's native window: the cap never exceeds it, and the compaction point stays a headroom of `min(100K, 15% of the cap)`, at least the host reserve plus 8K, below the cap. A model with a native window under 64K is left to Pi's own trigger, and an OpenAI native-compaction budget, when published, also bounds the compaction point. These two presets are the only configuration; the headroom is fixed.
-- Compaction modes are set in `/preferences` under Session → Compaction. **OpenAI compaction** uses OpenAI's remote compaction for the Codex transport and configured Responses providers; this profile's [`.pi/choco-pi-codex.json`](.pi/choco-pi-codex.json) sets it to server-side. **Anthropic compaction** defaults to server-side and uses Anthropic's on-demand compaction only with OAuth on `api.anthropic.com` for Fable 5+, Mythos 5+ and Preview, Opus 4.6+, Sonnet 4.6+, and Haiku 5.5+. Any failure falls back to choco-pi's local summary, which is reconciled with retained messages. Background compaction is on by default; when on, it always runs the text lane and runs each native lane only while its vendor row is server-side.
+- Compaction modes are set in `/preferences` under Session → Compaction. **OpenAI compaction** uses OpenAI's remote compaction for the Codex transport and configured Responses providers; this profile's [`.pi/choco-pi-codex.json`](.pi/choco-pi-codex.json) sets it to server-side. **Anthropic compaction** defaults to server-side and uses Anthropic's on-demand compaction only with OAuth on `api.anthropic.com` for Fable 5+, Mythos 5+ and Preview, Opus 4.6+, Sonnet 4.6+, and Haiku 5.5+. **xAI compaction** defaults to server-side and uses xAI's `/responses/compact` for `grok-*` models on `api.x.ai`, with OAuth or an API key; it covers foreground compaction only. Any failure falls back to choco-pi's local summary, which is reconciled with retained messages. Background compaction is on by default; when on, it always runs the text lane and runs each native lane (OpenAI and Anthropic) only while its vendor row is server-side.
 - New sessions are named automatically. `sessionAutoNameModel` selects the naming model (default `openai/gpt-6-luna`); set `sessionAutoName` to `false` to disable naming.
 - After each completed agent turn, choco-pi predicts your next prompt with `openai/gpt-6-luna` (falling back to `anthropic/claude-haiku-5-5`) and shows it as dim text in the empty editor. Tab fills it in; nothing is sent until you press Enter. Each turn sends recent conversation text to the suggestion model in one small request; set `promptSuggestion` to `false` to disable it.
 
@@ -282,7 +283,7 @@ The [RPC host bridge](docs/rpc-host-bridge.md) lets Waku identify the installed 
 
 ### Research and integrations
 
-- Web research uses one deferred `web_search` tool regardless of the conversation model. Search credentials and billing come from the selected search backend (OpenAI, Exa, Kagi, Synthetic, or Brave), not from the conversation provider. See [Web search](docs/web-search.md) for providers, routing, privacy, and fallback behavior.
+- Web research uses one deferred `web_search` tool regardless of the conversation model. Search credentials and billing come from the selected search backend (OpenAI, Exa, Kagi, Synthetic, Brave, or xAI), not from the conversation provider. The xAI (Grok) backend runs only when a request or routing configuration names `xai`, and only while xAI is signed in; each call is billed. See [Web search](docs/web-search.md) for providers, routing, privacy, and fallback behavior.
 - `fetch_content` extracts page content and `source_check` verifies claims against cited passages. `/search` browses stored results; `/websearch` and `/curator` drive the search curator workflow.
 - Pi's built-in MCP owns server configuration, authentication, and execution; agents find MCP tools with `tool_search` and call them by their `mcp__<server>__<tool>` names. Native Figma tools are separate and read files, components, variables, and renders.
 - `agent_browser` automates web pages through the optional `agent-browser` CLI.
@@ -293,7 +294,7 @@ The [RPC host bridge](docs/rpc-host-bridge.md) lets Waku identify the installed 
 
 - `/effort` sets reasoning effort and `/fast` sets the session Fast mode preference. `modelThinkingLevels` in settings assigns a default thinking level per model.
 - choco-pi defaults `PI_CACHE_RETENTION` to `long`, requesting one-hour prompt-cache retention from providers that support it. An explicit value wins.
-- `/usage` (alias `/quota`) shows provider usage and reset times; `/synthetic:quotas` shows Synthetic quotas.
+- `/usage` (alias `/quota`) shows provider usage and reset times for Claude, ChatGPT, Synthetic, and Grok; `/synthetic:quotas` shows Synthetic quotas. Grok shows its subscription credit window with an OAuth sign-in and a status-only row with an API key. Providers without credentials are omitted and listed on one dim `Not signed in: …` line.
 
 ### Interface
 
