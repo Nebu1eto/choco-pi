@@ -120,7 +120,12 @@ const ENV_KEYS = [
 async function actThroughBridge(
   backend: ComputerUsePlatformBackend,
   beforeAct?: () => Promise<void>,
-  options: { ref?: string; foregroundGrant?: string; findFixture?: boolean } = {},
+  options: {
+    ref?: string;
+    foregroundGrant?: string;
+    findFixture?: boolean;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<{ details: JsonObject; text: string }> {
   const saved = new Map(ENV_KEYS.map((key) => [key, process.env[key]]));
   const cwd = path.join(scratch, "project");
@@ -135,7 +140,7 @@ async function actThroughBridge(
   if (options.foregroundGrant)
     process.env.PI_COMPUTER_USE_FOREGROUND_GRANT = options.foregroundGrant;
   const restore = replacePlatformBackendForTest(backend);
-  const signal = new AbortController().signal;
+  const signal = options.signal ?? new AbortController().signal;
   try {
     const ctx = await createTestExtensionContext(cwd);
     await bridge.shutdownComputerUseSession();
@@ -601,6 +606,8 @@ test("effectPossible:false from a helper error reaches HelperCommandError", asyn
     deliveryUsed: "pid_pointer",
     pidPointerAttempted: true,
     observableChange: false,
+    pixelCheck: "compared",
+    pixelChange: false,
   });
 
   // ax_only keeps the refusal before delivery, with no attempt evidence.
@@ -788,7 +795,7 @@ test("S6 refuses the custom view in background and clicks it with a grant", asyn
   assert.equal(granted.frontmostAfter, FAKE_APP.pid);
 });
 
-test("bridge: an S6 custom-view ref click reaches the fake by ref and escalates once under the grant", async () => {
+test("bridge: an S6 custom-view ref click under the grant goes to foreground directly", async () => {
   const fake = await startDaemon({ script: "s6-grant" });
   const { details, text } = await actThroughBridge(wireBackend(), undefined, {
     ref: "@e5",
@@ -796,20 +803,17 @@ test("bridge: an S6 custom-view ref click reaches the fake by ref and escalates 
     foregroundGrant: FAKE_APP.bundleId,
   });
   const acts = fake.requests.filter((request) => request.cmd === "act");
-  assert.equal(acts.length, 2, "one background attempt and one granted retry");
+  assert.equal(acts.length, 1, "one granted attempt, no background pid attempt first");
   for (const act of acts) {
     assert.deepEqual(act.target, { ref: CUSTOM_VIEW_REF });
     assert.equal(act.pid, FAKE_APP.pid);
   }
-  assert.equal(acts[0]?.policy, "background");
-  assert.equal(acts[0]?.foregroundGrant, undefined);
-  assert.equal(acts[1]?.policy, "foreground");
-  assert.equal(acts[1]?.foregroundGrant, true);
-  assert.equal(field(acts[1]!, "response").ok, true);
-  assert.equal(field(field(acts[0]!, "response"), "error").effectPossible, false);
+  assert.equal(acts[0]?.policy, "foreground");
+  assert.equal(acts[0]?.foregroundGrant, true);
+  assert.equal(field(acts[0]!, "response").ok, true);
   const execution = field(details, "execution");
   assert.equal(execution.outcome, "unknown");
-  assert.equal(execution.escalatedToForeground, true);
+  assert.notEqual(execution.escalatedToForeground, true);
   const restores = fake.requests.filter((request) => request.cmd === "restoreUserFocus");
   assert.equal(restores.length, 1, "focus goes back to the user's app once");
   assert.equal(restores[0]?.pid, 4141);
@@ -842,6 +846,64 @@ test("bridge: an S2 custom-view ref click reaches the fake by ref and is refused
   assert.equal(field(error, "evidence").observableChange, false);
   assert.match(text, /foreground/i);
   assert.match(text, /produced no observable change/);
+});
+
+test("a cancel during a background pid attempt's settle wait is cancelled with a possible effect", async () => {
+  const fake = await startDaemon({ script: "s2-foreground-required", pidSettleHoldMs: 5_000 });
+  const client = new helper.MacosHelperClient();
+  const look = await lookId(client);
+  const args = actArgs(session(), look, { action: "click", target: { ref: CUSTOM_VIEW_REF } });
+  const controller = new AbortController();
+  const started = Date.now();
+  setTimeout(() => controller.abort(), 150);
+  const error = await rejection(
+    client.command("act", args, { signal: controller.signal, timeoutMs: 30_000 }),
+  );
+
+  assert.ok(error instanceof helper.HelperAbortedError, "abort surfaces HelperAbortedError");
+  assert.equal(error.effectPossible, true, "the pid event was already posted");
+  assert.equal(error.cancel?.state, "stopped");
+  assert.equal(error.cancel?.effectPossible, true);
+  assert.equal(error.interruption?.code, "cancelled");
+  assert.equal(error.interruption?.result?.outcome, "partial");
+  assert.ok(Date.now() - started < 2_000, "the cancel ends the settle wait at once");
+  const act = fake.requests.find((request) => request.cmd === "act");
+  const response = field(act!, "response");
+  assert.equal(response.ok, false);
+  assert.equal(field(response, "error").code, "cancelled", "never foreground_required");
+  assert.equal(field(response, "error").effectPossible, true);
+  assert.equal(field(response, "error").evidence, undefined);
+});
+
+test("bridge: an aborted background pid attempt reports cancelled, not a no-change refusal", async () => {
+  const fake = await startDaemon({ script: "s2-foreground-required", pidSettleHoldMs: 5_000 });
+  const controller = new AbortController();
+  let thrown: Error | undefined;
+  let outcome: { details: JsonObject; text: string } | undefined;
+  try {
+    outcome = await actThroughBridge(
+      wireBackend(),
+      async () => {
+        setTimeout(() => controller.abort(), 150);
+      },
+      { ref: "@e5", findFixture: true, signal: controller.signal },
+    );
+  } catch (error) {
+    assert.ok(error instanceof Error);
+    thrown = error;
+  }
+  const acts = fake.requests.filter((request) => request.cmd === "act");
+  assert.equal(acts.length, 1, "no retry or second attempt");
+  assert.equal(field(field(acts[0]!, "response"), "error").code, "cancelled");
+  assert.equal(field(field(acts[0]!, "response"), "error").effectPossible, true);
+  if (outcome) {
+    assert.equal(outcome.details.status, "cancelled");
+    assert.equal(field(outcome.details, "execution").effectPossible, true);
+    assert.doesNotMatch(outcome.text, /produced no observable change/);
+  } else {
+    assert.ok(thrown);
+    assert.doesNotMatch(thrown.message, /foreground/i);
+  }
 });
 
 test("bridge maps an ownership refusal to a structured owned_by_other_session result", async () => {

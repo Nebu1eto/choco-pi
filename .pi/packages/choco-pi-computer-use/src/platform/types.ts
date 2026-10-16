@@ -140,12 +140,17 @@ export interface PlatformRootDelta {
  * `pidPointerAttempted: true` with `observableChange: false` means pid-targeted
  * pointer input was posted and no change was observed within the settle window;
  * `effectPossible: false` then covers only work before that attempt. Absent
- * evidence means the helper refused before any delivery.
+ * evidence means the helper refused before any delivery. `pixelCheck` is
+ * "compared" (with `pixelChange`) when window pixels were compared during
+ * the settle window, "not_needed" when an AX/window signal changed first,
+ * and "unavailable" without Screen Recording or a successful capture.
  */
 export interface HelperRefusalEvidence {
   pidPointerAttempted?: boolean;
   observableChange?: boolean;
   deliveryUsed?: string;
+  pixelCheck?: string;
+  pixelChange?: boolean;
 }
 
 /**

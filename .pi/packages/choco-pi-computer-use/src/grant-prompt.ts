@@ -118,7 +118,8 @@ async function untilAborted(
 
 /**
  * Decides a foreground grant for one app after a refusal that proved nothing
- * was delivered. Only the user decides: through the `foreground_prompt` setting
+ * was delivered, or after a background pid pointer attempt that showed no
+ * change (the caller then defers the foreground retry to the next call). Only the user decides: through the `foreground_prompt` setting
  * or `/computer-use grant`, or by answering the host dialog. No tool parameter
  * reaches this decision.
  *
@@ -176,7 +177,7 @@ async function askOnce(
   ];
   if (refusal.pidPointerAttempted === true)
     lines.push(
-      `pi already sent this ${refusal.action} to ${appName} as background input and saw no visible change. Allowing foreground input sends it again; if the first attempt had an effect that was not visible, it may happen twice.`,
+      `pi already sent this ${refusal.action} to ${appName} as background input and saw no visible change. It is not sent again now: allowing lets pi's next action on ${appName} use foreground input after the current state is checked.`,
     );
   const title = lines.join("\n");
   const choice = await ui.select(

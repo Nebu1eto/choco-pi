@@ -24,7 +24,12 @@
  * posted by pid and verified: the custom view shows no change, so it is
  * refused with `foreground_required`, `effectPossible` from earlier work only
  * (`false` for a single act), and `error.evidence: {deliveryUsed:
- * "pid_pointer", pidPointerAttempted: true, observableChange: false}`. Under
+ * "pid_pointer", pidPointerAttempted: true, observableChange: false,
+ * pixelCheck: "compared", pixelChange: false}` (window pixels compared and
+ * unchanged). With `pidSettleHoldMs` the attempt waits that long after
+ * posting (the helper's settle and capture waits), waking at once on
+ * `cancel`; a cancel there answers `cancelled` with `effectPossible: true`
+ * and a `partial` result, never the no-change refusal. Under
  * `ax_only` it is refused before any delivery without evidence. The
  * button (`button-1`) is pressed through AX with or without a grant. A
  * granted click on `custom-1` is HID coordinates with activation and
@@ -107,6 +112,8 @@ export interface FakeHelperDaemonOptions {
   slowHoldMs?: number;
   /** Delay before a `cancel` wakes a held request (a blocking call). Default 0. */
   cancelBlockMs?: number;
+  /** Settle wait after a background pid pointer attempt posts. Default 0. */
+  pidSettleHoldMs?: number;
   /** Owner lease without requests in flight. Default 30000 ms (the helper's). */
   ownerTtlMs?: number;
 }
@@ -262,6 +269,7 @@ class FakeHelperState {
   private readonly slowChunkMs: number;
   private readonly slowHoldMs?: number;
   private readonly cancelBlockMs: number;
+  private readonly pidSettleHoldMs: number;
   private readonly ownerTtlMs: number;
   private owner?: Session & { lastSeen: number };
   /** Admitted owner-gated requests still running; positive pins the owner. */
@@ -287,6 +295,7 @@ class FakeHelperState {
     this.slowChunkMs = options.slowChunkMs ?? 5_000;
     this.slowHoldMs = options.slowHoldMs;
     this.cancelBlockMs = options.cancelBlockMs ?? 0;
+    this.pidSettleHoldMs = options.pidSettleHoldMs ?? 0;
     this.ownerTtlMs = options.ownerTtlMs ?? OWNER_TTL_MS;
   }
 
@@ -835,11 +844,19 @@ class FakeHelperState {
       const effectBefore = tracked.effect;
       this.checkpoint(tracked);
       effect();
+      if (this.pidSettleHoldMs > 0) {
+        // Settle/capture wait; a cancel here is `cancelled` with the posted
+        // input reported as a possible effect.
+        await this.sleep(tracked, this.pidSettleHoldMs);
+        this.checkpoint(tracked);
+      }
       throw new FakeFailure("foreground_required", PID_NO_CHANGE_REASON, effectBefore, undefined, {
         evidence: {
           deliveryUsed: "pid_pointer",
           pidPointerAttempted: true,
           observableChange: false,
+          pixelCheck: "compared",
+          pixelChange: false,
         },
       });
     }

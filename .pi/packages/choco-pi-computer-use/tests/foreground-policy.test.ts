@@ -862,6 +862,8 @@ test("image-bearing: typeText after a text-field ref click keeps the focus targe
 });
 
 const customClick: UiAction[] = [{ action: "click", ref: "@e4" }];
+/** A click on the AXPress button: not pointer-only, so background first even under a grant. */
+const pressClick: UiAction[] = [{ action: "click", ref: "@e3" }];
 
 function noteRegions(details: JsonObject): JsonObject[] {
   const regions = objectField(details, "note").regions;
@@ -897,7 +899,7 @@ test("background click on a ref without an AX action: one act and a refusal befo
   );
 });
 
-test("granted: a refused background click on a ref without an AX action retries once in foreground", async () => {
+test("granted: a click on a ref without an AX action goes to foreground directly", async () => {
   await withFixture(
     { grant: BUNDLE_ID },
     (request) => {
@@ -907,16 +909,14 @@ test("granted: a refused background click on a ref without an AX action retries 
     },
     async (context) => {
       const { details, text } = await actOnceWithText(context, customClick);
-      const [first, second, ...rest] = context.requests;
-      assert.equal(rest.length, 0, "at most one retry");
-      assert.equal(first?.policy, "background");
-      assert.equal(first?.foregroundGrant, undefined);
-      assert.equal(second?.policy, "foreground");
-      assert.equal(second?.foregroundGrant, true);
-      assertRefTarget(second, "wire-custom-1");
+      const [first, ...rest] = context.requests;
+      assert.equal(rest.length, 0, "no background attempt before the granted one");
+      assert.equal(first?.policy, "foreground");
+      assert.equal(first?.foregroundGrant, true);
+      assertRefTarget(first, "wire-custom-1");
       assert.equal(details.status, "ok");
       const execution = objectField(details, "execution");
-      assert.equal(execution.escalatedToForeground, true);
+      assert.notEqual(execution.escalatedToForeground, true);
       assert.equal(execution.outcome, "unknown");
       assert.match(text, /Effect not verified for action 1 \(click: unknown\)/);
     },
@@ -925,13 +925,14 @@ test("granted: a refused background click on a ref without an AX action retries 
 
 test("a background didnt on a ref click without an AX action is refused and never retried", async () => {
   await withFixture(
-    { grant: BUNDLE_ID },
+    { ui: { select: forbiddenSelect() }, promptMode: "always" },
     () => ({ outcome: "didnt", performed: { delivery: "pid", grounding: "coordinates" } }),
     async (context) => {
       const details = await actOnce(context, customClick);
       assert.equal(context.requests.length, 1, "a didnt proves delivery: no retry");
       assert.equal(context.requests[0]?.policy, "background");
       assert.equal(details.status, "foreground_required");
+      assert.deepEqual(getSessionGrants(), [], "a didnt never auto-grants");
       const execution = objectField(details, "execution");
       assert.equal(execution.outcome, "didnt");
       assert.notEqual(execution.escalatedToForeground, true);
@@ -1064,6 +1065,12 @@ test("ask + TUI: allowing for the session retries once in foreground as user_gra
       const execution = objectField(details, "execution");
       assert.equal(execution.escalatedToForeground, true);
       assert.equal(execution.escalationReason, "user_grant");
+      assert.equal(
+        execution.retryDeferred,
+        undefined,
+        "a pre-delivery refusal keeps the same-call retry",
+      );
+      assert.equal(details.nextStep, undefined);
       assert.equal(objectField(execution, "grantPrompt").decision, "session");
       assert.deepEqual(getSessionGrants(), [BUNDLE_ID]);
 
@@ -1450,6 +1457,8 @@ const NO_CHANGE_EVIDENCE: HelperRefusalEvidence = {
   deliveryUsed: "pid_pointer",
   pidPointerAttempted: true,
   observableChange: false,
+  pixelCheck: "compared",
+  pixelChange: false,
 };
 
 /** Background posts by pid and observes no change; a granted foreground attempt works. */
@@ -1477,6 +1486,8 @@ for (const variant of [
           deliveryUsed: "pid_pointer",
           pidPointerAttempted: true,
           observableChange: true,
+          pixelCheck: "compared",
+          pixelChange: true,
         },
       }),
       async (context) => {
@@ -1493,6 +1504,7 @@ for (const variant of [
         const steps = execution.steps;
         assert.ok(Array.isArray(steps) && isJsonObject(steps[0]));
         assert.equal(objectField(steps[0], "evidence").deliveryUsed, "pid_pointer");
+        assert.equal(objectField(steps[0], "evidence").pixelChange, true);
         assert.equal(steps[0].delivery, "pid");
       },
     );
@@ -1511,56 +1523,168 @@ test("pid pointer attempt with no change: refusal carries the evidence and says 
     assert.equal(refusal.pidPointerAttempted, true);
     assert.equal(refusal.observableChange, false);
     assert.ok(isString(refusal.grantHint) && refusal.grantHint.includes("observed no change"));
+    assert.equal(refusal.nextStep, "observe_then_retry");
+    assert.equal(refusal.grantedForNextCall, false);
+    assert.equal(details.nextStep, "observe_then_retry");
+    assert.equal(execution.retryDeferred, true);
   });
 });
 
-test("pid pointer attempt with no change: ask + TUI grant retries once in foreground", async () => {
+/** A deferred refusal: one background delivery, grant recorded, observe before acting again. */
+function assertDeferred(details: JsonObject, text: string, granted: boolean): void {
+  assert.equal(details.status, "foreground_required");
+  assert.equal(details.nextStep, "observe_then_retry");
+  const execution = objectField(details, "execution");
+  assert.notEqual(execution.escalatedToForeground, true);
+  assert.equal(execution.retryDeferred, true);
+  assert.equal(execution.retryDeferredReason, "pid_pointer_delivered_without_observable_change");
+  assert.equal(execution.pidPointerAttempted, true);
+  const refusal = objectField(execution, "refusal");
+  assert.equal(refusal.nextStep, "observe_then_retry");
+  assert.equal(refusal.grantedForNextCall, granted);
+  assert.match(
+    text,
+    /sent to Foreground Fixture in the background and produced no observable change/,
+  );
+  assert.match(text, /not repeated in the foreground in this call/);
+  assert.match(text, /observe_then_retry — call observe_ui/);
+  if (granted) assert.match(text, /next act_ui on it uses foreground input/);
+}
+
+test("pid pointer attempt with no change: ask + TUI allow grants for the session, defers the retry, next call goes foreground", async () => {
   const calls: SelectCall[] = [];
   await withFixture(
     { ui: { select: selectStub(GRANT_OPTION_SESSION, calls) } },
     pidNoChangeUntilGranted,
     async (context) => {
-      const details = await actOnce(context, [{ action: "click", x: 100, y: 100 }]);
+      const { details, text } = await actOnceWithText(context, [
+        { action: "click", x: 100, y: 100 },
+      ]);
       assert.equal(calls.length, 1, "one prompt");
       const title = calls[0]!.title;
       assert.ok(
         title.includes("already sent this click") && title.includes("saw no visible change"),
         "the prompt says a background attempt was sent and showed nothing",
       );
-      assert.ok(title.includes("sends it again"), "the prompt says allowing repeats the input");
+      assert.ok(
+        title.includes("not sent again now"),
+        "the prompt says allowing does not repeat it",
+      );
+      assert.deepEqual(
+        context.requests.map((request) => [request.policy, request.foregroundGrant]),
+        [["background", undefined]],
+        "no second delivery in the same call",
+      );
+      assertDeferred(details, text, true);
+      assert.equal(
+        objectField(objectField(details, "execution"), "grantPrompt").decision,
+        "session",
+      );
+      assert.deepEqual(getSessionGrants(), [BUNDLE_ID]);
+
+      const next = await actOnce(context, [{ action: "click", x: 100, y: 100 }]);
+      assert.equal(calls.length, 1, "no second prompt");
       assert.deepEqual(
         context.requests.map((request) => [request.policy, request.foregroundGrant]),
         [
           ["background", undefined],
           ["foreground", true],
         ],
+        "the next call goes to foreground directly",
       );
-      assert.equal(details.status, "ok");
-      const execution = objectField(details, "execution");
-      assert.equal(execution.escalationReason, "user_grant");
-      assert.equal(execution.pidPointerAttempted, true);
+      assert.equal(next.status, "ok");
     },
   );
 });
 
-test("pid pointer attempt with no change: a covering grant retries once in foreground", async () => {
+for (const variant of [
+  { name: "a ref without an AX action", actions: customClick },
+  { name: "a coordinate scroll", actions: [{ action: "scroll", x: 100, y: 100, scrollY: 3 }] },
+] satisfies Array<{ name: string; actions: UiAction[] }>) {
+  test(`pid pointer attempt with no change on ${variant.name}: always grants, defers the retry, next call goes foreground`, async () => {
+    await withFixture(
+      { ui: { select: forbiddenSelect() }, promptMode: "always" },
+      pidNoChangeUntilGranted,
+      async (context) => {
+        const { details, text } = await actOnceWithText(context, variant.actions);
+        assert.deepEqual(
+          context.requests.map((request) => request.policy),
+          ["background"],
+          "no second delivery in the same call",
+        );
+        assertDeferred(details, text, true);
+        assert.equal(
+          objectField(objectField(details, "execution"), "grantPrompt").decision,
+          "auto",
+        );
+        assert.deepEqual(getSessionGrants(), [BUNDLE_ID]);
+
+        const next = await actOnce(context, variant.actions);
+        assert.deepEqual(
+          context.requests.map((request) => [request.policy, request.foregroundGrant]),
+          [
+            ["background", undefined],
+            ["foreground", true],
+          ],
+        );
+        assert.equal(next.status, "ok");
+        assert.notEqual(objectField(next, "execution").escalatedToForeground, true);
+      },
+    );
+  });
+}
+
+test("pid pointer attempt with no change: Not now defers with no grant and says so", async () => {
+  const calls: SelectCall[] = [];
+  await withFixture(
+    { ui: { select: selectStub(GRANT_OPTION_DENY, calls) } },
+    pidNoChangeUntilGranted,
+    async (context) => {
+      const { details, text } = await actOnceWithText(context, customClick);
+      assert.equal(calls.length, 1);
+      assert.equal(context.requests.length, 1);
+      assertDeferred(details, text, false);
+      assert.deepEqual(getSessionGrants(), []);
+    },
+  );
+});
+
+test("Always allow after a pid attempt persists the grant without a same-call retry", async () => {
+  const calls: SelectCall[] = [];
+  await withFixture(
+    { ui: { select: selectStub(GRANT_OPTION_ALWAYS, calls) } },
+    pidNoChangeUntilGranted,
+    async (context) => {
+      const { details, text } = await actOnceWithText(context, customClick);
+      assert.equal(context.requests.length, 1);
+      assertDeferred(details, text, true);
+      const prompt = objectField(objectField(details, "execution"), "grantPrompt");
+      assert.equal(prompt.decision, "always");
+      assert.equal(prompt.persisted, true);
+      const saved: JsonValue = JSON.parse(await readFile(context.userConfigPath, "utf-8"));
+      assert.deepEqual(saved, { foreground_grant: [BUNDLE_ID] });
+    },
+  );
+});
+
+test("a covering grant sends a pointer-only click to foreground with no background attempt", async () => {
   await withFixture({ grant: BUNDLE_ID }, pidNoChangeUntilGranted, async (context) => {
     const details = await actOnce(context, customClick);
     assert.deepEqual(
       context.requests.map((request) => request.policy),
-      ["background", "foreground"],
+      ["foreground"],
     );
-    const execution = objectField(details, "execution");
-    assert.equal(execution.escalationReason, "foreground_required");
-    assert.equal(execution.pidPointerAttempted, true);
+    assert.equal(details.status, "ok");
+    assert.equal(objectField(details, "execution").pidPointerAttempted, undefined);
   });
 });
 
 for (const variant of [
-  { name: "a covering grant", scenario: { grant: BUNDLE_ID } },
-  { name: "ask + TUI", scenario: { ui: { select: forbiddenSelect() } } },
-  { name: "foreground_prompt always", scenario: { promptMode: "always" } },
-] satisfies Array<{ name: string; scenario: Scenario }>) {
+  // AXPress ref: background first even under a grant, as the helper decides.
+  { name: "a covering grant", scenario: { grant: BUNDLE_ID }, actions: pressClick },
+  { name: "ask + TUI", scenario: { ui: { select: forbiddenSelect() } }, actions: customClick },
+  { name: "foreground_prompt always", scenario: { promptMode: "always" }, actions: customClick },
+] satisfies Array<{ name: string; scenario: Scenario; actions: UiAction[] }>) {
   test(`inconsistent evidence (effectPossible false, observableChange true) never retries with ${variant.name}`, async () => {
     await withFixture(
       variant.scenario,
@@ -1573,7 +1697,7 @@ for (const variant of [
         return { outcome: "worked" };
       },
       async (context) => {
-        const details = await actOnce(context, customClick);
+        const details = await actOnce(context, variant.actions);
         assert.equal(context.requests.length, 1, "no retry");
         assertNoUngrantedForeground(context.requests);
         assert.deepEqual(getSessionGrants(), [], "no auto grant");
@@ -1584,7 +1708,7 @@ for (const variant of [
   });
 }
 
-test("a returned (batch-step style) refusal with no-change evidence is recognized", async () => {
+test("a returned (batch-step style) no-change refusal under a covering grant is deferred, not retried", async () => {
   await withFixture(
     { grant: BUNDLE_ID },
     (request) =>
@@ -1600,12 +1724,14 @@ test("a returned (batch-step style) refusal with no-change evidence is recognize
           }
         : { outcome: "worked" },
     async (context) => {
-      const details = await actOnce(context, customClick);
+      // The outline shows AXPress, so the bridge sends background first; the
+      // helper still reports a delivered pid attempt (stale outline).
+      const { details, text } = await actOnceWithText(context, pressClick);
       assert.deepEqual(
         context.requests.map((request) => request.policy),
-        ["background", "foreground"],
+        ["background"],
       );
-      assert.equal(objectField(details, "execution").pidPointerAttempted, true);
+      assertDeferred(details, text, true);
     },
   );
 });

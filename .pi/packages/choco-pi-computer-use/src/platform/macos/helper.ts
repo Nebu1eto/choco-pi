@@ -190,6 +190,9 @@ export function parseRefusalEvidence(value: JsonField): HelperRefusalEvidence | 
   const changed = booleanField(value.observableChange);
   if (changed !== undefined) evidence.observableChange = changed;
   if (isString(value.deliveryUsed)) evidence.deliveryUsed = value.deliveryUsed;
+  if (isString(value.pixelCheck)) evidence.pixelCheck = value.pixelCheck;
+  const pixelChange = booleanField(value.pixelChange);
+  if (pixelChange !== undefined) evidence.pixelChange = pixelChange;
   return Object.keys(evidence).length > 0 ? evidence : undefined;
 }
 

@@ -2546,11 +2546,60 @@ final class Bridge {
 		// `foreground_required`, reporting only effects from earlier work as
 		// possible plus `pidPointerAttempted`/`observableChange: false` evidence.
 		var attemptProbe: PointerProbe?
+		// Downsampled pixels of the target window before the attempt; nil when
+		// Screen Recording is missing or the capture failed (`pixelCheck:
+		// "unavailable"`, AX/window signals only).
+		var attemptPixels: PixelProbe?
 		var effectBeforeAttempt = false
-		/// Baseline taken right before the first pid event of the attempt.
-		func beginBackgroundPidAttempt(at point: CGPoint) {
+		/// Baseline taken right before the first pid event of the attempt. A
+		/// cancel during the window lookup or baseline capture wait throws
+		/// `cancelled` here (no event posted yet by this attempt).
+		func beginBackgroundPidAttempt(at point: CGPoint) throws {
 			effectBeforeAttempt = context?.effectPossible ?? false
+			attemptPixels = try startPixelProbe(windowId: record.windowId)
 			attemptProbe = capturePointerProbe(pid: pid, element: element, point: point)
+		}
+		// Settle check of the attempt: the AX/window signals each iteration,
+		// then (still unchanged) one pixel comparison against the baseline.
+		// At most 6 x 50 ms and `pointerSettleBudget` overall, checkpointed.
+		// `checkpoint()` also runs before each capture, after each capture
+		// wait, and before every return, so a cancel that arrives while waiting
+		// surfaces as `cancelled` (effect possible: the events were posted),
+		// never as a no-change `foreground_required`.
+		// Evidence: `pixelCheck` is "compared" (with `pixelChange`) after at
+		// least one comparison, "not_needed" when an AX/window signal changed
+		// first, else "unavailable" (no baseline, or every capture failed).
+		func settleBackgroundAttempt(_ probe: PointerProbe) throws -> (changed: Bool, evidence: [String: Any]) {
+			let start = Date()
+			var compared = false
+			func pixelEvidence(axChanged: Bool, pixelChanged: Bool) -> [String: Any] {
+				if compared { return ["pixelCheck": "compared", "pixelChange": pixelChanged] }
+				return ["pixelCheck": attemptPixels != nil && axChanged ? "not_needed" : "unavailable"]
+			}
+			for _ in 0..<6 {
+				try checkpoint()
+				usleep(50_000)
+				if pointerChangeObserved(element, baselineCg: probe.baselineCg) || pointerProbeChanged(probe) {
+					try checkpoint()
+					return (true, pixelEvidence(axChanged: true, pixelChanged: false))
+				}
+				let remaining = Self.pointerSettleBudget - Date().timeIntervalSince(start)
+				if let pixels = attemptPixels, remaining > 0.03 {
+					try checkpoint()
+					let timeout = min(Self.pixelCaptureTimeout, remaining)
+					let captured = capturePixelSnapshot(pixels, timeout: timeout)
+					try checkpoint()
+					if let current = captured {
+						compared = true
+						if pixelSnapshotsDiffer(pixels.baseline, current) {
+							return (true, pixelEvidence(axChanged: false, pixelChanged: true))
+						}
+					}
+				}
+				if Date().timeIntervalSince(start) >= Self.pointerSettleBudget { break }
+			}
+			try checkpoint()
+			return (false, pixelEvidence(axChanged: false, pixelChanged: false))
 		}
 		func executeCoordinates(_ point: CGPoint) throws {
 			guard element != nil || record.hasImage else {
@@ -2684,7 +2733,7 @@ final class Bridge {
 						throw foregroundRequired("target has no accessibility action; pointer delivery needs a host foreground grant")
 					}
 					let point = try coordinatePoint()
-					beginBackgroundPidAttempt(at: point)
+					try beginBackgroundPidAttempt(at: point)
 					try executeCoordinates(point)
 				} else {
 					pointerWithoutAXAction = true
@@ -2801,17 +2850,17 @@ final class Bridge {
 		} else {
 			let point = try coordinatePoint()
 			if policy == "background" && !foregroundGranted && ["press", "click", "scroll", "drag"].contains(action) {
-				beginBackgroundPidAttempt(at: point)
+				try beginBackgroundPidAttempt(at: point)
 			}
 			try executeCoordinates(point)
 		}
 
 		if let probe = attemptProbe {
-			let changed = try settlePointerChange {
-				pointerChangeObserved(element, baselineCg: probe.baselineCg) || pointerProbeChanged(probe)
-			}
-			if changed {
-				var evidence: [String: Any] = ["deliveryUsed": "pid_pointer", "pidPointerAttempted": true, "observableChange": true]
+			let settled = try settleBackgroundAttempt(probe)
+			var evidence: [String: Any] = ["deliveryUsed": "pid_pointer", "pidPointerAttempted": true]
+			evidence["observableChange"] = settled.changed
+			evidence.merge(settled.evidence) { _, new in new }
+			if settled.changed {
 				if beforeFocusedWindow != focusedWindowSummary(pid: pid) { evidence["windowChanged"] = true }
 				return try finish(["outcome": "worked", "performed": performed, "evidence": evidence])
 			}
@@ -2821,7 +2870,7 @@ final class Bridge {
 				message: "Pid-targeted pointer input produced no observable change; pointer delivery needs a host foreground grant",
 				code: "foreground_required",
 				effectPossible: effectBeforeAttempt,
-				details: ["evidence": ["deliveryUsed": "pid_pointer", "pidPointerAttempted": true, "observableChange": false]]
+				details: ["evidence": evidence]
 			)
 		}
 
@@ -2943,6 +2992,116 @@ final class Bridge {
 		return !optionalSameElement(base.focused, appFocusedElement(pid: base.pid))
 	}
 
+	/// Overall settle bound of a background pid pointer attempt (seconds).
+	private static let pointerSettleBudget: TimeInterval = 0.4
+	/// Per-capture wait inside the settle window (seconds).
+	private static let pixelCaptureTimeout: TimeInterval = 0.12
+	/// Wait for the window lookup and baseline capture before the attempt.
+	private static let pixelBaselineTimeout: TimeInterval = 0.25
+	/// Longest side of the downsampled comparison bitmap, in samples.
+	private static let pixelSampleMaxDimension: Double = 320
+	/// A sample changed when any RGB channel moved by more than this (0-255).
+	private static let pixelChannelThreshold = 24
+	/// Changed samples needed to call the window repainted.
+	private static let pixelChangedSamplesRequired = 2
+
+	/// Downsampled RGBA bitmap of one window capture (never written to disk).
+	private struct PixelSnapshot {
+		let width: Int
+		let height: Int
+		let bytes: [UInt8]
+	}
+
+	/// Capture setup and baseline for the pid pointer settle check. The filter
+	/// is `desktopIndependentWindow`, so only the target window's own content
+	/// is captured: the `AgentCursor` overlay is a separate window and the
+	/// system cursor is off (`showsCursor = false`).
+	private struct PixelProbe {
+		let filter: SCContentFilter
+		let config: SCStreamConfiguration
+		let baseline: PixelSnapshot
+	}
+
+	/// Looks up the window and captures the baseline. Nil without a Screen
+	/// Recording preflight grant (never prompts), when the window is not
+	/// shareable, or when either step misses its short timeout. Uses
+	/// ScreenCaptureKit only: no `screencapture` temp-file fallback. Throws
+	/// `cancelled` from the checkpoint before the lookup, after the lookup
+	/// wait (before the capture starts), and after the capture wait.
+	private func startPixelProbe(windowId: UInt32) throws -> PixelProbe? {
+		guard CGPreflightScreenCaptureAccess() else { return nil }
+		try checkpoint()
+		let semaphore = DispatchSemaphore(value: 0)
+		let found = Box<SCWindow?>(nil)
+		SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) { shareable, _ in
+			found.value = shareable?.windows.first { $0.windowID == windowId }
+			semaphore.signal()
+		}
+		let waited = semaphore.wait(timeout: .now() + Self.pixelBaselineTimeout)
+		try checkpoint()
+		guard waited == .success, let window = found.value else { return nil }
+		let longest = max(window.frame.width, window.frame.height)
+		guard longest >= 1 else { return nil }
+		let scale = min(1, Self.pixelSampleMaxDimension / Double(longest))
+		let config = SCStreamConfiguration()
+		config.width = max(1, Int((Double(window.frame.width) * scale).rounded()))
+		config.height = max(1, Int((Double(window.frame.height) * scale).rounded()))
+		config.showsCursor = false
+		config.ignoreShadowsSingleWindow = true
+		let filter = SCContentFilter(desktopIndependentWindow: window)
+		let pending = PixelProbe(filter: filter, config: config, baseline: PixelSnapshot(width: 0, height: 0, bytes: []))
+		let captured = capturePixelSnapshot(pending, timeout: Self.pixelBaselineTimeout)
+		try checkpoint()
+		guard let baseline = captured else { return nil }
+		return PixelProbe(filter: filter, config: config, baseline: baseline)
+	}
+
+	/// One capture redrawn into a fixed-size sRGB RGBA bitmap, or nil on
+	/// failure or timeout (a late result is dropped).
+	private func capturePixelSnapshot(_ probe: PixelProbe, timeout: TimeInterval) -> PixelSnapshot? {
+		let semaphore = DispatchSemaphore(value: 0)
+		let captured = Box<CGImage?>(nil)
+		SCScreenshotManager.captureImage(contentFilter: probe.filter, configuration: probe.config) { image, _ in
+			captured.value = image
+			semaphore.signal()
+		}
+		guard semaphore.wait(timeout: .now() + timeout) == .success, let image = captured.value else { return nil }
+		let width = probe.config.width
+		let height = probe.config.height
+		guard width > 0, height > 0,
+			let space = CGColorSpace(name: CGColorSpace.sRGB),
+			let bitmap = CGContext(
+				data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+				space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+			)
+		else { return nil }
+		bitmap.interpolationQuality = .low
+		bitmap.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+		guard let data = bitmap.data else { return nil }
+		let bytes = Array(UnsafeBufferPointer(start: data.assumingMemoryBound(to: UInt8.self), count: width * height * 4))
+		return PixelSnapshot(width: width, height: height, bytes: bytes)
+	}
+
+	/// True when at least `pixelChangedSamplesRequired` samples differ by more
+	/// than `pixelChannelThreshold` in any RGB channel. A size change counts.
+	private func pixelSnapshotsDiffer(_ lhs: PixelSnapshot, _ rhs: PixelSnapshot) -> Bool {
+		guard lhs.width == rhs.width, lhs.height == rhs.height, lhs.bytes.count == rhs.bytes.count else { return true }
+		var changed = 0
+		var index = 0
+		let count = lhs.bytes.count
+		while index + 3 < count {
+			for channel in 0..<3 {
+				let delta = abs(Int(lhs.bytes[index + channel]) - Int(rhs.bytes[index + channel]))
+				guard delta > Self.pixelChannelThreshold else { continue }
+				changed += 1
+				break
+			}
+			if changed >= Self.pixelChangedSamplesRequired { return true }
+			index += 4
+		}
+		return false
+	}
+
 	private func appFocusedElement(pid: Int32) -> AXUIElement? {
 		let app = AXUIElementCreateApplication(pid)
 		return copyAttribute(app, attribute: kAXFocusedUIElementAttribute as CFString).flatMap(asAXElement)
@@ -3005,11 +3164,23 @@ final class Bridge {
 		let beforeRootSnapshot = rootMetadataSnapshot(pid: pid)
 		let beforeCgSignature = cgRootSignature(pid: pid)
 		let beforeFrontmostPid = NSWorkspace.shared.frontmostApplication?.processIdentifier
-		let mayUsePhysicalInput = actions.contains { action in
-			(optionalStringArg(action, "policy") ?? "default") != "ax_only"
+		// Batch-wide `physicalInputLock` scope: only a batch with at least one
+		// granted HID step (the same rule `act` uses for `delivery == "hid"`)
+		// holds it for the whole batch, so no other physical input interleaves
+		// with its steps. Batches of pid/AX steps (background, ax_only, or
+		// granted `params.delivery: "pid"`) never take it: pid delivery needs no
+		// exclusion, and the background pid pointer attempt's ScreenCaptureKit
+		// lookup/capture and settle waits must not block unrelated physical
+		// input. A background attempt inside a batch that also has a granted
+		// HID step still waits under that batch's lock.
+		let holdsBatchPhysicalInput = actions.contains { action in
+			let rawPolicy = optionalStringArg(action, "policy") ?? "background"
+			let params = action["params"] as? [String: Any] ?? [:]
+			let granted = rawPolicy == "foreground" && (action["foregroundGrant"] as? Bool) == true
+			return granted && (params["delivery"] as? String) != "pid"
 		}
-		if mayUsePhysicalInput { physicalInputLock.lock() }
-		defer { if mayUsePhysicalInput { physicalInputLock.unlock() } }
+		if holdsBatchPhysicalInput { physicalInputLock.lock() }
+		defer { if holdsBatchPhysicalInput { physicalInputLock.unlock() } }
 
 		let context = activeRequestContext()
 		var steps: [[String: Any]] = []

@@ -192,6 +192,14 @@ interface ForegroundRefusal {
   pidPointerAttempted?: boolean;
   /** With `pidPointerAttempted`: whether the settle window observed a change. */
   observableChange?: boolean;
+  /**
+   * Set when the refused input was already delivered in the background: the
+   * model must observe the target before acting on it again. Never retried in
+   * the same call.
+   */
+  nextStep?: "observe_then_retry";
+  /** With `nextStep`: whether a host grant now covers the target for the next call. */
+  grantedForNextCall?: boolean;
   grantHint: string;
   reason: string;
 }
@@ -248,6 +256,9 @@ interface ExecutionTrace {
   backgroundAttempt?: { outcome: "foreground_required" | "didnt"; reason: string };
   /** A background refusal followed a pid-targeted pointer attempt that showed no change. */
   pidPointerAttempted?: boolean;
+  /** The foreground retry was not run in this call because the input was already delivered. */
+  retryDeferred?: true;
+  retryDeferredReason?: string;
   requestId?: string;
   foregroundGrant?: true;
   refusal?: ForegroundRefusal;
@@ -350,6 +361,8 @@ interface TerminalDesktopActionDetails {
   };
   execution: ExecutionTrace | InterruptedExecutionTrace;
   error: { code: string; message: string };
+  /** `observe_then_retry`: the refused input was already delivered in the background. */
+  nextStep?: "observe_then_retry";
   config?: ComputerUseDetailsConfig;
 }
 
@@ -1852,7 +1865,9 @@ async function restoreFocusAfterGrantedInput(
  * action wants it and a host-issued grant covers the target; otherwise the
  * helper's foreground need becomes a structured refusal. The one retry happens
  * after a background refusal that proved non-delivery, when a grant covers the
- * target or the user grants it at the host prompt.
+ * target or the user grants it at the host prompt. A refusal after a delivered
+ * background pid pointer attempt is never retried in the same call: the grant
+ * flow still runs, and the model must observe before acting again.
  */
 async function helperAct(
   target: ResolvedTarget,
@@ -1872,7 +1887,9 @@ async function helperAct(
   const timeoutMs = Math.max(COMMAND_TIMEOUT_MS, textTimeout);
   const basePolicy: DeliveryPolicy = headless ? "ax_only" : currentDeliveryPolicy();
   const policy: DeliveryPolicy =
-    basePolicy === "background" && action.wantsForeground && foregroundGrantCovers(target.bundleId)
+    basePolicy === "background" &&
+    (action.wantsForeground || mayPidPointerAttempt(action)) &&
+    foregroundGrantCovers(target.bundleId)
       ? "foreground"
       : basePolicy;
   const attempt = async (attemptPolicy: DeliveryPolicy): Promise<HelperAttempt> => {
@@ -1900,12 +1917,15 @@ async function helperAct(
   if (policy === "foreground") await captureUserFocus(session, signal);
   const first = await attempt(policy);
   const firstRefusal = helperRefusalSignal(first);
-  // The only escalation: the helper refused a background attempt and proved
-  // nothing took effect (no delivery, or a pid pointer attempt that verifiably
-  // changed nothing), and a host grant covers the target (from config, env, or
-  // an earlier session answer) or the user grants it now. Exactly one retry.
+  // The only escalation: the helper refused a background attempt before any
+  // delivery, and a host grant covers the target (from config, env, or an
+  // earlier session answer) or the user grants it now. Exactly one retry.
+  // A pid pointer attempt that verifiably changed nothing still runs the grant
+  // flow (session grant, dialog, "Always allow"), but its input was delivered,
+  // so the retry is deferred to the next call after the model observes.
   if (policy !== "background" || firstRefusal?.effectPossible !== false)
     return attemptTrace(target, action, headless, policy, first);
+  const delivered = firstRefusal.evidence?.pidPointerAttempted === true;
   let escalationReason: ExecutionTrace["escalationReason"];
   let prompt: GrantPromptOutcome | undefined;
   if (foregroundGrantCovers(target.bundleId)) escalationReason = "foreground_required";
@@ -1916,7 +1936,7 @@ async function helperAct(
       {
         action: action.action,
         capability: foregroundCapability(action),
-        pidPointerAttempted: firstRefusal.evidence?.pidPointerAttempted === true,
+        pidPointerAttempted: delivered,
       },
       signal,
     );
@@ -1924,9 +1944,10 @@ async function helperAct(
     if (grantPromptGranted(prompt) && foregroundGrantCovers(target.bundleId))
       escalationReason = prompt.decision === "auto" ? "auto_grant" : "user_grant";
   }
-  if (!escalationReason) {
+  if (!escalationReason || delivered) {
     const refused = attemptTrace(target, action, headless, policy, first);
     if (prompt) refused.grantPrompt = prompt;
+    if (delivered) deferRetryAfterDelivery(refused, target);
     return refused;
   }
   await captureUserFocus(session, signal);
@@ -1936,9 +1957,39 @@ async function helperAct(
   trace.escalatedToForeground = true;
   trace.escalationReason = escalationReason;
   trace.backgroundAttempt = { outcome: "foreground_required", reason: firstRefusal.message };
-  if (firstRefusal.evidence?.pidPointerAttempted === true) trace.pidPointerAttempted = true;
   if (prompt) trace.grantPrompt = prompt;
   return trace;
+}
+
+/**
+ * Actions the helper may deliver as an ungranted background pid pointer
+ * attempt: a pointer-only ref click, a coordinate click/press or scroll, and
+ * any drag. Under a covering grant they go to foreground directly, so a
+ * granted call never repeats a background attempt first.
+ */
+function mayPidPointerAttempt(action: NativePreparedAction): boolean {
+  if (action.action === "click" || action.action === "press")
+    return "x" in action.target || action.pointerOnly;
+  if (action.action === "scroll") return "x" in action.target;
+  return action.action === "drag";
+}
+
+/**
+ * A refusal after a delivered background pid pointer attempt: no same-call
+ * retry. The refusal tells the model to observe first and whether a grant now
+ * covers the target, so the next call goes to foreground directly.
+ */
+function deferRetryAfterDelivery(trace: ExecutionTrace, target: ResolvedTarget): void {
+  trace.retryDeferred = true;
+  trace.retryDeferredReason = "pid_pointer_delivered_without_observable_change";
+  const refusal = trace.refusal;
+  if (!refusal) return;
+  const granted = foregroundGrantCovers(target.bundleId);
+  refusal.nextStep = "observe_then_retry";
+  refusal.grantedForNextCall = granted;
+  refusal.grantHint = granted
+    ? `The helper already sent this ${refusal.action} to ${target.appName} as background pid-targeted pointer input and observed no change, so it was not sent again in this call; it may still have had an effect that is not visible. A host foreground grant now covers ${target.appName}, so the next act_ui on it uses foreground input. Call observe_ui on the target and confirm whether the action took effect before acting again.`
+    : `${refusal.grantHint} Call observe_ui on the target and confirm whether the action took effect before acting on it again.`;
 }
 
 interface HelperRefusalSignal {
@@ -2224,9 +2275,8 @@ async function performListWindows(
     !query.bundleId &&
     (!query.app || normalizeText(query.app) === "browser") &&
     config.browser_use;
-  const browserForest: ListWindowsDetails["windows"] = !includeBrowserPages
-    ? []
-    : (await listCdpPageContexts().catch(() => [])).map((page) => ({
+  const browserForest: ListWindowsDetails["windows"] = includeBrowserPages
+    ? (await listCdpPageContexts().catch(() => [])).map((page) => ({
         app: "Browser",
         pid: 0,
         kind: "browser_page",
@@ -2243,7 +2293,8 @@ async function performListWindows(
         browserUseAllowed: true,
         score: 0,
         url: page.url,
-      }));
+      }))
+    : [];
   const allRoots = [...desktopForest, ...browserForest];
   const forest = allRoots.filter((root) => !query.kind || root.kind === query.kind);
   const ranked = forest
@@ -2917,7 +2968,7 @@ async function performExpandUi(
   signal?: AbortSignal,
 ): Promise<AgentToolResult<OutlineToolDetails>> {
   const state = operationState();
-  let outline = currentOutlineOrThrow(params.stateId);
+  const outline = currentOutlineOrThrow(params.stateId);
   const ref = trimOrUndefined(params.ref);
   if (!ref) throw new Error("expand_ui.ref is required.");
   const initialTarget = nodeByRef(outline, ref);
@@ -3233,6 +3284,8 @@ function aggregateExecutions(steps: ExecutionTrace[]): ExecutionTrace {
       pidPointerAttempted: steps.some((step) => step.pidPointerAttempted === true)
         ? true
         : undefined,
+      retryDeferred: refused?.retryDeferred,
+      retryDeferredReason: refused?.retryDeferredReason,
       frontmostBefore: steps[0]?.frontmostBefore,
       frontmostAfter: steps.at(-1)?.frontmostAfter,
     },
@@ -3375,10 +3428,13 @@ function foregroundRequiredResult(
     error: { code: refusal.code, message: refusal.reason },
     config: detailsConfig(),
   };
-  const step = execution.stoppedAt !== undefined ? ` (action ${execution.stoppedAt + 1})` : "";
-  const noEffect = refusal.pidPointerAttempted
-    ? "The refused action was posted as background pointer input and produced no observable change."
-    : "The refused action delivered no input.";
+  if (refusal.nextStep) details.nextStep = refusal.nextStep;
+  const step = execution.stoppedAt === undefined ? "" : ` (action ${execution.stoppedAt + 1})`;
+  const noEffect = refusal.nextStep
+    ? `The input was sent to ${target.appName} in the background and produced no observable change; it was not repeated in the foreground in this call.`
+    : refusal.pidPointerAttempted
+      ? "The refused action was posted as background pointer input and produced no observable change."
+      : "The refused action delivered no input.";
   const effect = refusal.effectPossible
     ? "The refused action may still have reached the app; observe before continuing."
     : noEffect;
@@ -3394,7 +3450,9 @@ function foregroundRequiredResult(
           `foreground_required: ${refusal.action}${step} in ${target.appName} — ${target.windowTitle} needs ${refusal.capability}, which requires granted foreground delivery. It will not be retried automatically.`,
           `${effect}${prefix}`,
           refusal.grantHint,
-          "Call observe_ui for a fresh state before the next act_ui.",
+          refusal.nextStep
+            ? `next step: observe_then_retry — call observe_ui on ${target.appName} — ${target.windowTitle} before acting on it again.`
+            : "Call observe_ui for a fresh state before the next act_ui.",
         ].join("\n"),
       },
     ],
@@ -3451,7 +3509,7 @@ function helperInterruption(error: Error): HelperInterruptionOutcome | undefined
 
 /** Headline for a cancelled act; only a terminal helper report says it stopped. */
 function cancelledHeadline(execution: InterruptedExecutionTrace): string {
-  const at = execution.stoppedAt !== undefined ? ` at action ${execution.stoppedAt + 1}` : "";
+  const at = execution.stoppedAt === undefined ? "" : ` at action ${execution.stoppedAt + 1}`;
   switch (execution.state) {
     case "stopping":
       return `cancelled: the helper acknowledged the cancel but had not stopped this act_ui request; ${execution.stateReason ?? "delivery may continue until the helper reports stopped"}.`;
