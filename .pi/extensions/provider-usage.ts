@@ -5,6 +5,7 @@ import {
   fetchUsageJson,
   identityKey,
   UsageThrottledError,
+  type UsageCache,
   type UsageRequestPolicy,
   type UsageRequestResult,
 } from "./lib/usage-cache.ts";
@@ -509,6 +510,77 @@ export function normalizeSyntheticUsage(
   return { name: "Synthetic", windows };
 }
 
+/** Display name of the xAI Grok subscription entry (provider `xai`). */
+export const GROK_USAGE_NAME = "Grok";
+
+const GROK_BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
+const GROK_PERIOD_PREFIX = "USAGE_PERIOD_TYPE_";
+
+/**
+ * Label of the Grok credit window, from the period type the billing endpoint
+ * reports (`USAGE_PERIOD_TYPE_WEEKLY` -> "Weekly"). An unrecognised type keeps
+ * its own name, and a missing or unspecified one falls back to "Credits".
+ */
+export function grokPeriodLabel(type: string | undefined): string {
+  if (!type) return "Credits";
+  const name = type.startsWith(GROK_PERIOD_PREFIX) ? type.slice(GROK_PERIOD_PREFIX.length) : type;
+  const key = name.toLowerCase();
+  if (key.length === 0 || key === "unspecified") return "Credits";
+  return titleCase(key);
+}
+
+/** Prepaid balance in cents; proto int64 values may arrive as numeric strings. */
+function grokCents(value: RuntimeValue): number | undefined {
+  if (!isRecord(value)) return undefined;
+  const raw = value.val;
+  const cents = isString(raw) && raw.trim().length > 0 ? Number(raw) : numberValue(raw);
+  return cents !== undefined && Number.isFinite(cents) ? cents : undefined;
+}
+
+/**
+ * Normalizes the private Grok Build billing response
+ * (`/v1/billing?format=credits`): one credit window for the current period,
+ * with per-product usage as its detail and a positive prepaid balance as the
+ * status. Throws on a response without a `config` object.
+ */
+export function normalizeGrokUsage(payload: RuntimeValue): ProviderUsage {
+  if (!isRecord(payload) || !isRecord(payload.config)) throw new Error("Unexpected response");
+  const config = payload.config;
+  const period = isRecord(config.currentPeriod) ? config.currentPeriod : undefined;
+  const start = dateValue(period?.start);
+  const end = dateValue(period?.end);
+  const percent = numberValue(config.creditUsagePercent);
+  const products = Array.isArray(config.productUsage)
+    ? config.productUsage.flatMap((entry) => {
+        if (!isRecord(entry)) return [];
+        const product = stringValue(entry.product);
+        const used = numberValue(entry.usagePercent);
+        return product && used !== undefined ? [`${product} ${formatNumber(used, 1)}%`] : [];
+      })
+    : [];
+  const windows: UsageWindow[] = [];
+  if (percent !== undefined) {
+    const window: UsageWindow = {
+      label: grokPeriodLabel(stringValue(period?.type)),
+      percent: clampPercent(percent),
+      qualifier: "used",
+      eventAt: end,
+      eventLabel: "resets",
+    };
+    if (products.length > 0) window.detail = products.join(" · ");
+    const seconds = start && end ? (end.getTime() - start.getTime()) / 1000 : undefined;
+    if (seconds !== undefined && Number.isFinite(seconds) && seconds > 0) {
+      window.windowSeconds = seconds;
+    }
+    windows.push(window);
+  }
+  const cents = grokCents(config.prepaidBalance);
+  const usage: ProviderUsage = { name: GROK_USAGE_NAME, windows };
+  if (cents !== undefined && cents > 0)
+    usage.status = `$${(cents / 100).toFixed(2)} prepaid balance`;
+  return usage;
+}
+
 async function providerToken(ctx: ExtensionContext, provider: string): Promise<string | undefined> {
   if (!ctx.modelRegistry.getProviderAuthStatus(provider).configured) return undefined;
   return ctx.modelRegistry.getApiKeyForProvider(provider);
@@ -528,9 +600,9 @@ function withCacheNote(usage: ProviderUsage, result: UsageRequestResult): Provid
  * when the subscription changes, so it is read far less often than the usage
  * windows and never blocks the usage report when it fails.
  */
-async function claudeProfile(token: string): Promise<RuntimeValue> {
+async function claudeProfile(token: string, cache: UsageCache = usageCache): Promise<RuntimeValue> {
   try {
-    const result = await usageCache.request(
+    const result = await cache.request(
       "anthropic:profile",
       () => fetchUsageJson("https://api.anthropic.com/api/oauth/profile", token, ANTHROPIC_HEADERS),
       PROFILE_POLICY,
@@ -547,20 +619,26 @@ async function claudeProfile(token: string): Promise<RuntimeValue> {
  * cache slot: a snapshot from a previous account is replaced by the next live
  * read and is labelled with its age until then.
  */
-async function claudeUsage(ctx: ExtensionContext): Promise<ProviderUsage> {
+async function claudeUsage(
+  ctx: ExtensionContext,
+  cache: UsageCache,
+): Promise<ProviderUsage | undefined> {
   const token = await providerToken(ctx, "anthropic");
-  if (!token) return { name: "Claude", status: "not connected", windows: [] };
-  return readClaudeUsage(token);
+  if (!token) return undefined;
+  return readClaudeUsage(token, cache);
 }
 
-async function readClaudeUsage(token: string): Promise<ProviderUsage> {
+async function readClaudeUsage(
+  token: string,
+  cache: UsageCache = usageCache,
+): Promise<ProviderUsage> {
   const [usage, profile] = await Promise.all([
-    usageCache.request(
+    cache.request(
       "anthropic:usage",
       () => fetchUsageJson("https://api.anthropic.com/api/oauth/usage", token, ANTHROPIC_HEADERS),
       USAGE_POLICY,
     ),
-    claudeProfile(token),
+    claudeProfile(token, cache),
   ]);
   return withCacheNote(normalizeClaudeUsage(usage.payload, profile), usage);
 }
@@ -646,23 +724,30 @@ export function openaiUsage(ctx: ExtensionContext): ProviderUsage {
  * stale OAuth credential (network and credential-store lock), so it happens
  * only when the selection is `openai-codex`; an `openai` selection reads auth
  * status only. A Codex sign-in without a usable account id falls back to the
- * `openai` state.
+ * `openai` state. Resolves `undefined` when neither provider is signed in.
  */
-async function chatgptUsage(ctx: ExtensionContext): Promise<ProviderUsage> {
+async function chatgptUsage(
+  ctx: ExtensionContext,
+  cache: UsageCache,
+): Promise<ProviderUsage | undefined> {
   const selected = chatgptUsageProvider(ctx);
+  if (selected === undefined) return undefined;
   if (selected !== "openai-codex") return openaiUsage(ctx);
   const token = await providerToken(ctx, "openai-codex");
   const accountId = token ? codexAccountId(token) : undefined;
-  if (!token || !accountId) return openaiUsage(ctx);
-  return readCodexUsage(token, accountId);
+  if (!token || !accountId) {
+    return providerConfigured(ctx, "openai") ? openaiUsage(ctx) : undefined;
+  }
+  return readCodexUsage(token, accountId, false, cache);
 }
 
 async function readCodexUsage(
   token: string,
   accountId: string,
   refresh = false,
+  cache: UsageCache = usageCache,
 ): Promise<ProviderUsage> {
-  const usage = await usageCache.request(
+  const usage = await cache.request(
     `openai-codex:usage:${identityKey(accountId)}`,
     () =>
       fetchUsageJson("https://chatgpt.com/backend-api/wham/usage", token, {
@@ -697,14 +782,20 @@ export async function resetCodexUsage(
   });
 }
 
-async function syntheticUsage(ctx: ExtensionContext): Promise<ProviderUsage> {
+async function syntheticUsage(
+  ctx: ExtensionContext,
+  cache: UsageCache,
+): Promise<ProviderUsage | undefined> {
   const token = await providerToken(ctx, "synthetic");
-  if (!token) return { name: "Synthetic", status: "not connected", windows: [] };
-  return readSyntheticUsage(token);
+  if (!token) return undefined;
+  return readSyntheticUsage(token, cache);
 }
 
-async function readSyntheticUsage(token: string): Promise<ProviderUsage> {
-  const usage = await usageCache.request(
+async function readSyntheticUsage(
+  token: string,
+  cache: UsageCache = usageCache,
+): Promise<ProviderUsage> {
+  const usage = await cache.request(
     `synthetic:usage:${identityKey(token)}`,
     () => fetchUsageJson("https://api.synthetic.new/v2/quotas", token, {}),
     USAGE_POLICY,
@@ -713,6 +804,36 @@ async function readSyntheticUsage(token: string): Promise<ProviderUsage> {
     normalizeSyntheticUsage(usage.payload, usage.previous, usage.payloadAt),
     usage,
   );
+}
+
+/** Status of `xai` configured with an API key, which has no subscription window. */
+export const GROK_API_KEY_STATUS = OPENAI_API_KEY_STATUS;
+
+/**
+ * The Grok entry (provider `xai`). Only a confirmed OAuth sign-in reaches the
+ * private Grok Build billing endpoint; an API key, or a credential whose type
+ * the host cannot report, gets a status-only row without resolving the
+ * credential or making a request. Resolves `undefined` when `xai` is not signed
+ * in. The OAuth token rotates, so the provider owns one cache slot, as Claude
+ * does.
+ */
+export async function grokUsage(
+  ctx: ExtensionContext,
+  cache: UsageCache = usageCache,
+): Promise<ProviderUsage | undefined> {
+  if (!providerConfigured(ctx, "xai")) return undefined;
+  // Fail closed: only a confirmed OAuth sign-in is sent to the private endpoint.
+  if (providerUsesOAuth(ctx, "xai") !== true) {
+    return { name: GROK_USAGE_NAME, status: GROK_API_KEY_STATUS, windows: [] };
+  }
+  const token = await providerToken(ctx, "xai");
+  if (!token) return undefined;
+  const usage = await cache.request(
+    "xai:usage",
+    () => fetchUsageJson(GROK_BILLING_URL, token, {}),
+    USAGE_POLICY,
+  );
+  return withCacheNote(normalizeGrokUsage(usage.payload), usage);
 }
 
 /**
@@ -948,7 +1069,7 @@ export function formatProviderUsage(
   return [heading, ...windows].join("\n");
 }
 
-const PROVIDER_NAMES = ["Claude", CHATGPT_USAGE_NAME, "Synthetic"] as const;
+const PROVIDER_NAMES = ["Claude", CHATGPT_USAGE_NAME, "Synthetic", GROK_USAGE_NAME] as const;
 
 /**
  * Describes why a provider produced nothing: a throttled request also reports
@@ -967,43 +1088,69 @@ export type ProviderUsageReading =
   | { ok: true; usage: ProviderUsage }
   | { ok: false; name: string; error: string };
 
-/** Every provider's outcome from one round of requests, and when the round finished. */
-export type ProviderUsageReport = { observedAt: Date; providers: ProviderUsageReading[] };
+/**
+ * Every signed-in provider's outcome from one round of requests, when the
+ * round finished, and the names of providers skipped because they have no
+ * credential (absent means none were skipped).
+ */
+export type ProviderUsageReport = {
+  observedAt: Date;
+  providers: ProviderUsageReading[];
+  absent?: string[];
+};
 
 /**
- * Queries Claude, ChatGPT (`openai-codex` or `openai`), and Synthetic once.
- * A failed provider becomes a reading with its failure message, so this never
- * rejects; the Usage tab and the structured host report both render from one
- * result.
+ * Queries Claude, ChatGPT (`openai-codex` or `openai`), Synthetic, and Grok
+ * (`xai`) once. A provider without a credential is listed in `absent`
+ * instead of producing a reading; a signed-in provider that fails becomes a
+ * reading with its failure message, so this never rejects. The Usage tab and
+ * the structured host report both render from one result.
  */
-export async function readProviderUsages(ctx: ExtensionContext): Promise<ProviderUsageReport> {
+export async function readProviderUsages(
+  ctx: ExtensionContext,
+  options: { cache?: UsageCache } = {},
+): Promise<ProviderUsageReport> {
+  const cache = options.cache ?? usageCache;
   const settled = await Promise.allSettled([
-    claudeUsage(ctx),
-    chatgptUsage(ctx),
-    syntheticUsage(ctx),
+    claudeUsage(ctx, cache),
+    chatgptUsage(ctx, cache),
+    syntheticUsage(ctx, cache),
+    grokUsage(ctx, cache),
   ]);
-  return {
-    observedAt: new Date(),
-    providers: settled.map((result, index): ProviderUsageReading =>
-      result.status === "fulfilled"
-        ? { ok: true, usage: result.value }
-        : { ok: false, name: PROVIDER_NAMES[index], error: usageFailureMessage(result.reason) },
-    ),
-  };
+  const providers: ProviderUsageReading[] = [];
+  const absent: string[] = [];
+  settled.forEach((result, index) => {
+    const name = PROVIDER_NAMES[index];
+    if (result.status === "rejected") {
+      providers.push({ ok: false, name, error: usageFailureMessage(result.reason) });
+    } else if (result.value === undefined) {
+      absent.push(name);
+    } else {
+      providers.push({ ok: true, usage: result.value });
+    }
+  });
+  return { observedAt: new Date(), providers, absent };
+}
+
+/** The footer naming providers without a credential, or `undefined` when there are none. */
+export function absentProvidersLine(report: ProviderUsageReport): string | undefined {
+  const absent = report.absent ?? [];
+  return absent.length > 0 ? `Not signed in: ${absent.join(", ")}` : undefined;
 }
 
 export function formatUsageReport(report: ProviderUsageReport, style?: UsageStyle): string {
   const paint = usagePainter(style);
-  return report.providers
-    .map((reading) =>
-      reading.ok
-        ? formatProviderUsage(reading.usage, style)
-        : `${paint.head(reading.name)}${paint.dim(" — ")}${paint.health(
-            "exhausted",
-            `unavailable (${reading.error})`,
-          )}`,
-    )
-    .join("\n\n");
+  const blocks = report.providers.map((reading) =>
+    reading.ok
+      ? formatProviderUsage(reading.usage, style)
+      : `${paint.head(reading.name)}${paint.dim(" — ")}${paint.health(
+          "exhausted",
+          `unavailable (${reading.error})`,
+        )}`,
+  );
+  const absent = absentProvidersLine(report);
+  if (absent !== undefined) blocks.push(paint.dim(absent));
+  return blocks.join("\n\n");
 }
 
 export async function usageReport(ctx: ExtensionContext, style?: UsageStyle): Promise<string> {

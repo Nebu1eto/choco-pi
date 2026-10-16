@@ -133,8 +133,10 @@ of a `turn_end` only once 10 minutes have passed since the last automatic
 query. `session_start` and `model_select` never trigger one. An automatic
 query in which no provider reported a quota window publishes nothing and
 still waits out the interval; a user-invoked `/usage` always publishes,
-including providers that only carry a `status` such as `not connected` or
-`unavailable (HTTP 401)`.
+including providers that only carry a `status` such as
+`API key; no subscription quota window` or `unavailable (HTTP 401)`.
+Providers without credentials are never queried; they appear only in the
+`Not signed in` section.
 
 `statusText` is schema-1 JSON (`.pi/extensions/lib/host-bridge/report-schema.ts`,
 all objects closed):
@@ -176,8 +178,12 @@ Free space is `contextWindow - (measuredTokens ?? estimatedTokens) - autocompact
 floored at zero. Reports carry paths (session file, cwd, context files) but no
 credentials or MCP configuration beyond the enable flag.
 
-A usage report has one section per provider (`Claude`, `ChatGPT`, `Synthetic`) with `Plan`,
-`Status`, and `Snapshot` rows when present and one row per quota window. `ChatGPT` reports the
+A usage report has one section per signed-in provider (`Claude`, `ChatGPT`, `Synthetic`, `Grok`) with `Plan`,
+`Status`, and `Snapshot` rows when present and one row per quota window. Providers without
+credentials get no provider section and no `usage.providers` entry; when there are any, a last
+section titled `Not signed in` lists one row per provider (`label` the provider name, `value`
+`not signed in`). `Grok` carries the subscription credit window (such as `Weekly`) with an OAuth
+sign-in and only a `Status` row with an API key. `ChatGPT` reports the
 active model's provider when it is a configured `openai-codex` or `openai`, else `openai-codex`
 (Codex usage windows), else `openai` (signed in, no quota window). Each quota window row has (`value` such as `42% used`; `hint` the reset time, pace,
 and provider detail as the Usage tab prints them). The `usage` block:
@@ -187,7 +193,7 @@ and provider detail as the Usage tab prints them). The `usage` block:
 | `observedAt`                          | ISO-8601 time the provider queries finished.                                                        |
 | `providers[].name`                    | Provider display name.                                                                              |
 | `providers[].plan`                    | Plan label, such as `Max (5x)` or `Pro 200`, when known.                                            |
-| `providers[].status`                  | Free text: `not connected`, `unavailable (<error>)`, credits, or extra-usage state.                 |
+| `providers[].status`                  | Free text: sign-in state, `unavailable (<error>)`, credits, or extra-usage state.                   |
 | `providers[].cached`                  | `{ at, reason? }` when the reading was served from the store instead of a live response.            |
 | `providers[].windows[].label`         | Window name, such as `5h`, `7d`, `Opus 7d`, or `Weekly credits`.                                    |
 | `providers[].windows[].percent`       | 0–100 as reported, read with `qualifier` (`"used"` or `"remaining"`).                               |

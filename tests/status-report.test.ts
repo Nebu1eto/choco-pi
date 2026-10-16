@@ -336,15 +336,11 @@ test("rpc /usage and /quota publish the usage report before the plain-text notic
     assert.equal(frame.kind, "usage");
     assert.equal(frame.sessionId, "session-report");
     assert.deepEqual(
-      frame.usage?.providers.map((provider) => [provider.name, provider.status]),
-      [
-        ["Claude", "not connected"],
-        ["ChatGPT", "not connected"],
-        ["Synthetic", "not connected"],
-      ],
-      "a user-invoked report is sent even without quota windows",
+      frame.usage?.providers,
+      [],
+      "a user-invoked report is sent even when no provider is signed in",
     );
-    assert.match(calls[1].text ?? "", /^Claude — not connected/);
+    assert.equal(calls[1].text, "Not signed in: Claude, ChatGPT, Synthetic, Grok");
   }
 });
 

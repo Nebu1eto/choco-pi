@@ -72,8 +72,8 @@ test("the usage tab paints its own body instead of one flat colour", async () =>
     "usage",
     true,
   );
-  assert.match(body, /^<accent>Claude<\/accent><dim> — <\/dim><text>not connected<\/text>/);
-  assert.match(body, /<accent>ChatGPT<\/accent><dim> — <\/dim><text>not connected<\/text>/);
+  // No provider is signed in: no rows, only the dim footer naming them once.
+  assert.equal(body, "<dim>Not signed in: Claude, ChatGPT, Synthetic, Grok</dim>");
 });
 
 test("registers /quota as a plain-text alias for /usage outside the TUI", async () => {
@@ -111,7 +111,7 @@ test("registers /quota as a plain-text alias for /usage outside the TUI", async 
   assert.equal(notifications.length, 1);
   assert.equal(notifications[0]?.[1], "info");
   // Hosts without a terminal render notices verbatim, so no theme styling is applied.
-  assert.match(notifications[0]?.[0] ?? "", /^Claude — not connected/);
+  assert.equal(notifications[0]?.[0], "Not signed in: Claude, ChatGPT, Synthetic, Grok");
 });
 
 test("closes an open status dialog when reload starts before its context becomes stale", async () => {
@@ -756,16 +756,14 @@ test("signed-in openai reports no quota window and never resolves a token", asyn
     report.providers.map((reading) =>
       reading.ok ? [reading.usage.name, reading.usage.status] : [reading.name, reading.error],
     ),
-    [
-      ["Claude", "not connected"],
-      ["ChatGPT", "signed in; quota window not available on api.openai.com"],
-      ["Synthetic", "not connected"],
-    ],
+    [["ChatGPT", "signed in; quota window not available on api.openai.com"]],
   );
+  assert.deepEqual(report.absent, ["Claude", "Synthetic", "Grok"]);
   assert.match(
     formatUsageReport(report),
     /^ChatGPT — signed in; quota window not available on api\.openai\.com$/m,
   );
+  assert.match(formatUsageReport(report), /\n\nNot signed in: Claude, Synthetic, Grok$/);
   assert.deepEqual(tokenRequests, []);
   assert.deepEqual(fetches, []);
   assert.equal(await providerUsageWindows(ctx, "openai"), undefined);
@@ -804,8 +802,8 @@ test("a Codex sign-in without an account id falls back to the openai state", asy
     id: "gpt-6-sol",
   });
   const report = await readProviderUsages(ctx);
-  assert.equal(report.providers.length, 3);
-  const chatgpt = report.providers[1];
+  assert.equal(report.providers.length, 1);
+  const chatgpt = report.providers[0];
   assert.ok(chatgpt?.ok);
   assert.deepEqual(chatgpt.usage, {
     name: "ChatGPT",
@@ -815,10 +813,9 @@ test("a Codex sign-in without an account id falls back to the openai state", asy
   const signedOut = await readProviderUsages(
     openaiContext(undefined, "not-a-jwt", { provider: "openai-codex", id: "gpt-6-sol" }).ctx,
   );
-  assert.deepEqual(signedOut.providers[1], {
-    ok: true,
-    usage: { name: "ChatGPT", status: "not connected", windows: [] },
-  });
+  // An unusable Codex credential with no openai sign-in is listed as absent, not a row.
+  assert.deepEqual(signedOut.providers, []);
+  assert.deepEqual(signedOut.absent, ["Claude", "ChatGPT", "Synthetic", "Grok"]);
 });
 
 test("an active openai model leaves a configured Codex credential unresolved", async (t) => {
@@ -835,9 +832,9 @@ test("an active openai model leaves a configured Codex credential unresolved", a
   const report = await readProviderUsages(ctx);
   assert.deepEqual(
     report.providers.map((reading) => (reading.ok ? reading.usage.name : reading.name)),
-    ["Claude", "ChatGPT", "Synthetic"],
+    ["ChatGPT"],
   );
-  const chatgpt = report.providers[1];
+  const chatgpt = report.providers[0];
   assert.ok(chatgpt?.ok);
   assert.deepEqual(chatgpt.usage, {
     name: "ChatGPT",

@@ -86,19 +86,38 @@ export function hasUsageWindows(report: ProviderUsageReport): boolean {
   return report.providers.some((reading) => reading.ok && reading.usage.windows.length > 0);
 }
 
+/** Title of the section listing providers that have no credential. */
+export const ABSENT_PROVIDERS_TITLE = "Not signed in";
+
+/**
+ * Providers without a credential, one row each, so a host can still list them
+ * without showing them as quota rows. Omitted when every provider is signed in.
+ */
+function absentSection(report: ProviderUsageReport): ReportSection | undefined {
+  const absent = report.absent ?? [];
+  if (absent.length === 0) return undefined;
+  return {
+    title: ABSENT_PROVIDERS_TITLE,
+    rows: absent.map((name) => ({ label: name, value: "not signed in" })),
+  };
+}
+
 export function usageReportFrame(
   sessionId: string,
   report: ProviderUsageReport,
   at: Date = new Date(),
 ): ReportFrame {
   const providers = report.providers.map(readingUsage);
+  const sections = providers.map((usage) => providerSection(usage, at.getTime()));
+  const absent = absentSection(report);
+  if (absent !== undefined) sections.push(absent);
   return {
     schema: REPORT_SCHEMA_VERSION,
     kind: "usage",
     at: at.toISOString(),
     sessionId,
     title: "Usage",
-    sections: providers.map((usage) => providerSection(usage, at.getTime())),
+    sections,
     usage: {
       observedAt: report.observedAt.toISOString(),
       providers: providers.map(providerReport),
