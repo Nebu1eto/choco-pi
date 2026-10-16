@@ -6,6 +6,7 @@ import {
   type TUI,
   truncateToWidth,
   visibleWidth,
+  wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 
 import type {
@@ -204,14 +205,16 @@ export class ShellOutputViewer implements Component {
     if (width < 8) return [];
     const inner = width - 4;
     const notice = this.actionNotice ?? this.readNotice;
-    // Frame rows: border, status, command, two pane labels, divider, divider, help, border.
-    // On a short terminal the command row yields so the help and confirmation rows stay visible.
+    // Frame rows: border, status, two pane labels, divider, divider, help, border, plus the
+    // command rows. On a short terminal the command yields so the help and confirmation rows
+    // stay visible; a long command wraps across at most a third of the remaining rows.
     const maxHeight = Math.floor((this.tui.terminal.rows * 70) / 100);
     const showCommand = maxHeight >= 12;
-    const availableRows = Math.max(
-      2,
-      maxHeight - (notice || this.evicted ? 9 : 8) - (showCommand ? 1 : 0),
-    );
+    const contentRows = maxHeight - (notice || this.evicted ? 9 : 8);
+    const commandLines = showCommand
+      ? this.commandLines(inner, Math.max(1, Math.floor(contentRows / 3)))
+      : [];
+    const availableRows = Math.max(2, contentRows - commandLines.length);
     const activeRows = Math.min(availableRows - 1, Math.ceil((availableRows * 2) / 3));
     const paneRows = {
       stdout: this.stream === "stdout" ? activeRows : availableRows - activeRows,
@@ -226,10 +229,7 @@ export class ShellOutputViewer implements Component {
     lines.push(
       this.row(`${this.shell.state} · ${name} · ${pid}${exit} · ${duration(this.shell)}`, inner),
     );
-    if (showCommand)
-      lines.push(
-        this.row(this.theme.fg("dim", `$ ${sanitizeShellText(this.shell.command)}`), inner),
-      );
+    for (const line of commandLines) lines.push(this.row(this.theme.fg("dim", line), inner));
     this.renderPane(lines, "stdout", paneRows.stdout, inner);
     lines.push(this.row(this.theme.fg("dim", "─".repeat(inner)), inner));
     this.renderPane(lines, "stderr", paneRows.stderr, inner);
@@ -399,6 +399,18 @@ export class ShellOutputViewer implements Component {
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
     this.done(undefined);
+  }
+
+  /** Wrap "$ <command>" under its prompt, clipping with an ellipsis only beyond maxRows. */
+  private commandLines(inner: number, maxRows: number): string[] {
+    const width = Math.max(1, inner - 2);
+    const wrapped = wrapTextWithAnsi(sanitizeShellText(this.shell.command), width);
+    const kept = wrapped.slice(0, maxRows);
+    if (wrapped.length > maxRows) {
+      const last = kept.length - 1;
+      kept[last] = truncateToWidth(`${kept[last] ?? ""}…`, width, "…", false);
+    }
+    return kept.map((line, index) => `${index === 0 ? "$" : " "} ${line}`);
   }
 
   private row(content: string, inner: number): string {

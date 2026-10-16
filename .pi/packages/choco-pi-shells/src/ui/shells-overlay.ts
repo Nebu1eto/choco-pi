@@ -5,11 +5,15 @@ import {
   type TUI,
   truncateToWidth,
   visibleWidth,
+  wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 
 import { sanitizeShellText, ShellOutputViewer } from "./shell-viewer.ts";
 
 export const SHELLS_OVERLAY_HEIGHT_PCT = 70;
+
+/** Visible width of the "<bullet> <state> " prefix; continuation lines indent to match. */
+const ROW_PREFIX_WIDTH = 4;
 
 export type ShellState = "running" | "exited" | "stopped" | "failed";
 
@@ -221,12 +225,28 @@ export class ShellsOverlay implements Component {
       3,
       Math.floor((this.tui.terminal.rows * SHELLS_OVERLAY_HEIGHT_PCT) / 100) - 6,
     );
-    this.lastHeight = maxRows;
-    const start = Math.max(
-      0,
-      Math.min(this.selectedIndex - maxRows + 1, Math.max(0, shells.length - maxRows)),
-    );
-    const visible = shells.slice(start, start + maxRows);
+    // Long labels wrap, so entries have variable heights. Each entry is capped at maxRows so the
+    // selected entry always fits; scrolling keeps the selected entry at the bottom once the
+    // entries before it no longer fit, matching the former one-line-per-shell behavior.
+    const bodyWidth = Math.max(1, inner - ROW_PREFIX_WIDTH);
+    const entries = shells.map((shell) => this.entryLines(shell, bodyWidth, maxRows));
+    let start = this.selectedIndex;
+    let used = entries[start]?.length ?? 0;
+    while (start > 0) {
+      const height = entries[start - 1]?.length ?? 0;
+      if (used + height > maxRows) break;
+      used += height;
+      start -= 1;
+    }
+    let height = 0;
+    const visible: ShellSummary[] = [];
+    for (const [offset, shell] of shells.slice(start).entries()) {
+      const next = entries[start + offset]?.length ?? 0;
+      if (height + next > maxRows) break;
+      height += next;
+      visible.push(shell);
+    }
+    this.lastHeight = Math.max(1, visible.length);
     const lines = [this.theme.fg("border", `╭${"─".repeat(width - 2)}╮`)];
     lines.push(this.row(`Shells (${shells.length})`, inner));
     lines.push(this.row(this.theme.fg("dim", "─".repeat(inner)), inner));
@@ -236,14 +256,12 @@ export class ShellsOverlay implements Component {
       if (!shell) continue;
       const selected = start + index === this.selectedIndex;
       const bullet = selected ? this.theme.fg("accent", "●") : " ";
-      const label = sanitizeShellText(shell.name ?? shell.command).trim();
-      const pid = shell.pid === undefined ? "" : ` pid ${shell.pid}`;
-      lines.push(
-        this.row(
-          `${bullet} ${stateMark(shell, this.theme)} ${label} ${this.theme.fg("dim", `· ${shell.state}${pid} · ${elapsed(shell)}`)}`,
-          inner,
-        ),
-      );
+      const entry = entries[start + index] ?? [];
+      for (let line = 0; line < entry.length; line++) {
+        const prefix =
+          line === 0 ? `${bullet} ${stateMark(shell, this.theme)} ` : " ".repeat(ROW_PREFIX_WIDTH);
+        lines.push(this.row(`${prefix}${entry[line] ?? ""}`, inner));
+      }
     }
     lines.push(this.row(this.theme.fg("dim", "─".repeat(inner)), inner));
     const selected = shells[this.selectedIndex];
@@ -288,6 +306,19 @@ export class ShellsOverlay implements Component {
     if (this.closed) return;
     this.closed = true;
     this.done(result);
+  }
+
+  /** Wrap a shell's label and metadata to at most maxRows lines; clip only beyond that cap. */
+  private entryLines(shell: ShellSummary, width: number, maxRows: number): string[] {
+    const label = sanitizeShellText(shell.name ?? shell.command).trim();
+    const pid = shell.pid === undefined ? "" : ` pid ${shell.pid}`;
+    const meta = this.theme.fg("dim", `· ${shell.state}${pid} · ${elapsed(shell)}`);
+    const wrapped = wrapTextWithAnsi(`${label} ${meta}`, width);
+    if (wrapped.length <= maxRows) return wrapped;
+    const kept = wrapped.slice(0, maxRows);
+    const last = kept.length - 1;
+    kept[last] = truncateToWidth(`${kept[last] ?? ""}…`, width, "…", false);
+    return kept;
   }
 
   private row(content: string, inner: number): string {

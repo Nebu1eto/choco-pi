@@ -72,7 +72,11 @@ function managerFixture(shells: ShellSummary[]): ShellsManager & {
         stdoutOffset: input.stdoutOffset,
         stderrOffset: input.stderrOffset,
       });
-      return { shell: shells[0] ?? shell(input.shellId), stdout: chunk(""), stderr: chunk("") };
+      return {
+        shell: shells[0] ?? shell(input.shellId),
+        stdout: chunk(""),
+        stderr: chunk(""),
+      };
     },
     async stop(input: { shellId: string }) {
       fixture.stopCalls.push(input.shellId);
@@ -162,7 +166,10 @@ test("ShellOutputViewer tails both panes with absolute cursors and confirms stop
   let reads = 0;
   const manager = managerFixture([running]);
   manager.read = (input) => {
-    manager.readCalls.push({ stdoutOffset: input.stdoutOffset, stderrOffset: input.stderrOffset });
+    manager.readCalls.push({
+      stdoutOffset: input.stdoutOffset,
+      stderrOffset: input.stderrOffset,
+    });
     reads += 1;
     return {
       shell: running,
@@ -273,7 +280,11 @@ test("ShellOutputViewer retains bounded incremental state under noisy output", (
     "oldest-marker\n" +
     Array.from({ length: SHELL_VIEWER_MAX_LINES + 100 }, (_, index) => `line-${index}\n`).join("") +
     "newest-tail";
-  manager.read = () => ({ shell: exited, stdout: chunk(noisy), stderr: chunk("") });
+  manager.read = () => ({
+    shell: exited,
+    stdout: chunk(noisy),
+    stderr: chunk(""),
+  });
 
   const component = new ShellOutputViewer(tui(3_000), manager, "admin", exited, theme, () => {});
   const output = rendered(component);
@@ -310,7 +321,10 @@ test("ShellOutputViewer drains retained output after a terminal shell", async ()
   const manager = managerFixture([exited]);
   const noisy = `oldest-marker\n${"x".repeat(SHELL_VIEWER_MAX_CHARS + 100)}\nnewest-tail`;
   manager.read = (input) => {
-    manager.readCalls.push({ stdoutOffset: input.stdoutOffset, stderrOffset: input.stderrOffset });
+    manager.readCalls.push({
+      stdoutOffset: input.stdoutOffset,
+      stderrOffset: input.stderrOffset,
+    });
     const startOffset = input.stdoutOffset ?? 0;
     const data = noisy.slice(startOffset, startOffset + (input.maxBytes ?? noisy.length));
     return {
@@ -421,7 +435,7 @@ test("ShellsOverlay keeps a rejected stop visible across successful list refresh
   component.dispose();
 });
 
-test("ShellsOverlay sanitizes and one-line bounds shell metadata", () => {
+test("ShellsOverlay sanitizes and width-bounds shell metadata", () => {
   const named = shell("1");
   named.name = `named\x1b[31m-red\x1b[0m\nnext\x07${"n".repeat(100)}`;
   named.ownerId = `owner\x1b[2J\nnext\x07${"o".repeat(100)}`;
@@ -453,4 +467,122 @@ test("ShellsOverlay sanitizes and one-line bounds shell metadata", () => {
   assert.equal(output.includes("\x1b"), false);
   assert.equal(output.includes("\x07"), false);
   component.dispose();
+});
+
+function longCommand(prefix: string, count = 12): string {
+  return Array.from({ length: count }, (_, index) => `--${prefix}-${index}=value${index}`).join(
+    " ",
+  );
+}
+
+function rowText(lines: string[]): string[] {
+  return lines.map((line) =>
+    stripTerminalSequences(line)
+      .replace(/^│ ?/, "")
+      .replace(/ ?│$/, "")
+      .trim(),
+  );
+}
+
+test("ShellsOverlay wraps a long command across rows without truncation", () => {
+  const long = shell("1");
+  long.name = undefined;
+  long.command = `npx run ${longCommand("flag")}`;
+  const component = new ShellsOverlay(
+    tui(30),
+    managerFixture([long, shell("2")]),
+    "admin",
+    theme,
+    () => {},
+  );
+
+  const lines = component.render(64);
+  const rows = rowText(lines);
+  assert.ok(lines.every((line) => visibleWidth(line) <= 64));
+  assert.ok(lines.length <= Math.floor(30 * 0.7), `${lines.length} lines`);
+  const first = rows.findIndex((row) => row.startsWith("● ● npx run"));
+  const last = rows.findIndex((row) => /\d+s$/.test(row));
+  assert.ok(first >= 0 && last > first, "the command spans multiple rows");
+  const entry = rows.slice(first, last + 1).join(" ");
+  assert.equal(entry.includes("…"), false, "a wrapped command is not truncated");
+  assert.ok(entry.includes(`npx run ${longCommand("flag")} · running pid 101 · `), entry);
+  assert.ok(
+    rows.some((row) => row.startsWith("● shell-2 · running")),
+    "short rows stay one line",
+  );
+  component.dispose();
+});
+
+test("ShellsOverlay keeps the selected wrapped shell visible within the height budget", () => {
+  for (const rows of [12, 20, 30, 41]) {
+    const shells = Array.from({ length: 8 }, (_, index) => {
+      const item = shell(String(index + 1));
+      item.name = undefined;
+      item.command = `cmd${index + 1} ${longCommand(`s${index + 1}`, index % 2 === 0 ? 10 : 1)}`;
+      return item;
+    });
+    const huge = shell("9");
+    huge.name = undefined;
+    huge.command = `huge ${longCommand("h", 400)}`;
+    shells.push(huge);
+    const component = new ShellsOverlay(
+      tui(rows),
+      managerFixture(shells),
+      "admin",
+      theme,
+      () => {},
+    );
+    const budget = Math.max(3 + 6, Math.floor(rows * 0.7));
+
+    for (let index = 0; index < shells.length; index++) {
+      const lines = component.render(64);
+      assert.ok(lines.length <= budget, `${rows} rows, selected ${index}: ${lines.length}`);
+      assert.match(stripTerminalSequences(lines.at(-1) ?? ""), /^╰─+╯$/);
+      const text = rowText(lines).join("\n");
+      assert.match(text, new RegExp(`^● ● cmd${index + 1} |^● ● huge`, "m"));
+      if (index < shells.length - 1) {
+        const tail = index % 2 === 0 ? 9 : 0;
+        assert.match(
+          text,
+          new RegExp(`--s${index + 1}-${tail}=value${tail}`),
+          "selected fully shown",
+        );
+      }
+      component.handleInput("j");
+    }
+    component.handleInput("\x1b[H");
+    assert.match(rowText(component.render(64)).join("\n"), /^● ● cmd1 /m);
+    component.dispose();
+  }
+});
+
+test("ShellOutputViewer wraps a long command header within the viewport budget", () => {
+  for (const rows of [20, 30, 41]) {
+    for (const withNotice of [false, true]) {
+      const exited = shell("1", "exited");
+      exited.command = `npx run ${longCommand("flag")}`;
+      const manager = managerFixture([exited]);
+      manager.read = () => {
+        if (withNotice) throw new Error("temporary read failure");
+        return { shell: exited, stdout: chunk("output"), stderr: chunk("") };
+      };
+      const component = new ShellOutputViewer(tui(rows), manager, "admin", exited, theme, () => {});
+
+      const lines = component.render(64);
+      const text = rowText(lines);
+      assert.ok(lines.length <= Math.floor(rows * 0.7), `${rows} rows, notice=${withNotice}`);
+      assert.ok(lines.every((line) => visibleWidth(line) <= 64));
+      assert.match(stripTerminalSequences(lines.at(-1) ?? ""), /^╰─+╯$/);
+      const first = text.findIndex((row) => row.startsWith("$ npx run"));
+      assert.ok(first >= 0, "command row shown");
+      if (rows >= 30) {
+        const command = text.slice(first, text.indexOf("stdout")).join(" ");
+        assert.ok(text[first + 1]?.startsWith("--flag-"), "command continues on the next row");
+        assert.equal(command.includes("…"), false, "a wrapped command is not truncated");
+        assert.equal(command, `$ npx run ${longCommand("flag")}`);
+      }
+      assert.match(text.join("\n"), /output|Read failed/);
+      component.dispose();
+    }
+  }
 });
