@@ -473,7 +473,7 @@ test(
 );
 
 test(
-  "strict thinking binding: drop_block becomes error on replay",
+  "thinking binding: the provider's drop_block is kept on replay",
   { timeout: 20_000 },
   async () => {
     const host = await createHost({ managedEffort: true });
@@ -485,7 +485,7 @@ test(
       assert.deepEqual(request.body.thinking, {
         type: "adaptive",
         display: "summarized",
-        block_binding: { prefix_mismatch_behavior: "error" },
+        block_binding: { prefix_mismatch_behavior: "drop_block" },
       });
       const betas = parseBetaHeader(request.headers.get("anthropic-beta"));
       assert.ok(

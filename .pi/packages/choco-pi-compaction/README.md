@@ -287,6 +287,11 @@ session; the host's existing compaction path is then used.
 - Anthropic native replay is refused with `binding-mismatch` when the system
   prompt or tools changed while the retained messages carry thinking bound to
   them; the summary text is used instead.
+- Retained thinking behind a native compaction block is still bound to the
+  messages the block replaced. The replay keeps the provider's
+  `thinking.block_binding` (`drop_block` on managed-effort models), so the API
+  drops those blocks instead of rejecting the request; a model without
+  `block_binding` support may still reject them.
 - Anthropic native support follows a static family table. Live acceptance
   evidence covers only foreground `/compact` on `claude-fable-5-1`
   (first-party API, OAuth); other admitted families and the background lanes

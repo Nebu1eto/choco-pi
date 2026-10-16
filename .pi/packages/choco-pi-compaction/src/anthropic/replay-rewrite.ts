@@ -138,9 +138,11 @@ export interface ReplayDiagnostic {
 
 /**
  * Pure payload rewrite: block first, kept messages exactly as given, beta
- * appended. Where the request already carries `thinking.block_binding`, the
- * rewrite requires `prefix_mismatch_behavior: "error"` instead of silently
- * dropping kept thinking.
+ * appended. `thinking.block_binding` is left exactly as the provider set it.
+ * Kept thinking stays bound to the messages the block replaced, so the API
+ * rejects it under `prefix_mismatch_behavior: "error"` with a persistent 400
+ * (observed live on claude-fable-5-1 with unchanged system and tools); with
+ * pi-ai's `drop_block` the stale blocks are dropped server-side instead.
  */
 function rewriteReplayPayload<T>(payload: T, checkpoint: ActiveNativeCheckpoint): RewriteOutcome {
   if (!Value.Check(WireBodySchema, payload)) return { ok: false, code: "payload-unrecognized" };
@@ -170,16 +172,6 @@ function rewriteReplayPayload<T>(payload: T, checkpoint: ActiveNativeCheckpoint)
     messages: [blockMessage, ...rest],
     betas: [...new Set([...betas, COMPACT_BETA])],
   };
-  const thinking = payload.thinking;
-  if (Value.Check(JsonRecordSchema, thinking)) {
-    const binding = thinking.block_binding;
-    if (Value.Check(JsonRecordSchema, binding)) {
-      next.thinking = {
-        ...thinking,
-        block_binding: { ...binding, prefix_mismatch_behavior: "error" },
-      };
-    }
-  }
   return { ok: true, payload: next, bindingChanged };
 }
 
