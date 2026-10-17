@@ -22,12 +22,6 @@ const BRIDGE_SYMBOL: unique symbol = Symbol.for("choco-pi:compaction-session-com
 export interface SessionCompactHost {
   readonly sessionId: string;
   readonly isIdle: boolean;
-  /**
-   * Whether the request arrived while Pi emits `agent_settled` (for example
-   * model-context-cap's `ctx.compact()`). Pi defers a prompt arriving then
-   * and rejects it if a compaction is running when it re-runs.
-   */
-  readonly isSettling: boolean;
 }
 
 /**
@@ -96,19 +90,7 @@ function readBridge(): SessionCompactBridge | undefined {
 /** The session's id and idle state, or undefined when the host does not expose them. */
 function readScalars(session: AgentSession): SessionCompactHost | undefined {
   const scalars = { sessionId: session.sessionId, isIdle: session.isIdle };
-  if (!Value.Check(SessionScalarsSchema, scalars)) return undefined;
-  return { ...scalars, isSettling: readSettling(session) };
-}
-
-/**
- * Pi's own "emitting agent_settled" flag (`AgentSession._isEmittingAgentSettled`,
- * the switch its `prompt()` defers on). Not public API: a host without a
- * boolean there reads as not settling, which keeps the host's own behavior.
- */
-function readSettling(session: AgentSession): boolean {
-  // A class field: an own data property of the instance, read without its private type.
-  const flag: unknown = Object.getOwnPropertyDescriptor(session, "_isEmittingAgentSettled")?.value;
-  return Value.Check(Type.Boolean(), flag) && flag;
+  return Value.Check(SessionScalarsSchema, scalars) ? scalars : undefined;
 }
 
 /**

@@ -211,6 +211,21 @@ host event.
   host's own compaction runs and Codex's (or xAI's) foreground handler answers
   it natively. No text lane serves such a model, with or without custom
   instructions; Codex's handler reports that it ignores `/compact` guidance.
+  Such a host compaction (and a context-cap adoption) requested from an
+  `agent_settled` handler, as model-context-cap does, waits for the next
+  prompt's `input` hook: Pi defers a prompt that arrives during that emission
+  and would reject it, unanswered, while a compaction runs. The window is
+  tracked with public events only: it opens at this extension's `agent_end`
+  (Pi awaits every `agent_end` handler before emitting `agent_settled`, so it
+  covers every `agent_settled` handler whatever the load order) and closes at
+  the next `input`, `turn_start`, `session_start`, `model_select` or
+  shutdown. Public events cannot tell a late `agent_settled` handler's
+  `ctx.compact()` from an explicit idle RPC `compact` (or typed `/compact`,
+  which reaches the same session bridge) sent after the run settled, so for
+  such an owner a compaction requested after a run settles and before the
+  next prompt is answered at once (handled, no result) and applied at that
+  next prompt, before its request. A newer deferred request replaces an older
+  one; both callers were already answered.
   The Anthropic lane needs a wire capture
   of the session's latest request, so right after a reload or resume the
   request goes to the text lane instead; a lane that fails is retried once on

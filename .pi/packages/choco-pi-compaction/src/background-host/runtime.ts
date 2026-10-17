@@ -134,6 +134,16 @@ export interface HostRuntime {
   readonly nativeSessions: Set<string>;
   /** Removes this registration's per-session native refresher. */
   unregisterNativeRefresher: (() => void) | undefined;
+  /**
+   * The settling window, opened by this extension's own `agent_end` handler.
+   * Pi awaits every extension's `agent_end` before the run settles and
+   * `agent_settled` is emitted, so the window covers every `agent_settled`
+   * handler whatever the load order. It stays open until the next `input`
+   * (before the deferred request runs), `turn_start`, `session_start`,
+   * `model_select` or shutdown. Public events only; nothing on `ctx` or the
+   * session object is read or changed.
+   */
+  settling: boolean;
 }
 
 export function isCurrent(rt: HostRuntime, owner: MainOwner): boolean {

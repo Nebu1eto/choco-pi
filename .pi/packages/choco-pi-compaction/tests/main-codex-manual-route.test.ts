@@ -24,7 +24,7 @@ import { CODEX_BACKEND_SETTING_ID } from "../src/background/settings.ts";
 import type { TextSummarizer } from "../src/background/text-backend.ts";
 import registerCompaction from "../src/index.ts";
 import { mainOwnerKey } from "../src/ownership.ts";
-import { compactionEntries, createHost, reply } from "./host-boundary-fixture.ts";
+import { compactionEntries, createHost, mentions, reply } from "./host-boundary-fixture.ts";
 
 const previousAgentDir = process.env["PI_CODING_AGENT_DIR"];
 const agentDir = await mkdtemp(join(tmpdir(), "choco-pi-codex-manual-agent-"));
@@ -66,6 +66,10 @@ interface Rig {
 
 interface SessionHolder {
   session: AgentSession | undefined;
+}
+
+interface SettledHolder {
+  ctx: ExtensionContext | undefined;
 }
 
 function rigExtension(rig: Rig, settingsFile: string) {
@@ -120,6 +124,10 @@ for (const instructions of [undefined, "focus on the plan"]) {
       // The programmatic route model-context-cap takes (`ctx.compact()` once idle).
       await host.session.compact(instructions);
       await settle();
+      // Still inside the settling window (no prompt since the run ended): the host
+      // compaction runs at the next prompt's input hook, before that prompt's request.
+      assert.equal(compactionEntries(host.manager.getBranch()).length, 0, "deferred");
+      await host.session.prompt("CODEX-MAIN-NEXT");
       assert.deepEqual(rig.textCalls, [], "no text preparation for a Codex-owned session");
       const candidates = host.manager
         .getBranch()
@@ -142,80 +150,256 @@ for (const instructions of [undefined, "focus on the plan"]) {
     }
   });
 }
-test("a prompt deferred during agent_settled is not lost to a context-cap compaction", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "choco-pi-codex-settled-"));
+// The cap's handler runs after this extension's own agent_settled handler (the wrapped
+// emission context) or before it (the agent_end window): both must defer.
+for (const capOrder of ["after", "before"] as const) {
+  test(`a prompt deferred during agent_settled is not lost to a context-cap compaction (cap loads ${capOrder})`, async () => {
+    const dir = await mkdtemp(join(tmpdir(), "choco-pi-codex-settled-"));
+    const settingsFile = join(dir, "background-compaction.json");
+    await writeFile(
+      settingsFile,
+      JSON.stringify({ enabled: true, text: true, codexNative: true, anthropicNative: false }),
+    );
+    const rig: Rig = { textCalls: [], notices: [], ctx: undefined };
+    const holder: SessionHolder = { session: undefined };
+    const preflight: string[] = [];
+    let deferredPrompt: Promise<void> | undefined;
+    let deferredFailure: unknown;
+    let compactions = 0;
+    let capSettled: string | undefined;
+    // Stands in for Codex's remote compaction (it took ~2.7 s live).
+    const slowForeground = (pi: ExtensionAPI): void => {
+      pi.on("session_before_compact", async () => {
+        compactions += 1;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return undefined;
+      });
+    };
+    // model-context-cap's agent_settled `ctx.compact()`, then the RPC driver's next
+    // prompt arriving while agent_settled is still being emitted (Pi defers it).
+    const contextCapAndDriver = (pi: ExtensionAPI): void => {
+      pi.on("agent_settled", (_event, ctx) => {
+        const session = holder.session;
+        if (session === undefined || deferredPrompt !== undefined) return;
+        ctx.compact({
+          onComplete: () => {
+            capSettled = "complete";
+          },
+          onError: (error) => {
+            capSettled = `error: ${error.message}`;
+          },
+        });
+        deferredPrompt = session
+          .prompt("NEXT-PROMPT", {
+            source: "rpc",
+            preflightResult: (disposition) => {
+              preflight.push(disposition);
+            },
+          })
+          .catch((cause: unknown) => {
+            deferredFailure = cause;
+          });
+      });
+      // Other agent_settled handlers (task lineage, status) keep the emission open
+      // long enough for the host compaction to start inside it, as it did live.
+      pi.on("agent_settled", async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+    };
+    const host = await createHost({
+      dir,
+      modelIdentity: { api: "openai-codex-responses", provider: "openai-codex", id: "gpt-6-luna" },
+      respond: async (index) => reply(`R${index}`),
+      extensions:
+        capOrder === "after"
+          ? [rigExtension(rig, settingsFile), slowForeground, contextCapAndDriver]
+          : [contextCapAndDriver, rigExtension(rig, settingsFile), slowForeground],
+    });
+    holder.session = host.session;
+    let firstFailure: unknown;
+    try {
+      // A deferred prompt's failure surfaces on the run that emitted agent_settled.
+      await host.session.prompt("FIRST").catch((cause: unknown) => {
+        firstFailure = cause;
+      });
+      const deadline = Date.now() + 3_000;
+      while (preflight.length === 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      assert.equal(
+        firstFailure,
+        undefined,
+        "no deferred-prompt failure leaked into the settled run",
+      );
+      assert.deepEqual(preflight.length, 1, "the deferred prompt reached preflight");
+      await deferredPrompt;
+      assert.equal(deferredFailure, undefined);
+      await host.session.waitForIdle();
+      assert.equal(compactions, 1, "the context-cap compaction ran once");
+      assert.equal(capSettled, "complete", "the cap's callback was answered (handled at request)");
+      assert.equal(compactionEntries(host.manager.getBranch()).length, 1);
+      const next = host.calls.findIndex((call) => JSON.stringify(call).includes("NEXT-PROMPT"));
+      assert.ok(next >= 0, "the deferred prompt reached the provider");
+      assert.deepEqual(rig.textCalls, []);
+    } finally {
+      await host.dispose();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+}
+async function withCountingHost(
+  extra: (pi: ExtensionAPI) => void,
+  run: (
+    host: Awaited<ReturnType<typeof createHost>>,
+    counts: { compactions: number },
+  ) => Promise<void>,
+): Promise<void> {
+  const dir = await mkdtemp(join(tmpdir(), "choco-pi-codex-window-"));
   const settingsFile = join(dir, "background-compaction.json");
   await writeFile(
     settingsFile,
     JSON.stringify({ enabled: true, text: true, codexNative: true, anthropicNative: false }),
   );
-  const rig: Rig = { textCalls: [], notices: [], ctx: undefined };
-  const holder: SessionHolder = { session: undefined };
-  const preflight: string[] = [];
-  let deferredPrompt: Promise<void> | undefined;
-  let deferredFailure: unknown;
-  let compactions = 0;
-  // Stands in for Codex's remote compaction (it took ~2.7 s live).
-  const slowForeground = (pi: ExtensionAPI): void => {
-    pi.on("session_before_compact", async () => {
-      compactions += 1;
-      await new Promise((resolve) => setTimeout(resolve, 50));
+  const counts = { compactions: 0 };
+  const counting = (pi: ExtensionAPI): void => {
+    pi.on("session_before_compact", () => {
+      counts.compactions += 1;
       return undefined;
     });
   };
-  // model-context-cap's agent_settled `ctx.compact()`, then the RPC driver's next
-  // prompt arriving while agent_settled is still being emitted (Pi defers it).
-  const contextCapAndDriver = (pi: ExtensionAPI): void => {
-    pi.on("agent_settled", (_event, ctx) => {
-      const session = holder.session;
-      if (session === undefined || deferredPrompt !== undefined) return;
-      ctx.compact({});
-      deferredPrompt = session
-        .prompt("NEXT-PROMPT", {
-          source: "rpc",
-          preflightResult: (disposition) => {
-            preflight.push(disposition);
-          },
-        })
-        .catch((cause: unknown) => {
-          deferredFailure = cause;
-        });
-    });
-    // Other agent_settled handlers (task lineage, status) keep the emission open
-    // long enough for the host compaction to start inside it, as it did live.
-    pi.on("agent_settled", async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    });
-  };
+  const rig: Rig = { textCalls: [], notices: [], ctx: undefined };
   const host = await createHost({
     dir,
     modelIdentity: { api: "openai-codex-responses", provider: "openai-codex", id: "gpt-6-luna" },
     respond: async (index) => reply(`R${index}`),
-    extensions: [rigExtension(rig, settingsFile), slowForeground, contextCapAndDriver],
+    // Loaded after the compaction extension: its agent_settled ctx is the wrapped one.
+    extensions: [rigExtension(rig, settingsFile), counting, extra],
   });
-  holder.session = host.session;
-  let firstFailure: unknown;
   try {
-    // A deferred prompt's failure surfaces on the run that emitted agent_settled.
-    await host.session.prompt("FIRST").catch((cause: unknown) => {
-      firstFailure = cause;
-    });
-    const deadline = Date.now() + 3_000;
-    while (preflight.length === 0 && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
-    assert.equal(firstFailure, undefined, "no deferred-prompt failure leaked into the settled run");
-    assert.deepEqual(preflight.length, 1, "the deferred prompt reached preflight");
-    await deferredPrompt;
-    assert.equal(deferredFailure, undefined);
-    await host.session.waitForIdle();
-    assert.equal(compactions, 1, "the context-cap compaction ran once");
-    assert.equal(compactionEntries(host.manager.getBranch()).length, 1);
-    const next = host.calls.findIndex((call) => JSON.stringify(call).includes("NEXT-PROMPT"));
-    assert.ok(next >= 0, "the deferred prompt reached the provider");
+    await run(host, counts);
     assert.deepEqual(rig.textCalls, []);
   } finally {
     await host.dispose();
     await rm(dir, { recursive: true, force: true });
   }
+}
+
+/** Resolve with the outcome of a ctx.compact(), or "pending" when it did not settle in time. */
+function compactOutcome(ctx: ExtensionContext): Promise<string> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve("pending"), 1_000);
+    ctx.compact({
+      onComplete: () => {
+        clearTimeout(timer);
+        resolve("complete");
+      },
+      onError: (error) => {
+        clearTimeout(timer);
+        resolve(`error: ${error.message}`);
+      },
+    });
+  });
+}
+
+test("an idle RPC compact after a run settled is answered now and applied at the next prompt", async () => {
+  await withCountingHost(
+    () => undefined,
+    async (host, counts) => {
+      await host.session.prompt("FIRST");
+      await host.session.waitForIdle();
+      // Public events cannot tell this apart from a late agent_settled handler's
+      // ctx.compact(): the window is open until the next input or turn_start.
+      const answered = await host.session.compact();
+      assert.equal(answered, undefined, "answered at once as handled");
+      assert.equal(counts.compactions, 0, "not run yet");
+      const calls = host.calls.length;
+      await host.session.prompt("AFTER-RPC-COMPACT");
+      assert.equal(counts.compactions, 1, "applied at the next prompt");
+      assert.equal(compactionEntries(host.manager.getBranch()).length, 1);
+      const next = host.calls.slice(calls).find((call) => mentions(call, "AFTER-RPC-COMPACT"));
+      assert.ok(next && mentions(next, "HOST-SUMMARY"), "the prompt was sent after the compaction");
+    },
+  );
+});
+
+test("deferred requests are answered when made; a newer one supersedes an older one", async () => {
+  const settled: SettledHolder = { ctx: undefined };
+  const outcomes: string[] = [];
+  await withCountingHost(
+    (pi) => {
+      pi.on("agent_settled", (_event, ctx) => {
+        settled.ctx ??= ctx;
+      });
+    },
+    async (host, counts) => {
+      await host.session.prompt("FIRST");
+      assert.ok(settled.ctx);
+      for (const label of ["first", "second"]) {
+        settled.ctx.compact({
+          onComplete: () => outcomes.push(`${label}: complete`),
+          onError: (error) => outcomes.push(`${label}: ${error.message}`),
+        });
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      // The bridge answers each request as handled at once (Pi's ctx.compact() then
+      // calls onComplete with no result), before it runs; a superseded one never runs.
+      assert.deepEqual(outcomes, ["first: complete", "second: complete"]);
+      assert.equal(counts.compactions, 0);
+      await host.session.prompt("NEXT");
+      assert.equal(counts.compactions, 1, "only the newest request ran");
+    },
+  );
+});
+
+test("the settling window is closed by the next input: a retained settled ctx compacts at once", async () => {
+  const settled: SettledHolder = { ctx: undefined };
+  let probe: Promise<string> | undefined;
+  await withCountingHost(
+    (pi) => {
+      pi.on("agent_settled", (_event, ctx) => {
+        settled.ctx ??= ctx;
+      });
+      pi.on("input", (event) => {
+        if (event.text !== "PROBE" || settled.ctx === undefined) return { action: "continue" };
+        // This extension's input handler already ran: the wrapped emission is closed.
+        probe = compactOutcome(settled.ctx);
+        return { action: "handled" };
+      });
+    },
+    async (_host, counts) => {
+      await _host.session.prompt("FIRST");
+      await _host.session.prompt("PROBE");
+      assert.ok(probe);
+      assert.equal(await probe, "complete", "not deferred to a later prompt");
+      assert.equal(counts.compactions, 1);
+    },
+  );
+});
+
+test("a compact during a run started without input (turn_start) is never deferred", async () => {
+  const settled: SettledHolder = { ctx: undefined };
+  let probe: Promise<string> | undefined;
+  await withCountingHost(
+    (pi) => {
+      pi.on("agent_settled", (_event, ctx) => {
+        settled.ctx ??= ctx;
+      });
+      pi.on("turn_start", () => {
+        if (settled.ctx === undefined || probe !== undefined) return;
+        // A run started without any input hook (a custom message): turn_start closed it.
+        probe = compactOutcome(settled.ctx);
+      });
+    },
+    async (host, counts) => {
+      await host.session.prompt("FIRST");
+      await host.session.sendCustomMessage(
+        { customType: "probe", content: "CUSTOM-TURN", display: false },
+        { triggerTurn: true },
+      );
+      await host.session.waitForIdle();
+      assert.ok(probe);
+      assert.equal(await probe, "complete", "not deferred to a later prompt");
+      assert.equal(counts.compactions, 1);
+    },
+  );
 });
