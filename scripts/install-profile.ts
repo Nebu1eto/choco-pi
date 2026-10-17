@@ -483,9 +483,13 @@ async function writeSettings(target: string, settings: Settings) {
  */
 async function supersededPackageNames(root: string, projectSettings: ProjectSettings) {
   const names = [];
+  const bundled = path.join(root, ".pi", "packages");
   for (const spec of projectSettings.packages) {
-    if (!spec.startsWith("./")) continue;
-    const manifest = await readJson(path.resolve(root, ".pi", spec, "package.json"), {});
+    // Project settings name bundled packages as `./packages/<name>`; global
+    // settings, written by an earlier install, name them by absolute path.
+    const packageDir = spec.startsWith("./") ? path.resolve(root, ".pi", spec) : spec;
+    if (!path.isAbsolute(packageDir) || path.dirname(packageDir) !== bundled) continue;
+    const manifest = await readJson(path.join(packageDir, "package.json"), {});
     const schema = Type.Object({
       chocoPi: Type.Optional(Type.Object({ supersedes: Type.Optional(Type.Array(Type.String())) })),
     });
@@ -495,18 +499,47 @@ async function supersededPackageNames(root: string, projectSettings: ProjectSett
   return names;
 }
 
+/**
+ * The profile policy: the checkout's `.pi/settings.json` when present,
+ * otherwise the global settings an earlier install wrote, which carry the same
+ * packages and built-in extension policy. A machine with neither cannot
+ * bootstrap, and the error names both files.
+ */
+async function readProfileSettings(
+  root: string,
+  settingsPath: string,
+  existingSettings: Settings,
+): Promise<ProjectSettings> {
+  const projectPath = path.join(root, ".pi", "settings.json");
+  if (await exists(projectPath)) {
+    const project = await readJson(projectPath);
+    if (project.packages === undefined) throw new Error(`${projectPath} must declare packages`);
+    return { ...project, packages: project.packages };
+  }
+  // Global settings also hold the user's own packages. Only the bundled ones
+  // are profile-owned; the rest merge back as retained packages, where
+  // superseded predecessors are dropped.
+  const bundled = path.join(root, ".pi", "packages");
+  const packages = (existingSettings.packages ?? []).filter(
+    (spec) => path.isAbsolute(spec) && path.dirname(spec) === bundled,
+  );
+  if (packages.length === 0) {
+    throw new Error(
+      `no profile settings: ${projectPath} does not exist and ${settingsPath} declares no packages under ${bundled}`,
+    );
+  }
+  return { ...existingSettings, packages };
+}
+
 export async function installProfile({
   root = SCRIPT_ROOT,
   agentDir = process.env.PI_CODING_AGENT_DIR ?? path.join(homedir(), ".pi", "agent"),
   backup = false,
   piLauncher,
 }: InstallProfileOptions = {}) {
-  const projectSettings = await readJson(path.join(root, ".pi", "settings.json"));
-  if (projectSettings.packages === undefined)
-    throw new Error("project settings must declare packages");
-  const project: ProjectSettings = { ...projectSettings, packages: projectSettings.packages };
   const settingsPath = path.join(agentDir, "settings.json");
   const existingSettings = await readJson(settingsPath, {});
+  const project = await readProfileSettings(root, settingsPath, existingSettings);
   // MCP configuration is deliberately not linked. Pi reads ~/.pi/agent/mcp.json and a
   // project .pi/mcp.json as separate sources, so linking a repo-local copy registers every
   // server twice when Pi runs from this checkout, and the ignored file disappearing leaves

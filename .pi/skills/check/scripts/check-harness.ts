@@ -16,6 +16,7 @@ import { PI_SDK_TARGET } from "../../../extensions/lib/pi-target.ts";
 
 import { execFile } from "node:child_process";
 import { access, readFile, realpath } from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -54,6 +55,8 @@ function projectDisablesBuiltin(entries: readonly RuntimeValue[], name: string):
 
 export type HarnessOptions = {
   configRoot?: string;
+  /** Agent directory whose settings.json stands in when configRoot has none. */
+  agentDir?: string;
   mode: "full" | "automatic";
   requiredCapabilities?: readonly Capability[];
   nodeVersion?: string;
@@ -241,15 +244,37 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
   }
 
   let settings: Settings | undefined;
-  const settingsPath = path.join(configRoot, "settings.json");
+  // The profile policy lives in the checkout's settings.json when present;
+  // otherwise the global settings an earlier install wrote carry it. Only a
+  // missing project file falls back; any other read failure is reported.
+  const projectSettingsPath = path.join(configRoot, "settings.json");
+  const agentDir =
+    options.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? path.join(homedir(), ".pi", "agent");
+  let fromProject = true;
+  let settingsPath = projectSettingsPath;
   try {
-    const parsed: unknown = JSON.parse(await readText(settingsPath));
+    let text: string;
+    try {
+      text = await readText(projectSettingsPath);
+    } catch (error: unknown) {
+      const missing = error instanceof Error && "code" in error && error.code === "ENOENT";
+      if (!missing) throw error;
+      fromProject = false;
+      settingsPath = path.join(agentDir, "settings.json");
+      text = await readText(settingsPath);
+    }
+    const parsed: unknown = JSON.parse(text);
     if (!isRecord(parsed)) throw new Error("settings.json must contain an object");
     settings = parsed;
-    add("settings", "pass", settingsPath);
+    add(
+      "settings",
+      "pass",
+      fromProject ? settingsPath : `${settingsPath} (no ${projectSettingsPath})`,
+    );
   } catch (error: unknown) {
     add("settings", "fail", error instanceof Error ? error.message : String(error));
   }
+  const settingsLabel = fromProject ? "project" : "agent";
 
   if (settings) {
     add(
@@ -262,14 +287,29 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
     if (!Array.isArray(settings.packages))
       add("packages", "fail", "settings.packages must be an array");
     else {
+      const bundledRoot = path.join(configRoot, "packages");
+      // Project settings name bundled packages relatively. Agent settings name
+      // them by absolute path and may also hold the user's own packages, which
+      // this profile does not own and so does not validate.
+      const bundledDir = (spec: RuntimeValue): string | undefined => {
+        if (!isString(spec)) return undefined;
+        if (/^\.\/packages\/[^/]+$/.test(spec)) return path.resolve(configRoot, spec);
+        if (!fromProject && path.isAbsolute(spec) && path.dirname(spec) === bundledRoot)
+          return spec;
+        return undefined;
+      };
+      const specs = fromProject
+        ? settings.packages
+        : settings.packages.filter((spec) => bundledDir(spec) !== undefined);
       const packageResults = await Promise.all(
-        settings.packages.map(async (spec) => {
-          if (!isString(spec) || !/^\.\/packages\/[^/]+$/.test(spec)) {
+        specs.map(async (spec) => {
+          const packageDir = bundledDir(spec);
+          if (!isString(spec) || packageDir === undefined) {
             return { error: `${String(spec)}: expected ./packages/<name>` };
           }
           try {
             const manifest: unknown = JSON.parse(
-              await readText(path.resolve(configRoot, spec, "package.json")),
+              await readText(path.join(packageDir, "package.json")),
             );
             if (!isRecord(manifest))
               return { error: `${spec}: package.json must contain an object` };
@@ -282,6 +322,10 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
         }),
       );
       const errors = packageResults.flatMap((result) => (result.error ? [result.error] : []));
+      if (!fromProject && specs.length === 0)
+        errors.push(
+          `${settingsPath} lists no packages under ${bundledRoot}; run pnpm install:profile`,
+        );
       add(
         "packages",
         errors.length ? "fail" : "pass",
@@ -331,7 +375,7 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
       [
         findings.length
           ? findings.join("; ")
-          : `project settings disable builtin:codemode and enable built-in tool search and MCP; ${hostEvidence}`,
+          : `${settingsLabel} settings disable builtin:codemode and enable built-in tool search and MCP; ${hostEvidence}`,
         "Pi does not expose extension load warnings to extensions; check [Extension issues] at startup",
       ].join("; "),
     );

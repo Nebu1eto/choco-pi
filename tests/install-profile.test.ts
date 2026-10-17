@@ -4,6 +4,7 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   readlink,
   rm,
@@ -36,6 +37,47 @@ function parseJson<T extends TSchema>(contents: string, schema: T): Static<T> {
 }
 
 const SidecarSchema = Type.Record(Type.String(), Type.Unknown());
+
+/** Bundled packages as an earlier install of this checkout recorded them. */
+const BUNDLED_PACKAGES = [
+  "choco-pi-web-search",
+  "choco-pi-web-access",
+  "choco-pi-provider-synthetic",
+  "choco-pi-ui",
+  "choco-pi-shells",
+  "choco-pi-hooks",
+  "choco-pi-subagents",
+  "choco-pi-advisor",
+  "choco-pi-goal",
+  "choco-pi-mcp",
+  "choco-pi-lsp",
+  "choco-pi-compaction",
+  "choco-pi-codex",
+  "choco-pi-agents-md",
+  "choco-pi-agent-browser",
+  "choco-pi-computer-use",
+  "choco-pi-editor-context",
+].map((name) => path.resolve(".pi/packages", name));
+
+/**
+ * The checkout ships no `.pi/settings.json`, so the installer takes its policy
+ * from the global settings an earlier install wrote; seed those.
+ */
+type SeedSettings = {
+  packages?: string[];
+  extensions?: string[];
+  modelThinkingLevels?: Record<string, string>;
+};
+
+async function seedProfileSettings(agentDir: string, extra: SeedSettings = {}) {
+  await mkdir(agentDir, { recursive: true });
+  const settings = {
+    packages: BUNDLED_PACKAGES,
+    extensions: [path.resolve(".pi/extensions"), "-builtin:codemode"],
+    ...extra,
+  };
+  await writeFile(path.join(agentDir, "settings.json"), `${JSON.stringify(settings)}\n`, "utf8");
+}
 
 type SidecarFixture = {
   sidecar?: string;
@@ -158,6 +200,11 @@ test("user-added duplicate pins keep the newer version", () => {
 test("profile installer links tracked config and is idempotent", async (context) => {
   const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-"));
   context.after(() => rm(agentDir, { recursive: true, force: true }));
+  const thinking = {
+    "anthropic/claude-opus-5-5": "medium",
+    "synthetic/hf:zai-org/GLM-5.3": "high",
+  };
+  await seedProfileSettings(agentDir, { modelThinkingLevels: thinking });
 
   await installProfile({ root: process.cwd(), agentDir });
   await installProfile({ root: process.cwd(), agentDir });
@@ -180,32 +227,38 @@ test("profile installer links tracked config and is idempotent", async (context)
   );
   assert.equal(codexConfig.openai.fast, sourceCodexConfig.openai.fast);
   const settings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
-  assert.deepEqual(
-    settings.packages,
-    [
-      "choco-pi-web-search",
-      "choco-pi-web-access",
-      "choco-pi-provider-synthetic",
-      "choco-pi-ui",
-      "choco-pi-shells",
-      "choco-pi-hooks",
-      "choco-pi-subagents",
-      "choco-pi-advisor",
-      "choco-pi-goal",
-      "choco-pi-mcp",
-      "choco-pi-lsp",
-      "choco-pi-compaction",
-      "choco-pi-codex",
-      "choco-pi-agents-md",
-      "choco-pi-agent-browser",
-      "choco-pi-computer-use",
-      "choco-pi-editor-context",
-    ].map((name) => path.resolve(".pi/packages", name)),
-  );
-  const projectSettings = JSON.parse(await readFile(path.resolve(".pi/settings.json"), "utf8"));
+  assert.deepEqual(settings.packages, BUNDLED_PACKAGES);
   assert.deepEqual(settings.extensions, [path.resolve(".pi/extensions"), "-builtin:codemode"]);
-  assert.deepEqual(projectSettings.extensions, ["-builtin:codemode"]);
-  assert.deepEqual(settings.modelThinkingLevels, projectSettings.modelThinkingLevels);
+  assert.deepEqual(settings.modelThinkingLevels, thinking);
+});
+
+test("without project settings, global settings supply the profile and lose superseded packages", async (context) => {
+  const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-global-"));
+  context.after(() => rm(agentDir, { recursive: true, force: true }));
+  // choco-pi-lsp supersedes pi-lens; the user's own package stays.
+  await seedProfileSettings(agentDir, {
+    packages: [...BUNDLED_PACKAGES, "npm:pi-lens@1.0.0", "npm:user-package@2.0.0"],
+  });
+
+  await installProfile({ root: process.cwd(), agentDir });
+
+  const settings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
+  assert.deepEqual(settings.packages, [...BUNDLED_PACKAGES, "npm:user-package@2.0.0"]);
+});
+
+test("without project settings, global settings must declare packages", async (context) => {
+  const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-empty-"));
+  context.after(() => rm(agentDir, { recursive: true, force: true }));
+  const settingsPath = path.join(agentDir, "settings.json");
+
+  await assert.rejects(
+    installProfile({ root: process.cwd(), agentDir }),
+    (error) =>
+      error instanceof Error &&
+      error.message.includes(path.resolve(".pi/settings.json")) &&
+      error.message.includes(`${settingsPath} declares no packages`),
+  );
+  await assert.rejects(readlink(path.join(agentDir, "SYSTEM.md")), { code: "ENOENT" });
 });
 
 test("the profile removes stale built-in exclusions and preserves unrelated settings", () => {
@@ -241,19 +294,31 @@ test("the profile removes stale built-in exclusions and preserves unrelated sett
 });
 
 test("reinstalling keeps exactly one copy of the built-in extension policy", async (context) => {
-  const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-builtins-"));
-  context.after(() => rm(agentDir, { recursive: true, force: true }));
+  // A checkout that ships project settings: its policy overrides the user's.
+  const root = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-builtins-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const agentDir = path.join(root, "agent");
+  await mkdir(path.join(root, ".pi"), { recursive: true });
+  await mkdir(agentDir, { recursive: true });
+  await writeFile(
+    path.join(root, ".pi", "settings.json"),
+    `${JSON.stringify({ packages: [], extensions: ["-builtin:codemode"] })}\n`,
+    "utf8",
+  );
   await writeFile(
     path.join(agentDir, "settings.json"),
     `${JSON.stringify({ extensions: ["+builtin:codemode", "-builtin:llama.cpp"], deviceId: "d-1" })}\n`,
     "utf8",
   );
 
-  await installProfile({ root: process.cwd(), agentDir });
-  await installProfile({ root: process.cwd(), agentDir });
+  await installProfile({ root, agentDir });
+  await installProfile({ root, agentDir });
 
   const settings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
-  assert.deepEqual(settings.extensions, [path.resolve(".pi/extensions"), "-builtin:codemode"]);
+  assert.deepEqual(settings.extensions, [
+    path.join(root, ".pi", "extensions"),
+    "-builtin:codemode",
+  ]);
   assert.equal(settings.deviceId, "d-1");
 });
 
@@ -286,6 +351,7 @@ test("profile installer preserves enabled and disabled fast preferences", async 
 test("profile installer preserves a conflicting file unless backup is explicit", async (context) => {
   const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-conflict-"));
   context.after(() => rm(agentDir, { recursive: true, force: true }));
+  await seedProfileSettings(agentDir);
   const target = path.join(agentDir, "choco-pi-ui.json");
   await writeFile(target, "user-owned\n");
 
@@ -346,12 +412,15 @@ test("installing the profile drops another checkout's resource directories", () 
 });
 
 test("every bundled fork declares the packages it supersedes", async () => {
-  const projectSettings = JSON.parse(await readFile(".pi/settings.json", "utf8"));
-  for (const spec of projectSettings.packages) {
-    const manifest = JSON.parse(await readFile(path.resolve(".pi", spec, "package.json"), "utf8"));
+  for (const name of await readdir(".pi/packages")) {
+    const manifest = JSON.parse(
+      await readFile(path.resolve(".pi/packages", name, "package.json"), "utf8"),
+    );
+    // Only Pi packages are installed; choco-pi-acp is a standalone binary.
+    if (manifest.pi === undefined) continue;
     assert.ok(
       Array.isArray(manifest.chocoPi?.supersedes),
-      `${spec} must declare chocoPi.supersedes (use [] when it replaces nothing)`,
+      `${name} must declare chocoPi.supersedes (use [] when it replaces nothing)`,
     );
   }
 });
@@ -545,6 +614,7 @@ test("an unreadable codex config skips the sidecar migration with a warning", as
 test("install removes a stale context-cap.json link and reports it once", async (context) => {
   const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-context-cap-"));
   context.after(() => rm(agentDir, { recursive: true, force: true }));
+  await seedProfileSettings(agentDir);
   const target = path.join(agentDir, "extensions", "context-cap.json");
   await mkdir(path.dirname(target), { recursive: true });
   // An earlier install linked the tracked file, which no longer exists: dangling.
@@ -562,6 +632,7 @@ test("install removes a stale context-cap.json link and reports it once", async 
 test("install removes a stale context-cap.json copy without needing --backup", async (context) => {
   const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-context-cap-"));
   context.after(() => rm(agentDir, { recursive: true, force: true }));
+  await seedProfileSettings(agentDir);
   const target = path.join(agentDir, "extensions", "context-cap.json");
   await mkdir(path.dirname(target), { recursive: true });
   await writeFile(target, `${JSON.stringify({ headroom: { tokens: 1 }, models: {} })}\n`, "utf8");
@@ -574,6 +645,7 @@ test("install removes a stale context-cap.json copy without needing --backup", a
 test("a directory at a retired path is left in place with a warning", async (context) => {
   const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-context-cap-"));
   context.after(() => rm(agentDir, { recursive: true, force: true }));
+  await seedProfileSettings(agentDir);
   const target = path.join(agentDir, "extensions", "context-cap.json");
   await mkdir(target, { recursive: true });
 

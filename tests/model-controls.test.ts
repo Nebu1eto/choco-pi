@@ -20,25 +20,9 @@ import {
 
 type EditorFactory = NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]>;
 
-test("OpenAI thinking defaults mirror legacy models without overriding stock authentication", async () => {
-  const settings: unknown = JSON.parse(await readFile(".pi/settings.json", "utf8"));
-  assert.ok(isJsonRecord(settings));
-  const levels = settings.modelThinkingLevels;
-  assert.ok(isJsonRecord(levels));
-  const expected = new Map([
-    ["gpt-6-astra", "low"],
-    ["gpt-5.6-sol", "low"],
-    ["gpt-daybreak-blue-latest", "high"],
-    ["gpt-5.6-terra", "high"],
-    ["gpt-5.6-luna", "xhigh"],
-    ["gpt-6-sol", "low"],
-    ["gpt-6.1-sol", "low"],
-    ["gpt-6-luna", "high"],
-  ]);
-  for (const [id, level] of expected) {
-    assert.equal(levels["openai/" + id], level, id);
-    assert.equal(levels["openai-codex/" + id], level, id + " legacy");
-  }
+// Per-model thinking defaults are user settings now; the checkout ships no
+// settings.json, so only the tracked model overrides are checked here.
+test("OpenAI model overrides set only context windows without overriding stock authentication", async () => {
   const models: unknown = JSON.parse(await readFile(".pi/models.json", "utf8"));
   assert.ok(isJsonRecord(models));
   assert.ok(isJsonRecord(models.providers));

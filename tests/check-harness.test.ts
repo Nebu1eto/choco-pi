@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, symlink } from "node:fs/promises";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import test from "node:test";
 import { tmpdir } from "node:os";
@@ -439,11 +439,33 @@ test("active host must register built-in tool search without custom MCP adapters
   }
 });
 
-test("the repository settings disable the policy built-in extensions", async () => {
-  const report = await checkHarness({
-    mode: "automatic",
-    configRoot: fileURLToPath(new URL("../.pi", import.meta.url)),
-    nodeVersion: "v24.0.0",
+test("without project settings, the agent settings supply the profile policy", async (context) => {
+  const configRoot = fileURLToPath(new URL("../.pi", import.meta.url));
+  const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-check-agent-"));
+  context.after(() => rm(agentDir, { recursive: true, force: true }));
+  const settingsPath = path.join(agentDir, "settings.json");
+  type AgentSettings = { packages: string[]; extensions: string[]; tuiMode?: string };
+  const write = (settings: AgentSettings) =>
+    writeFile(settingsPath, JSON.stringify(settings), "utf8");
+  const status = async (id: string) =>
+    (
+      await checkHarness({ mode: "automatic", configRoot, agentDir, nodeVersion: "v24.0.0" })
+    ).checks.find((entry) => entry.id === id);
+
+  // As an install leaves them: bundled packages by absolute path, plus the user's own.
+  await write({
+    packages: [path.join(configRoot, "packages", "choco-pi-lsp"), "npm:user-package@1.0.0"],
+    extensions: [path.join(configRoot, "extensions"), "-builtin:codemode"],
+    tuiMode: "fullscreen",
   });
-  assert.equal(report.checks.find((entry) => entry.id === "builtin-extensions")?.status, "pass");
+  assert.equal((await status("settings"))?.status, "pass");
+  assert.match((await status("settings"))?.detail ?? "", /no .*settings\.json/);
+  assert.equal((await status("packages"))?.status, "pass");
+  assert.equal((await status("builtin-extensions"))?.status, "pass");
+  assert.match((await status("builtin-extensions"))?.detail ?? "", /^agent settings disable/);
+
+  // Without bundled packages the profile was never installed.
+  await write({ packages: ["npm:user-package@1.0.0"], extensions: ["-builtin:codemode"] });
+  assert.equal((await status("packages"))?.status, "fail");
+  assert.match((await status("packages"))?.detail ?? "", /lists no packages under/);
 });
