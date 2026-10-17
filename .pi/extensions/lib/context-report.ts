@@ -1,10 +1,9 @@
-import { isNumber, isString, recordOf, type RuntimeValue } from "./runtime-values.ts";
-import { readFileSync } from "node:fs";
-import path from "node:path";
+import { isString, recordOf, type RuntimeValue } from "./runtime-values.ts";
 import {
   calculateContextTokens,
   formatSkillsForPrompt,
   sessionEntryToContextMessages,
+  SettingsManager,
   type BuildSystemPromptOptions,
   type ExtensionAPI,
   type ExtensionCommandContext,
@@ -102,16 +101,21 @@ function percent(tokens: number, window: number): string {
   return `${((tokens / Math.max(1, window)) * 100).toFixed(1)}%`;
 }
 
-function reserveTokens(cwd: string): number {
+/**
+ * The compaction reserve the host applies to this model: the effective
+ * settings (global and project merged) resolved by Pi's own per-model rule.
+ * Pi rejects an invalid value when it compacts; the report shows the default.
+ */
+function reserveTokens(pi: ContextInventory, model: ExtensionContext["model"]): number {
+  if (pi.getSettings === undefined) return DEFAULT_RESERVE_TOKENS;
+  const settings = SettingsManager.inMemory(pi.getSettings());
   try {
-    // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
-    const settings = JSON.parse(readFileSync(path.join(cwd, ".pi/settings.json"), "utf8")) as {
-      compaction?: { reserveTokens?: unknown };
-    };
-    const configured = settings.compaction?.reserveTokens;
-    return isNumber(configured) && configured >= 0 ? configured : DEFAULT_RESERVE_TOKENS;
-  } catch {
-    return DEFAULT_RESERVE_TOKENS;
+    return settings.getCompactionReserveTokens(model);
+  } catch (error: unknown) {
+    if (error instanceof Error && error.message.startsWith("Invalid compaction.")) {
+      return DEFAULT_RESERVE_TOKENS;
+    }
+    throw error;
   }
 }
 
@@ -353,7 +357,7 @@ export type ContextReportContext = Pick<
 >;
 
 type ContextInventory = Pick<ExtensionAPI, "getAllTools" | "getActiveTools"> &
-  Partial<Pick<ExtensionAPI, "getMcpServers">>;
+  Partial<Pick<ExtensionAPI, "getMcpServers" | "getSettings">>;
 
 /** Everything the Context tab and the structured context report are drawn from. */
 type ContextData = {
@@ -392,7 +396,7 @@ function collectContextData(
     !measuredUsagePredatesCompaction(entries) && usage?.tokens && usage.tokens > 0
       ? usage.tokens
       : undefined;
-  const reserve = Math.min(reserveTokens(ctx.cwd), window);
+  const reserve = Math.min(reserveTokens(pi, ctx.model), window);
   const categories = categoryData(
     ctx,
     options,

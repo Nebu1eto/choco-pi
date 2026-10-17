@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { CompactionSettings } from "@earendil-works/pi-coding-agent";
 import { renderContext, usageBar } from "../.pi/extensions/lib/context-report.ts";
 import statusCommands, { tabBody } from "../.pi/extensions/status-commands.ts";
 
@@ -160,6 +161,47 @@ test("measured usage caps message estimates and keeps categories inside the wind
   assert.match(rendered, /Messages: 99\d tokens/);
   assert.match(rendered, /Free space: 2\.6k tokens/);
   assert.doesNotMatch(rendered, /\(1\d\d(?:\.\d)?%\)/);
+});
+
+/** The inventory members the context report reads, with the optional settings source. */
+type ReserveInventory = {
+  getAllTools: () => typeof TOOLS;
+  getActiveTools: () => string[];
+  getSettings?: () => { compaction: CompactionSettings };
+};
+
+test("the compaction reserve follows the effective settings and per-model overrides", () => {
+  const ctx = {
+    ...contextTabContext(),
+    model: { provider: "test", id: "test-model", contextWindow: 20_000 },
+    getContextUsage: () => ({ tokens: 1_000, contextWindow: 20_000, percent: 5 }),
+  };
+  const render = (compaction?: CompactionSettings) => {
+    const inventory: ReserveInventory = {
+      getAllTools: () => TOOLS,
+      getActiveTools: () => ["read"],
+    };
+    if (compaction !== undefined) inventory.getSettings = () => ({ compaction });
+    // SAFETY: the fixture supplies every host member exercised by renderContext.
+    return renderContext(inventory as never, ctx as never, false, false, {
+      systemTokens: 100,
+      toolsTokens: 60,
+      toolCount: 1,
+    });
+  };
+
+  // No settings source: Pi's default reserve (16,384) leaves 2.6k free.
+  assert.match(render(), /Free space: 2\.6k tokens/);
+  assert.match(render({ reserveTokens: 10_000 }), /Free space: 9\.0k tokens/);
+  assert.match(
+    render({
+      reserveTokens: 10_000,
+      modelOverrides: { "test/test-model": { reserveTokens: 4_000 } },
+    }),
+    /Free space: 15k tokens/,
+  );
+  // An invalid value is Pi's to reject at compaction; the report keeps the default.
+  assert.match(render({ reserveTokens: -1 }), /Free space: 2\.6k tokens/);
 });
 
 for (const withMetrics of [false, true]) {

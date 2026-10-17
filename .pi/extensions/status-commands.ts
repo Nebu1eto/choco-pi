@@ -112,7 +112,7 @@ export function isExpandableTab(id: StatusTabId): boolean {
 }
 
 type ToolInventory = Pick<ExtensionAPI, "getAllTools" | "getActiveTools"> &
-  Partial<Pick<ExtensionAPI, "getMcpServers">>;
+  Partial<Pick<ExtensionAPI, "getMcpServers" | "getSettings">>;
 
 const TOOL_INVENTORY_KEY: unique symbol = Symbol.for("choco-pi.status.tool-inventory");
 const CACHE_WARMING_SOURCE_KEY: unique symbol = Symbol.for("choco-pi.status.cache-warming-source");
