@@ -23,10 +23,11 @@ import {
 } from "../background/settings.ts";
 import { isChildSession, mainOwnerKey } from "../ownership.ts";
 import type { CompactionSessionState } from "../session-state.ts";
-import { xaiGateAdmitsModel } from "../xai/capability.ts";
 import { readXaiCompactionMode } from "../xai/mode.ts";
 import { type BackgroundAdoptionSignal, getBackgroundAdoptionSignal } from "./adoption-signal.ts";
 import { candidateRecordsOf } from "./branch.ts";
+import { nativeLaneSwitches } from "./native-lanes.ts";
+import { type NativeRefreshContext, registerSessionNativeRefresher } from "./native-refresh.ts";
 import { errorText } from "./notices.ts";
 import { createOwnerCore, type OwnerCore } from "./owner-core.ts";
 import type { OwnerSpec } from "./owner-spec.ts";
@@ -117,14 +118,13 @@ export async function startMainSession(
     rt.xaiMode = xaiMode;
     if (rt.loaded.diagnostic !== undefined) rt.notify(ctx, rt.loaded.diagnostic);
   }
-  // Inside a child the runner's bridge owns attachment; stay inert.
+  const settings = rt.loaded.settings;
+  registerSessionCleanup(rt, session);
+  // Children compact natively in the foreground and replay their own checkpoints too.
+  bindNativeSession(rt, session, settings);
+  // Inside a child the runner's bridge owns background attachment; no owner here.
   if (session.child) return;
   const state = bindParentSession(rt, ctx, session, start.childProvider);
-  const settings = rt.loaded.settings;
-  rt.serverSide.bind(session.sessionId);
-  rt.xaiServerSide.bind(session.sessionId);
-  bindAnthropicReplay(rt, session, settings);
-  bindXaiReplay(rt, session);
   const model = session.model;
   if (!backgroundCompactionActive(settings) || model === undefined) return;
   // A conflicting registry slot is the same "off" as the master switch.
@@ -151,22 +151,74 @@ function snapshotSession(ctx: ExtensionContext, generation: number): SessionSnap
   };
 }
 
-/** Register session cleanup, record the parent host and publish the child provider. */
+/** A session disposed without session_shutdown still releases its owner and native state. */
+function registerSessionCleanup(rt: HostRuntime, session: SessionSnapshot): void {
+  rt.unregisterResourceCleanup?.();
+  rt.unregisterResourceCleanup = registerSessionResourceCleanup((cleanupSessionId) => {
+    if (cleanupSessionId === undefined || cleanupSessionId === session.sessionId) shutdown(rt);
+  });
+}
+
+/** Record the parent host and publish the child provider. */
 function bindParentSession(
   rt: HostRuntime,
   ctx: ExtensionContext,
   session: SessionSnapshot,
   childProvider: ChildCompactionProvider,
 ): CompactionSessionState {
-  // A session disposed without session_shutdown still releases its owner.
-  rt.unregisterResourceCleanup?.();
-  rt.unregisterResourceCleanup = registerSessionResourceCleanup((cleanupSessionId) => {
-    if (cleanupSessionId === undefined || cleanupSessionId === session.sessionId) shutdown(rt);
-  });
   const state = rt.readState();
   rt.parent = { modelRegistry: session.registry, state, ctx };
   rt.unpublishProvider ??= publishChildCompactionProvider(childProvider);
   return state;
+}
+
+/**
+ * Bind this session's provider-native state (main session or subagent
+ * child): its server-side switches, its Anthropic and xAI replay bindings, and
+ * the refresher that restores them for a caller that knows only the session
+ * (the subagent bridge reattaching a child). State is keyed by session ID, so
+ * a child never resets the main session's.
+ */
+function bindNativeSession(
+  rt: HostRuntime,
+  session: SessionSnapshot,
+  settings: Readonly<BackgroundCompactionSettings>,
+): void {
+  const { sessionId, generation } = session;
+  rt.nativeSessions.add(sessionId);
+  rt.serverSide.bind(sessionId);
+  rt.xaiServerSide.bind(sessionId);
+  bindAnthropicReplay(rt, sessionId, session.sessionManager, settings);
+  bindXaiReplay(rt, sessionId, session.sessionManager);
+  rt.unregisterNativeRefresher = registerSessionNativeRefresher(
+    sessionId,
+    NATIVE_REFRESHER_ID,
+    (refreshCtx) => refreshNativeSession(rt, { sessionId, generation }, refreshCtx),
+  );
+}
+
+const NATIVE_REFRESHER_ID = "choco-pi-compaction:replay";
+
+/**
+ * Re-bind the session's replay projection to `ctx`'s session manager and
+ * re-arm the replay rewrite, keeping its captures. The committed checkpoint is
+ * read from the branch on every request, so a bound session replays it on the
+ * next one. Nothing happens once the binding generation moved or `ctx`
+ * belongs to another session.
+ */
+function refreshNativeSession(
+  rt: HostRuntime,
+  bound: { readonly sessionId: string; readonly generation: number },
+  ctx: NativeRefreshContext,
+): void {
+  if (rt.lifecycle !== bound.generation) return;
+  const sessionManager = ctx.sessionManager;
+  if (sessionManager.getSessionId() !== bound.sessionId) return;
+  rt.nativeSessions.add(bound.sessionId);
+  rt.serverSide.bind(bound.sessionId);
+  rt.xaiServerSide.bind(bound.sessionId);
+  bindAnthropicReplay(rt, bound.sessionId, sessionManager, rt.loaded.settings);
+  bindXaiReplay(rt, bound.sessionId, sessionManager);
 }
 
 async function attachMainOwner(
@@ -204,25 +256,31 @@ async function attachMainOwner(
 }
 
 /**
- * Capture and project this main session for Anthropic replay whenever either
+ * Capture and project this session for Anthropic replay whenever either
  * native path can produce a checkpoint: server-side mode (foreground) or the
- * background `anthropic-native` backend. Unbound at the next session start,
- * model change or shutdown.
+ * background `anthropic-native` backend. Rebinding replaces the session's
+ * entry (its captures are kept). Unbound at the next session start, model
+ * change or shutdown.
  */
 function bindAnthropicReplay(
   rt: HostRuntime,
-  session: SessionSnapshot,
+  sessionId: string,
+  sessionManager: ExtensionContext["sessionManager"],
   settings: Readonly<BackgroundCompactionSettings>,
 ): void {
   const serverSide = rt.anthropicMode === "server-side";
   if (!serverSide && !isBackendEnabled(ANTHROPIC_BACKEND_ID, settings)) return;
-  rt.unbindReplay = rt.replay.bindSession(session.sessionId, session.sessionManager);
+  rt.replayUnbinds.set(sessionId, rt.replay.bindSession(sessionId, sessionManager));
 }
 
-/** Capture and project this main session for xAI replay while xAI server-side mode is selected. */
-function bindXaiReplay(rt: HostRuntime, session: SessionSnapshot): void {
+/** Capture and project this session for xAI replay while xAI server-side mode is selected. */
+function bindXaiReplay(
+  rt: HostRuntime,
+  sessionId: string,
+  sessionManager: ExtensionContext["sessionManager"],
+): void {
   if (rt.xaiMode !== "server-side") return;
-  rt.unbindXaiReplay = rt.xaiReplay.bindSession(session.sessionId, session.sessionManager);
+  rt.xaiReplayUnbinds.set(sessionId, rt.xaiReplay.bindSession(sessionId, sessionManager));
 }
 
 async function resolveScopeOrRelease(
@@ -277,12 +335,7 @@ function mainOwnerSpec(
       return session.sessionManager.getLeafId() ?? "";
     },
     isOwnerCurrent: ownerCurrent,
-    allowAnthropic: true,
-    allowForeign: true,
-    xaiServerSide:
-      rt.xaiMode === "server-side" &&
-      binding.model.api === "openai-responses" &&
-      xaiGateAdmitsModel(rt.xaiGate, binding.model),
+    ...nativeLaneSwitches(rt, binding.model),
     report: (message) => rt.notify(rt.main?.lastCtx ?? ctx, message),
   };
 }

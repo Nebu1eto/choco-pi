@@ -235,7 +235,9 @@ function llmMessageKeys(message: Message): WireKey[] {
 function projectedEntryKeys(entry: ProjectedSessionEntry): WireKey[] {
   const keys = convertToLlm(entry.messages).flatMap(llmMessageKeys);
   const source = entry.sourceEntry;
-  if (source.type === "compaction" && isXaiDetails(source.details)) {
+  // Only the newest compaction is projected with messages (and sent as an item);
+  // an older one retained in the kept range is invisible and absent from the wire.
+  if (source.type === "compaction" && entry.messages.length > 0 && isXaiDetails(source.details)) {
     keys.push(wireKey("compaction", source.details.item.encrypted_content));
   }
   return keys;

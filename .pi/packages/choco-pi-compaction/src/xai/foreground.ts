@@ -3,9 +3,12 @@
  *
  * Answers the host's own `session_before_compact` for an admitted Grok model
  * with an opaque compaction item from `POST /v1/responses/compact`, cut at the
- * latest legal wire position at or before the host's cut. Any failure returns
+ * latest legal wire position at or before the host's cut. A failure returns
  * undefined so the local summarizer answers the same compaction; the first
- * fallback in a session is reported once. One attempt, never cancels.
+ * fallback in a session is reported once. A cancelled or auth-failed attempt
+ * instead answers `{ cancel: true }` so the host reports the failure
+ * (`foreground-failure.ts`). One attempt. Runs in main and subagent child
+ * sessions alike, reading only its own context and session state.
  */
 import type {
   ExtensionContext,
@@ -17,7 +20,13 @@ import type { AnthropicCapabilityGate } from "../anthropic/capability.ts";
 import type { AnthropicServerSideSession } from "../anthropic/mode.ts";
 import type { FailureReason, PreparationBudget, ProviderScope } from "../background/contract.ts";
 import { isStaleContextError } from "../lifecycle.ts";
-import { type CodexCompactionSnapshot, isChildSession, resolveOwner } from "../ownership.ts";
+import {
+  SURFACED_FAILURE_RESULT,
+  surfacedFailureMessage,
+  surfacesForegroundFailure,
+} from "../foreground-failure.ts";
+import { type CodexCompactionSnapshot, resolveOwner } from "../ownership.ts";
+import { retainableEntryIds } from "../retained-entries.ts";
 import { chooseLegalXaiCutEntry, runXaiCompaction, xaiCaptureMatchesScope } from "./backend.ts";
 import { xaiAuthModeOf, xaiGateAdmitsModel } from "./capability.ts";
 import type { XaiWireCapture } from "./capture.ts";
@@ -97,6 +106,12 @@ export function createXaiForegroundCompactHandler(
     if (run === undefined) return undefined;
     const attempt = await attemptCompaction(deps, run);
     if (attempt.kind === "compacted") return attempt.result;
+    if (attempt.kind === "fallback" && surfacesForegroundFailure(attempt.reason)) {
+      // Cancelled or auth-failed: the host fails this compaction instead of summarizing.
+      if (!isCurrent(deps, run)) return undefined;
+      notify(ctx, surfacedFailureMessage(attempt.reason));
+      return SURFACED_FAILURE_RESULT;
+    }
     if (attempt.kind === "fallback" && isCurrent(deps, run)) {
       if (deps.session.claimFallbackNotice(run.sessionId)) {
         notify(
@@ -121,7 +136,7 @@ function snapshotRun(
   });
   if (owner !== "xai-native") return undefined;
   const sessionId = readSessionId(ctx);
-  if (sessionId === undefined || isChildSession(sessionId)) return undefined;
+  if (sessionId === undefined) return undefined;
   deps.session.bind(sessionId);
   if (deps.session.isDisabled(sessionId)) return undefined;
   // Static policy first (either auth mode): an unsupported model or endpoint never reads credentials.
@@ -133,7 +148,7 @@ function snapshotRun(
     model,
     registry: ctx.modelRegistry,
     preparation: event.preparation,
-    branchEntryIds: event.branchEntries.map((entry) => entry.id),
+    branchEntryIds: retainableEntryIds(event.branchEntries),
     instructions: event.customInstructions,
     signal: event.signal,
   };

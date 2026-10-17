@@ -338,7 +338,7 @@ export function registerCodexEvents(
 
   pi.on("session_shutdown", async (_event, ctx) => {
     const sessionId = ctx.sessionManager.getSessionId();
-    background.stop();
+    background.stop(sessionId);
     elisionStates.delete(sessionId);
     runtime.cancelCacheKeepalive();
     resetRegisteredToolCapture(ctx);
@@ -404,8 +404,8 @@ export function registerCodexEvents(
     handleCodexAgentSettled(runtime, ui, ctx);
   });
   pi.on("before_provider_request", async (event, ctx) => {
-    const fence = background.fence();
     const sessionId = ctx.sessionManager.getSessionId();
+    const fence = background.fence(sessionId);
     state.cwd = ctx.cwd;
     if (!isBoundaryValue(event.payload)) return undefined;
     await background.refresh(ctx, fence.generation);
@@ -424,8 +424,8 @@ export function registerCodexEvents(
     rewriteCodexProviderHeaders(event.headers, ctx, state);
   });
   pi.on("session_before_compact", async (event, ctx) => {
-    const fence = background.fence();
     const sessionId = ctx.sessionManager.getSessionId();
+    const fence = background.fence(sessionId);
     state.cwd = ctx.cwd;
     if (!resolveCodexRuntimePlanForState(ctx, state).nativeCompaction) return undefined;
     const adopting = await willAdoptCodexBackgroundCheckpoint(sessionId, event);
@@ -436,10 +436,10 @@ export function registerCodexEvents(
     return handleCodexSessionBeforeCompact(event, ctx, state, pi);
   });
   pi.on("session_compact", async (event, ctx) => {
-    const fence = background.fence();
     const sessionId = ctx.sessionManager.getSessionId();
+    const fence = background.fence(sessionId);
     updateCodexBackgroundElision(elisionStates, sessionId, event.compactionEntry.id);
-    background.invalidateReplay();
+    background.invalidateReplay(sessionId);
     state.pendingPiCompactionNativeWindow = undefined;
     let nativeCompaction = false;
     const { findLatestCompactionEntry } = await loadCompactionDetails();

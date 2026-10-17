@@ -140,39 +140,52 @@ export async function writeTopLevelSetting(
 }
 
 /**
- * Session-scoped server-side switch. Once the provider rejects a replayed
- * block, server-side compaction stays off for the rest of that session and the
- * local summarizer handles every later compaction.
+ * Session-scoped server-side switch, one entry per bound session. Once the
+ * provider rejects a replayed block, server-side compaction stays off for the
+ * rest of that session and the local summarizer handles every later
+ * compaction. Sessions are independent: binding a subagent child never resets
+ * the main session's flags, and releasing one session leaves the others.
  */
 export class AnthropicServerSideSession {
-  private sessionId: string | undefined;
-  private disabledReason: string | undefined;
-  private fallbackNotified = false;
+  private readonly sessions = new Map<
+    string,
+    { disabledReason: string | undefined; fallbackNotified: boolean }
+  >();
 
-  /** Bind to a session; a different session ID clears every flag. */
+  /** Bind a session; an already bound session keeps its flags. */
   bind(sessionId: string): void {
-    if (this.sessionId === sessionId) return;
-    this.sessionId = sessionId;
-    this.disabledReason = undefined;
-    this.fallbackNotified = false;
+    if (this.sessions.has(sessionId)) return;
+    this.sessions.set(sessionId, { disabledReason: undefined, fallbackNotified: false });
   }
 
-  /** Whether `sessionId` is the bound session and server-side is off for it. */
+  /** Forget a session (shutdown); a later bind starts with fresh flags. */
+  release(sessionId: string): void {
+    this.sessions.delete(sessionId);
+  }
+
+  /** Whether `sessionId` is bound (diagnostics and tests). */
+  isBound(sessionId: string): boolean {
+    return this.sessions.has(sessionId);
+  }
+
+  /** Whether `sessionId` is bound and server-side is off for it. */
   isDisabled(sessionId: string): boolean {
-    return this.sessionId === sessionId && this.disabledReason !== undefined;
+    return this.sessions.get(sessionId)?.disabledReason !== undefined;
   }
 
-  /** Turn server-side off for the bound session; true only for the first call. */
+  /** Turn server-side off for a bound session; true only for the first call. */
   disable(sessionId: string, reason: string): boolean {
-    if (this.sessionId !== sessionId || this.disabledReason !== undefined) return false;
-    this.disabledReason = reason;
+    const entry = this.sessions.get(sessionId);
+    if (entry === undefined || entry.disabledReason !== undefined) return false;
+    entry.disabledReason = reason;
     return true;
   }
 
-  /** Claim the session's single fallback notice; true only for the first claim. */
+  /** Claim a bound session's single fallback notice; true only for the first claim. */
   claimFallbackNotice(sessionId: string): boolean {
-    if (this.sessionId !== sessionId || this.fallbackNotified) return false;
-    this.fallbackNotified = true;
+    const entry = this.sessions.get(sessionId);
+    if (entry === undefined || entry.fallbackNotified) return false;
+    entry.fallbackNotified = true;
     return true;
   }
 }

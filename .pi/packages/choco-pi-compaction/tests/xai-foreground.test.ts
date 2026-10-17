@@ -24,6 +24,7 @@ import {
   type AgentSession,
   type CompactionEntry,
   createAgentSession,
+  defineTool,
   DefaultResourceLoader,
   type ExtensionAPI,
   type ExtensionContext,
@@ -37,6 +38,10 @@ import { Value } from "typebox/value";
 
 import { buildBackgroundCompactionPreferencesSections } from "../../../extensions/lib/background-compaction-preferences.ts";
 import registerCompaction from "../src/index.ts";
+import {
+  refreshSessionNativeState,
+  sessionNativeRefreshers,
+} from "../src/background-host/native-refresh.ts";
 import { publishBackgroundCompactionPreferences } from "../src/preferences-section.ts";
 import {
   DEFAULT_XAI_COMPACTION_INSTRUCTIONS,
@@ -55,6 +60,13 @@ import type { XaiCompactionMode } from "../src/xai/mode.ts";
 import { BACKGROUND_OFF_SETTINGS_PATHS } from "./host-harness.ts";
 
 const API_KEY = "xai-foreground-non-secret-placeholder";
+
+/** Session IDs the (fake) subagent runner reports as live children. */
+const CHILD_IDS = new Set<string>();
+Object.defineProperty(globalThis, Symbol.for("pi-subagents:manager"), {
+  value: { isChildSessionId: (id: string) => CHILD_IDS.has(id) },
+  configurable: true,
+});
 const MODEL: Model<"openai-responses"> = {
   id: "grok-test-1",
   name: "Synthetic Grok",
@@ -131,6 +143,64 @@ function compactResponse(): Response {
   );
 }
 
+/** Tool the auto-compaction rig's model calls; each result is a distinct marker. */
+const STEP_TOOL = defineTool({
+  name: "step",
+  label: "step",
+  description: "deterministic step",
+  parameters: Type.Object({ label: Type.String() }),
+  async execute(_id, params) {
+    return { content: [{ type: "text", text: `XSTEP-RESULT-${params.label}` }], details: {} };
+  },
+});
+
+/** A `step` function call reporting `inputTokens` of context (drives the host threshold). */
+function toolCallResponse(label: string, inputTokens: number): Response {
+  const item = {
+    type: "function_call",
+    id: `fc_${label}`,
+    call_id: `call_${label}`,
+    name: "step",
+    arguments: JSON.stringify({ label }),
+  };
+  const frames: Frame[] = [
+    { type: "response.created", response: { id: `resp_${label}`, status: "in_progress" } },
+    {
+      type: "response.output_item.added",
+      output_index: 0,
+      item: { ...item, arguments: "", status: "in_progress" },
+    },
+    {
+      type: "response.function_call_arguments.delta",
+      output_index: 0,
+      item_id: item.id,
+      delta: item.arguments,
+    },
+    {
+      type: "response.output_item.done",
+      output_index: 0,
+      item: { ...item, status: "completed" },
+    },
+    {
+      type: "response.completed",
+      response: {
+        id: `resp_${label}`,
+        status: "completed",
+        usage: {
+          input_tokens: inputTokens,
+          output_tokens: 1,
+          total_tokens: inputTokens + 1,
+          input_tokens_details: { cached_tokens: 0 },
+        },
+      },
+    },
+  ];
+  return new Response(
+    frames.map((frame) => `event: ${frame.type}\ndata: ${JSON.stringify(frame)}\n\n`).join(""),
+    { status: 200, headers: { "content-type": "text/event-stream" } },
+  );
+}
+
 interface Sent {
   readonly url: string;
   readonly headers: Headers;
@@ -203,6 +273,10 @@ interface RigOptions {
   readonly lane: RecordingFetch;
   readonly mode?: XaiCompactionMode;
   readonly after?: readonly ExtensionFactory[];
+  /** Register the session as a subagent child before its extensions bind. */
+  readonly child?: boolean;
+  /** Host auto-compaction on (threshold at turn ends) and the `step` tool registered. */
+  readonly autoCompaction?: boolean;
 }
 
 async function createRig(options: RigOptions): Promise<Rig> {
@@ -228,12 +302,17 @@ async function createRig(options: RigOptions): Promise<Rig> {
     },
   });
   const settings = SettingsManager.inMemory({
-    compaction: { enabled: false, keepRecentTokens: 1, reserveTokens: 16_384 },
+    compaction: {
+      enabled: options.autoCompaction === true,
+      keepRecentTokens: 1,
+      reserveTokens: 16_384,
+    },
     retry: { enabled: false },
   });
   const notices: string[] = [];
   let captured: ExtensionContext | undefined;
   const extension = (pi: ExtensionAPI): void => {
+    if (options.autoCompaction === true) pi.registerTool(STEP_TOOL);
     pi.on("session_start", (_event, ctx) => {
       captured = ctx;
       ctx.ui.notify = (message) => {
@@ -270,6 +349,7 @@ async function createRig(options: RigOptions): Promise<Rig> {
   manager.appendMessage(assistantMessage("XG-PREFIX-B"));
   manager.appendMessage({ role: "user", content: "XG-KEPT-C", timestamp: 0 });
   manager.appendMessage(assistantMessage("XG-KEPT-D"));
+  if (options.child === true) CHILD_IDS.add(manager.getSessionId());
   const { session } = await createAgentSession({
     cwd: dir,
     agentDir: dir,
@@ -293,6 +373,7 @@ async function createRig(options: RigOptions): Promise<Rig> {
     async dispose() {
       session.dispose();
       releaseXaiSessionCaptures(sessionId);
+      CHILD_IDS.delete(sessionId);
       await rm(dir, { recursive: true, force: true });
     },
   };
@@ -546,3 +627,130 @@ test("the xAI Preferences row reaches the profile panel and applies in order", a
     await rig.dispose();
   }
 });
+
+test(
+  "a subagent child compacts natively and replays its own item; the main session is untouched",
+  { timeout: 60_000 },
+  async () => {
+    const mainForeground = textForeground();
+    const mainLane = recordingFetch(() => compactResponse());
+    const childForeground = textForeground();
+    const childLane = recordingFetch(() => compactResponse());
+    const main = await createRig({ foreground: mainForeground, lane: mainLane });
+    const child = await createRig({ foreground: childForeground, lane: childLane, child: true });
+    try {
+      await main.session.prompt("XG-MAIN-GO");
+      await child.session.prompt("XG-CHILD-GO");
+      await child.session.compact();
+      assert.equal(childLane.sent.length, 1, "the child's own compact request");
+      assert.ok(childLane.sent[0]?.text.includes("XG-PREFIX-A"));
+      assert.ok(isXaiDetails(compactions(child.manager)[0]?.details));
+      await child.session.prompt("XG-CHILD-NEXT");
+      assert.deepEqual(childForeground.sent.at(-1)?.body?.input[0], ITEM, "child replay");
+      assert.deepEqual(xaiTransportRefusals(child.manager.getSessionId()), []);
+      assert.deepEqual(noticesOf(child), []);
+
+      assert.equal(mainLane.sent.length, 0, "the main session made no request for the child");
+      assert.equal(compactions(main.manager).length, 0);
+      await main.session.compact();
+      assert.equal(mainLane.sent.length, 1);
+      assert.ok(isXaiDetails(compactions(main.manager)[0]?.details));
+      assert.deepEqual(noticesOf(main), []);
+    } finally {
+      await child.dispose();
+      await main.dispose();
+    }
+  },
+);
+
+test(
+  "the per-session refresh hook restores a reattached child's replay binding",
+  { timeout: 60_000 },
+  async () => {
+    const foreground = textForeground();
+    const lane = recordingFetch(() => compactResponse());
+    const rig = await createRig({ foreground, lane, child: true });
+    const sessionId = rig.manager.getSessionId();
+    try {
+      assert.ok(sessionNativeRefreshers(sessionId).includes("choco-pi-compaction:replay"));
+      // Detached state: the session's projection is gone, so captures cannot be mapped.
+      releaseXaiSessionCaptures(sessionId);
+      await rig.session.prompt("XG-UNMAPPED");
+      await rig.session.compact();
+      assert.equal(lane.sent.length, 0, "an unmapped capture cannot be compacted natively");
+      assert.equal(isXaiDetails(compactions(rig.manager).at(-1)?.details), false);
+
+      await refreshSessionNativeState(sessionId, rig.ctx());
+      await rig.session.prompt("XG-REMAPPED");
+      await rig.session.compact();
+      assert.equal(lane.sent.length, 1, "the restored binding maps the capture again");
+      assert.ok(isXaiDetails(compactions(rig.manager).at(-1)?.details));
+      await rig.session.prompt("XG-AFTER");
+      assert.deepEqual(foreground.sent.at(-1)?.body?.input[0], ITEM, "replayed after refresh");
+    } finally {
+      await rig.dispose();
+    }
+    assert.deepEqual(sessionNativeRefreshers(sessionId), [], "disposal unregisters the hook");
+  },
+);
+
+test(
+  "an auth-failed compact request fails the compaction instead of summarizing locally",
+  { timeout: 30_000 },
+  async () => {
+    const foreground = textForeground();
+    const lane = recordingFetch(
+      () => new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 }),
+    );
+    const rig = await createRig({ foreground, lane });
+    try {
+      await rig.session.prompt("XG-GO");
+      await assert.rejects(rig.session.compact(), /cancelled/u);
+      assert.equal(lane.sent.length, 1);
+      assert.equal(foreground.sent.length, 1, "no local summary after an auth failure");
+      assert.equal(compactions(rig.manager).length, 0);
+      const notices = noticesOf(rig);
+      assert.equal(notices.length, 1);
+      assert.match(notices[0] ?? "", /auth/u);
+    } finally {
+      await rig.dispose();
+    }
+  },
+);
+test(
+  "consecutive xAI compactions in a child tool loop advance the cut and never keep a compaction",
+  { timeout: 60_000 },
+  async () => {
+    const TURNS = 4;
+    const foreground = recordingFetch((index) =>
+      index < TURNS ? toolCallResponse(`t${index}`, 190_000) : textResponse("XG-DONE"),
+    );
+    const lane = recordingFetch(() => compactResponse());
+    const rig = await createRig({ foreground, lane, child: true, autoCompaction: true });
+    try {
+      await rig.session.prompt("XG-LOOP");
+      const branch = rig.manager.getBranch();
+      const position = new Map(branch.map((entry, index) => [entry.id, index]));
+      const native = compactions(rig.manager).filter((entry) => isXaiDetails(entry.details));
+      assert.ok(native.length >= 3, `three native compactions in a row (got ${native.length})`);
+      const kept = native.map((entry) => position.get(entry.firstKeptEntryId) ?? -1);
+      for (let index = 1; index < kept.length; index++) {
+        assert.ok(
+          (kept[index] ?? -1) > (kept[index - 1] ?? -1),
+          `firstKeptEntryId advances: ${kept.join(", ")}`,
+        );
+      }
+      for (const entry of native) {
+        const firstKept = branch.find((candidate) => candidate.id === entry.firstKeptEntryId);
+        assert.notEqual(firstKept?.type, "compaction");
+      }
+      for (let index = 2; index < lane.sent.length; index++) {
+        const label = `XSTEP-RESULT-t${index - 2}`;
+        assert.equal(lane.sent[index]?.text.includes(label), false, `${label} not resent`);
+      }
+      assert.deepEqual(noticesOf(rig), []);
+    } finally {
+      await rig.dispose();
+    }
+  },
+);

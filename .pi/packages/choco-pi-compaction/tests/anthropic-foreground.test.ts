@@ -24,6 +24,7 @@ import {
   type AgentSession,
   type CompactionEntry,
   createAgentSession,
+  defineTool,
   DefaultResourceLoader,
   type ExtensionAPI,
   ModelRuntime,
@@ -34,6 +35,7 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 
 import {
+  mapWireToEntries,
   parseBetaHeader,
   parseWireBody,
   releaseSessionCaptures,
@@ -48,6 +50,13 @@ import { mainOwnerKey } from "../src/ownership.ts";
 import { BACKGROUND_OFF_SETTINGS_PATHS } from "./host-harness.ts";
 
 const OAUTH_KEY = "sk-ant-oat01-foreground-non-secret-placeholder";
+
+/** Session IDs the (fake) subagent runner reports as live children. */
+const CHILD_IDS = new Set<string>();
+Object.defineProperty(globalThis, Symbol.for("pi-subagents:manager"), {
+  value: { isChildSessionId: (id: string) => CHILD_IDS.has(id) },
+  configurable: true,
+});
 const MODEL: Model<"anthropic-messages"> = {
   id: "claude-haiku-5-5",
   name: "Synthetic Haiku",
@@ -157,6 +166,41 @@ function errorResponse(status: number, error: JsonObject): Response {
   });
 }
 
+/** Tool the auto-compaction rig's model calls; each result is a distinct marker. */
+const STEP_TOOL = defineTool({
+  name: "step",
+  label: "step",
+  description: "deterministic step",
+  parameters: Type.Object({ label: Type.String() }),
+  async execute(_id, params) {
+    return { content: [{ type: "text", text: `STEP-RESULT-${params.label}` }], details: {} };
+  },
+});
+
+/** A `step` tool call reporting `inputTokens` of context (drives the host threshold). */
+function toolUseResponse(label: string, inputTokens: number): Response {
+  return sse([
+    messageStart(inputTokens),
+    {
+      type: "content_block_start",
+      index: 0,
+      content_block: { type: "tool_use", id: `toolu_${label}`, name: "step", input: {} },
+    },
+    {
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "input_json_delta", partial_json: JSON.stringify({ label }) },
+    },
+    { type: "content_block_stop", index: 0 },
+    {
+      type: "message_delta",
+      delta: { stop_reason: "tool_use", stop_sequence: null },
+      usage: { input_tokens: inputTokens, output_tokens: 1 },
+    },
+    { type: "message_stop" },
+  ]);
+}
+
 interface Sent {
   readonly headers: Headers;
   readonly text: string;
@@ -238,6 +282,10 @@ interface RigOptions {
   readonly apiKey?: string;
   readonly baseUrl?: string;
   readonly keepRecentTokens?: number;
+  /** Register the session as a subagent child before its extensions bind. */
+  readonly child?: boolean;
+  /** Host auto-compaction on (threshold at turn ends) and the `step` tool registered. */
+  readonly autoCompaction?: boolean;
   /** Background sidecar file and injected text summarizer. */
   readonly background?: {
     readonly sidecar: (dir: string) => Promise<string>;
@@ -275,7 +323,7 @@ async function createRig(options: RigOptions): Promise<Rig> {
   });
   const settings = SettingsManager.inMemory({
     compaction: {
-      enabled: false,
+      enabled: options.autoCompaction === true,
       keepRecentTokens: options.keepRecentTokens ?? 1,
       reserveTokens: 16_384,
     },
@@ -283,6 +331,7 @@ async function createRig(options: RigOptions): Promise<Rig> {
   });
   const notices: string[] = [];
   const extension = (pi: ExtensionAPI): void => {
+    if (options.autoCompaction === true) pi.registerTool(STEP_TOOL);
     pi.on("session_start", (_event, ctx) => {
       ctx.ui.notify = (message) => {
         notices.push(message);
@@ -319,6 +368,7 @@ async function createRig(options: RigOptions): Promise<Rig> {
   manager.appendMessage(assistantMessage("FG-PREFIX-B"));
   manager.appendMessage({ role: "user", content: "FG-KEPT-C", timestamp: 0 });
   manager.appendMessage(assistantMessage("FG-KEPT-D"));
+  if (options.child === true) CHILD_IDS.add(manager.getSessionId());
   const { session } = await createAgentSession({
     cwd: dir,
     agentDir: dir,
@@ -338,6 +388,7 @@ async function createRig(options: RigOptions): Promise<Rig> {
     async dispose() {
       session.dispose();
       releaseSessionCaptures(sessionId);
+      CHILD_IDS.delete(sessionId);
       await rm(dir, { recursive: true, force: true });
     },
   };
@@ -716,6 +767,149 @@ test(
       const latest = compactions(rig.manager).at(-1);
       assert.equal(isAnthropicDetails(latest?.details), false);
       assert.equal(noticesOf(rig).length, 1);
+    } finally {
+      await rig.dispose();
+    }
+  },
+);
+test(
+  "a subagent child compacts natively with its own session state; the main session is untouched",
+  { timeout: 60_000 },
+  async () => {
+    let rejectChild = false;
+    const childForeground = recordingFetch((index) => {
+      if (rejectChild) {
+        rejectChild = false;
+        return errorResponse(400, {
+          type: "invalid_request_error",
+          message: "synthetic signature rejection",
+          details: { error_code: "compaction_signature_invalid" },
+        });
+      }
+      return textResponse(index === 0 ? "FG-ANSWER" : `FG-LOCAL-SUMMARY-${index}`);
+    });
+    const childLane = recordingFetch(() => compactionResponse());
+    const mainForeground = textForeground();
+    const mainLane = recordingFetch(() => compactionResponse());
+    const main = await createRig({ foreground: mainForeground, lane: mainLane });
+    const child = await createRig({ foreground: childForeground, lane: childLane, child: true });
+    try {
+      await child.session.prompt("FG-CHILD-GO");
+      const result = await child.session.compact();
+      assert.equal(childLane.sent.length, 1, "the child's own lane request");
+      assert.equal(result.summary, BLOCK.content);
+      assert.ok(isAnthropicDetails(compactions(child.manager)[0]?.details));
+      // The child's replay binding sends its own checkpoint first.
+      await child.session.prompt("FG-CHILD-NEXT");
+      assert.deepEqual(childForeground.sent.at(-1)?.body?.messages[0], {
+        role: "assistant",
+        content: [BLOCK],
+      });
+      // A rejection turns server-side off for the child only.
+      rejectChild = true;
+      await child.session.prompt("FG-CHILD-REJECTED");
+      assert.equal(noticesOf(child).length, 1);
+      await child.session.compact();
+      assert.equal(childLane.sent.length, 1, "the disabled child summarizes locally");
+
+      assert.equal(mainLane.sent.length, 0, "the child never used the main session's lane");
+      await main.session.prompt("FG-MAIN-GO");
+      await main.session.compact();
+      assert.equal(mainLane.sent.length, 1, "the main session still compacts natively");
+      assert.ok(isAnthropicDetails(compactions(main.manager)[0]?.details));
+      assert.deepEqual(noticesOf(main), []);
+    } finally {
+      await child.dispose();
+      await main.dispose();
+    }
+  },
+);
+
+test(
+  "an auth-failed lane request fails the compaction instead of summarizing locally",
+  { timeout: 30_000 },
+  async () => {
+    const foreground = textForeground();
+    const lane = recordingFetch(() =>
+      errorResponse(401, { type: "authentication_error", message: "synthetic" }),
+    );
+    const rig = await createRig({ foreground, lane });
+    try {
+      await rig.session.prompt("FG-GO");
+      await assert.rejects(rig.session.compact(), /cancelled/u);
+      assert.equal(lane.sent.length, 1);
+      assert.equal(foreground.sent.length, 1, "no local summary after an auth failure");
+      assert.equal(compactions(rig.manager).length, 0);
+      const notices = noticesOf(rig);
+      assert.equal(notices.length, 1);
+      assert.match(notices[0] ?? "", /auth/u);
+    } finally {
+      await rig.dispose();
+    }
+  },
+);
+test(
+  "consecutive native compactions in a child tool loop advance the cut and shrink the window",
+  { timeout: 60_000 },
+  async () => {
+    const TURNS = 4;
+    // Each tool turn reports a context over the host threshold, so the host
+    // compacts at every turn end, between a tool result and the next request.
+    const foreground = recordingFetch((index) =>
+      index < TURNS ? toolUseResponse(`t${index}`, 190_000) : textResponse("FG-DONE", 10),
+    );
+    const lane = recordingFetch(() => compactionResponse());
+    const rig = await createRig({ foreground, lane, child: true, autoCompaction: true });
+    try {
+      await rig.session.prompt("FG-LOOP");
+      const branch = rig.manager.getBranch();
+      const position = new Map(branch.map((entry, index) => [entry.id, index]));
+      const native = compactions(rig.manager).filter((entry) => isAnthropicDetails(entry.details));
+      assert.ok(native.length >= 3, `three native compactions in a row (got ${native.length})`);
+      const kept = native.map((entry) => position.get(entry.firstKeptEntryId) ?? -1);
+      for (let index = 1; index < kept.length; index++) {
+        assert.ok(
+          (kept[index] ?? -1) > (kept[index - 1] ?? -1),
+          `firstKeptEntryId advances: ${kept.join(", ")}`,
+        );
+      }
+      for (const entry of native) {
+        const firstKept = branch.find((candidate) => candidate.id === entry.firstKeptEntryId);
+        assert.notEqual(
+          firstKept?.type,
+          "compaction",
+          "a compaction never keeps a compaction entry",
+        );
+      }
+      // Each lane request summarizes the newest window: an earlier tool result
+      // already summarized is not sent again, and no two requests repeat a cut.
+      const cuts = native.map((entry) =>
+        isAnthropicDetails(entry.details) ? entry.details.cut.cutEntryId : "",
+      );
+      assert.equal(new Set(cuts).size, cuts.length, `distinct cuts: ${cuts.join(", ")}`);
+      for (let index = 2; index < lane.sent.length; index++) {
+        const label = `STEP-RESULT-t${index - 2}`;
+        assert.equal(lane.sent[index]?.text.includes(label), false, `${label} not resent`);
+      }
+      assert.equal(foreground.sent.at(-1)?.text.includes("STEP-RESULT-t0"), false);
+      assert.deepEqual(noticesOf(rig), []);
+
+      // A session that already retains an older compaction entry (written
+      // before this fix) still maps: the invisible entry carries no wire key.
+      const [older, newer] = native.slice(-2);
+      assert.ok(older && newer);
+      const mapping = mapWireToEntries(
+        [],
+        [
+          {
+            sourceEntry: newer,
+            messages: rig.manager.buildSessionProjection().entries[0]?.messages ?? [],
+          },
+          { sourceEntry: older, messages: [] },
+        ],
+      );
+      assert.equal(mapping.projection[0]?.keyed, true, "the newest block is keyed");
+      assert.equal(mapping.projection[1]?.keyed, false, "an invisible older block is not");
     } finally {
       await rig.dispose();
     }

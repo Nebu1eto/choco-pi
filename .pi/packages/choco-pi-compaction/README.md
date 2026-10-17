@@ -31,9 +31,27 @@ combination on a bounded cooldown (transient ones after three in a row).
 In `server-side` mode the extension answers the host's own
 `session_before_compact` (threshold, overflow or `/compact`) for an admitted
 model with a signed `compaction` block from a separate lane, cut at the latest
-legal wire position at or before the host's cut. Any failure returns nothing,
-so the local reconciled summarizer answers the same compaction; the first
-fallback in a session is reported once. The handler never cancels.
+legal wire position at or before the host's cut. When the native path cannot
+answer, the handler returns nothing and the local reconciled summarizer answers
+the same compaction; the first fallback in a session is reported once. That
+covers an unconfigured or `choco-pi` mode, a model, endpoint or auth mode the
+gate does not admit, a cooling-down gate, no usable capture or legal cut, and
+provider refusals or outages (HTTP 4xx/5xx, 429/529, timeouts, malformed or
+oversized results).
+
+Two failures are not papered over by a local summary; they are reported as a
+warning and the handler answers `{ cancel: true }`, so the host fails the
+compaction ("Compaction cancelled") and emits `session_compact_failed`:
+
+- **cancelled**: the host aborted the compaction (`abortCompaction`, Escape)
+  before or during the native request;
+- **auth**: the provider's credentials could not be resolved, or the native
+  request was rejected with HTTP 401/403. The local summarizer would call the
+  same provider with the same login.
+
+The same rules apply to xAI server-side compaction (`compactionXai`).
+Throwing would not surface either case: Pi contains handler errors and then
+runs its own default summarizer.
 
 The replay binding (provider-stream capture, session projection and replay
 rewrite) is bound whenever the mode is `server-side`, and also when the
@@ -66,7 +84,7 @@ file and the problem. Settings are read at session start.
 | Key                                                     | Default                        | Meaning                                                                                                                                                                                                                           |
 | ------------------------------------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `enabled`                                               | `true`                         | Master switch. Every backend switch is ignored while it is off.                                                                                                                                                                   |
-| `text`                                                  | `true`                         | Text backend: summarizes the frozen prefix with the session model. Also the only backend subagent children use.                                                                                                                   |
+| `text`                                                  | `true`                         | Text backend: summarizes the frozen prefix with the session model. Subagent children select backends exactly as the main session does.                                                                                            |
 | `anthropicNative`                                       | `false`                        | Anthropic on-demand native compaction for combinations the foreground gate admits.                                                                                                                                                |
 | `codexNative`                                           | `false`                        | Codex native lane, supplied by the Codex package through the backend registry.                                                                                                                                                    |
 | `prepareAt`                                             | `0.7`                          | Start preparing when context tokens reach this fraction of the host trigger point (`contextWindow - reserveTokens`).                                                                                                              |
@@ -207,9 +225,13 @@ host event.
   preparation still in flight at the threshold is awaited (bounded by its own
   timeout) and adopted, rather than paying for a second summary in the
   foreground; only a failed or missing preparation leaves the host's own
-  summary to run. The threshold route also skips a native lane that cannot
-  serve (Anthropic without a wire capture, or a lane that just refused the
-  cut) in favor of the text lane. Overflow
+  summary to run. The threshold route also skips an Anthropic lane that
+  cannot serve (no wire capture, or it just refused the cut) in favor of the
+  text lane. The Codex lane never yields to text: a Codex-owned model is
+  compacted by Codex's own handler, so a refused Codex cut (for example
+  before the session's first recorded provider response) retries on the
+  Codex lane after the cooldown, and the host's Codex foreground compaction
+  covers the threshold meanwhile. Overflow
   recovery must shrink the next request before it can be sent at all, so an
   in-flight preparation is cancelled and the foreground summarizer recovers.
   `navigateTree({ summarize })` produces a branch summary, not a compaction.
@@ -245,13 +267,38 @@ Subagent children register their own owner through the runner bridge.
 
 ### Subagents
 
-The extension stays inert inside subagent child sessions. It publishes a child
-provider that the subagent runner uses to attach a separate text-backend
-coordinator to each child under `subagent-child:<childSessionId>`; the parent
-session is never touched. Children only use the text backend and have no idle
-route. When a child's cut has no retained entry yet, the coordinator appends a
-model-invisible `choco-compaction-anchor` entry through the runner bridge and
-keeps it.
+The main session publishes a child provider that the subagent runner uses to
+attach a separate coordinator to each child under
+`subagent-child:<childSessionId>`; the parent session's coordinator is never
+touched. A child gets the same provider-native lanes as the main session for
+the same model (`nativeLaneSwitches`): a Codex child prepares with
+`codex-native-v2`, an admitted Anthropic child with `anthropic-native`, an
+admitted xAI child in `server-side` mode leaves compaction to xAI's foreground
+path, and every other model uses `text`. The child's provider scope is resolved
+like the main session's (Anthropic auth mode, hashed Codex account); when its
+credentials cannot be read the native capability checks fail closed and the
+text lane serves the child. Children have no idle route. When a child's cut
+has no retained entry yet, the coordinator appends a model-invisible
+`choco-compaction-anchor` entry through the runner bridge and keeps it.
+
+Inside the child session itself the extension registers no coordinator, but
+it binds the child's own Anthropic and xAI replay (capture, projection,
+rewrite) and answers the child's host compactions with Anthropic or xAI
+server-side compaction under the same rules as the main session. Every piece
+of that state is keyed by session ID: a child's replay rejection turns
+server-side off for that child only. The Codex package binds each session
+under `ownerKeyFor(sessionId)` (the child key for a child), so a child
+coordinator finds its child's Codex binding even when the binding appears
+after the coordinator was created.
+
+`refreshSessionNativeState(sessionId, ctx)` re-runs every registered native
+restore for one session: this package re-binds the session's Anthropic and xAI
+replay to `ctx`'s session manager (keeping its captures), and the Codex package
+re-installs the session's committed Codex checkpoint. Contributors register
+through `registerSessionNativeRefresher` in a process-global table; a
+superseded or shut-down session's refresher does nothing. Only stale-context
+errors are contained. It is the hook for the subagent runner to call when a
+child reattaches after cancel or resume.
 
 ### Backends and the registry
 
@@ -298,7 +345,10 @@ session; the host's existing compaction path is then used.
   (first-party API, OAuth); other admitted families and the background lanes
   rely on the documented compatibility list.
 - A canceled or timed-out subagent run detaches its coordinator permanently;
-  resuming that child continues without background compaction.
+  resuming that child continues without background compaction unless the
+  runner reattaches one.
+- Child native lanes have offline test evidence only (fake transports and
+  fake subagent registry); no live child run has exercised them yet.
 - Runs started without `prompt()` (for example `sendMessage(..., { triggerTurn: true })`)
   skip the idle route and rely on boundary adoption.
 - Scheduling is per process; separate Pi processes do not share limits.

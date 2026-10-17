@@ -336,10 +336,13 @@ function observeUsage(
 }
 
 /**
- * The lane for the next threshold preparation. A native lane that cannot
- * serve (Anthropic without a wire capture of this session, or a native lane
- * whose last attempt refused the cut) yields to the text lane when enabled,
- * so the automatic route does not keep re-requesting a lane that refuses.
+ * The lane for the next threshold preparation. The Anthropic lane yields to
+ * the text lane (when enabled) while it cannot serve: no wire capture of this
+ * session yet, or its last attempt refused the cut. Any other native lane
+ * never yields: a Codex-owned model is compacted by Codex's own handler, so a
+ * text candidate adopted over Codex content is exactly what
+ * `selectBackendId` rules out. A refused Codex cut (no recorded provider
+ * response yet, for example) retries on the Codex lane after the cooldown.
  */
 export function thresholdLane(input: {
   readonly selected: string;
@@ -348,8 +351,8 @@ export function thresholdLane(input: {
   readonly status: CoordinatorStatus;
 }): string {
   const { selected, backendIds, hasAnthropicCapture, status } = input;
-  if (selected === TEXT_BACKEND_ID || !backendIds.includes(TEXT_BACKEND_ID)) return selected;
-  if (selected === ANTHROPIC_BACKEND_ID && !hasAnthropicCapture) return TEXT_BACKEND_ID;
+  if (selected !== ANTHROPIC_BACKEND_ID || !backendIds.includes(TEXT_BACKEND_ID)) return selected;
+  if (!hasAnthropicCapture) return TEXT_BACKEND_ID;
   const refusedHere =
     status.state === "failed" &&
     status.backendId === selected &&

@@ -287,7 +287,7 @@ function createRuntime(
       onDiagnostic: (ctx, diagnostic) => reportReplayDiagnostic(notify, ctx, diagnostic),
       onDisabled: (ctx, code) => reportServerSideDisabled(ctx, code),
     }),
-    unbindReplay: undefined,
+    replayUnbinds: new Map(),
     xaiMode: DEFAULT_XAI_COMPACTION_MODE,
     xaiServerSide,
     xaiGate: createXaiCapabilityGate({
@@ -302,7 +302,9 @@ function createRuntime(
       onDiagnostic: (ctx, diagnostic) => reportXaiReplayDiagnostic(notify, ctx, diagnostic),
       onDisabled: (ctx, code) => reportXaiServerSideDisabled(ctx, code),
     }),
-    unbindXaiReplay: undefined,
+    xaiReplayUnbinds: new Map(),
+    nativeSessions: new Set(),
+    unregisterNativeRefresher: undefined,
   };
   return rt;
 }

@@ -46,6 +46,25 @@ export function mainOwnerKey(sessionId: string): string {
   return `${MAIN_OWNER_KEY_PREFIX}${sessionId}`;
 }
 
+/**
+ * Owner key prefix of a subagent child's coordinator. Mirrors the subagent
+ * bridge's `CHILD_OWNER_KEY_PREFIX` (a test pins the two); it is not imported
+ * so this module, which the Codex package loads, never pulls the bridge in.
+ */
+export const CHILD_OWNER_KEY_PREFIX = "subagent-child:";
+
+/**
+ * Registry owner key of the coordinator that serves `sessionId`: the subagent
+ * bridge's `subagent-child:<sessionId>` for a live child session, otherwise
+ * {@link mainOwnerKey}. Backends that bind per session (Codex) key their
+ * bindings with this so a child coordinator finds its child's binding.
+ */
+export function ownerKeyFor(sessionId: string): string {
+  return isChildSession(sessionId)
+    ? `${CHILD_OWNER_KEY_PREFIX}${sessionId}`
+    : mainOwnerKey(sessionId);
+}
+
 const SUBAGENTS_MANAGER_KEY = Symbol.for("pi-subagents:manager");
 const ChildSessionRegistrySchema = Type.Object({
   isChildSessionId: Type.Function([Type.String()], Type.Boolean()),

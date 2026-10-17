@@ -7,7 +7,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { mainOwnerKey } from "../../../choco-pi-compaction/src/ownership.ts";
+import { ownerKeyFor } from "../../../choco-pi-compaction/src/ownership.ts";
+import { registerSessionNativeRefresher } from "../../../choco-pi-compaction/src/background-host/native-refresh.ts";
 import {
   backgroundSettingsPaths,
   loadBackgroundSettings,
@@ -46,7 +47,12 @@ import type { AdapterState } from "../adapter/activation/state.ts";
 import { extractAccountId } from "../providers/openai-codex/headers.ts";
 import { withLiveCtx } from "./live-context.ts";
 
-export const codexBackgroundOwnerKey = mainOwnerKey;
+/**
+ * Owner key a session's binding is published under: the main session's
+ * `main-session:<id>`, or a subagent child's `subagent-child:<id>`, so the
+ * child coordinator the runner bridge registers finds its child's binding.
+ */
+export const codexBackgroundOwnerKey = ownerKeyFor;
 
 const AdoptionSignalSchema = Type.Object(
   { version: Type.Literal(1), willAdopt: Type.Function([], Type.Unknown()) },
@@ -174,7 +180,73 @@ export interface CodexBackgroundBinding {
   readonly onInstalled: (sessionId: string, epoch: string) => void;
   readonly fetch?: typeof globalThis.fetch;
 }
-const bindings = new Map<string, CodexBackgroundBinding>();
+
+/** One published binding and the generation of the refresh that published it. */
+interface PublishedBinding {
+  readonly binding: CodexBackgroundBinding;
+  readonly generation: number;
+}
+interface BindingTable {
+  readonly bindings: Map<string, PublishedBinding>;
+  /** Process-wide generation counter: later session starts always compare greater. */
+  readonly counter: { value: number };
+}
+
+/**
+ * Bindings by owner key, process-global like the backend registry: the
+ * factory is registered once (first wins) and must see bindings published by
+ * every Codex registration, including a child session's, whichever module
+ * instance loaded it.
+ */
+const BINDING_TABLE_SYMBOL = Symbol.for("choco-pi:codex-background-bindings");
+const CounterSchema = Type.Object({ value: Type.Integer({ minimum: 0 }) });
+function isBindingTable<T>(value: T): value is T & BindingTable {
+  return (
+    Value.Check(Type.Object({ bindings: Type.Unknown(), counter: CounterSchema }), value) &&
+    value.bindings instanceof Map
+  );
+}
+function bindingTable(): BindingTable {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, BINDING_TABLE_SYMBOL);
+  const found: unknown = descriptor?.value;
+  if (isBindingTable(found)) return found;
+  if (descriptor !== undefined) throw new Error("Invalid Codex background binding table");
+  const table: BindingTable = { bindings: new Map(), counter: { value: 0 } };
+  Object.defineProperty(globalThis, BINDING_TABLE_SYMBOL, { value: table, configurable: true });
+  return table;
+}
+function nextGeneration(): number {
+  const counter = bindingTable().counter;
+  counter.value += 1;
+  return counter.value;
+}
+/** The current binding published under an owner key, if any. */
+export function publishedCodexBinding(ownerKey: string): CodexBackgroundBinding | undefined {
+  return bindingTable().bindings.get(ownerKey)?.binding;
+}
+/**
+ * Publish unless a newer, still-current binding holds the key: a stale
+ * refresh (older generation) never replaces a newer session start's binding.
+ */
+function publishBinding(ownerKey: string, published: PublishedBinding): boolean {
+  const bindings = bindingTable().bindings;
+  const existing = bindings.get(ownerKey);
+  if (
+    existing !== undefined &&
+    existing.binding !== published.binding &&
+    existing.generation > published.generation &&
+    existing.binding.isCurrent()
+  )
+    return false;
+  bindings.set(ownerKey, published);
+  return true;
+}
+/** Remove only this exact binding; a newer binding under the same key stays. */
+function withdrawBinding(ownerKey: string, binding: CodexBackgroundBinding | undefined): void {
+  if (binding === undefined) return;
+  const bindings = bindingTable().bindings;
+  if (bindings.get(ownerKey)?.binding === binding) bindings.delete(ownerKey);
+}
 
 /**
  * Register once per ID, yielding to any host-owned factory already registered.
@@ -193,7 +265,8 @@ export function registerCodexBackgroundFactory(enabled: boolean): boolean {
     let selected: CodexBackgroundBinding | undefined;
     let backend: Backend | undefined;
     const resolve = (): Backend | undefined => {
-      const binding = bindings.get(context.ownerKey);
+      // Looked up on every call: a binding published after this backend was created is used.
+      const binding = publishedCodexBinding(context.ownerKey);
       if (binding === undefined || !binding.isCurrent()) return undefined;
       if (binding !== selected) {
         selected = binding;
@@ -419,52 +492,107 @@ interface CodexBackgroundIntegrationOptions {
 
 /** Generation snapshot taken before a handler's first await. */
 interface CodexBackgroundFence {
+  readonly sessionId: string;
   readonly generation: number;
   /** False while background compaction is disabled or unbound: legacy paths are never fenced. */
   readonly engaged: boolean;
 }
 
-/** Controller state; every handler snapshots `generation` before its first await. */
-interface IntegrationState {
-  readonly options: CodexBackgroundIntegrationOptions;
-  generation: number;
-  activeSessionId: string | undefined;
-  active: CodexBackgroundBinding | undefined;
+/**
+ * One session's binding state. `begin` replaces the slot (a new generation);
+ * every refresh compares its expected generation and slot identity after each
+ * await, so a superseded refresh never writes into the replacement.
+ */
+interface SessionSlot {
+  readonly sessionId: string;
+  /** Owner key the session's binding is published under, fixed at begin. */
+  readonly ownerKey: string;
+  /** Process-unique: later begins (any registration) compare greater. */
+  readonly generation: number;
+  binding: CodexBackgroundBinding | undefined;
   replayEpoch: string | undefined;
   settingsSnapshot: CodexBackgroundSettings | undefined;
   incompatibleCheckpoint: boolean;
+  unregisterRefresher: (() => void) | undefined;
+}
+
+/** Controller state: one slot per session this registration serves. */
+interface IntegrationState {
+  readonly options: CodexBackgroundIntegrationOptions;
+  readonly sessions: Map<string, SessionSlot>;
   /** Settings diagnostics survive generation restarts so each session is told once. */
-  diagnosedSessionId: string | undefined;
-  /** Incompatibility warnings already shown to one session; a newly bound session starts empty. */
-  incompatibilityNotices: { readonly sessionId: string; readonly reasons: Set<string> } | undefined;
+  readonly diagnosed: Set<string>;
+  /** Incompatibility warnings already shown, per session. */
+  readonly incompatibilityNotices: Map<string, Set<string>>;
 }
 
-function unbindSession(state: IntegrationState, sessionId: string): void {
-  for (const cleanup of state.active?.cleanup ?? []) cleanup();
-  bindings.delete(codexBackgroundOwnerKey(sessionId));
-  state.active = undefined;
+function isSlotCurrent(state: IntegrationState, slot: SessionSlot): boolean {
+  return state.sessions.get(slot.sessionId) === slot;
 }
 
-function stopIntegration(state: IntegrationState): void {
-  state.generation += 1;
-  const { activeSessionId, active } = state;
-  if (
-    activeSessionId !== undefined &&
-    bindings.get(codexBackgroundOwnerKey(activeSessionId)) === active
-  )
-    bindings.delete(codexBackgroundOwnerKey(activeSessionId));
-  for (const cleanup of active?.cleanup ?? []) cleanup();
-  state.active = undefined;
-  state.activeSessionId = undefined;
-  state.replayEpoch = undefined;
-  state.settingsSnapshot = undefined;
-  state.incompatibleCheckpoint = false;
+function unbindSession(slot: SessionSlot): void {
+  const binding = slot.binding;
+  slot.binding = undefined;
+  for (const cleanup of binding?.cleanup ?? []) cleanup();
+  withdrawBinding(slot.ownerKey, binding);
+}
+
+/** Retire one slot: its binding, published entry and refresher; other sessions are untouched. */
+function retireSlot(state: IntegrationState, slot: SessionSlot): void {
+  if (isSlotCurrent(state, slot)) state.sessions.delete(slot.sessionId);
+  unbindSession(slot);
+  slot.unregisterRefresher?.();
+  slot.unregisterRefresher = undefined;
+  slot.replayEpoch = undefined;
+  slot.settingsSnapshot = undefined;
+  slot.incompatibleCheckpoint = false;
+}
+
+/** Session shutdown: retire only that session. Without an ID, every session (tests, teardown). */
+function stopIntegration(state: IntegrationState, sessionId?: string): void {
+  const slots =
+    sessionId === undefined ? [...state.sessions.values()] : [state.sessions.get(sessionId)];
+  for (const slot of slots) {
+    if (slot === undefined) continue;
+    retireSlot(state, slot);
+    state.diagnosed.delete(slot.sessionId);
+    state.incompatibilityNotices.delete(slot.sessionId);
+  }
 }
 
 function beginSession(state: IntegrationState, ctx: CodexBackgroundContext): number {
-  stopIntegration(state);
-  state.activeSessionId = ctx.sessionManager.getSessionId();
-  return state.generation;
+  const sessionId = ctx.sessionManager.getSessionId();
+  const previous = state.sessions.get(sessionId);
+  if (previous !== undefined) retireSlot(state, previous);
+  const slot: SessionSlot = {
+    sessionId,
+    ownerKey: codexBackgroundOwnerKey(sessionId),
+    generation: nextGeneration(),
+    binding: undefined,
+    replayEpoch: undefined,
+    settingsSnapshot: undefined,
+    incompatibleCheckpoint: false,
+    unregisterRefresher: undefined,
+  };
+  state.sessions.set(sessionId, slot);
+  // A reattached child (or any caller knowing only the session) re-runs the committed restore.
+  slot.unregisterRefresher = registerSessionNativeRefresher(
+    sessionId,
+    "codex-native",
+    (refreshCtx) => refreshSlotForReattach(state, slot, refreshCtx),
+  );
+  return slot.generation;
+}
+
+/** Re-install the committed checkpoint for this slot's generation; nothing once superseded. */
+async function refreshSlotForReattach(
+  state: IntegrationState,
+  slot: SessionSlot,
+  ctx: CodexBackgroundContext,
+): Promise<void> {
+  if (!isSlotCurrent(state, slot)) return;
+  slot.replayEpoch = undefined;
+  await refreshContainingStaleContext(state, ctx, slot.generation);
 }
 
 function reportSettingsDiagnostic(
@@ -473,8 +601,8 @@ function reportSettingsDiagnostic(
   sessionId: string,
   settings: CodexBackgroundSettings,
 ): void {
-  if (!settings.diagnostic || state.diagnosedSessionId === sessionId) return;
-  state.diagnosedSessionId = sessionId;
+  if (!settings.diagnostic || state.diagnosed.has(sessionId)) return;
+  state.diagnosed.add(sessionId);
   ctx.ui.notify(settings.diagnostic, "warning");
 }
 
@@ -485,10 +613,13 @@ function notifyIncompatibleOnce(
   sessionId: string,
   reason: string,
 ): void {
-  if (state.incompatibilityNotices?.sessionId !== sessionId)
-    state.incompatibilityNotices = { sessionId, reasons: new Set() };
-  if (state.incompatibilityNotices.reasons.has(reason)) return;
-  state.incompatibilityNotices.reasons.add(reason);
+  let reasons = state.incompatibilityNotices.get(sessionId);
+  if (reasons === undefined) {
+    reasons = new Set();
+    state.incompatibilityNotices.set(sessionId, reasons);
+  }
+  if (reasons.has(reason)) return;
+  reasons.add(reason);
   ctx.ui.notify(
     `Codex background checkpoint incompatible: ${reason}; using the host's existing path`,
     "warning",
@@ -498,20 +629,20 @@ function notifyIncompatibleOnce(
 /** Unbind, and fail closed to the host path when a committed background checkpoint exists. */
 function markIncompatible(
   state: IntegrationState,
+  slot: SessionSlot,
   ctx: CodexBackgroundContext,
   incompatibility: {
-    readonly sessionId: string;
     readonly hasBackgroundCheckpoint: boolean;
     readonly reason: string;
   },
 ): undefined {
-  const { sessionId, hasBackgroundCheckpoint, reason } = incompatibility;
-  unbindSession(state, sessionId);
-  state.replayEpoch = undefined;
+  const { hasBackgroundCheckpoint, reason } = incompatibility;
+  unbindSession(slot);
+  slot.replayEpoch = undefined;
   if (!hasBackgroundCheckpoint) return undefined;
-  state.incompatibleCheckpoint = true;
+  slot.incompatibleCheckpoint = true;
   state.options.state.pendingPiCompactionNativeWindow = undefined;
-  notifyIncompatibleOnce(state, ctx, sessionId, reason);
+  notifyIncompatibleOnce(state, ctx, slot.sessionId, reason);
   return undefined;
 }
 
@@ -580,7 +711,11 @@ interface BindingRequest {
   readonly blockImages: boolean;
   readonly isRefreshCurrent: () => boolean;
 }
-function createBinding(state: IntegrationState, request: BindingRequest): CodexBackgroundBinding {
+function createBinding(
+  state: IntegrationState,
+  slot: SessionSlot,
+  request: BindingRequest,
+): CodexBackgroundBinding {
   const { options } = state;
   const binding: CodexBackgroundBinding = {
     sessionId: request.sessionId,
@@ -592,29 +727,34 @@ function createBinding(state: IntegrationState, request: BindingRequest): CodexB
     state: options.state,
     cleanup: new Set(),
     blockImages: request.blockImages,
-    isCurrent: () => request.isRefreshCurrent() && state.active === binding,
+    isCurrent: () => request.isRefreshCurrent() && slot.binding === binding,
     onInstalled: (id, epoch) => {
-      state.replayEpoch = epoch;
+      if (slot.binding === binding) slot.replayEpoch = epoch;
       options.onInstalled(id, epoch);
     },
   };
   return binding;
 }
-function replaceBinding(state: IntegrationState, request: BindingRequest): CodexBackgroundBinding {
-  for (const cleanup of state.active?.cleanup ?? []) cleanup();
-  const binding = createBinding(state, request);
-  state.active = binding;
-  bindings.set(codexBackgroundOwnerKey(request.sessionId), binding);
+function replaceBinding(
+  state: IntegrationState,
+  slot: SessionSlot,
+  request: BindingRequest,
+): CodexBackgroundBinding {
+  unbindSession(slot);
+  const binding = createBinding(state, slot, request);
+  slot.binding = binding;
   return binding;
 }
 /** Preserve the binding object while its scope is unchanged: factory consumers close over it. */
-function bindScope(state: IntegrationState, request: BindingRequest): void {
+function bindScope(state: IntegrationState, slot: SessionSlot, request: BindingRequest): void {
   const reusable =
-    state.active !== undefined && sameBindingScope(state.active, request.scope)
-      ? state.active
+    slot.binding !== undefined && sameBindingScope(slot.binding, request.scope)
+      ? slot.binding
       : undefined;
-  const active = reusable ?? replaceBinding(state, request);
+  const active = reusable ?? replaceBinding(state, slot, request);
   active.runtime = request.runtime;
+  // Idempotent for the same binding; refused while a newer session start's binding is current.
+  publishBinding(slot.ownerKey, { binding: active, generation: slot.generation });
 }
 
 /** The replay incompatibility message, or undefined when the committed replay is usable. */
@@ -643,13 +783,14 @@ function replayIncompatibility(
 /** Install the committed checkpoint once per epoch; returns an incompatibility reason. */
 function restoreCommittedReplay(
   state: IntegrationState,
+  slot: SessionSlot,
   checkpoint: CommittedBackgroundCheckpoint | undefined,
   request: BindingRequest,
 ): string | undefined {
   if (checkpoint === undefined) return undefined;
   const incompatibility = replayIncompatibility(request.ctx, checkpoint, request);
   if (incompatibility !== undefined) return incompatibility;
-  if (state.replayEpoch === checkpoint.entryId) return undefined;
+  if (slot.replayEpoch === checkpoint.entryId) return undefined;
   const { details } = checkpoint;
   installCodexBackgroundCheckpoint({
     details,
@@ -662,7 +803,7 @@ function restoreCommittedReplay(
     currentScope: request.scope,
     state: state.options.state,
   });
-  state.replayEpoch = checkpoint.entryId;
+  slot.replayEpoch = checkpoint.entryId;
   state.options.onInstalled(request.sessionId, checkpoint.entryId);
   return undefined;
 }
@@ -708,24 +849,24 @@ async function refreshIntegration(
   const registry = ctx.modelRegistry;
   const cwd = ctx.cwd;
   const trusted = ctx.isProjectTrusted();
-  const current = (): boolean =>
-    state.generation === expectedGeneration && state.activeSessionId === sessionId;
-  if (!current()) return undefined;
+  const slot = state.sessions.get(sessionId);
+  if (slot === undefined || slot.generation !== expectedGeneration) return undefined;
+  const current = (): boolean => isSlotCurrent(state, slot);
   const settings =
-    state.settingsSnapshot ??
+    slot.settingsSnapshot ??
     (await (state.options.resolveSettings ?? resolveCodexBackgroundSettings)(cwd, trusted));
   if (!current()) return undefined;
-  state.settingsSnapshot = settings;
+  slot.settingsSnapshot = settings;
   reportSettingsDiagnostic(state, ctx, sessionId, settings);
   if (!settings.enabled) {
-    unbindSession(state, sessionId);
+    unbindSession(slot);
     return undefined;
   }
   const latest = resolveLatestNativeCompactionEntry(ctx.sessionManager.getBranch());
   const checkpoint = committedBackgroundCheckpoint(latest);
   const hasBackgroundCheckpoint = hasBackgroundCheckpointMarker(latest);
   const incompatible = (reason: string): undefined =>
-    markIncompatible(state, ctx, { sessionId, hasBackgroundCheckpoint, reason });
+    markIncompatible(state, slot, ctx, { hasBackgroundCheckpoint, reason });
   if (hasBackgroundCheckpoint && checkpoint === undefined)
     return incompatible("invalid checkpoint metadata");
   if (model === undefined || model.api !== "openai-codex-responses")
@@ -745,13 +886,12 @@ async function refreshIntegration(
     blockImages: settings.blockImages,
     isRefreshCurrent: current,
   };
-  bindScope(state, bindingRequest);
+  bindScope(state, slot, bindingRequest);
   registerCodexBackgroundFactory(true);
-  const replayFailure = restoreCommittedReplay(state, checkpoint, bindingRequest);
+  const replayFailure = restoreCommittedReplay(state, slot, checkpoint, bindingRequest);
   if (replayFailure !== undefined) return incompatible(replayFailure);
-  state.incompatibleCheckpoint = false;
-  if (state.incompatibilityNotices?.sessionId === sessionId)
-    state.incompatibilityNotices = undefined;
+  slot.incompatibleCheckpoint = false;
+  state.incompatibilityNotices.delete(sessionId);
   return scope;
 }
 
@@ -774,34 +914,43 @@ async function refreshContainingStaleContext(
 export function createCodexBackgroundIntegration(options: CodexBackgroundIntegrationOptions) {
   const state: IntegrationState = {
     options,
-    generation: 0,
-    activeSessionId: undefined,
-    active: undefined,
-    replayEpoch: undefined,
-    settingsSnapshot: undefined,
-    incompatibleCheckpoint: false,
-    diagnosedSessionId: undefined,
-    incompatibilityNotices: undefined,
+    sessions: new Map(),
+    diagnosed: new Set(),
+    incompatibilityNotices: new Map(),
   };
+  const slotGeneration = (sessionId: string): number | undefined =>
+    state.sessions.get(sessionId)?.generation;
   return {
     begin: (ctx: CodexBackgroundContext): number => beginSession(state, ctx),
-    fence: (): CodexBackgroundFence => ({
-      generation: state.generation,
-      engaged: state.active !== undefined || state.incompatibleCheckpoint,
-    }),
+    fence: (sessionId: string): CodexBackgroundFence => {
+      const slot = state.sessions.get(sessionId);
+      return {
+        sessionId,
+        generation: slot?.generation ?? 0,
+        engaged: slot !== undefined && (slot.binding !== undefined || slot.incompatibleCheckpoint),
+      };
+    },
     isStale: (snapshot: CodexBackgroundFence): boolean =>
-      snapshot.engaged && state.generation !== snapshot.generation,
-    isGenerationCurrent: (expected: number): boolean => state.generation === expected,
+      snapshot.engaged && slotGeneration(snapshot.sessionId) !== snapshot.generation,
+    /** Generations are process-unique, so a generation identifies its session's slot. */
+    isGenerationCurrent: (expected: number): boolean =>
+      [...state.sessions.values()].some((slot) => slot.generation === expected),
     requestState: (adapterState: AdapterState, sessionId: string) =>
       codexBackgroundRequestState(
         adapterState,
-        state.activeSessionId === sessionId && state.incompatibleCheckpoint,
+        state.sessions.get(sessionId)?.incompatibleCheckpoint === true,
       ),
-    invalidateReplay: () => {
-      state.replayEpoch = undefined;
+    invalidateReplay: (sessionId: string) => {
+      const slot = state.sessions.get(sessionId);
+      if (slot !== undefined) slot.replayEpoch = undefined;
     },
     refresh: (ctx: CodexBackgroundContext, expectedGeneration?: number) =>
-      refreshContainingStaleContext(state, ctx, expectedGeneration ?? state.generation),
-    stop: () => stopIntegration(state),
+      refreshContainingStaleContext(
+        state,
+        ctx,
+        expectedGeneration ?? slotGeneration(ctx.sessionManager.getSessionId()) ?? 0,
+      ),
+    /** Retire one session (session_shutdown); without an ID, every session. */
+    stop: (sessionId?: string) => stopIntegration(state, sessionId),
   };
 }

@@ -722,13 +722,13 @@ test("an incompatible checkpoint warns once per session and again for a newly bo
   const warnings = () => setup.diagnostics.filter((message) => /incompatible/.test(message));
   controller.begin(setup.binding.ctx);
   assert.equal(await controller.refresh(setup.binding.ctx), undefined);
-  assert.equal(controller.fence().engaged, true);
+  assert.equal(controller.fence(setup.manager.getSessionId()).engaged, true);
   assert.equal(await controller.refresh(setup.binding.ctx), undefined);
-  assert.equal(controller.fence().engaged, true);
+  assert.equal(controller.fence(setup.manager.getSessionId()).engaged, true);
   // model_select and session_tree restart the generation for the same session.
   controller.begin(setup.binding.ctx);
   assert.equal(await controller.refresh(setup.binding.ctx), undefined);
-  assert.equal(controller.fence().engaged, true);
+  assert.equal(controller.fence(setup.manager.getSessionId()).engaged, true);
   assert.equal(warnings().length, 1);
   assert.match(warnings()[0] ?? "", /incompatible.*account/);
   const previousSession = setup.manager.getSessionId();
@@ -739,7 +739,7 @@ test("an incompatible checkpoint warns once per session and again for a newly bo
   cleanupSessions.add(setup.manager.getSessionId());
   controller.begin(setup.binding.ctx);
   assert.equal(await controller.refresh(setup.binding.ctx), undefined);
-  assert.equal(controller.fence().engaged, true);
+  assert.equal(controller.fence(setup.manager.getSessionId()).engaged, true);
   assert.equal(warnings().length, 2);
   controller.stop();
 });

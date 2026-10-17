@@ -301,8 +301,14 @@ export interface XaiReplayBinderOptions {
 }
 
 export interface XaiReplayBinder {
+  /**
+   * Capture and project `sessionId` and activate replay for it; returns the
+   * unbind. Rebinding a bound session replaces its projection source and keeps
+   * its captures; only the newest binding's unbind releases them.
+   */
   bindSession(sessionId: string, sessionManager: SessionSource): () => void;
   readonly active: () => boolean;
+  readonly isBound: (sessionId: string) => boolean;
   /** The `before_provider_request` handler; register it last. */
   readonly handler: (
     event: BeforeProviderRequestEvent,
@@ -315,7 +321,8 @@ export function createXaiReplayBinder(
   options: XaiReplayBinderOptions,
 ): XaiReplayBinder {
   let captureRegistered = false;
-  let boundSession: string | undefined;
+  /** Bound sessions; the token identifies the newest binding of each. */
+  const bound = new Map<string, object>();
 
   const disable = (ctx: ExtensionContext, sessionId: string, code: string): void => {
     if (options.session.disable(sessionId, code)) options.onDisabled(ctx, code);
@@ -328,15 +335,17 @@ export function createXaiReplayBinder(
         registerXaiCapture(pi, provider, options.capture ?? {});
       }
     }
-    boundSession = sessionId;
+    const token = {};
+    bound.set(sessionId, token);
     const unbind = bindXaiSessionProjection(
       sessionId,
       () => sessionManager.buildSessionProjection().entries,
     );
     return () => {
       unbind();
+      if (bound.get(sessionId) !== token) return;
+      bound.delete(sessionId);
       releaseXaiSessionCaptures(sessionId);
-      if (boundSession === sessionId) boundSession = undefined;
     };
   };
 
@@ -344,8 +353,8 @@ export function createXaiReplayBinder(
     event: BeforeProviderRequestEvent,
     ctx: ExtensionContext,
   ): XaiWireBody | undefined => {
-    if (boundSession === undefined) return undefined;
     const sessionId = ctx.sessionManager.getSessionId();
+    if (!bound.has(sessionId)) return undefined;
     // Server-side is off for this session: the host's placeholder summary is sent instead.
     if (options.session.isDisabled(sessionId)) return undefined;
     const rewritten = createXaiReplayRewriteHandler({
@@ -358,7 +367,12 @@ export function createXaiReplayBinder(
     return rewritten;
   };
 
-  return { bindSession, active: () => boundSession !== undefined, handler };
+  return {
+    bindSession,
+    active: () => bound.size > 0,
+    isBound: (sessionId) => bound.has(sessionId),
+    handler,
+  };
 }
 
 function rejectionObserver(

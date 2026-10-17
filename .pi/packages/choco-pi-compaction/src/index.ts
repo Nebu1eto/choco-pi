@@ -50,10 +50,18 @@ export {
 } from "./extension.ts";
 export { EMPTY_NEXT_STEPS, normalizeSummary } from "./normalize.ts";
 export {
+  type NativeRefreshContext,
+  refreshSessionNativeState,
+  registerSessionNativeRefresher,
+  type SessionNativeRefresher,
+} from "./background-host/native-refresh.ts";
+export {
+  CHILD_OWNER_KEY_PREFIX,
   type CodexCompactionSnapshot,
   type CompactionOwner,
   isChildSession,
   mainOwnerKey,
+  ownerKeyFor,
   resolveOwner,
 } from "./ownership.ts";
 export {
@@ -156,7 +164,10 @@ export default function registerCompaction(
     if (adopted !== undefined) return adopted;
     // A child's runner bridge commits its own adoption after this handler.
     if (await background.childAdopts(event, ctx)) return undefined;
-    // Anthropic or xAI server-side compaction; any failure falls through to the summarizer.
+    // Anthropic or xAI server-side compaction (main and child sessions). Unconfigured,
+    // unadmitted or failed attempts fall through to the summarizer; a cancelled or
+    // auth-failed one answers { cancel: true } so the host reports the failure.
+    // The summarizer is the last resort, so precedence stays: background, child, native, local.
     const native = await background.foregroundCompact(event, ctx);
     if (native !== undefined) return native;
     return summarize(event, ctx);

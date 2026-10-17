@@ -225,7 +225,13 @@ function llmMessageKeys(message: Message): WireKey[] {
 function projectedEntryKeys(entry: ProjectedSessionEntry): WireKey[] {
   const keys = convertToLlm(entry.messages).flatMap(llmMessageKeys);
   const source = entry.sourceEntry;
-  if (source.type === "compaction" && isAnthropicDetails(source.details)) {
+  // Only the newest compaction is projected with messages (and sent as a block);
+  // an older one retained in the kept range is invisible and absent from the wire.
+  if (
+    source.type === "compaction" &&
+    entry.messages.length > 0 &&
+    isAnthropicDetails(source.details)
+  ) {
     keys.push(key("compaction", source.details.block.signature));
   }
   return keys;

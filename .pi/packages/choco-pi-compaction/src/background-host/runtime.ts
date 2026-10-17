@@ -91,8 +91,8 @@ export interface HostRuntime {
   readonly foregroundGate: AnthropicCapabilityGate;
   /** Capture, projection and replay rewrite shared by foreground and background. */
   readonly replay: AnthropicReplayBinder;
-  /** Unbinds the current session's replay binding. */
-  unbindReplay: (() => void) | undefined;
+  /** Unbind of each session's Anthropic replay binding, by session ID. */
+  readonly replayUnbinds: Map<string, () => void>;
   /** xAI compaction mode read at session start. */
   xaiMode: XaiCompactionMode;
   /** Session-scoped xAI server-side switch (disabled after a replay refusal or rejection). */
@@ -101,7 +101,12 @@ export interface HostRuntime {
   readonly xaiGate: AnthropicCapabilityGate;
   /** xAI capture, projection and replay rewrite. */
   readonly xaiReplay: XaiReplayBinder;
-  unbindXaiReplay: (() => void) | undefined;
+  /** Unbind of each session's xAI replay binding, by session ID. */
+  readonly xaiReplayUnbinds: Map<string, () => void>;
+  /** Sessions bound in `serverSide`/`xaiServerSide`; released at shutdown. */
+  readonly nativeSessions: Set<string>;
+  /** Removes this registration's per-session native refresher. */
+  unregisterNativeRefresher: (() => void) | undefined;
 }
 
 export function isCurrent(rt: HostRuntime, owner: MainOwner): boolean {
@@ -157,6 +162,11 @@ export function shutdown(rt: HostRuntime): void {
   rt.lifecycle += 1;
   teardownMain(rt);
   unbindReplay(rt);
+  for (const sessionId of rt.nativeSessions) {
+    rt.serverSide.release(sessionId);
+    rt.xaiServerSide.release(sessionId);
+  }
+  rt.nativeSessions.clear();
   rt.parent = undefined;
   const unregister = rt.unregisterResourceCleanup;
   rt.unregisterResourceCleanup = undefined;
@@ -170,10 +180,12 @@ export function shutdown(rt: HostRuntime): void {
 }
 
 export function unbindReplay(rt: HostRuntime): void {
-  const unbind = rt.unbindReplay;
-  rt.unbindReplay = undefined;
-  unbind?.();
-  const unbindXai = rt.unbindXaiReplay;
-  rt.unbindXaiReplay = undefined;
-  unbindXai?.();
+  const unregister = rt.unregisterNativeRefresher;
+  rt.unregisterNativeRefresher = undefined;
+  unregister?.();
+  for (const unbinds of [rt.replayUnbinds, rt.xaiReplayUnbinds]) {
+    const pending = [...unbinds.values()];
+    unbinds.clear();
+    for (const unbind of pending) unbind();
+  }
 }

@@ -4,9 +4,12 @@
  * Answers the host's own `session_before_compact` (threshold, overflow or
  * `/compact`) for an admitted Anthropic model with a signed `compaction` block
  * from the isolated lane, cut at the latest legal wire position at or before
- * the host's cut. Any failure returns undefined so the local reconciled
+ * the host's cut. A failure returns undefined so the local reconciled
  * summarizer answers the same compaction; the first fallback in a session is
- * reported once. The handler never cancels and never produces a second result.
+ * reported once. A cancelled or auth-failed attempt instead answers
+ * `{ cancel: true }` so the host reports the failure (`foreground-failure.ts`).
+ * The handler never produces a second result. It runs in main and subagent
+ * child sessions alike and reads only its own context and session state.
  */
 import type {
   ExtensionContext,
@@ -17,7 +20,13 @@ import type {
 import { resolveMaxTokens } from "../budget.ts";
 import type { FailureReason, PreparationBudget, ProviderScope } from "../background/contract.ts";
 import { isStaleContextError } from "../lifecycle.ts";
-import { type CodexCompactionSnapshot, isChildSession, resolveOwner } from "../ownership.ts";
+import {
+  SURFACED_FAILURE_RESULT,
+  surfacedFailureMessage,
+  surfacesForegroundFailure,
+} from "../foreground-failure.ts";
+import { type CodexCompactionSnapshot, resolveOwner } from "../ownership.ts";
+import { retainableEntryIds } from "../retained-entries.ts";
 import {
   type AnthropicBackendDeps,
   captureMatchesWireScope,
@@ -108,6 +117,12 @@ export function createForegroundCompactHandler(
     if (run === undefined) return undefined;
     const attempt = await attemptCompaction(deps, run);
     if (attempt.kind === "compacted") return attempt.result;
+    if (attempt.kind === "fallback" && surfacesForegroundFailure(attempt.reason)) {
+      // Cancelled or auth-failed: the host fails this compaction instead of summarizing.
+      if (!isCurrent(deps, run)) return undefined;
+      notify(ctx, surfacedFailureMessage(attempt.reason));
+      return SURFACED_FAILURE_RESULT;
+    }
     if (attempt.kind === "fallback" && isCurrent(deps, run)) {
       if (deps.session.claimFallbackNotice(run.sessionId)) {
         notify(
@@ -132,7 +147,7 @@ function snapshotRun(
   });
   if (owner !== "anthropic-native") return undefined;
   const sessionId = readSessionId(ctx);
-  if (sessionId === undefined || isChildSession(sessionId)) return undefined;
+  if (sessionId === undefined) return undefined;
   deps.session.bind(sessionId);
   if (deps.session.isDisabled(sessionId)) return undefined;
   // Static policy first: an unsupported model or endpoint never reads credentials.
@@ -150,7 +165,7 @@ function snapshotRun(
     model,
     registry: ctx.modelRegistry,
     preparation: event.preparation,
-    branchEntryIds: event.branchEntries.map((entry) => entry.id),
+    branchEntryIds: retainableEntryIds(event.branchEntries),
     instructions: event.customInstructions,
     signal: event.signal,
   };
@@ -221,7 +236,8 @@ async function attemptCompaction(
   const auth = await run.registry.getApiKeyAndHeaders(run.model);
   if (!isCurrent(deps, run)) return ABSTAIN;
   if (run.signal.aborted) return fallback("canceled");
-  if (!auth.ok) return ABSTAIN;
+  // No usable credentials: the local summarizer would call the same provider with them.
+  if (!auth.ok) return fallback("auth");
   const scope: ProviderScope = {
     provider: run.model.provider,
     model: run.model.id,

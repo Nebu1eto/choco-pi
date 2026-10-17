@@ -95,10 +95,16 @@ export interface AnthropicReplayBinderOptions {
 }
 
 export interface AnthropicReplayBinder {
-  /** Capture and project `sessionId` and activate replay; returns the unbind. */
+  /**
+   * Capture and project `sessionId` and activate replay for it; returns the
+   * unbind. Binding an already bound session replaces its projection source
+   * and keeps its captures; only the newest binding's unbind releases them.
+   */
   bindSession(sessionId: string, sessionManager: SessionSource): () => void;
-  /** Whether a session is bound (replay active). */
+  /** Whether any session is bound (replay active). */
   readonly active: () => boolean;
+  /** Whether this session is bound. */
+  readonly isBound: (sessionId: string) => boolean;
   /** The `before_provider_request` handler; register it last. */
   readonly handler: (
     event: BeforeProviderRequestEvent,
@@ -111,7 +117,8 @@ export function createAnthropicReplayBinder(
   options: AnthropicReplayBinderOptions,
 ): AnthropicReplayBinder {
   let captureRegistered = false;
-  let boundSession: string | undefined;
+  /** Bound sessions; the token identifies the newest binding of each. */
+  const bound = new Map<string, object>();
 
   const bindSession = (sessionId: string, sessionManager: SessionSource): (() => void) => {
     if (!captureRegistered) {
@@ -120,15 +127,18 @@ export function createAnthropicReplayBinder(
         registerAnthropicCapture(pi, provider, options.capture ?? {});
       }
     }
-    boundSession = sessionId;
+    const token = {};
+    bound.set(sessionId, token);
     const unbind = bindSessionProjection(
       sessionId,
       () => sessionManager.buildSessionProjection().entries,
     );
     return () => {
       unbind();
+      // A newer binding of the same session keeps its projection and captures.
+      if (bound.get(sessionId) !== token) return;
+      bound.delete(sessionId);
       releaseSessionCaptures(sessionId);
-      if (boundSession === sessionId) boundSession = undefined;
     };
   };
 
@@ -136,8 +146,8 @@ export function createAnthropicReplayBinder(
     event: BeforeProviderRequestEvent,
     ctx: ExtensionContext,
   ): WireBody | undefined => {
-    if (boundSession === undefined) return undefined;
     const sessionId = ctx.sessionManager.getSessionId();
+    if (!bound.has(sessionId)) return undefined;
     // Server-side is off for this session: the host's summary text is sent instead.
     if (options.session.isDisabled(sessionId)) return undefined;
     const rewritten = createReplayRewriteHandler({
@@ -149,7 +159,12 @@ export function createAnthropicReplayBinder(
     return rewritten;
   };
 
-  return { bindSession, active: () => boundSession !== undefined, handler };
+  return {
+    bindSession,
+    active: () => bound.size > 0,
+    isBound: (sessionId) => bound.has(sessionId),
+    handler,
+  };
 }
 
 function rejectionObserver(

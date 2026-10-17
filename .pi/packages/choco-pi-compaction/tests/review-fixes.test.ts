@@ -43,7 +43,7 @@ test("the typed /compact bridge keeps every live registration and releases only 
     releaseCompactCommandBridge(child);
   }
 });
-test("the threshold route falls back from a native lane that cannot serve to the text lane", () => {
+test("the threshold route falls back from an Anthropic lane that cannot serve to the text lane", () => {
   const idle = { ownerKey: "k", ownerGeneration: 1, state: "idle" as const };
   const lanes = ["text", "anthropic-native", "codex-native-v2"];
   assert.equal(
@@ -68,28 +68,39 @@ test("the threshold route falls back from a native lane that cannot serve to the
   const refused = {
     ...idle,
     state: "failed" as const,
-    backendId: "codex-native-v2",
+    backendId: "anthropic-native",
     reason: "no-legal-cut" as const,
   };
   assert.equal(
     thresholdLane({
-      selected: "codex-native-v2",
+      selected: "anthropic-native",
       backendIds: lanes,
       hasAnthropicCapture: true,
       status: refused,
     }),
     "text",
-    "the native lane just refused the cut",
+    "the Anthropic lane just refused the cut",
   );
-  const throttled = { ...refused, reason: "429" as const };
+  const codexRefused = { ...refused, backendId: "codex-native-v2" };
   assert.equal(
     thresholdLane({
       selected: "codex-native-v2",
       backendIds: lanes,
       hasAnthropicCapture: true,
-      status: throttled,
+      status: codexRefused,
     }),
     "codex-native-v2",
+    "a Codex-owned model never yields to text; Codex's handler owns it",
+  );
+  const throttled = { ...refused, reason: "429" as const };
+  assert.equal(
+    thresholdLane({
+      selected: "anthropic-native",
+      backendIds: lanes,
+      hasAnthropicCapture: true,
+      status: throttled,
+    }),
+    "anthropic-native",
     "a transport failure retries the same lane after its cooldown",
   );
   assert.equal(
