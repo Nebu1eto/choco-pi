@@ -1254,7 +1254,7 @@ model-switch badge gating, and runner loader installation; `focus-mode.test.ts`
 expectations include the new metadata.
 `daybreak-bridge.ts` declares its own outcome union and must be kept in step with
 the codex package's `daybreak-types.ts` (`model-not-supported` was added on
-2026-10-08).
+2026-10-08; `security-key-required` on 2026-10-17).
 
 The independent outcome union now also includes `pending`, matching the Codex
 controller's pre-lookup state. Focused `/daybreak` status uses `pending` when no

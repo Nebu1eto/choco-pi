@@ -83,6 +83,7 @@ const OutcomeSchema = Type.Union([
   Type.Literal("lookup-failed"),
   Type.Literal("model-not-supported"),
   Type.Literal("auth-not-eligible"),
+  Type.Literal("security-key-required"),
 ]);
 const StateSchema = Type.Object({
   sessionId: Type.String(),
@@ -312,6 +313,10 @@ async function resolveTicket(record: TicketRecord): Promise<CodexDaybreakDecisio
   if (record.isCurrent?.() === false || !ownerCurrent(owner.controller, checked))
     return publish(owner, checked);
   const result = await lookupCodexDaybreakEntitlement(account, credentials, record.turnedOn);
+  // The only verified_access answer that blocks: no grant, and OpenAI requires a hardware
+  // security key sign-in for this credential. Re-login replaces the token and the cache.
+  if (result.entitlement === "security-key-required")
+    return publish(owner, decisionFrom(sessionId, state, "security-key-required"));
   const preferred: DaybreakTargetProgram =
     result.entitlement === "red" ? "daybreak_red" : "daybreak_blue";
   const current = decisionFrom(sessionId, state, "off");

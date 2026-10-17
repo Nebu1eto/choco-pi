@@ -271,6 +271,10 @@ test("status text distinguishes every outcome", () => {
   assert.equal(daybreakStatusValue({ ...base, outcome: "red" }), "on");
   assert.match(daybreakStatusValue({ ...base, outcome: "not-granted" }), /not granted/);
   assert.match(daybreakStatusValue({ ...base, outcome: "auth-not-eligible" }), /not eligible/);
+  assert.match(
+    daybreakStatusValue({ ...base, outcome: "security-key-required" }),
+    /hardware security key \(\/login openai-codex\)/,
+  );
   assert.match(daybreakStatusValue(base), /lookup failed/);
   assert.equal(
     daybreakStatusValue({ ...base, outcome: "pending" }),

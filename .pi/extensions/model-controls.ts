@@ -114,6 +114,7 @@ const DAYBREAK_OUTCOMES = new Set<RuntimeValue>([
   "lookup-failed",
   "model-not-supported",
   "auth-not-eligible",
+  "security-key-required",
 ]);
 
 function isDaybreakOutcome(value: RuntimeValue): value is DaybreakOutcome {
@@ -129,6 +130,7 @@ const DAYBREAK_BADGES = {
   "lookup-failed": "daybreak lookup failed",
   "model-not-supported": "daybreak unavailable",
   "auth-not-eligible": "daybreak auth ineligible",
+  "security-key-required": "daybreak needs security key",
 } satisfies Record<DaybreakOutcome, string>;
 
 /**

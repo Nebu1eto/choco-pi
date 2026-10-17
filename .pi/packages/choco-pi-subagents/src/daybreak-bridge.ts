@@ -9,7 +9,8 @@ export type DaybreakOutcome =
   | "not-granted"
   | "lookup-failed"
   | "model-not-supported"
-  | "auth-not-eligible";
+  | "auth-not-eligible"
+  | "security-key-required";
 
 export interface DaybreakSnapshot {
   requested: boolean | "auto";

@@ -33,6 +33,8 @@ export function formatDaybreakStatus(
       return "Daybreak requested (auth not eligible)";
     case "lookup-failed":
       return "Daybreak requested (lookup failed)";
+    case "security-key-required":
+      return "Daybreak requested (sign in with security key: /login openai-codex)";
   }
 }
 

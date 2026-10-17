@@ -32,6 +32,7 @@ const outcomes: readonly [DaybreakOutcome, string][] = [
   ["lookup-failed", "Daybreak requested (lookup failed)"],
   ["model-not-supported", "Daybreak unavailable (model unsupported)"],
   ["auth-not-eligible", "Daybreak requested (auth not eligible)"],
+  ["security-key-required", "Daybreak requested (sign in with security key: /login openai-codex)"],
 ];
 
 test("Daybreak status distinguishes every effective state and denial reason", () => {

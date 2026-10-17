@@ -127,6 +127,15 @@ ownership, revisions, model-support gates, and finalizer validation remain
 unchanged. Decision tests cover Auto/On grants, inactive and failed entitlement
 lookups, and unsupported models.
 
+One `verified_access` answer does block (2026-10-17): no grant, and the `cyber`
+program reports `individual_blue_security_signin_required` or
+`individual_blue_security_setup_required` as true. The credential then needs a
+hardware security key sign-in, so the decision reports `security-key-required`
+and omits `access_programs`; a grant still wins over either flag. Observed live:
+the sign-in flag was true on a passkey session and cleared after a YubiKey
+`/login openai-codex` on the same account. Upstream Codex does not read these
+flags; it uses `verified_access` only for MCP plugin metadata.
+
 This directory is a **vendored, renamed, stripped fork** of the upstream
 open-source package **@howaboua/pi-codex-conversion**. This is not the original
 source repository.

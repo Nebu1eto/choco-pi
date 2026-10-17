@@ -244,6 +244,8 @@ const DAYBREAK_REQUESTED_STATUS = {
   "auth-not-eligible": "requested; current authentication is not eligible",
   "lookup-failed": "requested; Daybreak lookup failed",
   "model-not-supported": "unavailable; the current model does not support Daybreak",
+  "security-key-required":
+    "requested; sign in again with your hardware security key (/login openai-codex)",
   // A requested state never reports off; read it as unconfirmed.
   off: "requested; checking availability",
 } satisfies Record<DaybreakOutcome, string>;

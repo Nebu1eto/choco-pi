@@ -10,7 +10,16 @@ export const DAYBREAK_ENTITLEMENT_TTL_MS = 10 * 60_000;
 export const DAYBREAK_FAILURE_TTL_MS = 60_000;
 export const DAYBREAK_CACHE_MAX_ENTRIES = 64;
 
-export type DaybreakEntitlement = "blue" | "red" | "not-granted" | "lookup-failed";
+/**
+ * `security-key-required`: the account has no grant and OpenAI says this credential
+ * must come from a hardware security key sign-in (or the key is not set up yet).
+ */
+export type DaybreakEntitlement =
+  | "blue"
+  | "red"
+  | "not-granted"
+  | "security-key-required"
+  | "lookup-failed";
 export type DaybreakLookupResult = Readonly<{
   entitlement: DaybreakEntitlement;
   status?: number | undefined;
@@ -33,6 +42,10 @@ const ProgramSchema = Type.Object({
   program: Type.String(),
   state: Type.String(),
   grants: Type.Optional(Type.Array(GrantSchema)),
+  // Observed live 2026-10-17: true until the session is signed in with the enrolled
+  // hardware security key; a security-key sign-in cleared it on the same account.
+  individual_blue_security_signin_required: Type.Optional(Type.Boolean()),
+  individual_blue_security_setup_required: Type.Optional(Type.Boolean()),
 });
 const VerifiedAccessSchema = Type.Object({ programs: Type.Array(ProgramSchema) });
 
@@ -106,12 +119,22 @@ function entitlementFromVerifiedAccess(
   payload: Static<typeof VerifiedAccessSchema>,
 ): DaybreakEntitlement {
   const grants = new Set<string>();
+  let securityKeyRequired = false;
   for (const program of payload.programs) {
-    if (program.program !== "cyber" || program.state !== "active") continue;
+    if (program.program !== "cyber") continue;
+    if (
+      program.individual_blue_security_signin_required === true ||
+      program.individual_blue_security_setup_required === true
+    )
+      securityKeyRequired = true;
+    if (program.state !== "active") continue;
     for (const grant of program.grants ?? []) grants.add(grant.level);
   }
   if (grants.has("tac3") || grants.has("government")) return "red";
   if (grants.has("tac1") || grants.has("tac2")) return "blue";
+  // Without a grant, the catalog still advertises Daybreak, but the backend serves it only
+  // to a security-key session; sending it from this credential would not be honored.
+  if (securityKeyRequired) return "security-key-required";
   return "not-granted";
 }
 
@@ -185,7 +208,9 @@ export function lookupCodexDaybreakEntitlement(
       result,
       expiresAt:
         dependencies.now() +
-        (result.entitlement === "lookup-failed" || result.entitlement === "not-granted"
+        (result.entitlement === "lookup-failed" ||
+        result.entitlement === "not-granted" ||
+        result.entitlement === "security-key-required"
           ? DAYBREAK_FAILURE_TTL_MS
           : DAYBREAK_ENTITLEMENT_TTL_MS),
     };

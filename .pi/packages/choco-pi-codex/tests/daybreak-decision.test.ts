@@ -362,6 +362,78 @@ test("verified_access picks red over blue; anything else defaults to blue (catal
     ["tac1+tac3", () => Response.json(grantsPayload("tac1", "tac3")), "red"],
     ["government", () => Response.json(grantsPayload("government")), "red"],
     ["no grants", () => Response.json(grantsPayload()), "blue"],
+    [
+      "security-key sign-in required without a grant",
+      () =>
+        Response.json({
+          programs: [
+            {
+              program: "cyber",
+              state: "inactive",
+              grants: [],
+              individual_blue_security_setup_required: false,
+              individual_blue_security_signin_required: true,
+            },
+          ],
+        }),
+      "security-key-required",
+    ],
+    [
+      "security key not set up",
+      () =>
+        Response.json({
+          programs: [
+            {
+              program: "cyber",
+              state: "inactive",
+              grants: [],
+              individual_blue_security_setup_required: true,
+            },
+          ],
+        }),
+      "security-key-required",
+    ],
+    [
+      "both flags false (live after a security-key sign-in)",
+      () =>
+        Response.json({
+          programs: [
+            {
+              program: "cyber",
+              state: "inactive",
+              grants: [],
+              individual_blue_security_setup_required: false,
+              individual_blue_security_signin_required: false,
+            },
+          ],
+        }),
+      "blue",
+    ],
+    [
+      "an active grant outranks the sign-in flag",
+      () =>
+        Response.json({
+          programs: [
+            {
+              program: "cyber",
+              state: "active",
+              grants: [{ level: "tac1", source: "organization" }],
+              individual_blue_security_signin_required: true,
+            },
+          ],
+        }),
+      "blue",
+    ],
+    [
+      "sign-in flag on a non-cyber program",
+      () =>
+        Response.json({
+          programs: [
+            { program: "bio", state: "inactive", individual_blue_security_signin_required: true },
+          ],
+        }),
+      "blue",
+    ],
     ["unknown grant", () => Response.json(grantsPayload("other")), "blue"],
     [
       "grants omitted",

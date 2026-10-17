@@ -515,6 +515,10 @@ test("root Daybreak editor badge shows grants and names each denial", () => {
     render({ requested: true, outcome: "auth-not-eligible" }),
     /daybreak auth ineligible {2}$/,
   );
+  assert.match(
+    render({ requested: true, outcome: "security-key-required" }),
+    /daybreak needs security key {2}$/,
+  );
   assert.equal(render({ requested: false, outcome: "off" }), " gpt-5.6-sol  OpenAI  high");
   assert.equal(render(undefined), " gpt-5.6-sol  OpenAI  high");
   assert.match(
