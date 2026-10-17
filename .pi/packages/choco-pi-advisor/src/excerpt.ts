@@ -1,5 +1,40 @@
+import type { ToolCall } from "@earendil-works/pi-ai";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { isSameModelDisabledMessage } from "./model-gate.ts";
+
+/** Mirrors `AGENT_MESSAGE_TYPES` in choco-pi-subagents; a test pins parity. */
+export const AGENT_MESSAGE_TYPES = ["MESSAGE", "TASK", "FINAL"] as const;
+
+/** Local mirror of choco-pi-subagents `AgentMessageParams`; extra keys are tolerated. */
+export const AgentMessageArgsSchema = Type.Object({
+  to: Type.String(),
+  message: Type.String(),
+  type: Type.Optional(
+    Type.Union([
+      Type.Literal(AGENT_MESSAGE_TYPES[0]),
+      Type.Literal(AGENT_MESSAGE_TYPES[1]),
+      Type.Literal(AGENT_MESSAGE_TYPES[2]),
+    ]),
+  ),
+});
+
+function oneLine(value: string): string {
+  return value.replace(/\s+/g, " ");
+}
+
+/**
+ * Only `agent_message` arguments are rendered; every other tool stays name-only so
+ * arbitrary tool arguments never reach the advisor.
+ */
+function renderToolCall({ name, arguments: args }: ToolCall, bodyCap: number): string {
+  if (name === "agent_message" && Value.Check(AgentMessageArgsSchema, args)) {
+    const kind = args.type ?? "MESSAGE";
+    return `[agent_message \u2192 ${oneLine(args.to)} (${kind})]\n${args.message.slice(0, bodyCap)}`;
+  }
+  return `[tool: ${oneLine(name)}]`;
+}
 
 export interface ExcerptOptions {
   maxMessages?: number;
@@ -24,7 +59,7 @@ export function buildAdvisorExcerpt(
       ? content
           .map((part) => {
             if (part.type === "text") return part.text;
-            if (part.type === "toolCall") return `[tool: ${part.name.replace(/\s+/g, " ")}]`;
+            if (part.type === "toolCall") return renderToolCall(part, toolCap);
             return "";
           })
           .filter(Boolean)

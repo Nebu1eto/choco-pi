@@ -5,7 +5,17 @@ import { join } from "node:path";
 import test from "node:test";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { buildAdvisorPrompt } from "../src/consult.ts";
-import { buildAdvisorExcerpt, countAdvisorCallsThisTurn } from "../src/excerpt.ts";
+import type { JsonObject } from "@earendil-works/pi-ai";
+import type { Static } from "typebox";
+import { Value } from "typebox/value";
+import type { AgentMessageParams } from "../../choco-pi-subagents/src/agent-message.ts";
+import { AGENT_MESSAGE_TYPES as SUBAGENT_MESSAGE_TYPES } from "../../choco-pi-subagents/src/messaging.ts";
+import {
+  AGENT_MESSAGE_TYPES as ADVISOR_AGENT_MESSAGE_TYPES,
+  AgentMessageArgsSchema,
+  buildAdvisorExcerpt,
+  countAdvisorCallsThisTurn,
+} from "../src/excerpt.ts";
 import { resolveAdvisorManager } from "../src/manager-slot.ts";
 import { isSameModel, sameModelDisabledMessage } from "../src/model-gate.ts";
 import {
@@ -161,6 +171,112 @@ test("excerpt caps entries and tool results, drops oldest first, includes live l
     buildAdvisorExcerpt([user("first"), user("last")], { maxTotalChars: 10 }),
     "user: last",
   );
+});
+
+function toolCall(name: string, args: JsonObject, id = "assistant"): SessionEntry {
+  return {
+    type: "message",
+    id,
+    parentId: null,
+    timestamp: "2026-01-01T00:00:00.000Z",
+    message: {
+      role: "assistant",
+      content: [{ type: "toolCall", id: "call", name, arguments: args }],
+      api: "anthropic-messages",
+      provider: "anthropic",
+      model: "test",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: "toolUse",
+      timestamp: 3,
+    },
+  };
+}
+
+test("excerpt renders agent_message recipient, type, and capped body", () => {
+  assert.equal(
+    buildAdvisorExcerpt([
+      toolCall("agent_message", { to: "/root", message: "done", type: "FINAL" }),
+    ]),
+    "assistant: [agent_message \u2192 /root (FINAL)]\ndone",
+  );
+  assert.equal(
+    buildAdvisorExcerpt([toolCall("agent_message", { to: "worker\n x", message: "hi" })]),
+    "assistant: [agent_message \u2192 worker x (MESSAGE)]\nhi",
+  );
+  const long = buildAdvisorExcerpt([
+    toolCall("agent_message", { to: "a", message: "y".repeat(1000), type: "TASK" }),
+  ]);
+  assert.equal(long, `assistant: [agent_message \u2192 a (TASK)]\n${"y".repeat(500)}`);
+  assert.equal(
+    buildAdvisorExcerpt([toolCall("agent_message", { to: "a", message: "y".repeat(1000) })], {
+      maxToolResultChars: 10,
+    }),
+    `assistant: [agent_message \u2192 a (MESSAGE)]\n${"y".repeat(10)}`,
+  );
+});
+
+test("excerpt degrades invalid agent_message args and hides other tool args", () => {
+  const invalid: JsonObject[] = [
+    {},
+    { to: "a" },
+    { to: 1, message: "m" },
+    { to: "a", message: "m", type: "BOGUS" },
+  ];
+  for (const args of invalid) {
+    assert.equal(
+      buildAdvisorExcerpt([toolCall("agent_message", args)]),
+      "assistant: [tool: agent_message]",
+    );
+  }
+  assert.equal(
+    buildAdvisorExcerpt([toolCall("bash", { to: "a", message: "secret", command: "rm" })]),
+    "assistant: [tool: bash]",
+  );
+  assert.equal(
+    buildAdvisorExcerpt([result("agent_message", "Message steered to /root")]),
+    "toolResult: Message steered to /root",
+  );
+});
+
+test("excerpt agent_message honors entry and total caps", () => {
+  const entries = Array.from({ length: 30 }, (_, i) =>
+    toolCall("agent_message", { to: `w${i}`, message: "z".repeat(1000) }, String(i)),
+  );
+  const excerpt = buildAdvisorExcerpt(entries);
+  assert.ok(excerpt.length <= 12000);
+  assert.ok(excerpt.endsWith("z".repeat(500)));
+  assert.ok(excerpt.includes("\u2192 w29 (MESSAGE)"));
+  assert.ok(!excerpt.includes("\u2192 w9 "));
+  assert.equal(
+    buildAdvisorExcerpt([toolCall("agent_message", { to: "a".repeat(3000), message: "m" })]).length,
+    2000,
+  );
+  assert.equal(
+    buildAdvisorExcerpt([toolCall("agent_message", { to: "a", message: "m" })], {
+      maxTotalChars: 12,
+    }),
+    "assistant: [",
+  );
+});
+
+test("local agent_message schema matches the subagents tool shape", () => {
+  assert.deepEqual([...ADVISOR_AGENT_MESSAGE_TYPES], [...SUBAGENT_MESSAGE_TYPES]);
+  for (const type of SUBAGENT_MESSAGE_TYPES) {
+    const params: AgentMessageParams = { to: "/root", message: "m", type };
+    assert.ok(Value.Check(AgentMessageArgsSchema, params));
+  }
+  // Compile-time parity: each shape must be assignable to the other.
+  const toRemote = (local: Static<typeof AgentMessageArgsSchema>): AgentMessageParams => local;
+  const toLocal = (remote: AgentMessageParams): Static<typeof AgentMessageArgsSchema> => remote;
+  const sample: AgentMessageParams = { to: "a", message: "m", type: "TASK" };
+  assert.deepEqual(toRemote(toLocal(sample)), sample);
 });
 
 test("turn cap counts only advisor tool results after the last user", () => {
