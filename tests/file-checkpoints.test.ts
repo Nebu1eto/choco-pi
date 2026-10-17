@@ -193,6 +193,7 @@ test("the picker lists prompts, change counts, and every available action", () =
     checkpointEntryId: "checkpoint-1",
   };
   const screen = renderCheckpointPicker({
+    mode: "checkpoint",
     items: [{ turn, changes: { added: 10, deleted: 1, files: 2 } }],
     selectedIndex: 0,
     width: 100,
@@ -213,6 +214,7 @@ test("the picker marks a turn with no checkpoint and shows the reason", () => {
     timestamp: checkpoint.timestamp,
   };
   const screen = renderCheckpointPicker({
+    mode: "checkpoint",
     items: [{ turn }],
     selectedIndex: 0,
     width: 100,
@@ -224,22 +226,36 @@ test("the picker marks a turn with no checkpoint and shows the reason", () => {
   assert.match(screen, /No Git repository with a working tree\./);
 });
 
-test("the picker ends with a fork-only current-state row", () => {
+test("the checkpoint and fork pickers end with a current-state row; rewind has none", () => {
   const turn: SessionTurn = {
     entryId: "user-1",
     index: 1,
     label: "First prompt",
     timestamp: checkpoint.timestamp,
   };
-  const screen = renderCheckpointPicker({
-    items: [{ turn }],
-    selectedIndex: 1,
-    width: 100,
-    theme: plainTheme,
-  }).join("\n");
+  const render = (mode: "checkpoint" | "fork" | "rewind", selectedIndex: number) =>
+    renderCheckpointPicker({
+      mode,
+      items: [{ turn }],
+      selectedIndex,
+      width: 100,
+      theme: plainTheme,
+    }).join("\n");
 
-  assert.match(screen, /  First prompt[\s\S]*❯ Current state/);
-  assert.match(screen, /fork only/);
+  const checkpointScreen = render("checkpoint", 1);
+  assert.match(checkpointScreen, /  First prompt[\s\S]*❯ Current state/);
+  assert.match(checkpointScreen, /fork only/);
+
+  const forkScreen = render("fork", 1);
+  assert.match(forkScreen, /^│ Fork /m);
+  assert.match(forkScreen, /❯ Current state/);
+  assert.match(forkScreen, /↑↓ navigate · Enter fork · Esc cancel/);
+
+  const rewindScreen = render("rewind", 0);
+  assert.match(rewindScreen, /^│ Rewind /m);
+  assert.match(rewindScreen, /❯ First prompt/);
+  assert.doesNotMatch(rewindScreen, /Current state/);
+  assert.match(rewindScreen, /↑↓ navigate · Enter rewind · Esc cancel/);
 });
 
 const safety: GitSnapshot = {

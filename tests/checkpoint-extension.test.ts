@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import { promisify } from "node:util";
 import {
   InteractiveMode,
@@ -335,9 +335,9 @@ test("rollback still records and uses a safety snapshot when Git state is reused
   persistUserEntry(harness, "rollback target");
   await writeFile(path.join(root, "note.txt"), "live safety state\n");
 
-  const rewind = harness.commands.get("rewind");
-  assert.ok(rewind);
-  await rewind.handler(
+  const checkpoint = harness.commands.get("checkpoint");
+  assert.ok(checkpoint);
+  await checkpoint.handler(
     "",
     commandContext(harness, async (title, choices) =>
       title === "Checkpoints" ? choices.find((choice) => choice.startsWith("Turn 1")) : "Rollback",
@@ -403,9 +403,9 @@ test("fork reports through the replacement context because the old one is stale"
     },
   });
 
-  const rewind = harness.commands.get("rewind");
-  assert.ok(rewind);
-  await rewind.handler("", ctx);
+  const checkpoint = harness.commands.get("checkpoint");
+  assert.ok(checkpoint);
+  await checkpoint.handler("", ctx);
 
   assert.deepEqual(staleNotices, []);
   assert.deepEqual(freshNotices, [{ message: "Forked a new session at turn 1.", level: "info" }]);
@@ -413,12 +413,17 @@ test("fork reports through the replacement context because the old one is stale"
 
 type ForkCall = { entryId: string; position: string | undefined };
 
+type Recorder = { forks: ForkCall[]; navigations: string[]; freshNotices: Notice[] };
+
+function recorder(): Recorder {
+  return { forks: [], navigations: [], freshNotices: [] };
+}
+
 function forkContext(
   harness: Harness,
   mode: "tui" | "rpc",
   ui: Record<string, RuntimeValue>,
-  forks: ForkCall[],
-  freshNotices: Notice[],
+  record: Recorder,
 ): RuntimeValue {
   return reinterpretHostValue<RuntimeValue>({
     cwd: harness.ctx.cwd,
@@ -435,15 +440,20 @@ function forkContext(
       getBranch: () => harness.branch,
       getLeafId: () => "leaf-entry",
     },
+    navigateTree: async (targetId: string) => {
+      record.navigations.push(targetId);
+      return { cancelled: false };
+    },
     fork: async (
       entryId: string,
       options: { position?: string; withSession?: (fresh: RuntimeValue) => Promise<void> },
     ) => {
-      forks.push({ entryId, position: options.position });
+      record.forks.push({ entryId, position: options.position });
       await options.withSession?.(
         reinterpretHostValue<RuntimeValue>({
           ui: {
-            notify: (message: string, level: string) => freshNotices.push({ message, level }),
+            notify: (message: string, level: string) =>
+              record.freshNotices.push({ message, level }),
           },
         }),
       );
@@ -452,51 +462,136 @@ function forkContext(
   });
 }
 
-test("choosing the current state forks the whole branch without offering other actions", async (t) => {
-  const root = await mkdtemp(path.join(tmpdir(), "choco-pi-fork-current-"));
+async function gitHarness(t: TestContext, prefix: string): Promise<Harness> {
+  const root = await mkdtemp(path.join(tmpdir(), prefix));
   t.after(() => rm(root, { recursive: true, force: true }));
   t.after(restoreForkSelector);
   await execFileAsync("git", ["init", "-q", "-b", "main", "."], { cwd: root });
-  await writeFile(path.join(root, "note.txt"), "current state\n");
-
+  await writeFile(path.join(root, "note.txt"), "state\n");
   const harness = createHarness(root);
   persistUserEntry(harness, "earlier prompt");
+  return harness;
+}
+
+async function startSession(harness: Harness, mode: "tui" | "rpc"): Promise<void> {
+  await harness.sessionStart(
+    { type: "session_start", reason: "startup" },
+    reinterpretHostValue<ExtensionContext>({
+      ...reinterpretHostValue<Record<string, RuntimeValue>>(harness.ctx),
+      mode,
+    }),
+  );
+}
+
+async function runCommand(
+  harness: Harness,
+  name: string,
+  args: string,
+  ctx: RuntimeValue,
+): Promise<void> {
+  const command = harness.commands.get(name);
+  assert.ok(command, "the extension registers /" + name);
+  await command.handler(args, ctx);
+}
+
+test("/checkpoint offers the fork-only current state without an action dialog", async (t) => {
+  const harness = await gitHarness(t, "choco-pi-checkpoint-current-");
   const titles: string[] = [];
-  const forks: ForkCall[] = [];
-  const freshNotices: Notice[] = [];
+  const record = recorder();
   const ctx = forkContext(
     harness,
     "rpc",
     {
       select: async (title: string, choices: string[]) => {
         titles.push(title);
-        assert.equal(choices[0], "Current state · fork only");
+        assert.deepEqual(choices, [
+          "Current state · fork only",
+          "Turn 1 · earlier prompt (no checkpoint)",
+        ]);
         return choices[0];
       },
     },
-    forks,
-    freshNotices,
+    record,
   );
 
-  const rewind = harness.commands.get("rewind");
-  assert.ok(rewind);
-  await rewind.handler("", ctx);
+  await runCommand(harness, "checkpoint", "", ctx);
 
   assert.deepEqual(titles, ["Checkpoints"], "no rewind/rollback/fork action dialog follows");
-  assert.deepEqual(forks, [{ entryId: "leaf-entry", position: "at" }]);
-  assert.deepEqual(freshNotices, [
+  assert.deepEqual(record.forks, [{ entryId: "leaf-entry", position: "at" }]);
+  assert.deepEqual(record.freshNotices, [
     { message: "Forked a new session from the current state.", level: "info" },
   ]);
+});
+
+test("/fork is an extension command outside the TUI, where Pi's built-in owns it", async (t) => {
+  const interactive = await gitHarness(t, "choco-pi-fork-tui-only-");
+  await startSession(interactive, "tui");
+  assert.deepEqual([...interactive.commands.keys()], ["checkpoint", "rewind"]);
+
+  const rpc = await gitHarness(t, "choco-pi-fork-rpc-");
+  await startSession(rpc, "rpc");
+  await startSession(rpc, "rpc");
+  assert.deepEqual([...rpc.commands.keys()], ["checkpoint", "rewind", "fork"]);
+});
+
+test("RPC /fork forks before the chosen turn without an action dialog", async (t) => {
+  const harness = await gitHarness(t, "choco-pi-fork-rpc-turn-");
+  await startSession(harness, "rpc");
+  const titles: string[] = [];
+  const record = recorder();
+  const ctx = forkContext(
+    harness,
+    "rpc",
+    {
+      select: async (title: string, choices: string[]) => {
+        titles.push(title);
+        assert.deepEqual(choices, ["Current state", "Turn 1 · earlier prompt"]);
+        return choices[1];
+      },
+    },
+    record,
+  );
+
+  await runCommand(harness, "fork", "", ctx);
+
+  assert.deepEqual(titles, ["Fork"]);
+  assert.deepEqual(record.forks, [{ entryId: "user-0", position: "before" }]);
+  assert.deepEqual(record.navigations, []);
+});
+
+test("RPC /rewind hides the current state and rewinds without an action dialog", async (t) => {
+  const harness = await gitHarness(t, "choco-pi-rewind-rpc-");
+  const titles: string[] = [];
+  const record = recorder();
+  const ctx = forkContext(
+    harness,
+    "rpc",
+    {
+      select: async (title: string, choices: string[]) => {
+        titles.push(title);
+        assert.deepEqual(choices, ["Turn 1 · earlier prompt"]);
+        return choices[0];
+      },
+    },
+    record,
+  );
+
+  await runCommand(harness, "rewind", "", ctx);
+
+  assert.deepEqual(titles, ["Rewind"]);
+  assert.deepEqual(record.navigations, ["user-0"]);
+  assert.deepEqual(record.forks, []);
 });
 
 type PickerComponent = { render: (width: number) => string[]; handleInput: (data: string) => void };
 
 async function driveTuiPicker(
   harness: Harness,
+  name: string,
   args: string,
   keys: readonly string[],
-): Promise<{ forks: ForkCall[]; screens: string[]; selects: string[] }> {
-  const forks: ForkCall[] = [];
+): Promise<Recorder & { screens: string[]; selects: string[] }> {
+  const record = recorder();
   const screens: string[] = [];
   const selects: string[] = [];
   const ctx = forkContext(
@@ -534,34 +629,54 @@ async function driveTuiPicker(
           if (!settled) resolve(undefined);
         }),
     },
-    forks,
-    [],
+    record,
   );
-  const rewind = harness.commands.get("rewind");
-  assert.ok(rewind);
-  await rewind.handler(args, ctx);
-  return { forks, screens, selects };
+  await runCommand(harness, name, args, ctx);
+  return { ...record, screens, selects };
 }
 
-test("the /fork entry focuses the current state, and Enter forks it directly", async (t) => {
-  const root = await mkdtemp(path.join(tmpdir(), "choco-pi-fork-tui-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  t.after(restoreForkSelector);
-  await execFileAsync("git", ["init", "-q", "-b", "main", "."], { cwd: root });
-  await writeFile(path.join(root, "note.txt"), "tui state\n");
-  const harness = createHarness(root);
-  persistUserEntry(harness, "earlier prompt");
+const UP = "\u001b[A";
+const DOWN = "\u001b[B";
 
-  const forked = await driveTuiPicker(harness, "fork", ["r", "\r"]);
-  assert.match(forked.screens[0] ?? "", /❯ Current state/);
-  assert.match(forked.screens[1] ?? "", /The current state can only be forked/);
-  assert.deepEqual(forked.forks, [{ entryId: "leaf-entry", position: "at" }]);
-  assert.deepEqual(forked.selects, [], "no action dialog follows the current-state choice");
+test("the TUI fork picker focuses the current state and forks only", async (t) => {
+  const harness = await gitHarness(t, "choco-pi-fork-tui-");
 
-  const rewound = await driveTuiPicker(harness, "", ["\u001b"]);
+  const current = await driveTuiPicker(harness, "checkpoint", "fork", ["\r"]);
+  assert.match(current.screens[0] ?? "", /❯ Current state/);
+  assert.match(current.screens[0] ?? "", /Enter fork · Esc cancel/);
+  assert.deepEqual(current.forks, [{ entryId: "leaf-entry", position: "at" }]);
+  assert.deepEqual(current.selects, []);
+
+  const turn = await driveTuiPicker(harness, "checkpoint", "fork", ["r", UP, "\r"]);
+  assert.match(turn.screens[1] ?? "", /\/fork only forks/);
+  assert.deepEqual(turn.forks, [{ entryId: "user-0", position: "before" }]);
+  assert.deepEqual(turn.navigations, []);
+  assert.deepEqual(turn.selects, [], "no action dialog follows");
+});
+
+test("the TUI rewind picker hides the current state and rewinds only", async (t) => {
+  const harness = await gitHarness(t, "choco-pi-rewind-tui-");
+
+  const rewound = await driveTuiPicker(harness, "rewind", "", ["f", DOWN, "\r"]);
+  assert.doesNotMatch(rewound.screens.join("\n"), /Current state/);
   assert.match(rewound.screens[0] ?? "", /❯ earlier prompt/);
-  assert.match(rewound.screens[0] ?? "", /  Current state/);
+  assert.match(rewound.screens[0] ?? "", /Enter rewind · Esc cancel/);
+  assert.match(rewound.screens[1] ?? "", /\/rewind only rewinds/);
+  assert.deepEqual(rewound.navigations, ["user-0"]);
   assert.deepEqual(rewound.forks, []);
+  assert.deepEqual(rewound.selects, [], "no action dialog follows");
+});
+
+test("the TUI checkpoint picker keeps every action and asks which one to run", async (t) => {
+  const harness = await gitHarness(t, "choco-pi-checkpoint-tui-");
+
+  const picked = await driveTuiPicker(harness, "checkpoint", "", [DOWN, "r", UP, "\r"]);
+  assert.match(picked.screens[0] ?? "", /❯ earlier prompt[\s\S]*  Current state/);
+  assert.match(picked.screens[0] ?? "", /r rewind · b rollback · f fork/);
+  assert.match(picked.screens[2] ?? "", /The current state can only be forked/);
+  assert.deepEqual(picked.selects, ["Turn 1 · earlier prompt"], "Enter asks for the action");
+  assert.deepEqual(picked.forks, []);
+  assert.deepEqual(picked.navigations, []);
 });
 
 test("a working tree without Git warns once and then stays quiet", async (t) => {

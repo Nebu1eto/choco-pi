@@ -32,7 +32,7 @@ test("Pi still exposes the fork selector this extension redirects", () => {
   );
 });
 
-test("the extension registers /rewind and points Pi's fork selector at its fork intent", (t) => {
+test("the extension registers /checkpoint and /rewind and points /fork at the fork picker", (t) => {
   const original = prototype.showUserMessageSelector;
   t.after(() => {
     prototype.showUserMessageSelector = original;
@@ -42,11 +42,11 @@ test("the extension registers /rewind and points Pi's fork selector at its fork 
   const commands = new Map<string, RuntimeValue>();
   fileCheckpoints(stubExtensionApi(commands));
 
-  assert.deepEqual([...commands.keys()], ["rewind"]);
+  assert.deepEqual([...commands.keys()], ["checkpoint", "rewind"]);
   assert.notEqual(prototype.showUserMessageSelector, original);
 
   const prompts: string[] = [];
   const host = { session: { prompt: async (text: string) => void prompts.push(text) } };
   prototype.showUserMessageSelector.call(host);
-  assert.deepEqual(prompts, ["/rewind fork"]);
+  assert.deepEqual(prompts, ["/checkpoint fork"]);
 });

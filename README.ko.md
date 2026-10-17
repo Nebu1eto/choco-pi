@@ -246,7 +246,7 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 
 - 다른 세션에서 프로젝트 대화를 나열, 생성, 읽기, 조정, 대기할 수 있습니다(`/sessions`, `/session-new`, `/session-read`, `/session-send`, `/session-wait`).
 - `/goal`은 여러 턴과 compaction에 걸쳐 지속되는 목표를 유지합니다.
-- `/rewind`는 체크포인트가 있는 턴 기준으로 파일을 롤백하거나, 세션을 되감거나, 분기합니다.
+- `/checkpoint`는 체크포인트가 있는 턴 기준으로 세션을 되감거나, 파일을 롤백하거나, 분기하고, 현재 상태 그대로 분기할 수도 있습니다. `/rewind`는 대화 되감기만, `/fork`는 이전 턴이나 현재 상태에서 분기만 합니다.
 - 컨텍스트 한도는 `/preferences`에서 프리셋으로 고릅니다. soft cap은 Session → Context에, compaction 지점은 Session → Compaction에 있습니다. **Context soft cap**은 사용 가능한 컨텍스트 상한으로 strictest 250K, strict 400K, standard 600K, permissive 800K, unlimited 중 하나이고, **Auto-compaction point**는 compaction이 시작되는 지점으로 strictest 200K, strict 300K, standard 450K, permissive 600K, unlimited 중 하나입니다. soft cap 기본값은 unlimited, compaction 지점 기본값은 standard입니다. 각 프리셋은 모델의 네이티브 창에 맞춰 조정됩니다. 상한은 네이티브 창을 넘지 않고, compaction 지점은 상한보다 `min(100K, 상한의 15%)`(최소 host reserve + 8K)만큼 아래에 머뭅니다. 네이티브 창이 64K 미만인 모델은 Pi 자체 트리거에 맡기며, OpenAI 네이티브 compaction 예산이 게시되어 있으면 compaction 지점도 그 안으로 제한됩니다. 설정은 이 두 프리셋뿐이며 headroom은 고정값입니다.
 - compaction 방식은 `/preferences`의 Session → Compaction에서 정합니다. **OpenAI compaction**은 Codex 전송과 설정된 Responses 공급자에서 OpenAI 원격 compaction을 쓰며, 이 프로필의 [`.pi/choco-pi-codex.json`](.pi/choco-pi-codex.json)은 server-side로 설정합니다. **Anthropic compaction**은 기본값이 server-side이며, `api.anthropic.com`에 OAuth로 접속한 Fable 5+, Mythos 5+와 Preview, Opus 4.6+, Sonnet 4.6+, Haiku 5.5+에서만 Anthropic on-demand compaction을 씁니다. **xAI compaction**은 기본값이 server-side이며, `api.x.ai`의 `grok-*` 모델에서 OAuth나 API 키로 xAI `/responses/compact`를 씁니다. 포그라운드 compaction에만 적용됩니다. 어떤 실패든 최근 메시지와 대조하는 choco-pi 로컬 요약으로 대체됩니다. 백그라운드 compaction은 기본적으로 켜져 있고, 켜져 있으면 텍스트 레인은 항상 돌며 각 네이티브 레인(OpenAI, Anthropic)은 해당 공급자 행이 server-side일 때만 돕니다.
 - 새 세션에는 이름이 자동으로 붙습니다. 이름을 짓는 모델은 `sessionAutoNameModel`로 정하며 기본값은 `openai/gpt-6-luna`입니다. 끄려면 `sessionAutoName`을 `false`로 설정하세요.
@@ -296,7 +296,8 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 | `/review [target]`                                | 세션, 브랜치, 풀 리퀘스트 변경을 직접 검토                  |
 | `/review-agent [target]`                          | 새 문맥의 에이전트가 코드를 고치지 않고 적대적 리뷰만 수행  |
 | `/commit [guidance]`                              | 푸시하지 않고 검증된 로컬 커밋 생성                         |
-| `/rewind`                                         | 체크포인트가 있는 턴에서 롤백, 되감기, 분기                 |
+| `/checkpoint`                                     | 턴에서 되감기, 롤백, 분기 또는 현재 상태 분기               |
+| `/rewind`, `/fork`                                | 턴으로 되감기만, 또는 턴이나 현재 상태에서 분기만           |
 | `/agents`, `/btw`                                 | 에이전트 관리 또는 읽기 전용 곁대화 열기                    |
 | `/shells`                                         | 관리되는 셸 목록 보기, 출력 읽기, 중지                      |
 | `/sessions`, `/session-new`                       | 프로젝트 대화 목록을 보거나 독립 대화 시작                  |

@@ -30,6 +30,40 @@ export const TURN_ACTION_LABELS = {
   fork: "Fork",
 } satisfies Record<TurnAction, string>;
 
+/**
+ * Which command opened the picker. `checkpoint` offers every action and asks
+ * which one to run; `fork` and `rewind` run their single action on Enter.
+ */
+export type PickerMode = "checkpoint" | "fork" | "rewind";
+
+/** The one action a single-purpose picker runs, or none for `checkpoint`. */
+export function pickerModeAction(mode: PickerMode): TurnAction | undefined {
+  return mode === "checkpoint" ? undefined : mode;
+}
+
+/** Rewinding to where the session already is changes nothing, so only fork shows it. */
+export function pickerShowsCurrentState(mode: PickerMode): boolean {
+  return mode !== "rewind";
+}
+
+export const PICKER_TITLES = {
+  checkpoint: "Checkpoints",
+  fork: "Fork",
+  rewind: "Rewind",
+} satisfies Record<PickerMode, string>;
+
+const PICKER_INSTRUCTIONS = {
+  checkpoint: "Pick a turn to rewind, roll back, or fork, or fork the current state as it is.",
+  fork: "Pick the turn to fork before, or fork the current state as it is.",
+  rewind: "Pick the turn to rewind the conversation to. Files are not changed.",
+} satisfies Record<PickerMode, string>;
+
+const PICKER_HINTS = {
+  checkpoint: "↑↓ navigate · r rewind · b rollback · f fork · Enter choose · Esc cancel",
+  fork: "↑↓ navigate · Enter fork · Esc cancel",
+  rewind: "↑↓ navigate · Enter rewind · Esc cancel",
+} satisfies Record<PickerMode, string>;
+
 function printableKey(data: string): string | undefined {
   const kitty = decodeKittyPrintable(data);
   if (kitty) return kitty.toLowerCase();
@@ -75,10 +109,11 @@ export function changeSummaryText(changes: ChangeSummary | undefined, theme: The
 }
 
 export type PickerView = {
+  mode: PickerMode;
   items: readonly TurnTimelineItem[];
   /**
-   * Focused row. `items.length` focuses the trailing current-state row, which
-   * forks the whole session as it is now and offers no other action.
+   * Focused row. When the mode shows it, `items.length` focuses the trailing
+   * current-state row, which forks the whole session as it is now.
    */
   selectedIndex: number;
   width: number;
@@ -92,10 +127,10 @@ const VISIBLE_TURNS = 7;
 export const CURRENT_STATE_LABEL = "Current state";
 
 export function renderCheckpointPicker(view: PickerView): string[] {
-  const { items, selectedIndex, width, theme } = view;
+  const { mode, items, selectedIndex, width, theme } = view;
   const innerWidth = Math.max(20, width - 4);
   // The current-state row follows the newest turn and scrolls like one.
-  const rowCount = items.length + 1;
+  const rowCount = items.length + (pickerShowsCurrentState(mode) ? 1 : 0);
   const start = Math.max(
     0,
     Math.min(selectedIndex - Math.floor(VISIBLE_TURNS / 2), rowCount - VISIBLE_TURNS),
@@ -103,9 +138,9 @@ export function renderCheckpointPicker(view: PickerView): string[] {
   const end = Math.min(rowCount, start + VISIBLE_TURNS);
 
   const lines = [
-    theme.fg("accent", theme.bold("Checkpoints")),
+    theme.fg("accent", theme.bold(PICKER_TITLES[mode])),
     "",
-    "Pick a turn to rewind, roll back, or fork, or fork the current state as it is.",
+    PICKER_INSTRUCTIONS[mode],
     "",
   ];
 
@@ -115,12 +150,13 @@ export function renderCheckpointPicker(view: PickerView): string[] {
     const prefix = selected ? theme.fg("accent", "❯") : " ";
     if (index === items.length) {
       const label = selected ? theme.fg("accent", CURRENT_STATE_LABEL) : CURRENT_STATE_LABEL;
+      const detail =
+        mode === "checkpoint"
+          ? "Fork the whole session as it is now · fork only"
+          : "Fork the whole session as it is now";
       lines.push(
         truncateToWidth(`${prefix} ${label}`, innerWidth),
-        truncateToWidth(
-          `  ${theme.fg("dim", "Fork the whole session and files as they are now · fork only")}`,
-          innerWidth,
-        ),
+        truncateToWidth(`  ${theme.fg("dim", detail)}`, innerWidth),
         "",
       );
       continue;
@@ -141,12 +177,7 @@ export function renderCheckpointPicker(view: PickerView): string[] {
   if (end < rowCount) lines.push(theme.fg("dim", `  ↓ ${rowCount - end} more`), "");
 
   if (view.notice) lines.push(theme.fg("warning", view.notice), "");
-  lines.push(
-    theme.fg(
-      "dim",
-      theme.italic("↑↓ navigate · r rewind · b rollback · f fork · Enter choose · Esc cancel"),
-    ),
-  );
+  lines.push(theme.fg("dim", theme.italic(PICKER_HINTS[mode])));
 
   const top = theme.fg("border", `┌${"─".repeat(Math.max(1, width - 2))}┐`);
   const bottom = theme.fg("border", `└${"─".repeat(Math.max(1, width - 2))}┘`);
