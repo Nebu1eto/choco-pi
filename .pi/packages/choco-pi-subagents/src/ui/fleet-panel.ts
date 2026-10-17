@@ -11,6 +11,7 @@ import {
 import { hasAgentBadge } from "../agent-color.ts";
 import type { AgentManager } from "../agent-manager.ts";
 import { isSessionCompacting } from "../compaction-activity.ts";
+import { isStaleContextError } from "../../../choco-pi-compaction/src/lifecycle.ts";
 import type { AgentRecord, WidgetMode } from "../types.ts";
 import { formatResetAt } from "../usage-limit-seam.ts";
 import { getLifetimeTotal, getSessionContextPercent } from "../usage.ts";
@@ -37,6 +38,13 @@ const MAX_SHELL_ROWS = 3;
 const TICK_MS = 100;
 const FINISHED_LINGER_MS = 4_000;
 const ERROR_LINGER_TURNS = 2;
+/** Right-hand row marker while that agent is compacting. */
+export const COMPACTING_MARKER = "Compacting...";
+/** Status-line entry while any agent, main or child, is compacting. */
+export const COMPACTION_STATUS_KEY = "compaction";
+export const COMPACTION_STATUS_TEXT = "compacting...";
+/** Background preparation publishes no events, so the status line polls. */
+const COMPACTION_POLL_MS = 250;
 
 export type FleetPanelFocusOptions = {
   focusAgent?: (record: AgentRecord, tui: TUI, theme: Theme) => boolean;
@@ -180,6 +188,7 @@ export class FleetPanel {
   private shellProvider: ShellSectionProvider | undefined;
   private widgetRegistered = false;
   private timer: ReturnType<typeof setInterval> | undefined;
+  private compactionTimer: ReturnType<typeof setInterval> | undefined;
   private frame = 0;
   private active = false;
   private agentSectionEnabled = true;
@@ -192,23 +201,26 @@ export class FleetPanel {
   private readonly stopErrors = new Map<string, string>();
   private readonly finishedTurnAge = new Map<string, number>();
   private lastStatusText: string | undefined;
+  private lastCompactionStatus: string | undefined;
   private disposed = false;
   private generation = 0;
   private readonly manager: AgentManager;
   private readonly agentActivity: Map<string, AgentActivity>;
   private readonly focusOptions: FleetPanelFocusOptions;
   private readonly widgetMode: () => WidgetMode;
+  private readonly isMainCompacting: () => boolean;
 
   constructor(
     manager: AgentManager,
     agentActivity: Map<string, AgentActivity>,
     focusOptions: FleetPanelFocusOptions,
-    extras: { widgetMode: () => WidgetMode },
+    extras: { widgetMode: () => WidgetMode; isMainCompacting?: () => boolean },
   ) {
     this.manager = manager;
     this.agentActivity = agentActivity;
     this.focusOptions = focusOptions;
     this.widgetMode = extras.widgetMode;
+    this.isMainCompacting = extras.isMainCompacting ?? (() => false);
   }
 
   setUICtx(ui: FleetPanelUICtx): void {
@@ -219,7 +231,13 @@ export class FleetPanel {
     this.tui = undefined;
     this.theme = undefined;
     this.lastStatusText = undefined;
+    this.lastCompactionStatus = undefined;
     this.inputUnsub = ui.onTerminalInput((data) => this.handleKey(data));
+    if (!this.compactionTimer) {
+      this.compactionTimer = setInterval(() => this.pollCompactionStatus(), COMPACTION_POLL_MS);
+      this.compactionTimer.unref();
+    }
+    this.updateCompactionStatus();
   }
 
   setAgentSectionEnabled(enabled: boolean): void {
@@ -333,6 +351,8 @@ export class FleetPanel {
     this.disposed = true;
     this.generation++;
     this.stopTimer();
+    if (this.compactionTimer) clearInterval(this.compactionTimer);
+    this.compactionTimer = undefined;
     this.inputUnsub?.();
     this.inputUnsub = undefined;
     this.shellUnsub?.();
@@ -347,9 +367,13 @@ export class FleetPanel {
     if (this.ui) {
       this.ui.setWidget("fleet", undefined);
       this.ui.setStatus("subagents", undefined);
+      if (this.lastCompactionStatus !== undefined) {
+        this.ui.setStatus(COMPACTION_STATUS_KEY, undefined);
+      }
     }
     this.widgetRegistered = false;
     this.lastStatusText = undefined;
+    this.lastCompactionStatus = undefined;
     this.tui = undefined;
     this.theme = undefined;
     this.active = false;
@@ -703,6 +727,32 @@ export class FleetPanel {
       this.ui.setStatus("subagents", text);
       this.lastStatusText = text;
     }
+    this.updateCompactionStatus();
+  }
+
+  /** Timer tick: a UI context replaced before dispose stops the poll instead of throwing. */
+  private pollCompactionStatus(): void {
+    try {
+      this.updateCompactionStatus();
+    } catch (cause) {
+      if (!(cause instanceof Error && isStaleContextError(cause))) throw cause;
+      if (this.compactionTimer) clearInterval(this.compactionTimer);
+      this.compactionTimer = undefined;
+    }
+  }
+
+  /** One status-line entry while any agent compacts, foreground or background; none otherwise. */
+  private updateCompactionStatus(): void {
+    if (this.disposed || !this.ui) return;
+    const compacting =
+      this.isMainCompacting() ||
+      this.manager
+        .listAgents()
+        .some((record) => record.status === "running" && isSessionCompacting(record.session));
+    const text = compacting ? COMPACTION_STATUS_TEXT : undefined;
+    if (text === this.lastCompactionStatus) return;
+    this.ui.setStatus(COMPACTION_STATUS_KEY, text);
+    this.lastCompactionStatus = text;
   }
 
   private renderPanel(width: number, theme: Theme): string[] {
@@ -805,7 +855,9 @@ export class FleetPanel {
   }
 
   private renderMainRow(selectedIndex: number, width: number, theme: Theme): string {
-    return truncateToWidth(`  ${this.bullet(0, selectedIndex, theme)} main`, width);
+    const left = `  ${this.bullet(0, selectedIndex, theme)} main`;
+    if (!this.isMainCompacting()) return truncateToWidth(left, width);
+    return rightAlign(left, theme.fg("warning", COMPACTING_MARKER), width);
   }
 
   private renderAgentRow(
@@ -847,7 +899,7 @@ export class FleetPanel {
     // Leading the right segment keeps the marker when a narrow row clips it.
     const compacting =
       record.status === "running" && isSessionCompacting(record.session)
-        ? `${theme.fg("warning", "Compacting…")} `
+        ? `${theme.fg("warning", COMPACTING_MARKER)} `
         : "";
     const right = compacting + stats;
     return rightAlign(left, right, width);

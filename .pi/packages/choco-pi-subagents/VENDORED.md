@@ -85,11 +85,23 @@ source package cannot use:
   coordinator publishes no status events; `ready` is excluded because an
   unadoptable ready candidate can persist for a whole run). A detached or
   disposed bridge reads as idle. `fleet-panel.ts` `renderAgentRow` prefixes the
-  right-hand `elapsed · tokens` segment with `theme.fg("warning", "Compacting…")`
+  right-hand `elapsed · tokens` segment with `theme.fg("warning", "Compacting...")`
   only while the record is `running`, so terminal states never show it; leading
   the right segment keeps the marker when narrow rows clip. No manager
   callback, `subagents:*` event, or registry symbol changed. Child compaction
   never surfaced in a root-level status, so none was removed.
+  The main session is covered too: `createMainCompactionActivity` in
+  `compaction-activity.ts` holds a host window from `index.ts`'s
+  `session_before_compact` to `session_compact`/`session_compact_failed`
+  (bound and reset on `session_start`/`session_shutdown`) and polls the main
+  coordinator under `main-session:<sessionId>` with the same
+  `isCoordinatorPreparing` rule the bridge uses. `renderMainRow` right-aligns
+  the marker while it is open. `FleetPanel` also owns one status-line entry,
+  key `compaction`, text `compacting...`, set while the main session or any
+  running child compacts and cleared otherwise; a 250 ms unref'd poll started in
+  `setUICtx` keeps it current with no subagent rows, stops on a stale context,
+  and `dispose` clears it. choco-pi-compaction's own "compacting in background"
+  manual status was removed so this entry is the only one.
   `tests/fleet-compaction.test.ts` covers the host window, aborted ends,
   terminal statuses, narrow rows, background preparation through a real
   bridge, listener removal on stop, and run-scoped runner wiring (including a

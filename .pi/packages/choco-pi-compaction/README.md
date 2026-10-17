@@ -175,8 +175,8 @@ host event.
   candidate and runs the normal summarizer. Overflow recovery with no ready
   candidate cancels any preparation and proceeds unchanged.
 - **Manual (plain `/compact`, no ready candidate).** The extension starts a
-  background preparation (or waits on the one already running) and shows a
-  "compacting in background" status. In the TUI the typed command is taken
+  background preparation (or waits on the one already running); the
+  subagents fleet view shows it as the shared "compacting..." status. In the TUI the typed command is taken
   over at `InteractiveMode.prototype.handleCompactCommand` (the same way the
   settings dialog takes over `/settings`), so no host compaction starts: no
   "Compaction cancelled" line, and a running agent is not aborted. A

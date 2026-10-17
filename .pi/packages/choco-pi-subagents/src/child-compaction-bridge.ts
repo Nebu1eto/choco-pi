@@ -426,15 +426,27 @@ function addAdoptionListener(
 
 const PREPARING_STATES: ReadonlySet<CandidateState> = new Set(["queued", "preparing", "adopting"]);
 
-/** Poll the live coordinator; a detached bridge or a failing foreign status reads as idle. */
-function isBridgePreparing(state: BridgeState): boolean {
-  const current = state.active;
-  if (state.disposed || !current) return false;
+/**
+ * Whether a coordinator's candidate is queued, preparing, or adopting. `ready`
+ * is excluded: an unadoptable ready candidate can persist for a whole run.
+ * An absent coordinator or a failing foreign status reads as idle.
+ */
+export function isCoordinatorPreparing(
+  coordinator: Pick<CoordinatorApi, "status"> | undefined,
+): boolean {
+  if (coordinator === undefined) return false;
   try {
-    return PREPARING_STATES.has(current.attachment.coordinator.status().state);
+    return PREPARING_STATES.has(coordinator.status().state);
   } catch {
     return false;
   }
+}
+
+/** Poll the live coordinator; a detached bridge reads as idle. */
+function isBridgePreparing(state: BridgeState): boolean {
+  const current = state.active;
+  if (state.disposed || !current) return false;
+  return isCoordinatorPreparing(current.attachment.coordinator);
 }
 
 function settleBridge(

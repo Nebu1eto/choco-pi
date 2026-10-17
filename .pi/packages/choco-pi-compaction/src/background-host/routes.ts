@@ -14,7 +14,7 @@ import { capturesFor } from "../anthropic/capture.ts";
 import { TEXT_BACKEND_ID } from "../background/text-backend.ts";
 import { type BackgroundAdoptionOwner, readAdoptionIdentity } from "./adoption-signal.ts";
 import { boundaryDraft } from "./branch.ts";
-import { errorText, setStatus, tell } from "./notices.ts";
+import { errorText, tell } from "./notices.ts";
 import {
   type Decision,
   type HostRuntime,
@@ -30,7 +30,6 @@ import {
 
 const PROCEED: Decision = { action: "proceed" };
 const CANCEL: Decision = { action: "cancel" };
-const MANUAL_STATUS = "compacting in background";
 
 /** Idle-route refusals the host reports without running any handler. */
 function isHostRefusal(message: string): boolean {
@@ -142,7 +141,6 @@ export async function startManualPreparation(
   if (candidateId === undefined || !isCurrent(rt, owner) || owner.manualSerial !== serial)
     return false;
   owner.manualCandidate = candidateId;
-  setStatus(owner.lastCtx, MANUAL_STATUS);
   tell(
     owner.lastCtx,
     "continuing in the background; the checkpoint is adopted when the next prompt or turn end arrives, or as soon as it is ready while idle",
@@ -264,7 +262,7 @@ async function followManual(
     }
     // Already proposed or committed by a boundary that ran while we waited.
     if (status.state === "adopting" || status.state === "installed") {
-      settleManual(owner, ctx);
+      settleManual(owner);
       return;
     }
   }
@@ -281,7 +279,6 @@ async function followManual(
     }
   }
   owner.manualCandidate = undefined;
-  setStatus(ctx, undefined);
   const detail = status.candidateId === candidateId ? status.detail : undefined;
   if (detail === "nothing-to-summarize") {
     tell(ctx, "nothing to compact yet; the recent turns are kept as they are", "info");
@@ -305,7 +302,6 @@ async function adoptManualIfIdle(
   const status = owner.core.coordinator.status();
   if (status.candidateId !== candidateId) {
     owner.manualCandidate = undefined;
-    setStatus(ctx, undefined);
     return;
   }
   // The cancelled host compaction has not returned yet: adopt at the next boundary instead.
@@ -314,13 +310,12 @@ async function adoptManualIfIdle(
   const installed = await adoptIdle(rt, owner, ctx, { candidateId, trigger: "manual" });
   if (!isCurrent(rt, owner)) return;
   if (installed) {
-    settleManual(owner, ctx);
+    settleManual(owner);
     return;
   }
   if (owner.refusedIdle.has(candidateId)) {
     // Fail closed like the idle route; the checkpoint stays available to a later boundary.
     owner.manualCandidate = undefined;
-    setStatus(ctx, undefined);
     tell(
       ctx,
       "the host refused the checkpoint now; it is applied at the next turn boundary",
@@ -330,7 +325,7 @@ async function adoptManualIfIdle(
 }
 
 /** Clear the manual bookkeeping once its candidate is installed or gone. */
-function settleManual(owner: MainOwner, ctx: ExtensionContext): void {
+function settleManual(owner: MainOwner): void {
   const candidateId = owner.manualCandidate;
   if (candidateId === undefined) return;
   const status = owner.core.coordinator.status();
@@ -342,7 +337,6 @@ function settleManual(owner: MainOwner, ctx: ExtensionContext): void {
       status.state === "adopting");
   if (waiting) return;
   owner.manualCandidate = undefined;
-  setStatus(ctx, undefined);
 }
 
 /** Whether the idle route may start now for the ready candidate. */
@@ -503,7 +497,7 @@ export async function observeSettled(rt: HostRuntime, ctx: ExtensionContext): Pr
   if (!isCurrent(rt, owner)) return;
   owner.core.observeUsage(ctx.getContextUsage());
   hostBoundaryReached(owner);
-  settleManual(owner, ctx);
+  settleManual(owner);
   // A candidate that became ready late in the run is adopted now rather than at the next prompt.
   await adoptManualIfIdle(rt, owner, ctx);
 }
@@ -515,7 +509,7 @@ export async function adoptOnIdleInput(rt: HostRuntime, ctx: ExtensionContext): 
   await owner.core.settle();
   if (!isCurrent(rt, owner)) return;
   hostBoundaryReached(owner);
-  settleManual(owner, ctx);
+  settleManual(owner);
   const candidateId = idleCandidate(rt, owner, ctx);
   if (candidateId === undefined) return;
   await adoptIdle(rt, owner, ctx, { candidateId, trigger: "idle" });

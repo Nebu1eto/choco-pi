@@ -181,6 +181,7 @@ import {
   SPINNER,
 } from "./ui/agent-widget.ts";
 import { FleetPanel, type FleetPanelUICtx } from "./ui/fleet-panel.ts";
+import { createMainCompactionActivity } from "./compaction-activity.ts";
 import type {
   ShellSectionProvider,
   ShellSectionRegistration,
@@ -1282,6 +1283,7 @@ export default function (pi: ExtensionAPI) {
     activeMentionCloneGeneration = ++nextMentionCloneGeneration;
     const generation = ++revivalGeneration;
     currentCtx = ctx;
+    mainCompaction.bind(ctx.sessionManager.getSessionId());
     journalActive = journalEligible(ctx);
     const rootSessionId = ctx.sessionManager.getSessionId();
     if (journalActive) {
@@ -1718,12 +1720,22 @@ export default function (pi: ExtensionAPI) {
   pi.on("agent_end", () => notificationGate.agentEnd());
   pi.on("turn_end", () => notificationGate.turnEnd());
 
+  // Main-session compaction for the fleet view's main row and status line.
+  // An earlier handler's cancel skips this one, but the failed event still ends it.
+  const mainCompaction = createMainCompactionActivity();
+  pi.on("session_before_compact", () => {
+    mainCompaction.hostStarted();
+  });
+  pi.on("session_compact", () => mainCompaction.hostEnded());
+  pi.on("session_compact_failed", () => mainCompaction.hostEnded());
+
   // On shutdown, abort all agents immediately and clean up.
   // If the session is going down, there's nothing left to consume agent results.
   pi.on("session_shutdown", async () => {
     // Invalidate detached clone continuations before clearing their captured
     // context and before any future cleanup step can introduce an await.
     activeMentionCloneGeneration = undefined;
+    mainCompaction.bind(undefined);
     // Likewise for a revival that has not started or is still preparing.
     revivalGeneration++;
     if (revivalTimer !== undefined) clearTimeout(revivalTimer);
@@ -1814,7 +1826,7 @@ export default function (pi: ExtensionAPI) {
       unfocusAgent: () => focus.unfocus(),
       openSideConversation: (record) => sideConversations.open(record),
     },
-    { widgetMode: getWidgetMode },
+    { widgetMode: getWidgetMode, isMainCompacting: () => mainCompaction.isCompacting() },
   );
   fleetSource = fleet;
   let fleetViewEnabled = true;

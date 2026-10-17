@@ -1,10 +1,11 @@
 /**
- * Fleet view per-agent "Compacting…" marker.
+ * Fleet view per-agent "Compacting..." marker and the shared status line.
  *
  * The host window is driven through the session's own `compaction_start` /
  * `compaction_end` events; the background-preparation window through a real
  * child compaction bridge attached to a real SDK session with a fake
- * coordinator built against the frozen `CoordinatorApi`.
+ * coordinator built against the frozen `CoordinatorApi`. The main session's
+ * background window goes through the real process-wide registry.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -25,22 +26,37 @@ import type {
   CandidateState,
   CoordinatorApi,
 } from "../../choco-pi-compaction/src/background/contract.ts";
-import { getCoordinator } from "../../choco-pi-compaction/src/background/registry.ts";
+import {
+  getCoordinator,
+  release,
+  setCoordinator,
+} from "../../choco-pi-compaction/src/background/registry.ts";
+import { mainOwnerKey } from "../../choco-pi-compaction/src/ownership.ts";
 import type { AgentManager } from "../src/agent-manager.ts";
 import { resumeAgent } from "../src/agent-runner.ts";
 import {
   type ChildCompactionProvider,
   createChildCompactionBridge,
 } from "../src/child-compaction-bridge.ts";
-import { isSessionCompacting, trackSessionCompaction } from "../src/compaction-activity.ts";
+import {
+  createMainCompactionActivity,
+  isSessionCompacting,
+  mainCoordinatorOwnerKey,
+  trackSessionCompaction,
+} from "../src/compaction-activity.ts";
 import type { AgentRecord } from "../src/types.ts";
 import type { AgentActivity, Theme } from "../src/ui/agent-widget.ts";
-import { FleetPanel, type FleetPanelUICtx } from "../src/ui/fleet-panel.ts";
+import {
+  COMPACTION_STATUS_KEY,
+  COMPACTION_STATUS_TEXT,
+  FleetPanel,
+  type FleetPanelUICtx,
+} from "../src/ui/fleet-panel.ts";
 import { createSdkFixture } from "./sdk-fixture.ts";
 
 initTheme("dark", false);
 
-const MARKER = "Compacting…";
+const MARKER = "Compacting...";
 const styledTheme: Theme = {
   fg: (color, text) => `<${color}>${text}</${color}>`,
   bold: (text) => `<bold>${text}</bold>`,
@@ -67,7 +83,7 @@ function agent(id: string, session: AgentSession): AgentRecord {
 }
 
 // Theme tags count toward visible width, so default rows get room for them.
-function mount(records: AgentRecord[], width = 240) {
+function mount(records: AgentRecord[], width = 240, isMainCompacting?: () => boolean) {
   const manager = partialFixture<AgentManager>({
     listAgents: () => records.toReversed(),
     getScheduledActiveCount: () => records.filter((r) => r.status === "running").length,
@@ -80,6 +96,7 @@ function mount(records: AgentRecord[], width = 240) {
     {},
     {
       widgetMode: () => "all",
+      isMainCompacting,
     },
   );
   const tui = partialFixture<TUI>({
@@ -88,9 +105,12 @@ function mount(records: AgentRecord[], width = 240) {
     requestRender() {},
   });
   let component: { render(width: number): string[] } | undefined;
+  const statusWrites: Array<string | undefined> = [];
   panel.setUICtx(
     partialFixture<FleetPanelUICtx>({
-      setStatus() {},
+      setStatus(key, text) {
+        if (key === COMPACTION_STATUS_KEY) statusWrites.push(text);
+      },
       setWidget(_key, factory) {
         component = factory?.(tui, styledTheme);
       },
@@ -102,9 +122,22 @@ function mount(records: AgentRecord[], width = 240) {
   panel.update();
   return {
     panel,
+    /** Every write to the compaction status entry, in order. */
+    statusWrites,
+    /** The compaction status entry after an update. */
+    status: () => {
+      panel.update();
+      return statusWrites.at(-1);
+    },
     lines: (renderWidth = width) => {
       panel.update();
       return component?.render(renderWidth) ?? [];
+    },
+    mainRow: (renderWidth = width) => {
+      panel.update();
+      const line = component?.render(renderWidth).find((candidate) => /\bmain\b/.test(candidate));
+      assert.ok(line, "main row is rendered");
+      return line;
     },
     row: (id: string, renderWidth = width) => {
       panel.update();
@@ -164,7 +197,7 @@ test("host compaction window shows the marker at the row's right end and clears 
 
     child.start();
     const row = view.row("host");
-    assert.match(row, /<warning>Compacting…<\/warning> <dim>\d+s · ↓ 1\.2k<\/dim>$/);
+    assert.match(row, /<warning>Compacting\.\.\.<\/warning> <dim>\d+s · ↓ 1\.2k<\/dim>$/);
 
     child.end(false);
     assert.equal(view.row("host").includes(MARKER), false);
@@ -394,5 +427,112 @@ test("a run that throws still releases its compaction tracking", async () => {
     ]);
   } finally {
     session.dispose();
+  }
+});
+test("the main row shows the marker at its right end while the main session compacts", () => {
+  let mainCompacting = false;
+  const child = eventSession();
+  const view = mount([agent("idle-child", child.session)], 240, () => mainCompacting);
+  try {
+    assert.equal(view.mainRow().includes(MARKER), false);
+    mainCompacting = true;
+    assert.match(view.mainRow(), /main\s+<warning>Compacting\.\.\.<\/warning>$/);
+    assert.equal(view.row("idle-child").includes(MARKER), false, "only the compacting row");
+    mainCompacting = false;
+    assert.equal(view.mainRow().includes(MARKER), false);
+  } finally {
+    view.panel.dispose();
+  }
+});
+
+test("the status line shows one compacting entry while any agent compacts", () => {
+  let mainCompacting = false;
+  const first = eventSession();
+  const second = eventSession();
+  trackSessionCompaction(first.session);
+  trackSessionCompaction(second.session);
+  const view = mount(
+    [agent("first", first.session), agent("second", second.session)],
+    240,
+    () => mainCompacting,
+  );
+  try {
+    assert.equal(view.status(), undefined);
+    first.start();
+    second.start();
+    assert.equal(view.status(), COMPACTION_STATUS_TEXT);
+    first.end(false);
+    assert.equal(view.status(), COMPACTION_STATUS_TEXT, "one child still compacts");
+    mainCompacting = true;
+    second.end(true);
+    assert.equal(view.status(), COMPACTION_STATUS_TEXT, "main still compacts");
+    mainCompacting = false;
+    assert.equal(view.status(), undefined, "cleared once nothing compacts");
+    assert.deepEqual(
+      view.statusWrites,
+      [COMPACTION_STATUS_TEXT, undefined],
+      "written only on change, as a single entry",
+    );
+    first.start();
+    assert.equal(view.status(), COMPACTION_STATUS_TEXT);
+    view.panel.dispose();
+    assert.equal(view.statusWrites.at(-1), undefined, "dispose clears the entry");
+  } finally {
+    view.panel.dispose();
+  }
+});
+
+test("the status line follows the main session with no subagent rows and no panel update", async () => {
+  let mainCompacting = false;
+  const view = mount([], 240, () => mainCompacting);
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 400));
+  try {
+    mainCompacting = true;
+    await settle();
+    assert.equal(view.statusWrites.at(-1), COMPACTION_STATUS_TEXT);
+    mainCompacting = false;
+    await settle();
+    assert.equal(view.statusWrites.at(-1), undefined);
+  } finally {
+    view.panel.dispose();
+  }
+});
+
+test("the main owner key matches the compaction extension's", () => {
+  assert.equal(mainCoordinatorOwnerKey("abc"), mainOwnerKey("abc"));
+});
+
+test("main activity covers the host window and the main coordinator's preparation", () => {
+  const sessionId = `fleet-main-${process.pid}-${Date.now()}`;
+  const ownerKey = mainCoordinatorOwnerKey(sessionId);
+  const coordinator = new FakeCoordinator(ownerKey, 1);
+  const main = createMainCompactionActivity();
+  try {
+    assert.equal(main.isCompacting(), false, "unbound reads idle");
+    main.bind(sessionId);
+    main.hostStarted();
+    assert.equal(main.isCompacting(), true);
+    main.hostEnded();
+    assert.equal(main.isCompacting(), false);
+    main.hostStarted();
+    main.bind(sessionId);
+    assert.equal(main.isCompacting(), false, "rebinding closes the host window");
+
+    assert.equal(setCoordinator(ownerKey, coordinator), true);
+    for (const state of ["queued", "preparing", "adopting"] as const) {
+      coordinator.state = state;
+      assert.equal(main.isCompacting(), true, `${state} compacts`);
+    }
+    for (const state of ["ready", "installed", "canceled", "failed", "idle"] as const) {
+      coordinator.state = state;
+      assert.equal(main.isCompacting(), false, `${state} does not`);
+    }
+    coordinator.state = "preparing";
+    main.bind("another-session");
+    assert.equal(main.isCompacting(), false, "another session's coordinator is not read");
+    main.bind(undefined);
+    assert.equal(main.isCompacting(), false);
+  } finally {
+    release(ownerKey, 1, coordinator);
   }
 });
