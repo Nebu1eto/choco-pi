@@ -1713,3 +1713,128 @@ Pi SDK peer and development pins move from `1.2.0` to exactly `1.3.0`. The packa
 e2e-revival (`tests/e2e-revival/run.ts` and its README) requires the Pi `1.3.0` launcher at
 `~/.local/pi-1.3.0`.
 Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.
+
+## 2026-10-16 choco-pi patch: child compaction quiesce and reattach on resume
+
+A canceled or timed-out child run no longer detaches its background-compaction
+bridge permanently, so a resumed child gets background compaction again.
+
+`src/child-compaction-bridge.ts`:
+
+- `settle` with `canceled` or `timedOut` now quiesces instead of disposing:
+  the same synchronous `detach` (epoch bump, run controller aborted, proposals
+  cleared, `active` cleared, adoption owner unregistered, registry `release` by
+  owner key, generation and coordinator instance, then `cancel("canceled")` and
+  `dispose()`). The bridge stays bound: its session subscription, adoption
+  listeners and `getChildCompactionBridge` entry are kept, and `isPreparing()`
+  reads idle. The contract has no timeout reason code, so the kind
+  (`canceled`/`timed-out`) is kept on the bridge and named in a failed
+  reattach report. A repeated quiesce is a no-op.
+- New `reattach(): Promise<void>`: when not attached, not attaching and not
+  disposed, re-runs `attach` with the child's `pi` (captured by the factory)
+  and its `session_start` context. That allocates a new controller and owner
+  generation, re-registers under the same `subagent-child:<id>` key, and lets
+  the provider recover persisted candidate records. Never rejects; failures go
+  to `onError`. A no-op after disposal.
+- Permanent disposal is unchanged and still comes only from `bindExtensions`
+  failure in `runAgent` and from record retirement (the manager's
+  `session_shutdown` emit reaches the bridge's own handler); disposal also
+  drops the captured `pi` and context.
+- `agent_before_settle` already adopted a ready, branch-retained candidate
+  through `boundary()` (arbitration intent is `adopt` for any ready state), so
+  no separate idle route was added.
+
+`src/agent-runner.ts`: `resumeAgent` awaits `childCompaction?.reattach()`
+inside its `try`, before `session.prompt`, unless the signal is already
+aborted.
+
+Tests: `tests/child-compaction-bridge.test.ts` (cancel and timeout keep the
+bridge and read idle; reattach gives generation + 1 under the same key and
+recovers a matching persisted record; a moved leaf or a non-validating prefix
+recovers nothing; a late preparation after quiesce appends nothing and adopts
+nothing; repeated quiesce, disposal once, reattach after disposal; a candidate
+ready at `agent_before_settle` commits).
+
+Native state on reattach and commit-then-cancel ordering
+(`src/child-compaction-bridge.ts`):
+
+- After a successful reattach (attachment live, epoch unchanged) the bridge
+  awaits `refreshSessionNativeState(childSessionId, startCtx)` from
+  `choco-pi-compaction/src/background-host/native-refresh.ts`, so the
+  child's committed provider-native checkpoints (Anthropic/xAI replay
+  bindings, Codex committed-checkpoint restore) are replayed after the new
+  coordinator recovered its candidates and before the resumed prompt.
+  Stale-context failures are contained; any other failure goes to `onError`
+  and `reattach` still resolves.
+- `settle` (both the ordinary and the cancel/timeout path) first
+  acknowledges every pending proposal already committed on the child's
+  branch. Without it a cancel that runs after the host appended a host-routed
+  checkpoint but before the bridge's own `session_compact` handler (an
+  earlier-loaded extension's handler runs first) cleared the proposal and
+  disposed the coordinator with the commit unacknowledged.
+- The host-route `CompactionResult` sets `usage` only when the draft has
+  one (`exactOptionalPropertyTypes`; was TS2375 under the Codex package's
+  typecheck).
+
+Tests: `tests/child-compaction-bridge.test.ts` (reattach runs the child's
+registered refresher once, after the new attachment, and no other session's;
+a non-stale refresher failure is reported once and a stale one contained
+without rejecting `reattach`; a boundary commit followed by a cancel in the
+same `entry_appended` tick is acknowledged before cancel/dispose; a
+host-routed commit whose cancel runs inside an earlier `session_compact`
+handler is acknowledged once, the bridge reattaches, and resume replays the
+native refresher before the prompt without re-committing). The fake
+attachment now records `acknowledgeCommit` in the coordinator call log.
+
+No mid-turn projection: the bridge has no `context` handler that substitutes a
+ready-but-uncommitted candidate into provider requests. Pi SDK 1.3.0 ends a turn
+after every assistant response and its tool batch, and the `turn_end` boundary
+commits the bridge's draft and refreshes the agent context before the next
+request, so a single long tool-cycling task already adopts at the next tool-cycle
+boundary. `tests/child-compaction-bridge.test.ts` ("a multi-tool child adopts at
+the next tool-cycle boundary ...") pins this: one arbitration, one commit, one
+`threshold` `onCompaction`, and the next request starts with the summary.
+
+## 2026-10-17 choco-pi patch: host-route proposals survive a normal settle
+
+Cause: a normal `settle` cleared every pending proposal and canceled the
+coordinator. When it ran between a host-route adoption in
+`session_before_compact` and the host's append (a manual `/compact` racing
+the end of a run), `acknowledgeCommittedProposals` found nothing on the
+branch, the proposal was dropped, the real coordinator turned the adopting
+candidate `discarded-stale`, and the later `session_compact` was never
+acknowledged.
+
+`src/child-compaction-bridge.ts`:
+
+- A normal settle drops only boundary-route proposals. If a host-route
+  proposal is still pending it keeps it and defers the coordinator cancel
+  (`deferredCancel`); otherwise it cancels as before.
+- New `endHostRoute`, run from `session_compact` (with the committed entry)
+  and the new `session_compact_failed` handler: it acknowledges the entry,
+  drops every remaining host-route proposal (the host serializes compactions,
+  so they all belonged to the compaction that just ended), and runs a deferred
+  cancel only when nothing was acknowledged. After a commit the provider
+  reconciles the adopting candidate asynchronously, so canceling would discard
+  it.
+- `detach` clears `deferredCancel`; `acknowledge` returns whether it
+  acknowledged.
+- This keeps acknowledgment single-shot (`acknowledge` deletes the pending
+  entry) and owner-scoped (owner key plus a candidate ID pending in the
+  current epoch). An "ever proposed this epoch" set was rejected: it would
+  accept a replayed commit event as a second acknowledgment unless it
+  duplicated the same deletion.
+
+Tests (`tests/child-compaction-bridge.test.ts`): "a host-route proposal
+outlives a normal settle and is acknowledged once on commit" (manual
+`session.compact()` on a real SDK child; a trailing `session_before_compact`
+handler settles after the bridge adopted and before the append; exactly one
+`acknowledgeCommit`, candidate `installed`, one entry, and a replayed
+`session_compact` changes nothing); "a host-route proposal whose compaction
+fails after a normal settle is canceled once"; "a bindExtensions failure
+disposes the bridge once and leaves no slot or subscription" (a trailing
+`session_start` handler throws and the runner's `onToolActivity` rethrows
+the forwarded extension error, so `bindExtensions` rejects through the
+existing catch; no runner seam was added). The fake coordinator's `cancel` now
+turns `adopting` into `discarded-stale` like the real one. `runChild` gains
+`trailingFactories`, which load after the runner's inline factories.

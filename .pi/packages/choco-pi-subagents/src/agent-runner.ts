@@ -1872,6 +1872,8 @@ export async function resumeAgent(
   const stopCompactionTracking = trackSessionCompaction(session);
 
   try {
+    // A canceled or timed-out run quiesced the attachment; resume gets a fresh coordinator.
+    if (!options.signal?.aborted) await childCompaction?.reattach();
     if (!options.signal?.aborted) await session.prompt(prompt);
     await turnLimit?.settleCorrections();
   } finally {

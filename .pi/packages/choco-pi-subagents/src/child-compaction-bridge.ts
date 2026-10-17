@@ -7,8 +7,10 @@
  * per-child coordinator that the compaction extension supplies through the
  * provider slot below. The coordinator is registered in the shared
  * background-compaction registry under the child's own owner key (its
- * distinct session ID, never inherited entry IDs) and released when the run
- * is canceled, times out, or the session is disposed.
+ * distinct session ID, never inherited entry IDs). A canceled or timed-out
+ * run quiesces the attachment (registry slot released, coordinator disposed,
+ * session subscription kept); a later resume reattaches a fresh coordinator,
+ * which recovers persisted candidates. Session disposal detaches permanently.
  *
  * Feature switch: without a published, enabled provider at spawn time the
  * factory is absent and the child is byte-for-byte the pre-existing runner
@@ -42,6 +44,8 @@ import {
   release,
   setCoordinator,
 } from "../../choco-pi-compaction/src/background/registry.ts";
+import { refreshSessionNativeState } from "../../choco-pi-compaction/src/background-host/native-refresh.ts";
+import { isStaleContextError } from "../../choco-pi-compaction/src/lifecycle.ts";
 
 /** Global slot the compaction extension publishes its child provider on. */
 const CHILD_COMPACTION_PROVIDER_SYMBOL: unique symbol = Symbol.for(
@@ -130,6 +134,12 @@ interface ChildCompactionBridge {
   isPreparing(): boolean;
   /** End of one prompt invocation; never throws and never awaits. */
   settle(outcome: { readonly canceled: boolean; readonly timedOut: boolean }): void;
+  /**
+   * Attach a fresh coordinator after a cancel/timeout quiesce, before a
+   * resumed prompt. A no-op while attached, attaching, or disposed, and before
+   * the first `session_start`. Never rejects.
+   */
+  reattach(): Promise<void>;
   /** The runner gave up the session; detach permanently. Never throws. */
   dispose(reason?: ReasonCode): void;
 }
@@ -279,6 +289,17 @@ interface BridgeState {
   readonly proposed: Set<string>;
   readonly decisions: WeakMap<SessionBeforeCompactEvent, Promise<HostRouteDecision | undefined>>;
   readonly listeners: Set<(info: ChildAdoptionInfo) => void>;
+  /** The child's extension API, captured by the factory; reattach reuses it. */
+  pi: ExtensionAPI | undefined;
+  /** The context of the child's `session_start`; reattach reuses it. */
+  startCtx: ExtensionContext | undefined;
+  /** Why the attachment was last quiesced; cleared by a successful reattach. */
+  quiesced: "canceled" | "timed-out" | undefined;
+  /**
+   * A normal settle found a host-route proposal still awaiting its commit and
+   * deferred the coordinator cancel to that compaction's end event.
+   */
+  deferredCancel: boolean;
 }
 
 /**
@@ -303,6 +324,7 @@ export function createChildCompactionBridge(
     onAdoption: (listener) => addAdoptionListener(state, listener),
     isPreparing: () => isBridgePreparing(state),
     settle: (outcome) => settleBridge(state, outcome),
+    reattach: () => reattachBridge(state),
     dispose: (reason = "disposed") => disposeBridge(state, reason),
   };
   return bridge;
@@ -339,6 +361,10 @@ function createBridgeState(
     proposed: new Set(),
     decisions: new WeakMap(),
     listeners: new Set(),
+    pi: undefined,
+    startCtx: undefined,
+    quiesced: undefined,
+    deferredCancel: false,
   };
 }
 
@@ -374,6 +400,7 @@ function detach(state: BridgeState, reason: ReasonCode): void {
   state.creating = undefined;
   state.pending.clear();
   state.proposed.clear();
+  state.deferredCancel = false;
   const current = state.active;
   state.active = undefined;
   if (!current) return;
@@ -398,6 +425,8 @@ function disposeBridge(state: BridgeState, reason: ReasonCode): void {
   state.unsubscribeSession?.();
   state.unsubscribeSession = undefined;
   state.listeners.clear();
+  state.pi = undefined;
+  state.startCtx = undefined;
   if (state.boundSession) bridges.delete(state.boundSession);
 }
 
@@ -449,24 +478,157 @@ function isBridgePreparing(state: BridgeState): boolean {
   return isCoordinatorPreparing(current.attachment.coordinator);
 }
 
+/**
+ * Acknowledge every proposal that is already committed on the child's branch.
+ * A settle can run after the host appended a proposed checkpoint but before
+ * its commit event reached this bridge (another extension's `session_compact`
+ * handler runs first); clearing the proposals then would drop the commit.
+ */
+function acknowledgeCommittedProposals(state: BridgeState): void {
+  if (state.pending.size === 0 || state.active === undefined) return;
+  const session = state.boundSession;
+  if (session === undefined) return;
+  let branch: readonly SessionEntry[];
+  try {
+    branch = session.sessionManager.getBranch();
+  } catch (error) {
+    report(state, `committed checkpoint scan failed: ${String(error)}`);
+    return;
+  }
+  for (const entry of branch) {
+    if (state.pending.size === 0) return;
+    if (entry.type === "compaction") acknowledge(state, entry);
+  }
+}
+
 function settleBridge(
   state: BridgeState,
   outcome: { readonly canceled: boolean; readonly timedOut: boolean },
 ): void {
   if (state.disposed) return;
+  // Before anything clears the proposals or disposes the coordinator.
+  acknowledgeCommittedProposals(state);
   if (outcome.canceled || outcome.timedOut) {
-    disposeBridge(state, "canceled");
+    quiesceBridge(state, outcome.timedOut ? "timed-out" : "canceled");
     return;
   }
   // Settled, not disposed: the session may be resumed, so the attachment
   // stays registered, but no preparation outlives the invocation.
+  dropProposals(state, "boundary");
+  if (!state.active) return;
+  // A host compaction answered with our candidate may still be between
+  // `session_before_compact` and its append (a manual /compact racing the
+  // run's end). Its proposal and candidate must survive until that
+  // compaction's own end event, or the commit is never acknowledged and the
+  // canceled candidate fails closed. Keeping the pending entry (rather than
+  // acknowledging any entry whose candidate ID this epoch ever proposed)
+  // keeps acknowledgment single-shot (`acknowledge` deletes the entry) and
+  // owner-scoped, and it is bounded: the host serializes compactions, so the
+  // next `session_compact`/`session_compact_failed` ends it, and any detach
+  // clears it.
+  if (hasProposal(state, "host")) {
+    state.deferredCancel = true;
+    return;
+  }
+  cancelCandidate(state);
+}
+
+function cancelCandidate(state: BridgeState): void {
   const current = state.active;
-  state.pending.clear();
   if (!current) return;
   try {
     current.attachment.coordinator.cancel("canceled");
   } catch (error) {
     report(state, `cancel failed: ${String(error)}`);
+  }
+}
+
+function hasProposal(state: BridgeState, route: PendingAdoption["route"]): boolean {
+  for (const proposal of state.pending.values()) if (proposal.route === route) return true;
+  return false;
+}
+
+function dropProposals(state: BridgeState, route: PendingAdoption["route"]): void {
+  for (const [candidateId, proposal] of state.pending) {
+    if (proposal.route === route) state.pending.delete(candidateId);
+  }
+}
+
+/**
+ * One host compaction ended (`committed` is its appended entry, if any).
+ * Host-route proposals belong to the compaction in flight, so whatever this
+ * event did not acknowledge is over. A cancel deferred by settle runs only if
+ * our candidate was not committed: after a commit the provider reconciles the
+ * adopting candidate asynchronously, and canceling it would discard it.
+ */
+function endHostRoute(state: BridgeState, committed: CompactionEntry | undefined): void {
+  const acknowledged = committed !== undefined && acknowledge(state, committed);
+  dropProposals(state, "host");
+  if (!state.deferredCancel) return;
+  state.deferredCancel = false;
+  if (!acknowledged) cancelCandidate(state);
+}
+
+/**
+ * Cancel/timeout: invalidate synchronously, release the registry slot, then
+ * cancel and dispose the coordinator. Unlike disposal the bridge stays bound
+ * (session subscription and WeakMap entry kept) so a resume can reattach.
+ * Repeating it is a no-op beyond the epoch bump.
+ */
+function quiesceBridge(state: BridgeState, kind: "canceled" | "timed-out"): void {
+  if (state.disposed) return;
+  state.quiesced = kind;
+  // The contract has no timeout reason code; the kind is kept on the bridge.
+  detach(state, "canceled");
+}
+
+async function reattachBridge(state: BridgeState): Promise<void> {
+  if (state.disposed || state.active !== undefined || state.creating !== undefined) return;
+  const { pi, startCtx, quiesced, boundSessionId } = state;
+  if (pi === undefined || startCtx === undefined || boundSessionId === undefined) return;
+  const reattachEpoch = state.epoch;
+  try {
+    await attach(state, startCtx, pi);
+  } catch (error) {
+    const after = quiesced === undefined ? "" : ` after ${quiesced}`;
+    report(state, `reattach${after} failed: ${String(error)}`);
+    return;
+  }
+  // attach bumps the epoch only when it had to detach; any later detach wins.
+  const owner = state.active;
+  if (owner === undefined || state.disposed || state.epoch !== reattachEpoch) return;
+  state.quiesced = undefined;
+  // After attach, so a recovered candidate and the replayed provider-native
+  // checkpoint (Codex/Anthropic/xAI) both exist before the resumed prompt.
+  await refreshNativeState(state, {
+    owner,
+    epoch: reattachEpoch,
+    childSessionId: boundSessionId,
+    ctx: startCtx,
+  });
+}
+
+/** One native-state refresh, fixed before its await. */
+interface NativeRefreshAttempt {
+  readonly owner: ActiveAttachment;
+  readonly epoch: number;
+  readonly childSessionId: string;
+  readonly ctx: ExtensionContext;
+}
+
+/** Re-run the session's native-state refreshers; never rejects. */
+async function refreshNativeState(
+  state: BridgeState,
+  attempt: NativeRefreshAttempt,
+): Promise<void> {
+  try {
+    await refreshSessionNativeState(attempt.childSessionId, attempt.ctx);
+  } catch (cause) {
+    const error = cause instanceof Error ? cause : new Error(String(cause));
+    if (isStaleContextError(error)) return;
+    const current = isStillAttached(state, attempt.owner, attempt.epoch);
+    const detached = current ? "" : " (attachment since detached)";
+    report(state, `native state refresh failed${detached}: ${String(error)}`);
   }
 }
 
@@ -672,8 +834,10 @@ async function arbitrateHostRoute(
     firstKeptEntryId: result.draft.firstKeptEntryId,
     tokensBefore: event.preparation.tokensBefore,
     details: result.draft.details,
-    usage: result.draft.usage,
   };
+  // Under exactOptionalPropertyTypes an absent usage stays absent.
+  const usage = result.draft.usage;
+  if (usage) compaction.usage = usage;
   return { owner: current, epoch: arbitrationEpoch, compaction };
 }
 
@@ -721,14 +885,14 @@ function adoptionOwner(state: BridgeState, ownerKey: string): ChildAdoptionOwner
  * surface through the SDK `entry_appended` event; host-routed results are
  * appended without it and surface through the real `session_compact`.
  */
-function acknowledge(state: BridgeState, entry: CompactionEntry): void {
+function acknowledge(state: BridgeState, entry: CompactionEntry): boolean {
   const current = state.active;
-  if (!current) return;
+  if (!current) return false;
   const details: unknown = entry.details;
-  if (!Value.Check(CommittedDetailsSchema, details)) return;
-  if (details.ownerKey !== undefined && details.ownerKey !== current.ownerKey) return;
+  if (!Value.Check(CommittedDetailsSchema, details)) return false;
+  if (details.ownerKey !== undefined && details.ownerKey !== current.ownerKey) return false;
   const proposal = state.pending.get(details.candidateId);
-  if (!proposal) return;
+  if (!proposal) return false;
   // Deleting the proposal makes every later commit event for it a no-op.
   state.pending.delete(details.candidateId);
   try {
@@ -737,8 +901,9 @@ function acknowledge(state: BridgeState, entry: CompactionEntry): void {
     report(state, `commit acknowledgment failed: ${String(error)}`);
   }
   // Host-routed adoptions already reach onCompaction through compaction_end.
-  if (proposal.route !== "boundary") return;
+  if (proposal.route !== "boundary") return true;
   notifyAdoptionListeners(state, { reason: "threshold", tokensBefore: proposal.tokensBefore });
+  return true;
 }
 
 function notifyAdoptionListeners(state: BridgeState, info: ChildAdoptionInfo): void {
@@ -769,9 +934,12 @@ async function answerHostRoute(
 }
 
 function registerBridgeHandlers(state: BridgeState, pi: ExtensionAPI): void {
+  if (state.disposed) return;
+  state.pi = pi;
   // Never delay the child's start on coordinator creation; boundaries before
   // attachment are inert and a late attachment is checked against the epoch.
   pi.on("session_start", (_event, ctx) => {
+    if (!state.disposed) state.startCtx = ctx;
     void attachReporting(state, ctx, pi);
   });
   pi.on("turn_end", async (event, ctx) => {
@@ -787,6 +955,9 @@ function registerBridgeHandlers(state: BridgeState, pi: ExtensionAPI): void {
     disposeBridge(state, "disposed");
   });
   pi.on("session_compact", (event) => {
-    acknowledge(state, event.compactionEntry);
+    endHostRoute(state, event.compactionEntry);
+  });
+  pi.on("session_compact_failed", () => {
+    endHostRoute(state, undefined);
   });
 }
