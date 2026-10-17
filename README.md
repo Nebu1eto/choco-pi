@@ -40,6 +40,11 @@ npm run install:profile
 pi
 ```
 
+The checkout ships no `.pi/settings.json`. The installer reads the profile
+policy from `~/.pi/agent/settings.json`, so on a new machine create that file
+first from [Example global settings](#example-global-settings), with your
+checkout path. Without it, the installer stops and names both files.
+
 ### Install Pi without Homebrew
 
 Homebrew is not supported for choco-pi because its `pi-coding-agent` formula
@@ -335,7 +340,7 @@ The [RPC host bridge](docs/rpc-host-bridge.md) lets Waku identify the installed 
 
 ## Installed packages
 
-[`.pi/settings.json`](.pi/settings.json) loads these 17 local packages. An eighteenth package, [`choco-pi-acp`](.pi/packages/choco-pi-acp) 0.0.33, is not loaded by Pi; it runs as a separate ACP process for editors (see [Use choco-pi in Zed](#use-choco-pi-in-zed)).
+The profile loads these 17 local packages, listed by absolute path under `packages` in `~/.pi/agent/settings.json`. An eighteenth package, [`choco-pi-acp`](.pi/packages/choco-pi-acp) 0.0.33, is not loaded by Pi; it runs as a separate ACP process for editors (see [Use choco-pi in Zed](#use-choco-pi-in-zed)).
 
 | Package                                                                   |        Version | Purpose                                                      |
 | ------------------------------------------------------------------------- | -------------: | ------------------------------------------------------------ |
@@ -361,7 +366,7 @@ The [RPC host bridge](docs/rpc-host-bridge.md) lets Waku identify the installed 
 
 | File or directory                                                                                                                               | Purpose                                                                     |
 | ----------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| [`.pi/settings.json`](.pi/settings.json)                                                                                                        | Loaded packages, theme, TUI mode, per-model thinking levels, and compaction |
+| Global `~/.pi/agent/settings.json`; the checkout ships no `.pi/settings.json`                                                                   | Loaded packages, theme, TUI mode, per-model thinking levels, and compaction |
 | [`.pi/SYSTEM.md`](.pi/SYSTEM.md)                                                                                                                | Profile-wide agent behavior and authority rules                             |
 | [`.pi/model-guidance.md`](.pi/model-guidance.md)                                                                                                | Model routing and model-specific policy                                     |
 | [`.pi/writing-policy.md`](.pi/writing-policy.md) and [`.pi/review-policy.md`](.pi/review-policy.md)                                             | Response prose and review policy                                            |
@@ -384,14 +389,19 @@ It also migrates an existing `~/.pi/agent/extensions/background-compaction.json`
 
 ### Example global settings
 
-`npm run install:profile` builds `~/.pi/agent/settings.json` from
-[`.pi/settings.json`](.pi/settings.json) and keeps any keys it does not manage.
-Each run:
+`npm run install:profile` rewrites `~/.pi/agent/settings.json` and keeps any
+keys it does not manage. The checkout ships no `.pi/settings.json`, so the
+profile policy comes from this global file itself: its `packages` entries under
+the checkout's `.pi/packages` and its `extensions` built-in policy. Each run:
 
-- Writes `packages`, `skills`, and `prompts` as absolute checkout paths; `extensions` also gets the [built-in policy](#built-in-extensions). Entries you added are kept after the choco-pi entries.
-- Copies `theme`, `tuiMode`, `fullscreenExitOutput`, `fuzzyFileMentions`, and `compaction` from `.pi/settings.json` over the global value. Change these in `.pi/settings.json`; edits made only in the global file are lost on the next install.
-- Merges `modelThinkingLevels`. Your global entries win; `.pi/settings.json` only adds levels for models you have not set.
+- Writes `packages`, `skills`, and `prompts` as absolute checkout paths; `extensions` also gets the [built-in policy](#built-in-extensions). Entries you added are kept after the choco-pi entries, except packages a bundled package supersedes.
+- Keeps `theme`, `tuiMode`, `fullscreenExitOutput`, `fuzzyFileMentions`, `compaction`, and `modelThinkingLevels` as set in the global file. Change them there or through `/preferences`.
 - Leaves the remaining keys alone. Set them yourself or through `/preferences`.
+
+A checkout that adds a `.pi/settings.json` takes precedence: the installer and
+`/check` read it instead, copy its `theme`, `tuiMode`, `fullscreenExitOutput`,
+`fuzzyFileMentions`, and `compaction` over the global values, and merge its
+`modelThinkingLevels` under your global entries.
 
 A complete global file looks like this. Replace `/path/to/choco-pi` with your
 checkout path. The `defaultModel`, `modelThinkingLevels`, and `enabledModels`
@@ -497,15 +507,15 @@ values are the maintainer's current settings. Secrets never belong in this file.
 }
 ```
 
-| Keys                                                                                                                              | Set by                              | Notes                                                                                                                                                                                                                                                                                                                                       |
-| --------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages`, `extensions`, `skills`, `prompts`                                                                                     | Installer                           | Absolute checkout paths; rerun the installer after moving the checkout.                                                                                                                                                                                                                                                                     |
-| `theme`, `tuiMode`, `fullscreenExitOutput`, `fuzzyFileMentions`, `compaction`                                                     | Installer, from `.pi/settings.json` | `compaction.reserveTokens` is reserved for the model response and `compaction.keepRecentTokens` is kept without summarizing. Context limits are `/preferences` presets.                                                                                                                                                                     |
-| `modelThinkingLevels`                                                                                                             | You, with installer defaults        | Keyed by exact `provider/modelId`. Your entries win; the installer adds entries from `.pi/settings.json` for models you have not set.                                                                                                                                                                                                       |
-| `defaultProvider`, `defaultModel`, `defaultThinkingLevel`, `enabledModels`                                                        | You                                 | Startup model and thinking level; `enabledModels` limits model cycling.                                                                                                                                                                                                                                                                     |
-| `cacheWarming`, `transport`, `httpIdleTimeoutMs`, `quietStartup`, `enableInstallTelemetry`, `markdown`, `terminal`                | You                                 | Pi runtime settings. `cacheWarming` is read only from the global file and accepts `off`, `streaming` (default), or `idle`.                                                                                                                                                                                                                  |
-| `agentLanguage`, `agentStyle`, `agentPersona`, `agentOnUsageLimit`, `sessionAutoName`, `sessionAutoNameModel`, `promptSuggestion` | You or `/preferences`               | choco-pi reads these only from the global file. `agentStyle` is `concise`, `explanatory`, or the name of a style file in `~/.pi/agent/agent-styles/`. `agentPersona` defaults to `pessimistic`, `agentOnUsageLimit` to `none` (`fallback`, `auto-resume`), `sessionAutoNameModel` to `openai/gpt-6-luna`, and `promptSuggestion` to `true`. |
-| `hooks`                                                                                                                           | You                                 | Claude Code hook format. choco-pi-hooks also reads hooks from `.claude` and `.agents` settings files, as described in its [README](.pi/packages/choco-pi-hooks/README.md).                                                                                                                                                                  |
+| Keys                                                                                                                              | Set by                | Notes                                                                                                                                                                                                                                                                                                                                       |
+| --------------------------------------------------------------------------------------------------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages`, `extensions`, `skills`, `prompts`                                                                                     | Installer             | Absolute checkout paths; rerun the installer after moving the checkout.                                                                                                                                                                                                                                                                     |
+| `theme`, `tuiMode`, `fullscreenExitOutput`, `fuzzyFileMentions`, `compaction`                                                     | You                   | `compaction.reserveTokens` is reserved for the model response and `compaction.keepRecentTokens` is kept without summarizing. Context limits are `/preferences` presets.                                                                                                                                                                     |
+| `modelThinkingLevels`                                                                                                             | You                   | Keyed by exact `provider/modelId`. A checkout `.pi/settings.json`, when present, only adds entries for models you have not set.                                                                                                                                                                                                             |
+| `defaultProvider`, `defaultModel`, `defaultThinkingLevel`, `enabledModels`                                                        | You                   | Startup model and thinking level; `enabledModels` limits model cycling.                                                                                                                                                                                                                                                                     |
+| `cacheWarming`, `transport`, `httpIdleTimeoutMs`, `quietStartup`, `enableInstallTelemetry`, `markdown`, `terminal`                | You                   | Pi runtime settings. `cacheWarming` is read only from the global file and accepts `off`, `streaming` (default), or `idle`.                                                                                                                                                                                                                  |
+| `agentLanguage`, `agentStyle`, `agentPersona`, `agentOnUsageLimit`, `sessionAutoName`, `sessionAutoNameModel`, `promptSuggestion` | You or `/preferences` | choco-pi reads these only from the global file. `agentStyle` is `concise`, `explanatory`, or the name of a style file in `~/.pi/agent/agent-styles/`. `agentPersona` defaults to `pessimistic`, `agentOnUsageLimit` to `none` (`fallback`, `auto-resume`), `sessionAutoNameModel` to `openai/gpt-6-luna`, and `promptSuggestion` to `true`. |
+| `hooks`                                                                                                                           | You                   | Claude Code hook format. choco-pi-hooks also reads hooks from `.claude` and `.agents` settings files, as described in its [README](.pi/packages/choco-pi-hooks/README.md).                                                                                                                                                                  |
 
 ### Advisor settings
 

@@ -232,7 +232,8 @@ export const PREFERENCES_LAYOUT: readonly PreferencesLayoutTab[] = [
 /**
  * Rows the dialog never shows, not even in search.
  *
- * - `tui-mode` and `fullscreen-exit-output`: `.pi/settings.json` pins both.
+ * - `tui-mode` and `fullscreen-exit-output`: profile-owned layout keys;
+ *   `/check` flags a non-fullscreen `tuiMode`.
  * - `install-telemetry`, `collapse-changelog`: Pi update chrome, not harness
  *   behavior.
  * - `transport`, `http-idle-timeout`, `cache-warming-mode`: provider transport

@@ -381,8 +381,8 @@ function readFuzzyMentionsFlag(settingsPath: string): boolean | undefined {
 
 /**
  * Project settings win when the key is present there; otherwise the agent
- * profile's value applies. The repository's `.pi/settings.json` carries the
- * documented default (`false`).
+ * profile's value applies. The checkout ships no `.pi/settings.json`, so the
+ * agent profile's value applies unless a project adds one.
  */
 export function fuzzyFileMentionsEnabled(agentDir = getAgentDir(), projectDir?: string): boolean {
   const project =

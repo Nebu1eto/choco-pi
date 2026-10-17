@@ -39,6 +39,11 @@ npm run install:profile
 pi
 ```
 
+체크아웃에는 `.pi/settings.json`이 없습니다. 설치 프로그램은 프로필 정책을
+`~/.pi/agent/settings.json`에서 읽으므로, 새 컴퓨터에서는 먼저
+[전역 설정 예시](#전역-설정-예시)를 바탕으로 체크아웃 경로를 넣어 이 파일을
+만드세요. 파일이 없으면 설치 프로그램은 두 파일 경로를 알려 주고 멈춥니다.
+
 ### Homebrew를 사용하지 않고 Pi 설치
 
 Homebrew의 `pi-coding-agent` formula는 고정된 릴리스보다 늦게 갱신되므로 choco-pi는 Homebrew 설치를 지원하지 않습니다. 공식 설치 프로그램으로 Pi를 설치하세요.
@@ -307,7 +312,7 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 
 ## 설치된 패키지
 
-[`.pi/settings.json`](.pi/settings.json)은 다음 로컬 패키지 17개를 불러옵니다. 이와 별도로 [`choco-pi-acp`](.pi/packages/choco-pi-acp) 0.0.33 패키지는 Pi가 불러오지 않으며, 에디터와 연결하는 독립 ACP 프로세스로 실행됩니다([Zed에서 choco-pi 사용하기](#zed에서-choco-pi-사용하기) 참고).
+프로필은 다음 로컬 패키지 17개를 불러오며, 이 목록은 `~/.pi/agent/settings.json`의 `packages`에 절대 경로로 들어 있습니다. 이와 별도로 [`choco-pi-acp`](.pi/packages/choco-pi-acp) 0.0.33 패키지는 Pi가 불러오지 않으며, 에디터와 연결하는 독립 ACP 프로세스로 실행됩니다([Zed에서 choco-pi 사용하기](#zed에서-choco-pi-사용하기) 참고).
 
 | 패키지                                                                    |           버전 | 용도                                             |
 | ------------------------------------------------------------------------- | -------------: | ------------------------------------------------ |
@@ -333,7 +338,7 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 
 | 파일 또는 디렉터리                                                                                                                            | 용도                                                            |
 | --------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| [`.pi/settings.json`](.pi/settings.json)                                                                                                      | 불러올 패키지, 테마, TUI 모드, 모델별 thinking 수준, compaction |
+| 전역 `~/.pi/agent/settings.json`(체크아웃에는 `.pi/settings.json` 없음)                                                                       | 불러올 패키지, 테마, TUI 모드, 모델별 thinking 수준, compaction |
 | [`.pi/SYSTEM.md`](.pi/SYSTEM.md)                                                                                                              | 프로필 전체에 적용되는 에이전트 동작과 권한 규칙                |
 | [`.pi/model-guidance.md`](.pi/model-guidance.md)                                                                                              | 모델 라우팅과 모델별 정책                                       |
 | [`.pi/writing-policy.md`](.pi/writing-policy.md)와 [`.pi/review-policy.md`](.pi/review-policy.md)                                             | 응답 문장 규칙과 리뷰 정책                                      |
@@ -356,14 +361,20 @@ Pi 1.0.3부터 `Home`/`End`는 편집기 커서를 이동합니다. 대화 기�
 
 ### 전역 설정 예시
 
-`npm run install:profile`은 [`.pi/settings.json`](.pi/settings.json)을 바탕으로
-`~/.pi/agent/settings.json`을 만들며, 관리하지 않는 키는 그대로 둡니다. 실행할 때마다
+`npm run install:profile`은 `~/.pi/agent/settings.json`을 다시 쓰며, 관리하지 않는
+키는 그대로 둡니다. 체크아웃에는 `.pi/settings.json`이 없으므로 프로필 정책은 이
+전역 파일 자체에서 가져옵니다. 체크아웃의 `.pi/packages` 아래를 가리키는
+`packages` 항목과 `extensions`의 내장 확장 정책이 그 정책입니다. 실행할 때마다
 다음과 같이 처리합니다.
 
-- `packages`, `skills`, `prompts`를 체크아웃 절대 경로로 기록하고, `extensions`에는 [내장 확장 정책](#내장-확장)도 넣습니다. 사용자가 추가한 항목은 choco-pi 항목 뒤에 유지됩니다.
-- `.pi/settings.json`의 `theme`, `tuiMode`, `fullscreenExitOutput`, `fuzzyFileMentions`, `compaction`을 전역 값 위에 덮어씁니다. 이 키들은 `.pi/settings.json`에서 바꾸세요. 전역 파일에서만 고친 값은 다음 설치 때 사라집니다.
-- `modelThinkingLevels`는 합칩니다. 전역 파일의 값이 우선하며, `.pi/settings.json`은 사용자가 설정하지 않은 모델의 수준만 추가합니다.
+- `packages`, `skills`, `prompts`를 체크아웃 절대 경로로 기록하고, `extensions`에는 [내장 확장 정책](#내장-확장)도 넣습니다. 사용자가 추가한 항목은 choco-pi 항목 뒤에 유지되며, 번들 패키지가 대체하는 패키지는 제거됩니다.
+- `theme`, `tuiMode`, `fullscreenExitOutput`, `fuzzyFileMentions`, `compaction`, `modelThinkingLevels`는 전역 파일에 설정된 값을 그대로 둡니다. 전역 파일에서 바꾸거나 `/preferences`를 쓰세요.
 - 그 밖의 키는 건드리지 않습니다. 직접 쓰거나 `/preferences`로 설정하세요.
+
+체크아웃에 `.pi/settings.json`을 추가하면 그 파일이 우선합니다. 설치 프로그램과
+`/check`는 그 파일을 읽고, 그 파일의 `theme`, `tuiMode`, `fullscreenExitOutput`,
+`fuzzyFileMentions`, `compaction`을 전역 값 위에 덮어쓰며, `modelThinkingLevels`는
+전역 값이 우선하도록 합칩니다.
 
 완성된 전역 파일은 다음과 같습니다. `/path/to/choco-pi`는 실제 체크아웃 경로로
 바꾸세요. `defaultModel`, `modelThinkingLevels`, `enabledModels` 값은 관리자의 현재
@@ -469,15 +480,15 @@ Pi 1.0.3부터 `Home`/`End`는 편집기 커서를 이동합니다. 대화 기�
 }
 ```
 
-| 키                                                                                                                                | 설정 주체                                   | 설명                                                                                                                                                                                                                                                                                                                                                                        |
-| --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages`, `extensions`, `skills`, `prompts`                                                                                     | 설치 프로그램                               | 체크아웃 절대 경로입니다. 체크아웃을 옮기면 설치 프로그램을 다시 실행하세요.                                                                                                                                                                                                                                                                                                |
-| `theme`, `tuiMode`, `fullscreenExitOutput`, `fuzzyFileMentions`, `compaction`                                                     | 설치 프로그램(`.pi/settings.json`에서 복사) | `compaction.reserveTokens`는 모델 응답용으로 남겨 두는 토큰 수, `compaction.keepRecentTokens`는 요약하지 않고 남기는 최근 토큰 수입니다. 컨텍스트 한도는 `/preferences` 프리셋으로 정합니다.                                                                                                                                                                                |
-| `modelThinkingLevels`                                                                                                             | 사용자(설치 프로그램이 기본값 추가)         | 정확한 `provider/modelId`를 키로 씁니다. 사용자 값이 우선하며, 설치 프로그램은 사용자가 설정하지 않은 모델에 대해서만 `.pi/settings.json`의 값을 추가합니다.                                                                                                                                                                                                                |
-| `defaultProvider`, `defaultModel`, `defaultThinkingLevel`, `enabledModels`                                                        | 사용자                                      | 시작 모델과 thinking 수준입니다. `enabledModels`는 모델 전환 대상을 제한합니다.                                                                                                                                                                                                                                                                                             |
-| `cacheWarming`, `transport`, `httpIdleTimeoutMs`, `quietStartup`, `enableInstallTelemetry`, `markdown`, `terminal`                | 사용자                                      | Pi 런타임 설정입니다. `cacheWarming`은 전역 파일에서만 읽으며 `off`, `streaming`(기본값), `idle` 중 하나입니다.                                                                                                                                                                                                                                                             |
-| `agentLanguage`, `agentStyle`, `agentPersona`, `agentOnUsageLimit`, `sessionAutoName`, `sessionAutoNameModel`, `promptSuggestion` | 사용자 또는 `/preferences`                  | choco-pi는 이 키를 전역 파일에서만 읽습니다. `agentStyle`은 `concise`, `explanatory`, 또는 `~/.pi/agent/agent-styles/`에 둔 스타일 파일 이름입니다. `agentPersona`의 기본값은 `pessimistic`, `agentOnUsageLimit`의 기본값은 `none`(`fallback`, `auto-resume` 선택 가능), `sessionAutoNameModel`의 기본값은 `openai/gpt-6-luna`, `promptSuggestion`의 기본값은 `true`입니다. |
-| `hooks`                                                                                                                           | 사용자                                      | Claude Code 훅 형식입니다. choco-pi-hooks는 `.claude`, `.agents` 설정 파일의 훅도 읽습니다. 자세한 내용은 [README](.pi/packages/choco-pi-hooks/README.md)를 참고하세요.                                                                                                                                                                                                     |
+| 키                                                                                                                                | 설정 주체                  | 설명                                                                                                                                                                                                                                                                                                                                                                        |
+| --------------------------------------------------------------------------------------------------------------------------------- | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages`, `extensions`, `skills`, `prompts`                                                                                     | 설치 프로그램              | 체크아웃 절대 경로입니다. 체크아웃을 옮기면 설치 프로그램을 다시 실행하세요.                                                                                                                                                                                                                                                                                                |
+| `theme`, `tuiMode`, `fullscreenExitOutput`, `fuzzyFileMentions`, `compaction`                                                     | 사용자                     | `compaction.reserveTokens`는 모델 응답용으로 남겨 두는 토큰 수, `compaction.keepRecentTokens`는 요약하지 않고 남기는 최근 토큰 수입니다. 컨텍스트 한도는 `/preferences` 프리셋으로 정합니다.                                                                                                                                                                                |
+| `modelThinkingLevels`                                                                                                             | 사용자                     | 정확한 `provider/modelId`를 키로 씁니다. 체크아웃에 `.pi/settings.json`이 있으면 사용자가 설정하지 않은 모델의 값만 추가합니다.                                                                                                                                                                                                                                             |
+| `defaultProvider`, `defaultModel`, `defaultThinkingLevel`, `enabledModels`                                                        | 사용자                     | 시작 모델과 thinking 수준입니다. `enabledModels`는 모델 전환 대상을 제한합니다.                                                                                                                                                                                                                                                                                             |
+| `cacheWarming`, `transport`, `httpIdleTimeoutMs`, `quietStartup`, `enableInstallTelemetry`, `markdown`, `terminal`                | 사용자                     | Pi 런타임 설정입니다. `cacheWarming`은 전역 파일에서만 읽으며 `off`, `streaming`(기본값), `idle` 중 하나입니다.                                                                                                                                                                                                                                                             |
+| `agentLanguage`, `agentStyle`, `agentPersona`, `agentOnUsageLimit`, `sessionAutoName`, `sessionAutoNameModel`, `promptSuggestion` | 사용자 또는 `/preferences` | choco-pi는 이 키를 전역 파일에서만 읽습니다. `agentStyle`은 `concise`, `explanatory`, 또는 `~/.pi/agent/agent-styles/`에 둔 스타일 파일 이름입니다. `agentPersona`의 기본값은 `pessimistic`, `agentOnUsageLimit`의 기본값은 `none`(`fallback`, `auto-resume` 선택 가능), `sessionAutoNameModel`의 기본값은 `openai/gpt-6-luna`, `promptSuggestion`의 기본값은 `true`입니다. |
+| `hooks`                                                                                                                           | 사용자                     | Claude Code 훅 형식입니다. choco-pi-hooks는 `.claude`, `.agents` 설정 파일의 훅도 읽습니다. 자세한 내용은 [README](.pi/packages/choco-pi-hooks/README.md)를 참고하세요.                                                                                                                                                                                                     |
 
 ### advisor 설정
 

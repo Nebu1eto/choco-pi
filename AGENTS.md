@@ -18,7 +18,7 @@ Cached recollection, summaries, excerpts, metadata, and navigation-only pages do
 
 - Read the closest `AGENTS.md` and `VENDORED.md`; use Node-erasable TypeScript and explicit `.ts` relative imports.
 - Use the host `typebox` alias at `^1.3.29`; add no schema library or build output.
-- Never edit generated dependencies. After adding a package to `.pi/settings.json`, run `pnpm install:profile`.
+- Never edit generated dependencies. After adding a bundled package to `packages` in `~/.pi/agent/settings.json` (the checkout ships no `.pi/settings.json`), run `pnpm install:profile`.
 - ACP/editor-context require Node 24+; ACP runs `bin/choco-pi-acp.ts` without build output or a manifest entry.
 
 ## Mandatory implementation constraints
