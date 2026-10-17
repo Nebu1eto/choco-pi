@@ -60,9 +60,12 @@ import {
   adoptAtBoundary,
   adoptOnIdleInput,
   decide,
+  idleCompactionActive,
   manualBypassesHost,
+  manualLanes,
   observeSettled,
   reportHostRefused,
+  scheduleIdleCompaction,
   startManualPreparation,
 } from "./routes.ts";
 import {
@@ -193,6 +196,24 @@ export function registerBackgroundCompaction(
     if (!registryUsable(rt, undefined)) return "declined";
     const owner = rt.main;
     if (owner === undefined || owner.core.sessionId !== host.sessionId) return "declined";
+    // The host compaction a deferred request started is the host's to run.
+    if (idleCompactionActive(owner)) return "declined";
+    if (
+      host.isSettling &&
+      manualLanes(owner.core, customInstructions).length === 0 &&
+      isCurrent(rt, owner)
+    ) {
+      // No background lane serves this owner (Codex or xAI own its compaction, or none
+      // applies), so the host's compaction runs, but not inside agent_settled (where
+      // model-context-cap calls this): a prompt Pi defers meanwhile would be rejected
+      // unanswered. It runs in the next prompt's input hook instead.
+      scheduleIdleCompaction(owner, {
+        kind: "foreground",
+        customInstructions,
+        onSettled: () => undefined,
+      });
+      return "handled";
+    }
     if (!manualBypassesHost(rt, owner, customInstructions)) return "declined";
     if (await startManualPreparation(rt, owner, customInstructions)) return "handled";
     return isCurrent(rt, owner) ? "declined" : "stale";

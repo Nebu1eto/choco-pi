@@ -204,7 +204,14 @@ host event.
   starting a host compaction. On a busy session, or whenever the feature
   declines, the host's own `compact()` runs unchanged; its
   `session_before_compact` hook may still defer a plain request with
-  `cancel` (the host reports `Compaction cancelled`). The Anthropic lane needs a wire capture
+  `cancel` (the host reports `Compaction cancelled`). For a model whose
+  compaction a native vendor handler owns (Codex `responsesCompaction`, or xAI
+  server-side), the manual route never takes the request: a ready native
+  candidate prepared at the threshold is adopted as usual, and otherwise the
+  host's own compaction runs and Codex's (or xAI's) foreground handler answers
+  it natively. No text lane serves such a model, with or without custom
+  instructions; Codex's handler reports that it ignores `/compact` guidance.
+  The Anthropic lane needs a wire capture
   of the session's latest request, so right after a reload or resume the
   request goes to the text lane instead; a lane that fails is retried once on
   the remaining lane before the failure is reported. The prepared checkpoint

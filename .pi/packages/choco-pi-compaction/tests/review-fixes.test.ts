@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { arbitrationIntent } from "../src/background/arbitration.ts";
 import { thresholdLane } from "../src/background-host/owner-core.ts";
+import { manualLanes } from "../src/background-host/routes.ts";
 import {
   type CompactCommandHost,
   installCompactCommandBridge,
@@ -113,4 +114,20 @@ test("the threshold route falls back from an Anthropic lane that cannot serve to
     "anthropic-native",
     "no text lane to fall back to",
   );
+});
+test("manual lanes: text and Anthropic owners keep their lanes, a Codex owner gets none", () => {
+  const lanes = ["text", "anthropic-native", "codex-native-v2"];
+  const core = (backendId: string | undefined) => ({
+    backendId,
+    backendIds: lanes,
+    sessionId: "manual-lanes-no-capture",
+  });
+  assert.deepEqual(manualLanes(core("text")), ["text"]);
+  assert.deepEqual(manualLanes(core("text"), "focus"), ["text"]);
+  // No Anthropic capture for this session: the documented text fallback stays.
+  assert.deepEqual(manualLanes(core("anthropic-native")), ["text"]);
+  assert.deepEqual(manualLanes(core("anthropic-native"), "focus"), ["text"]);
+  assert.deepEqual(manualLanes(core("codex-native-v2")), [], "Codex's foreground handler owns it");
+  assert.deepEqual(manualLanes(core("codex-native-v2"), "focus"), []);
+  assert.deepEqual(manualLanes(core(undefined)), [], "xAI server-side or no lane");
 });

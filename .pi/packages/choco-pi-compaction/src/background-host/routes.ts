@@ -15,9 +15,11 @@ import { TEXT_BACKEND_ID } from "../background/text-backend.ts";
 import { type BackgroundAdoptionOwner, readAdoptionIdentity } from "./adoption-signal.ts";
 import { boundaryDraft } from "./branch.ts";
 import { errorText, tell } from "./notices.ts";
+import type { OwnerCore } from "./owner-core.ts";
 import {
   type Decision,
   type HostRuntime,
+  type IdleRequest,
   isCurrent,
   type MainOwner,
   type PendingRoute,
@@ -132,7 +134,7 @@ export async function startManualPreparation(
   customInstructions?: string,
 ): Promise<boolean> {
   if (owner.pendingRoute !== undefined) return false;
-  const lanes = manualLanes(owner, customInstructions);
+  const lanes = manualLanes(owner.core, customInstructions);
   // Joining the outstanding candidate keeps its follower; anything else supersedes it.
   const joining = joinableCandidate(owner, customInstructions);
   if (joining !== undefined && owner.manualCandidate === joining) return true;
@@ -173,7 +175,7 @@ export function manualBypassesHost(
     status.customInstructions === customInstructions
   )
     return false;
-  return manualLanes(owner, customInstructions).length > 0;
+  return manualLanes(owner.core, customInstructions).length > 0;
 }
 
 /**
@@ -182,14 +184,26 @@ export function manualBypassesHost(
  * reload or resume there is none, so the text lane goes first and the
  * Anthropic lane is skipped rather than failing with `incompatible`. Custom
  * instructions can only be applied by the text lane.
+ *
+ * Any other native lane (Codex) owns its model's compaction: its own
+ * foreground handler answers the host's compaction and would replace any
+ * other lane's result, so a text checkpoint over that content is never
+ * right. Such an owner gets no manual lane: the request falls through to the
+ * host's compaction, which the native foreground handler answers (a ready
+ * native candidate prepared at the threshold is still adopted first). Custom
+ * instructions are then the native handler's to apply or report.
  */
-function manualLanes(owner: MainOwner, customInstructions?: string): string[] {
-  const selected = owner.core.backendId;
+export function manualLanes(
+  core: Pick<OwnerCore, "backendId" | "backendIds" | "sessionId">,
+  customInstructions?: string,
+): string[] {
+  const selected = core.backendId;
   if (selected === undefined) return [];
-  const lanes = [selected, ...owner.core.backendIds.filter((id) => id !== selected)];
+  if (selected !== TEXT_BACKEND_ID && selected !== ANTHROPIC_BACKEND_ID) return [];
+  const lanes = [selected, ...core.backendIds.filter((id) => id !== selected)];
   if (customInstructions !== undefined) return lanes.filter((id) => id === TEXT_BACKEND_ID);
   const anthropicUsable =
-    selected !== ANTHROPIC_BACKEND_ID || capturesFor(owner.core.sessionId).length > 0;
+    selected !== ANTHROPIC_BACKEND_ID || capturesFor(core.sessionId).length > 0;
   if (anthropicUsable) return lanes.filter((id) => id === selected || id === TEXT_BACKEND_ID);
   return lanes.filter((id) => id === TEXT_BACKEND_ID);
 }
@@ -355,16 +369,27 @@ function idleCandidate(
 }
 
 /** Trigger a host compaction and resolve with its failure, or undefined on completion. */
-function runHostCompaction(ctx: ExtensionContext): Promise<Error | undefined> {
-  return new Promise<Error | undefined>((resolve) => requestCompaction(ctx, resolve));
+function runHostCompaction(
+  ctx: ExtensionContext,
+  customInstructions?: string,
+): Promise<Error | undefined> {
+  return new Promise<Error | undefined>((resolve) =>
+    requestCompaction(ctx, resolve, customInstructions),
+  );
 }
 
 function requestCompaction(
   ctx: ExtensionContext,
   settle: (failure: Error | undefined) => void,
+  customInstructions?: string,
 ): void {
   try {
-    ctx.compact({ onComplete: () => settle(undefined), onError: (error) => settle(error) });
+    // Pi's ctx.compact() awaits the session's compact() and calls exactly one callback.
+    ctx.compact({
+      customInstructions,
+      onComplete: () => settle(undefined),
+      onError: (error) => settle(error),
+    });
   } catch (cause) {
     settle(cause instanceof Error ? cause : new Error(String(cause)));
   }
@@ -430,14 +455,98 @@ function adoptReadyForContextCap(
   const candidateId = idleCandidate(rt, owner, ctx);
   if (candidateId === undefined) return false;
   owner.lastCtx = ctx;
-  adoptIdle(rt, owner, ctx, { candidateId, trigger: "context-cap" }).then(
-    onSettled,
-    (cause: unknown) => {
-      rt.notify(ctx, `context-cap adoption failed: ${errorText(cause)}`);
-      onSettled(false);
-    },
-  );
+  // Called from agent_settled: adopting now would start a host compaction that a
+  // prompt Pi deferred during this emission then hits ("compaction in progress").
+  scheduleIdleCompaction(owner, { kind: "adopt", trigger: "context-cap", onSettled });
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// Deferred host compaction: never start one inside agent_settled
+// ---------------------------------------------------------------------------
+
+/**
+ * Queue a host compaction for the next prompt instead of starting it now.
+ * Pi defers a prompt that arrives while `agent_settled` is emitted and
+ * re-runs it right after the emission; a host compaction started inside the
+ * emission is still running then, and the re-run rejects that prompt in a
+ * call chain no caller awaits (an RPC prompt gets no response at all). The
+ * emission can span several macrotasks, so no timer is safe either. The
+ * request runs inside the next prompt's `input` hook, which Pi awaits after
+ * its compaction check and before that prompt starts its run; without a next
+ * prompt no further request needs the smaller context. A newer request
+ * supersedes an older one still waiting.
+ */
+export function scheduleIdleCompaction(owner: MainOwner, request: IdleRequest): void {
+  const superseded = owner.idlePending;
+  owner.idlePending = request;
+  if (superseded !== undefined && superseded !== request) superseded.onSettled(false);
+}
+
+/** Whether a deferred request is running (the host compaction it started must pass). */
+export function idleCompactionActive(owner: MainOwner): boolean {
+  return owner.idleRunning !== undefined;
+}
+
+/**
+ * Run the waiting request now if the session is idle; join the running one.
+ * Every path settles: `runHostCompaction`
+ * resolves through Pi's `ctx.compact()` callbacks, which fire once its
+ * `compact()` settles.
+ */
+export async function runIdleCompaction(
+  rt: HostRuntime,
+  owner: MainOwner,
+  ctx: ExtensionContext,
+): Promise<void> {
+  if (owner.idleRunning !== undefined) return owner.idleRunning;
+  const request = owner.idlePending;
+  if (request === undefined) return;
+  if (!isCurrent(rt, owner)) {
+    owner.idlePending = undefined;
+    request.onSettled(false);
+    return;
+  }
+  if (!ctx.isIdle() || owner.pendingRoute !== undefined) return;
+  owner.idlePending = undefined;
+  // Marked running before it starts: its ctx.compact() reaches the session-compact
+  // bridge synchronously, which must see this run and hand the request to the host.
+  let finished = (): void => undefined;
+  const running = new Promise<void>((resolve) => {
+    finished = resolve;
+  });
+  owner.idleRunning = running;
+  try {
+    await executeIdleRequest(rt, owner, ctx, request);
+  } finally {
+    if (owner.idleRunning === running) owner.idleRunning = undefined;
+    finished();
+  }
+}
+
+async function executeIdleRequest(
+  rt: HostRuntime,
+  owner: MainOwner,
+  ctx: ExtensionContext,
+  request: IdleRequest,
+): Promise<void> {
+  let compacted = false;
+  try {
+    if (request.kind === "adopt") {
+      const candidateId = idleCandidate(rt, owner, ctx);
+      if (candidateId !== undefined) {
+        compacted = await adoptIdle(rt, owner, ctx, { candidateId, trigger: request.trigger });
+      }
+      return;
+    }
+    const failure = await runHostCompaction(ctx, request.customInstructions);
+    compacted = failure === undefined;
+    if (failure !== undefined && isCurrent(rt, owner) && !isHostRefusal(failure.message)) {
+      rt.notify(ctx, `compaction failed: ${failure.message}`);
+    }
+  } finally {
+    request.onSettled(compacted);
+  }
 }
 
 function isOwnAdoption(owner: MainOwner, entry: CompactionEntry): boolean {
@@ -498,8 +607,16 @@ export async function observeSettled(rt: HostRuntime, ctx: ExtensionContext): Pr
   owner.core.observeUsage(ctx.getContextUsage());
   hostBoundaryReached(owner);
   settleManual(owner);
-  // A candidate that became ready late in the run is adopted now rather than at the next prompt.
-  await adoptManualIfIdle(rt, owner, ctx);
+  // A manual candidate that became ready late in the run is adopted before the next
+  // prompt: adopting inside this emission would race a prompt Pi defers meanwhile.
+  const manual = owner.manualCandidate;
+  if (manual !== undefined && owner.core.coordinator.status().state === "ready") {
+    scheduleIdleCompaction(owner, {
+      kind: "adopt",
+      trigger: "manual",
+      onSettled: () => settleManual(owner),
+    });
+  }
 }
 
 /** input: adopt a ready candidate through ctx.compact while idle. */
@@ -510,6 +627,9 @@ export async function adoptOnIdleInput(rt: HostRuntime, ctx: ExtensionContext): 
   if (!isCurrent(rt, owner)) return;
   hostBoundaryReached(owner);
   settleManual(owner);
+  // A compaction deferred from agent_settled runs before this prompt starts its run.
+  await runIdleCompaction(rt, owner, ctx);
+  if (!isCurrent(rt, owner)) return;
   const candidateId = idleCandidate(rt, owner, ctx);
   if (candidateId === undefined) return;
   await adoptIdle(rt, owner, ctx, { candidateId, trigger: "idle" });

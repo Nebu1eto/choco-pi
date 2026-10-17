@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  type Api,
   type AssistantMessage,
   type AssistantMessageEventStream,
   createAssistantMessageEventStream,
@@ -122,6 +123,8 @@ export interface HostOptions {
   readonly dir?: string;
   /** Use this session manager (for example a reopened session) instead of a seeded new one. */
   readonly manager?: SessionManager;
+  /** Replace the fake model's API, provider and ID (for example an `openai-codex` model). */
+  readonly modelIdentity?: { readonly api: Api; readonly provider: string; readonly id: string };
 }
 
 export interface Host {
@@ -243,7 +246,7 @@ function seededManager(dir: string, persistent: boolean): SessionManager {
 }
 
 async function createRuntime(
-  model: Model<"anthropic-messages">,
+  model: Model<Api>,
   stream: ReturnType<typeof scriptedStream>,
 ): Promise<ModelRuntime> {
   const runtime = await ModelRuntime.create({
@@ -285,7 +288,7 @@ async function createLoader(
 export async function createHost(options: HostOptions): Promise<Host> {
   const ownsDir = options.dir === undefined;
   const dir = options.dir ?? (await mkdtemp(join(tmpdir(), "choco-pi-compaction-host-")));
-  const model = fakeModel(options.contextWindow);
+  const model: Model<Api> = { ...fakeModel(options.contextWindow), ...options.modelIdentity };
   if (options.baseUrl !== undefined) model.baseUrl = options.baseUrl;
   const log: ProviderLog = { calls: [], summarizerCalls: [], aborts: 0, mainIndex: 0 };
   const respond = options.respond ?? (async (index: number) => reply(`R${index}`));

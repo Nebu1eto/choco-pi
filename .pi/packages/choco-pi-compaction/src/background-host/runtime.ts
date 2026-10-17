@@ -58,9 +58,36 @@ export interface MainOwner {
    * only after that invocation returned. Cleared at that boundary.
    */
   hostCompactUnwinding: boolean;
+  /**
+   * A host compaction requested while it must not start yet (from
+   * `agent_settled`, where Pi defers an arriving prompt and would reject it
+   * once a compaction is running). Run at the next safe idle point: the
+   * following macrotask while idle, or the next prompt's `input` hook (before
+   * that prompt starts its run).
+   */
+  idlePending: IdleRequest | undefined;
+  /** The pending request while it runs; later requests join it. */
+  idleRunning: Promise<void> | undefined;
   lastCtx: ExtensionContext;
   readonly cleanup: (() => void)[];
 }
+
+/**
+ * A deferred host compaction: adopt the ready candidate (context cap), or run
+ * the host's own compaction, which a native handler (Codex, xAI) answers.
+ * `onSettled` runs exactly once with whether a compaction completed.
+ */
+export type IdleRequest =
+  | {
+      readonly kind: "adopt";
+      readonly trigger: PendingRoute["trigger"];
+      readonly onSettled: (compacted: boolean) => void;
+    }
+  | {
+      readonly kind: "foreground";
+      readonly customInstructions: string | undefined;
+      readonly onSettled: (compacted: boolean) => void;
+    };
 
 /** The main session's host services a child attachment borrows. */
 export interface ParentHost {

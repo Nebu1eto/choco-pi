@@ -384,6 +384,8 @@ function installMainOwner(
     manualCandidate: undefined,
     manualSerial: 0,
     hostCompactUnwinding: false,
+    idlePending: undefined,
+    idleRunning: undefined,
     lastCtx: ctx,
     cleanup,
   };

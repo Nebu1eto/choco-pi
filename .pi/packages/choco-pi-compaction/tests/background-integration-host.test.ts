@@ -839,8 +839,18 @@ test(
           outcome.resolve,
         );
         assert.equal(started, true);
+        // The adoption waits for the next prompt's input hook: model-context-cap calls this
+        // from agent_settled, where a host compaction would race a prompt Pi defers.
+        assert.equal(ownEntries(rig).length, 0, "not adopted inside the caller's event");
+        const calls = rig.calls.length;
+        await rig.session.prompt("AFTER-CAP");
         assert.equal(await outcome.promise, true, "adopted");
         assert.equal(ownEntries(rig).length, 1);
+        const next = rig.calls.slice(calls).find((call) => mentions(call, "AFTER-CAP"));
+        assert.ok(
+          next && mentions(next, CHECKPOINT),
+          "the next prompt was sent after the adoption",
+        );
         assert.equal(rig.hostSummarizerCalls.length, 0, "the host summarizer never ran");
         assert.equal(rig.aborts(), 0);
         assert.deepEqual(
