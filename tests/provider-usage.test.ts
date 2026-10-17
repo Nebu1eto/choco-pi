@@ -316,13 +316,6 @@ test("usage numbers are rounded for display instead of echoing float noise", () 
   assert.equal(fractional.status, "12.35 credits");
   const unparsable = normalizeCodexUsage({ credits: { balance: "n/a" }, rate_limit: {} });
   assert.equal(unparsable.status, "n/a credits");
-
-  const synthetic = normalizeSyntheticUsage(
-    syntheticPayload(943.2666666667, "$40.00"),
-    undefined,
-    NOW,
-  );
-  assert.match(synthetic.windows[0]?.detail ?? "", /^943\.27\/1000 requests remaining/);
 });
 
 test("re-queries the usage tab on every activation and every refresh interval", async (t) => {
@@ -493,18 +486,20 @@ test("a refilling bucket is paced by how its level moved, not by a clock", () =>
   assert.equal(refillPace({ capacity: 1_000, remaining: 750 }, undefined, minute), undefined);
 });
 
-function syntheticPayload(remaining: number, remainingCredits: string): RuntimeValue {
+function syntheticPayload(remainingCredits: string, percentRemaining = 40): RuntimeValue {
   return {
+    // Synthetic retired this limit; a stale field must not resurface in /usage.
     rollingFiveHourLimit: {
       nextTickAt: "2026-08-20T12:15:00Z",
       tickPercent: 0.05,
-      remaining,
+      remaining: 0,
       max: 1_000,
-      limited: false,
+      limited: true,
     },
+    subscription: { limit: 1_000, requests: 1_000, renewsAt: "2026-08-20T12:15:00Z" },
     weeklyTokenLimit: {
       nextRegenAt: "2026-08-20T18:00:00Z",
-      percentRemaining: 40,
+      percentRemaining,
       maxCredits: "$100.00",
       remainingCredits,
       nextRegenCredits: "$5.00",
@@ -512,29 +507,38 @@ function syntheticPayload(remaining: number, remainingCredits: string): RuntimeV
   };
 }
 
+test("Synthetic usage reports only weekly credits, not the retired five-hour limit", () => {
+  const usage = normalizeSyntheticUsage(syntheticPayload("$40.00"), undefined, NOW);
+  assert.deepEqual(
+    usage.windows.map((window) => window.label),
+    ["Weekly credits"],
+  );
+  assert.doesNotMatch(formatProviderUsage(usage), /five-hour|requests remaining|limited/iu);
+});
+
 test("Synthetic pacing compares the stored reading with the live one", () => {
-  const previous = { payload: syntheticPayload(800, "$40.00"), storedAt: NOW - 5 * 60_000 };
-  const draining = normalizeSyntheticUsage(syntheticPayload(700, "$39.00"), previous, NOW);
+  const previous = { payload: syntheticPayload("$40.00"), storedAt: NOW - 5 * 60_000 };
+  const draining = normalizeSyntheticUsage(syntheticPayload("$39.00"), previous, NOW);
   assert.deepEqual(
     draining.windows.map((window) => quotaHealth(window, NOW)),
-    ["over", "over"],
+    ["over"],
   );
 
-  const recovering = normalizeSyntheticUsage(syntheticPayload(850, "$40.00"), previous, NOW);
+  const recovering = normalizeSyntheticUsage(syntheticPayload("$40.00"), previous, NOW);
   assert.deepEqual(
     recovering.windows.map((window) => quotaHealth(window, NOW)),
-    ["under", "under"],
+    ["under"],
   );
 
   // With nothing to compare against, a refilling bucket has no pace at all.
-  const alone = normalizeSyntheticUsage(syntheticPayload(700, "$39.00"), undefined, NOW);
+  const alone = normalizeSyntheticUsage(syntheticPayload("$39.00"), undefined, NOW);
   assert.deepEqual(
     alone.windows.map((window) => quotaHealth(window, NOW)),
-    ["unknown", "unknown"],
+    ["unknown"],
   );
 
   // An exhausted bucket outranks the pace verdict.
-  const empty = normalizeSyntheticUsage(syntheticPayload(0, "$0.00"), previous, NOW);
+  const empty = normalizeSyntheticUsage(syntheticPayload("$0.00", 0), previous, NOW);
   assert.equal(quotaHealth(empty.windows[0], NOW), "exhausted");
 });
 

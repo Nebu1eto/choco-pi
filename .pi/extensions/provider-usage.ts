@@ -382,18 +382,17 @@ export function normalizeCodexUsage(payload: RuntimeValue): ProviderUsage {
 /** One reading of a bucket that refills instead of resetting. */
 type RefillReading = { capacity: number; remaining: number };
 
-type SyntheticReadings = { rolling?: RefillReading; weekly?: RefillReading };
+type SyntheticReadings = { weekly?: RefillReading };
 
-/** The two refilling buckets a `/v2/quotas` response reports, when present. */
+/**
+ * The refilling bucket a `/v2/quotas` response reports, when present.
+ *
+ * Synthetic retired its five-hour request limit, so `rollingFiveHourLimit`
+ * (and the legacy `subscription` request counter) is deliberately ignored.
+ */
 export function syntheticReadings(payload: RuntimeValue): SyntheticReadings {
   if (!isRecord(payload)) return {};
   const readings: SyntheticReadings = {};
-  const rolling = isRecord(payload.rollingFiveHourLimit) ? payload.rollingFiveHourLimit : undefined;
-  const capacity = rolling ? numberValue(rolling.max) : undefined;
-  const remaining = rolling ? numberValue(rolling.remaining) : undefined;
-  if (capacity !== undefined && capacity > 0 && remaining !== undefined) {
-    readings.rolling = { capacity, remaining };
-  }
   const weekly = isRecord(payload.weeklyTokenLimit) ? payload.weeklyTokenLimit : undefined;
   const maxCredits = weekly ? stringValue(weekly.maxCredits) : undefined;
   const remainingCredits = weekly ? stringValue(weekly.remainingCredits) : undefined;
@@ -444,42 +443,6 @@ export function normalizeSyntheticUsage(
   const readings = syntheticReadings(payload);
   const priorReadings = previous ? syntheticReadings(previous.payload) : {};
   const elapsedMs = previous ? payloadAt - previous.storedAt : Number.NaN;
-  const subscription = isRecord(payload.subscription) ? payload.subscription : undefined;
-  const rolling = isRecord(payload.rollingFiveHourLimit) ? payload.rollingFiveHourLimit : undefined;
-  const rollingMaximum = rolling ? numberValue(rolling.max) : undefined;
-  const rollingRemaining = rolling ? numberValue(rolling.remaining) : undefined;
-  const subscriptionLimit = subscription ? numberValue(subscription.limit) : undefined;
-  const subscriptionRequests = subscription ? numberValue(subscription.requests) : undefined;
-  const maximum = rollingMaximum ?? subscriptionLimit;
-  const remaining =
-    rollingRemaining ??
-    (maximum !== undefined && subscriptionRequests !== undefined
-      ? maximum - subscriptionRequests
-      : undefined);
-  if (maximum !== undefined && maximum > 0 && remaining !== undefined) {
-    const boundedRemaining = Math.max(0, Math.min(maximum, remaining));
-    const requestsUsed =
-      rollingMaximum !== undefined && rollingRemaining !== undefined
-        ? maximum - boundedRemaining
-        : (subscriptionRequests ?? maximum - boundedRemaining);
-    const requestDetail =
-      requestsUsed === 0
-        ? "No requests used"
-        : `${formatNumber(boundedRemaining, 2)}/${formatNumber(maximum, 2)} requests remaining`;
-    const detail = `${requestDetail}${rolling?.limited === true ? " · limited" : ""}`;
-    const window: UsageWindow = {
-      label: "Five-hour requests",
-      percent: clampPercent(((maximum - boundedRemaining) / maximum) * 100),
-      qualifier: "used",
-      eventAt: dateValue(rolling?.nextTickAt ?? subscription?.renewsAt),
-      eventLabel: rolling ? "regenerates" : "resets",
-      detail,
-      precision: 0,
-    };
-    const pace = refillPace(readings.rolling, priorReadings.rolling, elapsedMs);
-    if (pace) window.pace = pace;
-    windows.push(window);
-  }
 
   const weekly = isRecord(payload.weeklyTokenLimit) ? payload.weeklyTokenLimit : undefined;
   const remainingPercent = weekly ? numberValue(weekly.percentRemaining) : undefined;
