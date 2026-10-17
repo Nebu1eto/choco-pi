@@ -289,16 +289,27 @@ export function prefixReferences(prefix: readonly SessionEntry[]): PrefixReferen
 }
 
 /**
- * Whether a later entry edits a summarized entry or carries a late result for a
- * summarized tool call; either would split a group on replay.
+ * A predicate over the entries after a cut, fed in branch order: whether the
+ * entry edits a summarized entry or carries a late result for a summarized
+ * tool call; either would split a group on replay.
+ *
+ * Tool-call IDs are unique only within one provider context, not per session:
+ * some providers number calls by a counter that restarts once a checkpoint
+ * shortens the context. A result is therefore attributed to the most recent
+ * call with its ID, and a call re-issued after the cut owns its later results.
  */
-export function touchesPrefix(entry: SessionEntry, prefix: PrefixReferences): boolean {
-  if (entry.type === "context_edit") return prefix.entryIds.has(entry.targetId);
-  return (
-    entry.type === "message" &&
-    entry.message.role === "toolResult" &&
-    prefix.toolCallIds.has(entry.message.toolCallId)
-  );
+export function prefixTouchScan(prefix: PrefixReferences): (entry: SessionEntry) => boolean {
+  const reissued = new Set<string>();
+  return (entry) => {
+    if (entry.type === "context_edit") return prefix.entryIds.has(entry.targetId);
+    if (entry.type !== "message") return false;
+    for (const id of toolCallIds(entry.message)) reissued.add(id);
+    return (
+      entry.message.role === "toolResult" &&
+      prefix.toolCallIds.has(entry.message.toolCallId) &&
+      !reissued.has(entry.message.toolCallId)
+    );
+  };
 }
 
 function messageTokens(messages: readonly CompactionMessage[]): number {
@@ -848,10 +859,10 @@ export function findPrefixInvalidation(
   if (branch[cutIndex + 1]?.id !== readFirstKeptEntryId(snapshot)) {
     return "stale-prefix";
   }
-  const prefix = prefixReferences(snapshot.entries);
+  const touchesPrefix = prefixTouchScan(prefixReferences(snapshot.entries));
   for (const entry of branch.slice(cutIndex + 1)) {
     if (entry.type === "compaction") return "checkpoint-changed";
-    if (touchesPrefix(entry, prefix)) return "stale-prefix";
+    if (touchesPrefix(entry)) return "stale-prefix";
   }
   return null;
 }

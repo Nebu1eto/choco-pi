@@ -1,5 +1,5 @@
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-import { fingerprintEntries, prefixReferences, touchesPrefix } from "./snapshot.ts";
+import { fingerprintEntries, prefixReferences, prefixTouchScan } from "./snapshot.ts";
 import {
   type AdmissionRecord,
   isCandidateRecord,
@@ -127,5 +127,5 @@ function sameCheckpoint(identity: SnapshotIdentity, current: IdentityComparison)
 function suffixTouchesPrefix(entries: readonly SessionEntry[], cutEntryId: string): boolean {
   const cut = entries.findIndex((entry) => entry.id === cutEntryId);
   const prefix = prefixReferences(entries.slice(0, cut + 1));
-  return entries.slice(cut + 1).some((entry) => touchesPrefix(entry, prefix));
+  return entries.slice(cut + 1).some(prefixTouchScan(prefix));
 }

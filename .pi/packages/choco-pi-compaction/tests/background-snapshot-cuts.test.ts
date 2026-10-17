@@ -25,6 +25,7 @@ import {
   type FreezeOptions,
   type PrefixSnapshot,
 } from "../src/background/snapshot.ts";
+import { revalidateIdentity } from "../src/background/candidate-record.ts";
 import { buildSnapshot } from "./background-fakes.ts";
 
 const OPTIONS: Omit<FreezeOptions, "keepRecentTokens"> = {
@@ -456,6 +457,45 @@ test("a late result for a summarized call invalidates the snapshot", () => {
     },
   });
   assert.equal(findPrefixInvalidation(callSnapshot, late), "stale-prefix");
+});
+
+test("a call ID recycled after the cut owns its result and keeps the snapshot valid", () => {
+  // Some providers number tool calls by a counter that restarts after a checkpoint.
+  const branch = new Branch();
+  branch.user("go");
+  branch.calls(["exec:1"]);
+  branch.result("exec:1", "r".repeat(2000));
+  branch.user("next");
+  branch.text("t".repeat(400));
+  const snapshot = freeze(branch.entries, 50);
+  branch.calls(["exec:1"]);
+  branch.result("exec:1", "recycled");
+  const current = {
+    ownerKey: snapshot.ownerKey,
+    ownerGeneration: snapshot.ownerGeneration,
+    providerScope: snapshot.providerScope,
+    entries: branch.entries,
+    latestCheckpoint: null,
+  };
+  assert.equal(findPrefixInvalidation(snapshot, branch.entries), null);
+  assert.equal(revalidateIdentity(snapshot, current), undefined);
+
+  // A result with no re-issued call after the cut still answers the summarized call.
+  branch.result("exec:1", "orphan after the re-issued call was answered");
+  assert.equal(findPrefixInvalidation(snapshot, branch.entries), null);
+  const orphan = new Branch();
+  orphan.user("go");
+  orphan.calls(["exec:1"]);
+  orphan.result("exec:1", "r".repeat(2000));
+  orphan.user("next");
+  orphan.text("t".repeat(400));
+  const orphanSnapshot = freeze(orphan.entries, 50);
+  orphan.result("exec:1", "late");
+  assert.equal(findPrefixInvalidation(orphanSnapshot, orphan.entries), "stale-prefix");
+  assert.equal(
+    revalidateIdentity(orphanSnapshot, { ...current, entries: orphan.entries }),
+    "stale-prefix",
+  );
 });
 
 test("split turn in a single-prompt child transcript carries the governing request", () => {
