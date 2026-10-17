@@ -224,6 +224,24 @@ test("the picker marks a turn with no checkpoint and shows the reason", () => {
   assert.match(screen, /No Git repository with a working tree\./);
 });
 
+test("the picker ends with a fork-only current-state row", () => {
+  const turn: SessionTurn = {
+    entryId: "user-1",
+    index: 1,
+    label: "First prompt",
+    timestamp: checkpoint.timestamp,
+  };
+  const screen = renderCheckpointPicker({
+    items: [{ turn }],
+    selectedIndex: 1,
+    width: 100,
+    theme: plainTheme,
+  }).join("\n");
+
+  assert.match(screen, /  First prompt[\s\S]*❯ Current state/);
+  assert.match(screen, /fork only/);
+});
+
 const safety: GitSnapshot = {
   ref: "safety",
   commit: "safety-commit",

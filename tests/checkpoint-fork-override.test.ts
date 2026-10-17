@@ -32,7 +32,7 @@ test("Pi still exposes the fork selector this extension redirects", () => {
   );
 });
 
-test("the extension registers /rewind and points Pi's fork selector at it", (t) => {
+test("the extension registers /rewind and points Pi's fork selector at its fork intent", (t) => {
   const original = prototype.showUserMessageSelector;
   t.after(() => {
     prototype.showUserMessageSelector = original;
@@ -48,5 +48,5 @@ test("the extension registers /rewind and points Pi's fork selector at it", (t) 
   const prompts: string[] = [];
   const host = { session: { prompt: async (text: string) => void prompts.push(text) } };
   prototype.showUserMessageSelector.call(host);
-  assert.deepEqual(prompts, ["/rewind"]);
+  assert.deepEqual(prompts, ["/rewind fork"]);
 });

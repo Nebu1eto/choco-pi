@@ -76,6 +76,10 @@ export function changeSummaryText(changes: ChangeSummary | undefined, theme: The
 
 export type PickerView = {
   items: readonly TurnTimelineItem[];
+  /**
+   * Focused row. `items.length` focuses the trailing current-state row, which
+   * forks the whole session as it is now and offers no other action.
+   */
   selectedIndex: number;
   width: number;
   theme: Theme;
@@ -85,28 +89,44 @@ export type PickerView = {
 
 const VISIBLE_TURNS = 7;
 
+export const CURRENT_STATE_LABEL = "Current state";
+
 export function renderCheckpointPicker(view: PickerView): string[] {
   const { items, selectedIndex, width, theme } = view;
   const innerWidth = Math.max(20, width - 4);
+  // The current-state row follows the newest turn and scrolls like one.
+  const rowCount = items.length + 1;
   const start = Math.max(
     0,
-    Math.min(selectedIndex - Math.floor(VISIBLE_TURNS / 2), items.length - VISIBLE_TURNS),
+    Math.min(selectedIndex - Math.floor(VISIBLE_TURNS / 2), rowCount - VISIBLE_TURNS),
   );
-  const end = Math.min(items.length, start + VISIBLE_TURNS);
+  const end = Math.min(rowCount, start + VISIBLE_TURNS);
 
   const lines = [
     theme.fg("accent", theme.bold("Checkpoints")),
     "",
-    "Pick the turn to act on, then choose rewind, rollback, or fork.",
+    "Pick a turn to rewind, roll back, or fork, or fork the current state as it is.",
     "",
   ];
 
   if (start > 0) lines.push(theme.fg("dim", `  ↑ ${start} earlier turns`), "");
   for (let index = start; index < end; index += 1) {
-    const item = items[index];
-    if (!item) continue;
     const selected = index === selectedIndex;
     const prefix = selected ? theme.fg("accent", "❯") : " ";
+    if (index === items.length) {
+      const label = selected ? theme.fg("accent", CURRENT_STATE_LABEL) : CURRENT_STATE_LABEL;
+      lines.push(
+        truncateToWidth(`${prefix} ${label}`, innerWidth),
+        truncateToWidth(
+          `  ${theme.fg("dim", "Fork the whole session and files as they are now · fork only")}`,
+          innerWidth,
+        ),
+        "",
+      );
+      continue;
+    }
+    const item = items[index];
+    if (!item) continue;
     const label = selected ? theme.fg("accent", item.turn.label) : item.turn.label;
     const timestamp = new Date(item.turn.timestamp).toLocaleString();
     lines.push(
@@ -118,7 +138,7 @@ export function renderCheckpointPicker(view: PickerView): string[] {
       "",
     );
   }
-  if (end < items.length) lines.push(theme.fg("dim", `  ↓ ${items.length - end} later turns`), "");
+  if (end < rowCount) lines.push(theme.fg("dim", `  ↓ ${rowCount - end} more`), "");
 
   if (view.notice) lines.push(theme.fg("warning", view.notice), "");
   lines.push(

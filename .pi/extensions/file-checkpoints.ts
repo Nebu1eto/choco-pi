@@ -16,6 +16,7 @@ import {
 } from "./checkpoints/git-snapshot.ts";
 import { restoreTurn } from "./checkpoints/rollback.ts";
 import {
+  CURRENT_STATE_LABEL,
   renderCheckpointPicker,
   resolvePickerKey,
   TURN_ACTION_LABELS,
@@ -69,11 +70,23 @@ type CaptureState = {
   lastNoticeAt?: number;
 };
 
-type PickerChoice = {
-  turn: SessionTurn;
-  /** Absent when the user pressed Enter and still has to pick an action. */
-  action?: TurnAction;
-};
+/**
+ * What the picker settled on. Forking the current state is a complete choice:
+ * rewinding or rolling back to where the session already is changes nothing.
+ */
+type PickerChoice =
+  | {
+      kind: "turn";
+      turn: SessionTurn;
+      /** Absent when the user pressed Enter and still has to pick an action. */
+      action?: TurnAction;
+    }
+  | { kind: "current" };
+
+/** Which row the picker focuses first: `/fork` aims at the live state, `/rewind` at a turn. */
+type PickerIntent = "fork" | "rewind";
+
+const FORK_INTENT_ARGUMENT = "fork";
 
 /** Pi's interactive mode, reached only to redirect its built-in fork selector. */
 type ForkSelectorHost = {
@@ -204,24 +217,32 @@ export default function fileCheckpoints(pi: ExtensionAPI): void {
     state = undefined;
   });
 
-  async function selectTurn(
+  async function selectTarget(
     ctx: ExtensionCommandContext,
     items: readonly TurnTimelineItem[],
     unavailable: string | undefined,
+    intent: PickerIntent,
   ): Promise<PickerChoice | undefined> {
     if (ctx.mode !== "tui") {
       const reversed = items.toReversed();
-      const choices = reversed.map(
-        ({ turn }) =>
-          `Turn ${turn.index} · ${turn.label}${turn.checkpoint ? "" : " (no checkpoint)"}`,
-      );
+      const current = `${CURRENT_STATE_LABEL} · fork only`;
+      const choices = [
+        current,
+        ...reversed.map(
+          ({ turn }) =>
+            `Turn ${turn.index} · ${turn.label}${turn.checkpoint ? "" : " (no checkpoint)"}`,
+        ),
+      ];
       const picked = await ctx.ui.select("Checkpoints", choices);
-      const turn = picked ? reversed[choices.indexOf(picked)]?.turn : undefined;
-      return turn ? { turn } : undefined;
+      if (picked === current) return { kind: "current" };
+      const turn = picked ? reversed[choices.indexOf(picked) - 1]?.turn : undefined;
+      return turn ? { kind: "turn", turn } : undefined;
     }
 
+    // The trailing row past the newest turn is the current state.
+    const currentIndex = items.length;
     return ctx.ui.custom<PickerChoice | undefined>((tui, theme, _keybindings, done) => {
-      let selectedIndex = Math.max(0, items.length - 1);
+      let selectedIndex = intent === "fork" ? currentIndex : Math.max(0, items.length - 1);
       let notice = unavailable;
       return {
         render: (width: number) =>
@@ -241,19 +262,29 @@ export default function fileCheckpoints(pi: ExtensionAPI): void {
             return;
           }
           if (key.kind === "move") {
-            selectedIndex = Math.min(items.length - 1, Math.max(0, selectedIndex + key.delta));
+            selectedIndex = Math.min(currentIndex, Math.max(0, selectedIndex + key.delta));
             tui.requestRender();
             return;
           }
           if (key.kind === "jump") {
-            selectedIndex = key.position === "first" ? 0 : items.length - 1;
+            selectedIndex = key.position === "first" ? 0 : currentIndex;
+            tui.requestRender();
+            return;
+          }
+          if (selectedIndex === currentIndex) {
+            if (key.kind === "choose" || key.action === "fork") {
+              done({ kind: "current" });
+              return;
+            }
+            notice =
+              "The current state can only be forked; pick an earlier turn to rewind or roll back.";
             tui.requestRender();
             return;
           }
           const focused = items[selectedIndex]?.turn;
           if (!focused) return;
           if (key.kind === "choose") {
-            done({ turn: focused });
+            done({ kind: "turn", turn: focused });
             return;
           }
           if (key.action === "rollback" && !focused.checkpoint) {
@@ -261,7 +292,7 @@ export default function fileCheckpoints(pi: ExtensionAPI): void {
             tui.requestRender();
             return;
           }
-          done({ turn: focused, action: key.action });
+          done({ kind: "turn", turn: focused, action: key.action });
         },
       };
     });
@@ -359,7 +390,28 @@ export default function fileCheckpoints(pi: ExtensionAPI): void {
     }
   }
 
-  async function openPicker(ctx: ExtensionCommandContext): Promise<void> {
+  async function forkCurrentState(ctx: ExtensionCommandContext): Promise<void> {
+    try {
+      const leafId = ctx.sessionManager.getLeafId();
+      if (!leafId) {
+        ctx.ui.notify("This session has nothing to fork yet.", "warning");
+        return;
+      }
+      // `at` keeps the leaf itself, so the fork is a full copy of the active
+      // branch, like Pi's /clone. Forking invalidates `ctx`; only the
+      // replacement context may report the result.
+      await ctx.fork(leafId, {
+        position: "at",
+        withSession: async (fresh) => {
+          fresh.ui.notify("Forked a new session from the current state.", "info");
+        },
+      });
+    } catch (error) {
+      ctx.ui.notify(`${TURN_ACTION_LABELS.fork} failed: ${failureDetail(error)}`, "error");
+    }
+  }
+
+  async function openPicker(ctx: ExtensionCommandContext, intent: PickerIntent): Promise<void> {
     if (!ctx.isIdle()) {
       // Every action here rewrites the session tree, which Pi refuses mid-stream.
       ctx.ui.notify(
@@ -384,16 +436,22 @@ export default function fileCheckpoints(pi: ExtensionAPI): void {
       : (current.disabledReason ?? current.lastFailure ?? "File checkpoints are unavailable.");
     const timeline = await buildTurnTimeline(ctx.cwd, turns, live);
 
-    const choice = await selectTurn(ctx, timeline, unavailable);
+    const choice = await selectTarget(ctx, timeline, unavailable, intent);
     if (!choice) return;
+    if (choice.kind === "current") {
+      await forkCurrentState(ctx);
+      return;
+    }
     const action = choice.action ?? (await chooseAction(ctx, choice.turn));
     if (!action) return;
     await runAction(ctx, current, choice.turn, action);
   }
 
   pi.registerCommand("rewind", {
-    description: "Rewind, roll back, or fork the session at a checkpointed turn",
-    handler: (_args, ctx) => openPicker(ctx),
+    description:
+      "Rewind, roll back, or fork the session at a checkpointed turn or its current state",
+    handler: (args, ctx) =>
+      openPicker(ctx, args.trim() === FORK_INTENT_ARGUMENT ? "fork" : "rewind"),
   });
 
   overrideForkSelector();
@@ -405,13 +463,13 @@ export default function fileCheckpoints(pi: ExtensionAPI): void {
  * Interactive mode dispatches `/fork`, the `app.session.fork` binding, and the
  * double-escape action straight to its own selector before extension commands
  * are consulted, so replacing that one method is the only way to make all three
- * entry points open the checkpoint picker.
+ * entry points open the checkpoint picker, focused on forking the current state.
  */
 function overrideForkSelector(): void {
   const prototype = reinterpretHostValue<ForkSelectorHost>(InteractiveMode.prototype);
   if (prototype.__chocoPiCheckpointPickerApplied) return;
   prototype.showUserMessageSelector = function openCheckpointPicker(this: ForkSelectorHost) {
-    void this.session.prompt("/rewind");
+    void this.session.prompt(`/rewind ${FORK_INTENT_ARGUMENT}`);
   };
   prototype.__chocoPiCheckpointPickerApplied = true;
 }
