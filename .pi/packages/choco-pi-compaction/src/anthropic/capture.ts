@@ -269,6 +269,12 @@ export interface WireMapping {
 export interface KeyedWireMessage {
   readonly role: string;
   readonly keys: readonly WireKey[];
+  /**
+   * This wire message continues the previous one's source turn (Responses
+   * input splits one assistant turn into reasoning, message and call items),
+   * so it may map to the same projected entry instead of a strictly later one.
+   */
+  readonly continuesPrevious?: boolean;
 }
 
 /** One projected entry reduced to its identity, visibility and alignment keys. */
@@ -312,9 +318,14 @@ export function alignKeyedWire(
 ): WireMapping {
   const owners = indexKeyOwners(entries);
   let floor = 0;
+  // Floor at the start of the current run of continuing messages.
+  let runFloor = 0;
   const alignments = messages.map((message) => {
-    const alignment = alignWireMessage(message, owners, floor);
-    if (alignment.entryIndexes.length > 0) floor = Math.max(...alignment.entryIndexes) + 1;
+    if (message.continuesPrevious !== true) runFloor = floor;
+    const alignment = alignWireMessage(message, owners, runFloor);
+    if (alignment.entryIndexes.length > 0) {
+      floor = Math.max(floor, ...alignment.entryIndexes.map((index) => index + 1));
+    }
     return alignment;
   });
   const positional = positionallyResolvedKeys(alignments, owners);

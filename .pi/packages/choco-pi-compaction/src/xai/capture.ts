@@ -249,13 +249,30 @@ export function mapXaiWireToEntries(
   entries: readonly ProjectedSessionEntry[],
 ): WireMapping {
   return alignKeyedWire(
-    input.map((item) => ({ role: itemRole(item), keys: wireItemKeys(item) })),
+    input.map((item, index) => ({
+      role: itemRole(item),
+      keys: wireItemKeys(item),
+      continuesPrevious: isAssistantTurnItem(item) && isAssistantTurnItem(input[index - 1]),
+    })),
     entries.map((entry) => ({
       entryId: entry.sourceEntry.id,
       visible: entry.messages.length > 0,
       keys: projectedEntryKeys(entry),
     })),
   );
+}
+
+/**
+ * Items the adapter emits for one assistant message: its reasoning item, its
+ * text as an assistant `message` item, and its tool calls. A turn with text
+ * and a call (or several calls) spans several consecutive items that all map
+ * to the same projected entry.
+ */
+function isAssistantTurnItem(item: XaiWireItem | undefined): boolean {
+  if (item === undefined) return false;
+  if (Value.Check(AssistantMessageSchema, item)) return true;
+  const type = itemType(item);
+  return type === "reasoning" || (type !== undefined && CALL_TYPES.has(type));
 }
 
 // ---------------------------------------------------------------------------

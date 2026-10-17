@@ -154,8 +154,12 @@ const STEP_TOOL = defineTool({
   },
 });
 
-/** A `step` function call reporting `inputTokens` of context (drives the host threshold). */
-function toolCallResponse(label: string, inputTokens: number): Response {
+/**
+ * A `step` function call reporting `inputTokens` of context (drives the host
+ * threshold), optionally preceded by assistant text in the same turn: the
+ * adapter then replays that turn as two input items (message + function_call).
+ */
+function toolCallResponse(label: string, inputTokens: number, text?: string): Response {
   const item = {
     type: "function_call",
     id: `fc_${label}`,
@@ -163,22 +167,51 @@ function toolCallResponse(label: string, inputTokens: number): Response {
     name: "step",
     arguments: JSON.stringify({ label }),
   };
+  const callIndex = text === undefined ? 0 : 1;
+  const message = { type: "message", id: `msg_${label}`, role: "assistant" };
+  const textFrames: Frame[] =
+    text === undefined
+      ? []
+      : [
+          {
+            type: "response.output_item.added",
+            output_index: 0,
+            item: { ...message, status: "in_progress", content: [] },
+          },
+          {
+            type: "response.output_text.delta",
+            output_index: 0,
+            item_id: message.id,
+            content_index: 0,
+            delta: text,
+          },
+          {
+            type: "response.output_item.done",
+            output_index: 0,
+            item: {
+              ...message,
+              status: "completed",
+              content: [{ type: "output_text", text, annotations: [] }],
+            },
+          },
+        ];
   const frames: Frame[] = [
     { type: "response.created", response: { id: `resp_${label}`, status: "in_progress" } },
+    ...textFrames,
     {
       type: "response.output_item.added",
-      output_index: 0,
+      output_index: callIndex,
       item: { ...item, arguments: "", status: "in_progress" },
     },
     {
       type: "response.function_call_arguments.delta",
-      output_index: 0,
+      output_index: callIndex,
       item_id: item.id,
       delta: item.arguments,
     },
     {
       type: "response.output_item.done",
-      output_index: 0,
+      output_index: callIndex,
       item: { ...item, status: "completed" },
     },
     {
@@ -749,6 +782,120 @@ test(
         assert.equal(lane.sent[index]?.text.includes(label), false, `${label} not resent`);
       }
       assert.deepEqual(noticesOf(rig), []);
+    } finally {
+      await rig.dispose();
+    }
+  },
+);
+/** A response that streams nothing more until the request is aborted (a cancelled turn). */
+function stalledResponse(signal: AbortSignal | null | undefined): Response {
+  const created = {
+    type: "response.created",
+    response: { id: "resp_stall", status: "in_progress" },
+  };
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(
+        new TextEncoder().encode(`event: ${created.type}\ndata: ${JSON.stringify(created)}\n\n`),
+      );
+      signal?.addEventListener("abort", () => controller.error(new Error("aborted")), {
+        once: true,
+      });
+    },
+  });
+  return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+}
+
+test(
+  "xAI turns with text and a tool call compact natively three times across a cancel and resume",
+  { timeout: 60_000 },
+  async () => {
+    const STALL = 2;
+    const turns = new Map<number, number>([
+      [0, 0],
+      [1, 1],
+      [3, 2],
+      [4, 3],
+      [5, 4],
+    ]);
+    const lane = recordingFetch(() => compactResponse());
+    const sent: Sent[] = [];
+    const foreground: RecordingFetch = {
+      sent,
+      fetch: async (input, init) => {
+        const text = String(init?.body ?? "");
+        sent.push({
+          url: String(input),
+          headers: new Headers(init?.headers),
+          text,
+          body: parseXaiWireBody(text),
+        });
+        const index = sent.length - 1;
+        if (index === STALL) return stalledResponse(init?.signal);
+        const turn = turns.get(index);
+        return turn === undefined
+          ? textResponse("XG-DONE")
+          : toolCallResponse(`t${turn}`, 190_000, `Reading step ${turn} now.`);
+      },
+    };
+    const rig = await createRig({ foreground, lane, child: true, autoCompaction: true });
+    try {
+      const first = rig.session.prompt("XG-LOOP");
+      while (sent.length <= STALL) await new Promise((resolve) => setTimeout(resolve, 5));
+      await rig.session.abort();
+      await first;
+      await rig.session.prompt("XG-RESUME");
+      const branch = rig.manager.getBranch();
+      const position = new Map(branch.map((entry, index) => [entry.id, index]));
+      const all = compactions(rig.manager);
+      const native = all.filter((entry) => isXaiDetails(entry.details));
+      assert.ok(
+        native.length >= 3,
+        `three native compactions (got ${native.length} of ${all.length})`,
+      );
+      assert.equal(native.length, all.length, "no local fallback");
+      const kept = native.map((entry) => position.get(entry.firstKeptEntryId) ?? -1);
+      for (let index = 1; index < kept.length; index++) {
+        assert.ok(
+          (kept[index] ?? -1) > (kept[index - 1] ?? -1),
+          `firstKeptEntryId advances: ${kept.join(", ")}`,
+        );
+      }
+      const prefixes = native.map((entry) =>
+        isXaiDetails(entry.details) ? entry.details.wire.prefixDigest : "",
+      );
+      assert.equal(new Set(prefixes).size, prefixes.length, "no compacted prefix is sent twice");
+      assert.deepEqual(noticesOf(rig), []);
+    } finally {
+      await rig.dispose();
+    }
+  },
+);
+test(
+  "a capture from before the newest compaction is never reused to compact again",
+  { timeout: 60_000 },
+  async () => {
+    // Request 0 answers; request 1 (after the first compaction) fails, so its
+    // capture is unusable and only the pre-compaction capture remains.
+    const foreground = recordingFetch((index) =>
+      index === 1
+        ? new Response(JSON.stringify({ error: { message: "synthetic outage" } }), { status: 500 })
+        : textResponse(`XG-ANSWER-${index}`),
+    );
+    const lane = recordingFetch(() => compactResponse());
+    const rig = await createRig({ foreground, lane, child: true });
+    try {
+      await rig.session.prompt("XG-GO");
+      await rig.session.compact();
+      assert.equal(lane.sent.length, 1);
+      const [first] = compactions(rig.manager);
+      assert.ok(first && isXaiDetails(first.details));
+      await rig.session.prompt("XG-FAILS");
+      await rig.session.compact();
+      assert.equal(lane.sent.length, 1, "the stale capture was not sent to the compact endpoint");
+      const latest = compactions(rig.manager).at(-1);
+      assert.notEqual(latest?.id, first.id);
+      assert.equal(isXaiDetails(latest?.details), false, "the local summarizer answered");
     } finally {
       await rig.dispose();
     }

@@ -915,3 +915,31 @@ test(
     }
   },
 );
+test(
+  "a capture from before the newest compaction is never reused to compact again",
+  { timeout: 60_000 },
+  async () => {
+    const foreground = recordingFetch((index) =>
+      index === 1
+        ? errorResponse(500, { type: "api_error", message: "synthetic outage" })
+        : textResponse(`FG-ANSWER-${index}`),
+    );
+    const lane = recordingFetch(() => compactionResponse());
+    const rig = await createRig({ foreground, lane, child: true });
+    try {
+      await rig.session.prompt("FG-GO");
+      await rig.session.compact();
+      assert.equal(lane.sent.length, 1);
+      const [first] = compactions(rig.manager);
+      assert.ok(first && isAnthropicDetails(first.details));
+      await rig.session.prompt("FG-FAILS");
+      await rig.session.compact();
+      assert.equal(lane.sent.length, 1, "the stale capture was not sent to the lane");
+      const latest = compactions(rig.manager).at(-1);
+      assert.notEqual(latest?.id, first.id);
+      assert.equal(isAnthropicDetails(latest?.details), false, "the local summarizer answered");
+    } finally {
+      await rig.dispose();
+    }
+  },
+);

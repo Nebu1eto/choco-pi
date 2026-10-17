@@ -1872,8 +1872,12 @@ export async function resumeAgent(
   const stopCompactionTracking = trackSessionCompaction(session);
 
   try {
+    // A compaction may still run on the settled child (an agent_settled `ctx.compact()`);
+    // Pi rejects a prompt during one, so let it commit before reattaching and prompting.
+    if (!options.signal?.aborted && session.isCompacting) await session.waitForIdle();
     // A canceled or timed-out run quiesced the attachment; resume gets a fresh coordinator.
     if (!options.signal?.aborted) await childCompaction?.reattach();
+    if (!options.signal?.aborted && session.isCompacting) await session.waitForIdle();
     if (!options.signal?.aborted) await session.prompt(prompt);
     await turnLimit?.settleCorrections();
   } finally {

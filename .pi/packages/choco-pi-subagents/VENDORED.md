@@ -1846,3 +1846,12 @@ turns `adopting` into `discarded-stale` like the real one. `runChild` gains
   `state.creating` and every later `reattach()` returned at its first guard,
   so a resumed child never retried background compaction. Pinned by
   "a rejected reattach leaves the bridge idle so a later resume retries creation".
+- 2026-10-17 (live xAI cancel/resume finding): `resumeAgent` in
+  `src/agent-runner.ts` awaits `session.waitForIdle()` (only while `session.isCompacting`) before reattaching and
+  again before `session.prompt()`. After a cancelled child run settles,
+  `.pi/extensions/model-context-cap.ts` may call `ctx.compact()` on the child
+  (its `agent_settled` compact point); a native foreground compaction takes
+  seconds, and Pi rejects a prompt while one runs ("Cannot submit a prompt while
+  compaction is in progress"). Waiting lets that compaction commit first; an
+  abort still ends the wait through the existing signal forwarding. Pinned by
+  `.pi/packages/choco-pi-compaction/tests/child-resume-compaction-race.test.ts`.

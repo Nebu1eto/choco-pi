@@ -26,7 +26,7 @@ import {
   surfacesForegroundFailure,
 } from "../foreground-failure.ts";
 import { type CodexCompactionSnapshot, resolveOwner } from "../ownership.ts";
-import { retainableEntryIds } from "../retained-entries.ts";
+import { capturedSince, latestCompactionId, retainableEntryIds } from "../retained-entries.ts";
 import {
   type AnthropicBackendDeps,
   captureMatchesWireScope,
@@ -69,6 +69,8 @@ interface ForegroundRun {
   readonly registry: ExtensionContext["modelRegistry"];
   readonly preparation: SessionBeforeCompactEvent["preparation"];
   readonly branchEntryIds: readonly string[];
+  /** The branch's newest compaction entry; a capture sent before it is stale. */
+  readonly latestCompactionId: string | undefined;
   readonly instructions: string | undefined;
   readonly signal: AbortSignal;
 }
@@ -166,6 +168,7 @@ function snapshotRun(
     registry: ctx.modelRegistry,
     preparation: event.preparation,
     branchEntryIds: retainableEntryIds(event.branchEntries),
+    latestCompactionId: latestCompactionId(event.branchEntries),
     instructions: event.customInstructions,
     signal: event.signal,
   };
@@ -219,6 +222,9 @@ function chooseCapture(
     const capture = captures[index];
     if (capture === undefined || capture.status !== 200) continue;
     if (!captureMatchesWireScope(capture, scope)) continue;
+    // A capture from before the newest compaction maps only already-compacted history;
+    // cutting it re-compacts the same prefix and the cut never advances.
+    if (!capturedSince(capture.mapping, run.latestCompactionId)) continue;
     matched = true;
     const preferred = preferredCut(capture, run.preparation.firstKeptEntryId, run.branchEntryIds);
     if (preferred === undefined) continue;
