@@ -52,3 +52,22 @@ test("unexpected stdin errors are reported once without replacing the child exit
   assert.equal(result.stdout, "");
   assert.equal(result.stderr, "Hook stdin: injected stdin failure\n");
 });
+test("a child that closed its stdin socket (ENOTCONN) is not reported as a stdin failure", async (t) => {
+  const originalSpawn = childProcess.spawn;
+  const error = Object.assign(new Error("write ENOTCONN"), { code: "ENOTCONN" });
+  t.mock.method(childProcess, "spawn", (...args: Parameters<typeof spawn>) => {
+    const child = originalSpawn(...args);
+    child.stdin?.destroy(error);
+    return child;
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  const result = await executeHandler(
+    { type: "command", command: "sh", args: ["-c", "exit 0"] },
+    input,
+  );
+  assert.deepEqual(result, { exitCode: 0, stdout: "", stderr: "" });
+});

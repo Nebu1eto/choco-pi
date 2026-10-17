@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 import type {
   CommandHook,
   HookHandler,
@@ -75,6 +77,25 @@ export function substitute(value: JsonValue, input: JsonObject): JsonValue {
   return value;
 }
 
+/**
+ * A write that failed only because the child closed its end of stdin before
+ * reading it. `EPIPE` is the common case; macOS reports `ENOTCONN` when the
+ * peer socket is already gone, and `ECONNRESET` appears on some kernels.
+ * Node reports `ERR_STREAM_DESTROYED` once the stream itself is torn down.
+ */
+const StdinClosedByChildError = Type.Object({
+  code: Type.Union([
+    Type.Literal("EPIPE"),
+    Type.Literal("ENOTCONN"),
+    Type.Literal("ECONNRESET"),
+    Type.Literal("ERR_STREAM_DESTROYED"),
+  ]),
+});
+
+function isStdinClosedByChild(error: Error): boolean {
+  return Check(StdinClosedByChildError, error);
+}
+
 function runCommand(
   hook: CommandHook,
   input: HookInput,
@@ -114,8 +135,7 @@ function runCommand(
     const onStdinError = (error: Error | null | undefined) => {
       if (!error || settled || stdinErrors.has(error)) return;
       stdinErrors.add(error);
-      if ("code" in error && (error.code === "EPIPE" || error.code === "ERR_STREAM_DESTROYED"))
-        return;
+      if (isStdinClosedByChild(error)) return;
       stderr += `${stderr && !stderr.endsWith("\n") ? "\n" : ""}Hook stdin: ${error.message}\n`;
     };
     child.stdin.on("error", onStdinError);
