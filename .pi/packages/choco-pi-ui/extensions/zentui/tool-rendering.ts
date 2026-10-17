@@ -70,6 +70,40 @@ function join(parts: Array<string | undefined>): string {
   return parts.filter((part): part is string => Boolean(part)).join(" · ");
 }
 
+const TOOL_SEARCH_NAMES_SHOWN = 3;
+
+/**
+ * Pi's built-in `tool_search` reports `details.loaded` (tool names it activated).
+ * Sessions from choco-pi's former tool_search carry `matches`/`added` instead. Any other
+ * shape falls back to the result text, so a load is never misreported as no matches.
+ */
+function summarizeToolSearch(
+  details: BoundaryRecord | undefined,
+  result: ToolResultLike,
+  expanded: boolean,
+): string {
+  const loaded = details?.["loaded"];
+  if (Array.isArray(loaded)) {
+    const names = loaded.filter(isString);
+    if (names.length === 0) return "No matching tools";
+    const shown = expanded ? names : names.slice(0, TOOL_SEARCH_NAMES_SHOWN);
+    const rest = names.length - shown.length;
+    return compact(
+      `Loaded ${names.length} tool${names.length === 1 ? "" : "s"}: ${shown.join(", ")}${
+        rest > 0 ? `, +${rest} more` : ""
+      }`,
+      expanded ? 2000 : 140,
+    );
+  }
+  const legacy = join([
+    arrayCount(details, "matches") === undefined
+      ? undefined
+      : `${arrayCount(details, "matches")} matches`,
+    arrayCount(details, "added") ? `${arrayCount(details, "added")} activated` : undefined,
+  ]);
+  return legacy || semanticText(textContent(result), expanded) || "Completed";
+}
+
 function idSummary(
   args: BoundaryRecord | undefined,
   key: string,
@@ -322,14 +356,7 @@ export function summarizeToolResult(
 ): string {
   const details = record(result.details);
   if (name === "tool_search") {
-    return (
-      join([
-        arrayCount(details, "matches") === undefined
-          ? undefined
-          : `${arrayCount(details, "matches")} matches`,
-        arrayCount(details, "added") ? `${arrayCount(details, "added")} activated` : undefined,
-      ]) || "No matches"
-    );
+    return summarizeToolSearch(details, result, expanded);
   }
   if (name === "source_check") {
     return (

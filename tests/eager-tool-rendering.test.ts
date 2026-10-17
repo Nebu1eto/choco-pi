@@ -101,3 +101,53 @@ test(
     );
   },
 );
+
+test(
+  "tool_search results report Pi's loaded tools instead of claiming no matches",
+  { skip: SKIP_WITHOUT_ZENTUI },
+  async () => {
+    const rendering = await loadZentuiModule("tool-rendering.js");
+    // SAFETY: the compiled module exports the pure result summarizer.
+    const summarize = rendering.summarizeToolResult as (
+      name: string,
+      result: RuntimeValue,
+      expanded?: boolean,
+    ) => string;
+    const result = (details: RuntimeValue, text = "") => ({
+      content: [{ type: "text", text }],
+      details,
+    });
+    // Shape captured from a real session: query "create_goal" loaded eight unrelated tools.
+    const loaded = [
+      "mcp__slack__slack_create_list",
+      "mcp__slack__slack_create_canvas",
+      "mcp__slack__slack_update_canvas",
+      "mcp__1password__create_environment",
+    ];
+
+    assert.equal(
+      summarize("tool_search", result({ loaded })),
+      "Loaded 4 tools: mcp__slack__slack_create_list, mcp__slack__slack_create_canvas, mcp__slack__slack_update_canvas, +1 more",
+    );
+    assert.match(
+      summarize("tool_search", result({ loaded }), true),
+      /mcp__1password__create_environment$/,
+    );
+    assert.equal(
+      summarize("tool_search", result({ loaded: ["advisor"] })),
+      "Loaded 1 tool: advisor",
+    );
+    assert.equal(
+      summarize("tool_search", result({ loaded: [] }, "No matching tools found.")),
+      "No matching tools",
+    );
+    assert.equal(
+      summarize("tool_search", result({ matches: [1, 2], added: [1] })),
+      "2 matches · 1 activated",
+    );
+    assert.equal(
+      summarize("tool_search", result(undefined, "Loaded 2 tools. They are available")),
+      "Loaded 2 tools. They are available",
+    );
+  },
+);

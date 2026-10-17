@@ -254,6 +254,14 @@ summarizer; recognizes built-in `mcp__<server>__<tool>` names (including
 underscore server names) without exposing arguments, and keeps `tool_search`
 summaries and labels.
 
+## 2026-10-17 choco-pi patch: `tool_search` result summary
+
+Pi's built-in `tool_search` reports `details.loaded`; the summary read only the
+former choco-pi `matches`/`added` fields and printed "No matches" even when
+tools were loaded. It now names the loaded tools (three when collapsed, all when
+expanded), keeps the legacy fields for older sessions, and falls back to the
+result text for any other shape.
+
 ## 2026-10-08 choco-pi patch: focus-scoped footer identity
 
 The footer captures one focused-agent runtime snapshot per render and derives
