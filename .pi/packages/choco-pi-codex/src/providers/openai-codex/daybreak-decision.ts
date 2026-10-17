@@ -14,11 +14,14 @@ import {
   type DaybreakState,
 } from "./daybreak-types.ts";
 import {
+  clearCodexDaybreakEchoDenials,
   copyDaybreakHeaders,
   daybreakAccount,
   type DaybreakLookupCredentials,
   invalidateCodexDaybreakAccount,
+  isCodexDaybreakEchoDenied,
   lookupCodexDaybreakEntitlement,
+  recordCodexDaybreakEchoDenial,
 } from "./daybreak-entitlement.ts";
 
 export {
@@ -292,8 +295,12 @@ async function resolveTicket(record: TicketRecord): Promise<CodexDaybreakDecisio
   if (!credentials || !account)
     return publish(owner, decisionFrom(sessionId, state, "auth-not-eligible"));
   const modelId = record.model.id ?? "";
-  // A toggle-on transition drops both caches before any lookup so the catalog is re-read too.
-  if (record.turnedOn) invalidateCodexDaybreakAccount(account);
+  // A toggle-on transition drops both caches and echo refusals before any lookup, so the
+  // catalog is re-read and a previously refused program is tried again.
+  if (record.turnedOn) {
+    invalidateCodexDaybreakAccount(account);
+    clearCodexDaybreakEchoDenials(account);
+  }
   // Codex's own contract (observed in codex-cli 0.161): the model catalog is the gate. If the
   // selected model advertises a Daybreak program, the request is sent and the server's echo
   // is the final word. `verified_access` only chooses red over blue; it is not a gate for
@@ -322,25 +329,25 @@ async function resolveTicket(record: TicketRecord): Promise<CodexDaybreakDecisio
   const current = decisionFrom(sessionId, state, "off");
   if (record.isCurrent?.() === false || !ownerCurrent(owner.controller, current))
     return publish(owner, current);
-  const support = await lookupCodexDaybreakModelSupport(account, credentials, modelId, preferred);
-  const program: DaybreakTargetProgram | undefined =
-    support === "supported"
-      ? preferred
-      : preferred === "daybreak_red" &&
-          (await lookupCodexDaybreakModelSupport(
-            account,
-            credentials,
-            modelId,
-            "daybreak_blue",
-          )) === "supported"
-        ? "daybreak_blue"
-        : undefined;
-  const outcome =
-    program === "daybreak_red"
-      ? "red"
-      : program === "daybreak_blue"
-        ? "blue"
-        : "model-not-supported";
+  // A program the server already refused in a terminal echo is not sent again: re-sending it
+  // would report a grant until the next echo downgrades it, flipping the outcome every turn.
+  let program: DaybreakTargetProgram | undefined;
+  let refused = false;
+  const candidates: readonly DaybreakTargetProgram[] =
+    preferred === "daybreak_red" ? ["daybreak_red", "daybreak_blue"] : ["daybreak_blue"];
+  for (const candidate of candidates) {
+    const support = await lookupCodexDaybreakModelSupport(account, credentials, modelId, candidate);
+    if (support !== "supported") continue;
+    if (isCodexDaybreakEchoDenied(account, credentials.apiKey, modelId, candidate)) {
+      refused = true;
+      continue;
+    }
+    program = candidate;
+    break;
+  }
+  let outcome: DaybreakOutcome = refused ? "not-granted" : "model-not-supported";
+  if (program === "daybreak_red") outcome = "red";
+  else if (program === "daybreak_blue") outcome = "blue";
   return publish(owner, decisionFrom(sessionId, state, outcome));
 }
 
@@ -379,7 +386,16 @@ export function reportCodexDaybreakResponse(
   if (!owner?.controller) return;
   const outcome =
     response.access_programs.cyber === decision.cyber ? decision.outcome : "not-granted";
-  if (outcome === "not-granted" && owner.account) invalidateCodexDaybreakAccount(owner.account);
+  if (outcome === "not-granted" && owner.account) {
+    if (record.credentials)
+      recordCodexDaybreakEchoDenial(
+        owner.account,
+        record.credentials.apiKey,
+        record.model.id ?? "",
+        decision.cyber,
+      );
+    invalidateCodexDaybreakAccount(owner.account);
+  }
   owner.controller.report(outcome, decision.revision);
 }
 

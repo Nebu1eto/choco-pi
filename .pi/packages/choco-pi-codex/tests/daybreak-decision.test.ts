@@ -856,11 +856,12 @@ test("frozen decision: revision drift keeps start state; identity or generation 
 test("HTTP and normalized WebSocket terminal echoes attest the applied Daybreak program", async (t) => {
   t.after(cleanup);
   const bridge = installBridge();
-  fakeLookup(() => Response.json(grantsPayload("tac1")));
   const account = daybreakAccount(token("acct-1"), model.baseUrl);
   assert.ok(account);
   for (const transport of ["http", "ws"]) {
     for (const echo of ["standard", "daybreak_blue", "absent", "malformed"]) {
+      // Each echo is an independent scenario; a refusal must not leak into the next one.
+      fakeLookup(() => Response.json(grantsPayload("tac1")));
       const id = `${transport}-${echo}`;
       const fake = bridge.add(id, true);
       const requestTicket = ticket(id);
@@ -953,6 +954,54 @@ test("server echoes from superseded Daybreak revisions do not report or invalida
   const account = daybreakAccount(token("acct-1"), model.baseUrl);
   assert.ok(account);
   assert.equal(hasCodexDaybreakEntitlementEntry(account), true);
+});
+
+test("an echo refusal settles not-granted until re-login or toggle-on instead of flipping back", async (t) => {
+  t.after(cleanup);
+  const bridge = installBridge();
+  // Empty grants do not gate (the catalog does), so the first request carries Daybreak Blue.
+  fakeLookup(() => Response.json(grantsPayload()));
+  const fake = bridge.add("sticky", true);
+  const first = ticket("sticky");
+  assert.equal((await resolve(first)).outcome, "blue");
+  reportCodexDaybreakResponse(first, { access_programs: { cyber: "standard" } });
+  assert.equal(fake.state.outcome, "not-granted");
+  const refusedAt = fake.reports.length;
+
+  // Later turns and re-probes (session switch, tree navigation) stay refused and send nothing.
+  for (let turn = 0; turn < 3; turn++) {
+    const next = await resolve(ticket("sticky"));
+    assert.equal(next.outcome, "not-granted");
+    assert.equal(next.cyber, undefined);
+    assert.equal(hasAccessPrograms(applyCodexDaybreakAccessPrograms({}, next)), false);
+  }
+  assert.deepEqual(
+    fake.reports.slice(refusedAt).map(([outcome]) => outcome),
+    ["not-granted", "not-granted", "not-granted"],
+  );
+  const sibling = bridge.add("sticky-sibling", true);
+  assert.equal((await resolve(ticket("sticky-sibling"))).outcome, "not-granted");
+  assert.equal(sibling.state.outcome, "not-granted");
+
+  // A new token (re-login or refresh) and an explicit off->on toggle each try the program again.
+  bridge.add("sticky-relogin", true);
+  assert.equal((await resolve(ticket("sticky-relogin", token("acct-1", "b")))).outcome, "blue");
+  fake.controller.set(false);
+  fake.controller.set(true);
+  assert.equal((await resolve(ticket("sticky"))).outcome, "blue");
+});
+
+test("a refused red program falls back to blue when the catalog advertises it", async (t) => {
+  t.after(cleanup);
+  const bridge = installBridge();
+  fakeLookup(() => Response.json(grantsPayload("tac3")));
+  bridge.add("red-refused", true);
+  const first = ticket("red-refused");
+  assert.equal((await resolve(first)).outcome, "red");
+  reportCodexDaybreakResponse(first, { access_programs: { cyber: "standard" } });
+  const next = await resolve(ticket("red-refused"));
+  assert.equal(next.outcome, "blue");
+  assert.equal(next.cyber, "daybreak_blue");
 });
 
 test("HTTP provider path applies after payload hooks and 401 invalidates entitlement", async (t) => {

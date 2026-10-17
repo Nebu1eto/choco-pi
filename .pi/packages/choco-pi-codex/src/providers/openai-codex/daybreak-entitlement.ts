@@ -56,6 +56,15 @@ type CacheEntry = {
 };
 const cache = new Map<string, CacheEntry>();
 
+/**
+ * Programs the server refused in a terminal echo, per account and token. Unlike the lookup
+ * caches they survive account invalidation: the catalog keeps advertising the program, so
+ * forgetting the refusal re-sends it and flips the outcome back to granted on every lookup.
+ * A token change (re-login or refresh) or a toggle-on transition clears them.
+ */
+type EchoDenials = { readonly token: string; readonly denied: Set<string> };
+const echoDenials = new Map<string, EchoDenials>();
+
 type EntitlementDependencies = {
   fetch: typeof globalThis.fetch;
   now: () => number;
@@ -74,6 +83,7 @@ export function configureCodexDaybreakEntitlementForTest(
 ): void {
   dependencies = overrides ? { ...defaultDependencies, ...overrides } : defaultDependencies;
   cache.clear();
+  echoDenials.clear();
 }
 
 export function copyDaybreakHeaders<Value extends string | null>(
@@ -113,6 +123,47 @@ export function invalidateCodexDaybreakEntitlement(
 export function invalidateCodexDaybreakAccount(account: DaybreakAccount): void {
   cache.delete(account.key);
   invalidateCodexDaybreakModelSupport(account);
+}
+
+function echoDenialKey(modelId: string, program: string): string {
+  return JSON.stringify([modelId, program]);
+}
+
+/** Records that the server echo refused `program` for this account token and model. */
+export function recordCodexDaybreakEchoDenial(
+  account: DaybreakAccount,
+  apiKey: string,
+  modelId: string,
+  program: string,
+): void {
+  let entry = echoDenials.get(account.key);
+  if (entry?.token !== apiKey) {
+    echoDenials.delete(account.key);
+    while (echoDenials.size >= DAYBREAK_CACHE_MAX_ENTRIES) {
+      const oldest = echoDenials.keys().next();
+      if (oldest.done) break;
+      echoDenials.delete(oldest.value);
+    }
+    entry = { token: apiKey, denied: new Set() };
+    echoDenials.set(account.key, entry);
+  }
+  entry.denied.add(echoDenialKey(modelId, program));
+}
+
+/** True when the server already refused `program` for this exact account token and model. */
+export function isCodexDaybreakEchoDenied(
+  account: DaybreakAccount,
+  apiKey: string,
+  modelId: string,
+  program: string,
+): boolean {
+  const entry = echoDenials.get(account.key);
+  return entry?.token === apiKey && entry.denied.has(echoDenialKey(modelId, program));
+}
+
+/** Forgets echo refusals for an account, e.g. after an explicit toggle-on transition. */
+export function clearCodexDaybreakEchoDenials(account: DaybreakAccount): void {
+  echoDenials.delete(account.key);
 }
 
 function entitlementFromVerifiedAccess(

@@ -740,6 +740,15 @@ selected model advertises a Daybreak program the request carries it and the serv
 over blue (default blue); it never blocks, because it reports `inactive` for accounts
 the backend still serves Daybreak to.
 
+Echo refusals are remembered (choco-pi fix): a `not-granted` echo records the refused
+program for that account token and model in `daybreak-entitlement.ts`. That record
+survives the cache invalidation the echo itself triggers, so later decisions (each turn,
+and each re-probe on session start, tree navigation, or model select) settle on
+`not-granted` and omit `access_programs` instead of re-deriving the
+catalog-advertised program and flipping the badge between `daybreak` and
+`daybreak not granted`. A refused red falls back to advertised blue. A token change
+(re-login or refresh) or an off->on toggle clears the record and tries the program again.
+
 ## 2026-10-08 choco-pi patch: WebSocket decode ownership
 
 `websocket-parser.ts` invalidates its decoding generation synchronously on abort,
