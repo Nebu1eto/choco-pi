@@ -668,7 +668,17 @@ async function attach(state: BridgeState, ctx: ExtensionContext, pi: ExtensionAP
   state.creating = attempt.controller;
   // Called unbound, exactly like the provider member it was read from.
   const createChildCoordinator = state.createChildCoordinator;
-  const result = await createChildCoordinator(coordinatorContext(state, attempt, ctx, pi));
+  let result: ChildCoordinatorAttachment | undefined;
+  try {
+    result = await createChildCoordinator(coordinatorContext(state, attempt, ctx, pi));
+  } catch (error) {
+    // A rejected creation ends this attempt only; a newer attempt owns `creating`.
+    if (state.creating === attempt.controller) {
+      attempt.controller.abort();
+      state.creating = undefined;
+    }
+    throw error;
+  }
   const attachment = acceptedAttachment(state, attempt, result);
   if (attachment === undefined) return;
   if (!isAttemptCurrent(state, attempt)) {

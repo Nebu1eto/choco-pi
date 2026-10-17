@@ -359,6 +359,8 @@ interface FakeProviderOptions {
   readonly hideReadyFromStatus?: boolean;
   /** Recover persisted candidate records from the child branch at creation. */
   readonly recoverFromBranch?: boolean;
+  /** Reject creation attempts while this returns true (the attempt number is 1-based). */
+  readonly rejectCreation?: (attempt: number) => boolean;
   /** Make a candidate ready when this boundary is observed (before the bridge checks status). */
   readonly readyAtBoundary?: {
     readonly kind: "turn_end" | "agent_before_settle";
@@ -558,6 +560,9 @@ function fakeProvider(options: FakeProviderOptions = {}) {
     isEnabled: () => options.enabled ?? true,
     createChildCoordinator: async (context) => {
       attempts++;
+      if (options.rejectCreation?.(attempts) === true) {
+        throw new Error(`provider rejected creation ${attempts}`);
+      }
       const child = createFakeChild(context, options.hideReadyFromStatus === true);
       children.push(child);
       if (options.creationGate) await options.creationGate;
@@ -1922,3 +1927,29 @@ function placeholderContext(ownerKey: string): ChildCoordinatorContext {
     signal: new AbortController().signal,
   };
 }
+test("a rejected reattach leaves the bridge idle so a later resume retries creation", async () => {
+  const fake = fakeProvider({ rejectCreation: (attempt) => attempt === 2 });
+  unpublish = publishChildCompactionProvider(fake.provider);
+  const { run, child } = await cancelMidRun("reattach-retry", fake);
+  const bridge = getChildCompactionBridge(run.session);
+  assert.ok(bridge);
+  bridge.settle({ canceled: true, timedOut: false });
+  assert.equal(child.disposals(), 1);
+
+  // The provider rejects the second attempt: reattach reports and resolves.
+  await bridge.reattach();
+  assert.equal(fake.attempts(), 2);
+  assert.equal(fake.children.length, 1, "no coordinator was created by the rejected attempt");
+  assert.deepEqual(childKeys(), [], "the rejected attempt registered nothing");
+
+  // A later resume must retry; before the fix the failed attempt stayed "creating".
+  await bridge.reattach();
+  assert.equal(fake.attempts(), 3, "creation is retried after a rejected attempt");
+  const next = fake.children[1];
+  assert.ok(next, "the retry created a coordinator");
+  assert.equal(getCoordinator(next.context.ownerKey), next.coordinator);
+  assert.equal(next.context.ownerGeneration, 3, "each attempt took a generation");
+  await disposeChild(run.session);
+  assert.equal(next.disposals(), 1);
+  assert.deepEqual(childKeys(), []);
+});

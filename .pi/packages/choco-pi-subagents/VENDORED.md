@@ -1838,3 +1838,11 @@ the forwarded extension error, so `bindExtensions` rejects through the
 existing catch; no runner seam was added). The fake coordinator's `cancel` now
 turns `adopting` into `discarded-stale` like the real one. `runChild` gains
 `trailingFactories`, which load after the runner's inline factories.
+
+- 2026-10-17 (review follow-up): `attach` in `src/child-compaction-bridge.ts`
+  clears and aborts its own `creating` attempt when the provider's
+  `createChildCoordinator` rejects (identity-guarded so a newer attempt is
+  untouched), then rethrows. Before, the rejected controller stayed in
+  `state.creating` and every later `reattach()` returned at its first guard,
+  so a resumed child never retried background compaction. Pinned by
+  "a rejected reattach leaves the bridge idle so a later resume retries creation".
