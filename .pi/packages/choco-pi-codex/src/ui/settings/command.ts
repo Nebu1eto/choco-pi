@@ -17,6 +17,7 @@ import { syncAdapter } from "../../adapter/activation/activation.ts";
 import type { AdapterState } from "../../adapter/activation/state.ts";
 import { ROUTABLE_SETTINGS_TABS, parseSettingsTab, type SettingsTab } from "./tabs.ts";
 import { registerCodexPreferencesProvider } from "./preferences-sections.ts";
+import { inSubagentChildLoad } from "../../extension/child-load.ts";
 
 function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
   let promise: Promise<Module> | undefined;
@@ -182,12 +183,17 @@ export function registerCodexCommand(
     },
   });
 
-  registerCodexPreferencesProvider({
-    effectiveConfig,
-    saveAndApply,
-    applyEffectiveConfig,
-    getRunningConfig: () => state.config,
-  });
+  // The provider is process-global and closes over this load's `pi` and
+  // adapter state. A subagent child would leave it bound to a runtime that is
+  // disposed when the child ends, so only the main session publishes it.
+  if (!inSubagentChildLoad()) {
+    registerCodexPreferencesProvider({
+      effectiveConfig,
+      saveAndApply,
+      applyEffectiveConfig,
+      getRunningConfig: () => state.config,
+    });
+  }
 }
 
 function formatAllProvidersMode(value: CodexConversionConfig["scope"]["allProviders"]): string {

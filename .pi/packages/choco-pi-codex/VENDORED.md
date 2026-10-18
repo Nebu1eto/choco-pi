@@ -1010,3 +1010,21 @@ provider's "input exceeds the context window" rejection surfaced as a generic
 - `adapter/compaction/background-v2.ts`: `context-overflow` maps to `oversized`.
 
 Test: `tests/compaction-context-overflow.test.ts`.
+
+## choco-pi patch: in-process subagents no longer pin or replace main-session state
+
+Subagent children run in the same process and load every extension again.
+
+- `tools/code-mode/registered-tool-bridge.ts`: the runner list on
+  `ExtensionRunner.prototype` was pruned only along the stretch a lookup walked.
+  The root runner moves to the end whenever Pi reassembles its tools, so runners
+  of finished children sat behind it and each pinned a disposed child's session
+  manager, extensions and session closures for the rest of the process. Every
+  capture and lookup now drops all invalidated runners.
+- `ui/settings/command.ts` with the new `extension/child-load.ts`: a child load
+  no longer replaces the process-global Codex preferences provider, which
+  closes over that load's `pi` and adapter state. Child detection reads the
+  `pi-subagents:manager` registry's `isChildSessionContext()`.
+
+Tests: `tests/code-mode-bridge-session-affinity.test.ts`,
+`tests/child-load-preferences.test.ts`.

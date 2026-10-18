@@ -90,3 +90,62 @@ test("a stale runner is pruned even when a newer live runner precedes it", () =>
 
   resetRegisteredToolCapture();
 });
+
+function capturedRunners(): readonly ExtensionRunner[] {
+  const prototype = reinterpretHostValue<{
+    __chocoPiCodeModeToolBridgeRunners?: ExtensionRunner[];
+  }>(ExtensionRunner.prototype);
+  return prototype.__chocoPiCodeModeToolBridgeRunners ?? [];
+}
+
+/** A session context whose runner Pi has, or has not yet, invalidated. */
+interface DisposableContext {
+  context: ExtensionContext;
+  dispose: () => void;
+}
+
+function disposableContext(id: string): DisposableContext {
+  let stale = false;
+  const context = reinterpretHostValue<ExtensionContext>({
+    sessionManager: { id },
+    isIdle() {
+      if (stale)
+        throw new Error("This extension ctx is stale after session replacement or reload.");
+      return true;
+    },
+  });
+  return { context, dispose: () => (stale = true) };
+}
+
+test("disposed subagent runners behind the root runner are released", () => {
+  resetRegisteredToolCapture();
+  installRegisteredToolCapture();
+
+  const rootContext = sessionContext({ id: "root" });
+  const rootRunner = captureRunner(rootContext);
+  const children = [disposableContext("child-1"), disposableContext("child-2")];
+  for (const child of children) captureRunner(child.context);
+  for (const child of children) child.dispose();
+
+  // Pi reassembles the root's tools, which moves its runner behind the
+  // finished children; the root's own lookups then stop at it immediately.
+  ExtensionRunner.prototype.getAllRegisteredTools.call(rootRunner);
+  assert.equal(registeredToolRunner(rootContext), rootRunner);
+
+  assert.deepEqual(capturedRunners(), [rootRunner], "no disposed session stays pinned");
+  resetRegisteredToolCapture();
+});
+
+test("capturing a new runner releases runners disposed since the last capture", () => {
+  resetRegisteredToolCapture();
+  installRegisteredToolCapture();
+
+  const rootRunner = captureRunner(sessionContext({ id: "root" }));
+  const child = disposableContext("child");
+  captureRunner(child.context);
+  child.dispose();
+  const nextRunner = captureRunner(sessionContext({ id: "next" }));
+
+  assert.deepEqual(capturedRunners(), [rootRunner, nextRunner]);
+  resetRegisteredToolCapture();
+});

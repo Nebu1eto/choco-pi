@@ -94,8 +94,41 @@ function bridgedRunnerPrototype(): BridgedRunnerPrototype {
   return ExtensionRunner.prototype as BridgedRunnerPrototype;
 }
 
+type RuntimeSessionManager = ExtensionContext["sessionManager"] | undefined;
+
+/**
+ * The session a runner serves, or `undefined` once Pi has invalidated it. A
+ * disposed session's runner throws the canonical stale-context error.
+ */
+function liveRunnerProbe(
+  runner: ExtensionRunner,
+): { sessionManager: RuntimeSessionManager } | undefined {
+  return withLiveCtx(() => {
+    const context = runner.createContext();
+    context.isIdle();
+    return { sessionManager: context.sessionManager };
+  });
+}
+
+/**
+ * Drop every invalidated runner. The list lives on a process-global prototype,
+ * and a runner holds its session manager, every extension instance and the
+ * session's closures, so an entry left behind pins a whole disposed subagent
+ * session for the rest of the process. Sweeping only the stretch a lookup
+ * happened to walk was not enough: the root runner moves to the end each time
+ * Pi reassembles its tools, so runners of children that finished earlier sat
+ * behind it where no root lookup ever reached them.
+ */
+function pruneStaleRunners(runners: ExtensionRunner[]): void {
+  for (let index = runners.length - 1; index >= 0; index -= 1) {
+    const runner = runners[index];
+    if (!runner || !liveRunnerProbe(runner)) runners.splice(index, 1);
+  }
+}
+
 function rememberRunner(runner: ExtensionRunner): void {
   const runners = (bridgedRunnerPrototype().__chocoPiCodeModeToolBridgeRunners ??= []);
+  pruneStaleRunners(runners);
   const existingIndex = runners.indexOf(runner);
   if (existingIndex !== -1) runners.splice(existingIndex, 1);
   runners.push(runner);
@@ -129,16 +162,13 @@ export function installRegisteredToolCapture(): void {
  */
 export function registeredToolRunner(ctx?: ExtensionContext): RegisteredToolSource | undefined {
   const runners = bridgedRunnerPrototype().__chocoPiCodeModeToolBridgeRunners ?? [];
+  pruneStaleRunners(runners);
   const targetSessionManager = ctx ? withLiveCtx(() => ctx.sessionManager) : undefined;
   let newestLive: ExtensionRunner | undefined;
   for (let index = runners.length - 1; index >= 0; index -= 1) {
     const runner = runners[index];
     if (!runner) continue;
-    const probe = withLiveCtx(() => {
-      const context = runner.createContext();
-      context.isIdle();
-      return { sessionManager: context.sessionManager };
-    });
+    const probe = liveRunnerProbe(runner);
     if (!probe) {
       runners.splice(index, 1);
       continue;
