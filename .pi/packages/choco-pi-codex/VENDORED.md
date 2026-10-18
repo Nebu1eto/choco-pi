@@ -983,3 +983,30 @@ Pi SDK peer and development pins move from `1.2.0` to exactly `1.3.0`. The packa
 `minimumReleaseAgeExclude` entries move to `@1.3.0`; the lock was regenerated with
 `pnpm install --ignore-scripts` and restored with `pnpm install:vendored` (frozen).
 Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.
+
+## choco-pi patch: compaction v2 input bounded by the model window
+
+Overflow recovery (`session_before_compact` with `reason: "overflow"`) hands
+Responses compaction v2 a history that already exceeded the model's window. The
+upstream shrink used the 872k Responses Lite endpoint budget, which is above the
+272k/372k windows of the Codex models it applies to, and rewrote only a trailing
+run of tool outputs, so the oversized request was sent unchanged and the
+provider's "input exceeds the context window" rejection surfaced as a generic
+`stream-error`.
+
+- `adapter/compaction/request-shrink.ts`: `resolveNativeCompactionInputBudget`
+  bounds the endpoint budget by 95% of the model window
+  (`resolveNativeCompactionRequestBudget`, read by the context-policy hook, is
+  unchanged). The estimate counts tool declarations. After the upstream trailing
+  pass, earlier tool outputs are truncated oldest first, then the oldest turns
+  are dropped at a user-message cut, keeping every compaction item and dropping
+  any output whose call was dropped. `force` shrinks by the local estimate
+  regardless of `tokensBefore`.
+- `adapter/compaction/remote-v2-client.ts`: an overflow rejection is
+  `reason: "context-overflow"`. It gets one retry with the input forced down to
+  75% of the window budget; when nothing can be shrunk, or the shrunk input equals
+  the one already rejected, the retry sends nothing. The retry counts against the
+  caller's `maxRetries`, so the background lane (`maxRetries: 0`) gets none.
+- `adapter/compaction/background-v2.ts`: `context-overflow` maps to `oversized`.
+
+Test: `tests/compaction-context-overflow.test.ts`.

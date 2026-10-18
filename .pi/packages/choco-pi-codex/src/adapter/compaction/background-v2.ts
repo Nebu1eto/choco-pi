@@ -208,7 +208,8 @@ function classifyFailure(result: Extract<RemoteCompactionV2Result, { ok: false }
   if (result.reason === "aborted") return rejected("canceled");
   if (result.status === 429) return rateLimitFailure(result.retryAfterMs);
   if (isAuthRejection(result)) return authFailure();
-  if (result.reason === "oversized") return rejected("oversized");
+  if (result.reason === "oversized" || result.reason === "context-overflow")
+    return rejected("oversized");
   if (result.reason === "invalid-output") return rejected("malformed");
   if (isUnsupportedRejection(result)) return unsupportedCooldownFailure();
   if (/timeout|timed out/i.test(result.errorMessage)) return timeoutFailure();

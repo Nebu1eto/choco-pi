@@ -2,21 +2,21 @@ import { conditionalProperties, JsonObjectSchema } from "../runtime-values.ts";
 import type { JsonObject, BoundaryValue } from "../runtime-values.ts";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import {
-  type Api,
-  type AssistantMessage,
-  type AssistantMessageEvent,
-  type Model,
-  type SimpleStreamOptions,
-  type Transport,
-  type TranscriptContext,
+import type {
+  Api,
+  AssistantMessage,
+  AssistantMessageEvent,
+  Model,
+  SimpleStreamOptions,
+  Transport,
+  TranscriptContext,
 } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { NativeCompactionRuntime } from "./compaction-runtime.ts";
 import { cloneCodexCompactionJson } from "./details-store.ts";
 import type { NativeCompactionRequestOptions, ResponsesInputItem } from "./serializer.ts";
 import {
-  resolveNativeCompactionRequestBudget,
+  resolveNativeCompactionInputBudget,
   shrinkNativeCompactionRequestForEndpoint,
 } from "./request-shrink.ts";
 import {
@@ -77,7 +77,8 @@ export type RemoteCompactionV2Result =
         | "stream-error"
         | "invalid-output"
         | "oversized"
-        | "unsupported";
+        | "unsupported"
+        | "context-overflow";
       errorMessage: string;
       status?: number | undefined;
       retryAfterMs?: number | undefined;
@@ -249,6 +250,8 @@ interface AttemptObservations {
   terminalCompaction: JsonObject | undefined;
   expectedBackgroundPayload: ReturnType<typeof cloneCodexCompactionJson>;
   payloadUnsupported: boolean;
+  /** The reduced attempt could not shrink the input, so nothing was sent. */
+  irreducible: boolean;
 }
 function createAttemptObservations(): AttemptObservations {
   return {
@@ -263,7 +266,38 @@ function createAttemptObservations(): AttemptObservations {
     terminalCompaction: undefined,
     expectedBackgroundPayload: undefined,
     payloadUnsupported: false,
+    irreducible: false,
   };
+}
+
+/**
+ * How hard an attempt shrinks its input. The first attempt shrinks only when the
+ * host's estimate exceeds the window budget; after the provider reports a context
+ * overflow the single retry shrinks by the local estimate to a smaller budget.
+ * One record is shared by every attempt of a single compaction, so the reduced
+ * retry can tell whether it would only resend the input already rejected.
+ */
+interface AttemptShrink {
+  reduced: boolean;
+  /** Serialized input of the last attempt that reached the provider. */
+  sentInput: string | undefined;
+}
+/** Share of the window budget the reduced retry targets. */
+const REDUCED_BUDGET_PERCENT = 75;
+
+function attemptBudget(options: ExecuteRemoteCompactionV2Options): number | undefined {
+  return resolveNativeCompactionInputBudget({
+    codexTransport: options.runtime.codexTransport,
+    model: options.runtime.model,
+    contextWindow: options.runtime.currentModel.contextWindow,
+  });
+}
+
+/** Provider rejections of an input larger than the model's context window. */
+export function isContextOverflowMessage(message: string): boolean {
+  return /context_length_exceeded|exceeds? the context window|maximum context length/i.test(
+    message,
+  );
 }
 
 /** Canonical continuation history, when this attempt may use it instead of reconstruction. */
@@ -327,6 +361,7 @@ async function prepareAttemptPayload(
   canonical: CanonicalAttemptSource,
   diagnostic: CodexCompactionDiagnostic,
   observed: AttemptObservations,
+  shrink: AttemptShrink,
   payload: ProviderPayload,
 ) {
   if (!isResponsesBody(payload)) throw new Error("Invalid Responses compaction request body");
@@ -337,6 +372,7 @@ async function prepareAttemptPayload(
   const promptInput = normalizeRemoteCompactionV2PromptInput(
     canonical.input ?? options.promptInput,
   );
+  const budgetTokens = attemptBudget(options);
   const request = await shrinkNativeCompactionRequestForEndpoint(
     {
       model: requestBody.model,
@@ -344,16 +380,28 @@ async function prepareAttemptPayload(
       ...conditionalProperties(Boolean(Value.Check(Type.String(), requestBody.instructions)), {
         instructions: requestBody.instructions,
       }),
+      ...conditionalProperties(Boolean(requestBody.tools), { tools: requestBody.tools }),
     },
     {
-      budgetTokens: resolveNativeCompactionRequestBudget({
-        codexTransport: options.runtime.codexTransport,
-        model: options.runtime.model,
-        contextWindow: options.runtime.currentModel.contextWindow,
-      }),
+      budgetTokens:
+        shrink.reduced && budgetTokens !== undefined
+          ? Math.floor((budgetTokens * REDUCED_BUDGET_PERCENT) / 100)
+          : budgetTokens,
       tokensBefore: options.tokensBefore,
+      force: shrink.reduced,
     },
   );
+  const sentInput = JSON.stringify(request.request.input);
+  if (
+    shrink.reduced &&
+    ((request.rewrittenOutputs === 0 && request.droppedItems === 0) ||
+      sentInput === shrink.sentInput)
+  ) {
+    // Resending the identical input would fail the same way.
+    observed.irreducible = true;
+    throw new Error("Responses compaction v2 input cannot be reduced below the context window");
+  }
+  shrink.sentInput = sentInput;
   diagnostic.rewrittenToolOutputs = request.rewrittenOutputs;
   const preparedBody = {
     ...requestBody,
@@ -420,6 +468,7 @@ function buildAttemptStreamOptions(
   canonical: CanonicalAttemptSource,
   diagnostic: CodexCompactionDiagnostic,
   observed: AttemptObservations,
+  shrink: AttemptShrink,
 ): OpenAICodexStreamOptions {
   const serviceTier = Value.Check(Type.String(), options.requestOptions.service_tier)
     ? options.requestOptions.service_tier
@@ -442,7 +491,7 @@ function buildAttemptStreamOptions(
     onOutputItemDone: (item) => recordOutputItem(observed, options.maxResultBytes, item),
     onResponse: (response) => recordResponse(observed, response),
     onPayload: (payload) =>
-      prepareAttemptPayload(options, canonical, diagnostic, observed, payload),
+      prepareAttemptPayload(options, canonical, diagnostic, observed, shrink, payload),
   };
   if (isSupportedServiceTier(serviceTier)) streamOptions.serviceTier = serviceTier;
   if (options.frozenRequestBody) {
@@ -474,6 +523,16 @@ function streamErrorFailure(
   if (observed.oversized) return oversizedFailure();
   const message = event.error?.errorMessage || "Responses compaction v2 stream failed";
   const { responseStatus, retryAfterMs } = observed;
+  if (
+    observed.irreducible ||
+    (!isAborted(options.signal, message) && isContextOverflowMessage(message))
+  )
+    return {
+      ok: false,
+      reason: "context-overflow",
+      errorMessage: message,
+      ...conditionalProperties(Boolean(responseStatus !== undefined), { status: responseStatus }),
+    };
   return {
     ok: false,
     reason: isAborted(options.signal, message) ? "aborted" : "stream-error",
@@ -573,11 +632,12 @@ function finalizeAttempt(
 async function runAttempt(
   options: ExecuteRemoteCompactionV2Options,
   streamSimple: V2Stream,
+  shrink: AttemptShrink,
 ): Promise<RemoteCompactionV2Result> {
   const observed = createAttemptObservations();
   const diagnostic = attemptDiagnostic(options);
   const canonical = resolveCanonicalSource(options);
-  const streamOptions = buildAttemptStreamOptions(options, canonical, diagnostic, observed);
+  const streamOptions = buildAttemptStreamOptions(options, canonical, diagnostic, observed, shrink);
   const completion = await consumeAttemptStream(streamSimple, options, streamOptions, observed);
   if ("ok" in completion) return completion;
   return finalizeAttempt(options, observed, diagnostic, completion);
@@ -591,6 +651,7 @@ function isFinalFailure(result: RemoteCompactionV2Failure): boolean {
     result.reason === "invalid-output" ||
     result.reason === "oversized" ||
     result.reason === "unsupported" ||
+    result.reason === "context-overflow" ||
     !shouldRetry(result)
   );
 }
@@ -607,12 +668,13 @@ async function runAttemptsWithRetry(
   options: ExecuteRemoteCompactionV2Options,
   streamSimple: V2Stream,
   transport: Transport,
+  shrink: AttemptShrink,
 ): Promise<RemoteCompactionV2Result> {
   const maxRetries = options.maxRetries ?? MAX_STREAM_RETRIES;
   const delayMs = Math.max(0, options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS);
   let lastFailure: RemoteCompactionV2Failure | undefined;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const result = await runAttempt({ ...options, transport }, streamSimple);
+    const result = await runAttempt({ ...options, transport }, streamSimple, shrink);
     if (result.ok || isFinalFailure(result)) return result;
     lastFailure = result;
     if (attempt < maxRetries && !(await backoff(delayMs * 2 ** attempt, options.signal)))
@@ -625,6 +687,31 @@ async function runAttemptsWithRetry(
       errorMessage: "Responses compaction v2 failed without a transport attempt",
     }
   );
+}
+
+/**
+ * After a context overflow, one more attempt with the input shrunk by the local
+ * estimate to a smaller budget; it sends nothing when the input cannot shrink
+ * past what was already rejected. The retry counts against the caller's retry
+ * budget, so a caller that disabled retries (the background lane) gets none.
+ */
+async function retryReducedAfterOverflow(
+  options: ExecuteRemoteCompactionV2Options,
+  streamSimple: V2Stream,
+  transport: Transport,
+  shrink: AttemptShrink,
+  first: RemoteCompactionV2Result,
+): Promise<RemoteCompactionV2Result> {
+  if (
+    first.ok ||
+    first.reason !== "context-overflow" ||
+    (options.maxRetries ?? MAX_STREAM_RETRIES) < 1 ||
+    options.signal?.aborted === true ||
+    attemptBudget(options) === undefined
+  )
+    return first;
+  shrink.reduced = true;
+  return runAttempt({ ...options, transport }, streamSimple, shrink);
 }
 
 export async function executeRemoteCompactionV2(
@@ -642,7 +729,9 @@ export async function executeRemoteCompactionV2(
   if (options.runtime.codexTransport && isWebSocketSseFallbackActive(options.sessionId))
     initialTransport = "sse";
   // Codex transports own their retries inside the provider stream.
-  if (options.runtime.codexTransport)
-    return runAttempt({ ...options, transport: initialTransport }, streamSimple);
-  return runAttemptsWithRetry(options, streamSimple, initialTransport);
+  const shrink: AttemptShrink = { reduced: false, sentInput: undefined };
+  const first = options.runtime.codexTransport
+    ? await runAttempt({ ...options, transport: initialTransport }, streamSimple, shrink)
+    : await runAttemptsWithRetry(options, streamSimple, initialTransport, shrink);
+  return retryReducedAfterOverflow(options, streamSimple, initialTransport, shrink, first);
 }
