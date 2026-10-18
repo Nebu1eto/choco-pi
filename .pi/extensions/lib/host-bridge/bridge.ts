@@ -36,6 +36,15 @@ import type { AgentRecordView, HostBridgeSources, ShellResultView } from "./sour
 
 export const HOST_BRIDGE_COMMAND = "host-bridge";
 export const FRAME_INTERVAL_MS = 250;
+
+/**
+ * Shortest gap between two goal entries that differ only in usage. Goal mode
+ * reports usage after every turn, and each entry repeats the whole objective,
+ * so a long run appended thousands of near-identical entries that the session
+ * file and Pi's in-memory entry list both kept. Objective, status and budget
+ * changes are still written at once; usage is coalesced to its latest value.
+ */
+export const GOAL_USAGE_INTERVAL_MS = 60_000;
 const COMMAND_USAGE =
   "Usage: /host-bridge snapshot | stop subagent <id> | stop shell <id> | goal complete";
 
@@ -111,6 +120,11 @@ interface ActiveSession {
   readonly liveShells: Map<string, ShellRecord>;
   lastFrameKey: string | undefined;
   timer: CancelTimer | undefined;
+  /** The goal last written durably; `undefined` until the first goal entry. */
+  goalWritten: GoalMirror | null | undefined;
+  /** Newer usage for `goalWritten`, waiting for `goalTimer`. */
+  goalPending: GoalMirror | undefined;
+  goalTimer: CancelTimer | undefined;
 }
 
 const SUBAGENT_CHANNELS = [
@@ -434,16 +448,52 @@ export function registerHostBridge(pi: HostBridgeApi, deps: HostBridgeDependenci
     ensureLoop(session);
   }
 
+  function cancelGoalTimer(session: ActiveSession): void {
+    session.goalTimer?.();
+    session.goalTimer = undefined;
+  }
+
+  /** Writes `goal` now, superseding any coalesced usage. */
   function appendGoal(session: ActiveSession, goal: GoalMirror | null): void {
+    cancelGoalTimer(session);
+    session.goalPending = undefined;
     const data: GoalEntry = { schema: HOST_BRIDGE_SCHEMA_VERSION, at: clock.now(), goal };
-    append(session, GOAL_ENTRY_TYPE, data);
+    if (append(session, GOAL_ENTRY_TYPE, data)) session.goalWritten = goal;
+  }
+
+  function flushPendingGoal(session: ActiveSession): void {
+    const pending = session.goalPending;
+    if (pending !== undefined) appendGoal(session, pending);
+    else cancelGoalTimer(session);
   }
 
   function onGoalChanged(payload: RuntimeValue): void {
     const session = active;
     if (session === undefined) return;
     const goal = goalMirror(payload);
-    if (goal !== undefined) appendGoal(session, goal);
+    if (goal === undefined) return;
+    const written = session.goalWritten;
+    const usageOnly =
+      goal !== null &&
+      written !== undefined &&
+      written !== null &&
+      goal.objective === written.objective &&
+      goal.status === written.status &&
+      goal.tokenBudget === written.tokenBudget;
+    if (!usageOnly) {
+      appendGoal(session, goal);
+      return;
+    }
+    if (goal.tokensUsed === written.tokensUsed && goal.activeSeconds === written.activeSeconds) {
+      cancelGoalTimer(session);
+      session.goalPending = undefined;
+      return;
+    }
+    session.goalPending = goal;
+    session.goalTimer ??= clock.setTimeout(() => {
+      session.goalTimer = undefined;
+      if (session === active) flushPendingGoal(session);
+    }, GOAL_USAGE_INTERVAL_MS);
   }
 
   function onWorkflow(kind: "created" | "completed", payload: RuntimeValue): void {
@@ -576,6 +626,8 @@ export function registerHostBridge(pi: HostBridgeApi, deps: HostBridgeDependenci
   function deactivate(session: ActiveSession): void {
     session.timer?.();
     session.timer = undefined;
+    cancelGoalTimer(session);
+    session.goalPending = undefined;
     if (active === session) active = undefined;
   }
 
@@ -764,6 +816,9 @@ export function registerHostBridge(pi: HostBridgeApi, deps: HostBridgeDependenci
       liveShells: new Map(),
       lastFrameKey: undefined,
       timer: undefined,
+      goalWritten: undefined,
+      goalPending: undefined,
+      goalTimer: undefined,
     };
     active = session;
     if (rpc && !commandRegistered) {
@@ -778,6 +833,9 @@ export function registerHostBridge(pi: HostBridgeApi, deps: HostBridgeDependenci
 
   pi.on("session_shutdown", () => {
     generation += 1;
+    if (active === undefined) return;
+    // Usage coalesced since the last entry is the latest the host will see.
+    flushPendingGoal(active);
     if (active !== undefined) deactivate(active);
   });
 }

@@ -8,6 +8,7 @@ import { Value } from "typebox/value";
 import {
   boundSummary,
   FRAME_INTERVAL_MS,
+  GOAL_USAGE_INTERVAL_MS,
   HOST_BRIDGE_COMMAND,
   type HostBridgeApi,
   type HostBridgeContext,
@@ -714,6 +715,66 @@ describe("host-bridge durable entries", () => {
     });
     assert.ok(Value.Check(GoalEntrySchema, goals[1]));
     assert.equal(goals[1].goal, null);
+  });
+
+  it("coalesces usage-only goal updates and writes material changes at once", () => {
+    const { pi, clock } = createBridge();
+    pi.start(fakeContext("root"));
+    const usage = (tokensUsed: number, status = "active") => ({
+      ...threadGoal(status),
+      usage: { tokensUsed, activeSeconds: tokensUsed },
+    });
+    const tokens = () =>
+      pi
+        .ofType(GOAL_ENTRY_TYPE)
+        .map((entry) =>
+          Value.Check(GoalEntrySchema, entry) && entry.goal !== null
+            ? [entry.goal.status, entry.goal.tokensUsed]
+            : null,
+        );
+
+    pi.emit("goal:changed", usage(10));
+    pi.emit("goal:changed", usage(10));
+    pi.emit("goal:changed", usage(20));
+    pi.emit("goal:changed", usage(30));
+    assert.deepEqual(tokens(), [["active", 10]], "usage waits for the interval");
+
+    clock.advance(GOAL_USAGE_INTERVAL_MS);
+    assert.deepEqual(
+      tokens(),
+      [
+        ["active", 10],
+        ["active", 30],
+      ],
+      "only the latest usage is kept",
+    );
+
+    pi.emit("goal:changed", usage(40));
+    pi.emit("goal:changed", usage(50, "complete"));
+    assert.deepEqual(
+      tokens(),
+      [
+        ["active", 10],
+        ["active", 30],
+        ["complete", 50],
+      ],
+      "a status change is written at once and supersedes pending usage",
+    );
+    clock.advance(GOAL_USAGE_INTERVAL_MS);
+    assert.equal(tokens().length, 3);
+    assert.equal(clock.timers.size, 0);
+  });
+
+  it("flushes coalesced goal usage on shutdown", () => {
+    const { pi, clock } = createBridge();
+    pi.start(fakeContext("root"));
+    pi.emit("goal:changed", threadGoal());
+    pi.emit("goal:changed", { ...threadGoal(), usage: { tokensUsed: 99, activeSeconds: 9 } });
+    pi.shutdown();
+    const last = pi.ofType(GOAL_ENTRY_TYPE).at(-1);
+    assert.ok(Value.Check(GoalEntrySchema, last) && last.goal !== null);
+    assert.equal(last.goal.tokensUsed, 99);
+    assert.equal(clock.timers.size, 0);
   });
 
   it("records workflow created, completed, and cancelled", () => {
