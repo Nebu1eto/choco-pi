@@ -5,6 +5,7 @@ import type { SettingItem } from "@earendil-works/pi-tui";
 import {
   buildNativeSettingsSections,
   createHostCommandContext,
+  hostThinkingLevel,
   installNativeSettingsBridge,
   MODEL_PICKER_FOCUS,
   type NativeSettingsHost,
@@ -14,6 +15,9 @@ import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/r
 
 const BRIDGE_SYMBOL = Symbol.for("choco-pi.native-settings-bridge");
 const RULE = "─".repeat(20);
+/** Pi's own message when an extension touches a runtime it has retired. */
+const STALE_MESSAGE =
+  "This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload().";
 
 type PrototypeRecord = Record<PropertyKey, RuntimeValue>;
 
@@ -221,6 +225,94 @@ test(
     assert.equal(opened.length, 1, "and does not open the dialog");
   }),
 );
+
+test(
+  "a subagent child load leaves the main session's opener in place",
+  withPatchedPrototype(fakeNativeSettings(ROWS, []), () => {
+    const opened: string[] = [];
+    installNativeSettingsBridge(() => opened.push("main"));
+    installNativeSettingsBridge(() => opened.push("child"), { inChildLoad: true });
+
+    reinterpretHostValue<(this: NativeSettingsHost) => void>(
+      prototypeRecord()["showSettingsSelector"],
+    ).call(reinterpretHostValue<NativeSettingsHost>({}));
+
+    assert.deepEqual(opened, ["main"]);
+  }),
+);
+
+test(
+  "a child load never installs the bridge on its own",
+  withPatchedPrototype(fakeNativeSettings(ROWS, []), () => {
+    const before = prototypeRecord()["showSettingsSelector"];
+    installNativeSettingsBridge(() => {}, { inChildLoad: true });
+
+    assert.equal(prototypeRecord()["showSettingsSelector"], before);
+    assert.equal(reinterpretHostValue<PrototypeRecord>(globalThis)[BRIDGE_SYMBOL], undefined);
+  }),
+);
+
+test(
+  "a stale opener falls back to Pi's own UI instead of crashing",
+  withPatchedPrototype(fakeNativeSettings(ROWS, []), async () => {
+    let nativeMenus = 0;
+    const searched: (string | undefined)[] = [];
+    const prototype = prototypeRecord();
+    prototype["showSettingsSelector"] = function nativeMenu() {
+      nativeMenus += 1;
+    };
+    prototype["handleModelCommand"] = async function original(searchTerm?: string) {
+      searched.push(searchTerm);
+    };
+    let calls = 0;
+    installNativeSettingsBridge(() => {
+      calls += 1;
+      throw new Error(STALE_MESSAGE);
+    });
+    const host = reinterpretHostValue<NativeSettingsHost>({});
+    const patchedModel = reinterpretHostValue<
+      (this: NativeSettingsHost, searchTerm?: string) => Promise<void>
+    >(prototypeRecord()["handleModelCommand"]);
+
+    await patchedModel.call(host);
+    assert.deepEqual(searched, [undefined], "a bare /model reaches Pi's picker");
+
+    reinterpretHostValue<(this: NativeSettingsHost) => void>(
+      prototypeRecord()["showSettingsSelector"],
+    ).call(host);
+    assert.equal(nativeMenus, 1, "/settings opens Pi's menu");
+    assert.equal(calls, 1, "the stale opener is dropped after its first failure");
+  }),
+);
+
+test(
+  "an opener failure other than staleness still propagates",
+  withPatchedPrototype(fakeNativeSettings(ROWS, []), () => {
+    installNativeSettingsBridge(() => {
+      throw new Error("boom");
+    });
+    assert.throws(
+      () =>
+        reinterpretHostValue<(this: NativeSettingsHost) => void>(
+          prototypeRecord()["showSettingsSelector"],
+        ).call(reinterpretHostValue<NativeSettingsHost>({})),
+      /boom/,
+    );
+  }),
+);
+
+test("the reasoning effort comes from the live host session", () => {
+  const host = (session: RuntimeValue) => reinterpretHostValue<NativeSettingsHost>({ session });
+  assert.equal(hostThinkingLevel(host({ thinkingLevel: "xhigh" })), "xhigh");
+  assert.equal(hostThinkingLevel(host(undefined)), undefined);
+  assert.equal(hostThinkingLevel(host({ thinkingLevel: 3 })), undefined);
+  const retired = {
+    get thinkingLevel(): string {
+      throw new Error(STALE_MESSAGE);
+    },
+  };
+  assert.equal(hostThinkingLevel(host(retired)), undefined);
+});
 
 test(
   "the embedded model picker drops the rules Pi draws around it",

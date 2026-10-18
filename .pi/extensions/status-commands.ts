@@ -37,6 +37,7 @@ import { PREFERENCES_HIDDEN_ROWS, PREFERENCES_LAYOUT } from "./lib/preferences-l
 import {
   buildNativeSettingsSections,
   createHostCommandContext,
+  hostThinkingLevel,
   installNativeSettingsBridge,
   openNativeSettingsMenu,
   type NativeSettingsHost,
@@ -1042,8 +1043,11 @@ async function showTab(
 }
 
 export default function statusCommands(pi: ExtensionAPI): void {
-  setToolInventory(pi);
   const sources = createProcessSources();
+  // The inventory slot is process-global and holds this load's whole `pi`. A
+  // subagent child would leave the main session's reports reading a runtime
+  // that is disposed when the child ends, and pin it until the next load.
+  if (!sources.inChildLoad()) setToolInventory(pi);
   registerReportAutoPublish(pi, {
     host: process.env.CHOCO_PI_HOST,
     inChildLoad: sources.inChildLoad(),
@@ -1113,25 +1117,30 @@ export default function statusCommands(pi: ExtensionAPI): void {
 
   // Pi dispatches `/settings` itself, before extension commands, so the only way
   // to make it open this dialog is to take over the menu it would have shown.
-  installNativeSettingsBridge((host: NativeSettingsHost, focus?: NativeSettingsFocus) => {
-    const hostCtx = createHostCommandContext(host);
-    // Without the panel package the dialog has no Preferences tab to show, so
-    // `/settings` keeps opening Pi's own menu instead of reporting nothing.
-    if (hostCtx === undefined || !getPreferencesProvider()) {
-      openNativeSettingsMenu(host);
-      return;
-    }
-    // SAFETY: the host builds this context for its own command dispatch.
-    const ctx = hostCtx as ExtensionCommandContext;
-    void showTab(ctx, pi.getThinkingLevel(), "preferences", focus ?? {}).catch(
-      (error: RuntimeValue) => {
+  // The opener is process-global and outlives this load, so it reads everything
+  // from the live host and never touches this load's `pi`.
+  installNativeSettingsBridge(
+    (host: NativeSettingsHost, focus?: NativeSettingsFocus) => {
+      const hostCtx = createHostCommandContext(host);
+      const thinkingLevel = hostThinkingLevel(host);
+      // Without the panel package the dialog has no Preferences tab to show, so
+      // `/settings` keeps opening Pi's own menu instead of reporting nothing.
+      if (hostCtx === undefined || thinkingLevel === undefined || !getPreferencesProvider()) {
+        openNativeSettingsMenu(host);
+        return;
+      }
+      // SAFETY: the host builds this context for its own command dispatch.
+      const ctx = hostCtx as ExtensionCommandContext;
+      void showTab(ctx, thinkingLevel, "preferences", focus ?? {}).catch((error: RuntimeValue) => {
+        if (isStaleContextError(error)) return;
         ctx.ui.notify(
           `Could not open settings: ${error instanceof Error ? error.message : String(error)}`,
           "error",
         );
-      },
-    );
-  });
+      });
+    },
+    { inChildLoad: sources.inChildLoad() },
+  );
 }
 
 /** Pi's interactive mode, reached only to retire its built-in `/session` command. */

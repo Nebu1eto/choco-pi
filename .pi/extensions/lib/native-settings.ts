@@ -1,6 +1,7 @@
 import { InteractiveMode } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, type Component, type SettingItem } from "@earendil-works/pi-tui";
 import type { PreferencesExtraSection, PreferencesSectionChange } from "./agent-preferences.ts";
+import { isStaleContextError } from "./lifecycle.ts";
 import { isFunction, isString, reinterpretHostValue, type RuntimeValue } from "./runtime-values.ts";
 
 export const NATIVE_SETTINGS_SECTION_ID = "pi";
@@ -68,7 +69,11 @@ interface NativeSettingsBridge {
   original: (this: NativeSettingsHost) => void;
   /** Pi's own `/model` handler, kept for the argument form this bridge leaves alone. */
   originalModelCommand?: (this: NativeSettingsHost, searchTerm?: string) => Promise<void>;
-  /** Opens the unified dialog. Replaced on every extension load. */
+  /**
+   * Opens the unified dialog. Replaced on every main-session extension load;
+   * subagent child loads never touch it, so it can't be left bound to a child's
+   * runtime once that child is disposed.
+   */
   open?: (host: NativeSettingsHost, focus?: NativeSettingsFocus) => void;
   /** Most recent interactive mode instance seen by the patched methods. */
   host?: NativeSettingsHost;
@@ -94,6 +99,44 @@ function readBridge(): NativeSettingsBridge | undefined {
 }
 
 /**
+ * The live session's reasoning effort, read from the interactive host rather
+ * than from an `ExtensionAPI` captured at load time. A captured `pi` goes stale
+ * after session replacement or `/reload`, while the host always holds the
+ * session that is in use right now.
+ */
+export function hostThinkingLevel(host: NativeSettingsHost): string | undefined {
+  let level: RuntimeValue;
+  try {
+    level = propertyOf(propertyOf(host, "session"), "thinkingLevel");
+  } catch {
+    return undefined;
+  }
+  return isString(level) ? level : undefined;
+}
+
+/**
+ * Runs the dialog opener, falling back to Pi's own UI when the opener is bound
+ * to a runtime that has since been retired. A stale opener stays broken, so it
+ * is dropped until the next main-session load installs a fresh one. Anything
+ * other than the host's stale-context failure still propagates.
+ */
+function openOrFallback(
+  bridge: NativeSettingsBridge,
+  open: NonNullable<NativeSettingsBridge["open"]>,
+  host: NativeSettingsHost,
+  focus: NativeSettingsFocus | undefined,
+  fallback: () => void,
+): void {
+  try {
+    open(host, focus);
+  } catch (error) {
+    if (!isStaleContextError(error)) throw error;
+    if (bridge.open === open) bridge.open = undefined;
+    fallback();
+  }
+}
+
+/**
  * Routes Pi's built-in `/settings` to the unified dialog and remembers the live
  * interactive mode so the Pi section can read the real settings rows.
  *
@@ -101,10 +144,16 @@ function readBridge(): NativeSettingsBridge | undefined {
  * commands that collide with a built-in name, so an extension command called
  * `settings` can never run. Taking over `showSettingsSelector` is the only way
  * to make `/settings` open something else.
+ *
+ * Subagent children run in this process and load every extension again. Their
+ * loads must leave the bridge alone (`inChildLoad`): an opener installed by a
+ * child would outlive the child's runtime and throw on the next `/settings`.
  */
 export function installNativeSettingsBridge(
   open: (host: NativeSettingsHost, focus?: NativeSettingsFocus) => void,
+  options: { inChildLoad?: boolean } = {},
 ): void {
+  if (options.inChildLoad === true) return;
   const prototype = reinterpretHostValue<Record<PropertyKey, RuntimeValue>>(
     InteractiveMode.prototype,
   );
@@ -130,7 +179,8 @@ export function installNativeSettingsBridge(
     this: NativeSettingsHost,
   ): void {
     bridge.host = this;
-    if (bridge.open) bridge.open(this);
+    const current = bridge.open;
+    if (current) openOrFallback(bridge, current, this, undefined, () => bridge.original.call(this));
     else bridge.original.call(this);
   };
 
@@ -146,9 +196,13 @@ export function installNativeSettingsBridge(
       searchTerm?: string,
     ): Promise<void> {
       bridge.host = this;
-      if (searchTerm === undefined && bridge.open) {
-        bridge.open(this, MODEL_PICKER_FOCUS);
-        return;
+      const current = bridge.open;
+      if (searchTerm === undefined && current) {
+        let fellBack = false;
+        openOrFallback(bridge, current, this, MODEL_PICKER_FOCUS, () => {
+          fellBack = true;
+        });
+        if (!fellBack) return;
       }
       await bridge.originalModelCommand?.call(this, searchTerm);
     };
