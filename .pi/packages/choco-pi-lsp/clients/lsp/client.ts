@@ -34,6 +34,7 @@ import { type LspMutationContext, newLspMutationCorrelationId } from "../lsp-mut
 import { getAmbientAbortSignal } from "../safe-spawn.ts";
 import { raceToCompletion } from "./aggregation.ts";
 import { hashDiagnosticContent, type StoredDiagnosticBinding } from "./diagnostic-binding.ts";
+import { installLspCrashGuard } from "./crash-guard.ts";
 import { applyWorkspaceEdit, normalizeWorkspaceEditToUtf16 } from "./edits.ts";
 import type { LSPProcess } from "./launch.ts";
 import { normalizeMapKey, uriToPath } from "./path-utils.ts";
@@ -848,46 +849,9 @@ const PROBE_COMMAND_TIMEOUT_MS = positiveIntFromEnv(
   2_500,
 );
 
-const LSP_CRASH_CODES = new Set([
-  "ERR_STREAM_DESTROYED",
-  "ERR_STREAM_WRITE_AFTER_END",
-  "EPIPE",
-  "ECONNRESET",
-]);
-
-let crashGuardInstalled = false;
-
-function isIgnorableLspRuntimeCrash<T>(err: T): boolean {
-  if (!(err instanceof Error)) return false;
-  const code = Value.Check(ErrorCodeSchema, err) ? err.code : undefined;
-  if (Value.Check(Type.String(), code) && LSP_CRASH_CODES.has(code)) return true;
-  const msg = err.message.toLowerCase();
-  const stack = (err.stack ?? "").toLowerCase();
-  return (
-    msg.includes("stream") ||
-    msg.includes("write after end") ||
-    stack.includes("vscode-jsonrpc/lib/node/ril.js")
-  );
-}
-
-function installCrashGuard(): void {
-  if (crashGuardInstalled) return;
-  crashGuardInstalled = true;
-
-  process.on("uncaughtException", (err) => {
-    if (isIgnorableLspRuntimeCrash(err)) {
-      return;
-    }
-    throw err;
-  });
-
-  process.on("unhandledRejection", (reason) => {
-    if (isIgnorableLspRuntimeCrash(reason)) {
-      return;
-    }
-    throw reason instanceof Error ? reason : new Error(String(reason));
-  });
-}
+// The crash guard lives in ./crash-guard.ts and is installed once per process:
+// a module-local flag let every re-evaluated module graph add its own
+// process listeners, each pinning that graph for the process lifetime.
 
 // --- Client State + Module-level helpers ---
 
@@ -4044,7 +4008,7 @@ export async function createLSPClient(options: {
    *  the classic/default behavior (fail-safe). */
   launchVariant?: "classic" | "native-ts7";
 }): Promise<LSPClientInfo> {
-  installCrashGuard();
+  installLspCrashGuard();
 
   const {
     serverId,

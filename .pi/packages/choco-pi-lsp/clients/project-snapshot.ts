@@ -7,6 +7,7 @@ import { Worker } from "node:worker_threads";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { writeFileAtomic } from "./atomic-write.ts";
 import { getProjectDataDir } from "./file-utils.ts";
+import { idleEvictionTimersSuspended, registerIdleTimerRelease } from "./idle-timer-release.ts";
 import { readJsonCache } from "./json-cache-read.ts";
 import { logLatency } from "./latency-logger.ts";
 import { normalizeMapKey } from "./path-utils.ts";
@@ -339,6 +340,12 @@ function clearAuthoritativeSnapshotTimer(entry: AuthoritativeSnapshotEntry): voi
   entry.idleTimer = undefined;
 }
 
+// Primary session_shutdown releases idle handles (entries stay warm; the next
+// use re-arms) so a shut-down module graph is not pinned for the idle window.
+registerIdleTimerRelease(() => {
+  for (const entry of authoritativeSnapshots.values()) clearAuthoritativeSnapshotTimer(entry);
+});
+
 function deleteAuthoritativeSnapshot(key: string): void {
   const entry = authoritativeSnapshots.get(key);
   if (entry) clearAuthoritativeSnapshotTimer(entry);
@@ -350,6 +357,7 @@ function scheduleAuthoritativeSnapshotEviction(
   entry: AuthoritativeSnapshotEntry,
 ): void {
   clearAuthoritativeSnapshotTimer(entry);
+  if (idleEvictionTimersSuspended()) return;
   const generation = entry.lastUsedAt;
   entry.idleTimer = setTimeout(() => {
     entry.idleTimer = undefined;
@@ -566,6 +574,9 @@ interface PendingSnapshotBody {
 const _snapshotGenerations = new Map<string, number>();
 const _snapshotWorkerRequests = new Map<number, PendingSnapshotBody>();
 let _snapshotPersistWorker: Worker | undefined;
+// Workers retired because the request queue drained. Their asynchronous
+// `exit` must not treat requests posted to a successor worker as stranded.
+const _retiredSnapshotPersistWorkers = new WeakSet<Worker>();
 let _snapshotWorkerRequestId = 0;
 let _snapshotWorkerDisabled = false;
 let _snapshotGenerationGateEnabledForTests = true;
@@ -831,13 +842,24 @@ function getSnapshotPersistWorker(): Worker | undefined {
     // promotion timing under full-suite load and flaked the round-trip test).
     worker.on("message", (result: ProjectSnapshotPersistWorkerResult) => {
       if (_snapshotPromotionSeamForTests) {
-        void _snapshotPromotionSeamForTests().then(() => handleSnapshotWorkerResult(result));
+        void _snapshotPromotionSeamForTests().then(() => {
+          handleSnapshotWorkerResult(result);
+          settleSnapshotPersistQueue();
+        });
         return;
       }
       handleSnapshotWorkerResult(result);
+      settleSnapshotPersistQueue();
     });
-    worker.on("error", (err: Error) => handleSnapshotWorkerDeath(err.message));
+    worker.on("error", (err: Error) => {
+      if (_retiredSnapshotPersistWorkers.has(worker)) return;
+      handleSnapshotWorkerDeath(err.message);
+      settleSnapshotPersistQueue();
+    });
     worker.on("exit", (code) => {
+      // A drained worker retired by settleSnapshotPersistQueue owns no
+      // requests; anything queued now belongs to its successor.
+      if (_retiredSnapshotPersistWorkers.has(worker)) return;
       if (_snapshotPersistWorker === worker) _snapshotPersistWorker = undefined;
       // Any body still queued when the worker exits was abandoned mid-flight
       // (a crash, a `terminate()`, or host recycling) — it will never be
@@ -854,6 +876,7 @@ function getSnapshotPersistWorker(): Worker | undefined {
       // Only an ABNORMAL exit disables respawning; a clean idle exit (nothing
       // stranded) just drops the reference so the next persist respawns.
       if (code !== 0) _snapshotWorkerDisabled = true;
+      settleSnapshotPersistQueue();
     });
     // #1148: adding a message listener refs the Worker's public MessagePort.
     // Unref only after every listener is installed so it stays background-only.
@@ -887,22 +910,47 @@ function sweepStaleSnapshotStageFiles(cacheDir: string): void {
 
 // Flush any in-flight worker writes synchronously at process teardown so a body
 // whose worker hasn't promoted yet isn't lost. Sync writes only (no child
-// spawn — the teardown libuv hazard); best-effort.
-let _snapshotExitHookInstalled = false;
-function ensureSnapshotPersistExitHook(): void {
-  if (_snapshotExitHookInstalled) return;
-  _snapshotExitHookInstalled = true;
-  process.once("exit", () => {
-    const requests = [..._snapshotWorkerRequests.values()];
-    _snapshotWorkerRequests.clear();
-    for (const pending of requests) {
-      // Only the newest generation per key still matters; older ones are
-      // superseded and their stage files are swept on next launch.
-      if (_snapshotGenerations.get(pending.key) !== pending.generation) continue;
-      writeSnapshotBodyOnMainThread(pending, "exit_hook");
-    }
-    void _snapshotPersistWorker?.terminate();
-  });
+// spawn — the teardown libuv hazard); best-effort. The synchronous gzip/write
+// is deliberate: an `exit` listener cannot await.
+//
+// Lifetime: Pi may evaluate this module more than once per process (in-process
+// sessions with another cwd re-evaluate extensions without a module cache). A
+// permanently installed listener pinned every evaluation's module graph, so the
+// listener is registered only while this evaluation has in-flight worker
+// requests and is removed as soon as the queue drains. Drained workers are
+// terminated for the same reason: a live worker's listeners pin the module.
+let _snapshotExitHookRegistered = false;
+function flushSnapshotPersistsAtExit(): void {
+  _snapshotExitHookRegistered = false;
+  const requests = [..._snapshotWorkerRequests.values()];
+  _snapshotWorkerRequests.clear();
+  for (const pending of requests) {
+    // Only the newest generation per key still matters; older ones are
+    // superseded and their stage files are swept on next launch.
+    if (_snapshotGenerations.get(pending.key) !== pending.generation) continue;
+    writeSnapshotBodyOnMainThread(pending, "exit_hook");
+  }
+  void _snapshotPersistWorker?.terminate();
+}
+
+function registerSnapshotPersistExitHook(): void {
+  if (_snapshotExitHookRegistered) return;
+  _snapshotExitHookRegistered = true;
+  process.once("exit", flushSnapshotPersistsAtExit);
+}
+
+/** Drop the exit hook and the worker once no worker request is in flight. */
+function settleSnapshotPersistQueue(): void {
+  if (_snapshotWorkerRequests.size > 0) return;
+  if (_snapshotExitHookRegistered) {
+    _snapshotExitHookRegistered = false;
+    process.off("exit", flushSnapshotPersistsAtExit);
+  }
+  const worker = _snapshotPersistWorker;
+  if (!worker) return;
+  _snapshotPersistWorker = undefined;
+  _retiredSnapshotPersistWorkers.add(worker);
+  void worker.terminate();
 }
 
 export function saveProjectSnapshot(cwd: string, snapshot: ProjectSnapshot): void {
@@ -981,7 +1029,6 @@ export function saveProjectSnapshot(cwd: string, snapshot: ProjectSnapshot): voi
     generation,
   };
   sweepStaleSnapshotStageFiles(cacheDir);
-  ensureSnapshotPersistExitHook();
 
   if (!snapshotWorkerEnabled()) {
     dispatchMainThreadWriteThroughSeam(pending, undefined);
@@ -994,6 +1041,7 @@ export function saveProjectSnapshot(cwd: string, snapshot: ProjectSnapshot): voi
   }
   const id = ++_snapshotWorkerRequestId;
   _snapshotWorkerRequests.set(id, pending);
+  registerSnapshotPersistExitHook();
   const request: ProjectSnapshotPersistWorkerRequest = {
     id,
     generation,
@@ -1024,6 +1072,7 @@ export function flushProjectSnapshotPersistsForTests(): void {
     if (_snapshotGenerations.get(pending.key) !== pending.generation) continue;
     dispatchMainThreadWriteThroughSeam(pending, undefined);
   }
+  settleSnapshotPersistQueue();
 }
 
 /** Test-only: exercise the degraded worker-death path. */
@@ -1032,13 +1081,28 @@ export async function terminateProjectSnapshotPersistWorkerForTests(): Promise<v
   if (worker) await worker.terminate();
 }
 
+/** Test-only: observe this evaluation's persist lifetime resources. */
+export function getProjectSnapshotPersistLifetimeForTests() {
+  return {
+    workerAlive: _snapshotPersistWorker !== undefined,
+    exitHookRegistered: _snapshotExitHookRegistered,
+    inFlightRequests: _snapshotWorkerRequests.size,
+  };
+}
+
+/** Test-only: run this evaluation's process-exit flush without exiting. */
+export function flushProjectSnapshotPersistsAtExitForTests(): void {
+  if (_snapshotExitHookRegistered) process.off("exit", flushSnapshotPersistsAtExit);
+  flushSnapshotPersistsAtExit();
+}
+
 /** Test-only: restore worker creation + clear generation state after a deliberate death. */
 export function resetProjectSnapshotPersistWorkerForTests(): void {
   _snapshotWorkerDisabled = false;
   _snapshotGenerationGateEnabledForTests = true;
   _snapshotPromotionSeamForTests = undefined;
-  _snapshotPersistWorker = undefined;
   _snapshotWorkerRequests.clear();
+  settleSnapshotPersistQueue();
   _snapshotGenerations.clear();
   _lastSnapshotPersistErrorForTests = undefined;
 }

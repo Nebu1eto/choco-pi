@@ -1,4 +1,5 @@
 import { isRuntimeFunction, isRuntimeNumber, isRuntimeString } from "../../tools/runtime-values.ts";
+import { idleEvictionTimersSuspended, registerIdleTimerRelease } from "../idle-timer-release.ts";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -199,6 +200,12 @@ function clearWorkspaceGraphTimer(entry: { idleTimer?: ReturnType<typeof setTime
   entry.idleTimer = undefined;
 }
 
+// Primary session_shutdown releases idle handles (entries stay warm; the next
+// use re-arms) so a shut-down module graph is not pinned for the idle window.
+registerIdleTimerRelease(() => {
+  for (const entry of _workspaceGraphCache.values()) clearWorkspaceGraphTimer(entry);
+});
+
 function evictWorkspaceGraph(key: string, entry: WorkspaceGraphCacheEntry): void {
   if (_workspaceGraphCache.get(key) !== entry) return;
   clearWorkspaceGraphTimer(entry);
@@ -214,6 +221,7 @@ function evictWorkspaceGraph(key: string, entry: WorkspaceGraphCacheEntry): void
 
 function scheduleWorkspaceGraphEviction(key: string, entry: WorkspaceGraphCacheEntry): void {
   clearWorkspaceGraphTimer(entry);
+  if (idleEvictionTimersSuspended()) return;
   const epoch = workspaceCacheEpoch(key);
   entry.idleTimer = setTimeout(() => {
     entry.idleTimer = undefined;
@@ -1378,6 +1386,9 @@ const _persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const _persistGenerations = new Map<string, number>();
 const _workerRequests = new Map<number, { key: string; pending: PendingPersist }>();
 let _persistWorker: Worker | undefined;
+// Workers retired because every queue drained; their late error/exit events
+// must not disable or reroute a successor worker.
+const _retiredPersistWorkers = new WeakSet<Worker>();
 let _persistWorkerRequestId = 0;
 let _persistAttemptId = 0;
 let _workerDisabled = false;
@@ -1863,8 +1874,15 @@ function getPersistWorker(): Worker | undefined {
       return undefined;
     }
     const worker = new Worker(workerPath);
-    worker.on("message", handleWorkerResult);
-    worker.on("error", (err: Error) => handleWorkerDeath(err.message));
+    worker.on("message", (result: ReviewGraphPersistWorkerResult) => {
+      handleWorkerResult(result);
+      settleReviewGraphPersistQueue();
+    });
+    worker.on("error", (err: Error) => {
+      if (_retiredPersistWorkers.has(worker)) return;
+      handleWorkerDeath(err.message);
+      settleReviewGraphPersistQueue();
+    });
     worker.on("exit", (code) => {
       if (_persistWorker !== worker) return;
       const hasPendingRequests = _workerRequests.size > 0 || _checkpointWorkerRequests.size > 0;
@@ -1880,6 +1898,7 @@ function getPersistWorker(): Worker | undefined {
         // instead of posting into a dead worker (#950 review F7).
         _persistWorker = undefined;
       }
+      settleReviewGraphPersistQueue();
     });
     // #1148: adding a message listener refs the Worker's public MessagePort.
     // Unref only after every listener is installed so it stays background-only.
@@ -1909,6 +1928,7 @@ function writePending(key: string): void {
       completed: false,
       fallbackReason: unavailableReason,
     });
+    settleReviewGraphPersistQueue();
     return;
   }
   const id = ++_persistWorkerRequestId;
@@ -1931,9 +1951,21 @@ function writePending(key: string): void {
 
 // Flush any pending writes synchronously at process teardown so a debounced
 // snapshot isn't lost. Sync writes only (no child spawn — see the teardown
-// libuv hazard); best-effort.
-let _persistExitHookInstalled = false;
+// libuv hazard); best-effort. The synchronous gzip/write is deliberate: an
+// `exit` listener cannot await.
+//
+// Lifetime: Pi may evaluate this module more than once per process (in-process
+// sessions with another cwd re-evaluate extensions without a module cache). A
+// permanently installed listener pinned every evaluation's module graph, so the
+// listener is registered only while this evaluation has debounced or in-flight
+// work and is removed once every queue drains. Drained workers are terminated
+// for the same reason: a live worker's listeners pin the module.
+let _persistExitHookRegistered = false;
 function flushPendingReviewGraphPersistsAtExit(): void {
+  if (_persistExitHookRegistered) {
+    _persistExitHookRegistered = false;
+    process.off("exit", flushPendingReviewGraphPersistsAtExit);
+  }
   const keys = new Set([
     ..._pendingPersist.keys(),
     ...[..._workerRequests.values()].map((request) => request.key),
@@ -1956,9 +1988,35 @@ export function flushReviewGraphPersistsForExitForTests(): void {
 }
 
 function ensurePersistExitHook(): void {
-  if (_persistExitHookInstalled) return;
-  _persistExitHookInstalled = true;
+  if (_persistExitHookRegistered) return;
+  _persistExitHookRegistered = true;
   process.once("exit", flushPendingReviewGraphPersistsAtExit);
+}
+
+/** Drop the exit hook and the worker once no persist/checkpoint work remains. */
+function settleReviewGraphPersistQueue(): void {
+  if (_pendingPersist.size > 0 || _workerRequests.size > 0 || _checkpointWorkerRequests.size > 0) {
+    return;
+  }
+  if (_persistExitHookRegistered) {
+    _persistExitHookRegistered = false;
+    process.off("exit", flushPendingReviewGraphPersistsAtExit);
+  }
+  const worker = _persistWorker;
+  if (!worker) return;
+  _persistWorker = undefined;
+  _retiredPersistWorkers.add(worker);
+  void worker.terminate();
+}
+
+/** Test-only: observe this evaluation's persist lifetime resources. */
+export function getReviewGraphPersistLifetimeForTests() {
+  return {
+    workerAlive: _persistWorker !== undefined,
+    exitHookRegistered: _persistExitHookRegistered,
+    pendingPersists: _pendingPersist.size,
+    inFlightRequests: _workerRequests.size + _checkpointWorkerRequests.size,
+  };
 }
 
 // #950 review F3: a process that dies between a worker's staged write and its
@@ -2655,6 +2713,7 @@ export function flushReviewGraphPersistsForTests(): void {
     _persistTimers.delete(key);
     writePendingOnMainThread(key, pending);
   }
+  settleReviewGraphPersistQueue();
 }
 
 /** Test-only: wait until worker requests (authoritative persist AND offloaded
@@ -2678,12 +2737,13 @@ export async function terminateReviewGraphPersistWorkerForTests(): Promise<void>
 /** Test-only: restore worker creation after a deliberate death. */
 export function resetReviewGraphPersistWorkerForTests(): void {
   _workerDisabled = false;
-  _persistWorker = undefined;
   _persistWorkerUnavailableReason = undefined;
   _lastWorkerFallbackReasonForTests = undefined;
   _checkpointWorkerRequests.clear();
   _checkpointGenerations.clear();
   _checkpointOffloadCountForTests = 0;
+  settleReviewGraphPersistQueue();
+  _persistWorker = undefined;
 }
 
 /** Test-only: count of checkpoint writes that took the offloaded worker path. */
@@ -2720,6 +2780,15 @@ export function reviewGraphCachePath(cwd: string): string {
 export function flushReviewGraphPersist(
   cwd: string,
   source: "cli" | "exit_hook" = "cli",
+): ReviewGraphPersistFlushResult {
+  const result = flushReviewGraphPersistNow(cwd, source);
+  settleReviewGraphPersistQueue();
+  return result;
+}
+
+function flushReviewGraphPersistNow(
+  cwd: string,
+  source: "cli" | "exit_hook",
 ): ReviewGraphPersistFlushResult {
   const key = normalizeMapKey(cwd);
   // #950 review F2: pick the NEWEST generation across the debounced pending

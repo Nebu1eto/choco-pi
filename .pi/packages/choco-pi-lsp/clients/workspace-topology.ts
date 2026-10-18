@@ -1,4 +1,5 @@
 import { type Static, Type } from "typebox";
+import { idleEvictionTimersSuspended, registerIdleTimerRelease } from "./idle-timer-release.ts";
 /**
  * Shared, memoized workspace-topology snapshot service (#806).
  *
@@ -128,6 +129,8 @@ function deleteWalk(key: string): void {
 function touchDirMarker(key: string, entry: DirCacheEntry): void {
   entry.lastUsedAt = Date.now();
   if (entry.idleTimer) clearTimeout(entry.idleTimer);
+  entry.idleTimer = undefined;
+  if (idleEvictionTimersSuspended()) return;
   const stamp = entry.lastUsedAt;
   entry.idleTimer = setTimeout(() => {
     if (dirMarkerCache.get(key) === entry && entry.lastUsedAt === stamp) deleteDirMarker(key);
@@ -138,6 +141,8 @@ function touchDirMarker(key: string, entry: DirCacheEntry): void {
 function touchWalk(key: string, entry: WalkCacheEntry): void {
   entry.lastUsedAt = Date.now();
   if (entry.idleTimer) clearTimeout(entry.idleTimer);
+  entry.idleTimer = undefined;
+  if (idleEvictionTimersSuspended()) return;
   const stamp = entry.lastUsedAt;
   entry.idleTimer = setTimeout(() => {
     if (walkCache.get(key) === entry && entry.lastUsedAt === stamp) deleteWalk(key);
@@ -155,6 +160,8 @@ export function resetWorkspaceTopology(): void {
  * One-shot cascades call this after marker discovery so cache residency does
  * not leave a process-liveness tail; the next cache use re-arms its timer.
  */
+registerIdleTimerRelease(() => releaseWorkspaceTopologyIdleTimers());
+
 export function releaseWorkspaceTopologyIdleTimers(): void {
   for (const entry of dirMarkerCache.values()) {
     if (entry.idleTimer !== undefined) clearTimeout(entry.idleTimer);

@@ -244,3 +244,30 @@ Pi SDK peer and development pins move from `1.2.0` to exactly `1.3.0`. The packa
 `minimumReleaseAgeExclude` entries move to `@1.3.0`; the lock was regenerated with
 `pnpm install --ignore-scripts` and restored with `pnpm install:vendored` (frozen).
 Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.
+
+## 2026-10-17 choco-pi patch: collectible re-evaluated module graphs
+
+Pi 1.3.0 re-evaluates every extension graph (jiti, no module cache) when an
+in-process session loads with another cwd. Process-global references kept each
+evaluation alive forever (measured ~4 MB heap per session lifecycle). Fixes:
+
+- `clients/lsp/crash-guard.ts`: the `uncaughtException`/`unhandledRejection`
+  guard is installed once per process (a `Symbol.for` marker on `process`)
+  instead of once per evaluation; classification is unchanged.
+- `clients/project-snapshot.ts`, `clients/review-graph/builder.ts`: the
+  process `exit` flush is registered only while that evaluation has pending
+  or in-flight persist work and is removed when its queues drain; a drained
+  persist worker is terminated (retired workers' late events are ignored).
+  The exit flush keeps the existing synchronous gzip/write because an `exit`
+  listener cannot await. The install-lock exit cleanup in
+  `clients/installer/index.ts` follows the same register-while-held rule.
+- `clients/idle-timer-release.ts`: primary `session_shutdown` clears this
+  graph's idle-eviction timer handles (project snapshot, review graph, reverse
+  deps, word index, workspace topology; entries stay warm) and cancels the
+  pending 30 s managed-tool refresh. Idle timers stay unarmed until the next
+  `session_start`, so background work finishing after shutdown cannot re-pin
+  the graph.
+
+The `choco-pi-lsp:read-bridge` global slot still pins the latest evaluation
+only (replace semantics, unchanged). Regression tests:
+`tests/process-lifetime-hooks.test.ts`.

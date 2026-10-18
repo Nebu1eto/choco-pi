@@ -31,6 +31,10 @@ import * as nodeFs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createDefaultHostPorts, type HostPorts } from "./clients/host-ports.ts";
+import {
+  releaseIdleEvictionTimers,
+  resumeIdleEvictionTimers,
+} from "./clients/idle-timer-release.ts";
 import { AstGrepClient } from "./clients/ast-grep-client.ts";
 import { loadBootstrapClients } from "./clients/bootstrap.ts";
 import { CacheManager } from "./clients/cache-manager.ts";
@@ -1661,6 +1665,9 @@ function activateExtension(hostPi: ExtensionAPI) {
   // --- Events ---
 
   pi.on("session_start", async (event, ctx) => {
+    // A new session re-enables idle-eviction timers suspended by the previous
+    // primary session_shutdown in this module graph.
+    resumeIdleEvictionTimers();
     contextInjectionHistory.clear(getStableSessionId(ctx));
     warmDispatchAtSessionStart();
     void warmLspService().catch((err) =>
@@ -2732,6 +2739,11 @@ function activateExtension(hostPi: ExtensionAPI) {
       processExiting: true,
       reason: "session_shutdown",
     });
+    // Clear this module graph's idle-eviction timer handles (entries stay
+    // warm and re-arm on next use). Their callbacks would otherwise pin a
+    // shut-down graph — e.g. one re-evaluated for an in-process session with
+    // another cwd — for the full 20-30 minute idle window.
+    releaseIdleEvictionTimers();
     // S2d (gap 5, #1432 review): one session_end_bus_rollup row per event
     // name with any activity this session — same primary-only placement as
     // the shared-infra teardown above (a concurrent secondary already

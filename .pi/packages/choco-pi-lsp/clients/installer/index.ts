@@ -89,6 +89,21 @@ const INSTALL_LOCK_PATH = path.join(TOOLS_DIR, ".install.lock");
 const activeInstallLocks = new Set<string>();
 let installLockExitCleanupRegistered = false;
 
+// Removes this process's held install locks at exit. unlinkSync is retained
+// because an `exit` listener cannot await. The listener is registered only
+// while a lock is held: Pi may evaluate this module more than once per process,
+// and a permanent listener would pin every evaluation's module graph.
+function releaseInstallLocksAtExit(): void {
+  installLockExitCleanupRegistered = false;
+  for (const lockPath of activeInstallLocks) {
+    try {
+      unlinkSync(lockPath);
+    } catch {
+      // Best effort; the next owner verifies this PID is dead.
+    }
+  }
+}
+
 /**
  * The managed tools tree, for callers that need to tell a path `getToolPath()`
  * returned from the managed install apart from a global/PATH hit (the tool
@@ -134,15 +149,7 @@ async function acquireInstallLock(): Promise<{
       activeInstallLocks.add(INSTALL_LOCK_PATH);
       if (!installLockExitCleanupRegistered) {
         installLockExitCleanupRegistered = true;
-        process.once("exit", () => {
-          for (const lockPath of activeInstallLocks) {
-            try {
-              unlinkSync(lockPath);
-            } catch {
-              // Best effort; the next owner verifies this PID is dead.
-            }
-          }
-        });
+        process.once("exit", releaseInstallLocksAtExit);
       }
       let released = false;
       return {
@@ -150,6 +157,10 @@ async function acquireInstallLock(): Promise<{
           if (released) return;
           released = true;
           activeInstallLocks.delete(INSTALL_LOCK_PATH);
+          if (activeInstallLocks.size === 0 && installLockExitCleanupRegistered) {
+            installLockExitCleanupRegistered = false;
+            process.off("exit", releaseInstallLocksAtExit);
+          }
           await fs.rm(INSTALL_LOCK_PATH, { force: true });
         },
       };

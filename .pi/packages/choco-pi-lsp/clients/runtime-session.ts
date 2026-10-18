@@ -20,6 +20,7 @@ import type { GoClient } from "./go-client.ts";
 import { sweepAtomicWriteStages } from "./instance-reaper.ts";
 import { canRunStartupHeavyScans } from "./language-policy.ts";
 import { detectProjectLanguageProfile, getDefaultStartupTools } from "./language-profile.ts";
+import { registerIdleTimerRelease } from "./idle-timer-release.ts";
 import { logLatency } from "./latency-logger.ts";
 import { runLogCleanup } from "./log-cleanup.ts";
 import type { LSPShutdownOptions } from "./lsp/client.ts";
@@ -560,12 +561,23 @@ const MANAGED_TOOL_REFRESH_DELAY_MS = 30_000;
  * `runManagedToolRefresh` against a PERSISTED per-tool stamp, so a launch loop
  * cannot escalate the weekly cadence.
  */
+let managedToolRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+// A primary session_shutdown cancels a not-yet-fired refresh: its callback
+// would pin this module graph for the delay and then run the refresh from a
+// shut-down graph. The persisted per-tool stamp lets the next session retry.
+registerIdleTimerRelease(() => {
+  if (managedToolRefreshTimer !== undefined) clearTimeout(managedToolRefreshTimer);
+  managedToolRefreshTimer = undefined;
+});
+
 function scheduleManagedToolRefresh(dbg: SessionStartDeps["dbg"]): void {
+  if (managedToolRefreshTimer !== undefined) clearTimeout(managedToolRefreshTimer);
   const delayMs = Number(
     process.env.CHOCO_PI_LSP_TOOL_REFRESH_DELAY_MS ?? MANAGED_TOOL_REFRESH_DELAY_MS,
   );
   const timer = setTimeout(
     () => {
+      if (managedToolRefreshTimer === timer) managedToolRefreshTimer = undefined;
       void (async () => {
         try {
           const refresh = await import("./installer/managed-tool-refresh.ts");
@@ -588,6 +600,7 @@ function scheduleManagedToolRefresh(dbg: SessionStartDeps["dbg"]): void {
     Number.isFinite(delayMs) ? delayMs : MANAGED_TOOL_REFRESH_DELAY_MS,
   );
   timer.unref?.();
+  managedToolRefreshTimer = timer;
 }
 
 async function probePrettierInstall(

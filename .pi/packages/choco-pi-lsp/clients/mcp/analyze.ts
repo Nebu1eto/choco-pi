@@ -39,6 +39,7 @@ import {
   type WordIndex,
 } from "../word-index.ts";
 import { logWordIndex } from "../word-index-logger.ts";
+import { idleEvictionTimersSuspended, registerIdleTimerRelease } from "../idle-timer-release.ts";
 import { createMcpHost } from "./host-shim.ts";
 
 // #536: module-scoped FactStore for the warm-analyze graph seam, mirroring the
@@ -92,6 +93,12 @@ function clearWarmWordIndexTimer(entry: WarmWordIndexEntry): void {
   entry.timer = undefined;
 }
 
+// Primary session_shutdown releases idle handles (entries stay warm; the next
+// use re-arms) so a shut-down module graph is not pinned for the idle window.
+registerIdleTimerRelease(() => {
+  for (const entry of warmWordIndexes.values()) clearWarmWordIndexTimer(entry);
+});
+
 function evictWarmWordIndex(
   key: string,
   entry: WarmWordIndexEntry,
@@ -111,6 +118,7 @@ function evictWarmWordIndex(
 
 function scheduleWarmWordIndexIdleEviction(key: string, entry: WarmWordIndexEntry): void {
   clearWarmWordIndexTimer(entry);
+  if (idleEvictionTimersSuspended()) return;
   const generation = ++entry.generation;
   const timer = setTimeout(() => {
     entry.timer = undefined;

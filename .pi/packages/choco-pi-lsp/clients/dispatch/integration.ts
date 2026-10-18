@@ -92,6 +92,7 @@ import {
 } from "../review-graph/service.ts";
 import { clearModuleGraphCache } from "../review-graph/workspace-modules.ts";
 import { releaseWorkspaceTopologyIdleTimers } from "../workspace-topology.ts";
+import { idleEvictionTimersSuspended, registerIdleTimerRelease } from "../idle-timer-release.ts";
 import { RUNTIME_CONFIG } from "../runtime-config.ts";
 import { findCompiledClassesDir, hasJavaBuildDescriptor } from "../tool-policy.ts";
 import {
@@ -633,6 +634,15 @@ function reverseDepsIdleEvictMs(): number {
   return Number.isSafeInteger(value) && value > 0 ? value : REVERSE_DEPS_IDLE_EVICT_MS_DEFAULT;
 }
 
+// Primary session_shutdown releases idle handles (entries stay warm; the next
+// use re-arms) so a shut-down module graph is not pinned for the idle window.
+registerIdleTimerRelease(() => {
+  for (const entry of reverseDepsIndexCache.values()) {
+    if (entry.idleTimer !== undefined) clearTimeout(entry.idleTimer);
+    entry.idleTimer = undefined;
+  }
+});
+
 function deleteReverseDepsEntry(key: string): void {
   const entry = reverseDepsIndexCache.get(key);
   if (entry?.idleTimer !== undefined) clearTimeout(entry.idleTimer);
@@ -648,7 +658,7 @@ function touchReverseDepsEntry(
   entry.lastUsedAt = Date.now();
   if (entry.idleTimer !== undefined) clearTimeout(entry.idleTimer);
   entry.idleTimer = undefined;
-  if (!armIdleTimer) return;
+  if (!armIdleTimer || idleEvictionTimersSuspended()) return;
   const stamp = entry.lastUsedAt;
   entry.idleTimer = setTimeout(() => {
     if (reverseDepsIndexCache.get(key) !== entry || entry.lastUsedAt !== stamp) return;
