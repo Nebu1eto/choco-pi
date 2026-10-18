@@ -50,6 +50,7 @@ import {
   type WorkingLineTextAnimation,
 } from "./config";
 import { sanitizeExtensionStatusText } from "./extension-status";
+import { inSubagentChildLoad } from "./child-load";
 import { isIconMode } from "./icons";
 import type { SessionLifecycle } from "./session-lifecycle";
 import {
@@ -1553,12 +1554,7 @@ export async function runZentuiPreferencesOutcome(
       } else {
         const trimmed = edited.trim();
         const intervalMs = /^[+-]?\d+$/.test(trimmed) ? Number(trimmed) : Number.NaN;
-        if (!isValidWorkingLineIntervalMs(intervalMs)) {
-          ctx.ui.notify(
-            `${label} must be a whole number from ${MIN_WORKING_LINE_INTERVAL_MS} to ${MAX_WORKING_LINE_INTERVAL_MS} ms; unchanged.`,
-            "warning",
-          );
-        } else {
+        if (isValidWorkingLineIntervalMs(intervalMs)) {
           const result = deps.setWorkingLineComponent(
             spinnerSpeed ? { spinnerIntervalMs: intervalMs } : { textIntervalMs: intervalMs },
             ctx,
@@ -1566,6 +1562,11 @@ export async function runZentuiPreferencesOutcome(
           ctx.ui.notify(
             `${label}: ${intervalMs} ms${result.applied ? "" : ` (${result.reason ?? "reload Pi to apply this change"})`}`,
             "info",
+          );
+        } else {
+          ctx.ui.notify(
+            `${label} must be a whole number from ${MIN_WORKING_LINE_INTERVAL_MS} to ${MAX_WORKING_LINE_INTERVAL_MS} ms; unchanged.`,
+            "warning",
           );
         }
       }
@@ -1887,7 +1888,8 @@ export function createZentuiPreferencesComponent(
                 },
                 ctx,
               );
-            else if (enabled !== undefined) {
+            else if (enabled === undefined) return;
+            else {
               const key =
                 id === "minimalistContextGauge"
                   ? "contextGauge"
@@ -1902,7 +1904,7 @@ export function createZentuiPreferencesComponent(
                           : undefined;
               if (!key) return;
               deps.setMinimalist({ [key]: enabled }, ctx);
-            } else return;
+            }
             settingsList.updateValue(id, newValue);
             notifyChange(id, newValue);
             return;
@@ -2494,8 +2496,13 @@ export const ZENTUI_PREFERENCES_PROVIDER_SYMBOL = Symbol.for("choco-pi.preferenc
  * profile can host it as the Preferences tab of its Status/Usage dialog and
  * register the `/preferences` command. The package registers no command
  * itself; without the profile host the panel is simply unused.
+ *
+ * A subagent child never publishes it: the slot is process-global and the
+ * callbacks drive this activation's lifecycle and editor, so a child would
+ * leave the main session's panel operating on a disposed child UI.
  */
 export function registerZentuiPreferencesProvider(deps: SettingsCommandDeps): void {
+  if (inSubagentChildLoad()) return;
   Object.defineProperty(globalThis, ZENTUI_PREFERENCES_PROVIDER_SYMBOL, {
     configurable: true,
     writable: true,

@@ -293,3 +293,12 @@ test imports the validator from its 1.2.0 module, `theme-schema.js`.
 Pi SDK peer and development pins move from `1.2.0` to exactly `1.3.0`.
 The theme test asserts the host `pi-coding-agent` is `1.3.0`; its `theme-schema.js` validator path is unchanged.
 Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.
+
+## 2026-10-18 choco-pi patch: subagent loads keep the main preferences panel
+
+`registerZentuiPreferencesProvider` (`extensions/zentui/settings-command.ts`)
+returns without publishing when the new `extensions/zentui/child-load.ts` reports
+a subagent child load. The provider slot is process-global and its callbacks
+drive the publishing activation's lifecycle and editor, so a child load left the
+main session's Preferences panel operating on a disposed child UI.
+Test: `tests/child-load-preferences.test.ts`.
