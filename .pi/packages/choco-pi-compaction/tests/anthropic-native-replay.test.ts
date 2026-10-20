@@ -430,11 +430,6 @@ test("rewrite refusals also fail closed with a reason code", { timeout: 20_000 }
       options: { checkpoint: "invalid-anthropic" },
       code: "details-invalid",
     },
-    {
-      name: "system/tools changed with kept thinking",
-      options: { details: details({ keptThinking: true }) },
-      code: "binding-mismatch",
-    },
   ];
   for (const item of cases) {
     const host = await createHost(item.options);
@@ -466,6 +461,82 @@ test(
       await host.session.prompt("NATIVE-NEXT");
       assert.equal(host.sent.length, 1);
       assert.deepEqual(host.sent[0]?.body?.messages[0], { role: "assistant", content: [BLOCK] });
+    } finally {
+      await host.dispose();
+    }
+  },
+);
+
+test(
+  "a changed system/tools with kept thinking replays under drop_block",
+  { timeout: 20_000 },
+  async () => {
+    const host = await createHost({
+      details: details({ keptThinking: true }),
+      managedEffort: true,
+    });
+    try {
+      await host.session.prompt("NATIVE-NEXT");
+      assert.equal(host.sent.length, 1);
+      const body = host.sent[0]?.body;
+      assert.deepEqual(body?.messages[0], { role: "assistant", content: [BLOCK] });
+      assert.deepEqual(body?.thinking, {
+        type: "adaptive",
+        display: "summarized",
+        block_binding: { prefix_mismatch_behavior: "drop_block" },
+      });
+      assert.deepEqual(transportRefusals(host.sessionId), []);
+      assert.equal(lastAssistant(host.session).stopReason, "stop");
+    } finally {
+      await host.dispose();
+    }
+  },
+);
+
+test(
+  "a changed system/tools with kept thinking and no drop_block sends the summary text",
+  { timeout: 20_000 },
+  async () => {
+    const host = await createHost({ details: details({ keptThinking: true }) });
+    try {
+      await host.session.prompt("NATIVE-NEXT");
+      assert.equal(host.sent.length, 1, "the turn is transmitted, not refused");
+      const [request] = host.sent;
+      assert.ok(request?.body);
+      assert.equal(request.text.includes(BLOCK.signature), false, "block not replayed");
+      assert.ok(request.text.includes("<summary>"), "summary text sent");
+      assert.deepEqual(transportRefusals(host.sessionId), []);
+      assert.deepEqual(
+        host.diagnostics.map((diagnostic) => [diagnostic.kind, diagnostic.code]),
+        [["fallback", "binding-mismatch"]],
+      );
+      assert.equal(lastAssistant(host.session).stopReason, "stop");
+    } finally {
+      await host.dispose();
+    }
+  },
+);
+
+test(
+  "a later handler removing drop_block from a binding-changed replay is refused",
+  { timeout: 20_000 },
+  async () => {
+    const strip = handler((payload) => ({ ...payload, thinking: { type: "adaptive" } }));
+    const host = await createHost({
+      details: details({ keptThinking: true }),
+      managedEffort: true,
+      after: [strip],
+    });
+    try {
+      await host.session.prompt("NATIVE-NEXT");
+      assert.equal(host.sent.length, 0, "nothing transmitted");
+      assert.deepEqual(
+        transportRefusals(host.sessionId).map((refusal) => refusal.code),
+        ["binding-mismatch"],
+      );
+      const failed = lastAssistant(host.session);
+      assert.equal(failed.stopReason, "error");
+      assert.ok(failed.errorMessage?.includes(`${TRANSPORT_REFUSAL_PREFIX}: binding-mismatch`));
     } finally {
       await host.dispose();
     }

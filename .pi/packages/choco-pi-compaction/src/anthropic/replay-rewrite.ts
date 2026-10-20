@@ -119,16 +119,28 @@ function hasTaskBudgetRemaining(body: WireBody): boolean {
   return Value.Check(JsonRecordSchema, budget) && "remaining" in budget;
 }
 
+/** Whether the request tells the API to drop thinking whose bound prefix no longer matches. */
+function dropsMismatchedThinking(body: WireBody): boolean {
+  const thinking = body.thinking;
+  if (!Value.Check(JsonRecordSchema, thinking)) return false;
+  const binding = thinking.block_binding;
+  return (
+    Value.Check(JsonRecordSchema, binding) && binding.prefix_mismatch_behavior === "drop_block"
+  );
+}
+
 type RewriteOutcome =
-  | { readonly ok: true; readonly payload: WireBody; readonly bindingChanged: boolean }
-  | { readonly ok: false; readonly code: ReplayRefusalCode };
+  | { readonly ok: true; readonly payload: WireBody; readonly requiresDropBlock: boolean }
+  | { readonly ok: false; readonly code: ReplayRefusalCode }
+  /** Replay is unsafe but the host's summary text is a valid request: send that instead. */
+  | { readonly ok: "fallback"; readonly code: ReplayRefusalCode };
 
 interface ReplayRewriteOptions {
   readonly onDiagnostic?: (diagnostic: ReplayDiagnostic) => void;
 }
 
 export interface ReplayDiagnostic {
-  readonly kind: "rewritten" | "refused" | "unverifiable";
+  readonly kind: "rewritten" | "refused" | "fallback" | "unverifiable";
   readonly sessionId: string;
   readonly entryId: string;
   /** Non-secret block identity (digest prefix and length). */
@@ -143,6 +155,13 @@ export interface ReplayDiagnostic {
  * rejects it under `prefix_mismatch_behavior: "error"` with a persistent 400
  * (observed live on claude-fable-5-1 with unchanged system and tools); with
  * pi-ai's `drop_block` the stale blocks are dropped server-side instead.
+ *
+ * `system` and `tools` routinely differ from the capture: the host records
+ * prompt and tool changes as mid-conversation system messages, and a
+ * compaction entry restarts the request from the merged current system
+ * message. With `drop_block` that difference only drops kept thinking, so the
+ * block is replayed and the transport must still carry `drop_block`; without
+ * it the summary text is sent instead of the block.
  */
 function rewriteReplayPayload<T>(payload: T, checkpoint: ActiveNativeCheckpoint): RewriteOutcome {
   if (!Value.Check(WireBodySchema, payload)) return { ok: false, code: "payload-unrecognized" };
@@ -161,7 +180,10 @@ function rewriteReplayPayload<T>(payload: T, checkpoint: ActiveNativeCheckpoint)
     digests.systemDigest !== details.wire.systemDigest ||
     digests.toolsDigest !== details.wire.toolsDigest;
   // Kept thinking is only valid while system and non-deferred tools match.
-  if (bindingChanged && details.wire.keptThinking) return { ok: false, code: "binding-mismatch" };
+  const requiresDropBlock = bindingChanged && details.wire.keptThinking;
+  if (requiresDropBlock && !dropsMismatchedThinking(payload)) {
+    return { ok: "fallback", code: "binding-mismatch" };
+  }
   const blockMessage: WireMessage = {
     role: "assistant",
     content: [structuredClone(details.block)],
@@ -172,13 +194,14 @@ function rewriteReplayPayload<T>(payload: T, checkpoint: ActiveNativeCheckpoint)
     messages: [blockMessage, ...rest],
     betas: [...new Set([...betas, COMPACT_BETA])],
   };
-  return { ok: true, payload: next, bindingChanged };
+  return { ok: true, payload: next, requiresDropBlock };
 }
 
 /** Transport-level check: the serialized request must still carry the exact block first. */
 function verifyReplayTransport(
   request: TransportRequest,
   checkpoint: ActiveNativeCheckpoint,
+  requiresDropBlock: boolean,
 ): TransportVerdict {
   const messages = request.body.messages;
   const [first, ...rest] = messages;
@@ -192,6 +215,9 @@ function verifyReplayTransport(
   if (!request.betas.includes(COMPACT_BETA)) return { ok: false, code: "beta-missing" };
   if ("context_management" in request.body) return { ok: false, code: "context-management" };
   if (hasTaskBudgetRemaining(request.body)) return { ok: false, code: "task-budget-remaining" };
+  if (requiresDropBlock && !dropsMismatchedThinking(request.body)) {
+    return { ok: false, code: "binding-mismatch" };
+  }
   const summary = summaryWireText(checkpoint.summary);
   if (rest.some((message) => isSummaryMessage(message, summary))) {
     return { ok: false, code: "summary-duplicated" };
@@ -233,6 +259,16 @@ export function createReplayRewriteHandler(options: ReplayRewriteOptions = {}) {
     const checkpoint = lookup.checkpoint;
     const block = blockFingerprint(checkpoint.details.block);
     const outcome = rewriteReplayPayload(event.payload, checkpoint);
+    if (outcome.ok === "fallback") {
+      options.onDiagnostic?.({
+        kind: "fallback",
+        sessionId,
+        entryId: checkpoint.entryId,
+        block,
+        code: outcome.code,
+      });
+      return undefined;
+    }
     if (!outcome.ok) {
       const code = outcome.code;
       call.checks.push(() => ({ ok: false, code }));
@@ -245,7 +281,8 @@ export function createReplayRewriteHandler(options: ReplayRewriteOptions = {}) {
       });
       return undefined;
     }
-    call.checks.push((request) => verifyReplayTransport(request, checkpoint));
+    const { requiresDropBlock } = outcome;
+    call.checks.push((request) => verifyReplayTransport(request, checkpoint, requiresDropBlock));
     options.onDiagnostic?.({ kind: "rewritten", sessionId, entryId: checkpoint.entryId, block });
     return outcome.payload;
   };

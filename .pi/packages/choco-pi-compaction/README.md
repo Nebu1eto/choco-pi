@@ -354,9 +354,13 @@ session; the host's existing compaction path is then used.
 - Snapshots are refused when no legal cut exists (for example a cut that would
   split a tool call or, for Anthropic, an ambiguous wire mapping); preparation
   then waits for the cooldown and a later threshold.
-- Anthropic native replay is refused with `binding-mismatch` when the system
-  prompt or tools changed while the retained messages carry thinking bound to
-  them; the summary text is used instead.
+- The system prompt and tools of a replayed request usually differ from the
+  captured request: Pi records prompt and tool changes as mid-conversation
+  system messages, and a compaction restarts from the merged current system
+  message. When retained messages carry thinking, the block is replayed only
+  if the request sets `drop_block` (the transport refuses it with
+  `binding-mismatch` if a later handler removes it); otherwise replay is
+  skipped with `binding-mismatch` and the summary text is sent instead.
 - Retained thinking behind a native compaction block is still bound to the
   messages the block replaced. The replay keeps the provider's
   `thinking.block_binding` (`drop_block` on managed-effort models), so the API

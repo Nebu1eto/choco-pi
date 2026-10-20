@@ -586,6 +586,13 @@ function reportReplayDiagnostic(
     );
     return;
   }
+  if (diagnostic.kind === "fallback") {
+    notify(
+      ctx,
+      `Anthropic native replay skipped (${diagnostic.code ?? "unknown"}) for checkpoint ${diagnostic.entryId}; its summary text is sent instead`,
+    );
+    return;
+  }
   notify(
     ctx,
     `Anthropic native replay refused (${diagnostic.code ?? "unknown"}) for checkpoint ${diagnostic.entryId}`,
