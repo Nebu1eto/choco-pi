@@ -1,9 +1,20 @@
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 
+/** `project`: inside the session root; `trusted-root`: inside a configured trusted root. */
+export type AgentsFileSource = "project" | "trusted-root";
+
 export interface AgentsFileEntry {
   /** Path shown to the model, relative to the session cwd when possible. */
   path: string;
   content: string;
+  source: AgentsFileSource;
+}
+
+/** An AGENTS.md outside every allowed root: pointed to, never inlined. */
+export interface ForeignAgentsFile {
+  /** Absolute real path. */
+  path: string;
+  bytes: number;
 }
 
 /**
@@ -52,22 +63,34 @@ export function capTotalAppendixSize(files: AgentsFileEntry[]): AgentsFileEntry[
 
 /**
  * Append a `<subdirectory_agents_context>` block listing the applicable
- * AGENTS.md files to a tool result's content array. Returns `content`
- * unchanged when there is nothing to inject.
+ * AGENTS.md files to a tool result's content array, followed by one
+ * content-free pointer line per foreign AGENTS.md. Returns `content`
+ * unchanged when there is nothing to append.
  */
 export function appendAgentsContext(
   content: (TextContent | ImageContent)[],
   files: AgentsFileEntry[],
+  foreignFiles: ForeignAgentsFile[] = [],
 ): (TextContent | ImageContent)[] {
-  if (!files.length) return content;
-  const appendix = [
-    "<subdirectory_agents_context>",
-    "AGENTS.md context relevant to this tool result.",
-    ...files.map(
+  const appended: TextContent[] = [];
+  if (files.length) {
+    const appendix = [
+      "<subdirectory_agents_context>",
+      "AGENTS.md context relevant to this tool result.",
+      ...files.map(
+        (file) =>
+          `<agents_file path="${escapeXml(file.path)}" source="${file.source}">\n${escapeXml(file.content)}\n</agents_file>`,
+      ),
+      "</subdirectory_agents_context>",
+    ].join("\n");
+    appended.push({ type: "text", text: appendix });
+  }
+  if (foreignFiles.length) {
+    const pointers = foreignFiles.map(
       (file) =>
-        `<agents_file path="${escapeXml(file.path)}">\n${escapeXml(file.content)}\n</agents_file>`,
-    ),
-    "</subdirectory_agents_context>",
-  ].join("\n");
-  return [...content, { type: "text", text: appendix }];
+        `<foreign_agents_file path="${escapeXml(file.path)}" bytes="${file.bytes}" note="outside the project root; read it as evidence if needed"/>`,
+    );
+    appended.push({ type: "text", text: pointers.join("\n") });
+  }
+  return appended.length ? [...content, ...appended] : content;
 }

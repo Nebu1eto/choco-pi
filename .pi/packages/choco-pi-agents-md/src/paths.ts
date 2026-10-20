@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
 /** Resolve a possibly-relative path through its nearest existing ancestor. */
@@ -50,5 +51,39 @@ export function contentRootForTarget(resolvedTargetPath: string): string {
     }
   } catch {
     return "";
+  }
+}
+
+/** Real path of an existing path, or the normalized absolute input when it cannot be resolved. */
+export async function realpathOrSelf(targetPath: string): Promise<string> {
+  try {
+    return await realpath(targetPath);
+  } catch {
+    return path.resolve(targetPath);
+  }
+}
+
+async function pathExists(targetPath: string): Promise<boolean> {
+  try {
+    await stat(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The session project root: the nearest ancestor of the real `cwd` (inclusive)
+ * that contains a `.git` entry (directory or worktree file), else the real
+ * `cwd` itself.
+ */
+export async function findSessionRoot(cwd: string): Promise<string> {
+  const start = await realpathOrSelf(cwd);
+  let dir = start;
+  for (;;) {
+    if (await pathExists(path.join(dir, ".git"))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return start;
+    dir = parent;
   }
 }

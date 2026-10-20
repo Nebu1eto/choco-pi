@@ -18,13 +18,47 @@ The injected block looks like:
 ```
 <subdirectory_agents_context>
 AGENTS.md context relevant to this tool result.
-<agents_file path="packages/foo/AGENTS.md">
+<agents_file path="packages/foo/AGENTS.md" source="project">
 ...file content, XML-escaped...
 </agents_file>
 </subdirectory_agents_context>
 ```
 
 appended as an extra text content item on the tool result.
+
+## Project-root containment
+
+Only `AGENTS.md` files inside the session project root (the nearest ancestor
+of the session cwd containing `.git`, else the cwd) or inside a configured
+trusted root are inlined. `source` on `<agents_file>` is `project` or
+`trusted-root`. Touched paths are resolved through symlinks first, so a
+symlink inside the project that points elsewhere is judged by its real path.
+
+An `AGENTS.md` reached from a path outside every allowed root (a sibling
+repository, a clone under `/tmp`) is never inlined. It produces one
+content-free pointer per file per session, as a separate text item:
+
+```
+<foreign_agents_file path="/abs/path/AGENTS.md" bytes="1234" note="outside the project root; read it as evidence if needed"/>
+```
+
+Trusted roots come from the `agentsMd` key of `<agentDir>/settings.json`
+(usually `~/.pi/agent/settings.json`), read at each session start:
+
+```json
+{ "agentsMd": { "trustedRoots": ["~/Workspace/shared-guidance", "/opt/team-docs"] } }
+```
+
+Entries must be absolute or start with `~/`; others are ignored. A missing or
+malformed key means no trusted roots.
+
+## Session accounting
+
+Each registration counts the files inlined, the foreign pointers rendered,
+and the characters appended to tool results. At session end
+(`session_shutdown`, or a following `session_start`) it emits
+`choco-pi-agents-md:session-stats` on `pi.events` with
+`{ cwd, injectedFiles, injectedChars, foreignPointers }`.
 
 - The session root's own `AGENTS.md` is never re-injected here; the host
   already includes it in the base system prompt.

@@ -1,18 +1,29 @@
 import fs from "node:fs";
+import { stat } from "node:fs/promises";
 import path from "node:path";
-import type {
-  ExtensionAPI,
-  SessionStartEvent,
-  SessionTreeEvent,
+import {
+  type ExtensionAPI,
+  getAgentDir,
+  type SessionStartEvent,
+  type SessionTreeEvent,
 } from "@earendil-works/pi-coding-agent";
 import { findAgentsFiles } from "./agents-chain.ts";
 import {
   type AgentsFileEntry,
+  type AgentsFileSource,
   appendAgentsContext,
   capFileContent,
   capTotalAppendixSize,
+  type ForeignAgentsFile,
 } from "./appendix.ts";
-import { contentRootForTarget, resolvePath } from "./paths.ts";
+import {
+  contentRootForTarget,
+  findSessionRoot,
+  isInsideRoot,
+  realpathOrSelf,
+  resolvePath,
+} from "./paths.ts";
+import { type AgentsMdSettings, readAgentsMdSettings } from "./settings.ts";
 import { isDiscoveryShellCommand, shellTargets } from "./shell-targets.ts";
 import {
   codeModeDiscoveryEvents,
@@ -31,6 +42,50 @@ interface FailedRead {
 
 interface AgentsMdAutoloadDependencies {
   readFile?: (filePath: string) => Promise<string>;
+  /** Defaults to reading `agentsMd` from `<agentDir>/settings.json`. */
+  loadSettings?: () => Promise<AgentsMdSettings>;
+}
+
+/** Real-path roots that bound which AGENTS.md files may be inlined. */
+interface SessionScope {
+  sessionRoot: string;
+  trustedRoots: string[];
+}
+
+interface TargetAgents {
+  /** Allowed AGENTS.md files, root-first per target, mapped to their source. */
+  allowed: Map<string, AgentsFileSource>;
+  /** AGENTS.md files outside every allowed root. */
+  foreign: string[];
+}
+
+/** Per-session injection accounting emitted on `SESSION_STATS_EVENT`. */
+export interface AgentsMdSessionStats {
+  cwd: string;
+  injectedFiles: number;
+  injectedChars: number;
+  foreignPointers: number;
+}
+
+export const SESSION_STATS_EVENT = "choco-pi-agents-md:session-stats";
+
+function defaultLoadSettings(): Promise<AgentsMdSettings> {
+  return readAgentsMdSettings(getAgentDir());
+}
+
+async function loadSessionScope(
+  cwd: string,
+  loadSettings: () => Promise<AgentsMdSettings>,
+): Promise<SessionScope> {
+  const sessionRoot = await findSessionRoot(cwd);
+  let configured: string[] = [];
+  try {
+    configured = (await loadSettings()).trustedRoots;
+  } catch {
+    configured = [];
+  }
+  const trustedRoots = await Promise.all(configured.map((root) => realpathOrSelf(root)));
+  return { sessionRoot, trustedRoots };
 }
 
 /**
@@ -49,28 +104,47 @@ export function registerAgentsMdAutoload(
 ): void {
   const readFile =
     dependencies.readFile ?? ((filePath: string) => fs.promises.readFile(filePath, "utf-8"));
+  const loadSettings = dependencies.loadSettings ?? defaultLoadSettings;
   const loadedAgents = new Set<string>();
   let currentCwd = "";
   let cwdAgentsPath = "";
   let sessionGeneration = 0;
+  let sessionScope: Promise<SessionScope> | undefined;
+  let stats: AgentsMdSessionStats | undefined;
 
-  function resetSession(cwd: string): void {
+  function emitStats(): void {
+    if (stats) pi.events?.emit(SESSION_STATS_EVENT, { ...stats });
+    stats = undefined;
+  }
+
+  function resetSession(cwd: string, newSession: boolean): void {
     sessionGeneration += 1;
     currentCwd = resolvePath(cwd, process.cwd());
     cwdAgentsPath = path.join(currentCwd, "AGENTS.md");
     loadedAgents.clear();
     loadedAgents.add(cwdAgentsPath);
+    const scopeCwd = currentCwd;
+    sessionScope = loadSessionScope(scopeCwd, loadSettings).catch(() => ({
+      sessionRoot: scopeCwd,
+      trustedRoots: [],
+    }));
+    if (newSession || !stats) {
+      emitStats();
+      stats = { cwd: currentCwd, injectedFiles: 0, injectedChars: 0, foreignPointers: 0 };
+    }
   }
 
   function invalidateSession(): void {
     sessionGeneration += 1;
+    emitStats();
     currentCwd = "";
     cwdAgentsPath = "";
+    sessionScope = undefined;
     loadedAgents.clear();
   }
 
   function ensureSession(cwd: string): void {
-    if (!currentCwd) resetSession(cwd);
+    if (!currentCwd) resetSession(cwd, false);
   }
 
   function relativePath(absolutePath: string, baseCwd: string): string {
@@ -124,8 +198,24 @@ export function registerAgentsMdAutoload(
     return [];
   }
 
-  function agentsForTargets(targets: string[], rootAgentsPath: string): string[] {
-    const files = new Set<string>();
+  function sourceFor(scope: SessionScope, absolutePath: string): AgentsFileSource | undefined {
+    if (isInsideRoot(scope.sessionRoot, absolutePath)) return "project";
+    if (scope.trustedRoots.some((root) => isInsideRoot(root, absolutePath))) return "trusted-root";
+    return undefined;
+  }
+
+  /**
+   * Targets are already real paths (`resolvePath` resolves symlinks through
+   * the nearest existing ancestor), so a symlink inside the session root that
+   * points elsewhere is classified by its destination.
+   */
+  function agentsForTargets(
+    targets: string[],
+    rootAgentsPath: string,
+    scope: SessionScope,
+  ): TargetAgents {
+    const allowed = new Map<string, AgentsFileSource>();
+    const foreign = new Set<string>();
     for (const target of targets) {
       const searchRoot = contentRootForTarget(target);
       if (!searchRoot) continue;
@@ -141,21 +231,24 @@ export function registerAgentsMdAutoload(
       } catch {
         continue;
       }
+      const targetAllowed = sourceFor(scope, target) !== undefined;
       for (const file of findAgentsFiles(probe, searchRoot, rootAgentsPath)) {
-        files.add(file);
+        const source = sourceFor(scope, file);
+        if (targetAllowed && source) allowed.set(file, source);
+        else if (!targetAllowed && !source) foreign.add(file);
       }
     }
-    return [...files];
+    return { allowed, foreign: [...foreign] };
   }
 
   async function readAppendixFiles(
-    agentFiles: string[],
+    agentFiles: Map<string, AgentsFileSource>,
     generation: number,
     baseCwd: string,
   ): Promise<{ appendixFiles: AgentsFileEntry[]; failedFiles: FailedRead[] } | undefined> {
     const pendingFiles: { agentsPath: string; entry: AgentsFileEntry }[] = [];
     const failedFiles: FailedRead[] = [];
-    for (const agentsPath of agentFiles) {
+    for (const [agentsPath, source] of agentFiles) {
       if (loadedAgents.has(agentsPath)) continue;
       try {
         const content = await readFile(agentsPath);
@@ -163,7 +256,11 @@ export function registerAgentsMdAutoload(
         if (loadedAgents.has(agentsPath)) continue;
         pendingFiles.push({
           agentsPath,
-          entry: { path: relativePath(agentsPath, baseCwd), content: capFileContent(content) },
+          entry: {
+            path: relativePath(agentsPath, baseCwd),
+            content: capFileContent(content),
+            source,
+          },
         });
       } catch (error) {
         if (generation !== sessionGeneration) return undefined;
@@ -179,11 +276,34 @@ export function registerAgentsMdAutoload(
     return { appendixFiles, failedFiles };
   }
 
+  /** Size each unseen foreign file once per session; never reads content. */
+  async function foreignPointers(
+    foreignFiles: string[],
+    generation: number,
+  ): Promise<ForeignAgentsFile[] | undefined> {
+    const pointers: ForeignAgentsFile[] = [];
+    for (const agentsPath of foreignFiles) {
+      if (loadedAgents.has(agentsPath)) continue;
+      let bytes: number;
+      try {
+        bytes = (await stat(agentsPath)).size;
+      } catch {
+        if (generation !== sessionGeneration) return undefined;
+        continue;
+      }
+      if (generation !== sessionGeneration) return undefined;
+      if (loadedAgents.has(agentsPath)) continue;
+      loadedAgents.add(agentsPath);
+      pointers.push({ path: agentsPath, bytes });
+    }
+    return pointers;
+  }
+
   const handleSessionChange = (
-    _event: SessionStartEvent | SessionTreeEvent,
+    event: SessionStartEvent | SessionTreeEvent,
     ctx: { cwd: string },
   ): void => {
-    resetSession(ctx.cwd);
+    resetSession(ctx.cwd, event.type === "session_start");
   };
   pi.on("session_start", handleSessionChange);
   pi.on("session_tree", handleSessionChange);
@@ -194,22 +314,26 @@ export function registerAgentsMdAutoload(
     const generation = sessionGeneration;
     const baseCwd = currentCwd;
     const rootAgentsPath = cwdAgentsPath;
+    const scopePromise = sessionScope;
     const discoveryEvents = codeModeDiscoveryEvents(event);
     if (event.isError) discoveryEvents.shift();
 
     const targets = discoveryEvents.flatMap((discoveryEvent) =>
       targetsForEvent(discoveryEvent, baseCwd),
     );
-    if (!targets.length) return undefined;
+    if (!targets.length || !scopePromise) return undefined;
 
-    const agentFiles = agentsForTargets(targets, rootAgentsPath);
-    if (!agentFiles.length) return undefined;
+    const scope = await scopePromise;
+    if (generation !== sessionGeneration) return undefined;
+    const { allowed, foreign } = agentsForTargets(targets, rootAgentsPath, scope);
+    if (!allowed.size && !foreign.length) return undefined;
 
-    const readResult = await readAppendixFiles(agentFiles, generation, baseCwd);
+    const readResult = await readAppendixFiles(allowed, generation, baseCwd);
     if (generation !== sessionGeneration || !readResult) return undefined;
     const { appendixFiles, failedFiles } = readResult;
+    const pointers = await foreignPointers(foreign, generation);
+    if (generation !== sessionGeneration || !pointers) return undefined;
 
-    if (generation !== sessionGeneration) return undefined;
     if (ctx.hasUI) {
       for (const failed of failedFiles) {
         ctx.ui.notify(`Failed to load ${failed.agentsPath}: ${failed.error.message}`, "warning");
@@ -223,9 +347,8 @@ export function registerAgentsMdAutoload(
       }
     }
 
-    if (!appendixFiles.length) return undefined;
+    if (!appendixFiles.length && !pointers.length) return undefined;
 
-    if (generation !== sessionGeneration) return undefined;
     for (const file of appendixFiles) {
       pi.events?.emit("choco-pi-hooks:instructions-loaded", {
         filePath: resolvePath(file.path, baseCwd),
@@ -234,6 +357,14 @@ export function registerAgentsMdAutoload(
       });
     }
 
-    return { content: appendAgentsContext(event.content, appendixFiles) };
+    const content = appendAgentsContext(event.content, appendixFiles, pointers);
+    if (stats) {
+      stats.injectedFiles += appendixFiles.length;
+      stats.foreignPointers += pointers.length;
+      for (const item of content.slice(event.content.length)) {
+        if (item.type === "text") stats.injectedChars += item.text.length;
+      }
+    }
+    return { content };
   });
 }

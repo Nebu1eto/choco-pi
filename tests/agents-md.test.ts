@@ -12,6 +12,9 @@ import { resolve } from "node:path";
 // from a built `dist/`. Mirrors tests/subagent-config.test.ts.
 const packageRoot = resolve(".pi/packages/choco-pi-agents-md/src");
 const STALE_CONTEXT_MESSAGE = "This extension ctx is stale after session replacement or reload.";
+// Lifecycle accounting the shutdown/session_start handlers flush themselves;
+// the zero-emission assertions below cover only the stale tool_result path.
+const STATS_EVENT = "choco-pi-agents-md:session-stats";
 
 async function loadSubdir() {
   return import(pathToFileURL(resolve(packageRoot, "subdir.ts")).href);
@@ -93,6 +96,34 @@ function appendixText(
     (item) => item.type === "text" && item.text?.includes("<subdirectory_agents_context>"),
   );
   return block?.text;
+}
+
+/**
+ * A one-shot signal raised inside the injected `readFile` seam. The handler
+ * awaits session-root resolution before reading, so the seam is entered on a
+ * later microtask/IO turn, not synchronously with the handler call.
+ */
+function createSeamSignal() {
+  let markEntered: (() => void) | undefined;
+  const entered = new Promise<void>((resolveEntered) => {
+    markEntered = resolveEntered;
+  });
+  return {
+    mark() {
+      markEntered?.();
+    },
+    async wait(message: string, timeoutMs = 5000): Promise<void> {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<never>((_, rejectTimeout) => {
+        timer = setTimeout(() => rejectTimeout(new Error(message)), timeoutMs);
+      });
+      try {
+        await Promise.race([entered, timeout]);
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  };
 }
 
 test("injects the AGENTS.md chain root-first, leaf-last, skipping missing levels", async () => {
@@ -184,10 +215,12 @@ test("session shutdown invalidates a pending AGENTS.md read before extension rep
       resolveDeferredRead = resolveRead;
     });
     let deferred = false;
+    const seam = createSeamSignal();
     const { pi, baseCtx } = await setup(root, {
       readFile: async (filePath) => {
         if (filePath === nestedAgentsPath && !deferred) {
           deferred = true;
+          seam.mark();
           return deferredRead;
         }
         return fs.promises.readFile(filePath, "utf-8");
@@ -221,6 +254,7 @@ test("session shutdown invalidates a pending AGENTS.md read before extension rep
     };
     let stalePiAccesses = 0;
     let emissions = 0;
+    let statsEmissions = 0;
     Object.defineProperty(pi, "events", {
       configurable: true,
       get() {
@@ -228,7 +262,7 @@ test("session shutdown invalidates a pending AGENTS.md read before extension rep
           stalePiAccesses += 1;
           throw new Error(STALE_CONTEXT_MESSAGE);
         }
-        return { emit: () => emissions++ };
+        return { emit: (name: string) => (name === STATS_EVENT ? statsEmissions++ : emissions++) };
       },
     });
 
@@ -236,6 +270,7 @@ test("session shutdown invalidates a pending AGENTS.md read before extension rep
       .get("tool_result")
       ?.call(undefined, readToolResultEvent(leaf), oldCtx);
     assert.ok(oldResultPromise instanceof Promise);
+    await seam.wait("the old handler must be paused in the injected read seam");
     assert.equal(deferred, true, "the old handler must be paused in the injected read seam");
 
     pi.handlers.get("session_shutdown")?.({ type: "session_shutdown", reason: "reload" }, baseCtx);
@@ -246,6 +281,11 @@ test("session shutdown invalidates a pending AGENTS.md read before extension rep
     assert.equal(staleContextAccesses, 0, "stale ctx must not be accessed after the read");
     assert.equal(stalePiAccesses, 0, "stale pi must not be accessed after the read");
     assert.equal(emissions, 0, "the stale handler must not emit lifecycle events");
+    assert.equal(
+      statsEmissions,
+      1,
+      "shutdown flushes session stats once, before the wrapper goes stale",
+    );
   } finally {
     fs.rmSync(parent, { recursive: true, force: true });
   }
@@ -268,11 +308,14 @@ for (const sessionEvent of ["session_start", "session_tree"] as const) {
         resolveDeferredRead = resolveRead;
       });
       let deferred = false;
+      const seam = createSeamSignal();
       let emissions = 0;
+      let statsEmissions = 0;
       const { pi, baseCtx } = await setup(root, {
         readFile: async (filePath) => {
           if (filePath === nestedAgentsPath && !deferred) {
             deferred = true;
+            seam.mark();
             return deferredRead;
           }
           return fs.promises.readFile(filePath, "utf-8");
@@ -280,13 +323,14 @@ for (const sessionEvent of ["session_start", "session_tree"] as const) {
       });
       Object.defineProperty(pi, "events", {
         configurable: true,
-        value: { emit: () => emissions++ },
+        value: { emit: (name: string) => (name === STATS_EVENT ? statsEmissions++ : emissions++) },
       });
 
       const staleResultPromise = pi.handlers
         .get("tool_result")
         ?.call(undefined, readToolResultEvent(leaf), baseCtx);
       assert.ok(staleResultPromise instanceof Promise);
+      await seam.wait("the stale read must pause at the injected seam");
       assert.equal(deferred, true, "the stale read must pause at the injected seam");
 
       const currentCtx = { cwd: parent, hasUI: true, ui: createStubUi() };
@@ -294,6 +338,11 @@ for (const sessionEvent of ["session_start", "session_tree"] as const) {
       resolveDeferredRead?.("nested guidance");
       assert.equal(await staleResultPromise, undefined);
       assert.equal(emissions, 0, "the stale read must not emit lifecycle events");
+      assert.equal(
+        statsEmissions,
+        sessionEvent === "session_start" ? 1 : 0,
+        "only a new session flushes the previous session's stats",
+      );
 
       // SAFETY: The fixture supplies every host member exercised by this test.
       const currentResult = (await pi.handlers

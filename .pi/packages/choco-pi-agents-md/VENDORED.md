@@ -11,7 +11,7 @@ from-scratch reimplementation written for choco-pi.
   registration function), plus `dist/src/hooks/before-agent-start.js` for
   contrast (that hook is unrelated workflow-prompt logic, not subdir
   context — it was read to confirm it is _not_ the injection mechanism).
-- Reference source: https://github.com/IgorWarzocha/howaboua-pi-stuff/tree/main/packages/pi-markdown-workflows
+- Reference source: <https://github.com/IgorWarzocha/howaboua-pi-stuff/tree/main/packages/pi-markdown-workflows>
 - Written on: 2026-08-20.
 
 ## Why this exists
@@ -116,3 +116,24 @@ Pi SDK peer and development pins move from `1.0.4` to exactly `1.2.0`.
 
 Pi SDK peer and development pins move from `1.2.0` to exactly `1.3.0`.
 Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.
+
+## choco-pi patch: project-root containment
+
+Deviation from the reference, which bounds each chain only by the target's
+own nearest `.git`. Any touched path outside the session project root
+(nearest `.git` ancestor of the cwd, else the cwd) used to inline that
+foreign repository's `AGENTS.md` with instruction framing into the root
+session and every child session.
+
+- Targets and found files are classified by real path against the session
+  root and the new `agentsMd.trustedRoots` setting in
+  `<agentDir>/settings.json` (`src/settings.ts`, async read at session start).
+- Files outside every allowed root are never read; each gets one
+  `<foreign_agents_file path bytes note/>` pointer per session, deduplicated
+  through the same per-session set.
+- `<agents_file>` carries `source="project|trusted-root"`.
+- Each registration counts inlined files, pointers, and appended characters
+  and emits `choco-pi-agents-md:session-stats` on `pi.events` at session end.
+
+Verification: `npx tsc --noEmit` in the package and
+`node --test .pi/packages/choco-pi-agents-md/tests/*.test.ts` pass.
