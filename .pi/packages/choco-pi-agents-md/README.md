@@ -31,8 +31,10 @@ appended as an extra text content item on the tool result.
 Only `AGENTS.md` files inside the session project root (the nearest ancestor
 of the session cwd containing `.git`, else the cwd) or inside a configured
 trusted root are inlined. `source` on `<agents_file>` is `project` or
-`trusted-root`. Touched paths are resolved through symlinks first, so a
-symlink inside the project that points elsewhere is judged by its real path.
+`trusted-root`. Touched paths and every discovered `AGENTS.md` are resolved
+through symlinks first, so a symlink inside the project that points elsewhere
+is judged by its real path, and one file reached through several links is
+inlined once.
 
 An `AGENTS.md` reached from a path outside every allowed root (a sibling
 repository, a clone under `/tmp`) is never inlined. It produces one

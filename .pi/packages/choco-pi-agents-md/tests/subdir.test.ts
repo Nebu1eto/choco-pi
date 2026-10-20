@@ -260,26 +260,34 @@ interface ContainmentFixture {
   linkedTarget: string;
 }
 
-function createContainmentFixture(): ContainmentFixture {
-  const workspace = fs.realpathSync(
-    fs.mkdtempSync(path.join(os.tmpdir(), "choco-pi-agents-md-containment-")),
+async function createContainmentFixture(): Promise<ContainmentFixture> {
+  const workspace = await fs.promises.realpath(
+    await fs.promises.mkdtemp(path.join(os.tmpdir(), "choco-pi-agents-md-containment-")),
   );
   const root = path.join(workspace, "root");
   const sibling = path.join(workspace, "sibling");
-  fs.mkdirSync(path.join(root, ".git"), { recursive: true });
-  fs.mkdirSync(path.join(root, "src"));
-  fs.mkdirSync(path.join(sibling, ".git"), { recursive: true });
-  fs.mkdirSync(path.join(sibling, "lib"));
-  fs.writeFileSync(path.join(root, "AGENTS.md"), "ROOT-GUIDANCE");
-  fs.writeFileSync(path.join(root, "src", "AGENTS.md"), "PROJECT-NESTED-GUIDANCE");
-  fs.writeFileSync(path.join(sibling, "AGENTS.md"), "SIBLING-GUIDANCE");
+  await fs.promises.mkdir(path.join(root, ".git"), { recursive: true });
+  await fs.promises.mkdir(path.join(root, "src"));
+  await fs.promises.mkdir(path.join(sibling, ".git"), { recursive: true });
+  await fs.promises.mkdir(path.join(sibling, "lib"));
+  await fs.promises.writeFile(path.join(root, "AGENTS.md"), "ROOT-GUIDANCE");
+  await fs.promises.writeFile(path.join(root, "src", "AGENTS.md"), "PROJECT-NESTED-GUIDANCE");
+  await fs.promises.writeFile(path.join(sibling, "AGENTS.md"), "SIBLING-GUIDANCE");
   const projectTarget = path.join(root, "src", "a.ts");
   const siblingTarget = path.join(sibling, "lib", "b.ts");
-  fs.writeFileSync(projectTarget, "export {};\n");
-  fs.writeFileSync(siblingTarget, "export {};\n");
-  fs.symlinkSync(sibling, path.join(root, "linked"), "dir");
+  await fs.promises.writeFile(projectTarget, "export {};\n");
+  await fs.promises.writeFile(siblingTarget, "export {};\n");
+  await fs.promises.symlink(sibling, path.join(root, "linked"), "dir");
   const linkedTarget = path.join(root, "linked", "lib", "b.ts");
   return { workspace, root, sibling, siblingTarget, projectTarget, linkedTarget };
+}
+
+async function removeFixture(directory: string): Promise<void> {
+  await fs.promises.rm(directory, { recursive: true, force: true });
+}
+
+function countMatches(text: string, pattern: RegExp): number {
+  return text.match(pattern)?.length ?? 0;
 }
 
 function startSession(harness: StubPiHarness, cwd: string): TestContext {
@@ -293,7 +301,7 @@ async function runRead(harness: StubPiHarness, target: string, ctx: TestContext)
 }
 
 test("AGENTS.md outside the session root is pointed to once and never inlined", async () => {
-  const fixture = createContainmentFixture();
+  const fixture = await createContainmentFixture();
   try {
     const harness = createRegisteredStubPi();
     const ctx = startSession(harness, fixture.root);
@@ -328,12 +336,12 @@ test("AGENTS.md outside the session root is pointed to once and never inlined", 
       },
     ]);
   } finally {
-    fs.rmSync(fixture.workspace, { recursive: true, force: true });
+    await removeFixture(fixture.workspace);
   }
 });
 
 test("a symlink inside the session root that leaves it is classified by its real path", async () => {
-  const fixture = createContainmentFixture();
+  const fixture = await createContainmentFixture();
   try {
     const harness = createRegisteredStubPi();
     const ctx = startSession(harness, fixture.root);
@@ -346,12 +354,77 @@ test("a symlink inside the session root that leaves it is classified by its real
       new RegExp(`<foreign_agents_file path="${path.join(fixture.sibling, "AGENTS.md")}"`),
     );
   } finally {
-    fs.rmSync(fixture.workspace, { recursive: true, force: true });
+    await removeFixture(fixture.workspace);
+  }
+});
+
+test("a symlinked AGENTS.md inside the root that points to a sibling repo is never inlined", async () => {
+  const fixture = await createContainmentFixture();
+  try {
+    const vendor = path.join(fixture.root, "vendor");
+    await fs.promises.mkdir(vendor);
+    await fs.promises.symlink(
+      path.join(fixture.sibling, "AGENTS.md"),
+      path.join(vendor, "AGENTS.md"),
+    );
+    const target = path.join(vendor, "c.ts");
+    await fs.promises.writeFile(target, "export {};\n");
+
+    const harness = createRegisteredStubPi();
+    const ctx = startSession(harness, fixture.root);
+    const result = await runRead(harness, target, ctx);
+    const text = allAppendedText(result);
+    const siblingAgents = path.join(fixture.sibling, "AGENTS.md");
+    assert.equal(appendixText(result), undefined);
+    assert.doesNotMatch(text, /SIBLING-GUIDANCE/);
+    assert.equal(countMatches(text, /<foreign_agents_file /g), 1);
+    assert.equal(
+      text,
+      `<foreign_agents_file path="${siblingAgents}" bytes="${"SIBLING-GUIDANCE".length}" note="outside the project root; read it as evidence if needed"/>`,
+    );
+    assert.equal(await runRead(harness, target, ctx), undefined);
+  } finally {
+    await removeFixture(fixture.workspace);
+  }
+});
+
+test("a symlinked AGENTS.md pointing inside the root is inlined once by real path", async () => {
+  const fixture = await createContainmentFixture();
+  try {
+    const docs = path.join(fixture.root, "docs");
+    await fs.promises.mkdir(docs);
+    await fs.promises.symlink(path.join("..", "src", "AGENTS.md"), path.join(docs, "AGENTS.md"));
+    const docsTarget = path.join(docs, "x.ts");
+    await fs.promises.writeFile(docsTarget, "export {};\n");
+
+    const harness = createRegisteredStubPi();
+    const ctx = startSession(harness, fixture.root);
+    const findResult = await harness.handlers.get("tool_result")?.(
+      {
+        type: "tool_result",
+        toolCallId: "1",
+        toolName: "find",
+        input: { path: fixture.root },
+        content: [{ type: "text", text: "docs/x.ts\nsrc/a.ts" }],
+        isError: false,
+      },
+      ctx,
+    );
+    const appendix = appendixText(findResult);
+    assert.ok(appendix);
+    assert.equal(countMatches(appendix, /PROJECT-NESTED-GUIDANCE/g), 1);
+    assert.equal(countMatches(appendix, /<agents_file /g), 1);
+    assert.match(appendix, /<agents_file path="docs\/AGENTS\.md" source="project">/);
+    assert.doesNotMatch(allAppendedText(findResult), /foreign_agents_file/);
+
+    assert.equal(await runRead(harness, fixture.projectTarget, ctx), undefined);
+  } finally {
+    await removeFixture(fixture.workspace);
   }
 });
 
 test("trustedRoots allows a sibling repository with trusted-root provenance", async () => {
-  const fixture = createContainmentFixture();
+  const fixture = await createContainmentFixture();
   try {
     const harness = createRegisteredStubPi([fixture.sibling]);
     const ctx = startSession(harness, fixture.root);
@@ -362,14 +435,16 @@ test("trustedRoots allows a sibling repository with trusted-root provenance", as
     assert.match(appendix, /SIBLING-GUIDANCE/);
     assert.doesNotMatch(allAppendedText(result), /foreign_agents_file/);
   } finally {
-    fs.rmSync(fixture.workspace, { recursive: true, force: true });
+    await removeFixture(fixture.workspace);
   }
 });
 
 test("agentsMd settings keep absolute and home-relative trusted roots only", async () => {
-  const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "choco-pi-agents-md-settings-"));
+  const agentDir = await fs.promises.mkdtemp(
+    path.join(os.tmpdir(), "choco-pi-agents-md-settings-"),
+  );
   try {
-    fs.writeFileSync(
+    await fs.promises.writeFile(
       path.join(agentDir, "settings.json"),
       JSON.stringify({
         other: 1,
@@ -379,14 +454,14 @@ test("agentsMd settings keep absolute and home-relative trusted roots only", asy
     assert.deepEqual(await readAgentsMdSettings(agentDir), {
       trustedRoots: [path.join(os.homedir(), "shared"), "/abs/root"],
     });
-    fs.writeFileSync(
+    await fs.promises.writeFile(
       path.join(agentDir, "settings.json"),
       JSON.stringify({ agentsMd: { trustedRoots: "/x" } }),
     );
     assert.deepEqual(await readAgentsMdSettings(agentDir), { trustedRoots: [] });
-    fs.rmSync(path.join(agentDir, "settings.json"));
+    await fs.promises.rm(path.join(agentDir, "settings.json"));
     assert.deepEqual(await readAgentsMdSettings(agentDir), { trustedRoots: [] });
   } finally {
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    await removeFixture(agentDir);
   }
 });

@@ -125,8 +125,10 @@ own nearest `.git`. Any touched path outside the session project root
 foreign repository's `AGENTS.md` with instruction framing into the root
 session and every child session.
 
-- Targets and found files are classified by real path against the session
-  root and the new `agentsMd.trustedRoots` setting in
+- Targets and found files are classified by real path (each discovered
+  `AGENTS.md` goes through async `realpath` before classification, dedup,
+  and reading; the lexical path is kept only for the displayed label) against
+  the session root and the new `agentsMd.trustedRoots` setting in
   `<agentDir>/settings.json` (`src/settings.ts`, async read at session start).
 - Files outside every allowed root are never read; each gets one
   `<foreign_agents_file path bytes note/>` pointer per session, deduplicated

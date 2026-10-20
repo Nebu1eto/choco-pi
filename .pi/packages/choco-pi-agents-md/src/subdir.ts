@@ -50,12 +50,20 @@ interface AgentsMdAutoloadDependencies {
 interface SessionScope {
   sessionRoot: string;
   trustedRoots: string[];
+  /** Real path of the session cwd's own AGENTS.md (already in the base prompt). */
+  cwdAgentsRealPath: string;
+}
+
+interface AllowedAgentsFile {
+  /** Lexical path where the file was found; used only for the displayed label. */
+  displayPath: string;
+  source: AgentsFileSource;
 }
 
 interface TargetAgents {
-  /** Allowed AGENTS.md files, root-first per target, mapped to their source. */
-  allowed: Map<string, AgentsFileSource>;
-  /** AGENTS.md files outside every allowed root. */
+  /** Allowed AGENTS.md files keyed by real path, root-first per target. */
+  allowed: Map<string, AllowedAgentsFile>;
+  /** Real paths of AGENTS.md files outside every allowed root. */
   foreign: string[];
 }
 
@@ -85,7 +93,16 @@ async function loadSessionScope(
     configured = [];
   }
   const trustedRoots = await Promise.all(configured.map((root) => realpathOrSelf(root)));
-  return { sessionRoot, trustedRoots };
+  const cwdAgentsRealPath = await realpathOrSelf(path.join(cwd, "AGENTS.md"));
+  return { sessionRoot, trustedRoots, cwdAgentsRealPath };
+}
+
+async function isDirectory(targetPath: string): Promise<boolean> {
+  try {
+    return (await stat(targetPath)).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -127,6 +144,7 @@ export function registerAgentsMdAutoload(
     sessionScope = loadSessionScope(scopeCwd, loadSettings).catch(() => ({
       sessionRoot: scopeCwd,
       trustedRoots: [],
+      cwdAgentsRealPath: path.join(scopeCwd, "AGENTS.md"),
     }));
     if (newSession || !stats) {
       emitStats();
@@ -206,15 +224,19 @@ export function registerAgentsMdAutoload(
 
   /**
    * Targets are already real paths (`resolvePath` resolves symlinks through
-   * the nearest existing ancestor), so a symlink inside the session root that
-   * points elsewhere is classified by its destination.
+   * the nearest existing ancestor). Each discovered AGENTS.md is resolved to
+   * its real path before classification, deduplication, and reading, so a
+   * symlinked AGENTS.md inside the session root that points elsewhere is
+   * classified by its destination. Returns `undefined` when the session
+   * changed while resolving.
    */
-  function agentsForTargets(
+  async function agentsForTargets(
     targets: string[],
     rootAgentsPath: string,
     scope: SessionScope,
-  ): TargetAgents {
-    const allowed = new Map<string, AgentsFileSource>();
+    generation: number,
+  ): Promise<TargetAgents | undefined> {
+    const allowed = new Map<string, AllowedAgentsFile>();
     const foreign = new Set<string>();
     for (const target of targets) {
       const searchRoot = contentRootForTarget(target);
@@ -223,32 +245,32 @@ export function registerAgentsMdAutoload(
         loadedAgents.add(path.normalize(target));
         continue;
       }
-      let probe = target;
-      try {
-        if (fs.existsSync(target) && fs.statSync(target).isDirectory()) {
-          probe = path.join(target, "__probe__");
-        }
-      } catch {
-        continue;
-      }
+      const targetIsDirectory = await isDirectory(target);
+      if (generation !== sessionGeneration) return undefined;
+      const probe = targetIsDirectory ? path.join(target, "__probe__") : target;
       const targetAllowed = sourceFor(scope, target) !== undefined;
       for (const file of findAgentsFiles(probe, searchRoot, rootAgentsPath)) {
-        const source = sourceFor(scope, file);
-        if (targetAllowed && source) allowed.set(file, source);
-        else if (!targetAllowed && !source) foreign.add(file);
+        const realFile = await realpathOrSelf(file);
+        if (generation !== sessionGeneration) return undefined;
+        if (realFile === scope.cwdAgentsRealPath) continue;
+        const source = sourceFor(scope, realFile);
+        if (!source) foreign.add(realFile);
+        else if (targetAllowed && !allowed.has(realFile)) {
+          allowed.set(realFile, { displayPath: file, source });
+        }
       }
     }
     return { allowed, foreign: [...foreign] };
   }
 
   async function readAppendixFiles(
-    agentFiles: Map<string, AgentsFileSource>,
+    agentFiles: Map<string, AllowedAgentsFile>,
     generation: number,
     baseCwd: string,
   ): Promise<{ appendixFiles: AgentsFileEntry[]; failedFiles: FailedRead[] } | undefined> {
     const pendingFiles: { agentsPath: string; entry: AgentsFileEntry }[] = [];
     const failedFiles: FailedRead[] = [];
-    for (const [agentsPath, source] of agentFiles) {
+    for (const [agentsPath, { displayPath, source }] of agentFiles) {
       if (loadedAgents.has(agentsPath)) continue;
       try {
         const content = await readFile(agentsPath);
@@ -257,7 +279,7 @@ export function registerAgentsMdAutoload(
         pendingFiles.push({
           agentsPath,
           entry: {
-            path: relativePath(agentsPath, baseCwd),
+            path: relativePath(displayPath, baseCwd),
             content: capFileContent(content),
             source,
           },
@@ -325,7 +347,9 @@ export function registerAgentsMdAutoload(
 
     const scope = await scopePromise;
     if (generation !== sessionGeneration) return undefined;
-    const { allowed, foreign } = agentsForTargets(targets, rootAgentsPath, scope);
+    const targetAgents = await agentsForTargets(targets, rootAgentsPath, scope, generation);
+    if (generation !== sessionGeneration || !targetAgents) return undefined;
+    const { allowed, foreign } = targetAgents;
     if (!allowed.size && !foreign.length) return undefined;
 
     const readResult = await readAppendixFiles(allowed, generation, baseCwd);
