@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
-import { AgentManager } from "../src/agent-manager.ts";
+import { AgentManager, type AgentManagerRunner } from "../src/agent-manager.ts";
 import { formatModelLine } from "../src/invocation-config.ts";
 import { publishTerminalResult } from "../src/result-read.ts";
 import type { AgentRecord } from "../src/types.ts";
@@ -234,11 +234,12 @@ test("resume with the child's current model does not switch; a different one doe
   }
 });
 
-test("a model-switching resume refreshes the reported provenance; a same-model resume keeps it", async () => {
+test("a model-switching resume refreshes the reported provenance; a same-model resume keeps it", async (t) => {
+  const host = await createSdkFixture();
+  t.after(() => host.session.dispose());
   const manager = managerWithResumeRecords();
   try {
-    // SAFETY: managerWithResumeRecords replaces startAgent before this placeholder host is observed.
-    const id = manager.spawn({} as never, {} as never, "implementer", "work", {
+    const id = manager.spawn(host.pi, host.ctx, "implementer", "work", {
       description: "work",
       isBackground: false,
       modelProvenance: {
@@ -280,6 +281,65 @@ test("a model-switching resume refreshes the reported provenance; a same-model r
     assert.strictEqual(record.modelProvenance, before, "a same-model resume leaves it untouched");
     await manager.resume(id, "none");
     assert.strictEqual(record.modelProvenance, before, "a model-less resume leaves it untouched");
+  } finally {
+    manager.dispose();
+  }
+});
+
+test("session creation refreshes a fresh spawn's provenance to the thinking the session runs", async (t) => {
+  const host = await createSdkFixture();
+  t.after(() => host.session.dispose());
+  const created = partialFixture<AgentSession>({
+    model: partialFixture<NonNullable<AgentSession["model"]>>({ provider: "prov", id: "a" }),
+    thinkingLevel: "off",
+    sessionManager: partialFixture<AgentSession["sessionManager"]>({
+      getSessionFile: () => undefined,
+    }),
+    dispose: () => {},
+  });
+  let requestedAtCreation: string | undefined;
+  let manager: AgentManager | undefined;
+  const runner: AgentManagerRunner = {
+    runAgent(_ctx, _type, _prompt, options) {
+      requestedAtCreation = manager?.listAgents()[0]?.modelProvenance?.thinking;
+      options.onSessionCreated?.(created);
+      return Promise.resolve({
+        responseText: "done",
+        session: created,
+        aborted: false,
+        steered: false,
+      });
+    },
+    resumeAgent: () => Promise.reject(new Error("resume is not exercised")),
+  };
+  manager = new AgentManager(undefined, 8, undefined, undefined, runner);
+  try {
+    const id = manager.spawn(host.pi, host.ctx, "implementer", "work", {
+      description: "work",
+      isBackground: false,
+      thinkingLevel: "high",
+      modelProvenance: {
+        model: "prov/a",
+        source: "caller",
+        thinking: "high",
+        definition: "/r/implementer.md",
+      },
+    });
+    const record = manager.getRecord(id);
+    assert.ok(record);
+    await record.promise;
+    assert.equal(requestedAtCreation, "high", "the record starts with the requested level");
+    assert.deepEqual(record.modelProvenance, {
+      model: "prov/a",
+      source: "caller",
+      thinking: "off",
+      definition: "/r/implementer.md",
+    });
+    assert.ok(record.modelProvenance);
+    assert.equal(
+      formatModelLine(record.modelProvenance),
+      "Model: prov/a (source: caller) · thinking: off · definition: /r/implementer.md",
+    );
   } finally {
     manager.dispose();
   }

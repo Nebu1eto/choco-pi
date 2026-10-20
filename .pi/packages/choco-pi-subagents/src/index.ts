@@ -2974,6 +2974,11 @@ export default function (pi: ExtensionAPI) {
       const tokenText = formatLifetimeTokens(fgState);
 
       const details = buildDetails(detailBase, record, fgState, { tokens: tokenText });
+      // The session existed by now and may have clamped the requested
+      // thinking; report the record's refreshed provenance, not the request.
+      const settledModelLine = record.modelProvenance
+        ? `${formatModelLine(record.modelProvenance)}\n`
+        : modelLine;
 
       // Parked on a provider usage limit under auto-resume: the manager has
       // converted this child to background, so answer the tool call now.
@@ -2987,7 +2992,7 @@ export default function (pi: ExtensionAPI) {
           `${fallbackNote}Agent paused until ${until}; result will arrive as a notification.\n` +
             `Agent ID: ${record.id}\n` +
             `Alias: @${address}\n` +
-            modelLine +
+            settledModelLine +
             (record.usageLimit ? `Usage limit: ${describeUsageLimit(record.usageLimit)}\n` : "") +
             `It resumes on the same model after the reset. ${TERMINAL_RESULT_RETRIEVAL_GUIDANCE}`,
           details,
@@ -3001,7 +3006,7 @@ export default function (pi: ExtensionAPI) {
       ) {
         // Error headline + any partial output the run produced before failing.
         return textResult(
-          `${fallbackNote}${modelLine}Agent failed: ${record.error}${partialOutputSuffix(record)}`,
+          `${fallbackNote}${settledModelLine}Agent failed: ${record.error}${partialOutputSuffix(record)}`,
           details,
         );
       }
@@ -3010,7 +3015,7 @@ export default function (pi: ExtensionAPI) {
       const statsParts = [`${record.toolUses} tool uses`];
       if (tokenText) statsParts.push(tokenText);
       return textResult(
-        `${fallbackNote}${modelLine}Agent completed in ${formatMs(durationMs)} (${statsParts.join(", ")})${getForegroundOutcomeNote(record.status)}.\n\n` +
+        `${fallbackNote}${settledModelLine}Agent completed in ${formatMs(durationMs)} (${statsParts.join(", ")})${getForegroundOutcomeNote(record.status)}.\n\n` +
           (record.result?.trim() || "No output."),
         details,
       );

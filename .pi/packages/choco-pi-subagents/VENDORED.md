@@ -590,7 +590,13 @@ thinking and definition file. Resume keeps `model` optional;
 child session's current model. A resume that does switch refreshes
 `modelProvenance` in place to the session's new model and thinking level with
 `source: caller` (definition kept), so the resumed run's notification and
-journal entry name the model that ran. `/btw` side conversations are unaffected:
+journal entry name the model that ran. A fresh spawn's provenance starts as the
+requested model and thinking; the manager's `onSessionCreated` hook (same-run
+generation only) refreshes `model` and `thinking` from the created session
+when they differ, keeping `source` and `definition`, because the SDK clamps an
+unsupported thinking level at session creation. The immediate background spawn
+result may still show the requested level; the foreground completion text,
+notification and journal use the refreshed record. `/btw` side conversations are unaffected:
 `runAgent` applies the forked main-session runtime before any frontmatter or
 caller value. `tests/model-defaults.test.ts`, `tests/side-conversation.test.ts`,
 `tests/nested-tools.test.ts` and `tests/resume-alias.test.ts` cover it.

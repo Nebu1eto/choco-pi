@@ -2754,6 +2754,26 @@ export class AgentManager {
           // Cancellation stops provider work, not ownership of the child that
           // startup created. Retain it even after shutdown for settlement cleanup.
           record.session = session;
+          // The caller built provenance from the requested model and thinking;
+          // session creation may clamp thinking (or resolve another model). The
+          // completion notification and journal read this record, so report
+          // what the session runs. Source and definition stay as requested.
+          if (record.modelProvenance !== undefined) {
+            const created = session.model;
+            const model = created ? `${created.provider}/${created.id}` : undefined;
+            const thinking = session.thinkingLevel;
+            const current = record.modelProvenance;
+            if (
+              (model !== undefined && model !== current.model) ||
+              (thinking !== undefined && thinking !== current.thinking)
+            ) {
+              record.modelProvenance = {
+                ...current,
+                model: model ?? current.model,
+                thinking: thinking ?? current.thinking,
+              };
+            }
+          }
           // Before the first request: a token cap that cannot cover the
           // bootstrap prompt stops the run here instead of after a spent call.
           if (options.budgets?.maxTokens !== undefined && options.resumeSessionFile === undefined) {
