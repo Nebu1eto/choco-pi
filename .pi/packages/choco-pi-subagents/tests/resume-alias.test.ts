@@ -3,6 +3,7 @@ import test from "node:test";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { AgentManager } from "../src/agent-manager.ts";
+import { formatModelLine } from "../src/invocation-config.ts";
 import { publishTerminalResult } from "../src/result-read.ts";
 import type { AgentRecord } from "../src/types.ts";
 import { createSdkFixture } from "./sdk-fixture.ts";
@@ -228,6 +229,57 @@ test("resume with the child's current model does not switch; a different one doe
 
     await manager.resume(id, "different", undefined, { model: "prov/other" });
     assert.equal(switches, 1, "a different model still switches");
+  } finally {
+    manager.dispose();
+  }
+});
+
+test("a model-switching resume refreshes the reported provenance; a same-model resume keeps it", async () => {
+  const manager = managerWithResumeRecords();
+  try {
+    // SAFETY: managerWithResumeRecords replaces startAgent before this placeholder host is observed.
+    const id = manager.spawn({} as never, {} as never, "implementer", "work", {
+      description: "work",
+      isBackground: false,
+      modelProvenance: {
+        model: "prov/a",
+        source: "default",
+        thinking: "medium",
+        definition: "/r/implementer.md",
+      },
+    });
+    const record = manager.getRecord(id);
+    assert.ok(record?.session);
+    let live = { provider: "prov", id: "a" };
+    Object.defineProperty(record.session, "model", { get: () => live });
+    Object.defineProperty(manager, "applyResumeModel", {
+      value: async (_record: AgentRecord, _session: AgentSession, input: string) => {
+        const [provider = "", modelId = ""] = input.split("/");
+        live = { provider, id: modelId };
+      },
+    });
+
+    await manager.resume(id, "switch", undefined, { model: "prov/b" });
+    const switched = {
+      model: "prov/b",
+      source: "caller",
+      thinking: "medium",
+      definition: "/r/implementer.md",
+    };
+    assert.deepEqual(record.modelProvenance, switched);
+    // The completion notification and `subagents:record` journal both format
+    // `record.modelProvenance` at settle time.
+    assert.ok(record.modelProvenance);
+    assert.equal(
+      formatModelLine(record.modelProvenance),
+      "Model: prov/b (source: caller) · thinking: medium · definition: /r/implementer.md",
+    );
+
+    const before = record.modelProvenance;
+    await manager.resume(id, "same", undefined, { model: "prov/b" });
+    assert.strictEqual(record.modelProvenance, before, "a same-model resume leaves it untouched");
+    await manager.resume(id, "none");
+    assert.strictEqual(record.modelProvenance, before, "a model-less resume leaves it untouched");
   } finally {
     manager.dispose();
   }

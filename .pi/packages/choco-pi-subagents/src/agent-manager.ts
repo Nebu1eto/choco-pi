@@ -3282,6 +3282,17 @@ export class AgentManager {
       ) {
         return undefined;
       }
+      // The completion notification and journal read this provenance; refresh
+      // it to what the session now runs. The host may clamp thinking on switch.
+      if (record.modelProvenance !== undefined) {
+        const switched = session.model;
+        record.modelProvenance = {
+          ...record.modelProvenance,
+          model: switched ? `${switched.provider}/${switched.id}` : options.model,
+          source: "caller",
+          thinking: session.thinkingLevel ?? record.modelProvenance.thinking,
+        };
+      }
     }
     // Same owner-scoped availability gate as spawn, for every resumed dispatch
     // (with or without a model, foreground or background). Synchronous and

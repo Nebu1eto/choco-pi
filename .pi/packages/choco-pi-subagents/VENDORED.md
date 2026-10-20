@@ -587,7 +587,10 @@ from `AgentRecord.modelProvenance`. An unavailable configured model reports
 nested `Agent` description and the `/agents` type list show each role's model,
 thinking and definition file. Resume keeps `model` optional;
 `AgentManager.resume` skips the switch when the requested model equals the
-child session's current model. `/btw` side conversations are unaffected:
+child session's current model. A resume that does switch refreshes
+`modelProvenance` in place to the session's new model and thinking level with
+`source: caller` (definition kept), so the resumed run's notification and
+journal entry name the model that ran. `/btw` side conversations are unaffected:
 `runAgent` applies the forked main-session runtime before any frontmatter or
 caller value. `tests/model-defaults.test.ts`, `tests/side-conversation.test.ts`,
 `tests/nested-tools.test.ts` and `tests/resume-alias.test.ts` cover it.
