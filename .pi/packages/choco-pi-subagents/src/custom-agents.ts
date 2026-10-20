@@ -2,7 +2,7 @@
  * custom-agents.ts — Load user-defined agents from project (.pi/agents/, plus the shared .agents/agents/ workspace) and global ($PI_CODING_AGENT_DIR/agents/, default ~/.pi/agent/agents/) locations.
  */
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { basename, join } from "node:path";
 import { getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -293,7 +293,20 @@ function warnSkippedOverride(name: string, agents: Map<string, AgentConfig>): vo
 function warnShadowed(name: string, path: string, agents: Map<string, AgentConfig>): void {
   const shadowed = agents.get(name)?.sourcePath;
   if (shadowed === undefined || shadowed === path) return;
+  // A symlinked role file (e.g. ~/.pi/agent/agents/x.md -> <repo>/.pi/agents/x.md)
+  // is the same definition reached twice, not a substitution.
+  if (realPathOf(shadowed) === realPathOf(path)) return;
   warnIfNew(`Agent "${name}" loads from ${path}, shadowing ${shadowed}`);
+}
+
+/** Resolve symlinks; an unresolvable path compares as itself. */
+function realPathOf(path: string): string {
+  try {
+    // Sync to match this loader: loadCustomAgents is synchronous end to end.
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
 }
 
 function warnUnknownKeys(path: string, fm: AgentFrontmatter): void {

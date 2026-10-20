@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -210,6 +210,46 @@ test("agent files: deprecated aliases promote, unknown keys and shadowing warn",
   const before = warnings.length;
   loadCustomAgents(join(root, "project"));
   assert.equal(warnings.length, before);
+});
+
+test("agent files: a symlinked duplicate does not warn as shadowing, a distinct file does", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "choco-pi-shadow-symlink-"));
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  t.after(async () => {
+    console.warn = originalWarn;
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    await rm(root, { recursive: true, force: true });
+  });
+  const globalAgents = join(root, "agent-home", "agents");
+  const projectAgents = join(root, "project", ".pi", "agents");
+  await Promise.all([
+    mkdir(globalAgents, { recursive: true }),
+    mkdir(projectAgents, { recursive: true }),
+  ]);
+  process.env.PI_CODING_AGENT_DIR = join(root, "agent-home");
+  await writeFile(join(globalAgents, "linked.md"), "---\nmodel: prov/linked\n---\nlinked");
+  await symlink(join(globalAgents, "linked.md"), join(projectAgents, "linked.md"));
+  await writeFile(join(globalAgents, "distinct.md"), "---\nmodel: prov/global\n---\nglobal");
+  await writeFile(join(projectAgents, "distinct.md"), "---\nmodel: prov/project\n---\nproject");
+  console.warn = (message: string) => {
+    warnings.push(message);
+  };
+
+  const agents = loadCustomAgents(join(root, "project"));
+
+  assert.equal(agents.get("linked")?.model, "prov/linked");
+  assert.equal(agents.get("distinct")?.model, "prov/project");
+  const shadowWarnings = warnings.filter((w) => w.includes("shadowing"));
+  assert.deepEqual(shadowWarnings.length, 1, warnings.join("\n"));
+  assert.ok(
+    shadowWarnings[0]?.includes(
+      `Agent "distinct" loads from ${join(projectAgents, "distinct.md")}, shadowing ${join(globalAgents, "distinct.md")}`,
+    ),
+    warnings.join("\n"),
+  );
 });
 
 test("root Agent tool refuses a fresh spawn without model/thinking but not a resume", async (t) => {
