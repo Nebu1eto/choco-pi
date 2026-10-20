@@ -112,8 +112,12 @@ export type ResultsResetReason =
 export type DiskLookupStatus = "hit" | "miss" | "expired";
 
 let lastResetReason: ResultsResetReason = "unknown";
+// Incremented synchronously by every map reset so async disk lookups can detect a reset that
+// happened while they were awaiting and avoid repopulating a cleared map.
+let cacheGeneration = 0;
 
 function recordReset(reason: ResultsResetReason, dropped: number): void {
+  cacheGeneration++;
   lastResetReason = reason;
   if (dropped > 0) {
     console.error(`[pi-web-access] stored results reset by ${reason}; dropped ${dropped} id(s)`);
@@ -696,23 +700,43 @@ async function readFetchCacheFromDisk(id: string, now: number): Promise<DiskLook
 }
 
 export type StoredResultLookup =
-  | { data: StoredSearchData; source: "memory" | "disk" }
+  | { data: StoredSearchData; source: "memory" }
+  | { data: StoredSearchData; source: "disk"; cached: boolean; message: string }
   | { data: null; reset: ResultsResetReason; disk: DiskLookupStatus; message: string };
 
 /**
  * Resolve a stored result from memory, falling back to the on-disk fetch cache when the
- * in-memory map was reset (session start/tree navigation, shutdown, or deletion).
+ * in-memory map was reset (session start/tree navigation, shutdown, or deletion). A disk hit is
+ * cached in the map only when no reset happened during the read; otherwise the caller still gets
+ * the data but the cleared map stays untouched.
  */
 export async function resolveStoredResult(id: string): Promise<StoredResultLookup> {
   const reset = lastResetReason;
   const memory = getResult(id);
   if (memory) return { data: memory, source: "memory" };
+  const generation = cacheGeneration;
   const disk = await readFetchCacheFromDisk(id, Date.now());
+  if (generation !== cacheGeneration) {
+    if (disk.status === "hit") {
+      return {
+        data: disk.data,
+        source: "disk",
+        cached: false,
+        message: `disk: hit (not cached: reset by ${lastResetReason} during read)`,
+      };
+    }
+    return {
+      data: null,
+      reset: lastResetReason,
+      disk: disk.status,
+      message: `not in memory (reset by ${lastResetReason}); disk: ${disk.status}`,
+    };
+  }
   const raced = getResult(id);
   if (raced) return { data: raced, source: "memory" };
   if (disk.status === "hit") {
     storedResults.set(id, disk.data);
-    return { data: disk.data, source: "disk" };
+    return { data: disk.data, source: "disk", cached: true, message: "disk: hit" };
   }
   return {
     data: null,

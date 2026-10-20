@@ -227,6 +227,11 @@ Display-only edits so the new family type-checks and renders:
   `restoreFromSession`, `clearResults`, and `deleteResult` record the last reset reason and log
   `[pi-web-access] stored results reset by <reason>; dropped <n> id(s)` through `console.error`
   when `n > 0`. Only fetch results are cached on disk; search and research results remain memory/session only.
+  Every reset also increments a synchronous `cacheGeneration`; `resolveStoredResult` snapshots it
+  before the disk read and, if a reset happened during the read, returns the loaded data without
+  inserting it into the map (`source: "disk", cached: false`,
+  `disk: hit (not cached: reset by <reason> during read)`), so a stale lookup cannot repopulate a
+  cleared map.
 - `index.ts`: `get_search_content` uses `resolveStoredResult`; session_start/session_tree/shutdown
   pass their reset reason. The multi-URL `fetch_content` summary (new `fetch-continuation.ts`)
   lists each URL's index, offset 0 and stored length, and the exact

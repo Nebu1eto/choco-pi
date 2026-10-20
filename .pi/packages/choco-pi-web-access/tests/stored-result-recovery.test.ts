@@ -27,7 +27,14 @@ await writeFile(
 );
 
 const { default: webAccess } = await import("../index.ts");
-const { storeFetchedContentResult, getLastResetReason } = await import("../storage.ts");
+const {
+  storeFetchedContentResult,
+  getLastResetReason,
+  resolveStoredResult,
+  clearResults,
+  getAllResults,
+  getResult,
+} = await import("../storage.ts");
 const { formatMultiUrlFetchSummary } = await import("../fetch-continuation.ts");
 
 interface Host {
@@ -200,6 +207,35 @@ test("missing results name the reset reason and disk status", async () => {
   await host.runner.emit({ type: "session_shutdown", reason: "quit" });
   const expired = await getContent({ responseId: "expiredondisk1", urlIndex: 0 });
   assert.match(resultText(expired), /not in memory \(reset by shutdown\); disk: expired/);
+});
+
+test("a reset during the disk read returns the data without repopulating the map", async () => {
+  storeFetch("resetduringread1", Date.now(), "raced body text");
+  clearResults("session_tree");
+  assert.equal(getResult("resetduringread1"), null);
+
+  // resolveStoredResult runs synchronously up to its first filesystem await, so this
+  // clear lands after the generation snapshot and before the disk read settles.
+  const pending = resolveStoredResult("resetduringread1");
+  clearResults("shutdown");
+  const lookup = await pending;
+
+  if (lookup.data === null || lookup.source !== "disk") {
+    assert.fail(`expected an uncached disk hit, got ${JSON.stringify(lookup)}`);
+  }
+  assert.equal(lookup.data.urls?.[0]?.content, "raced body text");
+  assert.equal(lookup.cached, false);
+  assert.match(lookup.message, /disk: hit \(not cached: reset by shutdown during read\)/);
+  assert.equal(getResult("resetduringread1"), null);
+  assert.deepEqual(getAllResults(), []);
+
+  // Without a concurrent reset the same lookup rehydrates the map.
+  const settled = await resolveStoredResult("resetduringread1");
+  if (settled.data === null || settled.source !== "disk") {
+    assert.fail(`expected a cached disk hit, got ${JSON.stringify(settled)}`);
+  }
+  assert.equal(settled.cached, true);
+  assert.ok(getResult("resetduringread1"));
 });
 
 test("multi-URL fetch footer prints exact per-URL continuation calls", () => {
