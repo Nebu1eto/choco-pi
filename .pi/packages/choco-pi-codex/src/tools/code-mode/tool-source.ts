@@ -1,4 +1,8 @@
-import { registeredToolNames, registeredToolRunner } from "./registered-tool-bridge.ts";
+import {
+  BRIDGE_EXCLUDED_TOOLS,
+  registeredToolNames,
+  registeredToolRunner,
+} from "./registered-tool-bridge.ts";
 import { unavailableToolsGuardPreamble } from "./tools-namespace.ts";
 import type { CodeModeToolDefinition } from "./types.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -7,16 +11,21 @@ export function scopeAllToolsToDeferredCustom(
   source: string,
   tools: CodeModeToolDefinition[],
   ctx?: ExtensionContext,
+  registeredNames: readonly string[] = registeredToolNames(registeredToolRunner(ctx)),
 ): string {
   // Deferred tools are the ones kept out of the prompt, so ALL_TOOLS is how a
   // script discovers them: configured custom tools and the bridged Pi tools
   // (LSP, MCP, sub-agents, sessions) alike.
   const deferredNames = tools.filter((tool) => tool.deferLoading).map((tool) => tool.name);
-  const namespaceGuard = unavailableToolsGuardPreamble(
-    tools.map((tool) => tool.name),
-    registeredToolNames(registeredToolRunner(ctx)),
+  const cellNames = tools.map((tool) => tool.name);
+  // Registered Pi tools the bridge never exposes and this cell lacks; scripts
+  // read them as ALL_TOOLS.direct_only (a non-enumerable array property, so
+  // the catalog keeps its array shape).
+  const directOnly = registeredNames.filter(
+    (name) => BRIDGE_EXCLUDED_TOOLS.has(name) && !cellNames.includes(name),
   );
-  return `globalThis.ALL_TOOLS=globalThis.ALL_TOOLS.filter(({name})=>${JSON.stringify(deferredNames)}.includes(name));${namespaceGuard}${source}`;
+  const namespaceGuard = unavailableToolsGuardPreamble(cellNames, registeredNames, directOnly);
+  return `globalThis.ALL_TOOLS=globalThis.ALL_TOOLS.filter(({name})=>${JSON.stringify(deferredNames)}.includes(name));Object.defineProperty(globalThis.ALL_TOOLS,"direct_only",{value:Object.freeze(${JSON.stringify(directOnly)})});${namespaceGuard}${source}`;
 }
 
 export function directToolYieldTime(code: string, tools: CodeModeToolDefinition[]): number | null {

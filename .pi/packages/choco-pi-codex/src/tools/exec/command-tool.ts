@@ -245,7 +245,12 @@ export function createExecCommandTool(
     prepareArguments: prepareExecCommandArguments,
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       if (signal?.aborted) throw new Error("exec_command aborted");
-      const parsedInput = parseExecCommandParams(params);
+      // Mirror Pi's bash tool: the executing context's session id, set per
+      // call. Never on process.env: subagent sessions share this process.
+      const parsedInput = {
+        ...parseExecCommandParams(params),
+        env: { PI_SESSION_ID: ctx.sessionManager.getSessionId() },
+      };
       const input: ExecCommandInput =
         parsedInput.shell === undefined
           ? { ...parsedInput, defaultShell: getPiConfiguredShellPath(ctx) }

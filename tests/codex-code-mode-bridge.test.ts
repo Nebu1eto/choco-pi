@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createContext, runInContext } from "node:vm";
 import { createSyntheticSourceInfo, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type TSchema } from "typebox";
 import {
@@ -124,7 +125,33 @@ test("bridged tools stay discoverable in ALL_TOOLS and callable through the guar
   const preamble = scopeAllToolsToDeferredCustom("text(1);", bridged as CodeModeToolDefinition[]);
   assert.match(preamble, /ALL_TOOLS=globalThis.ALL_TOOLS.filter/);
   assert.match(preamble, /\["read_symbol"\]/, "bridged name survives the ALL_TOOLS filter");
-  assert.match(preamble, /Available tools: /, "namespace guard lists it as callable");
+  assert.match(
+    preamble,
+    /See ALL_TOOLS for the full catalog/,
+    "namespace guard points at ALL_TOOLS instead of listing callables",
+  );
+  assert.doesNotMatch(preamble, /Available tools: /);
+});
+
+test("direct-only tools fail with a one-line native-call hint and appear in ALL_TOOLS.direct_only", () => {
+  const directOnlyName = [...BRIDGE_EXCLUDED_TOOLS][0];
+  assert.ok(directOnlyName, "the bridge excludes at least one tool");
+  // Run only the generated preamble against a stub catalog in an isolated realm.
+  const context = createContext({ ALL_TOOLS: [], tools: {} });
+  runInContext(scopeAllToolsToDeferredCustom("", [], undefined, [directOnlyName]), context);
+  assert.equal(
+    runInContext("JSON.stringify(ALL_TOOLS.direct_only)", context),
+    JSON.stringify([directOnlyName]),
+  );
+  const access = `tools[${JSON.stringify(directOnlyName)}]`;
+  const escaped = directOnlyName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // No multiline flag: `$` proves the message is a single line.
+  assert.throws(
+    () => runInContext(access, context),
+    new RegExp(
+      `^Error: Code mode tool error \\[unavailable_tool\\]: tools\\.${escaped} is direct-only; call it natively outside exec\\.$`,
+    ),
+  );
 });
 
 test("bridgedToolUsage renders enums, array elements, and union discriminators", () => {

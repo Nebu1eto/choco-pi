@@ -10,6 +10,8 @@ export interface ToolContextFixtureOptions {
   tools?: ExtensionToolContext["tools"];
   /** Backs `executeTool()`; without it, any nested call fails the test. */
   executeTool?: ExtensionToolContext["executeTool"];
+  /** Backs `sessionManager`; without it, any access fails the test. */
+  sessionManager?: ExtensionToolContext["sessionManager"];
 }
 
 /** A structurally complete tool context whose unused host services fail loudly. */
@@ -17,6 +19,7 @@ export function createToolContextFixture(
   options: ToolContextFixtureOptions = {},
 ): ExtensionToolContext {
   const callable = options.tools ?? [];
+  const sessionManager = options.sessionManager;
   return {
     get ui(): ExtensionToolContext["ui"] {
       return unexpectedHostService("ui");
@@ -25,7 +28,7 @@ export function createToolContextFixture(
     hasUI: false,
     cwd: options.cwd ?? "/tmp",
     get sessionManager(): ExtensionToolContext["sessionManager"] {
-      return unexpectedHostService("sessionManager");
+      return sessionManager ?? unexpectedHostService("sessionManager");
     },
     get modelRegistry(): ExtensionToolContext["modelRegistry"] {
       return unexpectedHostService("modelRegistry");

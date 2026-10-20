@@ -10,7 +10,7 @@ export const CODE_MODE_DIRECT_EXCEPTIONS =
   "Use direct tools only for approvals, native artifacts, citations, one decision-gating result, or capabilities unavailable in code mode";
 
 const CODE_MODE_RUNTIME_CONTRACTS = `notify(value) rejects empty or whitespace-only text; guard before calling.
-Only exposed tools are callable via tools.<name>; direct-only Pi tools must be called outside exec.`;
+Only exposed tools are callable via tools.<name>; direct-only Pi tools must be called outside exec. ALL_TOOLS.direct_only names them.`;
 
 export const EXEC_DESCRIPTION = `Run JavaScript source only; no JSON/fences
 Follow the <code_mode_tools> system block for routing and composition guidance.

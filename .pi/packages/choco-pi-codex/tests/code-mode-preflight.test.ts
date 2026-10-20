@@ -92,6 +92,8 @@ test("unconditional top-level tool typos report close matches", () => {
   assert.match(message, /\[unknown_tool\]/);
   assert.match(message, /unconditional top-level reference/);
   assert.match(message, /get_subagent_result/);
+  assert.match(message, /See ALL_TOOLS for the full catalog\./);
+  assert.doesNotMatch(message, /Available tools/);
   assert.match(message, /Outside code mode: no/);
 });
 

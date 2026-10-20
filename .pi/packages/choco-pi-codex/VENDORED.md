@@ -1028,3 +1028,30 @@ Subagent children run in the same process and load every extension again.
 
 Tests: `tests/code-mode-bridge-session-affinity.test.ts`,
 `tests/child-load-preferences.test.ts`.
+
+## choco-pi patch: exec session id, direct-only tools, compact unavailable-tool errors
+
+- `tools/exec/command-tool.ts`: each `exec_command` call passes
+  `PI_SESSION_ID` from the executing context's `sessionManager.getSessionId()`
+  as per-call env, mirroring Pi's bash tool (`resolveSpawnContext`). Per-call
+  env overrides the cached base env, so `setBaseEnv` refreshes cannot clobber
+  it; `process.env` is never written because subagent sessions share the
+  process.
+- `tools/code-mode/tool-source.ts`, `tools-namespace.ts`: registered Pi tools
+  in `BRIDGE_EXCLUDED_TOOLS` that the cell lacks are exposed as the
+  non-enumerable, frozen `ALL_TOOLS.direct_only` (the catalog stays an array).
+  The runtime guard answers those names with one line,
+  `tools.<name> is direct-only; call it natively outside exec.`; other
+  unavailable names get at most three close matches and
+  `See ALL_TOOLS for the full catalog.` instead of the full cell tool list.
+  `source-preflight.ts` `[unknown_tool]` drops its full list the same way.
+- `custom-tool-prompt.ts`: the runtime contract appends
+  `ALL_TOOLS.direct_only names them.`, leaving the existing sentence intact.
+
+Tests: `tests/exec-command-session-env.test.ts`,
+`tests/code-mode-tools-guard.test.ts`, `tests/code-mode-preflight.test.ts`.
+
+- choco-pi-subagents' read-only `subagent_tree` and `get_subagent_status`
+  stay out of `BRIDGE_EXCLUDED_TOOLS` and are callable as `tools.<name>` in
+  exec; consume-once `get_subagent_result` stays excluded
+  (`tests/code-mode-bridge-exclusions.test.ts`).

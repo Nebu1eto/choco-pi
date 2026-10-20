@@ -160,8 +160,8 @@ function validateToolCalls(
     throw new Error(
       [
         `Code mode source preflight [unknown_tool] at line ${tokens[index + 2]!.line}: tools.${name} is an unconditional top-level reference, but ${name} is not registered in this cell or as a direct Pi tool.`,
-        `Available tools in this cell: ${available.length > 0 ? available.join(", ") : "(none)"}.`,
         `Close matches: ${suggestions.length > 0 ? suggestions.join(", ") : "(none)"}.`,
+        "See ALL_TOOLS for the full catalog.",
         `Outside code mode: no — ${name} is not registered as a direct Pi tool either.`,
       ].join(" "),
     );

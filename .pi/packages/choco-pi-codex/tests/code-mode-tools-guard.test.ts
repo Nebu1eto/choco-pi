@@ -10,6 +10,7 @@ import {
 } from "../src/adapter/code-mode/session-tool-permissions.ts";
 import { buildCodexSystemPrompt } from "../src/prompt/build-system-prompt.ts";
 import { buildCodeModeToolsPrompt } from "../src/tools/code-mode/custom-tool-prompt.ts";
+import { scopeAllToolsToDeferredCustom } from "../src/tools/code-mode/tool-source.ts";
 import { unavailableToolsGuardPreamble } from "../src/tools/code-mode/tools-namespace.ts";
 import type { ProgrammaticCodeModeToolDefinition } from "../src/tools/code-mode/types.ts";
 
@@ -142,12 +143,66 @@ test("the cell preamble explains unavailable tools namespace members", () => {
     (error: Error) => {
       assert.match(error.message, /\[unavailable_tool\]/);
       assert.match(error.message, /tools\.module_report is not available in this cell/);
-      assert.match(error.message, /Available tools: apply_patch, exec_command, write_stdin/);
       assert.match(error.message, /Close matches:/);
+      assert.match(error.message, /See ALL_TOOLS for the full catalog\./);
+      assert.doesNotMatch(error.message, /Available tools|apply_patch, exec_command/);
       assert.match(error.message, /Outside code mode: no/);
       return true;
     },
   );
+});
+
+test("the runtime guard limits suggestions to the three closest names", () => {
+  const names = Array.from({ length: 300 }, (_, index) => `tool_${index}`);
+  const source = `${unavailableToolsGuardPreamble(names)}tools.tool_x();`;
+  assert.throws(
+    () => runInNewContext(source, { tools: Object.fromEntries(names.map((n) => [n, () => {}])) }),
+    (error: Error) => {
+      const matches = /Close matches: ([^.]*)\./.exec(error.message)?.[1] ?? "";
+      assert.equal(matches.split(", ").length, 3);
+      assert.ok(error.message.length < 400, `message is ${error.message.length} chars`);
+      return true;
+    },
+  );
+});
+
+test("the runtime guard answers direct-only tools in one catalog-free line", () => {
+  const source = `${unavailableToolsGuardPreamble(
+    ["exec_command", "get_subagent_results"],
+    ["exec_command", "get_subagent_result", "read"],
+    ["get_subagent_result"],
+  )}tools.get_subagent_result({ agent_id: "a" });`;
+  assert.throws(
+    () => runInNewContext(source, { tools: { exec_command() {}, get_subagent_results() {} } }),
+    (error: Error) => {
+      assert.equal(
+        error.message,
+        "Code mode tool error [unavailable_tool]: tools.get_subagent_result is direct-only; call it natively outside exec.",
+      );
+      return true;
+    },
+  );
+});
+
+test("ALL_TOOLS.direct_only lists registered tools excluded from the bridge", () => {
+  const source = scopeAllToolsToDeferredCustom(
+    "text(JSON.stringify({ direct: ALL_TOOLS.direct_only, names: ALL_TOOLS.map(({ name }) => name) }));",
+    [],
+    undefined,
+    ["exec", "exec_command", "get_subagent_result", "read", "symbol_search"],
+  );
+  let emitted = "";
+  runInNewContext(source, {
+    ALL_TOOLS: [{ name: "symbol_search" }],
+    tools: {},
+    text(value: string) {
+      emitted = value;
+    },
+  });
+  assert.deepEqual(JSON.parse(emitted), {
+    direct: ["exec", "exec_command", "get_subagent_result"],
+    names: [],
+  });
 });
 
 test("the runtime guard leaves unavailable tools in untaken branches untouched", () => {
