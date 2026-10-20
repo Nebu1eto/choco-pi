@@ -212,7 +212,7 @@ test("agent files: deprecated aliases promote, unknown keys and shadowing warn",
   assert.equal(warnings.length, before);
 });
 
-test("agent files: a symlinked duplicate does not warn as shadowing, a distinct file does", async (t) => {
+test("agent files: a symlinked or identical duplicate does not warn as shadowing, a distinct file does", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "choco-pi-shadow-symlink-"));
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   const warnings: string[] = [];
@@ -232,6 +232,9 @@ test("agent files: a symlinked duplicate does not warn as shadowing, a distinct 
   process.env.PI_CODING_AGENT_DIR = join(root, "agent-home");
   await writeFile(join(globalAgents, "linked.md"), "---\nmodel: prov/linked\n---\nlinked");
   await symlink(join(globalAgents, "linked.md"), join(projectAgents, "linked.md"));
+  const copied = "---\nmodel: prov/copied\n---\ncopied";
+  await writeFile(join(globalAgents, "copied.md"), copied);
+  await writeFile(join(projectAgents, "copied.md"), copied);
   await writeFile(join(globalAgents, "distinct.md"), "---\nmodel: prov/global\n---\nglobal");
   await writeFile(join(projectAgents, "distinct.md"), "---\nmodel: prov/project\n---\nproject");
   console.warn = (message: string) => {
@@ -241,6 +244,8 @@ test("agent files: a symlinked duplicate does not warn as shadowing, a distinct 
   const agents = loadCustomAgents(join(root, "project"));
 
   assert.equal(agents.get("linked")?.model, "prov/linked");
+  assert.equal(agents.get("copied")?.model, "prov/copied");
+  assert.equal(agents.get("copied")?.sourcePath, join(projectAgents, "copied.md"));
   assert.equal(agents.get("distinct")?.model, "prov/project");
   const shadowWarnings = warnings.filter((w) => w.includes("shadowing"));
   assert.deepEqual(shadowWarnings.length, 1, warnings.join("\n"));

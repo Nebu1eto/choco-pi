@@ -1,13 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type {
-  AgentSession,
-  ExtensionAPI,
-  ExtensionContext,
-  ToolDefinition,
-} from "@earendil-works/pi-coding-agent";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import type { AgentSession, ToolDefinition } from "@earendil-works/pi-coding-agent";
 
+import { AgentManager, type AgentManagerRunner } from "../src/agent-manager.ts";
 import { computeChildToolGate } from "../src/agent-runner.ts";
 import subagentsExtension from "../src/index.ts";
 import {
@@ -18,15 +15,10 @@ import {
   TERMINAL_REASON_LIMIT,
 } from "../src/subagent-tree.ts";
 import type { AgentRecord } from "../src/types.ts";
-import { toolContext } from "./fixtures/tool-context.ts";
-
-function partialFixture<T extends object>(fixture: Partial<T>): T {
-  // SAFETY: Each test supplies the exact structural slice exercised by its subject.
-  return fixture as T;
-}
+import { createSdkFixture } from "./sdk-fixture.ts";
 
 function record(id: string, options: Partial<AgentRecord> = {}): AgentRecord {
-  return partialFixture<AgentRecord>({
+  const base: AgentRecord = {
     id,
     type: "implementer",
     handle: id,
@@ -38,23 +30,33 @@ function record(id: string, options: Partial<AgentRecord> = {}): AgentRecord {
     compactionCount: 0,
     depth: 1,
     resultGeneration: 1,
-    ...options,
-  });
+  };
+  return { ...base, ...options };
 }
 
-function nestedFixture(): AgentRecord[] {
+/** A model the live-session fixture runs on; nothing calls its provider. */
+const liveModel: Model<Api> = {
+  id: "claude-x",
+  name: "Claude X",
+  provider: "anthropic",
+  api: "anthropic-messages",
+  baseUrl: "https://api.anthropic.com",
+  reasoning: true,
+  input: ["text"],
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  contextWindow: 200_000,
+  maxTokens: 32_000,
+};
+
+/** `session` is the live session of the top record, when a test reads its model. */
+function nestedFixture(session?: AgentSession): AgentRecord[] {
   return [
     record("top", {
       alias: "lead",
       startedAt: 1_000,
       toolUses: 4,
       lifetimeUsage: { input: 100, output: 20, cacheWrite: 5 },
-      session: partialFixture<AgentSession>({
-        model: partialFixture<NonNullable<AgentSession["model"]>>({
-          provider: "anthropic",
-          id: "claude-x",
-        }),
-      }),
+      session,
     }),
     record("child", {
       alias: "worker",
@@ -72,8 +74,10 @@ function nestedFixture(): AgentRecord[] {
   ];
 }
 
-test("subagent_tree view nests descendants with status fields and bounded reasons", () => {
-  const view = buildSubagentTree(nestedFixture(), { now: 10_000 });
+test("subagent_tree view nests descendants with status fields and bounded reasons", async (t) => {
+  const live = await createSdkFixture(liveModel);
+  t.after(() => live.session.dispose());
+  const view = buildSubagentTree(nestedFixture(live.session), { now: 10_000 });
   assert.equal(view.kind, "ok");
   if (view.kind !== "ok") return;
   const lines = view.text.split("\n");
@@ -192,110 +196,91 @@ test("children never inherit the root-only tree tools", () => {
 
 // ---- registered production tools ----
 
-interface GlobalManagerEntry {
-  waitForAll(): Promise<void>;
-  spawn(
-    pi: ExtensionAPI,
-    ctx: ExtensionContext,
-    type: string,
-    prompt: string,
-    options: { description: string; isBackground: boolean; isolated: boolean },
-  ): string;
-}
-
-type RuntimeValue = {} | null | undefined;
-type LifecycleHandler = (...args: RuntimeValue[]) => RuntimeValue | Promise<RuntimeValue>;
-
-function asExtensionAPI(value: RuntimeValue): ExtensionAPI {
-  // SAFETY: The fixture implements every ExtensionAPI member exercised by this test.
-  return value as ExtensionAPI;
-}
-
-function asExtensionContext(value: RuntimeValue): ExtensionContext {
-  // SAFETY: Session binding reads only these members; child setup is deliberately
-  // incomplete so the spawned run settles as an error.
-  return value as ExtensionContext;
-}
-
 function resultText(result: Awaited<ReturnType<ToolDefinition["execute"]>>): string {
   const first = result.content[0];
   return first?.type === "text" ? first.text : "";
 }
 
-test("registered tree and status tools read records without consuming results", async () => {
-  const key = Symbol.for("pi-subagents:manager");
-  // SAFETY: This test reads only the package's documented process-global manager slot.
-  const registry = globalThis as typeof globalThis & {
-    [registryKey: symbol]: GlobalManagerEntry | undefined;
+test("registered tree and status tools read records without consuming results", async (t) => {
+  const fixture = await createSdkFixture(undefined, [subagentsExtension]);
+  t.after(() => fixture.session.dispose());
+  // refreshOnCreate is off in the SDK fixture; populate availability offline.
+  await fixture.ctx.modelRegistry.refresh({ allowNetwork: false });
+  // The child run fails deterministically at the runner seam, before any provider call.
+  const runner: AgentManagerRunner = {
+    runAgent: async () => {
+      throw new Error("tree probe failure");
+    },
+    resumeAgent: async () => {
+      throw new Error("tree probe never resumes");
+    },
   };
-  const handlers = new Map<string, LifecycleHandler>();
-  const tools = new Map<string, ToolDefinition>();
-  const noop = () => undefined;
-  const pi = asExtensionAPI({
-    events: { emit: noop, on: () => noop },
-    on: (name: string, handler: LifecycleHandler) => handlers.set(name, handler),
-    registerCommand: noop,
-    registerMessageRenderer: noop,
-    registerTool: (tool: ToolDefinition) => tools.set(tool.name, tool),
-    appendEntry: noop,
-    sendMessage: noop,
+  const spawn = AgentManager.prototype.spawn;
+  const spawningManagers = new Set<AgentManager>();
+  t.mock.method(
+    AgentManager.prototype,
+    "spawn",
+    function (this: AgentManager, ...args: Parameters<AgentManager["spawn"]>) {
+      spawningManagers.add(this);
+      assert.equal(Reflect.set(this, "runner", runner), true);
+      return spawn.apply(this, args);
+    },
+  );
+  const host = fixture.session.extensionRunner;
+  const tool = (name: string): ToolDefinition => {
+    const found = host.getToolDefinition(name);
+    assert.ok(found, name);
+    return found;
+  };
+  const execute = (
+    name: string,
+    toolCallId: string,
+    params: Record<string, string | boolean | string[]>,
+  ) => {
+    const signal = new AbortController().signal;
+    return tool(name).execute(
+      toolCallId,
+      params,
+      signal,
+      () => undefined,
+      host.createToolContext(toolCallId, signal),
+    );
+  };
+
+  const started = await execute("Agent", "spawn", {
+    prompt: "tree probe",
+    description: "tree probe",
+    subagent_type: "implementer",
+    model: "anthropic/claude-opus-4-5",
+    thinking: "low",
+    run_in_background: true,
+    isolated: true,
   });
-  subagentsExtension(pi);
-  const manager = registry[key];
+  const [manager] = spawningManagers;
+  assert.equal(spawningManagers.size, 1, resultText(started));
   assert.ok(manager);
-  const treeTool = tools.get("subagent_tree");
-  const statusTool = tools.get("get_subagent_status");
-  const resultTool = tools.get("get_subagent_result");
-  assert.ok(treeTool && statusTool && resultTool);
   try {
-    const context = asExtensionContext({
-      cwd: process.cwd(),
-      sessionManager: { getSessionId: () => "subagent-tree-probe", getEntries: () => [] },
-    });
-    const start = handlers.get("session_start");
-    assert.ok(start);
-    await start({}, context);
-    const id = manager.spawn(pi, context, "implementer", "tree probe", {
-      description: "tree probe",
-      isBackground: true,
-      isolated: true,
-    });
+    const [spawned] = manager.listAgents();
+    assert.ok(spawned);
+    const id = spawned.id;
     await manager.waitForAll();
 
-    const tree = await treeTool.execute("tree", {}, undefined, undefined, toolContext(context));
+    const tree = await execute("subagent_tree", "tree", {});
     assert.match(
       resultText(tree),
       new RegExp(`- (\\S+ \\()?${id}\\)? \\[implementer\\] \\| status=error`),
     );
-    const status = await statusTool.execute(
-      "status",
-      { ids: [id, "missing-agent"] },
-      undefined,
-      undefined,
-      toolContext(context),
-    );
+    const status = await execute("get_subagent_status", "status", {
+      ids: [id, "missing-agent"],
+    });
     assert.match(resultText(status), /status=error/);
     assert.match(resultText(status), /missing-agent \| status=unknown/);
-    const missingRoot = await treeTool.execute(
-      "tree-missing",
-      { root: "missing-agent" },
-      undefined,
-      undefined,
-      toolContext(context),
-    );
+    const missingRoot = await execute("subagent_tree", "tree-missing", { root: "missing-agent" });
     assert.equal("isError" in missingRoot && missingRoot.isError, true);
 
-    const terminal = await resultTool.execute(
-      "terminal-first",
-      { agent_id: id },
-      undefined,
-      undefined,
-      toolContext(context),
-    );
+    const terminal = await execute("get_subagent_result", "terminal-first", { agent_id: id });
     assert.match(resultText(terminal), /Status: error/, "result is still unconsumed");
   } finally {
-    const shutdown = handlers.get("session_shutdown");
-    assert.ok(shutdown);
-    await shutdown();
+    manager.dispose();
   }
 });

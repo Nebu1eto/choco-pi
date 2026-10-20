@@ -5,6 +5,7 @@ import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { AgentManager } from "../src/agent-manager.ts";
 import { publishTerminalResult } from "../src/result-read.ts";
 import type { AgentRecord } from "../src/types.ts";
+import { createSdkFixture } from "./sdk-fixture.ts";
 
 function partialFixture<T extends object>(fixture: Partial<T>): T {
   // SAFETY: Each test supplies the exact session slice exercised by resumeAgent.
@@ -232,7 +233,9 @@ test("resume with the child's current model does not switch; a different one doe
   }
 });
 
-test("a synchronous start failure reports the created record's id and alias before rethrowing", () => {
+test("a synchronous start failure reports the created record's id and alias before rethrowing", async (t) => {
+  const host = await createSdkFixture();
+  t.after(() => host.session.dispose());
   const manager = new AgentManager(undefined, 8);
   Object.defineProperty(manager, "startAgent", {
     value: () => {
@@ -242,9 +245,8 @@ test("a synchronous start failure reports the created record's id and alias befo
   const failures: Array<{ id: string; alias?: string; reason: string }> = [];
   try {
     assert.throws(
-      // SAFETY: startAgent is replaced above, so the placeholder hosts are never observed.
       () =>
-        manager.spawn({} as never, {} as never, "implementer", "work", {
+        manager.spawn(host.pi, host.ctx, "implementer", "work", {
           description: "work",
           name: "start-fails",
           isBackground: false,

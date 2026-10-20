@@ -2,7 +2,7 @@
  * custom-agents.ts — Load user-defined agents from project (.pi/agents/, plus the shared .agents/agents/ workspace) and global ($PI_CODING_AGENT_DIR/agents/, default ~/.pi/agent/agents/) locations.
  */
 
-import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -110,6 +110,8 @@ const KNOWN_FRONTMATTER_KEYS: ReadonlySet<string> = new Set([
 interface ParsedAgentFile {
   frontmatter: AgentFrontmatter;
   body: string;
+  /** The raw file text, kept so a same-content shadow is not reported. */
+  text: string;
 }
 
 interface ParsedToolsField {
@@ -203,11 +205,11 @@ function loadFromDir(
 
     warnUnknownKeys(path, fm);
     warnDeprecatedModelKeys(path, fm);
-    warnShadowed(name, path, agents);
+    warnShadowed(name, path, parsed.text, agents);
 
     const { builtinToolNames, extSelectors } = parseToolsField(fm.tools);
 
-    agents.set(name, {
+    const config: AgentConfig = {
       name,
       // Only `display_name` now: `name` is the type, and `getConfig` already
       // falls back to the type when no label is set — so a Claude Code file
@@ -244,7 +246,9 @@ function loadFromDir(
       internal: fm.internal === true,
       source,
       sourcePath: path,
-    });
+    };
+    sourceTextOf.set(config, parsed.text);
+    agents.set(name, config);
   }
 }
 
@@ -262,7 +266,8 @@ function loadFromDir(
  */
 function readAgentFile(path: string, strict: boolean): ParsedAgentFile | undefined {
   try {
-    return parseFrontmatter<AgentFrontmatter>(readFileSync(path, "utf-8"));
+    const text = readFileSync(path, "utf-8");
+    return { ...parseFrontmatter<AgentFrontmatter>(text), text };
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     if (strict) throw new Error(`${path}: ${reason}`);
@@ -290,24 +295,24 @@ function warnSkippedOverride(name: string, agents: Map<string, AgentConfig>): vo
  * shared `.agents/agents` role file without a model is not a silent
  * substitution of the global role that declared one.
  */
-function warnShadowed(name: string, path: string, agents: Map<string, AgentConfig>): void {
-  const shadowed = agents.get(name)?.sourcePath;
-  if (shadowed === undefined || shadowed === path) return;
+function warnShadowed(
+  name: string,
+  path: string,
+  text: string,
+  agents: Map<string, AgentConfig>,
+): void {
+  const previous = agents.get(name);
+  const shadowed = previous?.sourcePath;
+  if (previous === undefined || shadowed === undefined || shadowed === path) return;
   // A symlinked role file (e.g. ~/.pi/agent/agents/x.md -> <repo>/.pi/agents/x.md)
-  // is the same definition reached twice, not a substitution.
-  if (realPathOf(shadowed) === realPathOf(path)) return;
+  // or an identical copy is the same definition reached twice, not a
+  // substitution. Comparing the text already read needs no extra filesystem call.
+  if (sourceTextOf.get(previous) === text) return;
   warnIfNew(`Agent "${name}" loads from ${path}, shadowing ${shadowed}`);
 }
 
-/** Resolve symlinks; an unresolvable path compares as itself. */
-function realPathOf(path: string): string {
-  try {
-    // Sync to match this loader: loadCustomAgents is synchronous end to end.
-    return realpathSync(path);
-  } catch {
-    return path;
-  }
-}
+/** Raw file text per loaded config; private so AgentConfig stays unchanged. */
+const sourceTextOf = new WeakMap<AgentConfig, string>();
 
 function warnUnknownKeys(path: string, fm: AgentFrontmatter): void {
   for (const key of Object.keys(fm)) {

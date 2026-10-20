@@ -573,9 +573,10 @@ replaces a lower-priority definition of the same name warns
 `Agent "X" loads from <path>, shadowing <other path>` (no merge), and unknown
 frontmatter keys warn, with a snake_case hint for camelCase spellings such as
 `disallowedTools`. `persona` is known: choco-pi's agent-preferences extension
-reads it. The shadow warning compares real paths first (`realpathSync`, the
-loader being synchronous), so a file reached through a symlink in another agent
-directory is the same definition and warns nothing.
+reads it. The shadow warning first compares the text the loader already read
+(kept in a private side map, not on `AgentConfig`, and with no extra filesystem
+call), so a file reached through a symlink in another agent directory, or an
+identical copy, is the same definition and warns nothing.
 
 Every spawn result (background and foreground, top-level and nested), the
 `subagents:record` journal entry (`modelProvenance`, `modelLine`, and `alias`)
