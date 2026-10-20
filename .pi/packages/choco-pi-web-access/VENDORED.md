@@ -217,3 +217,19 @@ Display-only edits so the new family type-checks and renders:
 - `curator-page.ts` / `curator-server.ts`: xAI provider button, client provider list and
   label, and server-side availability check.
 - `tests/search-routing.test.ts`: provider-list and schema expectations include `xai`.
+
+## 2026-10-21 choco-pi patch: stored-result recovery and fetch continuation
+
+- `storage.ts`: `resolveStoredResult(id)` falls back to the on-disk fetch cache
+  (`<id>.json`, async `node:fs/promises` read with the same no-symlink/inode checks) when the
+  in-memory map misses, and rehydrates the map on a hit. A remaining miss reports
+  `not in memory (reset by <session_start|session_tree|shutdown|delete|unknown>); disk: hit|miss|expired`.
+  `restoreFromSession`, `clearResults`, and `deleteResult` record the last reset reason and log
+  `[pi-web-access] stored results reset by <reason>; dropped <n> id(s)` through `console.error`
+  when `n > 0`. Only fetch results are cached on disk; search and research results remain memory/session only.
+- `index.ts`: `get_search_content` uses `resolveStoredResult`; session_start/session_tree/shutdown
+  pass their reset reason. The multi-URL `fetch_content` summary (new `fetch-continuation.ts`)
+  lists each URL's index, offset 0 and stored length, and the exact
+  `get_search_content({ responseId, urlIndex, offset, limit })` call; the tool description states the
+  continuation contract in one sentence.
+- Added `tests/stored-result-recovery.test.ts`.

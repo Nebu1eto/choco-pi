@@ -52,13 +52,15 @@ import {
   deleteResult,
   generateId,
   getAllResults,
-  getResult,
+  resolveStoredResult,
   restoreFromSession,
   storeFetchedContentResult,
   storeResult,
   type QueryResultData,
+  type ResultsResetReason,
   type StoredSearchData,
 } from "./storage.ts";
+import { formatMultiUrlFetchSummary, type FetchSummaryRetrieval } from "./fetch-continuation.ts";
 import { activityMonitor, type ActivityEntry } from "./activity.ts";
 import {
   startCuratorServer,
@@ -1302,12 +1304,12 @@ function formatEntryLine(entry: ActivityEntry, theme: ExtensionTheme): string {
   return `${typeStr.padEnd(4)} ${target.padEnd(32)} ${statusStr.padStart(5)} ${duration.padStart(5)} ${indicator}`;
 }
 
-function handleSessionChange(ctx: ExtensionContext): void {
+function handleSessionChange(ctx: ExtensionContext, reason: ResultsResetReason): void {
   abortPendingFetches();
   closeCurator();
   clearCloneCache();
   sessionActive = true;
-  restoreFromSession(ctx);
+  restoreFromSession(ctx, reason);
   // Unsubscribe before clear() to avoid callback with stale ctx
   widgetUnsubscribe?.();
   widgetUnsubscribe = null;
@@ -2151,11 +2153,11 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     clearPublishedReferences();
-    handleSessionChange(ctx);
+    handleSessionChange(ctx, "session_start");
   });
   pi.on("session_tree", async (_event, ctx) => {
     clearPublishedReferences();
-    handleSessionChange(ctx);
+    handleSessionChange(ctx, "session_tree");
   });
 
   pi.on("session_shutdown", () => {
@@ -2164,7 +2166,7 @@ export default function (pi: ExtensionAPI) {
     abortPendingFetches();
     closeCurator();
     clearCloneCache();
-    clearResults();
+    clearResults("shutdown");
     // Unsubscribe before clear() to avoid callback with stale ctx
     widgetUnsubscribe?.();
     widgetUnsubscribe = null;
@@ -3155,7 +3157,7 @@ export default function (pi: ExtensionAPI) {
     pi.registerTool({
       name: toolNames.fetchContent,
       label: "Fetch Content",
-      description: "Fetch readable, raw, or question-focused URL content.",
+      description: `Fetch readable, raw, or question-focused URL content; long or multi-URL output is stored and its footer gives the exact ${toolNames.getSearchContent} responseId/urlIndex/offset call to continue.`,
       promptSnippet: "Fetch readable or raw content from URLs.",
       parameters: Type.Object({
         url: Type.Optional(Type.String({ description: "Single URL to fetch" })),
@@ -3369,20 +3371,28 @@ export default function (pi: ExtensionAPI) {
           return { content, details: successDetails };
         }
 
-        // Multi-URL: existing behavior (summary + responseId)
-        let output = "## Fetched URLs\n\n";
-        for (const { url, title, content, error } of presentedResults) {
-          if (error) {
-            output += `- ${url}: Error - ${error}\n`;
-          } else {
-            output += `- ${title || url} (${content.length} chars)\n`;
-          }
+        // Multi-URL: summary with per-URL stored length and exact continuation calls.
+        // Offsets index the stored content (data.urls), which answer mode does not replace.
+        let retrieval: FetchSummaryRetrieval = { kind: "cache-off" };
+        if (storedContent && getSearchContentEnabled) {
+          retrieval = {
+            kind: "stored",
+            toolName: toolNames.getSearchContent,
+            responseId,
+            maxSliceChars: getMaxInlineContentChars(),
+          };
+        } else if (storedContent) {
+          retrieval = { kind: "unregistered" };
         }
-        output += storedContent
-          ? getSearchContentEnabled
-            ? `\n---\nUse ${toolNames.getSearchContent}({ responseId: "${responseId}", urlIndex: 0 }) to retrieve bounded content slices.`
-            : "\n---\nContent retrieval is not registered."
-          : "\n---\nAuthenticated fetch cache is off; repeat the fetch to read content.";
+        const output = formatMultiUrlFetchSummary(
+          presentedResults.map((result, index) => ({
+            url: result.url,
+            title: result.title,
+            error: result.error,
+            content: data.urls[index]?.content ?? result.content,
+          })),
+          retrieval,
+        );
 
         const details: DetailObject = {
           urls: urlList,
@@ -3614,18 +3624,24 @@ export default function (pi: ExtensionAPI) {
             details: { error: "findMode requires findText" },
           };
         }
-        const data = getResult(params.responseId);
-        if (!data) {
+        const lookup = await resolveStoredResult(params.responseId);
+        if (!lookup.data) {
           return {
             content: [
               {
                 type: "text",
-                text: `Error: No stored results for responseId ${formatInputValue(params.responseId)}. Use a responseId returned by ${storedContentSources}.`,
+                text: `Error: No stored results for responseId ${formatInputValue(params.responseId)}: ${lookup.message}. Use a responseId returned by ${storedContentSources}.`,
               },
             ],
-            details: { error: "Not found", responseId: params.responseId },
+            details: {
+              error: "Not found",
+              responseId: params.responseId,
+              reset: lookup.reset,
+              disk: lookup.disk,
+            },
           };
         }
+        const data = lookup.data;
 
         if (data.type === "research") {
           const artifact = getResearchArtifact(params.responseId);

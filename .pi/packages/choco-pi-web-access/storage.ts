@@ -14,6 +14,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { lstat, open, type FileHandle } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -101,6 +102,27 @@ export interface StoredSearchData {
 }
 
 const storedResults = new Map<string, StoredSearchData>();
+
+export type ResultsResetReason =
+  | "session_start"
+  | "session_tree"
+  | "shutdown"
+  | "delete"
+  | "unknown";
+export type DiskLookupStatus = "hit" | "miss" | "expired";
+
+let lastResetReason: ResultsResetReason = "unknown";
+
+function recordReset(reason: ResultsResetReason, dropped: number): void {
+  lastResetReason = reason;
+  if (dropped > 0) {
+    console.error(`[pi-web-access] stored results reset by ${reason}; dropped ${dropped} id(s)`);
+  }
+}
+
+export function getLastResetReason(): ResultsResetReason {
+  return lastResetReason;
+}
 
 export function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -626,6 +648,80 @@ export function getResult(id: string): StoredSearchData | null {
   return loaded;
 }
 
+type DiskLookup =
+  | { status: "hit"; data: StoredSearchData & { urls: ExtractedContent[] } }
+  | { status: "miss" | "expired" };
+
+async function readFetchCacheFromDisk(id: string, now: number): Promise<DiskLookup> {
+  if (!CACHE_ID_PATTERN.test(id)) return { status: "miss" };
+  const dir = getFetchCacheDir();
+  const key = `${id}.json`;
+  const path = join(dir, key);
+  let handle: FileHandle | null = null;
+  try {
+    const dirInfo = await lstat(dir);
+    if (dirInfo.isSymbolicLink() || !dirInfo.isDirectory()) return { status: "miss" };
+    const before = await lstat(path);
+    if (before.isSymbolicLink() || !before.isFile()) return { status: "miss" };
+    handle = await open(path, constants.O_RDONLY | O_NOFOLLOW);
+    const info = await handle.stat();
+    if (!info.isFile() || info.dev !== before.dev || info.ino !== before.ino) {
+      return { status: "miss" };
+    }
+    if (now - info.mtimeMs >= CACHE_TTL_MS) return { status: "expired" };
+    const parsed: unknown = JSON.parse(await handle.readFile("utf8"));
+    if (
+      !isValidStoredData(parsed) ||
+      parsed.type !== "fetch" ||
+      parsed.id !== id ||
+      !isInlineFetchData(parsed)
+    ) {
+      return { status: "miss" };
+    }
+    if (now - parsed.timestamp >= CACHE_TTL_MS) return { status: "expired" };
+    return {
+      status: "hit",
+      data: {
+        ...parsed,
+        fetchCache: { version: FETCH_CACHE_VERSION, key, storedAt: info.mtimeMs },
+        urlMetadata: metadataForUrls(parsed.urls),
+      },
+    };
+  } catch {
+    return { status: "miss" };
+  } finally {
+    // A close failure cannot change an already-decided read-only lookup result.
+    if (handle) await handle.close().catch(() => undefined);
+  }
+}
+
+export type StoredResultLookup =
+  | { data: StoredSearchData; source: "memory" | "disk" }
+  | { data: null; reset: ResultsResetReason; disk: DiskLookupStatus; message: string };
+
+/**
+ * Resolve a stored result from memory, falling back to the on-disk fetch cache when the
+ * in-memory map was reset (session start/tree navigation, shutdown, or deletion).
+ */
+export async function resolveStoredResult(id: string): Promise<StoredResultLookup> {
+  const reset = lastResetReason;
+  const memory = getResult(id);
+  if (memory) return { data: memory, source: "memory" };
+  const disk = await readFetchCacheFromDisk(id, Date.now());
+  const raced = getResult(id);
+  if (raced) return { data: raced, source: "memory" };
+  if (disk.status === "hit") {
+    storedResults.set(id, disk.data);
+    return { data: disk.data, source: "disk" };
+  }
+  return {
+    data: null,
+    reset,
+    disk: disk.status,
+    message: `not in memory (reset by ${reset}); disk: ${disk.status}`,
+  };
+}
+
 export function getAllResults(): StoredSearchData[] {
   return Array.from(storedResults.values());
 }
@@ -648,13 +744,19 @@ export function deleteResult(id: string): boolean {
           });
         }
       }
-    } catch {}
+    } catch {
+      // Best-effort unlink: the in-memory entry is still removed, and TTL pruning reclaims the file.
+    }
   }
-  return storedResults.delete(id);
+  const deleted = storedResults.delete(id);
+  recordReset("delete", deleted ? 1 : 0);
+  return deleted;
 }
 
-export function clearResults(): void {
+export function clearResults(reason: ResultsResetReason = "unknown"): void {
+  const dropped = storedResults.size;
   storedResults.clear();
+  recordReset(reason, dropped);
 }
 
 function isSearchResult<Value>(value: Value): value is Value & SearchResult {
@@ -794,7 +896,21 @@ function isValidStoredData<Value>(data: Value): data is Value & StoredSearchData
   return "artifact" in data && isObject(data.artifact);
 }
 
-export function restoreFromSession(ctx: ExtensionContext): void {
+export function restoreFromSession(
+  ctx: ExtensionContext,
+  reason: ResultsResetReason = "unknown",
+): void {
+  const previousIds = new Set(storedResults.keys());
+  try {
+    restoreBranchResults(ctx);
+  } finally {
+    let dropped = 0;
+    for (const id of previousIds) if (!storedResults.has(id)) dropped++;
+    recordReset(reason, dropped);
+  }
+}
+
+function restoreBranchResults(ctx: ExtensionContext): void {
   storedResults.clear();
   const now = Date.now();
   pruneExpiredFetchCache(now);
