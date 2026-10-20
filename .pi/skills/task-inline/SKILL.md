@@ -35,4 +35,6 @@ When the integrated diff contains more than one coherent change, follow the comm
 
 When independent review is selected, prepare the exact `review_base..HEAD` input through `../review/references/review-bundle.md` and give the fresh read-only reviewer only its bundle path and manifest digest. Verify findings yourself before changing code.
 
+Spawn the reviewer with `model` and `thinking` taken from its effective definition shown by the Agent tool; when the definition shows none, choose both per `../../model-guidance.md`. Record `model`, `thinking`, `source: role|chosen|override`, and `reason` for the spawn; a value other than the declared one is an override and needs a reason from `../../model-guidance.md`. On a `Spawn refused` result, pass both and retry in the same turn. Do not set `max_tokens`, `max_tool_calls`, `timeout_ms`, or `idle_timeout_ms` unless the user asked; the first request alone costs roughly 15–25k tokens.
+
 After owned processes stop, release the lease with `node <resolved-script> release --cwd "$PWD"` only when the workflow completes or is deliberately abandoned. If retaining it for recoverable blocked work, report that ownership. Finish only when every required acceptance row is `pass` on the current state or explicitly user-`waived`.

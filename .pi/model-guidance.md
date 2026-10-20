@@ -1,6 +1,6 @@
 # Active-model guidance
 
-This file solely owns choco-pi model routing and model-specific behavioral advice. Role `default_model` and `default_thinking` values remain defaults; override them only for the task, never through an unmeasured universal effort increase.
+This file solely owns choco-pi model routing and model-specific behavioral advice. Role `model` and `thinking` values are defaults that the orchestrator restates on every spawn; override them only for the task, never through an unmeasured universal effort increase.
 
 ## Routing
 
@@ -24,6 +24,21 @@ Routing provenance only (2026-10-16): Pi 1.3.0's `~/.pi/agent/install/releases/1
 Routing provenance only (2026-10-16): Pi 1.3.0 ships provider `xai` (`https://api.x.ai/v1`, API `openai-responses`). `xai/grok-4.7` is the first `lastResort` entry in `.pi/model-fallbacks.json` and appears in no tier, so `fallbackCandidates` offers it only after every same-tier candidate is unavailable, unscoped, or closed. The Sonnet–Opus placement is the repository owner's routing preference, not a benchmark result.
 
 Grok guidance provenance (2026-10-16): the `xai/grok-*` section was written after reading, in full, <https://docs.x.ai/developers/models> (last updated 2026-09-21), <https://docs.x.ai/developers/model-capabilities/text/reasoning>, <https://docs.x.ai/developers/model-capabilities/text/best-practices>, <https://docs.x.ai/developers/pricing>, <https://docs.x.ai/developers/advanced-api-usage/context-compaction>, <https://docs.x.ai/developers/rate-limits>, and the per-model pages <https://docs.x.ai/developers/models/grok-4.7>, `grok-4.6`, `grok-4.5`, and `grok-4.3` under the same path. The grok-4.5 model page lists `xhigh`, but the reasoning guide says grok-4.5 treats `xhigh` as `high`; the section follows the reasoning guide. The Fast sentence (2026-10-17) rests on live api.x.ai responses: `grok-4.7-build-fast` is served by id, unlisted by `/v1/models`, and billed about twice `grok-4.7` for the same prompt.
+
+### When a role file declares no model
+
+This table is the routing reference when a role's effective definition shows no `model` or `thinking`. Pick a model from the named tier above and record the reason in the spawn manifest.
+
+| Role          | Tier      | Default thinking |
+| ------------- | --------- | ---------------- |
+| `explore`     | Utility   | `low`            |
+| `general`     | Workhorse | `medium`         |
+| `implementer` | Workhorse | `medium`         |
+| `planner`     | Flagship  | `medium`         |
+| `reviewer`    | Flagship  | `medium`         |
+| `handoff`     | Workhorse | `low`            |
+
+Routing provenance only (2026-10-20): the table backs the spawn rule in `.pi/SYSTEM.md` and the `task` skill, which pass `model` and `thinking` on every spawn because the subagents setting `requireExplicitModel` (in `.pi/subagents.json`) refuses a fresh spawn that omits either. This routing update does not refresh model source guides or behavioral advice.
 
 ## Runtime sections
 

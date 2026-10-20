@@ -53,6 +53,17 @@ this extension out must stay completely silent.
 queued }`; paths are canonical tree identities and `toId` is undefined for
 `/root`.
 
+`subagent-tree.ts` backs the root-only `subagent_tree` and
+`get_subagent_status` tools. Both read `manager.listAgents()` (nested records
+included) and never touch read claims, consumption, status, or steering, so
+`get_subagent_result` stays direct-children-only and consume-once. The same
+module reports one `subagent-descendant-failure` root message per failed nested
+generation (`error`, `budget_exceeded`, `watchdog_stopped`) with
+`triggerTurn: false`, beside the unchanged owner delivery, and counts failed
+nested records for the fleet status line (`· F failed`). Both tool names sit
+in `SUBAGENT_TOOL_NAMES`, so children never inherit them, and the Codex
+code-mode bridge does not exclude them.
+
 The child-session cleanup bridge is deliberately one-way and optional. The
 subagents package imports neither cleanup implementation; it looks up the shell
 manager and Codex transport process-global registries only at AgentManager-owned
@@ -63,14 +74,14 @@ one malformed or failing registry from blocking the other.
 
 ### Configuration
 
-| Module                                                     | Role                                                                                                                                                                                           |
-| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `custom-agents.ts`                                         | Parses `agents/*.md` frontmatter into `AgentConfig`. Discovery precedence: global < `.agents/agents/` < `.pi/agents/`. Unparseable files are skipped with a warning unless `strictAgentFiles`. |
-| `default-agents.ts`                                        | The three built-ins (`general-purpose`, `Explore`, `Plan`), skipped entirely under `disableDefaultAgents`.                                                                                     |
-| `settings.ts`                                              | `.pi/subagents.json` load/save and the `subagents:settings_loaded` / `changed` events.                                                                                                         |
-| `invocation-config.ts`                                     | Collapses agent frontmatter and caller parameters into one invocation (`resolveAgentInvocationConfig`), and owns the shared `isolation` parameter schema.                                      |
-| `model-resolver.ts`, `model-scope.ts`, `enabled-models.ts` | Forgiving `model:` resolution and the Model Scope gate.                                                                                                                                        |
-| `skill-loader.ts`, `memory.ts`                             | Skill inheritance and per-agent memory scopes.                                                                                                                                                 |
+| Module                                                     | Role                                                                                                                                                                                                                                                                                                                                                                |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `custom-agents.ts`                                         | Parses `agents/*.md` frontmatter into `AgentConfig`. Discovery precedence: global < `.agents/agents/` < `.pi/agents/`; a winner replaces the shadowed file wholesale (no merge) and warns `loads from …, shadowing …`. Unknown keys and deprecated `default_model`/`default_thinking` warn. Unparseable files are skipped with a warning unless `strictAgentFiles`. |
+| `default-agents.ts`                                        | The three built-ins (`general-purpose`, `Explore`, `Plan`), skipped entirely under `disableDefaultAgents`.                                                                                                                                                                                                                                                          |
+| `settings.ts`                                              | `.pi/subagents.json` load/save and the `subagents:settings_loaded` / `changed` events.                                                                                                                                                                                                                                                                              |
+| `invocation-config.ts`                                     | Collapses agent frontmatter and caller parameters into one invocation (`resolveAgentInvocationConfig`), and owns the shared `isolation` parameter schema.                                                                                                                                                                                                           |
+| `model-resolver.ts`, `model-scope.ts`, `enabled-models.ts` | Forgiving `model:` resolution and the Model Scope gate.                                                                                                                                                                                                                                                                                                             |
+| `skill-loader.ts`, `memory.ts`                             | Skill inheritance and per-agent memory scopes.                                                                                                                                                                                                                                                                                                                      |
 
 ### Execution context
 
@@ -115,31 +126,30 @@ so provider/tool loops cannot duplicate reminders inside one agent-run start.
 
 ## The choco-pi role convention is not an upstream feature
 
-`.pi/agents/*.md` in this repository carry `default_model:` and
-`default_thinking:`. **Upstream parses neither**; this fork does, as
-non-pinning defaults.
+Upstream treats frontmatter `model:` / `thinking:` as authoritative. In this
+fork they are **overridable role defaults**, and `model_locked: true` restores
+the pin. `default_model:` / `default_thinking:` are deprecated aliases that
+promote into `model` / `thinking` with a load warning.
 
-`custom-agents.ts` maps them to `AgentConfig.defaultModel` / `.defaultThinking`,
-kept distinct from `model:` / `thinking:` so the precedence stays four-tiered in
-`resolveAgentInvocationConfig` (and mirrored in `runAgent` for direct runner
-callers):
+Precedence in `resolveAgentInvocationConfig` (mirrored in `runAgent` for direct
+runner callers):
 
-1. `model:` / `thinking:` in frontmatter — a hard pin that outranks the caller.
-2. the caller's spawn parameter — how an orchestrator moves a unit off an
-   overloaded provider; it still beats the role default, which is what keeps
-   that fallback usable.
-3. `default_model:` / `default_thinking:` — the role's own preference.
-4. the parent session's model runtime, last.
+| Role file                         | Effective model / thinking              | `modelSource` |
+| --------------------------------- | --------------------------------------- | ------------- |
+| `model_locked: true`              | role value; caller value ignored, noted | `pin`         |
+| not locked, caller passes a value | caller value                            | `caller`      |
+| not locked, caller passes none    | role value                              | `default`     |
+| neither declares a model          | parent session runtime, with a note     | `inherit`     |
 
-Tier 3 is why an omitted `model` no longer inherits the orchestrator's provider:
-before it existed, an Anthropic orchestrator silently produced Anthropic
-children whatever the role declared. Pinning `model:` instead of adding tier 3
-would have made every spawn override inert, which is the trap this split avoids.
-
-`tests/subagent-config.test.ts` pins it: `implementer.model === undefined` and
-`implementer.thinking === undefined` (no pin), the parsed `defaultModel` /
-`defaultThinking`, a caller-supplied model surviving resolution, and the
-no-parameter case resolving to the role default.
+The caller tier is how an orchestrator moves a unit off an overloaded
+provider. `requireExplicitModel` (default on) refuses a fresh `Agent` spawn
+that omits `model` or `thinking`, naming the role's declared values and
+definition file, so a shadowing `.agents/agents` file without a model cannot
+silently hand the child the orchestrator's model. Resume, `/btw`, RPC,
+schedules and workflow steps are exempt. Every spawn result, the
+`subagents:record` entry and the completion notification carry a
+`Model: … (source: …) · thinking: … · definition: …` line.
+`tests/model-defaults.test.ts` covers the table.
 
 ## Seam A — focused agent fullscreen takeover
 

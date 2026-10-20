@@ -9,6 +9,7 @@ import {
 import subagentsExtension, { buildRecordDetails, delegationRenderers } from "../src/index.ts";
 import { AgentManager } from "../src/agent-manager.ts";
 import { createNestedSubagentTools, type NestedAgentManager } from "../src/nested-tools.ts";
+import { setRequireExplicitModel } from "../src/invocation-config.ts";
 import { publishTerminalResult, TERMINAL_RESULT_RETRIEVAL_GUIDANCE } from "../src/result-read.ts";
 import type { AgentRecord } from "../src/types.ts";
 import { createSdkFixture } from "./sdk-fixture.ts";
@@ -101,6 +102,9 @@ const renderContext = {
 for (const background of [false, true]) {
   test(`nested ${background ? "background" : "foreground"} spawn shares root details and card renderers`, async () => {
     const fixture = await createSdkFixture();
+    // This test exercises the role-default path, which requireExplicitModel
+    // would refuse before it resolves anything.
+    setRequireExplicitModel(false);
     try {
       const parent = recordFixture("parent");
       const child = recordFixture("child", parent.id);
@@ -136,16 +140,22 @@ for (const background of [false, true]) {
       const parentModel = fixture.ctx.model;
       assert.ok(parentModel, "fixture session has a model");
       const modelNote = `Note: agent "implementer" default model "anthropic/claude-opus-5-5" is not available; running on ${parentModel.provider}/${parentModel.id} instead.\n\n`;
-      assert.deepEqual(result.content, [
-        {
-          type: "text",
-          text:
-            modelNote +
-            (background
-              ? `Nested agent started in background. Agent ID: child\n${TERMINAL_RESULT_RETRIEVAL_GUIDANCE} Use steer_subagent to send it a message mid-run.`
-              : "Card output."),
-        },
-      ]);
+      assert.equal(result.content.length, 1);
+      const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+      const modelLine = new RegExp(
+        `Model: ${parentModel.provider}/${parentModel.id} \\(source: inherit\\) · thinking: \\S+ · definition: \\S+implementer\\.md\\n`,
+      );
+      assert.ok(text.startsWith(modelNote), text);
+      assert.match(text, modelLine);
+      assert.ok(
+        text.endsWith(
+          background
+            ? `\n${TERMINAL_RESULT_RETRIEVAL_GUIDANCE} Use steer_subagent to send it a message mid-run.`
+            : "\nCard output.",
+        ),
+        text,
+      );
+      if (background) assert.match(text, /Nested agent started in background\. Agent ID: child\n/);
       assert.equal(agent.renderCall, delegationRenderers.renderCall);
       assert.equal(agent.renderResult, delegationRenderers.renderResult);
       const options = { expanded: false, isPartial: false };
@@ -155,6 +165,7 @@ for (const background of [false, true]) {
         background ? /Running in background \(ID: child\)/ : /Done/,
       );
     } finally {
+      setRequireExplicitModel(true);
       fixture.session.dispose();
     }
   });

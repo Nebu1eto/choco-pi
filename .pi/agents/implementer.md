@@ -1,7 +1,7 @@
 ---
 description: Implementation leaf that supports caller-selected model and effort, edits only its assigned scope, and returns risk-based evidence
-default_model: anthropic/claude-opus-5-5
-default_thinking: medium
+model: anthropic/claude-opus-5-5
+thinking: medium
 allowed_subagents: "*"
 prompt_mode: append
 skills: true

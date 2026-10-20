@@ -737,3 +737,19 @@ test("one unref timer ticks while rows exist and stops when roster empties", asy
     view.panel.dispose();
   }
 });
+
+test("status line appends the failed-descendant count", () => {
+  const view = mount({
+    records: [
+      agent("lead"),
+      agent("worker", "worker", { parentAgentId: "lead", depth: 2, status: "error" }),
+      agent("budget", "budget", { parentAgentId: "lead", depth: 2, status: "budget_exceeded" }),
+      agent("done", "done", { parentAgentId: "lead", depth: 2, status: "completed" }),
+    ],
+  });
+  try {
+    assert.equal(view.statuses.at(-1), "1 scheduled / cap 8 · 2 failed");
+  } finally {
+    view.panel.dispose();
+  }
+});

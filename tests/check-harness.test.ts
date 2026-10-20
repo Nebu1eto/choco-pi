@@ -231,7 +231,7 @@ test("subagent readiness accepts only supported fallback roles", async () => {
           return JSON.stringify({ disableDefaultAgents: true, fallbackSubagent });
         }
         if (target.startsWith(path.join(root, "agents"))) {
-          return "---\ndefault_model: test/model\ndefault_thinking: medium\n---\n";
+          return "---\nmodel: test/model\nthinking: medium\n---\n";
         }
         throw new Error(`missing fixture: ${target}`);
       },
@@ -239,6 +239,35 @@ test("subagent readiness accepts only supported fallback roles", async () => {
     const report = await checkHarness(options);
 
     assert.equal(report.checks.find((check) => check.id === "subagents")?.status, expected);
+  }
+});
+
+test("subagent readiness requires overridable model and thinking on every role", async () => {
+  for (const [role, expected] of [
+    ["---\nmodel: test/model\nthinking: medium\n---\n", "pass"],
+    ["---\nmodel: test/model\n---\n", "fail"],
+    ["---\ndefault_model: test/model\ndefault_thinking: medium\n---\n", "fail"],
+    ["---\nmodel: test/model\nthinking: medium\nmodel_locked: true\n---\n", "fail"],
+  ] as const) {
+    const { options } = fixture({
+      requiredCapabilities: ["subagents"],
+      readText: async (target) => {
+        if (target === path.join(root, "settings.json")) {
+          return JSON.stringify({ packages: [], tuiMode: "inline" });
+        }
+        if (target === path.join(root, "subagents.json")) {
+          return JSON.stringify({ disableDefaultAgents: true, fallbackSubagent: "general" });
+        }
+        if (target.startsWith(path.join(root, "agents"))) return role;
+        throw new Error(`missing fixture: ${target}`);
+      },
+    });
+    const report = await checkHarness(options);
+    const check = report.checks.find((candidate) => candidate.id === "subagents");
+    assert.equal(check?.status, expected, role);
+    if (expected === "fail") {
+      assert.match(check?.detail ?? "", /locked or missing role defaults: general, planner/);
+    }
   }
 });
 

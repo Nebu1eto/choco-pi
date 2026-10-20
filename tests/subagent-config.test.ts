@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { readFile, readdir } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import test from "node:test";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const READ_ONLY_ROLES = ["explore", "planner", "reviewer", "handoff"];
@@ -21,7 +22,7 @@ test("read-only roles deny mutation tools while keeping extensions", async () =>
   }
 });
 
-test("role model and thinking follow hard pin, caller, then default precedence", async () => {
+test("role model and thinking follow model_locked pin, caller, then role default precedence", async () => {
   // The fork ships TypeScript source only, so these load straight from `src/`
   // under Node's type stripping.
   const packageRoot = resolve(".pi/packages/choco-pi-subagents/src");
@@ -33,20 +34,19 @@ test("role model and thinking follow hard pin, caller, then default precedence",
   );
   const implementer = loadCustomAgents(process.cwd()).get("implementer");
   assert.ok(implementer);
-  // The implementer takes caller overrides, so it declares defaults, not pins.
-  assert.equal(implementer.model, undefined);
-  assert.equal(implementer.thinking, undefined);
-  assert.ok(implementer.defaultModel, "implementer declares a default model");
-  assert.ok(implementer.defaultThinking, "implementer declares a default thinking level");
+  // The implementer takes caller overrides: it declares overridable defaults, not pins.
+  assert.ok(implementer.model, "implementer declares a default model");
+  assert.ok(implementer.thinking, "implementer declares a default thinking level");
+  assert.notEqual(implementer.modelLocked, true, "implementer does not lock its model");
 
   const caller = { model: "openai/gpt-5.6-terra", thinking: "high" };
 
   const defaults = resolveAgentInvocationConfig(implementer, {});
-  assert.equal(defaults.modelInput, implementer.defaultModel);
+  assert.equal(defaults.modelInput, implementer.model);
   assert.equal(defaults.modelFromParams, false);
   assert.equal(defaults.modelSource, "default");
   assert.deepEqual(defaults.overriddenCallerFields, []);
-  assert.equal(defaults.thinking, implementer.defaultThinking);
+  assert.equal(defaults.thinking, implementer.thinking);
 
   const fromCaller = resolveAgentInvocationConfig(implementer, caller);
   assert.equal(fromCaller.modelInput, caller.model);
@@ -55,8 +55,30 @@ test("role model and thinking follow hard pin, caller, then default precedence",
   assert.deepEqual(fromCaller.overriddenCallerFields, []);
   assert.equal(fromCaller.thinking, caller.thinking);
 
+  // A role file with `model_locked: true` pins its model and thinking against the caller.
+  const lockedDir = await mkdtemp(join(tmpdir(), "subagent-config-"));
+  try {
+    await mkdir(join(lockedDir, ".pi", "agents"), { recursive: true });
+    await writeFile(
+      join(lockedDir, ".pi", "agents", "pinned.md"),
+      "---\ndescription: pinned role\nmodel: test/pinned-model\nthinking: xhigh\nmodel_locked: true\n---\nbody\n",
+    );
+    const lockedRole = loadCustomAgents(lockedDir).get("pinned");
+    assert.ok(lockedRole, "pinned role loads");
+    assert.equal(lockedRole.modelLocked, true);
+    assert.equal(lockedRole.model, "test/pinned-model");
+    assert.equal(lockedRole.thinking, "xhigh");
+    const pinnedFromFile = resolveAgentInvocationConfig(lockedRole, caller);
+    assert.equal(pinnedFromFile.modelInput, "test/pinned-model");
+    assert.equal(pinnedFromFile.modelSource, "pin");
+    assert.deepEqual(pinnedFromFile.overriddenCallerFields, ["model", "thinking"]);
+    assert.equal(pinnedFromFile.thinking, "xhigh");
+  } finally {
+    await rm(lockedDir, { recursive: true, force: true });
+  }
+
   const pinned = resolveAgentInvocationConfig(
-    { ...implementer, model: "test/pinned-model", thinking: "xhigh" },
+    { ...implementer, model: "test/pinned-model", thinking: "xhigh", modelLocked: true },
     caller,
   );
   assert.equal(pinned.modelInput, "test/pinned-model");
@@ -65,13 +87,27 @@ test("role model and thinking follow hard pin, caller, then default precedence",
   assert.deepEqual(pinned.overriddenCallerFields, ["model", "thinking"]);
   assert.equal(pinned.thinking, "xhigh");
 
+  const echoed = resolveAgentInvocationConfig(
+    { ...implementer, model: "test/pinned-model", thinking: "xhigh", modelLocked: true },
+    { model: "test/pinned-model", thinking: "xhigh" },
+  );
+  assert.deepEqual(echoed.overriddenCallerFields, [], "echoing the pin overrides nothing");
+
   const unconfigured = resolveAgentInvocationConfig(
-    { ...implementer, defaultModel: undefined, defaultThinking: undefined },
+    { ...implementer, model: undefined, thinking: undefined },
     {},
   );
   assert.equal(unconfigured.modelInput, undefined);
-  assert.equal(unconfigured.modelSource, undefined);
+  assert.equal(unconfigured.modelSource, "inherit");
   assert.equal(unconfigured.thinking, undefined);
+
+  const unconfiguredCaller = resolveAgentInvocationConfig(
+    { ...implementer, model: undefined, thinking: undefined },
+    caller,
+  );
+  assert.equal(unconfiguredCaller.modelInput, caller.model);
+  assert.equal(unconfiguredCaller.modelSource, "caller");
+  assert.equal(unconfiguredCaller.thinking, caller.thinking);
 });
 
 test("spawn results explain discarded overrides and unavailable role models", async () => {
@@ -80,8 +116,7 @@ test("spawn results explain discarded overrides and unavailable role models", as
     pathToFileURL(resolve(packageRoot, "invocation-config.ts")).href
   );
   const parentModel = { provider: "anthropic", id: "parent-model" };
-  const defaultModel = "openai-codex/role-default";
-  const role = { defaultModel, defaultThinking: "medium" };
+  const role = { model: "openai-codex/role-default", thinking: "medium" };
 
   const honored = describeModelResolution({
     agentLabel: "reviewer",
@@ -90,6 +125,25 @@ test("spawn results explain discarded overrides and unavailable role models", as
     parentModel,
   });
   assert.equal(honored, "", "a resolved default produces no note");
+
+  const inherited = describeModelResolution({
+    agentLabel: "reviewer",
+    resolved: resolveAgentInvocationConfig({}, {}),
+    modelUnavailable: false,
+    parentModel,
+  });
+  assert.match(
+    inherited,
+    /agent "reviewer" declares no model and the caller passed none; it inherits anthropic\/parent-model/u,
+  );
+
+  const callerChosen = describeModelResolution({
+    agentLabel: "reviewer",
+    resolved: resolveAgentInvocationConfig({}, { model: "other/model", thinking: "low" }),
+    modelUnavailable: false,
+    parentModel,
+  });
+  assert.equal(callerChosen, "", "a caller-chosen model on a model-free role produces no note");
 
   const unavailable = describeModelResolution({
     agentLabel: "reviewer",
@@ -103,7 +157,7 @@ test("spawn results explain discarded overrides and unavailable role models", as
   const pinnedIgnored = describeModelResolution({
     agentLabel: "reviewer",
     resolved: resolveAgentInvocationConfig(
-      { ...role, model: "test/pinned", thinking: "high" },
+      { ...role, model: "test/pinned", thinking: "high", modelLocked: true },
       { model: "other/model", thinking: "low" },
     ),
     modelUnavailable: false,
@@ -111,13 +165,16 @@ test("spawn results explain discarded overrides and unavailable role models", as
   });
   assert.match(
     pinnedIgnored,
-    /pins model and thinking; the caller-supplied model and thinking was ignored/u,
+    /pins model and thinking \(model_locked\); the caller-supplied model and thinking was ignored/u,
   );
   assert.doesNotMatch(pinnedIgnored, /not available/u);
 
   const noParent = describeModelResolution({
     agentLabel: "reviewer",
-    resolved: resolveAgentInvocationConfig({ ...role, model: "test/pinned" }, {}),
+    resolved: resolveAgentInvocationConfig(
+      { ...role, model: "test/pinned", modelLocked: true },
+      {},
+    ),
     modelUnavailable: true,
     parentModel: undefined,
   });
@@ -144,10 +201,11 @@ test("fallbacks and role defaults route OpenAI through openai-codex only", async
   for (const file of expectedOpenAI.keys()) assert.ok(files.includes(file), file + " exists");
   for (const file of files) {
     const content = await readFile(resolve(".pi/agents", file), "utf8");
-    const defaultModel = /^default_model:\s*(\S+)$/mu.exec(content)?.[1];
+    const model = /^model:\s*(\S+)$/mu.exec(content)?.[1];
+    assert.doesNotMatch(content, /^default_(?:model|thinking):/mu, file + " uses model:/thinking:");
     const expected = expectedOpenAI.get(file);
-    if (expected) assert.equal(defaultModel, expected, file);
-    if (defaultModel) assert.match(defaultModel, /^(?:openai-codex|anthropic)\//u, file);
+    if (expected) assert.equal(model, expected, file);
+    if (model) assert.match(model, /^(?:openai-codex|anthropic)\//u, file);
   }
 });
 
@@ -181,9 +239,8 @@ test("the advisor role is internal: only the advisor tool may spawn it", async (
   assert.ok(sideChat, "side-chat stays in the registry for /btw");
   assert.equal(sideChat.internal, true);
   assert.notEqual(sideChat.enabled, false);
-  assert.equal(sideChat.defaultModel, undefined);
-  assert.equal(sideChat.defaultThinking, undefined);
   assert.equal(sideChat.model, undefined);
+  assert.equal(sideChat.thinking, undefined);
   assert.ok(!getAvailableTypesIn(registry).includes("side-chat"), "hidden from callers");
   assert.equal(resolveEnabledTypeIn(registry, "side-chat"), undefined);
   const sideDispatch = resolveSpawnTypeIn(registry, "side-chat");

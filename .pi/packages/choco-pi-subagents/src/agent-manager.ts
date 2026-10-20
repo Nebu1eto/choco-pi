@@ -57,6 +57,7 @@ import {
 } from "./result-read.ts";
 import {
   RunBudgetController,
+  estimateBootstrapTokens,
   type ForcedTerminalStatus,
   type RunBudgetLimits,
 } from "./run-budgets.ts";
@@ -86,6 +87,7 @@ import type {
   AgentTombstone,
   IsolationMode,
   MentionResolution,
+  ModelProvenance,
   SubagentUsageLimit,
   SubagentType,
   ThinkingLevel,
@@ -548,6 +550,23 @@ function isBudgetedToolActivity(activity: ToolActivity): boolean {
   return activity.type === "start" || !activity.toolName.includes("-error:");
 }
 
+/**
+ * Estimated first-request size of a freshly created child session: its system
+ * prompt plus the schemas of the tools it will declare. Read through a partial
+ * view because test doubles and older hosts may omit these members.
+ */
+function bootstrapEstimateOf(session: AgentSession): number {
+  const view: Partial<Pick<AgentSession, "getAllTools" | "getActiveToolNames" | "systemPrompt">> =
+    session;
+  const all = view.getAllTools?.() ?? [];
+  const activeNames = view.getActiveToolNames?.();
+  const active = activeNames === undefined ? undefined : new Set(activeNames);
+  return estimateBootstrapTokens({
+    systemPrompt: view.systemPrompt,
+    tools: active === undefined ? all : all.filter((tool) => active.has(tool.name)),
+  });
+}
+
 function ownsUnsettledGeneration(record: AgentRecord): boolean {
   return (
     record.status === "running" ||
@@ -649,6 +668,14 @@ interface SpawnOptions {
   cwd?: string;
   /** Resolved invocation snapshot captured for UI display. */
   invocation?: AgentInvocation;
+  /** Model/thinking/definition provenance resolved by the spawning tool. */
+  modelProvenance?: ModelProvenance;
+  /**
+   * Called when a created record is torn down because its start threw
+   * synchronously, before the error propagates — the only moment its id and
+   * alias still exist for the caller to journal.
+   */
+  onStartFailed?: (info: { id: string; alias?: string; reason: string }) => void;
   /** Parent abort signal — when aborted, the subagent is also stopped. */
   signal?: AbortSignal;
   /** Called on tool start/end with activity info (for streaming progress to UI). */
@@ -2361,6 +2388,7 @@ export class AgentManager {
       // have no inline surface — stay visible instead of vanishing.
       isBackground: options.isBackground,
       invocation: options.invocation,
+      modelProvenance: options.modelProvenance,
       sideConversation: options.sideConversation,
       transcriptStartAt: options.mainSessionFork?.capturedAt,
       workflowId: options.workflowId,
@@ -2473,6 +2501,7 @@ export class AgentManager {
     try {
       this.startAgent(id, record, args);
     } catch (err) {
+      const alias = record.alias;
       this.agents.delete(id);
       this.usageScopes.delete(id);
       this.forgetJournalState(id);
@@ -2485,6 +2514,11 @@ export class AgentManager {
       ) {
         reclaimedTombstone.id = previousTombstoneId;
       }
+      options.onStartFailed?.({
+        id,
+        alias,
+        reason: err instanceof Error ? err.message : String(err),
+      });
       throw err;
     }
     return id;
@@ -2720,6 +2754,11 @@ export class AgentManager {
           // Cancellation stops provider work, not ownership of the child that
           // startup created. Retain it even after shutdown for settlement cleanup.
           record.session = session;
+          // Before the first request: a token cap that cannot cover the
+          // bootstrap prompt stops the run here instead of after a spent call.
+          if (options.budgets?.maxTokens !== undefined && options.resumeSessionFile === undefined) {
+            runBudget.controller?.checkBootstrap(bootstrapEstimateOf(session));
+          }
           if (options.mainSessionFork) {
             record.sessionCostBaseline = getSessionCostBaseline(session) ?? undefined;
           }
@@ -3216,7 +3255,13 @@ export class AgentManager {
 
     // Model switch first, before any alias or run state changes, so a refused
     // or failed switch leaves the record exactly as it was.
-    if (options?.model !== undefined) {
+    // A model equal to the session's current one is no switch at all: skip the
+    // re-authentication and scope round trip instead of re-applying it.
+    const currentModel = record.session.model;
+    const sameModel =
+      currentModel !== undefined &&
+      options?.model === `${currentModel.provider}/${currentModel.id}`;
+    if (options?.model !== undefined && !sameModel) {
       const session = record.session;
       const generation = record.resultGeneration;
       // Reserved synchronously, before the first await; released only after the

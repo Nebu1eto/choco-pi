@@ -66,6 +66,15 @@ export interface SubagentsSettings {
    */
   strictAgentFiles?: boolean;
   /**
+   * When true, a fresh spawn through the Agent tool (top-level or nested) that
+   * omits `model` or `thinking` is refused with a text result naming the
+   * role's declared model, thinking and definition file. Resume, /btw forks,
+   * cross-extension RPC spawns, schedules and workflow steps are exempt.
+   * False restores silent role-default / parent-model resolution (with a note
+   * when the parent model is inherited). Defaults to true.
+   */
+  requireExplicitModel?: boolean;
+  /**
    * When true, the three built-in default agents (general-purpose, Explore, Plan)
    * are not registered at startup. User-defined agents from project/global custom
    * agent dirs are completely unaffected — only the hardcoded DEFAULT_AGENTS are suppressed.
@@ -178,6 +187,7 @@ export interface SettingsAppliers {
   setSchedulingEnabled: (b: boolean) => void;
   setScopeModels: (enabled: boolean) => void;
   setStrictAgentFiles: (b: boolean) => void;
+  setRequireExplicitModel: (b: boolean) => void;
   setDisableDefaultAgents: (b: boolean) => void;
   setFleetView: (b: boolean) => void;
   setAgentMentions: (mode: AgentMentionMode) => void;
@@ -272,6 +282,8 @@ export function sanitizeSettings(raw: JsonValue): SubagentsSettings {
   if (scopeModels !== undefined) out.scopeModels = scopeModels;
   const strictAgentFiles = asBoolean(raw.strictAgentFiles);
   if (strictAgentFiles !== undefined) out.strictAgentFiles = strictAgentFiles;
+  const requireExplicitModel = asBoolean(raw.requireExplicitModel);
+  if (requireExplicitModel !== undefined) out.requireExplicitModel = requireExplicitModel;
   const disableDefaultAgents = asBoolean(raw.disableDefaultAgents);
   if (disableDefaultAgents !== undefined) out.disableDefaultAgents = disableDefaultAgents;
   const fleetView = asBoolean(raw.fleetView);
@@ -356,6 +368,8 @@ export function applySettings(s: SubagentsSettings, appliers: SettingsAppliers):
   if (s.schedulingEnabled !== undefined) appliers.setSchedulingEnabled(s.schedulingEnabled);
   if (s.scopeModels !== undefined) appliers.setScopeModels(s.scopeModels);
   if (s.strictAgentFiles !== undefined) appliers.setStrictAgentFiles(s.strictAgentFiles);
+  if (s.requireExplicitModel !== undefined)
+    appliers.setRequireExplicitModel(s.requireExplicitModel);
   if (s.disableDefaultAgents !== undefined)
     appliers.setDisableDefaultAgents(s.disableDefaultAgents);
   if (s.fleetView !== undefined) appliers.setFleetView(s.fleetView);

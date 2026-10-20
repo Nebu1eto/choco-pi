@@ -240,20 +240,32 @@ export function contextWindowLabel(
   return `${model.contextWindow.toLocaleString()} tokens`;
 }
 
-type AgentFrontmatter = { default_model?: string; default_thinking?: string };
+type AgentFrontmatter = { model?: string; thinking?: string };
 
+/**
+ * Reads a role's declared `model:`/`thinking:`. The deprecated
+ * `default_model:`/`default_thinking:` aliases still apply for one release
+ * when the current key is absent.
+ */
 export function parseAgentFrontmatter(content: string): AgentFrontmatter {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!match) return {};
-  const result: AgentFrontmatter = {};
+  const current: AgentFrontmatter = {};
+  const deprecated: AgentFrontmatter = {};
   for (const line of match[1].split("\n")) {
-    const pair = line.match(/^(default_model|default_thinking):\s*(.+?)\s*$/);
+    const pair = line.match(/^(default_)?(model|thinking):\s*(.+?)\s*$/);
     if (!pair) continue;
-    const value = pair[2].replace(/^["']|["']$/g, "");
+    const value = pair[3].replace(/^["']|["']$/g, "");
     if (value.length === 0) continue;
-    if (pair[1] === "default_model") result.default_model = value;
-    else result.default_thinking = value;
+    const target = pair[1] ? deprecated : current;
+    if (pair[2] === "model") target.model = value;
+    else target.thinking = value;
   }
+  const result: AgentFrontmatter = {};
+  const model = current.model ?? deprecated.model;
+  const thinking = current.thinking ?? deprecated.thinking;
+  if (model) result.model = model;
+  if (thinking) result.thinking = thinking;
   return result;
 }
 
@@ -275,8 +287,8 @@ export function agentLabels(directory: string): string[] {
         readFileSync(path.join(directory, entry.name), "utf8"),
       );
       const details: string[] = [];
-      if (frontmatter.default_model) details.push(frontmatter.default_model);
-      if (frontmatter.default_thinking) details.push(frontmatter.default_thinking);
+      if (frontmatter.model) details.push(frontmatter.model);
+      if (frontmatter.thinking) details.push(frontmatter.thinking);
       labels.push(details.length === 0 ? name : `${name} (${details.join(", ")})`);
     } catch (error) {
       issues.push(`${name}: ${error instanceof Error ? error.message : String(error)}`);

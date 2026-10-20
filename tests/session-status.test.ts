@@ -238,14 +238,30 @@ test("lookupModelRecord returns baseUrl from the agent models store", async (con
   assert.equal(record?.baseUrl, "https://api.synthetic.new/v1");
 });
 
-test("parseAgentFrontmatter reads model and thinking defaults", () => {
+test("parseAgentFrontmatter reads model and thinking", () => {
   const frontmatter = parseAgentFrontmatter(
-    "---\nname: reviewer\ndefault_model: anthropic/claude-opus\ndefault_thinking: high\n---\nbody",
+    "---\nname: reviewer\nmodel: anthropic/claude-opus\nthinking: high\nmodel_locked: true\n---\nbody",
   );
   assert.deepEqual(frontmatter, {
-    default_model: "anthropic/claude-opus",
-    default_thinking: "high",
+    model: "anthropic/claude-opus",
+    thinking: "high",
   });
+});
+
+test("parseAgentFrontmatter falls back to deprecated default_* keys", () => {
+  assert.deepEqual(
+    parseAgentFrontmatter(
+      "---\nname: reviewer\ndefault_model: anthropic/claude-opus\ndefault_thinking: high\n---\nbody",
+    ),
+    { model: "anthropic/claude-opus", thinking: "high" },
+  );
+  // The current key wins over its deprecated alias regardless of order.
+  assert.deepEqual(
+    parseAgentFrontmatter(
+      "---\ndefault_model: old/model\nmodel: new/model\nthinking: low\ndefault_thinking: high\n---\n",
+    ),
+    { model: "new/model", thinking: "low" },
+  );
 });
 
 test("agentLabels reports unreadable definitions instead of failing", async (context) => {

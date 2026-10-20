@@ -28,6 +28,7 @@ import {
   type RunResult,
   type UsageLimitEnv,
 } from "./usage-limit-fixture.ts";
+import { setRequireExplicitModel } from "../src/invocation-config.ts";
 
 const HOUR = 3_600_000;
 const SOL = "openai/gpt-5.6-sol";
@@ -207,6 +208,9 @@ test("a background resume refused on availability leaves the record untouched", 
     );
   };
   const owner = parent.ctx.sessionManager.getSessionId();
+  // Activation applies the project's subagents.json (requireExplicitModel on);
+  // this test drives spawn mechanics, not model choice, so lift the gate.
+  setRequireExplicitModel(false);
   await execute("spawn-call", {
     prompt: "task",
     description: "task",

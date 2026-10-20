@@ -17,8 +17,10 @@ test("nested Agent exposes name and forwards it to the manager alias option", as
     compactionCount: 0,
   };
   let capturedOptions: Parameters<NestedAgentManager["spawn"]>[4] | undefined;
+  let spawnCalls = 0;
   const manager: NestedAgentManager = {
     spawn(_pi, _ctx, _type, _prompt, options) {
+      spawnCalls += 1;
       capturedOptions = options;
       return "child";
     },
@@ -44,7 +46,37 @@ test("nested Agent exposes name and forwards it to the manager alias option", as
   });
   assert.match(JSON.stringify(agentTool.parameters), /"name":/, "nested Agent schema accepts name");
 
+  const childModel = { provider: "test", id: "child-model", name: "child-model" };
   // SAFETY: The nested execute path reads only cwd, model, and modelRegistry from this fixture.
+  const hostCtx = {
+    cwd: "/tmp/choco-pi-nested-name-test",
+    model: undefined,
+    modelRegistry: {
+      getAvailable: () => [childModel],
+      find: (provider: string, id: string) =>
+        provider === childModel.provider && id === childModel.id ? childModel : undefined,
+    },
+  } as never;
+
+  // requireExplicitModel (default on): no model/thinking → refusal, no spawn.
+  const refused = await agentTool.execute(
+    "call-refused",
+    {
+      prompt: "do work",
+      description: "child work",
+      subagent_type: "general-purpose",
+      run_in_background: true,
+    },
+    undefined,
+    undefined,
+    hostCtx,
+  );
+  assert.match(
+    refused.content[0]?.type === "text" ? refused.content[0].text : "",
+    /^Spawn refused: pass model and thinking\. Role "general-purpose" \(/,
+  );
+  assert.equal(spawnCalls, 0, "a refused spawn never reaches the manager");
+
   const result = await agentTool.execute(
     "call",
     {
@@ -52,26 +84,24 @@ test("nested Agent exposes name and forwards it to the manager alias option", as
       description: "child work",
       name: "beta",
       subagent_type: "general-purpose",
+      model: "test/child-model",
+      thinking: "low",
       run_in_background: true,
     },
     undefined,
     undefined,
-    {
-      cwd: "/tmp/choco-pi-nested-name-test",
-      model: undefined,
-      modelRegistry: {},
-    } as never,
+    hostCtx,
   );
 
-  assert.deepEqual(result.content, [
-    {
-      type: "text",
-      text:
-        "Nested agent started in background. Agent ID: child\n" +
-        "Continue other work until the terminal completion notification arrives, then retrieve the result exactly once with get_subagent_result. Use steer_subagent to send it a message mid-run.",
-    },
-  ]);
+  const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+  assert.match(text, /^Nested agent started in background\. Agent ID: child\n/);
+  assert.match(
+    text,
+    /\nModel: test\/child-model \(source: caller\) · thinking: low · definition: [^\n]+\n/,
+  );
+  assert.match(text, /retrieve the result exactly once with get_subagent_result/);
   assert.equal(capturedOptions?.name, "beta");
+  assert.equal(capturedOptions?.modelProvenance?.source, "caller");
 });
 
 test("nested resume forwards alias rename and refuses live records actionably", async () => {
@@ -403,4 +433,111 @@ test("nested result wait still propagates non-abort rejections", async () => {
     failure,
   );
   assert.equal(claimSubagentResultRead(child).kind, "active");
+});
+
+test("nested get/stop/resume resolve an owned child by alias and list children when unknown", async () => {
+  const base = {
+    toolUses: 0,
+    lifetimeUsage: { input: 0, output: 0, cacheWrite: 0 },
+    compactionCount: 0,
+  };
+  const parent: AgentRecord = {
+    ...base,
+    id: "parent-alias",
+    type: "general-purpose",
+    description: "parent",
+    status: "running",
+    startedAt: 1,
+  };
+  const scout: AgentRecord = {
+    ...base,
+    id: "child-scout",
+    type: "explore",
+    handle: "explore-3",
+    alias: "scout",
+    description: "scout",
+    status: "running",
+    startedAt: 2,
+    parentAgentId: parent.id,
+  };
+  const foreign: AgentRecord = {
+    ...base,
+    id: "child-foreign",
+    type: "explore",
+    alias: "foreign",
+    description: "other branch",
+    status: "running",
+    startedAt: 3,
+    parentAgentId: "someone-else",
+  };
+  const records = [parent, scout, foreign];
+  const aborted: string[] = [];
+  const resumedIds: string[] = [];
+  const manager: NestedAgentManager = {
+    spawn: () => assert.fail("no spawn"),
+    spawnAndWait: () => assert.fail("no spawn"),
+    getRecord: (id: string) => records.find((record) => record.id === id),
+    listAgents: () => records,
+    getActiveCount: () => 2,
+    getScheduledActiveCount: () => 2,
+    getMaxConcurrent: () => 4,
+    abort: (id: string) => {
+      aborted.push(id);
+      return true;
+    },
+    async resume(id) {
+      resumedIds.push(id);
+      return scout;
+    },
+  };
+  const [agentTool, resultTool, , stopTool] = createNestedSubagentTools({
+    manager,
+    // SAFETY: These paths never dereference the ExtensionAPI fixture.
+    pi: {} as never,
+    parentAgentId: parent.id,
+    depth: 1,
+    maxSubagentDepth: 3,
+    allowedSubagents: "all",
+    configCwd: "/tmp/choco-pi-nested-alias-test",
+  });
+  const textOf = (result: { content: Array<{ type: string; text?: string }> }) =>
+    result.content[0]?.text ?? "";
+
+  // SAFETY: stop_subagent reads no host context.
+  const stopped = await stopTool.execute(
+    "stop",
+    { agent_id: "@scout" },
+    undefined,
+    undefined,
+    {} as never,
+  );
+  assert.deepEqual(aborted, ["child-scout"]);
+  assert.match(textOf(stopped), /Nested agent child-scout stopped/);
+
+  // SAFETY: get_subagent_result reads no host context.
+  const unknown = await resultTool.execute(
+    "get",
+    { agent_id: "foreign" },
+    undefined,
+    undefined,
+    {} as never,
+  );
+  assert.equal(unknown.isError, true);
+  assert.equal(
+    textOf(unknown),
+    'Nested agent not found or not owned by this parent: "foreign" — unknown id or alias. ' +
+      "This parent's nested agents: @scout (child-scout, running).",
+  );
+
+  scout.status = "completed";
+  scout.result = "done";
+  // SAFETY: a resume without model reads no host context.
+  await agentTool.execute(
+    "resume",
+    { prompt: "more", description: "more", subagent_type: "explore", resume: "Scout" },
+    undefined,
+    undefined,
+    {} as never,
+  );
+  assert.deepEqual(resumedIds, ["child-scout"], "alias resolves to the owned child's id");
 });

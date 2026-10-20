@@ -46,6 +46,7 @@ interface AgentFrontmatter {
   inherit_skills?: FrontmatterValue;
   model?: FrontmatterValue;
   thinking?: FrontmatterValue;
+  model_locked?: FrontmatterValue;
   default_model?: FrontmatterValue;
   default_thinking?: FrontmatterValue;
   max_turns?: FrontmatterValue;
@@ -64,6 +65,47 @@ interface AgentFrontmatter {
   enabled?: FrontmatterValue;
   internal?: FrontmatterValue;
 }
+
+/**
+ * Every frontmatter key the loader reads. Anything else is reported once per
+ * load: a misspelt or foreign key (Claude Code's camelCase `disallowedTools`)
+ * would otherwise be dropped silently and the agent would run without it.
+ */
+const KNOWN_FRONTMATTER_KEYS: ReadonlySet<string> = new Set([
+  "name",
+  "display_name",
+  "color",
+  "description",
+  "tools",
+  "disallowed_tools",
+  "extensions",
+  "inherit_extensions",
+  "exclude_extensions",
+  "skills",
+  "inherit_skills",
+  "model",
+  "thinking",
+  "model_locked",
+  "default_model",
+  "default_thinking",
+  "max_turns",
+  "persist_session",
+  "output_transcript",
+  "session_dir",
+  "allowed_subagents",
+  "prompt_mode",
+  "inherit_context",
+  "run_in_background",
+  "isolated",
+  "fast_mode",
+  "daybreak",
+  "memory",
+  "isolation",
+  "enabled",
+  "internal",
+  // Read by choco-pi's agent-preferences extension, not by this loader.
+  "persona",
+]);
 
 interface ParsedAgentFile {
   frontmatter: AgentFrontmatter;
@@ -159,6 +201,10 @@ function loadFromDir(
     // filename-derived one down with it.
     const name = declared || filenameType;
 
+    warnUnknownKeys(path, fm);
+    warnDeprecatedModelKeys(path, fm);
+    warnShadowed(name, path, agents);
+
     const { builtinToolNames, extSelectors } = parseToolsField(fm.tools);
 
     agents.set(name, {
@@ -175,22 +221,23 @@ function loadFromDir(
       extensions: inheritField(fm.extensions ?? fm.inherit_extensions),
       excludeExtensions: csvListOptional(fm.exclude_extensions),
       skills: inheritField(fm.skills ?? fm.inherit_skills),
-      model: str(fm.model),
-      thinking: parseThinkingLevel(fm.thinking),
-      defaultModel: str(fm.default_model),
-      defaultThinking: parseThinkingLevel(fm.default_thinking),
+      // `model:`/`thinking:` are overridable defaults; `model_locked: true`
+      // turns them back into pins. `default_*` are deprecated aliases.
+      model: str(fm.model) ?? str(fm.default_model),
+      thinking: parseThinkingLevel(fm.thinking) ?? parseThinkingLevel(fm.default_thinking),
+      modelLocked: fm.model_locked === true ? true : undefined,
       maxTurns: nonNegativeInt(fm.max_turns),
-      persistSession: fm.persist_session != null ? fm.persist_session === true : undefined,
-      outputTranscript: fm.output_transcript != null ? fm.output_transcript !== false : undefined,
+      persistSession: fm.persist_session == null ? undefined : fm.persist_session === true,
+      outputTranscript: fm.output_transcript == null ? undefined : fm.output_transcript !== false,
       sessionDir: str(fm.session_dir),
       allowedSubagents: parseAllowedSubagents(fm.allowed_subagents),
       systemPrompt: body.trim(),
       promptMode: fm.prompt_mode === "append" ? "append" : "replace",
-      inheritContext: fm.inherit_context != null ? fm.inherit_context === true : undefined,
-      runInBackground: fm.run_in_background != null ? fm.run_in_background === true : undefined,
-      isolated: fm.isolated != null ? fm.isolated === true : undefined,
-      fastMode: fm.fast_mode != null ? fm.fast_mode === true : undefined,
-      daybreak: fm.daybreak != null ? fm.daybreak === true : undefined,
+      inheritContext: fm.inherit_context == null ? undefined : fm.inherit_context === true,
+      runInBackground: fm.run_in_background == null ? undefined : fm.run_in_background === true,
+      isolated: fm.isolated == null ? undefined : fm.isolated === true,
+      fastMode: fm.fast_mode == null ? undefined : fm.fast_mode === true,
+      daybreak: fm.daybreak == null ? undefined : fm.daybreak === true,
       memory: parseMemory(fm.memory),
       isolation: parseIsolation(fm.isolation),
       enabled: fm.enabled !== false, // default true; explicitly false disables
@@ -235,6 +282,39 @@ function warnSkippedOverride(name: string, agents: Map<string, AgentConfig>): vo
   // either way (see resolveEnabledTypeIn), so there is no substitution to report.
   if (!surviving?.sourcePath || surviving.enabled === false) return;
   warnIfNew(`Agent "${name}" now loads from ${surviving.sourcePath} instead`);
+}
+
+/**
+ * A higher-priority file replaces a lower-priority definition wholesale — its
+ * model, thinking and tools included — and nothing merges the two. Say so, so a
+ * shared `.agents/agents` role file without a model is not a silent
+ * substitution of the global role that declared one.
+ */
+function warnShadowed(name: string, path: string, agents: Map<string, AgentConfig>): void {
+  const shadowed = agents.get(name)?.sourcePath;
+  if (shadowed === undefined || shadowed === path) return;
+  warnIfNew(`Agent "${name}" loads from ${path}, shadowing ${shadowed}`);
+}
+
+function warnUnknownKeys(path: string, fm: AgentFrontmatter): void {
+  for (const key of Object.keys(fm)) {
+    if (KNOWN_FRONTMATTER_KEYS.has(key)) continue;
+    const snake = key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+    const hint =
+      snake !== key && KNOWN_FRONTMATTER_KEYS.has(snake) ? ` (did you mean "${snake}"?)` : "";
+    warnIfNew(`Agent file ${path} has unknown frontmatter key "${key}"${hint}; it is ignored.`);
+  }
+}
+
+function warnDeprecatedModelKeys(path: string, fm: AgentFrontmatter): void {
+  const deprecated = (["default_model", "default_thinking"] as const).filter(
+    (key) => fm[key] !== undefined,
+  );
+  if (deprecated.length === 0) return;
+  warnIfNew(
+    `Agent file ${path} uses deprecated ${deprecated.join(" and ")}; rename to model/thinking ` +
+      "(overridable defaults). Add model_locked: true to pin them against the caller.",
+  );
 }
 
 let warnedLastLoad = new Set<string>();

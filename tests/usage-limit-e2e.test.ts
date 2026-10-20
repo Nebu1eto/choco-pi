@@ -33,6 +33,7 @@ import {
   customEntries,
   delay,
   E2E_AGENT_TYPE,
+  E2E_SPAWN_MODEL,
   managerRegistry,
   resultText,
   runTool,
@@ -120,6 +121,7 @@ test("preference none: child limit is reported, provider closed, model untouched
       prompt: "Summarise the repository.",
       description: "limited child",
       subagent_type: E2E_AGENT_TYPE,
+      ...E2E_SPAWN_MODEL,
       run_in_background: false,
     });
     const after = Date.now();
@@ -171,6 +173,7 @@ test("preference none: child limit is reported, provider closed, model untouched
         prompt: "Try again.",
         description: "second spawn",
         subagent_type: E2E_AGENT_TYPE,
+        ...E2E_SPAWN_MODEL,
       }),
       (error: Error) => {
         assert.match(error.message, /Provider openai-codex unavailable/);
@@ -232,6 +235,7 @@ async function spawnParkedChild(e2e: UsageLimitE2e) {
     prompt: "Summarise the repository.",
     description: "parked child",
     subagent_type: E2E_AGENT_TYPE,
+    ...E2E_SPAWN_MODEL,
     run_in_background: false,
   });
   const elapsed = Date.now() - started;
@@ -339,6 +343,7 @@ test("Agent resume with model: in-scope switches the errored child, others leave
       prompt: "Summarise the repository.",
       description: "limited child",
       subagent_type: E2E_AGENT_TYPE,
+      ...E2E_SPAWN_MODEL,
       run_in_background: false,
     });
     const [event] = usageEvents(e2e.usageEvents);

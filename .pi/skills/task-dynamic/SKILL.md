@@ -29,6 +29,8 @@ flowchart TD
 
 Choose roles by unit semantics, using `.pi/model-guidance.md` resolved relative to the repository for justified overrides. Every parent uses the `task` skill's delegation packet, narrowed to the scope it owns. Before any authorized reviewer handoff, the packet requires a scope-owning child to locate the `review` skill's actual `SKILL.md` from available skill metadata or Pi's configured skill directories, inspecting only the `skills` configuration field if needed, then read `references/review-bundle.md` relative to that file. Conventional paths are candidates only. Name every spawned child by its goal (`role-goal`, one to three dashed words, unique among its siblings). Spawned children of a worker are that worker's responsibility; standard `Agent`, `steer_subagent`, `get_subagent_result`, and `stop_subagent` tools remain available.
 
+Every parent, at every depth, passes `model` and `thinking` on each spawn, taken from the role's effective definition shown by the Agent tool; when the definition shows none, it chooses both per `.pi/model-guidance.md` for the role's work. Each spawn manifest row records `model`, `thinking`, `source: role|chosen|override`, and `reason`; a value other than the declared one is an override and needs a reason from `.pi/model-guidance.md`. On a `Spawn refused` result, pass both and retry in the same turn. Do not set `max_tokens`, `max_tool_calls`, `timeout_ms`, or `idle_timeout_ms` unless the user asked; the first request alone costs roughly 15–25k tokens.
+
 When the advisor tool is enabled, the orchestrator may consult it before presenting a complex plan and before final acceptance; advisor output is advice, not evidence.
 
 ### Scoped reviewer grandchildren

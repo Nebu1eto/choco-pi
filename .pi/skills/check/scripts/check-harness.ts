@@ -397,10 +397,9 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
         return {
           role,
           valid:
-            isString(frontmatter.default_model) &&
-            isString(frontmatter.default_thinking) &&
-            frontmatter.model === undefined &&
-            frontmatter.thinking === undefined,
+            isString(frontmatter.model) &&
+            isString(frontmatter.thinking) &&
+            frontmatter.model_locked !== true,
         };
       }),
     );

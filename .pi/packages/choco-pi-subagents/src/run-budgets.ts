@@ -11,6 +11,46 @@ export interface RunBudgetLimits {
 
 export type ForcedTerminalStatus = "budget_exceeded" | "watchdog_stopped";
 
+/**
+ * A token cap below this multiple of the estimated first request cannot let
+ * the child finish even one round trip with room to answer.
+ */
+export const BOOTSTRAP_FLOOR_MULTIPLIER = 1.5;
+
+interface BootstrapTool {
+  name?: string;
+  description?: string;
+  parameters?: unknown;
+}
+
+/**
+ * Rough first-request size: system prompt plus declared tool schemas at four
+ * characters per token. Deliberately coarse — it guards against caps that
+ * cannot cover bootstrap at all, not against marginal ones.
+ */
+export function estimateBootstrapTokens(input: {
+  systemPrompt?: string;
+  tools?: readonly BootstrapTool[];
+}): number {
+  let chars = input.systemPrompt?.length ?? 0;
+  for (const tool of input.tools ?? []) {
+    chars += (tool.name?.length ?? 0) + (tool.description?.length ?? 0);
+    if (tool.parameters !== undefined) chars += JSON.stringify(tool.parameters)?.length ?? 0;
+  }
+  return Math.ceil(chars / 4);
+}
+
+/** The refusal for a cap below the bootstrap floor, or undefined when it fits. */
+export function bootstrapFloorRefusal(
+  maxTokens: number | undefined,
+  estimatedTokens: number,
+): string | undefined {
+  if (maxTokens === undefined || estimatedTokens <= 0) return undefined;
+  const floor = Math.ceil(estimatedTokens * BOOTSTRAP_FLOOR_MULTIPLIER);
+  if (maxTokens >= floor) return undefined;
+  return `max_tokens ${maxTokens} is below the estimated first request (~${estimatedTokens} tokens); omit the field or set >= ${floor}`;
+}
+
 interface RunBudgetHooks {
   isActive(): boolean;
   steerConclusion(message?: string): void;
@@ -33,6 +73,7 @@ export class RunBudgetController {
   private toolCalls = 0;
   private tokens = 0;
   private largestRequestCharge = 0;
+  private lastUsage?: { input: number; output: number; cacheWrite: number };
   private tokenConclusionRequested = false;
   private conclusionRequested = false;
   private disposed = false;
@@ -68,16 +109,32 @@ export class RunBudgetController {
     const requestCharge = usage.input + usage.output + usage.cacheWrite;
     this.tokens += requestCharge;
     this.largestRequestCharge = Math.max(this.largestRequestCharge, requestCharge);
+    this.lastUsage = { input: usage.input, output: usage.output, cacheWrite: usage.cacheWrite };
     const maxTokens = this.limits.maxTokens;
     if (maxTokens === undefined) return;
     if (this.tokens >= maxTokens) {
+      const last = this.lastUsage;
       this.stop(
         "budget_exceeded",
-        `Token budget exceeded at ${this.tokens} tokens (limit ${maxTokens}).`,
+        `Token budget exceeded at ${this.tokens} tokens (limit ${maxTokens}).` +
+          ` (last request: input ${last.input}, cacheWrite ${last.cacheWrite}, output ${last.output})`,
       );
       return;
     }
     this.requestTokenConclusion(maxTokens);
+  }
+
+  /**
+   * Called once before the first request with the estimated bootstrap size.
+   * Stops the run as budget_exceeded when the token cap cannot cover it, so no
+   * provider call is spent on a run that is certain to be cut off.
+   */
+  checkBootstrap(estimatedTokens: number): boolean {
+    if (!this.isActive()) return true;
+    const refusal = bootstrapFloorRefusal(this.limits.maxTokens, estimatedTokens);
+    if (refusal === undefined) return true;
+    this.stop("budget_exceeded", refusal);
+    return false;
   }
 
   dispose(): void {

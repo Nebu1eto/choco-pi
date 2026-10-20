@@ -185,6 +185,8 @@ const FIRST_PARTY_TOOL_INVENTORY = new Map<string, readonly string[]>([
       "workflow_cancel",
       "set_subagent_fast_mode",
       "set_subagent_daybreak",
+      "subagent_tree",
+      "get_subagent_status",
       "get_subagent_result",
       "steer_subagent",
       "stop_subagent",
@@ -286,10 +288,19 @@ test("every first-party package tool has a bounded catalog snippet", async () =>
   assert.match(shellStart?.description ?? "", /do not poll/i);
 
   const agent = toolsByPackage.get("subagents")?.find((tool) => tool.name === "Agent");
-  assert.match(
-    agent?.description ?? "",
-    /Available types: explore, general, handoff, implementer, planner, reviewer/,
+  const agentDescription = agent?.description ?? "";
+  assert.match(agentDescription, /Available types:\n/);
+  const typeLines = agentDescription
+    .split("\n")
+    .filter((line) => line.startsWith("- "))
+    .map((line) => /^- ([a-z-]+): model \S+, thinking \S+, definition \S+$/.exec(line)?.[1]);
+  assert.deepEqual(
+    typeLines,
+    ["explore", "general", "handoff", "implementer", "planner", "reviewer"],
+    "each type is one `- name: model X, thinking Y, definition <path>` line",
   );
+  const agentSnippetWords = agent?.promptSnippet?.trim().split(/\s+/).filter(Boolean).length ?? 0;
+  assert.ok(agentSnippetWords > 0 && agentSnippetWords <= PROMPT_SNIPPET_WORD_LIMIT);
   const agentParameters = schemaNode(agent?.parameters);
   const runInBackground = schemaNode(agentParameters?.properties?.run_in_background);
   const schedule = schemaNode(agentParameters?.properties?.schedule);

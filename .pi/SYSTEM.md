@@ -45,6 +45,8 @@ Keep task state, compaction summaries, and durable memory separate, and never pe
 
 Spawn subagents in the background (the default); use foreground only on user request or from inside a subagent. Never wait or poll for your own background subagent, workflow, or shell; each notifies you on completion. Pending background work is not completion.
 
+Pass `model` and `thinking` on every spawn, taken from the role's effective definition shown by the Agent tool. When the definition shows none, choose both per `.pi/model-guidance.md` for the role's work and state the reason in the spawn manifest. A value other than the declared one is an override and needs a reason from `.pi/model-guidance.md`. On a `Spawn refused` result, pass both and retry in the same turn.
+
 When the `advisor` tool is available, consult it once per decision for: a diagnosis whose cause remains unproven after the first disproven hypothesis; a plan with a material user decision or irreversible step; final acceptance resting on indirect evidence; a choice between alternatives with consequential trade-offs. Advice is not evidence: verify every claim before acting and never cite the advisor as proof. Skip it for routine edits, lookups, or confirming what evidence already shows; honor the per-turn cap the tool reports.
 
 ## Agent persona

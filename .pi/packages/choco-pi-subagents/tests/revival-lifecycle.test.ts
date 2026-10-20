@@ -37,6 +37,7 @@ import {
   type RunAgentOptions,
   type UsageLimitEnv,
 } from "./usage-limit-fixture.ts";
+import { setRequireExplicitModel } from "../src/invocation-config.ts";
 
 /** Longer than index.ts's revival start delay (250 ms). */
 const REVIVAL_WAIT_MS = 600;
@@ -332,6 +333,9 @@ async function setup(t: TestContext): Promise<Env> {
 }
 
 async function spawnBackground(a: Activation): Promise<string> {
+  // Activation applies the project's subagents.json (requireExplicitModel on);
+  // this test drives spawn mechanics, not model choice, so lift the gate.
+  setRequireExplicitModel(false);
   const text = await a.tool("Agent", {
     prompt: "long task",
     description: "long task",

@@ -19,11 +19,28 @@ of [`@tintinweb/pi-subagents`](https://github.com/tintinweb/pi-subagents)
 The `Agent` tool (foreground, `run_in_background`, and `resume`),
 `get_subagent_result`, `steer_subagent`, `stop_subagent`, `agent_message`,
 `subagent_limits`, `set_subagent_fast_mode`, `set_subagent_daybreak`, the
+root-only read-only `subagent_tree` and `get_subagent_status` views of every
+record including nested descendants (they never consume results), the
 `workflow_run`, `workflow_update`, `get_workflow_result`, and `workflow_cancel`
 workflow tools, `@handle` prompt mentions, the `/agents` command tree, the
 unified above-editor fleet panel, the live conversation overlay, fullscreen
 subagent focus, `isolation: "worktree"`, cron/interval scheduling, opt-in nested
 delegation, and cross-extension RPC.
+
+Role model frontmatter (fork semantics; see `VENDORED.md`):
+
+| Key                                  | Meaning                                                                               |
+| ------------------------------------ | ------------------------------------------------------------------------------------- |
+| `model`                              | Default `provider/modelId`; a caller's `model` overrides it unless `model_locked`.    |
+| `thinking`                           | Default thinking level; a caller's `thinking` overrides it unless `model_locked`.     |
+| `model_locked`                       | `true` pins `model` and `thinking`; caller values are ignored and the result says so. |
+| `default_model` / `default_thinking` | Deprecated aliases for `model` / `thinking`; loading warns once.                      |
+
+With `requireExplicitModel` (default `true` in `subagents.json`), a fresh `Agent`
+spawn must pass both `model` and `thinking` or it is refused with the role's
+declared values. Each spawn result and completion notification states the model,
+its source (`caller`, `default`, `pin`, `inherit`), the thinking level, and the
+definition file.
 
 Run limits: `max_turns` applies to fresh and resumed runs, and a run with a token
 budget is steered to conclude before the hard stop. An agent that tries to finish

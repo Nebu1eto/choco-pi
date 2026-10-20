@@ -12,6 +12,7 @@ import { hasAgentBadge } from "../agent-color.ts";
 import type { AgentManager } from "../agent-manager.ts";
 import { isSessionCompacting } from "../compaction-activity.ts";
 import { isStaleContextError } from "../../../choco-pi-compaction/src/lifecycle.ts";
+import { countFailedDescendants } from "../subagent-tree.ts";
 import type { AgentRecord, WidgetMode } from "../types.ts";
 import { formatResetAt } from "../usage-limit-seam.ts";
 import { getLifetimeTotal, getSessionContextPercent } from "../usage.ts";
@@ -721,7 +722,8 @@ export class FleetPanel {
       const scheduled = this.manager.getScheduledActiveCount();
       const tree = this.manager.getActiveCount();
       const cap = this.manager.getMaxConcurrent();
-      text = `${scheduled} scheduled / cap ${cap === 0 ? "unlimited" : cap}${tree === scheduled ? "" : ` · ${tree} in tree`}`;
+      const failed = countFailedDescendants(records);
+      text = `${scheduled} scheduled / cap ${cap === 0 ? "unlimited" : cap}${tree === scheduled ? "" : ` · ${tree} in tree`}${failed === 0 ? "" : ` · ${failed} failed`}`;
     }
     if (text !== this.lastStatusText) {
       this.ui.setStatus("subagents", text);

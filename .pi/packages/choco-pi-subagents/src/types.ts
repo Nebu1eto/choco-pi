@@ -53,12 +53,19 @@ export interface AgentConfig {
   excludeExtensions?: string[];
   /** true = inherit all, string[] = only listed, false = none */
   skills: true | string[] | false;
+  /**
+   * Declared model ("provider/modelId"). An overridable default: a caller's
+   * `model` wins unless `modelLocked` is set. `default_model:` is a
+   * deprecated frontmatter alias for the same field.
+   */
   model?: string;
+  /** Declared thinking level; overridable like `model` unless `modelLocked`. */
   thinking?: ThinkingLevel;
-  /** Preferred model when neither frontmatter nor the caller pins one. */
-  defaultModel?: string;
-  /** Preferred thinking level when neither frontmatter nor the caller pins one. */
-  defaultThinking?: ThinkingLevel;
+  /**
+   * `model_locked: true` — the declared model and thinking level are pins that
+   * outrank the caller (the pre-default semantics of `model:`/`thinking:`).
+   */
+  modelLocked?: boolean;
   maxTurns?: number;
   /** Persist this subagent as a normal pi session instead of keeping it in memory only. */
   persistSession?: boolean;
@@ -156,6 +163,22 @@ export type MentionResolution =
   | { kind: "live"; record: AgentRecord }
   | { kind: "tombstone"; entry: AgentTombstone };
 
+/** Where a spawn's effective model came from. */
+export type ModelSource = "pin" | "caller" | "default" | "inherit";
+
+/**
+ * Model provenance captured at spawn, surfaced on spawn results, the
+ * `subagents:record` journal entry and the completion notification.
+ */
+export interface ModelProvenance {
+  /** Effective `provider/id`, or undefined when no model was resolvable. */
+  model?: string;
+  source: ModelSource;
+  thinking?: string;
+  /** Agent definition file, or undefined for an embedded built-in. */
+  definition?: string;
+}
+
 export interface AgentRecord {
   id: string;
   type: SubagentType;
@@ -174,6 +197,8 @@ export interface AgentRecord {
    */
   alias?: string;
   description: string;
+  /** Model/thinking/definition provenance captured when the spawn resolved. */
+  modelProvenance?: ModelProvenance;
   status:
     | "queued"
     | "running"

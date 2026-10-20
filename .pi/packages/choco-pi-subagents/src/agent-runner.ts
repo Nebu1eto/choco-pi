@@ -66,6 +66,7 @@ import {
   type PromptExtras,
 } from "./prompts.ts";
 import { preloadSkills } from "./skill-loader.ts";
+import { SUBAGENT_STATUS_TOOL_NAME, SUBAGENT_TREE_TOOL_NAME } from "./subagent-tree.ts";
 import type { SubagentType, ThinkingLevel } from "./types.ts";
 
 interface ModelRegistryWithRuntime {
@@ -133,6 +134,8 @@ export const SUBAGENT_TOOL_NAMES = {
   SET_DAYBREAK: "set_subagent_daybreak",
   MESSAGE: AGENT_MESSAGE_TOOL_NAME,
   LIMITS: "subagent_limits",
+  TREE: SUBAGENT_TREE_TOOL_NAME,
+  STATUS: SUBAGENT_STATUS_TOOL_NAME,
 } as const;
 
 /** Names of tools registered by this extension that subagents must NOT inherit. */
@@ -1500,18 +1503,22 @@ export async function runAgent(
   }
 
   // A BTW fork inherits the main runtime identity, not the selected record type.
+  // Frontmatter model/thinking are overridable defaults; `model_locked` pins
+  // them over the caller (mirrors resolveAgentInvocationConfig).
+  const locked = agentConfig?.modelLocked === true;
   let model = ctx.model;
-  let thinkingLevel =
-    agentConfig?.thinking ?? options.thinkingLevel ?? agentConfig?.defaultThinking;
+  let thinkingLevel = locked
+    ? agentConfig?.thinking
+    : (options.thinkingLevel ?? agentConfig?.thinking);
   if (options.mainSessionFork) {
     model = options.mainSessionFork.model;
     thinkingLevel = options.mainSessionFork.thinkingLevel;
-  } else if (agentConfig?.model != null) {
-    model = resolveDefaultModel(ctx.model, ctx.modelRegistry, agentConfig.model);
+  } else if (locked) {
+    model = resolveDefaultModel(ctx.model, ctx.modelRegistry, agentConfig?.model);
   } else if (options.model) {
     model = options.model;
   } else {
-    model = resolveDefaultModel(ctx.model, ctx.modelRegistry, agentConfig?.defaultModel);
+    model = resolveDefaultModel(ctx.model, ctx.modelRegistry, agentConfig?.model);
   }
 
   const disallowedSet = agentConfig?.disallowedTools

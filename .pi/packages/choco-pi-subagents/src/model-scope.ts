@@ -51,7 +51,11 @@ export function checkModelScope(args: {
   model: { provider: string; id: string } | undefined;
   cwd: string;
   modelRegistry: ModelRegistryRef;
-  /** True when the model came from the tool call rather than frontmatter. */
+  /**
+   * True when the caller's model is in effect and differs from the role's
+   * declared model. A caller echoing the role's own model is treated as the
+   * role's choice: warn and proceed, like a frontmatter default.
+   */
   callerSupplied: boolean;
   /** Display name used in the warning toast. */
   agentLabel: string;

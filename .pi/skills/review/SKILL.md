@@ -18,6 +18,8 @@ This workflow reports findings only. It never edits, commits, or expands into im
 
 Spawn one fresh `reviewer` sub-agent. Give it the review-bundle path and manifest digest. Require it to follow `references/review-bundle.md`, review `target.diff` rather than a newly generated diff, and use the bundled requirements, policy snapshots, and evidence. It may inspect repository files only to understand unchanged context; the bundle remains the sole change target.
 
+Pass `model` and `thinking` taken from the `reviewer` role's effective definition shown by the Agent tool; when the definition shows none, choose both per `.pi/model-guidance.md` and state the reason. A value other than the declared one is an override and needs a reason from `.pi/model-guidance.md`. On a `Spawn refused` result, pass both and retry in the same turn.
+
 Do not include implementation plans, claimed safety, expected findings, or previous reviewer conclusions. The reviewer must remain read-only and must not spawn another agent.
 
 For observation, cancellation, terminal-state classification, and recovery, follow `task-core`'s **Observe and recover a review run** section. In particular, an observation timeout is not an execution failure, and a completed `INCOMPLETE` result must remain incomplete rather than being forced into findings or `NO_FINDINGS`.

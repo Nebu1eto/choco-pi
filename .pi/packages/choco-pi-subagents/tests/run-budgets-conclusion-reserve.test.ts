@@ -52,7 +52,11 @@ test("20% conclusion reserve steers once at the threshold and preserves the hard
     charge(run.controller, 1000);
     run.controller.noteToolActivity("end");
     assert.deepEqual(run.stops, [
-      { status: "budget_exceeded", reason: "Token budget exceeded at 1000 tokens (limit 1000)." },
+      {
+        status: "budget_exceeded",
+        reason:
+          "Token budget exceeded at 1000 tokens (limit 1000). (last request: input 0.5, cacheWrite 0.25, output 0.25)",
+      },
     ]);
     assert.equal(run.steers.length, 1);
     assert.equal(run.disposals, 1);
@@ -114,7 +118,9 @@ for (const firstCharge of [1000, 1200]) {
     assert.deepEqual(run.stops, [
       {
         status: "budget_exceeded",
-        reason: `Token budget exceeded at ${firstCharge} tokens (limit 1000).`,
+        reason:
+          `Token budget exceeded at ${firstCharge} tokens (limit 1000).` +
+          ` (last request: input ${firstCharge / 2}, cacheWrite ${firstCharge / 4}, output ${firstCharge / 4})`,
       },
     ]);
     assert.equal(run.disposals, 1);

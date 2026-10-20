@@ -1,5 +1,28 @@
 import { Type } from "typebox";
-import type { AgentConfig, IsolationMode, JoinMode, ThinkingLevel } from "./types.ts";
+import type {
+  AgentConfig,
+  IsolationMode,
+  JoinMode,
+  ModelProvenance,
+  ModelSource,
+  ThinkingLevel,
+} from "./types.ts";
+
+/**
+ * When true (the default), a fresh spawn through the Agent tool or the nested
+ * Agent tool must name both `model` and `thinking`; omitting either returns a
+ * refusal instead of silently running on a role default or the parent model.
+ * Resume, /btw forks, cross-extension RPC, schedules and workflow steps are
+ * exempt. Module state (like `scopeModels`) so the nested tools see it too.
+ */
+let requireExplicitModel = true;
+
+export function isRequireExplicitModel(): boolean {
+  return requireExplicitModel;
+}
+export function setRequireExplicitModel(enabled: boolean): void {
+  requireExplicitModel = enabled;
+}
 
 /**
  * The model-facing `isolation` parameter, shared by the `Agent` tool and the
@@ -77,8 +100,8 @@ interface AgentInvocationParams {
   isolation?: unknown;
 }
 
-/** Where the effective model string came from, when there is one. */
-export type ModelInputSource = "pin" | "caller" | "default";
+/** Where the effective model string came from; "inherit" means the parent runtime. */
+export type ModelInputSource = ModelSource;
 
 /** Caller fields a frontmatter pin overrode. */
 export type OverriddenCallerField = "model" | "thinking";
@@ -86,10 +109,16 @@ export type OverriddenCallerField = "model" | "thinking";
 interface ResolvedAgentInvocationConfig {
   modelInput?: string;
   modelFromParams: boolean;
-  /** Undefined when nothing chose a model and the parent runtime applies. */
-  modelSource?: ModelInputSource;
+  /** "inherit" when nothing chose a model and the parent runtime applies. */
+  modelSource: ModelInputSource;
   /**
-   * Caller-supplied fields the agent definition's hard pin discarded. Spawn
+   * True only when the caller's model is in effect AND differs from the role's
+   * declared model. Scope policy treats a caller echoing the role's own model
+   * as the role's choice (warn-and-proceed), not as a runtime override.
+   */
+  callerOverridesRoleModel: boolean;
+  /**
+   * Caller-supplied fields a `model_locked` agent definition discarded. Spawn
    * paths report these so an orchestrator learns its override did not apply
    * instead of assuming it did.
    */
@@ -137,8 +166,12 @@ export function resolveAgentInvocationConfig(
   const isolation =
     requested === "worktree" && opts?.worktreeAllowed !== false ? "worktree" : undefined;
 
-  const requestedThinking =
-    agentConfig?.thinking ?? params.thinking ?? agentConfig?.defaultThinking;
+  // Frontmatter model/thinking are overridable defaults; `model_locked` makes
+  // them pins that outrank the caller.
+  const locked = agentConfig?.modelLocked === true;
+  const requestedThinking = locked
+    ? agentConfig?.thinking
+    : (params.thinking ?? agentConfig?.thinking);
   // SAFETY: Pi accepts the advertised "off" level at runtime although ThinkingLevel omits it.
   const thinking = (
     requestedThinking === "off" ||
@@ -152,24 +185,22 @@ export function resolveAgentInvocationConfig(
       : undefined
   ) as ThinkingLevel | undefined;
 
-  const modelInput = agentConfig?.model ?? params.model ?? agentConfig?.defaultModel;
-  const modelSource: ModelInputSource | undefined =
-    agentConfig?.model == null
-      ? params.model == null
-        ? agentConfig?.defaultModel == null
-          ? undefined
-          : "default"
-        : "caller"
-      : "pin";
+  const modelInput = locked ? agentConfig?.model : (params.model ?? agentConfig?.model);
+  let modelSource: ModelInputSource = "default";
+  if (modelInput == null) modelSource = "inherit";
+  else if (locked) modelSource = "pin";
+  else if (params.model != null) modelSource = "caller";
   const overriddenCallerFields: OverriddenCallerField[] = [];
-  if (agentConfig?.model != null && params.model != null) overriddenCallerFields.push("model");
-  if (agentConfig?.thinking != null && params.thinking != null)
+  if (locked && params.model != null && params.model !== agentConfig?.model)
+    overriddenCallerFields.push("model");
+  if (locked && params.thinking != null && params.thinking !== agentConfig?.thinking)
     overriddenCallerFields.push("thinking");
 
   return {
     modelInput,
     modelFromParams: modelSource === "caller",
     modelSource,
+    callerOverridesRoleModel: modelSource === "caller" && params.model !== agentConfig?.model,
     overriddenCallerFields,
     thinking,
     maxTurns: agentConfig?.maxTurns ?? params.max_turns,
@@ -220,15 +251,93 @@ export function describeModelResolution(args: {
   if (resolved.overriddenCallerFields.length > 0) {
     const fields = resolved.overriddenCallerFields.join(" and ");
     notes.push(
-      `Note: agent "${agentLabel}" pins ${fields}; the caller-supplied ${fields} was ignored.`,
+      `Note: agent "${agentLabel}" pins ${fields} (model_locked); the caller-supplied ${fields} was ignored.`,
     );
   }
-  if (modelUnavailable && resolved.modelInput !== undefined && resolved.modelSource !== undefined) {
-    const origin = resolved.modelSource === "default" ? "default model" : "pinned model";
-    const parent = parentModel ? `${parentModel.provider}/${parentModel.id}` : "the parent model";
+  const parent = parentModel ? `${parentModel.provider}/${parentModel.id}` : "the parent model";
+  if (modelUnavailable && resolved.modelInput !== undefined && resolved.modelSource !== "inherit") {
+    const origin = resolved.modelSource === "pin" ? "pinned model" : "default model";
     notes.push(
       `Note: agent "${agentLabel}" ${origin} "${resolved.modelInput}" is not available; running on ${parent} instead.`,
     );
   }
+  if (resolved.modelSource === "inherit" && !resolved.overriddenCallerFields.includes("model")) {
+    notes.push(
+      `Note: agent "${agentLabel}" declares no model and the caller passed none; it inherits ${parent}.`,
+    );
+  }
   return notes.length > 0 ? `${notes.join("\n")}\n\n` : "";
+}
+
+/** `provider/id, thinking, definition` facts a role file declares. */
+function roleFacts(config: AgentConfig | undefined) {
+  return {
+    definition: config?.sourcePath ?? "built-in",
+    model: config?.model ?? "none",
+    thinking: config?.thinking ?? "none",
+  };
+}
+
+/**
+ * One-line role summary for tool descriptions and `/agents`: what the role
+ * declares and where it was loaded from, so a shadowing definition is visible.
+ */
+export function describeRoleModel(name: string, config: AgentConfig | undefined): string {
+  return `${name}: ${describeRoleDeclaration(config)}`;
+}
+
+/** `model …, thinking …, definition …` for one role, without its name. */
+export function describeRoleDeclaration(config: AgentConfig | undefined): string {
+  const facts = roleFacts(config);
+  const lock = config?.modelLocked === true ? " (locked)" : "";
+  return `model ${facts.model}${lock}, thinking ${facts.thinking}, definition ${facts.definition}`;
+}
+
+/**
+ * The `requireExplicitModel` refusal, or undefined when the spawn may proceed.
+ * Callers apply it to fresh spawns only — resume, /btw, RPC, schedules and
+ * workflow steps are exempt by never calling it.
+ */
+export function explicitModelRefusal(
+  name: string,
+  config: AgentConfig | undefined,
+  params: { model?: string; thinking?: string },
+): string | undefined {
+  if (!requireExplicitModel || (params.model && params.thinking)) return undefined;
+  const facts = roleFacts(config);
+  const declaresAny = config?.model !== undefined || config?.thinking !== undefined;
+  const advice = declaresAny
+    ? "pass those or an override with a reason."
+    : "choose them from .pi/model-guidance.md for this role and record the reason.";
+  return (
+    `Spawn refused: pass model and thinking. Role "${name}" (${facts.definition}) declares model ` +
+    `${facts.model}, thinking ${facts.thinking}; ${advice}`
+  );
+}
+
+/**
+ * Provenance for the effective spawn model. An unavailable configured model
+ * runs on the parent, so it reports `inherit` — the line names what ran.
+ */
+export function buildModelProvenance(args: {
+  model: { provider: string; id: string } | undefined;
+  source: ModelSource;
+  modelUnavailable: boolean;
+  thinking: string | undefined;
+  config: AgentConfig | undefined;
+}): ModelProvenance {
+  return {
+    model: args.model ? `${args.model.provider}/${args.model.id}` : undefined,
+    source: args.modelUnavailable ? "inherit" : args.source,
+    thinking: args.thinking,
+    definition: args.config?.sourcePath,
+  };
+}
+
+/** `Model: provider/id (source: …) · thinking: … · definition: …` */
+export function formatModelLine(provenance: ModelProvenance): string {
+  return (
+    `Model: ${provenance.model ?? "unknown"} (source: ${provenance.source}) · ` +
+    `thinking: ${provenance.thinking ?? "none"} · definition: ${provenance.definition ?? "built-in"}`
+  );
 }

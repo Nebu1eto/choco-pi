@@ -85,10 +85,17 @@ import { type RpcHandle, registerRpcHandlers } from "./cross-extension-rpc.ts";
 import { loadCustomAgents } from "./custom-agents.ts";
 import { GroupJoinManager } from "./group-join.ts";
 import {
+  buildModelProvenance,
+  describeRoleDeclaration,
+  describeRoleModel,
   describeModelResolution,
+  explicitModelRefusal,
+  formatModelLine,
+  isRequireExplicitModel,
   isolationParam,
   resolveAgentInvocationConfig,
   resolveJoinMode,
+  setRequireExplicitModel,
 } from "./invocation-config.ts";
 import {
   createSubagentLimitsTool,
@@ -112,6 +119,13 @@ import { formatSteerMessage, ROOT_AGENT_PATH } from "./messaging.ts";
 import { type ModelRegistry, resolveModel } from "./model-resolver.ts";
 import { checkModelScope, isScopeModelsEnabled, setScopeModelsEnabled } from "./model-scope.ts";
 import { getMaxSubagentDepth, setMaxSubagentDepth } from "./nested-tools.ts";
+import {
+  buildSubagentStatusBatch,
+  buildSubagentTree,
+  DescendantFailureReporter,
+  SUBAGENT_STATUS_TOOL_NAME,
+  SUBAGENT_TREE_TOOL_NAME,
+} from "./subagent-tree.ts";
 import {
   createOutputFilePath,
   ensureOutputFile,
@@ -349,6 +363,7 @@ function formatTaskNotification(record: AgentRecord, resultMaxLen: number): stri
         )}</usage-limit>`
       : null,
     `<summary>Agent "${escapeXml(record.description)}" ${record.status}${getStatusNote(record.status)}</summary>`,
+    record.modelProvenance ? escapeXml(formatModelLine(record.modelProvenance)) : null,
     `<result>${escapeXml(resultPreview)}</result>`,
     record.pendingDependents
       ? `Pending dependents (terminal-boundary snapshot): ${escapeXml(record.pendingDependents.map((child) => child.handle ?? child.id).join(", "))}.`
@@ -661,6 +676,8 @@ export default function (pi: ExtensionAPI) {
   // Assigned after the shared UI controllers are constructed. Agent completion
   // callbacks can still consult it because no child settles synchronously.
   let workflows: WorkflowManager | undefined;
+  // One root-visible line per failed nested generation (owner delivery is unchanged).
+  const descendantFailures = new DescendantFailureReporter();
 
   // Background completion: route through group join or send individual nudge
   const manager = new AgentManager(
@@ -671,6 +688,23 @@ export default function (pi: ExtensionAPI) {
       // result remains on the manager record if this notification is missed.
       if (record.parentAgentId) {
         const parent = manager.getRecord(record.parentAgentId);
+        const failureLine = descendantFailures.report(record, parent);
+        if (failureLine !== undefined) {
+          // Informational, like usage-limit notices: rides the next root
+          // delivery and never starts a root turn by itself.
+          try {
+            pi.sendMessage(
+              {
+                customType: "subagent-descendant-failure",
+                content: `<task-notification>${failureLine}</task-notification>`,
+                display: true,
+              },
+              { deliverAs: "steer", triggerTurn: false },
+            );
+          } catch (error) {
+            console.error("[choco-pi-subagents] Descendant failure notice failed", error);
+          }
+        }
         const parentSession = parent?.session;
         const parentIsActive =
           parent !== undefined &&
@@ -721,6 +755,11 @@ export default function (pi: ExtensionAPI) {
         error: record.error,
         startedAt: record.startedAt,
         completedAt: record.completedAt,
+        ...(record.alias && { alias: record.alias }),
+        ...(record.modelProvenance && {
+          modelProvenance: record.modelProvenance,
+          modelLine: formatModelLine(record.modelProvenance),
+        }),
         ...(record.sideConversation && { sideConversation: true }),
         ...(record.workflowId && {
           workflowId: record.workflowId,
@@ -2160,6 +2199,7 @@ export default function (pi: ExtensionAPI) {
       setStrictAgentFiles: (b) => {
         strictAgentFiles = b;
       },
+      setRequireExplicitModel,
       setDisableDefaultAgents: setDisableDefaultAgents,
       setFleetView: setFleetViewEnabled,
       setAgentMentions: setAgentMentionMode,
@@ -2205,7 +2245,14 @@ export default function (pi: ExtensionAPI) {
     ? scheduleSchemaFields
     : {};
 
-  const agentToolDescription = `Launch a child-safe nested subagent for bounded delegated work. Available types: ${getAvailableTypes().join(", ")}.`;
+  // Each type carries its declared model, thinking and definition file, so the
+  // orchestrator chooses model/thinking knowing what the role (and any
+  // shadowing workspace file) actually declares.
+  const agentToolDescription =
+    "Launch a child-safe nested subagent for bounded delegated work. Available types:\n" +
+    getAvailableTypes()
+      .map((name) => `- ${describeRoleModel(name, getAgentConfig(name))}`)
+      .join("\n");
 
   // Held rather than registered inline: the mention clone reuses this exact
   // definition, so the agent it starts is an ordinary top-level spawn instead
@@ -2239,12 +2286,12 @@ export default function (pi: ExtensionAPI) {
       model: Type.Optional(
         Type.String({
           description:
-            'Model as "provider/modelId" or a fuzzy name. Omit to use the agent definition\'s default model; pass one only for a reason .pi/model-guidance.md allows. Ignored when the agent definition pins a model. With resume: continue a usage-limited child on another model.',
+            'Model as "provider/modelId" or a fuzzy name. Required for a fresh spawn unless requireExplicitModel is off; choose it per .pi/model-guidance.md. Overrides the agent definition\'s model unless it sets model_locked. With resume: optional; a different model switches a usage-limited child first.',
         }),
       ),
       thinking: Type.Optional(
         thinkingLevelSchema(
-          "Thinking level. Omit to use the agent definition's default; pass one only for a task-specific reason. Ignored when the agent definition pins it.",
+          "Thinking level. Required for a fresh spawn unless requireExplicitModel is off. Overrides the agent definition's thinking unless it sets model_locked.",
         ),
       ),
       max_turns: Type.Optional(
@@ -2269,7 +2316,8 @@ export default function (pi: ExtensionAPI) {
       max_tokens: Type.Optional(
         Type.Integer({
           minimum: 1,
-          description: "Input, output, and cache-write token cap.",
+          description:
+            "Omit unless the user sets a budget; the first request alone costs roughly 15–25k tokens.",
         }),
       ),
       idle_timeout_ms: Type.Optional(
@@ -2363,6 +2411,13 @@ export default function (pi: ExtensionAPI) {
       // Get agent config (if any)
       const customConfig = getAgentConfig(subagentType);
 
+      // requireExplicitModel: a fresh spawn names its model and thinking.
+      // Resume and schedule are exempt (they continue or defer, not choose).
+      if (!params.resume && !params.schedule) {
+        const refusal = explicitModelRefusal(subagentType, customConfig, params);
+        if (refusal !== undefined) return textResult(typeNote + refusal);
+      }
+
       const resolvedConfig = resolveAgentInvocationConfig(customConfig, params, {
         worktreeAllowed: isWorktreeIsolationEnabled(),
         defaultRunInBackground: true,
@@ -2374,7 +2429,8 @@ export default function (pi: ExtensionAPI) {
         }
       ).__choco_hook_worktree_path;
 
-      // Resolve model from agent config first; tool-call params only fill gaps.
+      // Resolve the model chosen by invocation-config: caller first, then the
+      // role default, unless the role sets model_locked.
       let model = ctx.model;
       let modelUnavailable = false;
       if (resolvedConfig.modelInput) {
@@ -2407,7 +2463,7 @@ export default function (pi: ExtensionAPI) {
         model,
         cwd: ctx.cwd,
         modelRegistry: ctx.modelRegistry,
-        callerSupplied: resolvedConfig.modelFromParams,
+        callerSupplied: resolvedConfig.callerOverridesRoleModel,
         agentLabel: customConfig?.displayName ?? subagentType,
         modelInput: resolvedConfig.modelInput,
       });
@@ -2415,6 +2471,29 @@ export default function (pi: ExtensionAPI) {
       if (scopeVerdict.kind === "warn") ctx.ui.notify(scopeVerdict.message, "warning");
 
       const thinking = resolvedConfig.thinking;
+      const modelProvenance = buildModelProvenance({
+        model,
+        source: resolvedConfig.modelSource,
+        modelUnavailable,
+        thinking,
+        config: customConfig,
+      });
+      const modelLine = `${formatModelLine(modelProvenance)}\n`;
+      // A synchronous start failure deletes the record before the throw
+      // propagates; journal its identity first so the failure is traceable.
+      const onStartFailed = (info: { id: string; alias?: string; reason: string }): void => {
+        pi.appendEntry("subagents:record", {
+          id: info.id,
+          ...(info.alias && { alias: info.alias }),
+          type: subagentType,
+          description: params.description,
+          status: "error",
+          error: info.reason,
+          startFailed: true,
+          modelProvenance,
+          modelLine: formatModelLine(modelProvenance),
+        });
+      };
       const inheritContext = resolvedConfig.inheritContext;
       const runInBackground = resolvedConfig.runInBackground;
       const isolated = resolvedConfig.isolated;
@@ -2718,6 +2797,8 @@ export default function (pi: ExtensionAPI) {
           isolation,
           hookWorktreePath,
           invocation: agentInvocation,
+          modelProvenance,
+          onStartFailed,
           rootSessionId: ctx.sessionManager.getSessionId(),
           ...bgCallbacks,
         });
@@ -2761,6 +2842,7 @@ export default function (pi: ExtensionAPI) {
             `Agent ID: ${id}\n` +
             `Type: ${displayName}\n` +
             `Description: ${params.description}\n` +
+            modelLine +
             (record?.outputFile ? `Output file: ${record.outputFile}\n` : "") +
             (isQueued
               ? `Position: queued (cap ${formatConcurrencyCap(manager.getMaxConcurrent())})\n`
@@ -2862,6 +2944,8 @@ export default function (pi: ExtensionAPI) {
             isolation,
             hookWorktreePath,
             invocation: agentInvocation,
+            modelProvenance,
+            onStartFailed,
             signal,
             rootSessionId: ctx.sessionManager.getSessionId(),
             ...fgCallbacks,
@@ -2903,6 +2987,7 @@ export default function (pi: ExtensionAPI) {
           `${fallbackNote}Agent paused until ${until}; result will arrive as a notification.\n` +
             `Agent ID: ${record.id}\n` +
             `Alias: @${address}\n` +
+            modelLine +
             (record.usageLimit ? `Usage limit: ${describeUsageLimit(record.usageLimit)}\n` : "") +
             `It resumes on the same model after the reset. ${TERMINAL_RESULT_RETRIEVAL_GUIDANCE}`,
           details,
@@ -2916,7 +3001,7 @@ export default function (pi: ExtensionAPI) {
       ) {
         // Error headline + any partial output the run produced before failing.
         return textResult(
-          `${fallbackNote}Agent failed: ${record.error}${partialOutputSuffix(record)}`,
+          `${fallbackNote}${modelLine}Agent failed: ${record.error}${partialOutputSuffix(record)}`,
           details,
         );
       }
@@ -2925,7 +3010,7 @@ export default function (pi: ExtensionAPI) {
       const statsParts = [`${record.toolUses} tool uses`];
       if (tokenText) statsParts.push(tokenText);
       return textResult(
-        `${fallbackNote}Agent completed in ${formatMs(durationMs)} (${statsParts.join(", ")})${getForegroundOutcomeNote(record.status)}.\n\n` +
+        `${fallbackNote}${modelLine}Agent completed in ${formatMs(durationMs)} (${statsParts.join(", ")})${getForegroundOutcomeNote(record.status)}.\n\n` +
           (record.result?.trim() || "No output."),
         details,
       );
@@ -2987,7 +3072,7 @@ export default function (pi: ExtensionAPI) {
           model,
           cwd: ctx.cwd,
           modelRegistry: ctx.modelRegistry,
-          callerSupplied: resolvedConfig.modelFromParams,
+          callerSupplied: resolvedConfig.callerOverridesRoleModel,
           agentLabel: config?.displayName ?? step.subagent_type,
           modelInput: resolvedConfig.modelInput,
         });
@@ -3284,6 +3369,74 @@ export default function (pi: ExtensionAPI) {
   );
 
   // ---- get_subagent_result tool ----
+
+  // ---- read-only whole-tree views (root only; never consume or steer) ----
+
+  const TreeStatusFilterSchema = Type.Union(
+    [Type.Literal("all"), Type.Literal("active"), Type.Literal("terminal")],
+    { description: "Which records to list. Default: all." },
+  );
+
+  pi.registerTool(
+    defineTool({
+      name: SUBAGENT_TREE_TOOL_NAME,
+      label: "Subagent Tree",
+      description:
+        "List every subagent record, nested descendants included, as a read-only tree. Never consumes results.",
+      promptSnippet: "Inspect the full subagent tree, including nested descendants",
+      parameters: Type.Object(
+        {
+          status: Type.Optional(TreeStatusFilterSchema),
+          root: Type.Optional(
+            Type.String({ description: "Agent ID, handle, or name whose subtree to list." }),
+          ),
+        },
+        { additionalProperties: false },
+      ),
+      execute: async (_toolCallId, params) => {
+        const view = buildSubagentTree(manager.listAgents(), {
+          status: params.status,
+          root: params.root,
+        });
+        if (view.kind === "unknown-root") {
+          return {
+            content: [{ type: "text" as const, text: `Agent not found: "${view.ref}".` }],
+            details: { agents: [] },
+            isError: true,
+          };
+        }
+        return {
+          content: [{ type: "text" as const, text: view.text }],
+          details: { agents: view.entries },
+        };
+      },
+    }),
+  );
+
+  pi.registerTool(
+    defineTool({
+      name: SUBAGENT_STATUS_TOOL_NAME,
+      label: "Subagent Status",
+      description:
+        "Read status lines for subagents (nested included) without their results. Never consumes results.",
+      promptSnippet: "Read status lines for subagents without consuming results",
+      parameters: Type.Object(
+        {
+          ids: Type.Array(Type.String({ description: "Agent ID, handle, or assigned name." }), {
+            minItems: 1,
+          }),
+        },
+        { additionalProperties: false },
+      ),
+      execute: async (_toolCallId, params) => {
+        const batch = buildSubagentStatusBatch(manager.listAgents(), params.ids);
+        return {
+          content: [{ type: "text" as const, text: batch.text }],
+          details: { agents: batch.entries, unknown: batch.unknown },
+        };
+      },
+    }),
+  );
 
   pi.registerTool(
     defineTool({
@@ -3682,11 +3835,14 @@ export default function (pi: ExtensionAPI) {
       const cfg = getAgentConfig(name);
       const disabled = cfg?.enabled === false;
       const model = getModelLabel(name, ctx.modelRegistry);
+      // What the role declares and which file it came from, so a workspace
+      // file shadowing a global role is visible here, not only at spawn.
+      const declared = describeRoleDeclaration(cfg);
       return {
         id: name,
         label: `${sourceIndicator(cfg)}${name}`,
         currentValue: model,
-        description: disabled ? "(disabled)" : (cfg?.description ?? name),
+        description: `${disabled ? "(disabled)" : (cfg?.description ?? name)}\n${declared}`,
         // Single-value list so Enter "activates" the row (fires onChange with the
         // agent's id) without offering anything to actually cycle.
         values: [model],
@@ -4042,10 +4198,9 @@ The file format is a markdown file with YAML frontmatter and a system prompt bod
 description: <one-line description shown in UI>
 color: <optional agent name badge color: red, blue, green, yellow, purple, orange, pink, cyan, an Agency Agents alias, or quoted "#RRGGBB">
 tools: <comma-separated built-in tools: read, bash, edit, write, grep, find, ls. Use "none" for no tools. Omit for all tools>
-model: <optional pinned model as "provider/modelId"; callers cannot override it>
-default_model: <optional model as "provider/modelId" used when the caller passes none. Omit both to inherit the parent model>
-thinking: <optional pinned thinking level: ${THINKING_LEVELS.join(", ")}; callers cannot override it>
-default_thinking: <optional thinking level used when the caller passes none. Omit both to inherit>
+model: <optional default model as "provider/modelId"; a caller's model overrides it unless model_locked. Omit to inherit the parent model>
+thinking: <optional default thinking level: ${THINKING_LEVELS.join(", ")}; a caller's thinking overrides it unless model_locked>
+model_locked: <true pins model and thinking so callers cannot override them. Default: false>
 max_turns: <optional max agentic turns. 0 or omit for unlimited (default)>
 internal: <true hides the agent from every caller-supplied type (Agent tool, workflows, @mentions, /btw); only first-party code spawns it by name. Default: false>
 prompt_mode: <"replace" (body IS the full system prompt) or "append" (body is appended to default prompt). Default: replace>
@@ -4210,6 +4365,7 @@ Write the file using the write tool. Only write the file, nothing else.`;
       schedulingEnabled: isSchedulingEnabled(),
       scopeModels: isScopeModelsEnabled(),
       strictAgentFiles,
+      requireExplicitModel: isRequireExplicitModel(),
       disableDefaultAgents: isDefaultsDisabled(),
       fleetView: isFleetViewEnabled(),
       agentMentions: getAgentMentionMode(),

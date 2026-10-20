@@ -14,5 +14,6 @@
   "outputTranscript": true,
   "worktreeIsolation": true,
   "maxSubagentDepth": 2,
-  "fallbackSubagent": "general"
+  "fallbackSubagent": "general",
+  "requireExplicitModel": true
 }

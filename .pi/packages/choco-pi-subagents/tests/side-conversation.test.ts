@@ -465,7 +465,7 @@ test("a btw fork runs on the main model and thinking level, not side-chat defaul
   const fixture = await createSdkFixture(mainModel);
   fixture.session.setThinkingLevel("low");
   // The fixture's catalog is empty; expose the role default so the control run
-  // proves the agent file's default_model would otherwise win.
+  // proves the agent file's model would otherwise win.
   const ctx = fixture.ctx;
   const registry = ctx.modelRegistry;
   const find = registry.find.bind(registry);
@@ -480,8 +480,8 @@ test("a btw fork runs on the main model and thinking level, not side-chat defaul
       [
         SIDE_CHAT_TYPE,
         sideChatConfig({
-          defaultModel: `${roleModel.provider}/${roleModel.id}`,
-          defaultThinking: "high",
+          model: `${roleModel.provider}/${roleModel.id}`,
+          thinking: "high",
         }),
       ],
     ]),
@@ -511,6 +511,55 @@ test("a btw fork runs on the main model and thinking level, not side-chat defaul
     assert.ok(fork.systemPrompt.startsWith(ctx.getSystemPrompt()), "main prompt kept verbatim");
     assert.match(fork.systemPrompt, /<read_only_side_conversation>/);
     assert.doesNotMatch(fork.systemPrompt, /side-chat body that a fork must not use/);
+  } finally {
+    for (const session of sessions) {
+      unregisterChildSessionId(session.sessionManager.getSessionId());
+      session.dispose();
+    }
+    fixture.session.dispose();
+    resetRegistry();
+  }
+});
+
+test("runner: a caller model and thinking override the role's, unless model_locked pins them", async () => {
+  const mainModel = reasoningModel("main-runner-model");
+  const roleModel = reasoningModel("role-runner-model");
+  const callerModel = reasoningModel("caller-runner-model");
+  const fixture = await createSdkFixture(mainModel);
+  const ctx = fixture.ctx;
+  const registry = ctx.modelRegistry;
+  const find = registry.find.bind(registry);
+  registry.find = (provider, id) =>
+    [roleModel, callerModel].find((m) => m.provider === provider && m.id === id) ??
+    find(provider, id);
+  registry.getAvailable = () => [mainModel, roleModel, callerModel];
+  const roleRef = `${roleModel.provider}/${roleModel.id}`;
+  const sessions: AgentSession[] = [];
+  const run = async (config: Partial<AgentConfig>) => {
+    agentTypes.registerAgents(
+      new Map([
+        ["runner-role", sideChatConfig({ name: "runner-role", internal: false, ...config })],
+      ]),
+    );
+    const controller = new AbortController();
+    controller.abort();
+    const result = await runAgent(ctx, "runner-role", "task", {
+      pi: fixture.pi,
+      signal: controller.signal,
+      model: callerModel,
+      thinkingLevel: "low",
+    });
+    sessions.push(result.session);
+    return result.session;
+  };
+  try {
+    const overridden = await run({ model: roleRef, thinking: "high" });
+    assert.equal(overridden.model?.id, callerModel.id);
+    assert.equal(overridden.thinkingLevel, "low");
+
+    const pinned = await run({ model: roleRef, thinking: "high", modelLocked: true });
+    assert.equal(pinned.model?.id, roleModel.id);
+    assert.equal(pinned.thinkingLevel, "high");
   } finally {
     for (const session of sessions) {
       unregisterChildSessionId(session.sessionManager.getSessionId());

@@ -68,6 +68,13 @@ export const ANTHROPIC_LIMIT_TEXT =
 
 export const E2E_AGENT_TYPE = "e2e-worker";
 
+/**
+ * Fresh Agent spawns must name model and thinking (`requireExplicitModel`
+ * defaults on). These echo the e2e role's own declaration, so the spawn still
+ * runs the role's model and scope policy sees no caller override.
+ */
+export const E2E_SPAWN_MODEL = { model: modelKey(CODEX_MODEL), thinking: "medium" } as const;
+
 export type ScriptedReply = { kind: "text"; text: string } | { kind: "error"; message: string };
 
 export type ProviderRequest = {
@@ -246,7 +253,8 @@ const FALLBACK_OVERRIDE = {
 
 const AGENT_FILE = `---
 description: Usage-limit end-to-end worker
-default_model: ${modelKey(CODEX_MODEL)}
+model: ${modelKey(CODEX_MODEL)}
+thinking: medium
 prompt_mode: replace
 extensions: true
 skills: false

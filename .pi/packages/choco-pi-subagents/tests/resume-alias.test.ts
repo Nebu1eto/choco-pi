@@ -204,3 +204,59 @@ test("accepted background resume rebinds, while refused resumes preserve the ali
     manager.dispose();
   }
 });
+
+test("resume with the child's current model does not switch; a different one does", async () => {
+  const manager = managerWithResumeRecords();
+  try {
+    const id = spawnCompleted(manager, "same-model");
+    const record = manager.getRecord(id);
+    assert.ok(record?.session);
+    Object.defineProperty(record.session, "model", {
+      value: { provider: "prov", id: "current" },
+    });
+    let switches = 0;
+    Object.defineProperty(manager, "applyResumeModel", {
+      value: async () => {
+        switches += 1;
+      },
+    });
+
+    const resumed = await manager.resume(id, "same", undefined, { model: "prov/current" });
+    assert.strictEqual(resumed, record);
+    assert.equal(switches, 0, "an equal model is no switch");
+
+    await manager.resume(id, "different", undefined, { model: "prov/other" });
+    assert.equal(switches, 1, "a different model still switches");
+  } finally {
+    manager.dispose();
+  }
+});
+
+test("a synchronous start failure reports the created record's id and alias before rethrowing", () => {
+  const manager = new AgentManager(undefined, 8);
+  Object.defineProperty(manager, "startAgent", {
+    value: () => {
+      throw new Error("worktree refused");
+    },
+  });
+  const failures: Array<{ id: string; alias?: string; reason: string }> = [];
+  try {
+    assert.throws(
+      // SAFETY: startAgent is replaced above, so the placeholder hosts are never observed.
+      () =>
+        manager.spawn({} as never, {} as never, "implementer", "work", {
+          description: "work",
+          name: "start-fails",
+          isBackground: false,
+          onStartFailed: (info) => failures.push(info),
+        }),
+      /worktree refused/,
+    );
+    assert.equal(failures.length, 1);
+    assert.equal(failures[0]?.alias, "start-fails");
+    assert.equal(failures[0]?.reason, "worktree refused");
+    assert.equal(manager.getRecord(failures[0]?.id ?? ""), undefined, "record is still torn down");
+  } finally {
+    manager.dispose();
+  }
+});

@@ -539,27 +539,77 @@ former `fleet-list.test.ts` and `agent-widget.test.ts` coverage.
 
 ### Role model and effort defaults
 
-The fork parses `default_model:` and `default_thinking:` from agent frontmatter
-into `AgentConfig.defaultModel` / `.defaultThinking` and resolves model and
-effort as frontmatter pin, then caller parameter, then role default, then the
-parent runtime. Upstream has no such tier: an omitted `model` fell straight
-through to the parent session's model, so an orchestrator on one provider
-produced children on that provider regardless of the role's declared
-preference. An explicit caller value still wins, which preserves provider
-fallback on overload. `tests/subagent-config.test.ts` pins the parsed fields and
-the resolution order.
+Frontmatter `model:` and `thinking:` are overridable role defaults, not pins.
+`custom-agents.ts` parses them into `AgentConfig.model` / `.thinking` and the
+new boolean `model_locked: true` into `.modelLocked`. `default_model:` and
+`default_thinking:` remain accepted as deprecated aliases: they promote into
+`model` / `thinking` and the loader emits one `warnIfNew` deprecation per file.
+`AgentConfig.defaultModel` / `.defaultThinking` no longer exist.
 
-The resolver also reports `modelSource` (`pin`, `caller`, `default`) and
-`overriddenCallerFields`, and `describeModelResolution` turns them into result
-notes that the `Agent` tool and the nested delegation tool prepend to every
-spawn result. Two outcomes that were silent upstream now surface: a frontmatter
-pin discarding a caller's `model`/`thinking`, and a pinned or default model that
-fails to resolve (the parent model runs; the top-level tool also toasts a
-warning). The `model`/`thinking` parameter descriptions and the generated
-agent-file template name `default_model`/`default_thinking` and tell callers
-to omit the fields unless there is a task-specific reason. `/btw` side
-conversations are unaffected: `runAgent` applies the forked main-session
-runtime before any frontmatter or caller value.
+`resolveAgentInvocationConfig` (mirrored in `runAgent` for direct runner
+callers) resolves `modelLocked ? role : (caller ?? role)` for model and thinking,
+then the parent runtime. Upstream treats `model:` as authoritative and has no
+default tier; the previous fork tier list (pin, caller, default, parent) is
+replaced by this two-way choice. `modelSource` is `pin`, `caller`, `default` or
+`inherit`; `overriddenCallerFields` is non-empty only for a locked role that
+discarded a different caller value. `describeModelResolution` keeps the pin and
+unavailable-model notes and adds an `inherit` note when the role declares no
+model and the caller passed none. `callerOverridesRoleModel` feeds
+`checkModelScope`: a caller value equal to the role's declared model is the
+role's choice, so an out-of-scope model warns and proceeds instead of failing.
+
+`requireExplicitModel` (`subagents.json`, default `true`, beside
+`strictAgentFiles`) refuses a fresh `Agent` or nested `Agent` spawn that omits
+`model` or `thinking`. The refusal is a text result, not a throw:
+`Spawn refused: pass model and thinking. Role "<name>" (<sourcePath|built-in>)
+declares model <m|none>, thinking <t|none>; …`. Resume, `/btw` forks,
+cross-extension RPC `spawnTopLevel`, schedules and workflow steps are exempt.
+Upstream has no such gate. It exists because a workspace `.agents/agents/*.md`
+role without a model shadowed a global role that declared one, and the child
+silently ran on the orchestrator's model.
+
+The loader no longer lets that shadowing pass silently either: a file that
+replaces a lower-priority definition of the same name warns
+`Agent "X" loads from <path>, shadowing <other path>` (no merge), and unknown
+frontmatter keys warn, with a snake_case hint for camelCase spellings such as
+`disallowedTools`. `persona` is known: choco-pi's agent-preferences extension
+reads it.
+
+Every spawn result (background and foreground, top-level and nested), the
+`subagents:record` journal entry (`modelProvenance`, `modelLine`, and `alias`)
+and the `<task-notification>` carry
+`Model: <provider/id> (source: …) · thinking: … · definition: <sourcePath|built-in>`
+from `AgentRecord.modelProvenance`. An unavailable configured model reports
+`source: inherit` because the parent ran. The `Agent` tool description, the
+nested `Agent` description and the `/agents` type list show each role's model,
+thinking and definition file. Resume keeps `model` optional;
+`AgentManager.resume` skips the switch when the requested model equals the
+child session's current model. `/btw` side conversations are unaffected:
+`runAgent` applies the forked main-session runtime before any frontmatter or
+caller value. `tests/model-defaults.test.ts`, `tests/side-conversation.test.ts`,
+`tests/nested-tools.test.ts` and `tests/resume-alias.test.ts` cover it.
+
+### Token-budget bootstrap floor and nested addressing
+
+`run-budgets.ts` adds `estimateBootstrapTokens` (system prompt plus active tool
+schemas at four characters per token) and `RunBudgetController.checkBootstrap`.
+`AgentManager` calls it from a fresh spawn's `onSessionCreated`, before the
+first request: a `max_tokens` below 1.5x the estimate stops the run as
+`budget_exceeded` with `max_tokens N is below the estimated first request
+(~M tokens); omit the field or set >= K`, and the aborted signal keeps the runner
+from sending the prompt. A token-budget stop appends
+`(last request: input A, cacheWrite B, output C)`. Both `max_tokens` schema
+descriptions now say to omit the field unless the user sets a budget. Upstream
+has no run budgets.
+
+Nested `get_subagent_result`, `steer_subagent`, `stop_subagent` and `resume`
+resolve `agent_id`/`resume` by id, handle or alias (case-insensitive, leading
+`@` allowed) among the caller's own children only, and an unknown reference
+answers `unknown id or alias` with the parent's children list. `SpawnOptions`
+gains `onStartFailed`: when `startAgent` throws synchronously the manager
+reports the torn-down record's id, alias and reason before rethrowing, and the
+top-level `Agent` tool journals them as a `subagents:record` entry with
+`startFailed: true`; the throw still propagates.
 
 ### Internal roles
 
@@ -1855,3 +1905,32 @@ turns `adopting` into `discarded-stale` like the real one. `runChild` gains
   compaction is in progress"). Waiting lets that compaction commit first; an
   abort still ends the wait through the existing signal forwarding. Pinned by
   `.pi/packages/choco-pi-compaction/tests/child-resume-compaction-race.test.ts`.
+
+## choco-pi patch: root-only subagent tree views and descendant failures
+
+The root orchestrator saw only `N in tree` and could not read nested records
+(`get_subagent_result` is direct-children-only and consume-once), so a
+grandchild failure stayed invisible until someone read its `.output` file.
+
+- New `src/subagent-tree.ts`: pure tree/status formatting, nested-failure
+  classification (`error`, `budget_exceeded`, `watchdog_stopped`), a
+  once-per-generation `DescendantFailureReporter`, and
+  `countFailedDescendants`.
+- `src/index.ts` registers root-only `subagent_tree({ status?, root? })` and
+  `get_subagent_status({ ids })` before `get_subagent_result`. Both read
+  `manager.listAgents()` only; neither claims, consumes, changes status, nor
+  steers. The nested-completion branch additionally sends one
+  `subagent-descendant-failure` root message ("Descendant <name> (owner
+  <name>, depth N) failed: <reason>") with `deliverAs: "steer"` and
+  `triggerTurn: false`, the existing usage-limit notice channel; owner
+  delivery is unchanged.
+- `src/agent-runner.ts` adds both names to `SUBAGENT_TOOL_NAMES` so children
+  never inherit them.
+- `src/ui/fleet-panel.ts` appends `· F failed` (failed nested records) to the
+  active status line.
+
+Tests: `tests/subagent-tree.test.ts` (nested tree, filters/subtree scope,
+mixed known/unknown status batch, failure line once per generation, child tool
+gate, registered tools leave a terminal result unconsumed) and
+`tests/fleet-panel.test.ts` ("status line appends the failed-descendant
+count").

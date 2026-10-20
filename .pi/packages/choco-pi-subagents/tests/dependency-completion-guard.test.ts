@@ -12,6 +12,7 @@ import { createNestedSubagentTools } from "../src/nested-tools.ts";
 import type { AgentRecord } from "../src/types.ts";
 import { toolContext } from "./fixtures/tool-context.ts";
 import { createSdkFixture } from "./sdk-fixture.ts";
+import { setRequireExplicitModel } from "../src/invocation-config.ts";
 
 const answer: AssistantMessage = {
   role: "assistant",
@@ -347,6 +348,9 @@ test("root notification, failed lifecycle and root/nested fetched details retain
   try {
     const agent = fixture.session.extensionRunner.getToolDefinition("Agent");
     assert.ok(agent);
+    // Activation applies the project's subagents.json (requireExplicitModel on);
+    // this test drives spawn mechanics, not model choice, so lift the gate.
+    setRequireExplicitModel(false);
     const inline = await agent.execute(
       "owner",
       {
