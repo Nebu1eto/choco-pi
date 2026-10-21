@@ -383,21 +383,28 @@ host event.
   host's own compaction runs and Codex's (or xAI's) foreground handler answers
   it natively. No text lane serves such a model, with or without custom
   instructions; Codex's handler reports that it ignores `/compact` guidance.
-  Such a host compaction (and a context-cap adoption) requested from an
-  `agent_settled` handler, as model-context-cap does, waits for the next
-  prompt's `input` hook: Pi defers a prompt that arrives during that emission
-  and would reject it, unanswered, while a compaction runs. The window is
-  tracked with public events only: it opens at this extension's `agent_end`
-  (Pi awaits every `agent_end` handler before emitting `agent_settled`, so it
-  covers every `agent_settled` handler whatever the load order) and closes at
-  the next `input`, `turn_start`, `session_start`, `model_select` or
-  shutdown. Public events cannot tell a late `agent_settled` handler's
-  `ctx.compact()` from an explicit idle RPC `compact` (or typed `/compact`,
-  which reaches the same session bridge) sent after the run settled, so for
-  such an owner a compaction requested after a run settles and before the
-  next prompt is answered at once (handled, no result) and applied at that
-  next prompt, before its request. A newer deferred request replaces an older
-  one; both callers were already answered.
+  Such a host compaction runs as soon as it is requested, including from an
+  `agent_settled` handler (as model-context-cap does) or while Pi re-runs the
+  prompts it deferred during that emission; the RPC `compact` answers with
+  the compaction's result. Pi rejects a prompt submitted while a manual
+  compaction runs ("Cannot submit a prompt while compaction is in
+  progress"), and a prompt it deferred during `agent_settled` is re-run where
+  no caller sees that rejection. The session bridge therefore also wraps the
+  public `AgentSession.prototype.prompt`: while `isCompacting` holds with no
+  active run (`isStreaming` false), a prompt awaits the public `waitForIdle()`,
+  checks again (a later compaction is waited for too), and then goes to the
+  host's `prompt`, so it is sent after the compaction instead of being
+  rejected. Text Pi dispatches as an extension command first (`/`-prefixed,
+  with `expandPromptTemplates` not `false`) and every prompt while no
+  compaction runs go to the host at once. Automatic compaction runs only
+  inside an active run, where Pi queues a prompt instead of rejecting it, so
+  the wrapper leaves it alone; a branch summary running while idle is waited
+  for like a compaction. The wrapper is validated as a configurable method,
+  installed and restored with the `compact` patch, and
+  `tests/background-session-compact-bridge.test.ts` fails when the installed
+  Pi stops rejecting such a prompt (the wrapper is then redundant). A
+  context-cap adoption or a late manual candidate is still adopted at the
+  next prompt's `input` hook rather than inside `agent_settled`.
   The Anthropic lane needs a usable wire capture
   of the session's latest request (HTTP 200, same provider, model and
   endpoint), so right after a reload or resume, or once a replay rejection

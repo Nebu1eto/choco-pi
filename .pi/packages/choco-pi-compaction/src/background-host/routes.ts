@@ -465,24 +465,17 @@ function idleCandidate(
 }
 
 /** Trigger a host compaction and resolve with its failure, or undefined on completion. */
-function runHostCompaction(
-  ctx: ExtensionContext,
-  customInstructions?: string,
-): Promise<Error | undefined> {
-  return new Promise<Error | undefined>((resolve) =>
-    requestCompaction(ctx, resolve, customInstructions),
-  );
+function runHostCompaction(ctx: ExtensionContext): Promise<Error | undefined> {
+  return new Promise<Error | undefined>((resolve) => requestCompaction(ctx, resolve));
 }
 
 function requestCompaction(
   ctx: ExtensionContext,
   settle: (failure: Error | undefined) => void,
-  customInstructions?: string,
 ): void {
   try {
     // Pi's ctx.compact() awaits the session's compact() and calls exactly one callback.
     ctx.compact({
-      customInstructions,
       onComplete: () => settle(undefined),
       onError: (error) => settle(error),
     });
@@ -562,16 +555,11 @@ function adoptReadyForContextCap(
 // ---------------------------------------------------------------------------
 
 /**
- * Queue a host compaction for the next prompt instead of starting it now.
- * Pi defers a prompt that arrives while `agent_settled` is emitted and
- * re-runs it right after the emission; a host compaction started inside the
- * emission is still running then, and the re-run rejects that prompt in a
- * call chain no caller awaits (an RPC prompt gets no response at all). The
- * emission can span several macrotasks, so no timer is safe either. The
- * request runs inside the next prompt's `input` hook, which Pi awaits after
- * its compaction check and before that prompt starts its run; without a next
- * prompt no further request needs the smaller context. A newer request
- * supersedes an older one still waiting.
+ * Queue an adoption for the next prompt instead of starting it inside
+ * `agent_settled`. The request runs inside the next prompt's `input` hook,
+ * which Pi awaits after its compaction check and before that prompt starts its
+ * run; without a next prompt no further request needs the smaller context. A
+ * newer request supersedes an older one still waiting.
  */
 export function scheduleIdleCompaction(owner: MainOwner, request: IdleRequest): void {
   const superseded = owner.idlePending;
@@ -579,16 +567,10 @@ export function scheduleIdleCompaction(owner: MainOwner, request: IdleRequest): 
   if (superseded !== undefined && superseded !== request) superseded.onSettled(false);
 }
 
-/** Whether a deferred request is running (the host compaction it started must pass). */
-export function idleCompactionActive(owner: MainOwner): boolean {
-  return owner.idleRunning !== undefined;
-}
-
 /**
  * Run the waiting request now if the session is idle; join the running one.
- * Every path settles: `runHostCompaction`
- * resolves through Pi's `ctx.compact()` callbacks, which fire once its
- * `compact()` settles.
+ * Every path settles: `runHostCompaction` resolves through Pi's
+ * `ctx.compact()` callbacks, which fire once its `compact()` settles.
  */
 export async function runIdleCompaction(
   rt: HostRuntime,
@@ -605,8 +587,7 @@ export async function runIdleCompaction(
   }
   if (!ctx.isIdle() || owner.pendingRoute !== undefined) return;
   owner.idlePending = undefined;
-  // Marked running before it starts: its ctx.compact() reaches the session-compact
-  // bridge synchronously, which must see this run and hand the request to the host.
+  // Marked running before it starts, so a concurrent caller joins this run.
   let finished = (): void => undefined;
   const running = new Promise<void>((resolve) => {
     finished = resolve;
@@ -628,17 +609,9 @@ async function executeIdleRequest(
 ): Promise<void> {
   let compacted = false;
   try {
-    if (request.kind === "adopt") {
-      const candidateId = idleCandidate(rt, owner, ctx);
-      if (candidateId !== undefined) {
-        compacted = await adoptIdle(rt, owner, ctx, { candidateId, trigger: request.trigger });
-      }
-      return;
-    }
-    const failure = await runHostCompaction(ctx, request.customInstructions);
-    compacted = failure === undefined;
-    if (failure !== undefined && isCurrent(rt, owner) && !isHostRefusal(failure.message)) {
-      rt.notify(ctx, `compaction failed: ${failure.message}`);
+    const candidateId = idleCandidate(rt, owner, ctx);
+    if (candidateId !== undefined) {
+      compacted = await adoptIdle(rt, owner, ctx, { candidateId, trigger: request.trigger });
     }
   } finally {
     request.onSettled(compacted);

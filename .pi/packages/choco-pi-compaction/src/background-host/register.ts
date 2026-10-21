@@ -91,19 +91,15 @@ import {
   adoptAtBoundary,
   adoptOnIdleInput,
   decide,
-  idleCompactionActive,
   manualBypassesHost,
-  manualLanes,
   observeSettled,
   reportHostRefused,
-  scheduleIdleCompaction,
   startManualPreparation,
 } from "./routes.ts";
 import {
   type CompactionModes,
   type HostRuntime,
   isCurrent,
-  type MainOwner,
   registryUsable,
   shutdown,
   touchCurrentOwner,
@@ -234,55 +230,25 @@ export function registerBackgroundCompaction(
   // a registry conflict, or a declined request runs the host's own compact().
   // An owner that retires while the preparation starts (shutdown, reload,
   // replacement) reports the request stale: it settles without any compaction.
+  // A declined request runs the host's compaction at once, also from an
+  // agent_settled handler: a prompt arriving meanwhile waits for it in the
+  // bridge's prompt wrapper instead of being rejected.
   const deferSessionCompact = async (
     host: SessionCompactHost,
     customInstructions?: string,
   ): Promise<SessionCompactOutcome> => {
-    // Snapshot before the first await: the window can close while deciding.
-    const settling = rt.settling;
     if (!host.isIdle) return "declined";
     if (!backgroundCompactionActive(rt.loaded.settings)) return "declined";
     if (!registryUsable(rt, undefined)) return "declined";
     const owner = rt.main;
     if (owner === undefined || owner.core.sessionId !== host.sessionId) return "declined";
-    if (settling && deferrableOwner(owner, customInstructions)) {
-      // Inside the settling window (agent_end until the next input or turn_start).
-      // A request here may come from any extension's agent_settled handler, before
-      // or after this extension's own, or be an explicit idle RPC compact sent after
-      // the emission ended: public events cannot tell those apart, so all of them
-      // run at the next prompt's input hook. The caller is answered now (handled).
-      scheduleIdleCompaction(owner, {
-        kind: "foreground",
-        customInstructions,
-        onSettled: () => undefined,
-      });
-      return "handled";
-    }
     if (!manualBypassesHost(rt, owner, customInstructions)) return "declined";
     if (await startManualPreparation(rt, owner, customInstructions)) return "handled";
     return isCurrent(rt, owner) ? "declined" : "stale";
   };
   installSessionCompactBridge(deferSessionCompact);
 
-  /**
-   * Whether a host compaction for this owner must wait for the next prompt: no
-   * background lane serves it (Codex or xAI own its compaction, or none
-   * applies), so it would be a host compaction, and starting one while
-   * `agent_settled` is emitted makes Pi reject the prompt it defers meanwhile,
-   * unanswered. The host compaction a deferred request itself started is the
-   * host's to run.
-   */
-  const deferrableOwner = (owner: MainOwner, customInstructions?: string): boolean =>
-    isCurrent(rt, owner) &&
-    !idleCompactionActive(owner) &&
-    manualLanes(owner.core, customInstructions).length === 0;
-
-  const closeSettlingWindow = (): void => {
-    rt.settling = false;
-  };
-
   pi.on("session_start", async (_event, ctx) => {
-    closeSettlingWindow();
     // Shutdown withdrew this registration's consent resolver; a reactivation publishes it again.
     publishConsent(rt);
     publishPreferences(rt, ctx, childProvider);
@@ -296,34 +262,21 @@ export function registerBackgroundCompaction(
     warnOnProjectLanes(rt, ctx, lanes);
   });
   pi.on("model_select", async (_event, ctx) => {
-    closeSettlingWindow();
     // A new model is a new provider scope: replace the owner, keep the settings.
     await startMainSession(rt, ctx, { reloadSettings: false, childProvider });
   });
   pi.on("session_tree", (_event, ctx) => onSessionTree(rt, ctx));
   pi.on("session_shutdown", () => {
-    closeSettlingWindow();
     shutdowns.count += 1;
     releaseCompactCommandBridge(deferTypedCompact);
     releaseSessionCompactBridge(deferSessionCompact);
     shutdown(rt);
   });
-  pi.on("turn_start", (_event, ctx) => {
-    closeSettlingWindow();
-    return settleCurrentOwner(rt, ctx);
-  });
+  pi.on("turn_start", (_event, ctx) => settleCurrentOwner(rt, ctx));
   pi.on("turn_end", (event, ctx) => adoptAtBoundary(rt, event, ctx));
   pi.on("agent_before_settle", (event, ctx) => adoptAtBoundary(rt, event, ctx));
-  // Pi awaits agent_end before the run settles and emits agent_settled: the window is open
-  // for every agent_settled handler, whichever extension loaded first.
-  pi.on("agent_end", () => {
-    rt.settling = true;
-  });
-  // The window stays open through the whole agent_settled emission, whatever the load order.
   pi.on("agent_settled", (_event, ctx) => observeSettled(rt, ctx));
   pi.on("input", async (event, ctx) => {
-    // The settled emission and Pi's deferred actions are over once a prompt gets here.
-    closeSettlingWindow();
     // Steer/follow-up input arrives while a run is active: never compact then.
     if (event.streamingBehavior !== undefined) return undefined;
     await adoptOnIdleInput(rt, ctx);
@@ -546,7 +499,6 @@ function createRuntime(
     detachedUnbinds: [],
     nativeSessions: new Set(),
     unregisterNativeRefresher: undefined,
-    settling: false,
   };
   rt.onReplayDisabled = (sessionId, provider) => cancelDisabledCandidate(rt, sessionId, provider);
   return rt;

@@ -72,11 +72,9 @@ export interface MainOwner {
    */
   hostCompactUnwinding: boolean;
   /**
-   * A host compaction requested while it must not start yet (from
-   * `agent_settled`, where Pi defers an arriving prompt and would reject it
-   * once a compaction is running). Run at the next safe idle point: the
-   * following macrotask while idle, or the next prompt's `input` hook (before
-   * that prompt starts its run).
+   * An adoption requested from `agent_settled` (a context-cap hand-off or a
+   * manual candidate that became ready late in the run). Run at the next
+   * prompt's `input` hook, before that prompt starts its run.
    */
   idlePending: IdleRequest | undefined;
   /** The pending request while it runs; later requests join it. */
@@ -86,21 +84,14 @@ export interface MainOwner {
 }
 
 /**
- * A deferred host compaction: adopt the ready candidate (context cap), or run
- * the host's own compaction, which a native handler (Codex, xAI) answers.
- * `onSettled` runs exactly once with whether a compaction completed.
+ * A deferred adoption of the ready candidate. `onSettled` runs exactly once
+ * with whether a compaction completed.
  */
-export type IdleRequest =
-  | {
-      readonly kind: "adopt";
-      readonly trigger: PendingRoute["trigger"];
-      readonly onSettled: (compacted: boolean) => void;
-    }
-  | {
-      readonly kind: "foreground";
-      readonly customInstructions: string | undefined;
-      readonly onSettled: (compacted: boolean) => void;
-    };
+export interface IdleRequest {
+  readonly kind: "adopt";
+  readonly trigger: PendingRoute["trigger"];
+  readonly onSettled: (compacted: boolean) => void;
+}
 
 /** The main session's host services a child attachment borrows. */
 export interface ParentHost {
@@ -200,16 +191,6 @@ export interface HostRuntime {
   readonly nativeSessions: Set<string>;
   /** Removes this registration's per-session native refresher. */
   unregisterNativeRefresher: (() => void) | undefined;
-  /**
-   * The settling window, opened by this extension's own `agent_end` handler.
-   * Pi awaits every extension's `agent_end` before the run settles and
-   * `agent_settled` is emitted, so the window covers every `agent_settled`
-   * handler whatever the load order. It stays open until the next `input`
-   * (before the deferred request runs), `turn_start`, `session_start`,
-   * `model_select` or shutdown. Public events only; nothing on `ctx` or the
-   * session object is read or changed.
-   */
-  settling: boolean;
 }
 
 export function isCurrent(rt: HostRuntime, owner: MainOwner): boolean {
