@@ -372,7 +372,10 @@ test("a Codex child whose Codex lane refuses the cut never prepares on the text 
   try {
     assert.equal(core.backendId, CODEX_BACKEND_SETTING_ID);
     const usage = { tokens: 190_000, contextWindow: 200_000, percent: 95 };
+    const candidates = new Set<string | undefined>();
     for (let attempt = 0; attempt < 2; attempt++) {
+      // A refused lane is asked again only at a later context position.
+      if (attempt > 0) child.appendMessage({ role: "user", content: "CHILD-D", timestamp: 4 });
       core.observeUsage(usage);
       await core.coordinator.waitForPreparation();
       const status: CoordinatorStatus = core.coordinator.status();
@@ -380,7 +383,9 @@ test("a Codex child whose Codex lane refuses the cut never prepares on the text 
       assert.equal(status.backendId, CODEX_BACKEND_SETTING_ID, `attempt ${attempt} stays on Codex`);
       assert.equal(status.reason, "no-legal-cut");
       assert.equal(status.detail, "no_state", "the capture refuses before any provider response");
+      candidates.add(status.candidateId);
     }
+    assert.equal(candidates.size, 2, "the second attempt is a new Codex candidate");
     assert.deepEqual(summarized, [], "no text preparation for a Codex child");
   } finally {
     core.dispose();

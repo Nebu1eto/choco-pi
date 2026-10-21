@@ -23,6 +23,7 @@ import {
   type CoordinatorHandle,
   type CoordinatorPort,
   createCoordinator,
+  type DetailedCoordinatorStatus,
   type SnapshotContext,
   type SnapshotRefused,
 } from "../background/coordinator.ts";
@@ -85,6 +86,19 @@ const TERMINAL_FAILURE: ReadonlySet<CandidateState> = new Set([
   "discarded-stale",
 ]);
 
+/**
+ * Branch entry types that change what the model sees. The last one marks the
+ * context position a threshold request was made at; extension state entries
+ * (`custom`, labels, session info) appended between host hooks do not move it.
+ */
+const CONTEXT_ENTRY_TYPES: ReadonlySet<string> = new Set([
+  "message",
+  "custom_message",
+  "compaction",
+  "branch_summary",
+  "context_edit",
+]);
+
 export interface OwnerCore {
   readonly ownerKey: string;
   readonly sessionId: string;
@@ -131,6 +145,28 @@ interface OwnerCoreState {
   armed: boolean;
   retryAfter: number;
   lastRequested: string | undefined;
+  /** Lane and context position of the last threshold request. */
+  requested: ThresholdRequest | undefined;
+  /**
+   * Lanes whose threshold candidate failed at `failedAt`. A lane is not asked
+   * again at the same context position: nothing it decided on has changed, so
+   * the host's several boundary hooks of one run cannot each start a candidate.
+   */
+  failedAt: string | undefined;
+  readonly failedLanes: Set<string>;
+  /**
+   * Lanes that answered `unsupported` for this owner without a retry delay:
+   * nothing that changes within the owner lifts it, so they get no further
+   * threshold candidate; a model or Codex eligibility change replaces the
+   * owner. An `unsupported` with a retry delay (a capture-specific condition,
+   * such as a Daybreak request) is barred like any other failure instead.
+   */
+  readonly unsupportedLanes: Set<string>;
+}
+
+interface ThresholdRequest {
+  readonly lane: string;
+  readonly position: string;
 }
 
 export async function createOwnerCore(
@@ -152,6 +188,10 @@ export async function createOwnerCore(
     armed: true,
     retryAfter: 0,
     lastRequested: undefined,
+    requested: undefined,
+    failedAt: undefined,
+    failedLanes: new Set(),
+    unsupportedLanes: new Set(),
   };
   const coordinator = createCoordinator({
     ownerKey: spec.ownerKey,
@@ -442,11 +482,24 @@ function observeUsage(
     anthropicDisabled,
     status,
   });
+  if (state.unsupportedLanes.has(lane)) return;
+  const position = contextPosition(state);
+  if (state.failedAt === position && state.failedLanes.has(lane)) return;
   if (yieldsToOpaque(state, lane)) return;
   if (anthropicDisabled && backendId === ANTHROPIC_BACKEND_ID && lane === TEXT_BACKEND_ID) {
     announceDisabledYield(state);
   }
-  requestThresholdPreparation(state, coordinator, lane);
+  requestThresholdPreparation(state, coordinator, { lane, position });
+}
+
+/** The ID of the newest branch entry the model sees, or "" for none. */
+function contextPosition(state: OwnerCoreState): string {
+  const branch = state.spec.sessionManager.getBranch();
+  for (let index = branch.length - 1; index >= 0; index--) {
+    const entry = branch[index];
+    if (entry !== undefined && CONTEXT_ENTRY_TYPES.has(entry.type)) return entry.id;
+  }
+  return "";
 }
 
 /**
@@ -504,7 +557,8 @@ function announceDisabledYield(state: OwnerCoreState): void {
  * never yields: a Codex-owned model is compacted by Codex's own handler, so a
  * text candidate adopted over Codex content is exactly what
  * `selectBackendId` rules out. A refused Codex cut (no recorded provider
- * response yet, for example) retries on the Codex lane after the cooldown.
+ * response yet, for example) retries on the Codex lane after the cooldown, at
+ * a later context position.
  */
 export function thresholdLane(input: {
   readonly selected: string;
@@ -525,38 +579,75 @@ export function thresholdLane(input: {
 
 /**
  * A failed attempt may retry after the cooldown; an installed one waits for
- * usage to drop below the hysteresis band first.
+ * usage to drop below the hysteresis band first. A failure also bars its lane
+ * at the context position it was requested at, and an `unsupported` answer
+ * with no retry delay bars the lane for the owner's lifetime. A retry delay
+ * the backend reported lengthens the cooldown to at least that delay.
  */
-function rearmAfterFailure(state: OwnerCoreState, status: CoordinatorStatus): void {
+function rearmAfterFailure(state: OwnerCoreState, status: DetailedCoordinatorStatus): void {
   if (state.armed || state.lastRequested === undefined) return;
   if (status.candidateId !== state.lastRequested || !TERMINAL_FAILURE.has(status.state)) return;
   state.armed = true;
   state.lastRequested = undefined;
-  state.retryAfter = now(state) + state.spec.settings.cooldownMs;
+  const failed = status.state === "failed";
+  const retryAfterMs = failed ? (status.retryAfterMs ?? 0) : 0;
+  state.retryAfter = now(state) + Math.max(state.spec.settings.cooldownMs, retryAfterMs);
+  if (failed) barRequestedLane(state, ownerInvariantUnsupported(status));
+}
+
+/**
+ * Whether a failure is an `unsupported` no change within the owner lifts.
+ * A backend that expects the condition to clear (the Codex lane refusing a
+ * Daybreak capture, for one) reports a retry delay with it.
+ */
+function ownerInvariantUnsupported(status: DetailedCoordinatorStatus): boolean {
+  return status.reason === "unsupported" && status.retryAfterMs === undefined;
+}
+
+function barRequestedLane(state: OwnerCoreState, unsupported: boolean): void {
+  const requested = state.requested;
+  state.requested = undefined;
+  if (requested === undefined) return;
+  if (unsupported) state.unsupportedLanes.add(requested.lane);
+  if (state.failedAt !== requested.position) {
+    state.failedAt = requested.position;
+    state.failedLanes.clear();
+  }
+  state.failedLanes.add(requested.lane);
 }
 
 function requestThresholdPreparation(
   state: OwnerCoreState,
   coordinator: CoordinatorHandle,
-  backendId: string,
+  request: ThresholdRequest,
 ): void {
   const report = state.spec.report;
-  const requested = coordinator.requestPreparation({ trigger: "threshold", backendId });
+  const requested = coordinator.requestPreparation({
+    trigger: "threshold",
+    backendId: request.lane,
+  });
   coordinator.waitForPreparation().catch((cause: unknown) => {
     report(`preparation failed unexpectedly: ${errorText(cause)}`);
   });
   requested.then(
-    (result) => recordPreparationRequest(state, result),
+    (result) => recordPreparationRequest(state, request, result),
     (cause: unknown) => report(`preparation request failed: ${errorText(cause)}`),
   );
 }
 
-function recordPreparationRequest(state: OwnerCoreState, result: PreparationRequestResult): void {
+function recordPreparationRequest(
+  state: OwnerCoreState,
+  request: ThresholdRequest,
+  result: PreparationRequestResult,
+): void {
   if (result.accepted) {
     state.armed = false;
     state.lastRequested = result.candidateId;
+    state.requested = request;
   } else if (result.reason !== "busy") {
     state.retryAfter = now(state) + state.spec.settings.cooldownMs;
+    state.requested = request;
+    barRequestedLane(state, result.reason === "unsupported");
   }
 }
 

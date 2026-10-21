@@ -137,7 +137,7 @@ export interface CandidateFailurePortEvent {
   detail?: string;
 }
 
-interface DetailedCoordinatorStatus extends CoordinatorStatus {
+export interface DetailedCoordinatorStatus extends CoordinatorStatus {
   readonly durationMs: number;
   readonly queueDelayMs: number;
   readonly preparationMs: number;
@@ -148,6 +148,12 @@ interface DetailedCoordinatorStatus extends CoordinatorStatus {
   readonly committedEntryId?: string;
   /** How admission sized the prompt of the current candidate. */
   readonly admission?: AdmissionRecord;
+  /**
+   * The retry delay the backend reported with the candidate's terminal
+   * failure (`PrepareFailure.retryAfterMs`). Its presence marks a failure the
+   * backend expects to clear (a capture-specific `unsupported`, for one).
+   */
+  readonly retryAfterMs?: number;
 }
 
 type CoordinatorArbitrationResult =
@@ -192,6 +198,8 @@ interface Candidate {
   committedEntryId?: string;
   /** Backend detail code behind the terminal failure reason. */
   detail?: string;
+  /** Retry delay reported with the terminal failure, if any. */
+  retryAfterMs?: number;
   admission?: AdmissionRecord;
   cancelDeadline: () => void;
 }
@@ -360,9 +368,15 @@ function reportFailure(
 function fail(
   state: CoordinatorState,
   current: Candidate,
-  failure: { readonly reason: ReasonCode; readonly detail?: string; readonly cool: boolean },
+  failure: {
+    readonly reason: ReasonCode;
+    readonly detail?: string;
+    readonly cool: boolean;
+    readonly retryAfterMs?: number;
+  },
 ): void {
   current.detail = failure.detail;
+  current.retryAfterMs = failure.retryAfterMs;
   finish(state, current, "failed", failure.reason);
   rememberFailure(state, current, failure.reason, failure.detail);
   if (failure.cool) cool(state, current);
@@ -796,7 +810,12 @@ async function retryAfterFailure(
     // other terminal failure (auth, unsupported, oversized, transport) cools it
     // so the next request waits, honoring a reported retry delay.
     const refusal = CUT_REFUSALS.has(failure.reason);
-    fail(state, current, { reason: failure.reason, detail: failure.detail, cool: !refusal });
+    fail(state, current, {
+      reason: failure.reason,
+      detail: failure.detail,
+      cool: !refusal,
+      retryAfterMs: failure.retryAfterMs,
+    });
     if (!refusal && failure.retryAfterMs !== undefined)
       cool(state, current, Math.max(settings.cooldownMs, failure.retryAfterMs));
     return "stop";
@@ -1363,6 +1382,7 @@ function status(state: CoordinatorState): DetailedCoordinatorStatus {
         : undefined,
     committedEntryId: current.committedEntryId,
     admission: current.admission,
+    retryAfterMs: current.retryAfterMs,
   };
 }
 
