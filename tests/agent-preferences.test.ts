@@ -137,7 +137,7 @@ test(
       persona: DEFAULT_PERSONA,
       onUsageLimit: DEFAULT_ON_USAGE_LIMIT,
       daybreak: false,
-      contextSoftCap: "unlimited",
+      contextSoftCap: "permissive",
       autoCompactionPoint: "standard",
     };
     assert.deepEqual(readAgentPreferences(agent), defaults);
@@ -155,9 +155,9 @@ test(
 );
 
 test(
-  "context presets default to unlimited and standard, round-trip every value, and reject invalid values",
+  "context presets default to permissive and standard, round-trip every value, and reject invalid values",
   withTempDirs(async ({ agent }) => {
-    assert.equal(DEFAULT_CONTEXT_SOFT_CAP, "unlimited");
+    assert.equal(DEFAULT_CONTEXT_SOFT_CAP, "permissive");
     assert.equal(DEFAULT_AUTO_COMPACTION_POINT, "standard");
     assert.deepEqual(CONTEXT_PRESET_VALUES, [
       "strictest",
@@ -167,7 +167,7 @@ test(
       "unlimited",
     ]);
     const initial = await readAgentPreferencesAsync(agent);
-    assert.equal(initial.contextSoftCap, "unlimited");
+    assert.equal(initial.contextSoftCap, "permissive");
     assert.equal(initial.autoCompactionPoint, "standard");
 
     for (const value of CONTEXT_PRESET_VALUES) {
@@ -188,7 +188,7 @@ test(
       JSON.stringify({ contextSoftCap: 600_000, autoCompactionPoint: "loose" }),
     );
     const fallback = await readAgentPreferencesAsync(agent);
-    assert.equal(fallback.contextSoftCap, "unlimited");
+    assert.equal(fallback.contextSoftCap, "permissive");
     assert.equal(fallback.autoCompactionPoint, "standard");
   }),
 );

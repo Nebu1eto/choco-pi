@@ -51,7 +51,7 @@ export const CONTEXT_PRESET_VALUES: readonly ContextPreset[] = [
   "permissive",
   "unlimited",
 ];
-export const DEFAULT_CONTEXT_SOFT_CAP: ContextSoftCap = "unlimited";
+export const DEFAULT_CONTEXT_SOFT_CAP: ContextSoftCap = "permissive";
 export const DEFAULT_AUTO_COMPACTION_POINT: AutoCompactionPoint = "standard";
 /** Token counts per preset; `unlimited` defers to the model's own window. */
 export const CONTEXT_SOFT_CAP_TOKENS = {
