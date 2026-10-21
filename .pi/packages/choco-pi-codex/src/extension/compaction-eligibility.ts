@@ -61,8 +61,10 @@ function isPublishedSlot<T>(value: T): value is T & PublishedEligibilitySlot {
 /** Call every listener; failures are collected so one listener cannot starve the rest. */
 function notifyListeners(listeners: ReadonlySet<EligibilityListener>, revision: number): void {
   const failures: unknown[] = [];
-  // Set iteration tolerates a listener unsubscribing while being notified.
-  for (const listener of listeners) {
+  // Snapshot: a listener that unsubscribes and re-subscribes during
+  // notification would otherwise be appended to the live iteration.
+  const snapshot = Array.from(listeners);
+  for (const listener of snapshot) {
     try {
       listener(revision);
     } catch (cause) {
@@ -199,8 +201,9 @@ export function createCodexCompactionEligibility(
       const next = eligibilityInputs(state(), aliasInput());
       if (next === inputs) return false;
       inputs = next;
-      // Set iteration tolerates a listener unsubscribing while being notified.
-      for (const listener of local) listener();
+      // Snapshot for the same re-subscription reason as notifyListeners.
+      const snapshot = Array.from(local);
+      for (const listener of snapshot) listener();
       if (remove !== undefined) processSlot()?.bump(source);
       return true;
     },

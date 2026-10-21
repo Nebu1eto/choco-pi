@@ -29,7 +29,8 @@
  */
 import assert from "node:assert/strict";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { mkdir, mkdtemp, open, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { type FileHandle, mkdir, mkdtemp, open, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -43,7 +44,10 @@ import {
   CONTEXT_SOFT_CAP_TOKENS,
 } from "../../.pi/extensions/lib/agent-preferences.ts";
 import { isString } from "../../.pi/extensions/lib/runtime-values.ts";
-import { REASONS } from "../../.pi/packages/choco-pi-compaction/src/background/lane-journal.ts";
+import {
+  type LaneEvent,
+  REASONS,
+} from "../../.pi/packages/choco-pi-compaction/src/background/lane-journal.ts";
 import {
   OPAQUE_GUARD_NOTICE,
   OPAQUE_STRATEGIES,
@@ -57,11 +61,13 @@ import {
   RUNAWAY_FACTOR,
 } from "./background-compaction/budget.ts";
 import {
+  credentialNotices,
   type JournalRequirements,
   journalReasons,
   laneRecordData,
   MAX_LANE_RECORDS,
   summarizeJournal,
+  validRecords,
 } from "./background-compaction/lane-journal-checks.ts";
 import {
   buildAgentFiles,
@@ -106,7 +112,7 @@ const WireSchema = Type.Object(
   },
   { additionalProperties: true },
 );
-type WireRecord = Static<typeof WireSchema>;
+export type WireRecord = Static<typeof WireSchema>;
 const AssistantMessageSchema = Type.Object(
   {
     role: Type.Literal("assistant"),
@@ -143,7 +149,7 @@ const CompactionEntrySchema = Type.Object(
   },
   { additionalProperties: true },
 );
-type CompactionEntry = Static<typeof CompactionEntrySchema>;
+export type CompactionEntry = Static<typeof CompactionEntrySchema>;
 const CandidateDetailsSchema = Type.Object(
   { candidateId: Type.String({ minLength: 1 }) },
   { additionalProperties: true },
@@ -243,7 +249,26 @@ const ProbeStatusSchema = Type.Object({
   captureSystemHead: NullableString,
   /** The same from the latest `before_provider_request` payload. */
   requestSystemHead: NullableString,
+  /**
+   * The latest Codex WebSocket `response.create` frames this process sent
+   * (oldest first): booleans and counts only, never item content.
+   */
+  codexSends: Type.Array(
+    Type.Object(
+      {
+        seq: Type.Number(),
+        model: NullableString,
+        prewarm: Type.Boolean(),
+        previousResponseId: Type.Boolean(),
+        compactionItems: Type.Number(),
+        /** SHA-256 digests of the frame's encrypted compaction items (never the items). */
+        itemDigests: Type.Array(Type.String()),
+      },
+      { additionalProperties: true },
+    ),
+  ),
 });
+export type CodexSend = ProbeStatus["codexSends"][number];
 type ProbeStatus = Static<typeof ProbeStatusSchema>;
 const SidecarSchema = Type.Object(
   { prepareAt: Type.Number(), hysteresis: Type.Number(), reserveTokens: Type.Number() },
@@ -296,44 +321,237 @@ const SwitchResultSchema = Type.Object(
 );
 
 // ---------------------------------------------------------------------------
+// Pure verdicts (exported for the harness unit test)
+// ---------------------------------------------------------------------------
+
+/** An encrypted Responses compaction item (choco-pi-codex compactedWindow and wire input). */
+const EncryptedItemSchema = Type.Object(
+  {
+    type: Type.Union([Type.Literal("compaction"), Type.Literal("compaction_summary")]),
+    encrypted_content: Type.String({ minLength: 1 }),
+  },
+  { additionalProperties: true },
+);
+const CompactedWindowSchema = Type.Object(
+  { compactedWindow: Type.Array(Type.Unknown()) },
+  { additionalProperties: true },
+);
+
+/**
+ * SHA-256 digests of the encrypted compaction items of a checkpoint's
+ * `details.compactedWindow`, the same digest the probe extension keeps per
+ * sent frame (`encryptedDigests` in `probeExtensionSource`).
+ */
+export function checkpointDigests(entry: CompactionEntry): string[] {
+  const { details } = entry;
+  if (!Value.Check(CompactedWindowSchema, details)) return [];
+  return details.compactedWindow.flatMap((item) =>
+    Value.Check(EncryptedItemSchema, item)
+      ? [createHash("sha256").update(item.encrypted_content).digest("hex")]
+      : [],
+  );
+}
+
+/** A checkpoint frozen before the model switch: its entry id and encrypted-item digests. */
+export interface FrozenCheckpoint {
+  readonly entryId: string;
+  readonly digests: readonly string[];
+}
+
+export interface ModelSwitchEvidence {
+  readonly variant: "foreground" | "background";
+  readonly frozen: FrozenCheckpoint;
+  /** The first generating frame for the switch target. */
+  readonly frame: CodexSend | undefined;
+  /** The branch's latest compaction entry id right after the switched turn. */
+  readonly latestAfterSwitch: string | null;
+  /** Lane-journal records the case appended (switched and back turns). */
+  readonly laneData: readonly unknown[];
+  readonly switchedAway: boolean;
+  readonly switchedBack: boolean;
+  readonly switchedTurnErrors: number;
+  readonly backTurnErrors: number;
+}
+
+export interface ModelSwitchVerdict {
+  readonly verdict: "pass" | "fail";
+  readonly failures: string[];
+  readonly frameCarriesCheckpointItem: boolean;
+  /** Replay fallback records naming the frozen checkpoint. */
+  readonly replayFallbackRecords: number;
+  /** Checkpoint ids named by replay fallback records other than the frozen one. */
+  readonly otherReplayCheckpoints: string[];
+  readonly journalRecords: string[];
+  readonly journalProblems: string[];
+}
+
+/**
+ * Plan Q5 verdict. The frame and the journal are judged against the
+ * checkpoint frozen before `set_model` (A), never the latest one at status
+ * time: a replacement checkpoint (B) installed during the switched turn,
+ * whose item alone reaches the frame, must not pass for A. Background: every
+ * encrypted item of A on the first target frame, a codex replay fallback
+ * record naming A, none naming another checkpoint, and A still the latest
+ * checkpoint after the switched turn.
+ */
+export function modelSwitchVerdict(evidence: ModelSwitchEvidence): ModelSwitchVerdict {
+  const { frozen, frame } = evidence;
+  const background = evidence.variant === "background";
+  const replay = validRecords(evidence.laneData).filter(
+    (item) =>
+      item.provider === "codex" &&
+      item.route === "replay" &&
+      item.event === "fallback" &&
+      item.from === "codex-native-v2" &&
+      item.to === "codex-foreground" &&
+      item.reason === REASONS.incompatible &&
+      item.detail === "model",
+  );
+  const replayFallbackRecords = replay.filter(
+    (item) => item.checkpointEntryId === frozen.entryId,
+  ).length;
+  const otherReplayCheckpoints = replay
+    .filter((item) => item.checkpointEntryId !== frozen.entryId)
+    .map((item) => item.checkpointEntryId ?? "none");
+  const frameCarriesCheckpointItem =
+    frame !== undefined &&
+    frozen.digests.length > 0 &&
+    frozen.digests.every((item) => frame.itemDigests.includes(item));
+  const journalProblems = journalReasons(
+    evidence.laneData,
+    background ? { events: ["fallback"] } : {},
+  );
+  const journalRecords = summarizeJournal(evidence.laneData).records;
+  const failures: string[] = [];
+  if (!evidence.switchedAway) failures.push("set_model to the switch target failed");
+  if (!evidence.switchedBack) failures.push("set_model back to the subject failed");
+  if (evidence.switchedTurnErrors > 0) failures.push("switched turn errored");
+  if (evidence.backTurnErrors > 0) failures.push("back turn errored");
+  if (journalRecords.some((item) => item.startsWith("refuse:")))
+    failures.push("lane journal records a refusal");
+  failures.push(...journalProblems);
+  if (background) {
+    if (frozen.digests.length === 0)
+      failures.push(`checkpoint ${frozen.entryId} has no encrypted items`);
+    if (frame === undefined) failures.push("no frame for the switch target");
+    else if (!frameCarriesCheckpointItem)
+      failures.push(`first target frame lacks an encrypted item of ${frozen.entryId}`);
+    if (replayFallbackRecords === 0)
+      failures.push(`no replay fallback record names checkpoint ${frozen.entryId}`);
+    for (const other of otherReplayCheckpoints)
+      failures.push(`replay fallback record names checkpoint ${other}, not ${frozen.entryId}`);
+    if (evidence.latestAfterSwitch !== frozen.entryId)
+      failures.push(
+        `checkpoint ${evidence.latestAfterSwitch ?? "none"} replaced ${frozen.entryId} during the switched turn`,
+      );
+  }
+  return {
+    verdict: failures.length === 0 ? "pass" : "fail",
+    failures,
+    frameCarriesCheckpointItem,
+    replayFallbackRecords,
+    otherReplayCheckpoints,
+    journalRecords,
+    journalProblems,
+  };
+}
+
+/** Aborted compactions among `records`: every `compaction_end` with `aborted: true`, errored or not. */
+export function abortedCompactions(records: readonly WireRecord[]): number {
+  return records.filter((value) => value.type === "compaction_end" && value.aborted === true)
+    .length;
+}
+
+/** An auto case's journal verdict. */
+export interface JournalVerdict {
+  readonly verdict: "pass" | "fail";
+  readonly problems: string[];
+  readonly records: string[];
+}
+
+/**
+ * Journal verdict of an auto case over every wire record from the case start
+ * through the completed follow-up turn: one `cancel` record per aborted
+ * compaction (with or without an error) and one `fallback` record when the
+ * adopted checkpoint has another strategy than the lane's.
+ */
+export function autoJournalVerdict(
+  records: readonly WireRecord[],
+  observedFallback: boolean,
+  laneData: readonly unknown[],
+): JournalVerdict {
+  const events: LaneEvent[] = [
+    ...(observedFallback ? (["fallback"] as const) : []),
+    ...Array.from({ length: abortedCompactions(records) }, () => "cancel" as const),
+  ];
+  const problems = journalReasons(laneData, { events });
+  return {
+    verdict: problems.length === 0 ? "pass" : "fail",
+    problems,
+    records: summarizeJournal(laneData).records,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Options and evidence
 // ---------------------------------------------------------------------------
 
 const checkout = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-let parsed: ReturnType<typeof parseCli>;
-try {
-  parsed = parseCli(process.argv.slice(2), checkout);
-} catch (error) {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n\n${USAGE}`);
-  process.exit(2);
+/**
+ * The run's state, set by `main()` only when this file is the entry point. An
+ * import (the harness unit test reads the exported verdicts) parses no CLI,
+ * spawns nothing and writes nothing.
+ */
+interface RunState {
+  readonly options: ProbeOptions;
+  readonly cells: ReturnType<typeof resolveCells>;
 }
-if (parsed.help) {
-  process.stdout.write(USAGE);
-  process.exit(0);
+/** The live run's resources (no dry run). */
+interface LiveState {
+  readonly launcher: string;
+  readonly capture: string;
+  readonly scratch: string;
+  readonly evidence: FileHandle;
 }
-const options: ProbeOptions = parsed.options;
-const cells = resolveCells(options);
+let runState: RunState | undefined;
+let liveState: LiveState | undefined;
+function run(): RunState {
+  assert.ok(runState !== undefined, "probe state read before main()");
+  return runState;
+}
+function live(): LiveState {
+  assert.ok(liveState !== undefined, "live probe state read before main()");
+  return liveState;
+}
+function opts(): ProbeOptions {
+  return run().options;
+}
 const STATUS_PREFIX = "PROBE-STATUS ";
-
-if (options.dryRun) {
-  await dryRun();
-  process.exit(0);
+/** The Codex model the model-switch case replays the Luna checkpoint on (approved). */
+const CODEX_SWITCH_TARGET = "openai-codex/gpt-6-sol";
+/** Why the captures-cleared case cannot run: no approved second model of the provider. */
+function noSwitchModel(): string {
+  return `captures-cleared-before-compact needs a second approved ${opts().provider} model and none is approved: pass --switch-model <approved ${opts().provider} model> (add it to APPROVED_LIVE_MODELS, or to SWITCH_ONLY_LIVE_MODELS in tests/live/background-compaction/budget.ts once the user approves it)`;
 }
 
 async function dryRun(): Promise<void> {
   const write = (line: string): void => {
     process.stdout.write(`${line}\n`);
   };
-  write(`model ${options.model} logic ${options.logic} (approved)`);
+  write(`model ${opts().model} logic ${opts().logic} (approved)`);
   write(
-    `contextSoftCap ${options.softCap} (${CONTEXT_SOFT_CAP_TOKENS[options.softCap]}), autoCompactionPoint ${options.compactionPoint} (${AUTO_COMPACTION_POINT_TOKENS[options.compactionPoint]})`,
+    `contextSoftCap ${opts().softCap} (${CONTEXT_SOFT_CAP_TOKENS[opts().softCap]}), autoCompactionPoint ${opts().compactionPoint} (${AUTO_COMPACTION_POINT_TOKENS[opts().compactionPoint]})`,
   );
   write(
-    `text lane ${options.text ? "on" : "off"}; switch model ${options.switchModel ?? "none"}; runaway stop ${RUNAWAY_FACTOR}x the cell's LIVE_EXPECTATIONS row`,
+    `text lane ${opts().text ? "on" : "off"}; switch model ${opts().switchModel ?? "none"}; runaway stop ${RUNAWAY_FACTOR}x the cell's LIVE_EXPECTATIONS row`,
   );
+  write("stop: the first cell with a failed case ends the run; later cells are not run");
+  const { cells } = run();
+  if (opts().switchModel === undefined && laneFor()?.needsCapture === true)
+    write(`warning: ${noSwitchModel()}`);
   for (const cell of cells) {
     const unprovable = unprovableReason(cell);
-    const key = rpcProbeExpectationKey(options.model, cell.point);
+    const key = rpcProbeExpectationKey(opts().model, cell.point);
     write(`\ncell ${cell.key}${unprovable === undefined ? "" : ` (unprovable: ${unprovable})`}`);
     write(`  budget row: ${key ?? "none (no runaway stop)"}`);
     const reserve =
@@ -341,13 +559,13 @@ async function dryRun(): Promise<void> {
         ? `${DEFAULT_RESERVE_TOKENS}`
         : "calibrated: window - plannedPoint - 8000 (planAuto)";
     const files = await buildAgentFiles(
-      options,
+      opts(),
       {
         background: cell.background,
         reserveTokens: DEFAULT_RESERVE_TOKENS,
         sidecarReserveTokens: 0,
       },
-      join(options.source, "choco-pi-codex.json"),
+      join(opts().source, "choco-pi-codex.json"),
     );
     write(`  compaction.reserveTokens: ${reserve}`);
     write(`  settings.json overrides: ${JSON.stringify(files.settingsOverrides)}`);
@@ -366,20 +584,24 @@ async function dryRun(): Promise<void> {
         "  cases: RPC compact (plain), RPC compact (instructions), each + one follow-up prompt",
       );
     else write("  cases: calibrate, seed, prompt until the cap point fires, one follow-up prompt");
+    if (backgroundSwitchApplies(cell))
+      write(
+        `  model-switch-replay: background Codex checkpoint (details.background.providerScope), then one ${CODEX_SWITCH_TARGET} turn: fallback/incompatible/model replay record, encrypted item on the frame, no refusal`,
+      );
     write(`  case names: ${caseNames(cell).join(", ")}`);
     if (cell.point === "auto") {
       // Example points only: the live run calibrates and logs its own.
-      const plan = planAuto(options, DRY_RUN_CALIBRATION);
+      const plan = planAuto(opts(), DRY_RUN_CALIBRATION);
       const sidecar = parseSidecar(
         (
           await buildAgentFiles(
-            options,
+            opts(),
             {
               background: cell.background,
               reserveTokens: plan.reserveTokens,
               sidecarReserveTokens: plan.sidecarReserveTokens,
             },
-            join(options.source, "choco-pi-codex.json"),
+            join(opts().source, "choco-pi-codex.json"),
           )
         ).backgroundSidecar,
       );
@@ -404,17 +626,7 @@ async function dryRun(): Promise<void> {
   }
 }
 
-const launcherPath = options.launcher;
-const capturePath = options.capture;
-assert(launcherPath !== undefined && capturePath !== undefined, "launcher and capture required");
-const launcher: string = launcherPath;
-const capture: string = capturePath;
 const runFile = promisify(execFile);
-const version = await runFile(launcher, ["--version"], { timeout: 5000, maxBuffer: 4096 });
-assert.equal(version.stdout.trim(), "1.3.0", "Probe requires Pi 1.3.0");
-
-const scratch = await mkdtemp(join(tmpdir(), "choco-pi-rpc-compaction-"));
-const evidence = await open(capture, "wx", 0o600);
 type DetailValue = string | number | boolean | null | readonly string[];
 type Detail = { readonly [key: string]: DetailValue };
 /** Signatures stay in the protected session file; evidence keeps their length only. */
@@ -426,7 +638,7 @@ let logQueue: Promise<void> = Promise.resolve();
 function log<T extends object>(record: T): void {
   const line = `${JSON.stringify({ at: Date.now(), ...record }, redact)}\n`;
   logQueue = logQueue.then(async () => {
-    await evidence.write(line);
+    await live().evidence.write(line);
   });
 }
 
@@ -455,9 +667,16 @@ function probeExtensionSource(hostReserve: number): string {
     cap: join(checkout, ".pi/extensions/model-context-cap.ts"),
     policy: join(checkout, ".pi/extensions/lib/context-policy.ts"),
   };
+  // Codex traffic rides choco-pi-codex's WebSocket. Its modules load per
+  // extension (jiti, no module cache), so their in-memory request state is
+  // not readable from here; the frames are observed at `WebSocket.send`
+  // instead (the transport resolves `globalThis.WebSocket` per connection
+  // when no proxy is configured; behind a proxy it uses undici's and nothing
+  // is observed). Only digests of encrypted items are kept in memory.
+  const codexSendsKey = "choco-pi.rpc-probe.codex-sends";
   const settings = {
-    softCap: options.softCap,
-    compactionPoint: options.compactionPoint,
+    softCap: opts().softCap,
+    compactionPoint: opts().compactionPoint,
     hostReserve,
   };
   return `import type { ExtensionAPI } from ${JSON.stringify(imports.api)};
@@ -466,8 +685,59 @@ import { capturesFor, transportRefusals } from ${JSON.stringify(imports.capture)
 import { xaiCapturesFor } from ${JSON.stringify(imports.xaiCapture)};
 import { resolvePolicy } from ${JSON.stringify(imports.cap)};
 import { readNativeContextWindow } from ${JSON.stringify(imports.policy)};
+import { createHash } from "node:crypto";
 const SETTINGS = ${JSON.stringify(settings)};
 const HEAD_CHARS = 80;
+const SEND_LIMIT = 16;
+type Sent = { seq: number; model: string | null; prewarm: boolean; previousResponseId: boolean; digests: string[] };
+function digest(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
+/** Digests of the encrypted compaction items in a Responses input list. */
+function encryptedDigests(items: unknown): string[] {
+  if (!Array.isArray(items)) return [];
+  const found: string[] = [];
+  for (const item of items) {
+    if (typeof item !== "object" || item === null || !("type" in item) || !("encrypted_content" in item)) continue;
+    if (item.type !== "compaction" && item.type !== "compaction_summary") continue;
+    if (typeof item.encrypted_content === "string" && item.encrypted_content !== "") found.push(digest(item.encrypted_content));
+  }
+  return found;
+}
+function codexSends(): Sent[] {
+  const key = Symbol.for(${JSON.stringify(codexSendsKey)});
+  const existing: unknown = Object.getOwnPropertyDescriptor(globalThis, key)?.value;
+  if (Array.isArray(existing)) return existing;
+  const sends: Sent[] = [];
+  Object.defineProperty(globalThis, key, { value: sends, configurable: true });
+  const Socket = globalThis.WebSocket;
+  if (typeof Socket === "function") {
+    const send = Socket.prototype.send;
+    let seq = 0;
+    Socket.prototype.send = function (data: Parameters<typeof send>[0]) {
+      if (typeof data === "string" && data.startsWith('{"type":"response.create"')) {
+        try {
+          const frame: unknown = JSON.parse(data);
+          if (typeof frame === "object" && frame !== null) {
+            const model = "model" in frame && typeof frame.model === "string" ? frame.model : null;
+            sends.push({
+              seq: ++seq,
+              model,
+              prewarm: "generate" in frame && frame.generate === false,
+              previousResponseId: "previous_response_id" in frame && Boolean(frame.previous_response_id),
+              digests: encryptedDigests("input" in frame ? frame.input : undefined),
+            });
+            if (sends.length > SEND_LIMIT) sends.shift();
+          }
+        } catch {
+          // Observation only: never affect the transport.
+        }
+      }
+      return send.call(this, data);
+    };
+  }
+  return sends;
+}
 /** First characters of system[0].text (or a string system); never headers or auth. */
 function systemHead(body: unknown): string | null {
   if (typeof body !== "object" || body === null || !("system" in body)) return null;
@@ -480,6 +750,7 @@ function systemHead(body: unknown): string | null {
 }
 let requestSystemHead: string | null = null;
 export default function (pi: ExtensionAPI) {
+  const sends = codexSends();
   pi.on("before_provider_request", (event) => {
     const head = systemHead(event.payload);
     if (head !== null) requestSystemHead = head;
@@ -499,8 +770,16 @@ export default function (pi: ExtensionAPI) {
       const model = ctx.model;
       const nativeWindow = model ? (readNativeContextWindow(model) ?? model.contextWindow) : null;
       const policy = model && nativeWindow !== null ? resolvePolicy(model, nativeWindow, SETTINGS) : {};
+      const codexFrames = sends.map((sent) => ({
+        seq: sent.seq,
+        model: sent.model,
+        prewarm: sent.prewarm,
+        previousResponseId: sent.previousResponseId,
+        compactionItems: sent.digests.length,
+        itemDigests: sent.digests,
+      }));
       ctx.ui.notify(${JSON.stringify(STATUS_PREFIX)} + JSON.stringify({
-        rows, captures, refusals, xaiCaptures,
+        rows, captures, refusals, xaiCaptures, codexSends: codexFrames,
         window: model ? model.contextWindow : null,
         nativeWindow,
         cap: policy.cap ?? null,
@@ -530,7 +809,7 @@ function startCellBudget(cell: Cell): void {
   cellUsage.requests = 0;
   cellUsage.inputTokens = 0;
   cellUsage.outputTokens = 0;
-  const key = rpcProbeExpectationKey(options.model, cell.point);
+  const key = rpcProbeExpectationKey(opts().model, cell.point);
   const expected = key === undefined ? undefined : LIVE_EXPECTATIONS[key];
   cellBudget = key === undefined || expected === undefined ? undefined : { key, expected };
   log({
@@ -564,6 +843,7 @@ let launches = 0;
 async function launch(label: string, settings: LaunchSettings, reuse?: string): Promise<Session> {
   const dir =
     reuse ?? `${String(++launches).padStart(2, "0")}-${label.replace(/[^A-Za-z0-9.-]+/g, "_")}`;
+  const { launcher, scratch } = live();
   const agentDir = join(scratch, dir, "agent");
   const workspace = join(scratch, dir, "workspace");
   const sessionsDir = join(scratch, dir, "sessions");
@@ -575,9 +855,9 @@ async function launch(label: string, settings: LaunchSettings, reuse?: string): 
       mkdir(workspace, { recursive: true }),
       mkdir(sessionsDir, { recursive: true }),
     ]);
-    await copyAgentFiles(options.source, agentDir);
+    await copyAgentFiles(opts().source, agentDir);
   }
-  const files = await buildAgentFiles(options, settings, join(agentDir, "choco-pi-codex.json"));
+  const files = await buildAgentFiles(opts(), settings, join(agentDir, "choco-pi-codex.json"));
   if (reuse === undefined) {
     await Promise.all([
       writeFile(join(agentDir, "settings.json"), files.settings),
@@ -610,9 +890,9 @@ async function launch(label: string, settings: LaunchSettings, reuse?: string): 
       "--session-dir",
       sessionsDir,
       "--provider",
-      options.provider,
+      opts().provider,
       "--model",
-      options.modelId,
+      opts().modelId,
       "--thinking",
       "off",
       "--extension",
@@ -698,7 +978,7 @@ async function launch(label: string, settings: LaunchSettings, reuse?: string): 
     predicate: (value: WireRecord) => boolean,
     since: number,
   ): Promise<WireRecord> {
-    const deadline = Date.now() + options.caseTimeoutMs;
+    const deadline = Date.now() + opts().caseTimeoutMs;
     while (Date.now() < deadline) {
       if (failure) throw failure;
       const found = records.slice(since).find(predicate);
@@ -823,7 +1103,7 @@ function errorsSince(session: Session, since: number): ErrorTally {
 }
 
 async function waitIdle(session: Session): Promise<void> {
-  const deadline = Date.now() + options.caseTimeoutMs;
+  const deadline = Date.now() + opts().caseTimeoutMs;
   while (Date.now() < deadline) {
     const state = await session.command("get_state");
     if (Value.Check(StateSchema, state.data) && !state.data.isStreaming && !state.data.isCompacting)
@@ -893,7 +1173,7 @@ async function waitForNewCandidate(
   session: Session,
   prior: ReadonlySet<string>,
 ): Promise<StatusRow> {
-  const deadline = Date.now() + options.caseTimeoutMs;
+  const deadline = Date.now() + opts().caseTimeoutMs;
   let last = "";
   while (Date.now() < deadline) {
     const status = await probeStatus(session);
@@ -1018,7 +1298,8 @@ async function provenance(
 // Cases
 // ---------------------------------------------------------------------------
 
-type Outcome = "pass" | "fail" | "unprovable";
+/** `not-run`: a cell after the first failing cell (the run stops there). */
+type Outcome = "pass" | "fail" | "unprovable" | "not-run";
 interface CaseResult {
   readonly cell: string;
   readonly name: string;
@@ -1034,7 +1315,7 @@ function record(cell: Cell, name: string, outcome: Outcome, details: Detail | De
 }
 
 function laneFor(): NativeLane | undefined {
-  return options.logic === "server-side" ? nativeLaneFor(options.provider) : undefined;
+  return opts().logic === "server-side" ? nativeLaneFor(opts().provider) : undefined;
 }
 
 /** The lane a manual case expects and whether a background candidate or the foreground serves it. */
@@ -1087,11 +1368,11 @@ async function journalCount(session: Session): Promise<number> {
  * be present. Only the first 80 characters are read; no headers.
  */
 async function identityProof(session: Session): Promise<Provenance> {
-  if (options.provider !== "anthropic")
+  if (opts().provider !== "anthropic")
     return {
       pass: true,
       detail: new Map<string, DetailValue>([
-        ["identity", `not applicable: provider ${options.provider}`],
+        ["identity", `not applicable: provider ${opts().provider}`],
       ]),
     };
   const status = await probeStatus(session);
@@ -1233,14 +1514,16 @@ async function manualCase(
   // strategy) and cancel (the compact failed or aborted).
   const observedFallback =
     lane !== undefined && entry !== undefined && strategyOf(entry) !== lane.strategy;
-  const observedCancel =
-    response.success !== true || commandEvents.some((event) => event.endsWith(":aborted"));
+  // One cancel per aborted compaction; a failed RPC with none aborted is one.
+  // Through the follow-up turn; an aborted compaction counts with or without an error.
+  const aborts = abortedCompactions(session.records.slice(commandSince));
+  const cancels = Math.max(aborts, response.success === true ? 0 : 1);
   const journal = await journalSince(session, journalStart, {
     ...caseOptions.journal,
     events: [
       ...(caseOptions.journal?.events ?? []),
       ...(observedFallback ? (["fallback"] as const) : []),
-      ...(observedCancel ? (["cancel"] as const) : []),
+      ...Array.from({ length: cancels }, () => "cancel" as const),
     ],
   });
   detail.set("journalRecords", journal.records);
@@ -1271,16 +1554,16 @@ function modelParts(model: string): ModelSelection {
  */
 async function capturesClearedCase(session: Session, cell: Cell, identity: Provenance) {
   const name = `${cell.key}:captures-cleared-before-compact`;
-  const target = options.switchModel;
+  const target = opts().switchModel;
   if (target === undefined) {
-    record(cell, name, "fail", { reason: "no second model of the provider: pass --switch-model" });
+    record(cell, name, "fail", { reason: noSwitchModel() });
     return;
   }
   const xai = laneFor()?.strategy === "xai-responses-compaction-v1";
   const capturesOf = (status: ProbeStatus) => (xai ? status.xaiCaptures : status.captures);
   const before = capturesOf(await probeStatus(session)).filter((item) => item.status === 200);
   const away = await session.command("set_model", modelParts(target));
-  const back = await session.command("set_model", modelParts(options.model));
+  const back = await session.command("set_model", modelParts(opts().model));
   const after = capturesOf(await probeStatus(session)).filter((item) => item.status === 200);
   const detail: DetailMap = new Map<string, DetailValue>([
     ["switchModel", target],
@@ -1300,57 +1583,155 @@ async function capturesClearedCase(session: Session, cell: Cell, identity: Prove
   });
 }
 
-/** The Codex model the model-switch case replays the Luna checkpoint on (approved). */
-const CODEX_SWITCH_TARGET = "openai-codex/gpt-6-sol";
+/** `details.background.providerScope` of a background Codex checkpoint (choco-pi-codex types.ts). */
+const BackgroundScopeSchema = Type.Object(
+  {
+    background: Type.Object(
+      {
+        providerScope: Type.Object(
+          { provider: Type.String(), model: Type.String() },
+          { additionalProperties: true },
+        ),
+      },
+      { additionalProperties: true },
+    ),
+  },
+  { additionalProperties: true },
+);
+
+/** The auto cell runs the background model-switch case: Codex, background on. */
+function backgroundSwitchApplies(cell: Cell): boolean {
+  return (
+    cell.point === "auto" &&
+    cell.background &&
+    laneFor()?.strategy === "openai-responses-compaction-v2"
+  );
+}
+
+/** The first generating Codex frame for `modelId` sent after frame `afterSeq`. */
+function firstFrameFor(
+  status: ProbeStatus,
+  modelId: string,
+  afterSeq: number,
+): CodexSend | undefined {
+  return status.codexSends.find(
+    (frame) => frame.seq > afterSeq && !frame.prewarm && frame.model === modelId,
+  );
+}
 
 /**
  * Codex model-only mismatch (plan Q5, D12): one turn on gpt-6-sol over the
  * subject's Codex checkpoint must be replayed through the foreground path
  * (same account) and accepted by the server, then one turn back on the
  * subject. A local refusal or a provider rejection fails the case.
+ *
+ * - `foreground` (manual cells): the latest checkpoint is the foreground
+ *   lane's; the frame's replay item is recorded, not required.
+ * - `background` (Codex auto cell, background on): the latest checkpoint must
+ *   be a background one carrying `details.background.providerScope` for the
+ *   subject, so `refreshIntegration` (choco-pi-codex background-compaction.ts)
+ *   takes `useForegroundReplay`: a `replay`/`fallback` record from
+ *   `codex-native-v2` to `codex-foreground`, reason `incompatible`, detail
+ *   `model`, naming the checkpoint. The first gpt-6-sol frame must carry every
+ *   encrypted item of that checkpoint, and it must still be the latest one
+ *   after the switched turn (`modelSwitchVerdict`).
+ *
+ * The checkpoint's id and encrypted-item digests are frozen before
+ * `set_model`; nothing is compared against a later checkpoint.
+ *
+ * A failed precondition records the failure without prompting.
  */
-async function modelSwitchReplayCase(session: Session, cell: Cell): Promise<void> {
+async function modelSwitchReplayCase(
+  session: Session,
+  cell: Cell,
+  variant: "foreground" | "background",
+): Promise<void> {
   const name = `${cell.key}:model-switch-replay`;
   assert.ok(
     APPROVED_LIVE_MODELS.includes(CODEX_SWITCH_TARGET),
     `${CODEX_SWITCH_TARGET} unapproved`,
   );
   const lane = laneFor();
+  const target = modelParts(CODEX_SWITCH_TARGET);
   const since = session.records.length;
   const journalStart = await journalCount(session);
   const latest = compactions((await allEntries(session)).branch).at(-1);
-  const checkpoint = latest !== undefined && strategyOf(latest) === lane?.strategy;
-  const away = await session.command("set_model", modelParts(CODEX_SWITCH_TARGET));
+  const codexCheckpoint = latest !== undefined && strategyOf(latest) === lane?.strategy;
+  const scope =
+    latest !== undefined && Value.Check(BackgroundScopeSchema, latest.details)
+      ? latest.details.background.providerScope
+      : undefined;
+  const candidate = latest === undefined ? null : (backgroundCandidate(latest) ?? null);
+  const backgroundCheckpoint =
+    candidate !== null && scope?.provider === opts().provider && scope.model === opts().modelId;
+  const detail: DetailMap = new Map<string, DetailValue>([
+    ["variant", variant],
+    ["switchModel", CODEX_SWITCH_TARGET],
+    ["codexCheckpointBefore", codexCheckpoint],
+    ["checkpointEntryId", latest?.id ?? null],
+    ["checkpointCandidate", candidate],
+    ["providerScopeModel", scope?.model ?? null],
+    ["backgroundCheckpoint", backgroundCheckpoint],
+  ]);
+  const precondition = codexCheckpoint && (variant === "foreground" || backgroundCheckpoint);
+  if (!precondition || latest === undefined) {
+    detail.set("notPrompted", "precondition failed: no matching Codex checkpoint");
+    record(cell, name, "fail", detail);
+    return;
+  }
+  // Frozen before set_model: the frame and the journal are judged against A only.
+  const frozen: FrozenCheckpoint = {
+    entryId: latest.id,
+    digests: checkpointDigests(latest),
+  };
+  detail.set("frozenCheckpointItems", frozen.digests.length);
+  const framesBefore = (await probeStatus(session)).codexSends.at(-1)?.seq ?? 0;
+  const away = await session.command("set_model", target);
+  const awaySince = session.records.length;
   await prompt(session, "SWITCHED-TURN: reply with exactly ACK-SWITCHED");
   const awayErrors = errorsSince(session, since);
+  const shown = noticesSince(session, awaySince);
+  // Read before the next Luna turn replaces the latest frames or adopts another checkpoint.
+  const frame = firstFrameFor(await probeStatus(session), target.modelId, framesBefore);
+  const latestAfterSwitch = compactions((await allEntries(session)).branch).at(-1)?.id ?? null;
   const backSince = session.records.length;
-  const back = await session.command("set_model", modelParts(options.model));
+  const back = await session.command("set_model", modelParts(opts().model));
   await prompt(session, "SWITCHED-BACK: reply with exactly ACK-BACK");
   const backErrors = errorsSince(session, backSince);
-  const journal = await journalSince(session, journalStart, {});
-  const refused = journal.records.filter((item) => item.startsWith("refuse:"));
-  const detail: DetailMap = new Map<string, DetailValue>([
-    ["switchModel", CODEX_SWITCH_TARGET],
-    ["codexCheckpointBefore", checkpoint],
-    ["checkpointEntryId", latest?.id ?? null],
+  const laneData = laneRecordData((await allEntries(session)).entries).slice(journalStart);
+  const verdict = modelSwitchVerdict({
+    variant,
+    frozen,
+    frame,
+    latestAfterSwitch,
+    laneData,
+    switchedAway: away.success === true,
+    switchedBack: back.success === true,
+    switchedTurnErrors: awayErrors.count,
+    backTurnErrors: backErrors.count,
+  });
+  const replayNotice = `Codex background checkpoint ${frozen.entryId} was made for model ${opts().modelId}; replaying it for ${target.modelId} through the foreground path`;
+  for (const [key, value] of [
     ["switchedAway", away.success === true],
     ["switchedTurnErrors", awayErrors.count],
     ["switchedTurnFirstError", awayErrors.first],
+    ["frameSeen", frame !== undefined],
+    ["framePreviousResponseId", frame?.previousResponseId ?? null],
+    ["frameCompactionItems", frame?.compactionItems ?? null],
+    ["frameCarriesCheckpointItem", verdict.frameCarriesCheckpointItem],
+    ["latestCheckpointAfterSwitch", latestAfterSwitch],
+    ["replayFallbackRecords", verdict.replayFallbackRecords],
+    ["otherReplayCheckpoints", verdict.otherReplayCheckpoints],
+    ["replayNoticeShown", shown.some((message) => message.includes(replayNotice))],
     ["switchedBack", back.success === true],
     ["backTurnErrors", backErrors.count],
     ["backTurnFirstError", backErrors.first],
-    ["journalRecords", journal.records],
-    ["journalProblems", journal.problems],
-  ]);
-  const pass =
-    checkpoint &&
-    away.success === true &&
-    back.success === true &&
-    awayErrors.count === 0 &&
-    backErrors.count === 0 &&
-    refused.length === 0 &&
-    journal.problems.length === 0;
-  record(cell, name, pass ? "pass" : "fail", detail);
+    ["journalRecords", verdict.journalRecords],
+    ["journalProblems", verdict.journalProblems],
+    ["failures", verdict.failures],
+  ] as const)
+    detail.set(key, value);
+  record(cell, name, verdict.verdict, detail);
 }
 
 /** What the first compact after a resume must do, per lane. */
@@ -1479,14 +1860,28 @@ async function resumeThenCompactCase(
   record(cell, name, pass ? "pass" : "fail", detail);
 }
 
-/** Cell-wide journal: fewer than MAX_LANE_RECORDS records, all valid, none credential-looking. */
-async function journalCellCase(session: Session, cell: Cell): Promise<void> {
-  const data = laneRecordData((await allEntries(session)).entries);
-  const problems = journalReasons(data, { below: MAX_LANE_RECORDS });
+/**
+ * Cell-wide journal: fewer than MAX_LANE_RECORDS records, all valid, none
+ * credential-looking, and no notice any of the cell's processes showed looks
+ * like a credential (the probe's own status output excluded). `sessions[0]`
+ * holds the journal (the latest process of the cell).
+ */
+async function journalCellCase(sessions: readonly Session[], cell: Cell): Promise<void> {
+  const [current] = sessions;
+  assert.ok(current !== undefined, "journal case needs a session");
+  const data = laneRecordData((await allEntries(current)).entries);
+  const notices = [...new Set(sessions)].flatMap((session) =>
+    noticesSince(session, 0).filter((message) => !message.startsWith(STATUS_PREFIX)),
+  );
+  const problems = [
+    ...journalReasons(data, { below: MAX_LANE_RECORDS }),
+    ...credentialNotices(notices),
+  ];
   record(cell, `${cell.key}:journal`, problems.length === 0 ? "pass" : "fail", {
     count: data.length,
     limit: MAX_LANE_RECORDS,
     records: summarizeJournal(data).records,
+    noticesScanned: notices.length,
     problems,
   });
 }
@@ -1512,7 +1907,7 @@ async function runManualCell(cell: Cell): Promise<void> {
   };
   const session = holder.current;
   try {
-    const identity = await seedWithIdentity(session, cell, options.seedTurns);
+    const identity = await seedWithIdentity(session, cell, opts().seedTurns);
     await manualCase(session, cell, `${cell.key}:plain`, undefined, identity);
     await seed(session, 2, "SEED-B");
     await manualCase(session, cell, `${cell.key}:instructions`, FOCUS_INSTRUCTIONS, identity, {
@@ -1521,9 +1916,10 @@ async function runManualCell(cell: Cell): Promise<void> {
     const extras = extraManualCases(cell);
     if (extras.includes("captures-cleared-before-compact"))
       await capturesClearedCase(session, cell, identity);
-    if (extras.includes("model-switch-replay")) await modelSwitchReplayCase(session, cell);
+    if (extras.includes("model-switch-replay"))
+      await modelSwitchReplayCase(session, cell, "foreground");
     if (extras.includes("resume-then-compact")) await resumeThenCompactCase(holder, cell, identity);
-    await journalCellCase(holder.current, cell);
+    await journalCellCase([holder.current, session], cell);
   } finally {
     await holder.current.close();
     if (holder.current !== session) await session.close();
@@ -1562,7 +1958,7 @@ async function calibrate(cell: Cell): Promise<Calibration> {
 async function runAutoCell(cell: Cell): Promise<void> {
   const lane = laneFor();
   const calibration = await calibrate(cell);
-  const plan = planAuto(options, calibration);
+  const plan = planAuto(opts(), calibration);
   log({ label: cell.key, calibration: { ...calibration }, plan: { ...plan } });
   const session = await launch(cell.key, {
     background: cell.background,
@@ -1570,13 +1966,14 @@ async function runAutoCell(cell: Cell): Promise<void> {
     sidecarReserveTokens: plan.sidecarReserveTokens,
   });
   try {
-    const identity = await seedWithIdentity(session, cell, options.seedTurns);
+    const identity = await seedWithIdentity(session, cell, opts().seedTurns);
     const start = await probeStatus(session);
     const prior = new Set(
       start.rows.flatMap((row) => (row.candidateId === undefined ? [] : [row.candidateId])),
     );
     const before = await branchCompactionCount(session);
     const since = session.records.length;
+    const journalStart = await journalCount(session);
     let fired = false;
     let tokensAtFire: number | null = null;
     for (let index = 0; index < 12 && !fired; index += 1) {
@@ -1598,12 +1995,13 @@ async function runAutoCell(cell: Cell): Promise<void> {
     const entry = fired ? await waitForNewCompaction(session, before, 60_000) : undefined;
     // Read the coordinator before the follow-up turn can start another candidate.
     const adoptedStatus = entry === undefined ? undefined : await probeStatus(session);
+    await prompt(session, "AFTER-AUTO: reply with exactly ACK-AUTO");
+    // Observed through the completed follow-up: a compaction it aborts needs its record too.
     const events = compactionEvents(session, since);
     // The probe never sends RPC `compact` here; a "manual" reason is ctx.compact() from the cap.
     const compactRpcCalls = session.records
       .slice(since)
       .filter((value) => value.type === "response" && value.command === "compact").length;
-    await prompt(session, "AFTER-AUTO: reply with exactly ACK-AUTO");
     const point = start.compactAt;
     // The cap's point fires through ctx.compact() ("manual"); without a cap
     // (window < 64k) Pi's own threshold (window - reserve) is the auto point.
@@ -1628,8 +2026,8 @@ async function runAutoCell(cell: Cell): Promise<void> {
       ["reserveTokens", plan.reserveTokens],
       ["hostThreshold", plan.hostThreshold],
       ["sidecarReserveTokens", plan.sidecarReserveTokens],
-      ["softCap", options.softCap],
-      ["compactionPoint", options.compactionPoint],
+      ["softCap", opts().softCap],
+      ["compactionPoint", opts().compactionPoint],
       ["tokensAtFire", tokensAtFire],
       ["events", events.slice(0, 6)],
       ["expectedReason", expectedReason],
@@ -1693,11 +2091,24 @@ async function runAutoCell(cell: Cell): Promise<void> {
       for (const [key, value] of proof.detail) detail.set(key, value);
       pass &&= proof.pass;
     }
+    // A record for every observed fallback (another strategy than the
+    // lane's) and every aborted compaction, as in the manual cases.
+    const observedFallback =
+      lane !== undefined && entry !== undefined && strategyOf(entry) !== lane.strategy;
+    const journal = autoJournalVerdict(
+      session.records.slice(since),
+      observedFallback,
+      laneRecordData((await allEntries(session)).entries).slice(journalStart),
+    );
+    detail.set("journalRecords", journal.records);
+    detail.set("journalProblems", journal.problems);
+    pass &&= journal.verdict === "pass";
     const errors = errorsSince(session, since);
     detail.set("erroredTurns", errors.count);
     detail.set("firstError", errors.first);
     record(cell, cell.key, pass && identity.pass && errors.count === 0 ? "pass" : "fail", detail);
-    await journalCellCase(session, cell);
+    if (backgroundSwitchApplies(cell)) await modelSwitchReplayCase(session, cell, "background");
+    await journalCellCase([session], cell);
   } finally {
     await session.close();
   }
@@ -1705,7 +2116,12 @@ async function runAutoCell(cell: Cell): Promise<void> {
 
 function caseNames(cell: Cell): string[] {
   const journal = `${cell.key}:journal`;
-  if (cell.point === "auto") return [cell.key, journal];
+  if (cell.point === "auto")
+    return [
+      cell.key,
+      ...(backgroundSwitchApplies(cell) ? [`${cell.key}:model-switch-replay`] : []),
+      journal,
+    ];
   return [
     `${cell.key}:plain`,
     `${cell.key}:instructions`,
@@ -1716,12 +2132,12 @@ function caseNames(cell: Cell): string[] {
 
 /** Why a server-side cell cannot prove its lane, or undefined when it can. */
 function unprovableReason(cell: Cell): string | undefined {
-  if (options.logic !== "server-side") return undefined;
+  if (opts().logic !== "server-side") return undefined;
   const lane = laneFor();
   if (lane === undefined)
-    return `provider ${options.provider} has no server-side compaction lane in this profile (anthropic, openai-codex and xai only); nothing could show server-side logic ran`;
+    return `provider ${opts().provider} has no server-side compaction lane in this profile (anthropic, openai-codex and xai only); nothing could show server-side logic ran`;
   if (cell.background && lane.foregroundOnly)
-    return `provider ${options.provider} has no background backend; its lane runs in the foreground only (run --background off)`;
+    return `provider ${opts().provider} has no background backend; its lane runs in the foreground only (run --background off)`;
   return undefined;
 }
 
@@ -1729,62 +2145,110 @@ function unprovableReason(cell: Cell): string | undefined {
 // Run
 // ---------------------------------------------------------------------------
 
-let aborted: string | undefined;
-try {
-  log({
-    options: { ...options, backgrounds: options.backgrounds.map(String) },
-    cells: cells.map((cell) => cell.key),
-  });
-  for (const cell of cells) {
-    if (aborted !== undefined) {
-      for (const name of caseNames(cell))
-        record(cell, name, "fail", { notRun: true, reason: `run aborted: ${aborted}` });
-      continue;
-    }
-    const unprovable = unprovableReason(cell);
-    if (unprovable !== undefined) {
-      for (const name of caseNames(cell)) record(cell, name, "unprovable", { reason: unprovable });
-      continue;
-    }
-    const recorded = results.length;
-    startCellBudget(cell);
-    try {
-      if (cell.point === "manual") await runManualCell(cell);
-      else await runAutoCell(cell);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const stop = error instanceof SeedTurnError || error instanceof RunawayError;
-      if (stop) aborted = message;
-      const done = new Set(results.slice(recorded).map((item) => item.name));
-      for (const name of caseNames(cell))
-        if (!done.has(name)) record(cell, name, "fail", { error: message });
-      if (stop) process.stderr.write(`ABORT: ${message}\n`);
-    }
-    log({ label: cell.key, usage: { ...cellUsage } });
+/** Parses the CLI, then dry-runs or runs every cell; exits on `--help`, a bad CLI or a dry run. */
+async function main(): Promise<void> {
+  let parsed: ReturnType<typeof parseCli>;
+  try {
+    parsed = parseCli(process.argv.slice(2), checkout);
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n\n${USAGE}`);
+    process.exit(2);
   }
-} finally {
-  log({ results: results.map((item) => ({ ...item })) });
-  await logQueue;
-  await evidence.close();
-  await rm(scratch, { recursive: true, force: true, maxRetries: 8, retryDelay: 125 });
+  if (parsed.help) {
+    process.stdout.write(USAGE);
+    process.exit(0);
+  }
+  const options = parsed.options;
+  const cells = resolveCells(options);
+  runState = { options, cells };
+  if (options.dryRun) {
+    await dryRun();
+    process.exit(0);
+  }
+  const { launcher, capture } = options;
+  assert(launcher !== undefined && capture !== undefined, "launcher and capture required");
+  const version = await runFile(launcher, ["--version"], { timeout: 5000, maxBuffer: 4096 });
+  assert.equal(version.stdout.trim(), "1.3.0", "Probe requires Pi 1.3.0");
+  const scratch = await mkdtemp(join(tmpdir(), "choco-pi-rpc-compaction-"));
+  const evidence = await open(capture, "wx", 0o600);
+  liveState = { launcher, capture, scratch, evidence };
+  /** Why the run stopped: a seed or runaway abort, or the first cell with a failed case. */
+  let stopped: string | undefined;
+  try {
+    log({
+      options: { ...opts(), backgrounds: opts().backgrounds.map(String) },
+      cells: cells.map((cell) => cell.key),
+    });
+    for (const cell of cells) {
+      if (stopped !== undefined) {
+        // No further paid cell runs after a failure.
+        for (const name of caseNames(cell))
+          record(cell, name, "not-run", { reason: `run stopped: ${stopped}` });
+        continue;
+      }
+      const unprovable = unprovableReason(cell);
+      if (unprovable !== undefined) {
+        for (const name of caseNames(cell))
+          record(cell, name, "unprovable", { reason: unprovable });
+        continue;
+      }
+      const recorded = results.length;
+      startCellBudget(cell);
+      try {
+        if (cell.point === "manual") await runManualCell(cell);
+        else await runAutoCell(cell);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const stop = error instanceof SeedTurnError || error instanceof RunawayError;
+        if (stop) stopped = `aborted: ${message}`;
+        const done = new Set(results.slice(recorded).map((item) => item.name));
+        for (const name of caseNames(cell))
+          if (!done.has(name)) record(cell, name, "fail", { error: message });
+        if (stop) process.stderr.write(`ABORT: ${message}\n`);
+      }
+      log({ label: cell.key, usage: { ...cellUsage } });
+      const failed = results
+        .slice(recorded)
+        .filter((item) => item.outcome === "fail")
+        .map((item) => item.name.slice(cell.key.length + 1) || "auto");
+      if (stopped === undefined && failed.length > 0) {
+        stopped = `cell ${cell.key} failed (${failed.join(", ")})`;
+        process.stderr.write(`STOP: ${stopped}; later cells are not run\n`);
+      }
+    }
+  } finally {
+    log({ results: results.map((item) => ({ ...item })) });
+    await logQueue;
+    await evidence.close();
+    await rm(scratch, { recursive: true, force: true, maxRetries: 8, retryDelay: 125 });
+  }
+
+  const totals = { pass: 0, fail: 0, unprovable: 0, "not-run": 0 } satisfies Record<
+    Outcome,
+    number
+  >;
+  process.stdout.write("\n");
+  for (const cell of cells) {
+    const cases = results.filter((item) => item.cell === cell.key);
+    const outcome: Outcome =
+      cases.length === 0 || cases.some((item) => item.outcome === "fail")
+        ? "fail"
+        : cases.some((item) => item.outcome === "not-run")
+          ? "not-run"
+          : cases.some((item) => item.outcome === "unprovable")
+            ? "unprovable"
+            : "pass";
+    totals[outcome] += 1;
+    process.stdout.write(
+      `${outcome.toUpperCase()} ${cell.key} ${cases.map((item) => `${item.name.slice(cell.key.length) || "auto"}=${item.outcome}`).join(" ")}\n`,
+    );
+  }
+  process.stdout.write(
+    `cells: ${totals.pass} pass, ${totals.fail} fail, ${totals.unprovable} unprovable, ${totals["not-run"]} not run of ${cells.length}; cases: ${results.filter((item) => item.outcome === "pass").length}/${results.length} pass; evidence ${capture}\n`,
+  );
+  process.exitCode = totals.pass === cells.length ? 0 : 1;
 }
 
-const totals = { pass: 0, fail: 0, unprovable: 0 };
-process.stdout.write("\n");
-for (const cell of cells) {
-  const cases = results.filter((item) => item.cell === cell.key);
-  const outcome: Outcome =
-    cases.length === 0 || cases.some((item) => item.outcome === "fail")
-      ? "fail"
-      : cases.some((item) => item.outcome === "unprovable")
-        ? "unprovable"
-        : "pass";
-  totals[outcome] += 1;
-  process.stdout.write(
-    `${outcome.toUpperCase()} ${cell.key} ${cases.map((item) => `${item.name.slice(cell.key.length) || "auto"}=${item.outcome}`).join(" ")}\n`,
-  );
-}
-process.stdout.write(
-  `cells: ${totals.pass} pass, ${totals.fail} fail, ${totals.unprovable} unprovable of ${cells.length}; cases: ${results.filter((item) => item.outcome === "pass").length}/${results.length} pass; evidence ${capture}\n`,
-);
-process.exitCode = totals.fail === 0 && totals.unprovable === 0 ? 0 : 1;
+/** The resolved entry script, or undefined (a REPL or `-e`). */
+const entryScript = process.argv[1] === undefined ? undefined : await realpath(process.argv[1]);
+if (entryScript === fileURLToPath(import.meta.url)) await main();

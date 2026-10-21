@@ -47,10 +47,11 @@ Presets: ${CONTEXT_PRESET_VALUES.join(", ")} (--soft-cap default strict, --compa
 fallback is observable; choco-pi logic always uses the text lane.
 --switch-model is the second model of the subject's provider the captures-cleared case selects
 and switches straight back from without prompting (default: the next approved model of that
-provider, else a switch-only model).
+provider, else a switch-only model). xAI has none until one is approved (budget.ts
+SWITCH_ONLY_LIVE_MODELS); the xAI captures-cleared case then fails and names this flag.
 --dry-run prints the resolved cells and the settings it would write; it spawns nothing.
 Approved models: ${APPROVED_LIVE_MODELS.join(", ")}.
-Manual cells only: ${MANUAL_ONLY_LIVE_MODELS.join(", ")}. Switch-only (never prompted): ${SWITCH_ONLY_LIVE_MODELS.join(", ")}.
+Manual cells only: ${MANUAL_ONLY_LIVE_MODELS.join(", ")}. Switch-only (never prompted): ${SWITCH_ONLY_LIVE_MODELS.join(", ") || "none"}.
 `;
 
 export type Logic = "server-side" | "choco-pi";
@@ -101,7 +102,8 @@ function positiveInteger(name: string, value: string): number {
 
 /**
  * The captures-cleared case's second model: the next approved model of the
- * subject's provider, else its switch-only model (selected, never prompted).
+ * subject's provider, else its switch-only model (selected, never prompted);
+ * undefined when neither exists (xAI today: no second xAI model is approved).
  */
 export function defaultSwitchModel(model: string): string | undefined {
   const provider = model.slice(0, model.indexOf("/") + 1);

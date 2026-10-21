@@ -43,9 +43,16 @@ export const MANUAL_ONLY_LIVE_MODELS: readonly string[] = ["anthropic/claude-fab
 /**
  * Models the RPC probe may select with RPC `set_model` and switch straight
  * back from, without ever prompting them (no request reaches the provider,
- * so no spend): the `captures-cleared-before-compact` case needs a second
- * model of the subject's provider, and `xai/grok-4.7` is the only approved
- * xAI model. `grok-4.6` is the installed catalog's other xAI Responses model.
+ * so no spend). The `captures-cleared-before-compact` case needs a second
+ * model of the subject's provider; `xai/grok-4.7` is the only approved xAI
+ * model, so the xAI cell has no default target and that case fails until one
+ * is approved.
+ *
+ * Nothing enters this list without the user's explicit approval.
+ * `xai/grok-4.6` (the installed catalog's other xAI Responses model) was
+ * approved as a switch-only target in the compaction-lane session on
+ * 2026-06 ("I'll approve for all"); the xAI cell selects it by default
+ * (`--switch-model` accepts only approved or listed models).
  */
 export const SWITCH_ONLY_LIVE_MODELS: readonly string[] = ["xai/grok-4.6"];
 /**
@@ -110,9 +117,17 @@ export const LIVE_EXPECTATIONS: ExpectationTable = {
   // ≈ $0.55 expected; the runaway stop bounds a cell near $5.3.
   "rpc-xai-grok-4.7-manual": { requests: 20, inputTokens: 240_000, outputTokens: 8_000 },
   // GPT-6 Luna over the ChatGPT subscription (no dollar spend; quota only):
-  // the manual flow plus the model-switch case (one gpt-6-sol turn and one
-  // Luna turn).
+  // the manual flow plus the model-switch case over its foreground checkpoint
+  // (one gpt-6-sol turn and one Luna turn).
   "rpc-codex-luna-manual": { requests: 22, inputTokens: 260_000, outputTokens: 8_000 },
+  // Luna auto cell (subscription quota, no dollars), background on: the Haiku
+  // auto flow (calibration, 6 seed turns, up to 12 turns until the preparer's
+  // background candidate is adopted, one follow-up), then the background
+  // model-switch case (one gpt-6-sol turn over the background checkpoint, one
+  // Luna turn): about 24 requests, ≈ 520k input tokens. A manual cell cannot
+  // produce a background Codex checkpoint (routes.ts `manualLanes` gives a
+  // Codex owner no manual lane), so plan Q5's background branch runs here.
+  "rpc-codex-luna-auto": { requests: 24, inputTokens: 520_000, outputTokens: 12_000 },
 };
 
 /**
@@ -131,6 +146,7 @@ const RPC_PROBE_ROWS: ReadonlyMap<string, string> = new Map([
   ["anthropic/claude-haiku-5-5|auto", "rpc-anthropic-haiku-auto"],
   ["xai/grok-4.7|manual", "rpc-xai-grok-4.7-manual"],
   ["openai-codex/gpt-6-luna|manual", "rpc-codex-luna-manual"],
+  ["openai-codex/gpt-6-luna|auto", "rpc-codex-luna-auto"],
 ]);
 export const RUNAWAY_FACTOR = 10;
 

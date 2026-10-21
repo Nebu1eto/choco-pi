@@ -16,9 +16,12 @@ import {
   LIVE_EXPECTATIONS,
   requireLiveRun,
   rpcProbeExpectationKey,
+  SWITCH_ONLY_LIVE_MODELS,
 } from "./live/background-compaction/budget.ts";
 import {
   CREDENTIAL_TEXT,
+  credentialLike,
+  credentialNotices,
   journalReasons,
   laneRecordData,
   MAX_LANE_RECORDS,
@@ -48,6 +51,16 @@ import {
   RENDERED_TOOL_RESULT_CHARS,
 } from "./live/background-compaction/scenarios/manual-compaction-verdicts.ts";
 import { containsText, mapPayload } from "./live/background-compaction/transport-capture.ts";
+import {
+  abortedCompactions,
+  autoJournalVerdict,
+  checkpointDigests,
+  type CodexSend,
+  type CompactionEntry,
+  type ModelSwitchEvidence,
+  modelSwitchVerdict,
+  type WireRecord,
+} from "./live/rpc-compaction-probe.ts";
 
 const scratchRoot = "/tmp/choco-pi/01a12ed9-8477-76d1-b5cd-928b54b5cd15/harness-tests";
 const PROMPT = "HARNESS-GO";
@@ -135,6 +148,17 @@ test("lane-journal verdicts: one record per observed outcome, budget, schema, no
   assert.deepEqual(journalReasons([fallback], { events: ["cancel"] }), [
     "observed cancel has no lane record",
   ]);
+  // Observed events correlate by count: two fallbacks need two records.
+  assert.deepEqual(journalReasons([fallback], { events: ["fallback", "fallback"] }), [
+    "observed fallback outnumbers its lane records: 2 required, 1 recorded",
+  ]);
+  assert.deepEqual(journalReasons([fallback, fallback], { events: ["fallback", "fallback"] }), []);
+  assert.deepEqual(journalReasons(data, { events: ["cancel", "cancel", "fallback"] }), [
+    "observed cancel outnumbers its lane records: 2 required, 1 recorded",
+  ]);
+  assert.deepEqual(journalReasons([fallback], { reasons: ["no-capture", "no-capture"] }), [
+    "too few lane records with reason no-capture: 2 required, 1 recorded",
+  ]);
   assert.deepEqual(journalReasons(data, { forbiddenReasons: ["no-capture"] }), [
     "unexpected lane record with reason no-capture",
   ]);
@@ -145,10 +169,24 @@ test("lane-journal verdicts: one record per observed outcome, budget, schema, no
   assert.deepEqual(journalReasons(many, { below: MAX_LANE_RECORDS }), [
     `${MAX_LANE_RECORDS} lane records (expected fewer than ${MAX_LANE_RECORDS})`,
   ]);
-  // Own codes and lane ids are not credentials; token-leading keys and JWT-like text are.
+  // Own codes and lane ids are exempt by equality only; the pattern itself is the plain one.
+  assert.equal(CREDENTIAL_TEXT.source, "Bearer |sk-|xai-|eyJ");
   const own = laneRecord({ reason: "task-budget-remaining", detail: "instructions-forwarded" });
   assert.deepEqual(journalReasons([own]), []);
-  for (const leaked of ["Bearer abc", "sk-ant-oat-1", "xai-0123", "eyJhbGciOi"]) {
+  for (const code of ["task-budget-remaining", "xai-native"])
+    assert.deepEqual(journalReasons([laneRecord({ detail: code })]), [], code);
+  for (const leaked of [
+    "Bearer abc",
+    "sk-ant-oat-1",
+    "xai-0123",
+    "eyJhbGciOi",
+    // Embedded in a word: the old lookbehind pattern missed these.
+    "requestxai-0123456789abcdef0123456789abcdef",
+    "tokensk-0123456789",
+    // An owned code plus anything is no longer that code.
+    "xai-native-0123",
+    "task-budget-remaining sk-0123",
+  ]) {
     assert.equal(CREDENTIAL_TEXT.test(leaked), true, leaked);
     const record = laneRecord({ detail: leaked });
     assert.ok(
@@ -162,6 +200,18 @@ test("lane-journal verdicts: one record per observed outcome, budget, schema, no
     "lane record 0 fails the lane record schema",
     "lane record 0 field reason looks like a credential",
   ]);
+  // A closed field is exempt only for a value its schema admits.
+  const offVocabulary = { ...laneRecord(), from: "xai-0123456789" };
+  assert.deepEqual(journalReasons([offVocabulary]), [
+    "lane record 0 fails the lane record schema",
+    "lane record 0 field from looks like a credential",
+  ]);
+  assert.equal(credentialLike("lane xai-native fell back: task-budget-remaining"), false);
+  assert.equal(credentialLike("replayed for requestxai-0123456789abcdef"), true);
+  assert.equal(credentialLike("header Bearer xai-native"), true, "Bearer survives the exemption");
+  assert.deepEqual(credentialNotices(["plain notice", "key sk-ant-0123"]), [
+    "notice 1 looks like a credential",
+  ]);
   const observed = {
     ...emptyEvidence(),
     records: [record("branch")],
@@ -173,6 +223,129 @@ test("lane-journal verdicts: one record per observed outcome, budget, schema, no
   };
   assert.equal(statusOf("lane-journal", observed), "pass");
   assert.equal(statusOf("lane-journal", emptyEvidence()), "fail", "no journal evidence fails");
+});
+
+test("RPC probe Q5: the switched frame and journal are judged against the frozen checkpoint", () => {
+  type WindowItem = { readonly type: string; readonly encrypted_content?: string };
+  const checkpoint = (id: string, compactedWindow: readonly WindowItem[]): CompactionEntry => ({
+    id,
+    type: "compaction",
+    summary: "",
+    details: { strategy: "openai-responses-compaction-v2", compactedWindow },
+  });
+  const itemsA = checkpointDigests(
+    checkpoint("entry-A", [
+      { type: "message" },
+      { type: "compaction", encrypted_content: "ciphertext-A" },
+    ]),
+  );
+  const itemsB = checkpointDigests(
+    checkpoint("entry-B", [{ type: "compaction_summary", encrypted_content: "ciphertext-B" }]),
+  );
+  assert.equal(itemsA.length, 1, "only encrypted compaction items are digested");
+  assert.equal(itemsB.length, 1);
+  assert.notDeepEqual(itemsA, itemsB);
+  const text: CompactionEntry = { id: "entry-T", type: "compaction", summary: "text" };
+  assert.deepEqual(checkpointDigests(text), [], "a text checkpoint has no encrypted items");
+  const frame = (digests: readonly string[]): CodexSend => ({
+    seq: 2,
+    model: "gpt-6-sol",
+    prewarm: false,
+    previousResponseId: false,
+    compactionItems: digests.length,
+    itemDigests: [...digests],
+  });
+  const replay = (checkpointEntryId: string) =>
+    laneRecord({
+      provider: "codex",
+      route: "replay",
+      event: "fallback",
+      from: "codex-native-v2",
+      to: "codex-foreground",
+      reason: "incompatible",
+      detail: "model",
+      checkpointEntryId,
+    });
+  const good: ModelSwitchEvidence = {
+    variant: "background",
+    frozen: { entryId: "entry-A", digests: itemsA },
+    frame: frame(itemsA),
+    latestAfterSwitch: "entry-A",
+    laneData: [replay("entry-A")],
+    switchedAway: true,
+    switchedBack: true,
+    switchedTurnErrors: 0,
+    backTurnErrors: 0,
+  };
+  assert.deepEqual(modelSwitchVerdict(good).failures, []);
+  assert.equal(modelSwitchVerdict(good).verdict, "pass");
+  // Review false-pass: B replaced A during the switched prompt and only B's item
+  // reached the frame (B is the latest checkpoint when the status is read).
+  const replaced = modelSwitchVerdict({
+    ...good,
+    frame: frame(itemsB),
+    latestAfterSwitch: "entry-B",
+    laneData: [replay("entry-B")],
+  });
+  assert.equal(replaced.verdict, "fail");
+  assert.equal(replaced.frameCarriesCheckpointItem, false);
+  assert.deepEqual(replaced.failures, [
+    "first target frame lacks an encrypted item of entry-A",
+    "no replay fallback record names checkpoint entry-A",
+    "replay fallback record names checkpoint entry-B, not entry-A",
+    "checkpoint entry-B replaced entry-A during the switched turn",
+  ]);
+  // The exact pre-fix false-pass: A's record is journaled, but only B's item is sent.
+  const onlyB = modelSwitchVerdict({ ...good, frame: frame(itemsB), latestAfterSwitch: "entry-B" });
+  assert.equal(onlyB.verdict, "fail");
+  assert.deepEqual(onlyB.failures, [
+    "first target frame lacks an encrypted item of entry-A",
+    "checkpoint entry-B replaced entry-A during the switched turn",
+  ]);
+  // B's appearance alone fails even when A's item and record are present.
+  const appeared = modelSwitchVerdict({
+    ...good,
+    frame: frame([...itemsA, ...itemsB]),
+    latestAfterSwitch: "entry-B",
+  });
+  assert.equal(appeared.verdict, "fail");
+  assert.deepEqual(appeared.failures, [
+    "checkpoint entry-B replaced entry-A during the switched turn",
+  ]);
+  // A frozen checkpoint without encrypted items never matches a frame.
+  const empty = modelSwitchVerdict({ ...good, frozen: { entryId: "entry-A", digests: [] } });
+  assert.equal(empty.verdict, "fail");
+  assert.equal(empty.frameCarriesCheckpointItem, false);
+});
+
+test("RPC probe auto case: an aborted follow-up compaction needs a cancel record", () => {
+  const wire = (value: Partial<WireRecord> & { type: string }): WireRecord => value;
+  const adoption = [
+    wire({ type: "compaction_start", reason: "threshold" }),
+    wire({ type: "compaction_end", reason: "threshold" }),
+  ];
+  // The AFTER-AUTO follow-up aborts a compaction that also reports an error.
+  const followUp = [
+    wire({ type: "agent_start" }),
+    wire({ type: "compaction_start", reason: "threshold" }),
+    wire({
+      type: "compaction_end",
+      reason: "threshold",
+      aborted: true,
+      errorMessage: "aborted by the next prompt",
+    }),
+    wire({ type: "agent_end" }),
+  ];
+  const records = [...adoption, ...followUp];
+  assert.equal(abortedCompactions(records), 1, "aborted with errorMessage still counts");
+  assert.equal(abortedCompactions(adoption), 0);
+  const missing = autoJournalVerdict(records, false, []);
+  assert.equal(missing.verdict, "fail");
+  assert.deepEqual(missing.problems, ["observed cancel has no lane record"]);
+  const cancel = laneRecord({ provider: "codex", route: "threshold", event: "cancel" });
+  assert.equal(autoJournalVerdict(records, false, [cancel]).verdict, "pass");
+  assert.equal(autoJournalVerdict(adoption, false, []).verdict, "pass");
+  assert.equal(autoJournalVerdict(adoption, true, []).verdict, "fail", "fallback needs a record");
 });
 
 test("RPC probe: xAI lane, text switch, approvals, manual-only models and cell budgets", async () => {
@@ -196,7 +369,18 @@ test("RPC probe: xAI lane, text switch, approvals, manual-only models and cell b
   assert.equal(logicSwitches("choco-pi", true).compactionXai, "choco-pi");
   const xai = parse("--model", "xai/grok-4.7", "--background", "off");
   assert.equal(xai.text, true);
-  assert.equal(xai.switchModel, "xai/grok-4.6", "switch-only second xAI model");
+  // grok-4.6 is the one approved switch-only target (never prompted); any
+  // other unlisted model is still refused.
+  assert.deepEqual(
+    SWITCH_ONLY_LIVE_MODELS,
+    ["xai/grok-4.6"],
+    "only the approved switch-only model",
+  );
+  assert.equal(xai.switchModel, "xai/grok-4.6", "the approved second xAI model is the default");
+  assert.throws(
+    () => parse("--model", "xai/grok-4.7", "--switch-model", "xai/grok-3"),
+    /Unapproved switch model xai\/grok-3/u,
+  );
   assert.equal(
     parse("--model", "anthropic/claude-fable-5-1", "--point", "manual").switchModel,
     "anthropic/claude-haiku-5-5",
@@ -235,6 +419,7 @@ test("RPC probe: xAI lane, text switch, approvals, manual-only models and cell b
     ["anthropic/claude-haiku-5-5", "auto", "rpc-anthropic-haiku-auto"],
     ["xai/grok-4.7", "manual", "rpc-xai-grok-4.7-manual"],
     ["openai-codex/gpt-6-luna", "manual", "rpc-codex-luna-manual"],
+    ["openai-codex/gpt-6-luna", "auto", "rpc-codex-luna-auto"],
   ] as const;
   for (const [model, point, key] of rows) {
     assert.equal(rpcProbeExpectationKey(model, point), key);
