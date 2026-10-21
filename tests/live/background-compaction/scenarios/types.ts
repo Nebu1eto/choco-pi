@@ -1,5 +1,5 @@
 import type { BackgroundCompactionSettings } from "../../../../.pi/packages/choco-pi-compaction/src/background/contract.ts";
-import type { Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import type { CheckEvidence, ObservedCheck } from "../checks.ts";
 import type { launch } from "../launch.ts";
@@ -20,12 +20,24 @@ export interface Scenario {
   hostCompaction?: boolean;
   /** Serve the Anthropic model with background compaction off (foreground server-side path). */
   anthropicForeground?: boolean;
+  /**
+   * Serve an offline xAI Grok mirror (openai-responses) over the production xAI
+   * capturing stream, with a scripted `/responses/compact` lane on global
+   * fetch; background compaction off. Offline only.
+   */
+  xaiForeground?: boolean;
   /** Extra keys merged into the isolated agent settings.json. */
   agentSettings?: Readonly<Record<string, string>>;
   /** Seed every live catalog mirror and apply the worktree models.json overrides. */
   catalog?: boolean;
-  /** Offline subjects selectable with --offline-model (first is the default). */
-  offlineModels?: ReadonlyMap<string, Model<"anthropic-messages">>;
+  /**
+   * Offline subjects selectable with --offline-model (first is the default):
+   * anthropic-messages models, or xai openai-responses models for an
+   * `xaiForeground` scenario.
+   */
+  offlineModels?: ReadonlyMap<string, Model<Api>>;
+  /** Offline xaiForeground: more xai models the provider serves (switch targets). */
+  extraOfflineModels?: readonly Model<Api>[];
   /** Live: allow a model served by its own provider transport (Codex WebSocket). */
   providerOwnedTransport?: boolean;
   /** Extra in-host extension factories (probes) loaded after the harness tail. */

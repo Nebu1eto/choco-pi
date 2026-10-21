@@ -49,9 +49,13 @@ compaction ("Compaction cancelled") and emits `session_compact_failed`:
   request was rejected with HTTP 401/403. The local summarizer would call the
   same provider with the same login.
 
-The same rules apply to xAI server-side compaction (`compactionXai`).
-Throwing would not surface either case: Pi contains handler errors and then
-runs its own default summarizer.
+The same rules apply to xAI server-side compaction (`compactionXai`), which
+needs a wire capture of the current Grok model and cuts at the latest legal
+wire position. A cooldown after an earlier auth failure is not a fresh
+credential failure: while it lasts, the foreground falls back to the local
+summarizer with a notice instead of cancelling (subject to the opaque-history
+guard below). Throwing would not surface either case: Pi contains handler
+errors and then runs its own default summarizer.
 
 The replay binding (provider-stream capture, session projection and replay
 rewrite) is bound whenever the mode is `server-side`, and also when the
@@ -60,6 +64,174 @@ rejects with HTTP 400 and a `compaction_*` error code (or the OAuth extra-usage
 refusal) turns server-side compaction off for the rest of that session: later
 requests send the checkpoint's summary text and later compactions are
 summarized locally.
+
+xAI replay works the same way, except that a checkpoint that is no longer
+replayable is never silently replaced by its placeholder text; see "Opaque
+history guard". The xAI rejection that disables server-side compaction is an
+HTTP 400 or 422 whose JSON `error.message`, `error.code` or `error.param`
+names the compaction item (`encrypted_content`, `compaction item`,
+`type "compaction"` or `input[0]`); other statuses, non-JSON bodies and errors
+about something else do not disable it. A persisted checkpoint whose
+`details.scope` (provider, model, normalized base URL) differs from the current
+model is refused locally (`scope-mismatch`) instead of being sent.
+
+## Lane journal (`choco-compaction-lane`)
+
+Every transition of a compaction lane (attempt outcome, fallback, cancel,
+replay disable, cooldown start, loss consent, authorized loss) is appended as
+one `choco-compaction-lane` custom session entry. Like
+`choco-compaction-candidate` it is not model-visible. One record is written per
+semantic transition, not per re-evaluation: automatic routes keep a per-session
+memo keyed by route, event, reason and checkpoint id.
+
+A record has `customType`, `schemaVersion` (`1`), `at` (epoch ms), `sessionId`,
+`provider` (`anthropic`, `xai`, `codex`), `route` (`foreground`, `manual`,
+`threshold`, `boundary`, `idle`, `context-cap`, `replay`, `resume`,
+`mode-change`, `model-select`, `config-change`), `event` (`fallback`, `yield`,
+`cancel`, `disable`, `cooldown`, `refuse`, `consent`, `loss`), `from` and
+optional `to` (`anthropic-native`, `xai-native`, `codex-native-v2`,
+`codex-foreground`, `text`, `local`, `host-default`), `reason`, optional
+`detail` (at most 128 characters), `candidateId`, `checkpointEntryId` and
+`cooldownUntil`, and `noticeAttempted`. No other key is accepted; an invalid
+record is dropped and reported as `lane journal: dropped invalid record: <path>`.
+
+`reason` is always one of this package's own codes (`REASONS` in
+`src/background/lane-journal.ts`, for example `no-capture`,
+`no-usable-capture`, `opaque-checkpoint`, `scope-mismatch`, `auth`,
+`auth-transient`, `cooldown`, `not-admitted`, `mode-off`,
+`instructions-ignored`, `instructions-forwarded`, `consent`, `loss`). Provider
+error text and provider-supplied codes never enter a record: a string that is
+not an owned code (an Anthropic `compaction_*` error code, for instance) is
+journaled as `provider-error`.
+
+Notice policy decides how a transition reaches the user, and is separate from
+what the journal keeps:
+
+- `always`: user-initiated routes (a foreground or manual `/compact` gets one
+  outcome notice per user action), replay disables, guard cancels and
+  refusals, and authorized losses. Journaled and notified every time.
+- `per-session-reason`: automatic routes (threshold, boundary, replay rewrite).
+  Journaled and notified once per route, event, reason and checkpoint in a
+  session; a repeat is neither journaled nor notified again.
+- `silent`: policy declines (a model the gate does not admit, a mode that is
+  off) and `instructions-forwarded`; journal only.
+
+`noticeAttempted` records whether a notice was attempted for the record.
+
+## Opaque history guard
+
+An xAI or Codex server-side checkpoint stores its history at the provider; the
+session entry carries only a placeholder summary. The guard calls a checkpoint
+_opaque_ when the branch's newest compaction entry has `details.strategy` of
+`xai-responses-compaction-v1`, `openai-responses-compaction-v2` or
+`openai-native-compact-v1` (an older opaque checkpoint behind a newer local one
+is ordinary history). While the latest checkpoint is opaque and the lane that
+can replay it is not the one answering, two things never happen without
+authorization: a local summarizer never runs over the placeholder, and no
+provider request is sent with placeholder-only context.
+
+- A compaction that would end at the local summarizer is cancelled
+  (`{ cancel: true }`) and journaled as `cancel` / `opaque-checkpoint`.
+- A request is refused locally, before anything is serialized or transmitted,
+  for xAI at the capture transport and for any other provider at an overlay
+  of the current model's provider. The error begins
+  `choco-pi compaction: request not sent (opaque-checkpoint):` and is
+  journaled as `refuse`.
+- Automatic background preparation pauses with
+  `Background compaction: background compaction is paused: the latest checkpoint <id> is an opaque <provider> server-side record a local summary cannot replace; run /compaction-allow-loss to summarize without it`.
+
+Every cancel or refusal ends with the same exits text:
+
+> compaction cancelled: the latest checkpoint `<id>` is an opaque `<provider>`
+> server-side record and the `<provider>` lane cannot replay it now. Run one
+> turn on the `<provider>` model that made it and retry, switch back to that
+> model, or run /compaction-allow-loss (or set compactionOpaqueHistory=allow-loss)
+> to summarize without it.
+
+The exits are: let the owning lane serve again (a new capture or a compatible
+scope), switch back, or authorize the loss.
+
+Authorizing loss has two forms:
+
+- The top-level `compactionOpaqueHistory` key of `<agent dir>/settings.json`:
+  `preserve` (default; a missing or invalid value means the default) or
+  `allow-loss`. It is read at session start; there is no Preferences row for
+  it. `allow-loss` lifts every guard.
+- `/compaction-allow-loss`, a command that consents to losing the history of
+  the branch's current opaque checkpoint for this session only. It answers
+  `Background compaction: loss authorized for checkpoint <id> (this session
+only)`, or `Background compaction: no opaque checkpoint on this branch`, and
+  journals `consent` with the checkpoint id. Consent ends with the session
+  registration and does not cover a later checkpoint.
+
+An authorized loss is still told: the summarizer proceeds, a `loss` record is
+journaled, and the notice reads `Compaction: summarizing without the opaque
+<provider> server-side record <id> (loss authorized); its compacted history is
+not part of the summary.` The Codex package reads the same consent through a
+process-global slot.
+
+## Capture retention
+
+The Anthropic and xAI lanes cut a compaction from wire captures of the
+session's latest requests (four per session by default). Captures belong to a
+session id, not to a registration binding: a model change, a mode change or a
+settings reload for the same session keeps them. They are released when the
+session id changes or at shutdown.
+
+For Anthropic only an HTTP 200 answer to a mapped request is a usable capture.
+Any other response is recorded in a separate diagnostic ring (eight per
+session), so a host retry burst never evicts the last usable capture. Routing
+checks whether a usable capture exists for the current provider, model and
+endpoint, so a capture of another model does not count. The xAI ring keeps each
+captured response with its status; the foreground ignores captures that are not
+HTTP 200.
+
+## Manual fallback policy
+
+When the native lane of a manual `/compact` produces no checkpoint, the
+follower decides what happens next:
+
+- A cancellation (`canceled`, `stale-prefix`, `owner-changed`,
+  `manual-instructions`, `checkpoint-changed`, `disposed`) stops silently. A
+  text retry would answer a request nobody made.
+- `auth` stops with the same warning as the foreground path; the text lane uses
+  the same login.
+- "Nothing to summarize" stops with an informational notice.
+- A disabled Anthropic lane and the classified failures (`no-legal-cut`,
+  `incompatible`, `unsupported`, `oversized`, `malformed`, `timeout`, `429`,
+  `529`, `quota`, `cooling`) retry once on the text lane, only when the text
+  lane is enabled for the owner and the opaque-history guard allows a local
+  summary. Otherwise the request stops with a warning that names the blocker.
+- Anything else stops with `manual compaction did not produce a checkpoint`.
+
+## Instructions on the Anthropic lane
+
+`/compact <instructions>` is forwarded to the Anthropic lane as
+`compaction.instructions` (at most 16,384 code points; a longer text fails as
+`oversized`), and the background Anthropic lane forwards its candidate's
+instructions the same way. The manual route therefore keeps the Anthropic lane
+for a request with instructions, and the text lane serves it too. A ready
+candidate answers a later request only when its instructions match. On the xAI
+lane the instructions go to `/responses/compact` as `instructions`; a forwarded
+focus is journaled silently as `instructions-forwarded`. Codex forwards the
+focus as a developer item; see the Codex package's `VENDORED.md`.
+
+## Auth classification
+
+One helper, `bearerCredentialOf({ apiKey, headers })` in `src/auth.ts`, reads
+the credential for every classifier: a non-empty `apiKey`, else the token of an
+`Authorization: Bearer <token>` header (name case-insensitive); a null or empty
+value or another scheme carries none. Anthropic treats a token containing
+`sk-ant-oat` as OAuth and any other as an API key; xAI treats an `xai-` prefix
+as an API key and any other token as OAuth. The foreground and background
+paths of both providers use the same helper, and the Codex package reads
+headers the same way (`codexBackgroundAuthToken`), so one session has one auth
+mode in all three.
+
+An auth failure cools the combination for a fixed wait, `min(cooldownMs,
+300000)` ms, not the doubling rule other failures use. The gate's base cooldown
+follows the loaded sidecar's `cooldownMs`, and the foreground and background
+lanes share one gate per registration.
 
 ## Background compaction (on by default)
 
@@ -227,18 +399,20 @@ host event.
   next prompt is answered at once (handled, no result) and applied at that
   next prompt, before its request. A newer deferred request replaces an older
   one; both callers were already answered.
-  The Anthropic lane needs a wire capture
-  of the session's latest request, so right after a reload or resume the
-  request goes to the text lane instead; a lane that fails is retried once on
-  the remaining lane before the failure is reported. The prepared checkpoint
+  The Anthropic lane needs a usable wire capture
+  of the session's latest request (HTTP 200, same provider, model and
+  endpoint), so right after a reload or resume, or once a replay rejection
+  turned the lane off, the request goes to the text lane instead; a lane that
+  fails is retried once on the remaining lane before the failure is reported,
+  under the manual fallback policy above. The prepared checkpoint
   is adopted when the next prompt or turn end arrives; a session that is
   already idle when the checkpoint becomes ready adopts it then through the
   idle route, unless a cancelled host compaction is still unwinding; a failed
   preparation is reported and nothing is summarized. `/compact <instructions>`
-  takes the same path on the text lane only (the native lanes cannot apply
-  instructions); the candidate carries the instructions, a ready candidate
-  answers a later request only when its instructions match, and a request
-  with different instructions supersedes the one in flight. Consumers see the
+  takes the same path on the Anthropic and text lanes (see "Instructions on
+  the Anthropic lane"); the candidate carries the instructions, a ready
+  candidate answers a later request only when its instructions match, and a
+  request with different instructions supersedes the one in flight. Consumers see the
   deferred request as answered by the feature (`willAdopt` is true), so no
   compaction hook runs for it or for its later adoption.
 - **Paths that stay foreground, and why.** Threshold compaction runs inside

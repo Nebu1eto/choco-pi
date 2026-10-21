@@ -32,6 +32,8 @@ import { getCoordinator } from "../src/background/registry.ts";
 import type { CompactCommandHost } from "../src/background-host/host-command.ts";
 import { TEXT_BACKEND_ID, type TextSummarizer } from "../src/background/text-backend.ts";
 import type { AnthropicSupportEntry } from "../src/anthropic/capability.ts";
+import { laneRecordsOf } from "../src/background/lane-journal.ts";
+import { OPAQUE_GUARD_NOTICE, opaqueCheckpointOf } from "../src/opaque-checkpoint.ts";
 import registerCompaction, {
   type BackgroundAdoptionNotice,
   getBackgroundAdoptionSignal,
@@ -737,7 +739,7 @@ test(
 );
 
 test(
-  "a plain /compact with the Anthropic lane selected but no capture uses the text lane",
+  "a plain /compact with the Anthropic lane selected but no capture uses the text lane (no opaque checkpoint)",
   { timeout: 20_000 },
   async () => {
     await withDir(async (dir) => {
@@ -757,6 +759,8 @@ test(
           reply(`R${index}`, { usageInput: index === 0 ? HIGH_USAGE : 20_000 }),
       });
       try {
+        // The precondition of the text fallback: no opaque server-side checkpoint is latest.
+        assert.equal(opaqueCheckpointOf(rig.manager.getBranch()), undefined);
         await rig.session.prompt("GO");
         assert.equal(getCoordinator(rig.ownerKey)?.status().state, "idle");
         assert.equal(await rig.session.compact(), undefined);
@@ -769,6 +773,88 @@ test(
           getCoordinator(rig.ownerKey)?.status().backendId,
           TEXT_BACKEND_ID,
           "the Anthropic lane was skipped rather than failing with incompatible",
+        );
+      } finally {
+        await rig.dispose();
+      }
+    });
+  },
+);
+
+test(
+  "the same /compact over an opaque server-side checkpoint never summarizes it on the text lane",
+  { timeout: 20_000 },
+  async () => {
+    await withDir(async (dir) => {
+      const model = fakeModel(CONTEXT_WINDOW);
+      // A resumed session whose newest checkpoint is an opaque xAI record this model cannot replay.
+      const manager = SessionManager.inMemory(dir);
+      manager.appendMessage({ role: "user", content: PREFIX_A, timestamp: Date.now() });
+      const kept = manager.appendMessage(reply("OPAQUE-PREFIX-B"));
+      const checkpointId = manager.appendCompaction("opaque placeholder", kept, 1, {
+        strategy: "xai-responses-compaction-v1",
+        schemaVersion: 1,
+      });
+      manager.appendMessage({ role: "user", content: "OPAQUE-AFTER", timestamp: Date.now() });
+      const notices: string[] = [];
+      const rig = await createRig({
+        dir,
+        manager,
+        firstExtensions: [recordNotices(notices)],
+        sidecar: JSON.stringify({ ...JSON.parse(MANUAL_ONLY_SIDECAR), anthropicNative: true }),
+        anthropicAllowList: [
+          {
+            provider: model.provider,
+            model: model.id,
+            baseUrl: model.baseUrl,
+            authMode: "api-key",
+          },
+        ],
+        respond: async (index) =>
+          reply(`R${index}`, { usageInput: index === 0 ? HIGH_USAGE : 20_000 }),
+      });
+      try {
+        assert.equal(opaqueCheckpointOf(rig.manager.getBranch())?.entryId, checkpointId);
+        // The turn itself is refused at the provider boundary: nothing is sent over the record.
+        await rig.session.prompt("GO");
+        const callsBefore = rig.calls.length;
+        // The manual route takes the request into the background, where the freeze refuses it.
+        assert.equal(await rig.session.compact(), undefined);
+        await waitFor(
+          () => notices.some((notice) => notice.includes("did not produce a checkpoint")),
+          "the manual outcome notice",
+        );
+        assert.equal(rig.backgroundCalls(), 0, "no text preparation over the opaque record");
+        assert.equal(rig.hostSummarizerCalls.length, 0, "no local summary either");
+        assert.equal(ownEntries(rig).length, 0);
+        const latest = compactionEntries(rig.manager.getBranch()).at(-1);
+        assert.equal(latest?.id, checkpointId, "the opaque checkpoint is still the latest");
+        assert.equal(rig.calls.length, callsBefore, "no provider request for the compaction");
+        const refused = notices.filter((notice) =>
+          notice.includes(OPAQUE_GUARD_NOTICE("xai", checkpointId)),
+        );
+        assert.equal(refused.length, 1, JSON.stringify(notices));
+        assert.ok(
+          notices.some((notice) =>
+            notice.includes(
+              "manual compaction did not produce a checkpoint (no-legal-cut: opaque-checkpoint)",
+            ),
+          ),
+          JSON.stringify(notices),
+        );
+        const guarded = laneRecordsOf(rig.manager.getBranch()).filter(
+          (record) => record.checkpointEntryId === checkpointId,
+        );
+        const refusal = guarded.find((record) => record.event === "refuse");
+        assert.deepEqual(
+          [refusal?.route, refusal?.from, refusal?.reason],
+          ["replay", "xai-native", "opaque-checkpoint"],
+          JSON.stringify(guarded),
+        );
+        assert.equal(
+          guarded.some((record) => record.event === "loss"),
+          false,
+          "no loss without consent",
         );
       } finally {
         await rig.dispose();

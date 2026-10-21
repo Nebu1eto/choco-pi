@@ -1,10 +1,12 @@
 /**
  * Anthropic native backend: capability gating, preparation, versioned details and the full
  * capture -> lane -> draft -> replay loop through a real `createAgentSession`
- * (INSTALLED Anthropic adapter, fake transports, no network).
+ * (INSTALLED Anthropic adapter, fake transports, no network): once with the
+ * backend driven directly, once through the registered extension's owner and
+ * coordinator (preparation, adoption with the owner's draft vetting, replay).
  */
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -72,6 +74,13 @@ import {
   sameBlock,
 } from "../src/anthropic/details.ts";
 import { createReplayRewriteHandler } from "../src/anthropic/replay-rewrite.ts";
+import { getCoordinator } from "../src/background/registry.ts";
+import { readAdoptionIdentity } from "../src/background-host/adoption-signal.ts";
+import registerCompaction, {
+  type BackgroundAdoptionNotice,
+  getBackgroundAdoptionSignal,
+  mainOwnerKey,
+} from "../src/index.ts";
 import { persistedCustomEntry } from "./background-fakes.ts";
 
 const PROVIDER = "native-backend";
@@ -813,3 +822,245 @@ test(
     }
   },
 );
+
+// ---------------------------------------------------------------------------
+// The same loop through the registered extension's owner and coordinator
+// ---------------------------------------------------------------------------
+
+const OWNER_MODEL: Model<"anthropic-messages"> = {
+  ...MODEL,
+  provider: "anthropic",
+  baseUrl: "https://api.anthropic.com",
+};
+const OWNER_OAUTH_KEY = "sk-ant-oat01-native-owner-non-secret-placeholder";
+
+/** The owner loop's lane: its n-th answer is a distinct block, so the adopted one is identifiable. */
+function ownerBlock(index: number) {
+  return {
+    type: "compaction",
+    content: `NATIVE owner-loop summary ${index}`,
+    signature: `native-owner-loop-signature-${index}`,
+  };
+}
+
+function ownerBlockResponse(index: number): Response {
+  return sse([
+    messageStart(),
+    { type: "content_block_start", index: 0, content_block: ownerBlock(index) },
+    { type: "content_block_stop", index: 0 },
+    {
+      type: "message_delta",
+      delta: { stop_reason: "compaction", stop_sequence: null },
+      usage: {
+        input_tokens: 0,
+        output_tokens: 0,
+        iterations: [{ type: "compaction", input_tokens: 90, output_tokens: 30 }],
+      },
+    },
+    { type: "message_stop" },
+  ]);
+}
+
+const OwnerTextSchema = Type.Object({ type: Type.Literal("text"), text: Type.String() });
+const OwnerBlockSchema = Type.Object({ type: Type.Literal("compaction"), content: Type.String() });
+
+/** The test's own reading of a wire request: `<role>:<text>` per message. */
+function ownerTurns(body: WireBody | undefined): string[] {
+  return (body?.messages ?? []).map((message) => {
+    const content: unknown = message.content;
+    if (Value.Check(Type.String(), content)) return `${message.role}:${content}`;
+    const blocks = Value.Check(Type.Array(Type.Unknown()), content) ? content : [];
+    const parts = blocks.map((block) => {
+      if (Value.Check(OwnerTextSchema, block)) return block.text;
+      if (Value.Check(OwnerBlockSchema, block)) return `[compaction:${block.content}]`;
+      return "[other]";
+    });
+    return `${message.role}:${parts.join("|")}`;
+  });
+}
+
+/**
+ * The lane prefix: the last captured request (three prompts, two answers), the
+ * system prompt carried separately.
+ */
+const OWNER_LANE_TURNS = [
+  "user:NATIVE-OWNER-0",
+  "assistant:NATIVE-OWNER-ACK-0",
+  "user:NATIVE-OWNER-1",
+  "assistant:NATIVE-OWNER-ACK-1",
+  "user:NATIVE-OWNER-2",
+];
+
+async function waitUntil(label: string, predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (!predicate()) {
+    assert.ok(Date.now() < deadline, `timed out waiting for ${label}`);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+test(
+  "owner and coordinator: capture -> prepared candidate -> vetted adoption at the idle boundary -> replay",
+  { timeout: 30_000 },
+  async () => {
+    const dir = await mkdtemp(join(tmpdir(), "choco-pi-native-owner-"));
+    const sidecar = join(dir, "background-compaction.json");
+    // Native lane only; the usage threshold is never crossed, so only the explicit request prepares.
+    await writeFile(
+      sidecar,
+      JSON.stringify({
+        enabled: true,
+        text: false,
+        anthropicNative: true,
+        prepareAt: 0.99,
+        hysteresis: 0,
+        reserveTokens: 0,
+        retryBaseMs: 0,
+        cooldownMs: 0,
+        timeoutMs: 20_000,
+        maxOutputTokens: 1_000,
+      }),
+    );
+    const foreground = recordingFetch((index) => textResponse(`NATIVE-OWNER-ACK-${index}`));
+    const lane = recordingFetch((index) => ownerBlockResponse(index));
+    const runtime = await ModelRuntime.create({
+      credentials: new InMemoryCredentialStore(),
+      modelsStore: new InMemoryModelsStore(),
+      allowModelNetwork: false,
+      refreshOnCreate: false,
+      modelsPath: null,
+    });
+    runtime.registerProvider("anthropic", {
+      api: "anthropic-messages",
+      apiKey: OWNER_OAUTH_KEY,
+      models: [OWNER_MODEL],
+      streamSimple: () => {
+        throw new Error("unwrapped provider stream used");
+      },
+    });
+    const settings = SettingsManager.inMemory({
+      compaction: { enabled: false, keepRecentTokens: 1, reserveTokens: 16_384 },
+      retry: { enabled: false },
+    });
+    const notices: string[] = [];
+    const extension = (pi: ExtensionAPI): void => {
+      pi.on("session_start", (_event, ctx) => {
+        ctx.ui.notify = (message) => {
+          notices.push(message);
+        };
+      });
+      registerCompaction(pi, {
+        retryPolicy: { enabled: false, maxRetries: 0, baseDelayMs: 0, maxAgentDelayMs: 0 },
+        compactionPolicy: () => ({ keepRecentTokens: 1, reserveTokens: 16_384 }),
+        background: {
+          settingsPaths: () => [sidecar],
+          anthropic: {
+            readMode: async () => "server-side",
+            fetch: lane.fetch,
+            capture: { fetch: foreground.fetch },
+          },
+        },
+      });
+    };
+    const loader = new DefaultResourceLoader({
+      cwd: dir,
+      agentDir: dir,
+      settingsManager: settings,
+      noExtensions: true,
+      noSkills: true,
+      noPromptTemplates: true,
+      noThemes: true,
+      noContextFiles: true,
+      extensionFactories: [extension],
+    });
+    await loader.reload();
+    const manager = SessionManager.inMemory(dir);
+    const adoptions: BackgroundAdoptionNotice[] = [];
+    const unsubscribe = getBackgroundAdoptionSignal().subscribe((notice) => {
+      if (notice.sessionId === manager.getSessionId()) adoptions.push(notice);
+    });
+    let session: AgentSession | undefined;
+    try {
+      ({ session } = await createAgentSession({
+        cwd: dir,
+        agentDir: dir,
+        model: OWNER_MODEL,
+        modelRuntime: runtime,
+        resourceLoader: loader,
+        sessionManager: manager,
+        settingsManager: settings,
+        noTools: "builtin",
+      }));
+      await session.bindExtensions({});
+      for (const turn of ["NATIVE-OWNER-0", "NATIVE-OWNER-1", "NATIVE-OWNER-2"]) {
+        await session.prompt(turn);
+      }
+      const ownerKey = mainOwnerKey(manager.getSessionId());
+      const coordinator = getCoordinator(ownerKey);
+      assert.ok(coordinator, "the main owner has a coordinator");
+      const request = await coordinator.requestPreparation({
+        trigger: "manual",
+        backendId: "anthropic-native",
+      });
+      assert.ok(request.accepted, JSON.stringify(request));
+      await waitUntil("a ready native candidate", () => coordinator.status().state === "ready");
+      assert.equal(lane.sent.length, 1, "one paid lane request");
+      // Prefix fidelity: the lane received the turns before the legal cut, as written here.
+      assert.deepEqual(ownerTurns(lane.sent[0]?.body), OWNER_LANE_TURNS);
+      assert.ok(
+        parseBetaHeader(lane.sent[0]?.headers.get("anthropic-beta") ?? null).includes(COMPACT_BETA),
+      );
+      const [record, ...moreRecords] = persistedCandidates(manager);
+      assert.ok(record, "the ready candidate was persisted before adoption");
+      assert.equal(moreRecords.length, 0);
+      assert.equal(record.backendId, "anthropic-native");
+      assert.ok(isAnthropicDetails(record.checkpoint.draft.details));
+      assert.deepEqual(record.checkpoint.draft.details.block, ownerBlock(0));
+
+      // The next prompt's input hook adopts the ready candidate before its first request.
+      const before = foreground.sent.length;
+      await session.prompt("NATIVE-OWNER-NEXT");
+      const committed = manager
+        .getBranch()
+        .filter((entry): entry is CompactionEntry => entry.type === "compaction");
+      assert.equal(committed.length, 1, JSON.stringify(notices));
+      const [entry] = committed;
+      assert.ok(entry && isAnthropicDetails(entry.details), "the native draft was committed");
+      assert.deepEqual(entry.details.block, ownerBlock(0));
+      // The owner vetted this draft: its identity names this owner, and its kept entry is live.
+      const identity = readAdoptionIdentity(entry);
+      assert.equal(identity?.ownerKey, ownerKey);
+      assert.ok(manager.getBranch().some((item) => item.id === entry.firstKeptEntryId));
+      assert.equal(entry.firstKeptEntryId, record.checkpoint.draft.firstKeptEntryId);
+      assert.deepEqual(
+        adoptions.map((notice) => [notice.backendId, notice.committedEntryId]),
+        [["anthropic-native", entry.id]],
+      );
+      assert.equal(coordinator.status().state, "installed");
+      // That prompt's request already replays the adopted block first, prefix gone.
+      assert.equal(foreground.sent.length, before + 1, "no extra or aborted request");
+      const replay = foreground.sent.at(-1);
+      assert.deepEqual(replay?.body?.messages[0], { role: "assistant", content: [ownerBlock(0)] });
+      assert.ok(
+        parseBetaHeader(replay?.headers.get("anthropic-beta") ?? null).includes(COMPACT_BETA),
+      );
+      assert.equal(replay?.text.includes("NATIVE-OWNER-0"), false, "the compacted prefix is gone");
+      assert.ok(replay?.text.includes("NATIVE-OWNER-NEXT"));
+      assert.deepEqual(transportRefusals(manager.getSessionId()), []);
+    } finally {
+      unsubscribe();
+      session?.dispose();
+      releaseSessionCaptures(manager.getSessionId());
+      await rm(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+/** The validated candidate records persisted on the session, in order. */
+function persistedCandidates(manager: SessionManager) {
+  return manager.getEntries().flatMap((entry) => {
+    if (entry.type !== "custom") return [];
+    const data: unknown = entry.data;
+    return isCandidateRecord(data) ? [data] : [];
+  });
+}

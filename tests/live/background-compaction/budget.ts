@@ -28,7 +28,26 @@ export const APPROVED_LIVE_MODELS: readonly string[] = [
   // on). User-approved for the manual background-compaction runs; spend per
   // scenario is in LIVE_EXPECTATIONS below.
   "synthetic/hf:zai-org/GLM-5.3",
+  // xAI, $2/$6 per MTok (installed catalog; the $4/$12 tier starts above 200k
+  // input tokens per request, which no probe request reaches). User-approved
+  // (plan Q2) for the RPC probe's manual xAI cell only; spend in
+  // LIVE_EXPECTATIONS["rpc-xai-grok-4.7-manual"].
+  "xai/grok-4.7",
 ];
+/**
+ * Approved models the RPC probe may run in manual cells only: an automatic
+ * cell on them costs several times the manual one (Fable 5.1 auto ≈ 460k
+ * input tokens ≈ $4.9, runaway ≈ $49), so the auto cell runs on Haiku 5.5.
+ */
+export const MANUAL_ONLY_LIVE_MODELS: readonly string[] = ["anthropic/claude-fable-5-1"];
+/**
+ * Models the RPC probe may select with RPC `set_model` and switch straight
+ * back from, without ever prompting them (no request reaches the provider,
+ * so no spend): the `captures-cleared-before-compact` case needs a second
+ * model of the subject's provider, and `xai/grok-4.7` is the only approved
+ * xAI model. `grok-4.6` is the installed catalog's other xAI Responses model.
+ */
+export const SWITCH_ONLY_LIVE_MODELS: readonly string[] = ["xai/grok-4.6"];
 /**
  * Expected usage per process (restart-recovery: per worker phase). Full worktree profile:
  * about 7k tokens of system prompt and tool schemas per request, plus a
@@ -70,7 +89,49 @@ export const LIVE_EXPECTATIONS: ExpectationTable = {
   // Synthetic (OpenAI-compatible) rides fetch, and the ledger parses its
   // chat-completions usage (final SSE chunk or JSON body).
   "context-window-presets": { requests: 1, inputTokens: 40_000, outputTokens: 2_000 },
+  // RPC compaction probe cells (`tests/live/rpc-compaction-probe.ts`), one row
+  // per cell (one background setting x one point); the probe sums the assistant
+  // usage its RPC stream reports per cell and stops at RUNAWAY_FACTOR x the row.
+  // Native lane requests (Anthropic `compaction`, xAI `/responses/compact`,
+  // Codex compact) are not assistant messages and are not counted.
+  // Manual cell: 6 seed turns, 2 SEED-B turns, plain / instructions /
+  // captures-cleared compactions with one follow-up each, then the resume
+  // relaunch (one local fallback summary, one turn, one compaction, one
+  // follow-up): about 20 requests of ~12k tokens (system prompt and tools).
+  // Fable 5.1 ($10/$50 per MTok): ≈ $2.4 in + $0.4 out ≈ $2.8 expected; the
+  // runaway stop bounds a cell near $28. (Plan estimate before the
+  // captures-cleared and resume cases: 140k in / 6k out ≈ $1.7.)
+  "rpc-anthropic-fable-manual": { requests: 20, inputTokens: 240_000, outputTokens: 8_000 },
+  // Auto cell on Haiku 5.5 ($0.10/$0.50 per MTok below 100k input per request):
+  // calibration (2 turns), 6 seed turns, up to 12 turns to the point and one
+  // follow-up per process, ≈ 460k in ≈ $0.05 expected; runaway ≈ $0.5.
+  "rpc-anthropic-haiku-auto": { requests: 22, inputTokens: 460_000, outputTokens: 10_000 },
+  // Same manual flow on Grok 4.7 ($2/$6 per MTok): ≈ $0.48 in + $0.05 out
+  // ≈ $0.55 expected; the runaway stop bounds a cell near $5.3.
+  "rpc-xai-grok-4.7-manual": { requests: 20, inputTokens: 240_000, outputTokens: 8_000 },
+  // GPT-6 Luna over the ChatGPT subscription (no dollar spend; quota only):
+  // the manual flow plus the model-switch case (one gpt-6-sol turn and one
+  // Luna turn).
+  "rpc-codex-luna-manual": { requests: 22, inputTokens: 260_000, outputTokens: 8_000 },
 };
+
+/**
+ * The LIVE_EXPECTATIONS row of one RPC probe cell, or undefined when the
+ * cell has none (the probe then runs without a runaway stop and says so).
+ */
+export function rpcProbeExpectationKey(
+  model: string,
+  point: "auto" | "manual",
+): string | undefined {
+  return RPC_PROBE_ROWS.get(`${model}|${point}`);
+}
+
+const RPC_PROBE_ROWS: ReadonlyMap<string, string> = new Map([
+  ["anthropic/claude-fable-5-1|manual", "rpc-anthropic-fable-manual"],
+  ["anthropic/claude-haiku-5-5|auto", "rpc-anthropic-haiku-auto"],
+  ["xai/grok-4.7|manual", "rpc-xai-grok-4.7-manual"],
+  ["openai-codex/gpt-6-luna|manual", "rpc-codex-luna-manual"],
+]);
 export const RUNAWAY_FACTOR = 10;
 
 export function requireLiveRun(

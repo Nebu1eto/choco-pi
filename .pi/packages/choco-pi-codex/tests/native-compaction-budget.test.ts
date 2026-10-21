@@ -5,7 +5,6 @@ import {
   type CodexConversionConfig,
   DEFAULT_CODEX_CONVERSION_CONFIG,
 } from "../src/adapter/activation/config.ts";
-import { OPENAI_CODEX_COMPACTION_ENDPOINT_BUDGET_TOKENS } from "../src/adapter/compaction/request-shrink.ts";
 import {
   createNativeCompactionBudgetHook,
   NATIVE_COMPACTION_BUDGET_SYMBOL,
@@ -13,6 +12,14 @@ import {
   type NativeCompactionBudgetState,
   publishNativeCompactionBudgetHook,
 } from "../src/extension/native-compaction-budget.ts";
+
+/**
+ * The compaction endpoint's request budget, pinned as a literal so a change to
+ * the source constant (`OPENAI_CODEX_COMPACTION_ENDPOINT_BUDGET_TOKENS` in
+ * `src/adapter/compaction/request-shrink.ts`) fails here instead of moving the
+ * expectation with it.
+ */
+const ENDPOINT_BUDGET_TOKENS = 872_000;
 
 function model(provider: string, id: string, api: Api, baseUrl: string): Model<Api> {
   return {
@@ -76,7 +83,7 @@ function ask(hook: NativeCompactionBudgetHook, target: Model<Api>, contextWindow
 
 test("server-side OpenAI compaction publishes the native request budget", () => {
   const hook = hookFor({ current: stateWith(true) });
-  assert.equal(ask(hook, CODEX_LITE, 1_000_000), OPENAI_CODEX_COMPACTION_ENDPOINT_BUDGET_TOKENS);
+  assert.equal(ask(hook, CODEX_LITE, 1_000_000), ENDPOINT_BUDGET_TOKENS);
   assert.equal(ask(hook, CODEX_PLAIN, 400_000), 380_000, "95% of the native window");
 });
 
@@ -107,7 +114,7 @@ test("the choco-pi mode publishes no budget, and the live config is re-read", ()
   const hook = hookFor(state);
   assert.equal(ask(hook, CODEX_LITE, 1_000_000), undefined);
   state.current = stateWith(true);
-  assert.equal(ask(hook, CODEX_LITE, 1_000_000), OPENAI_CODEX_COMPACTION_ENDPOINT_BUDGET_TOKENS);
+  assert.equal(ask(hook, CODEX_LITE, 1_000_000), ENDPOINT_BUDGET_TOKENS);
   state.current = stateWith(false);
   assert.equal(ask(hook, CODEX_LITE, 1_000_000), undefined);
 });

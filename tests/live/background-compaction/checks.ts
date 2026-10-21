@@ -26,7 +26,8 @@ export type ObservedCheck =
   | "no-local-fallback"
   | "context-window-displayed"
   | "context-window-preset-change"
-  | "compaction-point";
+  | "compaction-point"
+  | "lane-journal";
 /** Checks every scenario requires, computed from launcher counters and records. */
 export type HarnessCheck = "no-secret-leak" | "no-abort" | "zero-network" | "live-accepted";
 export type CheckName = ObservedCheck | HarnessCheck;

@@ -274,7 +274,20 @@ test("isolated SSE lane freezes request before auth await, persists exact native
   assert.notEqual(requests[0]?.sessionId, "foreground-session");
   assert.ok(requests[0]?.sessionId.startsWith("foreground-session:background-compaction:"));
   assert.deepEqual(requests[0]?.body.input, [...before.input, { type: "compaction_trigger" }]);
+  // Independent of the capture object: the four frozen prefix items, written out, then the
+  // trigger this test builds; the mutated tail never reaches the lane.
+  const sentInput = requests[0]?.body.input ?? [];
+  assert.equal(sentInput.length, 5, "four frozen prefix items plus the trigger");
+  assert.deepEqual(sentInput.slice(0, 4), [
+    { role: "user", content: [{ type: "input_text", text: "PREFIX PENDING" }] },
+    { type: "function_call", name: "lookup", call_id: "prefix-call", arguments: "{}" },
+    { type: "function_call_output", call_id: "prefix-call", output: "37" },
+    { role: "user", content: [{ type: "input_text", text: "CUT" }] },
+  ]);
+  assert.deepEqual(sentInput.at(-1), { type: "compaction_trigger" });
+  assert.equal(JSON.stringify(sentInput).includes("MOVING TAIL NOT IN PREFIX"), false);
   assert.equal(requests[0]?.body.instructions, before.instructions);
+  assert.equal(requests[0]?.body.instructions, "Frozen instructions");
   assert.deepEqual(requests[0]?.body.reasoning, before.reasoning);
   assert.deepEqual(checkpoint.details.compactedWindow, [
     { ...user("PREFIX PENDING"), type: "message" },

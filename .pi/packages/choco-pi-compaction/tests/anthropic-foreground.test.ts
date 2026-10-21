@@ -4,7 +4,10 @@
  * network): the host's own compaction is answered with a signed block, every
  * failure falls back to the local summarizer with a single notice, replay
  * carries the block first with the beta, and a replay rejection turns
- * server-side off for the rest of the session.
+ * server-side off for the rest of the session (background lane included).
+ * The scripted lane answers every request with a distinct block, so equality
+ * with the replayed block proves which lane answer was persisted; lane request
+ * bodies are checked against turns the test writes out.
  */
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -43,9 +46,11 @@ import {
 } from "../src/anthropic/capture.ts";
 import { COMPACT_BETA, isAnthropicDetails } from "../src/anthropic/details.ts";
 import type { AnthropicCompactionMode } from "../src/anthropic/mode.ts";
+import { laneRecordsOf } from "../src/background/lane-journal.ts";
 import { getCoordinator } from "../src/background/registry.ts";
 import type { TextSummarizer } from "../src/background/text-backend.ts";
 import registerCompaction from "../src/index.ts";
+import { ANTHROPIC_BACKEND_ID } from "../src/anthropic/backend.ts";
 import { mainOwnerKey } from "../src/ownership.ts";
 import { BACKGROUND_OFF_SETTINGS_PATHS } from "./host-harness.ts";
 
@@ -69,11 +74,14 @@ const MODEL: Model<"anthropic-messages"> = {
   contextWindow: 200_000,
   maxTokens: 4_096,
 };
-const BLOCK = {
-  type: "compaction",
-  content: "FOREGROUND synthetic native summary",
-  signature: "foreground-synthetic-signature",
-};
+/** The scripted lane's answer to its `index`-th request: a distinct signed block each time. */
+function blockFor(index: number) {
+  return {
+    type: "compaction",
+    content: `FOREGROUND synthetic native summary ${index}`,
+    signature: `foreground-synthetic-signature-${index}`,
+  };
+}
 const NOTICE_PREFIX = "Anthropic server-side compaction";
 const BACKGROUND_SUMMARY = [
   "## Goal",
@@ -121,14 +129,15 @@ function messageStart(inputTokens = 0): Frame {
 }
 
 function laneFrames(options: {
-  readonly block?: boolean;
+  /** Answer with `blockFor(block)`. */
+  readonly block?: number;
   readonly stopReason: string;
   readonly text?: string;
   readonly inputTokens?: number;
 }): Frame[] {
   const frames: Frame[] = [messageStart(options.inputTokens)];
-  if (options.block === true) {
-    frames.push({ type: "content_block_start", index: 0, content_block: BLOCK });
+  if (options.block !== undefined) {
+    frames.push({ type: "content_block_start", index: 0, content_block: blockFor(options.block) });
     frames.push({ type: "content_block_stop", index: 0 });
   } else if (options.text !== undefined) {
     frames.push({
@@ -151,8 +160,38 @@ function laneFrames(options: {
   return frames;
 }
 
-function compactionResponse(): Response {
-  return sse(laneFrames({ block: true, stopReason: "compaction" }));
+function compactionResponse(index = 0): Response {
+  return sse(laneFrames({ block: index, stopReason: "compaction" }));
+}
+
+/** A lane that answers its n-th request with `blockFor(n)`. */
+function nativeLane(): RecordingFetch {
+  return recordingFetch((index) => compactionResponse(index));
+}
+
+const TextBlockSchema = Type.Object({ type: Type.Literal("text"), text: Type.String() });
+const CompactionBlockSchema = Type.Object({
+  type: Type.Literal("compaction"),
+  content: Type.String(),
+});
+const TypedBlockSchema = Type.Object({ type: Type.String() });
+
+/**
+ * The test's own reading of a wire request: one `<role>:<text>` line per
+ * message, a block other than text shown as `[type]` (`[compaction:<content>]`).
+ */
+function turnsOf(sent: { readonly body: WireBody | undefined } | undefined): string[] {
+  return (sent?.body?.messages ?? []).map((message) => {
+    const content: unknown = message.content;
+    if (Value.Check(Type.String(), content)) return `${message.role}:${content}`;
+    if (!Value.Check(Type.Array(TypedBlockSchema), content)) return `${message.role}:?`;
+    const parts = content.map((block) => {
+      if (Value.Check(TextBlockSchema, block)) return block.text;
+      if (Value.Check(CompactionBlockSchema, block)) return `[compaction:${block.content}]`;
+      return `[${block.type}]`;
+    });
+    return `${message.role}:${parts.join("|")}`;
+  });
 }
 
 function textResponse(text: string, inputTokens?: number): Response {
@@ -411,6 +450,21 @@ function textForeground(): RecordingFetch {
   );
 }
 
+/** The seeded turns plus the first prompt, as the lane must receive them (system excluded). */
+const LANE_PREFIX_TURNS = [
+  "user:FG-PREFIX-A",
+  "assistant:FG-PREFIX-B",
+  "user:FG-KEPT-C",
+  "assistant:FG-KEPT-D",
+  "user:FG-GO",
+];
+/** The first replay after compaction: the block, then the kept tail and the new prompt. */
+const REPLAY_TURNS = [
+  "assistant:[compaction:FOREGROUND synthetic native summary 0]",
+  "assistant:FG-ANSWER",
+  "user:FG-NEXT",
+];
+
 test(
   "server-side success commits the signed block with details; replay sends it first with the beta",
   {
@@ -418,13 +472,17 @@ test(
   },
   async () => {
     const foreground = textForeground();
-    const lane = recordingFetch(() => compactionResponse());
+    const lane = nativeLane();
     const rig = await createRig({ foreground, lane });
     try {
       await rig.session.prompt("FG-GO");
       assert.equal(foreground.sent.length, 1);
       const result = await rig.session.compact("FG custom focus");
       assert.equal(lane.sent.length, 1, "one lane request");
+      // Prefix fidelity: the lane carries the captured turns before the cut, as written here.
+      assert.deepEqual(turnsOf(lane.sent[0]), LANE_PREFIX_TURNS);
+      assert.deepEqual(lane.sent[0]?.body?.system, foreground.sent[0]?.body?.system);
+      assert.equal(lane.sent[0]?.body?.model, MODEL.id);
       assert.deepEqual(laneCompaction(lane.sent[0]), {
         type: "summarize",
         instructions: "FG custom focus",
@@ -433,27 +491,41 @@ test(
         parseBetaHeader(lane.sent[0]?.headers.get("anthropic-beta") ?? null).includes(COMPACT_BETA),
       );
       assert.equal(foreground.sent.length, 1, "the local summarizer never ran");
-      assert.equal(result.summary, BLOCK.content);
+      assert.equal(result.summary, "FOREGROUND synthetic native summary 0");
       const [entry, ...extra] = compactions(rig.manager);
       assert.ok(entry);
       assert.equal(extra.length, 0, "exactly one compaction");
       assert.ok(isAnthropicDetails(entry.details), "details recognized by replay");
-      assert.deepEqual(entry.details.block, BLOCK);
+      assert.deepEqual(entry.details.block, blockFor(0));
       assert.equal(entry.details.cut.firstKeptEntryId, entry.firstKeptEntryId);
       assert.deepEqual(noticesOf(rig), []);
 
       await rig.session.prompt("FG-NEXT");
       const replay = foreground.sent.at(-1);
       assert.ok(replay?.body);
-      assert.deepEqual(replay.body.messages[0], { role: "assistant", content: [BLOCK] });
+      assert.deepEqual(replay.body.messages[0], { role: "assistant", content: [blockFor(0)] });
       assert.ok(parseBetaHeader(replay.headers.get("anthropic-beta")).includes(COMPACT_BETA));
-      assert.equal(replay.text.includes(JSON.stringify(BLOCK.content)), true);
-      assert.ok(replay.text.includes("FG-NEXT"));
+      assert.deepEqual(turnsOf(replay), REPLAY_TURNS);
+
+      // A second compaction persists and replays the second answer, not the first.
+      await rig.session.compact();
+      assert.equal(lane.sent.length, 2);
+      assert.equal(laneCompaction(lane.sent[1])?.instructions, undefined, "no focus this time");
       assert.equal(
-        replay.body.messages.filter((message) => JSON.stringify(message).includes("compaction"))
-          .length,
-        1,
-        "exactly one block",
+        turnsOf(lane.sent[1])[0],
+        "assistant:[compaction:FOREGROUND synthetic native summary 0]",
+        "the earlier block heads the new prefix",
+      );
+      const latest = compactions(rig.manager).at(-1);
+      assert.ok(isAnthropicDetails(latest?.details));
+      assert.deepEqual(latest.details.block, blockFor(1));
+      await rig.session.prompt("FG-LAST");
+      const second = foreground.sent.at(-1);
+      assert.deepEqual(second?.body?.messages[0], { role: "assistant", content: [blockFor(1)] });
+      assert.equal(
+        second?.text.includes(blockFor(0).signature),
+        false,
+        "the superseded block is not resent",
       );
     } finally {
       await rig.dispose();
@@ -468,7 +540,7 @@ test(
   },
   async () => {
     const foreground = recordingFetch((index) => textResponse(`FG-ANSWER-${index}`));
-    const lane = recordingFetch(() => compactionResponse());
+    const lane = nativeLane();
     const rig = await createRig({ foreground, lane, keepRecentTokens: 100 });
     try {
       await rig.session.prompt("FG-GO");
@@ -493,7 +565,7 @@ test(
       await rig.session.prompt("FG-THIRD");
       const replay = foreground.sent.at(-1);
       assert.ok(replay?.body);
-      assert.deepEqual(replay.body.messages[0], { role: "assistant", content: [BLOCK] });
+      assert.deepEqual(replay.body.messages[0], { role: "assistant", content: [blockFor(0)] });
       assert.equal(replay.body.messages[1]?.role, "user");
       assert.ok(JSON.stringify(replay.body.messages[1]).includes("FG-NEXT"));
     } finally {
@@ -737,30 +809,49 @@ test(
       }
       return textResponse(index === 0 ? "FG-ANSWER" : `FG-LOCAL-SUMMARY-${index}`);
     });
-    const lane = recordingFetch(() => compactionResponse());
+    const lane = nativeLane();
     const rig = await createRig({ foreground, lane });
     try {
       await rig.session.prompt("FG-GO");
       await rig.session.compact();
-      assert.ok(isAnthropicDetails(compactions(rig.manager)[0]?.details));
+      const [checkpoint] = compactions(rig.manager);
+      assert.ok(isAnthropicDetails(checkpoint?.details));
       reject = true;
       await rig.session.prompt("FG-REJECTED");
       const rejected = foreground.sent.at(-1);
-      assert.deepEqual(rejected?.body?.messages[0], { role: "assistant", content: [BLOCK] });
+      assert.deepEqual(rejected?.body?.messages[0], { role: "assistant", content: [blockFor(0)] });
       const disabled = noticesOf(rig);
       assert.equal(disabled.length, 1);
       assert.ok(disabled[0]?.includes("compaction_signature_invalid"));
+      const disables = laneRecordsOf(rig.manager.getEntries()).filter(
+        (record) => record.event === "disable",
+      );
+      assert.equal(disables.length, 1, "the disable is journaled once");
+      assert.deepEqual(
+        {
+          provider: disables[0]?.provider,
+          route: disables[0]?.route,
+          from: disables[0]?.from,
+          checkpoint: disables[0]?.checkpointEntryId,
+        },
+        {
+          provider: "anthropic",
+          route: "replay",
+          from: "anthropic-native",
+          checkpoint: checkpoint.id,
+        },
+      );
 
       // Later requests carry the summary text, not the block or the beta.
       await rig.session.prompt("FG-AFTER");
       const after = foreground.sent.at(-1);
       assert.ok(after?.body);
-      assert.equal(after.text.includes(BLOCK.signature), false);
+      assert.equal(after.text.includes(blockFor(0).signature), false);
       assert.equal(
         parseBetaHeader(after.headers.get("anthropic-beta")).includes(COMPACT_BETA),
         false,
       );
-      assert.ok(after.text.includes(BLOCK.content), "summary text sent instead");
+      assert.ok(after.text.includes(blockFor(0).content), "summary text sent instead");
 
       // Later compactions are local, with no lane request and no new notice.
       const laneBefore = lane.sent.length;
@@ -769,6 +860,104 @@ test(
       const latest = compactions(rig.manager).at(-1);
       assert.equal(isAnthropicDetails(latest?.details), false);
       assert.equal(noticesOf(rig).length, 1);
+    } finally {
+      await rig.dispose();
+    }
+  },
+);
+
+test(
+  "with the background Anthropic lane on, a replay rejection also shuts the background lane off",
+  { timeout: 30_000 },
+  async () => {
+    let reject = false;
+    let summarized = 0;
+    const summarizer: TextSummarizer = {
+      scope: { provider: MODEL.provider, model: MODEL.id, baseUrl: MODEL.baseUrl },
+      summarize: async () => {
+        summarized += 1;
+        return { text: BACKGROUND_SUMMARY, usage, stopReason: "stop", toolCallCount: 0 };
+      },
+    };
+    const foreground = recordingFetch((index) => {
+      if (reject) {
+        reject = false;
+        return errorResponse(400, {
+          type: "invalid_request_error",
+          message: "synthetic signature rejection",
+          details: { error_code: "compaction_signature_invalid" },
+        });
+      }
+      return textResponse(`FG-ANSWER-${index}`);
+    });
+    const lane = nativeLane();
+    const rig = await createRig({
+      foreground,
+      lane,
+      background: {
+        sidecar: async (dir) => {
+          const path = join(dir, "background-compaction.json");
+          // Manual-only: the usage threshold is never crossed.
+          await writeFile(
+            path,
+            JSON.stringify({
+              enabled: true,
+              text: true,
+              anthropicNative: true,
+              prepareAt: 0.99,
+              hysteresis: 0,
+              reserveTokens: 0,
+              retryBaseMs: 0,
+              cooldownMs: 0,
+              timeoutMs: 20_000,
+              maxOutputTokens: 1_000,
+            }),
+          );
+          return path;
+        },
+        summarizer,
+      },
+    });
+    const ownerKey = mainOwnerKey(rig.manager.getSessionId());
+    const settledCount = async (count: number): Promise<void> => {
+      const deadline = Date.now() + 5_000;
+      while (compactions(rig.manager).length < count) {
+        assert.ok(
+          Date.now() < deadline,
+          `compaction ${count} not committed: ${JSON.stringify(getCoordinator(ownerKey)?.status())} ${JSON.stringify(rig.notices)}`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+    };
+    try {
+      await rig.session.prompt("FG-GO");
+      await rig.session.compact();
+      await settledCount(1);
+      const [checkpoint] = compactions(rig.manager);
+      assert.ok(isAnthropicDetails(checkpoint?.details), "native checkpoint first");
+      assert.equal(lane.sent.length, 1);
+      assert.equal(summarized, 0);
+
+      reject = true;
+      await rig.session.prompt("FG-REJECTED");
+      const disables = laneRecordsOf(rig.manager.getEntries()).filter(
+        (record) => record.event === "disable",
+      );
+      assert.equal(disables.length, 1, JSON.stringify(laneRecordsOf(rig.manager.getEntries())));
+      assert.equal(disables[0]?.checkpointEntryId, checkpoint.id);
+
+      // The background lane is off too: the next manual compaction sends no lane request.
+      await rig.session.prompt("FG-AFTER");
+      await rig.session.compact();
+      await settledCount(2);
+      assert.equal(lane.sent.length, 1, "no native request after the disable, on any route");
+      const latest = compactions(rig.manager).at(-1);
+      assert.equal(isAnthropicDetails(latest?.details), false, "a text/local checkpoint");
+      assert.notEqual(
+        getCoordinator(ownerKey)?.status().backendId,
+        ANTHROPIC_BACKEND_ID,
+        "the coordinator did not run the Anthropic lane",
+      );
     } finally {
       await rig.dispose();
     }
@@ -790,22 +979,22 @@ test(
       }
       return textResponse(index === 0 ? "FG-ANSWER" : `FG-LOCAL-SUMMARY-${index}`);
     });
-    const childLane = recordingFetch(() => compactionResponse());
+    const childLane = nativeLane();
     const mainForeground = textForeground();
-    const mainLane = recordingFetch(() => compactionResponse());
+    const mainLane = nativeLane();
     const main = await createRig({ foreground: mainForeground, lane: mainLane });
     const child = await createRig({ foreground: childForeground, lane: childLane, child: true });
     try {
       await child.session.prompt("FG-CHILD-GO");
       const result = await child.session.compact();
       assert.equal(childLane.sent.length, 1, "the child's own lane request");
-      assert.equal(result.summary, BLOCK.content);
+      assert.equal(result.summary, blockFor(0).content);
       assert.ok(isAnthropicDetails(compactions(child.manager)[0]?.details));
       // The child's replay binding sends its own checkpoint first.
       await child.session.prompt("FG-CHILD-NEXT");
       assert.deepEqual(childForeground.sent.at(-1)?.body?.messages[0], {
         role: "assistant",
-        content: [BLOCK],
+        content: [blockFor(0)],
       });
       // A rejection turns server-side off for the child only.
       rejectChild = true;

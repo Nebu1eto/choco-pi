@@ -335,7 +335,18 @@ test("compact client: happy path posts the body with bearer auth and returns the
   const { calls, request } = client(() => new Response(compactBody(extra), { status: 200 }));
   const result = await runXaiCompactRequest(request);
   assert.ok(result.ok);
-  assert.deepEqual(result.item, extra, "unknown fields kept, nothing added");
+  // Written out, not the object the response was serialized from.
+  assert.deepEqual(
+    result.item,
+    {
+      type: "compaction",
+      encrypted_content: "xai-units-synthetic-opaque-record",
+      id: "cmp_units",
+      future_field: { nested: [1] },
+    },
+    "unknown fields kept, nothing added",
+  );
+  assert.notEqual(result.item, extra, "parsed from the wire, not the fixture object");
   assert.equal(result.id, "cmp_units");
   assert.deepEqual(result.usage, { input: 120, output: 30 });
   assert.equal(result.droppedMessageCount, 7);

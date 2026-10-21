@@ -4,17 +4,26 @@
  * Spawns `pi --mode rpc` as a separate process with its own agent directory and
  * drives one matrix cell per (background on/off) x (point manual/auto) for one
  * model and one compaction logic (`server-side` or `choco-pi`):
- *   - manual: RPC `compact` without and with instructions, then one follow-up prompt;
- *     background on with instructions expects the text lane (`text`,
- *     `local-reconciled`): server-side compaction takes no instructions, so the
- *     background host serves that request only by text (background-host/routes.ts
- *     `manualLanes`). Background on without instructions, every auto case, and every
- *     background-off case expect the logic's native lane (server-side) or text (choco-pi);
+ *   - manual: RPC `compact` without and with instructions (`/compact <focus>`),
+ *     each with one follow-up prompt. Every case expects the logic's native lane
+ *     (server-side) or text (choco-pi); the Anthropic lane applies instructions
+ *     itself (D9), the Codex lane forwards them as a developer item (A1) and xAI
+ *     sends them as `instructions`. A Codex or xAI manual request is answered by
+ *     the foreground handler even with background on (routes.ts `manualLanes`).
+ *     Server-side cells add `captures-cleared-before-compact` (RPC `set_model` to a
+ *     second model of the provider and back, then `compact`: captures survive,
+ *     D8), Codex `model-switch-replay` (one turn on gpt-6-sol over the Luna
+ *     checkpoint, then back) and, where the foreground answers, `resume-then-compact`
+ *     (a fresh process `switch_session`s to the same file and compacts with no
+ *     turn, then after one turn compacts again);
  *   - auto: the context cap's compaction point (presets from `--soft-cap` and
  *     `--compaction-point`, `reserveTokens` calibrated so a short seed crosses it).
+ * Every case checks the lane journal (`choco-compaction-lane`): a record for each
+ * observed fallback or cancel; each cell ends with a journal case (fewer than
+ * MAX_LANE_RECORDS records, all schema-valid, none credential-looking).
  * Evidence is the RPC event stream, the session entries, and the in-process
  * coordinator/capture status; no UI. Any errored assistant turn fails its case,
- * and an errored seed turn aborts the run.
+ * and an errored seed turn or a runaway usage stop (budget.ts) aborts the run.
  *
  * Usage: `node tests/live/rpc-compaction-probe.ts --help`.
  */
@@ -34,6 +43,26 @@ import {
   CONTEXT_SOFT_CAP_TOKENS,
 } from "../../.pi/extensions/lib/agent-preferences.ts";
 import { isString } from "../../.pi/extensions/lib/runtime-values.ts";
+import { REASONS } from "../../.pi/packages/choco-pi-compaction/src/background/lane-journal.ts";
+import {
+  OPAQUE_GUARD_NOTICE,
+  OPAQUE_STRATEGIES,
+} from "../../.pi/packages/choco-pi-compaction/src/opaque-checkpoint.ts";
+import { isXaiDetails } from "../../.pi/packages/choco-pi-compaction/src/xai/details.ts";
+import {
+  APPROVED_LIVE_MODELS,
+  type Expectation,
+  LIVE_EXPECTATIONS,
+  rpcProbeExpectationKey,
+  RUNAWAY_FACTOR,
+} from "./background-compaction/budget.ts";
+import {
+  type JournalRequirements,
+  journalReasons,
+  laneRecordData,
+  MAX_LANE_RECORDS,
+  summarizeJournal,
+} from "./background-compaction/lane-journal-checks.ts";
 import {
   buildAgentFiles,
   type Calibration,
@@ -199,6 +228,13 @@ const ProbeStatusSchema = Type.Object({
     ),
   ),
   refusals: Type.Number(),
+  /** xAI wire captures of the session (xai/capture.ts), same fields. */
+  xaiCaptures: Type.Array(
+    Type.Object(
+      { status: Type.Number(), mapped: Type.Boolean(), endpoint: Type.String() },
+      { additionalProperties: true },
+    ),
+  ),
   window: NullableNumber,
   nativeWindow: NullableNumber,
   cap: NullableNumber,
@@ -227,7 +263,37 @@ type Command = {
   message?: string;
   customInstructions?: string;
   cancelled?: boolean;
+  /** `set_model`. */
+  provider?: string;
+  modelId?: string;
+  /** `switch_session`. */
+  sessionPath?: string;
 };
+/** Provider-reported usage on an assistant `message_end` (pi-ai Usage). */
+const UsageMessageSchema = Type.Object(
+  {
+    role: Type.Literal("assistant"),
+    usage: Type.Object(
+      {
+        input: Type.Number(),
+        output: Type.Number(),
+        cacheRead: Type.Number(),
+        cacheWrite: Type.Number(),
+      },
+      { additionalProperties: true },
+    ),
+  },
+  { additionalProperties: true },
+);
+type UsageMessage = Static<typeof UsageMessageSchema>;
+const SessionFileSchema = Type.Object(
+  { sessionFile: Type.String({ minLength: 1 }) },
+  { additionalProperties: true },
+);
+const SwitchResultSchema = Type.Object(
+  { cancelled: Type.Boolean() },
+  { additionalProperties: true },
+);
 
 // ---------------------------------------------------------------------------
 // Options and evidence
@@ -262,10 +328,14 @@ async function dryRun(): Promise<void> {
   write(
     `contextSoftCap ${options.softCap} (${CONTEXT_SOFT_CAP_TOKENS[options.softCap]}), autoCompactionPoint ${options.compactionPoint} (${AUTO_COMPACTION_POINT_TOKENS[options.compactionPoint]})`,
   );
-  const lane = nativeLaneFor(options.provider);
+  write(
+    `text lane ${options.text ? "on" : "off"}; switch model ${options.switchModel ?? "none"}; runaway stop ${RUNAWAY_FACTOR}x the cell's LIVE_EXPECTATIONS row`,
+  );
   for (const cell of cells) {
-    const unprovable = options.logic === "server-side" && lane === undefined;
-    write(`\ncell ${cell.key}${unprovable ? " (unprovable: no native lane; not launched)" : ""}`);
+    const unprovable = unprovableReason(cell);
+    const key = rpcProbeExpectationKey(options.model, cell.point);
+    write(`\ncell ${cell.key}${unprovable === undefined ? "" : ` (unprovable: ${unprovable})`}`);
+    write(`  budget row: ${key ?? "none (no runaway stop)"}`);
     const reserve =
       cell.point === "manual"
         ? `${DEFAULT_RESERVE_TOKENS}`
@@ -296,7 +366,7 @@ async function dryRun(): Promise<void> {
         "  cases: RPC compact (plain), RPC compact (instructions), each + one follow-up prompt",
       );
     else write("  cases: calibrate, seed, prompt until the cap point fires, one follow-up prompt");
-    const variants = cell.point === "manual" ? [false, true] : [false];
+    write(`  case names: ${caseNames(cell).join(", ")}`);
     if (cell.point === "auto") {
       // Example points only: the live run calibrates and logs its own.
       const plan = planAuto(options, DRY_RUN_CALIBRATION);
@@ -323,14 +393,14 @@ async function dryRun(): Promise<void> {
           : `  pass: compaction_start/end:${plan.capApplies ? "manual" : "threshold"}, no compact RPC, tokensBefore >= capPoint ${plan.capPoint ?? plan.hostThreshold}`,
       );
     }
-    for (const withInstructions of variants) {
-      const expected = caseLane(cell.background, withInstructions);
-      const name = cell.point === "manual" ? (withInstructions ? "instructions" : "plain") : "auto";
-      const backend = cell.background ? (expected.lane?.backendId ?? "text") : "none (foreground)";
-      write(
-        `  expect ${name}: backend ${backend}, strategy ${expected.lane?.strategy ?? "local-reconciled"}${expected.laneRule === undefined ? "" : `, laneRule ${expected.laneRule}`}`,
-      );
-    }
+    const expected =
+      cell.point === "manual" ? caseLane(cell) : { lane: laneFor(), background: cell.background };
+    const backend = expected.background
+      ? (expected.lane?.backendId ?? "text")
+      : "none (foreground)";
+    write(
+      `  expect ${cell.point}: backend ${backend}, strategy ${expected.lane?.strategy ?? "local-reconciled"}; journal < ${MAX_LANE_RECORDS} records, one per observed fallback/cancel`,
+    );
   }
 }
 
@@ -366,6 +436,8 @@ function log<T extends object>(record: T): void {
 
 interface Session {
   readonly label: string;
+  /** Scratch directory name of this launch; a relaunch with it reuses agent, workspace and sessions. */
+  readonly dir: string;
   readonly records: WireRecord[];
   /** The background sidecar this launch wrote (preparer prepareAt/reserveTokens). */
   readonly sidecar: Sidecar;
@@ -379,6 +451,7 @@ function probeExtensionSource(hostReserve: number): string {
     api: join(checkout, "node_modules/@earendil-works/pi-coding-agent/dist/index.js"),
     registry: join(checkout, ".pi/packages/choco-pi-compaction/src/background/registry.ts"),
     capture: join(checkout, ".pi/packages/choco-pi-compaction/src/anthropic/capture.ts"),
+    xaiCapture: join(checkout, ".pi/packages/choco-pi-compaction/src/xai/capture.ts"),
     cap: join(checkout, ".pi/extensions/model-context-cap.ts"),
     policy: join(checkout, ".pi/extensions/lib/context-policy.ts"),
   };
@@ -390,6 +463,7 @@ function probeExtensionSource(hostReserve: number): string {
   return `import type { ExtensionAPI } from ${JSON.stringify(imports.api)};
 import { getRegistry } from ${JSON.stringify(imports.registry)};
 import { capturesFor, transportRefusals } from ${JSON.stringify(imports.capture)};
+import { xaiCapturesFor } from ${JSON.stringify(imports.xaiCapture)};
 import { resolvePolicy } from ${JSON.stringify(imports.cap)};
 import { readNativeContextWindow } from ${JSON.stringify(imports.policy)};
 const SETTINGS = ${JSON.stringify(settings)};
@@ -421,11 +495,12 @@ export default function (pi: ExtensionAPI) {
       const latest = all.at(-1);
       const captureSystemHead = latest === undefined ? null : systemHead(latest.body);
       const refusals = transportRefusals(sessionId).length;
+      const xaiCaptures = xaiCapturesFor(sessionId).map((capture) => ({ status: capture.status, mapped: capture.mapping !== undefined, endpoint: capture.endpoint }));
       const model = ctx.model;
       const nativeWindow = model ? (readNativeContextWindow(model) ?? model.contextWindow) : null;
       const policy = model && nativeWindow !== null ? resolvePolicy(model, nativeWindow, SETTINGS) : {};
       ctx.ui.notify(${JSON.stringify(STATUS_PREFIX)} + JSON.stringify({
-        rows, captures, refusals,
+        rows, captures, refusals, xaiCaptures,
         window: model ? model.contextWindow : null,
         nativeWindow,
         cap: policy.cap ?? null,
@@ -439,29 +514,85 @@ export default function (pi: ExtensionAPI) {
 `;
 }
 
+// ---------------------------------------------------------------------------
+// Runaway stop (budget.ts LIVE_EXPECTATIONS, per cell)
+// ---------------------------------------------------------------------------
+
+class RunawayError extends Error {
+  override name = "RunawayError";
+}
+
+/** Provider-reported assistant usage of the current cell (all of its launches). */
+const cellUsage = { requests: 0, inputTokens: 0, outputTokens: 0 };
+let cellBudget: { readonly key: string; readonly expected: Expectation } | undefined;
+
+function startCellBudget(cell: Cell): void {
+  cellUsage.requests = 0;
+  cellUsage.inputTokens = 0;
+  cellUsage.outputTokens = 0;
+  const key = rpcProbeExpectationKey(options.model, cell.point);
+  const expected = key === undefined ? undefined : LIVE_EXPECTATIONS[key];
+  cellBudget = key === undefined || expected === undefined ? undefined : { key, expected };
+  log({
+    label: cell.key,
+    budget:
+      cellBudget === undefined
+        ? "none: no LIVE_EXPECTATIONS row for this model and point; no runaway stop"
+        : { key: cellBudget.key, ...cellBudget.expected, runawayFactor: RUNAWAY_FACTOR },
+  });
+}
+
+/** Counts one assistant message_end; returns the runaway error once usage passes the stop. */
+function countUsage(message: UsageMessage): RunawayError | undefined {
+  const { usage } = message;
+  cellUsage.requests += 1;
+  cellUsage.inputTokens += usage.input + usage.cacheRead + usage.cacheWrite;
+  cellUsage.outputTokens += usage.output;
+  if (cellBudget === undefined) return undefined;
+  const { expected, key } = cellBudget;
+  if (
+    cellUsage.inputTokens <= expected.inputTokens * RUNAWAY_FACTOR &&
+    cellUsage.outputTokens <= expected.outputTokens * RUNAWAY_FACTOR
+  )
+    return undefined;
+  return new RunawayError(
+    `runaway stop (${key} x${RUNAWAY_FACTOR}): ${cellUsage.inputTokens} input / ${cellUsage.outputTokens} output tokens over ${cellUsage.requests} assistant messages`,
+  );
+}
+
 let launches = 0;
-async function launch(label: string, settings: LaunchSettings): Promise<Session> {
-  const dir = `${String(++launches).padStart(2, "0")}-${label.replace(/[^A-Za-z0-9.-]+/g, "_")}`;
+async function launch(label: string, settings: LaunchSettings, reuse?: string): Promise<Session> {
+  const dir =
+    reuse ?? `${String(++launches).padStart(2, "0")}-${label.replace(/[^A-Za-z0-9.-]+/g, "_")}`;
   const agentDir = join(scratch, dir, "agent");
   const workspace = join(scratch, dir, "workspace");
   const sessionsDir = join(scratch, dir, "sessions");
-  await Promise.all([
-    mkdir(join(agentDir, "extensions"), { recursive: true }),
-    mkdir(workspace, { recursive: true }),
-    mkdir(sessionsDir, { recursive: true }),
-  ]);
-  await copyAgentFiles(options.source, agentDir);
-  const files = await buildAgentFiles(options, settings, join(agentDir, "choco-pi-codex.json"));
-  await Promise.all([
-    writeFile(join(agentDir, "settings.json"), files.settings),
-    writeFile(join(agentDir, "extensions", "background-compaction.json"), files.backgroundSidecar),
-    writeFile(join(agentDir, "choco-pi-codex.json"), files.codexConfig),
-    writeFile(join(agentDir, "SYSTEM.md"), files.systemPrompt),
-  ]);
   const probeExtension = join(agentDir, "probe-compaction-status.ts");
-  await writeFile(probeExtension, probeExtensionSource(settings.reserveTokens));
+  // A relaunch keeps the launch's agent dir, workspace and session files as they are.
+  if (reuse === undefined) {
+    await Promise.all([
+      mkdir(join(agentDir, "extensions"), { recursive: true }),
+      mkdir(workspace, { recursive: true }),
+      mkdir(sessionsDir, { recursive: true }),
+    ]);
+    await copyAgentFiles(options.source, agentDir);
+  }
+  const files = await buildAgentFiles(options, settings, join(agentDir, "choco-pi-codex.json"));
+  if (reuse === undefined) {
+    await Promise.all([
+      writeFile(join(agentDir, "settings.json"), files.settings),
+      writeFile(
+        join(agentDir, "extensions", "background-compaction.json"),
+        files.backgroundSidecar,
+      ),
+      writeFile(join(agentDir, "choco-pi-codex.json"), files.codexConfig),
+      writeFile(join(agentDir, "SYSTEM.md"), files.systemPrompt),
+    ]);
+    await writeFile(probeExtension, probeExtensionSource(settings.reserveTokens));
+  }
   log({
     label,
+    relaunch: reuse !== undefined,
     launch: {
       background: settings.background,
       reserveTokens: settings.reserveTokens,
@@ -530,6 +661,12 @@ async function launch(label: string, settings: LaunchSettings): Promise<Session>
       if (!Value.Check(WireSchema, value)) continue;
       records.push(value);
       log({ label, wire: value });
+      if (value.type === "message_end") {
+        const runaway = Value.Check(UsageMessageSchema, value.message)
+          ? countUsage(value.message)
+          : undefined;
+        if (runaway !== undefined) failure ??= runaway;
+      }
       if (
         value.type === "extension_ui_request" &&
         value.id &&
@@ -584,7 +721,7 @@ async function launch(label: string, settings: LaunchSettings): Promise<Session>
     if (alive) child.kill("SIGKILL");
   }
   const sidecar = parseSidecar(files.backgroundSidecar);
-  const session: Session = { label, records, sidecar, command, waitFor, close };
+  const session: Session = { label, dir, records, sidecar, command, waitFor, close };
   try {
     const state = await command("get_state");
     assert.equal(state.success, true, `get_state failed: ${state.error ?? ""}`);
@@ -845,8 +982,10 @@ async function provenance(
     if (lane !== undefined) {
       // The host records a hook-supplied compaction as `fromHook`.
       checks.set("fromHook", entry.fromHook === true);
-      if (lane.backendId === "anthropic-native") {
+      if (lane.strategy === "anthropic-compaction-on-demand-v1") {
         checks.set("signedBlock", Value.Check(AnthropicNativeDetailsSchema, entry.details));
+      } else if (lane.strategy === "xai-responses-compaction-v1") {
+        checks.set("xaiItem", isXaiDetails(entry.details));
       } else {
         checks.set("compactedWindow", Value.Check(CodexNativeDetailsSchema, entry.details));
         checks.set(
@@ -863,7 +1002,9 @@ async function provenance(
   }
   if (lane?.needsCapture) {
     const status = await probeStatus(session);
-    const ok = status.captures.filter((item) => item.status === 200).length;
+    const captures =
+      lane.strategy === "xai-responses-compaction-v1" ? status.xaiCaptures : status.captures;
+    const ok = captures.filter((item) => item.status === 200).length;
     detail.set("captures200", ok);
     detail.set("refusals", status.refusals);
     checks.set("capture200", ok > 0);
@@ -896,22 +1037,45 @@ function laneFor(): NativeLane | undefined {
   return options.logic === "server-side" ? nativeLaneFor(options.provider) : undefined;
 }
 
-/** The lane a case expects, and the routing rule that overrode the logic's lane. */
+/** The lane a manual case expects and whether a background candidate or the foreground serves it. */
 interface CaseLane {
   readonly lane: NativeLane | undefined;
-  readonly laneRule: "instructions-text-only" | undefined;
+  readonly background: boolean;
 }
 
 /**
- * The lane one case must be served by. A background manual request with
- * custom instructions may only use the text lane (background-host/routes.ts
- * `manualLanes`), because server-side compaction takes no instructions; the
- * foreground path applies instructions natively, so it keeps the logic's lane.
+ * The lane one manual case must be served by: the logic's lane, with or
+ * without instructions (D9: the Anthropic lane applies them; A1: Codex
+ * forwards them; xAI sends them as `instructions`). With background on, the
+ * background host answers through a candidate unless the lane is answered in
+ * the foreground (Codex owners get no manual lane, xAI has no backend).
  */
-function caseLane(background: boolean, withInstructions: boolean): CaseLane {
-  if (background && withInstructions)
-    return { lane: undefined, laneRule: "instructions-text-only" };
-  return { lane: laneFor(), laneRule: undefined };
+function caseLane(cell: Cell): CaseLane {
+  const lane = laneFor();
+  return { lane, background: cell.background && lane?.manualForeground !== true };
+}
+
+/** Every `notify` message the session showed since `since`. */
+function noticesSince(session: Session, since: number): string[] {
+  return session.records
+    .slice(since)
+    .flatMap((value) =>
+      value.method === "notify" && isString(value.message) ? [value.message] : [],
+    );
+}
+
+/** Lane-journal records appended since `start` (a record count), checked against `requirements`. */
+async function journalSince(
+  session: Session,
+  start: number,
+  requirements: JournalRequirements,
+): Promise<{ readonly problems: string[]; readonly records: string[] }> {
+  const data = laneRecordData((await allEntries(session)).entries).slice(start);
+  return { problems: journalReasons(data, requirements), records: summarizeJournal(data).records };
+}
+
+async function journalCount(session: Session): Promise<number> {
+  return laneRecordData((await allEntries(session)).entries).length;
 }
 
 /**
@@ -955,18 +1119,41 @@ async function seedWithIdentity(session: Session, cell: Cell, turns: number): Pr
   return identity;
 }
 
+/** Case preconditions and journal requirements beyond the per-outcome records. */
+interface CaseOptions {
+  /** Detail and verdict gathered before the compact. */
+  readonly pre?: { readonly pass: boolean; readonly detail: DetailMap };
+  /** Lane-journal requirements on the records the case appends. */
+  readonly journal?: JournalRequirements;
+}
+
+const FOCUS_INSTRUCTIONS = "FOCUS-MARKER list every SEED index you saw";
+
+/** Journal requirements of `/compact <focus>` (A1): never ignored; Codex and xAI journal the forwarding. */
+function focusJournal(lane: NativeLane | undefined): JournalRequirements {
+  const forwarded =
+    lane?.strategy === "openai-responses-compaction-v2" ||
+    lane?.strategy === "xai-responses-compaction-v1";
+  return {
+    forbiddenReasons: [REASONS.instructionsIgnored],
+    reasons: forwarded ? [REASONS.instructionsForwarded] : [],
+  };
+}
+
 async function manualCase(
   session: Session,
   cell: Cell,
   name: string,
   instructions: string | undefined,
   identity: Provenance,
+  caseOptions: CaseOptions = {},
 ): Promise<void> {
-  const { lane, laneRule } = caseLane(cell.background, instructions !== undefined);
+  const { lane, background } = caseLane(cell);
   const since = session.records.length;
+  const journalStart = await journalCount(session);
   const before = await branchCompactionCount(session);
   const prior = new Set<string>();
-  if (cell.background)
+  if (background)
     for (const row of (await probeStatus(session)).rows)
       if (row.candidateId !== undefined) prior.add(row.candidateId);
   const commandSince = session.records.length;
@@ -976,6 +1163,7 @@ async function manualCase(
   const commandEvents = compactionEvents(session, commandSince);
   const detail: DetailMap = new Map<string, DetailValue>([
     ["instructions", instructions ?? null],
+    ["path", background ? "background" : "foreground"],
     ["rpcSuccess", response.success === true],
     ["rpcError", response.error ?? null],
     [
@@ -983,11 +1171,12 @@ async function manualCase(
       response.data === undefined ? "undefined" : JSON.stringify(response.data).slice(0, 200),
     ],
     ["commandEvents", commandEvents],
+    ...(caseOptions.pre?.detail ?? []),
     ...identity.detail,
   ]);
-  if (laneRule !== undefined) detail.set("laneRule", laneRule);
   let pass: boolean;
-  if (cell.background) {
+  let entry: CompactionEntry | undefined;
+  if (background) {
     const accepted =
       response.success === true && response.data === undefined && commandEvents.length === 0;
     detail.set("accepted", accepted);
@@ -1009,7 +1198,7 @@ async function manualCase(
     const promptSince = session.records.length;
     await prompt(session, `AFTER-${name}: reply with exactly ACK-AFTER`);
     detail.set("followUpEvents", compactionEvents(session, promptSince));
-    const entry = await waitForNewCompaction(session, before, 30_000);
+    entry = await waitForNewCompaction(session, before, 30_000);
     detail.set("adopted", entry !== undefined);
     // An idle session adopts a ready checkpoint at once ("installed"); a busy
     // one holds it "ready" until the next prompt or turn end.
@@ -1026,7 +1215,7 @@ async function manualCase(
         backgroundCandidate(entry) === row.candidateId;
     }
   } else {
-    const entry = await waitForNewCompaction(session, before, 30_000);
+    entry = await waitForNewCompaction(session, before, 30_000);
     const hostRan =
       commandEvents.includes("compaction_start:manual") &&
       commandEvents.includes("compaction_end:manual");
@@ -1040,31 +1229,304 @@ async function manualCase(
       pass &&= proof.pass;
     }
   }
+  // A record for every observed fallback (a native cell committed another
+  // strategy) and cancel (the compact failed or aborted).
+  const observedFallback =
+    lane !== undefined && entry !== undefined && strategyOf(entry) !== lane.strategy;
+  const observedCancel =
+    response.success !== true || commandEvents.some((event) => event.endsWith(":aborted"));
+  const journal = await journalSince(session, journalStart, {
+    ...caseOptions.journal,
+    events: [
+      ...(caseOptions.journal?.events ?? []),
+      ...(observedFallback ? (["fallback"] as const) : []),
+      ...(observedCancel ? (["cancel"] as const) : []),
+    ],
+  });
+  detail.set("journalRecords", journal.records);
+  detail.set("journalProblems", journal.problems);
   const errors = errorsSince(session, since);
   detail.set("erroredTurns", errors.count);
   detail.set("firstError", errors.first);
+  pass &&= (caseOptions.pre?.pass ?? true) && journal.problems.length === 0;
   record(cell, name, pass && identity.pass && errors.count === 0 ? "pass" : "fail", detail);
 }
 
-async function runManualCell(cell: Cell): Promise<void> {
-  const session = await launch(cell.key, {
-    background: cell.background,
-    reserveTokens: DEFAULT_RESERVE_TOKENS,
-    sidecarReserveTokens: 0,
+/** `<provider>/<id>` split for RPC `set_model`. */
+/** RPC `set_model` arguments. */
+interface ModelSelection {
+  readonly provider: string;
+  readonly modelId: string;
+}
+
+function modelParts(model: string): ModelSelection {
+  const separator = model.indexOf("/");
+  return { provider: model.slice(0, separator), modelId: model.slice(separator + 1) };
+}
+
+/**
+ * Captures survive a model switch of the same session (D8): RPC `set_model`
+ * to a second model of the provider and straight back (no prompt in between),
+ * then `compact`, which the native lane must answer with no `no-capture` record.
+ */
+async function capturesClearedCase(session: Session, cell: Cell, identity: Provenance) {
+  const name = `${cell.key}:captures-cleared-before-compact`;
+  const target = options.switchModel;
+  if (target === undefined) {
+    record(cell, name, "fail", { reason: "no second model of the provider: pass --switch-model" });
+    return;
+  }
+  const xai = laneFor()?.strategy === "xai-responses-compaction-v1";
+  const capturesOf = (status: ProbeStatus) => (xai ? status.xaiCaptures : status.captures);
+  const before = capturesOf(await probeStatus(session)).filter((item) => item.status === 200);
+  const away = await session.command("set_model", modelParts(target));
+  const back = await session.command("set_model", modelParts(options.model));
+  const after = capturesOf(await probeStatus(session)).filter((item) => item.status === 200);
+  const detail: DetailMap = new Map<string, DetailValue>([
+    ["switchModel", target],
+    ["switchedAway", away.success === true],
+    ["switchedBack", back.success === true],
+    ["captures200Before", before.length],
+    ["captures200After", after.length],
+  ]);
+  const pass =
+    away.success === true &&
+    back.success === true &&
+    before.length > 0 &&
+    after.length >= before.length;
+  await manualCase(session, cell, name, undefined, identity, {
+    pre: { pass, detail },
+    journal: { forbiddenReasons: [REASONS.noCapture, REASONS.noUsableCapture] },
   });
+}
+
+/** The Codex model the model-switch case replays the Luna checkpoint on (approved). */
+const CODEX_SWITCH_TARGET = "openai-codex/gpt-6-sol";
+
+/**
+ * Codex model-only mismatch (plan Q5, D12): one turn on gpt-6-sol over the
+ * subject's Codex checkpoint must be replayed through the foreground path
+ * (same account) and accepted by the server, then one turn back on the
+ * subject. A local refusal or a provider rejection fails the case.
+ */
+async function modelSwitchReplayCase(session: Session, cell: Cell): Promise<void> {
+  const name = `${cell.key}:model-switch-replay`;
+  assert.ok(
+    APPROVED_LIVE_MODELS.includes(CODEX_SWITCH_TARGET),
+    `${CODEX_SWITCH_TARGET} unapproved`,
+  );
+  const lane = laneFor();
+  const since = session.records.length;
+  const journalStart = await journalCount(session);
+  const latest = compactions((await allEntries(session)).branch).at(-1);
+  const checkpoint = latest !== undefined && strategyOf(latest) === lane?.strategy;
+  const away = await session.command("set_model", modelParts(CODEX_SWITCH_TARGET));
+  await prompt(session, "SWITCHED-TURN: reply with exactly ACK-SWITCHED");
+  const awayErrors = errorsSince(session, since);
+  const backSince = session.records.length;
+  const back = await session.command("set_model", modelParts(options.model));
+  await prompt(session, "SWITCHED-BACK: reply with exactly ACK-BACK");
+  const backErrors = errorsSince(session, backSince);
+  const journal = await journalSince(session, journalStart, {});
+  const refused = journal.records.filter((item) => item.startsWith("refuse:"));
+  const detail: DetailMap = new Map<string, DetailValue>([
+    ["switchModel", CODEX_SWITCH_TARGET],
+    ["codexCheckpointBefore", checkpoint],
+    ["checkpointEntryId", latest?.id ?? null],
+    ["switchedAway", away.success === true],
+    ["switchedTurnErrors", awayErrors.count],
+    ["switchedTurnFirstError", awayErrors.first],
+    ["switchedBack", back.success === true],
+    ["backTurnErrors", backErrors.count],
+    ["backTurnFirstError", backErrors.first],
+    ["journalRecords", journal.records],
+    ["journalProblems", journal.problems],
+  ]);
+  const pass =
+    checkpoint &&
+    away.success === true &&
+    back.success === true &&
+    awayErrors.count === 0 &&
+    backErrors.count === 0 &&
+    refused.length === 0 &&
+    journal.problems.length === 0;
+  record(cell, name, pass ? "pass" : "fail", detail);
+}
+
+/** What the first compact after a resume must do, per lane. */
+type ResumeExpectation = "native" | "guard-cancel" | "local-fallback";
+
+/**
+ * A fresh process `switch_session`s to the same session file and compacts
+ * with no turn, then runs one turn and compacts again (native).
+ *
+ * - xAI (captures needed, opaque checkpoint): the guard cancels with
+ *   OPAQUE_GUARD_NOTICE and journals `cancel`/`opaque-checkpoint`.
+ * - Anthropic (captures needed, the signed block is replayable text): the
+ *   local summarizer answers with a fallback notice and a `fallback` record.
+ * - Codex (no capture needed: the foreground serializes the resumed branch,
+ *   choco-pi-codex adapter/compaction/compaction.ts
+ *   `serializeActiveSessionToResponsesInput`): native at once. (The plan
+ *   expected a guard cancel here; the probe records what the server does.)
+ *
+ * `holder.current` is replaced by the resumed session as soon as it exists.
+ */
+async function resumeThenCompactCase(
+  holder: { current: Session },
+  cell: Cell,
+  identity: Provenance,
+): Promise<void> {
+  const name = `${cell.key}:resume-then-compact`;
+  const lane = laneFor();
+  assert.ok(lane !== undefined, "resume case needs a native lane");
+  const state = await holder.current.command("get_state");
+  assert.ok(Value.Check(SessionFileSchema, state.data), "get_state carries no sessionFile");
+  const sessionFile = state.data.sessionFile;
+  const dir = holder.current.dir;
+  await holder.current.close();
+  const resumed = await launch(
+    `${cell.key}:resume`,
+    { background: cell.background, reserveTokens: DEFAULT_RESERVE_TOKENS, sidecarReserveTokens: 0 },
+    dir,
+  );
+  holder.current = resumed;
+  const switched = await resumed.command("switch_session", { sessionPath: sessionFile });
+  const switchedOk =
+    switched.success === true &&
+    Value.Check(SwitchResultSchema, switched.data) &&
+    !switched.data.cancelled;
+  const { entries, branch } = await allEntries(resumed);
+  const journalStart = laneRecordData(entries).length;
+  const latest = compactions(branch).at(-1);
+  const latestStrategy = latest === undefined ? null : strategyOf(latest);
+  const opaque = latestStrategy !== null && OPAQUE_STRATEGIES.has(latestStrategy);
+  const expectation: ResumeExpectation = !lane.needsCapture
+    ? "native"
+    : opaque
+      ? "guard-cancel"
+      : "local-fallback";
+  // Stage 1: compact with no turn in this process.
+  const before = compactions(branch).length;
+  const since = resumed.records.length;
+  const first = await resumed.command("compact");
+  const firstEvents = compactionEvents(resumed, since);
+  const firstEntry = await waitForNewCompaction(resumed, before, first.success ? 30_000 : 2_000);
+  const shown = noticesSince(resumed, since);
+  const provider = lane.strategy === "xai-responses-compaction-v1" ? "xai" : "codex";
+  const guardText = latest === undefined ? undefined : OPAQUE_GUARD_NOTICE(provider, latest.id);
+  let stageOne: boolean;
+  let requirements: JournalRequirements;
+  if (expectation === "native") {
+    stageOne =
+      first.success === true &&
+      firstEntry !== undefined &&
+      strategyOf(firstEntry) === lane.strategy;
+    requirements = {};
+  } else if (expectation === "guard-cancel") {
+    stageOne =
+      first.success !== true &&
+      firstEntry === undefined &&
+      guardText !== undefined &&
+      shown.some((message) => message.includes(guardText));
+    requirements = { events: ["cancel"], reasons: [REASONS.opaqueCheckpoint] };
+  } else {
+    stageOne =
+      first.success === true &&
+      firstEntry !== undefined &&
+      strategyOf(firstEntry) !== lane.strategy &&
+      shown.some((message) => message.includes("server-side compaction"));
+    requirements = { events: ["fallback"] };
+  }
+  const journal = await journalSince(resumed, journalStart, requirements);
+  // Stage 2: one turn (a fresh capture), then the native lane answers.
+  const turnSince = resumed.records.length;
+  await prompt(resumed, "RESUME-TURN: reply with exactly ACK-RESUME");
+  const beforeSecond = await branchCompactionCount(resumed);
+  const secondSince = resumed.records.length;
+  const second = await resumed.command("compact");
+  const secondEvents = compactionEvents(resumed, secondSince);
+  const secondEntry = await waitForNewCompaction(resumed, beforeSecond, 30_000);
+  const proof =
+    secondEntry === undefined ? undefined : await provenance(resumed, secondEntry, false, lane);
+  await prompt(resumed, "AFTER-RESUME: reply with exactly ACK-AFTER");
+  const errors = errorsSince(resumed, turnSince);
+  const detail: DetailMap = new Map<string, DetailValue>([
+    ["switchedSession", switchedOk],
+    ["latestStrategy", latestStrategy],
+    ["expectation", expectation],
+    ["firstRpcSuccess", first.success === true],
+    ["firstRpcError", first.error ?? null],
+    ["firstEvents", firstEvents],
+    ["firstStrategy", firstEntry === undefined ? null : strategyOf(firstEntry)],
+    ["guardNoticeShown", guardText !== undefined && shown.some((m) => m.includes(guardText))],
+    ["stageOne", stageOne],
+    ["journalRecords", journal.records],
+    ["journalProblems", journal.problems],
+    ["secondRpcSuccess", second.success === true],
+    ["secondEvents", secondEvents],
+    ...(proof?.detail ?? []),
+    ["erroredTurns", errors.count],
+    ["firstError", errors.first],
+    ...identity.detail,
+  ]);
+  const pass =
+    switchedOk &&
+    stageOne &&
+    journal.problems.length === 0 &&
+    second.success === true &&
+    proof?.pass === true &&
+    errors.count === 0;
+  record(cell, name, pass ? "pass" : "fail", detail);
+}
+
+/** Cell-wide journal: fewer than MAX_LANE_RECORDS records, all valid, none credential-looking. */
+async function journalCellCase(session: Session, cell: Cell): Promise<void> {
+  const data = laneRecordData((await allEntries(session)).entries);
+  const problems = journalReasons(data, { below: MAX_LANE_RECORDS });
+  record(cell, `${cell.key}:journal`, problems.length === 0 ? "pass" : "fail", {
+    count: data.length,
+    limit: MAX_LANE_RECORDS,
+    records: summarizeJournal(data).records,
+    problems,
+  });
+}
+
+/** Optional manual cases of a server-side cell, in run order. */
+function extraManualCases(cell: Cell): string[] {
+  const lane = laneFor();
+  if (lane === undefined) return [];
+  const names: string[] = [];
+  if (lane.needsCapture) names.push("captures-cleared-before-compact");
+  if (lane.strategy === "openai-responses-compaction-v2") names.push("model-switch-replay");
+  if (!caseLane(cell).background) names.push("resume-then-compact");
+  return names;
+}
+
+async function runManualCell(cell: Cell): Promise<void> {
+  const holder = {
+    current: await launch(cell.key, {
+      background: cell.background,
+      reserveTokens: DEFAULT_RESERVE_TOKENS,
+      sidecarReserveTokens: 0,
+    }),
+  };
+  const session = holder.current;
   try {
     const identity = await seedWithIdentity(session, cell, options.seedTurns);
     await manualCase(session, cell, `${cell.key}:plain`, undefined, identity);
     await seed(session, 2, "SEED-B");
-    await manualCase(
-      session,
-      cell,
-      `${cell.key}:instructions`,
-      "FOCUS-MARKER list every SEED index you saw",
-      identity,
-    );
+    await manualCase(session, cell, `${cell.key}:instructions`, FOCUS_INSTRUCTIONS, identity, {
+      journal: focusJournal(laneFor()),
+    });
+    const extras = extraManualCases(cell);
+    if (extras.includes("captures-cleared-before-compact"))
+      await capturesClearedCase(session, cell, identity);
+    if (extras.includes("model-switch-replay")) await modelSwitchReplayCase(session, cell);
+    if (extras.includes("resume-then-compact")) await resumeThenCompactCase(holder, cell, identity);
+    await journalCellCase(holder.current, cell);
   } finally {
-    await session.close();
+    await holder.current.close();
+    if (holder.current !== session) await session.close();
   }
 }
 
@@ -1235,13 +1697,32 @@ async function runAutoCell(cell: Cell): Promise<void> {
     detail.set("erroredTurns", errors.count);
     detail.set("firstError", errors.first);
     record(cell, cell.key, pass && identity.pass && errors.count === 0 ? "pass" : "fail", detail);
+    await journalCellCase(session, cell);
   } finally {
     await session.close();
   }
 }
 
 function caseNames(cell: Cell): string[] {
-  return cell.point === "manual" ? [`${cell.key}:plain`, `${cell.key}:instructions`] : [cell.key];
+  const journal = `${cell.key}:journal`;
+  if (cell.point === "auto") return [cell.key, journal];
+  return [
+    `${cell.key}:plain`,
+    `${cell.key}:instructions`,
+    ...extraManualCases(cell).map((name) => `${cell.key}:${name}`),
+    journal,
+  ];
+}
+
+/** Why a server-side cell cannot prove its lane, or undefined when it can. */
+function unprovableReason(cell: Cell): string | undefined {
+  if (options.logic !== "server-side") return undefined;
+  const lane = laneFor();
+  if (lane === undefined)
+    return `provider ${options.provider} has no server-side compaction lane in this profile (anthropic, openai-codex and xai only); nothing could show server-side logic ran`;
+  if (cell.background && lane.foregroundOnly)
+    return `provider ${options.provider} has no background backend; its lane runs in the foreground only (run --background off)`;
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -1260,25 +1741,26 @@ try {
         record(cell, name, "fail", { notRun: true, reason: `run aborted: ${aborted}` });
       continue;
     }
-    if (options.logic === "server-side" && laneFor() === undefined) {
-      for (const name of caseNames(cell))
-        record(cell, name, "unprovable", {
-          reason: `provider ${options.provider} has no server-side compaction lane in this profile (anthropic-native and codex-native-v2 serve anthropic and openai-codex only); nothing could show server-side logic ran`,
-        });
+    const unprovable = unprovableReason(cell);
+    if (unprovable !== undefined) {
+      for (const name of caseNames(cell)) record(cell, name, "unprovable", { reason: unprovable });
       continue;
     }
     const recorded = results.length;
+    startCellBudget(cell);
     try {
       if (cell.point === "manual") await runManualCell(cell);
       else await runAutoCell(cell);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (error instanceof SeedTurnError) aborted = message;
+      const stop = error instanceof SeedTurnError || error instanceof RunawayError;
+      if (stop) aborted = message;
       const done = new Set(results.slice(recorded).map((item) => item.name));
       for (const name of caseNames(cell))
         if (!done.has(name)) record(cell, name, "fail", { error: message });
-      if (error instanceof SeedTurnError) process.stderr.write(`ABORT: ${message}\n`);
+      if (stop) process.stderr.write(`ABORT: ${message}\n`);
     }
+    log({ label: cell.key, usage: { ...cellUsage } });
   }
 } finally {
   log({ results: results.map((item) => ({ ...item })) });

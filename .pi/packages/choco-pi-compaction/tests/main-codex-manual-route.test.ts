@@ -23,7 +23,11 @@ import { getCoordinator, registerBackendFactory } from "../src/background/regist
 import { CODEX_BACKEND_SETTING_ID } from "../src/background/settings.ts";
 import type { TextSummarizer } from "../src/background/text-backend.ts";
 import registerCompaction from "../src/index.ts";
-import { mainOwnerKey } from "../src/ownership.ts";
+import {
+  CODEX_ELIGIBILITY_SLOT,
+  type CodexEligibilityModel,
+  mainOwnerKey,
+} from "../src/ownership.ts";
 import { compactionEntries, createHost, mentions, reply } from "./host-boundary-fixture.ts";
 
 const previousAgentDir = process.env["PI_CODING_AGENT_DIR"];
@@ -41,8 +45,10 @@ test.after(async () => {
 });
 
 const codexAttempts: string[] = [];
+const codexFactory = { calls: 0 };
 // First-wins registration: the probe replaces the real Codex lane for this process.
 registerBackendFactory(CODEX_BACKEND_SETTING_ID, () => {
+  codexFactory.calls += 1;
   const probe: Backend = {
     id: CODEX_BACKEND_SETTING_ID,
     capability: async () => ({ supported: true }),
@@ -150,6 +156,92 @@ for (const instructions of [undefined, "focus on the plan"]) {
     }
   });
 }
+/** Publish a Codex eligibility slot answering `native` for every Codex model; returns the models asked. */
+function installEligibility(native: boolean): string[] {
+  const consulted: string[] = [];
+  Object.defineProperty(globalThis, CODEX_ELIGIBILITY_SLOT, {
+    value: {
+      version: 1,
+      revision: 0,
+      isNativeCompactionOwner: (model: CodexEligibilityModel) => {
+        consulted.push(`${model.provider}/${model.id}`);
+        return native && model.provider === "openai-codex";
+      },
+      subscribe: () => () => undefined,
+    },
+    configurable: true,
+  });
+  return consulted;
+}
+
+test("with no sidecar the derived default binds the Codex lane through the eligibility slot; manual compaction still never uses text", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "choco-pi-codex-derived-"));
+  // No sidecar anywhere: the lanes derive from Codex's `responsesCompaction: true` (agent dir above).
+  const absentSidecar = join(dir, "absent-background-compaction.json");
+  const consulted = installEligibility(true);
+  codexAttempts.length = 0;
+  const factoryCallsBefore = codexFactory.calls;
+  const rig: Rig = { textCalls: [], notices: [], ctx: undefined };
+  const host = await createHost({
+    dir,
+    contextWindow: 100_000,
+    modelIdentity: { api: "openai-codex-responses", provider: "openai-codex", id: "gpt-6-luna" },
+    // Over the default prepareAt (0.7): the owner requests its selected lane at the turn end.
+    respond: async (index) => reply(`R${index}`, { usageInput: 90_000 }),
+    extensions: [rigExtension(rig, absentSidecar)],
+  });
+  try {
+    const ownerKey = mainOwnerKey(host.manager.getSessionId());
+    await host.session.prompt("CODEX-DERIVED-GO");
+    assert.ok(getCoordinator(ownerKey), "the derived defaults enabled the background owner");
+    const deadline = Date.now() + 3_000;
+    while (codexAttempts.length === 0 && Date.now() < deadline) await settle();
+    assert.ok(consulted.includes("openai-codex/gpt-6-luna"), "ownership asked the slot");
+    assert.ok(codexFactory.calls > factoryCallsBefore, "the Codex lane was resolved");
+    assert.ok(
+      codexAttempts.includes("isLegalCut"),
+      `the threshold request went to the Codex lane: ${JSON.stringify(getCoordinator(ownerKey)?.status())}`,
+    );
+    assert.equal(getCoordinator(ownerKey)?.status().backendId, CODEX_BACKEND_SETTING_ID);
+    await host.session.compact();
+    await settle();
+    await host.session.prompt("CODEX-DERIVED-NEXT");
+    assert.deepEqual(rig.textCalls, [], "the text lane never ran for the Codex-owned session");
+  } finally {
+    Reflect.deleteProperty(globalThis, CODEX_ELIGIBILITY_SLOT);
+    await host.dispose();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("control: the slot, not the snapshot, decides; an ineligible slot keeps the Codex lane unselected", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "choco-pi-codex-derived-off-"));
+  // The snapshot (agent dir) still says `responsesCompaction: true`; the slot says no.
+  const consulted = installEligibility(false);
+  codexAttempts.length = 0;
+  const rig: Rig = { textCalls: [], notices: [], ctx: undefined };
+  const host = await createHost({
+    dir,
+    contextWindow: 100_000,
+    modelIdentity: { api: "openai-codex-responses", provider: "openai-codex", id: "gpt-6-luna" },
+    respond: async (index) => reply(`R${index}`, { usageInput: 90_000 }),
+    extensions: [rigExtension(rig, join(dir, "absent-background-compaction.json"))],
+  });
+  try {
+    const ownerKey = mainOwnerKey(host.manager.getSessionId());
+    await host.session.prompt("CODEX-DERIVED-OFF-GO");
+    const deadline = Date.now() + 3_000;
+    while (rig.textCalls.length === 0 && Date.now() < deadline) await settle();
+    assert.ok(consulted.includes("openai-codex/gpt-6-luna"));
+    assert.deepEqual(codexAttempts, [], "the Codex lane was not selected");
+    assert.equal(getCoordinator(ownerKey)?.status().backendId, "text");
+  } finally {
+    Reflect.deleteProperty(globalThis, CODEX_ELIGIBILITY_SLOT);
+    await host.dispose();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 // The cap's handler runs after this extension's own agent_settled handler (the wrapped
 // emission context) or before it (the agent_end window): both must defer.
 for (const capOrder of ["after", "before"] as const) {

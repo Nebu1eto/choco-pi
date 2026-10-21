@@ -1128,8 +1128,9 @@ of user messages (the foreground multiplier) instead of the fixed 64K. Test:
 ## 2026-10-21 choco-pi patch: compaction lane journal
 
 Every foreground fallback and cancel site in `adapter/compaction/compaction.ts`
-appends a `choco-pi-compaction` lane record (`provider: "codex"`, route from
-the compaction reason, `from: "codex-foreground"`); notice texts are unchanged.
+appends a `choco-compaction-lane` custom entry (`provider: "codex"`, route from
+the compaction reason, `from: "codex-foreground"`), validated and written
+through choco-pi-compaction's `appendLaneRecord`; notice texts are unchanged.
 
 ## 2026-10-21 choco-pi patch: /compact focus forwarded to Codex compaction
 
@@ -1137,8 +1138,8 @@ the compaction reason, `from: "codex-foreground"`); notice texts are unchanged.
 (`Compaction focus from the user: <focus>`) right before `compaction_trigger`
 when `/compact <focus>` is non-blank (foreground: `event.customInstructions`;
 background: the coordinator's instructions). A focus over 16,384 code points is
-an `oversized` failure. When the server rejects the item (a 4xx naming its
-index, the developer role or `compaction_trigger`), the foreground retries once
+an `oversized` failure. When the server rejects the item (the narrow rule in
+"stricter /compact focus rejection" below), the foreground retries once
 without it, notifies "Codex compaction ignored the /compact focus (server
 rejected it)" and journals `instructions-ignored`; a forwarded focus journals
 `instructions-forwarded`. The item is never part of the retained window.

@@ -45,6 +45,24 @@ import { BACKGROUND_OFF_SETTINGS_PATHS } from "./host-harness.ts";
 export const XAI_API_KEY = "xai-rig-non-secret-placeholder";
 export const XAI_NOTICE_PREFIX = "xAI server-side compaction";
 
+/** Session IDs the (fake) subagent runner reports as live children. */
+const CHILD_IDS = new Set<string>();
+const SUBAGENTS_MANAGER = Symbol.for("pi-subagents:manager");
+const childManager = { isChildSessionId: (id: string) => CHILD_IDS.has(id) };
+
+/** Publish the rig's fake subagent manager (once; only rigs that create a child need it). */
+function publishChildManager(): void {
+  if (Object.getOwnPropertyDescriptor(globalThis, SUBAGENTS_MANAGER)?.value === childManager)
+    return;
+  Object.defineProperty(globalThis, SUBAGENTS_MANAGER, {
+    value: childManager,
+    configurable: true,
+  });
+}
+
+/** A tool the rig registers (the auto-compaction loops' `step` tool). */
+export type RigTool = Parameters<ExtensionAPI["registerTool"]>[0];
+
 function grok(id: string): Model<"openai-responses"> {
   return {
     id,
@@ -221,8 +239,16 @@ export interface XaiRigOptions {
   readonly foreground: RecordingFetch;
   readonly lane: RecordingFetch;
   readonly mode?: XaiCompactionMode;
+  /** Read the xAI mode from the agent dir (overrides `mode`; e.g. the real settings reader). */
+  readonly readMode?: (agentDir: string) => Promise<XaiCompactionMode>;
   readonly opaqueHistory?: OpaqueHistoryMode;
   readonly after?: readonly ExtensionFactory[];
+  /** Register the session as a subagent child before its extensions bind. */
+  readonly child?: boolean;
+  /** Host auto-compaction on (threshold at turn ends). */
+  readonly autoCompaction?: boolean;
+  /** Tools the rig's extension registers. */
+  readonly tools?: readonly RigTool[];
   /** Reuse a session (a new registration over the same session id); no seeding. */
   readonly manager?: SessionManager;
   readonly dir?: string;
@@ -260,13 +286,19 @@ export async function createXaiRig(options: XaiRigOptions): Promise<XaiRig> {
       installedStreamSimple(OTHER_MODEL, context, { ...streamOptions, fetch: other.fetch }),
   });
   const settings = SettingsManager.inMemory({
-    compaction: { enabled: false, keepRecentTokens: 1, reserveTokens: 16_384 },
+    compaction: {
+      enabled: options.autoCompaction === true,
+      keepRecentTokens: 1,
+      reserveTokens: 16_384,
+    },
     retry: { enabled: false },
   });
   const notices: string[] = [];
   let captured: ExtensionContext | undefined;
   const auth = options.auth;
+  const readMode = options.readMode ?? (async () => options.mode ?? "server-side");
   const extension = (pi: ExtensionAPI): void => {
+    for (const tool of options.tools ?? []) pi.registerTool(tool);
     pi.on("session_start", (_event, ctx) => {
       captured = ctx;
       ctx.ui.notify = (message) => {
@@ -284,7 +316,7 @@ export async function createXaiRig(options: XaiRigOptions): Promise<XaiRig> {
         clock: options.clock,
         readOpaqueHistoryMode: async () => options.opaqueHistory ?? "preserve",
         xai: {
-          readMode: async () => options.mode ?? "server-side",
+          readMode,
           fetch: options.lane.fetch,
           capture: { fetch: options.foreground.fetch },
         },
@@ -310,6 +342,10 @@ export async function createXaiRig(options: XaiRigOptions): Promise<XaiRig> {
     manager.appendMessage(assistantMessage("XR-PREFIX-B"));
     manager.appendMessage({ role: "user", content: "XR-KEPT-C", timestamp: 0 });
     manager.appendMessage(assistantMessage("XR-KEPT-D"));
+  }
+  if (options.child === true) {
+    publishChildManager();
+    CHILD_IDS.add(manager.getSessionId());
   }
   const { session } = await createAgentSession({
     cwd: dir,
@@ -338,6 +374,7 @@ export async function createXaiRig(options: XaiRigOptions): Promise<XaiRig> {
     async dispose(disposeOptions = {}) {
       session.dispose();
       if (disposeOptions.release !== false) releaseXaiSessionCaptures(sessionId);
+      CHILD_IDS.delete(sessionId);
       if (disposeOptions.keepDir !== true) await rm(dir, { recursive: true, force: true });
     },
   };

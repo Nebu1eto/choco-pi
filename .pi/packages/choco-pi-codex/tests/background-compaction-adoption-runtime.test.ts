@@ -424,7 +424,7 @@ test("reload installs compatible committed replay; account/model change reports 
   controller.stop();
 });
 
-test("incompatible checkpoint bypasses legacy replay per request; compatible replay is unchanged", async () => {
+test("an incompatible checkpoint refuses requests until loss is authorized; only then the bypass drops it; compatible replay is unchanged", async () => {
   const setup = await committedFixture();
   const config = structuredClone(DEFAULT_CODEX_CONVERSION_CONFIG);
   config.executionMode = "normal";
@@ -482,18 +482,29 @@ test("incompatible checkpoint bypasses legacy replay per request; compatible rep
     expires: Date.now() + 3600000,
   }));
   await controller.refresh(ctx);
-  const bypass = controller.requestState(state, setup.binding.sessionId);
+  const sessionId = setup.binding.sessionId;
+  const entryId = setup.adoption.committedEntryId;
+  // The guard, not a silent loss: the request is refused with the exits text.
+  assert.equal(controller.requestRefusal(ctx, sessionId), OPAQUE_GUARD_NOTICE("codex", entryId));
+  const bypass = controller.requestState(state, sessionId);
   assert.notEqual(bypass, state);
   assert.equal(bypass.config.compaction.responsesCompaction, false);
   assert.equal(state.config.compaction.responsesCompaction, true);
   assert.equal(bypass.pendingPiCompactionNativeWindow, undefined);
   assert.equal(state.pendingPiCompactionNativeWindow, undefined);
-  const outgoing = await rewriteCodexProviderRequest(payload, ctx, bypass);
-  assert.ok(Value.Check(InputBodySchema, outgoing));
-  assert.equal(
-    outgoing.input.some((item) => item.type === "compaction"),
-    false,
-  );
+  // Only with the loss authorized for this checkpoint does the bypass send without the item.
+  const unpublish = publishOpaqueConsent((id, entry) => id === sessionId && entry === entryId);
+  try {
+    assert.equal(controller.requestRefusal(ctx, sessionId), undefined);
+    const outgoing = await rewriteCodexProviderRequest(payload, ctx, bypass);
+    assert.ok(Value.Check(InputBodySchema, outgoing));
+    assert.equal(
+      outgoing.input.some((item) => item.type === "compaction"),
+      false,
+    );
+  } finally {
+    unpublish();
+  }
   assert.equal(controller.requestState(state, "unrelated-session"), state);
   state.config.openai.verbosity = "high";
   assert.equal(

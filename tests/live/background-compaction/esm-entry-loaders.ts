@@ -63,6 +63,7 @@ const NATIVE_ENTRIES: ReadonlySet<string> = new Set<string>([
   ".pi/extensions/task-lineage.ts",
   ".pi/extensions/tool-search.ts",
   ".pi/extensions/usage-limit-policy.ts",
+  ".pi/extensions/xai-search.ts",
   ".pi/packages/choco-pi-web-search/extension.ts",
   ".pi/packages/choco-pi-web-access/index.ts",
   ".pi/packages/choco-pi-shells/src/index.ts",

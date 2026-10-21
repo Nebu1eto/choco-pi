@@ -1,4 +1,5 @@
 import type { WireBody } from "../../../.pi/packages/choco-pi-compaction/src/anthropic/capture.ts";
+import type { XaiWireBody } from "../../../.pi/packages/choco-pi-compaction/src/xai/capture.ts";
 import type { Recorder } from "./artifacts.ts";
 import { MarkerBook } from "./host-seed.ts";
 import type { RequestBranch } from "./request-branch.ts";
@@ -32,6 +33,24 @@ export interface WireRequest {
   readonly status: number;
 }
 
+/**
+ * Memory-only parsed copy of one offline xAI foreground request (it can hold
+ * an encrypted compaction item, so it is never recorded).
+ */
+export interface XaiWireRequest {
+  readonly index: number;
+  readonly summary: boolean;
+  readonly body: XaiWireBody;
+  readonly status: number;
+}
+
+/** Memory-only copy of one scripted xAI `/responses/compact` request. */
+export interface XaiLaneRequest {
+  readonly model: string;
+  readonly instructions: string | undefined;
+  readonly inputItems: number;
+}
+
 /** Mutable per-launch harness state shared by the launcher modules. */
 export class HostState {
   disposed = false;
@@ -44,6 +63,9 @@ export class HostState {
   reportedInputTokens: number | undefined;
   readonly requestBranches: RequestBranch[] = [];
   readonly wire: WireRequest[] = [];
+  /** Offline xAI foreground requests and scripted compact-lane requests, in order. */
+  readonly xaiWire: XaiWireRequest[] = [];
+  readonly xaiLane: XaiLaneRequest[] = [];
   /** Signatures the fake server issued; any other signature is a tamper (400). */
   readonly issuedSignatures = new Set<string>();
   readonly requestCounts = new Map<string, number>();

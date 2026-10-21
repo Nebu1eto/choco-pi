@@ -70,6 +70,13 @@ import {
 import { WORKTREE } from "./profile.ts";
 import { installTextFakeFactory } from "./text-factory.ts";
 import { capturePayload, recordBranch } from "./transport-capture.ts";
+import { xaiCapturesFor } from "../../../.pi/packages/choco-pi-compaction/src/xai/capture.ts";
+import {
+  FAKE_XAI_KEY,
+  registerOfflineXaiProvider,
+  scriptedXaiCompactFetch,
+  XAI_GROK_MIRROR,
+} from "./xai-offline.ts";
 
 export { WORKTREE } from "./profile.ts";
 
@@ -95,6 +102,12 @@ export interface LaunchOptions {
    * off, for the foreground server-side path.
    */
   anthropicForeground?: boolean;
+  /**
+   * Offline only: serve an xAI Grok mirror (openai-responses) over production's
+   * xAI capturing stream and a scripted `/responses/compact` lane on global
+   * fetch, for the xAI foreground server-side path.
+   */
+  xaiForeground?: boolean;
   /** Extra keys merged into the isolated agent `settings.json` (e.g. context presets). */
   agentSettings?: Readonly<Record<string, string>>;
   /**
@@ -103,8 +116,14 @@ export interface LaunchOptions {
    * into the isolated agent dir. Both tiers.
    */
   catalog?: boolean;
-  /** Offline: serve this model instead of the default fixture (harness-offline provider only). */
-  offlineModel?: Model<"anthropic-messages">;
+  /**
+   * Offline: serve this model instead of the default fixture: an
+   * anthropic-messages model (harness-offline provider), or with
+   * `xaiForeground` an xai openai-responses model.
+   */
+  offlineModel?: Model<Api>;
+  /** Offline `xaiForeground`: more xai models the provider serves (switch targets). */
+  extraOfflineModels?: readonly Model<Api>[];
   /**
    * Live: allow a non-Anthropic model served by its own provider transport (for
    * Codex, choco-pi-codex's WebSocket, which global fetch does not see).
@@ -157,14 +176,46 @@ function copyOptions(input: LaunchOptions): LaunchOptions {
     agentSettings: input.agentSettings === undefined ? undefined : { ...input.agentSettings },
     offlineModel:
       input.offlineModel === undefined ? undefined : structuredClone(input.offlineModel),
+    extraOfflineModels: (input.extraOfflineModels ?? []).map((model) => structuredClone(model)),
     live: input.live === undefined ? undefined : { ...input.live },
     seedToolResults: input.seedToolResults === undefined ? undefined : { ...input.seedToolResults },
   };
 }
 
 function protectedStringsOf(credential: Credential | undefined): string[] {
-  const list = [FAKE_OFFLINE_KEY, FAKE_ANTHROPIC_KEY];
+  const list = [FAKE_OFFLINE_KEY, FAKE_ANTHROPIC_KEY, FAKE_XAI_KEY];
   return credential === undefined ? list : [...list, ...credentialSecrets(credential)];
+}
+
+function isXaiResponsesModel(model: Model<Api>): model is Model<"openai-responses"> {
+  return model.api === "openai-responses" && model.provider === "xai";
+}
+
+/** The offline xAI subject of an `xaiForeground` launch (the Grok mirror by default). */
+function offlineXaiModel(options: LaunchOptions): Model<"openai-responses"> {
+  const requested = options.offlineModel ?? XAI_GROK_MIRROR;
+  if (!isXaiResponsesModel(requested))
+    throw new Error("xaiForeground serves xai openai-responses models only");
+  return requested;
+}
+
+function extraXaiModels(options: LaunchOptions): Model<"openai-responses">[] {
+  return (options.extraOfflineModels ?? []).map((model) => {
+    if (!isXaiResponsesModel(model))
+      throw new Error("xaiForeground serves xai openai-responses models only");
+    return model;
+  });
+}
+
+/** The requested offline Anthropic-wire subject, refusing any other api. */
+function offlineAnthropicModel(options: LaunchOptions): Model<"anthropic-messages"> | undefined {
+  const requested = options.offlineModel;
+  if (requested === undefined) return undefined;
+  if (!isAnthropicModel(requested))
+    throw new Error(
+      `Offline model ${requested.provider}/${requested.id} is not anthropic-messages`,
+    );
+  return requested;
 }
 
 function blockedFetch(state: HostState): typeof globalThis.fetch {
@@ -574,6 +625,11 @@ function launchedHost(parts: LaunchedParts) {
     sessionFile: () => manager.getSessionFile(),
     markers: parts.markers,
     wire: state.wire,
+    /** Offline xAI: memory-only foreground and compact-lane requests (never recorded). */
+    xaiWire: state.xaiWire,
+    xaiLane: state.xaiLane,
+    /** Production's xAI wire captures of the main session (memory only). */
+    xaiCaptures: () => xaiCapturesFor(manager.getSessionId()),
     parent: () => {
       current();
       if (!slot.pi || !slot.ctx) throw new Error("Parent extension context unavailable");
@@ -709,6 +765,11 @@ export async function launch(input: LaunchOptions) {
     const sidecar = { ...DEFAULT_BACKGROUND_COMPACTION_SETTINGS, ...options.settings };
     const problem = crossFieldProblem(sidecar);
     if (problem) throw new Error(`Scenario sidecar rejected by production policy: ${problem}`);
+    if (options.xaiForeground === true && live)
+      throw new Error(
+        "The xAI foreground scenario is offline only; live xAI runs use the RPC probe",
+      );
+    const xai = options.xaiForeground === true ? offlineXaiModel(options) : undefined;
     // Offline Anthropic mirror: the background native lane or the foreground server-side path.
     const anthropic = sidecar.anthropicNative || options.anthropicForeground === true;
     const apiKey = anthropic ? FAKE_ANTHROPIC_KEY : FAKE_OFFLINE_KEY;
@@ -730,21 +791,24 @@ export async function launch(input: LaunchOptions) {
     const credentials = new ReadOnlyMemoryCredentials();
     const runtime = await createRuntime(credentials, live, catalog);
     current();
-    const offline: Model<"anthropic-messages"> | undefined = live
-      ? undefined
-      : anthropic
-        ? FAKE_ANTHROPIC_MODEL
-        : (options.offlineModel ?? FAKE_MODEL);
+    const offline: Model<"anthropic-messages"> | undefined =
+      live || xai
+        ? undefined
+        : anthropic
+          ? FAKE_ANTHROPIC_MODEL
+          : (offlineAnthropicModel(options) ?? FAKE_MODEL);
     const model: Model<Api> = live
       ? liveModel(runtime, live, options.providerOwnedTransport === true)
-      : (offline ?? FAKE_MODEL);
-    globalThis.fetch = globalFetchFor(state, {
-      live,
-      model,
-      offline,
-      realFetch,
-      scriptedLane: options.anthropicForeground === true,
-    });
+      : (xai ?? offline ?? FAKE_MODEL);
+    globalThis.fetch = xai
+      ? scriptedXaiCompactFetch(state, xai, blockedFetch(state))
+      : globalFetchFor(state, {
+          live,
+          model,
+          offline,
+          realFetch,
+          scriptedLane: options.anthropicForeground === true,
+        });
     const modelRegistry = new ModelRegistry(runtime);
     const manager = openManager(options, dirs);
     state.mainSessionId = manager.getSessionId();
@@ -765,15 +829,22 @@ export async function launch(input: LaunchOptions) {
     // Live: production's default native factory, capture and lane transport run unmodified.
     if (sidecar.anthropicNative && offline)
       owned.releases.push(installAnthropicFakeFactory(recorder, offline, apiKey));
-    const reregister = !offline
-      ? () => {}
-      : registerOfflineProvider(runtime, {
+    const reregister = xai
+      ? registerOfflineXaiProvider(runtime, {
           state,
-          model: offline,
-          apiKey,
-          nativeCapture: anthropic,
-          toolCycles: options.cycles ?? 2,
-        });
+          model: xai,
+          extraModels: extraXaiModels(options),
+          apiKey: FAKE_XAI_KEY,
+        })
+      : !offline
+        ? () => {}
+        : registerOfflineProvider(runtime, {
+            state,
+            model: offline,
+            apiKey,
+            nativeCapture: anthropic,
+            toolCycles: options.cycles ?? 2,
+          });
     const plan = await loadPlan(options);
     current();
     const slot: ParentSlot = {};

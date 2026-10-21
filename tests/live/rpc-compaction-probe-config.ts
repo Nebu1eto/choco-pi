@@ -23,7 +23,13 @@ import {
   computeContextPolicy,
   HEADROOM_MARGIN_TOKENS,
 } from "../../.pi/extensions/lib/context-policy.ts";
-import { APPROVED_LIVE_MODELS } from "./background-compaction/budget.ts";
+import { OPAQUE_HISTORY_KEY } from "../../.pi/packages/choco-pi-compaction/src/anthropic/mode.ts";
+import { XAI_COMPACTION_MODE_KEY } from "../../.pi/packages/choco-pi-compaction/src/xai/mode.ts";
+import {
+  APPROVED_LIVE_MODELS,
+  MANUAL_ONLY_LIVE_MODELS,
+  SWITCH_ONLY_LIVE_MODELS,
+} from "./background-compaction/budget.ts";
 import { isJsonRecord, type JsonRecord } from "../../.pi/extensions/lib/runtime-values.ts";
 
 export const USAGE = `Manual, billable real-Pi RPC compaction probe (never run by the unit suite).
@@ -31,13 +37,20 @@ export const USAGE = `Manual, billable real-Pi RPC compaction probe (never run b
 Usage:
   node tests/live/rpc-compaction-probe.ts --model <provider/model> --logic <server-side|choco-pi>
     --pi-launcher <path> --capture <new.jsonl>
-    [--background on|off|both] [--point auto|manual|both]
+    [--background on|off|both] [--point auto|manual|both] [--text on|off]
+    [--switch-model <provider/model>]
     [--soft-cap <preset>] [--compaction-point <preset>]
     [--source-agent-dir <dir>] [--case-timeout-ms <n>] [--seed-turns <n>] [--dry-run] [--help]
 
 Presets: ${CONTEXT_PRESET_VALUES.join(", ")} (--soft-cap default strict, --compaction-point default strictest).
+--text (server-side logic only, default on) keeps the background text lane enabled, so a
+fallback is observable; choco-pi logic always uses the text lane.
+--switch-model is the second model of the subject's provider the captures-cleared case selects
+and switches straight back from without prompting (default: the next approved model of that
+provider, else a switch-only model).
 --dry-run prints the resolved cells and the settings it would write; it spawns nothing.
 Approved models: ${APPROVED_LIVE_MODELS.join(", ")}.
+Manual cells only: ${MANUAL_ONLY_LIVE_MODELS.join(", ")}. Switch-only (never prompted): ${SWITCH_ONLY_LIVE_MODELS.join(", ")}.
 `;
 
 export type Logic = "server-side" | "choco-pi";
@@ -48,6 +61,10 @@ export interface ProbeOptions {
   readonly provider: string;
   readonly modelId: string;
   readonly logic: Logic;
+  /** Background text lane enabled (server-side logic; choco-pi logic always). */
+  readonly text: boolean;
+  /** Second model of the subject's provider for captures-cleared-before-compact, if any. */
+  readonly switchModel: string | undefined;
   readonly backgrounds: readonly boolean[];
   readonly points: readonly Point[];
   readonly softCap: ContextPreset;
@@ -82,8 +99,22 @@ function positiveInteger(name: string, value: string): number {
   return parsed;
 }
 
+/**
+ * The captures-cleared case's second model: the next approved model of the
+ * subject's provider, else its switch-only model (selected, never prompted).
+ */
+export function defaultSwitchModel(model: string): string | undefined {
+  const provider = model.slice(0, model.indexOf("/") + 1);
+  const sameProvider = (item: string): boolean => item !== model && item.startsWith(provider);
+  return APPROVED_LIVE_MODELS.find(sameProvider) ?? SWITCH_ONLY_LIVE_MODELS.find(sameProvider);
+}
+
 /** Parse and validate argv; throws a plain Error with the reason on any invalid input. */
-export function parseCli(argv: readonly string[], checkout: string): ParsedCli {
+export function parseCli(
+  argv: readonly string[],
+  checkout: string,
+  env: NodeJS.ProcessEnv = process.env,
+): ParsedCli {
   const { values } = parseArgs({
     args: [...argv],
     strict: true,
@@ -93,6 +124,8 @@ export function parseCli(argv: readonly string[], checkout: string): ParsedCli {
       logic: { type: "string" },
       background: { type: "string", default: "both" },
       point: { type: "string", default: "both" },
+      text: { type: "string", default: "on" },
+      "switch-model": { type: "string" },
       "soft-cap": { type: "string", default: "strict" },
       "compaction-point": { type: "string", default: "strictest" },
       "pi-launcher": { type: "string" },
@@ -115,6 +148,24 @@ export function parseCli(argv: readonly string[], checkout: string): ParsedCli {
   const logic = pickOne("--logic", values.logic, ["server-side", "choco-pi"]);
   const background = pickOne("--background", values.background, ["on", "off", "both"]);
   const point = pickOne("--point", values.point, ["auto", "manual", "both"]);
+  const text = pickOne("--text", values.text, ["on", "off"]);
+  if (logic === "choco-pi" && text === "off")
+    throw new Error(
+      "--text off applies to --logic server-side only (choco-pi logic is the text lane)",
+    );
+  if (MANUAL_ONLY_LIVE_MODELS.includes(model) && point !== "manual")
+    throw new Error(`${model} runs manual cells only: pass --point manual`);
+  const provider = model.slice(0, separator);
+  const switchModel = values["switch-model"] ?? defaultSwitchModel(model);
+  if (switchModel !== undefined) {
+    if (switchModel === model || !switchModel.startsWith(`${provider}/`))
+      throw new Error(`--switch-model must be another ${provider} model`);
+    if (
+      !APPROVED_LIVE_MODELS.includes(switchModel) &&
+      !SWITCH_ONLY_LIVE_MODELS.includes(switchModel)
+    )
+      throw new Error(`Unapproved switch model ${switchModel}`);
+  }
   const softCap = pickOne("--soft-cap", values["soft-cap"], CONTEXT_PRESET_VALUES);
   const compactionPoint = pickOne(
     "--compaction-point",
@@ -124,15 +175,20 @@ export function parseCli(argv: readonly string[], checkout: string): ParsedCli {
   const dryRun = values["dry-run"];
   const launcher = values["pi-launcher"];
   const capture = values.capture;
+  // Billable: a live run is opt-in, like the harness's requireLiveRun.
+  if (!dryRun && env.CHOCO_PI_LIVE_E2E !== "1")
+    throw new Error("A live probe run requires CHOCO_PI_LIVE_E2E=1 (or --dry-run)");
   if (!dryRun && launcher === undefined) throw new Error("Missing --pi-launcher");
   if (!dryRun && capture === undefined) throw new Error("Missing --capture");
   return {
     help: false,
     options: {
       model,
-      provider: model.slice(0, separator),
+      provider,
       modelId: model.slice(separator + 1),
       logic,
+      text: logic === "choco-pi" || text === "on",
+      switchModel,
       backgrounds: background === "both" ? [true, false] : [background === "on"],
       points: point === "both" ? ["manual", "auto"] : [point],
       softCap,
@@ -171,12 +227,26 @@ export function resolveCells(options: ProbeOptions): Cell[] {
 
 /** The native lane a server-side cell must prove, per provider. */
 export interface NativeLane {
-  /** Backend id (`.pi/packages/choco-pi-compaction/src/background/settings.ts`). */
-  readonly backendId: "anthropic-native" | "codex-native-v2";
+  /**
+   * Background backend id (`.pi/packages/choco-pi-compaction/src/background/settings.ts`);
+   * undefined for a lane with no background backend (xAI).
+   */
+  readonly backendId: "anthropic-native" | "codex-native-v2" | undefined;
   /** `details.strategy` the lane writes onto its compaction entry. */
-  readonly strategy: "anthropic-compaction-on-demand-v1" | "openai-responses-compaction-v2";
-  /** Anthropic main requests leave wire captures the lane cuts from. */
+  readonly strategy:
+    | "anthropic-compaction-on-demand-v1"
+    | "openai-responses-compaction-v2"
+    | "xai-responses-compaction-v1";
+  /** Main requests leave wire captures the lane cuts from (Anthropic, xAI). */
   readonly needsCapture: boolean;
+  /**
+   * A manual request is answered by the foreground handler even with
+   * background on: background-host/routes.ts `manualLanes` gives a Codex
+   * owner no manual lane, and xAI has no background backend.
+   */
+  readonly manualForeground: boolean;
+  /** No background backend at all: background-on cells cannot prove the lane (xAI). */
+  readonly foregroundOnly: boolean;
 }
 
 export function nativeLaneFor(provider: string): NativeLane | undefined {
@@ -185,30 +255,48 @@ export function nativeLaneFor(provider: string): NativeLane | undefined {
       backendId: "anthropic-native",
       strategy: "anthropic-compaction-on-demand-v1",
       needsCapture: true,
+      manualForeground: false,
+      foregroundOnly: false,
+    };
+  if (provider === "xai")
+    return {
+      backendId: undefined,
+      strategy: "xai-responses-compaction-v1",
+      needsCapture: true,
+      manualForeground: true,
+      foregroundOnly: true,
     };
   if (provider === "openai-codex")
     return {
       backendId: "codex-native-v2",
       strategy: "openai-responses-compaction-v2",
       needsCapture: false,
+      manualForeground: true,
+      foregroundOnly: false,
     };
   return undefined;
 }
 
 /** Background sidecar backend switches and vendor rows for one logic. */
-export function logicSwitches(logic: Logic): {
+export function logicSwitches(
+  logic: Logic,
+  text: boolean,
+): {
   readonly anthropicNative: boolean;
   readonly codexNative: boolean;
   readonly text: boolean;
   readonly compactionAnthropic: Logic;
+  readonly compactionXai: Logic;
   readonly responsesCompaction: boolean;
 } {
   return logic === "server-side"
     ? {
         anthropicNative: true,
         codexNative: true,
-        text: false,
+        // On by default (--text on): a native failure then falls back visibly.
+        text,
         compactionAnthropic: "server-side",
+        compactionXai: "server-side",
         responsesCompaction: true,
       }
     : {
@@ -216,6 +304,7 @@ export function logicSwitches(logic: Logic): {
         codexNative: false,
         text: true,
         compactionAnthropic: "choco-pi",
+        compactionXai: "choco-pi",
         responsesCompaction: false,
       };
 }
@@ -288,7 +377,7 @@ export async function buildAgentFiles(
   launch: LaunchSettings,
   codexSource: string,
 ): Promise<AgentFiles> {
-  const switches = logicSwitches(options.logic);
+  const switches = logicSwitches(options.logic, options.text);
   const settingsPath = join(options.source, "settings.json");
   const sourceSettings = parseObject(await readFile(settingsPath, "utf8"), settingsPath);
   const settingsOverrides: JsonRecord = {
@@ -301,6 +390,9 @@ export async function buildAgentFiles(
     extensions: [join(options.checkout, ".pi/extensions")],
     compaction: { enabled: true, reserveTokens: launch.reserveTokens, keepRecentTokens: 1 },
     compactionAnthropic: switches.compactionAnthropic,
+    [XAI_COMPACTION_MODE_KEY]: switches.compactionXai,
+    // Explicit: a source agent dir set to allow-loss would change the guard cases.
+    [OPAQUE_HISTORY_KEY]: "preserve",
     [CONTEXT_SOFT_CAP_KEY]: options.softCap,
     [AUTO_COMPACTION_POINT_KEY]: options.compactionPoint,
   };

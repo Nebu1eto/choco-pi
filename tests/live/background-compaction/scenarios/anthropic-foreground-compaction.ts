@@ -381,7 +381,7 @@ export const scenario: Scenario = {
   name: "anthropic-foreground-compaction",
   description:
     "Background off, Anthropic server-side mode: /compact <instructions> answered by the lane, block replayed on the next request",
-  settings: {},
+  settings: { enabled: false },
   anthropicForeground: true,
   // Small padding makes the seed end with an assistant turn (strict role alternation).
   seedBytes: SEED_BYTES,
@@ -394,7 +394,7 @@ export const automaticScenario: Scenario = {
   name: "anthropic-foreground-auto-compaction",
   description:
     "Same foreground path reached automatically through the Standard / Standard preset compaction point",
-  settings: {},
+  settings: { enabled: false },
   agentSettings: { [CONTEXT_SOFT_CAP_KEY]: "standard", [AUTO_COMPACTION_POINT_KEY]: "standard" },
   anthropicForeground: true,
   seedBytes: SEED_BYTES,

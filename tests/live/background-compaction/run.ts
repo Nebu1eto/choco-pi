@@ -28,6 +28,7 @@ import {
   scenario as restart,
 } from "./scenarios/restart-recovery.ts";
 import { scenario as textBoundary } from "./scenarios/text-boundary-adoption.ts";
+import { scenario as xaiForeground } from "./scenarios/xai-foreground-compaction.ts";
 import type { Host, PendingScenario, Scenario } from "./scenarios/types.ts";
 
 const SCENARIOS: readonly Scenario[] = [
@@ -42,6 +43,7 @@ const SCENARIOS: readonly Scenario[] = [
   anthropicForeground,
   anthropicForegroundAuto,
   contextWindowPresets,
+  xaiForeground,
 ];
 const FOREGROUND_TOOL_CYCLES = 6;
 const EXIT_CODES = { pass: 0, fail: 1, pending: 2 } as const;
@@ -186,6 +188,8 @@ else {
     keepRecentTokens: scenario.keepRecentTokens,
     hostCompaction: scenario.hostCompaction,
     anthropicForeground: scenario.anthropicForeground,
+    xaiForeground: scenario.xaiForeground,
+    extraOfflineModels: scenario.extraOfflineModels,
     agentSettings: scenario.agentSettings,
     catalog: scenario.catalog,
     offlineModel,

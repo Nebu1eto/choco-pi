@@ -1,10 +1,16 @@
 import { readFile, readdir, realpath, stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { homedir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 
 export const WORKTREE = fileURLToPath(new URL("../../../", import.meta.url));
+/**
+ * The real agent dir, read when this module loads: before any launcher scopes
+ * PI_CODING_AGENT_DIR and HOME to its isolated runtime.
+ */
+const GLOBAL_AGENT_DIR = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
 
 // Mirrors the SDK package-manager discovery (collectAutoExtensionEntries) for the
 // subset this repository uses; any unsupported shape fails closed instead of
@@ -148,9 +154,42 @@ async function canonicalUnique(paths: string[]): Promise<string[]> {
  * `.pi/extensions` auto-discovery first, then configured packages.
  */
 export async function loadExtensionProfile(): Promise<string[]> {
-  const settings = await readJsonFile(join(WORKTREE, ".pi", "settings.json"), settingsSchema);
+  const settings = await profileSettings();
   assertSupportedExtensionSettings(settings.extensions);
   const loose = await looseEntries();
   const packages = await Promise.all(settings.packages.map(packageEntries));
   return canonicalUnique([...loose, ...packages.flat()]);
+}
+
+/** `./packages/<name>` for a bundled package path of any checkout (`<root>/.pi/packages/<name>`). */
+function bundledSpec(spec: string): string | undefined {
+  if (/^\.\/packages\/[^/]+$/u.test(spec)) return spec;
+  const parent = dirname(spec);
+  if (basename(parent) !== "packages" || basename(dirname(parent)) !== ".pi") return undefined;
+  return `./packages/${basename(spec)}`;
+}
+
+/** A global `extensions` entry naming a checkout's `.pi/extensions` directory (discovered as loose entries). */
+function isProfileExtensionsDir(entry: string): boolean {
+  return basename(entry) === "extensions" && basename(dirname(entry)) === ".pi";
+}
+
+/**
+ * The profile policy, as `scripts/install-profile.ts` resolves it: the
+ * checkout's `.pi/settings.json` when present, else the bundled packages of
+ * the global agent `settings.json` (the checkout ships no project settings),
+ * each mapped onto this worktree's `.pi/packages`.
+ */
+async function profileSettings(): Promise<Static<typeof settingsSchema>> {
+  const projectPath = join(WORKTREE, ".pi", "settings.json");
+  if ((await entryKind(projectPath)) === "file") return readJsonFile(projectPath, settingsSchema);
+  const globalPath = join(GLOBAL_AGENT_DIR, "settings.json");
+  const global = await readJsonFile(globalPath, settingsSchema);
+  const packages = global.packages.flatMap((spec) => bundledSpec(spec) ?? []);
+  if (packages.length === 0)
+    throw new Error(
+      `No profile: ${projectPath} is missing and ${globalPath} names no bundled package`,
+    );
+  const extensions = (global.extensions ?? []).filter((entry) => !isProfileExtensionsDir(entry));
+  return { ...global, packages, extensions };
 }

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdir, readFile, rm } from "node:fs/promises";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { Type, type Static } from "typebox";
@@ -12,7 +12,23 @@ import {
   redact,
   writeArtifact,
 } from "./live/background-compaction/artifacts.ts";
-import { requireLiveRun } from "./live/background-compaction/budget.ts";
+import {
+  LIVE_EXPECTATIONS,
+  requireLiveRun,
+  rpcProbeExpectationKey,
+} from "./live/background-compaction/budget.ts";
+import {
+  CREDENTIAL_TEXT,
+  journalReasons,
+  laneRecordData,
+  MAX_LANE_RECORDS,
+} from "./live/background-compaction/lane-journal-checks.ts";
+import {
+  buildAgentFiles,
+  logicSwitches,
+  nativeLaneFor,
+  parseCli,
+} from "./live/rpc-compaction-probe-config.ts";
 import {
   evaluateCheck,
   type CheckEvidence,
@@ -85,6 +101,170 @@ test("checks fail without runtime evidence and on every observed violation", () 
   assert.equal(statusOf("consumers-notified-once", runnerMismatch), "fail");
   const leaked = { ...empty, records: [record("bad", { signature: "unsafe" })] };
   assert.equal(statusOf("no-secret-leak", leaked), "fail");
+});
+
+function laneRecord(overrides: Record<string, string | number | boolean> = {}) {
+  return {
+    customType: "choco-compaction-lane",
+    schemaVersion: 1,
+    at: 1,
+    sessionId: "session-1",
+    provider: "xai",
+    route: "manual",
+    event: "fallback",
+    from: "xai-native",
+    to: "local",
+    reason: "no-capture",
+    noticeAttempted: true,
+    ...overrides,
+  };
+}
+
+test("lane-journal verdicts: one record per observed outcome, budget, schema, no credentials", () => {
+  const fallback = laneRecord();
+  const cancel = laneRecord({ event: "cancel", reason: "opaque-checkpoint", to: "local" });
+  const entries = [
+    { type: "message" },
+    { type: "custom", customType: "choco-compaction-candidate", data: {} },
+    { type: "custom", customType: "choco-compaction-lane", data: fallback },
+    { type: "custom", customType: "choco-compaction-lane", data: cancel },
+  ];
+  const data = laneRecordData(entries);
+  assert.equal(data.length, 2, "only lane entries are read");
+  assert.deepEqual(journalReasons(data, { events: ["fallback", "cancel"], below: 10 }), []);
+  assert.deepEqual(journalReasons([fallback], { events: ["cancel"] }), [
+    "observed cancel has no lane record",
+  ]);
+  assert.deepEqual(journalReasons(data, { forbiddenReasons: ["no-capture"] }), [
+    "unexpected lane record with reason no-capture",
+  ]);
+  assert.deepEqual(journalReasons(data, { reasons: ["instructions-forwarded"] }), [
+    "no lane record with reason instructions-forwarded",
+  ]);
+  const many = Array.from({ length: MAX_LANE_RECORDS }, () => fallback);
+  assert.deepEqual(journalReasons(many, { below: MAX_LANE_RECORDS }), [
+    `${MAX_LANE_RECORDS} lane records (expected fewer than ${MAX_LANE_RECORDS})`,
+  ]);
+  // Own codes and lane ids are not credentials; token-leading keys and JWT-like text are.
+  const own = laneRecord({ reason: "task-budget-remaining", detail: "instructions-forwarded" });
+  assert.deepEqual(journalReasons([own]), []);
+  for (const leaked of ["Bearer abc", "sk-ant-oat-1", "xai-0123", "eyJhbGciOi"]) {
+    assert.equal(CREDENTIAL_TEXT.test(leaked), true, leaked);
+    const record = laneRecord({ detail: leaked });
+    assert.ok(
+      journalReasons([record]).includes("lane record 0 field detail looks like a credential"),
+      leaked,
+    );
+  }
+  // A record with provider text in a free field fails the schema and is still scanned.
+  const invalid = { ...laneRecord(), reason: "Bearer secret-token" };
+  assert.deepEqual(journalReasons([invalid]), [
+    "lane record 0 fails the lane record schema",
+    "lane record 0 field reason looks like a credential",
+  ]);
+  const observed = {
+    ...emptyEvidence(),
+    records: [record("branch")],
+    observations: {
+      "lane-journal": [
+        { description: "records", actual: journalReasons(data), expected: [], evidenceRefs: [0] },
+      ],
+    },
+  };
+  assert.equal(statusOf("lane-journal", observed), "pass");
+  assert.equal(statusOf("lane-journal", emptyEvidence()), "fail", "no journal evidence fails");
+});
+
+test("RPC probe: xAI lane, text switch, approvals, manual-only models and cell budgets", async () => {
+  const checkout = process.cwd();
+  const base = ["--logic", "server-side", "--dry-run"];
+  const parse = (...args: string[]) => {
+    const parsed = parseCli([...base, ...args], checkout);
+    if (parsed.help) throw new Error("unexpected help");
+    return parsed.options;
+  };
+  assert.deepEqual(nativeLaneFor("xai"), {
+    backendId: undefined,
+    strategy: "xai-responses-compaction-v1",
+    needsCapture: true,
+    manualForeground: true,
+    foregroundOnly: true,
+  });
+  assert.equal(logicSwitches("server-side", true).text, true, "text lane on by default");
+  assert.equal(logicSwitches("server-side", false).text, false);
+  assert.equal(logicSwitches("server-side", true).compactionXai, "server-side");
+  assert.equal(logicSwitches("choco-pi", true).compactionXai, "choco-pi");
+  const xai = parse("--model", "xai/grok-4.7", "--background", "off");
+  assert.equal(xai.text, true);
+  assert.equal(xai.switchModel, "xai/grok-4.6", "switch-only second xAI model");
+  assert.equal(
+    parse("--model", "anthropic/claude-fable-5-1", "--point", "manual").switchModel,
+    "anthropic/claude-haiku-5-5",
+  );
+  assert.equal(parse("--model", "openai-codex/gpt-6-luna", "--text", "off").text, false);
+  assert.throws(() => parse("--model", "anthropic/claude-fable-5-1"), /manual cells only/u);
+  const live = ["--model", "xai/grok-4.7", "--logic", "server-side", "--pi-launcher", "pi"];
+  assert.throws(
+    () => parseCli([...live, "--capture", "c.jsonl"], checkout, {}),
+    /CHOCO_PI_LIVE_E2E=1/u,
+    "a billable run is opt-in",
+  );
+  assert.equal(
+    parseCli([...live, "--capture", "c.jsonl"], checkout, { CHOCO_PI_LIVE_E2E: "1" }).help,
+    false,
+  );
+  assert.throws(() => parse("--model", "xai/grok-4.6"), /Unapproved live model/u);
+  assert.throws(
+    () =>
+      parseCli(
+        ["--model", "xai/grok-4.7", "--logic", "choco-pi", "--text", "off", "--dry-run"],
+        checkout,
+      ),
+    /--text off applies/u,
+  );
+  assert.throws(
+    () => parse("--model", "xai/grok-4.7", "--switch-model", "anthropic/claude-haiku-5-5"),
+    /another xai model/u,
+  );
+  // The switch-only model is never a live subject.
+  assert.throws(() =>
+    requireLiveRun("text-boundary-adoption", "xai/grok-4.6", { CHOCO_PI_LIVE_E2E: "1" }),
+  );
+  const rows = [
+    ["anthropic/claude-fable-5-1", "manual", "rpc-anthropic-fable-manual"],
+    ["anthropic/claude-haiku-5-5", "auto", "rpc-anthropic-haiku-auto"],
+    ["xai/grok-4.7", "manual", "rpc-xai-grok-4.7-manual"],
+    ["openai-codex/gpt-6-luna", "manual", "rpc-codex-luna-manual"],
+  ] as const;
+  for (const [model, point, key] of rows) {
+    assert.equal(rpcProbeExpectationKey(model, point), key);
+    assert.ok((LIVE_EXPECTATIONS[key]?.inputTokens ?? 0) > 0, key);
+  }
+  assert.equal(rpcProbeExpectationKey("anthropic/claude-fable-5-1", "auto"), undefined);
+  // Settings written for an xAI server-side launch: the xAI row and preserve are explicit,
+  // even over a source agent dir that chose allow-loss and choco-pi.
+  const source = join(scratchRoot, "probe-source");
+  await mkdir(source, { recursive: true });
+  try {
+    await writeFile(
+      join(source, "settings.json"),
+      JSON.stringify({ compactionXai: "choco-pi", compactionOpaqueHistory: "allow-loss" }),
+    );
+    const files = await buildAgentFiles(
+      { ...xai, source },
+      { background: false, reserveTokens: 16_384, sidecarReserveTokens: 0 },
+      join(source, "choco-pi-codex.json"),
+    );
+    const settings: unknown = JSON.parse(files.settings);
+    assert.ok(Value.Check(Type.Record(Type.String(), Type.Unknown()), settings));
+    assert.equal(settings["compactionXai"], "server-side");
+    assert.equal(settings["compactionOpaqueHistory"], "preserve");
+    const sidecar: unknown = JSON.parse(files.backgroundSidecar);
+    assert.ok(Value.Check(Type.Object({ text: Type.Boolean() }), sidecar));
+    assert.equal(sidecar.text, true, "--text on keeps the fallback lane");
+  } finally {
+    await rm(source, { recursive: true, force: true });
+  }
 });
 
 test("zero-network tolerates only listed non-provider origins and every counted fetch", () => {
