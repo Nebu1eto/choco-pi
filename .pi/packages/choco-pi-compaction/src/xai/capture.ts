@@ -9,6 +9,8 @@
  * compaction `encrypted_content`) with the shared order-preserving aligner.
  *
  * Captures hold the request body (conversation content, never credentials).
+ * Only an HTTP 200 answer to a mapped request is kept as a usable capture;
+ * other responses go to a bounded diagnostics ring without their body.
  * Transport checks registered for the current provider call run before the
  * request leaves the process; a failed check refuses it locally (fail closed).
  */
@@ -289,12 +291,12 @@ export interface XaiWireCapture {
   readonly baseUrl: string;
   /** Request URL origin and path; the query is dropped. */
   readonly endpoint: string;
-  /** HTTP status of the response to this exact request. */
+  /** HTTP status of the response to this exact request (always 200 for a stored capture). */
   readonly status: number;
   readonly bodyText: string;
   /** Deep-frozen parse of bodyText. */
   readonly body: XaiWireBody;
-  /** Undefined when no projection source was bound for the session. */
+  /** Always set for a stored capture (an unmapped request is not a usable capture). */
   readonly mapping: WireMapping | undefined;
 }
 
@@ -407,6 +409,56 @@ export function releaseXaiSessionCaptures(sessionId: string): void {
   const state = runtime();
   state.captures.delete(sessionId);
   state.projections.delete(sessionId);
+  responseRing().delete(sessionId);
+}
+
+// ---------------------------------------------------------------------------
+// Responses that left no usable capture (diagnostics only)
+// ---------------------------------------------------------------------------
+
+/** A transmitted session request whose response was not HTTP 200 or whose body could not be mapped. */
+export interface XaiRecordedResponse {
+  readonly sequence: number;
+  readonly status: number;
+  readonly capturedAt: number;
+  readonly provider: string;
+  readonly modelId: string;
+  readonly baseUrl: string;
+}
+
+const RESPONSES_SYMBOL = Symbol.for("choco-pi:xai-native-responses");
+const MAX_RESPONSES_PER_SESSION = 8;
+
+/**
+ * Process-wide ring of unusable responses per session, kept apart from the
+ * capture ring so a host retry burst (non-200 answers) never evicts the last
+ * usable capture. Its own slot, so the lane runtime's shape is unchanged.
+ */
+function responseRing(): Map<string, XaiRecordedResponse[]> {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, RESPONSES_SYMBOL);
+  const found: unknown = descriptor?.value;
+  if (found instanceof Map) return found;
+  if (descriptor !== undefined) throw new Error("Invalid xAI native response ring slot");
+  const created = new Map<string, XaiRecordedResponse[]>();
+  Object.defineProperty(globalThis, RESPONSES_SYMBOL, { value: created, configurable: true });
+  return created;
+}
+
+/** Unusable responses of a session, oldest first (at most 8). */
+export function recentXaiResponsesFor(sessionId: string): readonly XaiRecordedResponse[] {
+  return responseRing().get(sessionId) ?? [];
+}
+
+function storeResponse(sessionId: string, response: XaiRecordedResponse): void {
+  const ring = responseRing();
+  const list = ring.get(sessionId) ?? [];
+  ring.delete(sessionId);
+  ring.set(sessionId, [...list, response].slice(-MAX_RESPONSES_PER_SESSION));
+  while (ring.size > MAX_SESSIONS) {
+    const oldest = ring.keys().next();
+    if (oldest.done === true) break;
+    ring.delete(oldest.value);
+  }
 }
 
 export function xaiTransportRefusals(sessionId?: string): readonly TransportRefusal[] {
@@ -587,6 +639,12 @@ async function captureAndForward(
   return response;
 }
 
+/**
+ * Store the sent body for a session-bound call; calls without a session ID are
+ * not captured. Only an HTTP 200 answer to a mapped body is a usable capture;
+ * any other response goes to the diagnostics ring, so the host's retries of a
+ * failing request never evict the last usable capture.
+ */
 function recordCapture(
   capture: CaptureCall,
   sent: {
@@ -599,10 +657,21 @@ function recordCapture(
   const { sessionId } = capture.call;
   const { body, bodyText } = sent.request;
   if (sessionId === undefined || body === undefined || bodyText === undefined) return;
-  freezeJson(body);
   const counter = runtime().counter;
   counter.value += 1;
   const { model, settings } = capture;
+  if (sent.status !== 200 || sent.mapping === undefined) {
+    storeResponse(sessionId, {
+      sequence: counter.value,
+      status: sent.status,
+      capturedAt: settings.now(),
+      provider: model.provider,
+      modelId: model.id,
+      baseUrl: model.baseUrl,
+    });
+    return;
+  }
+  freezeJson(body);
   storeCapture(
     {
       schemaVersion: 1,

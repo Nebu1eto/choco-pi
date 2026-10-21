@@ -979,6 +979,10 @@ function reportServerSideDisabled(rt: HostRuntime, ctx: ExtensionContext, code: 
   });
 }
 
+/** What happens to later requests over an xAI checkpoint that is no longer replayed (`unreplayable` in `xai/replay.ts`). */
+const XAI_REFUSED_UNTIL =
+  "later requests over this checkpoint are refused until you run /compaction-allow-loss or create a new xAI checkpoint";
+
 function reportXaiReplayDiagnostic(
   rt: HostRuntime,
   ctx: ExtensionContext,
@@ -996,7 +1000,7 @@ function reportXaiReplayDiagnostic(
       rt,
       ctx,
       { ...base, event: "fallback", reason: REASONS.unverifiable },
-      `xAI native checkpoint ${diagnostic.entryId} could not be verified at the transport; only its placeholder summary is sent`,
+      `xAI native checkpoint ${diagnostic.entryId} could not be verified at the transport; ${XAI_REFUSED_UNTIL}`,
     );
     return;
   }
@@ -1013,7 +1017,7 @@ function reportXaiServerSideDisabled(rt: HostRuntime, ctx: ExtensionContext, cod
   reportReplayDisabled(rt, ctx, {
     provider: "xai",
     code,
-    text: `xAI server-side compaction: the replayed checkpoint was refused (${code}); server-side compaction is off for this session. Later requests carry only the checkpoint's placeholder summary (the compacted history is no longer sent); later compactions over this checkpoint need /compaction-allow-loss or a new xAI checkpoint.`,
+    text: `xAI server-side compaction: the replayed checkpoint was refused (${code}); server-side compaction is off for this session; ${XAI_REFUSED_UNTIL}.`,
     checkpointId: xaiCheckpointId,
   });
 }

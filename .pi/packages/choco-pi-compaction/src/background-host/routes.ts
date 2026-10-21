@@ -11,12 +11,13 @@ import type {
 import type { HostCompactionTrigger } from "../background/arbitration.ts";
 import { ANTHROPIC_BACKEND_ID, hasUsableCapture } from "../anthropic/backend.ts";
 import { TEXT_BACKEND_ID } from "../background/text-backend.ts";
-import { OPAQUE_GUARD_NOTICE, opaqueProviderOf } from "../opaque-checkpoint.ts";
+import { REASONS } from "../background/lane-journal.ts";
+import { OPAQUE_GUARD_NOTICE, opaqueLaneOf, opaqueProviderOf } from "../opaque-checkpoint.ts";
 import { type BackgroundAdoptionOwner, readAdoptionIdentity } from "./adoption-signal.ts";
 import { boundaryDraft } from "./branch.ts";
 import { type ManualOutcome, manualFallbackPolicy } from "./manual-policy.ts";
-import { errorText, tell } from "./notices.ts";
-import type { OwnerCore } from "./owner-core.ts";
+import { announce, errorText, tell } from "./notices.ts";
+import { laneIdOf, type OwnerCore } from "./owner-core.ts";
 import {
   type Decision,
   type HostRuntime,
@@ -141,6 +142,8 @@ async function deferManual(
  * foreground path has to run instead. Shared by the `session_before_compact`
  * hook and the TUI command bridge. The follower starts at once; on the hook
  * path its adoption waits for the next host boundary (`hostCompactUnwinding`).
+ * A request the opaque-history guard would refuse is refused here, before any
+ * candidate or progress notice: one refusal notice and one journal record.
  */
 export async function startManualPreparation(
   rt: HostRuntime,
@@ -152,6 +155,7 @@ export async function startManualPreparation(
   // Joining the outstanding candidate keeps its follower; anything else supersedes it.
   const joining = joinableCandidate(owner, customInstructions);
   if (joining !== undefined && owner.manualCandidate === joining) return true;
+  if (refusedOverOpaque(rt, owner, lanes[0])) return true;
   const serial = ++owner.manualSerial;
   const candidateId = await manualCandidate(rt, owner, lanes[0], customInstructions);
   if (candidateId === undefined || !isCurrent(rt, owner) || owner.manualSerial !== serial)
@@ -163,6 +167,38 @@ export async function startManualPreparation(
     "info",
   );
   void followManual(rt, owner, { candidateId, serial, customInstructions }, lanes.slice(1));
+  return true;
+}
+
+/**
+ * The opaque-history guard for a manual request, evaluated before anything is
+ * started: the freeze would refuse every lane a manual request may use over
+ * this checkpoint (no lane offered here can replay an opaque record), so the
+ * request is cancelled with the guard's exits notice and one `cancel` record.
+ */
+function refusedOverOpaque(rt: HostRuntime, owner: MainOwner, lane: string | undefined): boolean {
+  if (lane === undefined) return false;
+  const opaque = owner.core.opaqueBlock(lane);
+  if (opaque === undefined) return false;
+  const provider = opaqueProviderOf(opaque.owner);
+  announce(
+    rt,
+    owner.lastCtx,
+    {
+      at: rt.options.clock?.now() ?? Date.now(),
+      sessionId: owner.core.sessionId,
+      provider,
+      route: "manual",
+      event: "cancel",
+      from: opaqueLaneOf(opaque.owner),
+      to: laneIdOf(lane),
+      reason: REASONS.opaqueCheckpoint,
+      checkpointEntryId: opaque.entryId,
+    },
+    OPAQUE_GUARD_NOTICE(provider, opaque.entryId),
+    "warning",
+    "always",
+  );
   return true;
 }
 

@@ -178,13 +178,12 @@ session id, not to a registration binding: a model change, a mode change or a
 settings reload for the same session keeps them. They are released when the
 session id changes or at shutdown.
 
-For Anthropic only an HTTP 200 answer to a mapped request is a usable capture.
+For both lanes only an HTTP 200 answer to a mapped request is a usable capture.
 Any other response is recorded in a separate diagnostic ring (eight per
-session), so a host retry burst never evicts the last usable capture. Routing
-checks whether a usable capture exists for the current provider, model and
-endpoint, so a capture of another model does not count. The xAI ring keeps each
-captured response with its status; the foreground ignores captures that are not
-HTTP 200.
+session), so a host retry burst never evicts the last usable capture and a
+failed request never becomes the compacted prefix. Routing checks whether a
+usable capture exists for the current provider, model and endpoint, so a
+capture of another model does not count.
 
 ## Manual fallback policy
 

@@ -818,30 +818,24 @@ test(
         // The turn itself is refused at the provider boundary: nothing is sent over the record.
         await rig.session.prompt("GO");
         const callsBefore = rig.calls.length;
-        // The manual route takes the request into the background, where the freeze refuses it.
+        const noticesBefore = notices.length;
+        // The manual route evaluates the opaque guard before starting anything: no
+        // "continuing in the background" progress notice, only the refusal.
         assert.equal(await rig.session.compact(), undefined);
-        await waitFor(
-          () => notices.some((notice) => notice.includes("did not produce a checkpoint")),
-          "the manual outcome notice",
+        // Nothing was started, so nothing may report later either.
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        assert.deepEqual(
+          notices.slice(noticesBefore),
+          [OPAQUE_GUARD_NOTICE("xai", checkpointId)],
+          "exactly one notice for the manual request: the refusal",
         );
+        assert.equal(getCoordinator(rig.ownerKey)?.status().candidateId, undefined);
         assert.equal(rig.backgroundCalls(), 0, "no text preparation over the opaque record");
         assert.equal(rig.hostSummarizerCalls.length, 0, "no local summary either");
         assert.equal(ownEntries(rig).length, 0);
         const latest = compactionEntries(rig.manager.getBranch()).at(-1);
         assert.equal(latest?.id, checkpointId, "the opaque checkpoint is still the latest");
         assert.equal(rig.calls.length, callsBefore, "no provider request for the compaction");
-        const refused = notices.filter((notice) =>
-          notice.includes(OPAQUE_GUARD_NOTICE("xai", checkpointId)),
-        );
-        assert.equal(refused.length, 1, JSON.stringify(notices));
-        assert.ok(
-          notices.some((notice) =>
-            notice.includes(
-              "manual compaction did not produce a checkpoint (no-legal-cut: opaque-checkpoint)",
-            ),
-          ),
-          JSON.stringify(notices),
-        );
         const guarded = laneRecordsOf(rig.manager.getBranch()).filter(
           (record) => record.checkpointEntryId === checkpointId,
         );
@@ -850,6 +844,14 @@ test(
           [refusal?.route, refusal?.from, refusal?.reason],
           ["replay", "xai-native", "opaque-checkpoint"],
           JSON.stringify(guarded),
+        );
+        const manual = laneRecordsOf(rig.manager.getBranch()).filter(
+          (record) => record.route === "manual",
+        );
+        assert.deepEqual(
+          manual.map((record) => [record.event, record.reason, record.checkpointEntryId]),
+          [["cancel", "opaque-checkpoint", checkpointId]],
+          "one cancel record for the manual request, no candidate failure record",
         );
         assert.equal(
           guarded.some((record) => record.event === "loss"),
