@@ -761,6 +761,7 @@ const ProviderErrorBodySchema = Type.Object(
       {
         param: Type.Optional(Type.Union([Type.String(), Type.Null()])),
         message: Type.Optional(Type.String()),
+        code: Type.Optional(Type.Union([Type.String(), Type.Null()])),
       },
       { additionalProperties: true },
     ),
@@ -772,50 +773,54 @@ const ProviderErrorBodySchema = Type.Object(
 interface ProviderErrorFields {
   readonly param: string | undefined;
   readonly message: string | undefined;
+  readonly code: string | undefined;
 }
-const NO_PROVIDER_ERROR_FIELDS: ProviderErrorFields = { param: undefined, message: undefined };
 
-/** `error.param` and `error.message` of a JSON error body embedded in the failure text, if any. */
-function providerErrorFields(failureText: string): ProviderErrorFields {
+/**
+ * `error.param`, `error.message` and `error.code` of the JSON error body
+ * embedded in the failure text; undefined when there is no parseable body.
+ */
+function providerErrorFields(failureText: string): ProviderErrorFields | undefined {
   const start = failureText.indexOf("{");
-  if (start < 0) return NO_PROVIDER_ERROR_FIELDS;
+  if (start < 0) return undefined;
   let parsed: unknown;
   try {
     parsed = JSON.parse(failureText.slice(start));
   } catch {
-    return NO_PROVIDER_ERROR_FIELDS;
+    return undefined;
   }
-  if (!Value.Check(ProviderErrorBodySchema, parsed)) return NO_PROVIDER_ERROR_FIELDS;
-  const { param, message } = parsed.error;
-  return { param: param ?? undefined, message };
+  if (!Value.Check(ProviderErrorBodySchema, parsed)) return undefined;
+  const { param, message, code } = parsed.error;
+  return { param: param ?? undefined, message, code: code ?? undefined };
 }
 
-/** HTTP statuses that may reject the request body (4xx other than auth and rate limit). */
-function isRequestRejectionStatus(status: number | undefined): boolean {
-  return (
-    status === undefined ||
-    (status >= 400 && status < 500 && status !== 401 && status !== 403 && status !== 429)
-  );
-}
+/** `error.param` pointing at an input item: `input[N]`, optionally followed by a sub-path. */
+const INPUT_PARAM_PATTERN = /^input\[(\d+)\](?:$|[.[])/;
+/** `developer` or `compaction_trigger` as a whole token, not part of a longer identifier. */
+const FOCUS_TOKEN_PATTERN = /(?<![A-Za-z0-9_-])(?:developer|compaction_trigger)(?![A-Za-z0-9_-])/i;
 
 /**
  * Whether the server rejected the request because of the appended focus item:
- * a 4xx whose JSON `error.param` points at the item's input index, or whose
- * error text names the item index, the developer role or `compaction_trigger`.
- * The Codex transport surfaces only the parsed `error.message`, so the index
- * and role are matched in the text as well.
+ * an HTTP 400 or 422 carrying a parseable JSON error body whose `error.param`
+ * is `input[N]` (or a path below it) with N the item's index, or whose
+ * `error.message` or `error.code` names `developer` or `compaction_trigger`
+ * as a whole token. Anything else (another status, no status, no JSON body)
+ * is an ordinary failure, never retried without the focus.
  */
 export function rejectsCompactionFocus(
   result: RemoteCompactionV2Failure,
   focusIndex: number | undefined,
 ): boolean {
   if (focusIndex === undefined || result.reason !== "stream-error") return false;
-  if (!isRequestRejectionStatus(result.status)) return false;
+  if (result.status !== 400 && result.status !== 422) return false;
   const fields = providerErrorFields(result.errorMessage);
-  const itemPath = `input[${focusIndex}]`;
-  if (fields.param === itemPath || fields.param?.startsWith(`${itemPath}.`) === true) return true;
-  const text = fields.message ?? result.errorMessage;
-  return text.includes(itemPath) || /\bdeveloper\b|compaction_trigger/i.test(text);
+  if (fields === undefined) return false;
+  const index =
+    fields.param === undefined ? undefined : INPUT_PARAM_PATTERN.exec(fields.param)?.[1];
+  if (index !== undefined && Number(index) === focusIndex) return true;
+  return [fields.message, fields.code].some(
+    (text) => text !== undefined && FOCUS_TOKEN_PATTERN.test(text),
+  );
 }
 
 async function runCompactionRequest(

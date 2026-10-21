@@ -10,6 +10,7 @@ import type { LaneRecordInput, LaneTransitionMemo } from "../background/lane-jou
 import type { LoadedBackgroundSettings } from "../background/settings.ts";
 import { registryAvailability } from "../background/registry.ts";
 import type { AnthropicCapabilityGate } from "../anthropic/capability.ts";
+import { releaseSessionCaptures } from "../anthropic/capture.ts";
 import type {
   AnthropicCompactionMode,
   AnthropicServerSideSession,
@@ -17,6 +18,7 @@ import type {
 } from "../anthropic/mode.ts";
 import type { AnthropicReplayBinder } from "../anthropic/replay-binding.ts";
 import type { CompactionSessionState, SessionStateReader } from "../session-state.ts";
+import { releaseXaiSessionCaptures } from "../xai/capture.ts";
 import type { XaiCompactionMode } from "../xai/mode.ts";
 import type { XaiReplayBinder } from "../xai/replay.ts";
 import { errorText, type Notifier } from "./notices.ts";
@@ -185,12 +187,16 @@ export interface HostRuntime {
   readonly xaiReplayUnbinds: Map<string, () => void>;
   /**
    * Replay unbinds detached by a session start that has not yet installed the
-   * new bindings (D8). They run after the new bindings exist, so a rebind of
-   * the same session keeps its captures (the binder's token check skips the
-   * release); `shutdown` runs them at once.
+   * new bindings (D8). They run after the new bindings exist (the binder's
+   * token check then keeps a renewed binding's projection); `shutdown` runs
+   * them at once. No unbind releases captures: see `releaseCaptures`.
    */
   readonly detachedUnbinds: (() => void)[];
-  /** Sessions bound in `serverSide`/`xaiServerSide`; released at shutdown. */
+  /**
+   * Sessions bound in `serverSide`/`xaiServerSide` by this registration;
+   * released at shutdown. Their wire captures are released at shutdown and
+   * once a session start binds a different session.
+   */
   readonly nativeSessions: Set<string>;
   /** Removes this registration's per-session native refresher. */
   unregisterNativeRefresher: (() => void) | undefined;
@@ -261,6 +267,7 @@ export function shutdown(rt: HostRuntime): void {
   detachReplayUnbinds(rt);
   runUnbinds(rt.detachedUnbinds.splice(0));
   for (const sessionId of rt.nativeSessions) {
+    releaseCaptures(sessionId);
     rt.serverSide.release(sessionId);
     rt.xaiServerSide.release(sessionId);
     // A released session starts fresh: no journal memo, no loss consent.
@@ -307,7 +314,26 @@ export function detachReplayUnbinds(rt: HostRuntime): (() => void)[] {
   return detached;
 }
 
-/** Run detached unbinds (each releases its session's captures unless a newer binding exists). */
+/** Run detached unbinds (each drops its projection and replay activation unless a newer binding exists). */
 export function runUnbinds(list: readonly (() => void)[]): void {
   for (const unbind of list) unbind();
+}
+
+/**
+ * Release one session's Anthropic and xAI wire captures (D8). Capture
+ * retention is separate from replay binding: an unbind never releases them,
+ * so the same session keeps its captures across every rebind (model change,
+ * mode off and on without a checkpoint); only `shutdown` and a session start
+ * for a different session (`releaseOtherSessionCaptures`) release them.
+ */
+export function releaseCaptures(sessionId: string): void {
+  releaseSessionCaptures(sessionId);
+  releaseXaiSessionCaptures(sessionId);
+}
+
+/** Release the captures of every session this registration bound except `current`. */
+export function releaseOtherSessionCaptures(rt: HostRuntime, current: string): void {
+  for (const sessionId of rt.nativeSessions) {
+    if (sessionId !== current) releaseCaptures(sessionId);
+  }
 }

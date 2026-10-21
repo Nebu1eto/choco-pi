@@ -221,14 +221,57 @@ test("other failures do not retry: a 5xx, an auth error, or an unrelated 4xx", a
   }
 });
 
-test("rejection heuristic: error.param path, item index, developer role or compaction_trigger text", () => {
+test("rejection heuristic: 400/422 with a JSON body naming the item index, developer or compaction_trigger", () => {
   const failure = (message: string, status = 400) =>
     ({ ok: false, reason: "stream-error", errorMessage: message, status }) as const;
+  const body = (error: Record<string, string>) => `400 ${JSON.stringify({ error })}`;
+  // A real item rejection: the param names exactly the appended item.
+  assert.equal(rejectsCompactionFocus(failure('{"error":{"param":"input[3]"}}'), 3), true);
   assert.equal(rejectsCompactionFocus(failure('{"error":{"param":"input[3].role"}}'), 3), true);
+  assert.equal(rejectsCompactionFocus(failure('{"error":{"param":"input[3]"}}', 422), 3), true);
   assert.equal(rejectsCompactionFocus(failure('{"error":{"param":"input[2]"}}'), 3), false);
-  assert.equal(rejectsCompactionFocus(failure("Invalid input[3]: bad item"), 3), true);
-  assert.equal(rejectsCompactionFocus(failure("role 'developer' is not allowed here"), 3), true);
-  assert.equal(rejectsCompactionFocus(failure("compaction_trigger must be last"), 3), true);
+  assert.equal(rejectsCompactionFocus(failure('{"error":{"param":"input[31]"}}'), 3), false);
+  assert.equal(
+    rejectsCompactionFocus(failure(body({ message: "role 'developer' is not allowed here" })), 3),
+    true,
+  );
+  assert.equal(
+    rejectsCompactionFocus(failure(body({ message: "compaction_trigger must be last" })), 3),
+    true,
+  );
+  assert.equal(
+    rejectsCompactionFocus(failure(body({ message: "bad", code: "invalid_developer" })), 3),
+    false,
+    "a longer identifier is not the token",
+  );
+  assert.equal(
+    rejectsCompactionFocus(failure(body({ message: "bad", code: "developer" })), 3),
+    true,
+  );
+  // No JSON body: plain text naming the item, the role or the trigger is not proof.
+  assert.equal(rejectsCompactionFocus(failure("Invalid input[3]: bad item"), 3), false);
+  assert.equal(rejectsCompactionFocus(failure("role 'developer' is not allowed here"), 3), false);
+  assert.equal(rejectsCompactionFocus(failure(body({ message: "context too long" })), 3), false);
+  // Reviewer probes: an HTML 404 page mentioning "developer", and transport text without a status.
+  assert.equal(
+    rejectsCompactionFocus(
+      failure("<html><body>404 Not Found. See the developer docs.</body></html>", 404),
+      3,
+    ),
+    false,
+  );
+  assert.equal(
+    rejectsCompactionFocus(
+      {
+        ok: false,
+        reason: "stream-error",
+        errorMessage: 'WebSocket closed: {"error":{"message":"developer role rejected"}}',
+      },
+      3,
+    ),
+    false,
+  );
+  assert.equal(rejectsCompactionFocus(failure(body({ message: "developer" }), 404), 3), false);
   assert.equal(rejectsCompactionFocus(failure("anything", 429), 3), false);
-  assert.equal(rejectsCompactionFocus(failure("developer"), undefined), false);
+  assert.equal(rejectsCompactionFocus(failure(body({ message: "developer" })), undefined), false);
 });

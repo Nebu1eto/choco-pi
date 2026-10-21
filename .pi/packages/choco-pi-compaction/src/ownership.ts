@@ -121,6 +121,12 @@ export interface CodexEligibility {
    * snapshot heuristic then applies. Absent counts as published.
    */
   readonly published?: boolean;
+  /**
+   * The answering registration's live `compaction.responsesCompaction` (the
+   * OpenAI row of the derived default lanes). Absent: unknown, the session
+   * snapshot applies.
+   */
+  readonly responsesCompaction?: boolean;
   isNativeCompactionOwner(model: CodexEligibilityModel): boolean;
   subscribe(listener: (revision: number) => void): () => void;
 }
@@ -132,6 +138,7 @@ const CodexEligibilitySchema = Type.Object(
     version: Type.Literal(1),
     revision: Type.Integer({ minimum: 0 }),
     published: Type.Optional(Type.Boolean()),
+    responsesCompaction: Type.Optional(Type.Boolean()),
     isNativeCompactionOwner: SlotFunction,
     subscribe: SlotFunction,
   },
@@ -146,6 +153,19 @@ function isCodexEligibility<T>(value: T): value is T & CodexEligibility {
 export function readCodexEligibility(): CodexEligibility | undefined {
   const found: unknown = Object.getOwnPropertyDescriptor(globalThis, CODEX_ELIGIBILITY_SLOT)?.value;
   return isCodexEligibility(found) ? found : undefined;
+}
+
+/**
+ * Codex's live `compaction.responsesCompaction` from the eligibility slot, or
+ * undefined when no Codex registration is published (no slot, a foreign
+ * value, every registration shut down, or a slot without the field). Owner
+ * restarts derive the OpenAI lane row from this before the session snapshot,
+ * which a `/codex` change made after session start leaves stale.
+ */
+export function publishedCodexResponsesCompaction(): boolean | undefined {
+  const slot = readCodexEligibility();
+  if (slot === undefined || slot.published === false) return undefined;
+  return slot.responsesCompaction;
 }
 
 /** Owner inputs beyond the Codex snapshot. */

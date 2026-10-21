@@ -23,7 +23,7 @@ import {
   type SettingsLocation,
   withDerivedDefaultLanes,
 } from "../background/settings.ts";
-import { isChildSession, mainOwnerKey } from "../ownership.ts";
+import { isChildSession, mainOwnerKey, publishedCodexResponsesCompaction } from "../ownership.ts";
 import type { CompactionSessionState } from "../session-state.ts";
 import { readXaiCompactionMode } from "../xai/mode.ts";
 import { findActiveXaiCheckpoint } from "../xai/replay.ts";
@@ -43,6 +43,7 @@ import {
   type MainOwner,
   REGISTRY_CONFLICT_NOTICE,
   registryUsable,
+  releaseOtherSessionCaptures,
   runCleanup,
   runUnbinds,
   shutdown,
@@ -92,10 +93,12 @@ interface MainOwnerIdentity {
  * session_start / model_select: replace the main owner. Invalidates the
  * previous owner synchronously, then rechecks the lifecycle after each await.
  * The previous replay bindings are detached synchronously but unbound only
- * after the new ones are installed (D8): a rebind of the same session keeps
- * its captures, a different session's are released. A start superseded
- * during its await leaves them detached for the start that completes (or
- * shutdown) to run.
+ * after the new ones are installed (D8). Capture retention is separate from
+ * replay binding: no unbind releases captures, so the same session keeps them
+ * across every rebind, even one that installs no binding (mode off, no
+ * checkpoint); a start for a different session releases the previous
+ * sessions' captures explicitly. A start superseded during its await leaves
+ * the unbinds detached for the start that completes (or shutdown) to run.
  */
 export async function startMainSession(
   rt: HostRuntime,
@@ -113,7 +116,11 @@ export async function startMainSession(
     const readMode = rt.options.anthropic?.readMode ?? readAnthropicCompactionMode;
     const readXaiMode = rt.options.xai?.readMode ?? readXaiCompactionMode;
     const readOpaqueHistory = rt.options.readOpaqueHistoryMode ?? readOpaqueHistoryMode;
-    const openaiServerSide = rt.readState().codexCompaction?.responsesCompaction ?? false;
+    // The live Codex value from the eligibility slot; the session-start snapshot only without one.
+    const openaiServerSide =
+      publishedCodexResponsesCompaction() ??
+      rt.readState().codexCompaction?.responsesCompaction ??
+      false;
     const [loaded, mode, xaiMode, opaqueHistory] = await Promise.all([
       loadBackgroundSettings(paths),
       readMode(session.location.agentDir),
@@ -139,6 +146,8 @@ export async function startMainSession(
   bindNativeSession(rt, session, settings, ctx);
   // The new bindings exist: the detached ones release only what no binding still holds.
   runUnbinds(rt.detachedUnbinds.splice(0));
+  // Captures follow the session, not the binding: only another session's are released.
+  releaseOtherSessionCaptures(rt, session.sessionId);
   // Inside a child the runner's bridge owns background attachment; no owner here.
   if (session.child) return;
   const state = bindParentSession(rt, ctx, session, start.childProvider);
@@ -288,8 +297,9 @@ interface ReplayTarget {
  * an Anthropic native checkpoint: a mode switch off keeps replaying it rather
  * than sending its summary text. The binding replaces the session's previous
  * one; the previous unbind runs afterwards (`startMainSession`), and the
- * binder's token check then keeps the captures. Unbound at the next session
- * start or model change for a binding that is not renewed, and at shutdown.
+ * binder's token check then keeps the projection. Unbound at the next session
+ * start or model change for a binding that is not renewed, and at shutdown;
+ * an unbind never releases the session's captures (`releaseCaptures`).
  */
 function bindAnthropicReplay(
   rt: HostRuntime,

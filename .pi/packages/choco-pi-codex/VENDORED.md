@@ -1143,3 +1143,35 @@ without it, notifies "Codex compaction ignored the /compact focus (server
 rejected it)" and journals `instructions-ignored`; a forwarded focus journals
 `instructions-forwarded`. The item is never part of the retained window.
 Server acceptance is not proven live. Test: `tests/compaction-focus-item.test.ts`.
+
+## 2026-10-21 choco-pi patch: opaque Codex checkpoint guard without native compaction
+
+When the newest checkpoint is an opaque Codex record and the Codex replay will
+not rewrite the current model's requests (`responsesCompaction` off, no
+background sidecar, voice-only, another provider or endpoint, an untrusted
+alias), the request is no longer sent with the placeholder summary.
+`extension/background-compaction.ts` decides it after every rebind and before
+each request, ahead of the eligibility and settings exits: on the Codex
+transport the request is refused through the prepared-payload hook (one
+notice and one `refuse` record per checkpoint); on any other transport a
+`codex-native` pending block is published for the compaction host's provider
+guard. `session_before_compact` without native compaction cancels with the
+exits text. `rewriteCodexCompactedProviderRequest` refuses when the newest
+opaque Codex checkpoint has no replayable match (runtime unresolved, another
+endpoint, no payload). Authorized loss sends and journals `loss` once. Tests:
+`tests/incompatible-checkpoint-policy.test.ts`.
+
+## 2026-10-21 choco-pi patch: eligibility slot publishes responsesCompaction
+
+The eligibility slot exposes the answering registration's live
+`compaction.responsesCompaction`, so a host owner restart derives the OpenAI
+lane row from it rather than the session-start snapshot. Test:
+`choco-pi-compaction/tests/ownership-eligibility-slot.test.ts`.
+
+## 2026-10-21 choco-pi patch: stricter /compact focus rejection
+
+The focus item is retried away only for an HTTP 400 or 422 with a parseable
+JSON error body whose `error.param` is `input[N]` (N the item's index) or
+whose `error.message`/`error.code` names `developer` or `compaction_trigger`
+as a whole token. Plain text, other statuses and status-less failures are
+ordinary failures. Test: `tests/compaction-focus-item.test.ts`.

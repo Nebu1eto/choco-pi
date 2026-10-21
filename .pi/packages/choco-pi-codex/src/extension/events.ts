@@ -86,6 +86,9 @@ const loadLocalVersionWarning = memoizedImport(() => import("../adapter/local-ve
 const loadPromptBuilder = memoizedImport(() => import("../prompt/build-system-prompt.ts"));
 const loadProviderRequest = memoizedImport(() => import("../adapter/provider-request.ts"));
 
+/** The API the Codex transport serves; its prepared-payload hook enforces recorded refusals. */
+const CODEX_TRANSPORT_API = "openai-codex-responses";
+
 function formatCompactionUsage(usage: NativeCompactionUsage): string {
   const ratio =
     usage.inputTokens > 0
@@ -225,12 +228,33 @@ export function registerCodexEvents(
   };
   sessions.onSessionExit((sessionId) => tracker.recordSessionFinished(sessionId));
   registerSessionReplacementEvents(pi, runtime);
+  /**
+   * Maintain the opaque-checkpoint guard after a rebind (no notice): a model
+   * outside the Codex transport gets the cross-provider block before its
+   * first request; the Codex transport is refused per request.
+   */
+  const guardOpaqueCheckpoint = async (
+    ctx: ExtensionContext,
+    ownerGeneration: number,
+  ): Promise<void> => {
+    const sessionId = ctx.sessionManager.getSessionId();
+    const codexTransport = ctx.model?.api === CODEX_TRANSPORT_API;
+    const { codexNativeReplayApplies } = await loadProviderRequest();
+    if (!background.isGenerationCurrent(ownerGeneration)) return;
+    background.opaqueRefusal(ctx, sessionId, {
+      served: codexNativeReplayApplies(ctx, background.requestState(state, sessionId)),
+      codexTransport,
+      site: "bind",
+    });
+  };
   /** Rebind background compaction for the generation begin() returned; false once superseded. */
   const refreshBackground = async (
     ctx: ExtensionContext,
     ownerGeneration: number,
   ): Promise<boolean> => {
     await background.refresh(ctx, ownerGeneration);
+    if (!background.isGenerationCurrent(ownerGeneration)) return false;
+    await guardOpaqueCheckpoint(ctx, ownerGeneration);
     return background.isGenerationCurrent(ownerGeneration);
   };
   /** Shared activation tail; false when voice-only or superseded, so no host prep follows. */
@@ -395,6 +419,12 @@ export function registerCodexEvents(
   pi.on("agent_start", async () => {
     runtime.cancelCacheKeepalive();
   });
+  // After the canonical-alias preflight settled this turn's trust: the first request's guard.
+  pi.on("before_agent_start", async (_event, ctx) => {
+    const fence = background.fence(ctx.sessionManager.getSessionId());
+    if (!background.isGenerationCurrent(fence.generation)) return;
+    await guardOpaqueCheckpoint(ctx, fence.generation);
+  });
   pi.on("turn_start", (_event, ctx) => {
     if (!isAdapterRuntime(resolveCodexRuntimePlan(ctx, state.config, state.executionMode))) return;
     if (isNativeSteerPending(ctx.sessionManager.getSessionId())) return;
@@ -417,6 +447,7 @@ export function registerCodexEvents(
   pi.on("before_provider_request", async (event, ctx) => {
     const sessionId = ctx.sessionManager.getSessionId();
     const fence = background.fence(sessionId);
+    const codexTransport = ctx.model?.api === CODEX_TRANSPORT_API;
     state.cwd = ctx.cwd;
     // Each request decides afresh; a refusal is enforced by the Codex transport.
     recordCodexRequestDecision(sessionId, undefined);
@@ -430,9 +461,21 @@ export function registerCodexEvents(
       recordCodexRequestDecision(sessionId, refusal);
       return undefined;
     }
-    const { rewriteCodexProviderRequest, CodexRequestRefusedError } = await loadProviderRequest();
+    const { rewriteCodexProviderRequest, CodexRequestRefusedError, codexNativeReplayApplies } =
+      await loadProviderRequest();
     if (background.isStale(fence)) return undefined;
     const requestState = background.requestState(state, sessionId);
+    // Before any eligibility exit: an opaque Codex checkpoint the replay will not
+    // rewrite for this model is refused (or blocked), never sent as its placeholder.
+    const opaqueRefusal = background.opaqueRefusal(ctx, sessionId, {
+      served: codexNativeReplayApplies(ctx, requestState),
+      codexTransport,
+      site: "request",
+    });
+    if (opaqueRefusal !== undefined) {
+      recordCodexRequestDecision(sessionId, opaqueRefusal);
+      return undefined;
+    }
     let rewritten: Awaited<ReturnType<typeof rewriteCodexProviderRequest>>;
     try {
       rewritten = await rewriteCodexProviderRequest(event.payload, ctx, requestState, pi);
@@ -455,8 +498,10 @@ export function registerCodexEvents(
     const fence = background.fence(sessionId);
     state.cwd = ctx.cwd;
     if (!resolveCodexRuntimePlanForState(ctx, state).nativeCompaction) {
-      background.journalOpaqueTrap(ctx, event);
-      return undefined;
+      // Codex does not compact natively here: an opaque Codex checkpoint must not be summarized.
+      return background.opaqueCompactionCancel(ctx, event) === undefined
+        ? undefined
+        : { cancel: true };
     }
     const adopting = await willAdoptCodexBackgroundCheckpoint(sessionId, event);
     if (background.isStale(fence) || adopting) return undefined;
@@ -509,6 +554,9 @@ export function registerCodexEvents(
     state.activeProviderSystemPrompt = postCompactionPrompt;
     runtime.resetTransportAfterCompaction(sessionId);
     await background.refresh(ctx, fence.generation);
+    if (background.isStale(fence)) return;
+    if (background.isGenerationCurrent(fence.generation))
+      await guardOpaqueCheckpoint(ctx, fence.generation);
     if (background.isStale(fence)) return;
     await (nativeCompaction
       ? runtime.startCompactionPrewarm(ctx)

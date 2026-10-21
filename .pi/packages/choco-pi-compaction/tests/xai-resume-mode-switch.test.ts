@@ -4,12 +4,14 @@
  * mode (the binding follows the committed checkpoint), journals the resume,
  * and guards `/compact` until a turn is captured; a provider rejection that
  * resolves after a model switch rebound the session is stale and never
- * disables server-side, while a fresh one on the new binding does.
+ * disables server-side, while a fresh one on the new binding does; the
+ * disabled checkpoint is then refused locally until the loss is authorized.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
 
 import { OPAQUE_GUARD_NOTICE } from "../src/opaque-checkpoint.ts";
+import { xaiTransportRefusals } from "../src/xai/capture.ts";
 import { isXaiDetails } from "../src/xai/details.ts";
 import type { XaiCompactionMode } from "../src/xai/mode.ts";
 import {
@@ -83,7 +85,7 @@ function rejection(): Response {
 }
 
 test(
-  "a rejection that resolves after a model switch rebound the session is stale; a fresh one disables",
+  "a stale rejection never disables; a fresh one disables, then the checkpoint is refused until loss is authorized",
   { timeout: 30_000 },
   async () => {
     let release: (() => void) | undefined;
@@ -134,8 +136,29 @@ test(
       assert.equal(disables().length, 1, "a fresh rejection on the new binding disables once");
       assert.equal(rig.notices.filter((notice) => /off for this session/u.test(notice)).length, 1);
       mode = "answer";
+      const before = foreground.sent.length;
       await rig.session.prompt("XR-AFTER");
-      assert.equal(carriesItem(foreground.sent.at(-1)), false, "replay is off");
+      assert.equal(foreground.sent.length, before, "unreplayable without consent: not sent");
+      assert.deepEqual(
+        xaiTransportRefusals(rig.manager.getSessionId()).map((refusal) => refusal.code),
+        ["disabled"],
+      );
+      const checkpointId = compactionsOf(rig.manager).at(-1)?.id ?? "";
+      assert.ok(
+        rig.notices.some((notice) => notice.includes(OPAQUE_GUARD_NOTICE("xai", checkpointId))),
+      );
+      assert.equal(
+        rig.records().filter((record) => record.event === "refuse" && record.reason === "disabled")
+          .length,
+        1,
+      );
+
+      await rig.session.prompt("/compaction-allow-loss");
+      await rig.session.prompt("XR-CONSENTED");
+      assert.equal(foreground.sent.length, before + 1, "sent with consent");
+      const sent = foreground.sent.at(-1);
+      assert.equal(carriesItem(sent), false, "replay is off");
+      assert.ok(sent?.text.includes("xAI server-side compaction checkpoint"), "placeholder only");
     } finally {
       await rig.dispose();
     }

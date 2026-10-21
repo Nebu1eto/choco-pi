@@ -18,12 +18,16 @@
  *
  * Opaque-history guard (D2) at the request boundary: when the checkpoint
  * cannot be replayed (its scope differs from the current model, the payload
- * cannot be rewritten, or the request is not an xAI transport call) and the
- * user has not authorized the loss, an xAI call is refused locally and any
- * other provider's request is published as a pending block for its capturing
- * transport (a `before_provider_request` handler cannot stop a request: the
- * host's runner catches throws and sends the payload anyway). Authorized loss
- * sends the placeholder and is journaled.
+ * cannot be rewritten, server-side is off for the session after a provider
+ * rejection, or the request is not an xAI transport call) and the user has
+ * not authorized the loss, an xAI call is refused locally. For any other
+ * provider a pending opaque block is published at `context` time, before the
+ * request is built, and the provider-boundary overlay
+ * (`installOpaqueBlockProvider`) refuses the request before it is sent (a
+ * `before_provider_request` handler cannot stop a request: the host's runner
+ * catches throws and sends the payload anyway). A non-xAI request that still
+ * reaches `before_provider_request` was not stopped and is journaled as an
+ * unauthorized send. Authorized loss sends the placeholder and is journaled.
  */
 import {
   type BeforeProviderRequestEvent,
@@ -41,7 +45,7 @@ import { normalizeBaseUrl } from "../anthropic/capability.ts";
 import { REASONS, ownedReasonOf } from "../background/lane-journal.ts";
 import type { AnnouncedRecord } from "../background-host/notices.ts";
 import { lossAuthorizedFor, OPAQUE_GUARD_NOTICE } from "../opaque-checkpoint.ts";
-import { clearOpaqueBlock, setOpaqueBlock } from "../opaque-guard.ts";
+import { clearOpaqueBlockOf, setOpaqueBlock } from "../opaque-guard.ts";
 import { isStaleContextError } from "../lifecycle.ts";
 import {
   bindXaiSessionProjection,
@@ -50,7 +54,6 @@ import {
   isInstructionItem,
   parseXaiWireBody,
   registerXaiCapture,
-  releaseXaiSessionCaptures,
   type XaiCapturingOptions,
   type XaiResponseObserver,
   type XaiTransportRequest,
@@ -241,7 +244,8 @@ export interface XaiReplayDiagnostic {
 
 /** Why the checkpoint cannot be replayed on this request. */
 /** `opaque-checkpoint`: the request is not an xAI transport call, so it cannot carry the item. */
-export type XaiReplayGuardCode = XaiReplayRefusalCode | "opaque-checkpoint";
+/** `disabled`: server-side is off for the session (a provider rejected the item), so it is never replayed. */
+export type XaiReplayGuardCode = XaiReplayRefusalCode | "opaque-checkpoint" | "disabled";
 
 /**
  * A request-boundary guard decision for an unreplayable checkpoint:
@@ -263,6 +267,13 @@ interface ReplayRewriteOptions {
   readonly onGuard?: (guard: XaiReplayGuard) => void;
   /** Session-scoped loss consent; defaults to the process-global consent slot. */
   readonly lossAuthorized?: (sessionId: string, entryId: string) => boolean;
+  /** Server-side is off for this session: the checkpoint is unreplayable on every request. */
+  readonly disabled?: boolean;
+}
+
+/** Clear only this lane's pending block; a Codex block on the same session is kept. */
+function clearXaiBlock(sessionId: string): void {
+  clearOpaqueBlockOf(sessionId, "xai-native");
 }
 
 /** The local refusal text: the exits, never a provider body. */
@@ -281,7 +292,7 @@ export function createXaiReplayRewriteHandler(options: ReplayRewriteOptions = {}
     const lookup = findActiveXaiCheckpoint(ctx.sessionManager.getBranch());
     const sessionId = ctx.sessionManager.getSessionId();
     if (lookup.kind === "none") {
-      clearOpaqueBlock(sessionId);
+      clearXaiBlock(sessionId);
       return undefined;
     }
     const call = currentXaiTransportCall();
@@ -291,16 +302,17 @@ export function createXaiReplayRewriteHandler(options: ReplayRewriteOptions = {}
     if (call === undefined) {
       // Another provider (or an uncaptured call): it cannot carry the xAI item.
       if (consent(sessionId, entryId)) {
-        clearOpaqueBlock(sessionId);
+        clearXaiBlock(sessionId);
         guard("loss", "opaque-checkpoint");
       } else {
+        // The provider overlay did not stop this request: it is sent with the placeholder.
         setOpaqueBlock(sessionId, { entryId, owner: "xai-native" });
         guard("blocked", "opaque-checkpoint");
       }
       return undefined;
     }
-    clearOpaqueBlock(sessionId);
-    const unreplayable = (code: XaiReplayRefusalCode): undefined => {
+    clearXaiBlock(sessionId);
+    const unreplayable = (code: XaiReplayGuardCode): undefined => {
       if (consent(sessionId, entryId)) {
         guard("loss", code);
         return undefined;
@@ -310,6 +322,7 @@ export function createXaiReplayRewriteHandler(options: ReplayRewriteOptions = {}
       guard("refused", code);
       return undefined;
     };
+    if (options.disabled === true) return unreplayable("disabled");
     if (lookup.kind === "invalid") return unreplayable("details-invalid");
     const checkpoint = lookup.checkpoint;
     if (!xaiCheckpointScopeMatches(checkpoint.details, ctx.model)) {
@@ -413,8 +426,9 @@ export interface XaiReplayBinderOptions {
 export interface XaiReplayBinder {
   /**
    * Capture and project `sessionId` and activate replay for it; returns the
-   * unbind. Rebinding a bound session replaces its projection source and keeps
-   * its captures; only the newest binding's unbind releases them.
+   * unbind. Rebinding a bound session replaces its projection source; no
+   * unbind releases captures (the host releases them at shutdown and when a
+   * session start binds a different session).
    */
   bindSession(sessionId: string, sessionManager: SessionSource): () => void;
   readonly active: () => boolean;
@@ -464,8 +478,7 @@ export function createXaiReplayBinder(
       if (bound.get(sessionId) !== token) return;
       bound.delete(sessionId);
       announced.delete(sessionId);
-      clearOpaqueBlock(sessionId);
-      releaseXaiSessionCaptures(sessionId);
+      clearXaiBlock(sessionId);
     };
   };
 
@@ -488,13 +501,12 @@ export function createXaiReplayBinder(
     const sessionId = ctx.sessionManager.getSessionId();
     const token = bound.get(sessionId);
     if (token === undefined) return undefined;
-    // Server-side is off for this session: the host's placeholder summary is sent instead.
-    if (options.session.isDisabled(sessionId)) {
-      clearOpaqueBlock(sessionId);
-      return undefined;
-    }
     const binding = { sessionId, token };
+    // Server-side off for this session (a provider rejected the item): the checkpoint is
+    // unreplayable, so the guard refuses the request unless the loss is authorized.
+    const disabled = options.session.isDisabled(sessionId);
     const rewritten = createXaiReplayRewriteHandler({
+      disabled,
       onDiagnostic: (diagnostic) => options.onDiagnostic(ctx, diagnostic),
       // A local transport refusal is reported, never a disable: only the provider's rejection disables.
       onRefused: (code) => onTransportRefused(ctx, binding, code),
@@ -506,6 +518,36 @@ export function createXaiReplayBinder(
     }
     return rewritten;
   };
+
+  const consent = options.lossAuthorized ?? lossAuthorizedFor;
+  /**
+   * Publish or clear this lane's pending block before a request is built: a
+   * request that cannot go through an xAI capture cannot carry the item, so
+   * without authorized loss the provider overlay must refuse it. A captured
+   * xAI request is guarded by its transport check instead (no block).
+   */
+  const publishBlock = (ctx: ExtensionContext): void => {
+    const sessionId = readSessionId(ctx);
+    if (sessionId === undefined || !bound.has(sessionId)) return;
+    const lookup = findActiveXaiCheckpoint(readBranch(ctx) ?? []);
+    const model = ctx.model;
+    const captured =
+      model !== undefined &&
+      model.api === "openai-responses" &&
+      options.providers.includes(model.provider);
+    if (lookup.kind === "none" || captured) {
+      clearXaiBlock(sessionId);
+      return;
+    }
+    const entryId = lookup.kind === "active" ? lookup.checkpoint.entryId : lookup.entryId;
+    if (consent(sessionId, entryId)) clearXaiBlock(sessionId);
+    else setOpaqueBlock(sessionId, { entryId, owner: "xai-native" });
+  };
+  pi.on("model_select", (_event, ctx) => publishBlock(ctx));
+  pi.on("context", (_event, ctx) => {
+    publishBlock(ctx);
+    return undefined;
+  });
 
   const onTransportRefused = (
     ctx: ExtensionContext,
@@ -568,6 +610,16 @@ function refusalCodeOf(code: string): XaiReplayRefusalCode | undefined {
   return isRefusalCode(code) ? code : undefined;
 }
 
+/** The session id, or undefined once the context outlived its session. */
+function readSessionId(ctx: ExtensionContext): string | undefined {
+  try {
+    return ctx.sessionManager.getSessionId();
+  } catch (cause) {
+    if (cause instanceof Error && isStaleContextError(cause)) return undefined;
+    throw cause;
+  }
+}
+
 /** The branch, or undefined once the context outlived its session. */
 function readBranch(ctx: ExtensionContext): SessionEntry[] | undefined {
   try {
@@ -610,7 +662,7 @@ function announceGuard(
     text = `${GUARD_PREFIX}: request not sent (${code}); ${exits}`;
     record = { ...base, event: "refuse", reason: ownedReasonOf(code) } as const;
   } else if (kind === "blocked") {
-    text = `${GUARD_PREFIX}: a request to a model other than the checkpoint's xAI model cannot replay its history; it is refused where its transport supports that, otherwise only the placeholder summary is sent. ${exits}`;
+    text = `${GUARD_PREFIX}: a request to a model other than the checkpoint's xAI model could not be stopped before it was sent; only the placeholder summary was sent. ${exits}`;
     record = {
       ...base,
       event: "loss",

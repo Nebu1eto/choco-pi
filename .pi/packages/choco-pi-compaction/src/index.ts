@@ -10,6 +10,7 @@ import {
 import { isStaleContextError } from "./lifecycle.ts";
 import {
   guardBeforeLocalSummary,
+  installOpaqueBlockProvider,
   type OpaqueGuardAnnounce,
   opaqueLossAuthorized,
 } from "./opaque-guard.ts";
@@ -185,6 +186,9 @@ export default function registerCompaction(
       opaqueLossAuthorized(background.modes(), sessionId, entryId),
   });
   const announceGuard = guardAnnouncer(pi);
+  // Registered after the background handlers, so the overlay wraps the capture transports
+  // that a session start registers; every `context` event re-checks it before a request.
+  installOpaqueBlockProvider(pi, { modes: () => background.modes(), announce: announceGuard });
   pi.on("session_before_compact", async (event, ctx) => {
     // A ready, still-valid background candidate replaces the summarizer.
     const adopted = await background.beforeCompact(event, ctx);

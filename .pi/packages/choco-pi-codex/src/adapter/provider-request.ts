@@ -124,6 +124,23 @@ function hasCanonicalAliasEndpoint(ctx: ExtensionContext, state: AdapterState): 
   return endpoint?.modelKey === canonicalCodexAliasModelKey(model) && endpoint.trusted;
 }
 
+/**
+ * Whether a normal request for the current model reaches the native replay
+ * (`rewriteCodexCompactedProviderRequest`): the same gates as
+ * {@link rewriteCodexProviderRequest} up to it. When false, an opaque Codex
+ * checkpoint would go out as its placeholder summary, so the caller guards it.
+ */
+export function codexNativeReplayApplies(ctx: ExtensionContext, state: AdapterState): boolean {
+  if (state.config.voiceFeaturesOnly || ctx.model === undefined) return false;
+  const plan = resolveCodexRuntimePlanForState(ctx, state);
+  return (
+    isAdapterRuntime(plan) &&
+    (plan.effectiveOpenAICodex || isResponsesContext(ctx)) &&
+    plan.nativeCompaction &&
+    hasCanonicalAliasEndpoint(ctx, state)
+  );
+}
+
 export function rewriteCodexProviderHeaders(
   headers: ProviderHeaders,
   ctx: ExtensionContext,

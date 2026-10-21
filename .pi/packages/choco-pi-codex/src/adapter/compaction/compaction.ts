@@ -37,6 +37,7 @@ import {
 import {
   lossAuthorizedFor,
   OPAQUE_GUARD_NOTICE,
+  opaqueCheckpointOf,
 } from "../../../../choco-pi-compaction/src/opaque-checkpoint.ts";
 import { codexBackgroundAccountScope } from "./background-v2.ts";
 import {
@@ -720,6 +721,9 @@ function refuseOrLose(
  * that account, the foreground lenient path); another account, or a replay
  * that cannot be rebuilt, refuses the request with
  * {@link CodexRequestRefusedError} unless its loss is authorized.
+ * So does a newest opaque Codex checkpoint this runtime cannot replay at all
+ * (another provider, api or endpoint, or no native runtime): it is never sent
+ * as its placeholder summary.
  */
 export async function rewriteCodexCompactedProviderRequest(
   payload: BoundaryValue,
@@ -730,12 +734,22 @@ export async function rewriteCodexCompactedProviderRequest(
   const plan = resolveCodexRuntimePlanForState(ctx, state);
   if (!plan.nativeCompaction || (!plan.effectiveOpenAICodex && !isResponsesContext(ctx)))
     return undefined;
+  // Snapshot before the first await: the request belongs to the branch as it is now.
+  const opaque = opaqueCheckpointOf(ctx.sessionManager.getBranch());
+  const unreplayable = (detail: string): undefined =>
+    opaque?.owner === "codex-native"
+      ? refuseOrLose(pi, ctx, opaque.entryId, {
+          message: OPAQUE_GUARD_NOTICE("codex", opaque.entryId),
+          reason: "opaque-checkpoint",
+          detail,
+        })
+      : undefined;
   const resolution = await resolveNativeCompactionEnvironment(
     ctx,
     { enabled: true, supportedProviders: getSupportedNativeCompactionProviders(state) },
     payload,
   );
-  if (!resolution.ok) return undefined;
+  if (!resolution.ok) return unreplayable(resolution.reason);
   const runtime = resolution.runtime;
   const branchEntries = ctx.sessionManager.getBranch();
   const latestNativeCompactionIndex = findLatestNativeCompactionEntryIndex(branchEntries, {
@@ -743,10 +757,13 @@ export async function rewriteCodexCompactedProviderRequest(
     api: runtime.api,
     baseUrl: runtime.baseUrl,
   });
-  if (latestNativeCompactionIndex === undefined) return undefined;
-  if (!runtime.payload) return undefined;
+  if (latestNativeCompactionIndex === undefined) return unreplayable("endpoint");
+  if (!runtime.payload) return unreplayable("payload");
   // SAFETY: findLatestNativeCompactionEntryIndex returns an in-bounds entry accepted by isNativeCompactionEntry.
   const compactionEntry = branchEntries[latestNativeCompactionIndex]! as NativeCompactionEntry;
+  // An older checkpoint of this endpoint is not the newest opaque one: that one cannot be replayed here.
+  if (opaque?.owner === "codex-native" && compactionEntry.id !== opaque.entryId)
+    return unreplayable("endpoint");
   const accountScope = runtimeAccountScope(runtime);
   if (
     accountScope !== undefined &&

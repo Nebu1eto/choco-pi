@@ -23,7 +23,12 @@ import {
   lossAuthorizedFor,
   OPAQUE_GUARD_NOTICE,
   opaqueCheckpointOf,
+  opaqueLaneOf,
 } from "../../../choco-pi-compaction/src/opaque-checkpoint.ts";
+import {
+  clearOpaqueBlockOf,
+  setOpaqueBlock,
+} from "../../../choco-pi-compaction/src/opaque-block.ts";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type {
   Adoption,
@@ -698,6 +703,7 @@ function stopIntegration(state: IntegrationState, sessionId?: string): void {
     state.incompatibilityNotices.delete(slot.sessionId);
     state.transitions.reset(slot.sessionId);
     recordCodexRequestDecision(slot.sessionId, undefined);
+    clearCodexOpaqueBlock(slot.sessionId);
   }
 }
 
@@ -899,6 +905,139 @@ function incompatibleRefusal(
 }
 
 type LatestNativeCompaction = ReturnType<typeof resolveLatestNativeCompactionEntry>;
+
+// ---------------------------------------------------------------------------
+// Opaque Codex checkpoint guard
+// ---------------------------------------------------------------------------
+
+/** How the current model's requests relate to the session's newest opaque Codex checkpoint. */
+export interface CodexOpaqueGuardInput {
+  /** The Codex native replay rewrites this model's requests (it replays or refuses itself). */
+  readonly served: boolean;
+  /** The model is served by the Codex transport, whose prepared-payload hook enforces refusals. */
+  readonly codexTransport: boolean;
+  /**
+   * `request`: decide one outgoing request (refusal text, notice, journal).
+   * `bind`: a session start, model or tree change, or compaction rebound the
+   * session: only the cross-provider block is maintained, nothing is shown.
+   */
+  readonly site: "request" | "bind";
+}
+
+/** Withdraw this package's pending block for the session; another owner's block stays. */
+function clearCodexOpaqueBlock(sessionId: string): void {
+  clearOpaqueBlockOf(sessionId, "codex-native");
+}
+
+/** Announce and journal (once per session and checkpoint) that a request drops the checkpoint's history. */
+function announceOpaqueLoss(
+  state: IntegrationState,
+  ctx: CodexBackgroundContext,
+  sessionId: string,
+  entryId: string,
+): void {
+  const noticed = notifyOnce(state, ctx, sessionId, `loss:${entryId}`, {
+    text: `Codex checkpoint ${entryId} cannot be replayed; its history is dropped (loss authorized).`,
+    level: "warning",
+  });
+  journalOnce(state, ctx, sessionId, {
+    route: "replay",
+    event: "loss",
+    from: opaqueLaneOf("codex-native"),
+    reason: "loss",
+    checkpointEntryId: entryId,
+    noticeAttempted: noticed,
+  });
+}
+
+/**
+ * The opaque-history guard for the session's newest checkpoint when it is an
+ * opaque Codex record that the Codex replay will not rewrite for the current
+ * model (native compaction off, voice-only, another provider or endpoint, an
+ * untrusted alias): such a request would carry only the placeholder summary.
+ * Evaluated before every eligibility and settings exit, so a session without
+ * native compaction or without a background sidecar is still protected.
+ *
+ * - Loss authorized: no refusal; at a request the loss is shown and journaled once.
+ * - Codex transport: the refusal text for this request (the caller records it
+ *   for {@link assertCodexRequestAllowed}); shown and journaled once per checkpoint.
+ * - Any other transport: a pending `codex-native` block, which the compaction
+ *   host's provider guard enforces (and announces) before the request is sent.
+ */
+function opaqueCheckpointRefusal(
+  state: IntegrationState,
+  ctx: CodexBackgroundContext,
+  sessionId: string,
+  input: CodexOpaqueGuardInput,
+): string | undefined {
+  const opaque = opaqueCheckpointOf(ctx.sessionManager.getBranch());
+  if (opaque?.owner !== "codex-native" || input.served) {
+    clearCodexOpaqueBlock(sessionId);
+    return undefined;
+  }
+  const { entryId } = opaque;
+  if (lossAuthorizedFor(sessionId, entryId)) {
+    clearCodexOpaqueBlock(sessionId);
+    if (input.site === "request") announceOpaqueLoss(state, ctx, sessionId, entryId);
+    return undefined;
+  }
+  if (!input.codexTransport) {
+    setOpaqueBlock(sessionId, { entryId, owner: "codex-native" });
+    return undefined;
+  }
+  clearCodexOpaqueBlock(sessionId);
+  if (input.site !== "request") return undefined;
+  const text = OPAQUE_GUARD_NOTICE("codex", entryId);
+  const noticed = notifyOnce(state, ctx, sessionId, `opaque:${entryId}`, { text, level: "error" });
+  journalOnce(state, ctx, sessionId, {
+    route: "replay",
+    event: "refuse",
+    from: opaqueLaneOf("codex-native"),
+    reason: "opaque-checkpoint",
+    checkpointEntryId: entryId,
+    noticeAttempted: noticed,
+  });
+  return text;
+}
+
+/**
+ * The cancel text for a host compaction over an opaque Codex checkpoint that
+ * Codex does not compact natively for this model, or undefined (no such
+ * checkpoint, or its loss is authorized: the host's summarizer then
+ * announces the loss). Every cancel is shown and journaled (policy `always`).
+ */
+function opaqueCompactionCancel(
+  state: IntegrationState,
+  ctx: CodexBackgroundContext,
+  event: Pick<SessionBeforeCompactEvent, "reason">,
+): string | undefined {
+  const sessionId = ctx.sessionManager.getSessionId();
+  const opaque = opaqueCheckpointOf(ctx.sessionManager.getBranch());
+  if (opaque?.owner !== "codex-native" || lossAuthorizedFor(sessionId, opaque.entryId))
+    return undefined;
+  const text = OPAQUE_GUARD_NOTICE("codex", opaque.entryId);
+  ctx.ui.notify(text, "error");
+  const append = state.options.append;
+  if (append !== undefined)
+    appendLaneRecord(
+      append,
+      {
+        at: Date.now(),
+        sessionId,
+        provider: "codex",
+        route: codexLaneRoute(event.reason),
+        event: "cancel",
+        from: opaqueLaneOf("codex-native"),
+        to: "local",
+        reason: "opaque-checkpoint",
+        checkpointEntryId: opaque.entryId,
+        noticeAttempted: true,
+      },
+      (message) => ctx.ui.notify(message, "warning"),
+    );
+  return text;
+}
+
 interface CommittedBackgroundCheckpoint {
   readonly entryId: string;
   readonly index: number;
@@ -1234,26 +1373,23 @@ export function createCodexBackgroundIntegration(options: CodexBackgroundIntegra
       for (const slot of state.sessions.values()) slot.settingsSnapshot = undefined;
     },
     /**
-     * Journal the exit-before-native trap: Codex does not compact natively
-     * for this model, yet the latest checkpoint is an opaque Codex one; the
-     * compaction host's opaque guard cancels, and this names the owner.
+     * The opaque Codex checkpoint guard for a request or a rebind; the
+     * refusal text of a refused Codex-transport request, else undefined.
      */
-    journalOpaqueTrap: (
+    opaqueRefusal: (
+      ctx: CodexBackgroundContext,
+      sessionId: string,
+      input: CodexOpaqueGuardInput,
+    ): string | undefined => opaqueCheckpointRefusal(state, ctx, sessionId, input),
+    /**
+     * Codex does not compact natively for this model, yet the newest
+     * checkpoint is an opaque Codex one: the cancel text (the caller answers
+     * `{ cancel: true }`), or undefined when there is none or loss is authorized.
+     */
+    opaqueCompactionCancel: (
       ctx: CodexBackgroundContext,
       event: Pick<SessionBeforeCompactEvent, "reason">,
-    ): void => {
-      const sessionId = ctx.sessionManager.getSessionId();
-      const opaque = opaqueCheckpointOf(ctx.sessionManager.getBranch());
-      if (opaque?.owner !== "codex-native" || lossAuthorizedFor(sessionId, opaque.entryId)) return;
-      journalOnce(state, ctx, sessionId, {
-        route: codexLaneRoute(event.reason),
-        event: "cancel",
-        from: "codex-foreground",
-        reason: "opaque-checkpoint",
-        checkpointEntryId: opaque.entryId,
-        noticeAttempted: false,
-      });
-    },
+    ): string | undefined => opaqueCompactionCancel(state, ctx, event),
     invalidateReplay: (sessionId: string) => {
       const slot = state.sessions.get(sessionId);
       if (slot !== undefined) slot.replayEpoch = undefined;

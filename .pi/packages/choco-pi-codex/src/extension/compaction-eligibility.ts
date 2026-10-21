@@ -2,8 +2,9 @@
  * Live Codex native-compaction eligibility for the compaction host (D12).
  *
  * The process-global slot `Symbol.for("choco-pi.codex-compaction-eligibility")`
- * holds one frozen object `{ version: 1, revision, isNativeCompactionOwner,
- * subscribe }` (read by `choco-pi-compaction` `ownership.ts`). Each Codex
+ * holds one frozen object `{ version: 1, revision, published,
+ * responsesCompaction, isNativeCompactionOwner, subscribe }` (read by
+ * `choco-pi-compaction` `ownership.ts`). Each Codex
  * registration adds its predicate as a source; the oldest live source answers
  * (the main session's registration; a child registration that shares the
  * process only answers once it is the last one). `revision` is a process
@@ -25,7 +26,11 @@ import {
 import { resolveNativeCompactionEligibilityForState } from "../adapter/activation/runtime-plan.ts";
 import type { AdapterState } from "../adapter/activation/state.ts";
 
-type EligibilitySource = (model: CodexEligibilityModel) => boolean;
+/** One registration's predicate and the live OpenAI row it reads. */
+interface EligibilitySource {
+  readonly owns: (model: CodexEligibilityModel) => boolean;
+  readonly responsesCompaction: () => boolean;
+}
 type EligibilityListener = (revision: number) => void;
 
 /** The slot plus the publisher methods every Codex module instance shares. */
@@ -83,7 +88,11 @@ function createSlot(): PublishedEligibilitySlot {
     get published() {
       return sources.length > 0;
     },
-    isNativeCompactionOwner: (model: CodexEligibilityModel) => sources[0]?.(model) === true,
+    /** The answering source's `compaction.responsesCompaction`; false while none is published. */
+    get responsesCompaction() {
+      return sources[0]?.responsesCompaction() === true;
+    },
+    isNativeCompactionOwner: (model: CodexEligibilityModel) => sources[0]?.owns(model) === true,
     subscribe: (listener: EligibilityListener) => {
       listeners.add(listener);
       return () => {
@@ -172,8 +181,10 @@ export function createCodexCompactionEligibility(
   let inputs = eligibilityInputs(state(), aliasInput());
   let remove: (() => void) | undefined;
   const local = new Set<() => void>();
-  const source: EligibilitySource = (model) =>
-    resolveNativeCompactionEligibilityForState(model, state());
+  const source: EligibilitySource = {
+    owns: (model) => resolveNativeCompactionEligibilityForState(model, state()),
+    responsesCompaction: () => state().config.compaction.responsesCompaction,
+  };
   return {
     publish: () => {
       remove ??= processSlot()?.addSource(source);

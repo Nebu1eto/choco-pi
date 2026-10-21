@@ -12,13 +12,14 @@ import {
   CODEX_ELIGIBILITY_SLOT,
   type CodexEligibility,
   type CodexEligibilityModel,
+  publishedCodexResponsesCompaction,
   readCodexEligibility,
 } from "../ownership.ts";
 import { startMainSession } from "./main-session.ts";
 import { errorText } from "./notices.ts";
 import type { HostRuntime } from "./runtime.ts";
 
-export { CODEX_ELIGIBILITY_SLOT, readCodexEligibility };
+export { CODEX_ELIGIBILITY_SLOT, publishedCodexResponsesCompaction, readCodexEligibility };
 export type { CodexEligibility, CodexEligibilityModel };
 
 /** The current owner model's native decision, keyed by the model it was taken for. */

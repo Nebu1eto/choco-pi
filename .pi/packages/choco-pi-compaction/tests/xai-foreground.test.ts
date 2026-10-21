@@ -39,6 +39,7 @@ import { Value } from "typebox/value";
 
 import { buildBackgroundCompactionPreferencesSections } from "../../../extensions/lib/background-compaction-preferences.ts";
 import registerCompaction from "../src/index.ts";
+import { laneRecordsOf } from "../src/background/lane-journal.ts";
 import {
   refreshSessionNativeState,
   sessionNativeRefreshers,
@@ -501,7 +502,7 @@ test(
 );
 
 test(
-  "an HTTP 4xx falls back to the local summarizer once, then cools down without requests",
+  "an HTTP 4xx falls back to the local summarizer, then cools down without requests; each manual action is told",
   { timeout: 30_000 },
   async () => {
     const foreground = textForeground();
@@ -522,7 +523,79 @@ test(
       await rig.session.prompt("XG-AGAIN");
       await rig.session.compact();
       assert.equal(lane.sent.length, 1, "the cooled-down scope sends nothing");
-      assert.equal(noticesOf(rig).length, 1, "later fallbacks are silent");
+      assert.equal(noticesOf(rig).length, 2, "every manual fallback is told");
+      const fallbacks = laneRecordsOf(rig.manager.getEntries()).filter(
+        (record) => record.event === "fallback" && record.route === "manual",
+      );
+      assert.equal(fallbacks.length, 2, "one record per manual action");
+    } finally {
+      await rig.dispose();
+    }
+  },
+);
+
+test(
+  "two manual no-capture compactions: one notice and one record each",
+  { timeout: 30_000 },
+  async () => {
+    const foreground = textForeground();
+    const lane = recordingFetch(() => compactResponse());
+    const rig = await createRig({ foreground, lane });
+    const sessionId = rig.manager.getSessionId();
+    try {
+      const counts: number[] = [];
+      for (const prompt of ["XG-ONE", "XG-TWO"]) {
+        await rig.session.prompt(prompt);
+        releaseXaiSessionCaptures(sessionId);
+        const before = noticesOf(rig).length;
+        await rig.session.compact();
+        counts.push(noticesOf(rig).length - before);
+      }
+      assert.deepEqual(counts, [1, 1]);
+      assert.equal(lane.sent.length, 0, "no capture, no compact request");
+      const fallbacks = laneRecordsOf(rig.manager.getEntries()).filter(
+        (record) =>
+          record.event === "fallback" &&
+          record.route === "manual" &&
+          record.reason === "no-capture",
+      );
+      assert.equal(fallbacks.length, 2);
+      assert.ok(fallbacks.every((record) => record.noticeAttempted));
+    } finally {
+      await rig.dispose();
+    }
+  },
+);
+
+test(
+  "a successful /compact with a focus journals instructions-forwarded silently",
+  { timeout: 30_000 },
+  async () => {
+    const foreground = textForeground();
+    const lane = recordingFetch(() => compactResponse());
+    const rig = await createRig({ foreground, lane });
+    try {
+      await rig.session.prompt("XG-GO");
+      await rig.session.compact("keep decisions");
+      assert.ok(isXaiDetails(compactions(rig.manager)[0]?.details), "native success");
+      const forwarded = laneRecordsOf(rig.manager.getEntries()).filter(
+        (record) => record.detail === "instructions-forwarded",
+      );
+      assert.equal(forwarded.length, 1);
+      assert.equal(forwarded[0]?.noticeAttempted, false, "silent");
+      assert.equal(forwarded[0]?.route, "manual");
+      assert.equal(forwarded[0]?.provider, "xai");
+      assert.deepEqual(noticesOf(rig), []);
+
+      await rig.session.prompt("XG-NEXT");
+      await rig.session.compact();
+      assert.equal(
+        laneRecordsOf(rig.manager.getEntries()).filter(
+          (record) => record.detail === "instructions-forwarded",
+        ).length,
+        1,
+        "no record without a focus",
+      );
     } finally {
       await rig.dispose();
     }
@@ -600,7 +673,7 @@ test(
 );
 
 test(
-  "a provider 400 naming the compaction item turns server-side off for the session",
+  "a provider 400 naming the compaction item turns server-side off; the checkpoint is then refused until loss is authorized",
   { timeout: 30_000 },
   async () => {
     let reject = false;
@@ -622,8 +695,28 @@ test(
       assert.equal(noticesOf(rig).length, 1);
       assert.match(noticesOf(rig)[0] ?? "", /provider-400/u);
       reject = false;
+      const before = foreground.sent.length;
       await rig.session.prompt("XG-AFTER");
-      assert.equal(foreground.sent.at(-1)?.text.includes(ITEM.encrypted_content), false);
+      assert.equal(foreground.sent.length, before, "refused locally: nothing transmitted");
+      assert.deepEqual(
+        xaiTransportRefusals(rig.manager.getSessionId()).map((refusal) => refusal.code),
+        ["disabled"],
+      );
+      const refused = laneRecordsOf(rig.manager.getEntries()).filter(
+        (record) => record.event === "refuse" && record.reason === "disabled",
+      );
+      assert.equal(refused.length, 1);
+
+      await rig.session.prompt("/compaction-allow-loss");
+      await rig.session.prompt("XG-WITH-CONSENT");
+      assert.equal(foreground.sent.length, before + 1, "sent once the loss is authorized");
+      const sent = foreground.sent.at(-1);
+      assert.equal(sent?.text.includes(ITEM.encrypted_content), false, "no item");
+      assert.ok(sent?.text.includes("xAI server-side compaction checkpoint"), "placeholder");
+      const losses = laneRecordsOf(rig.manager.getEntries()).filter(
+        (record) => record.event === "loss" && record.detail === "disabled",
+      );
+      assert.equal(losses.length, 1);
     } finally {
       await rig.dispose();
     }

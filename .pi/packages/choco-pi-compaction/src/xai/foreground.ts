@@ -4,8 +4,10 @@
  * Answers the host's own `session_before_compact` for an admitted Grok model
  * with an opaque compaction item from `POST /v1/responses/compact`, cut at the
  * latest legal wire position at or before the host's cut. A failure returns
- * undefined so the local summarizer answers the same compaction; the first
- * fallback in a session is reported once. A cancelled or auth-failed attempt
+ * undefined so the local summarizer answers the same compaction; a manual
+ * (`/compact`) fallback is reported every time, an automatic one once per
+ * session and transition. A successful attempt that forwarded a `/compact`
+ * focus is journaled silently (`instructions-forwarded`). A cancelled or auth-failed attempt
  * instead answers `{ cancel: true }` so the host reports the failure
  * (`foreground-failure.ts`); a combination still cooling down after an auth
  * failure (`auth-cooling`, the gate's verdict, no credential read failed now)
@@ -174,6 +176,27 @@ function fallbackRecord(
 
 type FallbackAttempt = Extract<Attempt, { readonly kind: "fallback" }>;
 
+/** A native compaction that carried the user's `/compact` focus to xAI: journaled silently. */
+function journalForwarded(deps: XaiForegroundDeps, run: ForegroundRun): void {
+  report(
+    deps,
+    run.ctx,
+    {
+      at: (deps.now ?? Date.now)(),
+      sessionId: run.sessionId,
+      provider: "xai",
+      route: run.route,
+      event: "yield",
+      from: "xai-native",
+      to: "xai-native",
+      reason: REASONS.instructionsForwarded,
+      detail: REASONS.instructionsForwarded,
+    },
+    "the /compact focus was forwarded",
+    "silent",
+  );
+}
+
 /** `session_before_compact` handler; undefined means the local summarizer answers. */
 export function createXaiForegroundCompactHandler(
   deps: XaiForegroundDeps,
@@ -189,7 +212,10 @@ export function createXaiForegroundCompactHandler(
     const run = snapshotRun(deps, event, ctx, resumed);
     if (run === undefined) return undefined;
     const attempt = await attemptCompaction(deps, run);
-    if (attempt.kind === "compacted") return attempt.result;
+    if (attempt.kind === "compacted") {
+      if (hasInstructions(run.instructions)) journalForwarded(deps, run);
+      return attempt.result;
+    }
     if (attempt.kind !== "fallback" || !isCurrent(deps, run)) return undefined;
     const reason = attempt.reason;
     const record = fallbackRecord(deps, run, attempt);
@@ -209,18 +235,18 @@ export function createXaiForegroundCompactHandler(
       );
       return undefined;
     }
-    const claimed = deps.session.claimFallbackNotice(run.sessionId);
+    const message = `not used for this compaction (${reason}); the local summarizer answers instead.`;
+    if (record.route === "manual") {
+      // A user action is answered every time: one notice and one record per `/compact`.
+      report(deps, ctx, { ...record, event: "fallback" }, message, "always");
+      return undefined;
+    }
+    // Automatic routes: once per session and transition (D4).
     const key = [run.sessionId, record.route, record.reason, record.detail ?? ""].join("|");
-    if (!claimed && journaled.has(key)) return undefined;
+    if (journaled.has(key)) return undefined;
     if (journaled.size >= MAX_JOURNALED_FALLBACKS) journaled.clear();
     journaled.add(key);
-    report(
-      deps,
-      ctx,
-      { ...record, event: "fallback" },
-      `not used for this compaction (${reason}); the local summarizer answers instead. Later fallbacks in this session are silent.`,
-      claimed ? "always" : "silent",
-    );
+    report(deps, ctx, { ...record, event: "fallback" }, message, "per-session-reason");
     return undefined;
   };
 }

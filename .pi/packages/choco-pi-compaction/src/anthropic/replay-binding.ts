@@ -24,7 +24,6 @@ import {
   type CapturingProviderOptions,
   currentTransportCall,
   registerAnthropicCapture,
-  releaseSessionCaptures,
   type TransportResponseObserver,
   type WireBody,
 } from "./capture.ts";
@@ -97,8 +96,11 @@ export interface AnthropicReplayBinderOptions {
 export interface AnthropicReplayBinder {
   /**
    * Capture and project `sessionId` and activate replay for it; returns the
-   * unbind. Binding an already bound session replaces its projection source
-   * and keeps its captures; only the newest binding's unbind releases them.
+   * unbind. Binding an already bound session replaces its projection source.
+   * An unbind never releases the session's captures (D8): a binding that is
+   * not renewed (mode off, no checkpoint) keeps them for the next binding of
+   * the same session; the host releases them at shutdown and when the session
+   * changes (`releaseSessionCaptures`).
    */
   bindSession(sessionId: string, sessionManager: SessionSource): () => void;
   /** Whether any session is bound (replay active). */
@@ -135,10 +137,9 @@ export function createAnthropicReplayBinder(
     );
     return () => {
       unbind();
-      // A newer binding of the same session keeps its projection and captures.
+      // A newer binding of the same session keeps its projection; captures are the host's to release.
       if (bound.get(sessionId) !== token) return;
       bound.delete(sessionId);
-      releaseSessionCaptures(sessionId);
     };
   };
 

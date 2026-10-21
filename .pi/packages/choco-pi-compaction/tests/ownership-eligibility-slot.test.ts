@@ -29,10 +29,13 @@ import {
   CODEX_ELIGIBILITY_SLOT,
   type CodexEligibilityModel,
   mainOwnerKey,
+  publishedCodexResponsesCompaction,
   readCodexEligibility,
   resolveOwner,
 } from "../src/ownership.ts";
 import { createHost } from "./host-boundary-fixture.ts";
+
+const AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
 
 const CODEX_MODEL: Model<Api> = {
   id: "gpt-6-luna",
@@ -57,11 +60,13 @@ const RESPONSES_MODEL: Model<Api> = {
 /** A fake Codex slot: `native` decides, `bump` advances the revision and notifies. */
 interface SlotOptions {
   readonly published?: boolean;
+  /** Codex's live `compaction.responsesCompaction`; absent: the field is not published. */
+  readonly responsesCompaction?: boolean;
 }
 
 function installSlot(native: (model: CodexEligibilityModel) => boolean, options: SlotOptions = {}) {
   const listeners = new Set<(revision: number) => void>();
-  const control = { native, revision: 0 };
+  const control = { native, revision: 0, responsesCompaction: options.responsesCompaction };
   const slot = {
     version: 1,
     get revision() {
@@ -77,6 +82,11 @@ function installSlot(native: (model: CodexEligibilityModel) => boolean, options:
   };
   if (options.published !== undefined)
     Object.defineProperty(slot, "published", { value: options.published, enumerable: true });
+  if (options.responsesCompaction !== undefined)
+    Object.defineProperty(slot, "responsesCompaction", {
+      get: () => control.responsesCompaction,
+      enumerable: true,
+    });
   Object.defineProperty(globalThis, CODEX_ELIGIBILITY_SLOT, { value: slot, configurable: true });
   return {
     control,
@@ -142,6 +152,29 @@ test("slot with nothing published: the heuristic decides", () => {
   assert.equal(resolveOwner({ model: CODEX_MODEL }, ON), "codex-native");
 });
 
+test("publishedCodexResponsesCompaction: the live slot value, undefined when unknown", () => {
+  assert.equal(publishedCodexResponsesCompaction(), undefined, "no slot");
+  installSlot(() => false);
+  assert.equal(publishedCodexResponsesCompaction(), undefined, "a slot without the field");
+  const slot = installSlot(() => false, { responsesCompaction: false });
+  assert.equal(publishedCodexResponsesCompaction(), false);
+  slot.control.responsesCompaction = true;
+  assert.equal(publishedCodexResponsesCompaction(), true);
+  installSlot(() => false, { published: false, responsesCompaction: true });
+  assert.equal(publishedCodexResponsesCompaction(), undefined, "nothing published");
+  Object.defineProperty(globalThis, CODEX_ELIGIBILITY_SLOT, {
+    value: {
+      version: 1,
+      revision: 0,
+      responsesCompaction: "yes",
+      isNativeCompactionOwner: () => true,
+      subscribe: () => () => {},
+    },
+    configurable: true,
+  });
+  assert.equal(publishedCodexResponsesCompaction(), undefined, "a malformed field");
+});
+
 function stubBackend(id: string): Backend {
   return {
     id,
@@ -194,8 +227,12 @@ test("selectBackendId follows the slot: no codex-native-v2 for an ineligible Cod
 // The watcher, through a real host session
 // ---------------------------------------------------------------------------
 
-// First-wins: a probe stands in for the Codex lane in this process.
-registerBackendFactory(CODEX_BACKEND_SETTING_ID, () => stubBackend(CODEX_BACKEND_SETTING_ID));
+// First-wins: a probe stands in for the Codex lane in this process; it counts its instantiations.
+const codexFactory = { calls: 0 };
+registerBackendFactory(CODEX_BACKEND_SETTING_ID, () => {
+  codexFactory.calls += 1;
+  return stubBackend(CODEX_BACKEND_SETTING_ID);
+});
 
 const STALE = "This extension ctx is stale after session replacement or reload.";
 
@@ -347,4 +384,50 @@ test("after shutdown a bump does nothing: unsubscribed, no restart, no record", 
   await settle();
   assert.equal(rig.records().length, records);
   assert.ok(rig.generation() === before || rig.generation() === undefined);
+});
+
+test("an eligibility restart derives the OpenAI lane from the live slot, not the stale snapshot", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "choco-pi-eligibility-derive-"));
+  const previousAgentDir = process.env[AGENT_DIR_ENV];
+  // The session-start snapshot: Codex native compaction off. No sidecar anywhere.
+  await writeFile(
+    join(dir, "choco-pi-codex.json"),
+    JSON.stringify({ compaction: { responsesCompaction: false } }),
+  );
+  process.env[AGENT_DIR_ENV] = dir;
+  const slot = installSlot(() => false, { responsesCompaction: false });
+  const extension = (pi: ExtensionAPI): void => {
+    registerCompaction(pi, {
+      retryPolicy: { enabled: false, maxRetries: 0, baseDelayMs: 0, maxAgentDelayMs: 0 },
+      compactionPolicy: () => ({ keepRecentTokens: 1, reserveTokens: 0 }),
+      background: { settingsPaths: () => [join(dir, "absent-background-compaction.json")] },
+    });
+  };
+  let host: Awaited<ReturnType<typeof createHost>> | undefined;
+  try {
+    host = await createHost({
+      dir,
+      modelIdentity: { api: CODEX_MODEL.api, provider: CODEX_MODEL.provider, id: CODEX_MODEL.id },
+      extensions: [extension],
+    });
+    await host.session.prompt("DERIVE-GO");
+    await settle();
+    const ownerKey = mainOwnerKey(host.manager.getSessionId());
+    const calls = codexFactory.calls;
+    const before = getCoordinator(ownerKey)?.ownerGeneration;
+    // `/codex` turns Responses compaction on: the slot flips, the snapshot stays false.
+    slot.control.responsesCompaction = true;
+    slot.bump(() => true);
+    await waitFor(
+      () => (getCoordinator(ownerKey)?.ownerGeneration ?? 0) > (before ?? 0),
+      "the owner restarted",
+    );
+    await waitFor(() => codexFactory.calls > calls, "the Codex lane was instantiated");
+    assert.ok(codexFactory.calls >= calls + 1);
+  } finally {
+    await host?.dispose();
+    if (previousAgentDir === undefined) Reflect.deleteProperty(process.env, AGENT_DIR_ENV);
+    else process.env[AGENT_DIR_ENV] = previousAgentDir;
+    await rm(dir, { recursive: true, force: true });
+  }
 });
