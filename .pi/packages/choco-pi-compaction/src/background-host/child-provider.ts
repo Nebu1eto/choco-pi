@@ -6,10 +6,11 @@ import type {
   ChildCoordinatorContext,
 } from "../../../choco-pi-subagents/src/child-compaction-bridge.ts";
 import type { ProviderScope } from "../background/contract.ts";
+import type { LaneRecordInput } from "../background/lane-journal.ts";
 import { backgroundCompactionActive } from "../background/settings.ts";
 import { candidateRecordsOf } from "./branch.ts";
 import { nativeLaneSwitches } from "./native-lanes.ts";
-import { errorText } from "./notices.ts";
+import { announceVia, errorText } from "./notices.ts";
 import { createOwnerCore, type OwnerCore } from "./owner-core.ts";
 import type { OwnerSpec } from "./owner-spec.ts";
 import { resolveProviderScope } from "./provider-scope.ts";
@@ -100,8 +101,13 @@ async function createChildAttachment(
   };
 }
 
-/** The runtime fields a child owner spec reads. */
-export type ChildSpecRuntime = Pick<HostRuntime, "loaded" | "xaiMode" | "xaiGate">;
+/**
+ * The runtime fields a child owner spec reads. The journal, transition memo,
+ * Anthropic session switch and shared gate are optional only for partial test
+ * runtimes; the host always passes its full runtime.
+ */
+export type ChildSpecRuntime = Pick<HostRuntime, "loaded" | "xaiMode" | "xaiGate"> &
+  Partial<Pick<HostRuntime, "journal" | "transitions" | "serverSide" | "foregroundGate">>;
 
 /**
  * The owner spec of a child coordinator: the child's own session, model and
@@ -122,6 +128,12 @@ export function childOwnerSpec(
   },
 ): OwnerSpec {
   const { host, child, model, scope, report } = parts;
+  const childSessionId = child.childSessionId;
+  // The bridge persists candidate records only, so a child's lane records are
+  // journaled through this registration under the child's session id.
+  const journal = (record: LaneRecordInput): void => {
+    if (!child.signal.aborted) rt.journal?.(record);
+  };
   return {
     ownerKey: child.ownerKey,
     ownerGeneration: child.ownerGeneration,
@@ -142,6 +154,15 @@ export function childOwnerSpec(
     isOwnerCurrent: () => !child.signal.aborted,
     ...nativeLaneSwitches(rt, model),
     report,
+    journal,
+    announce: (text, _level, policy, record) => {
+      if (child.signal.aborted) return;
+      const transitions = rt.transitions;
+      if (transitions === undefined) return;
+      announceVia({ journal, transitions }, record, policy, () => report(text));
+    },
+    anthropicDisabled: () => rt.serverSide?.isDisabled(childSessionId) === true,
+    anthropicGate: rt.foregroundGate,
   };
 }
 

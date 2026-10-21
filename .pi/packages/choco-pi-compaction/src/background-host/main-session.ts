@@ -8,7 +8,7 @@ import {
   type ChildCompactionProvider,
 } from "../../../choco-pi-subagents/src/child-compaction-bridge.ts";
 import { ANTHROPIC_BACKEND_ID } from "../anthropic/backend.ts";
-import { readAnthropicCompactionMode } from "../anthropic/mode.ts";
+import { readAnthropicCompactionMode, readOpaqueHistoryMode } from "../anthropic/mode.ts";
 import type { BackgroundCompactionSettings, ProviderScope } from "../background/contract.ts";
 import { ANCHOR_ENTRY_TYPE } from "../background/entry-types.ts";
 import { release, setCoordinator } from "../background/registry.ts";
@@ -28,7 +28,7 @@ import { type BackgroundAdoptionSignal, getBackgroundAdoptionSignal } from "./ad
 import { candidateRecordsOf } from "./branch.ts";
 import { nativeLaneSwitches } from "./native-lanes.ts";
 import { type NativeRefreshContext, registerSessionNativeRefresher } from "./native-refresh.ts";
-import { errorText } from "./notices.ts";
+import { announce, errorText } from "./notices.ts";
 import { createOwnerCore, type OwnerCore } from "./owner-core.ts";
 import type { OwnerSpec } from "./owner-spec.ts";
 import { resolveProviderScope } from "./provider-scope.ts";
@@ -103,11 +103,13 @@ export async function startMainSession(
       rt.options.settingsPaths?.(session.location) ?? backgroundSettingsPaths(session.location);
     const readMode = rt.options.anthropic?.readMode ?? readAnthropicCompactionMode;
     const readXaiMode = rt.options.xai?.readMode ?? readXaiCompactionMode;
+    const readOpaqueHistory = rt.options.readOpaqueHistoryMode ?? readOpaqueHistoryMode;
     const openaiServerSide = rt.readState().codexCompaction?.responsesCompaction ?? false;
-    const [loaded, mode, xaiMode] = await Promise.all([
+    const [loaded, mode, xaiMode, opaqueHistory] = await Promise.all([
       loadBackgroundSettings(paths),
       readMode(session.location.agentDir),
       readXaiMode(session.location.agentDir),
+      readOpaqueHistory(session.location.agentDir),
     ]);
     if (generation !== rt.lifecycle) return;
     rt.loaded = withDerivedDefaultLanes(
@@ -116,6 +118,7 @@ export async function startMainSession(
     );
     rt.anthropicMode = mode;
     rt.xaiMode = xaiMode;
+    rt.opaqueHistory = opaqueHistory;
     if (rt.loaded.diagnostic !== undefined) rt.notify(ctx, rt.loaded.diagnostic);
   }
   const settings = rt.loaded.settings;
@@ -337,6 +340,15 @@ function mainOwnerSpec(
     isOwnerCurrent: ownerCurrent,
     ...nativeLaneSwitches(rt, binding.model),
     report: (message) => rt.notify(rt.main?.lastCtx ?? ctx, message),
+    journal: (record) => {
+      if (ownerCurrent()) rt.journal(record);
+    },
+    announce: (text, level, policy, record) => {
+      if (!ownerCurrent()) return;
+      announce(rt, rt.main?.lastCtx ?? ctx, record, text, level, policy);
+    },
+    anthropicDisabled: () => rt.serverSide.isDisabled(session.sessionId),
+    anthropicGate: rt.foregroundGate,
   };
 }
 

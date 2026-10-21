@@ -112,6 +112,29 @@ interface CoordinatorDependencies {
   readonly modelBudget?: ModelBudget;
   /** Provider prompt counter; when it returns a count, it replaces the estimate. */
   readonly tokenCounter?: { readonly counter: TokenCounter; readonly model: ModelRef };
+  /**
+   * Failure port: observes each candidate's terminal `failed`, `canceled` or
+   * `discarded-stale` transition exactly once, after the transition. Not
+   * called once the coordinator is disposed or for a `disposed` teardown (a
+   * lifecycle event, not a lane transition). A stale-context failure of the
+   * observer is contained; any other failure reaches the caller.
+   */
+  readonly onCandidateFailure?: (failure: CandidateFailurePortEvent) => void;
+}
+
+/** What requested a candidate; `recovery` restores a persisted record at session start. */
+export type CandidateTrigger = PreparationRequest["trigger"] | "recovery";
+
+/** One candidate's terminal outcome as the failure port reports it. */
+export interface CandidateFailurePortEvent {
+  readonly candidateId: string;
+  readonly backendId: string;
+  readonly reason: CandidateFailure["reason"];
+  readonly trigger: CandidateTrigger;
+  /** Instructions the candidate was requested with (`/compact <instructions>`). */
+  customInstructions?: string;
+  /** Backend detail code, or the coordinator's own (`overflow` for an overflow cancel). */
+  detail?: string;
 }
 
 interface DetailedCoordinatorStatus extends CoordinatorStatus {
@@ -154,6 +177,7 @@ export interface CoordinatorHandle extends CoordinatorApi {
 interface Candidate {
   readonly id: string;
   readonly backendId: string;
+  readonly trigger: CandidateTrigger;
   readonly machine: CandidateMachine;
   readonly abort: AbortController;
   readonly createdAt: number;
@@ -288,6 +312,7 @@ function finish(
   current: Candidate,
   terminal: TerminalState,
   reason: ReasonCode,
+  portDetail?: string,
 ): void {
   if (!isOutstanding(current.machine.state)) return;
   // The frozen table has no adopting -> canceled edge. Invalidation of a proposal fails closed.
@@ -298,6 +323,33 @@ function finish(
   current.finishedAt = state.clock.now();
   current.cancelDeadline();
   current.abort.abort();
+  reportFailure(state, current, reason, portDetail ?? current.detail);
+}
+
+/** The single failure-port call of a candidate, made right after its one terminal transition. */
+function reportFailure(
+  state: CoordinatorState,
+  current: Candidate,
+  reason: ReasonCode,
+  detail: string | undefined,
+): void {
+  const observer = state.deps.onCandidateFailure;
+  if (observer === undefined || state.disposed || reason === "disposed") return;
+  const failure: CandidateFailurePortEvent = {
+    candidateId: current.id,
+    backendId: current.backendId,
+    reason,
+    trigger: current.trigger,
+  };
+  if (current.customInstructions !== undefined) {
+    failure.customInstructions = current.customInstructions;
+  }
+  if (detail !== undefined) failure.detail = detail;
+  try {
+    observer(failure);
+  } catch (cause) {
+    if (!isStaleCause(state, cause)) throw cause;
+  }
 }
 
 /**
@@ -820,11 +872,13 @@ function newCandidate(
   state: CoordinatorState,
   id: string,
   backendId: string,
+  trigger: CandidateTrigger,
   customInstructions?: string,
 ): Candidate {
   const current: Candidate = {
     id,
     backendId,
+    trigger,
     customInstructions,
     machine: new CandidateMachine(),
     abort: new AbortController(),
@@ -861,6 +915,7 @@ function requestPreparation(
     state,
     state.deps.createCandidateId?.() ?? randomUUID(),
     backend.id,
+    request.trigger,
     request.customInstructions,
   );
   state.candidate = current;
@@ -1021,7 +1076,9 @@ function arbitrateCandidate(
   );
   if (intent === "discard-instructions" && current)
     finish(state, current, "discarded-stale", "manual-instructions");
-  if (intent === "cancel-overflow" && current) finish(state, current, "canceled", "canceled");
+  if (intent === "cancel-overflow" && current) {
+    finish(state, current, "canceled", "canceled", "overflow");
+  }
   if (intent === "await-outstanding" && current) return awaitOutstanding(state, current, event);
   if (intent !== "adopt" || !current) return Promise.resolve(PROCEED);
   return proposeAdoption(state, current);
@@ -1123,7 +1180,7 @@ function recordedPriorCheckpoint(
 
 /** Record a discarded candidate so status reports why the persisted record was refused. */
 function discardRecord(state: CoordinatorState, record: CandidateRecord, reason: ReasonCode): void {
-  const stale = newCandidate(state, record.candidateId, record.backendId);
+  const stale = newCandidate(state, record.candidateId, record.backendId, "recovery");
   state.candidate = stale;
   finish(state, stale, "discarded-stale", reason);
 }
@@ -1225,6 +1282,7 @@ async function recoverRecord(
     state,
     record.candidateId,
     record.backendId,
+    "recovery",
     record.customInstructions,
   );
   state.candidate = current;

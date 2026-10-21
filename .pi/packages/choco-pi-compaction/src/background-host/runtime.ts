@@ -5,10 +5,16 @@ import type {
   SessionBeforeCompactEvent,
 } from "@earendil-works/pi-coding-agent";
 
+import type { ChildCompactionProvider } from "../../../choco-pi-subagents/src/child-compaction-bridge.ts";
+import type { LaneRecordInput, LaneTransitionMemo } from "../background/lane-journal.ts";
 import type { LoadedBackgroundSettings } from "../background/settings.ts";
 import { registryAvailability } from "../background/registry.ts";
 import type { AnthropicCapabilityGate } from "../anthropic/capability.ts";
-import type { AnthropicCompactionMode, AnthropicServerSideSession } from "../anthropic/mode.ts";
+import type {
+  AnthropicCompactionMode,
+  AnthropicServerSideSession,
+  OpaqueHistoryMode,
+} from "../anthropic/mode.ts";
 import type { AnthropicReplayBinder } from "../anthropic/replay-binding.ts";
 import type { CompactionSessionState, SessionStateReader } from "../session-state.ts";
 import type { XaiCompactionMode } from "../xai/mode.ts";
@@ -96,11 +102,49 @@ export interface ParentHost {
   readonly ctx: ExtensionContext;
 }
 
+/** The vendor compaction modes and the opaque-history setting of a registration. */
+export interface CompactionModes {
+  readonly anthropic: AnthropicCompactionMode;
+  readonly xai: XaiCompactionMode;
+  readonly opaqueHistory: OpaqueHistoryMode;
+}
+
 export interface HostRuntime {
   readonly pi: ExtensionAPI;
   readonly readState: SessionStateReader;
   readonly options: BackgroundCompactionOptions;
   readonly notify: Notifier;
+  /**
+   * Append one lane journal record through `pi.appendEntry` (validated by
+   * `appendLaneRecord`). Dropped while no session is bound to this
+   * registration (before the first session start, after shutdown).
+   */
+  readonly journal: (record: LaneRecordInput) => void;
+  /** Lane transitions already journaled, per session (reset when the session's binding is torn down). */
+  readonly transitions: LaneTransitionMemo;
+  /** Opaque-history setting (`compactionOpaqueHistory`) read at session start; default `preserve`. */
+  opaqueHistory: OpaqueHistoryMode;
+  /** sessionId -> the opaque checkpoint entry id the user consented to lose (`/compaction-allow-loss`). */
+  readonly opaqueConsent: Map<string, string>;
+  /**
+   * Removes this registration's resolver from the process-global consent slot.
+   * Set while published (registration, and every session start after a
+   * shutdown); `shutdown` runs and clears it.
+   */
+  unpublishOpaqueConsent: (() => void) | undefined;
+  /**
+   * Seam: a replay rejection or refusal turned a vendor's server-side
+   * compaction off for `sessionId`. Undefined until a lane unit assigns it.
+   */
+  onReplayDisabled:
+    | ((sessionId: string, provider: "anthropic" | "xai", code: string) => void)
+    | undefined;
+  /** The child provider this registration publishes (kept for the Codex eligibility watcher). */
+  childProvider: ChildCompactionProvider | undefined;
+  /** Disposes this registration's Codex eligibility watch; set at session start. */
+  unwatchCodexEligibility: (() => void) | undefined;
+  /** The current vendor compaction modes and opaque-history setting. */
+  modes(): CompactionModes;
   /** Bumped by every session start and shutdown; owners compare their generation to it. */
   lifecycle: number;
   main: MainOwner | undefined;
@@ -114,7 +158,11 @@ export interface HostRuntime {
   anthropicMode: AnthropicCompactionMode;
   /** Session-scoped server-side switch (disabled after a replay rejection). */
   readonly serverSide: AnthropicServerSideSession;
-  /** Capability gate (and cooldowns) of the foreground server-side path. */
+  /**
+   * The registration's one Anthropic capability gate (and cooldowns): the
+   * foreground server-side path, and the background lane through
+   * `OwnerSpec.anthropicGate`.
+   */
   readonly foregroundGate: AnthropicCapabilityGate;
   /** Capture, projection and replay rewrite shared by foreground and background. */
   readonly replay: AnthropicReplayBinder;
@@ -202,12 +250,21 @@ export function shutdown(rt: HostRuntime): void {
   for (const sessionId of rt.nativeSessions) {
     rt.serverSide.release(sessionId);
     rt.xaiServerSide.release(sessionId);
+    // A released session starts fresh: no journal memo, no loss consent.
+    rt.transitions.reset(sessionId);
+    rt.opaqueConsent.delete(sessionId);
   }
   rt.nativeSessions.clear();
   rt.parent = undefined;
   const unregister = rt.unregisterResourceCleanup;
   rt.unregisterResourceCleanup = undefined;
   unregister?.();
+  const unwatch = rt.unwatchCodexEligibility;
+  rt.unwatchCodexEligibility = undefined;
+  unwatch?.();
+  const unpublishConsent = rt.unpublishOpaqueConsent;
+  rt.unpublishOpaqueConsent = undefined;
+  unpublishConsent?.();
   const unpublish = rt.unpublishProvider;
   rt.unpublishProvider = undefined;
   unpublish?.();
@@ -221,6 +278,8 @@ export function unbindReplay(rt: HostRuntime): void {
   rt.unregisterNativeRefresher = undefined;
   unregister?.();
   for (const unbinds of [rt.replayUnbinds, rt.xaiReplayUnbinds]) {
+    // The transition memo of a session whose binding is torn down starts fresh.
+    for (const sessionId of unbinds.keys()) rt.transitions.reset(sessionId);
     const pending = [...unbinds.values()];
     unbinds.clear();
     for (const unbind of pending) unbind();

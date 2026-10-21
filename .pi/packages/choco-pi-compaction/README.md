@@ -152,6 +152,7 @@ process-unique generation. At each `turn_end`, `agent_before_settle` and
 freezes the prefix up to a legal cut and starts preparation in the background.
 The foreground run never waits for it. Ready candidates are persisted as
 `choco-compaction-candidate` custom entries, which are not model-visible.
+Lane transitions (fallback, cancel, disable, consent) are journaled as `choco-compaction-lane` custom entries, also not model-visible.
 
 On reload or a model change the coordinator is rebuilt for the current provider
 scope (provider, endpoint, model, auth mode). A persisted ready candidate is

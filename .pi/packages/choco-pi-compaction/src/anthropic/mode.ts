@@ -26,6 +26,19 @@ const AnthropicCompactionModeSchema = Type.Union([
 export type AnthropicCompactionMode = Static<typeof AnthropicCompactionModeSchema>;
 export const DEFAULT_ANTHROPIC_COMPACTION_MODE: AnthropicCompactionMode = "server-side";
 
+/**
+ * Top-level `<agentDir>/settings.json` key deciding what happens when the
+ * latest checkpoint is an opaque server-side record (xAI, Codex) that the
+ * answering lane cannot replay: `preserve` (default) cancels the compaction
+ * and refuses placeholder-only requests; `allow-loss` lets the local
+ * summarizer run without the opaque history (the loss is still notified).
+ */
+export const OPAQUE_HISTORY_KEY = "compactionOpaqueHistory";
+
+const OpaqueHistoryModeSchema = Type.Union([Type.Literal("preserve"), Type.Literal("allow-loss")]);
+export type OpaqueHistoryMode = Static<typeof OpaqueHistoryModeSchema>;
+export const DEFAULT_OPAQUE_HISTORY_MODE: OpaqueHistoryMode = "preserve";
+
 const SettingsObjectSchema = Type.Record(Type.String(), JsonValueSchema);
 type SettingsObject = Static<typeof SettingsObjectSchema>;
 
@@ -90,6 +103,27 @@ export async function readAnthropicCompactionMode(
   return parseAnthropicCompactionMode(
     await readTopLevelSetting(agentDir, ANTHROPIC_COMPACTION_MODE_KEY),
   );
+}
+
+/** Validate one raw opaque-history value; anything else is the default. */
+export function parseOpaqueHistoryMode(value: JsonValue | undefined): OpaqueHistoryMode {
+  return Value.Check(OpaqueHistoryModeSchema, value) ? value : DEFAULT_OPAQUE_HISTORY_MODE;
+}
+
+/** The configured opaque-history mode; unreadable, malformed or missing settings yield `preserve`. */
+export async function readOpaqueHistoryMode(agentDir: string): Promise<OpaqueHistoryMode> {
+  return parseOpaqueHistoryMode(await readTopLevelSetting(agentDir, OPAQUE_HISTORY_KEY));
+}
+
+/** Set the opaque-history mode (atomic read-modify-write, every other key kept). */
+export async function writeOpaqueHistoryMode(
+  agentDir: string,
+  mode: OpaqueHistoryMode,
+): Promise<void> {
+  if (!Value.Check(OpaqueHistoryModeSchema, mode)) {
+    throw new Error(`invalid ${OPAQUE_HISTORY_KEY} value`);
+  }
+  await writeTopLevelSetting(agentDir, OPAQUE_HISTORY_KEY, mode);
 }
 
 /**

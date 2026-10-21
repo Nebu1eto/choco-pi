@@ -103,6 +103,20 @@ const IGNORED: ReadonlySet<FailureReason> = new Set(["canceled", "no-legal-cut"]
 const TRANSIENT: ReadonlySet<FailureReason> = new Set(["429", "529", "timeout", "quota"]);
 /** Consecutive transient failures tolerated before a cooldown starts. */
 const TRANSIENT_STREAK = 3;
+/**
+ * Reasons cooled for a fixed, capped wait instead of the doubling rule: a
+ * credential failure is not healed by waiting longer, and a long cooldown
+ * only hides a fixed login (D10). The wait is `min(cooldownMs, 300_000)`.
+ */
+export const FIXED_COOLDOWN_REASONS: ReadonlySet<FailureReason> = new Set<FailureReason>(["auth"]);
+export const FIXED_COOLDOWN_CAP_MS = 300_000;
+
+/** Called when a cooldown actually starts (wait > 0), after it is recorded. */
+export type CooldownObserver = (
+  entry: AnthropicSupportEntry,
+  reason: FailureReason,
+  until: number,
+) => void;
 
 interface CapabilityGateOptions {
   readonly enabled: boolean;
@@ -123,6 +137,7 @@ interface CapabilityGateOptions {
   readonly maxCooldownMs?: number;
   readonly maxTrackedScopes?: number;
   readonly now?: () => number;
+  readonly onCooldown?: CooldownObserver;
 }
 
 interface CooldownState {
@@ -138,11 +153,12 @@ export class AnthropicCapabilityGate {
     | ((scope: ProviderScope) => AnthropicSupportEntry | undefined)
     | undefined;
   private readonly families: readonly AnthropicFamilyFloor[];
-  private readonly cooldownMs: number;
-  private readonly maxCooldownMs: number;
+  private cooldownMs: number;
+  private maxCooldownMs: number;
   private readonly maxTrackedScopes: number;
   private readonly now: () => number;
   private readonly cooldowns = new Map<string, CooldownState>();
+  private readonly onCooldown: CooldownObserver | undefined;
 
   constructor(options: CapabilityGateOptions) {
     this.enabled = options.enabled;
@@ -153,6 +169,13 @@ export class AnthropicCapabilityGate {
     this.maxCooldownMs = Math.max(this.cooldownMs, options.maxCooldownMs ?? 3_600_000);
     this.maxTrackedScopes = Math.max(1, options.maxTrackedScopes ?? 64);
     this.now = options.now ?? Date.now;
+    this.onCooldown = options.onCooldown;
+  }
+
+  /** Base cooldown for the next failure (the loaded sidecar's `cooldownMs`); running cooldowns are unchanged. */
+  setCooldownMs(cooldownMs: number): void {
+    this.cooldownMs = Math.max(0, cooldownMs);
+    this.maxCooldownMs = Math.max(this.cooldownMs, this.maxCooldownMs);
   }
 
   /** Synchronous, local decision. Never performs I/O. */
@@ -207,6 +230,8 @@ export class AnthropicCapabilityGate {
     let wait: number;
     if (TRANSIENT.has(reason)) {
       wait = Math.max(retryAfterMs ?? 0, consecutive >= TRANSIENT_STREAK ? this.cooldownMs : 0);
+    } else if (FIXED_COOLDOWN_REASONS.has(reason)) {
+      wait = Math.min(this.cooldownMs, FIXED_COOLDOWN_CAP_MS);
     } else {
       wait = this.cooldownMs * 2 ** Math.min(consecutive - 1, 16);
     }
@@ -218,6 +243,7 @@ export class AnthropicCapabilityGate {
       if (oldest.done === true) break;
       this.cooldowns.delete(oldest.value);
     }
+    if (wait > 0) this.onCooldown?.(entry, reason, until);
   }
 
   recordSuccess(scope: ProviderScope): void {

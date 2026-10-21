@@ -18,9 +18,23 @@ export {
   ANTHROPIC_COMPACTION_MODE_KEY,
   type AnthropicCompactionMode,
   DEFAULT_ANTHROPIC_COMPACTION_MODE,
+  OPAQUE_HISTORY_KEY,
   readAnthropicCompactionMode,
   writeAnthropicCompactionMode,
 } from "./anthropic/mode.ts";
+export { bearerCredentialOf } from "./auth.ts";
+export {
+  appendLaneRecord,
+  LANE_RECORD_TYPE,
+  type LaneRecord,
+  LaneRecordSchema,
+  laneRecordsOf,
+} from "./background/lane-journal.ts";
+export {
+  laneMayAnswerOverOpaque,
+  lossAuthorizedFor,
+  opaqueCheckpointOf,
+} from "./opaque-checkpoint.ts";
 export {
   DEFAULT_XAI_COMPACTION_MODE,
   readXaiCompactionMode,
@@ -192,5 +206,8 @@ function injectedBackgroundOptions(
     background.xai?.readMode === undefined
       ? { ...background.xai, readMode: async () => "choco-pi" as const }
       : background.xai;
-  return { ...background, anthropic, xai };
+  // Nor the real opaque-history setting: tests get the default unless they inject a reader.
+  const readOpaqueHistoryMode =
+    background.readOpaqueHistoryMode ?? (async () => "preserve" as const);
+  return { ...background, anthropic, xai, readOpaqueHistoryMode };
 }

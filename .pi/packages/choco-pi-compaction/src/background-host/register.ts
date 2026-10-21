@@ -10,16 +10,26 @@ import type { ChildCompactionProvider } from "../../../choco-pi-subagents/src/ch
 import { AnthropicCapabilityGate, capturedProviders } from "../anthropic/capability.ts";
 import { capturesFor } from "../anthropic/capture.ts";
 import { createForegroundCompactHandler } from "../anthropic/foreground.ts";
+import { isAnthropicDetails } from "../anthropic/details.ts";
 import {
   AnthropicServerSideSession,
   type AnthropicCompactionMode,
   DEFAULT_ANTHROPIC_COMPACTION_MODE,
+  DEFAULT_OPAQUE_HISTORY_MODE,
   readAnthropicCompactionMode,
   writeAnthropicCompactionMode,
 } from "../anthropic/mode.ts";
 import { createAnthropicReplayBinder } from "../anthropic/replay-binding.ts";
 import type { ReplayDiagnostic } from "../anthropic/replay-rewrite.ts";
 import { DEFAULT_BACKGROUND_COMPACTION_SETTINGS } from "../background/contract.ts";
+import {
+  appendLaneRecord,
+  type LaneReason,
+  type LaneRecordInput,
+  LaneTransitionMemo,
+  ownedReasonOf,
+  REASONS,
+} from "../background/lane-journal.ts";
 import {
   backgroundCompactionActive,
   type BackgroundLaneSwitches,
@@ -31,6 +41,13 @@ import {
   writeGlobalBackgroundSettings,
 } from "../background/settings.ts";
 import { isStaleContextError } from "../lifecycle.ts";
+import {
+  lossAuthorized,
+  opaqueCheckpointOf,
+  opaqueLaneOf,
+  opaqueProviderOf,
+  publishOpaqueConsent,
+} from "../opaque-checkpoint.ts";
 import { isChildSession } from "../ownership.ts";
 import { publishBackgroundCompactionPreferences } from "../preferences-section.ts";
 import { readCodexCompactionSnapshot, type SessionStateReader } from "../session-state.ts";
@@ -42,19 +59,24 @@ import {
   type XaiCompactionMode,
   writeXaiCompactionMode,
 } from "../xai/mode.ts";
-import { createXaiReplayBinder, type XaiReplayDiagnostic } from "../xai/replay.ts";
+import {
+  createXaiReplayBinder,
+  findActiveXaiCheckpoint,
+  type XaiReplayDiagnostic,
+} from "../xai/replay.ts";
 import {
   getBackgroundAdoptionSignal,
   publishBackgroundAdoptionSignalSlot,
 } from "./adoption-signal.ts";
 import { createChildProvider } from "./child-provider.ts";
+import { watchCodexEligibility } from "./codex-eligibility.ts";
 import {
   type CompactCommandHost,
   installCompactCommandBridge,
   releaseCompactCommandBridge,
 } from "./host-command.ts";
 import { startMainSession } from "./main-session.ts";
-import { createNotifier, errorText } from "./notices.ts";
+import { announce, createNotifier, errorText, tell } from "./notices.ts";
 import type { BackgroundCompactionOptions } from "./owner-spec.ts";
 import {
   adoptAtBoundary,
@@ -69,6 +91,7 @@ import {
   startManualPreparation,
 } from "./routes.ts";
 import {
+  type CompactionModes,
   type HostRuntime,
   isCurrent,
   type MainOwner,
@@ -128,6 +151,8 @@ export interface BackgroundCompaction {
   ): Promise<SessionBeforeCompactResult | undefined>;
   /** Current settings load (for diagnostics and tests). */
   settings(): LoadedBackgroundSettings;
+  /** Current vendor compaction modes and opaque-history setting. */
+  modes(): CompactionModes;
 }
 
 /**
@@ -144,6 +169,16 @@ export function registerBackgroundCompaction(
   publishBackgroundAdoptionSignalSlot();
   const rt = createRuntime(pi, readState, options);
   const childProvider = createChildProvider(rt);
+  rt.childProvider = childProvider;
+  publishConsent(rt);
+  pi.registerCommand("compaction-allow-loss", {
+    description:
+      "Allow compaction to summarize without the latest opaque server-side checkpoint (this session only)",
+    handler: (_args, ctx) => {
+      allowOpaqueLoss(rt, ctx);
+      return Promise.resolve();
+    },
+  });
   const clock = options.clock;
   const foreground = createForegroundCompactHandler({
     gate: rt.foregroundGate,
@@ -237,7 +272,11 @@ export function registerBackgroundCompaction(
 
   pi.on("session_start", async (_event, ctx) => {
     closeSettlingWindow();
+    // Shutdown withdrew this registration's consent resolver; a reactivation publishes it again.
+    publishConsent(rt);
     publishPreferences(rt, ctx, childProvider);
+    // Stub watcher until the Codex eligibility unit fills it; disposed at shutdown.
+    rt.unwatchCodexEligibility ??= watchCodexEligibility(rt, () => {});
     const shutdownCount = shutdowns.count;
     const lanes = await syncLanesAtSessionStart(rt, ctx);
     if (shutdownCount !== shutdowns.count) return;
@@ -293,7 +332,84 @@ export function registerBackgroundCompaction(
     foregroundCompact: async (event, ctx) =>
       (await foreground(event, ctx)) ?? (await xaiForeground(event, ctx)),
     settings: () => rt.loaded,
+    modes: () => rt.modes(),
   };
+}
+
+/**
+ * Publish this registration's opaque-loss consent on the process-global slot
+ * unless it is published already. Shutdown removes it (`unpublishOpaqueConsent`),
+ * so a shut-down registration and its runtime stay unreachable from the slot.
+ * Consent is answered only for sessions bound to this registration.
+ */
+function publishConsent(rt: HostRuntime): void {
+  rt.unpublishOpaqueConsent ??= publishOpaqueConsent(
+    (sessionId, entryId) =>
+      rt.nativeSessions.has(sessionId) && lossAuthorized(rt, sessionId, entryId),
+  );
+}
+
+/**
+ * What a replay request saw when it started: the lifecycle generation and the
+ * session's replay binding (the unbind the binder returned for its newest
+ * binding token, so it changes with every rebind).
+ */
+interface ReplayRequestStart {
+  readonly lifecycle: number;
+  readonly sessionId: string;
+  readonly binding: (() => void) | undefined;
+}
+
+/**
+ * Request starts keyed by the request's `ctx`: Pi creates one context per
+ * event emission, and the binder hands that same object to the diagnostic and
+ * disable callbacks of the request, including a late rejection's.
+ */
+type ReplayRequests = WeakMap<ExtensionContext, ReplayRequestStart>;
+
+/**
+ * Wrap a binder's `before_provider_request` handler so every request records
+ * its start (generation and binding) before the binder sees it.
+ */
+function trackRequestStart<E, R>(
+  track: {
+    readonly requests: ReplayRequests;
+    readonly lifecycle: () => number;
+    readonly unbinds: () => Map<string, () => void>;
+  },
+  handler: (event: E, ctx: ExtensionContext) => R,
+): (event: E, ctx: ExtensionContext) => R {
+  return (event, ctx) => {
+    const sessionId = ctx.sessionManager.getSessionId();
+    track.requests.set(ctx, {
+      lifecycle: track.lifecycle(),
+      sessionId,
+      binding: track.unbinds().get(sessionId),
+    });
+    return handler(event, ctx);
+  };
+}
+
+/**
+ * Whether the request behind a binder callback still belongs to the current
+ * lifecycle generation and the session's current binding. Checked before the
+ * callback touches `ctx`, journals or notifies: a late provider callback of a
+ * request started before a shutdown, session or model change (rebind) is
+ * dropped silently.
+ */
+function requestCurrent(
+  rt: HostRuntime,
+  requests: ReplayRequests,
+  unbinds: Map<string, () => void>,
+  ctx: ExtensionContext,
+): boolean {
+  const start = requests.get(ctx);
+  return (
+    start !== undefined &&
+    start.binding !== undefined &&
+    start.lifecycle === rt.lifecycle &&
+    unbinds.get(start.sessionId) === start.binding
+  );
 }
 
 function createRuntime(
@@ -306,11 +422,60 @@ function createRuntime(
   const xaiServerSide = new AnthropicServerSideSession();
   const clock = options.clock;
   const now = clock === undefined ? undefined : () => clock.now();
+  const anthropicRequests: ReplayRequests = new WeakMap();
+  const xaiRequests: ReplayRequests = new WeakMap();
+  const anthropicCurrent = (ctx: ExtensionContext): boolean =>
+    requestCurrent(rt, anthropicRequests, rt.replayUnbinds, ctx);
+  const xaiCurrent = (ctx: ExtensionContext): boolean =>
+    requestCurrent(rt, xaiRequests, rt.xaiReplayUnbinds, ctx);
+  const replay = createAnthropicReplayBinder(pi, {
+    providers: capturedProviders(options.anthropic?.allowList),
+    capture: options.anthropic?.capture,
+    session: serverSide,
+    onDiagnostic: (ctx, diagnostic) => {
+      if (anthropicCurrent(ctx)) reportReplayDiagnostic(rt, ctx, diagnostic);
+    },
+    onDisabled: (ctx, code) => {
+      if (anthropicCurrent(ctx)) reportServerSideDisabled(rt, ctx, code);
+    },
+  });
+  const xaiReplay = createXaiReplayBinder(pi, {
+    providers: xaiCapturedProviders(options.xai?.allowList),
+    capture: options.xai?.capture,
+    session: xaiServerSide,
+    onDiagnostic: (ctx, diagnostic) => {
+      if (xaiCurrent(ctx)) reportXaiReplayDiagnostic(rt, ctx, diagnostic);
+    },
+    onDisabled: (ctx, code) => {
+      if (xaiCurrent(ctx)) reportXaiServerSideDisabled(rt, ctx, code);
+    },
+  });
   const rt: HostRuntime = {
     pi,
     readState,
     options,
     notify,
+    journal: (record) => {
+      // No session bound to this registration (before the first start, after shutdown).
+      if (rt.nativeSessions.size === 0) return;
+      appendLaneRecord(
+        (customType, data) => pi.appendEntry(customType, data),
+        record,
+        (message) => notify(rt.main?.lastCtx ?? rt.parent?.ctx, message),
+      );
+    },
+    transitions: new LaneTransitionMemo(),
+    opaqueHistory: DEFAULT_OPAQUE_HISTORY_MODE,
+    opaqueConsent: new Map(),
+    unpublishOpaqueConsent: undefined,
+    onReplayDisabled: undefined,
+    childProvider: undefined,
+    unwatchCodexEligibility: undefined,
+    modes: () => ({
+      anthropic: rt.anthropicMode,
+      xai: rt.xaiMode,
+      opaqueHistory: rt.opaqueHistory,
+    }),
     lifecycle: 0,
     main: undefined,
     loaded: {
@@ -330,13 +495,17 @@ function createRuntime(
       allowList: options.anthropic?.allowList,
       now: clock === undefined ? undefined : () => clock.now(),
     }),
-    replay: createAnthropicReplayBinder(pi, {
-      providers: capturedProviders(options.anthropic?.allowList),
-      capture: options.anthropic?.capture,
-      session: serverSide,
-      onDiagnostic: (ctx, diagnostic) => reportReplayDiagnostic(notify, ctx, diagnostic),
-      onDisabled: (ctx, code) => reportServerSideDisabled(ctx, code),
-    }),
+    replay: {
+      ...replay,
+      handler: trackRequestStart(
+        {
+          requests: anthropicRequests,
+          lifecycle: () => rt.lifecycle,
+          unbinds: () => rt.replayUnbinds,
+        },
+        replay.handler,
+      ),
+    },
     replayUnbinds: new Map(),
     xaiMode: DEFAULT_XAI_COMPACTION_MODE,
     xaiServerSide,
@@ -345,13 +514,17 @@ function createRuntime(
       allowList: options.xai?.allowList,
       now,
     }),
-    xaiReplay: createXaiReplayBinder(pi, {
-      providers: xaiCapturedProviders(options.xai?.allowList),
-      capture: options.xai?.capture,
-      session: xaiServerSide,
-      onDiagnostic: (ctx, diagnostic) => reportXaiReplayDiagnostic(notify, ctx, diagnostic),
-      onDisabled: (ctx, code) => reportXaiServerSideDisabled(ctx, code),
-    }),
+    xaiReplay: {
+      ...xaiReplay,
+      handler: trackRequestStart(
+        {
+          requests: xaiRequests,
+          lifecycle: () => rt.lifecycle,
+          unbinds: () => rt.xaiReplayUnbinds,
+        },
+        xaiReplay.handler,
+      ),
+    },
     xaiReplayUnbinds: new Map(),
     nativeSessions: new Set(),
     unregisterNativeRefresher: undefined,
@@ -573,73 +746,217 @@ async function onCompactFailed(rt: HostRuntime, ctx: ExtensionContext): Promise<
   await reportHostRefused(rt, owner, ctx);
 }
 
+function nowOf(rt: HostRuntime): number {
+  return rt.options.clock?.now() ?? Date.now();
+}
+
+/**
+ * The journaled reason of a replay code: our own refusal and disable codes
+ * as they are; a provider-supplied code (`compaction_*` from
+ * `error.details.error_code`) or a missing one is `provider-error`.
+ */
+function replayReason(code: string | undefined): LaneReason {
+  return code === undefined ? REASONS.providerError : ownedReasonOf(code);
+}
+
+/**
+ * Journal a replay diagnostic once per transition and notify through the
+ * registration notifier exactly as before the journal existed (each distinct
+ * text once per registration).
+ */
+function announceReplayDiagnostic(
+  rt: HostRuntime,
+  ctx: ExtensionContext,
+  record: Pick<LaneRecordInput, "sessionId" | "provider" | "event" | "from" | "reason"> & {
+    readonly checkpointEntryId: string;
+  },
+  text: string,
+): void {
+  announce(
+    rt,
+    ctx,
+    { ...record, at: nowOf(rt), route: "replay" },
+    text,
+    "warning",
+    "per-session-reason",
+  );
+}
+
 function reportReplayDiagnostic(
-  notify: HostRuntime["notify"],
+  rt: HostRuntime,
   ctx: ExtensionContext,
   diagnostic: ReplayDiagnostic,
 ): void {
   if (diagnostic.kind === "rewritten") return;
+  const base = {
+    sessionId: diagnostic.sessionId,
+    provider: "anthropic",
+    from: "anthropic-native",
+    checkpointEntryId: diagnostic.entryId,
+  } as const;
   if (diagnostic.kind === "unverifiable") {
-    notify(
+    announceReplayDiagnostic(
+      rt,
       ctx,
+      { ...base, event: "fallback", reason: REASONS.unverifiable },
       `Anthropic native checkpoint ${diagnostic.entryId} could not be verified at the transport; its summary text is sent instead`,
     );
     return;
   }
+  const reason = replayReason(diagnostic.code);
   if (diagnostic.kind === "fallback") {
-    notify(
+    announceReplayDiagnostic(
+      rt,
       ctx,
+      { ...base, event: "fallback", reason },
       `Anthropic native replay skipped (${diagnostic.code ?? "unknown"}) for checkpoint ${diagnostic.entryId}; its summary text is sent instead`,
     );
     return;
   }
-  notify(
+  announceReplayDiagnostic(
+    rt,
     ctx,
+    { ...base, event: "refuse", reason },
     `Anthropic native replay refused (${diagnostic.code ?? "unknown"}) for checkpoint ${diagnostic.entryId}`,
   );
 }
 
-/** One notice per session when the provider rejected a replayed block. */
-function reportServerSideDisabled(ctx: ExtensionContext, code: string): void {
-  try {
-    ctx.ui.notify(
-      `Anthropic server-side compaction: the provider rejected the replayed checkpoint (${code}); server-side compaction is off for this session, its summary text is sent instead and later compactions are summarized locally.`,
-      "warning",
-    );
-  } catch (cause) {
-    if (!(cause instanceof Error && isStaleContextError(cause))) throw cause;
+/** The replayed Anthropic checkpoint: the branch's newest compaction entry, when it is Anthropic-native. */
+function anthropicCheckpointId(ctx: ExtensionContext): string | undefined {
+  const branch = ctx.sessionManager.getBranch();
+  for (let index = branch.length - 1; index >= 0; index--) {
+    const entry = branch[index];
+    if (entry?.type !== "compaction") continue;
+    return isAnthropicDetails(entry.details) ? entry.id : undefined;
   }
+  return undefined;
+}
+
+function xaiCheckpointId(ctx: ExtensionContext): string | undefined {
+  const lookup = findActiveXaiCheckpoint(ctx.sessionManager.getBranch());
+  if (lookup.kind === "none") return undefined;
+  return lookup.kind === "active" ? lookup.checkpoint.entryId : lookup.entryId;
+}
+
+/**
+ * One journaled, always-notified disable per session (the replay binder calls
+ * this once per session), then the `onReplayDisabled` seam. A stale context
+ * (the session is gone) is contained.
+ */
+function reportReplayDisabled(
+  rt: HostRuntime,
+  ctx: ExtensionContext,
+  disabled: {
+    readonly provider: "anthropic" | "xai";
+    readonly code: string;
+    readonly text: string;
+    readonly checkpointId: (ctx: ExtensionContext) => string | undefined;
+  },
+): void {
+  let sessionId: string;
+  let checkpointEntryId: string | undefined;
+  try {
+    sessionId = ctx.sessionManager.getSessionId();
+    checkpointEntryId = disabled.checkpointId(ctx);
+  } catch (cause) {
+    if (cause instanceof Error && isStaleContextError(cause)) return;
+    throw cause;
+  }
+  const { provider, code } = disabled;
+  announce(
+    rt,
+    ctx,
+    {
+      at: nowOf(rt),
+      sessionId,
+      provider,
+      route: "replay",
+      event: "disable",
+      from: provider === "anthropic" ? "anthropic-native" : "xai-native",
+      reason: replayReason(code),
+      checkpointEntryId,
+    },
+    disabled.text,
+    "warning",
+    "always",
+  );
+  rt.onReplayDisabled?.(sessionId, provider, code);
+}
+
+/** One notice per session when the provider rejected a replayed block. */
+function reportServerSideDisabled(rt: HostRuntime, ctx: ExtensionContext, code: string): void {
+  reportReplayDisabled(rt, ctx, {
+    provider: "anthropic",
+    code,
+    text: `Anthropic server-side compaction: the provider rejected the replayed checkpoint (${code}); server-side compaction is off for this session, its summary text is sent instead and later compactions are summarized locally.`,
+    checkpointId: anthropicCheckpointId,
+  });
 }
 
 function reportXaiReplayDiagnostic(
-  notify: HostRuntime["notify"],
+  rt: HostRuntime,
   ctx: ExtensionContext,
   diagnostic: XaiReplayDiagnostic,
 ): void {
   if (diagnostic.kind === "rewritten") return;
+  const base = {
+    sessionId: diagnostic.sessionId,
+    provider: "xai",
+    from: "xai-native",
+    checkpointEntryId: diagnostic.entryId,
+  } as const;
   if (diagnostic.kind === "unverifiable") {
-    notify(
+    announceReplayDiagnostic(
+      rt,
       ctx,
+      { ...base, event: "fallback", reason: REASONS.unverifiable },
       `xAI native checkpoint ${diagnostic.entryId} could not be verified at the transport; only its placeholder summary is sent`,
     );
     return;
   }
-  notify(
+  announceReplayDiagnostic(
+    rt,
     ctx,
+    { ...base, event: "refuse", reason: replayReason(diagnostic.code) },
     `xAI native replay refused (${diagnostic.code ?? "unknown"}) for checkpoint ${diagnostic.entryId}`,
   );
 }
 
 /** One notice per session when a replay refusal or provider rejection turned xAI server-side off. */
-function reportXaiServerSideDisabled(ctx: ExtensionContext, code: string): void {
-  try {
-    ctx.ui.notify(
-      `xAI server-side compaction: the replayed checkpoint was refused (${code}); server-side compaction is off for this session. Later requests carry only the checkpoint's placeholder summary (the compacted history is no longer sent) and later compactions are summarized locally.`,
-      "warning",
-    );
-  } catch (cause) {
-    if (!(cause instanceof Error && isStaleContextError(cause))) throw cause;
+function reportXaiServerSideDisabled(rt: HostRuntime, ctx: ExtensionContext, code: string): void {
+  reportReplayDisabled(rt, ctx, {
+    provider: "xai",
+    code,
+    text: `xAI server-side compaction: the replayed checkpoint was refused (${code}); server-side compaction is off for this session. Later requests carry only the checkpoint's placeholder summary (the compacted history is no longer sent) and later compactions are summarized locally.`,
+    checkpointId: xaiCheckpointId,
+  });
+}
+
+/**
+ * `/compaction-allow-loss`: consent, for this session and the branch's
+ * current opaque checkpoint only, to compaction summarizing without the
+ * provider-held history. Journaled with the checkpoint id.
+ */
+function allowOpaqueLoss(rt: HostRuntime, ctx: ExtensionContext): void {
+  const sessionId = ctx.sessionManager.getSessionId();
+  const opaque = opaqueCheckpointOf(ctx.sessionManager.getBranch());
+  if (opaque === undefined) {
+    tell(ctx, "no opaque checkpoint on this branch", "info");
+    return;
   }
+  rt.opaqueConsent.set(sessionId, opaque.entryId);
+  rt.journal({
+    at: nowOf(rt),
+    sessionId,
+    provider: opaqueProviderOf(opaque.owner),
+    route: "manual",
+    event: "consent",
+    from: opaqueLaneOf(opaque.owner),
+    reason: REASONS.consent,
+    checkpointEntryId: opaque.entryId,
+    noticeAttempted: true,
+  });
+  tell(ctx, `loss authorized for checkpoint ${opaque.entryId} (this session only)`, "info");
 }
 
 async function answerBeforeCompact(

@@ -13,13 +13,20 @@ import type {
   PreparationRequestResult,
 } from "../background/contract.ts";
 import {
+  type CandidateFailurePortEvent,
   type CoordinatorHandle,
   type CoordinatorPort,
   createCoordinator,
   type SnapshotContext,
   type SnapshotRefused,
 } from "../background/coordinator.ts";
-import { isBackendEnabled } from "../background/settings.ts";
+import {
+  type LaneId,
+  type LaneProvider,
+  type LaneRoute,
+  ownedReasonOf,
+} from "../background/lane-journal.ts";
+import { CODEX_BACKEND_SETTING_ID, isBackendEnabled } from "../background/settings.ts";
 import { TEXT_BACKEND_ID } from "../background/text-backend.ts";
 import { deliveredAdoptionsFor } from "../background/registry.ts";
 import {
@@ -141,8 +148,55 @@ export async function createOwnerCore(
     delivered: deliveredAdoptionsFor(spec.ownerKey),
     modelBudget: ownerModelBudget(spec),
     tokenCounter: ownerTokenCounter(spec, options),
+    onCandidateFailure: (failure) => journalCandidateFailure(state, failure),
   });
   return assembleCore(state, coordinator, [...backends.keys()]);
+}
+
+/**
+ * Native background lanes with the provider each journals under. xAI has no
+ * background lane: an admitted xAI model leaves compaction to xAI server-side.
+ */
+const NATIVE_LANE_PROVIDERS: ReadonlyMap<string, LaneProvider> = new Map([
+  [ANTHROPIC_BACKEND_ID, "anthropic"],
+  [CODEX_BACKEND_SETTING_ID, "codex"],
+]);
+
+function laneIdOf(backendId: string): LaneId | undefined {
+  if (backendId === TEXT_BACKEND_ID) return "text";
+  if (backendId === ANTHROPIC_BACKEND_ID) return "anthropic-native";
+  if (backendId === CODEX_BACKEND_SETTING_ID) return "codex-native-v2";
+  return undefined;
+}
+
+/**
+ * Journal a candidate's terminal failure, cancellation or discard. A text
+ * candidate is journaled under the provider of this owner's selected native
+ * lane; with no native lane selected there is no vendor lane to report on.
+ * A backend (possibly another package's) supplies the reason and detail at
+ * runtime, so both go through `ownedReasonOf`: anything that is not an owned
+ * code is journaled as `provider-error`, never as it is.
+ */
+function journalCandidateFailure(state: OwnerCoreState, failure: CandidateFailurePortEvent): void {
+  const from = laneIdOf(failure.backendId);
+  const provider =
+    NATIVE_LANE_PROVIDERS.get(failure.backendId) ??
+    (state.backendId === undefined ? undefined : NATIVE_LANE_PROVIDERS.get(state.backendId));
+  if (from === undefined || provider === undefined) return;
+  const route: LaneRoute = failure.trigger === "recovery" ? "resume" : failure.trigger;
+  const detail = failure.detail;
+  state.spec.journal({
+    at: now(state),
+    sessionId: state.spec.sessionId,
+    provider,
+    route,
+    event: failure.reason === "canceled" ? "cancel" : "fallback",
+    from,
+    reason: ownedReasonOf(failure.reason),
+    detail: detail === undefined ? undefined : ownedReasonOf(detail),
+    candidateId: failure.candidateId,
+    noticeAttempted: false,
+  });
 }
 
 function assembleCore(
