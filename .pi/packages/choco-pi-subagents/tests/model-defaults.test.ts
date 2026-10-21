@@ -177,7 +177,7 @@ test("agent files: deprecated aliases promote, unknown keys and shadowing warn",
     warnings.push(message);
   };
 
-  const agents = loadCustomAgents(join(root, "project"));
+  const agents = await loadCustomAgents(join(root, "project"));
 
   const legacy = agents.get("legacy");
   assert.equal(legacy?.model, "prov/legacy");
@@ -208,7 +208,7 @@ test("agent files: deprecated aliases promote, unknown keys and shadowing warn",
 
   // An unchanged reload does not repeat the warnings.
   const before = warnings.length;
-  loadCustomAgents(join(root, "project"));
+  await loadCustomAgents(join(root, "project"));
   assert.equal(warnings.length, before);
 });
 
@@ -241,7 +241,7 @@ test("agent files: a symlinked or identical duplicate does not warn as shadowing
     warnings.push(message);
   };
 
-  const agents = loadCustomAgents(join(root, "project"));
+  const agents = await loadCustomAgents(join(root, "project"));
 
   assert.equal(agents.get("linked")?.model, "prov/linked");
   assert.equal(agents.get("copied")?.model, "prov/copied");

@@ -49,7 +49,7 @@ test("nested fast-mode control reaches retained descendants but rejects siblings
       return target;
     },
   };
-  const tools = createNestedSubagentTools({
+  const tools = await createNestedSubagentTools({
     manager,
     pi: fixture.pi,
     parentAgentId: parent.id,

@@ -131,15 +131,17 @@ async function steerNestedRealSession(factories: readonly ExtensionFactory[]) {
     resume: async () => undefined,
   };
   try {
-    const steerTool = createNestedSubagentTools({
-      manager,
-      pi: fixture.pi,
-      parentAgentId: parent.id,
-      depth: 1,
-      maxSubagentDepth: 3,
-      allowedSubagents: "all",
-      configCwd: process.cwd(),
-    }).find((tool) => tool.name === "steer_subagent");
+    const steerTool = (
+      await createNestedSubagentTools({
+        manager,
+        pi: fixture.pi,
+        parentAgentId: parent.id,
+        depth: 1,
+        maxSubagentDepth: 3,
+        allowedSubagents: "all",
+        configCwd: process.cwd(),
+      })
+    ).find((tool) => tool.name === "steer_subagent");
     assert.ok(steerTool, "the nested tool set must include steer_subagent");
     const result = await steerTool.execute(
       "steer-call",

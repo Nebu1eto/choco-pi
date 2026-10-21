@@ -7,6 +7,7 @@ import test, { type TestContext } from "node:test";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 
 import { ResumeModelError, USAGE_LIMIT_RESUME_PROMPT } from "../src/agent-manager.ts";
+import { loadEnabledModels } from "../src/enabled-models.ts";
 import { setScopeModelsEnabled } from "../src/model-scope.ts";
 import { resolveStopOutcome } from "../src/stop-subagent.ts";
 import {
@@ -467,6 +468,8 @@ test("resume with model validates scope and availability, and reports setModel f
     join(cwd, ".pi", "settings.json"),
     JSON.stringify({ enabledModels: [OPUS, SOL] }),
   );
+  // Model Scope reads the snapshot the spawn entry points load first.
+  await loadEnabledModels(cwd);
   let failSetModel = false;
   const { manager, runs, resumes, resumePrompts, modelSwitches } = harness({
     setSessionModel: async () => {

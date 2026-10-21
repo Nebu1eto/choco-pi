@@ -12,7 +12,7 @@
  *   /agents                 — Interactive agent management menu
  */
 
-import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   type AgentSession,
@@ -53,6 +53,7 @@ import {
   ResumeModelError,
 } from "./agent-manager.ts";
 import { createAgentMessageTool } from "./agent-message.ts";
+import { createAgentReloader } from "./agent-reload.ts";
 import {
   getAgentConversation,
   getDefaultMaxTurns,
@@ -117,6 +118,8 @@ import {
 } from "./mention-clone.ts";
 import { formatSteerMessage, ROOT_AGENT_PATH } from "./messaging.ts";
 import { type ModelRegistry, resolveModel } from "./model-resolver.ts";
+import { ensureEnabledModels } from "./enabled-models.ts";
+import { pathExists } from "./fs-async.ts";
 import { checkModelScope, isScopeModelsEnabled, setScopeModelsEnabled } from "./model-scope.ts";
 import { getMaxSubagentDepth, setMaxSubagentDepth } from "./nested-tools.ts";
 import {
@@ -471,7 +474,7 @@ function getModelLabelFromConfig(model: string): string {
   return name.replace(/-\d{8}$/, "");
 }
 
-export default function (pi: ExtensionAPI) {
+export default async function (pi: ExtensionAPI): Promise<void> {
   // Child AgentSessions load normal extensions. Re-entering this extension there
   // would create another manager and leak handlers. Nested orchestration is
   // injected as scoped custom tools by the existing manager instead.
@@ -497,19 +500,38 @@ export default function (pi: ExtensionAPI) {
     return rendered === undefined ? undefined : new Text(rendered, 0, 0);
   });
 
-  // Read directly rather than waiting for applyAndEmitLoaded below: this decides
-  // the initial load, which happens hundreds of lines before settings are applied.
-  let strictAgentFiles = loadSettings(process.cwd()).strictAgentFiles === true;
+  // Activation reads, started together. The enabled-models preload never
+  // rejects and gates nothing here: Model Scope checks read its snapshot, and
+  // the async spawn entry points await it (ensureEnabledModels) before their
+  // first check. The settings gate the strict agent load below, so they are
+  // awaited first; the same loaded value feeds applyAndEmitLoaded further down.
+  const activationCwd = process.cwd();
+  void ensureEnabledModels(activationCwd);
+  const initialSettings = await loadSettings(activationCwd);
+  let strictAgentFiles = initialSettings.strictAgentFiles === true;
 
+  // Reloads are async and generation-guarded (agent-reload.ts): a load that a
+  // newer reload overtook never registers, and its caller settles with the newer one.
+  const agentReloader = createAgentReloader({
+    load: loadCustomAgents,
+    register: registerAgents,
+    cwd: () => process.cwd(),
+  });
   /** Reload agents from project/global custom agent dirs and merge with defaults (called on init and each Agent invocation). */
-  const reloadCustomAgents = (strict = false) => {
-    const userAgents = loadCustomAgents(process.cwd(), strict);
-    registerAgents(userAgents);
+  const reloadCustomAgents = (strict = false): Promise<void> => agentReloader.reload(strict);
+  /** Reload for a synchronous caller that cannot await; a failure only warns. */
+  const refreshAgentsInBackground = (): void => {
+    void reloadCustomAgents().catch((error) => {
+      console.warn("[choco-pi-subagents] Agent reload failed:", error);
+    });
   };
 
   // Initial load — the only strict one. A bad edit mid-session must not kill the
   // session on the next unrelated spawn, so every later reload keeps warning.
-  reloadCustomAgents(strictAgentFiles);
+  // Awaited before anything else registers: a strict failure rejects activation
+  // (Pi discards this extension's registrations), and the Agent tool's
+  // description below lists the roles this load found.
+  await reloadCustomAgents(strictAgentFiles);
 
   // ---- Agent activity tracking + widget ----
   const agentActivity = new Map<string, AgentActivity>();
@@ -927,9 +949,9 @@ export default function (pi: ExtensionAPI) {
     // Cross-extension callers get the same dispatch contract as the LLM (#183).
     // The RPC layer already throws for an unresolvable model rather than falling
     // back silently; a bad agent type should not be quieter. Throws become error
-    // envelopes at the RPC boundary. Reload first so an agent file added mid
-    // session is spawnable here too, not only through the Agent tool.
-    reloadCustomAgents();
+    // envelopes at the RPC boundary. Resolves against the registry as last
+    // loaded: callers that can await reload first (RPC, mentions), so an agent
+    // file added mid session is spawnable there too, not only through the Agent tool.
     const dispatch = resolveSpawnType(type);
     if (!dispatch.ok) throw new Error(dispatch.message);
     return manager.spawn(piRef, ctxRef, dispatch.type, prompt, options);
@@ -1000,7 +1022,13 @@ export default function (pi: ExtensionAPI) {
         },
       };
     },
-    spawn: spawnTopLevel,
+    // Synchronous cross-extension contract (returns the id), so it cannot await
+    // a reload: it resolves against the last-loaded registry and refreshes it
+    // in the background for the next call.
+    spawn: (...args: Parameters<typeof spawnTopLevel>) => {
+      refreshAgentsInBackground();
+      return spawnTopLevel(...args);
+    },
     getRecord: (id: string) => {
       const record = manager.getRecord(id);
       return record?.parentAgentId ? undefined : record;
@@ -1044,20 +1072,43 @@ export default function (pi: ExtensionAPI) {
   // is available. Mirrors pi-chonky-tasks's session-scoped task store —
   // schedules reset on /new, restore on /resume.
   const scheduler = new SubagentScheduler();
+  /** Bumped by every stop: a store load that finishes after a stop or restart never binds. */
+  let schedulerGeneration = 0;
+  /** The in-flight store load, so the schedule path can wait for it instead of refusing. */
+  let schedulerStarting: Promise<void> | undefined;
 
-  function startScheduler(ctx: ExtensionContext) {
-    try {
-      const sessionId = ctx.sessionManager?.getSessionId?.();
-      if (!sessionId) return; // sessionId not yet available — try again on next event
-      const path = resolveStorePath(ctx.cwd, sessionId);
-      const store = new ScheduleStore(path);
-      scheduler.start(pi, ctx, manager, store);
-      pi.events.emit("subagents:scheduler_ready", { sessionId, jobCount: store.list().length });
-    } catch (err) {
-      // Scheduling is non-essential — log and move on so the rest of the
-      // extension keeps working if e.g. .pi/ is unwritable.
-      console.warn("[choco-pi-subagents] Failed to start scheduler:", err);
-    }
+  function stopScheduler(): void {
+    schedulerGeneration++;
+    schedulerStarting = undefined;
+    scheduler.stop();
+  }
+
+  /**
+   * Load the session's store asynchronously, then bind the scheduler — only
+   * if no stop/restart happened meanwhile and nothing else bound it. The
+   * load is not awaited by session_start; `schedulerStarting` exposes it.
+   */
+  function startScheduler(ctx: ExtensionContext): void {
+    const sessionId = ctx.sessionManager?.getSessionId?.();
+    if (!sessionId) return; // sessionId not yet available — try again on next event
+    const path = resolveStorePath(ctx.cwd, sessionId);
+    const owner = ++schedulerGeneration;
+    schedulerStarting = (async () => {
+      try {
+        const store = await ScheduleStore.open(path);
+        if (owner !== schedulerGeneration || scheduler.isActive() || !isSchedulingEnabled()) {
+          return;
+        }
+        scheduler.start(pi, ctx, manager, store);
+        pi.events.emit("subagents:scheduler_ready", { sessionId, jobCount: store.list().length });
+      } catch (err) {
+        // Scheduling is non-essential — log and move on so the rest of the
+        // extension keeps working if e.g. .pi/ is unwritable.
+        console.warn("[choco-pi-subagents] Failed to start scheduler:", err);
+      } finally {
+        if (owner === schedulerGeneration) schedulerStarting = undefined;
+      }
+    })();
   }
 
   // ---- Durable revival: journal sink and startup revival ----
@@ -1075,6 +1126,23 @@ export default function (pi: ExtensionAPI) {
   const REVIVAL_START_DELAY_MS = 250;
   /** Bumped on every session_start/session_shutdown; stale continuations compare it. */
   let revivalGeneration = 0;
+
+  /**
+   * Reload agent definitions for a caller bound to the current session.
+   * Returns false when the session started or shut down while the files were
+   * read; the caller must then leave its captured ctx and pi untouched.
+   */
+  async function refreshAgentsForSession(): Promise<boolean> {
+    const generation = revivalGeneration;
+    // Alongside the reload (no extra latency): the first Model Scope check for
+    // this cwd must see the allowlist; a cached snapshot resolves without I/O.
+    const cwd = currentCtx?.cwd;
+    await Promise.all([
+      reloadCustomAgents(),
+      cwd === undefined ? undefined : ensureEnabledModels(cwd),
+    ]);
+    return generation === revivalGeneration;
+  }
   let journalActive = false;
   let revivalTimer: ReturnType<typeof setTimeout> | undefined;
   /** Activity trackers created for revivals, claimed by `onRevived`. */
@@ -1175,11 +1243,15 @@ export default function (pi: ExtensionAPI) {
   }
 
   function revivalContext(ctx: ExtensionContext, generation: number): RevivalContext {
+    const revivalCwd = ctx.cwd;
     return {
       pi,
       ctx,
-      resolveType: (type) => {
-        reloadCustomAgents();
+      // The manager rechecks its own revival generation after this settles.
+      // The enabled-models snapshot loads alongside: prepareRevival's Model
+      // Scope check runs synchronously right after.
+      resolveType: async (type) => {
+        await Promise.all([reloadCustomAgents(), ensureEnabledModels(revivalCwd)]);
         const dispatch = resolveSpawnType(type);
         if (!dispatch.ok) return { ok: false, message: dispatch.message };
         // Same rule as the tombstone resume: reopening a conversation under a
@@ -1322,6 +1394,9 @@ export default function (pi: ExtensionAPI) {
     activeMentionCloneGeneration = ++nextMentionCloneGeneration;
     const generation = ++revivalGeneration;
     currentCtx = ctx;
+    // Background preload for this session's cwd (never rejects); the spawn
+    // entry points still await it before their first Model Scope check.
+    void ensureEnabledModels(ctx.cwd);
     mainCompaction.bind(ctx.sessionManager.getSessionId());
     journalActive = journalEligible(ctx);
     const rootSessionId = ctx.sessionManager.getSessionId();
@@ -1417,6 +1492,7 @@ export default function (pi: ExtensionAPI) {
             return !record?.parentAgentId && manager.abort(id);
           },
         },
+        refreshAgents: () => reloadCustomAgents(),
       });
       // Broadcast readiness so extensions loaded alongside us can discover us.
       // Emitting after all factories have run (rather than at factory time)
@@ -1607,7 +1683,12 @@ export default function (pi: ExtensionAPI) {
       // the conversation unrecoverable (Claude Code's `not_reachable`), so drop
       // the entry — a row that can only ever fail is worse than none — and say
       // so rather than quietly sending this message to an unrelated agent.
-      if (!existsSync(entry.sessionFile)) {
+      const sessionGeneration = revivalGeneration;
+      const sessionFileExists = await pathExists(entry.sessionFile);
+      // Same as a failed refresh below: a session that changed meanwhile gets
+      // the input back untouched.
+      if (sessionGeneration !== revivalGeneration) return { action: "continue" };
+      if (!sessionFileExists) {
         manager.dropTombstone(entry.handle);
         ctx.ui.notify(`Could not resume ${target} — its session is gone.`, "warning");
         return { action: "handled" };
@@ -1619,7 +1700,7 @@ export default function (pi: ExtensionAPI) {
       // conversation under a different agent's prompt and tools is not
       // continuing it, and the new record would re-tombstone under the
       // substitute, so the handle would never find its way back.
-      reloadCustomAgents();
+      if (!(await refreshAgentsForSession())) return { action: "continue" };
       const dispatch = resolveSpawnType(entry.type);
       if (!dispatch.ok || dispatch.fellBackFrom !== undefined) {
         // The tombstone stays: re-enabling the agent makes the handle work
@@ -1661,6 +1742,9 @@ export default function (pi: ExtensionAPI) {
 
     // No agent under that handle — but the name may still be an agent type, in
     // which case the mention starts one.
+    // Reloaded first so an agent file added mid session is mentionable, and
+    // the spawn below resolves against the same fresh registry.
+    if (!(await refreshAgentsForSession())) return { action: "continue" };
     const typeHandle = mention.handle;
     const type =
       resolveHandleToType(typeHandle, getAvailableTypes()) ??
@@ -1752,7 +1836,7 @@ export default function (pi: ExtensionAPI) {
     // a non-journaling session aborts them there as before.
     sideConversations.dismiss();
     focus.unfocus();
-    scheduler.stop();
+    stopScheduler();
   });
 
   pi.on("agent_start", () => notificationGate.agentStart());
@@ -1777,6 +1861,7 @@ export default function (pi: ExtensionAPI) {
     mainCompaction.bind(undefined);
     // Likewise for a revival that has not started or is still preparing.
     revivalGeneration++;
+    agentReloader.invalidate();
     if (revivalTimer !== undefined) clearTimeout(revivalTimer);
     revivalTimer = undefined;
     revivalTrackers.clear();
@@ -1801,7 +1886,7 @@ export default function (pi: ExtensionAPI) {
     if (ownsManagerRegistry && globalManagerRegistry[MANAGER_KEY] === registryEntry) {
       delete globalManagerRegistry[MANAGER_KEY];
     }
-    scheduler.stop();
+    stopScheduler();
     workflowManager.dispose();
     if (suspend) {
       // Journal every live run as interrupted (or still waiting) before it is
@@ -1972,7 +2057,9 @@ export default function (pi: ExtensionAPI) {
   // needs it; this wrapper just re-registers after flipping it.
   function setDisableDefaultAgents(b: boolean): void {
     setDefaultsDisabled(b);
-    reloadCustomAgents(); // re-register with new setting
+    // Re-register with the new setting from the last load: no filesystem read,
+    // so this synchronous settings applier leaves the registry current at once.
+    agentReloader.reregister();
   }
 
   // ---- Batch tracking for smart join mode ----
@@ -2187,8 +2274,9 @@ export default function (pi: ExtensionAPI) {
 
   // Apply persisted settings on startup and emit `subagents:settings_loaded`.
   // Global + project merged; missing → defaults; corrupt file emits a warning
-  // to stderr and falls back to defaults.
+  // to stderr and falls back to defaults. Loaded once at activation (above).
   applyAndEmitLoaded(
+    initialSettings,
     {
       setMaxConcurrent: (n) => manager.setMaxConcurrent(n),
       setDefaultMaxTurns,
@@ -2377,7 +2465,11 @@ export default function (pi: ExtensionAPI) {
       fleet.setUICtx(fleetContext.ui);
 
       // Reload custom agents so new project/global .md files are picked up without restart
-      reloadCustomAgents();
+      if (!(await refreshAgentsForSession())) {
+        return textResult(
+          "Session changed while agent definitions were loading; nothing was started.",
+        );
+      }
 
       const rawType: SubagentType = params.subagent_type;
       // Single decision point for dispatch (#183): unknown, disabled and
@@ -2571,6 +2663,10 @@ export default function (pi: ExtensionAPI) {
             "Cannot combine `schedule` with `run_in_background: false` — scheduled jobs always run in background.",
           );
         }
+        // session_start loads the store in the background; wait for that load
+        // rather than refusing a schedule that arrives while it is in flight.
+        const starting = schedulerStarting;
+        if (!scheduler.isActive() && starting !== undefined) await starting;
         if (!scheduler.isActive()) {
           return textResult(
             "Scheduler is not active in this session yet. Try again after the session has fully started.",
@@ -2578,7 +2674,7 @@ export default function (pi: ExtensionAPI) {
         }
         try {
           // SAFETY: The Agent tool schema validates model as an optional string before execute runs.
-          const job = scheduler.addJob({
+          const job = await scheduler.addJob({
             name: params.description,
             description: params.description,
             schedule: params.schedule as string,
@@ -3192,7 +3288,11 @@ export default function (pi: ExtensionAPI) {
       promptSnippet: "Launch a dynamic DAG workflow of subagents",
       parameters: WorkflowDefinitionSchema,
       execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
-        reloadCustomAgents();
+        if (!(await refreshAgentsForSession())) {
+          return errorResult(
+            "Session changed while agent definitions were loading; the workflow was not started.",
+          );
+        }
         try {
           const result = workflowManager.start(
             params,
@@ -3229,7 +3329,11 @@ export default function (pi: ExtensionAPI) {
         { additionalProperties: false },
       ),
       execute: async (_toolCallId, params) => {
-        reloadCustomAgents();
+        if (!(await refreshAgentsForSession())) {
+          return errorResult(
+            "Session changed while agent definitions were loading; the workflow was not updated.",
+          );
+        }
         if (!params.steps && params.finish !== true) {
           return errorResult("workflow_update requires `steps` or `finish: true`.");
         }
@@ -3747,7 +3851,7 @@ export default function (pi: ExtensionAPI) {
   }
 
   async function showAgentsMenu(ctx: ExtensionCommandContext) {
-    reloadCustomAgents();
+    if (!(await refreshAgentsForSession())) return;
     const allNames = getAllTypes();
 
     // Build select options
@@ -3990,7 +4094,7 @@ export default function (pi: ExtensionAPI) {
       return;
     }
 
-    const file = locateAgentFile(name, cfg.sourcePath);
+    const file = await locateAgentFile(name, cfg.sourcePath);
     const isDefault = cfg.isDefault === true;
     const disabled = cfg.enabled === false;
 
@@ -4015,12 +4119,11 @@ export default function (pi: ExtensionAPI) {
     if (!choice || choice === "Back") return;
 
     if (choice === "Edit" && file) {
-      const content = readFileSync(file.path, "utf-8");
+      const content = await readFile(file.path, "utf-8");
       const edited = await ctx.ui.editor(`Edit ${name}`, content);
       if (edited !== undefined && edited !== content) {
-        const { writeFileSync } = await import("node:fs");
-        writeFileSync(file.path, edited, "utf-8");
-        reloadCustomAgents();
+        await writeFile(file.path, edited, "utf-8");
+        if (!(await refreshAgentsForSession())) return;
         ctx.ui.notify(`Updated ${file.path}`, "info");
       }
     } else if (choice === "Delete") {
@@ -4030,8 +4133,8 @@ export default function (pi: ExtensionAPI) {
           `Delete ${name} from ${file.location} (${file.path})?`,
         );
         if (confirmed) {
-          unlinkSync(file.path);
-          reloadCustomAgents();
+          await unlink(file.path);
+          if (!(await refreshAgentsForSession())) return;
           ctx.ui.notify(`Deleted ${file.path}`, "info");
         }
       }
@@ -4041,8 +4144,8 @@ export default function (pi: ExtensionAPI) {
         `Delete override ${file.path} and restore embedded default?`,
       );
       if (confirmed) {
-        unlinkSync(file.path);
-        reloadCustomAgents();
+        await unlink(file.path);
+        if (!(await refreshAgentsForSession())) return;
         ctx.ui.notify(`Restored default ${name}`, "info");
       }
     } else if (choice.startsWith("Eject")) {
@@ -4054,6 +4157,21 @@ export default function (pi: ExtensionAPI) {
     }
   }
 
+  /**
+   * Create `targetDir` and report whether `targetPath` already exists, for the
+   * /agents file flows. Resolves `undefined` when the session changed during
+   * the I/O, so the caller stops before touching `ctx` again.
+   */
+  async function prepareAgentTarget(
+    targetDir: string,
+    targetPath: string,
+  ): Promise<boolean | undefined> {
+    const generation = revivalGeneration;
+    await mkdir(targetDir, { recursive: true });
+    const exists = await pathExists(targetPath);
+    return generation === revivalGeneration ? exists : undefined;
+  }
+
   /** Eject a default agent: write its embedded config as a .md file. */
   async function ejectAgent(ctx: ExtensionCommandContext, name: string, cfg: AgentConfig) {
     const location = await ctx.ui.select("Choose location", [
@@ -4063,10 +4181,10 @@ export default function (pi: ExtensionAPI) {
     if (!location) return;
 
     const targetDir = location.startsWith("Project") ? projectAgentsDir() : personalAgentsDir();
-    mkdirSync(targetDir, { recursive: true });
-
     const targetPath = join(targetDir, `${name}.md`);
-    if (existsSync(targetPath)) {
+    const targetExists = await prepareAgentTarget(targetDir, targetPath);
+    if (targetExists === undefined) return;
+    if (targetExists) {
       const overwrite = await ctx.ui.confirm(
         "Overwrite",
         `${targetPath} already exists. Overwrite?`,
@@ -4076,18 +4194,17 @@ export default function (pi: ExtensionAPI) {
 
     const content = serializeAgentFile(cfg);
 
-    const { writeFileSync } = await import("node:fs");
-    writeFileSync(targetPath, content, "utf-8");
-    reloadCustomAgents();
+    await writeFile(targetPath, content, "utf-8");
+    if (!(await refreshAgentsForSession())) return;
     ctx.ui.notify(`Ejected ${name} to ${targetPath}`, "info");
   }
 
   /** Disable an agent: set enabled: false in its .md file, or create a stub for built-in defaults. */
   async function disableAgent(ctx: ExtensionCommandContext, name: string) {
-    const file = locateAgentFile(name, getAgentConfig(name)?.sourcePath);
+    const file = await locateAgentFile(name, getAgentConfig(name)?.sourcePath);
     if (file) {
       // Existing file — set enabled: false in frontmatter (idempotent)
-      const content = readFileSync(file.path, "utf-8");
+      const content = await readFile(file.path, "utf-8");
       const { content: updated, outcome } = disableInContent(content);
       if (outcome === "already-disabled") {
         ctx.ui.notify(`${name} is already disabled.`, "info");
@@ -4099,9 +4216,8 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(`Cannot disable ${name}: ${file.path} has no frontmatter block.`, "error");
         return;
       }
-      const { writeFileSync } = await import("node:fs");
-      writeFileSync(file.path, updated, "utf-8");
-      reloadCustomAgents();
+      await writeFile(file.path, updated, "utf-8");
+      if (!(await refreshAgentsForSession())) return;
       ctx.ui.notify(`Disabled ${name} (${file.path})`, "info");
       return;
     }
@@ -4114,21 +4230,20 @@ export default function (pi: ExtensionAPI) {
     if (!location) return;
 
     const targetDir = location.startsWith("Project") ? projectAgentsDir() : personalAgentsDir();
-    mkdirSync(targetDir, { recursive: true });
+    await mkdir(targetDir, { recursive: true });
 
     const targetPath = join(targetDir, `${name}.md`);
-    const { writeFileSync } = await import("node:fs");
-    writeFileSync(targetPath, "---\nenabled: false\n---\n", "utf-8");
-    reloadCustomAgents();
+    await writeFile(targetPath, "---\nenabled: false\n---\n", "utf-8");
+    if (!(await refreshAgentsForSession())) return;
     ctx.ui.notify(`Disabled ${name} (${targetPath})`, "info");
   }
 
   /** Enable a disabled agent by removing enabled: false from its frontmatter. */
   async function enableAgent(ctx: ExtensionCommandContext, name: string) {
-    const file = locateAgentFile(name, getAgentConfig(name)?.sourcePath);
+    const file = await locateAgentFile(name, getAgentConfig(name)?.sourcePath);
     if (!file) return;
 
-    const content = readFileSync(file.path, "utf-8");
+    const content = await readFile(file.path, "utf-8");
     const { content: updated, changed } = enableInContent(content);
     if (!changed && !isEmptyStub(updated)) {
       // The file carries no `enabled: false` to remove, so it was never disabled
@@ -4136,16 +4251,14 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.notify(`${name} is not disabled in ${file.path}.`, "info");
       return;
     }
-    const { writeFileSync } = await import("node:fs");
-
     // If the file was just a stub ("---\n---\n"), delete it to restore the built-in default
     if (isEmptyStub(updated)) {
-      unlinkSync(file.path);
-      reloadCustomAgents();
+      await unlink(file.path);
+      if (!(await refreshAgentsForSession())) return;
       ctx.ui.notify(`Enabled ${name} (removed ${file.path})`, "info");
     } else {
-      writeFileSync(file.path, updated, "utf-8");
-      reloadCustomAgents();
+      await writeFile(file.path, updated, "utf-8");
+      if (!(await refreshAgentsForSession())) return;
       ctx.ui.notify(`Enabled ${name} (${file.path})`, "info");
     }
   }
@@ -4179,10 +4292,10 @@ export default function (pi: ExtensionAPI) {
     const name = await ctx.ui.input("Agent name (filename, no spaces)");
     if (!name) return;
 
-    mkdirSync(targetDir, { recursive: true });
-
     const targetPath = join(targetDir, `${name}.md`);
-    if (existsSync(targetPath)) {
+    const targetExists = await prepareAgentTarget(targetDir, targetPath);
+    if (targetExists === undefined) return;
+    if (targetExists) {
       const overwrite = await ctx.ui.confirm(
         "Overwrite",
         `${targetPath} already exists. Overwrite?`,
@@ -4252,9 +4365,12 @@ Write the file using the write tool. Only write the file, nothing else.`;
       return;
     }
 
-    reloadCustomAgents();
+    if (!(await refreshAgentsForSession())) return;
 
-    if (existsSync(targetPath)) {
+    const createdGeneration = revivalGeneration;
+    const created = await pathExists(targetPath);
+    if (createdGeneration !== revivalGeneration) return;
+    if (created) {
       ctx.ui.notify(`Created ${targetPath}`, "info");
     } else {
       ctx.ui.notify(
@@ -4333,10 +4449,10 @@ Write the file using the write tool. Only write the file, nothing else.`;
       systemPrompt,
     });
 
-    mkdirSync(targetDir, { recursive: true });
     const targetPath = join(targetDir, `${name}.md`);
-
-    if (existsSync(targetPath)) {
+    const targetExists = await prepareAgentTarget(targetDir, targetPath);
+    if (targetExists === undefined) return;
+    if (targetExists) {
       const overwrite = await ctx.ui.confirm(
         "Overwrite",
         `${targetPath} already exists. Overwrite?`,
@@ -4344,9 +4460,8 @@ Write the file using the write tool. Only write the file, nothing else.`;
       if (!overwrite) return;
     }
 
-    const { writeFileSync } = await import("node:fs");
-    writeFileSync(targetPath, content, "utf-8");
-    reloadCustomAgents();
+    await writeFile(targetPath, content, "utf-8");
+    if (!(await refreshAgentsForSession())) return;
     ctx.ui.notify(`Created ${targetPath}`, "info");
   }
 
@@ -4412,7 +4527,7 @@ Write the file using the write tool. Only write the file, nothing else.`;
       setDefaultJoinMode,
       isSchedulingEnabled,
       setSchedulingEnabled,
-      stopScheduler: () => scheduler.stop(),
+      stopScheduler,
       isScopeModelsEnabled,
       setScopeModelsEnabled,
       isStrictAgentFiles: () => strictAgentFiles,
@@ -4531,19 +4646,27 @@ Write the file using the write tool. Only write the file, nothing else.`;
   // the right toast. Successful saves show info; persistence failures downgrade
   // to warning so users aren't silently reverted on restart. Event fires regardless
   // of outcome so listeners see the in-memory change.
+  // The write is asynchronous: the snapshot is taken now (saves are serialized in
+  // call order), and the event and toast go out only while the session that
+  // made the change is still current.
   function notifyApplied(ctx: ExtensionContext, successMsg: string) {
-    const { message, level } = saveAndEmitChanged(
-      snapshotSettings(),
-      successMsg,
-      (event, payload) => pi.events.emit(event, payload),
-    );
-    ctx.ui.notify(message, level);
+    const generation = revivalGeneration;
+    const current = () => generation === revivalGeneration && currentCtx !== undefined;
+    void saveAndEmitChanged(snapshotSettings(), successMsg, (event, payload) => {
+      if (current()) pi.events.emit(event, payload);
+    })
+      .then(({ message, level }) => {
+        if (current()) ctx.ui.notify(message, level);
+      })
+      .catch((error) => {
+        console.warn("[choco-pi-subagents] Settings change notification failed:", error);
+      });
   }
 
   async function handleBtwCommand(args: string, ctx: ExtensionCommandContext): Promise<void> {
     const question = args.trim();
     if (question) {
-      reloadCustomAgents();
+      if (!(await refreshAgentsForSession())) return;
       const dispatch = resolveBtwType();
       if (!dispatch.ok) {
         ctx.ui.notify(`Could not start BTW conversation: ${dispatch.message}`, "error");

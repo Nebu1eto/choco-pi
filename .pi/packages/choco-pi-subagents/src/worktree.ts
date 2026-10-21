@@ -6,11 +6,21 @@
  * If changes exist, a branch is created and returned in the result.
  */
 
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, realpathSync } from "node:fs";
+import { realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
+import { promisify } from "node:util";
+import { pathExists } from "./fs-async.ts";
+
+const execFileAsync = promisify(execFile);
+
+/** Run git with argv (no shell) and resolve its trimmed stdout; rejects on a non-zero exit or timeout. */
+async function git(args: string[], cwd: string, timeout: number): Promise<string> {
+  const { stdout } = await execFileAsync("git", args, { cwd, timeout, encoding: "utf8" });
+  return stdout.trim();
+}
 
 export interface WorktreeInfo {
   /** Absolute path to the worktree directory (the copied repo's root). */
@@ -30,23 +40,20 @@ export interface WorktreeInfo {
   hookManaged?: boolean;
 }
 
-export function adoptHookWorktree(
+export async function adoptHookWorktree(
   cwd: string,
   worktreePath: string,
   agentId: string,
-): WorktreeInfo | undefined {
+): Promise<WorktreeInfo | undefined> {
   try {
-    if (!existsSync(worktreePath)) return undefined;
-    const baseSha = execFileSync("git", ["rev-parse", "HEAD"], {
-      cwd,
-      stdio: "pipe",
-      timeout: 5000,
-    })
-      .toString()
-      .trim();
+    if (!(await pathExists(worktreePath))) return undefined;
+    const [baseSha, resolved] = await Promise.all([
+      git(["rev-parse", "HEAD"], cwd, 5000),
+      realpath(worktreePath),
+    ]);
     return {
-      path: realpathSync(worktreePath),
-      workPath: realpathSync(worktreePath),
+      path: resolved,
+      workPath: resolved,
       branch: `pi-agent-${agentId}`,
       baseSha,
       hookManaged: true,
@@ -89,31 +96,23 @@ export interface WorktreeCleanupResult {
  * Create a temporary git worktree for an agent.
  * Returns the worktree path, or undefined if not in a git repo.
  */
-export function createWorktree(cwd: string, agentId: string): WorktreeInfo | undefined {
+export async function createWorktree(
+  cwd: string,
+  agentId: string,
+): Promise<WorktreeInfo | undefined> {
   // Verify we're in a git repo with at least one commit (HEAD must exist)
   let baseSha: string;
   let subdir: string;
   try {
-    execFileSync("git", ["rev-parse", "--is-inside-work-tree"], {
-      cwd,
-      stdio: "pipe",
-      timeout: 5000,
-    });
-    baseSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd, stdio: "pipe", timeout: 5000 })
-      .toString()
-      .trim();
+    await git(["rev-parse", "--is-inside-work-tree"], cwd, 5000);
+    baseSha = await git(["rev-parse", "HEAD"], cwd, 5000);
     // Where cwd sits inside the repo ("" at the root): the agent must work at
     // the same subdirectory inside the copy, or a monorepo-package cwd would
     // silently widen to the whole repo. realpath both sides — git emits
     // resolved paths while cwd may arrive through a symlink (macOS /tmp).
-    const topLevel = execFileSync("git", ["rev-parse", "--show-toplevel"], {
-      cwd,
-      stdio: "pipe",
-      timeout: 5000,
-    })
-      .toString()
-      .trim();
-    subdir = relative(realpathSync(topLevel), realpathSync(cwd));
+    const topLevel = await git(["rev-parse", "--show-toplevel"], cwd, 5000);
+    const [realTop, realCwd] = await Promise.all([realpath(topLevel), realpath(cwd)]);
+    subdir = relative(realTop, realCwd);
   } catch {
     return undefined;
   }
@@ -124,11 +123,7 @@ export function createWorktree(cwd: string, agentId: string): WorktreeInfo | und
 
   try {
     // Create detached worktree at HEAD
-    execFileSync("git", ["worktree", "add", "--detach", worktreePath, "HEAD"], {
-      cwd,
-      stdio: "pipe",
-      timeout: 30000,
-    });
+    await git(["worktree", "add", "--detach", worktreePath, "HEAD"], cwd, 30000);
     return {
       path: worktreePath,
       branch,
@@ -146,48 +141,32 @@ export function createWorktree(cwd: string, agentId: string): WorktreeInfo | und
  * - If no changes: remove worktree entirely.
  * - If changes exist: create a branch, commit changes, return branch info.
  */
-export function cleanupWorktree(
+export async function cleanupWorktree(
   cwd: string,
   worktree: WorktreeInfo,
   agentDescription: string,
-): WorktreeCleanupResult {
-  if (!existsSync(worktree.path)) {
+): Promise<WorktreeCleanupResult> {
+  if (!(await pathExists(worktree.path))) {
     return { hasChanges: false };
   }
 
   try {
     // Check for uncommitted changes in the worktree
-    const status = execFileSync("git", ["status", "--porcelain"], {
-      cwd: worktree.path,
-      stdio: "pipe",
-      timeout: 10000,
-    })
-      .toString()
-      .trim();
+    const status = await git(["status", "--porcelain"], worktree.path, 10000);
 
     if (status) {
       // Changes exist — stage, commit, and create a branch
-      execFileSync("git", ["add", "-A"], { cwd: worktree.path, stdio: "pipe", timeout: 10000 });
-      // Truncate description for commit message (no shell sanitization needed — execFileSync uses argv)
+      await git(["add", "-A"], worktree.path, 10000);
+      // Truncate description for commit message (no shell sanitization needed — execFile uses argv)
       const safeDesc = agentDescription.slice(0, 200);
       const commitMsg = `pi-agent: ${safeDesc}`;
-      execFileSync("git", ["commit", "--no-verify", "-m", commitMsg], {
-        cwd: worktree.path,
-        stdio: "pipe",
-        timeout: 10000,
-      });
+      await git(["commit", "--no-verify", "-m", commitMsg], worktree.path, 10000);
     } else {
-      const currentSha = execFileSync("git", ["rev-parse", "HEAD"], {
-        cwd: worktree.path,
-        stdio: "pipe",
-        timeout: 5000,
-      })
-        .toString()
-        .trim();
+      const currentSha = await git(["rev-parse", "HEAD"], worktree.path, 5000);
 
       if (currentSha === worktree.baseSha) {
         // No changes — remove worktree
-        removeWorktree(cwd, worktree.path);
+        await removeWorktree(cwd, worktree.path);
         return { hasChanges: false };
       }
     }
@@ -196,25 +175,17 @@ export function cleanupWorktree(
     // If the branch already exists, append a suffix to avoid overwriting previous work.
     let branchName = worktree.branch;
     try {
-      execFileSync("git", ["branch", branchName], {
-        cwd: worktree.path,
-        stdio: "pipe",
-        timeout: 5000,
-      });
+      await git(["branch", branchName], worktree.path, 5000);
     } catch {
       // Branch already exists — use a unique suffix
       branchName = `${worktree.branch}-${Date.now()}`;
-      execFileSync("git", ["branch", branchName], {
-        cwd: worktree.path,
-        stdio: "pipe",
-        timeout: 5000,
-      });
+      await git(["branch", branchName], worktree.path, 5000);
     }
     // Update branch name in worktree info for the caller
     worktree.branch = branchName;
 
     // Remove the worktree (branch persists in main repo)
-    removeWorktree(cwd, worktree.path);
+    await removeWorktree(cwd, worktree.path);
 
     return {
       hasChanges: true,
@@ -224,7 +195,7 @@ export function cleanupWorktree(
   } catch {
     // Best effort cleanup on error
     try {
-      removeWorktree(cwd, worktree.path);
+      await removeWorktree(cwd, worktree.path);
     } catch {
       /* ignore */
     }
@@ -235,17 +206,13 @@ export function cleanupWorktree(
 /**
  * Force-remove a worktree.
  */
-function removeWorktree(cwd: string, worktreePath: string): void {
+async function removeWorktree(cwd: string, worktreePath: string): Promise<void> {
   try {
-    execFileSync("git", ["worktree", "remove", "--force", worktreePath], {
-      cwd,
-      stdio: "pipe",
-      timeout: 10000,
-    });
+    await git(["worktree", "remove", "--force", worktreePath], cwd, 10000);
   } catch {
     // If git worktree remove fails, try pruning
     try {
-      execFileSync("git", ["worktree", "prune"], { cwd, stdio: "pipe", timeout: 5000 });
+      await git(["worktree", "prune"], cwd, 5000);
     } catch {
       /* ignore */
     }
@@ -255,9 +222,9 @@ function removeWorktree(cwd: string, worktreePath: string): void {
 /**
  * Prune any orphaned worktrees (crash recovery).
  */
-export function pruneWorktrees(cwd: string): void {
+export async function pruneWorktrees(cwd: string): Promise<void> {
   try {
-    execFileSync("git", ["worktree", "prune"], { cwd, stdio: "pipe", timeout: 5000 });
+    await git(["worktree", "prune"], cwd, 5000);
   } catch {
     /* ignore */
   }

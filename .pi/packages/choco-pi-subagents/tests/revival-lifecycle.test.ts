@@ -95,7 +95,7 @@ interface Env {
   /** Journal entry seen by the runner's abort listener, per agent id. */
   atAbort: Map<string, SubagentJournalData | undefined>;
   sm: SessionManager;
-  activate(options?: { mode?: ExtensionContext["mode"]; sm?: SessionManager }): Activation;
+  activate(options?: { mode?: ExtensionContext["mode"]; sm?: SessionManager }): Promise<Activation>;
   journal(id: string, sm?: SessionManager): SubagentJournalData[];
   seed(agent: JournalAgentSnapshot, suspended: boolean): void;
   childFile(name: string): Promise<string>;
@@ -222,9 +222,9 @@ async function setup(t: TestContext): Promise<Env> {
     for (const manager of managers) manager.dispose();
   });
 
-  function activate(
+  async function activate(
     options: { mode?: ExtensionContext["mode"]; sm?: SessionManager } = {},
-  ): Activation {
+  ): Promise<Activation> {
     const handlers = new Map<string, LifecycleHandler>();
     let open = false;
     // A failing assertion must not leave the global manager slot claimed.
@@ -253,7 +253,7 @@ async function setup(t: TestContext): Promise<Env> {
       },
       getSettings: () => ({}),
     });
-    subagentsExtension(pi);
+    await subagentsExtension(pi);
     const base = env.context({ sessionManager: session });
     const mode = options.mode ?? "rpc";
     // The SDK's headless UI; notify is captured for the latest activation.
@@ -350,7 +350,7 @@ async function spawnBackground(a: Activation): Promise<string> {
 for (const reason of ["reload", "quit", "resume", "fork"]) {
   test(`shutdown (${reason}) journals the running agent as suspended before aborting it`, async (t) => {
     const s = await setup(t);
-    const a = s.activate();
+    const a = await s.activate();
     await a.start();
     const id = await spawnBackground(a);
     await s.ready(id);
@@ -373,7 +373,7 @@ for (const reason of ["reload", "quit", "resume", "fork"]) {
 
 test("startup revives an interrupted agent under its id, after session_start returns", async (t) => {
   const s = await setup(t);
-  const first = s.activate();
+  const first = await s.activate();
   await first.start();
   const id = await spawnBackground(first);
   await s.ready(id);
@@ -382,7 +382,7 @@ test("startup revives an interrupted agent under its id, after session_start ret
   assert.ok(file);
   const before = s.runs.length;
 
-  const second = s.activate();
+  const second = await s.activate();
   await second.start("reload");
   await flush();
   assert.equal(s.runs.length, before, "revival is deferred past the session_start handler");
@@ -408,7 +408,7 @@ test("a revival scheduled for a session that already shut down does nothing", as
   const s = await setup(t);
   const file = await s.childFile("stale.jsonl");
   s.seed(snap("stale", { sessionFile: file }), true);
-  const a = s.activate();
+  const a = await s.activate();
   await a.start();
   await a.shutdown("reload");
   await sleep(REVIVAL_WAIT_MS);
@@ -417,7 +417,7 @@ test("a revival scheduled for a session that already shut down does nothing", as
 
 test("print mode and in-memory roots do not journal and abort as before", async (t) => {
   const s = await setup(t);
-  const print = s.activate({ mode: "print" });
+  const print = await s.activate({ mode: "print" });
   await print.start();
   const id = await spawnBackground(print);
   await s.ready(id);
@@ -426,7 +426,7 @@ test("print mode and in-memory roots do not journal and abort as before", async 
   assert.deepEqual(s.aborted, [id]);
 
   const memory = SessionManager.inMemory(s.dir);
-  const inMemory = s.activate({ sm: memory });
+  const inMemory = await s.activate({ sm: memory });
   await inMemory.start();
   const other = await spawnBackground(inMemory);
   await s.ready(other);
@@ -457,7 +457,7 @@ test("a capped agent is journaled as an error and reported once", async (t) => {
   const s = await setup(t);
   const file = await s.childFile("capped.jsonl");
   s.seed(snap("cap", { status: "running", sessionFile: file, revivals: 2 }), false);
-  const first = s.activate();
+  const first = await s.activate();
   await first.start();
   await sleep(REVIVAL_WAIT_MS);
   assert.equal(s.runs.length, 0);
@@ -470,7 +470,7 @@ test("a capped agent is journaled as an error and reported once", async (t) => {
   assert.equal(latest?.error, CAPPED_REVIVAL_ERROR);
   await first.shutdown("quit");
 
-  const second = s.activate();
+  const second = await s.activate();
   await second.start();
   await sleep(REVIVAL_WAIT_MS);
   assert.equal(second.sent.filter((m) => m.customType === "subagent-revival").length, 0);
@@ -485,7 +485,7 @@ test("dormant agents: result read, stop before revival, Agent resume and @handle
   const mentionFile = await s.childFile("mention.jsonl");
   // Activation loads the agent registry; a resume refuses fallback types, so
   // seed with one that resolves exactly in this checkout.
-  const a = s.activate();
+  const a = await s.activate();
   const type = getAvailableTypes()[0];
   assert.ok(type);
   s.seed(
@@ -554,7 +554,7 @@ test("a pending notification for a dormant unread result survives a restart", as
   const s = await setup(t);
   s.seed(snap("note", { status: "completed", result: "the result" }), false);
   s.sm.appendCustomEntry("subagent-notification-pending", { keys: ["note"] });
-  const a = s.activate();
+  const a = await s.activate();
   await a.start();
   await sleep(NUDGE_HOLD_MS * 3);
   const notification = a.sent.find((message) => message.customType === "subagent-notification");
@@ -573,7 +573,7 @@ test("Agent resume of a dormant agent with model: switches and journals, or refu
   const s = await setup(t);
   const file = await s.childFile("model.jsonl");
   const closedFile = await s.childFile("closed.jsonl");
-  const a = s.activate();
+  const a = await s.activate();
   const type = getAvailableTypes()[0];
   assert.ok(type);
   const anthropic = { provider: "anthropic", id: "claude-opus-4-5" };

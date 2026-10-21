@@ -28,6 +28,7 @@ import {
   startupDisposition,
   type SubagentJournalData,
 } from "../src/revival-journal.ts";
+import { loadEnabledModels } from "../src/enabled-models.ts";
 import { setScopeModelsEnabled } from "../src/model-scope.ts";
 import {
   claimSessionFile,
@@ -45,6 +46,7 @@ import {
   type HarnessOptions,
   type UsageLimitEnv,
 } from "./usage-limit-fixture.ts";
+import { waitFor } from "./wait-for.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -512,6 +514,12 @@ test("a re-armed wait journals its adopted worktree and cleans it if stopped bef
   assert.equal(s.manager.abort("rev-r"), true);
   await flush();
   assert.equal(s.manager.getRecord("rev-r")?.status, "stopped");
+  // The deferred cleanup runs git asynchronously after the stop; publication follows it.
+  await waitFor(
+    () => s.manager.getRecord("rev-r")?.worktreeResult !== undefined,
+    "the stop's final settle",
+  );
+  await flush();
   assert.equal(await exists(path), false, "the stop's final settle removed the worktree");
   assert.notEqual(sessionFileOwner(s.file), undefined, "the live record still holds its file");
   s.manager.clearCompleted();
@@ -708,6 +716,8 @@ test("a dormant resume with an out-of-scope model is refused like a live resume"
     join(cwd, ".pi", "settings.json"),
     JSON.stringify({ enabledModels: [OPUS_REF, SOL_REF] }),
   );
+  // Model Scope reads the snapshot the spawn entry points load first.
+  await loadEnabledModels(cwd);
   setScopeModelsEnabled(true);
   t.after(() => setScopeModelsEnabled(false));
   const file = await sessionFile(s.dir, "s.jsonl");

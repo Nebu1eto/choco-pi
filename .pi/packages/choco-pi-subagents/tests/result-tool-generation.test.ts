@@ -88,7 +88,7 @@ test("top-level get_subagent_result refuses repeated generation reads and retain
     [registryKey: symbol]: GlobalManagerEntry | undefined;
   };
   const root = fixture();
-  subagentsExtension(root.pi);
+  await subagentsExtension(root.pi);
   const manager = registry[key];
   assert.ok(manager);
   const resultTool = root.tools.get("get_subagent_result");
@@ -169,7 +169,7 @@ test("top-level get_subagent_result treats an aborted wait as benign and release
     [registryKey: symbol]: GlobalManagerEntry | undefined;
   };
   const root = fixture();
-  subagentsExtension(root.pi);
+  await subagentsExtension(root.pi);
   const manager = registry[key];
   assert.ok(manager);
   try {
@@ -212,7 +212,7 @@ test("top-level get_subagent_result treats an aborted wait as benign and release
 
 test("get_workflow_result treats an aborted wait as benign and leaves the workflow unconsumed", async () => {
   const root = fixture();
-  subagentsExtension(root.pi);
+  await subagentsExtension(root.pi);
   const context = asExtensionContext({
     cwd: process.cwd(),
     sessionManager: { getSessionId: () => "workflow-abort-probe", getEntries: () => [] },

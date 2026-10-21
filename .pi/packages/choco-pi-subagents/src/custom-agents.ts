@@ -2,7 +2,7 @@
  * custom-agents.ts — Load user-defined agents from project (.pi/agents/, plus the shared .agents/agents/ workspace) and global ($PI_CODING_AGENT_DIR/agents/, default ~/.pi/agent/agents/) locations.
  */
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { readdir, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -119,6 +119,9 @@ interface ParsedToolsField {
   extSelectors: string[] | undefined;
 }
 
+/** One file's read outcome, gathered in parallel and then applied in directory order. */
+type AgentFileRead = { path: string; text: string } | { path: string; error: unknown };
+
 /**
  * Scan for custom agent .md files from multiple locations.
  * Discovery hierarchy (higher priority wins):
@@ -136,46 +139,75 @@ interface ParsedToolsField {
  * Because the type is now declared rather than derived from a unique path, two
  * files can claim the same one; the later load wins, as it always has for a
  * filename clash, and `warnSkippedOverride` reports the substitution.
+ *
+ * Asynchronous throughout (no synchronous filesystem call), so a reload never
+ * blocks the event loop. Each call keeps its own warning set, so two loads in
+ * flight at once cannot interleave their per-load deduplication state.
  */
-export function loadCustomAgents(cwd: string, strict = false): Map<string, AgentConfig> {
+export async function loadCustomAgents(
+  cwd: string,
+  strict = false,
+): Promise<Map<string, AgentConfig>> {
   const globalDir = join(getAgentDir(), "agents");
   const workspaceProjectDir = join(cwd, ".agents", "agents");
   const projectDir = join(cwd, ".pi", "agents");
 
   const agents = new Map<string, AgentConfig>();
-  loadFromDir(globalDir, agents, "global", strict); // lowest priority
-  loadFromDir(workspaceProjectDir, agents, "project", strict); // shared workspace
-  loadFromDir(projectDir, agents, "project", strict); // highest priority (overwrites)
+  const warned = new Set<string>();
+  // Directories are read concurrently but applied in priority order, so the
+  // overwrite and shadow-warning sequence matches a sequential scan exactly.
+  const [globalFiles, workspaceFiles, projectFiles] = await Promise.all([
+    readAgentDir(globalDir),
+    readAgentDir(workspaceProjectDir),
+    readAgentDir(projectDir),
+  ]);
+  applyDir(globalFiles, agents, "global", strict, warned); // lowest priority
+  applyDir(workspaceFiles, agents, "project", strict, warned); // shared workspace
+  applyDir(projectFiles, agents, "project", strict, warned); // highest priority (overwrites)
 
-  warnedLastLoad = warnedThisLoad;
-  warnedThisLoad = new Set();
+  warnedLastLoad = warned;
   return agents;
 }
 
-/** Load agent configs from a directory into the map. */
-function loadFromDir(
-  dir: string,
+/**
+ * Read every `.md` file in one directory. A missing or unreadable directory
+ * contributes nothing, as before; per-file read errors are kept so the caller
+ * reports them in directory order.
+ */
+async function readAgentDir(dir: string): Promise<AgentFileRead[]> {
+  let files: string[];
+  try {
+    files = (await readdir(dir)).filter((f) => f.endsWith(".md"));
+  } catch {
+    return [];
+  }
+  return Promise.all(
+    files.map(async (file): Promise<AgentFileRead> => {
+      const path = join(dir, file);
+      try {
+        return { path, text: await readFile(path, "utf-8") };
+      } catch (error) {
+        return { path, error };
+      }
+    }),
+  );
+}
+
+/** Apply one directory's agent files to the map, in directory order. */
+function applyDir(
+  files: AgentFileRead[],
   agents: Map<string, AgentConfig>,
   source: "project" | "global",
   strict: boolean,
+  warned: Set<string>,
 ): void {
-  if (!existsSync(dir)) return;
+  for (const read of files) {
+    const path = read.path;
+    const filenameType = basename(path, ".md");
 
-  let files: string[];
-  try {
-    files = readdirSync(dir).filter((f) => f.endsWith(".md"));
-  } catch {
-    return;
-  }
-
-  for (const file of files) {
-    const filenameType = basename(file, ".md");
-
-    const path = join(dir, file);
-
-    const parsed = readAgentFile(path, strict);
+    const parsed = parseAgentFile(read, strict, warned);
     if (!parsed) {
-      warnSkippedOverride(filenameType, agents);
+      warnSkippedOverride(filenameType, agents, warned);
       continue;
     }
     const { frontmatter: fm, body } = parsed;
@@ -191,6 +223,7 @@ function loadFromDir(
       warnIfNew(
         `Agent file ${path} declares name "${declared}", which contains "${RESERVED_IN_TYPE}" — reserved for ` +
           "plugin-scoped identifiers. Rename it, or move the label to `display_name:`. Skipping.",
+        warned,
       );
       // No `warnSkippedOverride`: this file would have registered under its
       // *declared* name, which nothing else can hold (a colon keeps it out of
@@ -203,9 +236,9 @@ function loadFromDir(
     // filename-derived one down with it.
     const name = declared || filenameType;
 
-    warnUnknownKeys(path, fm);
-    warnDeprecatedModelKeys(path, fm);
-    warnShadowed(name, path, parsed.text, agents);
+    warnUnknownKeys(path, fm, warned);
+    warnDeprecatedModelKeys(path, fm, warned);
+    warnShadowed(name, path, parsed.text, agents, warned);
 
     const { builtinToolNames, extSelectors } = parseToolsField(fm.tools);
 
@@ -253,7 +286,7 @@ function loadFromDir(
 }
 
 /**
- * Read and parse one agent file, or warn and return undefined for the caller to
+ * Parse one read agent file, or warn and return undefined for the caller to
  * skip. One bad file must not take the whole extension down with it — an
  * unparseable `.md` used to abort activation, so pi exited before the TUI.
  *
@@ -264,14 +297,19 @@ function loadFromDir(
  * Under `strict` the same failure rethrows, still naming the path, so callers
  * that opted into failing closed stop rather than run a substituted agent.
  */
-function readAgentFile(path: string, strict: boolean): ParsedAgentFile | undefined {
+function parseAgentFile(
+  read: AgentFileRead,
+  strict: boolean,
+  warned: Set<string>,
+): ParsedAgentFile | undefined {
+  const path = read.path;
   try {
-    const text = readFileSync(path, "utf-8");
-    return { ...parseFrontmatter<AgentFrontmatter>(text), text };
+    if ("error" in read) throw read.error;
+    return { ...parseFrontmatter<AgentFrontmatter>(read.text), text: read.text };
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     if (strict) throw new Error(`${path}: ${reason}`);
-    warnIfNew(`Skipping agent file ${path}: ${reason}`);
+    warnIfNew(`Skipping agent file ${path}: ${reason}`, warned);
     return undefined;
   }
 }
@@ -281,12 +319,16 @@ function readAgentFile(path: string, strict: boolean): ParsedAgentFile | undefin
  * pointing at a *different* file — its own prompt, model and tools. Nothing
  * downstream can flag that: unlike an unknown type, the `Agent` call succeeds.
  */
-function warnSkippedOverride(name: string, agents: Map<string, AgentConfig>): void {
+function warnSkippedOverride(
+  name: string,
+  agents: Map<string, AgentConfig>,
+  warned: Set<string>,
+): void {
   const surviving = agents.get(name);
   // Nothing shadowed, or what it shadowed is disabled: dispatch refuses the type
   // either way (see resolveEnabledTypeIn), so there is no substitution to report.
   if (!surviving?.sourcePath || surviving.enabled === false) return;
-  warnIfNew(`Agent "${name}" now loads from ${surviving.sourcePath} instead`);
+  warnIfNew(`Agent "${name}" now loads from ${surviving.sourcePath} instead`, warned);
 }
 
 /**
@@ -300,6 +342,7 @@ function warnShadowed(
   path: string,
   text: string,
   agents: Map<string, AgentConfig>,
+  warned: Set<string>,
 ): void {
   const previous = agents.get(name);
   const shadowed = previous?.sourcePath;
@@ -308,23 +351,26 @@ function warnShadowed(
   // or an identical copy is the same definition reached twice, not a
   // substitution. Comparing the text already read needs no extra filesystem call.
   if (sourceTextOf.get(previous) === text) return;
-  warnIfNew(`Agent "${name}" loads from ${path}, shadowing ${shadowed}`);
+  warnIfNew(`Agent "${name}" loads from ${path}, shadowing ${shadowed}`, warned);
 }
 
 /** Raw file text per loaded config; private so AgentConfig stays unchanged. */
 const sourceTextOf = new WeakMap<AgentConfig, string>();
 
-function warnUnknownKeys(path: string, fm: AgentFrontmatter): void {
+function warnUnknownKeys(path: string, fm: AgentFrontmatter, warned: Set<string>): void {
   for (const key of Object.keys(fm)) {
     if (KNOWN_FRONTMATTER_KEYS.has(key)) continue;
     const snake = key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
     const hint =
       snake !== key && KNOWN_FRONTMATTER_KEYS.has(snake) ? ` (did you mean "${snake}"?)` : "";
-    warnIfNew(`Agent file ${path} has unknown frontmatter key "${key}"${hint}; it is ignored.`);
+    warnIfNew(
+      `Agent file ${path} has unknown frontmatter key "${key}"${hint}; it is ignored.`,
+      warned,
+    );
   }
 }
 
-function warnDeprecatedModelKeys(path: string, fm: AgentFrontmatter): void {
+function warnDeprecatedModelKeys(path: string, fm: AgentFrontmatter, warned: Set<string>): void {
   const deprecated = (["default_model", "default_thinking"] as const).filter(
     (key) => fm[key] !== undefined,
   );
@@ -332,20 +378,22 @@ function warnDeprecatedModelKeys(path: string, fm: AgentFrontmatter): void {
   warnIfNew(
     `Agent file ${path} uses deprecated ${deprecated.join(" and ")}; rename to model/thinking ` +
       "(overridable defaults). Add model_locked: true to pin them against the caller.",
+    warned,
   );
 }
 
 let warnedLastLoad = new Set<string>();
-let warnedThisLoad = new Set<string>();
 
 /**
  * Agents reload on activation and again on every `Agent` call, so an unchanged
  * problem would re-warn all session — over a painted TUI, since pi does not
  * redirect console output. Compare against the previous load rather than every
  * load ever, so a file that is fixed and then broken again still reports.
+ * `warned` is the calling load's own set; it becomes the comparison baseline
+ * once that load completes.
  */
-function warnIfNew(message: string): void {
-  warnedThisLoad.add(message);
+function warnIfNew(message: string, warned: Set<string>): void {
+  warned.add(message);
   if (warnedLastLoad.has(message)) return;
   console.warn(`[choco-pi-subagents] ${message}`);
 }

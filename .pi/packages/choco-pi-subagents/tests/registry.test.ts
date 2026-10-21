@@ -91,7 +91,7 @@ test("root registry capabilities survive a child activation", async () => {
   const getEntry = (): RegistryEntry | undefined => storedEntry;
   assert.equal(getEntry(), undefined);
   const root = piFixture();
-  subagentsExtension(root.pi);
+  await subagentsExtension(root.pi);
   const rootEntry = getEntry();
   assert.ok(rootEntry);
 
@@ -156,7 +156,7 @@ test("root activation wires the live manager into a persisted turn-start status 
     [registryKey: symbol]: RegistryEntry | undefined;
   };
   const root = piFixture();
-  subagentsExtension(root.pi);
+  await subagentsExtension(root.pi);
   const rootEntry = registry[key];
   assert.ok(rootEntry);
 

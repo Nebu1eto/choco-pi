@@ -253,7 +253,7 @@ test("nested Daybreak permits owned descendants but rejects siblings, ancestors,
       allowedSubagents: "all",
       configCwd: process.cwd(),
     };
-    const tool = createNestedSubagentTools(context).find(
+    const tool = (await createNestedSubagentTools(context)).find(
       (candidate) => candidate.name === "set_subagent_daybreak",
     );
     assert.ok(tool);
@@ -275,7 +275,7 @@ test("nested Daybreak permits owned descendants but rejects siblings, ancestors,
       );
       assert.equal(manager.getRecord(deniedId)?.daybreakRequested, false);
     }
-    const childTool = createNestedSubagentTools({ ...context, parentAgentId: child }).find(
+    const childTool = (await createNestedSubagentTools({ ...context, parentAgentId: child })).find(
       (candidate) => candidate.name === "set_subagent_daybreak",
     );
     assert.ok(childTool);

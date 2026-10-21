@@ -25,7 +25,7 @@
  * refuses honestly rather than announcing a change it did not make.
  */
 
-import { existsSync } from "node:fs";
+import { access } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "./types.ts";
@@ -63,22 +63,32 @@ export const projectAgentsDir = (cwd: string = process.cwd()) => join(cwd, ".pi"
 export const workspaceAgentsDir = (cwd: string = process.cwd()) => join(cwd, ".agents", "agents");
 export const personalAgentsDir = () => join(getAgentDir(), "agents");
 
+/** Whether `path` exists, without blocking (the async form of `existsSync`). */
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Find the file path of a custom agent by name, in discovery-precedence order
  * (project, workspace, then global). Mirrors the load-side precedence in
  * src/custom-agents.ts — if the two drift, `/agents` edits a file the loader
  * isn't reading.
  */
-export function findAgentFile(
+export async function findAgentFile(
   name: string,
   cwd: string = process.cwd(),
-): AgentFileReference | undefined {
+): Promise<AgentFileReference | undefined> {
   const projectPath = join(projectAgentsDir(cwd), `${name}.md`);
-  if (existsSync(projectPath)) return { path: projectPath, location: "project" };
+  if (await pathExists(projectPath)) return { path: projectPath, location: "project" };
   const workspacePath = join(workspaceAgentsDir(cwd), `${name}.md`);
-  if (existsSync(workspacePath)) return { path: workspacePath, location: "workspace" };
+  if (await pathExists(workspacePath)) return { path: workspacePath, location: "workspace" };
   const personalPath = join(personalAgentsDir(), `${name}.md`);
-  if (existsSync(personalPath)) return { path: personalPath, location: "personal" };
+  if (await pathExists(personalPath)) return { path: personalPath, location: "personal" };
   return undefined;
 }
 
@@ -96,12 +106,12 @@ export function findAgentFile(
  * The probe stays as the fallback: a built-in that was never ejected has no
  * `sourcePath`, and a path can go stale between a load and this call.
  */
-export function locateAgentFile(
+export async function locateAgentFile(
   name: string,
   sourcePath: string | undefined,
   cwd: string = process.cwd(),
-): AgentFileReference | undefined {
-  if (sourcePath && existsSync(sourcePath)) {
+): Promise<AgentFileReference | undefined> {
+  if (sourcePath && (await pathExists(sourcePath))) {
     return { path: sourcePath, location: classifyAgentDir(sourcePath, cwd) };
   }
   return findAgentFile(name, cwd);

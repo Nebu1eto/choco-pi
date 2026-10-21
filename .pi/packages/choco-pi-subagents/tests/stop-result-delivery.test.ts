@@ -55,7 +55,7 @@ async function fixture(t: TestContext, initialMaxConcurrent = 1) {
       deliveryOptions.push(options);
     },
   });
-  subagentsExtension(pi);
+  await subagentsExtension(pi);
   const key = Symbol.for("pi-subagents:manager");
   // SAFETY: Root activation owns this documented manager slot in this isolated test process.
   const registry = globalThis as typeof globalThis & {

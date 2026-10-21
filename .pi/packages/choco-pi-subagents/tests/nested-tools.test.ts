@@ -39,7 +39,7 @@ test("nested Agent exposes name and forwards it to the manager alias option", as
     resume: async () => undefined,
   };
   // SAFETY: The manager fixture implements every NestedAgentManager member used by these tools.
-  const [agentTool] = createNestedSubagentTools({
+  const [agentTool] = await createNestedSubagentTools({
     manager,
     pi: env.pi,
     parentAgentId: parent.id,
@@ -151,7 +151,7 @@ test("nested resume forwards alias rename and refuses live records actionably", 
     },
   };
   // SAFETY: The manager fixture implements every NestedAgentManager member used by these tools.
-  const [agentTool] = createNestedSubagentTools({
+  const [agentTool] = await createNestedSubagentTools({
     manager,
     // SAFETY: This path only forwards the ExtensionAPI value to the manager fixture above.
     // SAFETY: Result reads never dereference the ExtensionAPI fixture.
@@ -246,7 +246,7 @@ test("nested result reads enforce one shared run generation", async () => {
     resume: async () => undefined,
   };
   // SAFETY: Result reads never dereference the ExtensionAPI fixture.
-  const tools = createNestedSubagentTools({
+  const tools = await createNestedSubagentTools({
     manager,
     pi: {} as never,
     parentAgentId: parent.id,
@@ -343,15 +343,17 @@ test("nested result wait cancellation is benign and releases its read claim", as
     resume: async () => undefined,
   };
   // SAFETY: Result reads never dereference the ExtensionAPI fixture.
-  const resultTool = createNestedSubagentTools({
-    manager,
-    pi: {} as never,
-    parentAgentId: parent.id,
-    depth: 1,
-    maxSubagentDepth: 3,
-    allowedSubagents: "all",
-    configCwd: "/tmp/choco-pi-nested-cancelled-result-test",
-  })[1];
+  const resultTool = (
+    await createNestedSubagentTools({
+      manager,
+      pi: {} as never,
+      parentAgentId: parent.id,
+      depth: 1,
+      maxSubagentDepth: 3,
+      allowedSubagents: "all",
+      configCwd: "/tmp/choco-pi-nested-cancelled-result-test",
+    })
+  )[1];
   assert.ok(resultTool);
 
   const controller = new AbortController();
@@ -395,6 +397,9 @@ test("nested result wait still propagates non-abort rejections", async () => {
     compactionCount: 0,
     parentAgentId: parent.id,
   } satisfies AgentRecord;
+  // Tool construction awaits a registry load before the read below observes
+  // this rejection; mark it handled so the gap is not an unhandled rejection.
+  child.promise.catch(() => undefined);
   const manager = {
     spawn: () => assert.fail("result read must not spawn"),
     spawnAndWait: () => assert.fail("result read must not spawn and wait"),
@@ -407,15 +412,17 @@ test("nested result wait still propagates non-abort rejections", async () => {
     resume: async () => undefined,
   } satisfies NestedAgentManager;
   // SAFETY: Result reads never dereference the ExtensionAPI fixture.
-  const resultTool = createNestedSubagentTools({
-    manager,
-    pi: {} as never,
-    parentAgentId: parent.id,
-    depth: 1,
-    maxSubagentDepth: 3,
-    allowedSubagents: "all",
-    configCwd: "/tmp/choco-pi-nested-rejected-result-test",
-  })[1];
+  const resultTool = (
+    await createNestedSubagentTools({
+      manager,
+      pi: {} as never,
+      parentAgentId: parent.id,
+      depth: 1,
+      maxSubagentDepth: 3,
+      allowedSubagents: "all",
+      configCwd: "/tmp/choco-pi-nested-rejected-result-test",
+    })
+  )[1];
   assert.ok(resultTool);
 
   // SAFETY: The nested result execute path does not inspect its ExtensionContext argument.
@@ -490,7 +497,7 @@ test("nested get/stop/resume resolve an owned child by alias and list children w
       return scout;
     },
   };
-  const [agentTool, resultTool, , stopTool] = createNestedSubagentTools({
+  const [agentTool, resultTool, , stopTool] = await createNestedSubagentTools({
     manager,
     pi: fixture.pi,
     parentAgentId: parent.id,

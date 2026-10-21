@@ -29,6 +29,7 @@ import {
   policyState,
   type UsageLimitEnv,
 } from "./usage-limit-fixture.ts";
+import { waitFor } from "./wait-for.ts";
 
 const HOUR = 3_600_000;
 const SOL = "openai/gpt-5.6-sol";
@@ -473,6 +474,8 @@ for (const ending of ["continuation", "stop"] as const) {
         ...background,
         isolation: "worktree",
       });
+      // Worktree creation runs git asynchronously once the run starts.
+      await waitFor(() => runs.length > 0, "the run started");
       const record = manager.getRecord(id);
       const worktree = record?.worktree;
       assert.ok(worktree, "worktree created");
@@ -501,6 +504,9 @@ for (const ending of ["continuation", "stop"] as const) {
         assert.equal(manager.abort(id), true);
         assert.equal(record?.status, "stopped");
       }
+      // The deferred cleanup runs git asynchronously; publication follows it.
+      await waitFor(() => record?.worktreeResult !== undefined, "the final settle's cleanup");
+      await flush();
       assert.deepEqual(record?.worktreeResult, { hasChanges: false });
       assert.equal(await exists(worktree.path), false, "cleaned on the final settle");
       assert.equal(completions.length, 1);
@@ -536,7 +542,7 @@ test("nested resume forwards and validates model through the manager", async (t)
     await childPromise;
     assert.equal(manager.getRecord(childId)?.status, "completed");
 
-    const [agentTool] = createNestedSubagentTools({
+    const [agentTool] = await createNestedSubagentTools({
       manager,
       pi: env.pi,
       parentAgentId: parentId,

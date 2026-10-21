@@ -26,6 +26,7 @@ import {
   type HarnessOptions,
   type UsageLimitEnv,
 } from "./usage-limit-fixture.ts";
+import { waitFor } from "./wait-for.ts";
 
 const execFileAsync = promisify(execFile);
 const background = { description: "suspend probe", isBackground: true, isolated: true };
@@ -330,6 +331,8 @@ test("dispose({ suspend: true }) keeps a suspended run's worktree", async (t) =>
     isolation: "worktree",
     cwd: repo,
   });
+  // Worktree creation runs git asynchronously once the run starts.
+  await waitFor(() => runs.length > 0, "the run started");
   const worktree = manager.getRecord(id)?.worktree;
   assert.ok(worktree, "a worktree was created");
   t.after(async () => {
@@ -372,6 +375,7 @@ test("a suspend during the usage-limit evaluation keeps the worktree and publish
     isolation: "worktree",
     cwd: repo,
   });
+  await waitFor(() => runs.length > 0, "the run started");
   const worktree = manager.getRecord(id)?.worktree;
   assert.ok(worktree, "a worktree was created");
   t.after(async () => {

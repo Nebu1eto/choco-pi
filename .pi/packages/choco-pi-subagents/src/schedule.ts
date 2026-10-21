@@ -149,33 +149,43 @@ export class SubagentScheduler {
     };
   }
 
-  /** Add a job, persist, and arm if enabled. Returns the stored job. */
-  addJob(input: NewJobInput): ScheduledSubagent {
+  /**
+   * Add a job, persist, and arm if enabled. Resolves the stored job. The
+   * store binding is the owner: a scheduler stopped or rebound while the
+   * write ran persists the job but neither arms nor announces it.
+   */
+  async addJob(input: NewJobInput): Promise<ScheduledSubagent> {
     const store = this.requireStore();
     if (store.hasName(input.name)) {
       throw new Error(`A scheduled job named "${input.name}" already exists.`);
     }
     const job = this.buildJob(input);
-    store.add(job);
+    if (!(await store.add(job))) {
+      throw new Error(`A scheduled job named "${input.name}" already exists.`);
+    }
+    if (this.store !== store) return job;
     if (job.enabled) this.scheduleJob(job);
     this.emit({ type: "added", job });
     return job;
   }
 
-  removeJob(id: string): boolean {
+  async removeJob(id: string): Promise<boolean> {
     const store = this.requireStore();
     if (!store.get(id)) return false;
     this.unscheduleJob(id);
-    const ok = store.remove(id);
-    if (ok) this.emit({ type: "removed", jobId: id });
+    const ok = await store.remove(id);
+    if (ok && this.store === store) this.emit({ type: "removed", jobId: id });
     return ok;
   }
 
   /** Toggle / mutate a job. Re-arms based on the new `enabled` state. */
-  updateJob(id: string, patch: Partial<ScheduledSubagent>): ScheduledSubagent | undefined {
+  async updateJob(
+    id: string,
+    patch: Partial<ScheduledSubagent>,
+  ): Promise<ScheduledSubagent | undefined> {
     const store = this.requireStore();
-    const updated = store.update(id, patch);
-    if (!updated) return undefined;
+    const updated = await store.update(id, patch);
+    if (!updated || this.store !== store) return updated;
     this.unscheduleJob(id);
     if (updated.enabled) this.scheduleJob(updated);
     this.emit({ type: "updated", job: updated });
@@ -201,6 +211,33 @@ export class SubagentScheduler {
 
   // ── Scheduling primitives ────────────────────────────────────────────
 
+  /**
+   * Persist a timer-driven state change in the background. Timer callbacks
+   * cannot await; a failed write (e.g. lock timeout) becomes an `error`
+   * event instead of an unhandled rejection. `then` runs only while the
+   * scheduler is still bound to `store`.
+   */
+  private persist(
+    store: ScheduleStore,
+    id: string,
+    patch: Partial<ScheduledSubagent>,
+    then?: (updated: ScheduledSubagent | undefined) => void,
+  ): void {
+    store.update(id, patch).then(
+      (updated) => {
+        if (this.store === store) then?.(updated);
+      },
+      (err) => {
+        if (this.store !== store) return;
+        this.emit({
+          type: "error",
+          jobId: id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      },
+    );
+  }
+
   private scheduleJob(job: ScheduledSubagent): void {
     const store = this.store;
     if (!store) return;
@@ -215,14 +252,15 @@ export class SubagentScheduler {
           const t = setTimeout(() => {
             this.executeJob(job.id);
             // Auto-disable one-shots after they fire (mirrors pi-cron-schedule)
-            store.update(job.id, { enabled: false });
-            const updated = store.get(job.id);
-            if (updated) this.emit({ type: "updated", job: updated });
+            this.persist(store, job.id, { enabled: false }, () => {
+              const updated = store.get(job.id);
+              if (updated) this.emit({ type: "updated", job: updated });
+            });
           }, delay);
           this.intervals.set(job.id, t);
         } else {
           // Past timestamp — disable, mark error, never fire
-          store.update(job.id, { enabled: false, lastStatus: "error" });
+          this.persist(store, job.id, { enabled: false, lastStatus: "error" });
           this.emit({
             type: "error",
             jobId: job.id,
@@ -270,7 +308,7 @@ export class SubagentScheduler {
     const job = store.get(id);
     if (!job?.enabled) return;
 
-    store.update(id, { lastStatus: "running" });
+    this.persist(store, id, { lastStatus: "running" });
 
     // Resolve model at fire time — registry contents may have changed since the
     // job was created (auth added/removed). Fall back silently to spawn-default
@@ -317,7 +355,7 @@ export class SubagentScheduler {
       });
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
-      store.update(id, { lastRun: new Date().toISOString(), lastStatus: "error" });
+      this.persist(store, id, { lastRun: new Date().toISOString(), lastStatus: "error" });
       this.emit({ type: "error", jobId: id, error });
       return;
     }
@@ -328,7 +366,7 @@ export class SubagentScheduler {
     const finalize = (status: "success" | "error") => {
       const next = this.getNextRun(id);
       const current = store.get(id);
-      store.update(id, {
+      this.persist(store, id, {
         lastRun: new Date().toISOString(),
         lastStatus: status,
         runCount: (current?.runCount ?? 0) + 1,

@@ -10,7 +10,8 @@
 import {
   isModelInScope,
   type ModelRegistryRef,
-  readEnabledModels,
+  peekEnabledModels,
+  refreshEnabledModels,
   resolveEnabledModels,
 } from "./enabled-models.ts";
 
@@ -46,6 +47,12 @@ export type ModelScopeVerdict =
  *     out-of-scope choice; surface it so it picks differently).
  *   - Frontmatter-pinned or parent-inherited out-of-scope → warn but proceed (the
  *     user authored/installed this agent or chose the parent's model; trust it).
+ *
+ * Synchronous: reads the snapshot `loadEnabledModels` cached for `cwd` (the
+ * activation, `session_start`, and the async spawn entry points load it first
+ * via `ensureEnabledModels`) and starts a background revalidation, so an edit
+ * to settings.json is seen by the next check. With no snapshot yet for `cwd`
+ * there is no allowlist to validate against, the same as a missing file.
  */
 export function checkModelScope(args: {
   model: { provider: string; id: string } | undefined;
@@ -65,7 +72,9 @@ export function checkModelScope(args: {
   const { model, cwd, modelRegistry, callerSupplied, agentLabel, modelInput } = args;
   if (!scopeModelsEnabled || !model) return { kind: "ok" };
 
-  const allowed = resolveEnabledModels(readEnabledModels(cwd), modelRegistry, cwd);
+  const snapshot = peekEnabledModels(cwd);
+  refreshEnabledModels(cwd);
+  const allowed = resolveEnabledModels(snapshot, modelRegistry);
   if (!allowed || isModelInScope(model, allowed)) return { kind: "ok" };
 
   if (callerSupplied) {

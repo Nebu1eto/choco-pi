@@ -12,7 +12,7 @@ test("read-only roles deny mutation tools while keeping extensions", async () =>
   const { loadCustomAgents } = await import(
     pathToFileURL(resolve(packageRoot, "custom-agents.ts")).href
   );
-  const agents = loadCustomAgents(process.cwd());
+  const agents = await loadCustomAgents(process.cwd());
 
   for (const role of READ_ONLY_ROLES) {
     const agent = agents.get(role);
@@ -32,7 +32,7 @@ test("role model and thinking follow model_locked pin, caller, then role default
   const { resolveAgentInvocationConfig } = await import(
     pathToFileURL(resolve(packageRoot, "invocation-config.ts")).href
   );
-  const implementer = loadCustomAgents(process.cwd()).get("implementer");
+  const implementer = (await loadCustomAgents(process.cwd())).get("implementer");
   assert.ok(implementer);
   // The implementer takes caller overrides: it declares overridable defaults, not pins.
   assert.ok(implementer.model, "implementer declares a default model");
@@ -63,7 +63,7 @@ test("role model and thinking follow model_locked pin, caller, then role default
       join(lockedDir, ".pi", "agents", "pinned.md"),
       "---\ndescription: pinned role\nmodel: test/pinned-model\nthinking: xhigh\nmodel_locked: true\n---\nbody\n",
     );
-    const lockedRole = loadCustomAgents(lockedDir).get("pinned");
+    const lockedRole = (await loadCustomAgents(lockedDir)).get("pinned");
     assert.ok(lockedRole, "pinned role loads");
     assert.equal(lockedRole.modelLocked, true);
     assert.equal(lockedRole.model, "test/pinned-model");
@@ -221,7 +221,7 @@ test("the advisor role is internal: only the advisor tool may spawn it", async (
     resolveEnabledTypeIn,
     resolveSpawnTypeIn,
   } = await import(pathToFileURL(resolve(packageRoot, "agent-types.ts")).href);
-  const registry = buildAgentRegistry(loadCustomAgents(process.cwd()));
+  const registry = buildAgentRegistry(await loadCustomAgents(process.cwd()));
 
   const advisor = getAgentConfigIn(registry, "advisor");
   assert.ok(advisor, "advisor stays in the registry for first-party spawns");

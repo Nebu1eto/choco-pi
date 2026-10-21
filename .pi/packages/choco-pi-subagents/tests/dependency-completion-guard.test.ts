@@ -323,7 +323,7 @@ test("root notification, failed lifecycle and root/nested fetched details retain
   const failed: unknown[] = [];
   const spawn = AgentManager.prototype.spawn;
   const fixture = await harness("persist", [
-    (pi) => {
+    async (pi) => {
       pi.sendMessage = (message) => {
         assert.ok(Value.Check(Type.String(), message.content));
         notices.push(message.content);
@@ -331,7 +331,7 @@ test("root notification, failed lifecycle and root/nested fetched details retain
       pi.events.on("subagents:failed", (payload) => {
         failed.push(payload);
       });
-      subagentsExtension(pi);
+      await subagentsExtension(pi);
     },
   ]);
   t.mock.method(
@@ -388,15 +388,17 @@ test("root notification, failed lifecycle and root/nested fetched details retain
     record.parentAgentId = "outer";
     record.resultConsumed = false;
     record.consumedResultGeneration = undefined;
-    const nested = createNestedSubagentTools({
-      manager: actual,
-      pi: fixture.pi,
-      parentAgentId: "outer",
-      depth: 1,
-      maxSubagentDepth: 3,
-      allowedSubagents: "all",
-      configCwd: fixture.ctx.cwd,
-    }).find((tool) => tool.name === "get_subagent_result");
+    const nested = (
+      await createNestedSubagentTools({
+        manager: actual,
+        pi: fixture.pi,
+        parentAgentId: "outer",
+        depth: 1,
+        maxSubagentDepth: 3,
+        allowedSubagents: "all",
+        configCwd: fixture.ctx.cwd,
+      })
+    ).find((tool) => tool.name === "get_subagent_result");
     assert.ok(nested);
     const nestedResult = await nested.execute(
       "nested-fetch",

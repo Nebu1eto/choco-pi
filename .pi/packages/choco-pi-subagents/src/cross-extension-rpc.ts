@@ -12,6 +12,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
+import { validateSpawnCwd } from "./agent-manager.ts";
 import { type ModelRegistry, resolveModel } from "./model-resolver.ts";
 
 type RpcScalar = string | number | boolean | null;
@@ -48,6 +49,11 @@ export interface RpcDeps {
   pi: ExtensionAPI;
   getCtx: () => ExtensionContext | undefined;
   manager: SpawnCapable;
+  /**
+   * Reload agent definitions before a spawn resolves its type, so an agent
+   * file added mid-session is spawnable over RPC. Async: the load reads files.
+   */
+  refreshAgents?: () => Promise<void>;
 }
 
 export interface RpcHandle {
@@ -168,7 +174,10 @@ function handleRpc<P extends RpcRequest, R>(
 
 /** Register ping, spawn, and stop RPC handlers on the event bus. */
 export function registerRpcHandlers(deps: RpcDeps): RpcHandle {
-  const { events, pi, getCtx, manager } = deps;
+  const { events, pi, getCtx, manager, refreshAgents } = deps;
+  // Cleared when the spawn handler is unsubscribed, so a request that was
+  // waiting on the agent reload does not spawn into a shut-down activation.
+  let spawnSubscribed = true;
 
   const unsubPing = handleRpc(events, "subagents:rpc:ping", parsePingRequest, () => {
     return { version: PROTOCOL_VERSION };
@@ -178,7 +187,13 @@ export function registerRpcHandlers(deps: RpcDeps): RpcHandle {
     events,
     "subagents:rpc:spawn",
     parseSpawnRequest,
-    ({ type, prompt, options }) => {
+    async ({ type, prompt, options }) => {
+      // The cwd's directory check is asynchronous, so it runs here, alongside
+      // the reload, to keep a bad cwd an error reply instead of an agent that
+      // fails right after starting. The run re-checks it when it starts.
+      await Promise.all([refreshAgents?.(), validateSpawnCwd(options?.cwd)]);
+      if (!spawnSubscribed) throw new Error("Subagent RPC handler was disposed");
+      // Read after the reload: the session may have changed while it ran.
       const ctx = getCtx();
       if (!ctx) throw new Error("No active session");
 
@@ -215,5 +230,12 @@ export function registerRpcHandlers(deps: RpcDeps): RpcHandle {
     if (!manager.abort(agentId)) throw new Error("Agent not found");
   });
 
-  return { unsubPing, unsubSpawn, unsubStop };
+  return {
+    unsubPing,
+    unsubSpawn: () => {
+      spawnSubscribed = false;
+      unsubSpawn();
+    },
+    unsubStop,
+  };
 }

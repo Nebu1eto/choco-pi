@@ -8,7 +8,6 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { statSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
@@ -253,6 +252,9 @@ export interface RevivalReport {
   message: string;
 }
 
+/** Outcome of resolving a saved agent type under spawn's dispatch rules. */
+export type RevivalTypeResolution = { ok: true; type: string } | { ok: false; message: string };
+
 /** What a revival needs from the activation that owns the root session. */
 export interface RevivalContext {
   pi: ExtensionAPI;
@@ -261,8 +263,9 @@ export interface RevivalContext {
   /**
    * Agent-type resolution with spawn's dispatch rules (index.ts:
    * `reloadCustomAgents()` + `resolveSpawnType`). Omitted accepts the type.
+   * May be async: the reload reads agent files without blocking.
    */
-  resolveType?: (type: string) => { ok: true; type: string } | { ok: false; message: string };
+  resolveType?: (type: string) => RevivalTypeResolution | Promise<RevivalTypeResolution>;
   /** Per-agent background callbacks (activity tracker, transcript streaming). */
   callbacksFor?: (snapshot: JournalAgentSnapshot) => RevivalRunCallbacks;
   /** Called synchronously once a revived record is live (join mode, output file). */
@@ -517,20 +520,36 @@ type SpawnCwdInput =
 
 const SpawnCwdSchema = Type.String();
 
-function assertValidSpawnCwd(cwd: SpawnCwdInput): asserts cwd is string | undefined | null {
+/**
+ * Synchronous half of the check: unset, or an absolute path string. The
+ * directory check is asynchronous ({@link assertSpawnCwdDirectory}); a run
+ * performs it before it starts, and async entry points (RPC) can run
+ * {@link validateSpawnCwd} before spawning to fail at the call.
+ */
+function assertAbsoluteSpawnCwd(cwd: SpawnCwdInput): asserts cwd is string | undefined | null {
   if (cwd == null) return;
   if (!Value.Check(SpawnCwdSchema, cwd) || !isAbsolute(cwd)) {
     throw new Error(`SpawnOptions.cwd must be an absolute path: "${String(cwd)}"`);
   }
+}
+
+/** Reject unless `cwd` names an existing directory, with the curated errors. */
+async function assertSpawnCwdDirectory(cwd: string): Promise<void> {
   let isDirectory = false;
   try {
-    isDirectory = statSync(cwd).isDirectory();
+    isDirectory = (await stat(cwd)).isDirectory();
   } catch {
     throw new Error(`SpawnOptions.cwd does not exist: "${cwd}"`);
   }
   if (!isDirectory) {
     throw new Error(`SpawnOptions.cwd is not a directory: "${cwd}"`);
   }
+}
+
+/** Full validation of a caller-supplied SpawnOptions.cwd, for async callers that spawn next. */
+export async function validateSpawnCwd(cwd: SpawnCwdInput): Promise<void> {
+  assertAbsoluteSpawnCwd(cwd);
+  if (cwd != null) await assertSpawnCwdDirectory(cwd);
 }
 
 /**
@@ -886,7 +905,7 @@ export class AgentManager {
   /** Records whose resume() holds exclusive ownership across its async model switch. */
   private resumeReservations = new Set<string>();
   /** Worktree cleanup deferred by a parked spawn; runs on the task's final settle. */
-  private deferredWorktrees = new Map<string, () => void>();
+  private deferredWorktrees = new Map<string, () => Promise<void>>();
   private usageLimitListener?: UsageLimitListener;
 
   /** Durable-revival writer; undefined (child managers, tests) journals nothing. */
@@ -1863,41 +1882,73 @@ export class AgentManager {
     if (record.usageLimit !== undefined) {
       record.usageLimit = { ...record.usageLimit, status: "exhausted" };
     }
-    this.finishDeferredWorktree(record);
-    wait.release(record.result ?? "");
-    if (!notify || this.disposed) return;
-    this.notifyUsageLimit(record);
-    try {
-      this.onComplete?.(record);
-    } catch {
-      /* ignore completion side-effect errors */
-    }
+    this.finishDeferredWorktreeThen(record, () => {
+      wait.release(record.result ?? "");
+      if (!notify || this.disposed) return;
+      this.notifyUsageLimit(record);
+      try {
+        this.onComplete?.(record);
+      } catch {
+        /* ignore completion side-effect errors */
+      }
+    });
   }
 
-  /** Run the worktree cleanup a parked spawn deferred, exactly once. */
-  private finishDeferredWorktree(record: AgentRecord): void {
+  /** Take the worktree cleanup a parked spawn deferred, exactly once. */
+  private takeDeferredWorktree(record: AgentRecord): (() => Promise<void>) | undefined {
     const finish = this.deferredWorktrees.get(record.id);
-    if (finish === undefined) return;
+    if (finish === undefined) return undefined;
     this.deferredWorktrees.delete(record.id);
+    return finish;
+  }
+
+  /** Run the deferred worktree cleanup, if any; never rejects (like the spawn settle path). */
+  private async finishDeferredWorktree(record: AgentRecord): Promise<void> {
+    const finish = this.takeDeferredWorktree(record);
+    if (finish === undefined) return;
     try {
-      finish();
+      await finish();
     } catch {
       /* ignore cleanup errors, like the spawn settle path */
     }
   }
 
   /**
-   * Worktree cleanup for a spawn's final outcome. Synchronous so it can run
-   * before the result is published; hook-managed removal completes in the
-   * background, as it reports no branch.
+   * For synchronous settle paths: run `publish` immediately when nothing was
+   * deferred, otherwise once the deferred cleanup settled — the cleanup may
+   * append the branch note to `record.result`, which `publish` must carry.
+   * A record awaiting publication stays terminal-unpublished meanwhile, which
+   * `resumeBlockedByRun` already treats as busy. `publish` runs exactly once.
    */
-  private cleanupRecordWorktree(
+  private finishDeferredWorktreeThen(record: AgentRecord, publish: () => void): void {
+    const finish = this.takeDeferredWorktree(record);
+    if (finish === undefined) {
+      publish();
+      return;
+    }
+    void finish()
+      .catch(() => undefined)
+      .then(() => {
+        try {
+          publish();
+        } catch (error) {
+          console.warn("[choco-pi-subagents] Settling after worktree cleanup failed:", error);
+        }
+      });
+  }
+
+  /**
+   * Worktree cleanup for a spawn's final outcome. Awaited before the result
+   * is published; hook-managed removal completes in the background, as it
+   * reports no branch.
+   */
+  private async cleanupRecordWorktree(
     pi: ExtensionAPI,
     record: AgentRecord,
     baseCwd: string,
     customCwd: string | undefined,
     description: string,
-  ): void {
+  ): Promise<void> {
     const worktree = record.worktree;
     if (worktree === undefined) return;
     if (worktree.hookManaged === true) {
@@ -1905,7 +1956,7 @@ export class AgentManager {
       void removeHookWorktree(pi, worktree.path).catch(() => undefined);
       return;
     }
-    const wtResult = cleanupWorktree(baseCwd, worktree, description);
+    const wtResult = await cleanupWorktree(baseCwd, worktree, description);
     record.worktreeResult = wtResult;
     if (wtResult.hasChanges && wtResult.branch) {
       const repoNote = customCwd === undefined ? "" : ` in \`${baseCwd}\``;
@@ -1956,16 +2007,17 @@ export class AgentManager {
       }
       record.outputCleanup = undefined;
     }
-    this.finishDeferredWorktree(record);
-    this.publishTerminal(record);
-    wait?.release(record.result ?? "");
-    if (!outcome.notify || this.disposed) return;
-    this.notifyUsageLimit(record);
-    try {
-      this.onComplete?.(record);
-    } catch {
-      /* ignore completion side-effect errors */
-    }
+    this.finishDeferredWorktreeThen(record, () => {
+      this.publishTerminal(record);
+      wait?.release(record.result ?? "");
+      if (!outcome.notify || this.disposed) return;
+      this.notifyUsageLimit(record);
+      try {
+        this.onComplete?.(record);
+      } catch {
+        /* ignore completion side-effect errors */
+      }
+    });
   }
 
   /**
@@ -2328,7 +2380,7 @@ export class AgentManager {
     // Validate before the queue branch — a queued spawn should fail at the
     // call, not minutes later at drain. Throw (not warn): programmatic callers
     // can fix and retry; the RPC layer converts throws into error envelopes.
-    assertValidSpawnCwd(options.cwd);
+    assertAbsoluteSpawnCwd(options.cwd);
     const providerKey = providerKeyFor(options, ctx);
     const usageScope = this.captureUsageScope(ctx, options);
     if (identity?.scoped !== undefined) usageScope.scoped = [...identity.scoped];
@@ -2549,9 +2601,10 @@ export class AgentManager {
     { pi, ctx, type, prompt, options }: SpawnArgs,
   ) {
     // Re-validate a caller-supplied cwd: queued spawns can start minutes after
-    // spawn()'s check, and the directory may be gone by then (TOCTOU). Same
-    // curated errors; drainQueue parks a throw on the record as an error.
-    assertValidSpawnCwd(options.cwd);
+    // spawn()'s check, and the directory may be gone by then (TOCTOU). The
+    // absolute-path check throws here; the directory check runs in prepareRun
+    // below and settles the record as an error with the same curated message.
+    assertAbsoluteSpawnCwd(options.cwd);
     const providerKey = providerKeyFor(options, ctx);
     const owner = this.usageScopes.get(id)?.owner;
     if (!this.isProviderAvailable(providerKey, owner)) {
@@ -2577,12 +2630,17 @@ export class AgentManager {
     const baseCwd = options.adoptWorktree?.repo ?? customCwd ?? ctx.cwd;
 
     // Worktree isolation: try to create a temporary git worktree. Strict —
-    // fail loud if not possible (no silent fallback to main tree). Done
-    // BEFORE state mutation so a throw doesn't leave the record half-running.
+    // fail loud if not possible (no silent fallback to main tree). Creation
+    // runs git asynchronously in prepareRun below, after the record owns its
+    // run; a failure settles the record through the run's error path.
     // The project switch is enforced here as well as at the tool boundary
     // because cross-extension RPC forwards its options unvalidated — a schema
     // that omits the field can't stop a caller that never saw the schema.
     let worktreeCwd: string | undefined;
+    const createsWorktree =
+      options.adoptWorktree === undefined &&
+      options.isolation === "worktree" &&
+      isWorktreeIsolationEnabled();
     if (options.adoptWorktree !== undefined) {
       // Revival: continue in the original worktree (verified by the caller).
       const adopt = options.adoptWorktree;
@@ -2590,27 +2648,50 @@ export class AgentManager {
       // Same rule as a created worktree: a caller-supplied cwd maps to its
       // subdirectory, a plain spawn runs at the copy's root.
       worktreeCwd = customCwd === undefined ? adopt.path : workPath;
-    } else if (options.isolation === "worktree" && isWorktreeIsolationEnabled()) {
-      const wt = options.hookWorktreePath
-        ? adoptHookWorktree(baseCwd, options.hookWorktreePath, id)
-        : createWorktree(baseCwd, id);
-      if (!wt) {
-        throw new Error(
-          'Cannot run with isolation: "worktree" — not a git repo, no commits yet, or `git worktree add` failed. ' +
-            "Initialize git and commit at least once, or omit `isolation`.",
-        );
-      }
-      record.worktree = wt;
-      record.worktreeRepo = baseCwd;
-      // workPath preserves subdirectory scoping for caller-supplied cwds: a
-      // cwd deep in a monorepo maps to the same subdir inside the copy, not
-      // the copied repo's root. Plain worktree spawns keep the historical
-      // behavior (agent at the copy's root) — moving them to workPath would
-      // also move .pi config discovery when the parent session sits in a repo
-      // subdirectory, silently dropping extensions/skills.
-      worktreeCwd = customCwd === undefined ? wt.path : wt.workPath;
-      this.worktreeRepos.add(baseCwd);
     }
+    // Asynchronous preparation, invoked once this generation is running:
+    // the caller-supplied cwd's directory check and worktree creation. After
+    // the awaits it rechecks that this generation still owns the record; a
+    // stale or cancelled run removes the worktree it just made (nothing
+    // journaled it) and rejects into the run's error path.
+    const prepareRun = async (): Promise<void> => {
+      if (customCwd !== undefined) await assertSpawnCwdDirectory(customCwd);
+      if (createsWorktree) {
+        const hookWorktreePath = options.hookWorktreePath;
+        const wt = hookWorktreePath
+          ? await adoptHookWorktree(baseCwd, hookWorktreePath, id)
+          : await createWorktree(baseCwd, id);
+        if (!wt) {
+          throw new Error(
+            'Cannot run with isolation: "worktree" — not a git repo, no commits yet, or `git worktree add` failed. ' +
+              "Initialize git and commit at least once, or omit `isolation`.",
+          );
+        }
+        if (!this.ownsPreparedRun(record, runGeneration)) {
+          if (wt.hookManaged === true) {
+            await removeHookWorktree(pi, wt.path).catch(() => undefined);
+          } else {
+            await cleanupWorktree(baseCwd, wt, options.description);
+          }
+          throw new Error(record.cancellation?.reason ?? "Run ended before it started.");
+        }
+        record.worktree = wt;
+        record.worktreeRepo = baseCwd;
+        // workPath preserves subdirectory scoping for caller-supplied cwds: a
+        // cwd deep in a monorepo maps to the same subdir inside the copy, not
+        // the copied repo's root. Plain worktree spawns keep the historical
+        // behavior (agent at the copy's root) — moving them to workPath would
+        // also move .pi config discovery when the parent session sits in a repo
+        // subdirectory, silently dropping extensions/skills.
+        worktreeCwd = customCwd === undefined ? wt.path : wt.workPath;
+        this.worktreeRepos.add(baseCwd);
+      }
+      // The run reads ctx next: it must still own this record.
+      if (!this.ownsPreparedRun(record, runGeneration)) {
+        throw new Error(record.cancellation?.reason ?? "Run ended before it started.");
+      }
+    };
+    const needsPrepare = customCwd !== undefined || createsWorktree;
 
     this.transition(record, "running");
     record.startedAt = Date.now();
@@ -2690,8 +2771,8 @@ export class AgentManager {
       revision: record.daybreakRevision ?? 0,
     };
     record.daybreakInitialization = daybreakInitialization;
-    const promise = this.runner
-      .runAgent(ctx, type, prompt, {
+    const startRun = () =>
+      this.runner.runAgent(ctx, type, prompt, {
         pi,
         agentId: id,
         model: options.model,
@@ -2814,7 +2895,9 @@ export class AgentManager {
           }
           options.onSessionCreated?.(session);
         },
-      })
+      });
+    // Without preparation the run starts synchronously, exactly as before.
+    const promise = (needsPrepare ? prepareRun().then(startRun) : startRun())
       .then(async ({ responseText, session, aborted, steered, failure }) => {
         try {
           if (this.wakeRuns.get(id) === runGeneration) this.wakeRuns.delete(id);
@@ -2883,7 +2966,7 @@ export class AgentManager {
             const worktreePath = worktree.path;
             const wtResult = hookManaged
               ? (await removeHookWorktree(pi, worktreePath), { hasChanges: false })
-              : cleanupWorktree(baseCwd, worktree, options.description);
+              : await cleanupWorktree(baseCwd, worktree, options.description);
             if (record.resultGeneration !== runGeneration) return responseText;
             if (this.isSuspendedGeneration(record, runGeneration)) {
               settleSuspendedRun(session);
@@ -2997,7 +3080,7 @@ export class AgentManager {
               const worktreePath = worktree.path;
               const wtResult = hookManaged
                 ? (await removeHookWorktree(pi, worktreePath), { hasChanges: false })
-                : cleanupWorktree(baseCwd, worktree, options.description);
+                : await cleanupWorktree(baseCwd, worktree, options.description);
               if (record.resultGeneration !== runGeneration) return "";
               if (this.isSuspendedGeneration(record, runGeneration)) {
                 settleSuspendedRun(undefined);
@@ -3719,7 +3802,8 @@ export class AgentManager {
           }
           record.result = text;
           record.completedAt ??= Date.now();
-          this.finishDeferredWorktree(record);
+          await this.finishDeferredWorktree(record);
+          if (record.resultGeneration !== runGeneration) return text;
           this.publishTerminal(record);
           if (usageDecision !== undefined) this.notifyUsageLimit(record);
           settle();
@@ -3728,7 +3812,7 @@ export class AgentManager {
           if (!currentRunSettled && record.resultGeneration !== runGeneration) settleStaleRun();
         }
       })
-      .catch((err) => {
+      .catch(async (err) => {
         try {
           if (this.isSuspendedGeneration(record, runGeneration)) {
             this.settleSuspendedResume(id, runGeneration, runBudget, detach, () => {
@@ -3752,7 +3836,8 @@ export class AgentManager {
             record.error = record.cancellation.reason;
           }
           record.completedAt ??= Date.now();
-          this.finishDeferredWorktree(record);
+          await this.finishDeferredWorktree(record);
+          if (record.resultGeneration !== runGeneration) return "";
           this.publishTerminal(record);
           settle();
           return "";
@@ -3978,7 +4063,8 @@ export class AgentManager {
     // worktree is kept for the revival and its name stays with the journal.
     if (suspended) this.deferredWorktrees.delete(id);
     else this.tombstone(record);
-    this.finishDeferredWorktree(record);
+    // The record leaves the map now; its deferred cleanup only affects disk.
+    void this.finishDeferredWorktree(record);
     // Before the scope and session go: the final snapshot reads both.
     const dormant = this.retireJournal(record);
     const wait = this.usageWaits.get(id);
@@ -4117,6 +4203,20 @@ export class AgentManager {
     return (
       record.resultGeneration === generation &&
       cancellationForGeneration(record, generation)?.cause === "suspend"
+    );
+  }
+
+  /**
+   * Whether a run that awaited its preparation (cwd check, worktree creation)
+   * still owns the record: same generation, not suspended, not cancelled, and
+   * the manager is not disposed.
+   */
+  private ownsPreparedRun(record: AgentRecord, generation: number): boolean {
+    return (
+      !this.disposed &&
+      (record.resultGeneration ?? 1) === generation &&
+      !this.isSuspendedGeneration(record, generation) &&
+      record.abortController?.signal.aborted !== true
     );
   }
 
@@ -4334,12 +4434,14 @@ export class AgentManager {
     }
     let type: SubagentType = snapshot.type;
     if (context.resolveType !== undefined) {
-      let resolved: ReturnType<NonNullable<RevivalContext["resolveType"]>>;
+      let resolved: RevivalTypeResolution;
       try {
-        resolved = context.resolveType(snapshot.type);
+        resolved = await context.resolveType(snapshot.type);
       } catch (err) {
+        if (!isCurrent()) return { kind: "stale" };
         return permanent(err instanceof Error ? err.message : String(err));
       }
+      if (!isCurrent()) return { kind: "stale" };
       if (!resolved.ok) return permanent(resolved.message);
       type = resolved.type;
     }
@@ -4642,12 +4744,13 @@ export class AgentManager {
       record.completedAt = Date.now();
       this.publishTerminal(record);
       if (finalize === undefined) {
-        this.finishDeferredWorktree(record);
-        try {
-          this.onComplete?.(record);
-        } catch {
-          /* ignore completion side-effect errors */
-        }
+        this.finishDeferredWorktreeThen(record, () => {
+          try {
+            this.onComplete?.(record);
+          } catch {
+            /* ignore completion side-effect errors */
+          }
+        });
       } else finalize(true);
     }
   }
@@ -5016,20 +5119,13 @@ export class AgentManager {
         this.removeRecord(id, record);
       }
     }
-    // Prune any orphaned git worktrees (crash recovery)
-    try {
-      pruneWorktrees(process.cwd());
-    } catch {
-      /* ignore */
-    }
+    // Prune any orphaned git worktrees (crash recovery). Background git
+    // processes: pruneWorktrees never rejects, and dispose() stays synchronous.
+    void pruneWorktrees(process.cwd());
     // Also prune repos that caller-supplied cwds created worktrees in — a clean
     // exit with in-flight agents would otherwise leave stale registrations there.
     for (const repo of this.worktreeRepos) {
-      try {
-        pruneWorktrees(repo);
-      } catch {
-        /* ignore */
-      }
+      void pruneWorktrees(repo);
     }
   }
 }

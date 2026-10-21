@@ -2,7 +2,7 @@
  * agent-runner.ts — Core execution engine: creates sessions, runs agents, collects results.
  */
 
-import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { Model } from "@earendil-works/pi-ai";
@@ -377,7 +377,7 @@ export function extensionCanonicalName(extPath: string): string {
  * as `choco-pi-subagents`, so a looser rule would misattribute every co-located
  * file to `choco-pi-subagents`.
  */
-function extensionPackageName(extPath: string): string | undefined {
+async function readExtensionPackageName(extPath: string): Promise<string | undefined> {
   const entry = resolve(extPath);
   let dir = dirname(extPath);
   for (;;) {
@@ -385,7 +385,7 @@ function extensionPackageName(extPath: string): string | undefined {
     if (basename(dir) === "node_modules") return undefined;
     let pkg: { name?: unknown; pi?: { extensions?: unknown } };
     try {
-      pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf-8"));
+      pkg = JSON.parse(await readFile(join(dir, "package.json"), "utf-8"));
     } catch {
       const parent = dirname(dir);
       if (parent === dir) return undefined; // walked to the filesystem root
@@ -413,16 +413,37 @@ function extensionPackageName(extPath: string): string | undefined {
 }
 
 /**
+ * Package names resolved by {@link warmExtensionPackageNames}, keyed by
+ * extension path. Pi calls the loader's `extensionsOverride` and the tool-scope
+ * hooks synchronously, so the manifests are read asynchronously beforehand and
+ * the synchronous name lookups below only read this map.
+ */
+const extensionPackageNames = new Map<string, string | undefined>();
+
+/**
+ * (Re-)read the owning package manifest of every path, concurrently, so
+ * {@link extensionCanonicalNames} reflects the manifests as they are now.
+ */
+export async function warmExtensionPackageNames(paths: readonly string[]): Promise<void> {
+  const unique = [...new Set(paths)];
+  const names = await Promise.all(unique.map((path) => readExtensionPackageName(path)));
+  unique.forEach((path, index) => extensionPackageNames.set(path, names[index]));
+}
+
+/**
  * All names an extension answers to for allowlist matching (lowercased): its
  * path-derived {@link extensionCanonicalName} plus, when a pi package manifest
  * declares this entry, that package's unscoped short name (`@scope/foo` → `foo`).
  * #143: an extension installed via `pi.extensions: ["./src/index.ts"]` would
  * otherwise only ever match as `src` (the source directory), never by its
  * package name. The path-derived name is preserved, so it keeps matching too.
+ *
+ * The package name comes from the cache {@link warmExtensionPackageNames}
+ * fills; a path that was never warmed answers to its path-derived name only.
  */
 export function extensionCanonicalNames(extPath: string): string[] {
   const canonical = extensionCanonicalName(extPath);
-  const pkg = extensionPackageName(extPath);
+  const pkg = extensionPackageNames.get(extPath);
   return pkg && pkg !== canonical ? [canonical, pkg] : [canonical];
 }
 
@@ -844,7 +865,7 @@ export function buildEffectivePrompt(
 export interface RunOptions {
   /** Synchronous, generation-pinned check before a tool-free turn may finish. */
   onFinishAttempt?: () => { steer?: string; failure?: string } | undefined;
-  /** ExtensionAPI instance — used for pi.exec() instead of execSync. */
+  /** ExtensionAPI instance — used for pi.exec() instead of a blocking child process. */
   pi: ExtensionAPI;
   /** Narrow loader-construction seam used by wiring probes before a child session is created. */
   createResourceLoader?: (
@@ -1207,16 +1228,6 @@ export async function runAgent(
       }
     : undefined;
 
-  const env = await detectEnv(options.pi, effectiveCwd);
-
-  // Get parent system prompt for append-mode agents
-  const parentSystemPrompt = ctx.getSystemPrompt();
-
-  // Build prompt extras (memory, skill preloading)
-  const extras: PromptExtras = {};
-  if (options.worktreeBase) extras.worktreeBase = options.worktreeBase;
-  if (options.readOnly) extras.readOnly = true;
-
   // Isolated runs load neither extensions nor skills. Read-only side
   // conversations keep skills available as instructions, but load no extension
   // code or tools: the only callable capabilities are the static allowlist below.
@@ -1227,14 +1238,6 @@ export async function runAgent(
     options.isolated || options.readOnly ? undefined : config.excludeExtensions;
   const skills = options.isolated ? false : config.skills;
 
-  // Skill preloading: when skills is string[], preload their content into prompt
-  if (Array.isArray(skills)) {
-    const loaded = preloadSkills(skills, configCwd);
-    if (loaded.length > 0) {
-      extras.skillBlocks = loaded;
-    }
-  }
-
   let toolNames = getToolNamesForType(type);
   if (options.readOnly) {
     toolNames = toolNames.filter((name) => READ_ONLY_TOOL_NAMES.has(name));
@@ -1242,6 +1245,7 @@ export async function runAgent(
 
   // Persistent memory: detect write capability and branch accordingly.
   // Account for disallowedTools — a tool in the base set but on the denylist is not truly available.
+  let memoryBlock: Promise<string> | undefined;
   if (agentConfig?.memory) {
     const existingNames = new Set(toolNames);
     const denied = agentConfig.disallowedTools ? new Set(agentConfig.disallowedTools) : undefined;
@@ -1252,18 +1256,32 @@ export async function runAgent(
       // Read-write memory: add any missing memory tool names (read/write/edit)
       const extraNames = getMemoryToolNames(existingNames);
       if (extraNames.length > 0) toolNames = [...toolNames, ...extraNames];
-      extras.memoryBlock = buildMemoryBlock(agentConfig.name, agentConfig.memory, configCwd);
+      memoryBlock = buildMemoryBlock(agentConfig.name, agentConfig.memory, configCwd);
     } else {
       // Read-only memory: only add read tool name, use read-only prompt
       const extraNames = getReadOnlyMemoryToolNames(existingNames);
       if (extraNames.length > 0) toolNames = [...toolNames, ...extraNames];
-      extras.memoryBlock = buildReadOnlyMemoryBlock(
-        agentConfig.name,
-        agentConfig.memory,
-        configCwd,
-      );
+      memoryBlock = buildReadOnlyMemoryBlock(agentConfig.name, agentConfig.memory, configCwd);
     }
   }
+
+  // Environment detection, skill preloading (when skills is string[]) and the
+  // memory block are independent reads: run them together.
+  const [env, loadedSkills, loadedMemoryBlock] = await Promise.all([
+    detectEnv(options.pi, effectiveCwd),
+    Array.isArray(skills) ? preloadSkills(skills, configCwd) : undefined,
+    memoryBlock,
+  ]);
+
+  // Get parent system prompt for append-mode agents
+  const parentSystemPrompt = ctx.getSystemPrompt();
+
+  // Build prompt extras (memory, skill preloading)
+  const extras: PromptExtras = {};
+  if (options.worktreeBase) extras.worktreeBase = options.worktreeBase;
+  if (options.readOnly) extras.readOnly = true;
+  if (loadedSkills !== undefined && loadedSkills.length > 0) extras.skillBlocks = loadedSkills;
+  if (loadedMemoryBlock !== undefined) extras.memoryBlock = loadedMemoryBlock;
 
   // Build system prompt from agent config. A BTW fork keeps the main agent's
   // effective identity verbatim, adding only the read-only capability notice.
@@ -1332,23 +1350,30 @@ export async function runAgent(
   // (`extensions: true` or a `"*"` wildcard) nor nothing (`noExtensions`).
   const loadAll = extensions === true || extensionsSpec?.wildcard === true;
   const additionalExtensionPaths = extensionsSpec?.paths.length ? extensionsSpec.paths : undefined;
-  // Pre-filter discovered set, captured by the override — the exclude-typo warning
-  // must compare against this, not the surviving set (absence from survivors is
-  // an exclude *succeeding*).
+  // Pre-filter discovered set — the exclude-typo warning must compare against
+  // this, not the surviving set (absence from survivors is an exclude *succeeding*).
   let discoveredNames: Set<string> | undefined;
+  // Pi calls the override synchronously, but matching by package name needs each
+  // extension's package.json. The override filters with the names known so far
+  // (path-derived, plus package names cached by earlier runs) into a result object
+  // this run owns; after reload() the manifests are read asynchronously and that
+  // object is re-filtered from the captured base, before anything reads the
+  // loader's extensions or binds them to a session. Factories ran during reload()
+  // either way (see the exclusion note above), so the re-filter changes nothing else.
+  const keepExtension = (extension: { path: string }) =>
+    shouldKeepExtension(extension.path, { loadAll, keepNames, excludeNames });
+  let overrideBase: LoadExtensionsResult | undefined;
+  let ownedExtensions: LoadExtensionsResult | undefined;
   const extensionsOverride: ((base: LoadExtensionsResult) => LoadExtensionsResult) | undefined =
     noExtensions || (loadAll && !hasExcludes)
       ? undefined
       : (base) => {
+          overrideBase = base;
           discoveredNames = new Set(
             base.extensions.flatMap((e) => extensionCanonicalNames(e.path)),
           );
-          return {
-            ...base,
-            extensions: base.extensions.filter((extension) =>
-              shouldKeepExtension(extension.path, { loadAll, keepNames, excludeNames }),
-            ),
-          };
+          ownedExtensions = { ...base, extensions: base.extensions.filter(keepExtension) };
+          return ownedExtensions;
         };
 
   // Filled once the child's scope is installed; the search and `tool_call`
@@ -1432,6 +1457,16 @@ export async function runAgent(
     ? options.createResourceLoader(loaderOptions)
     : new DefaultResourceLoader(loaderOptions);
   await runInChildSessionContext(() => loader.reload());
+  {
+    const base = overrideBase;
+    const owned = ownedExtensions;
+    const loaded = base?.extensions ?? loader.getExtensions().extensions;
+    await warmExtensionPackageNames(loaded.map((extension) => extension.path));
+    if (base !== undefined && owned !== undefined) {
+      discoveredNames = new Set(base.extensions.flatMap((e) => extensionCanonicalNames(e.path)));
+      owned.extensions = base.extensions.filter(keepExtension);
+    }
+  }
 
   // Plain entries in `tools:` are expected to be built-in names (extension tools
   // go through `ext:`), so an unknown name there is unambiguously a typo. Previously
@@ -1552,7 +1587,7 @@ export async function runAgent(
       : undefined;
   const nestedTools =
     agentConfig?.allowedSubagents && nestedRuntime && !options.isolated && !options.readOnly
-      ? createNestedSubagentTools({
+      ? await createNestedSubagentTools({
           manager: nestedRuntime.manager,
           pi: options.pi,
           parentAgentId: nestedRuntime.parentAgentId,

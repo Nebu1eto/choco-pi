@@ -2,12 +2,13 @@
 // - Global:  ~/.pi/agent/subagents.json (via getAgentDir()) — manual defaults, never written here
 // - Project: <cwd>/.pi/subagents.json — written by /agents → Settings; overrides global on load
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { NO_FALLBACK } from "./agent-types.ts";
+import { readTextIfExists } from "./fs-async.ts";
 import { MAX_CONCURRENT_SANITY_CAP, SUBAGENT_DEPTH_CEILING } from "./limits.ts";
 import type { AgentMentionMode, JoinMode, WidgetMode } from "./types.ts";
 
@@ -322,13 +323,21 @@ function projectPath(cwd: string): string {
 
 /**
  * Read a settings file. Missing file is silent (returns `{}`). A file that
- * exists but can't be parsed emits a warning to stderr so users aren't
+ * exists but can't be read or parsed emits a warning to stderr so users aren't
  * silently reverted to defaults — and still returns `{}` so startup proceeds.
  */
-function readSettingsFile(path: string): SubagentsSettings {
-  if (!existsSync(path)) return {};
+async function readSettingsFile(path: string): Promise<SubagentsSettings> {
+  let text: string | undefined;
   try {
-    return sanitizeSettings(JSON.parse(readFileSync(path, "utf-8")));
+    text = await readTextIfExists(path);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    console.warn(`[choco-pi-subagents] Ignoring malformed settings at ${path}: ${reason}`);
+    return {};
+  }
+  if (text === undefined) return {};
+  try {
+    return sanitizeSettings(JSON.parse(text));
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     console.warn(`[choco-pi-subagents] Ignoring malformed settings at ${path}: ${reason}`);
@@ -336,25 +345,48 @@ function readSettingsFile(path: string): SubagentsSettings {
   }
 }
 
-/** Load merged settings: global provides defaults, project overrides. */
-export function loadSettings(cwd: string = process.cwd()): SubagentsSettings {
-  return { ...readSettingsFile(globalPath()), ...readSettingsFile(projectPath(cwd)) };
+/** Load merged settings: global provides defaults, project overrides. Both files are read concurrently. */
+export async function loadSettings(cwd: string = process.cwd()): Promise<SubagentsSettings> {
+  const [global, project] = await Promise.all([
+    readSettingsFile(globalPath()),
+    readSettingsFile(projectPath(cwd)),
+  ]);
+  return { ...global, ...project };
 }
 
 /**
- * Write project-local settings. Global is never touched from code.
- * Returns `true` on success, `false` if the write (or mkdir) failed so the
- * caller can surface a warning — persistence isn't fatal but isn't silent.
+ * Per-path write chain. Two quick settings changes must land in call order:
+ * concurrent `writeFile`s to one path may complete out of order and leave the
+ * older snapshot on disk.
  */
-export function saveSettings(s: SubagentsSettings, cwd: string = process.cwd()): boolean {
+const saveChains = new Map<string, Promise<boolean>>();
+
+/**
+ * Write project-local settings. Global is never touched from code.
+ * Resolves `true` on success, `false` if the write (or mkdir) failed so the
+ * caller can surface a warning — persistence isn't fatal but isn't silent.
+ * Saves to one path are serialized in call order; the serialized text is
+ * captured at call time.
+ */
+export function saveSettings(s: SubagentsSettings, cwd: string = process.cwd()): Promise<boolean> {
   const path = projectPath(cwd);
-  try {
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, JSON.stringify(s, null, 2), "utf-8");
-    return true;
-  } catch {
-    return false;
-  }
+  const text = JSON.stringify(s, null, 2);
+  const write = async (): Promise<boolean> => {
+    try {
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, text, "utf-8");
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const previous = saveChains.get(path);
+  const next = previous === undefined ? write() : previous.then(write);
+  saveChains.set(path, next);
+  void next.then(() => {
+    if (saveChains.get(path) === next) saveChains.delete(path);
+  });
+  return next;
 }
 
 /** Apply persisted settings to the in-memory state via caller-supplied setters. */
@@ -395,16 +427,17 @@ export function persistToastFor(
 }
 
 /**
- * Load merged settings, apply them to in-memory state, and emit the
- * `subagents:settings_loaded` lifecycle event. Returns the loaded settings so
- * callers can log/inspect. Extension init wires this once.
+ * Apply already-loaded settings to in-memory state and emit the
+ * `subagents:settings_loaded` lifecycle event. The caller loads once (see
+ * `loadSettings`) and passes the result, so the synchronous appliers never
+ * wait on the filesystem. Returns the settings so callers can log/inspect.
+ * Extension init wires this once.
  */
 export function applyAndEmitLoaded(
+  settings: SubagentsSettings,
   appliers: SettingsAppliers,
   emit: SettingsEmit,
-  cwd: string = process.cwd(),
 ): SubagentsSettings {
-  const settings = loadSettings(cwd);
   applySettings(settings, appliers);
   emit("subagents:settings_loaded", { settings });
   return settings;
@@ -413,16 +446,16 @@ export function applyAndEmitLoaded(
 /**
  * Persist a settings snapshot, emit the `subagents:settings_changed` event
  * (regardless of persist outcome so listeners see the in-memory change), and
- * return the toast the UI should display. Event payload carries the `persisted`
+ * resolve the toast the UI should display. Event payload carries the `persisted`
  * flag so listeners can react to write failures.
  */
-export function saveAndEmitChanged(
+export async function saveAndEmitChanged(
   snapshot: SubagentsSettings,
   successMsg: string,
   emit: SettingsEmit,
   cwd: string = process.cwd(),
-): { message: string; level: "info" | "warning" } {
-  const persisted = saveSettings(snapshot, cwd);
+): Promise<{ message: string; level: "info" | "warning" }> {
+  const persisted = await saveSettings(snapshot, cwd);
   emit("subagents:settings_changed", { settings: snapshot, persisted });
   return persistToastFor(successMsg, persisted);
 }

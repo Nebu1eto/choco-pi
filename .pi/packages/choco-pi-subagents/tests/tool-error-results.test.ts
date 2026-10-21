@@ -89,7 +89,7 @@ async function withRootTools(
     sendMessage: noop,
   };
   const pi = asExtensionAPI(host);
-  subagentsExtension(pi);
+  await subagentsExtension(pi);
   const context = asExtensionContext({
     cwd: process.cwd(),
     sessionManager: { getSessionId: () => sessionId, getEntries: () => [] },
@@ -204,7 +204,7 @@ function nestedRecord(id: string, overrides: Partial<AgentRecord> = {}): AgentRe
   };
 }
 
-function nestedTools(records: AgentRecord[]) {
+async function nestedTools(records: AgentRecord[]) {
   const byId = new Map(records.map((record) => [record.id, record]));
   const manager: NestedAgentManager = {
     spawn: () => assert.fail("must not spawn"),
@@ -232,7 +232,9 @@ test("nested steer_subagent queues for a queued child and rejects a settled one"
   const parent = nestedRecord("parent", { handle: "parent" });
   const queued = nestedRecord("queued-child", { parentAgentId: "parent", status: "queued" });
   const done = nestedRecord("done-child", { parentAgentId: "parent", status: "completed" });
-  const steer = nestedTools([parent, queued, done]).find((t) => t.name === "steer_subagent");
+  const steer = (await nestedTools([parent, queued, done])).find(
+    (t) => t.name === "steer_subagent",
+  );
   assert.ok(steer);
   const context = toolContext(asExtensionContext({ cwd: process.cwd() }));
 
@@ -257,8 +259,8 @@ test("nested steer_subagent queues for a queued child and rejects a settled one"
   assert.equal(refused.isError, true);
 });
 
-test("nested Agent schema rejects an unknown thinking level", () => {
-  const agent = nestedTools([nestedRecord("parent")]).find((t) => t.name === "Agent");
+test("nested Agent schema rejects an unknown thinking level", async () => {
+  const agent = (await nestedTools([nestedRecord("parent")])).find((t) => t.name === "Agent");
   assert.ok(agent);
   const base = { prompt: "p", description: "d", subagent_type: "general" };
   assert.equal(Value.Check(agent.parameters, { ...base, thinking: "max" }), true);

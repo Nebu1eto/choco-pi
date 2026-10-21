@@ -29,6 +29,7 @@ import {
 import { SUBAGENT_DEPTH_CEILING } from "./limits.ts";
 import { formatSteerMessage, getAgentIdentity } from "./messaging.ts";
 import { resolveModel } from "./model-resolver.ts";
+import { ensureEnabledModels } from "./enabled-models.ts";
 import { checkModelScope } from "./model-scope.ts";
 import { ResumeModelError } from "./resume-model-error.ts";
 import {
@@ -300,12 +301,19 @@ function readDormantNested(context: NestedToolContext, dormant: JournalAgentSnap
   return textResult(note ? `Nested agent${note}.\n\n${text}` : text);
 }
 
-/** Build child-safe orchestration tools scoped to one parent agent instance. */
-export function createNestedSubagentTools(context: NestedToolContext): ToolDefinition[] {
+/**
+ * Build child-safe orchestration tools scoped to one parent agent instance.
+ * Async because the `Agent` tool's description lists the allowed roles, which
+ * needs one registry load before the tools exist.
+ */
+export async function createNestedSubagentTools(
+  context: NestedToolContext,
+): Promise<ToolDefinition[]> {
   // Agents resolve from a registry built for THIS branch's config root (under
   // worktree isolation, the copy). Never via registerAgents — that is
   // process-global state shared with the main session and every other agent.
-  const loadRegistry = () => buildAgentRegistry(loadCustomAgents(context.configCwd));
+  const loadRegistry = async (configCwd: string) =>
+    buildAgentRegistry(await loadCustomAgents(configCwd));
   const allowedTypesIn = (registry: Map<string, AgentConfig>): Set<string> | undefined =>
     context.allowedSubagents === "all"
       ? undefined
@@ -317,13 +325,14 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
     );
   };
   /** Allowed types with their declared model, thinking and definition file. */
-  const describeAllowedRoles = (): string => {
-    const registry = loadRegistry();
+  const describeAllowedRoles = (registry: Map<string, AgentConfig>): string => {
     const lines = availableIn(registry).map(
       (name) => `- ${describeRoleModel(name, getAgentConfigIn(registry, name))}`,
     );
     return lines.length > 0 ? lines.join("\n") : "- none";
   };
+  // Snapshot of the roles at construction; execute reloads per call.
+  const initialRegistry = await loadRegistry(context.configCwd);
 
   const agentTool = defineTool({
     name: NESTED_TOOL_NAMES[0],
@@ -333,7 +342,7 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
     description:
       "Launch a child-safe nested subagent for bounded delegated work. " +
       "Only use agent types allowed by this parent agent; nesting is depth-limited. Allowed types:\n" +
-      describeAllowedRoles(),
+      describeAllowedRoles(initialRegistry),
     parameters: Type.Object({
       prompt: Type.String({ description: "Self-contained task for the nested agent." }),
       description: Type.String({ description: "Short 3-5 word task description." }),
@@ -344,7 +353,7 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
         }),
       ),
       subagent_type: Type.String({
-        description: `Allowed nested agent type. Available: ${availableIn(loadRegistry()).join(", ") || "none"}.`,
+        description: `Allowed nested agent type. Available: ${availableIn(initialRegistry).join(", ") || "none"}.`,
       }),
       model: Type.Optional(
         Type.String({
@@ -473,7 +482,15 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
       }
 
       // Reloaded per call so new agent files are picked up without a restart.
-      const registry = loadRegistry();
+      // Snapshot the config root before the await; everything below uses it.
+      const configCwd = context.configCwd;
+      // The enabled-models snapshot for configCwd loads alongside (Model Scope
+      // below reads it synchronously); a cached snapshot costs no I/O.
+      const [registry] = await Promise.all([
+        loadRegistry(configCwd),
+        ensureEnabledModels(configCwd),
+      ]);
+      if (signal?.aborted) return textResult("Nested agent spawn cancelled.", true);
       const rawType = params.subagent_type;
       // Strict resolve, never the fallback policy: a project-level
       // `fallbackSubagent` must not hand a nested caller an agent its allowlist
@@ -535,7 +552,7 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
       // child sessions have no UI surface to toast to.
       const scopeVerdict = checkModelScope({
         model,
-        cwd: context.configCwd,
+        cwd: configCwd,
         modelRegistry: ctx.modelRegistry,
         callerSupplied: invocation.callerOverridesRoleModel,
         agentLabel: config?.displayName ?? resolvedType,
@@ -608,7 +625,7 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
         depth: childDepth,
         parentAgentId: context.parentAgentId,
         maxSubagentDepth: context.maxSubagentDepth,
-        configCwd: context.configCwd,
+        configCwd,
         rootSessionId,
       };
 
@@ -630,7 +647,7 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
         if (transcriptSessionId === undefined) return;
         const rec = context.manager.getRecord(id);
         if (!rec) return;
-        rec.outputFile = createOutputFilePath(context.configCwd, id, transcriptSessionId);
+        rec.outputFile = createOutputFilePath(configCwd, id, transcriptSessionId);
         writeInitialEntry(rec.outputFile, id, params.prompt, ctx.cwd);
       };
       options.onSessionCreated = (session) => {

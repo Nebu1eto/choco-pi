@@ -24,13 +24,21 @@
  * Example:
  *   enabledModels = ["anthropic/claude-sonnet-4-6", "anthropic/claude-opus-4-6"]
  *   → resolves to { "anthropic/claude-sonnet-4-6", "anthropic/claude-opus-4-6" }
+ *
+ * **Loading is asynchronous and cached per cwd.** `loadEnabledModels(cwd)`
+ * stats both settings files concurrently and re-reads them only when their
+ * mtime/size changed; concurrent calls for one cwd share one revalidation.
+ * Synchronous consumers read the last loaded snapshot with
+ * `peekEnabledModels(cwd)` and must make sure a load for that cwd completed
+ * first (`ensureEnabledModels`).
  */
 
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
+import { readTextIfExists } from "./fs-async.ts";
 import type { ModelEntry } from "./model-resolver.ts";
 
 /** Minimal registry shape — only the methods resolveEnabledModels actually calls. */
@@ -51,40 +59,99 @@ function settingsPaths(cwd: string): [project: string, global: string] {
 }
 
 /** Read `enabledModels` from a single settings.json file. Undefined when missing or absent. */
-function readField(path: string): string[] | undefined {
-  if (!existsSync(path)) return undefined;
+async function readField(path: string): Promise<string[] | undefined> {
   try {
-    const raw = JSON.parse(readFileSync(path, "utf-8"));
+    const text = await readTextIfExists(path);
+    if (text === undefined) return undefined;
+    const raw = JSON.parse(text);
     if (Array.isArray(raw?.enabledModels)) {
       return raw.enabledModels.filter(isString);
     }
   } catch {
-    /* corrupt file — silent */
+    /* corrupt or unreadable file — silent */
   }
   return undefined;
 }
 
-/**
- * Read enabledModels from pi's settings — project-local overrides global.
- * Mirrors pi's SettingsManager deep-merge for the `enabledModels` field
- * (and matches our own loadSettings precedence in src/settings.ts).
- * Returns undefined when neither file has the field.
- */
-export function readEnabledModels(cwd: string): string[] | undefined {
+/** One loaded view of `enabledModels` for a cwd. */
+export interface EnabledModelsSnapshot {
+  /** Project-local overrides global; undefined when neither file has the field. */
+  readonly patterns: string[] | undefined;
+  /** mtime+size of both settings files when `patterns` was read. */
+  readonly hash: string;
+}
+
+const snapshots = new Map<string, EnabledModelsSnapshot>();
+const inFlight = new Map<string, Promise<EnabledModelsSnapshot>>();
+
+/** mtime+size hash of one file, or "missing" if absent. */
+async function hashOf(path: string): Promise<string> {
+  try {
+    const s = await stat(path);
+    return `${s.mtimeMs}-${s.size}`;
+  } catch {
+    return "missing";
+  }
+}
+
+async function revalidate(cwd: string): Promise<EnabledModelsSnapshot> {
   const [project, global] = settingsPaths(cwd);
-  return readField(project) ?? readField(global);
+  const [projectHash, globalHash] = await Promise.all([hashOf(project), hashOf(global)]);
+  const hash = `${projectHash};${globalHash}`;
+  const cached = snapshots.get(cwd);
+  if (cached !== undefined && cached.hash === hash) return cached;
+  // Both reads start together; project still takes precedence over global.
+  const [projectPatterns, globalPatterns] = await Promise.all([
+    readField(project),
+    readField(global),
+  ]);
+  const snapshot: EnabledModelsSnapshot = { patterns: projectPatterns ?? globalPatterns, hash };
+  snapshots.set(cwd, snapshot);
+  return snapshot;
 }
 
 /**
- * Resolve enabledModels patterns → Set<"provider/modelId"> (lowercase keys).
+ * Load (or revalidate) `enabledModels` for `cwd` — project-local overrides
+ * global. Mirrors pi's SettingsManager deep-merge for the `enabledModels`
+ * field (and matches our own loadSettings precedence in src/settings.ts).
+ * Never rejects: unreadable or corrupt files read as absent.
+ */
+export function loadEnabledModels(cwd: string): Promise<EnabledModelsSnapshot> {
+  const pending = inFlight.get(cwd);
+  if (pending !== undefined) return pending;
+  const next = revalidate(cwd).finally(() => {
+    if (inFlight.get(cwd) === next) inFlight.delete(cwd);
+  });
+  inFlight.set(cwd, next);
+  return next;
+}
+
+/** The cached snapshot when one exists (no I/O), otherwise the first load. */
+export function ensureEnabledModels(cwd: string): Promise<EnabledModelsSnapshot> {
+  const cached = snapshots.get(cwd);
+  return cached === undefined ? loadEnabledModels(cwd) : Promise.resolve(cached);
+}
+
+/** Last loaded snapshot for `cwd`, or undefined when no load for it has completed. */
+export function peekEnabledModels(cwd: string): EnabledModelsSnapshot | undefined {
+  return snapshots.get(cwd);
+}
+
+/** Start a background revalidation for `cwd`; the next peek sees an edited file. */
+export function refreshEnabledModels(cwd: string): void {
+  void loadEnabledModels(cwd);
+}
+
+/**
+ * Resolve a snapshot's patterns → Set<"provider/modelId"> (lowercase keys).
  *
  * Only exact `provider/modelId` patterns are matched (case-insensitive).
  * Patterns without a slash, with glob characters, or with a `:thinking`
  * suffix are silently dropped. See module-level docstring for rationale.
  *
- * Cache: keyed on JSON.stringify(patterns) + mtime/size of *both*
- * project and global settings.json files. Re-resolves when either file
- * changes or the patterns argument differs.
+ * Cache: keyed on JSON.stringify(patterns) + the snapshot's mtime/size hash
+ * of *both* project and global settings.json files. Re-resolves when either
+ * file changed (a new snapshot) or the patterns differ.
  *
  * Returns undefined when no patterns are provided or no patterns match
  * (scope check becomes a no-op at the call site).
@@ -95,25 +162,14 @@ let cachedAllowed: Set<string> | undefined;
 let cachedHash = "";
 let cachedPatternsKey = "";
 
-/** mtime+size hash of one file, or "missing" if absent. */
-function hashOf(path: string): string {
-  try {
-    const s = statSync(path);
-    return `${s.mtimeMs}-${s.size}`;
-  } catch {
-    return "missing";
-  }
-}
-
 export function resolveEnabledModels(
-  patterns: string[] | undefined,
+  snapshot: EnabledModelsSnapshot | undefined,
   registry: ModelRegistryRef,
-  cwd: string = process.cwd(),
 ): Set<string> | undefined {
-  // Fast path: check cache (stat both project and global settings.json files)
+  const patterns = snapshot?.patterns;
+  // Fast path: same patterns from the same file state
   const patternsKey = JSON.stringify(patterns);
-  const [project, global] = settingsPaths(cwd);
-  const fileHash = `${hashOf(project)};${hashOf(global)}`;
+  const fileHash = snapshot?.hash ?? "";
 
   if (fileHash === cachedHash && patternsKey === cachedPatternsKey) {
     return cachedAllowed;

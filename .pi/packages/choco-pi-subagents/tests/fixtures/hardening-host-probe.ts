@@ -285,7 +285,7 @@ function streamFixture(model: Model<any>, context: Context, options?: SimpleStre
   return completeText(model, "Awaiting the production completion follow-up.");
 }
 
-export default function hardeningHostProbe(pi: ExtensionAPI) {
+export default async function hardeningHostProbe(pi: ExtensionAPI): Promise<void> {
   const generation = owner;
   const wrapped = new Proxy(pi, {
     get(target, property) {
@@ -311,7 +311,7 @@ export default function hardeningHostProbe(pi: ExtensionAPI) {
       return (target as any)[property];
     },
   });
-  subagentsExtension(wrapped);
+  await subagentsExtension(wrapped);
 
   pi.registerProvider("hardening-fixture", {
     baseUrl: "http://127.0.0.1.invalid",

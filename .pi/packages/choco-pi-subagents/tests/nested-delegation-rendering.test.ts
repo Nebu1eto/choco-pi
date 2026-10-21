@@ -109,7 +109,7 @@ for (const background of [false, true]) {
       const parent = recordFixture("parent");
       const child = recordFixture("child", parent.id);
       child.outputFile = "/tmp/nested-cards.output";
-      const [agent] = createNestedSubagentTools({
+      const [agent] = await createNestedSubagentTools({
         manager: managerFixture(parent, child),
         pi: fixture.pi,
         parentAgentId: parent.id,
@@ -203,7 +203,7 @@ test("nested resume, result retrieval, and steering preserve text and attach sha
   try {
     const parent = recordFixture("parent");
     const child = recordFixture("child", parent.id);
-    const [agent, getResult, steer] = createNestedSubagentTools({
+    const [agent, getResult, steer] = await createNestedSubagentTools({
       manager: managerFixture(parent, child),
       pi: fixture.pi,
       parentAgentId: parent.id,

@@ -3,11 +3,18 @@
  *
  * Creates a per-agent output file that streams conversation turns as JSONL,
  * matching Claude Code's task output file format.
+ *
+ * All I/O is asynchronous. Each file has one write queue: an entry's JSON is
+ * captured synchronously when it is produced (so event hooks never wait), and
+ * the queue writes entries in production order. Directory setup is the first
+ * step of a file's queue; the private root is created and chmod-ed once per
+ * process. A failed write is reported through `console.warn`, never dropped
+ * silently.
  */
 
-import { appendFileSync, chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFile, chmod, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 /**
@@ -41,22 +48,78 @@ export function encodeCwd(cwd: string): string {
     .replace(/^-+/, ""); // strip leading dashes (POSIX root, UNC)
 }
 
-/** Create the output file path, ensuring the directory exists.
+function outputRoot(): string {
+  return join(tmpdir(), `choco-pi-subagents-${process.getuid?.() ?? 0}`);
+}
+
+/** Root setup promise per root path; a failed setup is forgotten so the next file retries. */
+const rootReady = new Map<string, Promise<void>>();
+/** Directory of each output file whose directories must exist before its first write. */
+const pendingDirs = new Map<string, { root: string; dir: string }>();
+/** Tail of each file's write queue; removed once the queue drains. */
+const writeQueues = new Map<string, Promise<void>>();
+
+function ensureRoot(root: string): Promise<void> {
+  const cached = rootReady.get(root);
+  if (cached !== undefined) return cached;
+  const ready = (async () => {
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    // chmod is a no-op on Windows and throws on some Windows filesystems.
+    // On Unix we still want to enforce 0o700 past umask, so only swallow on Windows.
+    try {
+      await chmod(root, 0o700);
+    } catch (err) {
+      if (process.platform !== "win32") throw err;
+    }
+  })();
+  rootReady.set(root, ready);
+  ready.catch(() => {
+    if (rootReady.get(root) === ready) rootReady.delete(root);
+  });
+  return ready;
+}
+
+/**
+ * Append one operation to `path`'s write queue. Operations run strictly in
+ * enqueue order; the first one also creates the file's directories. A failure
+ * is reported and does not stop later operations.
+ */
+function enqueueWrite(path: string, what: string, op: () => Promise<void>): void {
+  const previous = writeQueues.get(path) ?? Promise.resolve();
+  const next = previous.then(async () => {
+    try {
+      const pending = pendingDirs.get(path);
+      if (pending !== undefined) {
+        await ensureRoot(pending.root);
+        await mkdir(pending.dir, { recursive: true });
+        pendingDirs.delete(path);
+      }
+      await op();
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.warn(`[choco-pi-subagents] Could not write ${what} to transcript ${path}: ${reason}`);
+    }
+  });
+  writeQueues.set(path, next);
+  void next.then(() => {
+    if (writeQueues.get(path) === next) writeQueues.delete(path);
+  });
+}
+
+/** Resolves once every write queued so far for `path` has settled. */
+export function flushOutputFile(path: string): Promise<void> {
+  return writeQueues.get(path) ?? Promise.resolve();
+}
+
+/** Build the output file path; its directories are created by the file's first queued write.
  *  Mirrors Claude Code's layout: /tmp/{prefix}-{uid}/{encoded-cwd}/{sessionId}/tasks/{agentId}.output */
 export function createOutputFilePath(cwd: string, agentId: string, sessionId: string): string {
   const encoded = encodeCwd(cwd);
-  const root = join(tmpdir(), `choco-pi-subagents-${process.getuid?.() ?? 0}`);
-  mkdirSync(root, { recursive: true, mode: 0o700 });
-  // chmod is a no-op on Windows and throws on some Windows filesystems.
-  // On Unix we still want to enforce 0o700 past umask, so only swallow on Windows.
-  try {
-    chmodSync(root, 0o700);
-  } catch (err) {
-    if (process.platform !== "win32") throw err;
-  }
+  const root = outputRoot();
   const dir = join(root, encoded, sessionId, "tasks");
-  mkdirSync(dir, { recursive: true });
-  return join(dir, `${agentId}.output`);
+  const path = join(dir, `${agentId}.output`);
+  pendingDirs.set(path, { root, dir: dirname(path) });
+  return path;
 }
 
 /**
@@ -69,14 +132,10 @@ export function createOutputFilePath(cwd: string, agentId: string, sessionId: st
  * when this is the agent's first transcript and is a no-op when it is not.
  */
 export function ensureOutputFile(path: string): void {
-  try {
-    appendFileSync(path, "", "utf-8");
-  } catch {
-    /* ignore — streaming writes are best-effort too */
-  }
+  enqueueWrite(path, "the transcript file", () => appendFile(path, "", "utf-8"));
 }
 
-/** Write the initial user prompt entry. */
+/** Write the initial user prompt entry (queued; truncates the file when it runs). */
 export function writeInitialEntry(
   path: string,
   agentId: string,
@@ -91,12 +150,20 @@ export function writeInitialEntry(
     timestamp: new Date().toISOString(),
     cwd,
   };
-  writeFileSync(path, JSON.stringify(entry) + "\n", "utf-8");
+  const line = `${JSON.stringify(entry)}\n`;
+  enqueueWrite(path, "the initial prompt entry", () => writeFile(path, line, "utf-8"));
+}
+
+function entryType(role: string): "assistant" | "user" | "toolResult" {
+  if (role === "assistant") return "assistant";
+  return role === "user" ? "user" : "toolResult";
 }
 
 /**
  * Subscribe to session events and flush new messages to the output file on each turn_end.
- * Returns a cleanup function that does a final flush and unsubscribes.
+ * Returns a cleanup function that does a final flush and unsubscribes. Flushing
+ * serializes entries synchronously and queues their writes; await
+ * {@link flushOutputFile} to observe them on disk.
  */
 export function streamToOutputFile(
   session: AgentSession,
@@ -119,16 +186,13 @@ export function streamToOutputFile(
       const entry = {
         isSidechain: true,
         agentId,
-        type: msg.role === "assistant" ? "assistant" : msg.role === "user" ? "user" : "toolResult",
+        type: entryType(msg.role),
         message: msg,
         timestamp: new Date().toISOString(),
         cwd,
       };
-      try {
-        appendFileSync(path, JSON.stringify(entry) + "\n", "utf-8");
-      } catch {
-        /* ignore write errors */
-      }
+      const line = `${JSON.stringify(entry)}\n`;
+      enqueueWrite(path, `message ${writtenCount}`, () => appendFile(path, line, "utf-8"));
       writtenCount++;
     }
   };

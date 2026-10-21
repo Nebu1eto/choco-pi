@@ -100,6 +100,18 @@ export async function showSchedulesMenu(
   const ok = await ctx.ui.confirm(`Cancel "${job.name}"?`, formatDetails(job, scheduler));
   if (!ok) return;
 
-  scheduler.removeJob(job.id);
+  if (!scheduler.isActive()) return;
+  try {
+    await scheduler.removeJob(job.id);
+  } catch (err) {
+    // A stopped scheduler (session ended during the write) has no UI to report to.
+    if (!scheduler.isActive()) return;
+    ctx.ui.notify(
+      `Could not cancel "${job.name}": ${err instanceof Error ? err.message : String(err)}`,
+      "warning",
+    );
+    return;
+  }
+  if (!scheduler.isActive()) return;
   ctx.ui.notify(`Cancelled "${job.name}".`, "info");
 }

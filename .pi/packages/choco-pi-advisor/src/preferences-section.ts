@@ -3,7 +3,8 @@ import { Input, type SettingItem } from "@earendil-works/pi-tui";
 import { modelPickerSubmenu } from "../../choco-pi-ui/extensions/zentui/model-picker.ts";
 import {
   isModelInScope,
-  readEnabledModels,
+  peekEnabledModels,
+  refreshEnabledModels,
   resolveEnabledModels,
 } from "../../choco-pi-subagents/src/enabled-models.ts";
 import {
@@ -209,11 +210,19 @@ export function registerAdvisorPreferencesProvider(
   const provider: AdvisorPreferencesProvider = {
     buildSections: (ctx) => {
       if (!isActive()) return [];
+      // The host calls buildSections synchronously, so the model list reads the
+      // enabled-models snapshot session_start loaded (src/index.ts awaits
+      // loadEnabledModels there). Until that load completes the section is
+      // omitted rather than rendered with an unfiltered model list. Each build
+      // starts a background revalidation, so an edited settings.json shows on
+      // the next open.
+      const snapshot = peekEnabledModels(ctx.cwd);
+      refreshEnabledModels(ctx.cwd);
+      if (snapshot === undefined) return [];
       surfaceAdvisorWriteError(ctx);
       const settings = settingsByCwd.get(ctx.cwd) ?? { ...DEFAULT_SETTINGS };
       settingsByCwd.set(ctx.cwd, settings);
-      const patterns = readEnabledModels(ctx.cwd);
-      const allowed = resolveEnabledModels(patterns, ctx.modelRegistry, ctx.cwd);
+      const allowed = resolveEnabledModels(snapshot, ctx.modelRegistry);
       const models = listAdvisorModelChoices(ctx.modelRegistry.getAll(), settings.model, allowed);
       return [buildAdvisorPreferencesSection({ agentDir, settings, models, ctx, isActive })];
     },

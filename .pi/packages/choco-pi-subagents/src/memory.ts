@@ -11,10 +11,11 @@
  * so existing memories aren't orphaned.
  */
 
-import { existsSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
+import { lstat, mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { pathExists } from "./fs-async.ts";
 import type { MemoryScope } from "./types.ts";
 
 /** Maximum lines to read from MEMORY.md */
@@ -32,9 +33,9 @@ export function isUnsafeName(name: string): boolean {
 /**
  * Returns true if the given path is a symlink (defense against symlink attacks).
  */
-export function isSymlink(filePath: string): boolean {
+export async function isSymlink(filePath: string): Promise<boolean> {
   try {
-    return lstatSync(filePath).isSymbolicLink();
+    return (await lstat(filePath)).isSymbolicLink();
   } catch {
     return false;
   }
@@ -44,11 +45,11 @@ export function isSymlink(filePath: string): boolean {
  * Safely read a file, rejecting symlinks.
  * Returns undefined if the file doesn't exist, is a symlink, or can't be read.
  */
-export function safeReadFile(filePath: string): string | undefined {
-  if (!existsSync(filePath)) return undefined;
-  if (isSymlink(filePath)) return undefined;
+export async function safeReadFile(filePath: string): Promise<string | undefined> {
+  if (!(await pathExists(filePath))) return undefined;
+  if (await isSymlink(filePath)) return undefined;
   try {
-    return readFileSync(filePath, "utf-8");
+    return await readFile(filePath, "utf-8");
   } catch {
     return undefined;
   }
@@ -56,9 +57,13 @@ export function safeReadFile(filePath: string): string | undefined {
 
 /**
  * Resolve the memory directory path for a given agent + scope + cwd.
- * Throws if agentName contains path traversal characters.
+ * Rejects if agentName contains path traversal characters.
  */
-export function resolveMemoryDir(agentName: string, scope: MemoryScope, cwd: string): string {
+export async function resolveMemoryDir(
+  agentName: string,
+  scope: MemoryScope,
+  cwd: string,
+): Promise<string> {
   if (isUnsafeName(agentName)) {
     throw new Error(`Unsafe agent name for memory directory: "${agentName}"`);
   }
@@ -69,7 +74,11 @@ export function resolveMemoryDir(agentName: string, scope: MemoryScope, cwd: str
       // already holds this agent's memory and the new location hasn't been
       // created yet — otherwise existing memories would be silently orphaned.
       const legacy = join(homedir(), ".pi", "agent-memory", agentName);
-      if (!existsSync(current) && existsSync(legacy) && !isSymlink(legacy)) {
+      if (
+        !(await pathExists(current)) &&
+        (await pathExists(legacy)) &&
+        !(await isSymlink(legacy))
+      ) {
         return legacy;
       }
       return current;
@@ -86,27 +95,27 @@ export function resolveMemoryDir(agentName: string, scope: MemoryScope, cwd: str
  * Refuses to create directories if any component in the path is a symlink
  * to prevent symlink-based directory traversal attacks.
  */
-export function ensureMemoryDir(memoryDir: string): void {
+export async function ensureMemoryDir(memoryDir: string): Promise<void> {
   // If the directory already exists, verify it's not a symlink
-  if (existsSync(memoryDir)) {
-    if (isSymlink(memoryDir)) {
+  if (await pathExists(memoryDir)) {
+    if (await isSymlink(memoryDir)) {
       throw new Error(`Refusing to use symlinked memory directory: ${memoryDir}`);
     }
     return;
   }
-  mkdirSync(memoryDir, { recursive: true });
+  await mkdir(memoryDir, { recursive: true });
 }
 
 /**
  * Read the first N lines of MEMORY.md from the memory directory, if it exists.
  * Returns undefined if no MEMORY.md exists or if the path is a symlink.
  */
-export function readMemoryIndex(memoryDir: string): string | undefined {
+export async function readMemoryIndex(memoryDir: string): Promise<string | undefined> {
   // Reject symlinked memory directories
-  if (isSymlink(memoryDir)) return undefined;
+  if (await isSymlink(memoryDir)) return undefined;
 
   const memoryFile = join(memoryDir, "MEMORY.md");
-  const content = safeReadFile(memoryFile);
+  const content = await safeReadFile(memoryFile);
   if (content === undefined) return undefined;
 
   const lines = content.split("\n");
@@ -120,12 +129,16 @@ export function readMemoryIndex(memoryDir: string): string | undefined {
  * Build the memory block to inject into the agent's system prompt.
  * Also ensures the memory directory exists (creates it if needed).
  */
-export function buildMemoryBlock(agentName: string, scope: MemoryScope, cwd: string): string {
-  const memoryDir = resolveMemoryDir(agentName, scope, cwd);
+export async function buildMemoryBlock(
+  agentName: string,
+  scope: MemoryScope,
+  cwd: string,
+): Promise<string> {
+  const memoryDir = await resolveMemoryDir(agentName, scope, cwd);
   // Create the memory directory so the agent can immediately write to it
-  ensureMemoryDir(memoryDir);
+  await ensureMemoryDir(memoryDir);
 
-  const existingMemory = readMemoryIndex(memoryDir);
+  const existingMemory = await readMemoryIndex(memoryDir);
 
   const header = `# Agent Memory
 
@@ -162,13 +175,13 @@ This memory persists across sessions. Use it to build up knowledge over time.`;
  * Build a read-only memory block for agents that lack write/edit tools.
  * Does NOT create the memory directory — agents can only consume existing memory.
  */
-export function buildReadOnlyMemoryBlock(
+export async function buildReadOnlyMemoryBlock(
   agentName: string,
   scope: MemoryScope,
   cwd: string,
-): string {
-  const memoryDir = resolveMemoryDir(agentName, scope, cwd);
-  const existingMemory = readMemoryIndex(memoryDir);
+): Promise<string> {
+  const memoryDir = await resolveMemoryDir(agentName, scope, cwd);
+  const existingMemory = await readMemoryIndex(memoryDir);
 
   const header = `# Agent Memory (read-only)
 

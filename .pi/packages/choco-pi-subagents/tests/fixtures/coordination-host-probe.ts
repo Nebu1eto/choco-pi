@@ -338,7 +338,7 @@ function streamFixture(model: Model<Api>, context: Context) {
   return completeText(model, "COORDINATION_HOST_OBSERVATION complete");
 }
 
-export default function coordinationHostProbe(pi: ExtensionAPI): void {
+export default async function coordinationHostProbe(pi: ExtensionAPI): Promise<void> {
   let completionUnsubscribe: (() => void) | undefined;
   let messageUnsubscribe: (() => void) | undefined;
   const wrapped = new Proxy(pi, {
@@ -366,7 +366,7 @@ export default function coordinationHostProbe(pi: ExtensionAPI): void {
       return sendMessage;
     },
   });
-  subagentsExtension(wrapped);
+  await subagentsExtension(wrapped);
   // The production event parser, not a hand-rolled dictionary cast: it is the
   // same contract the TUI notice renders, so a queued flag captured here is the
   // flag the user sees.

@@ -1946,3 +1946,164 @@ mixed known/unknown status batch, failure line once per generation, child tool
 gate, registered tools leave a terminal result unconsumed) and
 `tests/fleet-panel.test.ts` ("status line appends the failed-descendant
 count").
+
+## choco-pi patch: asynchronous custom-agent loading
+
+The role loader must not use any synchronous filesystem API. Upstream read
+every agent file with `existsSync`/`readdirSync`/`readFileSync` on activation
+and on each `Agent` call, blocking the event loop.
+
+- `src/custom-agents.ts`: `loadCustomAgents(cwd, strict?)` returns
+  `Promise<Map<string, AgentConfig>>` and uses `fs/promises` `readdir`/`readFile`
+  only. The three directories are read concurrently and applied in precedence
+  order, so overwrite order, every warning (deprecation, unknown key,
+  shadow-by-content, skipped override) and `strict` throw semantics are
+  unchanged. Warning deduplication state is per load, so concurrent loads do
+  not interleave it.
+- New `src/agent-reload.ts`: `createAgentReloader` snapshots cwd and a
+  generation before awaiting; a load overtaken by a newer reload never
+  registers and its caller settles with the newer reload. Every call starts its
+  own load so a file written just before the call is seen. `reregister()`
+  replays the last load without I/O; `invalidate()` retires in-flight loads.
+- `src/index.ts`: the default factory is `async` and awaits the initial strict
+  load before registering anything, so a strict failure rejects activation (Pi
+  discards the registrations) and the `Agent` description lists loaded roles.
+  Async call sites await `refreshAgentsForSession()`, which rechecks the
+  session generation (`revivalGeneration`) after the load and returns without
+  touching ctx/pi when the session changed. `setDisableDefaultAgents` (a
+  synchronous settings applier) calls `reregister()`. The synchronous
+  `Symbol.for("pi-subagents:manager").spawn` contract cannot await: it
+  resolves against the last-loaded registry and starts a background reload
+  whose failure is reported through `console.warn`. `spawnResolved` no longer
+  reloads itself; RPC and mention callers reload first. Session shutdown
+  invalidates in-flight reloads. `/agents` reads agent files with
+  `fs/promises` `readFile`.
+- `src/cross-extension-rpc.ts`: optional `refreshAgents` dependency awaited
+  before an RPC spawn resolves its type; the session context is read after the
+  await and a disposed handler refuses the spawn.
+- `src/agent-manager.ts`: `RevivalContext.resolveType` may return a promise;
+  `prepareRevival` awaits it and rechecks `isCurrent()` afterwards.
+- `src/nested-tools.ts`: `createNestedSubagentTools` is async (one registry
+  load for the role list in the description); the nested `Agent` execute
+  snapshots `configCwd`, awaits the load, and stops if its signal aborted.
+  `src/agent-runner.ts` awaits it.
+- `src/agent-file-toggle.ts`: `findAgentFile`/`locateAgentFile` are async
+  (`fs/promises` `access`).
+
+Tests: `tests/agent-reload.test.ts` (an overtaken reload that resolves last
+never registers; an overtaken caller settles only after the newer reload
+registers; invalidate; reregister; strict rejection). Callers in
+`tests/model-defaults.test.ts`, root `tests/subagent-config.test.ts`, every
+nested-tools test and every factory activation now await.
+
+## choco-pi patch: no synchronous filesystem or child-process calls in `src/`
+
+No module under `src/` calls a synchronous `node:fs` API or a blocking
+child-process API (`execFileSync` and friends). Upstream used them for settings,
+schedules, memory, skills, worktrees, transcripts and `/agents` file edits.
+Messages, error strings and on-disk formats are unchanged except where noted.
+
+- `src/fs-async.ts` (new): `pathExists` (`access`), `readTextIfExists`
+  (ENOENT/ENOTDIR read as absent) and `createExclusiveFile` (`open(path, "wx")`
+  plus a handle write; a failed write removes the partial file).
+- `src/settings.ts`: `loadSettings` is async and reads global and project files
+  concurrently; a missing file (ENOENT/ENOTDIR) stays silent and any other read
+  or parse error warns, as before. `saveSettings`/`saveAndEmitChanged` are
+  async; saves to one path are serialized in call order with the text captured at
+  call time. `applyAndEmitLoaded(settings, appliers, emit)` takes the
+  already-loaded settings instead of re-reading.
+- `src/index.ts`: activation snapshots `process.cwd()`, starts the
+  enabled-models preload, awaits `loadSettings` once (it gates the strict agent
+  load) and reuses that value for `applyAndEmitLoaded` — one settings read instead
+  of two. `notifyApplied` snapshots the settings synchronously, persists in the
+  background, and emits/toasts only while the session generation is unchanged.
+  The scheduler starts asynchronously (`ScheduleStore.open`) behind a scheduler
+  generation that every stop bumps; the Agent tool's `schedule` path awaits an
+  in-flight start instead of refusing. The tombstone-resume session-file check
+  and the `/agents` edit/delete/eject/disable/enable/create flows use
+  `fs/promises` and recheck the session generation after their file I/O before
+  touching `ctx`. `refreshAgentsForSession`, the revival `resolveType` and
+  `session_start` load the enabled-models snapshot alongside the agent reload.
+- `src/schedule-store.ts`: the PID lock is `createExclusiveFile(lock, pid)`
+  (`wx`), stale-lock reclaim reads/unlinks asynchronously, and contention waits
+  50 ms with `timers/promises` instead of busy-waiting. `ScheduleStore.open`
+  replaces the loading constructor; `add`/`update`/`remove`/`deleteFileIfEmpty`
+  are async and run through a per-store promise chain, so two saves never
+  interleave the temp file. Temp+rename stays atomic. `add` re-checks the job
+  name under the lock and resolves `false` when taken (two concurrent adds of
+  one name cannot both win).
+- `src/schedule.ts`: `addJob`/`removeJob`/`updateJob` are async and arm/emit only
+  while the scheduler is still bound to the same store. Timer-driven state
+  writes (`running`, one-shot disable, finalize) are queued in the background;
+  a failed write becomes an `error` event instead of an uncaught exception.
+  `src/ui/schedule-menu.ts` awaits the removal and reports a failure.
+- `src/memory.ts`: `isSymlink`, `safeReadFile`, `resolveMemoryDir`,
+  `ensureMemoryDir`, `readMemoryIndex`, `buildMemoryBlock`,
+  `buildReadOnlyMemoryBlock` are async (`lstat`, `access`, `readFile`, `mkdir`).
+- `src/skill-loader.ts`: `preloadSkills` is async; skills load concurrently,
+  roots stay sequential in precedence order, and each BFS level probes its
+  children's `SKILL.md` concurrently while keeping byte-order traversal.
+- `src/agent-runner.ts`: `detectEnv`, skill preloading and the memory block
+  load concurrently. Extension package names (the `package.json` climb) are
+  read asynchronously by `warmExtensionPackageNames` into a cache that the
+  synchronous `extensionCanonicalNames` reads. Pi calls `extensionsOverride`
+  synchronously, so the override filters with the names known so far into a
+  result object the run owns; after `reload()` the manifests are warmed and that
+  object is re-filtered from the captured base before anything reads or binds
+  the extensions.
+- `src/enabled-models.ts`: `loadEnabledModels(cwd)` stats both settings files
+  concurrently and re-reads them only when mtime/size changed; concurrent calls
+  share one revalidation. `ensureEnabledModels` returns a cached snapshot without
+  I/O. `peekEnabledModels` is the synchronous read; `refreshEnabledModels` starts
+  a background revalidation. `readEnabledModels` is removed and
+  `resolveEnabledModels(snapshot, registry)` keys its cache on the snapshot hash.
+- `src/model-scope.ts`: `checkModelScope` stays synchronous for its callers in
+  the manager (fallback suggestion, resume model, revival). It reads the
+  snapshot and starts a background revalidation, so the check after an edit to
+  `settings.json` sees it one check later than upstream's per-check sync read.
+  With no snapshot yet for a cwd there is no allowlist (as for a missing file);
+  every async spawn entry point (Agent tool, nested Agent, mention, revival)
+  ensures the snapshot first.
+- `src/nested-tools.ts`: the nested `Agent` loads the snapshot for its
+  `configCwd` alongside its registry load.
+- `src/worktree.ts`: `adoptHookWorktree`, `createWorktree`, `cleanupWorktree`,
+  `pruneWorktrees` are async; git runs through promisified `execFile` (argv, same
+  timeouts) and paths resolve with `fs/promises` `realpath`.
+- `src/agent-manager.ts`: `SpawnOptions.cwd` keeps its synchronous
+  absolute-path check in `spawn`/`startAgent`; the directory check
+  (`stat`) and worktree creation run in a `prepareRun` step once the record is
+  running and holds its pool slot. Without a custom cwd or worktree the run
+  starts synchronously exactly as before. After preparation the run must still
+  own the record (generation, not suspended, not aborted, manager not
+  disposed); a stale run removes the worktree it just created and settles
+  through the error path. Divergence: a missing/non-directory cwd or a failed
+  worktree creation no longer throws from `spawn()`; the record settles as
+  `error` with the same message (RPC callers still get an error reply, see
+  below). Worktree cleanups are awaited. Deferred cleanups of parked records
+  run asynchronously: the resume paths await them before publishing; the
+  synchronous settle paths (`settleParked`, `settleDroppedWake`, a failed
+  revived continuation) publish, release and notify once the cleanup settled,
+  so the branch note still reaches the result; with nothing deferred they stay
+  synchronous. `removeRecord` and `dispose` start their cleanup/prune in the
+  background. `validateSpawnCwd` is exported for async callers.
+- `src/cross-extension-rpc.ts`: the spawn handler runs `validateSpawnCwd`
+  alongside the agent reload, so a bad cwd stays an error reply.
+- `src/output-file.ts`: `createOutputFilePath` only computes the path; each file
+  has one write queue whose first step creates its directories (the private
+  root is created and chmod-ed once per process, memoized, retried after a
+  failure). `writeInitialEntry`, `ensureOutputFile` and streamed entries capture
+  their JSON synchronously and queue `writeFile`/`appendFile` in production
+  order. A failed write is reported with `console.warn` instead of being
+  ignored, and no longer throws into the spawn path. `flushOutputFile(path)`
+  resolves once queued writes settled.
+
+Tests: `tests/schedule-store.test.ts` (`wx` contention, no overlap, dead-PID
+reclaim, two stores without lost updates or leftover temp/lock files, same-name
+adds under the lock, call-order updates) and `tests/output-file.test.ts`
+(ordering across concurrent streams, no truncation by `ensureOutputFile`,
+reported write failure). `tests/wait-for.ts` polls on `setImmediate` for work
+started without a returned promise; the worktree tests in
+`tests/revival-suspend.test.ts`, `tests/revival-revive.test.ts` and
+`tests/usage-limit-review.test.ts` wait for asynchronous creation and cleanup,
+and the scope tests in `tests/revival-revive.test.ts` and
+`tests/usage-limit.test.ts` load the enabled-models snapshot first.

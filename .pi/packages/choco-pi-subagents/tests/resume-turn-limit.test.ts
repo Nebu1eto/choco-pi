@@ -230,7 +230,7 @@ test("nested resume forwards max_turns for manager-side resolution", async () =>
     },
   };
   try {
-    const [agentTool] = createNestedSubagentTools({
+    const [agentTool] = await createNestedSubagentTools({
       manager,
       pi: fixture.pi,
       parentAgentId: "parent",

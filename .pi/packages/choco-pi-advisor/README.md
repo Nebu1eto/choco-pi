@@ -19,6 +19,10 @@ take precedence. Unknown keys are ignored. Invalid layers use defaults and warn 
 interactive sessions.
 The picker lists registry models scoped by Pi's `enabledModels` (project over global)
 when set, otherwise the whole registry. The configured model always appears in the in-place searchable `provider/id` selector.
+`enabledModels` is read asynchronously at `session_start`, alongside the advisor
+settings. The host builds Preferences sections synchronously, so the Advisor Agent
+section is omitted until that read completes rather than offering an unfiltered list;
+each later build revalidates the files in the background, so an edit shows on the next open.
 Consults are skipped when the advisor model equals the session model with the message
 `advisor is disabled for this session: the advisor model (<provider>/<id>) is the same as the session model; pick a different advisor model in /preferences`.
 
