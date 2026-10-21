@@ -7,7 +7,7 @@ const ResponsesLiteCompatibleBodySchema = Type.Object({
   input: Type.Array(Type.Unknown()),
 });
 import { Value } from "typebox/value";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ProviderHeaders } from "@earendil-works/pi-ai";
 import {
   canonicalCodexAliasModelKey,
@@ -26,6 +26,8 @@ import {
   injectPendingNativeWindowIntoPiCompactionRequest,
   rewriteCodexCompactedProviderRequest,
 } from "./compaction/compaction.ts";
+
+export { CodexRequestRefusedError } from "./compaction/compaction.ts";
 import {
   applyResponsesLiteRequest,
   RESPONSES_LITE_HEADER,
@@ -176,16 +178,22 @@ function withoutSubscriptionSignInServiceTier(
   return rest;
 }
 
+/**
+ * Rewrite one outgoing request. Throws `CodexRequestRefusedError` when the
+ * latest native checkpoint cannot be replayed for it (see
+ * `rewriteCodexCompactedProviderRequest`); `pi` journals that refusal.
+ */
 export async function rewriteCodexProviderRequest(
   payload: BoundaryValue,
   ctx: ExtensionContext,
   state: AdapterState,
+  pi?: Pick<ExtensionAPI, "appendEntry">,
 ): Promise<BoundaryValue | undefined> {
   // Snapshot before the first await: the request belongs to the model selected now.
   const subscriptionSignIn = isOpenAISubscriptionSignInModel(ctx.model, ctx.modelRegistry);
   const rewritten = withoutAccessPrograms(
     payload,
-    await rewriteCodexProviderRequestBody(payload, ctx, state),
+    await rewriteCodexProviderRequestBody(payload, ctx, state, pi),
   );
   return subscriptionSignIn ? withoutSubscriptionSignInServiceTier(payload, rewritten) : rewritten;
 }
@@ -194,6 +202,7 @@ async function rewriteCodexProviderRequestBody(
   payload: BoundaryValue,
   ctx: ExtensionContext,
   state: AdapterState,
+  pi: Pick<ExtensionAPI, "appendEntry"> | undefined,
 ): Promise<BoundaryValue | undefined> {
   const prepared = prepareCodexProviderRequest(payload, ctx, state);
   if (!prepared) return undefined;
@@ -208,7 +217,7 @@ async function rewriteCodexProviderRequestBody(
     );
     rewrittenPayload =
       piCompactionPayload ??
-      (await rewriteCodexCompactedProviderRequest(configuredPayload, ctx, state)) ??
+      (await rewriteCodexCompactedProviderRequest(configuredPayload, ctx, state, pi)) ??
       configuredPayload;
   }
   const finalPayload = applyAuthoritativeServiceTier(

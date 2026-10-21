@@ -18,6 +18,8 @@ import { registerNativeSteeringBridge } from "./native-steering-bridge.ts";
 import { resolveCodexRuntimePlan } from "../adapter/activation/runtime-plan.ts";
 import { captureActiveProviderSystemPrompt } from "../adapter/provider-prompt-capture.ts";
 import { withLiveCtx } from "./live-context.ts";
+import { createCodexCompactionEligibility } from "./compaction-eligibility.ts";
+import { assertCodexRequestAllowed } from "./background-compaction.ts";
 import { registerCodexWebRunSearchAdapter } from "./search-adapter.ts";
 import {
   createNativeCompactionBudgetHook,
@@ -66,6 +68,9 @@ export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
     throw error;
   }
   let cleanupProxyProvider: ReturnType<typeof registerCodeModeProxyProvider> | undefined;
+  // Published once registered so the compaction host's ownership follows this
+  // registration's live config; withdrawn at shutdown, re-published at session start.
+  const eligibility = createCodexCompactionEligibility(() => runtime.state);
   try {
     registerOpenAICodexCustomProvider(pi, {
       getConfig: () => ({
@@ -79,6 +84,8 @@ export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
       turnState: runtime.state.codexTurnState,
       getDiagnostics: () => runtime.diagnosticsSink(),
       onPreparedPayload: (payload) => {
+        // A request refused for an incompatible checkpoint fails here, before any network call.
+        assertCodexRequestAllowed(payload);
         runtime.captureCacheKeepaliveRequest(payload);
         if (!runtime.state.pendingActiveProviderPromptCapture) return;
         captureActiveProviderSystemPrompt(payload, runtime.state);
@@ -94,6 +101,8 @@ export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
     const tools = registerCodexTools(pi, runtime);
     const ui = registerCodexUi(pi, runtime);
     registerCodexCommand(pi, runtime.state, (config, ctx, previousConfig) => {
+      // Compaction, scope, voice-only or tool-only switches change native-compaction ownership.
+      eligibility.refresh();
       const executionModeChanged = config.executionMode !== previousConfig.executionMode;
       proxyProvider.applyConfig(config, ctx.modelRegistry);
       tools.applyConfig(config);
@@ -146,8 +155,10 @@ export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
           );
       }
     });
-    registerCodexEvents(pi, runtime, tools, ui, codeMode, proxyProvider);
+    registerCodexEvents(pi, runtime, tools, ui, codeMode, proxyProvider, eligibility);
+    eligibility.publish();
   } catch (registrationError) {
+    eligibility.unpublish();
     searchAdapter.unregister();
     unpublishBudget?.();
     try {

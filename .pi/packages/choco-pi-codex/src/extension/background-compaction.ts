@@ -9,10 +9,21 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { ownerKeyFor } from "../../../choco-pi-compaction/src/ownership.ts";
 import { registerSessionNativeRefresher } from "../../../choco-pi-compaction/src/background-host/native-refresh.ts";
+import { loadEffectiveBackgroundSettings } from "../../../choco-pi-compaction/src/background/settings.ts";
+import { readAnthropicCompactionMode } from "../../../choco-pi-compaction/src/anthropic/mode.ts";
 import {
-  backgroundSettingsPaths,
-  loadBackgroundSettings,
-} from "../../../choco-pi-compaction/src/background/settings.ts";
+  appendLaneRecord,
+  type LaneAppend,
+  type LaneRecordInput,
+  type LaneRoute,
+  type LaneTransitionKey,
+  LaneTransitionMemo,
+} from "../../../choco-pi-compaction/src/background/lane-journal.ts";
+import {
+  lossAuthorizedFor,
+  OPAQUE_GUARD_NOTICE,
+  opaqueCheckpointOf,
+} from "../../../choco-pi-compaction/src/opaque-checkpoint.ts";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type {
   Adoption,
@@ -37,6 +48,7 @@ import {
   type CodexBackgroundBackendOptions,
 } from "../adapter/compaction/background-v2.ts";
 import {
+  codexLaneRoute,
   isBackgroundNativeCompactionDetails,
   resolveLatestNativeCompactionEntry,
 } from "../adapter/compaction/details-store.ts";
@@ -102,20 +114,36 @@ const ImageSettingsSchema = Type.Object(
   { additionalProperties: true },
 );
 
-/** Resolve background settings through the host seam; snapshot image policy with async I/O. */
-async function resolveCodexBackgroundSettings(
-  cwd: string,
-  trusted: boolean,
+/** Where and with which vendor rows the Codex lane's background settings are read. */
+export interface CodexBackgroundSettingsInput {
+  readonly cwd: string;
+  readonly trusted: boolean;
+  /** OpenAI row: the Codex `compaction.responsesCompaction` switch, read before the first await. */
+  readonly openaiServerSide: boolean;
+  /** Defaults to Pi's agent directory. */
+  readonly agentDir?: string | undefined;
+}
+
+/**
+ * Resolve background settings through the host seam (the sidecar, or with
+ * none anywhere the lanes derived from the vendor rows, exactly as the host
+ * resolves them); snapshot image policy with async I/O. A rejected sidecar
+ * only disables the lane here: the host reports it, once.
+ */
+export async function resolveCodexBackgroundSettings(
+  input: CodexBackgroundSettingsInput,
 ): Promise<CodexBackgroundSettings> {
-  const agentDir = getAgentDir();
-  const loaded = await loadBackgroundSettings(
-    backgroundSettingsPaths({ cwd, agentDir, projectTrusted: trusted }),
+  const { cwd, trusted, openaiServerSide } = input;
+  const agentDir = input.agentDir ?? getAgentDir();
+  const loaded = await loadEffectiveBackgroundSettings(
+    { cwd, agentDir, projectTrusted: trusted },
+    {
+      openaiServerSide,
+      anthropicServerSide: (await readAnthropicCompactionMode(agentDir)) === "server-side",
+    },
   );
   if (!loaded.settings.enabled || !loaded.settings.codexNative) {
-    const disabled: CodexBackgroundSettings = { enabled: false, blockImages: false };
-    return loaded.diagnostic === undefined
-      ? disabled
-      : { ...disabled, diagnostic: loaded.diagnostic };
+    return { enabled: false, blockImages: false };
   }
   let blockImages = false;
   for (const path of [
@@ -179,6 +207,51 @@ export interface CodexBackgroundBinding {
   readonly isCurrent: () => boolean;
   readonly onInstalled: (sessionId: string, epoch: string) => void;
   readonly fetch?: typeof globalThis.fetch;
+  /** Token budget of retained user messages (`v2UserMessageRetention` * 1000); absent: the default. */
+  readonly userMessageRetentionTokens?: (() => number) | undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Request refusals (incompatible checkpoint policy)
+// ---------------------------------------------------------------------------
+
+/**
+ * Refusals decided in `before_provider_request`, by session ID. The host sends
+ * the payload whatever a `before_provider_request` handler throws, so the
+ * refusal is enforced by the Codex transport: its prepared-payload hook
+ * ({@link assertCodexRequestAllowed}) runs after the handlers and before any
+ * network call. Every request's handler records its decision (refusal or
+ * none), so a refusal never outlives the request it was decided for.
+ */
+const requestRefusals = new Map<string, string>();
+
+/** Record this request's decision for `sessionId`: the refusal text, or undefined to allow it. */
+export function recordCodexRequestDecision(sessionId: string, refusal: string | undefined): void {
+  if (refusal === undefined) requestRefusals.delete(sessionId);
+  else requestRefusals.set(sessionId, refusal);
+}
+
+/** The Pi session a prepared Codex payload belongs to (`client_metadata.session_id`). */
+function payloadSessionId(payload: {
+  readonly client_metadata?: Readonly<Record<string, string>> | undefined;
+}): string | undefined {
+  return payload.client_metadata?.["session_id"];
+}
+
+/**
+ * Transport guard: throw the recorded refusal for the payload's session before
+ * anything is sent (the error becomes the turn's provider error). The refusal
+ * is consumed, so the next request decides afresh.
+ */
+export function assertCodexRequestAllowed(payload: {
+  readonly client_metadata?: Readonly<Record<string, string>> | undefined;
+}): void {
+  const sessionId = payloadSessionId(payload);
+  if (sessionId === undefined) return;
+  const refusal = requestRefusals.get(sessionId);
+  if (refusal === undefined) return;
+  requestRefusals.delete(sessionId);
+  throw new Error(refusal);
 }
 
 /** One published binding and the generation of the refresh that published it. */
@@ -338,6 +411,7 @@ function createNativeBackend(
   slot: AdoptionConsumerSlot,
 ): Backend<BackgroundNativeCompactionDetails> {
   const nativeOptions: CodexBackgroundBackendOptions = {
+    userMessageRetentionTokens: binding.userMessageRetentionTokens,
     modelRegistry: binding.ctx.modelRegistry,
     resolveRuntime: async () =>
       binding.isCurrent() ? binding.runtime : { ok: false, reason: "canceled", retryable: false },
@@ -488,6 +562,12 @@ interface CodexBackgroundIntegrationOptions {
   readonly resolveSettings?: (cwd: string, trusted: boolean) => Promise<CodexBackgroundSettings>;
   readonly state: Pick<AdapterState, "pendingPiCompactionNativeWindow">;
   readonly onInstalled: (sessionId: string, epoch: string) => void;
+  /** OpenAI row for the derived default lanes: Codex `compaction.responsesCompaction`. */
+  readonly openaiServerSide?: (() => boolean) | undefined;
+  /** `compaction.v2UserMessageRetention` * 1000 for the background window. */
+  readonly userMessageRetentionTokens?: (() => number) | undefined;
+  /** Lane journal sink (`pi.appendEntry`); absent: nothing is journaled. */
+  readonly append?: LaneAppend | undefined;
 }
 
 /** Generation snapshot taken before a handler's first await. */
@@ -512,7 +592,12 @@ interface SessionSlot {
   binding: CodexBackgroundBinding | undefined;
   replayEpoch: string | undefined;
   settingsSnapshot: CodexBackgroundSettings | undefined;
+  /** The committed checkpoint cannot be replayed here (provider/api/endpoint/account or metadata). */
   incompatibleCheckpoint: boolean;
+  /** Only the model ID changed: the foreground path replays the checkpoint; the lane stays unbound. */
+  foregroundReplayOnly: boolean;
+  /** Entry ID of the checkpoint behind `incompatibleCheckpoint` / `foregroundReplayOnly`. */
+  checkpointEntryId: string | undefined;
   unregisterRefresher: (() => void) | undefined;
 }
 
@@ -524,6 +609,58 @@ interface IntegrationState {
   readonly diagnosed: Set<string>;
   /** Incompatibility warnings already shown, per session. */
   readonly incompatibilityNotices: Map<string, Set<string>>;
+  /** Lane transitions already journaled, per session (one record per transition). */
+  readonly transitions: LaneTransitionMemo;
+}
+
+/** The lane-record fields a Codex background site chooses. */
+type CodexLaneRecord = Pick<
+  LaneRecordInput,
+  "route" | "event" | "from" | "reason" | "noticeAttempted"
+> &
+  Partial<Pick<LaneRecordInput, "to" | "detail" | "checkpointEntryId">>;
+
+/** Journal one transition once per session (route, event, reason, checkpoint). */
+function journalOnce(
+  state: IntegrationState,
+  ctx: CodexBackgroundContext,
+  sessionId: string,
+  record: CodexLaneRecord,
+): void {
+  const append = state.options.append;
+  if (append === undefined) return;
+  const key: LaneTransitionKey =
+    record.checkpointEntryId === undefined
+      ? { route: record.route, event: record.event, reason: record.reason }
+      : {
+          route: record.route,
+          event: record.event,
+          reason: record.reason,
+          checkpointEntryId: record.checkpointEntryId,
+        };
+  if (state.transitions.seen(sessionId, key)) return;
+  appendLaneRecord(append, { at: Date.now(), sessionId, provider: "codex", ...record }, (message) =>
+    ctx.ui.notify(message, "warning"),
+  );
+}
+
+/** Notify once per session and key. */
+function notifyOnce(
+  state: IntegrationState,
+  ctx: CodexBackgroundContext,
+  sessionId: string,
+  key: string,
+  notice: { readonly text: string; readonly level: "warning" | "error" },
+): boolean {
+  let keys = state.incompatibilityNotices.get(sessionId);
+  if (keys === undefined) {
+    keys = new Set();
+    state.incompatibilityNotices.set(sessionId, keys);
+  }
+  if (keys.has(key)) return false;
+  keys.add(key);
+  ctx.ui.notify(notice.text, notice.level);
+  return true;
 }
 
 function isSlotCurrent(state: IntegrationState, slot: SessionSlot): boolean {
@@ -546,6 +683,8 @@ function retireSlot(state: IntegrationState, slot: SessionSlot): void {
   slot.replayEpoch = undefined;
   slot.settingsSnapshot = undefined;
   slot.incompatibleCheckpoint = false;
+  slot.foregroundReplayOnly = false;
+  slot.checkpointEntryId = undefined;
 }
 
 /** Session shutdown: retire only that session. Without an ID, every session (tests, teardown). */
@@ -557,6 +696,8 @@ function stopIntegration(state: IntegrationState, sessionId?: string): void {
     retireSlot(state, slot);
     state.diagnosed.delete(slot.sessionId);
     state.incompatibilityNotices.delete(slot.sessionId);
+    state.transitions.reset(slot.sessionId);
+    recordCodexRequestDecision(slot.sessionId, undefined);
   }
 }
 
@@ -572,6 +713,8 @@ function beginSession(state: IntegrationState, ctx: CodexBackgroundContext): num
     replayEpoch: undefined,
     settingsSnapshot: undefined,
     incompatibleCheckpoint: false,
+    foregroundReplayOnly: false,
+    checkpointEntryId: undefined,
     unregisterRefresher: undefined,
   };
   state.sessions.set(sessionId, slot);
@@ -606,44 +749,153 @@ function reportSettingsDiagnostic(
   ctx.ui.notify(settings.diagnostic, "warning");
 }
 
-/** Warn once per session and reason; refreshes run before every provider request. */
+/**
+ * Warn once per session and reason; refreshes run before every provider
+ * request. Unless the user authorized losing the checkpoint, the text names
+ * the exits, since requests and compactions are refused until one is taken.
+ */
 function notifyIncompatibleOnce(
   state: IntegrationState,
   ctx: CodexBackgroundContext,
   sessionId: string,
-  reason: string,
+  incompatibility: { readonly reason: string; readonly entryId: string },
 ): void {
-  let reasons = state.incompatibilityNotices.get(sessionId);
-  if (reasons === undefined) {
-    reasons = new Set();
-    state.incompatibilityNotices.set(sessionId, reasons);
-  }
-  if (reasons.has(reason)) return;
-  reasons.add(reason);
-  ctx.ui.notify(
-    `Codex background checkpoint incompatible: ${reason}; using the host's existing path`,
-    "warning",
-  );
+  const { reason, entryId } = incompatibility;
+  const tail = lossAuthorizedFor(sessionId, entryId)
+    ? "its history is dropped (loss authorized)"
+    : OPAQUE_GUARD_NOTICE("codex", entryId);
+  notifyOnce(state, ctx, sessionId, reason, {
+    text: `Codex background checkpoint incompatible: ${reason}; ${tail}`,
+    level: "warning",
+  });
 }
 
-/** Unbind, and fail closed to the host path when a committed background checkpoint exists. */
+/** Unbind, and fail closed (refuse) when a committed background checkpoint exists. */
 function markIncompatible(
   state: IntegrationState,
   slot: SessionSlot,
   ctx: CodexBackgroundContext,
   incompatibility: {
     readonly hasBackgroundCheckpoint: boolean;
+    readonly entryId: string | undefined;
     readonly reason: string;
   },
 ): undefined {
-  const { hasBackgroundCheckpoint, reason } = incompatibility;
+  const { hasBackgroundCheckpoint, entryId, reason } = incompatibility;
   unbindSession(slot);
   slot.replayEpoch = undefined;
-  if (!hasBackgroundCheckpoint) return undefined;
+  slot.foregroundReplayOnly = false;
+  if (!hasBackgroundCheckpoint || entryId === undefined) return undefined;
   slot.incompatibleCheckpoint = true;
+  slot.checkpointEntryId = entryId;
   state.options.state.pendingPiCompactionNativeWindow = undefined;
-  notifyIncompatibleOnce(state, ctx, slot.sessionId, reason);
+  notifyIncompatibleOnce(state, ctx, slot.sessionId, { reason, entryId });
   return undefined;
+}
+
+/**
+ * Account credentials or identity are unavailable for now (signed out, token
+ * refresh pending): unbind and retry on the next refresh. The checkpoint is
+ * not marked incompatible and nothing is shown; one `yield` is journaled.
+ */
+function yieldTransientIdentity(
+  state: IntegrationState,
+  slot: SessionSlot,
+  ctx: CodexBackgroundContext,
+  reason: string,
+): undefined {
+  unbindSession(slot);
+  slot.replayEpoch = undefined;
+  journalOnce(state, ctx, slot.sessionId, {
+    route: "replay",
+    event: "yield",
+    from: "codex-native-v2",
+    reason: "auth-transient",
+    detail: reason,
+    noticeAttempted: false,
+  });
+  return undefined;
+}
+
+/** Whether only the model ID differs between the checkpoint's scope and the current one. */
+function onlyModelChanged(recorded: ProviderScope, current: ProviderScope): boolean {
+  return (
+    recorded.model !== current.model && Value.Equal({ ...recorded, model: current.model }, current)
+  );
+}
+
+/**
+ * Same provider, endpoint and account, another model ID: the lane unbinds and
+ * the foreground path replays the checkpoint leniently (its account guard
+ * still applies). Server acceptance of a window on another model is not
+ * proven; a rejection there refuses the request rather than dropping history.
+ */
+function useForegroundReplay(
+  state: IntegrationState,
+  slot: SessionSlot,
+  ctx: CodexBackgroundContext,
+  change: { readonly entryId: string; readonly from: string; readonly to: string },
+): undefined {
+  unbindSession(slot);
+  slot.replayEpoch = undefined;
+  slot.incompatibleCheckpoint = false;
+  slot.foregroundReplayOnly = true;
+  slot.checkpointEntryId = change.entryId;
+  const noticed = notifyOnce(state, ctx, slot.sessionId, `model:${change.entryId}`, {
+    text: `Codex background checkpoint ${change.entryId} was made for model ${change.from}; replaying it for ${change.to} through the foreground path`,
+    level: "warning",
+  });
+  journalOnce(state, ctx, slot.sessionId, {
+    route: "replay",
+    event: "fallback",
+    from: "codex-native-v2",
+    to: "codex-foreground",
+    reason: "incompatible",
+    detail: "model",
+    checkpointEntryId: change.entryId,
+    noticeAttempted: noticed,
+  });
+  return undefined;
+}
+
+/**
+ * The refusal for a request or compaction of a session whose committed
+ * checkpoint is incompatible, or undefined. With the loss authorized there is
+ * no refusal; the loss is journaled (and shown) once.
+ */
+function incompatibleRefusal(
+  state: IntegrationState,
+  ctx: CodexBackgroundContext,
+  sessionId: string,
+  site: { readonly route: LaneRoute; readonly event: "refuse" | "cancel" },
+): string | undefined {
+  const slot = state.sessions.get(sessionId);
+  const entryId = slot?.checkpointEntryId;
+  if (slot === undefined || !slot.incompatibleCheckpoint || entryId === undefined) return undefined;
+  if (lossAuthorizedFor(sessionId, entryId)) {
+    const noticed = notifyOnce(state, ctx, sessionId, `loss:${entryId}`, {
+      text: `Codex checkpoint ${entryId} cannot be replayed; its history is dropped (loss authorized).`,
+      level: "warning",
+    });
+    journalOnce(state, ctx, sessionId, {
+      route: "replay",
+      event: "loss",
+      from: "codex-native-v2",
+      reason: "loss",
+      checkpointEntryId: entryId,
+      noticeAttempted: noticed,
+    });
+    return undefined;
+  }
+  journalOnce(state, ctx, sessionId, {
+    route: site.route,
+    event: site.event,
+    from: "codex-native-v2",
+    reason: "scope-mismatch",
+    checkpointEntryId: entryId,
+    noticeAttempted: true,
+  });
+  return OPAQUE_GUARD_NOTICE("codex", entryId);
 }
 
 type LatestNativeCompaction = ReturnType<typeof resolveLatestNativeCompactionEntry>;
@@ -727,6 +979,7 @@ function createBinding(
     state: options.state,
     cleanup: new Set(),
     blockImages: request.blockImages,
+    userMessageRetentionTokens: options.userMessageRetentionTokens,
     isCurrent: () => request.isRefreshCurrent() && slot.binding === binding,
     onInstalled: (id, epoch) => {
       if (slot.binding === binding) slot.replayEpoch = epoch;
@@ -852,9 +1105,11 @@ async function refreshIntegration(
   const slot = state.sessions.get(sessionId);
   if (slot === undefined || slot.generation !== expectedGeneration) return undefined;
   const current = (): boolean => isSlotCurrent(state, slot);
+  const openaiServerSide = state.options.openaiServerSide?.() ?? false;
   const settings =
     slot.settingsSnapshot ??
-    (await (state.options.resolveSettings ?? resolveCodexBackgroundSettings)(cwd, trusted));
+    (await (state.options.resolveSettings?.(cwd, trusted) ??
+      resolveCodexBackgroundSettings({ cwd, trusted, openaiServerSide })));
   if (!current()) return undefined;
   slot.settingsSnapshot = settings;
   reportSettingsDiagnostic(state, ctx, sessionId, settings);
@@ -865,8 +1120,9 @@ async function refreshIntegration(
   const latest = resolveLatestNativeCompactionEntry(ctx.sessionManager.getBranch());
   const checkpoint = committedBackgroundCheckpoint(latest);
   const hasBackgroundCheckpoint = hasBackgroundCheckpointMarker(latest);
+  const entryId = latest.ok ? latest.entry.id : latest.latestCompaction?.id;
   const incompatible = (reason: string): undefined =>
-    markIncompatible(state, slot, ctx, { hasBackgroundCheckpoint, reason });
+    markIncompatible(state, slot, ctx, { hasBackgroundCheckpoint, entryId, reason });
   if (hasBackgroundCheckpoint && checkpoint === undefined)
     return incompatible("invalid checkpoint metadata");
   if (model === undefined || model.api !== "openai-codex-responses")
@@ -874,8 +1130,19 @@ async function refreshIntegration(
   const auth = await registry.getApiKeyAndHeaders(model);
   if (!current()) return undefined;
   const identity = resolveAccountIdentity(auth);
-  if (!identity.ok) return incompatible(identity.reason);
+  if (!identity.ok) return yieldTransientIdentity(state, slot, ctx, identity.reason);
   const { scope, runtime } = scopeAndRuntime(model, identity);
+  const recordedScope = checkpoint?.details.background.providerScope;
+  if (
+    checkpoint !== undefined &&
+    recordedScope !== undefined &&
+    onlyModelChanged(recordedScope, scope)
+  )
+    return useForegroundReplay(state, slot, ctx, {
+      entryId: checkpoint.entryId,
+      from: recordedScope.model,
+      to: scope.model,
+    });
   const bindingRequest: BindingRequest = {
     sessionId,
     ctx,
@@ -891,6 +1158,8 @@ async function refreshIntegration(
   const replayFailure = restoreCommittedReplay(state, slot, checkpoint, bindingRequest);
   if (replayFailure !== undefined) return incompatible(replayFailure);
   slot.incompatibleCheckpoint = false;
+  slot.foregroundReplayOnly = false;
+  slot.checkpointEntryId = undefined;
   state.incompatibilityNotices.delete(sessionId);
   return scope;
 }
@@ -917,6 +1186,7 @@ export function createCodexBackgroundIntegration(options: CodexBackgroundIntegra
     sessions: new Map(),
     diagnosed: new Set(),
     incompatibilityNotices: new Map(),
+    transitions: new LaneTransitionMemo(),
   };
   const slotGeneration = (sessionId: string): number | undefined =>
     state.sessions.get(sessionId)?.generation;
@@ -940,6 +1210,50 @@ export function createCodexBackgroundIntegration(options: CodexBackgroundIntegra
         adapterState,
         state.sessions.get(sessionId)?.incompatibleCheckpoint === true,
       ),
+    /**
+     * The refusal of a normal request (route `replay`) for an incompatible
+     * checkpoint whose loss is not authorized; undefined to send it.
+     */
+    requestRefusal: (ctx: CodexBackgroundContext, sessionId: string): string | undefined =>
+      incompatibleRefusal(state, ctx, sessionId, { route: "replay", event: "refuse" }),
+    /** The same for a host compaction: the caller answers `{ cancel: true }` with this text. */
+    compactionRefusal: (
+      ctx: CodexBackgroundContext,
+      sessionId: string,
+      event: Pick<SessionBeforeCompactEvent, "reason">,
+    ): string | undefined =>
+      incompatibleRefusal(state, ctx, sessionId, {
+        route: codexLaneRoute(event.reason),
+        event: "cancel",
+      }),
+    /** Whether only the model changed and the foreground path replays the checkpoint. */
+    isForegroundReplayOnly: (sessionId: string): boolean =>
+      state.sessions.get(sessionId)?.foregroundReplayOnly === true,
+    /** Drop the settings snapshots: the vendor rows the derived defaults read changed. */
+    invalidateSettings: (): void => {
+      for (const slot of state.sessions.values()) slot.settingsSnapshot = undefined;
+    },
+    /**
+     * Journal the exit-before-native trap: Codex does not compact natively
+     * for this model, yet the latest checkpoint is an opaque Codex one; the
+     * compaction host's opaque guard cancels, and this names the owner.
+     */
+    journalOpaqueTrap: (
+      ctx: CodexBackgroundContext,
+      event: Pick<SessionBeforeCompactEvent, "reason">,
+    ): void => {
+      const sessionId = ctx.sessionManager.getSessionId();
+      const opaque = opaqueCheckpointOf(ctx.sessionManager.getBranch());
+      if (opaque?.owner !== "codex-native" || lossAuthorizedFor(sessionId, opaque.entryId)) return;
+      journalOnce(state, ctx, sessionId, {
+        route: codexLaneRoute(event.reason),
+        event: "cancel",
+        from: "codex-foreground",
+        reason: "opaque-checkpoint",
+        checkpointEntryId: opaque.entryId,
+        noticeAttempted: false,
+      });
+    },
     invalidateReplay: (sessionId: string) => {
       const slot = state.sessions.get(sessionId);
       if (slot !== undefined) slot.replayEpoch = undefined;

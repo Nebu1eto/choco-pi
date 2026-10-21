@@ -135,10 +135,16 @@ test("session_before_compact on openai sign-in falls back to Pi compaction with 
   const ctx = context(signInModel(), true, "oauth-token", calls);
   const state = adapterState();
   const event = fixture<SessionBeforeCompactEvent>({
+    reason: "threshold",
     signal: new AbortController().signal,
     preparation: { tokensBefore: 10, firstKeptEntryId: "entry" },
   });
-  const pi = fixture<ExtensionAPI>({ getThinkingLevel: () => "off" });
+  const journal: string[] = [];
+  // Each fallback also appends one lane-journal record.
+  const pi = fixture<ExtensionAPI>({
+    getThinkingLevel: () => "off",
+    appendEntry: (customType: string) => journal.push(customType),
+  });
   assert.equal(resolveCodexRuntimePlanForState(ctx, state).nativeCompaction, true);
   const { result, fetches } = await withFetchCounter(async () => [
     await handleCodexSessionBeforeCompact(event, ctx, state, pi),
@@ -150,6 +156,7 @@ test("session_before_compact on openai sign-in falls back to Pi compaction with 
   assert.deepEqual(calls.notify, [
     [`OpenAI native compaction skipped: ${OPENAI_SIGN_IN_COMPACTION_REASON}.`, "info"],
   ]);
+  assert.deepEqual(journal, ["choco-compaction-lane", "choco-compaction-lane"]);
 });
 
 function summarizationPayload() {

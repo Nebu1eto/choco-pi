@@ -1055,3 +1055,91 @@ Tests: `tests/exec-command-session-env.test.ts`,
   stay out of `BRIDGE_EXCLUDED_TOOLS` and are callable as `tools.<name>` in
   exec; consume-once `get_subagent_result` stays excluded
   (`tests/code-mode-bridge-exclusions.test.ts`).
+
+## 2026-10-21 choco-pi patch: native-compaction eligibility slot (ownership parity)
+
+- `adapter/activation/runtime-plan.ts`: the model/config exits of
+  `resolveCodexRuntimePlan` (extras, voice-only, inactive, untrusted canonical
+  alias) moved into one gate shared with the new
+  `resolveNativeCompactionEligibility` / `...ForState`, which is exactly
+  `plan.nativeCompaction` without building tool lists.
+- New `extension/compaction-eligibility.ts` publishes
+  `Symbol.for("choco-pi.codex-compaction-eligibility")` =
+  `{ version: 1, revision, published, isNativeCompactionOwner(model), subscribe }`.
+  The oldest published registration answers; only it bumps the revision (a
+  child registration never restarts the parent's owner). `register.ts`
+  publishes at registration and refreshes on every `/codex` change;
+  `events.ts` re-publishes at session start, withdraws at shutdown, and
+  refreshes before each provider request (canonical-alias trust).
+- choco-pi-compaction `resolveOwner` treats the slot as authoritative while
+  published; `background-host/codex-eligibility.ts` journals a
+  `config-change` record and replaces the main owner when the bound model's
+  decision changes.
+
+Tests: `tests/compaction-eligibility-parity.test.ts`,
+choco-pi-compaction `tests/ownership-eligibility-slot.test.ts`.
+
+## 2026-10-21 choco-pi patch: derived background defaults
+
+`extension/background-compaction.ts` resolves the Codex lane through
+choco-pi-compaction `loadEffectiveBackgroundSettings`: with no sidecar
+anywhere the lane follows `compaction.responsesCompaction`, like the host. A
+rejected sidecar only disables the lane; the host reports it once (Codex keeps
+its image-settings diagnostics). Test: `tests/background-derived-defaults.test.ts`.
+
+## 2026-10-21 choco-pi patch: incompatible background checkpoint policy
+
+- Unavailable account credentials or identity unbind the lane, journal one
+  `yield`/`auth-transient`, and retry on the next refresh; they no longer mark
+  the checkpoint incompatible.
+- A model-ID-only change (same provider, endpoint and account) unbinds the
+  lane and lets the foreground path replay the checkpoint (one notice, one
+  `fallback` record). Server acceptance of a window on another model ID is not
+  proven; a rejection refuses the request.
+- Any other scope change or invalid metadata refuses normal requests and
+  cancels compactions with the opaque-checkpoint exits text unless the loss is
+  authorized (`/compaction-allow-loss`); a loss is journaled once. Throwing from
+  `before_provider_request` does not stop the host from sending, so the refusal
+  is recorded per session and enforced by the provider's `onPreparedPayload`
+  hook (`assertCodexRequestAllowed`), which fails the request before any
+  network call. The foreground replay-failure throw in `compaction.ts` now
+  goes through the same path.
+- `session_before_compact` journals a Codex `cancel` when Codex does not
+  compact natively for the model but the latest checkpoint is an opaque Codex one.
+
+Tests: `tests/background-compaction-adoption-runtime.test.ts` (policy cases),
+`tests/incompatible-checkpoint-policy.test.ts`.
+
+## 2026-10-21 choco-pi patch: foreground replay account guard
+
+`details-store.ts` matches an optional `accountScope` against
+`background.providerScope.accountScope`; `rewriteCodexCompactedProviderRequest`
+and the foreground compaction pass the runtime's digest (same SHA-256
+derivation as the background lane). Another account refuses or cancels;
+entries without background scope keep provider/api/baseUrl matching. Test:
+`tests/foreground-replay-account-guard.test.ts`.
+
+## 2026-10-21 choco-pi patch: background retention follows the setting
+
+The background window keeps `compaction.v2UserMessageRetention * 1000` tokens
+of user messages (the foreground multiplier) instead of the fixed 64K. Test:
+`tests/background-retention-setting.test.ts`.
+
+## 2026-10-21 choco-pi patch: compaction lane journal
+
+Every foreground fallback and cancel site in `adapter/compaction/compaction.ts`
+appends a `choco-pi-compaction` lane record (`provider: "codex"`, route from
+the compaction reason, `from: "codex-foreground"`); notice texts are unchanged.
+
+## 2026-10-21 choco-pi patch: /compact focus forwarded to Codex compaction
+
+`remote-v2-client.ts` appends one developer message
+(`Compaction focus from the user: <focus>`) right before `compaction_trigger`
+when `/compact <focus>` is non-blank (foreground: `event.customInstructions`;
+background: the coordinator's instructions). A focus over 16,384 code points is
+an `oversized` failure. When the server rejects the item (a 4xx naming its
+index, the developer role or `compaction_trigger`), the foreground retries once
+without it, notifies "Codex compaction ignored the /compact focus (server
+rejected it)" and journals `instructions-ignored`; a forwarded focus journals
+`instructions-forwarded`. The item is never part of the retained window.
+Server acceptance is not proven live. Test: `tests/compaction-focus-item.test.ts`.

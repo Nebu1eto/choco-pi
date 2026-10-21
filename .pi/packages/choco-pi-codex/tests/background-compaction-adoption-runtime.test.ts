@@ -36,6 +36,11 @@ import {
   type CodexBackgroundContext,
 } from "../src/extension/background-compaction.ts";
 import { codexBackgroundAccountScope } from "../src/adapter/compaction/background-v2.ts";
+import type { LaneRecord } from "../../choco-pi-compaction/src/background/lane-journal.ts";
+import {
+  OPAQUE_GUARD_NOTICE,
+  publishOpaqueConsent,
+} from "../../choco-pi-compaction/src/opaque-checkpoint.ts";
 import { isBackgroundNativeCompactionDetails } from "../src/adapter/compaction/details-store.ts";
 import { createOpenAICodexProviderStream } from "../src/providers/openai-codex-custom-provider.ts";
 import {
@@ -404,8 +409,18 @@ test("reload installs compatible committed replay; account/model change reports 
   await controller.refresh(setup.binding.ctx);
   assert.equal(setup.state.pendingPiCompactionNativeWindow, undefined);
   assert.match(setup.diagnostics.at(-1) ?? "", /incompatible.*account/);
+  // Only the model ID changed (same account again): the foreground path replays it instead.
+  await setup.credentials.modify(model.provider, async () => ({
+    type: "oauth",
+    access: tokenFor(account),
+    refresh: "synthetic-unused-refresh",
+    expires: Date.now() + 3600000,
+  }));
   await controller.refresh({ ...setup.binding.ctx, model: { ...model, id: "different-model" } });
-  assert.match(setup.diagnostics.at(-1) ?? "", /incompatible.*model/);
+  assert.match(
+    setup.diagnostics.at(-1) ?? "",
+    /made for model gpt-6-luna; replaying it for different-model through the foreground path/,
+  );
   controller.stop();
 });
 
@@ -742,4 +757,167 @@ test("an incompatible checkpoint warns once per session and again for a newly bo
   assert.equal(controller.fence(setup.manager.getSessionId()).engaged, true);
   assert.equal(warnings().length, 2);
   controller.stop();
+});
+
+// ---------------------------------------------------------------------------
+// Incompatible checkpoint policy (E1)
+// ---------------------------------------------------------------------------
+
+async function setCredential(
+  setup: Awaited<ReturnType<typeof fixture>>,
+  access: string,
+): Promise<void> {
+  await setup.credentials.modify(model.provider, async () => ({
+    type: "oauth",
+    access,
+    refresh: "synthetic-unused-refresh",
+    expires: Date.now() + 3600000,
+  }));
+}
+
+async function policyFixture() {
+  const setup = await committedFixture();
+  const records: LaneRecord[] = [];
+  const config = structuredClone(DEFAULT_CODEX_CONVERSION_CONFIG);
+  config.executionMode = "normal";
+  config.compaction.responsesCompaction = true;
+  const state: AdapterState = {
+    enabled: true,
+    cwd: process.cwd(),
+    promptSkills: [],
+    config,
+    executionMode: "normal",
+    codexTurnState: createCodexTurnState(),
+  };
+  const extensionRuntime = createExtensionRuntime();
+  extensionRuntime.getThinkingLevel = () => "off";
+  const runner = new ExtensionRunner(
+    [],
+    extensionRuntime,
+    process.cwd(),
+    setup.manager,
+    setup.binding.ctx.modelRegistry,
+  );
+  const ctxFor = (current: Model<"openai-codex-responses">) => ({
+    ...runner.createContext(),
+    model: current,
+    ui: { ...runner.getUIContext(), notify: (message: string) => setup.diagnostics.push(message) },
+  });
+  const controller = createCodexBackgroundIntegration({
+    state,
+    resolveSettings: async () => ({ enabled: true, blockImages: false }),
+    onInstalled: () => {},
+    append: (_customType, data) => records.push(data),
+  });
+  const payloadFor = (current: Model<"openai-codex-responses">) => ({
+    model: current.id,
+    input: serializeActiveSessionToResponsesInput({
+      model: current,
+      entries: setup.manager.getBranch(),
+      options: { blockImages: false },
+    }),
+  });
+  return { ...setup, records, state, ctxFor, controller, payloadFor };
+}
+
+const PolicyInputSchema = Type.Object(
+  {
+    input: Type.Array(
+      Type.Object({ type: Type.Optional(Type.String()) }, { additionalProperties: true }),
+    ),
+  },
+  { additionalProperties: true },
+);
+
+test("transient account identity failure: no incompatibility, no notice, one yield journaled", async () => {
+  const setup = await policyFixture();
+  const ctx = setup.ctxFor(model);
+  const sessionId = setup.manager.getSessionId();
+  setup.controller.begin(ctx);
+  assert.ok(await setup.controller.refresh(ctx));
+  await setCredential(setup, "not-a-jwt");
+  const before = setup.diagnostics.length;
+  assert.equal(await setup.controller.refresh(ctx), undefined);
+  assert.equal(await setup.controller.refresh(ctx), undefined);
+  assert.equal(setup.diagnostics.length, before);
+  assert.equal(setup.controller.requestState(setup.state, sessionId), setup.state);
+  assert.equal(setup.controller.requestRefusal(ctx, sessionId), undefined);
+  const yields = setup.records.filter((record) => record.reason === "auth-transient");
+  assert.equal(yields.length, 1);
+  assert.equal(yields[0]?.event, "yield");
+  assert.equal(yields[0]?.provider, "codex");
+  // Credentials recover: the lane binds again on the next refresh.
+  await setCredential(setup, tokenFor(account));
+  assert.ok(await setup.controller.refresh(ctx));
+  setup.controller.stop();
+});
+
+test("model-ID-only change: foreground replay sends the compaction item; one fallback journaled", async () => {
+  const setup = await policyFixture();
+  const other: Model<"openai-codex-responses"> = { ...model, id: "gpt-6-sol" };
+  const ctx = setup.ctxFor(other);
+  const sessionId = setup.manager.getSessionId();
+  setup.controller.begin(ctx);
+  assert.equal(await setup.controller.refresh(ctx), undefined);
+  assert.equal(await setup.controller.refresh(ctx), undefined);
+  assert.equal(setup.controller.isForegroundReplayOnly(sessionId), true);
+  assert.equal(setup.controller.fence(sessionId).engaged, false);
+  const requestState = setup.controller.requestState(setup.state, sessionId);
+  assert.equal(requestState, setup.state);
+  assert.equal(setup.controller.requestRefusal(ctx, sessionId), undefined);
+  const outgoing = await rewriteCodexProviderRequest(setup.payloadFor(other), ctx, requestState);
+  assert.ok(Value.Check(PolicyInputSchema, outgoing));
+  assert.ok(outgoing.input.some((item) => item.type === "compaction"));
+  const fallbacks = setup.records.filter((record) => record.event === "fallback");
+  assert.equal(fallbacks.length, 1);
+  assert.equal(fallbacks[0]?.from, "codex-native-v2");
+  assert.equal(fallbacks[0]?.to, "codex-foreground");
+  assert.equal(fallbacks[0]?.checkpointEntryId, setup.adoption.committedEntryId);
+  assert.equal(
+    setup.diagnostics.filter((message) => /replaying it for gpt-6-sol/.test(message)).length,
+    1,
+  );
+  setup.controller.stop();
+});
+
+test("account change: requests and compactions are refused with the exits text until loss is authorized", async () => {
+  const setup = await policyFixture();
+  const ctx = setup.ctxFor(model);
+  const sessionId = setup.manager.getSessionId();
+  const entryId = setup.adoption.committedEntryId;
+  setup.controller.begin(ctx);
+  assert.ok(await setup.controller.refresh(ctx));
+  await setCredential(setup, tokenFor("another-account"));
+  assert.equal(await setup.controller.refresh(ctx), undefined);
+  const exits = OPAQUE_GUARD_NOTICE("codex", entryId);
+  assert.ok(setup.diagnostics.some((message) => message.includes(exits)));
+  assert.equal(setup.controller.requestRefusal(ctx, sessionId), exits);
+  assert.equal(setup.controller.requestRefusal(ctx, sessionId), exits);
+  const event = { reason: "manual" as const };
+  assert.equal(setup.controller.compactionRefusal(ctx, sessionId, event), exits);
+  const refusals = setup.records.filter((record) => record.event === "refuse");
+  assert.equal(refusals.length, 1, "one record per transition");
+  assert.equal(refusals[0]?.checkpointEntryId, entryId);
+  assert.equal(setup.records.filter((record) => record.event === "cancel").length, 1);
+
+  // Loss authorized: no refusal, the placeholder path sends, and the loss is journaled once.
+  const unpublish = publishOpaqueConsent((id, entry) => id === sessionId && entry === entryId);
+  try {
+    assert.equal(setup.controller.requestRefusal(ctx, sessionId), undefined);
+    assert.equal(setup.controller.compactionRefusal(ctx, sessionId, event), undefined);
+    const bypass = setup.controller.requestState(setup.state, sessionId);
+    assert.notEqual(bypass, setup.state);
+    const outgoing = await rewriteCodexProviderRequest(setup.payloadFor(model), ctx, bypass);
+    assert.ok(Value.Check(PolicyInputSchema, outgoing));
+    assert.equal(
+      outgoing.input.some((item) => item.type === "compaction"),
+      false,
+    );
+    const losses = setup.records.filter((record) => record.event === "loss");
+    assert.equal(losses.length, 1);
+    assert.equal(losses[0]?.checkpointEntryId, entryId);
+  } finally {
+    unpublish();
+  }
+  setup.controller.stop();
 });

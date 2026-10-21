@@ -1,4 +1,9 @@
-import type { CompactionEntry, SessionEntry } from "@earendil-works/pi-coding-agent";
+import type {
+  CompactionEntry,
+  SessionBeforeCompactEvent,
+  SessionEntry,
+} from "@earendil-works/pi-coding-agent";
+import type { LaneRoute } from "../../../../choco-pi-compaction/src/background/lane-journal.ts";
 import { Value } from "typebox/value";
 import { isCanonicalCodexBaseUrl } from "../prompt/codex-model.ts";
 import { type Static, Type } from "typebox";
@@ -16,7 +21,15 @@ import {
   type NativeCompactionIdentity,
 } from "../compaction/types.ts";
 
-export type NativeCompactionEntryMatch = Partial<NativeCompactionIdentity>;
+/**
+ * Checkpoint identity to match. `accountScope` (the background lane's
+ * `sha256:` account digest) is compared only for entries that carry
+ * `background.providerScope`; entries without it keep provider/api/model/baseUrl
+ * matching.
+ */
+export type NativeCompactionEntryMatch = Partial<NativeCompactionIdentity> & {
+  readonly accountScope?: string | undefined;
+};
 
 const JsonScalarSchema = Type.Union([Type.Null(), Type.Boolean(), Type.Number(), Type.String()]);
 const PersistableJsonSchema = Type.Cyclic(
@@ -158,6 +171,15 @@ export function persistCodexBackgroundDetails(
   return detached;
 }
 
+/**
+ * The lane-journal route of a host compaction trigger: `manual` and
+ * `threshold` as they are; overflow recovery (and any other trigger) is the
+ * foreground route.
+ */
+export function codexLaneRoute(reason: SessionBeforeCompactEvent["reason"]): LaneRoute {
+  return reason === "manual" || reason === "threshold" ? reason : "foreground";
+}
+
 export type LatestNativeCompactionResolutionFailureReason =
   | "no-compaction"
   | "latest-compaction-not-native"
@@ -183,12 +205,29 @@ function entryMatches(entry: NativeCompactionEntry, match: NativeCompactionEntry
     return false;
   }
 
+  const recordedAccount = details.background?.providerScope.accountScope;
   return (
     (match.provider === undefined || details.provider === match.provider) &&
     (match.api === undefined || details.api === match.api) &&
     (match.model === undefined || details.model === match.model) &&
-    (match.baseUrl === undefined || details.baseUrl === match.baseUrl)
+    (match.baseUrl === undefined || details.baseUrl === match.baseUrl) &&
+    (match.accountScope === undefined ||
+      details.background === undefined ||
+      recordedAccount === match.accountScope)
   );
+}
+
+/**
+ * Whether a found native entry also matches `match` (account and model
+ * included). Callers locate the entry by provider/api/baseUrl and then check
+ * this, so an account mismatch is reported instead of silently skipping to an
+ * older entry.
+ */
+export function nativeCompactionEntryMatches(
+  entry: NativeCompactionEntry,
+  match: NativeCompactionEntryMatch,
+): boolean {
+  return entryMatches(entry, match);
 }
 
 export function isPersistedNativeCompactionEntry(

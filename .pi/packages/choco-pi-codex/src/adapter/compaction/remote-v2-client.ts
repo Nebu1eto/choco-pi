@@ -61,6 +61,13 @@ type V2Stream = (
   options?: SimpleStreamOptions,
 ) => AsyncIterable<AssistantMessageEvent>;
 
+/**
+ * What happened to `/compact <focus>`: forwarded in the request, or dropped
+ * after the server rejected the focus item (one retry without it). Absent when
+ * the caller passed no focus.
+ */
+export type RemoteCompactionV2Focus = "forwarded" | "ignored";
+
 export type RemoteCompactionV2Result =
   | {
       ok: true;
@@ -68,6 +75,7 @@ export type RemoteCompactionV2Result =
       responseId: string;
       createdAt: string;
       usage?: RemoteCompactionV2Usage | undefined;
+      focus?: RemoteCompactionV2Focus | undefined;
     }
   | {
       ok: false;
@@ -82,6 +90,7 @@ export type RemoteCompactionV2Result =
       errorMessage: string;
       status?: number | undefined;
       retryAfterMs?: number | undefined;
+      focus?: RemoteCompactionV2Focus | undefined;
     };
 
 export type RemoteCompactionV2Usage = {
@@ -111,7 +120,31 @@ export type ExecuteRemoteCompactionV2Options = {
   maxOutputTokens?: number | undefined;
   maxResultBytes?: number | undefined;
   fetch?: typeof globalThis.fetch | undefined;
+  /**
+   * `/compact <focus>`. When non-blank it is sent as one developer message
+   * ("Compaction focus from the user: ...") right before the
+   * `compaction_trigger` item; it is part of this request only, never of the
+   * prompt input the retained window is built from.
+   */
+  customInstructions?: string | undefined;
 };
+
+/** Largest focus forwarded, in code points (the Anthropic `instructions` cap). */
+export const COMPACTION_FOCUS_MAX_CODE_POINTS = 16_384;
+const COMPACTION_FOCUS_PREFIX = "Compaction focus from the user: ";
+
+/** The developer message that carries `/compact <focus>`; undefined for a blank focus. */
+export function compactionFocusItem(
+  customInstructions: string | undefined,
+): ResponsesInputItem | undefined {
+  const focus = customInstructions?.trim();
+  if (!focus) return undefined;
+  return {
+    type: "message",
+    role: "developer",
+    content: [{ type: "input_text", text: `${COMPACTION_FOCUS_PREFIX}${focus}` }],
+  };
+}
 
 function resolveStream(options: ExecuteRemoteCompactionV2Options): V2Stream | undefined {
   if (options.runtime.codexTransport) {
@@ -281,6 +314,8 @@ interface AttemptShrink {
   reduced: boolean;
   /** Serialized input of the last attempt that reached the provider. */
   sentInput: string | undefined;
+  /** Input index of the focus item in the last prepared request, when one was appended. */
+  focusIndex: number | undefined;
 }
 /** Share of the window budget the reduced retry targets. */
 const REDUCED_BUDGET_PERCENT = 75;
@@ -403,9 +438,15 @@ async function prepareAttemptPayload(
   }
   shrink.sentInput = sentInput;
   diagnostic.rewrittenToolOutputs = request.rewrittenOutputs;
+  const focusItem = compactionFocusItem(options.customInstructions);
+  shrink.focusIndex = focusItem === undefined ? undefined : request.request.input.length;
   const preparedBody = {
     ...requestBody,
-    input: [...request.request.input, { type: "compaction_trigger" }],
+    input: [
+      ...request.request.input,
+      ...(focusItem === undefined ? [] : [focusItem]),
+      { type: "compaction_trigger" },
+    ],
     ...conditionalProperties(Boolean(!canonical.body && options.requestOptions.reasoning), {
       reasoning: structuredClone(options.requestOptions.reasoning),
     }),
@@ -714,6 +755,87 @@ async function retryReducedAfterOverflow(
   return runAttempt({ ...options, transport }, streamSimple, shrink);
 }
 
+const ProviderErrorBodySchema = Type.Object(
+  {
+    error: Type.Object(
+      {
+        param: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        message: Type.Optional(Type.String()),
+      },
+      { additionalProperties: true },
+    ),
+  },
+  { additionalProperties: true },
+);
+
+/** The fields of a provider JSON error body the focus-rejection check reads. */
+interface ProviderErrorFields {
+  readonly param: string | undefined;
+  readonly message: string | undefined;
+}
+const NO_PROVIDER_ERROR_FIELDS: ProviderErrorFields = { param: undefined, message: undefined };
+
+/** `error.param` and `error.message` of a JSON error body embedded in the failure text, if any. */
+function providerErrorFields(failureText: string): ProviderErrorFields {
+  const start = failureText.indexOf("{");
+  if (start < 0) return NO_PROVIDER_ERROR_FIELDS;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(failureText.slice(start));
+  } catch {
+    return NO_PROVIDER_ERROR_FIELDS;
+  }
+  if (!Value.Check(ProviderErrorBodySchema, parsed)) return NO_PROVIDER_ERROR_FIELDS;
+  const { param, message } = parsed.error;
+  return { param: param ?? undefined, message };
+}
+
+/** HTTP statuses that may reject the request body (4xx other than auth and rate limit). */
+function isRequestRejectionStatus(status: number | undefined): boolean {
+  return (
+    status === undefined ||
+    (status >= 400 && status < 500 && status !== 401 && status !== 403 && status !== 429)
+  );
+}
+
+/**
+ * Whether the server rejected the request because of the appended focus item:
+ * a 4xx whose JSON `error.param` points at the item's input index, or whose
+ * error text names the item index, the developer role or `compaction_trigger`.
+ * The Codex transport surfaces only the parsed `error.message`, so the index
+ * and role are matched in the text as well.
+ */
+export function rejectsCompactionFocus(
+  result: RemoteCompactionV2Failure,
+  focusIndex: number | undefined,
+): boolean {
+  if (focusIndex === undefined || result.reason !== "stream-error") return false;
+  if (!isRequestRejectionStatus(result.status)) return false;
+  const fields = providerErrorFields(result.errorMessage);
+  const itemPath = `input[${focusIndex}]`;
+  if (fields.param === itemPath || fields.param?.startsWith(`${itemPath}.`) === true) return true;
+  const text = fields.message ?? result.errorMessage;
+  return text.includes(itemPath) || /\bdeveloper\b|compaction_trigger/i.test(text);
+}
+
+async function runCompactionRequest(
+  options: ExecuteRemoteCompactionV2Options,
+  streamSimple: V2Stream,
+  initialTransport: Transport,
+  shrink: AttemptShrink,
+): Promise<RemoteCompactionV2Result> {
+  // Codex transports own their retries inside the provider stream.
+  const first = options.runtime.codexTransport
+    ? await runAttempt({ ...options, transport: initialTransport }, streamSimple, shrink)
+    : await runAttemptsWithRetry(options, streamSimple, initialTransport, shrink);
+  return retryReducedAfterOverflow(options, streamSimple, initialTransport, shrink, first);
+}
+
+function focusTooLong(customInstructions: string | undefined): boolean {
+  const focus = customInstructions?.trim() ?? "";
+  return [...focus].length > COMPACTION_FOCUS_MAX_CODE_POINTS;
+}
+
 export async function executeRemoteCompactionV2(
   options: ExecuteRemoteCompactionV2Options,
 ): Promise<RemoteCompactionV2Result> {
@@ -724,14 +846,33 @@ export async function executeRemoteCompactionV2(
       reason: "unavailable",
       errorMessage: "No compatible Responses stream is registered for this provider",
     };
+  if (focusTooLong(options.customInstructions))
+    return {
+      ok: false,
+      reason: "oversized",
+      errorMessage: `Compaction focus exceeds ${COMPACTION_FOCUS_MAX_CODE_POINTS} code points`,
+    };
   let initialTransport: Transport =
     options.transport ?? (options.runtime.codexTransport ? "websocket-cached" : "sse");
   if (options.runtime.codexTransport && isWebSocketSseFallbackActive(options.sessionId))
     initialTransport = "sse";
-  // Codex transports own their retries inside the provider stream.
-  const shrink: AttemptShrink = { reduced: false, sentInput: undefined };
-  const first = options.runtime.codexTransport
-    ? await runAttempt({ ...options, transport: initialTransport }, streamSimple, shrink)
-    : await runAttemptsWithRetry(options, streamSimple, initialTransport, shrink);
-  return retryReducedAfterOverflow(options, streamSimple, initialTransport, shrink, first);
+  const shrink: AttemptShrink = { reduced: false, sentInput: undefined, focusIndex: undefined };
+  const result = await runCompactionRequest(options, streamSimple, initialTransport, shrink);
+  if (compactionFocusItem(options.customInstructions) === undefined) return result;
+  if (result.ok) return { ...result, focus: "forwarded" };
+  // The background lane keeps its frozen request: a rejected focus is a real
+  // failure there, and its coordinator falls back to a lane that honors it.
+  if (
+    options.frozenRequestBody !== undefined ||
+    options.signal?.aborted === true ||
+    !rejectsCompactionFocus(result, shrink.focusIndex)
+  )
+    return result;
+  const retry = await runCompactionRequest(
+    { ...options, customInstructions: undefined },
+    streamSimple,
+    initialTransport,
+    { reduced: false, sentInput: undefined, focusIndex: undefined },
+  );
+  return { ...retry, focus: "ignored" };
 }

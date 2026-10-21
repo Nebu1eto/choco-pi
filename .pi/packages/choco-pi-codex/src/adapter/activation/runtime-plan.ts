@@ -6,11 +6,13 @@ import {
 } from "../tool-support.ts";
 import {
   canonicalCodexAliasModelKey,
+  type CodexLikeModelDescriptor,
   isCanonicalCodexAliasModel,
   isCodexLikeModel,
   isCodexTransportContext,
+  isCodexTransportModel,
   isOpenAIResponsesContext,
-  isResponsesContext,
+  isResponsesModel,
 } from "../prompt/codex-model.ts";
 import type { CodexConversionConfig } from "./config.ts";
 import type { ExecutionMode } from "./execution-mode.ts";
@@ -84,11 +86,17 @@ const ALL_ADAPTER_TOOL_NAMES = [
   VIEW_IMAGE_TOOL_NAME,
 ];
 
-function configuredProvider(ctx: RuntimeContext, config: CodexConversionConfig): boolean {
-  const provider = ctx.model?.provider?.trim().toLowerCase();
+type PlanModel = Partial<CodexLikeModelDescriptor> | null | undefined;
+
+function configuredProviderModel(model: PlanModel, config: CodexConversionConfig): boolean {
+  const provider = model?.provider?.trim().toLowerCase();
   return Boolean(
-    provider && isResponsesContext(ctx) && config.scope.additionalProviders.includes(provider),
+    provider && isResponsesModel(model) && config.scope.additionalProviders.includes(provider),
   );
+}
+
+function configuredProvider(ctx: RuntimeContext, config: CodexConversionConfig): boolean {
+  return configuredProviderModel(ctx.model, config);
 }
 
 function proxySupportsCodeMode(ctx: RuntimeContext, config: CodexConversionConfig): boolean {
@@ -164,6 +172,87 @@ function normalToolNames(
   return names;
 }
 
+/**
+ * The model- and config-only exits of a runtime plan, shared by
+ * {@link resolveCodexRuntimePlan} and {@link resolveNativeCompactionEligibility}
+ * so the two can never disagree on native compaction.
+ */
+interface PlanGate {
+  readonly isConfigured: boolean;
+  readonly codexTransport: boolean;
+  readonly effectiveOpenAICodex: boolean;
+  /** The extras plan applies (no native compaction). */
+  readonly extras: boolean;
+  /** Not voice-only, the canonical alias endpoint is trusted, and the adapter is in scope. */
+  readonly active: boolean;
+}
+
+function resolvePlanGate(
+  model: PlanModel,
+  config: CodexConversionConfig,
+  canonicalAliasEndpointTrusted: boolean | undefined,
+): PlanGate {
+  const isConfigured = configuredProviderModel(model, config);
+  const codexTransport = isCodexTransportModel(model);
+  const extras =
+    hasExtras(config) &&
+    (config.scope.allProviders === "extras" ||
+      (config.voiceFeaturesOnly && config.scope.allProviders === "on") ||
+      (config.scope.allProviders === "off" && (isConfigured || isCodexLikeModel(model))));
+  const canonicalAliasTrusted =
+    !isCanonicalCodexAliasModel(model) || canonicalAliasEndpointTrusted !== false;
+  const active =
+    !config.voiceFeaturesOnly &&
+    canonicalAliasTrusted &&
+    (config.scope.allProviders === "on" || isConfigured || isCodexLikeModel(model));
+  return {
+    isConfigured,
+    codexTransport,
+    effectiveOpenAICodex: codexTransport || isConfigured,
+    extras,
+    active,
+  };
+}
+
+/**
+ * Whether Codex compacts natively for `model`: exactly
+ * `resolveCodexRuntimePlan(...).nativeCompaction`, without building tool
+ * lists. Published to the compaction host as the ownership predicate.
+ */
+export function resolveNativeCompactionEligibility(
+  model: PlanModel,
+  config: CodexConversionConfig,
+  options: { canonicalAliasEndpointTrusted?: boolean | undefined } = {},
+): boolean {
+  const gate = resolvePlanGate(model, config, options.canonicalAliasEndpointTrusted);
+  return (
+    !gate.extras &&
+    gate.active &&
+    config.compaction.responsesCompaction &&
+    gate.effectiveOpenAICodex
+  );
+}
+
+/** {@link resolveNativeCompactionEligibility} with the adapter state's canonical-alias trust. */
+export function resolveNativeCompactionEligibilityForState(
+  model: PlanModel,
+  state: Pick<AdapterState, "config" | "canonicalAliasEndpoint">,
+): boolean {
+  return resolveNativeCompactionEligibility(model, state.config, {
+    canonicalAliasEndpointTrusted: canonicalAliasTrustFor(model, state),
+  });
+}
+
+/** Undefined for a model that is not a canonical alias (trusted by default). */
+function canonicalAliasTrustFor(
+  model: PlanModel,
+  state: Pick<AdapterState, "canonicalAliasEndpoint">,
+): boolean | undefined {
+  if (!model || !isCanonicalCodexAliasModel(model)) return undefined;
+  const endpoint = state.canonicalAliasEndpoint;
+  return endpoint?.modelKey === canonicalCodexAliasModelKey(model) && endpoint.trusted;
+}
+
 export function resolveCodexRuntimePlan(
   ctx: RuntimeContext,
   config: CodexConversionConfig,
@@ -173,9 +262,8 @@ export function resolveCodexRuntimePlan(
     canonicalSearch?: boolean | undefined;
   } = {},
 ): CodexRuntimePlan {
-  const isConfigured = configuredProvider(ctx, config);
-  const codexTransport = isCodexTransportContext(ctx);
-  const effectiveOpenAICodex = codexTransport || isConfigured;
+  const gate = resolvePlanGate(ctx.model, config, options.canonicalAliasEndpointTrusted);
+  const { isConfigured, codexTransport, effectiveOpenAICodex } = gate;
   const ownedToolNames = [
     ...SHELL_ADAPTER_TOOL_NAMES,
     ...NOTEBOOK_MODE_TOOL_NAMES,
@@ -191,13 +279,8 @@ export function resolveCodexRuntimePlan(
     effectiveOpenAICodex,
     nativeCompaction: false,
   };
-  const extras =
-    hasExtras(config) &&
-    (config.scope.allProviders === "extras" ||
-      (config.voiceFeaturesOnly && config.scope.allProviders === "on") ||
-      (config.scope.allProviders === "off" && (isConfigured || isCodexLikeModel(ctx.model))));
   const codexBacked = usesCodexProviderFallback(config) || isConfigured;
-  if (extras) {
+  if (gate.extras) {
     return {
       ...base,
       kind: "extras",
@@ -206,15 +289,7 @@ export function resolveCodexRuntimePlan(
       transport: "responses",
     };
   }
-  if (config.voiceFeaturesOnly)
-    return { ...base, kind: "inactive", toolNames: [], prompt: undefined, transport: undefined };
-
-  const canonicalAliasTrusted =
-    !isCanonicalCodexAliasModel(ctx.model) || options.canonicalAliasEndpointTrusted !== false;
-  const active =
-    canonicalAliasTrusted &&
-    (config.scope.allProviders === "on" || isConfigured || isCodexLikeModel(ctx.model));
-  if (!active)
+  if (!gate.active)
     return { ...base, kind: "inactive", toolNames: [], prompt: undefined, transport: undefined };
   const nativeCompaction = config.compaction.responsesCompaction && effectiveOpenAICodex;
   const configuredExecutionMode = executionMode ?? config.executionMode;
@@ -262,13 +337,11 @@ export function resolveCodexRuntimePlanForState(
     "canonicalSearch" | "config" | "canonicalAliasEndpoint" | "executionMode"
   >,
 ): CodexRuntimePlan {
-  const model = ctx.model;
-  if (!model || !isCanonicalCodexAliasModel(model))
+  const trusted = canonicalAliasTrustFor(ctx.model, state);
+  if (trusted === undefined)
     return resolveCodexRuntimePlan(ctx, state.config, state.executionMode, {
       canonicalSearch: state.canonicalSearch,
     });
-  const endpoint = state.canonicalAliasEndpoint;
-  const trusted = endpoint?.modelKey === canonicalCodexAliasModelKey(model) && endpoint.trusted;
   return resolveCodexRuntimePlan(ctx, state.config, state.executionMode, {
     canonicalAliasEndpointTrusted: trusted,
     canonicalSearch: state.canonicalSearch,

@@ -21,11 +21,24 @@ import {
   type ModelThinkingLevel,
 } from "@earendil-works/pi-ai";
 import {
+  codexLaneRoute,
   findLatestNativeCompactionEntry,
   findLatestNativeCompactionEntryIndex,
+  nativeCompactionEntryMatches,
   resolveLatestNativeCompactionEntry,
   type LatestNativeCompactionResolution,
 } from "./details-store.ts";
+import {
+  appendLaneRecord,
+  type LaneReason,
+  type LaneRecordInput,
+  type LaneRoute,
+} from "../../../../choco-pi-compaction/src/background/lane-journal.ts";
+import {
+  lossAuthorizedFor,
+  OPAQUE_GUARD_NOTICE,
+} from "../../../../choco-pi-compaction/src/opaque-checkpoint.ts";
+import { codexBackgroundAccountScope } from "./background-v2.ts";
 import {
   rewriteResponsesPayloadWithNativeReplay,
   serializeLiveTailToResponsesInput,
@@ -52,7 +65,7 @@ import {
 import { isResponsesContext } from "../prompt/codex-model.ts";
 import { isCodeModeRuntime, resolveCodexRuntimePlanForState } from "../activation/runtime-plan.ts";
 import type { AdapterState } from "../activation/state.ts";
-import { executeRemoteCompactionV2 } from "./remote-v2-client.ts";
+import { executeRemoteCompactionV2, type RemoteCompactionV2Result } from "./remote-v2-client.ts";
 import { buildRemoteCompactionV2Window } from "./remote-v2-history.ts";
 import { CODE_MODE_EXEC_GRAMMAR_INPUTS } from "../../tools/code-mode/exec-contract.ts";
 import { getActiveToolsInActiveOrder } from "../active-tools.ts";
@@ -67,6 +80,74 @@ import { projectForcedPromptContext } from "../forced-prompt-projection.ts";
 import { OPENAI_SIGN_IN_COMPACTION_REASON } from "../openai-sign-in.ts";
 
 const notifiedOpenAISignInCompactionSessions = new Set<string>();
+
+/**
+ * A provider request that must not be sent: the latest Codex checkpoint cannot
+ * be replayed for it and its loss is not authorized. Throwing from
+ * `before_provider_request` does not stop the host from sending, so the
+ * extension records the refusal and the Codex transport fails the request
+ * before any network call (`events.ts` / `register.ts`).
+ */
+export class CodexRequestRefusedError extends Error {
+  override name = "CodexRequestRefusedError";
+}
+
+/** The lane-record fields a foreground Codex site chooses; the rest is fixed per site. */
+type CodexForegroundRecord = Pick<LaneRecordInput, "event" | "reason" | "noticeAttempted"> &
+  Partial<Pick<LaneRecordInput, "to" | "detail" | "checkpointEntryId">>;
+
+/** Append one `codex-foreground` lane record through `pi.appendEntry`. */
+function journalCodexForeground(
+  pi: Pick<ExtensionAPI, "appendEntry">,
+  ctx: ExtensionContext,
+  route: LaneRoute,
+  record: CodexForegroundRecord,
+): void {
+  appendLaneRecord(
+    (customType, data) => pi.appendEntry(customType, data),
+    {
+      at: Date.now(),
+      sessionId: ctx.sessionManager.getSessionId(),
+      provider: "codex",
+      route,
+      from: "codex-foreground",
+      ...record,
+    },
+    (message) => ctx.ui.notify(message, "warning"),
+  );
+}
+
+/** The package-owned code of a failed native compaction. */
+function compactionFailureReason(
+  result: Extract<RemoteCompactionV2Result, { ok: false }>,
+): LaneReason {
+  if (result.reason === "aborted") return "canceled";
+  if (result.reason === "oversized" || result.reason === "context-overflow") return "oversized";
+  if (result.reason === "invalid-output") return "malformed";
+  if (result.reason === "unsupported" || result.reason === "unavailable") return "unsupported";
+  if (result.status === 401 || result.status === 403) return "auth";
+  if (result.status === 429) return "429";
+  return "provider-error";
+}
+
+/**
+ * The background lane's account digest for this runtime, so a background
+ * checkpoint is replayed only for the account that made it. A Codex runtime
+ * whose credential names no account gets a value no digest equals (fail
+ * closed); other runtimes are not account-scoped.
+ */
+function runtimeAccountScope(runtime: {
+  readonly codexTransport: boolean;
+  readonly apiKey?: string | undefined;
+}): string | undefined {
+  if (!runtime.codexTransport) return undefined;
+  if (!runtime.apiKey) return "unverified-account";
+  try {
+    return codexBackgroundAccountScope(extractAccountId(runtime.apiKey));
+  } catch {
+    return "unverified-account";
+  }
+}
 
 /** Tell the user once per session that sign-in uses Pi's local compaction instead. */
 function notifyOpenAISignInCompactionFallback(ctx: ExtensionContext): void {
@@ -190,6 +271,28 @@ function notifyNativeCompactionFallback(
   );
 }
 
+/** The `session_before_compact` answer that stops the host compaction. */
+interface CompactionCancel {
+  readonly cancel: true;
+}
+
+/** Notice and journal one foreground cancel. */
+function cancelForeground(
+  pi: Pick<ExtensionAPI, "appendEntry">,
+  ctx: ExtensionContext,
+  event: SessionBeforeCompactEvent,
+  reason: LaneReason,
+  message: string | undefined,
+): CompactionCancel {
+  if (message !== undefined) ctx.ui.notify(message, "error");
+  journalCodexForeground(pi, ctx, codexLaneRoute(event.reason), {
+    event: "cancel",
+    reason,
+    noticeAttempted: message !== undefined,
+  });
+  return { cancel: true };
+}
+
 function textFromResponsesContent(content: BoundaryValue): string {
   if (Value.Check(Type.String(), content)) return content;
   if (!Array.isArray(content)) return "";
@@ -306,11 +409,13 @@ export async function handleCodexSessionBeforeCompact(
     return await handleCodexSessionBeforeCompactInner(event, ctx, state, pi);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    ctx.ui.notify(
+    return cancelForeground(
+      pi,
+      ctx,
+      event,
+      "provider-error",
       `OpenAI native compaction failed unexpectedly: ${message}; Pi compaction was not run.`,
-      "error",
     );
-    return { cancel: true };
   }
 }
 
@@ -321,14 +426,17 @@ async function handleCodexSessionBeforeCompactInner(
   pi: ExtensionAPI,
 ) {
   const plan = resolveCodexRuntimePlanForState(ctx, state);
+  const route = codexLaneRoute(event.reason);
   if (!plan.effectiveOpenAICodex && !isResponsesContext(ctx)) {
-    ctx.ui.notify(
+    return cancelForeground(
+      pi,
+      ctx,
+      event,
+      "unsupported",
       "OpenAI native compaction is enabled, but the current model is not Responses-compatible; Pi compaction was not run.",
-      "error",
     );
-    return { cancel: true };
   }
-  if (event.signal.aborted) return { cancel: true };
+  if (event.signal.aborted) return cancelForeground(pi, ctx, event, "canceled", undefined);
 
   const resolution = await resolveNativeCompactionEnvironment(ctx, {
     enabled: true,
@@ -336,17 +444,33 @@ async function handleCodexSessionBeforeCompactInner(
   });
   if (!resolution.ok) {
     if (resolution.reason === "unsupported-provider" || resolution.reason === "unsupported-api") {
+      journalCodexForeground(pi, ctx, route, {
+        event: "fallback",
+        to: "local",
+        reason: "unsupported",
+        detail: resolution.reason,
+        noticeAttempted: false,
+      });
       return undefined;
     }
     if (resolution.reason === "openai-subscription-sign-in") {
       notifyOpenAISignInCompactionFallback(ctx);
+      journalCodexForeground(pi, ctx, route, {
+        event: "fallback",
+        to: "local",
+        reason: "unsupported",
+        detail: resolution.reason,
+        noticeAttempted: true,
+      });
       return undefined;
     }
-    ctx.ui.notify(
+    return cancelForeground(
+      pi,
+      ctx,
+      event,
+      resolution.reason === "missing-api-key" ? "auth" : "unsupported",
       `OpenAI native compaction is enabled but unavailable (${resolution.reason}); Pi compaction was not run.`,
-      "error",
     );
-    return { cancel: true };
   }
 
   const runtime = resolution.runtime;
@@ -367,20 +491,24 @@ async function handleCodexSessionBeforeCompactInner(
     state.activeProviderSystemPrompt ?? ctx.getSystemPrompt(),
     getActiveToolsInActiveOrder(pi, codeMode),
   );
+  const accountScope = runtimeAccountScope(runtime);
   const latestNativeCompaction = resolveLatestNativeCompactionEntry(branchEntries, {
     provider: runtime.provider,
     api: runtime.api,
     baseUrl: runtime.baseUrl,
+    ...conditionalProperties(accountScope !== undefined, { accountScope }),
   });
   if (
     !latestNativeCompaction.ok &&
     latestNativeCompaction.reason === "latest-native-compaction-mismatch"
   ) {
-    ctx.ui.notify(
+    return cancelForeground(
+      pi,
+      ctx,
+      event,
+      "scope-mismatch",
       "OpenAI native compaction cannot reuse the latest checkpoint with this provider or endpoint; compaction was cancelled to preserve its encrypted history.",
-      "error",
     );
-    return { cancel: true };
   }
   const builtInput = buildNativeCompactionInput({
     model: compactionTargetModel,
@@ -392,11 +520,13 @@ async function handleCodexSessionBeforeCompactInner(
     projectedContext: context,
   });
   if (!builtInput) {
-    ctx.ui.notify(
+    return cancelForeground(
+      pi,
+      ctx,
+      event,
+      "malformed",
       "OpenAI native compaction could not clone the previous compacted window; Pi compaction was not run.",
-      "error",
     );
-    return { cancel: true };
   }
   const canonicalReplay =
     runtime.codexTransport && runtime.apiKey
@@ -428,19 +558,16 @@ async function handleCodexSessionBeforeCompactInner(
   };
 
   if (input.length === 0) {
-    ctx.ui.notify(
+    return cancelForeground(
+      pi,
+      ctx,
+      event,
+      "nothing-to-summarize",
       "OpenAI native compaction had no serializable conversation items; Pi compaction was not run.",
-      "error",
-    );
-    return { cancel: true };
-  }
-  if (event.customInstructions?.trim()) {
-    ctx.ui.notify(
-      "Responses compaction v2 uses the active session instructions and ignores custom /compact guidance.",
-      "warning",
     );
   }
   const compactResult = await executeRemoteCompactionV2({
+    customInstructions: event.customInstructions,
     runtime,
     modelRegistry: ctx.modelRegistry,
     context,
@@ -452,17 +579,24 @@ async function handleCodexSessionBeforeCompactInner(
     sessionId: ctx.sessionManager.getSessionId(),
     signal: event.signal,
   });
+  journalCompactionFocus(pi, ctx, route, compactResult);
   if (!compactResult.ok) {
-    if (compactResult.reason !== "aborted") {
-      notifyNativeCompactionFallback(
-        ctx,
-        state,
-        branchEntries,
-        runtime,
-        `Responses compaction v2 failed (${compactResult.reason}): ${compactResult.errorMessage}`,
-      );
-    }
-    return compactResult.reason === "aborted" ? { cancel: true } : undefined;
+    if (compactResult.reason === "aborted")
+      return cancelForeground(pi, ctx, event, "canceled", undefined);
+    notifyNativeCompactionFallback(
+      ctx,
+      state,
+      branchEntries,
+      runtime,
+      `Responses compaction v2 failed (${compactResult.reason}): ${compactResult.errorMessage}`,
+    );
+    journalCodexForeground(pi, ctx, route, {
+      event: "fallback",
+      to: "local",
+      reason: compactionFailureReason(compactResult),
+      noticeAttempted: true,
+    });
+    return undefined;
   }
   const compactedWindow = buildRemoteCompactionV2Window(
     input,
@@ -501,14 +635,97 @@ async function handleCodexSessionBeforeCompactInner(
       runtime,
       "Responses compaction v2 produced details Pi could not store",
     );
+    journalCodexForeground(pi, ctx, route, {
+      event: "fallback",
+      to: "local",
+      reason: "malformed",
+      noticeAttempted: true,
+    });
     return undefined;
   }
 }
 
+/** Shown when the server rejected the `/compact` focus item and the compaction ran without it. */
+export const CODEX_FOCUS_IGNORED_NOTICE =
+  "Codex compaction ignored the /compact focus (server rejected it)";
+
+/** Journal (and, when dropped, announce) what happened to `/compact <focus>`. */
+function journalCompactionFocus(
+  pi: Pick<ExtensionAPI, "appendEntry">,
+  ctx: ExtensionContext,
+  route: LaneRoute,
+  result: RemoteCompactionV2Result,
+): void {
+  if (result.focus === "forwarded") {
+    // The focus went to the server with the compaction request; no lane changed.
+    journalCodexForeground(pi, ctx, route, {
+      event: "yield",
+      to: "codex-foreground",
+      reason: "instructions-forwarded",
+      noticeAttempted: false,
+    });
+    return;
+  }
+  if (result.focus !== "ignored") return;
+  ctx.ui.notify(CODEX_FOCUS_IGNORED_NOTICE, "warning");
+  journalCodexForeground(pi, ctx, route, {
+    event: "fallback",
+    to: "codex-foreground",
+    reason: "instructions-ignored",
+    noticeAttempted: true,
+  });
+}
+
+/**
+ * Refuse a request whose replay is impossible, unless the user authorized
+ * losing that checkpoint's history: then the request goes out with the
+ * placeholder, and the loss is announced and journaled.
+ */
+function refuseOrLose(
+  pi: Pick<ExtensionAPI, "appendEntry"> | undefined,
+  ctx: ExtensionContext,
+  entryId: string,
+  refusal: { readonly message: string; readonly reason: LaneReason; readonly detail?: string },
+): undefined {
+  const sessionId = ctx.sessionManager.getSessionId();
+  if (lossAuthorizedFor(sessionId, entryId)) {
+    ctx.ui.notify(
+      `Codex checkpoint ${entryId} cannot be replayed; its history is dropped (loss authorized).`,
+      "warning",
+    );
+    if (pi !== undefined)
+      journalCodexForeground(pi, ctx, "replay", {
+        event: "loss",
+        reason: "loss",
+        checkpointEntryId: entryId,
+        noticeAttempted: true,
+      });
+    return undefined;
+  }
+  ctx.ui.notify(refusal.message, "error");
+  if (pi !== undefined)
+    journalCodexForeground(pi, ctx, "replay", {
+      event: "refuse",
+      reason: refusal.reason,
+      checkpointEntryId: entryId,
+      noticeAttempted: true,
+      ...conditionalProperties(refusal.detail !== undefined, { detail: refusal.detail ?? "" }),
+    });
+  throw new CodexRequestRefusedError(refusal.message);
+}
+
+/**
+ * Replay the latest native checkpoint into a normal request. A background
+ * checkpoint is replayed only for the account that made it (any model id of
+ * that account, the foreground lenient path); another account, or a replay
+ * that cannot be rebuilt, refuses the request with
+ * {@link CodexRequestRefusedError} unless its loss is authorized.
+ */
 export async function rewriteCodexCompactedProviderRequest(
   payload: BoundaryValue,
   ctx: ExtensionContext,
   state: AdapterState,
+  pi?: Pick<ExtensionAPI, "appendEntry">,
 ): Promise<BoundaryValue | undefined> {
   const plan = resolveCodexRuntimePlanForState(ctx, state);
   if (!plan.nativeCompaction || (!plan.effectiveOpenAICodex && !isResponsesContext(ctx)))
@@ -530,6 +747,16 @@ export async function rewriteCodexCompactedProviderRequest(
   if (!runtime.payload) return undefined;
   // SAFETY: findLatestNativeCompactionEntryIndex returns an in-bounds entry accepted by isNativeCompactionEntry.
   const compactionEntry = branchEntries[latestNativeCompactionIndex]! as NativeCompactionEntry;
+  const accountScope = runtimeAccountScope(runtime);
+  if (
+    accountScope !== undefined &&
+    !nativeCompactionEntryMatches(compactionEntry, { accountScope })
+  )
+    return refuseOrLose(pi, ctx, compactionEntry.id, {
+      message: OPAQUE_GUARD_NOTICE("codex", compactionEntry.id),
+      reason: "scope-mismatch",
+      detail: "account",
+    });
   const rewrite = rewriteResponsesPayloadWithNativeReplay({
     model: runtime.currentModel,
     payload: runtime.payload,
@@ -542,8 +769,11 @@ export async function rewriteCodexCompactedProviderRequest(
   if (rewrite.ok) return rewrite.rewrittenPayload;
   const detail = rewrite.parity?.mismatches.slice(0, 3).join("; ");
   const message = `OpenAI native compaction replay failed (${rewrite.reason})${detail ? `: ${detail}` : ""}; request was not sent with placeholder compaction context.`;
-  ctx.ui.notify(message, "error");
-  throw new Error(message);
+  return refuseOrLose(pi, ctx, compactionEntry.id, {
+    message,
+    reason: "incompatible",
+    detail: rewrite.reason,
+  });
 }
 
 export async function injectPendingNativeWindowIntoPiCompactionRequest(

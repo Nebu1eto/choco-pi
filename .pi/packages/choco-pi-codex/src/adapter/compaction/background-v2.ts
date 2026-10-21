@@ -142,6 +142,13 @@ export interface CodexBackgroundBackendOptions {
   ) => Promise<NativeCompactionRuntime | PrepareFailure>;
   readonly isCurrent: (ownerKey: string, generation: number, scope: ProviderScope) => boolean;
   readonly fetch?: typeof globalThis.fetch;
+  /**
+   * Token budget of the retained user messages in the checkpoint window: the
+   * user's `compaction.v2UserMessageRetention` (thousands) * 1000, the same
+   * multiplier as the foreground. Read once per preparation, before its first
+   * await. Absent: the 64K default.
+   */
+  readonly userMessageRetentionTokens?: (() => number) | undefined;
 }
 export function codexBackgroundAccountScope(accountId: string): string {
   return `sha256:${createHash("sha256").update(accountId).digest("hex")}`;
@@ -281,6 +288,9 @@ interface FrozenPreparation {
   readonly input: ResponsesInputItem[];
   readonly laneSessionId: string;
   readonly remainingMs: number;
+  readonly retentionTokens: number | undefined;
+  /** `/compact <focus>` of a manual candidate; forwarded as the compaction request's focus item. */
+  readonly customInstructions: string | undefined;
 }
 
 function exceedsInputBudget(
@@ -330,13 +340,15 @@ function isolateLaneRequest(body: ResponsesBody, captureSessionId: string): stri
 }
 
 function freezePreparation(
+  options: CodexBackgroundBackendOptions,
   snapshot: FrozenSnapshot,
   request: PrepareRequest,
 ): FrozenPreparation | PrepareFailure {
   const { ownerKey, ownerGeneration, prefixFingerprint, cutEntryId, tokenEstimate } = snapshot;
   const scope = Object.freeze(structuredClone(snapshot.providerScope));
   const budget = { ...request.budget };
-  const { candidateId, signal: callerSignal } = request;
+  const { candidateId, signal: callerSignal, customInstructions } = request;
+  const retentionTokens = options.userMessageRetentionTokens?.();
   if (callerSignal.aborted) return rejected("canceled");
   if (!supportedScope(scope)) return rejected("unsupported");
   const illegal = illegalCaptureDetail(snapshot);
@@ -376,6 +388,8 @@ function freezePreparation(
     input,
     laneSessionId,
     remainingMs,
+    retentionTokens,
+    customInstructions,
   };
 }
 
@@ -484,6 +498,7 @@ async function runLaneCompaction(
     maxOutputTokens: budget.maxOutputTokens,
     maxResultBytes: budget.maxResultBytes,
     fetch: options.fetch,
+    customInstructions: frozen.customInstructions,
   });
   return withAbort(
     operation.finally(() => cleanupOpenAICodexTransportSession(laneSessionId)),
@@ -509,7 +524,11 @@ function buildPreparedCheckpoint(
     api: runtime.api,
     model: runtime.model,
     baseUrl: runtime.baseUrl,
-    compactedWindow: buildRemoteCompactionV2Window(frozen.input, result.compaction),
+    compactedWindow: buildRemoteCompactionV2Window(
+      frozen.input,
+      result.compaction,
+      frozen.retentionTokens,
+    ),
     compactResponseId: result.responseId,
     createdAt: result.createdAt,
     background: {
@@ -564,7 +583,7 @@ async function prepareBackgroundCheckpoint(
   snapshot: FrozenSnapshot,
   request: PrepareRequest,
 ): Promise<PrepareResult> {
-  const frozen = freezePreparation(snapshot, request);
+  const frozen = freezePreparation(options, snapshot, request);
   if ("ok" in frozen) return frozen;
   const { ownerKey, ownerGeneration, scope } = frozen;
   const isOwnerCurrent = () => options.isCurrent(ownerKey, ownerGeneration, scope);

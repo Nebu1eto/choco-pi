@@ -46,8 +46,10 @@ import {
   takeCodexUsageLimitEntry,
 } from "./usage-limit-entry.ts";
 import { withLiveCtx } from "./live-context.ts";
+import type { CodexCompactionEligibility } from "./compaction-eligibility.ts";
 import {
   createCodexBackgroundIntegration,
+  recordCodexRequestDecision,
   registerCodexBackgroundFactory,
   updateCodexBackgroundElision,
   willAdoptCodexBackgroundCheckpoint,
@@ -181,6 +183,7 @@ export function registerCodexEvents(
   ui: CodexUiController,
   codeMode: CodeModeRegistration,
   proxyProvider: CodeModeProxyProviderRegistration,
+  eligibility?: CodexCompactionEligibility,
 ): void {
   registerCodexDaybreakProbe(pi);
   const { state, tracker, sessions } = runtime;
@@ -199,7 +202,12 @@ export function registerCodexEvents(
     state,
     onInstalled: (sessionId, epoch) =>
       updateCodexBackgroundElision(elisionStates, sessionId, epoch),
+    openaiServerSide: () => state.config.compaction.responsesCompaction,
+    userMessageRetentionTokens: () => state.config.compaction.v2UserMessageRetention * 1_000,
+    append: (customType, data) => pi.appendEntry(customType, data),
   });
+  // The derived default lanes read the OpenAI row: re-resolve after it changed.
+  eligibility?.onChange(() => background.invalidateSettings());
   const restoreElision = (ctx: ExtensionContext): void => {
     const elision = elisionFor(ctx.sessionManager.getSessionId());
     const branch = ctx.sessionManager.getBranch();
@@ -265,6 +273,8 @@ export function registerCodexEvents(
     state.activeProviderSystemPrompt = undefined;
     state.voiceSystemPromptOverride = undefined;
     state.canonicalAliasEndpoint = undefined;
+    eligibility?.publish();
+    eligibility?.refresh();
     proxyProvider.applyConfig(state.config, ctx.modelRegistry);
     state.promptSkills = extractPiPromptSkills(ctx.getSystemPrompt());
     if (!(await refreshBackground(ctx, ownerGeneration))) return;
@@ -339,6 +349,7 @@ export function registerCodexEvents(
   pi.on("session_shutdown", async (_event, ctx) => {
     const sessionId = ctx.sessionManager.getSessionId();
     background.stop(sessionId);
+    eligibility?.unpublish();
     elisionStates.delete(sessionId);
     runtime.cancelCacheKeepalive();
     resetRegisteredToolCapture(ctx);
@@ -407,13 +418,29 @@ export function registerCodexEvents(
     const sessionId = ctx.sessionManager.getSessionId();
     const fence = background.fence(sessionId);
     state.cwd = ctx.cwd;
+    // Each request decides afresh; a refusal is enforced by the Codex transport.
+    recordCodexRequestDecision(sessionId, undefined);
+    // Picks up a canonical-alias trust the endpoint preflight settled.
+    eligibility?.refresh();
     if (!isBoundaryValue(event.payload)) return undefined;
     await background.refresh(ctx, fence.generation);
     if (background.isStale(fence)) return undefined;
-    const { rewriteCodexProviderRequest } = await loadProviderRequest();
+    const refusal = background.requestRefusal(ctx, sessionId);
+    if (refusal !== undefined) {
+      recordCodexRequestDecision(sessionId, refusal);
+      return undefined;
+    }
+    const { rewriteCodexProviderRequest, CodexRequestRefusedError } = await loadProviderRequest();
     if (background.isStale(fence)) return undefined;
     const requestState = background.requestState(state, sessionId);
-    const rewritten = await rewriteCodexProviderRequest(event.payload, ctx, requestState);
+    let rewritten: Awaited<ReturnType<typeof rewriteCodexProviderRequest>>;
+    try {
+      rewritten = await rewriteCodexProviderRequest(event.payload, ctx, requestState, pi);
+    } catch (cause) {
+      if (!(cause instanceof CodexRequestRefusedError)) throw cause;
+      recordCodexRequestDecision(sessionId, cause.message);
+      return undefined;
+    }
     if (background.isStale(fence)) return undefined;
     if (requestState !== state)
       state.activeProviderSystemPrompt = requestState.activeProviderSystemPrompt;
@@ -427,9 +454,18 @@ export function registerCodexEvents(
     const sessionId = ctx.sessionManager.getSessionId();
     const fence = background.fence(sessionId);
     state.cwd = ctx.cwd;
-    if (!resolveCodexRuntimePlanForState(ctx, state).nativeCompaction) return undefined;
+    if (!resolveCodexRuntimePlanForState(ctx, state).nativeCompaction) {
+      background.journalOpaqueTrap(ctx, event);
+      return undefined;
+    }
     const adopting = await willAdoptCodexBackgroundCheckpoint(sessionId, event);
     if (background.isStale(fence) || adopting) return undefined;
+    const refusal = background.compactionRefusal(ctx, sessionId, event);
+    if (refusal !== undefined) {
+      ctx.ui.notify(refusal, "error");
+      return { cancel: true };
+    }
+    // Loss authorized: the host path compacts without the checkpoint's history.
     if (background.requestState(state, sessionId) !== state) return undefined;
     const { handleCodexSessionBeforeCompact } = await loadCompaction();
     if (background.isStale(fence)) return undefined;
