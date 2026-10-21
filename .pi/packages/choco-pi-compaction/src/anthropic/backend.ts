@@ -9,6 +9,7 @@
  */
 import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai";
 
+import { type BearerAuth, bearerCredentialOf } from "../auth.ts";
 import type {
   Backend,
   BackgroundUsage,
@@ -27,6 +28,7 @@ import { readFirstKeptEntryId } from "../background/snapshot.ts";
 import { type AnthropicCapabilityGate, authModeOf, normalizeBaseUrl } from "./capability.ts";
 import {
   bindingDigests,
+  capturesFor,
   hasThinking,
   isWireCapture,
   toolResultIds,
@@ -222,6 +224,29 @@ export function selectCapture(
   return undefined;
 }
 
+/**
+ * Whether `sessionId` holds a usable capture for `scope`: an HTTP 200 answer
+ * to a mapped request of the same provider, model and endpoint. The capture
+ * ring holds only such captures; the scope still has to match (a capture of
+ * another model cannot be cut for this one). No cut is checked.
+ */
+export function hasUsableCapture(sessionId: string, scope: ProviderScope): boolean {
+  return capturesFor(sessionId).some(
+    (capture) =>
+      capture.status === 200 &&
+      capture.mapping !== undefined &&
+      captureMatchesWireScope(capture, scope),
+  );
+}
+
+/**
+ * The Anthropic auth mode of a resolved credential, header-aware (D10): the
+ * API key, else an `Authorization: Bearer` header's token.
+ */
+export function authModeFromAuth(auth: BearerAuth | undefined): "oauth" | "api-key" | undefined {
+  return authModeOf(bearerCredentialOf(auth));
+}
+
 // ---------------------------------------------------------------------------
 // Backend
 // ---------------------------------------------------------------------------
@@ -248,6 +273,11 @@ export interface AnthropicBackendDeps {
   readonly fetch?: typeof globalThis.fetch;
   readonly stream?: LaneStream;
   readonly now?: () => number;
+  /**
+   * Whether a replay rejection turned Anthropic server-side compaction off for
+   * the owner's session (D7); the lane then reports itself unsupported.
+   */
+  readonly disabled?: () => boolean;
 }
 
 function prepareFailure(
@@ -279,6 +309,7 @@ class AnthropicNativeBackend implements Backend<AnthropicDetails> {
   }
 
   async capability(scope: ProviderScope): Promise<CapabilityVerdict> {
+    if (this.deps.disabled?.() === true) return { supported: false, reason: "unsupported" };
     return this.deps.gate.check(scope);
   }
 
@@ -310,6 +341,7 @@ class AnthropicNativeBackend implements Backend<AnthropicDetails> {
       readonly signal: AbortSignal;
       readonly budget: PreparationBudget;
       readonly candidateId: string;
+      readonly customInstructions?: string;
     },
   ): Promise<PreparedCheckpoint<AnthropicDetails> | PrepareFailure> {
     const { candidateId } = options;
@@ -326,6 +358,8 @@ class AnthropicNativeBackend implements Backend<AnthropicDetails> {
       entryIds,
       signal: options.signal,
       budget: options.budget,
+      // `/compact <focus>`: the lane applies it as `compaction.instructions` (D9).
+      instructions: options.customInstructions,
     });
     if (!outcome.ok) return outcome.failure;
     const details = outcome.details;
@@ -471,7 +505,7 @@ export async function runNativeCompaction(
     deps.gate.recordFailure(scope, "auth");
     return failed(prepareFailure("auth", false));
   }
-  if (authModeOf(auth.apiKey) !== scope.authMode) {
+  if (authModeFromAuth(auth) !== scope.authMode) {
     return failed(prepareFailure("unsupported", false));
   }
   const model: Model<"anthropic-messages"> =

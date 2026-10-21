@@ -293,6 +293,21 @@ export async function loadBackgroundSettings(
   return { settings: defaults(), source: undefined, diagnostic: undefined };
 }
 
+/**
+ * The settings a session runs with: the first sidecar found, or, with none
+ * anywhere, the documented defaults with the native lanes derived from the
+ * vendor rows. The host and the Codex integration both load through here, so a
+ * no-sidecar install binds the same lanes in both packages.
+ */
+export async function loadEffectiveBackgroundSettings(
+  location: SettingsLocation,
+  modes: VendorCompactionModes,
+  paths?: readonly string[],
+): Promise<LoadedBackgroundSettings> {
+  const loaded = await loadBackgroundSettings(paths ?? backgroundSettingsPaths(location));
+  return withDerivedDefaultLanes(loaded, deriveBackgroundLanes(modes));
+}
+
 /** Whether any background work may run at all. */
 export function backgroundCompactionActive(settings: BackgroundCompactionSettings): boolean {
   return settings.enabled && (settings.text || settings.anthropicNative || settings.codexNative);

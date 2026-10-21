@@ -9,11 +9,12 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import type { HostCompactionTrigger } from "../background/arbitration.ts";
-import { ANTHROPIC_BACKEND_ID } from "../anthropic/backend.ts";
-import { capturesFor } from "../anthropic/capture.ts";
+import { ANTHROPIC_BACKEND_ID, hasUsableCapture } from "../anthropic/backend.ts";
 import { TEXT_BACKEND_ID } from "../background/text-backend.ts";
+import { OPAQUE_GUARD_NOTICE, opaqueProviderOf } from "../opaque-checkpoint.ts";
 import { type BackgroundAdoptionOwner, readAdoptionIdentity } from "./adoption-signal.ts";
 import { boundaryDraft } from "./branch.ts";
+import { type ManualOutcome, manualFallbackPolicy } from "./manual-policy.ts";
 import { errorText, tell } from "./notices.ts";
 import type { OwnerCore } from "./owner-core.ts";
 import {
@@ -76,6 +77,7 @@ async function arbitrate(
   event: SessionBeforeCompactEvent,
 ): Promise<Decision> {
   if (!isCurrent(rt, owner) || event.signal.aborted) return PROCEED;
+  refuseDisabledReady(owner);
   const result = await owner.core.coordinator.arbitrateHostCompaction(hostTrigger(owner, event));
   if (!isCurrent(rt, owner)) return PROCEED;
   if (result.action !== "adopt") return deferManual(rt, owner, event);
@@ -96,6 +98,17 @@ async function arbitrate(
   return { action: "adopt", candidateId: result.candidateId, compaction };
 }
 
+/**
+ * A ready `anthropic-native` candidate prepared before a replay rejection
+ * turned the lane off for this session (D7) is never adopted: its checkpoint
+ * would be replayed by a lane that is off. Cancelled (`disabled`) instead.
+ */
+function refuseDisabledReady(owner: MainOwner): void {
+  const status = owner.core.coordinator.status();
+  if (status.state !== "ready" || status.backendId !== ANTHROPIC_BACKEND_ID) return;
+  if (owner.core.anthropicDisabled()) owner.core.coordinator.cancel("disabled");
+}
+
 /** A `/compact` typed by the user (with or without instructions): not a route of ours. */
 function isUserManual(owner: MainOwner, event: SessionBeforeCompactEvent): boolean {
   return event.reason === "manual" && owner.pendingRoute === undefined && !event.signal.aborted;
@@ -106,8 +119,9 @@ function isUserManual(owner: MainOwner, event: SessionBeforeCompactEvent): boole
  * background instead of blocking the session on the summarizer. The host
  * compaction is cancelled so input is accepted again; the candidate is adopted
  * as soon as it is ready (idle route when idle, otherwise the next boundary).
- * Custom instructions go to the text lane only (the native lanes cannot apply
- * them). An owner without a backend or a refused request keeps the foreground path.
+ * Custom instructions go to the lanes that apply them: the Anthropic lane
+ * (as `compaction.instructions`) and the text lane. An owner without a
+ * backend or a refused request keeps the foreground path.
  */
 async function deferManual(
   rt: HostRuntime,
@@ -180,10 +194,13 @@ export function manualBypassesHost(
 
 /**
  * Backend lanes a manual request may use, preferred first. The Anthropic lane
- * needs a wire capture of this session's latest request; right after a
- * reload or resume there is none, so the text lane goes first and the
- * Anthropic lane is skipped rather than failing with `incompatible`. Custom
- * instructions can only be applied by the text lane.
+ * needs a usable wire capture (an answered request of this owner's scope);
+ * right after a reload or resume there is none, so the text lane goes first
+ * and the Anthropic lane is skipped rather than failing with `incompatible`.
+ * It is skipped too once a replay rejection turned it off for the session.
+ * Custom instructions are applied by both lanes (D9: the Anthropic lane sends
+ * them as `compaction.instructions`); a lane that could not apply them is
+ * never offered one.
  *
  * Any other native lane (Codex) owns its model's compaction: its own
  * foreground handler answers the host's compaction and would replace any
@@ -194,19 +211,26 @@ export function manualBypassesHost(
  * instructions are then the native handler's to apply or report.
  */
 export function manualLanes(
-  core: Pick<OwnerCore, "backendId" | "backendIds" | "sessionId">,
+  core: Pick<OwnerCore, "backendId" | "backendIds" | "sessionId" | "scope"> &
+    Partial<Pick<OwnerCore, "anthropicDisabled">>,
   customInstructions?: string,
 ): string[] {
   const selected = core.backendId;
   if (selected === undefined) return [];
   if (selected !== TEXT_BACKEND_ID && selected !== ANTHROPIC_BACKEND_ID) return [];
   const lanes = [selected, ...core.backendIds.filter((id) => id !== selected)];
-  if (customInstructions !== undefined) return lanes.filter((id) => id === TEXT_BACKEND_ID);
   const anthropicUsable =
-    selected !== ANTHROPIC_BACKEND_ID || capturesFor(core.sessionId).length > 0;
-  if (anthropicUsable) return lanes.filter((id) => id === selected || id === TEXT_BACKEND_ID);
-  return lanes.filter((id) => id === TEXT_BACKEND_ID);
+    selected !== ANTHROPIC_BACKEND_ID ||
+    (core.anthropicDisabled?.() !== true && hasUsableCapture(core.sessionId, core.scope));
+  const usable = anthropicUsable
+    ? lanes.filter((id) => id === selected || id === TEXT_BACKEND_ID)
+    : lanes.filter((id) => id === TEXT_BACKEND_ID);
+  if (customInstructions === undefined) return usable;
+  return usable.filter((id) => INSTRUCTION_LANES.has(id));
 }
+
+/** Lanes that apply `/compact <instructions>` themselves. */
+const INSTRUCTION_LANES: ReadonlySet<string> = new Set([TEXT_BACKEND_ID, ANTHROPIC_BACKEND_ID]);
 
 /** The outstanding candidate a request with these instructions can wait on. */
 function joinableCandidate(owner: MainOwner, customInstructions?: string): string | undefined {
@@ -249,7 +273,11 @@ interface ManualFollow {
 
 /**
  * Wait for the manual candidate; adopt it while idle, otherwise leave it to
- * the next boundary. A failed lane retries once per remaining fallback lane.
+ * the next boundary. A candidate that did not produce a checkpoint is decided
+ * by `manualFallbackPolicy` (D6): a cancellation stops silently, `auth`
+ * stops with a warning, other failures retry once on the text lane when it is
+ * enabled and the opaque-history guard allows it. The request gets one
+ * outcome notice: a successful retry's is shown when its checkpoint installs.
  */
 async function followManual(
   rt: HostRuntime,
@@ -279,30 +307,56 @@ async function followManual(
       settleManual(owner);
       return;
     }
+  } else if (failure === undefined) {
+    // A newer candidate (another request, the threshold route) took over: nothing to report.
+    owner.manualCandidate = undefined;
+    owner.manualNotice = undefined;
+    return;
   }
-  const reason = failure === undefined ? (status.reason ?? status.state) : errorText(failure);
+  const outcome = manualOutcome(owner, status, { failure, fallbacks });
   const [next, ...rest] = fallbacks;
-  if (next !== undefined && failure === undefined) {
+  if (outcome.action === "retry-text" && next !== undefined) {
     const retried = await manualCandidate(rt, owner, next, customInstructions);
     if (!live()) return;
     if (retried !== undefined) {
       owner.manualCandidate = retried;
-      // Expected lane fallback: recorded on the failed candidate's status, not shown to the user.
+      // One notice per user action: shown once the text checkpoint installs.
+      owner.manualNotice = outcome.notice;
       void followManual(rt, owner, { candidateId: retried, serial, customInstructions }, rest);
       return;
     }
   }
   owner.manualCandidate = undefined;
-  const detail = status.candidateId === candidateId ? status.detail : undefined;
-  if (detail === "nothing-to-summarize") {
-    tell(ctx, "nothing to compact yet; the recent turns are kept as they are", "info");
+  owner.manualNotice = undefined;
+  if (outcome.action === "retry-text") {
+    tell(
+      ctx,
+      `manual compaction did not produce a checkpoint (${status.reason ?? status.state}); run /compact again`,
+      "warning",
+    );
     return;
   }
-  tell(
-    ctx,
-    `manual compaction did not produce a checkpoint (${reason}${detail ? `: ${detail}` : ""}); run /compact again`,
-    "warning",
-  );
+  if (outcome.notice !== undefined) tell(ctx, outcome.notice, outcome.level);
+}
+
+/** The policy verdict for a manual candidate that produced no checkpoint. */
+function manualOutcome(
+  owner: MainOwner,
+  status: ReturnType<OwnerCore["coordinator"]["status"]>,
+  context: { readonly failure: unknown; readonly fallbacks: readonly string[] },
+): ManualOutcome {
+  const opaque = owner.core.opaqueBlock(TEXT_BACKEND_ID);
+  return manualFallbackPolicy({
+    status,
+    failure: context.failure,
+    opaqueBlocked: opaque !== undefined,
+    opaqueNotice:
+      opaque === undefined
+        ? undefined
+        : OPAQUE_GUARD_NOTICE(opaqueProviderOf(opaque.owner), opaque.entryId),
+    textEnabled: context.fallbacks.includes(TEXT_BACKEND_ID),
+    failedOnText: status.backendId === TEXT_BACKEND_ID,
+  });
 }
 
 /** Adopt the manual candidate now when it is ready and the session is idle. */
@@ -338,7 +392,7 @@ async function adoptManualIfIdle(
   }
 }
 
-/** Clear the manual bookkeeping once its candidate is installed or gone. */
+/** Clear the manual bookkeeping once its candidate is installed or gone; show its pending notice on install. */
 function settleManual(owner: MainOwner): void {
   const candidateId = owner.manualCandidate;
   if (candidateId === undefined) return;
@@ -351,6 +405,11 @@ function settleManual(owner: MainOwner): void {
       status.state === "adopting");
   if (waiting) return;
   owner.manualCandidate = undefined;
+  const notice = owner.manualNotice;
+  owner.manualNotice = undefined;
+  if (notice !== undefined && status.candidateId === candidateId && status.state === "installed") {
+    tell(owner.lastCtx, notice, "info");
+  }
 }
 
 /** Whether the idle route may start now for the ready candidate. */
@@ -360,6 +419,7 @@ function idleCandidate(
   ctx: ExtensionContext,
 ): string | undefined {
   if (!isCurrent(rt, owner) || owner.pendingRoute !== undefined) return undefined;
+  refuseDisabledReady(owner);
   const status = owner.core.coordinator.status();
   if (status.state !== "ready" || status.candidateId === undefined) return undefined;
   if (owner.refusedIdle.has(status.candidateId)) return undefined;
@@ -585,6 +645,7 @@ export async function adoptAtBoundary(
   hostBoundaryReached(owner);
   owner.core.observeUsage(ctx.getContextUsage());
   if (owner.pendingRoute !== undefined) return undefined;
+  refuseDisabledReady(owner);
   if (owner.core.coordinator.status().state !== "ready") return undefined;
   const result = await owner.core.coordinator.arbitrateHostCompaction({ reason: "threshold" });
   if (!isCurrent(rt, owner) || result.action !== "adopt") return undefined;

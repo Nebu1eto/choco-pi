@@ -7,7 +7,12 @@ import type {
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 import type { ChildCompactionProvider } from "../../../choco-pi-subagents/src/child-compaction-bridge.ts";
-import { AnthropicCapabilityGate, capturedProviders } from "../anthropic/capability.ts";
+import { ANTHROPIC_BACKEND_ID } from "../anthropic/backend.ts";
+import {
+  AnthropicCapabilityGate,
+  type AnthropicSupportEntry,
+  capturedProviders,
+} from "../anthropic/capability.ts";
 import { capturesFor } from "../anthropic/capture.ts";
 import { createForegroundCompactHandler } from "../anthropic/foreground.ts";
 import { isAnthropicDetails } from "../anthropic/details.ts";
@@ -21,7 +26,11 @@ import {
 } from "../anthropic/mode.ts";
 import { createAnthropicReplayBinder } from "../anthropic/replay-binding.ts";
 import type { ReplayDiagnostic } from "../anthropic/replay-rewrite.ts";
-import { DEFAULT_BACKGROUND_COMPACTION_SETTINGS } from "../background/contract.ts";
+import {
+  type CandidateState,
+  DEFAULT_BACKGROUND_COMPACTION_SETTINGS,
+  type FailureReason,
+} from "../background/contract.ts";
 import {
   appendLaneRecord,
   type LaneReason,
@@ -190,6 +199,7 @@ export function registerBackgroundCompaction(
     fetch: options.anthropic?.fetch,
     stream: options.anthropic?.stream,
     now: clock === undefined ? undefined : () => clock.now(),
+    announce: (ctx, record, text, level, policy) => announce(rt, ctx, record, text, level, policy),
   });
   const xaiForeground = createXaiForegroundCompactHandler({
     gate: rt.xaiGate,
@@ -200,6 +210,7 @@ export function registerBackgroundCompaction(
     captures: xaiCapturesFor,
     fetch: options.xai?.fetch,
     now: clock === undefined ? undefined : () => clock.now(),
+    announce: (ctx, record, text, level, policy) => announce(rt, ctx, record, text, level, policy),
   });
   /** Bumped by every session_shutdown; a session start awaiting I/O stops when it moved. */
   const shutdowns = { count: 0 };
@@ -449,6 +460,9 @@ function createRuntime(
     onDisabled: (ctx, code) => {
       if (xaiCurrent(ctx)) reportXaiServerSideDisabled(rt, ctx, code);
     },
+    announce: (ctx, record, text, level, policy) => {
+      if (xaiCurrent(ctx)) announce(rt, ctx, record, text, level, policy);
+    },
   });
   const rt: HostRuntime = {
     pi,
@@ -494,6 +508,8 @@ function createRuntime(
       cooldownMs: DEFAULT_BACKGROUND_COMPACTION_SETTINGS.cooldownMs,
       allowList: options.anthropic?.allowList,
       now: clock === undefined ? undefined : () => clock.now(),
+      onCooldown: (entry, reason, until) =>
+        announceCooldown(rt, "anthropic", { entry, reason, until }),
     }),
     replay: {
       ...replay,
@@ -513,6 +529,7 @@ function createRuntime(
       cooldownMs: DEFAULT_BACKGROUND_COMPACTION_SETTINGS.cooldownMs,
       allowList: options.xai?.allowList,
       now,
+      onCooldown: (entry, reason, until) => announceCooldown(rt, "xai", { entry, reason, until }),
     }),
     xaiReplay: {
       ...xaiReplay,
@@ -526,11 +543,80 @@ function createRuntime(
       ),
     },
     xaiReplayUnbinds: new Map(),
+    detachedUnbinds: [],
     nativeSessions: new Set(),
     unregisterNativeRefresher: undefined,
     settling: false,
   };
+  rt.onReplayDisabled = (sessionId, provider) => cancelDisabledCandidate(rt, sessionId, provider);
   return rt;
+}
+
+/** Candidate states a replay disable cancels; an `adopting` proposal is the host's already. */
+const CANCELABLE_ON_DISABLE: ReadonlySet<CandidateState> = new Set<CandidateState>([
+  "queued",
+  "preparing",
+  "ready",
+]);
+
+/**
+ * A replay rejection turned Anthropic server-side off for `sessionId` (D7):
+ * the main owner's outstanding `anthropic-native` candidate for that session
+ * is cancelled (`disabled`); later threshold work selects the text lane.
+ */
+function cancelDisabledCandidate(
+  rt: HostRuntime,
+  sessionId: string,
+  provider: "anthropic" | "xai",
+): void {
+  if (provider !== "anthropic") return;
+  const owner = rt.main;
+  if (owner === undefined || !isCurrent(rt, owner) || owner.core.sessionId !== sessionId) return;
+  const status = owner.core.coordinator.status();
+  if (status.backendId !== ANTHROPIC_BACKEND_ID || !CANCELABLE_ON_DISABLE.has(status.state)) return;
+  owner.core.coordinator.cancel("disabled");
+}
+
+/** The session a registration-wide event (a gate cooldown) is journaled under, if one is bound. */
+function boundSessionId(rt: HostRuntime): string | undefined {
+  const main = rt.main;
+  if (main !== undefined && isCurrent(rt, main)) return main.core.sessionId;
+  return [...rt.nativeSessions].at(-1);
+}
+
+/**
+ * A capability gate started a cooldown for a provider scope: journal it once
+ * per session and reason, with its end, and notice it (no host context: journal only).
+ */
+function announceCooldown(
+  rt: HostRuntime,
+  provider: "anthropic" | "xai",
+  cooldown: {
+    readonly entry: AnthropicSupportEntry;
+    readonly reason: FailureReason;
+    readonly until: number;
+  },
+): void {
+  const sessionId = boundSessionId(rt);
+  if (sessionId === undefined) return;
+  const label = provider === "anthropic" ? "Anthropic" : "xAI";
+  announce(
+    rt,
+    rt.main?.lastCtx ?? rt.parent?.ctx,
+    {
+      at: nowOf(rt),
+      sessionId,
+      provider,
+      route: "foreground",
+      event: "cooldown",
+      from: provider === "anthropic" ? "anthropic-native" : "xai-native",
+      reason: ownedReasonOf(cooldown.reason),
+      cooldownUntil: cooldown.until,
+    },
+    `${label} server-side compaction for ${cooldown.entry.model} is cooling down after a failure (${cooldown.reason}); compactions use the local summarizer until ${new Date(cooldown.until).toISOString()}`,
+    "warning",
+    "per-session-reason",
+  );
 }
 
 /** A main session offers the Preferences row; a child session never does. */
@@ -927,7 +1013,7 @@ function reportXaiServerSideDisabled(rt: HostRuntime, ctx: ExtensionContext, cod
   reportReplayDisabled(rt, ctx, {
     provider: "xai",
     code,
-    text: `xAI server-side compaction: the replayed checkpoint was refused (${code}); server-side compaction is off for this session. Later requests carry only the checkpoint's placeholder summary (the compacted history is no longer sent) and later compactions are summarized locally.`,
+    text: `xAI server-side compaction: the replayed checkpoint was refused (${code}); server-side compaction is off for this session. Later requests carry only the checkpoint's placeholder summary (the compacted history is no longer sent); later compactions over this checkpoint need /compaction-allow-loss or a new xAI checkpoint.`,
     checkpointId: xaiCheckpointId,
   });
 }

@@ -39,6 +39,8 @@ import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 
 import { JsonValueSchema, type JsonValue } from "../background/contract.ts";
+import { OPAQUE_GUARD_NOTICE, opaqueProviderOf } from "../opaque-checkpoint.ts";
+import { pendingOpaqueBlock } from "../opaque-guard.ts";
 import { isAnthropicDetails, sha256 } from "./details.ts";
 
 // ---------------------------------------------------------------------------
@@ -644,6 +646,56 @@ export function releaseSessionCaptures(sessionId: string): void {
   const state = runtime();
   state.captures.delete(sessionId);
   state.projections.delete(sessionId);
+  responseRing().delete(sessionId);
+}
+
+// ---------------------------------------------------------------------------
+// Responses that left no usable capture (diagnostics only)
+// ---------------------------------------------------------------------------
+
+/** A transmitted session request whose response was not HTTP 200 or whose body could not be mapped. */
+export interface RecordedResponse {
+  readonly sequence: number;
+  readonly status: number;
+  readonly capturedAt: number;
+  readonly provider: string;
+  readonly modelId: string;
+  readonly baseUrl: string;
+}
+
+const RESPONSES_SYMBOL = Symbol.for("choco-pi:anthropic-native-responses");
+const MAX_RESPONSES_PER_SESSION = 8;
+
+/**
+ * Process-wide ring of unusable responses per session, kept apart from the
+ * capture ring so a host retry burst (non-200 answers) never evicts the last
+ * usable capture. Its own slot, so the capture runtime's shape is unchanged.
+ */
+function responseRing(): Map<string, RecordedResponse[]> {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, RESPONSES_SYMBOL);
+  const found: unknown = descriptor?.value;
+  if (found instanceof Map) return found;
+  if (descriptor !== undefined) throw new Error("Invalid Anthropic native response ring slot");
+  const created = new Map<string, RecordedResponse[]>();
+  Object.defineProperty(globalThis, RESPONSES_SYMBOL, { value: created, configurable: true });
+  return created;
+}
+
+/** Unusable responses of a session, oldest first (at most 8). */
+export function recentResponsesFor(sessionId: string): readonly RecordedResponse[] {
+  return responseRing().get(sessionId) ?? [];
+}
+
+function storeResponse(sessionId: string, response: RecordedResponse): void {
+  const ring = responseRing();
+  const list = ring.get(sessionId) ?? [];
+  ring.delete(sessionId);
+  ring.set(sessionId, [...list, response].slice(-MAX_RESPONSES_PER_SESSION));
+  while (ring.size > MAX_SESSIONS) {
+    const oldest = ring.keys().next();
+    if (oldest.done === true) break;
+    ring.delete(oldest.value);
+  }
 }
 
 export function transportRefusals(sessionId?: string): readonly TransportRefusal[] {
@@ -654,6 +706,8 @@ export function transportRefusals(sessionId?: string): readonly TransportRefusal
 }
 
 export const TRANSPORT_REFUSAL_PREFIX = "choco-pi anthropic native transport refused";
+/** Prefix of the local answer to a request refused by the opaque-history guard. */
+export const OPAQUE_REFUSAL_PREFIX = "choco-pi compaction";
 /** Marks a locally answered (never transmitted) refusal response. */
 const TRANSPORT_REFUSAL_HEADER = "x-choco-pi-transport-refusal";
 
@@ -744,12 +798,12 @@ function storeCapture(capture: WireCapture, limit: number): void {
  * non-retryable 400 whose message carries the reason code, so the foreground
  * turn fails visibly instead of looping through transport-error retries.
  */
-function refuse(call: TransportCall, code: string, now: number): Response {
+function refuse(call: TransportCall, code: string, now: number, text?: string): Response {
   call.refusals.push(code);
   const refusals = runtime().refusals;
   refusals.push({ sessionId: call.sessionId, code, at: now });
   if (refusals.length > MAX_REFUSALS) refusals.splice(0, refusals.length - MAX_REFUSALS);
-  const message = `${TRANSPORT_REFUSAL_PREFIX}: ${code}`;
+  const message = text ?? `${TRANSPORT_REFUSAL_PREFIX}: ${code}`;
   return new Response(
     JSON.stringify({ type: "error", error: { type: "invalid_request_error", message } }),
     {
@@ -832,9 +886,27 @@ function readRequest(init: RequestInit | undefined): ReadRequest {
   return { bodyText, body, betas };
 }
 
+/**
+ * Refuse a session request while the session's newest checkpoint is an
+ * opaque record this request cannot carry (D2): sending it would give the
+ * model placeholder-only context. The xAI replay handler sets the block (and
+ * already notified and journaled it); the request is answered locally here,
+ * because a `before_provider_request` handler cannot stop a request.
+ */
+function refuseOpaque(capture: CaptureCall): Response | undefined {
+  const sessionId = capture.call.sessionId;
+  if (sessionId === undefined) return undefined;
+  const block = pendingOpaqueBlock(sessionId);
+  if (block === undefined) return undefined;
+  const text = `${OPAQUE_REFUSAL_PREFIX}: ${OPAQUE_GUARD_NOTICE(opaqueProviderOf(block.owner), block.entryId)}`;
+  return refuse(capture.call, "opaque-checkpoint", capture.settings.now(), text);
+}
+
 /** Run every registered transport check; returns the local refusal when one fails. */
 function verifyRequest(capture: CaptureCall, request: ReadRequest): Response | undefined {
   const { call, settings } = capture;
+  const opaque = refuseOpaque(capture);
+  if (opaque !== undefined) return opaque;
   if (call.checks.length === 0) return undefined;
   const { body, bodyText, betas } = request;
   if (body === undefined || bodyText === undefined)
@@ -867,7 +939,12 @@ async function captureAndForward(
   return response;
 }
 
-/** Store the sent body for a session-bound call; calls without a session ID are not captured. */
+/**
+ * Store the sent body for a session-bound call; calls without a session ID are
+ * not captured. Only an HTTP 200 answer to a mapped body is a usable capture;
+ * any other response goes to the diagnostics ring, so the host's retries of a
+ * failing request never evict the last usable capture (D8).
+ */
 function recordCapture(
   capture: CaptureCall,
   sent: {
@@ -880,10 +957,21 @@ function recordCapture(
   const { sessionId } = capture.call;
   const { body, bodyText, betas } = sent.request;
   if (sessionId === undefined || body === undefined || bodyText === undefined) return;
-  freezeJson(body);
   const counter = runtime().counter;
   counter.value += 1;
   const { model, settings } = capture;
+  if (sent.status !== 200 || sent.mapping === undefined) {
+    storeResponse(sessionId, {
+      sequence: counter.value,
+      status: sent.status,
+      capturedAt: settings.now(),
+      provider: model.provider,
+      modelId: model.id,
+      baseUrl: model.baseUrl,
+    });
+    return;
+  }
+  freezeJson(body);
   storeCapture(
     {
       schemaVersion: 1,

@@ -88,6 +88,19 @@ function findActiveNativeCheckpoint(branch: readonly SessionEntry[]): Checkpoint
   return { kind: "none" };
 }
 
+/**
+ * The branch's committed Anthropic native checkpoint: the newest compaction
+ * entry when it claims the Anthropic strategy (valid or not, since replay must
+ * still refuse an invalid one), else undefined.
+ */
+export function findActiveAnthropicCheckpoint(
+  branch: readonly SessionEntry[],
+): { readonly entryId: string } | undefined {
+  const lookup = findActiveNativeCheckpoint(branch);
+  if (lookup.kind === "none") return undefined;
+  return { entryId: lookup.kind === "active" ? lookup.checkpoint.entryId : lookup.entryId };
+}
+
 /** Text the host sends for a compaction summary (public `convertToLlm`). */
 function summaryWireText(summary: string): string {
   const [message] = convertToLlm([

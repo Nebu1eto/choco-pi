@@ -13,6 +13,8 @@ import test from "node:test";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { convertToLlm, SessionManager } from "@earendil-works/pi-coding-agent";
 
+import { OPAQUE_GUARD_NOTICE, opaqueCheckpointOf } from "../src/opaque-checkpoint.ts";
+import { guardBeforeLocalSummary } from "../src/opaque-guard.ts";
 import { resolveOwner } from "../src/ownership.ts";
 import {
   compactInput,
@@ -590,14 +592,48 @@ test("transport check refuses a body a later handler altered", () => {
   });
 });
 
-test("an invalid xAI checkpoint is reported; a newer text checkpoint ends replay", () => {
+test("an invalid xAI checkpoint is guarded like a valid one; a newer text checkpoint ends both", () => {
   const manager = SessionManager.inMemory("/tmp");
   manager.appendMessage({ role: "user", content: "A", timestamp: 0 });
   const kept = manager.appendMessage(assistantMessage("B"));
   const bad = manager.appendCompaction("s", kept, 1, { strategy: XAI_STRATEGY, schemaVersion: 1 });
   assert.deepEqual(findActiveXaiCheckpoint(manager.getBranch()), { kind: "invalid", entryId: bad });
+  // The placeholder of an unreadable xAI record is still not history a summarizer may use.
+  assert.equal(opaqueCheckpointOf(manager.getBranch())?.owner, "xai-native");
+  const notices: string[] = [];
+  const guard = () =>
+    guardBeforeLocalSummary(
+      {
+        modes: { anthropic: "choco-pi", xai: "server-side", opaqueHistory: "preserve" },
+        owner: "local",
+        lossAuthorized: () => false,
+        announce: (_ctx, _record, text) => notices.push(text),
+      },
+      {
+        type: "session_before_compact",
+        preparation: {
+          firstKeptEntryId: kept,
+          messagesToSummarize: [],
+          turnPrefixMessages: [],
+          isSplitTurn: false,
+          tokensBefore: 0,
+          fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+          settings: { enabled: true, reserveTokens: 1, keepRecentTokens: 1 },
+        },
+        branchEntries: manager.getBranch(),
+        reason: "threshold",
+        willRetry: false,
+        signal: new AbortController().signal,
+      },
+      { sessionManager: manager },
+    );
+  assert.deepEqual(guard(), { cancel: true });
+  assert.deepEqual(notices, [OPAQUE_GUARD_NOTICE("xai", bad)]);
   manager.appendCompaction("s", kept, 1, { strategy: "local-reconciled", schemaVersion: 1 });
   assert.deepEqual(findActiveXaiCheckpoint(manager.getBranch()), { kind: "none" });
+  assert.equal(opaqueCheckpointOf(manager.getBranch()), undefined);
+  assert.equal(guard(), undefined, "a newer local checkpoint replaced the record");
+  assert.equal(notices.length, 1);
 });
 
 test("provider rejection: only a 400/422 naming the compaction item disables replay", async () => {

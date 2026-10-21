@@ -4,13 +4,19 @@ import type {
   SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 
-import { ANTHROPIC_BACKEND_ID, chooseLegalCutEntry, selectCapture } from "../anthropic/backend.ts";
+import {
+  ANTHROPIC_BACKEND_ID,
+  chooseLegalCutEntry,
+  hasUsableCapture,
+  selectCapture,
+} from "../anthropic/backend.ts";
 import { capturesFor, type WireCapture } from "../anthropic/capture.ts";
 import type {
   CandidateState,
   CoordinatorStatus,
   FrozenSnapshot,
   PreparationRequestResult,
+  ProviderScope,
 } from "../background/contract.ts";
 import {
   type CandidateFailurePortEvent,
@@ -25,6 +31,7 @@ import {
   type LaneProvider,
   type LaneRoute,
   ownedReasonOf,
+  REASONS,
 } from "../background/lane-journal.ts";
 import { CODEX_BACKEND_SETTING_ID, isBackendEnabled } from "../background/settings.ts";
 import { TEXT_BACKEND_ID } from "../background/text-backend.ts";
@@ -37,6 +44,13 @@ import {
   type SnapshotRefusal,
 } from "../background/snapshot.ts";
 import { isStaleContextError } from "../lifecycle.ts";
+import {
+  laneMayAnswerOverOpaque,
+  lossAuthorizedFor,
+  type OpaqueCheckpoint,
+  opaqueCheckpointOf,
+  opaqueProviderOf,
+} from "../opaque-checkpoint.ts";
 import { type AdoptionRoute, readAdoptionIdentity } from "./adoption-signal.ts";
 import {
   ownerModelBudget,
@@ -45,6 +59,7 @@ import {
   selectBackendId,
 } from "./backends.ts";
 import { findCommittedAdoption, latestCompactionOf } from "./branch.ts";
+import { CANCELLATIONS } from "./manual-policy.ts";
 import { errorText } from "./notices.ts";
 import type { BackgroundCompactionOptions, OwnerSpec } from "./owner-spec.ts";
 
@@ -73,11 +88,17 @@ const TERMINAL_FAILURE: ReadonlySet<CandidateState> = new Set([
 export interface OwnerCore {
   readonly ownerKey: string;
   readonly sessionId: string;
+  /** The owner's provider scope (the session model's resolved endpoint and auth mode). */
+  readonly scope: ProviderScope;
   readonly coordinator: CoordinatorHandle;
   /** Backend chosen for this owner's model, or undefined when none applies. */
   readonly backendId: string | undefined;
   /** Backend IDs resolved for this owner; the chosen one may fall back to another at request time. */
   readonly backendIds: readonly string[];
+  /** Whether a replay rejection turned Anthropic server-side off for this owner's session. */
+  anthropicDisabled(): boolean;
+  /** The opaque checkpoint that forbids `backendId`'s lane from answering now, if any. */
+  opaqueBlock(backendId: string): OpaqueCheckpoint | undefined;
   /** candidateId -> route of every proposal this owner handed to the host. */
   readonly proposals: Map<string, AdoptionRoute>;
   /** Branch switch observed outside the per-read leaf check. */
@@ -162,11 +183,30 @@ const NATIVE_LANE_PROVIDERS: ReadonlyMap<string, LaneProvider> = new Map([
   [CODEX_BACKEND_SETTING_ID, "codex"],
 ]);
 
-function laneIdOf(backendId: string): LaneId | undefined {
+export function laneIdOf(backendId: string): LaneId | undefined {
   if (backendId === TEXT_BACKEND_ID) return "text";
   if (backendId === ANTHROPIC_BACKEND_ID) return "anthropic-native";
   if (backendId === CODEX_BACKEND_SETTING_ID) return "codex-native-v2";
   return undefined;
+}
+
+/**
+ * The opaque checkpoint that forbids `backendId`'s lane from answering over
+ * `entries` (D2): the newest compaction is a provider-held record that lane
+ * cannot replay, and the user has not authorized losing it. Undefined when
+ * the lane may answer. Consent is read from the process-global slot, which
+ * combines every registration's answer for the session.
+ */
+export function opaqueBlockFor(
+  sessionId: string,
+  entries: readonly SessionEntry[],
+  backendId: string,
+): OpaqueCheckpoint | undefined {
+  const opaque = opaqueCheckpointOf(entries);
+  if (opaque === undefined) return undefined;
+  const lane = laneIdOf(backendId);
+  if (lane !== undefined && laneMayAnswerOverOpaque(lane, opaque)) return undefined;
+  return lossAuthorizedFor(sessionId, opaque.entryId) ? undefined : opaque;
 }
 
 /**
@@ -184,13 +224,18 @@ function journalCandidateFailure(state: OwnerCoreState, failure: CandidateFailur
     (state.backendId === undefined ? undefined : NATIVE_LANE_PROVIDERS.get(state.backendId));
   if (from === undefined || provider === undefined) return;
   const route: LaneRoute = failure.trigger === "recovery" ? "resume" : failure.trigger;
-  const detail = failure.detail;
+  // `/compact <focus>` on the Anthropic lane: the instructions were sent as
+  // `compaction.instructions` (D9); recorded when no failure detail says more.
+  const forwarded =
+    failure.backendId === ANTHROPIC_BACKEND_ID && failure.customInstructions !== undefined;
+  const detail = failure.detail ?? (forwarded ? REASONS.instructionsForwarded : undefined);
   state.spec.journal({
     at: now(state),
     sessionId: state.spec.sessionId,
     provider,
     route,
-    event: failure.reason === "canceled" ? "cancel" : "fallback",
+    event:
+      CANCELLATIONS.has(failure.reason) || failure.reason === "disabled" ? "cancel" : "fallback",
     from,
     reason: ownedReasonOf(failure.reason),
     detail: detail === undefined ? undefined : ownedReasonOf(detail),
@@ -208,9 +253,13 @@ function assembleCore(
   return {
     ownerKey: spec.ownerKey,
     sessionId: spec.sessionId,
+    scope: spec.scope,
     coordinator,
     backendId: state.backendId,
     backendIds,
+    anthropicDisabled: () => spec.anthropicDisabled(),
+    opaqueBlock: (backendId) =>
+      opaqueBlockFor(spec.sessionId, spec.sessionManager.getBranch(), backendId),
     proposals: new Map(),
     bumpBranch: () => {
       state.branchEpoch += 1;
@@ -291,6 +340,11 @@ function freezeAt(
 }
 
 function freeze(state: OwnerCoreState, context: SnapshotContext): FrozenSnapshot | SnapshotRefused {
+  // Second line of defence behind the routes (manual requests and recovery
+  // included): never freeze a prefix a lane cannot answer over an opaque record.
+  if (opaqueBlockFor(state.spec.sessionId, context.entries, context.backendId) !== undefined) {
+    return { refused: true, detail: REASONS.opaqueCheckpoint };
+  }
   const record = context.recoveryRecord;
   // Recovery reconstructs the recorded cut from the full branch; it never
   // reselects a later cut and never starts a paid preparation.
@@ -380,19 +434,73 @@ function observeUsage(
   rearmAfterFailure(state, status);
   if (!state.armed || ratio < settings.prepareAt || now(state) < state.retryAfter) return;
   if (OUTSTANDING.has(status.state)) return;
+  const anthropicDisabled = state.spec.anthropicDisabled();
   const lane = thresholdLane({
     selected: backendId,
     backendIds: state.backendIds,
-    hasAnthropicCapture: capturesFor(state.spec.sessionId).length > 0,
+    hasAnthropicCapture: hasUsableCapture(state.spec.sessionId, state.spec.scope),
+    anthropicDisabled,
     status,
   });
+  if (yieldsToOpaque(state, lane)) return;
+  if (anthropicDisabled && backendId === ANTHROPIC_BACKEND_ID && lane === TEXT_BACKEND_ID) {
+    announceDisabledYield(state);
+  }
   requestThresholdPreparation(state, coordinator, lane);
+}
+
+/**
+ * Whether the opaque-history guard stops a threshold preparation on `lane`:
+ * journaled (and noticed) once per checkpoint and session; no candidate.
+ */
+function yieldsToOpaque(state: OwnerCoreState, lane: string): boolean {
+  const { spec } = state;
+  const blocked = opaqueBlockFor(spec.sessionId, spec.sessionManager.getBranch(), lane);
+  if (blocked === undefined) return false;
+  const provider = opaqueProviderOf(blocked.owner);
+  spec.announce(
+    `background compaction is paused: the latest checkpoint ${blocked.entryId} is an opaque ${provider} server-side record a local summary cannot replace; run /compaction-allow-loss to summarize without it`,
+    "warning",
+    "per-session-reason",
+    {
+      at: now(state),
+      sessionId: spec.sessionId,
+      provider,
+      route: "threshold",
+      event: "yield",
+      from: laneIdOf(lane) ?? "text",
+      reason: REASONS.opaqueCheckpoint,
+      checkpointEntryId: blocked.entryId,
+    },
+  );
+  return true;
+}
+
+/** The Anthropic lane is off for this session (replay rejection): threshold work moves to text, once noticed. */
+function announceDisabledYield(state: OwnerCoreState): void {
+  const { spec } = state;
+  spec.announce(
+    "Anthropic server-side compaction is off for this session; background compaction uses the text lane",
+    "warning",
+    "per-session-reason",
+    {
+      at: now(state),
+      sessionId: spec.sessionId,
+      provider: "anthropic",
+      route: "threshold",
+      event: "yield",
+      from: "anthropic-native",
+      to: "text",
+      reason: REASONS.disabled,
+    },
+  );
 }
 
 /**
  * The lane for the next threshold preparation. The Anthropic lane yields to
  * the text lane (when enabled) while it cannot serve: no wire capture of this
- * session yet, or its last attempt refused the cut. Any other native lane
+ * session yet, its last attempt refused the cut, or a replay rejection turned
+ * it off for this session (`anthropicDisabled`). Any other native lane
  * never yields: a Codex-owned model is compacted by Codex's own handler, so a
  * text candidate adopted over Codex content is exactly what
  * `selectBackendId` rules out. A refused Codex cut (no recorded provider
@@ -402,11 +510,12 @@ export function thresholdLane(input: {
   readonly selected: string;
   readonly backendIds: readonly string[];
   readonly hasAnthropicCapture: boolean;
+  readonly anthropicDisabled?: boolean;
   readonly status: CoordinatorStatus;
 }): string {
   const { selected, backendIds, hasAnthropicCapture, status } = input;
   if (selected !== ANTHROPIC_BACKEND_ID || !backendIds.includes(TEXT_BACKEND_ID)) return selected;
-  if (!hasAnthropicCapture) return TEXT_BACKEND_ID;
+  if (input.anthropicDisabled === true || !hasAnthropicCapture) return TEXT_BACKEND_ID;
   const refusedHere =
     status.state === "failed" &&
     status.backendId === selected &&

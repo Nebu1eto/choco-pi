@@ -3,8 +3,9 @@
  * (INSTALLED openai-responses adapter, fake transports, no network): the
  * host's compaction is answered with an opaque compaction item, replay sends
  * it first (before the system prompt) with no summary text, failures fall back
- * to the local summarizer with a single notice and a cooldown, and a replay
- * the transport refuses turns server-side off for the session.
+ * to the local summarizer with a single notice and a cooldown (or, over a
+ * committed checkpoint, the opaque guard cancels), and a replay the transport
+ * refuses is refused locally without turning server-side off.
  */
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -543,7 +544,7 @@ test("choco-pi mode never calls the compact endpoint", { timeout: 30_000 }, asyn
 });
 
 test(
-  "a later handler that drops the item is refused at the transport and turns server-side off",
+  "a later handler that drops the item is refused at the transport; a local refusal never turns server-side off",
   { timeout: 30_000 },
   async () => {
     const foreground = textForeground();
@@ -568,18 +569,30 @@ test(
         xaiTransportRefusals(rig.manager.getSessionId()).map((refusal) => refusal.code),
         ["item-missing"],
       );
-      assert.equal(noticesOf(rig).length, 1, "one disable notice");
-      assert.match(noticesOf(rig)[0] ?? "", /off for this session/u);
+      assert.equal(
+        rig.notices.filter((notice) => /off for this session/u.test(notice)).length,
+        0,
+        "no disable notice",
+      );
+      assert.equal(
+        rig.notices.filter((notice) => /replay refused \(item-missing\)/u.test(notice)).length,
+        1,
+        "one refusal notice",
+      );
 
       hostile = false;
       await rig.session.prompt("XG-AFTER");
       const sent = foreground.sent.at(-1);
       assert.ok(sent?.body);
-      assert.equal(sent.text.includes(ITEM.encrypted_content), false, "replay is off");
-      assert.ok(sent.text.includes("xAI server-side compaction checkpoint"), "placeholder sent");
+      assert.ok(sent.text.includes(ITEM.encrypted_content), "replay stays on");
+      assert.equal(
+        sent.text.includes("xAI server-side compaction checkpoint"),
+        false,
+        "no placeholder sent",
+      );
 
       await rig.session.compact();
-      assert.equal(lane.sent.length, 1, "later compactions are local");
+      assert.equal(lane.sent.length, 2, "later compactions stay native");
     } finally {
       await rig.dispose();
     }
@@ -872,7 +885,7 @@ test(
   },
 );
 test(
-  "a capture from before the newest compaction is never reused to compact again",
+  "a capture from before the newest compaction is never reused; the opaque guard cancels the local fallback",
   { timeout: 60_000 },
   async () => {
     // Request 0 answers; request 1 (after the first compaction) fails, so its
@@ -891,11 +904,14 @@ test(
       const [first] = compactions(rig.manager);
       assert.ok(first && isXaiDetails(first.details));
       await rig.session.prompt("XG-FAILS");
-      await rig.session.compact();
+      await assert.rejects(rig.session.compact(), /Compaction cancelled/u);
       assert.equal(lane.sent.length, 1, "the stale capture was not sent to the compact endpoint");
       const latest = compactions(rig.manager).at(-1);
-      assert.notEqual(latest?.id, first.id);
-      assert.equal(isXaiDetails(latest?.details), false, "the local summarizer answered");
+      assert.equal(latest?.id, first.id, "no placeholder was summarized");
+      assert.ok(
+        rig.notices.some((notice) => /opaque xai server-side record/u.test(notice)),
+        "the guard names the exits",
+      );
     } finally {
       await rig.dispose();
     }

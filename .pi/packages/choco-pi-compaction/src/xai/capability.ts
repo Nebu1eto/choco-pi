@@ -11,8 +11,10 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import {
   AnthropicCapabilityGate,
   type AnthropicSupportEntry,
+  type CooldownObserver,
   normalizeBaseUrl,
 } from "../anthropic/capability.ts";
+import { type BearerAuth, bearerCredentialOf } from "../auth.ts";
 import type { ProviderScope } from "../background/contract.ts";
 import type { XaiAuthMode } from "./details.ts";
 
@@ -26,6 +28,16 @@ const API_KEY_PREFIX = "xai-";
 export function xaiAuthModeOf(apiKey: string | undefined): XaiAuthMode | undefined {
   if (apiKey === undefined || apiKey.length === 0) return undefined;
   return apiKey.startsWith(API_KEY_PREFIX) ? "api-key" : "oauth";
+}
+
+/**
+ * Auth mode of a resolved auth (D10): the bearer credential is the API key
+ * or, for a provider configured with headers only, the token of its
+ * `Authorization: Bearer` header. The foreground and the backend both
+ * classify through here, so they agree for one session.
+ */
+export function xaiAuthModeFromAuth(auth: BearerAuth): XaiAuthMode | undefined {
+  return xaiAuthModeOf(bearerCredentialOf(auth));
 }
 
 function firstPartyHost(baseUrl: string): boolean {
@@ -61,6 +73,8 @@ export interface XaiGateOptions {
   /** Exact combinations replacing the default policy (tests, synthetic providers). */
   readonly allowList?: readonly AnthropicSupportEntry[];
   readonly now?: () => number;
+  /** Called when a cooldown actually starts. */
+  readonly onCooldown?: CooldownObserver;
 }
 
 /** The shared cooldown gate with the xAI policy. */
@@ -71,6 +85,7 @@ export function createXaiCapabilityGate(options: XaiGateOptions): AnthropicCapab
     allowList: options.allowList,
     policy: xaiSupportPolicy,
     now: options.now,
+    onCooldown: options.onCooldown,
   });
 }
 

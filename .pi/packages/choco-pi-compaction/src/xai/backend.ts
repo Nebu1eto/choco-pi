@@ -23,7 +23,7 @@ import type {
   PrepareFailure,
   ProviderScope,
 } from "../background/contract.ts";
-import { xaiAuthModeOf } from "./capability.ts";
+import { xaiAuthModeFromAuth } from "./capability.ts";
 import {
   callIdOf,
   isCompactionWireItem,
@@ -309,7 +309,8 @@ function resolveRequest(
   if (request.signal.aborted) return prepareFailure("canceled", false);
   const verdict = deps.gate.check(scope);
   if (!verdict.supported) return prepareFailure(verdict.reason, false);
-  const authMode = xaiAuthModeOf(request.auth.apiKey);
+  // Header-aware (D10): a headers-only `Authorization: Bearer` credential classifies like an API key.
+  const authMode = xaiAuthModeFromAuth(request.auth);
   if (authMode === undefined || authMode !== scope.authMode) {
     return prepareFailure("unsupported", false, "auth-mode");
   }

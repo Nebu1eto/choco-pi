@@ -7,8 +7,12 @@
  * undefined so the local summarizer answers the same compaction; the first
  * fallback in a session is reported once. A cancelled or auth-failed attempt
  * instead answers `{ cancel: true }` so the host reports the failure
- * (`foreground-failure.ts`). One attempt. Runs in main and subagent child
- * sessions alike, reading only its own context and session state.
+ * (`foreground-failure.ts`); a combination still cooling down after an auth
+ * failure (`auth-cooling`, the gate's verdict, no credential read failed now)
+ * falls back with a notice instead. One attempt. Runs in main and subagent
+ * child sessions alike, reading only its own context and session state.
+ * Fallbacks, cancels and a resumed checkpoint without captures are journaled
+ * through the optional `announce` seam.
  */
 import type {
   ExtensionContext,
@@ -19,6 +23,8 @@ import type {
 import type { AnthropicCapabilityGate } from "../anthropic/capability.ts";
 import type { AnthropicServerSideSession } from "../anthropic/mode.ts";
 import type { FailureReason, PreparationBudget, ProviderScope } from "../background/contract.ts";
+import { type LaneRoute, ownedReasonOf, REASONS } from "../background/lane-journal.ts";
+import type { AnnouncedRecord, NoticeLevel, NoticePolicy } from "../background-host/notices.ts";
 import { isStaleContextError } from "../lifecycle.ts";
 import {
   SURFACED_FAILURE_RESULT,
@@ -28,15 +34,30 @@ import {
 import { type CodexCompactionSnapshot, resolveOwner } from "../ownership.ts";
 import { capturedSince, latestCompactionId, retainableEntryIds } from "../retained-entries.ts";
 import { chooseLegalXaiCutEntry, runXaiCompaction, xaiCaptureMatchesScope } from "./backend.ts";
-import { xaiAuthModeOf, xaiGateAdmitsModel } from "./capability.ts";
+import { xaiAuthModeFromAuth, xaiGateAdmitsModel } from "./capability.ts";
 import type { XaiWireCapture } from "./capture.ts";
 import { placeholderSummary } from "./details.ts";
 import type { XaiCompactionMode } from "./mode.ts";
+import { findActiveXaiCheckpoint } from "./replay.ts";
 
 /** Upper bound on one foreground compaction request. */
 const FOREGROUND_TIMEOUT_MS = 300_000;
 const FOREGROUND_MAX_RESULT_BYTES = 1_048_576;
 const NOTICE_PREFIX = "xAI server-side compaction";
+/** Bound on the silent-fallback dedupe memo (cleared when reached). */
+const MAX_JOURNALED_FALLBACKS = 256;
+
+/**
+ * Journal one lane record and notify per policy (`background-host/notices.ts`
+ * `announce`, bound to the registration). `always` shows `text` verbatim.
+ */
+export type XaiAnnounce = (
+  ctx: ExtensionContext,
+  record: AnnouncedRecord,
+  text: string,
+  level: NoticeLevel,
+  policy: NoticePolicy,
+) => void;
 
 export interface XaiForegroundDeps {
   readonly gate: AnthropicCapabilityGate;
@@ -49,6 +70,8 @@ export interface XaiForegroundDeps {
   readonly captures: (sessionId: string) => readonly XaiWireCapture[];
   readonly fetch?: typeof globalThis.fetch;
   readonly now?: () => number;
+  /** Journal seam; without it notices are shown directly and nothing is journaled. */
+  readonly announce?: XaiAnnounce;
 }
 
 type ForegroundModel = NonNullable<ExtensionContext["model"]>;
@@ -65,17 +88,26 @@ interface ForegroundRun {
   /** The branch's newest compaction entry; a capture sent before it is stale. */
   readonly latestCompactionId: string | undefined;
   readonly instructions: string | undefined;
+  readonly route: LaneRoute;
   readonly signal: AbortSignal;
 }
+
+/** Local fallback reasons: a coordinator failure, no usable capture, or an auth cooldown verdict. */
+type FallbackReason = FailureReason | "no-capture" | "auth-cooling";
 
 type Attempt =
   | { readonly kind: "compacted"; readonly result: SessionBeforeCompactResult }
   | { readonly kind: "abstain" }
-  | { readonly kind: "fallback"; readonly reason: FailureReason | "no-capture" };
+  | {
+      readonly kind: "fallback";
+      readonly reason: FallbackReason;
+      /** The compact request carried the user's `/compact` instructions to xAI. */
+      readonly forwarded?: boolean;
+    };
 
 const ABSTAIN: Attempt = { kind: "abstain" };
 
-function fallback(reason: FailureReason | "no-capture"): Attempt {
+function fallback(reason: FallbackReason): Attempt {
   return { kind: "fallback", reason };
 }
 
@@ -88,13 +120,59 @@ function readSessionId(ctx: ExtensionContext): string | undefined {
   }
 }
 
-function notify(ctx: ExtensionContext, message: string): void {
+function show(ctx: ExtensionContext, text: string): void {
   try {
-    ctx.ui.notify(`${NOTICE_PREFIX}: ${message}`, "warning");
+    ctx.ui.notify(text, "warning");
   } catch (error) {
     if (!(error instanceof Error && isStaleContextError(error))) throw error;
   }
 }
+
+/** Journal (when wired) and notify per policy; unwired, only the notice is shown. */
+function report(
+  deps: XaiForegroundDeps,
+  ctx: ExtensionContext,
+  record: AnnouncedRecord,
+  message: string,
+  policy: NoticePolicy,
+): void {
+  const text = `${NOTICE_PREFIX}: ${message}`;
+  if (deps.announce !== undefined) {
+    deps.announce(ctx, record, text, "warning", policy);
+    return;
+  }
+  if (policy !== "silent") show(ctx, text);
+}
+
+/** Whether a `/compact` focus is present (blank instructions are not forwarded). */
+function hasInstructions(instructions: string | undefined): boolean {
+  return instructions !== undefined && instructions.trim().length > 0;
+}
+
+/** A foreground attempt record before its event is chosen. */
+type AttemptRecord = Omit<AnnouncedRecord, "event">;
+
+function fallbackRecord(
+  deps: XaiForegroundDeps,
+  run: ForegroundRun,
+  attempt: FallbackAttempt,
+): AttemptRecord {
+  const cooling = attempt.reason === "auth-cooling";
+  const record: AttemptRecord = {
+    at: (deps.now ?? Date.now)(),
+    sessionId: run.sessionId,
+    provider: "xai",
+    route: run.route,
+    from: "xai-native",
+    to: "local",
+    reason: cooling ? REASONS.cooldown : ownedReasonOf(attempt.reason),
+  };
+  if (cooling) record.detail = "auth-cooling";
+  else if (attempt.forwarded === true) record.detail = REASONS.instructionsForwarded;
+  return record;
+}
+
+type FallbackAttempt = Extract<Attempt, { readonly kind: "fallback" }>;
 
 /** `session_before_compact` handler; undefined means the local summarizer answers. */
 export function createXaiForegroundCompactHandler(
@@ -103,25 +181,46 @@ export function createXaiForegroundCompactHandler(
   event: SessionBeforeCompactEvent,
   ctx: ExtensionContext,
 ) => Promise<SessionBeforeCompactResult | undefined> {
+  /** Sessions whose resumed checkpoint without captures was journaled (once per session). */
+  const resumed = new Set<string>();
+  /** Silent fallbacks already journaled, per session and record (D4: once per transition). */
+  const journaled = new Set<string>();
   return async (event, ctx) => {
-    const run = snapshotRun(deps, event, ctx);
+    const run = snapshotRun(deps, event, ctx, resumed);
     if (run === undefined) return undefined;
     const attempt = await attemptCompaction(deps, run);
     if (attempt.kind === "compacted") return attempt.result;
-    if (attempt.kind === "fallback" && surfacesForegroundFailure(attempt.reason)) {
+    if (attempt.kind !== "fallback" || !isCurrent(deps, run)) return undefined;
+    const reason = attempt.reason;
+    const record = fallbackRecord(deps, run, attempt);
+    if (reason !== "auth-cooling" && surfacesForegroundFailure(reason)) {
       // Cancelled or auth-failed: the host fails this compaction instead of summarizing.
-      if (!isCurrent(deps, run)) return undefined;
-      notify(ctx, surfacedFailureMessage(attempt.reason));
+      report(deps, ctx, { ...record, event: "cancel" }, surfacedFailureMessage(reason), "always");
       return SURFACED_FAILURE_RESULT;
     }
-    if (attempt.kind === "fallback" && isCurrent(deps, run)) {
-      if (deps.session.claimFallbackNotice(run.sessionId)) {
-        notify(
-          ctx,
-          `not used for this compaction (${attempt.reason}); the local summarizer answers instead. Later fallbacks in this session are silent.`,
-        );
-      }
+    if (reason === "auth-cooling") {
+      // Every cooled-down attempt is told: the user may be waiting for the login to work again.
+      report(
+        deps,
+        ctx,
+        { ...record, event: "fallback" },
+        "not used for this compaction (auth-cooling): the credentials were rejected recently and the cooldown has not ended; the local summarizer answers instead.",
+        "always",
+      );
+      return undefined;
     }
+    const claimed = deps.session.claimFallbackNotice(run.sessionId);
+    const key = [run.sessionId, record.route, record.reason, record.detail ?? ""].join("|");
+    if (!claimed && journaled.has(key)) return undefined;
+    if (journaled.size >= MAX_JOURNALED_FALLBACKS) journaled.clear();
+    journaled.add(key);
+    report(
+      deps,
+      ctx,
+      { ...record, event: "fallback" },
+      `not used for this compaction (${reason}); the local summarizer answers instead. Later fallbacks in this session are silent.`,
+      claimed ? "always" : "silent",
+    );
     return undefined;
   };
 }
@@ -130,6 +229,7 @@ function snapshotRun(
   deps: XaiForegroundDeps,
   event: SessionBeforeCompactEvent,
   ctx: ExtensionContext,
+  resumed: Set<string>,
 ): ForegroundRun | undefined {
   const model = ctx.model;
   if (model === undefined || model.api !== "openai-responses") return undefined;
@@ -141,6 +241,7 @@ function snapshotRun(
   if (sessionId === undefined) return undefined;
   deps.session.bind(sessionId);
   if (deps.session.isDisabled(sessionId)) return undefined;
+  noteResumeWithoutCaptures(deps, { ctx, sessionId, branch: event.branchEntries, resumed });
   // Static policy first (either auth mode): an unsupported model or endpoint never reads credentials.
   if (!xaiGateAdmitsModel(deps.gate, model)) return undefined;
   return {
@@ -153,8 +254,48 @@ function snapshotRun(
     branchEntryIds: retainableEntryIds(event.branchEntries),
     latestCompactionId: latestCompactionId(event.branchEntries),
     instructions: event.customInstructions,
+    route: event.reason === "manual" ? "manual" : "foreground",
     signal: event.signal,
   };
+}
+
+/**
+ * A committed xAI checkpoint with no capture in this process (a resumed
+ * session, a new registration, a mode or model switch back): the native lane
+ * cannot compact until a turn is captured. Journaled once per session, without
+ * a notice; what the user sees is the guard on the compaction attempt.
+ */
+function noteResumeWithoutCaptures(
+  deps: XaiForegroundDeps,
+  input: {
+    readonly ctx: ExtensionContext;
+    readonly sessionId: string;
+    readonly branch: SessionBeforeCompactEvent["branchEntries"];
+    readonly resumed: Set<string>;
+  },
+): void {
+  const { ctx, sessionId, resumed } = input;
+  if (resumed.has(sessionId) || deps.captures(sessionId).length > 0) return;
+  const lookup = findActiveXaiCheckpoint(input.branch);
+  if (lookup.kind !== "active") return;
+  resumed.add(sessionId);
+  report(
+    deps,
+    ctx,
+    {
+      at: (deps.now ?? Date.now)(),
+      sessionId,
+      provider: "xai",
+      route: "resume",
+      event: "yield",
+      from: "xai-native",
+      to: "local",
+      reason: REASONS.noCapture,
+      checkpointEntryId: lookup.checkpoint.entryId,
+    },
+    "no capture for the committed checkpoint yet",
+    "silent",
+  );
 }
 
 function isCurrent(deps: XaiForegroundDeps, run: ForegroundRun): boolean {
@@ -220,12 +361,15 @@ async function attemptCompaction(deps: XaiForegroundDeps, run: ForegroundRun): P
     model: run.model.id,
     baseUrl: auth.baseUrl ?? run.model.baseUrl,
   };
-  const authMode = xaiAuthModeOf(auth.apiKey);
+  // Header-aware (D10): the same classification as the backend's resolveRequest.
+  const authMode = xaiAuthModeFromAuth(auth);
   if (authMode === undefined) return fallback("auth");
   scope.authMode = authMode;
   const verdict = deps.gate.check(scope);
   if (!verdict.supported) {
-    return verdict.reason === "unsupported" ? ABSTAIN : fallback(verdict.reason);
+    if (verdict.reason === "unsupported") return ABSTAIN;
+    // A cooldown after an earlier auth failure: no credential failed now, so fall back locally.
+    return fallback(verdict.reason === "auth" ? "auth-cooling" : verdict.reason);
   }
   const choice = chooseCapture(deps.captures(run.sessionId), scope, run);
   if (!choice.ok) return fallback(choice.reason);
@@ -244,7 +388,11 @@ async function attemptCompaction(deps: XaiForegroundDeps, run: ForegroundRun): P
     },
   );
   if (!isCurrent(deps, run)) return ABSTAIN;
-  if (!outcome.ok) return fallback(outcome.failure.reason);
+  if (!outcome.ok) {
+    // The request reached xAI (a client outcome exists) with the user's focus in `instructions`.
+    const forwarded = outcome.client !== undefined && hasInstructions(run.instructions);
+    return { kind: "fallback", reason: outcome.failure.reason, forwarded };
+  }
   const details = outcome.details;
   return {
     kind: "compacted",

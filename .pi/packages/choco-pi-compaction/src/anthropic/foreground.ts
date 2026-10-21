@@ -5,9 +5,12 @@
  * `/compact`) for an admitted Anthropic model with a signed `compaction` block
  * from the isolated lane, cut at the latest legal wire position at or before
  * the host's cut. A failure returns undefined so the local reconciled
- * summarizer answers the same compaction; the first fallback in a session is
- * reported once. A cancelled or auth-failed attempt instead answers
- * `{ cancel: true }` so the host reports the failure (`foreground-failure.ts`).
+ * summarizer answers the same compaction; every fallback is journaled and
+ * announced (a `/compact` every time, an automatic compaction once per
+ * reason and session). A cancelled or auth-failed attempt instead answers
+ * `{ cancel: true }` so the host reports the failure (`foreground-failure.ts`),
+ * and so does an attempt whose session or registration changed while it ran
+ * (silently: the user's session moved on).
  * The handler never produces a second result. It runs in main and subagent
  * child sessions alike and reads only its own context and session state.
  */
@@ -19,6 +22,8 @@ import type {
 
 import { resolveMaxTokens } from "../budget.ts";
 import type { FailureReason, PreparationBudget, ProviderScope } from "../background/contract.ts";
+import { ownedReasonOf } from "../background/lane-journal.ts";
+import type { AnnouncedRecord, NoticeLevel, NoticePolicy } from "../background-host/notices.ts";
 import { isStaleContextError } from "../lifecycle.ts";
 import {
   SURFACED_FAILURE_RESULT,
@@ -29,12 +34,12 @@ import { type CodexCompactionSnapshot, resolveOwner } from "../ownership.ts";
 import { capturedSince, latestCompactionId, retainableEntryIds } from "../retained-entries.ts";
 import {
   type AnthropicBackendDeps,
+  authModeFromAuth,
   captureMatchesWireScope,
   chooseLegalCutEntry,
   runNativeCompaction,
 } from "./backend.ts";
 import type { AnthropicCapabilityGate } from "./capability.ts";
-import { authModeOf } from "./capability.ts";
 import type { WireCapture } from "./capture.ts";
 import type { LaneStream } from "./lane-client.ts";
 import type { AnthropicCompactionMode, AnthropicServerSideSession } from "./mode.ts";
@@ -56,6 +61,17 @@ export interface ForegroundCompactionDeps {
   readonly fetch?: typeof globalThis.fetch;
   readonly stream?: LaneStream;
   readonly now?: () => number;
+  /**
+   * Journal one lane transition and notify per policy (the host's
+   * `announce`); the dedupe of automatic routes lives there.
+   */
+  readonly announce: (
+    ctx: ExtensionContext,
+    record: AnnouncedRecord,
+    text: string,
+    level: NoticeLevel,
+    policy: NoticePolicy,
+  ) => void;
 }
 
 type ForegroundModel = NonNullable<ExtensionContext["model"]>;
@@ -73,14 +89,19 @@ interface ForegroundRun {
   readonly latestCompactionId: string | undefined;
   readonly instructions: string | undefined;
   readonly signal: AbortSignal;
+  /** A typed or programmatic `/compact` (user-initiated) rather than a threshold or overflow. */
+  readonly manual: boolean;
 }
 
 type Attempt =
   | { readonly kind: "compacted"; readonly result: SessionBeforeCompactResult }
   | { readonly kind: "abstain" }
+  /** The session or registration changed during an await: answer nothing for it. */
+  | { readonly kind: "stale" }
   | { readonly kind: "fallback"; readonly reason: FailureReason | "no-capture" };
 
 const ABSTAIN: Attempt = { kind: "abstain" };
+const STALE: Attempt = { kind: "stale" };
 
 function fallback(reason: FailureReason | "no-capture"): Attempt {
   return { kind: "fallback", reason };
@@ -93,14 +114,6 @@ function readSessionId(ctx: ExtensionContext): string | undefined {
   } catch (error) {
     if (error instanceof Error && isStaleContextError(error)) return undefined;
     throw error;
-  }
-}
-
-function notify(ctx: ExtensionContext, message: string): void {
-  try {
-    ctx.ui.notify(`${NOTICE_PREFIX}: ${message}`, "warning");
-  } catch (error) {
-    if (!(error instanceof Error && isStaleContextError(error))) throw error;
   }
 }
 
@@ -119,22 +132,49 @@ export function createForegroundCompactHandler(
     if (run === undefined) return undefined;
     const attempt = await attemptCompaction(deps, run);
     if (attempt.kind === "compacted") return attempt.result;
-    if (attempt.kind === "fallback" && surfacesForegroundFailure(attempt.reason)) {
-      // Cancelled or auth-failed: the host fails this compaction instead of summarizing.
-      if (!isCurrent(deps, run)) return undefined;
-      notify(ctx, surfacedFailureMessage(attempt.reason));
-      return SURFACED_FAILURE_RESULT;
-    }
-    if (attempt.kind === "fallback" && isCurrent(deps, run)) {
-      if (deps.session.claimFallbackNotice(run.sessionId)) {
-        notify(
-          ctx,
-          `not used for this compaction (${attempt.reason}); the local summarizer answers instead. Later fallbacks in this session are silent.`,
-        );
-      }
-    }
-    return undefined;
+    if (attempt.kind === "abstain") return undefined;
+    const state = runState(deps, run);
+    // The session or registration moved on during an await: nothing is answered for it.
+    if (attempt.kind === "stale" || state === "stale") return SURFACED_FAILURE_RESULT;
+    // Server-side was turned off mid-flight: the local summary is a real summary.
+    if (state === "disabled") return undefined;
+    return announceFallback(deps, run, attempt.reason);
   };
+}
+
+/**
+ * Announce a fallback and answer it: cancelled or auth-failed attempts fail
+ * the host compaction (surfaced, no local summary); every other failure lets
+ * the local summarizer answer. A `/compact` is told every time (one notice per
+ * user action); an automatic compaction once per reason and session.
+ */
+function announceFallback(
+  deps: ForegroundCompactionDeps,
+  run: ForegroundRun,
+  reason: FailureReason | "no-capture",
+): SessionBeforeCompactResult | undefined {
+  const surfaced = surfacesForegroundFailure(reason);
+  const record: AnnouncedRecord = {
+    at: (deps.now ?? Date.now)(),
+    sessionId: run.sessionId,
+    provider: "anthropic",
+    route: run.manual ? "manual" : "foreground",
+    event: surfaced ? "cancel" : "fallback",
+    from: "anthropic-native",
+    to: surfaced ? undefined : "local",
+    reason: ownedReasonOf(reason),
+  };
+  const text = surfaced
+    ? surfacedFailureMessage(reason)
+    : `not used for this compaction (${reason}); the local summarizer answers instead.`;
+  deps.announce(
+    run.ctx,
+    record,
+    `${NOTICE_PREFIX}: ${text}`,
+    "warning",
+    run.manual ? "always" : "per-session-reason",
+  );
+  return surfaced ? SURFACED_FAILURE_RESULT : undefined;
 }
 
 function snapshotRun(
@@ -171,15 +211,26 @@ function snapshotRun(
     latestCompactionId: latestCompactionId(event.branchEntries),
     instructions: event.customInstructions,
     signal: event.signal,
+    manual: event.reason === "manual",
   };
 }
 
-function isCurrent(deps: ForegroundCompactionDeps, run: ForegroundRun): boolean {
-  return (
-    deps.generation() === run.generation &&
-    readSessionId(run.ctx) === run.sessionId &&
-    !deps.session.isDisabled(run.sessionId)
-  );
+/** Whether the run still belongs to its registration generation and session, and server-side is on. */
+function runState(
+  deps: ForegroundCompactionDeps,
+  run: ForegroundRun,
+): "current" | "stale" | "disabled" {
+  if (deps.generation() !== run.generation || readSessionId(run.ctx) !== run.sessionId) {
+    return "stale";
+  }
+  return deps.session.isDisabled(run.sessionId) ? "disabled" : "current";
+}
+
+/** The attempt to return when the run is no longer current after an await, if any. */
+function interrupted(deps: ForegroundCompactionDeps, run: ForegroundRun): Attempt | undefined {
+  const state = runState(deps, run);
+  if (state === "stale") return STALE;
+  return state === "disabled" ? ABSTAIN : undefined;
 }
 
 /**
@@ -240,7 +291,8 @@ async function attemptCompaction(
 ): Promise<Attempt> {
   if (run.signal.aborted) return fallback("canceled");
   const auth = await run.registry.getApiKeyAndHeaders(run.model);
-  if (!isCurrent(deps, run)) return ABSTAIN;
+  const afterAuth = interrupted(deps, run);
+  if (afterAuth !== undefined) return afterAuth;
   if (run.signal.aborted) return fallback("canceled");
   // No usable credentials: the local summarizer would call the same provider with them.
   if (!auth.ok) return fallback("auth");
@@ -249,7 +301,7 @@ async function attemptCompaction(
     model: run.model.id,
     baseUrl: auth.baseUrl ?? run.model.baseUrl,
   };
-  const authMode = authModeOf(auth.apiKey);
+  const authMode = authModeFromAuth(auth);
   if (authMode !== undefined) scope.authMode = authMode;
   const verdict = deps.gate.check(scope);
   // Not admitted (API key, foreign endpoint): the local path is the policy, not a failure.
@@ -276,7 +328,8 @@ async function attemptCompaction(
     budget: foregroundBudget(deps, run),
     instructions: run.instructions,
   });
-  if (!isCurrent(deps, run)) return ABSTAIN;
+  const afterLane = interrupted(deps, run);
+  if (afterLane !== undefined) return afterLane;
   if (!outcome.ok) return fallback(outcome.failure.reason);
   const details = outcome.details;
   return {

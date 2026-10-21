@@ -35,7 +35,10 @@ import { Value } from "typebox/value";
 // Backend factories and per-owner backend selection
 // ---------------------------------------------------------------------------
 
-/** The owner fields backend resolution and selection read. */
+/**
+ * The owner fields backend resolution and selection read. The Anthropic
+ * disable switch and shared gate are optional for partial test runtimes.
+ */
 export type BackendOwnerSpec = Pick<
   OwnerSpec,
   | "ownerKey"
@@ -52,7 +55,8 @@ export type BackendOwnerSpec = Pick<
   | "allowForeign"
   | "xaiServerSide"
   | "report"
->;
+> &
+  Partial<Pick<OwnerSpec, "anthropicDisabled" | "anthropicGate">>;
 
 /** Per-owner inputs the in-package default backend factories bind to. */
 interface OwnerBackendInputs {
@@ -179,12 +183,15 @@ const defaultAnthropicBackendFactory: BackendFactory = anthropicBackendFactory((
   const sessionId = spec.sessionId;
   const clock = options.clock;
   return {
-    gate: new AnthropicCapabilityGate({
-      enabled: true,
-      cooldownMs: spec.settings.cooldownMs,
-      allowList: options.anthropic?.allowList,
-      now: clock === undefined ? undefined : () => clock.now(),
-    }),
+    // One gate per registration (M4): a foreground failure cools the background lane too.
+    gate:
+      spec.anthropicGate ??
+      new AnthropicCapabilityGate({
+        enabled: true,
+        cooldownMs: spec.settings.cooldownMs,
+        allowList: options.anthropic?.allowList,
+        now: clock === undefined ? undefined : () => clock.now(),
+      }),
     resolveModel: (scope) => registry.find(scope.provider, scope.model),
     resolveAuth: (model) => registry.getApiKeyAndHeaders(model),
     findCapture: (snapshot) =>
@@ -192,6 +199,7 @@ const defaultAnthropicBackendFactory: BackendFactory = anthropicBackendFactory((
     fetch: options.anthropic?.fetch,
     stream: options.anthropic?.stream,
     now: clock === undefined ? undefined : () => clock.now(),
+    disabled: spec.anthropicDisabled,
   };
 });
 

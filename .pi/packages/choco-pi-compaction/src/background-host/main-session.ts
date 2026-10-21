@@ -9,8 +9,10 @@ import {
 } from "../../../choco-pi-subagents/src/child-compaction-bridge.ts";
 import { ANTHROPIC_BACKEND_ID } from "../anthropic/backend.ts";
 import { readAnthropicCompactionMode, readOpaqueHistoryMode } from "../anthropic/mode.ts";
+import { findActiveAnthropicCheckpoint } from "../anthropic/replay-rewrite.ts";
 import type { BackgroundCompactionSettings, ProviderScope } from "../background/contract.ts";
 import { ANCHOR_ENTRY_TYPE } from "../background/entry-types.ts";
+import { type LaneProvider, REASONS } from "../background/lane-journal.ts";
 import { release, setCoordinator } from "../background/registry.ts";
 import {
   backgroundCompactionActive,
@@ -24,6 +26,7 @@ import {
 import { isChildSession, mainOwnerKey } from "../ownership.ts";
 import type { CompactionSessionState } from "../session-state.ts";
 import { readXaiCompactionMode } from "../xai/mode.ts";
+import { findActiveXaiCheckpoint } from "../xai/replay.ts";
 import { type BackgroundAdoptionSignal, getBackgroundAdoptionSignal } from "./adoption-signal.ts";
 import { candidateRecordsOf } from "./branch.ts";
 import { nativeLaneSwitches } from "./native-lanes.ts";
@@ -34,15 +37,16 @@ import type { OwnerSpec } from "./owner-spec.ts";
 import { resolveProviderScope } from "./provider-scope.ts";
 import { ownerApi } from "./routes.ts";
 import {
+  detachReplayUnbinds,
   type HostRuntime,
   isCurrent,
   type MainOwner,
   REGISTRY_CONFLICT_NOTICE,
   registryUsable,
   runCleanup,
+  runUnbinds,
   shutdown,
   teardownMain,
-  unbindReplay,
 } from "./runtime.ts";
 
 // ---------------------------------------------------------------------------
@@ -87,6 +91,11 @@ interface MainOwnerIdentity {
 /**
  * session_start / model_select: replace the main owner. Invalidates the
  * previous owner synchronously, then rechecks the lifecycle after each await.
+ * The previous replay bindings are detached synchronously but unbound only
+ * after the new ones are installed (D8): a rebind of the same session keeps
+ * its captures, a different session's are released. A start superseded
+ * during its await leaves them detached for the start that completes (or
+ * shutdown) to run.
  */
 export async function startMainSession(
   rt: HostRuntime,
@@ -96,7 +105,7 @@ export async function startMainSession(
   // Invalidate synchronously, then snapshot every scalar before awaiting.
   const generation = ++rt.lifecycle;
   teardownMain(rt);
-  unbindReplay(rt);
+  detachReplayUnbinds(rt);
   const session = snapshotSession(ctx, generation);
   if (start.reloadSettings) {
     const paths =
@@ -122,9 +131,14 @@ export async function startMainSession(
     if (rt.loaded.diagnostic !== undefined) rt.notify(ctx, rt.loaded.diagnostic);
   }
   const settings = rt.loaded.settings;
+  // One cooldown setting for the shared gates of both vendor lanes.
+  rt.foregroundGate.setCooldownMs(settings.cooldownMs);
+  rt.xaiGate.setCooldownMs(settings.cooldownMs);
   registerSessionCleanup(rt, session);
   // Children compact natively in the foreground and replay their own checkpoints too.
-  bindNativeSession(rt, session, settings);
+  bindNativeSession(rt, session, settings, ctx);
+  // The new bindings exist: the detached ones release only what no binding still holds.
+  runUnbinds(rt.detachedUnbinds.splice(0));
   // Inside a child the runner's bridge owns background attachment; no owner here.
   if (session.child) return;
   const state = bindParentSession(rt, ctx, session, start.childProvider);
@@ -186,13 +200,14 @@ function bindNativeSession(
   rt: HostRuntime,
   session: SessionSnapshot,
   settings: Readonly<BackgroundCompactionSettings>,
+  ctx: ExtensionContext,
 ): void {
   const { sessionId, generation } = session;
   rt.nativeSessions.add(sessionId);
   rt.serverSide.bind(sessionId);
   rt.xaiServerSide.bind(sessionId);
-  bindAnthropicReplay(rt, sessionId, session.sessionManager, settings);
-  bindXaiReplay(rt, sessionId, session.sessionManager);
+  bindAnthropicReplay(rt, { sessionId, sessionManager: session.sessionManager, ctx }, settings);
+  bindXaiReplay(rt, { sessionId, sessionManager: session.sessionManager, ctx });
   rt.unregisterNativeRefresher = registerSessionNativeRefresher(
     sessionId,
     NATIVE_REFRESHER_ID,
@@ -220,8 +235,9 @@ function refreshNativeSession(
   rt.nativeSessions.add(bound.sessionId);
   rt.serverSide.bind(bound.sessionId);
   rt.xaiServerSide.bind(bound.sessionId);
-  bindAnthropicReplay(rt, bound.sessionId, sessionManager, rt.loaded.settings);
-  bindXaiReplay(rt, bound.sessionId, sessionManager);
+  const target = { sessionId: bound.sessionId, sessionManager, ctx: undefined };
+  bindAnthropicReplay(rt, target, rt.loaded.settings);
+  bindXaiReplay(rt, target);
 }
 
 async function attachMainOwner(
@@ -258,32 +274,79 @@ async function attachMainOwner(
   await recoverMainCandidates(rt, ctx, { owner, sessionManager: session.sessionManager });
 }
 
+/** The session a replay binding is made for; `ctx` undefined journals without a notice. */
+interface ReplayTarget {
+  readonly sessionId: string;
+  readonly sessionManager: ExtensionContext["sessionManager"];
+  readonly ctx: ExtensionContext | undefined;
+}
+
 /**
- * Capture and project this session for Anthropic replay whenever either
- * native path can produce a checkpoint: server-side mode (foreground) or the
- * background `anthropic-native` backend. Rebinding replaces the session's
- * entry (its captures are kept). Unbound at the next session start, model
- * change or shutdown.
+ * Capture and project this session for Anthropic replay whenever a native
+ * path can produce a checkpoint (server-side mode, the background
+ * `anthropic-native` backend) or the branch's newest compaction already is
+ * an Anthropic native checkpoint: a mode switch off keeps replaying it rather
+ * than sending its summary text. The binding replaces the session's previous
+ * one; the previous unbind runs afterwards (`startMainSession`), and the
+ * binder's token check then keeps the captures. Unbound at the next session
+ * start or model change for a binding that is not renewed, and at shutdown.
  */
 function bindAnthropicReplay(
   rt: HostRuntime,
-  sessionId: string,
-  sessionManager: ExtensionContext["sessionManager"],
+  target: ReplayTarget,
   settings: Readonly<BackgroundCompactionSettings>,
 ): void {
-  const serverSide = rt.anthropicMode === "server-side";
-  if (!serverSide && !isBackendEnabled(ANTHROPIC_BACKEND_ID, settings)) return;
+  const { sessionId, sessionManager } = target;
+  const producing =
+    rt.anthropicMode === "server-side" || isBackendEnabled(ANTHROPIC_BACKEND_ID, settings);
+  const checkpoint = producing
+    ? undefined
+    : findActiveAnthropicCheckpoint(sessionManager.getBranch());
+  if (!producing && checkpoint === undefined) return;
   rt.replayUnbinds.set(sessionId, rt.replay.bindSession(sessionId, sessionManager));
+  if (checkpoint !== undefined) announceReplayKept(rt, target, "anthropic", checkpoint.entryId);
 }
 
-/** Capture and project this session for xAI replay while xAI server-side mode is selected. */
-function bindXaiReplay(
-  rt: HostRuntime,
-  sessionId: string,
-  sessionManager: ExtensionContext["sessionManager"],
-): void {
-  if (rt.xaiMode !== "server-side") return;
+/**
+ * Capture and project this session for xAI replay while xAI server-side mode
+ * is selected, or while the branch's newest compaction is an xAI checkpoint
+ * (kept replaying after a mode switch off, like Anthropic).
+ */
+function bindXaiReplay(rt: HostRuntime, target: ReplayTarget): void {
+  const { sessionId, sessionManager } = target;
+  const producing = rt.xaiMode === "server-side";
+  const lookup = producing ? undefined : findActiveXaiCheckpoint(sessionManager.getBranch());
+  if (!producing && (lookup === undefined || lookup.kind === "none")) return;
   rt.xaiReplayUnbinds.set(sessionId, rt.xaiReplay.bindSession(sessionId, sessionManager));
+  if (lookup === undefined || lookup.kind === "none") return;
+  const entryId = lookup.kind === "active" ? lookup.checkpoint.entryId : lookup.entryId;
+  announceReplayKept(rt, target, "xai", entryId);
+}
+
+/** The vendor's mode is off but a committed checkpoint keeps its replay binding: journal and notice once. */
+function announceReplayKept(
+  rt: HostRuntime,
+  target: ReplayTarget,
+  provider: Extract<LaneProvider, "anthropic" | "xai">,
+  checkpointEntryId: string,
+): void {
+  announce(
+    rt,
+    target.ctx,
+    {
+      at: rt.options.clock?.now() ?? Date.now(),
+      sessionId: target.sessionId,
+      provider,
+      route: "mode-change",
+      event: "yield",
+      from: provider === "anthropic" ? "anthropic-native" : "xai-native",
+      reason: REASONS.modeOff,
+      checkpointEntryId,
+    },
+    `replay of checkpoint ${checkpointEntryId} stays active until a local compaction replaces it`,
+    "info",
+    "per-session-reason",
+  );
 }
 
 async function resolveScopeOrRelease(
@@ -395,6 +458,7 @@ function installMainOwner(
     pendingRoute: undefined,
     manualCandidate: undefined,
     manualSerial: 0,
+    manualNotice: undefined,
     hostCompactUnwinding: false,
     idlePending: undefined,
     idleRunning: undefined,

@@ -17,6 +17,12 @@ import { formatFileLists, resolveFileLists } from "./file-ops.ts";
 import { buildCompactionInput, type CompactionInput } from "./input.ts";
 import { isStaleContextError } from "./lifecycle.ts";
 import { normalizeSummary } from "./normalize.ts";
+import {
+  lossAuthorizedFor,
+  OPAQUE_GUARD_NOTICE,
+  opaqueCheckpointOf,
+  opaqueProviderOf,
+} from "./opaque-checkpoint.ts";
 import { resolveOwner } from "./ownership.ts";
 import {
   buildHistoryPassPrompt,
@@ -75,6 +81,15 @@ function failVisibly(ctx: ExtensionContext, reason: string): SessionBeforeCompac
   return CANCELLED;
 }
 
+/** A warning notice; only a stale context (the session is gone) is contained. */
+function notifyContained(ctx: ExtensionContext, text: string): void {
+  try {
+    ctx.ui.notify(text, "warning");
+  } catch (error) {
+    if (!(error instanceof Error && isStaleContextError(error))) throw error;
+  }
+}
+
 /**
  * Session identity, or undefined once this context outlived its session.
  *
@@ -116,6 +131,21 @@ interface Summarized {
   readonly outcome: SummaryOutcome;
 }
 
+export interface BeforeCompactHandlerOptions {
+  /**
+   * Whether losing an opaque checkpoint's provider-held history is authorized
+   * for the session (the setting or a consent). Defaults to the process-global
+   * consent slot; fails closed (preserve).
+   */
+  readonly lossAuthorized?: (sessionId: string, entryId: string) => boolean;
+}
+
+/** The summarizer must not answer: the latest checkpoint is an unauthorized opaque record. */
+interface OpaqueRefusal {
+  readonly kind: "opaque";
+  readonly notice: string;
+}
+
 /**
  * Build the `session_before_compact` handler.
  *
@@ -124,13 +154,24 @@ interface Summarized {
  * checkpoint can report finished work as still pending. This handler feeds the
  * summarizer the discarded history *and* the retained tail, with the tail
  * marked as the current state.
+ *
+ * Over an opaque checkpoint (D2) the summarizer would only see its
+ * placeholder: unless the loss is authorized, the compaction is cancelled
+ * with the exits notice, so neither this summarizer nor the host's default
+ * one summarizes a placeholder.
  */
 export function createBeforeCompactHandler(
   readState: SessionStateReader,
+  options: BeforeCompactHandlerOptions = {},
 ): ExtensionHandler<SessionBeforeCompactEvent, SessionBeforeCompactResult> {
+  const lossAuthorized = options.lossAuthorized ?? lossAuthorizedFor;
   return async (event, ctx) => {
-    const run = snapshotRun(readState, event, ctx);
+    const run = snapshotRun(readState, event, ctx, lossAuthorized);
     if (run === undefined) return undefined;
+    if ("kind" in run) {
+      notifyContained(ctx, run.notice);
+      return CANCELLED;
+    }
     if (run.signal.aborted) return CANCELLED;
     let summarized: Summarized | undefined;
     try {
@@ -146,12 +187,17 @@ export function createBeforeCompactHandler(
   };
 }
 
-/** Snapshot every host-owned scalar before the first await; undefined when not locally owned. */
+/**
+ * Snapshot every host-owned scalar before the first await; undefined when not
+ * locally owned, an opaque refusal when the latest checkpoint is an opaque
+ * record whose loss is not authorized.
+ */
 function snapshotRun(
   readState: SessionStateReader,
   event: SessionBeforeCompactEvent,
   ctx: ExtensionContext,
-): CompactionRun | undefined {
+  lossAuthorized: (sessionId: string, entryId: string) => boolean,
+): CompactionRun | OpaqueRefusal | undefined {
   const state = readState();
   const owner = resolveOwner(ctx, state.codexCompaction);
   const model = ctx.model;
@@ -160,6 +206,16 @@ function snapshotRun(
   }
   const generation = state.generation;
   const sessionId = readSessionId(ctx);
+  const opaque = opaqueCheckpointOf(event.branchEntries);
+  if (
+    opaque !== undefined &&
+    (sessionId === undefined || !lossAuthorized(sessionId, opaque.entryId))
+  ) {
+    return {
+      kind: "opaque",
+      notice: OPAQUE_GUARD_NOTICE(opaqueProviderOf(opaque.owner), opaque.entryId),
+    };
+  }
   const signal = event.signal;
   return {
     event,

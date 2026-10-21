@@ -84,6 +84,70 @@ export function isChildSession(sessionId: string): boolean {
   return entry.isChildSessionId(sessionId) === true;
 }
 
+// ---------------------------------------------------------------------------
+// Codex native-compaction eligibility slot (D12)
+// ---------------------------------------------------------------------------
+
+/**
+ * Process-global slot on which the Codex package publishes its live
+ * native-compaction eligibility. It lives here rather than in
+ * `background-host/` so ownership, which the Codex package also loads, reads
+ * it without pulling the host runtime in.
+ */
+export const CODEX_ELIGIBILITY_SLOT: unique symbol = Symbol.for(
+  "choco-pi.codex-compaction-eligibility",
+);
+
+/** The model fields the Codex eligibility predicate decides on. */
+export interface CodexEligibilityModel {
+  readonly provider: string;
+  readonly id: string;
+  readonly api: string;
+  readonly baseUrl: string;
+}
+
+/**
+ * The published slot: `revision` changes whenever an input of the predicate
+ * changes (Codex `/codex` compaction, scope, voice-only or extras switches,
+ * canonical-alias endpoint trust); `isNativeCompactionOwner` is Codex's own
+ * `resolveCodexRuntimePlan(...).nativeCompaction` for the model;
+ * `subscribe` calls the listener with the new revision and returns its removal.
+ */
+export interface CodexEligibility {
+  readonly version: 1;
+  readonly revision: number;
+  /**
+   * False while no Codex registration is published (all shut down); the
+   * snapshot heuristic then applies. Absent counts as published.
+   */
+  readonly published?: boolean;
+  isNativeCompactionOwner(model: CodexEligibilityModel): boolean;
+  subscribe(listener: (revision: number) => void): () => void;
+}
+
+const SlotFunction = Type.Function([], Type.Unknown());
+/** Shape only: the functions are checked to be callable, their results at each call. */
+const CodexEligibilitySchema = Type.Object(
+  {
+    version: Type.Literal(1),
+    revision: Type.Integer({ minimum: 0 }),
+    published: Type.Optional(Type.Boolean()),
+    isNativeCompactionOwner: SlotFunction,
+    subscribe: SlotFunction,
+  },
+  { additionalProperties: true },
+);
+
+function isCodexEligibility<T>(value: T): value is T & CodexEligibility {
+  return Value.Check(CodexEligibilitySchema, value);
+}
+
+/** The published eligibility, or undefined when the slot is absent or does not have the expected shape. */
+export function readCodexEligibility(): CodexEligibility | undefined {
+  const found: unknown = Object.getOwnPropertyDescriptor(globalThis, CODEX_ELIGIBILITY_SLOT)?.value;
+  return isCodexEligibility(found) ? found : undefined;
+}
+
 /** Owner inputs beyond the Codex snapshot. */
 export interface OwnerOptions {
   /**
@@ -119,13 +183,43 @@ export interface OwnerOptions {
  * whenever native compaction is off, so nothing replaces this result and a
  * cancellation here stops no codex summary.
  *
- * `snapshot` is passed in rather than read here so this function stays pure
- * and the configuration read happens once per session, off the hot path. An
- * absent snapshot means no configuration was loaded yet; a codex transport
- * then still abstains, because codex may be configured for native compaction
- * and a failure here would cancel its handler, while abstaining is safe either
- * way (codex summarizes, or the host default does).
+ * When the Codex package published its live eligibility
+ * ({@link readCodexEligibility}), that predicate is authoritative: it is
+ * Codex's own runtime-plan decision (extras, voice-only, inactive and
+ * untrusted-alias plans included) and follows `/codex` changes without a new
+ * session. Otherwise the session-start snapshot heuristic below applies.
+ *
+ * `snapshot` is passed in rather than read here so the configuration read
+ * happens once per session, off the hot path. An absent snapshot means no
+ * configuration was loaded yet; a codex transport then still abstains,
+ * because codex may be configured for native compaction and a failure here
+ * would cancel its handler, while abstaining is safe either way (codex
+ * summarizes, or the host default does).
  */
+/** Codex's claim: the published eligibility when present, else the snapshot heuristic. */
+function codexOwns(
+  ctx: Pick<ExtensionContext, "model">,
+  model: CodexEligibilityModel,
+  snapshot: CodexCompactionSnapshot | undefined,
+): boolean {
+  const eligibility = readCodexEligibility();
+  if (eligibility !== undefined && eligibility.published !== false) {
+    const native: unknown = eligibility.isNativeCompactionOwner({
+      provider: model.provider,
+      id: model.id,
+      api: model.api,
+      baseUrl: model.baseUrl,
+    });
+    return native === true;
+  }
+  if (isCodexTransportContext(ctx) && (snapshot === undefined || snapshot.responsesCompaction)) {
+    return true;
+  }
+  if (!snapshot?.responsesCompaction || !isResponsesContext(ctx)) return false;
+  const provider = model.provider.trim().toLowerCase();
+  return provider.length > 0 && snapshot.additionalProviders.includes(provider);
+}
+
 export function resolveOwner(
   ctx: Pick<ExtensionContext, "model">,
   snapshot?: CodexCompactionSnapshot | undefined,
@@ -135,14 +229,8 @@ export function resolveOwner(
   if (!model) {
     return "none";
   }
-  if (isCodexTransportContext(ctx) && (snapshot === undefined || snapshot.responsesCompaction)) {
+  if (codexOwns(ctx, model, snapshot)) {
     return "codex-native";
-  }
-  if (snapshot?.responsesCompaction && isResponsesContext(ctx)) {
-    const provider = model.provider.trim().toLowerCase();
-    if (provider.length > 0 && snapshot.additionalProviders.includes(provider)) {
-      return "codex-native";
-    }
   }
   if (options.anthropicServerSide === true && model.api === "anthropic-messages") {
     return "anthropic-native";

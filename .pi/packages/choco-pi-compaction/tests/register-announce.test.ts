@@ -394,9 +394,18 @@ test(
       assert.equal(lossAuthorizedFor(sessionId, checkpointId), false);
       await rig.session.prompt("/compaction-allow-loss");
       assert.deepEqual(rig.notices, [
+        // xAI mode is off but the branch's newest compaction is an xAI checkpoint:
+        // its replay binding is kept and announced once at session start (U-ANTH 3).
+        `Background compaction: replay of checkpoint ${checkpointId} stays active until a local compaction replaces it`,
         `Background compaction: loss authorized for checkpoint ${checkpointId} (this session only)`,
       ]);
-      const records = laneRecordsOf(rig.manager.getBranch());
+      const all = laneRecordsOf(rig.manager.getBranch());
+      const kept = all.filter((record) => record.route === "mode-change");
+      assert.equal(kept.length, 1, "one mode-change yield for the kept binding");
+      assert.equal(kept[0]?.event, "yield");
+      assert.equal(kept[0]?.reason, "mode-off");
+      assert.equal(kept[0]?.checkpointEntryId, checkpointId);
+      const records = all.filter((record) => record.event === "consent");
       assert.equal(records.length, 1);
       assert.deepEqual(records[0], {
         customType: LANE_RECORD_TYPE,

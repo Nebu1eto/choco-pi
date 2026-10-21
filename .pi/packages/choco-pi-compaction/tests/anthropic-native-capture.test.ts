@@ -42,6 +42,7 @@ import {
   createCapturingStreamSimple,
   keyRef,
   mapWireToEntries,
+  recentResponsesFor,
   registerAnthropicCapture,
   releaseSessionCaptures,
   type WireCapture,
@@ -415,10 +416,14 @@ test("requests without a session ID or projection are not attributed", async () 
   })) {
     assert.notEqual(event.type, "error");
   }
-  const [capture] = capturesFor(unbound);
-  assert.ok(capture, "captured under its session ID");
-  assert.equal(capture.mapping, undefined, "no projection bound: unmapped, not guessed");
+  // No projection bound: unmapped, not guessed, and so not a usable capture (D8);
+  // the response is kept for diagnostics only.
+  assert.equal(capturesFor(unbound).length, 0, "an unmapped body is not a usable capture");
+  const [response] = recentResponsesFor(unbound);
+  assert.ok(response, "recorded under its session ID");
+  assert.equal(response.status, 200);
   releaseSessionCaptures(unbound);
+  assert.equal(recentResponsesFor(unbound).length, 0, "released with the session");
 });
 
 test("mapping control: content no projected entry produced is reported", () => {

@@ -1,11 +1,19 @@
 import type { RetryPolicy } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+import { appendLaneRecord } from "./background/lane-journal.ts";
 import {
   type BackgroundCompactionOptions,
   createBeforeCompactHandler,
   registerBackgroundCompaction,
 } from "./extension.ts";
+import { isStaleContextError } from "./lifecycle.ts";
+import {
+  guardBeforeLocalSummary,
+  type OpaqueGuardAnnounce,
+  opaqueLossAuthorized,
+} from "./opaque-guard.ts";
+import { resolveOwner } from "./ownership.ts";
 import {
   type CompactionSessionState,
   type HostCompactionPolicyReader,
@@ -169,9 +177,14 @@ export default function registerCompaction(
   pi.on("session_shutdown", () => {
     state = { ...state, generation: state.generation + 1 };
   });
-  const summarize = createBeforeCompactHandler(readState);
   const backgroundOptions = injectedBackgroundOptions(options);
   const background = registerBackgroundCompaction(pi, readState, backgroundOptions);
+  // The summarizer honors the same loss authorization as the guard (setting or consent).
+  const summarize = createBeforeCompactHandler(readState, {
+    lossAuthorized: (sessionId, entryId) =>
+      opaqueLossAuthorized(background.modes(), sessionId, entryId),
+  });
+  const announceGuard = guardAnnouncer(pi);
   pi.on("session_before_compact", async (event, ctx) => {
     // A ready, still-valid background candidate replaces the summarizer.
     const adopted = await background.beforeCompact(event, ctx);
@@ -184,8 +197,35 @@ export default function registerCompaction(
     // The summarizer is the last resort, so precedence stays: background, child, native, local.
     const native = await background.foregroundCompact(event, ctx);
     if (native !== undefined) return native;
+    // Over an opaque checkpoint no summarizer may answer without authorized loss (D2).
+    const modes = background.modes();
+    const owner = resolveOwner(ctx, readState().codexCompaction, {
+      anthropicServerSide: modes.anthropic === "server-side",
+      xaiServerSide: modes.xai === "server-side",
+    });
+    const guarded = guardBeforeLocalSummary({ modes, owner, announce: announceGuard }, event, ctx);
+    if (guarded !== undefined) return guarded;
     return summarize(event, ctx);
   });
+}
+
+/** Journal a guard record on the session and show its notice; only stale contexts are contained. */
+function guardAnnouncer(pi: ExtensionAPI): OpaqueGuardAnnounce {
+  const show = (ctx: ExtensionContext, text: string): void => {
+    try {
+      ctx.ui.notify(text, "warning");
+    } catch (error) {
+      if (!(error instanceof Error && isStaleContextError(error))) throw error;
+    }
+  };
+  return (ctx, record, text) => {
+    appendLaneRecord(
+      (customType, data) => pi.appendEntry(customType, data),
+      { ...record, noticeAttempted: true },
+      (message) => show(ctx, message),
+    );
+    show(ctx, text);
+  };
 }
 
 /**

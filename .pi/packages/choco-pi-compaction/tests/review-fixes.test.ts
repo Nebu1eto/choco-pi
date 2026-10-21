@@ -121,6 +121,11 @@ test("manual lanes: text and Anthropic owners keep their lanes, a Codex owner ge
     backendId,
     backendIds: lanes,
     sessionId: "manual-lanes-no-capture",
+    scope: {
+      provider: "anthropic",
+      model: "claude-test",
+      baseUrl: "https://api.anthropic.com",
+    },
   });
   assert.deepEqual(manualLanes(core("text")), ["text"]);
   assert.deepEqual(manualLanes(core("text"), "focus"), ["text"]);

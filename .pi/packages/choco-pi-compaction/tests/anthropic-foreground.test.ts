@@ -623,11 +623,11 @@ for (const item of FAILURES) {
         assert.equal(isAnthropicDetails(entry.details), false);
         assert.ok(entry.summary.includes("FG-LOCAL-SUMMARY"));
         assert.equal(noticesOf(rig).length, 1);
-        // A second fallback (cooldown or another failure) stays silent.
+        // A `/compact` is a user action: its fallback is told every time (D6/U-ANTH 8).
         await rig.session.prompt("FG-AGAIN");
         await rig.session.compact();
         assert.equal(compactions(rig.manager).length, 2);
-        assert.equal(noticesOf(rig).length, 1, "one notice per session");
+        assert.equal(noticesOf(rig).length, 2, "one notice per /compact");
       } finally {
         await rig.dispose();
       }
@@ -649,7 +649,9 @@ test(
       await rig.session.compact();
       assert.equal(lane.sent.length, 1, "cooling down: no second lane request");
       assert.equal(compactions(rig.manager).length, 2);
-      assert.equal(noticesOf(rig).length, 1);
+      assert.equal(noticesOf(rig).length, 2, "each /compact fallback is told");
+      // The cooling gate reports the reason that cooled it.
+      assert.equal(noticesOf(rig)[1], noticesOf(rig)[0]);
     } finally {
       await rig.dispose();
     }

@@ -56,6 +56,11 @@ export interface MainOwner {
   /** Bumped by every new manual request; a follower whose serial moved is superseded and stops. */
   manualSerial: number;
   /**
+   * The outcome notice of the current manual request, shown once when its
+   * candidate installs (a text retry folded into one notice per user action).
+   */
+  manualNotice: string | undefined;
+  /**
    * Set when the `session_before_compact` hook answers `cancel`: the host's
    * `compact()` is still unwinding (it clears the shared compaction controller
    * in its `finally`, after every `session_compact_failed` handler), so the
@@ -178,6 +183,13 @@ export interface HostRuntime {
   readonly xaiReplay: XaiReplayBinder;
   /** Unbind of each session's xAI replay binding, by session ID. */
   readonly xaiReplayUnbinds: Map<string, () => void>;
+  /**
+   * Replay unbinds detached by a session start that has not yet installed the
+   * new bindings (D8). They run after the new bindings exist, so a rebind of
+   * the same session keeps its captures (the binder's token check skips the
+   * release); `shutdown` runs them at once.
+   */
+  readonly detachedUnbinds: (() => void)[];
   /** Sessions bound in `serverSide`/`xaiServerSide`; released at shutdown. */
   readonly nativeSessions: Set<string>;
   /** Removes this registration's per-session native refresher. */
@@ -246,7 +258,8 @@ function runReportedCleanup(rt: HostRuntime, owner: MainOwner, cleanup: () => vo
 export function shutdown(rt: HostRuntime): void {
   rt.lifecycle += 1;
   teardownMain(rt);
-  unbindReplay(rt);
+  detachReplayUnbinds(rt);
+  runUnbinds(rt.detachedUnbinds.splice(0));
   for (const sessionId of rt.nativeSessions) {
     rt.serverSide.release(sessionId);
     rt.xaiServerSide.release(sessionId);
@@ -273,15 +286,28 @@ export function shutdown(rt: HostRuntime): void {
   unpublishPreferences?.();
 }
 
-export function unbindReplay(rt: HostRuntime): void {
+/**
+ * Detach every replay binding synchronously (the refresher is unregistered and
+ * the transition memo of each detached session starts fresh) without running
+ * the unbinds: they move to `rt.detachedUnbinds`, and the returned list is
+ * the ones detached now. The binders stay bound until the unbinds run.
+ */
+export function detachReplayUnbinds(rt: HostRuntime): (() => void)[] {
   const unregister = rt.unregisterNativeRefresher;
   rt.unregisterNativeRefresher = undefined;
   unregister?.();
+  const detached: (() => void)[] = [];
   for (const unbinds of [rt.replayUnbinds, rt.xaiReplayUnbinds]) {
     // The transition memo of a session whose binding is torn down starts fresh.
     for (const sessionId of unbinds.keys()) rt.transitions.reset(sessionId);
-    const pending = [...unbinds.values()];
+    detached.push(...unbinds.values());
     unbinds.clear();
-    for (const unbind of pending) unbind();
   }
+  rt.detachedUnbinds.push(...detached);
+  return detached;
+}
+
+/** Run detached unbinds (each releases its session's captures unless a newer binding exists). */
+export function runUnbinds(list: readonly (() => void)[]): void {
+  for (const unbind of list) unbind();
 }

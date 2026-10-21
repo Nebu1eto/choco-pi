@@ -305,7 +305,12 @@ export interface XaiTransportRequest {
 }
 export type XaiTransportVerdict =
   | { readonly ok: true }
-  | { readonly ok: false; readonly code: string };
+  | {
+      readonly ok: false;
+      readonly code: string;
+      /** Local, user-facing refusal text (without the prefix); defaults to the code. */
+      readonly message?: string;
+    };
 type TransportCheck = (request: XaiTransportRequest) => XaiTransportVerdict;
 /** Observes the provider response before the adapter reads it; must read a clone and never throw. */
 export type XaiResponseObserver = (response: Response) => Promise<void>;
@@ -411,7 +416,8 @@ export function xaiTransportRefusals(sessionId?: string): readonly TransportRefu
     : refusals.filter((refusal) => refusal.sessionId === sessionId);
 }
 
-export const XAI_TRANSPORT_REFUSAL_PREFIX = "choco-pi xai native transport refused";
+/** Every refusal is a local error of this package, never a provider body. */
+export const XAI_TRANSPORT_REFUSAL_PREFIX = "choco-pi compaction: xAI native transport refused";
 const TRANSPORT_REFUSAL_HEADER = "x-choco-pi-transport-refusal";
 
 export type XaiProviderStream = (
@@ -475,13 +481,13 @@ function storeCapture(capture: XaiWireCapture, limit: number): void {
 }
 
 /** A refused request is answered locally with a non-retryable 400 and never transmitted. */
-function refuse(call: TransportCall, code: string, now: number): Response {
+function refuse(call: TransportCall, code: string, now: number, detail?: string): Response {
   call.refusals.push(code);
   const refusals = runtime().refusals;
   refusals.push({ sessionId: call.sessionId, code, at: now });
   if (refusals.length > MAX_REFUSALS) refusals.splice(0, refusals.length - MAX_REFUSALS);
   for (const observe of call.refusalObservers.splice(0)) observe(code);
-  const message = `${XAI_TRANSPORT_REFUSAL_PREFIX}: ${code}`;
+  const message = `${XAI_TRANSPORT_REFUSAL_PREFIX} (${code}): ${detail ?? code}`;
   return new Response(JSON.stringify({ error: { type: "invalid_request_error", code, message } }), {
     status: 400,
     headers: { "content-type": "application/json", [TRANSPORT_REFUSAL_HEADER]: code },
@@ -556,7 +562,7 @@ function verifyRequest(capture: CaptureCall, request: ReadRequest): Response | u
   }
   for (const check of call.checks) {
     const verdict = check({ sessionId: call.sessionId, body, bodyText });
-    if (!verdict.ok) return refuse(call, verdict.code, settings.now());
+    if (!verdict.ok) return refuse(call, verdict.code, settings.now(), verdict.message);
   }
   return undefined;
 }

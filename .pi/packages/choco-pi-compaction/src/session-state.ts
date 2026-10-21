@@ -96,6 +96,12 @@ export function readHostSettings(cwd: string): HostSettingsSnapshot {
  * Same call the codex extension makes in its own `session_start`, so both
  * packages decide from one configuration state. A missing or unreadable config
  * file yields the documented defaults rather than throwing.
+ *
+ * This snapshot is the fallback for ownership: while the Codex package has
+ * published its live eligibility slot (`ownership.ts` `readCodexEligibility`),
+ * `resolveOwner` decides from that slot instead, which follows `/codex`
+ * changes mid-session. The snapshot still feeds the derived background lanes
+ * read at session start.
  */
 export function readCodexCompactionSnapshot(
   cwd: string,

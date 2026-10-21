@@ -154,7 +154,10 @@ export function createAnthropicReplayBinder(
       onDiagnostic: (diagnostic) => options.onDiagnostic(ctx, diagnostic),
     })(event, ctx);
     if (rewritten !== undefined) {
-      currentTransportCall()?.responseObservers.push(rejectionObserver(options, ctx, sessionId));
+      const binding = { sessionId, token: bound.get(sessionId) };
+      currentTransportCall()?.responseObservers.push(
+        rejectionObserver(options, ctx, binding, (id) => bound.get(id)),
+      );
     }
     return rewritten;
   };
@@ -170,11 +173,18 @@ export function createAnthropicReplayBinder(
 function rejectionObserver(
   options: AnthropicReplayBinderOptions,
   ctx: ExtensionContext,
-  sessionId: string,
+  binding: { readonly sessionId: string; readonly token: object | undefined },
+  currentToken: (sessionId: string) => object | undefined,
 ): TransportResponseObserver {
   return async (response) => {
     const code = await replayRejectionCode(response);
     if (code === undefined) return;
+    // A rejection that resolves after the session was rebound (model change,
+    // mode apply, reload) or unbound belongs to a binding that no longer
+    // exists: it neither disables the session nor notifies (the host would
+    // drop the stale notice, leaving a silent disable).
+    const { sessionId, token } = binding;
+    if (token === undefined || currentToken(sessionId) !== token) return;
     if (options.session.disable(sessionId, code)) options.onDisabled(ctx, code);
   };
 }
