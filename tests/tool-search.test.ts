@@ -500,6 +500,34 @@ for (const toolSearchLoaded of [false, true]) {
   });
 }
 
+// Pi applies the CLI's `--tools +name/-name` modifiers to the loadout it restores on resume,
+// in order, so the last modifier naming a tool decides.
+for (const [tools, kept] of [
+  [`-${LATE_TOOL}`, false],
+  [`-${LATE_TOOL},+${LATE_TOOL}`, true],
+  [`+${LATE_TOOL},-${LATE_TOOL}`, false],
+  ["-read", true],
+] as const) {
+  test(`real Pi session: --tools ${tools} ${kept ? "keeps" : "removes"} the resumed late tool`, async () => {
+    const argv = process.argv;
+    process.argv = [...argv.slice(0, 2), "--tools", tools];
+    try {
+      const fixture = await lateToolFixture({
+        resume: sessionThatRecorded(["read", "tool_search", LATE_TOOL]),
+      });
+      try {
+        fixture.registerLate();
+        await fixture.prompt("go");
+        assert.equal(fixture.session.getActiveToolNames().includes(LATE_TOOL), kept);
+      } finally {
+        await fixture.close();
+      }
+    } finally {
+      process.argv = argv;
+    }
+  });
+}
+
 test("real Pi session: a tool the transcript removed stays inactive after resume", async () => {
   const fixture = await lateToolFixture({
     resume: sessionThatRecorded(["read", "tool_search", LATE_TOOL], [LATE_TOOL]),

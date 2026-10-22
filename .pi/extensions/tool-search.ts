@@ -17,7 +17,12 @@ import {
   publishLeanSurface,
   TOOL_SEARCH_TOOL_NAME,
 } from "./lib/tool-surface.ts";
-import type { ExtensionAPI, SessionEntry, ToolExposure } from "@earendil-works/pi-coding-agent";
+import {
+  parseArgs,
+  type ExtensionAPI,
+  type SessionEntry,
+  type ToolExposure,
+} from "@earendil-works/pi-coding-agent";
 import { hasCanonicalSearch } from "../packages/choco-pi-web-search/index.ts";
 
 export {
@@ -139,7 +144,9 @@ export default function toolSearch(pi: ExtensionAPI): void {
     leanSurfaceInitialized = false;
     // A resumed session's searched tools carry over, as the first lean commit keeps them.
     const record = readBranchToolRecord(ctx.sessionManager.getBranch());
-    awaited = record ? awaitUnregistered(record.current, isSearchLoadedExposure) : NOTHING_AWAITED;
+    awaited = record
+      ? awaitUnregistered(withoutCliRemovals(record.current), isSearchLoadedExposure)
+      : NOTHING_AWAITED;
     scheduleLeanSurface();
   });
   pi.on("before_agent_start", () => {
@@ -212,4 +219,23 @@ function readBranchToolRecord(branch: readonly SessionEntry[]): BranchToolRecord
     }
   }
   return recorded ? { mentioned, current } : undefined;
+}
+
+/**
+ * `names` without the tools the launching command's `--tools -name` modifiers remove, which
+ * Pi leaves out of a restored loadout. Modifiers apply in order, so a later `+name` lifts an
+ * earlier removal; it never adds a tool here. Only the CLI's own arguments are visible, so an
+ * SDK session's `tools` option is not, and a parent's removals also hold in its sessions.
+ */
+function withoutCliRemovals(names: ReadonlySet<string>): Set<string> {
+  const modifiers = (parseArgs(process.argv.slice(2)).tools ?? []).filter(
+    (entry) => entry.startsWith("+") || entry.startsWith("-"),
+  );
+  const removed = (name: string): boolean =>
+    modifiers.reduce((isRemoved, entry) => {
+      if (entry === `-${name}`) return true;
+      if (entry === `+${name}`) return false;
+      return isRemoved;
+    }, false);
+  return new Set([...names].filter((name) => !removed(name)));
 }
