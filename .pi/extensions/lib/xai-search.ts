@@ -23,7 +23,7 @@ export const XAI_PROVIDER_ID = "xai";
 export const XAI_DEFAULT_BASE_URL = "https://api.x.ai/v1";
 // Hardcoded on purpose: Pi has no `webSearchModel` setting to mirror. The web-access OpenAI
 // transport's `openaiSearchModel` lives in that package's own config file, which this root
-// extension must not read. grok-4.3 is the cheapest xAI chat model in Pi 1.3.0's catalog.
+// extension must not read. grok-4.3 is the cheapest xAI chat model in Pi 1.4.0's catalog.
 export const XAI_SEARCH_MODEL = "grok-4.3";
 export const XAI_SEARCH_TIMEOUT_MS = 60_000;
 // xAI documents at most five allowed or excluded domains, and never both in one request.

@@ -519,11 +519,19 @@ test("web search model setting shows the credential provider and stores a bare i
     const openai = find("openai");
     assert.equal(openai.item.currentValue, `openai/${config.openai.webSearchModel}`);
     assert.match(openai.item.label, /legacy only/);
-    assert.equal(openai.update("openai/gpt-5.5", config).openai.webSearchModel, "gpt-5.5");
+    assert.equal(openai.update("openai/gpt-5.6-sol", config).openai.webSearchModel, "gpt-5.6-sol");
 
     const legacy = find("openai-codex");
     assert.equal(legacy.item.currentValue, `openai-codex/${config.openai.webSearchModel}`);
     assert.equal(legacy.item.label, "Web search model");
-    assert.equal(legacy.update("openai-codex/gpt-5.5", config).openai.webSearchModel, "gpt-5.5");
+    assert.equal(
+      legacy.update("openai-codex/gpt-5.6-sol", config).openai.webSearchModel,
+      "gpt-5.6-sol",
+    );
+    // Pi 1.4.0 dropped gpt-5.5 from openai-codex; a stale choice falls back to the default.
+    assert.equal(
+      legacy.update("openai-codex/gpt-5.5", config).openai.webSearchModel,
+      DEFAULT_CODEX_CONVERSION_CONFIG.openai.webSearchModel,
+    );
   });
 });

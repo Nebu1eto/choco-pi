@@ -117,7 +117,8 @@ test("the summarizer prompt carries only the discarded history, not the session 
     assert.ok(call);
     assert.ok(call.promptText.startsWith("<conversation>"));
     assert.ok(call.systemPrompt.length > 0);
-    assert.equal(call.options?.maxTokens, MAX_TOKENS);
+    // Pi 1.4.0 sends no summary output cap; summaries use the model's output limit (#9512).
+    assert.equal(call.options?.maxTokens, undefined);
     // The discarded first turn is present; the retained final turn is not.
     assert.ok(call.promptText.includes("Please rewrite the retry backoff."));
     assert.equal(call.promptText.includes("Continue and report the result of the rewrite."), false);

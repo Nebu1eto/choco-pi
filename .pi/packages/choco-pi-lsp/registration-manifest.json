@@ -422,7 +422,8 @@
               "description": "Validate/compile the pattern or rule without scanning project files. Helps distinguish a bad pattern/rule from a real no-match result."
             }
           }
-        }
+        },
+        "defaultActive": false
       },
       "functionKeys": ["renderResult", "execute"]
     },
@@ -512,7 +513,8 @@
               "description": "Pattern matching strictness. 'smart' (default) ignores comments and whitespace. 'relaxed' also ignores unnamed nodes like punctuation. 'ast' ignores all whitespace."
             }
           }
-        }
+        },
+        "defaultActive": false
       },
       "functionKeys": ["renderResult", "execute"]
     },
@@ -599,7 +601,8 @@
               "description": "Include/exclude file globs for directory input, e.g. [\"*.ts\",\"!**/dist/**\"]."
             }
           }
-        }
+        },
+        "defaultActive": false
       },
       "functionKeys": ["renderResult", "execute"]
     },
@@ -653,7 +656,8 @@
               "description": "Show anonymous punctuation/CST nodes too (default false)"
             }
           }
-        }
+        },
+        "defaultActive": false
       },
       "functionKeys": ["renderResult", "execute"]
     },
@@ -816,7 +820,8 @@
               "description": "Call hierarchy item. Required for incomingCalls/outgoingCalls"
             }
           }
-        }
+        },
+        "defaultActive": false
       },
       "functionKeys": ["renderResult", "execute"]
     },
@@ -860,7 +865,8 @@
               "description": "Optional short reason, kept alongside the disposition."
             }
           }
-        }
+        },
+        "defaultActive": false
       },
       "functionKeys": ["execute"]
     }

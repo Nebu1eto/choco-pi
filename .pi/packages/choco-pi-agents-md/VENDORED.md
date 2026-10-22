@@ -139,3 +139,8 @@ session and every child session.
 
 Verification: `npx tsc --noEmit` in the package and
 `node --test .pi/packages/choco-pi-agents-md/tests/*.test.ts` pass.
+
+## 2026-10-22 choco-pi patch: Pi SDK target 1.4.0
+
+Pi SDK peer and development pins move from `1.3.0` to exactly `1.4.0`.
+Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.

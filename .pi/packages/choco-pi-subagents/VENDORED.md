@@ -2107,3 +2107,13 @@ started without a returned promise; the worktree tests in
 `tests/usage-limit-review.test.ts` wait for asynchronous creation and cleanup,
 and the scope tests in `tests/revival-revive.test.ts` and
 `tests/usage-limit.test.ts` load the enabled-models snapshot first.
+
+## 2026-10-22 choco-pi patch: Pi SDK target 1.4.0
+
+Pi SDK peer and development pins move from `1.3.0` to exactly `1.4.0`. The package-local workspace
+`minimumReleaseAgeExclude` entries move to `@1.4.0`; the lock was regenerated with
+`pnpm install --ignore-scripts` and restored with `pnpm install:vendored` (frozen). The only new
+locked package is `marked-cjk-friendly@0.1.2`, a new `pi-tui` dependency.
+e2e-revival (`tests/e2e-revival/run.ts` and its README) requires the Pi `1.4.0` launcher at
+`~/.local/pi-1.4.0`.
+Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.

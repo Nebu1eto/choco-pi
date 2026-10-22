@@ -56,6 +56,11 @@ test("MCP status counts merged config and registrations without adapter cache", 
   assert.equal(await summarizeMcpServers(directory), "2 configured (see /mcp)");
   await writeFile(path.join(directory, "mcp.json"), JSON.stringify({ mcpServers: [] }));
   assert.equal(await summarizeMcpServers(directory), "none configured");
+  await writeFile(
+    path.join(directory, "mcp.json"),
+    `\uFEFF${JSON.stringify({ mcpServers: { bom: {} } })}`,
+  );
+  assert.equal(await summarizeMcpServers(directory), "1 configured (see /mcp)");
 });
 
 test("formatCacheWarming renders actual state before decision explanations", () => {

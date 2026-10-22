@@ -271,3 +271,20 @@ evaluation alive forever (measured ~4 MB heap per session lifecycle). Fixes:
 The `choco-pi-lsp:read-bridge` global slot still pins the latest evaluation
 only (replace semantics, unchanged). Regression tests:
 `tests/process-lifetime-hooks.test.ts`.
+
+## 2026-10-22 choco-pi patch: Pi SDK target 1.4.0
+
+Pi SDK peer and development pins move from `1.3.0` to exactly `1.4.0`. The package-local workspace
+`minimumReleaseAgeExclude` entries move to `@1.4.0`; the lock was regenerated with
+`pnpm install --ignore-scripts` and restored with `pnpm install:vendored` (frozen). The only new
+locked package is `marked-cjk-friendly@0.1.2`, a new `pi-tui` dependency.
+
+The six situational tools (`ast_grep_search`, `ast_grep_replace`, `ast_grep_outline`,
+`ast_grep_dump`, `lsp_navigation`, `diagnostic_mark`) register with `defaultActive: false` in
+`registration-manifest.json`. Pi 1.4.0 activates every extension tool a branch never recorded
+when it restores tools on resume or `/tree`, and choco-pi-lsp has no `session_tree` handler, so
+without the flag a `/tree` navigation re-activated tools the model never loaded. Under
+`--no-lazy-tools` the `session_start` handler now activates them, since registration no longer does.
+`tests/registration-manifest-lazy-tools.test.ts` requires the inactive set to equal the
+`lsp_activate_tools` catalog.
+Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.

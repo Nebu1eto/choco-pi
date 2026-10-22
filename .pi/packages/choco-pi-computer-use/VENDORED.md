@@ -233,3 +233,10 @@ Supersedes, in "background pid pointer attempt before foreground_required", the 
 - **Source hash.** `src/platform/macos/helper-source.mjs` (typed by `helper-source.d.mts`) exports `helperSourceHash(arch, packageRoot?)`: sha256 over `pi-computer-use-helper-source-v1\n<arch>\n`, then, for each compiled source sorted by package-relative path, `<path>\n<byte length>\n<contents>\n`. `agent_cursor_tests.swift` has its own `@main`, so it is neither compiled nor hashed. The installer writes this value to `Contents/Resources/source.sha256` and skips the build when it and `Info.plist` already match (the ad-hoc-to-identity re-sign upgrade still runs there); the ad-hoc replacement refusal now runs before compiling. `e2e/preflight.ts` compares a tier-B app's `source.sha256` with `helperSourceHash("arm64")` instead of hashing the arm64 prebuilt. The module is plain JavaScript, like `helper-path.mjs`, because the installer may run under an Electron or Bun host (`ELECTRON_RUN_AS_NODE`, `BUN_BE_BUN`) that does not strip TypeScript types; one shared module avoids duplicating the scheme.
 - **Staleness check.** `helperStaleReason` in `src/platform/macos/helper.ts` is unchanged: each install's `fs.copyFile` onto `Contents/MacOS/bridge` updates the mtime that the `startedAt` comparison reads.
 - **Verification.** `node scripts/setup-helper.mjs --build-only --out <scratch>` compiled an arm64 Mach-O in 13 s with a cold module cache and no warnings; on an isolated socket it answered `diagnostics` with protocol 7 and a `startedAt`, and exited on `shutdown`. Not exercised: a full install (signing, LaunchServices, the short-circuit, and the runtime `--runtime` path under the 60 s `HELPER_SETUP_TIMEOUT_MS`), the missing-`swiftc` message, and x64 builds.
+
+## 2026-10-22 choco-pi patch: Pi SDK target 1.4.0
+
+Pi SDK peer and development pins move from `1.3.0` to exactly `1.4.0`.
+The isolated e2e preflight (`e2e/preflight.ts`) requires a launcher reporting `1.4.0`; any other
+executable is still refused with `PI_VERSION_MISMATCH`.
+Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.

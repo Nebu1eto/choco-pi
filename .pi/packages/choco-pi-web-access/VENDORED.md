@@ -238,3 +238,11 @@ Display-only edits so the new family type-checks and renders:
   `get_search_content({ responseId, urlIndex, offset, limit })` call; the tool description states the
   continuation contract in one sentence.
 - Added `tests/stored-result-recovery.test.ts`.
+
+## 2026-10-22 choco-pi patch: Pi SDK target 1.4.0
+
+Pi SDK peer and development pins move from `1.3.0` to exactly `1.4.0`. The package-local workspace
+`minimumReleaseAgeExclude` entries move to `@1.4.0`; the lock was regenerated with
+`pnpm install --ignore-scripts` and restored with `pnpm install:vendored` (frozen). The only new
+locked package is `marked-cjk-friendly@0.1.2`, a new `pi-tui` dependency.
+Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.

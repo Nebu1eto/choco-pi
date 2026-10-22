@@ -36,7 +36,7 @@ import {
 const STOCK_COMPACT = AgentSession.prototype.compact;
 const STOCK_PROMPT = AgentSession.prototype.prompt;
 
-/** The host's rejection of a prompt during a manual compaction (Pi 1.3.0). */
+/** The host's rejection of a prompt during a manual compaction (Pi 1.4.0). */
 const HOST_REJECTION = /Cannot submit a prompt while compaction is in progress/;
 
 const SUMMARY = [
@@ -159,8 +159,8 @@ async function sidecarOff(dir: string): Promise<string> {
   return file;
 }
 
-// Contract with the installed Pi (1.3.0): its own prompt() rejects a prompt that arrives
-// during a manual compaction (agent-session.js:1619-1620). The bridge's prompt wrapper
+// Contract with the installed Pi (1.4.0): its own prompt() rejects a prompt that arrives
+// during a manual compaction (agent-session.js:1648-1649). The bridge's prompt wrapper
 // exists only for that; if this fails after a Pi upgrade, the host waits (or queues) on
 // its own and the wrapper can go.
 test("the stock host rejects a prompt issued during a manual compaction", async () => {

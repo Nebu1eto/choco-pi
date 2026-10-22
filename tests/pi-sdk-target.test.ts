@@ -11,7 +11,7 @@ interface PackageManifest {
 }
 
 const ROOT = new URL("../", import.meta.url);
-const TARGET = "1.3.0";
+const TARGET = "1.4.0";
 const SDK_NAMES = ["pi-ai", "pi-agent-core", "pi-coding-agent", "pi-tui"];
 const PACKAGE_PATHS = [
   "",

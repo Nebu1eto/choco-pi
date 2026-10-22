@@ -1176,3 +1176,23 @@ JSON error body whose `error.param` is `input[N]` (N the item's index) or
 whose `error.message`/`error.code` names `developer` or `compaction_trigger`
 as a whole token. Plain text, other statuses and status-less failures are
 ordinary failures. Test: `tests/compaction-focus-item.test.ts`.
+
+## 2026-10-22 choco-pi patch: Pi SDK target 1.4.0
+
+Pi SDK peer and development pins move from `1.3.0` to exactly `1.4.0`. The package-local workspace
+`minimumReleaseAgeExclude` entries move to `@1.4.0`; the lock was regenerated with
+`pnpm install --ignore-scripts` and restored with `pnpm install:vendored` (frozen). The only new
+locked package is `marked-cjk-friendly@0.1.2`, a new `pi-tui` dependency.
+
+Pi 1.4.0 replaced `resolveTranscriptTools(messages, boolean)` with a `TranscriptToolSupport` mode
+and dropped `TranscriptTools.anchorsAdditions`. `splitDeferredTools` in
+`providers/openai-responses/shared.ts` now computes the same placement from the exported
+`hasNonAdditiveToolChanges`, `getInitialSystemMessage`, and `getCurrentTools`: without a removal or
+redeclaration the initial tools stay top-level and later additions are deferred; otherwise the
+current tool list is sent top-level. Request bodies and the compaction serializer are unchanged;
+upstream's new all-`additional_tools` Responses encoding is not adopted.
+
+The web-search model choices drop `gpt-5.5` and `gpt-5.3-codex-spark`, which Pi 1.4.0 removed
+from `openai-codex` because they always fail for ChatGPT accounts; a saved value naming either
+normalizes to the default `gpt-5.6-luna`.
+Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.

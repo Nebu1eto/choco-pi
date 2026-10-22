@@ -272,3 +272,17 @@ The workspace `overrides` for `pi-ai` and `pi-tui` move to `1.3.0`. The pre-exis
 warning from `@aliou/pi-utils-settings@0.15.1` and `@aliou/pi-utils-ui@0.4.1`
 (`pi-coding-agent >=0.74.0 <1`) is unchanged by this move.
 Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.
+
+## 2026-10-22 choco-pi patch: Pi SDK target 1.4.0
+
+Pi SDK peer and development pins move from `1.3.0` to exactly `1.4.0`. The package-local workspace
+`minimumReleaseAgeExclude` entries move to `@1.4.0`; the lock was regenerated with
+`pnpm install --ignore-scripts` and restored with `pnpm install:vendored` (frozen). The only new
+locked package is `marked-cjk-friendly@0.1.2`, a new `pi-tui` dependency.
+The workspace `overrides` for `pi-ai` and `pi-tui` move to `1.4.0`.
+
+`synthetic_web_search` now registers with `defaultActive: false`. Pi 1.4.0 activates every
+extension tool a branch never recorded when `/tree` restores the branch's tools, unless the tool
+opts out at registration; the tool stays inactive until `session_start` proves subscription
+eligibility, as before.
+Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.

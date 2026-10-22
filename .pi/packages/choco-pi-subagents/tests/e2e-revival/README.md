@@ -1,7 +1,7 @@
-# e2e-revival: durable subagent revival against a real Pi 1.3.0
+# e2e-revival: durable subagent revival against a real Pi 1.4.0
 
 Opt-in harness. It is not part of `pnpm test` (no file ends in `.test.ts`).
-It starts a real Pi 1.3.0 process in RPC mode with a scripted faux model
+It starts a real Pi 1.4.0 process in RPC mode with a scripted faux model
 provider, so it is deterministic, needs no network, and spends no model credit.
 
 ```bash
@@ -12,8 +12,8 @@ node .pi/packages/choco-pi-subagents/tests/e2e-revival/run.ts --scenario S1 --sc
 
 Options:
 
-- `--pi <path>`: Pi binary. Defaults to `~/.local/pi-1.3.0/node_modules/.bin/pi`
-  (absolute path in `run.ts`); any binary whose `--version` is not `1.3.0` is refused.
+- `--pi <path>`: Pi binary. Defaults to `~/.local/pi-1.4.0/node_modules/.bin/pi`
+  (absolute path in `run.ts`); any binary whose `--version` is not `1.4.0` is refused.
 - `--scenario S1[,S2]`: select scenarios (repeatable). Default: all.
 - `--out <dir>`: base directory; each run gets `<dir>/<run-id>/<scenario>/`.
   Default: `/tmp/choco-pi/$PI_SESSION_ID/e2e` (or `/tmp/choco-pi/e2e-revival/e2e`).

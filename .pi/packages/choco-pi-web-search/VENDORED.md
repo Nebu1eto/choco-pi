@@ -41,3 +41,8 @@ them as `disabled` attempts with reason "explicit selection only", and drop fami
 registered adapters are all explicit-only. Explicit family selection, request provider
 lists, and `routing.providers` that name the family still reach them. The xAI adapter is
 explicit-only, so `auto` never reaches xAI despite its last-place order.
+
+## 2026-10-22 choco-pi patch: Pi SDK target 1.4.0
+
+Pi SDK peer and development pins move from `1.3.0` to exactly `1.4.0`.
+Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.

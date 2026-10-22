@@ -1769,9 +1769,13 @@ function activateExtension(hostPi: ExtensionAPI) {
       // `pi.getActiveTools`/`setActiveTools` aren't guaranteed present on
       // every host the broad `@earendil-works/pi-coding-agent` peer
       // dependency allows, so probe with typeof rather than assuming the
-      // pinned devDependency version's API exists at runtime. Under
-      // `--no-lazy-tools` nothing is touched at all: all-active IS the
-      // requested posture.
+      // pinned devDependency version's API exists at runtime.
+      //
+      // registration-manifest.json registers the lazy tools with
+      // `defaultActive: false`: Pi 1.4.0 re-activates any extension tool a
+      // branch never recorded when it restores tools on resume or `/tree`,
+      // unless the tool opts out at registration. `--no-lazy-tools` therefore
+      // turns them on here instead of leaving the set untouched.
       try {
         // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
         const piWithActiveTools = pi as {
@@ -1780,7 +1784,13 @@ function activateExtension(hostPi: ExtensionAPI) {
         };
         const getActiveTools = piWithActiveTools.getActiveTools;
         const setActiveTools = piWithActiveTools.setActiveTools;
-        if (getLensFlag("no-lazy-tools") !== true && getActiveTools && setActiveTools) {
+        if (getLensFlag("no-lazy-tools") === true && getActiveTools && setActiveTools) {
+          const active = getActiveTools();
+          const missing = LAZY_TOOL_CATALOG.map((t) => t.name).filter(
+            (name) => !active.includes(name),
+          );
+          if (missing.length > 0) setActiveTools([...active, ...missing]);
+        } else if (getActiveTools && setActiveTools) {
           // A fresh conversation starts with no activation memory; a
           // rebuild inherits the parent's.
           if (isFreshSessionStart(sessionReason)) rememberedLazyTools.clear();

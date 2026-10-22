@@ -1,8 +1,10 @@
 import {
+  getCurrentTools,
+  getInitialSystemMessage,
   getSystemMessageText,
+  hasNonAdditiveToolChanges,
   renderSystemMessageUpdate,
   resolveTranscript,
-  resolveTranscriptTools,
   type Api,
   type Model,
   type Tool,
@@ -131,10 +133,15 @@ export function splitDeferredTools(
   context: TranscriptContext,
   enabled: boolean,
 ): DeferredToolPlacement {
-  const transcriptTools = resolveTranscriptTools(context.messages, enabled);
-  const immediateNames = new Set(transcriptTools.requestTools.map((tool) => tool.name));
+  // Pi 1.3.0 `resolveTranscriptTools(messages, true)` semantics, kept across Pi 1.4.0's
+  // "additions" mode: any removal or redeclaration sends the current tool list inline.
+  const anchorsAdditions = enabled && !hasNonAdditiveToolChanges(context.messages);
+  const immediate = anchorsAdditions
+    ? (getInitialSystemMessage(context.messages)?.toolsAdded ?? [])
+    : getCurrentTools(context.messages);
+  const immediateNames = new Set(immediate.map((tool) => tool.name));
   const deferred = new Map<string, Tool>();
-  if (transcriptTools.anchorsAdditions) {
+  if (anchorsAdditions) {
     for (const message of context.messages) {
       if (message.role !== "system") continue;
       for (const tool of message.toolsAdded ?? []) {
@@ -142,7 +149,7 @@ export function splitDeferredTools(
       }
     }
   }
-  return { immediate: transcriptTools.requestTools, deferred };
+  return { immediate, deferred };
 }
 
 function sanitizeSurrogates(text: string): string {

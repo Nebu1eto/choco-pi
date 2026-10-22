@@ -222,3 +222,8 @@ package's own continuation; those runs no longer clear continuation state.
 
 Pi SDK peer and development pins move from `1.2.0` to exactly `1.3.0`.
 Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.
+
+## 2026-10-22 choco-pi patch: Pi SDK target 1.4.0
+
+Pi SDK peer and development pins move from `1.3.0` to exactly `1.4.0`.
+Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.

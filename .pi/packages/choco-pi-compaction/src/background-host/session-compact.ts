@@ -133,12 +133,12 @@ function readScalars(session: AgentSession): SessionCompactHost | undefined {
 // Prompt patch: wait for a running manual compaction instead of rejecting
 // ---------------------------------------------------------------------------
 //
-// Pi 1.3.0 `AgentSession.prompt` (`dist/core/agent-session.js`):
-//   1607  const expandPromptTemplates = options?.expandPromptTemplates ?? true;
-//   1611  if (expandPromptTemplates && text.startsWith("/")) { ...extension command... }
-//   1619  if (this._compactionAbortController !== undefined)
-//   1620      throw new Error("Cannot submit a prompt while compaction is in progress. ...")
-// A prompt Pi deferred during `agent_settled` (1603-1605) is re-run after the
+// Pi 1.4.0 `AgentSession.prompt` (`dist/core/agent-session.js`):
+//   1636  const expandPromptTemplates = options?.expandPromptTemplates ?? true;
+//   1640  if (expandPromptTemplates && text.startsWith("/")) { ...extension command... }
+//   1648  if (this._compactionAbortController !== undefined)
+//   1649      throw new Error("Cannot submit a prompt while compaction is in progress. ...")
+// A prompt Pi deferred during `agent_settled` (1632-1634) is re-run after the
 // emission and is rejected there, in a call chain no caller awaits, when a
 // compaction started meanwhile. Waiting on the public idle promise removes that
 // race without predicting when the run settles, so a host compaction can start
@@ -147,16 +147,16 @@ function readScalars(session: AgentSession): SessionCompactHost | undefined {
 // The host rejects only during a manual compaction (`compact()`), which first
 // awaits `abort()` and so runs with no active agent run (`isStreaming` false).
 // Automatic compaction runs only inside an active run (`_startRun` sets the run
-// active at 1393; its compactions are reached from 431, 482, 1454 and 1530),
+// active at 1424; its compactions are reached from 430, 481, 1485 and 1559),
 // where Pi queues a prompt as steer/follow-up instead of rejecting it; waiting
 // for idle there would hold that prompt until the whole run ended. So the
-// wrapper waits only while `isCompacting` (1209) holds without an active run;
+// wrapper waits only while `isCompacting` (1224) holds without an active run;
 // that also covers a branch summary running while idle, which then precedes
 // the prompt.
 
 /**
  * Whether the host would run `text` as an extension command before its
- * compaction check (agent-session.js:1607 and 1611). Such text is delegated at
+ * compaction check (agent-session.js:1636 and 1640). Such text is delegated at
  * once, as the host runs extension commands even while compacting.
  */
 function isCommandFirst(text: string, options: PromptOptions | undefined): boolean {
@@ -170,8 +170,8 @@ function compactionBlocksPrompt(session: AgentSession): boolean {
 
 /**
  * Wait until no compaction blocks the prompt, then delegate. `waitForIdle()`
- * (agent-session.js:1954) resolves once the session is idle, which Pi checks
- * when a compaction ends (2183-2184); a compaction started after that is
+ * (agent-session.js:1983) resolves once the session is idle, which Pi checks
+ * when a compaction ends (2212-2213); a compaction started after that is
  * waited for again. A session disposed meanwhile aborts its compaction, which
  * ends the wait; the host then decides what the prompt does.
  */

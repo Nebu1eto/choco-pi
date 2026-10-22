@@ -58,7 +58,14 @@ export function resolveBackgroundLimits(
   return { maxOutputTokens, maxInputTokens };
 }
 
-/** Output cap for a summarization request, computed like the host's. */
+/**
+ * Output cap for a summarization request: Pi 1.3.0's host formula
+ * (`0.8 * reserveTokens`, clamped to the model limit), raised for reasoning
+ * models. Pi 1.4.0 dropped its own cap and lets summaries use the model's
+ * output limit; this package keeps an explicit cap because {@link promptFits}
+ * reserves it from the context window, and the model's full output limit
+ * would leave far less room for the history being summarized.
+ */
 export function resolveMaxTokens(model: ModelBudget, settings: CompactionSettings): number {
   const reserveCap = Math.floor(0.8 * settings.reserveTokens);
   const requested = reasoningOutputCap(model, reserveCap);

@@ -145,6 +145,9 @@ export async function formatWebSearchResults(
 export const syntheticWebSearchTool = defineTool({
   name: SYNTHETIC_WEB_SEARCH_TOOL,
   label: "Synthetic: Web Search",
+  // Inactive until session_start proves subscription eligibility; Pi 1.4.0 would
+  // otherwise re-activate it when `/tree` restores a branch that never recorded it.
+  defaultActive: false,
   description: `Search the web using Synthetic's zero-data-retention API. Returns search results with titles, URLs, content snippets, and publication dates. Use for finding documentation, articles, recent information, or any web content. Results are fresh and not cached by Synthetic. Body excerpts share a 20KB budget, with an equal 4KB maximum per result. Larger results include a bounded excerpt and are saved to temp files for full inspection with the read tool.`,
   promptSnippet: "Search the web using Synthetic's zero-data-retention API",
   promptGuidelines: [

@@ -10,7 +10,7 @@ OAuth 토큰, API 키, 컴퓨터별 로컬 설정은 Git 밖에 보관하세요.
 
 - Node.js 24 이상
 - pnpm `11.11.0` (다른 버전은 사용할 수 없음)
-- Pi `1.3.0` (이 체크아웃이 고정한 SDK 패키지와 동일한 버전)
+- Pi `1.4.0` (이 체크아웃이 고정한 SDK 패키지와 동일한 버전)
 - Git
 - 선택 사항: 브라우저 자동화를 위한 [`agent-browser`](https://github.com/vercel-labs/agent-browser). 0.34.0, 0.35.2, 0.36.0, 0.37.1, 0.38.1 버전을 검증했으며, 그 외 버전은 경고만 표시하고 실행합니다.
 - 선택 사항: 데스크톱 조작(computer use)을 위한 macOS 14 이상([computer use 설정하기](#computer-use-설정하기-macos) 참고)
@@ -59,9 +59,9 @@ export PATH="$HOME/.local/bin:$PATH"
 pi --version
 ```
 
-이 명령은 `1.3.0`을 출력해야 합니다. 설치 프로그램은 Pi의 최신 릴리스를 설치하므로, 다른 버전이 출력되면 이 체크아웃의 고정 버전이 그 버전과 일치할 때까지 `/check`가 실패하고 프로필 설치 프로그램은 해당 실행기를 기록하지 않습니다.
+이 명령은 `1.4.0`을 출력해야 합니다. 설치 프로그램은 Pi의 최신 릴리스를 설치하므로, 다른 버전이 출력되면 이 체크아웃의 고정 버전이 그 버전과 일치할 때까지 `/check`가 실패하고 프로필 설치 프로그램은 해당 실행기를 기록하지 않습니다.
 
-Pi 1.3.0의 `cli.js` 실행기는 Node 컴파일 캐시를 활성화합니다. 원인을 알 수 없는 모듈 로드 오류를 조사할 때는 `NODE_DISABLE_COMPILE_CACHE=1`로 설정해 캐시를 끌 수 있습니다.
+Pi 1.4.0의 `cli.js` 실행기는 Node 컴파일 캐시를 활성화합니다. 원인을 알 수 없는 모듈 로드 오류를 조사할 때는 `NODE_DISABLE_COMPILE_CACHE=1`로 설정해 캐시를 끌 수 있습니다.
 
 Pi가 열리면 `/login`을 실행하고 공급자를 선택하세요. 설치 스크립트는 인증을 수행하거나 로그인 화면을 열지 않으며, 인증 정보를 저장소에 복사하지 않습니다.
 
@@ -95,7 +95,7 @@ npm run install:profile
 
 ### 내장 확장
 
-Pi 1.3.0에는 `codemode`, `tool-search`, `mcp`, `llama.cpp` 확장이 내장되어 있습니다. choco-pi는 Pi에 내장된 도구 검색과 MCP를 그대로 쓰고, 자체 `exec` 코드 모드 브리지를 유지하기 위해 `"extensions": ["-builtin:codemode"]`로 `codemode`만 비활성화합니다. 프로필 설치 프로그램은 이 정책을 전역 설정에 반영하고 그 밖의 내장 확장 비활성화 항목은 제거합니다.
+Pi 1.4.0에는 `codemode`, `tool-search`, `mcp`, `llama.cpp` 확장이 내장되어 있습니다. choco-pi는 Pi에 내장된 도구 검색과 MCP를 그대로 쓰고, 자체 `exec` 코드 모드 브리지를 유지하기 위해 `"extensions": ["-builtin:codemode"]`로 `codemode`만 비활성화합니다. 프로필 설치 프로그램은 이 정책을 전역 설정에 반영하고 그 밖의 내장 확장 비활성화 항목은 제거합니다.
 
 MCP 서버는 Pi의 `~/.pi/agent/mcp.json` 형식으로 설정합니다. 폐기된 `pi-mcp-adapter` 포크용으로 작성한 파일은 `node scripts/translate-mcp-config.ts`로 변환하세요. 이 스크립트는 값을 가린 dry-run diff를 출력하며, `--apply`를 줄 때만 시각이 붙은 백업을 남기고 파일을 씁니다.
 
@@ -484,7 +484,7 @@ Pi 1.0.3부터 `Home`/`End`는 편집기 커서를 이동합니다. 대화 기�
 | 키                                                                                                                                | 설정 주체                  | 설명                                                                                                                                                                                                                                                                                                                                                                        |
 | --------------------------------------------------------------------------------------------------------------------------------- | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `packages`, `extensions`, `skills`, `prompts`                                                                                     | 설치 프로그램              | 체크아웃 절대 경로입니다. 체크아웃을 옮기면 설치 프로그램을 다시 실행하세요.                                                                                                                                                                                                                                                                                                |
-| `theme`, `tuiMode`, `fullscreenExitOutput`, `fuzzyFileMentions`, `compaction`                                                     | 사용자                     | `compaction.reserveTokens`는 모델 응답용으로 남겨 두는 토큰 수, `compaction.keepRecentTokens`는 요약하지 않고 남기는 최근 토큰 수입니다. 컨텍스트 한도는 `/preferences` 프리셋으로 정합니다.                                                                                                                                                                                |
+| `theme`, `tuiMode`, `fullscreenExitOutput`, `fuzzyFileMentions`, `compaction`                                                     | 사용자                     | `compaction.reserveTokens`는 컨텍스트 창보다 얼마나 앞에서 압축을 시작할지 정하는 토큰 수(요약은 모델의 출력 한도 사용), `compaction.keepRecentTokens`는 요약하지 않고 남기는 최근 토큰 수입니다. 컨텍스트 한도는 `/preferences` 프리셋으로 정합니다.                                                                                                                       |
 | `modelThinkingLevels`                                                                                                             | 사용자                     | 정확한 `provider/modelId`를 키로 씁니다. 체크아웃에 `.pi/settings.json`이 있으면 사용자가 설정하지 않은 모델의 값만 추가합니다.                                                                                                                                                                                                                                             |
 | `defaultProvider`, `defaultModel`, `defaultThinkingLevel`, `enabledModels`                                                        | 사용자                     | 시작 모델과 thinking 수준입니다. `enabledModels`는 모델 전환 대상을 제한합니다.                                                                                                                                                                                                                                                                                             |
 | `cacheWarming`, `transport`, `httpIdleTimeoutMs`, `quietStartup`, `enableInstallTelemetry`, `markdown`, `terminal`                | 사용자                     | Pi 런타임 설정입니다. `cacheWarming`은 전역 파일에서만 읽으며 `off`, `streaming`(기본값), `idle` 중 하나입니다.                                                                                                                                                                                                                                                             |

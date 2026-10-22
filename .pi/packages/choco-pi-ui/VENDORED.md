@@ -302,3 +302,9 @@ a subagent child load. The provider slot is process-global and its callbacks
 drive the publishing activation's lifecycle and editor, so a child load left the
 main session's Preferences panel operating on a disposed child UI.
 Test: `tests/child-load-preferences.test.ts`.
+
+## 2026-10-22 choco-pi patch: Pi SDK target 1.4.0
+
+Pi SDK peer and development pins move from `1.3.0` to exactly `1.4.0`.
+The theme test asserts the host `pi-coding-agent` is `1.4.0`; its `theme-schema.js` validator path is unchanged.
+Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.

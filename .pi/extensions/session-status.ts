@@ -99,7 +99,8 @@ function readJsonFile(filePath: string): RuntimeValue | undefined {
 
 async function readMcpConfig(filePath: string): Promise<RuntimeValue | undefined> {
   try {
-    return JSON.parse(await readFile(filePath, "utf8"));
+    // Pi 1.4.0 accepts a leading UTF-8 BOM, which Windows PowerShell 5.1 writes.
+    return JSON.parse((await readFile(filePath, "utf8")).replace(/^\uFEFF/, ""));
   } catch {
     return undefined;
   }
