@@ -111,12 +111,14 @@ export default function toolSearch(pi: ExtensionAPI): void {
   pi.on("session_start", () => {
     unlockPrefix();
     leanSurfaceInitialized = false;
+    recordedUnregistered = new Set();
     scheduleLeanSurface();
   });
   pi.on("before_agent_start", () => {
     cancelScheduledLeanSurface();
     commitLeanSurface();
     lockPrefix();
+    activateRegisteredRecordedTools();
   });
   pi.on("session_shutdown", () => {
     cancelScheduledLeanSurface();
@@ -124,5 +126,58 @@ export default function toolSearch(pi: ExtensionAPI): void {
   pi.on("model_select", () => {
     unlockPrefix();
     scheduleLeanSurface();
+  });
+
+  // Pi 1.4.0 restores a branch's recorded tools on `/tree` and also activates every
+  // registered tool the branch never mentions, which re-declares the tools this lean
+  // surface left inactive and changes the request prefix. Drop exactly those additions:
+  // tools inactive before the navigation that the target branch never added or removed.
+  let activeBeforeTree: ReadonlySet<string> | undefined;
+  // Recorded tools that were not registered at the navigation, such as MCP tools of a
+  // server still connecting. Pi keeps them pending, but narrowing the active set clears
+  // its pending names, so they are activated here once registered instead.
+  let recordedUnregistered = new Set<string>();
+  function activateRegisteredRecordedTools(): void {
+    if (recordedUnregistered.size === 0) return;
+    const registered = new Set(pi.getAllTools().map((tool) => tool.name));
+    const active = pi.getActiveTools();
+    const ready = [...recordedUnregistered].filter(
+      (name) => registered.has(name) && !active.includes(name),
+    );
+    for (const name of recordedUnregistered)
+      if (registered.has(name)) recordedUnregistered.delete(name);
+    if (ready.length > 0) pi.setActiveTools([...active, ...ready]);
+  }
+  pi.on("session_before_tree", () => {
+    activeBeforeTree = new Set(pi.getActiveTools());
+  });
+  pi.on("session_tree", (_event, ctx) => {
+    const before = activeBeforeTree;
+    activeBeforeTree = undefined;
+    recordedUnregistered = new Set();
+    if (!before) return;
+    const mentioned = new Set<string>();
+    const recordedTools = new Set<string>();
+    let recorded = false;
+    for (const entry of ctx.sessionManager.getBranch()) {
+      if (entry.type !== "message" || entry.message.role !== "system") continue;
+      recorded = true;
+      for (const tool of entry.message.toolsRemoved ?? []) {
+        mentioned.add(tool.name);
+        recordedTools.delete(tool.name);
+      }
+      for (const tool of entry.message.toolsAdded ?? []) {
+        mentioned.add(tool.name);
+        recordedTools.add(tool.name);
+      }
+    }
+    // Without a recorded loadout Pi keeps the current tools.
+    if (!recorded) return;
+    const active = pi.getActiveTools();
+    const kept = active.filter((name) => before.has(name) || mentioned.has(name));
+    if (kept.length === active.length) return;
+    const registered = new Set(pi.getAllTools().map((tool) => tool.name));
+    recordedUnregistered = new Set([...recordedTools].filter((name) => !registered.has(name)));
+    pi.setActiveTools(kept);
   });
 }

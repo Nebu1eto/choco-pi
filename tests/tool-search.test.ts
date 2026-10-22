@@ -16,7 +16,13 @@ import {
   type ExtensionFactory,
   type ToolExposure,
 } from "@earendil-works/pi-coding-agent";
-import { InMemoryCredentialStore, InMemoryModelsStore } from "@earendil-works/pi-ai";
+import {
+  createFauxCore,
+  fauxAssistantMessage,
+  fauxText,
+  InMemoryCredentialStore,
+  InMemoryModelsStore,
+} from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import toolSearch, {
   ALWAYS_ACTIVE_TOOL_NAMES,
@@ -202,6 +208,7 @@ test("the native tier contains only core calls and rich-artifact tools", () => {
 
 interface SdkSession {
   session: AgentSession;
+  modelRuntime: ModelRuntime;
   close(): Promise<void>;
 }
 
@@ -238,6 +245,7 @@ async function sdkSession(factories: ExtensionFactory[]): Promise<SdkSession> {
   await session.bindExtensions({});
   return {
     session,
+    modelRuntime,
     close: async () => {
       session.dispose();
       await rm(root, { recursive: true, force: true });
@@ -289,6 +297,129 @@ test("real Pi session: built-in tool_search is active on turn one and loads late
     );
     assert.deepEqual(await runToolSearch(session, "radius issues"), ["mcp__radius__list_issues"]);
     assert.ok(session.getActiveToolNames().includes("mcp__radius__list_issues"));
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("real Pi session: /tree keeps the lean surface instead of activating unrecorded tools", async () => {
+  const extraDirect: ExtensionFactory = (pi) => {
+    pi.registerTool({
+      name: "extra_direct",
+      label: "extra direct",
+      description: "A direct tool the lean surface leaves inactive",
+      parameters: Type.Object({}),
+      execute: async () => ({ content: [{ type: "text", text: "extra" }], details: {} }),
+    });
+  };
+  const fixture = await sdkSession([toolSearch, createToolSearchExtension(), extraDirect]);
+  try {
+    const { session } = fixture;
+    await new Promise((resolve) => setImmediate(resolve));
+    const lean = session.getActiveToolNames();
+    assert.ok(lean.includes("tool_search"));
+    assert.ok(!lean.includes("extra_direct"));
+
+    // What Pi records with the first request: the declared loadout as a system message.
+    session.sessionManager.appendMessage({
+      role: "system",
+      content: "",
+      toolsAdded: lean.map((name) => ({ name, description: name, parameters: Type.Object({}) })),
+      timestamp: Date.now(),
+    });
+    const target = session.sessionManager.appendMessage({
+      role: "user",
+      content: [{ type: "text", text: "first" }],
+      timestamp: Date.now(),
+    });
+    session.sessionManager.appendMessage({
+      role: "user",
+      content: [{ type: "text", text: "second" }],
+      timestamp: Date.now(),
+    });
+
+    const result = await session.navigateTree(target, { summarize: false });
+    assert.equal(result.cancelled, false);
+    assert.deepEqual(session.getActiveToolNames(), lean);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("real Pi session: a recorded tool registered after /tree is active on the next request", async () => {
+  const faux = createFauxCore({
+    provider: "faux-tree",
+    api: "faux-tree-api",
+    models: [{ id: "m" }],
+  });
+  let registerLate: (() => void) | undefined;
+  const fixtureTools: ExtensionFactory = (pi) => {
+    pi.registerProvider("faux-tree", {
+      baseUrl: "http://127.0.0.1.invalid",
+      apiKey: "inert",
+      api: faux.api,
+      authHeader: false,
+      models: faux.models.map((model) => ({ ...model, name: model.id })),
+      streamSimple: faux.streamSimple,
+    });
+    pi.registerTool({
+      name: "extra_direct",
+      label: "extra direct",
+      description: "A direct tool the lean surface leaves inactive",
+      parameters: Type.Object({}),
+      execute: async () => ({ content: [{ type: "text", text: "extra" }], details: {} }),
+    });
+    // An MCP server still connecting at the navigation registers its tool later.
+    registerLate = () =>
+      pi.registerTool({
+        name: "mcp__late__probe",
+        label: "late probe",
+        description: "A recorded tool whose server connects late",
+        parameters: Type.Object({}),
+        exposure: "deferred",
+        execute: async () => ({ content: [{ type: "text", text: "late" }], details: {} }),
+      });
+  };
+  const fixture = await sdkSession([toolSearch, createToolSearchExtension(), fixtureTools]);
+  try {
+    const { session, modelRuntime } = fixture;
+    const model = modelRuntime.getModel("faux-tree", "m");
+    assert.ok(model);
+    await session.setModel(model);
+    await new Promise((resolve) => setImmediate(resolve));
+    const lean = session.getActiveToolNames();
+
+    const declared = [...lean, "mcp__late__probe"];
+    session.sessionManager.appendMessage({
+      role: "system",
+      content: "",
+      toolsAdded: declared.map((name) => ({
+        name,
+        description: name,
+        parameters: Type.Object({}),
+      })),
+      timestamp: Date.now(),
+    });
+    const target = session.sessionManager.appendMessage({
+      role: "user",
+      content: [{ type: "text", text: "first" }],
+      timestamp: Date.now(),
+    });
+    session.sessionManager.appendMessage({
+      role: "user",
+      content: [{ type: "text", text: "second" }],
+      timestamp: Date.now(),
+    });
+
+    assert.equal((await session.navigateTree(target, { summarize: false })).cancelled, false);
+    assert.deepEqual(session.getActiveToolNames(), lean);
+
+    registerLate?.();
+    faux.setResponses([fauxAssistantMessage([fauxText("done")])]);
+    await session.prompt("go");
+    const active = session.getActiveToolNames();
+    assert.ok(active.includes("mcp__late__probe"), "the recorded tool is active once registered");
+    assert.ok(!active.includes("extra_direct"), "the unrecorded tool stays inactive");
   } finally {
     await fixture.close();
   }
