@@ -14,6 +14,7 @@ import {
   type AgentSession,
   type ExtensionAPI,
   type ExtensionFactory,
+  type FileEntry,
   type ToolExposure,
 } from "@earendil-works/pi-coding-agent";
 import {
@@ -37,6 +38,11 @@ interface FakeTool {
   exposure?: ToolExposure;
 }
 
+/** The context members the policy reads: a fresh session with no recorded tools. */
+interface FakeContext {
+  sessionManager: { getBranch(): [] };
+}
+
 interface FakeHost {
   tools: FakeTool[];
   active: string[];
@@ -46,13 +52,14 @@ interface FakeHost {
 }
 
 function fakeHost(tools: FakeTool[], active: string[]): FakeHost {
-  const handlers = new Map<string, () => void>();
+  const handlers = new Map<string, (event: { type: string }, ctx: FakeContext) => void>();
+  const ctx: FakeContext = { sessionManager: { getBranch: () => [] } };
   const host: FakeHost = {
     tools,
     active,
     commits: [],
     registered: [],
-    emit: (event) => handlers.get(event)?.(),
+    emit: (event) => handlers.get(event)?.({ type: event }, ctx),
   };
   toolSearch(
     // SAFETY: The fixture supplies every host member the policy reads.
@@ -72,7 +79,8 @@ function fakeHost(tools: FakeTool[], active: string[]): FakeHost {
         host.active = [...names];
       },
       events: createEventBus(),
-      on: (name: string, handler: () => void) => handlers.set(name, handler),
+      on: (name: string, handler: (event: { type: string }, ctx: FakeContext) => void) =>
+        handlers.set(name, handler),
     }),
   );
   return host;
@@ -212,7 +220,10 @@ interface SdkSession {
   close(): Promise<void>;
 }
 
-async function sdkSession(factories: ExtensionFactory[]): Promise<SdkSession> {
+async function sdkSession(
+  factories: ExtensionFactory[],
+  entries?: FileEntry[],
+): Promise<SdkSession> {
   const root = await mkdtemp(join(tmpdir(), "choco-pi-tool-search-"));
   const settingsManager = SettingsManager.inMemory({});
   const loader = new DefaultResourceLoader({
@@ -240,7 +251,7 @@ async function sdkSession(factories: ExtensionFactory[]): Promise<SdkSession> {
     modelRuntime,
     resourceLoader: loader,
     settingsManager,
-    sessionManager: SessionManager.inMemory(root),
+    sessionManager: SessionManager.inMemory(root, undefined, entries),
   });
   await session.bindExtensions({});
   return {
@@ -302,10 +313,10 @@ test("real Pi session: built-in tool_search is active on turn one and loads late
   }
 });
 
-interface TreeFixture {
+interface LateToolFixture {
   session: AgentSession;
-  /** The lean surface before any navigation. */
-  lean: string[];
+  /** The active tools once the session has started. */
+  started: string[];
   /** Registers the recorded deferred tool, as an MCP server connecting late would. */
   registerLate(): void;
   /** Sends a prompt the faux model answers without tool calls. */
@@ -316,7 +327,14 @@ interface TreeFixture {
 const LATE_TOOL = "mcp__late__probe";
 const UNRECORDED_TOOL = "extra_direct";
 
-async function treeFixture(): Promise<TreeFixture> {
+interface LateToolOptions {
+  /** Entries of an earlier session to resume. */
+  resume?: FileEntry[];
+  /** Load choco-pi's tool-search policy; off for a Pi-only control. */
+  toolSearch?: boolean;
+}
+
+async function lateToolFixture(options: LateToolOptions = {}): Promise<LateToolFixture> {
   const faux = createFauxCore({
     provider: "faux-tree",
     api: "faux-tree-api",
@@ -349,18 +367,19 @@ async function treeFixture(): Promise<TreeFixture> {
         execute: async () => ({ content: [{ type: "text", text: "late" }], details: {} }),
       });
   };
-  const fixture = await sdkSession([toolSearch, createToolSearchExtension(), fixtureTools]);
+  const policy = options.toolSearch === false ? [] : [toolSearch];
+  const fixture = await sdkSession(
+    [...policy, createToolSearchExtension(), fixtureTools],
+    options.resume,
+  );
   const { session, modelRuntime } = fixture;
   const model = modelRuntime.getModel("faux-tree", "m");
   assert.ok(model, "faux model registered");
   await session.setModel(model);
   await new Promise((resolve) => setImmediate(resolve));
-  const lean = session.getActiveToolNames();
-  assert.ok(lean.includes("tool_search"));
-  assert.ok(!lean.includes(UNRECORDED_TOOL));
   return {
     session,
-    lean,
+    started: session.getActiveToolNames(),
     registerLate: () => registerLate(),
     prompt: async (text) => {
       faux.setResponses([fauxAssistantMessage([fauxText("done")])]);
@@ -370,44 +389,72 @@ async function treeFixture(): Promise<TreeFixture> {
   };
 }
 
-/**
- * Records `declared` the way Pi does with a first request, adds two user turns, and
- * navigates back to the first one.
- */
-async function recordAndNavigateBack(session: AgentSession, declared: string[]): Promise<void> {
-  const { sessionManager } = session;
-  const user = (text: string) =>
-    sessionManager.appendMessage({
-      role: "user",
-      content: [{ type: "text", text }],
-      timestamp: Date.now(),
-    });
+/** Records `declared` the way Pi does with a request: as a system message's added tools. */
+function recordTools(sessionManager: SessionManager, declared: readonly string[]): void {
   sessionManager.appendMessage({
     role: "system",
     content: "",
     toolsAdded: declared.map((name) => ({ name, description: name, parameters: Type.Object({}) })),
     timestamp: Date.now(),
   });
-  const target = user("first");
-  user("second");
+}
+
+function appendUserTurn(sessionManager: SessionManager, text: string): string {
+  return sessionManager.appendMessage({
+    role: "user",
+    content: [{ type: "text", text }],
+    timestamp: Date.now(),
+  });
+}
+
+/** Records `declared`, adds two user turns, and navigates back to the first one. */
+async function recordAndNavigateBack(session: AgentSession, declared: string[]): Promise<void> {
+  recordTools(session.sessionManager, declared);
+  const target = appendUserTurn(session.sessionManager, "first");
+  appendUserTurn(session.sessionManager, "second");
   assert.equal((await session.navigateTree(target, { summarize: false })).cancelled, false);
 }
 
+/** Entries of an earlier session whose transcript recorded `declared`, then `removed`. */
+function sessionThatRecorded(
+  declared: readonly string[],
+  removed: readonly string[] = [],
+): FileEntry[] {
+  const sessionManager = SessionManager.inMemory();
+  recordTools(sessionManager, declared);
+  appendUserTurn(sessionManager, "earlier turn");
+  if (removed.length > 0) {
+    sessionManager.appendMessage({
+      role: "system",
+      content: "",
+      toolsRemoved: removed.map((name) => ({ name })),
+      timestamp: Date.now(),
+    });
+    appendUserTurn(sessionManager, "later turn");
+  }
+  const header = sessionManager.getHeader();
+  assert.ok(header);
+  return [header, ...sessionManager.getEntries()];
+}
+
 test("real Pi session: /tree keeps the lean surface instead of activating unrecorded tools", async () => {
-  const fixture = await treeFixture();
+  const fixture = await lateToolFixture();
   try {
-    await recordAndNavigateBack(fixture.session, fixture.lean);
-    assert.deepEqual(fixture.session.getActiveToolNames(), fixture.lean);
+    const lean = fixture.started;
+    assert.ok(lean.includes("tool_search"));
+    assert.ok(!lean.includes(UNRECORDED_TOOL));
+    await recordAndNavigateBack(fixture.session, lean);
+    assert.deepEqual(fixture.session.getActiveToolNames(), lean);
   } finally {
     await fixture.close();
   }
 });
 
 test("real Pi session: a recorded tool registered after /tree is active on the next request", async () => {
-  const fixture = await treeFixture();
+  const fixture = await lateToolFixture();
   try {
-    await recordAndNavigateBack(fixture.session, [...fixture.lean, LATE_TOOL]);
-    assert.deepEqual(fixture.session.getActiveToolNames(), fixture.lean);
+    await recordAndNavigateBack(fixture.session, [...fixture.started, LATE_TOOL]);
+    assert.deepEqual(fixture.session.getActiveToolNames(), fixture.started);
 
     fixture.registerLate();
     await fixture.prompt("go");
@@ -420,13 +467,46 @@ test("real Pi session: a recorded tool registered after /tree is active on the n
 });
 
 test("real Pi session: a recorded tool still unregistered at the next request expires", async () => {
-  const fixture = await treeFixture();
+  const fixture = await lateToolFixture();
   try {
-    await recordAndNavigateBack(fixture.session, [...fixture.lean, LATE_TOOL]);
+    await recordAndNavigateBack(fixture.session, [...fixture.started, LATE_TOOL]);
     // Like Pi's pending tools, the restored name is dropped once a request records the loadout.
     await fixture.prompt("before registration");
     fixture.registerLate();
     await fixture.prompt("after registration");
+    assert.ok(!fixture.session.getActiveToolNames().includes(LATE_TOOL));
+  } finally {
+    await fixture.close();
+  }
+});
+
+// On resume, MCP servers are still connecting when the lean surface first commits, and that
+// commit clears Pi's pending recorded tools. The control shows Pi alone keeps the tool.
+for (const toolSearchLoaded of [false, true]) {
+  const subject = toolSearchLoaded ? "with the lean surface" : "Pi alone (control)";
+  test(`real Pi session: ${subject} keeps a searched tool that registers after resume`, async () => {
+    const fixture = await lateToolFixture({
+      resume: sessionThatRecorded(["read", "tool_search", LATE_TOOL]),
+      toolSearch: toolSearchLoaded,
+    });
+    try {
+      assert.ok(!fixture.started.includes(LATE_TOOL), "the tool is not registered at startup");
+      fixture.registerLate();
+      await fixture.prompt("go");
+      assert.ok(fixture.session.getActiveToolNames().includes(LATE_TOOL));
+    } finally {
+      await fixture.close();
+    }
+  });
+}
+
+test("real Pi session: a tool the transcript removed stays inactive after resume", async () => {
+  const fixture = await lateToolFixture({
+    resume: sessionThatRecorded(["read", "tool_search", LATE_TOOL], [LATE_TOOL]),
+  });
+  try {
+    fixture.registerLate();
+    await fixture.prompt("go");
     assert.ok(!fixture.session.getActiveToolNames().includes(LATE_TOOL));
   } finally {
     await fixture.close();

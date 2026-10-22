@@ -47,10 +47,18 @@ test("live Opus native surface matches the capture and stays within its budget",
   assert.equal(capture.rewrites, 0);
 });
 
+/** The context members the tool-search policy reads: a fresh session with no recorded tools. */
+interface FreshSessionContext {
+  sessionManager: { getBranch(): [] };
+}
+
 test("never changes active tools after the first before_agent_start", async () => {
   let activeTools = ["read", "exec_command"];
   const registeredTools: Array<{ name: string; description: string; parameters: object }> = [];
-  const lifecycleHandlers = new Map<string, () => void>();
+  type LifecycleHandler = (event: { type: string }, ctx: FreshSessionContext) => void;
+  const lifecycleHandlers = new Map<string, LifecycleHandler>();
+  const emitLifecycle = (type: string) =>
+    lifecycleHandlers.get(type)?.({ type }, { sessionManager: { getBranch: () => [] } });
   const eventHandlers = new Map<string, (payload: RuntimeValue) => void>();
   const commits: string[][] = [];
   const events = createEventBus();
@@ -81,14 +89,14 @@ test("never changes active tools after the first before_agent_start", async () =
         },
         emit: events.emit.bind(events),
       },
-      on: (name: string, handler: () => void) => {
+      on: (name: string, handler: LifecycleHandler) => {
         lifecycleHandlers.set(name, handler);
       },
     }),
   );
 
-  lifecycleHandlers.get("session_start")?.();
-  lifecycleHandlers.get("before_agent_start")?.();
+  emitLifecycle("session_start");
+  emitLifecycle("before_agent_start");
   const commitsAfterFirstRequest = commits.length;
 
   activeTools = [...activeTools, "synthetic_web_search"];

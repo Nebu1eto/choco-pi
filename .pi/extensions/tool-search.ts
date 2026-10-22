@@ -108,10 +108,38 @@ export default function toolSearch(pi: ExtensionAPI): void {
     });
   };
 
-  pi.on("session_start", () => {
+  // Recorded tools that are not registered yet, such as MCP tools of a server still
+  // connecting. Pi activates such tools when they register, but any narrowing of the
+  // active set, including the lean commit, clears that list. They are activated here
+  // instead, and like Pi's they expire at the next request.
+  let awaited: AwaitedTools = NOTHING_AWAITED;
+
+  const awaitUnregistered = (
+    names: ReadonlySet<string>,
+    accepts: AwaitedTools["accepts"],
+  ): AwaitedTools => {
+    const registered = new Set(pi.getAllTools().map((tool) => tool.name));
+    return { names: new Set([...names].filter((name) => !registered.has(name))), accepts };
+  };
+
+  const activateAwaitedTools = (): void => {
+    const { names, accepts } = awaited;
+    awaited = NOTHING_AWAITED;
+    if (names.size === 0) return;
+    const exposures = new Map(pi.getAllTools().map((tool) => [tool.name, tool.exposure]));
+    const active = pi.getActiveTools();
+    const ready = [...names].filter(
+      (name) => exposures.has(name) && !active.includes(name) && accepts(exposures.get(name)),
+    );
+    if (ready.length > 0) pi.setActiveTools([...active, ...ready]);
+  };
+
+  pi.on("session_start", (_event, ctx) => {
     unlockPrefix();
     leanSurfaceInitialized = false;
-    awaitingRegistration = new Set();
+    // A resumed session's searched tools carry over, as the first lean commit keeps them.
+    const record = readBranchToolRecord(ctx.sessionManager.getBranch());
+    awaited = record ? awaitUnregistered(record.current, isSearchLoadedExposure) : NOTHING_AWAITED;
     scheduleLeanSurface();
   });
   pi.on("before_agent_start", () => {
@@ -133,40 +161,31 @@ export default function toolSearch(pi: ExtensionAPI): void {
   // inactive and changing the request prefix. Drop exactly those additions: tools that
   // were inactive before the navigation and that the target branch never mentions.
   let activeBeforeTree: ReadonlySet<string> | undefined;
-  // Recorded tools not yet registered at the navigation, such as MCP tools of a server
-  // still connecting. Narrowing the active set clears Pi's pending names, so they are
-  // activated here instead, and like Pi's they expire at the next request.
-  let awaitingRegistration = new Set<string>();
-
-  function activateAwaitedTools(): void {
-    if (awaitingRegistration.size === 0) return;
-    const registered = new Set(pi.getAllTools().map((tool) => tool.name));
-    const active = pi.getActiveTools();
-    const ready = [...awaitingRegistration].filter(
-      (name) => registered.has(name) && !active.includes(name),
-    );
-    awaitingRegistration = new Set();
-    if (ready.length > 0) pi.setActiveTools([...active, ...ready]);
-  }
-
   pi.on("session_before_tree", () => {
     activeBeforeTree = new Set(pi.getActiveTools());
   });
   pi.on("session_tree", (_event, ctx) => {
     const before = activeBeforeTree;
     activeBeforeTree = undefined;
-    awaitingRegistration = new Set();
+    awaited = NOTHING_AWAITED;
     const record = before && readBranchToolRecord(ctx.sessionManager.getBranch());
     // Without a recorded loadout Pi keeps the current tools.
     if (!before || !record) return;
     const active = pi.getActiveTools();
     const kept = active.filter((name) => before.has(name) || record.mentioned.has(name));
     if (kept.length === active.length) return;
-    const registered = new Set(pi.getAllTools().map((tool) => tool.name));
-    awaitingRegistration = new Set([...record.current].filter((name) => !registered.has(name)));
+    awaited = awaitUnregistered(record.current, () => true);
     pi.setActiveTools(kept);
   });
 }
+
+interface AwaitedTools {
+  names: ReadonlySet<string>;
+  /** Whether a tool with this exposure may carry over once registered. */
+  accepts(exposure: ToolExposure | undefined): boolean;
+}
+
+const NOTHING_AWAITED: AwaitedTools = { names: new Set(), accepts: () => false };
 
 interface BranchToolRecord {
   /** Every tool the branch ever added or removed. */
