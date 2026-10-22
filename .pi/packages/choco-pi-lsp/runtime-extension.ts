@@ -1771,11 +1771,8 @@ function activateExtension(hostPi: ExtensionAPI) {
       // dependency allows, so probe with typeof rather than assuming the
       // pinned devDependency version's API exists at runtime.
       //
-      // registration-manifest.json registers the lazy tools with
-      // `defaultActive: false`: Pi 1.4.0 re-activates any extension tool a
-      // branch never recorded when it restores tools on resume or `/tree`,
-      // unless the tool opts out at registration. `--no-lazy-tools` therefore
-      // turns them on here instead of leaving the set untouched.
+      // The lazy tools register inactive (`defaultActive: false` in
+      // registration-manifest.json), so `--no-lazy-tools` activates them here.
       try {
         // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
         const piWithActiveTools = pi as {
@@ -1784,18 +1781,16 @@ function activateExtension(hostPi: ExtensionAPI) {
         };
         const getActiveTools = piWithActiveTools.getActiveTools;
         const setActiveTools = piWithActiveTools.setActiveTools;
-        if (getLensFlag("no-lazy-tools") === true && getActiveTools && setActiveTools) {
+        const lazyNames = LAZY_TOOL_CATALOG.map((t) => t.name);
+        if (getActiveTools && setActiveTools && getLensFlag("no-lazy-tools") === true) {
           const active = getActiveTools();
-          const missing = LAZY_TOOL_CATALOG.map((t) => t.name).filter(
-            (name) => !active.includes(name),
-          );
+          const missing = lazyNames.filter((name) => !active.includes(name));
           if (missing.length > 0) setActiveTools([...active, ...missing]);
         } else if (getActiveTools && setActiveTools) {
           // A fresh conversation starts with no activation memory; a
           // rebuild inherits the parent's.
           if (isFreshSessionStart(sessionReason)) rememberedLazyTools.clear();
-          const lazyNames = new Set(LAZY_TOOL_CATALOG.map((t) => t.name));
-          const plan = planToolSet(getActiveTools(), lazyNames, rememberedLazyTools);
+          const plan = planToolSet(getActiveTools(), new Set(lazyNames), rememberedLazyTools);
           if (plan.changed) {
             setActiveTools(plan.desired);
             recordToolSetMutation({

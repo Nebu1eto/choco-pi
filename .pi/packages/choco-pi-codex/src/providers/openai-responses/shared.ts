@@ -133,8 +133,9 @@ export function splitDeferredTools(
   context: TranscriptContext,
   enabled: boolean,
 ): DeferredToolPlacement {
-  // Pi 1.3.0 `resolveTranscriptTools(messages, true)` semantics, kept across Pi 1.4.0's
-  // "additions" mode: any removal or redeclaration sends the current tool list inline.
+  // Additions are deferred only while the transcript is purely additive: the initial
+  // tools stay top-level and later ones load in place. Any removal or redeclaration
+  // sends the whole current tool list top-level instead.
   const anchorsAdditions = enabled && !hasNonAdditiveToolChanges(context.messages);
   const immediate = anchorsAdditions
     ? (getInitialSystemMessage(context.messages)?.toolsAdded ?? [])
