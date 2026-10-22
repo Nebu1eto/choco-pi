@@ -17,7 +17,7 @@ import {
   publishLeanSurface,
   TOOL_SEARCH_TOOL_NAME,
 } from "./lib/tool-surface.ts";
-import type { ExtensionAPI, ToolExposure } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, SessionEntry, ToolExposure } from "@earendil-works/pi-coding-agent";
 import { hasCanonicalSearch } from "../packages/choco-pi-web-search/index.ts";
 
 export {
@@ -111,14 +111,14 @@ export default function toolSearch(pi: ExtensionAPI): void {
   pi.on("session_start", () => {
     unlockPrefix();
     leanSurfaceInitialized = false;
-    recordedUnregistered = new Set();
+    awaitingRegistration = new Set();
     scheduleLeanSurface();
   });
   pi.on("before_agent_start", () => {
     cancelScheduledLeanSurface();
     commitLeanSurface();
     lockPrefix();
-    activateRegisteredRecordedTools();
+    activateAwaitedTools();
   });
   pi.on("session_shutdown", () => {
     cancelScheduledLeanSurface();
@@ -129,55 +129,68 @@ export default function toolSearch(pi: ExtensionAPI): void {
   });
 
   // Pi 1.4.0 restores a branch's recorded tools on `/tree` and also activates every
-  // registered tool the branch never mentions, which re-declares the tools this lean
-  // surface left inactive and changes the request prefix. Drop exactly those additions:
-  // tools inactive before the navigation that the target branch never added or removed.
+  // registered tool the branch never mentions, re-declaring tools this lean surface left
+  // inactive and changing the request prefix. Drop exactly those additions: tools that
+  // were inactive before the navigation and that the target branch never mentions.
   let activeBeforeTree: ReadonlySet<string> | undefined;
-  // Recorded tools that were not registered at the navigation, such as MCP tools of a
-  // server still connecting. Pi keeps them pending, but narrowing the active set clears
-  // its pending names, so they are activated here once registered instead.
-  let recordedUnregistered = new Set<string>();
-  function activateRegisteredRecordedTools(): void {
-    if (recordedUnregistered.size === 0) return;
+  // Recorded tools not yet registered at the navigation, such as MCP tools of a server
+  // still connecting. Narrowing the active set clears Pi's pending names, so they are
+  // activated here instead, and like Pi's they expire at the next request.
+  let awaitingRegistration = new Set<string>();
+
+  function activateAwaitedTools(): void {
+    if (awaitingRegistration.size === 0) return;
     const registered = new Set(pi.getAllTools().map((tool) => tool.name));
     const active = pi.getActiveTools();
-    const ready = [...recordedUnregistered].filter(
+    const ready = [...awaitingRegistration].filter(
       (name) => registered.has(name) && !active.includes(name),
     );
-    for (const name of recordedUnregistered)
-      if (registered.has(name)) recordedUnregistered.delete(name);
+    awaitingRegistration = new Set();
     if (ready.length > 0) pi.setActiveTools([...active, ...ready]);
   }
+
   pi.on("session_before_tree", () => {
     activeBeforeTree = new Set(pi.getActiveTools());
   });
   pi.on("session_tree", (_event, ctx) => {
     const before = activeBeforeTree;
     activeBeforeTree = undefined;
-    recordedUnregistered = new Set();
-    if (!before) return;
-    const mentioned = new Set<string>();
-    const recordedTools = new Set<string>();
-    let recorded = false;
-    for (const entry of ctx.sessionManager.getBranch()) {
-      if (entry.type !== "message" || entry.message.role !== "system") continue;
-      recorded = true;
-      for (const tool of entry.message.toolsRemoved ?? []) {
-        mentioned.add(tool.name);
-        recordedTools.delete(tool.name);
-      }
-      for (const tool of entry.message.toolsAdded ?? []) {
-        mentioned.add(tool.name);
-        recordedTools.add(tool.name);
-      }
-    }
+    awaitingRegistration = new Set();
+    const record = before && readBranchToolRecord(ctx.sessionManager.getBranch());
     // Without a recorded loadout Pi keeps the current tools.
-    if (!recorded) return;
+    if (!before || !record) return;
     const active = pi.getActiveTools();
-    const kept = active.filter((name) => before.has(name) || mentioned.has(name));
+    const kept = active.filter((name) => before.has(name) || record.mentioned.has(name));
     if (kept.length === active.length) return;
     const registered = new Set(pi.getAllTools().map((tool) => tool.name));
-    recordedUnregistered = new Set([...recordedTools].filter((name) => !registered.has(name)));
+    awaitingRegistration = new Set([...record.current].filter((name) => !registered.has(name)));
     pi.setActiveTools(kept);
   });
+}
+
+interface BranchToolRecord {
+  /** Every tool the branch ever added or removed. */
+  mentioned: ReadonlySet<string>;
+  /** The branch's current recorded loadout. */
+  current: ReadonlySet<string>;
+}
+
+/** The branch's recorded tool state, or undefined when it has none yet. */
+function readBranchToolRecord(branch: readonly SessionEntry[]): BranchToolRecord | undefined {
+  const mentioned = new Set<string>();
+  const current = new Set<string>();
+  let recorded = false;
+  for (const entry of branch) {
+    if (entry.type !== "message" || entry.message.role !== "system") continue;
+    recorded = true;
+    for (const tool of entry.message.toolsRemoved ?? []) {
+      mentioned.add(tool.name);
+      current.delete(tool.name);
+    }
+    for (const tool of entry.message.toolsAdded ?? []) {
+      mentioned.add(tool.name);
+      current.add(tool.name);
+    }
+  }
+  return recorded ? { mentioned, current } : undefined;
 }
