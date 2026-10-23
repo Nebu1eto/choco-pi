@@ -516,6 +516,33 @@ test("Synthetic usage reports only weekly credits, not the retired five-hour lim
   assert.doesNotMatch(formatProviderUsage(usage), /five-hour|requests remaining|limited/iu);
 });
 
+function syntheticPlanPayload(percentRemaining: number): RuntimeValue {
+  // Shape returned by /v2/quotas since Synthetic replaced weeklyTokenLimit.
+  return {
+    subscription: { limit: 500, requests: 0, renewsAt: "2026-08-20T12:15:00Z" },
+    search: { hourly: { limit: 250, requests: 0, renewsAt: "2026-08-20T12:15:00Z" } },
+    planWeeklyLimit: {
+      nextRegenAt: "2026-08-20T18:00:00Z",
+      percentRemaining,
+      nextRegenPercent: 2,
+    },
+  };
+}
+
+test("Synthetic usage reads the percent-only planWeeklyLimit", () => {
+  const usage = normalizeSyntheticUsage(syntheticPlanPayload(51.85), undefined, NOW);
+  assert.equal(usage.windows.length, 1);
+  assert.equal(usage.windows[0].label, "Weekly");
+  assert.equal(usage.windows[0].percent, 48.15);
+  assert.equal(usage.windows[0].eventLabel, "regenerates 2%");
+
+  const previous = { payload: syntheticPlanPayload(51.85), storedAt: NOW - 5 * 60_000 };
+  const draining = normalizeSyntheticUsage(syntheticPlanPayload(50), previous, NOW);
+  assert.equal(quotaHealth(draining.windows[0], NOW), "over");
+  const recovering = normalizeSyntheticUsage(syntheticPlanPayload(53.85), previous, NOW);
+  assert.equal(quotaHealth(recovering.windows[0], NOW), "under");
+});
+
 test("Synthetic pacing compares the stored reading with the live one", () => {
   const previous = { payload: syntheticPayload("$40.00"), storedAt: NOW - 5 * 60_000 };
   const draining = normalizeSyntheticUsage(syntheticPayload("$39.00"), previous, NOW);

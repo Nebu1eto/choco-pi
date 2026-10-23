@@ -387,12 +387,22 @@ type SyntheticReadings = { weekly?: RefillReading };
 /**
  * The refilling bucket a `/v2/quotas` response reports, when present.
  *
+ * Synthetic now reports the weekly plan limit as `planWeeklyLimit`, in percent
+ * only; the credit-denominated `weeklyTokenLimit` is read as a fallback for
+ * snapshots stored before that change.
+ *
  * Synthetic retired its five-hour request limit, so `rollingFiveHourLimit`
  * (and the legacy `subscription` request counter) is deliberately ignored.
  */
 export function syntheticReadings(payload: RuntimeValue): SyntheticReadings {
   if (!isRecord(payload)) return {};
   const readings: SyntheticReadings = {};
+  const plan = isRecord(payload.planWeeklyLimit) ? payload.planWeeklyLimit : undefined;
+  const planRemaining = plan ? numberValue(plan.percentRemaining) : undefined;
+  if (planRemaining !== undefined) {
+    readings.weekly = { capacity: 100, remaining: planRemaining };
+    return readings;
+  }
   const weekly = isRecord(payload.weeklyTokenLimit) ? payload.weeklyTokenLimit : undefined;
   const maxCredits = weekly ? stringValue(weekly.maxCredits) : undefined;
   const remainingCredits = weekly ? stringValue(weekly.remainingCredits) : undefined;
@@ -443,6 +453,27 @@ export function normalizeSyntheticUsage(
   const readings = syntheticReadings(payload);
   const priorReadings = previous ? syntheticReadings(previous.payload) : {};
   const elapsedMs = previous ? payloadAt - previous.storedAt : Number.NaN;
+
+  const plan = isRecord(payload.planWeeklyLimit) ? payload.planWeeklyLimit : undefined;
+  const planRemaining = plan ? numberValue(plan.percentRemaining) : undefined;
+  if (planRemaining !== undefined) {
+    const regenPercent = numberValue(plan?.nextRegenPercent);
+    const window: UsageWindow = {
+      label: "Weekly",
+      percent: clampPercent(100 - planRemaining),
+      qualifier: "used",
+      eventAt: dateValue(plan?.nextRegenAt),
+      eventLabel:
+        regenPercent === undefined
+          ? "regenerates"
+          : `regenerates ${formatNumber(regenPercent, 2)}%`,
+      precision: 2,
+    };
+    const pace = refillPace(readings.weekly, priorReadings.weekly, elapsedMs);
+    if (pace) window.pace = pace;
+    windows.push(window);
+    return { name: "Synthetic", windows };
+  }
 
   const weekly = isRecord(payload.weeklyTokenLimit) ? payload.weeklyTokenLimit : undefined;
   const remainingPercent = weekly ? numberValue(weekly.percentRemaining) : undefined;
