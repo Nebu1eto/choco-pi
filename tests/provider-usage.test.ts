@@ -313,7 +313,11 @@ test("usage numbers are rounded for display instead of echoing float noise", () 
   });
   assert.equal(formatProviderUsage(codex), "ChatGPT — Pro 200 · 62500 credits");
   const fractional = normalizeCodexUsage({ credits: { balance: 12.3456 }, rate_limit: {} });
-  assert.equal(fractional.status, "12.35 credits");
+  assert.equal(fractional.status, "12 credits");
+  const half = normalizeCodexUsage({ credits: { balance: "12.5" }, rate_limit: {} });
+  assert.equal(half.status, "13 credits");
+  const negativeZero = normalizeCodexUsage({ credits: { balance: "-0.3" }, rate_limit: {} });
+  assert.equal(negativeZero.status, "0 credits");
   const unparsable = normalizeCodexUsage({ credits: { balance: "n/a" }, rate_limit: {} });
   assert.equal(unparsable.status, "n/a credits");
 });

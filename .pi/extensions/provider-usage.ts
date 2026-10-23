@@ -967,11 +967,12 @@ function formatNumber(value: number, precision: number): string {
   return fixed.includes(".") ? fixed.replace(/0+$/, "").replace(/\.$/, "") : fixed;
 }
 
-/** Credit balances arrive as decimal strings or floats; show at most two decimals, trimmed. */
+/** Credit balances arrive as decimal strings or floats; show them rounded to an integer. */
 function formatCredits(value: RuntimeValue): string | undefined {
   const text = stringValue(value);
   const parsed = text !== undefined ? Number(text) : numberValue(value);
-  if (parsed !== undefined && Number.isFinite(parsed)) return formatNumber(parsed, 2);
+  // String(-0) is "0", so small negative balances never render as "-0".
+  if (parsed !== undefined && Number.isFinite(parsed)) return String(Math.round(parsed));
   return text;
 }
 
