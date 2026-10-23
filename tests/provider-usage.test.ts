@@ -539,6 +539,14 @@ test("Synthetic usage reads the percent-only planWeeklyLimit", () => {
   assert.equal(usage.windows[0].label, "Weekly");
   assert.equal(usage.windows[0].percent, 48.15);
   assert.equal(usage.windows[0].eventLabel, "regenerates 2%");
+  assert.match(formatProviderUsage(usage, undefined, NOW), /48% used/);
+  assert.doesNotMatch(formatProviderUsage(usage, undefined, NOW), /48\.15/);
+  const fractionalRegen = normalizeSyntheticUsage(
+    { planWeeklyLimit: { percentRemaining: 50, nextRegenPercent: 2.6 } },
+    undefined,
+    NOW,
+  );
+  assert.equal(fractionalRegen.windows[0].eventLabel, "regenerates 3%");
 
   const previous = { payload: syntheticPlanPayload(51.85), storedAt: NOW - 5 * 60_000 };
   const draining = normalizeSyntheticUsage(syntheticPlanPayload(50), previous, NOW);

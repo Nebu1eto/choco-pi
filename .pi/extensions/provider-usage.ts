@@ -49,7 +49,6 @@ export type UsageWindow = {
   eventAt?: Date;
   eventLabel?: string;
   detail?: string;
-  precision?: number;
   /**
    * Full length of the quota window. Set only where the provider states a
    * fixed window, which is what makes `eventAt` measurable as a pace.
@@ -466,8 +465,7 @@ export function normalizeSyntheticUsage(
       eventLabel:
         regenPercent === undefined
           ? "regenerates"
-          : `regenerates ${formatNumber(regenPercent, 2)}%`,
-      precision: 2,
+          : `regenerates ${formatNumber(regenPercent, 0)}%`,
     };
     const pace = refillPace(readings.weekly, priorReadings.weekly, elapsedMs);
     if (pace) window.pace = pace;
@@ -485,7 +483,7 @@ export function normalizeSyntheticUsage(
         ? (currencyValue(nextRegenCredits) / currencyValue(maxCredits)) * 100
         : undefined;
     const regenDescription = nextRegenCredits
-      ? `regenerates${regenPercent !== undefined && Number.isFinite(regenPercent) ? ` ${formatNumber(regenPercent, 2)}%` : ""} (${nextRegenCredits})`
+      ? `regenerates${regenPercent !== undefined && Number.isFinite(regenPercent) ? ` ${formatNumber(regenPercent, 0)}%` : ""} (${nextRegenCredits})`
       : "regenerates";
     const window: UsageWindow = {
       label: "Weekly credits",
@@ -496,7 +494,6 @@ export function normalizeSyntheticUsage(
       detail: stringValue(weekly?.remainingCredits)
         ? `${weekly?.remainingCredits} remaining`
         : undefined,
-      precision: 2,
     };
     const pace = refillPace(readings.weekly, priorReadings.weekly, elapsedMs);
     if (pace) window.pace = pace;
@@ -1079,7 +1076,7 @@ export type UsageWindowSummary = { percent: string; detail: string };
  * empty when the provider reported none of them.
  */
 export function describeUsageWindow(window: UsageWindow, now = Date.now()): UsageWindowSummary {
-  const percent = formatNumber(window.percent, window.precision ?? 0);
+  const percent = formatNumber(window.percent, 0);
   const eventTime = relativeTime(window.eventAt, now);
   const event = window.eventLabel && eventTime ? `${window.eventLabel} ${eventTime}` : undefined;
   const elapsed = windowElapsedPercent(window, now);

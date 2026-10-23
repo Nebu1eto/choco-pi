@@ -241,7 +241,6 @@ const USAGE_FIXTURE: ProviderUsageReport = {
             percent: 12.5,
             qualifier: "used",
             detail: "$21.00 remaining",
-            precision: 2,
             pace: { health: "under", label: "refill keeping up" },
           },
         ],
@@ -301,7 +300,7 @@ test("usageReportFrame yields a schema-valid frame with a typed block and generi
   const claude = frame.sections[0].rows[1];
   assert.equal(claude.value, "42% used");
   assert.equal(claude.hint, "resets in 2h · 60% of window elapsed");
-  assert.equal(frame.sections[1].rows[1].value, "12.5% used");
+  assert.equal(frame.sections[1].rows[1].value, "13% used");
   assert.match(frame.sections[1].rows[0].value, /^cached .+ · HTTP 429$/);
   assert.doesNotMatch(JSON.stringify(frame), /account|token|Bearer|cookie/i);
 });
