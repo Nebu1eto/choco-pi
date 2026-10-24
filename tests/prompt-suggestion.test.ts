@@ -14,6 +14,8 @@ import {
   createPromptSuggestionController,
   PROMPT_SUGGESTION_FALLBACK_MODEL,
   PROMPT_SUGGESTION_MODEL,
+  PROMPT_SUGGESTION_SYSTEM_PROMPT,
+  promptSuggestionSystemPrompt,
   renderGhostSuggestion,
   sanitizePromptSuggestion,
   suggestionTranscript,
@@ -164,20 +166,31 @@ test("transcripts require a completed final reply and include user turns", () =>
   assert.equal(suggestionTranscript(entries([message("assistant", "hello")])), undefined);
 });
 
-function settleHarness(options: { enabled?: boolean; editorText?: string } = {}) {
+function settleHarness(
+  options: {
+    enabled?: boolean;
+    editorText?: string;
+    language?: string;
+    pending?: boolean;
+    branch?: Entry[];
+  } = {},
+) {
   let sessionId = "session-a";
-  const branch = entries([message("user", "Fix the bug"), message("assistant", "Fixed.")]);
+  const branch = entries(
+    options.branch ?? [message("user", "Fix the bug"), message("assistant", "Fixed.")],
+  );
   const ctx = reinterpretHostValue<ExtensionContext>({
     mode: "tui",
     sessionManager: { getSessionId: () => sessionId, getBranch: () => branch },
     ui: { getEditorText: () => options.editorText ?? "" },
+    hasPendingMessages: () => options.pending ?? false,
   });
   return {
     ctx,
     switchSession(next: string) {
       sessionId = next;
     },
-    isEnabled: async () => options.enabled ?? true,
+    readPreferences: async () => ({ enabled: options.enabled ?? true, language: options.language }),
   };
 }
 
@@ -189,7 +202,10 @@ test("a settled run fills the slot, falling back when the primary model fails", 
     return "Run the tests";
   };
   const harness = settleHarness();
-  const controller = createPromptSuggestionController({ generate, isEnabled: harness.isEnabled });
+  const controller = createPromptSuggestionController({
+    generate,
+    readPreferences: harness.readPreferences,
+  });
   let renders = 0;
   controller.slot.requestRender = () => {
     renders += 1;
@@ -212,13 +228,19 @@ test("disabled preference, a typed draft, or another session skips the request",
     return "unused";
   };
   for (const harness of [settleHarness({ enabled: false }), settleHarness({ editorText: "dra" })]) {
-    const controller = createPromptSuggestionController({ generate, isEnabled: harness.isEnabled });
+    const controller = createPromptSuggestionController({
+      generate,
+      readPreferences: harness.readPreferences,
+    });
     controller.start("session-a");
     await controller.settled(harness.ctx);
     assert.equal(controller.slot.text, undefined);
   }
   const other = settleHarness();
-  const controller = createPromptSuggestionController({ generate, isEnabled: other.isEnabled });
+  const controller = createPromptSuggestionController({
+    generate,
+    readPreferences: other.readPreferences,
+  });
   controller.start("session-b");
   await controller.settled(other.ctx);
   assert.deepEqual(calls, []);
@@ -235,7 +257,10 @@ test("a result arriving after the next run starts is discarded", async () => {
     });
   };
   const harness = settleHarness();
-  const controller = createPromptSuggestionController({ generate, isEnabled: harness.isEnabled });
+  const controller = createPromptSuggestionController({
+    generate,
+    readPreferences: harness.readPreferences,
+  });
   controller.start("session-a");
   const pending = controller.settled(harness.ctx);
   await new Promise<RuntimeValue>((resolve) => setImmediate(resolve));
@@ -253,7 +278,10 @@ test("the agent_settled handler returns without waiting for the model", async ()
     return new Promise<string>(() => {});
   };
   const harness = settleHarness();
-  const suggestions = createPromptSuggestionController({ generate, isEnabled: harness.isEnabled });
+  const suggestions = createPromptSuggestionController({
+    generate,
+    readPreferences: harness.readPreferences,
+  });
   const handlers = new Map<string, (event: RuntimeValue, ctx: ExtensionContext) => RuntimeValue>();
   const pi = reinterpretHostValue<ExtensionAPI>({
     on: (name: string, handler: (event: RuntimeValue, ctx: ExtensionContext) => RuntimeValue) =>
@@ -266,4 +294,120 @@ test("the agent_settled handler returns without waiting for the model", async ()
   await new Promise<RuntimeValue>((resolve) => setImmediate(resolve));
   assert.equal(started, true);
   suggestions.stop();
+});
+
+async function settleOnce(
+  harness: ReturnType<typeof settleHarness>,
+  generate: PromptSuggestionGenerator,
+): Promise<string | undefined> {
+  const controller = createPromptSuggestionController({
+    generate,
+    readPreferences: harness.readPreferences,
+  });
+  controller.start("session-a");
+  await controller.settled(harness.ctx);
+  return controller.slot.text;
+}
+
+test("a suggestion in a script the user and preference never use is dropped", async () => {
+  const korean = [message("user", "버그 고쳐 줘"), message("assistant", "Fixed. Add a test?")];
+  const shown = async (suggestion: string, language?: string) =>
+    settleOnce(settleHarness({ branch: korean, language }), async () => suggestion);
+  assert.equal(await shown("네, 테스트 추가해 줘", "English"), "네, 테스트 추가해 줘");
+  assert.equal(
+    await shown("Yes, add tests in prompt-suggestion.test.ts", "English"),
+    "Yes, add tests in prompt-suggestion.test.ts",
+  );
+  assert.equal(await shown("はい、テストを追加して", "English"), undefined);
+  assert.equal(await shown("好的，添加测试", "English"), undefined);
+  assert.equal(await shown("Да, добавь тест", "English"), undefined);
+  assert.equal(await shown("はい、テストを追加して", "Japanese"), "はい、テストを追加して");
+  assert.equal(await shown("Да, добавь тест", "Русский"), "Да, добавь тест");
+});
+
+test("the preferred language reaches the request and its system prompt", async () => {
+  let seen: string | undefined;
+  await settleOnce(settleHarness({ language: "Korean" }), async ({ language }) => {
+    seen = language;
+    return undefined;
+  });
+  assert.equal(seen, "Korean");
+  assert.ok(promptSuggestionSystemPrompt("Korean").includes("Preferred response language: Korean"));
+  assert.equal(promptSuggestionSystemPrompt(undefined), PROMPT_SUGGESTION_SYSTEM_PROMPT);
+});
+
+type GlobalSlots = { [slot: symbol]: RuntimeValue };
+
+async function withGlobalSlot<T>(
+  key: string,
+  value: RuntimeValue,
+  run: () => Promise<T>,
+): Promise<T> {
+  const slots = reinterpretHostValue<GlobalSlots>(globalThis);
+  const symbol = Symbol.for(key);
+  const previous = slots[symbol];
+  slots[symbol] = value;
+  try {
+    return await run();
+  } finally {
+    if (previous === undefined) Reflect.deleteProperty(globalThis, symbol);
+    else slots[symbol] = previous;
+  }
+}
+
+test("no suggestion is requested while the agent will resume on its own", async () => {
+  const calls: string[] = [];
+  const generate: PromptSuggestionGenerator = async ({ modelName }) => {
+    calls.push(modelName);
+    return "Run the tests";
+  };
+  assert.equal(await settleOnce(settleHarness({ pending: true }), generate), undefined);
+
+  const goal = (status: string) =>
+    new Map([
+      ["session-a", { owner: "session-a", getGoal: () => ({ status }), completeGoal: () => ({}) }],
+    ]);
+  assert.equal(
+    await withGlobalSlot("choco-pi-goal:runtime", goal("active"), () =>
+      settleOnce(settleHarness(), generate),
+    ),
+    undefined,
+  );
+  assert.equal(
+    await withGlobalSlot("pi-subagents:manager", { hasRunning: () => true }, () =>
+      settleOnce(settleHarness(), generate),
+    ),
+    undefined,
+  );
+  const shellManager = {
+    list: () => ({
+      shells: [
+        {
+          shellId: "s1",
+          ownerId: "session-a",
+          command: "sleep 9",
+          cwd: "/",
+          state: "running",
+          startedAt: 1,
+        },
+      ],
+    }),
+    read: () => ({}),
+    stop: () => ({}),
+    toolCallIdOf: () => null,
+  };
+  assert.equal(
+    await withGlobalSlot("choco-pi-shells:manager", shellManager, () =>
+      settleOnce(settleHarness(), generate),
+    ),
+    undefined,
+  );
+  assert.deepEqual(calls, []);
+
+  assert.equal(
+    await withGlobalSlot("choco-pi-goal:runtime", goal("paused"), () =>
+      settleOnce(settleHarness(), generate),
+    ),
+    "Run the tests",
+  );
 });

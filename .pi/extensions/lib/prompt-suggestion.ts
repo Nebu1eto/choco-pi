@@ -7,8 +7,12 @@ import {
   truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
-import { readAgentPreferencesAsync } from "./agent-preferences.ts";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
+import { readAgentPreferencesAsync, renderPreferredLanguageLine } from "./agent-preferences.ts";
+import { createProcessSources } from "./host-bridge/sources.ts";
 import { isStaleContextError } from "./lifecycle.ts";
+import { hasRunningSubagents } from "./subagent-manager.ts";
 import { isString, type RuntimeValue } from "./runtime-values.ts";
 
 export const PROMPT_SUGGESTION_MODEL = "openai-codex/gpt-6-luna";
@@ -23,13 +27,30 @@ export const PROMPT_SUGGESTION_SYSTEM_PROMPT =
   "You predict the next message the USER will type to a coding AGENT, given their recent conversation. " +
   "The transcript labels each message USER or AGENT. You write as the USER, replying to the AGENT's last message: " +
   "never repeat, paraphrase, or continue the AGENT's words, and never ask the AGENT's own questions back. " +
+  "Most turns need no suggestion. Return exactly NONE unless the AGENT's last message explicitly needs the USER's input: " +
+  "a direct question, a choice among options it offered, a request to approve or confirm a step it proposed, " +
+  "or a blocker only the USER can resolve. " +
+  "Return NONE when the AGENT reports finished work and asks nothing; when it says it is continuing, " +
+  "waiting for background work, subagents, shells, or a notification, or lists steps it will take on its own; " +
+  "when the next step is something the AGENT can do without the USER; or when you are unsure. " +
   "If the AGENT asked a question, write the USER's answer to it (for example, AGENT: 'Should I add a test?' -> USER: 'Yes, add a test'). " +
-  "Return only that message: one line, under 120 characters, in the language the USER writes in. " +
-  "Suggest only an obvious next step the conversation sets up, such as answering the AGENT's question, " +
-  "choosing among options the AGENT offered, approving its proposed next step, or asking for the natural follow-up. " +
+  "Return only that message: one line, under 120 characters. " +
+  "Write it in the language of the USER's own messages, using their latest message when they mix languages. " +
+  "Never switch to another language or script, even when the AGENT's text, quoted output, or code contains one. " +
   "Never suggest deploying, pushing, publishing, deleting data, or other destructive or external actions " +
   "unless the user already asked for them. " +
-  "If no next message is clearly predictable, return exactly NONE.";
+  "If no next message is clearly needed and predictable, return exactly NONE.";
+
+/** The suggestion request's system prompt, carrying the agent's preferred language when one is set. */
+export function promptSuggestionSystemPrompt(language: string | undefined): string {
+  if (!language) return PROMPT_SUGGESTION_SYSTEM_PROMPT;
+  return (
+    PROMPT_SUGGESTION_SYSTEM_PROMPT +
+    "\n\n" +
+    renderPreferredLanguageLine(language) +
+    "\nThe USER's own language comes first; use this preferred language only when theirs is unclear. Use no third language."
+  );
+}
 
 /** Shared between the suggestion controller and the decorated editor that shows it. */
 export interface PromptSuggestionSlot {
@@ -63,6 +84,91 @@ function clipMiddle(text: string, max: number): string {
   if (text.length <= max) return text;
   const head = Math.floor(max * 0.3);
   return text.slice(0, head) + "\n…\n" + text.slice(text.length - (max - head));
+}
+
+/**
+ * Writing systems told apart for the language guard. Latin is always allowed
+ * because code, paths, and identifiers use it in every language; letters of
+ * any script not listed here share the "Other" bucket.
+ */
+const SCRIPT_PATTERNS: readonly (readonly [string, RegExp])[] = [
+  ["Latin", /\p{Script=Latin}/u],
+  ["Hangul", /\p{Script=Hangul}/u],
+  ["Kana", /[\p{Script=Hiragana}\p{Script=Katakana}]/u],
+  ["Han", /\p{Script=Han}/u],
+  ["Cyrillic", /\p{Script=Cyrillic}/u],
+  ["Greek", /\p{Script=Greek}/u],
+  ["Arabic", /\p{Script=Arabic}/u],
+  ["Hebrew", /\p{Script=Hebrew}/u],
+  ["Thai", /\p{Script=Thai}/u],
+  ["Devanagari", /\p{Script=Devanagari}/u],
+];
+const SCRIPT_LETTER = /[\p{L}--[\p{Script=Common}\p{Script=Inherited}]]/gv;
+
+/** Language names whose script a preference spelled in Latin letters implies. */
+const LANGUAGE_SCRIPTS = new Map([
+  ["korean", ["Hangul"]],
+  ["japanese", ["Kana", "Han"]],
+  ["chinese", ["Han"]],
+  ["mandarin", ["Han"]],
+  ["cantonese", ["Han"]],
+  ["russian", ["Cyrillic"]],
+  ["ukrainian", ["Cyrillic"]],
+  ["belarusian", ["Cyrillic"]],
+  ["bulgarian", ["Cyrillic"]],
+  ["serbian", ["Cyrillic"]],
+  ["macedonian", ["Cyrillic"]],
+  ["kazakh", ["Cyrillic"]],
+  ["mongolian", ["Cyrillic"]],
+  ["greek", ["Greek"]],
+  ["arabic", ["Arabic"]],
+  ["persian", ["Arabic"]],
+  ["farsi", ["Arabic"]],
+  ["urdu", ["Arabic"]],
+  ["hebrew", ["Hebrew"]],
+  ["thai", ["Thai"]],
+  ["hindi", ["Devanagari"]],
+  ["marathi", ["Devanagari"]],
+  ["nepali", ["Devanagari"]],
+]);
+
+function letterScript(letter: string): string {
+  return SCRIPT_PATTERNS.find(([, pattern]) => pattern.test(letter))?.[0] ?? "Other";
+}
+
+/** The writing systems whose letters appear in `text`, ignoring shared punctuation and marks. */
+export function scriptsIn(text: string): Set<string> {
+  const scripts = new Set<string>();
+  for (const [letter] of text.matchAll(SCRIPT_LETTER)) scripts.add(letterScript(letter));
+  return scripts;
+}
+
+/**
+ * Scripts a suggestion may use: Latin, every script in the user's own
+ * messages on this branch, and the script of the preferred language.
+ */
+export function allowedSuggestionScripts(
+  entries: readonly SessionEntry[],
+  language: string | undefined,
+): Set<string> {
+  const allowed = new Set<string>(["Latin"]);
+  for (const entry of entries) {
+    if (entry.type !== "message" || entry.message.role !== "user") continue;
+    for (const script of scriptsIn(textContent(entry.message.content))) allowed.add(script);
+  }
+  if (language) {
+    for (const script of scriptsIn(language)) allowed.add(script);
+    for (const word of language.toLowerCase().split(/[^a-z]+/u)) {
+      for (const script of LANGUAGE_SCRIPTS.get(word) ?? []) allowed.add(script);
+    }
+  }
+  return allowed;
+}
+
+/** True when every letter of `text` belongs to an allowed script. */
+export function usesAllowedScripts(text: string, allowed: ReadonlySet<string>): boolean {
+  for (const script of scriptsIn(text)) if (!allowed.has(script)) return false;
+  return true;
 }
 
 /**
@@ -152,6 +258,8 @@ export interface PromptSuggestionRequest {
   ctx: ExtensionContext;
   modelName: string;
   transcript: string;
+  /** The agent's preferred response language, when one is configured. */
+  language: string | undefined;
   signal: AbortSignal;
 }
 
@@ -187,6 +295,7 @@ export const generatePromptSuggestion: PromptSuggestionGenerator = async ({
   ctx,
   modelName,
   transcript,
+  language,
   signal,
 }) => {
   const model = resolveModel(ctx, modelName);
@@ -197,7 +306,7 @@ export const generatePromptSuggestion: PromptSuggestionGenerator = async ({
   const response = await completeSimple(
     model,
     {
-      systemPrompt: PROMPT_SUGGESTION_SYSTEM_PROMPT,
+      systemPrompt: promptSuggestionSystemPrompt(language),
       messages: [
         {
           role: "user",
@@ -227,7 +336,12 @@ export const generatePromptSuggestion: PromptSuggestionGenerator = async ({
 
 export interface PromptSuggestionOptions {
   generate?: PromptSuggestionGenerator;
-  isEnabled?: () => Promise<boolean>;
+  readPreferences?: () => Promise<PromptSuggestionPreferences>;
+}
+
+export interface PromptSuggestionPreferences {
+  enabled: boolean;
+  language: string | undefined;
 }
 
 export interface PromptSuggestionController {
@@ -246,17 +360,42 @@ export interface PromptSuggestionController {
   settled(ctx: ExtensionContext): Promise<void>;
 }
 
-async function promptSuggestionEnabled(): Promise<boolean> {
+async function readSuggestionPreferences(): Promise<PromptSuggestionPreferences> {
   try {
-    return (await readAgentPreferencesAsync()).promptSuggestion !== false;
+    const preferences = await readAgentPreferencesAsync();
+    return { enabled: preferences.promptSuggestion !== false, language: preferences.language };
   } catch {
-    return false;
+    return { enabled: false, language: undefined };
   }
+}
+
+const ActiveGoalSchema = Type.Object({ status: Type.Literal("active") });
+
+/**
+ * True when the agent will resume without the user typing anything: a queued
+ * message, a running sub-agent or background shell whose completion triggers
+ * a turn, or an active goal that schedules its own continuation.
+ */
+export function agentContinuesUnprompted(ctx: ExtensionContext, sessionId: string): boolean {
+  if (ctx.hasPendingMessages()) return true;
+  if (hasRunningSubagents()) return true;
+  const sources = createProcessSources();
+  if (
+    sources
+      .shells(sessionId)
+      .shells()
+      .some((shell) => shell.state === "running")
+  )
+    return true;
+  return Value.Check(ActiveGoalSchema, sources.goals(sessionId).goal());
 }
 
 interface SuggestionAttempt {
   ctx: ExtensionContext;
+  sessionId: string;
   transcript: string;
+  /** Branch read at settle time, kept until the preference read supplies the language. */
+  branch: readonly SessionEntry[];
   controller: AbortController;
   isCurrent: () => boolean;
 }
@@ -277,7 +416,7 @@ export function createPromptSuggestionController(
   options: PromptSuggestionOptions = {},
 ): PromptSuggestionController {
   const generate = options.generate ?? generatePromptSuggestion;
-  const isEnabled = options.isEnabled ?? promptSuggestionEnabled;
+  const readPreferences = options.readPreferences ?? readSuggestionPreferences;
   const slot: PromptSuggestionSlot = { text: undefined, requestRender: undefined };
   let generation = 0;
   let ownerSessionId: string | undefined;
@@ -309,7 +448,9 @@ export function createPromptSuggestionController(
     if (ctx.mode !== "tui" || sessionId === undefined) return undefined;
     if (ctx.sessionManager.getSessionId() !== sessionId) return undefined;
     if (ctx.ui.getEditorText() !== "") return undefined;
-    const transcript = suggestionTranscript(ctx.sessionManager.getBranch());
+    if (agentContinuesUnprompted(ctx, sessionId)) return undefined;
+    const branch = ctx.sessionManager.getBranch();
+    const transcript = suggestionTranscript(branch);
     if (!transcript) return undefined;
     const controller = new AbortController();
     pending = controller;
@@ -318,11 +459,27 @@ export function createPromptSuggestionController(
       !controller.signal.aborted &&
       ownerSessionId === sessionId &&
       ctx.sessionManager.getSessionId() === sessionId;
-    return { ctx, transcript, controller, isCurrent };
+    return {
+      ctx,
+      sessionId,
+      transcript,
+      branch,
+      controller,
+      isCurrent,
+    };
   };
 
-  const request = async ({ ctx, transcript, controller, isCurrent }: SuggestionAttempt) => {
-    if (!(await isEnabled()) || !isCurrent()) return;
+  const request = async ({
+    ctx,
+    sessionId,
+    transcript,
+    branch,
+    controller,
+    isCurrent,
+  }: SuggestionAttempt) => {
+    const { enabled, language } = await readPreferences();
+    if (!enabled || !isCurrent()) return;
+    const allowedScripts = allowedSuggestionScripts(branch, language);
     for (const modelName of [PROMPT_SUGGESTION_MODEL, PROMPT_SUGGESTION_FALLBACK_MODEL]) {
       if (!isCurrent()) return;
       let text: string | undefined;
@@ -331,12 +488,17 @@ export function createPromptSuggestionController(
           ctx,
           modelName,
           transcript,
+          language,
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]),
         });
       } catch {
         continue;
       }
       if (!isCurrent() || text === undefined) return;
+      // A suggestion in a script neither the user nor the preference uses is a
+      // model slip; showing nothing beats a prompt the user cannot read.
+      if (!usesAllowedScripts(text, allowedScripts)) return;
+      if (agentContinuesUnprompted(ctx, sessionId)) return;
       slot.text = text;
       render();
       return;
