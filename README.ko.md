@@ -40,9 +40,10 @@ pi
 ```
 
 체크아웃에는 `.pi/settings.json`이 없습니다. 설치 프로그램은 프로필 정책을
-`~/.pi/agent/settings.json`에서 읽으므로, 새 컴퓨터에서는 먼저
-[전역 설정 예시](#전역-설정-예시)를 바탕으로 체크아웃 경로를 넣어 이 파일을
-만드세요. 파일이 없으면 설치 프로그램은 두 파일 경로를 알려 주고 멈춥니다.
+`~/.pi/agent/settings.json`에서 읽습니다. 새 컴퓨터처럼 이 파일이 없거나 번들
+패키지가 하나도 없으면 설치 프로그램이 번들 패키지 목록과 내장 확장 정책을 직접
+기록합니다. 나머지 키가 필요하면 그다음에 [전역 설정 예시](#전역-설정-예시)를
+참고해 추가하세요.
 
 ### Homebrew를 사용하지 않고 Pi 설치
 
@@ -366,7 +367,8 @@ Pi 1.0.3부터 `Home`/`End`는 편집기 커서를 이동합니다. 대화 기�
 키는 그대로 둡니다. 체크아웃에는 `.pi/settings.json`이 없으므로 프로필 정책은 이
 전역 파일 자체에서 가져옵니다. 체크아웃의 `.pi/packages` 아래를 가리키는
 `packages` 항목과 `extensions`의 내장 확장 정책이 그 정책입니다. 실행할 때마다
-다음과 같이 처리합니다.
+다음과 같이 처리합니다. 번들 패키지가 하나도 없으면 `scripts/install-profile.ts`의
+프로필 기본값에서 시작합니다.
 
 - `packages`, `skills`, `prompts`를 체크아웃 절대 경로로 기록하고, `extensions`에는 [내장 확장 정책](#내장-확장)도 넣습니다. 사용자가 추가한 항목은 choco-pi 항목 뒤에 유지되며, 번들 패키지가 대체하는 패키지는 제거됩니다.
 - `theme`, `tuiMode`, `fullscreenExitOutput`, `fuzzyFileMentions`, `compaction`, `modelThinkingLevels`는 전역 파일에 설정된 값을 그대로 둡니다. 전역 파일에서 바꾸거나 `/preferences`를 쓰세요.

@@ -41,9 +41,10 @@ pi
 ```
 
 The checkout ships no `.pi/settings.json`. The installer reads the profile
-policy from `~/.pi/agent/settings.json`, so on a new machine create that file
-first from [Example global settings](#example-global-settings), with your
-checkout path. Without it, the installer stops and names both files.
+policy from `~/.pi/agent/settings.json`. On a new machine, where that file is
+missing or lists no bundled packages, the installer writes the bundled package
+list and built-in policy itself; add the other keys from
+[Example global settings](#example-global-settings) afterward if you want them.
 
 ### Install Pi without Homebrew
 
@@ -393,7 +394,9 @@ It also migrates an existing `~/.pi/agent/extensions/background-compaction.json`
 `npm run install:profile` rewrites `~/.pi/agent/settings.json` and keeps any
 keys it does not manage. The checkout ships no `.pi/settings.json`, so the
 profile policy comes from this global file itself: its `packages` entries under
-the checkout's `.pi/packages` and its `extensions` built-in policy. Each run:
+the checkout's `.pi/packages` and its `extensions` built-in policy. When it
+lists no bundled packages, the installer starts from the profile defaults in
+`scripts/install-profile.ts`. Each run:
 
 - Writes `packages`, `skills`, and `prompts` as absolute checkout paths; `extensions` also gets the [built-in policy](#built-in-extensions). Entries you added are kept after the choco-pi entries, except packages a bundled package supersedes.
 - Keeps `theme`, `tuiMode`, `fullscreenExitOutput`, `fuzzyFileMentions`, `compaction`, and `modelThinkingLevels` as set in the global file. Change them there or through `/preferences`.

@@ -20,6 +20,7 @@ import { Value } from "typebox/value";
 import { deriveBackgroundLanes } from "../.pi/packages/choco-pi-compaction/src/background/settings.ts";
 import {
   buildGlobalSettings,
+  DEFAULT_PROFILE_PACKAGES,
   installProfile,
   MIGRATED_SIDECARS,
   PROFILE_LINKS,
@@ -246,19 +247,44 @@ test("without project settings, global settings supply the profile and lose supe
   assert.deepEqual(settings.packages, [...BUNDLED_PACKAGES, "npm:user-package@2.0.0"]);
 });
 
-test("without project settings, global settings must declare packages", async (context) => {
+test("a clean machine with no settings at all bootstraps the bundled profile", async (context) => {
   const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-empty-"));
   context.after(() => rm(agentDir, { recursive: true, force: true }));
-  const settingsPath = path.join(agentDir, "settings.json");
 
-  await assert.rejects(
-    installProfile({ root: process.cwd(), agentDir }),
-    (error) =>
-      error instanceof Error &&
-      error.message.includes(path.resolve(".pi/settings.json")) &&
-      error.message.includes(`${settingsPath} declares no packages`),
-  );
-  await assert.rejects(readlink(path.join(agentDir, "SYSTEM.md")), { code: "ENOENT" });
+  await installProfile({ root: process.cwd(), agentDir });
+
+  const settings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
+  assert.deepEqual(settings.packages, BUNDLED_PACKAGES);
+  assert.deepEqual(settings.extensions, [path.resolve(".pi/extensions"), "-builtin:codemode"]);
+  assert.deepEqual(settings.skills, [path.resolve(".pi/skills")]);
+  assert.deepEqual(settings.prompts, [path.resolve(".pi/prompts")]);
+  assert.equal(await readlink(path.join(agentDir, "SYSTEM.md")), path.resolve(".pi/SYSTEM.md"));
+});
+
+test("global settings with only user packages bootstrap the profile and keep them", async (context) => {
+  const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-user-only-"));
+  context.after(() => rm(agentDir, { recursive: true, force: true }));
+  await seedProfileSettings(agentDir, { packages: ["npm:user-package@2.0.0"], extensions: [] });
+
+  await installProfile({ root: process.cwd(), agentDir });
+
+  const settings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
+  assert.deepEqual(settings.packages, [...BUNDLED_PACKAGES, "npm:user-package@2.0.0"]);
+  assert.deepEqual(settings.extensions, [path.resolve(".pi/extensions"), "-builtin:codemode"]);
+});
+
+test("the clean-install defaults list every bundled package Pi loads", async () => {
+  const PiManifestSchema = Type.Object({ pi: Type.Optional(Type.Unknown()) });
+  const loaded: string[] = [];
+  for (const entry of await readdir(".pi/packages", { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const manifest = parseJson(
+      await readFile(path.join(".pi/packages", entry.name, "package.json"), "utf8"),
+      PiManifestSchema,
+    );
+    if (manifest.pi !== undefined) loaded.push(`./packages/${entry.name}`);
+  }
+  assert.deepEqual([...DEFAULT_PROFILE_PACKAGES].sort(), loaded.sort());
 });
 
 test("the profile removes stale built-in exclusions and preserves unrelated settings", () => {

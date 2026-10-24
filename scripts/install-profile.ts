@@ -116,6 +116,35 @@ export const MIGRATED_SIDECARS: readonly string[] = ["extensions/background-comp
 export const RETIRED_PROFILE_FILES: readonly string[] = ["extensions/context-cap.json"];
 
 /**
+ * Bundled packages Pi loads, in load order, named relative to `.pi`. Order is
+ * load-bearing: `choco-pi-web-search` must precede `choco-pi-web-access`.
+ * `choco-pi-acp` is absent because Pi never loads it. A test fails until a new
+ * bundled Pi package joins this list.
+ */
+export const DEFAULT_PROFILE_PACKAGES: readonly string[] = [
+  "./packages/choco-pi-web-search",
+  "./packages/choco-pi-web-access",
+  "./packages/choco-pi-provider-synthetic",
+  "./packages/choco-pi-ui",
+  "./packages/choco-pi-shells",
+  "./packages/choco-pi-hooks",
+  "./packages/choco-pi-subagents",
+  "./packages/choco-pi-advisor",
+  "./packages/choco-pi-goal",
+  "./packages/choco-pi-mcp",
+  "./packages/choco-pi-lsp",
+  "./packages/choco-pi-compaction",
+  "./packages/choco-pi-codex",
+  "./packages/choco-pi-agents-md",
+  "./packages/choco-pi-agent-browser",
+  "./packages/choco-pi-computer-use",
+  "./packages/choco-pi-editor-context",
+];
+
+/** Built-in extension policy a clean install starts from. */
+const DEFAULT_PROFILE_EXTENSIONS: readonly string[] = ["-builtin:codemode"];
+
+/**
  * Remove each retired file that is still a symlink (dangling or not) or a
  * regular file. Anything else at that path is left in place with a warning.
  * Returns the removed paths.
@@ -502,12 +531,11 @@ async function supersededPackageNames(root: string, projectSettings: ProjectSett
 /**
  * The profile policy: the checkout's `.pi/settings.json` when present,
  * otherwise the global settings an earlier install wrote, which carry the same
- * packages and built-in extension policy. A machine with neither cannot
- * bootstrap, and the error names both files.
+ * packages and built-in extension policy. A clean machine has neither, so it
+ * starts from the tracked defaults.
  */
 async function readProfileSettings(
   root: string,
-  settingsPath: string,
   existingSettings: Settings,
 ): Promise<ProjectSettings> {
   const projectPath = path.join(root, ".pi", "settings.json");
@@ -524,9 +552,7 @@ async function readProfileSettings(
     (spec) => path.isAbsolute(spec) && path.dirname(spec) === bundled,
   );
   if (packages.length === 0) {
-    throw new Error(
-      `no profile settings: ${projectPath} does not exist and ${settingsPath} declares no packages under ${bundled}`,
-    );
+    return { packages: [...DEFAULT_PROFILE_PACKAGES], extensions: [...DEFAULT_PROFILE_EXTENSIONS] };
   }
   return { ...existingSettings, packages };
 }
@@ -539,7 +565,7 @@ export async function installProfile({
 }: InstallProfileOptions = {}) {
   const settingsPath = path.join(agentDir, "settings.json");
   const existingSettings = await readJson(settingsPath, {});
-  const project = await readProfileSettings(root, settingsPath, existingSettings);
+  const project = await readProfileSettings(root, existingSettings);
   // MCP configuration is deliberately not linked. Pi reads ~/.pi/agent/mcp.json and a
   // project .pi/mcp.json as separate sources, so linking a repo-local copy registers every
   // server twice when Pi runs from this checkout, and the ignored file disappearing leaves
