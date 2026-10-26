@@ -1,4 +1,9 @@
-import { reportCodexDaybreakResponse, type CodexDaybreakTicket } from "./daybreak-decision.ts";
+import {
+  ignoreCodexDaybreakEcho,
+  isIgnoredCodexDaybreakEcho,
+  reportCodexDaybreakResponse,
+  type CodexDaybreakTicket,
+} from "./daybreak-decision.ts";
 import { processResponsesStream } from "../openai-responses/shared.ts";
 import { type Static, Type } from "typebox";
 import { Check } from "typebox/value";
@@ -302,13 +307,19 @@ export async function* mapCodexEvents(
       if (output && Check(BooleanSchema, response?.["end_turn"])) {
         output.endTurn = response["end_turn"];
       }
-      yield {
+      const completed = {
         ...event,
         type: "response.completed",
         response: response
           ? { ...response, status: normalizeCodexStatus(response.status) }
           : response,
       };
+      // `response.incomplete`, including a steered rewrite already marked ignored,
+      // is not a fresh-create echo. Upstream does not retract Daybreak from it.
+      if (type === "response.incomplete" || isIgnoredCodexDaybreakEcho(event)) {
+        ignoreCodexDaybreakEcho(completed);
+      }
+      yield completed;
       return;
     }
 
@@ -347,7 +358,8 @@ async function* observeDaybreakCompletion(
   ticket: CodexDaybreakTicket | undefined,
 ): AsyncIterable<CodexStreamEvent> {
   for await (const event of events) {
-    if (event.type === "response.completed") reportCodexDaybreakResponse(ticket, event.response);
+    if (event.type === "response.completed" && !isIgnoredCodexDaybreakEcho(event))
+      reportCodexDaybreakResponse(ticket, event.response);
     yield event;
   }
 }

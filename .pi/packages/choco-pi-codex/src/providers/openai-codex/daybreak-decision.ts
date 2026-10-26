@@ -62,6 +62,8 @@ type TicketRecord = {
   resolution?: Promise<CodexDaybreakDecision>;
   decision?: CodexDaybreakDecision;
   responseObserved?: boolean;
+  /** Unset means a fresh create. Continuation echoes must not retract a grant. */
+  echoAuthority?: "create" | "continuation";
 };
 
 type DecisionOwner = Readonly<{
@@ -116,6 +118,8 @@ const ControllerSchema = Type.Object({
 const tickets = new WeakMap<CodexDaybreakTicket, TicketRecord>();
 const genuineDecisions = new WeakMap<CodexDaybreakDecision, DecisionOwner>();
 const observations = new WeakMap<DaybreakController, Observation>();
+/** Completions that were synthesized from `response.incomplete` or otherwise are not grants. */
+const ignoredEchoes = new WeakSet<CodexStreamEvent>();
 
 function validatedBridge(): DaybreakBridge | undefined {
   const host: BridgeHost = globalThis;
@@ -370,13 +374,42 @@ export function resolveCodexDaybreakTicket(
 const CompletedResponseSchema = Type.Object({
   access_programs: Type.Optional(Type.Object({ cyber: Type.Optional(Type.String()) })),
 });
-/** Observe the terminal echo once, using only the request's frozen revision and account. */
+/**
+ * Marks whether this ticket's sent request can attest a Daybreak downgrade.
+ * A body with `previous_response_id`, or a native automatic successor, is a
+ * continuation: upstream Codex still sends the explicit program and does not
+ * read the completion echo. Only a fresh `response.create` echo is final.
+ */
+export function noteCodexDaybreakEchoAuthority(
+  ticket: CodexDaybreakTicket | undefined,
+  authority: "create" | "continuation",
+): void {
+  const record = ticket ? tickets.get(ticket) : undefined;
+  if (!record) return;
+  record.echoAuthority = authority;
+}
+
+/** The observer must not treat this completion object as a Daybreak echo. */
+export function ignoreCodexDaybreakEcho(event: CodexStreamEvent): void {
+  ignoredEchoes.add(event);
+}
+
+export function isIgnoredCodexDaybreakEcho(event: CodexStreamEvent): boolean {
+  return ignoredEchoes.has(event);
+}
+
+/** Observe one fresh-create terminal echo, using only the frozen revision and account. */
 export function reportCodexDaybreakResponse(
   ticket: CodexDaybreakTicket | undefined,
   response: CodexStreamEvent["response"],
 ): void {
   const record = ticket ? tickets.get(ticket) : undefined;
   if (!record || record.responseObserved) return;
+  // Continuation and successor completions keep the last fresh-create decision.
+  if (record.echoAuthority === "continuation") {
+    record.responseObserved = true;
+    return;
+  }
   record.responseObserved = true;
   const decision = record.decision;
   if (!decision?.cyber || !isCurrentCodexDaybreakDecision(decision)) return;

@@ -748,6 +748,11 @@ and each re-probe on session start, tree navigation, or model select) settle on
 catalog-advertised program and flipping the badge between `daybreak` and
 `daybreak not granted`. A refused red falls back to advertised blue. A token change
 (re-login or refresh) or an off->on toggle clears the record and tries the program again.
+Only a fresh `response.create` terminal echo (`response.done` or `response.completed`)
+can record that refusal. Upstream Codex resends the explicit program on WebSocket
+continuation and does not read completion echoes, so a `previous_response_id` request,
+a native automatic successor, and a steered or normalized `response.incomplete` do not
+retract a grant or write an echo denial.
 
 ## 2026-10-08 choco-pi patch: WebSocket decode ownership
 

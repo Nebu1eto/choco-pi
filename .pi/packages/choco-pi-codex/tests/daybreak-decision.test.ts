@@ -26,6 +26,7 @@ import {
   configureCodexDaybreakEntitlementForTest,
   invalidateCodexDaybreakEntitlement,
   isCurrentCodexDaybreakDecision,
+  noteCodexDaybreakEchoAuthority,
   resolveCodexDaybreakTicket,
   reportCodexDaybreakResponse,
   snapshotCodexDaybreakDecision,
@@ -46,6 +47,12 @@ import {
   processCodexResponsesStream,
   processMappedCodexResponsesStream,
 } from "../src/providers/openai-codex/stream-events.ts";
+import {
+  closeNativeSteering,
+  openNativeSteering,
+  steerNativeResponse,
+} from "../src/providers/openai-codex/native-steering.ts";
+import type { WebSocketEvent, WebSocketLike } from "../src/providers/openai-codex/types.ts";
 import { buildRequestBody } from "../src/providers/openai-codex/request-body.ts";
 import { buildCachedWebSocketRequestBody } from "../src/providers/openai-codex/websocket-continuation.ts";
 import { sendPreparedWebSocketRequest } from "../src/providers/openai-codex/websocket-stream.ts";
@@ -119,6 +126,57 @@ function cyberOf(body: WireBody | undefined): string | undefined {
 
 function hasAccessPrograms(body: WireBody | undefined): boolean {
   return body !== undefined && Object.hasOwn(body, "access_programs");
+}
+
+function assistantOutput(): AssistantMessage {
+  return {
+    role: "assistant",
+    content: [],
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: "stop",
+    timestamp: 1,
+  };
+}
+
+function emptyResponsesBody(): ResponsesBody {
+  return {
+    model: model.id,
+    store: false,
+    stream: true,
+    input: [],
+    text: { verbosity: "low" },
+    include: [],
+    tool_choice: "auto",
+    parallel_tool_calls: true,
+  };
+}
+
+class SteerSocket implements WebSocketLike {
+  listeners = new Map<string, Set<(event: WebSocketEvent) => void>>();
+  send(_data: string) {}
+  close() {}
+  addEventListener(type: string, listener: (event: WebSocketEvent) => void) {
+    const listeners = this.listeners.get(type) ?? new Set();
+    listeners.add(listener);
+    this.listeners.set(type, listeners);
+  }
+  removeEventListener(type: string, listener: (event: WebSocketEvent) => void) {
+    this.listeners.get(type)?.delete(listener);
+  }
+  emit(event: CodexStreamEvent) {
+    for (const listener of this.listeners.get("message") ?? [])
+      listener({ data: JSON.stringify(event) });
+  }
 }
 
 const decompress = promisify(zstdDecompress);
@@ -989,6 +1047,99 @@ test("an echo refusal settles not-granted until re-login or toggle-on instead of
   fake.controller.set(false);
   fake.controller.set(true);
   assert.equal((await resolve(ticket("sticky"))).outcome, "blue");
+});
+
+test("a continuation echo does not sticky-deny an eligible Daybreak Blue grant", async (t) => {
+  t.after(cleanup);
+  const bridge = installBridge();
+  fakeLookup(() => Response.json(grantsPayload()));
+  const fake = bridge.add("continuation-echo", true);
+  const first = ticket("continuation-echo");
+  assert.equal((await resolve(first)).outcome, "blue");
+  noteCodexDaybreakEchoAuthority(first, "continuation");
+  reportCodexDaybreakResponse(first, { access_programs: { cyber: "standard" } });
+  assert.equal(fake.state.outcome, "blue");
+  const next = await resolve(ticket("continuation-echo"));
+  assert.equal(next.outcome, "blue");
+  assert.equal(next.cyber, "daybreak_blue");
+  assert.equal(cyberOf(applyCodexDaybreakAccessPrograms({}, next)), "daybreak_blue");
+});
+
+test("an incomplete completion does not sticky-deny Daybreak", async (t) => {
+  t.after(cleanup);
+  const bridge = installBridge();
+  fakeLookup(() => Response.json(grantsPayload("tac1")));
+  const fake = bridge.add("incomplete-echo", true);
+  const requestTicket = ticket("incomplete-echo");
+  await resolve(requestTicket);
+  const output = assistantOutput();
+  async function* events(): AsyncIterable<CodexStreamEvent> {
+    yield {
+      type: "response.incomplete",
+      response: {
+        status: "incomplete",
+        access_programs: { cyber: "standard" },
+        incomplete_details: { reason: "steered" },
+      },
+    };
+  }
+  await processMappedCodexResponsesStream(
+    events(),
+    output,
+    createAssistantMessageEventStream(),
+    model,
+    { daybreakTicket: requestTicket },
+  );
+  assert.equal(fake.state.outcome, "blue");
+  const next = await resolve(ticket("incomplete-echo"));
+  assert.equal(next.cyber, "daybreak_blue");
+});
+
+test("a steered incomplete rewrite does not sticky-deny Daybreak", async (t) => {
+  t.after(cleanup);
+  const bridge = installBridge();
+  fakeLookup(() => Response.json(grantsPayload("tac1")));
+  const fake = bridge.add("steer-echo", true);
+  const requestTicket = ticket("steer-echo");
+  await resolve(requestTicket);
+  const owner = "steer-echo-owner";
+  const socket = new SteerSocket();
+  const connection = openNativeSteering(socket, owner);
+  const controller = new AbortController();
+  try {
+    connection.begin({ ...emptyResponsesBody(), model: model.id }, controller.signal);
+    const iterator = connection.responseEvents(controller.signal, 1_000)[Symbol.asyncIterator]();
+    socket.emit({ type: "response.created", response: { id: "r1" } });
+    const created = await iterator.next();
+    assert.equal(created.value?.type, "response.created");
+    assert.equal(steerNativeResponse(owner, "change the plan"), true);
+    socket.emit({
+      type: "response.incomplete",
+      response: {
+        id: "r1",
+        status: "incomplete",
+        incomplete_details: { reason: "steered" },
+        access_programs: { cyber: "standard" },
+      },
+    });
+    const rewritten = await iterator.next();
+    assert.equal(rewritten.value?.type, "response.completed", "steered incomplete is rewritten");
+    async function* rewrittenEvents(): AsyncIterable<CodexStreamEvent> {
+      if (rewritten.value) yield rewritten.value;
+    }
+    await processMappedCodexResponsesStream(
+      rewrittenEvents(),
+      assistantOutput(),
+      createAssistantMessageEventStream(),
+      model,
+      { daybreakTicket: requestTicket },
+    );
+  } finally {
+    controller.abort();
+    closeNativeSteering(owner);
+  }
+  assert.equal(fake.state.outcome, "blue");
+  assert.equal((await resolve(ticket("steer-echo"))).cyber, "daybreak_blue");
 });
 
 test("a refused red program falls back to blue when the catalog advertises it", async (t) => {

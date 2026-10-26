@@ -22,6 +22,7 @@ import {
   responseInputsEqual,
 } from "./websocket-continuation.ts";
 import { extractCodexTurnStateFromWebSocketEvent } from "./turn-state.ts";
+import { ignoreCodexDaybreakEcho } from "./daybreak-decision.ts";
 
 const EventSchema = Type.Object({
   type: Type.String(),
@@ -246,11 +247,14 @@ export class NativeSteeringConnection {
         ) {
           this.steered = true;
           // The server finished the current item: this is not a token-truncated tool call.
-          yield {
+          // It is also not a Daybreak attestation; the fresh create echo remains authoritative.
+          const rewritten = {
             ...event,
             type: "response.completed",
             response: { ...event.response, status: "completed", incomplete_details: undefined },
           };
+          ignoreCodexDaybreakEcho(rewritten);
+          yield rewritten;
         } else {
           yield event;
         }
