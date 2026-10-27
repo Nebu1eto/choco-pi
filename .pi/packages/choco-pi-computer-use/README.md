@@ -44,4 +44,10 @@ With `restore_focus` (`PI_COMPUTER_USE_RESTORE_FOCUS`, default `true`), after an
 
 `/computer-use` shows the settings, sources, and this session's grants and denials. `/computer-use grant ask|always|off` sets the prompt mode for the session and saves it to the user file.
 
+## Action results
+
+`act_ui` validates every action before it sends any. An invalid action (a stale ref, coordinates outside the image, a scroll without target, keyboard x/y, headless keyboard input without ref, and so on) rejects the call before delivery, and the stateId stays usable. In a multi-action call the error is prefixed `act_ui action N (<action>):` and ends with `Nothing was sent.`
+
+When an action fails during delivery after earlier actions ran, the result has `details.status: "partial"` and a fresh successor state. `execution.steps` lists the delivered actions and the failed one (with request ids), `execution.stoppedAt` is the failed action's index, and `execution.error` carries the helper's code, message, and `effectPossible`. Focus is restored as after a complete call. A failure of the first action still rejects the call. A cancellation or ownership refusal after earlier actions ran reports them in `execution.steps` with the transaction index in `stoppedAt`; focus is not restored while the helper may still be sending. Any result after which the UI may have changed (a partial call, a cancellation after delivery, or a refusal that followed delivered actions or may itself have taken effect) invalidates the base stateId.
+
 See `VENDORED.md` for provenance and fork divergences.

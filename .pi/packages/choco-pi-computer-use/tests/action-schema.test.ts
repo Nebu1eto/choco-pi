@@ -86,6 +86,17 @@ test("registered act_ui schema accepts every action shape", async () => {
       guidelines.some((line) => line.includes("typeText/keypress without ref go to")),
       "the act guideline describes ref-less keyboard input",
     );
+    const statuses = guidelines.find((line) => line.includes('Result status "partial"'));
+    assert.ok(statuses, "the act guideline documents the partial status");
+    for (const status of [
+      "foreground_required",
+      "cancelled",
+      "owned_by_other_session",
+      "target_closed",
+      "post_action_observation_failed",
+    ])
+      assert.ok(statuses.includes(status), `the act guideline names ${status}`);
+    assert.match(statuses, /act_ui action N \(<action>\): … Nothing was sent\./);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }

@@ -34,7 +34,7 @@ import type {
   PlatformRestoreUserFocusRequest,
   PlatformRoot,
 } from "../src/platform/types.ts";
-import { PlatformCommandError } from "../src/platform/types.ts";
+import { HelperInterruption, PlatformCommandError } from "../src/platform/types.ts";
 import { createTestExtensionContext, type TestUiOptions } from "./helpers/extension-context.ts";
 
 const BUNDLE_ID = "test.foreground-fixture";
@@ -1920,4 +1920,445 @@ test("a returned (batch-step style) no-change refusal under a covering grant is 
       assertDeferred(details, text, true);
     },
   );
+});
+
+// ---- Batch failures: validate before delivery, report partial delivery ----
+
+/** A helper command failure that is not a refusal or an interruption. */
+class HelperFailureFixtureError extends PlatformCommandError {
+  readonly effectPossible?: boolean;
+
+  constructor(message: string, code: string, effectPossible?: boolean) {
+    super(message, undefined, code);
+    this.effectPossible = effectPossible;
+  }
+}
+
+/** A transport error carrying a helper interruption, as the macOS client raises them. */
+class InterruptionFixtureError extends PlatformCommandError {
+  readonly interruption: HelperInterruption;
+
+  constructor(interruption: HelperInterruption) {
+    super("Helper request interrupted.");
+    this.interruption = interruption;
+  }
+}
+
+/** Answers "worked" except for the 1-based \`failAt\` call, which throws \`error\`. */
+function failingResponder(
+  failAt: number,
+  error: () => Error,
+  ok: Responder = () => ({ outcome: "worked" }),
+): Responder {
+  let calls = 0;
+  return (request) => {
+    calls += 1;
+    if (calls === failAt) throw error();
+    return ok(request);
+  };
+}
+
+async function observeStateId(context: FixtureContext): Promise<string> {
+  const observed = await executeObserve("observe", {}, context.signal, undefined, context.ctx);
+  return stateIdFromContent(observed.content);
+}
+
+async function actOnState(
+  context: FixtureContext,
+  stateId: string,
+  actions: UiAction[],
+): Promise<{ details: JsonObject; text: string }> {
+  const result = await executeAct(
+    "act",
+    { stateId, actions },
+    context.signal,
+    undefined,
+    context.ctx,
+  );
+  const text = result.content
+    .filter(
+      (part): part is Extract<(typeof result.content)[number], { type: "text" }> =>
+        part.type === "text",
+    )
+    .map((part) => part.text)
+    .join("\n");
+  return { details: detailsJson(result), text };
+}
+
+async function assertBaseStale(context: FixtureContext, stateId: string): Promise<void> {
+  await assert.rejects(
+    actOnState(context, stateId, [{ action: "setText", ref: "@e2", text: "again" }]),
+    /observation_refresh_required.*"reason":"stale"/,
+  );
+}
+
+async function assertBaseValid(context: FixtureContext, stateId: string): Promise<void> {
+  const again = await actOnState(context, stateId, [
+    { action: "setText", ref: "@e2", text: "again" },
+  ]);
+  assert.equal(again.details.status, "ok", "the base state still accepts actions");
+}
+
+function stepsOf(execution: JsonObject): JsonObject[] {
+  const steps = execution.steps;
+  assert.ok(Array.isArray(steps), "execution.steps");
+  return steps.map((step) => {
+    assert.ok(isJsonObject(step));
+    return step;
+  });
+}
+
+const setFirst: UiAction = { action: "setText", ref: "@e2", text: "a" };
+
+for (const [name, failing, message] of [
+  [
+    "an unknown ref",
+    { action: "press", ref: "@e99" },
+    /Outline ref '@e99' is stale or not available/,
+  ],
+  [
+    "out-of-image coordinates",
+    { action: "click", x: 9999, y: 1 },
+    /Coordinates \(9999,1\) are outside the latest look image bounds \(640x480\)/,
+  ],
+  [
+    "a scroll without target",
+    { action: "scroll", scrollY: 3 },
+    /scroll requires either ref or both x and y\./,
+  ],
+  [
+    "a one-point drag",
+    { action: "drag", path: [{ x: 1, y: 1 }] },
+    /drag\.path must contain at least two points\./,
+  ],
+  [
+    "a keypress without keys",
+    { action: "keypress", ref: "@e2", keys: [] },
+    /keypress\.keys must contain at least one key\./,
+  ],
+] satisfies Array<[string, UiAction, RegExp]>) {
+  test(`batch: ${name} at action 2 is rejected before action 1 is sent`, async () => {
+    await withFixture(
+      {},
+      () => ({ outcome: "worked" }),
+      async (context) => {
+        const stateId = await observeStateId(context);
+        await assert.rejects(actOnState(context, stateId, [setFirst, failing]), (error: Error) => {
+          assert.match(error.message, new RegExp(`^act_ui action 2 \\(${failing.action}\\): `));
+          assert.match(error.message, message, "the original message follows the prefix");
+          assert.match(error.message, / Nothing was sent\.$/);
+          return true;
+        });
+        assert.deepEqual(context.requests, [], "action 1 was not sent");
+        await assertBaseValid(context, stateId);
+      },
+    );
+  });
+}
+
+test("batch: a single invalid action keeps its original message", async () => {
+  await withFixture(
+    {},
+    () => ({ outcome: "worked" }),
+    async (context) => {
+      const stateId = await observeStateId(context);
+      await assert.rejects(
+        actOnState(context, stateId, [{ action: "press", ref: "@e99" }]),
+        /^Error: Outline ref '@e99' is stale or not available/,
+      );
+      assert.deepEqual(context.requests, []);
+    },
+  );
+});
+
+test("batch: outline-only coordinates at action 2 are rejected before action 1 is sent", async () => {
+  await withFixture(
+    { outlineOnly: true },
+    () => ({ outcome: "worked" }),
+    async (context) => {
+      const stateId = await observeStateId(context);
+      await assert.rejects(
+        actOnState(context, stateId, [setFirst, { action: "click", x: 10, y: 10 }]),
+        /^Error: act_ui action 2 \(click\): Coordinates require an image-bearing root\..* Nothing was sent\.$/,
+      );
+      assert.deepEqual(context.requests, []);
+      await assertBaseValid(context, stateId);
+    },
+  );
+});
+
+test("batch: headless keyboard input without ref at action 2 is rejected before action 1", async () => {
+  await withFixture(
+    { headless: true },
+    () => ({ outcome: "worked" }),
+    async (context) => {
+      const stateId = await observeStateId(context);
+      await assert.rejects(
+        actOnState(context, stateId, [setFirst, { action: "keypress", keys: ["Enter"] }]),
+        /^Error: act_ui action 2 \(keypress\): keypress without ref is unavailable in headless mode: .* Nothing was sent\.$/,
+      );
+      assert.deepEqual(context.requests, []);
+    },
+  );
+});
+
+test("batch: a helper failure at action 2 returns a partial successor state", async () => {
+  await withFixture(
+    {},
+    failingResponder(2, () => new HelperFailureFixtureError("element vanished", "invalid_args")),
+    async (context) => {
+      const stateId = await observeStateId(context);
+      const { details, text } = await actOnState(context, stateId, [
+        setFirst,
+        { action: "press", ref: "@e3" },
+        { action: "setText", ref: "@e2", text: "never" },
+      ]);
+      assert.equal(context.requests.length, 2, "action 3 was not sent");
+      assert.equal(details.status, "partial");
+      const execution = objectField(details, "execution");
+      assert.equal(execution.stoppedAt, 1);
+      assert.equal(execution.actionCount, 2);
+      assert.equal(execution.outcome, "unknown");
+      assert.deepEqual(execution.error, {
+        code: "invalid_args",
+        message: "element vanished",
+        effectPossible: true,
+      });
+      const [delivered, failed, ...rest] = stepsOf(execution);
+      assert.equal(rest.length, 0);
+      assert.equal(delivered?.outcome, "worked");
+      assert.equal(delivered?.requestId, context.requests[0]?.requestId);
+      assert.equal(failed?.outcome, "unknown");
+      assert.equal(failed?.requestId, context.requests[1]?.requestId);
+      assert.equal(failed?.deliveryPolicy, context.requests[1]?.policy);
+      assert.deepEqual(failed?.error, execution.error);
+      const successor = objectField(details, "capture").stateId;
+      assert.ok(isString(successor) && successor !== stateId, "a fresh successor state");
+      assert.equal(details.baseStateId, stateId);
+      assert.match(
+        text,
+        /^act_ui stopped at action 2 \(press\) in Foreground Fixture — Fixture Window: element vanished\. Action 1 was delivered; action 2 \(press\) may have reached the app; later actions were not sent\. Returned state [0-9a-f-]{36}\./,
+      );
+      assert.match(text, /Effect not verified for action 2 \(press: unknown\)/);
+      await assertBaseStale(context, stateId);
+      assert.ok(isString(successor));
+      const next = await actOnState(context, successor, [
+        { action: "setText", ref: "@e2", text: "b" },
+      ]);
+      assert.equal(next.details.status, "ok", "the successor state accepts actions");
+    },
+  );
+});
+
+test("batch: a failure that proves no delivery reports the failed action as didnt", async () => {
+  await withFixture(
+    {},
+    failingResponder(2, () => new HelperFailureFixtureError("look expired", "stale_look", false)),
+    async (context) => {
+      const stateId = await observeStateId(context);
+      const { details, text } = await actOnState(context, stateId, [
+        setFirst,
+        { action: "press", ref: "@e3" },
+      ]);
+      assert.equal(details.status, "partial");
+      const execution = objectField(details, "execution");
+      assert.equal(execution.outcome, "didnt");
+      assert.equal(stepsOf(execution)[1]?.outcome, "didnt");
+      assert.deepEqual(execution.error, {
+        code: "stale_look",
+        message: "look expired",
+        effectPossible: false,
+      });
+      assert.match(text, /action 2 \(press\) delivered nothing; later actions were not sent\./);
+      await assertBaseStale(context, stateId);
+    },
+  );
+});
+
+test("batch: a helper failure at action 1 still throws, with nothing earlier sent", async () => {
+  await withFixture(
+    {},
+    failingResponder(1, () => new HelperFailureFixtureError("element vanished", "invalid_args")),
+    async (context) => {
+      const stateId = await observeStateId(context);
+      await assert.rejects(
+        actOnState(context, stateId, [{ action: "press", ref: "@e3" }, setFirst]),
+        { message: "element vanished" },
+      );
+      assert.equal(context.requests.length, 1);
+      await assertBaseStale(context, stateId);
+    },
+  );
+});
+
+test("batch: focus is restored after granted input when a later action fails", async () => {
+  await withFixture(
+    { grant: BUNDLE_ID },
+    failingResponder(
+      2,
+      () => new HelperFailureFixtureError("element vanished", "invalid_args"),
+      grantedResponder(USER_PID, root.pid!),
+    ),
+    async (context) => {
+      const stateId = await observeStateId(context);
+      const { details } = await actOnState(context, stateId, coordinateClicks);
+      assert.equal(details.status, "partial");
+      assert.equal(context.restores.length, 1);
+      assert.equal(context.restores[0]!.pid, USER_PID);
+      const execution = objectField(details, "execution");
+      assert.equal(execution.focusRestored, true);
+      assert.equal(execution.focusRestoreReason, "restored");
+    },
+  );
+});
+
+test("batch: focus is not restored while an interrupted request may still deliver", async () => {
+  await withFixture(
+    { grant: BUNDLE_ID },
+    failingResponder(
+      2,
+      () =>
+        new InterruptionFixtureError(
+          new HelperInterruption({
+            code: "cancelled",
+            cancel: { acknowledged: true, state: "stopping" },
+            clientTimeout: true,
+          }),
+        ),
+      grantedResponder(USER_PID, root.pid!),
+    ),
+    async (context) => {
+      const stateId = await observeStateId(context);
+      const { details, text } = await actOnState(context, stateId, coordinateClicks);
+      assert.equal(details.status, "cancelled");
+      assert.equal(context.restores.length, 0, "no focus restore while delivery may continue");
+      const execution = objectField(details, "execution");
+      assert.equal(execution.focusRestored, false);
+      assert.equal(execution.focusRestoreReason, "delivery_may_continue");
+      assert.equal(execution.stoppedAt, 1);
+      assert.equal(execution.outcome, "partial");
+      assert.equal(stepsOf(execution).length, 1);
+      assert.match(text, /Action 1 was delivered before the interruption/);
+      await assertBaseStale(context, stateId);
+    },
+  );
+});
+
+test("batch: a cancel that rejected action 2 before delivery still reports action 1", async () => {
+  await withFixture(
+    {},
+    failingResponder(
+      2,
+      () =>
+        new InterruptionFixtureError(
+          new HelperInterruption({
+            code: "cancelled",
+            effectPossible: false,
+            result: { outcome: "rejected_before_delivery" },
+          }),
+        ),
+    ),
+    async (context) => {
+      const stateId = await observeStateId(context);
+      const { details, text } = await actOnState(context, stateId, [
+        setFirst,
+        { action: "press", ref: "@e3" },
+      ]);
+      assert.equal(details.status, "cancelled");
+      const execution = objectField(details, "execution");
+      assert.equal(execution.outcome, "partial");
+      assert.equal(execution.effectPossible, true);
+      assert.equal(execution.stoppedAt, 1);
+      const [delivered, ...rest] = stepsOf(execution);
+      assert.equal(rest.length, 0);
+      assert.equal(delivered?.requestId, context.requests[0]?.requestId);
+      assert.match(text, /Action 1 was delivered before the interruption; call observe_ui/);
+      await assertBaseStale(context, stateId);
+    },
+  );
+});
+
+test("batch: a cancel of action 1 is reported as before", async () => {
+  await withFixture(
+    {},
+    failingResponder(
+      1,
+      () =>
+        new InterruptionFixtureError(
+          new HelperInterruption({
+            code: "cancelled",
+            effectPossible: false,
+            result: { outcome: "rejected_before_delivery", stoppedAt: 0 },
+          }),
+        ),
+    ),
+    async (context) => {
+      const stateId = await observeStateId(context);
+      const { details } = await actOnState(context, stateId, [setFirst]);
+      assert.equal(details.status, "cancelled");
+      const execution = objectField(details, "execution");
+      assert.equal(execution.outcome, "rejected_before_delivery");
+      assert.equal(execution.effectPossible, false);
+      assert.equal(execution.stoppedAt, 0);
+      assert.equal(execution.steps, undefined);
+      await assertBaseValid(context, stateId);
+    },
+  );
+});
+
+for (const [name, failAt, effectPossible, stale] of [
+  ["after a delivered action", 2, false, true],
+  ["at action 1 when it may have taken effect", 1, true, true],
+  ["at action 1 when it proved no delivery", 1, false, false],
+] satisfies Array<[string, number, boolean, boolean]>) {
+  test(`batch: foreground_required ${name} ${stale ? "invalidates" : "keeps"} the base state`, async () => {
+    await withFixture(
+      {},
+      failingResponder(
+        failAt,
+        () => new ForegroundRequiredFixtureError("needs foreground", effectPossible),
+      ),
+      async (context) => {
+        const stateId = await observeStateId(context);
+        const actions: UiAction[] =
+          failAt === 2
+            ? [setFirst, { action: "click", ref: "@e3" }]
+            : [{ action: "click", ref: "@e3" }];
+        const { details } = await actOnState(context, stateId, actions);
+        assert.equal(details.status, "foreground_required");
+        assert.equal(objectField(details, "execution").stoppedAt, failAt - 1);
+        if (stale) await assertBaseStale(context, stateId);
+        else await assertBaseValid(context, stateId);
+      },
+    );
+  });
+}
+
+test("batch: up-front preparation keeps the same-call focus routes", async () => {
+  for (const outlineOnly of [false, true]) {
+    await withFixture(
+      { outlineOnly },
+      () => ({ outcome: "worked" }),
+      async (context) => {
+        await actOnce(context, [
+          { action: "click", ref: "@e2" },
+          { action: "typeText", text: "x" },
+          { action: "keypress", keys: ["Enter"] },
+        ]);
+        const [click, type, key, ...rest] = context.requests;
+        assert.equal(rest.length, 0);
+        assertRefTarget(click, "wire-field-1");
+        for (const request of [type, key]) {
+          assert.ok(request);
+          if (outlineOnly) {
+            assertRefTarget(request, "wire-field-1");
+          } else {
+            assert.deepEqual(request.target, { focus: { x: 320, y: 240 } });
+            assert.equal(request.focusResolution, "ax_focused_element");
+          }
+          assert.equal(request.policy, "background");
+        }
+      },
+    );
+  }
 });

@@ -126,7 +126,6 @@ export class HelperAbortedError extends Error {
 }
 
 export class HelperCommandError extends PlatformCommandError {
-  readonly code?: string;
   /** From `error.effectPossible`; false only when the helper proved nothing was delivered. */
   readonly effectPossible?: boolean;
   /** Partial result the helper attached to the error (for example `cancelled`). */
@@ -146,9 +145,8 @@ export class HelperCommandError extends PlatformCommandError {
       evidence?: HelperRefusalEvidence;
     },
   ) {
-    super(message, details?.evidence);
+    super(message, details?.evidence, code);
     this.name = "HelperCommandError";
-    this.code = code;
     this.effectPossible = details?.effectPossible;
     this.result = details?.result;
     this.activeRequests = details?.activeRequests;

@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, before, test } from "node:test";
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
+import type { UiAction } from "../src/contract.ts";
 import { isJsonObject, type JsonObject, type JsonValue } from "../src/json.ts";
 import {
   HELPER_STOPPING_REASON,
@@ -134,6 +135,8 @@ async function actThroughBridge(
     foregroundGrant?: string;
     findFixture?: boolean;
     signal?: AbortSignal;
+    /** Actions to send instead of one click on `ref`. */
+    actions?: UiAction[];
   } = {},
 ): Promise<{ details: JsonObject; text: string }> {
   const saved = new Map(ENV_KEYS.map((key) => [key, process.env[key]]));
@@ -175,7 +178,7 @@ async function actThroughBridge(
     await beforeAct?.();
     const result = await bridge.executeAct(
       "act",
-      { stateId, actions: [{ action: "click", ref }] },
+      { stateId, actions: options.actions ?? [{ action: "click", ref }] },
       signal,
       undefined,
       ctx,
@@ -1225,4 +1228,47 @@ test("the CLI exits on SIGTERM within 500 ms with an idle client connected", asy
   } finally {
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
   }
+});
+
+test("a stale_look at action 2 over the wire returns a partial successor with both requests", async () => {
+  const logPath = path.join(scratch, "partial.requests.jsonl");
+  const fake = await startDaemon({ script: "s1-ok", logPath });
+  const mutator = new helper.MacosHelperClient();
+  let acts = 0;
+  // Before the second act, a fixture mutation invalidates every look, so the
+  // helper refuses it with stale_look after the first act was delivered.
+  const backend = wireBackend(async (request, options) => {
+    acts += 1;
+    if (acts === 2)
+      await mutator.command("look", { pid: FAKE_APP.pid, fixtureMutation: "bump_root_generation" });
+    return await macosBackend.act(request, options);
+  });
+  const { details, text } = await actThroughBridge(backend, undefined, {
+    findFixture: true,
+    actions: [
+      { action: "setText", ref: "@e2", text: "first" },
+      { action: "press", ref: "@e3" },
+      { action: "setText", ref: "@e2", text: "never" },
+    ],
+  });
+  await fake.close();
+  daemon = undefined;
+  assert.equal(details.status, "partial");
+  const execution = field(details, "execution");
+  assert.equal(execution.stoppedAt, 1);
+  assert.equal(field(execution, "error").code, "stale_look");
+  assert.equal(field(execution, "error").effectPossible, false);
+  const steps = execution.steps;
+  assert.ok(Array.isArray(steps) && steps.length === 2);
+  const logged = (await logLines(logPath)).filter((line) => line.cmd === "act");
+  assert.equal(logged.length, 2, "action 3 never reached the helper");
+  assert.equal(field(field(logged[1]!, "response"), "error").code, "stale_look");
+  for (const [index, step] of steps.entries()) {
+    assert.ok(isJsonObject(step));
+    assert.equal(step.requestId, logged[index]?.requestId, "each logged act matches a step");
+  }
+  assert.match(
+    text,
+    /act_ui stopped at action 2 \(press\).*Action 1 was delivered; action 2 \(press\) delivered nothing/,
+  );
 });

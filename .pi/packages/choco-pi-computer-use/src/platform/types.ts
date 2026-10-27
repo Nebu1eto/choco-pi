@@ -161,11 +161,14 @@ export interface HelperRefusalEvidence {
  */
 export class PlatformCommandError extends Error {
   readonly evidence?: HelperRefusalEvidence;
+  /** Helper error code, for example `stale_look` or `invalid_args`. */
+  readonly code?: string;
 
-  constructor(message: string, evidence?: HelperRefusalEvidence) {
+  constructor(message: string, evidence?: HelperRefusalEvidence, code?: string) {
     super(message);
     this.name = "PlatformCommandError";
     this.evidence = evidence;
+    this.code = code;
   }
 }
 
