@@ -536,6 +536,20 @@ export function grokPlanLabel(tier: string | undefined): string | undefined {
   return GROK_PLAN_LABELS.get(trimmed) ?? trimmed;
 }
 
+/** Display labels of the billing `productUsage` keys Grok Build reports. */
+const GROK_PRODUCT_LABELS = new Map([
+  ["GrokBot", "Bot"],
+  ["Api", "API"],
+  ["GrokBuild", "Build"],
+]);
+
+/** Label of a billing `productUsage` key; an unknown key is shown verbatim. */
+export function grokProductLabel(product: string | undefined): string | undefined {
+  const trimmed = product?.trim();
+  if (!trimmed) return undefined;
+  return GROK_PRODUCT_LABELS.get(trimmed) ?? trimmed;
+}
+
 /**
  * Reduces a `/v1/user` response to its subscription tier, so only that field
  * reaches the shared cache file. A response of any other shape yields `{}`.
@@ -585,7 +599,7 @@ export function normalizeGrokUsage(payload: RuntimeValue): ProviderUsage {
   const products = Array.isArray(config.productUsage)
     ? config.productUsage.flatMap((entry) => {
         if (!isRecord(entry)) return [];
-        const product = stringValue(entry.product);
+        const product = grokProductLabel(stringValue(entry.product));
         const used = numberValue(entry.usagePercent);
         return product && used !== undefined ? [`${product} ${formatNumber(used, 1)}%`] : [];
       })

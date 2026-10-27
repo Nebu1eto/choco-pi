@@ -5,6 +5,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   formatUsageReport,
   grokPlanLabel,
+  grokProductLabel,
   grokSubscription,
   grokPeriodLabel,
   grokUsage,
@@ -39,9 +40,11 @@ function billing(overrides: BillingOverrides = {}) {
         end: "2026-10-23T05:44:20.695+00:00",
       },
       creditUsagePercent: 2,
+      // Product keys and order as the billing endpoint reports them.
       productUsage: [
-        { product: "Api", usagePercent: 1 },
-        { product: "GrokBot", usagePercent: 1 },
+        { product: "GrokBot", usagePercent: 23 },
+        { product: "Api", usagePercent: 5 },
+        { product: "GrokBuild", usagePercent: 1 },
       ],
       isUnifiedBillingUser: true,
       prepaidBalance: { val: 0 },
@@ -121,7 +124,7 @@ test("normalizes a weekly Grok billing response into one credit window", () => {
         qualifier: "used",
         eventAt: new Date("2026-10-23T05:44:20.695Z"),
         eventLabel: "resets",
-        detail: "Api 1% · GrokBot 1%",
+        detail: "Bot 23% · API 5% · Build 1%",
         windowSeconds: 7 * 86_400,
       },
     ],
@@ -169,9 +172,41 @@ test("labels unknown and missing Grok period types generically", () => {
       qualifier: "used",
       eventAt: undefined,
       eventLabel: "resets",
-      detail: "Api 1% · GrokBot 1%",
+      detail: "Bot 23% · API 5% · Build 1%",
     },
   ]);
+});
+
+test("maps Grok billing products to fixed labels and passes unknown keys through", () => {
+  assert.equal(grokProductLabel("GrokBot"), "Bot");
+  assert.equal(grokProductLabel("Api"), "API");
+  assert.equal(grokProductLabel("GrokBuild"), "Build");
+  assert.equal(grokProductLabel(" Api "), "API");
+  // Matching is exact-case; anything else is shown as the server sent it.
+  assert.equal(grokProductLabel("api"), "api");
+  assert.equal(grokProductLabel("grokbot"), "grokbot");
+  assert.equal(grokProductLabel("GrokImagine"), "GrokImagine");
+  assert.equal(grokProductLabel("toString"), "toString");
+  assert.equal(grokProductLabel("  "), undefined);
+  assert.equal(grokProductLabel(""), undefined);
+  assert.equal(grokProductLabel(undefined), undefined);
+});
+
+test("the Grok product breakdown keeps server order and shows unknown products verbatim", () => {
+  const usage = normalizeGrokUsage(
+    billing({
+      productUsage: [
+        { product: "GrokBot", usagePercent: 23 },
+        { product: "Api", usagePercent: 5 },
+        { product: "GrokBuild", usagePercent: 1 },
+        { product: "GrokImagine", usagePercent: 2 },
+        { product: " ", usagePercent: 4 },
+      ],
+    }),
+  );
+  const detail = usage.windows[0]?.detail ?? "";
+  assert.equal(detail, "Bot 23% · API 5% · Build 1% · GrokImagine 2%");
+  assert.doesNotMatch(detail, /GrokBot|GrokBuild|Api /);
 });
 
 test("rejects a Grok response without a config object", () => {
@@ -207,6 +242,12 @@ test("a Grok OAuth sign-in reads the billing endpoint with its bearer token", as
   const text = formatUsageReport(report);
   assert.match(text, /^Grok\n {2}Weekly\n/);
   assert.match(text, /2% used/);
+  assert.match(text, /\n {2}(?:.* · )?Bot 23% · API 5% · Build 1%\n/);
+  assert.doesNotMatch(text, /GrokBot|GrokBuild|Api /);
+  // The structured host report carries the same labels as the text.
+  const frame = usageReportFrame("session-xai", report);
+  assert.equal(frame.usage?.providers[0]?.windows[0]?.detail, "Bot 23% · API 5% · Build 1%");
+  assert.match(frame.sections[0]?.rows[0]?.hint ?? "", /(?:^|· )Bot 23% · API 5% · Build 1%$/);
   assert.match(text, /\n\nNot signed in: Claude, ChatGPT, Synthetic$/);
   assert.doesNotMatch(text, new RegExp(XAI_TOKEN));
 });
