@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const VENDORED = [
+  ".pi/packages/choco-pi-acp",
   ".pi/packages/choco-pi-codex",
   ".pi/packages/choco-pi-lsp",
   ".pi/packages/choco-pi-mcp",
@@ -154,7 +155,7 @@ export async function bootstrap(
       `Vendored installation failed:\n${failures.map((error) => error.message).join("\n")}`,
     );
   }
-  report("bootstrap-vendored OK - all six vendored packages restored.");
+  report(`bootstrap-vendored OK - all ${VENDORED.length} vendored packages restored.`);
 }
 
 // No interrupt handler: a killed process can leave its claim and backup for manual inspection.

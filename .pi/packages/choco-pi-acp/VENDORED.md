@@ -376,3 +376,21 @@ statement above covers only the manifest and lockfile.
   cover stalled delivery, cancellation, an already-draining turn, late replies,
   duplicate terminal events, and responsive-client notification ordering without
   spawning a Pi child.
+
+## 2026-10-27 choco-pi patch: frozen package-local install
+
+The root install never provided `@agentclientprotocol/sdk`, so a fresh checkout
+could neither typecheck, test, nor run the adapter. The package now joins the
+isolated vendored installs that `npm run install:vendored` restores.
+
+- `package.json`: adds `"packageManager": "pnpm@11.11.0"` and declares the
+  `typebox` dependency (`^1.3.29`) that `src/boundary.ts` imports. The adapter
+  runs outside Pi, so no host supplies it. This supersedes divergence 1's "two
+  upstream runtime dependencies"; `zod` remains only for the SDK peer.
+- `pnpm-workspace.yaml`: the shared one-package workspace used by the other
+  vendored packages.
+- `pnpm-lock.yaml`: new. Generated with `pnpm install --lockfile-only
+--ignore-scripts`; `typebox` is locked at `1.3.29` to match the repository
+  root. Locked: `@agentclientprotocol/sdk@0.26.0`, `typebox@1.3.29`,
+  `zod@3.25.76`. This replaces the 2026-10-07 note that the package has no
+  package-local lockfile; it still declares no Pi SDK pin.

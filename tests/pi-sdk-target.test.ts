@@ -56,7 +56,20 @@ test("every frozen lock resolves only the target SDK release", async () => {
         /@earendil-works\/(?:pi-ai|pi-agent-core|pi-codemode|pi-coding-agent|pi-mcp|pi-tui|pi-telemetry|chord)@([^\s'"():]+)/g,
       ),
     ];
-    assert.ok(references.length > 0, `${path} must lock the SDK`);
+    // A package without a direct SDK dependency, such as the standalone ACP adapter,
+    // need not lock the SDK; any SDK reference its lock does carry is still checked.
+    const manifest: PackageManifest = JSON.parse(
+      await readFile(new URL(`${path}package.json`, ROOT), "utf8"),
+    );
+    const declaresSdk = [
+      manifest.dependencies,
+      manifest.devDependencies,
+      manifest.peerDependencies,
+      manifest.optionalDependencies,
+    ].some((section) =>
+      Object.keys(section ?? {}).some((name) => name.startsWith("@earendil-works/")),
+    );
+    if (declaresSdk) assert.ok(references.length > 0, `${path} must lock the SDK`);
     for (const reference of references) {
       assert.equal(reference[1], TARGET, `${path}${reference[0]}`);
     }

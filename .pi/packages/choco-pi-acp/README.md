@@ -22,10 +22,12 @@ feature statements describe upstream and do not override this README.
 Node.js 24 LTS or newer is required. The package uses Node-erasable TypeScript
 directly from source and has no build step or generated runtime output.
 
-From the repository root, install dependencies and run the adapter with:
+From the repository root, install the root and vendored dependencies, including
+this package's frozen lockfile, then run the adapter:
 
 ```sh
-pnpm install
+pnpm install --frozen-lockfile --ignore-scripts
+npm run install:vendored
 node .pi/packages/choco-pi-acp/bin/choco-pi-acp.ts
 ```
 

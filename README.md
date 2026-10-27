@@ -74,7 +74,7 @@ unusual module-load errors, set `NODE_DISABLE_COMPILE_CACHE=1` to disable it.
 When Pi opens, run `/login` and select a provider. The installation scripts do
 not authenticate, open a login flow, or copy credentials into the repository.
 
-The root install and all six vendored-package installs use their committed
+The root install and all seven vendored-package installs use their committed
 lockfiles. `npm run install:vendored` installs each package in its isolated
 workspace and attempts to restore that package's previous dependency tree if
 its install fails. An interrupted process can leave a

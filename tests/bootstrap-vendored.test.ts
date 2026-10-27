@@ -307,7 +307,7 @@ test("version spawn failure leaves all packages untouched", async (t) => {
 });
 
 for (const failing of [false, true]) {
-  test(`bootstrap visits all six packages and aggregates failures=${failing}`, async (t) => {
+  test(`bootstrap visits every vendored package and aggregates failures=${failing}`, async (t) => {
     const root = await fixture(t);
     await workspace(root);
     const visited: string[] = [];

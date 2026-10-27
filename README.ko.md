@@ -66,7 +66,7 @@ Pi 1.4.0의 `cli.js` 실행기는 Node 컴파일 캐시를 활성화합니다. �
 
 Pi가 열리면 `/login`을 실행하고 공급자를 선택하세요. 설치 스크립트는 인증을 수행하거나 로그인 화면을 열지 않으며, 인증 정보를 저장소에 복사하지 않습니다.
 
-루트 설치와 vendored 패키지 6개의 설치는 모두 커밋된 lockfile을 사용합니다.
+루트 설치와 vendored 패키지 7개의 설치는 모두 커밋된 lockfile을 사용합니다.
 `npm run install:vendored`는 각 패키지를 독립된 workspace에 설치하고, 설치에 실패하면
 해당 패키지의 이전 의존성 트리 복원을 시도합니다. 프로세스가 중단되면
 `node_modules.bootstrap-lock` 점유 디렉터리와 `node_modules.bootstrap-backup*` 의존성

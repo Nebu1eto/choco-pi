@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const PACKAGE_NAMES = [
+  "choco-pi-acp",
   "choco-pi-codex",
   "choco-pi-lsp",
   "choco-pi-mcp",
