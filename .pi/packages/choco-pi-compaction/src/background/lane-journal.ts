@@ -12,6 +12,7 @@ import { Value } from "typebox/value";
 
 import { isStaleContextError } from "../lifecycle.ts";
 import { LANE_RECORD_TYPE as LANE_ENTRY_TYPE } from "./entry-types.ts";
+import { CompactionTriggerSchema } from "../trigger.ts";
 
 /** The custom entry type of lane records (declared with the other entry types in `entry-types.ts`). */
 export const LANE_RECORD_TYPE = LANE_ENTRY_TYPE;
@@ -234,6 +235,8 @@ export const LaneRecordSchema = Type.Object(
     candidateId: Type.Optional(NonEmptyString),
     checkpointEntryId: Type.Optional(NonEmptyString),
     cooldownUntil: Type.Optional(Type.Number({ minimum: 0 })),
+    /** What started the compaction this transition belongs to; absent on records written before it was journaled. */
+    trigger: Type.Optional(CompactionTriggerSchema),
     noticeAttempted: Type.Boolean(),
   },
   { additionalProperties: false },
@@ -265,6 +268,7 @@ function envelope(input: LaneRecordInput): LaneRecord {
   if (input.candidateId !== undefined) record.candidateId = input.candidateId;
   if (input.checkpointEntryId !== undefined) record.checkpointEntryId = input.checkpointEntryId;
   if (input.cooldownUntil !== undefined) record.cooldownUntil = input.cooldownUntil;
+  if (input.trigger !== undefined) record.trigger = input.trigger;
   return record;
 }
 

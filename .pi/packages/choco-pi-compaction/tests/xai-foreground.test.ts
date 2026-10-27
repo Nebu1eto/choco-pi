@@ -308,6 +308,11 @@ test(
         .records()
         .filter((record) => record.event === "fallback" && record.route === "manual");
       assert.equal(fallbacks.length, 2, "one record per manual action");
+      assert.deepEqual(
+        fallbacks.map((record) => record.trigger),
+        ["manual", "manual"],
+        "xAI fallback records carry the trigger",
+      );
     } finally {
       await rig.dispose();
     }

@@ -27,6 +27,7 @@ import {
   type PendingRoute,
   touchCurrentOwner,
 } from "./runtime.ts";
+import { withTrigger } from "../trigger.ts";
 
 // ---------------------------------------------------------------------------
 // Adoption routes: host compaction arbitration, turn boundaries, idle input
@@ -79,7 +80,8 @@ async function arbitrate(
 ): Promise<Decision> {
   if (!isCurrent(rt, owner) || event.signal.aborted) return PROCEED;
   refuseDisabledReady(owner);
-  const result = await owner.core.coordinator.arbitrateHostCompaction(hostTrigger(owner, event));
+  const trigger = hostTrigger(owner, event);
+  const result = await owner.core.coordinator.arbitrateHostCompaction(trigger);
   if (!isCurrent(rt, owner)) return PROCEED;
   if (result.action !== "adopt") return deferManual(rt, owner, event);
   // An aborted compaction fails and is reconciled back to ready afterwards.
@@ -93,7 +95,8 @@ async function arbitrate(
     summary: result.compaction.summary,
     firstKeptEntryId: result.compaction.firstKeptEntryId,
     tokensBefore: event.preparation.tokensBefore,
-    details: result.compaction.details,
+    // The adoption knows its own route; the host only saw "manual" for ctx.compact().
+    details: withTrigger({ details: result.compaction.details }, trigger.reason).details,
   };
   if (result.compaction.usage !== undefined) compaction.usage = result.compaction.usage;
   return { action: "adopt", candidateId: result.candidateId, compaction };

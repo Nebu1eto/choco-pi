@@ -43,6 +43,7 @@ import type { AnthropicCapabilityGate } from "./capability.ts";
 import type { WireCapture } from "./capture.ts";
 import type { LaneStream } from "./lane-client.ts";
 import type { AnthropicCompactionMode, AnthropicServerSideSession } from "./mode.ts";
+import { hostTriggerOf, type CompactionTrigger } from "../trigger.ts";
 
 /** Upper bound on one foreground summarization request. */
 const FOREGROUND_TIMEOUT_MS = 300_000;
@@ -91,6 +92,8 @@ interface ForegroundRun {
   readonly signal: AbortSignal;
   /** A typed or programmatic `/compact` (user-initiated) rather than a threshold or overflow. */
   readonly manual: boolean;
+  /** The host's reason, journaled on the fallback record. */
+  readonly trigger: CompactionTrigger;
 }
 
 type Attempt =
@@ -159,6 +162,7 @@ function announceFallback(
     sessionId: run.sessionId,
     provider: "anthropic",
     route: run.manual ? "manual" : "foreground",
+    trigger: run.trigger,
     event: surfaced ? "cancel" : "fallback",
     from: "anthropic-native",
     to: surfaced ? undefined : "local",
@@ -212,6 +216,7 @@ function snapshotRun(
     instructions: event.customInstructions,
     signal: event.signal,
     manual: event.reason === "manual",
+    trigger: hostTriggerOf(event),
   };
 }
 

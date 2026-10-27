@@ -39,6 +39,7 @@ import registerCompaction, {
   getBackgroundAdoptionSignal,
   mainOwnerKey,
 } from "../src/index.ts";
+import { triggerOfDetails } from "../src/trigger.ts";
 import {
   compactionEntries,
   createHost,
@@ -545,6 +546,8 @@ test(
         assert.deepEqual(rig.compactEvents, [
           { reason: "manual", fromExtension: true, entryId: entry.id },
         ]);
+        // The host saw ctx.compact() as manual; the checkpoint records the real route.
+        assert.equal(triggerOfDetails(entry.details), "idle");
         const signal = getBackgroundAdoptionSignal();
         const sessionId = rig.manager.getSessionId();
         assert.equal(signal.isAdoption(sessionId, entry), true, "consumers can tell adoption");
@@ -689,6 +692,11 @@ test(
         assert.deepEqual(rig.compactEvents, [
           { reason: "manual", fromExtension: true, entryId: entry.id },
         ]);
+        assert.equal(
+          triggerOfDetails(entry.details),
+          "manual",
+          "a /compact continued in the background stays manual",
+        );
         assert.deepEqual(
           rig.notices.map((notice) => [notice.route, notice.committedEntryId]),
           [["host", entry.id]],

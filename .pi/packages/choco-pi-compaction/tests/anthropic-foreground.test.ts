@@ -52,6 +52,7 @@ import type { TextSummarizer } from "../src/background/text-backend.ts";
 import registerCompaction from "../src/index.ts";
 import { ANTHROPIC_BACKEND_ID } from "../src/anthropic/backend.ts";
 import { mainOwnerKey } from "../src/ownership.ts";
+import { triggerOfDetails } from "../src/trigger.ts";
 import { BACKGROUND_OFF_SETTINGS_PATHS } from "./host-harness.ts";
 
 const OAUTH_KEY = "sk-ant-oat01-foreground-non-secret-placeholder";
@@ -496,6 +497,11 @@ test(
       assert.ok(entry);
       assert.equal(extra.length, 0, "exactly one compaction");
       assert.ok(isAnthropicDetails(entry.details), "details recognized by replay");
+      assert.equal(
+        triggerOfDetails(entry.details),
+        "manual",
+        "a server-side checkpoint records its trigger",
+      );
       assert.deepEqual(entry.details.block, blockFor(0));
       assert.equal(entry.details.cut.firstKeptEntryId, entry.firstKeptEntryId);
       assert.deepEqual(noticesOf(rig), []);
@@ -694,6 +700,20 @@ for (const item of FAILURES) {
         assert.equal(extra.length, 0, "exactly one compaction");
         assert.equal(isAnthropicDetails(entry.details), false);
         assert.ok(entry.summary.includes("FG-LOCAL-SUMMARY"));
+        assert.equal(
+          triggerOfDetails(entry.details),
+          "manual",
+          "the built-in checkpoint after a fallback keeps the trigger",
+        );
+        const fallbacks = laneRecordsOf(rig.manager.getEntries()).filter(
+          (record) => record.event === "fallback",
+        );
+        assert.equal(fallbacks.length, 1);
+        assert.equal(
+          fallbacks[0]?.trigger,
+          "manual",
+          "the fallback record carries the original trigger",
+        );
         assert.equal(noticesOf(rig).length, 1);
         // A `/compact` is a user action: its fallback is told every time (D6/U-ANTH 8).
         await rig.session.prompt("FG-AGAIN");

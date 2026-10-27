@@ -41,6 +41,7 @@ import type { XaiWireCapture } from "./capture.ts";
 import { placeholderSummary } from "./details.ts";
 import type { XaiCompactionMode } from "./mode.ts";
 import { findActiveXaiCheckpoint } from "./replay.ts";
+import { hostTriggerOf, type CompactionTrigger } from "../trigger.ts";
 
 /** Upper bound on one foreground compaction request. */
 const FOREGROUND_TIMEOUT_MS = 300_000;
@@ -91,6 +92,8 @@ interface ForegroundRun {
   readonly latestCompactionId: string | undefined;
   readonly instructions: string | undefined;
   readonly route: LaneRoute;
+  /** The host's reason, journaled on the fallback record and stamped on the checkpoint. */
+  readonly trigger: CompactionTrigger;
   readonly signal: AbortSignal;
 }
 
@@ -165,6 +168,7 @@ function fallbackRecord(
     sessionId: run.sessionId,
     provider: "xai",
     route: run.route,
+    trigger: run.trigger,
     from: "xai-native",
     to: "local",
     reason: cooling ? REASONS.cooldown : ownedReasonOf(attempt.reason),
@@ -281,6 +285,7 @@ function snapshotRun(
     latestCompactionId: latestCompactionId(event.branchEntries),
     instructions: event.customInstructions,
     route: event.reason === "manual" ? "manual" : "foreground",
+    trigger: hostTriggerOf(event),
     signal: event.signal,
   };
 }

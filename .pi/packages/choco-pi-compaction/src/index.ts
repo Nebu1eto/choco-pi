@@ -1,5 +1,11 @@
 import type { RetryPolicy } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+  SessionBeforeCompactEvent,
+  SessionBeforeCompactResult,
+} from "@earendil-works/pi-coding-agent";
+import { hostTriggerOf, withTrigger } from "./trigger.ts";
 
 import { appendLaneRecord } from "./background/lane-journal.ts";
 import {
@@ -190,6 +196,18 @@ export default function registerCompaction(
   // that a session start registers; every `context` event re-checks it before a request.
   installOpaqueBlockProvider(pi, { modes: () => background.modes(), announce: announceGuard });
   pi.on("session_before_compact", async (event, ctx) => {
+    const answer = await answerBeforeCompact(event, ctx);
+    // Every checkpoint this extension answers carries what started it; a
+    // producer that set its own trigger (a background adoption) keeps it.
+    return answer?.compaction === undefined
+      ? answer
+      : { ...answer, compaction: withTrigger(answer.compaction, hostTriggerOf(event)) };
+  });
+
+  async function answerBeforeCompact(
+    event: SessionBeforeCompactEvent,
+    ctx: ExtensionContext,
+  ): Promise<SessionBeforeCompactResult | undefined> {
     // A ready, still-valid background candidate replaces the summarizer.
     const adopted = await background.beforeCompact(event, ctx);
     if (adopted !== undefined) return adopted;
@@ -209,8 +227,9 @@ export default function registerCompaction(
     });
     const guarded = guardBeforeLocalSummary({ modes, owner, announce: announceGuard }, event, ctx);
     if (guarded !== undefined) return guarded;
-    return summarize(event, ctx);
-  });
+    const summarized = await summarize(event, ctx);
+    return summarized === undefined ? undefined : summarized;
+  }
 }
 
 /** Journal a guard record on the session and show its notice; only stale contexts are contained. */
