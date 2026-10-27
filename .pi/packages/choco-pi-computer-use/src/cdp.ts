@@ -386,9 +386,11 @@ export class CdpTab {
   }
 
   async clickBackendNode(backendNodeId: number, signal?: AbortSignal): Promise<void> {
+    // Like a real click, focus moves to a focusable target before the click
+    // runs, so later keyboard input without ref goes there.
     await this.withBackendNode(
       backendNodeId,
-      "function(){ this.scrollIntoView({block:'center', inline:'center'}); this.click(); }",
+      "function(){ this.scrollIntoView({block:'center', inline:'center'}); if (typeof this.focus === 'function') this.focus({preventScroll: true}); this.click(); }",
       [],
       signal,
     );

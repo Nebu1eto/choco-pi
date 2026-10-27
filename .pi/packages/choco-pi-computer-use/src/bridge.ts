@@ -2402,6 +2402,7 @@ function browserObservationResult(
   epoch: number,
   tool: string,
   base?: { stateId: string; outline: SerializedOutline },
+  headline?: (stateId: string) => string,
 ): AgentToolResult<BrowserObservationDetails> {
   savedStates.set({
     stateId: browser.snapshotId,
@@ -2439,7 +2440,7 @@ function browserObservationResult(
     content: [
       {
         type: "text",
-        text: `${tool} completed for ${root.ref} ${JSON.stringify(browser.title)}. State ${browser.snapshotId}.\n${viewText}`,
+        text: `${headline?.(browser.snapshotId) ?? `${tool} completed for ${root.ref} ${JSON.stringify(browser.title)}. State ${browser.snapshotId}.`}\n${viewText}`,
       },
     ],
     details,
@@ -2450,6 +2451,7 @@ async function refreshBrowserSnapshot(
   contextId: string,
   tool: string,
   base?: { stateId: string; outline: SerializedOutline },
+  headline?: (stateId: string) => string,
 ): Promise<AgentToolResult<BrowserObservationDetails>> {
   const browser = await cdpSnapshotForContext(contextId);
   if (!browser)
@@ -2464,6 +2466,7 @@ async function refreshBrowserSnapshot(
     state.epoch ?? resourceScheduler.epoch(resourceKey),
     tool,
     base,
+    headline,
   );
 }
 
@@ -4398,15 +4401,17 @@ async function performBrowserTransaction(
     try {
       if (condition && !failure)
         await verifyBrowserCondition(contextId, condition, base.outline, execution, signal);
-      const result = await refreshBrowserSnapshot(contextId, "act_ui", baseView);
+      // A partial result leads with the stopped summary in place of the
+      // "completed" header, as on the desktop path.
+      const result = await refreshBrowserSnapshot(
+        contextId,
+        "act_ui",
+        baseView,
+        stopped ? (stateId) => `${stopped} Returned state ${stateId}.` : undefined,
+      );
       result.details.execution = execution;
-      if (stopped) {
-        result.details.status = "partial";
-        result.content = [
-          { type: "text", text: `${stopped} Returned state ${result.details.stateId}.` },
-          ...result.content,
-        ];
-      } else if (execution.verification?.status === "failed" && execution.error?.message) {
+      if (stopped) result.details.status = "partial";
+      else if (execution.verification?.status === "failed" && execution.error?.message) {
         result.content = [
           {
             type: "text",

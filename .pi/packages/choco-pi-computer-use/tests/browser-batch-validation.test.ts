@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 import {
   executeAct,
   executeFind,
@@ -867,5 +868,68 @@ test("the preflight refuses a ref whose element was removed from the page", asyn
     assert.deepEqual(browser.fake.inputCommands(start), [], "nothing was sent");
     browser.fake.respond = undefined;
     await assertUsable(browser, stateId);
+  });
+});
+
+/** Runs a page-script declaration the bridge sent against a fake element; returns the calls it made. */
+function runOnFakeElement(declaration: string): string[] {
+  const calls: string[] = [];
+  const element = {
+    scrollIntoView: () => calls.push("scrollIntoView"),
+    focus: (options?: { preventScroll?: boolean }) =>
+      calls.push(options?.preventScroll ? "focus(preventScroll)" : "focus"),
+    click: () => calls.push("click"),
+  };
+  // The page calls the declaration with the element as `this`; do the same in a sandbox.
+  runInNewContext(`(${declaration}).call(element)`, { element });
+  return calls;
+}
+
+test("a ref click or press focuses its target before clicking, as a real click does", async () => {
+  await withBrowser({}, async (browser) => {
+    for (const action of [
+      { action: "click", ref: "@e3" },
+      { action: "press", ref: "@e2" },
+    ] satisfies UiAction[]) {
+      const stateId = await browser.observe();
+      const start = browser.fake.commands.length;
+      await browser.act(stateId, [action, { action: "typeText", text: "into-focus" }]);
+      const clicks = browser.fake.commands.slice(start).filter(isRefClick);
+      assert.equal(clicks.length, 1, action.action);
+      assert.deepEqual(
+        runOnFakeElement(String(clicks[0]?.params.functionDeclaration)),
+        ["scrollIntoView", "focus(preventScroll)", "click"],
+        `${action.action} focuses before it clicks`,
+      );
+      assert.deepEqual(insertedTexts(browser.fake.commands.slice(start)), ["into-focus"]);
+    }
+  });
+});
+
+test("a partial browser result leads with the stopped summary and never says completed", async () => {
+  await withBrowser({}, async (browser) => {
+    const stateId = await browser.observe();
+    // The element is removed once action 1 has been sent (after the preflight).
+    let typed = false;
+    browser.fake.respond = (command) => {
+      if (command.method === "Input.insertText") typed = true;
+      return detachAfter(11, () => typed)(command);
+    };
+    const result = await browser.act(stateId, [
+      { action: "typeText", text: "a" },
+      { action: "click", ref: "@e2" },
+    ]);
+    browser.fake.respond = undefined;
+    const details = successor(result);
+    assert.equal(details.status, "partial");
+    const text = resultText(result);
+    assert.doesNotMatch(text, /act_ui completed/);
+    assert.match(
+      text,
+      new RegExp(
+        `^act_ui stopped at action 2 \\(click\\) in "Fixture": .* Returned state ${details.stateId}\\.\\nChanges \\(`,
+      ),
+    );
+    assert.equal(text.match(/Returned state /g)?.length, 1, "one state header");
   });
 });
