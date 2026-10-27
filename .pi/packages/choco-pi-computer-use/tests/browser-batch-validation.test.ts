@@ -933,3 +933,33 @@ test("a partial browser result leads with the stopped summary and never says com
     assert.equal(text.match(/Returned state /g)?.length, 1, "one state header");
   });
 });
+
+test("browser keypress refusals do not recommend a key form that has no effect", async () => {
+  await withBrowser({}, async (browser) => {
+    const stateId = await browser.observe();
+    const start = browser.fake.commands.length;
+    await assert.rejects(
+      browser.act(stateId, [{ action: "keypress", keys: ["cmd+a"] }]),
+      (error: Error) => {
+        assert.equal(
+          error.message,
+          'Browser keypress cannot send "cmd+a": browser pages take DOM key values, either one character or a named key such as "Enter", "Tab", "Escape", "Backspace", "ArrowRight", "PageDown", or "F5", with any modifiers (shift, ctrl, alt/option, cmd/meta) as separate keys before it. On macOS, Cmd editing shortcuts such as ["cmd","a"] (select all, copy, cut, paste, undo, redo) do not run on browser pages; use setText to replace a field\'s text.',
+        );
+        assert.doesNotMatch(error.message, /e\.g\. \["cmd","a"\]/);
+        return true;
+      },
+    );
+    await assert.rejects(
+      browser.act(stateId, [{ action: "keypress", keys: ["shift"] }]),
+      (error: Error) => {
+        assert.equal(
+          error.message,
+          'Browser keypress keys ["shift"] are only modifiers, so nothing would be pressed; add the key to press after the modifiers.',
+        );
+        return true;
+      },
+    );
+    assert.deepEqual(browser.fake.inputCommands(start), [], "nothing was sent");
+    await assertUsable(browser, stateId);
+  });
+});

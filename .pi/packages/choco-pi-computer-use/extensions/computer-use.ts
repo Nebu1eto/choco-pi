@@ -92,7 +92,7 @@ const uiAction = Type.Union([
     keys: Type.Array(Type.String(), {
       minItems: 1,
       description:
-        'Modifiers then one key form one chord, e.g. ["cmd","shift","z"]; otherwise keys are pressed in order. Chord strings like "cmd+a" are desktop-only; browser pages reject them and take DOM key values (one character or a name such as "Enter" or "ArrowRight") with modifiers as separate keys',
+        'Modifiers then one key form one chord, e.g. ["cmd","shift","z"]; otherwise keys are pressed in order. Chord strings like "cmd+a" are desktop-only; browser pages reject them and take DOM key values (one character or a name such as "Enter" or "ArrowRight") with modifiers as separate keys. On macOS, Cmd editing shortcuts (select all, copy, cut, paste, undo, redo) do not run on browser pages; use setText to replace a field\'s text',
     }),
   }),
   Type.Object({

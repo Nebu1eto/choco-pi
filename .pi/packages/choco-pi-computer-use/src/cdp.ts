@@ -200,6 +200,14 @@ function cdpModifierBit(key: string): number | undefined {
 }
 
 /**
+ * CDP key events skip the macOS text-input layer that turns Cmd shortcuts into
+ * editing commands, so on macOS they reach the page without running them
+ * (confirmed live for ["cmd","a"]: the selection stayed collapsed).
+ */
+const CDP_MACOS_EDITING_LIMIT =
+  'On macOS, Cmd editing shortcuts such as ["cmd","a"] (select all, copy, cut, paste, undo, redo) do not run on browser pages; use setText to replace a field\'s text.';
+
+/**
  * Why CDP keypress cannot send `keys`, or undefined when it can. CDP sends each
  * key as a DOM key value: a modifier name, a single character, or a named key
  * such as "Enter". Desktop-only forms ("return", "right", "cmd+a") and
@@ -211,9 +219,9 @@ export function cdpKeysProblem(keys: readonly string[]): string | undefined {
     (key) => cdpModifierBit(key) === undefined && key.length !== 1 && !CDP_NAMED_KEY_CODES.has(key),
   );
   if (unsupported.length > 0)
-    return `Browser keypress cannot send ${unsupported.map((key) => JSON.stringify(key)).join(", ")}: browser pages take DOM key values, either one character or a named key such as "Enter", "Tab", "Escape", "Backspace", "ArrowRight", "PageDown", or "F5", with modifiers (shift, ctrl, alt/option, cmd/meta) as separate keys, e.g. ["cmd","a"].`;
+    return `Browser keypress cannot send ${unsupported.map((key) => JSON.stringify(key)).join(", ")}: browser pages take DOM key values, either one character or a named key such as "Enter", "Tab", "Escape", "Backspace", "ArrowRight", "PageDown", or "F5", with any modifiers (shift, ctrl, alt/option, cmd/meta) as separate keys before it. ${CDP_MACOS_EDITING_LIMIT}`;
   if (keys.every((key) => cdpModifierBit(key) !== undefined))
-    return `Browser keypress keys ${JSON.stringify(keys)} are only modifiers, so nothing would be pressed; add the key to press, e.g. ["shift","Tab"].`;
+    return `Browser keypress keys ${JSON.stringify(keys)} are only modifiers, so nothing would be pressed; add the key to press after the modifiers.`;
   return undefined;
 }
 
