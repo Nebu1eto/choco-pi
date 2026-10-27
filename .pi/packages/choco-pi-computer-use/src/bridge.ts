@@ -11,6 +11,8 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import {
+  focusEstablishedBy,
+  headlessKeyboardRefusal,
   outcomeAfterCheck,
   outcomeAfterObservedValues,
   prepareAction,
@@ -3118,13 +3120,62 @@ async function dispatchUiAction(
     return executionTrace("wait", "stealth", { outcome: "worked" });
   }
   const trace = await helperAct(target, prepared, headless, signal, session);
-  if (
-    !headless &&
-    (prepared.establishesFocus || (prepared.action === "click" && "x" in prepared.target))
-  ) {
-    state.currentFocus = true;
-  }
+  if (focusEstablishedBy(prepared, headless)) state.currentFocus = true;
   return trace;
+}
+
+function isKeyboardUiAction(action: UiAction): action is UiAction & {
+  action: "typeText" | "keypress";
+} {
+  return action.action === "typeText" || action.action === "keypress";
+}
+
+/**
+ * Whether dispatch will send any keyboard action to the app's focused element
+ * (no ref and no focus established earlier in the call). Mirrors the dispatch
+ * loop's focus tracking on a scratch state without delivering anything.
+ */
+function usesImplicitFocus(actions: UiAction[], look: LookResponse, headless: boolean): boolean {
+  const state: ActionState = { currentFocus: false };
+  for (const action of actions) {
+    let prepared: PreparedAction;
+    try {
+      prepared = prepareUiAction(action, state, look, headless);
+    } catch {
+      // Dispatch stops at this action with the same error, so no later
+      // keyboard action runs.
+      return false;
+    }
+    if (
+      (prepared.action === "typeText" || prepared.action === "keypress") &&
+      prepared.implicitFocus
+    )
+      return true;
+    if (focusEstablishedBy(prepared, headless)) state.currentFocus = true;
+  }
+  return false;
+}
+
+/**
+ * Ref-less keyboard input goes to the target app's focused element. Refuse it
+ * before any delivery when the app reports that focus (or, failing that, its
+ * main window) in a window other than this state's window.
+ */
+async function assertImplicitFocusWindow(
+  target: ResolvedTarget,
+  signal?: AbortSignal,
+): Promise<void> {
+  const windows = await listWindows(target.pid, signal);
+  const isTargetWindow = (window: HelperWindow): boolean =>
+    (target.nativeWindowRef !== undefined && window.windowRef === target.nativeWindowRef) ||
+    (target.windowId > 0 && window.windowId === target.windowId);
+  const focused = windows.filter((window) => window.isFocused);
+  const holders = focused.length > 0 ? focused : windows.filter((window) => window.isMain);
+  const other = holders.find((window) => !isTargetWindow(window));
+  if (!other || holders.some(isTargetWindow)) return;
+  throw new Error(
+    `Keyboard input without ref goes to ${target.appName}'s focused element, which is in window "${other.title || "(untitled)"}", not this state's window "${target.windowTitle}". Nothing was sent. Pass an @e ref from this state, or observe that window first.`,
+  );
 }
 
 async function dispatchUiTransaction(
@@ -3573,8 +3624,17 @@ async function performDesktopTransaction(
   const scopeNode = condition ? conditionScopeNode(look.parsedOutline!, condition) : undefined;
   const target = await ensureTargetWindowId(await resolveCurrentTarget(signal), signal);
   const noteBefore = state.currentNote;
+  // Refusals before the write lock deliver nothing and keep the base state valid.
+  const headless = getComputerUseConfig().headless;
+  if (headless) {
+    for (const action of actions) {
+      if (isKeyboardUiAction(action) && !trimOrUndefined(action.ref))
+        throw new Error(headlessKeyboardRefusal(action.action));
+    }
+  } else if (usesImplicitFocus(actions, look, headless)) {
+    await assertImplicitFocusWindow(target, signal);
+  }
   return await withWindowWriteLock(target, async () => {
-    const headless = getComputerUseConfig().headless;
     let execution: ExecutionTrace;
     try {
       execution = await dispatchUiTransaction(actions, target, look, headless, signal, ctx);
@@ -3816,6 +3876,10 @@ function validateActionTarget(action: UiAction): void {
   const hasRef = Boolean(trimOrUndefined(action.ref));
   const hasX = Number.isFinite(action.x);
   const hasY = Number.isFinite(action.y);
+  if (isKeyboardUiAction(action) && (action.x !== undefined || action.y !== undefined))
+    throw new Error(
+      `${action.action} does not take x/y: keyboard input goes to a focused control, not a point. Click the point first and then send ${action.action} without ref, or pass the control's ref.`,
+    );
   if (hasX !== hasY) throw new Error(`${action.action} coordinates require both x and y.`);
   const hasPoint = hasX && hasY;
   if ((action.action === "click" || action.action === "moveMouse") && hasRef === hasPoint) {

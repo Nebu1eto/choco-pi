@@ -147,6 +147,7 @@ function fakeBackend(
   restores: PlatformRestoreUserFocusRequest[] = [],
   restoreFails = false,
   frontmost: { pid: number } = { pid: root.pid! },
+  roots: PlatformRoot[] = [root],
 ): ComputerUsePlatformBackend {
   let observationCount = 0;
   return {
@@ -158,7 +159,7 @@ function fakeBackend(
       return [{ appName: root.appName!, bundleId: root.bundleId, pid: root.pid! }];
     },
     async listRoots() {
-      return [root];
+      return roots;
     },
     async getFrontmost() {
       if (frontmost.pid !== root.pid)
@@ -281,6 +282,9 @@ interface Scenario {
   restoreFails?: boolean;
   /** Mutable frontmost app reported by getFrontmost; defaults to the target. */
   frontmost?: { pid: number };
+  /** Windows reported by listRoots; defaults to the single target window. */
+  roots?: PlatformRoot[];
+  headless?: boolean;
 }
 
 interface FixtureContext {
@@ -321,7 +325,7 @@ async function withFixture<T>(
     );
   }
   process.env.PI_CODING_AGENT_DIR = agentDir;
-  process.env.PI_COMPUTER_USE_HEADLESS = "0";
+  process.env.PI_COMPUTER_USE_HEADLESS = scenario.headless === true ? "1" : "0";
   process.env.PI_COMPUTER_USE_BROWSER_USE = "0";
   delete process.env.PI_COMPUTER_USE_EVENT_DELIVERY;
   if (scenario.deliveryPolicy === undefined) delete process.env.PI_COMPUTER_USE_DELIVERY_POLICY;
@@ -343,6 +347,7 @@ async function withFixture<T>(
       restores,
       scenario.restoreFails === true,
       scenario.frontmost,
+      scenario.roots,
     ),
   );
   try {
@@ -857,6 +862,187 @@ test("image-bearing: typeText after a text-field ref click keeps the focus targe
       assert.ok(type && "focus" in type.target);
       assert.equal(type.focusResolution, "ax_focused_element");
       assert.equal(type.policy, "background");
+    },
+  );
+});
+
+function assertImplicitFocusRequest(
+  request: PlatformActRequest | undefined,
+  action: PlatformActRequest["action"],
+  focus: JsonObject,
+): void {
+  assert.ok(request, "expected an act request");
+  assert.equal(request.action, action);
+  assert.deepEqual(request.target, { focus }, "focus target, never a ref or a point");
+  assert.equal(request.focusResolution, "ax_focused_element");
+  assert.equal(request.policy, "background");
+  assert.equal(request.foregroundGrant, undefined);
+}
+
+for (const outlineOnly of [false, true]) {
+  const look = outlineOnly ? "outline-only" : "image-bearing";
+  const focus: JsonObject = outlineOnly ? {} : { x: 320, y: 240 };
+
+  test(`${look}: a first-action keypress without ref goes to the app's focused element`, async () => {
+    await withFixture(
+      { outlineOnly },
+      () => ({ outcome: "unknown" }),
+      async (context) => {
+        const { details, text } = await actOnceWithText(context, [
+          { action: "keypress", keys: ["option", "right"] },
+        ]);
+        assert.equal(context.requests.length, 1);
+        const [request] = context.requests;
+        assertImplicitFocusRequest(request, "keypress", focus);
+        assert.ok(request?.action === "keypress");
+        assert.deepEqual(request.params.keys, ["option", "right"]);
+        assert.equal(details.status, "ok");
+        assert.match(text, /Effect not verified for action 1 \(keypress: unknown\)/);
+      },
+    );
+  });
+
+  test(`${look}: a first-action typeText without ref goes to the app's focused element`, async () => {
+    await withFixture(
+      { outlineOnly },
+      () => ({ outcome: "worked" }),
+      async (context) => {
+        const details = await actOnce(context, [{ action: "typeText", text: "hello" }]);
+        assert.equal(context.requests.length, 1);
+        const [request] = context.requests;
+        assertImplicitFocusRequest(request, "typeText", focus);
+        assert.ok(request?.action === "typeText");
+        assert.equal(request.params.text, "hello");
+        assert.equal(details.status, "ok");
+      },
+    );
+  });
+}
+
+test("a keypress without ref stays background first under a foreground grant", async () => {
+  await withFixture(
+    { grant: BUNDLE_ID },
+    () => ({ outcome: "unknown" }),
+    async (context) => {
+      await actOnce(context, [{ action: "keypress", keys: ["Enter"] }]);
+      assert.equal(context.requests.length, 1);
+      assertImplicitFocusRequest(context.requests[0], "keypress", { x: 320, y: 240 });
+    },
+  );
+});
+
+test("keyboard input with a ref keeps its ref target and no focus resolution", async () => {
+  await withFixture(
+    {},
+    () => ({ outcome: "worked" }),
+    async (context) => {
+      await actOnce(context, [
+        { action: "keypress", ref: "@e2", keys: ["cmd", "a"] },
+        { action: "typeText", ref: "@e2", text: "x" },
+      ]);
+      const [keypress, type, ...rest] = context.requests;
+      assert.equal(rest.length, 0);
+      assert.equal(keypress?.action, "keypress");
+      assertRefTarget(keypress, "wire-field-1");
+      assert.equal(type?.action, "typeText");
+      assertRefTarget(type, "wire-field-1");
+      for (const request of context.requests) assert.equal(request.policy, "background");
+    },
+  );
+});
+
+const otherWindow: PlatformRoot = {
+  ...root,
+  rootRef: "native-root-other",
+  windowRef: "native-root-other",
+  windowId: 78,
+  title: "Other Window",
+};
+
+test("keyboard input without ref is refused before delivery when another window holds focus", async () => {
+  const roots = [{ ...root, isFocused: false, isMain: false }, otherWindow];
+  await withFixture(
+    { roots },
+    () => ({ outcome: "worked" }),
+    async (context) => {
+      for (const actions of [
+        [{ action: "keypress", keys: ["option", "right"] }],
+        [{ action: "typeText", text: "hello" }],
+        // A button press establishes no focus, so the keypress is still ref-less input.
+        [
+          { action: "press", ref: "@e3" },
+          { action: "keypress", keys: ["Enter"] },
+        ],
+      ] satisfies UiAction[][]) {
+        await assert.rejects(
+          actOnce(context, actions),
+          /goes to Foreground Fixture's focused element, which is in window "Other Window", not this state's window "Fixture Window"\. Nothing was sent\./,
+        );
+      }
+      assert.deepEqual(context.requests, [], "nothing reaches the helper");
+    },
+  );
+});
+
+test("keyboard input without ref is delivered when no window reports focus or main", async () => {
+  const roots = [
+    { ...root, isFocused: false, isMain: false },
+    { ...otherWindow, isFocused: false, isMain: false },
+  ];
+  await withFixture(
+    { roots },
+    () => ({ outcome: "unknown" }),
+    async (context) => {
+      await actOnce(context, [{ action: "keypress", keys: ["Enter"] }]);
+      assert.equal(context.requests.length, 1);
+      assertImplicitFocusRequest(context.requests[0], "keypress", { x: 320, y: 240 });
+    },
+  );
+});
+
+test("headless mode refuses keyboard input without ref before delivery", async () => {
+  await withFixture(
+    { headless: true },
+    () => ({ outcome: "worked" }),
+    async ({ ctx, signal, requests }) => {
+      const observed = await executeObserve("observe", {}, signal, undefined, ctx);
+      const stateId = stateIdFromContent(observed.content);
+      for (const action of [
+        { action: "keypress", keys: ["Enter"] },
+        { action: "typeText", text: "hello" },
+      ] satisfies UiAction[]) {
+        await assert.rejects(
+          executeAct("headless", { stateId, actions: [action] }, signal, undefined, ctx),
+          new RegExp(
+            `^Error: ${action.action} without ref is unavailable in headless mode: .* Pass the @e ref`,
+          ),
+        );
+      }
+      assert.deepEqual(requests, []);
+    },
+  );
+});
+
+test("keyboard actions reject x/y before delivery", async () => {
+  await withFixture(
+    {},
+    () => ({ outcome: "worked" }),
+    async ({ ctx, signal, requests }) => {
+      const observed = await executeObserve("observe", {}, signal, undefined, ctx);
+      const stateId = stateIdFromContent(observed.content);
+      for (const action of [
+        { action: "keypress", x: 10, y: 20, keys: ["Enter"] },
+        { action: "keypress", ref: "@e2", x: 10, keys: ["Enter"] },
+        { action: "typeText", y: 20, text: "hello" },
+      ] satisfies UiAction[]) {
+        await assert.rejects(
+          executeAct("xy", { stateId, actions: [action] }, signal, undefined, ctx),
+          new RegExp(
+            `^Error: ${action.action} does not take x/y: .*Click the point first.*pass the control's ref\\.$`,
+          ),
+        );
+      }
+      assert.deepEqual(requests, []);
     },
   );
 });

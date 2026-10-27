@@ -74,6 +74,18 @@ test("registered act_ui schema accepts every action shape", async () => {
     for (const action of invalidTargets) {
       assert.equal(Value.Check(schema, { actions: [action] }), true);
     }
+
+    // Keyboard input without ref goes to the app's focused element; the
+    // descriptions must say so instead of requiring a ref.
+    const described = JSON.stringify(schema);
+    assert.doesNotMatch(described, /Required unless an earlier action/);
+    assert.match(described, /omit to send keys to the target app's focused element/);
+    assert.match(described, /omit to type into the target app's focused element/);
+    const guidelines = act.definition.promptGuidelines ?? [];
+    assert.ok(
+      guidelines.some((line) => line.includes("typeText/keypress without ref go to")),
+      "the act guideline describes ref-less keyboard input",
+    );
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }

@@ -5,7 +5,12 @@ import { toFiniteNumber } from "./platform/coerce.ts";
 export type ActionTarget =
   | { ref: string }
   | { x: number; y: number }
-  | { focus: { x: number; y: number } };
+  /**
+   * The target app's own focused element, resolved by the helper. The point is
+   * the image center when the look has an image; keyboard delivery never uses
+   * it, so outline-only looks send an empty focus target.
+   */
+  | { focus: { x: number; y: number } | Record<string, never> };
 
 /**
  * `wantsForeground` records a capability need only: the action's most reliable
@@ -39,6 +44,8 @@ export type PreparedAction =
       params: { text: string };
       establishesFocus: false;
       wantsForeground: boolean;
+      /** No ref and no focus established earlier in this call: the app's focused element. */
+      implicitFocus: boolean;
     }
   | {
       action: "keypress";
@@ -46,6 +53,8 @@ export type PreparedAction =
       params: { keys: string[] };
       establishesFocus: false;
       wantsForeground: boolean;
+      /** No ref and no focus established earlier in this call: the app's focused element. */
+      implicitFocus: boolean;
     }
   | {
       action: "scroll";
@@ -76,6 +85,7 @@ export type PreparedAction =
     };
 
 export interface ActionState {
+  /** An earlier action in this call established keyboard focus (see `focusEstablishedBy`). */
   currentFocus: boolean;
   /**
    * Model ref of the text input that the latest prepared ref click, press,
@@ -163,12 +173,21 @@ function nativeTarget(
     return { x, y };
   }
   if (operation === "drag" && action.path?.length) return path(action.path, env)[0];
+  if (operation === "typeText" || operation === "keypress")
+    throw new Error(
+      `${operation} has no usable ref; omit ref to use the app's focused element, or pass an @e ref.`,
+    );
   throw new Error(`${operation} requires either ref or both x and y.`);
 }
 
 function focusedTarget(env: ActionEnvironment): ActionTarget {
-  if (!env.image) throw new Error("Focused keyboard input requires an image-bearing state.");
+  if (!env.image) return { focus: {} };
   return { focus: { x: Math.floor(env.image.width / 2), y: Math.floor(env.image.height / 2) } };
+}
+
+/** Message for keyboard input without a ref in headless mode, which only allows ref targets. */
+export function headlessKeyboardRefusal(operation: "typeText" | "keypress"): string {
+  return `${operation} without ref is unavailable in headless mode: headless delivery cannot send keys to the app's focused element. Pass the @e ref of the control that should receive the input.`;
 }
 
 /** The ref's node when it is a text input the helper can target by ref. */
@@ -193,18 +212,22 @@ export function prepareAction(
   env: ActionEnvironment,
 ): PreparedAction {
   const operation = action.action;
-  const usesCurrentFocus =
-    !env.headless &&
-    state.currentFocus &&
-    !action.ref &&
-    (operation === "typeText" || operation === "keypress");
+  const keyboard = operation === "typeText" || operation === "keypress";
+  const targetless = keyboard && !action.ref?.trim();
+  if (targetless && env.headless) throw new Error(headlessKeyboardRefusal(operation));
+  const usesCurrentFocus = targetless && state.currentFocus;
+  // Without a ref or an earlier focusing action, keyboard input goes to the
+  // target app's own focused element (pid-scoped, never system focus).
+  const implicitFocus = targetless && !state.currentFocus;
   // Without an image there is no focus point; keyboard input then targets the
   // text input that the preceding ref action focused, exactly as if the model
   // had named that ref.
   const focusRef = usesCurrentFocus && !env.image ? state.focusRef : undefined;
   const retargeted = focusRef ? { ...action, ref: focusRef } : action;
   const target =
-    usesCurrentFocus && !focusRef ? focusedTarget(env) : nativeTarget(retargeted, operation, env);
+    (usesCurrentFocus && !focusRef) || implicitFocus
+      ? focusedTarget(env)
+      : nativeTarget(retargeted, operation, env);
   const ref = retargeted.ref?.trim();
   if (operation === "click" || operation === "press")
     state.focusRef = ref ? refTextInput(ref, env) : undefined;
@@ -248,7 +271,9 @@ export function prepareAction(
         target,
         params: { text: action.text ?? "" },
         establishesFocus: false,
-        wantsForeground: "focus" in target,
+        // Implicit focus is always tried in the background first, even under a grant.
+        wantsForeground: "focus" in target && !implicitFocus,
+        implicitFocus,
       };
     case "keypress":
       return {
@@ -256,7 +281,8 @@ export function prepareAction(
         target,
         params: { keys: keys(action.keys) },
         establishesFocus: false,
-        wantsForeground: "focus" in target,
+        wantsForeground: "focus" in target && !implicitFocus,
+        implicitFocus,
       };
     case "scroll":
       return {
@@ -283,6 +309,14 @@ export function prepareAction(
         wantsForeground: false,
       };
   }
+}
+
+/** Whether a delivered action leaves keyboard focus for later ref-less keyboard input. */
+export function focusEstablishedBy(prepared: PreparedAction, headless: boolean): boolean {
+  return (
+    !headless &&
+    (prepared.establishesFocus || (prepared.action === "click" && "x" in prepared.target))
+  );
 }
 
 export function outcomeAfterCheck(

@@ -208,7 +208,8 @@ export interface PlatformObserveRequest {
 export type PlatformActTarget =
   | { ref: string }
   | { x: number; y: number }
-  | { focus: PlatformPoint };
+  /** Resolved through the app's AX focused element; the point is absent on outline-only looks. */
+  | { focus: PlatformPoint | Record<string, never> };
 export type PlatformDeliveryPolicy = "ax_only" | "background" | "foreground";
 type PlatformMouseButton = "left" | "right" | "middle";
 type PlatformActDeliveryParam = { delivery?: NativeInputDelivery };

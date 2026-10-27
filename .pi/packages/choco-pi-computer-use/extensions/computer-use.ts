@@ -75,7 +75,8 @@ const uiAction = Type.Union([
     action: Type.Literal("typeText"),
     ref: Type.Optional(
       Type.String({
-        description: "Required unless an earlier action in this same call focused an input",
+        description:
+          "Input to focus first; omit to type into the target app's focused element (headless requires ref)",
       }),
     ),
     text: Type.String(),
@@ -84,10 +85,15 @@ const uiAction = Type.Union([
     action: Type.Literal("keypress"),
     ref: Type.Optional(
       Type.String({
-        description: "Required unless an earlier action in this same call focused an input",
+        description:
+          "Control to focus first; omit to send keys to the target app's focused element (headless requires ref)",
       }),
     ),
-    keys: Type.Array(Type.String(), { minItems: 1 }),
+    keys: Type.Array(Type.String(), {
+      minItems: 1,
+      description:
+        'Modifiers then one key form one chord, e.g. ["cmd","shift","z"]; otherwise keys are pressed in order and each may be a chord like "cmd+a"',
+    }),
   }),
   Type.Object({
     action: Type.Literal("scroll"),
@@ -244,7 +250,7 @@ const actTool = defineTool({
     "Pass dependent click/type steps together and use expect for observable completion.",
   promptGuidelines: [
     'Action shapes: {action:"press",ref}; {action:"click",ref|x,y,button?,clickCount?}; {action:"setText",ref,text}; {action:"typeText",text,ref?}; {action:"keypress",keys:[key,…],ref?}; {action:"scroll",ref|x,y,scrollX?,scrollY?}; {action:"drag",path:[{x,y},…]}; {action:"moveMouse",x,y}. Click requires exactly one target; scroll requires a target and at least one non-zero delta.',
-    "typeText/keypress require ref unless an earlier action in this same call focused an input; then omit ref to follow that focus.",
+    "typeText/keypress without ref go to the target app's focused element, which must be in this state's window; pass ref to focus a specific input first. They take no x/y: click the point first. Headless mode requires ref.",
   ],
   parameters: Type.Object({
     stateId: actionStateId,
