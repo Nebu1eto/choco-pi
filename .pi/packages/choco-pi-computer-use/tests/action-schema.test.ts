@@ -6,6 +6,26 @@ import test from "node:test";
 import { discoverAndLoadExtensions } from "@earendil-works/pi-coding-agent";
 import { Value } from "typebox/value";
 import type { UiAction } from "../src/contract.ts";
+import { isJsonObject, isString, type JsonObject, type JsonValue } from "../src/json.ts";
+
+/** The object at `key` of a JSON object, or undefined. */
+function objectAt(value: JsonValue | undefined, key: string): JsonObject | undefined {
+  if (!isJsonObject(value)) return undefined;
+  const field = value[key];
+  return isJsonObject(field) ? field : undefined;
+}
+
+/** A property description of one act_ui action variant in the serialized schema. */
+function actionDescription(schema: JsonValue, action: string, property: string): string {
+  const variants = objectAt(objectAt(schema, "properties"), "actions")?.items;
+  const anyOf = isJsonObject(variants) ? variants.anyOf : undefined;
+  const variant = (Array.isArray(anyOf) ? anyOf : []).find(
+    (candidate) => objectAt(objectAt(candidate, "properties"), "action")?.const === action,
+  );
+  const description = objectAt(objectAt(variant, "properties"), property)?.description;
+  assert.ok(isString(description), `${action}.${property} has a description`);
+  return description;
+}
 
 const examples: UiAction[] = [
   { action: "press", ref: "@e1" },
@@ -81,6 +101,23 @@ test("registered act_ui schema accepts every action shape", async () => {
     assert.doesNotMatch(described, /Required unless an earlier action/);
     assert.match(described, /omit to send keys to the target app's focused element/);
     assert.match(described, /omit to type into the target app's focused element/);
+    // Keyboard wording matches the browser path: the headless ref rule and
+    // chord strings apply to desktop delivery only.
+    const serialized: JsonValue = JSON.parse(described);
+    assert.equal(
+      actionDescription(serialized, "typeText", "ref"),
+      "Input to focus first; omit to type into the target app's focused element (headless desktop mode requires ref)",
+    );
+    assert.equal(
+      actionDescription(serialized, "keypress", "ref"),
+      "Control to focus first; omit to send keys to the target app's focused element (headless desktop mode requires ref)",
+    );
+    assert.equal(
+      actionDescription(serialized, "keypress", "keys"),
+      'Modifiers then one key form one chord, e.g. ["cmd","shift","z"]; otherwise keys are pressed in order. Chord strings like "cmd+a" are desktop-only; browser pages reject them and take DOM key values (one character or a name such as "Enter" or "ArrowRight") with modifiers as separate keys',
+    );
+    assert.doesNotMatch(described, /\(headless requires ref\)/);
+    assert.doesNotMatch(described, /each may be a chord/);
     const guidelines = act.definition.promptGuidelines ?? [];
     assert.ok(
       guidelines.some((line) => line.includes("typeText/keypress without ref go to")),

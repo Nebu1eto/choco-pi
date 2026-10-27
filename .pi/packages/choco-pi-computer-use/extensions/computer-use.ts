@@ -76,7 +76,7 @@ const uiAction = Type.Union([
     ref: Type.Optional(
       Type.String({
         description:
-          "Input to focus first; omit to type into the target app's focused element (headless requires ref)",
+          "Input to focus first; omit to type into the target app's focused element (headless desktop mode requires ref)",
       }),
     ),
     text: Type.String(),
@@ -86,13 +86,13 @@ const uiAction = Type.Union([
     ref: Type.Optional(
       Type.String({
         description:
-          "Control to focus first; omit to send keys to the target app's focused element (headless requires ref)",
+          "Control to focus first; omit to send keys to the target app's focused element (headless desktop mode requires ref)",
       }),
     ),
     keys: Type.Array(Type.String(), {
       minItems: 1,
       description:
-        'Modifiers then one key form one chord, e.g. ["cmd","shift","z"]; otherwise keys are pressed in order and each may be a chord like "cmd+a"',
+        'Modifiers then one key form one chord, e.g. ["cmd","shift","z"]; otherwise keys are pressed in order. Chord strings like "cmd+a" are desktop-only; browser pages reject them and take DOM key values (one character or a name such as "Enter" or "ArrowRight") with modifiers as separate keys',
     }),
   }),
   Type.Object({
