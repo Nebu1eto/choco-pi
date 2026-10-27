@@ -1,16 +1,5 @@
 import assert from "node:assert/strict";
-import { createServer } from "node:http";
 import test from "node:test";
-import type { AddressInfo } from "node:net";
-
-function isTcpAddress(value: AddressInfo | string | null): value is AddressInfo {
-  return (
-    value !== null &&
-    Object.hasOwn(Object(value), "port") &&
-    Object.hasOwn(Object(value), "address") &&
-    Object.hasOwn(Object(value), "family")
-  );
-}
 import {
   executeAct,
   executeFind,
@@ -18,126 +7,16 @@ import {
   shutdownComputerUseSession,
   type UiAction,
 } from "../src/bridge.ts";
-import { replaceCdpTransportForTest, type CdpTransport } from "../src/cdp.ts";
-import { isJsonObject, isNumber, isString, type JsonObject, type JsonValue } from "../src/json.ts";
-import { replacePlatformBackendForTest } from "../src/platform/index.ts";
 import { createTestExtensionContext } from "./helpers/extension-context.ts";
-
-interface Command {
-  id: number;
-  method: string;
-  params: JsonObject;
-}
-
-function commandFrom(raw: string): Command {
-  const value: JsonValue = JSON.parse(raw);
-  if (
-    !isJsonObject(value) ||
-    !isNumber(value.id) ||
-    !isString(value.method) ||
-    !isJsonObject(value.params)
-  )
-    throw new Error("Invalid CDP command");
-  return { id: value.id, method: value.method, params: value.params };
-}
-
-function forbidden(): never {
-  throw new Error("Native backend must not be invoked");
-}
+import { replaceWithForbiddenBackend, startFakeCdp } from "./helpers/fake-cdp.ts";
 
 test(
   "browser batches stop on abort, release paired input and unlock",
   { timeout: 15000 },
   async () => {
-    const restoreBackend = replacePlatformBackendForTest({
-      name: "macos",
-      async ensureReady(_ctx, state) {
-        return state;
-      },
-      async listApps() {
-        return [];
-      },
-      async listRoots() {
-        return [];
-      },
-      async getFrontmost() {
-        return forbidden();
-      },
-      async focusWindow() {
-        return forbidden();
-      },
-      async restoreUserFocus() {
-        return forbidden();
-      },
-      async observe() {
-        return forbidden();
-      },
-      async act() {
-        return forbidden();
-      },
-      async readText() {
-        return forbidden();
-      },
-      async waitFor() {
-        return forbidden();
-      },
-      isBrowserApp() {
-        return false;
-      },
-      isChromeFamilyApp() {
-        return false;
-      },
-      async openBrowserLocation() {
-        return forbidden();
-      },
-    });
-    const server = createServer((_req, res) => {
-      res.setHeader("Content-Type", "application/json");
-      res.end(
-        JSON.stringify([
-          {
-            id: "fixture",
-            type: "page",
-            title: "Fixture",
-            url: "about:blank",
-            webSocketDebuggerUrl: `ws://127.0.0.1:${listeningPort}/devtools/page/fixture`,
-          },
-        ]),
-      );
-    });
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-    const port = server.address();
-    if (!isTcpAddress(port)) throw new Error("Missing TCP address");
-    const listeningPort = port.port;
-    const oldPort = process.env.PI_COMPUTER_USE_CDP_PORT;
-    process.env.PI_COMPUTER_USE_CDP_PORT = String(listeningPort);
-    const commands: Command[] = [];
-    let hold: ((command: Command, reply: () => void) => boolean) | undefined;
-    const restoreTransport = replaceCdpTransportForTest(() => {
-      const transport: CdpTransport = {
-        readyState: WebSocket.OPEN,
-        onopen: null,
-        onclose: null,
-        onerror: null,
-        onmessage: null,
-        close() {},
-        send(data) {
-          const command = commandFrom(data);
-          commands.push(command);
-          let result: JsonObject = {};
-          if (command.method === "Runtime.evaluate") result = { result: { value: "Fixture page" } };
-          else if (command.method === "Accessibility.getFullAXTree") result = { nodes: [] };
-          else if (command.method === "DOM.resolveNode") result = { object: { objectId: "node" } };
-          const reply = () =>
-            transport.onmessage?.(
-              new MessageEvent("message", { data: JSON.stringify({ id: command.id, result }) }),
-            );
-          if (!hold?.(command, reply)) queueMicrotask(reply);
-        },
-      };
-      queueMicrotask(() => transport.onopen?.(new Event("open")));
-      return transport;
-    });
+    const restoreBackend = replaceWithForbiddenBackend();
+    const fake = await startFakeCdp();
+    const commands = fake.commands;
     try {
       const ctx = await createTestExtensionContext(process.cwd());
       const roots = await executeFind("find", { kind: "browser_page" }, undefined, undefined, ctx);
@@ -172,7 +51,7 @@ test(
         const controller = new AbortController();
         const received = Promise.withResolvers<void>();
         let lateReply: (() => void) | undefined;
-        hold = (command, reply) => {
+        fake.hold = (command, reply) => {
           if (
             !lateReply &&
             command.method.startsWith("Input.") &&
@@ -206,7 +85,7 @@ test(
           await rejected;
           lateReply();
         }
-        hold = undefined;
+        fake.hold = undefined;
         const delivered = commands
           .slice(start)
           .filter((command) => command.method.startsWith("Input."));
@@ -239,14 +118,8 @@ test(
       }
     } finally {
       await shutdownComputerUseSession();
-      restoreTransport();
+      await fake.close();
       restoreBackend();
-      if (oldPort === undefined) delete process.env.PI_COMPUTER_USE_CDP_PORT;
-      else process.env.PI_COMPUTER_USE_CDP_PORT = oldPort;
-      server.closeAllConnections();
-      await new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
-      );
     }
   },
 );

@@ -250,7 +250,7 @@ const actTool = defineTool({
     "Pass dependent click/type steps together and use expect for observable completion.",
   promptGuidelines: [
     'Action shapes: {action:"press",ref}; {action:"click",ref|x,y,button?,clickCount?}; {action:"setText",ref,text}; {action:"typeText",text,ref?}; {action:"keypress",keys:[key,…],ref?}; {action:"scroll",ref|x,y,scrollX?,scrollY?}; {action:"drag",path:[{x,y},…]}; {action:"moveMouse",x,y}. Click requires exactly one target; scroll requires a target and at least one non-zero delta.',
-    "typeText/keypress without ref go to the target app's focused element, which must be in this state's window; pass ref to focus a specific input first. They take no x/y: click the point first. Headless mode requires ref.",
+    "typeText/keypress without ref go to the target app's focused element, which must be in this state's window; pass ref to focus a specific input first. They take no x/y: click the point first. Headless desktop mode requires ref.",
     'Every action is validated before anything is sent; an invalid one rejects the whole call ("act_ui action N (<action>): … Nothing was sent.") and the stateId stays usable. Result status "partial": action stoppedAt+1 failed during delivery after the earlier ones ran (execution.error says why); continue from the returned state and do not resend delivered actions. foreground_required, cancelled, owned_by_other_session, target_closed, and post_action_observation_failed return no successor state: call observe_ui before acting again.',
   ],
   parameters: Type.Object({

@@ -86,6 +86,10 @@ test("registered act_ui schema accepts every action shape", async () => {
       guidelines.some((line) => line.includes("typeText/keypress without ref go to")),
       "the act guideline describes ref-less keyboard input",
     );
+    assert.ok(
+      guidelines.some((line) => line.includes("Headless desktop mode requires ref.")),
+      "the headless ref rule is limited to desktop delivery",
+    );
     const statuses = guidelines.find((line) => line.includes('Result status "partial"'));
     assert.ok(statuses, "the act guideline documents the partial status");
     for (const status of [

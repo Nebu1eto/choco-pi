@@ -49,6 +49,8 @@ export interface CdpPageSnapshot {
   text: string;
   targets: CdpSnapshotTarget[];
   outline: SerializedOutline;
+  /** Layout viewport in CSS pixels at capture time; absent when the page did not report it. */
+  viewport?: { width: number; height: number };
   diagnostics: {
     cdp: "connected";
     targetCount: number;
@@ -62,10 +64,6 @@ export interface CdpEvaluationResult {
 
 interface CdpAxValue extends JsonObject {
   value?: JsonValue;
-}
-
-interface ModifierBits {
-  [key: string]: number;
 }
 
 interface CdpRawOutlineNode extends JsonObject {
@@ -118,11 +116,102 @@ interface CdpCommandResult {
   nodes?: CdpAxNode[];
   object?: { objectId?: string };
   bounds?: { left?: number; top?: number; width?: number; height?: number };
+  exceptionDetails?: JsonValue;
 }
 
 function checkAbort(signal?: AbortSignal): void {
   if (signal?.aborted) throw new DOMException("Operation aborted.", "AbortError");
 }
+
+/**
+ * A CDP action failed. `effectPossible` is false only when no input-bearing
+ * command of the action (key, mouse, text, focus, or page-script call) was
+ * sent; once one was sent the page may have applied it, even if it errored.
+ */
+export class CdpActionError extends Error {
+  readonly code: string;
+  readonly effectPossible: boolean;
+
+  constructor(message: string, code: string, effectPossible: boolean, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "CdpActionError";
+    this.code = code;
+    this.effectPossible = effectPossible;
+  }
+}
+
+/** Modifier names CDP keypress folds into the modifier bit mask (compared in lower case). */
+const CDP_MODIFIER_BITS = new Map([
+  ["alt", 1],
+  ["option", 1],
+  ["control", 2],
+  ["ctrl", 2],
+  ["meta", 4],
+  ["command", 4],
+  ["cmd", 4],
+  ["shift", 8],
+]);
+
+/** DOM `KeyboardEvent.key` names that CDP keypress sends as-is. */
+const CDP_NAMED_KEYS: ReadonlySet<string> = new Set([
+  "Enter",
+  "Tab",
+  "Escape",
+  "Backspace",
+  "Delete",
+  "Insert",
+  "Home",
+  "End",
+  "PageUp",
+  "PageDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "ArrowUp",
+  "ArrowDown",
+  ...Array.from({ length: 12 }, (_, index) => `F${index + 1}`),
+]);
+
+function cdpModifierBit(key: string): number | undefined {
+  return CDP_MODIFIER_BITS.get(key.toLowerCase());
+}
+
+/**
+ * Why CDP keypress cannot send `keys`, or undefined when it can. CDP sends each
+ * key as a DOM key value: a modifier name, a single character, or a named key
+ * such as "Enter". Desktop-only forms ("return", "right", "cmd+a") and
+ * modifier-only lists would send nothing useful, so they are refused.
+ */
+export function cdpKeysProblem(keys: readonly string[]): string | undefined {
+  if (keys.length === 0) return "keypress.keys must contain at least one key.";
+  const unsupported = keys.filter(
+    (key) => cdpModifierBit(key) === undefined && key.length !== 1 && !CDP_NAMED_KEYS.has(key),
+  );
+  if (unsupported.length > 0)
+    return `Browser keypress cannot send ${unsupported.map((key) => JSON.stringify(key)).join(", ")}: browser pages take DOM key values, either one character or a named key such as "Enter", "Tab", "Escape", "Backspace", "ArrowRight", "PageDown", or "F5", with modifiers (shift, ctrl, alt/option, cmd/meta) as separate keys, e.g. ["cmd","a"].`;
+  if (keys.every((key) => cdpModifierBit(key) !== undefined))
+    return `Browser keypress keys ${JSON.stringify(keys)} are only modifiers, so nothing would be pressed; add the key to press, e.g. ["shift","Tab"].`;
+  return undefined;
+}
+
+/** The thrown page-script message from a Runtime result, or undefined when it did not throw. */
+function scriptExceptionMessage(details: JsonValue | undefined): string | undefined {
+  if (details === undefined) return undefined;
+  if (!isJsonObject(details)) return "Page script threw an exception.";
+  const exception = isJsonObject(details.exception) ? details.exception : undefined;
+  const description = exception && isString(exception.description) ? exception.description : "";
+  const text = isString(details.text) ? details.text : "";
+  return `Page script threw: ${(description || text || "unknown exception").split("\n")[0]}`;
+}
+
+function isAbortError(error: Error): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
+/** The browser answered a command with a protocol error. */
+class CdpProtocolError extends Error {}
+
+/** A page script run for an action threw. */
+class CdpPageScriptError extends Error {}
 
 export interface CdpTransport {
   readonly readyState: number;
@@ -155,6 +244,7 @@ export class CdpTab {
   private readonly ws: CdpTransport;
   readonly targetId: string;
   public title: string;
+  private inputCommandSent = false;
 
   private constructor(ws: CdpTransport, targetId: string, title: string) {
     this.ws = ws;
@@ -215,6 +305,11 @@ export class CdpTab {
 
   get isOpen(): boolean {
     return this.ws.readyState === WebSocket.OPEN;
+  }
+
+  /** Whether this connection sent an input-bearing command (key, mouse, text, focus, page script). */
+  get inputSent(): boolean {
+    return this.inputCommandSent;
   }
 
   close(): void {
@@ -298,37 +393,37 @@ export class CdpTab {
       );
       return;
     }
-    await this.send(
+    const result = await this.deliver(
       "Runtime.evaluate",
       {
         expression: `window.scrollBy(${JSON.stringify(deltaX)}, ${JSON.stringify(deltaY)})`,
       },
       signal,
     );
+    const exception = scriptExceptionMessage(result?.exceptionDetails);
+    if (exception) throw new CdpPageScriptError(exception);
   }
 
   async typeIntoFocused(text: string, signal?: AbortSignal): Promise<void> {
-    await this.send("Input.insertText", { text }, signal);
+    await this.deliver("Input.insertText", { text }, signal);
+  }
+
+  /** Focuses a node and fails when focus did not land on it or inside it. */
+  async focusBackendNode(backendNodeId: number, signal?: AbortSignal): Promise<void> {
+    await this.withBackendNode(
+      backendNodeId,
+      "function(){ this.scrollIntoView({block:'center', inline:'center'}); this.focus(); const active = this.getRootNode().activeElement; if (active !== this && !(active && this.contains(active))) throw new Error('The element did not take keyboard focus.'); }",
+      [],
+      signal,
+    );
   }
 
   async keypress(keys: string[], signal?: AbortSignal): Promise<void> {
-    const modifierBits: ModifierBits = {
-      alt: 1,
-      option: 1,
-      control: 2,
-      ctrl: 2,
-      meta: 4,
-      command: 4,
-      cmd: 4,
-      shift: 8,
-    };
-    const modifiers = keys.reduce((bits, key) => bits | (modifierBits[key.toLowerCase()] ?? 0), 0);
-    for (const key of keys.filter(
-      (candidate) => modifierBits[candidate.toLowerCase()] === undefined,
-    )) {
+    const modifiers = keys.reduce((bits, key) => bits | (cdpModifierBit(key) ?? 0), 0);
+    for (const key of keys.filter((candidate) => cdpModifierBit(candidate) === undefined)) {
       checkAbort(signal);
       try {
-        await this.send(
+        await this.deliver(
           "Input.dispatchKeyEvent",
           {
             type: "keyDown",
@@ -340,7 +435,7 @@ export class CdpTab {
           signal,
         );
       } finally {
-        await this.send("Input.dispatchKeyEvent", { type: "keyUp", key, code: key, modifiers });
+        await this.deliver("Input.dispatchKeyEvent", { type: "keyUp", key, code: key, modifiers });
       }
       checkAbort(signal);
     }
@@ -354,7 +449,7 @@ export class CdpTab {
     clickCount = 1,
     signal?: AbortSignal,
   ): Promise<void> {
-    await this.send(
+    await this.deliver(
       "Input.dispatchMouseEvent",
       {
         type,
@@ -376,7 +471,7 @@ export class CdpTab {
       for (const point of path.slice(1)) {
         checkAbort(signal);
         last = point;
-        await this.send(
+        await this.deliver(
           "Input.dispatchMouseEvent",
           {
             type: "mouseMoved",
@@ -421,7 +516,7 @@ export class CdpTab {
     const objectId = resolved?.object?.objectId;
     if (!isString(objectId))
       throw new Error(`CDP could not resolve backend node ${backendNodeId}.`);
-    await this.send(
+    const result = await this.deliver(
       "Runtime.callFunctionOn",
       {
         objectId,
@@ -430,6 +525,41 @@ export class CdpTab {
       },
       signal,
     );
+    const exception = scriptExceptionMessage(result?.exceptionDetails);
+    if (exception) throw new CdpPageScriptError(exception);
+  }
+
+  /**
+   * Read-only check: which of `backendNodeIds` no longer resolve to a node.
+   * Resolved handles are released; no input-bearing command is sent.
+   */
+  async unresolvedBackendNodes(
+    backendNodeIds: readonly number[],
+    signal?: AbortSignal,
+  ): Promise<number[]> {
+    const objectGroup = "pi-computer-use-preflight";
+    const unresolved: number[] = [];
+    try {
+      for (const backendNodeId of backendNodeIds) {
+        checkAbort(signal);
+        try {
+          const resolved = await this.send(
+            "DOM.resolveNode",
+            { backendNodeId, objectGroup },
+            signal,
+          );
+          if (!isString(resolved?.object?.objectId)) unresolved.push(backendNodeId);
+        } catch (error) {
+          // A protocol error means the node is gone; transport failures and aborts propagate.
+          if (!(error instanceof CdpProtocolError)) throw error;
+          unresolved.push(backendNodeId);
+        }
+      }
+    } finally {
+      if (this.isOpen)
+        await this.send("Runtime.releaseObjectGroup", { objectGroup }).catch(() => undefined);
+    }
+    return unresolved;
   }
 
   /** Screen bounds of the browser window containing this tab. */
@@ -451,6 +581,17 @@ export class CdpTab {
     const entries = this.consoleBuffer;
     this.consoleBuffer = [];
     return entries;
+  }
+
+  /** Sends an input-bearing command; from here on the action may have taken effect. */
+  private deliver(
+    method: string,
+    params: JsonObject = {},
+    signal?: AbortSignal,
+  ): Promise<CdpCommandResult> {
+    checkAbort(signal);
+    this.inputCommandSent = true;
+    return this.send(method, params, signal);
   }
 
   private send(
@@ -504,7 +645,7 @@ export class CdpTab {
       if (!pending) return;
       this.pending.delete(message.id);
       if (message.error) {
-        pending.reject(new Error(`CDP error: ${message.error.message ?? "unknown"}`));
+        pending.reject(new CdpProtocolError(`CDP error: ${message.error.message ?? "unknown"}`));
       } else {
         pending.resolve(message.result);
       }
@@ -712,11 +853,14 @@ export async function cdpKeypressForContext(
   contextId: string,
   keys: string[],
   signal?: AbortSignal,
+  focusBackendNodeId?: number,
 ): Promise<boolean> {
   return (
     (await withCdpContextTab(
       contextId,
       async (tab) => {
+        if (focusBackendNodeId !== undefined)
+          await tab.focusBackendNode(focusBackendNodeId, signal);
         await tab.keypress(keys, signal);
         return true;
       },
@@ -814,9 +958,10 @@ export async function cdpSnapshotForContext(
 
   const tab = await CdpTab.connect(page.webSocketDebuggerUrl, page.id, page.title);
   try {
-    const [textValue, nodes] = await Promise.all([
+    const [textValue, nodes, viewportValue] = await Promise.all([
       tab.evaluate("document.body ? document.body.innerText : ''").catch(() => ""),
       tab.accessibilityTree().catch(() => []),
+      tab.evaluate("[window.innerWidth, window.innerHeight]").catch(() => undefined),
     ]);
     const snapshotId = randomUUID();
     const { targets, outline } = cdpSnapshotOutline(snapshotId, nodes);
@@ -830,6 +975,7 @@ export async function cdpSnapshotForContext(
       text: isString(textValue) ? textValue : String(textValue ?? ""),
       targets,
       outline,
+      viewport: viewportFrom(viewportValue),
       diagnostics: { cdp: "connected", targetCount: targets.length },
     };
   } finally {
@@ -837,19 +983,76 @@ export async function cdpSnapshotForContext(
   }
 }
 
+/** A positive finite [width, height] pair, or undefined. */
+function viewportFrom(value: JsonField): { width: number; height: number } | undefined {
+  if (!Array.isArray(value) || value.length !== 2) return undefined;
+  const [width, height] = value;
+  if (!isNumber(width) || !isNumber(height)) return undefined;
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0)
+    return undefined;
+  return { width, height };
+}
+
+/**
+ * Read-only preflight for an action batch: `undefined` when the page target is
+ * gone, otherwise the backend node ids that no longer resolve. Sends no
+ * input-bearing command; with no node ids it only lists the page targets.
+ */
+export async function cdpPreflightForContext(
+  contextId: string,
+  backendNodeIds: readonly number[],
+  signal?: AbortSignal,
+): Promise<{ unresolved: number[] } | undefined> {
+  checkAbort(signal);
+  const page = await cdpPageForContext(contextId, signal);
+  checkAbort(signal);
+  if (!page?.webSocketDebuggerUrl) return undefined;
+  if (backendNodeIds.length === 0) return { unresolved: [] };
+  const tab = await CdpTab.connect(page.webSocketDebuggerUrl, page.id, page.title, signal);
+  try {
+    return { unresolved: await tab.unresolvedBackendNodes(backendNodeIds, signal) };
+  } finally {
+    tab.close();
+  }
+}
+
+/**
+ * Runs one action on a fresh connection to the context's page. `undefined`
+ * when the page target is gone (nothing sent). Other failures, except aborts,
+ * become a CdpActionError whose `effectPossible` says whether input was sent.
+ */
 async function withCdpContextTab<T>(
   contextId: string,
   run: (tab: CdpTab) => Promise<T>,
   signal?: AbortSignal,
 ): Promise<T | undefined> {
   checkAbort(signal);
-  const page = await cdpPageForContext(contextId, signal);
-  checkAbort(signal);
-  if (!page?.webSocketDebuggerUrl) return undefined;
-  const tab = await CdpTab.connect(page.webSocketDebuggerUrl, page.id, page.title, signal);
+  let tab: CdpTab;
+  try {
+    const page = await cdpPageForContext(contextId, signal);
+    checkAbort(signal);
+    if (!page?.webSocketDebuggerUrl) return undefined;
+    tab = await CdpTab.connect(page.webSocketDebuggerUrl, page.id, page.title, signal);
+  } catch (error) {
+    if (signal?.aborted || !(error instanceof Error) || isAbortError(error)) throw error;
+    throw new CdpActionError(
+      `Could not reach the browser page: ${error.message}`,
+      "cdp_unreachable",
+      false,
+      { cause: error },
+    );
+  }
   try {
     checkAbort(signal);
     return await run(tab);
+  } catch (error) {
+    if (signal?.aborted || !(error instanceof Error) || isAbortError(error)) throw error;
+    throw new CdpActionError(
+      error.message,
+      error instanceof CdpPageScriptError ? "page_script_exception" : "cdp_failed",
+      tab.inputSent,
+      { cause: error },
+    );
   } finally {
     tab.close();
   }

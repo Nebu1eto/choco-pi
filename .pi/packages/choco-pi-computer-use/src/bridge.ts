@@ -19,13 +19,16 @@ import {
   type PreparedAction,
 } from "./actions.ts";
 import {
+  CdpActionError,
   cdpClickAtForContext,
   cdpClickForContext,
   cdpDragForContext,
   cdpEvaluateForContext,
   cdpKeypressForContext,
+  cdpKeysProblem,
   cdpMouseForContext,
   cdpNavigateContext,
+  cdpPreflightForContext,
   cdpScrollForContext,
   cdpSnapshotForContext,
   cdpTabForWindow,
@@ -233,7 +236,7 @@ export class ObservationRefreshRequiredError extends Error {
 }
 
 interface ExecutionTrace {
-  strategy: "look" | "act" | "wait" | "browser_open_location" | "cdp_navigate";
+  strategy: "look" | "act" | "wait" | "browser_open_location" | "cdp_navigate" | "cdp_act";
   runtimeMode?: ExecutionVariant;
   variant?: ExecutionVariant;
   stealthCompatible?: boolean;
@@ -423,6 +426,24 @@ interface BrowserObservationDetails {
   root: { ref: string; kind: "browser_page"; title: string; url: string };
   outline: SerializedOutline;
   renderedOutline: string;
+  /**
+   * act_ui only. `partial`: an action failed during delivery after earlier
+   * actions ran; `execution.stoppedAt` names it and `execution.error` says why.
+   */
+  status?: "ok" | "partial";
+  /** act_ui only: one `cdp_act` step per action; a sent step's outcome is `unknown` (effect not verified). */
+  execution?: ExecutionTrace;
+}
+
+/** A browser act_ui result without a successor state: the page could not be observed afterward. */
+interface TerminalBrowserActionDetails {
+  tool: "act_ui";
+  kind: "browser_page";
+  status: "target_closed" | "post_action_observation_failed";
+  baseStateId: string;
+  root: { ref: string; kind: "browser_page"; title: string; url: string };
+  execution: ExecutionTrace;
+  error: { code: string; message: string };
 }
 
 interface EvaluateBrowserDetails {
@@ -2354,27 +2375,18 @@ function isBrowserContextId(contextId: string | undefined): contextId is string 
   return Boolean(contextId?.startsWith(BROWSER_CONTEXT_PREFIX));
 }
 
-function browserSnapshotTarget(
-  snapshotId: string | undefined,
-  ref: string | undefined,
-): { contextId: string; backendNodeId?: number } | undefined {
-  if (!snapshotId || !ref) return undefined;
-  const record = savedStates.get(snapshotId);
-  const snapshot = record?.value.kind === "browser" ? record.value.snapshot : undefined;
-  const target = snapshot?.targets.find((candidate) => candidate.ref === ref);
-  if (!snapshot || !target) return undefined;
-  return { contextId: snapshot.contextId, backendNodeId: target.backendNodeId };
-}
-
 function browserContextForOperation(): string | undefined {
   const contextId = operationState().contextId;
   return isBrowserContextId(contextId) ? contextId : undefined;
 }
 
+function browserResourceKey(contextId: string): string {
+  return `cdp:${contextId.slice(BROWSER_CONTEXT_PREFIX.length)}`;
+}
+
 async function withBrowserWrite<T>(contextId: string, work: () => Promise<T>): Promise<T> {
   const state = operationState();
-  const targetId = contextId.slice(BROWSER_CONTEXT_PREFIX.length);
-  const resourceKey = `cdp:${targetId}`;
+  const resourceKey = browserResourceKey(contextId);
   const baseEpoch = state.epoch ?? resourceScheduler.epoch(resourceKey);
   const result = await resourceScheduler.write(resourceKey, baseEpoch, async (nextEpoch) => {
     state.resourceKey = resourceKey;
@@ -3141,17 +3153,26 @@ function prepareDesktopTransaction(
     try {
       prepared = prepareUiAction(action, state, look, headless);
     } catch (error) {
-      if (actions.length === 1 || !(error instanceof Error)) throw error;
-      throw new Error(
-        `act_ui action ${index + 1} (${action.action}): ${asSentence(error.message)} Nothing was sent.`,
-        { cause: error },
-      );
+      if (!(error instanceof Error)) throw error;
+      throw batchPreparationError(actions, index, error);
     }
     if (prepared.action === "wait")
       throw new Error("Native action transactions cannot contain wait actions.");
     if (focusEstablishedBy(prepared, headless)) state.currentFocus = true;
     return prepared;
   });
+}
+
+/**
+ * An error decided before anything was sent. In a multi-action call it names
+ * the action and states that nothing was sent; a single action keeps its message.
+ */
+function batchPreparationError(actions: UiAction[], index: number, error: Error): Error {
+  if (actions.length === 1) return error;
+  return new Error(
+    `act_ui action ${index + 1} (${actions[index]?.action ?? "unknown"}): ${asSentence(error.message)} Nothing was sent.`,
+    { cause: error },
+  );
 }
 
 /** Whether any prepared keyboard action goes to the app's focused element. */
@@ -3876,11 +3897,21 @@ function partialSummary(
   stateId: string,
   target: ResolvedTarget,
 ): string {
+  return `${stoppedSummary(failure, actions, `${target.appName} — ${target.windowTitle}`, "the app")} Returned state ${stateId}.`;
+}
+
+/** "act_ui stopped at action N (…) in <where>: <error> Actions 1-K were delivered; …" */
+function stoppedSummary(
+  failure: { index: number; error: Error },
+  actions: UiAction[],
+  where: string,
+  subject: string,
+): string {
   const failed = `action ${failure.index + 1} (${actions[failure.index]?.action ?? "unknown"})`;
   const landed = errorEffectPossible(failure.error)
-    ? "may have reached the app"
+    ? `may have reached ${subject}`
     : "delivered nothing";
-  return `act_ui stopped at ${failed} in ${target.appName} — ${target.windowTitle}: ${asSentence(failure.error.message)} ${deliveredActionsText(failure.index)}; ${failed} ${landed}; later actions were not sent. Returned state ${stateId}.`;
+  return `act_ui stopped at ${failed} in ${where}: ${asSentence(failure.error.message)} ${deliveredActionsText(failure.index)}; ${failed} ${landed}; later actions were not sent.`;
 }
 
 /** The message unchanged, with a final period when it ends without punctuation. */
@@ -3889,132 +3920,506 @@ function asSentence(message: string): string {
   return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
 }
 
+/** The base observation a browser batch is prepared against. */
+interface BrowserBase {
+  stateId: string;
+  snapshot: CdpPageSnapshot;
+  outline: Outline;
+}
+
+type BrowserPoint = { x: number; y: number };
+
+/** A browser action prepared before anything is sent; node targets carry their backend node id. */
+type BrowserPreparedAction =
+  | { action: "press"; backendNodeId: number; clickCount: number }
+  | {
+      action: "click";
+      target: { backendNodeId: number } | BrowserPoint;
+      button: NonNullable<UiAction["button"]>;
+      clickCount: number;
+    }
+  | { action: "setText"; backendNodeId: number; text: string }
+  | { action: "typeText"; backendNodeId?: number; text: string }
+  | { action: "keypress"; backendNodeId?: number; keys: string[] }
+  | { action: "scroll"; backendNodeId?: number; scrollX: number; scrollY: number }
+  | { action: "drag"; path: BrowserPoint[] }
+  | ({ action: "moveMouse" } & BrowserPoint);
+
+/** The backend node a prepared browser action targets, if any. */
+function browserActionNode(action: BrowserPreparedAction): number | undefined {
+  if (action.action === "click")
+    return "backendNodeId" in action.target ? action.target.backendNodeId : undefined;
+  if (action.action === "drag" || action.action === "moveMouse") return undefined;
+  return action.backendNodeId;
+}
+
+/** The backend node id of an actionable ref in the base state. */
+function browserRefNode(base: BrowserBase, operation: string, ref: string | undefined): number {
+  if (!ref)
+    throw new Error(`Browser ${operation} requires an actionable @e ref owned by ${base.stateId}.`);
+  const target = base.snapshot.targets.find((candidate) => candidate.ref === ref);
+  if (!target)
+    throw new Error(
+      nodeByRef(base.outline, ref)
+        ? `Browser ${operation} ref '${ref}' is in state ${base.stateId} but is not an actionable control; browser actions target named buttons, links, and text inputs.`
+        : `Browser ${operation} ref '${ref}' is not in state ${base.stateId}; pass a ref from this state.`,
+    );
+  if (target.backendNodeId === undefined || !Number.isFinite(target.backendNodeId))
+    throw new Error(`Browser ${operation} requires an actionable @e ref owned by ${base.stateId}.`);
+  return target.backendNodeId;
+}
+
+/** A finite point inside the viewport recorded with the base state (unchecked when none was recorded). */
+function browserPoint(
+  base: BrowserBase,
+  x: number | undefined,
+  y: number | undefined,
+  label: string,
+): BrowserPoint {
+  const px = toFiniteNumber(x, NaN);
+  const py = toFiniteNumber(y, NaN);
+  if (!Number.isFinite(px) || !Number.isFinite(py))
+    throw new Error(`${label} requires finite x and y coordinates.`);
+  const viewport = base.snapshot.viewport;
+  if (viewport && (px < 0 || py < 0 || px >= viewport.width || py >= viewport.height))
+    throw new Error(
+      `${label} (${px}, ${py}) is outside the page viewport, ${viewport.width}x${viewport.height} CSS pixels in state ${base.stateId}.`,
+    );
+  return { x: px, y: py };
+}
+
+function prepareBrowserAction(action: UiAction, base: BrowserBase): BrowserPreparedAction {
+  if (!BROWSER_TRANSACTION_ACTIONS.has(action.action))
+    throw new Error(`Browser transactions do not support '${action.action}'.`);
+  const ref = trimOrUndefined(action.ref);
+  const clickCount = action.clickCount ?? 1;
+  switch (action.action) {
+    case "press":
+      return { action: "press", backendNodeId: browserRefNode(base, "press", ref), clickCount };
+    case "click":
+      if (ref) {
+        if (action.button && action.button !== "left")
+          throw new Error(
+            "Browser ref clicks support only the left button; use coordinate clicks for right or middle buttons.",
+          );
+        return {
+          action: "click",
+          target: { backendNodeId: browserRefNode(base, "click", ref) },
+          button: "left",
+          clickCount,
+        };
+      }
+      return {
+        action: "click",
+        target: browserPoint(base, action.x, action.y, "click"),
+        button: action.button ?? "left",
+        clickCount,
+      };
+    case "setText":
+      return {
+        action: "setText",
+        backendNodeId: browserRefNode(base, "setText", ref),
+        text: action.text ?? "",
+      };
+    case "typeText":
+      return {
+        action: "typeText",
+        backendNodeId: ref ? browserRefNode(base, "typeText", ref) : undefined,
+        text: action.text ?? "",
+      };
+    case "keypress": {
+      const keys = Array.isArray(action.keys) ? action.keys.map((key) => String(key)) : [];
+      const problem = cdpKeysProblem(keys);
+      if (problem) throw new Error(problem);
+      return {
+        action: "keypress",
+        backendNodeId: ref ? browserRefNode(base, "keypress", ref) : undefined,
+        keys,
+      };
+    }
+    case "scroll":
+      if (action.x !== undefined || action.y !== undefined)
+        throw new Error(
+          "Browser scroll does not take x/y: pass the @e ref of the element to scroll, or omit the target to scroll the page.",
+        );
+      return {
+        action: "scroll",
+        backendNodeId: ref ? browserRefNode(base, "scroll", ref) : undefined,
+        scrollX: toFiniteNumber(action.scrollX, 0),
+        scrollY: toFiniteNumber(action.scrollY, 0),
+      };
+    case "drag": {
+      const points = Array.isArray(action.path) ? action.path : [];
+      if (points.length < 2) throw new Error("drag.path must contain at least two points.");
+      return {
+        action: "drag",
+        path: points.map((point, index) =>
+          browserPoint(base, point.x, point.y, `Drag point ${index + 1}`),
+        ),
+      };
+    }
+    case "moveMouse":
+      if (ref)
+        throw new Error(
+          "Browser moveMouse takes x and y only; browser outlines carry no element coordinates.",
+        );
+      return { action: "moveMouse", ...browserPoint(base, action.x, action.y, "moveMouse") };
+  }
+}
+
+/** Prepares every browser action before anything is sent (see prepareDesktopTransaction). */
+function prepareBrowserTransaction(
+  actions: UiAction[],
+  base: BrowserBase,
+): BrowserPreparedAction[] {
+  return actions.map((action, index) => {
+    try {
+      return prepareBrowserAction(action, base);
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      throw batchPreparationError(actions, index, error);
+    }
+  });
+}
+
+/**
+ * Read-only check before the write lock, so a refusal keeps the base state
+ * valid: the page target still exists and every targeted node still resolves.
+ * It holds the resource at the base epoch; a newer write makes it stale.
+ */
+async function preflightBrowserTransaction(
+  prepared: BrowserPreparedAction[],
+  actions: UiAction[],
+  base: BrowserBase,
+  contextId: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const nodes = prepared.map(browserActionNode);
+  const ids = [...new Set(nodes.filter((node): node is number => node !== undefined))];
+  const resourceKey = browserResourceKey(contextId);
+  const baseEpoch = operationState().epoch ?? resourceScheduler.epoch(resourceKey);
+  let checked: { unresolved: number[] } | undefined;
+  try {
+    const scheduled = await resourceScheduler.readAt(
+      resourceKey,
+      baseEpoch,
+      async () => await cdpPreflightForContext(contextId, ids, signal),
+    );
+    checked = scheduled.value;
+  } catch (error) {
+    if (signal?.aborted || error instanceof StaleResourceStateError || !(error instanceof Error))
+      throw error;
+    throw new Error(
+      `Could not check the browser page before sending: ${asSentence(error.message)} Nothing was sent.`,
+      { cause: error },
+    );
+  }
+  if (!checked)
+    throw new Error(
+      `The browser page of state ${base.stateId} is no longer available. Nothing was sent. Call find_roots and observe_ui again.`,
+    );
+  const unresolved = new Set(checked.unresolved);
+  const index = nodes.findIndex((node) => node !== undefined && unresolved.has(node));
+  if (index >= 0)
+    throw batchPreparationError(
+      actions,
+      index,
+      new Error(
+        `Ref '${trimOrUndefined(actions[index]?.ref) ?? ""}' no longer resolves to an element on the page; the page changed after state ${base.stateId}. Observe the page again.`,
+      ),
+    );
+}
+
+/** Sends one prepared action; false when the page target was gone before any input of it was sent. */
+async function deliverBrowserAction(
+  action: BrowserPreparedAction,
+  contextId: string,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  switch (action.action) {
+    case "press":
+    case "click": {
+      if (action.action === "click" && !("backendNodeId" in action.target))
+        return await cdpClickAtForContext(
+          contextId,
+          action.target.x,
+          action.target.y,
+          action.button,
+          action.clickCount,
+          signal,
+        );
+      const node = browserActionNode(action);
+      if (node === undefined) return false;
+      for (let count = 0; count < action.clickCount; count += 1) {
+        throwIfAborted(signal);
+        if (await cdpClickForContext(contextId, node, signal)) continue;
+        if (count === 0) return false;
+        // An earlier click of this action was sent.
+        throw new CdpActionError(
+          "The browser page is no longer available.",
+          "browser_page_unavailable",
+          true,
+        );
+      }
+      return true;
+    }
+    case "setText":
+      return await cdpTypeForContext(contextId, action.backendNodeId, action.text, true, signal);
+    case "typeText":
+      return action.backendNodeId === undefined
+        ? await cdpTypeFocusedForContext(contextId, action.text, signal)
+        : await cdpTypeForContext(contextId, action.backendNodeId, action.text, false, signal);
+    case "keypress":
+      return await cdpKeypressForContext(contextId, action.keys, signal, action.backendNodeId);
+    case "scroll":
+      return await cdpScrollForContext(
+        contextId,
+        action.scrollX,
+        action.scrollY,
+        action.backendNodeId,
+        signal,
+      );
+    case "drag":
+      return await cdpDragForContext(contextId, action.path, signal);
+    case "moveMouse":
+      return await cdpMouseForContext(
+        contextId,
+        action.x,
+        action.y,
+        "mouseMoved",
+        "left",
+        1,
+        signal,
+      );
+  }
+}
+
+/** A browser action that failed during delivery, after `index` earlier actions ran. */
+interface BrowserDispatchFailure {
+  index: number;
+  error: Error;
+}
+
+/**
+ * Sends the prepared actions in order and stops at the first failure, keeping
+ * the record of the delivered ones. Caller aborts keep propagating.
+ */
+async function dispatchBrowserTransaction(
+  prepared: BrowserPreparedAction[],
+  contextId: string,
+  signal?: AbortSignal,
+): Promise<{ steps: ExecutionTrace[]; failure?: BrowserDispatchFailure }> {
+  const steps: ExecutionTrace[] = [];
+  for (const [index, action] of prepared.entries()) {
+    throwIfAborted(signal);
+    let delivered: boolean;
+    try {
+      delivered = await deliverBrowserAction(action, contextId, signal);
+    } catch (error) {
+      if (signal?.aborted || !(error instanceof Error)) throw error;
+      return { steps, failure: { index, error } };
+    }
+    throwIfAborted(signal);
+    if (!delivered)
+      return {
+        steps,
+        failure: {
+          index,
+          error: new CdpActionError(
+            "The browser page is no longer available. Call find_roots and observe_ui again.",
+            "browser_page_unavailable",
+            false,
+          ),
+        },
+      };
+    steps.push(executionTrace("cdp_act", "default", { outcome: "unknown" }));
+  }
+  return { steps };
+}
+
+/** The failed browser action's step: the error and whether it may have landed. */
+function failedBrowserStepTrace(error: Error): ExecutionTrace {
+  const effectPossible = errorEffectPossible(error);
+  return executionTrace("cdp_act", "default", {
+    outcome: effectPossible ? "unknown" : "didnt",
+    error: {
+      code: error instanceof CdpActionError ? error.code : "action_failed",
+      message: error.message,
+      effectPossible,
+    },
+  });
+}
+
+/** Polls the page until the postcondition holds or times out; records it like the desktop path. */
+async function verifyBrowserCondition(
+  contextId: string,
+  condition: ReturnType<typeof validateCondition>,
+  baseOutline: Outline,
+  execution: ExecutionTrace,
+  signal?: AbortSignal,
+): Promise<void> {
+  const { text, role, value, gone, timeoutMs } = condition;
+  const desiredWasPreexisting = outlineConditionPresent(baseOutline, condition) !== gone;
+  const deadline = Date.now() + timeoutMs;
+  let satisfied = false;
+  do {
+    const snapshot = await cdpSnapshotForContext(contextId);
+    if (!snapshot)
+      throw new Error(`Browser root '${contextId}' is no longer available. Observe it again.`);
+    satisfied = outlineConditionPresent(restoreOutline(snapshot.outline), condition) !== gone;
+    if (!satisfied) await sleep(100, signal);
+  } while (!satisfied && Date.now() < deadline);
+  const status = satisfied ? (desiredWasPreexisting ? "preexisting" : "verified") : "failed";
+  execution.verification = { status, text, role, value, gone: gone || undefined, timeoutMs };
+  execution.outcome = outcomeAfterCheck(execution.outcome ?? "unknown", status);
+  if (!satisfied)
+    execution.error = {
+      code: "postcondition_failed",
+      message: `The action was delivered but its postcondition was not satisfied within ${timeoutMs}ms.`,
+    };
+}
+
+async function terminalBrowserActionResult(
+  contextId: string,
+  base: CdpPageSnapshot,
+  execution: ExecutionTrace,
+  cause: unknown,
+  stopped: string | undefined,
+  condition?: ReturnType<typeof validateCondition>,
+): Promise<AgentToolResult<TerminalBrowserActionDetails>> {
+  let pageAvailable: boolean | undefined;
+  try {
+    pageAvailable = (await listCdpPageContexts()).some((page) => page.contextId === contextId);
+  } catch {
+    // A failed page listing cannot prove that the page closed.
+  }
+  const targetClosed = pageAvailable === false;
+  if (targetClosed && condition && !stopped) {
+    const status = condition.gone ? "verified" : "failed";
+    execution.verification = {
+      status,
+      text: condition.text,
+      role: condition.role,
+      value: condition.value,
+      gone: condition.gone || undefined,
+      timeoutMs: condition.timeoutMs,
+    };
+    execution.outcome = outcomeAfterCheck(execution.outcome ?? "unknown", status);
+    if (status === "failed")
+      execution.error = {
+        code: "postcondition_failed",
+        message:
+          "The browser page closed before the requested presence or value postcondition could be verified.",
+      };
+  }
+  const status = targetClosed ? "target_closed" : "post_action_observation_failed";
+  const message = cause instanceof Error ? cause.message : String(cause);
+  const details: TerminalBrowserActionDetails = {
+    tool: "act_ui",
+    kind: "browser_page",
+    status,
+    baseStateId: base.snapshotId,
+    root: {
+      ref: storeBrowserRootRef(contextId),
+      kind: "browser_page",
+      title: base.title,
+      url: base.url,
+    },
+    execution,
+    error: { code: status, message },
+  };
+  const page = `the browser page ${JSON.stringify(base.title)}`;
+  const outcome = targetClosed
+    ? `${page} closed before a successor observation could be captured.`
+    : `${page} could not be observed afterward: ${asSentence(message)}`;
+  const headline = stopped
+    ? `${stopped} Then ${outcome}`
+    : `The actions were delivered, and ${outcome}`;
+  return {
+    content: [
+      {
+        type: "text",
+        text: `${headline}\nNo successor state was created. Call find_roots, then observe_ui to continue.`,
+      },
+    ],
+    details,
+  };
+}
+
 async function performBrowserTransaction(
   params: ActParams,
   actions: UiAction[],
   signal?: AbortSignal,
-): Promise<AgentToolResult<BrowserObservationDetails>> {
+): Promise<AgentToolResult<BrowserObservationDetails | TerminalBrowserActionDetails>> {
   const contextId = browserContextForOperation();
   if (!contextId) throw new Error("Browser transaction requires a browser observation state.");
   const baseSnapshot = operationState().browserSnapshot;
   if (!baseSnapshot) throw new Error("Browser transaction requires a complete base observation.");
+  if (baseSnapshot.contextId !== contextId)
+    throw new Error(`Browser state ${baseSnapshot.snapshotId} belongs to another page.`);
   const baseView = { stateId: baseSnapshot.snapshotId, outline: baseSnapshot.outline };
+  const base: BrowserBase = {
+    stateId: baseSnapshot.snapshotId,
+    snapshot: baseSnapshot,
+    outline: restoreOutline(baseSnapshot.outline),
+  };
   const condition = params.expect ? validateCondition(params.expect) : undefined;
-  if (condition) conditionScopeNode(restoreOutline(baseSnapshot.outline), condition);
-  const prepared = actions.map((action) => {
-    if (!BROWSER_TRANSACTION_ACTIONS.has(action.action))
-      throw new Error(`Browser transactions do not support '${action.action}'.`);
-    if (action.action === "click" && action.ref && action.button && action.button !== "left")
-      throw new Error(
-        "Browser ref clicks support only the left button; use coordinate clicks for right or middle buttons.",
-      );
-    const target = browserSnapshotTarget(params.stateId, trimOrUndefined(action.ref));
-    if (
-      (action.action === "press" ||
-        action.action === "setText" ||
-        (action.action === "click" && action.ref) ||
-        (action.action === "typeText" && action.ref)) &&
-      !Number.isFinite(target?.backendNodeId)
-    ) {
-      throw new Error(
-        `Browser ${action.action} requires an actionable @e ref owned by ${params.stateId}.`,
-      );
-    }
-    if (action.ref && (!target || target.contextId !== contextId))
-      throw new Error(`Browser ${action.action} ref must be owned by ${params.stateId}.`);
-    return { action, target };
-  });
+  if (condition) conditionScopeNode(base.outline, condition);
+  // Every refusal before the write lock sends nothing and keeps the base state
+  // valid: per-action validation first, then the read-only page check.
+  const prepared = prepareBrowserTransaction(actions, base);
+  await preflightBrowserTransaction(prepared, actions, base, contextId, signal);
   return await withBrowserWrite(contextId, async () => {
     throwIfAborted(signal);
-    for (const { action, target } of prepared) {
-      throwIfAborted(signal);
-      let worked = false;
-      if (action.action === "press" || (action.action === "click" && action.ref)) {
-        worked = true;
-        for (let count = 0; count < (action.clickCount ?? 1); count += 1) {
-          throwIfAborted(signal);
-          worked = (await cdpClickForContext(contextId, target!.backendNodeId!, signal)) && worked;
-        }
-      } else if (action.action === "click") {
-        worked = await cdpClickAtForContext(
-          contextId,
-          action.x!,
-          action.y!,
-          action.button ?? "left",
-          action.clickCount ?? 1,
-          signal,
-        );
-      } else if (action.action === "setText")
-        worked = await cdpTypeForContext(
-          contextId,
-          target!.backendNodeId!,
-          action.text ?? "",
-          true,
-          signal,
-        );
-      else if (action.action === "typeText")
-        worked = target?.backendNodeId
-          ? await cdpTypeForContext(
-              contextId,
-              target.backendNodeId,
-              action.text ?? "",
-              false,
-              signal,
-            )
-          : await cdpTypeFocusedForContext(contextId, action.text ?? "", signal);
-      else if (action.action === "keypress")
-        worked = await cdpKeypressForContext(contextId, action.keys ?? [], signal);
-      else if (action.action === "scroll")
-        worked = await cdpScrollForContext(
-          contextId,
-          toFiniteNumber(action.scrollX, 0),
-          toFiniteNumber(action.scrollY, 0),
-          target?.backendNodeId,
-          signal,
-        );
-      else if (action.action === "drag")
-        worked = await cdpDragForContext(contextId, normalizeActionPath(action.path), signal);
-      else if (action.action === "moveMouse")
-        worked = await cdpMouseForContext(
-          contextId,
-          action.x!,
-          action.y!,
-          "mouseMoved",
-          "left",
-          1,
-          signal,
-        );
-      throwIfAborted(signal);
-      if (!worked)
-        throw new Error(
-          "The browser root became unavailable during the action transaction. Observe it again.",
-        );
+    const { steps, failure } = await dispatchBrowserTransaction(prepared, contextId, signal);
+    // Nothing earlier was delivered: the failure is reported as it always was.
+    if (failure?.index === 0) throw failure.error;
+    const failedStep = failure ? failedBrowserStepTrace(failure.error) : undefined;
+    const allSteps = failedStep ? [...steps, failedStep] : steps;
+    const execution = executionTrace("cdp_act", "default", {
+      outcome: allSteps.some((step) => step.outcome === "didnt") ? "didnt" : "unknown",
+      steps: allSteps,
+      actionCount: allSteps.length,
+    });
+    if (failure && failedStep) {
+      execution.stoppedAt = failure.index;
+      execution.error = failedStep.error;
     }
-    if (condition) {
-      const deadline = Date.now() + condition.timeoutMs;
-      let satisfied = false;
-      do {
-        const snapshot = await cdpSnapshotForContext(contextId);
-        if (!snapshot)
-          throw new Error(`Browser root '${contextId}' is no longer available. Observe it again.`);
-        const present = outlineConditionPresent(restoreOutline(snapshot.outline), condition);
-        satisfied = present !== condition.gone;
-        if (!satisfied) await sleep(100, signal);
-      } while (!satisfied && Date.now() < deadline);
-      if (!satisfied)
-        throw new Error(
-          `The browser action was delivered but its postcondition was not satisfied within ${condition.timeoutMs}ms.`,
-        );
+    const where = JSON.stringify(baseSnapshot.title);
+    const stopped = failure ? stoppedSummary(failure, actions, where, "the page") : undefined;
+    try {
+      if (condition && !failure)
+        await verifyBrowserCondition(contextId, condition, base.outline, execution, signal);
+      const result = await refreshBrowserSnapshot(contextId, "act_ui", baseView);
+      result.details.execution = execution;
+      if (stopped) {
+        result.details.status = "partial";
+        result.content = [
+          { type: "text", text: `${stopped} Returned state ${result.details.stateId}.` },
+          ...result.content,
+        ];
+      } else if (execution.verification?.status === "failed" && execution.error?.message) {
+        result.content = [
+          {
+            type: "text",
+            text: `${execution.error.message} Returned state ${result.details.stateId}.`,
+          },
+          ...result.content,
+        ];
+      }
+      return result;
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      return await terminalBrowserActionResult(
+        contextId,
+        baseSnapshot,
+        execution,
+        error,
+        stopped,
+        condition,
+      );
     }
-    return await refreshBrowserSnapshot(contextId, "act_ui", baseView);
   });
-}
-
-function normalizeActionPath(path: UiAction["path"]): Array<{ x: number; y: number }> {
-  return (path ?? []).map((point) => ({
-    x: toFiniteNumber(point.x, 0),
-    y: toFiniteNumber(point.y, 0),
-  }));
 }
 
 function validateActionTarget(action: UiAction): void {
@@ -4049,7 +4454,12 @@ async function performAct(
   signal?: AbortSignal,
   ctx?: ExtensionContext,
 ): Promise<
-  AgentToolResult<ComputerUseDetails | TerminalDesktopActionDetails | BrowserObservationDetails>
+  AgentToolResult<
+    | ComputerUseDetails
+    | TerminalDesktopActionDetails
+    | BrowserObservationDetails
+    | TerminalBrowserActionDetails
+  >
 > {
   const actions = Array.isArray(params.actions) ? params.actions : [];
   if (actions.length === 0) throw new Error("act_ui.actions must contain at least one action.");
@@ -4423,7 +4833,10 @@ export const executeExpandUi = makeToolExecutor("expand_ui", performExpandUi);
 export const executeInspectUi = makeToolExecutor("inspect_ui", performInspectUi);
 export const executeAct = makeToolExecutor<
   ActParams,
-  ComputerUseDetails | TerminalDesktopActionDetails | BrowserObservationDetails
+  | ComputerUseDetails
+  | TerminalDesktopActionDetails
+  | BrowserObservationDetails
+  | TerminalBrowserActionDetails
 >("act_ui", performAct);
 export const executeNavigateBrowser = makeToolExecutor("navigate_browser", performNavigateBrowser);
 export const executeEvaluateBrowser = makeToolExecutor("evaluate_browser", performEvaluateBrowser);
