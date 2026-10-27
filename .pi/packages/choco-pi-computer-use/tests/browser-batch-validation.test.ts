@@ -11,6 +11,8 @@ import {
 import { isString, type JsonObject } from "../src/json.ts";
 import { createTestExtensionContext } from "./helpers/extension-context.ts";
 import {
+  isConnectedProbe,
+  nodeObjectId,
   replaceWithForbiddenBackend,
   startFakeCdp,
   type FakeCdp,
@@ -624,7 +626,9 @@ test("browser keypress with a ref focuses the node first; keyboard input without
     // A node that does not take focus gets no keys.
     stateId = await browser.observe();
     browser.fake.respond = (command) =>
-      command.method === "Runtime.callFunctionOn"
+      command.method === "Runtime.callFunctionOn" &&
+      isString(command.params.functionDeclaration) &&
+      command.params.functionDeclaration.includes("this.focus()")
         ? {
             result: {
               result: { type: "object" },
@@ -687,5 +691,181 @@ test("an abort after delivered actions still rejects and invalidates the base st
     browser.fake.respond = undefined;
     assert.deepEqual(insertedTexts(browser.fake.commands), ["a"]);
     await assertStale(browser, stateId);
+  });
+});
+
+/** Key events sent from \`start\`: [type, key, code, windowsVirtualKeyCode, text, modifiers]. */
+function keyEvents(fake: FakeCdp, start: number) {
+  return fake
+    .inputCommands(start)
+    .filter((command) => command.method === "Input.dispatchKeyEvent")
+    .map((command) => [
+      command.params.type,
+      command.params.key,
+      command.params.code,
+      command.params.windowsVirtualKeyCode,
+      command.params.text,
+      command.params.modifiers,
+    ]);
+}
+
+test("browser keypress sends the virtual key code and code that default editing actions need", async () => {
+  await withBrowser({}, async (browser) => {
+    const cases: Array<{ keys: string[]; events: unknown[][] }> = [
+      {
+        keys: ["ArrowLeft"],
+        events: [
+          ["keyDown", "ArrowLeft", "ArrowLeft", 37, undefined, 0],
+          ["keyUp", "ArrowLeft", "ArrowLeft", 37, undefined, 0],
+        ],
+      },
+      {
+        keys: ["Backspace"],
+        events: [
+          ["keyDown", "Backspace", "Backspace", 8, undefined, 0],
+          ["keyUp", "Backspace", "Backspace", 8, undefined, 0],
+        ],
+      },
+      {
+        keys: ["Enter"],
+        events: [
+          ["keyDown", "Enter", "Enter", 13, "\r", 0],
+          ["keyUp", "Enter", "Enter", 13, undefined, 0],
+        ],
+      },
+      {
+        keys: ["shift", "Tab"],
+        events: [
+          ["keyDown", "Tab", "Tab", 9, undefined, 8],
+          ["keyUp", "Tab", "Tab", 9, undefined, 8],
+        ],
+      },
+      {
+        keys: ["F5"],
+        events: [
+          ["keyDown", "F5", "F5", 116, undefined, 0],
+          ["keyUp", "F5", "F5", 116, undefined, 0],
+        ],
+      },
+      {
+        keys: ["ctrl", "a"],
+        events: [
+          ["keyDown", "a", "KeyA", 65, undefined, 2],
+          ["keyUp", "a", "KeyA", 65, undefined, 2],
+        ],
+      },
+      {
+        keys: ["7", " "],
+        events: [
+          ["keyDown", "7", "Digit7", 55, "7", 0],
+          ["keyUp", "7", "Digit7", 55, undefined, 0],
+          ["keyDown", " ", "Space", 32, " ", 0],
+          ["keyUp", " ", "Space", 32, undefined, 0],
+        ],
+      },
+    ];
+    for (const { keys, events } of cases) {
+      const stateId = await browser.observe();
+      const start = browser.fake.commands.length;
+      await browser.act(stateId, [{ action: "keypress", keys }]);
+      assert.deepEqual(keyEvents(browser.fake, start), events, JSON.stringify(keys));
+    }
+  });
+});
+
+/** Answers the connectivity probe for \`backendNodeId\` with "removed" once \`detached()\` is true. */
+function detachAfter(backendNodeId: number, detached: () => boolean) {
+  return (command: FakeCdpCommand) =>
+    isConnectedProbe(command) &&
+    command.params.objectId === nodeObjectId(backendNodeId) &&
+    detached()
+      ? { result: { result: { type: "boolean", value: false } } }
+      : undefined;
+}
+
+/** Whether a command is the page-side click of a ref action. */
+function isRefClick(command: FakeCdpCommand): boolean {
+  return (
+    command.method === "Runtime.callFunctionOn" &&
+    isString(command.params.functionDeclaration) &&
+    command.params.functionDeclaration.includes("this.click()")
+  );
+}
+
+test("a ref whose element was removed mid-batch returns partial instead of a silent click", async () => {
+  await withBrowser({}, async (browser) => {
+    // The first click removes the element; the second click of the same ref
+    // must not report success.
+    let stateId = await browser.observe();
+    let clicks = 0;
+    browser.fake.respond = (command) => {
+      if (isRefClick(command)) clicks += 1;
+      return detachAfter(11, () => clicks >= 1)(command);
+    };
+    let start = browser.fake.commands.length;
+    let result = await browser.act(stateId, [
+      { action: "click", ref: "@e2" },
+      { action: "click", ref: "@e2" },
+      { action: "typeText", text: "after-vanish" },
+    ]);
+    let details = successor(result);
+    assert.equal(details.status, "partial");
+    assert.equal(details.execution?.stoppedAt, 1);
+    assert.deepEqual(
+      details.execution?.steps?.map((step) => step.outcome),
+      ["unknown", "didnt"],
+    );
+    assert.deepEqual(details.execution?.steps?.[1]?.error, {
+      code: "element_detached",
+      message:
+        "The target element is no longer in the page; it was removed after the state was observed.",
+      effectPossible: false,
+    });
+    assert.equal(browser.fake.commands.slice(start).filter(isRefClick).length, 1, "one click sent");
+    assert.deepEqual(insertedTexts(browser.fake.commands.slice(start)), []);
+    assert.match(
+      resultText(result),
+      /action 2 \(click\) delivered nothing; later actions were not sent\./,
+    );
+    await assertStale(browser, stateId);
+
+    // A double press whose element vanishes after its first click may have taken effect.
+    stateId = await browser.observe();
+    clicks = 0;
+    start = browser.fake.commands.length;
+    result = await browser.act(stateId, [
+      { action: "typeText", text: "a" },
+      { action: "press", ref: "@e2", clickCount: 2 },
+    ]);
+    details = successor(result);
+    assert.equal(details.status, "partial");
+    assert.deepEqual(details.execution?.steps?.[1]?.error, {
+      code: "element_detached",
+      message:
+        "The target element is no longer in the page; it was removed after the state was observed.",
+      effectPossible: true,
+    });
+    assert.match(resultText(result), /action 2 \(press\) may have reached the page;/);
+    browser.fake.respond = undefined;
+  });
+});
+
+test("the preflight refuses a ref whose element was removed from the page", async () => {
+  await withBrowser({}, async (browser) => {
+    const stateId = await browser.observe();
+    browser.fake.respond = detachAfter(12, () => true);
+    const start = browser.fake.commands.length;
+    await assert.rejects(
+      browser.act(stateId, [
+        { action: "typeText", text: "a" },
+        { action: "setText", ref: "@e3", text: "x" },
+      ]),
+      messageMatches(
+        /^act_ui action 2 \(setText\): Ref '@e3' no longer resolves to an element on the page; .* Nothing was sent\.$/,
+      ),
+    );
+    assert.deepEqual(browser.fake.inputCommands(start), [], "nothing was sent");
+    browser.fake.respond = undefined;
+    await assertUsable(browser, stateId);
   });
 });

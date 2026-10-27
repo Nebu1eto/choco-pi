@@ -152,24 +152,48 @@ const CDP_MODIFIER_BITS = new Map([
   ["shift", 8],
 ]);
 
-/** DOM `KeyboardEvent.key` names that CDP keypress sends as-is. */
-const CDP_NAMED_KEYS: ReadonlySet<string> = new Set([
-  "Enter",
-  "Tab",
-  "Escape",
-  "Backspace",
-  "Delete",
-  "Insert",
-  "Home",
-  "End",
-  "PageUp",
-  "PageDown",
-  "ArrowLeft",
-  "ArrowRight",
-  "ArrowUp",
-  "ArrowDown",
-  ...Array.from({ length: 12 }, (_, index) => `F${index + 1}`),
+/**
+ * DOM `KeyboardEvent.key` names CDP keypress accepts, with their Windows
+ * virtual key codes; each name is also its `code`. Chrome runs default
+ * editing and navigation actions (caret moves, deletion, Tab focus) only for
+ * key events that carry the virtual key code.
+ */
+const CDP_NAMED_KEY_CODES: ReadonlyMap<string, number> = new Map<string, number>([
+  ["Enter", 13],
+  ["Tab", 9],
+  ["Escape", 27],
+  ["Backspace", 8],
+  ["Delete", 46],
+  ["Insert", 45],
+  ["Home", 36],
+  ["End", 35],
+  ["PageUp", 33],
+  ["PageDown", 34],
+  ["ArrowLeft", 37],
+  ["ArrowUp", 38],
+  ["ArrowRight", 39],
+  ["ArrowDown", 40],
+  ...Array.from({ length: 12 }, (_, index): [string, number] => [`F${index + 1}`, 112 + index]),
 ]);
+
+/** The physical-key fields of a CDP key event, when known for the key. */
+interface CdpKeyIdentity {
+  code?: string;
+  windowsVirtualKeyCode?: number;
+}
+
+/** The `code` and Windows virtual key code of a DOM key value, when known. */
+function cdpKeyIdentity(key: string): CdpKeyIdentity {
+  const named = CDP_NAMED_KEY_CODES.get(key);
+  if (named !== undefined) return { code: key, windowsVirtualKeyCode: named };
+  if (/^[a-z]$/i.test(key)) {
+    const upper = key.toUpperCase();
+    return { code: `Key${upper}`, windowsVirtualKeyCode: upper.charCodeAt(0) };
+  }
+  if (/^[0-9]$/.test(key)) return { code: `Digit${key}`, windowsVirtualKeyCode: key.charCodeAt(0) };
+  if (key === " ") return { code: "Space", windowsVirtualKeyCode: 32 };
+  return {};
+}
 
 function cdpModifierBit(key: string): number | undefined {
   return CDP_MODIFIER_BITS.get(key.toLowerCase());
@@ -184,7 +208,7 @@ function cdpModifierBit(key: string): number | undefined {
 export function cdpKeysProblem(keys: readonly string[]): string | undefined {
   if (keys.length === 0) return "keypress.keys must contain at least one key.";
   const unsupported = keys.filter(
-    (key) => cdpModifierBit(key) === undefined && key.length !== 1 && !CDP_NAMED_KEYS.has(key),
+    (key) => cdpModifierBit(key) === undefined && key.length !== 1 && !CDP_NAMED_KEY_CODES.has(key),
   );
   if (unsupported.length > 0)
     return `Browser keypress cannot send ${unsupported.map((key) => JSON.stringify(key)).join(", ")}: browser pages take DOM key values, either one character or a named key such as "Enter", "Tab", "Escape", "Backspace", "ArrowRight", "PageDown", or "F5", with modifiers (shift, ctrl, alt/option, cmd/meta) as separate keys, e.g. ["cmd","a"].`;
@@ -212,6 +236,12 @@ class CdpProtocolError extends Error {}
 
 /** A page script run for an action threw. */
 class CdpPageScriptError extends Error {}
+
+/** The targeted element still resolves but is no longer in the page (it was removed). */
+class CdpDetachedNodeError extends Error {}
+
+/** Read-only probe: whether the element is still connected to its document. */
+const CDP_CONNECTED_PROBE = "function(){ return this.isConnected; }";
 
 export interface CdpTransport {
   readonly readyState: number;
@@ -422,20 +452,28 @@ export class CdpTab {
     const modifiers = keys.reduce((bits, key) => bits | (cdpModifierBit(key) ?? 0), 0);
     for (const key of keys.filter((candidate) => cdpModifierBit(candidate) === undefined)) {
       checkAbort(signal);
+      const identity = cdpKeyIdentity(key);
+      const text =
+        modifiers !== 0 ? undefined : key.length === 1 ? key : key === "Enter" ? "\r" : undefined;
       try {
         await this.deliver(
           "Input.dispatchKeyEvent",
           {
             type: "keyDown",
             key,
-            code: key,
-            text: key.length === 1 && modifiers === 0 ? key : undefined,
+            ...identity,
+            text,
             modifiers,
           },
           signal,
         );
       } finally {
-        await this.deliver("Input.dispatchKeyEvent", { type: "keyUp", key, code: key, modifiers });
+        await this.deliver("Input.dispatchKeyEvent", {
+          type: "keyUp",
+          key,
+          ...identity,
+          modifiers,
+        });
       }
       checkAbort(signal);
     }
@@ -516,6 +554,12 @@ export class CdpTab {
     const objectId = resolved?.object?.objectId;
     if (!isString(objectId))
       throw new Error(`CDP could not resolve backend node ${backendNodeId}.`);
+    // A removed element still resolves until it is collected, and actions on it
+    // succeed without reaching the page; refuse it before sending anything.
+    if (!(await this.isConnectedObject(objectId, signal)))
+      throw new CdpDetachedNodeError(
+        "The target element is no longer in the page; it was removed after the state was observed.",
+      );
     const result = await this.deliver(
       "Runtime.callFunctionOn",
       {
@@ -530,8 +574,9 @@ export class CdpTab {
   }
 
   /**
-   * Read-only check: which of `backendNodeIds` no longer resolve to a node.
-   * Resolved handles are released; no input-bearing command is sent.
+   * Read-only check: which of `backendNodeIds` no longer resolve to a node in
+   * the page (gone, or removed from the document). Resolved handles are
+   * released; no input-bearing command is sent.
    */
   async unresolvedBackendNodes(
     backendNodeIds: readonly number[],
@@ -548,7 +593,9 @@ export class CdpTab {
             { backendNodeId, objectGroup },
             signal,
           );
-          if (!isString(resolved?.object?.objectId)) unresolved.push(backendNodeId);
+          const objectId = resolved?.object?.objectId;
+          if (!isString(objectId) || !(await this.isConnectedObject(objectId, signal)))
+            unresolved.push(backendNodeId);
         } catch (error) {
           // A protocol error means the node is gone; transport failures and aborts propagate.
           if (!(error instanceof CdpProtocolError)) throw error;
@@ -560,6 +607,15 @@ export class CdpTab {
         await this.send("Runtime.releaseObjectGroup", { objectGroup }).catch(() => undefined);
     }
     return unresolved;
+  }
+
+  private async isConnectedObject(objectId: string, signal?: AbortSignal): Promise<boolean> {
+    const result = await this.send(
+      "Runtime.callFunctionOn",
+      { objectId, functionDeclaration: CDP_CONNECTED_PROBE, returnByValue: true },
+      signal,
+    );
+    return result?.result?.value === true;
   }
 
   /** Screen bounds of the browser window containing this tab. */
@@ -1049,7 +1105,11 @@ async function withCdpContextTab<T>(
     if (signal?.aborted || !(error instanceof Error) || isAbortError(error)) throw error;
     throw new CdpActionError(
       error.message,
-      error instanceof CdpPageScriptError ? "page_script_exception" : "cdp_failed",
+      error instanceof CdpPageScriptError
+        ? "page_script_exception"
+        : error instanceof CdpDetachedNodeError
+          ? "element_detached"
+          : "cdp_failed",
       tab.inputSent,
       { cause: error },
     );

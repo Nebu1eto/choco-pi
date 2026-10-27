@@ -60,6 +60,21 @@ const INPUT_METHODS = new Set([
   "Runtime.callFunctionOn",
 ]);
 
+/** Whether a command is the bridge's read-only element-connected probe (not input). */
+export function isConnectedProbe(command: FakeCdpCommand): boolean {
+  return (
+    command.method === "Runtime.callFunctionOn" &&
+    command.params.returnByValue === true &&
+    isString(command.params.functionDeclaration) &&
+    command.params.functionDeclaration.includes("isConnected")
+  );
+}
+
+/** The fake object id of a resolved backend node: `node-<backendNodeId>`. */
+export function nodeObjectId(backendNodeId: number): string {
+  return `node-${backendNodeId}`;
+}
+
 function commandFrom(raw: string): FakeCdpCommand {
   const value: JsonValue = JSON.parse(raw);
   if (
@@ -170,7 +185,15 @@ export async function startFakeCdp(options: FakeCdpOptions = {}): Promise<FakeCd
       return { result: { value: "Fixture page" } };
     }
     if (command.method === "Accessibility.getFullAXTree") return { nodes: options.axNodes ?? [] };
-    if (command.method === "DOM.resolveNode") return { object: { objectId: "node" } };
+    if (command.method === "DOM.resolveNode")
+      return {
+        object: {
+          objectId: nodeObjectId(
+            isNumber(command.params.backendNodeId) ? command.params.backendNodeId : 0,
+          ),
+        },
+      };
+    if (isConnectedProbe(command)) return { result: { type: "boolean", value: true } };
     return {};
   };
 
@@ -217,7 +240,9 @@ export async function startFakeCdp(options: FakeCdpOptions = {}): Promise<FakeCd
     respond: undefined,
     hold: undefined,
     inputCommands(from = 0) {
-      return fake.commands.slice(from).filter((command) => INPUT_METHODS.has(command.method));
+      return fake.commands
+        .slice(from)
+        .filter((command) => INPUT_METHODS.has(command.method) && !isConnectedProbe(command));
     },
     async close() {
       restoreTransport();

@@ -4152,7 +4152,15 @@ async function deliverBrowserAction(
       if (node === undefined) return false;
       for (let count = 0; count < action.clickCount; count += 1) {
         throwIfAborted(signal);
-        if (await cdpClickForContext(contextId, node, signal)) continue;
+        let clicked: boolean;
+        try {
+          clicked = await cdpClickForContext(contextId, node, signal);
+        } catch (error) {
+          if (count === 0 || signal?.aborted || !(error instanceof CdpActionError)) throw error;
+          // An earlier click of this action was sent, so it may have taken effect.
+          throw new CdpActionError(error.message, error.code, true, { cause: error });
+        }
+        if (clicked) continue;
         if (count === 0) return false;
         // An earlier click of this action was sent.
         throw new CdpActionError(
