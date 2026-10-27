@@ -6,6 +6,7 @@
   "scripts": {
     "install:profile": "node scripts/install-profile.ts",
     "install:vendored": "node scripts/bootstrap-vendored.ts",
+    "postinstall": "node scripts/bootstrap-vendored.ts",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "fmt": "oxfmt .",

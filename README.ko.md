@@ -33,8 +33,7 @@ cd choco-pi
 npm install --global pnpm@11.11.0
 pnpm --version
 
-pnpm install --frozen-lockfile --ignore-scripts
-npm run install:vendored
+pnpm install --frozen-lockfile
 npm run install:profile
 pi
 ```
@@ -67,12 +66,19 @@ Pi 1.4.0의 `cli.js` 실행기는 Node 컴파일 캐시를 활성화합니다. �
 Pi가 열리면 `/login`을 실행하고 공급자를 선택하세요. 설치 스크립트는 인증을 수행하거나 로그인 화면을 열지 않으며, 인증 정보를 저장소에 복사하지 않습니다.
 
 루트 설치와 vendored 패키지 7개의 설치는 모두 커밋된 lockfile을 사용합니다.
-`npm run install:vendored`는 각 패키지를 독립된 workspace에 설치하고, 설치에 실패하면
-해당 패키지의 이전 의존성 트리 복원을 시도합니다. 프로세스가 중단되면
+루트 `postinstall` 스크립트가 `npm run install:vendored`를 실행하며, 이 명령은 각 패키지를
+독립된 workspace에 설치하고, 설치에 실패하면 해당 패키지의 이전 의존성 트리 복원을
+시도합니다. vendored 설치가 실패하면 루트 설치도 실패하며, 루트 설치를 다시 실행하면
+재시도합니다. 프로세스가 중단되면
 `node_modules.bootstrap-lock` 점유 디렉터리와 `node_modules.bootstrap-backup*` 의존성
 백업이 남을 수 있습니다. 설치 프로그램은 이 복구 가능한 상태를 자동으로 정리하지 않으며,
 SIGINT 같은 중단 뒤의 롤백도 보장하지 않습니다. 다시 시도하기 전에 무작정 지우지 말고
 내용을 확인해 보존하세요.
+
+vendored 트리를 복구하려면 `npm run install:vendored`를 직접 실행하세요. 루트 설치가
+`Already up to date`를 출력하면 vendored `node_modules`가 없거나 손상되었더라도
+`postinstall`이 실행되지 않으며, `--ignore-scripts`(또는 npmrc의 `ignore-scripts=true`)를
+사용하면 `postinstall`을 아예 건너뜁니다.
 
 `npm run install:profile`은 기존 런타임·인증 상태와 사용자가 추가한 패키지를 보존하고,
 체크아웃의 절대 경로를 기록한 다음 추적 중인 프로필 리소스를 `~/.pi/agent`에 연결합니다.
@@ -81,13 +87,13 @@ MCP 설정은 연결하지 않습니다. 대상에 관련 없는 내용이 이�
 
 ## 업데이트와 다시 불러오기
 
-의존성 트리를 교체하기 전에 실행 중인 Pi 세션을 종료하세요. 저장소 변경을 pull한 뒤에는
-같은 Node와 pnpm 버전을 유지한 채 frozen 루트 설치, vendored 설치, 프로필 설치를 다시
-실행하세요.
+의존성 트리를 교체하기 전에 실행 중인 Pi 세션을 종료하세요. 변경이 없는 경우를 제외한
+모든 루트 설치는 `pnpm add`와 `pnpm remove`를 포함해 `postinstall`로 vendored 트리
+7개를 모두 교체합니다. 저장소 변경을 pull한 뒤에는 같은 Node와 pnpm 버전을 유지한 채
+vendored 패키지까지 복원하는 frozen 루트 설치와 프로필 설치를 다시 실행하세요.
 
 ```sh
-pnpm install --frozen-lockfile --ignore-scripts
-npm run install:vendored
+pnpm install --frozen-lockfile
 npm run install:profile
 ```
 

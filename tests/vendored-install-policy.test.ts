@@ -57,6 +57,9 @@ test("root and vendored packages require the exact pnpm toolchain", async () => 
   };
   assert.equal(rootManifest.packageManager, EXACT_PACKAGE_MANAGER);
   assert.equal(rootManifest.scripts?.["install:vendored"], "node scripts/bootstrap-vendored.ts");
+  // The root install restores every vendored tree through the same entry point.
+  assert.equal(rootManifest.scripts?.postinstall, "node scripts/bootstrap-vendored.ts");
+  assert.equal(rootManifest.scripts?.postinstall, rootManifest.scripts?.["install:vendored"]);
 
   for (const packageName of PACKAGE_NAMES) {
     // SAFETY: each repository-controlled manifest is exercised only through optional policy fields.

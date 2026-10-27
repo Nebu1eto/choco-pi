@@ -17,8 +17,7 @@ From the repository root, install dependencies and the choco-pi profile as the
 root README describes:
 
 ```sh
-pnpm install --frozen-lockfile --ignore-scripts
-npm run install:vendored
+pnpm install --frozen-lockfile
 npm run install:profile
 ```
 

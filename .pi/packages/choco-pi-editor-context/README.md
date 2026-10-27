@@ -17,8 +17,7 @@ sessions started elsewhere, from the global choco-pi profile. From the
 repository root, follow the root README's install steps:
 
 ```sh
-pnpm install --frozen-lockfile --ignore-scripts
-npm run install:vendored
+pnpm install --frozen-lockfile
 npm run install:profile
 ```
 

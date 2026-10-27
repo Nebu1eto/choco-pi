@@ -34,8 +34,7 @@ cd choco-pi
 npm install --global pnpm@11.11.0
 pnpm --version
 
-pnpm install --frozen-lockfile --ignore-scripts
-npm run install:vendored
+pnpm install --frozen-lockfile
 npm run install:profile
 pi
 ```
@@ -75,14 +74,21 @@ When Pi opens, run `/login` and select a provider. The installation scripts do
 not authenticate, open a login flow, or copy credentials into the repository.
 
 The root install and all seven vendored-package installs use their committed
-lockfiles. `npm run install:vendored` installs each package in its isolated
-workspace and attempts to restore that package's previous dependency tree if
-its install fails. An interrupted process can leave a
+lockfiles. The root `postinstall` script runs `npm run install:vendored`, which
+installs each package in its isolated workspace and attempts to restore that
+package's previous dependency tree if its install fails. A vendored failure
+fails the root install; rerunning the root install retries it. An interrupted
+process can leave a
 `node_modules.bootstrap-lock` claim directory and a
 `node_modules.bootstrap-backup*` dependency backup. The installer does not
 automatically prune this recoverable state or guarantee rollback after an
 interrupt such as SIGINT; inspect and preserve it before retrying rather than
 deleting it blindly.
+
+Run `npm run install:vendored` directly to repair the vendored trees. A root
+install that reports `Already up to date` does not run `postinstall`, even when
+a vendored `node_modules` is missing or damaged, and `--ignore-scripts` (or
+`ignore-scripts=true` in an npmrc) skips it entirely.
 
 `npm run install:profile` preserves existing runtime and authentication state
 plus user-added packages, writes absolute checkout paths, and links tracked
@@ -101,13 +107,14 @@ it when appropriate.
 
 ## Updating and reloading
 
-Stop active Pi sessions before replacing their dependency trees. After pulling
-repository changes, keep the same Node and pnpm versions, then rerun the frozen
-root install, vendored install, and profile install:
+Stop active Pi sessions before replacing their dependency trees. Every root
+install that is not a no-op, including `pnpm add` and `pnpm remove`, replaces
+all seven vendored trees through `postinstall`. After pulling repository
+changes, keep the same Node and pnpm versions, then rerun the frozen root
+install, which also restores the vendored packages, and the profile install:
 
 ```sh
-pnpm install --frozen-lockfile --ignore-scripts
-npm run install:vendored
+pnpm install --frozen-lockfile
 npm run install:profile
 ```
 
