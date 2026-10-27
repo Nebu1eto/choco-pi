@@ -8,6 +8,7 @@ import type {
 import { InteractiveMode } from "@earendil-works/pi-coding-agent";
 import statusCommands, {
   createTabController,
+  renderTabBody,
   statusBody,
 } from "../.pi/extensions/status-commands.ts";
 import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
@@ -53,7 +54,7 @@ test("an MCP refresh updates the immediate status body without resetting its scr
         resolveRefresh = resolve;
       }),
     }),
-    paint: (body, view) => paints.push({ body, ...view }),
+    paint: (body, view) => paints.push({ body: renderTabBody(body, 80), ...view }),
     loading: () => "Loading",
     failure: (_id, message) => message,
   });

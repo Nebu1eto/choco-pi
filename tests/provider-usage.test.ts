@@ -8,6 +8,7 @@ import statusCommands, {
   type StatusTabId,
   type TextTabId,
   tabBody,
+  renderTabBody,
   USAGE_REFRESH_MS,
 } from "../.pi/extensions/status-commands.ts";
 import {
@@ -54,10 +55,10 @@ function memoryStorage(): UsageCacheStorage & { entries: () => Record<string, Us
   };
 }
 
-test("status tabs expose Status, Context, Usage, and Preferences in order", () => {
+test("status tabs expose Status, Context, Usage, Preferences, and Statistics in order", () => {
   assert.deepEqual(
     STATUS_TABS.map((tab) => tab.title),
-    ["Status", "Context", "Usage", "Preferences"],
+    ["Status", "Context", "Usage", "Preferences", "Statistics"],
   );
 });
 
@@ -170,7 +171,7 @@ test("contains a synchronous stale-context failure while a tab is switching", as
     load: () => {
       throw new Error("This extension ctx is stale after session replacement or reload.");
     },
-    paint: (body) => paints.push(body),
+    paint: (body) => paints.push(renderTabBody(body, 80)),
     loading: () => "Loading",
     failure: (_id, message) => `Failed: ${message}`,
   });
@@ -331,7 +332,7 @@ test("re-queries the usage tab on every activation and every refresh interval", 
       loads.push(id);
       return Promise.resolve(`${id}-body-${loads.length}`);
     },
-    paint: (body, view) => paints.push([body, view.preserveScroll]),
+    paint: (body, view) => paints.push([renderTabBody(body, 80), view.preserveScroll]),
     loading: () => "loading",
     failure: (id, message) => `failed ${id}: ${message}`,
   });
@@ -366,7 +367,7 @@ test("keeps the last good body when a refresh fails and never auto-refreshes Sta
       attempt += 1;
       return attempt === 1 ? Promise.resolve("fresh") : Promise.reject(new Error("HTTP 500"));
     },
-    paint: (body) => paints.push(body),
+    paint: (body) => paints.push(renderTabBody(body, 80)),
     loading: () => "loading",
     failure: (id, message) => `failed ${id}: ${message}`,
   });
@@ -399,7 +400,7 @@ test("caches a tab's concise and expanded bodies separately", async () => {
       loads.push([id, expanded]);
       return Promise.resolve(`${id}-${expanded ? "all" : "brief"}`);
     },
-    paint: (body) => paints.push(body),
+    paint: (body) => paints.push(renderTabBody(body, 80)),
     loading: () => "loading",
     failure: (id, message) => `failed ${id}: ${message}`,
   });

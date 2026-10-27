@@ -311,7 +311,8 @@ The [RPC host bridge](docs/rpc-host-bridge.md) lets Waku identify the installed 
 
 ### Interface
 
-- Fullscreen TUI with Nord themes, a status line, and a `/status` dialog with Status, Context, Usage, and Preferences tabs.
+- Fullscreen TUI with Nord themes, a status line, and a `/status` dialog with Status, Context, Usage, Preferences, and Statistics tabs.
+- `/stats` opens the Statistics tab: token usage and metered list-price cost over the last 30 days, 7 days, or all time (`r` cycles), for all projects or this one (`p` toggles), computed from every session log with fork and rewind copies counted once; a breakdown by model and by the feature that triggered each call (MCP servers, code mode, subagents, built-in tools, browser, web, compaction); and throughput per model and provider: tok/s (generation speed, output tokens over the request time after the first token) and time to first token. Collapsed, the tab shows the totals, a daily token chart, the top rows of each breakdown and throughput by provider; Ctrl+O expands every row with details, throughput by model and the notes. Time to first token is recorded per response by this profile; older sessions get both figures fitted from request duration against output, marked est.
 - Mermaid diagrams render in the terminal. When a response draws a diagram with box or arrow characters, the next request carries a hidden reminder to use Mermaid instead.
 - Fuzzy `@` file mentions, slash-command completion anywhere in the prompt, and inline image support that respects terminal multiplexers.
 
@@ -323,6 +324,7 @@ The [RPC host bridge](docs/rpc-host-bridge.md) lets Waku identify the installed 
 | `/preferences` (`/pref`)                          | Configure agent, advisor, language, style, persona, and interface  |
 | `/context all`                                    | Inspect prompt, tools, MCP, agents, files, skills, and token use   |
 | `/usage` (`/quota`)                               | Show supported provider usage and reset information                |
+| `/stats`                                          | Show token usage, cost, feature and model breakdown, and speed     |
 | `/effort [level]`, `/fast [on\|off\|status]`      | Set reasoning effort or the session Fast mode preference           |
 | `/check`                                          | Validate the installed profile and required resources              |
 | `/task-inline <task>`                             | Implement one ordinary change directly                             |

@@ -10,7 +10,14 @@ import {
   type ExtensionCommandContext,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { Box, matchesKey, ScrollView, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import {
+  Box,
+  matchesKey,
+  ScrollView,
+  Text,
+  truncateToWidth,
+  type Component,
+} from "@earendil-works/pi-tui";
 import {
   AGENT_OUTCOME_PREFIX,
   getPreferencesProvider,
@@ -53,6 +60,20 @@ import {
   type SessionInfoStyle,
 } from "./lib/session-usage.ts";
 import { buildContextReport, renderContext } from "./lib/context-report.ts";
+import {
+  DEFAULT_PERIOD,
+  DEFAULT_SCOPE,
+  nextPeriod,
+  toggleScope,
+  type StatsSelection,
+} from "./lib/stats/aggregate.ts";
+import {
+  registryModelNames,
+  registryPriceLookup,
+  statsBody,
+  statsLayout,
+  statsVariant,
+} from "./lib/stats/report.ts";
 import { hasRunningSubagents } from "./lib/subagent-manager.ts";
 import {
   condenseStatusRows,
@@ -86,14 +107,15 @@ import {
   type ReportRow,
 } from "./lib/host-bridge/report-schema.ts";
 
-export type StatusTabId = "status" | "context" | "usage" | "preferences";
-export type TextTabId = "status" | "context" | "usage";
+export type StatusTabId = "status" | "context" | "usage" | "preferences" | "stats";
+export type TextTabId = "status" | "context" | "usage" | "stats";
 
 export const STATUS_TABS: ReadonlyArray<{ id: StatusTabId; title: string }> = [
   { id: "status", title: "Status" },
   { id: "context", title: "Context" },
   { id: "usage", title: "Usage" },
   { id: "preferences", title: "Preferences" },
+  { id: "stats", title: "Statistics" },
 ];
 
 /** How often an open Usage tab re-queries the providers. */
@@ -103,10 +125,15 @@ export const USAGE_REFRESH_MS = 3 * 60_000;
 const AUTO_REFRESH_TABS: ReadonlySet<TextTabId> = new Set<TextTabId>(["usage"]);
 
 /**
- * Tabs that hold back their inventories until Ctrl+O asks for them. Both
- * default to the one-line-per-fact view; the Usage tab has no long form.
+ * Tabs that hold back their inventories until Ctrl+O asks for them. All
+ * default to the one-line-per-fact view; the Usage tab has no long form, and
+ * the Statistics tab expands its breakdown rows and footnotes.
  */
-const EXPANDABLE_TABS: ReadonlySet<StatusTabId> = new Set<StatusTabId>(["status", "context"]);
+const EXPANDABLE_TABS: ReadonlySet<StatusTabId> = new Set<StatusTabId>([
+  "status",
+  "context",
+  "stats",
+]);
 
 export function isExpandableTab(id: StatusTabId): boolean {
   return EXPANDABLE_TABS.has(id);
@@ -153,8 +180,11 @@ function setToolInventory(inventory: ToolInventory): void {
 }
 
 export type TabController = {
-  /** Switch to a tab in one of its two views, repaint the last body, and re-query it. */
-  activate: (id: TextTabId, expanded?: boolean) => void;
+  /**
+   * Switch to a tab in one of its two views, repaint the last body, and re-query it.
+   * `variant` names a tab-local view (the Statistics period and scope) that is cached apart.
+   */
+  activate: (id: TextTabId, expanded?: boolean, variant?: string) => void;
   /** Drop theme-dependent bodies and refresh the visible tab without losing its scroll position. */
   invalidate: () => void;
   /** Stop the refresh timer. */
@@ -170,52 +200,69 @@ export type TabController = {
  * A tab's concise and expanded bodies are cached separately, so toggling the
  * view paints the other one immediately instead of blanking on every keypress.
  */
-type TabLoad = string | Promise<string> | { body: string; refresh: Promise<() => string> };
+/**
+ * A tab body: a string laid out once, or a function that lays itself out for
+ * the columns the dialog has (the Statistics tab, whose tables adapt).
+ */
+export type TabBody = string | ((width: number) => string);
+
+type TabLoad = TabBody | Promise<TabBody> | { body: string; refresh: Promise<() => string> };
+
+export function renderTabBody(body: TabBody, width: number): string {
+  return isString(body) ? body : body(width);
+}
 
 export function createTabController(options: {
-  load: (id: TextTabId, expanded: boolean) => TabLoad;
-  paint: (body: string, view: { preserveScroll: boolean }) => void;
+  load: (id: TextTabId, expanded: boolean, variant: string) => TabLoad;
+  paint: (body: TabBody, view: { preserveScroll: boolean }) => void;
   loading: () => string;
   failure: (id: TextTabId, message: string) => string;
   intervalMs?: number;
 }): TabController {
-  const cache = new Map<string, string>();
+  const cache = new Map<string, TabBody>();
   const intervalMs = options.intervalMs ?? USAGE_REFRESH_MS;
   let active: TextTabId | undefined;
   let activeExpanded = false;
+  let activeVariant = "";
   let token = 0;
   let generation = 0;
   let timer: ReturnType<typeof setInterval> | undefined;
-  const viewKey = (id: TextTabId, expanded: boolean): string => `${id}:${expanded ? "all" : ""}`;
-  const query = (id: TextTabId, expanded: boolean, background: boolean): void => {
+  const viewKey = (id: TextTabId, expanded: boolean, variant: string): string =>
+    `${id}:${expanded ? "all" : ""}:${variant}`;
+  const query = (id: TextTabId, expanded: boolean, variant: string, background: boolean): void => {
     const current = ++token;
     const currentGeneration = generation;
-    const accept = (body: string, preserveScroll = background): void => {
+    /** True while this query still owns the visible view. */
+    const owns = (): boolean =>
+      current === token &&
+      active === id &&
+      activeExpanded === expanded &&
+      activeVariant === variant;
+    const accept = (body: TabBody, preserveScroll = background): void => {
       if (currentGeneration !== generation) return;
-      cache.set(viewKey(id, expanded), body);
-      if (current === token && active === id && activeExpanded === expanded)
-        options.paint(body, { preserveScroll });
+      cache.set(viewKey(id, expanded, variant), body);
+      if (owns()) options.paint(body, { preserveScroll });
     };
     const fail = (error: RuntimeValue): void => {
-      if (current !== token || active !== id || activeExpanded !== expanded) return;
-      if (cache.has(viewKey(id, expanded))) return;
+      if (!owns()) return;
+      if (cache.has(viewKey(id, expanded, variant))) return;
       const message = error instanceof Error ? error.message : String(error);
       options.paint(options.failure(id, message), { preserveScroll: background });
     };
     try {
-      const body = options.load(id, expanded);
+      const body = options.load(id, expanded, variant);
       if (isString(body)) accept(body);
       else if ("body" in body) {
         accept(body.body);
         void body.refresh
           .then((render) => {
             // Check ownership before the deferred renderer touches context or theme.
-            if (currentGeneration !== generation || current !== token) return;
-            if (active !== id || activeExpanded !== expanded) return;
+            if (currentGeneration !== generation || !owns()) return;
             accept(render(), true);
           })
           .catch(fail);
-      } else void body.then(accept).catch(fail);
+      } else if ("then" in body) void body.then(accept).catch(fail);
+      else accept(body);
     } catch (error) {
       fail(error);
     }
@@ -224,19 +271,20 @@ export function createTabController(options: {
     if (timer !== undefined) clearInterval(timer);
     timer = setInterval(() => {
       if (active !== undefined && AUTO_REFRESH_TABS.has(active))
-        query(active, activeExpanded, true);
+        query(active, activeExpanded, activeVariant, true);
     }, intervalMs);
     timer.unref?.();
   };
   return {
-    activate: (id: TextTabId, expanded = false) => {
+    activate: (id: TextTabId, expanded = false, variant = "") => {
       active = id;
       activeExpanded = expanded;
-      options.paint(cache.get(viewKey(id, expanded)) ?? options.loading(), {
+      activeVariant = variant;
+      options.paint(cache.get(viewKey(id, expanded, variant)) ?? options.loading(), {
         preserveScroll: false,
       });
       restartTimer();
-      query(id, expanded, false);
+      query(id, expanded, variant, false);
     },
     invalidate: () => {
       cache.clear();
@@ -244,7 +292,7 @@ export function createTabController(options: {
       token++;
       if (active === undefined) return;
       options.paint(options.loading(), { preserveScroll: true });
-      query(active, activeExpanded, true);
+      query(active, activeExpanded, activeVariant, true);
     },
     dispose: () => {
       if (timer !== undefined) clearInterval(timer);
@@ -599,14 +647,34 @@ function contextBody(ctx: ExtensionCommandContext, expanded: boolean, styled: bo
   return body.replace(/^Context Usage/, () => heading);
 }
 
+/** The Statistics view encoded in a tab variant, or the defaults when it carries none. */
+function statsViewOf(variant: string): StatsSelection {
+  const [period, scope] = variant.split(":");
+  return {
+    period: period === "7d" || period === "all" || period === "30d" ? period : DEFAULT_PERIOD,
+    scope: scope === "project" ? scope : DEFAULT_SCOPE,
+  };
+}
+
 export function tabBody(
   ctx: ExtensionCommandContext,
   thinkingLevel: string,
   id: TextTabId,
   styled: boolean,
   expanded = false,
+  variant = "",
 ): string | Promise<string> {
   const style = styled ? ctx.ui.theme : undefined;
+  if (id === "stats") {
+    const view = statsViewOf(variant);
+    return statsBody({
+      cwd: ctx.cwd,
+      view: { period: view.period, scope: view.scope, expanded },
+      priceLookup: registryPriceLookup(ctx.modelRegistry),
+      modelNames: registryModelNames(ctx.modelRegistry),
+      style,
+    });
+  }
   if (id === "usage") {
     return usageReport(ctx, style);
   }
@@ -629,8 +697,19 @@ function loadTabBody(
   thinkingLevel: string,
   id: TextTabId,
   expanded: boolean,
+  variant: string,
 ): TabLoad {
-  if (id !== "status") return tabBody(ctx, thinkingLevel, id, true, expanded);
+  if (id === "stats") {
+    const view = statsViewOf(variant);
+    return statsLayout({
+      cwd: ctx.cwd,
+      view: { period: view.period, scope: view.scope, expanded },
+      priceLookup: registryPriceLookup(ctx.modelRegistry),
+      modelNames: registryModelNames(ctx.modelRegistry),
+      style: ctx.ui.theme,
+    });
+  }
+  if (id !== "status") return tabBody(ctx, thinkingLevel, id, true, expanded, variant);
   const cwd = ctx.cwd;
   const names = registeredMcpNames();
   const style = ctx.ui.theme;
@@ -697,7 +776,7 @@ function preferencesSummary(ctx: ExtensionCommandContext): void {
 }
 
 /**
- * One pass of the Status/Usage/Preferences dialog. Resolves `undefined` when
+ * One pass of the Status/Usage/Preferences/Statistics dialog. Resolves `undefined` when
  * the dialog is done; any other string is a panel outcome the caller runs
  * before reopening the dialog on the Preferences tab.
  */
@@ -724,6 +803,21 @@ async function showTabOnce(
       rememberPromptOptions(ctx, sessionId);
       const body = statusBody(ctx, thinkingLevel, undefined, initialExpanded, label);
       reportThenNotify(ctx, () => buildStatusReport(ctx, thinkingLevel, label), body);
+      return undefined;
+    }
+    if (initial === "stats") {
+      const owner = ctx.sessionManager;
+      const currentSessionId = owner.getSessionId.bind(owner);
+      const sessionId = currentSessionId();
+      const view = statsViewOf("");
+      const body = await statsBody({
+        cwd: ctx.cwd,
+        view: { period: view.period, scope: view.scope, expanded: initialExpanded },
+        priceLookup: registryPriceLookup(ctx.modelRegistry),
+        modelNames: registryModelNames(ctx.modelRegistry),
+      });
+      if (currentSessionId() !== sessionId) return undefined;
+      ctx.ui.notify(body, "info");
       return undefined;
     }
     if (initial === "context") {
@@ -756,14 +850,33 @@ async function showTabOnce(
   return ctx.ui.custom<string | undefined>((tui, theme, _keybindings, done) => {
     let active = initial;
     let expanded = initialExpanded;
+    let statsView: StatsSelection = {
+      period: DEFAULT_PERIOD,
+      scope: DEFAULT_SCOPE,
+    };
+    const variantOf = (id: TextTabId): string => (id === "stats" ? statsVariant(statsView) : "");
     let panel: PreferencesPanelHandle | undefined;
     let rememberedSection: string | undefined = initialFocus.section;
     let rememberedFocusId: string | undefined = initialFocus.focusId;
     let rememberedOpenSubmenu = initialFocus.openSubmenu === true;
 
     const text = new Text("", 0, 0);
+    /** The body painted last; a function body is laid out again for every render width. */
+    let painted: TabBody = "";
+    let paintedWidth = -1;
+    const compose = (body: string): string => `${header()}\n\n${body}\n\n${textHint()}`;
+    const bodyView: Component = {
+      render: (width) => {
+        if (!isString(painted) && width !== paintedWidth) {
+          paintedWidth = width;
+          text.setText(compose(painted(width)));
+        }
+        return text.render(width);
+      },
+      invalidate: () => text.invalidate(),
+    };
     const component = new Box(1, 1, (value) => theme.fg("border", value));
-    component.addChild(text);
+    component.addChild(bodyView);
     const scrollView = new ScrollView(component, {
       primary: true,
       scrollbar: "auto",
@@ -781,6 +894,7 @@ async function showTabOnce(
       const parts = ["Tab switches tabs", "↑/↓ scrolls", `${digitHint} jumps`];
       // The reset flow reads the legacy openai-codex login, not openai sign-in.
       if (active === "usage") parts.push("r uses a saved ChatGPT reset (openai-codex login)");
+      if (active === "stats") parts.push("r cycles period", "p toggles scope");
       if (isExpandableTab(active)) parts.push(expanded ? "Ctrl+O collapses" : "Ctrl+O expands");
       parts.push("Enter/Esc closes");
       return theme.fg("dim", parts.join(" · "));
@@ -794,14 +908,16 @@ async function showTabOnce(
       return theme.fg("dim", hint);
     };
 
-    const paint = (body: string, view: { preserveScroll: boolean }): void => {
-      text.setText(`${header()}\n\n${body}\n\n${textHint()}`);
+    const paint = (body: TabBody, view: { preserveScroll: boolean }): void => {
+      painted = body;
+      paintedWidth = -1;
+      if (isString(body)) text.setText(compose(body));
       if (!view.preserveScroll) scrollView.scrollToStart();
       tui.requestRender();
     };
 
     const controller = createTabController({
-      load: (id, view) => loadTabBody(ctx, thinkingLevel, id, view),
+      load: (id, view, variant) => loadTabBody(ctx, thinkingLevel, id, view, variant),
       paint,
       loading: () => theme.fg("dim", "Loading…"),
       failure: (id, message) => theme.fg("error", `Failed to load the ${id} tab: ${message}`),
@@ -855,7 +971,14 @@ async function showTabOnce(
       if (active === "preferences") closePanel();
       active = id;
       if (id === "preferences") openPanel();
-      else controller.activate(id, expanded);
+      else controller.activate(id, expanded, variantOf(id));
+      tui.requestRender();
+    };
+
+    /** r / p on the Statistics tab: re-query the tab in its new period or scope. */
+    const changeStatsView = (next: StatsSelection): void => {
+      statsView = next;
+      controller.activate("stats", expanded, variantOf("stats"));
       tui.requestRender();
     };
 
@@ -863,7 +986,7 @@ async function showTabOnce(
     const toggleExpanded = (): void => {
       if (!isExpandableTab(active) || active === "preferences") return;
       expanded = !expanded;
-      controller.activate(active, expanded);
+      controller.activate(active, expanded, variantOf(active));
       tui.requestRender();
     };
 
@@ -887,7 +1010,7 @@ async function showTabOnce(
     };
 
     if (initial === "preferences") openPanel();
-    else controller.activate(initial, expanded);
+    else controller.activate(initial, expanded, variantOf(initial));
 
     return {
       render: (width: number) => {
@@ -922,6 +1045,14 @@ async function showTabOnce(
         if (finished) return;
         if (active === "usage" && data === "r") {
           finish("usage:reset-codex");
+          return;
+        }
+        if (active === "stats" && data === "r") {
+          changeStatsView({ ...statsView, period: nextPeriod(statsView.period) });
+          return;
+        }
+        if (active === "stats" && data === "p") {
+          changeStatsView({ ...statsView, scope: toggleScope(statsView.scope) });
           return;
         }
         // A panel submenu, such as the model picker, needs every key it can
@@ -1057,12 +1188,13 @@ export default function statusCommands(pi: ExtensionAPI): void {
   pi.on("session_shutdown", closeOpenDialogs);
   pi.registerCommand("status", {
     description:
-      "Show session info, cost, model, context, MCP, and environment (Status/Context/Usage tabs)",
+      "Show session info, cost, model, context, MCP, and environment (Status/Context/Usage/Statistics tabs)",
     handler: async (_args, ctx) => showTab(ctx, pi.getThinkingLevel(), "status"),
   });
   overrideSessionCommand();
   const usageCommand = {
-    description: "Show connected Claude, ChatGPT, and Synthetic usage (Status/Context/Usage tabs)",
+    description:
+      "Show connected Claude, ChatGPT, and Synthetic usage (Status/Context/Usage/Statistics tabs)",
     handler: async (_args: string, ctx: ExtensionCommandContext) =>
       showTab(ctx, pi.getThinkingLevel(), "usage"),
   };
