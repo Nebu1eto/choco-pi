@@ -38,7 +38,7 @@ const MAX_LABEL = 36;
 const MAX_SPEED_LABEL = 40;
 const SPARK_CHARS = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"] as const;
 /** Rows a collapsed breakdown shows; Ctrl+O shows the rest, as the Context tab does with its inventories. */
-const COLLAPSED_ROWS = 5;
+const COLLAPSED_ROWS = 6;
 /** Width of the token scale printed left of the daily chart. */
 const CHART_GUTTER = 7;
 
@@ -373,12 +373,9 @@ function breakdownRows(
   const dim = p.dim;
   if (rows.length === 0) return [dim("  (no calls in this period)")];
   const lines: string[] = [];
-  // Collapsed: the top rows plus every MCP server row (the point of the feature
-  // view), then one line counting the rest. Expanded: everything, surplus
-  // per-tool rows folded into one.
-  const shown = expanded
-    ? foldTools(rows, 12)
-    : rows.filter((row, index) => index < COLLAPSED_ROWS || isMcpFeature(row.key));
+  // Collapsed: the top rows, then one line counting the rest. Expanded:
+  // everything, surplus per-tool rows folded into one.
+  const shown = expanded ? foldTools(rows, 12) : rows.slice(0, COLLAPSED_ROWS);
   if (layout.inOut) {
     lines.push(
       dim(
@@ -1212,7 +1209,9 @@ export function formatStats(report: StatsReport, options: StatsFormatOptions): s
     return out;
   };
 
-  const speedRows = report.speed.byModel;
+  // Collapsed: the top models by output, then one line counting the rest.
+  const allSpeedRows = report.speed.byModel;
+  const speedRows = options.expanded ? allSpeedRows : allSpeedRows.slice(0, COLLAPSED_ROWS);
   lines.push(
     heading("Throughput") +
       dim(
@@ -1223,8 +1222,8 @@ export function formatStats(report: StatsReport, options: StatsFormatOptions): s
             : " (per model and Fast; generation tok/s, TTFT median)",
       ),
   );
-  const anyTiming = speedRows.some((row) => row.timedCalls > 0 || row.estimate !== undefined);
-  if (!anyTiming && speedRows.length > 0)
+  const anyTiming = allSpeedRows.some((row) => row.timedCalls > 0 || row.estimate !== undefined);
+  if (!anyTiming && allSpeedRows.length > 0)
     lines.push(dim("  no timed calls yet and too few to estimate · TTFT is recorded from now on"));
   const table = speedTable(
     speedRows,
@@ -1235,6 +1234,8 @@ export function formatStats(report: StatsReport, options: StatsFormatOptions): s
     modelColours,
   );
   lines.push(...table.lines);
+  const hiddenSpeed = allSpeedRows.length - speedRows.length;
+  if (hiddenSpeed > 0) lines.push(dim(`  ${count(hiddenSpeed)} more · Ctrl+O shows all`));
   // The legend names exactly the markers the table used.
   const legend = [
     ...(table.anyFitted

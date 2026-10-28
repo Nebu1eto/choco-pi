@@ -11,12 +11,13 @@ import statusCommands, {
   createTabController,
   openStatusTab,
   STATUS_TABS,
+  statsViewportRows,
   type TextTabId,
   renderTabBody,
 } from "../.pi/extensions/status-commands.ts";
 import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
 
-function openDialog(tab: TextTabId) {
+function openDialog(tab: TextTabId, terminalRows = 200) {
   let color = 31;
   let component: (Component & { dispose?: () => void }) | undefined;
   let close = (): void => {};
@@ -55,7 +56,10 @@ function openDialog(tab: TextTabId) {
       custom: (factory: Factory) =>
         new Promise<unknown>((resolve) => {
           const result = factory(
-            reinterpretHostValue<Parameters<Factory>[0]>({ requestRender: () => {} }),
+            reinterpretHostValue<Parameters<Factory>[0]>({
+              requestRender: () => {},
+              terminal: { rows: terminalRows },
+            }),
             reinterpretHostValue<Parameters<Factory>[1]>(theme),
             reinterpretHostValue<Parameters<Factory>[2]>({}),
             resolve,
@@ -271,7 +275,18 @@ test("the Statistics tab scans the agent's session root, cycles period and scope
     assert.ok(loaded.includes("\u001b[31m  Statistics  "), "the fifth tab is highlighted");
     assert.ok(loaded.includes("Last 30 days · all projects"));
     assert.ok(loaded.includes("(1 files) · 1 calls"));
-    assert.ok(loaded.includes("Claude Opus 5.5 (Anthropic)"), "rows show friendly model names");
+    // The body scrolls in a fixed window: page through it for rows further down.
+    const pages: string[] = [];
+    for (let page = 0; page < 10; page++) {
+      pages.push(rendered(120));
+      view.dialog.handleInput?.("\u001b[6~");
+    }
+    view.dialog.handleInput?.("\u001b[H");
+    assert.ok(
+      pages.some((page) => page.includes("Claude Opus 5.5 (Anthropic)")),
+      "rows show friendly model names",
+    );
+    assert.equal(rendered(120), loaded, "Home returns to the top");
     assert.ok(loaded.includes("r cycles period"));
     assert.ok(loaded.includes("Ctrl+O expands"));
     // Width 1 is below the text tabs' own padding, on this tab as on Status and Context.
@@ -298,6 +313,56 @@ test("the Statistics tab scans the agent's session root, cycles period and scope
     view.dialog.handleInput?.("5");
     assert.ok(rendered(120).includes("All time · this project"));
     assert.ok(!rendered(120).includes("Loading…"));
+  } finally {
+    await view.close();
+    if (previousAgentDir === undefined) delete process.env["PI_CODING_AGENT_DIR"];
+    else process.env["PI_CODING_AGENT_DIR"] = previousAgentDir;
+    await rm(agentDir, { recursive: true, force: true });
+  }
+});
+
+test("the Statistics body scrolls inside a fixed-height window under the tab header and hint", async () => {
+  const previousAgentDir = process.env["PI_CODING_AGENT_DIR"];
+  const agentDir = await statsAgentDir();
+  process.env["PI_CODING_AGENT_DIR"] = agentDir;
+  // 20 terminal rows leave a 10-row body window.
+  const view = openDialog("stats", 20);
+  try {
+    const plain = (): string[] =>
+      view.dialog.render(100).map((row) => stripVTControlCharacters(row).trimEnd());
+    await settle(() => plain().some((row) => row.includes("Statistics · Last 30 days")));
+    const hint = (rows: string[]): string =>
+      rows.find((row) => row.includes("Tab switches tabs")) ?? "";
+    const first = plain();
+    assert.ok(
+      first.some((row) => row.includes("Status  ·  Context")),
+      "the tab header stays",
+    );
+    assert.ok(first.length <= statsViewportRows(20) + 8, `${first.length} rows stay bounded`);
+    const total = Number(/scrolls \(1–10\/(\d+)\)/.exec(hint(first))?.[1]);
+    assert.ok(total > 10, "the hint names the window over a longer body");
+
+    view.dialog.handleInput?.("\u001b[B");
+    assert.match(hint(plain()), /scrolls \(2–11\//, "↓ moves one row");
+    view.dialog.handleInput?.("\u001b[F");
+    assert.match(
+      hint(plain()),
+      new RegExp(`scrolls \\(${total - 9}–${total}/${total}\\)`),
+      "End reaches the last row",
+    );
+    view.dialog.handleInput?.("\u001b[B");
+    assert.match(
+      hint(plain()),
+      new RegExp(`scrolls \\(${total - 9}–${total}/`),
+      "scrolling stops at the end",
+    );
+
+    // Expanding keeps the same window height and starts at the top.
+    view.dialog.handleInput?.("\u000f");
+    await settle(() => plain().some((row) => row.includes("Ctrl+O collapses")));
+    const expanded = plain();
+    assert.match(hint(expanded), /scrolls \(1–10\/\d+\)/);
+    assert.equal(expanded.length, first.length, "the window height does not change");
   } finally {
     await view.close();
     if (previousAgentDir === undefined) delete process.env["PI_CODING_AGENT_DIR"];

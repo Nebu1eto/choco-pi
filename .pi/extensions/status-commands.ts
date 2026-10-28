@@ -139,6 +139,25 @@ export function isExpandableTab(id: StatusTabId): boolean {
   return EXPANDABLE_TABS.has(id);
 }
 
+/** Most body rows the Statistics tab shows at once; longer bodies scroll inside it. */
+export const STATS_VIEWPORT_ROWS = 30;
+/** Rows kept free for the dialog's padding, tab header, key hint, and Pi's footer. */
+const STATS_CHROME_ROWS = 10;
+const STATS_MIN_VIEWPORT_ROWS = 5;
+
+/** The Statistics body window's height for a terminal of `terminalRows` rows. */
+export function statsViewportRows(terminalRows: number): number {
+  return Math.max(
+    STATS_MIN_VIEWPORT_ROWS,
+    Math.min(STATS_VIEWPORT_ROWS, Math.floor(terminalRows) - STATS_CHROME_ROWS),
+  );
+}
+
+/** The first visible row of a `height`-row window over `total` rows, kept in range. */
+export function clampScrollTop(top: number, total: number, height: number): number {
+  return Math.max(0, Math.min(top, total - height));
+}
+
 type ToolInventory = Pick<ExtensionAPI, "getAllTools" | "getActiveTools"> &
   Partial<Pick<ExtensionAPI, "getMcpServers" | "getSettings">>;
 
@@ -860,20 +879,59 @@ async function showTabOnce(
     let rememberedFocusId: string | undefined = initialFocus.focusId;
     let rememberedOpenSubmenu = initialFocus.openSubmenu === true;
 
-    const text = new Text("", 0, 0);
+    const headerText = new Text("", 0, 0);
+    const bodyText = new Text("", 0, 0);
+    const hintText = new Text("", 0, 0);
+    // Text.setText drops its render cache, so only call it on a change.
+    const shownText = new Map<Text, string>();
+    const setText = (target: Text, value: string): void => {
+      if (shownText.get(target) === value) return;
+      shownText.set(target, value);
+      target.setText(value);
+    };
     /** The body painted last; a function body is laid out again for every render width. */
     let painted: TabBody = "";
     let paintedWidth = -1;
-    const compose = (body: string): string => `${header()}\n\n${body}\n\n${textHint()}`;
+    /**
+     * The Statistics body scrolls inside a fixed-height window so the tab
+     * header and key hint stay on screen; other tabs render whole.
+     */
+    let statsTop = 0;
+    let statsWindow: { top: number; height: number; total: number } | undefined;
+    const statsHeight = (): number => statsViewportRows(tui.terminal.rows);
+    const windowed = (lines: string[]): string[] => {
+      statsWindow = undefined;
+      if (active !== "stats") return lines;
+      const height = statsHeight();
+      if (lines.length <= height) return lines;
+      statsTop = clampScrollTop(statsTop, lines.length, height);
+      statsWindow = { top: statsTop, height, total: lines.length };
+      return lines.slice(statsTop, statsTop + height);
+    };
+    const scrollStats = (delta: number): void => {
+      const window = statsWindow;
+      if (!window) return;
+      statsTop = clampScrollTop(statsTop + delta, window.total, window.height);
+      tui.requestRender();
+    };
     const bodyView: Component = {
       render: (width) => {
         if (!isString(painted) && width !== paintedWidth) {
           paintedWidth = width;
-          text.setText(compose(painted(width)));
+          bodyText.setText(painted(width));
         }
-        return text.render(width);
+        const body = windowed(bodyText.render(width));
+        // The header and hint are read after the body so the hint can name the window.
+        setText(headerText, header());
+        setText(hintText, textHint());
+        const blank = " ".repeat(width);
+        return [...headerText.render(width), blank, ...body, blank, ...hintText.render(width)];
       },
-      invalidate: () => text.invalidate(),
+      invalidate: () => {
+        headerText.invalidate();
+        bodyText.invalidate();
+        hintText.invalidate();
+      },
     };
     const component = new Box(1, 1, (value) => theme.fg("border", value));
     component.addChild(bodyView);
@@ -892,6 +950,10 @@ async function showTabOnce(
     const digitHint = STATUS_TABS.map((_tab, index) => index + 1).join("/");
     const textHint = (): string => {
       const parts = ["Tab switches tabs", "↑/↓ scrolls", `${digitHint} jumps`];
+      if (active === "stats" && statsWindow) {
+        const { top, height, total } = statsWindow;
+        parts[1] = `↑/↓ scrolls (${top + 1}–${top + height}/${total})`;
+      }
       // The reset flow reads the legacy openai-codex login, not openai sign-in.
       if (active === "usage") parts.push("r uses a saved ChatGPT reset (openai-codex login)");
       if (active === "stats") parts.push("r cycles period", "p toggles scope");
@@ -911,8 +973,11 @@ async function showTabOnce(
     const paint = (body: TabBody, view: { preserveScroll: boolean }): void => {
       painted = body;
       paintedWidth = -1;
-      if (isString(body)) text.setText(compose(body));
-      if (!view.preserveScroll) scrollView.scrollToStart();
+      if (isString(body)) bodyText.setText(body);
+      if (!view.preserveScroll) {
+        scrollView.scrollToStart();
+        statsTop = 0;
+      }
       tui.requestRender();
     };
 
@@ -1093,6 +1158,14 @@ async function showTabOnce(
         }
         if (matchesKey(data, "enter") || matchesKey(data, "escape")) {
           finish(undefined);
+        } else if (active === "stats") {
+          const page = Math.max(1, (statsWindow?.height ?? 1) - 1);
+          if (matchesKey(data, "up")) scrollStats(-1);
+          else if (matchesKey(data, "down")) scrollStats(1);
+          else if (matchesKey(data, "pageUp")) scrollStats(-page);
+          else if (matchesKey(data, "pageDown")) scrollStats(page);
+          else if (matchesKey(data, "home")) scrollStats(-Infinity);
+          else if (matchesKey(data, "end")) scrollStats(Infinity);
         } else if (matchesKey(data, "up")) {
           scrollView.scrollBy(-1);
           tui.requestRender();

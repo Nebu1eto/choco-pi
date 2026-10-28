@@ -188,11 +188,8 @@ test("concise view folds surplus per-tool rows into one row and the expanded vie
     "the trailing rows are counted, not listed",
   );
   assert.ok(!concise.includes("tools: tool_7"));
-  assert.match(
-    concise,
-    /^  ● MCP: github\s+/m,
-    "an MCP server with tiny usage keeps its own concise row",
-  );
+  assert.match(concise, /^  ● MCP: github\s+/m, "a top-six row is listed");
+  assert.ok(!concise.includes("tools: tool_2"), "rows past the top six are counted");
   assert.ok(!concise.includes("Not counted:"));
   const expanded = formatStats(report, {
     period: "all",
@@ -202,6 +199,7 @@ test("concise view folds surplus per-tool rows into one row and the expanded vie
     scan,
   });
   assert.ok(expanded.includes("tools: tool_7"));
+  assert.match(expanded, /^  ● MCP: github\s+/m, "expanded lists every MCP server");
   assert.match(expanded, /^    1 calls · in 100 · out 50 · cache 1\.0k read \/ 200 write$/m);
   assert.ok(expanded.includes("Not counted:"));
 });
@@ -596,8 +594,11 @@ test("collapsed view shows the top rows and names the rest; series colours are s
     width: 80,
   });
   const models = collapsed.split("By model")[1]?.split("By feature")[0] ?? "";
-  assert.equal((models.match(/^  ● Model /gm) ?? []).length, 5, "five rows collapsed");
-  assert.match(models, /^  4 more \(\d+\.\d% · \$[\d.]+\) · Ctrl\+O shows all$/m);
+  assert.equal((models.match(/^  ● Model /gm) ?? []).length, 6, "six rows collapsed");
+  assert.match(models, /^  3 more \(\d+\.\d% · \$[\d.]+\) · Ctrl\+O shows all$/m);
+  const speed = collapsed.split("\nThroughput")[1] ?? "";
+  assert.equal((speed.match(/^  ● Model /gm) ?? []).length, 6, "six throughput rows collapsed");
+  assert.match(speed, /^  3 more · Ctrl\+O shows all$/m);
   assert.ok(!models.includes("  other "), "collapsed rows are counted, not folded");
   assert.match(collapsed, /Ctrl\+O expands rows, details and notes/);
   const expanded = formatStats(report, {
