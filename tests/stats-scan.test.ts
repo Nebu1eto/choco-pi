@@ -532,6 +532,70 @@ test("code-mode traces are kept as nested calls with their result sizes", async 
   }
 });
 
+test("parses lines longer than a read chunk and multi-byte text split across chunks", async () => {
+  const { root, project } = await makeRoot();
+  try {
+    const file = path.join(project, "2026-10-20T10-00-00-000Z_large.jsonl");
+    // 800,000 three-byte characters span the 1 MiB and 2 MiB read boundaries;
+    // the two boundaries differ mod 3, so at least one splits a character.
+    const large = "가".repeat(800_000);
+    const tail = JSON.stringify(assistant("a3", "a2", 5000));
+    await writeFile(
+      file,
+      lines([
+        header("large", "/work/app", 0),
+        user("u1", null, 1000),
+        assistant("a1", "u1", 2000, { toolCalls: ["exec"] }),
+        {
+          type: "message",
+          id: "r1",
+          parentId: "a1",
+          timestamp: iso(3000),
+          message: {
+            role: "toolResult",
+            toolCallId: "call-a1-0",
+            toolName: "exec",
+            content: [{ type: "text", text: "Script completed" }],
+            details: {
+              codeMode: true,
+              traces: [
+                {
+                  name: "exec_command",
+                  status: "done",
+                  result: { content: [{ type: "text", text: large }] },
+                },
+              ],
+            },
+            isError: false,
+            timestamp: T0 + 3000,
+          },
+        },
+        assistant("a2", "r1", 4000),
+      ]) + tail.slice(0, 40),
+    );
+    const cache: ScanCache = new Map();
+    const scan = (await scanSessions([root], cache)).sessions[0];
+    assert.ok(scan);
+    assert.equal(scan.malformedLines, 0);
+    assert.deepEqual(
+      scan.records.map((record) => record.key.split("|")[0]),
+      ["a1", "a2"],
+    );
+    assert.deepEqual(scan.records[1]?.nestedCalls, [{ name: "exec_command", size: large.length }]);
+
+    // The unfinished line is read once its newline arrives.
+    await appendFile(file, tail.slice(40) + "\n");
+    const grown = (await scanSessions([root], cache)).sessions[0];
+    assert.equal(grown, scan, "an appended file updates the same scan");
+    assert.deepEqual(
+      scan.records.map((record) => record.key.split("|")[0]),
+      ["a1", "a2", "a3"],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("compaction checkpoints become events with method, provider, and trigger from the journal", async () => {
   const { root, project } = await makeRoot();
   try {

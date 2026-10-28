@@ -44,8 +44,12 @@ export type SessionScan = {
   mtimeMs: number;
   /** Byte offset just past the last complete line already parsed. */
   offset: number;
-  /** The header line as written, so a rewrite that grew the file is told from an append. */
-  headerLine: string;
+  /**
+   * The header line's bytes as written, so a rewrite that grew the file is told
+   * from an append. An owned copy: a string slice of the read would keep the
+   * whole decoded chunk alive for as long as the scan is cached.
+   */
+  headerBytes: Buffer;
   sessionId: string;
   cwd: string;
   parentSession: string | undefined;
@@ -85,6 +89,8 @@ export type ScanResult = {
 };
 
 const READ_CONCURRENCY = 8;
+/** Bytes read per call; a file is parsed one chunk of lines at a time, never loaded whole. */
+const READ_CHUNK_BYTES = 1 << 20;
 
 export function timingKey(provider: string, model: string, at: number): string {
   return `${provider}|${model}|${at}`;
@@ -96,7 +102,7 @@ function newScan(path: string): SessionScan {
     size: 0,
     mtimeMs: 0,
     offset: 0,
-    headerLine: "",
+    headerBytes: Buffer.alloc(0),
     sessionId: "",
     cwd: "",
     parentSession: undefined,
@@ -447,7 +453,7 @@ export function applyLines(scan: SessionScan, lines: readonly string[]): boolean
     const type = entry["type"];
     if (type === "session") {
       if (scan.sessionId.length > 0) return false;
-      if (applyHeader(scan, entry)) scan.headerLine = line;
+      if (applyHeader(scan, entry)) scan.headerBytes = Buffer.from(line, "utf8");
       continue;
     }
     if (scan.sessionId.length === 0) continue;
@@ -466,8 +472,7 @@ export function applyLines(scan: SessionScan, lines: readonly string[]): boolean
 }
 
 /** True when the file still starts with the header the scan was built from. */
-async function headerUnchanged(path: string, headerLine: string): Promise<boolean> {
-  const expected = Buffer.from(headerLine, "utf8");
+async function headerUnchanged(path: string, expected: Buffer): Promise<boolean> {
   if (expected.length === 0) return false;
   const handle = await open(path, "r");
   try {
@@ -479,21 +484,61 @@ async function headerUnchanged(path: string, headerLine: string): Promise<boolea
   }
 }
 
-/** Read the complete lines between `offset` and the end of the file. */
-async function readCompleteLines(
+/**
+ * Parse the complete lines between `offset` and `size` into the scan, one
+ * chunk at a time, so memory stays near one chunk plus the longest line.
+ * Lines split on the newline byte, which never occurs inside a UTF-8
+ * sequence. A trailing line without its newline is left for a later read.
+ *
+ * When a second header appears, `stopOnRewrite` returns at once so the
+ * caller can start over; otherwise the rest of the file is skipped unparsed,
+ * as a fresh scan has nothing to start over from.
+ */
+async function parseCompleteLines(
+  scan: SessionScan,
   path: string,
   offset: number,
   size: number,
-): Promise<{ lines: string[]; nextOffset: number }> {
-  if (size <= offset) return { lines: [], nextOffset: offset };
+  stopOnRewrite: boolean,
+): Promise<{ ok: boolean; nextOffset: number }> {
+  if (size <= offset) return { ok: true, nextOffset: offset };
   const handle = await open(path, "r");
   try {
-    const buffer = Buffer.allocUnsafe(size - offset);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, offset);
-    const end = buffer.subarray(0, bytesRead).lastIndexOf(0x0a);
-    if (end < 0) return { lines: [], nextOffset: offset };
-    const text = buffer.subarray(0, end).toString("utf8");
-    return { lines: text.split("\n"), nextOffset: offset + end + 1 };
+    const chunk = Buffer.allocUnsafe(Math.min(READ_CHUNK_BYTES, size - offset));
+    /** Owned copies of a line's leading bytes from earlier chunks. */
+    let carry: Buffer[] = [];
+    let position = offset;
+    let nextOffset = offset;
+    let ok = true;
+    while (position < size) {
+      const want = Math.min(chunk.length, size - position);
+      const { bytesRead } = await handle.read(chunk, 0, want, position);
+      if (bytesRead === 0) break;
+      const view = chunk.subarray(0, bytesRead);
+      const lines: string[] = [];
+      let start = 0;
+      for (let end = view.indexOf(0x0a); end >= 0; end = view.indexOf(0x0a, start)) {
+        if (ok) {
+          const tail = view.subarray(start, end);
+          lines.push(
+            carry.length === 0
+              ? tail.toString("utf8")
+              : Buffer.concat([...carry, tail]).toString("utf8"),
+          );
+        }
+        carry = [];
+        start = end + 1;
+        nextOffset = position + start;
+      }
+      if (ok && start < bytesRead) carry.push(Buffer.from(view.subarray(start)));
+      position += bytesRead;
+      if (ok && !applyLines(scan, lines)) {
+        if (stopOnRewrite) return { ok: false, nextOffset };
+        ok = false;
+        carry = [];
+      }
+    }
+    return { ok, nextOffset };
   } finally {
     await handle.close();
   }
@@ -507,14 +552,12 @@ async function scanFile(path: string, previous: SessionScan | undefined): Promis
   const appended =
     previous !== undefined &&
     size >= previous.size &&
-    (await headerUnchanged(path, previous.headerLine));
+    (await headerUnchanged(path, previous.headerBytes));
   let scan = appended ? previous : newScan(path);
-  let read = await readCompleteLines(path, scan.offset, size);
-  let ok = applyLines(scan, read.lines);
-  if (!ok) {
+  let read = await parseCompleteLines(scan, path, scan.offset, size, true);
+  if (!read.ok) {
     scan = newScan(path);
-    read = await readCompleteLines(path, 0, size);
-    ok = applyLines(scan, read.lines);
+    read = await parseCompleteLines(scan, path, 0, size, false);
   }
   scan.offset = read.nextOffset;
   scan.size = size;
