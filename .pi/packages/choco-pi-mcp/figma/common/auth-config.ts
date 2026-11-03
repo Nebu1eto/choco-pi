@@ -9,7 +9,7 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey } from "@earendil-works/pi-tui";
-import { Type } from "typebox";
+import { bool, obj, opt } from "@earendil-works/pi-schema";
 import { ApiError } from "./errors.ts";
 import {
   MissingAuthTokenError,
@@ -23,6 +23,7 @@ import {
   type FigmaRecord,
   type FigmaValue,
 } from "../src/figma-values.ts";
+import { hostParams } from "../src/schema-bridge.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -39,13 +40,16 @@ interface ConfigureAuthParams {
   force?: boolean;
 }
 
-const ConfigureAuthParamsSchema = Type.Object({
-  force: Type.Optional(
-    Type.Boolean({
-      description: "Prompt even if a token is already configured. Defaults to false.",
-    }),
-  ),
-});
+const ConfigureAuthParamsSchema = obj(
+  {
+    force: opt(
+      bool({
+        description: "Prompt even if a token is already configured. Defaults to false.",
+      }),
+    ),
+  },
+  { open: true },
+);
 
 export function registerAuthConfigurator(pi: ExtensionAPI, options: AuthConfiguratorOptions): void {
   pi.registerCommand(options.commandName, {
@@ -66,7 +70,7 @@ export function registerAuthConfigurator(pi: ExtensionAPI, options: AuthConfigur
     label: `${options.displayName} Auth`,
     description: `Securely prompt the user for a ${options.displayName} token and store it without exposing it to the model. Use only when auth is missing/expired/invalid, or when the user asks to update the token.`,
     promptSnippet: `Configure ${options.displayName} authentication securely.`,
-    parameters: ConfigureAuthParamsSchema,
+    parameters: hostParams(ConfigureAuthParamsSchema),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await configureAuthToken(ctx, options, { force: params.force });
       return {

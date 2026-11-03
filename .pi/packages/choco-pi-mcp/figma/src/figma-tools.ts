@@ -22,6 +22,7 @@ import {
   FigmaSearchComponentsParams,
   FigmaSingleFileParams,
 } from "./figma-schemas.ts";
+import { hostParams } from "./schema-bridge.ts";
 
 const DEFAULT_PROCESSED_MAX_CHARS = 20_000;
 const DEFAULT_RAW_MAX_CHARS = 40_000;
@@ -74,7 +75,7 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     label: "Figma Parse URL",
     description: "Parse a Figma URL into fileKey and nodeId values for the other figma_* tools.",
     promptSnippet: "Parse Figma URLs into file key and node ID.",
-    parameters: FigmaParseUrlParams,
+    parameters: hostParams(FigmaParseUrlParams),
     async execute(_toolCallId, params) {
       return jsonToolResult(parseFigmaUrl(params.url));
     },
@@ -93,7 +94,7 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
       "Do not call figma_get_nodes by default; use it only when raw Figma JSON is explicitly needed or when debugging the extension.",
       "Use figma_render_nodes when screenshots or visual assets are needed.",
     ],
-    parameters: FigmaGetDesignContextParams,
+    parameters: hostParams(FigmaGetDesignContextParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await withFigmaAuth(ctx, () =>
         client.getDesignContext(params.fileKey, params.nodeId),
@@ -110,7 +111,7 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     description:
       "Search Figma layer/node names within a file or scoped subtree. Returns compact path-aware matches with result caps; prefer this before raw JSON exploration.",
     promptSnippet: "Find Figma nodes/layers by name before choosing a target frame.",
-    parameters: FigmaFindNodesParams,
+    parameters: hostParams(FigmaFindNodesParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await withFigmaAuth(ctx, () => client.findNodesByName(params.fileKey, params));
       return jsonToolResult(result, {
@@ -125,7 +126,7 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     description:
       "Search visible Figma text nodes within a file or scoped subtree and return compact path-aware matches with nearest parent context.",
     promptSnippet: "Find Figma nodes by visible text.",
-    parameters: FigmaFindNodesParams,
+    parameters: hostParams(FigmaFindNodesParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await withFigmaAuth(ctx, () => client.findNodesByText(params.fileKey, params));
       return jsonToolResult(result, {
@@ -140,7 +141,7 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     description:
       "Fetch a compact structured summary of a Figma node: dimensions, layout, spacing, styles, visible text, component properties, and shallow child hierarchy. Default depth is 2; hidden nodes, vectors, and component internals are omitted by default.",
     promptSnippet: "Get LLM-ready structured summaries of Figma frames/components.",
-    parameters: FigmaProcessedNodeParams,
+    parameters: hostParams(FigmaProcessedNodeParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await withFigmaAuth(ctx, () =>
         client.getNodeSummary(params.fileKey, params.nodeId, processedOptions(params)),
@@ -157,7 +158,7 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     description:
       "Extract visible text nodes from a Figma node without raw JSON. Hidden text is excluded by default and results are capped for LLM readability.",
     promptSnippet: "Extract visible text from Figma designs.",
-    parameters: FigmaProcessedNodeParams,
+    parameters: hostParams(FigmaProcessedNodeParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await withFigmaAuth(ctx, () =>
         client.extractText(params.fileKey, params.nodeId, processedOptions(params)),
@@ -174,7 +175,7 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     description:
       "Explain a Figma node in human-readable Markdown using compact summary, visible text, shallow hierarchy, and optional rendered image asset. Primary tool for questions like 'Explain this component'.",
     promptSnippet: "Explain a Figma component/frame in Markdown without raw JSON.",
-    parameters: FigmaProcessedNodeWithRenderParams,
+    parameters: hostParams(FigmaProcessedNodeWithRenderParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const assets = params.renderImage
         ? await withFigmaAuth(ctx, () => renderAssets(client, ctx, params))
@@ -192,7 +193,7 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     description:
       "Return concise design-to-code context for a Figma node: purpose, sections, fields/buttons, measurements, typography, colors, spacing, CSS layout/responsive hints, accessibility hints, design tokens, assets, and optional framework starter snippets.",
     promptSnippet: "Get coding-ready Figma implementation context.",
-    parameters: FigmaImplementationContextParams,
+    parameters: hostParams(FigmaImplementationContextParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const assets = params.renderImage
         ? await withFigmaAuth(ctx, () => renderAssets(client, ctx, params))
@@ -216,7 +217,7 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     description:
       "Fetch a raw Figma file JSON document. Use only when raw Figma JSON is explicitly needed or when debugging the extension; prefer figma_get_node_summary, figma_explain_node, or figma_get_design_context.",
     promptSnippet: "Fetch raw Figma file JSON for debugging.",
-    parameters: FigmaGetFileParams,
+    parameters: hostParams(FigmaGetFileParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await withFigmaAuth(ctx, () => client.getFile(params.fileKey, params.depth));
       return jsonToolResult(result, { maxChars: params.maxResponseChars ?? DEFAULT_RAW_MAX_CHARS });
@@ -229,7 +230,7 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     description:
       "Fetch raw Figma JSON for one or more nodes/frames/components by node ID. Use only when raw Figma JSON is explicitly needed or when debugging the extension; do not use by default.",
     promptSnippet: "Fetch raw Figma node JSON for debugging.",
-    parameters: FigmaGetNodesParams,
+    parameters: hostParams(FigmaGetNodesParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await withFigmaAuth(ctx, () =>
         client.getNodes(params.fileKey, params.nodeIds),
@@ -243,7 +244,7 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     label: "Figma Node Metadata",
     description: "Fetch compact spatial/layout metadata for one or more Figma nodes.",
     promptSnippet: "Fetch compact Figma node metadata.",
-    parameters: FigmaGetNodesParams,
+    parameters: hostParams(FigmaGetNodesParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await withFigmaAuth(ctx, () =>
         client.getNodeMetadata(params.fileKey, params.nodeIds),
@@ -260,7 +261,7 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     description:
       "Fetch named styles from a Figma file, including colors, text, effects, and grids.",
     promptSnippet: "Fetch named Figma styles.",
-    parameters: FigmaSingleFileParams,
+    parameters: hostParams(FigmaSingleFileParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await withFigmaAuth(ctx, () => client.getStyles(params.fileKey));
       return jsonToolResult(result, {
@@ -274,7 +275,7 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     label: "Figma Variables",
     description: "Fetch local Figma variables and collections for design tokens.",
     promptSnippet: "Fetch Figma variables and design tokens.",
-    parameters: FigmaSingleFileParams,
+    parameters: hostParams(FigmaSingleFileParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await withFigmaAuth(ctx, () => client.getVariables(params.fileKey));
       return jsonToolResult(result, {
@@ -288,7 +289,7 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     label: "Figma Components",
     description: "Fetch Figma component metadata for a file.",
     promptSnippet: "Fetch Figma component metadata.",
-    parameters: FigmaSingleFileParams,
+    parameters: hostParams(FigmaSingleFileParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await withFigmaAuth(ctx, () => client.getComponents(params.fileKey));
       return jsonToolResult(result, {
@@ -302,7 +303,7 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     label: "Figma Component Sets",
     description: "Fetch Figma component set metadata for a file.",
     promptSnippet: "Fetch Figma component-set metadata.",
-    parameters: FigmaSingleFileParams,
+    parameters: hostParams(FigmaSingleFileParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await withFigmaAuth(ctx, () => client.getComponentSets(params.fileKey));
       return jsonToolResult(result, {
@@ -316,7 +317,7 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     label: "Figma Search Components",
     description: "Search Figma components in a file by name or description.",
     promptSnippet: "Search Figma components.",
-    parameters: FigmaSearchComponentsParams,
+    parameters: hostParams(FigmaSearchComponentsParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await withFigmaAuth(ctx, () =>
         client.searchComponents(params.fileKey, params.query),
@@ -333,7 +334,7 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     description:
       "Render one or more Figma nodes to image URLs and optionally download them as local assets.",
     promptSnippet: "Render Figma nodes to images.",
-    parameters: FigmaRenderNodesParams,
+    parameters: hostParams(FigmaRenderNodesParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await withFigmaAuth(ctx, () =>
         client.renderNodes(params.fileKey, params.nodeIds, {
@@ -356,7 +357,7 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     description:
       "Extract a compact asset manifest for a Figma subtree, including SVG/icon exports, node renders, image fills, node paths, hashes, sizes, and local file paths when downloaded.",
     promptSnippet: "Extract a Figma asset manifest.",
-    parameters: FigmaExtractAssetsParams,
+    parameters: hostParams(FigmaExtractAssetsParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await withFigmaAuth(ctx, () =>
         client.extractAssets(params.fileKey, params.nodeId, { ...params, cwd: ctx.cwd }),
@@ -373,7 +374,7 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     description:
       "Scan the local repo for Code Connect files, figma.connect calls, Figma URLs, node IDs, and component keys matching a target. No live Figma request is required.",
     promptSnippet: "Find local Figma component mappings.",
-    parameters: FigmaFindCodeConnectMappingParams,
+    parameters: hostParams(FigmaFindCodeConnectMappingParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await client.findCodeConnectMapping({ ...params, cwd: ctx.cwd });
       return jsonToolResult(result, {
@@ -388,7 +389,7 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     description:
       "Combine Figma summary, implementation context, variants/properties, accessibility, token dependencies, assets, optional local Code Connect matches, and starter snippets into compact component implementation guidance.",
     promptSnippet: "Get Figma component implementation hints.",
-    parameters: FigmaComponentImplementationHintsParams,
+    parameters: hostParams(FigmaComponentImplementationHintsParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await withFigmaAuth(ctx, () =>
         client.getComponentImplementationHints(params.fileKey, params.nodeId, {

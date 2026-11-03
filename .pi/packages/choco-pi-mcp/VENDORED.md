@@ -281,3 +281,12 @@ Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pas
 ## 2026-11-03 choco-pi patch: Pi SDK target 1.5.0 + pi-schema dependency
 
 Pi SDK pins move from `1.4.0` to exactly `1.5.0` and `@earendil-works/pi-schema@1.5.0` is added as a peer dependency (the extension loader has no alias for it). The package-local `minimumReleaseAgeExclude` entries move to `@1.5.0` and gain `pi-schema`. The lock was regenerated with pnpm 11.11.0 (`pnpm install --ignore-scripts`).
+
+## 2026-11-03 choco-pi patch: figma tool schemas move from TypeBox to pi-schema
+
+First-party `figma/src/figma-schemas.ts` and `figma/common/auth-config.ts` build tool parameters with
+`@earendil-works/pi-schema` (objects stay open, as TypeBox objects were; enums use `oneOf`). Only
+`figma/src/schema-bridge.ts` imports `typebox` (`hostParams` wraps the schema with `Type.Unsafe` because
+`registerTool` still requires a TypeBox schema in Pi 1.5.0); `figma-tools.ts` and `auth-config.ts` pass
+`hostParams(...)`. No vendored provider or `node_modules` file changed. The `typebox` peer declaration is
+still needed for the bridge. Verification: `npx tsc --noEmit` and `node --test tests/figma-*.test.ts`.
