@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { discoverAndLoadExtensions } from "@earendil-works/pi-coding-agent";
-import { Value } from "typebox/value";
+import { compile } from "@earendil-works/pi-schema";
 import type { UiAction } from "../src/contract.ts";
 import { isJsonObject, isString, type JsonObject, type JsonValue } from "../src/json.ts";
 
@@ -59,11 +59,12 @@ test("registered act_ui schema accepts every action shape", async () => {
       .find((tool) => tool.definition.name === "act_ui");
     assert.ok(act);
     const schema = act.definition.parameters;
+    const { check } = compile(schema);
     for (const action of examples) {
-      assert.equal(Value.Check(schema, { actions: [action] }), true, JSON.stringify(action));
+      assert.equal(check({ actions: [action] }), true, JSON.stringify(action));
     }
     assert.equal(
-      Value.Check(schema, {
+      check({
         actions: [
           {
             action: "drag",
@@ -78,11 +79,37 @@ test("registered act_ui schema accepts every action shape", async () => {
       "drag only accepts object points",
     );
     assert.equal(
-      Value.Check(schema, {
+      check({
         actions: [{ action: "click", ref: "@e1", clickCount: 1.5 }],
       }),
       false,
       "clickCount must be an integer",
+    );
+
+    // Objects stay open (TypeBox default): unknown keys are accepted.
+    assert.equal(
+      check({ actions: [{ action: "press", ref: "@e1", extra: 1 }], extra: true }),
+      true,
+    );
+    // Optional stateId/expect may be omitted; required actions may not.
+    assert.equal(check({ stateId: "s1", actions: [{ action: "moveMouse", x: 1, y: 2 }] }), true);
+    assert.equal(check({ stateId: "s1" }), false, "actions required");
+    assert.equal(check({ actions: [] }), false, "actions minItems");
+    assert.equal(check({ actions: [{ action: "click", ref: "@e1", clickCount: 4 }] }), false);
+    assert.equal(check({ actions: [{ action: "click", button: "back" }] }), false, "button enum");
+    assert.equal(check({ actions: [{ action: "nope" }] }), false, "unknown action");
+    assert.equal(check({ actions: [{ action: "moveMouse", x: "1", y: 2 }] }), false);
+    assert.equal(check({ actions: [{ action: "press" }] }), false, "press needs ref");
+    assert.equal(
+      check({ expect: { timeoutMs: 50 }, actions: [{ action: "press", ref: "@e1" }] }),
+      false,
+    );
+    assert.equal(
+      check({
+        expect: { until: "absent", timeoutMs: 100 },
+        actions: [{ action: "press", ref: "@e1" }],
+      }),
+      true,
     );
 
     const invalidTargets: UiAction[] = [
@@ -92,7 +119,7 @@ test("registered act_ui schema accepts every action shape", async () => {
       { action: "click", y: 20 },
     ];
     for (const action of invalidTargets) {
-      assert.equal(Value.Check(schema, { actions: [action] }), true);
+      assert.equal(check({ actions: [action] }), true);
     }
 
     // Keyboard input without ref goes to the app's focused element; the
@@ -138,6 +165,48 @@ test("registered act_ui schema accepts every action shape", async () => {
     ])
       assert.ok(statuses.includes(status), `the act guideline names ${status}`);
     assert.match(statuses, /act_ui action N \(<action>\): … Nothing was sent\./);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("registered read-side tool schemas keep bounds, optionality and open objects", async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), "computer-use-schema-"));
+  try {
+    const extensionPath = new URL("../extensions/computer-use.ts", import.meta.url).pathname;
+    const loaded = await discoverAndLoadExtensions([extensionPath], cwd, cwd);
+    assert.deepEqual(loaded.errors, []);
+    const checkFor = (name: string) => {
+      const tool = loaded.extensions
+        .flatMap((extension) => [...extension.tools.values()])
+        .find((candidate) => candidate.definition.name === name);
+      assert.ok(tool, name);
+      return compile(tool.definition.parameters).check;
+    };
+    const findRoots = checkFor("find_roots");
+    assert.equal(findRoots({}), true, "every find_roots field is optional");
+    assert.equal(findRoots({ kind: "dialog", pid: 3, extra: 1 }), true, "open object");
+    assert.equal(findRoots({ kind: "tab" }), false);
+    assert.equal(findRoots({ text: "x".repeat(257) }), false);
+    const waitFor = checkFor("wait_for");
+    assert.equal(waitFor({ stateId: "s" }), true);
+    assert.equal(waitFor({}), false, "stateId required");
+    assert.equal(waitFor({ stateId: "s", timeoutMs: 99 }), false);
+    assert.equal(waitFor({ stateId: "s", timeoutMs: 60_001 }), false);
+    assert.equal(waitFor({ stateId: "s", until: "gone" }), false);
+    const expand = checkFor("expand_ui");
+    assert.equal(expand({ ref: "@e1", depth: 8 }), true);
+    assert.equal(expand({ ref: "@e1", depth: 9 }), false);
+    assert.equal(expand({ depth: 2 }), false, "ref required");
+    const readText = checkFor("read_text");
+    assert.equal(readText({ ref: "@e1", offset: 0 }), true);
+    assert.equal(readText({ ref: "@e1", offset: -1 }), false);
+    const observe = checkFor("observe_ui");
+    assert.equal(observe({ mode: "visual" }), true);
+    assert.equal(observe({ mode: "ocr" }), false);
+    const evaluate = checkFor("evaluate_browser");
+    assert.equal(evaluate({ stateId: "s", expression: "1" }), true);
+    assert.equal(evaluate({ stateId: "s", expression: "x".repeat(65_537) }), false);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }

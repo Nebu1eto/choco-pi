@@ -1,5 +1,6 @@
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import type { Properties } from "@earendil-works/pi-schema";
+import { arr, int, lit, num, obj, oneOf, opt, str, union } from "@earendil-works/pi-schema";
 import {
   ensureComputerUseSetup,
   executeAct,
@@ -32,114 +33,111 @@ import {
   notifyUnlessStale,
   setForegroundPromptMode,
 } from "../src/grant-prompt.ts";
+import { hostParams } from "../src/schema-bridge.ts";
 
-const stateId = Type.String({
+/** TypeBox objects were open; keep unknown keys allowed. */
+const object = <const P extends Properties>(properties: P) => obj(properties, { open: true });
+const toolParams = <const P extends Properties>(properties: P) => hostParams(object(properties));
+
+const stateId = str({
   description: "Required state id owning every @e ref used by this operation",
 });
-const optionalInspectionStateId = Type.Optional(
-  Type.String({
+const optionalInspectionStateId = opt(
+  str({
     description: "Cached state id; omit to establish a read-only semantic observation first",
   }),
 );
-const actionStateId = Type.Optional(
-  Type.String({
+const actionStateId = opt(
+  str({
     description: "Fresh state id owning every @e ref; omission returns an observe_ui requirement",
   }),
 );
-const point = { x: Type.Number(), y: Type.Number() };
-const mouseButton = Type.Optional(
-  Type.Union([Type.Literal("left"), Type.Literal("right"), Type.Literal("middle")]),
-);
-const click = Type.Object({
-  action: Type.Literal("click"),
-  ref: Type.Optional(
-    Type.String({ description: "Exactly one target is required: ref or both x and y" }),
-  ),
-  x: Type.Optional(Type.Number({ description: "Target x; requires y and no ref" })),
-  y: Type.Optional(Type.Number({ description: "Target y; requires x and no ref" })),
+const point = { x: num(), y: num() };
+const mouseButton = opt(oneOf(["left", "right", "middle"]));
+const click = object({
+  action: lit("click"),
+  ref: opt(str({ description: "Exactly one target is required: ref or both x and y" })),
+  x: opt(num({ description: "Target x; requires y and no ref" })),
+  y: opt(num({ description: "Target y; requires x and no ref" })),
   button: mouseButton,
-  clickCount: Type.Optional(Type.Integer({ minimum: 1, maximum: 3 })),
+  clickCount: opt(int({ minimum: 1, maximum: 3 })),
 });
-const uiAction = Type.Union([
-  Type.Object({
-    action: Type.Literal("press"),
-    ref: Type.String({ description: "Actionable outline ref" }),
+const uiAction = union([
+  object({
+    action: lit("press"),
+    ref: str({ description: "Actionable outline ref" }),
   }),
   click,
-  Type.Object({
-    action: Type.Literal("setText"),
-    ref: Type.String({ description: "Editable outline ref" }),
-    text: Type.String(),
+  object({
+    action: lit("setText"),
+    ref: str({ description: "Editable outline ref" }),
+    text: str(),
   }),
-  Type.Object({
-    action: Type.Literal("typeText"),
-    ref: Type.Optional(
-      Type.String({
+  object({
+    action: lit("typeText"),
+    ref: opt(
+      str({
         description:
           "Input to focus first; omit to type into the target app's focused element (headless desktop mode requires ref)",
       }),
     ),
-    text: Type.String(),
+    text: str(),
   }),
-  Type.Object({
-    action: Type.Literal("keypress"),
-    ref: Type.Optional(
-      Type.String({
+  object({
+    action: lit("keypress"),
+    ref: opt(
+      str({
         description:
           "Control to focus first; omit to send keys to the target app's focused element (headless desktop mode requires ref)",
       }),
     ),
-    keys: Type.Array(Type.String(), {
+    keys: arr(str(), {
       minItems: 1,
       description:
         'Modifiers then one key form one chord, e.g. ["cmd","shift","z"]; otherwise keys are pressed in order. Chord strings like "cmd+a" are desktop-only; browser pages reject them and take DOM key values (one character or a name such as "Enter" or "ArrowRight") with modifiers as separate keys. On macOS, Cmd editing shortcuts (select all, copy, cut, paste, undo, redo) do not run on browser pages; use setText to replace a field\'s text',
     }),
   }),
-  Type.Object({
-    action: Type.Literal("scroll"),
-    ref: Type.Optional(
-      Type.String({
+  object({
+    action: lit("scroll"),
+    ref: opt(
+      str({
         description:
           "Target ref or both x and y required; at least one non-zero scrollX/scrollY required",
       }),
     ),
-    x: Type.Optional(Type.Number({ description: "Target x; requires y; omit when using ref" })),
-    y: Type.Optional(Type.Number({ description: "Target y; requires x; omit when using ref" })),
-    scrollX: Type.Optional(
-      Type.Number({
+    x: opt(num({ description: "Target x; requires y; omit when using ref" })),
+    y: opt(num({ description: "Target y; requires x; omit when using ref" })),
+    scrollX: opt(
+      num({
         description: "Horizontal delta; at least one non-zero scrollX/scrollY required",
       }),
     ),
-    scrollY: Type.Optional(
-      Type.Number({
+    scrollY: opt(
+      num({
         description: "Vertical delta; at least one non-zero scrollX/scrollY required",
       }),
     ),
   }),
-  Type.Object({
-    action: Type.Literal("drag"),
-    path: Type.Array(Type.Object(point), { minItems: 2 }),
+  object({
+    action: lit("drag"),
+    path: arr(object(point), { minItems: 2 }),
   }),
-  Type.Object({ action: Type.Literal("moveMouse"), ...point }),
+  object({ action: lit("moveMouse"), ...point }),
 ]);
 
 const conditionProperties = {
-  ref: Type.Optional(Type.String({ description: "Specific @e ref to test", maxLength: 128 })),
-  scopeRef: Type.Optional(
-    Type.String({ description: "Restrict matching to this @e subtree", maxLength: 128 }),
-  ),
-  text: Type.Optional(Type.String({ description: "Text that must match", maxLength: 512 })),
-  role: Type.Optional(Type.String({ description: "Exact normalized role", maxLength: 128 })),
-  value: Type.Optional(
-    Type.String({ description: "Exact normalized value; normally pair with ref" }),
-  ),
-  until: Type.Optional(
-    Type.Union([Type.Literal("present"), Type.Literal("absent")], {
+  ref: opt(str({ description: "Specific @e ref to test", maxLength: 128 })),
+  scopeRef: opt(str({ description: "Restrict matching to this @e subtree", maxLength: 128 })),
+  text: opt(str({ description: "Text that must match", maxLength: 512 })),
+  role: opt(str({ description: "Exact normalized role", maxLength: 128 })),
+  value: opt(str({ description: "Exact normalized value; normally pair with ref" })),
+  until: opt(
+    oneOf(["present", "absent"], {
       description: "Desired condition, default present",
     }),
   ),
-  timeoutMs: Type.Optional(
-    Type.Number({ description: "Maximum wait, default 10000ms", minimum: 100, maximum: 60000 }),
+  timeoutMs: opt(
+    num({ description: "Maximum wait, default 10000ms", minimum: 100, maximum: 60000 }),
   ),
 };
 
@@ -149,23 +147,15 @@ const findTool = defineTool({
   description:
     "Find a bounded, ranked set of controllable UI roots with refs, geometry, and focus state.",
   promptSnippet: "Find a target root before observe_ui when needed.",
-  parameters: Type.Object({
-    text: Type.Optional(Type.String({ description: "Ranked app or title text", maxLength: 256 })),
-    app: Type.Optional(Type.String({ description: "Exact normalized app name", maxLength: 256 })),
-    bundleId: Type.Optional(Type.String({ description: "Exact bundle id" })),
-    pid: Type.Optional(Type.Number({ description: "Exact process id" })),
-    kind: Type.Optional(
-      Type.Union(
-        [
-          Type.Literal("window"),
-          Type.Literal("menu"),
-          Type.Literal("sheet"),
-          Type.Literal("popover"),
-          Type.Literal("dialog"),
-          Type.Literal("browser_page"),
-        ],
-        { description: "Exact root kind" },
-      ),
+  parameters: toolParams({
+    text: opt(str({ description: "Ranked app or title text", maxLength: 256 })),
+    app: opt(str({ description: "Exact normalized app name", maxLength: 256 })),
+    bundleId: opt(str({ description: "Exact bundle id" })),
+    pid: opt(num({ description: "Exact process id" })),
+    kind: opt(
+      oneOf(["window", "menu", "sheet", "popover", "dialog", "browser_page"], {
+        description: "Exact root kind",
+      }),
     ),
   }),
   execute: executeFind,
@@ -182,10 +172,10 @@ const observeTool = defineTool({
     "Use mode=semantic to skip OCR and images, visual to force them, and fused for automatic selection.",
     "Use @e outline refs from observe_ui/search_ui for act_ui; pictureOnly refs are coordinate-only and blocked by UI-tree-only policy.",
   ],
-  parameters: Type.Object({
-    root: Type.Optional(Type.String({ description: "Exact @r ref issued by find_roots" })),
-    mode: Type.Optional(
-      Type.Union([Type.Literal("semantic"), Type.Literal("visual"), Type.Literal("fused")], {
+  parameters: toolParams({
+    root: opt(str({ description: "Exact @r ref issued by find_roots" })),
+    mode: opt(
+      oneOf(["semantic", "visual", "fused"], {
         description: "Observation mode, default fused",
       }),
     ),
@@ -200,16 +190,10 @@ const searchUiTool = defineTool({
     "Search the current outline, establishing a read-only semantic observation when stateId is omitted. At least one predicate is required.",
   promptSnippet:
     "Find targets not shown in the compact observe_ui output; refine broad searches instead of paging matches.",
-  parameters: Type.Object({
-    text: Type.Optional(
-      Type.String({ description: "Human-readable text or label", maxLength: 256 }),
-    ),
-    role: Type.Optional(
-      Type.String({ description: "Exact normalized role, e.g. button", maxLength: 128 }),
-    ),
-    capability: Type.Optional(
-      Type.String({ description: "Exact capability, e.g. press", maxLength: 128 }),
-    ),
+  parameters: toolParams({
+    text: opt(str({ description: "Human-readable text or label", maxLength: 256 })),
+    role: opt(str({ description: "Exact normalized role, e.g. button", maxLength: 128 })),
+    capability: opt(str({ description: "Exact capability, e.g. press", maxLength: 128 })),
     stateId: optionalInspectionStateId,
   }),
   execute: executeSearchUi,
@@ -221,11 +205,9 @@ const expandUiTool = defineTool({
   description:
     "Unfold bounded local outline context for one @e ref, establishing a read-only semantic observation when stateId is omitted.",
   promptSnippet: "Expand a specific ref instead of dumping unrelated UI.",
-  parameters: Type.Object({
-    ref: Type.String(),
-    depth: Type.Optional(
-      Type.Number({ minimum: 1, maximum: 8, description: "Subtree depth, default 3" }),
-    ),
+  parameters: toolParams({
+    ref: str(),
+    depth: opt(num({ minimum: 1, maximum: 8, description: "Subtree depth, default 3" })),
     stateId: optionalInspectionStateId,
   }),
   execute: executeExpandUi,
@@ -237,7 +219,7 @@ const inspectUiTool = defineTool({
   description:
     "Inspect one exact outline ref, establishing a read-only semantic observation when stateId is omitted.",
   promptSnippet: "Use when a target's evidence or provenance matters.",
-  parameters: Type.Object({ ref: Type.String(), stateId: optionalInspectionStateId }),
+  parameters: toolParams({ ref: str(), stateId: optionalInspectionStateId }),
   execute: executeInspectUi,
 });
 
@@ -253,10 +235,10 @@ const actTool = defineTool({
     "typeText/keypress without ref go to the target app's focused element, which must be in this state's window; pass ref to focus a specific input first. They take no x/y: click the point first. Headless desktop mode requires ref.",
     'Every action is validated before anything is sent; an invalid one rejects the whole call ("act_ui action N (<action>): … Nothing was sent.") and the stateId stays usable. Result status "partial": action stoppedAt+1 failed during delivery after the earlier ones ran (execution.error says why); continue from the returned state and do not resend delivered actions. foreground_required, cancelled, owned_by_other_session, target_closed, and post_action_observation_failed return no successor state: call observe_ui before acting again.',
   ],
-  parameters: Type.Object({
+  parameters: toolParams({
     stateId: actionStateId,
-    expect: Type.Optional(Type.Object(conditionProperties)),
-    actions: Type.Array(uiAction, { minItems: 1, maxItems: 20 }),
+    expect: opt(object(conditionProperties)),
+    actions: arr(uiAction, { minItems: 1, maxItems: 20 }),
   }),
   execute: executeAct,
 });
@@ -266,10 +248,10 @@ const readTextTool = defineTool({
   label: "Read Text",
   description: "Read a fixed-size page from an @e UI ref or immutable @o truncated-output ref.",
   promptSnippet: "Use @e with its stateId; @o continuation refs don't need stateId.",
-  parameters: Type.Object({
-    ref: Type.String(),
-    offset: Type.Optional(Type.Number({ minimum: 0 })),
-    stateId: Type.Optional(stateId),
+  parameters: toolParams({
+    ref: str(),
+    offset: opt(num({ minimum: 0 })),
+    stateId: opt(stateId),
   }),
   execute: executeReadText,
 });
@@ -279,7 +261,7 @@ const waitForTool = defineTool({
   label: "Wait For",
   description: "Wait for one scoped UI condition and return the successor state.",
   promptSnippet: "Use after asynchronous UI changes instead of polling observe_ui.",
-  parameters: Type.Object({ ...conditionProperties, stateId }),
+  parameters: toolParams({ ...conditionProperties, stateId }),
   execute: executeWaitFor,
 });
 
@@ -290,7 +272,7 @@ const launchBrowserTool = defineTool({
     "Launch the configured Pi-managed CDP browser and return an observed browser-page state.",
   promptSnippet: "Use for browser work that needs a managed CDP context.",
   promptGuidelines: ["Prefer curl through bash when the page is directly fetchable."],
-  parameters: Type.Object({ url: Type.Optional(Type.String({ maxLength: 8192 })) }),
+  parameters: toolParams({ url: opt(str({ maxLength: 8192 })) }),
   execute: executeLaunchBrowser,
 });
 
@@ -299,7 +281,7 @@ const navigateBrowserTool = defineTool({
   label: "Navigate Browser",
   description: "Navigate an observed CDP browser-page state to an HTTP(S) URL.",
   promptSnippet: "Native browser windows use act_ui; this tool is CDP-only.",
-  parameters: Type.Object({ url: Type.String({ maxLength: 8192 }), stateId }),
+  parameters: toolParams({ url: str({ maxLength: 8192 }), stateId }),
   execute: executeNavigateBrowser,
 });
 
@@ -310,7 +292,7 @@ const evaluateBrowserTool = defineTool({
     "Evaluate targeted JavaScript in a CDP browser-page state; returned output is strictly bounded.",
   promptSnippet:
     "Prefer observe/search/read; return selected fields, aggregates, or bounded slices.",
-  parameters: Type.Object({ stateId, expression: Type.String({ maxLength: 65_536 }) }),
+  parameters: toolParams({ stateId, expression: str({ maxLength: 65_536 }) }),
   execute: executeEvaluateBrowser,
 });
 

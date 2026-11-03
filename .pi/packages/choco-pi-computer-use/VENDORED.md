@@ -314,3 +314,13 @@ A live re-run on headless Chrome on macOS confirmed that `keypress` `["cmd","a"]
 ## 2026-11-03 choco-pi patch: Pi SDK target 1.5.0 + pi-schema dependency
 
 Pi SDK pins move from `1.4.0` to exactly `1.5.0` and `@earendil-works/pi-schema@1.5.0` is added as a peer dependency (the extension loader has no alias for it).
+
+## 2026-11-04 choco-pi patch: tool schemas on pi-schema
+
+Tool parameter schemas in `extensions/computer-use.ts` are built with `@earendil-works/pi-schema` (`obj`, `str`, `num`, `int`, `lit`, `oneOf`, `union`, `arr`, `opt`) instead of TypeBox. No tool name, parameter name, description, bound or default changed.
+
+- **Bridge (`src/schema-bridge.ts`).** `defineTool` still requires a TypeBox schema in Pi 1.5.0, so `hostParams` wraps each pi-schema object in `Type.Unsafe`. This is the only file importing `typebox`.
+- **Openness.** Every object uses `{ open: true }` (TypeBox objects allowed extra keys; pi-schema objects are closed by default).
+- **Literal unions.** The `button`, `until`, `kind` and `mode` literal unions are now enums (`oneOf`) in the emitted JSON Schema (`enum` instead of `anyOf` of `const`); the accepted values are the same. The `act_ui` action variants stay an `anyOf` of `const`-tagged objects.
+- **Numbers.** pi-schema `num` admits NaN/Infinity where TypeBox did not; arguments arrive as decoded JSON, which cannot carry them, so no extra bound was added.
+- **Tests.** `tests/action-schema.test.ts` validates with `compile(...).check` instead of `Value.Check` and adds open-object, optional, bound and enum cases for the other tools.
