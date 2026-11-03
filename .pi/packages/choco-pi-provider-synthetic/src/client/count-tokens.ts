@@ -1,5 +1,5 @@
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import { compile, int, obj } from "@earendil-works/pi-schema";
+import type { Static } from "@earendil-works/pi-schema";
 import { DEFAULT_SYNTHETIC_API_BASE_URL, syntheticUtilityApiUrl } from "./utility-api.ts";
 import { authHeaders, combineWithTimeout, isTimeoutReason, parseErrorMessage } from "./utils.ts";
 
@@ -7,9 +7,12 @@ export const DEFAULT_COUNT_TOKENS_TIMEOUT_MS = 3000;
 const ANTHROPIC_VERSION = "2023-06-01";
 const MAX_ERROR_MESSAGE_CHARS = 500;
 
-export const CountTokensResponseSchema = Type.Object({
-  input_tokens: Type.Integer({ minimum: 0 }),
-});
+export const CountTokensResponseSchema = obj(
+  { input_tokens: int({ minimum: 0, maximum: Number.MAX_VALUE }) },
+  { open: true },
+);
+
+const isCountTokensResponse = compile(CountTokensResponseSchema).check;
 
 export type CountTokensResponse = Static<typeof CountTokensResponseSchema>;
 
@@ -169,7 +172,7 @@ export async function countSyntheticTokens(
       message: "Synthetic count_tokens returned non-JSON body",
     };
   }
-  if (!Value.Check(CountTokensResponseSchema, data)) {
+  if (!isCountTokensResponse(data)) {
     return {
       ok: false,
       code: "malformed",

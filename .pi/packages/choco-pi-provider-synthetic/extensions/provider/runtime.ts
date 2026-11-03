@@ -1,5 +1,4 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Value } from "typebox/value";
 import {
   configLoader,
   emitSyntheticConfigUpdated,
@@ -7,8 +6,8 @@ import {
   SYNTHETIC_CONFIG_UPDATED_EVENT,
   SYNTHETIC_EXTENSIONS_REGISTER_EVENT,
   SYNTHETIC_EXTENSIONS_REQUEST_EVENT,
-  SyntheticConfigUpdatedPayloadSchema,
-  SyntheticExtensionsRegisterPayloadSchema,
+  isSyntheticConfigUpdatedPayload,
+  isSyntheticExtensionsRegisterPayload,
   type SyntheticFeatureId,
   seedSyntheticConfigIfMissing,
 } from "../../src/config.ts";
@@ -20,8 +19,8 @@ import {
   SYNTHETIC_QUOTAS_READ_EVENT,
   SYNTHETIC_QUOTAS_REQUEST_EVENT,
   SYNTHETIC_QUOTAS_UPDATED_EVENT,
-  SyntheticQuotasReadPayloadSchema,
-  SyntheticQuotasRequestEventPayloadSchema,
+  isSyntheticQuotasReadPayload,
+  isSyntheticQuotasRequestEventPayload,
   type SyntheticQuotasSnapshotPayload,
 } from "../../src/types/quotas.ts";
 import { SYNTHETIC_OVERFLOW_PATTERN } from "./context-overflow.ts";
@@ -44,7 +43,7 @@ export async function activateSyntheticProvider(
   registerProvider(pi);
 
   pi.events.on(SYNTHETIC_CONFIG_UPDATED_EVENT, (data) => {
-    if (!Value.Check(SyntheticConfigUpdatedPayloadSchema, data)) return;
+    if (!isSyntheticConfigUpdatedPayload(data)) return;
     const config = data.config;
     publishSyntheticConfig(config);
 
@@ -61,7 +60,7 @@ export async function activateSyntheticProvider(
   const loadedFeatures = new Set<SyntheticFeatureId>();
 
   pi.events.on(SYNTHETIC_EXTENSIONS_REGISTER_EVENT, (data) => {
-    if (!Value.Check(SyntheticExtensionsRegisterPayloadSchema, data)) return;
+    if (!isSyntheticExtensionsRegisterPayload(data)) return;
     const { feature } = data;
     loadedFeatures.add(feature);
   });
@@ -131,7 +130,7 @@ export async function activateSyntheticProvider(
   });
 
   pi.events.on(SYNTHETIC_QUOTAS_REQUEST_EVENT, async (data) => {
-    if (!Value.Check(SyntheticQuotasRequestEventPayloadSchema, data)) return;
+    if (!isSyntheticQuotasRequestEventPayload(data)) return;
     const snapshot = await quotaStore.refreshFromApi(fetchQuotasFromAuth);
     if (data?.respond) {
       data.respond(toSnapshotPayload(snapshot));
@@ -139,7 +138,7 @@ export async function activateSyntheticProvider(
   });
 
   pi.events.on(SYNTHETIC_QUOTAS_READ_EVENT, (data) => {
-    if (!Value.Check(SyntheticQuotasReadPayloadSchema, data)) return;
+    if (!isSyntheticQuotasReadPayload(data)) return;
     const { respond } = data;
     respond(toSnapshotPayload(quotaStore.getSnapshot()));
   });

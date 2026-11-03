@@ -1,8 +1,8 @@
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { compile, obj, opt, str } from "@earendil-works/pi-schema";
 
 const FETCH_TIMEOUT_MS = 15_000;
-const ErrorPayloadSchema = Type.Object({ error: Type.Optional(Type.String()) });
+const ErrorPayloadSchema = obj({ error: opt(str()) }, { open: true });
+const isErrorPayload = compile(ErrorPayloadSchema).check;
 
 export function isTimeoutReason(reason: Error | DOMException | undefined): boolean {
   return (
@@ -31,7 +31,7 @@ export async function parseErrorMessage(response: Response): Promise<string> {
     if (!body) return message;
     try {
       const parsed = JSON.parse(body);
-      return Value.Check(ErrorPayloadSchema, parsed) && parsed.error ? parsed.error : body;
+      return isErrorPayload(parsed) && parsed.error ? parsed.error : body;
     } catch {
       return body;
     }

@@ -12,9 +12,9 @@
 
 import type { OpenAICompletionsCompat } from "@earendil-works/pi-ai";
 import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
-import { SyntheticApiModelSchema, type SyntheticApiModel } from "../../src/client/types";
+import { arr, bool, compile, obj, oneOf, str, unknown } from "@earendil-works/pi-schema";
+import { isSyntheticApiModel, type SyntheticApiModel } from "../../src/client/types";
+import { finiteNum } from "../../src/schema.ts";
 
 // Pi 1.0 split ProviderModelConfig into chat/image/classifier members and does
 // not export the chat member by name; every Synthetic model is a chat model.
@@ -373,24 +373,31 @@ export const SYNTHETIC_MODELS: SyntheticModel[] = [
   },
 ];
 
-const StoredSyntheticModelSchema = Type.Object({
-  id: Type.String({ minLength: 1 }),
-  name: Type.String(),
-  reasoning: Type.Boolean(),
-  input: Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image")]), {
-    minItems: 1,
-  }),
-  cost: Type.Object({
-    input: Type.Number(),
-    output: Type.Number(),
-    cacheRead: Type.Number(),
-    cacheWrite: Type.Number(),
-  }),
-  contextWindow: Type.Number(),
-  maxTokens: Type.Number(),
-});
+const StoredSyntheticModelSchema = obj(
+  {
+    id: str({ minLength: 1 }),
+    name: str(),
+    reasoning: bool(),
+    input: arr(oneOf(["text", "image"]), { minItems: 1 }),
+    cost: obj(
+      {
+        input: finiteNum(),
+        output: finiteNum(),
+        cacheRead: finiteNum(),
+        cacheWrite: finiteNum(),
+      },
+      { open: true },
+    ),
+    contextWindow: finiteNum(),
+    maxTokens: finiteNum(),
+  },
+  { open: true },
+);
 
-const ModelIdentifierSchema = Type.Object({ id: Type.Unknown() });
+const isStoredSyntheticModel = compile(StoredSyntheticModelSchema).check;
+
+const ModelIdentifierSchema = obj({ id: unknown() }, { open: true });
+const hasModelIdentifier = compile(ModelIdentifierSchema).check;
 
 export function parseApiPrice(priceStr: string): number {
   const match = priceStr.match(/\$?(\d+\.?\d*)/);
@@ -418,14 +425,12 @@ function apiModelSupportsReasoning(model: SyntheticApiModel): boolean {
 // (hidden) — model backends accept exactly the values they declare, so an
 // unlisted level must be hidden rather than sent upstream. Every level key is
 // written explicitly because pi gates "xhigh"/"max" on key presence, not value.
-const ApiEffortSchema = Type.String({ minLength: 1 });
+const isApiEffort = compile(str({ minLength: 1 })).check;
 
 function buildThinkingLevelMapFromApiEfforts(
   efforts: readonly unknown[],
 ): NonNullable<SyntheticModel["thinkingLevelMap"]> {
-  const available = new Set(
-    efforts.filter((effort): effort is string => Value.Check(ApiEffortSchema, effort)),
-  );
+  const available = new Set(efforts.filter((effort): effort is string => isApiEffort(effort)));
   return {
     // No "none" entry means the upstream rejects it (e.g. Kimi-K3 always
     // reasons), so hide "off" rather than trying to disable reasoning.
@@ -526,8 +531,8 @@ export function buildSyntheticProviderModelsFromApi(
 
   return apiModels
     .map((model, index) => {
-      if (!Value.Check(SyntheticApiModelSchema, model) || model.id.length === 0) {
-        const id = Value.Check(ModelIdentifierSchema, model) ? String(model.id) : String(index);
+      if (!isSyntheticApiModel(model) || model.id.length === 0) {
+        const id = hasModelIdentifier(model) ? String(model.id) : String(index);
         throw new Error(`Synthetic API returned invalid model entry "${id}"`);
       }
       return mergeWithStaticOverride(apiModelToSyntheticModel(model), overrides.get(model.id));
@@ -542,8 +547,8 @@ export function buildSyntheticProviderModelsFromStore(
 
   return storedModels
     .map((model, index) => {
-      if (!Value.Check(StoredSyntheticModelSchema, model)) {
-        const id = Value.Check(ModelIdentifierSchema, model) ? String(model.id) : String(index);
+      if (!isStoredSyntheticModel(model)) {
+        const id = hasModelIdentifier(model) ? String(model.id) : String(index);
         throw new Error(`Synthetic model store contains invalid entry "${id}"`);
       }
       return mergeWithStaticOverride(model, overrides.get(model.id));

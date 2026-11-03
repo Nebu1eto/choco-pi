@@ -1,10 +1,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Value } from "typebox/value";
 import {
   SYNTHETIC_CONFIG_UPDATED_EVENT,
   SYNTHETIC_EXTENSIONS_REGISTER_EVENT,
   SYNTHETIC_EXTENSIONS_REQUEST_EVENT,
-  SyntheticConfigUpdatedPayloadSchema,
+  isSyntheticConfigUpdatedPayload,
 } from "../../src/config-events.ts";
 import { ensureSyntheticConfig, publishSyntheticConfig } from "../../src/config-state.ts";
 import { detectBillingMode } from "../../src/utils/quotas.ts";
@@ -84,7 +83,7 @@ export default async function (pi: ExtensionAPI) {
   });
 
   pi.events.on(SYNTHETIC_CONFIG_UPDATED_EVENT, (data) => {
-    if (!Value.Check(SyntheticConfigUpdatedPayloadSchema, data)) return;
+    if (!isSyntheticConfigUpdatedPayload(data)) return;
     const nextConfig = data.config;
     const connectionChanged =
       nextConfig.proxyUrl !== config.proxyUrl ||

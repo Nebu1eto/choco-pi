@@ -1,10 +1,9 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Value } from "typebox/value";
 import {
   SYNTHETIC_CONFIG_UPDATED_EVENT,
   SYNTHETIC_EXTENSIONS_REGISTER_EVENT,
   SYNTHETIC_EXTENSIONS_REQUEST_EVENT,
-  SyntheticConfigUpdatedPayloadSchema,
+  isSyntheticConfigUpdatedPayload,
 } from "../../src/config-events.ts";
 import { ensureSyntheticConfig, publishSyntheticConfig } from "../../src/config-state.ts";
 import type { QuotasResponse, SyntheticQuotasSnapshotPayload } from "../../src/types/quotas.ts";
@@ -146,7 +145,7 @@ export async function activateUsageStatus(
   }
 
   pi.events.on(SYNTHETIC_CONFIG_UPDATED_EVENT, (data) => {
-    if (!Value.Check(SyntheticConfigUpdatedPayloadSchema, data)) return;
+    if (!isSyntheticConfigUpdatedPayload(data)) return;
     enabled = data.config.usageStatus;
     dependencies.publishConfig(data.config);
   });

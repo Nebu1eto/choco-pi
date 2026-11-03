@@ -1,10 +1,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Value } from "typebox/value";
 import {
   SYNTHETIC_CONFIG_UPDATED_EVENT,
   SYNTHETIC_EXTENSIONS_REGISTER_EVENT,
   SYNTHETIC_EXTENSIONS_REQUEST_EVENT,
-  SyntheticConfigUpdatedPayloadSchema,
+  isSyntheticConfigUpdatedPayload,
 } from "../../src/config-events.ts";
 import {
   ensureSyntheticConfig,
@@ -14,7 +13,7 @@ import {
 import {
   type QuotasResponse,
   SYNTHETIC_QUOTAS_UPDATED_EVENT,
-  SyntheticQuotasUpdatedPayloadSchema,
+  isSyntheticQuotasUpdatedPayload,
 } from "../../src/types/quotas.ts";
 import { formatResetTime } from "../../src/utils/quotas.ts";
 import { type QuotaWindow, safePercent, toWindows } from "../../src/utils/quotas-severity.ts";
@@ -97,14 +96,14 @@ export function registerSubBarIntegration(pi: ExtensionAPI): void {
 
   // Receive quota updates from the provider extension
   pi.events.on(SYNTHETIC_QUOTAS_UPDATED_EVENT, (data) => {
-    if (!Value.Check(SyntheticQuotasUpdatedPayloadSchema, data)) return;
+    if (!isSyntheticQuotasUpdatedPayload(data)) return;
     if (!isSynthetic() || !subCoreReady) return;
     const { quotas } = data;
     emitUsage(quotas);
   });
 
   pi.events.on(SYNTHETIC_CONFIG_UPDATED_EVENT, (data) => {
-    if (!Value.Check(SyntheticConfigUpdatedPayloadSchema, data)) return;
+    if (!isSyntheticConfigUpdatedPayload(data)) return;
     enabled = data.config.subBarIntegration;
     publishSyntheticConfig(data.config);
 

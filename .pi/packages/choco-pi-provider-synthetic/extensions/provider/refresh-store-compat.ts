@@ -15,19 +15,25 @@
 // ---------------------------------------------------------------------------
 
 import type { RefreshModelsContext } from "@earendil-works/pi-ai";
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, bool, compile, nullable, obj, opt, str, unknown } from "@earendil-works/pi-schema";
+import type { Static } from "@earendil-works/pi-schema";
+import { finiteNum } from "../../src/schema.ts";
 
-export const SyntheticModelsStoreEntrySchema = Type.Object({
-  models: Type.Array(Type.Unknown()),
-  lastModified: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-  checkedAt: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-  etag: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-});
+export const SyntheticModelsStoreEntrySchema = obj(
+  {
+    models: arr(unknown()),
+    lastModified: opt(nullable(finiteNum())),
+    checkedAt: opt(nullable(finiteNum())),
+    etag: opt(nullable(str())),
+  },
+  { open: true },
+);
+
+const isModelsStoreEntry = compile(SyntheticModelsStoreEntrySchema).check;
 
 export type SyntheticModelsStoreEntry = Static<typeof SyntheticModelsStoreEntrySchema>;
 
-const BooleanSchema = Type.Boolean();
+const isBoolean = compile(bool()).check;
 
 type StoreBoundaryValue = {} | null | undefined;
 
@@ -63,9 +69,7 @@ export async function readStoredModels(
   context: RefreshModelsContext,
 ): Promise<SyntheticModelsStoreEntry | undefined> {
   if (context.stored !== undefined) {
-    return Value.Check(SyntheticModelsStoreEntrySchema, context.stored)
-      ? context.stored
-      : undefined;
+    return isModelsStoreEntry(context.stored) ? context.stored : undefined;
   }
   return readLegacyStore(context);
 }
@@ -76,7 +80,7 @@ async function readLegacyStore(
   const legacy: LegacyRefreshModelsContext = context;
   if (!isLegacyStore(legacy.store)) return undefined;
   const entry = await legacy.store.read();
-  return Value.Check(SyntheticModelsStoreEntrySchema, entry) ? entry : undefined;
+  return isModelsStoreEntry(entry) ? entry : undefined;
 }
 
 /**
@@ -91,12 +95,12 @@ export async function persistModels(
   context: RefreshModelsContext,
   entry: SyntheticModelsStoreEntry,
 ): Promise<boolean> {
-  if (!Value.Check(SyntheticModelsStoreEntrySchema, entry)) return false;
+  if (!isModelsStoreEntry(entry)) return false;
 
   const publish: unknown = context.publish;
   if (publish instanceof Function) {
     const result = await publish({ persist: entry });
-    return Value.Check(BooleanSchema, result) && result;
+    return isBoolean(result) && result;
   }
 
   const legacy: LegacyRefreshModelsContext = context;

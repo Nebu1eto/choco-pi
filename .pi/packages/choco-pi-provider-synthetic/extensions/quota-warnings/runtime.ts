@@ -1,10 +1,9 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Value } from "typebox/value";
 import {
   SYNTHETIC_CONFIG_UPDATED_EVENT,
   SYNTHETIC_EXTENSIONS_REGISTER_EVENT,
   SYNTHETIC_EXTENSIONS_REQUEST_EVENT,
-  SyntheticConfigUpdatedPayloadSchema,
+  isSyntheticConfigUpdatedPayload,
 } from "../../src/config-events.ts";
 import { ensureSyntheticConfig, publishSyntheticConfig } from "../../src/config-state.ts";
 import { QuotaHistory } from "../../src/services/quota-history.ts";
@@ -12,7 +11,7 @@ import { QuotaWarningNotifier } from "../../src/services/quota-warnings.ts";
 import {
   SYNTHETIC_QUOTAS_UPDATED_EVENT,
   type SyntheticQuotasSnapshotPayload,
-  SyntheticQuotasUpdatedPayloadSchema,
+  isSyntheticQuotasUpdatedPayload,
 } from "../../src/types/quotas.ts";
 import { buildProjectionHints } from "../../src/utils/quotas-projection.ts";
 import { readQuotas, requestQuotas } from "../_shared/quota-events.ts";
@@ -107,7 +106,7 @@ export async function activateQuotaWarnings(
   }
 
   pi.events.on(SYNTHETIC_QUOTAS_UPDATED_EVENT, (data) => {
-    if (!Value.Check(SyntheticQuotasUpdatedPayloadSchema, data) || !enabled) return;
+    if (!isSyntheticQuotasUpdatedPayload(data) || !enabled) return;
     const snapshot = data;
     historyReady
       .then(() => {
@@ -117,7 +116,7 @@ export async function activateQuotaWarnings(
   });
 
   pi.events.on(SYNTHETIC_CONFIG_UPDATED_EVENT, (data) => {
-    if (!Value.Check(SyntheticConfigUpdatedPayloadSchema, data)) return;
+    if (!isSyntheticConfigUpdatedPayload(data)) return;
     const wasEnabled = enabled;
     enabled = data.config.quotaWarnings;
     dependencies.publishConfig(data.config);

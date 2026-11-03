@@ -6,7 +6,8 @@ import { ToolCallHeader, ToolFooter } from "@aliou/pi-utils-ui";
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { defineTool, formatSize, keyHint, truncateHead } from "@earendil-works/pi-coding-agent";
 import { Container, Text } from "@earendil-works/pi-tui";
-import { type Static, Type } from "typebox";
+import { obj, str } from "@earendil-works/pi-schema";
+import type { Static } from "@earendil-works/pi-schema";
 import {
   resolveSyntheticClientOptions,
   SyntheticClient,
@@ -14,6 +15,7 @@ import {
   type SyntheticSearchResult,
 } from "../../src/client/index.ts";
 import { ensureSyntheticConfig } from "../../src/config-state.ts";
+import { hostParams } from "../../src/schema-bridge.ts";
 import { SYNTHETIC_WEB_SEARCH_TOOL } from "./activation.ts";
 
 const MAX_INLINE_SEARCH_BYTES = 20_000;
@@ -36,11 +38,10 @@ interface WebSearchDetails {
   query?: string;
 }
 
-const SearchParams = Type.Object({
-  query: Type.String({
-    description: "The search query. Be specific for best results.",
-  }),
-});
+const SearchParams = obj(
+  { query: str({ description: "The search query. Be specific for best results." }) },
+  { open: true },
+);
 
 type SearchParamsType = Static<typeof SearchParams>;
 
@@ -155,7 +156,7 @@ export const syntheticWebSearchTool = defineTool({
     "Write specific queries with names, dates, versions, or locations for synthetic_web_search.",
     "synthetic_web_search results are fresh and not cached by Synthetic.",
   ],
-  parameters: SearchParams,
+  parameters: hostParams(SearchParams),
 
   async execute(_toolCallId, params, signal, onUpdate, ctx) {
     onUpdate?.({

@@ -1,12 +1,11 @@
-import { Value } from "typebox/value";
-import { QuotasResponseSchema, type QuotasResult } from "../types/quotas.ts";
+import { isQuotasResponse, type QuotasResult } from "../types/quotas.ts";
 import {
   type SyntheticClientOptions,
   type SyntheticClientRequestOptions,
   type SyntheticModelsResponse,
-  SyntheticModelsResponseSchema,
+  isSyntheticModelsResponse,
+  isSyntheticSearchResponse,
   type SyntheticSearchResponse,
-  SyntheticSearchResponseSchema,
 } from "./types.ts";
 import {
   DEFAULT_SYNTHETIC_API_BASE_URL,
@@ -80,7 +79,7 @@ export class SyntheticClient {
       }
 
       const data = await response.json();
-      if (!Value.Check(QuotasResponseSchema, data)) {
+      if (!isQuotasResponse(data)) {
         throw new Error("Synthetic quotas API returned an invalid response");
       }
       return { success: true, data: { quotas: data } };
@@ -157,7 +156,7 @@ export class SyntheticClient {
 
     try {
       const data = await response.json();
-      if (!Value.Check(SyntheticSearchResponseSchema, data)) {
+      if (!isSyntheticSearchResponse(data)) {
         throw new Error("Synthetic search API returned an invalid response");
       }
       return data;
@@ -187,7 +186,7 @@ export class SyntheticClient {
       }
 
       const data = await response.json();
-      if (!Value.Check(SyntheticModelsResponseSchema, data)) {
+      if (!isSyntheticModelsResponse(data)) {
         throw new Error("Synthetic models API returned an invalid response");
       }
       return data;

@@ -1,14 +1,12 @@
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { compile, obj, unknown } from "@earendil-works/pi-schema";
 
 export type WebSearchEntitlement = "unknown" | "subscription" | "pay-as-you-go";
 
 export const SYNTHETIC_WEB_SEARCH_TOOL = "synthetic_web_search";
 
+const hasPrefixLock = compile(obj({ isLocked: unknown() }, { open: true })).check;
+
 const PREFIX_LOCK_SYMBOL = Symbol.for("choco-pi.prefix.locked");
-const PrefixLockSchema = Type.Object({
-  isLocked: Type.Function([], Type.Boolean()),
-});
 
 export interface WebSearchActivationHost {
   getAllTools: () => Array<{ name: string }>;
@@ -18,7 +16,12 @@ export interface WebSearchActivationHost {
 
 function isPrefixLocked(): boolean {
   const prefixLock = Object.getOwnPropertyDescriptor(globalThis, PREFIX_LOCK_SYMBOL)?.value;
-  return Value.Check(PrefixLockSchema, prefixLock) && prefixLock.isLocked() === true;
+  // The lock is a live object carrying a callback, not JSON: plain predicate.
+  return (
+    hasPrefixLock(prefixLock) &&
+    prefixLock.isLocked instanceof Function &&
+    prefixLock.isLocked() === true
+  );
 }
 
 export function shouldActivateWebSearch(

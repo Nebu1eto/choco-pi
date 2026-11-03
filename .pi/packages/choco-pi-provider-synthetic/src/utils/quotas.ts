@@ -1,39 +1,47 @@
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { bool, compile, obj, str } from "@earendil-works/pi-schema";
+import { finiteNum } from "../schema.ts";
 import type { QuotasResponse } from "../types/quotas.ts";
 
 export type BillingMode = "subscription" | "pay-as-you-go";
 
-const SubscriptionQuotaSchema = Type.Object({
-  limit: Type.Number(),
-  requests: Type.Number(),
-  renewsAt: Type.String(),
-});
+const SubscriptionQuotaSchema = obj(
+  { limit: finiteNum(), requests: finiteNum(), renewsAt: str() },
+  { open: true },
+);
+const isSubscriptionQuota = compile(SubscriptionQuotaSchema).check;
 
-const WeeklyTokenLimitSchema = Type.Object({
-  nextRegenAt: Type.String(),
-  percentRemaining: Type.Number(),
-  maxCredits: Type.String(),
-  remainingCredits: Type.String(),
-  nextRegenCredits: Type.String(),
-});
+const WeeklyTokenLimitSchema = obj(
+  {
+    nextRegenAt: str(),
+    percentRemaining: finiteNum(),
+    maxCredits: str(),
+    remainingCredits: str(),
+    nextRegenCredits: str(),
+  },
+  { open: true },
+);
+const isWeeklyTokenLimit = compile(WeeklyTokenLimitSchema).check;
 
-const RollingFiveHourLimitSchema = Type.Object({
-  nextTickAt: Type.String(),
-  tickPercent: Type.Number(),
-  remaining: Type.Number(),
-  max: Type.Number(),
-  limited: Type.Boolean(),
-});
+const RollingFiveHourLimitSchema = obj(
+  {
+    nextTickAt: str(),
+    tickPercent: finiteNum(),
+    remaining: finiteNum(),
+    max: finiteNum(),
+    limited: bool(),
+  },
+  { open: true },
+);
+const isRollingFiveHourLimit = compile(RollingFiveHourLimitSchema).check;
 
 /**
  * Synthetic subscription accounts expose at least one subscription quota
  * window. PAYG accounts return an empty quota object or legacy tool windows.
  */
 export function detectBillingMode(quotas: QuotasResponse | undefined): BillingMode {
-  return Value.Check(SubscriptionQuotaSchema, quotas?.subscription) ||
-    Value.Check(WeeklyTokenLimitSchema, quotas?.weeklyTokenLimit) ||
-    Value.Check(RollingFiveHourLimitSchema, quotas?.rollingFiveHourLimit)
+  return isSubscriptionQuota(quotas?.subscription) ||
+    isWeeklyTokenLimit(quotas?.weeklyTokenLimit) ||
+    isRollingFiveHourLimit(quotas?.rollingFiveHourLimit)
     ? "subscription"
     : "pay-as-you-go";
 }

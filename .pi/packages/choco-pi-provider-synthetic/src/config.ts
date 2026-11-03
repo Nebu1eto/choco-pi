@@ -7,7 +7,8 @@ import {
 } from "@aliou/pi-utils-settings";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { SettingItem } from "@earendil-works/pi-tui";
-import { type Static, Type } from "typebox";
+import { bool, compile, obj, oneOf, str } from "@earendil-works/pi-schema";
+import type { Static } from "@earendil-works/pi-schema";
 import pkg from "../package.json" with { type: "json" };
 import {
   formatSyntheticUtilityApiProxySummary,
@@ -15,12 +16,12 @@ import {
   validateSyntheticUtilityApiProxyUrl,
 } from "./client";
 
-export const SyntheticFeatureIdSchema = Type.Union([
-  Type.Literal("webSearch"),
-  Type.Literal("quotasCommand"),
-  Type.Literal("subBarIntegration"),
-  Type.Literal("usageStatus"),
-  Type.Literal("quotaWarnings"),
+export const SyntheticFeatureIdSchema = oneOf([
+  "webSearch",
+  "quotasCommand",
+  "subBarIntegration",
+  "usageStatus",
+  "quotaWarnings",
 ]);
 
 export type SyntheticFeatureId = Static<typeof SyntheticFeatureIdSchema>;
@@ -42,9 +43,14 @@ export const SYNTHETIC_EXTENSIONS_REQUEST_EVENT = "synthetic:extensions:request"
 
 export const SYNTHETIC_EXTENSIONS_REGISTER_EVENT = "synthetic:extensions:register" as const;
 
-export const SyntheticExtensionsRegisterPayloadSchema = Type.Object({
-  feature: SyntheticFeatureIdSchema,
-});
+export const SyntheticExtensionsRegisterPayloadSchema = obj(
+  { feature: SyntheticFeatureIdSchema },
+  { open: true },
+);
+
+export const isSyntheticExtensionsRegisterPayload = compile(
+  SyntheticExtensionsRegisterPayloadSchema,
+).check;
 
 export type SyntheticExtensionsRegisterPayload = Static<
   typeof SyntheticExtensionsRegisterPayloadSchema
@@ -64,16 +70,19 @@ export interface SyntheticConfig {
   proxyRequiresAuth?: boolean;
 }
 
-export const ResolvedSyntheticConfigSchema = Type.Object({
-  configVersion: Type.String(),
-  webSearch: Type.Boolean(),
-  quotasCommand: Type.Boolean(),
-  usageStatus: Type.Boolean(),
-  quotaWarnings: Type.Boolean(),
-  subBarIntegration: Type.Boolean(),
-  proxyUrl: Type.String(),
-  proxyRequiresAuth: Type.Boolean(),
-});
+export const ResolvedSyntheticConfigSchema = obj(
+  {
+    configVersion: str(),
+    webSearch: bool(),
+    quotasCommand: bool(),
+    usageStatus: bool(),
+    quotaWarnings: bool(),
+    subBarIntegration: bool(),
+    proxyUrl: str(),
+    proxyRequiresAuth: bool(),
+  },
+  { open: true },
+);
 
 export type ResolvedSyntheticConfig = Static<typeof ResolvedSyntheticConfigSchema>;
 
@@ -119,9 +128,12 @@ export async function seedSyntheticConfigIfMissing(): Promise<void> {
 
 export const SYNTHETIC_CONFIG_UPDATED_EVENT = "synthetic:config:updated" as const;
 
-export const SyntheticConfigUpdatedPayloadSchema = Type.Object({
-  config: ResolvedSyntheticConfigSchema,
-});
+export const SyntheticConfigUpdatedPayloadSchema = obj(
+  { config: ResolvedSyntheticConfigSchema },
+  { open: true },
+);
+
+export const isSyntheticConfigUpdatedPayload = compile(SyntheticConfigUpdatedPayloadSchema).check;
 
 export type SyntheticConfigUpdatedPayload = Static<typeof SyntheticConfigUpdatedPayloadSchema>;
 

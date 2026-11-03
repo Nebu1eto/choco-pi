@@ -1,8 +1,8 @@
 import { appendFile, mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { bool, compile, lit, obj, opt, str, unknown } from "@earendil-works/pi-schema";
+import { finiteNum } from "../schema.ts";
 import type { QuotasResponse } from "../types/quotas";
 import type { ProjectionSnapshot } from "../utils/quotas-projection";
 
@@ -22,30 +22,42 @@ interface PersistedQuotaHistoryEntry {
   quotas: QuotasResponse;
 }
 
-const WeeklyQuotaSchema = Type.Object({
-  nextRegenAt: Type.String(),
-  percentRemaining: Type.Number(),
-  maxCredits: Type.String(),
-  remainingCredits: Type.String(),
-  nextRegenCredits: Type.String(),
-});
+const WeeklyQuotaSchema = obj(
+  {
+    nextRegenAt: str(),
+    percentRemaining: finiteNum(),
+    maxCredits: str(),
+    remainingCredits: str(),
+    nextRegenCredits: str(),
+  },
+  { open: true },
+);
+const isWeeklyQuota = compile(WeeklyQuotaSchema).check;
 
-const RollingQuotaSchema = Type.Object({
-  nextTickAt: Type.String(),
-  tickPercent: Type.Number(),
-  remaining: Type.Number(),
-  max: Type.Number(),
-  limited: Type.Boolean(),
-});
+const RollingQuotaSchema = obj(
+  {
+    nextTickAt: str(),
+    tickPercent: finiteNum(),
+    remaining: finiteNum(),
+    max: finiteNum(),
+    limited: bool(),
+  },
+  { open: true },
+);
+const isRollingQuota = compile(RollingQuotaSchema).check;
 
-const HistoryLineSchema = Type.Object({
-  version: Type.Literal(1),
-  recordedAt: Type.String(),
-  quotas: Type.Object({
-    weeklyTokenLimit: Type.Optional(Type.Unknown()),
-    rollingFiveHourLimit: Type.Optional(Type.Unknown()),
-  }),
-});
+const HistoryLineSchema = obj(
+  {
+    version: lit(1),
+    recordedAt: str(),
+    quotas: obj(
+      { weeklyTokenLimit: opt(unknown()), rollingFiveHourLimit: opt(unknown()) },
+      { open: true },
+    ),
+  },
+  { open: true },
+);
+const isHistoryLine = compile(HistoryLineSchema).check;
 
 export interface QuotaHistoryOptions {
   /** Override the state directory. `null` disables disk persistence. */
@@ -296,16 +308,16 @@ function hasProjectionQuotas(quotas: QuotasResponse): boolean {
 function parseHistoryLine(line: string): ProjectionSnapshot | undefined {
   try {
     const value = JSON.parse(line);
-    if (!Value.Check(HistoryLineSchema, value)) return undefined;
+    if (!isHistoryLine(value)) return undefined;
 
     const updatedAt = Date.parse(value.recordedAt);
     if (!Number.isFinite(updatedAt)) return undefined;
 
     const quotas: QuotasResponse = {};
-    if (Value.Check(WeeklyQuotaSchema, value.quotas.weeklyTokenLimit)) {
+    if (isWeeklyQuota(value.quotas.weeklyTokenLimit)) {
       quotas.weeklyTokenLimit = value.quotas.weeklyTokenLimit;
     }
-    if (Value.Check(RollingQuotaSchema, value.quotas.rollingFiveHourLimit)) {
+    if (isRollingQuota(value.quotas.rollingFiveHourLimit)) {
       quotas.rollingFiveHourLimit = value.quotas.rollingFiveHourLimit;
     }
     if (!hasProjectionQuotas(quotas)) return undefined;

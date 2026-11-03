@@ -1,54 +1,56 @@
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import { bool, compile, nullable, obj, oneOf, opt, str, unknown } from "@earendil-works/pi-schema";
+import type { Static } from "@earendil-works/pi-schema";
+import { type BoundaryValue, finiteNum } from "../schema.ts";
 
-export const QuotaSourceSchema = Type.Union([Type.Literal("header"), Type.Literal("api")]);
+export const QuotaSourceSchema = oneOf(["header", "api"]);
 
 export type QuotaSource = Static<typeof QuotaSourceSchema>;
 
-const RequestQuotaSchema = Type.Object({
-  limit: Type.Number(),
-  requests: Type.Number(),
-  renewsAt: Type.String(),
-});
+const RequestQuotaSchema = obj(
+  { limit: finiteNum(), requests: finiteNum(), renewsAt: str() },
+  { open: true },
+);
 
-export const QuotasResponseSchema = Type.Object({
-  subscription: Type.Optional(Type.Union([RequestQuotaSchema, Type.Null()])),
-  search: Type.Optional(
-    Type.Union([
-      Type.Object({
-        hourly: Type.Optional(Type.Union([RequestQuotaSchema, Type.Null()])),
-      }),
-      Type.Null(),
-    ]),
-  ),
-  freeToolCalls: Type.Optional(Type.Union([RequestQuotaSchema, Type.Null()])),
-  weeklyTokenLimit: Type.Optional(
-    Type.Union([
-      Type.Object({
-        nextRegenAt: Type.String(),
-        percentRemaining: Type.Number(),
-        maxCredits: Type.String(),
-        remainingCredits: Type.String(),
-        nextRegenCredits: Type.String(),
-      }),
-      Type.Null(),
-    ]),
-  ),
-  rollingFiveHourLimit: Type.Optional(
-    Type.Union([
-      Type.Object({
-        nextTickAt: Type.String(),
-        tickPercent: Type.Number(),
-        remaining: Type.Number(),
-        max: Type.Number(),
-        limited: Type.Boolean(),
-      }),
-      Type.Null(),
-    ]),
-  ),
-});
+export const QuotasResponseSchema = obj(
+  {
+    subscription: opt(nullable(RequestQuotaSchema)),
+    search: opt(nullable(obj({ hourly: opt(nullable(RequestQuotaSchema)) }, { open: true }))),
+    freeToolCalls: opt(nullable(RequestQuotaSchema)),
+    weeklyTokenLimit: opt(
+      nullable(
+        obj(
+          {
+            nextRegenAt: str(),
+            percentRemaining: finiteNum(),
+            maxCredits: str(),
+            remainingCredits: str(),
+            nextRegenCredits: str(),
+          },
+          { open: true },
+        ),
+      ),
+    ),
+    rollingFiveHourLimit: opt(
+      nullable(
+        obj(
+          {
+            nextTickAt: str(),
+            tickPercent: finiteNum(),
+            remaining: finiteNum(),
+            max: finiteNum(),
+            limited: bool(),
+          },
+          { open: true },
+        ),
+      ),
+    ),
+  },
+  { open: true },
+);
 
 export type QuotasResponse = Static<typeof QuotasResponseSchema>;
+
+export const isQuotasResponse = compile(QuotasResponseSchema).check;
 
 /** Refill-aware projection for a quota window, derived from recent snapshots.
  *
@@ -73,11 +75,14 @@ export const SYNTHETIC_QUOTAS_REQUEST_EVENT = "synthetic:quotas:request" as cons
 
 export const SYNTHETIC_QUOTAS_READ_EVENT = "synthetic:quotas:read" as const;
 
-export const SyntheticQuotasSnapshotPayloadSchema = Type.Object({
-  quotas: QuotasResponseSchema,
-  source: QuotaSourceSchema,
-  updatedAt: Type.Number(), // epoch ms
-});
+export const SyntheticQuotasSnapshotPayloadSchema = obj(
+  {
+    quotas: QuotasResponseSchema,
+    source: QuotaSourceSchema,
+    updatedAt: finiteNum(), // epoch ms
+  },
+  { open: true },
+);
 
 export type SyntheticQuotasSnapshotPayload = Static<typeof SyntheticQuotasSnapshotPayloadSchema>;
 
@@ -85,36 +90,44 @@ export const SyntheticQuotasUpdatedPayloadSchema = SyntheticQuotasSnapshotPayloa
 
 export type SyntheticQuotasUpdatedPayload = Static<typeof SyntheticQuotasUpdatedPayloadSchema>;
 
-const OptionalSyntheticQuotasSnapshotPayloadSchema = Type.Union([
-  SyntheticQuotasSnapshotPayloadSchema,
-  Type.Undefined(),
-]);
+export const isSyntheticQuotasUpdatedPayload = compile(SyntheticQuotasUpdatedPayloadSchema).check;
 
-export const SyntheticQuotasReadPayloadSchema = Type.Object({
-  respond: Type.Function([OptionalSyntheticQuotasSnapshotPayloadSchema], Type.Void()),
-});
+type QuotasRespond = (snapshot: SyntheticQuotasSnapshotPayload | undefined) => void;
 
-export type SyntheticQuotasReadPayload = Static<typeof SyntheticQuotasReadPayloadSchema>;
+// Payloads carrying callbacks are runtime values, not JSON: the schema checks the
+// object shape (non-null, non-array, non-function; open) and a predicate the callback.
+const hasRespond = compile(obj({ respond: unknown() }, { open: true })).check;
+const hasOptionalRespond = compile(obj({ respond: opt(unknown()) }, { open: true })).check;
 
-export const SyntheticQuotasRequestPayloadSchema = Type.Object({
-  respond: Type.Optional(
-    Type.Union([
-      Type.Function([OptionalSyntheticQuotasSnapshotPayloadSchema], Type.Void()),
-      Type.Null(),
-    ]),
-  ),
-});
+export interface SyntheticQuotasReadPayload {
+  respond: QuotasRespond;
+}
 
-export type SyntheticQuotasRequestPayload = Static<typeof SyntheticQuotasRequestPayloadSchema>;
+export function isSyntheticQuotasReadPayload(
+  value: BoundaryValue,
+): value is SyntheticQuotasReadPayload {
+  return hasRespond(value) && value.respond instanceof Function;
+}
 
-export const SyntheticQuotasRequestEventPayloadSchema = Type.Union([
-  SyntheticQuotasRequestPayloadSchema,
-  Type.Undefined(),
-]);
+export interface SyntheticQuotasRequestPayload {
+  respond?: QuotasRespond | null;
+}
 
-export type SyntheticQuotasRequestEventPayload = Static<
-  typeof SyntheticQuotasRequestEventPayloadSchema
->;
+function isSyntheticQuotasRequestPayload(
+  value: BoundaryValue,
+): value is SyntheticQuotasRequestPayload {
+  if (!hasOptionalRespond(value)) return false;
+  const respond = value.respond;
+  return respond === undefined || respond === null || respond instanceof Function;
+}
+
+export type SyntheticQuotasRequestEventPayload = SyntheticQuotasRequestPayload | undefined;
+
+export function isSyntheticQuotasRequestEventPayload(
+  value: BoundaryValue,
+): value is SyntheticQuotasRequestEventPayload {
+  return value === undefined || isSyntheticQuotasRequestPayload(value);
+}
 
 export type QuotasErrorKind = "cancelled" | "timeout" | "config" | "http" | "network";
 
@@ -132,7 +145,7 @@ export function parseQuotaHeader(
   if (!entry?.[1]) return undefined;
   try {
     const parsed = JSON.parse(entry[1]);
-    return Value.Check(QuotasResponseSchema, parsed) ? parsed : undefined;
+    return isQuotasResponse(parsed) ? parsed : undefined;
   } catch {
     return undefined;
   }
