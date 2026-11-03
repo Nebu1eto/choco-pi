@@ -17,7 +17,14 @@ import {
   countAdvisorCallsThisTurn,
 } from "../src/excerpt.ts";
 import { resolveAdvisorManager } from "../src/manager-slot.ts";
-import { isSameModel, sameModelDisabledMessage } from "../src/model-gate.ts";
+import { loadFlagshipPrimaries } from "../src/flagship-models.ts";
+import {
+  alternateModelNotice,
+  chooseAlternateModel,
+  isSameModel,
+  sameModelDisabledMessage,
+} from "../src/model-gate.ts";
+import { selectAdvisorModel } from "../src/select-model.ts";
 import {
   buildAdvisorPreferencesSection,
   drainWriteQueueForTests,
@@ -500,4 +507,81 @@ test("manager slot is resolved lazily and rejects non-callable shapes", () => {
     if (previous) Object.defineProperty(globalThis, symbol, previous);
     else Reflect.deleteProperty(globalThis, symbol);
   }
+});
+
+const FABLE = { provider: "anthropic", id: "claude-fable-5-1" };
+const ASTRA = { provider: "openai-codex", id: "gpt-6-astra" };
+
+test("chooseAlternateModel picks the first differing, resolvable candidate", () => {
+  assert.deepEqual(
+    chooseAlternateModel(FABLE, [FABLE, ASTRA], () => true),
+    ASTRA,
+  );
+  assert.equal(
+    chooseAlternateModel(FABLE, [FABLE], () => true),
+    undefined,
+  );
+  assert.equal(
+    chooseAlternateModel(FABLE, [FABLE, ASTRA], () => false),
+    undefined,
+  );
+});
+
+test("loadFlagshipPrimaries reads the project table and fails open", async () => {
+  const { root, project } = await fixture();
+  try {
+    assert.deepEqual(await loadFlagshipPrimaries(project), []);
+    await writeFile(
+      join(project, ".pi", "model-fallbacks.json"),
+      JSON.stringify({ tiers: { flagship: { primary: ["anthropic/claude-fable-5-1", "bad"] } } }),
+    );
+    assert.deepEqual(await loadFlagshipPrimaries(project), [FABLE]);
+    await writeFile(join(project, ".pi", "model-fallbacks.json"), "{");
+    assert.deepEqual(await loadFlagshipPrimaries(project), []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("advisor switches to an available alternate when it equals the session model", async () => {
+  const registry = {
+    find: (provider: string, id: string) =>
+      [FABLE, ASTRA].find((m) => m.provider === provider && m.id === id),
+    getAvailable: () => [FABLE, ASTRA],
+  };
+  const selection = await selectAdvisorModel(FABLE, FABLE, registry, async () => [FABLE, ASTRA]);
+  assert.deepEqual(selection, {
+    tag: "selected",
+    model: ASTRA,
+    notice:
+      "advisor model switched to openai-codex/gpt-6-astra because the configured model equals the session model.",
+  });
+  assert.equal(selection.tag === "selected" && selection.notice, alternateModelNotice(ASTRA));
+  assert.deepEqual(await selectAdvisorModel(ASTRA, FABLE, registry, async () => []), {
+    tag: "selected",
+    model: ASTRA,
+  });
+});
+
+test("advisor stays disabled, without consuming the cap, when no alternate resolves", async () => {
+  const registry = {
+    find: (provider: string, id: string) =>
+      provider === FABLE.provider && id === FABLE.id ? FABLE : undefined,
+    getAvailable: () => [FABLE],
+  };
+  const selection = await selectAdvisorModel(FABLE, FABLE, registry, async () => [FABLE, ASTRA]);
+  assert.deepEqual(selection, { tag: "disabled", message: sameModelDisabledMessage(FABLE) });
+  const unavailable = { ...registry, getAvailable: () => [FABLE] };
+  const registered = { ...unavailable, find: () => ASTRA };
+  assert.equal(
+    (await selectAdvisorModel(FABLE, FABLE, registered, async () => [ASTRA])).tag,
+    "disabled",
+  );
+  assert.equal(
+    countAdvisorCallsThisTurn([
+      user("question"),
+      result("advisor", selection.tag === "disabled" ? selection.message : ""),
+    ]),
+    0,
+  );
 });

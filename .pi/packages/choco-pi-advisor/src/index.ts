@@ -6,12 +6,13 @@ import { loadEnabledModels } from "../../choco-pi-subagents/src/enabled-models.t
 import { buildAdvisorPrompt } from "./consult.ts";
 import { buildAdvisorExcerpt, countAdvisorCallsThisTurn } from "./excerpt.ts";
 import { resolveAdvisorManager } from "./manager-slot.ts";
-import { isSameModel, sameModelDisabledMessage } from "./model-gate.ts";
+import { loadFlagshipPrimaries } from "./flagship-models.ts";
 import {
   registerAdvisorPreferencesProvider,
   surfaceAdvisorWriteError,
   waitForAdvisorWrites,
 } from "./preferences-section.ts";
+import { selectAdvisorModel } from "./select-model.ts";
 import { type AdvisorSettings, loadAdvisorSettings } from "./settings.ts";
 
 const ADVISOR_TOOL_NAME = "advisor";
@@ -86,9 +87,13 @@ export default function (pi: ExtensionAPI) {
             return textResult(`advisor model not available: ${settings.model}`);
           // Resolve through the typed registry after the shared resolver chooses a model.
           const selected: Model<Api> = resolution.model;
-          if (isSameModel(ctx.model, selected))
-            return textResult(sameModelDisabledMessage(selected));
-          const model = ctx.modelRegistry.find(selected.provider, selected.id);
+          const selection = await selectAdvisorModel(selected, ctx.model, ctx.modelRegistry, () =>
+            loadFlagshipPrimaries(cwd),
+          );
+          if (!current()) return textResult("advisor consult failed: session ended");
+          if (selection.tag === "disabled") return textResult(selection.message);
+          const switchNotice = selection.notice;
+          const model = ctx.modelRegistry.find(selection.model.provider, selection.model.id);
           if (!model) return textResult(`advisor model not available: ${settings.model}`);
           const manager = resolveAdvisorManager();
           if (!manager)
@@ -116,7 +121,7 @@ export default function (pi: ExtensionAPI) {
           if (status !== "completed")
             return textResult(`advisor consult failed: ${error ?? status ?? "unknown status"}`);
           return textResult(
-            `${result ?? ""}\n\nadvisor: ${model.provider}/${model.id} effort=${settings.effort}`,
+            `${switchNotice ? `${switchNotice}\n` : ""}${result ?? ""}\n\nadvisor: ${model.provider}/${model.id} effort=${settings.effort}`,
           );
         } catch (error) {
           return textResult(
