@@ -1,4 +1,5 @@
 import { Type } from "typebox";
+import { normalizeTierModel } from "./model-tiers.ts";
 import type {
   AgentConfig,
   IsolationMode,
@@ -90,6 +91,7 @@ interface AgentInvocationParams {
   isolated?: boolean;
   fast_mode?: boolean;
   daybreak?: boolean;
+  model_override_reason?: string;
   /**
    * Untyped on purpose. Both tool schemas now build this field conditionally
    * and spread it, which erases TypeBox's literal inference to `unknown` (the
@@ -313,6 +315,36 @@ export function explicitModelRefusal(
     `Spawn refused: pass model and thinking. Role "${name}" (${facts.definition}) declares model ` +
     `${facts.model}, thinking ${facts.thinking}; ${advice}`
   );
+}
+
+/**
+ * Refuses a fresh spawn of a Flagship-tier model for a role that does not
+ * itself declare a Flagship model, unless `model_override_reason` is given.
+ * Same call sites as `explicitModelRefusal`. `flagship` holds normalized ids.
+ */
+export function tierRefusal(
+  name: string,
+  config: AgentConfig | undefined,
+  params: { model?: string; model_override_reason?: string },
+  flagship: ReadonlySet<string>,
+): string | undefined {
+  const model = params.model?.trim();
+  if (!model || !flagship.has(normalizeTierModel(model))) return undefined;
+  if (config?.model !== undefined && flagship.has(normalizeTierModel(config.model))) {
+    return undefined;
+  }
+  if ((params.model_override_reason ?? "").trim() !== "") return undefined;
+  return (
+    `Spawn refused: "${model}" is a Flagship-tier model and role "${name}" declares ` +
+    `${config?.model ?? "no model"}; pass model_override_reason with the .pi/model-guidance.md reason, ` +
+    "or choose a Workhorse/Utility model."
+  );
+}
+
+/** Appends the audited override reason to a model line when one was given. */
+export function withOverrideReason(line: string, reason: string | undefined): string {
+  const trimmed = reason?.trim();
+  return trimmed ? `${line} · override reason: ${trimmed}` : line;
 }
 
 /**

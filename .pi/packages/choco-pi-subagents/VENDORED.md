@@ -2125,3 +2125,10 @@ Pi SDK pins move from `1.4.0` to exactly `1.5.0` and `@earendil-works/pi-schema@
 ## 2026-11-03 choco-pi patch: cancelled worktree runs retain their worktree
 
 A run cancelled in an isolated worktree (cause `user_stop`, `parent_signal`, `budget`, `watchdog` or `shutdown`) no longer has its worktree staged, committed (`git commit --no-verify`) and removed at settle. `cleanupWorktree` gains a `WorktreeDisposition` argument (`"settle"` default, `"retain"`); `retain` runs only a read-only `git status --porcelain` and returns `{ hasChanges, path, retained: true }`. `AgentManager.worktreeDispositionFor` picks `retain` when the record's cancellation for the run generation has a cause other than `suspend`; the success settle, rejection settle and the deferred cleanup of parked or re-armed waits use it, and hook-managed worktrees skip the `subagents:worktree-remove` event. The result gets a "Work retained in worktree `<path>`" notice (base SHA, cancel cause, discard command). `AgentRecord.worktreeResult` gains optional `path` and `retained`. Suspend (already kept) and non-cancelled settles are unchanged. Tests: `tests/worktree-cancel-retain.test.ts`, the stop cases in `tests/usage-limit-review.test.ts` and `tests/revival-revive.test.ts`.
+
+## 2026-11-03 choco-pi patch: Flagship-tier spawn guard
+
+- `src/model-tiers.ts` (new, not upstream): reads `.pi/model-fallbacks.json` (tiers.flagship), TypeBox-validated, cached per process, fails open to an empty set; maps `openai/<id>` to `openai-codex/<id>`.
+- `src/invocation-config.ts`: `model_override_reason` on `AgentInvocationParams`; new `tierRefusal()` and `withOverrideReason()`.
+- `src/index.ts`, `src/nested-tools.ts`: `model_override_reason` schema field on the Agent and nested Agent tools; fresh spawns (not resume or schedule) call `tierRefusal` after `explicitModelRefusal`; the model line appends `override reason: <text>`. Workflow steps, resume, schedule and RPC stay exempt.
+- `tests/tier-guard.test.ts` added.

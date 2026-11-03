@@ -22,6 +22,8 @@ import {
   describeRoleModel,
   describeModelResolution,
   explicitModelRefusal,
+  tierRefusal,
+  withOverrideReason,
   formatModelLine,
   isolationParam,
   resolveAgentInvocationConfig,
@@ -62,6 +64,7 @@ import type {
 } from "./types.ts";
 import { addUsage } from "./usage.ts";
 import { isWorktreeIsolationEnabled } from "./worktree.ts";
+import { loadFlagshipModels } from "./model-tiers.ts";
 import { thinkingLevelSchema } from "./workflow.ts";
 
 /**
@@ -361,6 +364,12 @@ export async function createNestedSubagentTools(
             "provider/model. Required for a fresh spawn unless requireExplicitModel is off; overrides the agent definition's model unless it sets model_locked. With resume: optional; a different model switches the child first.",
         }),
       ),
+      model_override_reason: Type.Optional(
+        Type.String({
+          description:
+            "Required when model is a Flagship-tier model and the role's declared model is not Flagship; state the model-guidance reason.",
+        }),
+      ),
       thinking: Type.Optional(
         thinkingLevelSchema(
           "Thinking level. Required for a fresh spawn unless requireExplicitModel is off; overrides the agent definition's thinking unless it sets model_locked.",
@@ -515,6 +524,8 @@ export async function createNestedSubagentTools(
       // requireExplicitModel applies to fresh nested spawns as at the top level.
       const refusal = explicitModelRefusal(resolvedType, config, params);
       if (refusal !== undefined) return textResult(refusal);
+      const tier = tierRefusal(resolvedType, config, params, await loadFlagshipModels());
+      if (tier !== undefined) return textResult(tier);
       const invocation = resolveAgentInvocationConfig(config, params, {
         worktreeAllowed: isWorktreeIsolationEnabled(),
       });
@@ -566,7 +577,7 @@ export async function createNestedSubagentTools(
         thinking: invocation.thinking,
         config,
       });
-      const modelLine = `${formatModelLine(modelProvenance)}\n`;
+      const modelLine = `${withOverrideReason(formatModelLine(modelProvenance), params.model_override_reason)}\n`;
 
       // The whole branch shares the root session's transcript directory; read it
       // off the owning parent rather than this child session's own id.

@@ -91,6 +91,8 @@ import {
   describeRoleModel,
   describeModelResolution,
   explicitModelRefusal,
+  tierRefusal,
+  withOverrideReason,
   formatModelLine,
   isRequireExplicitModel,
   isolationParam,
@@ -120,6 +122,7 @@ import { formatSteerMessage, ROOT_AGENT_PATH } from "./messaging.ts";
 import { type ModelRegistry, resolveModel } from "./model-resolver.ts";
 import { ensureEnabledModels } from "./enabled-models.ts";
 import { pathExists } from "./fs-async.ts";
+import { loadFlagshipModels } from "./model-tiers.ts";
 import { checkModelScope, isScopeModelsEnabled, setScopeModelsEnabled } from "./model-scope.ts";
 import { getMaxSubagentDepth, setMaxSubagentDepth } from "./nested-tools.ts";
 import {
@@ -2377,6 +2380,12 @@ export default async function (pi: ExtensionAPI): Promise<void> {
             'Model as "provider/modelId" or a fuzzy name. Required for a fresh spawn unless requireExplicitModel is off; choose it per .pi/model-guidance.md. Overrides the agent definition\'s model unless it sets model_locked. With resume: optional; a different model switches a usage-limited child first.',
         }),
       ),
+      model_override_reason: Type.Optional(
+        Type.String({
+          description:
+            "Required when model is a Flagship-tier model and the role's declared model is not Flagship; state the model-guidance reason.",
+        }),
+      ),
       thinking: Type.Optional(
         thinkingLevelSchema(
           "Thinking level. Required for a fresh spawn unless requireExplicitModel is off. Overrides the agent definition's thinking unless it sets model_locked.",
@@ -2508,6 +2517,8 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       if (!params.resume && !params.schedule) {
         const refusal = explicitModelRefusal(subagentType, customConfig, params);
         if (refusal !== undefined) return textResult(typeNote + refusal);
+        const tier = tierRefusal(subagentType, customConfig, params, await loadFlagshipModels());
+        if (tier !== undefined) return textResult(typeNote + tier);
       }
 
       const resolvedConfig = resolveAgentInvocationConfig(customConfig, params, {
@@ -2570,7 +2581,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         thinking,
         config: customConfig,
       });
-      const modelLine = `${formatModelLine(modelProvenance)}\n`;
+      const modelLine = `${withOverrideReason(formatModelLine(modelProvenance), params.model_override_reason)}\n`;
       // A synchronous start failure deletes the record before the throw
       // propagates; journal its identity first so the failure is traceable.
       const onStartFailed = (info: { id: string; alias?: string; reason: string }): void => {
