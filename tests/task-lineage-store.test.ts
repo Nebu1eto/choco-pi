@@ -11,6 +11,7 @@ import {
   auditTaskLineage,
   createParticipantSpawnRecord,
   createParticipantStartRecord,
+  createTaskArchiveRecord,
   createTaskOutcomeRecord,
   createTaskSessionSnapshot,
   createTaskStartRecord,
@@ -724,4 +725,40 @@ test("audit ignores boundary data whose fields are hostile objects instead of th
     }),
     (error) => error instanceof TaskLineageOperationalError,
   );
+});
+
+test("workflowKind round-trips on start and archive records and stays optional", () => {
+  const base = {
+    taskId: "task-kind",
+    rootSessionId: "root-session",
+    parentSessionId: null,
+    role: "root" as const,
+    purpose: "coordination" as const,
+    startedAt: START,
+    snapshot: createTaskSessionSnapshot({ sessions: [], truncated: false }, START),
+  };
+  assert.equal(Object.hasOwn(createTaskStartRecord(base), "workflowKind"), false);
+  const withKind = createTaskStartRecord({ ...base, workflowKind: "task-inline" });
+  assert.equal(withKind.event === "start" ? withKind.workflowKind : undefined, "task-inline");
+  const legacy = createTaskArchiveRecord("task-kind", END, "completed");
+  assert.deepEqual(legacy, {
+    schemaVersion: 1,
+    event: "archive",
+    taskId: "task-kind",
+    archivedAt: END,
+    outcome: "completed",
+  });
+  const archive = createTaskArchiveRecord("task-kind", END, "completed", {
+    workflowKind: "none",
+    workflowKindChanges: 2,
+  });
+  assert.deepEqual(archive, {
+    schemaVersion: 1,
+    event: "archive",
+    taskId: "task-kind",
+    archivedAt: END,
+    outcome: "completed",
+    workflowKind: "none",
+    workflowKindChanges: 2,
+  });
 });

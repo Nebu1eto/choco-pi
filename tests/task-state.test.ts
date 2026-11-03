@@ -778,3 +778,132 @@ test("rejects token-shaped review revisions while accepting commit and refs shap
   assert.equal(spawned[1]?.reviewRevision, "abcdef1");
   assert.equal(spawned[2]?.reviewRevision, "refs/heads/review-safe");
 });
+
+function unarchivedStartBranch(): SessionEntry[] {
+  return [
+    {
+      type: "custom",
+      id: "orphan-start",
+      parentId: null,
+      timestamp: "2026-09-01T00:00:00.000Z",
+      customType: TASK_BOUNDARY_CUSTOM_TYPE,
+      data: {
+        schemaVersion: 1,
+        event: "start",
+        taskId: "orphan-task",
+        rootSessionId,
+        parentSessionId: null,
+        role: "root",
+        purpose: "coordination",
+        startedAt: "2026-09-01T00:00:00.000Z",
+        snapshot,
+      },
+    },
+  ];
+}
+
+test("replayed unarchived start: a later prompt joins it and agent_settled archives it", async () => {
+  const harness = createHarness({ branch: unarchivedStartBranch() });
+  await harness.emit("session_start", event({ type: "session_start", reason: "startup" }));
+  await startRootTask(harness, "after replay");
+  assert.equal(
+    records(harness, TASK_BOUNDARY_CUSTOM_TYPE).filter((entry) => entry.event === "start").length,
+    0,
+  );
+  await harness.emit("agent_end", agentEnd("stop"));
+  await harness.emit("agent_settled", event({ type: "agent_settled", aborted: false }));
+  const archives = records(harness, TASK_BOUNDARY_CUSTOM_TYPE).filter(
+    (entry) => entry.event === "archive",
+  );
+  assert.equal(archives.length, 1);
+  assert.equal(archives[0]?.taskId, "orphan-task");
+  assert.equal(archives[0]?.outcome, "completed");
+});
+
+test("replayed unarchived start: session_shutdown archives it as partial", async () => {
+  const harness = createHarness({ branch: unarchivedStartBranch() });
+  await harness.emit("session_start", event({ type: "session_start", reason: "startup" }));
+  await harness.emit("session_shutdown", event({ type: "session_shutdown", reason: "quit" }));
+  const archives = records(harness, TASK_BOUNDARY_CUSTOM_TYPE).filter(
+    (entry) => entry.event === "archive",
+  );
+  assert.equal(archives.length, 1);
+  assert.equal(archives[0]?.taskId, "orphan-task");
+  assert.equal(archives[0]?.outcome, "partial");
+});
+
+function readSkill(harness: ReturnType<typeof createHarness>, id: string, skill: string) {
+  return harness.emit(
+    "tool_call",
+    event({
+      type: "tool_call",
+      toolCallId: id,
+      toolName: "Read",
+      input: { path: skill },
+    }),
+  );
+}
+
+function archiveOf(harness: ReturnType<typeof createHarness>): JsonObject | undefined {
+  return records(harness, TASK_BOUNDARY_CUSTOM_TYPE).find((entry) => entry.event === "archive");
+}
+
+async function settle(harness: ReturnType<typeof createHarness>): Promise<void> {
+  await harness.emit("agent_end", agentEnd("stop"));
+  await harness.emit("agent_settled", event({ type: "agent_settled", aborted: false }));
+}
+
+for (const kind of ["task", "task-inline", "task-hotfix", "task-dynamic"]) {
+  test(`archive records workflowKind ${kind} from a loaded skill`, async () => {
+    const harness = createHarness();
+    await harness.emit("session_start", event({ type: "session_start", reason: "startup" }));
+    await startRootTask(harness, "work");
+    await readSkill(harness, "r1", `/repo/.pi/skills/${kind}/SKILL.md`);
+    await settle(harness);
+    assert.equal(archiveOf(harness)?.workflowKind, kind);
+    assert.equal(archiveOf(harness)?.workflowKindChanges, undefined);
+  });
+}
+
+test("archive records workflowKind none when no workflow skill loads", async () => {
+  const harness = createHarness();
+  await harness.emit("session_start", event({ type: "session_start", reason: "startup" }));
+  await startRootTask(harness, "work");
+  await readSkill(harness, "r1", "/repo/.pi/skills/commit/SKILL.md");
+  await readSkill(harness, "r2", "/repo/src/skills/task/notes.md");
+  await settle(harness);
+  assert.equal(archiveOf(harness)?.workflowKind, "none");
+});
+
+test("first workflow kind wins and later different kinds only bump the counter", async () => {
+  const harness = createHarness();
+  await harness.emit("session_start", event({ type: "session_start", reason: "startup" }));
+  await startRootTask(harness, "work");
+  await readSkill(harness, "r1", "/repo/.pi/skills/task-inline/SKILL.md");
+  await readSkill(harness, "r2", "/repo/.pi/skills/task-inline/SKILL.md");
+  await readSkill(harness, "r3", "/home/u/.pi/agent/skills/task-hotfix/SKILL.md");
+  await settle(harness);
+  assert.equal(archiveOf(harness)?.workflowKind, "task-inline");
+  assert.equal(archiveOf(harness)?.workflowKindChanges, 1);
+});
+
+test("a /skill: command at the prompt seeds the start record and survives reload", async () => {
+  const harness = createHarness();
+  await harness.emit("session_start", event({ type: "session_start", reason: "startup" }));
+  await startRootTask(harness, "/skill:task-hotfix fix it");
+  await readSkill(harness, "r1", "/repo/.pi/skills/task/SKILL.md");
+  await harness.emit("session_shutdown", event({ type: "session_shutdown", reason: "reload" }));
+  await harness.emit("session_start", event({ type: "session_start", reason: "reload" }));
+  await settle(harness);
+  const start = records(harness, TASK_BOUNDARY_CUSTOM_TYPE).find((e) => e.event === "start");
+  assert.equal(start?.workflowKind, "task-hotfix");
+  assert.equal(archiveOf(harness)?.workflowKind, "task-hotfix");
+  assert.equal(archiveOf(harness)?.workflowKindChanges, 1);
+});
+
+test("a journal start without workflowKind (old format) replays and archives as none", async () => {
+  const harness = createHarness({ branch: unarchivedStartBranch() });
+  await harness.emit("session_start", event({ type: "session_start", reason: "startup" }));
+  await harness.emit("session_shutdown", event({ type: "session_shutdown", reason: "quit" }));
+  assert.equal(archiveOf(harness)?.workflowKind, "none");
+});

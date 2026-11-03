@@ -34,6 +34,7 @@ import {
   type TaskLineageSummary,
   type TaskSessionSnapshot,
   type TerminalOutcome,
+  type WorkflowKind,
 } from "./task-lineage/store.ts";
 import { isStaleContextError } from "./lib/lifecycle.ts";
 import { isBoolean, isString, type RuntimeValue } from "./lib/runtime-values.ts";
@@ -42,6 +43,10 @@ const INDEX_DIRECTORY = ".task-lineage";
 const MAX_LINE_BYTES = 1024 * 1024;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/u;
 const TASK_RESOURCE_CUSTOM_TYPE = "choco-pi:task-lineage:resource";
+const TASK_WORKFLOW_CUSTOM_TYPE = "choco-pi:task-lineage:workflow";
+const WORKFLOW_SKILL_PATH =
+  /(?:^|[\\/])skills[\\/](task|task-inline|task-hotfix|task-dynamic)[\\/]SKILL\.md$/u;
+const WORKFLOW_SKILL_COMMAND = /^\/skill:(task|task-inline|task-hotfix|task-dynamic)(?:\s|$)/u;
 const TASK_INDEX_STATUS_CUSTOM_TYPE = "choco-pi:task-state:resource";
 const REVIEW_FINDING_CUSTOM_TYPES = new Set([
   "choco-pi:review-finding",
@@ -79,6 +84,8 @@ type ActiveTask = ParentTask & {
   outcome: TerminalOutcome;
   terminalized: boolean;
   root: boolean;
+  workflowKind?: WorkflowKind | undefined;
+  workflowKindChanges?: number | undefined;
 };
 
 type HostState = {
@@ -90,6 +97,7 @@ type HostState = {
   root: boolean;
   startupFallback: boolean;
   inputSource?: InputEvent["source"];
+  inputWorkflowKind?: WorkflowKind;
   active?: ActiveTask;
   pendingSessionCreates: Map<string, PendingResource>;
   retryCount: number;
@@ -230,6 +238,21 @@ function childClassification(sessionName: string | undefined): ChildClassificati
     return { role: "implementation", purpose: "implementation" };
   }
   return { role: "independent", purpose: "coordination" };
+}
+
+function workflowSkillName(name: string | undefined): WorkflowKind | undefined {
+  if (
+    name === "task" ||
+    name === "task-inline" ||
+    name === "task-hotfix" ||
+    name === "task-dynamic"
+  )
+    return name;
+  return undefined;
+}
+
+function workflowMatch(value: string | undefined, pattern: RegExp): WorkflowKind | undefined {
+  return value === undefined ? undefined : workflowSkillName(pattern.exec(value)?.[1]);
 }
 
 function selectedInput(event: ToolCallEvent, key: string): StructuralValue | undefined {
@@ -401,11 +424,25 @@ function currentActiveFromBranch(
       if (participantKey) terminal.add(`${taskId}:${participantKey}`);
       continue;
     }
+    if (record.customType === TASK_WORKFLOW_CUSTOM_TYPE) {
+      const kind = workflowSkillName(
+        isString(data["workflowKind"]) ? data["workflowKind"] : undefined,
+      );
+      if (latest?.taskId === taskId && kind) {
+        latest.workflowKind = kind;
+        const changes = Number(data["workflowKindChanges"]);
+        if (Number.isSafeInteger(changes) && changes > 0) latest.workflowKindChanges = changes;
+      }
+      continue;
+    }
     if (record.customType === TASK_BOUNDARY_CUSTOM_TYPE && data["event"] === "start") {
       const rootSessionId = safeId(data["rootSessionId"]);
       const startedAtValue = data["startedAt"];
       const startedAt = isString(startedAtValue) ? startedAtValue : undefined;
       if (!rootSessionId || !startedAt) continue;
+      const startKind = workflowSkillName(
+        isString(data["workflowKind"]) ? data["workflowKind"] : undefined,
+      );
       latest = {
         taskId,
         rootSessionId,
@@ -419,6 +456,7 @@ function currentActiveFromBranch(
         outcome: "partial",
         terminalized: false,
         root: true,
+        workflowKind: startKind,
       };
       continue;
     }
@@ -599,6 +637,22 @@ export function createTaskLineageExtension(
     const isOwner = (candidate: HostState): boolean =>
       host === candidate && generation === candidate.generation;
 
+    const recordWorkflowKind = (active: ActiveTask, kind: WorkflowKind): void => {
+      if (active.workflowKind === undefined) {
+        active.workflowKind = kind;
+      } else if (active.workflowKind !== kind) {
+        active.workflowKindChanges = (active.workflowKindChanges ?? 0) + 1;
+      } else {
+        return;
+      }
+      pi.appendEntry(TASK_WORKFLOW_CUSTOM_TYPE, {
+        schemaVersion: 1,
+        taskId: active.taskId,
+        workflowKind: active.workflowKind,
+        workflowKindChanges: active.workflowKindChanges ?? 0,
+      });
+    };
+
     const terminalize = (
       state: HostState,
       outcome: TerminalOutcome,
@@ -626,7 +680,10 @@ export function createTaskLineageExtension(
       if (!active.root) return undefined;
       pi.appendEntry(
         TASK_BOUNDARY_CUSTOM_TYPE,
-        createTaskArchiveRecord(active.taskId, finishedAt, outcome),
+        createTaskArchiveRecord(active.taskId, finishedAt, outcome, {
+          workflowKind: active.workflowKind ?? "none",
+          workflowKindChanges: active.workflowKindChanges,
+        }),
       );
       return {
         taskId: active.taskId,
@@ -767,6 +824,7 @@ export function createTaskLineageExtension(
     pi.on("input", (event: InputEvent) => {
       if (!host) return;
       host.inputSource = event.source;
+      host.inputWorkflowKind = workflowMatch(event.text, WORKFLOW_SKILL_COMMAND);
       if (event.source === "extension") host.startupFallback = false;
     });
 
@@ -783,6 +841,8 @@ export function createTaskLineageExtension(
         state.inputSource === "rpc" ||
         (state.inputSource === undefined && state.startupFallback);
       state.inputSource = undefined;
+      const inputKind = state.inputWorkflowKind;
+      state.inputWorkflowKind = undefined;
       state.startupFallback = false;
       if (!permitted) return;
       const sessionId = state.sessionId;
@@ -805,6 +865,7 @@ export function createTaskLineageExtension(
           parentSessionId,
           role: "root",
           purpose: "coordination",
+          workflowKind: inputKind,
           startedAt,
           snapshot,
         }),
@@ -824,6 +885,7 @@ export function createTaskLineageExtension(
         outcome: "partial",
         terminalized: false,
         root: true,
+        workflowKind: inputKind,
       };
     });
 
@@ -831,6 +893,17 @@ export function createTaskLineageExtension(
       const state = host;
       const active = state?.active;
       if (!state || !active || active.terminalized) return;
+      if (active.root && event.toolName.toLowerCase() === "read") {
+        const skillPath = selectedInput(event, "path");
+        const kind = workflowMatch(
+          isString(skillPath) ? skillPath : undefined,
+          WORKFLOW_SKILL_PATH,
+        );
+        if (kind) {
+          recordWorkflowKind(active, kind);
+          return;
+        }
+      }
       const resume = selectedInput(event, "resume");
       if (event.toolName === "Agent" && safeId(resume)) {
         state.retryCount += 1;

@@ -60,6 +60,10 @@ export type SessionJsonlHeader = {
   cursor: number;
 };
 
+export const WORKFLOW_KINDS = ["task", "task-inline", "task-hotfix", "task-dynamic"] as const;
+
+export type WorkflowKind = (typeof WORKFLOW_KINDS)[number] | "none";
+
 export type TaskBoundaryRecord =
   | {
       schemaVersion: 1;
@@ -70,6 +74,7 @@ export type TaskBoundaryRecord =
       role: LineageRole;
       purpose: LineagePurpose;
       reviewRevision?: string;
+      workflowKind?: WorkflowKind;
       startedAt: string;
       snapshot: TaskSessionSnapshot;
     }
@@ -79,6 +84,8 @@ export type TaskBoundaryRecord =
       taskId: string;
       archivedAt: string;
       outcome: TerminalOutcome;
+      workflowKind?: WorkflowKind;
+      workflowKindChanges?: number;
     };
 
 export type ParticipantSpawnRecord = {
@@ -305,6 +312,19 @@ function safeRevision(value: JsonValue | undefined): string | undefined | null {
   return null;
 }
 
+function parseWorkflowKind(value: JsonValue | undefined): WorkflowKind | undefined {
+  if (
+    value === "task" ||
+    value === "task-inline" ||
+    value === "task-hotfix" ||
+    value === "task-dynamic" ||
+    value === "none"
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
 function parseRole(value: JsonValue): LineageRole | undefined {
   if (
     value === "root" ||
@@ -432,13 +452,26 @@ function parseBoundary(value: JsonValue): TaskBoundaryRecord | undefined {
       snapshot,
     };
     if (reviewRevision !== undefined) start.reviewRevision = reviewRevision;
+    const workflowKind = parseWorkflowKind(value["workflowKind"]);
+    if (workflowKind !== undefined) start.workflowKind = workflowKind;
     return start;
   }
   if (value["event"] === "archive") {
     const archivedAt = safeTimestamp(value["archivedAt"]);
     const outcome = value["outcome"];
     if (!archivedAt || !isTerminalOutcome(outcome)) return undefined;
-    return { schemaVersion: 1, event: "archive", taskId, archivedAt, outcome };
+    const archive: TaskBoundaryRecord & { event: "archive" } = {
+      schemaVersion: 1,
+      event: "archive",
+      taskId,
+      archivedAt,
+      outcome,
+    };
+    const workflowKind = parseWorkflowKind(value["workflowKind"]);
+    if (workflowKind !== undefined) archive.workflowKind = workflowKind;
+    const changes = safeCount(value["workflowKindChanges"]);
+    if (changes !== undefined) archive.workflowKindChanges = changes;
+    return archive;
   }
   return undefined;
 }
@@ -698,6 +731,7 @@ export function createTaskStartRecord(input: {
   role: LineageRole;
   purpose: LineagePurpose;
   reviewRevision?: string;
+  workflowKind?: WorkflowKind | undefined;
   startedAt: string;
   snapshot: TaskSessionSnapshot;
 }): TaskBoundaryRecord {
@@ -710,8 +744,19 @@ export function createTaskArchiveRecord(
   taskId: string,
   archivedAt: string,
   outcome: TerminalOutcome,
+  workflow: {
+    workflowKind?: WorkflowKind | undefined;
+    workflowKindChanges?: number | undefined;
+  } = {},
 ): TaskBoundaryRecord {
-  const parsed = parseBoundary({ schemaVersion: 1, event: "archive", taskId, archivedAt, outcome });
+  const parsed = parseBoundary({
+    schemaVersion: 1,
+    event: "archive",
+    taskId,
+    archivedAt,
+    outcome,
+    ...workflow,
+  });
   if (!parsed || parsed.event !== "archive") throw new TypeError("invalid task archive record");
   return parsed;
 }
