@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { num, obj, str } from "@earendil-works/pi-schema";
+import { matches } from "../schema-check.ts";
 
 import {
   countCompactionBlocks,
@@ -37,14 +37,17 @@ interface ReplayPair {
   readonly branchRef: number;
 }
 
-const BindingSchema = Type.Object({ block_binding: Type.Object({}) });
-const BehaviorSchema = Type.Object({
-  block_binding: Type.Object({ prefix_mismatch_behavior: Type.String() }),
-});
-const SignatureSchema = Type.Object({ signature: Type.String() });
-const LaneUsageSchema = Type.Object(
-  { usage: Type.Object({ input: Type.Number(), output: Type.Number() }) },
-  { additionalProperties: true },
+const BindingSchema = obj({ block_binding: obj({}, { open: true }) }, { open: true });
+const BehaviorSchema = obj(
+  {
+    block_binding: obj({ prefix_mismatch_behavior: str() }, { open: true }),
+  },
+  { open: true },
+);
+const SignatureSchema = obj({ signature: str() }, { open: true });
+const LaneUsageSchema = obj(
+  { usage: obj({ input: num(), output: num() }, { open: true }) },
+  { open: true },
 );
 
 /** Live: asks for visible reasoning so the kept tail carries signed thinking. */
@@ -95,8 +98,8 @@ function findReplayPair(host: Host, sessionId: string): ReplayPair | undefined {
 /** "none": no binding on the wire; "absent": binding without a behavior. */
 function bindingBehavior(post: WireRequest): string {
   const thinking = post.body.thinking;
-  if (Value.Check(BehaviorSchema, thinking)) return thinking.block_binding.prefix_mismatch_behavior;
-  return Value.Check(BindingSchema, thinking) ? "absent" : "none";
+  if (matches(BehaviorSchema, thinking)) return thinking.block_binding.prefix_mismatch_behavior;
+  return matches(BindingSchema, thinking) ? "absent" : "none";
 }
 
 function observe<T>(
@@ -170,9 +173,9 @@ function bindingObservations(pair: ReplayPair): Observation[] {
 
 function usageObservations(host: Host, pair: ReplayPair): Observation[] {
   const lane = host.recorder.records.findLast(
-    (record) => record.kind === "native-lane-response" && Value.Check(LaneUsageSchema, record.data),
+    (record) => record.kind === "native-lane-response" && matches(LaneUsageSchema, record.data),
   );
-  if (!lane || !Value.Check(LaneUsageSchema, lane.data)) return [];
+  if (!lane || !matches(LaneUsageSchema, lane.data)) return [];
   const usage = pair.checkpoint.details.laneUsage;
   return [
     observe(
@@ -187,7 +190,7 @@ function usageObservations(host: Host, pair: ReplayPair): Observation[] {
 /** Signatures stay in memory only; the leak check scans recorded artifacts for them. */
 function protectedSignatures(pair: ReplayPair): string[] {
   const signed = thinkingBlocks(pair.source.body.messages).flatMap((block) =>
-    Value.Check(SignatureSchema, block) ? [block.signature] : [],
+    matches(SignatureSchema, block) ? [block.signature] : [],
   );
   return [pair.checkpoint.details.block.signature, ...signed];
 }

@@ -6,8 +6,7 @@
  * - `pi-subagents:manager`: choco-pi-subagents writes child-session probes; the root policy reads
  *   them. Every reader validates the host-owned value before using it.
  */
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { bool, compile, num, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
 import {
   isFunction,
   isJsonRecord,
@@ -25,12 +24,11 @@ export type OnUsageLimit = "auto-resume" | "fallback" | "none";
 
 export const ON_USAGE_LIMIT_VALUES: readonly OnUsageLimit[] = ["auto-resume", "fallback", "none"];
 export const DEFAULT_ON_USAGE_LIMIT: OnUsageLimit = "none";
-export const OnUsageLimitSchema = Type.Union(
-  ON_USAGE_LIMIT_VALUES.map((value) => Type.Literal(value)),
-);
+export const OnUsageLimitSchema = oneOf(ON_USAGE_LIMIT_VALUES);
+const isOnUsageLimit = compile(OnUsageLimitSchema).check;
 
 export function parseOnUsageLimit(value: RuntimeValue): OnUsageLimit | undefined {
-  if (!Value.Check(OnUsageLimitSchema, value)) return undefined;
+  if (!isOnUsageLimit(value)) return undefined;
   switch (value) {
     case "auto-resume":
     case "fallback":
@@ -58,19 +56,18 @@ export type UsageLimitClassification = {
   sessionId?: string;
 };
 
-export const UsageLimitClassificationSchema = Type.Object({
-  kind: Type.Union([Type.Literal("quota"), Type.Literal("billing"), Type.Literal("transient")]),
-  provider: Type.String(),
-  modelId: Type.String(),
-  accountId: Type.Optional(Type.String()),
-  resetAt: Type.Optional(Type.Number()),
-  confidence: Type.Union([
-    Type.Literal("structured"),
-    Type.Literal("parsed"),
-    Type.Literal("inferred"),
-  ]),
-  sessionId: Type.Optional(Type.String()),
-});
+export const UsageLimitClassificationSchema = obj(
+  {
+    kind: oneOf(["quota", "billing", "transient"]),
+    provider: str(),
+    modelId: str(),
+    accountId: opt(str()),
+    resetAt: opt(num()),
+    confidence: oneOf(["structured", "parsed", "inferred"]),
+    sessionId: opt(str()),
+  },
+  { open: true },
+);
 
 export type UsageLimitClassifyInput = {
   provider: string;
@@ -180,30 +177,34 @@ export type UsageLimitPendingEntry = {
   /** Root session that wrote the entry; a fork or clone carrying a copy does not replay it. */
   sessionId?: string;
 };
-export const UsageLimitPendingEntrySchema = Type.Object({
-  recoveryId: Type.String(),
-  resetAt: Type.Optional(Type.Number()),
-  modelId: Type.String(),
-  provider: Type.String(),
-  accountId: Type.String(),
-  attempts: Type.Number(),
-  branchEntryId: Type.Optional(Type.String()),
-  sessionId: Type.Optional(Type.String()),
-});
+export const UsageLimitPendingEntrySchema = obj(
+  {
+    recoveryId: str(),
+    resetAt: opt(num()),
+    modelId: str(),
+    provider: str(),
+    accountId: str(),
+    attempts: num(),
+    branchEntryId: opt(str()),
+    sessionId: opt(str()),
+  },
+  { open: true },
+);
+const isUsageLimitPendingEntry = compile(UsageLimitPendingEntrySchema).check;
 
 export const USAGE_LIMIT_RESOLVED_ENTRY = "choco-pi-usage-limit-resolved";
 export type UsageLimitResolvedEntry = {
   recoveryId: string;
   outcome: "continued" | "cancelled" | "exhausted";
 };
-export const UsageLimitResolvedEntrySchema = Type.Object({
-  recoveryId: Type.String(),
-  outcome: Type.Union([
-    Type.Literal("continued"),
-    Type.Literal("cancelled"),
-    Type.Literal("exhausted"),
-  ]),
-});
+export const UsageLimitResolvedEntrySchema = obj(
+  {
+    recoveryId: str(),
+    outcome: oneOf(["continued", "cancelled", "exhausted"]),
+  },
+  { open: true },
+);
+const isUsageLimitResolvedEntry = compile(UsageLimitResolvedEntrySchema).check;
 
 export const CODEX_USAGE_LIMIT_ENTRY = "choco-pi-codex-usage-limit";
 export type CodexUsageLimitEntry = {
@@ -212,17 +213,21 @@ export type CodexUsageLimitEntry = {
   accountId?: string;
   observedAt: number;
 };
-export const CodexUsageLimitEntrySchema = Type.Object({
-  resetAt: Type.Optional(Type.Number()),
-  planType: Type.Optional(Type.String()),
-  accountId: Type.Optional(Type.String()),
-  observedAt: Type.Number(),
-});
+export const CodexUsageLimitEntrySchema = obj(
+  {
+    resetAt: opt(num()),
+    planType: opt(str()),
+    accountId: opt(str()),
+    observedAt: num(),
+  },
+  { open: true },
+);
+const isCodexUsageLimitEntry = compile(CodexUsageLimitEntrySchema).check;
 
 export function parseUsageLimitPendingEntry(
   value: RuntimeValue,
 ): UsageLimitPendingEntry | undefined {
-  return Value.Check(UsageLimitPendingEntrySchema, value)
+  return isUsageLimitPendingEntry(value)
     ? reinterpretHostValue<UsageLimitPendingEntry>(value)
     : undefined;
 }
@@ -230,13 +235,13 @@ export function parseUsageLimitPendingEntry(
 export function parseUsageLimitResolvedEntry(
   value: RuntimeValue,
 ): UsageLimitResolvedEntry | undefined {
-  return Value.Check(UsageLimitResolvedEntrySchema, value)
+  return isUsageLimitResolvedEntry(value)
     ? reinterpretHostValue<UsageLimitResolvedEntry>(value)
     : undefined;
 }
 
 export function parseCodexUsageLimitEntry(value: RuntimeValue): CodexUsageLimitEntry | undefined {
-  return Value.Check(CodexUsageLimitEntrySchema, value)
+  return isCodexUsageLimitEntry(value)
     ? reinterpretHostValue<CodexUsageLimitEntry>(value)
     : undefined;
 }
@@ -249,24 +254,21 @@ export type SubagentUsageLimit = {
   suggestedModel?: string;
   status: "reported" | "waiting_for_reset" | "resumed" | "exhausted";
 };
-export const SubagentUsageLimitSchema = Type.Object({
-  provider: Type.String(),
-  accountId: Type.String(),
-  kind: Type.Union([Type.Literal("quota"), Type.Literal("billing"), Type.Literal("transient")]),
-  resetAt: Type.Optional(Type.Number()),
-  suggestedModel: Type.Optional(Type.String()),
-  status: Type.Union([
-    Type.Literal("reported"),
-    Type.Literal("waiting_for_reset"),
-    Type.Literal("resumed"),
-    Type.Literal("exhausted"),
-  ]),
-});
+export const SubagentUsageLimitSchema = obj(
+  {
+    provider: str(),
+    accountId: str(),
+    kind: oneOf(["quota", "billing", "transient"]),
+    resetAt: opt(num()),
+    suggestedModel: opt(str()),
+    status: oneOf(["reported", "waiting_for_reset", "resumed", "exhausted"]),
+  },
+  { open: true },
+);
+const isSubagentUsageLimit = compile(SubagentUsageLimitSchema).check;
 
 export function parseSubagentUsageLimit(value: RuntimeValue): SubagentUsageLimit | undefined {
-  return Value.Check(SubagentUsageLimitSchema, value)
-    ? reinterpretHostValue<SubagentUsageLimit>(value)
-    : undefined;
+  return isSubagentUsageLimit(value) ? reinterpretHostValue<SubagentUsageLimit>(value) : undefined;
 }
 
 export const SUBAGENTS_USAGE_LIMIT_EVENT = "subagents:usage_limit";
@@ -285,12 +287,16 @@ export type GoalRecoveryOwnership = {
   owner?: string;
 };
 
-const GoalRecoveryOwnershipSchema = Type.Object({
-  goalId: Type.String(),
-  status: Type.Union([Type.Literal("active"), Type.Literal("paused")]),
-  providerLimitResumeScheduled: Type.Boolean(),
-  owner: Type.Optional(Type.String()),
-});
+const GoalRecoveryOwnershipSchema = obj(
+  {
+    goalId: str(),
+    status: oneOf(["active", "paused"]),
+    providerLimitResumeScheduled: bool(),
+    owner: opt(str()),
+  },
+  { open: true },
+);
+const isGoalRecoveryOwnership = compile(GoalRecoveryOwnershipSchema).check;
 
 /**
  * Reads goal recovery ownership. With `owner` (a root session id) the slot's
@@ -310,7 +316,7 @@ export function readGoalRecoveryOwnership(owner?: string): GoalRecoveryOwnership
     );
     const ownership =
       owner === undefined ? recoveryOwnership.call(entry) : recoveryOwnership.call(entry, owner);
-    if (!Value.Check(GoalRecoveryOwnershipSchema, ownership)) return undefined;
+    if (!isGoalRecoveryOwnership(ownership)) return undefined;
     const parsed = reinterpretHostValue<GoalRecoveryOwnership>(ownership);
     if (owner !== undefined && parsed.owner !== undefined && parsed.owner !== owner) {
       return undefined;

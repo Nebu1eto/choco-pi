@@ -15,8 +15,16 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
 import { promisify } from "node:util";
-import { Type, type Static, type TSchema } from "typebox";
-import { Value } from "typebox/value";
+import {
+  bool,
+  compile,
+  map,
+  obj,
+  opt,
+  unknown,
+  type JsonSchema,
+  type Static,
+} from "@earendil-works/pi-schema";
 import { deriveBackgroundLanes } from "../.pi/packages/choco-pi-compaction/src/background/settings.ts";
 import {
   buildGlobalSettings,
@@ -27,17 +35,15 @@ import {
   RETIRED_PROFILE_FILES,
 } from "../scripts/install-profile.ts";
 
-const CodexConfigSchema = Type.Object({
-  openai: Type.Object({ fast: Type.Boolean() }),
-});
+const CodexConfigSchema = obj({ openai: obj({ fast: bool() }, { open: true }) }, { open: true });
 
-function parseJson<T extends TSchema>(contents: string, schema: T): Static<T> {
+function parseJson<T extends JsonSchema>(contents: string, schema: T): Static<T> {
   const parsed: unknown = JSON.parse(contents);
-  assert.ok(Value.Check(schema, parsed), "JSON fixture must match its expected schema");
+  assert.ok(compile(schema).check(parsed), "JSON fixture must match its expected schema");
   return parsed;
 }
 
-const SidecarSchema = Type.Record(Type.String(), Type.Unknown());
+const SidecarSchema = map(unknown());
 
 /** Bundled packages as an earlier install of this checkout recorded them. */
 const BUNDLED_PACKAGES = [
@@ -167,7 +173,9 @@ test("user thinking levels win and the profile only fills in missing models", ()
 
 test("tracked npm package pins dedupe stale older versions of the same package", () => {
   const settings = buildGlobalSettings(
-    { packages: ["npm:example-extension@4.0.0", "npm:@example/subagents@0.16.1"] },
+    {
+      packages: ["npm:example-extension@4.0.0", "npm:@example/subagents@0.16.1"],
+    },
     {
       packages: [
         "npm:example-extension@3.8.74",
@@ -264,7 +272,10 @@ test("a clean machine with no settings at all bootstraps the bundled profile", a
 test("global settings with only user packages bootstrap the profile and keep them", async (context) => {
   const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-user-only-"));
   context.after(() => rm(agentDir, { recursive: true, force: true }));
-  await seedProfileSettings(agentDir, { packages: ["npm:user-package@2.0.0"], extensions: [] });
+  await seedProfileSettings(agentDir, {
+    packages: ["npm:user-package@2.0.0"],
+    extensions: [],
+  });
 
   await installProfile({ root: process.cwd(), agentDir });
 
@@ -274,7 +285,7 @@ test("global settings with only user packages bootstrap the profile and keep the
 });
 
 test("the clean-install defaults list every bundled package Pi loads", async () => {
-  const PiManifestSchema = Type.Object({ pi: Type.Optional(Type.Unknown()) });
+  const PiManifestSchema = obj({ pi: opt(unknown()) }, { open: true });
   const loaded: string[] = [];
   for (const entry of await readdir(".pi/packages", { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
@@ -386,16 +397,24 @@ test("profile installer preserves a conflicting file unless backup is explicit",
     /already exists; rerun with --backup/,
   );
   assert.equal(await readFile(target, "utf8"), "user-owned\n");
-  await assert.rejects(readlink(path.join(agentDir, "SYSTEM.md")), { code: "ENOENT" });
+  await assert.rejects(readlink(path.join(agentDir, "SYSTEM.md")), {
+    code: "ENOENT",
+  });
 
-  const result = await installProfile({ root: process.cwd(), agentDir, backup: true });
+  const result = await installProfile({
+    root: process.cwd(),
+    agentDir,
+    backup: true,
+  });
   const migrated = result.links.find((link) => link.target === target);
   assert.equal(migrated?.action, "backed-up");
   assert.equal(await readFile(migrated?.backup ?? "", "utf8"), "user-owned\n");
 });
 
 test("installing the profile removes the packages each bundled fork replaces", () => {
-  const projectSettings = { packages: ["./packages/choco-pi-lsp", "./packages/choco-pi-ui"] };
+  const projectSettings = {
+    packages: ["./packages/choco-pi-lsp", "./packages/choco-pi-ui"],
+  };
   const existingSettings = {
     packages: [
       "npm:pi-lens@4.0.0",
@@ -480,7 +499,9 @@ test("invalid settings shapes fail before profile links are written", async (con
   ]) {
     await writeFile(path.join(agentDir, "settings.json"), JSON.stringify(value));
     await assert.rejects(installProfile({ root: process.cwd(), agentDir }), /valid JSON/);
-    await assert.rejects(readlink(path.join(agentDir, "SYSTEM.md")), { code: "ENOENT" });
+    await assert.rejects(readlink(path.join(agentDir, "SYSTEM.md")), {
+      code: "ENOENT",
+    });
   }
 });
 
@@ -549,7 +570,10 @@ test("install derives the sidecar lanes from every vendor mode combination", asy
 
       await installProfile({ root, agentDir });
 
-      const lanes = deriveBackgroundLanes({ openaiServerSide, anthropicServerSide });
+      const lanes = deriveBackgroundLanes({
+        openaiServerSide,
+        anthropicServerSide,
+      });
       assert.deepEqual(parseJson(await readFile(sidecarPath, "utf8"), SidecarSchema), {
         enabled: false,
         maxQueued: 7,
@@ -683,7 +707,9 @@ test("a directory at a retired path is left in place with a warning", async (con
 
 test("retired profile files are neither shipped, linked, nor migrated", async () => {
   for (const target of RETIRED_PROFILE_FILES) {
-    await assert.rejects(lstat(path.resolve(".pi", target)), { code: "ENOENT" });
+    await assert.rejects(lstat(path.resolve(".pi", target)), {
+      code: "ENOENT",
+    });
     assert.ok(!PROFILE_LINKS.some(([, linkedTarget]) => linkedTarget === target));
     assert.ok(!MIGRATED_SIDECARS.includes(target));
   }

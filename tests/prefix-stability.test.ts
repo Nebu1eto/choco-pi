@@ -1,26 +1,35 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { Type } from "typebox";
+import { readFile } from "node:fs/promises";
+import { arr, compile, num, obj, str } from "@earendil-works/pi-schema";
 import { createEventBus } from "@earendil-works/pi-coding-agent";
 import toolSearch, { ALWAYS_ACTIVE_TOOL_NAMES } from "../.pi/extensions/tool-search.ts";
 import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
-import { readValidatedJson } from "../tools/prefix-eval/io.ts";
 
-const PrefixBudgetCaptureSchema = Type.Object({
-  model: Type.String(),
-  before: Type.Object({ total: Type.Number(), system: Type.Number(), tools: Type.Number() }),
-  after: Type.Object({ total: Type.Number(), system: Type.Number(), tools: Type.Number() }),
-  codeModeTools: Type.Number(),
-  rewrites: Type.Number(),
-  toolNames: Type.Array(Type.String()),
-});
+const PrefixBudgetCaptureSchema = obj(
+  {
+    model: str(),
+    before: obj({ total: num(), system: num(), tools: num() }, { open: true }),
+    after: obj({ total: num(), system: num(), tools: num() }, { open: true }),
+    codeModeTools: num(),
+    rewrites: num(),
+    toolNames: arr(str()),
+  },
+  { open: true },
+);
+
+const isPrefixBudgetCapture = compile(PrefixBudgetCaptureSchema).check;
+
+async function readCapture(path: string) {
+  const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
+  if (!isPrefixBudgetCapture(parsed)) throw new Error("Invalid U2 prefix capture");
+  return parsed;
+}
 
 test("live Opus native surface matches the capture and stays within its budget", async () => {
-  const capture = await readValidatedJson(
+  const capture = await readCapture(
     fileURLToPath(new URL("./fixtures/u2-prefix-capture.json", import.meta.url)),
-    PrefixBudgetCaptureSchema,
-    "U2 prefix capture",
   );
   const codeModeOwnedDirectTools = new Set([
     "read",
@@ -54,7 +63,11 @@ interface FreshSessionContext {
 
 test("never changes active tools after the first before_agent_start", async () => {
   let activeTools = ["read", "exec_command"];
-  const registeredTools: Array<{ name: string; description: string; parameters: object }> = [];
+  const registeredTools: Array<{
+    name: string;
+    description: string;
+    parameters: object;
+  }> = [];
   type LifecycleHandler = (event: { type: string }, ctx: FreshSessionContext) => void;
   const lifecycleHandlers = new Map<string, LifecycleHandler>();
   const emitLifecycle = (type: string) =>

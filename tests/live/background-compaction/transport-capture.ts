@@ -1,7 +1,14 @@
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
-import { digest, redact, InputSchema, type ArtifactInput, type Recorder } from "./artifacts.ts";
+import { isString } from "./schema-check.ts";
+import {
+  digest,
+  isArtifactInput,
+  isArtifactRecord,
+  redact,
+  type ArtifactInput,
+  type Recorder,
+  parseArtifactInput,
+} from "./artifacts.ts";
 
 /** A unique text that identifies one branch entry inside a serialized payload. */
 export interface EntryMarker {
@@ -15,13 +22,11 @@ interface MarkerPosition {
   offset: number;
 }
 
-const RecordSchema = Type.Record(Type.String(), InputSchema);
-
 /** Every string in the payload, depth-first in serialization order. */
 function payloadStrings(payload: ArtifactInput): string[] {
-  if (Value.Check(Type.String(), payload)) return [payload];
+  if (isString(payload)) return [payload];
   if (Array.isArray(payload)) return payload.flatMap(payloadStrings);
-  if (!Value.Check(RecordSchema, payload)) return [];
+  if (!isArtifactRecord(payload)) return [];
   return Object.values(payload).flatMap((item) => payloadStrings(redact(item)));
 }
 
@@ -70,13 +75,10 @@ export function mapPayload(payload: ArtifactInput, markers: readonly EntryMarker
 
 /** True when any string anywhere inside the (unredacted) value contains `text`. */
 export function containsText(value: ArtifactInput, text: string): boolean {
-  if (!Value.Check(InputSchema, value)) throw new Error("Invalid marker search input");
-  if (Value.Check(Type.String(), value)) return value.includes(text);
+  if (!isArtifactInput(value)) throw new Error("Invalid marker search input");
+  if (isString(value)) return value.includes(text);
   if (Array.isArray(value)) return value.some((item) => containsText(item, text));
-  return (
-    Value.Check(RecordSchema, value) &&
-    Object.values(value).some((item) => containsText(item, text))
-  );
+  return isArtifactRecord(value) && Object.values(value).some((item) => containsText(item, text));
 }
 
 export function capturePayload(
@@ -86,7 +88,7 @@ export function capturePayload(
   markers: readonly EntryMarker[],
   ownerKey?: string,
 ): void {
-  if (!Value.Check(InputSchema, payload)) throw new Error("Invalid provider payload");
+  if (!isArtifactInput(payload)) throw new Error("Invalid provider payload");
   const safe = redact(payload);
   recorder.record(source, {
     ownerKey,
@@ -103,16 +105,16 @@ function branchRecord(entry: SessionEntry) {
       ...base,
       summary: entry.summary,
       firstKeptEntryId: entry.firstKeptEntryId,
-      details: redact(Value.Parse(InputSchema, entry.details)),
+      details: redact(parseArtifactInput(entry.details)),
     };
   if (entry.type === "custom")
     return {
       ...base,
       customType: entry.customType,
-      data: redact(Value.Parse(InputSchema, entry.data)),
+      data: redact(parseArtifactInput(entry.data)),
     };
   if (entry.type === "message")
-    return { ...base, message: redact(Value.Parse(InputSchema, entry.message)) };
+    return { ...base, message: redact(parseArtifactInput(entry.message)) };
   return base;
 }
 
@@ -129,9 +131,9 @@ export function capturingFetch(
 ): typeof globalThis.fetch {
   return async (input, init) => {
     const body = init?.body ?? (input instanceof Request ? await input.clone().text() : "");
-    if (!Value.Check(Type.String(), body)) throw new Error("Uncapturable request body");
+    if (!isString(body)) throw new Error("Uncapturable request body");
     const payload: unknown = body.length ? JSON.parse(body) : null;
-    if (!Value.Check(InputSchema, payload)) throw new Error("Invalid serialized transport");
+    if (!isArtifactInput(payload)) throw new Error("Invalid serialized transport");
     capturePayload(recorder, "transport", payload, markers(), ownerKey);
     return delegate(input, init);
   };

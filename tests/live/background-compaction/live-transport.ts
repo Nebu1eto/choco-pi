@@ -1,10 +1,10 @@
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, obj, str, unknown } from "@earendil-works/pi-schema";
+import { isString, matches } from "./schema-check.ts";
 import {
   parseBetaHeader,
   parseWireBody,
 } from "../../../.pi/packages/choco-pi-compaction/src/anthropic/capture.ts";
-import { InputSchema, type ArtifactInput } from "./artifacts.ts";
+import { InputSchema, isArtifactInput, type ArtifactInput } from "./artifacts.ts";
 import { estimateTokens } from "./budget.ts";
 import type { HostState, ResponseDispatch } from "./host-state.ts";
 import { billedInput, billedOutput, type LiveLedger, type RequestKind } from "./live-ledger.ts";
@@ -20,8 +20,8 @@ export function requestOrigin(input: Parameters<typeof globalThis.fetch>[0]): st
   return URL.canParse(raw) ? new URL(raw).origin : "unparseable";
 }
 
-const LaneSchema = Type.Object({ compaction: Type.Unknown() }, { additionalProperties: true });
-const LaneFieldSchema = Type.Object({ compaction: InputSchema }, { additionalProperties: true });
+const LaneSchema = obj({ compaction: unknown() }, { open: true });
+const LaneFieldSchema = obj({ compaction: InputSchema }, { open: true });
 
 /** The lane request's `compaction` field and `anthropic-beta` values (no other header). */
 export function recordLaneRequest(
@@ -34,20 +34,20 @@ export function recordLaneRequest(
     betas: parseBetaHeader(new Headers(init?.headers).get("anthropic-beta")),
   });
 }
-const ToolsSchema = Type.Object(
+const ToolsSchema = obj(
   {
-    tools: Type.Array(Type.Object({ name: Type.String() }, { additionalProperties: true })),
+    tools: arr(obj({ name: str() }, { open: true })),
   },
-  { additionalProperties: true },
+  { open: true },
 );
-const SystemSchema = Type.Object({ system: InputSchema }, { additionalProperties: true });
+const SystemSchema = obj({ system: InputSchema }, { open: true });
 
 /** Classifies an actual serialized Anthropic body by what production put on it. */
 export function classify(payload: ArtifactInput): RequestKind {
-  if (Value.Check(LaneSchema, payload)) return "lane";
-  if (Value.Check(SystemSchema, payload) && containsText(payload.system, SUMMARY_MARKER))
+  if (matches(LaneSchema, payload)) return "lane";
+  if (matches(SystemSchema, payload) && containsText(payload.system, SUMMARY_MARKER))
     return "summary";
-  if (Value.Check(ToolsSchema, payload) && payload.tools.some((tool) => tool.name === STEP_TOOL))
+  if (matches(ToolsSchema, payload) && payload.tools.some((tool) => tool.name === STEP_TOOL))
     return "foreground";
   return "other";
 }
@@ -78,7 +78,7 @@ async function bodyTextOf(
   init: RequestInit | undefined,
 ): Promise<string> {
   const body = init?.body ?? (input instanceof Request ? await input.clone().text() : "");
-  if (!Value.Check(Type.String(), body)) throw new Error("Uncapturable live request body");
+  if (!isString(body)) throw new Error("Uncapturable live request body");
   return body;
 }
 
@@ -136,9 +136,9 @@ export function liveFetch(options: LiveFetchOptions): typeof globalThis.fetch {
       return options.block(input, init);
     const bodyText = await bodyTextOf(input, init);
     const payload: unknown = bodyText.length ? JSON.parse(bodyText) : null;
-    if (!Value.Check(InputSchema, payload)) throw new Error("Invalid serialized live transport");
+    if (!isArtifactInput(payload)) throw new Error("Invalid serialized live transport");
     const sent = recordRequest(state, bodyText, payload);
-    if (sent.kind === "lane" && Value.Check(LaneFieldSchema, payload))
+    if (sent.kind === "lane" && matches(LaneFieldSchema, payload))
       recordLaneRequest(state.recorder, payload.compaction, init);
     const id = ledger.reserve(sent.kind, estimateTokens(bodyText));
     const observer = state.foregroundObserver;

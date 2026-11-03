@@ -1,8 +1,8 @@
 import { getCurrentSystemPrompt, type Model } from "@earendil-works/pi-ai";
 import { streamSimple as anthropicStreamSimple } from "@earendil-works/pi-ai/api/anthropic-messages";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { lit, obj, oneOf, str } from "@earendil-works/pi-schema";
+import { isString, matches } from "./schema-check.ts";
 import {
   createCapturingStreamSimple,
   parseBetaHeader,
@@ -51,23 +51,20 @@ function dispatchFor(
   return { sessionId, summary, index: options.state.nextIndex(sessionId, summary) };
 }
 
-const SignedBlockSchema = Type.Object(
+const SignedBlockSchema = obj(
   {
-    type: Type.Union([Type.Literal("thinking"), Type.Literal("compaction")]),
-    signature: Type.String(),
+    type: oneOf(["thinking", "compaction"]),
+    signature: str(),
   },
-  { additionalProperties: true },
+  { open: true },
 );
-const RedactedThinkingSchema = Type.Object(
-  { type: Type.Literal("redacted_thinking"), data: Type.String() },
-  { additionalProperties: true },
-);
+const RedactedThinkingSchema = obj({ type: lit("redacted_thinking"), data: str() }, { open: true });
 
 function signaturesOf(body: WireBody): string[] {
   return body.messages.flatMap((message) =>
     wireBlocks(message).flatMap((block) => {
-      if (Value.Check(SignedBlockSchema, block)) return [block.signature];
-      if (Value.Check(RedactedThinkingSchema, block)) return [block.data];
+      if (matches(SignedBlockSchema, block)) return [block.signature];
+      if (matches(RedactedThinkingSchema, block)) return [block.data];
       return [];
     }),
   );
@@ -115,7 +112,7 @@ function rememberWire(
   const manager = state.book.manager(dispatch.sessionId);
   const branch = manager ? captureRequestBranch(state.recorder, manager, dispatch) : undefined;
   if (branch) state.requestBranches.push(branch);
-  const body = Value.Check(Type.String(), init?.body) ? parseWireBody(init.body) : undefined;
+  const body = isString(init?.body) ? parseWireBody(init.body) : undefined;
   return { body, branch, betas: parseBetaHeader(new Headers(init?.headers).get("anthropic-beta")) };
 }
 

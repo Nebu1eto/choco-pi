@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Value } from "typebox/value";
+import { compile, type JsonSchema, type Static } from "@earendil-works/pi-schema";
 import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
 import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 import {
@@ -65,10 +65,10 @@ test("on-usage-limit values and classification schema accept valid data and reje
   assert.equal(DEFAULT_ON_USAGE_LIMIT, "none");
   assert.equal(parseOnUsageLimit("fallback"), "fallback");
   assert.equal(parseOnUsageLimit("FALLBACK"), undefined);
-  assert.equal(Value.Check(OnUsageLimitSchema, "none"), true);
-  assert.equal(Value.Check(OnUsageLimitSchema, "later"), false);
+  assert.equal(checkSchema(OnUsageLimitSchema, "none"), true);
+  assert.equal(checkSchema(OnUsageLimitSchema, "later"), false);
   assert.equal(
-    Value.Check(UsageLimitClassificationSchema, {
+    checkSchema(UsageLimitClassificationSchema, {
       kind: "quota",
       provider: "openai-codex",
       modelId: "gpt",
@@ -77,7 +77,7 @@ test("on-usage-limit values and classification schema accept valid data and reje
     true,
   );
   assert.equal(
-    Value.Check(UsageLimitClassificationSchema, {
+    checkSchema(UsageLimitClassificationSchema, {
       kind: "unknown",
       provider: "openai-codex",
       modelId: "gpt",
@@ -86,7 +86,7 @@ test("on-usage-limit values and classification schema accept valid data and reje
     false,
   );
   assert.equal(
-    Value.Check(UsageLimitClassificationSchema, {
+    checkSchema(UsageLimitClassificationSchema, {
       kind: "quota",
       provider: "openai-codex",
       modelId: "gpt",
@@ -97,7 +97,7 @@ test("on-usage-limit values and classification schema accept valid data and reje
     "sessionId is an optional string",
   );
   assert.equal(
-    Value.Check(UsageLimitClassificationSchema, {
+    checkSchema(UsageLimitClassificationSchema, {
       kind: "quota",
       provider: "openai-codex",
       modelId: "gpt",
@@ -143,7 +143,7 @@ test("persisted schemas and parsers accept valid entries and reject malformed en
     branchEntryId: "branch",
   };
   assert.equal(USAGE_LIMIT_PENDING_ENTRY, "choco-pi-usage-limit-pending");
-  assert.equal(Value.Check(UsageLimitPendingEntrySchema, pending), true);
+  assert.equal(checkSchema(UsageLimitPendingEntrySchema, pending), true);
   assert.deepEqual(parseUsageLimitPendingEntry(pending), pending);
   assert.equal(parseUsageLimitPendingEntry({ ...pending, attempts: "1" }), undefined);
   const owned = { ...pending, sessionId: "root" };
@@ -151,12 +151,17 @@ test("persisted schemas and parsers accept valid entries and reject malformed en
   assert.equal(parseUsageLimitPendingEntry({ ...pending, sessionId: 1 }), undefined);
   const resolved = { recoveryId: "recovery", outcome: "continued" };
   assert.equal(USAGE_LIMIT_RESOLVED_ENTRY, "choco-pi-usage-limit-resolved");
-  assert.equal(Value.Check(UsageLimitResolvedEntrySchema, resolved), true);
+  assert.equal(checkSchema(UsageLimitResolvedEntrySchema, resolved), true);
   assert.deepEqual(parseUsageLimitResolvedEntry(resolved), resolved);
   assert.equal(parseUsageLimitResolvedEntry({ ...resolved, outcome: "later" }), undefined);
-  const codex = { resetAt: 2, planType: "plus", observedAt: 1, accountId: "account" };
+  const codex = {
+    resetAt: 2,
+    planType: "plus",
+    observedAt: 1,
+    accountId: "account",
+  };
   assert.equal(CODEX_USAGE_LIMIT_ENTRY, "choco-pi-codex-usage-limit");
-  assert.equal(Value.Check(CodexUsageLimitEntrySchema, codex), true);
+  assert.equal(checkSchema(CodexUsageLimitEntrySchema, codex), true);
   assert.deepEqual(parseCodexUsageLimitEntry(codex), codex);
   assert.equal(parseCodexUsageLimitEntry({ ...codex, observedAt: "1" }), undefined);
 });
@@ -171,7 +176,7 @@ test("subagent usage-limit schema and parser validate event payload data", () =>
     status: "reported",
   };
   assert.equal(SUBAGENTS_USAGE_LIMIT_EVENT, "subagents:usage_limit");
-  assert.equal(Value.Check(SubagentUsageLimitSchema, limit), true);
+  assert.equal(checkSchema(SubagentUsageLimitSchema, limit), true);
   assert.deepEqual(parseSubagentUsageLimit(limit), limit);
   assert.equal(parseSubagentUsageLimit({ ...limit, status: "waiting" }), undefined);
 });
@@ -199,7 +204,10 @@ test("goal recovery and child-session readers reject malformed host slots", () =
   });
   withSlot(
     managerSymbol,
-    { isChildSessionContext: () => true, isChildSessionId: (id: string) => id === "child" },
+    {
+      isChildSessionContext: () => true,
+      isChildSessionId: (id: string) => id === "child",
+    },
     () => {
       const probe = readChildSessionProbe();
       assert.ok(probe);
@@ -213,7 +221,11 @@ test("goal recovery and child-session readers reject malformed host slots", () =
 });
 
 test("goal recovery reader scopes ownership to the requested owner", () => {
-  const goal = { goalId: "goal", status: "active", providerLimitResumeScheduled: false };
+  const goal = {
+    goalId: "goal",
+    status: "active",
+    providerLimitResumeScheduled: false,
+  };
   const calls: RuntimeValue[][] = [];
   // A goal package that accepts the owner argument answers only for its own session.
   const scoped = {
@@ -224,7 +236,10 @@ test("goal recovery reader scopes ownership to the requested owner", () => {
     },
   };
   withSlot(GOAL_RECOVERY_SYMBOL, scoped, () => {
-    assert.deepEqual(readGoalRecoveryOwnership("root-a"), { ...goal, owner: "root-a" });
+    assert.deepEqual(readGoalRecoveryOwnership("root-a"), {
+      ...goal,
+      owner: "root-a",
+    });
     assert.equal(readGoalRecoveryOwnership("root-b"), undefined);
     assert.deepEqual(readGoalRecoveryOwnership(), { ...goal, owner: "root-a" });
   });
@@ -236,7 +251,10 @@ test("goal recovery reader scopes ownership to the requested owner", () => {
     { recoveryOwnership: () => ({ ...goal, owner: "root-a" }) },
     () => {
       assert.equal(readGoalRecoveryOwnership("root-b"), undefined);
-      assert.deepEqual(readGoalRecoveryOwnership("root-a"), { ...goal, owner: "root-a" });
+      assert.deepEqual(readGoalRecoveryOwnership("root-a"), {
+        ...goal,
+        owner: "root-a",
+      });
     },
   );
   // A result without an owner comes from a goal package that predates it and is accepted.
@@ -247,3 +265,8 @@ test("goal recovery reader scopes ownership to the requested owner", () => {
     assert.equal(readGoalRecoveryOwnership("root-a"), undefined, "a non-string owner is malformed");
   });
 });
+
+/** Whether `value` matches `schema`, narrowing like the compiled validator's check. */
+function checkSchema<S extends JsonSchema>(schema: S, value: RuntimeValue): value is Static<S> {
+  return compile(schema).check(value);
+}

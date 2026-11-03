@@ -1,94 +1,139 @@
-import { Type, type Static } from "typebox";
+import {
+  arr,
+  bool,
+  int,
+  lit,
+  nullable,
+  num,
+  obj,
+  oneOf,
+  opt,
+  str,
+  union,
+  type Schema,
+  type Static,
+} from "@earendil-works/pi-schema";
 import type { JsonValue as RuntimeJsonValue } from "../../.pi/extensions/lib/runtime-values.ts";
 
-export const JsonSchema = Type.Cyclic(
-  {
-    JsonValue: Type.Union([
-      Type.Null(),
-      Type.Boolean(),
-      Type.Number(),
-      Type.String(),
-      Type.Array(Type.Ref("JsonValue")),
-      Type.Record(Type.String(), Type.Ref("JsonValue")),
-    ]),
+// A raw $defs/$ref schema: pi-schema builders cannot express recursion. Numbers are bounded to
+// reject NaN/Infinity as the previous schema library's number check did.
+export const JsonSchema: Schema<RuntimeJsonValue> = {
+  $ref: "#/$defs/JsonValue",
+  $defs: {
+    JsonValue: {
+      anyOf: [
+        { type: "null" },
+        { type: "boolean" },
+        { type: "number", minimum: -Number.MAX_VALUE, maximum: Number.MAX_VALUE },
+        { type: "string" },
+        { type: "array", items: { $ref: "#/$defs/JsonValue" } },
+        { type: "object", additionalProperties: { $ref: "#/$defs/JsonValue" } },
+      ],
+    },
   },
-  "JsonValue",
-);
+};
 
 export type JsonValue = RuntimeJsonValue;
 
-export const CaptureRecordSchema = Type.Object({
-  requestIndex: Type.Integer({ minimum: 1 }),
-  model: Type.String(),
-  systemHash: Type.String(),
-  systemChars: Type.Integer({ minimum: 0 }),
-  toolsHash: Type.String(),
-  toolNames: Type.Array(Type.String()),
-  toolCount: Type.Integer({ minimum: 0 }),
-  toolsChars: Type.Integer({ minimum: 0 }),
-  messageCount: Type.Integer({ minimum: 0 }),
-});
+export const CaptureRecordSchema = obj(
+  {
+    requestIndex: int({ minimum: 1 }),
+    model: str(),
+    systemHash: str(),
+    systemChars: int({ minimum: 0 }),
+    toolsHash: str(),
+    toolNames: arr(str()),
+    toolCount: int({ minimum: 0 }),
+    toolsChars: int({ minimum: 0 }),
+    messageCount: int({ minimum: 0 }),
+  },
+  { open: true },
+);
 
 export type CaptureRecord = Static<typeof CaptureRecordSchema>;
 
-export const TokenUsageSchema = Type.Object({
-  input: Type.Number(),
-  cacheRead: Type.Number(),
-  cacheWrite: Type.Number(),
-  output: Type.Number(),
-});
+export const TokenUsageSchema = obj(
+  {
+    input: num(),
+    cacheRead: num(),
+    cacheWrite: num(),
+    output: num(),
+  },
+  { open: true },
+);
 
 export type TokenUsage = Static<typeof TokenUsageSchema>;
 
-export const SessionUsageSchema = Type.Object({
-  turns: Type.Integer({ minimum: 0 }),
-  perTurn: Type.Array(TokenUsageSchema),
-  tokens: TokenUsageSchema,
-  cost: Type.Number(),
-  finalMessage: Type.String(),
-  assistantText: Type.String(),
-  directToolCalls: Type.Array(Type.String()),
-  inExecToolCalls: Type.Array(Type.String()),
-  toolErrors: Type.Array(Type.String()),
-  discoveryFailures: Type.Integer({ minimum: 0 }),
-});
+export const SessionUsageSchema = obj(
+  {
+    turns: int({ minimum: 0 }),
+    perTurn: arr(TokenUsageSchema),
+    tokens: TokenUsageSchema,
+    cost: num(),
+    finalMessage: str(),
+    assistantText: str(),
+    directToolCalls: arr(str()),
+    inExecToolCalls: arr(str()),
+    toolErrors: arr(str()),
+    discoveryFailures: int({ minimum: 0 }),
+  },
+  { open: true },
+);
 
 export type SessionUsage = Static<typeof SessionUsageSchema>;
 
-export const FileContainsVerdictSchema = Type.Object({
-  kind: Type.Literal("fileContains"),
-  path: Type.String(),
-  substring: Type.String(),
-});
+export const FileContainsVerdictSchema = obj(
+  {
+    kind: lit("fileContains"),
+    path: str(),
+    substring: str(),
+  },
+  { open: true },
+);
 
-export const CommandVerdictSchema = Type.Object({
-  kind: Type.Literal("command"),
-  cmd: Type.String(),
-  expectExitCode: Type.Integer(),
-});
+export const CommandVerdictSchema = obj(
+  {
+    kind: lit("command"),
+    cmd: str(),
+    expectExitCode: int(),
+  },
+  { open: true },
+);
 
-export const TestPatternVerdictSchema = Type.Object({
-  kind: Type.Literal("testPattern"),
-  pattern: Type.String(),
-  minPassing: Type.Integer({ minimum: 1 }),
-});
+export const TestPatternVerdictSchema = obj(
+  {
+    kind: lit("testPattern"),
+    pattern: str(),
+    minPassing: int({ minimum: 1 }),
+  },
+  { open: true },
+);
 
-export const FinalMessageVerdictSchema = Type.Object({
-  kind: Type.Literal("finalMessageMatches"),
-  regex: Type.String(),
-});
+export const FinalMessageVerdictSchema = obj(
+  {
+    kind: lit("finalMessageMatches"),
+    regex: str(),
+  },
+  { open: true },
+);
 
-export const FileUnchangedVerdictSchema = Type.Object({
-  kind: Type.Literal("fileUnchanged"),
-  path: Type.String(),
-});
+export const FileUnchangedVerdictSchema = obj(
+  {
+    kind: lit("fileUnchanged"),
+    path: str(),
+  },
+  { open: true },
+);
 
-export const ToolCalledVerdictSchema = Type.Object({
-  kind: Type.Literal("toolCalled"),
-  name: Type.String(),
-});
+export const ToolCalledVerdictSchema = obj(
+  {
+    kind: lit("toolCalled"),
+    name: str(),
+  },
+  { open: true },
+);
 
-export const VerdictSpecSchema = Type.Union([
+export const VerdictSpecSchema = union([
   FileContainsVerdictSchema,
   CommandVerdictSchema,
   TestPatternVerdictSchema,
@@ -99,107 +144,129 @@ export const VerdictSpecSchema = Type.Union([
 
 export type VerdictSpec = Static<typeof VerdictSpecSchema>;
 
-export const TaskSpecSchema = Type.Object({
-  id: Type.String({ pattern: "^[a-z0-9-]+$" }),
-  prompts: Type.Array(Type.String(), { minItems: 1 }),
-  verdicts: Type.Array(VerdictSpecSchema, { minItems: 1 }),
-  timeoutMs: Type.Optional(Type.Integer({ minimum: 1 })),
-  expectedTurns: Type.Optional(Type.Integer({ minimum: 1 })),
-});
+export const TaskSpecSchema = obj(
+  {
+    id: str({ pattern: "^[a-z0-9-]+$" }),
+    prompts: arr(str(), { minItems: 1 }),
+    verdicts: arr(VerdictSpecSchema, { minItems: 1 }),
+    timeoutMs: opt(int({ minimum: 1 })),
+    expectedTurns: opt(int({ minimum: 1 })),
+  },
+  { open: true },
+);
 
-export const TaskSpecsSchema = Type.Array(TaskSpecSchema);
+export const TaskSpecsSchema = arr(TaskSpecSchema);
 export type TaskSpec = Static<typeof TaskSpecSchema>;
 
-export const VerdictStatusSchema = Type.Union([
-  Type.Literal("pass"),
-  Type.Literal("fail"),
-  Type.Literal("timeout"),
-  Type.Literal("blocked"),
-]);
+export const VerdictStatusSchema = oneOf(["pass", "fail", "timeout", "blocked"]);
 
-export const RunResultSchema = Type.Object({
-  model: Type.String(),
-  taskId: Type.String(),
-  verdict: VerdictStatusSchema,
-  reason: Type.String(),
-  processTimedOut: Type.Optional(Type.Boolean()),
-  turns: Type.Integer({ minimum: 0 }),
-  tokens: TokenUsageSchema,
-  cacheHitRatio: Type.Number(),
-  rewrites: Type.Integer({ minimum: 0 }),
-  wallMs: Type.Number(),
-  cost: Type.Number(),
-  directToolCalls: Type.Array(Type.String()),
-  inExecToolCalls: Type.Array(Type.String()),
-  discoveryFailures: Type.Integer({ minimum: 0 }),
-  finalMessage: Type.String(),
-  requestOnePrefixTokens: Type.Number(),
-  deviations: Type.Array(Type.String()),
-});
+export const RunResultSchema = obj(
+  {
+    model: str(),
+    taskId: str(),
+    verdict: VerdictStatusSchema,
+    reason: str(),
+    processTimedOut: opt(bool()),
+    turns: int({ minimum: 0 }),
+    tokens: TokenUsageSchema,
+    cacheHitRatio: num(),
+    rewrites: int({ minimum: 0 }),
+    wallMs: num(),
+    cost: num(),
+    directToolCalls: arr(str()),
+    inExecToolCalls: arr(str()),
+    discoveryFailures: int({ minimum: 0 }),
+    finalMessage: str(),
+    requestOnePrefixTokens: num(),
+    deviations: arr(str()),
+  },
+  { open: true },
+);
 
 export type RunResult = Static<typeof RunResultSchema>;
 
-export const MatrixModelSchema = Type.Object({
-  model: Type.String(),
-  thinking: Type.String(),
-});
+export const MatrixModelSchema = obj(
+  {
+    model: str(),
+    thinking: str(),
+  },
+  { open: true },
+);
 
-export const MatrixSummarySchema = Type.Object({
-  models: Type.Array(MatrixModelSchema),
-  results: Type.Array(RunResultSchema),
-});
+export const MatrixSummarySchema = obj(
+  {
+    models: arr(MatrixModelSchema),
+    results: arr(RunResultSchema),
+  },
+  { open: true },
+);
 
 export type MatrixSummary = Static<typeof MatrixSummarySchema>;
 
-export const ToolNameDiffSchema = Type.Object({
-  requestIndex: Type.Integer({ minimum: 1 }),
-  systemChanged: Type.Boolean(),
-  toolsChanged: Type.Boolean(),
-  added: Type.Array(Type.String()),
-  removed: Type.Array(Type.String()),
-  orderChanged: Type.Boolean(),
-});
+export const ToolNameDiffSchema = obj(
+  {
+    requestIndex: int({ minimum: 1 }),
+    systemChanged: bool(),
+    toolsChanged: bool(),
+    added: arr(str()),
+    removed: arr(str()),
+    orderChanged: bool(),
+  },
+  { open: true },
+);
 
 export type ToolNameDiff = Static<typeof ToolNameDiffSchema>;
 
-export const TokenMeasurementSchema = Type.Object({
-  name: Type.String(),
-  chars: Type.Integer({ minimum: 0 }),
-  tokens: Type.Number(),
-  method: Type.String(),
-});
+export const TokenMeasurementSchema = obj(
+  {
+    name: str(),
+    chars: int({ minimum: 0 }),
+    tokens: num(),
+    method: str(),
+  },
+  { open: true },
+);
 
 export type TokenMeasurement = Static<typeof TokenMeasurementSchema>;
 
-export const AuditReportSchema = Type.Object({
-  model: Type.String(),
-  thinking: Type.String(),
-  cwd: Type.String(),
-  requests: Type.Array(CaptureRecordSchema),
-  rewrites: Type.Integer({ minimum: 0 }),
-  changes: Type.Array(ToolNameDiffSchema),
-  attribution: Type.Array(
-    Type.Object({
-      requestIndex: Type.Integer({ minimum: 1 }),
-      state: Type.String(),
-      firstDivergence: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
-      systemRegions: Type.Array(Type.String()),
-    }),
-  ),
-  systemSections: Type.Array(TokenMeasurementSchema),
-  tools: Type.Array(TokenMeasurementSchema),
-  prefixTokens: Type.Optional(
-    Type.Object({
-      total: Type.Number(),
-      system: Type.Number(),
-      tools: Type.Number(),
-      method: Type.String(),
-    }),
-  ),
-  usage: SessionUsageSchema,
-  wallMs: Type.Number(),
-  toolNames: Type.Array(Type.String()),
-  notes: Type.Array(Type.String()),
-});
+export const AuditReportSchema = obj(
+  {
+    model: str(),
+    thinking: str(),
+    cwd: str(),
+    requests: arr(CaptureRecordSchema),
+    rewrites: int({ minimum: 0 }),
+    changes: arr(ToolNameDiffSchema),
+    attribution: arr(
+      obj(
+        {
+          requestIndex: int({ minimum: 1 }),
+          state: str(),
+          firstDivergence: nullable(int({ minimum: 0 })),
+          systemRegions: arr(str()),
+        },
+        { open: true },
+      ),
+    ),
+    systemSections: arr(TokenMeasurementSchema),
+    tools: arr(TokenMeasurementSchema),
+    prefixTokens: opt(
+      obj(
+        {
+          total: num(),
+          system: num(),
+          tools: num(),
+          method: str(),
+        },
+        { open: true },
+      ),
+    ),
+    usage: SessionUsageSchema,
+    wallMs: num(),
+    toolNames: arr(str()),
+    notes: arr(str()),
+  },
+  { open: true },
+);
 
 export type AuditReport = Static<typeof AuditReportSchema>;

@@ -1,5 +1,5 @@
 import { stripVTControlCharacters } from "node:util";
-import { Value } from "typebox/value";
+import { compile } from "@earendil-works/pi-schema";
 import { isString, reinterpretHostValue, type RuntimeValue } from "./lib/runtime-values.ts";
 import {
   InteractiveMode,
@@ -177,9 +177,9 @@ function setCacheWarmingSource(source: CacheWarmingSource): void {
 }
 
 function currentCacheWarming(): CacheWarmingInfo | undefined {
-  const source = reinterpretHostValue<{ [CACHE_WARMING_SOURCE_KEY]?: CacheWarmingSource }>(
-    globalThis,
-  )[CACHE_WARMING_SOURCE_KEY];
+  const source = reinterpretHostValue<{
+    [CACHE_WARMING_SOURCE_KEY]?: CacheWarmingSource;
+  }>(globalThis)[CACHE_WARMING_SOURCE_KEY];
   if (!source) return undefined;
   return {
     mode: source.settingsManager.getCacheWarmingMode(),
@@ -266,7 +266,9 @@ export function createTabController(options: {
       if (!owns()) return;
       if (cache.has(viewKey(id, expanded, variant))) return;
       const message = error instanceof Error ? error.message : String(error);
-      options.paint(options.failure(id, message), { preserveScroll: background });
+      options.paint(options.failure(id, message), {
+        preserveScroll: background,
+      });
     };
     try {
       const body = options.load(id, expanded, variant);
@@ -440,15 +442,20 @@ export function buildStatusReport(
     title: "Status",
     sections: [
       { title: "Session Info", rows: sessionInfoRows(sessionInfoInput(ctx)) },
-      { title: "Environment", rows: environmentRows(ctx, thinkingLevel, mcpLabel).map(reportRow) },
+      {
+        title: "Environment",
+        rows: environmentRows(ctx, thinkingLevel, mcpLabel).map(reportRow),
+      },
     ],
   };
 }
 
+const isReportFrame = compile(ReportFrameSchema).check;
+
 /** Sends one report frame; refuses a frame the documented schema would reject. */
 function publishReport(ui: Pick<ExtensionContext["ui"], "setStatus">, frame: ReportFrame): void {
   const kind = frame.kind;
-  if (!Value.Check(ReportFrameSchema, frame)) {
+  if (!isReportFrame(frame)) {
     throw new Error(`status-commands produced an invalid ${kind} report frame`);
   }
   ui.setStatus(REPORT_STATUS_KEY, JSON.stringify(frame));
@@ -740,7 +747,11 @@ function loadTabBody(
   };
 }
 
-type PreferencesFocus = { section?: string; focusId?: string; openSubmenu?: boolean };
+type PreferencesFocus = {
+  section?: string;
+  focusId?: string;
+  openSubmenu?: boolean;
+};
 
 const openDialogs = new Set<() => void>();
 
@@ -831,7 +842,11 @@ async function showTabOnce(
       const view = statsViewOf("");
       const body = await statsBody({
         cwd: ctx.cwd,
-        view: { period: view.period, scope: view.scope, expanded: initialExpanded },
+        view: {
+          period: view.period,
+          scope: view.scope,
+          expanded: initialExpanded,
+        },
         priceLookup: registryPriceLookup(ctx.modelRegistry),
         modelNames: registryModelNames(ctx.modelRegistry),
       });
@@ -1113,11 +1128,17 @@ async function showTabOnce(
           return;
         }
         if (active === "stats" && data === "r") {
-          changeStatsView({ ...statsView, period: nextPeriod(statsView.period) });
+          changeStatsView({
+            ...statsView,
+            period: nextPeriod(statsView.period),
+          });
           return;
         }
         if (active === "stats" && data === "p") {
-          changeStatsView({ ...statsView, scope: toggleScope(statsView.scope) });
+          changeStatsView({
+            ...statsView,
+            scope: toggleScope(statsView.scope),
+          });
           return;
         }
         // A panel submenu, such as the model picker, needs every key it can
@@ -1352,7 +1373,9 @@ export default function statusCommands(pi: ExtensionAPI): void {
 type SessionCommandHost = {
   handleSessionCommand: () => void;
   run: () => Promise<void>;
-  session: Pick<AgentSession, "cacheWarmingStatus"> & { prompt: (text: string) => Promise<void> };
+  session: Pick<AgentSession, "cacheWarmingStatus"> & {
+    prompt: (text: string) => Promise<void>;
+  };
   settingsManager: { getCacheWarmingMode(): CacheWarmingMode };
   __chocoPiSessionCommandApplied?: boolean;
 };

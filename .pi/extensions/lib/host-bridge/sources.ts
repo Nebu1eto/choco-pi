@@ -1,120 +1,153 @@
-import { Type, type Static } from "typebox";
-import { Value } from "typebox/value";
+import { arr, bool, compile, num, obj, opt, str, type Static } from "@earendil-works/pi-schema";
 
-import type { RuntimeValue } from "../runtime-values.ts";
+import { isJsonRecord, isString, type RuntimeValue } from "../runtime-values.ts";
 
 /**
  * Structural access to sibling-package runtimes. Nothing here imports another
- * package: each process-global slot is validated with typebox before use, so a
+ * package: each process-global slot is validated before use (pi-schema for data,
+ * predicates for the function members JSON Schema cannot describe), so a
  * missing or older package degrades to "unavailable" instead of a type lie.
  */
 export const SUBAGENT_REGISTRY_SYMBOL = Symbol.for("pi-subagents:manager");
 export const SHELL_MANAGER_SYMBOL = Symbol.for("choco-pi-shells:manager");
 export const GOAL_RUNTIME_SYMBOL = Symbol.for("choco-pi-goal:runtime");
 
-const ModelRefSchema = Type.Object({ provider: Type.String(), id: Type.String() });
+const ModelRefSchema = obj({ provider: str(), id: str() }, { open: true });
 
 /** The AgentRecord fields the bridge reads (choco-pi-subagents/src/types.ts). */
-export const AgentRecordSchema = Type.Object({
-  id: Type.String(),
-  type: Type.String(),
-  description: Type.String(),
-  status: Type.String(),
-  toolUses: Type.Number(),
-  startedAt: Type.Number(),
-  completedAt: Type.Optional(Type.Number()),
-  result: Type.Optional(Type.String()),
-  toolCallId: Type.Optional(Type.String()),
-  outputFile: Type.Optional(Type.String()),
-  parentAgentId: Type.Optional(Type.String()),
-  isBackground: Type.Optional(Type.Boolean()),
-  rootSessionId: Type.Optional(Type.String()),
-  spawnCwd: Type.Optional(Type.String()),
-  spawnModel: Type.Optional(ModelRefSchema),
-  worktree: Type.Optional(Type.Object({ workPath: Type.String() })),
-  runOptions: Type.Optional(
-    Type.Object({ cwd: Type.Optional(Type.String()), maxTurns: Type.Optional(Type.Number()) }),
-  ),
-  invocation: Type.Optional(Type.Object({ maxTurns: Type.Optional(Type.Number()) })),
-  lifetimeUsage: Type.Object({
-    input: Type.Number(),
-    output: Type.Number(),
-    cacheWrite: Type.Number(),
-  }),
-});
+export const AgentRecordSchema = obj(
+  {
+    id: str(),
+    type: str(),
+    description: str(),
+    status: str(),
+    toolUses: num(),
+    startedAt: num(),
+    completedAt: opt(num()),
+    result: opt(str()),
+    toolCallId: opt(str()),
+    outputFile: opt(str()),
+    parentAgentId: opt(str()),
+    isBackground: opt(bool()),
+    rootSessionId: opt(str()),
+    spawnCwd: opt(str()),
+    spawnModel: opt(ModelRefSchema),
+    worktree: opt(obj({ workPath: str() }, { open: true })),
+    runOptions: opt(obj({ cwd: opt(str()), maxTurns: opt(num()) }, { open: true })),
+    invocation: opt(obj({ maxTurns: opt(num()) }, { open: true })),
+    lifetimeUsage: obj({ input: num(), output: num(), cacheWrite: num() }, { open: true }),
+  },
+  { open: true },
+);
 export type AgentRecordView = Static<typeof AgentRecordSchema>;
+const isAgentRecord = compile(AgentRecordSchema).check;
 
-const AgentSessionModelSchema = Type.Object({
-  session: Type.Object({ model: ModelRefSchema }),
-});
+const isAgentSessionModel = compile(
+  obj({ session: obj({ model: ModelRefSchema }, { open: true }) }, { open: true }),
+).check;
 
-const SubagentRegistrySchema = Type.Object({
-  getAllRecords: Type.Function([], Type.Array(Type.Unknown())),
-  stop: Type.Function([Type.String()], Type.Boolean()),
-  isChildSessionContext: Type.Function([], Type.Boolean()),
-  isChildSessionId: Type.Function([Type.String()], Type.Boolean()),
-});
-type SubagentRegistry = Static<typeof SubagentRegistrySchema>;
+interface SubagentRegistry {
+  getAllRecords(): RuntimeValue[];
+  stop(id: string): boolean;
+  isChildSessionContext(): boolean;
+  isChildSessionId(id: string): boolean;
+}
 
-export const ShellResultSchema = Type.Object({
-  shellId: Type.String(),
-  ownerId: Type.String(),
-  name: Type.Optional(Type.String()),
-  command: Type.String(),
-  cwd: Type.String(),
-  state: Type.String(),
-  pid: Type.Optional(Type.Number()),
-  exitCode: Type.Optional(Type.Number()),
-  startedAt: Type.Number(),
-  endedAt: Type.Optional(Type.Number()),
-});
+/** True when every named member of `value` is a function (arguments and results are not checked). */
+function hasFunctionMembers(value: RuntimeValue, names: readonly string[]): boolean {
+  return isJsonRecord(value) && names.every((name) => value[name] instanceof Function);
+}
+
+function isSubagentRegistry(value: RuntimeValue): value is SubagentRegistry {
+  return hasFunctionMembers(value, [
+    "getAllRecords",
+    "stop",
+    "isChildSessionContext",
+    "isChildSessionId",
+  ]);
+}
+
+/** Shell record as the shell manager reports it. */
+export const ShellResultSchema = obj(
+  {
+    shellId: str(),
+    ownerId: str(),
+    name: opt(str()),
+    command: str(),
+    cwd: str(),
+    state: str(),
+    pid: opt(num()),
+    exitCode: opt(num()),
+    startedAt: num(),
+    endedAt: opt(num()),
+  },
+  { open: true },
+);
 export type ShellResultView = Static<typeof ShellResultSchema>;
 
-const ShellListResultSchema = Type.Object({ shells: Type.Array(ShellResultSchema) });
-const ShellReadResultSchema = Type.Object({
-  stdout: Type.Object({ endOffset: Type.Number() }),
-  stderr: Type.Object({ endOffset: Type.Number() }),
-});
+const isShellListResult = compile(obj({ shells: arr(ShellResultSchema) }, { open: true })).check;
+const isShellReadResult = compile(
+  obj(
+    {
+      stdout: obj({ endOffset: num() }, { open: true }),
+      stderr: obj({ endOffset: num() }, { open: true }),
+    },
+    { open: true },
+  ),
+).check;
 
-const ShellListInputSchema = Type.Object({ requesterId: Type.String(), isAdmin: Type.Boolean() });
-const ShellTargetInputSchema = Type.Object({
-  requesterId: Type.String(),
-  isAdmin: Type.Boolean(),
-  shellId: Type.String(),
-  maxBytes: Type.Optional(Type.Number()),
-});
+interface ShellListInput {
+  requesterId: string;
+  isAdmin: boolean;
+}
+interface ShellTargetInput extends ShellListInput {
+  shellId: string;
+  maxBytes?: number;
+}
 
-const ShellManagerSchema = Type.Object({
-  list: Type.Function([ShellListInputSchema], Type.Unknown()),
-  read: Type.Function([ShellTargetInputSchema], Type.Unknown()),
-  stop: Type.Function([ShellTargetInputSchema], Type.Unknown()),
-  toolCallIdOf: Type.Function([Type.String()], Type.Union([Type.String(), Type.Null()])),
-});
-type ShellManager = Static<typeof ShellManagerSchema>;
+interface ShellManager {
+  list(input: ShellListInput): RuntimeValue;
+  read(input: ShellTargetInput): RuntimeValue;
+  stop(input: ShellTargetInput): RuntimeValue;
+  toolCallIdOf(shellId: string): string | null;
+}
 
-const GoalCompleteResultSchema = Type.Object({ ok: Type.Boolean(), message: Type.String() });
+function isShellManager(value: RuntimeValue): value is ShellManager {
+  return hasFunctionMembers(value, ["list", "read", "stop", "toolCallIdOf"]);
+}
 
-const GoalRuntimeSchema = Type.Object({
-  owner: Type.String(),
-  getGoal: Type.Function([], Type.Unknown()),
-  completeGoal: Type.Function([Type.Unknown()], Type.Unknown()),
-});
-type GoalRuntime = Static<typeof GoalRuntimeSchema>;
+const isGoalCompleteResult = compile(obj({ ok: bool(), message: str() }, { open: true })).check;
+
+interface GoalRuntime {
+  owner: string;
+  getGoal(): RuntimeValue;
+  completeGoal(ctx: RuntimeValue): RuntimeValue;
+}
+
+function isGoalRuntime(value: RuntimeValue): value is GoalRuntime {
+  return (
+    hasFunctionMembers(value, ["getGoal", "completeGoal"]) &&
+    isJsonRecord(value) &&
+    isString(value.owner)
+  );
+}
 
 function globalSlot(key: symbol): RuntimeValue {
   // SAFETY: Process-global symbol slots are published by sibling packages; the value is validated before use.
-  const slots = globalThis as typeof globalThis & { [slot: symbol]: RuntimeValue };
+  const slots = globalThis as typeof globalThis & {
+    [slot: symbol]: RuntimeValue;
+  };
   return slots[key];
 }
 
 function subagentRegistry(): SubagentRegistry | undefined {
   const slot = globalSlot(SUBAGENT_REGISTRY_SYMBOL);
-  return Value.Check(SubagentRegistrySchema, slot) ? slot : undefined;
+  return isSubagentRegistry(slot) ? slot : undefined;
 }
 
 function shellManager(): ShellManager | undefined {
   const slot = globalSlot(SHELL_MANAGER_SYMBOL);
-  return Value.Check(ShellManagerSchema, slot) ? slot : undefined;
+  return isShellManager(slot) ? slot : undefined;
 }
 
 /** Live view of the subagent registry, narrowed to records owned by `sessionId`. */
@@ -165,7 +198,7 @@ function ownedRecords(
 ): AgentRecordView[] {
   const owned: AgentRecordView[] = [];
   for (const raw of rawRecords(registry)) {
-    if (!Value.Check(AgentRecordSchema, raw)) continue;
+    if (!isAgentRecord(raw)) continue;
     // rootSessionId names the owning root session; a record of another root session is not ours.
     if (raw.rootSessionId !== undefined && raw.rootSessionId !== sessionId) continue;
     if (!owns(raw)) continue;
@@ -194,8 +227,8 @@ function createSubagentSource(
     record: (id) => ownedRecords(registry, sessionId, owns).find((record) => record.id === id),
     sessionModel: (id) => {
       for (const raw of rawRecords(registry)) {
-        if (!Value.Check(AgentRecordSchema, raw) || raw.id !== id) continue;
-        if (!Value.Check(AgentSessionModelSchema, raw)) return undefined;
+        if (!isAgentRecord(raw) || raw.id !== id) continue;
+        if (!isAgentSessionModel(raw)) return undefined;
         return `${raw.session.model.provider}/${raw.session.model.id}`;
       }
       return undefined;
@@ -223,15 +256,20 @@ function createShellSource(sessionId: string): ShellSource {
   }
   const owned = (): ShellResultView[] => {
     const listed = manager.list({ requesterId: sessionId, isAdmin: true });
-    if (!Value.Check(ShellListResultSchema, listed)) return [];
+    if (!isShellListResult(listed)) return [];
     return listed.shells.filter((shell) => shell.ownerId === sessionId);
   };
   return {
     available: true,
     shells: owned,
     bytes: (shellId) => {
-      const read = manager.read({ requesterId: sessionId, isAdmin: true, shellId, maxBytes: 1 });
-      if (!Value.Check(ShellReadResultSchema, read)) return 0;
+      const read = manager.read({
+        requesterId: sessionId,
+        isAdmin: true,
+        shellId,
+        maxBytes: 1,
+      });
+      if (!isShellReadResult(read)) return 0;
       return read.stdout.endOffset + read.stderr.endOffset;
     },
     toolCallIdOf: (shellId) => manager.toolCallIdOf(shellId),
@@ -248,7 +286,7 @@ function goalRuntime(sessionId: string): GoalRuntime | undefined {
   const slot = globalSlot(GOAL_RUNTIME_SYMBOL);
   if (!(slot instanceof Map)) return undefined;
   const runtime: RuntimeValue = slot.get(sessionId);
-  if (!Value.Check(GoalRuntimeSchema, runtime)) return undefined;
+  if (!isGoalRuntime(runtime)) return undefined;
   // The map key is publisher-supplied; trust only an entry that names the same owner.
   return runtime.owner === sessionId ? runtime : undefined;
 }
@@ -261,7 +299,7 @@ function createGoalSource(sessionId: string): GoalSource {
     complete: (ctx) => {
       if (runtime === undefined) throw new Error("Goal runtime is not available for this session");
       const result = runtime.completeGoal(ctx);
-      if (!Value.Check(GoalCompleteResultSchema, result)) {
+      if (!isGoalCompleteResult(result)) {
         throw new Error("Goal runtime returned an invalid completion result");
       }
       if (!result.ok) throw new Error(result.message);

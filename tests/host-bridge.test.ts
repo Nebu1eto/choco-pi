@@ -2,8 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-import type { TObject } from "typebox";
-import { Value } from "typebox/value";
+import { compile, type Schema } from "@earendil-works/pi-schema";
 
 import {
   boundSummary,
@@ -380,11 +379,23 @@ function subagentEntryData(event: string, overrides: Record<string, RuntimeValue
 
 const validEntries = {
   subagent: subagentEntryData("started", {}, ["a1"]),
-  shell: { schema: 1, at: 1, event: "started", shell: shellPayload("s1"), live: ["s1"] },
+  shell: {
+    schema: 1,
+    at: 1,
+    event: "started",
+    shell: shellPayload("s1"),
+    live: ["s1"],
+  },
   goal: {
     schema: 1,
     at: 1,
-    goal: { objective: "o", status: "active", tokenBudget: null, tokensUsed: 0, activeSeconds: 0 },
+    goal: {
+      objective: "o",
+      status: "active",
+      tokenBudget: null,
+      tokensUsed: 0,
+      activeSeconds: 0,
+    },
   },
   workflow: {
     schema: 1,
@@ -411,13 +422,18 @@ const validEntries = {
   },
 };
 
-const schemas = {
-  subagent: SubagentEntrySchema,
-  shell: ShellEntrySchema,
-  goal: GoalEntrySchema,
-  workflow: WorkflowEntrySchema,
-  frame: ProgressFrameSchema,
+const validators = {
+  subagent: compile(SubagentEntrySchema),
+  shell: compile(ShellEntrySchema),
+  goal: compile(GoalEntrySchema),
+  workflow: compile(WorkflowEntrySchema),
+  frame: compile(ProgressFrameSchema),
 };
+const isSubagentEntry = validators.subagent.check;
+const isShellEntry = validators.shell.check;
+const isGoalEntry = validators.goal.check;
+const isWorkflowEntry = validators.workflow.check;
+const isProgressFrame = validators.frame.check;
 
 /** Every object path in a sample, so each field is proven required and closed. */
 function objectPaths(value: RuntimeValue, path: string[] = []): string[][] {
@@ -450,16 +466,24 @@ function cloneWith(
 describe("host-bridge schema (§6.4, frozen)", () => {
   for (const name of ["subagent", "shell", "goal", "workflow", "frame"] as const) {
     const sample = validEntries[name];
-    const schema = schemas[name];
+    const validator = validators[name];
     it(`${name}: accepts the canonical sample`, () => {
-      assert.deepEqual([...Value.Errors(schema, sample)], []);
+      assert.deepEqual(validator.errors(sample), []);
     });
     it(`${name}: every field is required and no field may be added`, () => {
       for (const path of objectPaths(sample)) {
         const extended = cloneWith(sample, path, (target) => {
           target.extraField = 1;
         });
-        assert.equal(Value.Check(schema, extended), false, `extra field at ${path.join(".")}`);
+        assert.equal(validator.check(extended), false, `extra field at ${path.join(".")}`);
+        // Error shape: JSON Pointer path, keyword, message (replaces TypeBox's instancePath errors).
+        const errors = validator.errors(extended);
+        assert.ok(errors.length > 0, `extra field errors at ${path.join(".")}`);
+        for (const error of errors) {
+          assert.equal(error.path.length === 0 || error.path.startsWith("/"), true);
+          assert.ok(error.keyword.length > 0);
+          assert.ok(error.message.length > 0);
+        }
         const node = path.reduce<RuntimeValue>(
           (current, key) =>
             current instanceof Object
@@ -472,14 +496,14 @@ describe("host-bridge schema (§6.4, frozen)", () => {
           const removed = cloneWith(sample, path, (target) => {
             Reflect.deleteProperty(target, key);
           });
-          assert.equal(Value.Check(schema, removed), false, `missing ${[...path, key].join(".")}`);
+          assert.equal(validator.check(removed), false, `missing ${[...path, key].join(".")}`);
         }
       }
     });
   }
 
   it("pins the exact §6.4 field set of every closed object", () => {
-    const frozen: Array<[string, TObject, string[]]> = [
+    const frozen: Array<[string, Schema, string[]]> = [
       ["subagent entry", SubagentEntrySchema, ["schema", "at", "event", "agent", "live"]],
       [
         "subagent agent",
@@ -533,8 +557,14 @@ describe("host-bridge schema (§6.4, frozen)", () => {
       ["progress shell", ProgressShellSchema, ["id", "status", "bytes"]],
     ];
     for (const [name, schema, keys] of frozen) {
-      assert.deepEqual(Object.keys(schema.properties), keys, name);
-      assert.deepEqual(schema.required, keys, `${name} required`);
+      const properties = Object.getOwnPropertyDescriptor(schema, "properties")?.value;
+      assert.ok(isJsonRecord(properties), `${name} properties`);
+      assert.deepEqual(Object.keys(properties), keys, name);
+      assert.deepEqual(
+        Object.getOwnPropertyDescriptor(schema, "required")?.value,
+        keys,
+        `${name} required`,
+      );
       assert.equal(
         Object.getOwnPropertyDescriptor(schema, "additionalProperties")?.value,
         false,
@@ -544,30 +574,18 @@ describe("host-bridge schema (§6.4, frozen)", () => {
   });
 
   it("subagent event/status unions include lost and reject unknown values", () => {
-    assert.ok(
-      Value.Check(
-        SubagentEntrySchema,
-        subagentEntryData("lost", { status: "lost", finishedAt: 2 }, []),
-      ),
-    );
-    assert.ok(Value.Check(SubagentEntrySchema, subagentEntryData("resumed", {}, ["a1"])));
-    assert.equal(
-      Value.Check(SubagentEntrySchema, subagentEntryData("steered", { status: "steered" }, [])),
-      false,
-    );
-    assert.equal(Value.Check(SubagentEntrySchema, subagentEntryData("revived", {}, [])), false);
-    assert.equal(
-      Value.Check(SubagentEntrySchema, { ...subagentEntryData("started", {}, []), schema: 2 }),
-      false,
-    );
+    assert.ok(isSubagentEntry(subagentEntryData("lost", { status: "lost", finishedAt: 2 }, [])));
+    assert.ok(isSubagentEntry(subagentEntryData("resumed", {}, ["a1"])));
+    assert.equal(isSubagentEntry(subagentEntryData("steered", { status: "steered" }, [])), false);
+    assert.equal(isSubagentEntry(subagentEntryData("revived", {}, [])), false);
+    assert.equal(isSubagentEntry({ ...subagentEntryData("started", {}, []), schema: 2 }), false);
   });
 
   it("summary is bounded to 200 code points", () => {
     const ascii201 = "x".repeat(201);
     const astral200 = "\u{1F600}".repeat(200);
     assert.equal(
-      Value.Check(
-        SubagentEntrySchema,
+      isSubagentEntry(
         subagentEntryData(
           "completed",
           { status: "completed", finishedAt: 2, summary: ascii201 },
@@ -577,8 +595,7 @@ describe("host-bridge schema (§6.4, frozen)", () => {
       false,
     );
     assert.ok(
-      Value.Check(
-        SubagentEntrySchema,
+      isSubagentEntry(
         subagentEntryData(
           "completed",
           { status: "completed", finishedAt: 2, summary: astral200 },
@@ -624,11 +641,10 @@ describe("host-bridge durable entries", () => {
 
     const entries = pi.ofType(SUBAGENT_ENTRY_TYPE);
     assert.equal(entries.length, 3);
-    for (const entry of entries) assert.ok(Value.Check(SubagentEntrySchema, entry));
+    for (const entry of entries) assert.ok(isSubagentEntry(entry));
     assert.deepEqual(
       entries.map(
-        (entry) =>
-          Value.Check(SubagentEntrySchema, entry) && [entry.event, entry.agent.status, entry.live],
+        (entry) => isSubagentEntry(entry) && [entry.event, entry.agent.status, entry.live],
       ),
       [
         ["created", "running", ["a1"]],
@@ -637,7 +653,7 @@ describe("host-bridge durable entries", () => {
       ],
     );
     const last = entries[2];
-    assert.ok(Value.Check(SubagentEntrySchema, last));
+    assert.ok(isSubagentEntry(last));
     assert.equal(last.agent.cwd, "/wt");
     assert.equal(last.agent.model, "anthropic/claude");
     assert.equal(last.agent.toolCallId, "call-a1");
@@ -649,9 +665,14 @@ describe("host-bridge durable entries", () => {
     new FakeRegistry().install();
     const { pi } = createBridge();
     pi.start(fakeContext("root"));
-    pi.emit("subagents:failed", { id: "gone", type: "general", status: "error", summary: "boom" });
+    pi.emit("subagents:failed", {
+      id: "gone",
+      type: "general",
+      status: "error",
+      summary: "boom",
+    });
     const [entry] = pi.ofType(SUBAGENT_ENTRY_TYPE);
-    assert.ok(Value.Check(SubagentEntrySchema, entry));
+    assert.ok(isSubagentEntry(entry));
     assert.equal(entry.agent.status, "failed");
     assert.equal(entry.agent.summary, "boom");
     assert.equal(entry.agent.finishedAt, 10_000);
@@ -669,7 +690,7 @@ describe("host-bridge durable entries", () => {
     pi.emit("subagents:steered", { id: "a1", message: "y" });
     const statuses = pi
       .ofType(SUBAGENT_ENTRY_TYPE)
-      .map((entry) => Value.Check(SubagentEntrySchema, entry) && [entry.event, entry.agent.status]);
+      .map((entry) => isSubagentEntry(entry) && [entry.event, entry.agent.status]);
     assert.deepEqual(statuses, [
       ["steered", "running"],
       ["steered", "completed"],
@@ -686,9 +707,9 @@ describe("host-bridge durable entries", () => {
     pi.emit("shells:exited", shellPayload("never-started"));
     const entries = pi.ofType(SHELL_ENTRY_TYPE);
     assert.equal(entries.length, 2);
-    for (const entry of entries) assert.ok(Value.Check(ShellEntrySchema, entry));
+    for (const entry of entries) assert.ok(isShellEntry(entry));
     assert.deepEqual(
-      entries.map((entry) => Value.Check(ShellEntrySchema, entry) && [entry.event, entry.live]),
+      entries.map((entry) => isShellEntry(entry) && [entry.event, entry.live]),
       [
         ["started", ["s1"]],
         ["exited", []],
@@ -704,8 +725,8 @@ describe("host-bridge durable entries", () => {
     pi.emit("goal:changed", { objective: "bad" });
     const goals = pi.ofType(GOAL_ENTRY_TYPE);
     assert.equal(goals.length, 2);
-    assert.ok(goals.every((entry) => Value.Check(GoalEntrySchema, entry)));
-    assert.ok(Value.Check(GoalEntrySchema, goals[0]));
+    assert.ok(goals.every((entry) => isGoalEntry(entry)));
+    assert.ok(isGoalEntry(goals[0]));
     assert.deepEqual(goals[0].goal, {
       objective: "ship",
       status: "active",
@@ -713,7 +734,7 @@ describe("host-bridge durable entries", () => {
       tokensUsed: 10,
       activeSeconds: 4,
     });
-    assert.ok(Value.Check(GoalEntrySchema, goals[1]));
+    assert.ok(isGoalEntry(goals[1]));
     assert.equal(goals[1].goal, null);
   });
 
@@ -728,7 +749,7 @@ describe("host-bridge durable entries", () => {
       pi
         .ofType(GOAL_ENTRY_TYPE)
         .map((entry) =>
-          Value.Check(GoalEntrySchema, entry) && entry.goal !== null
+          isGoalEntry(entry) && entry.goal !== null
             ? [entry.goal.status, entry.goal.tokensUsed]
             : null,
         );
@@ -769,10 +790,13 @@ describe("host-bridge durable entries", () => {
     const { pi, clock } = createBridge();
     pi.start(fakeContext("root"));
     pi.emit("goal:changed", threadGoal());
-    pi.emit("goal:changed", { ...threadGoal(), usage: { tokensUsed: 99, activeSeconds: 9 } });
+    pi.emit("goal:changed", {
+      ...threadGoal(),
+      usage: { tokensUsed: 99, activeSeconds: 9 },
+    });
     pi.shutdown();
     const last = pi.ofType(GOAL_ENTRY_TYPE).at(-1);
-    assert.ok(Value.Check(GoalEntrySchema, last) && last.goal !== null);
+    assert.ok(isGoalEntry(last) && last.goal !== null);
     assert.equal(last.goal.tokensUsed, 99);
     assert.equal(clock.timers.size, 0);
   });
@@ -787,14 +811,18 @@ describe("host-bridge durable entries", () => {
       steps: [{ agentId: "a1" }, {}],
     };
     pi.emit("subagents:workflow_created", workflow);
-    pi.emit("subagents:workflow_completed", { ...workflow, status: "completed" });
-    pi.emit("subagents:workflow_completed", { ...workflow, status: "cancelled" });
+    pi.emit("subagents:workflow_completed", {
+      ...workflow,
+      status: "completed",
+    });
+    pi.emit("subagents:workflow_completed", {
+      ...workflow,
+      status: "cancelled",
+    });
     const entries = pi.ofType(WORKFLOW_ENTRY_TYPE);
-    assert.ok(entries.every((entry) => Value.Check(WorkflowEntrySchema, entry)));
+    assert.ok(entries.every((entry) => isWorkflowEntry(entry)));
     assert.deepEqual(
-      entries.map(
-        (entry) => Value.Check(WorkflowEntrySchema, entry) && [entry.event, entry.workflow],
-      ),
+      entries.map((entry) => isWorkflowEntry(entry) && [entry.event, entry.workflow]),
       [
         ["created", { id: "w1", title: "Plan", agentIds: ["a1"] }],
         ["completed", { id: "w1", title: "Plan", agentIds: ["a1"] }],
@@ -854,7 +882,7 @@ describe("host-bridge progress frames", () => {
     clock.advance(1);
     assert.equal(ctx.statuses.length, 1);
     const frame: RuntimeValue = JSON.parse(ctx.statuses[0] ?? "null");
-    assert.ok(Value.Check(ProgressFrameSchema, frame));
+    assert.ok(isProgressFrame(frame));
     assert.deepEqual(frame.subagents, [
       {
         id: "a1",
@@ -884,7 +912,7 @@ describe("host-bridge progress frames", () => {
     clock.advance(FRAME_INTERVAL_MS);
     assert.equal(ctx.statuses.length, 3);
     const last: RuntimeValue = JSON.parse(ctx.statuses[2] ?? "null");
-    assert.ok(Value.Check(ProgressFrameSchema, last));
+    assert.ok(isProgressFrame(last));
     assert.deepEqual([last.subagents, last.shells], [[], []]);
     assert.equal(clock.timers.size, 0);
   });
@@ -931,7 +959,7 @@ describe("host-bridge progress frames", () => {
       .ofType(SUBAGENT_ENTRY_TYPE)
       .map(
         (entry) =>
-          Value.Check(SubagentEntrySchema, entry) && [
+          isSubagentEntry(entry) && [
             entry.event,
             entry.agent.id,
             entry.agent.parentId,
@@ -968,7 +996,7 @@ describe("/host-bridge snapshot", () => {
     pi.emit("subagents:started", lifecyclePayload(next));
 
     const entry = pi.ofType(SUBAGENT_ENTRY_TYPE).at(-1);
-    assert.ok(Value.Check(SubagentEntrySchema, entry));
+    assert.ok(isSubagentEntry(entry));
     assert.equal(entry.agent.id, "q");
     assert.deepEqual(entry.live, ["p", "q"]);
   });
@@ -996,7 +1024,7 @@ describe("/host-bridge snapshot", () => {
       [GOAL_ENTRY_TYPE, SUBAGENT_ENTRY_TYPE, SUBAGENT_ENTRY_TYPE],
     );
     const terminal = snapshotEntries[1]?.data;
-    assert.ok(Value.Check(SubagentEntrySchema, terminal));
+    assert.ok(isSubagentEntry(terminal));
     assert.equal(terminal.event, "completed");
     assert.equal(terminal.agent.id, "c");
     assert.equal(terminal.agent.status, "completed");
@@ -1004,7 +1032,7 @@ describe("/host-bridge snapshot", () => {
     assert.equal(terminal.agent.summary, "nested child complete");
     assert.deepEqual(terminal.live, ["p"]);
     const live = snapshotEntries[2]?.data;
-    assert.ok(Value.Check(SubagentEntrySchema, live));
+    assert.ok(isSubagentEntry(live));
     assert.equal(live.event, "started");
     assert.equal(live.agent.id, "p");
 
@@ -1015,9 +1043,7 @@ describe("/host-bridge snapshot", () => {
         .ofType(SUBAGENT_ENTRY_TYPE)
         .filter(
           (entry) =>
-            Value.Check(SubagentEntrySchema, entry) &&
-            entry.agent.id === "c" &&
-            entry.event === "completed",
+            isSubagentEntry(entry) && entry.agent.id === "c" && entry.event === "completed",
         ).length,
       1,
     );
@@ -1034,8 +1060,12 @@ describe("/host-bridge snapshot", () => {
       pi.entries.map((entry) => entry.customType),
       [GOAL_ENTRY_TYPE],
     );
-    assert.ok(Value.Check(GoalEntrySchema, pi.entries[0]?.data));
-    assert.deepEqual(pi.entries[0]?.data, { schema: 1, at: 10_000, goal: null });
+    assert.ok(isGoalEntry(pi.entries[0]?.data));
+    assert.deepEqual(pi.entries[0]?.data, {
+      schema: 1,
+      at: 10_000,
+      goal: null,
+    });
   });
 
   it("appends the current goal, then each live owned subagent and shell as started", async () => {
@@ -1077,18 +1107,13 @@ describe("/host-bridge snapshot", () => {
       [GOAL_ENTRY_TYPE, SUBAGENT_ENTRY_TYPE, SUBAGENT_ENTRY_TYPE, SHELL_ENTRY_TYPE],
     );
     const goal = pi.entries[0]?.data;
-    assert.ok(Value.Check(GoalEntrySchema, goal));
+    assert.ok(isGoalEntry(goal));
     assert.equal(goal.goal?.objective, "ship");
     const subs = pi.ofType(SUBAGENT_ENTRY_TYPE);
     assert.deepEqual(
       subs.map(
         (entry) =>
-          Value.Check(SubagentEntrySchema, entry) && [
-            entry.event,
-            entry.agent.id,
-            entry.agent.status,
-            entry.live,
-          ],
+          isSubagentEntry(entry) && [entry.event, entry.agent.id, entry.agent.status, entry.live],
       ),
       [
         ["started", "a1", "running", ["a1", "a2"]],
@@ -1096,7 +1121,7 @@ describe("/host-bridge snapshot", () => {
       ],
     );
     const [shell] = pi.ofType(SHELL_ENTRY_TYPE);
-    assert.ok(Value.Check(ShellEntrySchema, shell));
+    assert.ok(isShellEntry(shell));
     assert.deepEqual(shell.shell, {
       id: "s1",
       name: null,
@@ -1129,7 +1154,7 @@ describe("/host-bridge snapshot", () => {
       [GOAL_ENTRY_TYPE, SUBAGENT_ENTRY_TYPE],
     );
     const lost = pi.ofType(SUBAGENT_ENTRY_TYPE)[0];
-    assert.ok(Value.Check(SubagentEntrySchema, lost));
+    assert.ok(isSubagentEntry(lost));
     assert.equal(lost.event, "lost");
     assert.equal(lost.agent.id, "a1");
     assert.deepEqual(lost.live, []);
@@ -1138,18 +1163,14 @@ describe("/host-bridge snapshot", () => {
     registry.records.push(other);
     pi.emit("subagents:started", lifecyclePayload(other));
     const entry = pi.ofType(SUBAGENT_ENTRY_TYPE).at(-1);
-    assert.ok(Value.Check(SubagentEntrySchema, entry));
+    assert.ok(isSubagentEntry(entry));
     assert.deepEqual(entry.live, ["a2"]);
     clock.advance(FRAME_INTERVAL_MS);
     assert.equal(
       pi
         .ofType(SUBAGENT_ENTRY_TYPE)
-        .filter(
-          (item) =>
-            Value.Check(SubagentEntrySchema, item) &&
-            item.event === "lost" &&
-            item.agent.id === "a1",
-        ).length,
+        .filter((item) => isSubagentEntry(item) && item.event === "lost" && item.agent.id === "a1")
+        .length,
       1,
     );
   });
@@ -1253,7 +1274,13 @@ describe("host-bridge session lifecycle", () => {
       customEntry(SUBAGENT_ENTRY_TYPE, subagentEntryData("started", {}, ["a1"]), 0),
       customEntry(
         SHELL_ENTRY_TYPE,
-        { schema: 1, at: 1, event: "started", shell: shellPayload("s1"), live: ["s1"] },
+        {
+          schema: 1,
+          at: 1,
+          event: "started",
+          shell: shellPayload("s1"),
+          live: ["s1"],
+        },
         1,
       ),
     ];
@@ -1278,14 +1305,14 @@ describe("host-bridge session lifecycle", () => {
     ctx.branch = restoredBranch();
     pi.start(ctx, "fork");
     const [agent] = pi.ofType(SUBAGENT_ENTRY_TYPE);
-    assert.ok(Value.Check(SubagentEntrySchema, agent));
+    assert.ok(isSubagentEntry(agent));
     assert.deepEqual(
       [agent.event, agent.agent.status, agent.agent.finishedAt, agent.live],
       ["lost", "lost", 10_000, []],
     );
     assert.match(agent.agent.summary ?? "", /^lost: /);
     const [shell] = pi.ofType(SHELL_ENTRY_TYPE);
-    assert.ok(Value.Check(ShellEntrySchema, shell));
+    assert.ok(isShellEntry(shell));
     assert.deepEqual([shell.event, shell.live], ["lost", []]);
   });
 
@@ -1300,14 +1327,14 @@ describe("host-bridge session lifecycle", () => {
     pi.start(ctx, "resume");
     assert.equal(pi.ofType(SUBAGENT_ENTRY_TYPE).length, 0);
     const [shell] = pi.ofType(SHELL_ENTRY_TYPE);
-    assert.ok(Value.Check(ShellEntrySchema, shell));
+    assert.ok(isShellEntry(shell));
     assert.equal(shell.event, "lost");
     // The adopted record later completes and is recorded.
     registry.records[0]!.status = "completed";
     registry.records[0]!.completedAt = 12_000;
     clock.advance(FRAME_INTERVAL_MS);
     const [done] = pi.ofType(SUBAGENT_ENTRY_TYPE);
-    assert.ok(Value.Check(SubagentEntrySchema, done));
+    assert.ok(isSubagentEntry(done));
     assert.deepEqual([done.event, done.agent.status], ["completed", "completed"]);
   });
 
@@ -1323,10 +1350,7 @@ describe("host-bridge session lifecycle", () => {
     pi.emit("subagents:started", lifecyclePayload(revived));
     const events = pi
       .ofType(SUBAGENT_ENTRY_TYPE)
-      .map(
-        (entry) =>
-          Value.Check(SubagentEntrySchema, entry) && [entry.event, entry.agent.status, entry.live],
-      );
+      .map((entry) => isSubagentEntry(entry) && [entry.event, entry.agent.status, entry.live]);
     assert.deepEqual(events, [
       ["lost", "lost", []],
       ["resumed", "running", ["a1"]],

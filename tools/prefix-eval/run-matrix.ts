@@ -1,7 +1,7 @@
 import { cp, mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { Type } from "typebox";
+import { num, obj, opt, str } from "@earendil-works/pi-schema";
 import { parseNamedOptions, readValidatedJson, requiredStringOption } from "./io.ts";
 import { runPi } from "./pi-runner.ts";
 import { countStructuralRewrites, readCaptureRecords } from "./prefix-report.ts";
@@ -126,15 +126,13 @@ interface MergedSummary extends MatrixSummary {
   perModel: ModelMetrics[];
 }
 
-const CountedPrefixReportSchema = Type.Object(
+const CountedPrefixReportSchema = obj(
   {
-    model: Type.String(),
-    cwd: Type.String(),
-    prefixTokens: Type.Optional(
-      Type.Object({ total: Type.Number(), method: Type.String() }, { additionalProperties: true }),
-    ),
+    model: str(),
+    cwd: str(),
+    prefixTokens: opt(obj({ total: num(), method: str() }, { open: true })),
   },
-  { additionalProperties: true },
+  { open: true },
 );
 
 async function countedAnthropicPrefixes(

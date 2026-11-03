@@ -30,7 +30,8 @@ import {
   type ExtensionFactory,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { obj, str } from "@earendil-works/pi-schema";
+import { hostParams } from "../.pi/extensions/lib/schema-bridge.ts";
 import { publishLeanSurface } from "../.pi/extensions/lib/tool-surface.ts";
 import { toNestedTool } from "../.pi/packages/choco-pi-codex/src/adapter/code-mode/nested-tool-adapter.ts";
 import {
@@ -55,7 +56,7 @@ function probe(name: string, exposure: "deferred" | "direct", executed: string[]
     name,
     label: name,
     description: `Inspect widget probe state (${name})`,
-    parameters: Type.Object({}),
+    parameters: hostParams(obj({}, { open: true })),
     exposure,
     execute: async () => {
       executed.push(name);
@@ -106,7 +107,7 @@ async function harness(): Promise<Harness> {
       name: "bridge",
       label: "bridge",
       description: "Run a registered tool through the code-mode bridge adapter",
-      parameters: Type.Object({ name: Type.String() }),
+      parameters: hostParams(obj({ name: str() }, { open: true })),
       execute: async (toolCallId, params, signal, _onUpdate, ctx) => {
         const target = probes.get(params.name);
         if (!target) throw new Error(`unknown ${params.name}`);
@@ -129,7 +130,7 @@ async function harness(): Promise<Harness> {
       name: "raw_bridge",
       label: "raw_bridge",
       description: "Run a tool through ctx.executeTool",
-      parameters: Type.Object({ name: Type.String() }),
+      parameters: hostParams(obj({ name: str() }, { open: true })),
       execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
         const outcome = await ctx.executeTool(params.name, {});
         bridgeResults.push(`raw:${params.name}:${outcome.isError ? "blocked" : "ok"}`);
@@ -155,7 +156,10 @@ async function harness(): Promise<Harness> {
   });
   await loader.reload();
   const credentials = new InMemoryCredentialStore();
-  await credentials.modify(PROVIDER, async () => ({ type: "api_key", key: "inert" }));
+  await credentials.modify(PROVIDER, async () => ({
+    type: "api_key",
+    key: "inert",
+  }));
   const modelRuntime = await ModelRuntime.create({
     credentials,
     modelsStore: new InMemoryModelsStore(),

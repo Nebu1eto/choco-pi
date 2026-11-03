@@ -1,7 +1,7 @@
 import { setTimeout } from "node:timers/promises";
 import { InteractiveMode } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { obj, str } from "@earendil-works/pi-schema";
+import { matches } from "../schema-check.ts";
 import type { CompactCommandHost } from "../../../../.pi/packages/choco-pi-compaction/src/background-host/host-command.ts";
 import { statusArtifact, type ArtifactInput } from "../artifacts.ts";
 import type { CheckEvidence, Observation } from "../checks.ts";
@@ -38,7 +38,7 @@ const TURN_4 = "HARNESS-MANUAL-TURN-4";
 const TURN_5 = "HARNESS-MANUAL-TURN-5";
 const SETTLE_DEADLINE_MS = 5000;
 const LIVE_SETTLE_DEADLINE_MS = 180_000;
-const DetailsSchema = Type.Object({ candidateId: Type.String() }, { additionalProperties: true });
+const DetailsSchema = obj({ candidateId: str() }, { open: true });
 /** Pi's (patched) typed-command handler, invoked the way the interactive mode does. */
 interface TypedCompactPrototype {
   handleCompactCommand: (
@@ -47,16 +47,16 @@ interface TypedCompactPrototype {
   ) => Promise<void>;
 }
 
-interface Checkpoint {
+type Checkpoint = {
   readonly id: string;
   readonly candidateId: string | undefined;
-}
+};
 
 function checkpoints(host: Host): Checkpoint[] {
   return host.manager.getBranch().flatMap((entry) => {
     if (entry.type !== "compaction") return [];
     const details: unknown = entry.details;
-    const candidateId = Value.Check(DetailsSchema, details) ? details.candidateId : undefined;
+    const candidateId = matches(DetailsSchema, details) ? details.candidateId : undefined;
     return [{ id: entry.id, candidateId }];
   });
 }

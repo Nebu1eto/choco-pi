@@ -1,5 +1,5 @@
 import type { ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
-import { Value } from "typebox/value";
+import { compile } from "@earendil-works/pi-schema";
 
 import { rethrowUnlessStaleContext } from "../lifecycle.ts";
 import type { RuntimeValue } from "../runtime-values.ts";
@@ -95,7 +95,9 @@ export interface HostBridgeApi {
     handler: (event: { reason: SessionStartReason }, ctx: HostBridgeContext) => void,
   ): void;
   on(event: "session_shutdown", handler: () => void): void;
-  readonly events: { on(channel: string, handler: (data: RuntimeValue) => void): void };
+  readonly events: {
+    on(channel: string, handler: (data: RuntimeValue) => void): void;
+  };
   appendEntry(customType: string, data: RuntimeValue): void;
   registerCommand(
     name: string,
@@ -142,13 +144,19 @@ const SHELL_CHANNELS = [
   "lost",
 ] as const satisfies readonly ShellEvent[];
 
-const ENTRY_SCHEMAS = {
-  [SUBAGENT_ENTRY_TYPE]: SubagentEntrySchema,
-  [SHELL_ENTRY_TYPE]: ShellEntrySchema,
-  [GOAL_ENTRY_TYPE]: GoalEntrySchema,
-  [WORKFLOW_ENTRY_TYPE]: WorkflowEntrySchema,
+const isSubagentEntry = compile(SubagentEntrySchema).check;
+const isShellEntry = compile(ShellEntrySchema).check;
+const ENTRY_VALIDATORS = {
+  [SUBAGENT_ENTRY_TYPE]: isSubagentEntry,
+  [SHELL_ENTRY_TYPE]: isShellEntry,
+  [GOAL_ENTRY_TYPE]: compile(GoalEntrySchema).check,
+  [WORKFLOW_ENTRY_TYPE]: compile(WorkflowEntrySchema).check,
 };
-type EntryType = keyof typeof ENTRY_SCHEMAS;
+type EntryType = keyof typeof ENTRY_VALIDATORS;
+const isGoalChangedPayload = compile(GoalChangedPayloadSchema).check;
+const isSubagentLifecyclePayload = compile(SubagentLifecyclePayloadSchema).check;
+const isShellLifecyclePayload = compile(ShellLifecyclePayloadSchema).check;
+const isWorkflowPayload = compile(WorkflowPayloadSchema).check;
 
 function isLive(status: SubagentStatus): boolean {
   return status === "queued" || status === "running";
@@ -240,7 +248,7 @@ function pickShellRecord(payload: ShellRecord): ShellRecord {
 }
 
 function goalMirror(payload: RuntimeValue): GoalMirror | null | undefined {
-  if (!Value.Check(GoalChangedPayloadSchema, payload)) return undefined;
+  if (!isGoalChangedPayload(payload)) return undefined;
   if (payload === null) return null;
   return {
     objective: payload.objective,
@@ -262,9 +270,9 @@ function restoreFromBranch(entries: readonly SessionEntry[]): RestoredState {
   const shells = new Map<string, ShellRecord>();
   for (const entry of entries) {
     if (entry.type !== "custom") continue;
-    if (entry.customType === SUBAGENT_ENTRY_TYPE && Value.Check(SubagentEntrySchema, entry.data)) {
+    if (entry.customType === SUBAGENT_ENTRY_TYPE && isSubagentEntry(entry.data)) {
       agents.set(entry.data.agent.id, entry.data.agent);
-    } else if (entry.customType === SHELL_ENTRY_TYPE && Value.Check(ShellEntrySchema, entry.data)) {
+    } else if (entry.customType === SHELL_ENTRY_TYPE && isShellEntry(entry.data)) {
       if (entry.data.event === "started") shells.set(entry.data.shell.id, entry.data.shell);
       else shells.delete(entry.data.shell.id);
     }
@@ -319,7 +327,7 @@ export function registerHostBridge(pi: HostBridgeApi, deps: HostBridgeDependenci
   function append(session: ActiveSession, customType: EntryType, data: RuntimeValue): boolean {
     if (session !== active) return false;
     // The wire schema is frozen: refuse to persist anything Waku would reject.
-    if (!Value.Check(ENTRY_SCHEMAS[customType], data)) {
+    if (!ENTRY_VALIDATORS[customType](data)) {
       throw new Error(`host-bridge produced an invalid ${customType} entry`);
     }
     try {
@@ -403,7 +411,7 @@ export function registerHostBridge(pi: HostBridgeApi, deps: HostBridgeDependenci
 
   function onSubagentEvent(event: SubagentEvent, payload: RuntimeValue): void {
     const session = active;
-    if (session === undefined || !Value.Check(SubagentLifecyclePayloadSchema, payload)) return;
+    if (session === undefined || !isSubagentLifecyclePayload(payload)) return;
     // This bus belongs to the root session, so an evented record is ours.
     session.owned.add(payload.id);
     const record = sources.subagents(session.sessionId, ownsRecord(session)).record(payload.id);
@@ -426,7 +434,7 @@ export function registerHostBridge(pi: HostBridgeApi, deps: HostBridgeDependenci
 
   function onShellEvent(event: ShellEvent, payload: RuntimeValue): void {
     const session = active;
-    if (session === undefined || !Value.Check(ShellLifecyclePayloadSchema, payload)) return;
+    if (session === undefined || !isShellLifecyclePayload(payload)) return;
     const shell = pickShellRecord(payload);
     const known =
       session.liveShells.has(shell.id) ||
@@ -457,7 +465,11 @@ export function registerHostBridge(pi: HostBridgeApi, deps: HostBridgeDependenci
   function appendGoal(session: ActiveSession, goal: GoalMirror | null): void {
     cancelGoalTimer(session);
     session.goalPending = undefined;
-    const data: GoalEntry = { schema: HOST_BRIDGE_SCHEMA_VERSION, at: clock.now(), goal };
+    const data: GoalEntry = {
+      schema: HOST_BRIDGE_SCHEMA_VERSION,
+      at: clock.now(),
+      goal,
+    };
     if (append(session, GOAL_ENTRY_TYPE, data)) session.goalWritten = goal;
   }
 
@@ -498,7 +510,7 @@ export function registerHostBridge(pi: HostBridgeApi, deps: HostBridgeDependenci
 
   function onWorkflow(kind: "created" | "completed", payload: RuntimeValue): void {
     const session = active;
-    if (session === undefined || !Value.Check(WorkflowPayloadSchema, payload)) return;
+    if (session === undefined || !isWorkflowPayload(payload)) return;
     const agentIds: string[] = [];
     for (const step of payload.steps) if (step.agentId !== undefined) agentIds.push(step.agentId);
     const data: WorkflowEntry = {

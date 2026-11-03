@@ -8,8 +8,7 @@ import { fileURLToPath } from "node:url";
 import test, { after, beforeEach } from "node:test";
 
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { compile, num, obj, opt, str } from "@earendil-works/pi-schema";
 
 import usageLimitPolicy, {
   USAGE_LIMIT_MESSAGE_TYPE,
@@ -51,17 +50,15 @@ const CHILD_CONTROLLER_SHIM = `export { default } from ${JSON.stringify(CONTROLL
 const subagents: ExtensionFactory = (pi) => subagentsExtension(pi);
 const rootController: ExtensionFactory = (pi) => usageLimitPolicy(pi);
 
-const UsageLimitEventSchema = Type.Object({
-  agentId: Type.String(),
-  provider: Type.String(),
-  resetAt: Type.Optional(Type.Number()),
-  status: Type.String(),
-});
+const isUsageLimitEvent = compile(
+  obj({ agentId: str(), provider: str(), resetAt: opt(num()), status: str() }, { open: true }),
+).check;
 
 function usageEvents(events: readonly RuntimeValue[]) {
   return events.map((event) => {
-    assert.ok(Value.Check(UsageLimitEventSchema, event), "malformed subagents:usage_limit event");
-    return Value.Parse(UsageLimitEventSchema, event);
+    assert.ok(isUsageLimitEvent(event), "malformed subagents:usage_limit event");
+    // Value.Parse after the check only stripped unknown keys; the tests read declared fields only.
+    return event;
   });
 }
 
@@ -114,7 +111,10 @@ test("preference none: child limit is reported, provider closed, model untouched
   try {
     const parentId = e2e.session.sessionId;
     assert.deepEqual(usageLimitPolicyOwners(), [parentId]);
-    e2e.providers.script(CODEX_MODEL, { kind: "error", message: CODEX_LIMIT_TEXT });
+    e2e.providers.script(CODEX_MODEL, {
+      kind: "error",
+      message: CODEX_LIMIT_TEXT,
+    });
 
     const before = Date.now();
     const result = await runTool(e2e.session, "Agent", {
@@ -208,7 +208,9 @@ function registerParkingPolicy(e2e: UsageLimitE2e) {
     generation: 1,
     readPreference: async () => (await readAgentPreferencesAsync(e2e.agentDir)).onUsageLimit,
     fallbacks: {
-      tiers: { e2e: { primary: ["anthropic/e2e-claude", "openai-codex/e2e-codex"] } },
+      tiers: {
+        e2e: { primary: ["anthropic/e2e-claude", "openai-codex/e2e-codex"] },
+      },
       lastResort: [],
     },
     usageSnapshot: async (provider) => {
@@ -217,7 +219,10 @@ function registerParkingPolicy(e2e: UsageLimitE2e) {
       const observedAt = Date.now();
       if (readings > 1) return { observedAt, windows: [] };
       const eventAt = new Date(observedAt - MANAGER_RESET_MARGIN_MS + WAKE_AFTER_MS);
-      return { observedAt, windows: [{ label: "5h", percent: 100, qualifier: "used", eventAt }] };
+      return {
+        observedAt,
+        windows: [{ label: "5h", percent: 100, qualifier: "used", eventAt }],
+      };
     },
   });
   const unregister = registerUsageLimitPolicy(policy);
@@ -335,10 +340,15 @@ test("Agent resume with model: in-scope switches the errored child, others leave
     parentModel: CLAUDE_MODEL,
     factories: [rootController, subagents],
     subagentsSettings: { scopeModels: true },
-    projectSettings: { enabledModels: ["openai-codex/e2e-codex", "anthropic/e2e-claude"] },
+    projectSettings: {
+      enabledModels: ["openai-codex/e2e-codex", "anthropic/e2e-claude"],
+    },
   });
   try {
-    e2e.providers.script(CODEX_MODEL, { kind: "error", message: CODEX_LIMIT_TEXT });
+    e2e.providers.script(CODEX_MODEL, {
+      kind: "error",
+      message: CODEX_LIMIT_TEXT,
+    });
     await runTool(e2e.session, "Agent", {
       prompt: "Summarise the repository.",
       description: "limited child",

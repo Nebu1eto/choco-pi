@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
-import { Value } from "typebox/value";
+import { compile, type JsonSchema, type Static } from "@earendil-works/pi-schema";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   formatUsageReport,
@@ -93,7 +93,10 @@ function mockFetch(t: TestContext, respond: Responder): FetchCall[] {
     "fetch",
     (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
       const url = input instanceof Request ? input.url : String(input);
-      calls.push({ url, authorization: new Headers(init?.headers).get("authorization") });
+      calls.push({
+        url,
+        authorization: new Headers(init?.headers).get("authorization"),
+      });
       return respond(url);
     },
   );
@@ -283,7 +286,9 @@ test("maps Grok subscription tiers to plan labels and passes unknown tiers throu
   assert.equal(grokPlanLabel(""), undefined);
   assert.equal(grokPlanLabel(undefined), undefined);
   // Only the tier survives parsing; a non-string tier or a non-object is dropped.
-  assert.deepEqual(grokSubscription(user("SuperGrokPlus")), { subscriptionTier: "SuperGrokPlus" });
+  assert.deepEqual(grokSubscription(user("SuperGrokPlus")), {
+    subscriptionTier: "SuperGrokPlus",
+  });
   assert.deepEqual(grokSubscription({ subscriptionTier: 3 }), {});
   assert.deepEqual(grokSubscription(null), {});
 });
@@ -301,8 +306,11 @@ test("the Grok row shows the subscription plan and keeps no personal fields", as
     assert.ok(!serialized.includes(field), `the reading must not retain ${field}`);
   }
   const frame = usageReportFrame("session-xai", report);
-  assert.ok(Value.Check(ReportFrameSchema, frame));
-  assert.deepEqual(frame.sections[0]?.rows[0], { label: "Plan", value: "SuperGrok Plus" });
+  assert.ok(checkSchema(ReportFrameSchema, frame));
+  assert.deepEqual(frame.sections[0]?.rows[0], {
+    label: "Plan",
+    value: "SuperGrok Plus",
+  });
   assert.ok(!JSON.stringify(frame).includes("person@example.invalid"));
 });
 
@@ -403,7 +411,9 @@ test("an xai credential of unknown type fails closed: no token, no fetch", async
   // Configured, but the host cannot report the credential type (no xai model, no isUsingOAuth).
   const ctx = reinterpretHostValue<ExtensionContext>({
     modelRegistry: {
-      getProviderAuthStatus: (provider: string) => ({ configured: provider === "xai" }),
+      getProviderAuthStatus: (provider: string) => ({
+        configured: provider === "xai",
+      }),
       getApiKeyForProvider: async (provider: string) => {
         tokenRequests.push(provider);
         return "fake-xai-token";
@@ -454,12 +464,19 @@ test("absent providers: none, one, and three", async (t) => {
     report.providers.map((reading) => (reading.ok ? reading.usage.name : reading.name));
 
   const none = await grokReading(
-    registry({ anthropic: "oauth", openai: "oauth", synthetic: "api_key", xai: "oauth" }).ctx,
+    registry({
+      anthropic: "oauth",
+      openai: "oauth",
+      synthetic: "api_key",
+      xai: "oauth",
+    }).ctx,
   );
   assert.deepEqual(names(none), ["Claude", "ChatGPT", "Synthetic", "Grok"]);
   assert.deepEqual(none.absent, []);
   assert.doesNotMatch(formatUsageReport(none), /Not signed in/);
-  const style = { fg: (color: string, text: string) => `<${color}>${text}</${color}>` };
+  const style = {
+    fg: (color: string, text: string) => `<${color}>${text}</${color}>`,
+  };
   assert.doesNotMatch(formatUsageReport(none, style), /Not signed in/);
 
   const one = await grokReading(
@@ -486,7 +503,7 @@ test("the host frame lists absent providers in their own section", () => {
     absent: ["Claude", "Synthetic"],
   };
   const frame = usageReportFrame("session-xai", report, at);
-  assert.ok(Value.Check(ReportFrameSchema, frame));
+  assert.ok(checkSchema(ReportFrameSchema, frame));
   assert.deepEqual(
     frame.sections.map((section) => [section.title, section.rows.map((row) => row.label)]),
     [
@@ -505,11 +522,23 @@ test("the host frame lists absent providers in their own section", () => {
     allPresent.sections.map((section) => section.title),
     ["Grok"],
   );
-  const onlyAbsent: ProviderUsageReport = { observedAt: at, providers: [], absent: ["Grok"] };
+  const onlyAbsent: ProviderUsageReport = {
+    observedAt: at,
+    providers: [],
+    absent: ["Grok"],
+  };
   assert.equal(hasUsageWindows(onlyAbsent), false);
   const absentFrame = usageReportFrame("session-xai", onlyAbsent, at);
-  assert.ok(Value.Check(ReportFrameSchema, absentFrame));
+  assert.ok(checkSchema(ReportFrameSchema, absentFrame));
   assert.deepEqual(absentFrame.sections, [
-    { title: "Not signed in", rows: [{ label: "Grok", value: "not signed in" }] },
+    {
+      title: "Not signed in",
+      rows: [{ label: "Grok", value: "not signed in" }],
+    },
   ]);
 });
+
+/** Whether `value` matches `schema`, narrowing like the compiled validator's check. */
+function checkSchema<S extends JsonSchema>(schema: S, value: RuntimeValue): value is Static<S> {
+  return compile(schema).check(value);
+}

@@ -1,6 +1,6 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { obj, str } from "@earendil-works/pi-schema";
+import { jsonEqual, matches } from "../schema-check.ts";
 
 import { OPAQUE_HISTORY_KEY } from "../../../../.pi/packages/choco-pi-compaction/src/anthropic/mode.ts";
 import { REASONS } from "../../../../.pi/packages/choco-pi-compaction/src/background/lane-journal.ts";
@@ -42,7 +42,7 @@ const SWITCH_MODEL: Model<"openai-responses"> = {
   name: "Grok 4.6 (offline mirror)",
 };
 
-const NoticeSchema = Type.Object({ message: Type.String() }, { additionalProperties: true });
+const NoticeSchema = obj({ message: str() }, { open: true });
 
 interface Checkpoint {
   readonly id: string;
@@ -94,7 +94,7 @@ function recordsSince(host: Host, from: Mark, kind: string, to?: Mark): Evidence
 
 function notices(host: Host, from: Mark, text: string): EvidenceRecord[] {
   return recordsSince(host, from, "ui-notify").filter(
-    (record) => Value.Check(NoticeSchema, record.data) && record.data.message.includes(text),
+    (record) => matches(NoticeSchema, record.data) && record.data.message.includes(text),
   );
 }
 
@@ -212,7 +212,7 @@ function replayObservations(
     ),
     observe(
       "input[0] is the persisted compaction item, exactly",
-      first !== undefined && isCompactionWireItem(first) && Value.Equal(first, details.item),
+      first !== undefined && isCompactionWireItem(first) && jsonEqual(first, details.item),
       true,
       refs,
     ),

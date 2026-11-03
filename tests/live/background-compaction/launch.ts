@@ -15,8 +15,9 @@ import {
   type ExtensionContext,
   type ExtensionFactory,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { obj, str } from "@earendil-works/pi-schema";
+import { matches } from "./schema-check.ts";
+import { hostParams } from "../../../.pi/extensions/lib/schema-bridge.ts";
 import {
   BackgroundCompactionSidecarSchema,
   DEFAULT_BACKGROUND_COMPACTION_SETTINGS,
@@ -30,7 +31,13 @@ import {
 import { crossFieldProblem } from "../../../.pi/packages/choco-pi-compaction/src/background/settings.ts";
 import { mainOwnerKey } from "../../../.pi/packages/choco-pi-compaction/src/index.ts";
 import { installAdoptionProbe } from "./adoption-probe.ts";
-import { digest, InputSchema, Recorder, statusArtifact, writeArtifact } from "./artifacts.ts";
+import {
+  digest,
+  Recorder,
+  statusArtifact,
+  writeArtifact,
+  parseArtifactInput,
+} from "./artifacts.ts";
 import { requireLiveRun } from "./budget.ts";
 import { installConsumerProbe } from "./consumer-probe.ts";
 import { loadWorktreeProfilePlan, type WorktreeProfilePlan } from "./esm-entry-loaders.ts";
@@ -427,7 +434,7 @@ function stepTool() {
     name: STEP_TOOL,
     label: "harness step",
     description: "Deterministic offline tool",
-    parameters: Type.Object({ label: Type.String() }),
+    parameters: hostParams(obj({ label: str() }, { open: true })),
     async execute(_id, params) {
       return { content: [{ type: "text", text: stepResultText(params.label) }], details: {} };
     },
@@ -473,10 +480,10 @@ function harnessFactory(
     });
     pi.on("before_provider_request", (event) => {
       observe();
-      capturePrompt(state, manager, Value.Parse(InputSchema, event.payload));
+      capturePrompt(state, manager, parseArtifactInput(event.payload));
     });
     pi.on("session_compact", (event) => {
-      state.recorder.record("session_compact", Value.Parse(InputSchema, event));
+      state.recorder.record("session_compact", parseArtifactInput(event));
     });
   };
 }
@@ -545,7 +552,7 @@ function dropNewFactories(initial: ReadonlyMap<string, unknown>): void {
 }
 
 function onSessionEvent(state: HostState, event: AgentSessionEvent): void {
-  state.recorder.record("session-event", Value.Parse(InputSchema, event));
+  state.recorder.record("session-event", parseArtifactInput(event));
   if (event.type !== "message_end" || event.message.role !== "assistant") return;
   if (event.message.stopReason !== "aborted") return;
   state.aborts++;
@@ -694,7 +701,7 @@ export async function launch(input: LaunchOptions) {
   const options = copyOptions(input);
   if (launcherActive)
     throw new Error("Launchers require isolated processes; global fetch/env are scoped");
-  if (!Value.Check(BackgroundCompactionSidecarSchema, options.settings ?? {}))
+  if (!matches(BackgroundCompactionSidecarSchema, options.settings ?? {}))
     throw new Error("Invalid scenario sidecar");
   // Read once, before scoping, so the Recorder redacts the credential from the start.
   const source = readLiveSource(options);
@@ -868,7 +875,7 @@ export async function launch(input: LaunchOptions) {
     current();
     const extensions = loader.getExtensions();
     if (extensions.errors.length) {
-      recorder.record("extension-load-errors", Value.Parse(InputSchema, extensions.errors));
+      recorder.record("extension-load-errors", parseArtifactInput(extensions.errors));
       throw new Error(`Extension load failed (${extensions.errors.length} errors)`);
     }
     const loadedPaths = extensions.extensions.map((extension) => extension.path);
@@ -900,7 +907,7 @@ export async function launch(input: LaunchOptions) {
     owned.releases.push(wrapNotify(state, session));
     await session.bindExtensions({
       onError: (error) => {
-        recorder.record("extension-error", Value.Parse(InputSchema, error));
+        recorder.record("extension-error", parseArtifactInput(error));
       },
     });
     current();
@@ -933,7 +940,7 @@ export async function launch(input: LaunchOptions) {
       await writeArtifact(
         options.failureOut,
         "launcher-failure.json",
-        Value.Parse(InputSchema, recorder.records),
+        parseArtifactInput(recorder.records),
       );
     await cleanup();
     throw error;

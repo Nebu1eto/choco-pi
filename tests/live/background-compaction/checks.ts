@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
-import { artifactLeaks, JsonSchema, type EvidenceRecord } from "./artifacts.ts";
+import { int, obj, str } from "@earendil-works/pi-schema";
+import { matches } from "./schema-check.ts";
+import { artifactLeaks, parseArtifactValue, type EvidenceRecord } from "./artifacts.ts";
 
 /** Behavior checks a scenario can require; each is proven by scenario observations. */
 export type ObservedCheck =
@@ -85,10 +85,10 @@ function noAbort(evidence: CheckEvidence): Verdict {
 const TOLERATED_BLOCKED_ORIGINS: ReadonlyMap<string, string> = new Map([
   ["https://github.com", "choco-pi-codex Code Mode host asset download"],
 ]);
-const BlockedSchema = Type.Object({ origin: Type.String() }, { additionalProperties: true });
+const BlockedSchema = obj({ origin: str() }, { open: true });
 
 function blockedOrigin(record: EvidenceRecord): string {
-  return Value.Check(BlockedSchema, record.data) ? record.data.origin : "unrecorded";
+  return matches(BlockedSchema, record.data) ? record.data.origin : "unrecorded";
 }
 
 /** Fails on any blocked attempt outside the tolerated non-provider origins. */
@@ -118,22 +118,16 @@ function zeroNetwork(evidence: CheckEvidence): Verdict {
   return result;
 }
 
-const LiveResponseSchema = Type.Object(
-  { kind: Type.String(), status: Type.Integer() },
-  { additionalProperties: true },
-);
+const LiveResponseSchema = obj({ kind: str(), status: int() }, { open: true });
 /**
  * A live turn whose transport the provider package owns (Codex WebSocket):
  * no fetch response exists, so acceptance is the turn's own stop reason.
  */
-const ProviderTurnSchema = Type.Object(
-  { transport: Type.String(), stopReason: Type.String() },
-  { additionalProperties: true },
-);
+const ProviderTurnSchema = obj({ transport: str(), stopReason: str() }, { open: true });
 const ACCEPTED_STOP_REASONS: ReadonlySet<string> = new Set(["stop", "length", "toolUse"]);
 
 function rejectedResponse(record: EvidenceRecord): string[] {
-  if (!Value.Check(LiveResponseSchema, record.data)) return [];
+  if (!matches(LiveResponseSchema, record.data)) return [];
   const { kind, status } = record.data;
   if (status >= 200 && status <= 299) return [];
   return [`${kind} request #${record.sequence} answered HTTP ${status}`];
@@ -144,18 +138,14 @@ function liveAccepted(evidence: CheckEvidence): Verdict {
   if (evidence.mode !== "live")
     return { check: "live-accepted", status: "not-applicable", reasons: [], evidenceRefs: [] };
   const responses = evidence.records.filter(
-    (record) => record.kind === "live-response" && Value.Check(LiveResponseSchema, record.data),
+    (record) => record.kind === "live-response" && matches(LiveResponseSchema, record.data),
   );
   const turns = evidence.records.filter(
-    (record) =>
-      record.kind === "live-provider-turn" && Value.Check(ProviderTurnSchema, record.data),
+    (record) => record.kind === "live-provider-turn" && matches(ProviderTurnSchema, record.data),
   );
   const reasons = responses.flatMap(rejectedResponse);
   for (const turn of turns)
-    if (
-      Value.Check(ProviderTurnSchema, turn.data) &&
-      !ACCEPTED_STOP_REASONS.has(turn.data.stopReason)
-    )
+    if (matches(ProviderTurnSchema, turn.data) && !ACCEPTED_STOP_REASONS.has(turn.data.stopReason))
       reasons.push(
         `${turn.data.transport} turn #${turn.sequence} ended with stop reason ${turn.data.stopReason}`,
       );
@@ -232,7 +222,7 @@ function observedVerdict(check: ObservedCheck, evidence: CheckEvidence): Verdict
 function noSecretLeak(evidence: CheckEvidence): Verdict {
   return verdict(
     "no-secret-leak",
-    artifactLeaks(Value.Parse(JsonSchema, evidence.records), "$", evidence.knownSecrets ?? []),
+    artifactLeaks(parseArtifactValue(evidence.records), "$", evidence.knownSecrets ?? []),
     evidence.records.map((record) => record.sequence),
   );
 }

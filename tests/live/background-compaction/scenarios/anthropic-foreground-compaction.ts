@@ -1,8 +1,8 @@
 import { setTimeout } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
 
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, int, nullable, obj, str } from "@earendil-works/pi-schema";
+import { matches } from "../schema-check.ts";
 
 import {
   countCompactionBlocks,
@@ -39,25 +39,16 @@ const AUTO_POINT = 450_000;
 /** Input tokens each automatic-route answer reports: past the point, under the cap. */
 const AUTO_REPORTED_INPUT = AUTO_POINT + 10_000;
 
-const LaneRequestSchema = Type.Object(
-  { compaction: JsonSchema, betas: Type.Array(Type.String()) },
-  { additionalProperties: true },
-);
+const LaneRequestSchema = obj({ compaction: JsonSchema, betas: arr(str()) }, { open: true });
 
 /** The `compaction` field a lane request is expected to carry. */
 type LaneCompaction = {
   readonly type: "summarize";
   readonly instructions?: string;
 };
-const LaneResponseSchema = Type.Object(
-  { status: Type.Integer(), stopReason: Type.Union([Type.String(), Type.Null()]) },
-  { additionalProperties: true },
-);
-const NoticeSchema = Type.Object({ message: Type.String() }, { additionalProperties: true });
-const LiveStatusSchema = Type.Object(
-  { kind: Type.String(), status: Type.Integer() },
-  { additionalProperties: true },
-);
+const LaneResponseSchema = obj({ status: int(), stopReason: nullable(str()) }, { open: true });
+const NoticeSchema = obj({ message: str() }, { open: true });
+const LiveStatusSchema = obj({ kind: str(), status: int() }, { open: true });
 
 interface Checkpoint {
   readonly id: string;
@@ -95,7 +86,7 @@ function recordsSince(host: Host, from: Mark, kind: string): EvidenceRecord[] {
 
 function notices(host: Host, from: Mark, text: string): EvidenceRecord[] {
   return recordsSince(host, from, "ui-notify").filter(
-    (record) => Value.Check(NoticeSchema, record.data) && record.data.message.includes(text),
+    (record) => matches(NoticeSchema, record.data) && record.data.message.includes(text),
   );
 }
 
@@ -112,9 +103,9 @@ function observe<T>(
 function lastForegroundAccepted(host: Host): boolean {
   if (host.mode === "fake") return true;
   const last = host.recorder.records.findLast(
-    (record) => record.kind === "live-response" && Value.Check(LiveStatusSchema, record.data),
+    (record) => record.kind === "live-response" && matches(LiveStatusSchema, record.data),
   );
-  return last !== undefined && Value.Check(LiveStatusSchema, last.data)
+  return last !== undefined && matches(LiveStatusSchema, last.data)
     ? last.data.status >= 200 && last.data.status <= 299
     : false;
 }
@@ -145,7 +136,7 @@ function laneObservations(host: Host, from: Mark, compaction: LaneCompaction): O
   const requests = recordsSince(host, from, "lane-request");
   const responses = recordsSince(host, from, "native-lane-response");
   const sentLanes = requests.map((record) =>
-    Value.Check(LaneRequestSchema, record.data)
+    matches(LaneRequestSchema, record.data)
       ? {
           beta: record.data.betas.includes(COMPACT_BETA),
           compaction: record.data.compaction,
@@ -153,7 +144,7 @@ function laneObservations(host: Host, from: Mark, compaction: LaneCompaction): O
       : { beta: false, compaction: null },
   );
   const answered = responses.map((record) =>
-    Value.Check(LaneResponseSchema, record.data)
+    matches(LaneResponseSchema, record.data)
       ? { status: record.data.status, stopReason: record.data.stopReason }
       : { status: -1, stopReason: null },
   );

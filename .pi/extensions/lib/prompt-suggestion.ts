@@ -7,8 +7,7 @@ import {
   truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { compile, lit, obj } from "@earendil-works/pi-schema";
 import { readAgentPreferencesAsync, renderPreferredLanguageLine } from "./agent-preferences.ts";
 import { createProcessSources } from "./host-bridge/sources.ts";
 import { isStaleContextError } from "./lifecycle.ts";
@@ -363,13 +362,16 @@ export interface PromptSuggestionController {
 async function readSuggestionPreferences(): Promise<PromptSuggestionPreferences> {
   try {
     const preferences = await readAgentPreferencesAsync();
-    return { enabled: preferences.promptSuggestion !== false, language: preferences.language };
+    return {
+      enabled: preferences.promptSuggestion !== false,
+      language: preferences.language,
+    };
   } catch {
     return { enabled: false, language: undefined };
   }
 }
 
-const ActiveGoalSchema = Type.Object({ status: Type.Literal("active") });
+const isActiveGoal = compile(obj({ status: lit("active") }, { open: true })).check;
 
 /**
  * True when the agent will resume without the user typing anything: a queued
@@ -387,7 +389,7 @@ export function agentContinuesUnprompted(ctx: ExtensionContext, sessionId: strin
       .some((shell) => shell.state === "running")
   )
     return true;
-  return Value.Check(ActiveGoalSchema, sources.goals(sessionId).goal());
+  return isActiveGoal(sources.goals(sessionId).goal());
 }
 
 interface SuggestionAttempt {
@@ -417,7 +419,10 @@ export function createPromptSuggestionController(
 ): PromptSuggestionController {
   const generate = options.generate ?? generatePromptSuggestion;
   const readPreferences = options.readPreferences ?? readSuggestionPreferences;
-  const slot: PromptSuggestionSlot = { text: undefined, requestRender: undefined };
+  const slot: PromptSuggestionSlot = {
+    text: undefined,
+    requestRender: undefined,
+  };
   let generation = 0;
   let ownerSessionId: string | undefined;
   let pending: AbortController | undefined;

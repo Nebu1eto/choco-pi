@@ -4,38 +4,29 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { Type, type Static } from "typebox";
-import { Value } from "typebox/value";
+import { compile, lit, nullable, obj, opt, str, type Static } from "@earendil-works/pi-schema";
 import { PI_SDK_TARGET } from "./pi-target.ts";
 
-export const ProfileMarkerSchema = Type.Object(
-  {
-    schema: Type.Literal(1),
-    name: Type.Literal("choco-pi"),
-    checkout: Type.String(),
-    revision: Type.Union([Type.String(), Type.Null()]),
-    installedAt: Type.String(),
-    pi: Type.Object(
-      {
-        version: Type.Union([Type.String(), Type.Null()]),
-        launcher: Type.Union([Type.String(), Type.Null()]),
-      },
-      { additionalProperties: false },
-    ),
-    hostBridge: Type.Object(
-      {
-        schema: Type.Literal(1),
-        entryPrefix: Type.Literal("choco-pi:host-bridge"),
-        statusKey: Type.Literal("choco-pi.host-bridge"),
-        // Optional so markers written before structured reports stay valid.
-        reportStatusKey: Type.Optional(Type.Literal("choco-pi.report")),
-      },
-      { additionalProperties: false },
-    ),
-  },
-  { additionalProperties: false },
-);
+export const ProfileMarkerSchema = obj({
+  schema: lit(1),
+  name: lit("choco-pi"),
+  checkout: str(),
+  revision: nullable(str()),
+  installedAt: str(),
+  pi: obj({
+    version: nullable(str()),
+    launcher: nullable(str()),
+  }),
+  hostBridge: obj({
+    schema: lit(1),
+    entryPrefix: lit("choco-pi:host-bridge"),
+    statusKey: lit("choco-pi.host-bridge"),
+    // Optional so markers written before structured reports stay valid.
+    reportStatusKey: opt(lit("choco-pi.report")),
+  }),
+});
 export type ProfileMarker = Static<typeof ProfileMarkerSchema>;
+const isProfileMarker = compile(ProfileMarkerSchema).check;
 export type ProfileMarkerObservation =
   | {
       path: string;
@@ -44,7 +35,11 @@ export type ProfileMarkerObservation =
       observedPiVersion: string | null;
       warning?: string;
     }
-  | { path: string; status: "missing" | "invalid" | "unreadable"; reason: string };
+  | {
+      path: string;
+      status: "missing" | "invalid" | "unreadable";
+      reason: string;
+    };
 
 export function profileMarkerPath(
   agentDir = process.env.PI_CODING_AGENT_DIR ?? path.join(homedir(), ".pi", "agent"),
@@ -70,7 +65,10 @@ export const PROFILE_PI_TARGET = PI_SDK_TARGET;
 
 export async function launcherVersion(launcher: string): Promise<string | null> {
   try {
-    const { stdout } = await runFile(launcher, ["--version"], { timeout: 5000, maxBuffer: 4096 });
+    const { stdout } = await runFile(launcher, ["--version"], {
+      timeout: 5000,
+      maxBuffer: 4096,
+    });
     return stdout.trim() || null;
   } catch {
     return null;
@@ -120,7 +118,10 @@ export async function writeProfileMarker(
   await chmod(path.dirname(target), 0o700);
   const temporary = `${target}.${randomUUID()}.tmp`;
   try {
-    await writeFile(temporary, `${JSON.stringify(marker, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+    await writeFile(temporary, `${JSON.stringify(marker, null, 2)}\n`, {
+      mode: 0o600,
+      flag: "wx",
+    });
     await chmod(temporary, 0o600);
     await rename(temporary, target);
   } finally {
@@ -146,15 +147,23 @@ export async function readProfileMarker(agentDir?: string): Promise<ProfileMarke
   try {
     parsed = JSON.parse(contents);
   } catch {
-    return { path: target, status: "invalid", reason: "Profile marker is not valid JSON" };
+    return {
+      path: target,
+      status: "invalid",
+      reason: "Profile marker is not valid JSON",
+    };
   }
   if (
-    !Value.Check(ProfileMarkerSchema, parsed) ||
+    !isProfileMarker(parsed) ||
     !path.isAbsolute(parsed.checkout) ||
     (parsed.pi.launcher !== null && !path.isAbsolute(parsed.pi.launcher)) ||
     !Number.isFinite(Date.parse(parsed.installedAt))
   ) {
-    return { path: target, status: "invalid", reason: "Profile marker does not match schema 1" };
+    return {
+      path: target,
+      status: "invalid",
+      reason: "Profile marker does not match schema 1",
+    };
   }
   try {
     if (!(await stat(parsed.checkout)).isDirectory()) {
@@ -165,7 +174,11 @@ export async function readProfileMarker(agentDir?: string): Promise<ProfileMarke
       };
     }
   } catch {
-    return { path: target, status: "invalid", reason: "Profile marker checkout is unavailable" };
+    return {
+      path: target,
+      status: "invalid",
+      reason: "Profile marker checkout is unavailable",
+    };
   }
   const observedPiVersion =
     parsed.pi.launcher === null ? null : await launcherVersion(parsed.pi.launcher);

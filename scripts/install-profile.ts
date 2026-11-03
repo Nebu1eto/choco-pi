@@ -47,19 +47,19 @@ import {
   SidecarRefusedError,
   writeGlobalBackgroundSettings,
 } from "../.pi/packages/choco-pi-compaction/src/background/settings.ts";
-import { Type, type Static } from "typebox";
-import { Value } from "typebox/value";
+import { arr, compile, map, obj, opt, str, unknown, type Static } from "@earendil-works/pi-schema";
 
-const SettingsSchema = Type.Object(
+const SettingsSchema = obj(
   {
-    packages: Type.Optional(Type.Array(Type.String())),
-    extensions: Type.Optional(Type.Array(Type.String())),
-    skills: Type.Optional(Type.Array(Type.String())),
-    prompts: Type.Optional(Type.Array(Type.String())),
-    modelThinkingLevels: Type.Optional(Type.Record(Type.String(), Type.String())),
+    packages: opt(arr(str())),
+    extensions: opt(arr(str())),
+    skills: opt(arr(str())),
+    prompts: opt(arr(str())),
+    modelThinkingLevels: opt(map(str())),
   },
-  { additionalProperties: Type.Unknown() },
+  { open: true },
 );
+const isSettings = compile(SettingsSchema).check;
 type Settings = Static<typeof SettingsSchema> & JsonRecord;
 type ProjectSettings = Settings & { packages: string[] };
 export type InstallLinkResult = {
@@ -171,17 +171,18 @@ async function removeRetiredProfileFiles(agentDir: string, warnings: string[]): 
   return removed;
 }
 
-const CodexCompactionSchema = Type.Object(
+const CodexCompactionSchema = obj(
   {
-    compaction: Type.Optional(
-      Type.Object(
-        { responsesCompaction: Type.Optional(Type.Unknown()) },
-        { additionalProperties: Type.Unknown() },
-      ),
-    ),
+    compaction: opt(obj({ responsesCompaction: opt(unknown()) }, { open: true })),
   },
-  { additionalProperties: Type.Unknown() },
+  { open: true },
 );
+const isCodexCompaction = compile(CodexCompactionSchema).check;
+const ManifestSupersedesSchema = obj(
+  { chocoPi: opt(obj({ supersedes: opt(arr(str())) }, { open: true })) },
+  { open: true },
+);
+const hasValidSupersedes = compile(ManifestSupersedesSchema).check;
 
 /**
  * Whether the installed codex config compacts server-side. Mirrors the codex
@@ -205,7 +206,7 @@ async function readCodexResponsesCompaction(agentDir: string): Promise<boolean> 
   } catch (error) {
     throw new Error(`${target} does not contain valid JSON`, { cause: error });
   }
-  if (!Value.Check(CodexCompactionSchema, parsed)) {
+  if (!isCodexCompaction(parsed)) {
     throw new Error(`${target} is not a codex config object`);
   }
   // Only a literal `true` turns it on; any non-boolean is the default `false`.
@@ -235,7 +236,10 @@ export async function migrateBackgroundCompactionSidecar(
     return { target, action: "skipped" };
   }
   const anthropicServerSide = (await readAnthropicCompactionMode(agentDir)) === "server-side";
-  const lanes = deriveBackgroundLanes({ openaiServerSide, anthropicServerSide });
+  const lanes = deriveBackgroundLanes({
+    openaiServerSide,
+    anthropicServerSide,
+  });
   try {
     await lstat(target);
   } catch (error) {
@@ -245,7 +249,10 @@ export async function migrateBackgroundCompactionSidecar(
     throw error;
   }
   try {
-    const changed = await writeGlobalBackgroundSettings(agentDir, { lanes, onlyIfExists: true });
+    const changed = await writeGlobalBackgroundSettings(agentDir, {
+      lanes,
+      onlyIfExists: true,
+    });
     return { target, action: changed ? "migrated" : "unchanged" };
   } catch (error) {
     if (!(error instanceof SidecarRefusedError)) throw error;
@@ -271,8 +278,7 @@ async function readJson(target: string, fallback?: Settings): Promise<Settings> 
   const contents = await readFile(target, "utf8");
   try {
     const parsed: unknown = JSON.parse(contents);
-    if (!isJsonRecord(parsed) || !Value.Check(SettingsSchema, parsed))
-      throw new Error("invalid settings shape");
+    if (!isJsonRecord(parsed) || !isSettings(parsed)) throw new Error("invalid settings shape");
     return parsed;
   } catch (error) {
     // The CLI prints only `error.message`, so a bare SyntaxError would report a
@@ -386,7 +392,12 @@ export function buildGlobalSettings(
   existingSettings: Settings,
   root: string,
   supersededNames: string[] = [],
-): Settings & { packages: string[]; extensions: string[]; skills: string[]; prompts: string[] } {
+): Settings & {
+  packages: string[];
+  extensions: string[];
+  skills: string[];
+  prompts: string[];
+} {
   const canonicalPackages = projectSettings.packages.map((spec) =>
     spec.startsWith("./") ? path.resolve(root, ".pi", spec) : spec,
   );
@@ -424,7 +435,9 @@ export function buildGlobalSettings(
     ...projectSettings,
     // Per-model thinking levels are tuned by the user as models change: the
     // profile only fills in models the user has not set.
-    ...(Object.keys(thinkingLevels).length > 0 && { modelThinkingLevels: thinkingLevels }),
+    ...(Object.keys(thinkingLevels).length > 0 && {
+      modelThinkingLevels: thinkingLevels,
+    }),
     packages: mergePackages(canonicalPackages, retainedPackages),
     extensions: unique([...extensions, ...builtinPolicy]),
     skills: unique(profileDirectories("skills")),
@@ -499,7 +512,9 @@ async function installLink(
 async function writeSettings(target: string, settings: Settings) {
   await mkdir(path.dirname(target), { recursive: true });
   const temporary = `${target}.${process.pid}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600 });
+  await writeFile(temporary, `${JSON.stringify(settings, null, 2)}\n`, {
+    mode: 0o600,
+  });
   await chmod(temporary, 0o600);
   await rename(temporary, target);
 }
@@ -519,10 +534,7 @@ async function supersededPackageNames(root: string, projectSettings: ProjectSett
     const packageDir = spec.startsWith("./") ? path.resolve(root, ".pi", spec) : spec;
     if (!path.isAbsolute(packageDir) || path.dirname(packageDir) !== bundled) continue;
     const manifest = await readJson(path.join(packageDir, "package.json"), {});
-    const schema = Type.Object({
-      chocoPi: Type.Optional(Type.Object({ supersedes: Type.Optional(Type.Array(Type.String())) })),
-    });
-    if (!Value.Check(schema, manifest)) throw new Error(`invalid chocoPi.supersedes in ${spec}`);
+    if (!hasValidSupersedes(manifest)) throw new Error(`invalid chocoPi.supersedes in ${spec}`);
     for (const name of manifest.chocoPi?.supersedes ?? []) names.push(name);
   }
   return names;
@@ -552,7 +564,10 @@ async function readProfileSettings(
     (spec) => path.isAbsolute(spec) && path.dirname(spec) === bundled,
   );
   if (packages.length === 0) {
-    return { packages: [...DEFAULT_PROFILE_PACKAGES], extensions: [...DEFAULT_PROFILE_EXTENSIONS] };
+    return {
+      packages: [...DEFAULT_PROFILE_PACKAGES],
+      extensions: [...DEFAULT_PROFILE_EXTENSIONS],
+    };
   }
   return { ...existingSettings, packages };
 }
@@ -605,7 +620,15 @@ export async function installProfile({
       `No compatible Pi ${PROFILE_PI_TARGET} launcher: ${pi.launcher ?? "none found"} (${pi.version ?? "unavailable"}). Set --pi-launcher or CHOCO_PI_LAUNCHER.`,
     );
   }
-  return { agentDir, settingsPath, markerPath, warnings, links: results, migrations, removed };
+  return {
+    agentDir,
+    settingsPath,
+    markerPath,
+    warnings,
+    links: results,
+    migrations,
+    removed,
+  };
 }
 
 function parseArgs(args: string[]) {

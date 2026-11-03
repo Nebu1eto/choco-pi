@@ -10,8 +10,7 @@ import {
   type UsageRequestResult,
 } from "./lib/usage-cache.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type, type Static } from "typebox";
-import { Value } from "typebox/value";
+import { compile, obj, opt, str, type Static } from "@earendil-works/pi-schema";
 import { createCodexResetClient, runCodexResetFlow } from "./lib/codex-resets.ts";
 
 const OPENAI_AUTH_CLAIM = "https://api.openai.com/auth";
@@ -30,7 +29,10 @@ const MIN_PACE_INTERVAL_MS = 30_000;
  * snapshot stays on screen for an hour of failures before the tab admits it has
  * nothing current to show.
  */
-const USAGE_POLICY: UsageRequestPolicy = { minIntervalMs: 60_000, maxStaleMs: 60 * 60_000 };
+const USAGE_POLICY: UsageRequestPolicy = {
+  minIntervalMs: 60_000,
+  maxStaleMs: 60 * 60_000,
+};
 
 /** The plan only changes when the subscription does, so it is read far less often. */
 const PROFILE_POLICY: UsageRequestPolicy = {
@@ -408,7 +410,10 @@ export function syntheticReadings(payload: RuntimeValue): SyntheticReadings {
   if (maxCredits && remainingCredits) {
     const weeklyCapacity = currencyValue(maxCredits);
     if (weeklyCapacity > 0) {
-      readings.weekly = { capacity: weeklyCapacity, remaining: currencyValue(remainingCredits) };
+      readings.weekly = {
+        capacity: weeklyCapacity,
+        remaining: currencyValue(remainingCredits),
+      };
     }
   }
   return readings;
@@ -514,7 +519,8 @@ const GROK_PERIOD_PREFIX = "USAGE_PERIOD_TYPE_";
  * The one field read from the Grok `/v1/user` response. The response also
  * carries personal data (email, names, ids), which is never read or kept.
  */
-const GrokUserSchema = Type.Object({ subscriptionTier: Type.Optional(Type.String()) });
+const GrokUserSchema = obj({ subscriptionTier: opt(str()) }, { open: true });
+const isGrokUser = compile(GrokUserSchema).check;
 /** The subscription part of a Grok `/v1/user` response, the only part kept. */
 export type GrokSubscription = Static<typeof GrokUserSchema>;
 
@@ -556,7 +562,7 @@ export function grokProductLabel(product: string | undefined): string | undefine
  */
 export function grokSubscription(payload: RuntimeValue): GrokSubscription {
   const subscription: GrokSubscription = {};
-  if (Value.Check(GrokUserSchema, payload) && payload.subscriptionTier !== undefined) {
+  if (isGrokUser(payload) && payload.subscriptionTier !== undefined) {
     subscription.subscriptionTier = payload.subscriptionTier;
   }
   return subscription;
@@ -638,7 +644,10 @@ async function providerToken(ctx: ExtensionContext, provider: string): Promise<s
  */
 function withCacheNote(usage: ProviderUsage, result: UsageRequestResult): ProviderUsage {
   if (result.cachedAt === undefined) return usage;
-  return { ...usage, cached: { at: new Date(result.cachedAt), reason: result.reason } };
+  return {
+    ...usage,
+    cached: { at: new Date(result.cachedAt), reason: result.reason },
+  };
 }
 
 /**
@@ -898,7 +907,10 @@ export async function grokUsage(
  * reading served from the store carries the time it was originally fetched, so
  * a caller can tell a live reading from one that predates an event.
  */
-export type ProviderUsageSnapshot = { windows: UsageWindow[]; observedAt: number };
+export type ProviderUsageSnapshot = {
+  windows: UsageWindow[];
+  observedAt: number;
+};
 
 /**
  * Reads the quota windows of `provider` (`anthropic`, `openai-codex` or
@@ -928,7 +940,10 @@ export async function providerUsageSnapshot(
     } else {
       return undefined;
     }
-    return { windows: usage.windows, observedAt: usage.cached?.at.getTime() ?? Date.now() };
+    return {
+      windows: usage.windows,
+      observedAt: usage.cached?.at.getTime() ?? Date.now(),
+    };
   } catch {
     return undefined;
   }
@@ -1051,7 +1066,13 @@ type UsagePainter = {
 function usagePainter(style: UsageStyle | undefined): UsagePainter {
   const plain = (text: string): string => text;
   if (!style) {
-    return { value: plain, dim: plain, label: plain, head: plain, health: (_health, t) => t };
+    return {
+      value: plain,
+      dim: plain,
+      label: plain,
+      head: plain,
+      health: (_health, t) => t,
+    };
   }
   const color = (name: string, text: string): string => {
     try {
@@ -1097,7 +1118,10 @@ export function describeUsageWindow(window: UsageWindow, now = Date.now()): Usag
   const pace =
     window.pace?.label ??
     (elapsed === undefined ? undefined : `${formatNumber(elapsed, 0)}% of window elapsed`);
-  return { percent, detail: [event, pace, window.detail].filter(Boolean).join(" · ") };
+  return {
+    percent,
+    detail: [event, pace, window.detail].filter(Boolean).join(" · "),
+  };
 }
 
 export function formatProviderUsage(
@@ -1180,7 +1204,11 @@ export async function readProviderUsages(
   settled.forEach((result, index) => {
     const name = PROVIDER_NAMES[index];
     if (result.status === "rejected") {
-      providers.push({ ok: false, name, error: usageFailureMessage(result.reason) });
+      providers.push({
+        ok: false,
+        name,
+        error: usageFailureMessage(result.reason),
+      });
     } else if (result.value === undefined) {
       absent.push(name);
     } else {

@@ -1,8 +1,8 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { obj, str } from "@earendil-works/pi-schema";
+import { matches } from "../schema-check.ts";
 import { routeToBackgroundAdoption } from "../../../../.pi/extensions/model-context-cap.ts";
 import { DEFAULT_BACKGROUND_COMPACTION_SETTINGS } from "../../../../.pi/packages/choco-pi-compaction/src/background/contract.ts";
 import { errorResponse } from "../fake-sse.ts";
@@ -15,7 +15,7 @@ const SETTINGS = { enabled: true, text: true, minReductionTokens: 0 };
 const MANUAL_INSTRUCTIONS = "HARNESS-ARBITRATION-MANUAL keep the offline facts";
 const OVERFLOW_ERROR = "prompt is too long: 250000 tokens > 200000 maximum";
 const ROUTE_TIMEOUT_MS = 5000;
-const DetailsSchema = Type.Object({ candidateId: Type.String() }, { additionalProperties: true });
+const DetailsSchema = obj({ candidateId: str() }, { open: true });
 
 interface Checkpoint {
   readonly id: string;
@@ -26,7 +26,7 @@ function checkpoints(host: Host): Checkpoint[] {
   return host.manager.getBranch().flatMap((entry) => {
     if (entry.type !== "compaction") return [];
     const details: unknown = entry.details;
-    const candidateId = Value.Check(DetailsSchema, details) ? details.candidateId : undefined;
+    const candidateId = matches(DetailsSchema, details) ? details.candidateId : undefined;
     return [{ id: entry.id, candidateId }];
   });
 }

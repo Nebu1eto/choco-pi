@@ -1,52 +1,47 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Type, type Static } from "typebox";
+import { arr, bool, num, obj, opt, str, union, type Static } from "@earendil-works/pi-schema";
 import { isJsonRecord, isNumber, isString } from "../../.pi/extensions/lib/runtime-values.ts";
 import { parseJson, validateValue } from "./io.ts";
 import { JsonSchema, type JsonValue, type SessionUsage, type TokenUsage } from "./types.ts";
 
-const UsagePayloadSchema = Type.Object(
+const UsagePayloadSchema = obj(
   {
-    input: Type.Optional(Type.Number()),
-    output: Type.Optional(Type.Number()),
-    cacheRead: Type.Optional(Type.Number()),
-    cacheWrite: Type.Optional(Type.Number()),
-    cost: Type.Optional(
-      Type.Union([
-        Type.Number(),
-        Type.Object({ total: Type.Optional(Type.Number()) }, { additionalProperties: true }),
-      ]),
-    ),
+    input: opt(num()),
+    output: opt(num()),
+    cacheRead: opt(num()),
+    cacheWrite: opt(num()),
+    cost: opt(union([num(), obj({ total: opt(num()) }, { open: true })])),
   },
-  { additionalProperties: true },
+  { open: true },
 );
 
-const MessageBlockSchema = Type.Object(
+const MessageBlockSchema = obj(
   {
-    type: Type.Optional(Type.String()),
-    text: Type.Optional(Type.String()),
-    name: Type.Optional(Type.String()),
-    arguments: Type.Optional(JsonSchema),
+    type: opt(str()),
+    text: opt(str()),
+    name: opt(str()),
+    arguments: opt(JsonSchema),
   },
-  { additionalProperties: true },
+  { open: true },
 );
 
-const SessionRecordSchema = Type.Object(
+const SessionRecordSchema = obj(
   {
-    message: Type.Optional(
-      Type.Object(
+    message: opt(
+      obj(
         {
-          role: Type.Optional(Type.String()),
-          toolName: Type.Optional(Type.String()),
-          isError: Type.Optional(Type.Boolean()),
-          content: Type.Optional(Type.Array(MessageBlockSchema)),
-          usage: Type.Optional(UsagePayloadSchema),
+          role: opt(str()),
+          toolName: opt(str()),
+          isError: opt(bool()),
+          content: opt(arr(MessageBlockSchema)),
+          usage: opt(UsagePayloadSchema),
         },
-        { additionalProperties: true },
+        { open: true },
       ),
     ),
   },
-  { additionalProperties: true },
+  { open: true },
 );
 
 export type SessionRecord = Static<typeof SessionRecordSchema>;

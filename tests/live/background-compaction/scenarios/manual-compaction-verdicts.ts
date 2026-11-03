@@ -1,5 +1,5 @@
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, lit, nullable, num, obj, opt, str } from "@earendil-works/pi-schema";
+import { isString, matches } from "../schema-check.ts";
 import type { EvidenceRecord } from "../artifacts.ts";
 import type { Observation } from "../checks.ts";
 import type { SeedToolResults } from "../host-seed.ts";
@@ -23,48 +23,42 @@ const NOTICE_PREFIX = "Background compaction";
 const REGRESSION_TEXT = /\b(?:oversized|quota|cooling)\b/iu;
 const REGRESSION_REASONS: ReadonlySet<string> = new Set(["oversized", "quota", "cooling"]);
 
-const NotifySchema = Type.Object({ message: Type.String() }, { additionalProperties: true });
-const FailureRowSchema = Type.Object(
+const NotifySchema = obj({ message: str() }, { open: true });
+const FailureRowSchema = obj(
   {
-    candidateId: Type.String(),
-    backendId: Type.Optional(Type.String()),
-    reason: Type.String(),
-    detail: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+    candidateId: str(),
+    backendId: opt(str()),
+    reason: str(),
+    detail: opt(nullable(str())),
   },
-  { additionalProperties: true },
+  { open: true },
 );
-const FailuresSchema = Type.Object(
-  { recentFailures: Type.Array(FailureRowSchema) },
-  { additionalProperties: true },
-);
-const StatusHolderSchema = Type.Object({ status: FailuresSchema }, { additionalProperties: true });
+const FailuresSchema = obj({ recentFailures: arr(FailureRowSchema) }, { open: true });
+const StatusHolderSchema = obj({ status: FailuresSchema }, { open: true });
 /**
  * Loose candidate-record shape: the estimate source may sit in `admission.source`
  * (current contract) or a top-level `estimateSource`; absence is reported only.
  */
-const CandidateSchema = Type.Object(
+const CandidateSchema = obj(
   {
-    customType: Type.Literal("choco-compaction-candidate"),
-    candidateId: Type.String(),
-    estimateSource: Type.Optional(Type.String()),
-    admission: Type.Optional(
-      Type.Object(
+    customType: lit("choco-compaction-candidate"),
+    candidateId: str(),
+    estimateSource: opt(str()),
+    admission: opt(
+      obj(
         {
-          source: Type.Optional(Type.String()),
-          promptTokens: Type.Optional(Type.Number()),
-          budget: Type.Optional(Type.Number()),
-          ratio: Type.Optional(Type.Number()),
+          source: opt(str()),
+          promptTokens: opt(num()),
+          budget: opt(num()),
+          ratio: opt(num()),
         },
-        { additionalProperties: true },
+        { open: true },
       ),
     ),
   },
-  { additionalProperties: true },
+  { open: true },
 );
-const CheckpointDetailsSchema = Type.Object(
-  { candidateId: Type.String() },
-  { additionalProperties: true },
-);
+const CheckpointDetailsSchema = obj({ candidateId: str() }, { open: true });
 
 function refsOr(host: Host, records: readonly EvidenceRecord[]): number[] {
   return records.length ? records.map((record) => record.sequence) : [host.snapshot()];
@@ -73,10 +67,10 @@ function refsOr(host: Host, records: readonly EvidenceRecord[]): number[] {
 /** No compaction notice shown to the user names oversized, quota or cooling. */
 export function regressionNoticeObservation(host: Host): Observation {
   const notices = host.recorder.records.filter(
-    (record) => record.kind === "ui-notify" && Value.Check(NotifySchema, record.data),
+    (record) => record.kind === "ui-notify" && matches(NotifySchema, record.data),
   );
   const flagged = notices.flatMap((record) =>
-    Value.Check(NotifySchema, record.data) &&
+    matches(NotifySchema, record.data) &&
     record.data.message.startsWith(NOTICE_PREFIX) &&
     REGRESSION_TEXT.test(record.data.message)
       ? [record.data.message]
@@ -91,8 +85,8 @@ export function regressionNoticeObservation(host: Host): Observation {
 }
 
 function failureRows(data: EvidenceRecord["data"]) {
-  if (Value.Check(FailuresSchema, data)) return data.recentFailures;
-  if (Value.Check(StatusHolderSchema, data)) return data.status.recentFailures;
+  if (matches(FailuresSchema, data)) return data.recentFailures;
+  if (matches(StatusHolderSchema, data)) return data.status.recentFailures;
   return [];
 }
 
@@ -123,10 +117,10 @@ export function regressionFailureObservation(host: Host): Observation {
 export function candidateRecordObservation(host: Host): Observation {
   const branch = host.manager.getBranch();
   const records = branch.flatMap((entry) =>
-    entry.type === "custom" && Value.Check(CandidateSchema, entry.data) ? [entry.data] : [],
+    entry.type === "custom" && matches(CandidateSchema, entry.data) ? [entry.data] : [],
   );
   const committed = branch.flatMap((entry) =>
-    entry.type === "compaction" && Value.Check(CheckpointDetailsSchema, entry.details)
+    entry.type === "compaction" && matches(CheckpointDetailsSchema, entry.details)
       ? [entry.details.candidateId]
       : [],
   );
@@ -194,7 +188,7 @@ function messageChars(entry: BranchEntry): MessageChars {
   }
   if (message.role === "user") {
     const content = message.content;
-    const chars = Value.Check(Type.String(), content)
+    const chars = isString(content)
       ? content.length
       : content.reduce((sum, block) => sum + (block.type === "text" ? block.text.length : 0), 0);
     return { chars, toolResult: undefined };

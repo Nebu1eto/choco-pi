@@ -1,4 +1,15 @@
-import { Type, type Static } from "typebox";
+import {
+  arr,
+  bool,
+  lit,
+  nullable,
+  num,
+  obj,
+  oneOf,
+  opt,
+  str,
+  type Static,
+} from "@earendil-works/pi-schema";
 
 /**
  * Structured `/status`, `/context`, and `/usage` reports for RPC hosts
@@ -9,117 +20,87 @@ import { Type, type Static } from "typebox";
  */
 export const REPORT_SCHEMA_VERSION = 1;
 
-const closed = { additionalProperties: false } as const;
-
-export const ReportRowSchema = Type.Object(
-  {
-    label: Type.String(),
-    value: Type.String(),
-    /** Secondary detail, such as the inventory behind a count; may span lines. */
-    hint: Type.Optional(Type.String()),
-  },
-  closed,
-);
+export const ReportRowSchema = obj({
+  label: str(),
+  value: str(),
+  /** Secondary detail, such as the inventory behind a count; may span lines. */
+  hint: opt(str()),
+});
 export type ReportRow = Static<typeof ReportRowSchema>;
 
-export const ReportSectionSchema = Type.Object(
-  { title: Type.String(), rows: Type.Array(ReportRowSchema) },
-  closed,
-);
+export const ReportSectionSchema = obj({
+  title: str(),
+  rows: arr(ReportRowSchema),
+});
 export type ReportSection = Static<typeof ReportSectionSchema>;
 
-const TokenCount = Type.Number({ minimum: 0 });
+const TokenCount = num({ minimum: 0 });
 
-export const ContextReportSchema = Type.Object(
-  {
-    model: Type.String(),
-    contextWindow: TokenCount,
-    measuredTokens: Type.Union([TokenCount, Type.Null()]),
-    estimatedTokens: TokenCount,
-    autocompactReserve: TokenCount,
-    categories: Type.Array(
-      Type.Object({ label: Type.String(), tokens: TokenCount, estimated: Type.Boolean() }, closed),
+export const ContextReportSchema = obj({
+  model: str(),
+  contextWindow: TokenCount,
+  measuredTokens: nullable(TokenCount),
+  estimatedTokens: TokenCount,
+  autocompactReserve: TokenCount,
+  categories: arr(obj({ label: str(), tokens: TokenCount, estimated: bool() })),
+  tools: obj({ active: TokenCount, deferred: TokenCount }),
+  mcp: obj({
+    servers: arr(
+      obj({
+        name: str(),
+        tools: TokenCount,
+        tokens: TokenCount,
+        state: opt(str()),
+      }),
     ),
-    tools: Type.Object({ active: TokenCount, deferred: TokenCount }, closed),
-    mcp: Type.Object(
-      {
-        servers: Type.Array(
-          Type.Object(
-            {
-              name: Type.String(),
-              tools: TokenCount,
-              tokens: TokenCount,
-              state: Type.Optional(Type.String()),
-            },
-            closed,
-          ),
-        ),
-      },
-      closed,
-    ),
-    skills: Type.Object({ count: TokenCount, tokens: TokenCount }, closed),
-    contextFiles: Type.Object({ count: TokenCount, tokens: TokenCount }, closed),
-  },
-  closed,
-);
+  }),
+  skills: obj({ count: TokenCount, tokens: TokenCount }),
+  contextFiles: obj({ count: TokenCount, tokens: TokenCount }),
+});
 export type ContextReport = Static<typeof ContextReportSchema>;
 
-const Percent = Type.Number({ minimum: 0, maximum: 100 });
+const Percent = num({ minimum: 0, maximum: 100 });
 
-export const UsageWindowReportSchema = Type.Object(
-  {
-    label: Type.String(),
-    percent: Percent,
-    qualifier: Type.Union([Type.Literal("used"), Type.Literal("remaining")]),
-    resetsAt: Type.Optional(Type.String()),
-    resetLabel: Type.Optional(Type.String()),
-    detail: Type.Optional(Type.String()),
-    windowSeconds: Type.Optional(Type.Number({ exclusiveMinimum: 0 })),
-    pace: Type.Optional(
-      Type.Object(
-        {
-          health: Type.Union([Type.Literal("over"), Type.Literal("under")]),
-          label: Type.String(),
-        },
-        closed,
-      ),
-    ),
-  },
-  closed,
-);
+export const UsageWindowReportSchema = obj({
+  label: str(),
+  percent: Percent,
+  qualifier: oneOf(["used", "remaining"]),
+  resetsAt: opt(str()),
+  resetLabel: opt(str()),
+  detail: opt(str()),
+  windowSeconds: opt(num({ exclusiveMinimum: 0 })),
+  pace: opt(
+    obj({
+      health: oneOf(["over", "under"]),
+      label: str(),
+    }),
+  ),
+});
 export type UsageWindowReport = Static<typeof UsageWindowReportSchema>;
 
-export const UsageProviderReportSchema = Type.Object(
-  {
-    name: Type.String(),
-    plan: Type.Optional(Type.String()),
-    status: Type.Optional(Type.String()),
-    cached: Type.Optional(
-      Type.Object({ at: Type.String(), reason: Type.Optional(Type.String()) }, closed),
-    ),
-    windows: Type.Array(UsageWindowReportSchema),
-  },
-  closed,
-);
+export const UsageProviderReportSchema = obj({
+  name: str(),
+  plan: opt(str()),
+  status: opt(str()),
+  cached: opt(obj({ at: str(), reason: opt(str()) })),
+  windows: arr(UsageWindowReportSchema),
+});
 export type UsageProviderReport = Static<typeof UsageProviderReportSchema>;
 
-export const UsageReportSchema = Type.Object(
-  { observedAt: Type.String(), providers: Type.Array(UsageProviderReportSchema) },
-  closed,
-);
+export const UsageReportSchema = obj({
+  observedAt: str(),
+  providers: arr(UsageProviderReportSchema),
+});
 export type UsageReport = Static<typeof UsageReportSchema>;
 
-export const ReportFrameSchema = Type.Object(
-  {
-    schema: Type.Literal(REPORT_SCHEMA_VERSION),
-    kind: Type.Union([Type.Literal("status"), Type.Literal("context"), Type.Literal("usage")]),
-    at: Type.String(),
-    sessionId: Type.String(),
-    title: Type.String(),
-    sections: Type.Array(ReportSectionSchema),
-    context: Type.Optional(ContextReportSchema),
-    usage: Type.Optional(UsageReportSchema),
-  },
-  closed,
-);
+export const ReportFrameSchema = obj({
+  schema: lit(REPORT_SCHEMA_VERSION),
+  kind: oneOf(["status", "context", "usage"]),
+  at: str(),
+  sessionId: str(),
+  title: str(),
+  sections: arr(ReportSectionSchema),
+  context: opt(ContextReportSchema),
+  usage: opt(UsageReportSchema),
+});
 export type ReportFrame = Static<typeof ReportFrameSchema>;

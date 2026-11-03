@@ -36,18 +36,11 @@ import {
   type AgentPreferenceChange,
   type AgentStyle,
 } from "../.pi/extensions/lib/agent-preferences.ts";
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
-
-const PreferenceModuleCopySchema = Type.Object({
-  onAgentPreferenceChange: Type.Function([Type.Unknown()], Type.Unknown()),
-});
-
-function isPreferenceModuleCopy<Candidate>(
-  value: Candidate,
-): value is Candidate & { onAgentPreferenceChange: typeof onAgentPreferenceChange } {
-  return Value.Check(PreferenceModuleCopySchema, value);
+import { isJsonRecord, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+function isPreferenceModuleCopy<Candidate>(value: Candidate): value is Candidate & {
+  onAgentPreferenceChange: typeof onAgentPreferenceChange;
+} {
+  return isJsonRecord(value) && value.onAgentPreferenceChange instanceof Function;
 }
 
 function withTempDirs(
@@ -56,7 +49,10 @@ function withTempDirs(
   return async () => {
     const root = mkdtempSync(path.join(tmpdir(), "agent-preferences-"));
     try {
-      await run({ agent: path.join(root, "agent"), presets: path.join(root, "presets") });
+      await run({
+        agent: path.join(root, "agent"),
+        presets: path.join(root, "presets"),
+      });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -198,7 +194,10 @@ test(
   withTempDirs(async ({ agent }) => {
     await mkdir(agent, { recursive: true });
     const foreign = {
-      compactionAnthropic: { mode: "native", nested: { list: [1, 2, 3], flag: true } },
+      compactionAnthropic: {
+        mode: "native",
+        nested: { list: [1, 2, 3], flag: true },
+      },
       someFutureKey: "kept",
     };
     await writeFile(path.join(agent, "settings.json"), JSON.stringify(foreign, null, 2));
@@ -207,7 +206,10 @@ test(
     await writeAgentPreference(CONTEXT_SOFT_CAP_KEY, undefined, agent);
 
     const settings = JSON.parse(await readFile(path.join(agent, "settings.json"), "utf8"));
-    assert.deepEqual(settings, { ...foreign, autoCompactionPoint: "permissive" });
+    assert.deepEqual(settings, {
+      ...foreign,
+      autoCompactionPoint: "permissive",
+    });
   }),
 );
 
@@ -491,7 +493,12 @@ Agent body.`,
       "unset",
     );
     assert.equal(
-      resolvePersona({ configured: "critical", systemPrompt: leafPrompt, prompt: "work", cwd }),
+      resolvePersona({
+        configured: "critical",
+        systemPrompt: leafPrompt,
+        prompt: "work",
+        cwd,
+      }),
       "pessimistic",
     );
     assert.equal(

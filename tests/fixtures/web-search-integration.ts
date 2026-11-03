@@ -24,8 +24,9 @@ import {
   type ExtensionFactory,
   type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
-import { Type, type Static } from "typebox";
+import { obj, opt, str, type Static } from "@earendil-works/pi-schema";
 import toolSearch from "../../.pi/extensions/tool-search.ts";
+import { hostParams } from "../../.pi/extensions/lib/schema-bridge.ts";
 import { DEFAULT_CODEX_CONVERSION_CONFIG } from "../../.pi/packages/choco-pi-codex/src/adapter/activation/config.ts";
 import { registerCodexWebRunSearchAdapter } from "../../.pi/packages/choco-pi-codex/src/extension/search-adapter.ts";
 import { loadAgentBrowserConfig } from "../../.pi/packages/choco-pi-agent-browser/extensions/agent-browser/lib/config.ts";
@@ -148,7 +149,7 @@ const legacySearchFactory: ExtensionFactory = (pi) => {
       label: name,
       description: `Legacy web search tool ${name}`,
       promptSnippet: `Use ${name} for legacy web search`,
-      parameters: Type.Object({ query: Type.Optional(Type.String()) }),
+      parameters: hostParams(obj({ query: opt(str()) }, { open: true })),
       async execute() {
         return {
           content: [{ type: "text", text: name }],
@@ -166,7 +167,7 @@ const deferredResearchFactory: ExtensionFactory = (pi) => {
     name: DEFERRED_RESEARCH_TOOL,
     label: DEFERRED_RESEARCH_TOOL,
     description: "Summarize a research web search digest",
-    parameters: Type.Object({ query: Type.Optional(Type.String()) }),
+    parameters: hostParams(obj({ query: opt(str()) }, { open: true })),
     exposure: "deferred",
     async execute() {
       return { content: [{ type: "text", text: "digest" }], details: {} };
@@ -322,7 +323,9 @@ async function createHarness(
     refreshOnCreate: false,
   });
   const modelRegistry = new FixtureModelRegistry(modelRuntime, credentials);
-  const manager = SessionManager.inMemory(cwd, { id: "shared-native-session-id" });
+  const manager = SessionManager.inMemory(cwd, {
+    id: "shared-native-session-id",
+  });
   manager.appendCustomEntry("web-search-results", {
     id: "legacy-provider-result",
     type: "search",

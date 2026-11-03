@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Value } from "typebox/value";
+import { compile, type JsonSchema, type Static } from "@earendil-works/pi-schema";
 import type {
   BuildSystemPromptOptions,
   ExtensionCommandContext,
@@ -27,7 +27,12 @@ import { ProfileMarkerSchema } from "../.pi/extensions/lib/profile-marker.ts";
 import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 
 const TOOLS = [
-  { name: "read", description: "Read a file", parameters: {}, sourceInfo: { source: "builtin" } },
+  {
+    name: "read",
+    description: "Read a file",
+    parameters: {},
+    sourceInfo: { source: "builtin" },
+  },
   ...["mcp__alpha__read", "mcp__alpha__search", "mcp__beta__list"].map((name) => ({
     name,
     description: "Built-in MCP server tool",
@@ -42,7 +47,11 @@ const PROMPT_OPTIONS = {
   skills: [],
 };
 
-type UiCall = { method: "setStatus" | "notify"; key?: string; text: string | undefined };
+type UiCall = {
+  method: "setStatus" | "notify";
+  key?: string;
+  text: string | undefined;
+};
 
 function fixture(mode: "rpc" | "tui" = "rpc") {
   const calls: UiCall[] = [];
@@ -58,7 +67,11 @@ function fixture(mode: "rpc" | "tui" = "rpc") {
       getHeader: () => null,
       buildContextEntries: () => [],
     },
-    getContextUsage: () => ({ tokens: 50_000, contextWindow: 200_000, percent: 25 }),
+    getContextUsage: () => ({
+      tokens: 50_000,
+      contextWindow: 200_000,
+      percent: 25,
+    }),
     modelRegistry: {
       find: () => undefined,
       // No provider is connected, so /usage never reaches the network.
@@ -68,7 +81,10 @@ function fixture(mode: "rpc" | "tui" = "rpc") {
     getSystemPrompt: () => "system prompt",
     getSystemPromptOptions: () => PROMPT_OPTIONS,
     ui: {
-      theme: { fg: (_color: string, text: string) => text, bold: (text: string) => text },
+      theme: {
+        fg: (_color: string, text: string) => text,
+        bold: (text: string) => text,
+      },
       setStatus: (key: string, text: string | undefined) => {
         calls.push({ method: "setStatus", key, text });
       },
@@ -86,7 +102,11 @@ const MCP_SERVERS: RegisteredMcpServer[] = [
     config: { command: "beta-server", enabled: false },
     extensionPath: "builtin:mcp",
   },
-  { name: "gamma", config: { command: "gamma-server" }, extensionPath: "builtin:mcp" },
+  {
+    name: "gamma",
+    config: { command: "gamma-server" },
+    extensionPath: "builtin:mcp",
+  },
 ];
 
 const inventory = {
@@ -97,14 +117,14 @@ const inventory = {
 
 function parseFrame(text: string | undefined): ReportFrame {
   const parsed: unknown = JSON.parse(text ?? "null");
-  assert.ok(Value.Check(ReportFrameSchema, parsed), "frame matches the documented schema");
+  assert.ok(checkSchema(ReportFrameSchema, parsed), "frame matches the documented schema");
   return parsed;
 }
 
 test("buildStatusReport yields a schema-valid frame with session and environment rows", () => {
   const { ctx } = fixture();
   const frame = buildStatusReport(ctx, "high", "2 configured (see /mcp)");
-  assert.ok(Value.Check(ReportFrameSchema, frame));
+  assert.ok(checkSchema(ReportFrameSchema, frame));
   assert.equal(frame.kind, "status");
   assert.equal(frame.title, "Status");
   assert.equal(frame.sessionId, "session-report");
@@ -134,7 +154,7 @@ test("buildStatusReport yields a schema-valid frame with session and environment
 test("buildContextReport yields a schema-valid frame whose typed block matches the tab", () => {
   const { ctx } = fixture();
   const frame = buildContextReport(inventory, ctx, PROMPT_OPTIONS, undefined);
-  assert.ok(Value.Check(ReportFrameSchema, frame));
+  assert.ok(checkSchema(ReportFrameSchema, frame));
   assert.equal(frame.kind, "context");
   assert.equal(frame.title, "Context Usage");
   const context = frame.context;
@@ -177,10 +197,14 @@ test("context reports carry no measurement before the model has answered", () =>
   const unmeasured = reinterpretHostValue<ExtensionCommandContext>({
     ...ctx,
     sessionManager: ctx.sessionManager,
-    getContextUsage: () => ({ tokens: null, contextWindow: 200_000, percent: null }),
+    getContextUsage: () => ({
+      tokens: null,
+      contextWindow: 200_000,
+      percent: null,
+    }),
   });
   const frame = buildContextReport(inventory, unmeasured, PROMPT_OPTIONS, undefined);
-  assert.ok(Value.Check(ReportFrameSchema, frame));
+  assert.ok(checkSchema(ReportFrameSchema, frame));
   assert.equal(frame.context?.measuredTokens, null);
   assert.ok(frame.context?.categories.every((category) => category.estimated));
 });
@@ -234,7 +258,10 @@ const USAGE_FIXTURE: ProviderUsageReport = {
       ok: true,
       usage: {
         name: "Synthetic",
-        cached: { at: new Date("2026-10-11T08:30:00.000Z"), reason: "HTTP 429" },
+        cached: {
+          at: new Date("2026-10-11T08:30:00.000Z"),
+          reason: "HTTP 429",
+        },
         windows: [
           {
             label: "Weekly credits",
@@ -252,7 +279,7 @@ const USAGE_FIXTURE: ProviderUsageReport = {
 
 test("usageReportFrame yields a schema-valid frame with a typed block and generic sections", () => {
   const frame = usageReportFrame("session-report", USAGE_FIXTURE, USAGE_AT);
-  assert.ok(Value.Check(ReportFrameSchema, frame));
+  assert.ok(checkSchema(ReportFrameSchema, frame));
   assert.equal(frame.kind, "usage");
   assert.equal(frame.title, "Usage");
   assert.equal(frame.context, undefined);
@@ -312,7 +339,9 @@ test("rpc /usage and /quota publish the usage report before the plain-text notic
       on: () => undefined,
       registerCommand: (
         name: string,
-        command: { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> },
+        command: {
+          handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
+        },
       ) => {
         commands.set(name, command.handler);
       },
@@ -356,7 +385,11 @@ function publisherHarness(
   extra: Pick<ReportAutoPublishOptions, "readUsage" | "now"> = {},
 ) {
   const handlers = new Map<string, Handler[]>();
-  const timers: Array<{ callback: () => void; ms: number; cancelled: boolean }> = [];
+  const timers: Array<{
+    callback: () => void;
+    ms: number;
+    cancelled: boolean;
+  }> = [];
   const warnings: string[] = [];
   const api = reinterpretHostValue<Parameters<typeof registerReportAutoPublish>[0]>({
     on: (event: string, handler: Handler) => {
@@ -552,11 +585,16 @@ test("profile markers written before structured reports still validate", () => {
       statusKey: "choco-pi.host-bridge",
     },
   };
-  assert.ok(Value.Check(ProfileMarkerSchema, legacy));
+  assert.ok(checkSchema(ProfileMarkerSchema, legacy));
   assert.ok(
-    Value.Check(ProfileMarkerSchema, {
+    checkSchema(ProfileMarkerSchema, {
       ...legacy,
       hostBridge: { ...legacy.hostBridge, reportStatusKey: REPORT_STATUS_KEY },
     }),
   );
 });
+
+/** Whether `value` matches `schema`, narrowing like the compiled validator's check. */
+function checkSchema<S extends JsonSchema>(schema: S, value: RuntimeValue): value is Static<S> {
+  return compile(schema).check(value);
+}

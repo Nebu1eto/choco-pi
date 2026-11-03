@@ -7,8 +7,6 @@ import {
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import {
   AUTO_COMPACTION_POINT_KEY,
   AUTO_COMPACTION_POINT_TOKENS,
@@ -157,10 +155,6 @@ export function shouldRequestCompaction(
  * when its (default-off) background mode is enabled for this session.
  */
 const BACKGROUND_ADOPTION_SIGNAL = Symbol.for("choco-pi:compaction-background-adoption");
-const AdoptionSignalSchema = Type.Object({
-  version: Type.Literal(1),
-  adoptReady: Type.Function([], Type.Unknown()),
-});
 interface AdoptionSignal {
   adoptReady(
     sessionId: string,
@@ -170,7 +164,7 @@ interface AdoptionSignal {
 }
 
 function isAdoptionSignal<T>(value: T): value is T & AdoptionSignal {
-  return Value.Check(AdoptionSignalSchema, value);
+  return isJsonRecord(value) && value.version === 1 && value.adoptReady instanceof Function;
 }
 
 /**

@@ -2,8 +2,8 @@ import { readFile, readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Type, type Static, type TSchema } from "typebox";
-import { Value } from "typebox/value";
+import { arr, lit, obj, opt, str, type Static } from "@earendil-works/pi-schema";
+import { matches } from "./schema-check.ts";
 
 export const WORKTREE = fileURLToPath(new URL("../../../", import.meta.url));
 /**
@@ -18,34 +18,29 @@ const GLOBAL_AGENT_DIR = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi
 const IGNORE_FILE_NAMES = [".gitignore", ".ignore", ".fdignore"];
 const BUILTIN_EXCLUSION = /^-builtin:[a-z0-9-]+$/u;
 
-const settingsSchema = Type.Object(
+const settingsSchema = obj(
   {
-    packages: Type.Array(Type.String()),
-    extensions: Type.Optional(Type.Array(Type.String())),
+    packages: arr(str()),
+    extensions: opt(arr(str())),
   },
-  { additionalProperties: true },
+  { open: true },
 );
-const manifestSchema = Type.Object(
+const manifestSchema = obj(
   {
-    pi: Type.Optional(
-      Type.Object(
-        { extensions: Type.Optional(Type.Array(Type.String())) },
-        { additionalProperties: true },
-      ),
-    ),
+    pi: opt(obj({ extensions: opt(arr(str())) }, { open: true })),
   },
-  { additionalProperties: true },
+  { open: true },
 );
-const missingCodeSchema = Type.Object({ code: Type.Literal("ENOENT") });
+const missingCodeSchema = obj({ code: lit("ENOENT") }, { open: true });
 
 type EntryKind = "file" | "directory" | "missing" | "other";
 
-async function readJsonFile<Schema extends TSchema>(
+async function readJsonFile<Schema extends object>(
   path: string,
   schema: Schema,
 ): Promise<Static<Schema>> {
   const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
-  if (!Value.Check(schema, parsed)) throw new Error(`Unexpected JSON shape: ${path}`);
+  if (!matches(schema, parsed)) throw new Error(`Unexpected JSON shape: ${path}`);
   return parsed;
 }
 
@@ -55,7 +50,7 @@ async function entryKind(path: string): Promise<EntryKind> {
     if (stats.isFile()) return "file";
     return stats.isDirectory() ? "directory" : "other";
   } catch (cause) {
-    if (Value.Check(missingCodeSchema, cause)) return "missing";
+    if (matches(missingCodeSchema, cause)) return "missing";
     throw cause;
   }
 }

@@ -8,14 +8,16 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { EventBus, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, compile, map, obj, opt, str, type Static } from "@earendil-works/pi-schema";
 import {
   SYNTHETIC_QUOTAS_READ_EVENT,
   SYNTHETIC_QUOTAS_REQUEST_EVENT,
   SyntheticQuotasSnapshotPayloadSchema,
 } from "../../packages/choco-pi-provider-synthetic/src/types/quotas.ts";
-import type { QuotasResponse } from "../../packages/choco-pi-provider-synthetic/src/types/quotas.ts";
+import type {
+  QuotasResponse,
+  SyntheticQuotasSnapshotPayload,
+} from "../../packages/choco-pi-provider-synthetic/src/types/quotas.ts";
 import { providerUsageSnapshot } from "../provider-usage.ts";
 import type { ProviderUsageSnapshot } from "../provider-usage.ts";
 import { DEFAULT_ON_USAGE_LIMIT } from "./usage-limit-contract.ts";
@@ -75,7 +77,9 @@ const OPENAI_SUBSCRIPTION_UNAVAILABLE_PATTERN =
 const OPENAI_LIMIT_PATTERN =
   /OpenAI API error \(429\)|^429\b|rate_limit_exceeded|rate.?limit|too many requests|usage_limit_reached/i;
 
-export type ClassifyUsageLimitInput = UsageLimitClassifyInput & { now?: number };
+export type ClassifyUsageLimitInput = UsageLimitClassifyInput & {
+  now?: number;
+};
 
 function codexResetAt(message: string, now: number): number | undefined {
   const match = CODEX_RESET_PATTERN.exec(message);
@@ -105,7 +109,12 @@ function classifyRetryDelayWrapper(
   }
   const seconds = Number(wrapped[1]);
   return Number.isFinite(seconds)
-    ? { ...base, kind: "quota", confidence: "inferred", resetAt: now + seconds * 1000 }
+    ? {
+        ...base,
+        kind: "quota",
+        confidence: "inferred",
+        resetAt: now + seconds * 1000,
+      }
     : { ...base, kind: "quota", confidence: "inferred" };
 }
 
@@ -260,12 +269,16 @@ function emitForSnapshot(
     };
     const timer = setTimeout(() => finish(undefined), timeoutMs);
     try {
-      events.emit(channel, { respond: (snapshot: RuntimeValue) => finish(snapshot) });
+      events.emit(channel, {
+        respond: (snapshot: RuntimeValue) => finish(snapshot),
+      });
     } catch {
       finish(undefined);
     }
   });
 }
+
+const isSyntheticSnapshot = compile(SyntheticQuotasSnapshotPayloadSchema).check;
 
 /**
  * Asks the Synthetic provider to refresh its quota store, then reads the store.
@@ -278,14 +291,18 @@ async function syntheticReading(
 ): Promise<QuotaReading | undefined> {
   const refreshed = await emitForSnapshot(events, SYNTHETIC_QUOTAS_REQUEST_EVENT, timeoutMs);
   const read = await emitForSnapshot(events, SYNTHETIC_QUOTAS_READ_EVENT, timeoutMs);
-  let best: Static<typeof SyntheticQuotasSnapshotPayloadSchema> | undefined;
+  let best: SyntheticQuotasSnapshotPayload | undefined;
   for (const candidate of [read, refreshed]) {
-    if (!Value.Check(SyntheticQuotasSnapshotPayloadSchema, candidate)) continue;
-    const parsed = Value.Parse(SyntheticQuotasSnapshotPayloadSchema, candidate);
-    if (!best || parsed.updatedAt > best.updatedAt) best = parsed;
+    // The old Value.Parse after Value.Check was a no-op apart from stripping unknown keys, and
+    // only declared fields are read below, so the checked candidate is used as is.
+    if (!isSyntheticSnapshot(candidate)) continue;
+    if (!best || candidate.updatedAt > best.updatedAt) best = candidate;
   }
   if (!best) return undefined;
-  return { observedAt: best.updatedAt, exhausted: syntheticExhaustedWindows(best.quotas) };
+  return {
+    observedAt: best.updatedAt,
+    exhausted: syntheticExhaustedWindows(best.quotas),
+  };
 }
 
 function earliest(times: readonly (number | undefined)[]): number | undefined {
@@ -320,7 +337,11 @@ function applyReading(
       evidence: "confirmed",
     };
   }
-  return { ready: fresh, classification, evidence: fresh ? "capacity" : "unavailable" };
+  return {
+    ready: fresh,
+    classification,
+    evidence: fresh ? "capacity" : "unavailable",
+  };
 }
 
 function withCodexEntry(
@@ -331,7 +352,10 @@ function withCodexEntry(
   if (!entry || Math.abs(failedAt - entry.observedAt) > CODEX_ENTRY_WINDOW_MS) {
     return classification;
   }
-  const upgraded: UsageLimitClassification = { ...classification, confidence: "structured" };
+  const upgraded: UsageLimitClassification = {
+    ...classification,
+    confidence: "structured",
+  };
   if (entry.resetAt !== undefined) upgraded.resetAt = entry.resetAt;
   if (entry.accountId !== undefined) upgraded.accountId = entry.accountId;
   return upgraded;
@@ -395,7 +419,11 @@ async function corroborateStructured(
   const windowResetAt = earliest(blocking.map((window) => window.resetAt));
   const resetAt =
     windowResetAt === undefined ? structuredResetAt : Math.max(structuredResetAt, windowResetAt);
-  return { ready: false, classification: { ...classification, resetAt }, evidence: "confirmed" };
+  return {
+    ready: false,
+    classification: { ...classification, resetAt },
+    evidence: "confirmed",
+  };
 }
 
 async function corroborateQuota(
@@ -484,32 +512,25 @@ export async function corroborateUsageLimit(
   }
 }
 
-const FallbackTierSchema = Type.Object(
-  {
-    primary: Type.Array(Type.String()),
-    secondary: Type.Optional(Type.Array(Type.String())),
-  },
-  { additionalProperties: false },
-);
+const FallbackTierSchema = obj({
+  primary: arr(str()),
+  secondary: opt(arr(str())),
+});
 
-export const ModelFallbacksSchema = Type.Object(
-  {
-    tiers: Type.Record(Type.String(), FallbackTierSchema),
-    lastResort: Type.Array(Type.String()),
-  },
-  { additionalProperties: false },
-);
+export const ModelFallbacksSchema = obj({
+  tiers: map(FallbackTierSchema),
+  lastResort: arr(str()),
+});
 
-export const ModelFallbacksOverrideSchema = Type.Object(
-  {
-    tiers: Type.Optional(Type.Record(Type.String(), FallbackTierSchema)),
-    lastResort: Type.Optional(Type.Array(Type.String())),
-  },
-  { additionalProperties: false },
-);
+export const ModelFallbacksOverrideSchema = obj({
+  tiers: opt(map(FallbackTierSchema)),
+  lastResort: opt(arr(str())),
+});
 
 export type ModelFallbacks = Static<typeof ModelFallbacksSchema>;
 export type ModelFallbacksOverride = Static<typeof ModelFallbacksOverrideSchema>;
+const isModelFallbacks = compile(ModelFallbacksSchema).check;
+const isModelFallbacksOverride = compile(ModelFallbacksOverrideSchema).check;
 
 export const MODEL_FALLBACKS_FILE = "model-fallbacks.json";
 export const DEFAULT_MODEL_FALLBACKS_PATH = fileURLToPath(
@@ -556,17 +577,19 @@ export async function loadModelFallbacks(
 ): Promise<ModelFallbacks> {
   const base = await readJson(basePath);
   if (!base.found) throw new Error(`Model fallback table not found: ${basePath}`);
-  if (!Value.Check(ModelFallbacksSchema, base.value)) {
+  // The old Value.Parse after Value.Check changed nothing: the schemas are closed and have no
+  // defaults, so a value that passes the check is already clean.
+  if (!isModelFallbacks(base.value)) {
     throw new Error(`Invalid model fallback table: ${basePath}`);
   }
-  const table = Value.Parse(ModelFallbacksSchema, base.value);
+  const table = base.value;
   const overridePath = join(agentDir, MODEL_FALLBACKS_FILE);
   const override = await readJson(overridePath);
   if (!override.found) return table;
-  if (!Value.Check(ModelFallbacksOverrideSchema, override.value)) {
+  if (!isModelFallbacksOverride(override.value)) {
     throw new Error(`Invalid model fallback override: ${overridePath}`);
   }
-  return mergeModelFallbacks(table, Value.Parse(ModelFallbacksOverrideSchema, override.value));
+  return mergeModelFallbacks(table, override.value);
 }
 
 type ModelRef = { provider: string; id: string };

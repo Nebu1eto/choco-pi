@@ -10,6 +10,7 @@ import {
   type HarnessCheckExecutionDependencies,
 } from "../.pi/extensions/harness-check.ts";
 import { PI_SDK_TARGET, type HarnessReport } from "../.pi/skills/check/scripts/check-harness.ts";
+import { isJsonRecord } from "../.pi/extensions/lib/runtime-values.ts";
 
 const report: HarnessReport = {
   status: "pass",
@@ -142,10 +143,12 @@ test("default extension registers a host-authenticated schema and reports failur
   });
   harnessCheckExtension(registration);
   assert.ok(captured.tool);
-  assert.deepEqual(Object.keys(captured.tool.parameters.properties).sort(), [
-    "mode",
-    "required_capabilities",
-  ]);
+  const parameterProperties = Object.getOwnPropertyDescriptor(
+    captured.tool.parameters,
+    "properties",
+  )?.value;
+  assert.ok(isJsonRecord(parameterProperties));
+  assert.deepEqual(Object.keys(parameterProperties).sort(), ["mode", "required_capabilities"]);
   await captured.start?.({ type: "session_start", reason: "startup" }, context("session-a"));
   const result = await captured.tool.execute(
     "call-1",

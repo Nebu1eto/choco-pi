@@ -14,7 +14,7 @@ import {
 import path from "node:path";
 import test from "node:test";
 import { VERSION } from "@earendil-works/pi-coding-agent";
-import { Value } from "typebox/value";
+import { compile, type JsonSchema, type Static } from "@earendil-works/pi-schema";
 import {
   checkoutRevision,
   PROFILE_PI_TARGET,
@@ -28,6 +28,7 @@ import {
   executeHarnessCheck,
   type HarnessCheckExecutionDependencies,
 } from "../.pi/extensions/harness-check.ts";
+import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 import { installProfile } from "../scripts/install-profile.ts";
 
 async function fakeLauncher(directory: string, version: string): Promise<string> {
@@ -55,14 +56,20 @@ test("launcher selection prefers explicit override, then environment, then compa
         launcher: compatible,
         version: PROFILE_PI_TARGET,
       });
-      assert.deepEqual(await resolvePiLauncher(), { launcher: incompatible, version: "0.87.1" });
+      assert.deepEqual(await resolvePiLauncher(), {
+        launcher: incompatible,
+        version: "0.87.1",
+      });
       delete process.env.CHOCO_PI_LAUNCHER;
       assert.deepEqual(await resolvePiLauncher(), {
         launcher: compatible,
         version: PROFILE_PI_TARGET,
       });
       process.env.PATH = path.dirname(incompatible);
-      assert.deepEqual(await resolvePiLauncher(), { launcher: null, version: null });
+      assert.deepEqual(await resolvePiLauncher(), {
+        launcher: null,
+        version: null,
+      });
     } finally {
       if (previousPath === undefined) delete process.env.PATH;
       else process.env.PATH = previousPath;
@@ -79,7 +86,11 @@ test("installer records an explicitly selected launcher and harness rechecks it 
     await writeFile(path.join(root, ".pi", "settings.json"), JSON.stringify({ packages: [] }));
     const launcher = await fakeLauncher(path.join(directory, "launcher"), PROFILE_PI_TARGET);
     const agentDir = path.join(directory, "agent");
-    const result = await installProfile({ root, agentDir, piLauncher: launcher });
+    const result = await installProfile({
+      root,
+      agentDir,
+      piLauncher: launcher,
+    });
     assert.deepEqual(result.warnings, []);
     const dependencies = harnessDependencies();
     dependencies.check = async () => ({
@@ -94,7 +105,10 @@ test("installer records an explicitly selected launcher and harness rechecks it 
     assert.equal(healthy.status, "pass");
     assert.ok(healthy.checks.every((check) => check.status === "pass"));
     if (healthy.profileMarker?.status === "valid")
-      assert.deepEqual(healthy.profileMarker.marker.pi, { launcher, version: PROFILE_PI_TARGET });
+      assert.deepEqual(healthy.profileMarker.marker.pi, {
+        launcher,
+        version: PROFILE_PI_TARGET,
+      });
     await fakeLauncher(path.dirname(launcher), "0.87.1");
     const stale = await executeHarnessCheck({ mode: "automatic" }, undefined, dependencies);
     assert.equal(stale.status, "warn");
@@ -102,7 +116,11 @@ test("installer records an explicitly selected launcher and harness rechecks it 
       stale.checks.find((check) => check.id === "profile-launcher")?.detail ?? "",
       /0\.87\.1/,
     );
-    const incompatible = await installProfile({ root, agentDir, piLauncher: launcher });
+    const incompatible = await installProfile({
+      root,
+      agentDir,
+      piLauncher: launcher,
+    });
     assert.equal(incompatible.warnings.length, 1);
   });
 });
@@ -127,7 +145,7 @@ test("marker uses schema 1, private modes and atomic replacement without changin
     assert.equal(target, path.join(agentDir, "choco-pi", "profile.json"));
     const contents = await readFile(target, "utf8");
     const parsed: unknown = JSON.parse(contents);
-    assert.ok(Value.Check(ProfileMarkerSchema, parsed));
+    assert.ok(checkSchema(ProfileMarkerSchema, parsed));
     assert.deepEqual(parsed, {
       schema: 1,
       name: "choco-pi",
@@ -202,7 +220,7 @@ test("marker reports missing, malformed, unsupported and stale checkout states",
     assert.equal((await readProfileMarker(directory)).status, "missing");
     const target = await writeProfileMarker(directory, directory, VERSION);
     const valid: unknown = JSON.parse(await readFile(target, "utf8"));
-    assert.ok(Value.Check(ProfileMarkerSchema, valid));
+    assert.ok(checkSchema(ProfileMarkerSchema, valid));
     for (const invalid of [
       "{",
       JSON.stringify({ ...valid, schema: 2 }),
@@ -300,7 +318,10 @@ test("harness report warns on missing markers, checkout mismatch and unavailable
 test("harness rejects a session change during marker reading", async () => {
   const dependencies = harnessDependencies();
   dependencies.readProfileMarker = async () => {
-    dependencies.currentOwner = () => ({ sessionId: "new-session", generation: 2 });
+    dependencies.currentOwner = () => ({
+      sessionId: "new-session",
+      generation: 2,
+    });
     return { path: "/unused", status: "missing", reason: "absent" };
   };
   await assert.rejects(
@@ -321,3 +342,8 @@ test("harness rejects cancellation during marker reading", async () => {
     /cancelled/,
   );
 });
+
+/** Whether `value` matches `schema`, narrowing like the compiled validator's check. */
+function checkSchema<S extends JsonSchema>(schema: S, value: RuntimeValue): value is Static<S> {
+  return compile(schema).check(value);
+}

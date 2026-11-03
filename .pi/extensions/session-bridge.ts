@@ -32,7 +32,8 @@ import {
   type ExtensionContext,
   type SessionInfo,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { bool, int, nullable, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
+import { hostParams } from "./lib/schema-bridge.ts";
 import {
   assertSessionId,
   BRIDGE_DIRECTORY,
@@ -149,11 +150,19 @@ type DeliveryStage =
   | "heartbeat"
   | "watch";
 
-type DeliveryErrorDetails = { stage: DeliveryStage; errorName: string; code: string | null };
+type DeliveryErrorDetails = {
+  stage: DeliveryStage;
+  errorName: string;
+  code: string | null;
+};
 
 function deliveryErrorDetails(stage: DeliveryStage, error: RuntimeValue): DeliveryErrorDetails {
   const code = isRecord(error) && isString(error.code) ? error.code : null;
-  return { stage, errorName: error instanceof Error ? error.name : runtimeTypeOf(error), code };
+  return {
+    stage,
+    errorName: error instanceof Error ? error.name : runtimeTypeOf(error),
+    code,
+  };
 }
 
 function startupAdmission(): StartupAdmission {
@@ -258,7 +267,12 @@ function startManagedTask(managed: ManagedSession, operation: () => Promise<void
 
 async function createIndependentSession(
   ctx: ExtensionContext,
-  input: { initialPrompt: string; model?: string; effort?: string; name?: string },
+  input: {
+    initialPrompt: string;
+    model?: string;
+    effort?: string;
+    name?: string;
+  },
 ): Promise<SessionSnapshot> {
   const initialPrompt = input.initialPrompt.trim();
   if (!initialPrompt) throw new Error("Initial prompt must not be empty.");
@@ -433,7 +447,11 @@ async function withNextMailboxSequence(
 async function sendSessionMessage(
   ctx: ExtensionContext,
   input: { sessionId: string; mode?: DeliveryMode; message: string },
-): Promise<{ accepted: "direct" | "mailbox"; effectiveMode: "steer"; status: SessionStatus }> {
+): Promise<{
+  accepted: "direct" | "mailbox";
+  effectiveMode: "steer";
+  status: SessionStatus;
+}> {
   const message = input.message.trim();
   if (!message) throw new Error("Message must not be empty.");
   const cwd = ctx.cwd;
@@ -866,19 +884,27 @@ export function installAgentTools(pi: ExtensionAPI): void {
     label: "Create conversation",
     description: "Create and start an independent project conversation.",
     promptSnippet: "Start an independent project conversation.",
-    parameters: Type.Object({
-      initial_prompt: Type.String({ description: "Initial user prompt for the new conversation" }),
-      model: Type.Optional(
-        Type.String({ description: "Model as provider/model; defaults to the current model" }),
+    parameters: hostParams(
+      obj(
+        {
+          initial_prompt: str({
+            description: "Initial user prompt for the new conversation",
+          }),
+          model: opt(
+            str({
+              description: "Model as provider/model; defaults to the current model",
+            }),
+          ),
+          effort: opt(
+            oneOf(THINKING_LEVELS, {
+              description: "Reasoning effort; defaults to the current effort",
+            }),
+          ),
+          name: opt(str({ description: "Optional session display name" })),
+        },
+        { open: true },
       ),
-      effort: Type.Optional(
-        Type.Union(
-          THINKING_LEVELS.map((level) => Type.Literal(level)),
-          { description: "Reasoning effort; defaults to the current effort" },
-        ),
-      ),
-      name: Type.Optional(Type.String({ description: "Optional session display name" })),
-    }),
+    ),
     executionMode: "sequential",
     execute: async (_toolCallId, params, _signal, _onUpdate, ctx) =>
       toolResult(
@@ -897,11 +923,16 @@ export function installAgentTools(pi: ExtensionAPI): void {
     description:
       "Steer and resume a live conversation. Legacy mode 'queue' is accepted as a deprecated alias for 'steer'.",
     promptSnippet: "Steer another live project conversation.",
-    parameters: Type.Object({
-      session_id: Type.String({ description: "Target session ID" }),
-      mode: Type.Optional(Type.Union([Type.Literal("queue"), Type.Literal("steer")])),
-      message: Type.String({ description: "Message to deliver" }),
-    }),
+    parameters: hostParams(
+      obj(
+        {
+          session_id: str({ description: "Target session ID" }),
+          mode: opt(oneOf(["queue", "steer"])),
+          message: str({ description: "Message to deliver" }),
+        },
+        { open: true },
+      ),
+    ),
     executionMode: "sequential",
     execute: async (_toolCallId, params, _signal, _onUpdate, ctx) =>
       toolResult(
@@ -918,7 +949,7 @@ export function installAgentTools(pi: ExtensionAPI): void {
     label: "List conversations",
     description: "List persisted conversations for the current project.",
     promptSnippet: "List persisted project conversations.",
-    parameters: Type.Object({}),
+    parameters: hostParams(obj({}, { open: true })),
     executionMode: "parallel",
     execute: async (_toolCallId, _params, _signal, _onUpdate, ctx) =>
       toolResult(await listProjectSessions(ctx.cwd)),
@@ -929,19 +960,26 @@ export function installAgentTools(pi: ExtensionAPI): void {
     label: "Read conversation",
     description: "Read recent messages from another persisted conversation.",
     promptSnippet: "Read another conversation's recent messages.",
-    parameters: Type.Object({
-      session_id: Type.String({ description: "Session ID to read" }),
-      limit: Type.Optional(
-        Type.Integer({
-          minimum: 1,
-          maximum: MAX_READ_LIMIT,
-          description: "Maximum transcript items; defaults to 50",
-        }),
+    parameters: hostParams(
+      obj(
+        {
+          session_id: str({ description: "Session ID to read" }),
+          limit: opt(
+            int({
+              minimum: 1,
+              maximum: MAX_READ_LIMIT,
+              description: "Maximum transcript items; defaults to 50",
+            }),
+          ),
+          include_tools: opt(
+            bool({
+              description: "Include tool calls and tool results; defaults to false",
+            }),
+          ),
+        },
+        { open: true },
       ),
-      include_tools: Type.Optional(
-        Type.Boolean({ description: "Include tool calls and tool results; defaults to false" }),
-      ),
-    }),
+    ),
     executionMode: "parallel",
     execute: async (_toolCallId, params, _signal, _onUpdate, ctx) =>
       toolResult(
@@ -954,24 +992,28 @@ export function installAgentTools(pi: ExtensionAPI): void {
     label: "Wait for conversation",
     description: "Wait briefly for conversation progress and idle state.",
     promptSnippet: "Wait briefly for another conversation's progress.",
-    parameters: Type.Object({
-      session_id: Type.String({ description: "Session ID to wait for" }),
-      after_cursor: Type.Optional(
-        Type.Union([
-          Type.String({
-            description: "Cursor returned by session_create, session_read, or session_list",
-          }),
-          Type.Null(),
-        ]),
+    parameters: hostParams(
+      obj(
+        {
+          session_id: str({ description: "Session ID to wait for" }),
+          after_cursor: opt(
+            nullable(
+              str({
+                description: "Cursor returned by session_create, session_read, or session_list",
+              }),
+            ),
+          ),
+          timeout_ms: opt(
+            int({
+              minimum: 0,
+              maximum: SESSION_WAIT_LIMIT_MS,
+              description: "Wait milliseconds; defaults to and cannot exceed 5000.",
+            }),
+          ),
+        },
+        { open: true },
       ),
-      timeout_ms: Type.Optional(
-        Type.Integer({
-          minimum: 0,
-          maximum: SESSION_WAIT_LIMIT_MS,
-          description: "Wait milliseconds; defaults to and cannot exceed 5000.",
-        }),
-      ),
-    }),
+    ),
     executionMode: "parallel",
     execute: async (_toolCallId, params, signal, _onUpdate, ctx) =>
       toolResult(

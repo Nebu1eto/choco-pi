@@ -2,7 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createContext, runInContext } from "node:vm";
 import { createSyntheticSourceInfo, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Type, type TSchema } from "typebox";
+import {
+  arr,
+  lit,
+  num,
+  obj,
+  oneOf,
+  opt,
+  str,
+  union,
+  type JsonSchema,
+} from "@earendil-works/pi-schema";
+import { hostParams } from "../.pi/extensions/lib/schema-bridge.ts";
 import {
   BRIDGE_EXCLUDED_TOOLS,
   bridgedToolUsage,
@@ -13,15 +24,18 @@ import { buildBridgedToolsLine } from "../.pi/packages/choco-pi-codex/src/tools/
 import { scopeAllToolsToDeferredCustom } from "../.pi/packages/choco-pi-codex/src/tools/code-mode/tool-source.ts";
 import type { CodeModeToolDefinition } from "../.pi/packages/choco-pi-codex/src/tools/code-mode/types.ts";
 
-function makeTool(name: string, parameters: TSchema, promptSnippet?: string): ToolDefinition {
+function makeTool(name: string, parameters: JsonSchema, promptSnippet?: string): ToolDefinition {
   return {
     name,
     label: name,
     description: name + " description",
     promptSnippet,
-    parameters,
+    parameters: hostParams(parameters),
     async execute(_toolCallId: string) {
-      return { content: [{ type: "text" as const, text: name + " ran" }], details: undefined };
+      return {
+        content: [{ type: "text" as const, text: name + " ran" }],
+        details: undefined,
+      };
     },
   };
 }
@@ -39,24 +53,27 @@ function makeRunner(definitions: ToolDefinition[]): RegisteredToolSource {
 test("usage lines name required and optional parameters", () => {
   const withParams = makeTool(
     "symbol_search",
-    Type.Object({
-      query: Type.String(),
-      limit: Type.Optional(Type.Number()),
-    }),
+    obj(
+      {
+        query: str(),
+        limit: opt(num()),
+      },
+      { open: true },
+    ),
   );
   assert.equal(bridgedToolUsage(withParams), "await tools.symbol_search({query, limit?})");
 
-  const noParams = makeTool("get_goal", Type.Object({}));
+  const noParams = makeTool("get_goal", obj({}, { open: true }));
   assert.equal(bridgedToolUsage(noParams), "await tools.get_goal()");
 });
 
 test("the bridge skips its own entry points and the natively wrapped tools", () => {
   const runner = makeRunner([
-    makeTool("exec", Type.Object({ code: Type.String() })),
-    makeTool("wait", Type.Object({ cell_id: Type.String() })),
-    makeTool("apply_patch", Type.Object({ patch: Type.String() })),
-    makeTool("symbol_search", Type.Object({ query: Type.String() })),
-    makeTool("Agent", Type.Object({ prompt: Type.String() })),
+    makeTool("exec", obj({ code: str() }, { open: true })),
+    makeTool("wait", obj({ cell_id: str() }, { open: true })),
+    makeTool("apply_patch", obj({ patch: str() }, { open: true })),
+    makeTool("symbol_search", obj({ query: str() }, { open: true })),
+    makeTool("Agent", obj({ prompt: str() }, { open: true })),
   ]);
   const bridged = collectBridgedTools(runner);
   const names = bridged.map((tool) => tool.name).sort();
@@ -68,7 +85,7 @@ test("the bridge skips its own entry points and the natively wrapped tools", () 
 
 test("bridged tools are deferred so they cost no prompt tokens", () => {
   const runner = makeRunner([
-    makeTool("module_report", Type.Object({ path: Type.String() }), "Inspect module structure."),
+    makeTool("module_report", obj({ path: str() }, { open: true }), "Inspect module structure."),
   ]);
   const [bridged] = collectBridgedTools(runner);
   assert.ok(bridged);
@@ -85,8 +102,8 @@ test("a cold capture yields no bridged tools instead of throwing", () => {
 test("the prompt catalogs bridged tools with deterministic summaries", () => {
   const bridged = collectBridgedTools(
     makeRunner([
-      makeTool("session_send", Type.Object({ session_id: Type.String() })),
-      makeTool("lsp_diagnostics", Type.Object({ path: Type.Optional(Type.String()) })),
+      makeTool("session_send", obj({ session_id: str() }, { open: true })),
+      makeTool("lsp_diagnostics", obj({ path: opt(str()) }, { open: true })),
     ]),
   );
   // SAFETY: ProgrammaticCodeModeToolDefinition is a CodeModeToolDefinition member.
@@ -104,9 +121,9 @@ test("the prompt catalogs bridged tools with deterministic summaries", () => {
 test("headless bridge omits UI-only tools but retains workflow tools", () => {
   const bridged = collectBridgedTools(
     makeRunner([
-      makeTool("observe_ui", Type.Object({})),
-      makeTool("read_text", Type.Object({ ref: Type.String() })),
-      makeTool("workflow_run", Type.Object({ name: Type.String() })),
+      makeTool("observe_ui", obj({}, { open: true })),
+      makeTool("read_text", obj({ ref: str() }, { open: true })),
+      makeTool("workflow_run", obj({ name: str() }, { open: true })),
     ]),
     false,
   );
@@ -119,7 +136,7 @@ test("headless bridge omits UI-only tools but retains workflow tools", () => {
 
 test("bridged tools stay discoverable in ALL_TOOLS and callable through the guard", () => {
   const bridged = collectBridgedTools(
-    makeRunner([makeTool("read_symbol", Type.Object({ path: Type.String() }))]),
+    makeRunner([makeTool("read_symbol", obj({ path: str() }, { open: true }))]),
   );
   // SAFETY: ProgrammaticCodeModeToolDefinition is a CodeModeToolDefinition member.
   const preamble = scopeAllToolsToDeferredCustom("text(1);", bridged as CodeModeToolDefinition[]);
@@ -159,21 +176,24 @@ test("bridgedToolUsage renders enums, array elements, and union discriminators",
     name: "act_ui",
     label: "act_ui",
     description: "act",
-    parameters: Type.Object({
-      mode: Type.Union([Type.Literal("automatic"), Type.Literal("full")]),
-      caps: Type.Optional(Type.Array(Type.Union([Type.Literal("a"), Type.Literal("b")]))),
-      actions: Type.Array(
-        Type.Union([
-          Type.Object({ action: Type.Literal("press"), ref: Type.String() }),
-          Type.Object({ action: Type.Literal("click"), ref: Type.String() }),
-          Type.Object({ action: Type.Literal("click"), x: Type.Number(), y: Type.Number() }),
-        ]),
+    parameters: hostParams(
+      obj(
+        {
+          mode: oneOf(["automatic", "full"]),
+          caps: opt(arr(oneOf(["a", "b"]))),
+          actions: arr(
+            union([
+              obj({ action: lit("press"), ref: str() }, { open: true }),
+              obj({ action: lit("click"), ref: str() }, { open: true }),
+              obj({ action: lit("click"), x: num(), y: num() }, { open: true }),
+            ]),
+          ),
+          expect: opt(obj({ ref: opt(str()), text: str() }, { open: true })),
+          free: opt(str()),
+        },
+        { open: true },
       ),
-      expect: Type.Optional(
-        Type.Object({ ref: Type.Optional(Type.String()), text: Type.String() }),
-      ),
-      free: Type.Optional(Type.String()),
-    }),
+    ),
     async execute() {
       return { content: [], details: {} };
     },

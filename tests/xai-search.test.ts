@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { Type, type Static } from "typebox";
-import { Check } from "typebox/value";
+import { arr, bool, compile, num, obj, opt, str, type Static } from "@earendil-works/pi-schema";
 import {
   createEventBus,
   createExtensionRuntime,
@@ -74,7 +73,13 @@ function fakeRegistry(options: FakeRegistryOptions = {}): FakeRegistry {
     getAll: () => [model],
     getApiKeyAndHeaders: async () => {
       registry.credentialReads += 1;
-      return options.auth ?? { ok: true, apiKey: API_KEY, headers: { "x-extra": "1" } };
+      return (
+        options.auth ?? {
+          ok: true,
+          apiKey: API_KEY,
+          headers: { "x-extra": "1" },
+        }
+      );
     },
     getApiKeyForProvider: async () => {
       registry.credentialReads += 1;
@@ -85,24 +90,34 @@ function fakeRegistry(options: FakeRegistryOptions = {}): FakeRegistry {
   return registry;
 }
 
-const RequestBodySchema = Type.Object({
-  model: Type.String(),
-  input: Type.Array(Type.Object({ role: Type.String(), content: Type.String() })),
-  tools: Type.Array(
-    Type.Object({
-      type: Type.String(),
-      filters: Type.Optional(
-        Type.Object({
-          allowed_domains: Type.Optional(Type.Array(Type.String())),
-          excluded_domains: Type.Optional(Type.Array(Type.String())),
-        }),
+const RequestBodySchema = obj(
+  {
+    model: str(),
+    input: arr(obj({ role: str(), content: str() }, { open: true })),
+    tools: arr(
+      obj(
+        {
+          type: str(),
+          filters: opt(
+            obj(
+              {
+                allowed_domains: opt(arr(str())),
+                excluded_domains: opt(arr(str())),
+              },
+              { open: true },
+            ),
+          ),
+        },
+        { open: true },
       ),
-    }),
-  ),
-  store: Type.Boolean(),
-  stream: Type.Boolean(),
-  max_output_tokens: Type.Number(),
-});
+    ),
+    store: bool(),
+    stream: bool(),
+    max_output_tokens: num(),
+  },
+  { open: true },
+);
+const isRequestBody = compile(RequestBodySchema).check;
 
 interface FetchCall {
   url: string;
@@ -115,7 +130,7 @@ function recordingFetch(respond: (call: FetchCall) => Promise<Response> | Respon
   const calls: FetchCall[] = [];
   const fetch: XaiFetch = async (url, init) => {
     const body = JSON.parse(String(init.body));
-    if (!Check(RequestBodySchema, body)) throw new Error("unexpected xAI request body");
+    if (!isRequestBody(body)) throw new Error("unexpected xAI request body");
     const call: FetchCall = {
       url,
       headers: new Headers(init.headers),
@@ -129,7 +144,10 @@ function recordingFetch(respond: (call: FetchCall) => Promise<Response> | Respon
 }
 
 interface UncitedPayload {
-  output: Array<{ type: string; content: Array<{ type: string; text: string }> }>;
+  output: Array<{
+    type: string;
+    content: Array<{ type: string; text: string }>;
+  }>;
 }
 type XaiFixturePayload = ReturnType<typeof citedResponse> | UncitedPayload;
 
@@ -150,7 +168,12 @@ function citedResponse() {
     id: "resp_1",
     status: "completed",
     output: [
-      { type: "web_search_call", id: "ws_1", status: "completed", action: { type: "search" } },
+      {
+        type: "web_search_call",
+        id: "ws_1",
+        status: "completed",
+        action: { type: "search" },
+      },
       {
         type: "message",
         role: "assistant",
@@ -197,7 +220,10 @@ function setup(
   const manager = SessionManager.inMemory("/tmp/choco-pi-xai-search-test");
   bindSearchSession(scope, manager);
   const registry = fakeRegistry(registryOptions);
-  const options: XaiSearchAdapterOptions = { fetch, getRegistry: () => registry };
+  const options: XaiSearchAdapterOptions = {
+    fetch,
+    getRegistry: () => registry,
+  };
   if (timeoutMs !== undefined) options.timeoutMs = timeoutMs;
   registerXaiSearchAdapter(scope, options);
   return { scope, manager, registry };
@@ -228,7 +254,11 @@ test("default family order ends with xai and the adapter declares its contract",
   assert.equal(adapter.transport, "responses");
   assert.deepEqual(adapter.capabilities, {
     actions: ["search"],
-    constraints: { numResults: true, domainFilter: true, domainExclusions: true },
+    constraints: {
+      numResults: true,
+      domainFilter: true,
+      domainExclusions: true,
+    },
   });
 });
 
@@ -295,7 +325,10 @@ test("happy path posts a stateless web_search request and parses citations", asy
     response.results.map(({ title, url }) => ({ title, url })),
     [
       { title: "x.ai", url: "https://x.ai/company" },
-      { title: "xAI (company) - Wikipedia", url: "https://en.wikipedia.org/wiki/XAI_(company)" },
+      {
+        title: "xAI (company) - Wikipedia",
+        url: "https://en.wikipedia.org/wiki/XAI_(company)",
+      },
       { title: "x.ai", url: "https://x.ai/news" },
     ],
   );
@@ -315,7 +348,12 @@ test("numResults limits sources and domain filters map to xAI filters", async ()
   const { calls, fetch } = recordingFetch(() => jsonResponse(citedResponse()));
   const { scope } = setup(fetch);
   const limited = await search(
-    { query: "fixture", provider: "xai", numResults: 1, domainFilter: ["X.ai", "wikipedia.org"] },
+    {
+      query: "fixture",
+      provider: "xai",
+      numResults: 1,
+      domainFilter: ["X.ai", "wikipedia.org"],
+    },
     { scope },
   );
   assert.equal(limited.results.length, 1);
@@ -332,7 +370,14 @@ test("numResults limits sources and domain filters map to xAI filters", async ()
   });
 
   await expectSearchError(
-    search({ query: "fixture", provider: "xai", domainFilter: ["x.ai", "-reddit.com"] }, { scope }),
+    search(
+      {
+        query: "fixture",
+        provider: "xai",
+        domainFilter: ["x.ai", "-reddit.com"],
+      },
+      { scope },
+    ),
     "capability",
   );
   await expectSearchError(
@@ -352,7 +397,12 @@ test("numResults limits sources and domain filters map to xAI filters", async ()
 test("an answer without citations succeeds with empty results", async () => {
   const { fetch } = recordingFetch(() =>
     jsonResponse({
-      output: [{ type: "message", content: [{ type: "output_text", text: "No sources needed." }] }],
+      output: [
+        {
+          type: "message",
+          content: [{ type: "output_text", text: "No sources needed." }],
+        },
+      ],
     }),
   );
   const { scope } = setup(fetch);
@@ -415,7 +465,9 @@ test("network failures are retryable network errors", async () => {
 
 test("credential resolution failures are auth errors", async () => {
   const { calls, fetch } = recordingFetch(() => jsonResponse(citedResponse()));
-  const { scope } = setup(fetch, { auth: { ok: false, error: "token expired" } });
+  const { scope } = setup(fetch, {
+    auth: { ok: false, error: "token expired" },
+  });
   await expectSearchError(search({ query: "fixture", provider: "xai" }, { scope }), "auth");
   assert.equal(calls.length, 0);
 });
@@ -497,8 +549,18 @@ test("auto and all never route to xai even when it is the only available adapter
   // Unregistered families make auto report the router's existing route-miss error.
   const autoError = await expectSearchError(search({ query: "fixture" }, { scope }), "capability");
   assert.deepEqual(
-    autoError.attempts?.map(({ adapterId, outcome, reason }) => ({ adapterId, outcome, reason })),
-    [{ adapterId: XAI_SEARCH_ADAPTER_ID, outcome: "disabled", reason: "explicit selection only" }],
+    autoError.attempts?.map(({ adapterId, outcome, reason }) => ({
+      adapterId,
+      outcome,
+      reason,
+    })),
+    [
+      {
+        adapterId: XAI_SEARCH_ADAPTER_ID,
+        outcome: "disabled",
+        reason: "explicit selection only",
+      },
+    ],
   );
   await expectSearchError(search({ query: "fixture", provider: "all" }, { scope }), "config");
   assert.equal(calls.length, 0);
@@ -510,7 +572,9 @@ test("registration gate follows the configured auth status and never reads crede
   let configured = false;
   let credentialReads = 0;
   const registry = {
-    getProviderAuthStatus: (provider: string) => ({ configured: provider === "xai" && configured }),
+    getProviderAuthStatus: (provider: string) => ({
+      configured: provider === "xai" && configured,
+    }),
     getApiKeyForProvider: async () => {
       credentialReads += 1;
       return API_KEY;

@@ -5,8 +5,9 @@
  * budget, every record validates against the package schema, and no record
  * (or shown notice) carries credential-looking text.
  */
-import { type Static, type TSchema, Type } from "typebox";
-import { Value } from "typebox/value";
+import { str } from "@earendil-works/pi-schema";
+import type { JsonRecord, RuntimeValue } from "../../../.pi/extensions/lib/runtime-values.ts";
+import { isRecord, matches } from "./schema-check.ts";
 
 import {
   isOwnedReason,
@@ -33,7 +34,7 @@ const LANE_FIELDS = LaneRecordSchema.properties;
  * owned-code enum). A value there is exempt only when it validates against
  * its field's schema; any other value is scanned like free text.
  */
-const CLOSED_FIELDS: ReadonlyMap<string, TSchema> = new Map<string, TSchema>([
+const CLOSED_FIELDS: ReadonlyMap<string, object> = new Map<string, object>([
   ["customType", LANE_FIELDS.customType],
   ["provider", LANE_FIELDS.provider],
   ["route", LANE_FIELDS.route],
@@ -45,7 +46,7 @@ const CLOSED_FIELDS: ReadonlyMap<string, TSchema> = new Map<string, TSchema>([
 
 /** Exactly one of the package's own codes (REASONS) or lane ids; equality, not a pattern. */
 export function isOwnedCode(text: string): boolean {
-  return isOwnedReason(text) || Value.Check(LANE_FIELDS.from, text);
+  return isOwnedReason(text) || matches(LANE_FIELDS.from, text);
 }
 
 /** Maximal code-like tokens of free text (owned codes are lowercase words joined by `-`). */
@@ -83,16 +84,15 @@ export function laneRecordData(entries: readonly JournalEntry[]): unknown[] {
 }
 
 /** Any object-shaped record, valid or not, so invalid records are scanned too. */
-const JournalFieldsSchema = Type.Record(Type.String(), Type.Unknown());
-type JournalFields = Static<typeof JournalFieldsSchema>;
-const TextSchema = Type.String();
+type JournalFields = JsonRecord;
+const TextSchema = str();
 
 /** Field names of one record whose string value looks like a credential. */
 export function credentialFields(record: JournalFields): string[] {
   return Object.entries(record).flatMap(([key, value]) => {
-    if (!Value.Check(TextSchema, value)) return [];
+    if (!matches(TextSchema, value)) return [];
     const closed = CLOSED_FIELDS.get(key);
-    if (closed !== undefined && Value.Check(closed, value)) return [];
+    if (closed !== undefined && matches(closed, value)) return [];
     if (isOwnedCode(value)) return [];
     return CREDENTIAL_TEXT.test(value) ? [key] : [];
   });
@@ -125,9 +125,14 @@ export function summarizeJournal(data: readonly unknown[]): JournalSummary {
   };
 }
 
+/** Whether `item` validates against the package's lane record schema. */
+function isLaneRecord(item: RuntimeValue): item is LaneRecord {
+  return matches(LaneRecordSchema, item);
+}
+
 /** The schema-valid lane records of `data`, in order. */
 export function validRecords(data: readonly unknown[]): LaneRecord[] {
-  return data.filter((item): item is LaneRecord => Value.Check(LaneRecordSchema, item));
+  return data.filter(isLaneRecord);
 }
 
 /** Occurrences of each distinct value, in first-seen order. */
@@ -156,9 +161,9 @@ export function journalReasons(
   const reasons: string[] = [];
   const valid: LaneRecord[] = [];
   data.forEach((item, index) => {
-    if (Value.Check(LaneRecordSchema, item)) valid.push(item);
+    if (isLaneRecord(item)) valid.push(item);
     else reasons.push(`lane record ${index} fails the lane record schema`);
-    if (!Value.Check(JournalFieldsSchema, item)) return;
+    if (!isRecord(item)) return;
     for (const field of credentialFields(item))
       reasons.push(`lane record ${index} field ${field} looks like a credential`);
   });

@@ -1,4 +1,4 @@
-import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
+import { isJsonRecord, reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
 import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -7,8 +7,6 @@ import path from "node:path";
 import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import {
   default as modelContextCap,
   resolvePolicy,
@@ -65,7 +63,11 @@ function overThresholdContext(options: { model: Model<Api>; onCompact: () => voi
     cwd: process.cwd(),
     model: options.model,
     modelRegistry: { getAll: () => [options.model] },
-    getContextUsage: () => ({ tokens: 550_001, contextWindow: 600_000, percent: 91.7 }),
+    getContextUsage: () => ({
+      tokens: 550_001,
+      contextWindow: 600_000,
+      percent: 91.7,
+    }),
     compact: options.onCompact,
     ui: { notify: () => {} },
   };
@@ -115,7 +117,12 @@ test("a context-cap.json left in a project is ignored without a notice", async (
     {
       defaultCap: 200_000,
       headroom: { tokens: 10_000, ratio: 0.5 },
-      models: { "test-provider/one-million-context-model": { cap: 700_000, compactAt: 500_000 } },
+      models: {
+        "test-provider/one-million-context-model": {
+          cap: 700_000,
+          compactAt: 500_000,
+        },
+      },
     },
     async (cwd) => {
       const handlers = registerCap();
@@ -131,7 +138,9 @@ test("a context-cap.json left in a project is ignored without a notice", async (
         compact: () => {
           compactionRequests++;
         },
-        ui: { notify: (message: string, level: string) => notices.push([message, level]) },
+        ui: {
+          notify: (message: string, level: string) => notices.push([message, level]),
+        },
       };
       await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, context);
       // Standard presets govern: neither the override cap nor its point applies.
@@ -213,7 +222,11 @@ test("compaction is requested only after the agent run settles", async () => {
     cwd: process.cwd(),
     model: activeModel,
     modelRegistry: { getAll: () => [activeModel] },
-    getContextUsage: () => ({ tokens: 550_001, contextWindow: 600_000, percent: 91.7 }),
+    getContextUsage: () => ({
+      tokens: 550_001,
+      contextWindow: 600_000,
+      percent: 91.7,
+    }),
     compact: () => {
       compactionRequests++;
     },
@@ -410,7 +423,11 @@ function singleModelContext(activeModel: Model<Api>) {
     cwd: process.cwd(),
     model: activeModel,
     modelRegistry: { getAll: () => [activeModel] },
-    getContextUsage: () => ({ tokens: 0, contextWindow: activeModel.contextWindow, percent: 0 }),
+    getContextUsage: () => ({
+      tokens: 0,
+      contextWindow: activeModel.contextWindow,
+      percent: 0,
+    }),
     compact: () => {},
     ui: { notify: () => {} },
   };
@@ -519,12 +536,10 @@ function registerCap(): Map<string, CapHandler> {
   return handlers;
 }
 
-const CapModuleSchema = Type.Object({ default: Type.Function([Type.Unknown()], Type.Unknown()) });
-
 function isCapModule<Candidate>(
   value: Candidate,
 ): value is Candidate & { default: typeof modelContextCap } {
-  return Value.Check(CapModuleSchema, value);
+  return isJsonRecord(value) && value.default instanceof Function;
 }
 
 /**
@@ -562,7 +577,10 @@ interface AdoptionSlotValue {
 /** Publish `value` on the background-adoption slot for the duration of `run`. */
 async function withAdoptionSlot(value: AdoptionSlotValue, run: () => Promise<void>): Promise<void> {
   const previous = Object.getOwnPropertyDescriptor(globalThis, ADOPTION_SLOT);
-  Object.defineProperty(globalThis, ADOPTION_SLOT, { configurable: true, value });
+  Object.defineProperty(globalThis, ADOPTION_SLOT, {
+    configurable: true,
+    value,
+  });
   try {
     await run();
   } finally {

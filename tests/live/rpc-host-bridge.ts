@@ -7,128 +7,148 @@ import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { Type, type Static } from "typebox";
-import { Value } from "typebox/value";
+import {
+  arr,
+  bool,
+  lit,
+  nullable,
+  num,
+  obj,
+  oneOf,
+  opt,
+  str,
+  union,
+  type Static,
+} from "@earendil-works/pi-schema";
+import { matches } from "./background-compaction/schema-check.ts";
 
 import { ShellEntrySchema } from "../../.pi/extensions/lib/host-bridge/schema.ts";
 
-const AgentSchema = Type.Object({
-  id: Type.String(),
-  status: Type.String(),
-  outputFile: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-});
-const SubagentTransitionSchema = Type.Object(
+const AgentSchema = obj(
   {
-    schema: Type.Literal(1),
-    at: Type.Number(),
-    event: Type.Union([
-      Type.Literal("created"),
-      Type.Literal("started"),
-      Type.Literal("completed"),
-      Type.Literal("failed"),
-      Type.Literal("stopped"),
-      Type.Literal("steered"),
-      Type.Literal("resumed"),
-      Type.Literal("lost"),
-    ]),
-    agent: Type.Object(
-      {
-        id: Type.String(),
-        parentId: Type.Union([Type.String(), Type.Null()]),
-        role: Type.String(),
-        model: Type.Union([Type.String(), Type.Null()]),
-        description: Type.String(),
-        background: Type.Boolean(),
-        cwd: Type.Union([Type.String(), Type.Null()]),
-        toolCallId: Type.Union([Type.String(), Type.Null()]),
-        outputFile: Type.Union([Type.String(), Type.Null()]),
-        status: Type.Union([
-          Type.Literal("queued"),
-          Type.Literal("running"),
-          Type.Literal("completed"),
-          Type.Literal("failed"),
-          Type.Literal("stopped"),
-          Type.Literal("lost"),
-        ]),
-        startedAt: Type.Union([Type.Number(), Type.Null()]),
-        finishedAt: Type.Union([Type.Number(), Type.Null()]),
-        summary: Type.Union([Type.String({ maxLength: 200 }), Type.Null()]),
-      },
-      { additionalProperties: false },
-    ),
-    live: Type.Array(Type.String()),
+    id: str(),
+    status: str(),
+    outputFile: opt(nullable(str())),
   },
-  { additionalProperties: false },
+  { open: true },
 );
-const EntryDataSchema = Type.Object({
-  schema: Type.Optional(Type.Number()),
-  event: Type.Optional(Type.String()),
-  agent: Type.Optional(AgentSchema),
-  shell: Type.Optional(Type.Object({ id: Type.String() })),
-  selected: Type.Optional(Type.String()),
-  input: Type.Optional(Type.String()),
-  edited: Type.Optional(Type.String()),
-  confirmed: Type.Optional(Type.Boolean()),
-});
-const EntrySchema = Type.Object({
-  type: Type.String(),
-  customType: Type.Optional(Type.String()),
-  data: Type.Optional(EntryDataSchema),
-});
-const WireSchema = Type.Object({
-  entry: Type.Optional(EntrySchema),
-  type: Type.String(),
-  id: Type.Optional(Type.String()),
-  method: Type.Optional(Type.String()),
-  title: Type.Optional(Type.String()),
-  statusKey: Type.Optional(Type.String()),
-  statusText: Type.Optional(Type.String()),
-  success: Type.Optional(Type.Boolean()),
-  error: Type.Optional(Type.String()),
-  data: Type.Optional(
-    Type.Object({
-      commands: Type.Optional(Type.Array(Type.Object({ name: Type.String() }))),
-      entries: Type.Optional(Type.Array(EntrySchema)),
-      disposition: Type.Optional(Type.String()),
-    }),
-  ),
-});
-const ProgressSchema = Type.Object({
-  schema: Type.Literal(1),
-  at: Type.Number(),
-  subagents: Type.Array(Type.Object({ id: Type.String(), status: Type.String() })),
-  shells: Type.Array(Type.Object({ id: Type.String() })),
-});
-const TranscriptSchema = Type.Object({
-  type: Type.String(),
-  message: Type.Object({
-    role: Type.String(),
-    content: Type.Union([
-      Type.String(),
-      Type.Array(Type.Object({ type: Type.String(), text: Type.Optional(Type.String()) })),
-    ]),
-  }),
-});
-const GoalSnapshotSchema = Type.Object({
-  schema: Type.Literal(1),
-  at: Type.Number(),
-  goal: Type.Union([
-    Type.Null(),
-    Type.Object({
-      objective: Type.String(),
-      status: Type.Union([
-        Type.Literal("active"),
-        Type.Literal("paused"),
-        Type.Literal("budgetLimited"),
-        Type.Literal("complete"),
-      ]),
-      tokenBudget: Type.Union([Type.Number(), Type.Null()]),
-      tokensUsed: Type.Number(),
-      activeSeconds: Type.Number(),
-    }),
+const SubagentTransitionSchema = obj({
+  schema: lit(1),
+  at: num(),
+  event: oneOf([
+    "created",
+    "started",
+    "completed",
+    "failed",
+    "stopped",
+    "steered",
+    "resumed",
+    "lost",
   ]),
+  agent: obj({
+    id: str(),
+    parentId: nullable(str()),
+    role: str(),
+    model: nullable(str()),
+    description: str(),
+    background: bool(),
+    cwd: nullable(str()),
+    toolCallId: nullable(str()),
+    outputFile: nullable(str()),
+    status: oneOf(["queued", "running", "completed", "failed", "stopped", "lost"]),
+    startedAt: nullable(num()),
+    finishedAt: nullable(num()),
+    summary: nullable(str({ maxLength: 200 })),
+  }),
+  live: arr(str()),
 });
-const ErrnoSchema = Type.Object({ code: Type.Literal("ENOENT") });
+const EntryDataSchema = obj(
+  {
+    schema: opt(num()),
+    event: opt(str()),
+    agent: opt(AgentSchema),
+    shell: opt(obj({ id: str() }, { open: true })),
+    selected: opt(str()),
+    input: opt(str()),
+    edited: opt(str()),
+    confirmed: opt(bool()),
+  },
+  { open: true },
+);
+const EntrySchema = obj(
+  {
+    type: str(),
+    customType: opt(str()),
+    data: opt(EntryDataSchema),
+  },
+  { open: true },
+);
+const WireSchema = obj(
+  {
+    entry: opt(EntrySchema),
+    type: str(),
+    id: opt(str()),
+    method: opt(str()),
+    title: opt(str()),
+    statusKey: opt(str()),
+    statusText: opt(str()),
+    success: opt(bool()),
+    error: opt(str()),
+    data: opt(
+      obj(
+        {
+          commands: opt(arr(obj({ name: str() }, { open: true }))),
+          entries: opt(arr(EntrySchema)),
+          disposition: opt(str()),
+        },
+        { open: true },
+      ),
+    ),
+  },
+  { open: true },
+);
+const ProgressSchema = obj(
+  {
+    schema: lit(1),
+    at: num(),
+    subagents: arr(obj({ id: str(), status: str() }, { open: true })),
+    shells: arr(obj({ id: str() }, { open: true })),
+  },
+  { open: true },
+);
+const TranscriptSchema = obj(
+  {
+    type: str(),
+    message: obj(
+      {
+        role: str(),
+        content: union([str(), arr(obj({ type: str(), text: opt(str()) }, { open: true }))]),
+      },
+      { open: true },
+    ),
+  },
+  { open: true },
+);
+const GoalSnapshotSchema = obj(
+  {
+    schema: lit(1),
+    at: num(),
+    goal: nullable(
+      obj(
+        {
+          objective: str(),
+          status: oneOf(["active", "paused", "budgetLimited", "complete"]),
+          tokenBudget: nullable(num()),
+          tokensUsed: num(),
+          activeSeconds: num(),
+        },
+        { open: true },
+      ),
+    ),
+  },
+  { open: true },
+);
+const ErrnoSchema = obj({ code: lit("ENOENT") }, { open: true });
 type WireRecord = Static<typeof WireSchema>;
 type Command = {
   id?: string;
@@ -140,7 +160,7 @@ type Command = {
 };
 function parse(line: string): WireRecord {
   const value: unknown = JSON.parse(line);
-  assert(Value.Check(WireSchema, value), "Invalid RPC record");
+  assert(matches(WireSchema, value), "Invalid RPC record");
   return value;
 }
 function option(name: string, fallback?: string): string {
@@ -222,7 +242,7 @@ async function snapshot(): Promise<void> {
         value.type === "entry_appended" && value.entry?.customType === "choco-pi:host-bridge/goal",
     );
   assert(frame, "Snapshot must append current goal before handled response");
-  assert(Value.Check(GoalSnapshotSchema, frame.entry?.data), "Invalid schema-1 goal snapshot");
+  assert(matches(GoalSnapshotSchema, frame.entry?.data), "Invalid schema-1 goal snapshot");
 }
 
 try {
@@ -241,7 +261,7 @@ try {
     try {
       await cp(join(source, name), join(agentDir, name), { recursive: true, dereference: true });
     } catch (error) {
-      if (!Value.Check(ErrnoSchema, error) || name === "settings.json") throw error;
+      if (!matches(ErrnoSchema, error) || name === "settings.json") throw error;
     }
   }
   const extension = join(scratch, "probe-ui.ts");
@@ -389,10 +409,7 @@ export default function (pi: ExtensionAPI) {
     before,
   );
   const completed = completedFrame.entry?.data;
-  assert(
-    Value.Check(SubagentTransitionSchema, completed),
-    "Invalid frozen subagent transition schema",
-  );
+  assert(matches(SubagentTransitionSchema, completed), "Invalid frozen subagent transition schema");
   assert.equal(completed.agent.status, "completed");
   const outputFile = completed.agent.outputFile;
   assert(outputFile, "Subagent omitted outputFile");
@@ -403,7 +420,7 @@ export default function (pi: ExtensionAPI) {
     .split("\n")
     .map((line) => {
       const value: unknown = JSON.parse(line);
-      assert(Value.Check(TranscriptSchema, value), "Invalid subagent transcript record");
+      assert(matches(TranscriptSchema, value), "Invalid subagent transcript record");
       return value;
     });
   assert(
@@ -433,13 +450,13 @@ export default function (pi: ExtensionAPI) {
     return (
       value.type === "entry_appended" &&
       value.entry?.customType === "choco-pi:host-bridge/shell" &&
-      Value.Check(ShellEntrySchema, data) &&
+      matches(ShellEntrySchema, data) &&
       data.event === "exited" &&
       data.shell.name === "bridge-probe-root-liveness"
     );
   }, beforeShell);
   const shellData = shellFrame.entry?.data;
-  assert.ok(Value.Check(ShellEntrySchema, shellData));
+  assert.ok(matches(ShellEntrySchema, shellData));
   assert.equal(shellData.shell.exitCode, 0, "the root manager remains usable after child quit");
   assert.ok(shellData.shell.toolCallId);
   await waitFor((value) => value.type === "agent_settled", beforeShell);
@@ -464,7 +481,7 @@ export default function (pi: ExtensionAPI) {
   assert(progressFrames.length > 0, "Missing host bridge progress frames");
   for (const frame of progressFrames) {
     const value: unknown = JSON.parse(frame.statusText ?? "null");
-    assert(Value.Check(ProgressSchema, value), "Invalid schema-1 progress frame");
+    assert(matches(ProgressSchema, value), "Invalid schema-1 progress frame");
   }
   console.error(
     "PASS: real RPC dialogs, durable bridge completion, transcript, resumed parent turn, root shell after child quit, schema-1 progress frames",

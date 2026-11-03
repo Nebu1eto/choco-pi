@@ -2,8 +2,7 @@ import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import { stripVTControlCharacters } from "node:util";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { compile, str } from "@earendil-works/pi-schema";
 import type { SessionUsage, TaskSpec, VerdictSpec } from "./types.ts";
 
 export interface VerdictCheckResult {
@@ -81,8 +80,7 @@ export async function evaluateVerdict(
 ): Promise<VerdictCheckResult> {
   if (spec.kind === "finalMessageMatches") {
     const caseInsensitivePattern = spec.regex.toLowerCase();
-    const passed = Value.Check(
-      Type.String({ pattern: caseInsensitivePattern }),
+    const passed = compile(str({ pattern: caseInsensitivePattern })).check(
       usage.finalMessage.toLowerCase(),
     );
     return { passed, reason: `final message must match /${spec.regex}/i` };

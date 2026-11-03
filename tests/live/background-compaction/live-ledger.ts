@@ -1,64 +1,69 @@
-import { Type, type Static } from "typebox";
-import { Value } from "typebox/value";
+import {
+  arr,
+  int,
+  lit,
+  nul,
+  nullable,
+  num,
+  obj,
+  opt,
+  str,
+  union,
+  type Static,
+} from "@earendil-works/pi-schema";
+import { matches } from "./schema-check.ts";
 import type { Recorder } from "./artifacts.ts";
 import { RUNAWAY_FACTOR, type Expectation } from "./budget.ts";
 
 export type RequestKind = "foreground" | "summary" | "lane" | "other";
 
-const Count = Type.Optional(Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]));
-const CountsSchema = Type.Object(
-  {
-    input_tokens: Count,
-    output_tokens: Count,
-    cache_read_input_tokens: Count,
-    cache_creation_input_tokens: Count,
-  },
-  { additionalProperties: true },
+const Count = opt(nullable(int({ minimum: 0 })));
+const countProperties = {
+  input_tokens: Count,
+  output_tokens: Count,
+  cache_read_input_tokens: Count,
+  cache_creation_input_tokens: Count,
+};
+const CountsSchema = obj(countProperties, { open: true });
+const DeltaUsageSchema = obj(
+  { ...countProperties, iterations: opt(arr(CountsSchema)) },
+  { open: true },
 );
-const DeltaUsageSchema = Type.Object(
-  { ...CountsSchema.properties, iterations: Type.Optional(Type.Array(CountsSchema)) },
-  { additionalProperties: true },
-);
-const StartSchema = Type.Object(
+const StartSchema = obj(
   {
-    type: Type.Literal("message_start"),
-    message: Type.Object({ usage: CountsSchema }, { additionalProperties: true }),
+    type: lit("message_start"),
+    message: obj({ usage: CountsSchema }, { open: true }),
   },
-  { additionalProperties: true },
+  { open: true },
 );
-const DeltaSchema = Type.Object(
+const DeltaSchema = obj(
   {
-    type: Type.Literal("message_delta"),
-    delta: Type.Optional(
-      Type.Object(
-        { stop_reason: Type.Optional(Type.Union([Type.String(), Type.Null()])) },
-        { additionalProperties: true },
-      ),
-    ),
-    usage: Type.Optional(DeltaUsageSchema),
+    type: lit("message_delta"),
+    delta: opt(obj({ stop_reason: opt(nullable(str())) }, { open: true })),
+    usage: opt(DeltaUsageSchema),
   },
-  { additionalProperties: true },
+  { open: true },
 );
-const StreamErrorSchema = Type.Object(
+const StreamErrorSchema = obj(
   {
-    type: Type.Literal("error"),
-    error: Type.Object({ type: Type.String() }, { additionalProperties: true }),
+    type: lit("error"),
+    error: obj({ type: str() }, { open: true }),
   },
-  { additionalProperties: true },
+  { open: true },
 );
 type Counts = Static<typeof CountsSchema>;
-const SseEventSchema = Type.Union([StartSchema, DeltaSchema, StreamErrorSchema]);
+const SseEventSchema = union([StartSchema, DeltaSchema, StreamErrorSchema]);
 type SseEvent = Static<typeof SseEventSchema>;
 /** Anthropic errors carry `type`; OpenAI-compatible errors carry `type` and/or `code`. */
-const ErrorObjectSchema = Type.Object(
+const ErrorObjectSchema = obj(
   {
-    type: Type.Optional(Type.String()),
-    code: Type.Optional(Type.Union([Type.String(), Type.Number(), Type.Null()])),
-    message: Type.Optional(Type.String()),
+    type: opt(str()),
+    code: opt(union([str(), num(), nul()])),
+    message: opt(str()),
   },
-  { additionalProperties: true },
+  { open: true },
 );
-const ErrorBodySchema = Type.Object({ error: ErrorObjectSchema }, { additionalProperties: true });
+const ErrorBodySchema = obj({ error: ErrorObjectSchema }, { open: true });
 
 /**
  * OpenAI-compatible chat-completions usage (Synthetic). pi-ai requests it with
@@ -67,44 +72,35 @@ const ErrorBodySchema = Type.Object({ error: ErrorObjectSchema }, { additionalPr
  * sit in `prompt_tokens_details.cached_tokens`, `prompt_cache_hit_tokens` or a
  * top-level `cached_tokens` depending on the upstream (pi-ai parseChunkUsage).
  */
-const OpenAIUsageSchema = Type.Object(
+const OpenAIUsageSchema = obj(
   {
-    prompt_tokens: Type.Integer({ minimum: 0 }),
+    prompt_tokens: int({ minimum: 0 }),
     completion_tokens: Count,
     cached_tokens: Count,
     prompt_cache_hit_tokens: Count,
-    prompt_tokens_details: Type.Optional(
-      Type.Union([
-        Type.Object(
-          { cached_tokens: Count, cache_write_tokens: Count },
-          { additionalProperties: true },
-        ),
-        Type.Null(),
-      ]),
+    prompt_tokens_details: opt(
+      nullable(obj({ cached_tokens: Count, cache_write_tokens: Count }, { open: true })),
     ),
   },
-  { additionalProperties: true },
+  { open: true },
 );
-const OpenAIChoiceSchema = Type.Object(
-  { finish_reason: Type.Optional(Type.Union([Type.String(), Type.Null()])) },
-  { additionalProperties: true },
-);
+const OpenAIChoiceSchema = obj({ finish_reason: opt(nullable(str())) }, { open: true });
 /** One chat-completions chunk or non-stream body; `usage` is null until the final chunk. */
-const OpenAIChunkSchema = Type.Object(
+const OpenAIChunkSchema = obj(
   {
-    choices: Type.Optional(Type.Array(OpenAIChoiceSchema)),
-    usage: Type.Optional(Type.Union([OpenAIUsageSchema, Type.Null()])),
+    choices: opt(arr(OpenAIChoiceSchema)),
+    usage: opt(nullable(OpenAIUsageSchema)),
   },
-  { additionalProperties: true },
+  { open: true },
 );
 /** Anthropic non-stream message body. */
-const AnthropicBodySchema = Type.Object(
+const AnthropicBodySchema = obj(
   {
-    type: Type.Literal("message"),
+    type: lit("message"),
     usage: CountsSchema,
-    stop_reason: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+    stop_reason: opt(nullable(str())),
   },
-  { additionalProperties: true },
+  { open: true },
 );
 const ERROR_MESSAGE_LIMIT = 300;
 
@@ -196,10 +192,10 @@ function parseWireObject(text: string): WireObject | undefined {
     return undefined;
   }
   // First: Anthropic error events/bodies (`type: "error"`) and OpenAI error bodies alike.
-  if (Value.Check(ErrorBodySchema, parsed)) return { kind: "error", error: parsed.error };
-  if (Value.Check(SseEventSchema, parsed)) return { kind: "anthropic-event", event: parsed };
-  if (Value.Check(AnthropicBodySchema, parsed)) return { kind: "anthropic-body", body: parsed };
-  if (Value.Check(OpenAIChunkSchema, parsed)) return { kind: "openai", chunk: parsed };
+  if (matches(ErrorBodySchema, parsed)) return { kind: "error", error: parsed.error };
+  if (matches(SseEventSchema, parsed)) return { kind: "anthropic-event", event: parsed };
+  if (matches(AnthropicBodySchema, parsed)) return { kind: "anthropic-body", body: parsed };
+  if (matches(OpenAIChunkSchema, parsed)) return { kind: "openai", chunk: parsed };
   return undefined;
 }
 

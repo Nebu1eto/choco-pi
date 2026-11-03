@@ -2,8 +2,9 @@ import { realpath } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { obj, unknown } from "@earendil-works/pi-schema";
+import type { RuntimeValue } from "../../../.pi/extensions/lib/runtime-values.ts";
+import { matches } from "./schema-check.ts";
 import { WORKTREE, loadExtensionProfile } from "./profile.ts";
 
 interface WorktreeFactory {
@@ -160,17 +161,19 @@ function assertPlanMatchesProfile(profile: string[], plan: WorktreeProfilePlan):
   if (!same) throw new Error("Worktree extension plan diverged from the resolved profile");
 }
 
-/** Runtime shape of a native entry module: a callable default export. */
-const extensionModuleSchema = Type.Object({
-  default: Type.Function([Type.Unknown()], Type.Void()),
-});
+/** Runtime shape of a native entry module: an object with a `default` export (callability is checked separately: functions are not JSON). */
+const extensionModuleSchema = obj({ default: unknown() }, { open: true });
+
+function isExtensionFactory(value: RuntimeValue): value is ExtensionFactory {
+  return value instanceof Function;
+}
 
 async function loadEntry(entry: ProfileEntry): Promise<WorktreeFactory> {
   if (!NATIVE_ENTRIES.has(entry.key)) {
     throw new Error(`No native loader for extension entry: ${entry.key}`);
   }
   const namespace: unknown = await import(pathToFileURL(join(WORKTREE, entry.key)).href);
-  if (!Value.Check(extensionModuleSchema, namespace)) {
+  if (!matches(extensionModuleSchema, namespace) || !isExtensionFactory(namespace.default)) {
     throw new Error(`Extension entry has no default factory function: ${entry.key}`);
   }
   const factory: ExtensionFactory = namespace.default;

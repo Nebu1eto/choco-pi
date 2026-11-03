@@ -3,8 +3,8 @@ import {
   type BackgroundAdoptionNotice,
   type BackgroundAdoptionListener,
 } from "../../../.pi/packages/choco-pi-compaction/src/index.ts";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { obj, str } from "@earendil-works/pi-schema";
+import { matches } from "./schema-check.ts";
 import type { Recorder } from "./artifacts.ts";
 import type { ConsumerNotice } from "./consumer-probe.ts";
 export interface SignalNotice {
@@ -15,9 +15,9 @@ export interface SignalNotice {
 type AdoptionSignal = ReturnType<typeof getBackgroundAdoptionSignal>;
 
 /** The consumer-relay record fields that identify one adoption. */
-const RelayRecordSchema = Type.Object(
-  { adoptionId: Type.String(), candidateId: Type.String(), committedEntryId: Type.String() },
-  { additionalProperties: true },
+const RelayRecordSchema = obj(
+  { adoptionId: str(), candidateId: str(), committedEntryId: str() },
+  { open: true },
 );
 
 /**
@@ -39,11 +39,11 @@ function relayAdoptionId(recorder: Recorder, notice: BackgroundAdoptionNotice): 
   const relay = recorder.records.findLast(
     (record) =>
       record.kind === "consumer-invoked" &&
-      Value.Check(RelayRecordSchema, record.data) &&
+      matches(RelayRecordSchema, record.data) &&
       record.data.candidateId === notice.candidateId &&
       record.data.committedEntryId === notice.committedEntryId,
   );
-  return relay && Value.Check(RelayRecordSchema, relay.data)
+  return relay && matches(RelayRecordSchema, relay.data)
     ? relay.data.adoptionId
     : `${notice.sessionId}:${notice.committedEntryId}:${notice.candidateId}`;
 }

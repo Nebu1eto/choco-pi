@@ -62,7 +62,8 @@ import {
   SearchError,
   type JsonValue,
 } from "../.pi/packages/choco-pi-web-search/index.ts";
-import { Type } from "typebox";
+import { obj, opt, str } from "@earendil-works/pi-schema";
+import { hostParams } from "../.pi/extensions/lib/schema-bridge.ts";
 import {
   BRIDGE_EXCLUDED_TOOLS,
   collectBridgedTools,
@@ -487,7 +488,10 @@ test("native OpenAI web backend binds references to its explicit session owner",
   const { binary } = await mockWebRunBinary(t);
   const result = await executeOpenAICodexWebRun({
     binaryPath: binary,
-    params: { search_query: [{ q: "session binding" }], response_length: "long" },
+    params: {
+      search_query: [{ q: "session binding" }],
+      response_length: "long",
+    },
     provider: resolvedProvider(),
     sessionId: "adapter-session",
     model: "gpt-5.6-sol",
@@ -608,7 +612,9 @@ function jsonObject(value: JsonValue | undefined): value is { [key: string]: Jso
   return isObjectValue(value);
 }
 
-function nativeRequest(native: JsonValue | undefined): { [key: string]: JsonValue } {
+function nativeRequest(native: JsonValue | undefined): {
+  [key: string]: JsonValue;
+} {
   assert.ok(jsonObject(native));
   const request = native["request"];
   assert.ok(jsonObject(request));
@@ -718,8 +724,11 @@ test("Code Mode bridges canonical web_search while excluding legacy competitors"
     name,
     label: name,
     description: name === "web_search" ? "Canonical provider-neutral web search" : "legacy",
-    parameters: Type.Object({ query: Type.Optional(Type.String()) }),
-    execute: async () => ({ content: [{ type: "text", text: "ok" }], details: undefined }),
+    parameters: hostParams(obj({ query: opt(str()) }, { open: true })),
+    execute: async () => ({
+      content: [{ type: "text", text: "ok" }],
+      details: undefined,
+    }),
   });
   const sourceInfo = createSyntheticSourceInfo("<inline:bridge-fixture>", {
     source: "test",
@@ -814,13 +823,23 @@ test("native Codex adapter forwards every action and preserves scoped reference 
   assert.deepEqual(nativeRequest(image.native)["image_query"], [{ q: "image" }]);
 
   const opened = await search(
-    { action: "open", reference: { id: reference.id }, lineno: 42, provider: "openai" },
+    {
+      action: "open",
+      reference: { id: reference.id },
+      lineno: 42,
+      provider: "openai",
+    },
     { scope: first.scope, context: first.context },
   );
   assert.deepEqual(nativeRequest(opened.native)["open"], [{ ref_id: nativeRefId, lineno: 42 }]);
 
   const clicked = await search(
-    { action: "click", reference: { id: reference.id }, click: { id: 7 }, provider: "openai" },
+    {
+      action: "click",
+      reference: { id: reference.id },
+      click: { id: 7 },
+      provider: "openai",
+    },
     { scope: first.scope, context: first.context },
   );
   assert.deepEqual(nativeRequest(clicked.native)["click"], [{ ref_id: nativeRefId, id: 7 }]);
@@ -895,7 +914,11 @@ test("integrated native adapter preserves auth, quota, cancellation, and stale f
   const controller = new AbortController();
   const cancellation = search(
     { query: `delay:${cancelMarker}`, provider: "openai" },
-    { scope: cancelled.scope, context: cancelled.context, signal: controller.signal },
+    {
+      scope: cancelled.scope,
+      context: cancelled.context,
+      signal: controller.signal,
+    },
   );
   setTimeout(() => controller.abort(), 100);
   await assert.rejects(

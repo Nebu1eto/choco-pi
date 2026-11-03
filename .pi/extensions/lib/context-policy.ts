@@ -4,9 +4,8 @@
  * compaction point. No I/O; the caller supplies every input, including the
  * native-compaction budget read from the global hook.
  */
-import { Type } from "typebox";
-import { Value } from "typebox/value";
-import type { RuntimeValue } from "./runtime-values.ts";
+import { compile, int, num, obj } from "@earendil-works/pi-schema";
+import { isJsonRecord, type RuntimeValue } from "./runtime-values.ts";
 
 /** A preset token count, or `"unlimited"` for the model's own limit. */
 export type PresetTokens = number | "unlimited";
@@ -103,12 +102,17 @@ export const NATIVE_CONTEXT_WINDOW_KEY = "chocoPiNativeContextWindow";
 /** Record key used before the record had to survive copies; still read so a reload keeps it. */
 const LEGACY_NATIVE_CONTEXT_WINDOW_SYMBOL = Symbol.for("choco-pi.native-context-window");
 
-const NativeWindowSchema = Type.Integer({ exclusiveMinimum: 0 });
-const NativeWindowRecordSchema = Type.Object({
-  native: NativeWindowSchema,
-  /** The window the cap left on the object when it wrote the record. */
-  applied: NativeWindowSchema,
-});
+const NativeWindowSchema = int({ exclusiveMinimum: 0 });
+const isNativeWindow = compile(NativeWindowSchema).check;
+const NativeWindowRecordSchema = obj(
+  {
+    native: NativeWindowSchema,
+    /** The window the cap left on the object when it wrote the record. */
+    applied: NativeWindowSchema,
+  },
+  { open: true },
+);
+const nativeWindowRecord = compile(NativeWindowRecordSchema);
 
 /** The part of a model object the native-window record attaches to. */
 export interface ContextWindowOwner {
@@ -127,13 +131,13 @@ function ownValue(model: ContextWindowOwner, key: string | symbol): RuntimeValue
  */
 export function readNativeContextWindow(model: ContextWindowOwner): number | undefined {
   const record = ownValue(model, NATIVE_CONTEXT_WINDOW_KEY);
-  if (Value.Check(NativeWindowRecordSchema, record)) {
+  if (nativeWindowRecord.check(record)) {
     return model.contextWindow === record.applied || model.contextWindow === record.native
       ? record.native
       : undefined;
   }
   const legacy = ownValue(model, LEGACY_NATIVE_CONTEXT_WINDOW_SYMBOL);
-  return Value.Check(NativeWindowSchema, legacy) ? legacy : undefined;
+  return isNativeWindow(legacy) ? legacy : undefined;
 }
 
 /**
@@ -142,7 +146,10 @@ export function readNativeContextWindow(model: ContextWindowOwner): number | und
  */
 export function recordNativeContextWindow(model: ContextWindowOwner, nativeWindow: number): void {
   Object.defineProperty(model, NATIVE_CONTEXT_WINDOW_KEY, {
-    value: { native: nativeWindow, applied: model.contextWindow ?? nativeWindow },
+    value: {
+      native: nativeWindow,
+      applied: model.contextWindow ?? nativeWindow,
+    },
     configurable: true,
     enumerable: true,
     writable: true,
@@ -161,19 +168,14 @@ export interface BudgetModel {
   contextWindow: number;
 }
 
-const NativeCompactionBudgetHookSchema = Type.Object({
-  version: Type.Literal(1),
-  budgetFor: Type.Function([], Type.Unknown()),
-});
-
 interface NativeCompactionBudgetHook {
   budgetFor(model: BudgetModel): RuntimeValue;
 }
 
-const BudgetSchema = Type.Number({ exclusiveMinimum: 0 });
+const isPositiveBudget = compile(num({ exclusiveMinimum: 0 })).check;
 
 function isNativeCompactionBudgetHook<T>(value: T): value is T & NativeCompactionBudgetHook {
-  return Value.Check(NativeCompactionBudgetHookSchema, value);
+  return isJsonRecord(value) && value.version === 1 && value.budgetFor instanceof Function;
 }
 
 /**
@@ -197,6 +199,6 @@ export function readNativeCompactionBudget(model: BudgetModel): number | undefin
   } catch {
     return undefined;
   }
-  if (!Value.Check(BudgetSchema, budget) || !Number.isFinite(budget)) return undefined;
+  if (!isPositiveBudget(budget) || !Number.isFinite(budget)) return undefined;
   return Math.floor(budget);
 }

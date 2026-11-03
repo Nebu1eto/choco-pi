@@ -1,5 +1,5 @@
 import path from "node:path";
-import { Type, type Static } from "typebox";
+import { arr, obj, oneOf, opt, type Static } from "@earendil-works/pi-schema";
 import {
   VERSION,
   getPackageDir,
@@ -20,31 +20,33 @@ import {
 } from "../skills/check/scripts/check-harness.ts";
 import { captureHostIdentity, type CapturedHostIdentity } from "./lib/pi-runtime-identity.ts";
 import { readProfileMarker, type ProfileMarkerObservation } from "./lib/profile-marker.ts";
+import { hostParams } from "./lib/schema-bridge.ts";
 
-export type HarnessCheckReport = HarnessReport & { profileMarker?: ProfileMarkerObservation };
+export type HarnessCheckReport = HarnessReport & {
+  profileMarker?: ProfileMarkerObservation;
+};
 
 type HarnessCheckInput = {
   mode: "full" | "automatic";
   required_capabilities?: readonly Capability[];
 };
 
-const harnessCheckParameters = Type.Object({
-  mode: Type.Union([Type.Literal("automatic"), Type.Literal("full")], {
-    description:
-      "automatic = readiness for required_capabilities (the workflow default); full = every capability. Only these two values exist.",
-  }),
-  required_capabilities: Type.Optional(
-    Type.Array(
-      Type.Union([
-        Type.Literal("tui"),
-        Type.Literal("subagents"),
-        Type.Literal("resources"),
-        Type.Literal("lsp"),
-      ]),
-      { uniqueItems: true, description: "Capabilities an automatic check must prove." },
+const harnessCheckSchema = obj(
+  {
+    mode: oneOf(["automatic", "full"], {
+      description:
+        "automatic = readiness for required_capabilities (the workflow default); full = every capability. Only these two values exist.",
+    }),
+    required_capabilities: opt(
+      arr(oneOf(["tui", "subagents", "resources", "lsp"]), {
+        uniqueItems: true,
+        description: "Capabilities an automatic check must prove.",
+      }),
     ),
-  ),
-});
+  },
+  { open: true },
+);
+const harnessCheckParameters = hostParams(harnessCheckSchema);
 
 type HarnessCheckTool = ToolDefinition<typeof harnessCheckParameters, HarnessReport>;
 type HarnessCheckToolResult = Awaited<ReturnType<HarnessCheckTool["execute"]>> & {
@@ -60,7 +62,7 @@ type EventHandler<TEvent> = (
 type RegisteredHarnessCheckTool = Omit<HarnessCheckTool, "execute"> & {
   execute: (
     toolCallId: string,
-    params: Static<typeof harnessCheckParameters>,
+    params: Static<typeof harnessCheckSchema>,
     signal: AbortSignal | undefined,
     onUpdate: undefined,
     context: HarnessLifecycleContext,
@@ -136,7 +138,9 @@ export async function executeHarnessCheck(
     requiredCapabilities: input.required_capabilities,
     nodeVersion: identity.nodeVersion,
     runtimeIdentity: identity.runtime,
-    ...(loadedBuiltins !== undefined && { loadedBuiltinExtensions: loadedBuiltins }),
+    ...(loadedBuiltins !== undefined && {
+      loadedBuiltinExtensions: loadedBuiltins,
+    }),
     ...(hostTools !== undefined && { activeHostTools: hostTools }),
     signal,
   });
@@ -152,7 +156,11 @@ export async function executeHarnessCheck(
   }
   const checks: HarnessReport["checks"] = [...report.checks];
   if (profileMarker.status !== "valid") {
-    checks.push({ id: "profile-marker", status: "warn", detail: profileMarker.reason });
+    checks.push({
+      id: "profile-marker",
+      status: "warn",
+      detail: profileMarker.reason,
+    });
   } else {
     const expectedCheckout = path.resolve(report.configRoot, "..");
     const matches = path.resolve(profileMarker.marker.checkout) === expectedCheckout;
@@ -221,7 +229,10 @@ export default function harnessCheckExtension(host: ExtensionAPI | HarnessCheckR
     sessionId = context.sessionManager.getSessionId();
   });
 
-  const owner = (): CapturedHostIdentity["owner"] => ({ sessionId, generation });
+  const owner = (): CapturedHostIdentity["owner"] => ({
+    sessionId,
+    generation,
+  });
 
   registration.registerHarnessCheckTool({
     name: "harness_check",

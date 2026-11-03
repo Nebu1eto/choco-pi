@@ -1,9 +1,9 @@
 import { execFile } from "node:child_process";
 import { promisify, parseArgs } from "node:util";
 import { join } from "node:path";
-import { Value } from "typebox/value";
-import { Type } from "typebox";
-import { writeArtifact, InputSchema, type EvidenceRecord } from "./artifacts.ts";
+import { obj } from "@earendil-works/pi-schema";
+import { matches } from "./schema-check.ts";
+import { writeArtifact, type EvidenceRecord, parseArtifactInput } from "./artifacts.ts";
 import { evaluateChecks, HARNESS_CHECKS, type Verdict } from "./checks.ts";
 import { requireLiveRun } from "./budget.ts";
 import { launch, WORKTREE } from "./launch.ts";
@@ -49,12 +49,12 @@ const FOREGROUND_TOOL_CYCLES = 6;
 const EXIT_CODES = { pass: 0, fail: 1, pending: 2 } as const;
 type Status = keyof typeof EXIT_CODES;
 
-const PhaseRecordSchema = Type.Object({ usage: PhaseUsageSchema }, { additionalProperties: true });
+const PhaseRecordSchema = obj({ usage: PhaseUsageSchema }, { open: true });
 
 /** Restart workers are separate processes with their own ledgers. */
 function workerUsage(records: readonly EvidenceRecord[]) {
   return records.flatMap((record) =>
-    record.kind === PHASE_RECORD && Value.Check(PhaseRecordSchema, record.data) && record.data.usage
+    record.kind === PHASE_RECORD && matches(PhaseRecordSchema, record.data) && record.data.usage
       ? [record.data.usage]
       : [],
   );
@@ -108,9 +108,9 @@ async function runScenario(scenario: Scenario, host: Host, out: string): Promise
   const verdicts = evaluateChecks(evidence, [...scenario.checks, ...HARNESS_CHECKS]);
   const status = statusOf(verdicts, scenario);
   const usage = await usageReport(host);
-  await writeArtifact(out, "events.json", Value.Parse(InputSchema, host.recorder.records));
-  await writeArtifact(out, "verdicts.json", Value.Parse(InputSchema, verdicts));
-  if (usage) await writeArtifact(out, "usage.json", Value.Parse(InputSchema, usage));
+  await writeArtifact(out, "events.json", parseArtifactInput(host.recorder.records));
+  await writeArtifact(out, "verdicts.json", parseArtifactInput(verdicts));
+  if (usage) await writeArtifact(out, "usage.json", parseArtifactInput(usage));
   await writeArtifact(out, "manifest.json", {
     ...(await revision()),
     scenario: scenario.name,
@@ -135,8 +135,8 @@ async function recordFailure(host: Host, out: string, message: string): Promise<
   const usage = await usageReport(host).catch(() => null);
   await writeArtifact(out, "failure.json", {
     error: message,
-    usage: usage === null ? null : Value.Parse(InputSchema, usage),
-    records: Value.Parse(InputSchema, host.recorder.records),
+    usage: usage === null ? null : parseArtifactInput(usage),
+    records: parseArtifactInput(host.recorder.records),
   });
 }
 

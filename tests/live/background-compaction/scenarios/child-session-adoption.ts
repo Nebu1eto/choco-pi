@@ -6,11 +6,12 @@ import {
   type ExtensionContext,
   type ExtensionFactory,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, int, obj, str } from "@earendil-works/pi-schema";
+import { matches } from "../schema-check.ts";
+import { hostParams } from "../../../../.pi/extensions/lib/schema-bridge.ts";
 import type { RunOptions } from "../../../../.pi/packages/choco-pi-subagents/src/agent-runner.ts";
 import { CHILD_OWNER_KEY_PREFIX } from "../../../../.pi/packages/choco-pi-subagents/src/child-compaction-bridge.ts";
-import { InputSchema, type EvidenceRecord } from "../artifacts.ts";
+import { type EvidenceRecord, parseArtifactInput } from "../artifacts.ts";
 import type { CheckEvidence, Observation } from "../checks.ts";
 import { STEP_TOOL, stepResultText } from "../fake-sse.ts";
 import { recordBranch } from "../transport-capture.ts";
@@ -19,14 +20,8 @@ import { prepare } from "./workload.ts";
 
 const CHILD_COUNT = 2;
 const CHILD_CYCLES = 6;
-const ToolsSchema = Type.Object(
-  { childId: Type.String(), activeTools: Type.Array(Type.String()) },
-  { additionalProperties: true },
-);
-const CompactionSchema = Type.Object(
-  { childIndex: Type.Integer() },
-  { additionalProperties: true },
-);
+const ToolsSchema = obj({ childId: str(), activeTools: arr(str()) }, { open: true });
+const CompactionSchema = obj({ childIndex: int() }, { open: true });
 
 interface ChildProbe {
   host: Host;
@@ -48,7 +43,7 @@ function registerStep(pi: Parameters<ExtensionFactory>[0]): void {
       name: STEP_TOOL,
       label: "harness child step",
       description: "Offline step",
-      parameters: Type.Object({ label: Type.String() }),
+      parameters: hostParams(obj({ label: str() }, { open: true })),
       async execute(_id, params) {
         return { content: [{ type: "text", text: stepResultText(params.label) }], details: {} };
       },
@@ -82,7 +77,7 @@ function childFactory(probe: ChildProbe): ExtensionFactory {
       const ref = probe.host.recorder.record("child-before-provider", {
         childId: ctx.sessionManager.getSessionId(),
         activeTools: pi.getActiveTools(),
-        payload: Value.Parse(InputSchema, event.payload),
+        payload: parseArtifactInput(event.payload),
       });
       probe.refs.push(ref);
     });
@@ -104,7 +99,7 @@ function sessionCreated(probe: ChildProbe, child: AgentSession): void {
     probe.refs.push(
       probe.host.recorder.record("child-event", {
         childId,
-        event: Value.Parse(InputSchema, event),
+        event: parseArtifactInput(event),
       }),
     );
   });
@@ -220,7 +215,7 @@ function prepareChildren(host: Host): string[] {
 function toolDrift(records: readonly EvidenceRecord[], childId: string): unknown[] {
   const sets = records.flatMap((record) =>
     record.kind === "child-before-provider" &&
-    Value.Check(ToolsSchema, record.data) &&
+    matches(ToolsSchema, record.data) &&
     record.data.childId === childId
       ? [record.data.activeTools]
       : [],
@@ -231,8 +226,7 @@ function toolDrift(records: readonly EvidenceRecord[], childId: string): unknown
 function onCompactionCounts(records: readonly EvidenceRecord[]): number[] {
   const counts = Array.from({ length: CHILD_COUNT }, () => 0);
   for (const record of records) {
-    if (record.kind !== "runner-onCompaction" || !Value.Check(CompactionSchema, record.data))
-      continue;
+    if (record.kind !== "runner-onCompaction" || !matches(CompactionSchema, record.data)) continue;
     counts[record.data.childIndex] = (counts[record.data.childIndex] ?? 0) + 1;
   }
   return counts;

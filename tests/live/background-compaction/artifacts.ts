@@ -1,49 +1,104 @@
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Type, type Static } from "typebox";
-import { Value } from "typebox/value";
+import { compile, int, lit, obj, str } from "@earendil-works/pi-schema";
+import type { Schema } from "@earendil-works/pi-schema";
+import type { RuntimeValue } from "../../../.pi/extensions/lib/runtime-values.ts";
+import { isArray, isBoolean, isNumber, isRecord, isString, matches } from "./schema-check.ts";
 
-export const JsonSchema = Type.Cyclic(
-  {
-    Json: Type.Union([
-      Type.Null(),
-      Type.Boolean(),
-      Type.Number(),
-      Type.String(),
-      Type.Array(Type.Ref("Json")),
-      Type.Record(Type.String(), Type.Ref("Json")),
-    ]),
+/** Decoded-JSON values: what an artifact file can hold. */
+export type ArtifactValue =
+  | null
+  | boolean
+  | number
+  | string
+  | ArtifactValue[]
+  | { [key: string]: ArtifactValue };
+/** Recorder input: JSON plus `undefined` (dropped on serialisation). */
+export type ArtifactInput =
+  | undefined
+  | null
+  | boolean
+  | number
+  | string
+  | ArtifactInput[]
+  | { [key: string]: ArtifactInput };
+
+// Raw $defs/$ref schemas: pi-schema builders cannot express recursion. Numbers are bounded to
+// reject NaN/Infinity as the previous schema library's number check did.
+const finiteNumber = { type: "number", minimum: -Number.MAX_VALUE, maximum: Number.MAX_VALUE };
+export const JsonSchema: Schema<ArtifactValue> = {
+  $ref: "#/$defs/Json",
+  $defs: {
+    Json: {
+      anyOf: [
+        { type: "null" },
+        { type: "boolean" },
+        finiteNumber,
+        { type: "string" },
+        { type: "array", items: { $ref: "#/$defs/Json" } },
+        { type: "object", additionalProperties: { $ref: "#/$defs/Json" } },
+      ],
+    },
   },
-  "Json",
-);
-export const InputSchema = Type.Cyclic(
-  {
-    Input: Type.Union([
-      Type.Undefined(),
-      Type.Null(),
-      Type.Boolean(),
-      Type.Number(),
-      Type.String(),
-      Type.Array(Type.Ref("Input")),
-      Type.Record(Type.String(), Type.Ref("Input")),
-    ]),
+};
+/**
+ * JSON-only recursion for embedding in object schemas. `undefined` is not JSON, so it is only
+ * accepted by `isArtifactInput`; this schema is used on payloads decoded from JSON text.
+ */
+export const InputSchema: Schema<ArtifactInput> = {
+  $ref: "#/$defs/Input",
+  $defs: {
+    Input: {
+      anyOf: [
+        { type: "null" },
+        { type: "boolean" },
+        finiteNumber,
+        { type: "string" },
+        { type: "array", items: { $ref: "#/$defs/Input" } },
+        { type: "object", additionalProperties: { $ref: "#/$defs/Input" } },
+      ],
+    },
   },
-  "Input",
-);
-export type ArtifactValue = Static<typeof JsonSchema>;
-export type ArtifactInput = Static<typeof InputSchema>;
+};
+
+/** Whether `value` is `ArtifactInput`: JSON recursion plus `undefined` anywhere. */
+export function isArtifactInput(value: RuntimeValue): value is ArtifactInput {
+  if (value === undefined || value === null || isBoolean(value) || isNumber(value)) return true;
+  if (isString(value)) return true;
+  if (isArray(value)) return value.every(isArtifactInput);
+  return isArtifactRecord(value);
+}
+
+/** Whether `value` is an object whose every value is `ArtifactInput`. */
+export function isArtifactRecord(value: RuntimeValue): value is { [key: string]: ArtifactInput } {
+  return isRecord(value) && Object.values(value).every(isArtifactInput);
+}
+
+const isArtifactJson = compile(JsonSchema).check;
+
+/** Replaces the old `Value.Parse(JsonSchema, v)`: assertion only (no defaults or conversion applied). */
+export function parseArtifactValue(value: RuntimeValue): ArtifactValue {
+  if (!isArtifactJson(value)) throw new Error("Non-JSON artifact value");
+  return value;
+}
+
+/**
+ * Replaces the old `Value.Parse(InputSchema, v)`: assertion only. Its Clean/Convert/Default
+ * steps were identities for this open, default-free schema.
+ */
+export function parseArtifactInput(value: RuntimeValue): ArtifactInput {
+  if (!isArtifactInput(value)) throw new Error("Non-serializable artifact input");
+  return value;
+}
 
 const sensitiveKey =
   /signature|ciphertext|encrypted|authorization|credential|api.?key|access.?token|refresh.?token|cookie|headers/i;
-const RedactionSchema = Type.Object(
-  {
-    redacted: Type.Literal(true),
-    sha256: Type.String({ pattern: "^[a-f0-9]{64}$" }),
-    bytes: Type.Integer({ minimum: 0 }),
-  },
-  { additionalProperties: false },
-);
+const RedactionSchema = obj({
+  redacted: lit(true),
+  sha256: str({ pattern: "^[a-f0-9]{64}$" }),
+  bytes: int({ minimum: 0 }),
+});
 const sensitiveText = /\bsk-[A-Za-z0-9_-]+|Bearer\s+\S+|-----BEGIN .*PRIVATE KEY-----/i;
 export function digest(text: string) {
   return {
@@ -56,21 +111,21 @@ export function redact(
   value: ArtifactInput,
   protectedStrings: readonly string[] = [],
 ): ArtifactValue {
-  if (!Value.Check(InputSchema, value)) throw new Error("Non-serializable artifact input");
+  if (!isArtifactInput(value)) throw new Error("Non-serializable artifact input");
   if (value === null || value === undefined) return null;
-  if (Value.Check(Type.String(), value))
+  if (isString(value))
     return sensitiveText.test(value) ||
       protectedStrings.some((secret) => secret.length > 0 && value.includes(secret))
       ? { redacted: true, ...digest(value) }
       : value;
-  if (Value.Check(Type.Boolean(), value) || Value.Check(Type.Number(), value)) return value;
+  if (isBoolean(value) || isNumber(value)) return value;
   if (Array.isArray(value)) return value.map((item) => redact(item, protectedStrings));
   const result: Record<string, ArtifactValue> = {};
   for (const [key, item] of Object.entries(value)) {
-    if (sensitiveKey.test(key) && key.endsWith("Redacted") && Value.Check(RedactionSchema, item))
+    if (sensitiveKey.test(key) && key.endsWith("Redacted") && matches(RedactionSchema, item))
       result[key] = { redacted: true, sha256: item.sha256, bytes: item.bytes };
     else if (sensitiveKey.test(key)) {
-      const serialized = Value.Check(Type.String(), item) ? item : (JSON.stringify(item) ?? "");
+      const serialized = isString(item) ? item : (JSON.stringify(item) ?? "");
       result[`${key}Redacted`] = { redacted: true, ...digest(serialized) };
     } else result[key] = redact(item, protectedStrings);
   }
@@ -81,18 +136,17 @@ export function artifactLeaks(
   path = "$",
   knownSecrets: readonly string[] = [],
 ): string[] {
-  if (!Value.Check(JsonSchema, value)) return [`${path}:invalid-json`];
-  if (Value.Check(Type.String(), value))
+  if (!matches(JsonSchema, value)) return [`${path}:invalid-json`];
+  if (isString(value))
     return sensitiveText.test(value) ||
       knownSecrets.some((secret) => secret.length > 0 && value.includes(secret))
       ? [path]
       : [];
   if (Array.isArray(value))
     return value.flatMap((item, index) => artifactLeaks(item, `${path}[${index}]`, knownSecrets));
-  if (value === null || Value.Check(Type.Boolean(), value) || Value.Check(Type.Number(), value))
-    return [];
+  if (value === null || isBoolean(value) || isNumber(value)) return [];
   return Object.entries(value).flatMap(([key, item]) =>
-    sensitiveKey.test(key) && !(key.endsWith("Redacted") && Value.Check(RedactionSchema, item))
+    sensitiveKey.test(key) && !(key.endsWith("Redacted") && matches(RedactionSchema, item))
       ? [`${path}.${key}`]
       : artifactLeaks(item, `${path}.${key}`, knownSecrets),
   );
@@ -102,9 +156,9 @@ export async function writeArtifact(
   filename: string,
   value: ArtifactInput,
 ): Promise<void> {
-  if (!Value.Check(InputSchema, value)) throw new Error("Non-serializable artifact input");
+  if (!isArtifactInput(value)) throw new Error("Non-serializable artifact input");
   const safe = redact(value);
-  if (!Value.Check(JsonSchema, safe) || artifactLeaks(safe).length > 0)
+  if (!matches(JsonSchema, safe) || artifactLeaks(safe).length > 0)
     throw new Error("Artifact validation failed");
   await mkdir(dir, { recursive: true, mode: 0o700 });
   await writeFile(join(dir, filename), `${JSON.stringify(safe, null, 2)}\n`, { mode: 0o600 });
@@ -123,7 +177,7 @@ export class Recorder {
     this.#protectedStrings = [...protectedStrings];
   }
   record(kind: string, data: ArtifactInput): number {
-    if (!Value.Check(InputSchema, data)) throw new Error("Non-serializable recorder input");
+    if (!isArtifactInput(data)) throw new Error("Non-serializable recorder input");
     const sequence = this.records.length;
     this.records.push({
       sequence,

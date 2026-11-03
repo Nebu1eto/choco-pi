@@ -7,8 +7,8 @@
  */
 import { getCurrentSystemPrompt, type JsonObject, type Model } from "@earendil-works/pi-ai";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, obj, opt, str, unknown } from "@earendil-works/pi-schema";
+import { isString, matches } from "./schema-check.ts";
 
 import {
   countCompactionItems,
@@ -48,13 +48,13 @@ export const XAI_HARNESS_ITEM = {
 const SUMMARY_MARKER = "context summarization assistant";
 const COMPACT_PATH = "/responses/compact";
 
-const CompactRequestSchema = Type.Object(
+const CompactRequestSchema = obj(
   {
-    model: Type.String(),
-    input: Type.Array(Type.Unknown()),
-    instructions: Type.Optional(Type.String()),
+    model: str(),
+    input: arr(unknown()),
+    instructions: opt(str()),
   },
-  { additionalProperties: true },
+  { open: true },
 );
 
 type Frame = JsonObject & { readonly type: string };
@@ -112,7 +112,7 @@ function serveForeground(
   dispatch: { readonly index: number; readonly summary: boolean },
   init: RequestInit | undefined,
 ): Response {
-  const text = Value.Check(Type.String(), init?.body) ? init.body : undefined;
+  const text = isString(init?.body) ? init.body : undefined;
   const body = text === undefined ? undefined : parseXaiWireBody(text);
   const response = textResponse(
     dispatch.summary
@@ -220,11 +220,11 @@ export function scriptedXaiCompactFetch(
     if (
       requestOrigin(input) !== origin ||
       !requestPath(input).endsWith(COMPACT_PATH) ||
-      !Value.Check(Type.String(), body)
+      !isString(body)
     )
       return fallback(input, init);
     const parsed: unknown = JSON.parse(body);
-    if (!Value.Check(CompactRequestSchema, parsed)) return fallback(input, init);
+    if (!matches(CompactRequestSchema, parsed)) return fallback(input, init);
     const wire = parseXaiWireBody(body);
     state.xaiLane.push({
       model: parsed.model,

@@ -24,7 +24,8 @@ import {
   InMemoryCredentialStore,
   InMemoryModelsStore,
 } from "@earendil-works/pi-ai";
-import { Type } from "typebox";
+import { obj } from "@earendil-works/pi-schema";
+import { hostParams } from "../.pi/extensions/lib/schema-bridge.ts";
 import toolSearch, {
   ALWAYS_ACTIVE_TOOL_NAMES,
   LEAN_SURFACE_SYMBOL,
@@ -289,9 +290,12 @@ test("real Pi session: built-in tool_search is active on turn one and loads late
         name: "mcp__radius__list_issues",
         label: "list issues",
         description: "List Radius issues for a project",
-        parameters: Type.Object({}),
+        parameters: hostParams(obj({}, { open: true })),
         exposure: "deferred",
-        execute: async () => ({ content: [{ type: "text", text: "issues" }], details: {} }),
+        execute: async () => ({
+          content: [{ type: "text", text: "issues" }],
+          details: {},
+        }),
       });
   };
   const fixture = await sdkSession([toolSearch, createToolSearchExtension(), lateDeferred]);
@@ -354,17 +358,23 @@ async function lateToolFixture(options: LateToolOptions = {}): Promise<LateToolF
       name: UNRECORDED_TOOL,
       label: "extra direct",
       description: "A direct tool the lean surface leaves inactive",
-      parameters: Type.Object({}),
-      execute: async () => ({ content: [{ type: "text", text: "extra" }], details: {} }),
+      parameters: hostParams(obj({}, { open: true })),
+      execute: async () => ({
+        content: [{ type: "text", text: "extra" }],
+        details: {},
+      }),
     });
     registerLate = () =>
       pi.registerTool({
         name: LATE_TOOL,
         label: "late probe",
         description: "A recorded tool whose server connects late",
-        parameters: Type.Object({}),
+        parameters: hostParams(obj({}, { open: true })),
         exposure: "deferred",
-        execute: async () => ({ content: [{ type: "text", text: "late" }], details: {} }),
+        execute: async () => ({
+          content: [{ type: "text", text: "late" }],
+          details: {},
+        }),
       });
   };
   const policy = options.toolSearch === false ? [] : [toolSearch];
@@ -394,7 +404,11 @@ function recordTools(sessionManager: SessionManager, declared: readonly string[]
   sessionManager.appendMessage({
     role: "system",
     content: "",
-    toolsAdded: declared.map((name) => ({ name, description: name, parameters: Type.Object({}) })),
+    toolsAdded: declared.map((name) => ({
+      name,
+      description: name,
+      parameters: hostParams(obj({}, { open: true })),
+    })),
     timestamp: Date.now(),
   });
 }

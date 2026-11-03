@@ -4,8 +4,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import type { SettingItem } from "@earendil-works/pi-tui";
-import { Type } from "typebox";
-import { Value as TypeboxValue } from "typebox/value";
 import {
   isJsonRecord,
   isBoolean,
@@ -163,7 +161,10 @@ interface AgentPreferenceValues {
   promptSuggestion: boolean;
 }
 
-export type AgentPreferenceChange = { key: keyof AgentPreferenceValues; value: unknown };
+export type AgentPreferenceChange = {
+  key: keyof AgentPreferenceValues;
+  value: unknown;
+};
 
 type AgentPreferenceChangeListener = (change: AgentPreferenceChange) => void;
 
@@ -180,12 +181,10 @@ function isRuntimeSet<Value>(value: Value): value is Value & Set<RuntimeValue> {
   return value instanceof Set;
 }
 
-const AgentPreferenceChangeListenerSchema = Type.Function([Type.Unknown()], Type.Unknown());
-
 function isAgentPreferenceChangeListener<Value>(
   value: Value,
 ): value is Value & AgentPreferenceChangeListener {
-  return TypeboxValue.Check(AgentPreferenceChangeListenerSchema, value);
+  return value instanceof Function;
 }
 
 function agentPreferenceChangeListeners(): Set<RuntimeValue> {

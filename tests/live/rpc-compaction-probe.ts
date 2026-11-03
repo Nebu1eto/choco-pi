@@ -36,8 +36,20 @@ import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { Type, type Static } from "typebox";
-import { Value } from "typebox/value";
+import {
+  arr,
+  bool,
+  lit,
+  nullable,
+  num,
+  obj,
+  oneOf,
+  opt,
+  str,
+  unknown,
+  type Static,
+} from "@earendil-works/pi-schema";
+import { matches } from "./background-compaction/schema-check.ts";
 
 import {
   AUTO_COMPACTION_POINT_TOKENS,
@@ -92,193 +104,176 @@ import {
 // Wire and entry schemas
 // ---------------------------------------------------------------------------
 
-const WireSchema = Type.Object(
+const WireSchema = obj(
   {
-    type: Type.String(),
-    id: Type.Optional(Type.String()),
-    command: Type.Optional(Type.String()),
-    success: Type.Optional(Type.Boolean()),
-    error: Type.Optional(Type.String()),
-    reason: Type.Optional(Type.String()),
-    aborted: Type.Optional(Type.Boolean()),
-    errorMessage: Type.Optional(Type.String()),
-    method: Type.Optional(Type.String()),
-    message: Type.Optional(Type.Unknown()),
-    messages: Type.Optional(Type.Array(Type.Unknown())),
-    statusKey: Type.Optional(Type.String()),
-    statusText: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-    data: Type.Optional(Type.Unknown()),
-    entry: Type.Optional(Type.Unknown()),
+    type: str(),
+    id: opt(str()),
+    command: opt(str()),
+    success: opt(bool()),
+    error: opt(str()),
+    reason: opt(str()),
+    aborted: opt(bool()),
+    errorMessage: opt(str()),
+    method: opt(str()),
+    message: opt(unknown()),
+    messages: opt(arr(unknown())),
+    statusKey: opt(str()),
+    statusText: opt(nullable(str())),
+    data: opt(unknown()),
+    entry: opt(unknown()),
   },
-  { additionalProperties: true },
+  { open: true },
 );
 export type WireRecord = Static<typeof WireSchema>;
-const AssistantMessageSchema = Type.Object(
+const AssistantMessageSchema = obj(
   {
-    role: Type.Literal("assistant"),
-    stopReason: Type.Optional(Type.String()),
-    errorMessage: Type.Optional(Type.String()),
-    timestamp: Type.Optional(Type.Number()),
-    responseId: Type.Optional(Type.String()),
+    role: lit("assistant"),
+    stopReason: opt(str()),
+    errorMessage: opt(str()),
+    timestamp: opt(num()),
+    responseId: opt(str()),
   },
-  { additionalProperties: true },
+  { open: true },
 );
-const EntrySchema = Type.Object(
+const EntrySchema = obj(
   {
-    id: Type.String(),
-    type: Type.String(),
-    parentId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-    customType: Type.Optional(Type.String()),
-    data: Type.Optional(Type.Unknown()),
+    id: str(),
+    type: str(),
+    parentId: opt(nullable(str())),
+    customType: opt(str()),
+    data: opt(unknown()),
   },
-  { additionalProperties: true },
+  { open: true },
 );
 type Entry = Static<typeof EntrySchema>;
-const EntriesSchema = Type.Object(
-  { entries: Type.Array(Type.Unknown()), leafId: Type.Union([Type.String(), Type.Null()]) },
-  { additionalProperties: true },
-);
-const CompactionEntrySchema = Type.Object(
+const EntriesSchema = obj({ entries: arr(unknown()), leafId: nullable(str()) }, { open: true });
+const CompactionEntrySchema = obj(
   {
-    id: Type.String(),
-    type: Type.Literal("compaction"),
-    summary: Type.String(),
-    tokensBefore: Type.Optional(Type.Number()),
-    fromHook: Type.Optional(Type.Boolean()),
-    details: Type.Optional(Type.Unknown()),
+    id: str(),
+    type: lit("compaction"),
+    summary: str(),
+    tokensBefore: opt(num()),
+    fromHook: opt(bool()),
+    details: opt(unknown()),
   },
-  { additionalProperties: true },
+  { open: true },
 );
 export type CompactionEntry = Static<typeof CompactionEntrySchema>;
-const CandidateDetailsSchema = Type.Object(
-  { candidateId: Type.String({ minLength: 1 }) },
-  { additionalProperties: true },
-);
+const CandidateDetailsSchema = obj({ candidateId: str({ minLength: 1 }) }, { open: true });
 /** Text-lane checkpoints carry a frozen-prefix `background` block; native lanes do not. */
-const BackgroundBlockSchema = Type.Object(
-  { background: Type.Object({ mode: Type.String() }, { additionalProperties: true }) },
-  { additionalProperties: true },
+const BackgroundBlockSchema = obj(
+  { background: obj({ mode: str() }, { open: true }) },
+  { open: true },
 );
-const OwnerKeySchema = Type.Object({ ownerKey: Type.String() }, { additionalProperties: true });
-const StrategySchema = Type.Object({ strategy: Type.String() }, { additionalProperties: true });
+const OwnerKeySchema = obj({ ownerKey: str() }, { open: true });
+const StrategySchema = obj({ strategy: str() }, { open: true });
 /** `choco-compaction-candidate` record (background/contract.ts CandidateRecordSchema). */
-const CandidateRecordDataSchema = Type.Object(
-  { candidateId: Type.String({ minLength: 1 }), backendId: Type.String({ minLength: 1 }) },
-  { additionalProperties: true },
+const CandidateRecordDataSchema = obj(
+  { candidateId: str({ minLength: 1 }), backendId: str({ minLength: 1 }) },
+  { open: true },
 );
 /** Anthropic server-side checkpoint (anthropic/details.ts): signed block from the lane. */
-const AnthropicNativeDetailsSchema = Type.Object(
+const AnthropicNativeDetailsSchema = obj(
   {
-    strategy: Type.Literal("anthropic-compaction-on-demand-v1"),
-    block: Type.Object(
+    strategy: lit("anthropic-compaction-on-demand-v1"),
+    block: obj(
       {
-        type: Type.Literal("compaction"),
-        content: Type.String({ minLength: 1 }),
-        signature: Type.String({ minLength: 1 }),
+        type: lit("compaction"),
+        content: str({ minLength: 1 }),
+        signature: str({ minLength: 1 }),
       },
-      { additionalProperties: true },
+      { open: true },
     ),
-    stopReason: Type.Literal("compaction"),
+    stopReason: lit("compaction"),
   },
-  { additionalProperties: true },
+  { open: true },
 );
 /** Codex server-side checkpoint (choco-pi-codex adapter/compaction/types.ts). */
-const CodexNativeDetailsSchema = Type.Object(
+const CodexNativeDetailsSchema = obj(
   {
-    strategy: Type.Literal("openai-responses-compaction-v2"),
-    compactedWindow: Type.Array(Type.Unknown(), { minItems: 1 }),
+    strategy: lit("openai-responses-compaction-v2"),
+    compactedWindow: arr(unknown(), { minItems: 1 }),
   },
-  { additionalProperties: true },
+  { open: true },
 );
-const CodexDisplayDataSchema = Type.Object(
-  { compactionEntryId: Type.String() },
-  { additionalProperties: true },
-);
-const StateSchema = Type.Object(
-  { isStreaming: Type.Boolean(), isCompacting: Type.Boolean() },
-  { additionalProperties: true },
-);
-const StatsSchema = Type.Object(
+const CodexDisplayDataSchema = obj({ compactionEntryId: str() }, { open: true });
+const StateSchema = obj({ isStreaming: bool(), isCompacting: bool() }, { open: true });
+const StatsSchema = obj(
   {
-    contextUsage: Type.Object(
+    contextUsage: obj(
       {
-        tokens: Type.Union([Type.Number(), Type.Null()]),
-        contextWindow: Type.Number(),
+        tokens: nullable(num()),
+        contextWindow: num(),
       },
-      { additionalProperties: true },
+      { open: true },
     ),
   },
-  { additionalProperties: true },
+  { open: true },
 );
-const StatusRowSchema = Type.Object(
+const StatusRowSchema = obj(
   {
-    state: Type.String(),
-    candidateId: Type.Optional(Type.String()),
-    backendId: Type.Optional(Type.String()),
-    reason: Type.Optional(Type.String()),
-    detail: Type.Optional(Type.String()),
-    customInstructions: Type.Optional(Type.String()),
-    committedEntryId: Type.Optional(Type.String()),
+    state: str(),
+    candidateId: opt(str()),
+    backendId: opt(str()),
+    reason: opt(str()),
+    detail: opt(str()),
+    customInstructions: opt(str()),
+    committedEntryId: opt(str()),
   },
-  { additionalProperties: true },
+  { open: true },
 );
 type StatusRow = Static<typeof StatusRowSchema>;
-const NullableNumber = Type.Union([Type.Number(), Type.Null()]);
-const NullableString = Type.Union([Type.String(), Type.Null()]);
-const ProbeStatusSchema = Type.Object({
-  rows: Type.Array(StatusRowSchema),
-  captures: Type.Array(
-    Type.Object(
-      { status: Type.Number(), mapped: Type.Boolean(), endpoint: Type.String() },
-      { additionalProperties: true },
+const NullableNumber = nullable(num());
+const NullableString = nullable(str());
+const ProbeStatusSchema = obj(
+  {
+    rows: arr(StatusRowSchema),
+    captures: arr(obj({ status: num(), mapped: bool(), endpoint: str() }, { open: true })),
+    refusals: num(),
+    /** xAI wire captures of the session (xai/capture.ts), same fields. */
+    xaiCaptures: arr(obj({ status: num(), mapped: bool(), endpoint: str() }, { open: true })),
+    window: NullableNumber,
+    nativeWindow: NullableNumber,
+    cap: NullableNumber,
+    compactAt: NullableNumber,
+    /** First 80 characters of `system[0].text` in the latest Anthropic wire capture. */
+    captureSystemHead: NullableString,
+    /** The same from the latest `before_provider_request` payload. */
+    requestSystemHead: NullableString,
+    /**
+     * The latest Codex WebSocket `response.create` frames this process sent
+     * (oldest first): booleans and counts only, never item content.
+     */
+    codexSends: arr(
+      obj(
+        {
+          seq: num(),
+          model: NullableString,
+          prewarm: bool(),
+          previousResponseId: bool(),
+          compactionItems: num(),
+          /** SHA-256 digests of the frame's encrypted compaction items (never the items). */
+          itemDigests: arr(str()),
+        },
+        { open: true },
+      ),
     ),
-  ),
-  refusals: Type.Number(),
-  /** xAI wire captures of the session (xai/capture.ts), same fields. */
-  xaiCaptures: Type.Array(
-    Type.Object(
-      { status: Type.Number(), mapped: Type.Boolean(), endpoint: Type.String() },
-      { additionalProperties: true },
-    ),
-  ),
-  window: NullableNumber,
-  nativeWindow: NullableNumber,
-  cap: NullableNumber,
-  compactAt: NullableNumber,
-  /** First 80 characters of `system[0].text` in the latest Anthropic wire capture. */
-  captureSystemHead: NullableString,
-  /** The same from the latest `before_provider_request` payload. */
-  requestSystemHead: NullableString,
-  /**
-   * The latest Codex WebSocket `response.create` frames this process sent
-   * (oldest first): booleans and counts only, never item content.
-   */
-  codexSends: Type.Array(
-    Type.Object(
-      {
-        seq: Type.Number(),
-        model: NullableString,
-        prewarm: Type.Boolean(),
-        previousResponseId: Type.Boolean(),
-        compactionItems: Type.Number(),
-        /** SHA-256 digests of the frame's encrypted compaction items (never the items). */
-        itemDigests: Type.Array(Type.String()),
-      },
-      { additionalProperties: true },
-    ),
-  ),
-});
+  },
+  { open: true },
+);
 export type CodexSend = ProbeStatus["codexSends"][number];
 type ProbeStatus = Static<typeof ProbeStatusSchema>;
-const SidecarSchema = Type.Object(
-  { prepareAt: Type.Number(), hysteresis: Type.Number(), reserveTokens: Type.Number() },
-  { additionalProperties: true },
+/** The codex sidecar: only its `compaction` member is reported. */
+const CodexSidecarSchema = obj({ compaction: unknown() }, { open: true });
+const SidecarSchema = obj(
+  { prepareAt: num(), hysteresis: num(), reserveTokens: num() },
+  { open: true },
 );
 type Sidecar = Static<typeof SidecarSchema>;
 
 function parseSidecar(text: string): Sidecar {
   const value: unknown = JSON.parse(text);
-  assert(Value.Check(SidecarSchema, value), "background sidecar lacks prepareAt/reserveTokens");
+  assert(matches(SidecarSchema, value), "background sidecar lacks prepareAt/reserveTokens");
   return value;
 }
 
@@ -295,47 +290,38 @@ type Command = {
   sessionPath?: string;
 };
 /** Provider-reported usage on an assistant `message_end` (pi-ai Usage). */
-const UsageMessageSchema = Type.Object(
+const UsageMessageSchema = obj(
   {
-    role: Type.Literal("assistant"),
-    usage: Type.Object(
+    role: lit("assistant"),
+    usage: obj(
       {
-        input: Type.Number(),
-        output: Type.Number(),
-        cacheRead: Type.Number(),
-        cacheWrite: Type.Number(),
+        input: num(),
+        output: num(),
+        cacheRead: num(),
+        cacheWrite: num(),
       },
-      { additionalProperties: true },
+      { open: true },
     ),
   },
-  { additionalProperties: true },
+  { open: true },
 );
 type UsageMessage = Static<typeof UsageMessageSchema>;
-const SessionFileSchema = Type.Object(
-  { sessionFile: Type.String({ minLength: 1 }) },
-  { additionalProperties: true },
-);
-const SwitchResultSchema = Type.Object(
-  { cancelled: Type.Boolean() },
-  { additionalProperties: true },
-);
+const SessionFileSchema = obj({ sessionFile: str({ minLength: 1 }) }, { open: true });
+const SwitchResultSchema = obj({ cancelled: bool() }, { open: true });
 
 // ---------------------------------------------------------------------------
 // Pure verdicts (exported for the harness unit test)
 // ---------------------------------------------------------------------------
 
 /** An encrypted Responses compaction item (choco-pi-codex compactedWindow and wire input). */
-const EncryptedItemSchema = Type.Object(
+const EncryptedItemSchema = obj(
   {
-    type: Type.Union([Type.Literal("compaction"), Type.Literal("compaction_summary")]),
-    encrypted_content: Type.String({ minLength: 1 }),
+    type: oneOf(["compaction", "compaction_summary"]),
+    encrypted_content: str({ minLength: 1 }),
   },
-  { additionalProperties: true },
+  { open: true },
 );
-const CompactedWindowSchema = Type.Object(
-  { compactedWindow: Type.Array(Type.Unknown()) },
-  { additionalProperties: true },
-);
+const CompactedWindowSchema = obj({ compactedWindow: arr(unknown()) }, { open: true });
 
 /**
  * SHA-256 digests of the encrypted compaction items of a checkpoint's
@@ -344,9 +330,9 @@ const CompactedWindowSchema = Type.Object(
  */
 export function checkpointDigests(entry: CompactionEntry): string[] {
   const { details } = entry;
-  if (!Value.Check(CompactedWindowSchema, details)) return [];
+  if (!matches(CompactedWindowSchema, details)) return [];
   return details.compactedWindow.flatMap((item) =>
-    Value.Check(EncryptedItemSchema, item)
+    matches(EncryptedItemSchema, item)
       ? [createHash("sha256").update(item.encrypted_content).digest("hex")]
       : [],
   );
@@ -574,7 +560,7 @@ async function dryRun(): Promise<void> {
     );
     const codex: unknown = JSON.parse(files.codexConfig);
     write(
-      `  choco-pi-codex.json compaction: ${JSON.stringify(Value.Check(Type.Object({ compaction: Type.Unknown() }), codex) ? codex.compaction : null)}`,
+      `  choco-pi-codex.json compaction: ${JSON.stringify(matches(CodexSidecarSchema, codex) ? codex.compaction : null)}`,
     );
     write(
       `  SYSTEM.md: first line ${JSON.stringify(files.systemPrompt.split("\n")[0])}, ${Buffer.byteLength(files.systemPrompt)} bytes, source ${files.systemPromptSource}`,
@@ -938,11 +924,11 @@ async function launch(label: string, settings: LaunchSettings, reuse?: string): 
         failure ??= error instanceof Error ? error : new Error(String(error));
         continue;
       }
-      if (!Value.Check(WireSchema, value)) continue;
+      if (!matches(WireSchema, value)) continue;
       records.push(value);
       log({ label, wire: value });
       if (value.type === "message_end") {
-        const runaway = Value.Check(UsageMessageSchema, value.message)
+        const runaway = matches(UsageMessageSchema, value.message)
           ? countUsage(value.message)
           : undefined;
         if (runaway !== undefined) failure ??= runaway;
@@ -1019,9 +1005,9 @@ async function launch(label: string, settings: LaunchSettings, reuse?: string): 
 async function allEntries(session: Session): Promise<{ entries: Entry[]; branch: Entry[] }> {
   const result = await session.command("get_entries");
   assert.equal(result.success, true, "get_entries failed");
-  assert(Value.Check(EntriesSchema, result.data), "get_entries returned no entries");
+  assert(matches(EntriesSchema, result.data), "get_entries returned no entries");
   const entries = result.data.entries.filter((entry): entry is Entry =>
-    Value.Check(EntrySchema, entry),
+    matches(EntrySchema, entry),
   );
   const byId = new Map(entries.map((entry) => [entry.id, entry]));
   const branch: Entry[] = [];
@@ -1035,7 +1021,7 @@ async function allEntries(session: Session): Promise<{ entries: Entry[]; branch:
 
 function compactions(entries: readonly Entry[]): CompactionEntry[] {
   return entries.filter((entry): entry is Entry & CompactionEntry =>
-    Value.Check(CompactionEntrySchema, entry),
+    matches(CompactionEntrySchema, entry),
   );
 }
 
@@ -1044,21 +1030,18 @@ async function branchCompactionCount(session: Session): Promise<number> {
 }
 
 function backgroundCandidate(entry: CompactionEntry): string | undefined {
-  return Value.Check(CandidateDetailsSchema, entry.details) ? entry.details.candidateId : undefined;
+  return matches(CandidateDetailsSchema, entry.details) ? entry.details.candidateId : undefined;
 }
 
 function strategyOf(entry: CompactionEntry): string | null {
-  return Value.Check(StrategySchema, entry.details) ? entry.details.strategy : null;
+  return matches(StrategySchema, entry.details) ? entry.details.strategy : null;
 }
 
 /** Backend id persisted by the coordinator's candidate record for `candidateId`. */
 function recordedBackend(entries: readonly Entry[], candidateId: string): string | null {
   for (const entry of entries) {
     if (entry.type !== "custom" || entry.customType !== "choco-compaction-candidate") continue;
-    if (
-      Value.Check(CandidateRecordDataSchema, entry.data) &&
-      entry.data.candidateId === candidateId
-    )
+    if (matches(CandidateRecordDataSchema, entry.data) && entry.data.candidateId === candidateId)
       return entry.data.backendId;
   }
   return null;
@@ -1082,7 +1065,7 @@ function errorsSince(session: Session, since: number): ErrorTally {
     if (value.type === "agent_end") messages.push(...(value.messages ?? []));
     if (value.type === "message_end" || value.type === "turn_end") messages.push(value.message);
     for (const message of messages) {
-      if (!Value.Check(AssistantMessageSchema, message)) continue;
+      if (!matches(AssistantMessageSchema, message)) continue;
       if (message.stopReason !== "error" && message.errorMessage === undefined) continue;
       seen.add(
         JSON.stringify([
@@ -1106,7 +1089,7 @@ async function waitIdle(session: Session): Promise<void> {
   const deadline = Date.now() + opts().caseTimeoutMs;
   while (Date.now() < deadline) {
     const state = await session.command("get_state");
-    if (Value.Check(StateSchema, state.data) && !state.data.isStreaming && !state.data.isCompacting)
+    if (matches(StateSchema, state.data) && !state.data.isStreaming && !state.data.isCompacting)
       return;
     await delay(100);
   }
@@ -1162,7 +1145,7 @@ async function probeStatus(session: Session): Promise<ProbeStatus> {
   const text = notice !== undefined && isString(notice.message) ? notice.message : undefined;
   assert(text !== undefined, "/probe-compaction-status printed nothing");
   const status: unknown = JSON.parse(text.slice(STATUS_PREFIX.length));
-  assert(Value.Check(ProbeStatusSchema, status), `invalid probe status: ${text}`);
+  assert(matches(ProbeStatusSchema, status), `invalid probe status: ${text}`);
   return status;
 }
 
@@ -1263,17 +1246,17 @@ async function provenance(
       // The host records a hook-supplied compaction as `fromHook`.
       checks.set("fromHook", entry.fromHook === true);
       if (lane.strategy === "anthropic-compaction-on-demand-v1") {
-        checks.set("signedBlock", Value.Check(AnthropicNativeDetailsSchema, entry.details));
+        checks.set("signedBlock", matches(AnthropicNativeDetailsSchema, entry.details));
       } else if (lane.strategy === "xai-responses-compaction-v1") {
         checks.set("xaiItem", isXaiDetails(entry.details));
       } else {
-        checks.set("compactedWindow", Value.Check(CodexNativeDetailsSchema, entry.details));
+        checks.set("compactedWindow", matches(CodexNativeDetailsSchema, entry.details));
         checks.set(
           "displayEntry",
           entries.some(
             (item) =>
               item.customType === "codex-native-compaction-display" &&
-              Value.Check(CodexDisplayDataSchema, item.data) &&
+              matches(CodexDisplayDataSchema, item.data) &&
               item.data.compactionEntryId === entry.id,
           ),
         );
@@ -1584,19 +1567,16 @@ async function capturesClearedCase(session: Session, cell: Cell, identity: Prove
 }
 
 /** `details.background.providerScope` of a background Codex checkpoint (choco-pi-codex types.ts). */
-const BackgroundScopeSchema = Type.Object(
+const BackgroundScopeSchema = obj(
   {
-    background: Type.Object(
+    background: obj(
       {
-        providerScope: Type.Object(
-          { provider: Type.String(), model: Type.String() },
-          { additionalProperties: true },
-        ),
+        providerScope: obj({ provider: str(), model: str() }, { open: true }),
       },
-      { additionalProperties: true },
+      { open: true },
     ),
   },
-  { additionalProperties: true },
+  { open: true },
 );
 
 /** The auto cell runs the background model-switch case: Codex, background on. */
@@ -1658,7 +1638,7 @@ async function modelSwitchReplayCase(
   const latest = compactions((await allEntries(session)).branch).at(-1);
   const codexCheckpoint = latest !== undefined && strategyOf(latest) === lane?.strategy;
   const scope =
-    latest !== undefined && Value.Check(BackgroundScopeSchema, latest.details)
+    latest !== undefined && matches(BackgroundScopeSchema, latest.details)
       ? latest.details.background.providerScope
       : undefined;
   const candidate = latest === undefined ? null : (backgroundCandidate(latest) ?? null);
@@ -1761,7 +1741,7 @@ async function resumeThenCompactCase(
   const lane = laneFor();
   assert.ok(lane !== undefined, "resume case needs a native lane");
   const state = await holder.current.command("get_state");
-  assert.ok(Value.Check(SessionFileSchema, state.data), "get_state carries no sessionFile");
+  assert.ok(matches(SessionFileSchema, state.data), "get_state carries no sessionFile");
   const sessionFile = state.data.sessionFile;
   const dir = holder.current.dir;
   await holder.current.close();
@@ -1774,7 +1754,7 @@ async function resumeThenCompactCase(
   const switched = await resumed.command("switch_session", { sessionPath: sessionFile });
   const switchedOk =
     switched.success === true &&
-    Value.Check(SwitchResultSchema, switched.data) &&
+    matches(SwitchResultSchema, switched.data) &&
     !switched.data.cancelled;
   const { entries, branch } = await allEntries(resumed);
   const journalStart = laneRecordData(entries).length;
@@ -1936,7 +1916,7 @@ async function calibrate(cell: Cell): Promise<Calibration> {
   try {
     const usage = async (): Promise<number> => {
       const stats = await session.command("get_session_stats");
-      assert.ok(Value.Check(StatsSchema, stats.data), "session stats unavailable");
+      assert.ok(matches(StatsSchema, stats.data), "session stats unavailable");
       const tokens = stats.data.contextUsage.tokens;
       assert.ok(tokens !== null && tokens > 0, "context usage unavailable");
       return tokens;
@@ -1984,7 +1964,7 @@ async function runAutoCell(cell: Cell): Promise<void> {
       await waitIdle(session);
       const status = await probeStatus(session);
       const stats = await session.command("get_session_stats");
-      const tokens = Value.Check(StatsSchema, stats.data) ? stats.data.contextUsage.tokens : null;
+      const tokens = matches(StatsSchema, stats.data) ? stats.data.contextUsage.tokens : null;
       log({ probe: `${cell.key} auto turn ${index}`, tokens, status });
       fired =
         compactionEvents(session, turnSince).length > 0 ||
@@ -2061,11 +2041,11 @@ async function runAutoCell(cell: Cell): Promise<void> {
       detail.set("adoptedBeforeCap", adoptedAt !== null && adoptedAt < capPoint);
       detail.set(
         "backgroundBlock",
-        entry !== undefined && Value.Check(BackgroundBlockSchema, entry.details),
+        entry !== undefined && matches(BackgroundBlockSchema, entry.details),
       );
       detail.set(
         "ownerKey",
-        entry !== undefined && Value.Check(OwnerKeySchema, entry.details)
+        entry !== undefined && matches(OwnerKeySchema, entry.details)
           ? entry.details.ownerKey
           : null,
       );

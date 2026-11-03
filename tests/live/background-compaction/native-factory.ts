@@ -1,6 +1,6 @@
 import type { Model } from "@earendil-works/pi-ai";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { lit, obj } from "@earendil-works/pi-schema";
+import { isString, matches } from "./schema-check.ts";
 import {
   createAnthropicNativeBackend,
   ANTHROPIC_BACKEND_ID,
@@ -30,9 +30,9 @@ const NATIVE_BLOCK = {
 } as const;
 export const NATIVE_SIGNATURE = NATIVE_BLOCK.signature;
 /** The on-demand lane asks for a summary through the top-level `compaction` field. */
-const LaneRequestSchema = Type.Object(
-  { compaction: Type.Object({ type: Type.Literal("summarize") }) },
-  { additionalProperties: true },
+const LaneRequestSchema = obj(
+  { compaction: obj({ type: lit("summarize") }, { open: true }) },
+  { open: true },
 );
 
 function compactionFrames(model: Model<"anthropic-messages">): SseFrame[] {
@@ -71,9 +71,9 @@ function laneResponse(
   init: RequestInit | undefined,
 ): Response {
   const body = init?.body;
-  if (!Value.Check(Type.String(), body)) throw new Error("Lane did not send serialized payload");
+  if (!isString(body)) throw new Error("Lane did not send serialized payload");
   const parsed: unknown = JSON.parse(body);
-  if (!Value.Check(LaneRequestSchema, parsed))
+  if (!matches(LaneRequestSchema, parsed))
     throw new Error("Lane did not request native compaction");
   recorder.record("native-lane-response", {
     status: 200,
@@ -100,10 +100,9 @@ export function scriptedLaneFetch(
   const origin = new URL(model.baseUrl).origin;
   return async (input, init) => {
     const body = init?.body;
-    if (requestOrigin(input) !== origin || !Value.Check(Type.String(), body))
-      return fallback(input, init);
+    if (requestOrigin(input) !== origin || !isString(body)) return fallback(input, init);
     const parsed: unknown = JSON.parse(body);
-    if (!Value.Check(LaneRequestSchema, parsed)) return fallback(input, init);
+    if (!matches(LaneRequestSchema, parsed)) return fallback(input, init);
     recordLaneRequest(recorder, parsed.compaction, init);
     return laneResponse(recorder, model, init);
   };

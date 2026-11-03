@@ -5,10 +5,10 @@
  */
 import { readFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { lit, nullable, obj, opt, str, unknown } from "@earendil-works/pi-schema";
+import { matches } from "../schema-check.ts";
 import { isCandidateRecord } from "../../../../.pi/packages/choco-pi-compaction/src/background/contract.ts";
-import { InputSchema, writeArtifact } from "../artifacts.ts";
+import { writeArtifact, parseArtifactInput } from "../artifacts.ts";
 import { evaluateChecks } from "../checks.ts";
 import { launch } from "../launch.ts";
 import { replyPrompt, stepsPrompt } from "./prompts.ts";
@@ -23,22 +23,10 @@ import { textAdoptionEvidence } from "./text-adoption-checks.ts";
 import type { Host } from "./types.ts";
 import { prepare } from "./workload.ts";
 
-const LineSchema = Type.Object(
-  { type: Type.String(), data: Type.Optional(Type.Unknown()) },
-  { additionalProperties: true },
-);
-const CheckpointDetailsSchema = Type.Object(
-  { candidateId: Type.String() },
-  { additionalProperties: true },
-);
-const StatusSchema = Type.Object(
-  { state: Type.String(), reason: Type.Optional(Type.Union([Type.String(), Type.Null()])) },
-  { additionalProperties: true },
-);
-const SummaryDispatchSchema = Type.Object(
-  { summary: Type.Literal(true) },
-  { additionalProperties: true },
-);
+const LineSchema = obj({ type: str(), data: opt(unknown()) }, { open: true });
+const CheckpointDetailsSchema = obj({ candidateId: str() }, { open: true });
+const StatusSchema = obj({ state: str(), reason: opt(nullable(str())) }, { open: true });
+const SummaryDispatchSchema = obj({ summary: lit(true) }, { open: true });
 const REOPEN_MARKERS = {
   recover: "HARNESS-RESTART-REOPEN",
   reload: "HARNESS-RESTART-RELOAD",
@@ -52,7 +40,7 @@ async function persistedCandidateIds(file: string): Promise<string[]> {
     .filter(Boolean)
     .flatMap((line) => {
       const value: unknown = JSON.parse(line);
-      if (!Value.Check(LineSchema, value) || value.type !== "custom") return [];
+      if (!matches(LineSchema, value) || value.type !== "custom") return [];
       return isCandidateRecord(value.data) ? [value.data.candidateId] : [];
     });
 }
@@ -61,14 +49,13 @@ function checkpointCandidateIds(host: Host): string[] {
   return host.manager.getBranch().flatMap((entry) => {
     if (entry.type !== "compaction") return [];
     const details: unknown = entry.details;
-    return Value.Check(CheckpointDetailsSchema, details) ? [details.candidateId] : [];
+    return matches(CheckpointDetailsSchema, details) ? [details.candidateId] : [];
   });
 }
 
 function summaryDispatches(host: Host): number {
   return host.recorder.records.filter(
-    (record) =>
-      record.kind === "provider-dispatch" && Value.Check(SummaryDispatchSchema, record.data),
+    (record) => record.kind === "provider-dispatch" && matches(SummaryDispatchSchema, record.data),
   ).length;
 }
 
@@ -79,7 +66,7 @@ interface CoordinatorSnapshot {
 
 function statusOf(host: Host): CoordinatorSnapshot {
   const status: unknown = host.mainCoordinator()?.status();
-  if (!Value.Check(StatusSchema, status)) return { state: "missing-coordinator", reason: null };
+  if (!matches(StatusSchema, status)) return { state: "missing-coordinator", reason: null };
   return { state: status.state, reason: status.reason ?? null };
 }
 
@@ -109,7 +96,7 @@ async function result(
 }
 
 async function finish(host: Host, out: string, phase: RestartPhase, data: PhaseResult) {
-  await writeArtifact(out, `${phase}-events.json`, Value.Parse(InputSchema, host.recorder.records));
+  await writeArtifact(out, `${phase}-events.json`, parseArtifactInput(host.recorder.records));
   await writeArtifact(out, `${phase}.json`, data);
 }
 

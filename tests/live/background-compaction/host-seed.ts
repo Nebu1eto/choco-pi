@@ -1,7 +1,6 @@
 import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import type { SessionEntry, SessionManager } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { isString } from "./schema-check.ts";
 import { assistantMessage, STEP_TOOL } from "./fake-sse.ts";
 import type { EntryMarker } from "./transport-capture.ts";
 
@@ -42,7 +41,7 @@ export class MarkerBook {
 function messageTexts(entry: SessionEntry): string[] {
   if (entry.type !== "message" || !("content" in entry.message)) return [];
   const content = entry.message.content;
-  if (Value.Check(Type.String(), content)) return content.length > 0 ? [content] : [];
+  if (isString(content)) return content.length > 0 ? [content] : [];
   return content.flatMap((block) =>
     block.type === "text" && block.text.length > 0 ? [block.text] : [],
   );
@@ -51,9 +50,7 @@ function messageTexts(entry: SessionEntry): string[] {
 /** String-content entries keep one marker (a seeded unique prefix wins over padded text). */
 function isKnown(list: readonly EntryMarker[], entry: SessionEntry, text: string): boolean {
   const stringContent =
-    entry.type === "message" &&
-    "content" in entry.message &&
-    Value.Check(Type.String(), entry.message.content);
+    entry.type === "message" && "content" in entry.message && isString(entry.message.content);
   return list.some((item) => item.entryId === entry.id && (stringContent || item.text === text));
 }
 

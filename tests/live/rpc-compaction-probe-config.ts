@@ -8,8 +8,8 @@ import { cp, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { lit, obj } from "@earendil-works/pi-schema";
+import { matches } from "./background-compaction/schema-check.ts";
 
 import {
   AUTO_COMPACTION_POINT_KEY,
@@ -313,13 +313,13 @@ export function logicSwitches(
 
 export const SYSTEM_PROMPT_FIRST_LINE = "You are Claude Code, Anthropic's official CLI for Claude.";
 
-const ErrnoSchema = Type.Object({ code: Type.Literal("ENOENT") });
+const ErrnoSchema = obj({ code: lit("ENOENT") }, { open: true });
 
 async function readOptional(path: string): Promise<string | undefined> {
   try {
     return await readFile(path, "utf8");
   } catch (error) {
-    if (Value.Check(ErrnoSchema, error)) return undefined;
+    if (matches(ErrnoSchema, error)) return undefined;
     throw error;
   }
 }
@@ -347,7 +347,7 @@ export async function copyAgentFiles(source: string, agentDir: string): Promise<
     try {
       await cp(join(source, name), join(agentDir, name), { recursive: true, dereference: true });
     } catch (error) {
-      if (!Value.Check(ErrnoSchema, error)) throw error;
+      if (!matches(ErrnoSchema, error)) throw error;
     }
   }
 }

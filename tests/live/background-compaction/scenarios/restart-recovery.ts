@@ -2,8 +2,8 @@ import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Type, type Static } from "typebox";
-import { Value } from "typebox/value";
+import { arr, int, nullable, obj, oneOf, str, type Static } from "@earendil-works/pi-schema";
+import { matches } from "../schema-check.ts";
 import type { CheckEvidence, Observation } from "../checks.ts";
 import { WORKTREE } from "../profile.ts";
 import { evidence, type Host, type Scenario } from "./types.ts";
@@ -16,33 +16,38 @@ export const WORKER_CHECKS = ["post-adoption-transport", "kept-suffix-exact"] as
 export const PHASE_RECORD = "restart-phase";
 
 /** Real provider usage of one live worker phase (null in fake mode). */
-export const PhaseUsageSchema = Type.Union([
-  Type.Null(),
-  Type.Object(
+export const PhaseUsageSchema = nullable(
+  obj(
     {
-      requests: Type.Integer(),
-      inputTokens: Type.Integer(),
-      outputTokens: Type.Integer(),
-      unreported: Type.Integer(),
+      requests: int(),
+      inputTokens: int(),
+      outputTokens: int(),
+      unreported: int(),
     },
-    { additionalProperties: true },
+    { open: true },
   ),
-]);
+);
 
-const PhaseResultSchema = Type.Object({
-  phase: Type.Union([Type.Literal("persist"), Type.Literal("recover"), Type.Literal("reload")]),
-  sessionFile: Type.String(),
-  candidateIds: Type.Array(Type.String()),
-  coordinatorState: Type.String(),
-  coordinatorReason: Type.Union([Type.String(), Type.Null()]),
-  summaryDispatches: Type.Integer(),
-  checkpointCandidateIds: Type.Array(Type.String()),
-  checks: Type.Object({
-    "post-adoption-transport": Type.String(),
-    "kept-suffix-exact": Type.String(),
-  }),
-  usage: PhaseUsageSchema,
-});
+const PhaseResultSchema = obj(
+  {
+    phase: oneOf(["persist", "recover", "reload"]),
+    sessionFile: str(),
+    candidateIds: arr(str()),
+    coordinatorState: str(),
+    coordinatorReason: nullable(str()),
+    summaryDispatches: int(),
+    checkpointCandidateIds: arr(str()),
+    checks: obj(
+      {
+        "post-adoption-transport": str(),
+        "kept-suffix-exact": str(),
+      },
+      { open: true },
+    ),
+    usage: PhaseUsageSchema,
+  },
+  { open: true },
+);
 export type PhaseResult = Static<typeof PhaseResultSchema>;
 
 const WORKER = fileURLToPath(new URL("./restart-recovery-worker.ts", import.meta.url));
@@ -102,7 +107,11 @@ async function runPhase(
     host.recorder.record("restart-phase-failed", { phase, ...exit });
     throw new Error(`Restart phase ${phase} wrote no result (exit ${String(exit.code)})`);
   }
-  const result = Value.Parse(PhaseResultSchema, JSON.parse(text));
+  // Written by our own worker: no conversion, defaults or stripping were needed, so assert only.
+  const decoded: unknown = JSON.parse(text);
+  if (!matches(PhaseResultSchema, decoded))
+    throw new Error(`Restart phase ${phase} wrote an invalid result`);
+  const result = decoded;
   const ref = host.recorder.record(PHASE_RECORD, {
     ...result,
     exitCode: exit.code,

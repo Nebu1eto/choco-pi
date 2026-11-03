@@ -1,7 +1,7 @@
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { lit, obj, str } from "@earendil-works/pi-schema";
+import { matches } from "./schema-check.ts";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-import { InputSchema, type ArtifactInput } from "./artifacts.ts";
+import { isArtifactRecord, type ArtifactInput } from "./artifacts.ts";
 export interface ToolPair {
   kind: "call" | "result";
   id: string;
@@ -9,20 +9,13 @@ export interface ToolPair {
 /** Actual serialized Anthropic tool blocks, in wire order (not deduplicated). */
 export function wireToolPairs(payload: ArtifactInput): ToolPair[] {
   const pairs: ToolPair[] = [];
-  const callSchema = Type.Object(
-    { type: Type.Literal("tool_use"), id: Type.String() },
-    { additionalProperties: true },
-  );
-  const resultSchema = Type.Object(
-    { type: Type.Literal("tool_result"), tool_use_id: Type.String() },
-    { additionalProperties: true },
-  );
+  const callSchema = obj({ type: lit("tool_use"), id: str() }, { open: true });
+  const resultSchema = obj({ type: lit("tool_result"), tool_use_id: str() }, { open: true });
   function visit(item: ArtifactInput): void {
-    if (Value.Check(callSchema, item)) pairs.push({ kind: "call", id: item.id });
-    else if (Value.Check(resultSchema, item)) pairs.push({ kind: "result", id: item.tool_use_id });
+    if (matches(callSchema, item)) pairs.push({ kind: "call", id: item.id });
+    else if (matches(resultSchema, item)) pairs.push({ kind: "result", id: item.tool_use_id });
     else if (Array.isArray(item)) for (const child of item) visit(child);
-    else if (Value.Check(Type.Record(Type.String(), InputSchema), item))
-      for (const child of Object.values(item)) visit(child);
+    else if (isArtifactRecord(item)) for (const child of Object.values(item)) visit(child);
   }
   visit(payload);
   return pairs;

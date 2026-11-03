@@ -1,6 +1,5 @@
 import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai";
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { arr, compile, lit, num, obj, opt, str, unknown } from "@earendil-works/pi-schema";
 import {
   registerSearchAdapter,
   SearchError,
@@ -59,37 +58,62 @@ interface XaiAttemptSnapshot {
   billing: SearchBilling;
 }
 
-const AnnotationSchema = Type.Object({
-  type: Type.Literal("url_citation"),
-  url: Type.String({ minLength: 1 }),
-  title: Type.Optional(Type.String()),
-  start_index: Type.Optional(Type.Number()),
-  end_index: Type.Optional(Type.Number()),
-});
-const OutputTextSchema = Type.Object({
-  type: Type.String(),
-  text: Type.String(),
-  annotations: Type.Optional(Type.Array(Type.Unknown())),
-});
-const MessageItemSchema = Type.Object({
-  type: Type.Literal("message"),
-  content: Type.Array(Type.Unknown()),
-});
-const SourceSchema = Type.Object({
-  url: Type.String({ minLength: 1 }),
-  title: Type.Optional(Type.String()),
-});
-const WebSearchCallSchema = Type.Object({
-  type: Type.Literal("web_search_call"),
-  action: Type.Optional(Type.Object({ sources: Type.Optional(Type.Array(Type.Unknown())) })),
-});
-const XaiResponseSchema = Type.Object({
-  id: Type.Optional(Type.String()),
-  status: Type.Optional(Type.String()),
-  output: Type.Array(Type.Object({ type: Type.String() })),
-  citations: Type.Optional(Type.Array(Type.Unknown())),
-});
-const CitationUrlSchema = Type.String({ minLength: 1 });
+const AnnotationSchema = obj(
+  {
+    type: lit("url_citation"),
+    url: str({ minLength: 1 }),
+    title: opt(str()),
+    start_index: opt(num()),
+    end_index: opt(num()),
+  },
+  { open: true },
+);
+const OutputTextSchema = obj(
+  {
+    type: str(),
+    text: str(),
+    annotations: opt(arr(unknown())),
+  },
+  { open: true },
+);
+const MessageItemSchema = obj(
+  {
+    type: lit("message"),
+    content: arr(unknown()),
+  },
+  { open: true },
+);
+const SourceSchema = obj(
+  {
+    url: str({ minLength: 1 }),
+    title: opt(str()),
+  },
+  { open: true },
+);
+const WebSearchCallSchema = obj(
+  {
+    type: lit("web_search_call"),
+    action: opt(obj({ sources: opt(arr(unknown())) }, { open: true })),
+  },
+  { open: true },
+);
+const XaiResponseSchema = obj(
+  {
+    id: opt(str()),
+    status: opt(str()),
+    output: arr(obj({ type: str() }, { open: true })),
+    citations: opt(arr(unknown())),
+  },
+  { open: true },
+);
+const CitationUrlSchema = str({ minLength: 1 });
+const isXaiResponse = compile(XaiResponseSchema).check;
+const isMessageItem = compile(MessageItemSchema).check;
+const isOutputText = compile(OutputTextSchema).check;
+const isAnnotation = compile(AnnotationSchema).check;
+const isWebSearchCall = compile(WebSearchCallSchema).check;
+const isSource = compile(SourceSchema).check;
+const isCitationUrl = compile(CitationUrlSchema).check;
 
 function errorOptions(extra: SearchErrorOptions = {}): SearchErrorOptions {
   return {
@@ -284,7 +308,7 @@ export function parseXaiResponse(text: string, status?: number): ParsedXaiRespon
       retryable: true,
     });
   }
-  if (!Check(XaiResponseSchema, value)) {
+  if (!isXaiResponse(value)) {
     throw xaiError("invalid-response", "xAI Responses API returned an unexpected payload", {
       status,
       retryable: true,
@@ -299,12 +323,12 @@ export function parseXaiResponse(text: string, status?: number): ParsedXaiRespon
   };
   const answers: string[] = [];
   for (const item of value.output) {
-    if (Check(MessageItemSchema, item)) {
+    if (isMessageItem(item)) {
       for (const part of item.content) {
-        if (!Check(OutputTextSchema, part)) continue;
+        if (!isOutputText(part)) continue;
         if (part.text.trim()) answers.push(part.text);
         for (const annotation of part.annotations ?? []) {
-          if (!Check(AnnotationSchema, annotation)) continue;
+          if (!isAnnotation(annotation)) continue;
           add(
             annotation.url,
             annotation.title,
@@ -312,14 +336,14 @@ export function parseXaiResponse(text: string, status?: number): ParsedXaiRespon
           );
         }
       }
-    } else if (Check(WebSearchCallSchema, item)) {
+    } else if (isWebSearchCall(item)) {
       for (const source of item.action?.sources ?? []) {
-        if (Check(SourceSchema, source)) add(source.url, source.title, "");
+        if (isSource(source)) add(source.url, source.title, "");
       }
     }
   }
   for (const citation of value.citations ?? []) {
-    if (Check(CitationUrlSchema, citation) && citation.trim()) add(citation.trim(), undefined, "");
+    if (isCitationUrl(citation) && citation.trim()) add(citation.trim(), undefined, "");
   }
   return {
     id: value.id,
@@ -363,7 +387,11 @@ async function resolveCallAuth(
     );
   }
   const baseUrl = resolved.baseUrl ?? model?.baseUrl ?? XAI_DEFAULT_BASE_URL;
-  return { apiKey: resolved.apiKey, headers: resolved.headers, url: responsesUrl(baseUrl) };
+  return {
+    apiKey: resolved.apiKey,
+    headers: resolved.headers,
+    url: responsesUrl(baseUrl),
+  };
 }
 
 async function callXai(
@@ -394,7 +422,9 @@ async function callXai(
       });
     }
     const message = cause instanceof Error ? redact(cause.message, auth.apiKey) : "request failed";
-    throw xaiError("network", `xAI request failed: ${message}`, { retryable: true });
+    throw xaiError("network", `xAI request failed: ${message}`, {
+      retryable: true,
+    });
   }
   assertCurrent(context, generation);
   let text: string;
@@ -409,7 +439,9 @@ async function callXai(
       });
     }
     const message = cause instanceof Error ? redact(cause.message, auth.apiKey) : "read failed";
-    throw xaiError("network", `xAI response could not be read: ${message}`, { retryable: true });
+    throw xaiError("network", `xAI response could not be read: ${message}`, {
+      retryable: true,
+    });
   }
   assertCurrent(context, generation);
   if (!response.ok) {
@@ -470,7 +502,11 @@ export function createXaiSearchAdapter(options: XaiSearchAdapterOptions = {}): S
     explicitOnly: true,
     capabilities: {
       actions: ["search"],
-      constraints: { numResults: true, domainFilter: true, domainExclusions: true },
+      constraints: {
+        numResults: true,
+        domainFilter: true,
+        domainExclusions: true,
+      },
     },
     availability(context): SearchAvailability {
       const generation = context.generation;
@@ -557,7 +593,11 @@ export function createXaiSearchAdapter(options: XaiSearchAdapterOptions = {}): S
       const response: SearchAdapterResponse = {
         answer: answers.join("\n\n"),
         results: results.slice(0, limit),
-        native: { backend: XAI_SEARCH_ADAPTER_ID, model: XAI_SEARCH_MODEL, responseIds },
+        native: {
+          backend: XAI_SEARCH_ADAPTER_ID,
+          model: XAI_SEARCH_MODEL,
+          responseIds,
+        },
       };
       if (warnings.length > 0) response.warnings = warnings;
       return response;

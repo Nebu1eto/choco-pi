@@ -2,59 +2,68 @@ import { open, readFile, rename, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { Type, type Static } from "typebox";
+import {
+  arr,
+  bool,
+  compile,
+  int,
+  lit,
+  map,
+  num,
+  obj,
+  oneOf,
+  opt,
+  str,
+  union,
+  unknown,
+  type Schema,
+  type Static,
+} from "@earendil-works/pi-schema";
 import { isJsonRecord, isString, type JsonValue } from "../.pi/extensions/lib/runtime-values.ts";
-import { Value } from "typebox/value";
 
 class McpTranslationError extends Error {}
 
-const strings = Type.Record(Type.String(), Type.String());
-const optionalString = Type.Optional(Type.String());
-const oauth = Type.Object(
-  {
-    clientId: optionalString,
-    clientSecret: optionalString,
-    scope: optionalString,
-    clientName: optionalString,
-    callbackUrl: optionalString,
-    callbackPort: Type.Optional(Type.Integer({ minimum: 1, maximum: 65535 })),
-    clientRegistration: Type.Optional(Type.Union([Type.Literal("dcr"), Type.Literal("cimd")])),
-    authServerMetadataUrl: optionalString,
-  },
-  { additionalProperties: false },
-);
-const exposure = Type.Union([
-  Type.Literal("codemode"),
-  Type.Literal("deferred"),
-  Type.Literal("direct"),
-  Type.Literal("hidden"),
-]);
+/** A closed record whose keys must all match `pattern` (pi-schema's map() accepts any key). */
+function patternMap<T>(pattern: string, value: Schema<T>): Schema<Record<string, T>> {
+  return {
+    type: "object",
+    patternProperties: { [pattern]: value },
+    additionalProperties: false,
+  };
+}
+
+const strings = map(str());
+const optionalString = opt(str());
+const oauth = obj({
+  clientId: optionalString,
+  clientSecret: optionalString,
+  scope: optionalString,
+  clientName: optionalString,
+  callbackUrl: optionalString,
+  callbackPort: opt(int({ minimum: 1, maximum: 65535 })),
+  clientRegistration: opt(oneOf(["dcr", "cimd"])),
+  authServerMetadataUrl: optionalString,
+});
+const exposure = oneOf(["codemode", "deferred", "direct", "hidden"]);
 const common = {
   command: optionalString,
-  args: Type.Optional(Type.Array(Type.String())),
-  env: Type.Optional(strings),
+  args: opt(arr(str())),
+  env: opt(strings),
   cwd: optionalString,
   url: optionalString,
-  headers: Type.Optional(strings),
-  type: Type.Optional(
-    Type.Union([Type.Literal("stdio"), Type.Literal("http"), Type.Literal("streamable-http")]),
-  ),
-  enabled: Type.Optional(Type.Boolean()),
-  timeout: Type.Optional(Type.Number({ exclusiveMinimum: 0 })),
-  exposure: Type.Optional(exposure),
-  toolExposure: Type.Optional(Type.Record(Type.String(), exposure)),
+  headers: opt(strings),
+  type: opt(oneOf(["stdio", "http", "streamable-http"])),
+  enabled: opt(bool()),
+  timeout: opt(num({ exclusiveMinimum: 0 })),
+  exposure: opt(exposure),
+  toolExposure: opt(map(exposure)),
   description: optionalString,
 };
-const builtinServer = Type.Object(
-  {
-    ...common,
-    oauth: Type.Optional(oauth),
-    auth: Type.Optional(
-      Type.Object({ provider: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
-    ),
-  },
-  { additionalProperties: false },
-);
+const builtinServer = obj({
+  ...common,
+  oauth: opt(oauth),
+  auth: opt(obj({ provider: str({ minLength: 1 }) })),
+});
 const unsupported = [
   "directTools",
   "toolPrefix",
@@ -77,62 +86,39 @@ const unsupported = [
   "pluginDataDir",
   "literalEnv",
 ];
-const legacyOauth = Type.Object(
-  {
-    clientId: optionalString,
-    clientSecret: optionalString,
-    scope: optionalString,
-    clientName: optionalString,
-    redirectUri: optionalString,
-    grantType: Type.Optional(
-      Type.Union([Type.Literal("authorization_code"), Type.Literal("client_credentials")]),
-    ),
-    authorizationParams: Type.Optional(strings),
-    clientUri: optionalString,
-    logoUri: optionalString,
-    skipIssuerMetadataValidation: Type.Optional(Type.Boolean()),
-  },
-  { additionalProperties: false },
-);
-const legacyServer = Type.Object(
-  {
-    ...common,
-    auth: Type.Optional(
-      Type.Union([
-        Type.Literal("oauth"),
-        Type.Literal("bearer"),
-        Type.Literal(false),
-        Type.Object({ provider: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
-      ]),
-    ),
-    oauth: Type.Optional(Type.Union([legacyOauth, oauth, Type.Literal(false)])),
-    bearerToken: optionalString,
-    protocolVersion: optionalString,
-    disabled: Type.Optional(Type.Boolean()),
-    requestTimeoutMs: Type.Optional(Type.Number({ exclusiveMinimum: 0 })),
-    ...Object.fromEntries(unsupported.map((field) => [field, Type.Optional(Type.Unknown())])),
-  },
-  { additionalProperties: false },
-);
-const legacySchema = Type.Object(
-  {
-    mcpServers: Type.Record(Type.String({ pattern: "^[A-Za-z0-9_-]+$" }), legacyServer, {
-      additionalProperties: false,
-    }),
-    settings: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
-  },
-  { additionalProperties: false },
-);
-const builtinSchema = Type.Object(
-  {
-    mcpServers: Type.Record(Type.String({ pattern: "^[A-Za-z0-9_-]+$" }), builtinServer, {
-      additionalProperties: false,
-    }),
-  },
-  { additionalProperties: false },
-);
+const legacyOauth = obj({
+  clientId: optionalString,
+  clientSecret: optionalString,
+  scope: optionalString,
+  clientName: optionalString,
+  redirectUri: optionalString,
+  grantType: opt(oneOf(["authorization_code", "client_credentials"])),
+  authorizationParams: opt(strings),
+  clientUri: optionalString,
+  logoUri: optionalString,
+  skipIssuerMetadataValidation: opt(bool()),
+});
+const legacyServer = obj({
+  ...common,
+  auth: opt(union([oneOf(["oauth", "bearer", false]), obj({ provider: str({ minLength: 1 }) })])),
+  oauth: opt(union([legacyOauth, oauth, lit(false)])),
+  bearerToken: optionalString,
+  protocolVersion: optionalString,
+  disabled: opt(bool()),
+  requestTimeoutMs: opt(num({ exclusiveMinimum: 0 })),
+  ...Object.fromEntries(unsupported.map((field) => [field, opt(unknown())])),
+});
+const legacySchema = obj({
+  mcpServers: patternMap("^[A-Za-z0-9_-]+$", legacyServer),
+  settings: opt(map(unknown())),
+});
+const builtinSchema = obj({
+  mcpServers: patternMap("^[A-Za-z0-9_-]+$", builtinServer),
+});
 
 type LegacyConfig = Static<typeof legacySchema>;
+const isLegacyConfig = compile(legacySchema).check;
+const isBuiltinConfig = compile(builtinSchema).check;
 
 /** The retired adapter always listened here (mcp-oauth-provider.ts DEFAULT_OAUTH_CALLBACK_PORT). */
 const LEGACY_CALLBACK_PORT = 19876;
@@ -219,7 +205,10 @@ export function translateMcpConfig(
               : `Bearer ${bearerToken}`;
           if (authorization.startsWith("!"))
             notices.push(`Wrapped the token command for ${name} so Pi runs it as the whole header`);
-          translated.headers = { ...server.headers, Authorization: authorization };
+          translated.headers = {
+            ...server.headers,
+            Authorization: authorization,
+          };
         } else if (bearerToken !== undefined)
           throw new McpTranslationError(`Unsupported bearerToken without bearer auth for ${name}`);
         if (auth instanceof Object) Object.assign(translated, { auth });
@@ -274,7 +263,7 @@ export function translateMcpConfig(
       }),
   );
   const result = { mcpServers: servers };
-  if (!Value.Check(builtinSchema, result))
+  if (!isBuiltinConfig(result))
     throw new McpTranslationError(
       "Translated MCP configuration failed built-in schema validation (values withheld)",
     );
@@ -366,7 +355,7 @@ export async function translateMcpFile(
   } catch {
     throw new McpTranslationError("Invalid MCP JSON (values withheld)");
   }
-  if (!isJsonRecord(raw) || !Value.Check(legacySchema, raw))
+  if (!isJsonRecord(raw) || !isLegacyConfig(raw))
     throw new McpTranslationError("Invalid legacy MCP configuration shape (values withheld)");
   const { config: translated, notices } = translateMcpConfig(raw, options);
   const noticeText = notices.length ? `${notices.join("\n")}\n` : "";

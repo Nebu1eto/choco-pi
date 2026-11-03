@@ -1,5 +1,5 @@
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, bool, int, lit, obj, opt, str, union, type Static } from "@earendil-works/pi-schema";
+import { isString, matches } from "../schema-check.ts";
 import { isCandidateRecord } from "../../../../.pi/packages/choco-pi-compaction/src/background/contract.ts";
 import { InputSchema, type ArtifactInput } from "../artifacts.ts";
 import type { CheckEvidence, Observation } from "../checks.ts";
@@ -12,18 +12,18 @@ import { evidence, type Host } from "./types.ts";
 /** Matches nothing: a live run without a committed checkpoint has no marker. */
 const NO_CHECKPOINT = "\u0000no-committed-checkpoint";
 /** Shape of a recorded `transport` evidence record (see capturePayload). */
-const TransportRecordSchema = Type.Object(
+const TransportRecordSchema = obj(
   {
-    payload: Type.Object({ messages: Type.Array(InputSchema) }, { additionalProperties: true }),
+    payload: obj({ messages: arr(InputSchema) }, { open: true }),
   },
-  { additionalProperties: true },
+  { open: true },
 );
-const PassesSchema = Type.Object({ passes: Type.Integer() }, { additionalProperties: true });
-const PromptInputSchema = Type.Object(
-  { ownerKey: Type.String(), pass: Type.Integer(), entryIds: Type.Array(Type.String()) },
-  { additionalProperties: true },
+const PassesSchema = obj({ passes: int() }, { open: true });
+const PromptInputSchema = obj(
+  { ownerKey: str(), pass: int(), entryIds: arr(str()) },
+  { open: true },
 );
-const ActiveSchema = Type.Object({ isStreaming: Type.Boolean() }, { additionalProperties: true });
+const ActiveSchema = obj({ isStreaming: bool() }, { open: true });
 
 /**
  * Main-session text adoption must reach the compaction relay and the goal
@@ -37,7 +37,7 @@ const MANDATORY_MAIN_CONSUMERS = ["choco-pi-compaction:adoption-relay", "goal"];
  * prefix entries still travel on the wire.
  */
 function transportMessages(record: ArtifactInput): ArtifactInput[] {
-  if (!Value.Check(TransportRecordSchema, record))
+  if (!matches(TransportRecordSchema, record))
     throw new Error("Transport record lacks payload messages");
   return record.payload.messages;
 }
@@ -56,7 +56,7 @@ function checkpointMarker(host: Host): string {
 
 function committedPasses(host: Host): number | undefined {
   const details: unknown = lastCheckpoint(host)?.details;
-  return Value.Check(PassesSchema, details) ? details.passes : undefined;
+  return matches(PassesSchema, details) ? details.passes : undefined;
 }
 
 /** Every observed or mandatory consumer exactly once per committed main adoption. */
@@ -142,7 +142,7 @@ function textPassObservations(host: Host): Observation[] {
   if (cut < 0) return [];
   const prefixIds = new Set(branch.slice(0, cut + 1).map((item) => item.id));
   const captures = host.recorder.records.filter(
-    (record) => record.kind === "text-prompt-input" && Value.Check(PromptInputSchema, record.data),
+    (record) => record.kind === "text-prompt-input" && matches(PromptInputSchema, record.data),
   );
   const passes: Observation = {
     actual: captures.length,
@@ -154,7 +154,7 @@ function textPassObservations(host: Host): Observation[] {
     passes,
     ...captures.map((capture) => ({
       actual:
-        Value.Check(PromptInputSchema, capture.data) &&
+        matches(PromptInputSchema, capture.data) &&
         capture.data.entryIds.every((id) => prefixIds.has(id)),
       expected: true,
       evidenceRefs: [capture.sequence],
@@ -167,7 +167,7 @@ function activeObservations(host: Host, activeRef: number, signalRefs: number[])
   const activeData = host.recorder.records[activeRef]?.data;
   return [
     {
-      actual: Value.Check(ActiveSchema, activeData) && activeData.isStreaming,
+      actual: matches(ActiveSchema, activeData) && activeData.isStreaming,
       expected: true,
       evidenceRefs: [activeRef],
       description: "Preparation requested during actual active foreground",
@@ -246,21 +246,21 @@ function providerOwnedTransportObservations(host: Host): Observation[] {
   const prefixEntries = branch.slice(0, Math.max(cut, 0));
   // Text of every summarized user turn; none of it may survive verbatim in the context.
   // The host stores prompted user text either as a string or as text blocks.
-  const UserTextSchema = Type.Object({
-    role: Type.Literal("user"),
-    content: Type.Union([
-      Type.String(),
-      Type.Array(Type.Object({ type: Type.String(), text: Type.Optional(Type.String()) })),
-    ]),
-  });
+  const UserTextSchema = obj(
+    {
+      role: lit("user"),
+      content: union([str(), arr(obj({ type: str(), text: opt(str()) }, { open: true }))]),
+    },
+    { open: true },
+  );
   const textOf = (content: Static<typeof UserTextSchema>["content"]): string =>
-    Value.Check(Type.String(), content)
+    isString(content)
       ? content
       : content
           .flatMap((block) => (block.type === "text" && block.text ? [block.text] : []))
           .join("\n");
   const prefixTexts = prefixEntries.flatMap((entry) =>
-    entry.type === "message" && Value.Check(UserTextSchema, entry.message)
+    entry.type === "message" && matches(UserTextSchema, entry.message)
       ? [textOf(entry.message.content)]
       : [],
   );
@@ -270,8 +270,7 @@ function providerOwnedTransportObservations(host: Host): Observation[] {
     (message) => message.role === "compactionSummary" && message.summary === checkpoint.summary,
   );
   const rawPrefixPresent = conversational.some(
-    (message) =>
-      Value.Check(UserTextSchema, message) && prefixTexts.includes(textOf(message.content)),
+    (message) => matches(UserTextSchema, message) && prefixTexts.includes(textOf(message.content)),
   );
   const ref = host.recorder.record("provider-owned-request-context", {
     transport: last.api,

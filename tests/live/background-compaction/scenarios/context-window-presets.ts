@@ -1,8 +1,8 @@
 import { setTimeout } from "node:timers/promises";
 import type { Model } from "@earendil-works/pi-ai";
 import type { ExtensionContext, ExtensionFactory } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, lit, num, obj, str } from "@earendil-works/pi-schema";
+import { matches } from "../schema-check.ts";
 import {
   AUTO_COMPACTION_POINT_KEY,
   CONTEXT_SOFT_CAP_KEY,
@@ -114,22 +114,20 @@ export const OFFLINE_MODELS: ReadonlyMap<string, Model<"anthropic-messages">> = 
 
 const SETTLE_MS = 1_000;
 const COMPACT_WAIT_MS = 5_000;
-const RowSchema = Type.Object({ label: Type.String(), value: Type.String() });
-const StatusFrameSchema = Type.Object(
+const RowSchema = obj({ label: str(), value: str() }, { open: true });
+const StatusFrameSchema = obj(
   {
-    kind: Type.Literal("status"),
-    sections: Type.Array(
-      Type.Object({ rows: Type.Array(RowSchema) }, { additionalProperties: true }),
-    ),
+    kind: lit("status"),
+    sections: arr(obj({ rows: arr(RowSchema) }, { open: true })),
   },
-  { additionalProperties: true },
+  { open: true },
 );
-const ContextFrameSchema = Type.Object(
+const ContextFrameSchema = obj(
   {
-    kind: Type.Literal("context"),
-    context: Type.Object({ contextWindow: Type.Number() }, { additionalProperties: true }),
+    kind: lit("context"),
+    context: obj({ contextWindow: num() }, { open: true }),
   },
-  { additionalProperties: true },
+  { open: true },
 );
 
 /** Records every `session_before_compact` the host emits (no handler result). */
@@ -179,14 +177,14 @@ async function reportFrames(host: Host, phase: Phase): Promise<Frames> {
   } finally {
     ui.setStatus = original;
   }
-  const statusFrame = frames.find((frame) => Value.Check(StatusFrameSchema, frame));
-  const contextFrame = frames.find((frame) => Value.Check(ContextFrameSchema, frame));
-  const status = Value.Check(StatusFrameSchema, statusFrame)
+  const statusFrame = frames.find((frame) => matches(StatusFrameSchema, frame));
+  const contextFrame = frames.find((frame) => matches(ContextFrameSchema, frame));
+  const status = matches(StatusFrameSchema, statusFrame)
     ? statusFrame.sections
         .flatMap((section) => section.rows)
         .find((row) => row.label === "Context window")?.value
     : undefined;
-  const context = Value.Check(ContextFrameSchema, contextFrame)
+  const context = matches(ContextFrameSchema, contextFrame)
     ? contextFrame.context.contextWindow
     : undefined;
   const statusRef = host.recorder.record("status-report", {

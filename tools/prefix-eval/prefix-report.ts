@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { Type } from "typebox";
+import { num, obj } from "@earendil-works/pi-schema";
 import {
   cacheableSegments,
   canonicalJson,
@@ -21,10 +21,7 @@ import {
   type ToolNameDiff,
 } from "./types.ts";
 
-const CountTokensResponseSchema = Type.Object(
-  { input_tokens: Type.Number() },
-  { additionalProperties: true },
-);
+const CountTokensResponseSchema = obj({ input_tokens: num() }, { open: true });
 
 const anthropicApiHost = process.env.CHOCO_PI_ANTHROPIC_API_HOST ?? "api.anthropic.com";
 

@@ -16,7 +16,8 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
-import { Type } from "typebox";
+import { obj, str } from "@earendil-works/pi-schema";
+import { hostParams } from "../.pi/extensions/lib/schema-bridge.ts";
 import type { ResolvedReviewConfig } from "../.pi/extensions/review/core/types.ts";
 import {
   buildApplyPatchDiffFiles,
@@ -114,7 +115,7 @@ function definition(name: string, extra: Partial<ToolDefinition> = {}): ToolFixt
     name,
     label: name,
     description: `${name} description`,
-    parameters: Type.Object({ path: Type.String() }),
+    parameters: hostParams(obj({ path: str() }, { open: true })),
     execute: async () => ({ content: [{ type: "text" as const, text: "ok" }] }),
     renderCall: (...args: unknown[]) => {
       calls.call.push(args);
@@ -281,7 +282,10 @@ test("execute still runs the original implementation", async () => {
   const { tool } = definition("write", {
     execute: async () => {
       executed += 1;
-      return { content: [{ type: "text" as const, text: "written" }], details: undefined };
+      return {
+        content: [{ type: "text" as const, text: "written" }],
+        details: undefined,
+      };
     },
   });
   const decorated = decorateToolDefinition(tool);
@@ -482,7 +486,10 @@ test("renders the edit diff from the patch the tool actually applied", () => {
   const before = "one\ntwo\nthree\nfour\nfive\nsix\nseven\n";
   const after = "one\ntwo\nthree\nfour\nFIVE\nsix\nseven\n";
   const args = { path: "src/a.ts" };
-  const details = { diff: "ignored", patch: generateUnifiedPatch("src/a.ts", before, after) };
+  const details = {
+    diff: "ignored",
+    patch: generateUnifiedPatch("src/a.ts", before, after),
+  };
 
   const title = renderCall(decorated, args, context({ args })).render(60).join("\n");
   assert.match(title, /File: Edited src\/a\.ts/);
@@ -733,7 +740,10 @@ test("decorating Pi's real write tool changes rendering and nothing else", async
     assert.equal(decorated.execute, stock.execute);
     assert.equal(decorated.renderResult, stock.renderResult);
 
-    const args = { path: "nested/created.ts", content: "export const value = 1;\n" };
+    const args = {
+      path: "nested/created.ts",
+      content: "export const value = 1;\n",
+    };
     // SAFETY: The fixture supplies every host member exercised by this test.
     await decorated.execute("call-real-write", args as never, undefined, undefined, {} as never);
     assert.equal(readFileSync(join(dir, "nested/created.ts"), "utf8"), "export const value = 1;\n");
@@ -750,7 +760,10 @@ test("decorating Pi's real write tool changes rendering and nothing else", async
 });
 
 test("survives a tool definition with no renderers at all", () => {
-  const { tool } = definition("write", { renderCall: undefined, renderResult: undefined });
+  const { tool } = definition("write", {
+    renderCall: undefined,
+    renderResult: undefined,
+  });
   const decorated = decorateToolDefinition(tool);
   const badArgs = { path: "src/a.ts", content: 1 };
   assert.deepEqual(

@@ -2,12 +2,11 @@ import assert from "node:assert/strict";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { Type, type Static } from "typebox";
-import { Value } from "typebox/value";
+import { arr, bool, compile, map, obj, unknown } from "@earendil-works/pi-schema";
+import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 import {
   artifactLeaks,
-  InputSchema,
-  JsonSchema,
+  type ArtifactInput,
   Recorder,
   redact,
   writeArtifact,
@@ -98,7 +97,11 @@ test("checks fail without runtime evidence and on every observed violation", () 
   };
   assert.equal(statusOf("single-checkpoint", unbacked), "fail", "refs must name real records");
   const notice = { consumer: "goal", adoptionId: "a", evidenceRef: 0 };
-  const roster = { ...empty, records: [record("counts")], expectedNotifications: [notice] };
+  const roster = {
+    ...empty,
+    records: [record("counts")],
+    expectedNotifications: [notice],
+  };
   assert.equal(statusOf("consumers-notified-once", { ...roster, notifications: [notice] }), "pass");
   const duplicate = { ...roster, notifications: [notice, notice] };
   assert.equal(statusOf("consumers-notified-once", duplicate), "fail");
@@ -107,12 +110,20 @@ test("checks fail without runtime evidence and on every observed violation", () 
     notifications: [notice],
     observations: {
       "consumers-notified-once": [
-        { description: "runner once", actual: [2], expected: [1], evidenceRefs: [0] },
+        {
+          description: "runner once",
+          actual: [2],
+          expected: [1],
+          evidenceRefs: [0],
+        },
       ],
     },
   };
   assert.equal(statusOf("consumers-notified-once", runnerMismatch), "fail");
-  const leaked = { ...empty, records: [record("bad", { signature: "unsafe" })] };
+  const leaked = {
+    ...empty,
+    records: [record("bad", { signature: "unsafe" })],
+  };
   assert.equal(statusOf("no-secret-leak", leaked), "fail");
 });
 
@@ -135,7 +146,11 @@ function laneRecord(overrides: Record<string, string | number | boolean> = {}) {
 
 test("lane-journal verdicts: one record per observed outcome, budget, schema, no credentials", () => {
   const fallback = laneRecord();
-  const cancel = laneRecord({ event: "cancel", reason: "opaque-checkpoint", to: "local" });
+  const cancel = laneRecord({
+    event: "cancel",
+    reason: "opaque-checkpoint",
+    to: "local",
+  });
   const entries = [
     { type: "message" },
     { type: "custom", customType: "choco-compaction-candidate", data: {} },
@@ -171,7 +186,10 @@ test("lane-journal verdicts: one record per observed outcome, budget, schema, no
   ]);
   // Own codes and lane ids are exempt by equality only; the pattern itself is the plain one.
   assert.equal(CREDENTIAL_TEXT.source, "Bearer |sk-|xai-|eyJ");
-  const own = laneRecord({ reason: "task-budget-remaining", detail: "instructions-forwarded" });
+  const own = laneRecord({
+    reason: "task-budget-remaining",
+    detail: "instructions-forwarded",
+  });
   assert.deepEqual(journalReasons([own]), []);
   for (const code of ["task-budget-remaining", "xai-native"])
     assert.deepEqual(journalReasons([laneRecord({ detail: code })]), [], code);
@@ -217,7 +235,12 @@ test("lane-journal verdicts: one record per observed outcome, budget, schema, no
     records: [record("branch")],
     observations: {
       "lane-journal": [
-        { description: "records", actual: journalReasons(data), expected: [], evidenceRefs: [0] },
+        {
+          description: "records",
+          actual: journalReasons(data),
+          expected: [],
+          evidenceRefs: [0],
+        },
       ],
     },
   };
@@ -226,7 +249,10 @@ test("lane-journal verdicts: one record per observed outcome, budget, schema, no
 });
 
 test("RPC probe Q5: the switched frame and journal are judged against the frozen checkpoint", () => {
-  type WindowItem = { readonly type: string; readonly encrypted_content?: string };
+  type WindowItem = {
+    readonly type: string;
+    readonly encrypted_content?: string;
+  };
   const checkpoint = (id: string, compactedWindow: readonly WindowItem[]): CompactionEntry => ({
     id,
     type: "compaction",
@@ -245,7 +271,11 @@ test("RPC probe Q5: the switched frame and journal are judged against the frozen
   assert.equal(itemsA.length, 1, "only encrypted compaction items are digested");
   assert.equal(itemsB.length, 1);
   assert.notDeepEqual(itemsA, itemsB);
-  const text: CompactionEntry = { id: "entry-T", type: "compaction", summary: "text" };
+  const text: CompactionEntry = {
+    id: "entry-T",
+    type: "compaction",
+    summary: "text",
+  };
   assert.deepEqual(checkpointDigests(text), [], "a text checkpoint has no encrypted items");
   const frame = (digests: readonly string[]): CodexSend => ({
     seq: 2,
@@ -296,7 +326,11 @@ test("RPC probe Q5: the switched frame and journal are judged against the frozen
     "checkpoint entry-B replaced entry-A during the switched turn",
   ]);
   // The exact pre-fix false-pass: A's record is journaled, but only B's item is sent.
-  const onlyB = modelSwitchVerdict({ ...good, frame: frame(itemsB), latestAfterSwitch: "entry-B" });
+  const onlyB = modelSwitchVerdict({
+    ...good,
+    frame: frame(itemsB),
+    latestAfterSwitch: "entry-B",
+  });
   assert.equal(onlyB.verdict, "fail");
   assert.deepEqual(onlyB.failures, [
     "first target frame lacks an encrypted item of entry-A",
@@ -313,7 +347,10 @@ test("RPC probe Q5: the switched frame and journal are judged against the frozen
     "checkpoint entry-B replaced entry-A during the switched turn",
   ]);
   // A frozen checkpoint without encrypted items never matches a frame.
-  const empty = modelSwitchVerdict({ ...good, frozen: { entryId: "entry-A", digests: [] } });
+  const empty = modelSwitchVerdict({
+    ...good,
+    frozen: { entryId: "entry-A", digests: [] },
+  });
   assert.equal(empty.verdict, "fail");
   assert.equal(empty.frameCarriesCheckpointItem, false);
 });
@@ -342,7 +379,11 @@ test("RPC probe auto case: an aborted follow-up compaction needs a cancel record
   const missing = autoJournalVerdict(records, false, []);
   assert.equal(missing.verdict, "fail");
   assert.deepEqual(missing.problems, ["observed cancel has no lane record"]);
-  const cancel = laneRecord({ provider: "codex", route: "threshold", event: "cancel" });
+  const cancel = laneRecord({
+    provider: "codex",
+    route: "threshold",
+    event: "cancel",
+  });
   assert.equal(autoJournalVerdict(records, false, [cancel]).verdict, "pass");
   assert.equal(autoJournalVerdict(adoption, false, []).verdict, "pass");
   assert.equal(autoJournalVerdict(adoption, true, []).verdict, "fail", "fallback needs a record");
@@ -394,7 +435,9 @@ test("RPC probe: xAI lane, text switch, approvals, manual-only models and cell b
     "a billable run is opt-in",
   );
   assert.equal(
-    parseCli([...live, "--capture", "c.jsonl"], checkout, { CHOCO_PI_LIVE_E2E: "1" }).help,
+    parseCli([...live, "--capture", "c.jsonl"], checkout, {
+      CHOCO_PI_LIVE_E2E: "1",
+    }).help,
     false,
   );
   assert.throws(() => parse("--model", "xai/grok-4.6"), /Unapproved live model/u);
@@ -412,7 +455,9 @@ test("RPC probe: xAI lane, text switch, approvals, manual-only models and cell b
   );
   // The switch-only model is never a live subject.
   assert.throws(() =>
-    requireLiveRun("text-boundary-adoption", "xai/grok-4.6", { CHOCO_PI_LIVE_E2E: "1" }),
+    requireLiveRun("text-boundary-adoption", "xai/grok-4.6", {
+      CHOCO_PI_LIVE_E2E: "1",
+    }),
   );
   const rows = [
     ["anthropic/claude-fable-5-1", "manual", "rpc-anthropic-fable-manual"],
@@ -433,7 +478,10 @@ test("RPC probe: xAI lane, text switch, approvals, manual-only models and cell b
   try {
     await writeFile(
       join(source, "settings.json"),
-      JSON.stringify({ compactionXai: "choco-pi", compactionOpaqueHistory: "allow-loss" }),
+      JSON.stringify({
+        compactionXai: "choco-pi",
+        compactionOpaqueHistory: "allow-loss",
+      }),
     );
     const files = await buildAgentFiles(
       { ...xai, source },
@@ -441,11 +489,11 @@ test("RPC probe: xAI lane, text switch, approvals, manual-only models and cell b
       join(source, "choco-pi-codex.json"),
     );
     const settings: unknown = JSON.parse(files.settings);
-    assert.ok(Value.Check(Type.Record(Type.String(), Type.Unknown()), settings));
+    assert.ok(isSettingsRecord(settings));
     assert.equal(settings["compactionXai"], "server-side");
     assert.equal(settings["compactionOpaqueHistory"], "preserve");
     const sidecar: unknown = JSON.parse(files.backgroundSidecar);
-    assert.ok(Value.Check(Type.Object({ text: Type.Boolean() }), sidecar));
+    assert.ok(isTextSidecar(sidecar));
     assert.equal(sidecar.text, true, "--text on keeps the fallback lane");
   } finally {
     await rm(source, { recursive: true, force: true });
@@ -466,15 +514,28 @@ test("redaction removes signatures, ciphertext and credentials before recording/
   const secret = "harness-signature-must-not-appear";
   const safe = redact({
     signature: secret,
-    nested: [{ encrypted_content: "ciphertext", authorization: "Bearer secret", id: "entry-id" }],
+    nested: [
+      {
+        encrypted_content: "ciphertext",
+        authorization: "Bearer secret",
+        id: "entry-id",
+      },
+    ],
   });
   assert.deepEqual(artifactLeaks(safe, "$", [secret, "ciphertext", "Bearer secret"]), []);
   assert.deepEqual(redact(safe), safe, "redaction metadata is stable across writer boundaries");
   assert.equal(artifactLeaks({ signatureRedacted: secret }).length, 1);
   const recorder = new Recorder(["opaque-credential-value"]);
   recorder.record("candidate", { signature: secret });
-  recorder.record("unlabelled-provider-echo", { text: "opaque-credential-value" });
-  const records = Value.Parse(InputSchema, recorder.records);
+  recorder.record("unlabelled-provider-echo", {
+    text: "opaque-credential-value",
+  });
+  const records: ArtifactInput = recorder.records.map((entry) => ({
+    sequence: entry.sequence,
+    elapsedMs: entry.elapsedMs,
+    kind: entry.kind,
+    data: entry.data,
+  }));
   assert.deepEqual(artifactLeaks(records, "$", ["opaque-credential-value"]), []);
   const dir = join(scratchRoot, "artifacts");
   await mkdir(scratchRoot, { recursive: true });
@@ -517,7 +578,11 @@ test("live runs are opt-in and the ledger counts real SSE usage, stopping runawa
   assert.equal(report.inputTokens, 105, "cache reads and writes are billed input");
   assert.equal(report.outputTokens, 42, "message_delta overrides message_start output");
   assert.throws(() => ledger.reserve("foreground", 1000), /runaway-guard/u);
-  const busy = new LiveLedger(new Recorder(), { requests: 5, inputTokens: 100, outputTokens: 10 });
+  const busy = new LiveLedger(new Recorder(), {
+    requests: 5,
+    inputTokens: 100,
+    outputTokens: 10,
+  });
   busy.observe(busy.reserve("summary", 1), new Response("", { status: 529 }));
   await busy.drain();
   assert.throws(() => busy.reserve("summary", 1), /provider-unavailable/u);
@@ -556,7 +621,11 @@ test("the ledger counts OpenAI-compatible (Synthetic) usage from SSE and JSON bo
       id: "c2",
       object: "chat.completion",
       choices: [
-        { index: 0, message: { role: "assistant", content: "x" }, finish_reason: "length" },
+        {
+          index: 0,
+          message: { role: "assistant", content: "x" },
+          finish_reason: "length",
+        },
       ],
       usage: { prompt_tokens: 70, completion_tokens: 7 },
     }),
@@ -590,7 +659,9 @@ test("the ledger counts OpenAI-compatible (Synthetic) usage from SSE and JSON bo
     inputTokens: 100,
     outputTokens: 10,
   });
-  const error = JSON.stringify({ error: { message: "slow down", code: "rate_limit_exceeded" } });
+  const error = JSON.stringify({
+    error: { message: "slow down", code: "rate_limit_exceeded" },
+  });
   limited.observe(limited.reserve("other", 1), new Response(error, { status: 400 }));
   await limited.drain();
   assert.throws(() => limited.reserve("other", 1), /provider-unavailable \(rate_limit_exceeded\)/u);
@@ -632,18 +703,26 @@ test("marker mapping follows wire order and refuses ambiguous markers", () => {
   assert.throws(() => mapPayload({ content: "SAME" }, twice), /Ambiguous/u);
 });
 
-const MessagesSchema = Type.Object(
-  { messages: Type.Array(Type.Record(Type.String(), JsonSchema)) },
-  { additionalProperties: true },
-);
+const isSettingsRecord = compile(map(unknown())).check;
+const isTextSidecar = compile(obj({ text: bool() }, { open: true })).check;
+const MessagesSchema = obj({ messages: arr(map(unknown())) }, { open: true });
+const isMessages = compile(MessagesSchema).check;
+const isBlockArray = compile(arr(unknown())).check;
+
+function parseMessages(payload: RuntimeValue) {
+  if (!isMessages(payload)) throw new Error("Expected a messages payload");
+  return payload;
+}
 
 /** Appends text to the last message after capture, as a late payload rewriter would. */
-function appendLateText(payload: Static<typeof MessagesSchema>) {
+function appendLateText(payload: ReturnType<typeof parseMessages>) {
   const last = payload.messages.at(-1);
   const content = last?.["content"];
-  if (!last || !Value.Check(Type.Array(JsonSchema), content))
-    throw new Error("Expected block content");
-  const mutated = { ...last, content: [...content, { type: "text", text: LATE_MUTATION }] };
+  if (!last || !isBlockArray(content)) throw new Error("Expected block content");
+  const mutated = {
+    ...last,
+    content: [...content, { type: "text", text: LATE_MUTATION }],
+  };
   return { ...payload, messages: [...payload.messages.slice(0, -1), mutated] };
 }
 
@@ -659,9 +738,7 @@ test(
       cycles: 0,
       factories: [
         (pi) => {
-          pi.on("before_provider_request", (event) =>
-            appendLateText(Value.Parse(MessagesSchema, event.payload)),
-          );
+          pi.on("before_provider_request", (event) => appendLateText(parseMessages(event.payload)));
         },
       ],
     });
@@ -670,7 +747,10 @@ test(
       assert.equal(process.env.PI_CODING_AGENT_DIR, host.agentDir);
       assert.deepEqual(await host.credentials.list(), []);
       await assert.rejects(
-        host.credentials.modify("anthropic", async () => ({ type: "api_key", key: "not-secret" })),
+        host.credentials.modify("anthropic", async () => ({
+          type: "api_key",
+          key: "not-secret",
+        })),
       );
       await host.session.prompt(PROMPT);
       const before = host.recorder.records.find((item) => item.kind === "before-provider");
