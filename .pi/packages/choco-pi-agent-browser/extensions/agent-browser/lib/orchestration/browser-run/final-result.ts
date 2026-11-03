@@ -22,7 +22,12 @@ import {
   buildPlaywrightSelectorHint,
   buildUnicodeSelectorHint,
 } from "../../results/selector-hints.ts";
-import { buildAgentBrowserResultCategoryDetails } from "../../results/categories.ts";
+import {
+  buildAgentBrowserResultCategoryDetails,
+  classifyAgentBrowserDiagnostic,
+} from "../../results/categories.ts";
+import { extractUpstreamErrorCode } from "../../results/envelope.ts";
+import { formatAgentBrowserDiagnosticText } from "../../results/presentation/errors.ts";
 import { type AgentBrowserEnvelope, type AgentBrowserNextAction } from "../../results/contracts.ts";
 import { formatSessionArtifactRetentionSummary } from "../../results/artifact-manifest.ts";
 import {
@@ -60,7 +65,7 @@ import {
   redactSensitiveValue,
   type OpenResultTabCorrection,
 } from "../../runtime.ts";
-import { hasRuntimeType, isRecord, type RuntimeValue } from "../../parsing.ts";
+import { hasRuntimeType, isRecord, type RuntimeRecord, type RuntimeValue } from "../../parsing.ts";
 import {
   buildClickDispatchNextActions,
   formatClickDispatchDiagnosticText,
@@ -329,8 +334,19 @@ export function buildElectronHostFailureResult(options: {
   managedSessionOutcome?: ManagedSessionOutcome;
   status?: string;
 }): AgentBrowserToolResult {
+  const categoryDetails = buildAgentBrowserResultCategoryDetails({
+    args: [],
+    command: "electron",
+    errorText: options.errorText,
+    failureCategory: options.failureCategory,
+    succeeded: false,
+    timedOut: options.failureCategory === "timeout",
+  });
   const text = [
     options.errorText,
+    categoryDetails.diagnostic
+      ? formatAgentBrowserDiagnosticText(categoryDetails.diagnostic)
+      : undefined,
     formatElectronLaunchFailureDiagnostics(options.launchFailure),
     options.launchFailure?.cleanupError
       ? `Electron launch cleanup warning: ${options.launchFailure.cleanupError}`
@@ -349,13 +365,7 @@ export function buildElectronHostFailureResult(options: {
       status: options.status ?? "failed",
     },
     managedSessionOutcome: options.managedSessionOutcome,
-    ...buildAgentBrowserResultCategoryDetails({
-      args: [],
-      errorText: options.errorText,
-      failureCategory: options.failureCategory,
-      succeeded: false,
-      timedOut: options.failureCategory === "timeout",
-    }),
+    ...categoryDetails,
     summary: options.errorText,
   };
   return {
@@ -846,6 +856,50 @@ function buildResultNextActions(options: FinalResultInput): AgentBrowserNextActi
   return nextActions.length > 0 ? nextActions : undefined;
 }
 
+/** Recomputes the failure diagnostic with the CLI-supplied error code, which the recovery state does not see. */
+function withFinalDiagnostic(options: FinalResultInput): FinalResultInput {
+  const { categoryDetails } = options;
+  if (options.succeeded || categoryDetails.failureCategory === undefined) return options;
+  return {
+    ...options,
+    categoryDetails: {
+      ...categoryDetails,
+      diagnostic: classifyAgentBrowserDiagnostic({
+        command: options.executionPlan.commandInfo.command,
+        errorText: options.errorText ?? options.presentation.summary,
+        failureCategory: categoryDetails.failureCategory,
+        parseError: options.parseError,
+        spawnError: options.processResult.spawnError?.message,
+        timedOut: options.processResult.timedOut,
+        upstreamErrorCode: extractUpstreamErrorCode(options.presentationEnvelope),
+      }),
+    },
+  };
+}
+
+/** Keeps JSON-mode failures parseable while exposing the diagnostic to the model. */
+export function addDiagnosticToJsonContent(
+  content: AgentBrowserToolResult["content"],
+  diagnostic: FinalResultInput["categoryDetails"]["diagnostic"],
+  exactSensitiveValues: string[],
+): AgentBrowserToolResult["content"] {
+  const first = content[0];
+  if (!diagnostic || first?.type !== "text") return content;
+  let payload: RuntimeValue;
+  try {
+    payload = JSON.parse(first.text);
+  } catch {
+    return content;
+  }
+  if (!isRecord(payload) || payload.success !== false) return content;
+  const fields: RuntimeRecord<RuntimeValue> = payload;
+  const text = redactExactSensitiveText(
+    JSON.stringify({ ...fields, diagnostic }, null, 2),
+    exactSensitiveValues,
+  );
+  return [{ ...first, text }, ...content.slice(1)];
+}
+
 function formatFailureNextActionsText(
   options: FinalResultInput,
   nextActions: AgentBrowserNextAction[] | undefined,
@@ -998,8 +1052,9 @@ function buildAgentBrowserResultDetails(
 }
 
 export function buildFinalAgentBrowserToolResult(
-  options: FinalResultInput,
+  rawOptions: FinalResultInput,
 ): AgentBrowserToolResult {
+  const options = withFinalDiagnostic(rawOptions);
   const nextActions = applyNamespaceToNextActions(
     buildResultNextActions(options),
     options.executionPlan.namespace,
@@ -1041,7 +1096,11 @@ export function buildFinalAgentBrowserToolResult(
     : undefined;
   const managedSessionOutcomeText = formatManagedSessionOutcomeText(options.managedSessionOutcome);
   const failureNextActionsText = formatFailureNextActionsText(options, nextActions);
+  const diagnosticText = options.categoryDetails.diagnostic
+    ? formatAgentBrowserDiagnosticText(options.categoryDetails.diagnostic)
+    : undefined;
   const rawAppendedDiagnosticText = [
+    diagnosticText,
     visibleRefFallbackText,
     richInputRecoveryText,
     semanticActionCandidateText,
@@ -1095,6 +1154,13 @@ export function buildFinalAgentBrowserToolResult(
       ...content.slice(1),
     ];
   }
+  if (options.userRequestedJson && !options.plainTextInspection) {
+    content = addDiagnosticToJsonContent(
+      content,
+      options.categoryDetails.diagnostic,
+      options.exactSensitiveValues,
+    );
+  }
   const result = {
     content,
     details: redactToolDetails(details, options.exactSensitiveValues),
@@ -1139,6 +1205,22 @@ export async function buildMissingBinaryFailureResult(options: {
     sessionMode: options.sessionMode,
     succeeded: false,
   });
+  const missingBinaryCategoryDetails = {
+    ...buildAgentBrowserResultCategoryDetails({
+      args: options.redactedProcessArgs,
+      command: options.executionPlan.commandInfo.command,
+      errorText,
+      failureCategory: "missing-binary",
+      spawnError,
+      succeeded: false,
+    }),
+    diagnostic: classifyAgentBrowserDiagnostic({
+      command: options.executionPlan.commandInfo.command,
+      errorText,
+      failureCategory: "missing-binary",
+      spawnError,
+    }),
+  };
   const managedSessionOutcomeText = formatManagedSessionOutcomeText(managedSessionOutcome);
   const managedSessionRecoveryNextActions =
     applyNamespaceToNextActions(
@@ -1157,6 +1239,7 @@ export async function buildMissingBinaryFailureResult(options: {
   }
   const textParts = [
     errorText,
+    formatAgentBrowserDiagnosticText(missingBinaryCategoryDetails.diagnostic),
     managedSessionOutcomeText,
     missingBinaryElectronCleanup
       ? `Electron cleanup after failed attach: ${missingBinaryElectronCleanup.summary}`
@@ -1187,14 +1270,7 @@ export async function buildMissingBinaryFailureResult(options: {
           : undefined,
       sessionMode: options.sessionMode,
       sessionTabCorrection: options.sessionTabCorrection,
-      ...buildAgentBrowserResultCategoryDetails({
-        args: options.redactedProcessArgs,
-        command: options.executionPlan.commandInfo.command,
-        errorText,
-        failureCategory: "missing-binary",
-        spawnError,
-        succeeded: false,
-      }),
+      ...missingBinaryCategoryDetails,
       spawnError,
     },
     isError: true,

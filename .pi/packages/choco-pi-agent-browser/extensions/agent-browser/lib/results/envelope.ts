@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 
 import { hasRuntimeType, isRecord } from "../parsing.ts";
 import { detectConfirmationRequired } from "./confirmation.ts";
+import { validateUpstreamErrorCode } from "./categories.ts";
 import type { AgentBrowserBatchResult, AgentBrowserEnvelope } from "./contracts.ts";
 import { stringifyUnknown } from "./text.ts";
 
@@ -55,6 +56,41 @@ function extractEnvelopeErrorText<Value>(error: Value): string | undefined {
 
   const fallback = stringifyUnknown(error).trim();
   return fallback.length > 0 && fallback !== "{}" ? fallback : undefined;
+}
+
+const UPSTREAM_ERROR_CODE_MAX_DEPTH = 3;
+
+function findUpstreamErrorCode<Value>(error: Value, depth: number): string | undefined {
+  if (!isRecord(error) || depth > UPSTREAM_ERROR_CODE_MAX_DEPTH) return undefined;
+  const direct = hasRuntimeType(error.code, "string")
+    ? validateUpstreamErrorCode(error.code)
+    : undefined;
+  if (direct) return direct;
+  for (const key of ["error", "cause", "details"] as const) {
+    const nested = findUpstreamErrorCode(error[key], depth + 1);
+    if (nested) return nested;
+  }
+  return undefined;
+}
+
+/**
+ * Returns a validated machine code supplied by the CLI in envelope.error (or, for batches, the first failed
+ * step's error), searching nested error/cause/details records. Prose and non-identifier values are ignored.
+ */
+export function extractUpstreamErrorCode(
+  envelope: AgentBrowserEnvelope | undefined,
+): string | undefined {
+  if (!envelope || envelope.success !== false) return undefined;
+  const top = findUpstreamErrorCode(envelope.error, 0);
+  if (top) return top;
+  if (!Array.isArray(envelope.data)) return undefined;
+  for (const step of envelope.data) {
+    if (isRecord(step) && step.success === false) {
+      const nested = findUpstreamErrorCode(step.error, 0);
+      if (nested) return nested;
+    }
+  }
+  return undefined;
 }
 
 export async function parseAgentBrowserEnvelope(

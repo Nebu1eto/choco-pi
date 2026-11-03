@@ -96,6 +96,7 @@ export const RUNTIME_PROMPT_GUIDELINES = [
   "Use agent_browser sessionMode=fresh for launch flags. Use requested/configured profiles only; run profiles/doctor on failure. --allowed-domains cannot restore; macOS profile copies may omit encrypted cookies. Verify auth; use a user-approved headed login if needed. Profile content is model-visible.",
   "agent_browser: exact user paths; verify artifactVerification/artifacts before success claims. Save promptGuard-required files before close; record stop needs ffmpeg; close keeps files; waited:timeout proves nothing.",
   "When agent_browser details.nextActions exists, use exact payloads. Check Omitted high-value controls in dense snapshots. Dashboards: verify scroll with screenshot/snapshot.",
+  "After an agent_browser failure read diagnostic.code and nextActions. Do not repeat an unchanged failing action. Successful snapshots/status checks may repeat; prefer bounded condition waits. A timed-out action may already have executed.",
   "agent_browser: read <url> for docs/text or active DOM; get title/url; get text/html/value/count <selector>; get attr <selector> <name>. Batch 3+ getters; heed visibility warnings.",
 ] as const;
 

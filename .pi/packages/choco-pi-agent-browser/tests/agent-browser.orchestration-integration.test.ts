@@ -21,6 +21,11 @@ import {
   probeAgentBrowserCompatibility,
 } from "../extensions/agent-browser/lib/runtime-extension.ts";
 import { runAgentBrowserScript } from "../extensions/agent-browser/lib/input-modes/script.ts";
+import { buildValidationFailureResult } from "../extensions/agent-browser/lib/orchestration/input-plan.ts";
+import {
+  buildScriptBrowserEnvelope,
+  buildScriptToolResult,
+} from "../extensions/agent-browser/lib/orchestration/script-mode.ts";
 
 const context: SnapshotRevisionContext = {
   document: "document-1",
@@ -279,4 +284,26 @@ test("script sandbox starts under Node permissions and dispatches before complet
   assert.equal(run.ok, true);
   assert.equal(run.callCount, 1);
   assert.equal(run.data, "Fixture");
+});
+
+test("script failures surface the typed diagnostic to the script and the final tool result", async () => {
+  const run = await runAgentBrowserScript({
+    code: 'const result = await browser({ args: ["get", "title"] }); emit({ ok: result.ok, code: result.diagnostic?.code });',
+    dispatch: async ({ args }) =>
+      await buildScriptBrowserEnvelope(
+        buildValidationFailureResult({
+          kind: "invalid",
+          redactedArgs: args,
+          status: "invalid",
+          toolArgs: args,
+          validationError: "Rejected for the fixture.",
+        }),
+        args,
+      ),
+    timeoutMs: 5_000,
+  });
+  assert.equal(run.ok, true);
+  assert.deepEqual(run.data, { code: "invalid_arguments", ok: false });
+  const result = buildScriptToolResult({ innerResults: [], run });
+  assert.equal(result.isError, false);
 });

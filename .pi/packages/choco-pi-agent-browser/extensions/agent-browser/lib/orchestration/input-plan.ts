@@ -2,6 +2,7 @@ import { parseArgvDescriptor } from "../argv-descriptor.ts";
 import { hasRuntimeType } from "../parsing.ts";
 import { validateToolArgs, redactInvocationArgs, redactSensitiveText } from "../runtime.ts";
 import { buildAgentBrowserResultCategoryDetails } from "../results/categories.ts";
+import { formatAgentBrowserDiagnosticText } from "../results/presentation/errors.ts";
 import { compileAgentBrowserElectron } from "../input-modes/electron.ts";
 import { compileAgentBrowserJob, compileAgentBrowserQaPreset } from "../input-modes/job.ts";
 import {
@@ -479,8 +480,21 @@ export function buildValidationFailureResult(
   input: ResolvedAgentBrowserInvalidInput,
 ): AgentBrowserToolResult {
   const validationError = input.validationError ?? "Invalid agent_browser input.";
+  const categoryDetails = buildAgentBrowserResultCategoryDetails({
+    args: input.redactedArgs,
+    errorText: validationError,
+    succeeded: false,
+    validationError,
+  });
   return {
-    content: [{ type: "text", text: validationError }],
+    content: [
+      {
+        type: "text",
+        text: categoryDetails.diagnostic
+          ? `${validationError}\n\n${formatAgentBrowserDiagnosticText(categoryDetails.diagnostic)}`
+          : validationError,
+      },
+    ],
     details: {
       args: input.redactedArgs,
       compiledElectron: input.redactedCompiledElectron,
@@ -489,12 +503,7 @@ export function buildValidationFailureResult(
       compiledSourceLookup: input.redactedCompiledSourceLookup,
       compiledNetworkSourceLookup: input.redactedCompiledNetworkSourceLookup,
       compiledSemanticAction: input.redactedCompiledSemanticAction,
-      ...buildAgentBrowserResultCategoryDetails({
-        args: input.redactedArgs,
-        errorText: validationError,
-        succeeded: false,
-        validationError,
-      }),
+      ...categoryDetails,
       validationError,
     },
     isError: true,

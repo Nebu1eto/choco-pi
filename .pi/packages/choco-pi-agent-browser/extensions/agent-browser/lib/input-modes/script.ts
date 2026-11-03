@@ -19,7 +19,10 @@ import {
   isStringArray,
 } from "./shared.ts";
 import { validateToolArgs } from "../runtime.ts";
+import { classifyAgentBrowserDiagnostic } from "../results/categories.ts";
+import { parseAgentBrowserDiagnostic } from "../results/presentation/errors.ts";
 import type {
+  AgentBrowserDiagnostic,
   AgentBrowserFailureCategory,
   AgentBrowserNextAction,
   AgentBrowserResultCategory,
@@ -98,6 +101,7 @@ export interface AgentBrowserScriptBrowserParamsValidation {
 export interface AgentBrowserScriptBrowserEnvelope {
   data: unknown;
   details?: object;
+  diagnostic?: AgentBrowserDiagnostic;
   error?: string;
   failureCategory?: AgentBrowserFailureCategory;
   nextActions?: AgentBrowserNextAction[];
@@ -234,14 +238,22 @@ function buildRejectedCallEnvelope(
   error: string,
   policyBlocked: boolean,
 ): AgentBrowserScriptBrowserEnvelope {
+  const failureCategory = policyBlocked ? "policy-blocked" : "validation-error";
+  const diagnostic = classifyAgentBrowserDiagnostic({
+    command: "script",
+    errorText: error,
+    failureCategory,
+  });
   return {
     data: null,
     details: {
-      failureCategory: policyBlocked ? "policy-blocked" : "validation-error",
+      diagnostic,
+      failureCategory,
       resultCategory: "failure",
     },
+    diagnostic,
     error,
-    failureCategory: policyBlocked ? "policy-blocked" : "validation-error",
+    failureCategory,
     ok: false,
     resultCategory: "failure",
     summary: error,
@@ -267,6 +279,7 @@ function normalizeBrowserEnvelope(
   return {
     data: value.data ?? null,
     details: isInputRecord(value.details) ? value.details : undefined,
+    diagnostic: parseAgentBrowserDiagnostic(value.diagnostic),
     error: isString(value.error) ? value.error : undefined,
     failureCategory: value.failureCategory,
     nextActions: Array.isArray(value.nextActions) ? value.nextActions : undefined,

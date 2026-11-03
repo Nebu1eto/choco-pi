@@ -9,6 +9,7 @@ import {
 } from "./input-modes/lookups.ts";
 import { compileAgentBrowserSemanticAction } from "./input-modes/semantic-action.ts";
 import { hasRuntimeType, isRecord } from "./parsing.ts";
+import { parseAgentBrowserDiagnostic } from "./results/presentation/errors.ts";
 import { redactInvocationArgs } from "./runtime.ts";
 
 const TUI_INVOCATION_PREVIEW_MAX_CHARS = 160;
@@ -268,7 +269,8 @@ function formatModelVisibleFailureCategoryNotice<Details>(details: Details): str
     hasRuntimeType(details.failureCategory, "string") && details.failureCategory.length > 0
       ? details.failureCategory
       : undefined;
-  return `Result category: failure${failureCategory ? `; failureCategory: ${failureCategory}` : ""}; Pi tool isError: true.`;
+  const diagnostic = parseAgentBrowserDiagnostic(details.diagnostic);
+  return `Result category: failure${failureCategory ? `; failureCategory: ${failureCategory}` : ""}${diagnostic ? `; diagnostic.code: ${diagnostic.code}; diagnostic.outcome: ${diagnostic.outcome}` : ""}; Pi tool isError: true.`;
 }
 
 type AgentBrowserToolContent = AgentToolResult<unknown>["content"];

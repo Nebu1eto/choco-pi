@@ -32,6 +32,31 @@ export interface AgentBrowserBatchResult {
 
 export type AgentBrowserResultCategory = "failure" | "success";
 
+/** Which layer produced a failure; "unknown" means the layer could not be determined. */
+export type AgentBrowserDiagnosticOrigin =
+  | "cli"
+  | "daemon"
+  | "session"
+  | "unknown"
+  | "validation"
+  | "wrapper";
+
+/** Whether the requested command took effect: it never ran, ran to a definite failure, or cannot be told. */
+export type AgentBrowserDiagnosticOutcome = "completed" | "not-executed" | "unknown";
+
+/**
+ * Normalized machine-readable failure diagnostic. retryable alone never authorizes replaying a
+ * mutation whose outcome is "unknown"; hint says what to verify first.
+ */
+export interface AgentBrowserDiagnostic {
+  code: string;
+  hint: string;
+  origin: AgentBrowserDiagnosticOrigin;
+  outcome: AgentBrowserDiagnosticOutcome;
+  retryAfterMs?: number;
+  retryable: boolean;
+}
+
 export type AgentBrowserSuccessCategory =
   | "artifact-pending"
   | "artifact-saved"
@@ -60,6 +85,7 @@ export type AgentBrowserFailureCategory =
   | "validation-error";
 
 export interface AgentBrowserResultCategoryDetails {
+  diagnostic?: AgentBrowserDiagnostic;
   failureCategory?: AgentBrowserFailureCategory;
   resultCategory: AgentBrowserResultCategory;
   successCategory?: AgentBrowserSuccessCategory;
@@ -235,6 +261,7 @@ export interface ToolPresentation {
     { text: string; type: "text" } | { data: string; mimeType: string; type: "image" }
   >;
   data?: unknown;
+  diagnostic?: AgentBrowserDiagnostic;
   failureCategory?: AgentBrowserFailureCategory;
   fullOutputPath?: string;
   fullOutputPaths?: string[];

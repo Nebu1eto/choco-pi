@@ -17,6 +17,11 @@ import { parseCommandInfo, redactSensitiveText } from "../runtime.ts";
 import type { AgentBrowserNextAction, ArtifactVerificationSummary } from "../results/contracts.ts";
 import { isSessionArtifactManifest } from "../results/artifact-manifest.ts";
 import { redactPresentationData } from "../results/presentation/diagnostics.ts";
+import {
+  formatAgentBrowserDiagnosticText,
+  parseAgentBrowserDiagnostic,
+} from "../results/presentation/errors.ts";
+import { classifyAgentBrowserDiagnostic } from "../results/categories.ts";
 import { truncateText } from "../results/text.ts";
 import type { AgentBrowserToolResult } from "./browser-run/index.ts";
 
@@ -249,6 +254,11 @@ function buildOversizedScriptBrowserEnvelope(): AgentBrowserScriptBrowserEnvelop
   return {
     data: null,
     details: { failureCategory: "upstream-error", resultCategory: "failure" },
+    diagnostic: classifyAgentBrowserDiagnostic({
+      command: "script",
+      errorText: text,
+      failureCategory: "upstream-error",
+    }),
     error: text,
     failureCategory: "upstream-error",
     ok: false,
@@ -293,6 +303,8 @@ export async function buildScriptBrowserEnvelope(
     resultCategory === "failure" && isFailureCategory(details?.failureCategory)
       ? details.failureCategory
       : undefined;
+  const diagnostic =
+    resultCategory === "failure" ? parseAgentBrowserDiagnostic(details?.diagnostic) : undefined;
   const successCategory =
     resultCategory === "success" && isSuccessCategory(details?.successCategory)
       ? details.successCategory
@@ -300,6 +312,7 @@ export async function buildScriptBrowserEnvelope(
   const envelopeDetails = redactPresentationData(commandInfo, {
     artifactVerification: details?.artifactVerification,
     artifacts: details?.artifacts,
+    diagnostic,
     failureCategory,
     pageChangeSummary: details?.pageChangeSummary,
     resultCategory,
@@ -317,6 +330,7 @@ export async function buildScriptBrowserEnvelope(
   const envelope: AgentBrowserScriptBrowserEnvelope = {
     data,
     details: boundedEnvelopeDetails,
+    diagnostic,
     error: resultCategory === "failure" ? summary : undefined,
     failureCategory,
     nextActions: redactedNextActions,
@@ -440,6 +454,14 @@ export function buildScriptToolResult(options: {
       ? "validation-error"
       : (options.run.failureCategory ?? rejectedFailureCategory);
   const failed = failureCategory !== undefined || !options.run.ok;
+  const diagnostic = failed
+    ? classifyAgentBrowserDiagnostic({
+        command: "script",
+        errorText: options.cleanupError ?? outputError ?? options.run.error,
+        failureCategory: failureCategory ?? "script-error",
+        timedOut: options.run.timedOut,
+      })
+    : undefined;
   const failedStepCount = steps.filter((step) => !step.ok).length;
   const failedCallCount = Math.max(0, failedStepCount - options.run.rejectedCallCount);
   const successfulCallCount = steps.filter((step) => step.ok).length;
@@ -459,6 +481,7 @@ export function buildScriptToolResult(options: {
           : `Script failed: ${redactSensitiveText(options.run.error ?? "sandbox execution failed")}`
   }${cleanupSuffix}`;
   const dataText = serializedData === undefined ? "" : `\n\n${serializedData}`;
+  const diagnosticText = diagnostic ? `\n\n${formatAgentBrowserDiagnosticText(diagnostic)}` : "";
   const cleanupActionText =
     options.cleanupError && options.sessionName
       ? `\n\nNext action: ${JSON.stringify({ args: createAgentBrowserScriptCloseArgs(options.sessionName) })}`
@@ -485,13 +508,14 @@ export function buildScriptToolResult(options: {
     if (options.cleanupError) scriptSession.error = redactSensitiveText(options.cleanupError);
   }
   return {
-    content: [{ type: "text", text: `${summary}${dataText}${cleanupActionText}` }],
+    content: [{ type: "text", text: `${summary}${dataText}${diagnosticText}${cleanupActionText}` }],
     details: {
       artifactManifest,
       artifactRetentionSummary,
       artifacts,
       artifactVerification,
       data,
+      diagnostic,
       failureCategory,
       nextActions,
       resultCategory: failed ? "failure" : "success",

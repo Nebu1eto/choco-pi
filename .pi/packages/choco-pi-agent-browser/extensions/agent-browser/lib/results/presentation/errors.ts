@@ -1,17 +1,73 @@
 import { isOpenNavigationCommand } from "../../command-taxonomy.ts";
-import { hasRuntimeType } from "../../parsing.ts";
+import { hasRuntimeType, isRecord } from "../../parsing.ts";
 import { redactSensitiveText, type CommandInfo } from "../../runtime.ts";
 import { buildBrowserProfileConfigRecovery } from "./browser-profile-recovery.ts";
 import { redactModelFacingText } from "./common.ts";
 import { buildAgentBrowserNextActions } from "../action-recommendations.ts";
 import { buildAgentBrowserResultCategoryDetails } from "../categories.ts";
 import type {
+  AgentBrowserDiagnostic,
   AgentBrowserNextAction,
   AgentBrowserResultRecord,
   AgentBrowserResultValue,
   ToolPresentation,
 } from "../contracts.ts";
 import { withOptionalSessionArgs } from "../next-actions.ts";
+
+function toDiagnosticOrigin(value: string): AgentBrowserDiagnostic["origin"] | undefined {
+  switch (value) {
+    case "cli":
+    case "daemon":
+    case "session":
+    case "unknown":
+    case "validation":
+    case "wrapper":
+      return value;
+    default:
+      return undefined;
+  }
+}
+
+function toDiagnosticOutcome(value: string): AgentBrowserDiagnostic["outcome"] | undefined {
+  switch (value) {
+    case "completed":
+    case "not-executed":
+    case "unknown":
+      return value;
+    default:
+      return undefined;
+  }
+}
+
+/** Single-line model-visible rendering of a failure diagnostic; contains only fixed text and a validated code. */
+export function formatAgentBrowserDiagnosticText(diagnostic: AgentBrowserDiagnostic): string {
+  const retryAfter =
+    diagnostic.retryAfterMs === undefined ? "" : ` retryAfterMs=${diagnostic.retryAfterMs}`;
+  return `Diagnostic: code=${diagnostic.code} origin=${diagnostic.origin} outcome=${diagnostic.outcome} retryable=${diagnostic.retryable}${retryAfter}. ${diagnostic.hint}`;
+}
+
+/** Validates a diagnostic decoded from untrusted runtime data (for example a script IPC envelope). */
+export function parseAgentBrowserDiagnostic<Value>(
+  value: Value,
+): AgentBrowserDiagnostic | undefined {
+  if (!isRecord(value)) return undefined;
+  const { code, hint, origin, outcome, retryAfterMs, retryable } = value;
+  if (
+    !hasRuntimeType(code, "string") ||
+    !hasRuntimeType(hint, "string") ||
+    !hasRuntimeType(origin, "string") ||
+    !hasRuntimeType(outcome, "string") ||
+    !hasRuntimeType(retryable, "boolean")
+  )
+    return undefined;
+  const originValue = toDiagnosticOrigin(origin);
+  const outcomeValue = toDiagnosticOutcome(outcome);
+  if (originValue === undefined || outcomeValue === undefined) return undefined;
+  const base = { code, hint, origin: originValue, outcome: outcomeValue, retryable };
+  return hasRuntimeType(retryAfterMs, "number") && Number.isFinite(retryAfterMs)
+    ? { ...base, retryAfterMs }
+    : base;
+}
 
 const STALE_REF_ERROR_HINT = [
   "Agent-browser hint: This ref may be stale after navigation, scrolling, or re-rendering.",
