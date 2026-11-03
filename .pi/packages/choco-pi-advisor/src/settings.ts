@@ -1,8 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import {
+  bool,
+  compile,
+  int,
+  lit,
+  map,
+  obj,
+  oneOf,
+  opt,
+  type Static,
+  str,
+  unknown,
+} from "@earendil-works/pi-schema";
 
 export type AdvisorEffort = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export const EFFORTS: AdvisorEffort[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
@@ -17,16 +28,23 @@ export const DEFAULT_SETTINGS: AdvisorSettings = {
   model: "anthropic/claude-fable-5-1",
   effort: "low",
 };
-const effortSchema = Type.Union(EFFORTS.map((effort) => Type.Literal(effort)));
-const layerSchema = Type.Object({
-  enabled: Type.Optional(Type.Boolean()),
-  model: Type.Optional(Type.String({ minLength: 1 })),
-  effort: Type.Optional(effortSchema),
-  maxUses: Type.Optional(Type.Integer({ minimum: 1 })),
-});
-const missingSchema = Type.Object({ code: Type.Literal("ENOENT") });
-const jsonObjectSchema = Type.Object({}, { additionalProperties: Type.Unknown() });
+// Open object, as TypeBox's was: unknown keys pass validation (and are kept on read).
+const isSettingsLayer = compile(
+  obj(
+    {
+      enabled: opt(bool()),
+      model: opt(str({ minLength: 1 })),
+      effort: opt(oneOf(EFFORTS)),
+      maxUses: opt(int({ minimum: 1 })),
+    },
+    { open: true },
+  ),
+).check;
+const jsonObjectSchema = map(unknown());
+const isJsonObject = compile(jsonObjectSchema).check;
 type JsonObject = Static<typeof jsonObjectSchema>;
+/** A missing-file error: any object carrying `code: "ENOENT"` (errors are not JSON, so the schema is open). */
+const isMissingError = compile(obj({ code: lit("ENOENT") }, { open: true })).check;
 
 export interface SettingsLayer {
   settings: Partial<AdvisorSettings>;
@@ -40,10 +58,10 @@ export interface LoadedSettings {
 async function readSettingsFile(path: string): Promise<SettingsLayer> {
   try {
     const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
-    if (!Value.Check(layerSchema, parsed)) throw new Error("invalid settings");
+    if (!isSettingsLayer(parsed)) throw new Error("invalid settings");
     return { settings: parsed, warnings: [] };
   } catch (error) {
-    if (Value.Check(missingSchema, error)) return { settings: {}, warnings: [] };
+    if (isMissingError(error)) return { settings: {}, warnings: [] };
     return {
       settings: { ...DEFAULT_SETTINGS, maxUses: undefined },
       warnings: [`Could not read advisor settings at ${path}; using defaults for this layer.`],
@@ -75,11 +93,10 @@ export async function loadAdvisorSettings(agentDir: string, cwd: string): Promis
 async function readRawSettingsForWrite(path: string): Promise<JsonObject> {
   try {
     const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
-    if (!Value.Check(jsonObjectSchema, parsed))
-      throw new Error("advisor settings must be a JSON object");
+    if (!isJsonObject(parsed)) throw new Error("advisor settings must be a JSON object");
     return parsed;
   } catch (error) {
-    if (Value.Check(missingSchema, error)) return { ...DEFAULT_SETTINGS };
+    if (isMissingError(error)) return { ...DEFAULT_SETTINGS };
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`Could not update advisor settings at ${path}: ${detail}`);
   }
@@ -91,7 +108,7 @@ export async function writeGlobalAdvisorSettings(
 ): Promise<void> {
   const path = join(agentDir, "advisor.json");
   const previous = await readRawSettingsForWrite(path);
-  if (!Value.Check(layerSchema, partial)) throw new Error("Invalid advisor settings update");
+  if (!isSettingsLayer(partial)) throw new Error("Invalid advisor settings update");
   const next = { ...previous, ...partial };
   await mkdir(agentDir, { recursive: true });
   const temporary = join(agentDir, `.advisor-${randomUUID()}.tmp`);

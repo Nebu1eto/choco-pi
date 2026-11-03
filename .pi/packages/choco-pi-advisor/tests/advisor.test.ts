@@ -6,13 +6,13 @@ import test from "node:test";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { buildAdvisorPrompt } from "../src/consult.ts";
 import type { JsonObject } from "@earendil-works/pi-ai";
-import type { Static } from "typebox";
-import { Value } from "typebox/value";
+import { compile } from "@earendil-works/pi-schema";
 import type { AgentMessageParams } from "../../choco-pi-subagents/src/agent-message.ts";
 import { AGENT_MESSAGE_TYPES as SUBAGENT_MESSAGE_TYPES } from "../../choco-pi-subagents/src/messaging.ts";
 import {
   AGENT_MESSAGE_TYPES as ADVISOR_AGENT_MESSAGE_TYPES,
   AgentMessageArgsSchema,
+  type AgentMessageArgs,
   buildAdvisorExcerpt,
   countAdvisorCallsThisTurn,
 } from "../src/excerpt.ts";
@@ -35,6 +35,8 @@ import {
   loadAdvisorSettings,
   writeGlobalAdvisorSettings,
 } from "../src/settings.ts";
+
+const isAgentMessageArgs = compile(AgentMessageArgsSchema).check;
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "advisor-test-"));
@@ -277,13 +279,54 @@ test("local agent_message schema matches the subagents tool shape", () => {
   assert.deepEqual([...ADVISOR_AGENT_MESSAGE_TYPES], [...SUBAGENT_MESSAGE_TYPES]);
   for (const type of SUBAGENT_MESSAGE_TYPES) {
     const params: AgentMessageParams = { to: "/root", message: "m", type };
-    assert.ok(Value.Check(AgentMessageArgsSchema, params));
+    assert.ok(isAgentMessageArgs(params));
   }
   // Compile-time parity: each shape must be assignable to the other.
-  const toRemote = (local: Static<typeof AgentMessageArgsSchema>): AgentMessageParams => local;
-  const toLocal = (remote: AgentMessageParams): Static<typeof AgentMessageArgsSchema> => remote;
+  const toRemote = (local: AgentMessageArgs): AgentMessageParams => local;
+  const toLocal = (remote: AgentMessageParams): AgentMessageArgs => remote;
   const sample: AgentMessageParams = { to: "a", message: "m", type: "TASK" };
   assert.deepEqual(toRemote(toLocal(sample)), sample);
+});
+
+test("agent_message schema accepts, rejects, is open, and treats type as optional", () => {
+  assert.ok(isAgentMessageArgs({ to: "a", message: "m" }));
+  assert.ok(isAgentMessageArgs({ to: "a", message: "m", extra: 1 }));
+  assert.ok(!isAgentMessageArgs({ to: "a", message: "m", type: "OTHER" }));
+  assert.ok(!isAgentMessageArgs({ to: "a", message: "m", type: null }));
+  assert.ok(!isAgentMessageArgs({ to: 1, message: "m" }));
+  assert.ok(!isAgentMessageArgs({ to: "a" }));
+});
+
+test("settings layers are open, reject nulls and bad values, and flagship table is open", async () => {
+  const dirs = await fixture();
+  try {
+    await writeFile(
+      join(dirs.global, "advisor.json"),
+      JSON.stringify({ model: "a/b", extra: true }),
+    );
+    await writeFile(join(dirs.project, ".pi", "advisor.json"), JSON.stringify({ maxUses: null }));
+    const loaded = await loadAdvisorSettings(dirs.global, dirs.project);
+    assert.equal(loaded.settings.model, DEFAULT_SETTINGS.model);
+    assert.equal(loaded.warnings.length, 1);
+    await writeFile(
+      join(dirs.project, ".pi", "advisor.json"),
+      JSON.stringify({ model: "a/b", extra: 1 }),
+    );
+    assert.equal((await loadAdvisorSettings(dirs.global, dirs.project)).warnings.length, 0);
+    await assert.rejects(writeGlobalAdvisorSettings(dirs.global, { maxUses: 0 }));
+    await writeFile(
+      join(dirs.project, ".pi", "model-fallbacks.json"),
+      JSON.stringify({ x: 1, tiers: { other: [], flagship: { primary: ["p/m"], y: 2 } } }),
+    );
+    assert.deepEqual(await loadFlagshipPrimaries(dirs.project), [{ provider: "p", id: "m" }]);
+    await writeFile(
+      join(dirs.project, ".pi", "model-fallbacks.json"),
+      JSON.stringify({ tiers: { flagship: { primary: [1] } } }),
+    );
+    assert.deepEqual(await loadFlagshipPrimaries(dirs.project), []);
+  } finally {
+    await rm(dirs.root, { recursive: true, force: true });
+  }
 });
 
 test("turn cap counts only advisor tool results after the last user", () => {

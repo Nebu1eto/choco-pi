@@ -1,24 +1,22 @@
 import type { ToolCall } from "@earendil-works/pi-ai";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { compile, obj, oneOf, opt, str, type Static } from "@earendil-works/pi-schema";
 import { isSameModelDisabledMessage } from "./model-gate.ts";
 
 /** Mirrors `AGENT_MESSAGE_TYPES` in choco-pi-subagents; a test pins parity. */
 export const AGENT_MESSAGE_TYPES = ["MESSAGE", "TASK", "FINAL"] as const;
 
 /** Local mirror of choco-pi-subagents `AgentMessageParams`; extra keys are tolerated. */
-export const AgentMessageArgsSchema = Type.Object({
-  to: Type.String(),
-  message: Type.String(),
-  type: Type.Optional(
-    Type.Union([
-      Type.Literal(AGENT_MESSAGE_TYPES[0]),
-      Type.Literal(AGENT_MESSAGE_TYPES[1]),
-      Type.Literal(AGENT_MESSAGE_TYPES[2]),
-    ]),
-  ),
-});
+export const AgentMessageArgsSchema = obj(
+  {
+    to: str(),
+    message: str(),
+    type: opt(oneOf(AGENT_MESSAGE_TYPES)),
+  },
+  { open: true },
+);
+export type AgentMessageArgs = Static<typeof AgentMessageArgsSchema>;
+const isAgentMessageArgs = compile(AgentMessageArgsSchema).check;
 
 function oneLine(value: string): string {
   return value.replace(/\s+/g, " ");
@@ -29,7 +27,7 @@ function oneLine(value: string): string {
  * arbitrary tool arguments never reach the advisor.
  */
 function renderToolCall({ name, arguments: args }: ToolCall, bodyCap: number): string {
-  if (name === "agent_message" && Value.Check(AgentMessageArgsSchema, args)) {
+  if (name === "agent_message" && isAgentMessageArgs(args)) {
     const kind = args.type ?? "MESSAGE";
     return `[agent_message \u2192 ${oneLine(args.to)} (${kind})]\n${args.message.slice(0, bodyCap)}`;
   }

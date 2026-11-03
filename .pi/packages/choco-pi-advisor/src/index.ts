@@ -1,6 +1,6 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { obj, opt, str, type Static } from "@earendil-works/pi-schema";
 import { resolveModel } from "../../choco-pi-subagents/src/model-resolver.ts";
 import { loadEnabledModels } from "../../choco-pi-subagents/src/enabled-models.ts";
 import { buildAdvisorPrompt } from "./consult.ts";
@@ -13,9 +13,13 @@ import {
   waitForAdvisorWrites,
 } from "./preferences-section.ts";
 import { selectAdvisorModel } from "./select-model.ts";
+import { hostParams } from "./schema-bridge.ts";
 import { type AdvisorSettings, loadAdvisorSettings } from "./settings.ts";
 
 const ADVISOR_TOOL_NAME = "advisor";
+// TypeBox objects were open; keep extra keys tolerated.
+const advisorParams = obj({ question: str(), context: opt(str()) }, { open: true });
+type AdvisorParams = Static<typeof advisorParams>;
 
 function textResult(text: string) {
   return { content: [{ type: "text" as const, text }], details: {} };
@@ -54,8 +58,8 @@ export default function (pi: ExtensionAPI) {
       description:
         "Consult a fresh read-only advisor on an unproven diagnosis, a consequential plan, or final acceptance; its answer is advice, not evidence.",
       promptSnippet: "Consult a fresh read-only advisor for a focused second opinion.",
-      parameters: Type.Object({ question: Type.String(), context: Type.Optional(Type.String()) }),
-      async execute(_toolCallId, params, signal, onUpdate, ctx) {
+      parameters: hostParams(advisorParams),
+      async execute(_toolCallId, params: AdvisorParams, signal, onUpdate, ctx) {
         const owner = generation;
         const cwd = ctx.cwd;
         const question = params.question;

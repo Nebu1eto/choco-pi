@@ -1,7 +1,5 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import type { AdvisorEffort } from "./settings.ts";
 
 export interface AdvisorSpawnOptions {
@@ -29,18 +27,30 @@ export interface AdvisorManager {
   getRecord(id: string): AdvisorRecord | undefined;
   disposeSettledRecord?: (id: string) => boolean;
 }
-const managerSchema = Type.Object({
-  spawn: Type.Function([], Type.String()),
-  getRecord: Type.Function([Type.String()], Type.Unknown()),
-});
+
+type ManagerCandidate = {} | null | undefined;
+interface ManagerMethods {
+  spawn: Function;
+  getRecord: Function;
+}
+
+function hasManagerMethods(value: ManagerCandidate): value is ManagerMethods {
+  return (
+    value instanceof Object &&
+    "spawn" in value &&
+    value.spawn instanceof Function &&
+    "getRecord" in value &&
+    value.getRecord instanceof Function
+  );
+}
 
 export function resolveAdvisorManager(): AdvisorManager | undefined {
   const candidate: unknown = Object.getOwnPropertyDescriptor(
     globalThis,
     Symbol.for("pi-subagents:manager"),
   )?.value;
-  if (!Value.Check(managerSchema, candidate)) return undefined;
-  // SAFETY: Value.Check establishes both callable methods; their signatures are the
+  if (!hasManagerMethods(candidate)) return undefined;
+  // SAFETY: hasManagerMethods establishes both callable methods; their signatures are the
   // shared internal AgentManager ABI, not arbitrary user-supplied JSON functions.
   return candidate as AdvisorManager;
 }
