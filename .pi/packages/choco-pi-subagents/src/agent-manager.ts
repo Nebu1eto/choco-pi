@@ -113,6 +113,9 @@ import {
   createWorktree,
   isWorktreeIsolationEnabled,
   pruneWorktrees,
+  type WorktreeCleanupResult,
+  type WorktreeDisposition,
+  type WorktreeInfo,
 } from "./worktree.ts";
 
 export type OnAgentComplete = (record: AgentRecord) => void;
@@ -474,6 +477,14 @@ interface SuspendPlanResult {
   suspended: AgentRecord[];
   /** Suspended records whose run must still settle. */
   running: AgentRecord[];
+}
+
+/** Notice appended to a result whose worktree was kept after a cancellation. */
+function retainedWorktreeNotice(
+  worktree: WorktreeInfo,
+  cause: CancellationCause | undefined,
+): string {
+  return `\n\n---\nWork retained in worktree \`${worktree.path}\` (branch base \`${worktree.baseSha}\`) because the run was cancelled (${cause ?? "cancelled"}). Nothing was committed; inspect it before merging or run \`git worktree remove --force ${worktree.path}\` to discard.`;
 }
 
 async function removeHookWorktree(pi: ExtensionAPI, path: string): Promise<void> {
@@ -1951,19 +1962,40 @@ export class AgentManager {
   ): Promise<void> {
     const worktree = record.worktree;
     if (worktree === undefined) return;
+    const disposition = this.worktreeDispositionFor(record, record.resultGeneration ?? 1);
     if (worktree.hookManaged === true) {
+      if (disposition === "retain") {
+        record.worktreeResult = { hasChanges: false, path: worktree.path, retained: true };
+        record.result =
+          (record.result ?? "") + retainedWorktreeNotice(worktree, record.cancellation?.cause);
+        return;
+      }
       record.worktreeResult = { hasChanges: false };
       void removeHookWorktree(pi, worktree.path).catch(() => undefined);
       return;
     }
-    const wtResult = await cleanupWorktree(baseCwd, worktree, description);
+    const wtResult = await cleanupWorktree(baseCwd, worktree, description, disposition);
     record.worktreeResult = wtResult;
-    if (wtResult.hasChanges && wtResult.branch) {
+    if (wtResult.retained === true) {
+      record.result =
+        (record.result ?? "") + retainedWorktreeNotice(worktree, record.cancellation?.cause);
+    } else if (wtResult.hasChanges && wtResult.branch) {
       const repoNote = customCwd === undefined ? "" : ` in \`${baseCwd}\``;
       record.result =
         (record.result ?? "") +
         `\n\n---\nChanges saved to branch \`${wtResult.branch}\`${repoNote}. Merge with: \`git merge ${wtResult.branch}\`${customCwd === undefined ? "" : ` (run in \`${baseCwd}\`)`}`;
     }
+  }
+
+  /**
+   * A cancelled run (any cause but suspend) keeps its worktree untouched; every
+   * other settle commits changes to a branch and removes it.
+   */
+  private worktreeDispositionFor(record: AgentRecord, generation: number): WorktreeDisposition {
+    const cancellation = record.cancellation;
+    return cancellation?.generation === generation && cancellation.cause !== "suspend"
+      ? "retain"
+      : "settle";
   }
 
   /** Settle a parked record without running it again. */
@@ -2964,16 +2996,26 @@ export class AgentManager {
             const worktree = record.worktree;
             const hookManaged = worktree.hookManaged === true;
             const worktreePath = worktree.path;
-            const wtResult = hookManaged
-              ? (await removeHookWorktree(pi, worktreePath), { hasChanges: false })
-              : await cleanupWorktree(baseCwd, worktree, options.description);
+            const disposition = this.worktreeDispositionFor(record, runGeneration);
+            const wtResult: WorktreeCleanupResult = hookManaged
+              ? disposition === "retain"
+                ? { hasChanges: false, path: worktreePath, retained: true }
+                : (await removeHookWorktree(pi, worktreePath), { hasChanges: false })
+              : await cleanupWorktree(baseCwd, worktree, options.description, disposition);
             if (record.resultGeneration !== runGeneration) return responseText;
             if (this.isSuspendedGeneration(record, runGeneration)) {
               settleSuspendedRun(session);
               return responseText;
             }
             record.worktreeResult = wtResult;
-            if (wtResult.hasChanges && wtResult.branch) {
+            if (wtResult.retained === true) {
+              finalResult =
+                finalResult +
+                retainedWorktreeNotice(
+                  worktree,
+                  cancellationForGeneration(record, runGeneration)?.cause,
+                );
+            } else if (wtResult.hasChanges && wtResult.branch) {
               // With a caller-supplied cwd the branch lives in THAT repo, not the
               // parent session's — say so, or the orchestrator merges in the wrong repo.
               const repoNote = customCwd === undefined ? "" : ` in \`${baseCwd}\``;
@@ -3078,15 +3120,26 @@ export class AgentManager {
               const worktree = record.worktree;
               const hookManaged = worktree.hookManaged === true;
               const worktreePath = worktree.path;
-              const wtResult = hookManaged
-                ? (await removeHookWorktree(pi, worktreePath), { hasChanges: false })
-                : await cleanupWorktree(baseCwd, worktree, options.description);
+              const disposition = this.worktreeDispositionFor(record, runGeneration);
+              const wtResult: WorktreeCleanupResult = hookManaged
+                ? disposition === "retain"
+                  ? { hasChanges: false, path: worktreePath, retained: true }
+                  : (await removeHookWorktree(pi, worktreePath), { hasChanges: false })
+                : await cleanupWorktree(baseCwd, worktree, options.description, disposition);
               if (record.resultGeneration !== runGeneration) return "";
               if (this.isSuspendedGeneration(record, runGeneration)) {
                 settleSuspendedRun(undefined);
                 return "";
               }
               record.worktreeResult = wtResult;
+              if (wtResult.retained === true) {
+                record.result =
+                  (record.result ?? "") +
+                  retainedWorktreeNotice(
+                    worktree,
+                    cancellationForGeneration(record, runGeneration)?.cause,
+                  );
+              }
             } catch {
               /* ignore cleanup errors */
             }

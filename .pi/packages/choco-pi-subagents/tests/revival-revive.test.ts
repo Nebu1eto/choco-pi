@@ -520,7 +520,10 @@ test("a re-armed wait journals its adopted worktree and cleans it if stopped bef
     "the stop's final settle",
   );
   await flush();
-  assert.equal(await exists(path), false, "the stop's final settle removed the worktree");
+  // A user stop is a cancellation: the worktree is retained, not committed or removed.
+  assert.equal(await exists(path), true, "the stop's final settle retained the worktree");
+  assert.equal(s.manager.getRecord("rev-r")?.worktreeResult?.retained, true);
+  assert.match(s.manager.getRecord("rev-r")?.result ?? "", /Work retained in worktree/);
   assert.notEqual(sessionFileOwner(s.file), undefined, "the live record still holds its file");
   s.manager.clearCompleted();
   await flush();

@@ -88,9 +88,21 @@ export interface WorktreeCleanupResult {
   hasChanges: boolean;
   /** Branch name if changes were committed. */
   branch?: string;
-  /** Worktree path if it was kept. */
+  /**
+   * Worktree path while the worktree still exists on disk: set when it was
+   * retained (`retained: true`) and, historically, when changes were saved to
+   * a branch (the worktree itself was removed then).
+   */
   path?: string;
+  /** The worktree was left untouched (nothing staged, committed or removed). */
+  retained?: true;
 }
+
+/**
+ * `settle` commits changes to a branch and removes the worktree. `retain`
+ * (cancelled runs) leaves the worktree exactly as it is.
+ */
+export type WorktreeDisposition = "settle" | "retain";
 
 /**
  * Create a temporary git worktree for an agent.
@@ -145,9 +157,21 @@ export async function cleanupWorktree(
   cwd: string,
   worktree: WorktreeInfo,
   agentDescription: string,
+  disposition: WorktreeDisposition = "settle",
 ): Promise<WorktreeCleanupResult> {
   if (!(await pathExists(worktree.path))) {
     return { hasChanges: false };
+  }
+
+  if (disposition === "retain") {
+    // Read-only status only: a cancelled run's partial work stays untouched.
+    let hasChanges = true;
+    try {
+      hasChanges = (await git(["status", "--porcelain"], worktree.path, 10000)) !== "";
+    } catch {
+      /* unknown state: report the worktree as holding work */
+    }
+    return { hasChanges, path: worktree.path, retained: true };
   }
 
   try {
@@ -193,7 +217,7 @@ export async function cleanupWorktree(
       path: worktree.path,
     };
   } catch {
-    // Best effort cleanup on error
+    // Best effort cleanup on error (the "retain" disposition returned above)
     try {
       await removeWorktree(cwd, worktree.path);
     } catch {

@@ -306,7 +306,7 @@ export interface AgentRecord {
    */
   inMemorySession?: boolean;
   /** Worktree cleanup result after agent completion. */
-  worktreeResult?: { hasChanges: boolean; branch?: string };
+  worktreeResult?: { hasChanges: boolean; branch?: string; path?: string; retained?: true };
   /** The tool_use_id from the original Agent tool call. */
   toolCallId?: string;
   /** Path to the streaming output transcript file. */

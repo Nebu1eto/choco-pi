@@ -507,8 +507,20 @@ for (const ending of ["continuation", "stop"] as const) {
       // The deferred cleanup runs git asynchronously; publication follows it.
       await waitFor(() => record?.worktreeResult !== undefined, "the final settle's cleanup");
       await flush();
-      assert.deepEqual(record?.worktreeResult, { hasChanges: false });
-      assert.equal(await exists(worktree.path), false, "cleaned on the final settle");
+      if (ending === "stop") {
+        // A user stop is a cancellation: the worktree is retained untouched.
+        t.after(() => rm(worktree.path, { recursive: true, force: true }));
+        assert.deepEqual(record?.worktreeResult, {
+          hasChanges: false,
+          path: worktree.path,
+          retained: true,
+        });
+        assert.equal(await exists(worktree.path), true, "retained on a cancelled settle");
+        assert.match(record?.result ?? "", /Work retained in worktree/);
+      } else {
+        assert.deepEqual(record?.worktreeResult, { hasChanges: false });
+        assert.equal(await exists(worktree.path), false, "cleaned on the final settle");
+      }
       assert.equal(completions.length, 1);
     } finally {
       manager.dispose();
@@ -594,3 +606,58 @@ test("nested resume forwards and validates model through the manager", async (t)
 test("resume model errors stay ResumeModelError instances across modules", () => {
   assert.equal(new ResumeModelError("x").name, "ResumeModelError");
 });
+
+for (const cancel of ["stop", "complete"] as const) {
+  test(`a running worktree agent ${cancel === "stop" ? "stopped by the user retains" : "that completes commits to a branch and removes"} its dirty worktree`, async (t) => {
+    const { env, session } = await setup(t);
+    const repo = await createRepo(t);
+    setWorktreeIsolationEnabled(true);
+    const { manager, runs } = harness();
+    try {
+      const id = manager.spawn(env.pi, env.context({ cwd: repo }), "implementer", "task", {
+        ...background,
+        isolation: "worktree",
+      });
+      await waitFor(() => runs.length > 0, "the run started");
+      const record = manager.getRecord(id);
+      const worktree = record?.worktree;
+      assert.ok(worktree, "worktree created");
+      t.after(() => rm(worktree.path, { recursive: true, force: true }));
+      await writeFile(join(worktree.path, "partial.txt"), "partial\n");
+      const settled = record?.promise;
+      if (cancel === "stop") assert.equal(manager.abort(id), true);
+      runs[0].resolve({
+        responseText: "partial answer",
+        session,
+        aborted: cancel === "stop",
+        steered: false,
+      });
+      await settled;
+      await waitFor(() => record?.worktreeResult !== undefined, "worktree outcome");
+      if (cancel === "stop") {
+        const head = (
+          await run("git", ["rev-parse", "HEAD"], { cwd: worktree.path })
+        ).stdout.trim();
+        assert.equal(record?.worktreeResult?.retained, true);
+        assert.equal(record?.worktreeResult?.hasChanges, true);
+        assert.equal(await exists(join(worktree.path, "partial.txt")), true, "dirty file kept");
+        assert.equal(head, worktree.baseSha, "nothing committed");
+        const status = await run("git", ["status", "--porcelain"], {
+          cwd: worktree.path,
+        });
+        assert.match(status.stdout, /partial\.txt/, "still uncommitted");
+        assert.match(record?.result ?? "", /Work retained in worktree/);
+        assert.match(record?.result ?? "", /user_stop/);
+        assert.ok((record?.result ?? "").includes(worktree.path));
+      } else {
+        assert.equal(record?.worktreeResult?.retained, undefined);
+        assert.equal(record?.worktreeResult?.hasChanges, true);
+        assert.equal(await exists(worktree.path), false, "removed on a normal settle");
+        assert.match(record?.result ?? "", /Changes saved to branch/);
+      }
+    } finally {
+      manager.dispose();
+      cleanupProviders();
+    }
+  });
+}
