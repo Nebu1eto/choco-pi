@@ -10,10 +10,9 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import { validateSpawnCwd } from "./agent-manager.ts";
 import { type ModelRegistry, resolveModel } from "./model-resolver.ts";
+import { isBoolean, isFiniteNumber, isString } from "./value-guards.ts";
 
 type RpcScalar = string | number | boolean | null;
 type RpcWireValue = RpcScalar | RpcWireValue[] | { [key: string]: RpcWireValue };
@@ -76,10 +75,6 @@ interface StopRpcRequest extends RpcRequest {
   agentId: string;
 }
 
-const RpcStringSchema = Type.String();
-const RpcNumberSchema = Type.Number();
-const RpcBooleanSchema = Type.Boolean();
-
 function wireObject(value: RpcWireValue): RpcWireObject | undefined {
   if (value === null || Array.isArray(value) || Object(value) !== value) return undefined;
   // SAFETY: RpcWireValue's only non-null, non-array object member is RpcWireObject.
@@ -87,11 +82,7 @@ function wireObject(value: RpcWireValue): RpcWireObject | undefined {
 }
 
 function parseWireValue(input: RpcEventPayload): RpcWireValue {
-  if (
-    Value.Check(RpcStringSchema, input) ||
-    Value.Check(RpcNumberSchema, input) ||
-    Value.Check(RpcBooleanSchema, input)
-  ) {
+  if (isString(input) || isFiniteNumber(input) || isBoolean(input)) {
     return input;
   }
   if (input === null) return null;
@@ -106,11 +97,11 @@ function parseWireValue(input: RpcEventPayload): RpcWireValue {
 }
 
 function wireString(value: RpcWireValue | undefined): string | undefined {
-  return Value.Check(RpcStringSchema, value) ? value : undefined;
+  return isString(value) ? value : undefined;
 }
 
 function wireBoolean(value: RpcWireValue | undefined): boolean | undefined {
-  return Value.Check(RpcBooleanSchema, value) ? value : undefined;
+  return isBoolean(value) ? value : undefined;
 }
 
 function requestId(raw: RpcWireValue): string {

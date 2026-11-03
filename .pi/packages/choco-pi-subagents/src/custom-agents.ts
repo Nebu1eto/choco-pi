@@ -5,10 +5,9 @@
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import { BUILTIN_TOOL_NAMES } from "./agent-types.ts";
 import type { AgentConfig, IsolationMode, MemoryScope, ThinkingLevel } from "./types.ts";
+import { isNonNegativeFiniteNumber, isString } from "./value-guards.ts";
 
 /**
  * The one thing a declared `name:` may not contain, matching Claude Code
@@ -401,17 +400,14 @@ function warnIfNew(message: string, warned: Set<string>): void {
 // ---- Field parsers ----
 // All follow the same convention: omitted → default, "none"/empty → nothing, value → exact.
 
-const FrontmatterStringSchema = Type.String();
-const FrontmatterNonNegativeNumberSchema = Type.Number({ minimum: 0 });
-
 /** Extract a string or undefined. */
 function str(val: FrontmatterValue | undefined): string | undefined {
-  return Value.Check(FrontmatterStringSchema, val) ? val : undefined;
+  return isString(val) ? val : undefined;
 }
 
 /** Extract a non-negative integer or undefined. 0 means unlimited for max_turns. */
 function nonNegativeInt(val: FrontmatterValue | undefined): number | undefined {
-  return Value.Check(FrontmatterNonNegativeNumberSchema, val) ? val : undefined;
+  return isNonNegativeFiniteNumber(val) ? val : undefined;
 }
 
 function parseThinkingLevel(val: FrontmatterValue | undefined): ThinkingLevel | undefined {

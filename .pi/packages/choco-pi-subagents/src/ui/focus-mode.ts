@@ -1,8 +1,6 @@
 import { isCanonicalCodexSubscriptionModel } from "../../../choco-pi-codex/src/adapter/prompt/codex-model.ts";
 import type { AgentSession, MarkdownTransformer } from "@earendil-works/pi-coding-agent";
 import { getKeybindings, Key, matchesKey, truncateToWidth, type TUI } from "@earendil-works/pi-tui";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import type { AgentRecord } from "../types.ts";
 import { decideSessionFastMode, snapshotFastMode } from "../fast-mode-bridge.ts";
 import { getSessionDaybreak, snapshotDaybreak } from "../daybreak-bridge.ts";
@@ -14,6 +12,7 @@ import {
   type FocusedAgentRuntime,
 } from "./focused-runtime.ts";
 import { installMethodPatch } from "./method-patch-registry.ts";
+import { isFiniteNumber, isString } from "../value-guards.ts";
 
 const FOCUS_WIDGET_KEY = "subagent-focus";
 type ThinkingLevel = Parameters<AgentSession["setThinkingLevel"]>[0];
@@ -172,9 +171,6 @@ interface HostProbe {
 
 type TUIWithFocusedComponent = TUI & { getFocusedComponent?: () => HostBoundaryValue };
 
-const HostNumberSchema = Type.Number();
-const HostStringSchema = Type.String();
-
 /**
  * A plain host object whose probed properties stay unnarrowed until each one is
  * checked below, rather than passing `any` around.
@@ -213,11 +209,11 @@ function childrenOf(value: HostBoundaryValue): HostBoundaryValue[] {
 }
 
 function hostNumber(value: HostBoundaryValue): number | undefined {
-  return Value.Check(HostNumberSchema, value) ? value : undefined;
+  return isFiniteNumber(value) ? value : undefined;
 }
 
 function hostString(value: HostBoundaryValue): string | undefined {
-  return Value.Check(HostStringSchema, value) ? value : undefined;
+  return isString(value) ? value : undefined;
 }
 
 /** Pi mounts the transcript document first in both regular and fullscreen TUI modes. */

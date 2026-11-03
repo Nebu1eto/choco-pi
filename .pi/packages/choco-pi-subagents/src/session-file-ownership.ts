@@ -9,22 +9,34 @@
  */
 
 import { resolve } from "node:path";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { type HostValue, isHostObject } from "./value-guards.ts";
 
 const OWNERS_SYMBOL = Symbol.for("choco-pi-subagents:session-file-owners");
 
-const OwnershipRegistrySchema = Type.Object({
-  version: Type.Literal(1),
-  claim: Type.Function([Type.String(), Type.String()], Type.Boolean()),
-  release: Type.Function([Type.String(), Type.String()], Type.Void()),
-  owner: Type.Function([Type.String()], Type.Union([Type.String(), Type.Undefined()])),
-  /** Register a one-shot release listener; returns its unsubscribe function. */
-  onRelease: Type.Function(
-    [Type.String(), Type.Function([], Type.Void())],
-    Type.Function([], Type.Void()),
-  ),
-});
+/** Members of a registry found on `globalThis`, unvalidated until checked. */
+interface OwnershipRegistryCandidate {
+  version?: HostValue;
+  claim?: HostValue;
+  release?: HostValue;
+  owner?: HostValue;
+  onRelease?: HostValue;
+}
+
+/**
+ * Structural check of a registry another instance published: the version and
+ * callable members (signatures are not checkable at run time).
+ */
+function isOwnershipRegistry(value: HostValue): value is OwnershipRegistry {
+  if (!isHostObject(value)) return false;
+  const candidate: OwnershipRegistryCandidate = value;
+  return (
+    candidate.version === 1 &&
+    candidate.claim instanceof Function &&
+    candidate.release instanceof Function &&
+    candidate.owner instanceof Function &&
+    candidate.onRelease instanceof Function
+  );
+}
 
 interface OwnershipRegistry {
   version: 1;
@@ -71,8 +83,8 @@ function createRegistry(): OwnershipRegistry {
 }
 
 function registry(): OwnershipRegistry {
-  const existing: unknown = Object.getOwnPropertyDescriptor(globalThis, OWNERS_SYMBOL)?.value;
-  if (Value.Check(OwnershipRegistrySchema, existing)) {
+  const existing: HostValue = Object.getOwnPropertyDescriptor(globalThis, OWNERS_SYMBOL)?.value;
+  if (isOwnershipRegistry(existing)) {
     return {
       version: 1,
       claim: (file, ownerToken) => existing.claim(file, ownerToken),

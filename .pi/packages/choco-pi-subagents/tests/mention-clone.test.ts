@@ -19,7 +19,8 @@ import {
   SessionManager,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { obj } from "@earendil-works/pi-schema";
+import { hostParams } from "../src/schema-bridge.ts";
 import {
   buildMentionCloneContext,
   createMentionClonePromptExtension,
@@ -254,7 +255,7 @@ test("clone snapshots its parent model before resource loading", async () => {
     name: "Agent",
     label: "Agent",
     description: "fixture",
-    parameters: Type.Object({}),
+    parameters: hostParams(obj({}, { open: true })),
     execute: () => Promise.resolve({ content: [{ type: "text", text: "started" }] }),
   });
   const originalReload = DefaultResourceLoader.prototype.reload;
@@ -346,7 +347,7 @@ test("clone uses the parent's effective forced provider prompt", async () => {
     name: "Agent",
     label: "Agent",
     description: "fixture",
-    parameters: Type.Object({}),
+    parameters: hostParams(obj({}, { open: true })),
     execute: () => Promise.resolve({ content: [{ type: "text", text: "started" }] }),
   });
   try {
@@ -450,7 +451,7 @@ test("clone keeps the parent conversation across its own turn boundary", async (
     name: "Agent",
     label: "Agent",
     description: "fixture",
-    parameters: Type.Object({}),
+    parameters: hostParams(obj({}, { open: true })),
     execute: () => Promise.resolve({ content: [{ type: "text", text: "started" }] }),
   });
   try {

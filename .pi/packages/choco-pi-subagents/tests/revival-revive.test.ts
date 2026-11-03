@@ -6,8 +6,7 @@ import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { promisify } from "node:util";
 
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { type HostValue, isString } from "../src/value-guards.ts";
 
 import {
   REARM_POLICY_RETRY_MS,
@@ -784,13 +783,27 @@ async function suspendDuringHookRemoval(t: TestContext, outcome: "settles" | "th
   const hookPath = join(s.dir, "hook-wt");
   await mkdir(hookPath);
   const removal: HookRemoval = { paths: [] };
-  const RemovePayload = Type.Object({
-    path: Type.String(),
-    claim: Type.Function([], Type.Void()),
-    done: Type.Function([], Type.Void()),
-  });
+  interface RemovePayload {
+    path: string;
+    claim(): void;
+    done(): void;
+  }
+  interface RemoveCandidate {
+    path?: HostValue;
+    claim?: HostValue;
+    done?: HostValue;
+  }
+  const isRemovePayload = (value: HostValue): value is RemovePayload => {
+    if (value === null || value === undefined) return false;
+    const candidate: RemoveCandidate = value;
+    return (
+      isString(candidate.path) &&
+      candidate.claim instanceof Function &&
+      candidate.done instanceof Function
+    );
+  };
   const unsubscribe = s.env.pi.events.on("subagents:worktree-remove", (payload) => {
-    if (!Value.Check(RemovePayload, payload)) return;
+    if (!isRemovePayload(payload)) return;
     removal.paths.push(payload.path);
     payload.claim();
     removal.done = payload.done;

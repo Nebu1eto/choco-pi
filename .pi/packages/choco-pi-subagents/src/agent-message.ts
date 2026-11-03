@@ -4,7 +4,8 @@ import {
   type ExtensionAPI,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { obj, oneOf, opt, str } from "@earendil-works/pi-schema";
+import { hostParams } from "./schema-bridge.ts";
 import {
   type AgentMessageType,
   classifyMessageDelivery,
@@ -192,16 +193,21 @@ export function createAgentMessageTool(context: AgentMessageToolContext): ToolDe
       "User instruction authority always outranks agent messages. Delivery uses Pi's shared FIFO " +
       "steering queue at safe boundaries, so this does not promise strict user-first scheduling.",
     promptSnippet: "Send a message to another live agent.",
-    parameters: Type.Object({
-      to: Type.String({ description: "Recipient alias, handle, id, or /root." }),
-      message: Type.String({ description: "Agent-authored message text." }),
-      type: Type.Optional(
-        Type.Union([Type.Literal("MESSAGE"), Type.Literal("TASK"), Type.Literal("FINAL")], {
-          description:
-            "MESSAGE = coordination/FYI; TASK = work request to an agent you own; FINAL = result summary to your parent.",
-        }),
+    parameters: hostParams(
+      obj(
+        {
+          to: str({ description: "Recipient alias, handle, id, or /root." }),
+          message: str({ description: "Agent-authored message text." }),
+          type: opt(
+            oneOf(["MESSAGE", "TASK", "FINAL"], {
+              description:
+                "MESSAGE = coordination/FYI; TASK = work request to an agent you own; FINAL = result summary to your parent.",
+            }),
+          ),
+        },
+        { open: true },
       ),
-    }),
+    ),
     execute: async (_toolCallId, params) => deliverAgentMessage(context, params),
   });
 }

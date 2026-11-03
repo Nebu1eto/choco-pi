@@ -19,8 +19,7 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { type HostValue, isFiniteNumber, isHostObject, isString } from "./value-guards.ts";
 import {
   BUILTIN_TOOL_NAMES,
   getAgentConfig,
@@ -90,15 +89,12 @@ interface AssistantUsage {
   cacheWrite: number;
 }
 
-const HostStringSchema = Type.String();
-const HostNumberSchema = Type.Number();
-
 function hostString(value: any): string | undefined {
-  return Value.Check(HostStringSchema, value) ? value : undefined;
+  return isString(value) ? value : undefined;
 }
 
 function hostNumber(value: any): number | undefined {
-  return Value.Check(HostNumberSchema, value) ? value : undefined;
+  return isFiniteNumber(value) ? value : undefined;
 }
 
 function assistantErrorMessage(message: HostAssistantTrace): string | undefined {
@@ -297,25 +293,29 @@ function blockUnreachableToolCall(
 const TOOL_SCOPE_SYMBOL = Symbol.for("choco-pi.tool-scope.v1");
 
 /** The session identity a scope is keyed by: the session's own SessionManager. */
-const ToolScopeOwnerSchema = Type.Object({ getSessionId: Type.Function([], Type.String()) });
 type ToolScopeOwner = Pick<SessionManager, "getSessionId">;
-
-const ToolScopeRegistrySchema = Type.Object({
-  isToolAllowed: Type.Function([ToolScopeOwnerSchema, Type.String()], Type.Boolean()),
-  restrict: Type.Function(
-    [ToolScopeOwnerSchema, Type.Function([Type.String()], Type.Boolean())],
-    Type.Void(),
-  ),
-});
 
 interface ToolScopeRegistry {
   isToolAllowed(sessionManager: ToolScopeOwner, name: string): boolean;
   restrict(sessionManager: ToolScopeOwner, allows: (name: string) => boolean): void;
 }
 
+/** Members of a registry found on `globalThis`, unvalidated until checked. */
+interface ToolScopeRegistryCandidate {
+  isToolAllowed?: HostValue;
+  restrict?: HostValue;
+}
+
+/** Structural check of a published registry: an object with both callable members. */
+function isToolScopeRegistry(value: HostValue): value is ToolScopeRegistry {
+  if (!isHostObject(value)) return false;
+  const candidate: ToolScopeRegistryCandidate = value;
+  return candidate.isToolAllowed instanceof Function && candidate.restrict instanceof Function;
+}
+
 function toolScopeRegistry(): ToolScopeRegistry {
-  const existing = Object.getOwnPropertyDescriptor(globalThis, TOOL_SCOPE_SYMBOL)?.value;
-  if (Value.Check(ToolScopeRegistrySchema, existing)) return existing;
+  const existing: HostValue = Object.getOwnPropertyDescriptor(globalThis, TOOL_SCOPE_SYMBOL)?.value;
+  if (isToolScopeRegistry(existing)) return existing;
   const scopes = new WeakMap<ToolScopeOwner, (name: string) => boolean>();
   const registry: ToolScopeRegistry = {
     isToolAllowed: (sessionManager, name) => scopes.get(sessionManager)?.(name) ?? true,

@@ -3,7 +3,8 @@ import {
   type ExtensionAPI,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { int, obj, opt } from "@earendil-works/pi-schema";
+import { hostParams } from "./schema-bridge.ts";
 
 /** Persisted settings and runtime setters never exceed these safety bounds. */
 export const MAX_CONCURRENT_SANITY_CAP = 1024;
@@ -127,18 +128,27 @@ export function createSubagentLimitsTool(controller: SubagentLimitController): T
       "Values apply to this session only and are not persisted. " +
       "maxConcurrent=0 means unlimited concurrency (with a sanity cap of 1024).",
     promptSnippet: "Inspect or adjust this session's subagent limits.",
-    parameters: Type.Object({
-      maxConcurrent: Type.Optional(
-        Type.Integer({ minimum: 0, description: "Maximum concurrency; 0 means unlimited." }),
+    parameters: hostParams(
+      obj(
+        {
+          maxConcurrent: opt(
+            int({
+              minimum: 0,
+              maximum: Number.MAX_VALUE,
+              description: "Maximum concurrency; 0 means unlimited.",
+            }),
+          ),
+          maxSubagentDepth: opt(
+            int({
+              minimum: 0,
+              maximum: SUBAGENT_DEPTH_CEILING,
+              description: "Maximum nesting depth; 0 or 1 disables nesting.",
+            }),
+          ),
+        },
+        { open: true },
       ),
-      maxSubagentDepth: Type.Optional(
-        Type.Integer({
-          minimum: 0,
-          maximum: SUBAGENT_DEPTH_CEILING,
-          description: "Maximum nesting depth; 0 or 1 disables nesting.",
-        }),
-      ),
-    }),
+    ),
     execute: async (_toolCallId, params) => ({
       content: [{ type: "text" as const, text: applySubagentLimits(params, controller) }],
       details: {},

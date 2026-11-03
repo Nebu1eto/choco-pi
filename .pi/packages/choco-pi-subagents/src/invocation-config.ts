@@ -1,4 +1,4 @@
-import { Type } from "typebox";
+import { oneOf, opt } from "@earendil-works/pi-schema";
 import { normalizeTierModel } from "./model-tiers.ts";
 import type {
   AgentConfig,
@@ -50,8 +50,8 @@ export function setRequireExplicitModel(enabled: boolean): void {
  * a second legal value is what lets a model decline one, not being told to.
  */
 const isolationSchemaFields = {
-  isolation: Type.Optional(
-    Type.Union([Type.Literal("off"), Type.Literal("worktree")], {
+  isolation: opt(
+    oneOf(["off", "worktree"], {
       description:
         '"off" uses this checkout; "worktree" creates an isolated temporary copy. Applies unless the agent definition pins it.',
     }),

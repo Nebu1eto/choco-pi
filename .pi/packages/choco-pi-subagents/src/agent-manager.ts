@@ -12,8 +12,7 @@ import { stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { AgentSession, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { isString } from "./value-guards.ts";
 import {
   resolveAgentMaxTurns,
   resumeAgent,
@@ -65,7 +64,7 @@ import {
   buildJournalData,
   CAPPED_REVIVAL_ERROR,
   journalClassificationOf,
-  JournalAgentSnapshotSchema,
+  isJournalAgentSnapshot,
   startupDisposition,
   usageClassificationOf,
   type InterruptedChildRun,
@@ -529,8 +528,6 @@ type SpawnCwdInput =
   | { [key: string]: SpawnCwdInput }
   | undefined;
 
-const SpawnCwdSchema = Type.String();
-
 /**
  * Synchronous half of the check: unset, or an absolute path string. The
  * directory check is asynchronous ({@link assertSpawnCwdDirectory}); a run
@@ -539,7 +536,7 @@ const SpawnCwdSchema = Type.String();
  */
 function assertAbsoluteSpawnCwd(cwd: SpawnCwdInput): asserts cwd is string | undefined | null {
   if (cwd == null) return;
-  if (!Value.Check(SpawnCwdSchema, cwd) || !isAbsolute(cwd)) {
+  if (!isString(cwd) || !isAbsolute(cwd)) {
     throw new Error(`SpawnOptions.cwd must be an absolute path: "${String(cwd)}"`);
   }
 }
@@ -1114,7 +1111,7 @@ export class AgentManager {
   hydrateDormant(snapshots: Iterable<JournalAgentSnapshot>): number {
     let stored = 0;
     for (const snapshot of snapshots) {
-      if (!Value.Check(JournalAgentSnapshotSchema, snapshot)) continue;
+      if (!isJournalAgentSnapshot(snapshot)) continue;
       if (this.putDormant(snapshot)) stored++;
     }
     return stored;
@@ -1131,7 +1128,7 @@ export class AgentManager {
     } catch {
       return undefined;
     }
-    return found !== undefined && found.id === id && Value.Check(JournalAgentSnapshotSchema, found)
+    return found !== undefined && found.id === id && isJournalAgentSnapshot(found)
       ? found
       : undefined;
   }
@@ -4844,9 +4841,7 @@ export class AgentManager {
       }
     };
     const sink = this.journalSink;
-    const inputs = [...snapshots].filter((input) =>
-      Value.Check(JournalAgentSnapshotSchema, input.agent),
-    );
+    const inputs = [...snapshots].filter((input) => isJournalAgentSnapshot(input.agent));
     if (sink === undefined || this.disposed) {
       for (const input of inputs) {
         if (startupDisposition(input).kind !== "dormant") {

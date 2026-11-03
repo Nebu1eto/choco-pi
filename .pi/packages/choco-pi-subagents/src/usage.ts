@@ -1,7 +1,6 @@
 /** usage.ts — Token usage: shapes, accumulator operators, session-stats readers. */
 
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { isFiniteNumber, isNonEmptyString } from "./value-guards.ts";
 
 /**
  * Lifetime usage components, accumulated via `message_end` events. Survives
@@ -43,11 +42,8 @@ export interface SessionContextUsage {
   contextWindow: number | null;
 }
 
-const FINITE_NUMBER_SCHEMA = Type.Number();
-const SESSION_ID_SCHEMA = Type.String({ minLength: 1 });
-
 function finiteNumber(value: number | null | undefined): number | null {
-  return Value.Check(FINITE_NUMBER_SCHEMA, value) && Number.isFinite(value) ? value : null;
+  return isFiniteNumber(value) ? value : null;
 }
 
 /** Settled session cost paired with the stats identity that produced it. */
@@ -58,7 +54,7 @@ export function getSessionCostBaseline(
   try {
     const stats = session.getSessionStats();
     const cost = finiteNumber(stats.cost);
-    return Value.Check(SESSION_ID_SCHEMA, stats.sessionId) && cost !== null && cost >= 0
+    return isNonEmptyString(stats.sessionId) && cost !== null && cost >= 0
       ? { sessionId: stats.sessionId, cost }
       : null;
   } catch {

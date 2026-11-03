@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import {
   claimSessionFile,
   releaseSessionFile,
@@ -83,18 +81,14 @@ test("wait aborts, including an already-aborted signal", async () => {
   releaseSessionFile(file, "a");
 });
 
-const OwnershipModuleSchema = Type.Object({
-  claimSessionFile: Type.Function([Type.String(), Type.String()], Type.Boolean()),
-  releaseSessionFile: Type.Function([Type.String(), Type.String()], Type.Void()),
-  sessionFileOwner: Type.Function([Type.String()], Type.Union([Type.String(), Type.Undefined()])),
-});
-
 test("ownership state survives module re-import (reload)", async () => {
   const file = freshFile();
   assert.equal(claimSessionFile(file, "old-instance"), true);
   const specifier = `${new URL("../src/session-file-ownership.ts", import.meta.url).href}?reload=1`;
-  const reloaded: unknown = await import(specifier);
-  assert.ok(Value.Check(OwnershipModuleSchema, reloaded));
+  const reloaded: typeof import("../src/session-file-ownership.ts") = await import(specifier);
+  assert.ok(reloaded.claimSessionFile instanceof Function);
+  assert.ok(reloaded.releaseSessionFile instanceof Function);
+  assert.ok(reloaded.sessionFileOwner instanceof Function);
   assert.equal(reloaded.sessionFileOwner(file), "old-instance");
   assert.equal(reloaded.claimSessionFile(file, "new-instance"), false);
   const waiting = waitForSessionFileRelease(file, { timeoutMs: 10_000 });

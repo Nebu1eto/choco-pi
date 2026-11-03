@@ -8,7 +8,8 @@ import {
   type ExtensionFactory,
   type ExtensionToolContext,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { bool, obj, opt } from "@earendil-works/pi-schema";
+import { hostParams } from "../src/schema-bridge.ts";
 
 import { type AgentMessageRecord, deliverAgentMessage } from "../src/agent-message.ts";
 import { createMentionCloneAgentTool } from "../src/mention-clone.ts";
@@ -180,7 +181,7 @@ test("the mention clone runs the Agent tool on the main session with the clone c
     name: "Agent",
     label: "Agent",
     description: "probe",
-    parameters: Type.Object({ run_in_background: Type.Optional(Type.Boolean()) }),
+    parameters: hostParams(obj({ run_in_background: opt(bool()) }, { open: true })),
     execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
       received = ctx;
       assert.equal(params.run_in_background, true);

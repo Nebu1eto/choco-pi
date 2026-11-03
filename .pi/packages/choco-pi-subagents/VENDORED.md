@@ -2132,3 +2132,28 @@ A run cancelled in an isolated worktree (cause `user_stop`, `parent_signal`, `bu
 - `src/invocation-config.ts`: `model_override_reason` on `AgentInvocationParams`; new `tierRefusal()` and `withOverrideReason()`.
 - `src/index.ts`, `src/nested-tools.ts`: `model_override_reason` schema field on the Agent and nested Agent tools; fresh spawns (not resume or schedule) call `tierRefusal` after `explicitModelRefusal`; the model line appends `override reason: <text>`. Workflow steps, resume, schedule and RPC stay exempt.
 - `tests/tier-guard.test.ts` added.
+
+## 2026-11-03 choco-pi patch: persistence/runtime files on pi-schema (unit C24)
+
+Part 1 of the TypeBox to `@earendil-works/pi-schema` migration; `index.ts`, `nested-tools.ts`, `agent-message.ts`, `delegation-render.ts`, `limits.ts` and `invocation-config.ts` follow in unit C25.
+
+- New `src/value-guards.ts`: primitive guards (`isString`, `isBoolean`, `isFiniteNumber`, ...) built from compiled pi-schema validators because lint bans `typeof`; `finiteNum()` bounds `num()` at +/-`Number.MAX_VALUE` to keep TypeBox's NaN/Infinity rejection; `isHostObject`/`HostValue` for foreign slots. New `src/schema-bridge.ts`: `hostParams()`, the only file importing `typebox` (tool registration still needs a TypeBox `TSchema`).
+- `src/revival-journal.ts`: schemas are pi-schema objects, all open (unknown keys allowed), so the reader accepts every old or foreign entry as before. The only `Value.Clean` site is replaced by a hand-written recursive whitelist projection (`projectJournalDataForWrite`, including `options.invocation`): unknown keys are dropped, known fields are never repaired (no coercion, defaults or removal of invalid array members), and the output shares no objects with its input. `pickRunOptions` now picks `invocation` fields explicitly instead of spreading. Writer rejection text is now `Invalid subagent journal entry for <id>: <JSON pointer> <pi-schema message>`. `isJournalAgentSnapshot` replaces `Value.Check(JournalAgentSnapshotSchema, ...)` in `agent-manager.ts`.
+- `src/workflow.ts`: `WorkflowStepSchema`/`WorkflowDefinitionSchema` are closed pi-schema objects; `thinkingLevelSchema()` and the isolation field emit `enum` instead of `anyOf` of consts. Validation errors keep the `Invalid workflow definition: <pointer>: <message>` form.
+- Foreign process-global slots (`session-file-ownership.ts`, `child-compaction-bridge.ts`, `agent-runner.ts` tool-scope registry, `usage-limit-seam.ts`) keep structural property probing; `Type.Function` checks became `instanceof Function`, which rejects cross-realm functions.
+- `src/ui/*`, `usage.ts`, `settings.ts`, `custom-agents.ts`, `enabled-models.ts`, `fs-async.ts`, `model-tiers.ts`, `cross-extension-rpc.ts`: TypeBox checks replaced by the guards above or compiled pi-schema validators; no behaviour change intended. `agent-manager.ts` and `agent-runner.ts` changed only at those check sites; the P4a and P7 changes are untouched.
+- Tests: `tests/revival-journal.test.ts` gains projection (unknown nested keys, invalid known fields, array members, detachment, own properties only) and old-journal reader cases.
+
+## 2026-11-03 choco-pi patch: registration files on pi-schema (unit C25)
+
+`src/index.ts`, `nested-tools.ts`, `agent-message.ts`, `limits.ts`,
+`delegation-render.ts`, `invocation-config.ts` and the test fixtures no longer
+import `typebox`; only `src/schema-bridge.ts` does. Tool parameter objects are
+`hostParams(obj({...}, { open: true }))` (closed `obj({...})` where TypeBox had
+`additionalProperties: false`, including the workflow tools). `Type.Integer`/
+`Type.Number` become `int`/`num` with `maximum: Number.MAX_VALUE` so NaN and
+Infinity stay rejected. The `isolation` parameter is `oneOf(["off",
+"worktree"])`; the Agent tool keeps `model_override_reason` and every
+description string. Runtime checks (`subagent-notification-pending` entry,
+tool-result `AgentDetails`, the coordination probe's completed event) are
+compiled pi-schema validators with the same open-object behaviour.

@@ -38,8 +38,9 @@ import {
   visibleWidth,
 } from "@earendil-works/pi-tui";
 import { dispatchMouseEvent } from "@earendil-works/pi-tui/dist/tui.js";
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, compile, obj, opt, str, unknown } from "@earendil-works/pi-schema";
+import type { Static } from "@earendil-works/pi-schema";
+import { isBoolean, isFiniteNumber, isString } from "../value-guards.ts";
 import { renderAgentName } from "../agent-color.ts";
 import { extractText } from "../context.ts";
 import { parseAgentMessage } from "../messaging.ts";
@@ -86,24 +87,28 @@ interface HostBashExecutionTrace {
   excludeFromContext?: any;
 }
 
-const HostStringSchema = Type.String();
-const HostNumberSchema = Type.Number();
-const HostBooleanSchema = Type.Boolean();
-const PartialToolResultSchema = Type.Object({
-  content: Type.Array(
-    Type.Object({
-      type: Type.String(),
-      text: Type.Optional(Type.String()),
-      data: Type.Optional(Type.String()),
-      mimeType: Type.Optional(Type.String()),
-    }),
-  ),
-  details: Type.Optional(Type.Unknown()),
-});
+const PartialToolResultSchema = obj(
+  {
+    content: arr(
+      obj(
+        {
+          type: str(),
+          text: opt(str()),
+          data: opt(str()),
+          mimeType: opt(str()),
+        },
+        { open: true },
+      ),
+    ),
+    details: opt(unknown()),
+  },
+  { open: true },
+);
+const isPartialToolResult = compile(PartialToolResultSchema).check;
 type PartialToolResult = Static<typeof PartialToolResultSchema>;
 
 function parseHostString(value: any): string | undefined {
-  return Value.Check(HostStringSchema, value) ? value : undefined;
+  return isString(value) ? value : undefined;
 }
 
 /** Match pi-tui TruncatedText: a pending entry is always one terminal row. */
@@ -163,13 +168,11 @@ function parseBashExecution(message: HostBashExecutionTrace): BashExecutionTrace
   return {
     command,
     output: parseHostString(message.output),
-    exitCode: Value.Check(HostNumberSchema, message.exitCode) ? message.exitCode : undefined,
-    cancelled: Value.Check(HostBooleanSchema, message.cancelled) ? message.cancelled : false,
-    truncated: Value.Check(HostBooleanSchema, message.truncated) ? message.truncated : false,
+    exitCode: isFiniteNumber(message.exitCode) ? message.exitCode : undefined,
+    cancelled: isBoolean(message.cancelled) ? message.cancelled : false,
+    truncated: isBoolean(message.truncated) ? message.truncated : false,
     fullOutputPath: parseHostString(message.fullOutputPath),
-    excludeFromContext: Value.Check(HostBooleanSchema, message.excludeFromContext)
-      ? message.excludeFromContext
-      : false,
+    excludeFromContext: isBoolean(message.excludeFromContext) ? message.excludeFromContext : false,
   };
 }
 
@@ -658,7 +661,7 @@ export class ConversationViewer implements Component {
       case "tool_execution_update": {
         this.syncComponents(false);
         const partialResult: unknown = event.partialResult;
-        if (Value.Check(PartialToolResultSchema, partialResult)) {
+        if (isPartialToolResult(partialResult)) {
           this.applyPartialToolResult(event.toolCallId, partialResult);
         }
         break;

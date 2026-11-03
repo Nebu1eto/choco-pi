@@ -9,9 +9,9 @@
  * The manager only reads the slot; it never creates or mutates the map.
  */
 
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { bool, compile, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
 import { formatProviderLabel } from "../../choco-pi-ui/extensions/zentui/model-display.ts";
+import { finiteNum, isFiniteNumber, isString } from "./value-guards.ts";
 
 export const USAGE_LIMIT_POLICY_SYMBOL = Symbol.for("choco-pi.usage-limit-policy");
 export const SUBAGENTS_USAGE_LIMIT_EVENT = "subagents:usage_limit";
@@ -83,41 +83,39 @@ export type SubagentsUsageLimitEvent = {
   status: SubagentUsageLimit["status"];
 };
 
-const OnUsageLimitSchema = Type.Union([
-  Type.Literal("auto-resume"),
-  Type.Literal("fallback"),
-  Type.Literal("none"),
-]);
+// Policy answers are plain data objects; every schema is open (unknown keys allowed), as before.
+const isOnUsageLimit = compile(oneOf(["auto-resume", "fallback", "none"])).check;
 
-const UsageLimitClassificationSchema = Type.Object({
-  kind: Type.Union([Type.Literal("quota"), Type.Literal("billing"), Type.Literal("transient")]),
-  provider: Type.String(),
-  modelId: Type.String(),
-  accountId: Type.Optional(Type.String()),
-  resetAt: Type.Optional(Type.Number()),
-  confidence: Type.Union([
-    Type.Literal("structured"),
-    Type.Literal("parsed"),
-    Type.Literal("inferred"),
-  ]),
-  sessionId: Type.Optional(Type.String()),
-});
+const UsageLimitClassificationSchema = obj(
+  {
+    kind: oneOf(["quota", "billing", "transient"]),
+    provider: str(),
+    modelId: str(),
+    accountId: opt(str()),
+    resetAt: opt(finiteNum()),
+    confidence: oneOf(["structured", "parsed", "inferred"]),
+    sessionId: opt(str()),
+  },
+  { open: true },
+);
+const isUsageLimitClassification = compile(UsageLimitClassificationSchema).check;
 
-const CorroborationSchema = Type.Object({
-  ready: Type.Boolean(),
-  classification: UsageLimitClassificationSchema,
-  evidence: Type.Optional(
-    Type.Union([Type.Literal("confirmed"), Type.Literal("capacity"), Type.Literal("unavailable")]),
+const isCorroboration = compile(
+  obj(
+    {
+      ready: bool(),
+      classification: UsageLimitClassificationSchema,
+      evidence: opt(oneOf(["confirmed", "capacity", "unavailable"])),
+    },
+    { open: true },
   ),
-});
+).check;
 
-const FallbackModelSchema = Type.Object({ provider: Type.String(), id: Type.String() });
+const isFallbackModel = compile(obj({ provider: str(), id: str() }, { open: true })).check;
 
 /** Any value read from a process-global slot before validation. */
 export type HostSlotValue = {} | null | undefined;
 
-const StringSchema = Type.String();
-const NumberSchema = Type.Number();
 /** Every contract member, typed as unvalidated host data until checked. */
 interface UsageLimitPolicyCandidate {
   owner?: HostSlotValue;
@@ -141,8 +139,8 @@ export function isUsageLimitPolicy(value: HostSlotValue): value is UsageLimitPol
   // SAFETY: Every member of the candidate view is unvalidated host data; each is checked below.
   const candidate = value as UsageLimitPolicyCandidate;
   return (
-    Value.Check(StringSchema, candidate.owner) &&
-    Value.Check(NumberSchema, candidate.generation) &&
+    isString(candidate.owner) &&
+    isFiniteNumber(candidate.generation) &&
     candidate.preference instanceof Function &&
     candidate.classify instanceof Function &&
     candidate.corroborate instanceof Function &&
@@ -179,7 +177,7 @@ export function classifyWithPolicy(
 ): UsageLimitClassification | undefined {
   try {
     const result: HostSlotValue = policy.classify(input);
-    return Value.Check(UsageLimitClassificationSchema, result) ? result : undefined;
+    return isUsageLimitClassification(result) ? result : undefined;
   } catch {
     return undefined;
   }
@@ -212,7 +210,7 @@ function withinPolicyTimeout<Result>(call: Promise<Result>): Promise<Result> {
 export async function preferenceFromPolicy(policy: UsageLimitPolicy): Promise<OnUsageLimit> {
   try {
     const result: HostSlotValue = await withinPolicyTimeout(policy.preference());
-    return Value.Check(OnUsageLimitSchema, result) ? result : "none";
+    return isOnUsageLimit(result) ? result : "none";
   } catch {
     return "none";
   }
@@ -238,7 +236,7 @@ export async function corroborateWithPolicy(
 ): Promise<Corroboration | undefined> {
   try {
     const result: HostSlotValue = await withinPolicyTimeout(policy.corroborate(classification));
-    return Value.Check(CorroborationSchema, result) ? result : undefined;
+    return isCorroboration(result) ? result : undefined;
   } catch {
     return undefined;
   }
@@ -252,9 +250,7 @@ export function pickFallbackWithPolicy(
 ): { provider: string; id: string } | undefined {
   try {
     const result: HostSlotValue = policy.pickFallback(current, context);
-    return Value.Check(FallbackModelSchema, result)
-      ? { provider: result.provider, id: result.id }
-      : undefined;
+    return isFallbackModel(result) ? { provider: result.provider, id: result.id } : undefined;
   } catch {
     return undefined;
   }
@@ -297,7 +293,7 @@ export function accountIdWithPolicy(
   if (policy.accountId === undefined) return undefined;
   try {
     const result: HostSlotValue = policy.accountId(providerKey);
-    return Value.Check(StringSchema, result) && result.length > 0 ? result : undefined;
+    return isString(result) && result.length > 0 ? result : undefined;
   } catch {
     return undefined;
   }
@@ -315,12 +311,17 @@ export type CodexUsageLimitEntry = {
   accountId?: string;
   observedAt: number;
 };
-const CodexUsageLimitEntrySchema = Type.Object({
-  resetAt: Type.Optional(Type.Number()),
-  planType: Type.Optional(Type.String()),
-  accountId: Type.Optional(Type.String()),
-  observedAt: Type.Number(),
-});
+const isCodexUsageLimitEntry = compile(
+  obj(
+    {
+      resetAt: opt(finiteNum()),
+      planType: opt(str()),
+      accountId: opt(str()),
+      observedAt: finiteNum(),
+    },
+    { open: true },
+  ),
+).check;
 /** An entry further than this from the failure describes another failure. */
 export const CODEX_ENTRY_WINDOW_MS = 60_000;
 
@@ -345,7 +346,7 @@ export function latestCodexUsageLimitEntry(
     if (entry === undefined || entry.type !== "custom") continue;
     if (entry.customType !== CODEX_USAGE_LIMIT_ENTRY) continue;
     const data = entry.data;
-    if (!Value.Check(CodexUsageLimitEntrySchema, data)) continue;
+    if (!isCodexUsageLimitEntry(data)) continue;
     if (!Number.isFinite(data.observedAt)) continue;
     if (Math.abs(failedAt - data.observedAt) > CODEX_ENTRY_WINDOW_MS) continue;
     if (

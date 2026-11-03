@@ -16,8 +16,19 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs, promisify } from "node:util";
 
-import { Type, type Static, type TSchema } from "typebox";
-import { Value } from "typebox/value";
+import {
+  arr,
+  bool,
+  compile,
+  lit,
+  num,
+  obj,
+  opt,
+  str,
+  union,
+  unknown,
+} from "@earendil-works/pi-schema";
+import type { Schema, Static } from "@earendil-works/pi-schema";
 
 import { buildInterruptionPrompt } from "../../src/revival-journal.ts";
 import {
@@ -82,91 +93,119 @@ function parseJson(line: string): HostValue {
   }
 }
 
-function checked<Schema extends TSchema>(
-  schema: Schema,
+function checked<Declared extends Schema>(
+  schema: Declared,
   value: HostValue,
-): Static<Schema> | undefined {
-  return Value.Check(schema, value) ? value : undefined;
+): Static<Declared> | undefined {
+  const validator = compile(schema);
+  return validator.check(value) ? value : undefined;
 }
 
 function errorText(error: Error | string): string {
   return error instanceof Error ? error.message : error;
 }
 
-const RpcRecordSchema = Type.Object({
-  type: Type.String(),
-  id: Type.Optional(Type.String()),
-  command: Type.Optional(Type.String()),
-  success: Type.Optional(Type.Boolean()),
-  error: Type.Optional(Type.String()),
-  data: Type.Optional(Type.Unknown()),
-});
+const RpcRecordSchema = obj(
+  {
+    type: str(),
+    id: opt(str()),
+    command: opt(str()),
+    success: opt(bool()),
+    error: opt(str()),
+    data: opt(unknown()),
+  },
+  { open: true },
+);
 type RpcRecord = Static<typeof RpcRecordSchema>;
 
-const StateDataSchema = Type.Object({
-  sessionId: Type.String(),
-  sessionFile: Type.Optional(Type.String()),
-  isStreaming: Type.Boolean(),
-});
-const ForkMessagesSchema = Type.Object({
-  messages: Type.Array(Type.Object({ entryId: Type.String(), text: Type.String() })),
-});
-const ForkDataSchema = Type.Object({ cancelled: Type.Boolean() });
+const StateDataSchema = obj(
+  {
+    sessionId: str(),
+    sessionFile: opt(str()),
+    isStreaming: bool(),
+  },
+  { open: true },
+);
+const ForkMessagesSchema = obj(
+  {
+    messages: arr(obj({ entryId: str(), text: str() }, { open: true })),
+  },
+  { open: true },
+);
+const ForkDataSchema = obj({ cancelled: bool() }, { open: true });
 
-const ObservationSchema = Type.Object({
-  at: Type.Number(),
-  pid: Type.Number(),
-  kind: Type.String(),
-  role: Type.Optional(Type.String()),
-  action: Type.Optional(Type.String()),
-  channel: Type.Optional(Type.String()),
-  data: Type.Optional(Type.String()),
-  reason: Type.Optional(Type.String()),
-  sessionId: Type.Optional(Type.String()),
-  prompt: Type.Optional(Type.String()),
-  resetAt: Type.Optional(Type.Number()),
-});
+const ObservationSchema = obj(
+  {
+    at: num(),
+    pid: num(),
+    kind: str(),
+    role: opt(str()),
+    action: opt(str()),
+    channel: opt(str()),
+    data: opt(str()),
+    reason: opt(str()),
+    sessionId: opt(str()),
+    prompt: opt(str()),
+    resetAt: opt(num()),
+  },
+  { open: true },
+);
 type Observation = Static<typeof ObservationSchema>;
 
-const EventDataSchema = Type.Object({ id: Type.String() });
-const UsageEventSchema = Type.Object({ agentId: Type.String(), status: Type.String() });
+const EventDataSchema = obj({ id: str() }, { open: true });
+const UsageEventSchema = obj({ agentId: str(), status: str() }, { open: true });
 
-const SessionLineSchema = Type.Object({
-  type: Type.String(),
-  customType: Type.Optional(Type.String()),
-  data: Type.Optional(Type.Unknown()),
-});
-const SessionHeaderSchema = Type.Object({
-  type: Type.Literal("session"),
-  id: Type.String(),
-  parentSession: Type.Optional(Type.String()),
-});
-const MessageLineSchema = Type.Object({
-  type: Type.Literal("message"),
-  message: Type.Object({
-    role: Type.String(),
-    content: Type.Union([
-      Type.String(),
-      Type.Array(Type.Object({ type: Type.String(), text: Type.Optional(Type.String()) })),
-    ]),
-  }),
-});
+const SessionLineSchema = obj(
+  {
+    type: str(),
+    customType: opt(str()),
+    data: opt(unknown()),
+  },
+  { open: true },
+);
+const SessionHeaderSchema = obj(
+  {
+    type: lit("session"),
+    id: str(),
+    parentSession: opt(str()),
+  },
+  { open: true },
+);
+const MessageLineSchema = obj(
+  {
+    type: lit("message"),
+    message: obj(
+      {
+        role: str(),
+        content: union([str(), arr(obj({ type: str(), text: opt(str()) }, { open: true }))]),
+      },
+      { open: true },
+    ),
+  },
+  { open: true },
+);
 
 /** Only the fixed journal-contract names this harness asserts on. */
-const JournalDataSchema = Type.Object({
-  v: Type.Literal(1),
-  rootSessionId: Type.String(),
-  at: Type.Number(),
-  suspended: Type.Boolean(),
-  agent: Type.Object({
-    id: Type.String(),
-    handle: Type.Optional(Type.String()),
-    status: Type.String(),
-    sessionFile: Type.Optional(Type.String()),
-    revivals: Type.Number(),
-    usageWait: Type.Optional(Type.Object({ resetAt: Type.Optional(Type.Number()) })),
-  }),
-});
+const JournalDataSchema = obj(
+  {
+    v: lit(1),
+    rootSessionId: str(),
+    at: num(),
+    suspended: bool(),
+    agent: obj(
+      {
+        id: str(),
+        handle: opt(str()),
+        status: str(),
+        sessionFile: opt(str()),
+        revivals: num(),
+        usageWait: opt(obj({ resetAt: opt(num()) }, { open: true })),
+      },
+      { open: true },
+    ),
+  },
+  { open: true },
+);
 type JournalData = Static<typeof JournalDataSchema>;
 
 interface JournalEntry {

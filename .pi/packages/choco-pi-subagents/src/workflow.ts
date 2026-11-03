@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { Type, type Static } from "typebox";
-import { Value } from "typebox/value";
+import { arr, bool, compile, int, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
+import type { Static } from "@earendil-works/pi-schema";
 import {
   providerKeyFromUnavailableMessage,
   providerUnavailableMessage,
@@ -15,10 +15,11 @@ import {
  */
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
-/** Literal union of {@link THINKING_LEVELS}, so validation rejects any other level. */
+/** Enum of {@link THINKING_LEVELS}, so validation rejects any other level. */
 export function thinkingLevelSchema(description?: string) {
-  const levels = THINKING_LEVELS.map((level) => Type.Literal(level));
-  return description === undefined ? Type.Union(levels) : Type.Union(levels, { description });
+  return description === undefined
+    ? oneOf(THINKING_LEVELS)
+    : oneOf(THINKING_LEVELS, { description });
 }
 
 const STEP_ID_PATTERN = "^[A-Za-z][A-Za-z0-9_-]{0,63}$";
@@ -28,60 +29,57 @@ const TEMPLATE_REFERENCE =
 /** Maximum rendered characters contributed by one upstream-output reference. */
 export const WORKFLOW_REFERENCE_MAX_CHARS = 32_000;
 
-export const WorkflowStepSchema = Type.Object(
-  {
-    id: Type.String({
-      pattern: STEP_ID_PATTERN,
-      description: "Unique step id (letters, digits, underscore, hyphen; starts with a letter).",
+export const WorkflowStepSchema = obj({
+  id: str({
+    pattern: STEP_ID_PATTERN,
+    description: "Unique step id (letters, digits, underscore, hyphen; starts with a letter).",
+  }),
+  subagent_type: str({ description: "Enabled agent type that executes this step." }),
+  prompt: str({
+    description: "Step prompt. Upstream output references use {{steps.<id>.output}}.",
+  }),
+  needs: opt(
+    arr(str({ pattern: STEP_ID_PATTERN }), {
+      uniqueItems: true,
+      description: "Step ids that must settle before this step starts.",
     }),
-    subagent_type: Type.String({ description: "Enabled agent type that executes this step." }),
-    prompt: Type.String({
-      description: "Step prompt. Upstream output references use {{steps.<id>.output}}.",
+  ),
+  model: opt(str({ description: "Optional model override." })),
+  thinking: opt(thinkingLevelSchema()),
+  fast_mode: opt(bool({ description: "Request fast mode for this step." })),
+  daybreak: opt(bool({ description: "Request Daybreak for this step." })),
+  max_turns: opt(
+    int({ minimum: 1, maximum: Number.MAX_VALUE, description: "Per-step turn limit override." }),
+  ),
+  timeout_ms: opt(
+    int({
+      minimum: 1,
+      maximum: Number.MAX_VALUE,
+      description: "Per-step wall-clock timeout. Omit for no timeout.",
     }),
-    needs: Type.Optional(
-      Type.Array(Type.String({ pattern: STEP_ID_PATTERN }), {
-        uniqueItems: true,
-        description: "Step ids that must settle before this step starts.",
-      }),
-    ),
-    model: Type.Optional(Type.String({ description: "Optional model override." })),
-    thinking: Type.Optional(thinkingLevelSchema()),
-    fast_mode: Type.Optional(Type.Boolean({ description: "Request fast mode for this step." })),
-    daybreak: Type.Optional(Type.Boolean({ description: "Request Daybreak for this step." })),
-    max_turns: Type.Optional(
-      Type.Integer({ minimum: 1, description: "Per-step turn limit override." }),
-    ),
-    timeout_ms: Type.Optional(
-      Type.Integer({
-        minimum: 1,
-        description: "Per-step wall-clock timeout. Omit for no timeout.",
-      }),
-    ),
-    isolation: Type.Optional(Type.Union([Type.Literal("worktree"), Type.Literal("off")])),
-    continue_on_error: Type.Optional(
-      Type.Boolean({
-        description:
-          "Continue scheduling dependent steps if this step fails. Default: false (fail fast).",
-      }),
-    ),
-  },
-  { additionalProperties: false },
-);
+  ),
+  isolation: opt(oneOf(["worktree", "off"])),
+  continue_on_error: opt(
+    bool({
+      description:
+        "Continue scheduling dependent steps if this step fails. Default: false (fail fast).",
+    }),
+  ),
+});
 
 /** The single JSON definition accepted by workflow_run and the graph validator. */
-export const WorkflowDefinitionSchema = Type.Object(
-  {
-    name: Type.String({ minLength: 1, maxLength: 120 }),
-    dynamic: Type.Optional(
-      Type.Boolean({
-        description:
-          "Keep the workflow open while idle so workflow_update can add steps based on results.",
-      }),
-    ),
-    steps: Type.Array(WorkflowStepSchema, { minItems: 1 }),
-  },
-  { additionalProperties: false },
-);
+export const WorkflowDefinitionSchema = obj({
+  name: str({ minLength: 1, maxLength: 120 }),
+  dynamic: opt(
+    bool({
+      description:
+        "Keep the workflow open while idle so workflow_update can add steps based on results.",
+    }),
+  ),
+  steps: arr(WorkflowStepSchema, { minItems: 1 }),
+});
+
+const workflowDefinitionValidator = compile(WorkflowDefinitionSchema);
 
 export type WorkflowStepDefinition = Static<typeof WorkflowStepSchema>;
 export type WorkflowDefinition = Static<typeof WorkflowDefinitionSchema>;
@@ -164,9 +162,9 @@ type WorkflowBoundaryValue =
   | { [key: string]: WorkflowBoundaryValue };
 
 function parseWorkflowDefinition(input: WorkflowBoundaryValue): WorkflowDefinition {
-  if (Value.Check(WorkflowDefinitionSchema, input)) return structuredClone(input);
-  for (const error of Value.Errors(WorkflowDefinitionSchema, input)) {
-    const path = error.instancePath || "/";
+  if (workflowDefinitionValidator.check(input)) return structuredClone(input);
+  for (const error of workflowDefinitionValidator.errors(input)) {
+    const path = error.path || "/";
     throw new Error(`Invalid workflow definition: ${path}: ${error.message}`);
   }
   throw new Error("Invalid workflow definition: invalid workflow definition");

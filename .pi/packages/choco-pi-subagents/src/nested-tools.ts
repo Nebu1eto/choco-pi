@@ -6,7 +6,8 @@ import {
   type ExtensionContext,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { bool, int, num, obj, opt, str } from "@earendil-works/pi-schema";
+import { hostParams } from "./schema-bridge.ts";
 import type { QueuedInputDisposition } from "./agent-message.ts";
 import {
   buildAgentRegistry,
@@ -346,80 +347,94 @@ export async function createNestedSubagentTools(
       "Launch a child-safe nested subagent for bounded delegated work. " +
       "Only use agent types allowed by this parent agent; nesting is depth-limited. Allowed types:\n" +
       describeAllowedRoles(initialRegistry),
-    parameters: Type.Object({
-      prompt: Type.String({ description: "Self-contained task for the nested agent." }),
-      description: Type.String({ description: "Short 3-5 word task description." }),
-      name: Type.Optional(
-        Type.String({
-          description:
-            "Callers SHOULD name every spawn with a distinct short kebab-case goal label: `role-goal`, one to three dash-joined words (e.g. `implementer-limits-core` or `reviewer-e2e-validation`). It becomes the alias, agent_message/steering address, and fleet label. With `resume`, supplying `name` explicitly renames that existing alias; omitting `name` preserves it. Collisions are globally auto-numbered, and allowed characters are letters, digits, `_`, and `-`.",
-        }),
+    parameters: hostParams(
+      obj(
+        {
+          prompt: str({ description: "Self-contained task for the nested agent." }),
+          description: str({ description: "Short 3-5 word task description." }),
+          name: opt(
+            str({
+              description:
+                "Callers SHOULD name every spawn with a distinct short kebab-case goal label: `role-goal`, one to three dash-joined words (e.g. `implementer-limits-core` or `reviewer-e2e-validation`). It becomes the alias, agent_message/steering address, and fleet label. With `resume`, supplying `name` explicitly renames that existing alias; omitting `name` preserves it. Collisions are globally auto-numbered, and allowed characters are letters, digits, `_`, and `-`.",
+            }),
+          ),
+          subagent_type: str({
+            description: `Allowed nested agent type. Available: ${availableIn(initialRegistry).join(", ") || "none"}.`,
+          }),
+          model: opt(
+            str({
+              description:
+                "provider/model. Required for a fresh spawn unless requireExplicitModel is off; overrides the agent definition's model unless it sets model_locked. With resume: optional; a different model switches the child first.",
+            }),
+          ),
+          model_override_reason: opt(
+            str({
+              description:
+                "Required when model is a Flagship-tier model and the role's declared model is not Flagship; state the model-guidance reason.",
+            }),
+          ),
+          thinking: opt(
+            thinkingLevelSchema(
+              "Thinking level. Required for a fresh spawn unless requireExplicitModel is off; overrides the agent definition's thinking unless it sets model_locked.",
+            ),
+          ),
+          max_turns: opt(
+            num({
+              minimum: 1,
+              maximum: Number.MAX_VALUE,
+              description: "Applies unless the agent definition pins it.",
+            }),
+          ),
+          timeout_ms: opt(
+            int({
+              minimum: 1,
+              maximum: Number.MAX_VALUE,
+              description: "Per-run wall-clock budget in milliseconds.",
+            }),
+          ),
+          max_tool_calls: opt(
+            int({
+              minimum: 1,
+              maximum: Number.MAX_VALUE,
+              description: "Per-run completed tool-call cap.",
+            }),
+          ),
+          max_tokens: opt(
+            int({
+              minimum: 1,
+              maximum: Number.MAX_VALUE,
+              description:
+                "Omit unless the user sets a budget; the first request alone costs roughly 15–25k tokens.",
+            }),
+          ),
+          idle_timeout_ms: opt(
+            int({
+              minimum: 1,
+              maximum: Number.MAX_VALUE,
+              description:
+                "Tool-inactivity interval before one conclusion steering request, then watchdog stop.",
+            }),
+          ),
+          run_in_background: opt(
+            bool({ description: "Applies unless the agent definition pins it." }),
+          ),
+          resume: opt(
+            str({
+              description:
+                "Resume a nested agent owned by this parent. Supplying `name` explicitly renames its alias; omitting `name` preserves it.",
+            }),
+          ),
+          isolated: opt(bool({ description: "Applies unless the agent definition pins it." })),
+          inherit_context: opt(
+            bool({ description: "Applies unless the agent definition pins it." }),
+          ),
+          fast_mode: opt(bool({ description: "Request fast mode for this run." })),
+          daybreak: opt(bool({ description: "Request Daybreak for this run." })),
+          ...isolationParam(isWorktreeIsolationEnabled()),
+        },
+        { open: true },
       ),
-      subagent_type: Type.String({
-        description: `Allowed nested agent type. Available: ${availableIn(initialRegistry).join(", ") || "none"}.`,
-      }),
-      model: Type.Optional(
-        Type.String({
-          description:
-            "provider/model. Required for a fresh spawn unless requireExplicitModel is off; overrides the agent definition's model unless it sets model_locked. With resume: optional; a different model switches the child first.",
-        }),
-      ),
-      model_override_reason: Type.Optional(
-        Type.String({
-          description:
-            "Required when model is a Flagship-tier model and the role's declared model is not Flagship; state the model-guidance reason.",
-        }),
-      ),
-      thinking: Type.Optional(
-        thinkingLevelSchema(
-          "Thinking level. Required for a fresh spawn unless requireExplicitModel is off; overrides the agent definition's thinking unless it sets model_locked.",
-        ),
-      ),
-      max_turns: Type.Optional(
-        Type.Number({ minimum: 1, description: "Applies unless the agent definition pins it." }),
-      ),
-      timeout_ms: Type.Optional(
-        Type.Integer({
-          minimum: 1,
-          description: "Per-run wall-clock budget in milliseconds.",
-        }),
-      ),
-      max_tool_calls: Type.Optional(
-        Type.Integer({ minimum: 1, description: "Per-run completed tool-call cap." }),
-      ),
-      max_tokens: Type.Optional(
-        Type.Integer({
-          minimum: 1,
-          description:
-            "Omit unless the user sets a budget; the first request alone costs roughly 15–25k tokens.",
-        }),
-      ),
-      idle_timeout_ms: Type.Optional(
-        Type.Integer({
-          minimum: 1,
-          description:
-            "Tool-inactivity interval before one conclusion steering request, then watchdog stop.",
-        }),
-      ),
-      run_in_background: Type.Optional(
-        Type.Boolean({ description: "Applies unless the agent definition pins it." }),
-      ),
-      resume: Type.Optional(
-        Type.String({
-          description:
-            "Resume a nested agent owned by this parent. Supplying `name` explicitly renames its alias; omitting `name` preserves it.",
-        }),
-      ),
-      isolated: Type.Optional(
-        Type.Boolean({ description: "Applies unless the agent definition pins it." }),
-      ),
-      inherit_context: Type.Optional(
-        Type.Boolean({ description: "Applies unless the agent definition pins it." }),
-      ),
-      fast_mode: Type.Optional(Type.Boolean({ description: "Request fast mode for this run." })),
-      daybreak: Type.Optional(Type.Boolean({ description: "Request Daybreak for this run." })),
-      ...isolationParam(isWorktreeIsolationEnabled()),
-    }),
+    ),
     execute: async (_toolCallId, params, signal, _onUpdate, ctx) => {
       if (params.resume) {
         const existing = resolveOwnedRecord(context.manager, context.parentAgentId, params.resume);
@@ -723,15 +738,20 @@ export async function createNestedSubagentTools(
     description:
       "Retrieve an owned background nested-agent result after terminal completion. The first active read returns current status; repeated active reads in that run are refused until completion. " +
       `${TERMINAL_RESULT_RETRIEVAL_GUIDANCE} ${RESULT_WAIT_MECHANICS}`,
-    parameters: Type.Object({
-      agent_id: Type.String(),
-      wait: Type.Optional(
-        Type.Boolean({
-          description:
-            "For the first active read in a run only, allow up to 5 seconds for terminal status instead of returning current status immediately. Cancellation or timeout leaves the child running and its result unconsumed. Further active reads in that generation are refused. Default: false.",
-        }),
+    parameters: hostParams(
+      obj(
+        {
+          agent_id: str(),
+          wait: opt(
+            bool({
+              description:
+                "For the first active read in a run only, allow up to 5 seconds for terminal status instead of returning current status immediately. Cancellation or timeout leaves the child running and its result unconsumed. Further active reads in that generation are refused. Default: false.",
+            }),
+          ),
+        },
+        { open: true },
       ),
-    }),
+    ),
     execute: async (_toolCallId, params, signal) => {
       const record = resolveOwnedRecord(context.manager, context.parentAgentId, params.agent_id);
       if (record === undefined) {
@@ -805,10 +825,15 @@ export async function createNestedSubagentTools(
     renderResult: delegationRenderers.renderResult,
     description:
       "Send an agent-authored MESSAGE envelope to a running or queued nested agent you own. It interrupts the agent after its current tool execution and only works while the agent is running or queued.",
-    parameters: Type.Object({
-      agent_id: Type.String(),
-      message: Type.String(),
-    }),
+    parameters: hostParams(
+      obj(
+        {
+          agent_id: str(),
+          message: str(),
+        },
+        { open: true },
+      ),
+    ),
     execute: async (_toolCallId, params) => {
       const record = resolveOwnedRecord(context.manager, context.parentAgentId, params.agent_id);
       if (record === undefined) {
@@ -869,9 +894,14 @@ export async function createNestedSubagentTools(
     name: NESTED_TOOL_NAMES[3],
     label: "Stop Nested Agent",
     description: "Stop a running or queued nested agent owned by this parent.",
-    parameters: Type.Object({
-      agent_id: Type.String(),
-    }),
+    parameters: hostParams(
+      obj(
+        {
+          agent_id: str(),
+        },
+        { open: true },
+      ),
+    ),
     execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
       const record = resolveOwnedRecord(context.manager, context.parentAgentId, params.agent_id);
       if (record === undefined) {
@@ -907,7 +937,7 @@ export async function createNestedSubagentTools(
     label: "Set Descendant Fast Mode",
     description:
       "Enable or disable fast mode for a running or queued descendant owned by this agent.",
-    parameters: Type.Object({ agent_id: Type.String(), enabled: Type.Boolean() }),
+    parameters: hostParams(obj({ agent_id: str(), enabled: bool() }, { open: true })),
     execute: async (_toolCallId, params) => {
       const record = context.manager.getRecord(params.agent_id);
       if (!ownsDescendant(context.manager, record, context.parentAgentId)) {
@@ -936,7 +966,7 @@ export async function createNestedSubagentTools(
     label: "Set Descendant Daybreak",
     description:
       "Enable or disable Daybreak for a running or queued descendant owned by this agent.",
-    parameters: Type.Object({ agent_id: Type.String(), enabled: Type.Boolean() }),
+    parameters: hostParams(obj({ agent_id: str(), enabled: bool() }, { open: true })),
     execute: async (_toolCallId, params) => {
       const record = context.manager.getRecord(params.agent_id);
       if (!ownsDescendant(context.manager, record, context.parentAgentId)) {

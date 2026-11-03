@@ -4,13 +4,13 @@
  */
 
 import { access, open, readFile, unlink } from "node:fs/promises";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { compile, lit, obj, oneOf } from "@earendil-works/pi-schema";
 
-const missingFileSchema = Type.Object({
-  code: Type.Union([Type.Literal("ENOENT"), Type.Literal("ENOTDIR")]),
-});
-const alreadyExistsSchema = Type.Object({ code: Type.Literal("EEXIST") });
+// Node fs errors carry an enumerable own `code`, which is what pi-schema sees.
+const isMissingFileError = compile(
+  obj({ code: oneOf(["ENOENT", "ENOTDIR"]) }, { open: true }),
+).check;
+const isAlreadyExistsError = compile(obj({ code: lit("EEXIST") }, { open: true })).check;
 
 /** Whether `path` exists (following symlinks), without blocking — the async form of `existsSync`. */
 export async function pathExists(path: string): Promise<boolean> {
@@ -30,7 +30,7 @@ export async function readTextIfExists(path: string): Promise<string | undefined
   try {
     return await readFile(path, "utf-8");
   } catch (error) {
-    if (Value.Check(missingFileSchema, error)) return undefined;
+    if (isMissingFileError(error)) return undefined;
     throw error;
   }
 }
@@ -46,7 +46,7 @@ export async function createExclusiveFile(path: string, content: string): Promis
   try {
     handle = await open(path, "wx");
   } catch (error) {
-    if (Value.Check(alreadyExistsSchema, error)) return false;
+    if (isAlreadyExistsError(error)) return false;
     throw error;
   }
   try {

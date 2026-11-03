@@ -1,14 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-import { Value } from "typebox/value";
+import { compile } from "@earendil-works/pi-schema";
 import {
   buildInterruptionPrompt,
   buildJournalData,
   JOURNAL_TEXT_CAP_BYTES,
   type JournalAgentSnapshot,
   journalClassificationOf,
+  isJournalAgentSnapshot,
   journalStatusOf,
+  projectJournalDataForWrite,
   reduceJournal,
   startupDisposition,
   SUBAGENT_JOURNAL_ENTRY,
@@ -18,6 +20,7 @@ import {
 } from "../src/revival-journal.ts";
 
 const ROOT = "root-session";
+const isJournalData = compile(SubagentJournalDataSchema).check;
 
 function agent(overrides: Partial<JournalAgentSnapshot> = {}): JournalAgentSnapshot {
   return {
@@ -74,7 +77,7 @@ test("buildJournalData validates, strips undefined and smuggled fields", () => {
     suspended: true,
     agent: agent({ options, handle: undefined, status: "interrupted" }),
   });
-  assert.ok(Value.Check(SubagentJournalDataSchema, built));
+  assert.ok(isJournalData(built));
   assert.deepEqual(built.agent.options, {
     maxTurns: 3,
     budgets: { maxTokens: 10 },
@@ -281,6 +284,131 @@ test("suspend steers and in-memory marker round-trip; empty steers are dropped",
   const built = data({ status: "interrupted", steers: ["later"], inMemorySession: true });
   assert.deepEqual(built.agent.steers, ["later"]);
   assert.equal(built.agent.inMemorySession, true);
-  assert.ok(Value.Check(SubagentJournalDataSchema, built));
+  assert.ok(isJournalData(built));
   assert.equal(data({ steers: [] }).agent.steers, undefined);
+});
+
+const FULL_ENTRY = {
+  v: 1,
+  rootSessionId: ROOT,
+  at: 7,
+  suspended: false,
+  agent: {
+    id: "agent-full",
+    handle: "h",
+    type: "general-purpose",
+    description: "d",
+    depth: 1,
+    status: "waiting_for_reset",
+    model: { provider: "p", id: "m" },
+    options: {
+      maxTurns: 2,
+      budgets: { timeoutMs: 1 },
+      scopedModels: ["p/m"],
+      invocation: { modelName: "m", thinking: "high" },
+    },
+    usageWait: {
+      providerKey: "p",
+      resetAt: 9,
+      classification: { kind: "quota", provider: "p", modelId: "m", confidence: "parsed" },
+      steers: ["s"],
+    },
+    worktree: { path: "/w", branch: "b", baseSha: "x", repo: "/r" },
+    revivals: 0,
+    resultConsumed: false,
+  },
+};
+
+function jsonCopy(value: JsonValue): JsonValue {
+  return JSON.parse(JSON.stringify(value));
+}
+
+test("writer projection strips unknown keys at every nesting level", () => {
+  const input = jsonCopy(FULL_ENTRY);
+  const polluted = jsonCopy({
+    ...FULL_ENTRY,
+    extra: 1,
+    agent: {
+      ...FULL_ENTRY.agent,
+      extra: [1],
+      model: { ...FULL_ENTRY.agent.model, extra: true },
+      options: {
+        ...FULL_ENTRY.agent.options,
+        extra: "x",
+        budgets: { timeoutMs: 1, extra: 2 },
+        invocation: { modelName: "m", thinking: "high", extra: 3 },
+      },
+      usageWait: {
+        ...FULL_ENTRY.agent.usageWait,
+        extra: 4,
+        classification: { ...FULL_ENTRY.agent.usageWait.classification, extra: 5 },
+      },
+      worktree: { ...FULL_ENTRY.agent.worktree, extra: 6 },
+    },
+  });
+  assert.deepEqual(projectJournalDataForWrite(polluted), input);
+});
+
+test("writer projection never repairs an invalid known field", () => {
+  const broken = jsonCopy({
+    ...FULL_ENTRY,
+    agent: {
+      ...FULL_ENTRY.agent,
+      depth: "1",
+      revivals: -1,
+      options: { maxTurns: "2", budgets: 5, invocation: { thinking: "extreme", extra: 1 } },
+      usageWait: { ...FULL_ENTRY.agent.usageWait, steers: ["ok", 5] },
+    },
+  });
+  const projected = projectJournalDataForWrite(broken);
+  assert.equal(isJournalData(projected), false);
+  assert.deepEqual(projected, {
+    ...FULL_ENTRY,
+    agent: {
+      ...FULL_ENTRY.agent,
+      depth: "1",
+      revivals: -1,
+      options: { maxTurns: "2", budgets: 5, invocation: { thinking: "extreme" } },
+      usageWait: { ...FULL_ENTRY.agent.usageWait, steers: ["ok", 5] },
+    },
+  });
+});
+
+test("buildJournalData rejects an invalid array member instead of dropping it", () => {
+  const bad: JournalAgentSnapshot = JSON.parse(
+    JSON.stringify({
+      ...FULL_ENTRY.agent,
+      usageWait: { ...FULL_ENTRY.agent.usageWait, steers: ["ok", 5] },
+    }),
+  );
+  assert.throws(
+    () => buildJournalData({ rootSessionId: ROOT, at: 1, suspended: false, agent: bad }),
+    /Invalid subagent journal entry for agent-full: \/agent\/usageWait\/steers/,
+  );
+});
+
+test("writer projection is detached and reads only own properties", () => {
+  const input = structuredClone(FULL_ENTRY);
+  const projected = projectJournalDataForWrite(input);
+  assert.deepEqual(projected, FULL_ENTRY);
+  assert.notEqual(projected, input);
+  input.agent.usageWait.steers.push("mutated");
+  input.agent.options.scopedModels.push("mutated");
+  assert.deepEqual(projected, FULL_ENTRY);
+  const inherited = Object.create({ v: 1, rootSessionId: "inherited" });
+  assert.deepEqual(projectJournalDataForWrite(inherited), {});
+});
+
+test("reader keeps accepting old and foreign entries with unknown or missing additive fields", () => {
+  // An old entry predates steers, inMemorySession and worktree.workPath/hookManaged.
+  const old = jsonCopy({ ...FULL_ENTRY, future: { nested: true } });
+  const extended = jsonCopy({
+    ...FULL_ENTRY,
+    agent: { ...FULL_ENTRY.agent, id: "agent-ext", futureField: "kept by the reader" },
+  });
+  const reduced = reduceJournal([custom(old), custom(extended)], ROOT);
+  assert.deepEqual([...reduced.keys()].sort(), ["agent-ext", "agent-full"]);
+  assert.equal(reduced.get("agent-full")?.agent.status, "waiting_for_reset");
+  assert.ok(isJournalAgentSnapshot(reduced.get("agent-ext")?.agent));
+  assert.equal(isJournalAgentSnapshot({ ...FULL_ENTRY.agent, revivals: 1.5 }), false);
 });

@@ -6,7 +6,7 @@ import type {
   ExtensionContext,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { Value } from "typebox/value";
+import { compile } from "@earendil-works/pi-schema";
 
 import subagentsExtension from "../src/index.ts";
 import { createNestedSubagentTools, type NestedAgentManager } from "../src/nested-tools.ts";
@@ -185,8 +185,9 @@ test("root Agent schema rejects an unknown thinking level", async () => {
   await withRootTools("tool-error-thinking", async (tools) => {
     const schema = tool(tools, "Agent").parameters;
     const base = { prompt: "p", description: "d", subagent_type: "implementer" };
-    assert.equal(Value.Check(schema, { ...base, thinking: "high" }), true);
-    assert.equal(Value.Check(schema, { ...base, thinking: "extreme" }), false);
+    const accepts = compile(schema).check;
+    assert.equal(accepts({ ...base, thinking: "high" }), true);
+    assert.equal(accepts({ ...base, thinking: "extreme" }), false);
   });
 });
 
@@ -263,6 +264,7 @@ test("nested Agent schema rejects an unknown thinking level", async () => {
   const agent = (await nestedTools([nestedRecord("parent")])).find((t) => t.name === "Agent");
   assert.ok(agent);
   const base = { prompt: "p", description: "d", subagent_type: "general" };
-  assert.equal(Value.Check(agent.parameters, { ...base, thinking: "max" }), true);
-  assert.equal(Value.Check(agent.parameters, { ...base, thinking: "extreme" }), false);
+  const accepts = compile(agent.parameters).check;
+  assert.equal(accepts({ ...base, thinking: "max" }), true);
+  assert.equal(accepts({ ...base, thinking: "extreme" }), false);
 });

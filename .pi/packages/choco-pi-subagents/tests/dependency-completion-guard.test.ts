@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { AgentSessionEventListener } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, compile, obj, opt, str } from "@earendil-works/pi-schema";
+import { isString } from "../src/value-guards.ts";
 import { AgentManager, type AgentManagerRunner } from "../src/agent-manager.ts";
 import { resumeAgent } from "../src/agent-runner.ts";
 import { buildRecordDetails } from "../src/delegation-render.ts";
@@ -308,15 +308,23 @@ for (const isBackground of [false, true]) {
   }
 }
 
-const PendingPayload = Type.Object({
-  pendingDependents: Type.Array(
-    Type.Object({
-      id: Type.String(),
-      handle: Type.Optional(Type.String()),
-      status: Type.String(),
-    }),
-  ),
-});
+const PendingPayload = obj(
+  {
+    pendingDependents: arr(
+      obj(
+        {
+          id: str(),
+          handle: opt(str()),
+          status: str(),
+        },
+        { open: true },
+      ),
+    ),
+  },
+  { open: true },
+);
+
+const isPendingPayload = compile(PendingPayload).check;
 
 test("root notification, failed lifecycle and root/nested fetched details retain the snapshot", async (t) => {
   const notices: string[] = [];
@@ -325,7 +333,7 @@ test("root notification, failed lifecycle and root/nested fetched details retain
   const fixture = await harness("persist", [
     async (pi) => {
       pi.sendMessage = (message) => {
-        assert.ok(Value.Check(Type.String(), message.content));
+        assert.ok(isString(message.content));
         notices.push(message.content);
       };
       pi.events.on("subagents:failed", (payload) => {
@@ -363,13 +371,13 @@ test("root notification, failed lifecycle and root/nested fetched details retain
       undefined,
       toolContext(fixture.ctx),
     );
-    assert.ok(Value.Check(PendingPayload, inline.details), JSON.stringify(inline));
+    assert.ok(isPendingPayload(inline.details), JSON.stringify(inline));
     const actual = fixture.manager();
     const record = actual.listAgents().find((item) => !item.parentAgentId);
     assert.ok(record);
     assert.equal(record.status, "error");
     assert.equal(failed.length, 1);
-    assert.ok(Value.Check(PendingPayload, failed[0]));
+    assert.ok(isPendingPayload(failed[0]));
     assert.deepEqual(failed[0].pendingDependents, record.pendingDependents);
     const fetched = fixture.session.extensionRunner.getToolDefinition("get_subagent_result");
     assert.ok(fetched);
@@ -382,7 +390,7 @@ test("root notification, failed lifecycle and root/nested fetched details retain
       undefined,
       toolContext(fixture.ctx),
     );
-    assert.ok(Value.Check(PendingPayload, result.details), JSON.stringify(result));
+    assert.ok(isPendingPayload(result.details), JSON.stringify(result));
     assert.deepEqual(result.details.pendingDependents, record.pendingDependents);
     // Nested retrieval exercises the same shared details builder with scoped ownership.
     record.parentAgentId = "outer";
@@ -407,7 +415,7 @@ test("root notification, failed lifecycle and root/nested fetched details retain
       undefined,
       toolContext(fixture.ctx),
     );
-    assert.ok(Value.Check(PendingPayload, nestedResult.details));
+    assert.ok(isPendingPayload(nestedResult.details));
     assert.deepEqual(nestedResult.details.pendingDependents, record.pendingDependents);
     // A detached run publishes a notification independently of tool batches.
     const notificationId = actual.spawn(

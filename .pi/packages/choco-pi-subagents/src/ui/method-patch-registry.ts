@@ -1,6 +1,3 @@
-import { Type } from "typebox";
-import { Value } from "typebox/value";
-
 export const SUBAGENT_METHOD_PATCH_REGISTRY = Symbol.for(
   "choco-pi-subagents.method-patch-registry",
 );
@@ -32,10 +29,8 @@ type PatchRegistry = Map<PatchAdapter, PatchRecord>;
 type PatchTargetValue = Method | PatchRegistry | undefined;
 type PatchTarget = Record<PropertyKey, PatchTargetValue>;
 
-const HostMethodSchema = Type.Function([], Type.Any());
-
 function isMethod(value: PatchTargetValue): value is Method {
-  return Value.Check(HostMethodSchema, value);
+  return value instanceof Function;
 }
 
 function registryFor(target: PatchTarget): PatchRegistry {

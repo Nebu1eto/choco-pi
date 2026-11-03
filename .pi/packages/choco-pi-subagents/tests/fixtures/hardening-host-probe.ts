@@ -10,7 +10,8 @@ import {
   type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { obj } from "@earendil-works/pi-schema";
+import { hostParams } from "../../src/schema-bridge.ts";
 
 import subagentsExtension from "../../src/index.ts";
 
@@ -345,7 +346,7 @@ export default async function hardeningHostProbe(pi: ExtensionAPI): Promise<void
     name: "hardening_child_started_barrier",
     label: "Wait for child provider",
     description: "Fixture-only barrier proving the child provider stream started.",
-    parameters: Type.Object({}),
+    parameters: hostParams(obj({}, { open: true })),
     async execute() {
       const activeOwner = generation;
       await bounded(childStarted, 2_000, "child provider did not start before fixture deadline");
@@ -362,7 +363,7 @@ export default async function hardeningHostProbe(pi: ExtensionAPI): Promise<void
     name: "hardening_parent_barrier",
     label: "Hardening parent barrier",
     description: "Fixture-only deterministic parent-busy barrier.",
-    parameters: Type.Object({}),
+    parameters: hostParams(obj({}, { open: true })),
     async execute() {
       trace("parent_barrier_started");
       // SAFETY: This process-global registry is the production extension's documented interface.

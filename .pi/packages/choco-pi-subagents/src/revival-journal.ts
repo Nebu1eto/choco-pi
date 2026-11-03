@@ -9,8 +9,20 @@
  * unclean-revival cap. Everything here is pure; the manager owns the effects.
  */
 
-import { Type, type Static } from "typebox";
-import { Value } from "typebox/value";
+import {
+  arr,
+  bool,
+  compile,
+  int,
+  lit,
+  obj,
+  oneOf,
+  opt,
+  str,
+  union,
+} from "@earendil-works/pi-schema";
+import type { Static } from "@earendil-works/pi-schema";
+import { finiteNum } from "./value-guards.ts";
 import type { AgentRecord } from "./types.ts";
 import type { UsageLimitClassification } from "./usage-limit-seam.ts";
 
@@ -28,40 +40,39 @@ export const MAX_UNCLEAN_REVIVALS = 2;
  */
 export const CAPPED_REVIVAL_ERROR = `Automatic revival stopped after ${MAX_UNCLEAN_REVIVALS} automatic revivals ended in unexpected exits; resume manually.`;
 
-const ThinkingLevelSchema = Type.Union([
-  Type.Literal("minimal"),
-  Type.Literal("low"),
-  Type.Literal("medium"),
-  Type.Literal("high"),
-  Type.Literal("xhigh"),
-  Type.Literal("max"),
-]);
+const ThinkingLevelSchema = oneOf(["minimal", "low", "medium", "high", "xhigh", "max"]);
 
-const IsolationModeSchema = Type.Union([Type.Literal("worktree"), Type.Literal("off")]);
+const IsolationModeSchema = oneOf(["worktree", "off"]);
 
-const JournalBudgetsSchema = Type.Object({
-  timeoutMs: Type.Optional(Type.Number()),
-  maxToolCalls: Type.Optional(Type.Number()),
-  maxTokens: Type.Optional(Type.Number()),
-  idleTimeoutMs: Type.Optional(Type.Number()),
-});
+const JournalBudgetsSchema = obj(
+  {
+    timeoutMs: opt(finiteNum()),
+    maxToolCalls: opt(finiteNum()),
+    maxTokens: opt(finiteNum()),
+    idleTimeoutMs: opt(finiteNum()),
+  },
+  { open: true },
+);
 
 /** Mirrors `AgentInvocation` (UI display snapshot); every field is plain data. */
-const JournalInvocationSchema = Type.Object({
-  modelName: Type.Optional(Type.String()),
-  thinking: Type.Optional(ThinkingLevelSchema),
-  maxTurns: Type.Optional(Type.Number()),
-  timeoutMs: Type.Optional(Type.Number()),
-  maxToolCalls: Type.Optional(Type.Number()),
-  maxTokens: Type.Optional(Type.Number()),
-  idleTimeoutMs: Type.Optional(Type.Number()),
-  isolated: Type.Optional(Type.Boolean()),
-  inheritContext: Type.Optional(Type.Boolean()),
-  runInBackground: Type.Optional(Type.Boolean()),
-  isolation: Type.Optional(IsolationModeSchema),
-  fastMode: Type.Optional(Type.Boolean()),
-  daybreak: Type.Optional(Type.Boolean()),
-});
+const JournalInvocationSchema = obj(
+  {
+    modelName: opt(str()),
+    thinking: opt(ThinkingLevelSchema),
+    maxTurns: opt(finiteNum()),
+    timeoutMs: opt(finiteNum()),
+    maxToolCalls: opt(finiteNum()),
+    maxTokens: opt(finiteNum()),
+    idleTimeoutMs: opt(finiteNum()),
+    isolated: opt(bool()),
+    inheritContext: opt(bool()),
+    runInBackground: opt(bool()),
+    isolation: opt(IsolationModeSchema),
+    fastMode: opt(bool()),
+    daybreak: opt(bool()),
+  },
+  { open: true },
+);
 
 /**
  * Serializable subset of the spawn/run options a revival needs to re-run the
@@ -70,120 +81,277 @@ const JournalInvocationSchema = Type.Object({
  * `reclaim`/`resumeSessionFile` (derived from the snapshot) and the live
  * `Model` object (journaled separately as `agent.model`).
  */
-export const JournalRunOptionsSchema = Type.Object({
-  maxTurns: Type.Optional(Type.Number()),
-  budgets: Type.Optional(JournalBudgetsSchema),
-  thinkingLevel: Type.Optional(ThinkingLevelSchema),
-  isolated: Type.Optional(Type.Boolean()),
-  inheritContext: Type.Optional(Type.Boolean()),
-  isolation: Type.Optional(IsolationModeSchema),
-  cwd: Type.Optional(Type.String()),
-  configCwd: Type.Optional(Type.String()),
-  isBackground: Type.Optional(Type.Boolean()),
-  /** Restricted read-only child; a revival must never widen it. */
-  readOnly: Type.Optional(Type.Boolean()),
-  sideConversation: Type.Optional(Type.Boolean()),
-  workflowId: Type.Optional(Type.String()),
-  workflowStepId: Type.Optional(Type.String()),
-  maxSubagentDepth: Type.Optional(Type.Number()),
-  /** Agent-definition transcript switch, when the caller resolved it. */
-  outputTranscript: Type.Optional(Type.Boolean()),
-  outputFile: Type.Optional(Type.String()),
-  fastModeRequested: Type.Optional(Type.Boolean()),
-  daybreakRequested: Type.Optional(Type.Union([Type.Boolean(), Type.Literal("auto")])),
-  /** Parent's scoped models (`provider/id`) at spawn; empty = unrestricted. */
-  scopedModels: Type.Optional(Type.Array(Type.String())),
-  invocation: Type.Optional(JournalInvocationSchema),
-});
+export const JournalRunOptionsSchema = obj(
+  {
+    maxTurns: opt(finiteNum()),
+    budgets: opt(JournalBudgetsSchema),
+    thinkingLevel: opt(ThinkingLevelSchema),
+    isolated: opt(bool()),
+    inheritContext: opt(bool()),
+    isolation: opt(IsolationModeSchema),
+    cwd: opt(str()),
+    configCwd: opt(str()),
+    isBackground: opt(bool()),
+    /** Restricted read-only child; a revival must never widen it. */
+    readOnly: opt(bool()),
+    sideConversation: opt(bool()),
+    workflowId: opt(str()),
+    workflowStepId: opt(str()),
+    maxSubagentDepth: opt(finiteNum()),
+    /** Agent-definition transcript switch, when the caller resolved it. */
+    outputTranscript: opt(bool()),
+    outputFile: opt(str()),
+    fastModeRequested: opt(bool()),
+    daybreakRequested: opt(union([bool(), lit("auto")])),
+    /** Parent's scoped models (`provider/id`) at spawn; empty = unrestricted. */
+    scopedModels: opt(arr(str())),
+    invocation: opt(JournalInvocationSchema),
+  },
+  { open: true },
+);
 export type JournalRunOptions = Static<typeof JournalRunOptionsSchema>;
 
 /** Copy of the root usage-limit contract's classification schema. */
-export const JournalUsageClassificationSchema = Type.Object({
-  kind: Type.Union([Type.Literal("quota"), Type.Literal("billing"), Type.Literal("transient")]),
-  provider: Type.String(),
-  modelId: Type.String(),
-  accountId: Type.Optional(Type.String()),
-  resetAt: Type.Optional(Type.Number()),
-  confidence: Type.Union([
-    Type.Literal("structured"),
-    Type.Literal("parsed"),
-    Type.Literal("inferred"),
-  ]),
-  sessionId: Type.Optional(Type.String()),
-});
+export const JournalUsageClassificationSchema = obj(
+  {
+    kind: oneOf(["quota", "billing", "transient"]),
+    provider: str(),
+    modelId: str(),
+    accountId: opt(str()),
+    resetAt: opt(finiteNum()),
+    confidence: oneOf(["structured", "parsed", "inferred"]),
+    sessionId: opt(str()),
+  },
+  { open: true },
+);
 export type JournalUsageClassification = Static<typeof JournalUsageClassificationSchema>;
 
-export const JournalAgentStatusSchema = Type.Union([
-  Type.Literal("queued"),
-  Type.Literal("running"),
-  Type.Literal("completed"),
-  Type.Literal("steered"),
-  Type.Literal("aborted"),
-  Type.Literal("stopped"),
-  Type.Literal("budget_exceeded"),
-  Type.Literal("watchdog_stopped"),
-  Type.Literal("error"),
-  Type.Literal("waiting_for_reset"),
-  Type.Literal("interrupted"),
+export const JournalAgentStatusSchema = oneOf([
+  "queued",
+  "running",
+  "completed",
+  "steered",
+  "aborted",
+  "stopped",
+  "budget_exceeded",
+  "watchdog_stopped",
+  "error",
+  "waiting_for_reset",
+  "interrupted",
 ]);
 export type JournalAgentStatus = Static<typeof JournalAgentStatusSchema>;
 
-export const JournalAgentSnapshotSchema = Type.Object({
-  id: Type.String({ minLength: 1 }),
-  handle: Type.Optional(Type.String()),
-  alias: Type.Optional(Type.String()),
-  type: Type.String(),
-  description: Type.String(),
-  parentAgentId: Type.Optional(Type.String()),
-  depth: Type.Number(),
-  status: JournalAgentStatusSchema,
-  sessionFile: Type.Optional(Type.String()),
-  model: Type.Optional(Type.Object({ provider: Type.String(), id: Type.String() })),
-  options: JournalRunOptionsSchema,
-  prompt: Type.Optional(Type.String()),
-  usageWait: Type.Optional(
-    Type.Object({
-      providerKey: Type.String(),
-      resetAt: Type.Optional(Type.Number()),
-      classification: JournalUsageClassificationSchema,
-      steers: Type.Array(Type.String()),
-    }),
-  ),
-  worktree: Type.Optional(
-    Type.Object({
-      path: Type.String(),
-      branch: Type.String(),
-      baseSha: Type.String(),
-      repo: Type.String(),
-      /** Additive: subdirectory-scoped cwd inside the worktree. */
-      workPath: Type.Optional(Type.String()),
-      /** Additive: worktree supplied by a WorktreeCreate hook. */
-      hookManaged: Type.Optional(Type.Boolean()),
-    }),
-  ),
-  revivals: Type.Integer({ minimum: 0 }),
-  resultConsumed: Type.Boolean(),
-  stoppedByUser: Type.Optional(Type.Boolean()),
-  result: Type.Optional(Type.String()),
-  error: Type.Optional(Type.String()),
-  /**
-   * Additive: steering accepted but not yet delivered when a queued or
-   * running record was suspended; the revival prompt carries them.
-   */
-  steers: Type.Optional(Type.Array(Type.String())),
-  /** Additive: the child session lived in memory (`persist_session: false`). */
-  inMemorySession: Type.Optional(Type.Boolean()),
-});
+export const JournalAgentSnapshotSchema = obj(
+  {
+    id: str({ minLength: 1 }),
+    handle: opt(str()),
+    alias: opt(str()),
+    type: str(),
+    description: str(),
+    parentAgentId: opt(str()),
+    depth: finiteNum(),
+    status: JournalAgentStatusSchema,
+    sessionFile: opt(str()),
+    model: opt(obj({ provider: str(), id: str() }, { open: true })),
+    options: JournalRunOptionsSchema,
+    prompt: opt(str()),
+    usageWait: opt(
+      obj(
+        {
+          providerKey: str(),
+          resetAt: opt(finiteNum()),
+          classification: JournalUsageClassificationSchema,
+          steers: arr(str()),
+        },
+        { open: true },
+      ),
+    ),
+    worktree: opt(
+      obj(
+        {
+          path: str(),
+          branch: str(),
+          baseSha: str(),
+          repo: str(),
+          /** Additive: subdirectory-scoped cwd inside the worktree. */
+          workPath: opt(str()),
+          /** Additive: worktree supplied by a WorktreeCreate hook. */
+          hookManaged: opt(bool()),
+        },
+        { open: true },
+      ),
+    ),
+    revivals: int({ minimum: 0, maximum: Number.MAX_VALUE }),
+    resultConsumed: bool(),
+    stoppedByUser: opt(bool()),
+    result: opt(str()),
+    error: opt(str()),
+    /**
+     * Additive: steering accepted but not yet delivered when a queued or
+     * running record was suspended; the revival prompt carries them.
+     */
+    steers: opt(arr(str())),
+    /** Additive: the child session lived in memory (`persist_session: false`). */
+    inMemorySession: opt(bool()),
+  },
+  { open: true },
+);
 export type JournalAgentSnapshot = Static<typeof JournalAgentSnapshotSchema>;
 
-export const SubagentJournalDataSchema = Type.Object({
-  v: Type.Literal(1),
-  rootSessionId: Type.String({ minLength: 1 }),
-  at: Type.Number(),
-  suspended: Type.Boolean(),
-  agent: JournalAgentSnapshotSchema,
-});
+export const SubagentJournalDataSchema = obj(
+  {
+    v: lit(1),
+    rootSessionId: str({ minLength: 1 }),
+    at: finiteNum(),
+    suspended: bool(),
+    agent: JournalAgentSnapshotSchema,
+  },
+  { open: true },
+);
 export type SubagentJournalData = Static<typeof SubagentJournalDataSchema>;
+
+// Reader acceptance: every schema above is open (unknown keys allowed), so old
+// and foreign journal entries keep loading. The writer below is stricter: it
+// strips unknown keys with `projectJournalJson` before validating.
+const subagentJournalDataValidator = compile(SubagentJournalDataSchema);
+const journalAgentSnapshotValidator = compile(JournalAgentSnapshotSchema);
+
+/** Whether `value` is a journalable agent snapshot (unknown keys allowed). */
+export const isJournalAgentSnapshot = journalAgentSnapshotValidator.check;
+
+/** Decoded JSON, the only values the writer projection ever sees. */
+type JournalJson =
+  | string
+  | number
+  | boolean
+  | null
+  | JournalJson[]
+  | { [key: string]: JournalJson };
+
+/**
+ * Known fields of a journal payload. `null` is a leaf kept verbatim (valid or
+ * not); an object lists the fields to keep when the value is a plain object.
+ */
+interface JournalWhitelist {
+  readonly [field: string]: JournalWhitelist | null;
+}
+
+const INVOCATION_FIELDS: JournalWhitelist = {
+  modelName: null,
+  thinking: null,
+  maxTurns: null,
+  timeoutMs: null,
+  maxToolCalls: null,
+  maxTokens: null,
+  idleTimeoutMs: null,
+  isolated: null,
+  inheritContext: null,
+  runInBackground: null,
+  isolation: null,
+  fastMode: null,
+  daybreak: null,
+};
+
+const RUN_OPTIONS_FIELDS: JournalWhitelist = {
+  maxTurns: null,
+  budgets: { timeoutMs: null, maxToolCalls: null, maxTokens: null, idleTimeoutMs: null },
+  thinkingLevel: null,
+  isolated: null,
+  inheritContext: null,
+  isolation: null,
+  cwd: null,
+  configCwd: null,
+  isBackground: null,
+  readOnly: null,
+  sideConversation: null,
+  workflowId: null,
+  workflowStepId: null,
+  maxSubagentDepth: null,
+  outputTranscript: null,
+  outputFile: null,
+  fastModeRequested: null,
+  daybreakRequested: null,
+  scopedModels: null,
+  invocation: INVOCATION_FIELDS,
+};
+
+const JOURNAL_DATA_FIELDS: JournalWhitelist = {
+  v: null,
+  rootSessionId: null,
+  at: null,
+  suspended: null,
+  agent: {
+    id: null,
+    handle: null,
+    alias: null,
+    type: null,
+    description: null,
+    parentAgentId: null,
+    depth: null,
+    status: null,
+    sessionFile: null,
+    model: { provider: null, id: null },
+    options: RUN_OPTIONS_FIELDS,
+    prompt: null,
+    usageWait: {
+      providerKey: null,
+      resetAt: null,
+      classification: {
+        kind: null,
+        provider: null,
+        modelId: null,
+        accountId: null,
+        resetAt: null,
+        confidence: null,
+        sessionId: null,
+      },
+      steers: null,
+    },
+    worktree: {
+      path: null,
+      branch: null,
+      baseSha: null,
+      repo: null,
+      workPath: null,
+      hookManaged: null,
+    },
+    revivals: null,
+    resultConsumed: null,
+    stoppedByUser: null,
+    result: null,
+    error: null,
+    steers: null,
+    inMemorySession: null,
+  },
+};
+
+function isJsonObject(value: JournalJson): value is { [key: string]: JournalJson } {
+  return value !== null && !Array.isArray(value) && Object(value) === value;
+}
+
+/**
+ * Hand-written replacement for `Value.Clean`: copy only the fields `whitelist`
+ * names, recursively. A known field that is invalid (wrong type, non-object
+ * where an object is expected) is kept verbatim so validation rejects the
+ * entry; nothing is coerced, defaulted or silently dropped except unknown keys.
+ * The result shares no objects with `value`.
+ */
+function projectJournalJson(value: JournalJson, whitelist: JournalWhitelist | null): JournalJson {
+  // Leaves are deep-copied so the projection never aliases its input.
+  if (whitelist === null || !isJsonObject(value)) return structuredClone(value);
+  const projected: { [key: string]: JournalJson } = {};
+  for (const [field, child] of Object.entries(whitelist)) {
+    // Own properties only: inherited names like `constructor` are never data.
+    if (!Object.hasOwn(value, field)) continue;
+    projected[field] = projectJournalJson(value[field], child);
+  }
+  return projected;
+}
+
+/** Writer projection exposed for tests: strips unknown keys without repairing known ones. */
+export function projectJournalDataForWrite(value: JournalJson): JournalJson {
+  return projectJournalJson(value, JOURNAL_DATA_FIELDS);
+}
 
 /** A reduced snapshot plus where it came from in the session file. */
 export type JournalSnapshotWithMeta = SubagentJournalData & {
@@ -249,6 +417,24 @@ export function capJournalText(text: string, sessionFile: string | undefined): s
   return bytes.subarray(0, end).toString("utf8") + truncationNote(sessionFile, end, bytes.length);
 }
 
+function pickInvocation(invocation: NonNullable<JournalRunOptions["invocation"]>) {
+  return {
+    modelName: invocation.modelName,
+    thinking: invocation.thinking,
+    maxTurns: invocation.maxTurns,
+    timeoutMs: invocation.timeoutMs,
+    maxToolCalls: invocation.maxToolCalls,
+    maxTokens: invocation.maxTokens,
+    idleTimeoutMs: invocation.idleTimeoutMs,
+    isolated: invocation.isolated,
+    inheritContext: invocation.inheritContext,
+    runInBackground: invocation.runInBackground,
+    isolation: invocation.isolation,
+    fastMode: invocation.fastMode,
+    daybreak: invocation.daybreak,
+  };
+}
+
 function pickRunOptions(options: JournalRunOptions): JournalRunOptions {
   return {
     maxTurns: options.maxTurns,
@@ -278,7 +464,7 @@ function pickRunOptions(options: JournalRunOptions): JournalRunOptions {
     fastModeRequested: options.fastModeRequested,
     daybreakRequested: options.daybreakRequested,
     scopedModels: options.scopedModels === undefined ? undefined : [...options.scopedModels],
-    invocation: options.invocation === undefined ? undefined : { ...options.invocation },
+    invocation: options.invocation === undefined ? undefined : pickInvocation(options.invocation),
   };
 }
 
@@ -344,17 +530,17 @@ export function buildJournalData(input: JournalDataInput): SubagentJournalData {
   };
   // Round-trip to drop undefined keys and prove the payload survives JSONL,
   // then strip anything a structural caller smuggled into nested objects.
-  let serialized: unknown;
+  let serialized: JournalJson;
   try {
     serialized = JSON.parse(JSON.stringify(picked));
   } catch (err) {
     throw new Error(`Subagent journal entry for ${agent.id} is not serializable`, { cause: err });
   }
-  const cleaned = Value.Clean(SubagentJournalDataSchema, serialized);
-  if (!Value.Check(SubagentJournalDataSchema, cleaned)) {
-    const first = Value.Errors(SubagentJournalDataSchema, cleaned)[0];
+  const cleaned = projectJournalJson(serialized, JOURNAL_DATA_FIELDS);
+  if (!subagentJournalDataValidator.check(cleaned)) {
+    const first = subagentJournalDataValidator.errors(cleaned)[0];
     throw new Error(
-      `Invalid subagent journal entry for ${agent.id}: ${first?.instancePath ?? ""} ${first?.message ?? "schema mismatch"}`,
+      `Invalid subagent journal entry for ${agent.id}: ${first?.path ?? ""} ${first?.message ?? "schema mismatch"}`,
     );
   }
   return cleaned;
@@ -368,10 +554,14 @@ export interface JournalEntryView {
   data?: unknown;
 }
 
-const AgentIdProbeSchema = Type.Object({
-  rootSessionId: Type.String(),
-  agent: Type.Object({ id: Type.String({ minLength: 1 }) }),
-});
+const AgentIdProbeSchema = obj(
+  {
+    rootSessionId: str(),
+    agent: obj({ id: str({ minLength: 1 }) }, { open: true }),
+  },
+  { open: true },
+);
+const agentIdProbeValidator = compile(AgentIdProbeSchema);
 
 /**
  * Reduce journal entries (pass `getEntries()`, which is file order, not the
@@ -391,12 +581,12 @@ export function reduceJournal(
   entries.forEach((entry, index) => {
     if (entry.type !== "custom" || entry.customType !== SUBAGENT_JOURNAL_ENTRY) return;
     const data = entry.data;
-    if (Value.Check(SubagentJournalDataSchema, data)) {
+    if (subagentJournalDataValidator.check(data)) {
       if (data.rootSessionId !== rootSessionId) return;
       snapshots.set(data.agent.id, { ...data, entryId: entry.id, index });
       return;
     }
-    if (Value.Check(AgentIdProbeSchema, data) && data.rootSessionId === rootSessionId) {
+    if (agentIdProbeValidator.check(data) && data.rootSessionId === rootSessionId) {
       snapshots.delete(data.agent.id);
     }
   });

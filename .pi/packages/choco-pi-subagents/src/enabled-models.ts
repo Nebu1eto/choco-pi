@@ -36,21 +36,14 @@
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import { readTextIfExists } from "./fs-async.ts";
 import type { ModelEntry } from "./model-resolver.ts";
+import { isString } from "./value-guards.ts";
 
 /** Minimal registry shape — only the methods resolveEnabledModels actually calls. */
 export interface ModelRegistryRef {
   getAll(): ModelEntry[];
   getAvailable?(): ModelEntry[];
-}
-
-const EnabledModelSchema = Type.String();
-
-function isString(value: string | number | boolean | null): value is string {
-  return Value.Check(EnabledModelSchema, value);
 }
 
 /** Paths to pi's settings.json files: [project, global] (project takes precedence). */

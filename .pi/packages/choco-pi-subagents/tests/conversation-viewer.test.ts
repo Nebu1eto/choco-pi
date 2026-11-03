@@ -16,7 +16,8 @@ import {
   initTheme,
 } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, Text, type TUI, type TuiMouseEvent } from "@earendil-works/pi-tui";
-import { Type } from "typebox";
+import { obj } from "@earendil-works/pi-schema";
+import { hostParams } from "../src/schema-bridge.ts";
 import type {
   AgentInvocation,
   AgentRecord,
@@ -705,7 +706,7 @@ test("focused tool renderers resolve historical tools and override registered an
         name: "registered-render-test",
         label: "Registered renderer",
         description: "Renderer regression fixture.",
-        parameters: Type.Object({}),
+        parameters: hostParams(obj({}, { open: true })),
         execute: async () => ({
           content: [{ type: "text", text: "Unused execution." }],
           details: undefined,

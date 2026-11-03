@@ -8,17 +8,21 @@
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, compile, obj, opt, str } from "@earendil-works/pi-schema";
 
-const fallbacksSchema = Type.Object({
-  tiers: Type.Object({
-    flagship: Type.Object({
-      primary: Type.Array(Type.String()),
-      secondary: Type.Optional(Type.Array(Type.String())),
-    }),
-  }),
-});
+const fallbacksValidator = compile(
+  obj(
+    {
+      tiers: obj(
+        {
+          flagship: obj({ primary: arr(str()), secondary: opt(arr(str())) }, { open: true }),
+        },
+        { open: true },
+      ),
+    },
+    { open: true },
+  ),
+);
 
 /** .pi/packages/choco-pi-subagents/src -> .pi/model-fallbacks.json */
 function defaultFallbacksPath(): string {
@@ -38,7 +42,7 @@ const cache = new Map<string, Promise<ReadonlySet<string>>>();
 async function readFlagship(path: string): Promise<ReadonlySet<string>> {
   try {
     const parsed: unknown = JSON.parse(await readFile(path, "utf-8"));
-    if (!Value.Check(fallbacksSchema, parsed)) return new Set();
+    if (!fallbacksValidator.check(parsed)) return new Set();
     const { primary, secondary } = parsed.tiers.flagship;
     return new Set([...primary, ...(secondary ?? [])].map(normalizeTierModel));
   } catch {

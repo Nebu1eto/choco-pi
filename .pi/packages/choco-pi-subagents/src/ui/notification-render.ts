@@ -1,6 +1,6 @@
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import { bool, compile, obj, oneOf, str } from "@earendil-works/pi-schema";
+import type { Static } from "@earendil-works/pi-schema";
 import { formatProviderLabel } from "../../../choco-pi-ui/extensions/zentui/model-display.ts";
 import { renderAgentName } from "../agent-color.ts";
 import { parseAgentMessage } from "../messaging.ts";
@@ -26,12 +26,17 @@ interface StatusPresentation {
   title: string;
 }
 
-const SubagentMessageNotificationSchema = Type.Object({
-  from: Type.String(),
-  to: Type.String(),
-  type: Type.Union([Type.Literal("MESSAGE"), Type.Literal("TASK"), Type.Literal("FINAL")]),
-  queued: Type.Boolean(),
-});
+// Open object: extra event fields are ignored, as before.
+const SubagentMessageNotificationSchema = obj(
+  {
+    from: str(),
+    to: str(),
+    type: oneOf(["MESSAGE", "TASK", "FINAL"]),
+    queued: bool(),
+  },
+  { open: true },
+);
+const isSubagentMessageNotification = compile(SubagentMessageNotificationSchema).check;
 
 export type SubagentMessageNotification = Static<typeof SubagentMessageNotificationSchema>;
 type SubagentEventPayload = Parameters<Parameters<ExtensionAPI["events"]["on"]>[1]>[0];
@@ -40,7 +45,7 @@ type SubagentEventPayload = Parameters<Parameters<ExtensionAPI["events"]["on"]>[
 export function parseSubagentMessageNotification(
   payload: SubagentEventPayload,
 ): SubagentMessageNotification | undefined {
-  return Value.Check(SubagentMessageNotificationSchema, payload) ? payload : undefined;
+  return isSubagentMessageNotification(payload) ? payload : undefined;
 }
 
 /** Compact notification for agent_message traffic (never steer events). */

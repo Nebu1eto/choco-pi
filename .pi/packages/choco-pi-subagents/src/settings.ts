@@ -5,12 +5,11 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import { NO_FALLBACK } from "./agent-types.ts";
 import { readTextIfExists } from "./fs-async.ts";
 import { MAX_CONCURRENT_SANITY_CAP, SUBAGENT_DEPTH_CEILING } from "./limits.ts";
 import type { AgentMentionMode, JoinMode, WidgetMode } from "./types.ts";
+import { isBoolean, isFiniteNumber, isString } from "./value-guards.ts";
 
 export interface SubagentsSettings {
   /** Maximum concurrent background agents. 0 = unlimited, with a sanity cap of 1024. */
@@ -218,24 +217,20 @@ type JsonPrimitive = string | number | boolean | null;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 type JsonObject = { [key: string]: JsonValue };
 
-const JsonNumberSchema = Type.Number();
-const JsonBooleanSchema = Type.Boolean();
-const JsonStringSchema = Type.String();
-
 function isJsonObject(value: JsonValue): value is JsonObject {
   return value !== null && !Array.isArray(value) && Object(value) === value;
 }
 
 function asNumber(value: JsonValue | undefined): number | undefined {
-  return Value.Check(JsonNumberSchema, value) ? value : undefined;
+  return isFiniteNumber(value) ? value : undefined;
 }
 
 function asBoolean(value: JsonValue | undefined): boolean | undefined {
-  return Value.Check(JsonBooleanSchema, value) ? value : undefined;
+  return isBoolean(value) ? value : undefined;
 }
 
 function asString(value: JsonValue | undefined): string | undefined {
-  return Value.Check(JsonStringSchema, value) ? value : undefined;
+  return isString(value) ? value : undefined;
 }
 
 function boundedInteger(

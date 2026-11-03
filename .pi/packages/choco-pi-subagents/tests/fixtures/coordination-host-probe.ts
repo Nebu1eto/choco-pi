@@ -15,8 +15,8 @@ import {
   type ToolCall,
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { compile, lit, obj, str } from "@earendil-works/pi-schema";
+import { hostParams } from "../../src/schema-bridge.ts";
 
 import subagentsExtension from "../../src/index.ts";
 import { parseSubagentMessageNotification } from "../../src/ui/notification-render.ts";
@@ -28,10 +28,15 @@ if (!TRACE_PATH) {
 const tracePath = TRACE_PATH;
 const marker = `coordination-${randomUUID()}`;
 const childAlias = "coordination-host-child";
-const CompletedEventSchema = Type.Object({
-  id: Type.String(),
-  status: Type.Literal("completed"),
-});
+const isCompletedEvent = compile(
+  obj(
+    {
+      id: str(),
+      status: lit("completed"),
+    },
+    { open: true },
+  ),
+).check;
 
 type TraceValue = string | number | boolean | undefined;
 type Deferred = { promise: Promise<void>; resolve: () => void };
@@ -381,7 +386,7 @@ export default async function coordinationHostProbe(pi: ExtensionAPI): Promise<v
     });
   });
   completionUnsubscribe = pi.events.on("subagents:completed", (eventData) => {
-    if (!Value.Check(CompletedEventSchema, eventData)) return;
+    if (!isCompletedEvent(eventData)) return;
     const record = managerRecord(eventData.id);
     if (
       record.alias !== childAlias ||
@@ -432,7 +437,7 @@ export default async function coordinationHostProbe(pi: ExtensionAPI): Promise<v
     name: "coordination_delivery_barrier",
     label: "Coordination delivery barrier",
     description: "Wait for the fixture child's actual agent_message send to the root session.",
-    parameters: Type.Object({ agent_id: Type.String() }),
+    parameters: hostParams(obj({ agent_id: str() }, { open: true })),
     async execute(_toolCallId, params) {
       const id = params.agent_id;
       const record = managerRecord(id);
@@ -459,7 +464,7 @@ export default async function coordinationHostProbe(pi: ExtensionAPI): Promise<v
     name: "coordination_settlement_barrier",
     label: "Coordination settlement barrier",
     description: "Wait for fixture-child settlement and its actual terminal-notification send.",
-    parameters: Type.Object({ agent_id: Type.String() }),
+    parameters: hostParams(obj({ agent_id: str() }, { open: true })),
     async execute(_toolCallId, params) {
       const id = params.agent_id;
       if (childId !== id) throw new Error("settlement barrier child ID mismatch");

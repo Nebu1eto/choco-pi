@@ -31,8 +31,8 @@ import {
   Spacer,
   Text,
 } from "@earendil-works/pi-tui";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, bool, compile, int, num, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
+import { hostParams } from "./schema-bridge.ts";
 import { abortable } from "./abortable.ts";
 import { buildLifecycleMetadata, finalReportSummary } from "./lifecycle-event.ts";
 import {
@@ -1433,8 +1433,8 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         (entry) => entry.type === "custom" && entry.customType === "subagent-notification-pending",
       );
     const pendingData = pendingEntry?.type === "custom" ? pendingEntry.data : undefined;
-    const pendingSchema = Type.Object({ keys: Type.Array(Type.String()) });
-    const pendingKeys = Value.Check(pendingSchema, pendingData) ? pendingData.keys : [];
+    const isPendingNotifications = compile(obj({ keys: arr(str()) }, { open: true })).check;
+    const pendingKeys = isPendingNotifications(pendingData) ? pendingData.keys : [];
     notificationGate.start(
       ctx.sessionManager.getSessionId(),
       pendingKeys.filter((key) => {
@@ -2322,11 +2322,11 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   // The schedule parameter is gated on `schedulingEnabled` (read once
   // at registration; flipping the setting later requires next pi session for
   // the schema to update). Defining the shape once and spreading it via Partial
-  // preserves Type.Object's inference when present and produces a
+  // preserves obj()'s inference when present and produces a
   // `schedule`-free schema when absent — zero LLM-context cost in disabled mode.
   const scheduleSchemaFields = {
-    schedule: Type.Optional(
-      Type.String({
+    schedule: opt(
+      str({
         description:
           "Schedule for later; refused with run_in_background:false; incompatible with inherit_context/resume. Accepts cron, interval, +delay, or ISO.",
       }),
@@ -2359,107 +2359,117 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       "When an agent runs in the background, you will be notified on completion — do not poll or sleep waiting for it. Continue with other work instead.",
       "Trust but verify: an agent's summary describes intent, not outcome. When an agent writes or edits code, check the actual changes before reporting work as done.",
     ],
-    parameters: Type.Object({
-      prompt: Type.String({
-        description: "The task for the agent to perform.",
-      }),
-      description: Type.String({
-        description: "A short (3-5 word) description of the task (shown in UI).",
-      }),
-      name: Type.Optional(
-        Type.String({
-          description: "Short kebab-case alias; with resume, renames the existing alias.",
-        }),
+    parameters: hostParams(
+      obj(
+        {
+          prompt: str({
+            description: "The task for the agent to perform.",
+          }),
+          description: str({
+            description: "A short (3-5 word) description of the task (shown in UI).",
+          }),
+          name: opt(
+            str({
+              description: "Short kebab-case alias; with resume, renames the existing alias.",
+            }),
+          ),
+          subagent_type: str({
+            description: `Agent type. Available: ${getAvailableTypes().join(", ")}.`,
+          }),
+          model: opt(
+            str({
+              description:
+                'Model as "provider/modelId" or a fuzzy name. Required for a fresh spawn unless requireExplicitModel is off; choose it per .pi/model-guidance.md. Overrides the agent definition\'s model unless it sets model_locked. With resume: optional; a different model switches a usage-limited child first.',
+            }),
+          ),
+          model_override_reason: opt(
+            str({
+              description:
+                "Required when model is a Flagship-tier model and the role's declared model is not Flagship; state the model-guidance reason.",
+            }),
+          ),
+          thinking: opt(
+            thinkingLevelSchema(
+              "Thinking level. Required for a fresh spawn unless requireExplicitModel is off. Overrides the agent definition's thinking unless it sets model_locked.",
+            ),
+          ),
+          max_turns: opt(
+            num({
+              description:
+                "Maximum agentic turns; applies unless the agent definition pins it. Omit for unlimited (default).",
+              minimum: 1,
+              maximum: Number.MAX_VALUE,
+            }),
+          ),
+          timeout_ms: opt(
+            int({
+              minimum: 1,
+              maximum: Number.MAX_VALUE,
+              description: "Wall-clock run budget in milliseconds.",
+            }),
+          ),
+          max_tool_calls: opt(
+            int({
+              minimum: 1,
+              maximum: Number.MAX_VALUE,
+              description: "Completed tool-call cap for this run.",
+            }),
+          ),
+          max_tokens: opt(
+            int({
+              minimum: 1,
+              maximum: Number.MAX_VALUE,
+              description:
+                "Omit unless the user sets a budget; the first request alone costs roughly 15–25k tokens.",
+            }),
+          ),
+          idle_timeout_ms: opt(
+            int({
+              minimum: 1,
+              maximum: Number.MAX_VALUE,
+              description: "Inactivity interval before conclusion steering and watchdog stop.",
+            }),
+          ),
+          run_in_background: opt(
+            bool({
+              description:
+                "Default true: return an ID and notify on completion. false blocks until the agent finishes; use it only when the user asks. Applies unless the agent definition pins it.",
+            }),
+          ),
+          resume: opt(
+            str({
+              description:
+                "Finished agent ID to resume; name optionally renames its alias; model switches it first (continue a usage-limited child on another model).",
+            }),
+          ),
+          isolated: opt(
+            bool({
+              description:
+                "If true, agent gets no extension/MCP tools — only built-in tools. Applies unless the agent definition pins it.",
+            }),
+          ),
+          inherit_context: opt(
+            bool({
+              description:
+                "If true, fork parent conversation into the agent. Default: false (fresh context). Applies unless the agent definition pins it.",
+            }),
+          ),
+          fast_mode: opt(
+            bool({
+              description: "Request fast mode for this run; defaults to the parent request.",
+            }),
+          ),
+          daybreak: opt(
+            bool({
+              description: "Request Daybreak for this run; defaults to the parent request.",
+            }),
+          ),
+          ...isolationParam(isWorktreeIsolationEnabled()),
+          ...scheduleParam,
+        },
+        { open: true },
       ),
-      subagent_type: Type.String({
-        description: `Agent type. Available: ${getAvailableTypes().join(", ")}.`,
-      }),
-      model: Type.Optional(
-        Type.String({
-          description:
-            'Model as "provider/modelId" or a fuzzy name. Required for a fresh spawn unless requireExplicitModel is off; choose it per .pi/model-guidance.md. Overrides the agent definition\'s model unless it sets model_locked. With resume: optional; a different model switches a usage-limited child first.',
-        }),
-      ),
-      model_override_reason: Type.Optional(
-        Type.String({
-          description:
-            "Required when model is a Flagship-tier model and the role's declared model is not Flagship; state the model-guidance reason.",
-        }),
-      ),
-      thinking: Type.Optional(
-        thinkingLevelSchema(
-          "Thinking level. Required for a fresh spawn unless requireExplicitModel is off. Overrides the agent definition's thinking unless it sets model_locked.",
-        ),
-      ),
-      max_turns: Type.Optional(
-        Type.Number({
-          description:
-            "Maximum agentic turns; applies unless the agent definition pins it. Omit for unlimited (default).",
-          minimum: 1,
-        }),
-      ),
-      timeout_ms: Type.Optional(
-        Type.Integer({
-          minimum: 1,
-          description: "Wall-clock run budget in milliseconds.",
-        }),
-      ),
-      max_tool_calls: Type.Optional(
-        Type.Integer({
-          minimum: 1,
-          description: "Completed tool-call cap for this run.",
-        }),
-      ),
-      max_tokens: Type.Optional(
-        Type.Integer({
-          minimum: 1,
-          description:
-            "Omit unless the user sets a budget; the first request alone costs roughly 15–25k tokens.",
-        }),
-      ),
-      idle_timeout_ms: Type.Optional(
-        Type.Integer({
-          minimum: 1,
-          description: "Inactivity interval before conclusion steering and watchdog stop.",
-        }),
-      ),
-      run_in_background: Type.Optional(
-        Type.Boolean({
-          description:
-            "Default true: return an ID and notify on completion. false blocks until the agent finishes; use it only when the user asks. Applies unless the agent definition pins it.",
-        }),
-      ),
-      resume: Type.Optional(
-        Type.String({
-          description:
-            "Finished agent ID to resume; name optionally renames its alias; model switches it first (continue a usage-limited child on another model).",
-        }),
-      ),
-      isolated: Type.Optional(
-        Type.Boolean({
-          description:
-            "If true, agent gets no extension/MCP tools — only built-in tools. Applies unless the agent definition pins it.",
-        }),
-      ),
-      inherit_context: Type.Optional(
-        Type.Boolean({
-          description:
-            "If true, fork parent conversation into the agent. Default: false (fresh context). Applies unless the agent definition pins it.",
-        }),
-      ),
-      fast_mode: Type.Optional(
-        Type.Boolean({
-          description: "Request fast mode for this run; defaults to the parent request.",
-        }),
-      ),
-      daybreak: Type.Optional(
-        Type.Boolean({
-          description: "Request Daybreak for this run; defaults to the parent request.",
-        }),
-      ),
-      ...isolationParam(isWorktreeIsolationEnabled()),
-      ...scheduleParam,
-    }),
+    ),
 
     // ---- Custom rendering: Claude Code style ----
 
@@ -3297,7 +3307,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       label: "Run Workflow",
       description: "Launch a dependency-aware workflow of subagents.",
       promptSnippet: "Launch a dynamic DAG workflow of subagents",
-      parameters: WorkflowDefinitionSchema,
+      parameters: hostParams(WorkflowDefinitionSchema),
       execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
         if (!(await refreshAgentsForSession())) {
           return errorResult(
@@ -3331,13 +3341,12 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       description:
         "Add, replace, or finish pending workflow steps; requires steps or finish: true.",
       promptSnippet: "Adjust a running subagent workflow",
-      parameters: Type.Object(
-        {
-          workflow_id: Type.String(),
-          steps: Type.Optional(Type.Array(WorkflowStepSchema, { minItems: 1 })),
-          finish: Type.Optional(Type.Boolean()),
-        },
-        { additionalProperties: false },
+      parameters: hostParams(
+        obj({
+          workflow_id: str(),
+          steps: opt(arr(WorkflowStepSchema, { minItems: 1 })),
+          finish: opt(bool()),
+        }),
       ),
       execute: async (_toolCallId, params) => {
         if (!(await refreshAgentsForSession())) {
@@ -3368,12 +3377,11 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       label: "Get Workflow Result",
       description: "Retrieve aggregate workflow status and step outputs.",
       promptSnippet: "Get aggregate subagent workflow results",
-      parameters: Type.Object(
-        {
-          workflow_id: Type.String(),
-          wait: Type.Optional(Type.Boolean()),
-        },
-        { additionalProperties: false },
+      parameters: hostParams(
+        obj({
+          workflow_id: str(),
+          wait: opt(bool()),
+        }),
       ),
       execute: async (_toolCallId, params, signal) => {
         let result = workflowManager.get(params.workflow_id);
@@ -3415,7 +3423,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       label: "Cancel Workflow",
       description: "Cancel pending and running workflow steps.",
       promptSnippet: "Cancel a running subagent workflow",
-      parameters: Type.Object({ workflow_id: Type.String() }, { additionalProperties: false }),
+      parameters: hostParams(obj({ workflow_id: str() })),
       execute: async (_toolCallId, params) => {
         try {
           return textResult(JSON.stringify(workflowManager.cancel(params.workflow_id), null, 2));
@@ -3433,10 +3441,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       description:
         "Enable or disable fast mode for a running or queued descendant. Applies deterministically to the accepted generation.",
       promptSnippet: "Change a descendant subagent's fast-mode request",
-      parameters: Type.Object(
-        { agent_id: Type.String(), enabled: Type.Boolean() },
-        { additionalProperties: false },
-      ),
+      parameters: hostParams(obj({ agent_id: str(), enabled: bool() })),
       execute: async (_toolCallId, params) => {
         const record = resolveAgentRef(params.agent_id);
         if (!record) return errorResult(`Agent not found: "${params.agent_id}".`);
@@ -3465,10 +3470,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       description:
         "Enable or disable Daybreak for a running or queued descendant. Entitlement is checked separately.",
       promptSnippet: "Change a descendant subagent's Daybreak request",
-      parameters: Type.Object(
-        { agent_id: Type.String(), enabled: Type.Boolean() },
-        { additionalProperties: false },
-      ),
+      parameters: hostParams(obj({ agent_id: str(), enabled: bool() })),
       execute: async (_toolCallId, params) => {
         const record = resolveAgentRef(params.agent_id);
         if (!record) return errorResult(`Agent not found: "${params.agent_id}".`);
@@ -3492,10 +3494,9 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
   // ---- read-only whole-tree views (root only; never consume or steer) ----
 
-  const TreeStatusFilterSchema = Type.Union(
-    [Type.Literal("all"), Type.Literal("active"), Type.Literal("terminal")],
-    { description: "Which records to list. Default: all." },
-  );
+  const TreeStatusFilterSchema = oneOf(["all", "active", "terminal"], {
+    description: "Which records to list. Default: all.",
+  });
 
   pi.registerTool(
     defineTool({
@@ -3504,14 +3505,11 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       description:
         "List every subagent record, nested descendants included, as a read-only tree. Never consumes results.",
       promptSnippet: "Inspect the full subagent tree, including nested descendants",
-      parameters: Type.Object(
-        {
-          status: Type.Optional(TreeStatusFilterSchema),
-          root: Type.Optional(
-            Type.String({ description: "Agent ID, handle, or name whose subtree to list." }),
-          ),
-        },
-        { additionalProperties: false },
+      parameters: hostParams(
+        obj({
+          status: opt(TreeStatusFilterSchema),
+          root: opt(str({ description: "Agent ID, handle, or name whose subtree to list." })),
+        }),
       ),
       execute: async (_toolCallId, params) => {
         const view = buildSubagentTree(manager.listAgents(), {
@@ -3540,13 +3538,12 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       description:
         "Read status lines for subagents (nested included) without their results. Never consumes results.",
       promptSnippet: "Read status lines for subagents without consuming results",
-      parameters: Type.Object(
-        {
-          ids: Type.Array(Type.String({ description: "Agent ID, handle, or assigned name." }), {
+      parameters: hostParams(
+        obj({
+          ids: arr(str({ description: "Agent ID, handle, or assigned name." }), {
             minItems: 1,
           }),
-        },
-        { additionalProperties: false },
+        }),
       ),
       execute: async (_toolCallId, params) => {
         const batch = buildSubagentStatusBatch(manager.listAgents(), params.ids);
@@ -3566,22 +3563,27 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       renderResult: delegationRenderers.renderResult,
       description: "Retrieve a background agent's status or terminal result.",
       promptSnippet: "Retrieve a terminal background-agent result",
-      parameters: Type.Object({
-        agent_id: Type.String({
-          description: "Agent ID, handle, or assigned name.",
-        }),
-        wait: Type.Optional(
-          Type.Boolean({
-            description: "Wait up to five seconds on the first active read.",
-          }),
+      parameters: hostParams(
+        obj(
+          {
+            agent_id: str({
+              description: "Agent ID, handle, or assigned name.",
+            }),
+            wait: opt(
+              bool({
+                description: "Wait up to five seconds on the first active read.",
+              }),
+            ),
+            verbose: opt(
+              bool({
+                description:
+                  "If true, include the agent's full conversation (messages + tool calls). Default: false.",
+              }),
+            ),
+          },
+          { open: true },
         ),
-        verbose: Type.Optional(
-          Type.Boolean({
-            description:
-              "If true, include the agent's full conversation (messages + tool calls). Default: false.",
-          }),
-        ),
-      }),
+      ),
       execute: async (_toolCallId, params, signal, _onUpdate, _ctx) => {
         const record = resolveAgentRef(params.agent_id);
         if (!record) {
@@ -3700,14 +3702,19 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       renderResult: delegationRenderers.renderResult,
       description: "Send guidance to a running or queued agent.",
       promptSnippet: "Redirect a running or queued agent.",
-      parameters: Type.Object({
-        agent_id: Type.String({
-          description: "Running or queued agent ID, handle, or assigned name.",
-        }),
-        message: Type.String({
-          description: "Guidance delivered as an agent MESSAGE.",
-        }),
-      }),
+      parameters: hostParams(
+        obj(
+          {
+            agent_id: str({
+              description: "Running or queued agent ID, handle, or assigned name.",
+            }),
+            message: str({
+              description: "Guidance delivered as an agent MESSAGE.",
+            }),
+          },
+          { open: true },
+        ),
+      ),
       execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
         const record = resolveAgentRef(params.agent_id);
         if (!record || record.parentAgentId) {
@@ -3761,11 +3768,16 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       label: "Stop Agent",
       description: "Stop a running or queued background agent.",
       promptSnippet: "Stop a running or queued agent.",
-      parameters: Type.Object({
-        agent_id: Type.String({
-          description: "Agent ID, handle, or assigned name.",
-        }),
-      }),
+      parameters: hostParams(
+        obj(
+          {
+            agent_id: str({
+              description: "Agent ID, handle, or assigned name.",
+            }),
+          },
+          { open: true },
+        ),
+      ),
       execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
         const live = resolveAgentRef(params.agent_id);
         if (!live) {

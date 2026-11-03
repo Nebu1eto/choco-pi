@@ -28,8 +28,8 @@ import type {
   SessionBeforeCompactEvent,
   SessionEntry,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { compile, obj, opt, str } from "@earendil-works/pi-schema";
+import { type HostValue, isHostObject, isNonEmptyString } from "./value-guards.ts";
 
 import type {
   AppendRecord,
@@ -144,24 +144,32 @@ interface ChildCompactionBridge {
   dispose(reason?: ReasonCode): void;
 }
 
-const CallableSchema = Type.Function([], Type.Unknown());
-const ProviderSchema = Type.Object({
-  version: Type.Literal(1),
-  isEnabled: CallableSchema,
-  createChildCoordinator: CallableSchema,
-});
-const AttachmentSchema = Type.Object({
-  coordinator: Type.Object({
-    ownerKey: Type.String({ minLength: 1 }),
-    ownerGeneration: Type.Integer({ minimum: 0 }),
-  }),
-  observeBoundary: Type.Optional(CallableSchema),
-  acknowledgeCommit: Type.Optional(CallableSchema),
-});
-const CommittedDetailsSchema = Type.Object({
-  candidateId: Type.String({ minLength: 1 }),
-  ownerKey: Type.Optional(Type.String()),
-});
+// Foreign slots are host objects (class instances, accessors), so they are
+// probed with property reads rather than pi-schema, which sees only enumerable
+// own properties. Callables are checked structurally; signatures are not.
+interface ProviderCandidate {
+  version?: HostValue;
+  isEnabled?: HostValue;
+  createChildCoordinator?: HostValue;
+}
+interface AttachmentCandidate {
+  coordinator?: CoordinatorCandidate | HostValue;
+  observeBoundary?: HostValue;
+  acknowledgeCommit?: HostValue;
+}
+interface CoordinatorCandidate {
+  ownerKey?: HostValue;
+  ownerGeneration?: HostValue;
+}
+interface AdoptionSignalCandidate {
+  version?: HostValue;
+  registerOwner?: HostValue;
+}
+
+/** Decoded session-entry details (plain JSON), so a pi-schema object is exact. */
+const isCommittedDetails = compile(
+  obj({ candidateId: str({ minLength: 1 }), ownerKey: opt(str()) }, { open: true }),
+).check;
 
 /**
  * Process-global adoption signal published by `choco-pi-compaction`. The
@@ -170,11 +178,6 @@ const CommittedDetailsSchema = Type.Object({
  * memoized host-route decision this bridge later answers with.
  */
 const BACKGROUND_ADOPTION_SIGNAL = Symbol.for("choco-pi:compaction-background-adoption");
-const AdoptionSignalSchema = Type.Object({
-  version: Type.Literal(1),
-  registerOwner: CallableSchema,
-});
-
 interface ChildAdoptionOwner {
   willAdopt(event: SessionBeforeCompactEvent): Promise<boolean>;
   isAdoption(entry: CompactionEntry): boolean;
@@ -186,13 +189,15 @@ interface AdoptionSignalSlot {
   registerOwner(sessionId: string, owner: ChildAdoptionOwner): () => void;
 }
 
-function isAdoptionSignalSlot<T>(value: T): value is T & AdoptionSignalSlot {
-  return Value.Check(AdoptionSignalSchema, value);
+function isAdoptionSignalSlot<T extends HostValue>(value: T): value is T & AdoptionSignalSlot {
+  if (!isHostObject(value)) return false;
+  const slot: AdoptionSignalCandidate = value;
+  return slot.version === 1 && slot.registerOwner instanceof Function;
 }
 
 /** The slot is foreign code: confirm its unregister callback before keeping it. */
 function isUnregister<T>(value: T): value is T & (() => void) {
-  return Value.Check(CallableSchema, value);
+  return value instanceof Function;
 }
 
 /** Register a child owner; an absent or foreign slot leaves the child unregistered. */
@@ -206,12 +211,29 @@ function registerAdoptionOwner(sessionId: string, owner: ChildAdoptionOwner): ()
   return isUnregister(unregister) ? () => unregister() : () => {};
 }
 
-function isProvider<T>(value: T): value is T & ChildCompactionProvider {
-  return Value.Check(ProviderSchema, value);
+function isProvider<T extends HostValue>(value: T): value is T & ChildCompactionProvider {
+  if (!isHostObject(value)) return false;
+  const provider: ProviderCandidate = value;
+  return (
+    provider.version === 1 &&
+    provider.isEnabled instanceof Function &&
+    provider.createChildCoordinator instanceof Function
+  );
 }
 
-function isAttachment<T>(value: T): value is T & ChildCoordinatorAttachment {
-  return Value.Check(AttachmentSchema, value);
+function isAttachment<T extends HostValue>(value: T): value is T & ChildCoordinatorAttachment {
+  if (!isHostObject(value)) return false;
+  const attachment: AttachmentCandidate = value;
+  const coordinator = attachment.coordinator;
+  if (!isHostObject(coordinator)) return false;
+  const identity: CoordinatorCandidate = coordinator;
+  return (
+    isNonEmptyString(identity.ownerKey) &&
+    Number.isInteger(identity.ownerGeneration) &&
+    Number(identity.ownerGeneration) >= 0 &&
+    (attachment.observeBoundary === undefined || attachment.observeBoundary instanceof Function) &&
+    (attachment.acknowledgeCommit === undefined || attachment.acknowledgeCommit instanceof Function)
+  );
 }
 
 /** Resolve a published, structurally valid provider; foreign or corrupt slots are ignored. */
@@ -865,7 +887,7 @@ function decideHostRoute(
 
 function isProposedBy(state: BridgeState, ownerKey: string, entry: CompactionEntry): boolean {
   const details: unknown = entry.details;
-  if (!Value.Check(CommittedDetailsSchema, details)) return false;
+  if (!isCommittedDetails(details)) return false;
   if (details.ownerKey !== undefined && details.ownerKey !== ownerKey) return false;
   return state.active?.ownerKey === ownerKey && state.proposed.has(details.candidateId);
 }
@@ -899,7 +921,7 @@ function acknowledge(state: BridgeState, entry: CompactionEntry): boolean {
   const current = state.active;
   if (!current) return false;
   const details: unknown = entry.details;
-  if (!Value.Check(CommittedDetailsSchema, details)) return false;
+  if (!isCommittedDetails(details)) return false;
   if (details.ownerKey !== undefined && details.ownerKey !== current.ownerKey) return false;
   const proposal = state.pending.get(details.candidateId);
   if (!proposal) return false;

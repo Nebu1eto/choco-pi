@@ -3,8 +3,7 @@ import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { compile, lit, nullable, obj, opt, str } from "@earendil-works/pi-schema";
 
 import { registerAgents } from "../src/agent-types.ts";
 import { SUBAGENT_SESSION_MARKER, runAgent } from "../src/agent-runner.ts";
@@ -12,21 +11,34 @@ import { unregisterChildSessionId } from "../src/child-context.ts";
 import type { AgentConfig } from "../src/types.ts";
 import { createSdkFixture } from "./sdk-fixture.ts";
 
-const SessionHeaderSchema = Type.Object({
-  type: Type.Literal("session"),
-  parentSession: Type.Optional(Type.String()),
-});
+const SessionHeaderSchema = obj(
+  {
+    type: lit("session"),
+    parentSession: opt(str()),
+  },
+  { open: true },
+);
 
-const SubagentMarkerSchema = Type.Object({
-  type: Type.Literal("custom"),
-  customType: Type.Literal(SUBAGENT_SESSION_MARKER),
-  data: Type.Object({
-    schemaVersion: Type.Literal(1),
-    agentId: Type.Union([Type.String(), Type.Null()]),
-    agentType: Type.String(),
-    parentSessionId: Type.Union([Type.String(), Type.Null()]),
-  }),
-});
+const isSessionHeader = compile(SessionHeaderSchema).check;
+
+const SubagentMarkerSchema = obj(
+  {
+    type: lit("custom"),
+    customType: lit(SUBAGENT_SESSION_MARKER),
+    data: obj(
+      {
+        schemaVersion: lit(1),
+        agentId: nullable(str()),
+        agentType: str(),
+        parentSessionId: nullable(str()),
+      },
+      { open: true },
+    ),
+  },
+  { open: true },
+);
+
+const isSubagentMarker = compile(SubagentMarkerSchema).check;
 
 async function exists(path: string): Promise<boolean> {
   try {
@@ -97,14 +109,14 @@ test("runAgent tolerates a persisted child session whose file is created lazily"
       const [headerLine] = lines;
       assert.ok(headerLine);
       const header: unknown = JSON.parse(headerLine);
-      assert.ok(Value.Check(SessionHeaderSchema, header), "the file starts with a session header");
+      assert.ok(isSessionHeader(header), "the file starts with a session header");
       assert.equal(header.parentSession, fixture.ctx.sessionManager.getSessionFile());
       // The subagent marker is a durable custom entry (hosts filter on it).
       const markers = [];
       for (const line of lines) {
         if (!line.includes(SUBAGENT_SESSION_MARKER)) continue;
         const entry: unknown = JSON.parse(line);
-        if (Value.Check(SubagentMarkerSchema, entry)) markers.push(entry);
+        if (isSubagentMarker(entry)) markers.push(entry);
       }
       assert.equal(markers.length, 1, "exactly one subagent marker is written at spawn");
       assert.deepEqual(markers[0]?.data, {

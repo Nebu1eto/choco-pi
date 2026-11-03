@@ -1,10 +1,11 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Container, Text } from "@earendil-works/pi-tui";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, compile, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
 import { hasAgentBadge, renderAgentName } from "./agent-color.ts";
+import { hostParams } from "./schema-bridge.ts";
 import type { AgentRecord } from "./types.ts";
 import { getLifetimeTotal, type LifetimeUsage } from "./usage.ts";
+import { finiteNum } from "./value-guards.ts";
 import {
   type AgentActivity,
   type AgentDetails,
@@ -18,16 +19,16 @@ import {
   SPINNER,
 } from "./ui/agent-widget.ts";
 
-const AgentDetailsSchema = Type.Object({
-  displayName: Type.String(),
-  description: Type.String(),
-  subagentType: Type.String(),
-  toolUses: Type.Number(),
-  tokens: Type.String(),
-  durationMs: Type.Number(),
-  status: Type.Union(
-    (
-      [
+const isAgentDetails = compile(
+  obj(
+    {
+      displayName: str(),
+      description: str(),
+      subagentType: str(),
+      toolUses: finiteNum(),
+      tokens: str(),
+      durationMs: finiteNum(),
+      status: oneOf([
         "queued",
         "running",
         "completed",
@@ -40,18 +41,19 @@ const AgentDetailsSchema = Type.Object({
         "waiting_for_reset",
         "interrupted",
         "background",
-      ] as const
-    ).map((status) => Type.Literal(status)),
+      ] as const),
+      modelName: opt(str()),
+      tags: opt(arr(str())),
+      turnCount: opt(finiteNum()),
+      maxTurns: opt(finiteNum()),
+      agentId: opt(str()),
+      error: opt(str()),
+      activity: opt(str()),
+      spinnerFrame: opt(finiteNum()),
+    },
+    { open: true },
   ),
-  modelName: Type.Optional(Type.String()),
-  tags: Type.Optional(Type.Array(Type.String())),
-  turnCount: Type.Optional(Type.Number()),
-  maxTurns: Type.Optional(Type.Number()),
-  agentId: Type.Optional(Type.String()),
-  error: Type.Optional(Type.String()),
-  activity: Type.Optional(Type.String()),
-  spinnerFrame: Type.Optional(Type.Number()),
-});
+).check;
 export function renderRunningAgentStatus(
   frame: string,
   statsText: string,
@@ -132,11 +134,9 @@ export function buildRecordDetails(record: AgentRecord, background = false, resu
   };
 }
 
-const DelegationRenderArguments = Type.Object({
-  subagent_type: Type.Optional(Type.String()),
-  description: Type.Optional(Type.String()),
-  agent_id: Type.Optional(Type.String()),
-});
+const DelegationRenderArguments = hostParams(
+  obj({ subagent_type: opt(str()), description: opt(str()), agent_id: opt(str()) }, { open: true }),
+);
 type DelegationRenderers = Required<
   Pick<
     ToolDefinition<typeof DelegationRenderArguments, unknown, unknown>,
@@ -173,7 +173,7 @@ export const delegationRenderers: DelegationRenderers = {
   },
 
   renderResult(result, { expanded, isPartial }, theme, renderContext) {
-    const details = Value.Check(AgentDetailsSchema, result.details) ? result.details : undefined;
+    const details = isAgentDetails(result.details) ? result.details : undefined;
     const text = result.content[0]?.type === "text" ? result.content[0].text : "";
     // Pi reports pre-execution failures (extension block, abort, argument
     // validation) as `{ content: [reason], details: {} }` with isError set —
