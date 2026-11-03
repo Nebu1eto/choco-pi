@@ -10,7 +10,7 @@
 import { bool, compile, lit, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
 import type { Static } from "@earendil-works/pi-schema";
 
-import { nonEmptyStr, nonNegative } from "../guards.ts";
+import { finiteInt, nonEmptyStr, nonNegative } from "../guards.ts";
 import { isStaleContextError } from "../lifecycle.ts";
 import { LANE_RECORD_TYPE as LANE_ENTRY_TYPE } from "./entry-types.ts";
 import { CompactionTriggerSchema } from "../trigger.ts";
@@ -55,6 +55,8 @@ const LaneEventSchema = oneOf([
   "refuse",
   "consent",
   "loss",
+  /** A trigger was not started because nothing changed since a no-legal-cut attempt. */
+  "suppressed",
 ]);
 export type LaneEvent = Static<typeof LaneEventSchema>;
 
@@ -233,6 +235,12 @@ const laneFields = {
   cooldownUntil: nonNegative(),
   /** What started the compaction this transition belongs to; absent on records written before it was journaled. */
   trigger: CompactionTriggerSchema,
+  /** 1-based attempt number for the cut fingerprint; absent on records written before it was journaled. */
+  attempt: finiteInt(1),
+  /** Stable hash of the candidate cut (see `cutFingerprint` in snapshot.ts); absent on older records. */
+  cutFingerprint: NonEmptyString,
+  /** Context tokens when the trigger fired; absent on older records and non-threshold routes. */
+  tokensAtTrigger: nonNegative(),
   noticeAttempted: bool(),
 };
 const laneRecordSchema = obj({
@@ -251,6 +259,9 @@ const laneRecordSchema = obj({
   checkpointEntryId: opt(laneFields.checkpointEntryId),
   cooldownUntil: opt(laneFields.cooldownUntil),
   trigger: opt(laneFields.trigger),
+  attempt: opt(laneFields.attempt),
+  cutFingerprint: opt(laneFields.cutFingerprint),
+  tokensAtTrigger: opt(laneFields.tokensAtTrigger),
   noticeAttempted: laneFields.noticeAttempted,
 });
 export type LaneRecord = Static<typeof laneRecordSchema>;
@@ -284,6 +295,9 @@ function envelope(input: LaneRecordInput): LaneRecord {
   if (input.checkpointEntryId !== undefined) record.checkpointEntryId = input.checkpointEntryId;
   if (input.cooldownUntil !== undefined) record.cooldownUntil = input.cooldownUntil;
   if (input.trigger !== undefined) record.trigger = input.trigger;
+  if (input.attempt !== undefined) record.attempt = input.attempt;
+  if (input.cutFingerprint !== undefined) record.cutFingerprint = input.cutFingerprint;
+  if (input.tokensAtTrigger !== undefined) record.tokensAtTrigger = input.tokensAtTrigger;
   return record;
 }
 

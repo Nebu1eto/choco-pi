@@ -17,7 +17,7 @@ import {
   type CoordinatorPort,
 } from "../src/background/coordinator.ts";
 import type { SchedulerClock } from "../src/background/scheduler.ts";
-import { fingerprintEntries } from "../src/background/snapshot.ts";
+import { cutFingerprint, fingerprintEntries } from "../src/background/snapshot.ts";
 import { buildSnapshot, FakeBackend, seededToolPairs } from "./background-fakes.ts";
 
 /** A fresh clock per fixture: coordinator cooldowns are keyed by clock. */
@@ -74,7 +74,9 @@ function fixture(
       }),
     onCandidateFailure: (failure) => failures.push(failure),
   });
-  return { coordinator, backend, failures };
+  /** The additive fields every reported failure carries: first attempt over the fixture's branch. */
+  const cut = { attempt: 1, cutFingerprint: cutFingerprint(entries, `${backend.id}|`) };
+  return { coordinator, backend, failures, cut };
 }
 
 test("fail() reports once with the trigger and reason", async () => {
@@ -90,6 +92,7 @@ test("fail() reports once with the trigger and reason", async () => {
       reason: "auth",
       trigger: "manual",
       customInstructions: "focus",
+      ...f.cut,
     },
   ]);
   // A later terminal request for the same candidate does not report again.
@@ -111,6 +114,7 @@ test("the overflow cancel reports detail 'overflow' once; a second terminal tran
       reason: "canceled",
       trigger: "threshold",
       detail: "overflow",
+      ...f.cut,
     },
   ]);
   // Status keeps no coordinator-only detail: the port alone carries "overflow".
@@ -128,7 +132,13 @@ test("a user cancel reports the cancel reason without an overflow detail", async
   await flush();
   f.coordinator.cancel();
   assert.deepEqual(f.failures, [
-    { candidateId: "candidate-1", backendId: "fake", reason: "canceled", trigger: "idle" },
+    {
+      candidateId: "candidate-1",
+      backendId: "fake",
+      reason: "canceled",
+      trigger: "idle",
+      ...f.cut,
+    },
   ]);
   f.backend.pending[0]?.resolve({ ok: false, reason: "canceled", retryable: false });
   await f.coordinator.waitForPreparation();

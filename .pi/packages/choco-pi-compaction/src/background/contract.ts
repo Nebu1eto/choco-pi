@@ -218,6 +218,8 @@ export interface PreparationRequest {
   readonly trigger: "threshold" | "context-cap" | "manual" | "idle";
   readonly backendId?: string;
   readonly customInstructions?: string;
+  /** Context tokens when the trigger fired; journaled as `tokensAtTrigger`. */
+  readonly tokensAtTrigger?: number;
 }
 export interface CoordinatorStatus {
   readonly ownerKey: string;

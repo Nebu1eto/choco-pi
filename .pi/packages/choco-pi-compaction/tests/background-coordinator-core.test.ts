@@ -536,9 +536,10 @@ test("a legality refusal is diagnosable and does not cool the scope", async () =
     refused.recentFailures?.map((row) => [row.backendId, row.reason, row.detail]),
     [["fake", "no-legal-cut", "no-retained-entry"]],
   );
-  // The next request on the same scope must run at once, not report quota.
+  // The next request on the same scope must run at once, not report quota. The branch has not
+  // changed, so only a manual request starts again (see the no-progress suppression tests).
   f.backend.legalityVerdict = { legal: true };
-  await f.coordinator.requestPreparation();
+  await f.coordinator.requestPreparation({ trigger: "manual" });
   await f.coordinator.waitForPreparation();
   assert.equal(f.coordinator.status().state, "ready");
   assert.equal(f.backend.calls.length, 1);

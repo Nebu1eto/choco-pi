@@ -26,10 +26,12 @@ import {
   type DetailedCoordinatorStatus,
   type SnapshotContext,
   type SnapshotRefused,
+  type SuppressedPortEvent,
 } from "../background/coordinator.ts";
 import {
   type LaneId,
   type LaneProvider,
+  type LaneRecordInput,
   type LaneRoute,
   ownedReasonOf,
   REASONS,
@@ -210,6 +212,8 @@ export async function createOwnerCore(
     modelBudget: ownerModelBudget(spec),
     tokenCounter: ownerTokenCounter(spec, options),
     onCandidateFailure: (failure) => journalCandidateFailure(state, failure),
+    cutSalt: (backendId) => cutSaltOf(state, backendId),
+    onSuppressed: (event) => journalSuppressed(state, event),
   });
   return assembleCore(state, coordinator, [...backends.keys()]);
 }
@@ -250,6 +254,51 @@ export function opaqueBlockFor(
 }
 
 /**
+ * What besides the branch the cut search of `backendId` depends on, for the
+ * cut fingerprint: the keep policy, and for the Anthropic lane the newest wire
+ * capture it must replay (a new capture can make a deferred cut legal).
+ */
+function cutSaltOf(state: OwnerCoreState, backendId: string): string {
+  const keep = keepRecentTokens(state.spec);
+  if (backendId !== ANTHROPIC_BACKEND_ID) return `keep=${keep}`;
+  const capture = capturesFor(state.spec.sessionId).at(-1);
+  return `keep=${keep}|capture=${capture?.sequence ?? "none"}`;
+}
+
+/** The provider a lane's records journal under, or undefined when there is no vendor lane to report on. */
+function providerOfLane(state: OwnerCoreState, backendId: string): LaneProvider | undefined {
+  return (
+    NATIVE_LANE_PROVIDERS.get(backendId) ??
+    (state.backendId === undefined ? undefined : NATIVE_LANE_PROVIDERS.get(state.backendId))
+  );
+}
+
+/** A trigger the no-progress guard did not start: journaled once per cut fingerprint and lane, and logged. */
+function journalSuppressed(state: OwnerCoreState, event: SuppressedPortEvent): void {
+  const from = laneIdOf(event.backendId);
+  const provider = providerOfLane(state, event.backendId);
+  state.spec.report(
+    `compaction attempt #${event.attempt} (${event.trigger}) suppressed: no legal cut and nothing changed since the last attempt`,
+  );
+  if (from === undefined || provider === undefined) return;
+  const record: LaneRecordInput = {
+    at: now(state),
+    sessionId: state.spec.sessionId,
+    provider,
+    route: event.trigger,
+    event: "suppressed",
+    from,
+    reason: REASONS.noLegalCut,
+    trigger: event.trigger,
+    attempt: event.attempt,
+    cutFingerprint: event.cutFingerprint,
+    noticeAttempted: false,
+  };
+  if (event.tokensAtTrigger !== undefined) record.tokensAtTrigger = event.tokensAtTrigger;
+  state.spec.journal(record);
+}
+
+/**
  * Journal a candidate's terminal failure, cancellation or discard. A text
  * candidate is journaled under the provider of this owner's selected native
  * lane; with no native lane selected there is no vendor lane to report on.
@@ -259,9 +308,7 @@ export function opaqueBlockFor(
  */
 function journalCandidateFailure(state: OwnerCoreState, failure: CandidateFailurePortEvent): void {
   const from = laneIdOf(failure.backendId);
-  const provider =
-    NATIVE_LANE_PROVIDERS.get(failure.backendId) ??
-    (state.backendId === undefined ? undefined : NATIVE_LANE_PROVIDERS.get(state.backendId));
+  const provider = providerOfLane(state, failure.backendId);
   if (from === undefined || provider === undefined) return;
   const route: LaneRoute = failure.trigger === "recovery" ? "resume" : failure.trigger;
   // `/compact <focus>` on the Anthropic lane: the instructions were sent as
@@ -269,7 +316,7 @@ function journalCandidateFailure(state: OwnerCoreState, failure: CandidateFailur
   const forwarded =
     failure.backendId === ANTHROPIC_BACKEND_ID && failure.customInstructions !== undefined;
   const detail = failure.detail ?? (forwarded ? REASONS.instructionsForwarded : undefined);
-  state.spec.journal({
+  const record: LaneRecordInput = {
     at: now(state),
     sessionId: state.spec.sessionId,
     provider,
@@ -281,7 +328,13 @@ function journalCandidateFailure(state: OwnerCoreState, failure: CandidateFailur
     detail: detail === undefined ? undefined : ownedReasonOf(detail),
     candidateId: failure.candidateId,
     noticeAttempted: false,
-  });
+  };
+  // A recovered record carries no trigger of its own; every other candidate names what started it.
+  if (failure.trigger !== "recovery") record.trigger = failure.trigger;
+  if (failure.attempt !== undefined) record.attempt = failure.attempt;
+  if (failure.cutFingerprint !== undefined) record.cutFingerprint = failure.cutFingerprint;
+  if (failure.tokensAtTrigger !== undefined) record.tokensAtTrigger = failure.tokensAtTrigger;
+  state.spec.journal(record);
 }
 
 function assembleCore(
@@ -489,7 +542,7 @@ function observeUsage(
   if (anthropicDisabled && backendId === ANTHROPIC_BACKEND_ID && lane === TEXT_BACKEND_ID) {
     announceDisabledYield(state);
   }
-  requestThresholdPreparation(state, coordinator, { lane, position });
+  requestThresholdPreparation(state, coordinator, { lane, position }, usage.tokens);
 }
 
 /** The ID of the newest branch entry the model sees, or "" for none. */
@@ -620,11 +673,13 @@ function requestThresholdPreparation(
   state: OwnerCoreState,
   coordinator: CoordinatorHandle,
   request: ThresholdRequest,
+  tokensAtTrigger: number,
 ): void {
   const report = state.spec.report;
   const requested = coordinator.requestPreparation({
     trigger: "threshold",
     backendId: request.lane,
+    tokensAtTrigger,
   });
   coordinator.waitForPreparation().catch((cause: unknown) => {
     report(`preparation failed unexpectedly: ${errorText(cause)}`);

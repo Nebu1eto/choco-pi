@@ -215,6 +215,28 @@ export function fingerprintEntries(entries: readonly SessionEntry[]): string {
   return `sha256:${hash.digest("hex")}`;
 }
 
+/**
+ * Stable SHA-256 of the cut a lane would search over (`cutFingerprint` on lane
+ * records and the no-progress suppression key). The cut search is a pure
+ * function of the ordered branch, the keep policy and, for the Anthropic lane,
+ * the wire capture it must replay; so the fingerprint covers exactly those:
+ * the ordered entry IDs (IDs are unique per branch, so any new, removed or
+ * reordered entry, including a new checkpoint, changes it) plus `salt`, a
+ * caller-supplied string for the non-branch inputs (lane, keep tokens, latest
+ * capture sequence). Entry bodies are not hashed: this runs on every trigger,
+ * and an entry's body never changes once appended. Same inputs, same hash.
+ */
+export function cutFingerprint(entries: readonly SessionEntry[], salt: string): string {
+  const hash = createHash("sha256");
+  for (const entry of entries) {
+    hash.update(entry.id);
+    hash.update("\u0000");
+  }
+  hash.update("\u0001");
+  hash.update(salt);
+  return `sha256:${hash.digest("hex")}`;
+}
+
 function deepFreeze<T>(value: T): T {
   if (value instanceof Object && !Object.isFrozen(value)) {
     Object.freeze(value);

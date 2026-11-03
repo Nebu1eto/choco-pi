@@ -30,7 +30,7 @@ import type {
 } from "./contract.ts";
 import { type ModelBudget, resolveBackgroundLimits } from "../budget.ts";
 import { isRecord } from "../guards.ts";
-import { renderFrozenPrefixPrompt } from "./snapshot.ts";
+import { cutFingerprint, renderFrozenPrefixPrompt } from "./snapshot.ts";
 import {
   AdoptionDelivery,
   adoptionDraft,
@@ -120,6 +120,18 @@ interface CoordinatorDependencies {
    * observer is contained; any other failure reaches the caller.
    */
   readonly onCandidateFailure?: (failure: CandidateFailurePortEvent) => void;
+  /**
+   * Non-manual salt for the cut fingerprint: whatever besides the branch the
+   * cut search depends on (keep tokens, latest wire capture). Absent: the
+   * branch alone decides.
+   */
+  readonly cutSalt?: (backendId: string) => string;
+  /**
+   * Called once per cut fingerprint and lane when a trigger is not started
+   * because nothing changed since that lane ended with no legal cut. A
+   * stale-context failure of the observer is contained.
+   */
+  readonly onSuppressed?: (event: SuppressedPortEvent) => void;
 }
 
 /** What requested a candidate; `recovery` restores a persisted record at session start. */
@@ -135,6 +147,20 @@ export interface CandidateFailurePortEvent {
   customInstructions?: string;
   /** Backend detail code, or the coordinator's own (`overflow` for an overflow cancel). */
   detail?: string;
+  /** 1-based attempt number for `cutFingerprint`. */
+  attempt?: number;
+  cutFingerprint?: string;
+  tokensAtTrigger?: number;
+}
+
+/** A trigger the no-progress guard did not start (see `CoordinatorDependencies.onSuppressed`). */
+export interface SuppressedPortEvent {
+  readonly backendId: string;
+  readonly trigger: PreparationRequest["trigger"];
+  /** The attempt number that was not started. */
+  readonly attempt: number;
+  readonly cutFingerprint: string;
+  readonly tokensAtTrigger?: number;
 }
 
 export interface DetailedCoordinatorStatus extends CoordinatorStatus {
@@ -188,6 +214,10 @@ interface Candidate {
   readonly abort: AbortController;
   readonly createdAt: number;
   readonly customInstructions?: string;
+  /** Cut fingerprint and 1-based attempt number at request time. */
+  cutFingerprint?: string;
+  attempt?: number;
+  tokensAtTrigger?: number;
   snapshot?: FrozenSnapshot;
   branchKey?: string;
   checkpoint?: CandidateRecord["checkpoint"];
@@ -282,6 +312,15 @@ interface CoordinatorState {
   arbitrating: boolean;
   candidate: Candidate | undefined;
   preparation: Promise<WorkSettlement>;
+  /** Attempts started per cut fingerprint (bounded, oldest dropped). */
+  readonly cutAttempts: Map<string, number>;
+  /**
+   * Lane + cut fingerprints whose last attempt ended with no legal cut. A
+   * request that computes the same fingerprint is not started (manual ones
+   * excepted); a changed fingerprint is simply absent, which re-arms the lane.
+   * No time-based cooldown: see `selectSnapshot`.
+   */
+  readonly noProgress: Map<string, { reported: boolean }>;
 }
 
 const PROCEED: CoordinatorArbitrationResult = { action: "proceed" };
@@ -344,6 +383,9 @@ function reportFailure(
     failure.customInstructions = current.customInstructions;
   }
   if (detail !== undefined) failure.detail = detail;
+  if (current.attempt !== undefined) failure.attempt = current.attempt;
+  if (current.cutFingerprint !== undefined) failure.cutFingerprint = current.cutFingerprint;
+  if (current.tokensAtTrigger !== undefined) failure.tokensAtTrigger = current.tokensAtTrigger;
   try {
     observer(failure);
   } catch (cause) {
@@ -368,6 +410,9 @@ function fail(
 ): void {
   current.detail = failure.detail;
   current.retryAfterMs = failure.retryAfterMs;
+  // A retry delay marks a refusal the backend expects to clear without the branch changing.
+  if (failure.reason === "no-legal-cut" && failure.retryAfterMs === undefined)
+    markNoProgress(state, current);
   finish(state, current, "failed", failure.reason);
   rememberFailure(state, current, failure.reason, failure.detail);
   if (failure.cool) cool(state, current);
@@ -381,6 +426,65 @@ function failAndCool(
   detail?: string,
 ): void {
   fail(state, current, { reason, detail, cool: true });
+}
+
+const REMEMBERED_CUTS = 32;
+
+/** Insert into a bounded insertion-ordered map, dropping the oldest entries. */
+function remember<Value>(map: Map<string, Value>, key: string, value: Value): void {
+  map.delete(key);
+  map.set(key, value);
+  while (map.size > REMEMBERED_CUTS) {
+    const oldest = map.keys().next();
+    if (oldest.done === true) return;
+    map.delete(oldest.value);
+  }
+}
+
+function noProgressKey(fingerprint: string, backendId: string): string {
+  return `${keyPart(fingerprint)}|${keyPart(backendId)}`;
+}
+
+/** The lane just ended with no legal cut for this fingerprint: remember it so an unchanged retrigger is not started. */
+function markNoProgress(state: CoordinatorState, current: Candidate): void {
+  if (current.cutFingerprint === undefined) return;
+  remember(state.noProgress, noProgressKey(current.cutFingerprint, current.backendId), {
+    reported: false,
+  });
+}
+
+/**
+ * Whether a non-manual request repeats a no-legal-cut attempt over an
+ * unchanged cut. Journals (through the observer) once per fingerprint and lane.
+ */
+function suppressed(
+  state: CoordinatorState,
+  request: PreparationRequest,
+  backendId: string,
+  fingerprint: string,
+): boolean {
+  if (request.trigger === "manual") return false;
+  const entry = state.noProgress.get(noProgressKey(fingerprint, backendId));
+  if (entry === undefined) return false;
+  if (!entry.reported) {
+    entry.reported = true;
+    const event: SuppressedPortEvent = {
+      backendId,
+      trigger: request.trigger,
+      attempt: (state.cutAttempts.get(fingerprint) ?? 0) + 1,
+      cutFingerprint: fingerprint,
+    };
+    try {
+      state.deps.onSuppressed?.(
+        request.tokensAtTrigger === undefined
+          ? event
+          : { ...event, tokensAtTrigger: request.tokensAtTrigger },
+      );
+    } catch (cause) {
+      if (!isStaleCause(state, cause)) throw cause;
+    }
+  }
+  return true;
 }
 
 const RECENT_FAILURES = 8;
@@ -921,6 +1025,15 @@ function requestPreparation(
     return { accepted: false, reason: "busy" };
   const backend = resolveBackend(state, request.backendId);
   if (!backend) return { accepted: false, reason: "unsupported" };
+  const fingerprint = cutFingerprint(
+    state.deps.port.getBranch(),
+    `${backend.id}|${state.deps.cutSalt?.(backend.id) ?? ""}`,
+  );
+  // No owner recheck here: a read that lost the owner leaves the candidate to be discarded as stale by `prepare`.
+  if (suppressed(state, request, backend.id, fingerprint))
+    return { accepted: false, reason: "no-legal-cut" };
+  const attempt = (state.cutAttempts.get(fingerprint) ?? 0) + 1;
+  remember(state.cutAttempts, fingerprint, attempt);
   const current = newCandidate(
     state,
     state.deps.createCandidateId?.() ?? randomUUID(),
@@ -928,6 +1041,9 @@ function requestPreparation(
     request.trigger,
     request.customInstructions,
   );
+  current.cutFingerprint = fingerprint;
+  current.attempt = attempt;
+  if (request.tokensAtTrigger !== undefined) current.tokensAtTrigger = request.tokensAtTrigger;
   state.candidate = current;
   current.cancelDeadline = state.clock.setTimer(
     () => failAndCool(state, current, "timeout"),
@@ -1425,6 +1541,8 @@ function initialState(deps: CoordinatorDependencies): CoordinatorState {
     arbitrating: false,
     candidate: undefined,
     preparation: Promise.resolve({ ok: true }),
+    cutAttempts: new Map(),
+    noProgress: new Map(),
   };
 }
 
