@@ -16,6 +16,8 @@ import statusCommands, {
   renderTabBody,
 } from "../.pi/extensions/status-commands.ts";
 import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
+import { STATS_CACHE_TTL_MS } from "../.pi/extensions/lib/stats/report.ts";
+import { STATS_SECTION_ROWS } from "../.pi/extensions/lib/stats/format.ts";
 
 function openDialog(tab: TextTabId, terminalRows = 200) {
   let color = 31;
@@ -212,6 +214,12 @@ async function settle(condition: () => boolean): Promise<void> {
 /** A session root with one project holding one billed call, under a private agent dir. */
 async function statsAgentDir(): Promise<string> {
   const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-stats-dialog-"));
+  await addStatsSession(agentDir, "s1");
+  return agentDir;
+}
+
+/** Adds one session file with one billed call from a minute ago. */
+async function addStatsSession(agentDir: string, id: string): Promise<void> {
   const project = path.join(agentDir, "sessions", "--work-app--");
   await mkdir(project, { recursive: true });
   const at = Date.now() - 60_000;
@@ -219,21 +227,21 @@ async function statsAgentDir(): Promise<string> {
     {
       type: "session",
       version: 3,
-      id: "s1",
+      id,
       timestamp: new Date(at).toISOString(),
       cwd: process.cwd(),
     },
     {
       type: "message",
-      id: "u1",
+      id: `u-${id}`,
       parentId: null,
       timestamp: new Date(at).toISOString(),
       message: { role: "user", content: [{ type: "text", text: "hi" }], timestamp: at },
     },
     {
       type: "message",
-      id: "a1",
-      parentId: "u1",
+      id: `a-${id}`,
+      parentId: `u-${id}`,
       timestamp: new Date(at + 1000).toISOString(),
       message: {
         role: "assistant",
@@ -256,10 +264,9 @@ async function statsAgentDir(): Promise<string> {
     },
   ];
   await writeFile(
-    path.join(project, "2026-10-27T10-00-00-000Z_s1.jsonl"),
+    path.join(project, `2026-10-27T10-00-00-000Z_${id}.jsonl`),
     entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n",
   );
-  return agentDir;
 }
 
 test("the Statistics tab scans the agent's session root, cycles period and scope, and bounds every row", async () => {
@@ -275,19 +282,22 @@ test("the Statistics tab scans the agent's session root, cycles period and scope
     assert.ok(loaded.includes("\u001b[31m  Statistics  "), "the fifth tab is highlighted");
     assert.ok(loaded.includes("Last 30 days · all projects"));
     assert.ok(loaded.includes("(1 files) · 1 calls"));
-    // The body scrolls in a fixed window: page through it for rows further down.
-    const pages: string[] = [];
-    for (let page = 0; page < 10; page++) {
-      pages.push(rendered(120));
-      view.dialog.handleInput?.("\u001b[6~");
-    }
-    view.dialog.handleInput?.("\u001b[H");
     assert.ok(
-      pages.some((page) => page.includes("Claude Opus 5.5 (Anthropic)")),
-      "rows show friendly model names",
+      stripVTControlCharacters(loaded).includes(
+        "Summary / By Model / By Feature / Context & Compaction / Throughput",
+      ),
+      "the sub-menu bar names every section",
     );
-    assert.equal(rendered(120), loaded, "Home returns to the top");
+    assert.ok(stripVTControlCharacters(loaded).includes("Tokens per day"), "Summary opens first");
+    // → steps to By Model at once: the data on screen is laid out again, not reloaded.
+    view.dialog.handleInput?.("\u001b[C");
+    const models = stripVTControlCharacters(rendered(120));
+    assert.ok(models.includes("Claude Opus 5.5 (Anthropic)"), "rows show friendly model names");
+    assert.ok(!models.includes("Tokens per day"), "one section at a time");
+    view.dialog.handleInput?.("\u001b[D");
+    assert.equal(rendered(120), loaded, "← returns to Summary");
     assert.ok(loaded.includes("r cycles period"));
+    assert.ok(loaded.includes("←/→ switches section"));
     assert.ok(loaded.includes("Ctrl+O expands"));
     // Width 1 is below the text tabs' own padding, on this tab as on Status and Context.
     for (const width of [2, 20, 30, 40, 48, 80, 120]) {
@@ -297,22 +307,56 @@ test("the Statistics tab scans the agent's session root, cycles period and scope
     }
 
     view.dialog.handleInput?.("r");
-    await settle(() => rendered(120).includes("Last 7 days · all projects"));
+    await settle(() => rendered(120).includes("All time · all projects"));
     view.dialog.handleInput?.("p");
     await settle(
       () =>
-        rendered(120).includes("Last 7 days · this project") &&
+        rendered(120).includes("All time · this project") &&
         stripVTControlCharacters(rendered(120)).includes("Calls 1 ·"),
     );
     view.dialog.handleInput?.("r");
-    await settle(() => rendered(120).includes("All time · this project"));
+    await settle(() => rendered(120).includes("Last 24 hours · this project"));
+    assert.ok(stripVTControlCharacters(rendered(120)).includes("Tokens per hour"));
 
     // Leaving and returning keeps the chosen view and paints it from cache at once.
     view.dialog.handleInput?.("1");
     assert.ok(rendered(120).includes("\u001b[31m  Status  "));
     view.dialog.handleInput?.("5");
-    assert.ok(rendered(120).includes("All time · this project"));
+    assert.ok(rendered(120).includes("Last 24 hours · this project"));
     assert.ok(!rendered(120).includes("Loading…"));
+  } finally {
+    await view.close();
+    if (previousAgentDir === undefined) delete process.env["PI_CODING_AGENT_DIR"];
+    else process.env["PI_CODING_AGENT_DIR"] = previousAgentDir;
+    await rm(agentDir, { recursive: true, force: true });
+  }
+});
+
+test("Ctrl+O and the sub-menu reuse the statistics on screen; a new period reuses the scan", async () => {
+  const previousAgentDir = process.env["PI_CODING_AGENT_DIR"];
+  const agentDir = await statsAgentDir();
+  process.env["PI_CODING_AGENT_DIR"] = agentDir;
+  const view = openDialog("stats");
+  try {
+    const plain = (): string => stripVTControlCharacters(view.dialog.render(120).join("\n"));
+    await settle(() => plain().includes("Scanned 1 sessions"));
+    // A second session appears; nothing below may read the logs again within the TTL.
+    await addStatsSession(agentDir, "s2");
+    view.dialog.handleInput?.("\u000f");
+    assert.ok(
+      plain().replace(/\s+/g, " ").includes("Ctrl+O collapses"),
+      "expanding lays out at once, without loading",
+    );
+    assert.ok(plain().includes("Scanned 1 sessions"), "expanding does not scan again");
+    view.dialog.handleInput?.("\u001b[C");
+    assert.ok(plain().includes("By Model"));
+    assert.ok(plain().includes("Scanned 1 sessions"), "changing section does not scan again");
+    view.dialog.handleInput?.("p");
+    await settle(() => plain().includes("Last 30 days · this project"));
+    view.dialog.handleInput?.("r");
+    await settle(() => plain().includes("All time · this project"));
+    assert.ok(plain().includes("Scanned 1 sessions"), "a new period and scope reuse the scan");
+    assert.ok(plain().includes("By Model"), "the section survives a period change");
   } finally {
     await view.close();
     if (previousAgentDir === undefined) delete process.env["PI_CODING_AGENT_DIR"];
@@ -325,7 +369,7 @@ test("the Statistics body scrolls inside a fixed-height window under the tab hea
   const previousAgentDir = process.env["PI_CODING_AGENT_DIR"];
   const agentDir = await statsAgentDir();
   process.env["PI_CODING_AGENT_DIR"] = agentDir;
-  // 20 terminal rows leave a 10-row body window.
+  // 20 terminal rows leave a 10-row body window, less a row for the wrapped hint.
   const view = openDialog("stats", 20);
   try {
     const plain = (): string[] =>
@@ -339,21 +383,24 @@ test("the Statistics body scrolls inside a fixed-height window under the tab hea
       "the tab header stays",
     );
     assert.ok(first.length <= statsViewportRows(20) + 8, `${first.length} rows stay bounded`);
-    const total = Number(/scrolls \(1–10\/(\d+)\)/.exec(hint(first))?.[1]);
-    assert.ok(total > 10, "the hint names the window over a longer body");
+    const figures = /scrolls \(1–(\d+)\/(\d+)\)/.exec(hint(first));
+    const height = Number(figures?.[1]);
+    const total = Number(figures?.[2]);
+    assert.equal(height, statsViewportRows(20, 3), "a two-row hint takes one row from the window");
+    assert.ok(total > height, "the hint names the window over a longer body");
 
     view.dialog.handleInput?.("\u001b[B");
-    assert.match(hint(plain()), /scrolls \(2–11\//, "↓ moves one row");
+    assert.match(hint(plain()), new RegExp(`scrolls \\(2–${height + 1}/`), "↓ moves one row");
     view.dialog.handleInput?.("\u001b[F");
     assert.match(
       hint(plain()),
-      new RegExp(`scrolls \\(${total - 9}–${total}/${total}\\)`),
+      new RegExp(`scrolls \\(${total - height + 1}–${total}/${total}\\)`),
       "End reaches the last row",
     );
     view.dialog.handleInput?.("\u001b[B");
     assert.match(
       hint(plain()),
-      new RegExp(`scrolls \\(${total - 9}–${total}/`),
+      new RegExp(`scrolls \\(${total - height + 1}–${total}/`),
       "scrolling stops at the end",
     );
 
@@ -361,7 +408,7 @@ test("the Statistics body scrolls inside a fixed-height window under the tab hea
     view.dialog.handleInput?.("\u000f");
     await settle(() => plain().some((row) => row.includes("Ctrl+O collapses")));
     const expanded = plain();
-    assert.match(hint(expanded), /scrolls \(1–10\/\d+\)/);
+    assert.match(hint(expanded), new RegExp(`scrolls \\(1–${height}/\\d+\\)`));
     assert.equal(expanded.length, first.length, "the window height does not change");
   } finally {
     await view.close();
@@ -412,6 +459,135 @@ test("RPC /stats posts the plain-text statistics without a report frame", async 
     assert.ok(notice.message.includes("Scanned 1 sessions"));
     assert.ok(!notice.message.includes("\u001b"));
   } finally {
+    if (previousAgentDir === undefined) delete process.env["PI_CODING_AGENT_DIR"];
+    else process.env["PI_CODING_AGENT_DIR"] = previousAgentDir;
+    await rm(agentDir, { recursive: true, force: true });
+  }
+});
+
+test("the Statistics dialog leaves Pi's footer its rows when the header and hint wrap", async () => {
+  const previousAgentDir = process.env["PI_CODING_AGENT_DIR"];
+  const agentDir = await statsAgentDir();
+  process.env["PI_CODING_AGENT_DIR"] = agentDir;
+  try {
+    for (const rows of [20, 24, 40]) {
+      const view = openDialog("stats", rows);
+      try {
+        await settle(() =>
+          stripVTControlCharacters(view.dialog.render(80).join("\n")).includes("Scanned"),
+        );
+        for (const width of [40, 54, 80, 140]) {
+          const rendered = view.dialog.render(width);
+          // The base budget: everything but the four rows Pi's footer needs.
+          assert.ok(rendered.length <= rows - 4, `${rendered.length} rows at ${width}×${rows}`);
+          const text = rendered.map((row) => stripVTControlCharacters(row).trim()).join(" ");
+          assert.ok(text.includes("Enter/Esc closes"), `the whole hint shows at ${width}×${rows}`);
+        }
+      } finally {
+        await view.close();
+      }
+    }
+  } finally {
+    if (previousAgentDir === undefined) delete process.env["PI_CODING_AGENT_DIR"];
+    else process.env["PI_CODING_AGENT_DIR"] = previousAgentDir;
+    await rm(agentDir, { recursive: true, force: true });
+  }
+});
+
+test("a slow load from an expired scan never replaces newer statistics under Ctrl+O", async (t) => {
+  const previousAgentDir = process.env["PI_CODING_AGENT_DIR"];
+  const agentDir = await statsAgentDir();
+  process.env["PI_CODING_AGENT_DIR"] = agentDir;
+  // Hold the first scan's directory read until the newer scan has been shown.
+  const fs = (await import("node:fs/promises")).default;
+  const { syncBuiltinESMExports } = await import("node:module");
+  const readdir = fs.readdir.bind(fs);
+  let release = (): void => {};
+  const barrier = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let held = false;
+  t.mock.method(fs, "readdir", async (...args: Parameters<typeof fs.readdir>) => {
+    const result = await readdir(...args);
+    if (!held && String(args[0]).endsWith("--work-app--")) {
+      held = true;
+      await barrier;
+    }
+    return result;
+  });
+  syncBuiltinESMExports();
+  let clock = Date.now();
+  t.mock.method(Date, "now", () => clock);
+  const view = openDialog("stats");
+  try {
+    const plain = (): string => stripVTControlCharacters(view.dialog.render(140).join("\n"));
+    await settle(() => held);
+    await addStatsSession(agentDir, "s2");
+    clock += STATS_CACHE_TTL_MS + 1;
+    // All time scans afresh past the TTL; cycling back to 30 days reuses that scan.
+    view.dialog.handleInput?.("r");
+    await settle(() => plain().includes("All time") && plain().includes("Scanned 2 sessions"));
+    for (let step = 0; step < 4; step += 1) view.dialog.handleInput?.("r");
+    await settle(() => plain().includes("Last 30 days") && plain().includes("Scanned 2 sessions"));
+    release();
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    assert.ok(plain().includes("Scanned 2 sessions"), "the stale load does not repaint");
+    view.dialog.handleInput?.("\u000f");
+    assert.ok(plain().replace(/\s+/g, " ").includes("Ctrl+O collapses"));
+    assert.ok(plain().includes("Scanned 2 sessions"), "Ctrl+O keeps the newer statistics");
+  } finally {
+    release();
+    await view.close();
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+    if (previousAgentDir === undefined) delete process.env["PI_CODING_AGENT_DIR"];
+    else process.env["PI_CODING_AGENT_DIR"] = previousAgentDir;
+    await rm(agentDir, { recursive: true, force: true });
+  }
+});
+
+test("every Statistics sub-menu takes the same 25 body rows in a tall terminal", async () => {
+  const previousAgentDir = process.env["PI_CODING_AGENT_DIR"];
+  const agentDir = await statsAgentDir();
+  process.env["PI_CODING_AGENT_DIR"] = agentDir;
+  const view = openDialog("stats", 80);
+  try {
+    const rendered = (): string[] =>
+      view.dialog.render(100).map((row) => stripVTControlCharacters(row));
+    await settle(() => rendered().some((row) => row.includes("Scanned")));
+    for (const expanded of [false, true]) {
+      const heights: number[] = [];
+      const bodies: number[] = [];
+      for (let step = 0; step < 5; step += 1) {
+        const rows = rendered();
+        assert.ok(
+          rows
+            .join(" ")
+            .replace(/\s+/g, " ")
+            .includes(expanded ? "Ctrl+O collapses" : "Ctrl+O expands"),
+        );
+        heights.push(rows.length);
+        // The body window: from the Statistics header to the blank row above the hint.
+        const top = rows.findIndex((row) => row.includes("Statistics · "));
+        const hint = rows.findIndex((row) => row.includes("Tab switches tabs"));
+        bodies.push(hint - 1 - top);
+        view.dialog.handleInput?.("\u001b[C");
+      }
+      assert.deepEqual(
+        bodies,
+        Array<number>(5).fill(STATS_SECTION_ROWS),
+        `bodies ${bodies.join(",")}`,
+      );
+      assert.equal(new Set(heights).size, 1, `one dialog height (${heights.join(",")})`);
+      view.dialog.handleInput?.("\u000f");
+    }
+    assert.equal(statsViewportRows(80), STATS_SECTION_ROWS);
+    assert.ok(
+      statsViewportRows(30) < STATS_SECTION_ROWS,
+      "a short terminal still shrinks the window",
+    );
+  } finally {
+    await view.close();
     if (previousAgentDir === undefined) delete process.env["PI_CODING_AGENT_DIR"];
     else process.env["PI_CODING_AGENT_DIR"] = previousAgentDir;
     await rm(agentDir, { recursive: true, force: true });

@@ -42,9 +42,13 @@ function record(overrides: Partial<CallRecord> & { key: string }): CallRecord {
 }
 
 test("period and scope helpers cycle and label as the hint promises", () => {
-  assert.equal(nextPeriod("30d"), "7d");
-  assert.equal(nextPeriod("7d"), "all");
-  assert.equal(nextPeriod("all"), "30d");
+  assert.equal(nextPeriod("24h"), "3d");
+  assert.equal(nextPeriod("3d"), "7d");
+  assert.equal(nextPeriod("7d"), "30d");
+  assert.equal(nextPeriod("30d"), "all");
+  assert.equal(nextPeriod("all"), "24h");
+  assert.equal(periodLabel("24h"), "Last 24 hours");
+  assert.equal(periodLabel("3d"), "Last 3 days");
   assert.equal(periodLabel("30d"), "Last 30 days");
   assert.equal(periodLabel("7d"), "Last 7 days");
   assert.equal(periodLabel("all"), "All time");
@@ -52,6 +56,11 @@ test("period and scope helpers cycle and label as the hint promises", () => {
   midnight.setHours(0, 0, 0, 0);
   midnight.setDate(midnight.getDate() - 6);
   assert.equal(periodStart("7d", NOW), midnight.getTime(), "local midnight six days back");
+  const threeDays = new Date(NOW);
+  threeDays.setHours(0, 0, 0, 0);
+  threeDays.setDate(threeDays.getDate() - 2);
+  assert.equal(periodStart("3d", NOW), threeDays.getTime(), "local midnight two days back");
+  assert.equal(periodStart("24h", NOW), NOW - 24 * 3_600_000, "the rolling 24 hours, not today");
   assert.equal(periodStart("all", NOW), undefined);
   assert.equal(toggleScope("all"), "project");
   assert.equal(toggleScope("project"), "all");
@@ -416,4 +425,43 @@ test("zero-cost calls reprice at the tier list rate, times the Fast multiple whe
   );
   const unknownRow = report.speed.byModel.find((row) => row.fast === "unknown");
   assert.equal(unknownRow?.calls, 1, "requested without price evidence stays fast?");
+});
+
+test("hour buckets keep both occurrences of a DST fall-back hour: America/New_York and Asia/Kathmandu", async () => {
+  // The zone is process-wide, so the check runs in a child with TZ set.
+  const script = [
+    "import { hourStart, timelineOf } from './.pi/extensions/lib/stats/aggregate.ts';",
+    "const first = Date.parse('2026-11-01T01:30:00-04:00');",
+    "const second = Date.parse('2026-11-01T01:30:00-05:00');",
+    "const keys = timelineOf('24h', Date.parse('2026-11-01T03:30:00-05:00')).keys.map(Number);",
+    "console.log([hourStart(first), hourStart(second), ...keys].join(' '));",
+  ].join("\n");
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const run = promisify(execFile);
+  const { stdout } = await run(process.execPath, ["--input-type=module", "-e", script], {
+    cwd: process.cwd(),
+    env: { ...process.env, TZ: "America/New_York" },
+  });
+  const [firstHour, secondHour, ...keys] = stdout.trim().split(" ").map(Number);
+  assert.equal(firstHour, Date.parse("2026-11-01T01:00:00-04:00"), "01:30 EDT is in 01:00 EDT");
+  assert.equal(secondHour, Date.parse("2026-11-01T01:00:00-05:00"), "01:30 EST is in 01:00 EST");
+  assert.equal(keys.length, 25, "the rolling day touches 25 clock hours");
+  assert.ok(keys.includes(Date.parse("2026-11-01T01:00:00-04:00")));
+  assert.ok(
+    keys.includes(Date.parse("2026-11-01T01:00:00-05:00")),
+    "the repeated hour is its own bucket",
+  );
+  for (let index = 1; index < keys.length; index += 1)
+    assert.equal(keys[index] - keys[index - 1], 3_600_000, "buckets are one elapsed hour apart");
+  const { stdout: kathmandu } = await run(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      "import { hourStart } from './.pi/extensions/lib/stats/aggregate.ts'; console.log(new Date(hourStart(Date.parse('2026-10-27T12:00:00Z'))).toISOString());",
+    ],
+    { cwd: process.cwd(), env: { ...process.env, TZ: "Asia/Kathmandu" } },
+  );
+  assert.equal(kathmandu.trim(), "2026-10-27T11:15:00.000Z", "17:45 NPT floors to 17:00 NPT");
 });

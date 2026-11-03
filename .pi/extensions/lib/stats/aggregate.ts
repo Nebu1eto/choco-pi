@@ -7,7 +7,12 @@ import {
   type CompactionEvent,
   type LaneEvent,
 } from "./compaction.ts";
-import { estimateSpeed, type SpeedEstimate, type SpeedSample } from "./estimate.ts";
+import {
+  estimateSpeed,
+  MIN_ESTIMATE_SAMPLES,
+  type SpeedEstimate,
+  type SpeedSample,
+} from "./estimate.ts";
 import {
   baseModelId,
   fastPriceMultiplier,
@@ -18,10 +23,14 @@ import {
   type PriceLookup,
 } from "./fast.ts";
 
-export type Period = "30d" | "7d" | "all";
+export type Period = "24h" | "3d" | "7d" | "30d" | "all";
 /** The order `r` cycles through. */
-export const PERIODS: readonly Period[] = ["30d", "7d", "all"];
+export const PERIODS: readonly Period[] = ["24h", "3d", "7d", "30d", "all"];
 export const DEFAULT_PERIOD: Period = "30d";
+
+export function isPeriod(value: string): value is Period {
+  return PERIODS.some((period) => period === value);
+}
 
 export type Scope = "all" | "project";
 export const DEFAULT_SCOPE: Scope = "all";
@@ -35,12 +44,16 @@ export function nextPeriod(period: Period): Period {
 }
 
 export function periodLabel(period: Period): string {
+  if (period === "24h") return "Last 24 hours";
+  if (period === "3d") return "Last 3 days";
   if (period === "7d") return "Last 7 days";
   if (period === "30d") return "Last 30 days";
   return "All time";
 }
 
+/** Calendar days a day-based period spans; undefined for the rolling 24 hours and for all time. */
 export function periodDays(period: Period): number | undefined {
+  if (period === "3d") return 3;
   if (period === "7d") return 7;
   if (period === "30d") return 30;
   return undefined;
@@ -54,19 +67,71 @@ export function scopeLabel(scope: Scope): string {
   return scope === "all" ? "all projects" : "this project";
 }
 
+const HOUR_MS = 3_600_000;
+
 /**
  * Inclusive lower bound of the period in epoch ms, or undefined for all time.
- * "Last N days" means the N local calendar days ending today, so the bound is
- * local midnight of today minus N-1 days (date arithmetic, so DST days count
- * as one day), matching the chart buckets and the active-day count.
+ * "Last 24 hours" is the rolling window ending now. "Last N days" means the N
+ * local calendar days ending today, so the bound is local midnight of today
+ * minus N-1 days (date arithmetic, so DST days count as one day), matching the
+ * chart buckets and the active-day count.
  */
 export function periodStart(period: Period, now: number): number | undefined {
+  if (period === "24h") return now - HOUR_MS * 24;
   const days = periodDays(period);
   if (days === undefined) return undefined;
   const start = new Date(now);
   start.setHours(0, 0, 0, 0);
   start.setDate(start.getDate() - (days - 1));
   return start.getTime();
+}
+
+/** Days the all-time charts plot, ending today. */
+export const ALL_TIME_CHART_DAYS = 60;
+
+/** The unit the charts bucket calls into: hours for the rolling 24 hours, local days otherwise. */
+export type BucketUnit = "day" | "hour";
+
+export function bucketUnitOf(period: Period): BucketUnit {
+  return period === "24h" ? "hour" : "day";
+}
+
+/**
+ * Start of the local clock hour containing `at`: the instant less its local
+ * minutes, seconds, and milliseconds. Rebuilding the hour from local fields
+ * would resolve the repeated hour of a DST fall-back to its first occurrence;
+ * subtracting keeps both occurrences distinct, at any UTC offset.
+ */
+export function hourStart(at: number): number {
+  const date = new Date(at);
+  return at - (date.getMinutes() * 60_000 + date.getSeconds() * 1000 + date.getMilliseconds());
+}
+
+/** The chart bucket of a call: its local day (YYYY-MM-DD) or the epoch ms of its local hour. */
+export function bucketKey(unit: BucketUnit, at: number): string {
+  return unit === "day" ? dayKey(at) : String(hourStart(at));
+}
+
+/** The buckets a period's charts plot, oldest first, ending with the one containing `now`. */
+export type Timeline = { unit: BucketUnit; keys: string[] };
+
+export function timelineOf(period: Period, now: number): Timeline {
+  const unit = bucketUnitOf(period);
+  const keys: string[] = [];
+  if (unit === "hour") {
+    // Every clock hour the rolling window touches: the partial hour 24 hours
+    // back through the current one.
+    const first = hourStart(now - HOUR_MS * 24);
+    for (let at = hourStart(now); at >= first; at = hourStart(at - 1)) keys.unshift(String(at));
+    return { unit, keys };
+  }
+  const days = periodDays(period) ?? ALL_TIME_CHART_DAYS;
+  for (let offset = days - 1; offset >= 0; offset -= 1) {
+    const date = new Date(now);
+    date.setDate(date.getDate() - offset);
+    keys.push(dayKey(date.getTime()));
+  }
+  return { unit, keys };
 }
 
 /**
@@ -156,6 +221,17 @@ export type SpeedRow = {
 
 export type DayBucket = { day: string; tokens: number; cost: number; calls: number };
 
+/** Calls bucketed by chart bucket (local day or clock hour), for the charts. */
+export type TimelineData = {
+  unit: BucketUnit;
+  /** Totals per bucket; `day` holds the bucket key. */
+  totals: Map<string, DayBucket>;
+  /** Tokens per model key per bucket, for the token chart series. */
+  byModel: Map<string, Map<string, number>>;
+  /** Speed samples per base model (Fast and standard together) per bucket, for the throughput trend. */
+  speed: Map<string, Map<string, SpeedAccumulator>>;
+};
+
 export type StatsReport = {
   calls: number;
   failedCalls: number;
@@ -174,8 +250,7 @@ export type StatsReport = {
   /** What code-mode scripts executed, the code-mode rows' tokens and cost split by result size. */
   byCodeMode: Breakdown[];
   byDay: DayBucket[];
-  /** Tokens per model key per local day, for the daily chart series. */
-  byModelDay: Map<string, Map<string, number>>;
+  timeline: TimelineData;
   speed: { byProvider: SpeedRow[]; byModel: SpeedRow[] };
   context: ContextStats;
   compaction: CompactionSummary;
@@ -236,7 +311,8 @@ function percentile(sorted: readonly number[], fraction: number): number | undef
   return sorted[index];
 }
 
-type SpeedAccumulator = {
+/** Speed samples of a group of calls; finished into a SpeedRow or a trend point. */
+export type SpeedAccumulator = {
   model: string;
   fast: FastState | undefined;
   samples: SpeedSample[];
@@ -296,6 +372,21 @@ function finishSpeed(key: string, speed: SpeedAccumulator): SpeedRow {
     ttftP90Ms: percentile(sorted, 0.9),
     estimate: estimateSpeed(speed.samples),
   };
+}
+
+/** Most points one trend fit uses; a bucket is a small sample, so the fit stays cheap. */
+const TREND_FIT_POINTS = 150;
+
+/**
+ * Generation tok/s of one bucket: from recorded timings when the bucket has
+ * any, else the duration fit when it has enough calls, else undefined (the
+ * chart leaves a gap rather than plotting zero).
+ */
+export function bucketTokPerSec(speed: SpeedAccumulator | undefined): number | undefined {
+  if (speed === undefined) return undefined;
+  if (speed.generationMs > 0) return speed.timedOutputTokens / (speed.generationMs / 1000);
+  if (speed.samples.length < MIN_ESTIMATE_SAMPLES) return undefined;
+  return estimateSpeed(speed.samples, TREND_FIT_POINTS)?.tokPerSec;
 }
 
 type BreakdownAccumulator = { calls: number; tokens: CallTokens; cost: number };
@@ -482,7 +573,8 @@ export function modelKey(record: CallRecord): string {
  * Aggregate deduplicated, filtered records. Failed calls count only in
  * `failedCalls`; every other record lands in exactly one model bucket and one
  * feature bucket, so both breakdowns sum to the totals. Breakdown rows are
- * ordered by share of tokens, the metric their bars draw.
+ * ordered by share of tokens, the metric their bars draw. `unit` sets the
+ * chart buckets (local days by default).
  */
 export function aggregateStats(
   records: readonly CallRecord[],
@@ -490,15 +582,19 @@ export function aggregateStats(
     priceLookup?: PriceLookup;
     compactions?: readonly CompactionEvent[];
     laneEvents?: readonly LaneEvent[];
+    unit?: BucketUnit;
   } = {},
 ): StatsReport {
+  const unit = options.unit ?? "day";
   const tokens = emptyTokens();
   const sessions = new Set<string>();
   const byModel = new Map<string, BreakdownAccumulator>();
   const byFeature = new Map<string, BreakdownAccumulator>();
   const byCodeMode = new Map<string, BreakdownAccumulator>();
   const byDay = new Map<string, DayBucket>();
-  const byModelDay = new Map<string, Map<string, number>>();
+  const timelineTotals = new Map<string, DayBucket>();
+  const timelineByModel = new Map<string, Map<string, number>>();
+  const timelineSpeed = new Map<string, Map<string, SpeedAccumulator>>();
   const speedByProvider = new Map<string, SpeedAccumulator>();
   const speedByModel = new Map<string, SpeedAccumulator>();
   let calls = 0;
@@ -548,9 +644,15 @@ export function aggregateStats(
     bucket.cost += cost;
     bucket.calls += 1;
     byDay.set(day, bucket);
-    const series = byModelDay.get(modelKey(record)) ?? new Map<string, number>();
-    series.set(day, (series.get(day) ?? 0) + total);
-    byModelDay.set(modelKey(record), series);
+    const slot = unit === "day" ? day : bucketKey(unit, record.at);
+    const slotTotals = timelineTotals.get(slot) ?? { day: slot, tokens: 0, cost: 0, calls: 0 };
+    slotTotals.tokens += total;
+    slotTotals.cost += cost;
+    slotTotals.calls += 1;
+    timelineTotals.set(slot, slotTotals);
+    const series = timelineByModel.get(modelKey(record)) ?? new Map<string, number>();
+    series.set(slot, (series.get(slot) ?? 0) + total);
+    timelineByModel.set(modelKey(record), series);
     if (record.kind === "assistant") {
       const provider = speedByProvider.get(record.provider) ?? newSpeed(record.provider, undefined);
       addSpeed(provider, record);
@@ -560,6 +662,11 @@ export function aggregateStats(
       const model = speedByModel.get(key) ?? newSpeed(base, fast);
       addSpeed(model, record);
       speedByModel.set(key, model);
+      const trend = timelineSpeed.get(base) ?? new Map<string, SpeedAccumulator>();
+      const point = trend.get(slot) ?? newSpeed(base, undefined);
+      addSpeed(point, record);
+      trend.set(slot, point);
+      timelineSpeed.set(base, trend);
     }
     if (firstAt === undefined || record.at < firstAt) firstAt = record.at;
     if (lastAt === undefined || record.at > lastAt) lastAt = record.at;
@@ -598,7 +705,12 @@ export function aggregateStats(
     context: contextStats(records),
     compaction: compactionSummary(options.compactions ?? [], options.laneEvents ?? []),
     byDay: [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day)),
-    byModelDay,
+    timeline: {
+      unit,
+      totals: timelineTotals,
+      byModel: timelineByModel,
+      speed: timelineSpeed,
+    },
     speed: { byProvider: speedRows(speedByProvider), byModel: speedRows(speedByModel) },
     firstAt,
     lastAt,

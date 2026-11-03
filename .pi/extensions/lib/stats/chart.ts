@@ -11,8 +11,12 @@ import { formatTokens } from "../session-usage.ts";
  */
 
 export type ChartSeries = {
-  /** Series values, one per sample (day); zeros plot at the baseline. */
-  values: readonly number[];
+  /**
+   * Series values, one per sample (day or hour); zeros plot at the baseline.
+   * An undefined value leaves a gap: nothing is drawn there and the line
+   * resumes, unconnected, at the next defined sample.
+   */
+  values: readonly (number | undefined)[];
   /** Applies the series colour to a run of glyphs. */
   paint: (text: string) => string;
   /** Heavy box-drawing (━ ┃ ┏ ┓ ┗ ┛) for an aggregate line; light by default. */
@@ -84,7 +88,10 @@ export function lineChart(series: readonly ChartSeries[], options: ChartOptions)
     starts.push(at);
     at += w;
   }
-  const peak = Math.max(0, ...series.flatMap((s) => [...s.values]));
+  const peak = Math.max(
+    0,
+    ...series.flatMap((s) => s.values.filter((value) => value !== undefined)),
+  );
   const levelOf = (value: number): number =>
     peak <= 0 ? 0 : Math.min(rows - 1, Math.round((value / peak) * (rows - 1)));
 
@@ -132,7 +139,11 @@ export function lineChart(series: readonly ChartSeries[], options: ChartOptions)
     const heavy = entry.weight === "heavy";
     let previousLevel: number | undefined;
     for (let index = 0; index < samples; index += 1) {
-      const value = values[index] ?? 0;
+      const value = values[index];
+      if (value === undefined) {
+        previousLevel = undefined;
+        continue;
+      }
       const level = levelOf(value);
       const row = rows - 1 - level;
       const start = starts[index] ?? 0;

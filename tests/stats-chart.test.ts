@@ -239,3 +239,18 @@ test("tick labels keep two spaces apart and today always stays", () => {
     assert.equal(labels[0]?.[1], "D0", "the first tick is kept");
   }
 });
+
+test("an undefined value leaves a gap: nothing drawn and no connector across it", () => {
+  const lines = lineChart([{ values: [10, undefined, 20], paint: id }], {
+    rows: 3,
+    width: 7 + 9,
+    gutter: 7,
+    ticks: ["", "", ""],
+    dim: id,
+  });
+  const plots = lines.slice(0, 3).map((line) => line.slice(7));
+  for (const plot of plots)
+    assert.equal(plot.slice(3, 6).trim(), "", `gap column stays blank: ${plot}`);
+  assert.equal(plots[0]?.slice(6), "───", "the line resumes at its own level");
+  assert.match(lines[0] ?? "", /^\s+20 ┤/, "gaps take no part in the scale");
+});

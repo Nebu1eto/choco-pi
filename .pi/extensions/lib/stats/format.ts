@@ -1,16 +1,18 @@
 import { visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { formatCost, formatTokens, type SessionInfoStyle } from "../session-usage.ts";
 import {
+  bucketTokPerSec,
   dayKey,
-  periodDays,
   periodLabel,
   scopeLabel,
+  timelineOf,
   type Breakdown,
   type DayBucket,
   type Period,
   type Scope,
   type SpeedRow,
   type StatsReport,
+  type Timeline,
 } from "./aggregate.ts";
 import {
   isMcpFeature,
@@ -39,6 +41,16 @@ const MAX_SPEED_LABEL = 40;
 const SPARK_CHARS = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"] as const;
 /** Rows a collapsed breakdown shows; Ctrl+O shows the rest, as the Context tab does with its inventories. */
 const COLLAPSED_ROWS = 6;
+/** Rows an expanded breakdown keeps before folding surplus per-tool rows into one. */
+const EXPANDED_FOLD_ROWS = 12;
+/**
+ * Rows every Statistics sub-menu occupies: the dialog's body window, header
+ * and sub-menu bar included. Collapsed By Model and By Feature tables show as
+ * many rows as fit in it.
+ */
+export const STATS_SECTION_ROWS = 25;
+/** Fewest plot rows the Summary chart shrinks to when fitting its section. */
+const MIN_FITTED_CHART_ROWS = 5;
 /** Width of the token scale printed left of the daily chart. */
 const CHART_GUTTER = 7;
 
@@ -208,6 +220,8 @@ export type StatsFormatOptions = {
   width?: number;
   /** Display names from the model registry; unknown models get a formatted id. */
   modelNames?: ModelNameLookup;
+  /** The sub-menu to show under its bar; undefined renders every section in order. */
+  section?: StatsSection;
 };
 
 /** Pad or truncate plain text to exactly `width` columns without adding escape codes. */
@@ -320,6 +334,34 @@ function shortDay(day: string): string {
   return name === undefined ? day : `${name} ${Number(date)}`;
 }
 
+/** The local clock hour starting at epoch ms `at`, as HH:00. */
+function clockHour(at: number): string {
+  return `${String(new Date(at).getHours()).padStart(2, "0")}:00`;
+}
+
+/** How a chart bucket is named on an axis: a short day, or the clock hour. */
+function bucketLabel(timeline: Timeline, key: string): string {
+  return timeline.unit === "day" ? shortDay(key) : clockHour(Number(key));
+}
+
+/**
+ * X-axis ticks for a timeline: every day of a short window or every week of a
+ * long one, every six hours of the rolling day; the last bucket is always
+ * "today" (or "now"), and the tick before it is dropped when it would crowd it.
+ */
+function timelineTicks(timeline: Timeline): string[] {
+  const window = timeline.keys.length;
+  const every = timeline.unit === "hour" ? 6 : window <= 10 ? 1 : 7;
+  const last = timeline.unit === "hour" ? "now" : "today";
+  return timeline.keys.map((key, index) =>
+    index === window - 1
+      ? last
+      : index % every === 0 && index < window - 3
+        ? bucketLabel(timeline, key)
+        : "",
+  );
+}
+
 /** The label a breakdown row shows: a friendly model name for model keys, the feature name otherwise. */
 function rowLabel(key: string, names: ModelNameLookup | undefined, isModel: boolean): string {
   if (!isModel) return key;
@@ -369,13 +411,17 @@ function breakdownRows(
   colours: ColourMap | undefined,
   nested: ReadonlyMap<string, readonly Breakdown[]> = new Map(),
   suffixed = isModel,
+  collapsedRows = COLLAPSED_ROWS,
 ): string[] {
   const dim = p.dim;
   if (rows.length === 0) return [dim("  (no calls in this period)")];
   const lines: string[] = [];
   // Collapsed: the top rows, then one line counting the rest. Expanded:
-  // everything, surplus per-tool rows folded into one.
-  const shown = expanded ? foldTools(rows, 12) : rows.slice(0, COLLAPSED_ROWS);
+  // everything, surplus per-tool rows folded into one, never below the
+  // collapsed rows so expanding never hides a row.
+  const shown = expanded
+    ? foldTools(rows, Math.max(EXPANDED_FOLD_ROWS, collapsedRows))
+    : rows.slice(0, collapsedRows);
   if (layout.inOut) {
     lines.push(
       dim(
@@ -461,12 +507,20 @@ export function sparklineRows(
   p: Palette = paletteOf(undefined),
 ): string[] {
   const byDay = new Map(days.map((bucket) => [bucket.day, bucket.tokens]));
-  const peak = Math.max(0, ...days.map((bucket) => bucket.tokens));
+  return levelRows(
+    windowDays(window, now).map((key) => byDay.get(key) ?? 0),
+    Math.max(0, ...days.map((bucket) => bucket.tokens)),
+    rows,
+    p,
+  );
+}
+
+/** Sparkline rows over `values` scaled to `peak`, top row first; zero renders as a dot. */
+function levelRows(values: readonly number[], peak: number, rows: number, p: Palette): string[] {
   const steps = SPARK_CHARS.length;
-  const columns = windowDays(window, now).map((key) => {
-    const tokens = byDay.get(key) ?? 0;
-    return tokens <= 0 || peak <= 0 ? 0 : Math.max(1, Math.ceil((tokens / peak) * rows * steps));
-  });
+  const columns = values.map((value) =>
+    value <= 0 || peak <= 0 ? 0 : Math.max(1, Math.ceil((value / peak) * rows * steps)),
+  );
   const out: string[] = [];
   for (let row = rows - 1; row >= 0; row -= 1) {
     const base = row * steps;
@@ -523,6 +577,15 @@ export function sparklineAxis(window: number, now: number): string {
   return `${left}${" ".repeat(gap)}${label}`;
 }
 
+/** The dim axis under a sparkline over the last `span` buckets of a timeline. */
+function timelineAxis(timeline: Timeline, span: number, now: number): string {
+  if (timeline.unit === "day") return sparklineAxis(span, now);
+  const left = bucketLabel(timeline, timeline.keys[timeline.keys.length - span] ?? "");
+  const label = "now";
+  const gap = Math.max(1, span - visibleWidth(left) - visibleWidth(label));
+  return `${left}${" ".repeat(gap)}${label}`;
+}
+
 /** The chart series: the top models of the period by tokens, plus everything else. */
 const CHART_SERIES = 3;
 
@@ -532,28 +595,27 @@ export function chartModelKeys(report: StatsReport): string[] {
 }
 
 /**
- * The "Tokens per day" line chart with its legend: one line per top model in
- * that model's colour, a dim "other" line when the remaining models carry
- * tokens, every day of the window plotted (zero days at the baseline).
+ * The "Tokens per day" (or per hour) line chart with its legend: one line per
+ * top model in that model's colour, a dim "other" line when the remaining
+ * models carry tokens, every bucket of the window plotted (empty ones at the
+ * baseline). The report must be bucketed in the timeline's unit.
  */
 export function tokensPerDayChart(
   report: StatsReport,
-  window: number,
-  now: number,
+  timeline: Timeline,
   layout: Layout,
   p: Palette,
   names: ModelNameLookup | undefined,
   colours: ColourMap,
 ): string[] {
-  const keys = windowDays(window, now);
+  const keys = timeline.keys;
   const tops = chartModelKeys(report);
   const seriesFor = (modelKey: string): number[] => {
-    const byDay = report.byModelDay.get(modelKey);
-    return keys.map((day) => byDay?.get(day) ?? 0);
+    const byBucket = report.timeline.byModel.get(modelKey);
+    return keys.map((key) => byBucket?.get(key) ?? 0);
   };
-  const totals = keys.map((day) => report.byDay.find((bucket) => bucket.day === day)?.tokens ?? 0);
-  const other = keys.map((day, index) => {
-    const total = totals[index] ?? 0;
+  const totals = keys.map((key) => report.timeline.totals.get(key)?.tokens ?? 0);
+  const other = totals.map((total, index) => {
     const topSum = tops.reduce((sum, key) => sum + (seriesFor(key)[index] ?? 0), 0);
     return Math.max(0, total - topSum);
   });
@@ -569,21 +631,11 @@ export function tokensPerDayChart(
   ];
   const hasOther = other.some((value) => value > 0);
   if (hasOther) series.push({ values: other, paint: p.dim });
-  const tickEvery = window <= 10 ? 1 : 7;
-  // A dated tick every week from the left; the last column is always "today"
-  // and the tick before it is dropped when it would crowd the label.
-  const ticks = keys.map((day, index) =>
-    index === window - 1
-      ? "today"
-      : index % tickEvery === 0 && index < window - 3
-        ? shortDay(day)
-        : "",
-  );
   const lines = lineChart(series, {
     rows: layout.chartRows,
     width: layout.tableWidth,
     gutter: CHART_GUTTER,
-    ticks,
+    ticks: timelineTicks(timeline),
     dim: p.dim,
   });
   // Legend entries share the row: each name gets an equal slice of the width.
@@ -911,47 +963,80 @@ function speedTable(
   };
 }
 
+/** The sub-menus of the Statistics tab, in the order ←/→ steps through them. */
+export type StatsSection = "summary" | "models" | "features" | "context" | "throughput";
+
+export const STATS_SECTIONS: ReadonlyArray<{ id: StatsSection; title: string }> = [
+  { id: "summary", title: "Summary" },
+  { id: "models", title: "By Model" },
+  { id: "features", title: "By Feature" },
+  { id: "context", title: "Context & Compaction" },
+  { id: "throughput", title: "Throughput" },
+];
+
+export const DEFAULT_STATS_SECTION: StatsSection = "summary";
+
+export function isStatsSection(value: string): value is StatsSection {
+  return STATS_SECTIONS.some((section) => section.id === value);
+}
+
+/** The section `delta` steps away, wrapping at either end. */
+export function stepStatsSection(section: StatsSection, delta: 1 | -1): StatsSection {
+  const index = STATS_SECTIONS.findIndex((entry) => entry.id === section);
+  const count = STATS_SECTIONS.length;
+  return STATS_SECTIONS[(index + delta + count) % count]?.id ?? DEFAULT_STATS_SECTION;
+}
+
 /**
- * The Statistics tab body laid out for `options.width` columns; no line
- * exceeds it. Collapsed, it reports the totals, the daily chart, the top of
- * each breakdown and throughput by provider; expanded (Ctrl+O), every row
- * with its detail line, throughput by model, and the footnotes, the way the
- * Context tab appends its inventories.
+ * The sub-menu bar, as the Preferences tab draws its sections: the active
+ * title bold, the others dim, slash-separated. When the row would not fit,
+ * only the active title and its position show.
  */
-export function formatStats(report: StatsReport, options: StatsFormatOptions): string {
-  const width = Math.max(STATS_MIN_WIDTH, Math.floor(options.width ?? STATS_DEFAULT_WIDTH));
-  const names = options.modelNames;
-  const longestModelName = Math.max(
-    0,
-    ...report.byModel.map((row) => visibleWidth(withoutSuffix(rowLabel(row.key, names, true)))),
-  );
-  const layout = layoutFor(width, longestModelName + 2);
-  // One decision for every model table in the body (By model, Throughput).
-  const providerSuffix = providerSuffixFits(layout, [
-    ...report.byModel.map((row) => ({ text: rowLabel(row.key, names, true), extra: 0 })),
-    ...report.speed.byModel.map((row) => ({
-      text: rowLabel(row.model, names, true),
-      extra: fastTagWidth(row, false),
-    })),
-  ]);
-  const p = paletteOf(options.style);
+function sectionBar(active: StatsSection, width: number, p: Palette): string {
+  const full = `  ${STATS_SECTIONS.map((section) => (section.id === active ? p.strong(section.title) : p.dim(section.title))).join(p.dim(" / "))}`;
+  if (visibleWidth(full) <= width) return full;
+  const index = STATS_SECTIONS.findIndex((section) => section.id === active);
+  const title = STATS_SECTIONS[index]?.title ?? "";
+  return `  ${p.strong(title)}${p.dim(` (${index + 1}/${STATS_SECTIONS.length})`)}`;
+}
+
+/** What every section renderer reads; computed once per body. */
+type SectionContext = {
+  report: StatsReport;
+  options: StatsFormatOptions;
+  layout: Layout;
+  p: Palette;
+  names: ModelNameLookup | undefined;
+  /** Whether model labels keep their provider suffix (By model and Throughput agree). */
+  providerSuffix: boolean;
+  modelColours: ColourMap;
+  timeline: Timeline;
+};
+
+/** Dim notes packed onto as few rows as the width allows. */
+function packedDim(items: readonly string[], layout: Layout, p: Palette): string[] {
+  const out: string[] = [];
+  let current = "";
+  for (const item of items) {
+    const next = current === "" ? `  ${item}` : `${current} · ${item}`;
+    if (current !== "" && visibleWidth(next) > layout.width) {
+      out.push(p.dim(current));
+      current = `  ${item}`;
+    } else current = next;
+  }
+  if (current !== "") out.push(p.dim(current));
+  return out;
+}
+
+/** Summary: the totals, then tokens per day (per hour for the rolling 24 hours). */
+function summaryLines(ctx: SectionContext): string[] {
+  const { report, options, layout, p, timeline } = ctx;
   const { heading, dim } = p;
   const lines: string[] = [];
-
   const facts = (items: string[]): string[] =>
     layout.compact
       ? items.map((item) => p.text(`  ${item}`))
       : [p.text(`  ${items.join(dim(" · "))}`)];
-  lines.push(
-    heading("Statistics") + dim(` · ${periodLabel(options.period)} · ${scopeLabel(options.scope)}`),
-  );
-  const scanned = [
-    `Scanned ${count(options.scan.sessions)} sessions (${count(options.scan.files)} files)`,
-    `${count(options.scan.calls)} calls`,
-  ];
-  lines.push(...(layout.compact ? scanned.map((item) => dim(item)) : [dim(scanned.join(" · "))]));
-  lines.push("");
-
   lines.push(heading("Summary"));
   const cost = report.recordedCost + report.estimatedCost;
   lines.push(
@@ -989,63 +1074,89 @@ export function formatStats(report: StatsReport, options: StatsFormatOptions): s
   );
   lines.push("");
 
-  const modelColours = colourMapOf(report.byModel.map((row) => row.key));
-  const window = periodDays(options.period) ?? 60;
+  const hourly = timeline.unit === "hour";
+  const window = timeline.keys.length;
   lines.push(
-    heading("Tokens per day") +
-      dim(` (last ${window} days${layout.chartRows > 0 ? ", total and per model" : ""})`),
+    heading(hourly ? "Tokens per hour" : "Tokens per day") +
+      dim(
+        ` (${hourly ? "last 24 hours" : `last ${window} days`}${layout.chartRows > 0 ? ", total and per model" : ""})`,
+      ),
   );
-  const peak = report.byDay.reduce<DayBucket | undefined>(
+  const buckets = hourly ? [...report.timeline.totals.values()] : report.byDay;
+  const peak = buckets.reduce<DayBucket | undefined>(
     (best, bucket) => (best === undefined || bucket.tokens > best.tokens ? bucket : best),
     undefined,
   );
   if (layout.chartRows > 0 && window <= layout.tableWidth - CHART_GUTTER) {
-    lines.push(...tokensPerDayChart(report, window, options.now, layout, p, names, modelColours));
+    lines.push(...tokensPerDayChart(report, timeline, layout, p, ctx.names, ctx.modelColours));
+  } else if (hourly) {
+    const values = timeline.keys.map((key) => report.timeline.totals.get(key)?.tokens ?? 0);
+    for (const row of levelRows(values, Math.max(0, ...values), 3, p)) lines.push(`  ${row}`);
+    lines.push(dim(`  ${timelineAxis(timeline, window, options.now)}`));
   } else {
-    const sparkWindow = Math.min(window, width - 2);
+    const sparkWindow = Math.min(window, layout.width - 2);
     for (const row of sparklineRows(report.byDay, sparkWindow, options.now, 3, p))
       lines.push(`  ${row}`);
     lines.push(dim(`  ${sparklineAxis(sparkWindow, options.now)}`));
   }
+  const busiest =
+    peak === undefined
+      ? "  no activity"
+      : hourly
+        ? `  busiest hour ${clockHour(Number(peak.day))}`
+        : `  busiest day ${shortDay(peak.day)}`;
   lines.push(
     dim(
       peak === undefined
-        ? "  no activity"
-        : `  busiest day ${shortDay(peak.day)} · ${formatTokens(peak.tokens)} tokens${layout.compact ? "" : ` · ${count(peak.calls)} calls`}`,
+        ? busiest
+        : `${busiest} · ${formatTokens(peak.tokens)} tokens${layout.compact ? "" : ` · ${count(peak.calls)} calls`}`,
     ),
   );
-  lines.push("");
+  return lines;
+}
 
-  lines.push(heading("By model") + dim(" (share of tokens)"));
-  lines.push(
+function modelLines(ctx: SectionContext, collapsedRows = COLLAPSED_ROWS): string[] {
+  const { report, options, layout, p } = ctx;
+  return [
+    p.heading("By Model") + p.dim(" (share of tokens)"),
     ...breakdownRows(
       report.byModel,
       options.expanded,
       p,
       layout,
-      names,
+      ctx.names,
       true,
-      modelColours,
+      ctx.modelColours,
       new Map(),
-      providerSuffix,
+      ctx.providerSuffix,
+      collapsedRows,
     ),
-  );
-  lines.push("");
-  lines.push(heading("By feature") + dim(" (what triggered the call)"));
-  lines.push(
+  ];
+}
+
+function featureLines(ctx: SectionContext, collapsedRows = COLLAPSED_ROWS): string[] {
+  const { report, options, layout, p } = ctx;
+  return [
+    p.heading("By Feature") + p.dim(" (what triggered the call)"),
     ...breakdownRows(
       report.byFeature,
       options.expanded,
       p,
       layout,
-      names,
+      ctx.names,
       false,
       undefined,
       new Map([[FEATURE_CODE_MODE, report.byCodeMode]]),
+      undefined,
+      collapsedRows,
     ),
-  );
-  lines.push("");
+  ];
+}
 
+function contextLines(ctx: SectionContext): string[] {
+  const { report, options, layout, p } = ctx;
+  const { heading, dim } = p;
+  const lines: string[] = [];
   lines.push(
     heading("Context & Compaction") + dim(layout.compact ? "" : " (input + cache per call)"),
   );
@@ -1153,7 +1264,8 @@ export function formatStats(report: StatsReport, options: StatsFormatOptions): s
       ),
     );
 
-  if (options.expanded && compaction.byProvider.length > 0) {
+  // The provider table fits the section collapsed too; Ctrl+O adds its note.
+  if (compaction.byProvider.length > 0) {
     lines.push(p.text("  By provider"));
     const providerLabel = Math.max(10, Math.min(20, layout.label - 2));
     const cols: Array<[string, number]> = [
@@ -1186,29 +1298,21 @@ export function formatStats(report: StatsReport, options: StatsFormatOptions): s
       ];
       lines.push(cells.join(" "));
     });
-    lines.push(
-      ...wrapTextWithAnsi(
-        "method from each checkpoint's strategy; trigger from the checkpoint's recorded trigger, else a lane record naming its candidate; unknown = written before triggers were recorded",
-        layout.width - 2,
-      ).map((line) => dim(`  ${line}`)),
-    );
+    if (options.expanded)
+      lines.push(
+        ...wrapTextWithAnsi(
+          "method from each checkpoint's strategy; trigger from the checkpoint's recorded trigger, else a lane record naming its candidate; unknown = written before triggers were recorded",
+          layout.width - 2,
+        ).map((line) => dim(`  ${line}`)),
+      );
   }
-  lines.push("");
+  return lines;
+}
 
-  const packedDim = (items: string[]): string[] => {
-    const out: string[] = [];
-    let current = "";
-    for (const item of items) {
-      const next = current === "" ? `  ${item}` : `${current} · ${item}`;
-      if (current !== "" && visibleWidth(next) > layout.width) {
-        out.push(dim(current));
-        current = `  ${item}`;
-      } else current = next;
-    }
-    if (current !== "") out.push(dim(current));
-    return out;
-  };
-
+function throughputLines(ctx: SectionContext): string[] {
+  const { report, options, layout, p, names, providerSuffix, modelColours } = ctx;
+  const { heading, dim } = p;
+  const lines: string[] = [];
   // Collapsed: the top models by output, then one line counting the rest.
   const allSpeedRows = report.speed.byModel;
   const speedRows = options.expanded ? allSpeedRows : allSpeedRows.slice(0, COLLAPSED_ROWS);
@@ -1253,7 +1357,7 @@ export function formatStats(report: StatsReport, options: StatsFormatOptions): s
         ]
       : []),
   ];
-  if (legend.length > 0) lines.push(...packedDim(legend));
+  if (legend.length > 0) lines.push(...packedDim(legend, layout, p));
   if (options.expanded) {
     lines.push("");
     lines.push(p.text("  By provider"));
@@ -1268,21 +1372,241 @@ export function formatStats(report: StatsReport, options: StatsFormatOptions): s
       ).lines,
     );
   }
-  lines.push("");
+  lines.push("", ...throughputTrendLines(ctx));
+  return lines;
+}
 
-  if (options.expanded) {
-    lines.push(
-      dim(
-        "Cost is the metered list price recorded with each call, also under a subscription. tok/s is the generation speed, output tokens over the request time after the first token: from recorded timings when this profile timed the calls, otherwise fitted from duration against output (est.). Fast is read per call from the recorded price against the list rate, the xAI Fast model id, or the session's requested state (fast? when the log cannot tell). Each call is charged to the tool result it answered; a code-mode call is split across what its script executed in proportion to each nested result's size (evenly when results are empty).",
-      ),
-    );
-    lines.push(
-      dim(
-        "Not counted: subagents that did not persist a session, side conversations, and the context an earlier tool result keeps occupying.",
-      ),
-    );
-  } else {
-    lines.push(dim("Metered list price per call · Ctrl+O expands rows, details and notes"));
+/** How many models the throughput trend draws, the busiest by output first. */
+const TREND_SERIES = CHART_SERIES;
+
+type TrendSeries = { model: string; values: (number | undefined)[] };
+
+/** Trend fits are the costly part of a layout; each report computes them once per window. */
+const trendMemo = new WeakMap<StatsReport, Map<string, TrendSeries[]>>();
+
+/**
+ * Generation tok/s per bucket for the busiest models (Fast and standard calls
+ * together): recorded timings where the bucket has them, else a fit of its
+ * request durations, else a gap. Models with no point in the window are skipped.
+ */
+export function throughputTrend(report: StatsReport, timeline: Timeline): TrendSeries[] {
+  const memoKey = `${timeline.unit}:${timeline.keys.join(",")}`;
+  const byWindow = trendMemo.get(report) ?? new Map<string, TrendSeries[]>();
+  trendMemo.set(report, byWindow);
+  const cached = byWindow.get(memoKey);
+  if (cached !== undefined) return cached;
+  const models: string[] = [];
+  for (const row of report.speed.byModel) if (!models.includes(row.model)) models.push(row.model);
+  const series: TrendSeries[] = [];
+  for (const model of models) {
+    if (series.length >= TREND_SERIES) break;
+    const buckets = report.timeline.speed.get(model);
+    if (buckets === undefined) continue;
+    const values = timeline.keys.map((key) => bucketTokPerSec(buckets.get(key)));
+    if (values.some((value) => value !== undefined)) series.push({ model, values });
   }
+  byWindow.set(memoKey, series);
+  return series;
+}
+
+/**
+ * "Throughput per day" (per hour for the rolling 24 hours): one line per
+ * busiest model in its By Model colour, gaps where a bucket had neither
+ * timings nor enough calls to fit. Narrow bodies get one sparkline per model.
+ */
+function throughputTrendLines(ctx: SectionContext): string[] {
+  const { report, options, layout, p, timeline } = ctx;
+  const hourly = timeline.unit === "hour";
+  const window = timeline.keys.length;
+  const lines = [
+    p.heading(hourly ? "Throughput per hour" : "Throughput per day") +
+      p.dim(
+        layout.compact
+          ? " (tok/s)"
+          : ` (${hourly ? "last 24 hours" : `last ${window} days`}, generation tok/s per model)`,
+      ),
+  ];
+  const trend = throughputTrend(report, timeline);
+  if (trend.length === 0) {
+    lines.push(p.dim("  no timed calls and too few to fit in this period"));
+    return lines;
+  }
+  const tint = (entry: TrendSeries, rank: number, text: string): string =>
+    p.series(ctx.modelColours.get(entry.model) ?? rank, text);
+  const labels = trend.map((entry) => withoutSuffix(rowLabel(entry.model, ctx.names, true)));
+  if (layout.chartRows > 0 && window <= layout.tableWidth - CHART_GUTTER) {
+    lines.push(
+      ...lineChart(
+        trend.map((entry, rank) => ({
+          values: entry.values,
+          paint: (text: string) => tint(entry, rank, text),
+        })),
+        {
+          rows: layout.chartRows,
+          width: layout.tableWidth,
+          gutter: CHART_GUTTER,
+          ticks: timelineTicks(timeline),
+          dim: p.dim,
+        },
+      ),
+    );
+    const fixed = 2 + 2 * trend.length + 3 * (trend.length - 1);
+    const shortened = layout.compact
+      ? labels.map((label) => fit(label, layout.width - 4).trimEnd())
+      : shortenToFit(labels, layout.width - fixed);
+    const legend = trend.map(
+      (entry, rank) => tint(entry, rank, "●") + p.text(` ${shortened[rank] ?? ""}`),
+    );
+    if (layout.compact) for (const entry of legend) lines.push(`  ${entry}`);
+    else lines.push(`  ${legend.join(p.dim(" · "))}`);
+  } else {
+    // One sparkline per model over the most recent buckets that fit.
+    const span = Math.min(window, layout.width - 4);
+    const peak = Math.max(
+      0,
+      ...trend.flatMap((entry) => entry.values.slice(-span).filter((value) => value !== undefined)),
+    );
+    const steps = SPARK_CHARS.length;
+    trend.forEach((entry, rank) => {
+      lines.push(
+        tint(entry, rank, "  ●") +
+          p.text(` ${fit(labels[rank] ?? "", layout.width - 4).trimEnd()}`),
+      );
+      const cells = entry.values.slice(-span).map((value) => {
+        if (value === undefined) return p.dim("·");
+        const level = peak > 0 ? Math.max(1, Math.ceil((value / peak) * steps)) : 1;
+        return tint(entry, rank, SPARK_CHARS[Math.min(steps, level) - 1] ?? "█");
+      });
+      lines.push(`    ${cells.join("")}`);
+    });
+    lines.push(p.dim(`    ${timelineAxis(timeline, span, options.now)}`));
+  }
+  const notes = [`tok/s from recorded timings, else fitted per ${hourly ? "hour" : "day"}`];
+  if (trend.some((entry) => entry.values.some((value) => value === undefined)))
+    notes.push("gaps: too few calls to fit");
+  lines.push(...packedDim(notes, layout, p));
+  return lines;
+}
+
+/**
+ * The closing line: what cost means and, collapsed, what Ctrl+O adds.
+ */
+function footerLines(ctx: SectionContext): string[] {
+  const dim = ctx.p.dim;
+  if (ctx.options.expanded) return [dim("Metered list price per call")];
+  const adds = ctx.options.section === "context" ? "details" : "rows and details";
+  return [dim(`Metered list price per call · Ctrl+O expands ${adds}`)];
+}
+
+const SECTION_LINES = {
+  summary: summaryLines,
+  models: modelLines,
+  features: featureLines,
+  context: contextLines,
+  throughput: throughputLines,
+} satisfies Record<StatsSection, (ctx: SectionContext) => string[]>;
+
+/**
+ * The Statistics tab body laid out for `options.width` columns; no line
+ * exceeds it. The header names the period, scope, and scan; below it the
+ * body shows one section (`options.section`) under a Preferences-style
+ * sub-menu bar, or, without a section (hosts without a terminal), every
+ * section in order. Collapsed, each breakdown shows its top rows; expanded
+ * (Ctrl+O), every row with its detail line, throughput by provider, and the
+ * footnotes, the way the Context tab appends its inventories.
+ *
+ * The report must be aggregated in the period's bucket unit
+ * (`bucketUnitOf(options.period)`), which the charts plot.
+ */
+export function formatStats(report: StatsReport, options: StatsFormatOptions): string {
+  const width = Math.max(STATS_MIN_WIDTH, Math.floor(options.width ?? STATS_DEFAULT_WIDTH));
+  const names = options.modelNames;
+  const longestModelName = Math.max(
+    0,
+    ...report.byModel.map((row) => visibleWidth(withoutSuffix(rowLabel(row.key, names, true)))),
+  );
+  const layout = layoutFor(width, longestModelName + 2);
+  const p = paletteOf(options.style);
+  const ctx: SectionContext = {
+    report,
+    options,
+    layout,
+    p,
+    names,
+    // One decision for every model table in the body (By Model, Throughput).
+    providerSuffix: providerSuffixFits(layout, [
+      ...report.byModel.map((row) => ({ text: rowLabel(row.key, names, true), extra: 0 })),
+      ...report.speed.byModel.map((row) => ({
+        text: rowLabel(row.model, names, true),
+        extra: fastTagWidth(row, false),
+      })),
+    ]),
+    modelColours: colourMapOf(report.byModel.map((row) => row.key)),
+    timeline: timelineOf(options.period, options.now),
+  };
+  const { heading, dim } = p;
+  const lines: string[] = [];
+  lines.push(
+    heading("Statistics") + dim(` · ${periodLabel(options.period)} · ${scopeLabel(options.scope)}`),
+  );
+  const scanned = [
+    `Scanned ${count(options.scan.sessions)} sessions (${count(options.scan.files)} files)`,
+    `${count(options.scan.calls)} calls`,
+  ];
+  lines.push(...(layout.compact ? scanned.map((item) => dim(item)) : [dim(scanned.join(" · "))]));
+  lines.push("");
+  if (options.section === undefined) {
+    for (const section of STATS_SECTIONS) lines.push(...SECTION_LINES[section.id](ctx), "");
+  } else {
+    lines.push(sectionBar(options.section, layout.width, p), dim("─".repeat(layout.width)));
+    lines.push(...sectionBody(options.section, ctx, lines), "");
+  }
+  lines.push(...footerLines(ctx));
   return lines.flatMap((line) => wrapTextWithAnsi(line, width)).join("\n");
+}
+
+/**
+ * One section's lines, grown to fill STATS_SECTION_ROWS: By Model and By
+ * Feature show as many top rows as fit (at least their usual six), and
+ * Summary and Throughput draw their charts as tall as fits (at least
+ * MIN_FITTED_CHART_ROWS, which may overflow and scroll), counting the lines
+ * above (`above`), the blank line, and the footer after wrapping. The size
+ * is fitted collapsed whether or not the view is expanded, so Ctrl+O only
+ * adds lines.
+ */
+function sectionBody(
+  section: StatsSection,
+  ctx: SectionContext,
+  above: readonly string[],
+): string[] {
+  const collapsed: SectionContext = { ...ctx, options: { ...ctx.options, expanded: false } };
+  const width = ctx.layout.width;
+  const rowsOf = (lines: readonly string[]): number =>
+    lines.reduce((sum, line) => sum + wrapTextWithAnsi(line, width).length, 0);
+  const fixed = rowsOf(above) + 1 + rowsOf(footerLines(collapsed));
+  /** The largest size from `least` up to `most` whose collapsed lines fit. */
+  const grow = (
+    least: number,
+    most: number,
+    render: (target: SectionContext, size: number) => string[],
+  ): number => {
+    let size = least;
+    while (size < most && fixed + rowsOf(render(collapsed, size + 1)) <= STATS_SECTION_ROWS)
+      size += 1;
+    return size;
+  };
+  if (section === "models" || section === "features") {
+    const render = section === "models" ? modelLines : featureLines;
+    const total = (section === "models" ? ctx.report.byModel : ctx.report.byFeature).length;
+    return render(ctx, grow(COLLAPSED_ROWS, total, render));
+  }
+  // Narrow bodies draw sparklines instead of charts; they keep their size.
+  // A chart may also shrink from its default height to fit.
+  if ((section === "summary" || section === "throughput") && ctx.layout.chartRows > 0) {
+    const render = section === "summary" ? summaryLines : throughputLines;
+    const tall = (target: SectionContext, chartRows: number): string[] =>
+      render({ ...target, layout: { ...target.layout, chartRows } });
+    return tall(ctx, grow(MIN_FITTED_CHART_ROWS, STATS_SECTION_ROWS, tall));
+  }
+  return SECTION_LINES[section](ctx);
 }

@@ -42,8 +42,12 @@ function median(values: readonly number[]): number | undefined {
  * Fit duration = ttft + output * slope. Undefined when the sample is too
  * small, has no two distinct output counts, or the slope is not positive
  * (durations that do not grow with output carry no throughput signal).
+ * `maxPoints` bounds the thinned sample the quadratic pairwise fit uses.
  */
-export function estimateSpeed(samples: readonly SpeedSample[]): SpeedEstimate | undefined {
+export function estimateSpeed(
+  samples: readonly SpeedSample[],
+  maxPoints = MAX_FIT_POINTS,
+): SpeedEstimate | undefined {
   const usable = samples.filter(
     (sample) =>
       Number.isFinite(sample.output) &&
@@ -52,7 +56,7 @@ export function estimateSpeed(samples: readonly SpeedSample[]): SpeedEstimate | 
       sample.durationMs > 0,
   );
   if (usable.length < MIN_ESTIMATE_SAMPLES) return undefined;
-  const step = Math.max(1, Math.floor(usable.length / MAX_FIT_POINTS));
+  const step = Math.max(1, Math.floor(usable.length / Math.max(MIN_ESTIMATE_SAMPLES, maxPoints)));
   const thinned = usable.filter((_, index) => index % step === 0);
   const slopes: number[] = [];
   for (let i = 0; i < thinned.length; i += 1) {

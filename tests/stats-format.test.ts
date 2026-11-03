@@ -2,7 +2,12 @@ import { formatTokens } from "../.pi/extensions/lib/session-usage.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { aggregateStats, dayKey } from "../.pi/extensions/lib/stats/aggregate.ts";
+import {
+  aggregateStats,
+  bucketUnitOf,
+  dayKey,
+  filterRecords,
+} from "../.pi/extensions/lib/stats/aggregate.ts";
 import {
   fitLabel,
   shortenToFit,
@@ -13,6 +18,10 @@ import {
   sparkline,
   sparklineAxis,
   STATS_DEFAULT_WIDTH,
+  STATS_SECTION_ROWS,
+  STATS_SECTIONS,
+  stepStatsSection,
+  type StatsSection,
 } from "../.pi/extensions/lib/stats/format.ts";
 import {
   formatModelId,
@@ -134,7 +143,7 @@ test("narrow layouts drop columns instead of wrapping and wide layouts add in/ou
   const report = aggregateStats(records);
   const at = (width: number) =>
     formatStats(report, { period: "all", scope: "all", expanded: false, now: NOW, scan, width });
-  const models = (body: string) => body.split("By model")[1]?.split("By feature")[0] ?? "";
+  const models = (body: string) => body.split("By Model")[1]?.split("By Feature")[0] ?? "";
   assert.ok(
     !/\d[km]?\s+\$/.test(models(at(40))),
     "the token column is dropped at 40 columns, cost stays",
@@ -201,7 +210,8 @@ test("concise view folds surplus per-tool rows into one row and the expanded vie
   assert.ok(expanded.includes("tools: tool_7"));
   assert.match(expanded, /^  ● MCP: github\s+/m, "expanded lists every MCP server");
   assert.match(expanded, /^    1 calls · in 100 · out 50 · cache 1\.0k read \/ 200 write$/m);
-  assert.ok(expanded.includes("Not counted:"));
+  assert.ok(!expanded.includes("Not counted:"), "Ctrl+O adds rows and details, not notes");
+  assert.match(expanded, /^Metered list price per call$/m);
 });
 
 test("sparkline scales to the busiest day and dots empty days", () => {
@@ -262,7 +272,7 @@ test("narrow layouts keep the label, shrink then hide the bar, and drop the prov
   const report = aggregateStats(records);
   const at = (width: number) =>
     formatStats(report, { period: "all", scope: "all", expanded: false, now: NOW, scan, width });
-  const models = (body: string) => body.split("By model")[1]?.split("By feature")[0] ?? "";
+  const models = (body: string) => body.split("By Model")[1]?.split("By Feature")[0] ?? "";
   assert.match(
     models(at(40)),
     /^  ● Claude Opus 5\.5\s+\d+\.\d%\s+\$[\d.]+$/m,
@@ -489,7 +499,7 @@ test("the tokens-per-day chart plots the top models with a legend and falls back
     scan,
     width: 80,
   });
-  const chart = wide.split("Tokens per day")[1]?.split("By model")[0] ?? "";
+  const chart = wide.split("Tokens per day")[1]?.split("By Model")[0] ?? "";
   assert.match(chart, /^\s+0 ┤/m, "the baseline is labelled 0");
   assert.match(chart, /┤.*[╭╮╰╯]/, "the chart is a step line");
   assert.match(chart, /└.*today$/m, "ticks end with today");
@@ -593,14 +603,14 @@ test("collapsed view shows the top rows and names the rest; series colours are s
     scan,
     width: 80,
   });
-  const models = collapsed.split("By model")[1]?.split("By feature")[0] ?? "";
+  const models = collapsed.split("By Model")[1]?.split("By Feature")[0] ?? "";
   assert.equal((models.match(/^  ● Model /gm) ?? []).length, 6, "six rows collapsed");
   assert.match(models, /^  3 more \(\d+\.\d% · \$[\d.]+\) · Ctrl\+O shows all$/m);
   const speed = collapsed.split("\nThroughput")[1] ?? "";
   assert.equal((speed.match(/^  ● Model /gm) ?? []).length, 6, "six throughput rows collapsed");
   assert.match(speed, /^  3 more · Ctrl\+O shows all$/m);
   assert.ok(!models.includes("  other "), "collapsed rows are counted, not folded");
-  assert.match(collapsed, /Ctrl\+O expands rows, details and notes/);
+  assert.match(collapsed, /Ctrl\+O expands rows and details$/);
   const expanded = formatStats(report, {
     period: "all",
     scope: "all",
@@ -612,8 +622,8 @@ test("collapsed view shows the top rows and names the rest; series colours are s
   assert.equal(
     (
       expanded
-        .split("By model")[1]
-        ?.split("By feature")[0]
+        .split("By Model")[1]
+        ?.split("By Feature")[0]
         ?.match(/^  ● Model /gm) ?? []
     ).length,
     9,
@@ -682,7 +692,7 @@ test("the label column grows to show the longest model name whole at 54 columns,
     scan,
     width: 54,
   });
-  const models = body.split("By model")[1]?.split("By feature")[0] ?? "";
+  const models = body.split("By Model")[1]?.split("By Feature")[0] ?? "";
   assert.match(models, /^  ● Claude Fable 5\.1\s+[█░]{4,6}\s+/m, "the longest name shows whole");
   assert.ok(!models.includes("…"), "nothing is truncated");
   for (const row of body.split("\n")) assert.ok(visibleWidth(row) <= 54);
@@ -743,7 +753,7 @@ test("code mode nests what its scripts executed: top rows collapsed, all rows ex
     scan,
     width: 80,
   });
-  const features = collapsed.split("By feature")[1]?.split("\nThroughput")[0] ?? "";
+  const features = collapsed.split("By Feature")[1]?.split("\nThroughput")[0] ?? "";
   assert.match(features, /^  ● code mode\s+[█░]+\s+80\.0%/m);
   assert.match(features, /^    └ exec\/shell\s+[█░]+\s+18\.0%\s+900\s+\$0\.90$/m);
   assert.match(features, /^    └ MCP: linear\s+[█░]+\s+20\.0%/m);
@@ -762,14 +772,10 @@ test("code mode nests what its scripts executed: top rows collapsed, all rows ex
     scan,
     width: 80,
   });
-  const all = expanded.split("By feature")[1]?.split("\nThroughput")[0] ?? "";
+  const all = expanded.split("By Feature")[1]?.split("\nThroughput")[0] ?? "";
   for (const key of [CODE_MODE_LSP, CODE_MODE_BROWSER, CODE_MODE_FILES])
     assert.match(all, new RegExp(`^    └ ${key}\\s`, "m"));
   assert.doesNotMatch(all, /more \(/);
-  assert.match(
-    expanded.replace(/\n/g, " "),
-    /split across what its script executed in proportion to each nested result/,
-  );
   for (const width of [40, 54, 80, 140])
     for (const row of formatStats(report, {
       period: "all",
@@ -782,7 +788,7 @@ test("code mode nests what its scripts executed: top rows collapsed, all rows ex
       assert.ok(visibleWidth(row) <= width, `${width}: ${row}`);
 });
 
-test("Context & Compaction lays out aligned rows and lists providers when expanded", () => {
+test("Context & Compaction lays out aligned rows and lists providers, collapsed too", () => {
   const big = (key: string, cacheRead: number) =>
     record({ key, tokens: { input: 100, output: 10, cacheRead, cacheWrite: 0 } });
   const report = aggregateStats(
@@ -857,14 +863,16 @@ test("Context & Compaction lays out aligned rows and lists providers when expand
     line.indexOf("█") >= 0 ? line.indexOf("█") : line.indexOf("░");
   const bars = section
     .split("\n")
-    .filter((line) => line.includes("●"))
+    .filter((line) => line.includes("● ≥"))
     .map(barStart);
   assert.equal(new Set(bars).size, 1, "bars start in one column");
   const modelBar =
-    (collapsed.split("By model")[1] ?? "").split("\n").find((line) => line.includes("●")) ?? "";
+    (collapsed.split("By Model")[1] ?? "").split("\n").find((line) => line.includes("●")) ?? "";
   assert.equal(bars[0], barStart(modelBar), "aligned with the By model bars");
 
-  assert.doesNotMatch(section, /By provider/);
+  assert.match(section, /By provider\n\s+built-in\s+server\s+host\s+unknown\s+fallbk\s+no-op\n/);
+  assert.match(section, /^  ● Anthropic\s+1\s+0\s+0\s+0\s+0\s+1$/m, "providers show collapsed");
+  assert.doesNotMatch(section, /recorded trigger/, "the method note waits for Ctrl+O");
   const expanded = formatStats(report, {
     period: "all",
     scope: "all",
@@ -1101,7 +1109,7 @@ test("By model and Throughput agree on provider suffixes at 40, 54, 80, 100, and
         width,
         modelNames: names,
       });
-      const models = body.split("By model")[1]?.split("\nBy feature")[0] ?? "";
+      const models = body.split("By Model")[1]?.split("\nBy Feature")[0] ?? "";
       const speed = body.split("\nThroughput")[1]?.split("\n\n")[0] ?? "";
       const modelRows = models.split("\n").filter((line) => line.startsWith("  ●"));
       const speedRows = speed.split("\n").filter((line) => line.startsWith("  ●"));
@@ -1122,4 +1130,289 @@ test("By model and Throughput agree on provider suffixes at 40, 54, 80, 100, and
     false,
     "80 omits providers: the widest tagged label would not fit the column",
   );
+});
+
+test("a section renders under the sub-menu bar, below the unchanged two-line header", () => {
+  const report = aggregateStats(records);
+  const titles = "Summary / By Model / By Feature / Context & Compaction / Throughput";
+  const owners = {
+    summary: { has: ["Total tokens", "Tokens per day"], lacks: ["By Model", "Throughput"] },
+    models: { has: ["By Model", "Claude Opus 5.5"], lacks: ["Tokens per day", "By Feature"] },
+    features: { has: ["By Feature", "code mode"], lacks: ["By Model", "Median context"] },
+    context: { has: ["Context & Compaction", "Median context"], lacks: ["By Feature"] },
+    throughput: { has: ["Throughput", "tok/s", "Throughput per day"], lacks: ["Total tokens"] },
+  } satisfies Record<StatsSection, { has: string[]; lacks: string[] }>;
+  for (const { id, title } of STATS_SECTIONS) {
+    for (const width of [40, 80, 140]) {
+      for (const expanded of [false, true]) {
+        const body = formatStats(report, {
+          period: "30d",
+          scope: "all",
+          expanded,
+          now: NOW,
+          scan,
+          width,
+          section: id,
+          style,
+        });
+        for (const row of body.split("\n"))
+          assert.ok(visibleWidth(row) <= width, `${id} at ${width}: ${row.replace(ANSI, "")}`);
+        const plain = body.replace(ANSI, "").split("\n");
+        assert.equal(plain[0], "Statistics · Last 30 days · all projects");
+        assert.match(plain.slice(1, 3).join(" "), /Scanned 3 sessions \(4 files\)/);
+        const bar = plain.find((row) => row.includes(title) && row.startsWith("  ")) ?? "";
+        if (width >= 80) assert.equal(bar, `  ${titles}`, "every sub-menu is named");
+        else
+          assert.match(
+            bar,
+            new RegExp(`\\(\\d/${STATS_SECTIONS.length}\\)$`),
+            "narrow bars name the position",
+          );
+        const content = plain.slice(plain.indexOf(bar) + 1).join("\n");
+        if (width >= 80) {
+          for (const text of owners[id].has)
+            assert.ok(content.includes(text), `${id} shows ${text}`);
+          for (const text of owners[id].lacks)
+            assert.ok(!content.includes(text), `${id} leaves ${text} to another section`);
+        }
+      }
+    }
+  }
+  assert.equal(stepStatsSection("summary", -1), "throughput", "← wraps to the last section");
+  assert.equal(stepStatsSection("throughput", 1), "summary", "→ wraps to the first section");
+  const full = formatStats(report, {
+    period: "30d",
+    scope: "all",
+    expanded: false,
+    now: NOW,
+    scan,
+  });
+  assert.ok(!full.includes(titles), "without a section, every section shows and no bar is drawn");
+  const order = ["Summary", "Tokens per day", "By Model", "By Feature", "Context & Compaction"];
+  const positions = [...order, "\nThroughput", "Throughput per day"].map((text) =>
+    full.indexOf(text),
+  );
+  assert.deepEqual(
+    positions,
+    [...positions].sort((a, b) => a - b),
+    "sections keep their order",
+  );
+  assert.ok(positions.every((position) => position >= 0));
+});
+
+test("Throughput charts generation tok/s per day per model, leaving gaps where a day has no data", () => {
+  const report = aggregateStats(records);
+  const body = formatStats(report, {
+    period: "7d",
+    scope: "all",
+    expanded: false,
+    now: NOW,
+    scan,
+    width: 100,
+    section: "throughput",
+  });
+  const trend = body.split("Throughput per day")[1] ?? "";
+  assert.match(trend, /^ \(last 7 days, generation tok\/s per model\)/);
+  // 50 output tokens over 2000 - 300 ms of generation: 29.4 tok/s, the axis peak.
+  assert.match(trend, /^\s+29 ┤/m, "the axis peaks at the fastest day");
+  assert.match(trend, /└.*today$/m);
+  assert.match(trend, /^  ● Claude Opus 5\.5 · ● /m, "the legend names models in By Model colours");
+  assert.match(trend, /gaps: too few calls to fit/, "days without calls are gaps, not zero");
+  const narrow = formatStats(report, {
+    period: "30d",
+    scope: "all",
+    expanded: false,
+    now: NOW,
+    scan,
+    width: 40,
+    section: "throughput",
+  });
+  const sparks = narrow.split("Throughput per day")[1] ?? "";
+  assert.match(sparks, /^    [·▁▂▃▄▅▆▇█]+$/m, "narrow bodies draw a sparkline per model");
+  for (const row of narrow.split("\n")) assert.ok(visibleWidth(row) <= 40);
+});
+
+test("the rolling 24 hours charts tokens and throughput per clock hour", () => {
+  const HOUR = 3_600_000;
+  const recent = [
+    record({ key: "h1", at: NOW - 2 * HOUR }),
+    record({
+      key: "h2",
+      at: NOW - 30 * 60_000,
+      tokens: { input: 5000, output: 50, cacheRead: 0, cacheWrite: 0 },
+    }),
+    record({ key: "old", at: NOW - 25 * HOUR }),
+  ];
+  const report = aggregateStats(
+    filterRecords(recent, { period: "24h", scope: "all", projectDirs: [], now: NOW }),
+    { unit: bucketUnitOf("24h") },
+  );
+  assert.equal(report.calls, 2, "a call 25 hours back is outside the rolling day");
+  const summary = formatStats(report, {
+    period: "24h",
+    scope: "all",
+    expanded: false,
+    now: NOW,
+    scan,
+    width: 100,
+    section: "summary",
+  });
+  assert.match(summary, /^Statistics · Last 24 hours · all projects$/m);
+  assert.match(summary, /Tokens per hour \(last 24 hours, total and per model\)/);
+  assert.match(summary, /└.*now$/m, "the hour axis ends at now");
+  const busiest = new Date(NOW - 30 * 60_000).getHours();
+  assert.match(
+    summary,
+    new RegExp(`busiest hour ${String(busiest).padStart(2, "0")}:00 · 5\\.0k tokens`),
+  );
+  const throughput = formatStats(report, {
+    period: "24h",
+    scope: "all",
+    expanded: false,
+    now: NOW,
+    scan,
+    width: 100,
+    section: "throughput",
+  });
+  assert.match(throughput, /Throughput per hour \(last 24 hours/);
+  assert.match(throughput, /else fitted per hour/);
+});
+
+test("collapsed By Model and By Feature fill the 25-row section with as many rows as fit", () => {
+  const many = Array.from({ length: 40 }, (_unused, index) =>
+    record({
+      key: `m${index}`,
+      model: `model-${String(index).padStart(2, "0")}`,
+      feature: `mcp:server-${index}`,
+      tokens: { input: 100 + index, output: 50, cacheRead: 1000, cacheWrite: 200 },
+    }),
+  );
+  const report = aggregateStats(many);
+  for (const section of ["models", "features"] as const) {
+    for (const width of [40, 54, 80, 140]) {
+      const body = (expanded: boolean): string[] =>
+        formatStats(report, {
+          period: "30d",
+          scope: "all",
+          expanded,
+          now: NOW,
+          scan,
+          width,
+          section,
+        })
+          .replace(ANSI, "")
+          .split("\n");
+      const collapsed = body(false);
+      const rows = collapsed.filter((line) => line.startsWith("  ● ")).length;
+      assert.ok(
+        collapsed.length <= STATS_SECTION_ROWS,
+        `${section} at ${width}: ${collapsed.length} rows`,
+      );
+      assert.ok(rows > 6, `${section} at ${width} shows more than the old six rows (${rows})`);
+      assert.ok(
+        collapsed.length >= STATS_SECTION_ROWS - 2,
+        `${section} at ${width} fills the section`,
+      );
+      assert.match(
+        collapsed.join("\n"),
+        new RegExp(`^  ${40 - rows} more `, "m"),
+        "the rest is counted",
+      );
+      const expanded = body(true).filter((line) => line.startsWith("  ● ")).length;
+      assert.ok(expanded >= rows, "expanding never shows fewer rows");
+    }
+  }
+  const few = formatStats(aggregateStats(records), {
+    period: "30d",
+    scope: "all",
+    expanded: false,
+    now: NOW,
+    scan,
+    width: 100,
+    section: "models",
+  });
+  assert.ok(!/ more \(/.test(few), "a short list shows every row");
+  const full = formatStats(report, {
+    period: "30d",
+    scope: "all",
+    expanded: false,
+    now: NOW,
+    scan,
+  });
+  assert.match(full, /^  34 more /m, "without a section, the tables keep their six rows");
+});
+
+test("no section carries the long notes; the footer is one line naming what Ctrl+O adds", () => {
+  const report = aggregateStats(records);
+  const body = (section: StatsSection, expanded: boolean): string =>
+    formatStats(report, {
+      period: "30d",
+      scope: "all",
+      expanded,
+      now: NOW,
+      scan,
+      width: 100,
+      section,
+    });
+  for (const { id } of STATS_SECTIONS) {
+    for (const expanded of [false, true]) {
+      const text = body(id, expanded);
+      assert.ok(!text.includes("Cost is the metered list price"), `${id} expanded=${expanded}`);
+      assert.ok(!text.includes("Not counted:"));
+      assert.ok(!text.includes("notes"), "nothing promises notes");
+    }
+    assert.match(
+      body(id, true),
+      /\nMetered list price per call$/,
+      `${id} expanded ends on one line`,
+    );
+  }
+  assert.match(body("context", false), /Ctrl\+O expands details$/);
+  for (const section of ["summary", "models", "features", "throughput"] as const)
+    assert.match(body(section, false), /Ctrl\+O expands rows and details$/);
+  const full = formatStats(report, { period: "30d", scope: "all", expanded: true, now: NOW, scan });
+  assert.ok(!full.includes("Not counted:"), "nor does the body without a section");
+});
+
+test("Summary and Throughput fit their charts to the 25-row section, never below five rows", () => {
+  const report = aggregateStats(records);
+  const body = (section: StatsSection, width: number, expanded: boolean): string[] =>
+    formatStats(report, {
+      period: "30d",
+      scope: "all",
+      expanded,
+      now: NOW,
+      scan,
+      width,
+      section,
+    })
+      .replace(ANSI, "")
+      .split("\n");
+  const plotRows = (lines: readonly string[]): number =>
+    lines.filter((line) => /^\s*\S* [┤│]/.test(line)).length;
+  for (const width of [80, 140]) {
+    const summary = body("summary", width, false);
+    assert.equal(summary.length, STATS_SECTION_ROWS, `the summary fills the section at ${width}`);
+    assert.ok(plotRows(summary) >= 5);
+    assert.equal(
+      plotRows(body("summary", width, true)),
+      plotRows(summary),
+      "Ctrl+O keeps the height",
+    );
+    const throughput = body("throughput", width, false);
+    const trend = plotRows(
+      throughput.slice(throughput.findIndex((l) => l.startsWith("Throughput per day"))),
+    );
+    assert.ok(trend >= 5, `the trend keeps five rows at ${width}`);
+    assert.ok(
+      throughput.length <= STATS_SECTION_ROWS || trend === 5,
+      `throughput fits, or its chart is at the minimum, at ${width}`,
+    );
+  }
+  // At 54 columns the compact summary cannot fit: the chart stops at five rows and scrolls.
+  const compact = body("summary", 54, false);
+  assert.equal(plotRows(compact), 5);
+  assert.ok(compact.length > STATS_SECTION_ROWS);
+  const narrow = body("summary", 40, false);
+  assert.equal(plotRows(narrow), 0, "a narrow body keeps its sparkline");
 });

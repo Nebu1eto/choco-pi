@@ -63,16 +63,27 @@ import { buildContextReport, renderContext } from "./lib/context-report.ts";
 import {
   DEFAULT_PERIOD,
   DEFAULT_SCOPE,
+  isPeriod,
   nextPeriod,
   toggleScope,
   type StatsSelection,
 } from "./lib/stats/aggregate.ts";
 import {
+  DEFAULT_STATS_SECTION,
+  isStatsSection,
+  STATS_SECTION_ROWS,
+  stepStatsSection,
+  type StatsSection,
+} from "./lib/stats/format.ts";
+import {
+  layoutStats,
+  loadStatsSnapshot,
+  peekStatsSnapshot,
   registryModelNames,
   registryPriceLookup,
   statsBody,
-  statsLayout,
   statsVariant,
+  type StatsSnapshot,
 } from "./lib/stats/report.ts";
 import { hasRunningSubagents } from "./lib/subagent-manager.ts";
 import {
@@ -139,17 +150,31 @@ export function isExpandableTab(id: StatusTabId): boolean {
   return EXPANDABLE_TABS.has(id);
 }
 
-/** Most body rows the Statistics tab shows at once; longer bodies scroll inside it. */
-export const STATS_VIEWPORT_ROWS = 30;
-/** Rows kept free for the dialog's padding, tab header, key hint, and Pi's footer. */
+/**
+ * Body rows the Statistics tab shows: every sub-menu takes exactly this many,
+ * shorter ones padded and longer ones scrolled, unless the terminal is too short.
+ */
+export const STATS_VIEWPORT_ROWS = STATS_SECTION_ROWS;
+/**
+ * Rows kept free for the dialog's padding, a one-row tab header, a one-row
+ * key hint, and Pi's footer. A header or hint that wraps takes its extra rows
+ * from the body window (see {@link statsViewportRows}).
+ */
 const STATS_CHROME_ROWS = 10;
 const STATS_MIN_VIEWPORT_ROWS = 5;
 
-/** The Statistics body window's height for a terminal of `terminalRows` rows. */
-export function statsViewportRows(terminalRows: number): number {
+/**
+ * The Statistics body window's height for a terminal of `terminalRows` rows
+ * whose tab header and key hint take `chromeRows` rows together (two when
+ * neither wraps).
+ */
+export function statsViewportRows(terminalRows: number, chromeRows = 2): number {
   return Math.max(
     STATS_MIN_VIEWPORT_ROWS,
-    Math.min(STATS_VIEWPORT_ROWS, Math.floor(terminalRows) - STATS_CHROME_ROWS),
+    Math.min(
+      STATS_VIEWPORT_ROWS,
+      Math.floor(terminalRows) - STATS_CHROME_ROWS - Math.max(0, chromeRows - 2),
+    ),
   );
 }
 
@@ -673,13 +698,22 @@ function contextBody(ctx: ExtensionCommandContext, expanded: boolean, styled: bo
   return body.replace(/^Context Usage/, () => heading);
 }
 
+/** The Statistics period, scope, and sub-menu the dialog shows. */
+type StatsTabView = StatsSelection & { section: StatsSection };
+
 /** The Statistics view encoded in a tab variant, or the defaults when it carries none. */
-function statsViewOf(variant: string): StatsSelection {
-  const [period, scope] = variant.split(":");
+function statsViewOf(variant: string): StatsTabView {
+  const [period = "", scope, section = ""] = variant.split(":");
   return {
-    period: period === "7d" || period === "all" || period === "30d" ? period : DEFAULT_PERIOD,
+    period: isPeriod(period) ? period : DEFAULT_PERIOD,
     scope: scope === "project" ? scope : DEFAULT_SCOPE,
+    section: isStatsSection(section) ? section : DEFAULT_STATS_SECTION,
   };
+}
+
+/** What the Statistics data depends on; the section and Ctrl+O only change the layout. */
+function statsDataKey(view: StatsSelection): string {
+  return `${view.period}:${view.scope}`;
 }
 
 export function tabBody(
@@ -725,16 +759,6 @@ function loadTabBody(
   expanded: boolean,
   variant: string,
 ): TabLoad {
-  if (id === "stats") {
-    const view = statsViewOf(variant);
-    return statsLayout({
-      cwd: ctx.cwd,
-      view: { period: view.period, scope: view.scope, expanded },
-      priceLookup: registryPriceLookup(ctx.modelRegistry),
-      modelNames: registryModelNames(ctx.modelRegistry),
-      style: ctx.ui.theme,
-    });
-  }
   if (id !== "status") return tabBody(ctx, thinkingLevel, id, true, expanded, variant);
   const cwd = ctx.cwd;
   const names = registeredMcpNames();
@@ -884,11 +908,53 @@ async function showTabOnce(
   return ctx.ui.custom<string | undefined>((tui, theme, _keybindings, done) => {
     let active = initial;
     let expanded = initialExpanded;
-    let statsView: StatsSelection = {
+    let statsView: StatsTabView = {
       period: DEFAULT_PERIOD,
       scope: DEFAULT_SCOPE,
+      section: DEFAULT_STATS_SECTION,
     };
     const variantOf = (id: TextTabId): string => (id === "stats" ? statsVariant(statsView) : "");
+    /**
+     * The Statistics data on screen and the period and scope it was computed
+     * for. Ctrl+O, the sub-menu, a theme change, or a return to the tab keep
+     * that data, even past the cache TTL; only a new period or scope consults
+     * the 5-minute cache and, when it has expired, reads the logs again.
+     */
+    let statsShown: { key: string; snapshot: StatsSnapshot } | undefined;
+    /**
+     * Counts Statistics loads. Only the latest may set statsShown: a slow load
+     * from an expired scan can settle after a newer load of the same period
+     * and scope, and must not swap older data in under Ctrl+O.
+     */
+    let statsRequest = 0;
+    const loadStats = (tabExpanded: boolean, variant: string): TabLoad => {
+      const request = ++statsRequest;
+      const view = statsViewOf(variant);
+      const key = statsDataKey(view);
+      const layout = {
+        expanded: tabExpanded,
+        section: view.section,
+        style: ctx.ui.theme,
+        modelNames: registryModelNames(ctx.modelRegistry),
+      };
+      if (statsShown?.key === key) return layoutStats(statsShown.snapshot, layout);
+      const options = {
+        cwd: ctx.cwd,
+        period: view.period,
+        scope: view.scope,
+        priceLookup: registryPriceLookup(ctx.modelRegistry),
+      };
+      const ready = peekStatsSnapshot(options);
+      if (ready !== undefined) {
+        statsShown = { key, snapshot: ready };
+        return layoutStats(ready, layout);
+      }
+      return loadStatsSnapshot(options).then((snapshot) => {
+        // A load the user has already moved past must not replace the data on screen.
+        if (request === statsRequest) statsShown = { key, snapshot };
+        return layoutStats(snapshot, layout);
+      });
+    };
     let panel: PreferencesPanelHandle | undefined;
     let rememberedSection: string | undefined = initialFocus.section;
     let rememberedFocusId: string | undefined = initialFocus.focusId;
@@ -913,12 +979,13 @@ async function showTabOnce(
      */
     let statsTop = 0;
     let statsWindow: { top: number; height: number; total: number } | undefined;
-    const statsHeight = (): number => statsViewportRows(tui.terminal.rows);
-    const windowed = (lines: string[]): string[] => {
+    const windowed = (lines: string[], chromeRows: number): string[] => {
       statsWindow = undefined;
       if (active !== "stats") return lines;
-      const height = statsHeight();
-      if (lines.length <= height) return lines;
+      const height = statsViewportRows(tui.terminal.rows, chromeRows);
+      // Shorter sub-menus are padded so every one keeps the same height.
+      if (lines.length <= height)
+        return [...lines, ...Array<string>(height - lines.length).fill("")];
       statsTop = clampScrollTop(statsTop, lines.length, height);
       statsWindow = { top: statsTop, height, total: lines.length };
       return lines.slice(statsTop, statsTop + height);
@@ -935,12 +1002,17 @@ async function showTabOnce(
           paintedWidth = width;
           bodyText.setText(painted(width));
         }
-        const body = windowed(bodyText.render(width));
-        // The header and hint are read after the body so the hint can name the window.
+        const lines = bodyText.render(width);
         setText(headerText, header());
-        setText(hintText, textHint());
+        const headerRows = headerText.render(width);
+        // The window gives up the rows a wrapped header or hint takes. The hint
+        // is measured at its widest scroll figures, then read again after the
+        // body so it names the actual window.
+        setText(hintText, textHint({ top: lines.length - 1, height: 1, total: lines.length }));
+        const body = windowed(lines, headerRows.length + hintText.render(width).length);
+        setText(hintText, textHint(statsWindow));
         const blank = " ".repeat(width);
-        return [...headerText.render(width), blank, ...body, blank, ...hintText.render(width)];
+        return [...headerRows, blank, ...body, blank, ...hintText.render(width)];
       },
       invalidate: () => {
         headerText.invalidate();
@@ -963,15 +1035,16 @@ async function showTabOnce(
         return tab.id === active ? theme.fg("accent", theme.bold(label)) : theme.fg("dim", label);
       }).join(theme.fg("dim", "·"));
     const digitHint = STATUS_TABS.map((_tab, index) => index + 1).join("/");
-    const textHint = (): string => {
+    const textHint = (window: typeof statsWindow): string => {
       const parts = ["Tab switches tabs", "↑/↓ scrolls", `${digitHint} jumps`];
-      if (active === "stats" && statsWindow) {
-        const { top, height, total } = statsWindow;
+      if (active === "stats" && window) {
+        const { top, height, total } = window;
         parts[1] = `↑/↓ scrolls (${top + 1}–${top + height}/${total})`;
       }
       // The reset flow reads the legacy openai-codex login, not openai sign-in.
       if (active === "usage") parts.push("r uses a saved ChatGPT reset (openai-codex login)");
-      if (active === "stats") parts.push("r cycles period", "p toggles scope");
+      if (active === "stats")
+        parts.push("←/→ switches section", "r cycles period", "p toggles scope");
       if (isExpandableTab(active)) parts.push(expanded ? "Ctrl+O collapses" : "Ctrl+O expands");
       parts.push("Enter/Esc closes");
       return theme.fg("dim", parts.join(" · "));
@@ -997,7 +1070,10 @@ async function showTabOnce(
     };
 
     const controller = createTabController({
-      load: (id, view, variant) => loadTabBody(ctx, thinkingLevel, id, view, variant),
+      load: (id, view, variant) =>
+        id === "stats"
+          ? loadStats(view, variant)
+          : loadTabBody(ctx, thinkingLevel, id, view, variant),
       paint,
       loading: () => theme.fg("dim", "Loading…"),
       failure: (id, message) => theme.fg("error", `Failed to load the ${id} tab: ${message}`),
@@ -1055,8 +1131,8 @@ async function showTabOnce(
       tui.requestRender();
     };
 
-    /** r / p on the Statistics tab: re-query the tab in its new period or scope. */
-    const changeStatsView = (next: StatsSelection): void => {
+    /** r / p / ←/→ on the Statistics tab: show the new period, scope, or section. */
+    const changeStatsView = (next: StatsTabView): void => {
       statsView = next;
       controller.activate("stats", expanded, variantOf("stats"));
       tui.requestRender();
@@ -1138,6 +1214,13 @@ async function showTabOnce(
           changeStatsView({
             ...statsView,
             scope: toggleScope(statsView.scope),
+          });
+          return;
+        }
+        if (active === "stats" && (matchesKey(data, "left") || matchesKey(data, "right"))) {
+          changeStatsView({
+            ...statsView,
+            section: stepStatsSection(statsView.section, matchesKey(data, "left") ? -1 : 1),
           });
           return;
         }
