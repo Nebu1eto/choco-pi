@@ -1,6 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { isNumberValue, isStringValue } from "./value-guards.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { activityMonitor } from "./activity.ts";
 import type { SearchOptions, SearchResponse, SearchResult } from "./search-types.ts";
@@ -98,9 +97,6 @@ interface WebSearchTool {
   type: "web_search";
   filters?: WebSearchToolFilters;
 }
-
-const StringValueSchema = Type.String();
-const NumberValueSchema = Type.Number();
 
 function isJsonObject<Value>(value: Value): value is Value & OpenAIJsonObject {
   return value !== null && Object(value) === value && !Array.isArray(value);
@@ -220,12 +216,12 @@ function extractAccountId(token: string): string | undefined {
   const auth = payload?.["https://api.openai.com/auth"];
   if (!isJsonObject(auth)) return undefined;
   const id = auth.chatgpt_account_id;
-  return Check(StringValueSchema, id) && id.trim().length > 0 ? id.trim() : undefined;
+  return isStringValue(id) && id.trim().length > 0 ? id.trim() : undefined;
 }
 
 function resolveConfiguredResponsesUrl<Value>(value: Value): string {
   if (value === undefined) return OPENAI_RESPONSES_URL;
-  if (!Check(StringValueSchema, value) || value.trim().length === 0) {
+  if (!isStringValue(value) || value.trim().length === 0) {
     throw new Error(`openaiResponsesUrl in ${CONFIG_PATH} must be an absolute http(s) URL`);
   }
   let url: URL;
@@ -244,7 +240,7 @@ function resolveConfiguredSearchProviders<Value>(value: Value): readonly string[
   if (value === undefined) return DEFAULT_SEARCH_PROVIDERS;
   if (
     !Array.isArray(value) ||
-    value.some((entry) => !Check(StringValueSchema, entry) || entry.trim().length === 0)
+    value.some((entry) => !isStringValue(entry) || entry.trim().length === 0)
   ) {
     throw new Error(
       `openaiSearchProviders in ${CONFIG_PATH} must be an array of non-empty Pi provider ids`,
@@ -255,7 +251,7 @@ function resolveConfiguredSearchProviders<Value>(value: Value): readonly string[
 
 function resolveConfiguredSearchModel<Value>(value: Value): string | undefined {
   if (value == null) return undefined;
-  if (!Check(StringValueSchema, value) || value.trim().length === 0) {
+  if (!isStringValue(value) || value.trim().length === 0) {
     throw new Error(`openaiSearchModel in ${CONFIG_PATH} must be a non-empty string`);
   }
   return value.trim();
@@ -438,7 +434,7 @@ function buildInstructions(options: SearchOptions): string {
   }
 
   if (
-    Check(NumberValueSchema, options.numResults) &&
+    isNumberValue(options.numResults) &&
     Number.isFinite(options.numResults) &&
     options.numResults > 0
   ) {
@@ -522,7 +518,7 @@ function extractSnippetAround(
   start: OpenAIJsonValue | undefined,
   end: OpenAIJsonValue | undefined,
 ): string {
-  if (!Check(NumberValueSchema, start) || !Check(NumberValueSchema, end) || !text) return "";
+  if (!isNumberValue(start) || !isNumberValue(end) || !text) return "";
   const before = Math.max(0, start - 100);
   const after = Math.min(text.length, end + 100);
   const snippet = text
@@ -539,12 +535,12 @@ function addResult(
   title: OpenAIJsonValue | undefined,
   snippet = "",
 ): void {
-  if (!Check(StringValueSchema, url) || url.trim().length === 0) return;
+  if (!isStringValue(url) || url.trim().length === 0) return;
   const cleanUrl = cleanSourceUrl(url);
   if (seen.has(cleanUrl)) return;
   seen.add(cleanUrl);
   results.push({
-    title: Check(StringValueSchema, title) && title.trim().length > 0 ? title : cleanUrl,
+    title: isStringValue(title) && title.trim().length > 0 ? title : cleanUrl,
     url: cleanUrl,
     snippet,
   });
@@ -563,7 +559,7 @@ function extractSearchResults(
     if (!Array.isArray(content)) continue;
     for (const part of content) {
       if (!isJsonObject(part)) continue;
-      const text = Check(StringValueSchema, part.text) ? part.text : "";
+      const text = isStringValue(part.text) ? part.text : "";
       const annotations = part.annotations;
       if (!Array.isArray(annotations)) continue;
       for (const annotation of annotations) {
@@ -597,7 +593,7 @@ function extractSearchResults(
     }
   }
 
-  if (Check(NumberValueSchema, numResults) && Number.isFinite(numResults) && numResults > 0) {
+  if (isNumberValue(numResults) && Number.isFinite(numResults) && numResults > 0) {
     return results.slice(0, Math.min(Math.floor(numResults), 20));
   }
   return results;
@@ -612,7 +608,7 @@ function extractAnswer(output: OpenAIJsonValue[]): string {
     for (const part of content) {
       if (!isJsonObject(part)) continue;
       const text = part.text;
-      if (Check(StringValueSchema, text) && text.trim().length > 0) parts.push(text);
+      if (isStringValue(text) && text.trim().length > 0) parts.push(text);
     }
   }
   return parts.join("\n").trim();

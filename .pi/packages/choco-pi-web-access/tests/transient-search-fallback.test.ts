@@ -5,54 +5,36 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { Type, type Static } from "typebox";
-import { Check } from "typebox/value";
+import { arr, compile, int, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
+import type { Static } from "@earendil-works/pi-schema";
 
 const runnerPath = fileURLToPath(new URL("./fixtures/transient-search-runner.ts", import.meta.url));
 
-const TransportSchema = Type.Union([
-  Type.Literal("exa-api"),
-  Type.Literal("exa-mcp"),
-  Type.Literal("kagi-api"),
-  Type.Literal("openai-responses"),
-]);
-const ScenarioOutputSchema = Type.Object(
-  {
-    error: Type.Optional(
-      Type.Object(
-        {
-          kind: Type.String({
-            enum: ["auth", "cancelled", "invalid-request"],
-          }),
-          status: Type.Optional(Type.Integer({ minimum: 100, maximum: 599 })),
-        },
-        { additionalProperties: false },
+const TransportSchema = oneOf(["exa-api", "exa-mcp", "kagi-api", "openai-responses"]);
+const ScenarioOutputSchema = obj({
+  error: opt(
+    obj({
+      kind: oneOf(["auth", "cancelled", "invalid-request"]),
+      status: opt(int({ minimum: 100, maximum: 599 })),
+    }),
+  ),
+  fallbackCalls: int({ minimum: 0 }),
+  fetchCalls: int({ minimum: 0 }),
+  response: opt(
+    obj({
+      adapterId: str({ minLength: 1 }),
+      attempts: arr(
+        obj({
+          adapterId: str({ minLength: 1 }),
+          errorKind: opt(oneOf(["transient"])),
+          outcome: oneOf(["error", "success"]),
+          transport: str({ minLength: 1 }),
+        }),
       ),
-    ),
-    fallbackCalls: Type.Integer({ minimum: 0 }),
-    fetchCalls: Type.Integer({ minimum: 0 }),
-    response: Type.Optional(
-      Type.Object(
-        {
-          adapterId: Type.String({ minLength: 1 }),
-          attempts: Type.Array(
-            Type.Object(
-              {
-                adapterId: Type.String({ minLength: 1 }),
-                errorKind: Type.Optional(Type.String({ enum: ["transient"] })),
-                outcome: Type.String({ enum: ["error", "success"] }),
-                transport: Type.String({ minLength: 1 }),
-              },
-              { additionalProperties: false },
-            ),
-          ),
-        },
-        { additionalProperties: false },
-      ),
-    ),
-  },
-  { additionalProperties: false },
-);
+    }),
+  ),
+});
+const isScenarioOutput = compile(ScenarioOutputSchema).check;
 
 type TransportCase = Static<typeof TransportSchema>;
 type FailureMode = "cancel" | number;
@@ -96,7 +78,7 @@ async function runScenario(
     } catch {
       throw new Error(`transient search runner returned invalid JSON: ${stdout}`);
     }
-    if (!Check(ScenarioOutputSchema, output)) {
+    if (!isScenarioOutput(output)) {
       throw new Error(`transient search runner returned an invalid result: ${stdout}`);
     }
     return output;

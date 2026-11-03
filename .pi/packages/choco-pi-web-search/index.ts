@@ -1,7 +1,21 @@
 import { randomUUID } from "node:crypto";
 import type { EventBus, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Cyclic, Ref, type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import {
+  arr,
+  bool,
+  compile,
+  int,
+  lit,
+  nul,
+  nullable,
+  num,
+  obj,
+  oneOf,
+  opt,
+  str,
+  union,
+  type Schema,
+} from "@earendil-works/pi-schema";
 
 export const searchProviderFamilies = Object.freeze([
   "openai",
@@ -55,82 +69,87 @@ export type SearchCapability =
   | "responseLength"
   | "searchContextSize";
 
-const ProviderFamilySchema = Type.String({ enum: [...searchProviderFamilies] });
-const ProviderNameSchema = Type.String({ enum: [...searchProviderSelections] });
-const SearchActionSchema = Type.String({ enum: ["search", "image", "open", "click", "find"] });
-const CapabilitySchema = Type.String({
-  enum: [
-    "url",
-    "lineno",
-    "numResults",
-    "recencyFilter",
-    "recencyDays",
-    "domainFilter",
-    "domainExclusions",
-    "includeContent",
-    "country",
-    "language",
-    "safesearch",
-    "offset",
-    "exaSearchType",
-    "answerMode",
-    "responseLength",
-    "searchContextSize",
-  ],
-});
+/** String enum in the `{ type: "string", enum: [...] }` form every Pi provider accepts (not `anyOf` of literals). */
+function stringEnum<const V extends readonly string[]>(values: V): Schema<V[number]> {
+  return { type: "string", enum: [...values] };
+}
+
+const ProviderFamilySchema = stringEnum(searchProviderFamilies);
+const ProviderNameSchema = stringEnum(searchProviderSelections);
+const SearchActionSchema = stringEnum(["search", "image", "open", "click", "find"] as const);
+const SearchErrorKindSchema = stringEnum([
+  "auth",
+  "config",
+  "invalid-request",
+  "transient",
+  "quota",
+  "network",
+  "invalid-response",
+  "capability",
+  "stale-context",
+  "entitlement",
+  "conflict",
+  "deadline",
+  "cancelled",
+] as const);
+const CapabilitySchema = stringEnum([
+  "url",
+  "lineno",
+  "numResults",
+  "recencyFilter",
+  "recencyDays",
+  "domainFilter",
+  "domainExclusions",
+  "includeContent",
+  "country",
+  "language",
+  "safesearch",
+  "offset",
+  "exaSearchType",
+  "answerMode",
+  "responseLength",
+  "searchContextSize",
+] as const);
 
 export function searchProviderSchema(description?: string) {
-  return Type.Union(
-    [ProviderNameSchema, Type.Array(ProviderFamilySchema, { minItems: 1, uniqueItems: true })],
+  return union(
+    [ProviderNameSchema, arr(ProviderFamilySchema, { minItems: 1, uniqueItems: true })],
     description ? { description } : {},
   );
 }
 
-const ReferenceInputSchema = Type.Object(
-  { id: Type.String({ minLength: 1 }) },
-  { additionalProperties: false },
-);
+const ReferenceInputSchema = obj({ id: str({ minLength: 1 }) });
 
-export const canonicalSearchParams = Type.Object(
-  {
-    query: Type.Optional(Type.String({ minLength: 1 })),
-    queries: Type.Optional(
-      Type.Array(Type.String({ minLength: 1 }), { minItems: 1, maxItems: 20 }),
-    ),
-    action: Type.Optional(SearchActionSchema),
-    imageQuery: Type.Optional(Type.String({ minLength: 1 })),
-    url: Type.Optional(Type.String({ minLength: 1 })),
-    lineno: Type.Optional(Type.Integer({ minimum: 0 })),
-    open: Type.Optional(Type.Boolean()),
-    click: Type.Optional(
-      Type.Object({ id: Type.Integer({ minimum: 0 }) }, { additionalProperties: false }),
-    ),
-    find: Type.Optional(
-      Type.Object({ pattern: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
-    ),
-    reference: Type.Optional(ReferenceInputSchema),
-    responseLength: Type.Optional(Type.String({ enum: ["short", "medium", "long"] })),
-    numResults: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
-    recencyFilter: Type.Optional(Type.String({ enum: ["day", "week", "month", "year"] })),
-    recencyDays: Type.Optional(Type.Integer({ minimum: 1, maximum: 3650 })),
-    domainFilter: Type.Optional(
-      Type.Array(Type.String({ minLength: 1 }), { minItems: 1, maxItems: 100 }),
-    ),
-    includeContent: Type.Optional(Type.Boolean()),
-    country: Type.Optional(Type.String({ minLength: 2, maxLength: 2 })),
-    language: Type.Optional(Type.String({ minLength: 2, maxLength: 35 })),
-    safesearch: Type.Optional(Type.String({ enum: ["off", "moderate", "strict"] })),
-    offset: Type.Optional(Type.Integer({ minimum: 0 })),
-    exaSearchType: Type.Optional(
-      Type.String({ enum: ["auto", "fast", "instant", "deep-lite", "deep", "deep-reasoning"] }),
-    ),
-    answerMode: Type.Optional(Type.String({ enum: ["answer", "results", "both"] })),
-    searchContextSize: Type.Optional(Type.String({ enum: ["low", "medium", "high"] })),
-    provider: Type.Optional(searchProviderSchema()),
-    requiredCapabilities: Type.Optional(Type.Array(CapabilitySchema, { uniqueItems: true })),
-  },
-  { additionalProperties: false },
-);
+export const canonicalSearchParams = obj({
+  query: opt(str({ minLength: 1 })),
+  queries: opt(arr(str({ minLength: 1 }), { minItems: 1, maxItems: 20 })),
+  action: opt(SearchActionSchema),
+  imageQuery: opt(str({ minLength: 1 })),
+  url: opt(str({ minLength: 1 })),
+  lineno: opt(int({ minimum: 0 })),
+  open: opt(bool()),
+  click: opt(obj({ id: int({ minimum: 0 }) })),
+  find: opt(obj({ pattern: str({ minLength: 1 }) })),
+  reference: opt(ReferenceInputSchema),
+  responseLength: opt(stringEnum(["short", "medium", "long"] as const)),
+  numResults: opt(int({ minimum: 1, maximum: 100 })),
+  recencyFilter: opt(stringEnum(["day", "week", "month", "year"] as const)),
+  recencyDays: opt(int({ minimum: 1, maximum: 3650 })),
+  domainFilter: opt(arr(str({ minLength: 1 }), { minItems: 1, maxItems: 100 })),
+  includeContent: opt(bool()),
+  country: opt(str({ minLength: 2, maxLength: 2 })),
+  language: opt(str({ minLength: 2, maxLength: 35 })),
+  safesearch: opt(stringEnum(["off", "moderate", "strict"] as const)),
+  offset: opt(int({ minimum: 0 })),
+  exaSearchType: opt(
+    stringEnum(["auto", "fast", "instant", "deep-lite", "deep", "deep-reasoning"] as const),
+  ),
+  answerMode: opt(stringEnum(["answer", "results", "both"] as const)),
+  searchContextSize: opt(stringEnum(["low", "medium", "high"] as const)),
+  provider: opt(searchProviderSchema()),
+  requiredCapabilities: opt(arr(CapabilitySchema, { uniqueItems: true })),
+});
+const isCanonicalSearchParams = compile(canonicalSearchParams).check;
 
 export interface SearchRequest {
   query?: string;
@@ -388,32 +407,63 @@ class SearchRouteMiss extends SearchError {
 }
 
 const SHARED_DIRECTORY_VERSION = 1 as const;
-const ProcessObjectSchema = Type.Object({}, { additionalProperties: true });
-type ProcessObject = Static<typeof ProcessObjectSchema>;
-const SharedSearchDirectorySchema = Type.Object(
-  {
-    version: Type.Literal(SHARED_DIRECTORY_VERSION),
-    getScopeByEvents: Type.Function(
-      [ProcessObjectSchema],
-      Type.Union([ProcessObjectSchema, Type.Undefined()]),
-    ),
-    setScopeByEvents: Type.Function([ProcessObjectSchema, ProcessObjectSchema], Type.Void()),
-    getScopeByManager: Type.Function(
-      [ProcessObjectSchema],
-      Type.Union([ProcessObjectSchema, Type.Undefined()]),
-    ),
-    setScopeByManager: Type.Function([ProcessObjectSchema, ProcessObjectSchema], Type.Void()),
-    deleteScopeByManager: Type.Function([ProcessObjectSchema], Type.Void()),
-    brandScope: Type.Function([ProcessObjectSchema], Type.Void()),
-    brandSession: Type.Function([ProcessObjectSchema], Type.Void()),
-    brandError: Type.Function([ProcessObjectSchema], Type.Void()),
-    isScope: Type.Function([ProcessObjectSchema], Type.Boolean()),
-    isSession: Type.Function([ProcessObjectSchema], Type.Boolean()),
-    isError: Type.Function([ProcessObjectSchema], Type.Boolean()),
-  },
-  { additionalProperties: false },
-);
-type SharedSearchDirectory = Static<typeof SharedSearchDirectorySchema>;
+/** Any non-array, non-function object shared across loaders of the same process. */
+type ProcessObject = Record<never, never>;
+/** Anything a host may hand to a shared-directory or rendezvous callback. */
+type ProcessValue = {} | null | undefined;
+const isObjectValue = compile(obj({}, { open: true })).check;
+function isProcessObject<Value>(value: Value): value is Value & ProcessObject {
+  return isObjectValue(value);
+}
+
+/** True when `value` has a function-valued member `key` (functions are not JSON). */
+function hasFunctionMember<Value extends ProcessObject, Key extends string>(
+  value: Value,
+  key: Key,
+): value is Value & Record<Key, Function> {
+  const member: ProcessValue = Object(value)[key];
+  return member instanceof Function;
+}
+
+/** Reads member `key` (own or inherited, enumerable or not) without throwing for absent members. */
+function memberOf<Owner extends ProcessObject>(owner: Owner, key: string): ProcessValue {
+  return key in owner ? Object(owner)[key] : undefined;
+}
+interface SharedSearchDirectory {
+  readonly version: typeof SHARED_DIRECTORY_VERSION;
+  getScopeByEvents(owner: ProcessObject): ProcessObject | undefined;
+  setScopeByEvents(owner: ProcessObject, scope: ProcessObject): void;
+  getScopeByManager(owner: ProcessObject): ProcessObject | undefined;
+  setScopeByManager(owner: ProcessObject, scope: ProcessObject): void;
+  deleteScopeByManager(owner: ProcessObject): void;
+  brandScope(scope: ProcessObject): void;
+  brandSession(session: ProcessObject): void;
+  brandError(error: ProcessObject): void;
+  isScope(scope: ProcessObject): boolean;
+  isSession(session: ProcessObject): boolean;
+  isError(error: ProcessObject): boolean;
+}
+const SHARED_DIRECTORY_METHODS = [
+  "getScopeByEvents",
+  "setScopeByEvents",
+  "getScopeByManager",
+  "setScopeByManager",
+  "deleteScopeByManager",
+  "brandScope",
+  "brandSession",
+  "brandError",
+  "isScope",
+  "isSession",
+  "isError",
+] as const;
+
+/** Closed object: `version` plus exactly the listed function members (functions are not JSON). */
+function isSharedSearchDirectory<Value>(value: Value): value is Value & SharedSearchDirectory {
+  if (!isProcessObject(value)) return false;
+  if (Object.keys(value).length !== SHARED_DIRECTORY_METHODS.length + 1) return false;
+  if (!("version" in value) || value.version !== SHARED_DIRECTORY_VERSION) return false;
+  return SHARED_DIRECTORY_METHODS.every((method) => hasFunctionMember(value, method));
+}
 
 declare global {
   var __chocoPiWebSearchDirectoryV1: unknown;
@@ -425,7 +475,7 @@ function getSharedSearchDirectory(): SharedSearchDirectory {
     "__chocoPiWebSearchDirectoryV1",
   )?.value;
   if (current !== undefined) {
-    if (!Check(SharedSearchDirectorySchema, current)) {
+    if (!isSharedSearchDirectory(current)) {
       throw new Error("Invalid choco-pi web-search shared directory");
     }
     return current;
@@ -435,7 +485,7 @@ function getSharedSearchDirectory(): SharedSearchDirectory {
   const scopeBrands = new WeakSet<ProcessObject>();
   const sessionBrands = new WeakSet<ProcessObject>();
   const errorBrands = new WeakSet<ProcessObject>();
-  const created: SharedSearchDirectory = Object.freeze({
+  const created: SharedSearchDirectory = Object.freeze<SharedSearchDirectory>({
     version: SHARED_DIRECTORY_VERSION,
     getScopeByEvents: (owner) => scopesByEvents.get(owner),
     setScopeByEvents: (owner, scope) => {
@@ -471,72 +521,76 @@ function getSharedSearchDirectory(): SharedSearchDirectory {
 }
 
 const sharedSearchDirectory = getSharedSearchDirectory();
-const SharedSearchErrorSchema = Type.Object(
+const SharedSearchErrorSchema = obj(
   {
-    name: Type.Literal("SearchError"),
-    message: Type.String(),
-    kind: Type.String({
-      enum: [
-        "auth",
-        "config",
-        "invalid-request",
-        "transient",
-        "quota",
-        "network",
-        "invalid-response",
-        "capability",
-        "stale-context",
-        "entitlement",
-        "conflict",
-        "deadline",
-        "cancelled",
-      ],
-    }),
-    family: Type.Optional(ProviderFamilySchema),
-    adapterId: Type.Optional(Type.String()),
-    transport: Type.Optional(Type.String()),
-    billing: Type.Optional(Type.String({ enum: ["subscription", "api", "free", "unknown"] })),
-    status: Type.Optional(Type.Integer()),
-    retryable: Type.Optional(Type.Boolean()),
-    deadlineKind: Type.Optional(Type.String({ enum: ["total", "attempt"] })),
-    attempts: Type.Optional(
-      Type.Array(
-        Type.Object(
-          {
-            adapterId: Type.String(),
-            family: ProviderFamilySchema,
-            transport: Type.String(),
-            outcome: Type.String({
-              enum: ["success", "unavailable", "disabled", "incompatible", "error"],
-            }),
-            errorKind: Type.Optional(
-              Type.String({
-                enum: [
-                  "auth",
-                  "config",
-                  "invalid-request",
-                  "transient",
-                  "quota",
-                  "network",
-                  "invalid-response",
-                  "capability",
-                  "stale-context",
-                  "entitlement",
-                  "conflict",
-                  "deadline",
-                  "cancelled",
-                ],
-              }),
-            ),
-            reason: Type.Optional(Type.String()),
-          },
-          { additionalProperties: false },
-        ),
+    name: lit("SearchError"),
+    message: str(),
+    kind: SearchErrorKindSchema,
+    family: opt(ProviderFamilySchema),
+    adapterId: opt(str()),
+    transport: opt(str()),
+    billing: opt(stringEnum(["subscription", "api", "free", "unknown"] as const)),
+    status: opt(int()),
+    retryable: opt(bool()),
+    deadlineKind: opt(stringEnum(["total", "attempt"] as const)),
+    attempts: opt(
+      arr(
+        obj({
+          adapterId: str(),
+          family: ProviderFamilySchema,
+          transport: str(),
+          outcome: stringEnum([
+            "success",
+            "unavailable",
+            "disabled",
+            "incompatible",
+            "error",
+          ] as const),
+          errorKind: opt(SearchErrorKindSchema),
+          reason: opt(str()),
+        }),
       ),
     ),
   },
-  { additionalProperties: true },
+  { open: true },
 );
+const isSharedSearchErrorSnapshot = compile(SharedSearchErrorSchema).check;
+interface SearchErrorFields {
+  readonly name: SearchErrorSnapshotValue;
+  readonly message: SearchErrorSnapshotValue;
+  readonly kind: SearchErrorSnapshotValue;
+  readonly family: SearchErrorSnapshotValue;
+  readonly adapterId: SearchErrorSnapshotValue;
+  readonly transport: SearchErrorSnapshotValue;
+  readonly billing: SearchErrorSnapshotValue;
+  readonly status: SearchErrorSnapshotValue;
+  readonly retryable: SearchErrorSnapshotValue;
+  readonly deadlineKind: SearchErrorSnapshotValue;
+  readonly attempts: SearchErrorSnapshotValue;
+}
+type SearchErrorSnapshotValue = ProcessValue;
+
+/**
+ * pi-schema reads only enumerable properties, so an Error's own non-enumerable `message` would look
+ * missing. Snapshot the known fields by plain property reads (as the old TypeBox check did) and validate
+ * the snapshot; unknown fields were allowed before and are ignored here.
+ */
+function hasSharedSearchErrorFields(value: ProcessObject): boolean {
+  const snapshot: SearchErrorFields = {
+    name: memberOf(value, "name"),
+    message: memberOf(value, "message"),
+    kind: memberOf(value, "kind"),
+    family: memberOf(value, "family"),
+    adapterId: memberOf(value, "adapterId"),
+    transport: memberOf(value, "transport"),
+    billing: memberOf(value, "billing"),
+    status: memberOf(value, "status"),
+    retryable: memberOf(value, "retryable"),
+    deadlineKind: memberOf(value, "deadlineKind"),
+    attempts: memberOf(value, "attempts"),
+  };
+  return isSharedSearchErrorSnapshot(snapshot);
+}
 
 function isSearchScope(value: ProcessObject | undefined): value is SearchScope {
   return value !== undefined && sharedSearchDirectory.isScope(value);
@@ -548,91 +602,75 @@ function isSearchSession(value: ProcessObject | undefined): value is SearchSessi
 
 export function isSearchError<Value>(value: Value): value is Value & SearchError {
   return (
-    Check(ProcessObjectSchema, value) &&
+    isProcessObject(value) &&
     sharedSearchDirectory.isError(value) &&
-    Check(SharedSearchErrorSchema, value)
+    hasSharedSearchErrorFields(value)
   );
 }
 
 const SCOPE_RENDEZVOUS_CHANNEL = "choco-pi-web-search:scope-rendezvous:v1";
-const ScopeRendezvousSchema = Type.Object({
-  kind: Type.Literal("choco-pi-web-search-scope-request"),
-  accept: Type.Function([Type.Unknown()], Type.Undefined()),
+interface ScopeRendezvous {
+  readonly kind: "choco-pi-web-search-scope-request";
+  accept(candidate: ProcessValue): void;
+}
+/** Open object with a literal `kind` and a function `accept` (functions are not JSON). */
+function isScopeRendezvous<Value>(value: Value): value is Value & ScopeRendezvous {
+  return (
+    isProcessObject(value) &&
+    "kind" in value &&
+    value.kind === "choco-pi-web-search-scope-request" &&
+    hasFunctionMember(value, "accept")
+  );
+}
+const AvailabilitySchema = obj({
+  status: oneOf(["available", "unavailable", "disabled", "error"] as const),
+  reason: opt(str()),
+  transport: opt(str({ minLength: 1 })),
+  billing: opt(oneOf(["subscription", "api", "free", "unknown"] as const)),
 });
-const AvailabilitySchema = Type.Object(
-  {
-    status: Type.Union([
-      Type.Literal("available"),
-      Type.Literal("unavailable"),
-      Type.Literal("disabled"),
-      Type.Literal("error"),
-    ]),
-    reason: Type.Optional(Type.String()),
-    transport: Type.Optional(Type.String({ minLength: 1 })),
-    billing: Type.Optional(
-      Type.Union([
-        Type.Literal("subscription"),
-        Type.Literal("api"),
-        Type.Literal("free"),
-        Type.Literal("unknown"),
-      ]),
-    ),
+const isAvailability = compile(AvailabilitySchema).check;
+const SearchResultSchema = obj({ title: str(), url: str(), snippet: str() });
+const InlineContentSchema = obj({
+  url: str(),
+  title: str(),
+  content: str(),
+  error: nullable(str()),
+  thumbnail: opt(obj({ data: str(), mimeType: str() })),
+  mimeType: opt(str()),
+  status: opt(int()),
+});
+/**
+ * Recursive JSON value. Numbers are bounded to finite values because pi-schema `num()` accepts NaN and
+ * Infinity while the previous TypeBox `Number` rejected them. Records and arrays recurse through `$ref`.
+ */
+const JsonValueSchema: Schema<JsonValue> = { $ref: "#/$defs/JsonValue" };
+/** `$ref`s resolve against the compiled root, so the definition lives on the AdapterResponse root schema. */
+const JsonValueDefinitions = {
+  JsonValue: {
+    anyOf: [
+      nul(),
+      bool(),
+      num({ minimum: -Number.MAX_VALUE, maximum: Number.MAX_VALUE }),
+      str(),
+      { type: "array", items: JsonValueSchema },
+      { type: "object", additionalProperties: JsonValueSchema },
+    ],
   },
-  { additionalProperties: false },
-);
-const SearchResultSchema = Type.Object(
-  { title: Type.String(), url: Type.String(), snippet: Type.String() },
-  { additionalProperties: false },
-);
-const InlineContentSchema = Type.Object(
-  {
-    url: Type.String(),
-    title: Type.String(),
-    content: Type.String(),
-    error: Type.Union([Type.String(), Type.Null()]),
-    thumbnail: Type.Optional(
-      Type.Object(
-        { data: Type.String(), mimeType: Type.String() },
-        { additionalProperties: false },
-      ),
-    ),
-    mimeType: Type.Optional(Type.String()),
-    status: Type.Optional(Type.Integer()),
-  },
-  { additionalProperties: false },
-);
-const JsonValueSchema = Cyclic(
-  {
-    JsonValue: Type.Union([
-      Type.Null(),
-      Type.Boolean(),
-      Type.Number(),
-      Type.String(),
-      Type.Array(Ref("JsonValue")),
-      Type.Record(Type.String(), Ref("JsonValue")),
-    ]),
-  },
-  "JsonValue",
-);
-const NativeReferenceSchema = Type.Object(
-  {
-    id: Type.String({ minLength: 1 }),
-    kind: Type.String({ minLength: 1 }),
-    native: Type.Optional(JsonValueSchema),
-  },
-  { additionalProperties: false },
-);
-const AdapterResponseSchema = Type.Object(
-  {
-    answer: Type.String(),
-    results: Type.Array(SearchResultSchema),
-    inlineContent: Type.Optional(Type.Array(InlineContentSchema)),
-    warnings: Type.Optional(Type.Array(Type.String())),
-    native: Type.Optional(JsonValueSchema),
-    references: Type.Optional(Type.Array(NativeReferenceSchema)),
-  },
-  { additionalProperties: false },
-);
+};
+const NativeReferenceSchema = obj({
+  id: str({ minLength: 1 }),
+  kind: str({ minLength: 1 }),
+  native: opt(JsonValueSchema),
+});
+const AdapterResponseSchema = obj({
+  answer: str(),
+  results: arr(SearchResultSchema),
+  inlineContent: opt(arr(InlineContentSchema)),
+  warnings: opt(arr(str())),
+  native: opt(JsonValueSchema),
+  references: opt(arr(NativeReferenceSchema)),
+});
+const isAdapterResponse = compile({ ...AdapterResponseSchema, $defs: JsonValueDefinitions }).check;
 
 export function createSearchScope(): SearchScope {
   return new SearchScope();
@@ -642,10 +680,10 @@ export function getSearchScope(events: EventBus): SearchScope {
   const existing = sharedSearchDirectory.getScopeByEvents(events);
   if (isSearchScope(existing)) return existing;
   let shared: SearchScope | undefined;
-  const request: Static<typeof ScopeRendezvousSchema> = {
+  const request: ScopeRendezvous = {
     kind: "choco-pi-web-search-scope-request",
     accept(candidate) {
-      if (Check(ProcessObjectSchema, candidate) && isSearchScope(candidate)) shared = candidate;
+      if (isProcessObject(candidate) && isSearchScope(candidate)) shared = candidate;
     },
   };
   events.emit(SCOPE_RENDEZVOUS_CHANNEL, request);
@@ -655,7 +693,7 @@ export function getSearchScope(events: EventBus): SearchScope {
   }
   const scope = createSearchScope();
   events.on(SCOPE_RENDEZVOUS_CHANNEL, (data) => {
-    if (Check(ScopeRendezvousSchema, data)) data.accept(scope);
+    if (isScopeRendezvous(data)) data.accept(scope);
   });
   sharedSearchDirectory.setScopeByEvents(events, scope);
   return scope;
@@ -802,7 +840,7 @@ function actionFor(request: SearchRequest): SearchAction {
 }
 
 function validateRequest(request: SearchRequest): void {
-  if (!Check(canonicalSearchParams, request)) {
+  if (!isCanonicalSearchParams(request)) {
     throw new SearchError("invalid-request", "Search request does not match canonicalSearchParams");
   }
   const action = actionFor(request);
@@ -1175,7 +1213,7 @@ function responseFromAdapter(
   session: SearchSession,
   attempts: SearchAttemptDiagnostic[],
 ): SearchResponse {
-  if (!Check(AdapterResponseSchema, raw)) {
+  if (!isAdapterResponse(raw)) {
     throw new SearchError(
       "invalid-response",
       `Adapter ${adapter.id} returned an invalid response`,
@@ -1286,7 +1324,7 @@ async function attemptAdapter(
     );
     resolvedAvailability = availability;
     assertCurrent(scope, session, generation);
-    if (!Check(AvailabilitySchema, availability)) {
+    if (!isAvailability(availability)) {
       throw new SearchError(
         "invalid-response",
         `Adapter ${adapter.id} returned invalid availability`,

@@ -13,8 +13,7 @@ import {
   type ExtensionActions,
   type ExtensionContextActions,
 } from "@earendil-works/pi-coding-agent";
-import { Type, type Static } from "typebox";
-import { Check } from "typebox/value";
+import { bool, compile, obj, str, type Static } from "@earendil-works/pi-schema";
 import unifiedSearchCore from "../../extension.ts";
 import { registeredCanonicalSearchFrontend } from "./registered-canonical-tool.ts";
 import {
@@ -25,19 +24,17 @@ import {
   SearchError,
 } from "../../index.ts";
 
-const ResultSchema = Type.Object(
-  {
-    canonical: Type.Boolean(),
-    distinctScopeConstructor: Type.Boolean(),
-    scopeResolved: Type.Boolean(),
-    sessionResolved: Type.Boolean(),
-    searchAnswer: Type.String(),
-    openAnswer: Type.String(),
-    referenceAdapterId: Type.String(),
-  },
-  { additionalProperties: false },
-);
+const ResultSchema = obj({
+  canonical: bool(),
+  distinctScopeConstructor: bool(),
+  scopeResolved: bool(),
+  sessionResolved: bool(),
+  searchAnswer: str(),
+  openAnswer: str(),
+  referenceAdapterId: str(),
+});
 type ProbeResult = Static<typeof ResultSchema>;
+const resultValidator = compile(ResultSchema);
 
 const cwd = process.cwd();
 const agentDir = path.join(cwd, "agent");
@@ -90,7 +87,7 @@ assert.equal(nativeScope.adapters.has("cross-loader.probe"), true);
 
 let probeResult: ProbeResult | undefined;
 eventBus.on("choco-pi-web-search:test:cross-loader-result:v1", (data) => {
-  if (Check(ResultSchema, data)) probeResult = data;
+  if (resultValidator.check(data)) probeResult = data;
 });
 
 const modelRuntime = await ModelRuntime.create({

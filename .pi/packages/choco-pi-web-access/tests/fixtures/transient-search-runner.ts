@@ -1,6 +1,6 @@
 import { createEventBus, SessionManager } from "@earendil-works/pi-coding-agent";
-import { Type, type Static } from "typebox";
-import { Check } from "typebox/value";
+import { compile, int, lit, obj, oneOf, union } from "@earendil-works/pi-schema";
+import type { Static } from "@earendil-works/pi-schema";
 import { registerWebAccessSearchAdapters } from "../../search-adapters.ts";
 import {
   bindSearchSession,
@@ -11,19 +11,12 @@ import {
   type SearchProviderFamily,
 } from "../../../choco-pi-web-search/index.ts";
 
-const TransportSchema = Type.Union([
-  Type.Literal("exa-api"),
-  Type.Literal("exa-mcp"),
-  Type.Literal("kagi-api"),
-  Type.Literal("openai-responses"),
-]);
-const ScenarioSchema = Type.Object(
-  {
-    transport: TransportSchema,
-    failure: Type.Union([Type.Literal("cancel"), Type.Integer({ minimum: 100, maximum: 599 })]),
-  },
-  { additionalProperties: false },
-);
+const TransportSchema = oneOf(["exa-api", "exa-mcp", "kagi-api", "openai-responses"]);
+const ScenarioSchema = obj({
+  transport: TransportSchema,
+  failure: union([lit("cancel"), int({ minimum: 100, maximum: 599 })]),
+});
+const isScenario = compile(ScenarioSchema).check;
 
 type Scenario = Static<typeof ScenarioSchema>;
 type TransportCase = Static<typeof TransportSchema>;
@@ -56,7 +49,7 @@ function parseScenario(): Scenario {
   } catch {
     throw new Error("transient search scenario must be valid JSON");
   }
-  if (!Check(ScenarioSchema, value)) throw new Error("invalid transient search scenario");
+  if (!isScenario(value)) throw new Error("invalid transient search scenario");
   return value;
 }
 

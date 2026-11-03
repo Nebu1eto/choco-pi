@@ -1,7 +1,7 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { arr, compile, obj, opt, union, unknown } from "@earendil-works/pi-schema";
+import { isStringValue } from "./value-guards.ts";
 
 const execAsync = promisify(exec);
 const COMMAND_TIMEOUT_MS = 5_000;
@@ -78,10 +78,8 @@ export function redactCredential(text: string, credential: string | null | undef
   return credential ? text.split(credential).join("[redacted]") : text;
 }
 
-const StringValueSchema = Type.String();
-
 function isString(value: CredentialOptions["configuredValue"]): value is string {
-  return Check(StringValueSchema, value);
+  return isStringValue(value);
 }
 
 function normalize(value: CredentialOptions["configuredValue"]): string | null {
@@ -144,19 +142,12 @@ interface CommandFailure {
   killed?: unknown;
 }
 
-const CommandFailureSchema = Type.Union([
-  Type.Object(
-    {
-      code: Type.Optional(Type.Unknown()),
-      killed: Type.Optional(Type.Unknown()),
-    },
-    { additionalProperties: true },
-  ),
-  Type.Array(Type.Unknown()),
-]);
+const isCommandFailureValue = compile(
+  union([obj({ code: opt(unknown()), killed: opt(unknown()) }, { open: true }), arr(unknown())]),
+).check;
 
 function isCommandFailure(cause: unknown): cause is CommandFailure {
-  return Check(CommandFailureSchema, cause);
+  return isCommandFailureValue(cause);
 }
 
 function commandFailureCategory(cause: unknown, signal?: AbortSignal): CredentialFailureCategory {

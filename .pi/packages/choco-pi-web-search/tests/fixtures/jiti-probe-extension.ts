@@ -1,6 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { compile, lit, obj } from "@earendil-works/pi-schema";
 import {
   getSearchScope,
   hasCanonicalSearch,
@@ -13,10 +12,7 @@ import {
 } from "../../index.ts";
 
 export const CROSS_LOADER_RESULT_CHANNEL = "choco-pi-web-search:test:cross-loader-result:v1";
-const NativeOwnerSchema = Type.Object(
-  { owner: Type.Literal("jiti") },
-  { additionalProperties: false },
-);
+const isNativeOwner = compile(obj({ owner: lit("jiti") })).check;
 
 export default function crossLoaderProbe(pi: ExtensionAPI): void {
   const scope = getSearchScope(pi.events);
@@ -50,7 +46,7 @@ export default function crossLoaderProbe(pi: ExtensionAPI): void {
         if (
           reference?.id !== "foreign-reference" ||
           reference.kind !== "search-result" ||
-          !Check(NativeOwnerSchema, native)
+          !isNativeOwner(native)
         ) {
           throw new SearchError("stale-context", "foreign reference identity was not preserved");
         }

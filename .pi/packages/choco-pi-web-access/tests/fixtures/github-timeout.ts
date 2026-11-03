@@ -15,13 +15,18 @@ function notifyRunner(message: string): void {
 }
 
 if (mode === "runner") {
-  const { Type } = await import("typebox");
-  const { Value } = await import("typebox/value");
-  const TcpAddress = Type.Object({
-    address: Type.String(),
-    family: Type.String(),
-    port: Type.Integer({ minimum: 1, maximum: 65535 }),
-  });
+  const { compile, int, obj, str } = await import("@earendil-works/pi-schema");
+  // server.address() is a TCP address object here (open: extra keys allowed), never a pipe string or null.
+  const isTcpAddress = compile(
+    obj(
+      {
+        address: str(),
+        family: str(),
+        port: int({ minimum: 1, maximum: 65535 }),
+      },
+      { open: true },
+    ),
+  ).check;
   const { extractGitHub } = await import("../../github-extract.ts");
   const server = createServer();
   let markReady = () => {};
@@ -52,7 +57,7 @@ if (mode === "runner") {
     server.listen(0, "127.0.0.1", resolve);
   });
   const address = server.address();
-  assert.ok(Value.Check(TcpAddress, address));
+  assert.ok(isTcpAddress(address));
   process.env.CLONE_READY_PORT = String(address.port);
 
   // Keep the configured 500 ms deadline, but start advancing time only after

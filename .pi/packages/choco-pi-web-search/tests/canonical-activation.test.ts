@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
-import { Type } from "typebox";
+import { obj, opt, str } from "@earendil-works/pi-schema";
 import {
   createEventBus,
   DefaultResourceLoader,
@@ -13,6 +13,7 @@ import {
 import unifiedSearchCore from "../extension.ts";
 import { getSearchScope, hasCanonicalSearch } from "../index.ts";
 import { registeredCanonicalSearchFrontend } from "./fixtures/registered-canonical-tool.ts";
+import { hostParams } from "./fixtures/schema-bridge.ts";
 
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 const agentDir = await mkdtemp(join(tmpdir(), "choco-pi-canonical-activation-"));
@@ -30,7 +31,7 @@ const legacySearch: ExtensionFactory = (pi) => {
     name: "legacy_search",
     label: "Legacy search",
     description: "Legacy search fixture",
-    parameters: Type.Object({ query: Type.Optional(Type.String()) }),
+    parameters: hostParams(obj({ query: opt(str()) }, { open: true })),
     async execute() {
       return { content: [{ type: "text", text: "legacy" }], details: {} };
     },

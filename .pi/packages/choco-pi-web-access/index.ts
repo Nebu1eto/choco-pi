@@ -4,8 +4,22 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Box, Text, truncateToWidth, type KeyId } from "@earendil-works/pi-tui";
-import { Type, type Static, type TSchemaOptions, type TUnsafe } from "typebox";
-import { Check } from "typebox/value";
+import {
+  arr,
+  bool,
+  compile,
+  int,
+  map,
+  obj,
+  oneOf,
+  opt,
+  str,
+  union,
+  unknown,
+} from "@earendil-works/pi-schema";
+import type { JsonSchema, Schema, Static } from "@earendil-works/pi-schema";
+import { hostParams, hostParamsAs } from "./schema-bridge.ts";
+import { isBooleanValue, isNumberValue, isStringValue } from "./value-guards.ts";
 import { type ImageContent, type TextContent } from "@earendil-works/pi-ai/compat";
 import {
   canonicalSearchParams,
@@ -104,14 +118,6 @@ import {
   type ResearchArtifact,
 } from "./source-check.ts";
 import { registerWebAccessSearchAdapters } from "./search-adapters.ts";
-
-/** Local string-enum schema; Pi 1.5.0 pi-ai StringEnum returns a pi-schema Schema, not a TypeBox one. */
-function StringEnum<const T extends readonly string[]>(
-  values: T,
-  options?: TSchemaOptions,
-): TUnsafe<T[number]> {
-  return Type.Unsafe<T[number]>({ ...options, type: "string", enum: [...values] });
-}
 
 type ExtensionTheme = ExtensionContext["ui"]["theme"];
 
@@ -220,10 +226,6 @@ interface CuratorBootstrap {
   timeoutSeconds: number;
 }
 
-const StringValueSchema = Type.String();
-const NumberValueSchema = Type.Number();
-const BooleanValueSchema = Type.Boolean();
-
 function isConfigObject<Value>(value: Value): value is Value & ConfigObject {
   return value !== null && Object(value) === value && !Array.isArray(value);
 }
@@ -286,13 +288,48 @@ const DEFAULT_REMOTE_CURATOR_TIMEOUT_SECONDS = 60;
 const MAX_CURATOR_TIMEOUT_SECONDS = 600;
 const MAX_SUMMARY_GENERATION_DEADLINE_MS = 600_000;
 
+type WebSearchParams = Static<typeof canonicalSearchParams> & {
+  workflow?: "none" | "summary-review" | "auto-summary";
+};
+
+const isSchemaPropertyMap = compile(map(map(unknown()))).check;
+const isRequiredList = compile(arr(str())).check;
+
+function canonicalSchemaProperties(): Record<string, Schema> {
+  const { properties } = canonicalSearchParams;
+  if (!isSchemaPropertyMap(properties)) {
+    throw new Error("canonicalSearchParams must be an object schema with properties");
+  }
+  return properties;
+}
+
+function canonicalSchemaRequired(): { required?: string[] } {
+  const { required } = canonicalSearchParams;
+  return isRequiredList(required) ? { required } : {};
+}
+
+// The canonical shared-router object was spread into an open Type.Object, so the web_search tool
+// schema stays open (additionalProperties: true) and adds only the optional curator `workflow`.
+const webSearchParams: JsonSchema = {
+  type: "object",
+  properties: {
+    ...canonicalSchemaProperties(),
+    workflow: oneOf(["none", "summary-review", "auto-summary"], {
+      description:
+        "Search workflow mode: none = no curator, summary-review = open curator with auto summary draft (default), auto-summary = generate summary without opening curator",
+    }),
+  },
+  ...canonicalSchemaRequired(),
+  additionalProperties: true,
+};
+
 function searchProviderSchema(description: string) {
-  return canonicalSearchProviderSchema(description);
+  return { ...canonicalSearchProviderSchema(description) };
 }
 
 function isToolEnabled(config: WebSearchConfig, key: keyof ToolNames): boolean {
   const override = config.tools?.[key]?.enabled;
-  if (Check(BooleanValueSchema, override)) return override;
+  if (isBooleanValue(override)) return override;
   return (key !== "webSearch" && key !== "sourceCheck") || config.webSearch?.enabled !== false;
 }
 
@@ -319,7 +356,7 @@ function resolveToolNames(config: WebSearchConfig): ToolNames {
   for (const key of Object.keys(DEFAULT_TOOL_NAMES) as Array<keyof ToolNames>) {
     const value = config.toolNames?.[key];
     if (value === undefined) continue;
-    if (!Check(StringValueSchema, value))
+    if (!isStringValue(value))
       throw new Error(`toolNames.${key} in ${WEB_SEARCH_CONFIG_PATH} must be a string`);
     const trimmed = value.trim();
     if (!TOOL_NAME_PATTERN.test(trimmed)) {
@@ -518,7 +555,7 @@ function resolveCuratorSearchProvider<Value>(
 }
 
 function normalizeRecencyFilter<Value>(value: Value): RecencyFilter | undefined {
-  if (!Check(StringValueSchema, value)) return undefined;
+  if (!isStringValue(value)) return undefined;
   switch (value) {
     case "day":
       return "day";
@@ -534,14 +571,14 @@ function normalizeRecencyFilter<Value>(value: Value): RecencyFilter | undefined 
 }
 
 function normalizeCuratorTimeoutSeconds<Value>(value: Value): number | undefined {
-  if (!Check(NumberValueSchema, value) || !Number.isFinite(value)) return undefined;
+  if (!isNumberValue(value) || !Number.isFinite(value)) return undefined;
   const normalized = Math.floor(value);
   if (normalized < 1) return undefined;
   return Math.min(normalized, MAX_CURATOR_TIMEOUT_SECONDS);
 }
 
 function resolveWorkflow<Value>(input: Value, hasUI: boolean): WebSearchWorkflow {
-  const normalized = Check(StringValueSchema, input) ? input.trim().toLowerCase() : "";
+  const normalized = isStringValue(input) ? input.trim().toLowerCase() : "";
   if (normalized === "auto-summary") return "auto-summary";
   if (!hasUI) return "none";
   if (normalized === "none") return "none";
@@ -551,7 +588,7 @@ function resolveWorkflow<Value>(input: Value, hasUI: boolean): WebSearchWorkflow
 function normalizeQueryList(queryList: unknown[]): string[] {
   const normalized: string[] = [];
   for (const query of queryList) {
-    if (!Check(StringValueSchema, query)) continue;
+    if (!isStringValue(query)) continue;
     const trimmed = query.trim();
     if (trimmed.length > 0) normalized.push(trimmed);
   }
@@ -570,12 +607,7 @@ function getCuratorTimeoutSeconds(): number {
 
 export function getSummaryGenerationDeadlineMs(): number {
   const value = loadConfig().summaryGenerationDeadlineMs;
-  if (
-    !Check(NumberValueSchema, value) ||
-    !Number.isFinite(value) ||
-    !Number.isInteger(value) ||
-    value <= 0
-  ) {
+  if (!isNumberValue(value) || !Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
     return SUMMARY_GENERATION_DEADLINE_MS;
   }
   return Math.min(value, MAX_SUMMARY_GENERATION_DEADLINE_MS);
@@ -702,12 +734,7 @@ const MAX_INLINE_CONTENT_CHARS = 200_000;
 
 function getMaxInlineContentChars(config = loadConfig()): number {
   const value = config.maxInlineContentChars;
-  if (
-    !Check(NumberValueSchema, value) ||
-    !Number.isFinite(value) ||
-    !Number.isInteger(value) ||
-    value <= 0
-  ) {
+  if (!isNumberValue(value) || !Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
     return DEFAULT_MAX_INLINE_CONTENT_CHARS;
   }
   return Math.min(value, MAX_INLINE_CONTENT_CHARS);
@@ -769,8 +796,8 @@ function normalizeFindQueries(value: string | string[]): string[] {
 }
 
 function formatInputValue<Value>(value: Value): string {
-  if (Check(StringValueSchema, value)) return JSON.stringify(value);
-  if (Check(NumberValueSchema, value)) return Number.isNaN(value) ? "NaN" : String(value);
+  if (isStringValue(value)) return JSON.stringify(value);
+  if (isNumberValue(value)) return Number.isNaN(value) ? "NaN" : String(value);
   try {
     const serialized = JSON.stringify(value);
     return serialized === undefined ? String(value) : serialized;
@@ -1089,14 +1116,14 @@ function openInGlimpse(
   let maxHeight = 1200;
   win.on("ready", (info) => {
     const visibleHeight = info?.screen?.visibleHeight;
-    if (Check(NumberValueSchema, visibleHeight) && visibleHeight > 0) {
+    if (isNumberValue(visibleHeight) && visibleHeight > 0) {
       maxHeight = Math.floor(visibleHeight * 0.85);
     }
   });
   win.on("message", (data) => {
     if (!isDetailObject(data)) return;
     const msg = data;
-    if (msg.type !== "resize" || !Check(NumberValueSchema, msg.height)) return;
+    if (msg.type !== "resize" || !isNumberValue(msg.height)) return;
     const clamped = Math.max(400, Math.min(Math.round(msg.height), maxHeight));
     win._write({ type: "resize", width: 800, height: clamped });
   });
@@ -1183,17 +1210,17 @@ function isSearchErrorKindValue(value: DetailValue): value is SearchErrorKind {
 function isSearchAttemptValue(value: DetailValue): value is SearchAttemptDiagnostic & DetailObject {
   return (
     isDetailObject(value) &&
-    Check(StringValueSchema, value.adapterId) &&
-    Check(StringValueSchema, value.family) &&
+    isStringValue(value.adapterId) &&
+    isStringValue(value.family) &&
     searchProviderFamilies.some((family) => family === value.family) &&
-    Check(StringValueSchema, value.transport) &&
+    isStringValue(value.transport) &&
     (value.outcome === "success" ||
       value.outcome === "unavailable" ||
       value.outcome === "disabled" ||
       value.outcome === "incompatible" ||
       value.outcome === "error") &&
     (value.errorKind === undefined || isSearchErrorKindValue(value.errorKind)) &&
-    (value.reason === undefined || Check(StringValueSchema, value.reason))
+    (value.reason === undefined || isStringValue(value.reason))
   );
 }
 
@@ -1201,8 +1228,8 @@ function curatorSearchDiagnostics(entry: IndexedCuratorSearchEntry): CuratorSear
   if (!("searchDiagnostics" in entry) || !isDetailObject(entry.searchDiagnostics)) return {};
   const raw = entry.searchDiagnostics;
   const diagnostics: CuratorSearchDiagnostics = {};
-  if (Check(StringValueSchema, raw.adapterId)) diagnostics.adapterId = raw.adapterId;
-  if (Check(StringValueSchema, raw.transport)) diagnostics.transport = raw.transport;
+  if (isStringValue(raw.adapterId)) diagnostics.adapterId = raw.adapterId;
+  if (isStringValue(raw.transport)) diagnostics.transport = raw.transport;
   if (isSearchBillingValue(raw.billing)) diagnostics.billing = raw.billing;
   if (Array.isArray(raw.attempts) && raw.attempts.every(isSearchAttemptValue))
     diagnostics.attempts = raw.attempts;
@@ -1211,8 +1238,8 @@ function curatorSearchDiagnostics(entry: IndexedCuratorSearchEntry): CuratorSear
     for (const value of raw.providerErrors) {
       if (
         !isDetailObject(value) ||
-        !Check(StringValueSchema, value.provider) ||
-        !Check(StringValueSchema, value.error) ||
+        !isStringValue(value.provider) ||
+        !isStringValue(value.error) ||
         (value.kind !== undefined && !isSearchErrorKindValue(value.kind))
       )
         continue;
@@ -1625,7 +1652,7 @@ export default function (pi: ExtensionAPI) {
     }
 
     const config = loadConfig();
-    const configuredSummaryModel = Check(StringValueSchema, config.summaryModel)
+    const configuredSummaryModel = isStringValue(config.summaryModel)
       ? config.summaryModel.trim()
       : "";
     const preferredDefaults = [
@@ -1695,9 +1722,7 @@ export default function (pi: ExtensionAPI) {
     payload: { selectedQueryIndices: number[]; summary?: string; summaryMeta?: SummaryMeta },
     resultsByIndex: Map<number, QueryResultData>,
   ): ResolvedSubmittedSummary {
-    const submittedSummary = Check(StringValueSchema, payload.summary)
-      ? payload.summary.trim()
-      : "";
+    const submittedSummary = isStringValue(payload.summary) ? payload.summary.trim() : "";
     if (submittedSummary.length > 0) {
       return {
         approvedSummary: submittedSummary,
@@ -1718,9 +1743,7 @@ export default function (pi: ExtensionAPI) {
     const sc = opts.results.filter((r) => !r.error).length;
     const tr = opts.results.reduce((sum, r) => sum + r.results.length, 0);
 
-    const approvedSummary = Check(StringValueSchema, opts.approvedSummary)
-      ? opts.approvedSummary.trim()
-      : "";
+    const approvedSummary = isStringValue(opts.approvedSummary) ? opts.approvedSummary.trim() : "";
     const hasApprovedSummary = approvedSummary.length > 0;
     let output = "";
     if (hasApprovedSummary) {
@@ -2188,15 +2211,7 @@ export default function (pi: ExtensionAPI) {
       label: "Web Search",
       description: "Search the web and return a cited synthesized answer.",
       promptSnippet: "Search the web and synthesize cited results.",
-      parameters: Type.Object({
-        ...canonicalSearchParams.properties,
-        workflow: Type.Optional(
-          StringEnum(["none", "summary-review", "auto-summary"], {
-            description:
-              "Search workflow mode: none = no curator, summary-review = open curator with auto summary draft (default), auto-summary = generate summary without opening curator",
-          }),
-        ),
-      }),
+      parameters: hostParamsAs<WebSearchParams>(webSearchParams),
 
       async execute(callId, params, signal, onUpdate, ctx) {
         const directAction =
@@ -2761,12 +2776,10 @@ export default function (pi: ExtensionAPI) {
             if (details?.curatorUrl) lines.push(theme.fg("muted", `  ${details.curatorUrl}`));
             if (details?.browserOpenError)
               lines.push(theme.fg("dim", `  auto-open failed: ${details.browserOpenError}`));
-            const timeout = Check(NumberValueSchema, details?.timeoutSeconds)
+            const timeout = isNumberValue(details?.timeoutSeconds)
               ? details.timeoutSeconds
               : undefined;
-            const shortcut = Check(StringValueSchema, details?.shortcut)
-              ? details.shortcut
-              : curateKey;
+            const shortcut = isStringValue(details?.shortcut) ? details.shortcut : curateKey;
             lines.push(
               theme.fg(
                 "dim",
@@ -2792,12 +2805,10 @@ export default function (pi: ExtensionAPI) {
             if (details?.curatorUrl) {
               lines.push(theme.fg("muted", `  ${details.curatorUrl}`));
             }
-            const timeout = Check(NumberValueSchema, details?.timeoutSeconds)
+            const timeout = isNumberValue(details?.timeoutSeconds)
               ? details.timeoutSeconds
               : undefined;
-            const shortcut = Check(StringValueSchema, details?.shortcut)
-              ? details.shortcut
-              : curateKey;
+            const shortcut = isStringValue(details?.shortcut) ? details.shortcut : curateKey;
             if (timeout) {
               lines.push(
                 theme.fg("dim", `  auto-submits after ${timeout}s idle; ${shortcut} reopens`),
@@ -3016,35 +3027,38 @@ export default function (pi: ExtensionAPI) {
       description:
         "Check a claim against web sources and return a bounded machine-readable research artifact with exact passage citations.",
       promptSnippet: "Verify a claim with passage-level source citations.",
-      parameters: Type.Object({
-        claim: Type.String({ description: "The assertion to check against web sources." }),
-        queries: Type.Optional(
-          Type.Array(Type.String(), { description: "Search queries (default: the claim)." }),
+      parameters: hostParams(
+        obj(
+          {
+            claim: str({ description: "The assertion to check against web sources." }),
+            queries: opt(arr(str(), { description: "Search queries (default: the claim)." })),
+            numResults: opt(
+              int({
+                minimum: 1,
+                maximum: 20,
+                description: "Results per query (default: 5, max: 20).",
+              }),
+            ),
+            fetchContent: opt(
+              bool({ description: "Fetch up to 5 result pages for exact passage extraction." }),
+            ),
+            recencyFilter: opt(
+              oneOf(["day", "week", "month", "year"], { description: "Filter by recency." }),
+            ),
+            domainFilter: opt(
+              arr(str(), { description: "Limit to domains; prefix with - to exclude." }),
+            ),
+            provider: opt(
+              searchProviderSchema(
+                "Search provider or non-empty list of providers to search simultaneously; all searches every available provider",
+              ),
+            ),
+          },
+          { open: true },
         ),
-        numResults: Type.Optional(
-          Type.Integer({
-            minimum: 1,
-            maximum: 20,
-            description: "Results per query (default: 5, max: 20).",
-          }),
-        ),
-        fetchContent: Type.Optional(
-          Type.Boolean({ description: "Fetch up to 5 result pages for exact passage extraction." }),
-        ),
-        recencyFilter: Type.Optional(
-          StringEnum(["day", "week", "month", "year"], { description: "Filter by recency." }),
-        ),
-        domainFilter: Type.Optional(
-          Type.Array(Type.String(), { description: "Limit to domains; prefix with - to exclude." }),
-        ),
-        provider: Type.Optional(
-          searchProviderSchema(
-            "Search provider or non-empty list of providers to search simultaneously; all searches every available provider",
-          ),
-        ),
-      }),
+      ),
       async execute(_callId, params, signal, _onUpdate, ctx) {
-        const claim = Check(StringValueSchema, params.claim) ? params.claim.trim() : "";
+        const claim = isStringValue(params.claim) ? params.claim.trim() : "";
         if (!claim) {
           return {
             content: [{ type: "text", text: "Error: 'claim' is required." }],
@@ -3054,19 +3068,17 @@ export default function (pi: ExtensionAPI) {
 
         const requestedQueries = Array.isArray(params.queries)
           ? params.queries
-              .filter((query): query is string => Check(StringValueSchema, query))
+              .filter((query): query is string => isStringValue(query))
               .map((query) => query.trim())
               .filter(Boolean)
           : [];
         const queries = (requestedQueries.length > 0 ? requestedQueries : [claim]).slice(0, 8);
         const numResults =
-          Check(NumberValueSchema, params.numResults) && Number.isFinite(params.numResults)
+          isNumberValue(params.numResults) && Number.isFinite(params.numResults)
             ? Math.min(20, Math.max(1, Math.floor(params.numResults)))
             : 5;
         const domainFilter = Array.isArray(params.domainFilter)
-          ? params.domainFilter.filter((domain): domain is string =>
-              Check(StringValueSchema, domain),
-            )
+          ? params.domainFilter.filter((domain): domain is string => isStringValue(domain))
           : undefined;
         const recencyFilter = normalizeRecencyFilter(params.recencyFilter);
         const resultsByUrl = new Map<string, SearchResult>();
@@ -3167,35 +3179,41 @@ export default function (pi: ExtensionAPI) {
       label: "Fetch Content",
       description: `Fetch readable, raw, or question-focused URL content; long or multi-URL output is stored and its footer gives the exact ${toolNames.getSearchContent} responseId/urlIndex/offset call to continue.`,
       promptSnippet: "Fetch readable or raw content from URLs.",
-      parameters: Type.Object({
-        url: Type.Optional(Type.String({ description: "Single URL to fetch" })),
-        urls: Type.Optional(Type.Array(Type.String(), { description: "Multiple URLs (parallel)" })),
-        forceClone: Type.Optional(
-          Type.Boolean({
-            description: "Force cloning large GitHub repositories that exceed the size threshold",
-          }),
+      parameters: hostParams(
+        obj(
+          {
+            url: opt(str({ description: "Single URL to fetch" })),
+            urls: opt(arr(str(), { description: "Multiple URLs (parallel)" })),
+            forceClone: opt(
+              bool({
+                description:
+                  "Force cloning large GitHub repositories that exceed the size threshold",
+              }),
+            ),
+            prompt: opt(
+              str({
+                description: "Page-local question required by mode answer.",
+              }),
+            ),
+            mode: opt(
+              oneOf(["readable", "raw", "answer"], {
+                description: "Output readable, raw, or source-grounded answer content.",
+              }),
+            ),
+            answerModel: opt(
+              str({
+                description: "Provider/model override for answer mode.",
+              }),
+            ),
+            auth: opt(
+              union([str(), bool()], {
+                description: "Authentication profile name, or true for the sole profile.",
+              }),
+            ),
+          },
+          { open: true },
         ),
-        prompt: Type.Optional(
-          Type.String({
-            description: "Page-local question required by mode answer.",
-          }),
-        ),
-        mode: Type.Optional(
-          StringEnum(["readable", "raw", "answer"], {
-            description: "Output readable, raw, or source-grounded answer content.",
-          }),
-        ),
-        answerModel: Type.Optional(
-          Type.String({
-            description: "Provider/model override for answer mode.",
-          }),
-        ),
-        auth: Type.Optional(
-          Type.Union([Type.String(), Type.Boolean()], {
-            description: "Authentication profile name, or true for the sole profile.",
-          }),
-        ),
-      }),
+      ),
 
       async execute(
         _toolCallId,
@@ -3488,10 +3506,7 @@ export default function (pi: ExtensionAPI) {
 
         if (details?.error) {
           const extras: string[] = [];
-          if (
-            Check(NumberValueSchema, details.urlCount) ||
-            Check(NumberValueSchema, details.successful)
-          ) {
+          if (isNumberValue(details.urlCount) || isNumberValue(details.successful)) {
             extras.push(`urls: ${details.successful ?? 0}/${details.urlCount ?? 0} succeeded`);
           }
           if (details.responseId) extras.push(`response id: ${details.responseId}`);
@@ -3558,51 +3573,52 @@ export default function (pi: ExtensionAPI) {
       label: "Get Search Content",
       description: `Retrieve bounded content slices or find matching passages in a previous ${storedContentSources} call.`,
       promptSnippet: "Retrieve slices or matching passages from stored content.",
-      parameters: Type.Object({
-        responseId: Type.String({ description: `The responseId from ${storedContentSources}` }),
-        query: Type.Optional(Type.String({ description: searchQueryDescription })),
-        queryIndex: Type.Optional(
-          Type.Integer({ minimum: 0, description: "Get content for query at index" }),
-        ),
-        url: Type.Optional(Type.String({ description: "Get content for this URL" })),
-        urlIndex: Type.Optional(
-          Type.Integer({ minimum: 0, description: "Get content for URL at index" }),
-        ),
-        offset: Type.Optional(
-          Type.Integer({
-            minimum: 0,
-            description: "Slice offset; cannot be combined with findText.",
-          }),
-        ),
-        limit: Type.Optional(
-          Type.Integer({
-            minimum: 1,
-            maximum: maxInlineContentChars,
-            description: "Slice length; cannot be combined with findText.",
-          }),
-        ),
-        findText: Type.Optional(
-          Type.Union(
-            [
-              Type.String({ minLength: 1, maxLength: 500 }),
-              Type.Array(Type.String({ minLength: 1, maxLength: 500 }), {
-                minItems: 1,
-                maxItems: 10,
+      parameters: hostParams(
+        obj(
+          {
+            responseId: str({ description: `The responseId from ${storedContentSources}` }),
+            query: opt(str({ description: searchQueryDescription })),
+            queryIndex: opt(int({ minimum: 0, description: "Get content for query at index" })),
+            url: opt(str({ description: "Get content for this URL" })),
+            urlIndex: opt(int({ minimum: 0, description: "Get content for URL at index" })),
+            offset: opt(
+              int({
+                minimum: 0,
+                description: "Slice offset; cannot be combined with findText.",
               }),
-            ],
-            {
-              description:
-                "Text or texts to find in the selected stored content. Cannot be combined with offset or limit.",
-            },
-          ),
+            ),
+            limit: opt(
+              int({
+                minimum: 1,
+                maximum: maxInlineContentChars,
+                description: "Slice length; cannot be combined with findText.",
+              }),
+            ),
+            findText: opt(
+              union(
+                [
+                  str({ minLength: 1, maxLength: 500 }),
+                  arr(str({ minLength: 1, maxLength: 500 }), {
+                    minItems: 1,
+                    maxItems: 10,
+                  }),
+                ],
+                {
+                  description:
+                    "Text or texts to find in the selected stored content. Cannot be combined with offset or limit.",
+                },
+              ),
+            ),
+            findMode: opt(
+              oneOf(["exact", "case-insensitive", "fuzzy"], {
+                description:
+                  "Matching mode for findText (default: case-insensitive). Requires findText.",
+              }),
+            ),
+          },
+          { open: true },
         ),
-        findMode: Type.Optional(
-          StringEnum(["exact", "case-insensitive", "fuzzy"], {
-            description:
-              "Matching mode for findText (default: case-insensitive). Requires findText.",
-          }),
-        ),
-      }),
+      ),
 
       async execute(_toolCallId, params): Promise<AgentToolResult<DetailObject>> {
         if (
@@ -4048,7 +4064,7 @@ export default function (pi: ExtensionAPI) {
         }
 
         let statusLine: string;
-        if (Check(NumberValueSchema, details?.matchCount)) {
+        if (isNumberValue(details?.matchCount)) {
           statusLine =
             theme.fg("success", details?.title || details?.query || "Content") +
             theme.fg(

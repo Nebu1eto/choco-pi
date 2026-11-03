@@ -47,7 +47,7 @@ Availability and execution are raced against cancellation and deadlines, so nonc
 
 ## UI schemas
 
-- `canonicalSearchParams` is the complete TypeBox request schema. Action/provider and other public enum strings use JSON Schema `type: "string", enum: [...]`, not literal `anyOf` enums, for all Pi providers.
+- `canonicalSearchParams` is the complete pi-schema (`@earendil-works/pi-schema`) closed request object (`Schema<…>`; `Static<typeof canonicalSearchParams>` is the request type). Hosts that still require TypeBox (`registerTool`) wrap it with `Type.Unsafe`. Action/provider and other public enum strings use JSON Schema `type: "string", enum: [...]`, not literal `anyOf` enums, for all Pi providers.
 - `searchProviderSchema(description?)` returns the provider-selection schema used by the existing rich `web_search` registration.
 - `searchProviderFamilies`, `searchProviderSelections`, and `defaultSearchFamilyOrder` are frozen values.
 

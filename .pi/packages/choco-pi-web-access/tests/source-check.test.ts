@@ -17,8 +17,8 @@ import {
   type ExtensionContextActions,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { Type, type Static } from "typebox";
-import { Check } from "typebox/value";
+import { arr, compile, num, obj, opt, str } from "@earendil-works/pi-schema";
+import type { Static } from "@earendil-works/pi-schema";
 
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 const isolatedAgentDir = await mkdtemp(join(tmpdir(), "choco-pi-source-check-agent-"));
@@ -58,24 +58,18 @@ after(async () => {
   await rm(isolatedAgentDir, { recursive: true, force: true });
 });
 
-const SourceCheckDetailsSchema = Type.Object(
+const SourceCheckDetailsSchema = obj(
   {
-    sourceCount: Type.Number(),
-    passageCount: Type.Number(),
-    artifact: Type.Object(
-      {
-        sources: Type.Array(
-          Type.Object(
-            { fetch_error: Type.Optional(Type.String()) },
-            { additionalProperties: true },
-          ),
-        ),
-      },
-      { additionalProperties: true },
+    sourceCount: num({ minimum: -Number.MAX_VALUE, maximum: Number.MAX_VALUE }),
+    passageCount: num({ minimum: -Number.MAX_VALUE, maximum: Number.MAX_VALUE }),
+    artifact: obj(
+      { sources: arr(obj({ fetch_error: opt(str()) }, { open: true })) },
+      { open: true },
     ),
   },
-  { additionalProperties: true },
+  { open: true },
 );
+const isSourceCheckDetails = compile(SourceCheckDetailsSchema).check;
 
 type SourceCheckDetails = Static<typeof SourceCheckDetailsSchema>;
 
@@ -191,7 +185,7 @@ async function createSourceCheckHost(t: TestContext): Promise<SourceCheckHost> {
 
 function requireSourceCheckDetails(resultValue: AgentToolResult<unknown>): SourceCheckDetails {
   assert.ok(
-    Check(SourceCheckDetailsSchema, resultValue.details),
+    isSourceCheckDetails(resultValue.details),
     "source_check must return its typed details contract",
   );
   return resultValue.details;

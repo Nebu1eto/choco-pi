@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { isNumberValue, isStringValue } from "./value-guards.ts";
 import { activityMonitor } from "./activity.ts";
 import type { ExtractedContent, ExtractOptions } from "./extract.ts";
 import type { SearchOptions, SearchResponse } from "./search-types.ts";
@@ -46,9 +45,6 @@ export const KAGI_SEARCH_CAPABILITIES = {
 export interface KagiExtractOptions extends Pick<ExtractOptions, "timeoutMs" | "lookup"> {
   ssrf?: SsrfConfig;
 }
-
-const StringValueSchema = Type.String();
-const NumberValueSchema = Type.Number();
 
 function isKagiObject(value: KagiValue | undefined): value is KagiObject {
   return value !== null && value !== undefined && Object(value) === value && !Array.isArray(value);
@@ -100,7 +96,7 @@ async function requireApiKey(signal?: AbortSignal): Promise<string> {
 }
 
 function normalizeCount(value: number | undefined): number {
-  if (!Check(NumberValueSchema, value) || !Number.isFinite(value)) return 5;
+  if (!isNumberValue(value) || !Number.isFinite(value)) return 5;
   return Math.max(1, Math.min(Math.floor(value), 20));
 }
 
@@ -114,7 +110,7 @@ function invalidResponse(message: string): Error {
 
 function firstString(...values: Array<KagiValue | undefined>): string | null {
   for (const value of values) {
-    if (Check(StringValueSchema, value) && value.trim()) return value.trim();
+    if (isStringValue(value) && value.trim()) return value.trim();
   }
   return null;
 }

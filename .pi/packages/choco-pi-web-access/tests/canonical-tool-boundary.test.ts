@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { InMemoryCredentialStore, type Api, type Model } from "@earendil-works/pi-ai";
-import { Type } from "typebox";
+import { obj, opt, str } from "@earendil-works/pi-schema";
+import { hostParams } from "../schema-bridge.ts";
 import {
   createEventBus,
   DefaultResourceLoader,
@@ -182,7 +183,7 @@ const legacySearch: ExtensionFactory = (pi) => {
     name: "legacy_search",
     label: "Legacy search",
     description: "Legacy search fixture",
-    parameters: Type.Object({ query: Type.Optional(Type.String()) }),
+    parameters: hostParams(obj({ query: opt(str()) }, { open: true })),
     async execute() {
       return { content: [{ type: "text", text: "legacy" }], details: {} };
     },

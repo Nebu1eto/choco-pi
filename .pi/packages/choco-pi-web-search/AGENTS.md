@@ -4,7 +4,7 @@
 - Keep the public API in `index.ts` and document signature changes in `CONTRACT.md` before consumers adopt them.
 - Use Node-erasable TypeScript, explicit `.ts` relative imports, and host-provided peer dependencies only.
 - The extension marks the shared event-bus scope and owns session lifecycle; it does not register `web_search`.
-- Validate adapter data at the core boundary with TypeBox. Never expose credentials in diagnostics.
+- Validate adapter data at the core boundary with `@earendil-works/pi-schema`. Never expose credentials in diagnostics.
 
 ## Verify
 

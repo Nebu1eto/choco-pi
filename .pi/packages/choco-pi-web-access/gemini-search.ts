@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { isBooleanValue, isStringValue } from "./value-guards.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   resolveSearchScope,
@@ -113,9 +112,6 @@ interface ConfigObject {
   [key: string]: ConfigValue | undefined;
 }
 
-const StringValueSchema = Type.String();
-const BooleanValueSchema = Type.Boolean();
-
 function isConfigObject<Value>(value: Value): value is Value & ConfigObject {
   return value !== null && Object(value) === value && !Array.isArray(value);
 }
@@ -185,7 +181,7 @@ function getSearchConfig(): SearchConfig {
 }
 
 function normalizeConfiguredSearchProvider<Value>(value: Value): SearchProviderSelection {
-  if (Check(StringValueSchema, value)) {
+  if (isStringValue(value)) {
     const normalized = value.trim().toLowerCase();
     if (!isSearchProvider(normalized)) {
       throw new Error(`Invalid provider in ${CONFIG_PATH}: ${value}`);
@@ -195,7 +191,7 @@ function normalizeConfiguredSearchProvider<Value>(value: Value): SearchProviderS
 }
 
 function normalizeBoolean<Value>(value: Value, label: string): boolean {
-  if (!Check(BooleanValueSchema, value)) throw new Error(`${label} must be a boolean`);
+  if (!isBooleanValue(value)) throw new Error(`${label} must be a boolean`);
   return value;
 }
 
@@ -213,7 +209,7 @@ function normalizeSearchRouting<Value>(value: Value): SearchRoutingConfig {
   }
   const fallbackOn: SearchRoutingConfig["fallbackOn"] = [];
   for (const kind of raw.fallbackOn) {
-    if (!Check(StringValueSchema, kind) || !isFallbackKind(kind)) {
+    if (!isStringValue(kind) || !isFallbackKind(kind)) {
       throw new Error(
         `searchRouting.fallbackOn in ${CONFIG_PATH} may only contain transient, quota, network, or invalid-response`,
       );
@@ -236,7 +232,7 @@ function normalizeResolvedProviderList<Value>(
     throw new Error(`${label} must be a non-empty array`);
   const providers: ResolvedSearchProvider[] = [];
   for (const provider of value) {
-    const normalized = Check(StringValueSchema, provider) ? provider.trim().toLowerCase() : "";
+    const normalized = isStringValue(provider) ? provider.trim().toLowerCase() : "";
     if (!isResolvedSearchProvider(normalized)) {
       throw new Error(`${label} contains an invalid provider: ${String(provider)}`);
     }
@@ -253,7 +249,7 @@ export function normalizeSearchProviderSelection<Value>(
   label = "provider",
 ): SearchProviderSelection {
   if (Array.isArray(value)) return normalizeResolvedProviderList(value, label);
-  const normalized = Check(StringValueSchema, value) ? value.trim().toLowerCase() : "";
+  const normalized = isStringValue(value) ? value.trim().toLowerCase() : "";
   return isSearchProvider(normalized) ? normalized : "auto";
 }
 

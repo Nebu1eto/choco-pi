@@ -50,3 +50,11 @@ Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pas
 ## 2026-11-03 choco-pi patch: Pi SDK target 1.5.0 + pi-schema dependency
 
 Pi SDK pins move from `1.4.0` to exactly `1.5.0` and `@earendil-works/pi-schema@1.5.0` is added as a peer dependency (the extension loader has no alias for it).
+
+## 2026-11-03 choco-pi patch: TypeBox to pi-schema
+
+`index.ts` no longer imports `typebox`; all schemas are `@earendil-works/pi-schema` builders validated with `compile(...).check`.
+Public names are unchanged (`canonicalSearchParams`, `searchProviderSchema`); both now return pi-schema `Schema<…>` objects with identical JSON output (string enums stay `{ "type": "string", "enum": [...] }`, closed objects keep `additionalProperties: false`, `SearchError` snapshots and `ScopeRendezvous` stay open).
+Function-valued checks (shared directory, scope rendezvous) are hand-written predicates; `Type.Cyclic` JSON values are a `$ref` definition on the adapter-response root; NaN/Infinity stay rejected via finite bounds.
+`isSearchError` snapshots the known fields before validation because pi-schema ignores non-enumerable own properties such as `Error.message`.
+Tests: `tests/schema.test.ts` added; fixtures register tools through `tests/fixtures/schema-bridge.ts` (the only `typebox` import, `Type.Unsafe`).

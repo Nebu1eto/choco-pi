@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { Check } from "typebox/value";
+import { compile } from "@earendil-works/pi-schema";
 import {
   createEventBus,
   createExtensionRuntime,
@@ -828,6 +828,8 @@ test("all existing Exa search modes validate and unsupported neural is rejected"
   await expectKind(search(invalid, { scope }), "invalid-request");
 });
 
+const isCanonicalParams = compile(canonicalSearchParams).check;
+
 test("public action and provider schemas use string enum form", () => {
   const requestSchema = JSON.stringify(canonicalSearchParams);
   const providerSchema = JSON.stringify(searchProviderSchema());
@@ -1511,8 +1513,8 @@ test("xai is the last default family and its explicit-only adapter never runs im
     "xai",
   ]);
   assert.equal(searchProviderFamilies.at(-1), "xai");
-  assert.equal(Check(canonicalSearchParams, { query: "q", provider: "xai" }), true);
-  assert.equal(Check(canonicalSearchParams, { query: "q", provider: ["brave", "xai"] }), true);
+  assert.equal(isCanonicalParams({ query: "q", provider: "xai" }), true);
+  assert.equal(isCanonicalParams({ query: "q", provider: ["brave", "xai"] }), true);
 
   const { scope } = setup();
   const calls: string[] = [];

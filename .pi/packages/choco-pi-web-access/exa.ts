@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { isNumberValue, isStringValue } from "./value-guards.ts";
 import { activityMonitor } from "./activity.ts";
 import type { ExtractedContent } from "./extract.ts";
 import type { SearchOptions, SearchResponse } from "./search-types.ts";
@@ -96,9 +95,6 @@ interface ExaSearchArguments extends ExaDomainFilter {
   textMaxCharacters?: number;
 }
 type ExaMcpArguments = ExaMcpBasicArguments | ExaSearchArguments;
-
-const StringValueSchema = Type.String();
-const NumberValueSchema = Type.Number();
 
 let cachedConfig: WebSearchConfig | null = null;
 
@@ -207,9 +203,7 @@ function normalizeHighlights(
     : never,
 ): string[] {
   if (!Array.isArray(value)) return [];
-  return value.filter(
-    (item): item is string => Check(StringValueSchema, item) && item.trim().length > 0,
-  );
+  return value.filter((item): item is string => isStringValue(item) && item.trim().length > 0);
 }
 
 function buildAnswerFromSearchResults(results: ExaSearchResponse["results"]): string {
@@ -222,7 +216,7 @@ function buildAnswerFromSearchResults(results: ExaSearchResponse["results"]): st
     const content =
       highlights.length > 0
         ? highlights.join(" ")
-        : Check(StringValueSchema, item.text)
+        : isStringValue(item.text)
           ? item.text.trim().slice(0, 1000)
           : "";
     if (!content) continue;
@@ -254,7 +248,7 @@ function mapInlineContent(results: ExaSearchResponse["results"]): ExtractedConte
   return results
     .filter(
       (r): r is NonNullable<ExaSearchResponse["results"]>[number] & { url: string; text: string } =>
-        !!r?.url && Check(StringValueSchema, r.text) && r.text.length > 0,
+        !!r?.url && isStringValue(r.text) && r.text.length > 0,
     )
     .map((r) => ({
       url: r.url,
@@ -361,21 +355,20 @@ export async function callExaMcp(
   }
 
   if (parsed.error) {
-    const code = Check(NumberValueSchema, parsed.error.code) ? ` ${parsed.error.code}` : "";
+    const code = isNumberValue(parsed.error.code) ? ` ${parsed.error.code}` : "";
     const message = parsed.error.message || "Unknown error";
     throw new SearchTransportError("Exa MCP", "request", `Exa MCP error${code}: ${message}`);
   }
 
   if (parsed.result?.isError) {
     const message = parsed.result.content
-      ?.find((item) => item.type === "text" && Check(StringValueSchema, item.text))
+      ?.find((item) => item.type === "text" && isStringValue(item.text))
       ?.text?.trim();
     throw new SearchTransportError("Exa MCP", "request", message || "Exa MCP returned an error");
   }
 
   const text = parsed.result?.content?.find(
-    (item) =>
-      item.type === "text" && Check(StringValueSchema, item.text) && item.text.trim().length > 0,
+    (item) => item.type === "text" && isStringValue(item.text) && item.text.trim().length > 0,
   )?.text;
 
   if (!text) {
