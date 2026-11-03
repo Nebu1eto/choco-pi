@@ -103,3 +103,12 @@ Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pas
 ## 2026-11-03 choco-pi patch: Pi SDK target 1.5.0 + pi-schema dependency
 
 Pi SDK pins move from `1.4.0` to exactly `1.5.0` and `@earendil-works/pi-schema@1.5.0` is added as a peer dependency (the extension loader has no alias for it).
+
+## 2026-11-03 choco-pi patch: TypeBox removed (pi-schema + predicates)
+
+All TypeBox use is gone except `src/schema-bridge.ts` (`hostParams`, `Type.Unsafe`), which wraps pi-schema objects for `registerTool`, still TypeBox-typed in Pi 1.5.0.
+
+- `src/tasks.ts`: `TaskCreate`/`TaskUpdate` parameters are open pi-schema objects (as TypeBox objects were) behind `hostParams`.
+- `src/executor.ts`: the stdin-closed error code check is a compiled open `obj` + `oneOf` (EPIPE, ENOTCONN, ECONNRESET, ERR_STREAM_DESTROYED).
+- `src/validation.ts`, `src/extension.ts`: runtime guards for strings, booleans, functions, property bags, the subagents registry and the adoption signal are pi-schema `str` checks or plain predicates (`instanceof Function`, identity); their accept/reject behaviour is unchanged.
+- `tests/schema-guards.test.ts` (new): guards and task tool parameter schemas.

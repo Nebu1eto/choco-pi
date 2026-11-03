@@ -1,10 +1,7 @@
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { compile, str } from "@earendil-works/pi-schema";
 
-const StringSchema = Type.String();
-const BooleanSchema = Type.Boolean();
-const FunctionSchema = Type.Function([], Type.Unknown());
-const RecordSchema = Type.Record(Type.String(), Type.Unknown());
+// The repo lint rule forbids `typeof`; primitive strings are checked through pi-schema.
+const stringCheck = compile(str()).check;
 
 export type RuntimeValue = string | number | boolean | bigint | symbol | object | null | undefined;
 
@@ -42,19 +39,22 @@ export interface RuntimeRecord {
 }
 
 export function isStringValue<Value>(value: Value): value is Value & string {
-  return Check(StringSchema, value);
+  return stringCheck(value);
 }
 
 export function isBooleanValue<Value>(value: Value): value is Value & boolean {
-  return Check(BooleanSchema, value);
+  return value === true || value === false;
 }
 
 export function isFunctionValue<Value>(value: Value): value is Value & CallableFunction {
-  return Check(FunctionSchema, value);
+  return value instanceof Function;
 }
 
 export function parseRuntimeRecord<Value>(value: Value): RuntimeRecord | undefined {
-  if (!Check(RecordSchema, value) || Array.isArray(value)) return undefined;
-  // SAFETY: RecordSchema and the array exclusion establish a string-keyed runtime property bag.
+  // Non-null, non-function objects other than arrays form a string-keyed property bag.
+  if (Object(value) !== value || value instanceof Function || Array.isArray(value)) {
+    return undefined;
+  }
+  // SAFETY: the object and array exclusions establish a string-keyed runtime property bag.
   return value as Value & RuntimeRecord;
 }

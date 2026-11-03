@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { compile, obj, oneOf } from "@earendil-works/pi-schema";
 import type {
   CommandHook,
   HookHandler,
@@ -83,17 +82,12 @@ export function substitute(value: JsonValue, input: JsonObject): JsonValue {
  * peer socket is already gone, and `ECONNRESET` appears on some kernels.
  * Node reports `ERR_STREAM_DESTROYED` once the stream itself is torn down.
  */
-const StdinClosedByChildError = Type.Object({
-  code: Type.Union([
-    Type.Literal("EPIPE"),
-    Type.Literal("ENOTCONN"),
-    Type.Literal("ECONNRESET"),
-    Type.Literal("ERR_STREAM_DESTROYED"),
-  ]),
-});
+const isStdinClosedCode = compile(
+  obj({ code: oneOf(["EPIPE", "ENOTCONN", "ECONNRESET", "ERR_STREAM_DESTROYED"]) }, { open: true }),
+).check;
 
 function isStdinClosedByChild(error: Error): boolean {
-  return Check(StdinClosedByChildError, error);
+  return isStdinClosedCode(error);
 }
 
 function runCommand(

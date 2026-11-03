@@ -10,8 +10,6 @@ import type {
   ToolCallEvent,
   ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import { loadHookSources } from "./config.ts";
 import { createPiHookBackends } from "./backends.ts";
 import { HookEngine } from "./engine.ts";
@@ -55,9 +53,18 @@ function endReason(reason: string): string {
 const SUBAGENTS_MANAGER_KEY = Symbol.for("pi-subagents:manager");
 const SUBAGENT_SESSION_MARKER = "choco-pi:subagent";
 const SESSION_ROOTS_KEY = Symbol.for("choco-pi-hooks:subagent-session-roots");
-const ChildSessionRegistrySchema = Type.Object({
-  isChildSessionId: Type.Function([Type.String()], Type.Boolean()),
-});
+interface ChildSessionRegistry {
+  isChildSessionId(sessionId: string): boolean;
+}
+
+function isChildSessionRegistry<T>(value: T): value is T & ChildSessionRegistry {
+  return (
+    Object(value) === value &&
+    !(value instanceof Function) &&
+    "isChildSessionId" in Object(value) &&
+    Object(value).isChildSessionId instanceof Function
+  );
+}
 
 function subagentSessionRoots(): Map<string, string> {
   // SAFETY: Symbol.for provides a process-wide slot that only this module writes, always with a Map.
@@ -71,7 +78,7 @@ function subagentRootSessionId(sessionId: string, ctx: ExtensionContext): string
     globalThis,
     SUBAGENTS_MANAGER_KEY,
   )?.value;
-  if (!Value.Check(ChildSessionRegistrySchema, registry)) return undefined;
+  if (!isChildSessionRegistry(registry)) return undefined;
   if (registry.isChildSessionId(sessionId) !== true) return undefined;
   const marker = ctx.sessionManager
     .getEntries()
@@ -111,17 +118,19 @@ function stopFailureType(message: string): string {
  * absent or foreign slot leaves hook behavior unchanged.
  */
 const BACKGROUND_ADOPTION_SIGNAL = Symbol.for("choco-pi:compaction-background-adoption");
-const AdoptionSignalSchema = Type.Object({
-  version: Type.Literal(1),
-  willAdopt: Type.Function([], Type.Unknown()),
-  isAdoption: Type.Function([], Type.Unknown()),
-});
 interface AdoptionSignal {
   willAdopt(sessionId: string, event: SessionBeforeCompactEvent): Promise<boolean>;
   isAdoption(sessionId: string, entry: CompactionEntry): boolean;
 }
 function isAdoptionSignal<T>(value: T): value is T & AdoptionSignal {
-  return Value.Check(AdoptionSignalSchema, value);
+  const record = Object(value);
+  return (
+    record === value &&
+    !(value instanceof Function) &&
+    record.version === 1 &&
+    record.willAdopt instanceof Function &&
+    record.isAdoption instanceof Function
+  );
 }
 function adoptionSignal(): AdoptionSignal | undefined {
   const found: unknown = Object.getOwnPropertyDescriptor(

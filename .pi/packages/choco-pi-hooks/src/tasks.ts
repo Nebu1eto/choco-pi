@@ -1,5 +1,6 @@
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { obj, oneOf, opt, str } from "@earendil-works/pi-schema";
+import { hostParams } from "./schema-bridge.ts";
 import type { HookDispatch } from "./supplemental-events.ts";
 
 interface TaskRecord {
@@ -17,10 +18,7 @@ export function registerClaudeTaskTools(pi: ExtensionAPI, dispatch: HookDispatch
       name: "TaskCreate",
       label: "TaskCreate",
       description: "Create a tracked task.",
-      parameters: Type.Object({
-        subject: Type.String(),
-        description: Type.Optional(Type.String()),
-      }),
+      parameters: hostParams(obj({ subject: str(), description: opt(str()) }, { open: true })),
       execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
         const id = String(nextId++);
         const decision = await dispatch("TaskCreated", ctx, {
@@ -45,18 +43,17 @@ export function registerClaudeTaskTools(pi: ExtensionAPI, dispatch: HookDispatch
       name: "TaskUpdate",
       label: "TaskUpdate",
       description: "Update a tracked task.",
-      parameters: Type.Object({
-        task_id: Type.String(),
-        status: Type.Optional(
-          Type.Union([
-            Type.Literal("pending"),
-            Type.Literal("in_progress"),
-            Type.Literal("completed"),
-          ]),
+      parameters: hostParams(
+        obj(
+          {
+            task_id: str(),
+            status: opt(oneOf(["pending", "in_progress", "completed"])),
+            subject: opt(str()),
+            description: opt(str()),
+          },
+          { open: true },
         ),
-        subject: Type.Optional(Type.String()),
-        description: Type.Optional(Type.String()),
-      }),
+      ),
       execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
         const task = tasks.get(params.task_id);
         if (!task) throw new Error(`Unknown task: ${params.task_id}`);
