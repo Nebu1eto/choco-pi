@@ -1,41 +1,44 @@
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+// oxlint anti-slop/no-runtime-typeof forbids typeof here, so these guards use identity and a pi-schema string check.
+import { compile, str } from "@earendil-works/pi-schema";
 
-const BoundaryValueReference = Type.Ref("BoundaryValue");
-export const BoundaryValueSchema = Type.Cyclic(
-  {
-    BoundaryValue: Type.Union([
-      Type.Undefined(),
-      Type.Null(),
-      Type.Boolean(),
-      Type.Number(),
-      Type.BigInt(),
-      Type.String(),
-      Type.Symbol(),
-      Type.Function([], BoundaryValueReference),
-      Type.Array(BoundaryValueReference),
-      Type.Record(Type.String(), BoundaryValueReference),
-      Type.Object({}),
-    ]),
-  },
-  "BoundaryValue",
-);
-export type BoundaryValue = Static<typeof BoundaryValueSchema>;
+/** In-process runtime value universe; deliberately shallow (never deep-walked). */
+export type BoundaryValue =
+  | undefined
+  | null
+  | boolean
+  | number
+  | bigint
+  | string
+  | symbol
+  | (() => BoundaryValue)
+  | BoundaryValue[]
+  | BoundaryRecord
+  | {};
 
-export const BoundaryRecordSchema = Type.Record(Type.String(), BoundaryValueSchema);
-export type BoundaryRecord = Static<typeof BoundaryRecordSchema>;
+/** Record entries exclude the bare `{}` member so the dictionary keeps a concrete value contract. */
+export type BoundaryEntry =
+  | undefined
+  | null
+  | boolean
+  | number
+  | bigint
+  | string
+  | symbol
+  | (() => BoundaryValue)
+  | BoundaryValue[]
+  | BoundaryRecord;
 
-const StringSchema = Type.String();
-const NumberSchema = Type.Number();
-const BooleanSchema = Type.Boolean();
+export type BoundaryRecord = { [key: string]: BoundaryEntry };
+
+const stringCheck = compile(str()).check;
 
 export function isString(value: BoundaryValue): value is string {
-  return Check(StringSchema, value);
+  return stringCheck(value);
 }
 
 export function isNumber(value: BoundaryValue): value is number {
   return (
-    Check(NumberSchema, value) ||
+    Number.isFinite(value) ||
     Object.is(value, Number.NaN) ||
     Object.is(value, Number.POSITIVE_INFINITY) ||
     Object.is(value, Number.NEGATIVE_INFINITY)
@@ -43,7 +46,7 @@ export function isNumber(value: BoundaryValue): value is number {
 }
 
 export function isBoolean(value: BoundaryValue): value is boolean {
-  return Check(BooleanSchema, value);
+  return value === true || value === false;
 }
 
 export function isObjectValue(value: BoundaryValue): value is object {

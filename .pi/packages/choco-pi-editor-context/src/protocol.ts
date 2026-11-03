@@ -1,4 +1,4 @@
-import { Type } from "typebox";
+import { bool, compile, lit, num, obj, opt, str, type Schema } from "@earendil-works/pi-schema";
 
 /** The only editor-context document version accepted by this package. */
 export const EDITOR_CONTEXT_VERSION = 1 as const;
@@ -86,71 +86,59 @@ export interface EditorContextDocument {
   expiresAt: string;
 }
 
-export const EditorPositionSchema = Type.Object(
-  {
-    line: Type.Number(),
-    column: Type.Number(),
-  },
-  { additionalProperties: false },
-);
+// TypeBox Number rejected NaN and +/-Infinity but pi-schema num() accepts them; the finite bounds restore that
+// (NaN fails the bound comparisons).
+const finiteNumber = () => num({ minimum: -Number.MAX_VALUE, maximum: Number.MAX_VALUE });
 
-export const EditorSelectionSchema = Type.Object(
-  {
-    start: Type.Optional(EditorPositionSchema),
-    end: Type.Optional(EditorPositionSchema),
-    text: Type.Optional(Type.String()),
-    truncated: Type.Optional(Type.Boolean()),
-  },
-  { additionalProperties: false },
-);
+// All schemas are closed (additionalProperties: false in the TypeBox originals), so unknown keys are rejected.
+// Each schema is annotated with the exported interface, which the compiler checks against the builder shape.
+export const EditorPositionSchema: Schema<EditorPosition> = obj({
+  line: finiteNumber(),
+  column: finiteNumber(),
+});
 
-export const EditorBufferSchema = Type.Object(
-  {
-    path: Type.String(),
-    relativePath: Type.Optional(Type.String()),
-    language: Type.Optional(Type.String()),
-    symbol: Type.Optional(Type.String()),
-    dirty: Type.Optional(Type.Boolean()),
-    version: Type.Optional(Type.Number()),
-  },
-  { additionalProperties: false },
-);
+export const EditorSelectionSchema: Schema<EditorSelection> = obj({
+  start: opt(EditorPositionSchema),
+  end: opt(EditorPositionSchema),
+  text: opt(str()),
+  truncated: opt(bool()),
+});
 
-export const EditorContextSessionSchema = Type.Object(
-  {
-    sessionId: Type.String(),
-    ownerId: Type.String(),
-    generation: Type.Number(),
-  },
-  { additionalProperties: false },
-);
+export const EditorBufferSchema: Schema<EditorBuffer> = obj({
+  path: str(),
+  relativePath: opt(str()),
+  language: opt(str()),
+  symbol: opt(str()),
+  dirty: opt(bool()),
+  version: opt(finiteNumber()),
+});
 
-export const EditorContextEditorSchema = Type.Object(
-  {
-    name: Type.String(),
-    clientId: Type.Optional(Type.String()),
-  },
-  { additionalProperties: false },
-);
+export const EditorContextSessionSchema: Schema<EditorContextSession> = obj({
+  sessionId: str(),
+  ownerId: str(),
+  generation: finiteNumber(),
+});
 
-export const EditorContextWorkspaceSchema = Type.Object(
-  { root: Type.String() },
-  { additionalProperties: false },
-);
+export const EditorContextEditorSchema: Schema<EditorContextEditor> = obj({
+  name: str(),
+  clientId: opt(str()),
+});
 
-/** TypeBox is exported for boundary validation; consumers should use the plain interfaces above. */
-export const EditorContextDocumentSchema = Type.Object(
-  {
-    version: Type.Literal(EDITOR_CONTEXT_VERSION),
-    requestId: Type.String(),
-    editor: EditorContextEditorSchema,
-    session: EditorContextSessionSchema,
-    workspace: EditorContextWorkspaceSchema,
-    buffer: Type.Optional(EditorBufferSchema),
-    cursor: Type.Optional(EditorPositionSchema),
-    selection: Type.Optional(EditorSelectionSchema),
-    capturedAt: Type.String(),
-    expiresAt: Type.String(),
-  },
-  { additionalProperties: false },
-);
+export const EditorContextWorkspaceSchema: Schema<EditorContextWorkspace> = obj({ root: str() });
+
+/** pi-schema schema for boundary validation; consumers should use the plain interfaces above. */
+export const EditorContextDocumentSchema: Schema<EditorContextDocument> = obj({
+  version: lit(EDITOR_CONTEXT_VERSION),
+  requestId: str(),
+  editor: EditorContextEditorSchema,
+  session: EditorContextSessionSchema,
+  workspace: EditorContextWorkspaceSchema,
+  buffer: opt(EditorBufferSchema),
+  cursor: opt(EditorPositionSchema),
+  selection: opt(EditorSelectionSchema),
+  capturedAt: str(),
+  expiresAt: str(),
+});
+
+/** Compiled once; true only for an exact version-one document (unknown keys rejected). */
+export const isEditorContextDocument = compile(EditorContextDocumentSchema).check;

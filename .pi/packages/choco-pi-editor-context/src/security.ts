@@ -1,10 +1,9 @@
 import { lstatSync, realpathSync } from "node:fs";
 import { posix, win32 } from "node:path";
-import { Check } from "typebox/value";
 
 import {
   EDITOR_CONTEXT_VERSION,
-  EditorContextDocumentSchema,
+  isEditorContextDocument,
   isEditorContextId,
   isEditorContextOwnerId,
   type EditorContextDocument,
@@ -336,7 +335,7 @@ export function validateEditorContextDocument(
   const realpath = options.realpath ?? defaultRealpath;
   const document = valueRecord(value);
 
-  if (!Check(EditorContextDocumentSchema, value))
+  if (!isEditorContextDocument(value))
     addDiagnostic(diagnostics, { code: "DOCUMENT_SHAPE_INVALID" });
   if (document === undefined) return { ok: false, diagnostics };
 
@@ -496,6 +495,6 @@ export function validateEditorContextDocument(
   const fileSecurity = validateContextFile(options, diagnostics);
   if (diagnostics.length > 0) return { ok: false, diagnostics };
 
-  // SAFETY: TypeBox checked the exact schema before this boundary assertion.
+  // SAFETY: the pi-schema check validated the exact schema before this boundary assertion.
   return { ok: true, document: value as EditorContextDocument, fileSecurity };
 }
