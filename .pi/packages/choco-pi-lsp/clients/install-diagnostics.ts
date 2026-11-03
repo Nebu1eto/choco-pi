@@ -22,6 +22,7 @@ const ISSUES_URL = "https://github.com/apmantza/choco-pi-lsp/issues";
 const CRITICAL_DEPS = [
   "typescript",
   "minimatch",
+  // Still needed at runtime: tools/schema-bridge.ts imports Type.Unsafe for the registerTool boundary.
   "typebox",
   "js-yaml",
   "vscode-jsonrpc",

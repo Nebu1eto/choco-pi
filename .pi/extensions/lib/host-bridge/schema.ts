@@ -3,13 +3,13 @@ import {
   bool,
   lit,
   nullable,
-  num,
   obj,
   oneOf,
   opt,
   str,
   type Static,
 } from "@earendil-works/pi-schema";
+import { finiteNum } from "../finite-number.ts";
 
 /**
  * Host-bridge wire contract (docs/waku-integration.md §6.4). The durable entry
@@ -28,7 +28,7 @@ export const WORKFLOW_ENTRY_TYPE = `${HOST_BRIDGE_ENTRY_PREFIX}workflow`;
 export const SUMMARY_MAX_CHARS = 200;
 
 const NullableString = nullable(str());
-const NullableNumber = nullable(num());
+const NullableNumber = nullable(finiteNum());
 const SchemaVersion = lit(HOST_BRIDGE_SCHEMA_VERSION);
 
 export const SubagentEventSchema = oneOf([
@@ -72,7 +72,7 @@ export type SubagentAgent = Static<typeof SubagentAgentSchema>;
 
 export const SubagentEntrySchema = obj({
   schema: SchemaVersion,
-  at: num(),
+  at: finiteNum(),
   event: SubagentEventSchema,
   agent: SubagentAgentSchema,
   live: arr(str()),
@@ -89,7 +89,7 @@ const shellRecordProperties = {
   cwd: str(),
   pid: NullableNumber,
   exitCode: NullableNumber,
-  startedAt: num(),
+  startedAt: finiteNum(),
   finishedAt: NullableNumber,
   toolCallId: NullableString,
   tailPath: NullableString,
@@ -99,7 +99,7 @@ export type ShellRecord = Static<typeof ShellRecordSchema>;
 
 export const ShellEntrySchema = obj({
   schema: SchemaVersion,
-  at: num(),
+  at: finiteNum(),
   event: ShellEventSchema,
   shell: ShellRecordSchema,
   live: arr(str()),
@@ -112,14 +112,14 @@ export const GoalMirrorSchema = obj({
   objective: str(),
   status: GoalStatusSchema,
   tokenBudget: NullableNumber,
-  tokensUsed: num(),
-  activeSeconds: num(),
+  tokensUsed: finiteNum(),
+  activeSeconds: finiteNum(),
 });
 export type GoalMirror = Static<typeof GoalMirrorSchema>;
 
 export const GoalEntrySchema = obj({
   schema: SchemaVersion,
-  at: num(),
+  at: finiteNum(),
   goal: nullable(GoalMirrorSchema),
 });
 export type GoalEntry = Static<typeof GoalEntrySchema>;
@@ -128,7 +128,7 @@ export const WorkflowEventSchema = oneOf(["created", "completed", "cancelled"]);
 
 export const WorkflowEntrySchema = obj({
   schema: SchemaVersion,
-  at: num(),
+  at: finiteNum(),
   event: WorkflowEventSchema,
   workflow: obj({ id: str(), title: str(), agentIds: arr(str()) }),
 });
@@ -137,11 +137,11 @@ export type WorkflowEntry = Static<typeof WorkflowEntrySchema>;
 export const ProgressSubagentSchema = obj({
   id: str(),
   status: SubagentStatusSchema,
-  toolUses: num(),
-  tokens: num(),
+  toolUses: finiteNum(),
+  tokens: finiteNum(),
   turnCount: NullableNumber,
   maxTurns: NullableNumber,
-  durationMs: num(),
+  durationMs: finiteNum(),
   activity: NullableString,
 });
 export type ProgressSubagent = Static<typeof ProgressSubagentSchema>;
@@ -149,13 +149,13 @@ export type ProgressSubagent = Static<typeof ProgressSubagentSchema>;
 export const ProgressShellSchema = obj({
   id: str(),
   status: oneOf(["running", "exited"]),
-  bytes: num(),
+  bytes: finiteNum(),
 });
 export type ProgressShell = Static<typeof ProgressShellSchema>;
 
 export const ProgressFrameSchema = obj({
   schema: SchemaVersion,
-  at: num(),
+  at: finiteNum(),
   subagents: arr(ProgressSubagentSchema),
   shells: arr(ProgressShellSchema),
 });
@@ -200,9 +200,9 @@ export const ThreadGoalSchema = obj(
     objective: str(),
     status: GoalStatusSchema,
     tokenBudget: NullableNumber,
-    usage: obj({ tokensUsed: num(), activeSeconds: num() }, { open: true }),
-    createdAt: num(),
-    updatedAt: num(),
+    usage: obj({ tokensUsed: finiteNum(), activeSeconds: finiteNum() }, { open: true }),
+    createdAt: finiteNum(),
+    updatedAt: finiteNum(),
   },
   { open: true },
 );

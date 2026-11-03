@@ -240,4 +240,4 @@ All runtime validation moved from `typebox` / `typebox/value` to `@earendil-work
 - Persisted journal entries and goals (`src/state.ts`), queued-message details/parts, the recovery-ownership slot, the usage-limit seam and the compaction adoption relay keep their previous openness (all `open: true`) and optional/null handling.
 - pi-schema `num()` accepts NaN and +/-Infinity, which TypeBox `Number` rejected; every number uses `finiteNumber` (`src/guards.ts`, bounded by +/-`Number.MAX_VALUE`).
 - Function-valued members (reader, `classify`, `subscribe`, unsubscribe) are not JSON: the object is checked with a pi-schema `unknown()` member and `instanceof Function` confirms the member.
-- `typebox` is now needed only by the bridge file; the peer declaration is removed with the dependency cleanup.
+- `typebox` is now needed only by the bridge file; the optional peer declaration stays because that bridge resolves it at runtime.

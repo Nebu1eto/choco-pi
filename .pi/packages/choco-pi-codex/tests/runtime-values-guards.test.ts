@@ -1,13 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { compile } from "@earendil-works/pi-schema";
-import {
-  BoundaryValueSchema,
-  JsonObjectSchema,
-  isBoundaryValue,
-  isJsonObject,
-  jsonValueType,
-} from "../src/adapter/runtime-values.ts";
+import { isBoundaryValue, isJsonObject, jsonValueType } from "../src/adapter/runtime-values.ts";
 import {
   isBigIntValue,
   isBooleanValue,
@@ -166,16 +159,5 @@ test("boundary predicates and jsonValueType match the table without throwing", (
     assert.equal(isJsonObject(value), obj, `isJsonObject ${label}`);
     assert.equal(isBoundaryValue(value), true, `isBoundaryValue ${label}`);
     assert.equal(jsonValueType(value), type, `jsonValueType ${label}`);
-  }
-});
-
-test("compat schemas keep their Check behaviour for non-throwing values", () => {
-  const checkJsonObjectSchema = compile(JsonObjectSchema).check;
-  const checkBoundaryValueSchema = compile(BoundaryValueSchema).check;
-  for (const [label, value, , , , , , , , obj] of rows) {
-    if (value === throwingGetter) continue;
-    assert.equal(checkJsonObjectSchema(value), obj, `JsonObjectSchema ${label}`);
-    // NaN/Infinity are the documented difference: the old cyclic schema rejected them.
-    assert.equal(checkBoundaryValueSchema(value), true, `BoundaryValueSchema ${label}`);
   }
 });

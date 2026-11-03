@@ -1,4 +1,5 @@
-import { arr, bool, compile, num, obj, opt, str, type Static } from "@earendil-works/pi-schema";
+import { arr, bool, compile, obj, opt, str, type Static } from "@earendil-works/pi-schema";
+import { finiteNum } from "../finite-number.ts";
 
 import { isJsonRecord, isString, type RuntimeValue } from "../runtime-values.ts";
 
@@ -21,9 +22,9 @@ export const AgentRecordSchema = obj(
     type: str(),
     description: str(),
     status: str(),
-    toolUses: num(),
-    startedAt: num(),
-    completedAt: opt(num()),
+    toolUses: finiteNum(),
+    startedAt: finiteNum(),
+    completedAt: opt(finiteNum()),
     result: opt(str()),
     toolCallId: opt(str()),
     outputFile: opt(str()),
@@ -33,9 +34,12 @@ export const AgentRecordSchema = obj(
     spawnCwd: opt(str()),
     spawnModel: opt(ModelRefSchema),
     worktree: opt(obj({ workPath: str() }, { open: true })),
-    runOptions: opt(obj({ cwd: opt(str()), maxTurns: opt(num()) }, { open: true })),
-    invocation: opt(obj({ maxTurns: opt(num()) }, { open: true })),
-    lifetimeUsage: obj({ input: num(), output: num(), cacheWrite: num() }, { open: true }),
+    runOptions: opt(obj({ cwd: opt(str()), maxTurns: opt(finiteNum()) }, { open: true })),
+    invocation: opt(obj({ maxTurns: opt(finiteNum()) }, { open: true })),
+    lifetimeUsage: obj(
+      { input: finiteNum(), output: finiteNum(), cacheWrite: finiteNum() },
+      { open: true },
+    ),
   },
   { open: true },
 );
@@ -76,10 +80,10 @@ export const ShellResultSchema = obj(
     command: str(),
     cwd: str(),
     state: str(),
-    pid: opt(num()),
-    exitCode: opt(num()),
-    startedAt: num(),
-    endedAt: opt(num()),
+    pid: opt(finiteNum()),
+    exitCode: opt(finiteNum()),
+    startedAt: finiteNum(),
+    endedAt: opt(finiteNum()),
   },
   { open: true },
 );
@@ -89,8 +93,8 @@ const isShellListResult = compile(obj({ shells: arr(ShellResultSchema) }, { open
 const isShellReadResult = compile(
   obj(
     {
-      stdout: obj({ endOffset: num() }, { open: true }),
-      stderr: obj({ endOffset: num() }, { open: true }),
+      stdout: obj({ endOffset: finiteNum() }, { open: true }),
+      stderr: obj({ endOffset: finiteNum() }, { open: true }),
     },
     { open: true },
   ),

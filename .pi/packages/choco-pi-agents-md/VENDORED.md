@@ -152,3 +152,7 @@ Pi SDK pins move from `1.4.0` to exactly `1.5.0` and `@earendil-works/pi-schema@
 ## 2026-11-03 choco-pi patch: TypeBox to pi-schema
 
 `src/settings.ts` and `src/tool-events.ts` drop `typebox`/`typebox/value` and use compiled `@earendil-works/pi-schema` validators (open objects, no coercion, same accept/reject behaviour). The package no longer imports `typebox`.
+
+## 2026-11-03 choco-pi patch: typebox peer removed (C26)
+
+No file in this package imports `typebox` and there is no schema bridge, so the `typebox` peer declaration is removed from `package.json`. The `@earendil-works/pi-schema` peer stays.

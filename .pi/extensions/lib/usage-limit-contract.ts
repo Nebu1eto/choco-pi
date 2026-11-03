@@ -6,7 +6,8 @@
  * - `pi-subagents:manager`: choco-pi-subagents writes child-session probes; the root policy reads
  *   them. Every reader validates the host-owned value before using it.
  */
-import { bool, compile, num, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
+import { bool, compile, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
+import { finiteNum } from "./finite-number.ts";
 import {
   isFunction,
   isJsonRecord,
@@ -62,7 +63,7 @@ export const UsageLimitClassificationSchema = obj(
     provider: str(),
     modelId: str(),
     accountId: opt(str()),
-    resetAt: opt(num()),
+    resetAt: opt(finiteNum()),
     confidence: oneOf(["structured", "parsed", "inferred"]),
     sessionId: opt(str()),
   },
@@ -180,11 +181,11 @@ export type UsageLimitPendingEntry = {
 export const UsageLimitPendingEntrySchema = obj(
   {
     recoveryId: str(),
-    resetAt: opt(num()),
+    resetAt: opt(finiteNum()),
     modelId: str(),
     provider: str(),
     accountId: str(),
-    attempts: num(),
+    attempts: finiteNum(),
     branchEntryId: opt(str()),
     sessionId: opt(str()),
   },
@@ -215,10 +216,10 @@ export type CodexUsageLimitEntry = {
 };
 export const CodexUsageLimitEntrySchema = obj(
   {
-    resetAt: opt(num()),
+    resetAt: opt(finiteNum()),
     planType: opt(str()),
     accountId: opt(str()),
-    observedAt: num(),
+    observedAt: finiteNum(),
   },
   { open: true },
 );
@@ -259,7 +260,7 @@ export const SubagentUsageLimitSchema = obj(
     provider: str(),
     accountId: str(),
     kind: oneOf(["quota", "billing", "transient"]),
-    resetAt: opt(num()),
+    resetAt: opt(finiteNum()),
     suggestedModel: opt(str()),
     status: oneOf(["reported", "waiting_for_reset", "resumed", "exhausted"]),
   },

@@ -17,7 +17,11 @@ import {
   countAdvisorCallsThisTurn,
 } from "../src/excerpt.ts";
 import { resolveAdvisorManager } from "../src/manager-slot.ts";
-import { loadFlagshipPrimaries } from "../src/flagship-models.ts";
+import { defaultFallbacksPath, loadFlagshipPrimaries } from "../src/flagship-models.ts";
+import {
+  loadFlagshipModels,
+  normalizeTierModel,
+} from "../../choco-pi-subagents/src/model-tiers.ts";
 import {
   alternateModelNotice,
   chooseAlternateModel,
@@ -318,12 +322,13 @@ test("settings layers are open, reject nulls and bad values, and flagship table 
       join(dirs.project, ".pi", "model-fallbacks.json"),
       JSON.stringify({ x: 1, tiers: { other: [], flagship: { primary: ["p/m"], y: 2 } } }),
     );
-    assert.deepEqual(await loadFlagshipPrimaries(dirs.project), [{ provider: "p", id: "m" }]);
+    const table = join(dirs.project, ".pi", "model-fallbacks.json");
+    assert.deepEqual(await loadFlagshipPrimaries(table), [{ provider: "p", id: "m" }]);
     await writeFile(
       join(dirs.project, ".pi", "model-fallbacks.json"),
       JSON.stringify({ tiers: { flagship: { primary: [1] } } }),
     );
-    assert.deepEqual(await loadFlagshipPrimaries(dirs.project), []);
+    assert.deepEqual(await loadFlagshipPrimaries(table), []);
   } finally {
     await rm(dirs.root, { recursive: true, force: true });
   }
@@ -573,17 +578,30 @@ test("chooseAlternateModel picks the first differing, resolvable candidate", () 
 test("loadFlagshipPrimaries reads the project table and fails open", async () => {
   const { root, project } = await fixture();
   try {
-    assert.deepEqual(await loadFlagshipPrimaries(project), []);
+    const table = join(project, ".pi", "model-fallbacks.json");
+    assert.deepEqual(await loadFlagshipPrimaries(table), []);
     await writeFile(
-      join(project, ".pi", "model-fallbacks.json"),
+      table,
       JSON.stringify({ tiers: { flagship: { primary: ["anthropic/claude-fable-5-1", "bad"] } } }),
     );
-    assert.deepEqual(await loadFlagshipPrimaries(project), [FABLE]);
-    await writeFile(join(project, ".pi", "model-fallbacks.json"), "{");
-    assert.deepEqual(await loadFlagshipPrimaries(project), []);
+    assert.deepEqual(await loadFlagshipPrimaries(table), [FABLE]);
+    await writeFile(table, "{");
+    assert.deepEqual(await loadFlagshipPrimaries(table), []);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("flagship table resolves package-relative, matching subagents model-tiers, and fails open", async () => {
+  const resolved = defaultFallbacksPath();
+  assert.equal(resolved, join(import.meta.dirname, "..", "..", "..", "model-fallbacks.json"));
+  const tiers = await loadFlagshipModels(resolved);
+  const primaries = await loadFlagshipPrimaries();
+  assert.ok(primaries.length > 0);
+  for (const { provider, id } of primaries) {
+    assert.ok(tiers.has(normalizeTierModel(`${provider}/${id}`)));
+  }
+  assert.deepEqual(await loadFlagshipPrimaries(join(resolved, "missing.json")), []);
 });
 
 test("advisor switches to an available alternate when it equals the session model", async () => {

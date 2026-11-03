@@ -8,4 +8,4 @@ Run the read-only doctor with `node scripts/doctor.ts`. It performs side-effect-
 
 The wrapper binds discovery, version probing, scripts, QA, cleanup, and normal commands to one resolved executable fingerprint per invocation. Snapshot delta baselines are bounded and scoped by namespace, session, wrapper-owned tab/document generation, URL, and snapshot options; incompatible deltas receive at most one read-only full refresh. WebMCP parameters and detached invocation ownership, and recording video/contact-sheet destinations, are validated before execution.
 
-Host-provided Pi packages and `typebox` are peer dependencies. See `VENDORED.md` for provenance and fork differences, and `AGENTS.md` before changing the fork.
+Host-provided Pi packages, `@earendil-works/pi-schema`, and `typebox` (schema bridge only) are peer dependencies. See `VENDORED.md` for provenance and fork differences, and `AGENTS.md` before changing the fork.

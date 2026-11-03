@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { chmod, mkdir, open, opendir, readFile, readdir, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
+import { isString as isRuntimeString } from "../lib/runtime-values.ts";
 
 export const TASK_LINEAGE_SCHEMA_VERSION = 1;
 export const TASK_BOUNDARY_CUSTOM_TYPE = "choco-pi:task-lineage:boundary";
@@ -255,11 +256,16 @@ function isRecord(value: JsonValue): value is RuntimeRecord {
 }
 
 function isString(value: JsonValue): value is string {
-  return String(value) === value;
+  return isRuntimeString(value);
 }
 
+// Number.isFinite never coerces (Number(value) throws for objects with a hostile valueOf/toString).
 function isNumber(value: JsonValue): value is number {
-  return Number(value) === value;
+  return (
+    Number.isFinite(value) ||
+    Object.is(value, Number.POSITIVE_INFINITY) ||
+    Object.is(value, Number.NEGATIVE_INFINITY)
+  );
 }
 
 function isBoolean(value: JsonValue): value is boolean {

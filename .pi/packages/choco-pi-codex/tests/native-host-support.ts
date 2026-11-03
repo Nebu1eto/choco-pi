@@ -134,7 +134,7 @@ export async function createNativeHost(options: {
             kind: "function",
             usage: "await tools.delay_marker({})",
             description: "Return a synthetic marker after a bounded delay.",
-            inputSchema: obj({}),
+            inputSchema: obj({}, { open: true }),
             deferLoading: false,
             async invoke(_input, _context, signal) {
               observations.started++;

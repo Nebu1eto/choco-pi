@@ -403,8 +403,8 @@ function currentActiveFromBranch(
     }
     if (record.customType === TASK_BOUNDARY_CUSTOM_TYPE && data["event"] === "start") {
       const rootSessionId = safeId(data["rootSessionId"]);
-      const startedAt =
-        String(data["startedAt"]) === data["startedAt"] ? String(data["startedAt"]) : undefined;
+      const startedAtValue = data["startedAt"];
+      const startedAt = isString(startedAtValue) ? startedAtValue : undefined;
       if (!rootSessionId || !startedAt) continue;
       latest = {
         taskId,

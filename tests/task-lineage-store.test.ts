@@ -692,3 +692,36 @@ test("reports a fresh per-task lock as an operational timeout", async (context) 
       error instanceof TaskLineageOperationalError && error.code === "summary-lock-timeout",
   );
 });
+
+test("audit ignores boundary data whose fields are hostile objects instead of throwing", async (context) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "task-lineage-hostile-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const rootFile = path.join(directory, "root.jsonl");
+  await writeSession(rootFile, "root-session", undefined, []);
+  // JSON objects with own toString/valueOf make String(value) and Number(value) throw.
+  const hostile = JSON.parse('{"toString":1,"valueOf":2}');
+  await appendFile(
+    rootFile,
+    [
+      custom("hostile-start", TASK_BOUNDARY_CUSTOM_TYPE, {
+        event: "start",
+        taskId: "task-hostile",
+        rootSessionId: hostile,
+        startedAt: hostile,
+        schemaVersion: hostile,
+      }),
+    ]
+      .map(jsonLine)
+      .join(""),
+  );
+  // The hostile record is skipped as malformed: a typed operational error, never a TypeError from coercion.
+  await assert.rejects(
+    auditTaskLineage({
+      projectSessionDirectory: directory,
+      taskId: "task-hostile",
+      rootSessionId: "root-session",
+      updatedAt: END,
+    }),
+    (error) => error instanceof TaskLineageOperationalError,
+  );
+});

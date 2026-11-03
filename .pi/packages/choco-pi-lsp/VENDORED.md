@@ -303,3 +303,7 @@ validators (`compile(schema).check`) with `{ open: true }` objects, matching Typ
 `isFiniteNumber` and `isBooleanValue`. One behaviour difference: pi-schema rejects a required `unknown()` property that is
 absent, which TypeBox accepted; the only such property (`range` in `edits.ts`) is rejected downstream either way.
 Tests: `tests/pi-schema-clients-lsp-dispatch.test.ts`.
+
+## 2026-11-03 choco-pi patch: install-diagnostics keeps typebox (C26)
+
+`clients/install-diagnostics.ts` CRITICAL_DEPS keeps `typebox`: `tools/schema-bridge.ts` still imports it at runtime (`Type.Unsafe`), so a failed resolution remains a real load-failure surface. A comment records why. `@earendil-works/pi-schema` is not listed because the probe uses `require.resolve`, which an ESM-only exports map would fail spuriously.

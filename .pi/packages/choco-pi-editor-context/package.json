@@ -22,8 +22,7 @@
     "@earendil-works/pi-agent-core": "1.5.0",
     "@earendil-works/pi-ai": "1.5.0",
     "@earendil-works/pi-coding-agent": "1.5.0",
-    "@earendil-works/pi-schema": "1.5.0",
-    "typebox": "*"
+    "@earendil-works/pi-schema": "1.5.0"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-agent-core": {
@@ -33,9 +32,6 @@
       "optional": true
     },
     "@earendil-works/pi-coding-agent": {
-      "optional": true
-    },
-    "typebox": {
       "optional": true
     }
   },

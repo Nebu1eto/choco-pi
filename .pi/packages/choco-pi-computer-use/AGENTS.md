@@ -8,7 +8,7 @@ Vendored fork of `@injaneity/pi-computer-use@0.5.0`. Read `VENDORED.md` before c
 - Every relative TypeScript import must use an explicit `.ts` suffix. Keep the deliberate `helper-path.mjs` and `helper-source.mjs` imports (shared with the plain-JavaScript installer); never use `.js` or an extensionless relative specifier.
 - Do not rename any tool (`find_roots`, `observe_ui`, `search_ui`, `expand_ui`, `inspect_ui`, `act_ui`, `read_text`, `wait_for`, `launch_browser`, `navigate_browser`, `evaluate_browser`) or change its schema without explicit authority.
 - No build step and no `dist/`. Pi loads `extensions/computer-use.ts` directly.
-- `typebox` and `@earendil-works/*` are host-provided peer dependencies. Exactly pin and vendor any other runtime dependency under this package's `node_modules/`.
+- `typebox` (only `src/schema-bridge.ts`) and `@earendil-works/*` (including `pi-schema`, which owns validation) are host-provided peer dependencies. Exactly pin and vendor any other runtime dependency under this package's `node_modules/`.
 - Native helper installation is supported only on macOS. Keep Linux and Windows TypeScript backends dispatch-guarded; do not restore their native crates or build paths without an explicit support decision.
 - Keep `native/macos/*.swift`; no binaries are tracked. The installer compiles the helper for the host architecture on every install; never commit a built `bridge` or `prebuilt/` tree.
 - Record every upstream divergence in `VENDORED.md` when making it.

@@ -21,24 +21,6 @@ interface KeyedValues<Value> {
   [key: string]: Value;
 }
 
-/** Shape TypeBox infers a static type from; see the compat schemas below. */
-interface UnsafeSchemaOf<Sample> {
-  readonly type?: "object";
-  readonly "~unsafe": Sample;
-}
-
-/**
- * Compatibility schema for callers that still hand it to TypeBox `Value.Check` or nest it in a
- * TypeBox schema (registered-tool-bridge, local-version-warning). It is a plain JSON schema with no
- * TypeBox import. The `~unsafe` member carries a `BoundaryValue` sample so TypeBox infers
- * `BoundaryValue` from it (as `Type.Unsafe` did) without a cast.
- *
- * Behaviour change: the old cyclic schema also rejected a bare NaN/Infinity (TypeBox Number); this
- * accepts it. Every caller checks JSON.parse output or schema fragments, which cannot hold them.
- * Prefer `isBoundaryValue` in new code.
- */
-export const BoundaryValueSchema: UnsafeSchemaOf<BoundaryValue> = { "~unsafe": {} };
-
 /**
  * Shallow check; every value passes, matching the former `Type.Unsafe<BoundaryValue>({})`. It never
  * walks the value, so live cyclic objects and throwing getters are safe.
@@ -62,16 +44,6 @@ export function isJsonObject<T>(value: T): value is T & JsonObject {
     !(value instanceof Function)
   );
 }
-
-/**
- * Compatibility schema for callers still using TypeBox `Value.Check(JsonObjectSchema, v)` or
- * `Type.Array(JsonObjectSchema)`; same plain-JSON-schema mechanism as `BoundaryValueSchema`.
- * Prefer `isJsonObject` in new code.
- */
-export const JsonObjectSchema: UnsafeSchemaOf<JsonObject> = {
-  type: "object",
-  "~unsafe": {},
-};
 
 type PresentProperties<T extends object> = {
   [Key in keyof T]?: Exclude<T[Key], undefined>;

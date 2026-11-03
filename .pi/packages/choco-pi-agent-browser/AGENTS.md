@@ -13,7 +13,7 @@ Vendored fork of `pi-agent-browser-native@0.5.0`. Read `VENDORED.md` before chan
   canonical choco-pi web-search scope is present, that integrated tool exclusively owns search
   discovery and the companion name must not be advertised or revivable.
 - Keep `typebox` and all `@earendil-works/*` imports as host-provided peer dependencies.
-- Import TypeBox only as `typebox`, `typebox/compile`, or `typebox/value`. Pi's loader aliases only those three specifiers; any other subpath breaks extension loading.
+- Validate with `@earendil-works/pi-schema`; import `typebox` only in `extensions/agent-browser/lib/schema-bridge.ts` (`Type.Unsafe` at the `registerTool` boundary). Pi's loader aliases only `typebox`, `typebox/compile`, and `typebox/value`; any other subpath breaks extension loading.
 - Record every difference from upstream in `VENDORED.md` when making it.
 
 ## Operator commands

@@ -92,7 +92,7 @@ export default function (pi: ExtensionAPI) {
           // Resolve through the typed registry after the shared resolver chooses a model.
           const selected: Model<Api> = resolution.model;
           const selection = await selectAdvisorModel(selected, ctx.model, ctx.modelRegistry, () =>
-            loadFlagshipPrimaries(cwd),
+            loadFlagshipPrimaries(),
           );
           if (!current()) return textResult("advisor consult failed: session ended");
           if (selection.tag === "disabled") return textResult(selection.message);

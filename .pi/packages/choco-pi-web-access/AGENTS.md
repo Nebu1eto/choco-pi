@@ -11,7 +11,7 @@ Vendored fork of `pi-web-access@0.24.1`. Read `VENDORED.md` before changing sour
 - Use erasable TypeScript only: no enums, namespaces, decorators, or constructor parameter properties.
 - Every relative import uses an explicit `.ts` extension.
 - Pi loads `index.ts` directly. Do not add a build step or `dist/`.
-- Runtime dependencies are committed and exactly pinned under `node_modules/`. `typebox` and `@earendil-works/*` remain host-provided peer dependencies.
+- Runtime dependencies are committed and exactly pinned under `node_modules/`. `typebox` (only `schema-bridge.ts`) and `@earendil-works/*` (including `pi-schema`, which owns validation) remain host-provided peer dependencies.
 - Record every upstream divergence in `VENDORED.md` as it is made.
 
 ## Verify
