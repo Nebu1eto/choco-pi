@@ -1,8 +1,7 @@
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, compile, obj, opt, str } from "@earendil-works/pi-schema";
 
 /**
  * Top-level key of `<agentDir>/settings.json` owned by this package:
@@ -17,13 +16,9 @@ import { Value } from "typebox/value";
  */
 export const AGENTS_MD_SETTINGS_KEY = "agentsMd";
 
-const AgentsMdSettingsSchema = Type.Object(
-  { trustedRoots: Type.Optional(Type.Array(Type.String())) },
-  { additionalProperties: true },
-);
-const SettingsFileSchema = Type.Object(
-  { [AGENTS_MD_SETTINGS_KEY]: Type.Optional(AgentsMdSettingsSchema) },
-  { additionalProperties: true },
+const AgentsMdSettingsSchema = obj({ trustedRoots: opt(arr(str())) }, { open: true });
+const settingsFileValidator = compile(
+  obj({ [AGENTS_MD_SETTINGS_KEY]: opt(AgentsMdSettingsSchema) }, { open: true }),
 );
 
 export interface AgentsMdSettings {
@@ -44,7 +39,7 @@ export async function readAgentsMdSettings(agentDir: string): Promise<AgentsMdSe
   } catch {
     return { trustedRoots: [] };
   }
-  if (!Value.Check(SettingsFileSchema, parsed)) return { trustedRoots: [] };
+  if (!settingsFileValidator.check(parsed)) return { trustedRoots: [] };
   const entries = parsed[AGENTS_MD_SETTINGS_KEY]?.trustedRoots ?? [];
   return {
     trustedRoots: entries.flatMap((entry) => {

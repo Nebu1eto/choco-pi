@@ -1,6 +1,5 @@
 import type { ToolResultEvent } from "@earendil-works/pi-coding-agent";
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import { compile, obj, opt, type Static, str } from "@earendil-works/pi-schema";
 
 type HostBoundaryValue = {} | null | undefined;
 interface HostToolInput {
@@ -19,14 +18,13 @@ interface HostToolInput {
   content?: HostBoundaryValue;
 }
 
-const ToolContentSchema = Type.Object(
-  {
-    type: Type.String(),
-    text: Type.Optional(Type.String()),
-  },
-  { additionalProperties: true },
-);
+const ToolContentSchema = obj({ type: str(), text: opt(str()) }, { open: true });
 export type ToolContent = Static<typeof ToolContentSchema>;
+
+// Host tool-call payloads are in-process JSON-like objects; compiled guards keep
+// the former TypeBox accept/reject behaviour (open objects, no coercion).
+const isStringValue = compile(str()).check;
+const isToolContent = compile(ToolContentSchema).check;
 
 interface CodeModeDetails {
   codeMode: true;
@@ -59,7 +57,7 @@ function parseCodeModeDetails(value: HostBoundaryValue): CodeModeDetails | undef
 }
 
 function parseCompletedCodeModeTrace(value: HostBoundaryValue): CompletedCodeModeTrace | undefined {
-  if (!isHostObject(value) || value.status !== "done" || !Value.Check(Type.String(), value.name)) {
+  if (!isHostObject(value) || value.status !== "done" || !isStringValue(value.name)) {
     return undefined;
   }
   if (!isHostObject(value.input) || !isHostObject(value.result)) return undefined;
@@ -96,14 +94,14 @@ function parseDiscoveryToolInput(input: HostToolInput): DiscoveryToolInput {
   const commandValue = input["command"];
   const cmdValue = input["cmd"];
 
-  if (Value.Check(Type.String(), pathValue)) parsed.path = pathValue;
-  if (Value.Check(Type.String(), workdirValue)) parsed.workdir = workdirValue;
-  if (Value.Check(Type.String(), cwdValue)) parsed.cwd = cwdValue;
-  if (Value.Check(Type.String(), workingDirectoryValue)) {
+  if (isStringValue(pathValue)) parsed.path = pathValue;
+  if (isStringValue(workdirValue)) parsed.workdir = workdirValue;
+  if (isStringValue(cwdValue)) parsed.cwd = cwdValue;
+  if (isStringValue(workingDirectoryValue)) {
     parsed.working_directory = workingDirectoryValue;
   }
-  if (Value.Check(Type.String(), commandValue)) parsed.command = commandValue;
-  if (Value.Check(Type.String(), cmdValue)) parsed.cmd = cmdValue;
+  if (isStringValue(commandValue)) parsed.command = commandValue;
+  if (isStringValue(cmdValue)) parsed.cmd = cmdValue;
 
   return parsed;
 }
@@ -126,9 +124,7 @@ export function codeModeDiscoveryEvents(event: ToolResultEvent): DiscoveryToolRe
   for (const value of details.traces) {
     const trace = parseCompletedCodeModeTrace(value);
     if (!trace) continue;
-    const content = trace.result.content.filter((item): item is ToolContent =>
-      Value.Check(ToolContentSchema, item),
-    );
+    const content = trace.result.content.filter((item): item is ToolContent => isToolContent(item));
     events.push({
       toolName: trace.name,
       input: parseDiscoveryToolInput(trace.input),

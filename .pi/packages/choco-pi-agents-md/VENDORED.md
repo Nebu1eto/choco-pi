@@ -148,3 +148,7 @@ Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pas
 ## 2026-11-03 choco-pi patch: Pi SDK target 1.5.0 + pi-schema dependency
 
 Pi SDK pins move from `1.4.0` to exactly `1.5.0` and `@earendil-works/pi-schema@1.5.0` is added as a peer dependency (the extension loader has no alias for it).
+
+## 2026-11-03 choco-pi patch: TypeBox to pi-schema
+
+`src/settings.ts` and `src/tool-events.ts` drop `typebox`/`typebox/value` and use compiled `@earendil-works/pi-schema` validators (open objects, no coercion, same accept/reject behaviour). The package no longer imports `typebox`.
