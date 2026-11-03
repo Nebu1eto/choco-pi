@@ -21,7 +21,8 @@ import { isRuntimeFunction, isRuntimeObject, isRuntimeString } from "./runtime-v
  * instead, so calling this tool is harmless, just unnecessary.
  */
 
-import { Type } from "../clients/deps/typebox.ts";
+import { arr, obj, oneOf } from "@earendil-works/pi-schema";
+import { hostParams } from "./schema-bridge.ts";
 
 const PREFIX_LOCK_SYMBOL = Symbol.for("choco-pi.prefix.locked");
 
@@ -79,13 +80,18 @@ export function createActivateToolsTool(
       "Call this ONCE with the tools you need before using them — they become callable starting the NEXT turn. " +
       `Available:\n${catalog}`,
     promptSnippet: "Activate situational ast-grep / lsp_navigation tools before using them",
-    parameters: Type.Object({
-      tools: Type.Array(Type.String({ enum: lazyNames }), {
-        minItems: 1,
-        description:
-          "Names of situational tools to activate (see this tool's description for the catalog).",
-      }),
-    }),
+    parameters: hostParams(
+      obj(
+        {
+          tools: arr(oneOf(lazyNames), {
+            minItems: 1,
+            description:
+              "Names of situational tools to activate (see this tool's description for the catalog).",
+          }),
+        },
+        { open: true },
+      ),
+    ),
     async execute(
       _toolCallId: string,
       params: ProtocolDictionary,

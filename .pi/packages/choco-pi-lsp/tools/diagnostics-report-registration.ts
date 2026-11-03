@@ -1,6 +1,7 @@
 import type { CacheManager } from "../clients/cache-manager.ts";
 import type { RuntimeCoordinator } from "../clients/runtime-coordinator.ts";
-import { Type } from "../clients/deps/typebox.ts";
+import { arr, bool, num, obj, oneOf, opt, str, union } from "@earendil-works/pi-schema";
+import { hostParams } from "./schema-bridge.ts";
 import type { LSPServiceLike } from "./diagnostics-report.ts";
 import { compactRenderResult } from "./render-compact.ts";
 import type { ProtocolDictionary, RuntimeValue } from "./runtime-values.ts";
@@ -85,46 +86,49 @@ export function createLensDiagnosticsTool(
       }
       return `diagnostics_report ${mode} — ${b} blocking · ${e} errors · ${w} warnings (${files} files)${coldSuffix}${failedSuffix}`;
     }),
-    parameters: Type.Object({
-      mode: Type.Optional(
-        Type.String({
-          enum: ["delta", "all", "full"],
-          description: "Scan current-turn, edited-file, or project-wide diagnostics.",
-        }),
+    parameters: hostParams(
+      obj(
+        {
+          mode: opt(
+            oneOf(["delta", "all", "full"], {
+              description: "Scan current-turn, edited-file, or project-wide diagnostics.",
+            }),
+          ),
+          refreshRunners: opt(
+            union([bool(), oneOf(["cached", "cheap", "all", "none"])], {
+              description: "Project analyzer refresh level for full mode.",
+            }),
+          ),
+          maxProjectFiles: opt(
+            num({
+              description: "Project-file cap for cheap analyzers.",
+            }),
+          ),
+          maxLspFiles: opt(
+            num({
+              description: "File cap for the full LSP sweep.",
+            }),
+          ),
+          includeGenerated: opt(
+            bool({
+              description: "Include generated-looking files in project analyzers.",
+            }),
+          ),
+          severity: opt(
+            oneOf(["error", "warning", "all"], {
+              description: "Filter by severity (default: all).",
+            }),
+          ),
+          paths: opt(
+            arr(str(), {
+              maxItems: MAX_PATHS_ENTRIES,
+              description: `Limit diagnostics to at most ${MAX_PATHS_ENTRIES} files or directories.`,
+            }),
+          ),
+        },
+        { open: true },
       ),
-      refreshRunners: Type.Optional(
-        Type.Union([Type.Boolean(), Type.String({ enum: ["cached", "cheap", "all", "none"] })], {
-          description: "Project analyzer refresh level for full mode.",
-        }),
-      ),
-      maxProjectFiles: Type.Optional(
-        Type.Number({
-          description: "Project-file cap for cheap analyzers.",
-        }),
-      ),
-      maxLspFiles: Type.Optional(
-        Type.Number({
-          description: "File cap for the full LSP sweep.",
-        }),
-      ),
-      includeGenerated: Type.Optional(
-        Type.Boolean({
-          description: "Include generated-looking files in project analyzers.",
-        }),
-      ),
-      severity: Type.Optional(
-        Type.String({
-          enum: ["error", "warning", "all"],
-          description: "Filter by severity (default: all).",
-        }),
-      ),
-      paths: Type.Optional(
-        Type.Array(Type.String(), {
-          maxItems: MAX_PATHS_ENTRIES,
-          description: `Limit diagnostics to at most ${MAX_PATHS_ENTRIES} files or directories.`,
-        }),
-      ),
-    }),
+    ),
     async execute(
       toolCallId: string,
       params: ProtocolDictionary,

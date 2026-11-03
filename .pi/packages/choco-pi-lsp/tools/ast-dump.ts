@@ -1,7 +1,8 @@
 import type { ProtocolDictionary } from "./runtime-values.ts";
 import type { RuntimeValue } from "./runtime-values.ts";
 import { isRuntimeString } from "./runtime-values.ts";
-import { Type } from "../clients/deps/typebox.ts";
+import { bool, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
+import { hostParams } from "./schema-bridge.ts";
 import type { AstGrepClient } from "../clients/ast-grep-client.ts";
 import { compactRenderResult } from "./render-compact.ts";
 import { LANGUAGES } from "./shared.ts";
@@ -22,21 +23,24 @@ function createAstDumpToolWithName(astGrepClient: AstGrepClient, name: "ast_grep
         return `${name} ${lang} — ${lineCount} AST nodes`.replace(/\s+/g, " ");
       },
     ),
-    parameters: Type.Object({
-      source: Type.String({
-        description: "Source code snippet to parse and dump",
-      }),
-      lang: Type.String({
-        // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
-        enum: [...LANGUAGES] as string[],
-        description: "Target language",
-      }),
-      includeAnonymous: Type.Optional(
-        Type.Boolean({
-          description: "Show anonymous punctuation/CST nodes too (default false)",
-        }),
+    parameters: hostParams(
+      obj(
+        {
+          source: str({
+            description: "Source code snippet to parse and dump",
+          }),
+          lang: oneOf(LANGUAGES, {
+            description: "Target language",
+          }),
+          includeAnonymous: opt(
+            bool({
+              description: "Show anonymous punctuation/CST nodes too (default false)",
+            }),
+          ),
+        },
+        { open: true },
       ),
-    }),
+    ),
     async execute(
       _toolCallId: string,
       params: ProtocolDictionary,

@@ -6,7 +6,8 @@ import type { RuntimeValue } from "./runtime-values.ts";
  * Extracted from index.ts for maintainability.
  */
 
-import { Type } from "../clients/deps/typebox.ts";
+import { arr, bool, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
+import { hostParams } from "./schema-bridge.ts";
 import type { AstGrepClient } from "../clients/ast-grep-client.ts";
 import {
   astGrepRemediationHint,
@@ -69,58 +70,60 @@ export function createAstGrepReplaceTool(astGrepClient: AstGrepClient) {
       const state = details?.applied ? "applied" : "preview";
       return `ast_grep_replace — ${n} match${n === 1 ? "" : "es"}, ${state}`;
     }),
-    parameters: Type.Object({
-      pattern: Type.String({
-        description: "AST pattern to match (be specific with context)",
-      }),
-      rewrite: Type.String({
-        description: "Replacement using meta-variables from pattern",
-      }),
-      lang: Type.String({
-        // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
-        enum: [...LANGUAGES] as string[],
-        description: "Target language",
-      }),
-      paths: Type.Optional(Type.Array(Type.String(), { description: "Specific files/folders" })),
-      insideKind: Type.Optional(
-        Type.String({
-          description:
-            "Restrict matches to nodes inside an ancestor of this AST node kind. Synthesizes a YAML rule.",
-        }),
+    parameters: hostParams(
+      obj(
+        {
+          pattern: str({
+            description: "AST pattern to match (be specific with context)",
+          }),
+          rewrite: str({
+            description: "Replacement using meta-variables from pattern",
+          }),
+          lang: oneOf(LANGUAGES, {
+            description: "Target language",
+          }),
+          paths: opt(arr(str(), { description: "Specific files/folders" })),
+          insideKind: opt(
+            str({
+              description:
+                "Restrict matches to nodes inside an ancestor of this AST node kind. Synthesizes a YAML rule.",
+            }),
+          ),
+          hasKind: opt(
+            str({
+              description:
+                'Restrict matches to nodes whose immediate child has this AST node kind (ast-grep default stopBy: neighbor). Example: `hasKind: "await_expression"`.',
+            }),
+          ),
+          hasDescendantKind: opt(
+            str({
+              description:
+                "Restrict matches to nodes containing this AST node kind anywhere in their descendants. Explicit recursive form (`stopBy: end`); use this instead of `hasKind` when nesting is not immediate.",
+            }),
+          ),
+          follows: opt(
+            str({
+              description:
+                "Restrict matches to nodes that immediately follow a sibling matching this pattern.",
+            }),
+          ),
+          precedes: opt(
+            str({
+              description:
+                "Restrict matches to nodes that immediately precede a sibling matching this pattern.",
+            }),
+          ),
+          apply: opt(bool({ description: "Apply changes (default: false)" })),
+          strictness: opt(
+            oneOf(["smart", "relaxed", "ast", "cst", "signature", "template"], {
+              description:
+                "Pattern matching strictness. 'smart' (default) ignores comments and whitespace. 'relaxed' also ignores unnamed nodes like punctuation. 'ast' ignores all whitespace.",
+            }),
+          ),
+        },
+        { open: true },
       ),
-      hasKind: Type.Optional(
-        Type.String({
-          description:
-            'Restrict matches to nodes whose immediate child has this AST node kind (ast-grep default stopBy: neighbor). Example: `hasKind: "await_expression"`.',
-        }),
-      ),
-      hasDescendantKind: Type.Optional(
-        Type.String({
-          description:
-            "Restrict matches to nodes containing this AST node kind anywhere in their descendants. Explicit recursive form (`stopBy: end`); use this instead of `hasKind` when nesting is not immediate.",
-        }),
-      ),
-      follows: Type.Optional(
-        Type.String({
-          description:
-            "Restrict matches to nodes that immediately follow a sibling matching this pattern.",
-        }),
-      ),
-      precedes: Type.Optional(
-        Type.String({
-          description:
-            "Restrict matches to nodes that immediately precede a sibling matching this pattern.",
-        }),
-      ),
-      apply: Type.Optional(Type.Boolean({ description: "Apply changes (default: false)" })),
-      strictness: Type.Optional(
-        Type.String({
-          enum: ["smart", "relaxed", "ast", "cst", "signature", "template"],
-          description:
-            "Pattern matching strictness. 'smart' (default) ignores comments and whitespace. 'relaxed' also ignores unnamed nodes like punctuation. 'ast' ignores all whitespace.",
-        }),
-      ),
-    }),
+    ),
     async execute(
       _toolCallId: string,
       params: ProtocolDictionary,

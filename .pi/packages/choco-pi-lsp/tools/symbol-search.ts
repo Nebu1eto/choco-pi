@@ -8,7 +8,8 @@ import type { RuntimeValue } from "./runtime-values.ts";
  */
 
 import * as path from "node:path";
-import { Type } from "../clients/deps/typebox.ts";
+import { arr, num, obj, opt, str } from "@earendil-works/pi-schema";
+import { hostParams } from "./schema-bridge.ts";
 import { symbolSearch, type SymbolSearchResult } from "../clients/lsp-engine.ts";
 import { baseName, compactRenderResult } from "./render-compact.ts";
 
@@ -41,26 +42,31 @@ export function createSymbolSearchTool(getProjectRoot: () => string) {
       }
       return `symbol_search "${details?.query ?? ""}"  ${details?.count ?? 0} file(s)`;
     }),
-    parameters: Type.Object({
-      query: Type.String({
-        description: "Identifier query with optional lang, file, or ext filters.",
-      }),
-      limit: Type.Optional(
-        Type.Number({
-          description: "Max files to return (default 20).",
-        }),
+    parameters: hostParams(
+      obj(
+        {
+          query: str({
+            description: "Identifier query with optional lang, file, or ext filters.",
+          }),
+          limit: opt(
+            num({
+              description: "Max files to return (default 20).",
+            }),
+          ),
+          paths: opt(
+            arr(str(), {
+              description: "Glob patterns limiting files searched before ranking.",
+            }),
+          ),
+          lang: opt(
+            str({
+              description: "Language identifier limiting search results.",
+            }),
+          ),
+        },
+        { open: true },
       ),
-      paths: Type.Optional(
-        Type.Array(Type.String(), {
-          description: "Glob patterns limiting files searched before ranking.",
-        }),
-      ),
-      lang: Type.Optional(
-        Type.String({
-          description: "Language identifier limiting search results.",
-        }),
-      ),
-    }),
+    ),
     async execute(
       _toolCallId: string,
       params: { query: string; limit?: number; paths?: string[]; lang?: string },

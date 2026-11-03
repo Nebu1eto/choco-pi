@@ -6,7 +6,8 @@ import type {
   AstGrepOutlineFile,
   AstGrepOutlineItem,
 } from "../clients/ast-grep-client.ts";
-import { Type } from "../clients/deps/typebox.ts";
+import { arr, bool, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
+import { hostParams } from "./schema-bridge.ts";
 import { compactRenderResult } from "./render-compact.ts";
 import { LANGUAGES } from "./shared.ts";
 
@@ -73,56 +74,57 @@ export function createAstGrepOutlineTool(astGrepClient: AstGrepClient) {
       const trunc = details?.truncatedFiles ? " (truncated)" : "";
       return `ast_grep_outline — ${items} symbols across ${files} file${files === 1 ? "" : "s"}${trunc}`;
     }),
-    parameters: Type.Object({
-      paths: Type.Array(Type.String(), {
-        minItems: 1,
-        maxItems: 100,
-        description: "Files or directories to outline (workspace-relative or absolute).",
-      }),
-      lang: Type.Optional(
-        Type.String({
-          // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
-          enum: [...LANGUAGES] as string[],
-          description:
-            "Restrict to one language. Required for stdin; for paths, ast-grep infers per file when omitted.",
-        }),
+    parameters: hostParams(
+      obj(
+        {
+          paths: arr(str(), {
+            minItems: 1,
+            maxItems: 100,
+            description: "Files or directories to outline (workspace-relative or absolute).",
+          }),
+          lang: opt(
+            oneOf(LANGUAGES, {
+              description:
+                "Restrict to one language. Required for stdin; for paths, ast-grep infers per file when omitted.",
+            }),
+          ),
+          items: opt(
+            oneOf(["auto", "structure", "exports", "imports", "all"], {
+              description:
+                "Which top-level items to include. auto = `structure` for a file, `exports` for a directory (default).",
+            }),
+          ),
+          view: opt(
+            oneOf(["auto", "names", "signatures", "digest", "expanded"], {
+              description:
+                "Text presentation level for the underlying outline; `expanded` shows members.",
+            }),
+          ),
+          type: opt(
+            arr(str(), {
+              description: 'Keep only these symbol types, e.g. ["class","function"].',
+            }),
+          ),
+          match: opt(
+            str({
+              description: "Keep only top-level items whose name matches this regex.",
+            }),
+          ),
+          pubMembers: opt(
+            bool({
+              description: "Show only public members in member views.",
+            }),
+          ),
+          globs: opt(
+            arr(str(), {
+              description:
+                'Include/exclude file globs for directory input, e.g. ["*.ts","!**/dist/**"].',
+            }),
+          ),
+        },
+        { open: true },
       ),
-      items: Type.Optional(
-        Type.String({
-          enum: ["auto", "structure", "exports", "imports", "all"],
-          description:
-            "Which top-level items to include. auto = `structure` for a file, `exports` for a directory (default).",
-        }),
-      ),
-      view: Type.Optional(
-        Type.String({
-          enum: ["auto", "names", "signatures", "digest", "expanded"],
-          description:
-            "Text presentation level for the underlying outline; `expanded` shows members.",
-        }),
-      ),
-      type: Type.Optional(
-        Type.Array(Type.String(), {
-          description: 'Keep only these symbol types, e.g. ["class","function"].',
-        }),
-      ),
-      match: Type.Optional(
-        Type.String({
-          description: "Keep only top-level items whose name matches this regex.",
-        }),
-      ),
-      pubMembers: Type.Optional(
-        Type.Boolean({
-          description: "Show only public members in member views.",
-        }),
-      ),
-      globs: Type.Optional(
-        Type.Array(Type.String(), {
-          description:
-            'Include/exclude file globs for directory input, e.g. ["*.ts","!**/dist/**"].',
-        }),
-      ),
-    }),
+    ),
     async execute(
       _toolCallId: string,
       params: {

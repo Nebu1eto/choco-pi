@@ -15,7 +15,8 @@ import {
 import * as nodeFs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { Type } from "../clients/deps/typebox.ts";
+import { arr, bool, num, obj, oneOf, opt, str, unknown } from "@earendil-works/pi-schema";
+import { hostParams } from "./schema-bridge.ts";
 import { logLatency } from "../clients/latency-logger.ts";
 import {
   newLspMutationCorrelationId,
@@ -29,6 +30,9 @@ import { getLSPService } from "../clients/lsp/index.ts";
 import type { SearchReadLocation } from "../clients/search-read-registration.ts";
 import { buildLspNavigationEnvelope } from "./lsp-structured-output.ts";
 import { SYMBOL_KIND_NAMES } from "../clients/lsp-document-symbols.ts";
+
+const POSITION_SCHEMA = obj({ line: num(), character: num() }, { open: true });
+const RANGE_SCHEMA = obj({ start: POSITION_SCHEMA, end: POSITION_SCHEMA }, { open: true });
 
 const VALID_OPERATIONS = [
   "definition",
@@ -730,132 +734,118 @@ export function createLspNavigationTool(
       }
       return `lsp_navigation ${op} — ${n} result${n === 1 ? "" : "s"}`;
     }),
-    parameters: Type.Object({
-      operation: Type.Union(
-        VALID_OPERATIONS.map((operation) => Type.Literal(operation)),
-        { description: "LSP operation to perform." },
-      ),
-      path: Type.Optional(
-        Type.String({
-          description:
-            "Absolute or relative file path. Required for file-scoped operations; optional for workspaceSymbol/workspaceDiagnostics.",
-        }),
-      ),
-      line: Type.Optional(
-        Type.Number({
-          description:
-            "Line number (1-based). Required for definition/references/hover/implementation",
-        }),
-      ),
-      character: Type.Optional(
-        Type.Number({
-          description:
-            "Character offset (1-based). Optional when symbol is provided; use -1 to force symbol-column resolution.",
-        }),
-      ),
-      symbol: Type.Optional(
-        Type.String({
-          description:
-            "Symbol name on the target line for automatic character resolution. Use symbol#N to select the Nth occurrence on the line.",
-        }),
-      ),
-      endLine: Type.Optional(
-        Type.Number({
-          description: "End line (1-based). Optional; used by codeAction range.",
-        }),
-      ),
-      endCharacter: Type.Optional(
-        Type.Number({
-          description: "End character (1-based). Optional; used by codeAction range.",
-        }),
-      ),
-      newName: Type.Optional(
-        Type.String({
-          description: "Required for rename operation.",
-        }),
-      ),
-      newFilePath: Type.Optional(
-        Type.String({
-          description: "Required for rename_file operation.",
-        }),
-      ),
-      apply: Type.Optional(
-        Type.Boolean({
-          description:
-            "rename/executeCommand: apply for real. rename defaults to preview; executeCommand defaults to a dry-run that only reports whether the command is advertised — set apply:true to actually run it.",
-        }),
-      ),
-      command: Type.Optional(
-        Type.String({
-          description:
-            "executeCommand only: the server command id to run. Must be one the server advertised (see the capabilities operation).",
-        }),
-      ),
-      commandArguments: Type.Optional(
-        Type.Array(Type.Unknown(), {
-          description: "executeCommand only: arguments array passed to workspace/executeCommand.",
-        }),
-      ),
-      query: Type.Optional(
-        Type.String({
-          description: "Symbol name to search. Used by workspaceSymbol and findSymbol.",
-        }),
-      ),
-      kinds: Type.Optional(
-        Type.Array(Type.String(), {
-          description:
-            "findSymbol only: restrict matches to symbol kind labels such as function, class, method, variable, interface.",
-        }),
-      ),
-      exactMatch: Type.Optional(
-        Type.Boolean({
-          description:
-            "findSymbol only: match whole symbol names/details exactly instead of substring matching.",
-        }),
-      ),
-      topLevelOnly: Type.Optional(
-        Type.Boolean({
-          description: "findSymbol only: do not search nested child symbols.",
-        }),
-      ),
-      maxResults: Type.Optional(
-        Type.Number({
-          description: "findSymbol only: maximum matches to return. Default 20.",
-        }),
-      ),
-      callHierarchyItem: Type.Optional(
-        Type.Object(
-          {
-            name: Type.String(),
-            kind: Type.Number(),
-            uri: Type.String(),
-            range: Type.Object({
-              start: Type.Object({
-                line: Type.Number(),
-                character: Type.Number(),
-              }),
-              end: Type.Object({
-                line: Type.Number(),
-                character: Type.Number(),
-              }),
+    parameters: hostParams(
+      obj(
+        {
+          operation: oneOf(VALID_OPERATIONS, { description: "LSP operation to perform." }),
+          path: opt(
+            str({
+              description:
+                "Absolute or relative file path. Required for file-scoped operations; optional for workspaceSymbol/workspaceDiagnostics.",
             }),
-            selectionRange: Type.Object({
-              start: Type.Object({
-                line: Type.Number(),
-                character: Type.Number(),
-              }),
-              end: Type.Object({
-                line: Type.Number(),
-                character: Type.Number(),
-              }),
+          ),
+          line: opt(
+            num({
+              description:
+                "Line number (1-based). Required for definition/references/hover/implementation",
             }),
-          },
-          {
-            description: "Call hierarchy item. Required for incomingCalls/outgoingCalls",
-          },
-        ),
+          ),
+          character: opt(
+            num({
+              description:
+                "Character offset (1-based). Optional when symbol is provided; use -1 to force symbol-column resolution.",
+            }),
+          ),
+          symbol: opt(
+            str({
+              description:
+                "Symbol name on the target line for automatic character resolution. Use symbol#N to select the Nth occurrence on the line.",
+            }),
+          ),
+          endLine: opt(
+            num({
+              description: "End line (1-based). Optional; used by codeAction range.",
+            }),
+          ),
+          endCharacter: opt(
+            num({
+              description: "End character (1-based). Optional; used by codeAction range.",
+            }),
+          ),
+          newName: opt(
+            str({
+              description: "Required for rename operation.",
+            }),
+          ),
+          newFilePath: opt(
+            str({
+              description: "Required for rename_file operation.",
+            }),
+          ),
+          apply: opt(
+            bool({
+              description:
+                "rename/executeCommand: apply for real. rename defaults to preview; executeCommand defaults to a dry-run that only reports whether the command is advertised — set apply:true to actually run it.",
+            }),
+          ),
+          command: opt(
+            str({
+              description:
+                "executeCommand only: the server command id to run. Must be one the server advertised (see the capabilities operation).",
+            }),
+          ),
+          commandArguments: opt(
+            arr(unknown(), {
+              description:
+                "executeCommand only: arguments array passed to workspace/executeCommand.",
+            }),
+          ),
+          query: opt(
+            str({
+              description: "Symbol name to search. Used by workspaceSymbol and findSymbol.",
+            }),
+          ),
+          kinds: opt(
+            arr(str(), {
+              description:
+                "findSymbol only: restrict matches to symbol kind labels such as function, class, method, variable, interface.",
+            }),
+          ),
+          exactMatch: opt(
+            bool({
+              description:
+                "findSymbol only: match whole symbol names/details exactly instead of substring matching.",
+            }),
+          ),
+          topLevelOnly: opt(
+            bool({
+              description: "findSymbol only: do not search nested child symbols.",
+            }),
+          ),
+          maxResults: opt(
+            num({
+              description: "findSymbol only: maximum matches to return. Default 20.",
+            }),
+          ),
+          callHierarchyItem: opt(
+            obj(
+              {
+                name: str(),
+                kind: num(),
+                uri: str(),
+                range: RANGE_SCHEMA,
+                selectionRange: RANGE_SCHEMA,
+              },
+              {
+                open: true,
+                description: "Call hierarchy item. Required for incomingCalls/outgoingCalls",
+              },
+            ),
+          ),
+        },
+        { open: true },
       ),
-    }),
+    ),
     async execute(
       _toolCallId: string,
       params: LspNavigationParams,

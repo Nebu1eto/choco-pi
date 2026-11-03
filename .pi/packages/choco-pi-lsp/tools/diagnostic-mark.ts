@@ -46,7 +46,8 @@ import { isRuntimeNumber, isRuntimeString } from "./runtime-values.ts";
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import { Type } from "../clients/deps/typebox.ts";
+import { num, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
+import { hostParams } from "./schema-bridge.ts";
 import {
   markDisposition,
   normalizeMessage,
@@ -216,34 +217,36 @@ export function createLensDiagnosticMarkTool(
       "bottom-up (highest line number first) — each inserted comment shifts later lines down by one, " +
       "and reanchoring can't always disambiguate two nearby findings.",
     promptSnippet: "Record a diagnostic disposition or deferred fix.",
-    parameters: Type.Object({
-      filePath: Type.String({
-        description: "The file the diagnostic was reported on (relative or absolute).",
-      }),
-      line: Type.Number({
-        description: "The 1-based line the diagnostic was reported at.",
-      }),
-      message: Type.String({
-        description: "The diagnostic's message, exactly as diagnostics_report reported it.",
-      }),
-      rule: Type.Optional(
-        Type.String({
-          description:
-            "The diagnostic's rule id, if it has one (shown in diagnostics_report as [rule]). Required for disposition=suppress.",
-        }),
+    parameters: hostParams(
+      obj(
+        {
+          filePath: str({
+            description: "The file the diagnostic was reported on (relative or absolute).",
+          }),
+          line: num({
+            description: "The 1-based line the diagnostic was reported at.",
+          }),
+          message: str({
+            description: "The diagnostic's message, exactly as diagnostics_report reported it.",
+          }),
+          rule: opt(
+            str({
+              description:
+                "The diagnostic's rule id, if it has one (shown in diagnostics_report as [rule]). Required for disposition=suppress.",
+            }),
+          ),
+          tool: opt(str({ description: "The tool that produced the diagnostic, if known." })),
+          disposition: oneOf(DISPOSITIONS, {
+            description:
+              "false-positive = the rule misfired. suppress = real finding, won't fix (writes an inline ignore comment). defer = fix later, this session only. flagged = mark for you to fix.",
+          }),
+          reason: opt(
+            str({ description: "Optional short reason, kept alongside the disposition." }),
+          ),
+        },
+        { open: true },
       ),
-      tool: Type.Optional(
-        Type.String({ description: "The tool that produced the diagnostic, if known." }),
-      ),
-      disposition: Type.String({
-        enum: DISPOSITIONS,
-        description:
-          "false-positive = the rule misfired. suppress = real finding, won't fix (writes an inline ignore comment). defer = fix later, this session only. flagged = mark for you to fix.",
-      }),
-      reason: Type.Optional(
-        Type.String({ description: "Optional short reason, kept alongside the disposition." }),
-      ),
-    }),
+    ),
     async execute(
       _toolCallId: string,
       params: ProtocolDictionary,

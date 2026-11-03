@@ -1,10 +1,7 @@
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+// oxlint anti-slop/no-runtime-typeof forbids typeof here, so these guards use identity, instanceof and a pi-schema string check.
+import { compile, str } from "@earendil-works/pi-schema";
 
-const UndefinedSchema = Type.Undefined();
-const StringSchema = Type.String();
-const NumberSchema = Type.Number();
-const NullSchema = Type.Null();
+const stringCheck = compile(str()).check;
 
 export type RuntimeValue = string | number | boolean | bigint | symbol | object | null | undefined;
 
@@ -19,17 +16,17 @@ export interface RuntimeFunction {
 }
 
 export function isRuntimeUndefined<T>(value: T): value is T & undefined {
-  return Check(UndefinedSchema, value);
+  return value === undefined;
 }
 
 export function isRuntimeString<T>(value: T): value is T & string {
-  return Check(StringSchema, value);
+  return stringCheck(value);
 }
 
 export function isRuntimeNumber<T>(value: T): value is T & number {
   return (
-    Check(NumberSchema, value) ||
-    Object.is(value, Number.NaN) ||
+    Number.isFinite(value) ||
+    Number.isNaN(value) ||
     Object.is(value, Number.POSITIVE_INFINITY) ||
     Object.is(value, Number.NEGATIVE_INFINITY)
   );
@@ -40,5 +37,5 @@ export function isRuntimeFunction<T>(value: T): value is T & RuntimeFunction {
 }
 
 export function isRuntimeObject<T>(value: T): value is T & (object | null) {
-  return Check(NullSchema, value) || (Object(value) === value && !(value instanceof Function));
+  return value === null || (Object(value) === value && !(value instanceof Function));
 }

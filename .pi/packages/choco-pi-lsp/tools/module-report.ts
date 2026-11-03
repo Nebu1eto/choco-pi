@@ -13,7 +13,8 @@ import { isRuntimeNumber, isRuntimeString } from "./runtime-values.ts";
  */
 
 import * as path from "node:path";
-import { Type } from "../clients/deps/typebox.ts";
+import { arr, bool, num, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
+import { hostParams } from "./schema-bridge.ts";
 import { logLatency } from "../clients/latency-logger.ts";
 import {
   moduleReport,
@@ -54,48 +55,52 @@ export function createModuleReportTool(getProjectRoot: () => string) {
       const view = details?.view && details.view !== "default" ? ` [${details.view}]` : "";
       return `module_report ${base}  ${parts.join(" · ")}${view}`;
     }),
-    parameters: Type.Object({
-      path: Type.String({
-        description: "Absolute or workspace-relative path to the source file.",
-      }),
-      maxRefsPerSymbol: Type.Optional(
-        Type.Number({
-          description: "Cap on who-uses-this entries per symbol (default 10).",
-        }),
+    parameters: hostParams(
+      obj(
+        {
+          path: str({
+            description: "Absolute or workspace-relative path to the source file.",
+          }),
+          maxRefsPerSymbol: opt(
+            num({
+              description: "Cap on who-uses-this entries per symbol (default 10).",
+            }),
+          ),
+          focus: opt(
+            str({
+              description: "Task hint used only to rank recommended reads.",
+            }),
+          ),
+          view: opt(
+            oneOf(["summary", "default", "compact"], {
+              description: "Select summary, default JSON, or compact text output.",
+            }),
+          ),
+          blastRadius: opt(
+            bool({
+              description: "Include ranked transitive module dependents.",
+            }),
+          ),
+          blastRadiusDepth: opt(
+            num({
+              description:
+                "Max hops for the blast-radius walk (default 3). Only used with blastRadius.",
+            }),
+          ),
+          callGraph: opt(
+            bool({
+              description: "Include bounded cached callers and callees.",
+            }),
+          ),
+          maxCallGraphEntries: opt(
+            num({
+              description: "Per-direction cap for call-graph relations (default 20).",
+            }),
+          ),
+        },
+        { open: true },
       ),
-      focus: Type.Optional(
-        Type.String({
-          description: "Task hint used only to rank recommended reads.",
-        }),
-      ),
-      view: Type.Optional(
-        Type.String({
-          enum: ["summary", "default", "compact"],
-          description: "Select summary, default JSON, or compact text output.",
-        }),
-      ),
-      blastRadius: Type.Optional(
-        Type.Boolean({
-          description: "Include ranked transitive module dependents.",
-        }),
-      ),
-      blastRadiusDepth: Type.Optional(
-        Type.Number({
-          description:
-            "Max hops for the blast-radius walk (default 3). Only used with blastRadius.",
-        }),
-      ),
-      callGraph: Type.Optional(
-        Type.Boolean({
-          description: "Include bounded cached callers and callees.",
-        }),
-      ),
-      maxCallGraphEntries: Type.Optional(
-        Type.Number({
-          description: "Per-direction cap for call-graph relations (default 20).",
-        }),
-      ),
-    }),
+    ),
     async execute(
       _toolCallId: string,
       params: {
@@ -238,19 +243,24 @@ export function createReadSymbolTool(getProjectRoot: () => string, recordSymbolR
         " ",
       );
     }),
-    parameters: Type.Object({
-      path: Type.String({
-        description: "Absolute or workspace-relative path to the source file.",
-      }),
-      symbol: Type.String({
-        description: "Exact symbol, callback handle, or dotted member name.",
-      }),
-      kind: Type.Optional(
-        Type.String({
-          description: "Symbol kind used to disambiguate matches.",
-        }),
+    parameters: hostParams(
+      obj(
+        {
+          path: str({
+            description: "Absolute or workspace-relative path to the source file.",
+          }),
+          symbol: str({
+            description: "Exact symbol, callback handle, or dotted member name.",
+          }),
+          kind: opt(
+            str({
+              description: "Symbol kind used to disambiguate matches.",
+            }),
+          ),
+        },
+        { open: true },
       ),
-    }),
+    ),
     async execute(
       _toolCallId: string,
       params: { path: string; symbol: string; kind?: string },
@@ -362,36 +372,41 @@ export function createReadEnclosingTool(
         " ",
       );
     }),
-    parameters: Type.Object({
-      path: Type.String({
-        description: "Absolute or workspace-relative path to the source file.",
-      }),
-      line: Type.Number({
-        description: "1-based line number inside the desired symbol/callback.",
-      }),
-      kinds: Type.Optional(
-        Type.Array(Type.String(), {
-          description:
-            "Optional kind filter, e.g. function, method, callback, class, object_property_callback.",
-        }),
+    parameters: hostParams(
+      obj(
+        {
+          path: str({
+            description: "Absolute or workspace-relative path to the source file.",
+          }),
+          line: num({
+            description: "1-based line number inside the desired symbol/callback.",
+          }),
+          kinds: opt(
+            arr(str(), {
+              description:
+                "Optional kind filter, e.g. function, method, callback, class, object_property_callback.",
+            }),
+          ),
+          maxLines: opt(
+            num({
+              description:
+                "Optional maximum body size to return. Oversized matches obey onOversize.",
+            }),
+          ),
+          onOversize: opt(
+            oneOf(["error", "slice", "outline"], {
+              description: "Oversize handling: error, bounded slice, or nested outline.",
+            }),
+          ),
+          aroundLine: opt(
+            num({
+              description: "Maximum lines for onOversize=slice; defaults to maxLines, then 80.",
+            }),
+          ),
+        },
+        { open: true },
       ),
-      maxLines: Type.Optional(
-        Type.Number({
-          description: "Optional maximum body size to return. Oversized matches obey onOversize.",
-        }),
-      ),
-      onOversize: Type.Optional(
-        Type.String({
-          enum: ["error", "slice", "outline"],
-          description: "Oversize handling: error, bounded slice, or nested outline.",
-        }),
-      ),
-      aroundLine: Type.Optional(
-        Type.Number({
-          description: "Maximum lines for onOversize=slice; defaults to maxLines, then 80.",
-        }),
-      ),
-    }),
+    ),
     async execute(
       _toolCallId: string,
       params: {

@@ -7,7 +7,8 @@ import { isRuntimeNumber, isRuntimeString } from "./runtime-values.ts";
  * Extracted from index.ts for maintainability.
  */
 
-import { Type } from "../clients/deps/typebox.ts";
+import { arr, bool, num, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
+import { hostParams } from "./schema-bridge.ts";
 import type { AstGrepClient } from "../clients/ast-grep-client.ts";
 import type { AstGrepMatch } from "../clients/ast-grep-types.ts";
 import {
@@ -300,108 +301,110 @@ export function createAstGrepSearchTool(astGrepClient: AstGrepClient) {
       const applied = details?.applied ? " (applied)" : "";
       return `ast_grep_search — ${count}${ofTotal} match${count === 1 && !ofTotal ? "" : "es"}${applied}`;
     }),
-    parameters: Type.Object({
-      pattern: Type.Optional(
-        Type.String({
-          description:
-            "AST pattern (use function/class/call context, not text). Required unless `rule` or `nodeKind` is provided. Do not put metavariables inside quoted string literals; they match literally.",
-        }),
+    parameters: hostParams(
+      obj(
+        {
+          pattern: opt(
+            str({
+              description:
+                "AST pattern (use function/class/call context, not text). Required unless `rule` or `nodeKind` is provided. Do not put metavariables inside quoted string literals; they match literally.",
+            }),
+          ),
+          lang: oneOf(LANGUAGES, {
+            description: "Target language",
+          }),
+          paths: opt(
+            arr(str(), {
+              maxItems: MAX_PATHS,
+              description: `Specific files/folders to search (max ${MAX_PATHS} entries)`,
+            }),
+          ),
+          selector: opt(
+            str({
+              description:
+                "Advanced: restrict search to a specific AST node kind (for example 'call_expression' or 'function_declaration'). This narrows matching; it does not extract fields from matches.",
+            }),
+          ),
+          context: opt(
+            num({
+              description: "Show N lines before/after each match for context",
+            }),
+          ),
+          nodeKind: opt(
+            str({
+              description:
+                "Expert grammar-specific escape hatch: find every node of this exact AST kind (for example `call_expression`) without writing a pattern. Node kinds are not universal across languages; use ast_grep_dump to discover them. Mutually exclusive with `pattern` and `rule`; can be combined with structural constraints.",
+            }),
+          ),
+          insideKind: opt(
+            str({
+              description:
+                'Restrict matches to nodes inside an ancestor of this AST node kind. Example: `insideKind: "function_declaration"` finds the pattern only when it appears inside a function body. Searches all ancestors (stopBy: end), not just the immediate parent. Synthesizes a YAML rule — takes precedence over `selector` and `strictness`.',
+            }),
+          ),
+          hasKind: opt(
+            str({
+              description:
+                'Restrict matches to nodes whose immediate child has this AST node kind (ast-grep default stopBy: neighbor). Example: `hasKind: "await_expression"`.',
+            }),
+          ),
+          hasDescendantKind: opt(
+            str({
+              description:
+                "Restrict matches to nodes containing this AST node kind anywhere in their descendants. Explicit recursive form (`stopBy: end`); use this instead of `hasKind` when nesting is not immediate.",
+            }),
+          ),
+          follows: opt(
+            str({
+              description:
+                'Restrict matches to nodes that immediately follow a sibling matching this pattern. Example: `follows: "return $X"` finds the pattern only when preceded by a return statement.',
+            }),
+          ),
+          precedes: opt(
+            str({
+              description:
+                "Restrict matches to nodes that immediately precede a sibling matching this pattern.",
+            }),
+          ),
+          rule: opt(
+            str({
+              description:
+                "Raw ast-grep YAML rule. When provided, routes through `sg scan --config` instead of `sg run -p`, unlocking the full rule DSL. Takes precedence over `pattern` and structural-intent params. The YAML must include `id` and `language` fields.",
+            }),
+          ),
+          skip: opt(
+            num({
+              description:
+                "Match offset for pagination. Skip the first N matches and return the next page. Use when results are truncated — increment by the page size to retrieve subsequent pages.",
+            }),
+          ),
+          maxMatches: opt(
+            num({
+              description: `Cap on matches returned per call (default ${DEFAULT_PAGE_SIZE}, max ${MAX_PAGE_SIZE}). Lower it to keep a broad search compact; raise it to page less. Also sets the pagination step for skip.`,
+            }),
+          ),
+          groupByFile: opt(
+            bool({
+              description:
+                "Render results grouped by file (one line per file with L<line>:<col> locations) instead of each match's body. Compact distribution view for high-volume searches; match read-slices remain in details.matchLocations.",
+            }),
+          ),
+          strictness: opt(
+            oneOf(["smart", "relaxed", "ast", "cst", "signature", "template"], {
+              description:
+                "Pattern matching strictness. 'smart' (default) ignores comments and whitespace. 'relaxed' also ignores unnamed nodes like punctuation — useful when optional trailing commas cause misses. 'ast' ignores all whitespace. 'signature' matches only structural shape, ignoring bodies.",
+            }),
+          ),
+          validateOnly: opt(
+            bool({
+              description:
+                "Validate/compile the pattern or rule without scanning project files. Helps distinguish a bad pattern/rule from a real no-match result.",
+            }),
+          ),
+        },
+        { open: true },
       ),
-      lang: Type.String({
-        // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
-        enum: [...LANGUAGES] as string[],
-        description: "Target language",
-      }),
-      paths: Type.Optional(
-        Type.Array(Type.String(), {
-          maxItems: MAX_PATHS,
-          description: `Specific files/folders to search (max ${MAX_PATHS} entries)`,
-        }),
-      ),
-      selector: Type.Optional(
-        Type.String({
-          description:
-            "Advanced: restrict search to a specific AST node kind (for example 'call_expression' or 'function_declaration'). This narrows matching; it does not extract fields from matches.",
-        }),
-      ),
-      context: Type.Optional(
-        Type.Number({
-          description: "Show N lines before/after each match for context",
-        }),
-      ),
-      nodeKind: Type.Optional(
-        Type.String({
-          description:
-            "Expert grammar-specific escape hatch: find every node of this exact AST kind (for example `call_expression`) without writing a pattern. Node kinds are not universal across languages; use ast_grep_dump to discover them. Mutually exclusive with `pattern` and `rule`; can be combined with structural constraints.",
-        }),
-      ),
-      insideKind: Type.Optional(
-        Type.String({
-          description:
-            'Restrict matches to nodes inside an ancestor of this AST node kind. Example: `insideKind: "function_declaration"` finds the pattern only when it appears inside a function body. Searches all ancestors (stopBy: end), not just the immediate parent. Synthesizes a YAML rule — takes precedence over `selector` and `strictness`.',
-        }),
-      ),
-      hasKind: Type.Optional(
-        Type.String({
-          description:
-            'Restrict matches to nodes whose immediate child has this AST node kind (ast-grep default stopBy: neighbor). Example: `hasKind: "await_expression"`.',
-        }),
-      ),
-      hasDescendantKind: Type.Optional(
-        Type.String({
-          description:
-            "Restrict matches to nodes containing this AST node kind anywhere in their descendants. Explicit recursive form (`stopBy: end`); use this instead of `hasKind` when nesting is not immediate.",
-        }),
-      ),
-      follows: Type.Optional(
-        Type.String({
-          description:
-            'Restrict matches to nodes that immediately follow a sibling matching this pattern. Example: `follows: "return $X"` finds the pattern only when preceded by a return statement.',
-        }),
-      ),
-      precedes: Type.Optional(
-        Type.String({
-          description:
-            "Restrict matches to nodes that immediately precede a sibling matching this pattern.",
-        }),
-      ),
-      rule: Type.Optional(
-        Type.String({
-          description:
-            "Raw ast-grep YAML rule. When provided, routes through `sg scan --config` instead of `sg run -p`, unlocking the full rule DSL. Takes precedence over `pattern` and structural-intent params. The YAML must include `id` and `language` fields.",
-        }),
-      ),
-      skip: Type.Optional(
-        Type.Number({
-          description:
-            "Match offset for pagination. Skip the first N matches and return the next page. Use when results are truncated — increment by the page size to retrieve subsequent pages.",
-        }),
-      ),
-      maxMatches: Type.Optional(
-        Type.Number({
-          description: `Cap on matches returned per call (default ${DEFAULT_PAGE_SIZE}, max ${MAX_PAGE_SIZE}). Lower it to keep a broad search compact; raise it to page less. Also sets the pagination step for skip.`,
-        }),
-      ),
-      groupByFile: Type.Optional(
-        Type.Boolean({
-          description:
-            "Render results grouped by file (one line per file with L<line>:<col> locations) instead of each match's body. Compact distribution view for high-volume searches; match read-slices remain in details.matchLocations.",
-        }),
-      ),
-      strictness: Type.Optional(
-        Type.String({
-          enum: ["smart", "relaxed", "ast", "cst", "signature", "template"],
-          description:
-            "Pattern matching strictness. 'smart' (default) ignores comments and whitespace. 'relaxed' also ignores unnamed nodes like punctuation — useful when optional trailing commas cause misses. 'ast' ignores all whitespace. 'signature' matches only structural shape, ignoring bodies.",
-        }),
-      ),
-      validateOnly: Type.Optional(
-        Type.Boolean({
-          description:
-            "Validate/compile the pattern or rule without scanning project files. Helps distinguish a bad pattern/rule from a real no-match result.",
-        }),
-      ),
-    }),
+    ),
     async execute(
       _toolCallId: string,
       params: ProtocolDictionary,

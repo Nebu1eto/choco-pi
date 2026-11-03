@@ -9,7 +9,8 @@ import type { RuntimeValue } from "./runtime-values.ts";
  * `available: false` with a retry hint, never blocking the call.
  */
 
-import { Type } from "../clients/deps/typebox.ts";
+import { num, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
+import { hostParams } from "./schema-bridge.ts";
 import {
   projectReport,
   renderCompactProjectReport,
@@ -41,24 +42,28 @@ export function createProjectReportTool(getProjectRoot: () => string) {
       const view = details?.view && details.view !== "default" ? ` [${details.view}]` : "";
       return `project_report  ${parts.join(" · ")}${view}`;
     }),
-    parameters: Type.Object({
-      limit: Type.Optional(
-        Type.Number({
-          description: "Result cap per ranked section; defaults to 10.",
-        }),
+    parameters: hostParams(
+      obj(
+        {
+          limit: opt(
+            num({
+              description: "Result cap per ranked section; defaults to 10.",
+            }),
+          ),
+          focus: opt(
+            str({
+              description: "Task hint used only to rerank sections.",
+            }),
+          ),
+          view: opt(
+            oneOf(["default", "compact"], {
+              description: "Output default JSON or compact line-oriented text.",
+            }),
+          ),
+        },
+        { open: true },
       ),
-      focus: Type.Optional(
-        Type.String({
-          description: "Task hint used only to rerank sections.",
-        }),
-      ),
-      view: Type.Optional(
-        Type.String({
-          enum: ["default", "compact"],
-          description: "Output default JSON or compact line-oriented text.",
-        }),
-      ),
-    }),
+    ),
     async execute(
       _toolCallId: string,
       params: { limit?: number; focus?: string; view?: "default" | "compact" },

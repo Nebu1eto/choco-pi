@@ -10,7 +10,8 @@ import { isRuntimeFunction, isRuntimeNumber, isRuntimeString } from "./runtime-v
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { Type } from "../clients/deps/typebox.ts";
+import { arr, num, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
+import { hostParams } from "./schema-bridge.ts";
 import { getProjectIgnoreMatcher, isExcludedDirName } from "../clients/file-utils.ts";
 import {
   getLSPService,
@@ -465,42 +466,45 @@ export function createLspDiagnosticsTool(
       }
       return `lsp_diagnostics${scope} — ${count} ${noun}`;
     }),
-    parameters: Type.Object({
-      path: Type.Optional(
-        Type.String({
-          description: "File or directory to check.",
-        }),
+    parameters: hostParams(
+      obj(
+        {
+          path: opt(
+            str({
+              description: "File or directory to check.",
+            }),
+          ),
+          paths: opt(
+            arr(str(), {
+              minItems: 1,
+              maxItems: MAX_BATCH_FILES,
+              description: "Explicit file batch; overrides path.",
+            }),
+          ),
+          severity: opt(
+            oneOf(["error", "warning", "information", "hint", "all"], {
+              description: "Filter by severity level (default: all)",
+            }),
+          ),
+          concurrency: opt(
+            num({
+              description: "Concurrent language-server groups; defaults to 8, maximum 16.",
+            }),
+          ),
+          waitMs: opt(
+            num({
+              description: "Per-file wait budget in milliseconds.",
+            }),
+          ),
+          serverScope: opt(
+            oneOf(["primary", "all"], {
+              description: "Use the primary server only or all auxiliary scanners.",
+            }),
+          ),
+        },
+        { open: true },
       ),
-      paths: Type.Optional(
-        Type.Array(Type.String(), {
-          minItems: 1,
-          maxItems: MAX_BATCH_FILES,
-          description: "Explicit file batch; overrides path.",
-        }),
-      ),
-      severity: Type.Optional(
-        Type.String({
-          enum: ["error", "warning", "information", "hint", "all"],
-          description: "Filter by severity level (default: all)",
-        }),
-      ),
-      concurrency: Type.Optional(
-        Type.Number({
-          description: "Concurrent language-server groups; defaults to 8, maximum 16.",
-        }),
-      ),
-      waitMs: Type.Optional(
-        Type.Number({
-          description: "Per-file wait budget in milliseconds.",
-        }),
-      ),
-      serverScope: Type.Optional(
-        Type.String({
-          enum: ["primary", "all"],
-          description: "Use the primary server only or all auxiliary scanners.",
-        }),
-      ),
-    }),
+    ),
     async execute(
       _toolCallId: string,
       params: ProtocolDictionary,
