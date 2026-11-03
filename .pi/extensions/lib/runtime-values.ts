@@ -1,11 +1,7 @@
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+// oxlint anti-slop/no-runtime-typeof forbids typeof here, so these guards use instanceof, identity and a pi-schema string check.
+import { compile, str } from "@earendil-works/pi-schema";
 
-const BigIntSchema = Type.BigInt();
-const BooleanSchema = Type.Boolean();
-const NumberSchema = Type.Number();
-const StringSchema = Type.String();
-const SymbolSchema = Type.Symbol();
+const stringCheck = compile(str()).check;
 
 export type RuntimeValue = {} | null | undefined;
 
@@ -41,11 +37,12 @@ type RuntimeTypeName =
   | "undefined";
 
 export function isBigInt<Value>(value: Value): value is Value & bigint {
-  return Value.Check(BigIntSchema, value);
+  const boxed = Object(value);
+  return boxed !== value && boxed instanceof BigInt;
 }
 
 export function isBoolean<Value>(value: Value): value is Value & boolean {
-  return Value.Check(BooleanSchema, value);
+  return value === true || value === false;
 }
 
 type RuntimeCallable = (...args: never[]) => RuntimeValue;
@@ -55,9 +52,10 @@ export function isFunction<Value>(value: Value): value is Extract<Value, Runtime
 }
 
 export function isNumber<Value>(value: Value): value is Value & number {
+  // Admits NaN and +/-Infinity, as the previous helper did.
   return (
-    Value.Check(NumberSchema, value) ||
-    Object.is(value, Number.NaN) ||
+    Number.isFinite(value) ||
+    Number.isNaN(value) ||
     Object.is(value, Number.POSITIVE_INFINITY) ||
     Object.is(value, Number.NEGATIVE_INFINITY)
   );
@@ -72,11 +70,12 @@ export function isJsonRecord<Value>(value: Value): value is Value & JsonRecord {
 }
 
 export function isString<Value>(value: Value): value is Value & string {
-  return Value.Check(StringSchema, value);
+  return stringCheck(value);
 }
 
 export function isSymbol<Value>(value: Value): value is Value & symbol {
-  return Value.Check(SymbolSchema, value);
+  const boxed = Object(value);
+  return boxed !== value && boxed instanceof Symbol;
 }
 
 /** Exact replacement for JavaScript's runtime `typeof` operator when its type name is data. */
