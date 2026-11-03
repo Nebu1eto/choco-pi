@@ -12,8 +12,7 @@
  *   7. Cascade diagnostics (other files with errors, LSP only)
  */
 
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import { isFiniteNumber, isFunction, type LspDictionaryValue } from "./runtime-guards.ts";
 import * as nodeFs from "node:fs";
 import * as path from "node:path";
 import type { PiLensFlagSource } from "./lsp-config.ts";
@@ -89,9 +88,6 @@ import {
   markdownlintConfigArgs,
 } from "./tool-policy.ts";
 import type { PathSetLike } from "./runtime-coordinator.ts";
-
-const LspDictionaryValueSchema = Type.Unknown();
-type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
 
 type ExceedsLspSyncLimitsResultContract = {
   tooLarge: boolean;
@@ -1033,7 +1029,7 @@ export async function resyncLspFile(
         // into the catch below and suppress this record entirely (#1766 F3).
         const spawnInFlight =
           !abort?.aborted &&
-          Check(Type.Function([], Type.Unknown()), lspService.isSpawnInFlight) &&
+          isFunction(lspService.isSpawnInFlight) &&
           lspService.isSpawnInFlight(filePath);
         const reason = abort?.aborted ? "aborted" : spawnInFlight ? "spawn-in-flight" : "timeout";
         logLatency({
@@ -1587,7 +1583,7 @@ export async function runPipeline(
           )
           .map((d) => d.line)
 
-          .filter((line): line is number => Check(Type.Number(), line))
+          .filter((line): line is number => isFiniteNumber(line))
       : undefined,
     actionableWarnings,
     codeQualityWarnings,

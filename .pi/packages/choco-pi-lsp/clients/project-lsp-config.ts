@@ -57,8 +57,13 @@
  * patterns apply to files inside that package, in addition to (and with
  * higher precedence than) the root config's `ignore` patterns.
  */
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import {
+  isFiniteNumber,
+  isObjectRecord,
+  isString,
+  type LspBoundaryValue,
+  type LspDictionaryValue,
+} from "./runtime-guards.ts";
 import { logExtension } from "./extension-log.ts";
 import { notifyUserDegradation } from "./user-notify.ts";
 import * as fs from "node:fs";
@@ -77,11 +82,6 @@ import {
 } from "./lsp-flag-registry.ts";
 import { isAtOrAboveHomeDir, walkUpDirs } from "./path-utils.ts";
 import { findPiLensConfigMarkerInDir } from "./workspace-topology.ts";
-
-const LspBoundaryValueSchema = Type.Unknown();
-type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
-const LspDictionaryValueSchema = Type.Unknown();
-type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
 
 type ParseRulePolicyListResultContract = { list: string[]; invalid: boolean };
 
@@ -413,7 +413,7 @@ function parseRulePolicyList(
   }
   const list: string[] = [];
   for (const entry of value) {
-    if (!Check(Type.String(), entry)) continue;
+    if (!isString(entry)) continue;
     const trimmed = entry.trim();
     if (trimmed.length > 0) list.push(trimmed);
   }
@@ -450,7 +450,7 @@ function parseConfigFile(configPath: string): PiLensProjectConfig {
     return EMPTY_PROJECT_CONFIG;
   }
 
-  if (!raw || !Check(Type.Object({}), raw) || Array.isArray(raw)) {
+  if (!raw || !isObjectRecord(raw) || Array.isArray(raw)) {
     warnInvalidConfigOnce(configPath, "top-level value must be an object");
     return EMPTY_PROJECT_CONFIG;
   }
@@ -459,7 +459,7 @@ function parseConfigFile(configPath: string): PiLensProjectConfig {
   const obj = raw as Record<string, LspDictionaryValue>;
 
   const ignore = Array.isArray(obj.ignore)
-    ? obj.ignore.filter((p): p is string => Check(Type.String(), p))
+    ? obj.ignore.filter((p): p is string => isString(p))
     : [];
 
   const mutations: Record<string, LspDictionaryValue> = {};
@@ -471,7 +471,7 @@ function parseConfigFile(configPath: string): PiLensProjectConfig {
 
   const rules: Record<string, PiLensProjectRuleConfig> = {};
 
-  if (obj.rules && Check(Type.Object({}), obj.rules) && !Array.isArray(obj.rules)) {
+  if (obj.rules && isObjectRecord(obj.rules) && !Array.isArray(obj.rules)) {
     // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
     const rawRules = obj.rules as Record<string, LspDictionaryValue>;
     for (const [ruleId, ruleCfg] of Object.entries(rawRules)) {
@@ -479,7 +479,7 @@ function parseConfigFile(configPath: string): PiLensProjectConfig {
       // disable`), which lands here as an array and would otherwise be
       // dropped without a word — the one shape a user is most likely to try.
 
-      if (!ruleCfg || !Check(Type.Object({}), ruleCfg) || Array.isArray(ruleCfg)) {
+      if (!ruleCfg || !isObjectRecord(ruleCfg) || Array.isArray(ruleCfg)) {
         warnInvalidConfigOnce(
           configPath,
           `rules.${ruleId} must be an object with threshold, disable, or select; ignored`,
@@ -491,7 +491,7 @@ function parseConfigFile(configPath: string): PiLensProjectConfig {
       const r = ruleCfg as Record<string, LspDictionaryValue>;
       const entry: PiLensProjectRuleConfig = {};
 
-      if (Check(Type.Number(), r.threshold) && Number.isFinite(r.threshold) && r.threshold > 0) {
+      if (isFiniteNumber(r.threshold) && Number.isFinite(r.threshold) && r.threshold > 0) {
         entry.threshold = r.threshold;
       } else if ("threshold" in r) {
         warnInvalidConfigOnce(
@@ -528,7 +528,7 @@ function parseConfigFile(configPath: string): PiLensProjectConfig {
   let maxProjectFiles: number | undefined;
   if ("maxProjectFiles" in obj) {
     if (
-      Check(Type.Number(), obj.maxProjectFiles) &&
+      isFiniteNumber(obj.maxProjectFiles) &&
       Number.isFinite(obj.maxProjectFiles) &&
       obj.maxProjectFiles > 0
     ) {
@@ -540,11 +540,7 @@ function parseConfigFile(configPath: string): PiLensProjectConfig {
 
   let reviewGraph: PiLensProjectReviewGraphConfig | undefined;
   if (obj.reviewGraph !== undefined) {
-    if (
-      !obj.reviewGraph ||
-      !Check(Type.Object({}), obj.reviewGraph) ||
-      Array.isArray(obj.reviewGraph)
-    ) {
+    if (!obj.reviewGraph || !isObjectRecord(obj.reviewGraph) || Array.isArray(obj.reviewGraph)) {
       warnInvalidConfigOnce(configPath, "reviewGraph must be an object");
     } else {
       // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.

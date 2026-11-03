@@ -21,10 +21,10 @@
  * per-pid shard files if this proves too lossy in practice.
  */
 
+import { hasErrorCode } from "./runtime-guards.ts";
+import { arr, compile, obj, unknown } from "@earendil-works/pi-schema";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import { writeFileAtomic, writeFileAtomicAsync } from "./atomic-write.ts";
 import { recordDegradationOnce } from "./degradation-ledger.ts";
 import { getGlobalPiLensDir } from "./file-utils.ts";
@@ -59,7 +59,6 @@ export interface LspChildEntry {
   cpuPercent?: number;
 }
 
-const ErrorCodeSchema = Type.Object({ code: Type.Optional(Type.String()) });
 export interface InstanceEntry {
   pid: number;
   startedAt: string;
@@ -87,10 +86,8 @@ interface RegistryFile {
   instances: InstanceEntry[];
 }
 
-const RegistryFileSchema = Type.Object(
-  { instances: Type.Array(Type.Unknown()) },
-  { additionalProperties: true },
-);
+const RegistryFileSchema = obj({ instances: arr(unknown()) }, { open: true });
+const isRegistryFile = compile(RegistryFileSchema).check;
 
 function registryPath(): string {
   return path.join(getGlobalPiLensDir(), "instances.json");
@@ -147,7 +144,7 @@ function readRegistrySync(): RegistryFile {
   try {
     const raw = fs.readFileSync(registryPath(), "utf-8");
     const parsed = JSON.parse(raw);
-    if (Value.Check(RegistryFileSchema, parsed)) {
+    if (isRegistryFile(parsed)) {
       // SAFETY: The cast intentionally preserves the legacy loader, which checked only the instances array container.
       return parsed as RegistryFile;
     }
@@ -157,7 +154,7 @@ function readRegistrySync(): RegistryFile {
     // Missing file, corrupt JSON, or a read error — treat as empty, never
     // throw. Missing (ENOENT) is a clean start and stays silent; anything
     // else is recorded so a corrupt/torn file is distinguishable from one.
-    const code = Value.Check(ErrorCodeSchema, err) ? err.code : undefined;
+    const code = hasErrorCode(err) ? err.code : undefined;
     if (code !== "ENOENT") recordCorruptRegistryRead(code ?? "invalid");
     return { instances: [] };
   }
@@ -167,14 +164,14 @@ async function readRegistryAsync(): Promise<RegistryFile> {
   try {
     const raw = await fs.promises.readFile(registryPath(), "utf-8");
     const parsed = JSON.parse(raw);
-    if (Value.Check(RegistryFileSchema, parsed)) {
+    if (isRegistryFile(parsed)) {
       // SAFETY: The cast intentionally preserves the legacy loader, which checked only the instances array container.
       return parsed as RegistryFile;
     }
     recordCorruptRegistryRead("invalid shape");
     return { instances: [] };
   } catch (err) {
-    const code = Value.Check(ErrorCodeSchema, err) ? err.code : undefined;
+    const code = hasErrorCode(err) ? err.code : undefined;
     if (code !== "ENOENT") recordCorruptRegistryRead(code ?? "invalid");
     return { instances: [] };
   }

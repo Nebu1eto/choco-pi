@@ -1,5 +1,4 @@
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { isFunction } from "./runtime-guards.ts";
 import * as nodeFs from "node:fs";
 import * as path from "node:path";
 import {
@@ -181,7 +180,7 @@ export async function handleAgentEnd({
   // without that resolver keep the old fast exit and avoid a cache read.
   const inspectActionableReport =
     actionableWarningsWriterEnabled &&
-    Check(Type.Function([], Type.Unknown()), cacheManager.readCache) &&
+    isFunction(cacheManager.readCache) &&
     (rootActionableAutofixEnabled || getFlagSource !== undefined);
   if (droppedOrphans.length > 0) {
     // #1642 F3: a stale/foreign record whose origin (the cwd/worktree it
@@ -666,7 +665,7 @@ export async function handleAgentEnd({
       // exists but its TTL elapsed" (#1607) — both used to collapse into
       // one "cache missing or expired" line, which doesn't tell a reader
       // whether the writer ran and produced a stale file, or never ran.
-      const inspection = Check(Type.Function([], Type.Unknown()), cacheManager.inspectCache)
+      const inspection = isFunction(cacheManager.inspectCache)
         ? cacheManager.inspectCache("actionable-warnings", actionCwd, actionableWarningsMaxAgeMs)
         : undefined;
       if (inspection === "missing") {

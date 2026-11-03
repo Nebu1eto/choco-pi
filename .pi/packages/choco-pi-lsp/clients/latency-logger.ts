@@ -1,12 +1,9 @@
-import { type Static, Type } from "typebox";
+import { type LspDictionaryValue } from "./runtime-guards.ts";
 import * as path from "node:path";
 import { isTestMode } from "./env-utils.ts";
 import { getGlobalPiLensDir } from "./file-utils.ts";
 import { createNdjsonLogger } from "./ndjson-logger.ts";
 import { getMaxLogSizeMB } from "./log-cleanup.ts";
-
-const LspDictionaryValueSchema = Type.Unknown();
-type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
 
 const LATENCY_LOG_DIR = getGlobalPiLensDir();
 const LATENCY_LOG_FILE = path.join(LATENCY_LOG_DIR, "latency.log");

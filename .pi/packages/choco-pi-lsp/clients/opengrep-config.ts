@@ -1,5 +1,4 @@
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { isString } from "./runtime-guards.ts";
 import * as path from "node:path";
 import { findLocalToolConfig } from "./path-utils.ts";
 
@@ -62,7 +61,7 @@ export function resolveOpengrepConfig(
 ): ResolvedOpengrepConfig {
   const localConfig = findLocalOpengrepConfig(cwd);
   const flagConfig =
-    Check(Type.String(), flags?.config) && flags.config.trim() ? flags.config.trim() : undefined;
+    isString(flags?.config) && flags.config.trim() ? flags.config.trim() : undefined;
 
   // A non-empty --lens-opengrep-config implies --lens-opengrep (passing a
   // config is an unambiguous opt-in).

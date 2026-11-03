@@ -1,5 +1,9 @@
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import {
+  isFunction,
+  isString,
+  type LspBoundaryValue,
+  type LspDictionaryValue,
+} from "./runtime-guards.ts";
 import * as nodeFs from "node:fs";
 import * as path from "node:path";
 import { loadBootstrapClients } from "./bootstrap.ts";
@@ -49,11 +53,6 @@ import { handleToolResult } from "./runtime-tool-result.ts";
 import { isToolCallEventType, resolveToolCallCorrelationId } from "./tool-event.ts";
 import { getSharedTreeSitterClient } from "./tree-sitter-shared.ts";
 
-const LspBoundaryValueSchema = Type.Unknown();
-type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
-const LspDictionaryValueSchema = Type.Unknown();
-type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
-
 const LSP_TOOLCALL_NAV_TOUCH_BUDGET_MS = Math.max(
   0,
   Number.parseInt(
@@ -77,18 +76,18 @@ function getToolCallRawFilePath(toolName: string, event: { input?: unknown }): s
     // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
     const filePath = (event.input as { path?: unknown }).path;
 
-    return Check(Type.String(), filePath) ? filePath : undefined;
+    return isString(filePath) ? filePath : undefined;
   }
 
   if (toolName === "read") {
-    if (Check(Type.String(), inputObj.path)) return inputObj.path;
+    if (isString(inputObj.path)) return inputObj.path;
 
-    if (Check(Type.String(), inputObj.filePath)) return inputObj.filePath;
+    if (isString(inputObj.filePath)) return inputObj.filePath;
     return undefined;
   }
 
   if (toolName === "lsp_navigation") {
-    return Check(Type.String(), inputObj.filePath) ? inputObj.filePath : undefined;
+    return isString(inputObj.filePath) ? inputObj.filePath : undefined;
   }
 
   return undefined;
@@ -1032,9 +1031,7 @@ async function handleToolCallImpl(deps: ToolCallDeps): Promise<ToolCallResult> {
   }
   if (isEditOnly && filePath && !getFlag("no-read-guard")) {
     const readGuard = runtime.readGuard;
-    const isExistingFile =
-      !Check(Type.Function([], Type.Unknown()), readGuard?.isNewFile) ||
-      !readGuard.isNewFile(filePath);
+    const isExistingFile = !isFunction(readGuard?.isNewFile) || !readGuard.isNewFile(filePath);
     if (readGuard && isExistingFile && !isExternalOrVendor) {
       const {
         touchedLines,
@@ -1151,7 +1148,7 @@ async function handleToolCallImpl(deps: ToolCallDeps): Promise<ToolCallResult> {
           isExistingFile,
         },
       });
-      const verdict = Check(Type.Function([], Type.Unknown()), readGuard.checkEdit)
+      const verdict = isFunction(readGuard.checkEdit)
         ? readGuard.checkEdit(filePath, touchedLines, editRanges, {
             skipSnapshotCheck: !!contentMatchValidated,
             oldTextResolved: !!contentMatchValidated,

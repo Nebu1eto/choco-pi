@@ -51,8 +51,8 @@ import { logExtension } from "../extension-log.ts";
 import { notifyUserDegradation } from "../user-notify.ts";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, map, obj, opt, str, compile } from "@earendil-works/pi-schema";
+import { isRuntimeString } from "../../tools/runtime-values.ts";
 import { BoundedLruCache } from "../bounded-cache.ts";
 import { getGlobalPiLensDir } from "../file-utils.ts";
 import { launchLSP } from "./launch.ts";
@@ -115,25 +115,34 @@ interface RegisteredLSPConfig {
 
 // --- Config Loading ---
 
-const JsonObjectSchema = Type.Object({}, { additionalProperties: true });
-const CustomServerConfigSchema = Type.Object({
-  name: Type.String(),
-  extensions: Type.Array(Type.String()),
-  command: Type.String(),
-  args: Type.Optional(Type.Array(Type.String())),
-  rootMarkers: Type.Optional(Type.Array(Type.String())),
-  env: Type.Optional(Type.Record(Type.String(), Type.String())),
-});
-const ServerInitOverrideSchema = Type.Object({
-  initializationOptions: Type.Optional(JsonObjectSchema),
-});
+const JsonObjectSchema = obj({}, { open: true });
+const isJsonRecord = compile(JsonObjectSchema).check;
+const CustomServerConfigSchema = obj(
+  {
+    name: str(),
+    extensions: arr(str()),
+    command: str(),
+    args: opt(arr(str())),
+    rootMarkers: opt(arr(str())),
+    env: opt(map(str())),
+  },
+  { open: true },
+);
+const isCustomServerConfig = compile(CustomServerConfigSchema).check;
+const ServerInitOverrideSchema = obj(
+  {
+    initializationOptions: opt(JsonObjectSchema),
+  },
+  { open: true },
+);
+const isServerInitOverride = compile(ServerInitOverrideSchema).check;
 function isJsonObject(value: InitializationValue | undefined): value is InitializationOptions {
-  return Value.Check(JsonObjectSchema, value);
+  return isJsonRecord(value);
 }
 
 function stringArray(value: InitializationValue | undefined): string[] {
   return Array.isArray(value)
-    ? value.filter((entry): entry is string => Value.Check(Type.String(), entry))
+    ? value.filter((entry): entry is string => isRuntimeString(entry))
     : [];
 }
 
@@ -144,7 +153,7 @@ function sanitizeLspConfig(value: InitializationValue): LSPConfig | undefined {
   if (isJsonObject(value.servers)) {
     const servers: Record<string, CustomServerConfig> = {};
     for (const [id, server] of Object.entries(value.servers)) {
-      if (Value.Check(CustomServerConfigSchema, server)) servers[id] = server;
+      if (isCustomServerConfig(server)) servers[id] = server;
     }
     config.servers = servers;
   }
@@ -152,7 +161,7 @@ function sanitizeLspConfig(value: InitializationValue): LSPConfig | undefined {
   if (isJsonObject(value.serverOverrides)) {
     const overrides: Record<string, ServerInitOverride> = {};
     for (const [id, entry] of Object.entries(value.serverOverrides)) {
-      if (!Value.Check(ServerInitOverrideSchema, entry)) continue;
+      if (!isServerInitOverride(entry)) continue;
       // SAFETY: The value came from parsed JSON and JsonObjectSchema rejected null and arrays.
       overrides[id] = entry as ServerInitOverride;
     }

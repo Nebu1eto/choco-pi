@@ -22,8 +22,8 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, compile, obj, opt, str, unknown } from "@earendil-works/pi-schema";
+import { finiteNum } from "../../lsp/schema-guards.ts";
 import { safeSpawnAsync } from "../../safe-spawn.ts";
 import { PRIORITY } from "../priorities.ts";
 import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
@@ -50,6 +50,24 @@ function findShellcheckConfig(cwd: string): string | undefined {
 
   return undefined;
 }
+
+const ShellcheckJsonSchema = arr(
+  obj(
+    {
+      file: opt(str()),
+      line: opt(finiteNum()),
+      endLine: opt(finiteNum()),
+      column: opt(finiteNum()),
+      endColumn: opt(finiteNum()),
+      level: opt(str()),
+      code: opt(finiteNum()),
+      message: opt(str()),
+      fix: opt(unknown()),
+    },
+    { open: true },
+  ),
+);
+const isShellcheckJson = compile(ShellcheckJsonSchema).check;
 
 /**
  * Parse shellcheck JSON output
@@ -82,24 +100,7 @@ function parseShellcheckOutput(raw: string, filePath: string): Diagnostic[] {
 
   try {
     const parsed = JSON.parse(raw);
-    const schema = Type.Array(
-      Type.Object(
-        {
-          file: Type.Optional(Type.String()),
-          line: Type.Optional(Type.Number()),
-          endLine: Type.Optional(Type.Number()),
-          column: Type.Optional(Type.Number()),
-          endColumn: Type.Optional(Type.Number()),
-          level: Type.Optional(Type.String()),
-          code: Type.Optional(Type.Number()),
-          message: Type.Optional(Type.String()),
-          fix: Type.Optional(Type.Unknown()),
-        },
-        { additionalProperties: true },
-      ),
-    );
-
-    if (!Value.Check(schema, parsed)) {
+    if (!isShellcheckJson(parsed)) {
       return diagnostics;
     }
 

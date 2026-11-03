@@ -45,20 +45,23 @@
  * host that removes `.on`) simply never wires the subscriber — no throw, no
  * behavior change beyond "no nudges".
  */
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, compile, lit, obj, oneOf, str } from "@earendil-works/pi-schema";
 import type { FilesTouchedPayload } from "./bus-publish.ts";
 import { logLatency } from "./latency-logger.ts";
 import { normalizeMapKey } from "./path-utils.ts";
 import type { ReadGuard } from "./read-guard.ts";
 
 const BUS_FILES_TOUCHED_EVENT = "pilens:files:touched";
-const FilesTouchedPayloadSchema = Type.Object({
-  v: Type.Literal(1),
-  source: Type.Literal("choco-pi-lsp"),
-  reason: Type.Union([Type.Literal("autofix"), Type.Literal("format")]),
-  paths: Type.Array(Type.String()),
-});
+const FilesTouchedPayloadSchema = obj(
+  {
+    v: lit(1),
+    source: lit("choco-pi-lsp"),
+    reason: oneOf(["autofix", "format"]),
+    paths: arr(str()),
+  },
+  { open: true },
+);
+const isFilesTouchedPayload = compile(FilesTouchedPayloadSchema).check;
 const MAX_NAMES_SHOWN = 5;
 
 /**
@@ -135,7 +138,7 @@ export function isAgentNudgeEnabled(): boolean {
 }
 
 function isValidPayload<T>(data: T): data is T & FilesTouchedPayload {
-  return Value.Check(FilesTouchedPayloadSchema, data);
+  return isFilesTouchedPayload(data);
 }
 
 /**

@@ -1,6 +1,7 @@
 import * as path from "node:path";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, obj, opt, str, union, compile } from "@earendil-works/pi-schema";
+import { finiteNum, isFiniteNumber } from "../../lsp/schema-guards.ts";
+import { isRuntimeString } from "../../../tools/runtime-values.ts";
 import { safeSpawnAsync } from "../../safe-spawn.ts";
 import { pathsEqual } from "../../path-utils.ts";
 import { getLinterPolicyForCwd } from "../../tool-policy.ts";
@@ -21,44 +22,52 @@ interface TerragruntDiagnostic {
   };
 }
 
-const TerragruntDiagnosticSchema = Type.Object(
+const TerragruntDiagnosticSchema = obj(
   {
-    severity: Type.Optional(Type.Union([Type.String(), Type.Number()])),
-    summary: Type.Optional(Type.String()),
-    detail: Type.Optional(Type.String()),
-    range: Type.Optional(
-      Type.Object({
-        filename: Type.Optional(Type.String()),
-        start: Type.Optional(
-          Type.Object({
-            line: Type.Optional(Type.Number()),
-            column: Type.Optional(Type.Number()),
-          }),
-        ),
-      }),
-    ),
-  },
-  { additionalProperties: true },
-);
-const TerragruntOutputSchema = Type.Union([
-  Type.Array(TerragruntDiagnosticSchema),
-  Type.Object({
-    invalid_files: Type.Optional(
-      Type.Array(
-        Type.Object({ diagnostics: Type.Optional(Type.Array(TerragruntDiagnosticSchema)) }),
+    severity: opt(union([str(), finiteNum()])),
+    summary: opt(str()),
+    detail: opt(str()),
+    range: opt(
+      obj(
+        {
+          filename: opt(str()),
+          start: opt(
+            obj(
+              {
+                line: opt(finiteNum()),
+                column: opt(finiteNum()),
+              },
+              { open: true },
+            ),
+          ),
+        },
+        { open: true },
       ),
     ),
-  }),
+  },
+  { open: true },
+);
+const TerragruntOutputSchema = union([
+  arr(TerragruntDiagnosticSchema),
+  obj(
+    {
+      invalid_files: opt(
+        arr(obj({ diagnostics: opt(arr(TerragruntDiagnosticSchema)) }, { open: true })),
+      ),
+    },
+    { open: true },
+  ),
 ]);
+const isTerragruntOutput = compile(TerragruntOutputSchema).check;
 
 function normalizeSeverity(raw: TerragruntDiagnostic["severity"]): "error" | "warning" {
-  if (Value.Check(Type.Number(), raw)) return raw === 1 ? "error" : "warning";
-  if (Value.Check(Type.String(), raw) && raw.toLowerCase() === "error") return "error";
+  if (isFiniteNumber(raw)) return raw === 1 ? "error" : "warning";
+  if (isRuntimeString(raw) && raw.toLowerCase() === "error") return "error";
   return "warning";
 }
 
 function toRawDiagnostics<T>(parsed: T): TerragruntDiagnostic[] {
-  if (!Value.Check(TerragruntOutputSchema, parsed)) return [];
+  if (!isTerragruntOutput(parsed)) return [];
   if (Array.isArray(parsed)) return parsed;
   return (parsed.invalid_files ?? []).flatMap((file) => file.diagnostics ?? []);
 }

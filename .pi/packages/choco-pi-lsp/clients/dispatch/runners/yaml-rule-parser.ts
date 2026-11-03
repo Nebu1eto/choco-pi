@@ -15,8 +15,9 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, bool, obj, opt, str, union, unknown, compile } from "@earendil-works/pi-schema";
+import { finiteNum } from "../../lsp/schema-guards.ts";
+import { isRuntimeString } from "../../../tools/runtime-values.ts";
 import yaml from "../../deps/js-yaml.ts";
 import { BoundedLruCache } from "../../bounded-cache.ts";
 
@@ -214,59 +215,64 @@ export function getCachedRules(ruleDir: string, severityFilter?: "error"): YamlR
   return rules;
 }
 
-const YamlRichPatternSchema = Type.Object(
+const YamlRichPatternSchema = obj(
   {
-    context: Type.String(),
-    selector: Type.Optional(Type.String()),
+    context: str(),
+    selector: opt(str()),
   },
-  { additionalProperties: true },
+  { open: true },
 );
-const YamlRuleConditionSchema = Type.Object(
+const isYamlRichPattern = compile(YamlRichPatternSchema).check;
+const YamlRuleConditionSchema = obj(
   {
-    kind: Type.Optional(Type.String()),
-    pattern: Type.Optional(Type.Union([Type.String(), YamlRichPatternSchema])),
-    regex: Type.Optional(Type.String()),
-    has: Type.Optional(Type.Object({}, { additionalProperties: true })),
-    any: Type.Optional(Type.Array(Type.Object({}, { additionalProperties: true }))),
-    all: Type.Optional(Type.Array(Type.Object({}, { additionalProperties: true }))),
-    not: Type.Optional(Type.Object({}, { additionalProperties: true })),
-    inside: Type.Optional(Type.Object({}, { additionalProperties: true })),
-    follows: Type.Optional(Type.Object({}, { additionalProperties: true })),
-    precedes: Type.Optional(Type.Object({}, { additionalProperties: true })),
-    stopBy: Type.Optional(Type.Unknown()),
-    field: Type.Optional(Type.String()),
-    nthChild: Type.Optional(Type.Unknown()),
+    kind: opt(str()),
+    pattern: opt(union([str(), YamlRichPatternSchema])),
+    regex: opt(str()),
+    has: opt(obj({}, { open: true })),
+    any: opt(arr(obj({}, { open: true }))),
+    all: opt(arr(obj({}, { open: true }))),
+    not: opt(obj({}, { open: true })),
+    inside: opt(obj({}, { open: true })),
+    follows: opt(obj({}, { open: true })),
+    precedes: opt(obj({}, { open: true })),
+    stopBy: opt(unknown()),
+    field: opt(str()),
+    nthChild: opt(unknown()),
   },
-  { additionalProperties: true },
+  { open: true },
 );
-const YamlRuleSchema = Type.Object(
+const YamlRuleSchema = obj(
   {
-    id: Type.String(),
-    language: Type.Optional(Type.String()),
-    severity: Type.Optional(Type.String()),
-    message: Type.Optional(Type.String()),
-    note: Type.Optional(Type.String()),
-    fix: Type.Optional(Type.String()),
-    metadata: Type.Optional(
-      Type.Object({
-        weight: Type.Optional(Type.Number()),
-        category: Type.Optional(Type.String()),
-      }),
+    id: str(),
+    language: opt(str()),
+    severity: opt(str()),
+    message: opt(str()),
+    note: opt(str()),
+    fix: opt(str()),
+    metadata: opt(
+      obj(
+        {
+          weight: opt(finiteNum()),
+          category: opt(str()),
+        },
+        { open: true },
+      ),
     ),
-    rule: Type.Optional(YamlRuleConditionSchema),
-    constraints: Type.Optional(Type.Object({}, { additionalProperties: true })),
-    utils: Type.Optional(Type.Object({}, { additionalProperties: true })),
-    skip_test_files: Type.Optional(Type.Boolean()),
-    ignore_paths: Type.Optional(Type.Array(Type.String())),
+    rule: opt(YamlRuleConditionSchema),
+    constraints: opt(obj({}, { open: true })),
+    utils: opt(obj({}, { open: true })),
+    skip_test_files: opt(bool()),
+    ignore_paths: opt(arr(str())),
   },
-  { additionalProperties: true },
+  { open: true },
 );
+const isYamlRule = compile(YamlRuleSchema).check;
 
 export function isOverlyBroadPattern(pattern: string | YamlRichPattern | undefined): boolean {
   // The rich pattern form ({context, selector, ...}) is structured and never a
   // single-metavar trap; only string patterns can be overly-broad literals.
   if (!pattern) return false;
-  if (!Value.Check(Type.String(), pattern)) return false;
+  if (!isRuntimeString(pattern)) return false;
   if (OVERLY_BROAD_PATTERNS.includes(pattern.trim())) return true;
   return /^\$[A-Z_]+$/i.test(pattern.trim());
 }
@@ -286,7 +292,7 @@ export function isStructuredRule(rule: YamlRule): boolean {
   // Without recognizing it as structure, an otherwise-rich rule with only
   // `pattern: {context, selector}` and no other combinators would be wrongly
   // classified as "unstructured single-metavar" and dropped by the runner.
-  const hasRichPattern = Value.Check(YamlRichPatternSchema, rule.rule.pattern);
+  const hasRichPattern = isYamlRichPattern(rule.rule.pattern);
   return !!(
     hasRichPattern ||
     rule.rule.has ||
@@ -338,7 +344,6 @@ export function parseSimpleYaml(content: string): YamlRule | null {
   } catch {
     return null;
   }
-  if (!Value.Check(YamlRuleSchema, parsed)) return null;
-  // SAFETY: YamlRuleSchema verifies all modeled fields while preserving native ast-grep keys.
-  return parsed as YamlRule;
+  if (!isYamlRule(parsed)) return null;
+  return parsed;
 }

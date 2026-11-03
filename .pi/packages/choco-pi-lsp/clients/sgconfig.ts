@@ -1,5 +1,4 @@
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { isObjectRecord, isString } from "./runtime-guards.ts";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -141,14 +140,14 @@ function parseRuleId(raw: string): string | undefined {
   try {
     const parsed = loadYaml(raw);
 
-    if (!parsed || !Check(Type.Object({}), parsed) || !("id" in parsed)) {
+    if (!parsed || !isObjectRecord(parsed) || !("id" in parsed)) {
       return undefined;
     }
 
     // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
     const id = (parsed as { id?: unknown }).id;
 
-    return Check(Type.String(), id) ? id : undefined;
+    return isString(id) ? id : undefined;
   } catch {
     return undefined;
   }

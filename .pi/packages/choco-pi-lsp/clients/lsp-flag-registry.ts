@@ -1,10 +1,9 @@
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
-
-const LspBoundaryValueSchema = Type.Unknown();
-type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
-const LspDictionaryValueSchema = Type.Unknown();
-type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
+import {
+  isBoolean,
+  isObjectRecord,
+  type LspBoundaryValue,
+  type LspDictionaryValue,
+} from "./runtime-guards.ts";
 
 /**
  * THE single declarative source of truth for every choco-pi-lsp toggle (#166).
@@ -109,7 +108,7 @@ export const LENS_FLAGS: readonly LensFlagSpec[] = [
     readGlobal: (config) => {
       const format = config.format;
 
-      if (!format || !Check(Type.Object({}), format)) return undefined;
+      if (!format || !isObjectRecord(format)) return undefined;
 
       // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
       const mode = (format as Record<string, LspDictionaryValue>).mode;
@@ -310,7 +309,7 @@ export function flagConfigSectionKeys(flags: readonly LensFlagSpec[]): string[] 
 }
 
 function asConfigObject(value: LspBoundaryValue): Record<string, LspDictionaryValue> | undefined {
-  if (!value || !Check(Type.Object({}), value) || Array.isArray(value)) return undefined;
+  if (!value || !isObjectRecord(value) || Array.isArray(value)) return undefined;
   // SAFETY: TypeBox established a non-array object, so string-key access preserves its runtime values.
   return value as Record<string, LspDictionaryValue>;
 }
@@ -367,7 +366,7 @@ export function readFlagConfigValue(
   const leaf = path.segments[path.segments.length - 1];
   const value = path.source[leaf];
 
-  return Check(Type.Boolean(), value) ? value : undefined;
+  return isBoolean(value) ? value : undefined;
 }
 
 /** Turn a config-tier boolean into the flag's value, honoring `negated`. */
@@ -404,7 +403,7 @@ export function assignFlagConfigSection(
 
   const leaf = path.segments[path.segments.length - 1];
 
-  if (leaf in path.source && !Check(Type.Boolean(), path.source[leaf])) {
+  if (leaf in path.source && !isBoolean(path.source[leaf])) {
     warnInvalid(`${configKey} must be a boolean`);
     target[leaf] = undefined;
     return;

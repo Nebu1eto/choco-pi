@@ -19,8 +19,7 @@
  * and the napi tag (`no-eval` / `no-eval-js`). Sharing the normalization keeps
  * the three surfaces from drifting.
  */
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, obj, opt, str, compile } from "@earendil-works/pi-schema";
 import { normalizeRuleId } from "./rule-id-normalize.ts";
 
 export interface RulePolicyEntry {
@@ -48,20 +47,22 @@ interface RulePolicyScan {
   sawEntry: boolean;
 }
 
-const RulePolicyEntrySchema = Type.Object(
+const RulePolicyEntrySchema = obj(
   {
-    disable: Type.Optional(Type.Array(Type.String())),
-    select: Type.Optional(Type.Array(Type.String())),
+    disable: opt(arr(str())),
+    select: opt(arr(str())),
   },
-  { additionalProperties: true },
+  { open: true },
 );
-const RulePolicyContainerSchema = Type.Object({}, { additionalProperties: true });
+const isRulePolicyEntry = compile(RulePolicyEntrySchema).check;
+const RulePolicyContainerSchema = obj({}, { open: true });
+const isRulePolicyContainer = compile(RulePolicyContainerSchema).check;
 
 function parseRulePolicyMap<T>(value: T): RulePolicyMap | undefined {
-  if (!Value.Check(RulePolicyContainerSchema, value)) return undefined;
+  if (!isRulePolicyContainer(value)) return undefined;
   const policyMap: RulePolicyMap = {};
   for (const [key, entry] of Object.entries(value)) {
-    if (Value.Check(RulePolicyEntrySchema, entry)) policyMap[key] = entry;
+    if (isRulePolicyEntry(entry)) policyMap[key] = entry;
   }
   return policyMap;
 }

@@ -1,5 +1,10 @@
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import {
+  isFiniteNumber,
+  isObjectRecord,
+  isString,
+  type LspBoundaryValue,
+  type LspDictionaryValue,
+} from "./runtime-guards.ts";
 /**
  * Generic read-recording bridge for choco-pi-lsp.
  *
@@ -61,11 +66,6 @@ import { Check } from "typebox/value";
 
 /** Stable Symbol key — identical across module reloads in the same process. */
 import { captureReadContentBinding, type ReadContentBinding } from "./read-guard.ts";
-
-const LspBoundaryValueSchema = Type.Unknown();
-type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
-const LspDictionaryValueSchema = Type.Unknown();
-type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
 
 export const READ_BRIDGE_KEY: unique symbol = Symbol.for("choco-pi-lsp:read-bridge");
 
@@ -135,7 +135,7 @@ interface BridgeDeps {
  */
 
 function isValidEntry(entry: LspBoundaryValue): entry is ReadBridgeEntry {
-  if (!Check(Type.Object({}), entry) || entry === null) return false;
+  if (!isObjectRecord(entry) || entry === null) return false;
 
   // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
   const e = entry as Record<string, LspDictionaryValue>;
@@ -143,12 +143,12 @@ function isValidEntry(entry: LspBoundaryValue): entry is ReadBridgeEntry {
   // filePath must be a non-empty string (absolute paths are expected but
   // we don't re-resolve here — `isRecordable` handles scope checks).
 
-  if (!Check(Type.String(), e["filePath"]) || e["filePath"] === "") return false;
+  if (!isString(e["filePath"]) || e["filePath"] === "") return false;
 
   // requestedOffset must be a finite integer ≥ 1.
   const offset = e["requestedOffset"];
   if (
-    !Check(Type.Number(), offset) ||
+    !isFiniteNumber(offset) ||
     !Number.isFinite(offset) ||
     offset < 1 ||
     !Number.isInteger(offset)
@@ -158,12 +158,7 @@ function isValidEntry(entry: LspBoundaryValue): entry is ReadBridgeEntry {
   // requestedLimit must be undefined or a finite positive integer.
   const limit = e["requestedLimit"];
   if (limit !== undefined) {
-    if (
-      !Check(Type.Number(), limit) ||
-      !Number.isFinite(limit) ||
-      limit < 1 ||
-      !Number.isInteger(limit)
-    )
+    if (!isFiniteNumber(limit) || !Number.isFinite(limit) || limit < 1 || !Number.isInteger(limit))
       return false;
   }
 

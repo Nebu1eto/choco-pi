@@ -1,11 +1,7 @@
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import { isFunction, type LspBoundaryValue } from "./runtime-guards.ts";
 import { recordDegradation } from "./degradation-ledger.ts";
 import { probeCtxActive } from "./session-lifecycle.ts";
 import { logBusEvent, type BusEventLogEntry } from "./bus-events-logger.ts";
-
-const LspBoundaryValueSchema = Type.Unknown();
-type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
 
 /** Resolve a pi event-bus emitter and its ctx at delivery time, not
  * subscription time. */
@@ -26,7 +22,7 @@ export interface BusEmitTarget {
 }
 
 function isBusEmitFn(target: BusEmitFn | BusEmitTarget): target is BusEmitFn {
-  return Check(Type.Function([], Type.Unknown()), target);
+  return isFunction(target);
 }
 
 export type BusEmitGetter = () => BusEmitFn | BusEmitTarget | undefined;

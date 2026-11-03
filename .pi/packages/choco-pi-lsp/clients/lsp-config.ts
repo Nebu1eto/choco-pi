@@ -1,5 +1,11 @@
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import {
+  isBoolean,
+  isFiniteNumber,
+  isObjectRecord,
+  isString,
+  type LspBoundaryValue,
+  type LspDictionaryValue,
+} from "./runtime-guards.ts";
 import { logExtension } from "./extension-log.ts";
 import { notifyUserDegradation } from "./user-notify.ts";
 import * as fs from "node:fs";
@@ -17,11 +23,6 @@ import {
 } from "./lsp-flag-registry.ts";
 import { findNestedProjectMutationValue, type PiLensProjectConfig } from "./project-lsp-config.ts";
 import { typeAcquisitionEnabledFromConfig } from "./lsp/typescript-config.ts";
-
-const LspBoundaryValueSchema = Type.Unknown();
-type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
-const LspDictionaryValueSchema = Type.Unknown();
-type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
 
 interface MutableConfigDictionary extends Record<string, LspDictionaryValue> {}
 
@@ -197,7 +198,7 @@ export function persistPiLensGlobalConfigKey(
       // SAFETY: JSON.parse produced the local JSON document, and the consumer validates every field it reads before relying on that field type.
       const parsed = JSON.parse(fs.readFileSync(configPath, "utf-8")) as unknown;
 
-      if (parsed && Check(Type.Object({}), parsed) && !Array.isArray(parsed)) {
+      if (parsed && isObjectRecord(parsed) && !Array.isArray(parsed)) {
         // SAFETY: JSON.parse produced the local JSON document, and the consumer validates every field it reads before relying on that field type.
         raw = parsed as Record<string, LspDictionaryValue>;
       }
@@ -228,7 +229,7 @@ export function persistPiLensGlobalConfigKey(
 }
 
 function asConfigObject(value: LspBoundaryValue): Record<string, LspDictionaryValue> | undefined {
-  if (!value || !Check(Type.Object({}), value) || Array.isArray(value)) return undefined;
+  if (!value || !isObjectRecord(value) || Array.isArray(value)) return undefined;
   // SAFETY: TypeBox established a non-array object, so string-key access preserves its runtime values.
   return value as Record<string, LspDictionaryValue>;
 }
@@ -237,7 +238,7 @@ function parsePiLensGlobalConfig(
   parsed: LspBoundaryValue,
   configPath: string,
 ): PiLensGlobalConfig | undefined {
-  if (!parsed || !Check(Type.Object({}), parsed)) return undefined;
+  if (!parsed || !isObjectRecord(parsed)) return undefined;
 
   // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
   const raw = parsed as Record<string, LspDictionaryValue>;
@@ -251,7 +252,7 @@ function parsePiLensGlobalConfig(
   }
 
   const ignore = Array.isArray(raw.ignore)
-    ? raw.ignore.filter((p): p is string => Check(Type.String(), p))
+    ? raw.ignore.filter((p): p is string => isString(p))
     : undefined;
   if (ignore && ignore.length > 0) config.ignore = ignore;
 
@@ -259,7 +260,7 @@ function parsePiLensGlobalConfig(
   if (dispatch) {
     const floor = dispatch.runnerTimeoutFloorMs;
 
-    if (Check(Type.Number(), floor) && Number.isFinite(floor) && floor > 0) {
+    if (isFiniteNumber(floor) && Number.isFinite(floor) && floor > 0) {
       config.dispatch = { runnerTimeoutFloorMs: floor };
     } else {
       // #533: warn only when the key is PRESENT but malformed — an absent
@@ -274,7 +275,7 @@ function parsePiLensGlobalConfig(
 
   const typeAcquisition = asConfigObject(raw.typeAcquisition);
   if (typeAcquisition) {
-    if (Check(Type.Boolean(), typeAcquisition.enabled)) {
+    if (isBoolean(typeAcquisition.enabled)) {
       config.typeAcquisition = { enabled: typeAcquisition.enabled };
     } else {
       if ("enabled" in typeAcquisition) {
@@ -287,7 +288,7 @@ function parsePiLensGlobalConfig(
   const autoFix = asConfigObject(asConfigObject(raw.actionableWarnings)?.autoFix);
   if (autoFix && "maxFixes" in autoFix) {
     if (
-      Check(Type.Number(), autoFix.maxFixes) &&
+      isFiniteNumber(autoFix.maxFixes) &&
       Number.isFinite(autoFix.maxFixes) &&
       autoFix.maxFixes >= 0
     ) {
@@ -308,7 +309,7 @@ function parsePiLensGlobalConfig(
 
   const widget = asConfigObject(raw.widget);
   if (widget) {
-    if (Check(Type.Boolean(), widget.visible)) {
+    if (isBoolean(widget.visible)) {
       config.widget = { visible: widget.visible };
     } else {
       // #533: present-but-wrong-type warns; absent stays silent.

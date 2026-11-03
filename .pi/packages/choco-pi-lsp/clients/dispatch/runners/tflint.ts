@@ -1,6 +1,6 @@
 import * as path from "node:path";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, obj, str, compile } from "@earendil-works/pi-schema";
+import { finiteNum } from "../../lsp/schema-guards.ts";
 import { safeSpawnAsync } from "../../safe-spawn.ts";
 import { getLinterPolicyForCwd } from "../../tool-policy.ts";
 import { findNearestDirWithAnyBasename } from "../../workspace-topology.ts";
@@ -27,27 +27,34 @@ function findTflintConfig(fileDir: string): string | null {
   return dir ? path.join(dir, TFLINT_CONFIG) : null;
 }
 
-const TflintOutputSchema = Type.Object(
+const TflintOutputSchema = obj(
   {
-    issues: Type.Array(
-      Type.Object({
-        rule: Type.Object({ name: Type.String(), severity: Type.String() }),
-        message: Type.String(),
-        range: Type.Object({
-          filename: Type.String(),
-          start: Type.Object({ line: Type.Number(), column: Type.Number() }),
-        }),
-      }),
+    issues: arr(
+      obj(
+        {
+          rule: obj({ name: str(), severity: str() }, { open: true }),
+          message: str(),
+          range: obj(
+            {
+              filename: str(),
+              start: obj({ line: finiteNum(), column: finiteNum() }, { open: true }),
+            },
+            { open: true },
+          ),
+        },
+        { open: true },
+      ),
     ),
-    errors: Type.Array(Type.Object({ message: Type.String() })),
+    errors: arr(obj({ message: str() }, { open: true })),
   },
-  { additionalProperties: true },
+  { open: true },
 );
+const isTflintOutput = compile(TflintOutputSchema).check;
 
 function parseTflintOutput(raw: string, filePath: string): Diagnostic[] {
   try {
     const parsed = JSON.parse(raw);
-    if (!Value.Check(TflintOutputSchema, parsed)) return [];
+    if (!isTflintOutput(parsed)) return [];
     const issues = parsed.issues;
 
     return issues.map((issue) => {

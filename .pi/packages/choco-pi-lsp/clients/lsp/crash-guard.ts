@@ -9,22 +9,25 @@
  * the process lifetime. The guard's behavior is identical for every
  * evaluation, so one installation per process is sufficient.
  *
- * This module depends only on typebox and its handlers capture only the
- * classifier below: the first evaluation's listeners are the only ones ever
- * installed, so at most one small module instance stays reachable from them.
+ * This module depends only on pi-schema and two small guard helpers, and its
+ * handlers capture only the classifier below: the first evaluation's listeners
+ * are the only ones ever installed, so at most one small module instance stays
+ * reachable from them.
  */
 
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { obj, opt, str, union, compile } from "@earendil-works/pi-schema";
+import { finiteNum } from "./schema-guards.ts";
+import { isRuntimeString } from "../../tools/runtime-values.ts";
 
 const CRASH_GUARD_MARKER = Symbol.for("choco-pi-lsp.lsp-crash-guard.installed");
 
-const ErrorCodeSchema = Type.Object(
+const ErrorCodeSchema = obj(
   {
-    code: Type.Optional(Type.Union([Type.String(), Type.Number()])),
+    code: opt(union([str(), finiteNum()])),
   },
-  { additionalProperties: true },
+  { open: true },
 );
+const isErrorCode = compile(ErrorCodeSchema).check;
 
 const LSP_CRASH_CODES = new Set([
   "ERR_STREAM_DESTROYED",
@@ -35,8 +38,8 @@ const LSP_CRASH_CODES = new Set([
 
 export function isIgnorableLspRuntimeCrash<T>(err: T): boolean {
   if (!(err instanceof Error)) return false;
-  const code = Value.Check(ErrorCodeSchema, err) ? err.code : undefined;
-  if (Value.Check(Type.String(), code) && LSP_CRASH_CODES.has(code)) return true;
+  const code = isErrorCode(err) ? err.code : undefined;
+  if (isRuntimeString(code) && LSP_CRASH_CODES.has(code)) return true;
   const msg = err.message.toLowerCase();
   const stack = (err.stack ?? "").toLowerCase();
   return (

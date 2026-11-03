@@ -10,11 +10,10 @@
  *    mirror — guarded against drift by `tests/clients/grammar-source.test.ts`.
  */
 
+import { compile, map, obj, opt, str } from "@earendil-works/pi-schema";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import { writeFileAtomic } from "./atomic-write.ts";
 import { recordDegradationOnce } from "./degradation-ledger.ts";
 import { getPackageRoot } from "./package-root.ts";
@@ -340,25 +339,25 @@ export function describeNonWasmBody(bytes: Uint8Array): string {
 }
 
 /** Provenance for a single grammar in `scripts/grammars.lock.json`. */
-const GrammarSourceOverrideSchema = Type.Object({
-  package: Type.String(),
-  version: Type.String(),
-  url: Type.String(),
-});
-const VendoredGrammarSourceSchema = Type.Object({
-  repo: Type.String(),
-  commit: Type.String(),
-  license: Type.String(),
-  buildCommand: Type.String(),
-  sha256: Type.String(),
-});
-const GrammarManifestSchema = Type.Object({
-  package: Type.String(),
-  version: Type.String(),
-  grammars: Type.Record(Type.String(), Type.String()),
-  overrides: Type.Optional(Type.Record(Type.String(), GrammarSourceOverrideSchema)),
-  vendored: Type.Optional(Type.Record(Type.String(), VendoredGrammarSourceSchema)),
-});
+const GrammarSourceOverrideSchema = obj(
+  { package: str(), version: str(), url: str() },
+  { open: true },
+);
+const VendoredGrammarSourceSchema = obj(
+  { repo: str(), commit: str(), license: str(), buildCommand: str(), sha256: str() },
+  { open: true },
+);
+const GrammarManifestSchema = obj(
+  {
+    package: str(),
+    version: str(),
+    grammars: map(str()),
+    overrides: opt(map(GrammarSourceOverrideSchema)),
+    vendored: opt(map(VendoredGrammarSourceSchema)),
+  },
+  { open: true },
+);
+const isGrammarManifest = compile(GrammarManifestSchema).check;
 
 export interface GrammarManifest {
   package: string;
@@ -406,7 +405,7 @@ function resolveGrammarManifest(): GrammarManifest | null {
   try {
     const raw = fs.readFileSync(grammarManifestPath(), "utf-8");
     const parsed = JSON.parse(raw);
-    cachedManifest = Value.Check(GrammarManifestSchema, parsed) ? parsed : null;
+    cachedManifest = isGrammarManifest(parsed) ? parsed : null;
   } catch {
     cachedManifest = null;
   }

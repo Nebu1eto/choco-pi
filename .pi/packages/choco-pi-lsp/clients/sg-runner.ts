@@ -5,8 +5,8 @@
  * Handles: spawn, spawnSync, temp dir management, JSON parsing.
  */
 
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { finite } from "./runtime-guards.ts";
+import { arr, compile, obj, str } from "@earendil-works/pi-schema";
 import { createSubsystemLogger } from "./extension-log.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -93,13 +93,17 @@ export interface SgMatch {
   };
 }
 
-const SgPositionSchema = Type.Object({ line: Type.Number(), column: Type.Number() });
-const SgMatchSchema = Type.Object({
-  file: Type.String(),
-  range: Type.Object({ start: SgPositionSchema, end: SgPositionSchema }),
-  text: Type.String(),
-});
-const SgMatchesSchema = Type.Array(SgMatchSchema);
+const SgPositionSchema = obj({ line: finite(), column: finite() }, { open: true });
+const SgMatchSchema = obj(
+  {
+    file: str(),
+    range: obj({ start: SgPositionSchema, end: SgPositionSchema }, { open: true }),
+    text: str(),
+  },
+  { open: true },
+);
+const isSgMatches = compile(arr(SgMatchSchema)).check;
+const isSgMatch = compile(SgMatchSchema).check;
 
 export interface SgResult {
   matches: SgMatch[];
@@ -177,9 +181,9 @@ function formatMetaVarCaptures(mv: SgMatch["metaVariables"]): string | undefined
 function tryParseSgMatches(stdout: string): SgMatch[] | null {
   try {
     const parsed = JSON.parse(stdout);
-    if (Check(SgMatchesSchema, parsed)) return parsed;
+    if (isSgMatches(parsed)) return parsed;
 
-    if (Check(SgMatchSchema, parsed)) return [parsed];
+    if (isSgMatch(parsed)) return [parsed];
     return null;
   } catch {
     return null;

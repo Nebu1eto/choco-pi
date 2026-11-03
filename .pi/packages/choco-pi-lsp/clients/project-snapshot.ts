@@ -1,5 +1,9 @@
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import {
+  isFiniteNumber,
+  isObjectRecord,
+  isString,
+  type LspBoundaryValue,
+} from "./runtime-guards.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,9 +29,6 @@ import {
   serializeWordIndex,
   type SerializedWordIndex,
 } from "./word-index.ts";
-
-const LspBoundaryValueSchema = Type.Unknown();
-type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
 
 function assignOptionalProperties<T extends object, U extends object, C>(
   target: T,
@@ -104,16 +105,16 @@ export interface ProjectSnapshot {
 }
 
 function parseSequenceIndex(value: LspBoundaryValue): SnapshotSequenceIndex | undefined {
-  if (!value || !Check(Type.Object({}), value)) return undefined;
+  if (!value || !isObjectRecord(value)) return undefined;
 
   // SAFETY: The adjacent finite-number or TypeBox check establishes the numeric representation before this assertion.
   const index = value as Partial<SnapshotSequenceIndex>;
 
-  if (!Check(Type.Number(), index.projectSeq)) return undefined;
+  if (!isFiniteNumber(index.projectSeq)) return undefined;
   if (!Array.isArray(index.fileSeqByPath)) return undefined;
   const fileSeqByPath = index.fileSeqByPath.filter(
     (entry): entry is [string, number] =>
-      Array.isArray(entry) && Check(Type.String(), entry[0]) && Check(Type.Number(), entry[1]),
+      Array.isArray(entry) && isString(entry[0]) && isFiniteNumber(entry[1]),
   );
   return { projectSeq: index.projectSeq, fileSeqByPath };
 }
@@ -154,17 +155,17 @@ export function isProjectSnapshotFresh(
 }
 
 function parseSnapshot(value: LspBoundaryValue): ProjectSnapshot | null {
-  if (!value || !Check(Type.Object({}), value)) return null;
+  if (!value || !isObjectRecord(value)) return null;
 
   // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
   const snapshot = value as Partial<ProjectSnapshot>;
   if (snapshot.version !== PROJECT_SNAPSHOT_VERSION) return null;
 
-  if (!Check(Type.String(), snapshot.projectRoot)) return null;
+  if (!isString(snapshot.projectRoot)) return null;
 
-  if (!Check(Type.String(), snapshot.generatedAt)) return null;
+  if (!isString(snapshot.generatedAt)) return null;
 
-  if (!Check(Type.Number(), snapshot.seq)) return null;
+  if (!isFiniteNumber(snapshot.seq)) return null;
   if (!Array.isArray(snapshot.cachedExports)) return null;
   return {
     version: PROJECT_SNAPSHOT_VERSION,
@@ -176,7 +177,7 @@ function parseSnapshot(value: LspBoundaryValue): ProjectSnapshot | null {
     reverseDeps: snapshot.reverseDeps ?? {},
     cachedExports: snapshot.cachedExports.filter(
       (entry): entry is [string, string] =>
-        Array.isArray(entry) && Check(Type.String(), entry[0]) && Check(Type.String(), entry[1]),
+        Array.isArray(entry) && isString(entry[0]) && isString(entry[1]),
     ),
     sequenceIndex: parseSequenceIndex(snapshot.sequenceIndex),
     wordIndex: snapshot.wordIndex,
@@ -201,16 +202,16 @@ export interface ProjectSnapshotMeta {
 }
 
 function parseSnapshotMeta(value: LspBoundaryValue): ProjectSnapshotMeta | null {
-  if (!value || !Check(Type.Object({}), value)) return null;
+  if (!value || !isObjectRecord(value)) return null;
 
   // SAFETY: The adjacent finite-number or TypeBox check establishes the numeric representation before this assertion.
   const meta = value as Partial<ProjectSnapshotMeta>;
 
-  if (!Check(Type.Number(), meta.version)) return null;
+  if (!isFiniteNumber(meta.version)) return null;
 
-  if (!Check(Type.Number(), meta.seq)) return null;
+  if (!isFiniteNumber(meta.seq)) return null;
   return {
-    timestamp: Check(Type.String(), meta.timestamp) ? meta.timestamp : "",
+    timestamp: isString(meta.timestamp) ? meta.timestamp : "",
     version: meta.version,
     seq: meta.seq,
     sequenceIndex: parseSequenceIndex(meta.sequenceIndex),
@@ -1181,7 +1182,7 @@ export function saveRuntimeProjectSnapshot(args: {
   dbg?: (msg: string) => void;
 }): void {
   try {
-    if (!Check(Type.Number(), args.runtime.projectSeq)) return;
+    if (!isFiniteNumber(args.runtime.projectSeq)) return;
     const existing = loadProjectSnapshot(args.cwd);
     let conventions = args.conventions ?? existing?.conventions;
     if (!conventions) {

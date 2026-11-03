@@ -1,13 +1,10 @@
-import { type Static, Type } from "typebox";
+import { type LspDictionaryValue } from "./runtime-guards.ts";
 import * as path from "node:path";
 import { isTestMode } from "./env-utils.ts";
 import { getGlobalPiLensDir } from "./file-utils.ts";
 import { createNdjsonLogger } from "./ndjson-logger.ts";
 import type { TreeSitterParseCacheStats } from "./tree-sitter-client.ts";
 import { getMaxLogSizeMB } from "./log-cleanup.ts";
-
-const LspDictionaryValueSchema = Type.Unknown();
-type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
 
 function assignOptionalProperties<T extends object, U extends object, C>(
   target: T,

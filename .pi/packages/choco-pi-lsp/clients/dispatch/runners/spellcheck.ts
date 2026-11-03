@@ -19,8 +19,8 @@
  * Or: npm install -g typos-cli (if wrapped)
  */
 
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, obj, opt, str, compile } from "@earendil-works/pi-schema";
+import { finiteNum } from "../../lsp/schema-guards.ts";
 import { safeSpawnAsync } from "../../safe-spawn.ts";
 import { PRIORITY } from "../priorities.ts";
 import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
@@ -28,16 +28,17 @@ import { createAvailabilityChecker } from "./utils/runner-helpers.ts";
 
 const typos = createAvailabilityChecker("typos", ".exe");
 
-const TypoSchema = Type.Object(
+const TypoSchema = obj(
   {
-    path: Type.Optional(Type.String()),
-    line_num: Type.Optional(Type.Number()),
-    byte_offset: Type.Optional(Type.Number()),
-    typo: Type.Optional(Type.String()),
-    corrections: Type.Optional(Type.Array(Type.String())),
+    path: opt(str()),
+    line_num: opt(finiteNum()),
+    byte_offset: opt(finiteNum()),
+    typo: opt(str()),
+    corrections: opt(arr(str())),
   },
-  { additionalProperties: true },
+  { open: true },
 );
+const isTypo = compile(TypoSchema).check;
 
 /**
  * Parse typos-cli JSON output (JSON Lines format)
@@ -66,7 +67,7 @@ function parseTyposOutput(raw: string, filePath: string): Diagnostic[] {
   for (const line of lines) {
     try {
       const parsed = JSON.parse(line);
-      if (!Value.Check(TypoSchema, parsed) || !parsed.typo || !parsed.line_num) continue;
+      if (!isTypo(parsed) || !parsed.typo || !parsed.line_num) continue;
 
       const corrections = parsed.corrections?.join(", ") || "no suggestions";
       const message = `Typo: "${parsed.typo}" → ${corrections}`;

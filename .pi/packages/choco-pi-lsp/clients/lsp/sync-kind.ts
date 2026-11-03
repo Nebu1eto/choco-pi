@@ -17,8 +17,8 @@
  * behavior.
  */
 
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { obj, opt, union, compile } from "@earendil-works/pi-schema";
+import { finiteNum } from "./schema-guards.ts";
 
 export type TextDocumentSyncKind = 0 | 1 | 2;
 
@@ -26,17 +26,14 @@ export const TEXT_DOCUMENT_SYNC_KIND_NONE: TextDocumentSyncKind = 0;
 export const TEXT_DOCUMENT_SYNC_KIND_FULL: TextDocumentSyncKind = 1;
 export const TEXT_DOCUMENT_SYNC_KIND_INCREMENTAL: TextDocumentSyncKind = 2;
 
-const SyncCapabilitiesSchema = Type.Object(
+const SyncCapabilitiesSchema = obj(
   {
-    textDocumentSync: Type.Optional(
-      Type.Union([
-        Type.Number(),
-        Type.Object({ change: Type.Optional(Type.Number()) }, { additionalProperties: true }),
-      ]),
-    ),
+    textDocumentSync: opt(union([finiteNum(), obj({ change: opt(finiteNum()) }, { open: true })])),
   },
-  { additionalProperties: true },
+  { open: true },
 );
+const isSyncCapabilities = compile(SyncCapabilitiesSchema).check;
+const isSyncOptions = compile(obj({ change: opt(finiteNum()) }, { open: true })).check;
 
 function isSyncKind<T>(value: T): value is T & TextDocumentSyncKind {
   return value === 0 || value === 1 || value === 2;
@@ -49,14 +46,14 @@ function isSyncKind<T>(value: T): value is T & TextDocumentSyncKind {
  * a shape/value this function doesn't recognize.
  */
 export function negotiateSyncKind<T>(serverCapabilities: T): TextDocumentSyncKind {
-  if (!Value.Check(SyncCapabilitiesSchema, serverCapabilities)) {
+  if (!isSyncCapabilities(serverCapabilities)) {
     return TEXT_DOCUMENT_SYNC_KIND_FULL;
   }
   const sync = serverCapabilities.textDocumentSync;
   // Legacy shape: the whole field IS the kind.
   if (isSyncKind(sync)) return sync;
   // 3.0+ shape: `TextDocumentSyncOptions.change`.
-  if (Value.Check(Type.Object({ change: Type.Optional(Type.Number()) }), sync)) {
+  if (isSyncOptions(sync)) {
     const change = sync.change;
     if (isSyncKind(change)) return change;
   }

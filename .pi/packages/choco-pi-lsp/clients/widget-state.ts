@@ -1,5 +1,4 @@
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { isFiniteNumber } from "./runtime-guards.ts";
 import { stat } from "node:fs/promises";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -311,7 +310,7 @@ export function importWidgetState(state: PersistedWidgetState | undefined): bool
   // diagnostics — so v1..current are accepted and migrated.
   if (
     !state ||
-    !Check(Type.Number(), state.version) ||
+    !isFiniteNumber(state.version) ||
     state.version < 1 ||
     state.version > WIDGET_STATE_VERSION
   ) {

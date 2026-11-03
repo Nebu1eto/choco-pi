@@ -14,8 +14,7 @@
  *   3. `npm` as a final fallback so callers always get a usable value.
  */
 
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { isString } from "./runtime-guards.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -87,7 +86,7 @@ function readPackageManagerField(targetPath: string): NodePackageManager | undef
       packageManager?: unknown;
     };
 
-    if (!Check(Type.String(), pkg.packageManager)) return undefined;
+    if (!isString(pkg.packageManager)) return undefined;
     const name = pkg.packageManager.split("@")[0].trim().toLowerCase();
     return isNodePackageManager(name) ? name : undefined;
   } catch {

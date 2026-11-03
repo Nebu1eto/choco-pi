@@ -54,9 +54,8 @@
  * layered on later without changing the store shape.
  */
 
+import { compile, map, nullable, obj, opt, unknown } from "@earendil-works/pi-schema";
 import { createHash } from "node:crypto";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { commitDurableStore } from "./durable-store.ts";
@@ -116,14 +115,11 @@ interface DispositionStateFile {
   dispositions?: Record<string, DispositionEntry>;
 }
 
-const DispositionStateFileSchema = Type.Object(
-  {
-    dispositions: Type.Optional(
-      Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()]),
-    ),
-  },
-  { additionalProperties: true },
+const DispositionStateFileSchema = obj(
+  { dispositions: opt(nullable(map(unknown()))) },
+  { open: true },
 );
+const isDispositionStateFile = compile(DispositionStateFileSchema).check;
 
 // "defer" is session-ephemeral by design (#690) — held only in memory so it
 // resurfaces for free on the next process run, with no expiry/pruning logic
@@ -317,7 +313,7 @@ function readState(cwd: string): DispositionStateFile {
   try {
     const parsed = JSON.parse(fs.readFileSync(p, "utf-8"));
     // SAFETY: The shallow schema matches the legacy loader; individual fields remain guarded at use sites.
-    state = Value.Check(DispositionStateFileSchema, parsed) ? (parsed as DispositionStateFile) : {};
+    state = isDispositionStateFile(parsed) ? (parsed as DispositionStateFile) : {};
   } catch {
     // Now that writeState is tmp+rename atomic, a torn read (another process
     // mid-write) can no longer land here — this only fires on genuine
@@ -344,7 +340,7 @@ function deserializeState(contents: string | undefined): DispositionStateFile {
   try {
     const parsed = JSON.parse(contents ?? "");
     // SAFETY: The shallow schema matches the legacy loader; individual fields remain guarded at use sites.
-    return Value.Check(DispositionStateFileSchema, parsed) ? (parsed as DispositionStateFile) : {};
+    return isDispositionStateFile(parsed) ? (parsed as DispositionStateFile) : {};
   } catch {
     return {};
   }

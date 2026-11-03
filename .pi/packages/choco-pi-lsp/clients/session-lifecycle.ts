@@ -1,8 +1,4 @@
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
-
-const LspBoundaryValueSchema = Type.Unknown();
-type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
+import { isFunction, type LspBoundaryValue } from "./runtime-guards.ts";
 
 /**
  * Concurrent-session guard (#473).
@@ -130,11 +126,7 @@ export function probeCtxActive(ctx: LspBoundaryValue): boolean | undefined {
     // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
     const candidate = ctx as { isIdle?: unknown } | null | undefined;
 
-    if (
-      candidate === null ||
-      candidate === undefined ||
-      !Check(Type.Function([], Type.Unknown()), candidate.isIdle)
-    ) {
+    if (candidate === null || candidate === undefined || !isFunction(candidate.isIdle)) {
       return undefined;
     }
 

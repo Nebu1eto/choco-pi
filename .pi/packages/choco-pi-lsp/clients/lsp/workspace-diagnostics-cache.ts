@@ -1,7 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { lit, map, obj, unknown, compile } from "@earendil-works/pi-schema";
 import { getProjectDataDir } from "../file-utils.ts";
 import { writeFileAtomic } from "../atomic-write.ts";
 import { readJsonCache } from "../json-cache-read.ts";
@@ -88,13 +87,14 @@ export interface WorkspaceDiagnosticsCache {
   entries: Record<string, WorkspaceDiagnosticsCacheEntry>;
 }
 
-const WorkspaceDiagnosticsCacheSchema = Type.Object(
+const WorkspaceDiagnosticsCacheSchema = obj(
   {
-    version: Type.Literal(WORKSPACE_DIAGNOSTICS_CACHE_VERSION),
-    entries: Type.Record(Type.String(), Type.Unknown()),
+    version: lit(WORKSPACE_DIAGNOSTICS_CACHE_VERSION),
+    entries: map(unknown()),
   },
-  { additionalProperties: true },
+  { open: true },
 );
+const isWorkspaceDiagnosticsCache = compile(WorkspaceDiagnosticsCacheSchema).check;
 
 function cachePath(cwd: string): string {
   return path.join(getProjectDataDir(cwd), "cache", CACHE_FILE);
@@ -190,7 +190,7 @@ const _cacheEpochs = createGenerationMap("workspace-diagnostics-cache", {
  * `loadProjectDiagnosticsSnapshot`. */
 export function loadWorkspaceDiagnosticsCache(cwd: string): WorkspaceDiagnosticsCache | undefined {
   return readJsonCache<WorkspaceDiagnosticsCache>(cachePath(cwd), (parsed) => {
-    if (!Value.Check(WorkspaceDiagnosticsCacheSchema, parsed)) return undefined;
+    if (!isWorkspaceDiagnosticsCache(parsed)) return undefined;
     // SAFETY: The shallow schema matches the legacy cache loader; each entry is checked for freshness before use.
     return parsed as WorkspaceDiagnosticsCache;
   });

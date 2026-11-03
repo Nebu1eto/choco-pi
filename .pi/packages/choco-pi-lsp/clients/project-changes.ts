@@ -1,5 +1,4 @@
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { isFiniteNumber, isString } from "./runtime-guards.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getProjectDataDir } from "./file-utils.ts";
@@ -39,10 +38,10 @@ function parseChangeLine(line: string): ProjectChangeEntry | undefined {
     // SAFETY: JSON.parse produced the local JSON document, and the consumer validates every field it reads before relying on that field type.
     const parsed = JSON.parse(line) as Partial<ProjectChangeEntry>;
     if (
-      !Check(Type.Number(), parsed.seq) ||
-      !Check(Type.Number(), parsed.fileSeq) ||
-      !Check(Type.String(), parsed.filePath) ||
-      !Check(Type.String(), parsed.source)
+      !isFiniteNumber(parsed.seq) ||
+      !isFiniteNumber(parsed.fileSeq) ||
+      !isString(parsed.filePath) ||
+      !isString(parsed.source)
     ) {
       return undefined;
     }

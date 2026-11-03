@@ -1,7 +1,7 @@
 /** Bounded, process-local telemetry for behavior degraded during one session. */
 
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { finite } from "./runtime-guards.ts";
+import { arr, compile, obj, str } from "@earendil-works/pi-schema";
 import { logExtension } from "./extension-log.ts";
 
 export type DegradationKind =
@@ -277,18 +277,17 @@ export function incrementDegradationCount(record: DegradationRecord): boolean {
 
 /** Detached snapshot, grouped in first-seen kind order. */
 const LEDGER_FIELD_MAX = 200;
-const DegradationSummarySchema = Type.Array(
-  Type.Object({
-    kind: Type.String(),
-    count: Type.Number(),
-    latestReasons: Type.Array(
-      Type.Object({
-        subject: Type.String(),
-        reason: Type.String(),
-      }),
-    ),
-  }),
+const DegradationSummarySchema = arr(
+  obj(
+    {
+      kind: str(),
+      count: finite(),
+      latestReasons: arr(obj({ subject: str(), reason: str() }, { open: true })),
+    },
+    { open: true },
+  ),
 );
+const isDegradationSummary = compile(DegradationSummarySchema).check;
 
 function normalizeForLedger<T>(value: T): string {
   return String(value ?? "unknown");
@@ -322,7 +321,7 @@ interface RenderableDegradationGroup {
 }
 
 function parseRenderableSummary<T>(value: T): RenderableDegradationGroup[] | undefined {
-  return Value.Check(DegradationSummarySchema, value) ? value : undefined;
+  return isDegradationSummary(value) ? value : undefined;
 }
 
 export function renderDegradationLines<T>(summary?: T): string[] {

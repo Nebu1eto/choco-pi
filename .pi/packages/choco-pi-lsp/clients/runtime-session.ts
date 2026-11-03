@@ -1,5 +1,4 @@
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { isFunction, isString } from "./runtime-guards.ts";
 import * as nodeFs from "node:fs";
 import * as path from "node:path";
 import type { AstGrepClient } from "./ast-grep-client.ts";
@@ -645,7 +644,7 @@ type TodoScannerLike = {
 /** Scan one file via the per-file API, pushing any items. Tolerates an
  * unreadable file and a scanner without `scanFile` (no-op). */
 function scanOneTodoFile(scanner: TodoScannerLike, filePath: string, items: unknown[]): void {
-  if (!Check(Type.Function([], Type.Unknown()), scanner.scanFile)) return;
+  if (!isFunction(scanner.scanFile)) return;
   try {
     // scanFile returns TodoItem[] directly (not a { items } result).
     const result = scanner.scanFile(filePath);
@@ -1663,7 +1662,7 @@ export async function handleSessionStart(deps: SessionStartDeps): Promise<void> 
     dbg("session_start: phase0 workspace diagnostics observation enabled (capability probe only)");
   }
 
-  const hasWorkspaceCwd = Check(Type.String(), ctxCwd) && ctxCwd.length > 0;
+  const hasWorkspaceCwd = isString(ctxCwd) && ctxCwd.length > 0;
   const cwd = ctxCwd ?? process.cwd();
   // #1228: generic atomic-write stages are shared by several project stores,
   // so the review-graph-specific sweep cannot own this namespace. Sweep the

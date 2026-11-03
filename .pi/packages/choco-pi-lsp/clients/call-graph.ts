@@ -10,8 +10,13 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import {
+  isBoolean,
+  isFiniteNumber,
+  isObjectRecord,
+  isString,
+  isStringArray,
+} from "./runtime-guards.ts";
 import { getProjectDataDir } from "./file-utils.ts";
 import { writeFileAtomic } from "./atomic-write.ts";
 import { parseSymbolKey as parseCanonicalSymbolKey } from "./review-graph/symbol-id.ts";
@@ -694,9 +699,7 @@ function inferLegacyCoverage(edges: ResolvedCallEdge[]): CallGraphEvidenceCovera
   for (const edge of edges) {
     const evidenceCount = edge.evidenceCount;
     const count =
-      Value.Check(Type.Number(), evidenceCount) &&
-      Number.isFinite(evidenceCount) &&
-      evidenceCount > 0
+      isFiniteNumber(evidenceCount) && Number.isFinite(evidenceCount) && evidenceCount > 0
         ? Math.floor(evidenceCount)
         : 1;
     const weight = Number.isFinite(edge.weight) && edge.weight >= 0 ? edge.weight : 1;
@@ -738,7 +741,7 @@ function loadCoverage(
 }
 
 function finiteCount<T>(value: T): value is T & number {
-  return Value.Check(Type.Number(), value) && Number.isInteger(value) && value >= 0;
+  return isFiniteNumber(value) && Number.isInteger(value) && value >= 0;
 }
 
 function countsMatch(left: number, right: number): boolean {
@@ -750,9 +753,9 @@ function validatePersistedCallGraph(
   coverage: CallGraphEvidenceCoverage,
 ): boolean {
   const nonEmptyString = <T>(value: T): value is T & string =>
-    Value.Check(Type.String(), value) && value.trim().length > 0;
+    isString(value) && value.trim().length > 0;
   const enumValue = <T, U extends string>(value: T, values: readonly U[]): value is T & U =>
-    Value.Check(Type.String(), value) && values.some((candidate) => String(candidate) === value);
+    isString(value) && values.some((candidate) => String(candidate) === value);
   const edgeKinds = ["calls", "references", "mixed"] as const;
   const resolutions = ["exact", "import", "receiver-type", "name-only", "unresolved"] as const;
   if (!raw || raw.version !== CALL_GRAPH_CACHE_VERSION || !nonEmptyString(raw.builtAt))
@@ -761,7 +764,7 @@ function validatePersistedCallGraph(
     return false;
   if (
     raw.coverage !== undefined &&
-    (!raw.coverage || !Value.Check(Type.Object({}), raw.coverage) || Array.isArray(raw.coverage))
+    (!raw.coverage || !isObjectRecord(raw.coverage) || Array.isArray(raw.coverage))
   )
     return false;
   if (
@@ -783,15 +786,12 @@ function validatePersistedCallGraph(
     coverage.sameFileEvidence,
     coverage.duplicateEvidence,
   ];
-  if (
-    !Value.Check(Type.Boolean(), coverage.complete) ||
-    coverageValues.some((value) => !finiteCount(value))
-  )
+  if (!isBoolean(coverage.complete) || coverageValues.some((value) => !finiteCount(value)))
     return false;
   if (
     coverage.languages !== undefined &&
     (!coverage.languages ||
-      !Value.Check(Type.Object({}), coverage.languages) ||
+      !isObjectRecord(coverage.languages) ||
       Array.isArray(coverage.languages) ||
       Object.entries(coverage.languages).some(
         ([language, status]) =>
@@ -828,13 +828,13 @@ function validatePersistedCallGraph(
   for (const edge of raw.edges) {
     if (
       !edge ||
-      !Value.Check(Type.Object({}), edge) ||
+      !isObjectRecord(edge) ||
       !nonEmptyString(edge.callerKey) ||
       !nonEmptyString(edge.calleeKey) ||
       !nonEmptyString(edge.callerFile) ||
       !nonEmptyString(edge.calleeFile) ||
       !nonEmptyString(edge.calleeSymbol) ||
-      !Value.Check(Type.Number(), edge.weight) ||
+      !isFiniteNumber(edge.weight) ||
       !Number.isFinite(edge.weight) ||
       edge.weight <= 0 ||
       edge.weight > 1
@@ -905,8 +905,8 @@ function validatePersistedCallGraph(
       if (
         !Array.isArray(entry) ||
         !nonEmptyString(entry[0]) ||
-        !Value.Check(Type.Array(Type.String()), entry[1]) ||
-        entry[1].some((key) => !nonEmptyString(key))
+        !isStringArray(entry[1]) ||
+        entry[1].some((key: string) => !nonEmptyString(key))
       )
         return undefined;
       const keys = entry[1];
@@ -942,7 +942,7 @@ function validatePersistedCallGraph(
     if (
       !Array.isArray(entry) ||
       !nonEmptyString(entry[0]) ||
-      !Value.Check(Type.Number(), entry[1]) ||
+      !isFiniteNumber(entry[1]) ||
       !Number.isFinite(entry[1]) ||
       entry[1] < 0 ||
       actualInDegree.has(entry[0])
@@ -974,11 +974,7 @@ export function loadCallGraph(
   try {
     const raw = JSON.parse(fs.readFileSync(cacheFile, "utf-8"));
     if (raw.version !== CALL_GRAPH_CACHE_VERSION) return undefined;
-    if (
-      !Value.Check(Type.String(), raw.reviewGraphVersion) ||
-      !Value.Check(Type.String(), raw.reviewGraphSignature)
-    )
-      return undefined;
+    if (!isString(raw.reviewGraphVersion) || !isString(raw.reviewGraphSignature)) return undefined;
     const identity: CallGraphCacheIdentity = {
       reviewGraphVersion: raw.reviewGraphVersion,
       reviewGraphSignature: raw.reviewGraphSignature,

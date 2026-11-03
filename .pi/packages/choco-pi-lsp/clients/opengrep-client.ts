@@ -50,8 +50,12 @@
  * Refs: #584, #111 (opengrep adoption), #387 (workspace-sweep serialization), #1562
  */
 
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import {
+  isFiniteNumber,
+  isObjectRecord,
+  isString,
+  type LspDictionaryValue,
+} from "./runtime-guards.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -61,9 +65,6 @@ import { buildOpengrepScanArgs } from "./opengrep-runtime.ts";
 import { getScratchTreeDirNames } from "./scratch-tree-policy.ts";
 import { safeSpawnAsync } from "./safe-spawn.ts";
 import { SecurityScanClient } from "./security-scan-client.ts";
-
-const LspDictionaryValueSchema = Type.Unknown();
-type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
 
 // --- Types ---
 
@@ -232,21 +233,21 @@ export function parseOpengrepReport(raw: string): OpengrepFinding[] {
     return [];
   }
 
-  if (!parsed || !Check(Type.Object({}), parsed)) return [];
+  if (!parsed || !isObjectRecord(parsed)) return [];
 
   // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
   const results = (parsed as Record<string, LspDictionaryValue>).results;
   if (!Array.isArray(results)) return [];
   const findings: OpengrepFinding[] = [];
   for (const entry of results) {
-    if (!entry || !Check(Type.Object({}), entry)) continue;
+    if (!entry || !isObjectRecord(entry)) continue;
 
     // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
     const e = entry as Record<string, LspDictionaryValue>;
 
-    const checkId = Check(Type.String(), e.check_id) ? e.check_id : undefined;
+    const checkId = isString(e.check_id) ? e.check_id : undefined;
 
-    const filePath = Check(Type.String(), e.path) ? e.path : undefined;
+    const filePath = isString(e.path) ? e.path : undefined;
 
     // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
     const start = e.start as { line?: unknown; col?: unknown } | undefined;
@@ -254,7 +255,7 @@ export function parseOpengrepReport(raw: string): OpengrepFinding[] {
     // SAFETY: The adjacent finite-number or TypeBox check establishes the numeric representation before this assertion.
     const end = e.end as { line?: unknown; col?: unknown } | undefined;
 
-    const startLine = Check(Type.Number(), start?.line) ? start.line : undefined;
+    const startLine = isFiniteNumber(start?.line) ? start.line : undefined;
     if (!checkId || !filePath || !Number.isFinite(startLine)) continue;
 
     // SAFETY: The adjacent finite-number or TypeBox check establishes the numeric representation before this assertion.
@@ -263,7 +264,7 @@ export function parseOpengrepReport(raw: string): OpengrepFinding[] {
     // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
     const metadata = (extra.metadata as Record<string, LspDictionaryValue> | undefined) ?? {};
     const cwe = Array.isArray(metadata.cwe)
-      ? metadata.cwe.filter((c): c is string => Check(Type.String(), c))
+      ? metadata.cwe.filter((c): c is string => isString(c))
       : undefined;
     findings.push({
       checkId,
@@ -272,16 +273,16 @@ export function parseOpengrepReport(raw: string): OpengrepFinding[] {
       // SAFETY: The adjacent finite-number or TypeBox check establishes the numeric representation before this assertion.
       startLine: startLine as number,
 
-      startCol: Check(Type.Number(), start?.col) ? start.col : 1,
+      startCol: isFiniteNumber(start?.col) ? start.col : 1,
 
       // SAFETY: The adjacent finite-number or TypeBox check establishes the numeric representation before this assertion.
-      endLine: Check(Type.Number(), end?.line) ? end.line : (startLine as number),
+      endLine: isFiniteNumber(end?.line) ? end.line : (startLine as number),
 
-      endCol: Check(Type.Number(), end?.col) ? end.col : 1,
+      endCol: isFiniteNumber(end?.col) ? end.col : 1,
 
-      message: Check(Type.String(), extra.message) ? extra.message : "opengrep finding",
+      message: isString(extra.message) ? extra.message : "opengrep finding",
 
-      severity: Check(Type.String(), extra.severity) ? extra.severity : "WARNING",
+      severity: isString(extra.severity) ? extra.severity : "WARNING",
       cwe,
     });
   }

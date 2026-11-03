@@ -1,6 +1,4 @@
-import { type Static, Type } from "typebox";
-const LspBoundaryValueSchema = Type.Unknown();
-type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
+import { type LspBoundaryValue } from "./runtime-guards.ts";
 /**
  * `singleFlight` — at most one execution per key, clear owned by the primitive.
  *

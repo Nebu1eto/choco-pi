@@ -6,15 +6,14 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { compile, map, unknown } from "@earendil-works/pi-schema";
 
 const execFileAsync = promisify(execFile);
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const moduleUrl = (relative: string): string =>
   pathToFileURL(path.join(packageRoot, relative)).href;
 
-const ChildReportSchema = Type.Record(Type.String(), Type.Unknown());
+const isChildReport = compile(map(unknown())).check;
 
 /**
  * Each scenario runs in a fresh Node process: process listeners, module
@@ -34,7 +33,8 @@ async function runChild(source: string, root: string, env: Record<string, string
   });
   const lines = stdout.trim().split("\n");
   const parsed: unknown = JSON.parse(lines[lines.length - 1] ?? "{}");
-  return Value.Parse(ChildReportSchema, parsed);
+  if (!isChildReport(parsed)) throw new Error("child report is not a JSON object");
+  return parsed;
 }
 
 async function withRoot(run: (root: string) => Promise<void>): Promise<void> {

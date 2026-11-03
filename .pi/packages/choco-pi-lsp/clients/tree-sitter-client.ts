@@ -15,8 +15,16 @@
  *   "function $NAME($$$PARAMS) { $BODY }" matches function declarations
  */
 
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import {
+  isBoolean,
+  isFiniteNumber,
+  isFunction,
+  isNull,
+  isObjectRecord,
+  isString,
+  isUndefined,
+  type LspBoundaryValue,
+} from "./runtime-guards.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
@@ -44,9 +52,6 @@ import { resolvePackagePath } from "./package-root.ts";
 import { assertInstallAllowed, getProjectTrustGeneration } from "./project-trust.ts";
 import { logTreeSitterDiagnostic } from "./tree-sitter-logger.ts";
 import { notifyUserDegradation } from "./user-notify.ts";
-
-const LspBoundaryValueSchema = Type.Unknown();
-type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
 
 type GetRuntimeStatsResultContract = {
   languagesLoaded: number;
@@ -101,13 +106,13 @@ const QUERY_BATCH_MAX_LOAD_FAILURES = 3;
 const NO_NESTED_ANCHOR_VISIT_CAP = 10_000;
 
 function describeQueryPredicateValue(value: any): string {
-  if (Check(Type.Undefined(), value)) return "undefined";
-  if (Check(Type.Null(), value)) return "object";
-  if (Check(Type.String(), value)) return "string";
-  if (Check(Type.Number(), value)) return "number";
-  if (Check(Type.Boolean(), value)) return "boolean";
-  if (Check(Type.Function([], Type.Unknown()), value)) return "function";
-  if (Check(Type.Array(Type.Unknown()), value) || Check(Type.Object({}), value)) return "object";
+  if (isUndefined(value)) return "undefined";
+  if (isNull(value)) return "object";
+  if (isString(value)) return "string";
+  if (isFiniteNumber(value)) return "number";
+  if (isBoolean(value)) return "boolean";
+  if (isFunction(value)) return "function";
+  if (Array.isArray(value) || isObjectRecord(value)) return "object";
   return Object.prototype.toString.call(value).slice(8, -1).toLowerCase();
 }
 
@@ -257,7 +262,7 @@ function collectErrorCodes(err: LspBoundaryValue): string[] {
     // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
     const code = (current as Error & { code?: unknown }).code;
 
-    if (Check(Type.String(), code)) codes.push(code);
+    if (isString(code)) codes.push(code);
 
     // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
     current = (current as Error & { cause?: unknown }).cause;
@@ -1156,7 +1161,7 @@ export class TreeSitterClient {
         const anyMod = mod as any;
         const ParserClass = anyMod.Parser || anyMod.default || anyMod;
 
-        if (!ParserClass || !Check(Type.Function([], Type.Unknown()), ParserClass.init)) {
+        if (!ParserClass || !isFunction(ParserClass.init)) {
           this.dbg("Parser class not found or missing init method");
           return false;
         }

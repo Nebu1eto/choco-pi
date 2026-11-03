@@ -11,10 +11,10 @@
  * ~/.choco-pi-lsp/sessionstart.log before any agent exposure.
  */
 
+import { finite } from "./runtime-guards.ts";
+import { arr, compile, lit, obj, oneOf, str } from "@earendil-works/pi-schema";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import { getProjectDataDir } from "./file-utils.ts";
 import { writeFileAtomic } from "./atomic-write.ts";
 import { parseSymbolKey } from "./call-graph.ts";
@@ -64,31 +64,33 @@ const MIN_IN_DEGREE = 0.5; // skip symbols with low centrality (avoids noise)
 /** Persisted model schema version. Bump when the persisted shape changes. */
 export const CODEBASE_MODEL_VERSION = 1;
 
-const CodebaseModelSchema = Type.Object({
-  version: Type.Literal(CODEBASE_MODEL_VERSION),
-  reviewGraphVersion: Type.String({ minLength: 1 }),
-  reviewGraphSignature: Type.String({ minLength: 1 }),
-  generatedAt: Type.String(),
-  totalSymbols: Type.Number(),
-  totalFiles: Type.Number(),
-  entries: Type.Array(
-    Type.Object({
-      file: Type.String(),
-      name: Type.String(),
-      kind: Type.Union([
-        Type.Literal("function"),
-        Type.Literal("method"),
-        Type.Literal("class"),
-        Type.Literal("unknown"),
-      ]),
-      calls: Type.Array(Type.String()),
-      calledBy: Type.Array(Type.String()),
-      inDegree: Type.Number(),
-      tokens: Type.Number(),
-    }),
-  ),
-  totalTokens: Type.Number(),
-});
+const CodebaseModelSchema = obj(
+  {
+    version: lit(CODEBASE_MODEL_VERSION),
+    reviewGraphVersion: str({ minLength: 1 }),
+    reviewGraphSignature: str({ minLength: 1 }),
+    generatedAt: str(),
+    totalSymbols: finite(),
+    totalFiles: finite(),
+    entries: arr(
+      obj(
+        {
+          file: str(),
+          name: str(),
+          kind: oneOf(["function", "method", "class", "unknown"]),
+          calls: arr(str()),
+          calledBy: arr(str()),
+          inDegree: finite(),
+          tokens: finite(),
+        },
+        { open: true },
+      ),
+    ),
+    totalTokens: finite(),
+  },
+  { open: true },
+);
+const isCodebaseModel = compile(CodebaseModelSchema).check;
 
 // ── Builder ───────────────────────────────────────────────────────────────────
 
@@ -243,7 +245,7 @@ export function loadCodebaseModel(
 ): CodebaseModel | undefined {
   try {
     const raw = JSON.parse(fs.readFileSync(cacheFilePath(cwd), "utf-8"));
-    if (!Value.Check(CodebaseModelSchema, raw)) return undefined;
+    if (!isCodebaseModel(raw)) return undefined;
     if (
       raw.reviewGraphVersion !== expectedIdentity.reviewGraphVersion ||
       raw.reviewGraphSignature !== expectedIdentity.reviewGraphSignature

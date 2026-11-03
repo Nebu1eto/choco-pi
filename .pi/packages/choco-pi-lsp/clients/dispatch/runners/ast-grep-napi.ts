@@ -9,8 +9,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import { obj, opt, str, unknown, compile } from "@earendil-works/pi-schema";
 import {
   type AstGrepNapi,
   loadAstGrepNapi,
@@ -136,13 +135,14 @@ interface ErrorChain {
   messages: string[];
 }
 
-const ErrorCauseSchema = Type.Object(
+const ErrorCauseSchema = obj(
   {
-    code: Type.Optional(Type.String()),
-    cause: Type.Optional(Type.Unknown()),
+    code: opt(str()),
+    cause: opt(unknown()),
   },
-  { additionalProperties: true },
+  { open: true },
 );
+const isErrorCause = compile(ErrorCauseSchema).check;
 
 function collectErrorChain<T>(err: T): ErrorChain {
   const codes: string[] = [];
@@ -153,11 +153,11 @@ function collectErrorChain<T>(err: T): ErrorChain {
     seen.add(current);
     if (current instanceof Error) {
       messages.push(current.message);
-      if (Value.Check(ErrorCauseSchema, current)) {
-        // SAFETY: ErrorCauseSchema verified the optional code and cause fields.
-        const details = current as Error & Static<typeof ErrorCauseSchema>;
-        if (details.code !== undefined) codes.push(details.code);
-        current = details.cause;
+      // Re-bind as unknown so the guard narrows to the validated code/cause shape rather than to Error.
+      const candidate: unknown = current;
+      if (isErrorCause(candidate)) {
+        if (candidate.code !== undefined) codes.push(candidate.code);
+        current = candidate.cause;
       } else {
         break;
       }

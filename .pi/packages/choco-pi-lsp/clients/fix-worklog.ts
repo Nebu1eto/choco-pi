@@ -5,10 +5,10 @@
  * so repair history is preserved across sessions.
  */
 
+import { finite } from "./runtime-guards.ts";
+import { bool, compile, obj, opt, str } from "@earendil-works/pi-schema";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import type { Diagnostic } from "./dispatch/types.ts";
 import { getProjectDataDir } from "./file-utils.ts";
 import { redactSecrets } from "./redact/secrets.ts";
@@ -36,20 +36,24 @@ export interface WorklogEntry {
 }
 
 /** Identity to attribute a worklog append to, when known. */
-const WorklogEntrySchema = Type.Object({
-  timestamp: Type.String(),
-  filePath: Type.String(),
-  rule: Type.String(),
-  tool: Type.String(),
-  message: Type.String(),
-  line: Type.Number(),
-  column: Type.Optional(Type.Number()),
-  fixable: Type.Boolean(),
-  fixSuggestion: Type.Optional(Type.String()),
-  autoFixed: Type.Boolean(),
-  model: Type.Optional(Type.String()),
-  provider: Type.Optional(Type.String()),
-});
+const WorklogEntrySchema = obj(
+  {
+    timestamp: str(),
+    filePath: str(),
+    rule: str(),
+    tool: str(),
+    message: str(),
+    line: finite(),
+    column: opt(finite()),
+    fixable: bool(),
+    fixSuggestion: opt(str()),
+    autoFixed: bool(),
+    model: opt(str()),
+    provider: opt(str()),
+  },
+  { open: true },
+);
+const isWorklogEntry = compile(WorklogEntrySchema).check;
 
 export interface WorklogIdentity {
   model?: string;
@@ -125,7 +129,7 @@ export function readWorklog(cwd: string): WorklogEntry[] {
       .flatMap((line) => {
         try {
           const parsed = JSON.parse(line);
-          return Value.Check(WorklogEntrySchema, parsed) ? [parsed] : [];
+          return isWorklogEntry(parsed) ? [parsed] : [];
         } catch {
           return [];
         }

@@ -1,6 +1,6 @@
 import path from "node:path";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, obj, opt, str, union, compile } from "@earendil-works/pi-schema";
+import { finiteNum } from "../../lsp/schema-guards.ts";
 import { safeSpawnAsync } from "../../safe-spawn.ts";
 import { PRIORITY } from "../priorities.ts";
 import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
@@ -22,23 +22,22 @@ type ActionlintIssue = {
   end_column?: number;
 };
 
-const ActionlintIssueSchema = Type.Object(
+const ActionlintIssueSchema = obj(
   {
-    message: Type.Optional(Type.String()),
-    filepath: Type.Optional(Type.String()),
-    line: Type.Optional(Type.Number()),
-    column: Type.Optional(Type.Number()),
-    kind: Type.Optional(Type.String()),
-    snippet: Type.Optional(Type.String()),
-    end_line: Type.Optional(Type.Number()),
-    end_column: Type.Optional(Type.Number()),
+    message: opt(str()),
+    filepath: opt(str()),
+    line: opt(finiteNum()),
+    column: opt(finiteNum()),
+    kind: opt(str()),
+    snippet: opt(str()),
+    end_line: opt(finiteNum()),
+    end_column: opt(finiteNum()),
   },
-  { additionalProperties: true },
+  { open: true },
 );
-const ActionlintOutputSchema = Type.Union([
-  ActionlintIssueSchema,
-  Type.Array(ActionlintIssueSchema),
-]);
+const isActionlintIssue = compile(ActionlintIssueSchema).check;
+const ActionlintOutputSchema = union([ActionlintIssueSchema, arr(ActionlintIssueSchema)]);
+const isActionlintOutput = compile(ActionlintOutputSchema).check;
 
 export function isGitHubWorkflowFile(filePath: string): boolean {
   const normalized = filePath.replace(/\\/g, "/");
@@ -76,7 +75,7 @@ export function parseActionlintJson(raw: string, filePath: string): Diagnostic[]
 
   try {
     const parsed = JSON.parse(trimmed);
-    if (!Value.Check(ActionlintOutputSchema, parsed)) return [];
+    if (!isActionlintOutput(parsed)) return [];
     const issues = Array.isArray(parsed) ? parsed : [parsed];
     return issues.map((issue) => toDiagnostic(issue, filePath));
   } catch {
@@ -86,7 +85,7 @@ export function parseActionlintJson(raw: string, filePath: string): Diagnostic[]
       if (!line.trim()) continue;
       try {
         const parsed = JSON.parse(line);
-        if (Value.Check(ActionlintIssueSchema, parsed)) {
+        if (isActionlintIssue(parsed)) {
           diagnostics.push(toDiagnostic(parsed, filePath));
         }
       } catch {

@@ -1,8 +1,5 @@
-import { type Static, Type } from "typebox";
+import { type LspBoundaryValue } from "./runtime-guards.ts";
 import { logLatency } from "./latency-logger.ts";
-
-const LspBoundaryValueSchema = Type.Unknown();
-type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
 
 export type ToolSetMutationReason =
   | "fresh_session_lazy_deactivation"

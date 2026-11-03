@@ -11,8 +11,8 @@ import { existsSync, mkdirSync } from "node:fs";
 import { access, readFile, readdir, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { obj, opt, str, compile } from "@earendil-works/pi-schema";
+import { isRuntimeString } from "../../tools/runtime-values.ts";
 import {
   getGlobalPiLensDir,
   getProjectIgnoreGlobs,
@@ -54,14 +54,10 @@ import { isAutomaticTypeAcquisitionEnabledAsync } from "../lsp-config.ts";
 
 export type RootFunction = (file: string) => Promise<string | undefined>;
 
-const PackageVersionSchema = Type.Object(
-  { version: Type.String() },
-  { additionalProperties: true },
-);
-const FsErrorSchema = Type.Object(
-  { code: Type.Optional(Type.String()) },
-  { additionalProperties: true },
-);
+const PackageVersionSchema = obj({ version: str() }, { open: true });
+const isPackageVersion = compile(PackageVersionSchema).check;
+const FsErrorSchema = obj({ code: opt(str()) }, { open: true });
+const isFsError = compile(FsErrorSchema).check;
 
 const FIXTURE_ROOT_SEGMENTS = new Set(["__fixtures__", "testdata"]);
 const FALLBACK_PROJECT_MARKERS = [
@@ -892,11 +888,9 @@ function createInteractiveServer(spec: InteractiveServerSpec): LSPServerInfo {
     extensions: spec.extensions,
     root: spec.root,
     availabilityKey:
-      Value.Check(Type.String(), spec.command) && isSimpleCommand(spec.command)
-        ? spec.command
-        : undefined,
+      isRuntimeString(spec.command) && isSimpleCommand(spec.command) ? spec.command : undefined,
     async spawn(root) {
-      const command = Value.Check(Type.String(), spec.command) ? spec.command : spec.command(root);
+      const command = isRuntimeString(spec.command) ? spec.command : spec.command(root);
       const args =
         spec.args === undefined ? [] : Array.isArray(spec.args) ? spec.args : spec.args(root);
       // Try to launch directly — no auto-install for language-runtime tools
@@ -964,7 +958,7 @@ export function WorkspacePriorityRoot(
 }
 
 function isPermissionFsError<T>(err: T): boolean {
-  if (!Value.Check(FsErrorSchema, err)) return false;
+  if (!isFsError(err)) return false;
   return err.code === "EACCES" || err.code === "EPERM";
 }
 
@@ -1281,7 +1275,7 @@ async function typescriptVersionForTsc(
     let version: string;
     try {
       const parsed = JSON.parse(manifest);
-      if (!Value.Check(PackageVersionSchema, parsed)) return undefined;
+      if (!isPackageVersion(parsed)) return undefined;
       version = parsed.version;
     } catch {
       return undefined;
@@ -1388,7 +1382,7 @@ async function findNativeTypeScriptLsp(root: string): Promise<NativeTypeScriptLs
     try {
       packageJsonText = await readFile(packageJsonPath, "utf8");
     } catch (error) {
-      if (!Value.Check(FsErrorSchema, error) || error.code !== "ENOENT") {
+      if (!isFsError(error) || error.code !== "ENOENT") {
         return undefined;
       }
       // A `node_modules/typescript/` directory that exists but has no
@@ -1411,7 +1405,7 @@ async function findNativeTypeScriptLsp(root: string): Promise<NativeTypeScriptLs
     let version: string;
     try {
       const parsed = JSON.parse(packageJsonText);
-      if (!Value.Check(PackageVersionSchema, parsed)) return undefined;
+      if (!isPackageVersion(parsed)) return undefined;
       version = parsed.version;
     } catch {
       return undefined;

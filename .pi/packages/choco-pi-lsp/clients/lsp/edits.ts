@@ -2,8 +2,19 @@ import fs from "node:fs/promises";
 import type { BigIntStats, Stats } from "node:fs";
 import path from "node:path";
 import { URL } from "node:url";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import {
+  arr,
+  bool,
+  int,
+  nul,
+  obj,
+  opt,
+  str,
+  union,
+  unknown,
+  compile,
+} from "@earendil-works/pi-schema";
+import { isBooleanValue } from "./schema-guards.ts";
 import {
   isUnderDir,
   normalizeEphemeralMapKey,
@@ -102,60 +113,70 @@ export interface ApplyWorkspaceEditOptions {
   observe?: boolean;
 }
 
-const JsonObjectSchema = Type.Object({}, { additionalProperties: true });
-const PositionSchema = Type.Object({
-  line: Type.Integer({ minimum: 0 }),
-  character: Type.Integer({ minimum: 0 }),
-});
-const TextDocumentEditSchema = Type.Object(
+const JsonObjectSchema = obj({}, { open: true });
+const isJsonObject = compile(JsonObjectSchema).check;
+const PositionSchema = obj(
   {
-    textDocument: Type.Object({
-      uri: Type.String(),
-      version: Type.Optional(Type.Union([Type.Integer({ minimum: 0 }), Type.Null()])),
-    }),
-    edits: Type.Array(Type.Unknown()),
+    line: int({ minimum: 0 }),
+    character: int({ minimum: 0 }),
   },
-  { additionalProperties: true },
+  { open: true },
 );
-const ResourceOptionsSchema = Type.Object(
+const TextDocumentEditSchema = obj(
   {
-    overwrite: Type.Optional(Type.Boolean()),
-    ignoreIfExists: Type.Optional(Type.Boolean()),
-    ignoreIfNotExists: Type.Optional(Type.Boolean()),
-    recursive: Type.Optional(Type.Boolean()),
+    textDocument: obj(
+      {
+        uri: str(),
+        version: opt(union([int({ minimum: 0 }), nul()])),
+      },
+      { open: true },
+    ),
+    edits: arr(unknown()),
   },
-  { additionalProperties: true },
+  { open: true },
 );
-const FsErrorSchema = Type.Object(
-  { code: Type.Optional(Type.String()) },
-  { additionalProperties: true },
-);
-const ResourceOperationSchema = Type.Object(
+const isTextDocumentEdit = compile(TextDocumentEditSchema).check;
+const ResourceOptionsSchema = obj(
   {
-    kind: Type.String(),
-    uri: Type.Optional(Type.String()),
-    oldUri: Type.Optional(Type.String()),
-    newUri: Type.Optional(Type.String()),
-    options: Type.Optional(JsonObjectSchema),
+    overwrite: opt(bool()),
+    ignoreIfExists: opt(bool()),
+    ignoreIfNotExists: opt(bool()),
+    recursive: opt(bool()),
   },
-  { additionalProperties: true },
+  { open: true },
 );
+const isResourceOptions = compile(ResourceOptionsSchema).check;
+const FsErrorSchema = obj({ code: opt(str()) }, { open: true });
+const isFsError = compile(FsErrorSchema).check;
+const ResourceOperationSchema = obj(
+  {
+    kind: str(),
+    uri: opt(str()),
+    oldUri: opt(str()),
+    newUri: opt(str()),
+    options: opt(JsonObjectSchema),
+  },
+  { open: true },
+);
+const isResourceOperation = compile(ResourceOperationSchema).check;
 
 function comparePosition(a: LSPPosition, b: LSPPosition): number {
   return a.line === b.line ? a.character - b.character : a.line - b.line;
 }
 
+const isWireRange = compile(
+  obj({ start: PositionSchema, end: PositionSchema }, { open: true }),
+).check;
+const isWireTextEdit = compile(obj({ range: unknown(), newText: str() }, { open: true })).check;
+const isNonNegativeInteger = compile(int({ minimum: 0 })).check;
+
 function isRange<T>(value: T): value is T & LSPRange {
-  if (!Value.Check(Type.Object({ start: PositionSchema, end: PositionSchema }), value))
-    return false;
+  if (!isWireRange(value)) return false;
   return comparePosition(value.start, value.end) <= 0;
 }
 
 function isTextEdit<T>(value: T): value is T & LSPTextEdit {
-  return (
-    Value.Check(Type.Object({ range: Type.Unknown(), newText: Type.String() }), value) &&
-    isRange(value.range)
-  );
+  return isWireTextEdit(value) && isRange(value.range);
 }
 
 function parseTextEdits<T>(value: T, context: string): LSPTextEdit[] {
@@ -167,7 +188,7 @@ function parseTextEdits<T>(value: T, context: string): LSPTextEdit[] {
 function parseVersion<T>(value: T, context: string): number | null | undefined {
   if (value === undefined) return undefined;
   if (value === null) return null;
-  if (!Value.Check(Type.Integer({ minimum: 0 }), value)) {
+  if (!isNonNegativeInteger(value)) {
     throw new Error(`${context}.version must be a nonnegative integer or null`);
   }
   return Number(value);
@@ -175,16 +196,16 @@ function parseVersion<T>(value: T, context: string): number | null | undefined {
 
 function parseResourceOptions<T>(value: T, kind: string): ResourceOptions | undefined {
   if (value === undefined) return undefined;
-  if (!Value.Check(JsonObjectSchema, value)) throw new Error(`${kind}.options must be an object`);
+  if (!isJsonObject(value)) throw new Error(`${kind}.options must be an object`);
   const allowed = new Set(
     kind === "delete" ? ["ignoreIfNotExists", "recursive"] : ["overwrite", "ignoreIfExists"],
   );
   for (const [key, option] of Object.entries(value)) {
-    if (!allowed.has(key) || !Value.Check(Type.Boolean(), option)) {
+    if (!allowed.has(key) || !isBooleanValue(option)) {
       throw new Error(`invalid ${kind}.options.${key}`);
     }
   }
-  if (!Value.Check(ResourceOptionsSchema, value)) {
+  if (!isResourceOptions(value)) {
     throw new Error(`${kind}.options must contain boolean values`);
   }
   if (value.overwrite === true && value.ignoreIfExists === true) {
@@ -200,7 +221,7 @@ function parseResourceOptions<T>(value: T, kind: string): ResourceOptions | unde
 }
 
 function parseTextDocumentEdit<T>(value: T, context: string): TextDocumentEdit | null {
-  if (!Value.Check(TextDocumentEditSchema, value)) return null;
+  if (!isTextDocumentEdit(value)) return null;
   const version = parseVersion(value.textDocument.version, `${context}.textDocument`);
   return {
     textDocument: { uri: value.textDocument.uri, version },
@@ -220,7 +241,7 @@ function parseWorkspaceEdit(edit: {
   for (const [index, change] of (edit.documentChanges ?? []).entries()) {
     const text = parseTextDocumentEdit(change, `documentChanges[${index}]`);
     if (text) continue;
-    if (!Value.Check(ResourceOperationSchema, change)) {
+    if (!isResourceOperation(change)) {
       throw new Error(`malformed documentChanges[${index}]`);
     }
     switch (change.kind) {
@@ -609,7 +630,7 @@ function textEditOriginKey(origin: TextEditOrigin): string {
 }
 
 function parseResource<T>(change: T): WorkspaceEditOp {
-  if (!Value.Check(ResourceOperationSchema, change)) {
+  if (!isResourceOperation(change)) {
     throw new Error("malformed workspace resource operation");
   }
   const kind = change.kind;
@@ -844,7 +865,7 @@ export function summarizeWorkspaceEdit(
   for (const [uri, edits] of flattenWorkspaceTextEdits(edit))
     lines.push(`Apply ${edits.length} edit(s) to ${relativeToCwd(uriToPath(uri), cwd)}`);
   for (const change of edit.documentChanges ?? []) {
-    if (!Value.Check(ResourceOperationSchema, change)) continue;
+    if (!isResourceOperation(change)) continue;
     if (change.kind === "create" && change.uri !== undefined) {
       lines.push(`Create ${relativeToCwd(uriToPath(change.uri), cwd)}`);
     } else if (
@@ -868,7 +889,7 @@ async function lstatOrMissing(filePath: string): Promise<Stats | undefined> {
   try {
     return await fs.lstat(filePath);
   } catch (err) {
-    if (Value.Check(FsErrorSchema, err) && err.code === "ENOENT") return undefined;
+    if (isFsError(err) && err.code === "ENOENT") return undefined;
     throw err;
   }
 }
@@ -898,7 +919,7 @@ async function bigintLstatOrMissing(filePath: string): Promise<BigIntStats | und
   try {
     return await fs.lstat(filePath, { bigint: true });
   } catch (err) {
-    if (Value.Check(FsErrorSchema, err) && err.code === "ENOENT") return undefined;
+    if (isFsError(err) && err.code === "ENOENT") return undefined;
     throw err;
   }
 }
@@ -941,7 +962,7 @@ async function resolveExistingAncestor(filePath: string): Promise<string> {
       const resolved = await fs.realpath(current);
       return path.join(resolved, ...tail.reverse());
     } catch (err) {
-      const code = Value.Check(FsErrorSchema, err) ? err.code : undefined;
+      const code = isFsError(err) ? err.code : undefined;
       if (code !== "ENOENT" && code !== "ENOTDIR") throw err;
       const parent = path.dirname(current);
       if (parent === current) throw err;

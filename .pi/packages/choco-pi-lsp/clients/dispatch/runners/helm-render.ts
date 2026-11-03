@@ -65,8 +65,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { bool, obj, opt, compile } from "@earendil-works/pi-schema";
 import { logLatency } from "../../latency-logger.ts";
 import { PathKeyedMap } from "../../path-keyed-map.ts";
 import { normalizeMapKey } from "../../path-utils.ts";
@@ -95,16 +94,20 @@ const RENDER_TIMEOUT_MS = 30_000;
 /** Rendered manifests we are willing to read back, so a chart cannot flood us. */
 const MAX_RENDERED_FILES = 400;
 
-const HelmConfigSchema = Type.Object(
+const HelmConfigSchema = obj(
   {
-    helm: Type.Optional(
-      Type.Object({
-        renderValidation: Type.Optional(Type.Object({ enabled: Type.Optional(Type.Boolean()) })),
-      }),
+    helm: opt(
+      obj(
+        {
+          renderValidation: opt(obj({ enabled: opt(bool()) }, { open: true })),
+        },
+        { open: true },
+      ),
     ),
   },
-  { additionalProperties: true },
+  { open: true },
 );
+const isHelmConfig = compile(HelmConfigSchema).check;
 
 interface RenderedSourceMapping {
   filePath: string;
@@ -153,7 +156,7 @@ function isWithin(root: string, candidate: string): boolean {
 export function isHelmRenderEnabled(workspaceRoot: string): boolean {
   try {
     const config = loadPiLensProjectConfig(workspaceRoot);
-    if (!Value.Check(HelmConfigSchema, config.raw)) return false;
+    if (!isHelmConfig(config.raw)) return false;
     return config.raw.helm?.renderValidation?.enabled === true;
   } catch {
     return false;

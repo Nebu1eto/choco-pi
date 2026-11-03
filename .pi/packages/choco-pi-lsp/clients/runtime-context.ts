@@ -1,5 +1,4 @@
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { isString } from "./runtime-guards.ts";
 import type { CacheManager } from "./cache-manager.ts";
 import type { TurnEndFindingsCache } from "./git-guard.ts";
 import type { RuntimeCoordinator } from "./runtime-coordinator.ts";
@@ -111,7 +110,7 @@ export function consumeTurnEndFindings(
   // context message consumed without deleting the record; clean/advisory-only
   // records retain the historical consume-and-clear behavior.
 
-  if (findings.data.hasBlockers === true && Check(Type.String(), findings.data.sessionId)) {
+  if (findings.data.hasBlockers === true && isString(findings.data.sessionId)) {
     cacheManager.writeCache("turn-end-findings", { ...findings.data, consumed: true }, cwd);
   } else {
     cacheManager.clearCache("turn-end-findings", cwd);
@@ -187,7 +186,7 @@ export function acknowledgeTurnEndFindings(cacheManager: CacheManager, cwd: stri
   const findings = cacheManager.readCache<Partial<TurnEndFindingsCache>>("turn-end-findings", cwd);
   if (!findings?.data?.content || findings.data.consumed === true) return;
 
-  if (findings.data.hasBlockers === true && Check(Type.String(), findings.data.sessionId)) {
+  if (findings.data.hasBlockers === true && isString(findings.data.sessionId)) {
     cacheManager.writeCache("turn-end-findings", { ...findings.data, consumed: true }, cwd);
   } else {
     cacheManager.clearCache("turn-end-findings", cwd);

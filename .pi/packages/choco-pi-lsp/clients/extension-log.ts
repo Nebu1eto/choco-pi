@@ -23,8 +23,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import * as path from "node:path";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { isObjectRecord, isString } from "./runtime-guards.ts";
 import { isTestMode } from "./env-utils.ts";
 import { getGlobalPiLensDir } from "./file-utils.ts";
 import { getMaxLogSizeMB } from "./log-cleanup.ts";
@@ -275,7 +274,7 @@ function inCaptureWindow<TArgs extends RuntimeValue[], TResult>(
  * the terminal.
  */
 function isCaptureSeam(prop: PropertyKey): boolean {
-  return prop === "on" || (Value.Check(Type.String(), prop) && prop.startsWith("register"));
+  return prop === "on" || (isString(prop) && prop.startsWith("register"));
 }
 
 /**
@@ -311,7 +310,7 @@ function wrapFunctionsInPlace<T extends RuntimeValue>(value: T): RuntimeValue {
     // SAFETY: Function has been checked at runtime; the adapter forwards every argument and result.
     return inCaptureWindow(value as RuntimeFunction);
   }
-  if (value === null || !Value.Check(Type.Object({}), value) || Array.isArray(value)) return value;
+  if (value === null || !isObjectRecord(value) || Array.isArray(value)) return value;
   for (const key of Object.keys(value)) {
     const propValue = readRuntimeProperty(value, key);
     if (propValue instanceof Function) {
@@ -425,7 +424,7 @@ export function withConsoleCaptureWindows<T extends object>(api: T): T {
 function formatConsoleArgs(args: RuntimeValue[]): string {
   return args
     .map((arg) => {
-      if (Value.Check(Type.String(), arg)) return arg;
+      if (isString(arg)) return arg;
       if (arg instanceof Error) return arg.stack ?? arg.message;
       try {
         return JSON.stringify(arg) ?? String(arg);

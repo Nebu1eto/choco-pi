@@ -12,8 +12,9 @@ import * as nodeFs from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL, URL } from "node:url";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { obj, compile } from "@earendil-works/pi-schema";
+import { isRuntimeString } from "../../tools/runtime-values.ts";
+import { isBooleanValue, isFiniteNumber } from "./schema-guards.ts";
 import { getProjectIgnoreMatcher, isExcludedDirName } from "../file-utils.ts";
 import { recordLsp } from "../widget-state.ts";
 import { applyAuxiliarySuppressions } from "../dispatch/auxiliary-lsp.ts";
@@ -145,27 +146,20 @@ export type LspInitializationValue =
   | LspInitializationOptions
   | LspInitializationValue[];
 
-const InitializationObjectSchema = Type.Object({}, { additionalProperties: true });
+const InitializationObjectSchema = obj({}, { open: true });
+const isInitializationObject = compile(InitializationObjectSchema).check;
 
 function isInitializationValue<T>(value: T): value is T & LspInitializationValue {
-  if (
-    value === null ||
-    Value.Check(Type.String(), value) ||
-    Value.Check(Type.Number(), value) ||
-    Value.Check(Type.Boolean(), value)
-  ) {
+  if (value === null || isRuntimeString(value) || isFiniteNumber(value) || isBooleanValue(value)) {
     return true;
   }
   if (Array.isArray(value)) return value.every(isInitializationValue);
-  if (!Value.Check(InitializationObjectSchema, value)) return false;
+  if (!isInitializationObject(value)) return false;
   return Object.values(value).every(isInitializationValue);
 }
 
 function isInitializationOptions<T>(value: T): value is T & LspInitializationOptions {
-  return (
-    Value.Check(InitializationObjectSchema, value) &&
-    Object.values(value).every(isInitializationValue)
-  );
+  return isInitializationObject(value) && Object.values(value).every(isInitializationValue);
 }
 
 /**

@@ -8,12 +8,12 @@
  * Rules: ./rules/ directory
  */
 
+import { finite } from "./runtime-guards.ts";
+import { arr, bool, compile, obj, opt, str, unknown } from "@earendil-works/pi-schema";
 import { createSubsystemLogger } from "./extension-log.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import { AstGrepRuleManager } from "./ast-grep-rule-manager.ts";
 import type { AstGrepDiagnostic, AstGrepMatch, RuleDescription } from "./ast-grep-types.ts";
 import { resolvePackagePath } from "./package-root.ts";
@@ -155,29 +155,31 @@ interface AstGrepValidation {
   warning?: string;
 }
 
-const AstGrepOutlineItemSchema = Type.Object({
-  role: Type.String(),
-  symbolType: Type.String(),
-  name: Type.String(),
-  range: Type.Object({
-    start: Type.Object({ line: Type.Number(), column: Type.Number() }),
-    end: Type.Object({ line: Type.Number(), column: Type.Number() }),
-  }),
-  signature: Type.String(),
-  astKind: Type.String(),
-  isImport: Type.Optional(Type.Boolean()),
-  isExported: Type.Optional(Type.Boolean()),
-  isPublic: Type.Optional(Type.Boolean()),
-  members: Type.Optional(Type.Array(Type.Unknown())),
-});
-const AstGrepOutlineFileSchema = Type.Object({
-  path: Type.String(),
-  language: Type.String(),
-  items: Type.Array(Type.Unknown()),
-});
+const AstGrepPositionSchema = obj({ line: finite(), column: finite() }, { open: true });
+const AstGrepOutlineItemSchema = obj(
+  {
+    role: str(),
+    symbolType: str(),
+    name: str(),
+    range: obj({ start: AstGrepPositionSchema, end: AstGrepPositionSchema }, { open: true }),
+    signature: str(),
+    astKind: str(),
+    isImport: opt(bool()),
+    isExported: opt(bool()),
+    isPublic: opt(bool()),
+    members: opt(arr(unknown())),
+  },
+  { open: true },
+);
+const AstGrepOutlineFileSchema = obj(
+  { path: str(), language: str(), items: arr(unknown()) },
+  { open: true },
+);
+const isAstGrepOutlineItemRecord = compile(AstGrepOutlineItemSchema).check;
+const isAstGrepOutlineFileRecord = compile(AstGrepOutlineFileSchema).check;
 
 function isAstGrepOutlineItem<T>(value: T): value is T & AstGrepOutlineItem {
-  if (!Value.Check(AstGrepOutlineItemSchema, value)) return false;
+  if (!isAstGrepOutlineItemRecord(value)) return false;
   return value.members === undefined || value.members.every(isAstGrepOutlineItem);
 }
 
@@ -185,8 +187,7 @@ function isAstGrepOutline<T>(value: T): value is T & AstGrepOutlineFile[] {
   return (
     Array.isArray(value) &&
     value.every(
-      (file) =>
-        Value.Check(AstGrepOutlineFileSchema, file) && file.items.every(isAstGrepOutlineItem),
+      (file) => isAstGrepOutlineFileRecord(file) && file.items.every(isAstGrepOutlineItem),
     )
   );
 }

@@ -23,8 +23,7 @@
  * can import the policy without pulling in the dispatch/installer graph.
  */
 
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { obj, opt, str, compile } from "@earendil-works/pi-schema";
 import { logLatency } from "../../../latency-logger.ts";
 
 export type AvailabilityOutcome = "success" | "missing" | "transient" | "non-installable";
@@ -178,7 +177,7 @@ export interface ProbeEvidence {
  * about — a preflight, a fallback candidate, an interpreter.
  */
 export function describeProbeEvidence(result: ProbeFailureResult, command?: string): ProbeEvidence {
-  const errno = Value.Check(ErrnoSchema, result.error) ? result.error.code : undefined;
+  const errno = isErrno(result.error) ? result.error.code : undefined;
   return {
     ...(command !== undefined && { command }),
     ...(result.status !== undefined && { status: result.status }),
@@ -412,10 +411,8 @@ export function resetInstallRetryLatches(): void {
   installRetryGeneration += 1;
 }
 
-const ErrnoSchema = Type.Object(
-  { code: Type.Optional(Type.String()) },
-  { additionalProperties: true },
-);
+const ErrnoSchema = obj({ code: opt(str()) }, { open: true });
+const isErrno = compile(ErrnoSchema).check;
 
 /** The subset of a spawn result the classification actually reads. */
 export interface ProbeFailureResult {
@@ -457,7 +454,7 @@ export function classifyProbeFailure(
   options: ClassifyOptions = {},
 ): ProbeFailureClassification {
   const evidence = describeProbeEvidence(result, options.command);
-  const errorCode = Value.Check(ErrnoSchema, result.error) ? result.error.code : undefined;
+  const errorCode = isErrno(result.error) ? result.error.code : undefined;
   if (result.spawnFailure?.kind === "tool-not-found") {
     return { outcome: "missing", cause: "not-found", evidence };
   }

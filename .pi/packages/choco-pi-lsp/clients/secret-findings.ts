@@ -20,8 +20,7 @@
  * Refs: #131 (Mode 3), #130
  */
 
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { isFiniteNumber } from "./runtime-guards.ts";
 import type { ActionableWarningRecord } from "./actionable-warnings.ts";
 import { normalizeFilePath } from "./path-utils.ts";
 
@@ -74,7 +73,7 @@ export function secretLocationKey(file: string, line: number): string {
 export function fromAstGrepWarnings(warnings: ActionableWarningRecord[]): SecretFinding[] {
   const out: SecretFinding[] = [];
   for (const w of warnings) {
-    if (!isSecretWarning(w) || !Check(Type.Number(), w.line)) continue;
+    if (!isSecretWarning(w) || !isFiniteNumber(w.line)) continue;
     out.push({
       file: w.filePath,
       line: w.line,

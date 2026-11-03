@@ -1,6 +1,6 @@
 import * as path from "node:path";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, obj, opt, str, compile } from "@earendil-works/pi-schema";
+import { finiteNum } from "../../lsp/schema-guards.ts";
 import { findLocalBinUpwards } from "../../package-manager.ts";
 import { safeSpawnAsync } from "../../safe-spawn.ts";
 import { getLinterPolicyForCwd } from "../../tool-policy.ts";
@@ -15,30 +15,34 @@ import { spawnFailedWithNoOutput } from "./utils/spawn-outcome.ts";
 
 const taplo = createAvailabilityChecker("taplo", ".exe");
 
-const TaploResultSchema = Type.Object(
+const TaploResultSchema = obj(
   {
-    errors: Type.Optional(
-      Type.Array(
-        Type.Object(
+    errors: opt(
+      arr(
+        obj(
           {
-            range: Type.Optional(
-              Type.Object({ start: Type.Object({ line: Type.Number(), col: Type.Number() }) }),
+            range: opt(
+              obj(
+                { start: obj({ line: finiteNum(), col: finiteNum() }, { open: true }) },
+                { open: true },
+              ),
             ),
-            message: Type.String(),
-            kind: Type.String(),
+            message: str(),
+            kind: str(),
           },
-          { additionalProperties: true },
+          { open: true },
         ),
       ),
     ),
   },
-  { additionalProperties: true },
+  { open: true },
 );
+const isTaploResult = compile(TaploResultSchema).check;
 
 function parseTaploOutput(raw: string, filePath: string): Diagnostic[] {
   try {
     const parsed = JSON.parse(raw);
-    if (!Value.Check(TaploResultSchema, parsed)) return [];
+    if (!isTaploResult(parsed)) return [];
     const errors = parsed.errors ?? [];
 
     return errors.map((err, idx) => ({

@@ -1,5 +1,4 @@
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { isFunction } from "./runtime-guards.ts";
 
 /**
  * Generalized debounced-persist coalescing scheduler (#348 phase 2), factored
@@ -72,7 +71,7 @@ export function createDebounceScheduler<T>(args: {
     const timer = setTimeout(() => flush(key), debounce);
     // Don't keep the event loop alive solely for a debounced write.
 
-    if (Check(Type.Function([], Type.Unknown()), timer.unref)) timer.unref();
+    if (isFunction(timer.unref)) timer.unref();
     timers.set(key, timer);
   }
 

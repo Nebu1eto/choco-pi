@@ -1,6 +1,6 @@
 import * as path from "node:path";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, obj, opt, str, union, compile } from "@earendil-works/pi-schema";
+import { finiteNum } from "../../lsp/schema-guards.ts";
 import { safeSpawnAsync } from "../../safe-spawn.ts";
 import { getAutofixCapability, getLinterPolicyForCwd } from "../../tool-policy.ts";
 import { PRIORITY } from "../priorities.ts";
@@ -24,24 +24,28 @@ interface KtlintResult {
   errors: KtlintError[];
 }
 
-const KtlintResultSchema = Type.Object(
+const KtlintResultSchema = obj(
   {
-    file: Type.Optional(Type.String()),
-    errors: Type.Array(
-      Type.Object({
-        line: Type.Number(),
-        col: Type.Number(),
-        detail: Type.String(),
-        ruleId: Type.String(),
-      }),
+    file: opt(str()),
+    errors: arr(
+      obj(
+        {
+          line: finiteNum(),
+          col: finiteNum(),
+          detail: str(),
+          ruleId: str(),
+        },
+        { open: true },
+      ),
     ),
   },
-  { additionalProperties: true },
+  { open: true },
 );
-const KtlintOutputSchema = Type.Union([KtlintResultSchema, Type.Array(KtlintResultSchema)]);
+const KtlintOutputSchema = union([KtlintResultSchema, arr(KtlintResultSchema)]);
+const isKtlintOutput = compile(KtlintOutputSchema).check;
 
 function normalizeKtlintResults<T>(parsed: T): KtlintResult[] | null {
-  if (!Value.Check(KtlintOutputSchema, parsed)) return null;
+  if (!isKtlintOutput(parsed)) return null;
   return Array.isArray(parsed) ? parsed : [parsed];
 }
 

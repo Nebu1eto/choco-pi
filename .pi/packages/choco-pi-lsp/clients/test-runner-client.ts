@@ -11,8 +11,7 @@
  * specific file being edited, not the entire suite.
  */
 
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { isFiniteNumber, isString } from "./runtime-guards.ts";
 import { createSubsystemLogger } from "./extension-log.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -388,7 +387,7 @@ export class TestRunnerClient {
 
     // Priority 5: Check if pytest is available globally (Python files only)
 
-    const isPythonSource = Check(Type.String(), sourceFilePath) && sourceFilePath.endsWith(".py");
+    const isPythonSource = isString(sourceFilePath) && sourceFilePath.endsWith(".py");
     if (!isPythonSource) return null;
 
     try {
@@ -1132,9 +1131,9 @@ export class TestRunnerClient {
     let assertionTotal = 0;
     for (const suite of suites || []) {
       if (
-        Check(Type.Number(), suite.startTime) &&
+        isFiniteNumber(suite.startTime) &&
         Number.isFinite(suite.startTime) &&
-        Check(Type.Number(), suite.endTime) &&
+        isFiniteNumber(suite.endTime) &&
         Number.isFinite(suite.endTime)
       ) {
         minStart = Math.min(minStart, suite.startTime);
@@ -1142,7 +1141,7 @@ export class TestRunnerClient {
       }
       for (const assertion of suite.assertionResults || []) {
         if (
-          Check(Type.Number(), assertion.duration) &&
+          isFiniteNumber(assertion.duration) &&
           Number.isFinite(assertion.duration) &&
           assertion.duration > 0
         ) {

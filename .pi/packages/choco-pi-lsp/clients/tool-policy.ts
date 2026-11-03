@@ -1,4 +1,4 @@
-import { type Static, Type } from "typebox";
+import { type LspDictionaryValue } from "./runtime-guards.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { TERRAGRUNT_FILENAMES } from "./file-kinds.ts";
@@ -7,9 +7,6 @@ import { resolvePackagePath } from "./package-root.ts";
 import { findNearestContaining, walkUpDirs } from "./path-utils.ts";
 import type { ProjectConventions } from "./project-conventions.ts";
 import { loadProjectSnapshotWithoutWordIndex } from "./project-snapshot.ts";
-
-const LspDictionaryValueSchema = Type.Unknown();
-type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
 
 type GetRubocopCommandResultContract = {
   cmd: string;

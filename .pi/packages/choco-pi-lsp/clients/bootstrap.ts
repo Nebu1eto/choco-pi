@@ -1,6 +1,5 @@
 import { logExtension } from "./extension-log.ts";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { isSymbol } from "./runtime-guards.ts";
 import type { AgentBehaviorClient } from "./agent-behavior-client.ts";
 import type { BiomeClient } from "./biome-client.ts";
 import type { ComplexityClient } from "./complexity-client.ts";
@@ -47,7 +46,7 @@ export function degradedClient<T extends object>(): T {
     get(_target, prop) {
       // Not thenable (so `await stub` / Promise.resolve(stub) won't treat it
       // as a promise), not iterable, no surprising coercion.
-      if (Value.Check(Type.Symbol(), prop) || prop === "then") return undefined;
+      if (isSymbol(prop) || prop === "then") return undefined;
       return () => undefined;
     },
   });

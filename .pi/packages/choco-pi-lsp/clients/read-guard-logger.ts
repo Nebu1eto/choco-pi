@@ -1,14 +1,14 @@
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import {
+  isFiniteNumber,
+  isObjectRecord,
+  isString,
+  type LspBoundaryValue,
+  type LspDictionaryValue,
+} from "./runtime-guards.ts";
 import * as path from "node:path";
 import { isTestMode } from "./env-utils.ts";
 import { getGlobalPiLensDir } from "./file-utils.ts";
 import { createNdjsonLogger } from "./ndjson-logger.ts";
-
-const LspBoundaryValueSchema = Type.Unknown();
-type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
-const LspDictionaryValueSchema = Type.Unknown();
-type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
 
 const READ_GUARD_LOG_DIR = getGlobalPiLensDir();
 const READ_GUARD_LOG_FILE = path.join(READ_GUARD_LOG_DIR, "read-guard.log");
@@ -75,7 +75,7 @@ export interface ReadGuardEditBatchSummary {
 let generatedCorrelationCounter = 0;
 
 export function sanitizeCorrelationId(value: LspBoundaryValue): string | undefined {
-  if (!Check(Type.String(), value) && !Check(Type.Number(), value)) return undefined;
+  if (!isString(value) && !isFiniteNumber(value)) return undefined;
   const sanitized = String(value)
     .trim()
     .replace(/[^a-zA-Z0-9._:-]/g, "_")
@@ -153,7 +153,7 @@ export function createReadGuardEditBatchSummary(args: {
   const rejectedIndexes = boundedEditIndexes(rejectedSource.map((entry) => entry.index));
   const appliedIndexes = boundedEditIndexes(appliedSource);
   const participantSource = (args.participantIds ?? []).filter(
-    (id): id is string => Check(Type.String(), id) && id.length > 0,
+    (id): id is string => isString(id) && id.length > 0,
   );
   const participantIds = [...new Set(participantSource)].slice(0, MAX_EDIT_BATCH_ITEMS);
   const commitStatus = args.commitStatus ?? "not_attempted";
@@ -253,7 +253,7 @@ function boundTelemetryValue(
   pathName: string,
   depth: number,
 ): BoundedTelemetry {
-  if (Check(Type.String(), value)) {
+  if (isString(value)) {
     return value.length > MAX_TELEMETRY_STRING
       ? {
           value: `${value.slice(0, MAX_TELEMETRY_STRING)}…`,
@@ -281,7 +281,7 @@ function boundTelemetryValue(
     };
   }
 
-  if (!value || !Check(Type.Object({}), value) || depth >= 4) {
+  if (!value || !isObjectRecord(value) || depth >= 4) {
     return { value, truncated: false, arrayTotals: {} };
   }
 
@@ -308,7 +308,7 @@ export function logReadGuardEvent(entry: ReadGuardLogEntry): void {
   const bounded = boundTelemetryValue(rawMetadata, "metadata", 0);
 
   let metadata: Record<string, LspDictionaryValue> | undefined;
-  if (bounded.value && Check(Type.Object({}), bounded.value)) {
+  if (bounded.value && isObjectRecord(bounded.value)) {
     // SAFETY: TypeBox established a non-null object before string-keyed telemetry access.
     const boundedMetadata = bounded.value as Record<string, LspDictionaryValue>;
     metadata = bounded.truncated

@@ -19,15 +19,11 @@
  * be migrated safely.
  */
 
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import { isBoolean, isObjectRecord, isString, type LspBoundaryValue } from "./runtime-guards.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { normalizeFilePath } from "./path-utils.ts";
 import { redactSecrets } from "./redact/secrets.ts";
-
-const LspBoundaryValueSchema = Type.Unknown();
-type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
 
 /** A queued write ("line") or an in-band truncate op (latency clear). */
 type QueueItem = { kind: "line"; line: string } | { kind: "truncate" };
@@ -60,7 +56,7 @@ export interface NdjsonLogger {
 }
 
 function resolve(v: string | (() => string)): string {
-  return Check(Type.Function([], Type.Unknown()), v) ? v() : v;
+  return v instanceof Function ? v() : v;
 }
 
 function runBestEffort(operation: () => void): void {
@@ -124,7 +120,7 @@ const globalStateHost = globalThis as typeof globalThis & {
 const existingGlobalState = globalStateHost[NDJSON_GLOBAL_STATE_KEY];
 
 function isSharedWriterState(value: LspBoundaryValue): value is NdjsonGlobalState {
-  if (!value || !Check(Type.Object({}), value)) return false;
+  if (!value || !isObjectRecord(value)) return false;
 
   // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
   const candidate = value as Partial<NdjsonGlobalState>;
@@ -140,19 +136,19 @@ function isSharedWriterState(value: LspBoundaryValue): value is NdjsonGlobalStat
     candidate.writers instanceof Map &&
     candidate.exitFlushers instanceof Set &&
     candidate.registeredLogFiles instanceof Set &&
-    Check(Type.Boolean(), candidate.exitHandlerRegistered)
+    isBoolean(candidate.exitHandlerRegistered)
   );
 }
 
 function isLegacyGlobalState(value: LspBoundaryValue): value is LegacyNdjsonGlobalState {
-  if (!value || !Check(Type.Object({}), value)) return false;
+  if (!value || !isObjectRecord(value)) return false;
 
   // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
   const candidate = value as Partial<LegacyNdjsonGlobalState>;
   return (
     candidate.exitFlushers instanceof Set &&
     candidate.registeredLogFiles instanceof Set &&
-    Check(Type.Boolean(), candidate.exitHandlerRegistered)
+    isBoolean(candidate.exitHandlerRegistered)
   );
 }
 
@@ -455,11 +451,9 @@ export function createNdjsonLogger(options: NdjsonLoggerOptions): NdjsonLogger {
   // resolved at enqueue time, but each resolved raw path is canonicalized only
   // once (normally once per date), keeping realpath work off the hot path.
   const canonicalPaths = new Map<string, string>();
-  const staticFile = Check(Type.String(), options.filePath)
-    ? normalizeLogPath(options.filePath)
-    : undefined;
+  const staticFile = isString(options.filePath) ? normalizeLogPath(options.filePath) : undefined;
   const staticBackupPath =
-    Check(Type.String(), options.backupPath) && options.maxBytes !== undefined
+    isString(options.backupPath) && options.maxBytes !== undefined
       ? normalizeLogPath(options.backupPath)
       : undefined;
 

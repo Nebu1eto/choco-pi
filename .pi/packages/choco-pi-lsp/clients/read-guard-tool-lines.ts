@@ -1,5 +1,10 @@
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import {
+  isFiniteNumber,
+  isObjectRecord,
+  isString,
+  type LspBoundaryValue,
+  type LspDictionaryValue,
+} from "./runtime-guards.ts";
 import type { EditToolInput } from "@earendil-works/pi-coding-agent";
 import * as nodeFs from "node:fs";
 import {
@@ -17,11 +22,6 @@ import {
   type ReadGuardEditBatchSummary,
 } from "./read-guard-logger.ts";
 import { isToolCallEventType } from "./tool-event.ts";
-
-const LspBoundaryValueSchema = Type.Unknown();
-type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
-const LspDictionaryValueSchema = Type.Unknown();
-type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
 
 export interface GuardLineResult {
   touchedLines: [number, number] | undefined;
@@ -172,7 +172,7 @@ function lineNumberAt(content: string, index: number): number {
 }
 
 function parseHashlineAnchor(anchor: LspBoundaryValue): number | undefined {
-  if (!Check(Type.String(), anchor)) return undefined;
+  if (!isString(anchor)) return undefined;
   const trimmed = anchor.trim();
   const separator = trimmed.indexOf(":");
   const lineText = separator === -1 ? trimmed : trimmed.slice(0, separator);
@@ -1076,7 +1076,7 @@ export function relocateEditRange(
 ): boolean {
   const delta = to[0] - from[0];
 
-  if (delta === 0 || !input || !Check(Type.Object({}), input)) return false;
+  if (delta === 0 || !input || !isObjectRecord(input)) return false;
 
   // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
   const editInput = input as {
@@ -1181,7 +1181,7 @@ export function getTouchedLinesForGuard(
           const start = edit.range?.start?.line;
           const end = edit.range?.end?.line ?? start;
 
-          if (!Check(Type.Number(), start) || !Check(Type.Number(), end)) {
+          if (!isFiniteNumber(start) || !isFiniteNumber(end)) {
             return null;
           }
 
@@ -1192,7 +1192,7 @@ export function getTouchedLinesForGuard(
       const unresolvedOldTextEdits = editInput.edits
         .map((edit, index) => ({ ...edit, originalIndex: index }))
 
-        .filter((edit) => !Check(Type.Number(), edit.range?.start?.line) && !!edit.oldText);
+        .filter((edit) => !isFiniteNumber(edit.range?.start?.line) && !!edit.oldText);
       if (rangedEdits.length === 0) {
         if (filePath) {
           return resolveOldTextEdits(editInput.edits, filePath, sessionId, correlationId);

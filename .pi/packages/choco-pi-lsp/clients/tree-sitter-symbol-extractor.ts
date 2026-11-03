@@ -3,8 +3,7 @@
  * Extracts definitions and references from source files
  */
 
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { isFiniteNumber } from "./runtime-guards.ts";
 import { logTreeSitterDiagnostic } from "./tree-sitter-logger.ts";
 import * as path from "node:path";
 import { loadWebTreeSitter } from "./deps/web-tree-sitter.ts";
@@ -1082,7 +1081,7 @@ export class TreeSitterSymbolExtractor {
     while (cursor >= 0 && isComment(siblings[cursor])) {
       const candidate = siblings[cursor];
       const gapRows =
-        boundaryRow !== undefined && Check(Type.Number(), candidate.endPosition?.row)
+        boundaryRow !== undefined && isFiniteNumber(candidate.endPosition?.row)
           ? boundaryRow - candidate.endPosition.row
           : 0;
       if (gapRows > 1) break; // separated by a blank line — not attached

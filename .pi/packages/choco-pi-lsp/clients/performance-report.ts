@@ -1,12 +1,13 @@
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import {
+  isFiniteNumber,
+  isObjectRecord,
+  isString,
+  type LspBoundaryValue,
+} from "./runtime-guards.ts";
 import * as fs from "node:fs";
 import * as readline from "node:readline";
 import { flushLatencyLog, getLatencyLogPath, type LatencyEntry } from "./latency-logger.ts";
 import { getMaxLogSizeMB } from "./log-cleanup.ts";
-
-const LspBoundaryValueSchema = Type.Unknown();
-type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
 
 export const DEFAULT_PERF_TOP_N = 5;
 export const MAX_PERF_TOP_N = 50;
@@ -104,22 +105,22 @@ function roundedMs(value: number): number {
 }
 
 function isEntryObject(value: LspBoundaryValue): value is Partial<LatencyEntry> {
-  return !!value && Check(Type.Object({}), value) && !Array.isArray(value);
+  return !!value && isObjectRecord(value) && !Array.isArray(value);
 }
 
 function isPhaseRecord(value: LspBoundaryValue): value is LatencyEntry {
   if (!isEntryObject(value)) return false;
   return (
     value.type === "phase" &&
-    Check(Type.String(), value.phase) &&
+    isString(value.phase) &&
     value.phase.trim().length > 0 &&
-    Check(Type.Number(), value.durationMs) &&
+    isFiniteNumber(value.durationMs) &&
     Number.isFinite(value.durationMs) &&
     value.durationMs >= 0 &&
-    (value.toolName === undefined || Check(Type.String(), value.toolName)) &&
-    (value.ts === undefined || Check(Type.String(), value.ts)) &&
-    (value.startedAt === undefined || Check(Type.String(), value.startedAt)) &&
-    (value.pid === undefined || (Check(Type.Number(), value.pid) && Number.isFinite(value.pid)))
+    (value.toolName === undefined || isString(value.toolName)) &&
+    (value.ts === undefined || isString(value.ts)) &&
+    (value.startedAt === undefined || isString(value.startedAt)) &&
+    (value.pid === undefined || (isFiniteNumber(value.pid) && Number.isFinite(value.pid)))
   );
 }
 
@@ -138,7 +139,7 @@ function isCurrentSessionSample(
   processId: number,
   sessionStartedAt: number,
 ): boolean {
-  if (entry.pid !== processId || !Check(Type.String(), entry.ts)) return false;
+  if (entry.pid !== processId || !isString(entry.ts)) return false;
   const finishedAt = Date.parse(entry.ts);
   if (!Number.isFinite(finishedAt) || finishedAt < sessionStartedAt) return false;
   if (entry.startedAt === undefined) return true;
@@ -183,7 +184,7 @@ export function summarizePhaseLatency(
     durationsByPhase.set(phase, durations);
     sampleCount += 1;
 
-    if (Check(Type.String(), entry.ts)) {
+    if (isString(entry.ts)) {
       const ms = Date.parse(entry.ts);
       if (Number.isFinite(ms)) {
         if (!oldestTimestamp || ms < oldestTimestamp.ms) {

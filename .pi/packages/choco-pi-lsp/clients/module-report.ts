@@ -32,8 +32,7 @@
  * can record a read that legitimately satisfies the read-guard for that symbol.
  */
 
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import { isFiniteNumber, type LspBoundaryValue } from "./runtime-guards.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { detectFileKind } from "./file-kinds.ts";
@@ -52,9 +51,6 @@ import type { ReviewGraph, ReviewGraphEdgeKind } from "./review-graph/types.ts";
 import type { Symbol as ExtractedSymbol } from "./symbol-types.ts";
 import { getSharedTreeSitterClient, resolveTreeSitterLanguage } from "./tree-sitter-shared.ts";
 import { type ImportRef, TreeSitterSymbolExtractor } from "./tree-sitter-symbol-extractor.ts";
-
-const LspBoundaryValueSchema = Type.Unknown();
-type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
 
 function assignOptionalProperties<T extends object, U extends object, C>(
   target: T,
@@ -632,9 +628,9 @@ function resolveUsedBy(
     // `references` edge carries the line on the edge metadata.
     const line =
       // SAFETY: The adjacent finite-number or TypeBox check establishes the numeric representation before this assertion.
-      (Check(Type.Number(), from?.metadata?.line) ? (from.metadata.line as number) : undefined) ??
+      (isFiniteNumber(from?.metadata?.line) ? (from.metadata.line as number) : undefined) ??
       // SAFETY: The adjacent finite-number or TypeBox check establishes the numeric representation before this assertion.
-      (Check(Type.Number(), edge.metadata?.line) ? (edge.metadata.line as number) : 0);
+      (isFiniteNumber(edge.metadata?.line) ? (edge.metadata.line as number) : 0);
     const key = `${file} ${symbol} ${edge.kind}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -789,7 +785,7 @@ function toEntry(
   const node = graph?.nodes.get(symbolNodeId);
   const metadata = node?.metadata ?? {};
 
-  const complexity = Check(Type.Number(), metadata.cyclomaticComplexity)
+  const complexity = isFiniteNumber(metadata.cyclomaticComplexity)
     ? metadata.cyclomaticComplexity
     : undefined;
   const fanout = graph
@@ -1027,7 +1023,7 @@ function blastReadArgs(graph: ReviewGraph, normalizedFile: string): BlastReadArg
   const fileNodeId = graph.fileNodes.get(normalizedFile);
   const lineCount = fileNodeId ? graph.nodes.get(fileNodeId)?.metadata?.lineCount : undefined;
   const limit =
-    Check(Type.Number(), lineCount) && lineCount > 0 ? lineCount : BLAST_RADIUS_DEFAULT_READ_LIMIT;
+    isFiniteNumber(lineCount) && lineCount > 0 ? lineCount : BLAST_RADIUS_DEFAULT_READ_LIMIT;
   // Machine field keeps the absolute (slash-normalized) path so the host's Read
   // resolves it unambiguously — same convention as ModuleSymbolEntry.read.
 

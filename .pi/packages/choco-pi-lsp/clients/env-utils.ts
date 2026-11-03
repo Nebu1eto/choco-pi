@@ -5,8 +5,7 @@
  * knobs to keep duplicated env-handling expressions in a single place.
  */
 
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { isFiniteNumber } from "./runtime-guards.ts";
 
 /**
  * True when choco-pi-lsp should suppress side-effecting log writes — e.g. inside
@@ -43,7 +42,7 @@ export function isTestMode(): boolean {
  * ```
  */
 export function toPositiveFinite<T>(value: T): number {
-  const num = Value.Check(Type.Number(), value) ? value : Number(value);
+  const num = isFiniteNumber(value) ? value : Number(value);
   return Number.isFinite(num) && num > 0 ? num : 0;
 }
 

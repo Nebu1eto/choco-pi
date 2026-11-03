@@ -9,11 +9,11 @@
  * All paths are relative to project root (process.cwd()).
  */
 
+import { finite, hasErrorCode } from "./runtime-guards.ts";
+import { arr, bool, compile, map, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
 import { createSubsystemLogger } from "./extension-log.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import { getProjectDataDir } from "./file-utils.ts";
 import { writeFileAtomic } from "./atomic-write.ts";
 import { readJsonCache } from "./json-cache-read.ts";
@@ -27,34 +27,41 @@ export interface CacheMeta {
   fileCount?: number;
 }
 
-const CacheMetaSchema = Type.Object({
-  timestamp: Type.String(),
-  scanDurationMs: Type.Optional(Type.Number()),
-  fileCount: Type.Optional(Type.Number()),
-});
-const ErrorCodeSchema = Type.Object({ code: Type.Optional(Type.String()) });
-const TurnStateSchema = Type.Object({
-  files: Type.Record(
-    Type.String(),
-    Type.Object({
-      modifiedRanges: Type.Array(Type.Object({ start: Type.Number(), end: Type.Number() })),
-      importsChanged: Type.Boolean(),
-      lastEdit: Type.String(),
-    }),
-  ),
-  turnCycles: Type.Number(),
-  maxCycles: Type.Number(),
-  lastUpdated: Type.String(),
-  sessionId: Type.Optional(Type.String()),
-  owner: Type.Optional(
-    Type.Object({
-      kind: Type.Union([Type.Literal("pi"), Type.Literal("mcp")]),
-      id: Type.String(),
-      pid: Type.Number(),
-      lastSeen: Type.String(),
-    }),
-  ),
-});
+const CacheMetaSchema = obj(
+  {
+    timestamp: str(),
+    scanDurationMs: opt(finite()),
+    fileCount: opt(finite()),
+  },
+  { open: true },
+);
+const TurnStateSchema = obj(
+  {
+    files: map(
+      obj(
+        {
+          modifiedRanges: arr(obj({ start: finite(), end: finite() }, { open: true })),
+          importsChanged: bool(),
+          lastEdit: str(),
+        },
+        { open: true },
+      ),
+    ),
+    turnCycles: finite(),
+    maxCycles: finite(),
+    lastUpdated: str(),
+    sessionId: opt(str()),
+    owner: opt(
+      obj(
+        { kind: oneOf(["pi", "mcp"]), id: str(), pid: finite(), lastSeen: str() },
+        { open: true },
+      ),
+    ),
+  },
+  { open: true },
+);
+const isCacheMeta = compile(CacheMetaSchema).check;
+const isTurnState = compile(TurnStateSchema).check;
 
 export interface CacheEntry<T> {
   data: T;
@@ -175,7 +182,7 @@ export class CacheManager {
 
       const meta = readJsonCache<CacheMeta>(
         metaPath,
-        (parsed) => (Value.Check(CacheMetaSchema, parsed) ? parsed : undefined),
+        (parsed) => (isCacheMeta(parsed) ? parsed : undefined),
         onReadError,
       );
       if (meta === undefined) return null;
@@ -233,13 +240,13 @@ export class CacheManager {
       try {
         fs.statSync(cachePathname);
       } catch (err) {
-        if (Value.Check(ErrorCodeSchema, err) && err.code === "ENOENT") return "missing";
+        if (hasErrorCode(err) && err.code === "ENOENT") return "missing";
         return "unreadable";
       }
     }
     try {
       const meta = readJsonCache<CacheMeta>(metaPath, (parsed) =>
-        Value.Check(CacheMetaSchema, parsed) ? parsed : undefined,
+        isCacheMeta(parsed) ? parsed : undefined,
       );
       if (!meta) return "malformed";
       const timestamp = new Date(meta.timestamp).getTime();
@@ -262,7 +269,7 @@ export class CacheManager {
 
     try {
       const meta = readJsonCache<CacheMeta>(metaPath, (parsed) =>
-        Value.Check(CacheMetaSchema, parsed) ? parsed : undefined,
+        isCacheMeta(parsed) ? parsed : undefined,
       );
       if (meta === undefined) return false;
       const age = Date.now() - new Date(meta.timestamp).getTime();
@@ -283,7 +290,7 @@ export class CacheManager {
         fs.unlinkSync(p);
       } catch (err) {
         // ENOENT: file doesn't exist, other errors logged
-        if (!Value.Check(ErrorCodeSchema, err) || err.code !== "ENOENT") {
+        if (!hasErrorCode(err) || err.code !== "ENOENT") {
           this.log(`Failed to delete ${p}: ${err}`);
         }
       }
@@ -306,7 +313,7 @@ export class CacheManager {
     }
 
     const state = readJsonCache<TurnState>(statePath, (parsed) =>
-      Value.Check(TurnStateSchema, parsed) ? parsed : undefined,
+      isTurnState(parsed) ? parsed : undefined,
     );
     return (
       state ?? {

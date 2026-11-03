@@ -1,5 +1,3 @@
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
 /**
  * Tree-sitter Query Loader
  *
@@ -7,37 +5,28 @@ import { Check } from "typebox/value";
  * and provides them to the TreeSitterClient.
  */
 
+import { type LspBoundaryValue, type LspDictionaryValue } from "./runtime-guards.ts";
+import { compile, oneOf, type Static } from "@earendil-works/pi-schema";
 import { logTreeSitterDiagnostic } from "./tree-sitter-logger.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { resolvePackagePath } from "./package-root.ts";
 
-const LspBoundaryValueSchema = Type.Unknown();
-type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
-const LspDictionaryValueSchema = Type.Unknown();
-type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
-
-const InlineTierSchema = Type.Union([
-  Type.Literal("blocking"),
-  Type.Literal("warning"),
-  Type.Literal("review"),
-]);
-const ConfidenceSchema = Type.Union([
-  Type.Literal("low"),
-  Type.Literal("medium"),
-  Type.Literal("high"),
-]);
+const InlineTierSchema = oneOf(["blocking", "warning", "review"]);
+const ConfidenceSchema = oneOf(["low", "medium", "high"]);
+const isInlineTier = compile(InlineTierSchema).check;
+const isConfidence = compile(ConfidenceSchema).check;
 
 function parseInlineTier(value: LspBoundaryValue): Static<typeof InlineTierSchema> | undefined {
   if (!value) return undefined;
   const candidate = String(value);
-  return Check(InlineTierSchema, candidate) ? candidate : undefined;
+  return isInlineTier(candidate) ? candidate : undefined;
 }
 
 function parseConfidence(value: LspBoundaryValue): Static<typeof ConfidenceSchema> | undefined {
   if (!value) return undefined;
   const candidate = String(value);
-  return Check(ConfidenceSchema, candidate) ? candidate : undefined;
+  return isConfidence(candidate) ? candidate : undefined;
 }
 
 interface ParseYamlResultContract extends Record<string, string | string[] | boolean> {}

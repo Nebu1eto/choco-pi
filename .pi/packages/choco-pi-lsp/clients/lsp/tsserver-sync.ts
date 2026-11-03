@@ -33,8 +33,8 @@
  * fall back to existing unconfirmed/timed-out behavior".
  */
 
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { bool, obj, opt, str, unknown, compile } from "@earendil-works/pi-schema";
+import { finiteNum } from "./schema-guards.ts";
 import type { LSPDiagnostic } from "./client.ts";
 import { logLatency } from "../latency-logger.ts";
 import { normalizeMapKey } from "../path-utils.ts";
@@ -78,31 +78,34 @@ export interface TsserverSyncCapableService {
 // Constants
 // ---------------------------------------------------------------------------
 
-const ProjectInfoSchema = Type.Object(
+const ProjectInfoSchema = obj(
   {
-    configFileName: Type.Optional(Type.String()),
-    languageServiceDisabled: Type.Optional(Type.Boolean()),
+    configFileName: opt(str()),
+    languageServiceDisabled: opt(bool()),
   },
-  { additionalProperties: true },
+  { open: true },
 );
-const TsserverResponseSchema = Type.Object(
+const isProjectInfo = compile(ProjectInfoSchema).check;
+const TsserverResponseSchema = obj(
   {
-    success: Type.Optional(Type.Boolean()),
-    body: Type.Optional(Type.Unknown()),
+    success: opt(bool()),
+    body: opt(unknown()),
   },
-  { additionalProperties: true },
+  { open: true },
 );
-const LocationSchema = Type.Object({ line: Type.Number(), offset: Type.Number() });
-const TsserverRawDiagnosticSchema = Type.Object(
+const isTsserverResponse = compile(TsserverResponseSchema).check;
+const LocationSchema = obj({ line: finiteNum(), offset: finiteNum() }, { open: true });
+const TsserverRawDiagnosticSchema = obj(
   {
-    message: Type.String(),
-    category: Type.String(),
-    code: Type.Optional(Type.Number()),
-    startLocation: Type.Optional(LocationSchema),
-    endLocation: Type.Optional(LocationSchema),
+    message: str(),
+    category: str(),
+    code: opt(finiteNum()),
+    startLocation: opt(LocationSchema),
+    endLocation: opt(LocationSchema),
   },
-  { additionalProperties: true },
+  { open: true },
 );
+const isTsserverRawDiagnostic = compile(TsserverRawDiagnosticSchema).check;
 
 interface IdentityLatencyMetadata {
   [key: string]: string | number | boolean | undefined;
@@ -174,7 +177,7 @@ const INFERRED_PROJECT_SENTINEL = /^(?:[A-Za-z]:)?[/\\]dev[/\\]null[/\\]inferred
  * configFileName test would be a parallel source of truth for the same verdict.
  */
 export function classifyProjectInfo<T>(body: T): TsserverProjectIdentity {
-  if (!Value.Check(ProjectInfoSchema, body)) {
+  if (!isProjectInfo(body)) {
     return { projectKind: "unassociated", association: "unassociated" };
   }
   const configFile = body.configFileName || undefined;
@@ -252,7 +255,7 @@ export async function probeTsserverProjectIdentity(
       return;
     }
     const response = outcome.result;
-    if (!Value.Check(TsserverResponseSchema, response)) {
+    if (!isTsserverResponse(response)) {
       logOutcome("no-response");
       return;
     }
@@ -323,7 +326,7 @@ export async function fetchTsserverProjectIdentity(
     ]);
     if (!outcome.executed) return undefined;
     const response = outcome.result;
-    if (!Value.Check(TsserverResponseSchema, response) || response.success !== true) {
+    if (!isTsserverResponse(response) || response.success !== true) {
       return undefined;
     }
     return classifyProjectInfo(response.body);
@@ -337,7 +340,7 @@ export async function fetchTsserverProjectIdentity(
 // ---------------------------------------------------------------------------
 
 export function isTsserverSyncRawDiagnostic<T>(value: T): value is T & TsserverSyncRawDiagnostic {
-  return Value.Check(TsserverRawDiagnosticSchema, value);
+  return isTsserverRawDiagnostic(value);
 }
 
 export function tsserverSeverityFromCategory(category: string): 1 | 2 | 3 | 4 {
@@ -394,11 +397,7 @@ export async function runTsserverSyncCommand(
   ]);
   if (!outcome.executed) return undefined;
   const result = outcome.result;
-  if (
-    !Value.Check(TsserverResponseSchema, result) ||
-    result.success !== true ||
-    !Array.isArray(result.body)
-  ) {
+  if (!isTsserverResponse(result) || result.success !== true || !Array.isArray(result.body)) {
     return undefined;
   }
   return result.body.filter(isTsserverSyncRawDiagnostic);

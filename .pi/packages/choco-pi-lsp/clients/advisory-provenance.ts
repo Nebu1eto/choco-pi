@@ -1,8 +1,8 @@
+import { arr, bool, compile, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { finite, hasErrorCode, isFiniteNumber } from "./runtime-guards.ts";
 import type { RuntimeCoordinator } from "./runtime-coordinator.ts";
 import { logLatency } from "./latency-logger.ts";
 import { normalizeMapKey, toProjectRelativePath } from "./path-utils.ts";
@@ -11,27 +11,36 @@ import { MTIME_DRIFT_TOLERANCE_MS } from "./blocker-freshness.ts";
 
 export type AdvisoryFileRole = "source" | "test" | "affected";
 
-const ErrorCodeSchema = Type.Object({ code: Type.Optional(Type.String()) });
-const AdvisoryProvenanceSchema = Type.Object({
-  revision: Type.Object({
-    sessionId: Type.String(),
-    projectSeq: Type.Number(),
-    turnIndex: Type.Number(),
-    generation: Type.Number(),
-    capturedAt: Type.Number(),
-  }),
-  files: Type.Array(
-    Type.Object({
-      path: Type.String(),
-      role: Type.Union([Type.Literal("source"), Type.Literal("test"), Type.Literal("affected")]),
-      mtimeMs: Type.Number(),
-      size: Type.Number(),
-      sha256: Type.String({ pattern: "^(?:[a-f0-9]{64}|missing|unreadable:.*)$" }),
-    }),
-    { minItems: 1 },
-  ),
-  truncated: Type.Optional(Type.Boolean()),
-});
+const AdvisoryProvenanceSchema = obj(
+  {
+    revision: obj(
+      {
+        sessionId: str(),
+        projectSeq: finite(),
+        turnIndex: finite(),
+        generation: finite(),
+        capturedAt: finite(),
+      },
+      { open: true },
+    ),
+    files: arr(
+      obj(
+        {
+          path: str(),
+          role: oneOf(["source", "test", "affected"]),
+          mtimeMs: finite(),
+          size: finite(),
+          sha256: str({ pattern: "^(?:[a-f0-9]{64}|missing|unreadable:.*)$" }),
+        },
+        { open: true },
+      ),
+      { minItems: 1 },
+    ),
+    truncated: opt(bool()),
+  },
+  { open: true },
+);
+const isAdvisoryProvenanceRecord = compile(AdvisoryProvenanceSchema).check;
 
 export interface AdvisoryFileProvenance {
   path: string;
@@ -71,7 +80,7 @@ export function advisoryFileHash(filePath: string): string {
   try {
     return createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
   } catch (error) {
-    const code = Value.Check(ErrorCodeSchema, error) ? (error.code ?? "unknown") : "unknown";
+    const code = hasErrorCode(error) ? (error.code ?? "unknown") : "unknown";
     return code === "ENOENT" ? "missing" : `unreadable:${code}`;
   }
 }
@@ -92,7 +101,7 @@ function snapshotOne(
       sha256: advisoryFileHash(resolved),
     };
   } catch (error) {
-    const code = Value.Check(ErrorCodeSchema, error) ? (error.code ?? "unknown") : "unknown";
+    const code = hasErrorCode(error) ? (error.code ?? "unknown") : "unknown";
     return {
       path: resolved,
       role,
@@ -134,7 +143,7 @@ export function snapshotAdvisoryProvenance(args: {
 }
 
 function parseAdvisoryProvenance<T>(value: T): AdvisoryProvenance | undefined {
-  return Value.Check(AdvisoryProvenanceSchema, value) ? value : undefined;
+  return isAdvisoryProvenanceRecord(value) ? value : undefined;
 }
 
 export function validateAdvisoryProvenance(
@@ -167,7 +176,7 @@ export function validateAdvisoryProvenance(
     try {
       stat = fs.statSync(resolved);
     } catch (error) {
-      const code = Value.Check(ErrorCodeSchema, error) ? (error.code ?? "unknown") : "unknown";
+      const code = hasErrorCode(error) ? (error.code ?? "unknown") : "unknown";
       if (code === "ENOENT") {
         if (captured.sha256 !== "missing") {
           deletedFiles += 1;
@@ -342,7 +351,7 @@ export function findingPathFreshness(
     }
     return "live";
   } catch (error) {
-    const code = Value.Check(ErrorCodeSchema, error) ? (error.code ?? "unknown") : "unknown";
+    const code = hasErrorCode(error) ? (error.code ?? "unknown") : "unknown";
     // ENOTDIR: an ancestor component is no longer a directory — the cited
     // path cannot exist either, same as ENOENT.
     return code === "ENOENT" || code === "ENOTDIR" ? "missing" : "unknown";
@@ -364,7 +373,7 @@ export function parseScannedAtMs(scannedAt: string | number | undefined): number
   if (scannedAt === undefined || scannedAt === null || scannedAt === "") {
     return undefined;
   }
-  const ms = Value.Check(Type.Number(), scannedAt) ? scannedAt : Date.parse(scannedAt);
+  const ms = isFiniteNumber(scannedAt) ? scannedAt : Date.parse(scannedAt);
   return Number.isFinite(ms) ? ms : undefined;
 }
 

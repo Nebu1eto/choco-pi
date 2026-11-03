@@ -14,8 +14,7 @@
  * - To: await safeSpawnAsync(cmd, args, opts)
  */
 
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import { isString, type LspBoundaryValue } from "./runtime-guards.ts";
 import { type ChildProcess, type SpawnOptions, spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -24,9 +23,6 @@ import { recordDegradation } from "./degradation-ledger.ts";
 import { logExtension } from "./extension-log.ts";
 import { isFullyQualifiedWin32 } from "./path-utils.ts";
 import { startSpawnUsageSampler } from "./resource-sampler.ts";
-
-const LspBoundaryValueSchema = Type.Unknown();
-type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
 
 function assignOptionalProperties<T extends object, U extends object, C>(
   target: T,
@@ -1089,7 +1085,7 @@ export async function safeSpawnAsync(
         ? Math.floor(options.maxOutputBytes)
         : undefined;
     const appendOutput = (current: string, chunk: string | Buffer): string => {
-      const text = Check(Type.String(), chunk) ? chunk : chunk.toString();
+      const text = isString(chunk) ? chunk : chunk.toString();
       if (maxOutputBytes === undefined) return current + text;
       const used = Buffer.byteLength(stdout) + Buffer.byteLength(stderr);
       const remaining = maxOutputBytes - used;

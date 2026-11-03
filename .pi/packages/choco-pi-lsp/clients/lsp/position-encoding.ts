@@ -14,8 +14,7 @@
  * line's text. UTF-16 is the identity (and the hot path — no work, no I/O).
  */
 
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { obj, opt, str, compile } from "@earendil-works/pi-schema";
 
 export type PositionEncoding = "utf-8" | "utf-16" | "utf-32";
 
@@ -28,13 +27,11 @@ export const ADVERTISED_POSITION_ENCODINGS: readonly PositionEncoding[] = ["utf-
  * UTF-16 when the server doesn't advertise one (pre-3.17 behaviour). An
  * unrecognised value also falls back to UTF-16 — safer than guessing.
  */
-const PositionEncodingCapabilitiesSchema = Type.Object(
-  { positionEncoding: Type.Optional(Type.String()) },
-  { additionalProperties: true },
-);
+const PositionEncodingCapabilitiesSchema = obj({ positionEncoding: opt(str()) }, { open: true });
+const isPositionEncodingCapabilities = compile(PositionEncodingCapabilitiesSchema).check;
 
 export function negotiatePositionEncoding<T>(serverCapabilities: T): PositionEncoding {
-  if (!Value.Check(PositionEncodingCapabilitiesSchema, serverCapabilities)) return "utf-16";
+  if (!isPositionEncodingCapabilities(serverCapabilities)) return "utf-16";
   const raw = serverCapabilities.positionEncoding;
   if (raw === "utf-8" || raw === "utf-16" || raw === "utf-32") return raw;
   return "utf-16";

@@ -1,6 +1,6 @@
+import { compile, obj, opt, type Static, str } from "@earendil-works/pi-schema";
 import * as path from "node:path";
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import { isString } from "./runtime-guards.ts";
 
 type HostBoundaryValue = {} | null | undefined;
 interface HostObject {
@@ -18,11 +18,9 @@ interface HostObject {
   changedFiles?: HostBoundaryValue;
 }
 
-const ContentItemSchema = Type.Object({
-  type: Type.String(),
-  text: Type.Optional(Type.String()),
-});
+const ContentItemSchema = obj({ type: str(), text: opt(str()) }, { open: true });
 type ContentItem = Static<typeof ContentItemSchema>;
+const isContentItem = compile(ContentItemSchema).check;
 
 interface CodeModeDetails {
   codeMode: true;
@@ -57,7 +55,7 @@ function parseCodeModeDetails(value: HostBoundaryValue): CodeModeDetails | undef
 }
 
 function parseCompletedTrace(value: HostBoundaryValue): CompletedTrace | undefined {
-  if (!isHostObject(value) || value.status !== "done" || !Value.Check(Type.String(), value.name)) {
+  if (!isHostObject(value) || value.status !== "done" || !isString(value.name)) {
     return undefined;
   }
   if (!isHostObject(value.result) || !Array.isArray(value.result.content)) return undefined;
@@ -101,14 +99,12 @@ export function codeModeMutationToolResults(
   for (const value of details.traces) {
     const trace = parseCompletedTrace(value);
     if (!trace) continue;
-    const content = trace.result.content.filter((item): item is ContentItem =>
-      Value.Check(ContentItemSchema, item),
-    );
+    const content = trace.result.content.filter((item): item is ContentItem => isContentItem(item));
 
     if (trace.name === "edit" || trace.name === "write") {
       if (!isHostObject(trace.input)) continue;
       const inputPath = trace.input.path;
-      if (!Value.Check(Type.String(), inputPath)) continue;
+      if (!isString(inputPath)) continue;
       events.push({
         toolName: trace.name,
         input: { ...trace.input, path: absolutePath(inputPath, cwd) },
@@ -128,13 +124,11 @@ export function codeModeMutationToolResults(
     const changedFiles = patchResult.changedFiles;
     const created = new Set(
       Array.isArray(createdFiles)
-        ? createdFiles.filter((filePath): filePath is string =>
-            Value.Check(Type.String(), filePath),
-          )
+        ? createdFiles.filter((filePath): filePath is string => isString(filePath))
         : [],
     );
     const changed = Array.isArray(changedFiles)
-      ? changedFiles.filter((filePath): filePath is string => Value.Check(Type.String(), filePath))
+      ? changedFiles.filter((filePath): filePath is string => isString(filePath))
       : [];
     for (const filePath of new Set([...changed, ...created])) {
       events.push({

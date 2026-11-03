@@ -1,6 +1,6 @@
 import * as path from "node:path";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, lit, obj, str, union, compile } from "@earendil-works/pi-schema";
+import { finiteNum } from "../../lsp/schema-guards.ts";
 import { safeSpawnAsync } from "../../safe-spawn.ts";
 import { getLinterPolicyForCwd } from "../../tool-policy.ts";
 import { PRIORITY } from "../priorities.ts";
@@ -13,29 +13,25 @@ import { spawnFailedWithNoOutput } from "./utils/spawn-outcome.ts";
 
 const hadolint = createAvailabilityChecker("hadolint", ".exe");
 
-const HadolintOutputSchema = Type.Array(
-  Type.Object(
+const HadolintOutputSchema = arr(
+  obj(
     {
-      line: Type.Number(),
-      code: Type.String(),
-      message: Type.String(),
-      column: Type.Number(),
-      file: Type.String(),
-      level: Type.Union([
-        Type.Literal("error"),
-        Type.Literal("warning"),
-        Type.Literal("info"),
-        Type.Literal("style"),
-      ]),
+      line: finiteNum(),
+      code: str(),
+      message: str(),
+      column: finiteNum(),
+      file: str(),
+      level: union([lit("error"), lit("warning"), lit("info"), lit("style")]),
     },
-    { additionalProperties: true },
+    { open: true },
   ),
 );
+const isHadolintOutput = compile(HadolintOutputSchema).check;
 
 function parseHadolintOutput(raw: string, filePath: string): Diagnostic[] {
   try {
     const parsed = JSON.parse(raw);
-    if (!Value.Check(HadolintOutputSchema, parsed)) return [];
+    if (!isHadolintOutput(parsed)) return [];
 
     return parsed.map((item) => {
       const severity = item.level === "error" ? "error" : "warning";

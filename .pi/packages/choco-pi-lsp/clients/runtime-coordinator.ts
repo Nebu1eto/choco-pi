@@ -1,5 +1,4 @@
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import { isString, type LspBoundaryValue } from "./runtime-guards.ts";
 import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -18,9 +17,6 @@ import type { RuleScanResult } from "./rules-scanner.ts";
 import { RUNTIME_CONFIG } from "./runtime-config.ts";
 import { TurnSummaryCollector } from "./turn-summary.ts";
 import { deriveProviderFromModelId } from "./model-provider.ts";
-
-const LspBoundaryValueSchema = Type.Unknown();
-type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
 
 type RecordMutationToolReceiptResultContract = { autofixMode: "immediate" | "deferred" };
 type BumpFileSeqResultContract = { projectSeq: number; fileSeq: number };
@@ -1347,9 +1343,9 @@ export function readHostModelIdentity(ctx: LspBoundaryValue): ReadHostModelIdent
     const model = (ctx as { model?: { id?: unknown; provider?: unknown } } | null)?.model;
 
     return {
-      model: Check(Type.String(), model?.id) ? model.id : undefined,
+      model: isString(model?.id) ? model.id : undefined,
 
-      provider: Check(Type.String(), model?.provider) ? model.provider : undefined,
+      provider: isString(model?.provider) ? model.provider : undefined,
     };
   } catch {
     return {};

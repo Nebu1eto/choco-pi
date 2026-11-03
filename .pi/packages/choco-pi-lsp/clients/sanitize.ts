@@ -1,5 +1,4 @@
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { isString } from "./runtime-guards.ts";
 
 /**
  * Tool Output Sanitization for choco-pi-lsp
@@ -98,7 +97,7 @@ export function sanitizeLine(line: string): string {
  * Returns cleaned lines, filtered to relevant content.
  */
 export function sanitizeOutput(output: string): string {
-  if (!output || !Check(Type.String(), output)) {
+  if (!output || !isString(output)) {
     return "";
   }
 
@@ -117,7 +116,7 @@ export function sanitizeOutput(output: string): string {
  * Returns the first line that contains error indicators, or the first non-empty line.
  */
 export function extractErrorMessage(output: string): string | undefined {
-  if (!output || !Check(Type.String(), output)) {
+  if (!output || !isString(output)) {
     return undefined;
   }
 
@@ -322,7 +321,7 @@ export function sanitizeToolOutput(
   output: string,
   maxSummaryLength: number = 140,
 ): SanitizedResult {
-  if (!output || !Check(Type.String(), output)) {
+  if (!output || !isString(output)) {
     return { summary: undefined, details: undefined, truncated: false };
   }
 

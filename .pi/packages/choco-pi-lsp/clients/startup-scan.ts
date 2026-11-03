@@ -7,8 +7,7 @@
  * Credit: alexx-ftw (PR #1)
  */
 
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { isFiniteNumber } from "./runtime-guards.ts";
 import * as os from "node:os";
 import * as path from "node:path";
 import { BoundedLruCache } from "./bounded-cache.ts";
@@ -158,7 +157,7 @@ export function isStartupScanVerdictFresh(
   if (verdict.reason !== "too-many-source-files" && verdict.reason !== "too-many-entries")
     return true;
 
-  if (!Check(Type.Number(), verdict.computedAt)) return false;
+  if (!isFiniteNumber(verdict.computedAt)) return false;
   return now - verdict.computedAt < getStartupScanVerdictTtlMs();
 }
 

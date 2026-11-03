@@ -1,5 +1,4 @@
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import { isString, type LspBoundaryValue, type LspDictionaryValue } from "./runtime-guards.ts";
 import * as nodeCrypto from "node:crypto";
 import * as nodeFs from "node:fs";
 import * as path from "node:path";
@@ -46,11 +45,6 @@ import { syncGitGuardRecord } from "./git-guard.ts";
 import { scheduleWordIndexPersist } from "./word-index.ts";
 import { RUNTIME_CONFIG } from "./runtime-config.ts";
 
-const LspBoundaryValueSchema = Type.Unknown();
-type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
-const LspDictionaryValueSchema = Type.Unknown();
-type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
-
 function shellCommandFromInput(input: LspBoundaryValue): string | undefined {
   if (
     input === null ||
@@ -62,7 +56,7 @@ function shellCommandFromInput(input: LspBoundaryValue): string | undefined {
   }
   // SAFETY: The structural check above permits reading the one host input field this path consumes.
   const command = (input as { command?: LspBoundaryValue }).command;
-  return Check(Type.String(), command) ? command : undefined;
+  return isString(command) ? command : undefined;
 }
 
 const AUTHORITATIVE_CONTENT_MAX_BYTES = RUNTIME_CONFIG.pipeline.lspMaxFileBytes;
@@ -541,12 +535,9 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
         // across the whole command so the aggregate tool result stays
         // bounded too. Past the budget, degrade to the re-read warning.
         for (const block of syntheticResult.content.slice(event.content.length)) {
-          const blockBytes = Check(Type.String(), block.text)
-            ? Buffer.byteLength(block.text, "utf-8")
-            : 0;
+          const blockBytes = isString(block.text) ? Buffer.byteLength(block.text, "utf-8") : 0;
           const isAuthoritativeAttachment =
-            Check(Type.String(), block.text) &&
-            block.text.startsWith("choco-pi-lsp applied autofix to ");
+            isString(block.text) && block.text.startsWith("choco-pi-lsp applied autofix to ");
           if (
             isAuthoritativeAttachment &&
             syntheticAttachmentBytes + blockBytes > AUTHORITATIVE_CONTENT_MAX_BYTES
@@ -652,7 +643,7 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
       const command = searchShellCommand;
       const output = event.content
 
-        .map((part) => (Check(Type.String(), part.text) ? part.text : ""))
+        .map((part) => (isString(part.text) ? part.text : ""))
         .join("\n");
       searchReads.push(...extractGrepSearchReadsFromOutput(command, workspaceRoot, output));
     }

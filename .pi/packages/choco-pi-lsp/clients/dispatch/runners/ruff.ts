@@ -7,8 +7,8 @@
  * Supports venv-local installations.
  */
 
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, compile, obj, opt, str, unknown } from "@earendil-works/pi-schema";
+import { finiteNum } from "../../lsp/schema-guards.ts";
 import { safeSpawnAsync } from "../../safe-spawn.ts";
 import { stripAnsi } from "../../sanitize.ts";
 import { getAutofixCapability, getLinterPolicyForCwd, ruffConfigArgs } from "../../tool-policy.ts";
@@ -19,28 +19,33 @@ import { createAvailabilityChecker, resolveAvailableOrInstall } from "./utils/ru
 
 const ruff = createAvailabilityChecker("ruff", ".exe");
 
+const RuffJsonSchema = arr(
+  obj(
+    {
+      code: opt(str()),
+      message: opt(str()),
+      filename: opt(str()),
+      location: opt(
+        obj(
+          {
+            row: opt(finiteNum()),
+            column: opt(finiteNum()),
+          },
+          { open: true },
+        ),
+      ),
+      severity: opt(str()),
+      fix: opt(unknown()),
+    },
+    { open: true },
+  ),
+);
+const isRuffJson = compile(RuffJsonSchema).check;
+
 function parseRuffJson(raw: string, filePath: string): Diagnostic[] {
   try {
     const parsed = JSON.parse(raw);
-    const schema = Type.Array(
-      Type.Object(
-        {
-          code: Type.Optional(Type.String()),
-          message: Type.Optional(Type.String()),
-          filename: Type.Optional(Type.String()),
-          location: Type.Optional(
-            Type.Object({
-              row: Type.Optional(Type.Number()),
-              column: Type.Optional(Type.Number()),
-            }),
-          ),
-          severity: Type.Optional(Type.String()),
-          fix: Type.Optional(Type.Unknown()),
-        },
-        { additionalProperties: true },
-      ),
-    );
-    if (!Value.Check(schema, parsed)) return [];
+    if (!isRuffJson(parsed)) return [];
 
     const autofix = getAutofixCapability("ruff");
     return parsed.map((item, index) => {

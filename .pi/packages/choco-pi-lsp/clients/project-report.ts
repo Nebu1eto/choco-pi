@@ -1,5 +1,4 @@
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { isFiniteNumber } from "./runtime-guards.ts";
 /**
  * Project Report (#773) — the top of the discovery funnel: `project_report` →
  * `module_report` → `read_symbol`. Answers "orient me in this project" from
@@ -654,7 +653,7 @@ function computeRiskHotspots(
       for (const symbolId of symbolIds) {
         const complexity = graph.nodes.get(symbolId)?.metadata?.cyclomaticComplexity;
 
-        if (Check(Type.Number(), complexity) && complexity > maxComplexity) {
+        if (isFiniteNumber(complexity) && complexity > maxComplexity) {
           maxComplexity = complexity;
         }
       }

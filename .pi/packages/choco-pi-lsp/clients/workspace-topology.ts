@@ -1,4 +1,4 @@
-import { type Static, Type } from "typebox";
+import { type LspDictionaryValue } from "./runtime-guards.ts";
 import { idleEvictionTimersSuspended, registerIdleTimerRelease } from "./idle-timer-release.ts";
 /**
  * Shared, memoized workspace-topology snapshot service (#806).
@@ -43,9 +43,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { logLatency } from "./latency-logger.ts";
 import { isAtOrAboveHomeDir, nameMatchesMarkerGlob, walkUpDirs } from "./path-utils.ts";
-
-const LspDictionaryValueSchema = Type.Unknown();
-type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
 
 /** Depth cap on any upward marker walk — mirrors `findNearestMarkerRoot`'s bound. */
 const MAX_WALK_DEPTH = 64;

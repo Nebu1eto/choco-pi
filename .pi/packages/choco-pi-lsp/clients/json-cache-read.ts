@@ -1,4 +1,4 @@
-import { type Static, Type } from "typebox";
+import { type LspBoundaryValue } from "./runtime-guards.ts";
 /**
  * Shared "read a JSON cache file off disk" boilerplate (#676).
  *
@@ -20,9 +20,6 @@ import { type Static, Type } from "typebox";
 
 import * as fs from "node:fs";
 import { promises as fsPromises } from "node:fs";
-
-const LspBoundaryValueSchema = Type.Unknown();
-type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
 
 /**
  * Synchronous read: `JSON.parse(fs.readFileSync(path, "utf-8"))`, run through

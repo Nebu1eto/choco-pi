@@ -1,5 +1,4 @@
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { isFiniteNumber } from "./runtime-guards.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { normalizeMapKey } from "./path-utils.ts";
@@ -184,7 +183,7 @@ export function loadReverseDependencyIndexFromSnapshot(args: {
   const snapshot = loadProjectSnapshot(args.cwd);
   if (!snapshot) return null;
 
-  if (Check(Type.Number(), args.currentProjectSeq) && snapshot.seq !== args.currentProjectSeq) {
+  if (isFiniteNumber(args.currentProjectSeq) && snapshot.seq !== args.currentProjectSeq) {
     return null;
   }
   return buildReverseDependencyIndexFromSnapshot(snapshot);

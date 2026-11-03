@@ -1,6 +1,6 @@
+import { compile, map, nullable, obj, opt, unknown } from "@earendil-works/pi-schema";
 import { createHash } from "node:crypto";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { isFiniteNumber } from "./runtime-guards.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { CacheManager, ModifiedRange } from "./cache-manager.ts";
@@ -96,12 +96,8 @@ interface WarningStateFile {
   warnings?: Record<string, WarningSuppressionEntry>;
 }
 
-const WarningStateFileSchema = Type.Object(
-  {
-    warnings: Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()])),
-  },
-  { additionalProperties: true },
-);
+const WarningStateFileSchema = obj({ warnings: opt(nullable(map(unknown()))) }, { open: true });
+const isWarningStateFile = compile(WarningStateFileSchema).check;
 
 let beforeWarningStateLockForTests: (() => void) | null = null;
 
@@ -171,7 +167,7 @@ function deserializeSuppressionState(contents: string | undefined): WarningState
   try {
     const parsed = JSON.parse(contents ?? "");
     // SAFETY: The shallow schema matches the legacy loader; individual fields remain guarded at use sites.
-    return Value.Check(WarningStateFileSchema, parsed) ? (parsed as WarningStateFile) : {};
+    return isWarningStateFile(parsed) ? (parsed as WarningStateFile) : {};
   } catch {
     return {};
   }
@@ -651,7 +647,7 @@ export function checkActionableWarningsReportFresh(args: {
   getFileSeq?: (filePath: string) => number;
 }): ActionableWarningsFreshnessResult {
   const reportProjectSeqEnd = args.report.projectSeqEnd;
-  if (!Value.Check(Type.Number(), reportProjectSeqEnd)) {
+  if (!isFiniteNumber(reportProjectSeqEnd)) {
     return {
       fresh: false,
       reason: "missing_project_seq",
@@ -668,7 +664,7 @@ export function checkActionableWarningsReportFresh(args: {
   }
   if (args.getFileSeq) {
     for (const file of args.report.files) {
-      if (!Value.Check(Type.Number(), file.fileSeq)) continue;
+      if (!isFiniteNumber(file.fileSeq)) continue;
       const currentFileSeq = args.getFileSeq(file.filePath);
       if (currentFileSeq !== file.fileSeq) {
         return {

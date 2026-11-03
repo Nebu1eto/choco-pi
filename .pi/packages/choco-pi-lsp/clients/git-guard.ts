@@ -1,7 +1,7 @@
+import { arr, bool, compile, map, obj, opt, str } from "@earendil-works/pi-schema";
 import * as nodeFs from "node:fs";
 import * as path from "node:path";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { finite, hasErrorCode, isString, isStringArray } from "./runtime-guards.ts";
 import type { CacheManager } from "./cache-manager.ts";
 import type { RuntimeCoordinator } from "./runtime-coordinator.ts";
 import { isPathIgnoredByProject } from "./file-utils.ts";
@@ -16,19 +16,22 @@ import {
 } from "./advisory-provenance.ts";
 
 /** The structured, single-source turn record used by context and git-guard. */
-const ErrorCodeSchema = Type.Object({ code: Type.Optional(Type.String()) });
-const TurnEndFindingsCacheSchema = Type.Object({
-  content: Type.String(),
-  hasBlockers: Type.Boolean(),
-  affectedFiles: Type.Array(Type.String()),
-  sessionId: Type.String(),
-  projectSeqStart: Type.Number(),
-  projectSeqEnd: Type.Number(),
-  fileSeqByPath: Type.Record(Type.String(), Type.Number()),
-  fileContentHashes: Type.Record(Type.String(), Type.String()),
-  affectedFilesTruncated: Type.Optional(Type.Boolean()),
-  blockingFiles: Type.Optional(Type.Array(Type.String())),
-});
+const TurnEndFindingsCacheSchema = obj(
+  {
+    content: str(),
+    hasBlockers: bool(),
+    affectedFiles: arr(str()),
+    sessionId: str(),
+    projectSeqStart: finite(),
+    projectSeqEnd: finite(),
+    fileSeqByPath: map(finite()),
+    fileContentHashes: map(str()),
+    affectedFilesTruncated: opt(bool()),
+    blockingFiles: opt(arr(str())),
+  },
+  { open: true },
+);
+const isTurnEndFindingsCacheRecord = compile(TurnEndFindingsCacheSchema).check;
 
 export interface TurnEndFindingsCache {
   content: string;
@@ -76,7 +79,7 @@ function currentFileFingerprint(filePath: string): string {
     nodeFs.statSync(filePath);
     return fileFingerprint(filePath);
   } catch (err) {
-    const code = Value.Check(ErrorCodeSchema, err) ? err.code : undefined;
+    const code = hasErrorCode(err) ? err.code : undefined;
     return code === "ENOENT" ? "missing" : `unreadable:${code ?? "unknown"}`;
   }
 }
@@ -105,7 +108,7 @@ function hasCompleteBlockingProvenance(
     const file = line.slice(0, separator).trim();
     return file.length > 0 ? guardPathKey(file, cwd) : undefined;
   });
-  if (!Value.Check(Type.Array(Type.String()), blockerKeys)) return false;
+  if (!isStringArray(blockerKeys)) return false;
   const uniqueBlockerKeys = new Set(blockerKeys);
   return (
     uniqueBlockerKeys.size === blockerKeys.length &&
@@ -127,9 +130,9 @@ function getShellCommand<T>(input: T): string {
   const hostInput = input as { command?: unknown; cmd?: unknown };
   const command = hostInput.command;
   const cmd = hostInput.cmd;
-  if (Value.Check(Type.String(), command) && command.trim()) return command;
-  if (Value.Check(Type.String(), cmd) && cmd.trim()) return cmd;
-  if (Value.Check(Type.String(), command)) return command;
+  if (isString(command) && command.trim()) return command;
+  if (isString(cmd) && cmd.trim()) return cmd;
+  if (isString(command)) return command;
   return "";
 }
 
@@ -448,7 +451,7 @@ export function isGitCommitOrPushAttempt<T>(toolName: string, input: T): boolean
 }
 
 function isTurnEndFindingsCache<T>(value: T): value is T & TurnEndFindingsCache {
-  return Value.Check(TurnEndFindingsCacheSchema, value);
+  return isTurnEndFindingsCacheRecord(value);
 }
 
 function cacheRecord(cacheManager: CacheManager, cwd: string): TurnEndFindingsCache | undefined {

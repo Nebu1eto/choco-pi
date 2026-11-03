@@ -12,15 +12,11 @@
  * oldest insertion, and hot per-edit files survive scan traffic (#890).
  */
 
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import { isFunction, type LspBoundaryValue } from "./runtime-guards.ts";
 import { logTreeSitterDiagnostic } from "./tree-sitter-logger.ts";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import { normalizeFilePath } from "./path-utils.ts";
-
-const LspBoundaryValueSchema = Type.Unknown();
-type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
 
 const TREE_RETIREMENT_GRACE_MICROTASKS = 4;
 
@@ -209,7 +205,7 @@ export class TreeCache {
   // biome-ignore lint/suspicious/noExplicitAny: web-tree-sitter Tree
   private freeTree(tree: any): void {
     try {
-      if (tree && Check(Type.Function([], Type.Unknown()), tree.delete)) tree.delete();
+      if (tree && isFunction(tree.delete)) tree.delete();
     } catch (error) {
       this.treeErrorObserver?.(error);
     }

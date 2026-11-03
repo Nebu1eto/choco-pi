@@ -54,14 +54,10 @@
  * does, matching the analyzer's own low/medium/high severity gating.
  */
 
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import { isObjectRecord, isString, type LspDictionaryValue } from "./runtime-guards.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getGlobalPiLensDir } from "./file-utils.ts";
-
-const LspDictionaryValueSchema = Type.Unknown();
-type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
 
 interface CountRecentSmellsResultContract extends SmellsRollupCounts {}
 
@@ -150,7 +146,7 @@ function countMatchingLines(
     }
     if (
       entry &&
-      Check(Type.Object({}), entry) &&
+      isObjectRecord(entry) &&
       (sessionStartMs === undefined ||
         // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
         isAtOrAfterSessionStart(entry as Record<string, LspDictionaryValue>, sessionStartMs)) &&
@@ -167,14 +163,14 @@ function isAtOrAfterSessionStart(
   entry: Record<string, LspDictionaryValue>,
   sessionStartMs: number,
 ): boolean {
-  const timestamp = Check(Type.String(), entry.ts) ? Date.parse(entry.ts) : NaN;
+  const timestamp = isString(entry.ts) ? Date.parse(entry.ts) : NaN;
   return Number.isFinite(timestamp) && timestamp >= sessionStartMs;
 }
 
 function isStaleCtxEmitFailed(entry: Record<string, LspDictionaryValue>): boolean {
   return (
     entry.outcome === "emit_failed" &&
-    Check(Type.String(), entry.error) &&
+    isString(entry.error) &&
     entry.error.includes("stale after session replacement")
   );
 }

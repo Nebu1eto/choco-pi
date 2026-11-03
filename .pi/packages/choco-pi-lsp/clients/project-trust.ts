@@ -34,13 +34,9 @@
  * refreshed on each `session_start` and `turn_start`.
  */
 
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import { isBoolean, isFunction, type LspBoundaryValue } from "./runtime-guards.ts";
 import { logExtension } from "./extension-log.ts";
 import { recordDegradation } from "./degradation-ledger.ts";
-
-const LspBoundaryValueSchema = Type.Unknown();
-type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
 
 export type ProjectTrustState = "trusted" | "untrusted" | "unknown";
 
@@ -81,12 +77,12 @@ export function readProjectTrustFromContext(ctx: LspBoundaryValue): ProjectTrust
     // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
     const accessor = (ctx as { isProjectTrusted?: unknown } | null | undefined)?.isProjectTrusted;
 
-    if (!Check(Type.Function([], Type.Unknown()), accessor)) return "unknown";
+    if (!isFunction(accessor)) return "unknown";
 
     // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
     const trusted = (accessor as () => LspBoundaryValue).call(ctx);
 
-    if (!Check(Type.Boolean(), trusted)) return "unknown";
+    if (!isBoolean(trusted)) return "unknown";
     return trusted ? "trusted" : "untrusted";
   } catch (accessorErr) {
     // The accessor exists, so this is not the absent older-host signal. If it

@@ -34,13 +34,11 @@
  * no latched global to go stale across a session replacement.
  */
 
-import { Type } from "typebox";
-import { Value } from "typebox/value";
-
 /** `ExtensionMode` plus the "older host, no `mode` field" case. */
 export type ExtensionRunMode = "tui" | "rpc" | "json" | "print" | "unknown";
 
-const ExtensionModeContextSchema = Type.Object({ mode: Type.String() });
+const ExtensionModeContextSchema = obj({ mode: str() }, { open: true });
+const isExtensionModeContext = compile(ExtensionModeContextSchema).check;
 
 /**
  * Feature-detected read of `ctx.mode`.
@@ -52,7 +50,7 @@ const ExtensionModeContextSchema = Type.Object({ mode: Type.String() });
  */
 export function readExtensionMode<T>(ctx: T): ExtensionRunMode {
   try {
-    if (!Value.Check(ExtensionModeContextSchema, ctx)) return "unknown";
+    if (!isExtensionModeContext(ctx)) return "unknown";
     switch (ctx.mode) {
       case "tui":
       case "rpc":
@@ -87,3 +85,4 @@ export function suppressesUserNotify(mode: ExtensionRunMode): boolean {
 export function modeSuppressionNote(mode: ExtensionRunMode): string {
   return `suppressed in "${mode}" mode (no interactive TUI)`;
 }
+import { compile, obj, str } from "@earendil-works/pi-schema";

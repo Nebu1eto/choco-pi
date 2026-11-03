@@ -1,5 +1,4 @@
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { isString } from "./runtime-guards.ts";
 /**
  * Opt-in compact one-line tool-result rendering (#1327).
  *
@@ -55,9 +54,7 @@ interface CompactLineResultLike {
 
 function fullTextOf(result: CompactLineResultLike): string {
   return (result.content ?? [])
-    .filter(
-      (c): c is { type: string; text: string } => c.type === "text" && Check(Type.String(), c.text),
-    )
+    .filter((c): c is { type: string; text: string } => c.type === "text" && isString(c.text))
     .map((c) => c.text)
     .join("\n");
 }

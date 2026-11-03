@@ -1,4 +1,4 @@
-import { type Static, Type } from "typebox";
+import { type LspBoundaryValue, type LspDictionaryValue } from "./runtime-guards.ts";
 /**
  * Local re-implementation of the host SDK's `isToolCallEventType`.
  *
@@ -55,11 +55,6 @@ import { type Static, Type } from "typebox";
  * type describes them.
  */
 import { sanitizeCorrelationId } from "./read-guard-logger.ts";
-
-const LspBoundaryValueSchema = Type.Unknown();
-type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
-const LspDictionaryValueSchema = Type.Unknown();
-type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
 
 export function isToolCallEventType<T extends string>(
   toolName: T,

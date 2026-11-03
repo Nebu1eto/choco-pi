@@ -28,15 +28,8 @@
  * event handlers.
  */
 import { createHash } from "node:crypto";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { isBigInt, isBoolean, isFiniteNumber, isString, isSymbol } from "./runtime-guards.ts";
 import { logLatency } from "./latency-logger.ts";
-
-const HostStringSchema = Type.String();
-const HostNumberSchema = Type.Number();
-const HostBooleanSchema = Type.Boolean();
-const HostBigIntSchema = Type.BigInt();
-const HostSymbolSchema = Type.Symbol();
 
 type HostValue = {} | null | undefined;
 interface HostObject {
@@ -61,11 +54,11 @@ function isHostObject(value: HostValue): value is HostObject {
 }
 
 function hostString(value: HostValue): string | undefined {
-  return Value.Check(HostStringSchema, value) ? value : undefined;
+  return isString(value) ? value : undefined;
 }
 
 function hostNumber(value: HostValue): number | undefined {
-  if (Value.Check(HostNumberSchema, value)) return value;
+  if (isFiniteNumber(value)) return value;
   if (
     Object.is(value, Number.NaN) ||
     Object.is(value, Number.POSITIVE_INFINITY) ||
@@ -129,16 +122,16 @@ interface BoundedHashState {
 function boundedHashScalar<T>(value: T, state: BoundedHashState): string {
   if (value === null) return "null";
   if (value === undefined) return "undefined";
-  if (Value.Check(HostStringSchema, value)) {
+  if (isString(value)) {
     const truncated = value.length > MAX_HASHED_CONTENT_CHARS;
     if (truncated) state.contentTruncated = true;
     const suffix = truncated ? ":content-truncated" : "";
     return `string:${value.length}:${value.slice(0, MAX_HASHED_CONTENT_CHARS)}${suffix}`;
   }
   if (hostNumber(value) !== undefined) return `number:${String(value)}`;
-  if (Value.Check(HostBooleanSchema, value)) return `boolean:${String(value)}`;
-  if (Value.Check(HostBigIntSchema, value)) return `bigint:${String(value)}`;
-  if (Value.Check(HostSymbolSchema, value)) return "symbol";
+  if (isBoolean(value)) return `boolean:${String(value)}`;
+  if (isBigInt(value)) return `bigint:${String(value)}`;
+  if (isSymbol(value)) return "symbol";
   return value instanceof Function ? "function" : "object";
 }
 
@@ -216,7 +209,7 @@ function hashMessageSequence(messages: ReadonlyArray<ContextMessageLike>) {
 }
 
 function messageTextSize<T>(content: T) {
-  if (Value.Check(Type.String(), content)) {
+  if (isString(content)) {
     const chars = Math.min(content.length, MAX_INJECTED_CHARS);
     return {
       chars,

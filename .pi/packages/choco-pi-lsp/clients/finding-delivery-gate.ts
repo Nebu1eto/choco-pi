@@ -89,8 +89,7 @@
  * agent-facing surface is EITHER gated OR explicitly labeled — never neither.
  */
 
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { isFiniteNumber } from "./runtime-guards.ts";
 
 const MS_PER_MINUTE = 60_000;
 
@@ -108,7 +107,7 @@ export function formatCacheAgeLabel(
   if (scannedAt === undefined || scannedAt === null || scannedAt === "") {
     return "scan age unknown";
   }
-  const scannedAtMs = Value.Check(Type.Number(), scannedAt) ? scannedAt : Date.parse(scannedAt);
+  const scannedAtMs = isFiniteNumber(scannedAt) ? scannedAt : Date.parse(scannedAt);
   if (!Number.isFinite(scannedAtMs)) return "scan age unknown";
   const ageMs = Math.max(0, nowMs - scannedAtMs);
   const ageMinutes = Math.round(ageMs / MS_PER_MINUTE);

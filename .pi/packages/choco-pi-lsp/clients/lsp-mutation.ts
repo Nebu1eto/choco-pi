@@ -1,4 +1,4 @@
-import { type Static, Type } from "typebox";
+import { type LspBoundaryValue } from "./runtime-guards.ts";
 import * as path from "node:path";
 import {
   createReadGuardEditBatchSummary,
@@ -9,9 +9,6 @@ import {
 import { appendProjectChange, type ProjectChangeSource } from "./project-changes.ts";
 import type { AppliedWorkspaceEdit } from "./lsp/edits.ts";
 import { normalizeMapKey } from "./path-utils.ts";
-
-const LspBoundaryValueSchema = Type.Unknown();
-type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
 
 type CombineResultsResultContract = {
   requestedTotal: number;

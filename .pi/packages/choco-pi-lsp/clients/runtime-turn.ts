@@ -1,5 +1,4 @@
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import { isFiniteNumber, isFunction, type LspBoundaryValue } from "./runtime-guards.ts";
 import * as path from "node:path";
 import {
   appendActionableWarningsHistory,
@@ -57,9 +56,6 @@ import { sweepInlineBlockerPastEof } from "./blocker-past-eof.ts";
 // see clients/stale-marker.ts's doc comment.
 import { STALE_LINE_MARKER } from "./stale-marker.ts";
 import type { TestRunnerFindingsCache } from "./project-diagnostics/runner-adapters/runner-findings.ts";
-
-const LspBoundaryValueSchema = Type.Unknown();
-type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
 
 interface TurnEndDeps {
   ctxCwd?: string;
@@ -581,10 +577,7 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
     const uniqueNeighborFiles = [...new Set(neighborFilesWithErrors)];
     let testSuggestionCount = 0;
 
-    if (
-      uniqueNeighborFiles.length > 0 &&
-      Check(Type.Function([], Type.Unknown()), testRunnerClient.suggestTestFiles)
-    ) {
+    if (uniqueNeighborFiles.length > 0 && isFunction(testRunnerClient.suggestTestFiles)) {
       const testSuggestions = testRunnerClient.suggestTestFiles(uniqueNeighborFiles, cwd);
       testSuggestionCount = testSuggestions.length;
       // #1446 item 2: this path previously emitted nothing to any log — a
@@ -1225,7 +1218,7 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
             (w) =>
               !(
                 isSecretWarning(w) &&
-                Check(Type.Number(), w.line) &&
+                isFiniteNumber(w.line) &&
                 secretBlockedLocations.has(secretLocationKey(w.filePath, w.line))
               ),
           ),

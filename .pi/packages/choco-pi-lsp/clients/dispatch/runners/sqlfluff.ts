@@ -1,5 +1,5 @@
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, obj, opt, str, compile } from "@earendil-works/pi-schema";
+import { finiteNum } from "../../lsp/schema-guards.ts";
 import { safeSpawnAsync } from "../../safe-spawn.ts";
 import { getLinterPolicyForCwd, hasSqlfluffConfig } from "../../tool-policy.ts";
 import { PRIORITY } from "../priorities.ts";
@@ -13,24 +13,28 @@ const sqlfluff = createAvailabilityChecker("sqlfluff", ".exe");
 
 export { hasSqlfluffConfig };
 
-const SqlfluffJsonSchema = Type.Array(
-  Type.Object(
+const SqlfluffJsonSchema = arr(
+  obj(
     {
-      filepath: Type.Optional(Type.String()),
-      violations: Type.Optional(
-        Type.Array(
-          Type.Object({
-            code: Type.Optional(Type.String()),
-            description: Type.Optional(Type.String()),
-            line_no: Type.Optional(Type.Number()),
-            line_pos: Type.Optional(Type.Number()),
-          }),
+      filepath: opt(str()),
+      violations: opt(
+        arr(
+          obj(
+            {
+              code: opt(str()),
+              description: opt(str()),
+              line_no: opt(finiteNum()),
+              line_pos: opt(finiteNum()),
+            },
+            { open: true },
+          ),
         ),
       ),
     },
-    { additionalProperties: true },
+    { open: true },
   ),
 );
+const isSqlfluffJson = compile(SqlfluffJsonSchema).check;
 
 // sqlfluff's JSON lint output does not carry a per-violation fixable flag —
 // `sqlfluff fix` is a separate command and the lint surface doesn't tell us
@@ -94,7 +98,7 @@ function parseSqlfluffOutput(raw: string, filePath: string): Diagnostic[] {
   if (!raw.trim()) return [];
   try {
     const parsed = JSON.parse(raw);
-    if (!Value.Check(SqlfluffJsonSchema, parsed)) return [];
+    if (!isSqlfluffJson(parsed)) return [];
 
     const diagnostics: Diagnostic[] = [];
     for (const item of parsed) {

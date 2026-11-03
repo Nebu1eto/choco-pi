@@ -13,8 +13,21 @@ import { EventEmitter } from "node:events";
 import { access, readFile } from "node:fs/promises";
 import * as os from "node:os";
 import { pathToFileURL } from "node:url";
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import type { Static } from "@earendil-works/pi-schema";
+import { isRuntimeString } from "../../tools/runtime-values.ts";
+import { finiteNum, isBooleanValue } from "./schema-guards.ts";
+import {
+  arr,
+  bool,
+  map,
+  nul,
+  obj,
+  opt,
+  str,
+  union,
+  unknown,
+  compile,
+} from "@earendil-works/pi-schema";
 import { emitBounded } from "../bounded-telemetry.ts";
 import { withTimeout } from "../deadline-utils.ts";
 import { incrementDegradationCount } from "../degradation-ledger.ts";
@@ -119,152 +132,148 @@ interface LegacyDiagnosticCacheState extends LegacyDiagnosticsState {
 
 type JsonValue = string | number | boolean | null | JsonObject | JsonValue[];
 
-const JsonObjectSchema = Type.Object({}, { additionalProperties: true });
+const JsonObjectSchema = obj({}, { open: true });
+const isJsonRecord = compile(JsonObjectSchema).check;
 
-const ErrorCodeSchema = Type.Object(
+const ErrorCodeSchema = obj(
   {
-    code: Type.Optional(Type.Union([Type.String(), Type.Number()])),
+    code: opt(union([str(), finiteNum()])),
   },
-  { additionalProperties: true },
+  { open: true },
 );
+const isErrorCode = compile(ErrorCodeSchema).check;
 
 interface ErrorDetails {
   code?: string | number;
   message?: string;
 }
 
-const ErrorDetailsSchema = Type.Object(
+const ErrorDetailsSchema = obj(
   {
-    code: Type.Optional(Type.Union([Type.String(), Type.Number()])),
-    message: Type.Optional(Type.String()),
+    code: opt(union([str(), finiteNum()])),
+    message: opt(str()),
   },
-  { additionalProperties: true },
+  { open: true },
 );
+const isErrorDetails = compile(ErrorDetailsSchema).check;
 
-const LspCodeActionSchema = Type.Object({ title: Type.String() }, { additionalProperties: true });
+const LspCodeActionSchema = obj({ title: str() }, { open: true });
+const isLspCodeAction = compile(LspCodeActionSchema).check;
 
-const WorkspaceEditSchema = Type.Object(
+const WorkspaceEditSchema = obj(
   {
-    changes: Type.Optional(
-      Type.Union([Type.Record(Type.String(), Type.Array(Type.Unknown())), Type.Null()]),
-    ),
-    documentChanges: Type.Optional(Type.Union([Type.Array(Type.Unknown()), Type.Null()])),
-    changeAnnotations: Type.Optional(Type.Union([JsonObjectSchema, Type.Null()])),
+    changes: opt(union([map(arr(unknown())), nul()])),
+    documentChanges: opt(union([arr(unknown()), nul()])),
+    changeAnnotations: opt(union([JsonObjectSchema, nul()])),
   },
-  { additionalProperties: true },
+  { open: true },
 );
+const isWorkspaceEdit = compile(WorkspaceEditSchema).check;
 
-const VersionedTextDocumentChangeSchema = Type.Object(
+const VersionedTextDocumentChangeSchema = obj(
   {
-    textDocument: Type.Object(
+    textDocument: obj(
       {
-        uri: Type.Optional(Type.String()),
-        version: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+        uri: opt(str()),
+        version: opt(union([finiteNum(), nul()])),
       },
-      { additionalProperties: true },
+      { open: true },
     ),
   },
-  { additionalProperties: true },
+  { open: true },
 );
+const isVersionedTextDocumentChange = compile(VersionedTextDocumentChangeSchema).check;
 
 function parseWorkspaceEditPayload<T>(value: T): LSPWorkspaceEdit | undefined {
-  if (!Value.Check(WorkspaceEditSchema, value)) return undefined;
+  if (!isWorkspaceEdit(value)) return undefined;
   const edit: LSPWorkspaceEdit = {};
   if (value.changes) edit.changes = value.changes;
   if (value.documentChanges) edit.documentChanges = value.documentChanges;
   if (value.changeAnnotations) {
-    // SAFETY: JsonObjectSchema established a JSON object; TypeBox exposes its empty-object index type as object.
+    // SAFETY: JsonObjectSchema established a JSON object; pi-schema types an open empty-object schema as an empty object type.
     edit.changeAnnotations = value.changeAnnotations as JsonObject;
   }
   return edit;
 }
 
-const DiagnosticProviderSchema = Type.Union([
-  Type.Null(),
-  Type.Boolean(),
-  Type.Object(
-    { workspaceDiagnostics: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])) },
-    { additionalProperties: true },
-  ),
+const DiagnosticProviderSchema = union([
+  nul(),
+  bool(),
+  obj({ workspaceDiagnostics: opt(union([bool(), nul()])) }, { open: true }),
 ]);
 
-const ProviderCapabilitySchema = Type.Union([
-  Type.Null(),
-  Type.Boolean(),
-  Type.Object({}, { additionalProperties: true }),
-]);
+const ProviderCapabilitySchema = union([nul(), bool(), obj({}, { open: true })]);
 
-const LspCapabilitiesSchema = Type.Object(
+const LspCapabilitiesSchema = obj(
   {
-    diagnosticProvider: Type.Optional(DiagnosticProviderSchema),
-    executeCommandProvider: Type.Optional(
-      Type.Union([
-        Type.Null(),
-        Type.Object(
-          { commands: Type.Optional(Type.Union([Type.Array(Type.Unknown()), Type.Null()])) },
-          { additionalProperties: true },
-        ),
+    diagnosticProvider: opt(DiagnosticProviderSchema),
+    executeCommandProvider: opt(
+      union([nul(), obj({ commands: opt(union([arr(unknown()), nul()])) }, { open: true })]),
+    ),
+    positionEncoding: opt(union([str(), nul()])),
+    textDocumentSync: opt(
+      union([
+        nul(),
+        finiteNum(),
+        obj({ change: opt(union([finiteNum(), nul()])) }, { open: true }),
       ]),
     ),
-    positionEncoding: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-    textDocumentSync: Type.Optional(
-      Type.Union([
-        Type.Null(),
-        Type.Number(),
-        Type.Object(
-          { change: Type.Optional(Type.Union([Type.Number(), Type.Null()])) },
-          { additionalProperties: true },
-        ),
-      ]),
-    ),
-    definitionProvider: Type.Optional(ProviderCapabilitySchema),
-    typeDefinitionProvider: Type.Optional(ProviderCapabilitySchema),
-    declarationProvider: Type.Optional(ProviderCapabilitySchema),
-    referencesProvider: Type.Optional(ProviderCapabilitySchema),
-    hoverProvider: Type.Optional(ProviderCapabilitySchema),
-    signatureHelpProvider: Type.Optional(ProviderCapabilitySchema),
-    documentSymbolProvider: Type.Optional(ProviderCapabilitySchema),
-    workspaceSymbolProvider: Type.Optional(ProviderCapabilitySchema),
-    codeActionProvider: Type.Optional(ProviderCapabilitySchema),
-    renameProvider: Type.Optional(ProviderCapabilitySchema),
-    implementationProvider: Type.Optional(ProviderCapabilitySchema),
-    callHierarchyProvider: Type.Optional(ProviderCapabilitySchema),
+    definitionProvider: opt(ProviderCapabilitySchema),
+    typeDefinitionProvider: opt(ProviderCapabilitySchema),
+    declarationProvider: opt(ProviderCapabilitySchema),
+    referencesProvider: opt(ProviderCapabilitySchema),
+    hoverProvider: opt(ProviderCapabilitySchema),
+    signatureHelpProvider: opt(ProviderCapabilitySchema),
+    documentSymbolProvider: opt(ProviderCapabilitySchema),
+    workspaceSymbolProvider: opt(ProviderCapabilitySchema),
+    codeActionProvider: opt(ProviderCapabilitySchema),
+    renameProvider: opt(ProviderCapabilitySchema),
+    implementationProvider: opt(ProviderCapabilitySchema),
+    callHierarchyProvider: opt(ProviderCapabilitySchema),
   },
-  { additionalProperties: true },
+  { open: true },
 );
 
 type LspCapabilities = Static<typeof LspCapabilitiesSchema>;
 
-const InitializeResultSchema = Type.Object(
-  { capabilities: Type.Optional(Type.Union([LspCapabilitiesSchema, Type.Null()])) },
-  { additionalProperties: true },
+const InitializeResultSchema = obj(
+  { capabilities: opt(union([LspCapabilitiesSchema, nul()])) },
+  { open: true },
 );
+const isInitializeResult = compile(InitializeResultSchema).check;
 
 type InitializeResult = Static<typeof InitializeResultSchema>;
 
-const DynamicRegistrationParamsSchema = Type.Object({
-  registrations: Type.Optional(
-    Type.Array(
-      Type.Object({
-        id: Type.String(),
-        method: Type.String(),
-        registerOptions: Type.Optional(
-          Type.Union([
-            Type.Object(
-              {
-                commands: Type.Optional(Type.Unknown()),
-                identifier: Type.Optional(Type.Unknown()),
-                workspaceDiagnostics: Type.Optional(Type.Unknown()),
-              },
-              { additionalProperties: true },
+const DynamicRegistrationParamsSchema = obj(
+  {
+    registrations: opt(
+      arr(
+        obj(
+          {
+            id: str(),
+            method: str(),
+            registerOptions: opt(
+              union([
+                obj(
+                  {
+                    commands: opt(unknown()),
+                    identifier: opt(unknown()),
+                    workspaceDiagnostics: opt(unknown()),
+                  },
+                  { open: true },
+                ),
+                nul(),
+              ]),
             ),
-            Type.Null(),
-          ]),
+          },
+          { open: true },
         ),
-      }),
+      ),
     ),
-  ),
-});
+  },
+  { open: true },
+);
+const isDynamicRegistrationParams = compile(DynamicRegistrationParamsSchema).check;
 
 interface MutableDynamicRegistration {
   method: string;
@@ -1827,6 +1836,10 @@ export function applyDynamicCapabilities(state: LSPClientState): void {
   }
 }
 
+function isJsonObjectValue(value: JsonValue): value is JsonObject {
+  return isJsonRecord(value);
+}
+
 /**
  * Resolve a `workspace/configuration` request item's `section` (a dot-path,
  * e.g. "scan.jobs") against the server's `initializationOptions` blob.
@@ -1844,11 +1857,10 @@ export function resolveConfigurationSection(
   if (!section) return initialization;
   let cur: JsonValue = initialization;
   for (const part of section.split(".")) {
-    if (!Value.Check(JsonObjectSchema, cur) || !Object.hasOwn(cur, part)) {
+    if (!isJsonObjectValue(cur) || !Object.hasOwn(cur, part)) {
       return null;
     }
-    // SAFETY: JsonObjectSchema rejected null, arrays, and primitive values before indexed access.
-    cur = (cur as JsonObject)[part];
+    cur = cur[part];
   }
   return cur;
 }
@@ -2053,18 +2065,14 @@ export function setupIncomingHandlers(
     { name: "workspace", uri: pathToFileURL(state.root).href },
   ]);
   state.connection.onRequest("client/registerCapability", async (rawParams) => {
-    if (!Value.Check(DynamicRegistrationParamsSchema, rawParams)) return;
+    if (!isDynamicRegistrationParams(rawParams)) return;
     for (const reg of rawParams.registrations ?? []) {
       const options = reg.registerOptions ?? undefined;
       const commands = Array.isArray(options?.commands)
-        ? options.commands.filter((command): command is string =>
-            Value.Check(Type.String(), command),
-          )
+        ? options.commands.filter((command): command is string => isRuntimeString(command))
         : undefined;
-      const identifier = Value.Check(Type.String(), options?.identifier)
-        ? options.identifier
-        : undefined;
-      const workspaceDiagnostics = Value.Check(Type.Boolean(), options?.workspaceDiagnostics)
+      const identifier = isRuntimeString(options?.identifier) ? options.identifier : undefined;
+      const workspaceDiagnostics = isBooleanValue(options?.workspaceDiagnostics)
         ? options.workspaceDiagnostics
         : undefined;
       if (reg.id && reg.method) {
@@ -2814,7 +2822,7 @@ function armLateAnswerTelemetry(args: {
       // the timeout count that gates it.
       try {
         const elapsedMs = Date.now() - args.requestStartedAt;
-        const candidate: ErrorDetails = Value.Check(ErrorDetailsSchema, err) ? err : {};
+        const candidate: ErrorDetails = isErrorDetails(err) ? err : {};
         const code = candidate.code;
         emitBounded(
           "lsp_pull_late_rejection",
@@ -2853,7 +2861,7 @@ function recordPullFailure<T>(
   method: LSPPullFailure["method"],
   error: T,
 ): void {
-  const candidate: ErrorDetails = Value.Check(ErrorDetailsSchema, error) ? error : {};
+  const candidate: ErrorDetails = isErrorDetails(error) ? error : {};
   const message = candidate.message ?? "";
   const unsupportedMessage = /^(?:method not found|unknown method|unsupported method)(?::|$)/i;
   if (
@@ -3901,7 +3909,7 @@ function validateWorkspaceEditVersions(
   edit: { documentChanges?: unknown[] },
 ): void {
   for (const change of edit.documentChanges ?? []) {
-    if (!Value.Check(VersionedTextDocumentChangeSchema, change)) continue;
+    if (!isVersionedTextDocumentChange(change)) continue;
     const textDocument = change.textDocument;
     if (textDocument.uri === undefined || textDocument.version == null) continue;
     const current = state.documentVersions.get(normalizeMapKey(uriToPath(textDocument.uri)));
@@ -3926,7 +3934,7 @@ function stripDocumentVersions(edit: LSPWorkspaceEdit): LSPWorkspaceEdit {
   if (!Array.isArray(edit.documentChanges)) return edit;
   const documentChanges = edit.documentChanges.map((change) => {
     if (
-      Value.Check(VersionedTextDocumentChangeSchema, change) &&
+      isVersionedTextDocumentChange(change) &&
       Object.hasOwn(change, "edits") &&
       change.textDocument.version !== undefined &&
       change.textDocument.version !== null
@@ -3969,7 +3977,7 @@ async function resolveCodeActionBestEffort(
       safeSendRequest<JsonValue, LSPCodeAction>(state.connection, "codeAction/resolve", action),
       NAV_REQUEST_TIMEOUT_MS,
     );
-    resolved = Value.Check(LspCodeActionSchema, rawResolved) ? rawResolved : undefined;
+    resolved = isLspCodeAction(rawResolved) ? rawResolved : undefined;
   } catch {
     // codeAction/resolve is optional. Keep the original lightweight action when
     // the server does not support resolve or fails to populate an edit.
@@ -4264,9 +4272,7 @@ export async function createLSPClient(options: {
     );
   }
 
-  const initResult: InitializeResult = Value.Check(InitializeResultSchema, rawInitResult)
-    ? rawInitResult
-    : {};
+  const initResult: InitializeResult = isInitializeResult(rawInitResult) ? rawInitResult : {};
   const serverCapabilities = initResult.capabilities ?? undefined;
   state.workspaceDiagnosticsSupport = detectWorkspaceDiagnosticsSupport(serverCapabilities);
   state.operationSupport = detectOperationSupport(serverCapabilities);
@@ -4572,7 +4578,7 @@ export async function createLSPClient(options: {
       if (!result || !Array.isArray(result)) return [];
       const actions: LSPCodeAction[] = [];
       for (const item of result) {
-        if (Value.Check(LspCodeActionSchema, item)) actions.push(item);
+        if (isLspCodeAction(item)) actions.push(item);
       }
       return Promise.all(actions.map((action) => resolveCodeActionBestEffort(state, action)));
     },
@@ -4770,7 +4776,7 @@ async function safeSendRequest<T = JsonValue, P = object>(
 // as "no result" rather than a failure. (isStreamError also matches the
 // "cancelled" message text; this adds the structured error-code path.)
 function isCancellationError<T>(err: T): boolean {
-  if (!Value.Check(ErrorCodeSchema, err)) return false;
+  if (!isErrorCode(err)) return false;
   return err.code === -32800 || err.code === -32802;
 }
 
@@ -4778,7 +4784,7 @@ function isCancellationError<T>(err: T): boolean {
 // flight, so the server couldn't answer against a consistent state. Retryable —
 // the only LSP error code worth a second attempt on the edit hot path (#238).
 function isContentModifiedError<T>(err: T): boolean {
-  return Value.Check(ErrorCodeSchema, err) && err.code === -32801;
+  return isErrorCode(err) && err.code === -32801;
 }
 
 // Helper to detect stream destruction / connection disposal errors.
@@ -4791,7 +4797,7 @@ function isContentModifiedError<T>(err: T): boolean {
 function isStreamError<T>(err: T): boolean {
   if (!(err instanceof Error)) return false;
   const msg = err.message.toLowerCase();
-  const code = Value.Check(ErrorCodeSchema, err) ? err.code : undefined;
+  const code = isErrorCode(err) ? err.code : undefined;
   return (
     msg.includes("stream") ||
     msg.includes("destroyed") ||
@@ -4827,7 +4833,7 @@ function detectWorkspaceDiagnosticsSupport(
     };
   }
 
-  if (Value.Check(Type.Boolean(), diagnosticProvider)) {
+  if (isBooleanValue(diagnosticProvider)) {
     return {
       advertised: diagnosticProvider,
       mode: diagnosticProvider ? "pull" : "push-only",
@@ -4848,14 +4854,14 @@ function detectWorkspaceDiagnosticsSupport(
 function detectExecuteCommands(capabilities: LspCapabilities | undefined): string[] {
   const commands = capabilities?.executeCommandProvider?.commands;
   return Array.isArray(commands)
-    ? commands.filter((command): command is string => Value.Check(Type.String(), command))
+    ? commands.filter((command): command is string => isRuntimeString(command))
     : [];
 }
 
 function detectOperationSupport(capabilities: LspCapabilities | undefined): LSPOperationSupport {
   const hasProvider = (value: Static<typeof ProviderCapabilitySchema> | undefined): boolean => {
     if (value === undefined || value === null) return false;
-    return Value.Check(Type.Boolean(), value) ? value : true;
+    return isBooleanValue(value) ? value : true;
   };
 
   return {

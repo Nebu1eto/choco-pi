@@ -6,8 +6,9 @@
  */
 
 import * as path from "node:path";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { obj, compile } from "@earendil-works/pi-schema";
+import { isRuntimeString } from "../../../tools/runtime-values.ts";
+import { isFiniteNumber } from "../../lsp/schema-guards.ts";
 import { RuleCache } from "../../cache/rule-cache.ts";
 import { minimatch } from "../../deps/minimatch.ts";
 import { isTestFile } from "../../file-utils.ts";
@@ -121,24 +122,26 @@ const TS_STRUCTURAL_ENTITY_QUERIES: EntityQueryDef[] = [
   },
 ];
 
-const ProtocolObjectSchema = Type.Object({}, { additionalProperties: true });
+const ProtocolObjectSchema = obj({}, { open: true });
+const isProtocolObject = compile(ProtocolObjectSchema).check;
 
 function isProtocolValue<T>(value: T): value is T & ProtocolValue {
   if (
     value === null ||
-    Value.Check(Type.String(), value) ||
-    Value.Check(Type.Number(), value) ||
-    Value.Check(Type.Boolean(), value)
+    isRuntimeString(value) ||
+    isFiniteNumber(value) ||
+    value === true ||
+    value === false
   ) {
     return true;
   }
   if (Array.isArray(value)) return value.every(isProtocolValue);
-  if (!Value.Check(ProtocolObjectSchema, value)) return false;
+  if (!isProtocolObject(value)) return false;
   return Object.values(value).every(isProtocolValue);
 }
 
 function isProtocolDictionary<T>(value: T): value is T & ProtocolDictionary {
-  return Value.Check(ProtocolObjectSchema, value) && Object.values(value).every(isProtocolValue);
+  return isProtocolObject(value) && Object.values(value).every(isProtocolValue);
 }
 
 function normalizeCachedSeverity(severity: string): TreeSitterQuery["severity"] {

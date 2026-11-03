@@ -14,8 +14,7 @@
  * scan, LSP status, diagnostic stats, LSP config).
  */
 
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { isFiniteNumber } from "./runtime-guards.ts";
 import * as path from "node:path";
 import { minimatch } from "./deps/minimatch.ts";
 import { getDiagnosticTracker } from "./diagnostic-tracker.ts";
@@ -419,7 +418,7 @@ function annotateSymbolSearchHitsWithGraph(
     for (const symbolId of graph.symbolNodesByFile.get(normalized) ?? []) {
       const raw = graph.nodes.get(symbolId)?.metadata?.cyclomaticComplexity;
 
-      if (Check(Type.Number(), raw) && (complexity === undefined || raw > complexity)) {
+      if (isFiniteNumber(raw) && (complexity === undefined || raw > complexity)) {
         complexity = raw;
       }
     }

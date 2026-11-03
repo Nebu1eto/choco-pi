@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, obj, opt, str, unknown, compile } from "@earendil-works/pi-schema";
+import { finiteNum } from "../../lsp/schema-guards.ts";
 import { safeSpawnAsync } from "../../safe-spawn.ts";
 import { PRIORITY } from "../priorities.ts";
 import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
@@ -55,40 +55,44 @@ function findValeConfig(cwd: string): string | undefined {
  *   }
  * }
  */
-const ValeOutputSchema = Type.Object(
+const ValeOutputSchema = obj(
   {
-    Data: Type.Optional(
-      Type.Object({
-        Files: Type.Optional(
-          Type.Array(
-            Type.Object(
-              {
-                Path: Type.Optional(Type.String()),
-                Alerts: Type.Optional(
-                  Type.Array(
-                    Type.Object(
-                      {
-                        Line: Type.Optional(Type.Number()),
-                        Column: Type.Optional(Type.Number()),
-                        Severity: Type.Optional(Type.String()),
-                        Message: Type.Optional(Type.String()),
-                        Check: Type.Optional(Type.String()),
-                        Action: Type.Optional(Type.Unknown()),
-                      },
-                      { additionalProperties: true },
+    Data: opt(
+      obj(
+        {
+          Files: opt(
+            arr(
+              obj(
+                {
+                  Path: opt(str()),
+                  Alerts: opt(
+                    arr(
+                      obj(
+                        {
+                          Line: opt(finiteNum()),
+                          Column: opt(finiteNum()),
+                          Severity: opt(str()),
+                          Message: opt(str()),
+                          Check: opt(str()),
+                          Action: opt(unknown()),
+                        },
+                        { open: true },
+                      ),
                     ),
                   ),
-                ),
-              },
-              { additionalProperties: true },
+                },
+                { open: true },
+              ),
             ),
           ),
-        ),
-      }),
+        },
+        { open: true },
+      ),
     ),
   },
-  { additionalProperties: true },
+  { open: true },
 );
+const isValeOutput = compile(ValeOutputSchema).check;
 
 interface SeverityMap {
   [severity: string]: "error" | "warning" | "info";
@@ -101,7 +105,7 @@ function parseValeOutput(raw: string, filePath: string): Diagnostic[] {
 
   try {
     const parsed = JSON.parse(raw);
-    if (!Value.Check(ValeOutputSchema, parsed)) return diagnostics;
+    if (!isValeOutput(parsed)) return diagnostics;
 
     const files = parsed.Data?.Files;
     if (!files) return diagnostics;

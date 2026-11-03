@@ -1,4 +1,4 @@
-import { type Static, Type } from "typebox";
+import { type LspBoundaryValue } from "./runtime-guards.ts";
 import { logExtension } from "./extension-log.ts";
 import type { Diagnostic } from "./dispatch/types.ts";
 import { logBusEvent } from "./bus-events-logger.ts";
@@ -9,9 +9,6 @@ import {
   resolveLiveBusEmitter,
   type BusEmitGetter,
 } from "./live-bus-emitter.ts";
-
-const LspBoundaryValueSchema = Type.Unknown();
-type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
 
 export const LENS_EVENT_VERSION = 1;
 

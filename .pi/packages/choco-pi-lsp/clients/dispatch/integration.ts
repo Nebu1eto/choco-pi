@@ -5,8 +5,7 @@
  * with the existing index.ts tool_result handler.
  */
 
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, bool, lit, obj, opt, str, union, compile } from "@earendil-works/pi-schema";
 import { getDiagnosticLogger, type LogContext } from "../diagnostic-logger.ts";
 import type { FileKind } from "../file-kinds.ts";
 import { detectFileKind } from "../file-kinds.ts";
@@ -523,19 +522,23 @@ function cascadeReconcilableLspErrors(
  * mocked client, a non-collecting touch) — indistinguishable from "unknown" at
  * every call site, which is the intended pre-#1095 fall-through.
  */
-const TouchMetadataSchema = Type.Object(
+const TouchMetadataSchema = obj(
   {
-    binding: Type.Optional(
-      Type.Object({
-        boundToCurrentDisk: Type.Optional(Type.Union([Type.Boolean(), Type.Literal("unknown")])),
-      }),
+    binding: opt(
+      obj(
+        {
+          boundToCurrentDisk: opt(union([bool(), lit("unknown")])),
+        },
+        { open: true },
+      ),
     ),
-    inconclusive: Type.Optional(Type.Boolean()),
-    inconclusiveServerIds: Type.Optional(Type.Array(Type.String())),
-    inconclusiveReason: Type.Optional(Type.String()),
+    inconclusive: opt(bool()),
+    inconclusiveServerIds: opt(arr(str())),
+    inconclusiveReason: opt(str()),
   },
-  { additionalProperties: true },
+  { open: true },
 );
+const isTouchMetadata = compile(TouchMetadataSchema).check;
 
 interface InconclusiveAttribution {
   inconclusiveServerIds?: string[];
@@ -543,9 +546,7 @@ interface InconclusiveAttribution {
 }
 
 function readBoundToCurrentDisk<T>(rawDiags: T): BoundToCurrentDisk | undefined {
-  return Value.Check(TouchMetadataSchema, rawDiags)
-    ? rawDiags.binding?.boundToCurrentDisk
-    : undefined;
+  return isTouchMetadata(rawDiags) ? rawDiags.binding?.boundToCurrentDisk : undefined;
 }
 
 /**
@@ -579,7 +580,7 @@ function readBoundToCurrentDisk<T>(rawDiags: T): BoundToCurrentDisk | undefined 
  * `.diags` a downstream `.filter()`/copy operates on without touching the flags.
  */
 function readInconclusive<T>(rawDiags: T): boolean {
-  return Value.Check(TouchMetadataSchema, rawDiags) && rawDiags.inconclusive === true;
+  return isTouchMetadata(rawDiags) && rawDiags.inconclusive === true;
 }
 
 /**
@@ -592,7 +593,7 @@ function readInconclusive<T>(rawDiags: T): boolean {
  */
 function readInconclusiveAttribution<T>(rawDiags: T): InconclusiveAttribution {
   const attribution: InconclusiveAttribution = {};
-  if (!Value.Check(TouchMetadataSchema, rawDiags)) return attribution;
+  if (!isTouchMetadata(rawDiags)) return attribution;
   if (rawDiags.inconclusiveServerIds?.length) {
     attribution.inconclusiveServerIds = [...rawDiags.inconclusiveServerIds];
   }

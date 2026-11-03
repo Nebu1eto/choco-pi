@@ -1,6 +1,6 @@
 import * as path from "node:path";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, obj, opt, str, compile } from "@earendil-works/pi-schema";
+import { finiteNum } from "../../lsp/schema-guards.ts";
 import { safeSpawnAsync } from "../../safe-spawn.ts";
 import { PRIORITY } from "../priorities.ts";
 import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
@@ -28,20 +28,21 @@ const swiftlint = createAvailabilityChecker("swiftlint", ".exe");
  *
  * An empty array means clean. Exit code is non-zero when violations exist.
  */
-const SwiftLintOutputSchema = Type.Array(
-  Type.Object(
+const SwiftLintOutputSchema = arr(
+  obj(
     {
-      rule_id: Type.Optional(Type.String()),
-      reason: Type.Optional(Type.String()),
-      character: Type.Optional(Type.Number()),
-      file: Type.Optional(Type.String()),
-      severity: Type.Optional(Type.String()),
-      type: Type.Optional(Type.String()),
-      line: Type.Optional(Type.Number()),
+      rule_id: opt(str()),
+      reason: opt(str()),
+      character: opt(finiteNum()),
+      file: opt(str()),
+      severity: opt(str()),
+      type: opt(str()),
+      line: opt(finiteNum()),
     },
-    { additionalProperties: true },
+    { open: true },
   ),
 );
+const isSwiftLintOutput = compile(SwiftLintOutputSchema).check;
 
 // SwiftLint rules whose rule class declares a `corrector` — i.e. rules that
 // `swiftlint --fix` rewrites deterministically. The JSON reporter does not
@@ -117,7 +118,7 @@ function parseSwiftLintOutput(raw: string, filePath: string): Diagnostic[] {
 
   try {
     const parsed = JSON.parse(raw);
-    if (!Value.Check(SwiftLintOutputSchema, parsed)) return diagnostics;
+    if (!isSwiftLintOutput(parsed)) return diagnostics;
 
     for (const item of parsed) {
       if (!item.reason) continue;

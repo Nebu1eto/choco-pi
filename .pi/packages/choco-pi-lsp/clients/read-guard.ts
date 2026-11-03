@@ -10,16 +10,12 @@
  * Falls back safely when LSP is unavailable.
  */
 
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import { isString, type LspDictionaryValue } from "./runtime-guards.ts";
 import * as fs from "node:fs";
 import { createFileTime, type FileTime } from "./file-time.ts";
 import { hashDiagnosticContent } from "./lsp/diagnostic-binding.ts";
 import { normalizeEphemeralMapKey, normalizeFilePath } from "./path-utils.ts";
 import { logReadGuardEvent } from "./read-guard-logger.ts";
-
-const LspDictionaryValueSchema = Type.Unknown();
-type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
 
 function assignOptionalProperties<T extends object, U extends object, C>(
   target: T,
@@ -1053,7 +1049,7 @@ export class ReadGuard {
       if (!Array.isArray(entry) || entry.length !== 2) continue;
       const [rawPath, records] = entry;
 
-      if (!Check(Type.String(), rawPath)) continue;
+      if (!isString(rawPath)) continue;
       if (!Array.isArray(records) || records.length === 0) continue;
       const filePath = this.key(rawPath);
       let lines: string[];

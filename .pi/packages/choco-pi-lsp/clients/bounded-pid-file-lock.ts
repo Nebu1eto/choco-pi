@@ -1,16 +1,15 @@
+import { finite, hasErrorCode } from "./runtime-guards.ts";
+import { compile, obj, str } from "@earendil-works/pi-schema";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 
-const ErrorCodeSchema = Type.Object({ code: Type.Optional(Type.String()) });
-const QuarantineLockOwnerSchema = Type.Object({
-  pid: Type.Number(),
-  createdAt: Type.Number(),
-  token: Type.String(),
-});
+const QuarantineLockOwnerSchema = obj(
+  { pid: finite(), createdAt: finite(), token: str() },
+  { open: true },
+);
+const isQuarantineLockOwner = compile(QuarantineLockOwnerSchema).check;
 
 const waitArray = new Int32Array(new SharedArrayBuffer(4));
 
@@ -20,7 +19,7 @@ function ownerPidIsLive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (error) {
-    return Value.Check(ErrorCodeSchema, error) && error.code === "EPERM";
+    return hasErrorCode(error) && error.code === "EPERM";
   }
 }
 
@@ -55,14 +54,14 @@ async function releaseQuarantineLock(lockPath: string, token: string): Promise<v
       renamed = true;
       break;
     } catch (error) {
-      if (!Value.Check(ErrorCodeSchema, error) || error.code !== "ENOENT" || attempt === 2) return;
+      if (!hasErrorCode(error) || error.code !== "ENOENT" || attempt === 2) return;
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
   }
   if (!renamed) return;
   try {
     const owner = JSON.parse(await fsp.readFile(path.join(quarantined, "owner.json"), "utf8"));
-    if (Value.Check(QuarantineLockOwnerSchema, owner) && owner.token === token) {
+    if (isQuarantineLockOwner(owner) && owner.token === token) {
       await fsp.rm(quarantined, { recursive: true, force: true });
     } else {
       await restoreQuarantinedLock(lockPath, quarantined);
@@ -91,9 +90,7 @@ async function reclaimQuarantineLock(lockPath: string, staleMs: number): Promise
   let stale = false;
   try {
     const owner = JSON.parse(await fsp.readFile(path.join(quarantined, "owner.json"), "utf8"));
-    stale = Value.Check(QuarantineLockOwnerSchema, owner)
-      ? quarantineOwnerIsStale(owner, staleMs)
-      : false;
+    stale = isQuarantineLockOwner(owner) ? quarantineOwnerIsStale(owner, staleMs) : false;
   } catch {
     try {
       stale = Date.now() - (await fsp.stat(quarantined)).mtimeMs > staleMs;
@@ -129,14 +126,12 @@ async function tryAcquireQuarantineLock(
       }
       return () => releaseQuarantineLock(lockPath, owner.token);
     } catch (error) {
-      if (!Value.Check(ErrorCodeSchema, error) || error.code !== "EEXIST") throw error;
+      if (!hasErrorCode(error) || error.code !== "EEXIST") throw error;
     }
     let stale: boolean;
     try {
       const existing = JSON.parse(await fsp.readFile(path.join(lockPath, "owner.json"), "utf8"));
-      stale = Value.Check(QuarantineLockOwnerSchema, existing)
-        ? quarantineOwnerIsStale(existing, staleMs)
-        : false;
+      stale = isQuarantineLockOwner(existing) ? quarantineOwnerIsStale(existing, staleMs) : false;
     } catch {
       try {
         stale = Date.now() - (await fsp.stat(lockPath)).mtimeMs > staleMs;
@@ -234,7 +229,7 @@ export function acquireBoundedPidFileLock(
         }
       };
     } catch (error) {
-      if (!Value.Check(ErrorCodeSchema, error) || error.code !== "EEXIST") throw error;
+      if (!hasErrorCode(error) || error.code !== "EEXIST") throw error;
       try {
         const [pidText] = fs.readFileSync(lockPath, "utf8").split(":", 1);
         if (!ownerPidIsLive(Number.parseInt(pidText ?? "", 10))) {
@@ -242,7 +237,7 @@ export function acquireBoundedPidFileLock(
           continue;
         }
       } catch (lockError) {
-        if (Value.Check(ErrorCodeSchema, lockError) && lockError.code === "ENOENT") continue;
+        if (hasErrorCode(lockError) && lockError.code === "ENOENT") continue;
       }
       if (Date.now() >= deadline) {
         if (options.onContention === "skip-log") {

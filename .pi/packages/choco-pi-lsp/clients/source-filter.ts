@@ -17,8 +17,7 @@
  * generated/codegen-produced (hand-written JS, Python, Go, Rust, etc.).
  */
 
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { isFiniteNumber } from "./runtime-guards.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getProjectIgnoreMatcher } from "./file-utils.ts";
@@ -600,7 +599,7 @@ interface ResolvedCollectionConfig {
  * default, never `Infinity` (#250/#747/#760: an unbounded walk was the bug).
  */
 function resolveFiniteCap(raw: number | undefined, fallback: number): number {
-  return Check(Type.Number(), raw) && Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : fallback;
+  return isFiniteNumber(raw) && Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : fallback;
 }
 
 function resolveCollectionConfig(

@@ -9,8 +9,8 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, obj, opt, str, compile } from "@earendil-works/pi-schema";
+import { finiteNum } from "../../lsp/schema-guards.ts";
 import { walkUpDirs } from "../../path-utils.ts";
 import { safeSpawnAsync } from "../../safe-spawn.ts";
 import { getJstsLintPolicyForCwd, hasVitePlusConfig } from "../../tool-policy.ts";
@@ -133,39 +133,46 @@ interface OxlintJsonReport {
   diagnostics?: OxlintJsonDiagnostic[];
 }
 
-const OxlintJsonReportSchema = Type.Object(
+const OxlintJsonReportSchema = obj(
   {
-    diagnostics: Type.Optional(
-      Type.Array(
-        Type.Object(
+    diagnostics: opt(
+      arr(
+        obj(
           {
-            message: Type.Optional(Type.String()),
-            code: Type.Optional(Type.String()),
-            severity: Type.Optional(Type.String()),
-            help: Type.Optional(Type.String()),
-            filename: Type.Optional(Type.String()),
-            labels: Type.Optional(
-              Type.Array(
-                Type.Object({
-                  span: Type.Optional(
-                    Type.Object({
-                      offset: Type.Optional(Type.Number()),
-                      length: Type.Optional(Type.Number()),
-                      line: Type.Optional(Type.Number()),
-                      column: Type.Optional(Type.Number()),
-                    }),
-                  ),
-                }),
+            message: opt(str()),
+            code: opt(str()),
+            severity: opt(str()),
+            help: opt(str()),
+            filename: opt(str()),
+            labels: opt(
+              arr(
+                obj(
+                  {
+                    span: opt(
+                      obj(
+                        {
+                          offset: opt(finiteNum()),
+                          length: opt(finiteNum()),
+                          line: opt(finiteNum()),
+                          column: opt(finiteNum()),
+                        },
+                        { open: true },
+                      ),
+                    ),
+                  },
+                  { open: true },
+                ),
               ),
             ),
           },
-          { additionalProperties: true },
+          { open: true },
         ),
       ),
     ),
   },
-  { additionalProperties: true },
+  { open: true },
 );
+const isOxlintJsonReport = compile(OxlintJsonReportSchema).check;
 
 // Oxlint codes look like "eslint(no-debugger)" or "oxc(approx-constant)".
 // Strip the plugin prefix so the rule lines up with what users expect.
@@ -186,7 +193,7 @@ function parseOxlintJson(raw: string, filePath: string): Diagnostic[] {
   let parsed: OxlintJsonReport;
   try {
     const value = JSON.parse(trimmed);
-    if (!Value.Check(OxlintJsonReportSchema, value)) return [];
+    if (!isOxlintJsonReport(value)) return [];
     parsed = value;
   } catch {
     return [];

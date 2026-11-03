@@ -292,3 +292,14 @@ Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pas
 ## 2026-11-03 choco-pi patch: Pi SDK target 1.5.0 + pi-schema dependency
 
 Pi SDK pins move from `1.4.0` to exactly `1.5.0` and `@earendil-works/pi-schema@1.5.0` is added as a peer dependency (the extension loader has no alias for it). The package-local `minimumReleaseAgeExclude` entries move to `@1.5.0` and gain `pi-schema`. The lock was regenerated with pnpm 11.11.0 (`pnpm install --ignore-scripts`).
+
+Top-level `clients/*.ts` no longer import `typebox`. Host-boundary and live-object checks use `clients/runtime-guards.ts` (identity/instanceof guards mirroring the former `Check(Type.X)` matrix: Number rejects NaN/Infinity and boxed numbers, Object accepts any non-null non-array non-function object). Persisted-file validators (cache meta, turn state, codebase model, worklog, advisory provenance, warning/disposition state, instance registry, grammar manifest, git-guard record, agent-nudge payload) are open `pi-schema` objects with finite-bounded numbers, so files written by the TypeBox build still load; `tests/persisted-cache-formats.test.ts` replays HEAD-format fixtures. `registration-manifest.json` is deliberately NOT regenerated: `index.ts` reads it only as the static lazy-registration snapshot and no test or script compares it with runtime registration (tests check flag names and the inactive-tool set). It keeps the TypeBox-era enum form (`{"type":"string","enum":[…]}`, `required` first); runtime registration from `tools/*` now emits pi-schema's `{"enum":[…]}`. Both are equivalent for the host validator; 12 of 14 tool schemas differ textually (also pre-existing description drift for `lsp_navigation.operation`). `typebox` stays a peer only for `tools/schema-bridge.ts`; it also remains in `install-diagnostics.ts` CRITICAL_DEPS because the bridge still resolves it at runtime.
+
+`clients/dispatch/**` and `clients/lsp/**` no longer import `typebox`: runner output parsers, LSP capability and
+workspace-edit guards, the workspace diagnostics cache sidecar, and the YAML rule parser use compiled pi-schema
+validators (`compile(schema).check`) with `{ open: true }` objects, matching TypeBox's open-object default. The new
+`clients/lsp/schema-guards.ts` supplies `finiteNum()` (pi-schema `num()` bounded to +/-`Number.MAX_VALUE`, because
+`num()` accepts NaN/Infinity and `JSON.parse` yields `Infinity` for `1e999`, while TypeBox `Number` rejected both) plus
+`isFiniteNumber` and `isBooleanValue`. One behaviour difference: pi-schema rejects a required `unknown()` property that is
+absent, which TypeBox accepted; the only such property (`range` in `edits.ts`) is rejected downstream either way.
+Tests: `tests/pi-schema-clients-lsp-dispatch.test.ts`.
