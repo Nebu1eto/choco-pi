@@ -1,12 +1,35 @@
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { bool, compile, num, str } from "@earendil-works/pi-schema";
 
-const BigIntValueSchema = Type.BigInt();
-const BooleanValueSchema = Type.Boolean();
-const FunctionValueSchema = Type.Function([], Type.Unknown());
-const NumberValueSchema = Type.Number();
-const StringValueSchema = Type.String();
-const SymbolValueSchema = Type.Symbol();
+const isStringPrimitive = compile(str()).check;
+const isBooleanPrimitive = compile(bool()).check;
+// pi-schema number accepts NaN/infinities; the bounds restore finite-only, and isNumberValue re-admits them explicitly.
+const isFiniteNumber = compile(
+  num({ minimum: -Number.MAX_VALUE, maximum: Number.MAX_VALUE }),
+).check;
+
+function isFunctionValue<Value>(value: Value): boolean {
+  return value instanceof Function;
+}
+
+function isBigIntValue<Value>(value: Value): boolean {
+  const boxed = Object(value);
+  return boxed !== value && boxed instanceof BigInt;
+}
+
+function isSymbolValue<Value>(value: Value): boolean {
+  const boxed = Object(value);
+  return boxed !== value && boxed instanceof Symbol;
+}
+
+/** Finite numbers plus NaN and the infinities, like the `typeof` operator; boxed numbers are rejected. */
+function isNumberValue<Value>(value: Value): boolean {
+  return (
+    isFiniteNumber(value) ||
+    Object.is(value, Number.NaN) ||
+    Object.is(value, Number.POSITIVE_INFINITY) ||
+    Object.is(value, Number.NEGATIVE_INFINITY)
+  );
+}
 
 export type RuntimeValue = object | string | number | boolean | bigint | symbol | null | undefined;
 
@@ -32,24 +55,19 @@ export function hasRuntimeType<Value, Kind extends keyof RuntimeTypeMap>(
 ): value is Value & RuntimeTypeMap[Kind] {
   switch (kind) {
     case "bigint":
-      return Check(BigIntValueSchema, value);
+      return isBigIntValue(value);
     case "boolean":
-      return Check(BooleanValueSchema, value);
+      return isBooleanPrimitive(value);
     case "function":
-      return Check(FunctionValueSchema, value);
+      return isFunctionValue(value);
     case "number":
-      return (
-        Check(NumberValueSchema, value) ||
-        Object.is(value, Number.NaN) ||
-        Object.is(value, Number.POSITIVE_INFINITY) ||
-        Object.is(value, Number.NEGATIVE_INFINITY)
-      );
+      return isNumberValue(value);
     case "object":
-      return value === null || (Object(value) === value && !Check(FunctionValueSchema, value));
+      return value === null || (Object(value) === value && !isFunctionValue(value));
     case "string":
-      return Check(StringValueSchema, value);
+      return isStringPrimitive(value);
     case "symbol":
-      return Check(SymbolValueSchema, value);
+      return isSymbolValue(value);
     case "undefined":
       return value === undefined;
   }

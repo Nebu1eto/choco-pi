@@ -5,9 +5,10 @@ import {
   WEB_SEARCH_PROVIDERS,
   type AgentBrowserConfigState,
 } from "./config.ts";
-import { JsonSchema, type JsonSchemaBuilder } from "./json-schema.ts";
+import { int, obj, opt, str } from "@earendil-works/pi-schema";
 import { WEB_SEARCH_PROMPT_GUIDELINE } from "./playbook.ts";
-import { StringEnum as localStringEnum, type StringEnumBuilder } from "./string-enum-schema.ts";
+import { fullDescription, stringEnum, type SchemaDescribe } from "./json-schema.ts";
+import { hostParams } from "./schema-bridge.ts";
 import type { createAgentBrowserWebSearchTool as createRuntimeWebSearchTool } from "./web-search.ts";
 
 export const AGENT_BROWSER_WEB_SEARCH_TOOL_NAME = "agent_browser_web_search";
@@ -60,71 +61,77 @@ export type AgentBrowserWebSearchParamsInput = {
 };
 
 export function createAgentBrowserWebSearchParamsSchema(
-  Type: JsonSchemaBuilder = JsonSchema,
-  StringEnum: StringEnumBuilder = localStringEnum,
+  describe: SchemaDescribe = fullDescription,
 ) {
-  return Type.Object(
-    {
-      query: Type.String({
-        minLength: 1,
-        description: "Search query to run with the configured Exa or Brave web search provider.",
+  return obj({
+    query: str({
+      minLength: 1,
+      ...describe("Search query to run with the configured Exa or Brave web search provider."),
+    }),
+    provider: opt(
+      stringEnum(WEB_SEARCH_PROVIDER_PARAM_VALUES, {
+        ...describe(
+          `Optional provider override. auto uses configured keys and preferredProvider; when both Exa and Brave are available, the default preferred provider is ${DEFAULT_WEB_SEARCH_PROVIDER}.`,
+        ),
       }),
-      provider: Type.Optional(
-        StringEnum(WEB_SEARCH_PROVIDER_PARAM_VALUES, {
-          description: `Optional provider override. auto uses configured keys and preferredProvider; when both Exa and Brave are available, the default preferred provider is ${DEFAULT_WEB_SEARCH_PROVIDER}.`,
-        }),
-      ),
-      searchType: Type.Optional(
-        StringEnum(EXA_SEARCH_TYPES, {
-          description:
-            "Optional Exa search type. Defaults to auto; ignored by Brave. Use deep/deep-reasoning only for harder research because they are slower.",
-        }),
-      ),
-      count: Type.Optional(
-        Type.Integer({
-          minimum: 1,
-          maximum: MAX_SEARCH_RESULT_COUNT,
-          description: `Number of web results to return. Defaults to ${DEFAULT_SEARCH_RESULT_COUNT}; max ${MAX_SEARCH_RESULT_COUNT}.`,
-        }),
-      ),
-      offset: Type.Optional(
-        Type.Integer({
-          minimum: 0,
-          maximum: 9,
-          description: "Zero-based result offset for pagination. Defaults to 0.",
-        }),
-      ),
-      country: Type.Optional(
-        Type.String({
-          pattern: "^[A-Za-z]{2}$",
-          description: "Optional 2-letter country code, such as US or GB.",
-        }),
-      ),
-      searchLang: Type.Optional(
-        Type.String({
-          minLength: 2,
-          maxLength: 8,
-          description: "Optional Brave search language code, such as en or en-US.",
-        }),
-      ),
-      safesearch: Type.Optional(
-        StringEnum(["off", "moderate", "strict"] as const, {
-          description:
-            "Optional search safety setting. Brave forwards this as safesearch; Exa maps moderate/strict to moderation=true.",
-        }),
-      ),
-      freshness: Type.Optional(
-        StringEnum(["pd", "pw", "pm", "py"] as const, {
-          description:
-            "Optional freshness window: pd=past day, pw=past week, pm=past month, py=past year.",
-        }),
-      ),
-    },
-    { additionalProperties: false },
-  );
+    ),
+    searchType: opt(
+      stringEnum(EXA_SEARCH_TYPES, {
+        ...describe(
+          "Optional Exa search type. Defaults to auto; ignored by Brave. Use deep/deep-reasoning only for harder research because they are slower.",
+        ),
+      }),
+    ),
+    count: opt(
+      int({
+        minimum: 1,
+        maximum: MAX_SEARCH_RESULT_COUNT,
+        ...describe(
+          `Number of web results to return. Defaults to ${DEFAULT_SEARCH_RESULT_COUNT}; max ${MAX_SEARCH_RESULT_COUNT}.`,
+        ),
+      }),
+    ),
+    offset: opt(
+      int({
+        minimum: 0,
+        maximum: 9,
+        ...describe("Zero-based result offset for pagination. Defaults to 0."),
+      }),
+    ),
+    country: opt(
+      str({
+        pattern: "^[A-Za-z]{2}$",
+        ...describe("Optional 2-letter country code, such as US or GB."),
+      }),
+    ),
+    searchLang: opt(
+      str({
+        minLength: 2,
+        maxLength: 8,
+        ...describe("Optional Brave search language code, such as en or en-US."),
+      }),
+    ),
+    safesearch: opt(
+      stringEnum(["off", "moderate", "strict"] as const, {
+        ...describe(
+          "Optional search safety setting. Brave forwards this as safesearch; Exa maps moderate/strict to moderation=true.",
+        ),
+      }),
+    ),
+    freshness: opt(
+      stringEnum(["pd", "pw", "pm", "py"] as const, {
+        ...describe(
+          "Optional freshness window: pd=past day, pw=past week, pm=past month, py=past year.",
+        ),
+      }),
+    ),
+  });
 }
 
 export const AgentBrowserWebSearchParams = createAgentBrowserWebSearchParamsSchema();
+
+/** Registration form: Pi 1.5.0 still requires a TypeBox-shaped parameter schema. */
+export const AgentBrowserWebSearchHostParams = hostParams(AgentBrowserWebSearchParams);
 
 type RuntimeWebSearchTool = ReturnType<typeof createRuntimeWebSearchTool>;
 
@@ -156,7 +163,7 @@ export function createDeferredAgentBrowserWebSearchTool(
       "Do not issue parallel or repeated agent_browser_web_search calls; use one high-signal query, inspect the results, then only run a focused follow-up if needed. If the provider returns HTTP 429, stop searching and tell the user the API plan/rate limit needs time or a plan change.",
       "After using agent_browser_web_search, cite result URLs in the final answer when web evidence informed the answer.",
     ],
-    parameters: AgentBrowserWebSearchParams,
+    parameters: AgentBrowserWebSearchHostParams,
     async execute(
       toolCallId: string,
       params: AgentBrowserWebSearchParamsInput,

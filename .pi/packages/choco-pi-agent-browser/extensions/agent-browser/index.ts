@@ -27,8 +27,7 @@ import {
   loadAgentBrowserConfig,
   type AgentBrowserConfigState,
 } from "./lib/config.ts";
-import { AGENT_BROWSER_PARAMS } from "./lib/input-modes/params.ts";
-import type { AgentBrowserExecuteParams } from "./lib/orchestration/input-plan.ts";
+import { AGENT_BROWSER_HOST_PARAMS } from "./lib/input-modes/params.ts";
 import {
   AgentBrowserResultComponent,
   formatAgentBrowserRenderCall,
@@ -38,7 +37,7 @@ import { buildToolPromptGuidelines } from "./lib/playbook.ts";
 import { registerAgentBrowserSearchAdapters } from "./lib/web-search-backend-registration.ts";
 import { createDeferredAgentBrowserWebSearchTool } from "./lib/web-search-registration.ts";
 
-type AgentBrowserTool = ToolDefinition<typeof AGENT_BROWSER_PARAMS>;
+type AgentBrowserTool = ToolDefinition<typeof AGENT_BROWSER_HOST_PARAMS>;
 type RuntimeEvent =
   | BeforeAgentStartEvent
   | SessionShutdownEvent
@@ -105,7 +104,7 @@ async function captureRuntime(pi: ExtensionAPI): Promise<CapturedRuntime> {
   };
   const captureTool = (candidate: ToolDefinition): void => {
     if (candidate.name !== "agent_browser") return;
-    // SAFETY: runtime-extension registers agent_browser with the same AGENT_BROWSER_PARAMS schema imported above.
+    // SAFETY: runtime-extension registers agent_browser with the same AGENT_BROWSER_HOST_PARAMS schema imported above.
     tool = candidate as AgentBrowserTool;
   };
   // SAFETY: runtimePi inherits the live host API and replaces only registration methods with collectors.
@@ -209,7 +208,7 @@ function registerResolvedAgentBrowserExtension(
       "Automate browser navigation, interaction, extraction, screenshots, QA, and supported Electron apps.",
     promptSnippet: "Automate browser navigation, interaction, extraction, and screenshots.",
     promptGuidelines: toolPromptGuidelines,
-    parameters: AGENT_BROWSER_PARAMS,
+    parameters: AGENT_BROWSER_HOST_PARAMS,
     renderCall(args, theme, context) {
       const text =
         context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
@@ -228,7 +227,7 @@ function registerResolvedAgentBrowserExtension(
       );
       return component;
     },
-    async execute(toolCallId, params: AgentBrowserExecuteParams, signal, onUpdate, ctx) {
+    async execute(toolCallId, params, signal, onUpdate, ctx) {
       const runtime = await getRuntime();
       return runtime.tool.execute(toolCallId, params, signal, onUpdate, ctx);
     },

@@ -12,7 +12,7 @@ import { hasRuntimeType, isRecord, type RuntimeValue } from "./parsing.ts";
 import { WEB_SEARCH_PROMPT_GUIDELINE } from "./playbook.ts";
 import {
   AGENT_BROWSER_WEB_SEARCH_TOOL_NAME,
-  AgentBrowserWebSearchParams,
+  AgentBrowserWebSearchHostParams,
   DEFAULT_SEARCH_RESULT_COUNT,
   MAX_SEARCH_RESULT_COUNT,
   type AgentBrowserWebSearchParamsInput,
@@ -24,6 +24,7 @@ import {
 
 export {
   AGENT_BROWSER_WEB_SEARCH_TOOL_NAME,
+  AgentBrowserWebSearchHostParams,
   AgentBrowserWebSearchParams,
   DEFAULT_SEARCH_RESULT_COUNT,
   EXA_SEARCH_TYPES,
@@ -1096,7 +1097,7 @@ export function createAgentBrowserWebSearchTool(
       "Do not issue parallel or repeated agent_browser_web_search calls; use one high-signal query, inspect the results, then only run a focused follow-up if needed. If the provider returns HTTP 429, stop searching and tell the user the API plan/rate limit needs time or a plan change.",
       "After using agent_browser_web_search, cite result URLs in the final answer when web evidence informed the answer.",
     ],
-    parameters: AgentBrowserWebSearchParams,
+    parameters: AgentBrowserWebSearchHostParams,
     async execute(
       _toolCallId: string,
       params: AgentBrowserWebSearchParamsInput,

@@ -95,7 +95,7 @@ import {
 } from "./command-taxonomy.ts";
 import { hasLaunchScopedFlagToken } from "./launch-scoped-flags.ts";
 import { cleanupSecureTempArtifacts } from "./temp.ts";
-import { AGENT_BROWSER_PARAMS } from "./input-modes/params.ts";
+import { AGENT_BROWSER_HOST_PARAMS } from "./input-modes/params.ts";
 import { type CompiledAgentBrowserElectron } from "./input-modes/types.ts";
 import {
   AGENT_BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS,
@@ -137,7 +137,6 @@ import {
 import {
   buildValidationFailureResult,
   resolveAgentBrowserInput,
-  type AgentBrowserExecuteParams,
 } from "./orchestration/input-plan.ts";
 import {
   applyAgentBrowserOutputPath,
@@ -2481,14 +2480,14 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 
   pi.on("tool_result", async (event) => buildAgentBrowserToolResultPatch(event));
 
-  const agentBrowserTool: ToolDefinition<typeof AGENT_BROWSER_PARAMS> = {
+  const agentBrowserTool: ToolDefinition<typeof AGENT_BROWSER_HOST_PARAMS> = {
     name: "agent_browser",
     label: "Agent Browser",
     description:
       "Automate browser navigation, interaction, extraction, screenshots, QA, and supported Electron apps.",
     promptSnippet: "Automate browser navigation, interaction, extraction, and screenshots.",
     promptGuidelines: toolPromptGuidelines,
-    parameters: AGENT_BROWSER_PARAMS,
+    parameters: AGENT_BROWSER_HOST_PARAMS,
     renderCall(args, theme, context) {
       const text =
         context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
@@ -2507,13 +2506,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
       );
       return component;
     },
-    async execute(
-      toolCallId,
-      params: AgentBrowserExecuteParams,
-      signal,
-      onUpdate,
-      ctx,
-    ): Promise<AgentBrowserToolResult> {
+    async execute(toolCallId, params, signal, onUpdate, ctx): Promise<AgentBrowserToolResult> {
       const promptPolicy = buildPromptPolicy(getLatestUserPrompt(ctx.sessionManager.getBranch()));
       const outputPath =
         isRecord(params) && hasRuntimeType(params.outputPath, "string")
@@ -3391,7 +3384,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
         });
       });
     },
-  } satisfies ToolDefinition<typeof AGENT_BROWSER_PARAMS>;
+  } satisfies ToolDefinition<typeof AGENT_BROWSER_HOST_PARAMS>;
   pi.registerTool(agentBrowserTool);
 
   registerWebSearchToolIfAvailable(agentBrowserConfig);

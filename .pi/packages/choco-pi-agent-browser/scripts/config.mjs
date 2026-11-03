@@ -8,7 +8,6 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import process from "node:process";
-import { Guard } from "typebox/guard";
 
 async function loadConfigPolicyModule() {
   return import("../extensions/agent-browser/lib/config-policy.ts");
@@ -101,7 +100,7 @@ function parseArgs(argv) {
 function readConfig(path) {
   if (!existsSync(path)) return { ...DEFAULT_CONFIG };
   const parsed = JSON.parse(readFileSync(path, "utf8"));
-  if (!Guard.IsObject(parsed) || Array.isArray(parsed))
+  if (parsed === null || Object(parsed) !== parsed || Array.isArray(parsed))
     throw new Error(`${path} must contain a JSON object.`);
   return { ...DEFAULT_CONFIG, ...parsed };
 }

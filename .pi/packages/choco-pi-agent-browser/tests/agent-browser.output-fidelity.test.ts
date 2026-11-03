@@ -14,7 +14,9 @@ import {
   redactSensitiveText,
   redactSensitiveValue,
 } from "../extensions/agent-browser/lib/runtime.ts";
-import { Value } from "typebox/value";
+import { compile } from "@earendil-works/pi-schema";
+
+const isAgentBrowserParams = compile(AGENT_BROWSER_PARAMS).check;
 
 test("redaction does not normalize URLs that carry no secrets", () => {
   assert.equal(redactSensitiveText("wss://waku.example.com"), "wss://waku.example.com");
@@ -63,7 +65,7 @@ test("job press step compiles to upstream press and is schema-valid", () => {
       { action: "press", press: "Enter" },
     ],
   };
-  assert.equal(Value.Check(AGENT_BROWSER_PARAMS, { job }), true);
+  assert.equal(isAgentBrowserParams({ job }), true);
   const compiled = compileAgentBrowserJob(job);
   assert.equal(compiled.error, undefined);
   assert.deepEqual(compiled.compiled?.steps[1]?.args, ["press", "Enter"]);
