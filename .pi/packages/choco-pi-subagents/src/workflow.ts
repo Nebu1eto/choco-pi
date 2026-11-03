@@ -5,6 +5,7 @@ import {
   providerKeyFromUnavailableMessage,
   providerUnavailableMessage,
 } from "./provider-health.ts";
+import { WORK_TASK_PATTERN } from "./review-rounds.ts";
 
 /**
  * Advertised thinking levels, ordered to mirror pi-ai's EXTENDED_THINKING_LEVELS
@@ -70,6 +71,13 @@ export const WorkflowStepSchema = obj({
 /** The single JSON definition accepted by workflow_run and the graph validator. */
 export const WorkflowDefinitionSchema = obj({
   name: str({ minLength: 1, maxLength: 120 }),
+  work_task: opt(
+    str({
+      pattern: WORK_TASK_PATTERN,
+      description:
+        "Stable id of the work task this review belongs to (lowercase, digits, hyphens). Required for review roles; reuse it for every review round of the same task.",
+    }),
+  ),
   dynamic: opt(
     bool({
       description:

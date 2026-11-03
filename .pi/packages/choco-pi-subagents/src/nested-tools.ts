@@ -67,6 +67,15 @@ import { addUsage } from "./usage.ts";
 import { isWorktreeIsolationEnabled } from "./worktree.ts";
 import { loadFlagshipModels } from "./model-tiers.ts";
 import { thinkingLevelSchema } from "./workflow.ts";
+import {
+  defaultReviewRoundsDir,
+  isReviewRole,
+  ReviewRoundStore,
+  stateUnavailableMessage,
+  WORK_TASK_PATTERN,
+  type ReviewEntry,
+  type ReviewTicket,
+} from "./review-rounds.ts";
 
 /**
  * Hard ceiling on nesting for every branch: main session = 0, its subagents = 1,
@@ -93,6 +102,8 @@ const NESTED_TOOL_NAMES = [
 ] as const;
 
 interface NestedSpawnOptions {
+  /** One-shot review-round admission ticket; required for review-role types. */
+  reviewTicket?: ReviewTicket;
   description: string;
   name?: string;
   model?: Model<any>;
@@ -160,6 +171,7 @@ export interface NestedAgentManager {
     prompt: string,
     signal?: AbortSignal,
     options?: {
+      reviewTicket?: ReviewTicket;
       maxTurns?: number;
       name?: string;
       /** `provider/id`; validated and applied by the manager before the run. */
@@ -181,6 +193,8 @@ export interface NestedToolContext {
   allowedSubagents: "all" | string[];
   /** Root used for agent/config discovery; may differ from the agent's working directory. */
   configCwd: string;
+  /** Review-round ledger; defaults to the shared per-agent-dir store (same files, same locks). */
+  reviewRounds?: ReviewRoundStore;
 }
 
 function textResult(text: string, isError = false, details = {}) {
@@ -335,6 +349,43 @@ export async function createNestedSubagentTools(
     );
     return lines.length > 0 ? lines.join("\n") : "- none";
   };
+  const reviewStore = context.reviewRounds ?? new ReviewRoundStore(defaultReviewRoundsDir());
+  type ReviewAdmission =
+    | { ok: true; ticket: ReviewTicket | undefined; notice: string }
+    | { ok: false; message: string };
+  /**
+   * Reserve a review round for a review-role launch (no-op for other roles). The
+   * round is released when the session ends or the call is aborted while the
+   * reservation was pending.
+   */
+  const admitReview = async (
+    type: string,
+    workTask: string | undefined,
+    entry: ReviewEntry,
+    signal: AbortSignal | undefined,
+  ): Promise<ReviewAdmission> => {
+    if (!isReviewRole(type)) return { ok: true, ticket: undefined, notice: "" };
+    const rootSessionId = context.manager.getRecord(context.parentAgentId)?.rootSessionId;
+    if (rootSessionId === undefined) {
+      return { ok: false, message: stateUnavailableMessage("root session unknown") };
+    }
+    const result = await reviewStore.admit({
+      rootSessionId,
+      workTask: workTask ?? "",
+      agentType: type,
+      entry,
+    });
+    if (!result.ok) return { ok: false, message: result.message };
+    const parent = context.manager.getRecord(context.parentAgentId);
+    if (parent === undefined || parent.rootSessionId !== rootSessionId || signal?.aborted) {
+      await reviewStore.release(result.ticket);
+      return {
+        ok: false,
+        message: "Session changed while the review round was being admitted; nothing was started.",
+      };
+    }
+    return { ok: true, ticket: result.ticket, notice: `${result.notice}\n` };
+  };
   // Snapshot of the roles at construction; execute reloads per call.
   const initialRegistry = await loadRegistry(context.configCwd);
 
@@ -371,6 +422,13 @@ export async function createNestedSubagentTools(
             str({
               description:
                 "Required when model is a Flagship-tier model and the role's declared model is not Flagship; state the model-guidance reason.",
+            }),
+          ),
+          work_task: opt(
+            str({
+              pattern: WORK_TASK_PATTERN,
+              description:
+                "Stable id of the work task this review belongs to (lowercase, digits, hyphens). Required for review roles; reuse it for every review round of the same task.",
             }),
           ),
           thinking: opt(
@@ -465,9 +523,18 @@ export async function createNestedSubagentTools(
           if (resolution.tag === "error") return textResult(resolution.message, true);
           resumeModel = `${resolution.model.provider}/${resolution.model.id}`;
         }
+        const resumeAdmission = await admitReview(
+          existing.type,
+          params.work_task,
+          "nested-resume",
+          signal,
+        );
+        if (!resumeAdmission.ok) return textResult(resumeAdmission.message, true);
+        const resumeTicket = resumeAdmission.ticket;
         let resumed: AgentRecord | undefined;
         try {
           resumed = await context.manager.resume(existing.id, params.prompt, signal, {
+            reviewTicket: resumeTicket,
             maxTurns: params.max_turns,
             name: params.name,
             model: resumeModel,
@@ -481,6 +548,7 @@ export async function createNestedSubagentTools(
             },
           });
         } catch (error) {
+          if (resumeTicket !== undefined) await reviewStore.release(resumeTicket);
           if (error instanceof ResumeModelError) {
             return textResult(
               `Failed to resume nested agent "${params.resume}": ${error.message}`,
@@ -489,10 +557,13 @@ export async function createNestedSubagentTools(
           }
           throw error;
         }
-        if (!resumed) return textResult(`Failed to resume nested agent "${params.resume}".`, true);
+        if (!resumed) {
+          if (resumeTicket !== undefined) await reviewStore.release(resumeTicket);
+          return textResult(`Failed to resume nested agent "${params.resume}".`, true);
+        }
         const address = resumed.alias ?? resumed.handle ?? resumed.id;
         return textResult(
-          `Agent alias: @${address}\n\n${formatRecord(resumed, "inline")}`,
+          `${resumeAdmission.notice}Agent alias: @${address}\n\n${formatRecord(resumed, "inline")}`,
           resumed.status === "error",
           buildRecordDetails(resumed, false, true),
         );
@@ -692,6 +763,9 @@ export async function createNestedSubagentTools(
       // spawn() throws on strict worktree-isolation failure and cwd validation —
       // report it as a tool error, like the top-level Agent tool does, instead of
       // letting it escape into the child's turn.
+      const admission = await admitReview(resolvedType, params.work_task, "nested", signal);
+      if (!admission.ok) return textResult(admission.message, true);
+      options.reviewTicket = admission.ticket;
       try {
         if (invocation.runInBackground) {
           const id = context.manager.spawn(context.pi, ctx, resolvedType, params.prompt, {
@@ -703,7 +777,7 @@ export async function createNestedSubagentTools(
           attachTranscript(id);
           const record = context.manager.getRecord(id);
           return textResult(
-            `${modelNote}Nested agent started in background. Agent ID: ${id}\n` +
+            `${admission.notice}${modelNote}Nested agent started in background. Agent ID: ${id}\n` +
               modelLine +
               `${TERMINAL_RESULT_RETRIEVAL_GUIDANCE} Use steer_subagent to send it a message mid-run.`,
             false,
@@ -720,11 +794,15 @@ export async function createNestedSubagentTools(
           attachTranscript,
         );
         return textResult(
-          `${modelNote}${modelLine}${formatRecord(record, "inline")}`,
+          `${admission.notice}${modelNote}${modelLine}${formatRecord(record, "inline")}`,
           record.status === "error",
           buildRecordDetails(record),
         );
       } catch (err) {
+        // Refund only when no agent was created: a record means the round ran.
+        if (admission.ticket !== undefined && childId === undefined) {
+          await reviewStore.release(admission.ticket);
+        }
         return textResult(err instanceof Error ? err.message : String(err), true);
       }
     },

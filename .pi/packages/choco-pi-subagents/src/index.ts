@@ -182,6 +182,16 @@ import {
   reduceJournal,
   SUBAGENT_JOURNAL_ENTRY,
 } from "./revival-journal.ts";
+import {
+  ADMISSION_CLOSED_MESSAGE,
+  isAdmissionOpen,
+  isRevokeRequest,
+  mayTriggerTurn,
+  readStopState,
+  STOP_CONTROL_REPORT_CHANNEL,
+  STOP_CONTROL_REVOKE_CHANNEL,
+  type StopReport,
+} from "./stop-control-contract.ts";
 import type {
   AgentConfig,
   AgentInvocation,
@@ -189,7 +199,9 @@ import type {
   AgentRecord,
   JoinMode,
   NotificationDetails,
+  StopWorkflowPort,
   SubagentType,
+  UserStopResult,
   WidgetMode,
 } from "./types.ts";
 import { createMentionProvider, mentionRoster, type TypeInfo } from "./ui/agent-mention.ts";
@@ -240,6 +252,18 @@ import {
   type SubagentsUsageLimitEvent,
 } from "./usage-limit-seam.ts";
 import { buildDetails, buildRecordDetails, delegationRenderers } from "./delegation-render.ts";
+import {
+  defaultReviewRoundsDir,
+  isReviewRole,
+  issueExemptTicket,
+  REVIEW_CONTINUE_USAGE,
+  ReviewRoundStore,
+  stateUnavailableMessage,
+  scheduleUnsupportedMessage,
+  WORK_TASK_PATTERN,
+  type ReviewEntry,
+  type ReviewTicket,
+} from "./review-rounds.ts";
 import { isWorktreeIsolationEnabled, setWorktreeIsolationEnabled } from "./worktree.ts";
 import {
   THINKING_LEVELS,
@@ -547,6 +571,8 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   // only after the root FleetPanel exists.
   let fleetSource: FleetPanel | undefined;
   let shellSectionProvider: ShellSectionProvider | undefined;
+  /** Root session this activation serves; set on session_start, cleared on shutdown. */
+  let activeRootSessionId: string | undefined;
 
   // ---- Cancellable pending notifications ----
   // Holds notifications briefly so get_subagent_result can cancel them
@@ -627,7 +653,17 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         display: true,
         details,
       },
-      { deliverAs: "steer", triggerTurn: true },
+      { deliverAs: "steer", triggerTurn: completionMayTriggerTurn(records) },
+    );
+  }
+
+  /**
+   * A completion may start a turn only while the root's latch is open at the epoch the work
+   * was authorised under; a stopped epoch's notifications are still delivered, never as turns.
+   */
+  function completionMayTriggerTurn(records: readonly AgentRecord[]): boolean {
+    return records.every((record) =>
+      mayTriggerTurn(record.admissionRoot ?? activeRootSessionId, record.admissionEpoch),
     );
   }
 
@@ -751,7 +787,10 @@ export default async function (pi: ExtensionAPI): Promise<void> {
                 display: true,
                 details: buildNotificationDetails(record, 500),
               },
-              { deliverAs: "steer", triggerTurn: true },
+              {
+                deliverAs: "steer",
+                triggerTurn: mayTriggerTurn(record.admissionRoot, record.admissionEpoch),
+              },
             )
             .catch(() => {
               /* missed delivery never consumes or removes the durable record */
@@ -946,6 +985,68 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   // interface other packages resolve by literal string; renaming them with the
   // package would silently disconnect any consumer without a compile error.
   const MANAGER_KEY = Symbol.for("pi-subagents:manager");
+  // Review-round ledger. Caps and the grant command live here; every review-role
+  // launch the Agent/workflow tools make is admitted through it first, and the
+  // manager refuses review-role launches that carry no ticket (fail closed).
+  const reviewRounds = new ReviewRoundStore(defaultReviewRoundsDir());
+  type ReviewAdmission =
+    | { kind: "none" }
+    | { kind: "admitted"; ticket: ReviewTicket; notice: string }
+    | { kind: "refused"; message: string };
+  /**
+   * Reserve a review round for a review-role launch ("none" for other roles).
+   * Snapshots the root session before the first await and rechecks it after;
+   * on a mismatch the reservation is released and nothing starts.
+   */
+  const admitReviewRound = async (
+    ctxRef: ExtensionContext,
+    type: string,
+    workTask: string | undefined,
+    entry: ReviewEntry,
+    expectedRoot?: string,
+  ): Promise<ReviewAdmission> => {
+    if (!isReviewRole(type)) return { kind: "none" };
+    let rootSessionId: string;
+    try {
+      rootSessionId = ctxRef.sessionManager.getSessionId();
+    } catch {
+      return { kind: "refused", message: stateUnavailableMessage("session unavailable") };
+    }
+    const stale = "Session changed while the review round was being admitted; nothing was started.";
+    if (expectedRoot !== undefined && expectedRoot !== rootSessionId) {
+      return { kind: "refused", message: stale };
+    }
+    // A stopped session reserves no review round: the launch would be refused anyway.
+    if (!isAdmissionOpen(rootSessionId))
+      return { kind: "refused", message: ADMISSION_CLOSED_MESSAGE };
+    const result = await reviewRounds.admit({
+      rootSessionId,
+      workTask: workTask ?? "",
+      agentType: type,
+      entry,
+    });
+    if (!result.ok) return { kind: "refused", message: result.message };
+    let unchanged = false;
+    try {
+      unchanged = ctxRef.sessionManager.getSessionId() === rootSessionId;
+    } catch {
+      unchanged = false;
+    }
+    if (!unchanged) {
+      await reviewRounds.release(result.ticket);
+      return { kind: "refused", message: stale };
+    }
+    // A /stop that landed while the round was being reserved gives the reservation back.
+    if (!isAdmissionOpen(rootSessionId)) {
+      await reviewRounds.release(result.ticket);
+      return { kind: "refused", message: ADMISSION_CLOSED_MESSAGE };
+    }
+    return { kind: "admitted", ticket: result.ticket, notice: `${result.notice}\n` };
+  };
+  const ticketOf = (admission: ReviewAdmission): ReviewTicket | undefined =>
+    admission.kind === "admitted" ? admission.ticket : undefined;
+  const noticeOf = (admission: ReviewAdmission): string =>
+    admission.kind === "admitted" ? admission.notice : "";
   // Process-external callers may supply arbitrary options. Nested ownership and
   // config-root metadata are internal capabilities issued only by scoped tools.
   /**
@@ -1301,6 +1402,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     /** `provider/id` chosen by the caller; validated like a live resume's. */
     model: string | undefined,
     toolCallId: string,
+    workTask: string | undefined,
   ) {
     const id = dormant.id;
     if (manager.isRevivalPending(id)) {
@@ -1322,12 +1424,17 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         `Agent "${id}" has no saved session to resume (saved status: ${dormant.status}).`,
       );
     }
+    const admission = await admitReviewRound(ctx, dormant.type, workTask, "agent-resume");
+    if (admission.kind === "refused") return textResult(admission.message);
     let record: AgentRecord;
     try {
       record = await manager.resumeDormant(id, prompt, revivalContext(ctx, revivalGeneration), {
         model,
+        reviewTicket: ticketOf(admission),
       });
     } catch (error) {
+      // The dormant resume failed before a run started: refund the round.
+      if (admission.kind === "admitted") await reviewRounds.release(admission.ticket);
       return textResult(
         `Failed to resume agent "${id}": ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -1336,7 +1443,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     const isQueued = record.status === "queued";
     const address = record.alias ?? record.handle ?? record.id;
     return textResult(
-      `Agent ${isQueued ? "queued" : "resumed"} in background from its saved session (it was not running: ${dormant.status}).\n` +
+      `${noticeOf(admission)}Agent ${isQueued ? "queued" : "resumed"} in background from its saved session (it was not running: ${dormant.status}).\n` +
         `Agent ID: ${id}\n` +
         `Alias: @${address}\n` +
         `Type: ${record.type}\n` +
@@ -1403,6 +1510,10 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     currentCtx = ctx;
     // Forked or resumed root: the scratch directory follows the session id, so name the old one once.
     const startedSessionId = ctx.sessionManager.getSessionId();
+    if (ownsManagerRegistry) {
+      activeRootSessionId = startedSessionId;
+      subscribeStopControl();
+    }
     if (!inChildSessionContext() && !isChildSessionId(startedSessionId)) {
       const change = describeScratchChange({
         reason: event.reason,
@@ -1641,6 +1752,8 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         let resumedRecord: AgentRecord | undefined;
         try {
           resumedRecord = await startBackgroundResume(ctx, record, mention.message, {
+            // A user-typed mention is user authority: exempt from, never refused by, the cap.
+            reviewTicket: issueExemptTicket("user-mention"),
             outputTranscript: config?.outputTranscript ?? getOutputTranscriptDefault(),
             maxTurns: normalizeMaxTurns(config?.maxTurns ?? getDefaultMaxTurns()),
           });
@@ -1676,18 +1789,22 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       const generation = revivalGeneration;
       // Detached: reopening may wait for the previous runtime to release the
       // session file, and prompt() is blocked until this hook returns.
-      manager.resumeDormant(dormant.id, mention.message, revivalContext(ctx, generation)).then(
-        () => {
-          if (generation === revivalGeneration) ctx.ui.notify(`Resumed ${target}`, "info");
-        },
-        (error) => {
-          if (generation !== revivalGeneration) return;
-          ctx.ui.notify(
-            `Could not resume ${target}: ${error instanceof Error ? error.message : String(error)}`,
-            "warning",
-          );
-        },
-      );
+      manager
+        .resumeDormant(dormant.id, mention.message, revivalContext(ctx, generation), {
+          reviewTicket: issueExemptTicket("user-mention"),
+        })
+        .then(
+          () => {
+            if (generation === revivalGeneration) ctx.ui.notify(`Resumed ${target}`, "info");
+          },
+          (error) => {
+            if (generation !== revivalGeneration) return;
+            ctx.ui.notify(
+              `Could not resume ${target}: ${error instanceof Error ? error.message : String(error)}`,
+              "warning",
+            );
+          },
+        );
       ctx.ui.notify(`Resuming ${target}\u2026`, "info");
       return { action: "handled" };
     }
@@ -1744,6 +1861,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
           reclaim: { handle: entry.handle, alias: entry.alias },
           resumeSessionFile: entry.sessionFile,
           isBackground: true,
+          reviewTicket: issueExemptTicket("user-mention"),
         });
         // The tombstone deliberately stays. `resolveMention` prefers the live
         // record holding these same names, so it cannot shadow the resume — and
@@ -1820,6 +1938,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
           spawnTopLevel(pi, ctx, type, mention.message, {
             description: describeMention(mention.message),
             isBackground: true,
+            reviewTicket: issueExemptTicket("user-mention"),
           });
           ctx.ui.notify(`Started ${label} directly — ${result.error}`, "warning");
         } catch (err) {
@@ -1841,6 +1960,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       spawnTopLevel(pi, ctx, type, mention.message, {
         description: describeMention(mention.message),
         isBackground: true,
+        reviewTicket: issueExemptTicket("user-mention"),
       });
       ctx.ui.notify(`Started @${handleBase(type)}`, "info");
     } catch (err) {
@@ -1904,6 +2024,9 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     rpcHandle?.unsubPing();
     rpcHandle = undefined;
     currentCtx = undefined;
+    // Invalidated before any await: a stale settle must not report into a successor session.
+    unsubscribeStopControl();
+    activeRootSessionId = undefined;
     // Only release the global slot if this activation claimed it — a child
     // session's shutdown must not delete the root session's registry entry.
     if (ownsManagerRegistry && globalManagerRegistry[MANAGER_KEY] === registryEntry) {
@@ -1911,6 +2034,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     }
     stopScheduler();
     workflowManager.dispose();
+    workflowAdmissions.clear();
     if (suspend) {
       // Journal every live run as interrupted (or still waiting) before it is
       // aborted, then wait (bounded by the manager, 10 s) for the runs to
@@ -1987,10 +2111,15 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     fleet.setAgentSectionEnabled(b);
   }
 
+  // Root session and stop-control epoch each workflow was authorised under, captured at
+  // `workflow_run`; a stopped epoch's aggregate notification never starts a turn.
+  const workflowAdmissions = new Map<string, { root: string | undefined; epoch: number }>();
   const workflowManager = new WorkflowManager((result) => {
     pi.events.emit("subagents:workflow_completed", result);
     pi.appendEntry("subagents:workflow_record", result);
     scheduleNudge(`workflow:${result.workflowId}`, () => {
+      const admission = workflowAdmissions.get(result.workflowId);
+      workflowAdmissions.delete(result.workflowId);
       if (workflowManager.isConsumed(result.workflowId)) return;
       const counts = new Map<string, number>();
       for (const step of result.steps) counts.set(step.status, (counts.get(step.status) ?? 0) + 1);
@@ -2019,11 +2148,126 @@ export default async function (pi: ExtensionAPI): Promise<void> {
             resultPreview: summary,
           },
         },
-        { deliverAs: "steer", triggerTurn: true },
+        {
+          deliverAs: "steer",
+          triggerTurn: mayTriggerTurn(admission?.root ?? activeRootSessionId, admission?.epoch),
+        },
       );
     });
   });
   workflows = workflowManager;
+
+  // ---- /stop participant (choco-pi:stop-control/v1) ----
+  const stopWorkflowPort: StopWorkflowPort = {
+    runningFor: (rootSessionId) =>
+      [...workflowAdmissions]
+        .filter(([id, admission]) => {
+          const status = workflowManager.get(id)?.status;
+          return admission.root === rootSessionId && (status === "running" || status === "waiting");
+        })
+        .map(([id]) => id),
+    cancel: (workflowId) => {
+      const status = workflowManager.get(workflowId)?.status;
+      if (status !== "running" && status !== "waiting") return false;
+      workflowManager.cancel(workflowId);
+      return true;
+    },
+  };
+  let unsubscribeRevoke: (() => void) | undefined;
+
+  function emitStopReport(report: StopReport): void {
+    pi.events.emit(STOP_CONTROL_REPORT_CHANNEL, report);
+  }
+
+  /**
+   * Stop everything a user `/stop` targets. All revocation and the `acknowledged` report happen
+   * synchronously inside the handler; exactly one `settled` or `failed` report follows later,
+   * and only while the session that received the request is still the active one.
+   */
+  function applyStop(requestId: string, rootSessionId: string, stop: UserStopResult): void {
+    const generation = revivalGeneration;
+    for (const record of stop.records) emitLifecycle("subagents:stopped", buildEventData(record));
+    fleet.update();
+    emitStopReport({
+      requestId,
+      participant: "subagents",
+      phase: "acknowledged",
+      counts: { agents: stop.agents, workflows: stop.workflows },
+      ownerSessionIds: stop.ownerSessionIds,
+    });
+    const report = (partial: Pick<StopReport, "phase"> & Partial<StopReport>): void => {
+      // A shut-down or replaced session has no coordinator left to hear this.
+      if (generation !== revivalGeneration || activeRootSessionId !== rootSessionId) return;
+      emitStopReport({ requestId, participant: "subagents", ...partial });
+    };
+    void stop.settled.then(
+      (retainedWorktrees) => {
+        const settled: Pick<StopReport, "phase"> & Partial<StopReport> = {
+          phase: "settled",
+          counts: { agents: stop.agents, workflows: stop.workflows },
+        };
+        if (retainedWorktrees.length > 0) settled.retainedWorktrees = retainedWorktrees;
+        report(settled);
+      },
+      (error) =>
+        report({ phase: "failed", detail: error instanceof Error ? error.message : String(error) }),
+    );
+  }
+
+  function subscribeStopControl(): void {
+    if (unsubscribeRevoke !== undefined) return;
+    unsubscribeRevoke = pi.events.on(STOP_CONTROL_REVOKE_CHANNEL, (payload) => {
+      if (!isRevokeRequest(payload)) return;
+      const rootSessionId = activeRootSessionId;
+      if (rootSessionId === undefined || payload.rootSessionId !== rootSessionId) return;
+      if (payload.scope === "all") {
+        applyStop(
+          payload.requestId,
+          rootSessionId,
+          manager.stopAllForRoot(rootSessionId, stopWorkflowPort),
+        );
+        return;
+      }
+      const ref = payload.agentRef ?? "";
+      const record = ref === "" ? undefined : manager.findRecordForStop(ref);
+      const owned =
+        record !== undefined &&
+        (record.admissionRoot === undefined || record.admissionRoot === rootSessionId);
+      if (owned) {
+        applyStop(
+          payload.requestId,
+          rootSessionId,
+          manager.stopTreeForUser(record, stopWorkflowPort),
+        );
+        return;
+      }
+      // A dormant or evicted agent is known but has nothing running: acknowledge and settle.
+      const known =
+        ref !== "" &&
+        (manager.getDormant(ref) !== undefined || manager.resolveMention(ref) !== undefined);
+      if (known) {
+        applyStop(payload.requestId, rootSessionId, {
+          agents: 0,
+          workflows: 0,
+          ownerSessionIds: [],
+          records: [],
+          settled: Promise.resolve([]),
+        });
+        return;
+      }
+      emitStopReport({
+        requestId: payload.requestId,
+        participant: "subagents",
+        phase: "failed",
+        detail: `No agent matches "${ref}" in this session; nothing was stopped.`,
+      });
+    });
+  }
+
+  function unsubscribeStopControl(): void {
+    unsubscribeRevoke?.();
+    unsubscribeRevoke = undefined;
+  }
 
   // Claude Code-style `@handle message` prompt mentions. Read live by both the
   // `input` hook and the stacked autocomplete provider, so the toggle applies
@@ -2145,6 +2389,8 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     existing: AgentRecord,
     prompt: string,
     opts: {
+      /** Admission ticket for a review-role agent; refunded here when no run starts. */
+      reviewTicket?: ReviewTicket;
       outputTranscript: boolean;
       maxTurns?: number;
       toolCallId?: string;
@@ -2165,7 +2411,21 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     // Every refusal the manager can decide synchronously (live run, invalid or
     // closed model, closed provider) comes before any record or file change;
     // a closed provider throws the same ResumeModelError resume() would.
-    if (!manager.assertResumable(id, opts.model)) return undefined;
+    // Anything that stops the run before the manager starts it refunds the round.
+    const refund = async (): Promise<void> => {
+      if (opts.reviewTicket !== undefined) await reviewRounds.release(opts.reviewTicket);
+    };
+    let resumable: boolean;
+    try {
+      resumable = manager.assertResumable(id, opts.model);
+    } catch (error) {
+      await refund();
+      throw error;
+    }
+    if (!resumable) {
+      await refund();
+      return undefined;
+    }
     const joinMode = resolveJoinMode(defaultJoinMode, true);
     // Assigned unconditionally: the completion notification carries this as
     // `<tool-use-id>`, so a mention-resume (which passes none) has to CLEAR the
@@ -2194,34 +2454,45 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     // resume must behave the same. Passing it would abort this agent when
     // the parent turn is interrupted (user Esc), while agents started with
     // run_in_background in that same turn keep going.
-    const record = await manager.resume(id, prompt, undefined, {
-      isBackground: true,
-      name: opts.name,
-      maxTurns: opts.maxTurns,
-      model: opts.model,
-      fastModeRequested: opts.fastModeRequested,
-      daybreakRequested: opts.daybreakRequested,
-      budgets: opts.budgets,
-      onToolActivity: bgCallbacks.onToolActivity,
-      onAssistantUsage: bgCallbacks.onAssistantUsage,
-      // Fires when the run actually starts — immediately, or on queue
-      // drain. Wiring it here (rather than after resume() returns) means a
-      // resume stopped while still queued never started streaming, so
-      // there is no subscription left behind for a later run to trip over.
-      onStarted: () => {
-        const rec = manager.getRecord(id);
-        if (rec?.session && rec.outputFile) {
-          rec.outputCleanup = streamToOutputFile(
-            rec.session,
-            rec.outputFile,
-            id,
-            ctx.cwd,
-            transcriptAnchor,
-          );
-        }
-      },
-    });
-    if (!record) return undefined;
+    let record: AgentRecord | undefined;
+    try {
+      record = await manager.resume(id, prompt, undefined, {
+        reviewTicket: opts.reviewTicket,
+        isBackground: true,
+        name: opts.name,
+        maxTurns: opts.maxTurns,
+        model: opts.model,
+        fastModeRequested: opts.fastModeRequested,
+        daybreakRequested: opts.daybreakRequested,
+        budgets: opts.budgets,
+        onToolActivity: bgCallbacks.onToolActivity,
+        onAssistantUsage: bgCallbacks.onAssistantUsage,
+        // Fires when the run actually starts — immediately, or on queue
+        // drain. Wiring it here (rather than after resume() returns) means a
+        // resume stopped while still queued never started streaming, so
+        // there is no subscription left behind for a later run to trip over.
+        onStarted: () => {
+          const rec = manager.getRecord(id);
+          if (rec?.session && rec.outputFile) {
+            rec.outputCleanup = streamToOutputFile(
+              rec.session,
+              rec.outputFile,
+              id,
+              ctx.cwd,
+              transcriptAnchor,
+            );
+          }
+        },
+      });
+    } catch (error) {
+      // Only a refusal before the run started is refunded; other failures stay counted.
+      if (error instanceof ResumeModelError) await refund();
+      throw error;
+    }
+    if (!record) {
+      await refund();
+      return undefined;
+    }
 
     if (joinMode != null && joinMode !== "async") {
       currentBatchAgents.push({ id, joinMode });
@@ -2276,6 +2547,8 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       void (async () => {
         try {
           await startBackgroundResume(ctx, existing, reason, {
+            // Continues the round the hook's agent was admitted under.
+            reviewTicket: issueExemptTicket("hook-continuation"),
             outputTranscript: getOutputTranscriptDefault(),
           });
         } catch (error) {
@@ -2406,6 +2679,13 @@ export default async function (pi: ExtensionAPI): Promise<void> {
             str({
               description:
                 "Required when model is a Flagship-tier model and the role's declared model is not Flagship; state the model-guidance reason.",
+            }),
+          ),
+          work_task: opt(
+            str({
+              pattern: WORK_TASK_PATTERN,
+              description:
+                "Stable id of the work task this review belongs to (lowercase, digits, hyphens). Required for review roles; reuse it for every review round of the same task.",
             }),
           ),
           thinking: opt(
@@ -2684,6 +2964,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
       // ---- Schedule: register a job, don't spawn now ----
       if (params.schedule) {
+        if (isReviewRole(subagentType)) return textResult(scheduleUnsupportedMessage());
         if (!isSchedulingEnabled()) {
           return textResult(
             "Scheduling is disabled in this project. Enable via /agents → Settings → Scheduling.",
@@ -2771,6 +3052,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
               // Same rule as a live resume: only a caller-supplied model switches.
               resolvedConfig.modelFromParams && model ? `${model.provider}/${model.id}` : undefined,
               toolCallId,
+              params.work_task,
             );
           }
         }
@@ -2800,6 +3082,16 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         // file's default model never overrides the model the child already has.
         const resumeModel =
           resolvedConfig.modelFromParams && model ? `${model.provider}/${model.id}` : undefined;
+        // Resuming a review-role agent is a new review round: admit it first.
+        const resumeAdmission = await admitReviewRound(
+          ctx,
+          existing.type,
+          params.work_task,
+          "agent-resume",
+        );
+        if (resumeAdmission.kind === "refused") return textResult(resumeAdmission.message);
+        const resumeTicket = ticketOf(resumeAdmission);
+        const resumeNotice = noticeOf(resumeAdmission);
 
         // Background resume: detached run that notifies on completion, mirroring
         // a background spawn. Previously run_in_background was silently ignored
@@ -2810,6 +3102,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
           let record: AgentRecord | undefined;
           try {
             record = await startBackgroundResume(ctx, existing, params.prompt, {
+              reviewTicket: resumeTicket,
               outputTranscript,
               maxTurns: params.max_turns,
               toolCallId,
@@ -2826,13 +3119,13 @@ export default async function (pi: ExtensionAPI): Promise<void> {
             throw error;
           }
           if (!record) {
-            return textResult(`Failed to resume agent "${params.resume}".`);
+            return textResult(`${resumeNotice}Failed to resume agent "${params.resume}".`);
           }
 
           const isQueued = record.status === "queued";
           const address = record.alias ?? record.handle ?? record.id;
           return textResult(
-            `Agent ${isQueued ? "queued" : "resumed"} in background.\n` +
+            `${resumeNotice}Agent ${isQueued ? "queued" : "resumed"} in background.\n` +
               `Agent ID: ${id}\n` +
               `Alias: @${address}\n` +
               `Type: ${existing.type}\n` +
@@ -2849,6 +3142,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         let record: AgentRecord | undefined;
         try {
           record = await manager.resume(params.resume, params.prompt, signal, {
+            reviewTicket: resumeTicket,
             maxTurns: params.max_turns,
             name: params.name,
             model: resumeModel,
@@ -2858,11 +3152,14 @@ export default async function (pi: ExtensionAPI): Promise<void> {
           });
         } catch (error) {
           if (error instanceof ResumeModelError) {
+            // Refused before any run started: refund the round.
+            if (resumeTicket !== undefined) await reviewRounds.release(resumeTicket);
             return textResult(`Failed to resume agent "${params.resume}": ${error.message}`);
           }
           throw error;
         }
         if (!record) {
+          if (resumeTicket !== undefined) await reviewRounds.release(resumeTicket);
           return textResult(`Failed to resume agent "${params.resume}".`);
         }
         const address = record.alias ?? record.handle ?? record.id;
@@ -2874,7 +3171,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
               ? "the provider reports capacity again (reset time unknown)"
               : formatResetAt(record.usageLimit.resetAt);
           return textResult(
-            `Agent alias: @${address}\nAgent paused until ${until}; result will arrive as a notification.\n` +
+            `${resumeNotice}Agent alias: @${address}\nAgent paused until ${until}; result will arrive as a notification.\n` +
               `Agent ID: ${record.id}\n` +
               (record.usageLimit ? `Usage limit: ${describeUsageLimit(record.usageLimit)}\n` : "") +
               `It resumes on the same model after the reset. ${TERMINAL_RESULT_RETRIEVAL_GUIDANCE}`,
@@ -2889,15 +3186,22 @@ export default async function (pi: ExtensionAPI): Promise<void> {
           record.status === "watchdog_stopped"
         ) {
           return textResult(
-            `Agent alias: @${address}\nAgent failed: ${record.error}${partialOutputSuffix(record)}`,
+            `${resumeNotice}Agent alias: @${address}\nAgent failed: ${record.error}${partialOutputSuffix(record)}`,
             buildRecordDetails(record, false, true),
           );
         }
         return textResult(
-          `Agent alias: @${address}\n\n${record.result?.trim() || "No output."}`,
+          `${resumeNotice}Agent alias: @${address}\n\n${record.result?.trim() || "No output."}`,
           buildRecordDetails(record, false, true),
         );
       }
+
+      // Review roles: reserve a round (or refuse) after every other early return
+      // and immediately before the manager call.
+      const admission = await admitReviewRound(ctx, subagentType, params.work_task, "agent");
+      if (admission.kind === "refused") return textResult(admission.message);
+      const reviewTicket = ticketOf(admission);
+      const reviewNotice = noticeOf(admission);
 
       // Background execution
       if (runInBackground) {
@@ -2919,26 +3223,33 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         // A throw here means the agent never started. Let it out: pi marks a
         // tool call failed only when execute throws, and a returned message
         // reads to the model as a subagent that ran and reported this (#179).
-        id = manager.spawn(pi, ctx, subagentType, params.prompt, {
-          description: params.description,
-          name: params.name,
-          model,
-          maxTurns: effectiveMaxTurns,
-          budgets,
-          isolated,
-          inheritContext,
-          thinkingLevel: thinking,
-          fastModeRequested: resolvedConfig.fastMode,
-          daybreakRequested: resolvedConfig.daybreak,
-          isBackground: true,
-          isolation,
-          hookWorktreePath,
-          invocation: agentInvocation,
-          modelProvenance,
-          onStartFailed,
-          rootSessionId: ctx.sessionManager.getSessionId(),
-          ...bgCallbacks,
-        });
+        try {
+          id = manager.spawn(pi, ctx, subagentType, params.prompt, {
+            reviewTicket,
+            description: params.description,
+            name: params.name,
+            model,
+            maxTurns: effectiveMaxTurns,
+            budgets,
+            isolated,
+            inheritContext,
+            thinkingLevel: thinking,
+            fastModeRequested: resolvedConfig.fastMode,
+            daybreakRequested: resolvedConfig.daybreak,
+            isBackground: true,
+            isolation,
+            hookWorktreePath,
+            invocation: agentInvocation,
+            modelProvenance,
+            onStartFailed,
+            rootSessionId: ctx.sessionManager.getSessionId(),
+            ...bgCallbacks,
+          });
+        } catch (error) {
+          // spawn() throws only before an agent exists: refund the round.
+          if (reviewTicket !== undefined) await reviewRounds.release(reviewTicket);
+          throw error;
+        }
 
         // Set output file + join mode synchronously after spawn, before the
         // event loop yields — onSessionCreated is async so this is safe.
@@ -2975,7 +3286,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
         const isQueued = record?.status === "queued";
         return textResult(
-          `${fallbackNote}Agent ${isQueued ? "queued" : "started"} in background.\n` +
+          `${reviewNotice}${fallbackNote}Agent ${isQueued ? "queued" : "started"} in background.\n` +
             `Agent ID: ${id}\n` +
             `Type: ${displayName}\n` +
             `Description: ${params.description}\n` +
@@ -3061,6 +3372,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       streamUpdate();
 
       let record: AgentRecord;
+      let fgSpawned = false;
       try {
         const fgResult = await manager.spawnAndWait(
           pi,
@@ -3068,6 +3380,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
           subagentType,
           params.prompt,
           {
+            reviewTicket,
             description: params.description,
             name: params.name,
             model,
@@ -3090,11 +3403,16 @@ export default async function (pi: ExtensionAPI): Promise<void> {
           (fgAgentId) => {
             // onSpawned: called synchronously after spawn, before onSessionCreated fires.
             // Set up the output file so streamToOutputFile can pick it up.
+            fgSpawned = true;
             const fgRec = manager.getRecord(fgAgentId);
             attachTranscript(fgRec, fgAgentId);
           },
         );
         record = fgResult.record;
+      } catch (error) {
+        // No agent was created: refund the round. Once spawned, the round stays counted.
+        if (!fgSpawned && reviewTicket !== undefined) await reviewRounds.release(reviewTicket);
+        throw error;
       } finally {
         // Runs on both paths, so a startup throw — which now propagates, see
         // the background spawn above (#179) — no longer leaves the spinner
@@ -3126,7 +3444,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
             ? "the provider reports capacity again (reset time unknown)"
             : formatResetAt(record.usageLimit.resetAt);
         return textResult(
-          `${fallbackNote}Agent paused until ${until}; result will arrive as a notification.\n` +
+          `${reviewNotice}${fallbackNote}Agent paused until ${until}; result will arrive as a notification.\n` +
             `Agent ID: ${record.id}\n` +
             `Alias: @${address}\n` +
             settledModelLine +
@@ -3143,7 +3461,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       ) {
         // Error headline + any partial output the run produced before failing.
         return textResult(
-          `${fallbackNote}${settledModelLine}Agent failed: ${record.error}${partialOutputSuffix(record)}`,
+          `${reviewNotice}${fallbackNote}${settledModelLine}Agent failed: ${record.error}${partialOutputSuffix(record)}`,
           details,
         );
       }
@@ -3152,7 +3470,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       const statsParts = [`${record.toolUses} tool uses`];
       if (tokenText) statsParts.push(tokenText);
       return textResult(
-        `${fallbackNote}${settledModelLine}Agent completed in ${formatMs(durationMs)} (${statsParts.join(", ")})${getForegroundOutcomeNote(record.status)}.\n\n` +
+        `${reviewNotice}${fallbackNote}${settledModelLine}Agent completed in ${formatMs(durationMs)} (${statsParts.join(", ")})${getForegroundOutcomeNote(record.status)}.\n\n` +
           (record.result?.trim() || "No output."),
         details,
       );
@@ -3189,7 +3507,10 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     return { config, resolvedConfig, model };
   };
 
-  const createWorkflowRunner = (ctx: ExtensionContext): WorkflowStepRunner => {
+  const createWorkflowRunner = (
+    ctx: ExtensionContext,
+    workTask: string | undefined,
+  ): WorkflowStepRunner => {
     // Workflow steps are spawned under this root session; its usage-limit
     // policy and closures govern their availability.
     let owner: string | undefined;
@@ -3253,24 +3574,40 @@ export default async function (pi: ExtensionAPI): Promise<void> {
           }
         };
 
-        id = manager.spawn(pi, ctx, step.subagent_type, prompt, {
-          description: `Workflow step: ${step.id}`,
-          model,
-          maxTurns: effectiveMaxTurns,
-          isolated: resolvedConfig.isolated,
-          inheritContext: false,
-          thinkingLevel: resolvedConfig.thinking,
-          fastModeRequested: resolvedConfig.fastMode,
-          daybreakRequested: resolvedConfig.daybreak,
-          isBackground: true,
-          isolation: resolvedConfig.isolation,
-          invocation,
-          signal: workflowContext.signal,
-          workflowId: workflowContext.workflowId,
-          workflowStepId: step.id,
-          rootSessionId: ctx.sessionManager.getSessionId(),
-          ...callbacks,
-        });
+        // A refused review step errors on its own; other steps are unaffected.
+        const admission = await admitReviewRound(
+          ctx,
+          step.subagent_type,
+          workTask,
+          "workflow",
+          owner,
+        );
+        if (admission.kind === "refused") throw new Error(admission.message);
+        const reviewTicket = ticketOf(admission);
+        try {
+          id = manager.spawn(pi, ctx, step.subagent_type, prompt, {
+            reviewTicket,
+            description: `Workflow step: ${step.id}`,
+            model,
+            maxTurns: effectiveMaxTurns,
+            isolated: resolvedConfig.isolated,
+            inheritContext: false,
+            thinkingLevel: resolvedConfig.thinking,
+            fastModeRequested: resolvedConfig.fastMode,
+            daybreakRequested: resolvedConfig.daybreak,
+            isBackground: true,
+            isolation: resolvedConfig.isolation,
+            invocation,
+            signal: workflowContext.signal,
+            workflowId: workflowContext.workflowId,
+            workflowStepId: step.id,
+            rootSessionId: ctx.sessionManager.getSessionId(),
+            ...callbacks,
+          });
+        } catch (error) {
+          if (reviewTicket !== undefined) await reviewRounds.release(reviewTicket);
+          throw error;
+        }
         workflowContext.onAgentStarted(id);
 
         const record = manager.getRecord(id);
@@ -3329,18 +3666,30 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       promptSnippet: "Launch a dynamic DAG workflow of subagents",
       parameters: hostParams(WorkflowDefinitionSchema),
       execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
+        // Snapshot the root before the first await; admission is rechecked after it.
+        let runRoot: string | undefined;
+        try {
+          runRoot = ctx.sessionManager.getSessionId();
+        } catch {
+          runRoot = undefined;
+        }
         if (!(await refreshAgentsForSession())) {
           return errorResult(
             "Session changed while agent definitions were loading; the workflow was not started.",
           );
         }
+        if (!isAdmissionOpen(runRoot)) return errorResult(ADMISSION_CLOSED_MESSAGE);
         try {
           const result = workflowManager.start(
             params,
             resolveWorkflowType,
-            createWorkflowRunner(ctx),
+            createWorkflowRunner(ctx, params.work_task),
             manager.getSchedulingMaxConcurrent(),
           );
+          workflowAdmissions.set(result.workflowId, {
+            root: runRoot,
+            epoch: runRoot === undefined ? 0 : readStopState(runRoot).epoch,
+          });
           pi.events.emit("subagents:workflow_created", result);
           return textResult(
             `Workflow started.\nWorkflow ID: ${result.workflowId}\nName: ${result.name}\n` +
@@ -4779,6 +5128,39 @@ Write the file using the write tool. Only write the file, nothing else.`;
     description: "Ask a parallel read-only side conversation, or reopen one",
     handler: async (args, ctx) => {
       await handleBtwCommand(args, ctx);
+    },
+  });
+
+  // User-typed only: no tool can call a command, and no tool parameter approves a round.
+  pi.registerCommand("review-continue", {
+    description:
+      "Review rounds per work task, or authorize more: /review-continue [<work_task> [rounds 1-3]]",
+    handler: async (args, ctx) => {
+      let rootSessionId: string;
+      try {
+        rootSessionId = ctx.sessionManager.getSessionId();
+      } catch {
+        ctx.ui.notify(stateUnavailableMessage("session unavailable"), "error");
+        return;
+      }
+      const parts = args
+        .trim()
+        .split(/\s+/)
+        .filter((part) => part !== "");
+      if (parts.length === 0) {
+        const message = await reviewRounds.summary(rootSessionId);
+        ctx.ui.notify(message, "info");
+        return;
+      }
+      const roundsText = parts[1];
+      const rounds =
+        roundsText === undefined ? 1 : /^[0-9]{1,3}$/.test(roundsText) ? Number(roundsText) : 0;
+      if (parts.length > 2 || rounds === 0) {
+        ctx.ui.notify(REVIEW_CONTINUE_USAGE, "warning");
+        return;
+      }
+      const result = await reviewRounds.grant(rootSessionId, parts[0], rounds);
+      ctx.ui.notify(result.message, result.ok ? "info" : "warning");
     },
   });
 

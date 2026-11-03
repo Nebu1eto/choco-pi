@@ -6,6 +6,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { obj, oneOf, opt, str } from "@earendil-works/pi-schema";
 import { hostParams } from "./schema-bridge.ts";
+import { mayTriggerTurn } from "./stop-control-contract.ts";
 import {
   type AgentMessageType,
   classifyMessageDelivery,
@@ -32,6 +33,8 @@ export interface SteerableAgentSession {
 
 /** The record surface this tool reads and writes, narrowed from `AgentRecord`. */
 export interface AgentMessageRecord extends MessagingRecord {
+  admissionRoot?: string;
+  admissionEpoch?: number;
   session?: SteerableAgentSession;
   /** Steering messages held until the recipient's session exists. */
   pendingSteers?: string[];
@@ -70,6 +73,8 @@ export async function deliverAgentMessage(
 ) {
   const lookup = (id: string) => context.manager.getRecord(id);
   let senderIdentity = ROOT_AGENT_PATH;
+  let senderRoot: string | undefined;
+  let senderEpoch: number | undefined;
   if (context.senderAgentId) {
     const sender = lookup(context.senderAgentId);
     if (!sender) {
@@ -77,6 +82,8 @@ export async function deliverAgentMessage(
     }
     try {
       senderIdentity = getAgentIdentity(sender);
+      senderRoot = sender.admissionRoot;
+      senderEpoch = sender.admissionEpoch;
     } catch {
       return textResult(`Calling agent identity unavailable: "${context.senderAgentId}".`, true);
     }
@@ -92,7 +99,11 @@ export async function deliverAgentMessage(
     context.pi.sendMessage(
       { customType: "subagent-message", content: envelope, display: true },
       // SDK steering waits for the next safe boundary; it does not abort a tool/provider.
-      { deliverAs: "steer", triggerTurn: true },
+      // A sender from a stopped epoch may still steer, but must not start a root turn.
+      {
+        deliverAs: "steer",
+        triggerTurn: mayTriggerTurn(senderRoot, senderEpoch),
+      },
     );
     context.pi.events.emit("subagents:message", {
       from: senderIdentity,

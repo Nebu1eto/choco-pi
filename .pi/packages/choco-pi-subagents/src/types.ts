@@ -356,6 +356,13 @@ export interface AgentRecord {
   /** Aggregate workflow and step identity for FleetView grouping/tagging. */
   workflowId?: string;
   workflowStepId?: string;
+  /**
+   * Stop-control epoch this record's current run was authorised under, and the root
+   * session it belongs to. A completion notification may trigger a turn only while
+   * that root's latch is open at the same epoch; set at spawn and refreshed at resume.
+   */
+  admissionEpoch?: number;
+  admissionRoot?: string;
   /** Nesting depth: top-level subagent = 1. */
   depth?: number;
   /** Parent agent ID for ownership-scoped nested controls. */
@@ -479,4 +486,24 @@ export interface ScheduleStoreData {
   /** For future migrations. */
   version: 1;
   jobs: ScheduledSubagent[];
+}
+
+/** Workflow seam the manager uses to cancel workflows before it stops their agents. */
+export interface StopWorkflowPort {
+  /** Ids of running or waiting workflows started by `rootSessionId`. */
+  runningFor(rootSessionId: string): string[];
+  /** Cancel one workflow; returns true when it was still running or waiting. */
+  cancel(workflowId: string): boolean;
+}
+
+/** Result of a user stop: counts are final; `settled` resolves with retained worktree paths. */
+export interface UserStopResult {
+  agents: number;
+  workflows: number;
+  /** Child session ids of every targeted record, snapshotted before any settle. */
+  ownerSessionIds: string[];
+  /** Every record stopped now, or already stopped and still settling. */
+  records: AgentRecord[];
+  /** Resolves once each targeted record has published its terminal generation. */
+  settled: Promise<string[]>;
 }

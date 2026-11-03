@@ -293,6 +293,14 @@ function isExitCommand(text: string): boolean {
   return command === "/exit" || command === "/quit";
 }
 
+/**
+ * `/stop …` and `/resume-work`, as typed at a prompt that a focused agent owns. They address the
+ * root session's stop coordinator, never the focused child, so they must not be steered to it.
+ */
+function isRootStopCommand(text: string): boolean {
+  return /^\/(?:stop(?:\s.*)?|resume-work)\s*$/isu.test(text.trim());
+}
+
 /** Owns the orchestrator ↔ focused-agent state transition and both host patches. */
 export class FocusedAgentController {
   private ui: FocusUICtx | undefined;
@@ -505,6 +513,11 @@ export class FocusedAgentController {
         }
         if (matchesKey(data, Key.enter) && this.submitFocusedCommand(submitTarget)) {
           return undefined;
+        }
+        // Stop-control commands belong to the root session. The editor's own submit handler is
+        // untouched here (it is swapped only for the call below), so the host dispatches them.
+        if (matchesKey(data, Key.enter) && isRootStopCommand(submitTarget.getText())) {
+          return Function.prototype.apply.call(predecessor, receiver, args);
         }
         // Esc does NOT leave focus while the switcher is up: focus is switched
         // there (↑↓, with `main` restoring the orchestrator), exactly like

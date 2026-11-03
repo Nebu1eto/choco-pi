@@ -14,6 +14,12 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import type { AgentSession, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isString } from "./value-guards.ts";
 import {
+  admissionRequiredMessage,
+  consumeReviewTicket,
+  isReviewRole,
+  type ReviewTicket,
+} from "./review-rounds.ts";
+import {
   resolveAgentMaxTurns,
   resumeAgent,
   runAgent,
@@ -80,6 +86,12 @@ import {
 } from "./session-file-ownership.ts";
 import { probeWorktree } from "./worktree-probe.ts";
 import { getSessionCostBaseline } from "./usage.ts";
+import {
+  ADMISSION_CLOSED_MESSAGE,
+  isAdmissionOpen,
+  readStopState,
+  requireAdmissionOpen,
+} from "./stop-control-contract.ts";
 import type {
   AgentInvocation,
   AgentRecord,
@@ -87,9 +99,11 @@ import type {
   IsolationMode,
   MentionResolution,
   ModelProvenance,
+  StopWorkflowPort,
   SubagentUsageLimit,
   SubagentType,
   ThinkingLevel,
+  UserStopResult,
 } from "./types.ts";
 import {
   accountIdWithPolicy,
@@ -426,6 +440,15 @@ function withCodexUsageEntry(
  * child classification from the root branch. A child without a readable
  * session id gets a record-scoped marker that can never equal a root session.
  */
+/** The root session id a host context belongs to; undefined for stubs without one. */
+function sessionRootOf(ctx: ExtensionContext): string | undefined {
+  try {
+    return ctx.sessionManager?.getSessionId?.();
+  } catch {
+    return undefined;
+  }
+}
+
 function childSessionId(record: AgentRecord, session: AgentSession | undefined): string {
   let sessionId: string | undefined;
   try {
@@ -632,7 +655,19 @@ function cancellationForGeneration(
   return cancellation?.generation === generation ? cancellation : undefined;
 }
 
+/**
+ * Fail-closed review-round gate: a review-role launch must carry a one-shot
+ * ticket issued by `ReviewRoundStore.admit` (or `issueExemptTicket`). Throws
+ * before any record, queue or run state changes.
+ */
+function requireReviewAdmission(type: string, ticket: ReviewTicket | undefined): void {
+  if (!isReviewRole(type)) return;
+  if (!consumeReviewTicket(ticket)) throw new Error(admissionRequiredMessage(type));
+}
+
 interface SpawnOptions {
+  /** One-shot review-round admission ticket; required for review-role types. */
+  reviewTicket?: ReviewTicket;
   description: string;
   /**
    * Optional goal-derived name for this instance, becoming a second handle
@@ -839,6 +874,8 @@ function journalRunOptionsOf(options: SpawnOptions, scopedModels: string[]): Jou
 }
 
 interface ResumeOptions {
+  /** One-shot review-round admission ticket; required to resume a review-role agent. */
+  reviewTicket?: ReviewTicket;
   maxTurns?: number;
   /** Rebind the accepted record's alias for this resumed run. */
   name?: string;
@@ -875,6 +912,14 @@ interface ResumeOptions {
    * torn that subscription down.
    */
   onStarted?: () => void;
+}
+
+/** Longest a user stop waits for a stopped run to publish its terminal generation. */
+const USER_STOP_SETTLE_TIMEOUT_MS = 30_000;
+
+interface TerminalWaiter {
+  generation: number;
+  release: () => void;
 }
 
 export class AgentManager {
@@ -950,6 +995,8 @@ export class AgentManager {
   private revivalArgs = new Map<string, SpawnArgs>();
   /** Ids with a revival or dormant resume in flight. */
   private revivalReservations = new Set<string>();
+  /** Pending `awaitTerminal` callers for user stops, keyed by record id. */
+  private terminalWaiters = new Map<string, TerminalWaiter[]>();
   /** Bumped by dispose, suspend and root switches; stale revivals stop. */
   private revivalEpoch = 0;
 
@@ -1221,12 +1268,59 @@ export class AgentManager {
   private publishTerminal(record: AgentRecord): void {
     publishTerminalResult(record);
     this.scheduleJournal(record);
+    this.releaseTerminalWaiters(record);
   }
 
   /** Publish an inline-consumed terminal generation and journal it. */
   private markTerminalConsumed(record: AgentRecord): void {
     markResultGenerationConsumed(record);
     this.scheduleJournal(record);
+    this.releaseTerminalWaiters(record);
+  }
+
+  /** Resolve every user-stop waiter whose generation has now been published. */
+  private releaseTerminalWaiters(record: AgentRecord, force = false): void {
+    const waiters = this.terminalWaiters.get(record.id);
+    if (waiters === undefined) return;
+    const published = record.terminalResultGeneration;
+    const remaining: TerminalWaiter[] = [];
+    for (const waiter of waiters) {
+      if (force || (published !== undefined && published >= waiter.generation)) waiter.release();
+      else remaining.push(waiter);
+    }
+    if (remaining.length === 0) this.terminalWaiters.delete(record.id);
+    else this.terminalWaiters.set(record.id, remaining);
+  }
+
+  /**
+   * Resolves when `record` publishes the terminal generation it holds now. Bounded, so a
+   * run that never settles cannot hold a /stop report open forever.
+   */
+  private awaitTerminal(record: AgentRecord): Promise<void> {
+    const generation = record.resultGeneration ?? 1;
+    if (
+      (record.terminalResultGeneration !== undefined &&
+        record.terminalResultGeneration >= generation) ||
+      this.disposed ||
+      this.agents.get(record.id) !== record
+    ) {
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      let done = false;
+      const timer = setTimeout(() => waiter.release(), USER_STOP_SETTLE_TIMEOUT_MS);
+      timer.unref();
+      const waiter: TerminalWaiter = {
+        generation,
+        release: () => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          resolve();
+        },
+      };
+      this.terminalWaiters.set(record.id, [...(this.terminalWaiters.get(record.id) ?? []), waiter]);
+    });
   }
 
   /**
@@ -2082,6 +2176,37 @@ export class AgentManager {
   }
 
   /** Terminal state for a queued record that will never start. */
+  /** Root session a record belongs to for stop-control purposes. */
+  private recordRoot(record: AgentRecord): string | undefined {
+    return (
+      record.admissionRoot ??
+      this.usageScopes.get(record.id)?.owner ??
+      this.journalSink?.rootSessionId
+    );
+  }
+
+  /**
+   * A queued item reached its start while the root's latch is closed: settle it `stopped`
+   * with cause `user_stop` instead of starting it. A post-reset continuation settles through
+   * its finalizer so the parked task's promise and final notification are still owed once.
+   */
+  private refuseClosedStart(record: AgentRecord, finalize: QueuedFinalizer | undefined): void {
+    record.stoppedByUser = true;
+    this.stopQueuedRecord(record, "user_stop", "Stopped by user request.");
+    record.error = ADMISSION_CLOSED_MESSAGE;
+    if (finalize !== undefined) {
+      finalize(true);
+      return;
+    }
+    // Same as an explicit queued stop: only workflow controllers need the completion hook.
+    if (record.workflowId === undefined) return;
+    try {
+      this.onComplete?.(record);
+    } catch {
+      /* ignore completion side-effect errors */
+    }
+  }
+
   private stopQueuedRecord(record: AgentRecord, cause: CancellationCause, reason: string): void {
     this.transition(record, "stopped");
     this.requestCancellation(record, record.resultGeneration ?? 1, cause, reason);
@@ -2273,6 +2398,11 @@ export class AgentManager {
     this.transition(record, "queued");
 
     const start = () => {
+      // Final admission boundary before a session is created or a run restarts.
+      if (!isAdmissionOpen(this.recordRoot(record))) {
+        this.refuseClosedStart(record, hooks.finalize);
+        return;
+      }
       const before = record.promise;
       const revival = record.session === undefined ? this.revivalArgs.get(id) : undefined;
       if (revival === undefined) {
@@ -2421,6 +2551,11 @@ export class AgentManager {
     if (identity !== undefined && this.agents.has(identity.id)) {
       throw new Error(`Agent ${identity.id} is already live.`);
     }
+    // After /stop nothing new is admitted, revivals included. Before the review gate so a
+    // refused launch never burns the one-shot review ticket.
+    requireAdmissionOpen(usageScope.owner);
+    // Journal revival (identity set) recovers an already-admitted round.
+    if (identity === undefined) requireReviewAdmission(type, options.reviewTicket);
 
     const id = identity?.id ?? randomUUID().slice(0, 17);
     const revivedHandle =
@@ -2479,6 +2614,9 @@ export class AgentManager {
       parentAgentId: options.parentAgentId,
       maxSubagentDepth: options.maxSubagentDepth,
       rootSessionId: options.rootSessionId,
+      admissionRoot: usageScope.owner,
+      admissionEpoch:
+        usageScope.owner === undefined ? undefined : readStopState(usageScope.owner).epoch,
       fastModeRequested,
       fastModeSource: options.fastModeRequested === undefined ? "inherited" : "explicit",
       fastModeRevision: 0,
@@ -2686,6 +2824,8 @@ export class AgentManager {
     // journaled it) and rejects into the run's error path.
     const prepareRun = async (): Promise<void> => {
       if (customCwd !== undefined) await assertSpawnCwdDirectory(customCwd);
+      // A /stop during the await must not let a session start.
+      requireAdmissionOpen(this.recordRoot(record));
       if (createsWorktree) {
         const hookWorktreePath = options.hookWorktreePath;
         const wt = hookWorktreePath
@@ -2720,6 +2860,7 @@ export class AgentManager {
       if (!this.ownsPreparedRun(record, runGeneration)) {
         throw new Error(record.cancellation?.reason ?? "Run ended before it started.");
       }
+      requireAdmissionOpen(this.recordRoot(record));
     };
     const needsPrepare = customCwd !== undefined || createsWorktree;
 
@@ -3315,6 +3456,11 @@ export class AgentManager {
       const record = this.agents.get(next.id);
       if (!record || record.status !== "queued") continue;
       const owner = this.usageScopes.get(next.id)?.owner;
+      // Final admission boundary for queued spawns, resumes and post-reset continuations.
+      if (!isAdmissionOpen(this.recordRoot(record))) {
+        this.refuseClosedStart(record, next.finalize);
+        continue;
+      }
       const block = this.providerBlock(next.providerKey, owner);
       // A post-reset continuation whose account was closed again by a usage
       // limit waits for the new reset instead of dispatching or dropping; a
@@ -3397,6 +3543,8 @@ export class AgentManager {
   ): Promise<AgentRecord | undefined> {
     const record = this.agents.get(id);
     if (!record?.session) return undefined;
+    requireAdmissionOpen(this.recordRoot(record));
+    requireReviewAdmission(record.type, options?.reviewTicket);
 
     // A live run cannot be resumed safely in either mode: it owns the record's
     // abort controller and session prompt. Refuse before changing its alias or
@@ -3436,6 +3584,8 @@ export class AgentManager {
       ) {
         return undefined;
       }
+      // A /stop during the model switch must not let the resume run.
+      requireAdmissionOpen(this.recordRoot(record));
       // The completion notification and journal read this provenance; refresh
       // it to what the session now runs. The host may clamp thinking on switch.
       if (record.modelProvenance !== undefined) {
@@ -3452,6 +3602,10 @@ export class AgentManager {
     // (with or without a model, foreground or background). Synchronous and
     // before any state change; with a model it re-checks the switched target.
     this.assertResumeProviderOpen(id, record.session);
+    // Final admission boundary: everything from here to the new generation is synchronous.
+    const resumeRoot = this.recordRoot(record);
+    requireAdmissionOpen(resumeRoot);
+    if (resumeRoot !== undefined) record.admissionEpoch = readStopState(resumeRoot).epoch;
     // A caller-initiated resume starts a new task outcome; the previous
     // chain's usage-limit block no longer describes it.
     record.usageLimit = undefined;
@@ -4053,6 +4207,113 @@ export class AgentManager {
     return this.stopRecord(record, true);
   }
 
+  /**
+   * User `/stop` (all): cancel the root's running workflows first, then stop every queued,
+   * parked and running record of that root, nested ones included. Everything that revokes
+   * work happens synchronously; only `settled` is asynchronous. Never the shutdown path.
+   */
+  stopAllForRoot(rootSessionId: string, workflows?: StopWorkflowPort): UserStopResult {
+    const owned = [...this.agents.values()].filter(
+      (record) => this.recordRoot(record) === rootSessionId,
+    );
+    const workflowIds = new Set(workflows?.runningFor(rootSessionId) ?? []);
+    for (const record of owned)
+      if (record.workflowId !== undefined) workflowIds.add(record.workflowId);
+    return this.stopTargets(owned, workflowIds, workflows);
+  }
+
+  /**
+   * User `/stop agent <ref>`: the record and every descendant. Nested refs are allowed here
+   * (the LLM-facing `stop_subagent` keeps refusing them). A workflow step cancels its workflow.
+   */
+  stopTreeForUser(record: AgentRecord, workflows?: StopWorkflowPort): UserStopResult {
+    const tree = new Map<string, AgentRecord>([[record.id, record]]);
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const candidate of this.agents.values()) {
+        if (
+          !tree.has(candidate.id) &&
+          candidate.parentAgentId !== undefined &&
+          tree.has(candidate.parentAgentId)
+        ) {
+          tree.set(candidate.id, candidate);
+          grew = true;
+        }
+      }
+    }
+    const targets = [...tree.values()];
+    const workflowIds = new Set<string>();
+    for (const target of targets)
+      if (target.workflowId !== undefined) workflowIds.add(target.workflowId);
+    return this.stopTargets(targets, workflowIds, workflows);
+  }
+
+  /** Resolve a user-typed id, handle or alias to a live record, nested records included. */
+  findRecordForStop(ref: string): AgentRecord | undefined {
+    const byId = this.agents.get(ref);
+    if (byId !== undefined) return byId;
+    const wanted = ref.toLowerCase();
+    let found: AgentRecord | undefined;
+    for (const record of this.agents.values()) {
+      if (record.handle?.toLowerCase() !== wanted && record.alias?.toLowerCase() !== wanted)
+        continue;
+      if (found === undefined || record.startedAt > found.startedAt) found = record;
+    }
+    return found;
+  }
+
+  private stopTargets(
+    targets: AgentRecord[],
+    workflowIds: ReadonlySet<string>,
+    workflows: StopWorkflowPort | undefined,
+  ): UserStopResult {
+    // Snapshot every child session id before anything settles or is disposed.
+    const ownerSessionIds = new Set<string>();
+    for (const record of targets) {
+      let sessionId: string | undefined;
+      try {
+        sessionId = record.session?.sessionManager?.getSessionId?.();
+      } catch {
+        sessionId = undefined;
+      }
+      if (sessionId !== undefined && sessionId !== "") ownerSessionIds.add(sessionId);
+    }
+    // Workflows first, so no pending step can start while its agents are being stopped.
+    let cancelledWorkflows = 0;
+    if (workflows !== undefined) {
+      for (const workflowId of workflowIds) if (workflows.cancel(workflowId)) cancelledWorkflows++;
+    }
+    // Deepest first: a child never outlives the stop of its parent by a scheduling accident.
+    const ordered = [...targets].sort((a, b) => (b.depth ?? 1) - (a.depth ?? 1));
+    const settling: AgentRecord[] = [];
+    let stopped = 0;
+    for (const record of ordered) {
+      if (this.stopRecord(record, true)) {
+        stopped++;
+        settling.push(record);
+      } else if (record.status === "stopped" && ownsUnsettledGeneration(record)) {
+        // An earlier stop whose run has not published yet: not counted again, still awaited.
+        settling.push(record);
+      }
+    }
+    const settled = Promise.all(settling.map((record) => this.awaitTerminal(record))).then(() => {
+      const retained = new Set<string>();
+      for (const record of settling) {
+        const result = record.worktreeResult;
+        if (result?.retained === true && result.path !== undefined) retained.add(result.path);
+      }
+      return [...retained];
+    });
+    return {
+      agents: stopped,
+      workflows: cancelledWorkflows,
+      ownerSessionIds: [...ownerSessionIds],
+      records: settling,
+      settled,
+    };
+  }
+
   private stopRecord(record: AgentRecord, byUser: boolean): boolean {
     const id = record.id;
     // A parked record has no live run: cancel its wait and settle it now, with
@@ -4121,6 +4382,8 @@ export class AgentManager {
     const wait = this.usageWaits.get(id);
     if (wait?.timer !== undefined) clearTimeout(wait.timer);
     this.usageWaits.delete(id);
+    // The record leaves the map: a user stop waiting on it has nothing more to wait for.
+    this.releaseTerminalWaiters(record, true);
     this.usageScopes.delete(id);
     this.wakeRuns.delete(id);
     this.revivalArgs.delete(id);
@@ -5036,7 +5299,7 @@ export class AgentManager {
     id: string,
     prompt: string,
     context: RevivalContext,
-    options?: { model?: string },
+    options?: { model?: string; reviewTicket?: ReviewTicket },
   ): Promise<AgentRecord> {
     if (this.disposed) throw new Error("The subagent manager is shut down.");
     if (this.agents.has(id) || this.revivalReservations.has(id)) {
@@ -5044,6 +5307,9 @@ export class AgentManager {
     }
     const saved = this.getDormant(id);
     if (saved === undefined) throw new Error(`No saved agent ${id} in this session.`);
+    const dormantRoot = this.journalSink?.rootSessionId ?? sessionRootOf(context.ctx);
+    requireAdmissionOpen(dormantRoot);
+    requireReviewAdmission(saved.type, options?.reviewTicket);
     // A caller-selected model is validated like a live resume's (format,
     // availability, scope, provider closure; throws ResumeModelError) and
     // replaces the journaled one, so the revived run and its journal use it.
@@ -5076,6 +5342,11 @@ export class AgentManager {
       if (this.agents.has(id)) {
         if (item.claim !== undefined) releaseSessionFile(item.claim.file, item.claim.token);
         throw new Error(`Agent ${id} became live while resuming.`);
+      }
+      // A /stop during preparation must not start the revived run.
+      if (!isAdmissionOpen(dormantRoot)) {
+        if (item.claim !== undefined) releaseSessionFile(item.claim.file, item.claim.token);
+        throw new Error(ADMISSION_CLOSED_MESSAGE);
       }
       const fullPrompt =
         snapshot.status === "interrupted" || snapshot.error === CAPPED_REVIVAL_ERROR
@@ -5157,6 +5428,7 @@ export class AgentManager {
     if (options?.suspend === true && !this.disposed) this.suspendNow();
     this.revivalEpoch++;
     this.disposed = true;
+    for (const record of this.agents.values()) this.releaseTerminalWaiters(record, true);
     clearInterval(this.cleanupInterval);
     for (const controller of this.activeRunBudgets) controller.dispose();
     this.activeRunBudgets.clear();

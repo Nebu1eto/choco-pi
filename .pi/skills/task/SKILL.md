@@ -76,6 +76,6 @@ When the integrated diff contains more than one coherent change, follow the comm
 
 ## 5. Review and handoff
 
-Select review through `task-core`'s task-shaped rule. When selected, prepare the immutable input through `../review/references/review-bundle.md` and give one fresh `reviewer` only its bundle path and manifest digest, not claimed safety, expected findings, or previous conclusions. Findings remain advisory until the main agent reproduces or proves them.
+Select review through `task-core`'s task-shaped rule. When selected, prepare the immutable input through `../review/references/review-bundle.md` and give one fresh `reviewer` only its bundle path and manifest digest, not claimed safety, expected findings, or previous conclusions. Findings remain advisory until the main agent reproduces or proves them. Pass `work_task` (a stable kebab-case id for this work task, reused across review rounds and follow-ups). A `Review round refused` result is not a spawn-parameter error: do not retry or rename the work task; triage, report remaining risk, and tell the user that `/review-continue <work_task>` authorizes another round.
 
 Use `handoff` only when it materially improves a complex delivery. Stop all children and owned runtimes, then release the lease with `node <resolved-script> release --cwd "$PWD"`. Report exact final revision, acceptance results, review disposition, waivers, and remaining risk. Never treat a worker report as completion proof.

@@ -241,3 +241,7 @@ All runtime validation moved from `typebox` / `typebox/value` to `@earendil-work
 - pi-schema `num()` accepts NaN and +/-Infinity, which TypeBox `Number` rejected; every number uses `finiteNumber` (`src/guards.ts`, bounded by +/-`Number.MAX_VALUE`).
 - Function-valued members (reader, `classify`, `subscribe`, unsubscribe) are not JSON: the object is checked with a pi-schema `unknown()` member and `instanceof Function` confirms the member.
 - `typebox` is now needed only by the bridge file; the optional peer declaration stays because that bridge resolves it at runtime.
+
+## 2026-11-03 choco-pi patch: stop-control participant (P4b-3)
+
+The root activation joins the choco-pi stop-control v1 protocol through the package-local contract copy `src/stop-control.ts`. `src/goal-runtime-controller.ts` subscribes to `choco-pi:stop-control/v1/revoke` on session start (unsubscribed synchronously on shutdown) and keeps the latest live `ExtensionContext` (session start / agent start; cleared on shutdown). For scope `all` and a matching root session id it clears the provider-limit auto-resume timer, accounts elapsed time and applies the `abort_pause` transition (clears continuation, accounting and recovery) when the goal is active, then emits `acknowledged` and `settled` synchronously with detail `paused` or `not active`; a stale context emits `acknowledged` then `failed`. Tokens of the aborted turn are not accounted after the pause. Reopening admission never resumes the goal. Tests: `tests/stop-control.test.ts`.

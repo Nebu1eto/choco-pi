@@ -468,3 +468,37 @@ test("registered queued stop settles immediately without waiting for a nonexiste
     await host.close();
   }
 });
+
+test("a user-stopped epoch delivers the stopped notice by steer without triggering a turn", async (t) => {
+  const host = await fixture(t);
+  const registryKey = Symbol.for("choco-pi:stop-control/v1");
+  let latchClosed = false;
+  Object.defineProperty(globalThis, registryKey, {
+    value: {
+      protocol: "choco-pi:stop-control/v1",
+      state: () => ({ epoch: 1, closed: latchClosed }),
+    },
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  });
+  t.after(() => {
+    Reflect.deleteProperty(globalThis, registryKey);
+  });
+  try {
+    const id = host.spawn();
+    latchClosed = true;
+    await host.call("stop_subagent", id);
+    host.pending[0]();
+    const record = host.manager.getRecord(id);
+    assert.ok(record);
+    await record.promise;
+    await waitForGate();
+    assert.equal(host.notices.length, 1);
+    assert.deepEqual(host.deliveryOptions.at(-1), { deliverAs: "steer", triggerTurn: false });
+    assert.match(await host.call("get_subagent_result", id), /preserved partial output/);
+    assert.equal(record.consumedResultGeneration, record.resultGeneration);
+  } finally {
+    await host.close();
+  }
+});

@@ -6,6 +6,7 @@ import type { AgentSession, ExtensionAPI, ExtensionContext } from "@earendil-wor
 import { AgentManager, type AgentManagerRunner } from "../src/agent-manager.ts";
 import type { RunOptions } from "../src/agent-runner.ts";
 import { claimSubagentResultRead } from "../src/result-read.ts";
+import { issueExemptTicket } from "../src/review-rounds.ts";
 
 interface PendingRun {
   options: RunOptions;
@@ -62,8 +63,15 @@ async function runForcedCase(
   const base = { description: "budget transition", isBackground: true, isolated: true };
 
   try {
-    const forcedId = manager.spawn(pi, ctx, "reviewer", "forced", { ...base, budgets });
-    const queuedId = manager.spawn(pi, ctx, "reviewer", "queued", base);
+    const forcedId = manager.spawn(pi, ctx, "reviewer", "forced", {
+      ...base,
+      budgets,
+      reviewTicket: issueExemptTicket("user-mention"),
+    });
+    const queuedId = manager.spawn(pi, ctx, "reviewer", "queued", {
+      ...base,
+      reviewTicket: issueExemptTicket("user-mention"),
+    });
     assert.equal(manager.getRecord(queuedId)?.status, "queued");
     const forcedRun = pending.get("forced");
     assert.ok(forcedRun);
@@ -80,7 +88,10 @@ async function runForcedCase(
     assert.equal(active.terminalResultGeneration, undefined);
     assert.equal(manager.getRecord(queuedId)?.status, "queued", "slot remains owned until unwind");
     assert.equal(
-      await manager.resume(forcedId, "too soon", undefined, { name: "mutated" }),
+      await manager.resume(forcedId, "too soon", undefined, {
+        name: "mutated",
+        reviewTicket: issueExemptTicket("user-mention"),
+      }),
       undefined,
     );
     assert.notEqual(active.alias, "mutated");
@@ -165,6 +176,7 @@ test("later user stop preserves the first budget cancellation cause", async () =
     "forced",
     {
       description: "immutable cancellation",
+      reviewTicket: issueExemptTicket("user-mention"),
       isBackground: true,
       budgets: { timeoutMs: 5 },
     },
@@ -204,6 +216,7 @@ test("disposing the manager cancels the run once and disarms budget timers", asy
     "dispose",
     {
       description: "dispose timers",
+      reviewTicket: issueExemptTicket("user-mention"),
       isBackground: true,
       budgets: { timeoutMs: 10, idleTimeoutMs: 10 },
     },

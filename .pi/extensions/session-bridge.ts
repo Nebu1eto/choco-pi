@@ -34,6 +34,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { bool, int, nullable, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
 import { hostParams } from "./lib/schema-bridge.ts";
+import { formatHeldMessageNotice, onStopReopen, readStopState } from "./lib/stop-control.ts";
 import {
   assertSessionId,
   BRIDGE_DIRECTORY,
@@ -82,6 +83,8 @@ type MailboxMessage = {
   message: string;
   createdAt: string;
 };
+
+type HeldMailboxMessage = { message: MailboxMessage; claimedPath: string; sourcePath: string };
 
 type ManagedSession = {
   session: AgentSession;
@@ -1067,6 +1070,9 @@ export function installLiveSessionBridge(
     mailboxRetryAt: number;
     recoverClaimedMessages: boolean;
     submitted: Map<string, SubmittedMailboxClaim>;
+    // Claimed messages kept pending while the session is stopped (/stop); released on reopen.
+    held: Map<string, HeldMailboxMessage>;
+    unsubscribeStopReopen?: () => void;
     admission?: StartupAdmission;
   };
   let current: Lifecycle | undefined;
@@ -1183,6 +1189,17 @@ export function installLiveSessionBridge(
     }
   };
 
+  const holdMessage = (
+    lifecycle: Lifecycle,
+    message: MailboxMessage,
+    claimedPath: string,
+    sourcePath: string,
+  ): void => {
+    if (lifecycle.held.has(message.id)) return;
+    lifecycle.held.set(message.id, { message, claimedPath, sourcePath });
+    lifecycle.ctx.ui.notify(formatHeldMessageNotice(message.fromSessionId), "info");
+  };
+
   const dispatchClaimedMessage = async (
     lifecycle: Lifecycle,
     message: MailboxMessage,
@@ -1192,6 +1209,10 @@ export function installLiveSessionBridge(
     if (!isCurrent(lifecycle)) return;
     if (transcriptHasMessage(lifecycle, message.id)) {
       await unlink(claimedPath);
+      return;
+    }
+    if (readStopState(lifecycle.sessionId).closed) {
+      holdMessage(lifecycle, message, claimedPath, sourcePath);
       return;
     }
     if (
@@ -1206,6 +1227,11 @@ export function installLiveSessionBridge(
       while (lifecycle.admission) {
         await lifecycle.admission.started;
         if (!isCurrent(lifecycle)) return;
+      }
+      if (readStopState(lifecycle.sessionId).closed) {
+        releaseMailboxSubmission(lifecycle.submitted, message.id);
+        holdMessage(lifecycle, message, claimedPath, sourcePath);
+        return;
       }
       const admission = lifecycle.ctx.isIdle() ? startupAdmission() : undefined;
       lifecycle.admission = admission;
@@ -1229,6 +1255,19 @@ export function installLiveSessionBridge(
       }
       throw error;
     }
+  };
+
+  const releaseHeldMessages = async (lifecycle: Lifecycle): Promise<void> => {
+    for (const [messageId, held] of Array.from(lifecycle.held)) {
+      if (!isCurrent(lifecycle) || readStopState(lifecycle.sessionId).closed) return;
+      lifecycle.held.delete(messageId);
+      try {
+        await dispatchClaimedMessage(lifecycle, held.message, held.claimedPath, held.sourcePath);
+      } catch (error) {
+        reportDeliveryError(lifecycle, "dispatch", error);
+      }
+    }
+    await drainMailbox(lifecycle);
   };
 
   const drainMailbox = async (lifecycle: Lifecycle) => {
@@ -1345,6 +1384,8 @@ export function installLiveSessionBridge(
     previous.unregisterResourceCleanup = undefined;
     unregister?.();
     previous.abortController.abort();
+    previous.unsubscribeStopReopen?.();
+    previous.unsubscribeStopReopen = undefined;
     previous.admission?.release();
     previous.admission = undefined;
     if (previous.heartbeatTimer) clearInterval(previous.heartbeatTimer);
@@ -1378,8 +1419,15 @@ export function installLiveSessionBridge(
       mailboxRetryAt: 0,
       recoverClaimedMessages: true,
       submitted: new Map(),
+      held: new Map(),
     };
     current = lifecycle;
+    lifecycle.unsubscribeStopReopen = onStopReopen((rootSessionId) => {
+      if (rootSessionId !== lifecycle.sessionId || !isCurrent(lifecycle)) return;
+      void releaseHeldMessages(lifecycle).catch((error: RuntimeValue) =>
+        reportDeliveryError(lifecycle, "drain", error),
+      );
+    });
     lifecycle.unregisterResourceCleanup = registerSessionResourceCleanup((cleanupSessionId) => {
       if (cleanupSessionId !== undefined && cleanupSessionId !== lifecycle.sessionId) return;
       void cleanupLifecycle(lifecycle).catch(reportCleanupFailure);

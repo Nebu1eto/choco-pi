@@ -13,6 +13,15 @@ import { isRegisteredChildSession } from "./child-session.ts";
 import { hostParams } from "./schema-bridge.ts";
 import { ShellNotificationGate } from "./notification-gate.ts";
 import { ShellManager } from "./shell-manager.ts";
+import {
+  isStopShellsRequest,
+  mayTriggerTurn,
+  readStopState,
+  STOP_CONTROL_REPORT_CHANNEL,
+  STOP_CONTROL_STOP_SHELLS_CHANNEL,
+  type StopReport,
+  type StopShellsRequest,
+} from "./stop-control.ts";
 import type { ReadShellResult, ShellChangeEvent, ShellResult } from "./shell-manager.ts";
 import { isStaleContextError, type RuntimeValue } from "./lifecycle.ts";
 import {
@@ -267,6 +276,9 @@ export default function shellsExtension(pi: ExtensionAPI): void {
   let rootUI: ShellsUICtx | undefined;
   let currentSessionId: string | undefined;
   let shuttingDown = false;
+  // Stop epoch each root-owned shell was authorised in; completions from an older epoch never trigger a turn.
+  const shellStartEpochs = new Map<string, number>();
+  let unsubscribeStopShells: (() => void) | undefined;
 
   const flushCompletions = (completed: ShellResult[]): void => {
     if (shuttingDown) {
@@ -277,6 +289,16 @@ export default function shellsExtension(pi: ExtensionAPI): void {
     if (shells.length === 0) return;
     boundGroupedTails(shells);
     const details: ShellCompletionDetails = { shells };
+    const stopRoot = isChildActivation ? undefined : currentSessionId;
+    const triggerTurn =
+      stopRoot === undefined ||
+      completed.every((shell) =>
+        mayTriggerTurn(
+          stopRoot,
+          shellStartEpochs.get(shell.shellId) ?? readStopState(stopRoot).epoch,
+        ),
+      );
+    for (const shell of completed) shellStartEpochs.delete(shell.shellId);
     try {
       pi.sendMessage<ShellCompletionDetails>(
         {
@@ -285,7 +307,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
           display: true,
           details,
         },
-        { deliverAs: "steer", triggerTurn: true },
+        { deliverAs: "steer", triggerTurn },
       );
     } catch (error) {
       // Session replacement or reload can stale this ctx without session_shutdown
@@ -388,11 +410,74 @@ export default function shellsExtension(pi: ExtensionAPI): void {
     grants: () => (scratchGrants ??= loadScratchGrants()),
   });
 
+  const emitStopReport = (report: StopReport): void => {
+    try {
+      pi.events.emit(STOP_CONTROL_REPORT_CHANNEL, report);
+    } catch (error) {
+      // SAFETY: catch produces unknown; the helper narrows via instanceof before reading the message.
+      if (isStaleContextError(error as RuntimeValue)) return;
+      queueMicrotask(() => {
+        throw error;
+      });
+    }
+  };
+
+  // Revocation and the acknowledgement run synchronously inside the handler; only the
+  // settled/failed report waits for the SIGTERM/SIGKILL escalation to finish.
+  const handleStopShells = (payload: StopShellsRequest): void => {
+    const requesterId = currentSessionId;
+    if (shuttingDown || isChildActivation || requesterId === undefined) return;
+    if (payload.rootSessionId !== requesterId) return;
+    const requestId = payload.requestId;
+    const targets: string[] = [];
+    for (const ownerId of new Set(payload.ownerSessionIds)) {
+      for (const shell of manager.list({ requesterId: ownerId, isAdmin: false }).shells) {
+        if (shell.state === "running") targets.push(shell.shellId);
+      }
+    }
+    // Admin stop keeps output readable; cleanupOwner/dispose would drop the owner's records.
+    const stops = targets.map((shellId) => manager.stop({ requesterId, isAdmin: true, shellId }));
+    emitStopReport({
+      requestId,
+      participant: "shells",
+      phase: "acknowledged",
+      counts: { shells: targets.length },
+    });
+    void Promise.allSettled(stops).then((results) => {
+      const failures: string[] = [];
+      results.forEach((result, index) => {
+        const shellId = targets[index];
+        if (result.status === "rejected") {
+          const reason =
+            result.reason instanceof Error ? result.reason.message : String(result.reason);
+          failures.push(`${shellId}: ${reason}`);
+        } else if (result.value.error !== undefined) {
+          failures.push(`${shellId}: ${result.value.error}`);
+        }
+      });
+      if (failures.length === 0) {
+        emitStopReport({ requestId, participant: "shells", phase: "settled" });
+      } else {
+        emitStopReport({
+          requestId,
+          participant: "shells",
+          phase: "failed",
+          detail: `shell stop failed: ${failures.join("; ")}`,
+        });
+      }
+    });
+  };
+
   pi.on("session_start", async (_event, ctx) => {
     scratchGrants = undefined;
     scratchWarner.reset();
     currentSessionId = ctx.sessionManager.getSessionId();
     isChildSession(currentSessionId);
+    if (!isChildActivation && unsubscribeStopShells === undefined) {
+      unsubscribeStopShells = pi.events.on(STOP_CONTROL_STOP_SHELLS_CHANNEL, (data) => {
+        if (isStopShellsRequest(data)) handleStopShells(data);
+      });
+    }
     notificationGate.sessionStart(currentSessionId, ctx.sessionManager.getEntries());
     if (!isChildActivation && ctx.hasUI) bindRootUI(ctx.ui, currentSessionId);
   });
@@ -434,6 +519,13 @@ export default function shellsExtension(pi: ExtensionAPI): void {
           isChildSession(currentSessionId);
           notificationGate.activateOwner(currentSessionId);
           const ownerId = currentSessionId;
+          const startState = isChildActivation ? undefined : readStopState(ownerId);
+          if (startState?.closed === true) {
+            return jsonResult({
+              error:
+                "shell_start refused: the user stopped this session's work (/stop). Ask the user to run /resume-work.",
+            });
+          }
           const cwd = resolve(ctx.cwd, params.cwd ?? ".");
           const started = manager.start({
             ownerId,
@@ -443,6 +535,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
             toolCallId,
             env: scratchEnv(ownerId),
           });
+          if (startState !== undefined) shellStartEpochs.set(started.shellId, startState.epoch);
           // Warn mode: the process already runs; the agent learns where scratch files belong.
           const warnings = await scratchWarner.check({
             sessionId: ownerId,
@@ -584,6 +677,9 @@ export default function shellsExtension(pi: ExtensionAPI): void {
     notificationGate.shutdown();
     shuttingDown = true;
     unsubscribeCompletions();
+    unsubscribeStopShells?.();
+    unsubscribeStopShells = undefined;
+    shellStartEpochs.clear();
     // Snapshot identity before any await; this activation is already invalidated above.
     const shutdownSessionId = currentSessionId ?? ctx.sessionManager.getSessionId();
 

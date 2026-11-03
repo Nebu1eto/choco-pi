@@ -25,6 +25,7 @@ import { applyHookEnvironment, hookEnvironmentFile, removeHookEnvironment } from
 import { registerClaudeTaskTools } from "./tasks.ts";
 import { isStringValue, type RuntimeValue } from "./validation.ts";
 import { isStaleContextError, rethrowUnlessStaleContext } from "./lifecycle.ts";
+import { readStopState } from "./stop-control.ts";
 
 const TOOL_NAMES = new Map([
   ["bash", "Bash"],
@@ -219,6 +220,7 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
   let stopHookActive = false;
   let stopHookBlocks = 0;
   let stopTaskGeneration = 0;
+  let stopNoticeEpoch: number | undefined;
   let watchers: HookWatchers | undefined;
   let currentSources: HookSource[] = [];
   let envFile = hookEnvironmentFile(sessionId);
@@ -590,6 +592,18 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
   pi.on("agent_end", async (event, ctx) => {
     const generation = lifecycleGeneration;
     const taskGeneration = stopTaskGeneration;
+    // A subagent follows its root session's stop state; a root session uses its own id.
+    const stopRoot = rootSessionId ?? sessionId;
+    // Reset the continuation state and tell the user once per stop epoch.
+    const skipStopContinuation = (): void => {
+      stopHookActive = false;
+      stopHookBlocks = 0;
+      const epoch = readStopState(stopRoot).epoch;
+      if (stopNoticeEpoch === epoch) return;
+      stopNoticeEpoch = epoch;
+      if (ctx.hasUI)
+        ctx.ui.notify("Stop hook continuation skipped: session work is stopped.", "info");
+    };
     const last = event.messages.findLast((message) => message.role === "assistant");
     if (last?.role === "assistant" && last.stopReason === "error") {
       const errorText = last.errorMessage ?? textOf(last);
@@ -602,6 +616,16 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
       stopHookActive = false;
       return;
     }
+    // Claude Code does not run Stop hooks for a user interrupt; an Esc-aborted run is never auto-continued.
+    if (last?.role === "assistant" && last.stopReason === "aborted") {
+      stopHookActive = false;
+      stopHookBlocks = 0;
+      return;
+    }
+    if (readStopState(stopRoot).closed) {
+      skipStopContinuation();
+      return;
+    }
     const result = await dispatch("Stop", ctx, {
       stop_hook_active: stopHookActive,
       last_assistant_message: textOf(last),
@@ -610,6 +634,10 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
     });
     if (generation !== lifecycleGeneration || taskGeneration !== stopTaskGeneration) return;
     notify(ctx, result.systemMessages);
+    if (readStopState(stopRoot).closed) {
+      skipStopContinuation();
+      return;
+    }
     const continuation =
       result.blocked && result.reason ? result.reason : result.additionalContext.join("\n");
     if (continuation) {

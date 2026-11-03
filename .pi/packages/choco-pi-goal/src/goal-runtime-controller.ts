@@ -24,7 +24,15 @@ import {
   setRecoveryPausedAttention,
   type GoalStartTurnStrategy,
 } from "./recovery-machine.ts";
+import { isStaleContextError } from "./goal-runtime-access.ts";
 import { goalWithLiveUsage, updateGoalStatus } from "./state.ts";
+import {
+  isRevokeRequest,
+  STOP_CONTROL_REPORT_CHANNEL,
+  STOP_CONTROL_REVOKE_CHANNEL,
+  type RevokeRequest,
+  type StopReport,
+} from "./stop-control.ts";
 import { registerGoalTools } from "./tools.ts";
 import type { GoalEntrySource, GoalResult, ThreadGoal } from "./types.ts";
 
@@ -175,6 +183,60 @@ export function createGoalRuntimeController(pi: ExtensionAPI): GoalRuntimeContro
   });
 
   let recoveryOwnershipOwner: string | undefined;
+  // Latest live context of this activation; cleared synchronously on shutdown.
+  let latestCtx: ExtensionContext | null = null;
+  let unsubscribeRevoke: (() => void) | undefined;
+
+  const emitStopReport = (report: StopReport): void => {
+    try {
+      pi.events.emit(STOP_CONTROL_REPORT_CHANNEL, report);
+    } catch (error) {
+      if (isStaleContextError(error)) return;
+      throw error;
+    }
+  };
+
+  // /stop (all): pause an active goal and drop the provider-limit auto-resume timer. Both
+  // reports are emitted synchronously; reopening admission never resumes the goal.
+  const handleRevoke = (request: RevokeRequest): void => {
+    const ctx = latestCtx;
+    if (request.scope !== "all" || ctx === null) return;
+    if (request.rootSessionId !== recoveryOwnershipOwner) return;
+    const wasActive = stateController.getGoal()?.status === "active";
+    try {
+      providerLimitAutoResume.clear();
+      if (wasActive) {
+        // Account elapsed time while the goal is still active; the aborted turn's tokens are not counted.
+        goalAccounting.accountProgress(ctx, false, 0, true);
+        stateController.pauseForAbort(ctx);
+      } else {
+        status.refreshUi(ctx);
+      }
+    } catch (error) {
+      if (!isStaleContextError(error)) throw error;
+      emitStopReport({
+        requestId: request.requestId,
+        participant: "goal",
+        phase: "acknowledged",
+        detail: "not active",
+      });
+      emitStopReport({
+        requestId: request.requestId,
+        participant: "goal",
+        phase: "failed",
+        detail: "goal pause failed: session context is stale",
+      });
+      return;
+    }
+    const detail = wasActive ? "paused" : "not active";
+    emitStopReport({
+      requestId: request.requestId,
+      participant: "goal",
+      phase: "acknowledged",
+      detail,
+    });
+    emitStopReport({ requestId: request.requestId, participant: "goal", phase: "settled", detail });
+  };
   const recoveryOwnership = createGoalRecoveryOwnershipPublisher({
     getOwnerSessionId: () => recoveryOwnershipOwner,
     getGoal: () => persistence.getGoal(),
@@ -210,8 +272,16 @@ export function createGoalRuntimeController(pi: ExtensionAPI): GoalRuntimeContro
     completeGoal,
     resumeGoalWithContinuation,
     ...eventHandlers,
+    onAgentStart(event, ctx) {
+      latestCtx = ctx;
+      return eventHandlers.onAgentStart(event, ctx);
+    },
     onSessionStart(event, ctx) {
+      latestCtx = ctx;
       recoveryOwnershipOwner = ownerSessionId(ctx);
+      unsubscribeRevoke ??= pi.events.on(STOP_CONTROL_REVOKE_CHANNEL, (data) => {
+        if (isRevokeRequest(data)) handleRevoke(data);
+      });
       recoveryOwnership.install();
       runtimeAccess.install(recoveryOwnershipOwner);
       return eventHandlers.onSessionStart(event, ctx);
@@ -219,6 +289,9 @@ export function createGoalRuntimeController(pi: ExtensionAPI): GoalRuntimeContro
     async onSessionShutdown(event, ctx) {
       // Invalidate host access before the first await so a session installed meanwhile keeps its own.
       runtimeAccess.dispose();
+      latestCtx = null;
+      unsubscribeRevoke?.();
+      unsubscribeRevoke = undefined;
       try {
         return await eventHandlers.onSessionShutdown(event, ctx);
       } finally {
