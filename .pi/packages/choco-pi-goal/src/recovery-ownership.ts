@@ -1,5 +1,4 @@
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { bool, compile, obj, oneOf, str, unknown } from "@earendil-works/pi-schema";
 
 import type { ThreadGoal } from "./types.ts";
 
@@ -28,19 +27,24 @@ interface GoalRecoveryEntry {
   readers: Set<RuntimeSlot>;
 }
 
-const GoalRecoveryOwnershipSchema = Type.Object({
-  owner: Type.String(),
-  goalId: Type.String(),
-  status: Type.Union([Type.Literal("active"), Type.Literal("paused")]),
-  providerLimitResumeScheduled: Type.Boolean(),
-});
+// Slot values are host-owned in-process objects; objects stay open (extra keys accepted) as the
+// previous TypeBox objects were. Function-valued members are not JSON, so they are checked with
+// instanceof Function after the shape check.
+const isGoalRecoveryOwnership = compile(
+  obj(
+    {
+      owner: str(),
+      goalId: str(),
+      status: oneOf(["active", "paused"]),
+      providerLimitResumeScheduled: bool(),
+    },
+    { open: true },
+  ),
+).check;
 
-const OwnershipReaderSchema = Type.Function([], Type.Unknown());
-
-const GoalRecoveryEntrySchema = Type.Object({
-  recoveryOwnership: OwnershipReaderSchema,
-  readers: Type.Unknown(),
-});
+const hasRecoveryEntryMembers = compile(
+  obj({ recoveryOwnership: unknown(), readers: unknown() }, { open: true }),
+).check;
 
 /** Host-owned value read from a global slot before validation. */
 type RuntimeSlot = {} | null | undefined;
@@ -51,10 +55,10 @@ function createEntry(): GoalRecoveryEntry {
     readers,
     recoveryOwnership(owner) {
       for (const reader of readers) {
-        if (!Check(OwnershipReaderSchema, reader)) continue;
+        if (!(reader instanceof Function)) continue;
         try {
           const ownership: RuntimeSlot = reader();
-          if (Check(GoalRecoveryOwnershipSchema, ownership)) {
+          if (isGoalRecoveryOwnership(ownership)) {
             if (owner !== undefined && ownership.owner !== owner) continue;
             return {
               owner: ownership.owner,
@@ -77,7 +81,9 @@ function currentReaders(): Set<RuntimeSlot> | undefined {
     globalThis,
     GOAL_RECOVERY_SYMBOL,
   )?.value;
-  if (!Check(GoalRecoveryEntrySchema, slot)) return undefined;
+  if (!hasRecoveryEntryMembers(slot) || !(slot.recoveryOwnership instanceof Function)) {
+    return undefined;
+  }
   const readers: RuntimeSlot = slot.readers;
   return readers instanceof Set ? readers : undefined;
 }

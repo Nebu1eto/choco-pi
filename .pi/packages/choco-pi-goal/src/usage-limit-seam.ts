@@ -1,5 +1,6 @@
-import { Type, type Static } from "typebox";
-import { Check } from "typebox/value";
+import { compile, obj, oneOf, opt, str, unknown, type Static } from "@earendil-works/pi-schema";
+
+import { finiteNumber } from "./guards.ts";
 
 /**
  * Structural reader for the root usage-limit policy seam. The root harness registers owner-indexed
@@ -18,30 +19,26 @@ export interface UsageLimitClassifyInput {
   errorMessage: string;
 }
 
-const UsageLimitClassifyInputSchema = Type.Object({
-  provider: Type.String(),
-  modelId: Type.String(),
-  errorMessage: Type.String(),
-});
-
-const UsageLimitClassificationSchema = Type.Object({
-  kind: Type.Union([Type.Literal("quota"), Type.Literal("billing"), Type.Literal("transient")]),
-  provider: Type.String(),
-  modelId: Type.String(),
-  accountId: Type.Optional(Type.String()),
-  resetAt: Type.Optional(Type.Number()),
-  confidence: Type.Union([
-    Type.Literal("structured"),
-    Type.Literal("parsed"),
-    Type.Literal("inferred"),
-  ]),
-});
+// The policy and its result are foreign in-process objects: both stay open (extra keys accepted)
+// as the previous TypeBox objects were, and resetAt keeps rejecting NaN/Infinity.
+const UsageLimitClassificationSchema = obj(
+  {
+    kind: oneOf(["quota", "billing", "transient"]),
+    provider: str(),
+    modelId: str(),
+    accountId: opt(str()),
+    resetAt: opt(finiteNumber),
+    confidence: oneOf(["structured", "parsed", "inferred"]),
+  },
+  { open: true },
+);
 
 export type UsageLimitClassification = Static<typeof UsageLimitClassificationSchema>;
 
-const UsageLimitClassifierSchema = Type.Object({
-  classify: Type.Function([UsageLimitClassifyInputSchema], Type.Unknown()),
-});
+const isUsageLimitClassification = compile(UsageLimitClassificationSchema).check;
+
+/** Function-valued members are not JSON; the shape check leaves them unknown for instanceof Function. */
+const hasClassifyMember = compile(obj({ classify: unknown() }, { open: true })).check;
 
 /**
  * Classifies an errored assistant turn through the owner's registered policy. Returns `undefined`
@@ -59,13 +56,15 @@ export function classifyViaSeam(
     if (!(slot instanceof Map)) return undefined;
     const policies: ReadonlyMap<RuntimeSlot, RuntimeSlot> = slot;
     const policy = policies.get(owner);
-    if (!Check(UsageLimitClassifierSchema, policy)) return undefined;
+    if (!hasClassifyMember(policy) || !(policy.classify instanceof Function)) {
+      return undefined;
+    }
     const classification: RuntimeSlot = policy.classify.call(policy, {
       provider: input.provider,
       modelId: input.modelId,
       errorMessage: input.errorMessage,
     });
-    return Check(UsageLimitClassificationSchema, classification) ? classification : undefined;
+    return isUsageLimitClassification(classification) ? classification : undefined;
   } catch {
     return undefined;
   }

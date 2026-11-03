@@ -3,47 +3,51 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { Type, type TSchemaOptions, type TUnsafe } from "typebox";
+import { bool, int, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
 
 import { goalToolResponse, toToolText, type GoalToolResponse } from "./format.ts";
+import { hostParams } from "./schema-bridge.ts";
 import { createGoal, replaceGoal } from "./state.ts";
 import { TOOL_PROMPT_GUIDELINES } from "./prompts.ts";
 import type { GoalEntrySource, GoalResult, ThreadGoal } from "./types.ts";
 
-/** Local string-enum schema; Pi 1.5.0 pi-ai StringEnum returns a pi-schema Schema, not a TypeBox one. */
-function StringEnum<const T extends readonly string[]>(
-  values: T,
-  options?: TSchemaOptions,
-): TUnsafe<T[number]> {
-  return Type.Unsafe<T[number]>({ ...options, type: "string", enum: [...values] });
-}
+// TypeBox objects were open (extra keys allowed); keep that with { open: true }.
+const emptyParams = obj({}, { open: true });
 
-const EmptyParams = Type.Object({});
+const createGoalParams = obj(
+  {
+    objective: str({
+      description: "Concrete objective to pursue until completion.",
+    }),
+    token_budget: opt(
+      int({
+        description:
+          "Optional positive integer cumulative token cap. Omit unless the user explicitly supplied one.",
+        minimum: 1,
+      }),
+    ),
+    replace_existing: opt(
+      bool({
+        description: "Replace a non-complete goal only when explicitly requested.",
+      }),
+    ),
+  },
+  { open: true },
+);
 
-const CreateGoalParams = Type.Object({
-  objective: Type.String({
-    description: "Concrete objective to pursue until completion.",
-  }),
-  token_budget: Type.Optional(
-    Type.Integer({
+const updateGoalParams = obj(
+  {
+    status: oneOf(["complete"], {
       description:
-        "Optional positive integer cumulative token cap. Omit unless the user explicitly supplied one.",
-      minimum: 1,
+        "Confirmation token; only complete is accepted. Call only when no required work remains.",
     }),
-  ),
-  replace_existing: Type.Optional(
-    Type.Boolean({
-      description: "Replace a non-complete goal only when explicitly requested.",
-    }),
-  ),
-});
+  },
+  { open: true },
+);
 
-const UpdateGoalParams = Type.Object({
-  status: StringEnum(["complete"] as const, {
-    description:
-      "Confirmation token; only complete is accepted. Call only when no required work remains.",
-  }),
-});
+const EmptyParams = hostParams(emptyParams);
+const CreateGoalParams = hostParams(createGoalParams);
+const UpdateGoalParams = hostParams(updateGoalParams);
 
 export interface ToolHost {
   getGoal(): ThreadGoal | null;
@@ -66,7 +70,7 @@ function throwToolError(message: string): never {
   throw new Error(message);
 }
 
-export function registerGoalTools(pi: ExtensionAPI, host: ToolHost): void {
+export function registerGoalTools(pi: Pick<ExtensionAPI, "registerTool">, host: ToolHost): void {
   pi.registerTool({
     name: "get_goal",
     label: "Get Goal",

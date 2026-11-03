@@ -1,6 +1,6 @@
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { compile, lit, obj } from "@earendil-works/pi-schema";
 
+import { isString } from "./guards.ts";
 import { continuationGoalIdFromPrompt, supersededContinuationMessage } from "./prompts.ts";
 import {
   isActiveGoalQueuedDetails,
@@ -16,10 +16,10 @@ import {
 } from "./queued-goal-messages.ts";
 import { CUSTOM_ENTRY_TYPE, type GoalStatus, type ThreadGoal } from "./types.ts";
 
-const StringSchema = Type.String();
-const SupersededContinuationDetailsSchema = Type.Object({
-  kind: Type.Literal("superseded_continuation"),
-});
+// Open object, as the previous TypeBox object was: extra detail keys are accepted.
+const isSupersededDetails = compile(
+  obj({ kind: lit("superseded_continuation") }, { open: true }),
+).check;
 
 interface SupersededContinuationDetails {
   kind: "superseded_continuation";
@@ -79,11 +79,11 @@ function mergeProviderContextMessage<TMessage extends QueuedGoalContextInput>(
 }
 
 function isSupersededContinuationDetails(details: QueuedGoalContextInput["details"]): boolean {
-  return Check(SupersededContinuationDetailsSchema, details);
+  return isSupersededDetails(details);
 }
 
 function textContentFromMessageContent(content: QueuedGoalContextInput["content"]): string | null {
-  if (Check(StringSchema, content)) {
+  if (isString(content)) {
     return content;
   }
 

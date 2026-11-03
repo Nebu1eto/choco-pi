@@ -7,8 +7,7 @@ import type {
   SessionStartEvent,
   SessionTreeEvent,
 } from "@earendil-works/pi-coding-agent";
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import { compile, lit, obj, str, unknown, type Static } from "@earendil-works/pi-schema";
 
 import {
   clearActiveHostOverflowRecovery,
@@ -31,19 +30,20 @@ import type { ThreadGoal } from "./types.ts";
  * absent or foreign slot leaves the goal runtime exactly as before.
  */
 const BACKGROUND_ADOPTION_SIGNAL = Symbol.for("choco-pi:compaction-background-adoption");
-const AdoptionSignalSchema = Type.Object({
-  version: Type.Literal(1),
-  subscribe: Type.Function([], Type.Unknown()),
-});
-const AdoptionNoticeSchema = Type.Object(
+// Both objects are open, as the previous TypeBox objects were. Function-valued members are not
+// JSON, so the shape check leaves them unknown and instanceof Function confirms them.
+const hasAdoptionSignalMembers = compile(
+  obj({ version: lit(1), subscribe: unknown() }, { open: true }),
+).check;
+const AdoptionNoticeSchema = obj(
   {
-    sessionId: Type.String({ minLength: 1 }),
-    committedEntryId: Type.String({ minLength: 1 }),
-    route: Type.String(),
+    sessionId: str({ minLength: 1 }),
+    committedEntryId: str({ minLength: 1 }),
+    route: str(),
   },
-  { additionalProperties: true },
+  { open: true },
 );
-const UnsubscribeSchema = Type.Function([], Type.Unknown());
+const isAdoptionNotice = compile(AdoptionNoticeSchema).check;
 
 /** The members of the published notice this runtime reads. */
 type AdoptionNotice = Static<typeof AdoptionNoticeSchema>;
@@ -53,11 +53,11 @@ interface AdoptionSignal {
 }
 
 function isAdoptionSignal<T>(value: T): value is T & AdoptionSignal {
-  return Value.Check(AdoptionSignalSchema, value);
+  return hasAdoptionSignalMembers(value) && value.subscribe instanceof Function;
 }
 
 function isUnsubscribe<T>(value: T): value is T & (() => void) {
-  return Value.Check(UnsubscribeSchema, value);
+  return value instanceof Function;
 }
 
 function resolveAdoptionSignal(): AdoptionSignal | undefined {
@@ -153,7 +153,7 @@ export function createSessionEventHandlers(deps: GoalRuntimeSessionHandlerContex
     const sessionId = ctx.sessionManager.getSessionId();
     const listener: AdoptionListener = (notice, noticeCtx) => {
       if (adoptionSubscription?.sessionId !== sessionId) return;
-      if (!Value.Check(AdoptionNoticeSchema, notice) || notice.sessionId !== sessionId) return;
+      if (!isAdoptionNotice(notice) || notice.sessionId !== sessionId) return;
       if (notice.route === "recovered") return;
       afterCompactionOnce(notice.committedEntryId, noticeCtx, false);
     };

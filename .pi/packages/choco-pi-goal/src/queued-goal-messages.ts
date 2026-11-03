@@ -1,22 +1,18 @@
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { compile, lit, obj, oneOf, str } from "@earendil-works/pi-schema";
 
+import { isFiniteNumber, isString } from "./guards.ts";
 import { CUSTOM_ENTRY_TYPE } from "./types.ts";
 
-const StringSchema = Type.String();
-const NumberSchema = Type.Number();
-const QueuedGoalTextPartSchema = Type.Object({
-  type: Type.Literal("text"),
-  text: Type.String(),
-});
-const ActiveGoalQueuedDetailsSchema = Type.Object({
-  kind: Type.Union([
-    Type.Literal("continuation"),
-    Type.Literal("command_start"),
-    Type.Literal("command_resume"),
-  ]),
-  goalId: Type.String(),
-});
+// Both objects are open, as the previous TypeBox objects were: extra keys are accepted.
+const isQueuedGoalTextPart = compile(obj({ type: lit("text"), text: str() }, { open: true })).check;
+const activeGoalQueuedDetailsSchema = obj(
+  {
+    kind: oneOf(["continuation", "command_start", "command_resume"]),
+    goalId: str(),
+  },
+  { open: true },
+);
+const isActiveGoalQueuedDetailsValue = compile(activeGoalQueuedDetailsSchema).check;
 
 type GoalQueuedWorkKind = "continuation" | "command_start" | "command_resume";
 
@@ -87,7 +83,7 @@ export function userContentFromUnknown(
 
   const parts: QueuedGoalTextPart[] = [];
   for (const part of content) {
-    if (Check(QueuedGoalTextPartSchema, part)) {
+    if (isQueuedGoalTextPart(part)) {
       parts.push({ type: "text", text: part.text });
     }
   }
@@ -97,7 +93,7 @@ export function userContentFromUnknown(
 function customContentFromUnknown(
   content: QueuedGoalContextInput["content"],
 ): string | QueuedGoalUserContent {
-  if (Check(StringSchema, content)) {
+  if (isString(content)) {
     return content;
   }
 
@@ -109,7 +105,7 @@ function customContentFromUnknown(
 export function toQueuedGoalContextCarrier(
   message: QueuedGoalContextInput,
 ): QueuedGoalContextCarrier | null {
-  if (!Check(NumberSchema, message.timestamp)) {
+  if (!isFiniteNumber(message.timestamp)) {
     return null;
   }
 
@@ -167,7 +163,7 @@ export function toQueuedGoalWorkSource(
 export function isActiveGoalQueuedDetails(
   details: QueuedGoalContextInput["details"],
 ): details is ActiveGoalQueuedDetails {
-  return Check(ActiveGoalQueuedDetailsSchema, details);
+  return isActiveGoalQueuedDetailsValue(details);
 }
 
 export function isCommandResumeQueuedGoalMessage(message: QueuedGoalContextCarrier): boolean {

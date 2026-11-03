@@ -231,3 +231,13 @@ Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pas
 ## 2026-11-03 choco-pi patch: Pi SDK target 1.5.0 + pi-schema dependency
 
 Pi SDK pins move from `1.4.0` to exactly `1.5.0` and `@earendil-works/pi-schema@1.5.0` is added as a peer dependency (the extension loader has no alias for it). The local `StringEnum` helper now builds the TypeBox schema with `Type.Unsafe` because the Pi 1.5.0 pi-ai export returns a pi-schema schema.
+
+## 2026-11-03: TypeBox validators replaced by pi-schema
+
+All runtime validation moved from `typebox` / `typebox/value` to `@earendil-works/pi-schema` compiled validators. Only `src/schema-bridge.ts` still imports `typebox` (`Type.Unsafe`), because Pi 1.5.0 `registerTool` still requires a TypeBox schema.
+
+- Tool parameters (`src/tools.ts`): builders with `{ open: true }` (TypeBox objects were open), wrapped by `hostParams`; `StringEnum` became `oneOf(["complete"])`. Names, descriptions and defaults are unchanged. `registerGoalTools` now accepts `Pick<ExtensionAPI, "registerTool">`.
+- Persisted journal entries and goals (`src/state.ts`), queued-message details/parts, the recovery-ownership slot, the usage-limit seam and the compaction adoption relay keep their previous openness (all `open: true`) and optional/null handling.
+- pi-schema `num()` accepts NaN and +/-Infinity, which TypeBox `Number` rejected; every number uses `finiteNumber` (`src/guards.ts`, bounded by +/-`Number.MAX_VALUE`).
+- Function-valued members (reader, `classify`, `subscribe`, unsubscribe) are not JSON: the object is checked with a pi-schema `unknown()` member and `instanceof Function` confirms the member.
+- `typebox` is now needed only by the bridge file; the peer declaration is removed with the dependency cleanup.

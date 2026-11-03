@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { bool, compile, lit, nullable, obj, oneOf, str, union } from "@earendil-works/pi-schema";
+
+import { finiteNumber } from "./guards.ts";
 
 import {
   CUSTOM_ENTRY_TYPE,
@@ -17,59 +18,77 @@ import {
   type ThreadGoal,
 } from "./types.ts";
 
-const GoalStatusSchema = Type.Union([
-  Type.Literal("active"),
-  Type.Literal("paused"),
-  Type.Literal("budgetLimited"),
-  Type.Literal("complete"),
-]);
-const RuntimeUsageGoalStatusSchema = Type.Union([
-  Type.Literal("active"),
-  Type.Literal("budgetLimited"),
-]);
-const GoalUsageSchema = Type.Object({
-  tokensUsed: Type.Number(),
-  activeSeconds: Type.Number(),
-});
-const ThreadGoalSchema = Type.Object({
-  goalId: Type.String(),
-  objective: Type.String(),
-  status: GoalStatusSchema,
-  tokenBudget: Type.Union([Type.Number(), Type.Null()]),
-  usage: GoalUsageSchema,
-  createdAt: Type.Number(),
-  updatedAt: Type.Number(),
-});
-const GoalCustomEntrySchema = Type.Union([
-  Type.Object({
-    version: Type.Literal(1),
-    kind: Type.Literal("set"),
-    goal: ThreadGoalSchema,
-    at: Type.Number(),
-  }),
-  Type.Object({
-    version: Type.Literal(1),
-    kind: Type.Literal("usage"),
-    source: Type.Literal("runtime"),
-    goalId: Type.String(),
-    status: RuntimeUsageGoalStatusSchema,
+// Persisted journal entries are decoded JSON. The previous TypeBox objects were open (unknown keys
+// accepted) and numbers rejected NaN/Infinity, so every object here is { open: true } and every
+// number is the bounded finiteNumber.
+const GoalStatusSchema = oneOf(["active", "paused", "budgetLimited", "complete"]);
+const RuntimeUsageGoalStatusSchema = oneOf(["active", "budgetLimited"]);
+const GoalUsageSchema = obj(
+  {
+    tokensUsed: finiteNumber,
+    activeSeconds: finiteNumber,
+  },
+  { open: true },
+);
+const ThreadGoalSchema = obj(
+  {
+    goalId: str(),
+    objective: str(),
+    status: GoalStatusSchema,
+    tokenBudget: nullable(finiteNumber),
     usage: GoalUsageSchema,
-    updatedAt: Type.Number(),
-    at: Type.Number(),
-  }),
-  Type.Object({
-    version: Type.Literal(1),
-    kind: Type.Literal("clear"),
-    clearedGoalId: Type.Union([Type.String(), Type.Null()]),
-    at: Type.Number(),
-  }),
-  Type.Object({
-    version: Type.Literal(1),
-    kind: Type.Literal("host_overflow_cap_reset"),
-    active: Type.Boolean(),
-    at: Type.Number(),
-  }),
+    createdAt: finiteNumber,
+    updatedAt: finiteNumber,
+  },
+  { open: true },
+);
+const GoalCustomEntrySchema = union([
+  obj(
+    {
+      version: lit(1),
+      kind: lit("set"),
+      goal: ThreadGoalSchema,
+      at: finiteNumber,
+    },
+    { open: true },
+  ),
+  obj(
+    {
+      version: lit(1),
+      kind: lit("usage"),
+      source: lit("runtime"),
+      goalId: str(),
+      status: RuntimeUsageGoalStatusSchema,
+      usage: GoalUsageSchema,
+      updatedAt: finiteNumber,
+      at: finiteNumber,
+    },
+    { open: true },
+  ),
+  obj(
+    {
+      version: lit(1),
+      kind: lit("clear"),
+      clearedGoalId: nullable(str()),
+      at: finiteNumber,
+    },
+    { open: true },
+  ),
+  obj(
+    {
+      version: lit(1),
+      kind: lit("host_overflow_cap_reset"),
+      active: bool(),
+      at: finiteNumber,
+    },
+    { open: true },
+  ),
 ]);
+const checkGoalCustomEntry = compile(GoalCustomEntrySchema).check;
+const checkGoalUsage = compile(GoalUsageSchema).check;
+const checkRuntimeUsageGoalStatus = compile(RuntimeUsageGoalStatusSchema).check;
+const checkThreadGoal = compile(ThreadGoalSchema).check;
+const checkGoalStatus = compile(GoalStatusSchema).check;
 
 export interface ApplyUsageOptions {
   expectedGoalId?: string | null;
@@ -215,25 +234,25 @@ export function hostOverflowCapResetEntry(active: boolean, at = unixSeconds()): 
 }
 
 export function isGoalCustomEntry(data: SessionEntryLike["data"]): data is GoalCustomEntry {
-  return Check(GoalCustomEntrySchema, data);
+  return checkGoalCustomEntry(data);
 }
 
 export function isGoalUsage(usage: SessionEntryLike["data"]): usage is GoalUsage {
-  return Check(GoalUsageSchema, usage);
+  return checkGoalUsage(usage);
 }
 
 export function isRuntimeUsageGoalStatus(
   status: SessionEntryLike["data"],
 ): status is RuntimeUsageGoalStatus {
-  return Check(RuntimeUsageGoalStatusSchema, status);
+  return checkRuntimeUsageGoalStatus(status);
 }
 
 export function isThreadGoal(goal: SessionEntryLike["data"]): goal is ThreadGoal {
-  return Check(ThreadGoalSchema, goal);
+  return checkThreadGoal(goal);
 }
 
 export function isGoalStatus(status: SessionEntryLike["data"]): status is GoalStatus {
-  return Check(GoalStatusSchema, status);
+  return checkGoalStatus(status);
 }
 
 function canApplyRuntimeUsageEntry(
