@@ -1,8 +1,10 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { CompactionEntryDraft, SessionEntry } from "@earendil-works/pi-coding-agent";
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, bool, compile, lit, nullable, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
+import type { Properties, Schema, Static, StaticObject } from "@earendil-works/pi-schema";
+import { finiteInt, finiteNum, nonEmptyStr, nonNegative } from "../guards.ts";
 import type { CompactionFileOperations } from "../types.ts";
+import { jsonEqual } from "./json-equal.ts";
 
 export type CandidateState =
   | "idle"
@@ -37,35 +39,34 @@ export const CANDIDATE_TRANSITIONS: CandidateTransitionTable = {
   failed: [],
   "discarded-stale": [],
 };
-const NonEmptyString = Type.String({ minLength: 1 });
-const NonNegative = Type.Number({ minimum: 0 });
-const PositiveInteger = Type.Integer({ minimum: 1 });
-const Strict = { additionalProperties: false };
-export const ProviderScopeSchema = Type.Object(
-  {
-    provider: NonEmptyString,
-    baseUrl: Type.Optional(NonEmptyString),
-    model: NonEmptyString,
-    authMode: Type.Optional(NonEmptyString),
-    accountScope: Type.Optional(NonEmptyString),
-  },
-  Strict,
-);
+const NonEmptyString = nonEmptyStr();
+const NonNegative = nonNegative();
+const PositiveInteger = finiteInt(1);
+/** Wraps a pi-schema root so the shared recursive `JsonValue` definition resolves inside it. */
+export function withJsonValueDefs<T>(schema: Schema<T>): Schema<T> {
+  return { ...schema, $defs: JSON_VALUE_DEFS };
+}
+export const ProviderScopeSchema = obj({
+  provider: NonEmptyString,
+  baseUrl: opt(NonEmptyString),
+  model: NonEmptyString,
+  authMode: opt(NonEmptyString),
+  accountScope: opt(NonEmptyString),
+});
 /** Non-secret compatibility identity only; never tokens, headers, or credentials. */
 export type ProviderScope = Static<typeof ProviderScopeSchema>;
-export const SnapshotIdentitySchema = Type.Object(
-  {
-    cutEntryId: NonEmptyString,
-    prefixFingerprint: NonEmptyString,
-    priorCheckpointId: Type.Union([NonEmptyString, Type.Null()]),
-    priorCheckpointVersion: Type.Union([PositiveInteger, Type.Null()]),
-    ownerKey: NonEmptyString,
-    ownerGeneration: Type.Integer({ minimum: 0 }),
-    providerScope: ProviderScopeSchema,
-  },
-  Strict,
-);
+export const isProviderScope = compile(ProviderScopeSchema).check;
+export const SnapshotIdentitySchema = obj({
+  cutEntryId: NonEmptyString,
+  prefixFingerprint: NonEmptyString,
+  priorCheckpointId: nullable(NonEmptyString),
+  priorCheckpointVersion: nullable(PositiveInteger),
+  ownerKey: NonEmptyString,
+  ownerGeneration: finiteInt(0),
+  providerScope: ProviderScopeSchema,
+});
 export type SnapshotIdentity = Static<typeof SnapshotIdentitySchema>;
+export const isSnapshotIdentity = compile(SnapshotIdentitySchema).check;
 /** Captured entries must be detached immutable copies; no live host objects. */
 export interface FrozenSnapshot extends SnapshotIdentity {
   readonly entries: readonly SessionEntry[];
@@ -126,17 +127,13 @@ export type CapabilityVerdict =
 export type LegalityVerdict =
   | { readonly legal: true }
   | { readonly legal: false; readonly reason: FailureReason; readonly detail?: string };
-export const BackgroundUsageSchema = Type.Object(
-  {
-    input: NonNegative,
-    output: NonNegative,
-    iterations: Type.Optional(
-      Type.Array(Type.Object({ input: NonNegative, output: NonNegative }, Strict)),
-    ),
-  },
-  Strict,
-);
+export const BackgroundUsageSchema = obj({
+  input: NonNegative,
+  output: NonNegative,
+  iterations: opt(arr(obj({ input: NonNegative, output: NonNegative }))),
+});
 export type BackgroundUsage = Static<typeof BackgroundUsageSchema>;
+export const isBackgroundUsage = compile(BackgroundUsageSchema).check;
 export type CheckpointStrategy =
   | "local-reconciled"
   | "openai-native-compact-v1"
@@ -266,35 +263,53 @@ export interface CoordinatorApi {
   registerParticipant(participant: PreSnapshotParticipant): () => void;
   dispose(): void;
 }
-export const BackgroundCompactionSettingsSchema = Type.Object(
-  {
-    enabled: Type.Boolean(),
-    text: Type.Boolean(),
-    codexNative: Type.Boolean(),
-    anthropicNative: Type.Boolean(),
-    maxConcurrent: PositiveInteger,
-    maxQueued: PositiveInteger,
-    maxAttempts: PositiveInteger,
-    retryBaseMs: NonNegative,
-    cooldownMs: NonNegative,
-    prepareAt: Type.Number({ exclusiveMinimum: 0, maximum: 1 }),
-    hysteresis: Type.Number({ minimum: 0, exclusiveMaximum: 1 }),
-    minReductionTokens: NonNegative,
-    reserveTokens: NonNegative,
-    maxInputTokens: PositiveInteger,
-    maxOutputTokens: PositiveInteger,
-    maxResultBytes: PositiveInteger,
-    timeoutMs: PositiveInteger,
-    countTokens: Type.Boolean(),
-  },
-  Strict,
-);
+const settingsFields = {
+  enabled: bool(),
+  text: bool(),
+  codexNative: bool(),
+  anthropicNative: bool(),
+  maxConcurrent: PositiveInteger,
+  maxQueued: PositiveInteger,
+  maxAttempts: PositiveInteger,
+  retryBaseMs: NonNegative,
+  cooldownMs: NonNegative,
+  prepareAt: finiteNum({ exclusiveMinimum: 0, maximum: 1 }),
+  hysteresis: finiteNum({ minimum: 0, exclusiveMaximum: 1 }),
+  minReductionTokens: NonNegative,
+  reserveTokens: NonNegative,
+  maxInputTokens: PositiveInteger,
+  maxOutputTokens: PositiveInteger,
+  maxResultBytes: PositiveInteger,
+  timeoutMs: PositiveInteger,
+  countTokens: bool(),
+};
+export const BackgroundCompactionSettingsSchema = obj(settingsFields);
 export type BackgroundCompactionSettings = Static<typeof BackgroundCompactionSettingsSchema>;
+export const isBackgroundCompactionSettings = compile(BackgroundCompactionSettingsSchema).check;
 /** Sidecar may override individual defaults, but unknown keys are rejected. */
-export const BackgroundCompactionSidecarSchema = Type.Partial(
-  BackgroundCompactionSettingsSchema,
-  Strict,
-);
+export const BackgroundCompactionSidecarSchema = obj({
+  enabled: opt(settingsFields.enabled),
+  text: opt(settingsFields.text),
+  codexNative: opt(settingsFields.codexNative),
+  anthropicNative: opt(settingsFields.anthropicNative),
+  maxConcurrent: opt(settingsFields.maxConcurrent),
+  maxQueued: opt(settingsFields.maxQueued),
+  maxAttempts: opt(settingsFields.maxAttempts),
+  retryBaseMs: opt(settingsFields.retryBaseMs),
+  cooldownMs: opt(settingsFields.cooldownMs),
+  prepareAt: opt(settingsFields.prepareAt),
+  hysteresis: opt(settingsFields.hysteresis),
+  minReductionTokens: opt(settingsFields.minReductionTokens),
+  reserveTokens: opt(settingsFields.reserveTokens),
+  maxInputTokens: opt(settingsFields.maxInputTokens),
+  maxOutputTokens: opt(settingsFields.maxOutputTokens),
+  maxResultBytes: opt(settingsFields.maxResultBytes),
+  timeoutMs: opt(settingsFields.timeoutMs),
+  countTokens: opt(settingsFields.countTokens),
+});
+/** Compiled once; settings use its `errors()` for the first-violation diagnostic. */
+export const backgroundCompactionSidecarValidator = compile(BackgroundCompactionSidecarSchema);
+export const isBackgroundCompactionSidecar = backgroundCompactionSidecarValidator.check;
 export const DEFAULT_BACKGROUND_COMPACTION_SETTINGS: Readonly<BackgroundCompactionSettings> = {
   enabled: true,
   text: true,
@@ -315,136 +330,157 @@ export const DEFAULT_BACKGROUND_COMPACTION_SETTINGS: Readonly<BackgroundCompacti
   timeoutMs: 120000,
   countTokens: true,
 };
-export const JsonValueSchema = Type.Cyclic(
-  {
-    JsonValue: Type.Union([
-      Type.Null(),
-      Type.Boolean(),
-      Type.Number(),
-      Type.String(),
-      Type.Array(Type.Ref("JsonValue")),
-      Type.Record(Type.String(), Type.Ref("JsonValue")),
-    ]),
+/** Any JSON value (recursive); declared explicitly because `Static` cannot follow `$ref`. */
+export type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+/**
+ * The shared recursive definition. A schema that embeds {@link jsonValueRef}
+ * must be wrapped with {@link withJsonValueDefs}: pi-schema resolves `$ref`
+ * against the compiled root, so the definitions live on each root.
+ */
+const JSON_VALUE_DEFS = {
+  JsonValue: {
+    anyOf: [
+      { type: "null" },
+      { type: "boolean" },
+      // Bounded: pi-schema numbers accept NaN and Infinity, TypeBox `Number` did not.
+      { type: "number", minimum: -Number.MAX_VALUE, maximum: Number.MAX_VALUE },
+      { type: "string" },
+      { type: "array", items: { $ref: "#/$defs/JsonValue" } },
+      { type: "object", additionalProperties: { $ref: "#/$defs/JsonValue" } },
+    ],
   },
-  "JsonValue",
-);
-export type JsonValue = Static<typeof JsonValueSchema>;
-export const CheckpointDetailsSchema = Type.Object(
-  {
-    strategy: Type.Union([
-      Type.Literal("local-reconciled"),
-      Type.Literal("openai-native-compact-v1"),
-      Type.Literal("openai-responses-compaction-v2"),
-      Type.Literal("anthropic-compaction-on-demand-v1"),
-      Type.Literal("xai-responses-compaction-v1"),
-    ]),
-  },
-  { additionalProperties: JsonValueSchema },
-);
-const DraftUsageSchema = Type.Object(
-  {
+};
+/** Embed inside a schema wrapped by {@link withJsonValueDefs}. */
+export const jsonValueRef: Schema<JsonValue> = { $ref: "#/$defs/JsonValue" };
+/** Standalone root; it carries its own definitions, so do not embed it inside another schema. */
+export const JsonValueSchema: Schema<JsonValue> = withJsonValueDefs(jsonValueRef);
+export const isJsonValue = compile(JsonValueSchema).check;
+/** A string-keyed record of JSON values (TypeBox `Record(String, JsonValue)`), as a standalone root. */
+export type JsonRecord = { [key: string]: JsonValue };
+/** The un-wrapped record schema, for embedding inside a root wrapped by {@link withJsonValueDefs}. */
+export const jsonRecordMember: Schema<JsonRecord> = {
+  type: "object",
+  additionalProperties: { $ref: "#/$defs/JsonValue" },
+};
+export const JsonRecordSchema: Schema<JsonRecord> = withJsonValueDefs(jsonRecordMember);
+export const isJsonRecord = compile(JsonRecordSchema).check;
+const CHECKPOINT_STRATEGIES = [
+  "local-reconciled",
+  "openai-native-compact-v1",
+  "openai-responses-compaction-v2",
+  "anthropic-compaction-on-demand-v1",
+  "xai-responses-compaction-v1",
+] as const;
+/**
+ * An object whose listed `properties` are validated and whose every other key
+ * must hold a JSON value (TypeBox `additionalProperties: JsonValueSchema`).
+ * Embed it only inside a root wrapped by {@link withJsonValueDefs}.
+ */
+export function jsonRest<const P extends Properties>(
+  properties: P,
+): Schema<StaticObject<P> & JsonRecord> {
+  return {
+    // Keywords only: the builder's type-level brand is replaced by this function's return type.
+    ...Object.fromEntries(Object.entries(obj(properties, { open: true }))),
+    additionalProperties: { $ref: "#/$defs/JsonValue" },
+  };
+}
+/** `{ strategy }` plus any other JSON-valued keys: the backend owns the rest. */
+const checkpointDetails = jsonRest({ strategy: oneOf(CHECKPOINT_STRATEGIES) });
+export type CheckpointDetails = Static<typeof checkpointDetails>;
+export const CheckpointDetailsSchema = withJsonValueDefs(checkpointDetails);
+export const isCheckpointDetails = compile(CheckpointDetailsSchema).check;
+const DraftUsageSchema = obj({
+  input: NonNegative,
+  output: NonNegative,
+  cacheRead: NonNegative,
+  cacheWrite: NonNegative,
+  totalTokens: NonNegative,
+  cost: obj({
     input: NonNegative,
     output: NonNegative,
     cacheRead: NonNegative,
     cacheWrite: NonNegative,
-    totalTokens: NonNegative,
-    cost: Type.Object(
-      {
-        input: NonNegative,
-        output: NonNegative,
-        cacheRead: NonNegative,
-        cacheWrite: NonNegative,
-        total: NonNegative,
-      },
-      Strict,
-    ),
-  },
-  Strict,
-);
-const ReasonCodeSchema = Type.Union([
-  Type.Literal("quota"),
-  Type.Literal("429"),
-  Type.Literal("529"),
-  Type.Literal("auth"),
-  Type.Literal("timeout"),
-  Type.Literal("malformed"),
-  Type.Literal("oversized"),
-  Type.Literal("no-legal-cut"),
-  Type.Literal("unsupported"),
-  Type.Literal("canceled"),
-  Type.Literal("incompatible"),
-  Type.Literal("cooling"),
-  Type.Literal("stale-prefix"),
-  Type.Literal("owner-changed"),
-  Type.Literal("checkpoint-changed"),
-  Type.Literal("manual-instructions"),
-  Type.Literal("disabled"),
-  Type.Literal("disposed"),
-  Type.Literal("draft-not-committed"),
-  Type.Literal("prepared"),
-  Type.Literal("recovered"),
+    total: NonNegative,
+  }),
+});
+const ReasonCodeSchema = oneOf([
+  "quota",
+  "429",
+  "529",
+  "auth",
+  "timeout",
+  "malformed",
+  "oversized",
+  "no-legal-cut",
+  "unsupported",
+  "canceled",
+  "incompatible",
+  "cooling",
+  "stale-prefix",
+  "owner-changed",
+  "checkpoint-changed",
+  "manual-instructions",
+  "disabled",
+  "disposed",
+  "draft-not-committed",
+  "prepared",
+  "recovered",
 ]);
 /** Persist only validated ready payloads in protected session storage, never logs. */
-export const CandidateRecordSchema = Type.Object(
-  {
-    customType: Type.Literal("choco-compaction-candidate"),
-    schemaVersion: Type.Literal(1),
+export const CandidateRecordSchema = withJsonValueDefs(
+  obj({
+    customType: lit("choco-compaction-candidate"),
+    schemaVersion: lit(1),
     candidateId: NonEmptyString,
     backendId: NonEmptyString,
     identity: SnapshotIdentitySchema,
     createdAt: NonNegative,
-    customInstructions: Type.Optional(Type.String()),
+    customInstructions: opt(str()),
     /** How admission sized the prompt, for diagnosis only. */
-    admission: Type.Optional(
-      Type.Object(
-        {
-          promptTokens: NonNegative,
-          budget: NonNegative,
-          source: Type.Union([
-            Type.Literal("usage-calibrated"),
-            Type.Literal("chars"),
-            Type.Literal("counted"),
-          ]),
-          ratio: Type.Optional(NonNegative),
-          /** Why a provider count fell back to the estimate, e.g. `count-tokens: http 500`. */
-          detail: Type.Optional(NonEmptyString),
-        },
-        Strict,
-      ),
+    admission: opt(
+      obj({
+        promptTokens: NonNegative,
+        budget: NonNegative,
+        source: oneOf(["usage-calibrated", "chars", "counted"]),
+        ratio: opt(NonNegative),
+        /** Why a provider count fell back to the estimate, e.g. `count-tokens: http 500`. */
+        detail: opt(NonEmptyString),
+      }),
     ),
-    checkpoint: Type.Object(
-      {
-        candidateId: NonEmptyString,
-        backendId: NonEmptyString,
-        schemaVersion: Type.Literal(1),
-        draft: Type.Object(
-          {
-            type: Type.Literal("compaction"),
-            summary: NonEmptyString,
-            firstKeptEntryId: Type.Union([NonEmptyString, Type.Null()]),
-            details: CheckpointDetailsSchema,
-            usage: Type.Optional(DraftUsageSchema),
-          },
-          Strict,
-        ),
-        details: CheckpointDetailsSchema,
-        usage: BackgroundUsageSchema,
-        reasonCodes: Type.Array(ReasonCodeSchema),
-      },
-      Strict,
-    ),
-  },
-  Strict,
+    checkpoint: obj({
+      candidateId: NonEmptyString,
+      backendId: NonEmptyString,
+      schemaVersion: lit(1),
+      draft: obj({
+        type: lit("compaction"),
+        summary: NonEmptyString,
+        firstKeptEntryId: nullable(NonEmptyString),
+        details: checkpointDetails,
+        usage: opt(DraftUsageSchema),
+      }),
+      details: checkpointDetails,
+      usage: BackgroundUsageSchema,
+      reasonCodes: arr(ReasonCodeSchema),
+    }),
+  }),
 );
 export type CandidateRecord = Static<typeof CandidateRecordSchema>;
+const candidateRecordValidator = compile(CandidateRecordSchema);
 /** Admission sizing persisted with a candidate record and shown in status. */
 export type AdmissionRecord = NonNullable<CandidateRecord["admission"]>;
 export function isCandidateRecord<T>(value: T): value is T & CandidateRecord {
   return (
-    Value.Check(CandidateRecordSchema, value) &&
+    candidateRecordValidator.check(value) &&
     value.candidateId === value.checkpoint.candidateId &&
     value.backendId === value.checkpoint.backendId &&
-    Value.Equal(value.checkpoint.details, value.checkpoint.draft.details) &&
+    jsonEqual(value.checkpoint.details, value.checkpoint.draft.details) &&
     (value.identity.priorCheckpointId === null) === (value.identity.priorCheckpointVersion === null)
   );
 }

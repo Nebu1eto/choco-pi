@@ -3,14 +3,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { Value } from "typebox/value";
 
 import {
   appendLaneRecord,
   LANE_RECORD_TYPE,
   type LaneRecord,
   type LaneRecordInput,
-  LaneRecordSchema,
+  isLaneRecord,
   laneRecordsOf,
   LaneTransitionMemo,
   ownedReasonOf,
@@ -39,10 +38,10 @@ function record(overrides: Partial<LaneRecordInput> = {}): LaneRecord {
 }
 
 test("the schema rejects extra keys and a detail over 128 characters", () => {
-  assert.equal(Value.Check(LaneRecordSchema, record()), true);
-  assert.equal(Value.Check(LaneRecordSchema, { ...record(), message: "provider text" }), false);
-  assert.equal(Value.Check(LaneRecordSchema, record({ detail: "x".repeat(128) })), true);
-  assert.equal(Value.Check(LaneRecordSchema, record({ detail: "x".repeat(129) })), false);
+  assert.equal(isLaneRecord(record()), true);
+  assert.equal(isLaneRecord({ ...record(), message: "provider text" }), false);
+  assert.equal(isLaneRecord(record({ detail: "x".repeat(128) })), true);
+  assert.equal(isLaneRecord(record({ detail: "x".repeat(129) })), false);
 });
 
 test("a provider-supplied code maps to provider-error; owned codes map to themselves", () => {
@@ -56,11 +55,11 @@ test("a provider-supplied code maps to provider-error; owned codes map to themse
 
 test("the schema admits exactly the owned reason codes", () => {
   for (const code of Object.values(REASONS)) {
-    assert.equal(Value.Check(LaneRecordSchema, record({ reason: code })), true, code);
+    assert.equal(isLaneRecord(record({ reason: code })), true, code);
   }
   const unknown = { ...record(), reason: "compaction_private-payload" };
-  assert.equal(Value.Check(LaneRecordSchema, unknown), false);
-  assert.equal(Value.Check(LaneRecordSchema, { ...record(), reason: "x".repeat(65) }), false);
+  assert.equal(isLaneRecord(unknown), false);
+  assert.equal(isLaneRecord({ ...record(), reason: "x".repeat(65) }), false);
   assert.equal(
     laneRecordsOf([{ type: "custom", customType: LANE_RECORD_TYPE, data: unknown }]).length,
     0,

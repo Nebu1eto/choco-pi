@@ -8,7 +8,8 @@ import { Value } from "typebox/value";
 import { isCanonicalCodexBaseUrl } from "../prompt/codex-model.ts";
 import { type Static, Type } from "typebox";
 import {
-  JsonValueSchema,
+  isJsonRecord,
+  isJsonValue,
   type JsonValue,
 } from "../../../../choco-pi-compaction/src/background/contract.ts";
 import type { ProviderScope } from "../../../../choco-pi-compaction/src/background/contract.ts";
@@ -85,7 +86,7 @@ export function isBackgroundNativeCompactionDetails<T>(
   value: T,
 ): value is T & BackgroundNativeCompactionDetails {
   if (
-    !Value.Check(JsonValueSchema, value) ||
+    !isJsonValue(value) ||
     !isNativeCompactionDetails(value) ||
     value.strategy !== "openai-responses-compaction-v2" ||
     value.schemaVersion !== 1 ||
@@ -111,15 +112,13 @@ export function isBackgroundNativeCompactionDetails<T>(
     return false;
   const nativeItems = value.compactedWindow.filter(
     (item) =>
-      Value.Check(Type.Record(Type.String(), JsonValueSchema), item) &&
+      isJsonRecord(item) &&
       (item["type"] === "compaction" || item["type"] === "compaction_summary"),
   );
   const compaction =
     nativeItems.length === 1 ? canonicalCompactionOutput(nativeItems[0]) : undefined;
   if (!compaction) return false;
-  const records = value.compactedWindow.filter((item) =>
-    Value.Check(Type.Record(Type.String(), JsonValueSchema), item),
-  );
+  const records = value.compactedWindow.filter((item) => isJsonRecord(item));
   return (
     records.length === value.compactedWindow.length &&
     Value.Equal(value.compactedWindow, buildRemoteCompactionV2Window(records, compaction))

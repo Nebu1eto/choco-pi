@@ -37,8 +37,7 @@ import {
   type SessionEntry,
   type SessionManager,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { compile, lit, obj, opt, str, tuple, unknown } from "@earendil-works/pi-schema";
 
 import type { AnthropicServerSideSession } from "../anthropic/mode.ts";
 import { normalizeBaseUrl } from "../anthropic/capability.ts";
@@ -59,8 +58,8 @@ import {
   type XaiTransportRequest,
   type XaiTransportVerdict,
   type XaiWireBody,
-  XaiWireBodySchema,
   type XaiWireItem,
+  isXaiWireBody,
 } from "./capture.ts";
 import {
   isXaiCompactionItem,
@@ -95,18 +94,23 @@ type CheckpointLookup =
   | { readonly kind: "active"; readonly checkpoint: ActiveXaiCheckpoint }
   | { readonly kind: "invalid"; readonly entryId: string };
 
-const ClaimsXaiSchema = Type.Object({ strategy: Type.Literal(XAI_STRATEGY) });
-const SummaryItemSchema = Type.Object({
-  role: Type.Literal("user"),
-  content: Type.Tuple([Type.Object({ type: Type.Literal("input_text"), text: Type.String() })]),
-});
+const claimsXai = compile(obj({ strategy: lit(XAI_STRATEGY) }, { open: true })).check;
+const isSummaryFields = compile(
+  obj(
+    {
+      role: lit("user"),
+      content: tuple([obj({ type: lit("input_text"), text: str() }, { open: true })]),
+    },
+    { open: true },
+  ),
+).check;
 
 /** The latest compaction entry on the branch decides; older native entries are history. */
 export function findActiveXaiCheckpoint(branch: readonly SessionEntry[]): CheckpointLookup {
   for (let index = branch.length - 1; index >= 0; index--) {
     const entry = branch[index];
     if (entry === undefined || entry.type !== "compaction") continue;
-    if (!Value.Check(ClaimsXaiSchema, entry.details)) return { kind: "none" };
+    if (!claimsXai(entry.details)) return { kind: "none" };
     if (!isXaiDetails(entry.details)) return { kind: "invalid", entryId: entry.id };
     return {
       kind: "active",
@@ -128,9 +132,7 @@ function summaryWireText(summary: string): string {
 }
 
 function isSummaryItem(item: XaiWireItem | undefined, text: string): boolean {
-  return (
-    item !== undefined && Value.Check(SummaryItemSchema, item) && item.content[0].text === text
-  );
+  return item !== undefined && isSummaryFields(item) && item.content[0].text === text;
 }
 
 function isCheckpointItem(item: XaiWireItem | undefined, details: XaiDetails): boolean {
@@ -147,7 +149,7 @@ type RewriteOutcome =
  * that serialization drops; the JSON round trip yields exactly the sent form.
  */
 function wireForm<T>(payload: T): XaiWireBody | undefined {
-  if (Value.Check(XaiWireBodySchema, payload)) return payload;
+  if (isXaiWireBody(payload)) return payload;
   let text: string | undefined;
   try {
     text = JSON.stringify(payload);
@@ -349,14 +351,18 @@ const ERROR_BODY_LIMIT = 65_536;
  * item's encrypted payload, the item itself, its type, or its position.
  */
 const ITEM_REJECTION_PATTERN = /encrypted_content|compaction item|type "compaction"|input\[0\]/iu;
-const ErrorBodySchema = Type.Object({
-  error: Type.Object({
-    message: Type.Optional(Type.Unknown()),
-    code: Type.Optional(Type.Unknown()),
-    param: Type.Optional(Type.Unknown()),
-  }),
-});
-const ErrorFieldSchema = Type.String();
+const isErrorBody = compile(
+  obj(
+    {
+      error: obj(
+        { message: opt(unknown()), code: opt(unknown()), param: opt(unknown()) },
+        { open: true },
+      ),
+    },
+    { open: true },
+  ),
+).check;
+const isErrorField = compile(str()).check;
 
 async function readBounded(response: Response): Promise<string> {
   if (response.body === null) return "";
@@ -383,10 +389,10 @@ function namesCompactionItem(text: string): boolean {
   } catch {
     return false;
   }
-  if (!Value.Check(ErrorBodySchema, parsed)) return false;
+  if (!isErrorBody(parsed)) return false;
   const { message, code, param } = parsed.error;
   return [message, code, param].some(
-    (field) => Value.Check(ErrorFieldSchema, field) && ITEM_REJECTION_PATTERN.test(field),
+    (field) => isErrorField(field) && ITEM_REJECTION_PATTERN.test(field),
   );
 }
 

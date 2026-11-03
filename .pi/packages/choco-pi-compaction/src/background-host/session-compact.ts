@@ -3,9 +3,15 @@ import {
   type CompactionResult,
   type PromptOptions,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 
+import {
+  hasMethods,
+  hasProperty,
+  isBoolean,
+  isFunction,
+  isString,
+  readProperty,
+} from "../guards.ts";
 import { isStaleContextError } from "../lifecycle.ts";
 
 // ---------------------------------------------------------------------------
@@ -89,23 +95,23 @@ interface SessionCompactPrototype {
   compact: CompactMethod;
 }
 
-const SessionScalarsSchema = Type.Object({ sessionId: Type.String(), isIdle: Type.Boolean() });
-const PromptPatchSchema = Type.Object({
-  original: Type.Function([], Type.Unknown()),
-  patched: Type.Function([], Type.Unknown()),
-  writable: Type.Boolean(),
-  enumerable: Type.Boolean(),
-  configurable: Type.Boolean(),
-});
-const BridgeSlotSchema = Type.Object({
-  original: Type.Function([], Type.Unknown()),
-  patched: Type.Function([], Type.Unknown()),
-  defers: Type.Unknown(),
-  prompt: Type.Union([PromptPatchSchema, Type.Undefined()]),
-});
+function isPromptPatch<T>(value: T): value is T & PromptPatch {
+  return (
+    hasMethods(value, ["original", "patched"]) &&
+    isBoolean(readProperty(value, "writable")) &&
+    isBoolean(readProperty(value, "enumerable")) &&
+    isBoolean(readProperty(value, "configurable"))
+  );
+}
 
 function isBridge<T>(value: T): value is T & SessionCompactBridge {
-  return Value.Check(BridgeSlotSchema, value) && value.defers instanceof Set;
+  const prompt = readProperty(value, "prompt");
+  return (
+    hasProperty(value, "prompt") &&
+    hasMethods(value, ["original", "patched"]) &&
+    readProperty(value, "defers") instanceof Set &&
+    (prompt === undefined || isPromptPatch(prompt))
+  );
 }
 
 function hostPrototype(): SessionCompactPrototype {
@@ -126,7 +132,7 @@ function readBridge(): SessionCompactBridge | undefined {
 /** The session's id and idle state, or undefined when the host does not expose them. */
 function readScalars(session: AgentSession): SessionCompactHost | undefined {
   const scalars = { sessionId: session.sessionId, isIdle: session.isIdle };
-  return Value.Check(SessionScalarsSchema, scalars) ? scalars : undefined;
+  return isString(scalars.sessionId) && isBoolean(scalars.isIdle) ? scalars : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -185,13 +191,6 @@ async function promptWhenCompacted(
   return original.call(session, text, options);
 }
 
-const PromptDescriptorSchema = Type.Object({
-  value: Type.Function([], Type.Unknown()),
-  writable: Type.Boolean(),
-  enumerable: Type.Boolean(),
-  configurable: Type.Literal(true),
-});
-
 /**
  * Wrap the host's `prompt` so a prompt arriving during a manual compaction
  * waits for it; undefined (nothing installed) when the prototype holds no
@@ -209,7 +208,9 @@ function installPromptPatch(): PromptPatch | undefined {
     enumerable: descriptor?.enumerable,
     configurable: descriptor?.configurable,
   };
-  if (!Value.Check(PromptDescriptorSchema, found)) return undefined;
+  const { value, writable, enumerable, configurable } = found;
+  if (!isFunction(value) || !isBoolean(writable) || !isBoolean(enumerable)) return undefined;
+  if (configurable !== true) return undefined;
   // The validated own data property is exactly what this typed read returns.
   const original: PromptMethod = AgentSession.prototype.prompt;
   const patched: PromptMethod = function promptAfterCompaction(
@@ -224,16 +225,16 @@ function installPromptPatch(): PromptPatch | undefined {
   };
   Object.defineProperty(prototype, PROMPT_METHOD, {
     value: patched,
-    writable: found.writable,
-    enumerable: found.enumerable,
+    writable,
+    enumerable,
     configurable: true,
   });
   return {
     original,
     patched,
-    writable: found.writable,
-    enumerable: found.enumerable,
-    configurable: found.configurable,
+    writable,
+    enumerable,
+    configurable,
   };
 }
 

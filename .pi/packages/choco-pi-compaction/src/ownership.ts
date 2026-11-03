@@ -1,7 +1,12 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
-
+import {
+  hasMethods,
+  isBoolean,
+  isNonNegativeInteger,
+  isOptional,
+  isRecord,
+  readProperty,
+} from "./guards.ts";
 import {
   isCodexTransportContext,
   isResponsesContext,
@@ -66,9 +71,14 @@ export function ownerKeyFor(sessionId: string): string {
 }
 
 const SUBAGENTS_MANAGER_KEY = Symbol.for("pi-subagents:manager");
-const ChildSessionRegistrySchema = Type.Object({
-  isChildSessionId: Type.Function([Type.String()], Type.Boolean()),
-});
+interface ChildSessionRegistry {
+  isChildSessionId(sessionId: string): boolean;
+}
+
+/** An object with a callable `isChildSessionId` (own or inherited, as a manager class has it). */
+function isChildSessionRegistry<Value>(value: Value): value is Value & ChildSessionRegistry {
+  return hasMethods(value, ["isChildSessionId"]);
+}
 
 /**
  * Whether a session ID belongs to a live subagent child session.
@@ -80,7 +90,7 @@ const ChildSessionRegistrySchema = Type.Object({
  */
 export function isChildSession(sessionId: string): boolean {
   const entry: unknown = Object.getOwnPropertyDescriptor(globalThis, SUBAGENTS_MANAGER_KEY)?.value;
-  if (!Value.Check(ChildSessionRegistrySchema, entry)) return false;
+  if (!isChildSessionRegistry(entry)) return false;
   return entry.isChildSessionId(sessionId) === true;
 }
 
@@ -131,22 +141,16 @@ export interface CodexEligibility {
   subscribe(listener: (revision: number) => void): () => void;
 }
 
-const SlotFunction = Type.Function([], Type.Unknown());
 /** Shape only: the functions are checked to be callable, their results at each call. */
-const CodexEligibilitySchema = Type.Object(
-  {
-    version: Type.Literal(1),
-    revision: Type.Integer({ minimum: 0 }),
-    published: Type.Optional(Type.Boolean()),
-    responsesCompaction: Type.Optional(Type.Boolean()),
-    isNativeCompactionOwner: SlotFunction,
-    subscribe: SlotFunction,
-  },
-  { additionalProperties: true },
-);
-
 function isCodexEligibility<T>(value: T): value is T & CodexEligibility {
-  return Value.Check(CodexEligibilitySchema, value);
+  return (
+    isRecord(value) &&
+    readProperty(value, "version") === 1 &&
+    isNonNegativeInteger(readProperty(value, "revision")) &&
+    isOptional(readProperty(value, "published"), isBoolean) &&
+    isOptional(readProperty(value, "responsesCompaction"), isBoolean) &&
+    hasMethods(value, ["isNativeCompactionOwner", "subscribe"])
+  );
 }
 
 /** The published eligibility, or undefined when the slot is absent or does not have the expected shape. */

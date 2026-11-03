@@ -20,7 +20,7 @@
  *   anything is serialized or transmitted.
  *
  * Runtime imports are limited to `opaque-checkpoint.ts`, `opaque-block.ts`,
- * `lifecycle.ts` and `typebox`, so the transport modules can import this file without
+ * `lifecycle.ts` and `guards.ts`, so the transport modules can import this file without
  * a cycle.
  */
 import type { Api, Model, Provider } from "@earendil-works/pi-ai";
@@ -30,11 +30,10 @@ import type {
   SessionBeforeCompactEvent,
   SessionBeforeCompactResult,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 
 import type { LaneId, LaneRecordInput, LaneRoute } from "./background/lane-journal.ts";
 import type { CompactionModes } from "./background-host/runtime.ts";
+import { isNonNegativeInteger, isRecord, readProperty } from "./guards.ts";
 import { isStaleContextError } from "./lifecycle.ts";
 import { type OpaqueBlock, pendingOpaqueBlock, pendingOpaqueBlocks } from "./opaque-block.ts";
 import {
@@ -282,13 +281,6 @@ interface OverlaySlot {
 }
 
 const OVERLAY_SLOT_SYMBOL: unique symbol = Symbol.for("choco-pi:compaction-opaque-block-overlay");
-const OverlaySlotSchema = Type.Object({
-  version: Type.Literal(3),
-  overlays: Type.Unknown(),
-  owners: Type.Unknown(),
-  users: Type.Unknown(),
-  generation: Type.Integer({ minimum: 0 }),
-});
 
 /**
  * Private slots, made when a foreign value (or another version's slot)
@@ -299,10 +291,12 @@ const ISOLATED_SLOTS = new WeakSet<OverlaySlot>();
 
 function isOverlaySlot<T>(value: T): value is T & OverlaySlot {
   return (
-    Value.Check(OverlaySlotSchema, value) &&
-    value.overlays instanceof WeakSet &&
-    value.owners instanceof Map &&
-    value.users instanceof Map
+    isRecord(value) &&
+    readProperty(value, "version") === 3 &&
+    isNonNegativeInteger(readProperty(value, "generation")) &&
+    readProperty(value, "overlays") instanceof WeakSet &&
+    readProperty(value, "owners") instanceof Map &&
+    readProperty(value, "users") instanceof Map
   );
 }
 

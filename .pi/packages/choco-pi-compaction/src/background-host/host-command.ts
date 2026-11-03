@@ -1,6 +1,5 @@
 import { InteractiveMode } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { hasMethods, isRecord, isString, readProperty } from "../guards.ts";
 
 // ---------------------------------------------------------------------------
 // TUI /compact bridge
@@ -46,18 +45,13 @@ interface CompactCommandPrototype {
   handleCompactCommand: (this: CompactCommandHost, customInstructions?: string) => Promise<void>;
 }
 
-const HostSessionSchema = Type.Object({ session: Type.Object({ sessionId: Type.String() }) });
-const BridgeSlotSchema = Type.Object({
-  original: Type.Function([], Type.Unknown()),
-  defers: Type.Unknown(),
-});
-
 function isCompactCommandHost<T>(value: T): value is T & CompactCommandHost {
-  return Value.Check(HostSessionSchema, value);
+  const session = readProperty(value, "session");
+  return isRecord(value) && isRecord(session) && isString(readProperty(session, "sessionId"));
 }
 
 function isBridge<T>(value: T): value is T & CompactCommandBridge {
-  return Value.Check(BridgeSlotSchema, value) && value.defers instanceof Set;
+  return hasMethods(value, ["original"]) && readProperty(value, "defers") instanceof Set;
 }
 
 function hostPrototype(): CompactCommandPrototype {

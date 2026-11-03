@@ -32,7 +32,6 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { Value } from "typebox/value";
 
 import {
   bindSessionProjection,
@@ -44,7 +43,7 @@ import {
   transportRefusals,
   TRANSPORT_REFUSAL_PREFIX,
   type WireBody,
-  WireBodySchema,
+  isWireBody,
 } from "../src/anthropic/capture.ts";
 import {
   type AnthropicDetails,
@@ -293,7 +292,7 @@ function lastAssistant(session: AgentSession) {
 function handler(mutate: (payload: WireBody) => WireBody): ExtensionFactory {
   return (pi) => {
     pi.on("before_provider_request", (event) =>
-      Value.Check(WireBodySchema, event.payload) ? mutate(event.payload) : undefined,
+      isWireBody(event.payload) ? mutate(event.payload) : undefined,
     );
   };
 }

@@ -7,12 +7,13 @@
  * errors. Every failure is a typed result; the client never throws for
  * provider or transport failures.
  */
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, compile, lit, obj, opt, unknown } from "@earendil-works/pi-schema";
+import type { Static } from "@earendil-works/pi-schema";
 
 import { normalizeBaseUrl } from "../anthropic/capability.ts";
 import type { BackgroundUsage, FailureReason, JsonValue } from "../background/contract.ts";
-import { type XaiCompactionItem, XaiCompactionItemSchema } from "./details.ts";
+import { finiteInt, nonEmptyStr } from "../guards.ts";
+import { isXaiCompactionItem, type XaiCompactionItem } from "./details.ts";
 
 const ERROR_BODY_LIMIT = 65_536;
 
@@ -68,20 +69,27 @@ export interface XaiCompactSuccess {
 
 export type XaiCompactResult = XaiCompactSuccess | XaiCompactFailure;
 
-const Count = Type.Integer({ minimum: 0 });
-const CompactResponseSchema = Type.Object({
-  object: Type.Literal("response.compaction"),
-  id: Type.String({ minLength: 1 }),
-  output: Type.Array(Type.Unknown(), { minItems: 1, maxItems: 1 }),
-  usage: Type.Optional(
-    Type.Object({
-      input_tokens: Type.Optional(Count),
-      output_tokens: Type.Optional(Count),
-      dropped_message_count: Type.Optional(Count),
-    }),
-  ),
-});
+const Count = finiteInt(0);
+const CompactResponseSchema = obj(
+  {
+    object: lit("response.compaction"),
+    id: nonEmptyStr(),
+    output: arr(unknown(), { minItems: 1, maxItems: 1 }),
+    usage: opt(
+      obj(
+        {
+          input_tokens: opt(Count),
+          output_tokens: opt(Count),
+          dropped_message_count: opt(Count),
+        },
+        { open: true },
+      ),
+    ),
+  },
+  { open: true },
+);
 type CompactResponse = Static<typeof CompactResponseSchema>;
+const isCompactResponse = compile(CompactResponseSchema).check;
 
 function failure(
   code: XaiCompactFailureCode,
@@ -176,10 +184,10 @@ function parseSuccess(text: string): XaiCompactSuccess | undefined {
   } catch {
     return undefined;
   }
-  if (!Value.Check(CompactResponseSchema, parsed)) return undefined;
+  if (!isCompactResponse(parsed)) return undefined;
   const response: CompactResponse = parsed;
   const [item] = response.output;
-  if (!Value.Check(XaiCompactionItemSchema, item)) return undefined;
+  if (!isXaiCompactionItem(item)) return undefined;
   return {
     ok: true,
     item,

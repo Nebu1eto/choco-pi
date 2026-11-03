@@ -38,7 +38,9 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { obj, str } from "@earendil-works/pi-schema";
+
+import { hostParams } from "./schema-bridge.ts";
 
 const FAKE_PROVIDER = "fake-provider";
 const FAKE_API_KEY = "non-secret-placeholder";
@@ -145,7 +147,7 @@ const STEP_TOOL = defineTool({
   name: "step",
   label: "step",
   description: "deterministic step",
-  parameters: Type.Object({ label: Type.String() }),
+  parameters: hostParams(obj({ label: str() })),
   async execute(_id, params) {
     return { content: [{ type: "text", text: `result-${params.label}` }], details: {} };
   },

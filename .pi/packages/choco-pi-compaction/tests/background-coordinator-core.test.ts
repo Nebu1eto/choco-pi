@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { compile, obj, str } from "@earendil-works/pi-schema";
 import type { CompactionEntryDraft, SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
   CANDIDATE_TRANSITIONS,
@@ -88,10 +87,9 @@ interface AnchorGate {
 interface PersistenceGate {
   value?: Deferred<void>;
 }
-const DraftIdentitySchema = Type.Object(
-  { candidateId: Type.String(), prefixFingerprint: Type.String() },
-  { additionalProperties: true },
-);
+const isDraftIdentity = compile(
+  obj({ candidateId: str(), prefixFingerprint: str() }, { open: true }),
+).check;
 
 function fixture(
   options: {
@@ -227,7 +225,7 @@ function fixture(
     const draft = state.proposals.at(-1);
     assert.ok(draft);
     const details: unknown = draft.details;
-    assert.ok(Value.Check(DraftIdentitySchema, details));
+    assert.ok(isDraftIdentity(details));
     const id = "host-assigned-entry";
     state.committed = {
       id,

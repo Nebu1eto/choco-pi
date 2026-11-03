@@ -17,16 +17,19 @@
  */
 import { type Model, normalizeContext, type ProviderHeaders } from "@earendil-works/pi-ai";
 import { stream as installedStream } from "@earendil-works/pi-ai/api/anthropic-messages";
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, compile, lit, nullable, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
+import type { Static } from "@earendil-works/pi-schema";
 
 import {
   type BackgroundUsage,
   type FailureReason,
   type JsonValue,
-  JsonValueSchema,
+  isJsonRecord,
+  isJsonValue,
+  withJsonValueDefs,
 } from "../background/contract.ts";
-import { type WireBody, WireBlockSchema } from "./capture.ts";
+import { finiteInt, finiteNum } from "../guards.ts";
+import { type WireBody, wireBlockMember } from "./capture.ts";
 import { COMPACT_BETA, type CompactionBlock, isCompactionBlock } from "./details.ts";
 
 // ---------------------------------------------------------------------------
@@ -44,10 +47,7 @@ const REPLACED_KEYS: ReadonlySet<string> = new Set([
   "stop_sequences",
   "context_management",
 ]);
-const ForcedToolChoiceSchema = Type.Object({
-  type: Type.Union([Type.Literal("any"), Type.Literal("tool")]),
-});
-const JsonRecordSchema = Type.Record(Type.String(), JsonValueSchema);
+const isForcedToolChoice = compile(obj({ type: oneOf(["any", "tool"]) }, { open: true })).check;
 
 interface LanePayloadOptions {
   /** Betas the captured request was sent with (from its `anthropic-beta` header). */
@@ -78,14 +78,14 @@ interface LanePayload {
 
 /** Copy of `output_config` without structured-output `format` or task-budget `remaining`. */
 function compactionOutputConfig(value: JsonValue, removed: string[]): JsonValue | undefined {
-  if (!Value.Check(JsonRecordSchema, value)) return structuredClone(value);
+  if (!isJsonRecord(value)) return structuredClone(value);
   const result: JsonObject = {};
   for (const [name, item] of Object.entries(value)) {
     if (name === "format") {
       removed.push("output_config.format");
       continue;
     }
-    if (name === "task_budget" && Value.Check(JsonRecordSchema, item) && "remaining" in item) {
+    if (name === "task_budget" && isJsonRecord(item) && "remaining" in item) {
       removed.push("output_config.task_budget.remaining");
       result[name] = copyWithout(item, "remaining");
       continue;
@@ -129,16 +129,16 @@ export function buildLanePayload(
       if (name === "stop_sequences" || name === "context_management") removed.push(name);
       continue;
     }
-    if (name === "tool_choice" && Value.Check(ForcedToolChoiceSchema, value)) {
+    if (name === "tool_choice" && isForcedToolChoice(value)) {
       removed.push("tool_choice");
       continue;
     }
-    if (name === "output_config" && Value.Check(JsonValueSchema, value)) {
+    if (name === "output_config" && isJsonValue(value)) {
       const config = compactionOutputConfig(value, removed);
       if (config !== undefined) payload[name] = config;
       continue;
     }
-    if (Value.Check(JsonValueSchema, value)) payload[name] = structuredClone(value);
+    if (isJsonValue(value)) payload[name] = structuredClone(value);
   }
   payload.max_tokens = options.maxOutputTokens;
   const instructions = options.instructions;
@@ -221,63 +221,101 @@ export interface LaneFailure {
 
 export type LaneResult = LaneSuccess | LaneFailure;
 
-const NullableCount = Type.Optional(Type.Union([Type.Number({ minimum: 0 }), Type.Null()]));
-const UsageCountsSchema = Type.Object({
-  input_tokens: NullableCount,
-  output_tokens: NullableCount,
-  cache_creation_input_tokens: NullableCount,
-  cache_read_input_tokens: NullableCount,
-});
-const IterationSchema = Type.Object({
-  type: Type.Optional(Type.String()),
-  input_tokens: NullableCount,
-  output_tokens: NullableCount,
-  cache_creation_input_tokens: NullableCount,
-  cache_read_input_tokens: NullableCount,
-});
-const MessageStartSchema = Type.Object({
-  type: Type.Literal("message_start"),
-  message: Type.Object({ usage: Type.Optional(UsageCountsSchema) }),
-});
-const BlockStartSchema = Type.Object({
-  type: Type.Literal("content_block_start"),
-  index: Type.Integer({ minimum: 0 }),
-  content_block: WireBlockSchema,
-});
-const IndexedEventSchema = Type.Object({
-  type: Type.Union([Type.Literal("content_block_delta"), Type.Literal("content_block_stop")]),
-  index: Type.Integer({ minimum: 0 }),
-});
-const MessageDeltaSchema = Type.Object({
-  type: Type.Literal("message_delta"),
-  delta: Type.Object({ stop_reason: Type.Optional(Type.Union([Type.String(), Type.Null()])) }),
-  usage: Type.Optional(
-    Type.Object({
-      input_tokens: NullableCount,
-      output_tokens: NullableCount,
-      cache_creation_input_tokens: NullableCount,
-      cache_read_input_tokens: NullableCount,
-      iterations: Type.Optional(Type.Array(IterationSchema)),
-    }),
+const NullableCount = opt(nullable(finiteNum({ minimum: 0 })));
+const open = { open: true } as const;
+const UsageCountsSchema = obj(
+  {
+    input_tokens: NullableCount,
+    output_tokens: NullableCount,
+    cache_creation_input_tokens: NullableCount,
+    cache_read_input_tokens: NullableCount,
+  },
+  open,
+);
+const IterationSchema = obj(
+  {
+    type: opt(str()),
+    input_tokens: NullableCount,
+    output_tokens: NullableCount,
+    cache_creation_input_tokens: NullableCount,
+    cache_read_input_tokens: NullableCount,
+  },
+  open,
+);
+const isMessageStart = compile(
+  obj(
+    {
+      type: lit("message_start"),
+      message: obj({ usage: opt(UsageCountsSchema) }, open),
+    },
+    open,
   ),
-});
-const KnownEventSchema = Type.Object({
-  type: Type.Union([
-    Type.Literal("message_start"),
-    Type.Literal("content_block_start"),
-    Type.Literal("content_block_delta"),
-    Type.Literal("content_block_stop"),
-    Type.Literal("message_delta"),
-    Type.Literal("message_stop"),
-  ]),
-});
-const ErrorBodySchema = Type.Object({
-  error: Type.Object({
-    type: Type.Optional(Type.String()),
-    message: Type.Optional(Type.String()),
-    details: Type.Optional(Type.Object({ error_code: Type.Optional(Type.String()) })),
-  }),
-});
+).check;
+const isBlockStart = compile(
+  withJsonValueDefs(
+    obj(
+      {
+        type: lit("content_block_start"),
+        index: finiteInt(0),
+        content_block: wireBlockMember,
+      },
+      open,
+    ),
+  ),
+).check;
+const isIndexedEvent = compile(
+  obj({ type: oneOf(["content_block_delta", "content_block_stop"]), index: finiteInt(0) }, open),
+).check;
+const isMessageDelta = compile(
+  obj(
+    {
+      type: lit("message_delta"),
+      delta: obj({ stop_reason: opt(nullable(str())) }, open),
+      usage: opt(
+        obj(
+          {
+            input_tokens: NullableCount,
+            output_tokens: NullableCount,
+            cache_creation_input_tokens: NullableCount,
+            cache_read_input_tokens: NullableCount,
+            iterations: opt(arr(IterationSchema)),
+          },
+          open,
+        ),
+      ),
+    },
+    open,
+  ),
+).check;
+const isKnownEvent = compile(
+  obj(
+    {
+      type: oneOf([
+        "message_start",
+        "content_block_start",
+        "content_block_delta",
+        "content_block_stop",
+        "message_delta",
+        "message_stop",
+      ]),
+    },
+    open,
+  ),
+).check;
+const ErrorBodySchema = obj(
+  {
+    error: obj(
+      {
+        type: opt(str()),
+        message: opt(str()),
+        details: opt(obj({ error_code: opt(str()) }, open)),
+      },
+      open,
+    ),
+  },
+  open,
+);
+const isErrorBody = compile(ErrorBodySchema).check;
 
 interface UsageCounts {
   readonly input_tokens?: number | null;
@@ -485,14 +523,14 @@ function classifyStream(
 function collect<T>(state: StreamState, data: T, maxResultBytes: number): void {
   state.bytes += Buffer.byteLength(JSON.stringify(data) ?? "");
   if (state.bytes > maxResultBytes) state.oversized = true;
-  if (!Value.Check(KnownEventSchema, data)) return;
-  if (Value.Check(MessageStartSchema, data)) {
+  if (!isKnownEvent(data)) return;
+  if (isMessageStart(data)) {
     const usage = data.message.usage;
     if (usage !== undefined) {
       state.topInput = inputOf(usage);
       state.topOutput = usage.output_tokens ?? 0;
     }
-  } else if (Value.Check(BlockStartSchema, data)) {
+  } else if (isBlockStart(data)) {
     const block = data.content_block;
     if (block.type !== "compaction") {
       state.otherBlocks += 1;
@@ -506,11 +544,11 @@ function collect<T>(state: StreamState, data: T, maxResultBytes: number): void {
     } else {
       state.invalidEvent = true;
     }
-  } else if (Value.Check(IndexedEventSchema, data)) {
+  } else if (isIndexedEvent(data)) {
     if (data.index !== state.blockIndex) return;
     if (data.type === "content_block_delta") state.deltaOnBlock = true;
     else state.blockStopped = true;
-  } else if (Value.Check(MessageDeltaSchema, data)) {
+  } else if (isMessageDelta(data)) {
     if (data.delta.stop_reason !== undefined && data.delta.stop_reason !== null) {
       state.stopReason = data.delta.stop_reason;
     }
@@ -616,7 +654,7 @@ function parseErrorBody(text: string): Static<typeof ErrorBodySchema> | undefine
   } catch {
     return undefined;
   }
-  return Value.Check(ErrorBodySchema, parsed) ? parsed : undefined;
+  return isErrorBody(parsed) ? parsed : undefined;
 }
 
 /** Record status, retry hints, and the bounded provider error body of one HTTP response. */

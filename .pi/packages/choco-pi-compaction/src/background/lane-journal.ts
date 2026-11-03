@@ -7,9 +7,10 @@
  * them with {@link ownedReasonOf}. Notice dedupe is separate from journal
  * retention (see `background-host/notices.ts`).
  */
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import { bool, compile, lit, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
+import type { Static } from "@earendil-works/pi-schema";
 
+import { nonEmptyStr, nonNegative } from "../guards.ts";
 import { isStaleContextError } from "../lifecycle.ts";
 import { LANE_RECORD_TYPE as LANE_ENTRY_TYPE } from "./entry-types.ts";
 import { CompactionTriggerSchema } from "../trigger.ts";
@@ -17,51 +18,47 @@ import { CompactionTriggerSchema } from "../trigger.ts";
 /** The custom entry type of lane records (declared with the other entry types in `entry-types.ts`). */
 export const LANE_RECORD_TYPE = LANE_ENTRY_TYPE;
 
-const NonEmptyString = Type.String({ minLength: 1 });
+const NonEmptyString = nonEmptyStr();
 
-const LaneIdSchema = Type.Union([
-  Type.Literal("anthropic-native"),
-  Type.Literal("xai-native"),
-  Type.Literal("codex-native-v2"),
-  Type.Literal("codex-foreground"),
-  Type.Literal("text"),
-  Type.Literal("local"),
-  Type.Literal("host-default"),
+const LaneIdSchema = oneOf([
+  "anthropic-native",
+  "xai-native",
+  "codex-native-v2",
+  "codex-foreground",
+  "text",
+  "local",
+  "host-default",
 ]);
 export type LaneId = Static<typeof LaneIdSchema>;
 
-const LaneRouteSchema = Type.Union([
-  Type.Literal("foreground"),
-  Type.Literal("manual"),
-  Type.Literal("threshold"),
-  Type.Literal("boundary"),
-  Type.Literal("idle"),
-  Type.Literal("context-cap"),
-  Type.Literal("replay"),
-  Type.Literal("resume"),
-  Type.Literal("mode-change"),
-  Type.Literal("model-select"),
-  Type.Literal("config-change"),
+const LaneRouteSchema = oneOf([
+  "foreground",
+  "manual",
+  "threshold",
+  "boundary",
+  "idle",
+  "context-cap",
+  "replay",
+  "resume",
+  "mode-change",
+  "model-select",
+  "config-change",
 ]);
 export type LaneRoute = Static<typeof LaneRouteSchema>;
 
-const LaneEventSchema = Type.Union([
-  Type.Literal("fallback"),
-  Type.Literal("yield"),
-  Type.Literal("cancel"),
-  Type.Literal("disable"),
-  Type.Literal("cooldown"),
-  Type.Literal("refuse"),
-  Type.Literal("consent"),
-  Type.Literal("loss"),
+const LaneEventSchema = oneOf([
+  "fallback",
+  "yield",
+  "cancel",
+  "disable",
+  "cooldown",
+  "refuse",
+  "consent",
+  "loss",
 ]);
 export type LaneEvent = Static<typeof LaneEventSchema>;
 
-const LaneProviderSchema = Type.Union([
-  Type.Literal("anthropic"),
-  Type.Literal("xai"),
-  Type.Literal("codex"),
-]);
+const LaneProviderSchema = oneOf(["anthropic", "xai", "codex"]);
 export type LaneProvider = Static<typeof LaneProviderSchema>;
 
 /**
@@ -212,36 +209,54 @@ export function ownedReasonOf(candidate: string): LaneReason {
 
 /**
  * `reason` admits exactly the owned codes: the schema itself enforces their
- * provenance. An enum of the literals (a `Type.Union` of `Type.Literal`s built
- * from a non-tuple array would type as `never`).
+ * provenance. An enum of the literals.
  */
-const LaneReasonSchema = Type.Enum(OWNED_REASONS);
+const LaneReasonSchema = oneOf(OWNED_REASONS);
 
-export const LaneRecordSchema = Type.Object(
-  {
-    customType: Type.Literal(LANE_RECORD_TYPE),
-    schemaVersion: Type.Literal(1),
-    at: Type.Number({ minimum: 0 }),
-    sessionId: NonEmptyString,
-    provider: LaneProviderSchema,
-    route: LaneRouteSchema,
-    event: LaneEventSchema,
-    from: LaneIdSchema,
-    to: Type.Optional(LaneIdSchema),
-    /** One of {@link REASONS}. */
-    reason: LaneReasonSchema,
-    /** Free-form, but only own codes or text: provider input goes through {@link ownedReasonOf}. */
-    detail: Type.Optional(Type.String({ maxLength: 128 })),
-    candidateId: Type.Optional(NonEmptyString),
-    checkpointEntryId: Type.Optional(NonEmptyString),
-    cooldownUntil: Type.Optional(Type.Number({ minimum: 0 })),
-    /** What started the compaction this transition belongs to; absent on records written before it was journaled. */
-    trigger: Type.Optional(CompactionTriggerSchema),
-    noticeAttempted: Type.Boolean(),
-  },
-  { additionalProperties: false },
-);
-export type LaneRecord = Static<typeof LaneRecordSchema>;
+/** Field schemas by name, exposed as `LaneRecordSchema.properties` (the object schema's own keyword). */
+const laneFields = {
+  customType: lit(LANE_RECORD_TYPE),
+  schemaVersion: lit(1),
+  at: nonNegative(),
+  sessionId: NonEmptyString,
+  provider: LaneProviderSchema,
+  route: LaneRouteSchema,
+  event: LaneEventSchema,
+  from: LaneIdSchema,
+  to: LaneIdSchema,
+  /** One of {@link REASONS}. */
+  reason: LaneReasonSchema,
+  /** Free-form, but only own codes or text: provider input goes through {@link ownedReasonOf}. */
+  detail: str({ maxLength: 128 }),
+  candidateId: NonEmptyString,
+  checkpointEntryId: NonEmptyString,
+  cooldownUntil: nonNegative(),
+  /** What started the compaction this transition belongs to; absent on records written before it was journaled. */
+  trigger: CompactionTriggerSchema,
+  noticeAttempted: bool(),
+};
+const laneRecordSchema = obj({
+  customType: laneFields.customType,
+  schemaVersion: laneFields.schemaVersion,
+  at: laneFields.at,
+  sessionId: laneFields.sessionId,
+  provider: laneFields.provider,
+  route: laneFields.route,
+  event: laneFields.event,
+  from: laneFields.from,
+  to: opt(laneFields.to),
+  reason: laneFields.reason,
+  detail: opt(laneFields.detail),
+  candidateId: opt(laneFields.candidateId),
+  checkpointEntryId: opt(laneFields.checkpointEntryId),
+  cooldownUntil: opt(laneFields.cooldownUntil),
+  trigger: opt(laneFields.trigger),
+  noticeAttempted: laneFields.noticeAttempted,
+});
+export type LaneRecord = Static<typeof laneRecordSchema>;
+export const LaneRecordSchema = { ...laneRecordSchema, properties: laneFields };
+const laneRecordValidator = compile(laneRecordSchema);
+export const isLaneRecord = laneRecordValidator.check;
 
 /** A record as callers build it; the envelope fields are added on append. */
 export type LaneRecordInput = Omit<LaneRecord, "customType" | "schemaVersion">;
@@ -285,9 +300,9 @@ export function appendLaneRecord(
   report: (message: string) => void,
 ): boolean {
   const record = envelope(input);
-  if (!Value.Check(LaneRecordSchema, record)) {
-    const first = Value.Errors(LaneRecordSchema, record)[0];
-    const path = first === undefined || first.instancePath === "" ? "/" : first.instancePath;
+  if (!isLaneRecord(record)) {
+    const first = laneRecordValidator.errors(record)[0];
+    const path = first === undefined || first.path === "" ? "/" : first.path;
     report(`lane journal: dropped invalid record: ${path}`);
     return false;
   }
@@ -313,7 +328,7 @@ export function laneRecordsOf(entries: readonly JournalEntryLike[]): LaneRecord[
   for (const entry of entries) {
     if (entry.type !== "custom" || entry.customType !== LANE_RECORD_TYPE) continue;
     const data = entry.data;
-    if (Value.Check(LaneRecordSchema, data)) records.push(data);
+    if (isLaneRecord(data)) records.push(data);
   }
   return records;
 }

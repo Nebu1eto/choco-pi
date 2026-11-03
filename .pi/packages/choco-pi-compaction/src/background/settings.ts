@@ -26,11 +26,9 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { Value } from "typebox/value";
-
 import { anthropicNativeEnabled } from "../anthropic/capability.ts";
 import {
-  BackgroundCompactionSidecarSchema,
+  backgroundCompactionSidecarValidator,
   type BackgroundCompactionSettings,
   DEFAULT_BACKGROUND_COMPACTION_SETTINGS,
 } from "./contract.ts";
@@ -212,7 +210,7 @@ async function readSidecarForWrite(
   } catch {
     throw new SidecarRefusedError(`${path} is not valid JSON; it was not changed`);
   }
-  if (!Value.Check(BackgroundCompactionSidecarSchema, parsed)) {
+  if (!backgroundCompactionSidecarValidator.check(parsed)) {
     throw new SidecarRefusedError(`${path} failed validation; it was not changed`);
   }
   return parsed;
@@ -255,9 +253,10 @@ export function parseBackgroundSettings(
   } catch {
     return disabled(source, `${label} is not valid JSON; background compaction is disabled`);
   }
-  if (!Value.Check(BackgroundCompactionSidecarSchema, parsed)) {
-    const first = Value.Errors(BackgroundCompactionSidecarSchema, parsed)[0];
-    const where = first?.instancePath ? ` at ${first.instancePath}` : "";
+  if (!backgroundCompactionSidecarValidator.check(parsed)) {
+    // First violation as ` at <JSON pointer>: <message>`; the pointer form matches the previous diagnostic.
+    const first = backgroundCompactionSidecarValidator.errors(parsed)[0];
+    const where = first?.path ? ` at ${first.path}` : "";
     const why = first?.message ? `: ${first.message}` : "";
     return disabled(
       source,

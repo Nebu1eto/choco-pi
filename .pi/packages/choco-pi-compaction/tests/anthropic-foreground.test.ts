@@ -34,8 +34,7 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, compile, lit, obj, opt, str } from "@earendil-works/pi-schema";
 
 import {
   mapWireToEntries,
@@ -54,6 +53,7 @@ import { ANTHROPIC_BACKEND_ID } from "../src/anthropic/backend.ts";
 import { mainOwnerKey } from "../src/ownership.ts";
 import { triggerOfDetails } from "../src/trigger.ts";
 import { BACKGROUND_OFF_SETTINGS_PATHS } from "./host-harness.ts";
+import { hostParams } from "./schema-bridge.ts";
 
 const OAUTH_KEY = "sk-ant-oat01-foreground-non-secret-placeholder";
 
@@ -170,12 +170,11 @@ function nativeLane(): RecordingFetch {
   return recordingFetch((index) => compactionResponse(index));
 }
 
-const TextBlockSchema = Type.Object({ type: Type.Literal("text"), text: Type.String() });
-const CompactionBlockSchema = Type.Object({
-  type: Type.Literal("compaction"),
-  content: Type.String(),
-});
-const TypedBlockSchema = Type.Object({ type: Type.String() });
+const open = { open: true } as const;
+const isTextBlock = compile(obj({ type: lit("text"), text: str() }, open)).check;
+const isCompactionBlock = compile(obj({ type: lit("compaction"), content: str() }, open)).check;
+const isTypedBlocks = compile(arr(obj({ type: str() }, open))).check;
+const isStringContent = compile(str()).check;
 
 /**
  * The test's own reading of a wire request: one `<role>:<text>` line per
@@ -184,11 +183,11 @@ const TypedBlockSchema = Type.Object({ type: Type.String() });
 function turnsOf(sent: { readonly body: WireBody | undefined } | undefined): string[] {
   return (sent?.body?.messages ?? []).map((message) => {
     const content: unknown = message.content;
-    if (Value.Check(Type.String(), content)) return `${message.role}:${content}`;
-    if (!Value.Check(Type.Array(TypedBlockSchema), content)) return `${message.role}:?`;
+    if (isStringContent(content)) return `${message.role}:${content}`;
+    if (!isTypedBlocks(content)) return `${message.role}:?`;
     const parts = content.map((block) => {
-      if (Value.Check(TextBlockSchema, block)) return block.text;
-      if (Value.Check(CompactionBlockSchema, block)) return `[compaction:${block.content}]`;
+      if (isTextBlock(block)) return block.text;
+      if (isCompactionBlock(block)) return `[compaction:${block.content}]`;
       return `[${block.type}]`;
     });
     return `${message.role}:${parts.join("|")}`;
@@ -211,7 +210,7 @@ const STEP_TOOL = defineTool({
   name: "step",
   label: "step",
   description: "deterministic step",
-  parameters: Type.Object({ label: Type.String() }),
+  parameters: hostParams(obj({ label: str() })),
   async execute(_id, params) {
     return { content: [{ type: "text", text: `STEP-RESULT-${params.label}` }], details: {} };
   },
@@ -272,18 +271,15 @@ function recordingFetch(respond: (index: number, sent: Sent) => Response | Promi
   return recording;
 }
 
-const CompactionFieldSchema = Type.Object({
-  compaction: Type.Object({
-    type: Type.Literal("summarize"),
-    instructions: Type.Optional(Type.String()),
-  }),
-});
+const isCompactionField = compile(
+  obj({ compaction: obj({ type: lit("summarize"), instructions: opt(str()) }, open) }, open),
+).check;
 
 function laneCompaction(
   sent: Sent | undefined,
 ): { type: string; instructions?: string } | undefined {
   const body = sent?.body;
-  return Value.Check(CompactionFieldSchema, body) ? body.compaction : undefined;
+  return isCompactionField(body) ? body.compaction : undefined;
 }
 
 const usage = {

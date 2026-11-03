@@ -21,10 +21,9 @@ import {
   type ExtensionContext,
   type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, compile, lit, obj, str } from "@earendil-works/pi-schema";
 
-import { JsonValueSchema } from "../background/contract.ts";
+import { isJsonRecord } from "../background/contract.ts";
 import {
   bindingDigests,
   countCompactionBlocks,
@@ -32,7 +31,7 @@ import {
   type TransportRequest,
   type TransportVerdict,
   type WireBody,
-  WireBodySchema,
+  isWireBody,
   type WireMessage,
 } from "./capture.ts";
 import {
@@ -69,16 +68,16 @@ type CheckpointLookup =
   | { readonly kind: "active"; readonly checkpoint: ActiveNativeCheckpoint }
   | { readonly kind: "invalid"; readonly entryId: string };
 
-const ClaimsAnthropicSchema = Type.Object({ strategy: Type.Literal(ANTHROPIC_STRATEGY) });
-const JsonRecordSchema = Type.Record(Type.String(), JsonValueSchema);
-const TextBlockSchema = Type.Object({ type: Type.Literal("text"), text: Type.String() });
+const claimsAnthropic = compile(obj({ strategy: lit(ANTHROPIC_STRATEGY) }, { open: true })).check;
+const isTextBlock = compile(obj({ type: lit("text"), text: str() }, { open: true })).check;
+const isStringArray = compile(arr(str())).check;
 
 /** The latest compaction entry on the branch decides; older native entries are history. */
 function findActiveNativeCheckpoint(branch: readonly SessionEntry[]): CheckpointLookup {
   for (let index = branch.length - 1; index >= 0; index--) {
     const entry = branch[index];
     if (entry === undefined || entry.type !== "compaction") continue;
-    if (!Value.Check(ClaimsAnthropicSchema, entry.details)) return { kind: "none" };
+    if (!claimsAnthropic(entry.details)) return { kind: "none" };
     if (!isAnthropicDetails(entry.details)) return { kind: "invalid", entryId: entry.id };
     return {
       kind: "active",
@@ -116,7 +115,7 @@ function isSummaryMessage(message: WireMessage, text: string): boolean {
   if (message.role !== "user") return false;
   if (!Array.isArray(message.content)) return message.content === text;
   const [only] = message.content;
-  return message.content.length === 1 && Value.Check(TextBlockSchema, only) && only.text === text;
+  return message.content.length === 1 && isTextBlock(only) && only.text === text;
 }
 
 function isBlockMessage(message: WireMessage, details: AnthropicDetails): boolean {
@@ -127,19 +126,17 @@ function isBlockMessage(message: WireMessage, details: AnthropicDetails): boolea
 
 function hasTaskBudgetRemaining(body: WireBody): boolean {
   const config = body.output_config;
-  if (!Value.Check(JsonRecordSchema, config)) return false;
+  if (!isJsonRecord(config)) return false;
   const budget = config.task_budget;
-  return Value.Check(JsonRecordSchema, budget) && "remaining" in budget;
+  return isJsonRecord(budget) && "remaining" in budget;
 }
 
 /** Whether the request tells the API to drop thinking whose bound prefix no longer matches. */
 function dropsMismatchedThinking(body: WireBody): boolean {
   const thinking = body.thinking;
-  if (!Value.Check(JsonRecordSchema, thinking)) return false;
+  if (!isJsonRecord(thinking)) return false;
   const binding = thinking.block_binding;
-  return (
-    Value.Check(JsonRecordSchema, binding) && binding.prefix_mismatch_behavior === "drop_block"
-  );
+  return isJsonRecord(binding) && binding.prefix_mismatch_behavior === "drop_block";
 }
 
 type RewriteOutcome =
@@ -177,7 +174,7 @@ export interface ReplayDiagnostic {
  * it the summary text is sent instead of the block.
  */
 function rewriteReplayPayload<T>(payload: T, checkpoint: ActiveNativeCheckpoint): RewriteOutcome {
-  if (!Value.Check(WireBodySchema, payload)) return { ok: false, code: "payload-unrecognized" };
+  if (!isWireBody(payload)) return { ok: false, code: "payload-unrecognized" };
   const details = checkpoint.details;
   const [first, ...rest] = payload.messages;
   if (first === undefined) return { ok: false, code: "summary-not-first" };
@@ -201,7 +198,7 @@ function rewriteReplayPayload<T>(payload: T, checkpoint: ActiveNativeCheckpoint)
     role: "assistant",
     content: [structuredClone(details.block)],
   };
-  const betas = Value.Check(Type.Array(Type.String()), payload.betas) ? payload.betas : [];
+  const betas = isStringArray(payload.betas) ? payload.betas : [];
   const next: WireBody = {
     ...payload,
     messages: [blockMessage, ...rest],
@@ -250,7 +247,7 @@ export function createReplayRewriteHandler(options: ReplayRewriteOptions = {}) {
     const sessionId = ctx.sessionManager.getSessionId();
     const call = currentTransportCall();
     if (call === undefined) {
-      if (Value.Check(WireBodySchema, event.payload)) {
+      if (isWireBody(event.payload)) {
         options.onDiagnostic?.({
           kind: "unverifiable",
           sessionId,

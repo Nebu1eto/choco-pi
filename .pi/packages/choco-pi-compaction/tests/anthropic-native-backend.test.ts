@@ -32,8 +32,7 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, compile, lit, obj, str, unknown } from "@earendil-works/pi-schema";
 
 import type {
   FrozenSnapshot,
@@ -43,6 +42,8 @@ import type {
   ProviderScope,
 } from "../src/background/contract.ts";
 import { isCandidateRecord } from "../src/background/contract.ts";
+import { jsonEqual } from "../src/background/json-equal.ts";
+import { hostParams } from "./schema-bridge.ts";
 import {
   ANTHROPIC_BACKEND_ID,
   type AnthropicBackendDeps,
@@ -421,7 +422,7 @@ test("details persist exactly through JSON and the candidate record contract", a
   assert.ok(isPrepared(result));
   const restored = (await persistedCustomEntry(result.details)).data;
   assert.ok(isAnthropicDetails(restored), "validator accepts the persisted form");
-  assert.ok(Value.Equal(restored, result.details), "structural equality");
+  assert.ok(jsonEqual(restored, result.details), "structural equality");
   assert.ok(sameBlock(restored.block, result.details.block), "exact content and signature");
   assert.deepEqual(keyPaths(restored.block), keyPaths(BLOCK), "no added or reordered fields");
   // Coordinator-added adoption keys are tolerated; malformed details are rejected.
@@ -651,7 +652,7 @@ const STEP_TOOL = defineTool({
   name: "step",
   label: "step",
   description: "deterministic step",
-  parameters: Type.Object({ label: Type.String() }),
+  parameters: hostParams(obj({ label: str() })),
   async execute(_id, params) {
     return { content: [{ type: "text", text: `result-${params.label}` }], details: {} };
   },
@@ -793,7 +794,7 @@ test(
         .filter((entry): entry is CompactionEntry => entry.type === "compaction");
       assert.equal(committed.length, 1);
       assert.equal(committed[0]?.firstKeptEntryId, c);
-      assert.ok(Value.Equal(committed[0]?.details, checkpoint.details));
+      assert.ok(jsonEqual(committed[0]?.details, checkpoint.details));
       const committedBlock = isAnthropicDetails(committed[0]?.details)
         ? committed[0].details.block
         : undefined;
@@ -861,18 +862,22 @@ function ownerBlockResponse(index: number): Response {
   ]);
 }
 
-const OwnerTextSchema = Type.Object({ type: Type.Literal("text"), text: Type.String() });
-const OwnerBlockSchema = Type.Object({ type: Type.Literal("compaction"), content: Type.String() });
+const isOwnerText = compile(obj({ type: lit("text"), text: str() }, { open: true })).check;
+const isOwnerBlock = compile(
+  obj({ type: lit("compaction"), content: str() }, { open: true }),
+).check;
+const isOwnerString = compile(str()).check;
+const isOwnerBlocks = compile(arr(unknown())).check;
 
 /** The test's own reading of a wire request: `<role>:<text>` per message. */
 function ownerTurns(body: WireBody | undefined): string[] {
   return (body?.messages ?? []).map((message) => {
     const content: unknown = message.content;
-    if (Value.Check(Type.String(), content)) return `${message.role}:${content}`;
-    const blocks = Value.Check(Type.Array(Type.Unknown()), content) ? content : [];
+    if (isOwnerString(content)) return `${message.role}:${content}`;
+    const blocks = isOwnerBlocks(content) ? content : [];
     const parts = blocks.map((block) => {
-      if (Value.Check(OwnerTextSchema, block)) return block.text;
-      if (Value.Check(OwnerBlockSchema, block)) return `[compaction:${block.content}]`;
+      if (isOwnerText(block)) return block.text;
+      if (isOwnerBlock(block)) return `[compaction:${block.content}]`;
       return "[other]";
     });
     return `${message.role}:${parts.join("|")}`;

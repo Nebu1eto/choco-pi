@@ -28,8 +28,7 @@ import {
   type CountTokensNegativeCache,
   createProviderTokenCounter,
 } from "./token-counters.ts";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { isNonEmptyString, isRecord, readProperty } from "../guards.ts";
 
 // ---------------------------------------------------------------------------
 // Backend factories and per-owner backend selection
@@ -77,20 +76,22 @@ interface OwnerBackendInputs {
  */
 const RESOLVING_OWNERS_SYMBOL = Symbol.for("choco-pi:compaction-resolving-owners");
 
-const OwnerInputsEntrySchema = Type.Object({
-  spec: Type.Object({ ownerKey: Type.String({ minLength: 1 }) }),
-  options: Type.Object({}),
-});
+/** `{ spec: { ownerKey }, options: {} }`: the shape only, as TypeBox `Object` checked it. */
+function isOwnerInputsEntry<T>(value: T): value is T & OwnerBackendInputs {
+  const spec = readProperty(value, "spec");
+  return (
+    isRecord(value) &&
+    isRecord(spec) &&
+    isNonEmptyString(readProperty(spec, "ownerKey")) &&
+    isRecord(readProperty(value, "options"))
+  );
+}
 
 /** Entries are written only by `resolveBackends`; check their shape, not their domain. */
 function isOwnerInputsTable<T>(value: T): value is T & Map<string, OwnerBackendInputs> {
   return (
     value instanceof Map &&
-    [...value].every(
-      ([key, entry]) =>
-        Value.Check(Type.String({ minLength: 1 }), key) &&
-        Value.Check(OwnerInputsEntrySchema, entry),
-    )
+    [...value].every(([key, entry]) => isNonEmptyString(key) && isOwnerInputsEntry(entry))
   );
 }
 

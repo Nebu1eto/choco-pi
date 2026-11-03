@@ -29,8 +29,7 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { compile, lit, obj, opt, str } from "@earendil-works/pi-schema";
 
 import { ANTHROPIC_BACKEND_ID } from "../src/anthropic/backend.ts";
 import { releaseSessionCaptures } from "../src/anthropic/capture.ts";
@@ -119,12 +118,10 @@ function reply(content: JsonObject, stopReason: string): Response {
   });
 }
 
-const CompactionFieldSchema = Type.Object({
-  compaction: Type.Object({
-    type: Type.Literal("summarize"),
-    instructions: Type.Optional(Type.String()),
-  }),
-});
+const open = { open: true } as const;
+const isCompactionField = compile(
+  obj({ compaction: obj({ type: lit("summarize"), instructions: opt(str()) }, open) }, open),
+).check;
 
 const usage = {
   input: 1,
@@ -299,7 +296,7 @@ test(
       assert.equal(status.backendId, ANTHROPIC_BACKEND_ID);
       assert.equal(rig.laneBodies.length, 1);
       const body = rig.laneBodies[0];
-      assert.ok(Value.Check(CompactionFieldSchema, body), JSON.stringify(body));
+      assert.ok(isCompactionField(body), JSON.stringify(body));
       assert.equal(body.compaction.instructions, "focus");
       assert.deepEqual(rig.summarizedPrompts, [], "the text lane was not used");
       const latest = rig.manager.getBranch().findLast((entry) => entry.type === "compaction");

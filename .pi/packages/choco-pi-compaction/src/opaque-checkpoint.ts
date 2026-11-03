@@ -11,19 +11,22 @@
  * consult it without importing the host runtime.
  */
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import { compile, obj, oneOf } from "@earendil-works/pi-schema";
 
 import type { OpaqueHistoryMode } from "./anthropic/mode.ts";
 import type { LaneId } from "./background/lane-journal.ts";
+import { hasMethods, readProperty } from "./guards.ts";
 
 /** Opaque members of `CheckpointStrategy` (`background/contract.ts`, a type-only union). */
-const OpaqueStrategySchema = Type.Union([
-  Type.Literal("xai-responses-compaction-v1"),
-  Type.Literal("openai-responses-compaction-v2"),
-  Type.Literal("openai-native-compact-v1"),
+const OpaqueStrategySchema = oneOf([
+  "xai-responses-compaction-v1",
+  "openai-responses-compaction-v2",
+  "openai-native-compact-v1",
 ]);
-type OpaqueStrategy = Static<typeof OpaqueStrategySchema>;
+type OpaqueStrategy =
+  | "xai-responses-compaction-v1"
+  | "openai-responses-compaction-v2"
+  | "openai-native-compact-v1";
 
 /** Checkpoint strategies whose summary text is a placeholder for provider-held history. */
 export const OPAQUE_STRATEGIES: ReadonlySet<string> = new Set<OpaqueStrategy>([
@@ -32,10 +35,7 @@ export const OPAQUE_STRATEGIES: ReadonlySet<string> = new Set<OpaqueStrategy>([
   "openai-native-compact-v1",
 ]);
 
-const OpaqueDetailsSchema = Type.Object(
-  { strategy: OpaqueStrategySchema },
-  { additionalProperties: true },
-);
+const isOpaqueDetails = compile(obj({ strategy: OpaqueStrategySchema }, { open: true })).check;
 
 export type OpaqueOwner = "xai-native" | "codex-native";
 
@@ -65,7 +65,7 @@ export function opaqueCheckpointOf(entries: readonly SessionEntry[]): OpaqueChec
     const entry = entries[index];
     if (entry?.type !== "compaction") continue;
     const details = entry.details;
-    if (!Value.Check(OpaqueDetailsSchema, details)) return undefined;
+    if (!isOpaqueDetails(details)) return undefined;
     const owner: OpaqueOwner =
       details.strategy === "xai-responses-compaction-v1" ? "xai-native" : "codex-native";
     return { entryId: entry.id, strategy: details.strategy, owner };
@@ -121,15 +121,10 @@ interface OpaqueConsentSlot {
 export const OPAQUE_CONSENT_SYMBOL: unique symbol = Symbol.for(
   "choco-pi:compaction-opaque-consent",
 );
-const SlotCallable = Type.Function([], Type.Unknown());
-const ConsentSlotSchema = Type.Object({
-  version: Type.Literal(1),
-  lossAuthorizedFor: SlotCallable,
-  publish: SlotCallable,
-});
-
 function isConsentSlot<T>(value: T): value is T & OpaqueConsentSlot {
-  return Value.Check(ConsentSlotSchema, value);
+  return (
+    hasMethods(value, ["lossAuthorizedFor", "publish"]) && readProperty(value, "version") === 1
+  );
 }
 
 function createConsentSlot(): OpaqueConsentSlot {

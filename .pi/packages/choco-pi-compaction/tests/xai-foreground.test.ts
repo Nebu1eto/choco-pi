@@ -17,9 +17,9 @@ import test from "node:test";
 
 import type { JsonObject } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionFactory } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, compile, lit, obj, str } from "@earendil-works/pi-schema";
 
+import { hostParams } from "./schema-bridge.ts";
 import { buildBackgroundCompactionPreferencesSections } from "../../../extensions/lib/background-compaction-preferences.ts";
 import {
   refreshSessionNativeState,
@@ -34,7 +34,7 @@ import {
   parseXaiWireBody,
   releaseXaiSessionCaptures,
   xaiTransportRefusals,
-  XaiWireBodySchema,
+  isXaiWireBody,
 } from "../src/xai/capture.ts";
 import { isXaiDetails, placeholderSummary } from "../src/xai/details.ts";
 import { readXaiCompactionMode } from "../src/xai/mode.ts";
@@ -74,7 +74,7 @@ const STEP_TOOL = defineTool({
   name: "step",
   label: "step",
   description: "deterministic step",
-  parameters: Type.Object({ label: Type.String() }),
+  parameters: hostParams(obj({ label: str() })),
   async execute(_id, params) {
     return { content: [{ type: "text", text: `XSTEP-RESULT-${params.label}` }], details: {} };
   },
@@ -164,25 +164,24 @@ function noticesOf(rig: XaiRig): string[] {
   return rig.notices.filter((notice) => notice.startsWith(XAI_NOTICE_PREFIX));
 }
 
-const OpaqueItemSchema = Type.Object({
-  type: Type.Literal("compaction"),
-  encrypted_content: Type.String(),
-});
-const TextTurnSchema = Type.Object({ role: Type.String(), content: Type.String() });
-const PartsTurnSchema = Type.Object({
-  role: Type.String(),
-  content: Type.Array(Type.Object({ text: Type.String() })),
-});
+const open = { open: true } as const;
+const isOpaqueItem = compile(
+  obj({ type: lit("compaction"), encrypted_content: str() }, open),
+).check;
+const isTextTurn = compile(obj({ role: str(), content: str() }, open)).check;
+const isPartsTurn = compile(
+  obj({ role: str(), content: arr(obj({ text: str() }, open)) }, open),
+).check;
+const isXaiOptInSetting = compile(obj({ compactionXai: lit("choco-pi") }, open)).check;
 
 /**
  * The test's own reading of one wire item: `system`, `<role>:<text>`, or
  * `compaction:<opaque>`. Independent of the production cut and mapping helpers.
  */
 function turnOf(item: JsonObject | undefined): string {
-  if (Value.Check(OpaqueItemSchema, item)) return `compaction:${item.encrypted_content}`;
-  if (Value.Check(TextTurnSchema, item))
-    return item.role === "system" ? "system" : `${item.role}:${item.content}`;
-  if (!Value.Check(PartsTurnSchema, item)) return "unrecognized";
+  if (isOpaqueItem(item)) return `compaction:${item.encrypted_content}`;
+  if (isTextTurn(item)) return item.role === "system" ? "system" : `${item.role}:${item.content}`;
+  if (!isPartsTurn(item)) return "unrecognized";
   if (item.role === "system") return "system";
   return `${item.role}:${item.content.map((part) => part.text).join("")}`;
 }
@@ -488,7 +487,7 @@ test(
     let hostile = false;
     const stripper: ExtensionFactory = (pi) => {
       pi.on("before_provider_request", (event) => {
-        if (!hostile || !Value.Check(XaiWireBodySchema, event.payload)) return undefined;
+        if (!hostile || !isXaiWireBody(event.payload)) return undefined;
         return { ...event.payload, input: event.payload.input.slice(1) };
       });
     };
@@ -608,7 +607,7 @@ test(
       section.handleChange("compactionXai", "choco-pi");
       await waitForBackgroundCompactionPreferenceChanges();
       const written: unknown = JSON.parse(await readFile(join(dir, "settings.json"), "utf8"));
-      assert.ok(Value.Check(Type.Object({ compactionXai: Type.Literal("choco-pi") }), written));
+      assert.ok(isXaiOptInSetting(written));
       assert.equal(row()?.currentValue, "choco-pi");
       // Applied in place: the next compaction stays local.
       const local = await rig.session.compact();

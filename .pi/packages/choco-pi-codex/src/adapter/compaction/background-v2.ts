@@ -1,18 +1,22 @@
 import { createHash, randomUUID } from "node:crypto";
 import { CODEX_TURN_STATE_HEADER } from "../../providers/openai-codex/turn-state.ts";
+import { compile, obj, str } from "@earendil-works/pi-schema";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { normalizeContext } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import {
-  JsonValueSchema,
+  isJsonRecord,
+  jsonValueRef,
   ProviderScopeSchema,
+  withJsonValueDefs,
   type Backend,
   type FrozenSnapshot,
   type PreparationBudget,
   type PrepareFailure,
   type ProviderScope,
 } from "../../../../choco-pi-compaction/src/background/contract.ts";
+import { jsonEqual } from "../../../../choco-pi-compaction/src/background/json-equal.ts";
 import type { AdapterState } from "../activation/state.ts";
 import { isResponsesBody, type ResponsesBody } from "../../providers/openai-codex/types.ts";
 import {
@@ -52,17 +56,18 @@ interface CodexBackgroundCapture {
   readonly providerScope: ProviderScope;
   readonly body: ResponsesBody;
 }
-const CaptureSchema = Type.Object(
-  {
-    sessionId: Type.String({ minLength: 1 }),
-    providerScope: ProviderScopeSchema,
-    body: JsonValueSchema,
-  },
-  { additionalProperties: false },
-);
+const isCaptureFields = compile(
+  withJsonValueDefs(
+    obj({
+      sessionId: str({ minLength: 1 }),
+      providerScope: ProviderScopeSchema,
+      body: jsonValueRef,
+    }),
+  ),
+).check;
 export function isCodexBackgroundCapture<T>(value: T): value is T & CodexBackgroundCapture {
   return (
-    Value.Check(CaptureSchema, value) &&
+    isCaptureFields(value) &&
     isResponsesBody(value.body) &&
     value.body.model === value.providerScope.model
   );
@@ -234,7 +239,6 @@ function withAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
-const JsonRecordSchema = Type.Record(Type.String(), JsonValueSchema);
 const CallIdSchema = Type.String({ minLength: 1 });
 
 /** Tracks open function/custom-tool groups; false when the input cannot form a legal cut. */
@@ -243,7 +247,7 @@ function acceptLegalCutItem(
   open: Set<string>,
   seen: Set<string>,
 ): boolean {
-  if (!Value.Check(JsonRecordSchema, item)) return false;
+  if (!isJsonRecord(item)) return false;
   if (item["type"] === "compaction_trigger" || item["status"] === "in_progress") return false;
   if (item["type"] === "function_call" || item["type"] === "custom_tool_call") {
     if (!Value.Check(CallIdSchema, item["call_id"]) || seen.has(item["call_id"])) return false;
@@ -259,7 +263,7 @@ function acceptLegalCutItem(
 function illegalCaptureDetail(snapshot: FrozenSnapshot): string | undefined {
   const capture = snapshot.backendCapture;
   if (!isCodexBackgroundCapture(capture)) return "no-capture";
-  if (!Value.Equal(capture.providerScope, snapshot.providerScope)) return "scope-mismatch";
+  if (!jsonEqual(capture.providerScope, snapshot.providerScope)) return "scope-mismatch";
   // Never summarize an open function/custom-tool group or an in-progress message.
   const open = new Set<string>();
   const seen = new Set<string>();
@@ -365,9 +369,7 @@ function freezePreparation(
   const body = capture.body;
   if (body.access_programs !== undefined) return unsupportedCooldownFailure();
   body.previous_response_id = undefined;
-  const input = body.input.filter((item): item is ResponsesInputItem =>
-    Value.Check(JsonRecordSchema, item),
-  );
+  const input = body.input.filter((item): item is ResponsesInputItem => isJsonRecord(item));
   if (exceedsInputBudget(tokenEstimate, body, budget)) return rejected("oversized");
   if (!isWellFormedBudget(budget)) return rejected("malformed");
   const remainingMs = budget.deadlineMs - Date.now();

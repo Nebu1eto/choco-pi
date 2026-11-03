@@ -1,5 +1,11 @@
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import {
+  hasMethods,
+  hasProperty,
+  isFunction,
+  isNonEmptyString,
+  isNonNegativeInteger,
+  readProperty,
+} from "../guards.ts";
 import type { BackendFactory, CoordinatorApi } from "./contract.ts";
 
 /**
@@ -31,36 +37,28 @@ export type RegistryAvailability =
   | { readonly status: "available"; readonly registry: CoordinatorRegistry }
   /** The global slot holds a value this code cannot validate; it is left untouched. */
   | { readonly status: "conflict" };
-const CallableSchema = Type.Function([], Type.Unknown());
-const CoordinatorRegistrationSchema = Type.Object({
-  ownerKey: Type.String({ minLength: 1 }),
-  ownerGeneration: Type.Integer({ minimum: 0 }),
-  requestPreparation: CallableSchema,
-  cancel: CallableSchema,
-  status: CallableSchema,
-  arbitrateHostCompaction: CallableSchema,
-  arbitrateManualCompact: CallableSchema,
-  registerConsumer: CallableSchema,
-  registerParticipant: CallableSchema,
-  dispose: CallableSchema,
-});
-const RegistrySlotSchema = Type.Object({
-  schemaVersion: Type.Literal(2),
-  backendFactories: Type.Unknown(),
-  coordinators: Type.Unknown(),
-  delivered: Type.Unknown(),
-});
+const COORDINATOR_METHODS = [
+  "requestPreparation",
+  "cancel",
+  "status",
+  "arbitrateHostCompaction",
+  "arbitrateManualCompact",
+  "registerConsumer",
+  "registerParticipant",
+  "dispose",
+] as const;
 /** Validate callable presence; factories/coordinators themselves own their domain behavior. */
 function isCoordinator<T>(value: T): value is T & CoordinatorApi {
-  return Value.Check(CoordinatorRegistrationSchema, value);
+  return (
+    hasMethods(value, COORDINATOR_METHODS) &&
+    isNonEmptyString(readProperty(value, "ownerKey")) &&
+    isNonNegativeInteger(readProperty(value, "ownerGeneration"))
+  );
 }
 function isFactoryMap<T>(value: T): value is T & Map<string, BackendFactory> {
   return (
     value instanceof Map &&
-    [...value].every(
-      ([key, factory]) =>
-        Value.Check(Type.String({ minLength: 1 }), key) && Value.Check(CallableSchema, factory),
-    )
+    [...value].every(([key, factory]) => isNonEmptyString(key) && isFunction(factory))
   );
 }
 function isCoordinatorMap<T>(value: T): value is T & Map<string, CoordinatorApi> {
@@ -68,18 +66,19 @@ function isCoordinatorMap<T>(value: T): value is T & Map<string, CoordinatorApi>
     value instanceof Map &&
     [...value].every(
       ([key, coordinator]) =>
-        Value.Check(Type.String({ minLength: 1 }), key) &&
-        isCoordinator(coordinator) &&
-        key === coordinator.ownerKey,
+        isNonEmptyString(key) && isCoordinator(coordinator) && key === coordinator.ownerKey,
     )
   );
 }
 function isRegistry<T>(value: T): value is T & CoordinatorRegistry {
   return (
-    Value.Check(RegistrySlotSchema, value) &&
-    isFactoryMap(value.backendFactories) &&
-    isCoordinatorMap(value.coordinators) &&
-    value.delivered instanceof Map
+    hasProperty(value, "backendFactories") &&
+    hasProperty(value, "coordinators") &&
+    hasProperty(value, "delivered") &&
+    readProperty(value, "schemaVersion") === 2 &&
+    isFactoryMap(readProperty(value, "backendFactories")) &&
+    isCoordinatorMap(readProperty(value, "coordinators")) &&
+    readProperty(value, "delivered") instanceof Map
   );
 }
 function emptyRegistry(): CoordinatorRegistry {

@@ -9,15 +9,14 @@ import test from "node:test";
 
 import type { CompactionEntry, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { laneRecordsOf, LaneRecordSchema } from "../src/background/lane-journal.ts";
+import { isLaneRecord, laneRecordsOf } from "../src/background/lane-journal.ts";
 import registerCompaction from "../src/index.ts";
 import {
-  CompactionTriggerSchema,
+  isCompactionTrigger,
   hostTriggerOf,
   triggerOfDetails,
   withTrigger,
 } from "../src/trigger.ts";
-import { Value } from "typebox/value";
 import { compactionEntries, createHost, reply } from "./host-boundary-fixture.ts";
 import { BACKGROUND_OFF_SETTINGS_PATHS } from "./host-harness.ts";
 
@@ -47,8 +46,8 @@ test("withTrigger stamps details, keeps a producer's own trigger, and tolerates 
   );
   assert.equal(triggerOfDetails("text"), undefined);
   assert.equal(hostTriggerOf({ reason: "overflow" }), "overflow");
-  assert.ok(Value.Check(CompactionTriggerSchema, "manual"));
-  assert.ok(!Value.Check(CompactionTriggerSchema, "auto"));
+  assert.ok(isCompactionTrigger("manual"));
+  assert.ok(!isCompactionTrigger("auto"));
 });
 
 test("lane records accept the optional trigger and still accept records without it", () => {
@@ -64,9 +63,9 @@ test("lane records accept the optional trigger and still accept records without 
     reason: "no-legal-cut",
     noticeAttempted: false,
   } as const;
-  assert.ok(Value.Check(LaneRecordSchema, base), "a legacy record without a trigger");
-  assert.ok(Value.Check(LaneRecordSchema, { ...base, trigger: "threshold" }));
-  assert.ok(!Value.Check(LaneRecordSchema, { ...base, trigger: "auto" }), "only the vocabulary");
+  assert.ok(isLaneRecord(base), "a legacy record without a trigger");
+  assert.ok(isLaneRecord({ ...base, trigger: "threshold" }));
+  assert.ok(!isLaneRecord({ ...base, trigger: "auto" }), "only the vocabulary");
 });
 
 /** The full extension, background off, answering the host's own compactions. */

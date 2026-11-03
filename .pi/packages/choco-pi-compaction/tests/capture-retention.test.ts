@@ -30,8 +30,7 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { hasMethods } from "../src/guards.ts";
 
 import { ANTHROPIC_BACKEND_ID, hasUsableCapture } from "../src/anthropic/backend.ts";
 import { capturesFor, releaseSessionCaptures } from "../src/anthropic/capture.ts";
@@ -120,12 +119,15 @@ function reply(content: JsonObject, stopReason: string): Response {
   });
 }
 
-const SectionSchema = Type.Object({
-  handleChange: Type.Function([Type.String(), Type.String()], Type.Unknown()),
-});
-const ProviderSchema = Type.Object({
-  buildSections: Type.Function([Type.Unknown()], Type.Array(SectionSchema)),
-});
+interface PreferencesSection {
+  handleChange(id: string, value: string): void;
+}
+interface PreferencesProvider {
+  buildSections(ctx: ExtensionContext): PreferencesSection[];
+}
+function isPreferencesProvider<T>(value: T): value is T & PreferencesProvider {
+  return hasMethods(value, ["buildSections"]);
+}
 
 interface Rig {
   readonly session: AgentSession;
@@ -292,7 +294,7 @@ async function changeRow(rig: Rig, id: string, value: string): Promise<void> {
     globalThis,
     BACKGROUND_COMPACTION_PREFERENCES_PROVIDER_SYMBOL,
   )?.value;
-  assert.ok(Value.Check(ProviderSchema, provider), "the Preferences provider is published");
+  assert.ok(isPreferencesProvider(provider), "the Preferences provider is published");
   const [section] = provider.buildSections(rig.ctx());
   assert.ok(section);
   const before = ownerGeneration(rig);

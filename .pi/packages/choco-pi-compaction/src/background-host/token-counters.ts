@@ -8,14 +8,14 @@
  */
 import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { compile, obj } from "@earendil-works/pi-schema";
 
 import {
   type CountTokensErrorCode,
   type CountTokensResult,
   countSyntheticTokens,
 } from "../../../choco-pi-provider-synthetic/src/client/count-tokens.ts";
+import { finiteInt } from "../guards.ts";
 import { authModeOf, normalizeBaseUrl } from "../anthropic/capability.ts";
 import type { TokenCounter } from "../background/contract.ts";
 
@@ -26,7 +26,7 @@ export const COUNT_TOKENS_NEGATIVE_TTL_MS = 600_000;
 
 const ANTHROPIC_VERSION = "2023-06-01";
 const ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com";
-const CountTokensResponseSchema = Type.Object({ input_tokens: Type.Integer({ minimum: 0 }) });
+const isCountTokensResponse = compile(obj({ input_tokens: finiteInt(0) }, { open: true })).check;
 
 type CountInput = Parameters<TokenCounter["countTokens"]>[0];
 /** The registry slice a counter reads: request auth for the owner model. */
@@ -189,7 +189,7 @@ function parseAnthropicCount(text: string, status: number): CountOutcome {
   } catch {
     return malformed;
   }
-  return Value.Check(CountTokensResponseSchema, data) ? { tokens: data.input_tokens } : malformed;
+  return isCountTokensResponse(data) ? { tokens: data.input_tokens } : malformed;
 }
 
 async function countFor(context: CountContext, input: CountInput): Promise<CountOutcome> {

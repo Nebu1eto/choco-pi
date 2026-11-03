@@ -1,6 +1,6 @@
 import type { CompactionResult, SessionBeforeCompactEvent } from "@earendil-works/pi-coding-agent";
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import { compile, obj, oneOf, opt } from "@earendil-works/pi-schema";
+import type { Static } from "@earendil-works/pi-schema";
 
 /**
  * What started a compaction, recorded on the checkpoint it produced
@@ -15,21 +15,20 @@ import { Value } from "typebox/value";
  * - `idle`, `context-cap`: this package's own background routes, which commit
  *   through `ctx.compact()` and therefore reach the host as "manual".
  */
-export const CompactionTriggerSchema = Type.Union([
-  Type.Literal("manual"),
-  Type.Literal("threshold"),
-  Type.Literal("overflow"),
-  Type.Literal("idle"),
-  Type.Literal("context-cap"),
+export const CompactionTriggerSchema = oneOf([
+  "manual",
+  "threshold",
+  "overflow",
+  "idle",
+  "context-cap",
 ]);
 export type CompactionTrigger = Static<typeof CompactionTriggerSchema>;
 
 /** Any checkpoint details object; `trigger` is the only field this module reads. */
-const TriggeredDetailsSchema = Type.Object(
-  { trigger: Type.Optional(CompactionTriggerSchema) },
-  { additionalProperties: true },
-);
+const TriggeredDetailsSchema = obj({ trigger: opt(CompactionTriggerSchema) }, { open: true });
 type TriggeredDetails = Static<typeof TriggeredDetailsSchema>;
+export const isCompactionTrigger = compile(CompactionTriggerSchema).check;
+const isTriggeredDetails = compile(TriggeredDetailsSchema).check;
 
 /** The host's own reasons, as `session_before_compact` reports them. */
 export function hostTriggerOf(event: Pick<SessionBeforeCompactEvent, "reason">): CompactionTrigger {
@@ -40,7 +39,7 @@ export function hostTriggerOf(event: Pick<SessionBeforeCompactEvent, "reason">):
 export function triggerOfDetails(
   details: CompactionResult["details"],
 ): CompactionTrigger | undefined {
-  return Value.Check(TriggeredDetailsSchema, details) ? details.trigger : undefined;
+  return isTriggeredDetails(details) ? details.trigger : undefined;
 }
 
 /**
@@ -53,7 +52,7 @@ export function withTrigger<Result extends Pick<CompactionResult, "details">>(
   trigger: CompactionTrigger,
 ): Result {
   const details = result.details;
-  if (!Value.Check(TriggeredDetailsSchema, details)) return { ...result, details: { trigger } };
+  if (!isTriggeredDetails(details)) return { ...result, details: { trigger } };
   if (details.trigger !== undefined) return result;
   const stamped: TriggeredDetails = { ...details, trigger };
   return { ...result, details: stamped };

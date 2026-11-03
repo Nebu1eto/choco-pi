@@ -13,8 +13,7 @@
  * factories, and extension copies may load through separate module instances.
  */
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { isFunction, isNonEmptyString } from "../guards.ts";
 
 import { isStaleContextError } from "../lifecycle.ts";
 
@@ -31,16 +30,14 @@ const NATIVE_REFRESHERS_SYMBOL = Symbol.for("choco-pi:compaction-native-session-
 
 type RefresherTable = Map<string, Map<string, SessionNativeRefresher>>;
 
-const RefresherSchema = Type.Function([Type.Unknown()], Type.Unknown());
-
 function isRefresherTable<T>(value: T): value is T & RefresherTable {
   if (!(value instanceof Map)) return false;
   for (const [sessionId, contributors] of value) {
-    if (!Value.Check(Type.String({ minLength: 1 }), sessionId)) return false;
+    if (!isNonEmptyString(sessionId)) return false;
     if (!(contributors instanceof Map)) return false;
     for (const [id, refresher] of contributors) {
-      if (!Value.Check(Type.String({ minLength: 1 }), id)) return false;
-      if (!Value.Check(RefresherSchema, refresher)) return false;
+      if (!isNonEmptyString(id)) return false;
+      if (!isFunction(refresher)) return false;
     }
   }
   return true;

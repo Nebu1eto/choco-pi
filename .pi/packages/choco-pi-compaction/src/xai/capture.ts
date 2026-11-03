@@ -30,8 +30,8 @@ import {
   type ExtensionAPI,
   type ProjectedSessionEntry,
 } from "@earendil-works/pi-coding-agent";
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, compile, lit, obj, oneOf, str, union } from "@earendil-works/pi-schema";
+import type { Static } from "@earendil-works/pi-schema";
 
 import {
   alignKeyedWire,
@@ -40,52 +40,51 @@ import {
   wireKey,
   type WireMapping,
 } from "../anthropic/capture.ts";
-import { JsonValueSchema } from "../background/contract.ts";
+import {
+  jsonRecordMember,
+  jsonRest,
+  JsonRecordSchema,
+  withJsonValueDefs,
+} from "../background/contract.ts";
+import { isNonNegativeInteger, isRecord, isString, nonEmptyStr, readProperty } from "../guards.ts";
 import { isXaiDetails } from "./details.ts";
 
 // ---------------------------------------------------------------------------
 // Wire model (Responses `input` items)
 // ---------------------------------------------------------------------------
 
-const JsonRecordSchema = Type.Record(Type.String(), JsonValueSchema);
 export const XaiWireItemSchema = JsonRecordSchema;
-export const XaiWireBodySchema = Type.Intersect([
-  Type.Object({
-    model: Type.String({ minLength: 1 }),
-    input: Type.Array(XaiWireItemSchema),
-  }),
-  JsonRecordSchema,
-]);
+const xaiWireBody = jsonRest({
+  model: nonEmptyStr(),
+  input: arr(jsonRecordMember),
+});
+export const XaiWireBodySchema = withJsonValueDefs(xaiWireBody);
 export type XaiWireItem = Static<typeof XaiWireItemSchema>;
-export type XaiWireBody = Static<typeof XaiWireBodySchema>;
+export type XaiWireBody = Static<typeof xaiWireBody>;
+export const isXaiWireBody = compile(XaiWireBodySchema).check;
 
-const InstructionItemSchema = Type.Object({
-  role: Type.Union([Type.Literal("system"), Type.Literal("developer")]),
-  content: Type.String(),
-});
-const UserMessageSchema = Type.Object({
-  role: Type.Literal("user"),
-  content: Type.Union([Type.String(), Type.Array(JsonRecordSchema)]),
-});
-const AssistantMessageSchema = Type.Object({
-  type: Type.Literal("message"),
-  role: Type.Literal("assistant"),
-  content: Type.Array(JsonRecordSchema),
-});
-const InputTextSchema = Type.Object({
-  type: Type.Union([Type.Literal("input_text"), Type.Literal("output_text")]),
-  text: Type.String(),
-});
-const InputImageSchema = Type.Object({
-  type: Type.Literal("input_image"),
-  image_url: Type.String(),
-});
-const CallIdSchema = Type.Object({ call_id: Type.String({ minLength: 1 }) });
-const WireCompactionItemSchema = Type.Object({
-  type: Type.Literal("compaction"),
-  encrypted_content: Type.String(),
-});
-const StringSchema = Type.String();
+const open = { open: true } as const;
+const isInstructionFields = compile(
+  obj({ role: oneOf(["system", "developer"]), content: str() }, open),
+).check;
+const isUserMessageFields = compile(
+  withJsonValueDefs(
+    obj({ role: lit("user"), content: union([str(), arr(jsonRecordMember)]) }, open),
+  ),
+).check;
+const isAssistantMessage = compile(
+  withJsonValueDefs(
+    obj({ type: lit("message"), role: lit("assistant"), content: arr(jsonRecordMember) }, open),
+  ),
+).check;
+const isInputText = compile(
+  obj({ type: oneOf(["input_text", "output_text"]), text: str() }, open),
+).check;
+const isInputImage = compile(obj({ type: lit("input_image"), image_url: str() }, open)).check;
+const hasCallId = compile(obj({ call_id: nonEmptyStr() }, open)).check;
+const isWireCompactionItem = compile(
+  obj({ type: lit("compaction"), encrypted_content: str() }, open),
+).check;
 
 /** Items opening a tool call answered by a later output item with the same `call_id`. */
 const CALL_TYPES: ReadonlySet<string> = new Set([
@@ -106,30 +105,30 @@ export function parseXaiWireBody(text: string): XaiWireBody | undefined {
   } catch {
     return undefined;
   }
-  return Value.Check(XaiWireBodySchema, parsed) ? parsed : undefined;
+  return isXaiWireBody(parsed) ? parsed : undefined;
 }
 
 function itemType(item: XaiWireItem): string | undefined {
-  return Value.Check(StringSchema, item.type) ? item.type : undefined;
+  return isString(item.type) ? item.type : undefined;
 }
 
 /** Role-like label of an item: its `role`, else its `type`, else "item". */
 export function itemRole(item: XaiWireItem): string {
-  if (Value.Check(StringSchema, item.role)) return item.role;
+  if (isString(item.role)) return item.role;
   return itemType(item) ?? "item";
 }
 
 /** A leading system prompt or mid-conversation system update (`system`/`developer`, string content). */
 export function isInstructionItem(item: XaiWireItem | undefined): boolean {
-  return item !== undefined && Value.Check(InstructionItemSchema, item);
+  return item !== undefined && isInstructionFields(item);
 }
 
 export function isUserMessageItem(item: XaiWireItem | undefined): boolean {
-  return item !== undefined && Value.Check(UserMessageSchema, item);
+  return item !== undefined && isUserMessageFields(item);
 }
 
 export function isCompactionWireItem(item: XaiWireItem | undefined): boolean {
-  return item !== undefined && Value.Check(WireCompactionItemSchema, item);
+  return item !== undefined && isWireCompactionItem(item);
 }
 
 export function countCompactionItems(items: readonly XaiWireItem[]): number {
@@ -140,14 +139,14 @@ export function countCompactionItems(items: readonly XaiWireItem[]): number {
 export function callIdOf(item: XaiWireItem): string | undefined {
   const type = itemType(item);
   if (type === undefined || !CALL_TYPES.has(type)) return undefined;
-  return Value.Check(CallIdSchema, item) ? item.call_id : undefined;
+  return hasCallId(item) ? item.call_id : undefined;
 }
 
 /** `call_id` of a tool output item, else undefined. */
 export function outputIdOf(item: XaiWireItem): string | undefined {
   const type = itemType(item);
   if (type === undefined || !OUTPUT_TYPES.has(type)) return undefined;
-  return Value.Check(CallIdSchema, item) ? item.call_id : undefined;
+  return hasCallId(item) ? item.call_id : undefined;
 }
 
 /**
@@ -174,19 +173,19 @@ function textKey(text: string): WireKey[] {
 
 function contentKeys(content: readonly XaiWireItem[]): WireKey[] {
   return content.flatMap((part): WireKey[] => {
-    if (Value.Check(InputTextSchema, part)) return textKey(part.text);
-    if (Value.Check(InputImageSchema, part)) return [wireKey("image", part.image_url)];
+    if (isInputText(part)) return textKey(part.text);
+    if (isInputImage(part)) return [wireKey("image", part.image_url)];
     return [];
   });
 }
 
 /** Keys of one transport item. Instructions and reasoning are deliberately unkeyed. */
 function wireItemKeys(item: XaiWireItem): WireKey[] {
-  if (Value.Check(UserMessageSchema, item)) {
+  if (isUserMessageFields(item)) {
     return Array.isArray(item.content) ? contentKeys(item.content) : textKey(item.content);
   }
-  if (Value.Check(AssistantMessageSchema, item)) return contentKeys(item.content);
-  if (Value.Check(WireCompactionItemSchema, item)) {
+  if (isAssistantMessage(item)) return contentKeys(item.content);
+  if (isWireCompactionItem(item)) {
     return [wireKey("compaction", item.encrypted_content)];
   }
   const call = callIdOf(item);
@@ -272,7 +271,7 @@ export function mapXaiWireToEntries(
  */
 function isAssistantTurnItem(item: XaiWireItem | undefined): boolean {
   if (item === undefined) return false;
-  if (Value.Check(AssistantMessageSchema, item)) return true;
+  if (isAssistantMessage(item)) return true;
   const type = itemType(item);
   return type === "reasoning" || (type !== undefined && CALL_TYPES.has(type));
 }
@@ -344,21 +343,17 @@ interface LaneRuntime {
 }
 
 const RUNTIME_SYMBOL = Symbol.for("choco-pi:xai-native-lane");
-const RuntimeSlotSchema = Type.Object({
-  schemaVersion: Type.Literal(1),
-  calls: Type.Unknown(),
-  captures: Type.Unknown(),
-  projections: Type.Unknown(),
-  refusals: Type.Array(Type.Unknown()),
-  counter: Type.Object({ value: Type.Integer({ minimum: 0 }) }),
-});
 
 function isRuntime<T>(value: T): value is T & LaneRuntime {
   return (
-    Value.Check(RuntimeSlotSchema, value) &&
-    value.calls instanceof AsyncLocalStorage &&
-    value.captures instanceof Map &&
-    value.projections instanceof Map
+    isRecord(value) &&
+    readProperty(value, "schemaVersion") === 1 &&
+    Array.isArray(readProperty(value, "refusals")) &&
+    isRecord(readProperty(value, "counter")) &&
+    isNonNegativeInteger(readProperty(readProperty(value, "counter"), "value")) &&
+    readProperty(value, "calls") instanceof AsyncLocalStorage &&
+    readProperty(value, "captures") instanceof Map &&
+    readProperty(value, "projections") instanceof Map
   );
 }
 
@@ -601,7 +596,7 @@ interface ReadRequest {
 }
 
 function readRequest(init: RequestInit | undefined): ReadRequest {
-  const bodyText = Value.Check(StringSchema, init?.body) ? init.body : undefined;
+  const bodyText = isString(init?.body) ? init.body : undefined;
   return { bodyText, body: bodyText === undefined ? undefined : parseXaiWireBody(bodyText) };
 }
 

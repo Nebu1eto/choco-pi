@@ -4,30 +4,33 @@ import type {
   ExtensionContext,
   SessionBeforeCompactEvent,
 } from "@earendil-works/pi-coding-agent";
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import { compile, obj } from "@earendil-works/pi-schema";
+import type { Static } from "@earendil-works/pi-schema";
+
+import { hasMethods, nonEmptyStr, readProperty } from "../guards.ts";
 
 // ---------------------------------------------------------------------------
 // Process-global adoption signal (consumed by goal, hooks and the context cap)
 // ---------------------------------------------------------------------------
 
-const NonEmptyString = Type.String({ minLength: 1 });
-const AdoptionIdentitySchema = Type.Object(
+const NonEmptyString = nonEmptyStr();
+const AdoptionIdentitySchema = obj(
   {
     candidateId: NonEmptyString,
     prefixFingerprint: NonEmptyString,
     ownerKey: NonEmptyString,
   },
-  { additionalProperties: true },
+  { open: true },
 );
 type AdoptionIdentity = Static<typeof AdoptionIdentitySchema>;
+const isAdoptionIdentity = compile(AdoptionIdentitySchema).check;
 
 /** Coordinator-owned identity carried by every adopted checkpoint's details. */
 export function readAdoptionIdentity(
   source: Pick<CompactionEntryDraft, "details">,
 ): AdoptionIdentity | undefined {
   const details = source.details;
-  return Value.Check(AdoptionIdentitySchema, details) ? details : undefined;
+  return isAdoptionIdentity(details) ? details : undefined;
 }
 
 /** How a committed adoption reached the session. */
@@ -81,20 +84,18 @@ export interface BackgroundAdoptionSignal {
 export const BACKGROUND_ADOPTION_SIGNAL_SYMBOL: unique symbol = Symbol.for(
   "choco-pi:compaction-background-adoption",
 );
-const SignalCallable = Type.Function([], Type.Unknown());
-const SignalSlotSchema = Type.Object({
-  version: Type.Literal(1),
-  willAdopt: SignalCallable,
-  isAdoption: SignalCallable,
-  adoptReady: SignalCallable,
-  subscribe: SignalCallable,
-  registerOwner: SignalCallable,
-  publish: SignalCallable,
-  nextGeneration: SignalCallable,
-});
+const SIGNAL_METHODS = [
+  "willAdopt",
+  "isAdoption",
+  "adoptReady",
+  "subscribe",
+  "registerOwner",
+  "publish",
+  "nextGeneration",
+] as const;
 
 function isAdoptionSignal<T>(value: T): value is T & BackgroundAdoptionSignal {
-  return Value.Check(SignalSlotSchema, value);
+  return hasMethods(value, SIGNAL_METHODS) && readProperty(value, "version") === 1;
 }
 
 function unregisterOwner(

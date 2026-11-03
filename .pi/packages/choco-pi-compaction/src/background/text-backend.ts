@@ -13,8 +13,7 @@
  */
 import type { RetryPolicy, StopReason, Usage } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { compile, obj } from "@earendil-works/pi-schema";
 
 import { type BackgroundLimits, type ModelBudget, resolveBackgroundLimits } from "../budget.ts";
 import {
@@ -23,6 +22,7 @@ import {
   validTextCheckpointDetails,
 } from "../details.ts";
 import { formatFileLists, resolveFileLists } from "../file-ops.ts";
+import { nonNegative } from "../guards.ts";
 import { normalizeSummary } from "../normalize.ts";
 import {
   BACKGROUND_COMPACTION_SYSTEM_PROMPT,
@@ -205,23 +205,30 @@ export function classifySummarizerError(error: Error): PrepareFailure {
   return failure("malformed", true);
 }
 
-const UsageNumbersSchema = Type.Object({
-  input: Type.Number({ minimum: 0 }),
-  output: Type.Number({ minimum: 0 }),
-  cacheRead: Type.Number({ minimum: 0 }),
-  cacheWrite: Type.Number({ minimum: 0 }),
-  totalTokens: Type.Number({ minimum: 0 }),
-  cost: Type.Object({
-    input: Type.Number({ minimum: 0 }),
-    output: Type.Number({ minimum: 0 }),
-    cacheRead: Type.Number({ minimum: 0 }),
-    cacheWrite: Type.Number({ minimum: 0 }),
-    total: Type.Number({ minimum: 0 }),
-  }),
-});
+const UsageNumbersSchema = obj(
+  {
+    input: nonNegative(),
+    output: nonNegative(),
+    cacheRead: nonNegative(),
+    cacheWrite: nonNegative(),
+    totalTokens: nonNegative(),
+    cost: obj(
+      {
+        input: nonNegative(),
+        output: nonNegative(),
+        cacheRead: nonNegative(),
+        cacheWrite: nonNegative(),
+        total: nonNegative(),
+      },
+      { open: true },
+    ),
+  },
+  { open: true },
+);
+const hasUsageNumbers = compile(UsageNumbersSchema).check;
 
 function validUsage(usage: Usage): boolean {
-  if (!Value.Check(UsageNumbersSchema, usage)) return false;
+  if (!hasUsageNumbers(usage)) return false;
   const numbers = [
     usage.input,
     usage.output,

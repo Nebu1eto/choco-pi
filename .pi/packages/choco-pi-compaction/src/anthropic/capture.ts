@@ -35,10 +35,20 @@ import {
   type ExtensionAPI,
   type ProjectedSessionEntry,
 } from "@earendil-works/pi-coding-agent";
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, bool, compile, lit, obj, oneOf, opt, str, union } from "@earendil-works/pi-schema";
+import type { Static } from "@earendil-works/pi-schema";
 
-import { JsonValueSchema, type JsonValue } from "../background/contract.ts";
+import { jsonRest, withJsonValueDefs, type JsonValue } from "../background/contract.ts";
+import {
+  finiteInt,
+  hasProperty,
+  isNonNegativeInteger,
+  isRecord,
+  isString,
+  nonEmptyStr,
+  nonNegative,
+  readProperty,
+} from "../guards.ts";
 import { OPAQUE_GUARD_NOTICE, opaqueProviderOf } from "../opaque-checkpoint.ts";
 import { pendingOpaqueBlock } from "../opaque-guard.ts";
 import { isAnthropicDetails, sha256 } from "./details.ts";
@@ -47,48 +57,43 @@ import { isAnthropicDetails, sha256 } from "./details.ts";
 // Wire model
 // ---------------------------------------------------------------------------
 
-const JsonRecordSchema = Type.Record(Type.String(), JsonValueSchema);
+// Each wire object is its named fields plus a JSON value for every other key
+// (the previous `Intersect([Object, Record(String, JsonValue)])`); a schema
+// embedding these is wrapped with `withJsonValueDefs` where it is compiled.
+const wireBlock = jsonRest({ type: str() });
+const wireMessage = jsonRest({
+  role: str(),
+  content: union([str(), arr(wireBlock)]),
+});
+const wireBody = jsonRest({
+  model: nonEmptyStr(),
+  messages: arr(wireMessage),
+});
 /** Wire objects keep every provider field as JSON; only the named fields are required. */
-export const WireBlockSchema = Type.Intersect([
-  Type.Object({ type: Type.String() }),
-  JsonRecordSchema,
-]);
-const WireMessageSchema = Type.Intersect([
-  Type.Object({
-    role: Type.String(),
-    content: Type.Union([Type.String(), Type.Array(WireBlockSchema)]),
-  }),
-  JsonRecordSchema,
-]);
-export const WireBodySchema = Type.Intersect([
-  Type.Object({
-    model: Type.String({ minLength: 1 }),
-    messages: Type.Array(WireMessageSchema),
-  }),
-  JsonRecordSchema,
-]);
-export type WireBlock = Static<typeof WireBlockSchema>;
-export type WireMessage = Static<typeof WireMessageSchema>;
-export type WireBody = Static<typeof WireBodySchema>;
+export const WireBlockSchema = withJsonValueDefs(wireBlock);
+/** The un-wrapped block schema, for embedding in a root wrapped with `withJsonValueDefs`. */
+export const wireBlockMember = wireBlock;
+export const WireBodySchema = withJsonValueDefs(wireBody);
+export type WireBlock = Static<typeof wireBlock>;
+export type WireMessage = Static<typeof wireMessage>;
+export type WireBody = Static<typeof wireBody>;
+export const isWireBody = compile(WireBodySchema).check;
 
-const TextBlockSchema = Type.Object({ type: Type.Literal("text"), text: Type.String() });
-const ImageBlockSchema = Type.Object({
-  type: Type.Literal("image"),
-  source: Type.Object({ data: Type.String() }),
-});
-const ToolUseBlockSchema = Type.Object({ type: Type.Literal("tool_use"), id: Type.String() });
-const ToolResultBlockSchema = Type.Object({
-  type: Type.Literal("tool_result"),
-  tool_use_id: Type.String(),
-});
-const SignedBlockSchema = Type.Object({
-  type: Type.Literal("compaction"),
-  signature: Type.String(),
-});
-const ThinkingBlockSchema = Type.Object({
-  type: Type.Union([Type.Literal("thinking"), Type.Literal("redacted_thinking")]),
-});
-const StringSchema = Type.String();
+const isTextBlock = compile(obj({ type: lit("text"), text: str() }, { open: true })).check;
+const isImageBlock = compile(
+  obj({ type: lit("image"), source: obj({ data: str() }, { open: true }) }, { open: true }),
+).check;
+const isToolUseBlock = compile(obj({ type: lit("tool_use"), id: str() }, { open: true })).check;
+const isToolResultBlock = compile(
+  obj({ type: lit("tool_result"), tool_use_id: str() }, { open: true }),
+).check;
+const isSignedBlock = compile(
+  obj({ type: lit("compaction"), signature: str() }, { open: true }),
+).check;
+const isThinkingBlock = compile(
+  obj({ type: oneOf(["thinking", "redacted_thinking"]) }, { open: true }),
+).check;
+const isDeferredTool = compile(obj({ defer_loading: lit(true) }, { open: true })).check;
 
 export function parseWireBody(text: string): WireBody | undefined {
   let parsed: unknown;
@@ -97,7 +102,7 @@ export function parseWireBody(text: string): WireBody | undefined {
   } catch {
     return undefined;
   }
-  return Value.Check(WireBodySchema, parsed) ? parsed : undefined;
+  return isWireBody(parsed) ? parsed : undefined;
 }
 
 export function wireBlocks(message: WireMessage): readonly WireBlock[] {
@@ -105,22 +110,18 @@ export function wireBlocks(message: WireMessage): readonly WireBlock[] {
 }
 
 export function toolUseIds(message: WireMessage): string[] {
-  return wireBlocks(message).flatMap((block) =>
-    Value.Check(ToolUseBlockSchema, block) ? [block.id] : [],
-  );
+  return wireBlocks(message).flatMap((block) => (isToolUseBlock(block) ? [block.id] : []));
 }
 
 export function toolResultIds(message: WireMessage): string[] {
   return wireBlocks(message).flatMap((block) =>
-    Value.Check(ToolResultBlockSchema, block) ? [block.tool_use_id] : [],
+    isToolResultBlock(block) ? [block.tool_use_id] : [],
   );
 }
 
 export function hasThinking(message: WireMessage): boolean {
-  return wireBlocks(message).some((block) => Value.Check(ThinkingBlockSchema, block));
+  return wireBlocks(message).some((block) => isThinkingBlock(block));
 }
-
-const DeferredToolSchema = Type.Object({ defer_loading: Type.Literal(true) });
 
 interface BindingDigests {
   readonly systemDigest: string;
@@ -133,7 +134,7 @@ interface BindingDigests {
  */
 export function bindingDigests(body: WireBody): BindingDigests {
   const tools = Array.isArray(body.tools)
-    ? body.tools.filter((tool) => !Value.Check(DeferredToolSchema, tool))
+    ? body.tools.filter((tool) => !isDeferredTool(tool))
     : (body.tools ?? null);
   return {
     systemDigest: sha256(JSON.stringify(body.system ?? null)),
@@ -190,12 +191,11 @@ function wireMessageKeys(message: WireMessage): WireKey[] {
     return isBlank(message.content) ? [] : [key("text", message.content)];
   }
   return message.content.flatMap((block): WireKey[] => {
-    if (Value.Check(TextBlockSchema, block))
-      return isBlank(block.text) ? [] : [key("text", block.text)];
-    if (Value.Check(ToolUseBlockSchema, block)) return [key("tool_use", block.id)];
-    if (Value.Check(ToolResultBlockSchema, block)) return [key("tool_result", block.tool_use_id)];
-    if (Value.Check(ImageBlockSchema, block)) return [key("image", block.source.data)];
-    if (Value.Check(SignedBlockSchema, block)) return [key("compaction", block.signature)];
+    if (isTextBlock(block)) return isBlank(block.text) ? [] : [key("text", block.text)];
+    if (isToolUseBlock(block)) return [key("tool_use", block.id)];
+    if (isToolResultBlock(block)) return [key("tool_result", block.tool_use_id)];
+    if (isImageBlock(block)) return [key("image", block.source.data)];
+    if (isSignedBlock(block)) return [key("compaction", block.signature)];
     return [];
   });
 }
@@ -485,55 +485,60 @@ export interface WireCapture {
   readonly mapping: WireMapping | undefined;
 }
 
-const KeyRefSchema = Type.Object({
-  kind: Type.Union([
-    Type.Literal("text"),
-    Type.Literal("tool_use"),
-    Type.Literal("tool_result"),
-    Type.Literal("image"),
-    Type.Literal("compaction"),
-  ]),
-  digest: Type.String(),
-});
-export const WireMappingSchema = Type.Object({
-  projection: Type.Array(
-    Type.Object({ entryId: Type.String(), visible: Type.Boolean(), keyed: Type.Boolean() }),
-  ),
-  messages: Type.Array(
-    Type.Object({
-      index: Type.Integer({ minimum: 0 }),
-      role: Type.String(),
-      entryIds: Type.Array(Type.String()),
-      unmapped: Type.Array(KeyRefSchema),
-      ambiguous: Type.Array(
-        Type.Object({
-          key: KeyRefSchema,
-          candidates: Type.Array(Type.String()),
-          outOfOrder: Type.Boolean(),
-        }),
+const KeyRefSchema = obj(
+  {
+    kind: oneOf(["text", "tool_use", "tool_result", "image", "compaction"]),
+    digest: str(),
+  },
+  { open: true },
+);
+export const WireMappingSchema = obj(
+  {
+    projection: arr(obj({ entryId: str(), visible: bool(), keyed: bool() }, { open: true })),
+    messages: arr(
+      obj(
+        {
+          index: finiteInt(0),
+          role: str(),
+          entryIds: arr(str()),
+          unmapped: arr(KeyRefSchema),
+          ambiguous: arr(
+            obj({ key: KeyRefSchema, candidates: arr(str()), outOfOrder: bool() }, { open: true }),
+          ),
+        },
+        { open: true },
       ),
-    }),
+    ),
+  },
+  { open: true },
+);
+// `mapping` is the one key whose value may be undefined; pi-schema treats an undefined
+// property as absent, so the schema marks it optional and the guard requires the key.
+const WireCaptureSchema = withJsonValueDefs(
+  obj(
+    {
+      schemaVersion: lit(1),
+      sessionId: nonEmptyStr(),
+      sequence: finiteInt(0),
+      capturedAt: nonNegative(),
+      provider: nonEmptyStr(),
+      modelId: nonEmptyStr(),
+      baseUrl: str(),
+      endpoint: str(),
+      betas: arr(str()),
+      status: finiteInt(),
+      bodyText: str(),
+      body: wireBody,
+      mapping: opt(WireMappingSchema),
+    },
+    { open: true },
   ),
-});
-const WireCaptureSchema = Type.Object({
-  schemaVersion: Type.Literal(1),
-  sessionId: Type.String({ minLength: 1 }),
-  sequence: Type.Integer({ minimum: 0 }),
-  capturedAt: Type.Number({ minimum: 0 }),
-  provider: Type.String({ minLength: 1 }),
-  modelId: Type.String({ minLength: 1 }),
-  baseUrl: Type.String(),
-  endpoint: Type.String(),
-  betas: Type.Array(Type.String()),
-  status: Type.Integer(),
-  bodyText: Type.String(),
-  body: WireBodySchema,
-  mapping: Type.Union([WireMappingSchema, Type.Undefined()]),
-});
+);
+const isWireCaptureFields = compile(WireCaptureSchema).check;
 
 /** Narrow an opaque `FrozenSnapshot.backendCapture` produced by this module. */
 export function isWireCapture<T>(value: T): value is T & WireCapture {
-  return Value.Check(WireCaptureSchema, value);
+  return isWireCaptureFields(value) && hasProperty(value, "mapping");
 }
 
 export interface TransportRequest {
@@ -578,21 +583,17 @@ interface LaneRuntime {
 }
 
 const RUNTIME_SYMBOL = Symbol.for("choco-pi:anthropic-native-lane");
-const RuntimeSlotSchema = Type.Object({
-  schemaVersion: Type.Literal(1),
-  calls: Type.Unknown(),
-  captures: Type.Unknown(),
-  projections: Type.Unknown(),
-  refusals: Type.Array(Type.Unknown()),
-  counter: Type.Object({ value: Type.Integer({ minimum: 0 }) }),
-});
 
 function isRuntime<T>(value: T): value is T & LaneRuntime {
   return (
-    Value.Check(RuntimeSlotSchema, value) &&
-    value.calls instanceof AsyncLocalStorage &&
-    value.captures instanceof Map &&
-    value.projections instanceof Map
+    isRecord(value) &&
+    readProperty(value, "schemaVersion") === 1 &&
+    Array.isArray(readProperty(value, "refusals")) &&
+    isRecord(readProperty(value, "counter")) &&
+    isNonNegativeInteger(readProperty(readProperty(value, "counter"), "value")) &&
+    readProperty(value, "calls") instanceof AsyncLocalStorage &&
+    readProperty(value, "captures") instanceof Map &&
+    readProperty(value, "projections") instanceof Map
   );
 }
 
@@ -880,7 +881,7 @@ interface ReadRequest {
 }
 
 function readRequest(init: RequestInit | undefined): ReadRequest {
-  const bodyText = Value.Check(StringSchema, init?.body) ? init.body : undefined;
+  const bodyText = isString(init?.body) ? init.body : undefined;
   const body = bodyText === undefined ? undefined : parseWireBody(bodyText);
   const betas = parseBetaHeader(new Headers(init?.headers).get("anthropic-beta"));
   return { bodyText, body, betas };

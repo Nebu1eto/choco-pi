@@ -16,8 +16,7 @@ import type {
   ExtensionContext,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { compile, obj, opt, str } from "@earendil-works/pi-schema";
 
 import {
   bindSessionProjection,
@@ -36,12 +35,21 @@ const COMPACTION_ERROR_PREFIX = "compaction_";
 const OAUTH_ENTITLEMENT_MESSAGE = "Third-party apps now draw from your extra usage";
 export const OAUTH_ENTITLEMENT_CODE = "oauth-extra-usage";
 
-const ErrorBodySchema = Type.Object({
-  error: Type.Object({
-    message: Type.Optional(Type.String()),
-    details: Type.Optional(Type.Object({ error_code: Type.Optional(Type.String()) })),
-  }),
-});
+const open = { open: true } as const;
+const isErrorBody = compile(
+  obj(
+    {
+      error: obj(
+        {
+          message: opt(str()),
+          details: opt(obj({ error_code: opt(str()) }, open)),
+        },
+        open,
+      ),
+    },
+    open,
+  ),
+).check;
 
 async function readBounded(response: Response): Promise<string> {
   if (response.body === null) return "";
@@ -72,7 +80,7 @@ export async function replayRejectionCode(response: Response): Promise<string | 
   } catch {
     return undefined;
   }
-  if (!Value.Check(ErrorBodySchema, parsed)) return undefined;
+  if (!isErrorBody(parsed)) return undefined;
   const code = parsed.error.details?.error_code;
   if (code?.startsWith(COMPACTION_ERROR_PREFIX) === true) return code;
   if (parsed.error.message?.includes(OAUTH_ENTITLEMENT_MESSAGE) === true) {

@@ -25,8 +25,8 @@ import {
 } from "../src/adapter/provider-request.ts";
 import { createCodexTurnState } from "../src/providers/openai-codex/turn-state.ts";
 import {
+  isLaneRecord,
   type LaneRecord,
-  LaneRecordSchema,
 } from "../../choco-pi-compaction/src/background/lane-journal.ts";
 import { OPAQUE_GUARD_NOTICE } from "../../choco-pi-compaction/src/opaque-checkpoint.ts";
 
@@ -141,7 +141,7 @@ async function fixture(options: { readonly checkpointAccount?: string; readonly 
   const records: LaneRecord[] = [];
   const pi = {
     appendEntry: <T>(_customType: string, data?: T) => {
-      if (Value.Check(LaneRecordSchema, data)) records.push(structuredClone(data));
+      if (isLaneRecord(data)) records.push(structuredClone(data));
     },
   };
   const payload = {

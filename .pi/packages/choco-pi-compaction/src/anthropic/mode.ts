@@ -12,18 +12,16 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import { compile, oneOf } from "@earendil-works/pi-schema";
+import type { Static } from "@earendil-works/pi-schema";
 
-import { type JsonValue, JsonValueSchema } from "../background/contract.ts";
+import { type JsonRecord, type JsonValue, isJsonRecord } from "../background/contract.ts";
 
 export const ANTHROPIC_COMPACTION_MODE_KEY = "compactionAnthropic";
 
-const AnthropicCompactionModeSchema = Type.Union([
-  Type.Literal("server-side"),
-  Type.Literal("choco-pi"),
-]);
+const AnthropicCompactionModeSchema = oneOf(["server-side", "choco-pi"]);
 export type AnthropicCompactionMode = Static<typeof AnthropicCompactionModeSchema>;
+const isAnthropicCompactionMode = compile(AnthropicCompactionModeSchema).check;
 export const DEFAULT_ANTHROPIC_COMPACTION_MODE: AnthropicCompactionMode = "server-side";
 
 /**
@@ -35,12 +33,12 @@ export const DEFAULT_ANTHROPIC_COMPACTION_MODE: AnthropicCompactionMode = "serve
  */
 export const OPAQUE_HISTORY_KEY = "compactionOpaqueHistory";
 
-const OpaqueHistoryModeSchema = Type.Union([Type.Literal("preserve"), Type.Literal("allow-loss")]);
+const OpaqueHistoryModeSchema = oneOf(["preserve", "allow-loss"]);
 export type OpaqueHistoryMode = Static<typeof OpaqueHistoryModeSchema>;
+const isOpaqueHistoryMode = compile(OpaqueHistoryModeSchema).check;
 export const DEFAULT_OPAQUE_HISTORY_MODE: OpaqueHistoryMode = "preserve";
 
-const SettingsObjectSchema = Type.Record(Type.String(), JsonValueSchema);
-type SettingsObject = Static<typeof SettingsObjectSchema>;
+type SettingsObject = JsonRecord;
 
 function settingsPath(agentDir: string): string {
   return join(agentDir, "settings.json");
@@ -66,16 +64,14 @@ function parseObject(text: string): SettingsObject | undefined {
   } catch {
     return undefined;
   }
-  return Value.Check(SettingsObjectSchema, parsed) ? parsed : undefined;
+  return isJsonRecord(parsed) ? parsed : undefined;
 }
 
 /** Validate one raw value; anything else is the default. */
 export function parseAnthropicCompactionMode(
   value: JsonValue | undefined,
 ): AnthropicCompactionMode {
-  return Value.Check(AnthropicCompactionModeSchema, value)
-    ? value
-    : DEFAULT_ANTHROPIC_COMPACTION_MODE;
+  return isAnthropicCompactionMode(value) ? value : DEFAULT_ANTHROPIC_COMPACTION_MODE;
 }
 
 /**
@@ -107,7 +103,7 @@ export async function readAnthropicCompactionMode(
 
 /** Validate one raw opaque-history value; anything else is the default. */
 export function parseOpaqueHistoryMode(value: JsonValue | undefined): OpaqueHistoryMode {
-  return Value.Check(OpaqueHistoryModeSchema, value) ? value : DEFAULT_OPAQUE_HISTORY_MODE;
+  return isOpaqueHistoryMode(value) ? value : DEFAULT_OPAQUE_HISTORY_MODE;
 }
 
 /** The configured opaque-history mode; unreadable, malformed or missing settings yield `preserve`. */
@@ -120,7 +116,7 @@ export async function writeOpaqueHistoryMode(
   agentDir: string,
   mode: OpaqueHistoryMode,
 ): Promise<void> {
-  if (!Value.Check(OpaqueHistoryModeSchema, mode)) {
+  if (!isOpaqueHistoryMode(mode)) {
     throw new Error(`invalid ${OPAQUE_HISTORY_KEY} value`);
   }
   await writeTopLevelSetting(agentDir, OPAQUE_HISTORY_KEY, mode);
@@ -135,7 +131,7 @@ export async function writeAnthropicCompactionMode(
   agentDir: string,
   mode: AnthropicCompactionMode,
 ): Promise<void> {
-  if (!Value.Check(AnthropicCompactionModeSchema, mode)) {
+  if (!isAnthropicCompactionMode(mode)) {
     throw new Error(`invalid ${ANTHROPIC_COMPACTION_MODE_KEY} value`);
   }
   await writeTopLevelSetting(agentDir, ANTHROPIC_COMPACTION_MODE_KEY, mode);

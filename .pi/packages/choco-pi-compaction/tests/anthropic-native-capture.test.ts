@@ -33,9 +33,10 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 
+import { obj, str } from "@earendil-works/pi-schema";
+
+import { hostParams } from "./schema-bridge.ts";
 import {
   bindSessionProjection,
   capturesFor,
@@ -46,7 +47,7 @@ import {
   registerAnthropicCapture,
   releaseSessionCaptures,
   type WireCapture,
-  WireBodySchema,
+  isWireBody,
 } from "../src/anthropic/capture.ts";
 
 const PROVIDER = "native-capture";
@@ -136,7 +137,7 @@ const STEP_TOOL = defineTool({
   name: "step",
   label: "step",
   description: "deterministic step",
-  parameters: Type.Object({ label: Type.String() }),
+  parameters: hostParams(obj({ label: str() })),
   async execute(_id, params) {
     return { content: [{ type: "text", text: `result-${params.label}` }], details: {} };
   },
@@ -339,7 +340,7 @@ test(
     };
     const mutator = (pi: ExtensionAPI): void => {
       pi.on("before_provider_request", (event) => {
-        if (!Value.Check(WireBodySchema, event.payload)) return undefined;
+        if (!isWireBody(event.payload)) return undefined;
         return {
           ...event.payload,
           messages: [

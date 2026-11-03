@@ -11,10 +11,9 @@ import { test } from "node:test";
 
 import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
 import type { SessionEntry, SessionMessageEntry } from "@earendil-works/pi-coding-agent";
-import { Value } from "typebox/value";
 
 import {
-  CheckpointDetailsSchema,
+  isCheckpointDetails,
   isCandidateRecord,
   type PreparationBudget,
   type PreparedCheckpoint,
@@ -332,7 +331,7 @@ test("drafts survive the persisted-record schema and existing manual-path reader
       candidateId: "cand-2",
     }),
   );
-  assert.ok(Value.Check(CheckpointDetailsSchema, result.details));
+  assert.ok(isCheckpointDetails(result.details));
   const entry = await reopenedEntry((manager) =>
     manager.appendCompaction(
       result.draft.summary,

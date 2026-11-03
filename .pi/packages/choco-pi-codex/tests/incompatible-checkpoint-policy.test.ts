@@ -29,7 +29,7 @@ import { createSdkFixture } from "./sdk-fixture.ts";
 import { createOpenAICodexProviderStream } from "../src/providers/openai-codex-custom-provider.ts";
 import { cleanupOpenAICodexTransportSession } from "../src/providers/openai-codex/transport-cleanup.ts";
 import {
-  LaneRecordSchema,
+  isLaneRecord,
   type LaneRecord,
 } from "../../choco-pi-compaction/src/background/lane-journal.ts";
 import {
@@ -283,7 +283,7 @@ async function opaqueRig() {
       // `ExtensionAPI` exposes no tool refresh; the rig registers no tools.
       refreshTools() {},
       appendEntry: (name, data) => {
-        if (Value.Check(LaneRecordSchema, data)) records.push(data);
+        if (isLaneRecord(data)) records.push(data);
         manager.appendCustomEntry(name, data);
       },
     },

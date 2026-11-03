@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { compile, obj, str } from "@earendil-works/pi-schema";
 import type {
   CompactionEntryDraft,
   CompactionResult,
@@ -30,6 +29,7 @@ import type {
   TokenCounter,
 } from "./contract.ts";
 import { type ModelBudget, resolveBackgroundLimits } from "../budget.ts";
+import { isRecord } from "../guards.ts";
 import { renderFrozenPrefixPrompt } from "./snapshot.ts";
 import {
   AdoptionDelivery,
@@ -219,20 +219,11 @@ function cooldownMap(clock: SchedulerClock): Map<string, number> {
 function keyPart(value: string | undefined): string {
   return value === undefined ? "~" : `${value.length}:${value}`;
 }
-const AdoptionIdentitySchema = Type.Object(
-  {
-    candidateId: Type.String(),
-    prefixFingerprint: Type.String(),
-    ownerKey: Type.String(),
-  },
-  { additionalProperties: true },
-);
-const FreezeContainerSchema = Type.Union([
-  Type.Array(Type.Unknown()),
-  Type.Object({}, { additionalProperties: true }),
-]);
+const isAdoptionIdentity = compile(
+  obj({ candidateId: str(), prefixFingerprint: str(), ownerKey: str() }, { open: true }),
+).check;
 function deepFreeze<T>(value: T): void {
-  if (!Value.Check(FreezeContainerSchema, value) || Object.isFrozen(value)) return;
+  if (!(Array.isArray(value) || isRecord(value)) || Object.isFrozen(value)) return;
   Object.freeze(value);
   for (const child of Object.values(value)) deepFreeze(child);
 }
@@ -959,7 +950,7 @@ function committedEntryMatches(
     .find((item) => item.id === committed.id && item.type === "compaction");
   const details = entry && entry.type === "compaction" ? entry.details : undefined;
   return (
-    Value.Check(AdoptionIdentitySchema, details) &&
+    isAdoptionIdentity(details) &&
     details.candidateId === candidateId &&
     details.prefixFingerprint === fingerprint &&
     details.ownerKey === state.ownerKey

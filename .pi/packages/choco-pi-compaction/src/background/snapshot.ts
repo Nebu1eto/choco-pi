@@ -28,10 +28,9 @@ import {
   findTurnStartIndex,
   type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 
 import { parseTextCheckpointDetails } from "../details.ts";
+import { isNonEmptyString } from "../guards.ts";
 import { BACKGROUND_COMPACTION_SYSTEM_PROMPT, buildFrozenPrefixPrompt } from "../prompt.ts";
 import { estimateTextTokens } from "../serialize.ts";
 import type { CompactionFileOperations, CompactionMessage, EntryIdRange } from "../types.ts";
@@ -119,8 +118,6 @@ interface GoverningRequest {
 // ---------------------------------------------------------------------------
 // Entry-level helpers
 // ---------------------------------------------------------------------------
-
-const NonEmptyStringSchema = Type.String({ minLength: 1 });
 
 function isTurnStartRole(message: CompactionMessage): boolean {
   switch (message.role) {
@@ -234,7 +231,7 @@ function addFileOp(
   fileOps: CompactionFileOperations,
 ): void {
   const path = args?.path;
-  if (!Value.Check(NonEmptyStringSchema, path)) {
+  if (!isNonEmptyString(path)) {
     return;
   }
   if (name === "read") fileOps.read.add(path);
@@ -731,7 +728,7 @@ export function readFirstKeptEntryId(snapshot: FrozenSnapshot): string | undefin
     return undefined;
   }
   const value = snapshot.firstKeptEntryId;
-  return Value.Check(NonEmptyStringSchema, value) ? value : undefined;
+  return isNonEmptyString(value) ? value : undefined;
 }
 
 /** Summarizer inputs derived from the frozen prefix only. */
