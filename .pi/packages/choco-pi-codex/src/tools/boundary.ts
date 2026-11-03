@@ -1,38 +1,37 @@
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import type { BoundaryValue as RuntimeBoundaryValue } from "../adapter/runtime-values.ts";
 
-const BoundaryValueSchema = Type.Unknown();
-const StringValueSchema = Type.String();
-const NumberValueSchema = Type.Number();
-const BooleanValueSchema = Type.Boolean();
-const ObjectValueSchema = Type.Record(Type.String(), BoundaryValueSchema);
-const FunctionValueSchema = Type.Function([], BoundaryValueSchema);
-const UndefinedValueSchema = Type.Undefined();
-const SymbolValueSchema = Type.Symbol();
-const BigIntValueSchema = Type.BigInt();
+/** Any value crossing an I/O boundary before it is decoded: the JavaScript value universe, not JSON. */
+export type BoundaryValue = RuntimeBoundaryValue;
 
-export type BoundaryValue = Static<typeof BoundaryValueSchema>;
-export type BoundaryRecord = Static<typeof ObjectValueSchema>;
+/** An undecoded object keyed by arbitrary strings. */
+export type BoundaryRecord = KeyedValues<BoundaryValue>;
 
-export function isStringValue(value: BoundaryValue): value is string {
-  return Value.Check(StringValueSchema, value);
+interface KeyedValues<Value> {
+  [key: string]: Value;
 }
 
+// Identity against Object(value) rejects every object (boxed wrappers included) before instanceof
+// runs, and Object() never calls user code, so these guards cannot throw.
+export function isStringValue(value: BoundaryValue): value is string {
+  const boxed = Object(value);
+  return boxed !== value && boxed instanceof String;
+}
+
+/** Finite numbers only: NaN and +/-Infinity are rejected, as the former TypeBox Number check did. */
 export function isNumberValue(value: BoundaryValue): value is number {
-  return Value.Check(NumberValueSchema, value);
+  return Number.isFinite(value);
 }
 
 export function isBooleanValue(value: BoundaryValue): value is boolean {
-  return Value.Check(BooleanValueSchema, value);
+  return value === true || value === false;
 }
 
 /**
  * Structural, side-effect-free object test.
  *
- * This deliberately does NOT validate against a schema: a `Type.Record` check
- * enumerates the value's properties, which invokes getters on whatever object
- * it is handed. Applied to live host and session objects that is both wasteful
- * and unsafe — lazy getters ran and stalled code-mode turns.
+ * This deliberately does NOT validate against a schema: a record check enumerates the value's
+ * properties, which invokes getters on whatever object it is handed. Applied to live host and
+ * session objects that is both wasteful and unsafe — lazy getters ran and stalled code-mode turns.
  */
 export function isObjectValue(value: BoundaryValue): value is BoundaryRecord {
   return (
@@ -47,17 +46,19 @@ export function isObjectValue(value: BoundaryValue): value is BoundaryRecord {
 export function isFunctionValue(
   value: BoundaryValue,
 ): value is (...args: never[]) => BoundaryValue {
-  return Value.Check(FunctionValueSchema, value);
+  return value instanceof Function;
 }
 
 export function isUndefinedValue(value: BoundaryValue): value is undefined {
-  return Value.Check(UndefinedValueSchema, value);
+  return value === undefined;
 }
 
 export function isSymbolValue(value: BoundaryValue): value is symbol {
-  return Value.Check(SymbolValueSchema, value);
+  const boxed = Object(value);
+  return boxed !== value && boxed instanceof Symbol;
 }
 
 export function isBigIntValue(value: BoundaryValue): value is bigint {
-  return Value.Check(BigIntValueSchema, value);
+  const boxed = Object(value);
+  return boxed !== value && boxed instanceof BigInt;
 }

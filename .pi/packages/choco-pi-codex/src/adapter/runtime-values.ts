@@ -1,38 +1,77 @@
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+/**
+ * JavaScript runtime value universe at the Pi/host boundary (not JSON): it includes undefined,
+ * bigint, symbol and functions. Declared explicitly; the former TypeBox cyclic schema produced the
+ * same structural type.
+ */
+export type BoundaryValue =
+  | undefined
+  | null
+  | boolean
+  | number
+  | bigint
+  | string
+  | symbol
+  | ((...args: []) => BoundaryValue)
+  | BoundaryValue[]
+  | KeyedValues<BoundaryValue>
+  | {};
 
-const BoundaryValueReference = Type.Ref("BoundaryValue");
-export const BoundaryValueSchema = Type.Cyclic(
-  {
-    BoundaryValue: Type.Union([
-      Type.Undefined(),
-      Type.Null(),
-      Type.Boolean(),
-      Type.Number(),
-      Type.BigInt(),
-      Type.String(),
-      Type.Symbol(),
-      Type.Function([], BoundaryValueReference),
-      Type.Array(BoundaryValueReference),
-      Type.Record(Type.String(), BoundaryValueReference),
-      Type.Object({}),
-    ]),
-  },
-  "BoundaryValue",
-);
-export type BoundaryValue = Static<typeof BoundaryValueSchema>;
-const ShallowBoundaryValueSchema = Type.Unsafe<BoundaryValue>({});
+/** Open string-keyed record; generic so each owner names its own value contract. */
+interface KeyedValues<Value> {
+  [key: string]: Value;
+}
 
+/** Shape TypeBox infers a static type from; see the compat schemas below. */
+interface UnsafeSchemaOf<Sample> {
+  readonly type?: "object";
+  readonly "~unsafe": Sample;
+}
+
+/**
+ * Compatibility schema for callers that still hand it to TypeBox `Value.Check` or nest it in a
+ * TypeBox schema (registered-tool-bridge, local-version-warning). It is a plain JSON schema with no
+ * TypeBox import. The `~unsafe` member carries a `BoundaryValue` sample so TypeBox infers
+ * `BoundaryValue` from it (as `Type.Unsafe` did) without a cast.
+ *
+ * Behaviour change: the old cyclic schema also rejected a bare NaN/Infinity (TypeBox Number); this
+ * accepts it. Every caller checks JSON.parse output or schema fragments, which cannot hold them.
+ * Prefer `isBoundaryValue` in new code.
+ */
+export const BoundaryValueSchema: UnsafeSchemaOf<BoundaryValue> = { "~unsafe": {} };
+
+/**
+ * Shallow check; every value passes, matching the former `Type.Unsafe<BoundaryValue>({})`. It never
+ * walks the value, so live cyclic objects and throwing getters are safe.
+ */
 export function isBoundaryValue<T>(value: T): value is T & BoundaryValue {
-  return Value.Check(ShallowBoundaryValueSchema, value);
+  return Object.is(value, value);
 }
 
-export interface JsonObject {
-  [key: string]: BoundaryValue;
+export type JsonObject = KeyedValues<BoundaryValue>;
+
+/**
+ * Shallow object test: any non-null, non-array, non-function object (class instances, Map, Date and
+ * boxed primitives included, as `{ type: "object" }` accepted). It never enumerates properties, so
+ * getters on live Pi values are not invoked.
+ */
+export function isJsonObject<T>(value: T): value is T & JsonObject {
+  return (
+    value !== null &&
+    Object(value) === value &&
+    !Array.isArray(value) &&
+    !(value instanceof Function)
+  );
 }
 
-/** Shallow object validation avoids enumerating live Pi values or invoking their getters. */
-export const JsonObjectSchema = Type.Unsafe<JsonObject>({ type: "object" });
+/**
+ * Compatibility schema for callers still using TypeBox `Value.Check(JsonObjectSchema, v)` or
+ * `Type.Array(JsonObjectSchema)`; same plain-JSON-schema mechanism as `BoundaryValueSchema`.
+ * Prefer `isJsonObject` in new code.
+ */
+export const JsonObjectSchema: UnsafeSchemaOf<JsonObject> = {
+  type: "object",
+  "~unsafe": {},
+};
 
 type PresentProperties<T extends object> = {
   [Key in keyof T]?: Exclude<T[Key], undefined>;
@@ -44,16 +83,45 @@ export function conditionalProperties<T extends object>(condition: boolean, prop
   return result;
 }
 
-/** Return the same primitive category names as JavaScript's `typeof` for boundary values. */
-export function jsonValueType(
-  value: BoundaryValue,
-): "bigint" | "boolean" | "function" | "number" | "object" | "string" | "symbol" | "undefined" {
-  if (Value.Check(Type.String(), value)) return "string";
-  if (Value.Check(Type.Number(), value)) return "number";
-  if (Value.Check(Type.BigInt(), value)) return "bigint";
-  if (Value.Check(Type.Boolean(), value)) return "boolean";
-  if (Value.Check(Type.Symbol(), value)) return "symbol";
-  if (Value.Check(Type.Function([], Type.Unknown()), value)) return "function";
-  if (Value.Check(Type.Undefined(), value)) return "undefined";
+type JsonValueTypeName =
+  | "bigint"
+  | "boolean"
+  | "function"
+  | "number"
+  | "object"
+  | "string"
+  | "symbol"
+  | "undefined";
+
+// Identity against the wrapper rejects objects (including already-boxed values) and never calls
+// user code, so these cannot throw for null-prototype or throwing-toString inputs.
+function isPrimitiveString(value: BoundaryValue): boolean {
+  const boxed = Object(value);
+  return boxed !== value && boxed instanceof String;
+}
+
+function isPrimitiveBigInt(value: BoundaryValue): boolean {
+  const boxed = Object(value);
+  return boxed !== value && boxed instanceof BigInt;
+}
+
+function isPrimitiveSymbol(value: BoundaryValue): boolean {
+  const boxed = Object(value);
+  return boxed !== value && boxed instanceof Symbol;
+}
+
+/**
+ * Return the same primitive category names as JavaScript's `typeof` for boundary values.
+ * Old quirk kept: NaN and +/-Infinity were rejected by the TypeBox Number check and so reported
+ * "object"; only finite numbers report "number".
+ */
+export function jsonValueType(value: BoundaryValue): JsonValueTypeName {
+  if (isPrimitiveString(value)) return "string";
+  if (Number.isFinite(value)) return "number";
+  if (isPrimitiveBigInt(value)) return "bigint";
+  if (value === true || value === false) return "boolean";
+  if (isPrimitiveSymbol(value)) return "symbol";
+  if (value instanceof Function) return "function";
+  if (value === undefined) return "undefined";
   return "object";
 }
