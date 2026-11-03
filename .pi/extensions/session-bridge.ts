@@ -1,4 +1,10 @@
-import { isNumber, isObject, isString, type RuntimeValue } from "./lib/runtime-values.ts";
+import {
+  isNumber,
+  isObject,
+  isString,
+  runtimeTypeOf,
+  type RuntimeValue,
+} from "./lib/runtime-values.ts";
 import {
   effectiveSessionDeliveryMode,
   limitSessionWait,
@@ -131,6 +137,23 @@ function isRecord(value: RuntimeValue): value is Record<string, RuntimeValue> {
 
 function errorMessage(error: RuntimeValue): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+type DeliveryStage =
+  | "claim-unlink"
+  | "claim-restore"
+  | "claim-read"
+  | "claim-parse"
+  | "dispatch"
+  | "drain"
+  | "heartbeat"
+  | "watch";
+
+type DeliveryErrorDetails = { stage: DeliveryStage; errorName: string; code: string | null };
+
+function deliveryErrorDetails(stage: DeliveryStage, error: RuntimeValue): DeliveryErrorDetails {
+  const code = isRecord(error) && isString(error.code) ? error.code : null;
+  return { stage, errorName: error instanceof Error ? error.name : runtimeTypeOf(error), code };
 }
 
 function startupAdmission(): StartupAdmission {
@@ -1074,14 +1097,18 @@ export function installLiveSessionBridge(
     }
   };
 
-  const reportDeliveryError = (lifecycle: Lifecycle, error: RuntimeValue): void => {
+  const reportDeliveryError = (
+    lifecycle: Lifecycle,
+    stage: DeliveryStage,
+    error: RuntimeValue,
+  ): void => {
     if (!isCurrent(lifecycle)) return;
     pi.sendMessage(
       {
         customType: "choco-pi:session-bridge-error",
         content: `Session bridge delivery error: ${errorMessage(error)}`,
         display: true,
-        details: {},
+        details: deliveryErrorDetails(stage, error),
       },
       { triggerTurn: false },
     );
@@ -1096,7 +1123,7 @@ export function installLiveSessionBridge(
           await unlink(claim.claimedPath);
         } catch (error) {
           if (!isRecord(error) || error.code !== "ENOENT") {
-            reportDeliveryError(lifecycle, error);
+            reportDeliveryError(lifecycle, "claim-unlink", error);
             continue;
           }
         }
@@ -1108,7 +1135,7 @@ export function installLiveSessionBridge(
           await restoreClaim(lifecycle, claim.claimedPath, claim.sourcePath);
           if (isCurrent(lifecycle)) releaseMailboxSubmission(lifecycle.submitted, messageId);
         } catch (error) {
-          reportDeliveryError(lifecycle, error);
+          reportDeliveryError(lifecycle, "claim-restore", error);
         }
       }
     }
@@ -1156,7 +1183,7 @@ export function installLiveSessionBridge(
       try {
         await restoreClaim(lifecycle, claimedPath, sourcePath);
       } catch (restoreError) {
-        reportDeliveryError(lifecycle, restoreError);
+        reportDeliveryError(lifecycle, "claim-restore", restoreError);
       }
       throw error;
     }
@@ -1214,7 +1241,7 @@ export function installLiveSessionBridge(
         } catch (error) {
           if (!isCurrent(lifecycle)) return;
           if (error instanceof SyntaxError) {
-            reportDeliveryError(lifecycle, error);
+            reportDeliveryError(lifecycle, "claim-parse", error);
             await unlink(claimedPath);
             continue;
           }
@@ -1222,9 +1249,9 @@ export function installLiveSessionBridge(
           try {
             await restoreClaim(lifecycle, claimedPath, sourcePath);
           } catch (restoreError) {
-            reportDeliveryError(lifecycle, restoreError);
+            reportDeliveryError(lifecycle, "claim-restore", restoreError);
           }
-          reportDeliveryError(lifecycle, error);
+          reportDeliveryError(lifecycle, "claim-read", error);
           continue;
         }
         if (!isCurrent(lifecycle)) return;
@@ -1239,7 +1266,7 @@ export function installLiveSessionBridge(
         try {
           await dispatchClaimedMessage(lifecycle, message, claimedPath, sourcePath);
         } catch (error) {
-          reportDeliveryError(lifecycle, error);
+          reportDeliveryError(lifecycle, "dispatch", error);
         }
       }
       lifecycle.recoverClaimedMessages = false;
@@ -1248,7 +1275,7 @@ export function installLiveSessionBridge(
       lifecycle.mailboxRunning = false;
       if (isCurrent(lifecycle) && lifecycle.mailboxPending) {
         void drainMailbox(lifecycle).catch((error: RuntimeValue) =>
-          reportDeliveryError(lifecycle, error),
+          reportDeliveryError(lifecycle, "drain", error),
         );
       }
     }
@@ -1259,7 +1286,7 @@ export function installLiveSessionBridge(
       await dependencies.watchMailbox(directory, lifecycle.abortController.signal, () => {
         if (!isCurrent(lifecycle)) return;
         void drainMailbox(lifecycle).catch((error: RuntimeValue) =>
-          reportDeliveryError(lifecycle, error),
+          reportDeliveryError(lifecycle, "drain", error),
         );
       });
     } catch (error) {
@@ -1325,26 +1352,26 @@ export function installLiveSessionBridge(
     lifecycle.heartbeatTimer = setInterval(
       () =>
         void publish(lifecycle).catch((error: RuntimeValue) =>
-          reportDeliveryError(lifecycle, error),
+          reportDeliveryError(lifecycle, "heartbeat", error),
         ),
       HEARTBEAT_INTERVAL_MS,
     );
     lifecycle.mailboxTimer = setInterval(
       () =>
         void drainMailbox(lifecycle).catch((error: RuntimeValue) =>
-          reportDeliveryError(lifecycle, error),
+          reportDeliveryError(lifecycle, "drain", error),
         ),
       MAILBOX_FALLBACK_INTERVAL_MS,
     );
     lifecycle.heartbeatTimer.unref();
     lifecycle.mailboxTimer.unref();
     void watchMailbox(lifecycle, directory).catch((error: RuntimeValue) =>
-      reportDeliveryError(lifecycle, error),
+      reportDeliveryError(lifecycle, "watch", error),
     );
     await publish(lifecycle);
     if (isCurrent(lifecycle)) {
       void drainMailbox(lifecycle).catch((error: RuntimeValue) =>
-        reportDeliveryError(lifecycle, error),
+        reportDeliveryError(lifecycle, "drain", error),
       );
     }
   });
@@ -1364,7 +1391,7 @@ export function installLiveSessionBridge(
     if (isCurrent(lifecycle)) {
       await reconcileSubmitted(lifecycle);
       void drainMailbox(lifecycle).catch((error: RuntimeValue) =>
-        reportDeliveryError(lifecycle, error),
+        reportDeliveryError(lifecycle, "drain", error),
       );
     }
   });
