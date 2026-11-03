@@ -312,3 +312,7 @@ Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pas
 ## 2026-11-03 choco-pi patch: Pi SDK target 1.5.0 + pi-schema dependency
 
 Pi SDK pins move from `1.4.0` to exactly `1.5.0` and `@earendil-works/pi-schema@1.5.0` is added as a peer dependency (the extension loader has no alias for it).
+
+## 2026-11-04 choco-pi patch: zentui runtime guards no longer use TypeBox
+
+`extensions/zentui/runtime-values.ts` and `extensions/zentui/child-load.ts` no longer import `typebox`. `BoundaryValue` is the explicit `{} | null | undefined` type the former schema's `Static` collapsed to; the unused `BoundaryValueSchema`/`BoundaryRecordSchema` exports are removed. `isString` uses a pi-schema `str()` check; `isBigInt`/`isSymbol` use the boxed-identity check (boxed wrappers still rejected); `isNumber` still admits NaN and ±Infinity. The subagent registry guard stays open (extra keys allowed) and requires a callable `isChildSessionContext`. The package no longer declares or needs `typebox`. Test: `tests/runtime-guards.test.ts`.

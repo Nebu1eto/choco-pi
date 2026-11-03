@@ -1,6 +1,3 @@
-import { Type } from "typebox";
-import { Check } from "typebox/value";
-
 /**
  * Process-global registry published by choco-pi-subagents. Its
  * `isChildSessionContext()` reports whether the current async context is
@@ -8,16 +5,27 @@ import { Check } from "typebox/value";
  * factories run.
  */
 const SUBAGENTS_MANAGER_KEY = Symbol.for("pi-subagents:manager");
-const ChildContextRegistrySchema = Type.Object({
-  isChildSessionContext: Type.Function([], Type.Boolean()),
-});
+
+type ChildContextRegistry = { isChildSessionContext: () => boolean };
+
+type RegistryCandidate = {} | null | undefined;
+
+/** Open object (extra keys allowed, like the former schema) whose `isChildSessionContext` is callable. */
+function isChildContextRegistry(entry: RegistryCandidate): entry is ChildContextRegistry {
+  const boxed: { isChildSessionContext?: RegistryCandidate } = Object(entry);
+  if (boxed !== entry || boxed instanceof Function) return false;
+  return boxed.isChildSessionContext instanceof Function;
+}
 
 /**
  * True while a subagent child loads its extensions in this process. Absent or
  * malformed registries mean "not a child".
  */
 export function inSubagentChildLoad(): boolean {
-  const entry: unknown = Object.getOwnPropertyDescriptor(globalThis, SUBAGENTS_MANAGER_KEY)?.value;
-  if (!Check(ChildContextRegistrySchema, entry)) return false;
+  const entry: RegistryCandidate = Object.getOwnPropertyDescriptor(
+    globalThis,
+    SUBAGENTS_MANAGER_KEY,
+  )?.value;
+  if (!isChildContextRegistry(entry)) return false;
   return entry.isChildSessionContext() === true;
 }

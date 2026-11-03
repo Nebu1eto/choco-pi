@@ -1,47 +1,33 @@
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import { compile, str } from "@earendil-works/pi-schema";
 
-const BoundaryValueReference = Type.Ref("BoundaryValue");
-export const BoundaryValueSchema = Type.Cyclic(
-  {
-    BoundaryValue: Type.Union([
-      Type.Undefined(),
-      Type.Null(),
-      Type.Boolean(),
-      Type.Number(),
-      Type.BigInt(),
-      Type.String(),
-      Type.Symbol(),
-      Type.Function([], BoundaryValueReference),
-      Type.Array(BoundaryValueReference),
-      Type.Record(Type.String(), BoundaryValueReference),
-      Type.Object({}),
-    ]),
-  },
-  "BoundaryValue",
-);
-export type BoundaryValue = Static<typeof BoundaryValueSchema>;
+// oxlint anti-slop/no-runtime-typeof forbids typeof here, so these guards use instanceof, identity and a pi-schema string check.
+// The former schema's Static collapsed to this: every JS value, including functions and symbols.
+export type BoundaryValue = {} | null | undefined;
 
-export const BoundaryRecordSchema = Type.Record(Type.String(), BoundaryValueSchema);
-export type BoundaryRecord = Static<typeof BoundaryRecordSchema>;
-export type BoundaryPropertyMap = Record<PropertyKey, BoundaryValue>;
+/** An undecoded object keyed by arbitrary strings. */
+interface KeyedValues<Value> {
+  [key: string]: Value;
+}
 
+export type BoundaryRecord = KeyedValues<BoundaryValue>;
+interface PropertyValues<Value> {
+  [key: string]: Value;
+  [key: symbol]: Value;
+}
+
+export type BoundaryPropertyMap = PropertyValues<BoundaryValue>;
 export type HostCallable = (...args: BoundaryValue[]) => BoundaryValue;
 
-const StringSchema = Type.String();
-const NumberSchema = Type.Number();
-const BooleanSchema = Type.Boolean();
-const BigIntSchema = Type.BigInt();
-const SymbolSchema = Type.Symbol();
+const stringCheck = compile(str()).check;
 
 export function isBoundaryValue<Value>(value: Value): value is Value & BoundaryValue {
   if (
     value === undefined ||
     value === null ||
-    Check(StringSchema, value) ||
-    Check(BooleanSchema, value) ||
-    Check(BigIntSchema, value) ||
-    Check(SymbolSchema, value) ||
+    isString(value) ||
+    isBoolean(value) ||
+    isBigInt(value) ||
+    isSymbol(value) ||
     isNumber(value)
   ) {
     return true;
@@ -54,28 +40,33 @@ export function parseBoundaryValue<Value>(value: Value): BoundaryValue {
 }
 
 export function isString(value: BoundaryValue): value is string {
-  return Check(StringSchema, value);
+  return stringCheck(value);
 }
 
 export function isNumber(value: BoundaryValue): value is number {
+  // Admits NaN and +/-Infinity, as the previous helper did.
   return (
-    Check(NumberSchema, value) ||
-    Object.is(value, Number.NaN) ||
+    Number.isFinite(value) ||
+    Number.isNaN(value) ||
     Object.is(value, Number.POSITIVE_INFINITY) ||
     Object.is(value, Number.NEGATIVE_INFINITY)
   );
 }
 
 export function isBoolean(value: BoundaryValue): value is boolean {
-  return Check(BooleanSchema, value);
+  return value === true || value === false;
 }
 
 export function isBigInt(value: BoundaryValue): value is bigint {
-  return Check(BigIntSchema, value);
+  // The identity check rejects already-boxed BigInt wrappers.
+  const boxed = Object(value);
+  return boxed !== value && boxed instanceof BigInt;
 }
 
 export function isSymbol(value: BoundaryValue): value is symbol {
-  return Check(SymbolSchema, value);
+  // The identity check rejects already-boxed Symbol wrappers.
+  const boxed = Object(value);
+  return boxed !== value && boxed instanceof Symbol;
 }
 
 export function isCallable(value: BoundaryValue): value is HostCallable {
