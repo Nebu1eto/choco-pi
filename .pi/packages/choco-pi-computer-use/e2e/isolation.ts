@@ -38,13 +38,18 @@ export interface TierBHelper {
   app: string;
   socket: string;
 }
-export const scratchRoot = (): string =>
-  join(
-    "/tmp/choco-pi",
-    process.env.PI_SESSION_ID?.replaceAll(/[^a-zA-Z0-9_-]/g, "_") ||
-      new Date().toISOString().replaceAll(/[^a-zA-Z0-9_-]/g, "_"),
-    "e2e",
-  );
+/** `<PI_SCRATCH_DIR>/e2e` when the host provides it, else `/tmp/choco-pi/<PI_SESSION_ID>/e2e`. */
+export const scratchRoot = (
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string =>
+  env.PI_SCRATCH_DIR
+    ? join(env.PI_SCRATCH_DIR, "e2e")
+    : join(
+        "/tmp/choco-pi",
+        env.PI_SESSION_ID?.replaceAll(/[^a-zA-Z0-9_-]/g, "_") ||
+          new Date().toISOString().replaceAll(/[^a-zA-Z0-9_-]/g, "_"),
+        "e2e",
+      );
 export const slug = (model: string): string => model.replaceAll(/[^a-zA-Z0-9_-]/g, "-");
 export function plan(
   root: string,

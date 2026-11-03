@@ -27,40 +27,46 @@ export type ArtifactInput =
 // Raw $defs/$ref schemas: pi-schema builders cannot express recursion. Numbers are bounded to
 // reject NaN/Infinity as the previous schema library's number check did.
 const finiteNumber = { type: "number", minimum: -Number.MAX_VALUE, maximum: Number.MAX_VALUE };
-export const JsonSchema: Schema<ArtifactValue> = {
-  $ref: "#/$defs/Json",
-  $defs: {
-    Json: {
-      anyOf: [
-        { type: "null" },
-        { type: "boolean" },
-        finiteNumber,
-        { type: "string" },
-        { type: "array", items: { $ref: "#/$defs/Json" } },
-        { type: "object", additionalProperties: { $ref: "#/$defs/Json" } },
-      ],
-    },
+const JSON_DEF = {
+  Json: {
+    anyOf: [
+      { type: "null" },
+      { type: "boolean" },
+      finiteNumber,
+      { type: "string" },
+      { type: "array", items: { $ref: "#/$defs/Json" } },
+      { type: "object", additionalProperties: { $ref: "#/$defs/Json" } },
+    ],
   },
 };
+export const JsonSchema: Schema<ArtifactValue> = { $ref: "#/$defs/Json", $defs: JSON_DEF };
 /**
  * JSON-only recursion for embedding in object schemas. `undefined` is not JSON, so it is only
  * accepted by `isArtifactInput`; this schema is used on payloads decoded from JSON text.
  */
-export const InputSchema: Schema<ArtifactInput> = {
-  $ref: "#/$defs/Input",
-  $defs: {
-    Input: {
-      anyOf: [
-        { type: "null" },
-        { type: "boolean" },
-        finiteNumber,
-        { type: "string" },
-        { type: "array", items: { $ref: "#/$defs/Input" } },
-        { type: "object", additionalProperties: { $ref: "#/$defs/Input" } },
-      ],
-    },
+const INPUT_DEF = {
+  Input: {
+    anyOf: [
+      { type: "null" },
+      { type: "boolean" },
+      finiteNumber,
+      { type: "string" },
+      { type: "array", items: { $ref: "#/$defs/Input" } },
+      { type: "object", additionalProperties: { $ref: "#/$defs/Input" } },
+    ],
   },
 };
+export const InputSchema: Schema<ArtifactInput> = { $ref: "#/$defs/Input", $defs: INPUT_DEF };
+
+/**
+ * Hoists the recursive `$defs` of `JsonSchema`/`InputSchema` onto a schema that embeds them.
+ * pi-schema resolves `#/$defs/...` against the compiled root, so an embedded
+ * `InputSchema` inside `obj({...})` fails with "Unresolved $ref" unless the
+ * root carries the definitions (observed on the live Anthropic transport).
+ */
+export function withArtifactDefs<S extends object>(schema: S): S {
+  return { ...schema, $defs: { ...JSON_DEF, ...INPUT_DEF } };
+}
 
 /** Whether `value` is `ArtifactInput`: JSON recursion plus `undefined` anywhere. */
 export function isArtifactInput(value: RuntimeValue): value is ArtifactInput {

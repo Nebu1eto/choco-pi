@@ -1,7 +1,7 @@
 import { arr, bool, int, lit, obj, opt, str, union, type Static } from "@earendil-works/pi-schema";
 import { isString, matches } from "../schema-check.ts";
 import { isCandidateRecord } from "../../../../.pi/packages/choco-pi-compaction/src/background/contract.ts";
-import { InputSchema, type ArtifactInput } from "../artifacts.ts";
+import { InputSchema, withArtifactDefs, type ArtifactInput } from "../artifacts.ts";
 import type { CheckEvidence, Observation } from "../checks.ts";
 import { FAKE_CHECKPOINT_MARKER } from "../fake-sse.ts";
 import type { RequestBranch } from "../request-branch.ts";
@@ -12,11 +12,8 @@ import { evidence, type Host } from "./types.ts";
 /** Matches nothing: a live run without a committed checkpoint has no marker. */
 const NO_CHECKPOINT = "\u0000no-committed-checkpoint";
 /** Shape of a recorded `transport` evidence record (see capturePayload). */
-const TransportRecordSchema = obj(
-  {
-    payload: obj({ messages: arr(InputSchema) }, { open: true }),
-  },
-  { open: true },
+const TransportRecordSchema = withArtifactDefs(
+  obj({ payload: obj({ messages: arr(InputSchema) }, { open: true }) }, { open: true }),
 );
 const PassesSchema = obj({ passes: int() }, { open: true });
 const PromptInputSchema = obj(

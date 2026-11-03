@@ -324,3 +324,7 @@ Tool parameter schemas in `extensions/computer-use.ts` are built with `@earendil
 - **Literal unions.** The `button`, `until`, `kind` and `mode` literal unions are now enums (`oneOf`) in the emitted JSON Schema (`enum` instead of `anyOf` of `const`); the accepted values are the same. The `act_ui` action variants stay an `anyOf` of `const`-tagged objects.
 - **Numbers.** pi-schema `num` admits NaN/Infinity where TypeBox did not; arguments arrive as decoded JSON, which cannot carry them, so no extra bound was added.
 - **Tests.** `tests/action-schema.test.ts` validates with `compile(...).check` instead of `Value.Check` and adds open-object, optional, bound and enum cases for the other tools.
+
+## 2026-11-03 choco-pi patch: e2e scratch root follows PI_SCRATCH_DIR (P15)
+
+`e2e/isolation.ts` `scratchRoot()` now returns `<PI_SCRATCH_DIR>/e2e` when the host provides `PI_SCRATCH_DIR` (the root session's scratch directory, shared by subagents), and otherwise keeps the previous `/tmp/choco-pi/<sanitised PI_SESSION_ID or timestamp>/e2e`. It takes an optional env argument for tests. `e2e/README.md` states the same rule. Test: `tests/e2e-scratch-root.test.ts`.

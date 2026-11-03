@@ -4,7 +4,7 @@ import {
   parseBetaHeader,
   parseWireBody,
 } from "../../../.pi/packages/choco-pi-compaction/src/anthropic/capture.ts";
-import { InputSchema, isArtifactInput, type ArtifactInput } from "./artifacts.ts";
+import { InputSchema, isArtifactInput, withArtifactDefs, type ArtifactInput } from "./artifacts.ts";
 import { estimateTokens } from "./budget.ts";
 import type { HostState, ResponseDispatch } from "./host-state.ts";
 import { billedInput, billedOutput, type LiveLedger, type RequestKind } from "./live-ledger.ts";
@@ -21,7 +21,7 @@ export function requestOrigin(input: Parameters<typeof globalThis.fetch>[0]): st
 }
 
 const LaneSchema = obj({ compaction: unknown() }, { open: true });
-const LaneFieldSchema = obj({ compaction: InputSchema }, { open: true });
+const LaneFieldSchema = withArtifactDefs(obj({ compaction: InputSchema }, { open: true }));
 
 /** The lane request's `compaction` field and `anthropic-beta` values (no other header). */
 export function recordLaneRequest(
@@ -40,7 +40,7 @@ const ToolsSchema = obj(
   },
   { open: true },
 );
-const SystemSchema = obj({ system: InputSchema }, { open: true });
+const SystemSchema = withArtifactDefs(obj({ system: InputSchema }, { open: true }));
 
 /** Classifies an actual serialized Anthropic body by what production put on it. */
 export function classify(payload: ArtifactInput): RequestKind {

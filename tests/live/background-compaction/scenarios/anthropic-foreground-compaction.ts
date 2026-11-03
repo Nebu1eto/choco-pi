@@ -13,7 +13,7 @@ import {
   isAnthropicDetails,
   type AnthropicDetails,
 } from "../../../../.pi/packages/choco-pi-compaction/src/anthropic/details.ts";
-import { JsonSchema, type EvidenceRecord } from "../artifacts.ts";
+import { JsonSchema, withArtifactDefs, type EvidenceRecord } from "../artifacts.ts";
 import type { CheckEvidence, Observation } from "../checks.ts";
 import type { WireRequest } from "../host-state.ts";
 import {
@@ -39,7 +39,9 @@ const AUTO_POINT = 450_000;
 /** Input tokens each automatic-route answer reports: past the point, under the cap. */
 const AUTO_REPORTED_INPUT = AUTO_POINT + 10_000;
 
-const LaneRequestSchema = obj({ compaction: JsonSchema, betas: arr(str()) }, { open: true });
+const LaneRequestSchema = withArtifactDefs(
+  obj({ compaction: JsonSchema, betas: arr(str()) }, { open: true }),
+);
 
 /** The `compaction` field a lane request is expected to carry. */
 type LaneCompaction = {
