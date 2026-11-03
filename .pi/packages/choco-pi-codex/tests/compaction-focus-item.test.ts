@@ -7,8 +7,8 @@ import {
   type AssistantMessage,
   type Model,
 } from "@earendil-works/pi-ai";
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, compile, obj, unknown } from "@earendil-works/pi-schema";
+import type { Static } from "@earendil-works/pi-schema";
 import {
   COMPACTION_FOCUS_MAX_CODE_POINTS,
   compactionFocusItem,
@@ -31,11 +31,8 @@ const model: Model<"openai-responses"> = {
   maxTokens: 2048,
 };
 
-const CallbackSchema = Type.Function([Type.Unknown()], Type.Unknown());
-const BodySchema = Type.Object(
-  { input: Type.Array(Type.Unknown()) },
-  { additionalProperties: true },
-);
+const BodySchema = obj({ input: arr(unknown()) }, { open: true });
+const isBody = compile(BodySchema).check;
 
 function assistant(stopReason: "stop" | "error", errorMessage?: string): AssistantMessage {
   const message: AssistantMessage = {
@@ -77,20 +74,21 @@ async function harness(reject: (call: number) => Rejection | undefined = () => u
       const call = payloads.length;
       void (async () => {
         const onPayload = options && "onPayload" in options ? options.onPayload : undefined;
-        if (!Value.Check(CallbackSchema, onPayload)) {
+        if (!(onPayload instanceof Function)) {
           stream.end();
           return;
         }
         const payload: unknown = await onPayload(
           buildRequestBody(model, normalizeContext(context)),
+          model,
         );
-        assert.ok(Value.Check(BodySchema, payload));
+        assert.ok(isBody(payload));
         payloads.push(payload);
         const rejection = reject(call);
         if (rejection !== undefined) {
           const onResponse = options && "onResponse" in options ? options.onResponse : undefined;
-          if (Value.Check(CallbackSchema, onResponse))
-            await onResponse({ status: rejection.status, headers: {} });
+          if (onResponse instanceof Function)
+            await onResponse({ status: rejection.status, headers: {} }, model);
           stream.push({
             type: "error",
             reason: "error",
@@ -101,7 +99,7 @@ async function harness(reject: (call: number) => Rejection | undefined = () => u
         }
         const onOutputItemDone =
           options && "onOutputItemDone" in options ? options.onOutputItemDone : undefined;
-        if (Value.Check(CallbackSchema, onOutputItemDone))
+        if (onOutputItemDone instanceof Function)
           onOutputItemDone({ type: "compaction", id: "cmp-1", encrypted_content: "x" });
         stream.push({ type: "done", reason: "stop", message: assistant("stop") });
       })();

@@ -1,5 +1,5 @@
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import { isString } from "../value-guards.ts";
+import { isJsonObject, type JsonObject } from "../../adapter/runtime-values.ts";
 import { shortHash } from "./signatures.ts";
 
 type ToolFamily = "function" | "custom" | "search";
@@ -10,17 +10,14 @@ type PairedCall = {
   index: number;
 };
 
-const HistoryRecordType = Type.Record(Type.String(), Type.Unknown());
-type HistoryRecord = Static<typeof HistoryRecordType>;
-const HistoryRecordSchema = Type.Unsafe<HistoryRecord>({ type: "object" });
-const StringSchema = Type.String();
+type HistoryRecord = JsonObject;
 
 function isRecord<T>(value: T): value is Extract<T, object> & HistoryRecord {
-  return Check(HistoryRecordSchema, value);
+  return isJsonObject(value);
 }
 
 function callId<T>(item: T): string | undefined {
-  return isRecord(item) && Check(StringSchema, item["call_id"]) ? item["call_id"] : undefined;
+  return isRecord(item) && isString(item["call_id"]) ? item["call_id"] : undefined;
 }
 
 function callFamily<T>(item: T): ToolFamily | undefined {
@@ -38,7 +35,7 @@ function outputFamily<T>(item: T): ToolFamily | undefined {
   if (
     item["type"] === "tool_search_output" &&
     item["execution"] !== "server" &&
-    Check(StringSchema, item["call_id"])
+    isString(item["call_id"])
   )
     return "search";
   return undefined;
@@ -46,7 +43,7 @@ function outputFamily<T>(item: T): ToolFamily | undefined {
 
 function syntheticOutputId(prefix: string, call: HistoryRecord): string | undefined {
   const sourceId = call["id"];
-  return Check(StringSchema, sourceId) && sourceId !== ""
+  return isString(sourceId) && sourceId !== ""
     ? `${prefix}_${shortHash(`${prefix}:${sourceId}`)}`
     : undefined;
 }

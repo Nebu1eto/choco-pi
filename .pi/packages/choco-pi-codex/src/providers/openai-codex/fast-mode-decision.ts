@@ -1,6 +1,6 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import { isJsonObject } from "../../adapter/runtime-values.ts";
+import { isBoolean, isFunction, isRevision, isString } from "../value-guards.ts";
 import {
   isOpenAIPlatformModel,
   isOpenAISubscriptionSignInModel,
@@ -56,60 +56,66 @@ type FastModeBridgeHost = typeof globalThis & {
 };
 
 const bridgeDecisions = new WeakSet<CodexFastModeDecision>();
-const FastModeBridgeSchema = Type.Object({
-  version: Type.Literal(1),
-  get: Type.Function([Type.String()], Type.Undefined()),
-  register: Type.Function([Type.Object({ sessionId: Type.String() })], Type.Undefined()),
-  createExtension: Type.Function([Type.Object({ sessionId: Type.String() })], Type.Undefined()),
-});
-const FastModeDecisionSchema = Type.Object({
-  sessionId: Type.String(),
-  requested: Type.Boolean(),
-  source: Type.Union([
-    Type.Literal("default"),
-    Type.Literal("explicit"),
-    Type.Literal("inherited"),
-  ]),
-  revision: Type.Integer({ minimum: 0 }),
-  supported: Type.Boolean(),
-  active: Type.Boolean(),
-  serviceTier: Type.Optional(
-    Type.Union([Type.Literal("priority"), Type.Literal("standard"), Type.Undefined()]),
-  ),
-  reason: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
-});
-const FastModeStateSchema = Type.Object({
-  sessionId: Type.String(),
-  requested: Type.Boolean(),
-  source: Type.Union([
-    Type.Literal("default"),
-    Type.Literal("explicit"),
-    Type.Literal("inherited"),
-  ]),
-  revision: Type.Integer({ minimum: 0 }),
-});
-const FastModeControllerSchema = Type.Object({
-  getState: Type.Function([], FastModeStateSchema),
-  decide: Type.Function([], FastModeDecisionSchema),
-  set: Type.Function([], FastModeStateSchema),
-});
-type ParsedFastModeBridge = Static<typeof FastModeBridgeSchema>;
+// Bridge, controller, state and decision come from live host objects whose members may sit on the
+// prototype, and function members cannot be described as JSON, so these are shallow property
+// guards (shape only, like the TypeBox object schemas they replace).
+function isFastModeSource<Value>(value: Value): value is Value & FastModeState["source"] {
+  return value === "default" || value === "explicit" || value === "inherited";
+}
+
+function isFastModeBridge<Value>(value: Value): value is Value & FastModeBridge {
+  return (
+    isJsonObject(value) &&
+    value["version"] === 1 &&
+    isFunction(value["get"]) &&
+    isFunction(value["register"]) &&
+    isFunction(value["createExtension"])
+  );
+}
+
+function isFastModeState<Value>(value: Value): value is Value & FastModeState {
+  return (
+    isJsonObject(value) &&
+    isString(value["sessionId"]) &&
+    isBoolean(value["requested"]) &&
+    isFastModeSource(value["source"]) &&
+    isRevision(value["revision"])
+  );
+}
+
+function isFastModeDecision<Value>(value: Value): value is Value & CodexFastModeDecision {
+  if (!isFastModeState(value) || !isJsonObject(value)) return false;
+  const serviceTier = value["serviceTier"];
+  const reason = value["reason"];
+  return (
+    isBoolean(value["supported"]) &&
+    isBoolean(value["active"]) &&
+    (serviceTier === undefined || serviceTier === "priority" || serviceTier === "standard") &&
+    (reason === undefined || isString(reason))
+  );
+}
+
+function isFastModeController<Value>(value: Value): value is Value & FastModeController {
+  return (
+    isJsonObject(value) &&
+    isFunction(value["getState"]) &&
+    isFunction(value["decide"]) &&
+    isFunction(value["set"])
+  );
+}
 
 function validatedBridge(): FastModeBridge | undefined {
   const host: FastModeBridgeHost = globalThis;
   const candidate = host[FAST_MODE_BRIDGE_SYMBOL];
-  if (!Check(FastModeBridgeSchema, candidate)) return undefined;
-  const parsed: ParsedFastModeBridge = candidate;
-  // TypeBox validates the callable bridge surface; the named contract supplies its domain results.
-  if (parsed.version !== 1) return undefined;
-  return candidate;
+  // The guard validates the callable bridge surface; the named contract supplies its domain results.
+  return isFastModeBridge(candidate) ? candidate : undefined;
 }
 
 function validDecision(
   decision: CodexFastModeDecision,
   sessionId: string,
 ): decision is CodexFastModeDecision {
-  return decision.sessionId === sessionId && Check(FastModeDecisionSchema, decision);
+  return decision.sessionId === sessionId && isFastModeDecision(decision);
 }
 
 /** True when `model` is the stock `openai` provider on api.openai.com with subscription OAuth. */
@@ -156,7 +162,7 @@ export function snapshotCodexFastModeDecision(
 ): CodexFastModeDecision {
   const neutralize = isOpenAISignInFastModeModel(model, signIn);
   const controller = sessionId ? validatedBridge()?.get(sessionId) : undefined;
-  if (controller && Check(FastModeControllerSchema, controller) && sessionId) {
+  if (controller && isFastModeController(controller) && sessionId) {
     const decision = controller.decide(model);
     if (validDecision(decision, sessionId)) {
       const snapshot = neutralize
@@ -182,9 +188,9 @@ export function snapshotCodexFastModeDecision(
 export function isCurrentCodexFastModeDecision(decision: CodexFastModeDecision): boolean {
   if (!bridgeDecisions.has(decision)) return true;
   const controller = validatedBridge()?.get(decision.sessionId);
-  if (!controller || !Check(FastModeControllerSchema, controller)) return false;
+  if (!controller || !isFastModeController(controller)) return false;
   const state = controller.getState();
-  return Check(FastModeStateSchema, state) && state.revision === decision.revision;
+  return isFastModeState(state) && state.revision === decision.revision;
 }
 
 export function initializeCodexFastModeDefault(
@@ -192,9 +198,9 @@ export function initializeCodexFastModeDefault(
   requested: boolean,
 ): FastModeState | undefined {
   const controller = validatedBridge()?.get(sessionId);
-  if (!controller || !Check(FastModeControllerSchema, controller)) return undefined;
+  if (!controller || !isFastModeController(controller)) return undefined;
   const state = controller.getState();
-  if (!Check(FastModeStateSchema, state) || state.source !== "default") return state;
+  if (!isFastModeState(state) || state.source !== "default") return state;
   return state.requested === requested ? state : controller.set(requested, "default");
 }
 

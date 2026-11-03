@@ -1,25 +1,34 @@
 import { relative } from "node:path";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, bool, compile, nullable, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
+import { finiteNum } from "../../value-guards.ts";
 import { parsePatchActions } from "../../patch/parser.ts";
 import { ExecutePatchError, type ExecutePatchResult } from "../../patch/types.ts";
 import { getBundledApplyPatchBinaryPath } from "./binary.ts";
 import { parseSingleJsonLine, runBundledTool } from "../native/runner.ts";
 
-const ExecutePatchResultSchema = Type.Object({
-  changedFiles: Type.Array(Type.String()),
-  createdFiles: Type.Array(Type.String()),
-  deletedFiles: Type.Array(Type.String()),
-  movedFiles: Type.Array(Type.String()),
-  fuzz: Type.Number(),
-});
+// Decoded from the native binary's JSON output; open objects as the TypeBox schema was.
+const ExecutePatchResultSchema = obj(
+  {
+    changedFiles: arr(str()),
+    createdFiles: arr(str()),
+    deletedFiles: arr(str()),
+    movedFiles: arr(str()),
+    fuzz: finiteNum(),
+  },
+  { open: true },
+);
 
-const RustApplyPatchJsonSchema = Type.Object({
-  status: Type.Union([Type.Literal("success"), Type.Literal("failure")]),
-  error: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-  exact: Type.Optional(Type.Boolean()),
-  result: ExecutePatchResultSchema,
-});
+const isRustApplyPatchJson = compile(
+  obj(
+    {
+      status: oneOf(["success", "failure"]),
+      error: opt(nullable(str())),
+      exact: opt(bool()),
+      result: ExecutePatchResultSchema,
+    },
+    { open: true },
+  ),
+).check;
 
 interface RustApplyPatchJson {
   status: "success" | "failure";
@@ -30,7 +39,7 @@ interface RustApplyPatchJson {
 
 function parseRustApplyPatchJson(stdout: string): RustApplyPatchJson {
   const parsed = parseSingleJsonLine(stdout, "apply_patch");
-  if (!Value.Check(RustApplyPatchJsonSchema, parsed)) {
+  if (!isRustApplyPatchJson(parsed)) {
     throw new Error("apply_patch returned invalid structured JSON output");
   }
   return parsed;

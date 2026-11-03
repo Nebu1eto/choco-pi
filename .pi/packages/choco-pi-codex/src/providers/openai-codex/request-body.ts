@@ -1,3 +1,4 @@
+import { isJsonObject } from "../../adapter/runtime-values.ts";
 import {
   clampThinkingLevel,
   getCurrentSystemPrompt,
@@ -8,8 +9,6 @@ import {
   type Model,
   type TranscriptContext,
 } from "@earendil-works/pi-ai";
-import { Type } from "typebox";
-import { Check } from "typebox/value";
 import {
   CODEX_TOOL_CALL_PROVIDERS,
   convertResponsesMessages,
@@ -26,11 +25,16 @@ interface ModelCompat {
   supportsMidConvoSystemMessages?: boolean | undefined;
 }
 
+function isModelCompat<Value>(value: Value): value is Value & ModelCompat {
+  return isJsonObject(value);
+}
+
 // Model metadata is a live registry object; keep these guards shallow as the former casts were.
-const ModelCompatSchema = Type.Unsafe<ModelCompat>({ type: "object" });
-const ThinkingLevelMapSchema = Type.Unsafe<Record<string, string | null | undefined>>({
-  type: "object",
-});
+function isThinkingLevelMap<Value>(
+  value: Value,
+): value is Value & Record<string, string | null | undefined> {
+  return isJsonObject(value);
+}
 
 function clampOpenAIPromptCacheKey(key: string | undefined): string | undefined {
   if (key === undefined) return undefined;
@@ -56,7 +60,7 @@ export function buildRequestBody<TApi extends Api>(
   context: TranscriptContext,
   options?: OpenAICodexStreamOptions,
 ): ResponsesBody {
-  const compat = Check(ModelCompatSchema, model.compat) ? model.compat : undefined;
+  const compat = isModelCompat(model.compat) ? model.compat : undefined;
   const supportsStrictMode = compat?.supportsStrictMode ?? true;
   const deferredToolsMode = compat?.supportsAdditionalTools
     ? "additional-tools"
@@ -133,7 +137,7 @@ export function buildRequestBody<TApi extends Api>(
   const reasoningEffort =
     options?.reasoningEffort ?? (clampedReasoning === "off" ? undefined : clampedReasoning);
   if (reasoningEffort !== undefined) {
-    const thinkingLevelMap = Check(ThinkingLevelMapSchema, model.thinkingLevelMap)
+    const thinkingLevelMap = isThinkingLevelMap(model.thinkingLevelMap)
       ? model.thinkingLevelMap
       : undefined;
     const effort =

@@ -1,5 +1,5 @@
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { isJsonObject } from "../../adapter/runtime-values.ts";
+import { compile, obj, oneOf, str } from "@earendil-works/pi-schema";
 import type {
   CachedWebSocketContinuationState,
   CachedWebSocketRequestBodyResult,
@@ -10,15 +10,15 @@ import type {
   WebSocketContinuationDecision,
 } from "./types.ts";
 
-const CanonicalRecordSchema = Type.Unsafe<ProtocolObject>({ type: "object" });
-const FunctionCallSchema = Type.Object({
-  type: Type.Union([Type.Literal("function_call"), Type.Literal("custom_tool_call")]),
-  call_id: Type.String(),
-});
-const FunctionCallOutputSchema = Type.Object({
-  type: Type.Union([Type.Literal("function_call_output"), Type.Literal("custom_tool_call_output")]),
-  call_id: Type.String(),
-});
+const functionCallValidator = compile(
+  obj({ type: oneOf(["function_call", "custom_tool_call"]), call_id: str() }, { open: true }),
+);
+const functionCallOutputValidator = compile(
+  obj(
+    { type: oneOf(["function_call_output", "custom_tool_call_output"]), call_id: str() },
+    { open: true },
+  ),
+);
 
 type ContinuationComparableBody = Omit<
   ResponsesBody,
@@ -51,9 +51,13 @@ export function responseInputsEqual(
   );
 }
 
+function isCanonicalRecord<Value>(value: Value): value is Value & ProtocolObject {
+  return isJsonObject(value);
+}
+
 function canonicalResponseValue(value: ProtocolPropertyValue): ProtocolPropertyValue {
   if (Array.isArray(value)) return value.map(canonicalResponseValue);
-  if (!Check(CanonicalRecordSchema, value)) return value;
+  if (!isCanonicalRecord(value)) return value;
   const canonical: ProtocolObject = {};
   for (const key of Object.keys(value).sort()) {
     if (key === "internal_chat_message_metadata_passthrough") continue;
@@ -87,11 +91,11 @@ function requestBodiesMatchExceptInput(a: ResponsesBody, b: ResponsesBody): bool
 }
 
 function getFunctionCallId<T>(item: T): string | undefined {
-  return Check(FunctionCallSchema, item) ? item.call_id : undefined;
+  return functionCallValidator.check(item) ? item.call_id : undefined;
 }
 
 function getFunctionCallOutputId<T>(item: T): string | undefined {
-  return Check(FunctionCallOutputSchema, item) ? item.call_id : undefined;
+  return functionCallOutputValidator.check(item) ? item.call_id : undefined;
 }
 
 function getPendingToolOutputDelta(

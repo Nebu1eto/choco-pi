@@ -1,3 +1,4 @@
+import { isString } from "../value-guards.ts";
 import {
   appendAssistantMessageDiagnostic,
   createAssistantMessageDiagnostic,
@@ -10,8 +11,7 @@ import {
   type TranscriptContext,
   type Transport,
 } from "@earendil-works/pi-ai";
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { compile, lit, obj } from "@earendil-works/pi-schema";
 import { conditionalProperties } from "../../adapter/runtime-values.ts";
 import type { CodexConversionConfig } from "../../adapter/activation/config.ts";
 import { createGrammarToolInputProperties } from "../constrained-sampling.ts";
@@ -107,8 +107,9 @@ import {
   validateCanonicalSessionRequest,
 } from "./session-continuity.ts";
 
-const CompactionTriggerSchema = Type.Object({ type: Type.Literal("compaction_trigger") });
-const StringRequestBodySchema = Type.String();
+const compactionTriggerValidator = compile(
+  obj({ type: lit("compaction_trigger") }, { open: true }),
+);
 
 export type CodexProviderRuntimeConfig = Pick<CodexConversionConfig, "openai" | "executionMode"> &
   Partial<Pick<CodexConversionConfig, "compaction">>;
@@ -130,7 +131,7 @@ export interface CodexTransportRecoveryDependencies {
 }
 
 function diagnosticsLane(body: ResponsesBody): Exclude<CodexDiagnosticsLane, "prewarm"> {
-  return body.input.some((item) => Check(CompactionTriggerSchema, item))
+  return body.input.some((item) => compactionTriggerValidator.check(item))
     ? "compaction"
     : "response";
 }
@@ -282,7 +283,7 @@ async function openCodexSSE<TApi extends Api>(
 }
 
 export function snapshotCodexSSEBody(body: string | Uint8Array): string | Uint8Array<ArrayBuffer> {
-  if (Check(StringRequestBodySchema, body)) return body;
+  if (isString(body)) return body;
   const snapshot = new Uint8Array(body.byteLength);
   snapshot.set(body);
   return snapshot;

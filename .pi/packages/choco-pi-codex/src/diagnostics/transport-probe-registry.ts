@@ -1,36 +1,46 @@
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import { compile, bool, num, obj, opt, str, type Static } from "@earendil-works/pi-schema";
+import { isJsonObject } from "../adapter/runtime-values.ts";
+import { isFunction } from "../providers/value-guards.ts";
 
 export const TRANSPORT_PROBE_SYMBOL: unique symbol = Symbol.for("choco-pi.transport-probe");
 
-const TransportProbeRecordSchema = Type.Object({
-  probeInstance: Type.Optional(Type.String()),
-  requestId: Type.Optional(Type.Number()),
-  stream: Type.String(),
-  ts: Type.String(),
-  provider: Type.String(),
-  model: Type.String(),
-  continuation: Type.String(),
-  previousResponseId: Type.Boolean(),
-  nativeSteering: Type.Optional(Type.Boolean()),
-  fullInputItemCount: Type.Number(),
-  sentInputItemCount: Type.Number(),
-});
+// Counters are in-process numbers: bound them so NaN and Infinity stay rejected.
+const finiteNumber = () => num({ minimum: -Number.MAX_VALUE, maximum: Number.MAX_VALUE });
+const transportProbeRecordSchema = obj(
+  {
+    probeInstance: opt(str()),
+    requestId: opt(finiteNumber()),
+    stream: str(),
+    ts: str(),
+    provider: str(),
+    model: str(),
+    continuation: str(),
+    previousResponseId: bool(),
+    nativeSteering: opt(bool()),
+    fullInputItemCount: finiteNumber(),
+    sentInputItemCount: finiteNumber(),
+  },
+  { open: true },
+);
+const transportProbeRecordValidator = compile(transportProbeRecordSchema);
 
-export type TransportProbeRecord = Static<typeof TransportProbeRecordSchema>;
+export type TransportProbeRecord = Static<typeof transportProbeRecordSchema>;
 
-const TransportProbeRegistrySchema = Type.Object({
-  publish: Type.Function([TransportProbeRecordSchema], Type.Void()),
-});
+// The registry is a live process-global object; its function member may be inherited.
+function hasPublish<Value>(
+  value: Value,
+): value is Value & { publish(record: TransportProbeRecord): void } {
+  return isJsonObject(value) && isFunction(value["publish"]);
+}
 
 /** Validate at the process-global boundary and keep probe failures off the request path. */
 export function publishTransportProbe(record: TransportProbeRecord): void {
-  if (!Value.Check(TransportProbeRecordSchema, record)) return;
+  if (!transportProbeRecordValidator.check(record)) return;
   const candidate: unknown = Object.getOwnPropertyDescriptor(
     globalThis,
     TRANSPORT_PROBE_SYMBOL,
   )?.value;
-  if (!Value.Check(TransportProbeRegistrySchema, candidate)) return;
+  if (!hasPublish(candidate)) return;
   try {
     candidate.publish(record);
   } catch {

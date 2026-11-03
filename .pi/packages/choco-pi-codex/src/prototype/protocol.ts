@@ -1,9 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { Check } from "typebox/value";
 import {
   demoTool,
-  emptyArgumentsSchema,
+  isEmptyArguments,
   type WireEvent,
   type WireRequest,
   type WireUsage,
@@ -146,7 +145,7 @@ export class PrototypeTurn {
             if (!callId || this.calls.has(callId) || this.calls.size >= 1) {
               throw new Error("prototype_duplicate_or_extra_call");
             }
-            if (!Check(emptyArgumentsSchema, JSON.parse(item.arguments ?? "null"))) {
+            if (!isEmptyArguments(JSON.parse(item.arguments ?? "null"))) {
               throw new Error("prototype_invalid_tool_arguments");
             }
             this.calls.add(callId);

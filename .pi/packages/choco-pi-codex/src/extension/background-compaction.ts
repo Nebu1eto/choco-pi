@@ -1,3 +1,6 @@
+import { isBoolean, isNonEmptyString, isNonNegativeInteger } from "../value-guards.ts";
+import { isJsonObject } from "../adapter/runtime-values.ts";
+import { jsonEqual } from "../../../choco-pi-compaction/src/background/json-equal.ts";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -5,8 +8,6 @@ import {
   type ExtensionContext,
   type SessionBeforeCompactEvent,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import { ownerKeyFor } from "../../../choco-pi-compaction/src/ownership.ts";
 import { registerSessionNativeRefresher } from "../../../choco-pi-compaction/src/background-host/native-refresh.ts";
 import { loadEffectiveBackgroundSettings } from "../../../choco-pi-compaction/src/background/settings.ts";
@@ -71,14 +72,10 @@ import { withLiveCtx } from "./live-context.ts";
  */
 export const codexBackgroundOwnerKey = ownerKeyFor;
 
-const AdoptionSignalSchema = Type.Object(
-  { version: Type.Literal(1), willAdopt: Type.Function([], Type.Unknown()) },
-  { additionalProperties: true },
-);
 function isAdoptionSignal<T>(source: T): source is T & {
   readonly willAdopt: (sessionId: string, event: SessionBeforeCompactEvent) => Promise<boolean>;
 } {
-  return Value.Check(AdoptionSignalSchema, source);
+  return isJsonObject(source) && source["version"] === 1 && source["willAdopt"] instanceof Function;
 }
 /** Avoid importing the host extension's provider implementations into the Codex package. */
 export async function willAdoptCodexBackgroundCheckpoint(
@@ -92,7 +89,7 @@ export async function willAdoptCodexBackgroundCheckpoint(
   if (slot === undefined) return false;
   if (!isAdoptionSignal(slot)) throw new Error("Invalid background compaction adoption signal");
   const answer = await slot.willAdopt(sessionId, event);
-  if (!Value.Check(Type.Boolean(), answer)) throw new Error("Invalid background adoption decision");
+  if (!isBoolean(answer)) throw new Error("Invalid background adoption decision");
   return answer;
 }
 
@@ -110,14 +107,16 @@ export function codexBackgroundAuthToken(
   return undefined;
 }
 
-const ImageSettingsSchema = Type.Object(
-  {
-    images: Type.Optional(
-      Type.Object({ blockImages: Type.Optional(Type.Boolean()) }, { additionalProperties: true }),
-    ),
-  },
-  { additionalProperties: true },
-);
+/** Image block setting of a decoded settings file; "invalid" when its shape is wrong. */
+function readBlockImagesSetting<T>(settings: T): boolean | undefined | "invalid" {
+  if (!isJsonObject(settings)) return "invalid";
+  const images = settings["images"];
+  if (images === undefined) return undefined;
+  if (!isJsonObject(images)) return "invalid";
+  const blockImages = images["blockImages"];
+  if (blockImages === undefined) return undefined;
+  return isBoolean(blockImages) ? blockImages : "invalid";
+}
 
 /** Where and with which vendor rows the Codex lane's background settings are read. */
 export interface CodexBackgroundSettingsInput {
@@ -166,13 +165,14 @@ export async function resolveCodexBackgroundSettings(
         diagnostic: "Cannot snapshot image settings; Codex background compaction disabled",
       };
     }
-    if (!Value.Check(ImageSettingsSchema, settings))
+    const setting = readBlockImagesSetting(settings);
+    if (setting === "invalid")
       return {
         enabled: false,
         blockImages: false,
         diagnostic: "Invalid image settings; Codex background compaction disabled",
       };
-    if (settings.images?.blockImages !== undefined) blockImages = settings.images.blockImages;
+    if (setting !== undefined) blockImages = setting;
   }
   return { enabled: true, blockImages };
 }
@@ -277,11 +277,13 @@ interface BindingTable {
  * instance loaded it.
  */
 const BINDING_TABLE_SYMBOL = Symbol.for("choco-pi:codex-background-bindings");
-const CounterSchema = Type.Object({ value: Type.Integer({ minimum: 0 }) });
 function isBindingTable<T>(value: T): value is T & BindingTable {
+  if (!isJsonObject(value)) return false;
+  const counter = value["counter"];
   return (
-    Value.Check(Type.Object({ bindings: Type.Unknown(), counter: CounterSchema }), value) &&
-    value.bindings instanceof Map
+    isJsonObject(counter) &&
+    isNonNegativeInteger(counter["value"]) &&
+    value["bindings"] instanceof Map
   );
 }
 function bindingTable(): BindingTable {
@@ -368,12 +370,7 @@ export function registerCodexBackgroundFactory(enabled: boolean): boolean {
 }
 
 function freezeDetachedCapture<T>(source: T): T {
-  if (
-    Value.Check(
-      Type.Union([Type.Array(Type.Unknown()), Type.Record(Type.String(), Type.Unknown())]),
-      source,
-    )
-  ) {
+  if (Array.isArray(source) || isJsonObject(source)) {
     const children: unknown[] = Object.values(source);
     for (const child of children) freezeDetachedCapture(child);
     Object.freeze(source);
@@ -557,11 +554,6 @@ function codexBackgroundRequestState(state: AdapterState, incompatible: boolean)
     pendingPiCompactionNativeWindow: undefined,
   };
 }
-
-const BackgroundCheckpointMarkerSchema = Type.Object(
-  { strategy: Type.Literal("openai-responses-compaction-v2"), schemaVersion: Type.Literal(1) },
-  { additionalProperties: true },
-);
 
 interface CodexBackgroundIntegrationOptions {
   readonly resolveSettings?: (cwd: string, trusted: boolean) => Promise<CodexBackgroundSettings>;
@@ -826,7 +818,7 @@ function yieldTransientIdentity(
 /** Whether only the model ID differs between the checkpoint's scope and the current one. */
 function onlyModelChanged(recorded: ProviderScope, current: ProviderScope): boolean {
   return (
-    recorded.model !== current.model && Value.Equal({ ...recorded, model: current.model }, current)
+    recorded.model !== current.model && jsonEqual({ ...recorded, model: current.model }, current)
   );
 }
 
@@ -1051,7 +1043,11 @@ function committedBackgroundCheckpoint(
 }
 function hasBackgroundCheckpointMarker(latest: LatestNativeCompaction): boolean {
   const details = latest.ok ? latest.entry.details : latest.latestCompaction?.details;
-  return Value.Check(BackgroundCheckpointMarkerSchema, details);
+  return (
+    isJsonObject(details) &&
+    details["strategy"] === "openai-responses-compaction-v2" &&
+    details["schemaVersion"] === 1
+  );
 }
 
 type ModelAuth = Awaited<
@@ -1078,8 +1074,7 @@ function resolveAccountIdentity(auth: ModelAuth): AccountIdentity {
       return { ok: false, reason: "account identity unavailable" };
     throw cause;
   }
-  if (!Value.Check(Type.String({ minLength: 1 }), accountId))
-    return { ok: false, reason: "account identity unavailable" };
+  if (!isNonEmptyString(accountId)) return { ok: false, reason: "account identity unavailable" };
   return { ok: true, apiKey, accountId, baseUrl: auth.baseUrl, headers: auth.headers };
 }
 

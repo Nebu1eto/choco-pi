@@ -1,5 +1,12 @@
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { isJsonObject, type BoundaryValue } from "../adapter/runtime-values.ts";
+
+interface ChildContextRegistry {
+  isChildSessionContext(): BoundaryValue;
+}
+
+function isChildContextRegistry<T>(value: T): value is T & ChildContextRegistry {
+  return isJsonObject(value) && value["isChildSessionContext"] instanceof Function;
+}
 
 /**
  * Process-global registry published by choco-pi-subagents. Its
@@ -8,9 +15,6 @@ import { Value } from "typebox/value";
  * factories run.
  */
 const SUBAGENTS_MANAGER_KEY = Symbol.for("pi-subagents:manager");
-const ChildContextRegistrySchema = Type.Object({
-  isChildSessionContext: Type.Function([], Type.Boolean()),
-});
 
 /**
  * True while a subagent child loads its extensions in this process. Absent or
@@ -20,6 +24,6 @@ const ChildContextRegistrySchema = Type.Object({
  */
 export function inSubagentChildLoad(): boolean {
   const entry: unknown = Object.getOwnPropertyDescriptor(globalThis, SUBAGENTS_MANAGER_KEY)?.value;
-  if (!Value.Check(ChildContextRegistrySchema, entry)) return false;
+  if (!isChildContextRegistry(entry)) return false;
   return entry.isChildSessionContext() === true;
 }

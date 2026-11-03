@@ -6,7 +6,8 @@ import type {
   ExtensionContext,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { arr, num, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
+import { hostParams } from "../../schema-bridge.ts";
 import { Container, Text } from "@earendil-works/pi-tui";
 import { WEB_SEARCH_TOOL_NAME } from "../../adapter/activation/tool-set.ts";
 import { supportsNativeWebSearch } from "../../adapter/tool-support.ts";
@@ -31,58 +32,34 @@ export const WEB_SEARCH_UNSUPPORTED_MESSAGE =
 // the compatible builder dormant rather than disclose conversation context.
 const SEND_NATIVE_WEB_SEARCH_HISTORY = false;
 
-const SearchQueryParameters = Type.Object(
+const SearchQueryParameters = obj(
   {
-    q: Type.String(),
-    recency: Type.Optional(Type.Number({ description: "Recent days" })),
-    domains: Type.Optional(Type.Array(Type.String(), { description: "Domains" })),
+    q: str(),
+    recency: opt(num({ description: "Recent days" })),
+    domains: opt(arr(str(), { description: "Domains" })),
   },
-  { additionalProperties: true },
+  { open: true },
 );
 
-const WEB_SEARCH_PARAMETERS = Type.Object(
-  {
-    search_query: Type.Optional(Type.Array(SearchQueryParameters)),
-    image_query: Type.Optional(Type.Array(SearchQueryParameters)),
-    open: Type.Optional(
-      Type.Array(
-        Type.Object(
-          { ref_id: Type.String(), lineno: Type.Optional(Type.Number()) },
-          { additionalProperties: true },
-        ),
-        { description: "ref_id or URL" },
+const WEB_SEARCH_PARAMETERS = hostParams(
+  obj(
+    {
+      search_query: opt(arr(SearchQueryParameters)),
+      image_query: opt(arr(SearchQueryParameters)),
+      open: opt(
+        arr(obj({ ref_id: str(), lineno: opt(num()) }, { open: true }), {
+          description: "ref_id or URL",
+        }),
       ),
-    ),
-    click: Type.Optional(
-      Type.Array(
-        Type.Object({ ref_id: Type.String(), id: Type.Number() }, { additionalProperties: true }),
+      click: opt(arr(obj({ ref_id: str(), id: num() }, { open: true }))),
+      find: opt(arr(obj({ ref_id: str(), pattern: str() }, { open: true }))),
+      response_length: opt(oneOf(["short", "medium", "long"], { description: "Answer length" })),
+      settings: opt(
+        obj({ search_context_size: opt(oneOf(["low", "medium", "high"])) }, { open: true }),
       ),
-    ),
-    find: Type.Optional(
-      Type.Array(
-        Type.Object(
-          { ref_id: Type.String(), pattern: Type.String() },
-          { additionalProperties: true },
-        ),
-      ),
-    ),
-    response_length: Type.Optional(
-      Type.Union([Type.Literal("short"), Type.Literal("medium"), Type.Literal("long")], {
-        description: "Answer length",
-      }),
-    ),
-    settings: Type.Optional(
-      Type.Object(
-        {
-          search_context_size: Type.Optional(
-            Type.Union([Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")]),
-          ),
-        },
-        { additionalProperties: true },
-      ),
-    ),
-  },
-  { additionalProperties: true },
+    },
+    { open: true },
+  ),
 );
 function createEmptyResultComponent(): Container {
   return new Container();

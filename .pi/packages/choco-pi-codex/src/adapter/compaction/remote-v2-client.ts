@@ -1,7 +1,8 @@
-import { conditionalProperties, JsonObjectSchema } from "../runtime-values.ts";
+import { compile, nullable, obj, opt, str } from "@earendil-works/pi-schema";
+import { jsonEqual } from "../../../../choco-pi-compaction/src/background/json-equal.ts";
+import { isNonEmptyString, isNonNegativeInteger, isString } from "../../value-guards.ts";
+import { conditionalProperties, isJsonObject } from "../runtime-values.ts";
 import type { JsonObject, BoundaryValue } from "../runtime-values.ts";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import type {
   Api,
   AssistantMessage,
@@ -43,18 +44,35 @@ import {
 import type { CodexCompactionDiagnostic } from "./diagnostics.ts";
 
 const MAX_STREAM_RETRIES = 2;
-const TerminalCompactionResponseSchema = Type.Object({
-  type: Type.Literal("response.completed"),
-  response: Type.Object({
-    id: Type.String({ minLength: 1 }),
-    status: Type.Literal("completed"),
-    output: Type.Array(JsonObjectSchema),
-    usage: Type.Object({
-      input_tokens: Type.Integer({ minimum: 0 }),
-      output_tokens: Type.Integer({ minimum: 0 }),
-    }),
-  }),
-});
+interface TerminalCompactionResponse {
+  readonly type: "response.completed";
+  readonly response: {
+    readonly id: string;
+    readonly status: "completed";
+    readonly output: JsonObject[];
+    readonly usage: { readonly input_tokens: number; readonly output_tokens: number };
+  };
+}
+
+/** A completed-response stream event carrying object items and token usage; extra keys allowed. */
+function isTerminalCompactionResponse<T>(event: T): event is T & TerminalCompactionResponse {
+  if (!isJsonObject(event) || event["type"] !== "response.completed") return false;
+  const response = event["response"];
+  if (
+    !isJsonObject(response) ||
+    !isNonEmptyString(response["id"]) ||
+    response["status"] !== "completed"
+  )
+    return false;
+  const output = response["output"];
+  if (!Array.isArray(output) || !output.every((item) => isJsonObject(item))) return false;
+  const usage = response["usage"];
+  return (
+    isJsonObject(usage) &&
+    isNonNegativeInteger(usage["input_tokens"]) &&
+    isNonNegativeInteger(usage["output_tokens"])
+  );
+}
 type V2Stream = (
   model: Model<Api>,
   context: TranscriptContext,
@@ -236,9 +254,7 @@ function withCurrentCompactionControls(
     ...historyBody
   } = canonicalBody;
   const currentReasoning = requestOptions.reasoning ?? currentBody.reasoning;
-  const parsedCurrentReasoning = Value.Check(JsonObjectSchema, currentReasoning)
-    ? currentReasoning
-    : {};
+  const parsedCurrentReasoning = isJsonObject(currentReasoning) ? currentReasoning : {};
   const reasoningContext = canonicalReasoning?.context;
   return {
     ...historyBody,
@@ -412,7 +428,7 @@ async function prepareAttemptPayload(
     {
       model: requestBody.model,
       input: promptInput,
-      ...conditionalProperties(Boolean(Value.Check(Type.String(), requestBody.instructions)), {
+      ...conditionalProperties(Boolean(isString(requestBody.instructions)), {
         instructions: requestBody.instructions,
       }),
       ...conditionalProperties(Boolean(requestBody.tools), { tools: requestBody.tools }),
@@ -467,7 +483,7 @@ function matchesFrozenPayload(
     !signal?.aborted &&
     observed.expectedBackgroundPayload !== undefined &&
     actual !== undefined &&
-    Value.Equal(actual, observed.expectedBackgroundPayload);
+    jsonEqual(actual, observed.expectedBackgroundPayload);
   if (!matches) observed.payloadUnsupported = true;
   return matches;
 }
@@ -476,10 +492,10 @@ function isNativeCompactionItem(item: JsonObject): boolean {
   return item["type"] === "compaction" || item["type"] === "compaction_summary";
 }
 function observeTerminalEvent<T>(observed: AttemptObservations, event: T): void {
-  if (!Value.Check(Type.Object({ type: Type.Literal("response.completed") }), event)) return;
+  if (!isJsonObject(event) || event["type"] !== "response.completed") return;
   if (observed.sawTerminal) observed.malformedTerminal = true;
   observed.sawTerminal = true;
-  if (!Value.Check(TerminalCompactionResponseSchema, event)) {
+  if (!isTerminalCompactionResponse(event)) {
     observed.malformedTerminal = true;
     return;
   }
@@ -511,7 +527,7 @@ function buildAttemptStreamOptions(
   observed: AttemptObservations,
   shrink: AttemptShrink,
 ): OpenAICodexStreamOptions {
-  const serviceTier = Value.Check(Type.String(), options.requestOptions.service_tier)
+  const serviceTier = isString(options.requestOptions.service_tier)
     ? options.requestOptions.service_tier
     : undefined;
   const textVerbosity = options.requestOptions.text?.verbosity;
@@ -616,14 +632,14 @@ function matchesFrozenTerminal(
   compaction: JsonObject,
 ): boolean {
   const compactionItems = observed.outputItems.filter(
-    (item) => Value.Check(JsonObjectSchema, item) && isNativeCompactionItem(item),
+    (item) => isJsonObject(item) && isNativeCompactionItem(item),
   );
   return (
     compactionItems.length === 1 &&
     observed.sawTerminal &&
     !observed.malformedTerminal &&
     observed.terminalResponseId === completed.responseId &&
-    Value.Equal(observed.terminalCompaction, compaction)
+    jsonEqual(observed.terminalCompaction, compaction)
   );
 }
 
@@ -755,19 +771,21 @@ async function retryReducedAfterOverflow(
   return runAttempt({ ...options, transport }, streamSimple, shrink);
 }
 
-const ProviderErrorBodySchema = Type.Object(
-  {
-    error: Type.Object(
-      {
-        param: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        message: Type.Optional(Type.String()),
-        code: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-      },
-      { additionalProperties: true },
-    ),
-  },
-  { additionalProperties: true },
-);
+const isProviderErrorBody = compile(
+  obj(
+    {
+      error: obj(
+        {
+          param: opt(nullable(str())),
+          message: opt(str()),
+          code: opt(nullable(str())),
+        },
+        { open: true },
+      ),
+    },
+    { open: true },
+  ),
+).check;
 
 /** The fields of a provider JSON error body the focus-rejection check reads. */
 interface ProviderErrorFields {
@@ -789,7 +807,7 @@ function providerErrorFields(failureText: string): ProviderErrorFields | undefin
   } catch {
     return undefined;
   }
-  if (!Value.Check(ProviderErrorBodySchema, parsed)) return undefined;
+  if (!isProviderErrorBody(parsed)) return undefined;
   const { param, message, code } = parsed.error;
   return { param: param ?? undefined, message, code: code ?? undefined };
 }

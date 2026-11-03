@@ -1,6 +1,7 @@
 import { isNumberValue, isObjectValue, isStringValue } from "../boundary.ts";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { bool, int, obj, opt, str } from "@earendil-works/pi-schema";
+import { hostParams } from "../../schema-bridge.ts";
 import { getExperimentalToolSampling } from "../tool-sampling.ts";
 import { DEFAULT_CODE_MODE_OUTPUT_TOKENS, MAX_CODE_MODE_OUTPUT_TOKENS } from "./host-protocol.ts";
 import { MAX_CODE_MODE_WAIT_MS } from "../exec/shell.ts";
@@ -29,27 +30,30 @@ interface WriteStdinResumeInput {
   yield_time_ms: number;
   max_output_tokens?: number | undefined;
 }
-const EXEC_PARAMETERS = Type.Object({
-  code: Type.String(),
-});
-const WAIT_PARAMETERS = Type.Object({
-  cell_id: Type.String(),
-  yield_time_ms: Type.Optional(
-    Type.Integer({
-      minimum: 0,
-      maximum: MAX_CODE_MODE_WAIT_MS,
-      default: DEFAULT_WAIT_MS,
-    }),
+const EXEC_PARAMETERS = hostParams(obj({ code: str() }, { open: true }));
+const WAIT_PARAMETERS = hostParams(
+  obj(
+    {
+      cell_id: str(),
+      yield_time_ms: opt(
+        int({
+          minimum: 0,
+          maximum: MAX_CODE_MODE_WAIT_MS,
+          default: DEFAULT_WAIT_MS,
+        }),
+      ),
+      max_tokens: opt(
+        int({
+          minimum: 1,
+          maximum: MAX_CODE_MODE_OUTPUT_TOKENS,
+          default: DEFAULT_CODE_MODE_OUTPUT_TOKENS,
+        }),
+      ),
+      terminate: opt(bool()),
+    },
+    { open: true },
   ),
-  max_tokens: Type.Optional(
-    Type.Integer({
-      minimum: 1,
-      maximum: MAX_CODE_MODE_OUTPUT_TOKENS,
-      default: DEFAULT_CODE_MODE_OUTPUT_TOKENS,
-    }),
-  ),
-  terminate: Type.Optional(Type.Boolean()),
-});
+);
 
 export function registerPublicCodeModeTools(
   pi: ExtensionAPI,

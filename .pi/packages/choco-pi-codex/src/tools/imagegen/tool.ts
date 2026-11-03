@@ -4,8 +4,9 @@ import type {
   ExtensionContext,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
+import { hostParams } from "../../schema-bridge.ts";
+import { isString } from "../../value-guards.ts";
 import { Text } from "@earendil-works/pi-tui";
 import { IMAGE_GENERATION_TOOL_NAME } from "../../adapter/activation/tool-set.ts";
 import { supportsNativeImageGeneration } from "../../adapter/tool-support.ts";
@@ -14,6 +15,7 @@ import {
   formatImagegenOutput,
   imageContentsFromImagegenOutput,
   imagegenOutputFromJson,
+  type ImagegenOutput,
 } from "./output.ts";
 import { renderTextWithImages } from "../../ui/tool-rendering/media.ts";
 import { renderCodexToolCell } from "../../ui/tool-rendering/codex-tool-cell.ts";
@@ -37,15 +39,16 @@ export const IMAGE_GENERATION_UNSUPPORTED_MESSAGE =
  */
 export const OPENAI_SIGN_IN_IMAGEGEN_UNVERIFIED_NOTE =
   "imagegen through api.openai.com with openai Sign in with ChatGPT is unverified; an openai API key or openai-codex (legacy) model may be required";
-const IMAGE_GENERATION_PARAMETERS = Type.Object({
-  prompt: Type.String(),
-  action: Type.Optional(
-    Type.Union([Type.Literal("generate"), Type.Literal("edit")], {
-      description: "Default generate",
-    }),
+const IMAGE_GENERATION_PARAMETERS = hostParams(
+  obj(
+    {
+      prompt: str(),
+      action: opt(oneOf(["generate", "edit"], { description: "Default generate" })),
+      images: opt(arr(str(), { description: "Edit inputs" })),
+    },
+    { open: true },
   ),
-  images: Type.Optional(Type.Array(Type.String(), { description: "Edit inputs" })),
-});
+);
 
 type ImagegenArgs = {
   prompt: string;
@@ -61,11 +64,9 @@ type SavedImage = {
 };
 
 // Keep the post-parse validation aligned with imagegenOutputFromJson: only `path` is mandatory.
-const ImagegenDetailsSchema = Type.Unsafe<ImagegenDetails>({
-  type: "object",
-  properties: { path: { type: "string" } },
-  required: ["path"],
-});
+function isImagegenDetails(value: ImagegenOutput | undefined): value is ImagegenDetails {
+  return value !== undefined && isString(value.path);
+}
 
 type ImagegenDetails = {
   path: string;
@@ -125,7 +126,7 @@ async function executeRustImagegen(
     );
   }
   const parsed = imagegenOutputFromJson(child.stdout);
-  if (!Value.Check(ImagegenDetailsSchema, parsed)) {
+  if (!isImagegenDetails(parsed)) {
     throw new Error("imagegen returned output, but Pi could not parse it");
   }
   return parsed;

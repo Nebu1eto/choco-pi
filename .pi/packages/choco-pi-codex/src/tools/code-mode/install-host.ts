@@ -16,14 +16,19 @@ import {
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { isJsonObject, type BoundaryValue } from "../../adapter/runtime-values.ts";
+import { isString } from "../../value-guards.ts";
 import { codeModeHostBinaryName, hostAssetUrl, resolveCodeModeHostAsset } from "./host-assets.ts";
 
+interface ProxyModule {
+  getProxyForUrl(url: string): BoundaryValue;
+}
+
+function isProxyModule<T>(value: T): value is T & ProxyModule {
+  return isJsonObject(value) && value["getProxyForUrl"] instanceof Function;
+}
+
 const DOWNLOAD_TIMEOUT_MS = 120_000;
-const ProxyModuleSchema = Type.Object({
-  getProxyForUrl: Type.Function([Type.String()], Type.String()),
-});
 const INSTALL_LOCK_POLL_MS = 200;
 const INSTALL_LOCK_TIMEOUT_MS = 125_000;
 const INSTALL_LOCK_STALE_MS = 180_000;
@@ -57,10 +62,11 @@ export async function installCodeModeHost(options: InstallCodeModeHostOptions): 
     try {
       const timeoutSignal = AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
       const proxyModule: unknown = await dynamicImport("proxy-from-env");
-      if (!Value.Check(ProxyModuleSchema, proxyModule)) {
+      if (!isProxyModule(proxyModule)) {
         throw new Error("proxy-from-env returned an invalid module");
       }
-      const proxy = proxyModule.getProxyForUrl(assetUrl);
+      const proxyResult = proxyModule.getProxyForUrl(assetUrl);
+      const proxy = isString(proxyResult) ? proxyResult : undefined;
       const request: RequestInit & { proxy?: string } = {
         redirect: "follow",
         signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal,

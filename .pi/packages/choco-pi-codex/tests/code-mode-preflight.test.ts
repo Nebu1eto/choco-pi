@@ -5,7 +5,8 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { createSyntheticSourceInfo, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { num, obj, opt, str } from "@earendil-works/pi-schema";
+import { hostParams } from "../src/schema-bridge.ts";
 import { ExecutePatchError } from "../src/patch/types.ts";
 import { prepareCodeModeApplyPatchInput } from "../src/tools/apply-patch/code-mode-input.ts";
 import { enrichApplyPatchContextFailure } from "../src/tools/apply-patch/context-preflight.ts";
@@ -219,7 +220,7 @@ test("the registered-tool bridge applies focused read-offset errors", async () =
     name: "read",
     label: "read",
     description: "read",
-    parameters: Type.Object({ path: Type.String(), offset: Type.Optional(Type.Number()) }),
+    parameters: hostParams(obj({ path: str(), offset: opt(num()) }, { open: true })),
     async execute() {
       throw new Error("Offset 260 is beyond end of file (175 lines total)");
     },

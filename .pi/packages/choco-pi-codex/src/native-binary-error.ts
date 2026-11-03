@@ -1,19 +1,17 @@
 import { existsSync } from "node:fs";
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { isJsonObject } from "./adapter/runtime-values.ts";
+import { isString } from "./providers/value-guards.ts";
 
 const RECOVERY =
   "Build the native helpers locally, set `tools.customRustBinariesDir` in `choco-pi-codex.json`, then run `/reload`";
-
-/** Node attaches a string `code` to spawn and I/O failures. */
-const CodedError = Type.Object({ code: Type.String() });
 
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
 function errorCode(cause: unknown): string | undefined {
-  return Check(CodedError, cause) ? cause.code : undefined;
+  const code = isJsonObject(cause) ? cause["code"] : undefined;
+  return isString(code) ? code : undefined;
 }
 
 export function nativeBinaryRecoveryMessage(

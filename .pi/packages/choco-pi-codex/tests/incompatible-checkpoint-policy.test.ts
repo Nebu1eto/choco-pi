@@ -17,8 +17,7 @@ import {
   type SessionShutdownEvent,
   type SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { compile, lit, obj } from "@earendil-works/pi-schema";
 import {
   assertCodexRequestAllowed,
   recordCodexRequestDecision,
@@ -364,7 +363,7 @@ async function opaqueRig() {
   };
 }
 
-const CancelSchema = Type.Object({ cancel: Type.Literal(true) });
+const isCancel = compile(obj({ cancel: lit(true) }, { open: true })).check;
 
 test("opaque Codex checkpoint, responsesCompaction off, no sidecar: the prompt is refused before any fetch", async () => {
   await opaqueSession(async (rig) => {
@@ -382,7 +381,7 @@ test("opaque Codex checkpoint, responsesCompaction off, no sidecar: the prompt i
     assert.equal(refusals[0]?.provider, "codex");
     // A host compaction over the checkpoint is cancelled with the same exits text.
     const cancelled = await rig.emit(manualCompactEvent());
-    assert.ok(Value.Check(CancelSchema, cancelled));
+    assert.ok(isCancel(cancelled));
     assert.equal(rig.records.filter((record) => record.event === "cancel").length, 1);
 
     // Loss authorized for this checkpoint: the prompt is sent and the loss journaled once.

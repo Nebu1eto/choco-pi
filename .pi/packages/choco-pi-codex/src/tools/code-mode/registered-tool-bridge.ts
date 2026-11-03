@@ -24,9 +24,9 @@ import {
   type ExtensionContext,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { Type, type Static } from "typebox";
-import { BoundaryValueSchema, type BoundaryValue } from "../../adapter/runtime-values.ts";
-import { Value } from "typebox/value";
+import { arr, compile, map, obj, opt, str, unknown } from "@earendil-works/pi-schema";
+import type { Static } from "@earendil-works/pi-schema";
+import type { BoundaryValue } from "../../adapter/runtime-values.ts";
 import { toNestedTool } from "../../adapter/code-mode/nested-tool-adapter.ts";
 import { withLiveCtx } from "../../extension/live-context.ts";
 import { enhanceCodeModeNestedToolError } from "./nested-tool-errors.ts";
@@ -197,21 +197,24 @@ export function resetRegisteredToolCapture(ctx?: ExtensionContext): void {
   }
 }
 
-const ToolParametersSchema = Type.Object({
-  properties: Type.Optional(Type.Record(Type.String(), BoundaryValueSchema)),
-  required: Type.Optional(Type.Array(Type.String())),
-});
+const isToolParameters = compile(
+  obj({ properties: opt(map(unknown())), required: opt(arr(str())) }, { open: true }),
+).check;
 
 /** The JSON Schema facets the usage line renders; everything else is opaque. */
-const UsageNodeSchema = Type.Object({
-  type: Type.Optional(Type.String()),
-  const: Type.Optional(BoundaryValueSchema),
-  enum: Type.Optional(Type.Array(BoundaryValueSchema)),
-  anyOf: Type.Optional(Type.Array(BoundaryValueSchema)),
-  items: Type.Optional(BoundaryValueSchema),
-  properties: Type.Optional(Type.Record(Type.String(), BoundaryValueSchema)),
-  required: Type.Optional(Type.Array(Type.String())),
-});
+const UsageNodeSchema = obj(
+  {
+    type: opt(str()),
+    const: opt(unknown()),
+    enum: opt(arr(unknown())),
+    anyOf: opt(arr(unknown())),
+    items: opt(unknown()),
+    properties: opt(map(unknown())),
+    required: opt(arr(str())),
+  },
+  { open: true },
+);
+const isUsageNode = compile(UsageNodeSchema).check;
 const MAX_USAGE_LITERALS = 8;
 const MAX_USAGE_DEPTH = 2;
 
@@ -223,7 +226,7 @@ const MAX_USAGE_DEPTH = 2;
 type UsageNode = Static<typeof UsageNodeSchema>;
 
 function parseUsageNode(candidate: BoundaryValue): UsageNode | undefined {
-  return Value.Check(UsageNodeSchema, candidate) ? candidate : undefined;
+  return isUsageNode(candidate) ? candidate : undefined;
 }
 
 function renderUsageValue(node: UsageNode, depth: number): string | undefined {
@@ -330,9 +333,7 @@ const usageCache = new WeakMap<
 >();
 
 function computeBridgedToolUsage(definition: ToolDefinition): string {
-  const parameters = Value.Check(ToolParametersSchema, definition.parameters)
-    ? definition.parameters
-    : undefined;
+  const parameters = isToolParameters(definition.parameters) ? definition.parameters : undefined;
   const names = parameters?.properties ? Object.keys(parameters.properties) : [];
   if (names.length === 0) return "await tools." + definition.name + "()";
   const params = usageParams(parameters?.properties ?? {}, parameters?.required ?? [], 0);

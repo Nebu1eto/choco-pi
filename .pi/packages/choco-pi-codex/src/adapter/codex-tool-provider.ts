@@ -1,6 +1,5 @@
+import { isString } from "../value-guards.ts";
 import { conditionalProperties } from "./runtime-values.ts";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import type { ExtensionContext, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai";
 import { DEFAULT_CODEX_BASE_URL } from "../providers/openai-codex/constants.ts";
@@ -124,8 +123,7 @@ function headerValue(headers: ProviderHeaders | undefined, name: string): string
   if (!headers) return undefined;
   const lowerName = name.toLowerCase();
   for (const [key, value] of Object.entries(headers)) {
-    if (key.toLowerCase() === lowerName)
-      return Value.Check(Type.String(), value) ? value : undefined;
+    if (key.toLowerCase() === lowerName) return isString(value) ? value : undefined;
   }
   return undefined;
 }

@@ -4,15 +4,14 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { Value } from "typebox/value";
 import {
-  AgentTraceSchema,
+  isAgentTrace,
   assertFinal,
   decodeProbeEventLine,
   decodeTranscriptLine,
-  ErrorCodeSchema,
-  ErrorStatusSchema,
-  ExecArgumentsSchema,
+  isErrorCode,
+  isErrorStatus,
+  isExecArguments,
   finalAssistant,
   isLookupExecCode,
   type ProbeAgentEnd,
@@ -22,7 +21,7 @@ import {
   type ProbeToolStart,
   resultText,
   toolCallsOf,
-  ToolResultSchema,
+  isToolResult,
 } from "./code-mode-probe-events.ts";
 
 const enabled = process.env["CHOCO_PI_CODE_MODE_FIRST_E2E"] === "1";
@@ -51,7 +50,7 @@ function signalGroup(pid: number, signal: NodeJS.Signals): string | undefined {
     process.kill(-pid, signal);
     return undefined;
   } catch (error) {
-    if (Value.Check(ErrorCodeSchema, error)) return undefined;
+    if (isErrorCode(error)) return undefined;
     return error instanceof Error ? error.message : String(error);
   }
 }
@@ -201,9 +200,7 @@ test(
       }
       const usefulRootExec = [...successfulExec.keys()].filter((id) => {
         const callArguments = starts.get(id)?.args;
-        return (
-          Value.Check(ExecArgumentsSchema, callArguments) && isLookupExecCode(callArguments.code)
-        );
+        return isExecArguments(callArguments) && isLookupExecCode(callArguments.code);
       });
       rootMetrics = {
         outerChoices: [...outerChoices]
@@ -219,19 +216,15 @@ test(
 
       const agentResults: ProbeToolResult[] = [];
       for (const end of successfulExec.values()) {
-        if (!Value.Check(ToolResultSchema, end.result)) continue;
+        if (!isToolResult(end.result)) continue;
         for (const trace of end.result.details?.traces ?? []) {
-          if (
-            Value.Check(AgentTraceSchema, trace) &&
-            trace.name === "Agent" &&
-            trace.status === "done"
-          )
+          if (isAgentTrace(trace) && trace.name === "Agent" && trace.status === "done")
             agentResults.push(trace.result);
         }
       }
       for (const end of toolEnds) {
         if (end.toolName !== "Agent" || end.isError) continue;
-        if (Value.Check(ToolResultSchema, end.result)) agentResults.push(end.result);
+        if (isToolResult(end.result)) agentResults.push(end.result);
       }
       const agentResult = agentResults.find(
         (candidate) =>
@@ -254,7 +247,7 @@ test(
       const childExecCalls = childToolCalls.filter(
         (call) =>
           call.name === "exec" &&
-          Value.Check(ExecArgumentsSchema, call.arguments) &&
+          isExecArguments(call.arguments) &&
           isLookupExecCode(call.arguments.code),
       );
       const childExecResults = childMessages.filter(
@@ -263,7 +256,7 @@ test(
       let failedChildExec = 0;
       const successfulChildIds = new Set<string>();
       for (const message of childExecResults) {
-        const failed = message.isError !== false || Value.Check(ErrorStatusSchema, message.details);
+        const failed = message.isError !== false || isErrorStatus(message.details);
         if (failed) failedChildExec += 1;
         else if (message.toolCallId) successfulChildIds.add(message.toolCallId);
       }

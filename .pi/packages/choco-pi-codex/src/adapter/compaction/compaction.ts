@@ -1,8 +1,7 @@
+import { isString } from "../../value-guards.ts";
 import { conditionalProperties } from "../runtime-values.ts";
-import { JsonObjectSchema } from "../runtime-values.ts";
+import { isJsonObject } from "../runtime-values.ts";
 import type { JsonObject, BoundaryValue } from "../runtime-values.ts";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import {
   buildSessionContext,
   convertToLlm,
@@ -159,7 +158,7 @@ function notifyOpenAISignInCompactionFallback(ctx: ExtensionContext): void {
 }
 
 function isRecord(value: BoundaryValue): value is JsonObject {
-  return Value.Check(JsonObjectSchema, value);
+  return isJsonObject(value);
 }
 
 function stashLatestNativeWindowForPiCompactionFallback(
@@ -204,8 +203,7 @@ function buildCompactionReasoning(
   const clampedLevel = clampThinkingLevel(compactionTargetModel, level as ModelThinkingLevel);
   const rawEffort = compactionTargetModel.thinkingLevelMap?.[clampedLevel] ?? clampedLevel;
   const effort =
-    Value.Check(Type.String(), rawEffort) &&
-    resolveCodexRuntimePlanForState(ctx, state).effectiveOpenAICodex
+    isString(rawEffort) && resolveCodexRuntimePlanForState(ctx, state).effectiveOpenAICodex
       ? clampCodexReasoningEffort(compactionTargetModel.id, rawEffort)
       : rawEffort;
   return effort === null ? undefined : { effort, summary: "auto" };
@@ -295,11 +293,11 @@ function cancelForeground(
 }
 
 function textFromResponsesContent(content: BoundaryValue): string {
-  if (Value.Check(Type.String(), content)) return content;
+  if (isString(content)) return content;
   if (!Array.isArray(content)) return "";
   return content
     .map((item) =>
-      isRecord(item) && item["type"] === "input_text" && Value.Check(Type.String(), item["text"]!)
+      isRecord(item) && item["type"] === "input_text" && isString(item["text"]!)
         ? item["text"]!
         : "",
     )
@@ -307,7 +305,7 @@ function textFromResponsesContent(content: BoundaryValue): string {
 }
 
 function isPiCompactionSummarizationPayload(payload: ResponsesCompatibleRequestPayload): boolean {
-  const instructions = Value.Check(Type.String(), payload.instructions) ? payload.instructions : "";
+  const instructions = isString(payload.instructions) ? payload.instructions : "";
   if (/compact|summar/i.test(instructions)) return true;
 
   return payload.input.some((item) => {

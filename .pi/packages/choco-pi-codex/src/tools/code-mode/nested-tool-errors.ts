@@ -1,25 +1,23 @@
 import { access, readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, compile, obj, opt, str } from "@earendil-works/pi-schema";
+import { finiteNum } from "../../value-guards.ts";
 
 import type { BoundaryValue } from "../boundary.ts";
 
-const ReadInputSchema = Type.Object({
-  path: Type.String(),
-  offset: Type.Optional(Type.Number()),
-  limit: Type.Optional(Type.Number()),
-});
-const EditInputSchema = Type.Object({
-  path: Type.String(),
-  edits: Type.Array(
-    Type.Object({
-      oldText: Type.String(),
-      newText: Type.String(),
-    }),
+const isReadInput = compile(
+  obj({ path: str(), offset: opt(finiteNum()), limit: opt(finiteNum()) }, { open: true }),
+).check;
+const isEditInput = compile(
+  obj(
+    {
+      path: str(),
+      edits: arr(obj({ oldText: str(), newText: str() }, { open: true })),
+    },
+    { open: true },
   ),
-});
+).check;
 
 interface CandidateRange {
   start: number;
@@ -35,7 +33,7 @@ export async function enhanceCodeModeNestedToolError(
   const readOffset = /Offset (\d+) is beyond end of file \((\d+) lines total\)/i.exec(
     error.message,
   );
-  if (toolName === "read" && readOffset && Value.Check(ReadInputSchema, input)) {
+  if (toolName === "read" && readOffset && isReadInput(input)) {
     const requestedOffset = Number(readOffset[1]);
     const lineCount = Number(readOffset[2]);
     const limit = Math.max(1, Math.min(input.limit ?? 80, Math.max(1, lineCount)));
@@ -56,7 +54,7 @@ export async function enhanceCodeModeNestedToolError(
     /modified since read|oldText.*(?:not found|unique)|ambiguous|multiple matches/i.test(
       error.message,
     ) &&
-    Value.Check(EditInputSchema, input)
+    isEditInput(input)
   ) {
     return staleEditError(input, error, cwd);
   }

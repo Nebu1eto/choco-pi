@@ -1,14 +1,19 @@
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import { isString } from "../value-guards.ts";
+import { compile, map, obj, oneOf, unknown } from "@earendil-works/pi-schema";
 import type { CodexStreamEvent } from "./types.ts";
 
 export const CODEX_TURN_STATE_HEADER = "x-codex-turn-state";
 
-const TurnStateEventSchema = Type.Object({
-  type: Type.Union([Type.Literal("response.metadata"), Type.Literal("codex.response.metadata")]),
-  headers: Type.Record(Type.String(), Type.Unknown()),
-});
-type TurnStateEvent = Static<typeof TurnStateEventSchema>;
+// Open wire event: unknown fields are ignored, as before.
+const turnStateEventValidator = compile(
+  obj(
+    {
+      type: oneOf(["response.metadata", "codex.response.metadata"]),
+      headers: map(unknown()),
+    },
+    { open: true },
+  ),
+);
 
 export interface CodexTurnState {
   current(): string | undefined;
@@ -82,14 +87,10 @@ export function createCodexTurnState(): CodexTurnState {
 export function extractCodexTurnStateFromWebSocketEvent(
   event: CodexStreamEvent,
 ): string | undefined {
-  if (!Check(TurnStateEventSchema, event)) return undefined;
-  const parsed: TurnStateEvent = event;
+  if (!turnStateEventValidator.check(event)) return undefined;
+  const parsed = event;
   for (const [name, value] of Object.entries(parsed.headers)) {
-    if (
-      name.toLowerCase() === CODEX_TURN_STATE_HEADER &&
-      Check(Type.String(), value) &&
-      value.trim()
-    )
+    if (name.toLowerCase() === CODEX_TURN_STATE_HEADER && isString(value) && value.trim())
       return value.trim();
   }
   return undefined;

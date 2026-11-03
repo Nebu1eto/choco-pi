@@ -1,6 +1,7 @@
 import type { BoundaryValue } from "../boundary.ts";
 import { isObjectValue, isStringValue } from "../boundary.ts";
-import { Type } from "typebox";
+import { obj, str } from "@earendil-works/pi-schema";
+import { hostParams } from "../../schema-bridge.ts";
 import { type ExtensionAPI, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Container, Text } from "@earendil-works/pi-tui";
 import type { ExecutePatchResult } from "../../patch/types.ts";
@@ -20,12 +21,17 @@ function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Mo
 
 const loadExecution = memoizedImport(() => import("./execute.ts"));
 
-const APPLY_PATCH_PARAMETERS = Type.Object({
-  input: Type.String({
-    description:
-      "Full patch text. Use *** Begin Patch / *** End Patch with Add/Update/Delete File sections. *** Move to: path must immediately follow its Update File header and still needs a nonempty @@ hunk; use one unchanged context line for a pure move. Order each file's hunks top-to-bottom; indentation is literal",
-  }),
-});
+const APPLY_PATCH_PARAMETERS = hostParams(
+  obj(
+    {
+      input: str({
+        description:
+          "Full patch text. Use *** Begin Patch / *** End Patch with Add/Update/Delete File sections. *** Move to: path must immediately follow its Update File header and still needs a nonempty @@ hunk; use one unchanged context line for a pure move. Order each file's hunks top-to-bottom; indentation is literal",
+      }),
+    },
+    { open: true },
+  ),
+);
 
 interface ApplyPatchRenderContextLike {
   toolCallId?: string | undefined;

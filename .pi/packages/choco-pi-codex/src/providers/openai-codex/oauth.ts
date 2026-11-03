@@ -1,10 +1,11 @@
+import type { JsonObject } from "../../adapter/runtime-values.ts";
 import { createServer, type Server } from "node:http";
 import { randomBytes, createHash } from "node:crypto";
 import type { OAuthDeviceCodeInfo } from "@earendil-works/pi-ai/oauth";
+import { isString } from "../value-guards.ts";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ProviderConfig } from "@earendil-works/pi-coding-agent";
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import { compile, map, num, obj, opt, str, union, unknown } from "@earendil-works/pi-schema";
 import { type OAuthDeviceCodePollResult, pollOAuthDeviceCodeFlow } from "./device-code.ts";
 
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -32,28 +33,22 @@ type OAuthCredentials = { access: string; refresh: string; expires: number; acco
 type OAuthCallbacks = Parameters<NonNullable<ProviderConfig["oauth"]>["login"]>[0];
 type DeviceAuthToken = { authorization_code: string; code_verifier: string };
 
-const JwtPayloadSchema = Type.Record(Type.String(), Type.Unknown());
-type JwtPayload = Static<typeof JwtPayloadSchema>;
-const JwtAuthSchema = Type.Object({ chatgpt_account_id: Type.Optional(Type.String()) });
-const TokenResponseSchema = Type.Object({
-  access_token: Type.String(),
-  refresh_token: Type.String(),
-  expires_in: Type.Number(),
-});
-const DeviceAuthTokenSchema = Type.Object({
-  authorization_code: Type.String(),
-  code_verifier: Type.String(),
-});
-const DeviceAuthErrorSchema = Type.Object({
-  error: Type.Optional(
-    Type.Union([Type.String(), Type.Object({ code: Type.Optional(Type.String()) })]),
-  ),
-});
-const DeviceCodeResponseSchema = Type.Object({
-  device_auth_id: Type.String(),
-  user_code: Type.String(),
-  interval: Type.Union([Type.Number(), Type.String()]),
-});
+type JwtPayload = JsonObject;
+// OAuth wire payloads are open JSON objects: unknown members are ignored.
+const jwtPayloadValidator = compile(map(unknown()));
+const jwtAuthValidator = compile(obj({ chatgpt_account_id: opt(str()) }, { open: true }));
+const tokenResponseValidator = compile(
+  obj({ access_token: str(), refresh_token: str(), expires_in: num() }, { open: true }),
+);
+const deviceAuthTokenValidator = compile(
+  obj({ authorization_code: str(), code_verifier: str() }, { open: true }),
+);
+const deviceAuthErrorValidator = compile(
+  obj({ error: opt(union([str(), obj({ code: opt(str()) }, { open: true })])) }, { open: true }),
+);
+const deviceCodeResponseValidator = compile(
+  obj({ device_auth_id: str(), user_code: str(), interval: union([num(), str()]) }, { open: true }),
+);
 
 function getCallbackHost(): string {
   return process.env["PI_OAUTH_CALLBACK_HOST"] || "127.0.0.1";
@@ -75,7 +70,7 @@ function decodeJwt(token: string): JwtPayload | null {
     const parsed: object = JSON.parse(
       Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8"),
     );
-    return Check(JwtPayloadSchema, parsed) ? parsed : null;
+    return jwtPayloadValidator.check(parsed) ? parsed : null;
   } catch {
     return null;
   }
@@ -83,7 +78,7 @@ function decodeJwt(token: string): JwtPayload | null {
 
 export function getOpenAICodexAccountId(accessToken: string): string | null {
   const auth = decodeJwt(accessToken)?.[JWT_CLAIM_PATH];
-  return Check(JwtAuthSchema, auth) && auth.chatgpt_account_id ? auth.chatgpt_account_id : null;
+  return jwtAuthValidator.check(auth) && auth.chatgpt_account_id ? auth.chatgpt_account_id : null;
 }
 
 export function clampOpenAICodexModelWindows(models: Model<Api>[]): Model<Api>[] {
@@ -163,7 +158,7 @@ async function tokenRequest(
       `OpenAI Codex token ${operation} failed (${response.status}): ${await response.text().catch(() => response.statusText)}`,
     );
   const json = await response.json();
-  if (!Check(TokenResponseSchema, json) || !json.access_token || !json.refresh_token)
+  if (!tokenResponseValidator.check(json) || !json.access_token || !json.refresh_token)
     throw new Error(
       `OpenAI Codex token ${operation} response missing fields: ${JSON.stringify(json)}`,
     );
@@ -307,7 +302,7 @@ export async function parseOpenAICodexDeviceAuthPollResponse(
 ): Promise<OAuthDeviceCodePollResult<DeviceAuthToken>> {
   if (response.ok) {
     const json = await response.json();
-    return Check(DeviceAuthTokenSchema, json) && json.authorization_code && json.code_verifier
+    return deviceAuthTokenValidator.check(json) && json.authorization_code && json.code_verifier
       ? {
           status: "complete",
           value: { authorization_code: json.authorization_code, code_verifier: json.code_verifier },
@@ -323,9 +318,9 @@ export async function parseOpenAICodexDeviceAuthPollResponse(
   let errorCode: string | undefined;
   try {
     const json: object | null = JSON.parse(responseBody);
-    if (Check(DeviceAuthErrorSchema, json)) {
+    if (deviceAuthErrorValidator.check(json)) {
       const error = json.error;
-      errorCode = Check(Type.String(), error) ? error : error?.code;
+      errorCode = isString(error) ? error : error?.code;
     }
   } catch {}
   if (errorCode === "deviceauth_authorization_pending") return { status: "pending" };
@@ -349,12 +344,10 @@ async function loginDeviceCode(callbacks: OAuthCallbacks): Promise<OAuthCredenti
       `OpenAI Codex device code request failed with status ${response.status}: ${await response.text().catch(() => response.statusText)}`,
     );
   const json = await response.json();
-  if (!Check(DeviceCodeResponseSchema, json)) {
+  if (!deviceCodeResponseValidator.check(json)) {
     throw new Error(`Invalid OpenAI Codex device code response: ${JSON.stringify(json)}`);
   }
-  const intervalSeconds = Check(Type.String(), json.interval)
-    ? Number(json.interval.trim())
-    : json.interval;
+  const intervalSeconds = isString(json.interval) ? Number(json.interval.trim()) : json.interval;
   if (!json.device_auth_id || !json.user_code || !Number.isFinite(intervalSeconds))
     throw new Error(`Invalid OpenAI Codex device code response: ${JSON.stringify(json)}`);
   callbacks.onDeviceCode({

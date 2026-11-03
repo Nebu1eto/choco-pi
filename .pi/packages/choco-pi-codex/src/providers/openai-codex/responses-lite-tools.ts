@@ -1,25 +1,28 @@
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import { isString } from "../value-guards.ts";
+import { isJsonObject, type JsonObject } from "../../adapter/runtime-values.ts";
+import { arr, compile, lit, obj, opt, unknown, type Static } from "@earendil-works/pi-schema";
 
 const DEFAULT_TOOL_NAMESPACE = "functions";
 
-const ProtocolRecordType = Type.Record(Type.String(), Type.Unknown());
-type ProtocolRecord = Static<typeof ProtocolRecordType>;
-const ProtocolRecordSchema = Type.Unsafe<ProtocolRecord>({ type: "object" });
-const DefaultNamespaceSchema = Type.Object({
-  type: Type.Literal("namespace"),
-  name: Type.Literal(DEFAULT_TOOL_NAMESPACE),
-  description: Type.Optional(Type.Unknown()),
-  tools: Type.Array(Type.Unknown()),
-});
-type DefaultNamespace = Static<typeof DefaultNamespaceSchema>;
+type ProtocolRecord = JsonObject;
+const defaultNamespaceSchema = obj(
+  {
+    type: lit("namespace"),
+    name: lit(DEFAULT_TOOL_NAMESPACE),
+    description: opt(unknown()),
+    tools: arr(unknown()),
+  },
+  { open: true },
+);
+const defaultNamespaceValidator = compile(defaultNamespaceSchema);
+type DefaultNamespace = Static<typeof defaultNamespaceSchema>;
 
 function isRecord<T>(value: T): value is Extract<T, object> & ProtocolRecord {
-  return Check(ProtocolRecordSchema, value);
+  return isJsonObject(value);
 }
 
 function isDefaultNamespace<T>(value: T): value is T & DefaultNamespace {
-  return Check(DefaultNamespaceSchema, value);
+  return defaultNamespaceValidator.check(value);
 }
 
 export function namespaceResponsesLiteTools<T>(tools: readonly T[]): (T | DefaultNamespace)[] {
@@ -37,7 +40,7 @@ export function namespaceResponsesLiteTools<T>(tools: readonly T[]): (T | Defaul
     if (isDefaultNamespace(tool)) {
       insertionIndex ??= output.length;
       children.push(...tool.tools);
-      if (Check(Type.String(), tool.description) && tool.description.trim()) {
+      if (isString(tool.description) && tool.description.trim()) {
         description = tool.description;
       }
       continue;

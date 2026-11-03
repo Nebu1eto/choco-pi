@@ -1,7 +1,6 @@
-import { jsonValueType, JsonObjectSchema } from "../runtime-values.ts";
+import { isBoolean, isNumber, isString } from "../../value-guards.ts";
+import { jsonValueType, isJsonObject } from "../runtime-values.ts";
 import type { JsonObject, BoundaryValue } from "../runtime-values.ts";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import type {
   ResponsesInputContentItem,
   ResponsesInputItem,
@@ -9,18 +8,17 @@ import type {
 } from "../compaction/serializer.ts";
 
 export function isRecord(value: BoundaryValue): value is JsonObject {
-  return Value.Check(JsonObjectSchema, value);
+  return isJsonObject(value);
 }
 
 export function isResponsesInputContentItem(
   value: BoundaryValue,
 ): value is ResponsesInputContentItem {
-  if (!isRecord(value) || !Value.Check(Type.String(), value["type"]!)) return false;
-  if (value["type"] === "input_text") return Value.Check(Type.String(), value["text"]!);
+  if (!isRecord(value) || !isString(value["type"]!)) return false;
+  if (value["type"] === "input_text") return isString(value["text"]!);
   if (value["type"] === "input_image")
-    return value["detail"] === "auto" && Value.Check(Type.String(), value["image_url"]!);
-  if (value["type"] === "encrypted_content")
-    return Value.Check(Type.String(), value["encrypted_content"]!);
+    return value["detail"] === "auto" && isString(value["image_url"]!);
+  if (value["type"] === "encrypted_content") return isString(value["encrypted_content"]!);
   return false;
 }
 export function isResponsesInputMessageRole(
@@ -41,8 +39,7 @@ export function isResponsesInputMessageItem(
   if (!isRecord(value) || !isResponsesInputMessageRole(value["role"]!)) return false;
   const { content } = value;
   return (
-    Value.Check(Type.String(), content) ||
-    (Array.isArray(content) && content.every(isResponsesInputContentItem))
+    isString(content) || (Array.isArray(content) && content.every(isResponsesInputContentItem))
   );
 }
 
@@ -60,7 +57,7 @@ export function cloneResponsesInputMessageItem(
 ): ResponsesInputMessageItem {
   return {
     role: item.role,
-    content: Value.Check(Type.String(), item.content)
+    content: isString(item.content)
       ? item.content
       : item.content.map(cloneResponsesInputContentItem),
   };
@@ -70,9 +67,9 @@ export function cloneStructuredValue(value: BoundaryValue): BoundaryValue {
   if (
     value === undefined ||
     value === null ||
-    Value.Check(Type.String(), value) ||
-    Value.Check(Type.Number(), value) ||
-    Value.Check(Type.Boolean(), value)
+    isString(value) ||
+    isNumber(value) ||
+    isBoolean(value)
   )
     return value;
   if (Array.isArray(value)) return value.map(cloneStructuredValue);
@@ -106,7 +103,7 @@ export function cloneResponsesInputSlice(
   for (const item of items) {
     try {
       const clonedItem = cloneStructuredValue(item);
-      if (!Value.Check(JsonObjectSchema, clonedItem)) return undefined;
+      if (!isJsonObject(clonedItem)) return undefined;
       cloned.push(clonedItem);
     } catch {
       return undefined;

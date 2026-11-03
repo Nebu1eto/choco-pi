@@ -8,8 +8,7 @@ import {
   createExtensionRuntime,
 } from "@earendil-works/pi-coding-agent";
 import { InMemoryCredentialStore, type Model } from "@earendil-works/pi-ai";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, compile, obj, opt, str } from "@earendil-works/pi-schema";
 import { DEFAULT_CODEX_CONVERSION_CONFIG } from "../src/adapter/activation/config.ts";
 import type { AdapterState } from "../src/adapter/activation/state.ts";
 import { codexBackgroundAccountScope } from "../src/adapter/compaction/background-v2.ts";
@@ -47,14 +46,9 @@ function tokenFor(id: string): string {
   return `fixture.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: id } })).toString("base64url")}.fixture`;
 }
 
-const InputBodySchema = Type.Object(
-  {
-    input: Type.Array(
-      Type.Object({ type: Type.Optional(Type.String()) }, { additionalProperties: true }),
-    ),
-  },
-  { additionalProperties: true },
-);
+const isInputBody = compile(
+  obj({ input: arr(obj({ type: opt(str()) }, { open: true })) }, { open: true }),
+).check;
 
 function nativeDetails(background: { readonly account?: string }): NativeCompactionDetails {
   const details = createNativeCompactionDetails({
@@ -163,7 +157,7 @@ test("background checkpoint, same account: the foreground path replays it", asyn
     setup.state,
     setup.pi,
   );
-  assert.ok(Value.Check(InputBodySchema, outgoing));
+  assert.ok(isInputBody(outgoing));
   assert.ok(outgoing.input.some((item) => item.type === "compaction"));
 });
 
@@ -200,7 +194,7 @@ test("foreground checkpoint without background scope keeps provider/api/baseUrl 
     setup.state,
     setup.pi,
   );
-  assert.ok(Value.Check(InputBodySchema, outgoing));
+  assert.ok(isInputBody(outgoing));
   assert.ok(outgoing.input.some((item) => item.type === "compaction"));
   const latest = resolveLatestNativeCompactionEntry(setup.manager.getBranch(), {
     provider: model.provider,

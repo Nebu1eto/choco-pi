@@ -1,5 +1,4 @@
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { isJsonObject } from "../../adapter/runtime-values.ts";
 import type { NativeSteeringConnection } from "./native-steering.ts";
 import type { WebSocketLike } from "./types.ts";
 
@@ -8,13 +7,15 @@ interface NativeRuntime {
   byOwner: Map<string, NativeSteeringConnection>;
   asyncCalls: Map<string, Set<string>>;
 }
-const SlotSchema = Type.Unsafe<NativeRuntime>({ type: "object" });
+function isNativeRuntime<Value>(value: Value): value is Value & NativeRuntime {
+  return isJsonObject(value);
+}
 const slot = Symbol.for("choco-pi-codex:native-responses-runtime:v1");
 
 function runtime(): NativeRuntime {
   const existing = Object.getOwnPropertyDescriptor(globalThis, slot)?.value;
   if (
-    Check(SlotSchema, existing) &&
+    isNativeRuntime(existing) &&
     existing.bySocket instanceof WeakMap &&
     existing.byOwner instanceof Map &&
     existing.asyncCalls instanceof Map

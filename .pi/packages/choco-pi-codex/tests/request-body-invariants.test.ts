@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { normalizeContext, type Context, type Model } from "@earendil-works/pi-ai";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { bool, compile, num, obj, str } from "@earendil-works/pi-schema";
 import { buildRequestBody } from "../src/providers/openai-codex/request-body.ts";
 
-const NamedToolSchema = Type.Object({ name: Type.String() });
-const RoleSchema = Type.Object({ role: Type.String() });
+const namedToolValidator = compile(obj({ name: str() }, { open: true }));
+const roleValidator = compile(obj({ role: str() }, { open: true }));
 
 const MODEL: Model<"openai-codex-responses"> = {
   id: "gpt-5.6-sol",
@@ -28,12 +27,12 @@ const CONTEXT: Context = {
     {
       name: "zeta",
       description: "Runs after alpha alphabetically but first by registration.",
-      parameters: Type.Object({ value: Type.String() }),
+      parameters: obj({ value: str() }, { open: true }),
     },
     {
       name: "alpha",
       description: "Runs before zeta alphabetically but second by registration.",
-      parameters: Type.Object({ count: Type.Number() }),
+      parameters: obj({ count: num() }, { open: true }),
     },
   ],
 };
@@ -83,7 +82,7 @@ test("buildRequestBody replays transcript instructions and current tools exactly
           {
             name: "gamma",
             description: "Added later.",
-            parameters: Type.Object({ enabled: Type.Boolean() }),
+            parameters: obj({ enabled: bool() }, { open: true }),
           },
         ],
         toolsRemoved: [{ name: "zeta" }],
@@ -97,7 +96,7 @@ test("buildRequestBody replays transcript instructions and current tools exactly
   assert.equal(body.instructions, "Initial instructions.\n\nUpdated instructions.");
   assert.equal(JSON.stringify(body).match(/Initial instructions\./g)?.length, 1);
   assert.deepEqual(
-    body.tools?.map((tool) => (Value.Check(NamedToolSchema, tool) ? tool.name : undefined)),
+    body.tools?.map((tool) => (namedToolValidator.check(tool) ? tool.name : undefined)),
     ["alpha", "gamma"],
   );
   assert.equal(
@@ -126,7 +125,7 @@ test("buildRequestBody preserves later system messages only for compatible model
   assert.equal(
     supported.input.filter(
       (item) =>
-        Value.Check(RoleSchema, item) &&
+        roleValidator.check(item) &&
         item.role === "developer" &&
         JSON.stringify(item).includes("Later instructions."),
     ).length,
@@ -141,8 +140,7 @@ test("buildRequestBody preserves later system messages only for compatible model
   assert.equal(JSON.stringify(collapsed).match(/Leading instructions\./g)?.length, 1);
   assert.equal(
     collapsed.input.some(
-      (item) =>
-        Value.Check(RoleSchema, item) && JSON.stringify(item).includes("Later instructions."),
+      (item) => roleValidator.check(item) && JSON.stringify(item).includes("Later instructions."),
     ),
     false,
   );

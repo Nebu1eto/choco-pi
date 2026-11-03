@@ -1,13 +1,10 @@
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { compile, lit, obj, opt, str, unknown } from "@earendil-works/pi-schema";
 
 export type TextSignaturePhase = "commentary" | "final_answer";
 
-const TextSignatureSchema = Type.Object({
-  v: Type.Literal(1),
-  id: Type.String(),
-  phase: Type.Optional(Type.Unknown()),
-});
+const textSignatureValidator = compile(
+  obj({ v: lit(1), id: str(), phase: opt(unknown()) }, { open: true }),
+);
 
 export function shortHash(str: string): string {
   let h1 = 0xdeadbeef;
@@ -33,7 +30,7 @@ export function parseTextSignature(
   if (signature.startsWith("{")) {
     try {
       const parsed: object = JSON.parse(signature);
-      if (Check(TextSignatureSchema, parsed)) {
+      if (textSignatureValidator.check(parsed)) {
         return parsed.phase === "commentary" || parsed.phase === "final_answer"
           ? { id: parsed.id, phase: parsed.phase }
           : { id: parsed.id };

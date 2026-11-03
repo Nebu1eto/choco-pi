@@ -1,5 +1,4 @@
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import { arr, compile, obj, opt, str, unknown, type Static } from "@earendil-works/pi-schema";
 import {
   DAYBREAK_CACHE_MAX_ENTRIES,
   DAYBREAK_ENTITLEMENT_TTL_MS,
@@ -14,14 +13,17 @@ export type DaybreakModelSupport = "supported" | "unsupported" | "lookup-failed"
 export type DaybreakTargetProgram = "daybreak_blue" | "daybreak_red";
 /** `any` asks whether the model advertises some Daybreak program at all. */
 export type DaybreakSupportQuery = DaybreakTargetProgram | "any";
-const ModelSchema = Type.Object({
-  slug: Type.String(),
-  available_access_programs: Type.Optional(
-    Type.Object({ cyber: Type.Optional(Type.Array(Type.String())) }),
-  ),
-});
-const ModelsSchema = Type.Object({ models: Type.Array(Type.Unknown()) });
-type Models = readonly Static<typeof ModelSchema>[];
+const modelSchema = obj(
+  {
+    slug: str(),
+    available_access_programs: opt(obj({ cyber: opt(arr(str())) }, { open: true })),
+  },
+  { open: true },
+);
+const modelValidator = compile(modelSchema);
+const modelsValidator = compile(obj({ models: arr(unknown()) }, { open: true }));
+type DaybreakModelEntry = Static<typeof modelSchema>;
+type Models = readonly DaybreakModelEntry[];
 type LookupResult = Readonly<{ models?: Models; status?: number }>;
 type CacheEntry = {
   token: string;
@@ -70,9 +72,11 @@ async function fetchModels(
       return { status: response.status };
     }
     const payload: unknown = await response.json();
-    if (!Check(ModelsSchema, payload)) return { status: response.status };
+    if (!modelsValidator.check(payload)) return { status: response.status };
     return {
-      models: payload.models.filter((entry) => Check(ModelSchema, entry)),
+      models: payload.models.filter((entry): entry is DaybreakModelEntry =>
+        modelValidator.check(entry),
+      ),
       status: response.status,
     };
   } catch {

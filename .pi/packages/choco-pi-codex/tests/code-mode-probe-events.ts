@@ -12,70 +12,95 @@
  * decoder the live run depends on is exercised without starting any live process.
  */
 import assert from "node:assert/strict";
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import {
+  arr,
+  bool,
+  compile,
+  lit,
+  nullable,
+  obj,
+  opt,
+  str,
+  union,
+  unknown,
+} from "@earendil-works/pi-schema";
+import type { Static } from "@earendil-works/pi-schema";
 
-export const TextBlockSchema = Type.Object({ type: Type.Literal("text"), text: Type.String() });
-export const ToolCallBlockSchema = Type.Object({
-  type: Type.Literal("toolCall"),
-  id: Type.String(),
-  name: Type.String(),
-  arguments: Type.Optional(Type.Unknown()),
-});
-export const ExecArgumentsSchema = Type.Object({ code: Type.String() });
-export const ErrorStatusSchema = Type.Object({ status: Type.Literal("error") });
-export const ErrorCodeSchema = Type.Object({ code: Type.Literal("ESRCH") });
-const ToolResultDetailsSchema = Type.Object({
-  agentId: Type.Optional(Type.String()),
-  traces: Type.Optional(Type.Array(Type.Unknown())),
-});
-export const ToolResultSchema = Type.Object({
-  content: Type.Optional(Type.Array(Type.Unknown())),
-  details: Type.Optional(ToolResultDetailsSchema),
-});
-export const AgentTraceSchema = Type.Object({
-  name: Type.String(),
-  status: Type.String(),
-  result: ToolResultSchema,
-});
-const NullableString = Type.Optional(Type.Union([Type.String(), Type.Null()]));
+// Open objects (unmodelled fields are allowed), as the former TypeBox objects were.
+export const TextBlockSchema = obj({ type: lit("text"), text: str() }, { open: true });
+export const ToolCallBlockSchema = obj(
+  { type: lit("toolCall"), id: str(), name: str(), arguments: opt(unknown()) },
+  { open: true },
+);
+export const ExecArgumentsSchema = obj({ code: str() }, { open: true });
+export const ErrorStatusSchema = obj({ status: lit("error") }, { open: true });
+export const ErrorCodeSchema = obj({ code: lit("ESRCH") }, { open: true });
+const ToolResultDetailsSchema = obj(
+  { agentId: opt(str()), traces: opt(arr(unknown())) },
+  { open: true },
+);
+export const ToolResultSchema = obj(
+  { content: opt(arr(unknown())), details: opt(ToolResultDetailsSchema) },
+  { open: true },
+);
+export const AgentTraceSchema = obj(
+  { name: str(), status: str(), result: ToolResultSchema },
+  { open: true },
+);
+const NullableString = opt(nullable(str()));
 /**
  * Message content is a union because the SDK's CustomMessage declares
  * `content: string | (TextContent | ImageContent)[]`, while assistant, user, and toolResult
  * messages carry a block array. Modelling only the array shape rejects the entire terminal
  * `agent_end` envelope as soon as one extension-injected custom message is present.
  */
-const MessageContentSchema = Type.Optional(Type.Union([Type.Array(Type.Unknown()), Type.String()]));
-export const MessageSchema = Type.Object({
-  role: Type.String(),
-  content: MessageContentSchema,
-  stopReason: NullableString,
-  errorMessage: NullableString,
-  toolName: NullableString,
-  toolCallId: NullableString,
-  isError: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
-  details: Type.Optional(Type.Unknown()),
-});
-export const AgentEndEventSchema = Type.Object({
-  type: Type.Literal("agent_end"),
-  messages: Type.Array(MessageSchema),
-});
-export const ToolStartEventSchema = Type.Object({
-  type: Type.Literal("tool_execution_start"),
-  toolCallId: Type.String(),
-  toolName: Type.String(),
-  args: Type.Optional(Type.Unknown()),
-});
-export const ToolEndEventSchema = Type.Object({
-  type: Type.Literal("tool_execution_end"),
-  toolCallId: Type.String(),
-  toolName: Type.String(),
-  isError: Type.Boolean(),
-  result: Type.Optional(Type.Unknown()),
-});
-export const TranscriptEntrySchema = Type.Object({ message: MessageSchema });
-const StringContentSchema = Type.String();
-const BlockContentSchema = Type.Array(Type.Unknown());
+const MessageContentSchema = opt(union([arr(unknown()), str()]));
+export const MessageSchema = obj(
+  {
+    role: str(),
+    content: MessageContentSchema,
+    stopReason: NullableString,
+    errorMessage: NullableString,
+    toolName: NullableString,
+    toolCallId: NullableString,
+    isError: opt(nullable(bool())),
+    details: opt(unknown()),
+  },
+  { open: true },
+);
+export const AgentEndEventSchema = obj(
+  { type: lit("agent_end"), messages: arr(MessageSchema) },
+  { open: true },
+);
+export const ToolStartEventSchema = obj(
+  { type: lit("tool_execution_start"), toolCallId: str(), toolName: str(), args: opt(unknown()) },
+  { open: true },
+);
+export const ToolEndEventSchema = obj(
+  {
+    type: lit("tool_execution_end"),
+    toolCallId: str(),
+    toolName: str(),
+    isError: bool(),
+    result: opt(unknown()),
+  },
+  { open: true },
+);
+export const TranscriptEntrySchema = obj({ message: MessageSchema }, { open: true });
+
+export const isTextBlock = compile(TextBlockSchema).check;
+export const isToolCallBlock = compile(ToolCallBlockSchema).check;
+export const isExecArguments = compile(ExecArgumentsSchema).check;
+export const isErrorStatus = compile(ErrorStatusSchema).check;
+export const isErrorCode = compile(ErrorCodeSchema).check;
+export const isToolResult = compile(ToolResultSchema).check;
+export const isAgentTrace = compile(AgentTraceSchema).check;
+const isAgentEndEvent = compile(AgentEndEventSchema).check;
+const isToolStartEvent = compile(ToolStartEventSchema).check;
+const isToolEndEvent = compile(ToolEndEventSchema).check;
+const isTranscriptEntry = compile(TranscriptEntrySchema).check;
+const isStringContent = compile(str()).check;
+const isBlockContent = compile(arr(unknown())).check;
 
 export type ProbeMessage = Static<typeof MessageSchema>;
 export type ProbeToolCall = Static<typeof ToolCallBlockSchema>;
@@ -105,13 +130,13 @@ export function decodeProbeEventLine(line: string): ProbeEvent | undefined {
     return undefined;
   }
   const raw = parsed.value;
-  if (Value.Check(AgentEndEventSchema, raw)) {
+  if (isAgentEndEvent(raw)) {
     return { kind: "agentEnd", event: raw };
   }
-  if (Value.Check(ToolStartEventSchema, raw)) {
+  if (isToolStartEvent(raw)) {
     return { kind: "toolStart", event: raw };
   }
-  if (Value.Check(ToolEndEventSchema, raw)) {
+  if (isToolEndEvent(raw)) {
     return { kind: "toolEnd", event: raw };
   }
   return undefined;
@@ -123,14 +148,14 @@ export function decodeTranscriptLine(line: string): ProbeMessage | undefined {
   if (!parsed.parsed) {
     return undefined;
   }
-  return Value.Check(TranscriptEntrySchema, parsed.value) ? parsed.value.message : undefined;
+  return isTranscriptEntry(parsed.value) ? parsed.value.message : undefined;
 }
 
 /** Decode the text blocks of a content array, ignoring every other block kind. */
 export function textFromContentBlocks(blocks: readonly unknown[] | undefined): string {
   const parts: string[] = [];
   for (const block of blocks ?? []) {
-    if (Value.Check(TextBlockSchema, block)) {
+    if (isTextBlock(block)) {
       parts.push(block.text);
     }
   }
@@ -140,10 +165,10 @@ export function textFromContentBlocks(blocks: readonly unknown[] | undefined): s
 /** Decode a message's text, accepting both the block-array and the plain-string content shapes. */
 export function messageText(message: ProbeMessage): string {
   const content = message.content;
-  if (Value.Check(StringContentSchema, content)) {
+  if (isStringContent(content)) {
     return content;
   }
-  return Value.Check(BlockContentSchema, content) ? textFromContentBlocks(content) : "";
+  return isBlockContent(content) ? textFromContentBlocks(content) : "";
 }
 
 export function resultText(result: ProbeToolResult): string {
@@ -158,11 +183,11 @@ export function toolCallsOf(messages: readonly ProbeMessage[]): ProbeToolCall[] 
       continue;
     }
     const content = message.content;
-    if (!Value.Check(BlockContentSchema, content)) {
+    if (!isBlockContent(content)) {
       continue;
     }
     for (const block of content) {
-      if (Value.Check(ToolCallBlockSchema, block)) {
+      if (isToolCallBlock(block)) {
         calls.push(block);
       }
     }

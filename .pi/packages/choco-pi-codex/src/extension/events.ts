@@ -1,12 +1,6 @@
-import { isBoundaryValue, type BoundaryValue } from "../adapter/runtime-values.ts";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { isBoundaryValue, isJsonObject, type BoundaryValue } from "../adapter/runtime-values.ts";
+import { isNonNegativeInteger, isString } from "../value-guards.ts";
 
-const CommandArgsSchema = Type.Object({ cmd: Type.String() });
-const ToolCallOnlyAssistantMessageSchema = Type.Object({
-  role: Type.Literal("assistant"),
-  content: Type.Array(Type.Object({ type: Type.Literal("toolCall") }), { minItems: 1 }),
-});
 import {
   buildSessionContext,
   type ExtensionAPI,
@@ -67,10 +61,6 @@ import {
 } from "./context-elision.ts";
 
 const CONTEXT_ELISION_ENTRY = "codex-context-elision";
-const ContextElisionEntrySchema = Type.Object({
-  epoch: Type.String(),
-  cut: Type.Integer({ minimum: 0 }),
-});
 
 function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
   let promise: Promise<Module> | undefined;
@@ -100,11 +90,19 @@ function formatCompactionUsage(usage: NativeCompactionUsage): string {
 }
 
 function commandArg(args: BoundaryValue): string | undefined {
-  return Value.Check(CommandArgsSchema, args) ? args.cmd : undefined;
+  if (!isJsonObject(args)) return undefined;
+  const cmd = args["cmd"];
+  return isString(cmd) ? cmd : undefined;
 }
 
 function isToolCallOnlyAssistantMessage(message: BoundaryValue): boolean {
-  return Value.Check(ToolCallOnlyAssistantMessageSchema, message);
+  if (!isJsonObject(message) || message["role"] !== "assistant") return false;
+  const content = message["content"];
+  return (
+    Array.isArray(content) &&
+    content.length >= 1 &&
+    content.every((part) => isJsonObject(part) && part["type"] === "toolCall")
+  );
 }
 
 function isAbortError(error: Error | BoundaryValue): boolean {
@@ -217,13 +215,15 @@ export function registerCodexEvents(
     elision.epoch = branch.findLast((entry) => entry.type === "compaction")?.id ?? "";
     elision.cut = 0;
     for (const entry of branch) {
+      const data = entry.type === "custom" ? entry.data : undefined;
       if (
         entry.type === "custom" &&
         entry.customType === CONTEXT_ELISION_ENTRY &&
-        Value.Check(ContextElisionEntrySchema, entry.data) &&
-        entry.data.epoch === elision.epoch
+        isJsonObject(data) &&
+        data["epoch"] === elision.epoch &&
+        isNonNegativeInteger(data["cut"])
       )
-        elision.cut = Math.max(elision.cut, entry.data.cut);
+        elision.cut = Math.max(elision.cut, data["cut"]);
     }
   };
   sessions.onSessionExit((sessionId) => tracker.recordSessionFinished(sessionId));

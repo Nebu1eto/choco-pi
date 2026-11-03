@@ -6,7 +6,8 @@ import {
   type ExtensionContext,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { obj, str } from "@earendil-works/pi-schema";
+import { hostParams } from "../../schema-bridge.ts";
 import { Text } from "@earendil-works/pi-tui";
 import {
   imageContentFromViewImageOutput,
@@ -48,8 +49,7 @@ interface CreateViewImageToolOptions {
 type ViewImageParameters = ReturnType<typeof createViewImageParameters>;
 
 function createViewImageParameters() {
-  const properties = { path: Type.String() };
-  return Type.Object(properties);
+  return hostParams(obj({ path: str() }, { open: true }));
 }
 
 export function parseViewImageParams(params: BoundaryValue): ViewImageParams {

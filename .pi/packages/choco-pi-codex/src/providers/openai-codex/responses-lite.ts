@@ -1,7 +1,7 @@
+import { isString } from "../value-guards.ts";
+import { isJsonObject, type JsonObject } from "../../adapter/runtime-values.ts";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { resizeImage } from "@earendil-works/pi-coding-agent";
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
 import {
   namespaceResponsesLiteInputTools,
   namespaceResponsesLiteTools,
@@ -42,13 +42,10 @@ export function isResponsesLiteRequest(body: ResponsesLiteCompatibleBody): boole
   return isRecord(body.input[0]) && body.input[0]["type"] === "additional_tools";
 }
 
-const ProtocolRecordType = Type.Record(Type.String(), Type.Unknown());
-type ProtocolRecord = Static<typeof ProtocolRecordType>;
-const ProtocolRecordSchema = Type.Unsafe<ProtocolRecord>({ type: "object" });
-const StringSchema = Type.String();
+type ProtocolRecord = JsonObject;
 
 function isRecord<T>(value: T): value is Extract<T, object> & ProtocolRecord {
-  return Check(ProtocolRecordSchema, value);
+  return isJsonObject(value);
 }
 
 function prepareLiteContent<T>(content: T) {
@@ -56,7 +53,7 @@ function prepareLiteContent<T>(content: T) {
   return content.map((item) => {
     if (!isRecord(item) || item["type"] !== "input_image") return item;
     const imageUrl = item["image_url"];
-    if (Check(StringSchema, imageUrl) && /^https?:\/\//i.test(imageUrl)) {
+    if (isString(imageUrl) && /^https?:\/\//i.test(imageUrl)) {
       return {
         type: "input_text",
         text: "image content omitted because remote image URLs are not supported",
@@ -132,11 +129,7 @@ async function prepareLiteImageContent<T>(content: T) {
   if (!Array.isArray(content)) return content;
   return Promise.all(
     content.map(async (item) => {
-      if (
-        !isRecord(item) ||
-        item["type"] !== "input_image" ||
-        !Check(StringSchema, item["image_url"])
-      )
+      if (!isRecord(item) || item["type"] !== "input_image" || !isString(item["image_url"]))
         return item;
       if (!/^data:/i.test(item["image_url"])) return item;
       const imageUrl = await prepareDataImageUrl(item["image_url"]);

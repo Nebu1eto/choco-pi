@@ -1,11 +1,11 @@
+import { isString } from "../src/value-guards.ts";
 import assert from "node:assert/strict";
 import { promisify } from "node:util";
 import zlib from "node:zlib";
 import test, { after, afterEach } from "node:test";
 import { ModelRegistry, ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
 import { InMemoryCredentialStore, normalizeContext, type Model } from "@earendil-works/pi-ai";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, compile, obj, opt, str, unknown } from "@earendil-works/pi-schema";
 import { buildSnapshot } from "../../choco-pi-compaction/tests/background-fakes.ts";
 import type { BackendFactoryContext } from "../../choco-pi-compaction/src/background/contract.ts";
 import {
@@ -81,24 +81,22 @@ const MESSAGES = ["a", "b", "c", "d"].map((letter, index) => ({
   timestamp: index + 1,
 }));
 
-const WindowSchema = Type.Object(
-  {
-    compactedWindow: Type.Array(
-      Type.Object(
-        {
-          role: Type.Optional(Type.String()),
-          content: Type.Optional(
-            Type.Array(
-              Type.Object({ text: Type.Optional(Type.String()) }, { additionalProperties: true }),
-            ),
-          ),
-        },
-        { additionalProperties: true },
+const isWindow = compile(
+  obj(
+    {
+      compactedWindow: arr(
+        obj(
+          {
+            role: opt(str()),
+            content: opt(arr(obj({ text: opt(str()) }, { open: true }))),
+          },
+          { open: true },
+        ),
       ),
-    ),
-  },
-  { additionalProperties: true },
-);
+    },
+    { open: true },
+  ),
+).check;
 
 /** The retained user messages' first letters, in window order. */
 interface PrepareOptions {
@@ -108,7 +106,7 @@ interface PrepareOptions {
 
 /** Request bodies the lane sent, decoded. */
 async function decodedBody(body: RequestInit["body"]): Promise<string> {
-  if (Value.Check(Type.String(), body)) return body;
+  if (isString(body)) return body;
   assert.ok(body instanceof Uint8Array);
   const zstdDecompress = promisify(zlib.zstdDecompress);
   return (await zstdDecompress(body)).toString("utf8");
@@ -228,7 +226,7 @@ async function prepareBackground(
     customInstructions === undefined ? request : { ...request, customInstructions },
   );
   assert.ok("draft" in prepared, JSON.stringify(prepared));
-  assert.ok(Value.Check(WindowSchema, prepared.details));
+  assert.ok(isWindow(prepared.details));
   const letters = prepared.details.compactedWindow
     .filter((item) => item.role === "user")
     .map((item) => item.content?.[0]?.text?.slice(0, 1) ?? "");
@@ -256,12 +254,9 @@ test("background lane: the coordinator's /compact focus reaches the request, not
   const { letters, bodies } = await prepareBackground({ customInstructions: "keep the DB plan" });
   assert.deepEqual(letters, ["a", "b", "c", "d"]);
   assert.equal(bodies.length, 1);
-  const BodySchema = Type.Object(
-    { input: Type.Array(Type.Unknown()) },
-    { additionalProperties: true },
-  );
+  const isBody = compile(obj({ input: arr(unknown()) }, { open: true })).check;
   const body: unknown = JSON.parse(bodies[0] ?? "");
-  assert.ok(Value.Check(BodySchema, body));
+  assert.ok(isBody(body));
   assert.deepEqual(body.input.slice(-2), [
     {
       type: "message",

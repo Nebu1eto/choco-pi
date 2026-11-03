@@ -5,7 +5,7 @@
 // Voice, Notebook Mode, and the background-shell widget were removed.
 import { createRequire } from "node:module";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import type { TSchema } from "typebox";
+import type { HostSchema } from "./schema-bridge.ts";
 import type { ApplyPatchToolDetails, ApplyPatchToolOptions } from "./tools/apply-patch/tool.ts";
 import type { BoundaryValue } from "./tools/boundary.ts";
 import { registerCodexConversion } from "./extension/register.ts";
@@ -27,7 +27,7 @@ interface ActivationModule {
 interface ApplyPatchModule {
   createApplyPatchTool(
     options?: ApplyPatchToolOptions,
-  ): ToolDefinition<TSchema, ApplyPatchToolDetails>;
+  ): ToolDefinition<HostSchema, ApplyPatchToolDetails>;
   isApplyPatchToolDetails(details: BoundaryValue): details is ApplyPatchToolDetails;
   registerApplyPatchResultEvent(pi: ExtensionAPI): void;
 }

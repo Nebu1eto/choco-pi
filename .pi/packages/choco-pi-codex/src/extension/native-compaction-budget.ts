@@ -1,6 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { compile, obj, str } from "@earendil-works/pi-schema";
+import { finiteNum } from "../value-guards.ts";
 import { resolveCodexRuntimePlanForState } from "../adapter/activation/runtime-plan.ts";
 import type { AdapterState } from "../adapter/activation/state.ts";
 import { resolveNativeCompactionRequestBudget } from "../adapter/compaction/request-shrink.ts";
@@ -29,11 +29,9 @@ export interface NativeCompactionBudgetHook {
 type HostModel = NonNullable<ExtensionContext["model"]>;
 
 /** Callers outside this package reach the hook through a global; parse what they pass. */
-const BudgetModelSchema = Type.Object({
-  provider: Type.String(),
-  id: Type.String(),
-  contextWindow: Type.Number(),
-});
+const isBudgetModel = compile(
+  obj({ provider: str(), id: str(), contextWindow: finiteNum() }, { open: true }),
+).check;
 
 /** Full host model for a provider/id pair; undefined when it is unknown. */
 export type NativeCompactionModelLookup = (provider: string, id: string) => HostModel | undefined;
@@ -62,7 +60,7 @@ export function createNativeCompactionBudgetHook(
   return Object.freeze({
     version: 1 as const,
     budgetFor(model: NativeCompactionBudgetModel): number | undefined {
-      if (!Value.Check(BudgetModelSchema, model)) {
+      if (!isBudgetModel(model)) {
         return undefined;
       }
       const hostModel = deps.findModel()?.(model.provider, model.id);

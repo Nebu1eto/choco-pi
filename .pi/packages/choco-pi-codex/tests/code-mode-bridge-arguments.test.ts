@@ -2,7 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createSyntheticSourceInfo, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import {
+  arr,
+  lit,
+  nullable as nullableSchema,
+  num,
+  obj,
+  opt,
+  str,
+  union,
+  unknown,
+} from "@earendil-works/pi-schema";
+import { hostParams } from "../src/schema-bridge.ts";
 import { collectBridgedTools } from "../src/tools/code-mode/registered-tool-bridge.ts";
 import { createToolContextFixture } from "./tool-context-fixture.ts";
 
@@ -30,11 +41,9 @@ test("invalid bridged arguments are rejected before executor side effects", asyn
     name: "read_text",
     label: "read_text",
     description: "Read observed UI text",
-    parameters: Type.Object({
-      ref: Type.String(),
-      offset: Type.Optional(Type.Number({ minimum: 0 })),
-      stateId: Type.Optional(Type.String()),
-    }),
+    parameters: hostParams(
+      obj({ ref: str(), offset: opt(num({ minimum: 0 })), stateId: opt(str()) }, { open: true }),
+    ),
     async execute() {
       executions += 1;
       return success("unexpected");
@@ -60,7 +69,7 @@ test("explicit null and missing required arguments are not normalized", async ()
     name: "required",
     label: "required",
     description: "required",
-    parameters: Type.Object({ value: Type.String() }),
+    parameters: hostParams(obj({ value: str() }, { open: true })),
     async execute() {
       executions += 1;
       return success("unexpected");
@@ -85,7 +94,7 @@ test("nullable input still reaches prepareArguments unchanged", async () => {
     name: "nullable",
     label: "nullable",
     description: "nullable",
-    parameters: Type.Object({ value: Type.String() }),
+    parameters: hostParams(obj({ value: str() }, { open: true })),
     prepareArguments(input) {
       sawNull = input === null;
       return input === null ? { value: "from-null" } : input;
@@ -107,11 +116,9 @@ test("valid read_text input preserves UI observation failure", async () => {
     name: "read_text",
     label: "read_text",
     description: "Read observed UI text",
-    parameters: Type.Object({
-      ref: Type.String(),
-      offset: Type.Optional(Type.Number({ minimum: 0 })),
-      stateId: Type.Optional(Type.String()),
-    }),
+    parameters: hostParams(
+      obj({ ref: str(), offset: opt(num({ minimum: 0 })), stateId: opt(str()) }, { open: true }),
+    ),
     async execute() {
       executions += 1;
       throw new Error("No observation state is available. Call observe_ui first.");
@@ -135,7 +142,7 @@ test("valid, prepared, and no-argument bridged calls execute exactly once", asyn
     name: "valid",
     label: "valid",
     description: "valid",
-    parameters: Type.Object({ value: Type.String() }),
+    parameters: hostParams(obj({ value: str() }, { open: true })),
     async execute() {
       validExecutions += 1;
       return success("ok");
@@ -149,7 +156,7 @@ test("valid, prepared, and no-argument bridged calls execute exactly once", asyn
     name: "prepared",
     label: "prepared",
     description: "prepared",
-    parameters: Type.Object({ value: Type.Number() }),
+    parameters: hostParams(obj({ value: num() }, { open: true })),
     prepareArguments() {
       return { value: 7 };
     },
@@ -166,7 +173,7 @@ test("valid, prepared, and no-argument bridged calls execute exactly once", asyn
     name: "get_goal",
     label: "get_goal",
     description: "get goal",
-    parameters: Type.Object({}),
+    parameters: hostParams(obj({}, { open: true })),
     async execute(_id, input) {
       noArgExecutions += 1;
       assert.deepEqual(input, {});
@@ -183,7 +190,7 @@ test("bridged runtime rejection remains a single failed execution", async () => 
     name: "fails",
     label: "fails",
     description: "fails",
-    parameters: Type.Object({}),
+    parameters: hostParams(obj({}, { open: true })),
     async execute() {
       executions += 1;
       throw new Error("runtime rejection");
@@ -219,11 +226,9 @@ function recordingTool(parameters: ToolDefinition["parameters"]) {
   };
 }
 
-const ReadSchema = Type.Object({
-  path: Type.String(),
-  offset: Type.Optional(Type.Number()),
-  limit: Type.Optional(Type.Number()),
-});
+const ReadSchema = hostParams(
+  obj({ path: str(), offset: opt(num()), limit: opt(num()) }, { open: true }),
+);
 
 test("bridged arguments match native normalization for optional nulls and coercible scalars", async () => {
   const optional = recordingTool(ReadSchema);
@@ -245,11 +250,12 @@ test("bridged arguments match native normalization for optional nulls and coerci
   assert.deepEqual(coercible.last, { path: "package.json", limit: 50 });
 
   const nested = recordingTool(
-    Type.Object({
-      edits: Type.Array(
-        Type.Object({ oldText: Type.String(), newText: Type.Optional(Type.String()) }),
+    hostParams(
+      obj(
+        { edits: arr(obj({ oldText: str(), newText: opt(str()) }, { open: true })) },
+        { open: true },
       ),
-    }),
+    ),
   );
   assert.equal(
     await nested.tool.invoke(
@@ -261,7 +267,7 @@ test("bridged arguments match native normalization for optional nulls and coerci
   );
   assert.deepEqual(nested.last, { edits: [{ oldText: "a" }] });
 
-  const nullable = recordingTool(Type.Object({ value: Type.Union([Type.String(), Type.Null()]) }));
+  const nullable = recordingTool(hostParams(obj({ value: nullableSchema(str()) }, { open: true })));
   assert.equal(
     await nullable.tool.invoke({ value: null }, context, new AbortController().signal),
     "ok",
@@ -276,9 +282,9 @@ test("invalid nested arguments report their path without the rejected payload", 
     name: "edit",
     label: "edit",
     description: "edit",
-    parameters: Type.Object({
-      edits: Type.Array(Type.Object({ oldText: Type.String(), newText: Type.String() })),
-    }),
+    parameters: hostParams(
+      obj({ edits: arr(obj({ oldText: str(), newText: str() }, { open: true })) }, { open: true }),
+    ),
     async execute() {
       executions += 1;
       return success("unexpected");
@@ -309,7 +315,7 @@ test("non-validation failures from the native validator propagate without execut
     name: "permissive",
     label: "permissive",
     description: "permissive",
-    parameters: Type.Object({ handler: Type.Any() }),
+    parameters: hostParams(obj({ handler: unknown() }, { open: true })),
     prepareArguments() {
       // A schema-valid but structured-clone-hostile member: the native validator clones first.
       return { handler: () => undefined };
@@ -360,16 +366,21 @@ test("object-union failures name the discriminator and its accepted values once"
     name: "act_ui",
     label: "act_ui",
     description: "act",
-    parameters: Type.Object({
-      actions: Type.Array(
-        Type.Union([
-          Type.Object({ action: Type.Literal("press"), ref: Type.String() }),
-          Type.Object({ action: Type.Literal("click"), ref: Type.String() }),
-          Type.Object({ action: Type.Literal("click"), x: Type.Number(), y: Type.Number() }),
-        ]),
-        { minItems: 1 },
+    parameters: hostParams(
+      obj(
+        {
+          actions: arr(
+            union([
+              obj({ action: lit("press"), ref: str() }, { open: true }),
+              obj({ action: lit("click"), ref: str() }, { open: true }),
+              obj({ action: lit("click"), x: num(), y: num() }, { open: true }),
+            ]),
+            { minItems: 1 },
+          ),
+        },
+        { open: true },
       ),
-    }),
+    ),
     async execute() {
       return success("unexpected");
     },

@@ -1,7 +1,6 @@
-import { JsonObjectSchema } from "../runtime-values.ts";
+import { isNumber, isString } from "../../value-guards.ts";
+import { isJsonObject } from "../runtime-values.ts";
 import type { JsonObject, BoundaryValue } from "../runtime-values.ts";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import type { NativeCompactionRequestBody, ResponsesInputItem } from "./serializer.ts";
 import { supportsResponsesLiteModel } from "../../providers/openai-codex/responses-lite-model.ts";
 
@@ -35,7 +34,7 @@ export type NativeCompactionBudgetOptions = {
 };
 
 function isRecord(value: BoundaryValue): value is JsonObject {
-  return Value.Check(JsonObjectSchema, value);
+  return isJsonObject(value);
 }
 
 type TokenEncoder = { encode(value: string): ArrayLike<BoundaryValue> };
@@ -53,7 +52,7 @@ function getTokenEncoder(): Promise<TokenEncoder> {
 }
 
 function estimateTokenCount(value: BoundaryValue, encoding: TokenEncoder): number {
-  const serialized = Value.Check(Type.String(), value) ? value : (JSON.stringify(value) ?? "");
+  const serialized = isString(value) ? value : (JSON.stringify(value) ?? "");
   try {
     return encoding.encode(serialized).length;
   } catch {
@@ -94,11 +93,7 @@ export function resolveNativeCompactionRequestBudget(
     return OPENAI_CODEX_COMPACTION_ENDPOINT_BUDGET_TOKENS;
   }
   const contextWindow = options.contextWindow;
-  if (
-    !Value.Check(Type.Number(), contextWindow) ||
-    !Number.isFinite(contextWindow) ||
-    contextWindow <= 0
-  )
+  if (!isNumber(contextWindow) || !Number.isFinite(contextWindow) || contextWindow <= 0)
     return undefined;
   return Math.floor((contextWindow * CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT) / 100);
 }
@@ -122,11 +117,7 @@ export function resolveNativeCompactionInputBudget(
 
 function compactRequestBudget(options: ShrinkNativeCompactionRequestOptions): number | undefined {
   const budgetTokens = options.budgetTokens;
-  if (
-    !Value.Check(Type.Number(), budgetTokens) ||
-    !Number.isFinite(budgetTokens) ||
-    budgetTokens <= 0
-  )
+  if (!isNumber(budgetTokens) || !Number.isFinite(budgetTokens) || budgetTokens <= 0)
     return undefined;
   return Math.floor(budgetTokens);
 }
@@ -159,7 +150,7 @@ function stringField(item: ResponsesInputItem, key: string): string | undefined 
   if (!isRecord(item)) return undefined;
   const record: JsonObject = item;
   const value = record[key];
-  return Value.Check(Type.String(), value) ? value : undefined;
+  return isString(value) ? value : undefined;
 }
 function isCompactionItem(item: ResponsesInputItem): boolean {
   const type = stringField(item, "type");

@@ -1,8 +1,7 @@
+import { isString } from "../../value-guards.ts";
 import { conditionalProperties } from "../runtime-values.ts";
-import { jsonValueType, JsonObjectSchema } from "../runtime-values.ts";
+import { jsonValueType, isJsonObject } from "../runtime-values.ts";
 import type { JsonObject, BoundaryValue } from "../runtime-values.ts";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
@@ -140,10 +139,12 @@ interface ResponsesModelCompat {
   supportsMidConvoSystemMessages?: boolean | undefined;
 }
 
-const ResponsesModelCompatSchema = Type.Unsafe<ResponsesModelCompat>({ type: "object" });
+function isResponsesModelCompat<T>(value: T): value is T & ResponsesModelCompat {
+  return isJsonObject(value);
+}
 
 function isRecord(value: BoundaryValue): value is JsonObject {
-  return Value.Check(JsonObjectSchema, value);
+  return isJsonObject(value);
 }
 
 let cachedBlockImagesSetting: boolean | undefined;
@@ -217,7 +218,7 @@ export function serializeMessagesToResponsesInput<TApi extends Api>(
     isCodexTransportModel(model) && !CODEX_TOOL_CALL_PROVIDERS.has(model.provider)
       ? new Set([...CODEX_TOOL_CALL_PROVIDERS, model.provider])
       : CODEX_TOOL_CALL_PROVIDERS;
-  const compat = Value.Check(ResponsesModelCompatSchema, model.compat) ? model.compat : undefined;
+  const compat = isResponsesModelCompat(model.compat) ? model.compat : undefined;
   const supportsMidConvoSystemMessages = compat?.supportsMidConvoSystemMessages;
   const deferredToolsMode = compat?.supportsAdditionalTools
     ? "additional-tools"
@@ -289,22 +290,22 @@ export function compareResponsesInputParity(
 }
 
 function describeResponsesInputItem(item: BoundaryValue): string {
-  if (!Value.Check(JsonObjectSchema, item)) {
+  if (!isJsonObject(item)) {
     return jsonValueType(item);
   }
 
   const record = item;
-  const type = Value.Check(Type.String(), record["type"]!) ? record["type"]! : undefined;
+  const type = isString(record["type"]!) ? record["type"]! : undefined;
   if (type === "message") {
     const phase =
       record["phase"] === "commentary" || record["phase"] === "final_answer"
         ? `:${record["phase"]!}`
         : "";
-    return `message:${Value.Check(Type.String(), record["role"]!) ? record["role"]! : "unknown"}${phase}`;
+    return `message:${isString(record["role"]!) ? record["role"]! : "unknown"}${phase}`;
   }
 
   if (type === "function_call") {
-    return `function_call:${Value.Check(Type.String(), record["name"]!) ? record["name"]! : "unknown"}`;
+    return `function_call:${isString(record["name"]!) ? record["name"]! : "unknown"}`;
   }
 
   if (type === "function_call_output") {
@@ -315,7 +316,7 @@ function describeResponsesInputItem(item: BoundaryValue): string {
     return "reasoning";
   }
 
-  if (Value.Check(Type.String(), record["role"]!)) {
+  if (isString(record["role"]!)) {
     const content = Array.isArray(record["content"]!) ? `[${record["content"]!.length}]` : "";
     return `input:${record["role"]!}${content}`;
   }

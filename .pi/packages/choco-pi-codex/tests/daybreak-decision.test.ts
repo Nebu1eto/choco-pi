@@ -10,8 +10,8 @@ import {
   type Model,
 } from "@earendil-works/pi-ai";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import type { JsonObject } from "../src/adapter/runtime-values.ts";
+import { compile, lit, map, obj, str, unknown } from "@earendil-works/pi-schema";
 import {
   DAYBREAK_BRIDGE_SYMBOL,
   type CodexDaybreakDecision,
@@ -102,12 +102,13 @@ const context = normalizeContext({
   messages: [{ role: "user", content: "Hello.", timestamp: 1 }],
 });
 
-const AccessProgramsSchema = Type.Object({
-  access_programs: Type.Object({ cyber: Type.String() }),
-});
-const FrameSchema = Type.Object({ type: Type.Literal("response.create") });
-const WireBodySchema = Type.Record(Type.String(), Type.Unknown());
-type WireBody = Static<typeof WireBodySchema>;
+const accessProgramsValidator = compile(
+  obj({ access_programs: obj({ cyber: str() }, { open: true }) }, { open: true }),
+);
+const frameValidator = compile(obj({ type: lit("response.create") }, { open: true }));
+const wireBodyValidator = compile(map(unknown()));
+const modelBodyValidator = compile(obj({ model: str() }, { open: true }));
+type WireBody = JsonObject;
 const CYBER_BY_OUTCOME = new Map<DaybreakOutcome, string>([
   ["blue", "daybreak_blue"],
   ["red", "daybreak_red"],
@@ -121,7 +122,7 @@ function token(accountId: string, nonce = "a"): string {
 }
 
 function cyberOf(body: WireBody | undefined): string | undefined {
-  return Value.Check(AccessProgramsSchema, body) ? body.access_programs.cyber : undefined;
+  return accessProgramsValidator.check(body) ? body.access_programs.cyber : undefined;
 }
 
 function hasAccessPrograms(body: WireBody | undefined): boolean {
@@ -192,7 +193,7 @@ async function requestText(init: RequestInit | undefined): Promise<string> {
 function parseWire(text: string | undefined): WireBody {
   assert.ok(text);
   const parsed: unknown = JSON.parse(text);
-  assert.ok(Value.Check(WireBodySchema, parsed));
+  assert.ok(wireBodyValidator.check(parsed));
   return parsed;
 }
 
@@ -1295,7 +1296,7 @@ test("WebSocket response.create carries the field and continuation forces a fres
     },
   );
   const emitted: unknown = JSON.parse(frame);
-  assert.ok(Value.Check(FrameSchema, emitted));
+  assert.ok(frameValidator.check(emitted));
   assert.equal(cyberOf(parseWire(frame)), "daybreak_blue");
 
   const responseItems = [
@@ -1437,10 +1438,10 @@ test("provider-request overlay omits access_programs on early and rewritten path
     };
     for (const state of [baseState, voiceOnly]) {
       const rewritten = await rewriteCodexProviderRequest(payload, fixture.ctx, state);
-      assert.ok(rewritten && Value.Check(Type.Object({ model: Type.String() }), rewritten));
+      assert.ok(rewritten && modelBodyValidator.check(rewritten));
       assert.equal(hasAccessPrograms(rewritten), false);
       const prewarmed = rewriteCodexPrewarmProviderRequest(payload, fixture.ctx, state);
-      assert.ok(prewarmed && Value.Check(Type.Object({ model: Type.String() }), prewarmed));
+      assert.ok(prewarmed && modelBodyValidator.check(prewarmed));
       assert.equal(hasAccessPrograms(prewarmed), false);
     }
     assert.equal(

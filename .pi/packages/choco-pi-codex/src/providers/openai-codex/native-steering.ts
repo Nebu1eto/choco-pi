@@ -1,5 +1,4 @@
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { arr, compile, lit, obj, oneOf, opt, str, union } from "@earendil-works/pi-schema";
 import { nativeRuntime } from "./native-runtime.ts";
 import { codexDiagnosticsFailure } from "./diagnostic-failure.ts";
 import type {
@@ -24,27 +23,30 @@ import {
 import { extractCodexTurnStateFromWebSocketEvent } from "./turn-state.ts";
 import { ignoreCodexDaybreakEcho } from "./daybreak-decision.ts";
 
-const EventSchema = Type.Object({
-  type: Type.String(),
-  response: Type.Optional(
-    Type.Object({
-      id: Type.Optional(Type.String()),
-      status: Type.Optional(Type.String()),
-    }),
+// Server events are open JSON objects: only the members read here are checked.
+const eventValidator = compile(
+  obj(
+    {
+      type: str(),
+      response: opt(obj({ id: opt(str()), status: opt(str()) }, { open: true })),
+    },
+    { open: true },
   ),
-});
-const SteerSchema = Type.Object({ id: Type.String(), previous_response_id: Type.String() });
-const UserSchema = Type.Object({
-  role: Type.Literal("user"),
-  content: Type.Union([
-    Type.String(),
-    Type.Array(Type.Object({ type: Type.Literal("input_text"), text: Type.String() })),
-  ]),
-});
-const OutputSchema = Type.Object({
-  type: Type.Union([Type.Literal("function_call_output"), Type.Literal("custom_tool_call_output")]),
-});
-const IncompleteSchema = Type.Object({ reason: Type.Literal("steered") });
+);
+const steerValidator = compile(obj({ id: str(), previous_response_id: str() }, { open: true }));
+const userValidator = compile(
+  obj(
+    {
+      role: lit("user"),
+      content: union([str(), arr(obj({ type: lit("input_text"), text: str() }, { open: true }))]),
+    },
+    { open: true },
+  ),
+);
+const outputValidator = compile(
+  obj({ type: oneOf(["function_call_output", "custom_tool_call_output"]) }, { open: true }),
+);
+const incompleteValidator = compile(obj({ reason: lit("steered") }, { open: true }));
 
 type Resolution = "automatic" | "required" | "failed";
 export type SteeringStatus = "sent" | "accepted" | "applied" | "fallback";
@@ -66,7 +68,7 @@ type Preparation =
 const { bySocket, byOwner } = nativeRuntime;
 
 function matchesUser(item: ProtocolValue, text: string): boolean {
-  if (!Check(UserSchema, item)) return false;
+  if (!userValidator.check(item)) return false;
   const content = Array.isArray(item.content)
     ? item.content.map((part) => part.text).join("")
     : item.content;
@@ -203,7 +205,7 @@ export class NativeSteeringConnection {
       }
       if (resolution === "automatic")
         return outputs.length === 0 ? { kind: "automatic" } : { kind: "reconnect" };
-      if (outputs.length === 0 || !outputs.every((item) => Check(OutputSchema, item)))
+      if (outputs.length === 0 || !outputs.every((item) => outputValidator.check(item)))
         return { kind: "reconnect" };
       // Accepted steering is implicitly prepended by the server. Do not send it twice.
       return { kind: "send", body: { ...request, input: outputs } };
@@ -243,7 +245,7 @@ export class NativeSteeringConnection {
           event.type === "response.incomplete" &&
           this.pending &&
           event.response?.id === this.pending.target &&
-          Check(IncompleteSchema, event.response?.["incomplete_details"])
+          incompleteValidator.check(event.response?.["incomplete_details"])
         ) {
           this.steered = true;
           // The server finished the current item: this is not a token-truncated tool call.
@@ -327,7 +329,7 @@ export class NativeSteeringConnection {
         const text = await decodeWebSocketData(data);
         if (this.closed || !text) return;
         const parsed = JSON.parse(text);
-        if (!Check(EventSchema, parsed)) throw new Error("Invalid native steering event");
+        if (!eventValidator.check(parsed)) throw new Error("Invalid native steering event");
         // SAFETY: The discriminator and response identity used here are checked; the existing Responses parser validates output items.
         const event = parsed as CodexStreamEvent;
         const pending = this.pending;
@@ -348,7 +350,7 @@ export class NativeSteeringConnection {
         if (
           event.type === "response.steer.accepted" &&
           pending &&
-          Check(SteerSchema, event["steer"]) &&
+          steerValidator.check(event["steer"]) &&
           event["steer"].previous_response_id === pending.target
         ) {
           pending.acceptedId = event["steer"].id;
@@ -358,7 +360,7 @@ export class NativeSteeringConnection {
         if (
           event.type === "response.steer.pending" &&
           pending &&
-          Check(SteerSchema, event["steer"]) &&
+          steerValidator.check(event["steer"]) &&
           event["steer"].id === pending.acceptedId
         ) {
           this.trace?.({ type: "native-steering", phase: "required-ready" });

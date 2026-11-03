@@ -16,8 +16,8 @@
  * `nativeCompaction` decision of the runtime plan, evaluated per call against
  * the registration's live adapter state; no tool lists are built.
  */
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { isJsonObject } from "../adapter/runtime-values.ts";
+import { isNonNegativeInteger } from "../value-guards.ts";
 import {
   CODEX_ELIGIBILITY_SLOT,
   type CodexEligibility,
@@ -41,21 +41,15 @@ interface PublishedEligibilitySlot extends CodexEligibility {
   bump(source: EligibilitySource): void;
 }
 
-const SlotFunction = Type.Function([], Type.Unknown());
-const PublishedSlotSchema = Type.Object(
-  {
-    version: Type.Literal(1),
-    revision: Type.Integer({ minimum: 0 }),
-    isNativeCompactionOwner: SlotFunction,
-    subscribe: SlotFunction,
-    addSource: SlotFunction,
-    bump: SlotFunction,
-  },
-  { additionalProperties: true },
-);
+const SLOT_FUNCTIONS = ["isNativeCompactionOwner", "subscribe", "addSource", "bump"];
 
 function isPublishedSlot<T>(value: T): value is T & PublishedEligibilitySlot {
-  return Value.Check(PublishedSlotSchema, value);
+  if (!isJsonObject(value)) return false;
+  return (
+    value["version"] === 1 &&
+    isNonNegativeInteger(value["revision"]) &&
+    SLOT_FUNCTIONS.every((name) => value[name] instanceof Function)
+  );
 }
 
 /** Call every listener; failures are collected so one listener cannot starve the rest. */

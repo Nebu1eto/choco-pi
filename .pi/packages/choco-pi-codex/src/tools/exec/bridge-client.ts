@@ -2,18 +2,24 @@ import type { BoundaryRecord } from "../boundary.ts";
 import { isNumberValue, isStringValue } from "../boundary.ts";
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { bool, compile, nullable, obj, opt, str, unknown } from "@earendil-works/pi-schema";
+import { finiteNum } from "../../value-guards.ts";
 import { formatNativeBinaryError } from "../../native-binary-error.ts";
 import { getBundledToolBinaryPath } from "../native/binary.ts";
 
-const BridgeResponseIdentitySchema = Type.Object({ request_id: Type.Number() });
-const BridgeResponseSchema = Type.Object({
-  request_id: Type.Number(),
-  ok: Type.Boolean(),
-  result: Type.Optional(Type.Unknown()),
-  error: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-});
+// Decoded from the bridge's stdout (JSON): open objects, as the former TypeBox objects were.
+const isBridgeResponseIdentity = compile(obj({ request_id: finiteNum() }, { open: true })).check;
+const isBridgeResponse = compile(
+  obj(
+    {
+      request_id: finiteNum(),
+      ok: bool(),
+      result: opt(unknown()),
+      error: opt(nullable(str())),
+    },
+    { open: true },
+  ),
+).check;
 
 interface BridgeResponse<T = unknown> {
   request_id: number;
@@ -105,12 +111,12 @@ export function createExecBridgeClient(
       } catch {
         continue;
       }
-      if (!Value.Check(BridgeResponseIdentitySchema, parsed)) continue;
+      if (!isBridgeResponseIdentity(parsed)) continue;
       const pending = pendingBridgeRequests.get(parsed.request_id);
       if (!pending) continue;
       pendingBridgeRequests.delete(parsed.request_id);
       bridgeResponded = true;
-      if (!Value.Check(BridgeResponseSchema, parsed)) {
+      if (!isBridgeResponse(parsed)) {
         pending.reject(new Error("exec_bridge returned an invalid response"));
         continue;
       }

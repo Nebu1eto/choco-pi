@@ -1,33 +1,38 @@
+import { isBoolean, isNumber, isString } from "../../value-guards.ts";
 import { conditionalProperties } from "../runtime-values.ts";
-import { isBoundaryValue, JsonObjectSchema, type BoundaryValue } from "../runtime-values.ts";
-import { Value } from "typebox/value";
+import { isBoundaryValue, isJsonObject, type BoundaryValue } from "../runtime-values.ts";
 import { validateToolArguments, type JsonObject as PiJsonObject } from "@earendil-works/pi-ai";
+import { arr, bool, compile, map, obj, opt, str, unknown } from "@earendil-works/pi-schema";
+import type { CoercingValidator } from "@earendil-works/pi-schema";
+import { formats } from "@earendil-works/pi-schema/formats";
 import type {
   AgentToolResult,
   ExtensionToolContext,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { Type, type TSchema } from "typebox";
+import type { HostSchema } from "../../schema-bridge.ts";
+import { finiteNum } from "../../value-guards.ts";
 
-const PiJsonValueSchema = Type.Cyclic(
-  {
-    JsonValue: Type.Union([
-      Type.Null(),
-      Type.Boolean(),
-      Type.Number(),
-      Type.String(),
-      Type.Array(Type.Ref("JsonValue")),
-      Type.Record(Type.String(), Type.Ref("JsonValue")),
-    ]),
-  },
-  "JsonValue",
-);
-const PiJsonObjectSchema = Type.Unsafe<PiJsonObject>({
+/**
+ * JSON object whose values are JSON (the argument shape Pi's validator takes). Numbers are bounded
+ * so NaN and +/-Infinity, which structuredClone preserves but JSON cannot hold, stay rejected.
+ */
+const isPiJsonObject = compile({
   type: "object",
-  additionalProperties: PiJsonValueSchema,
-});
-
-const WebRunDetailsSchema = Type.Object({ webRun: Type.Unknown() });
+  additionalProperties: { $ref: "#/$defs/JsonValue" },
+  $defs: {
+    JsonValue: {
+      anyOf: [
+        { type: "null" },
+        { type: "boolean" },
+        { type: "number", minimum: -Number.MAX_VALUE, maximum: Number.MAX_VALUE },
+        { type: "string" },
+        { type: "array", items: { $ref: "#/$defs/JsonValue" } },
+        { type: "object", additionalProperties: { $ref: "#/$defs/JsonValue" } },
+      ],
+    },
+  },
+}).check;
 
 /**
  * Per-session tool scopes published by choco-pi-subagents for its children.
@@ -37,40 +42,30 @@ const WebRunDetailsSchema = Type.Object({ webRun: Type.Unknown() });
  * package must not import another; a session without a scope is unrestricted.
  */
 const TOOL_SCOPE_SYMBOL = Symbol.for("choco-pi.tool-scope.v1");
-const ToolScopeRegistrySchema = Type.Object({
-  isToolAllowed: Type.Function(
-    [Type.Object({ getSessionId: Type.Function([], Type.String()) }), Type.String()],
-    Type.Boolean(),
-  ),
-});
 
 /**
  * `structuredContent` of Pi's shell tools (`bash`, `powershell`): the full output up to 1 MiB,
  * whether it was cut, the spill file when it was, the exit code and the wall time.
  */
-const ShellStructuredContentSchema = Type.Object({
-  output: Type.String(),
-  truncated: Type.Boolean(),
-  full_output_path: Type.Optional(Type.String()),
-  exit_code: Type.Number(),
-  wall_time_seconds: Type.Number(),
-});
+const isShellStructuredContent = compile(
+  obj(
+    {
+      output: str(),
+      truncated: bool(),
+      full_output_path: opt(str()),
+      exit_code: finiteNum(),
+      wall_time_seconds: finiteNum(),
+    },
+    { open: true },
+  ),
+).check;
 
 /**
  * Details that name stored, retrievable content: web-access `fetch_content`/`source_check` set
  * `responseId` and `web_search` sets `searchId`; `get_search_content` needs that id to page the
  * content, so a nested result must keep it instead of collapsing to text.
  */
-const RetrievableDetailsSchema = Type.Union([
-  Type.Object({ responseId: Type.String() }),
-  Type.Object({ searchId: Type.String() }),
-]);
-const DetailsRecordSchema = Type.Record(Type.String(), Type.Unknown());
-const DetailScalarSchema = Type.Union([
-  Type.Boolean(),
-  Type.Number(),
-  Type.String({ maxLength: 256 }),
-]);
+const isShortString = compile(str({ maxLength: 256 })).check;
 /** Keys the retrievable result owns; detail scalars never overwrite them. */
 const RETRIEVABLE_RESERVED_KEYS = new Set(["output"]);
 
@@ -120,7 +115,7 @@ interface SessionNestedToolContract extends NestedToolContractBase {
 
 type NestedToolContract<TDetails> = DirectNestedToolContract<TDetails> | SessionNestedToolContract;
 
-export function toNestedTool<TParams extends TSchema, TDetails, TState>(
+export function toNestedTool<TParams extends HostSchema, TDetails, TState>(
   tool: ToolDefinition<TParams, TDetails, TState>,
   usage: string,
   lifecycle: NestedToolLifecycle = {},
@@ -173,7 +168,9 @@ export function toNestedTool<TParams extends TSchema, TDetails, TState>(
       }
       const parsedInput = isBoundaryValue(input) ? input : undefined;
       const schemaInput =
-        parsedInput === undefined && Value.Check(tool.parameters, {}) ? {} : parsedInput;
+        parsedInput === undefined && parameterValidator(tool.parameters).check({})
+          ? {}
+          : parsedInput;
       const toolInput = prepareInput(schemaInput);
       const prepared = tool.prepareArguments ? tool.prepareArguments(toolInput) : toolInput;
       const validation = validateBridgedArguments(
@@ -232,27 +229,25 @@ export function toNestedTool<TParams extends TSchema, TDetails, TState>(
 /** Prepared code-mode payloads crossing the bridge before schema validation. */
 type BridgeCandidate = BoundaryValue | undefined;
 
-/** The executor's own parameter type, which tracks the SDK's bundled typebox build. */
-type ExecuteParams<TParams extends TSchema, TDetails, TState> = Parameters<
+/** The executor's own parameter type. */
+type ExecuteParams<TParams extends HostSchema, TDetails, TState> = Parameters<
   ToolDefinition<TParams, TDetails, TState>["execute"]
 >[1];
 
-type BridgedArguments<TParams extends TSchema, TDetails, TState> =
+type BridgedArguments<TParams extends HostSchema, TDetails, TState> =
   | { ok: true; value: ExecuteParams<TParams, TDetails, TState> }
   | { ok: false; issues: string };
 
 /**
  * Schema guard for the executor parameter type.
  *
- * SAFETY: the predicate is decided by a real schema check against the tool's own
- * parameters; the declared type only reconciles the structurally identical
- * `Static` instantiations of the host and SDK typebox builds.
+ * The predicate is decided by a real schema check against the tool's own parameters.
  */
-function matchesToolParameters<TParams extends TSchema, TDetails, TState>(
+function matchesToolParameters<TParams extends HostSchema, TDetails, TState>(
   tool: ToolDefinition<TParams, TDetails, TState>,
   value: BridgeCandidate,
 ): value is ExecuteParams<TParams, TDetails, TState> {
-  return Value.Check(tool.parameters, value);
+  return parameterValidator(tool.parameters).check(value);
 }
 
 /**
@@ -265,14 +260,14 @@ function matchesToolParameters<TParams extends TSchema, TDetails, TState>(
  * that is not a validation rejection propagates unchanged, as it would for a directly
  * registered tool call, and never reaches the executor.
  */
-function validateBridgedArguments<TParams extends TSchema, TDetails, TState>(
+function validateBridgedArguments<TParams extends HostSchema, TDetails, TState>(
   tool: ToolDefinition<TParams, TDetails, TState>,
   prepared: BridgeCandidate,
 ): BridgedArguments<TParams, TDetails, TState> {
-  if (Value.Check(JsonObjectSchema, prepared)) {
+  if (isJsonObject(prepared)) {
     try {
       const cloned = structuredClone(prepared);
-      if (!isPiJsonObject(cloned)) {
+      if (!isPiJsonObjectValue(cloned)) {
         return { ok: false, issues: describeSchemaIssues(tool.parameters, cloned) };
       }
       const normalized: unknown = validateToolArguments(
@@ -286,7 +281,7 @@ function validateBridgedArguments<TParams extends TSchema, TDetails, TState>(
       const message = error instanceof Error ? error.message : "";
       if (message.startsWith(VALIDATION_FAILURE_PREFIX)) {
         // The schema-aware description collapses union branches; fall back to the native
-        // bullets only when typebox cannot reproduce the failure (e.g. converter-only rejects).
+        // bullets only when the schema check cannot reproduce the failure (e.g. converter-only rejects).
         const schemaIssues = describeSchemaIssues(tool.parameters, prepared);
         return { ok: false, issues: schemaIssues || describeNativeIssues(message) };
       }
@@ -298,8 +293,22 @@ function validateBridgedArguments<TParams extends TSchema, TDetails, TState>(
   return { ok: false, issues: describeSchemaIssues(tool.parameters, prepared) };
 }
 
-function isPiJsonObject(value: BoundaryValue): value is PiJsonObject {
-  return Value.Check(PiJsonObjectSchema, value);
+function isPiJsonObjectValue(value: BoundaryValue): value is PiJsonObject {
+  return isPiJsonObject(value);
+}
+
+/**
+ * One validator per tool schema, built with the options Pi's own tool validation uses
+ * (pi-ai `validateToolArguments`: standard formats, coercion on, unresolved `$ref`s reject
+ * instead of throwing), so this recheck accepts exactly what the host accepts.
+ */
+const parameterValidators = new WeakMap<HostSchema, CoercingValidator>();
+function parameterValidator(schema: HostSchema): CoercingValidator {
+  const cached = parameterValidators.get(schema);
+  if (cached) return cached;
+  const validator = compile(schema, { formats, coerce: true, unresolvedRefs: "reject" });
+  parameterValidators.set(schema, validator);
+  return validator;
 }
 
 function boundIssue(issue: string): string {
@@ -309,34 +318,47 @@ function boundIssue(issue: string): string {
     : flattened;
 }
 
-const UnionBranchSchema = Type.Object({
-  properties: Type.Record(Type.String(), Type.Object({ const: Type.Optional(Type.Unknown()) })),
-});
-const UnionSchema = Type.Object({ anyOf: Type.Array(UnionBranchSchema) });
+const isUnionNode = compile(
+  obj(
+    {
+      anyOf: arr(
+        obj({ properties: map(obj({ const: opt(unknown()) }, { open: true })) }, { open: true }),
+      ),
+    },
+    { open: true },
+  ),
+).check;
 /** The two schema shapes the path walk needs: a property map or an array item schema. */
-const PropertiesNodeSchema = Type.Object({
-  properties: Type.Record(Type.String(), Type.Unknown()),
-});
-const ItemsNodeSchema = Type.Object({ items: Type.Unknown() });
+const isPropertiesNode = compile(obj({ properties: map(unknown()) }, { open: true })).check;
+const isItemsNode = compile(obj({ items: unknown() }, { open: true })).check;
+
+/** A JSON Pointer's segments, unescaped. */
+function pointerSegments(pointer: string): string[] {
+  return pointer
+    .split("/")
+    .filter(Boolean)
+    .map((segment) => segment.replace(/~1/g, "/").replace(/~0/g, "~"));
+}
 
 /**
  * For an object union keyed by a literal (e.g. `action: "click" | "press"`), name the key and the
  * accepted values instead of repeating one branch's complaint per alternative.
  */
-function unionHint(schema: TSchema, instancePath: string): string | undefined {
-  let node: unknown = schema;
-  for (const segment of instancePath.split("/").filter(Boolean)) {
+function unionHint(schema: HostSchema, pointer: string): string | undefined {
+  let node: BoundaryValue = schema;
+  for (const segment of pointerSegments(pointer)) {
     if (/^\d+$/.test(segment)) {
-      if (!Value.Check(ItemsNodeSchema, node)) return undefined;
+      if (!isItemsNode(node)) return undefined;
       node = node.items;
       continue;
     }
-    if (!Value.Check(PropertiesNodeSchema, node)) return undefined;
+    if (!isPropertiesNode(node)) return undefined;
     node = node.properties[segment];
   }
-  if (!Value.Check(UnionSchema, node)) return undefined;
+  if (!isUnionNode(node)) return undefined;
+  const branches = node.anyOf;
   const keys = new Map<string, string[]>();
-  for (const branch of node.anyOf) {
+  for (const branch of branches) {
     for (const [key, property] of Object.entries(branch.properties)) {
       if (property.const === undefined) continue;
       const values = keys.get(key) ?? [];
@@ -344,20 +366,44 @@ function unionHint(schema: TSchema, instancePath: string): string | undefined {
       keys.set(key, values);
     }
   }
-  const [key, values] = [...keys.entries()].find(([, v]) => v.length === node.anyOf.length) ?? [];
+  const [key, values] = [...keys.entries()].find(([, v]) => v.length === branches.length) ?? [];
   if (!key || !values) return undefined;
-  return `expected one of the ${node.anyOf.length} shapes selected by "${key}": ${values.join(", ")}`;
+  return `expected one of the ${branches.length} shapes selected by "${key}": ${values.join(", ")}`;
+}
+
+/**
+ * pi-schema reports a failed union through the leaf errors of one branch (e.g. `/actions/0/ref`),
+ * not at the union itself, so the nearest enclosing discriminated union of the error path supplies
+ * the hint and the path it is reported under.
+ */
+function enclosingUnionHint(
+  schema: HostSchema,
+  pointer: string,
+): { pointer: string; hint: string } | undefined {
+  const parts = pointer.split("/");
+  for (let length = parts.length; length >= 1; length -= 1) {
+    const candidate = parts.slice(0, length).join("/");
+    const hint = unionHint(schema, candidate);
+    if (hint) return { pointer: candidate, hint };
+  }
+  return undefined;
+}
+
+/** A pi-schema error path (a JSON Pointer) as the dotted path the model sees. */
+function dottedPath(pointer: string): string {
+  return pointer === "" ? "root" : pointerSegments(pointer).join(".");
 }
 
 /** Schema issues name their instance path, collapse union branches, and never echo the value. */
-function describeSchemaIssues(schema: TSchema, value: BridgeCandidate): string {
+function describeSchemaIssues(schema: HostSchema, value: BridgeCandidate): string {
   const issues: string[] = [];
   const seen = new Set<string>();
-  for (const issue of Value.Errors(schema, value)) {
+  for (const issue of parameterValidator(schema).errors(value)) {
     if (issues.length >= MAX_REPORTED_ISSUES) break;
-    const path = issue.instancePath.replace(/^\//, "").replace(/\//g, ".") || "root";
-    const hint = unionHint(schema, issue.instancePath);
-    const text = hint ? `${path}: ${hint}` : `${path}: ${issue.message}`;
+    const union = enclosingUnionHint(schema, issue.path);
+    const text = union
+      ? `${dottedPath(union.pointer)}: ${union.hint}`
+      : `${dottedPath(issue.path)}: ${issue.message}`;
     if (seen.has(text)) continue;
     seen.add(text);
     issues.push(boundIssue(text));
@@ -386,8 +432,7 @@ export function codeModeImageResult<TDetails>(
 ): BoundaryValue {
   const image = result.content.find((item) => item.type === "image");
   if (!image || image.type !== "image") return compactNestedResult(result);
-  const detail =
-    "detail" in image && Value.Check(Type.String(), image.detail) ? image.detail : "high";
+  const detail = "detail" in image && isString(image.detail) ? image.detail : "high";
   return {
     image_url: `data:${image.mimeType};base64,${image.data}`,
     detail,
@@ -397,9 +442,9 @@ export function codeModeImageResult<TDetails>(
 
 export function codeModeWebResult<TDetails>(result: AgentToolResult<TDetails>): BoundaryValue {
   const details = result.details;
-  if (Value.Check(WebRunDetailsSchema, details)) {
-    const webRun = details.webRun;
-    if (webRun && (Value.Check(JsonObjectSchema, webRun) || Array.isArray(webRun))) return webRun;
+  if (isJsonObject(details) && "webRun" in details) {
+    const webRun = details["webRun"];
+    if (webRun && (isJsonObject(webRun) || Array.isArray(webRun))) return webRun;
   }
   return compactNestedResult(result);
 }
@@ -409,11 +454,25 @@ function requireExtensionContext(context: ToolExecutionContext): ExtensionToolCo
   return context.extensionContext;
 }
 
+interface ToolScopeRegistry {
+  isToolAllowed(
+    sessionManager: ExtensionToolContext["sessionManager"],
+    name: string,
+  ): BoundaryValue;
+}
+
+function isToolScopeRegistry<T>(value: T): value is T & ToolScopeRegistry {
+  return isJsonObject(value) && value["isToolAllowed"] instanceof Function;
+}
+
 /** Whether the calling session's published tool scope admits `name`. */
 function isInSessionToolScope(context: ExtensionToolContext, name: string): boolean {
-  const registry = Object.getOwnPropertyDescriptor(globalThis, TOOL_SCOPE_SYMBOL)?.value;
-  if (!Value.Check(ToolScopeRegistrySchema, registry)) return true;
-  return registry.isToolAllowed(context.sessionManager, name);
+  const registry: BoundaryValue = Object.getOwnPropertyDescriptor(
+    globalThis,
+    TOOL_SCOPE_SYMBOL,
+  )?.value;
+  if (!isToolScopeRegistry(registry)) return true;
+  return Boolean(registry.isToolAllowed(context.sessionManager, name));
 }
 
 /** Whether `ctx.executeTool()` can reach `name`: active `direct` tools and `codemode`/`deferred` ones. */
@@ -439,7 +498,7 @@ function shellStructuredResult<TDetails>(
   result: AgentToolResult<TDetails>,
 ): BoundaryValue | undefined {
   const structured = result.structuredContent;
-  if (!Value.Check(ShellStructuredContentSchema, structured)) return undefined;
+  if (!isShellStructuredContent(structured)) return undefined;
   return {
     output: structured.output,
     truncated: structured.truncated,
@@ -463,8 +522,7 @@ function compactNestedResult<TDetails>(result: AgentToolResult<TDetails>): Bound
   if (images.length > 0) return { content: result.content, details: result.details };
   const structured = shellStructuredResult(result);
   if (structured !== undefined) return structured;
-  if (Value.Check(JsonObjectSchema, result.details) && "output" in result.details)
-    return result.details;
+  if (isJsonObject(result.details) && "output" in result.details) return result.details;
   const retrievable = retrievableResult(result);
   if (retrievable !== undefined) return retrievable;
   return resultText(result) || "(no output)";
@@ -477,13 +535,13 @@ function compactNestedResult<TDetails>(result: AgentToolResult<TDetails>): Bound
  */
 function retrievableResult<TDetails>(result: AgentToolResult<TDetails>): BoundaryValue | undefined {
   const details = result.details;
-  if (!Value.Check(RetrievableDetailsSchema, details)) return undefined;
-  if (!Value.Check(DetailsRecordSchema, details)) return undefined;
+  if (!isJsonObject(details)) return undefined;
+  if (!isString(details["responseId"]) && !isString(details["searchId"])) return undefined;
   const scalars: Record<string, boolean | number | string> = {};
   for (const [key, value] of Object.entries(details)) {
     if (RETRIEVABLE_RESERVED_KEYS.has(key)) continue;
-    // TypeBox's number check rejects NaN and Infinity, so copied scalars stay JSON-safe.
-    if (!Value.Check(DetailScalarSchema, value)) continue;
+    // isNumber rejects NaN and Infinity, so copied scalars stay JSON-safe.
+    if (!isBoolean(value) && !isNumber(value) && !isShortString(value)) continue;
     scalars[key] = value;
   }
   return { output: resultText(result) || "(no output)", ...scalars };

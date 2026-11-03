@@ -1,7 +1,6 @@
+import { isString } from "../../value-guards.ts";
 import { conditionalProperties } from "../runtime-values.ts";
 import type { BoundaryValue } from "../runtime-values.ts";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import type { ResponsesCompatibleRequestPayload } from "../compaction/compaction-runtime.ts";
 import type { ResponsesInputMessageItem } from "../compaction/serializer.ts";
 import {
@@ -23,8 +22,7 @@ function isPromptEnvelopeItem(item: BoundaryValue): item is ResponsesInputMessag
 export function extractFreshAuthoritativePreamble(
   payload: ResponsesCompatibleRequestPayload,
 ): FreshAuthoritativePreamble | undefined {
-  if (payload.instructions !== undefined && !Value.Check(Type.String(), payload.instructions))
-    return undefined;
+  if (payload.instructions !== undefined && !isString(payload.instructions)) return undefined;
 
   let leadingBoundary = 0;
   while (
@@ -45,7 +43,7 @@ export function extractFreshAuthoritativePreamble(
   }
 
   return {
-    ...conditionalProperties(Boolean(Value.Check(Type.String(), payload.instructions)), {
+    ...conditionalProperties(Boolean(isString(payload.instructions)), {
       instructions: payload.instructions,
     }),
     // SAFETY: The leading-boundary loop accepted every item in this slice as a prompt envelope.

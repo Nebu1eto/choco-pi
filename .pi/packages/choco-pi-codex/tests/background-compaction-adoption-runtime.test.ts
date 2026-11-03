@@ -7,8 +7,7 @@ import {
   ExtensionRunner,
   createExtensionRuntime,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, compile, obj, opt, str } from "@earendil-works/pi-schema";
 import { DEFAULT_CODEX_CONVERSION_CONFIG } from "../src/adapter/activation/config.ts";
 import type { AdapterState } from "../src/adapter/activation/state.ts";
 import { createCodexTurnState } from "../src/providers/openai-codex/turn-state.ts";
@@ -464,16 +463,11 @@ test("an incompatible checkpoint refuses requests until loss is authorized; only
       options: { blockImages: false },
     }),
   };
-  const InputBodySchema = Type.Object(
-    {
-      input: Type.Array(
-        Type.Object({ type: Type.Optional(Type.String()) }, { additionalProperties: true }),
-      ),
-    },
-    { additionalProperties: true },
-  );
+  const isInputBody = compile(
+    obj({ input: arr(obj({ type: opt(str()) }, { open: true })) }, { open: true }),
+  ).check;
   const compatible = await rewriteCodexProviderRequest(payload, ctx, compatibleState);
-  assert.ok(Value.Check(InputBodySchema, compatible));
+  assert.ok(isInputBody(compatible));
   assert.ok(compatible.input.some((item) => item.type === "compaction"));
   await setup.credentials.modify(model.provider, async () => ({
     type: "oauth",
@@ -497,7 +491,7 @@ test("an incompatible checkpoint refuses requests until loss is authorized; only
   try {
     assert.equal(controller.requestRefusal(ctx, sessionId), undefined);
     const outgoing = await rewriteCodexProviderRequest(payload, ctx, bypass);
-    assert.ok(Value.Check(InputBodySchema, outgoing));
+    assert.ok(isInputBody(outgoing));
     assert.equal(
       outgoing.input.some((item) => item.type === "compaction"),
       false,
@@ -831,14 +825,9 @@ async function policyFixture() {
   return { ...setup, records, state, ctxFor, controller, payloadFor };
 }
 
-const PolicyInputSchema = Type.Object(
-  {
-    input: Type.Array(
-      Type.Object({ type: Type.Optional(Type.String()) }, { additionalProperties: true }),
-    ),
-  },
-  { additionalProperties: true },
-);
+const isPolicyInput = compile(
+  obj({ input: arr(obj({ type: opt(str()) }, { open: true })) }, { open: true }),
+).check;
 
 test("transient account identity failure: no incompatibility, no notice, one yield journaled", async () => {
   const setup = await policyFixture();
@@ -877,7 +866,7 @@ test("model-ID-only change: foreground replay sends the compaction item; one fal
   assert.equal(requestState, setup.state);
   assert.equal(setup.controller.requestRefusal(ctx, sessionId), undefined);
   const outgoing = await rewriteCodexProviderRequest(setup.payloadFor(other), ctx, requestState);
-  assert.ok(Value.Check(PolicyInputSchema, outgoing));
+  assert.ok(isPolicyInput(outgoing));
   assert.ok(outgoing.input.some((item) => item.type === "compaction"));
   const fallbacks = setup.records.filter((record) => record.event === "fallback");
   assert.equal(fallbacks.length, 1);
@@ -919,7 +908,7 @@ test("account change: requests and compactions are refused with the exits text u
     const bypass = setup.controller.requestState(setup.state, sessionId);
     assert.notEqual(bypass, setup.state);
     const outgoing = await rewriteCodexProviderRequest(setup.payloadFor(model), ctx, bypass);
-    assert.ok(Value.Check(PolicyInputSchema, outgoing));
+    assert.ok(isPolicyInput(outgoing));
     assert.equal(
       outgoing.input.some((item) => item.type === "compaction"),
       false,

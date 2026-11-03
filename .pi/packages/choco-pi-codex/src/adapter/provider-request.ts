@@ -1,12 +1,11 @@
-import { JsonObjectSchema } from "./runtime-values.ts";
+import { arr, compile, obj, str, unknown } from "@earendil-works/pi-schema";
+import { isString } from "../providers/value-guards.ts";
+import { isJsonObject } from "./runtime-values.ts";
 import type { JsonObject, BoundaryValue } from "./runtime-values.ts";
-import { Type } from "typebox";
 
-const ResponsesLiteCompatibleBodySchema = Type.Object({
-  model: Type.String(),
-  input: Type.Array(Type.Unknown()),
-});
-import { Value } from "typebox/value";
+const responsesLiteCompatibleBodyValidator = compile(
+  obj({ model: str(), input: arr(unknown()) }, { open: true }),
+);
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ProviderHeaders } from "@earendil-works/pi-ai";
 import {
@@ -266,15 +265,15 @@ export function rewriteCodexPrewarmProviderRequest(
 }
 
 function isCodeModeCompatibleBody(value: BoundaryValue): value is ResponsesLiteCompatibleBody {
-  return Value.Check(ResponsesLiteCompatibleBodySchema, value);
+  return responsesLiteCompatibleBodyValidator.check(value);
 }
 
 function isRecord(value: BoundaryValue): value is JsonObject {
-  return Value.Check(JsonObjectSchema, value);
+  return isJsonObject(value);
 }
 
 function providerSystemPrompt(payload: JsonObject): string | undefined {
-  if (Value.Check(Type.String(), payload["instructions"])) return payload["instructions"];
+  if (isString(payload["instructions"])) return payload["instructions"];
   if (!Array.isArray(payload["input"])) return undefined;
   for (const item of payload["input"]) {
     if (!isRecord(item) || item["role"] !== "developer" || !Array.isArray(item["content"]))
@@ -282,7 +281,7 @@ function providerSystemPrompt(payload: JsonObject): string | undefined {
     const text = item["content"]
       .filter((part) => isRecord(part) && part["type"] === "input_text")
       .map((part) => (isRecord(part) ? part["text"] : undefined))
-      .filter((part): part is string => Value.Check(Type.String(), part))
+      .filter((part): part is string => isString(part))
       .join("\n");
     if (text !== "") return text;
   }

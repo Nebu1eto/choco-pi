@@ -1,3 +1,4 @@
+import { isString } from "../../value-guards.ts";
 import { isAbsolute, resolve } from "node:path";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
 import {
@@ -10,8 +11,6 @@ import {
   Spacer,
   Text,
 } from "@earendil-works/pi-tui";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import {
   IMAGE_MOSAIC_ENV,
   renderHalfBlockImage,
@@ -30,9 +29,9 @@ function isImageContent(item: ToolContentLike): item is ImageContentLike {
   return (
     item.type === "image" &&
     "data" in item &&
-    Value.Check(Type.String(), item.data) &&
+    isString(item.data) &&
     "mimeType" in item &&
-    Value.Check(Type.String(), item.mimeType)
+    isString(item.mimeType)
   );
 }
 

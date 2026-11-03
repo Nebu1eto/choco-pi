@@ -1,8 +1,9 @@
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { isFunction, isString } from "../value-guards.ts";
+import { isJsonObject } from "../../adapter/runtime-values.ts";
 import {
-  CodexStreamEventSchema,
+  isCodexStreamEvent,
   type CodexStreamEvent,
+  type WebSocketArrayBufferData,
   type WebSocketEvent,
   type WebSocketLike,
 } from "./types.ts";
@@ -14,20 +15,20 @@ import {
 } from "./websocket-connection.ts";
 import { extractCodexTurnStateFromWebSocketEvent } from "./turn-state.ts";
 
-const StringSchema = Type.String();
-const ArrayBufferDataSchema = Type.Object({
-  arrayBuffer: Type.Function([], Type.Unknown()),
-});
+// Blob-like data object (live host value): the method may live on the prototype.
+function hasArrayBuffer<Value>(value: Value): value is Value & WebSocketArrayBufferData {
+  return isJsonObject(value) && isFunction(value["arrayBuffer"]);
+}
 
 export async function decodeWebSocketData(data: WebSocketEvent["data"]): Promise<string | null> {
-  if (Check(StringSchema, data)) return data;
+  if (isString(data)) return data;
   if (data instanceof ArrayBuffer) {
     return new TextDecoder().decode(new Uint8Array(data));
   }
   if (ArrayBuffer.isView(data)) {
     return new TextDecoder().decode(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
   }
-  if (Check(ArrayBufferDataSchema, data)) {
+  if (hasArrayBuffer(data)) {
     const arrayBuffer = await data.arrayBuffer();
     if (arrayBuffer instanceof ArrayBuffer) {
       return new TextDecoder().decode(new Uint8Array(arrayBuffer));
@@ -85,7 +86,7 @@ export function parseWebSocket(
         let parsed: CodexStreamEvent;
         try {
           const candidate: object = JSON.parse(text);
-          if (!Check(CodexStreamEventSchema, candidate)) return;
+          if (!isCodexStreamEvent(candidate)) return;
           parsed = candidate;
         } catch {
           // Codex ignores malformed individual events and keeps the live stream.

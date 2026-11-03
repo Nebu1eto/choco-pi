@@ -1,6 +1,5 @@
 import type { ProviderHeaders } from "@earendil-works/pi-ai";
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import { arr, bool, compile, obj, opt, str, type Static } from "@earendil-works/pi-schema";
 import { isCanonicalCodexBaseUrl } from "../../adapter/prompt/codex-model.ts";
 import { buildVerifiedAccessHeaders, extractAccountId } from "./headers.ts";
 import { invalidateCodexDaybreakModelSupport } from "./daybreak-model-support.ts";
@@ -37,17 +36,21 @@ export type DaybreakAccount = Readonly<{ key: string; accountId: string; url: st
 // External payload: required fields are validated strictly; unknown fields are tolerated.
 // Observed live shape (2026-10-08): grants are objects such as
 // { level: "tac1", source: "individual" }.
-const GrantSchema = Type.Object({ level: Type.String() });
-const ProgramSchema = Type.Object({
-  program: Type.String(),
-  state: Type.String(),
-  grants: Type.Optional(Type.Array(GrantSchema)),
-  // Observed live 2026-10-17: true until the session is signed in with the enrolled
-  // hardware security key; a security-key sign-in cleared it on the same account.
-  individual_blue_security_signin_required: Type.Optional(Type.Boolean()),
-  individual_blue_security_setup_required: Type.Optional(Type.Boolean()),
-});
-const VerifiedAccessSchema = Type.Object({ programs: Type.Array(ProgramSchema) });
+const grantSchema = obj({ level: str() }, { open: true });
+const programSchema = obj(
+  {
+    program: str(),
+    state: str(),
+    grants: opt(arr(grantSchema)),
+    // Observed live 2026-10-17: true until the session is signed in with the enrolled
+    // hardware security key; a security-key sign-in cleared it on the same account.
+    individual_blue_security_signin_required: opt(bool()),
+    individual_blue_security_setup_required: opt(bool()),
+  },
+  { open: true },
+);
+const verifiedAccessSchema = obj({ programs: arr(programSchema) }, { open: true });
+const verifiedAccessValidator = compile(verifiedAccessSchema);
 
 type CacheEntry = {
   readonly token: string;
@@ -167,7 +170,7 @@ export function clearCodexDaybreakEchoDenials(account: DaybreakAccount): void {
 }
 
 function entitlementFromVerifiedAccess(
-  payload: Static<typeof VerifiedAccessSchema>,
+  payload: Static<typeof verifiedAccessSchema>,
 ): DaybreakEntitlement {
   const grants = new Set<string>();
   let securityKeyRequired = false;
@@ -203,7 +206,7 @@ async function fetchVerifiedAccess(url: string, headers: Headers): Promise<Daybr
       return { entitlement: "lookup-failed", status: response.status };
     }
     const payload: unknown = await response.json();
-    if (!Check(VerifiedAccessSchema, payload))
+    if (!verifiedAccessValidator.check(payload))
       return { entitlement: "lookup-failed", status: response.status };
     return { entitlement: entitlementFromVerifiedAccess(payload), status: response.status };
   } catch {

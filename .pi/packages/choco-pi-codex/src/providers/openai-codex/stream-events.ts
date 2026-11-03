@@ -1,3 +1,5 @@
+import { isString, isNumber, isBoolean } from "../value-guards.ts";
+import { isJsonObject, type JsonObject } from "../../adapter/runtime-values.ts";
 import {
   ignoreCodexDaybreakEcho,
   isIgnoredCodexDaybreakEcho,
@@ -5,8 +7,6 @@ import {
   type CodexDaybreakTicket,
 } from "./daybreak-decision.ts";
 import { processResponsesStream } from "../openai-responses/shared.ts";
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
 import type {
   Api,
   AssistantMessage,
@@ -47,12 +47,7 @@ const FATAL_CODEX_ERROR_CODES = new Set([
   "usage_limit_reached",
 ]);
 
-const EventRecordType = Type.Record(Type.String(), Type.Unknown());
-type EventRecord = Static<typeof EventRecordType>;
-const EventRecordSchema = Type.Unsafe<EventRecord>({ type: "object" });
-const StringSchema = Type.String();
-const NumberSchema = Type.Number();
-const BooleanSchema = Type.Boolean();
+type EventRecord = JsonObject;
 
 interface CodexApiErrorOptions {
   code?: string | undefined;
@@ -182,13 +177,13 @@ export function assertSuccessfulCodexStatus(
 }
 
 function isRecord<T>(value: T): value is Extract<T, object> & EventRecord {
-  return Check(EventRecordSchema, value);
+  return isJsonObject(value);
 }
 
 function recordStatus(record: EventRecord | undefined): number | undefined {
   const status = record?.["status"] ?? record?.["status_code"] ?? record?.["statusCode"];
-  const parsed = Check(StringSchema, status) && /^\d+$/.test(status) ? Number(status) : status;
-  return Check(NumberSchema, parsed) && Number.isInteger(parsed) ? parsed : undefined;
+  const parsed = isString(status) && /^\d+$/.test(status) ? Number(status) : status;
+  return isNumber(parsed) && Number.isInteger(parsed) ? parsed : undefined;
 }
 
 function eventStatus(event: CodexStreamEvent): number | undefined {
@@ -244,13 +239,12 @@ function extractCodexEventError(event: CodexStreamEvent): CodexEventError {
   const nested = isRecord(event["error"]) ? event["error"] : undefined;
   const code =
     event.code ??
-    (Check(StringSchema, nested?.["code"])
+    (isString(nested?.["code"])
       ? nested["code"]
-      : Check(StringSchema, nested?.["type"])
+      : isString(nested?.["type"])
         ? nested["type"]
         : undefined);
-  const message =
-    event.message ?? (Check(StringSchema, nested?.["message"]) ? nested["message"] : undefined);
+  const message = event.message ?? (isString(nested?.["message"]) ? nested["message"] : undefined);
   return { code, message };
 }
 
@@ -279,12 +273,12 @@ export async function* mapCodexEvents(
 
     if (type === "response.failed") {
       const error = isRecord(event.response?.error) ? event.response.error : undefined;
-      const code = Check(StringSchema, error?.["code"])
+      const code = isString(error?.["code"])
         ? error["code"]
-        : Check(StringSchema, error?.["type"])
+        : isString(error?.["type"])
           ? error["type"]
           : undefined;
-      const message = Check(StringSchema, error?.["message"]) ? error["message"] : undefined;
+      const message = isString(error?.["message"]) ? error["message"] : undefined;
       const status = eventStatus(event);
       const retryDelayMs = codexApiRetryDelayMs(code, message);
       const options: CodexApiErrorOptions = {
@@ -304,7 +298,7 @@ export async function* mapCodexEvents(
     ) {
       sawTerminalResponse = true;
       const response = event.response;
-      if (output && Check(BooleanSchema, response?.["end_turn"])) {
+      if (output && isBoolean(response?.["end_turn"])) {
         output.endTurn = response["end_turn"];
       }
       const completed = {

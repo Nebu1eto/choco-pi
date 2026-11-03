@@ -1,6 +1,5 @@
+import { isString } from "../providers/value-guards.ts";
 import type { BoundaryValue } from "../adapter/runtime-values.ts";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import { mkdir, open } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { CodexDiagnosticsEvent } from "../providers/openai-codex/types.ts";
@@ -58,7 +57,7 @@ function safeText(value: string): string {
 
 function field(key: string, value: string | number | boolean | undefined): string | undefined {
   if (value === undefined) return undefined;
-  return `${key}=${Value.Check(Type.String(), value) ? JSON.stringify(safeText(value)) : String(value)}`;
+  return `${key}=${isString(value) ? JSON.stringify(safeText(value)) : String(value)}`;
 }
 
 function eventFields(event: CodexDiagnosticsEvent): Array<string | undefined> {

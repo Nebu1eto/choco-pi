@@ -1,12 +1,7 @@
-import { conditionalProperties } from "./runtime-values.ts";
+import { conditionalProperties, isJsonObject } from "./runtime-values.ts";
+import { isNumber, isString } from "../value-guards.ts";
 import type { JsonObject, BoundaryValue } from "./runtime-values.ts";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 
-const ExecInputSchema = Type.Object({ cmd: Type.String() });
-const PartialFailureDetailsSchema = Type.Object({ status: Type.Literal("partial_failure") });
-const RunningExecDetailsSchema = Type.Object({ session_id: Type.Number() });
-const CompletedExecDetailsSchema = Type.Object({ output: Type.String() });
 import {
   getAgentDir,
   type ExtensionAPI,
@@ -151,7 +146,7 @@ export function createNestedTools(
         kind: "freeform",
         prepareInput: prepareCodeModeApplyPatchInput,
         resultError(result) {
-          if (Value.Check(PartialFailureDetailsSchema, result.details))
+          if (isJsonObject(result.details) && result.details["status"] === "partial_failure")
             return (
               result.content
                 .filter((item) => item.type === "text")
@@ -167,7 +162,8 @@ export function createNestedTools(
       "await tools.exec_command({ cmd: string, workdir?: string, shell?: string, tty?: boolean, yield_time_ms?: number, max_output_tokens?: number, login?: boolean }) // returns { output: string, session_id?: number, exit_code?: number }",
       {
         start(id, input) {
-          const cmd = Value.Check(ExecInputSchema, input) ? input.cmd : "";
+          const inputCmd = isJsonObject(input) ? input["cmd"] : undefined;
+          const cmd = isString(inputCmd) ? inputCmd : "";
           if (cmd) runtime.tracker.recordStart(id, cmd);
         },
         end: (id) => runtime.tracker.recordEnd(id),
@@ -272,9 +268,9 @@ export function createNestedTools(
 }
 
 function isRunningExecResult<T>(details: T): details is T & JsonObject & { session_id: number } {
-  return Value.Check(RunningExecDetailsSchema, details);
+  return isJsonObject(details) && isNumber(details["session_id"]);
 }
 
 function isExecResult<T>(details: T): details is T & JsonObject & { output: string } {
-  return Value.Check(CompletedExecDetailsSchema, details);
+  return isJsonObject(details) && isString(details["output"]);
 }

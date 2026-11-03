@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import test, { after, afterEach } from "node:test";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
-import { JsonValueSchema } from "../../choco-pi-compaction/src/background/contract.ts";
+import { isJsonRecord } from "../../choco-pi-compaction/src/background/contract.ts";
 import { promisify } from "node:util";
 import { zstdDecompress } from "node:zlib";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
@@ -245,7 +243,7 @@ test("isolated SSE preparation cannot corrupt concurrent cached-WebSocket foregr
     const canonicalAtCut = canonicalCompactionPromptInput(lane, model.id, identity);
     assert.ok(canonicalAtCut);
     const before = canonicalAtCut.map((item) => {
-      assert.ok(Value.Check(Type.Record(Type.String(), JsonValueSchema), item));
+      assert.ok(isJsonRecord(item));
       return structuredClone(item);
     });
     const capture = captureCodexBackgroundRequest({
@@ -368,7 +366,7 @@ test("isolated SSE preparation cannot corrupt concurrent cached-WebSocket foregr
     const canonicalAfterForeground = canonicalCompactionPromptInput(lane, model.id, identity);
     assert.ok(canonicalAfterForeground);
     const exactTail = canonicalAfterForeground.slice(before.length).map((item) => {
-      assert.ok(Value.Check(Type.Record(Type.String(), JsonValueSchema), item));
+      assert.ok(isJsonRecord(item));
       return structuredClone(item);
     });
     assert.deepEqual(exactTail.slice(0, afterCut.length), afterCut);

@@ -1,7 +1,6 @@
-import { JsonObjectSchema } from "../runtime-values.ts";
+import { isString } from "../../value-guards.ts";
+import { isJsonObject } from "../runtime-values.ts";
 import type { BoundaryValue } from "../runtime-values.ts";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isCanonicalCodexSubscriptionModel, isOpenAICodexModel } from "../prompt/codex-model.ts";
@@ -98,7 +97,7 @@ async function resolveRequestAuth(
   headers?: ProviderHeaders | undefined;
   baseUrl?: string | undefined;
 }> {
-  // SAFETY: Pi's ModelRegistry owns this optional auth method, and TypeBox checks it before invocation.
+  // SAFETY: Pi's ModelRegistry owns this optional auth method, and it is checked before invocation.
   const modelRegistry = ctx.modelRegistry as {
     getApiKeyAndHeaders?: (currentModel: RuntimeModel) =>
       | Promise<
@@ -113,7 +112,7 @@ async function resolveRequestAuth(
       | undefined;
   };
 
-  if (!Value.Check(Type.Function([], Type.Unknown()), modelRegistry.getApiKeyAndHeaders)) {
+  if (!(modelRegistry.getApiKeyAndHeaders instanceof Function)) {
     return {};
   }
 
@@ -130,12 +129,12 @@ export function isSupportedApi(api: string): api is DefaultSupportedApi {
 export function isResponsesCompatiblePayload(
   payload: BoundaryValue,
 ): payload is ResponsesCompatibleRequestPayload {
-  if (!Value.Check(JsonObjectSchema, payload)) {
+  if (!isJsonObject(payload)) {
     return false;
   }
 
   const candidate = payload;
-  return Value.Check(Type.String(), candidate["model"]!) && Array.isArray(candidate["input"]!);
+  return isString(candidate["model"]!) && Array.isArray(candidate["input"]!);
 }
 
 interface RuntimeModelDescriptor {
@@ -288,7 +287,7 @@ export async function resolveNativeCompactionEnvironment(
 
 function bearerToken(headers: ProviderHeaders | undefined): string | undefined {
   for (const [key, value] of Object.entries(headers ?? {})) {
-    if (key.toLowerCase() !== "authorization" || !Value.Check(Type.String(), value)) continue;
+    if (key.toLowerCase() !== "authorization" || !isString(value)) continue;
     const match = value.trim().match(/^Bearer\s+(.+)$/i);
     if (match?.[1]?.trim()) return match[1].trim();
   }

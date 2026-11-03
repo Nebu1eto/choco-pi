@@ -1,8 +1,7 @@
+import { isString } from "../../value-guards.ts";
 import { conditionalProperties } from "../runtime-values.ts";
-import { JsonObjectSchema } from "../runtime-values.ts";
+import { isJsonObject } from "../runtime-values.ts";
 import type { JsonObject, BoundaryValue } from "../runtime-values.ts";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import { normalizeResponsesToolHistory } from "../../providers/openai-responses/tool-history.ts";
 
 const RETAINED_MESSAGE_TOKEN_BUDGET = 64_000;
@@ -19,7 +18,7 @@ const CONTEXTUAL_USER_MARKERS: ReadonlyArray<readonly [string, string]> = [
 ];
 
 function isRecord(value: BoundaryValue): value is JsonObject {
-  return Value.Check(JsonObjectSchema, value);
+  return isJsonObject(value);
 }
 
 function validMetadata(value: BoundaryValue): boolean {
@@ -27,32 +26,26 @@ function validMetadata(value: BoundaryValue): boolean {
     value === undefined ||
     value === null ||
     (isRecord(value) &&
-      (value["turn_id"] === undefined ||
-        value["turn_id"] === null ||
-        Value.Check(Type.String(), value["turn_id"])))
+      (value["turn_id"] === undefined || value["turn_id"] === null || isString(value["turn_id"])))
   );
 }
 
 export function canonicalCompactionOutput(item: BoundaryValue): JsonObject | undefined {
   if (!isRecord(item) || (item["type"] !== "compaction" && item["type"] !== "compaction_summary"))
     return undefined;
-  if (
-    !Value.Check(Type.String(), item["encrypted_content"]) ||
-    item["encrypted_content"].trim() === ""
-  )
+  if (!isString(item["encrypted_content"]) || item["encrypted_content"].trim() === "")
     return undefined;
-  if (item["id"] !== undefined && item["id"] !== null && !Value.Check(Type.String(), item["id"]))
-    return undefined;
+  if (item["id"] !== undefined && item["id"] !== null && !isString(item["id"])) return undefined;
   if (!validMetadata(item["internal_chat_message_metadata_passthrough"])) return undefined;
   const metadata = item["internal_chat_message_metadata_passthrough"];
   const metadataPassthrough = isRecord(metadata)
-    ? conditionalProperties(Value.Check(Type.String(), metadata["turn_id"]), {
+    ? conditionalProperties(isString(metadata["turn_id"]), {
         turn_id: metadata["turn_id"],
       })
     : undefined;
   return {
     type: "compaction",
-    ...conditionalProperties(Boolean(Value.Check(Type.String(), item["id"])), { id: item["id"] }),
+    ...conditionalProperties(Boolean(isString(item["id"])), { id: item["id"] }),
     encrypted_content: item["encrypted_content"],
     ...conditionalProperties(Boolean(metadataPassthrough), {
       internal_chat_message_metadata_passthrough: metadataPassthrough,
@@ -64,7 +57,7 @@ export function normalizeRemoteCompactionV2PromptInput(
   input: readonly BoundaryValue[],
 ): JsonObject[] {
   return normalizeResponsesToolHistory([...input])
-    .filter((item): item is JsonObject => Value.Check(JsonObjectSchema, item))
+    .filter((item): item is JsonObject => isJsonObject(item))
     .map((item) => structuredClone(item));
 }
 
@@ -136,7 +129,7 @@ function retainedRealUserMessage(item: BoundaryValue): JsonObject | undefined {
     return undefined;
   const content = item["content"].filter((part) => {
     if (!isRecord(part)) return false;
-    if (part["type"] !== "input_text" || !Value.Check(Type.String(), part["text"])) return true;
+    if (part["type"] !== "input_text" || !isString(part["text"])) return true;
     return !isHookPrompt(part["text"]) && !isContextualText(part["text"]);
   });
   return content.length > 0
@@ -158,7 +151,7 @@ function messageTextTokenCount(item: JsonObject): number {
     if (
       !isRecord(part) ||
       (part["type"] !== "input_text" && part["type"] !== "output_text") ||
-      !Value.Check(Type.String(), part["text"])
+      !isString(part["text"])
     )
       return tokens;
     return tokens + approxTokenCount(part["text"]);

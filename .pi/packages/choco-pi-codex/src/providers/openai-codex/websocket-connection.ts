@@ -1,5 +1,5 @@
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import { isFunction, isNumber, isString } from "../value-guards.ts";
+import { isJsonObject, type JsonObject } from "../../adapter/runtime-values.ts";
 import {
   DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS,
   WEBSOCKET_MESSAGE_TOO_BIG_CLOSE_CODE,
@@ -27,21 +27,32 @@ const PROXY_ENV_KEYS = new Set([
 
 type GetProxyForUrl = (url: string) => string;
 
-const StringSchema = Type.String();
-const NumberSchema = Type.Number();
-const FunctionSchema = Type.Function([], Type.Unknown());
-const ErrorRecordType = Type.Record(Type.String(), Type.Unknown());
-type ErrorRecord = Static<typeof ErrorRecordType>;
-const ErrorRecordSchema = Type.Unsafe<ErrorRecord>({ type: "object" });
-const ErrorCodeSchema = Type.Object({ code: Type.Optional(Type.Unknown()) });
-const ErrorEventSchema = Type.Object({
-  message: Type.Optional(Type.Unknown()),
-  error: Type.Optional(Type.Unknown()),
-});
-const CloseEventSchema = Type.Object({
-  code: Type.Optional(Type.Unknown()),
-  reason: Type.Optional(Type.Unknown()),
-});
+type ErrorRecord = JsonObject;
+interface ErrorCodeLike {
+  code?: unknown;
+}
+interface ErrorEventLike {
+  message?: unknown;
+  error?: unknown;
+}
+interface CloseEventLike {
+  code?: unknown;
+  reason?: unknown;
+}
+
+// The former all-optional TypeBox object schemas accepted any non-array object (live event and
+// Error instances included) and read members through the prototype, so these stay shallow guards.
+function hasErrorCode<T>(value: T): value is T & ErrorCodeLike {
+  return isJsonObject(value);
+}
+
+function isErrorEvent<T>(value: T): value is T & ErrorEventLike {
+  return isJsonObject(value);
+}
+
+function isCloseEvent<T>(value: T): value is T & CloseEventLike {
+  return isJsonObject(value);
+}
 
 let proxyFromEnvPromise: Promise<GetProxyForUrl> | undefined;
 async function getProxyFromEnv(): Promise<GetProxyForUrl> {
@@ -67,9 +78,7 @@ async function getWebSocketConstructor(
       ) {
         const proxy = resolveWebSocketProxyForTargetSync(getProxyForUrl, url, env);
         const baseOptions =
-          Array.isArray(options) || Check(StringSchema, options)
-            ? { protocols: options }
-            : { ...options };
+          Array.isArray(options) || isString(options) ? { protocols: options } : { ...options };
         const socketOptions = proxy ? { ...baseOptions, proxy } : baseOptions;
         // SAFETY: Bun's WebSocket constructor accepts this runtime-checked protocols/options union,
         // including its proxy extension, although the host WebSocket overload omits that extension.
@@ -83,7 +92,7 @@ async function getWebSocketConstructor(
   const proxy = resolveWebSocketProxyForTargetSync(getProxyForUrl, url, env);
   if (!proxy) {
     const ctor = globalThis.WebSocket;
-    if (!Check(FunctionSchema, ctor)) return null;
+    if (!isFunction(ctor)) return null;
     // SAFETY: The runtime function check establishes a WebSocket constructor; the adapter only
     // relies on the standard send, close, readyState, and event-listener members.
     return ctor as WebSocketConstructorLike;
@@ -97,9 +106,7 @@ async function getWebSocketConstructor(
       options?: { headers?: Record<string, string> | undefined } | string | string[],
     ) {
       const baseOptions =
-        Array.isArray(options) || Check(StringSchema, options)
-          ? { protocols: options }
-          : { ...options };
+        Array.isArray(options) || isString(options) ? { protocols: options } : { ...options };
       const dispatcher = new ProxyAgent(proxyUrl);
       // SAFETY: Undici accepts dispatcher alongside the checked protocols/options union, while its
       // public constructor overload does not expose this proxy-specific combination.
@@ -195,16 +202,13 @@ class NestedWebSocketError extends Error {
 function nestedWebSocketError(error: Error): Error {
   const wrapped = new NestedWebSocketError(`WebSocket error: ${error.message}`, { cause: error });
   wrapped.name = "WebSocketError";
-  if (
-    Check(ErrorCodeSchema, error) &&
-    (Check(StringSchema, error.code) || Check(NumberSchema, error.code))
-  )
+  if (hasErrorCode(error) && (isString(error.code) || isNumber(error.code)))
     wrapped.code = error.code;
   return wrapped;
 }
 
 function webSocketHttpStatus<T>(value: T, seen = new Set<object>()): number | undefined {
-  if (!Check(ErrorRecordSchema, value) || seen.has(value)) return undefined;
+  if (!isJsonObject(value) || seen.has(value)) return undefined;
   seen.add(value);
   const record: ErrorRecord = value;
   for (const candidate of [
@@ -213,9 +217,8 @@ function webSocketHttpStatus<T>(value: T, seen = new Set<object>()): number | un
     record["status_code"],
     record["code"],
   ]) {
-    const parsed =
-      Check(StringSchema, candidate) && /^\d+$/.test(candidate) ? Number(candidate) : candidate;
-    if (Check(NumberSchema, parsed) && Number.isInteger(parsed) && parsed >= 100 && parsed <= 599)
+    const parsed = isString(candidate) && /^\d+$/.test(candidate) ? Number(candidate) : candidate;
+    if (isNumber(parsed) && Number.isInteger(parsed) && parsed >= 100 && parsed <= 599)
       return parsed;
   }
   return (
@@ -226,13 +229,12 @@ function webSocketHttpStatus<T>(value: T, seen = new Set<object>()): number | un
 }
 
 function webSocketCloseCode<T>(value: T, seen = new Set<object>()): number | undefined {
-  if (!Check(ErrorRecordSchema, value) || seen.has(value)) return undefined;
+  if (!isJsonObject(value) || seen.has(value)) return undefined;
   seen.add(value);
   const record: ErrorRecord = value;
   for (const candidate of [record["closeCode"], record["code"]]) {
-    const parsed =
-      Check(StringSchema, candidate) && /^\d+$/.test(candidate) ? Number(candidate) : candidate;
-    if (Check(NumberSchema, parsed) && Number.isInteger(parsed) && parsed >= 1000 && parsed <= 4999)
+    const parsed = isString(candidate) && /^\d+$/.test(candidate) ? Number(candidate) : candidate;
+    if (isNumber(parsed) && Number.isInteger(parsed) && parsed >= 1000 && parsed <= 4999)
       return parsed;
   }
   return webSocketCloseCode(record["error"], seen) ?? webSocketCloseCode(record["cause"], seen);
@@ -277,8 +279,8 @@ class WebSocketStatusError extends Error {
 }
 
 export function extractWebSocketError<T>(event: T): Error {
-  if (!Check(ErrorEventSchema, event)) return new Error("WebSocket error");
-  if (Check(StringSchema, event.message) && event.message.length > 0) {
+  if (!isErrorEvent(event)) return new Error("WebSocket error");
+  if (isString(event.message) && event.message.length > 0) {
     const error = new WebSocketStatusError(event.message);
     error.status = webSocketHttpStatus(event);
     return error;
@@ -288,8 +290,8 @@ export function extractWebSocketError<T>(event: T): Error {
     return nestedWebSocketError(nestedError);
   }
   if (
-    Check(ErrorEventSchema, nestedError) &&
-    Check(StringSchema, nestedError.message) &&
+    isErrorEvent(nestedError) &&
+    isString(nestedError.message) &&
     nestedError.message.length > 0
   ) {
     return nestedWebSocketError(new Error(nestedError.message));
@@ -313,9 +315,9 @@ export class WebSocketCloseError extends Error {
 }
 
 export function extractWebSocketCloseError<T>(event: T): Error {
-  if (!Check(CloseEventSchema, event)) return new Error("WebSocket closed");
-  const code = Check(NumberSchema, event.code) ? event.code : undefined;
-  const reason = Check(StringSchema, event.reason) ? event.reason : undefined;
+  if (!isCloseEvent(event)) return new Error("WebSocket closed");
+  const code = isNumber(event.code) ? event.code : undefined;
+  const reason = isString(event.reason) ? event.reason : undefined;
   const codeText = code === undefined ? "" : ` ${code}`;
   let reasonText = reason ? ` ${reason}` : "";
   if (!reasonText && code === WEBSOCKET_MESSAGE_TOO_BIG_CLOSE_CODE) {

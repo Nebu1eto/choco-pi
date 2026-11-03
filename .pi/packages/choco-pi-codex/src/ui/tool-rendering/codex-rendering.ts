@@ -1,5 +1,4 @@
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { isString } from "../../value-guards.ts";
 import { summarizeShellCommand, type ShellAction } from "../../shell/summary.ts";
 import type { ExecCommandStatus } from "../../tools/exec/command-state.ts";
 
@@ -35,7 +34,7 @@ export function renderWriteStdinCall(
   command: string | undefined,
   theme: RenderTheme,
 ): string {
-  const interacted = Value.Check(Type.String(), input) && input.length > 0;
+  const interacted = isString(input) && input.length > 0;
   const marker = interacted ? "↳ " : "• ";
   const title = interacted
     ? "Interacted with background terminal"

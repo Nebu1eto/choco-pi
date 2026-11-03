@@ -1,7 +1,6 @@
-import { JsonObjectSchema } from "../runtime-values.ts";
+import { isBoolean } from "../../value-guards.ts";
+import { isJsonObject } from "../runtime-values.ts";
 import type { JsonObject, BoundaryValue } from "../runtime-values.ts";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -30,7 +29,7 @@ const OWNED_CONFIG_KEYS = Object.keys(DEFAULT_CODEX_CONVERSION_CONFIG);
 const LEGACY_OWNED_CONFIG_KEYS = ["beta"];
 
 function isRecord(value: BoundaryValue): value is JsonObject {
-  return Value.Check(JsonObjectSchema, value);
+  return isJsonObject(value);
 }
 
 function mergeConfigDocument(existing: JsonObject, owned: JsonObject): JsonObject {
@@ -124,8 +123,7 @@ export function readCodexConversionConfig(
   const migration = migrateCodexConversionConfigIfNeeded(parsed);
   const config = withoutProjectOnlyConfig(normalizeCodexConversionConfig(migration.config));
   const voice = isRecord(parsed) && isRecord(parsed["voice"]) ? parsed["voice"] : undefined;
-  if (!Value.Check(Type.Boolean(), voice?.["audioSetupCompleted"]))
-    config.voice.audioSetupCompleted = true;
+  if (!isBoolean(voice?.["audioSetupCompleted"])) config.voice.audioSetupCompleted = true;
   return config;
 }
 
@@ -176,7 +174,7 @@ export function readLayeredCodexConversionConfig(
 ): CodexConversionConfig {
   const global = readCodexConversionConfig(options.globalConfigPath);
   const project = readProjectCodexConversionDocument(options.cwd, options.projectTrusted);
-  if (!project || !Value.Check(JsonObjectSchema, global)) return global;
+  if (!project || !isJsonObject(global)) return global;
   return normalizeCodexConversionConfig(mergeConfigDocument(global, project));
 }
 
@@ -244,9 +242,7 @@ export function clearFolderCodexConversionConfig(
   for (const key of [...OWNED_CONFIG_KEYS, ...LEGACY_OWNED_CONFIG_KEYS]) {
     if (key === "openai" && isRecord(project[key])) {
       const keepalive = project[key]["cacheKeepalive"];
-      const nextOpenAI = Value.Check(Type.Boolean(), keepalive)
-        ? { cacheKeepalive: keepalive }
-        : {};
+      const nextOpenAI = isBoolean(keepalive) ? { cacheKeepalive: keepalive } : {};
       if (Object.keys(nextOpenAI).length === 0) delete project[key];
       else project[key] = nextOpenAI;
       continue;
@@ -271,7 +267,7 @@ export function writeCodexConversionConfig(
 ): { ok: true } | { ok: false; error: string } {
   try {
     const normalizedConfig = normalizeCodexConversionConfig(config);
-    if (!Value.Check(JsonObjectSchema, normalizedConfig)) {
+    if (!isJsonObject(normalizedConfig)) {
       throw new Error("Normalized Codex configuration is not JSON-serializable");
     }
     const normalized = withoutProjectOnlyDocument(normalizedConfig);

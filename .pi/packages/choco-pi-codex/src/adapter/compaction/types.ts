@@ -1,8 +1,9 @@
+import { isBoolean, isNumber, isString } from "../../value-guards.ts";
 import { conditionalProperties } from "../runtime-values.ts";
-import { jsonValueType, JsonObjectSchema } from "../runtime-values.ts";
+import { jsonValueType, isJsonObject } from "../runtime-values.ts";
 import type { JsonObject, BoundaryValue } from "../runtime-values.ts";
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import { compile, int, lit, obj, opt, str } from "@earendil-works/pi-schema";
+import type { Static } from "@earendil-works/pi-schema";
 import type { CompactionEntry, CompactionResult } from "@earendil-works/pi-coding-agent";
 import { isCodexCompactionDiagnostic, type CodexCompactionDiagnostic } from "./diagnostics.ts";
 
@@ -49,26 +50,22 @@ export type NativeCompactionIdentity = {
   baseUrl: string;
 };
 
-export const BackgroundNativeMetadataSchema = Type.Object(
-  {
-    sessionId: Type.String({ minLength: 1 }),
-    ownerKey: Type.String({ minLength: 1 }),
-    ownerGeneration: Type.Integer({ minimum: 0 }),
-    cutEntryId: Type.String({ minLength: 1 }),
-    retentionPolicyVersion: Type.Literal(1),
-    providerScope: Type.Object(
-      {
-        provider: Type.String({ minLength: 1 }),
-        baseUrl: Type.Optional(Type.String({ minLength: 1 })),
-        model: Type.String({ minLength: 1 }),
-        authMode: Type.Optional(Type.String({ minLength: 1 })),
-        accountScope: Type.Optional(Type.String({ minLength: 1 })),
-      },
-      { additionalProperties: false },
-    ),
-  },
-  { additionalProperties: false },
-);
+/** Closed objects: unknown keys are rejected, as with the former `additionalProperties: false`. */
+export const BackgroundNativeMetadataSchema = obj({
+  sessionId: str({ minLength: 1 }),
+  ownerKey: str({ minLength: 1 }),
+  ownerGeneration: int({ minimum: 0 }),
+  cutEntryId: str({ minLength: 1 }),
+  retentionPolicyVersion: lit(1),
+  providerScope: obj({
+    provider: str({ minLength: 1 }),
+    baseUrl: opt(str({ minLength: 1 })),
+    model: str({ minLength: 1 }),
+    authMode: opt(str({ minLength: 1 })),
+    accountScope: opt(str({ minLength: 1 })),
+  }),
+});
+const isBackgroundNativeMetadata = compile(BackgroundNativeMetadataSchema).check;
 export type BackgroundNativeMetadata = Static<typeof BackgroundNativeMetadataSchema>;
 
 export type BackgroundNativeCompactionDetails = NativeCompactionDetails & {
@@ -110,15 +107,15 @@ export type CreateNativeCompactionShimResultInput = {
 };
 
 function isRecord(value: BoundaryValue): value is JsonObject {
-  return Value.Check(JsonObjectSchema, value);
+  return isJsonObject(value);
 }
 
 function isNonEmptyString(value: BoundaryValue): value is string {
-  return Value.Check(Type.String(), value) && value.trim().length > 0;
+  return isString(value) && value.trim().length > 0;
 }
 
 function isFiniteNonNegativeNumber(value: BoundaryValue): value is number {
-  return Value.Check(Type.Number(), value) && Number.isFinite(value) && value >= 0;
+  return isNumber(value) && Number.isFinite(value) && value >= 0;
 }
 
 function normalizeString(value: string): string {
@@ -126,12 +123,7 @@ function normalizeString(value: string): string {
 }
 
 function isStructuredValue(value: BoundaryValue): boolean {
-  if (
-    value === null ||
-    Value.Check(Type.String(), value) ||
-    Value.Check(Type.Number(), value) ||
-    Value.Check(Type.Boolean(), value)
-  ) {
+  if (value === null || isString(value) || isNumber(value) || isBoolean(value)) {
     return true;
   }
 
@@ -147,12 +139,7 @@ function isStructuredValue(value: BoundaryValue): boolean {
 }
 
 function cloneStructuredValue(value: BoundaryValue): BoundaryValue {
-  if (
-    value === null ||
-    Value.Check(Type.String(), value) ||
-    Value.Check(Type.Number(), value) ||
-    Value.Check(Type.Boolean(), value)
-  ) {
+  if (value === null || isString(value) || isNumber(value) || isBoolean(value)) {
     return value;
   }
 
@@ -187,14 +174,11 @@ export function isNativeCompactionRequestMeta(
     return false;
   }
 
-  if (
-    previousSummaryPresent !== undefined &&
-    !Value.Check(Type.Boolean(), previousSummaryPresent)
-  ) {
+  if (previousSummaryPresent !== undefined && !isBoolean(previousSummaryPresent)) {
     return false;
   }
 
-  if (compactedKeptWindow !== undefined && !Value.Check(Type.Boolean(), compactedKeptWindow)) {
+  if (compactedKeptWindow !== undefined && !isBoolean(compactedKeptWindow)) {
     return false;
   }
 
@@ -239,8 +223,7 @@ export function isNativeCompactionDetails(value: BoundaryValue): value is Native
     (candidate["candidateId"] === undefined || isNonEmptyString(candidate["candidateId"])) &&
     (candidate["prefixFingerprint"] === undefined ||
       isNonEmptyString(candidate["prefixFingerprint"])) &&
-    (candidate["background"] === undefined ||
-      Value.Check(BackgroundNativeMetadataSchema, candidate["background"]))
+    (candidate["background"] === undefined || isBackgroundNativeMetadata(candidate["background"]))
   );
 }
 

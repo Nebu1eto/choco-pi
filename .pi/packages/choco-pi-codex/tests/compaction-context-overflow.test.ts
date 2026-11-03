@@ -7,8 +7,7 @@ import {
   type Model,
 } from "@earendil-works/pi-ai";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, compile, lit, obj, unknown } from "@earendil-works/pi-schema";
 import { executeRemoteCompactionV2 } from "../src/adapter/compaction/remote-v2-client.ts";
 import {
   COMPACTION_TRUNCATED_TOOL_OUTPUT_MESSAGE,
@@ -19,8 +18,10 @@ import type { ResponsesInputItem } from "../src/adapter/compaction/serializer.ts
 // Synthetic fixtures only: no session content, no network. The fake provider
 // records every payload the compaction client would send.
 
-const CallbackSchema = Type.Function([Type.Unknown()], Type.Unknown());
-const PayloadSchema = Type.Object({ input: Type.Array(Type.Unknown()) });
+const isPayload = compile(obj({ input: arr(unknown()) }, { open: true })).check;
+const isTruncatedOutput = compile(
+  obj({ output: lit(COMPACTION_TRUNCATED_TOOL_OUTPUT_MESSAGE) }, { open: true }),
+).check;
 const OVERFLOW =
   "Codex error: Your input exceeds the context window of this model. Please adjust your input and try again.";
 
@@ -103,20 +104,23 @@ async function runCompaction(
       const stream = createAssistantMessageEventStream();
       void (async () => {
         const onPayload = options && "onPayload" in options ? options.onPayload : undefined;
-        assert.ok(Value.Check(CallbackSchema, onPayload));
+        assert.ok(onPayload instanceof Function);
         const reply = replies[payloadAttempts++] ?? "ok";
         let body: unknown;
         try {
-          body = await onPayload({
-            model: codexModel.id,
-            store: false,
-            stream: true,
-            input: [],
-            text: { verbosity: "low" },
-            include: [],
-            tool_choice: "auto",
-            parallel_tool_calls: true,
-          });
+          body = await onPayload(
+            {
+              model: codexModel.id,
+              store: false,
+              stream: true,
+              input: [],
+              text: { verbosity: "low" },
+              include: [],
+              tool_choice: "auto",
+              parallel_tool_calls: true,
+            },
+            codexModel,
+          );
         } catch (error) {
           const failed = successMessage();
           failed.stopReason = "error";
@@ -124,7 +128,7 @@ async function runCompaction(
           stream.push({ type: "error", reason: "error", error: failed });
           return;
         }
-        assert.ok(Value.Check(PayloadSchema, body));
+        assert.ok(isPayload(body));
         sent.push(body.input);
         if (reply === "overflow") {
           const failed = successMessage();
@@ -135,7 +139,7 @@ async function runCompaction(
         }
         const onOutputItemDone =
           options && "onOutputItemDone" in options ? options.onOutputItemDone : undefined;
-        assert.ok(Value.Check(CallbackSchema, onOutputItemDone));
+        assert.ok(onOutputItemDone instanceof Function);
         onOutputItemDone({ type: "compaction", id: "cmp-1", encrypted_content: "synthetic" });
         stream.push({ type: "done", reason: "stop", message: successMessage() });
       })();
@@ -166,12 +170,7 @@ async function runCompaction(
 }
 
 function truncatedOutputs(input: readonly unknown[]): number {
-  return input.filter((item) =>
-    Value.Check(
-      Type.Object({ output: Type.Literal(COMPACTION_TRUNCATED_TOOL_OUTPUT_MESSAGE) }),
-      item,
-    ),
-  ).length;
+  return input.filter((item) => isTruncatedOutput(item)).length;
 }
 
 test("a Responses Lite request over the model window is shrunk before it is sent", async () => {

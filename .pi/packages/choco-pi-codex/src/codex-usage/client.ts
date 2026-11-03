@@ -1,8 +1,7 @@
+import { isFunction, isString } from "../providers/value-guards.ts";
 import { conditionalProperties } from "../adapter/runtime-values.ts";
-import { JsonObjectSchema } from "../adapter/runtime-values.ts";
+import { isJsonObject } from "../adapter/runtime-values.ts";
 import type { JsonObject, BoundaryValue } from "../adapter/runtime-values.ts";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import { createHash } from "node:crypto";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
@@ -50,11 +49,11 @@ const weeklyUsageCache = new Map<
 const weeklyUsageKeyByModel = new WeakMap<RuntimeModel, string>();
 
 function isRecord(value: BoundaryValue): value is JsonObject {
-  return Value.Check(JsonObjectSchema, value);
+  return isJsonObject(value);
 }
 
 function stringValue(value: BoundaryValue): string | undefined {
-  return Value.Check(Type.String(), value) && value.trim().length > 0 ? value : undefined;
+  return isString(value) && value.trim().length > 0 ? value : undefined;
 }
 
 export function buildCodexUsageUrl(): string {
@@ -269,7 +268,7 @@ function withAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
 }
 
 export function createCodexRateLimitResetRedeemRequestId(): string {
-  return Value.Check(Type.Function([], Type.Unknown()), globalThis.crypto?.randomUUID)
+  return isFunction(globalThis.crypto?.randomUUID)
     ? globalThis.crypto.randomUUID()
     : `pi_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 }

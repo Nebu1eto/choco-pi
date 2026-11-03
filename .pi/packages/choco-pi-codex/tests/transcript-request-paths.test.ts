@@ -13,8 +13,7 @@ import {
   ModelRuntime,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, compile, lit, obj, opt, str, unknown } from "@earendil-works/pi-schema";
 import { serializeMessagesToResponsesInput } from "../src/adapter/compaction/serializer.ts";
 import {
   buildCompactionTranscriptContext,
@@ -33,19 +32,21 @@ import {
   sendPreparedWebSocketRequest,
 } from "../src/providers/openai-codex/websocket-stream.ts";
 
-const NamedToolSchema = Type.Object({ name: Type.String() });
-const CallbackSchema = Type.Function([Type.Unknown()], Type.Unknown());
-const EmittedBodySchema = Type.Object({
-  type: Type.Literal("response.create"),
-  instructions: Type.String(),
-  input: Type.Array(Type.Unknown()),
-  tools: Type.Optional(Type.Array(Type.Unknown())),
-});
-const RequestBodySchema = Type.Object({
-  instructions: Type.String(),
-  input: Type.Array(Type.Unknown()),
-  tools: Type.Optional(Type.Array(Type.Unknown())),
-});
+const namedToolValidator = compile(obj({ name: str() }, { open: true }));
+const emittedBodyValidator = compile(
+  obj(
+    {
+      type: lit("response.create"),
+      instructions: str(),
+      input: arr(unknown()),
+      tools: opt(arr(unknown())),
+    },
+    { open: true },
+  ),
+);
+const requestBodyValidator = compile(
+  obj({ instructions: str(), input: arr(unknown()), tools: opt(arr(unknown())) }, { open: true }),
+);
 const model: Model<"openai-responses"> = {
   id: "gpt-5.6-sol",
   name: "GPT-5.6 Sol",
@@ -61,12 +62,12 @@ const model: Model<"openai-responses"> = {
 const toolA = {
   name: "toolA",
   description: "Removed tool.",
-  parameters: Type.Object({ old: Type.String() }),
+  parameters: obj({ old: str() }, { open: true }),
 };
 const toolB = {
   name: "toolB",
   description: "Current tool.",
-  parameters: Type.Object({ current: Type.String() }),
+  parameters: obj({ current: str() }, { open: true }),
 };
 const forcedPromptTranscript = normalizeContext({
   messages: [
@@ -130,9 +131,7 @@ interface TranscriptBody {
 }
 
 function toolNames(body: TranscriptBody): Array<string | undefined> {
-  return (body.tools ?? []).map((tool) =>
-    Value.Check(NamedToolSchema, tool) ? tool.name : undefined,
-  );
+  return (body.tools ?? []).map((tool) => (namedToolValidator.check(tool) ? tool.name : undefined));
 }
 
 function assertCurrentTranscript(body: TranscriptBody): void {
@@ -161,7 +160,7 @@ test("WebSocket continuation sends the same normalized body used by SSE fallback
     },
   );
   const websocketBody: unknown = JSON.parse(frame);
-  assert.ok(Value.Check(EmittedBodySchema, websocketBody));
+  assert.ok(emittedBodyValidator.check(websocketBody));
   const emitted = websocketBody;
   assertCurrentTranscript(emitted);
   assertCurrentTranscript(sseBody);
@@ -202,7 +201,7 @@ test("Code Mode proxy derives grammar-tool metadata after a toolsRemoved delta",
   const stream = streamCodeModeResponsesProxy(model, transcript, {
     apiKey: "fixture",
     onPayload: (payload) => {
-      assert.ok(Value.Check(RequestBodySchema, payload));
+      assert.ok(requestBodyValidator.check(payload));
       captured = structuredClone(payload);
       throw new Error("captured before transport");
     },
@@ -275,14 +274,14 @@ test("reconstructed remote compaction sends the projected transcript exactly onc
       const stream = createAssistantMessageEventStream();
       void (async () => {
         const onPayload = options && "onPayload" in options ? options.onPayload : undefined;
-        if (!Value.Check(CallbackSchema, onPayload)) {
+        if (!(onPayload instanceof Function)) {
           stream.end();
           return;
         }
-        captured = await onPayload(buildRequestBody(compatModel, context));
+        captured = await onPayload(buildRequestBody(compatModel, context), _model);
         const onOutputItemDone =
           options && "onOutputItemDone" in options ? options.onOutputItemDone : undefined;
-        if (Value.Check(CallbackSchema, onOutputItemDone)) {
+        if (onOutputItemDone instanceof Function) {
           onOutputItemDone({ type: "compaction", id: "cmp-1", encrypted_content: "x" });
         }
         const message: AssistantMessage = {
@@ -329,7 +328,7 @@ test("reconstructed remote compaction sends the projected transcript exactly onc
     retryDelayMs: 0,
   });
 
-  assert.ok(Value.Check(RequestBodySchema, captured));
+  assert.ok(requestBodyValidator.check(captured));
   assert.deepEqual(captured.input.slice(0, -1), expected.input);
   assert.equal(JSON.stringify(captured).match(/Extra rules\./g)?.length, 1);
   assert.deepEqual(toolNames(captured), ["toolA", "toolB"]);

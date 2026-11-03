@@ -4,9 +4,10 @@ import type {
   SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 import type { LaneRoute } from "../../../../choco-pi-compaction/src/background/lane-journal.ts";
-import { Value } from "typebox/value";
+import { jsonEqual } from "../../../../choco-pi-compaction/src/background/json-equal.ts";
+import { isBoolean, isNumber, isString } from "../../value-guards.ts";
+import { isJsonObject, type BoundaryValue } from "../runtime-values.ts";
 import { isCanonicalCodexBaseUrl } from "../prompt/codex-model.ts";
-import { type Static, Type } from "typebox";
 import {
   isJsonRecord,
   isJsonValue,
@@ -32,34 +33,28 @@ export type NativeCompactionEntryMatch = Partial<NativeCompactionIdentity> & {
   readonly accountScope?: string | undefined;
 };
 
-const JsonScalarSchema = Type.Union([Type.Null(), Type.Boolean(), Type.Number(), Type.String()]);
-const PersistableJsonSchema = Type.Cyclic(
-  {
-    CodexPersistableJson: Type.Union([
-      JsonScalarSchema,
-      Type.Array(Type.Ref("CodexPersistableJson")),
-      Type.Record(Type.String(), Type.Union([Type.Ref("CodexPersistableJson"), Type.Undefined()])),
-    ]),
-  },
-  "CodexPersistableJson",
-);
-type PersistableJson = Static<typeof PersistableJsonSchema>;
-const PersistableObjectSchema = Type.Record(
-  Type.String(),
-  Type.Union([PersistableJsonSchema, Type.Undefined()]),
-);
-function constructJsonValue(value: PersistableJson): JsonValue | undefined {
-  if (Value.Check(JsonScalarSchema, value)) return value;
-  if (Value.Check(Type.Array(PersistableJsonSchema), value)) {
+/**
+ * Validate plain JSON-like data and construct a detached JSON tree in one walk: scalars (finite
+ * numbers only), arrays, and plain objects (Object.prototype or null prototype) whose undefined
+ * members are omitted. Anything else (functions, bigint, symbols, class instances, boxed
+ * primitives, holes) yields undefined.
+ */
+function constructJsonValue<T>(value: T): JsonValue | undefined {
+  if (value === null) return null;
+  if (isBoolean(value)) return value;
+  if (isNumber(value)) return value;
+  if (isString(value)) return value;
+  if (Array.isArray(value)) {
+    const members: BoundaryValue[] = value;
     const output: JsonValue[] = [];
-    for (const member of value) {
-      const detached = constructJsonValue(member);
+    for (let index = 0; index < members.length; index += 1) {
+      const detached = constructJsonValue(members[index]);
       if (detached === undefined) return undefined;
       output.push(detached);
     }
     return output;
   }
-  if (!Value.Check(PersistableObjectSchema, value)) return undefined;
+  if (!isJsonObject(value)) return undefined;
   const prototype: unknown = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) return undefined;
   const output: Record<string, JsonValue> = {};
@@ -78,7 +73,7 @@ function constructJsonValue(value: PersistableJson): JsonValue | undefined {
 }
 /** Validate plain JSON-like data, construct a detached JSON tree and omit undefined object fields. */
 export function cloneCodexCompactionJson<T>(value: T): JsonValue | undefined {
-  return Value.Check(PersistableJsonSchema, value) ? constructJsonValue(value) : undefined;
+  return constructJsonValue(value);
 }
 
 /** Legacy readers remain valid; background records require complete versioned lineage. */
@@ -121,7 +116,7 @@ export function isBackgroundNativeCompactionDetails<T>(
   const records = value.compactedWindow.filter((item) => isJsonRecord(item));
   return (
     records.length === value.compactedWindow.length &&
-    Value.Equal(value.compactedWindow, buildRemoteCompactionV2Window(records, compaction))
+    jsonEqual(value.compactedWindow, buildRemoteCompactionV2Window(records, compaction))
   );
 }
 
@@ -130,7 +125,7 @@ export function isCodexBackgroundScopeCompatible(
   details: BackgroundNativeCompactionDetails,
   scope: ProviderScope,
 ): boolean {
-  return Value.Equal(details.background.providerScope, scope);
+  return jsonEqual(details.background.providerScope, scope);
 }
 
 export function persistCodexBackgroundDetails(

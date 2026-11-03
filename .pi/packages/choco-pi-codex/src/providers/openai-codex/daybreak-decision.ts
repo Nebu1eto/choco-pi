@@ -1,6 +1,7 @@
-import { Type } from "typebox";
+import { compile, obj, opt, str } from "@earendil-works/pi-schema";
 import type { CodexStreamEvent } from "./types.ts";
-import { Check } from "typebox/value";
+import { isJsonObject } from "../../adapter/runtime-values.ts";
+import { isBoolean, isFunction, isRevision, isString } from "../value-guards.ts";
 import {
   type CodexLikeModelDescriptor,
   isCanonicalCodexSubscriptionModel,
@@ -74,46 +75,58 @@ type DecisionOwner = Readonly<{
 type Observation = Readonly<{ requested: DaybreakState["requested"]; revision: number }>;
 type BridgeHost = typeof globalThis & { [DAYBREAK_BRIDGE_SYMBOL]?: DaybreakBridge };
 
-const SourceSchema = Type.Union([
-  Type.Literal("default"),
-  Type.Literal("explicit"),
-  Type.Literal("inherited"),
+const SOURCES: ReadonlySet<unknown> = new Set<DaybreakState["source"]>([
+  "default",
+  "explicit",
+  "inherited",
 ]);
-const OutcomeSchema = Type.Union([
-  Type.Literal("off"),
-  Type.Literal("pending"),
-  Type.Literal("blue"),
-  Type.Literal("red"),
-  Type.Literal("not-granted"),
-  Type.Literal("lookup-failed"),
-  Type.Literal("model-not-supported"),
-  Type.Literal("auth-not-eligible"),
-  Type.Literal("security-key-required"),
+const OUTCOMES: ReadonlySet<unknown> = new Set<DaybreakOutcome>([
+  "off",
+  "pending",
+  "blue",
+  "red",
+  "not-granted",
+  "lookup-failed",
+  "model-not-supported",
+  "auth-not-eligible",
+  "security-key-required",
 ]);
-const StateSchema = Type.Object({
-  sessionId: Type.String(),
-  requested: Type.Union([Type.Boolean(), Type.Literal("auto")]),
-  source: SourceSchema,
-  revision: Type.Integer({ minimum: 0 }),
-  generation: Type.Integer({ minimum: 0 }),
-  outcome: OutcomeSchema,
-});
-const BridgeSchema = Type.Object({
-  version: Type.Literal(1),
-  register: Type.Function([], Type.Unknown()),
-  get: Type.Function([Type.String()], Type.Unknown()),
-  createExtension: Type.Function([], Type.Unknown()),
-});
-const ControllerSchema = Type.Object({
-  getState: Type.Function([], StateSchema),
-  subscribe: Type.Function(
-    [Type.Function([], Type.Undefined())],
-    Type.Function([], Type.Undefined()),
-  ),
-  set: Type.Function([], StateSchema),
-  report: Type.Function([], Type.Undefined()),
-  dispose: Type.Function([], Type.Undefined()),
-});
+
+// Bridge, controller and state come from live host objects whose members may sit on the prototype,
+// and function members cannot be described as JSON, so these are shallow property guards (shape
+// only, like the TypeBox object schemas they replace).
+function isDaybreakState<Value>(value: Value): value is Value & DaybreakState {
+  return (
+    isJsonObject(value) &&
+    isString(value["sessionId"]) &&
+    (isBoolean(value["requested"]) || value["requested"] === "auto") &&
+    SOURCES.has(value["source"]) &&
+    isRevision(value["revision"]) &&
+    isRevision(value["generation"]) &&
+    OUTCOMES.has(value["outcome"])
+  );
+}
+
+function isDaybreakBridge<Value>(value: Value): value is Value & DaybreakBridge {
+  return (
+    isJsonObject(value) &&
+    value["version"] === 1 &&
+    isFunction(value["register"]) &&
+    isFunction(value["get"]) &&
+    isFunction(value["createExtension"])
+  );
+}
+
+function isDaybreakController<Value>(value: Value): value is Value & DaybreakController {
+  return (
+    isJsonObject(value) &&
+    isFunction(value["getState"]) &&
+    isFunction(value["subscribe"]) &&
+    isFunction(value["set"]) &&
+    isFunction(value["report"]) &&
+    isFunction(value["dispose"])
+  );
+}
 
 const tickets = new WeakMap<CodexDaybreakTicket, TicketRecord>();
 const genuineDecisions = new WeakMap<CodexDaybreakDecision, DecisionOwner>();
@@ -124,13 +137,13 @@ const ignoredEchoes = new WeakSet<CodexStreamEvent>();
 function validatedBridge(): DaybreakBridge | undefined {
   const host: BridgeHost = globalThis;
   const candidate = host[DAYBREAK_BRIDGE_SYMBOL];
-  return Check(BridgeSchema, candidate) ? candidate : undefined;
+  return isDaybreakBridge(candidate) ? candidate : undefined;
 }
 
 function currentController(sessionId: string): DaybreakController | undefined {
   if (!sessionId) return undefined;
   const controller = validatedBridge()?.get(sessionId);
-  return controller && Check(ControllerSchema, controller) ? controller : undefined;
+  return controller && isDaybreakController(controller) ? controller : undefined;
 }
 
 export function getCodexDaybreakController(sessionId: string): DaybreakController | undefined {
@@ -143,7 +156,7 @@ function controllerState(
 ): DaybreakState | undefined {
   if (!controller) return undefined;
   const state = controller.getState();
-  return Check(StateSchema, state) && state.sessionId === sessionId ? state : undefined;
+  return isDaybreakState(state) && state.sessionId === sessionId ? state : undefined;
 }
 
 function cyberFor(outcome: DaybreakOutcome): CodexDaybreakDecision["cyber"] {
@@ -371,9 +384,9 @@ export function resolveCodexDaybreakTicket(
   return record.resolution;
 }
 
-const CompletedResponseSchema = Type.Object({
-  access_programs: Type.Optional(Type.Object({ cyber: Type.Optional(Type.String()) })),
-});
+const completedResponseValidator = compile(
+  obj({ access_programs: opt(obj({ cyber: opt(str()) }, { open: true })) }, { open: true }),
+);
 /**
  * Marks whether this ticket's sent request can attest a Daybreak downgrade.
  * A body with `previous_response_id`, or a native automatic successor, is a
@@ -414,7 +427,7 @@ export function reportCodexDaybreakResponse(
   const decision = record.decision;
   if (!decision?.cyber || !isCurrentCodexDaybreakDecision(decision)) return;
   // Older backends omit the echo entirely; omission does not attest a downgrade.
-  if (!Check(CompletedResponseSchema, response) || !response.access_programs) return;
+  if (!completedResponseValidator.check(response) || !response.access_programs) return;
   const owner = genuineDecisions.get(decision);
   if (!owner?.controller) return;
   const outcome =

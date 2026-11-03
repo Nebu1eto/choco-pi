@@ -18,23 +18,23 @@ import {
   type Tool,
   type TranscriptContext,
 } from "@earendil-works/pi-ai";
-import { Type } from "typebox";
+import { obj, str } from "@earendil-works/pi-schema";
 import { buildRequestBody } from "../src/providers/openai-codex/request-body.ts";
 
 const TOOL_SEARCH: Tool = {
   name: "tool_search",
   description: "# Tool discovery",
-  parameters: Type.Object({ query: Type.String() }),
+  parameters: obj({ query: str() }, { open: true }),
 };
 const READ: Tool = {
   name: "read",
   description: "Read a file",
-  parameters: Type.Object({ path: Type.String() }),
+  parameters: obj({ path: str() }, { open: true }),
 };
 const LOADED: Tool = {
   name: "mcp__radius__list_issues",
   description: "List Radius issues",
-  parameters: Type.Object({}),
+  parameters: obj({}, { open: true }),
 };
 
 function model(compat: Record<string, boolean>): Model<"openai-codex-responses"> {

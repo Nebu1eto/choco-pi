@@ -3,7 +3,8 @@ import { isBooleanValue, isNumberValue, isObjectValue, isStringValue } from "../
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { keyHint, truncateToVisualLines } from "@earendil-works/pi-coding-agent";
 import { Container, Text, truncateToWidth } from "@earendil-works/pi-tui";
-import { Type } from "typebox";
+import { bool, num, obj, opt, str } from "@earendil-works/pi-schema";
+import { hostParams } from "../../schema-bridge.ts";
 import { getPiConfiguredShellPath } from "../../adapter/prompt/runtime-shell.ts";
 import {
   renderExecCommandCall,
@@ -16,23 +17,28 @@ import { renderTerminalOutput } from "./output.ts";
 import type { ExecCommandInput, ExecSessionManager, UnifiedExecResult } from "./session-manager.ts";
 import { MAX_EXEC_YIELD_TIME_MS } from "./shell.ts";
 
-const EXEC_COMMAND_PARAMETERS = Type.Object({
-  description: Type.String({
-    minLength: 1,
-    maxLength: 60,
-    description: "Required 3-7 word imperative phrase describing intent for collapsed display",
-  }),
-  cmd: Type.String({
-    description:
-      "Raw command string interpreted by the current shell; do not quote the entire command",
-  }),
-  workdir: Type.Optional(Type.String({ description: "Cwd" })),
-  shell: Type.Optional(Type.String()),
-  tty: Type.Optional(Type.Boolean({ description: "Keep stdin open for input or interruption" })),
-  yield_time_ms: Type.Optional(Type.Number({ description: "Wait ms" })),
-  max_output_tokens: Type.Optional(Type.Number({ description: "Truncate" })),
-  login: Type.Optional(Type.Boolean({ description: "Login shell" })),
-});
+const EXEC_COMMAND_PARAMETERS = hostParams(
+  obj(
+    {
+      description: str({
+        minLength: 1,
+        maxLength: 60,
+        description: "Required 3-7 word imperative phrase describing intent for collapsed display",
+      }),
+      cmd: str({
+        description:
+          "Raw command string interpreted by the current shell; do not quote the entire command",
+      }),
+      workdir: opt(str({ description: "Cwd" })),
+      shell: opt(str()),
+      tty: opt(bool({ description: "Keep stdin open for input or interruption" })),
+      yield_time_ms: opt(num({ description: "Wait ms" })),
+      max_output_tokens: opt(num({ description: "Truncate" })),
+      login: opt(bool({ description: "Login shell" })),
+    },
+    { open: true },
+  ),
+);
 
 interface ExecCommandParams {
   cmd: string;

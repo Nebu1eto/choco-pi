@@ -1,51 +1,61 @@
-import { Type, type Static } from "typebox";
+import {
+  bool,
+  compile,
+  lit,
+  nullable,
+  num,
+  obj,
+  opt,
+  str,
+  type Static,
+} from "@earendil-works/pi-schema";
 
-export const usageSchema = Type.Object({
-  input_tokens: Type.Optional(Type.Number()),
-  output_tokens: Type.Optional(Type.Number()),
-});
-export const wireEventSchema = Type.Object({
-  type: Type.String(),
-  delta: Type.Optional(Type.String()),
-  response: Type.Optional(
-    Type.Object({
-      id: Type.Optional(Type.String()),
-      incomplete_details: Type.Optional(
-        Type.Union([Type.Null(), Type.Object({ reason: Type.Optional(Type.String()) })]),
+// Prototype wire frames are open JSON objects: unknown members are ignored, as before.
+export const usageSchema = obj(
+  { input_tokens: opt(num()), output_tokens: opt(num()) },
+  { open: true },
+);
+export const wireEventSchema = obj(
+  {
+    type: str(),
+    delta: opt(str()),
+    response: opt(
+      obj(
+        {
+          id: opt(str()),
+          incomplete_details: opt(nullable(obj({ reason: opt(str()) }, { open: true }))),
+          usage: opt(nullable(usageSchema)),
+        },
+        { open: true },
       ),
-      usage: Type.Optional(Type.Union([Type.Null(), usageSchema])),
-    }),
-  ),
-  steer: Type.Optional(
-    Type.Object({
-      id: Type.Optional(Type.String()),
-      previous_response_id: Type.Optional(Type.String()),
-    }),
-  ),
-  error: Type.Optional(
-    Type.Union([
-      Type.Null(),
-      Type.Object({ code: Type.Optional(Type.Union([Type.Null(), Type.String()])) }),
-    ]),
-  ),
-  item: Type.Optional(
-    Type.Object({
-      type: Type.String(),
-      name: Type.Optional(Type.String()),
-      async: Type.Optional(Type.Boolean()),
-      call_id: Type.Optional(Type.String()),
-      arguments: Type.Optional(Type.String()),
-    }),
-  ),
-});
+    ),
+    steer: opt(obj({ id: opt(str()), previous_response_id: opt(str()) }, { open: true })),
+    error: opt(nullable(obj({ code: opt(nullable(str())) }, { open: true }))),
+    item: opt(
+      obj(
+        {
+          type: str(),
+          name: opt(str()),
+          async: opt(bool()),
+          call_id: opt(str()),
+          arguments: opt(str()),
+        },
+        { open: true },
+      ),
+    ),
+  },
+  { open: true },
+);
 export type WireEvent = Static<typeof wireEventSchema>;
 export type WireUsage = Static<typeof usageSchema>;
-export const emptyArgumentsSchema = Type.Object({}, { additionalProperties: false });
-export const demoOutputSchema = Type.Object({
-  marker: Type.String(),
-  source: Type.Literal("synthetic"),
-});
-export const textFrameSchema = Type.String({ maxLength: 1000000 });
+// Closed: the demo tool takes no arguments, so any member is rejected.
+export const emptyArgumentsSchema = obj({});
+export const demoOutputSchema = obj({ marker: str(), source: lit("synthetic") }, { open: true });
+export const textFrameSchema = str({ maxLength: 1000000 });
+export const isWireEvent = compile(wireEventSchema).check;
+export const isEmptyArguments = compile(emptyArgumentsSchema).check;
+export const isDemoOutput = compile(demoOutputSchema).check;
+export const isTextFrame = compile(textFrameSchema).check;
 export const demoTool = {
   type: "function",
   name: "prototype_lookup",

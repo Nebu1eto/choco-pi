@@ -1,8 +1,7 @@
+import { isString, isNumber } from "../providers/value-guards.ts";
 import { conditionalProperties } from "../adapter/runtime-values.ts";
-import { JsonObjectSchema } from "../adapter/runtime-values.ts";
+import { isJsonObject } from "../adapter/runtime-values.ts";
 import type { JsonObject, BoundaryValue } from "../adapter/runtime-values.ts";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 const WEEKLY_WINDOW_MINUTES = 7 * 24 * 60;
 
 export interface CodexUsageWindow {
@@ -71,21 +70,20 @@ export interface CodexRateLimitResetConsumeResult {
 }
 
 function isRecord(value: BoundaryValue): value is JsonObject {
-  return Value.Check(JsonObjectSchema, value);
+  return isJsonObject(value);
 }
 
 function numberValue(value: BoundaryValue): number | undefined {
-  return Value.Check(Type.Number(), value) && Number.isFinite(value) ? value : undefined;
+  return isNumber(value) && Number.isFinite(value) ? value : undefined;
 }
 
 function stringValue(value: BoundaryValue): string | undefined {
-  return Value.Check(Type.String(), value) && value.trim().length > 0 ? value : undefined;
+  return isString(value) && value.trim().length > 0 ? value : undefined;
 }
 
 function integerValue(value: BoundaryValue): number | undefined {
-  if (Value.Check(Type.Number(), value) && Number.isFinite(value))
-    return Math.max(0, Math.trunc(value));
-  if (!Value.Check(Type.String(), value) || value.trim().length === 0) return undefined;
+  if (isNumber(value) && Number.isFinite(value)) return Math.max(0, Math.trunc(value));
+  if (!isString(value) || value.trim().length === 0) return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : undefined;
 }

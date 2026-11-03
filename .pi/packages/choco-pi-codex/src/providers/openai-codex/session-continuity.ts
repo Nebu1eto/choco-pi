@@ -1,5 +1,4 @@
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { compile, lit, obj } from "@earendil-works/pi-schema";
 import type { CanonicalHistoryDecision, ProtocolValue, ResponsesBody } from "./types.ts";
 import { responseInputsEqual } from "./websocket-continuation.ts";
 import type { CodexCompactionReplayDecision } from "../../adapter/compaction/diagnostics.ts";
@@ -14,8 +13,10 @@ type CanonicalSessionLane = {
   requestSequence: number;
 };
 
-const AdditionalToolsItemSchema = Type.Object({ type: Type.Literal("additional_tools") });
-const DeveloperItemSchema = Type.Object({ role: Type.Literal("developer") });
+const additionalToolsItemValidator = compile(
+  obj({ type: lit("additional_tools") }, { open: true }),
+);
+const developerItemValidator = compile(obj({ role: lit("developer") }, { open: true }));
 
 type CanonicalSessionState = {
   accountId: string;
@@ -42,8 +43,8 @@ function materializedInput(state: CanonicalSessionState): ProtocolValue[] {
 }
 
 function responsesLiteRequestPrefixLength(input: readonly ProtocolValue[]): number {
-  if (!Check(AdditionalToolsItemSchema, input[0])) return 0;
-  return Check(DeveloperItemSchema, input[1]) ? 2 : 1;
+  if (!additionalToolsItemValidator.check(input[0])) return 0;
+  return developerItemValidator.check(input[1]) ? 2 : 1;
 }
 
 interface CanonicalReplayResult {

@@ -1,6 +1,5 @@
+import { isBoolean, isString } from "../../value-guards.ts";
 import type { BoundaryValue } from "../runtime-values.ts";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import {
   DEFAULT_CODEX_CONVERSION_CONFIG,
   isObject,
@@ -41,7 +40,7 @@ export function migrateCodexConversionConfigIfNeeded(value: BoundaryValue): Conf
             (beta["codeMode"] === true ? "code" : "normal"),
           openai: {
             ...openai,
-            proxyResponsesLite: Value.Check(Type.Boolean(), openai["proxyResponsesLite"])
+            proxyResponsesLite: isBoolean(openai["proxyResponsesLite"])
               ? openai["proxyResponsesLite"]
               : beta["responsesLite"] === true,
           },
@@ -77,16 +76,16 @@ export function migrateCodexConversionConfigIfNeeded(value: BoundaryValue): Conf
       customRustBinariesDir: DEFAULT_CODEX_CONVERSION_CONFIG.tools["customRustBinariesDir"],
       webRun: adapterProviderCodexToolsDisabled
         ? false
-        : Value.Check(Type.Boolean(), value["webSearch"])
+        : isBoolean(value["webSearch"])
           ? value["webSearch"]
           : DEFAULT_CODEX_CONVERSION_CONFIG.tools["webRun"],
       imageGeneration: adapterProviderCodexToolsDisabled
         ? false
-        : Value.Check(Type.Boolean(), value["imageGeneration"])
+        : isBoolean(value["imageGeneration"])
           ? value["imageGeneration"]
           : DEFAULT_CODEX_CONVERSION_CONFIG.tools["imageGeneration"],
       viewImageFallback: DEFAULT_CODEX_CONVERSION_CONFIG.tools["viewImageFallback"],
-      applyPatchOnly: Value.Check(Type.Boolean(), value["applyPatchOnly"])
+      applyPatchOnly: isBoolean(value["applyPatchOnly"])
         ? value["applyPatchOnly"]
         : DEFAULT_CODEX_CONVERSION_CONFIG.tools["applyPatchOnly"],
       viewImageOnly: DEFAULT_CODEX_CONVERSION_CONFIG.tools["viewImageOnly"],
@@ -94,14 +93,14 @@ export function migrateCodexConversionConfigIfNeeded(value: BoundaryValue): Conf
       imageGenerationOnly: DEFAULT_CODEX_CONVERSION_CONFIG.tools["imageGenerationOnly"],
     },
     ui: {
-      statusLine: Value.Check(Type.Boolean(), value["statusLine"])
+      statusLine: isBoolean(value["statusLine"])
         ? value["statusLine"]
         : DEFAULT_CODEX_CONVERSION_CONFIG.ui["statusLine"],
       toolRenaming: DEFAULT_CODEX_CONVERSION_CONFIG.ui["toolRenaming"],
       compactTools: DEFAULT_CODEX_CONVERSION_CONFIG.ui["compactTools"],
       codeModeDetails: DEFAULT_CODEX_CONVERSION_CONFIG.ui["codeModeDetails"],
       steeringDeliveryStatus: DEFAULT_CODEX_CONVERSION_CONFIG.ui.steeringDeliveryStatus,
-      backgroundShellWidget: Value.Check(Type.Boolean(), value["backgroundShellWidget"])
+      backgroundShellWidget: isBoolean(value["backgroundShellWidget"])
         ? value["backgroundShellWidget"]
         : DEFAULT_CODEX_CONVERSION_CONFIG.ui["backgroundShellWidget"],
       backgroundShellToggleShortcut: stringValue(
@@ -122,13 +121,13 @@ export function migrateCodexConversionConfigIfNeeded(value: BoundaryValue): Conf
       ),
     },
     compaction: {
-      responsesCompaction: Value.Check(Type.Boolean(), value["responsesCompaction"])
+      responsesCompaction: isBoolean(value["responsesCompaction"])
         ? value["responsesCompaction"]
         : DEFAULT_CODEX_CONVERSION_CONFIG.compaction["responsesCompaction"],
       v2UserMessageRetention: DEFAULT_CODEX_CONVERSION_CONFIG.compaction.v2UserMessageRetention,
     },
     openai: {
-      fast: Value.Check(Type.Boolean(), value["fast"])
+      fast: isBoolean(value["fast"])
         ? value["fast"]
         : DEFAULT_CODEX_CONVERSION_CONFIG.openai["fast"],
       verbosity:
@@ -138,7 +137,7 @@ export function migrateCodexConversionConfigIfNeeded(value: BoundaryValue): Conf
       midTurnSteering: DEFAULT_CODEX_CONVERSION_CONFIG.openai.midTurnSteering,
       asyncCodeMode: DEFAULT_CODEX_CONVERSION_CONFIG.openai.asyncCodeMode,
       proxyResponsesLite: DEFAULT_CODEX_CONVERSION_CONFIG.openai.proxyResponsesLite,
-      forceCachedWebSockets: Value.Check(Type.Boolean(), value["forceCachedWebSockets"])
+      forceCachedWebSockets: isBoolean(value["forceCachedWebSockets"])
         ? value["forceCachedWebSockets"]
         : DEFAULT_CODEX_CONVERSION_CONFIG.openai["forceCachedWebSockets"],
       cacheDiagnostics: DEFAULT_CODEX_CONVERSION_CONFIG.openai.cacheDiagnostics,
@@ -149,5 +148,5 @@ export function migrateCodexConversionConfigIfNeeded(value: BoundaryValue): Conf
 }
 
 function stringValue(value: BoundaryValue, fallback: string): string {
-  return Value.Check(Type.String(), value) && value.trim() ? value.trim() : fallback;
+  return isString(value) && value.trim() ? value.trim() : fallback;
 }

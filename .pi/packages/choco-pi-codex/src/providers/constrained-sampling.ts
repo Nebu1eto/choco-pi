@@ -1,19 +1,10 @@
+import { isString } from "./value-guards.ts";
+import { isJsonObject, type BoundaryValue, type JsonObject } from "../adapter/runtime-values.ts";
 import type { Tool } from "@earendil-works/pi-ai";
-import { Type } from "typebox";
-import { Check } from "typebox/value";
 
 // Pi's extension loader exposes pi-ai root modules, not api/* subpaths.
 // Keep aligned with pi-ai src/api/constrained-sampling.ts.
-const JsonSchemaValueSchema = Type.Union([
-  Type.Record(Type.String(), Type.Unknown()),
-  Type.Array(Type.Unknown()),
-  Type.String(),
-  Type.Number(),
-  Type.Boolean(),
-  Type.Null(),
-  Type.Undefined(),
-]);
-type JsonSchemaValue = import("typebox").Static<typeof JsonSchemaValueSchema>;
+type JsonSchemaValue = JsonObject | BoundaryValue[] | string | number | boolean | null | undefined;
 type JsonSchemaProperty = JsonSchemaObject | undefined;
 interface JsonSchemaObject {
   [key: string]: JsonSchemaValue;
@@ -27,9 +18,9 @@ interface JsonSchemaObject {
   enum?: JsonSchemaValue;
 }
 
-const JsonSchemaObjectSchema = Type.Unsafe<JsonSchemaObject>({ type: "object" });
-const StringSchema = Type.String();
-const StringArraySchema = Type.Array(StringSchema);
+function isStringArray<Value>(value: Value): value is Value & string[] {
+  return Array.isArray(value) && value.every((item) => isString(item));
+}
 
 class UnsupportedStrictJsonSchemaError extends Error {}
 
@@ -53,12 +44,12 @@ const UNSUPPORTED_STRICT_SCHEMA_KEYS = [
 ] as const;
 
 function isJsonSchemaObject<T>(value: T): value is Extract<T, object> & JsonSchemaObject {
-  return Check(JsonSchemaObjectSchema, value);
+  return isJsonObject(value);
 }
 
 function isStructuredSchema<T>(schema: T): boolean {
   if (!isJsonSchemaObject(schema)) return false;
-  const types = Check(StringSchema, schema.type)
+  const types = isString(schema.type)
     ? [schema.type]
     : Array.isArray(schema.type)
       ? schema.type
@@ -122,13 +113,13 @@ function makeJsonSchemaNodeStrict<T>(schema: T): void {
   if (schema.properties !== undefined && !isJsonSchemaObject(schema.properties)) {
     throw new UnsupportedStrictJsonSchemaError("object properties must be a schema map");
   }
-  if (schema.required !== undefined && !Check(StringArraySchema, schema.required)) {
+  if (schema.required !== undefined && !isStringArray(schema.required)) {
     throw new UnsupportedStrictJsonSchemaError("object required must be a string array");
   }
 
   const properties = schema.properties ?? {};
   const propertyNames = Object.keys(properties);
-  const required = new Set(Check(StringArraySchema, schema.required) ? schema.required : []);
+  const required = new Set(isStringArray(schema.required) ? schema.required : []);
   if ([...required].some((key) => !propertyNames.includes(key))) {
     throw new UnsupportedStrictJsonSchemaError("required contains an unknown property");
   }
@@ -200,16 +191,7 @@ export interface GrammarToolInputJsonBuffer {
   closed: boolean;
 }
 
-const GrammarArgumentValueSchema = Type.Union([
-  Type.Record(Type.String(), Type.Unknown()),
-  Type.Array(Type.Unknown()),
-  Type.String(),
-  Type.Number(),
-  Type.Boolean(),
-  Type.Null(),
-  Type.Undefined(),
-]);
-type GrammarArgumentValue = import("typebox").Static<typeof GrammarArgumentValueSchema>;
+type GrammarArgumentValue = JsonSchemaValue;
 
 export function getGrammarToolInput(
   toolName: string,
@@ -217,7 +199,7 @@ export function getGrammarToolInput(
   inputProperty: string,
 ): string {
   const input = arguments_[inputProperty];
-  if (!Check(StringSchema, input)) {
+  if (!isString(input)) {
     throw new Error(
       `Grammar tool call "${toolName}" requires argument "${inputProperty}" to be a string.`,
     );
@@ -264,7 +246,7 @@ function inferGrammarInputProperty(tool: Tool): string {
   if (!isJsonSchemaObject(schema) || schema.type !== "object") {
     throw new Error("grammar constrained sampling requires an object parameter schema");
   }
-  if (!Check(StringArraySchema, schema.required) || schema.required.length !== 1) {
+  if (!isStringArray(schema.required) || schema.required.length !== 1) {
     throw new Error("grammar constrained sampling requires exactly one required string property");
   }
 
@@ -293,9 +275,8 @@ export function resolveGrammarConstrainedSampling(
 
   const larkDefinition = config.variants.openai_lark;
   const regexDefinition = config.variants.openai_regex;
-  const hasLarkDefinition = Check(StringSchema, larkDefinition) && larkDefinition.trim().length > 0;
-  const hasRegexDefinition =
-    Check(StringSchema, regexDefinition) && regexDefinition.trim().length > 0;
+  const hasLarkDefinition = isString(larkDefinition) && larkDefinition.trim().length > 0;
+  const hasRegexDefinition = isString(regexDefinition) && regexDefinition.trim().length > 0;
   if (!hasLarkDefinition && !hasRegexDefinition) {
     throw new Error(
       `Tool "${tool.name}" cannot use grammar constrained sampling: no supported grammar variant was provided.`,

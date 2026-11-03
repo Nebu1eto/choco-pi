@@ -1,6 +1,17 @@
 import type { AssistantMessage, SimpleStreamOptions } from "@earendil-works/pi-ai";
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import {
+  arr,
+  bool,
+  compile,
+  obj,
+  oneOf,
+  str,
+  unknown,
+  type Schema,
+  type Static,
+} from "@earendil-works/pi-schema";
+import { isJsonObject } from "../../adapter/runtime-values.ts";
+import { isBoolean, isNumber, isString } from "../value-guards.ts";
 import type {
   ResponseCreateParamsStreaming,
   ResponseOutputItem,
@@ -12,57 +23,69 @@ import type {
 import type { CodexFastModeDecision } from "./fast-mode-decision.ts";
 import type { CodexAccessPrograms, CodexDaybreakTicket } from "./daybreak-decision.ts";
 
-const ProtocolValueTypeSchema = Type.Union([
-  Type.Unsafe<object>({ type: "object" }),
-  Type.String(),
-  Type.Number(),
-  Type.Boolean(),
-  Type.Null(),
-]);
-const ProtocolPropertyValueTypeSchema = Type.Union([ProtocolValueTypeSchema, Type.Undefined()]);
-const ProtocolValueSchema = Type.Cyclic(
-  {
-    ProtocolValue: Type.Union([
-      Type.Record(Type.String(), Type.Ref("ProtocolValue")),
-      Type.Array(Type.Ref("ProtocolValue")),
-      Type.String(),
-      Type.Number(),
-      Type.Boolean(),
-      Type.Null(),
-    ]),
-  },
-  "ProtocolValue",
+// Wire request bodies: compiled once at module scope. Properties the schema does not name stay
+// open, as the TypeBox object it replaces allowed them.
+const responsesBodyRequiredValidator = compile(
+  obj(
+    {
+      model: str(),
+      store: bool(),
+      stream: bool(),
+      input: arr(unknown()),
+      text: obj({ verbosity: str() }, { open: true }),
+      include: arr(str()),
+      tool_choice: oneOf(["auto", "none", "required"]),
+      parallel_tool_calls: bool(),
+    },
+    { open: true },
+  ),
 );
-const ProtocolPropertyValueSchema = Type.Union([ProtocolValueSchema, Type.Undefined()]);
-const ProtocolObjectSchema = Type.Record(Type.String(), ProtocolPropertyValueSchema);
-const ResponsesBodySchema = Type.Intersect([
-  ProtocolObjectSchema,
-  Type.Object({
-    model: Type.String(),
-    store: Type.Boolean(),
-    stream: Type.Boolean(),
-    input: Type.Array(ProtocolValueSchema),
-    text: Type.Object({ verbosity: Type.String() }),
-    include: Type.Array(Type.String()),
-    tool_choice: Type.Union([Type.Literal("auto"), Type.Literal("none"), Type.Literal("required")]),
-    parallel_tool_calls: Type.Boolean(),
-  }),
-]);
+const codexStreamEventValidator = compile({
+  anyOf: [
+    { type: "object" },
+    { type: "array" },
+    { type: "string" },
+    { type: "number" },
+    { type: "boolean" },
+    { type: "null" },
+  ],
+});
+
+/** Deep check of a JSON-like protocol value: finite numbers only, no undefined below the top level. */
+function isDeepProtocolValue<Value>(value: Value): boolean {
+  if (isString(value) || isNumber(value) || isBoolean(value) || value === null) return true;
+  if (Array.isArray(value)) return value.every((item) => isDeepProtocolValue(item));
+  if (isJsonObject(value)) return Object.values(value).every((item) => isDeepProtocolValue(item));
+  return false;
+}
 
 export type ProtocolPrimitive = boolean | number | string | null;
-export type ProtocolValue = Static<typeof ProtocolValueTypeSchema>;
-export type ProtocolPropertyValue = Static<typeof ProtocolPropertyValueTypeSchema>;
+// Schema-derived so the dictionary contract below names its owner; any JSON value or live object.
+const protocolValueSchema: Schema<object | string | number | boolean | null> = {
+  anyOf: [
+    { type: "object" },
+    { type: "string" },
+    { type: "number" },
+    { type: "boolean" },
+    { type: "null" },
+  ],
+};
+export type ProtocolValue = Static<typeof protocolValueSchema>;
+export type ProtocolPropertyValue = ProtocolValue | undefined;
 export type ProviderOutputItem = ResponseOutputItem | Extract<ProtocolValue, object>;
 export interface ProtocolObject {
   [key: string]: ProtocolPropertyValue;
 }
 
 export function isProtocolObject<Value>(value: Value): value is Value & ProtocolObject {
-  return Check(ProtocolObjectSchema, value);
+  return (
+    isJsonObject(value) &&
+    Object.values(value).every((item) => item === undefined || isDeepProtocolValue(item))
+  );
 }
 
 export function isResponsesBody<Value>(value: Value): value is Value & ResponsesBody {
-  return Check(ResponsesBodySchema, value);
+  return isProtocolObject(value) && responsesBodyRequiredValidator.check(value);
 }
 
 export interface WebSocketArrayBufferData {
@@ -331,16 +354,10 @@ export interface CodexStreamEvent {
   [key: string]: ProtocolPropertyValue;
 }
 
-export const CodexStreamEventSchema = Type.Unsafe<CodexStreamEvent>({
-  anyOf: [
-    { type: "object" },
-    { type: "array" },
-    { type: "string" },
-    { type: "number" },
-    { type: "boolean" },
-    { type: "null" },
-  ],
-});
+/** Any JSON value is a stream event candidate, as the former union of JSON kinds accepted. */
+export function isCodexStreamEvent<Value>(value: Value): value is Value & CodexStreamEvent {
+  return codexStreamEventValidator.check(value);
+}
 
 export function createInitialAssistantMessage(model: {
   provider: string;

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Type, type Static } from "typebox";
-import { Value } from "typebox/value";
+import { arr, compile, obj, opt, str, type Static } from "@earendil-works/pi-schema";
+import { isString } from "../src/providers/value-guards.ts";
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -59,14 +59,18 @@ const oauthCredential: Credential = {
 };
 const apiKeyCredential: Credential = { type: "api_key", key: "sk-test" };
 
-const PayloadSchema = Type.Object({
-  model: Type.String(),
-  service_tier: Type.Optional(Type.String()),
-  access_programs: Type.Optional(Type.Array(Type.String())),
-});
+const payloadSchema = obj(
+  {
+    model: str(),
+    service_tier: opt(str()),
+    access_programs: opt(arr(str())),
+  },
+  { open: true },
+);
+const payloadValidator = compile(payloadSchema);
 
-function parsePayload(value: BoundaryValue | undefined): Static<typeof PayloadSchema> {
-  assert.ok(Value.Check(PayloadSchema, value), "rewritten payload must be an object");
+function parsePayload(value: BoundaryValue | undefined): Static<typeof payloadSchema> {
+  assert.ok(payloadValidator.check(value), "rewritten payload must be an object");
   return value;
 }
 
@@ -204,7 +208,7 @@ test("Code Mode preserves plain Responses for models without additional-tools su
           {
             name: "read",
             description: "Read a file",
-            parameters: Type.Object({ path: Type.String() }),
+            parameters: obj({ path: str() }, { open: true }),
           },
         ],
       },
@@ -248,7 +252,7 @@ test("Code Mode proxy gates its final wire body and header on additional-tools s
       globalThis,
       "fetch",
       async (_input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => {
-        assert.ok(Value.Check(Type.String(), init?.body));
+        assert.ok(isString(init?.body));
         capturedBody = init.body;
         capturedHeaders = new Headers(init?.headers);
         throw new Error("Request captured without network access");
@@ -262,7 +266,7 @@ test("Code Mode proxy gates its final wire body and header on additional-tools s
       };
       const context = normalizeContext({
         systemPrompt: "Reply OK.",
-        tools: [{ name: "read", description: "Read a file", parameters: Type.Object({}) }],
+        tools: [{ name: "read", description: "Read a file", parameters: obj({}, { open: true }) }],
         messages: [{ role: "user", content: "Reply OK.", timestamp: 1 }],
       });
       await streamCodeModeResponsesProxy(model, context, {

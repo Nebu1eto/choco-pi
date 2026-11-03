@@ -6,9 +6,8 @@ import {
   extractAccountId,
   resolveCodexWebSocketUrl,
 } from "../providers/openai-codex/headers.ts";
-import { Check } from "typebox/value";
 import type { PrototypeTransport } from "./protocol.ts";
-import { wireEventSchema, textFrameSchema, type WireEvent } from "./wire.ts";
+import { isWireEvent, isTextFrame, type WireEvent } from "./wire.ts";
 
 /** Uses an existing unexpired credential; never refreshes or writes authentication. */
 export async function connectPrototype(signal: AbortSignal): Promise<PrototypeTransport> {
@@ -51,12 +50,12 @@ export async function connectPrototype(signal: AbortSignal): Promise<PrototypeTr
   socket.addEventListener("message", (event) => {
     if (ended) return;
     try {
-      if (!Check(textFrameSchema, event.data)) {
+      if (!isTextFrame(event.data)) {
         fail();
         return;
       }
       const parsed = JSON.parse(event.data);
-      if (!Check(wireEventSchema, parsed)) {
+      if (!isWireEvent(parsed)) {
         fail();
         return;
       }

@@ -1,28 +1,24 @@
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import { isString, isNumber } from "../value-guards.ts";
+import { isJsonObject, type JsonObject } from "../../adapter/runtime-values.ts";
 import type {
   CodexDiagnosticsFailure,
   CodexDiagnosticsFailureCategory,
   CodexDiagnosticsSink,
 } from "./types.ts";
 
-const DiagnosticRecordType = Type.Record(Type.String(), Type.Unknown());
-type DiagnosticRecord = Static<typeof DiagnosticRecordType>;
-const DiagnosticRecordSchema = Type.Unsafe<DiagnosticRecord>({ type: "object" });
-const StringSchema = Type.String();
-const NumberSchema = Type.Number();
+type DiagnosticRecord = JsonObject;
 
 function record<T>(value: T): DiagnosticRecord | undefined {
-  return Check(DiagnosticRecordSchema, value) ? value : undefined;
+  return isJsonObject(value) ? value : undefined;
 }
 
 function safeCode<T>(value: T): string | undefined {
-  return Check(StringSchema, value) && /^[a-z0-9_.-]{1,64}$/i.test(value) ? value : undefined;
+  return isString(value) && /^[a-z0-9_.-]{1,64}$/i.test(value) ? value : undefined;
 }
 
 function statusCode<T>(value: T): number | undefined {
-  const parsed = Check(StringSchema, value) && /^\d{3}$/.test(value) ? Number(value) : value;
-  return Check(NumberSchema, parsed) && Number.isInteger(parsed) && parsed >= 100 && parsed <= 599
+  const parsed = isString(value) && /^\d{3}$/.test(value) ? Number(value) : value;
+  return isNumber(parsed) && Number.isInteger(parsed) && parsed >= 100 && parsed <= 599
     ? parsed
     : undefined;
 }
@@ -61,7 +57,7 @@ export function codexDiagnosticsFailure<T>(error: T): CodexDiagnosticsFailure {
     statusCode(responseError?.["status"]);
   const description = [
     error instanceof Error ? error.name : undefined,
-    error instanceof Error ? error.message : Check(StringSchema, error) ? error : undefined,
+    error instanceof Error ? error.message : isString(error) ? error : undefined,
     code,
     status,
   ]

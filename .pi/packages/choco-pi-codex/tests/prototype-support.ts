@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
-import { Check } from "typebox/value";
 import { type PrototypeMode, type PrototypeTransport } from "../src/prototype/protocol.ts";
-import { demoOutputSchema, type WireEvent, type WireRequest } from "../src/prototype/wire.ts";
+import { isDemoOutput, type WireEvent, type WireRequest } from "../src/prototype/wire.ts";
 
 export function scriptedTransport(
   onSend: (event: WireRequest, emit: (event: WireEvent) => void) => void,
@@ -54,7 +53,7 @@ export function demoServer(mode: PrototypeMode) {
       assert.ok(input && "output" in input);
       emit({ type: "response.created", response: { id: "r2" } });
       const output = JSON.parse(input.output);
-      assert.ok(Check(demoOutputSchema, output));
+      assert.ok(isDemoOutput(output));
       emit({ type: "response.output_text.delta", delta: `Synthetic: ${output.marker}` });
       emit({ type: "response.completed", response: { id: "r2" } });
     } else {

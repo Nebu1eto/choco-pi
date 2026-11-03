@@ -1,5 +1,4 @@
-import { Check } from "typebox/value";
-import { CodexStreamEventSchema, type CodexStreamEvent } from "./types.ts";
+import { isCodexStreamEvent, type CodexStreamEvent } from "./types.ts";
 
 const REQUEST_COMPRESSION_ZSTD_LEVEL = 3;
 
@@ -158,7 +157,7 @@ export async function* parseSSE(
           if (data && data !== "[DONE]") {
             try {
               const parsed: object = JSON.parse(data);
-              if (Check(CodexStreamEventSchema, parsed)) yield parsed;
+              if (isCodexStreamEvent(parsed)) yield parsed;
             } catch {
               // Codex ignores malformed individual events and keeps the live stream.
             }

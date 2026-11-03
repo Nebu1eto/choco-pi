@@ -2,24 +2,22 @@ import { readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { BoundaryValueSchema, type BoundaryValue } from "./runtime-values.ts";
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import { compile, obj, opt, str, type Static } from "@earendil-works/pi-schema";
+import { isBoundaryValue, type BoundaryValue } from "./runtime-values.ts";
 
 const PACKAGE_NAME = "@howaboua/pi-codex-conversion";
 const NPM_REGISTRY_URL = "https://registry.npmjs.org/@howaboua%2Fpi-codex-conversion";
 const PACKAGE_ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 
-const PackageJsonSchema = Type.Object({
-  name: Type.Optional(Type.String()),
-  version: Type.Optional(Type.String()),
-});
+// package.json and the npm registry document are open JSON objects: unknown members are ignored.
+const packageJsonSchema = obj({ name: opt(str()), version: opt(str()) }, { open: true });
+const packageJsonValidator = compile(packageJsonSchema);
 
-type PackageJsonLike = Static<typeof PackageJsonSchema>;
+type PackageJsonLike = Static<typeof packageJsonSchema>;
 
-const NpmRegistryPackageSchema = Type.Object({
-  "dist-tags": Type.Optional(Type.Object({ latest: Type.Optional(Type.String()) })),
-});
+const npmRegistryPackageValidator = compile(
+  obj({ "dist-tags": opt(obj({ latest: opt(str()) }, { open: true })) }, { open: true }),
+);
 
 export function isLocalCheckoutPath(path: string): boolean {
   return !path.split(/[\\/]/).includes("node_modules");
@@ -52,7 +50,7 @@ function parseSemverLike(value: string): number[] {
 function readPackageJson(packageRoot: string): PackageJsonLike | undefined {
   try {
     const parsed: BoundaryValue = JSON.parse(readFileSync(`${packageRoot}/package.json`, "utf8"));
-    return Value.Check(PackageJsonSchema, parsed) ? parsed : undefined;
+    return packageJsonValidator.check(parsed) ? parsed : undefined;
   } catch {
     return undefined;
   }
@@ -62,8 +60,8 @@ async function fetchLatestNpmVersion(fetchImpl: typeof fetch = fetch): Promise<s
   const response = await fetchImpl(NPM_REGISTRY_URL, { signal: AbortSignal.timeout(2_000) });
   if (!response.ok) return undefined;
   const rawJson = await response.json();
-  if (!Value.Check(BoundaryValueSchema, rawJson)) return undefined;
-  return Value.Check(NpmRegistryPackageSchema, rawJson) ? rawJson["dist-tags"]?.latest : undefined;
+  if (!isBoundaryValue(rawJson)) return undefined;
+  return npmRegistryPackageValidator.check(rawJson) ? rawJson["dist-tags"]?.latest : undefined;
 }
 
 export async function maybeWarnLocalCheckoutVersion(

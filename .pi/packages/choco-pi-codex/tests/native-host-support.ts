@@ -1,8 +1,7 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { Type } from "typebox";
-import { Check } from "typebox/value";
+import { compile, lit, obj } from "@earendil-works/pi-schema";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import {
   createAgentSession,
@@ -27,8 +26,10 @@ import { codeModeHostBinaryPath } from "../src/tools/code-mode/binary.ts";
 /** GPT-6 model the live native probes target; CHOCO_PI_NATIVE_MODEL selects Sol or Luna. */
 export const NATIVE_LIVE_MODEL = process.env.CHOCO_PI_NATIVE_MODEL ?? "gpt-6-astra";
 
-const AsyncCall = Type.Object({ name: Type.Literal("exec"), async: Type.Literal(true) });
-const Yielded = Type.Object({ codeMode: Type.Literal(true), status: Type.Literal("yielded") });
+const asyncCallValidator = compile(obj({ name: lit("exec"), async: lit(true) }, { open: true }));
+const yieldedValidator = compile(
+  obj({ codeMode: lit(true), status: lit("yielded") }, { open: true }),
+);
 
 /** Opt-in harness: production provider, native input hook and actual Code Mode host. */
 export async function createNativeHost(options: {
@@ -108,7 +109,7 @@ export async function createNativeHost(options: {
             timeoutMs: 30000,
             reasoningEffort: "low",
             onOutputItemDone(item) {
-              if (Check(AsyncCall, item)) observations.asyncCalls++;
+              if (asyncCallValidator.check(item)) observations.asyncCalls++;
             },
           },
           {
@@ -133,7 +134,7 @@ export async function createNativeHost(options: {
             kind: "function",
             usage: "await tools.delay_marker({})",
             description: "Return a synthetic marker after a bounded delay.",
-            inputSchema: Type.Object({}),
+            inputSchema: obj({}),
             deferLoading: false,
             async invoke(_input, _context, signal) {
               observations.started++;
@@ -154,7 +155,7 @@ export async function createNativeHost(options: {
         }
       });
       pi.on("tool_result", (event) => {
-        if (Check(Yielded, event.details)) observations.yielded++;
+        if (yieldedValidator.check(event.details)) observations.yielded++;
       });
     }
   };

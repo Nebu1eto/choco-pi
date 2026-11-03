@@ -1205,3 +1205,26 @@ Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pas
 ## 2026-11-03 choco-pi patch: Pi SDK target 1.5.0 + pi-schema dependency
 
 Pi SDK pins move from `1.4.0` to exactly `1.5.0` and `@earendil-works/pi-schema@1.5.0` is added as a peer dependency (the extension loader has no alias for it). The package-local `minimumReleaseAgeExclude` entries move to `@1.5.0` and gain `pi-schema`. The lock was regenerated with pnpm 11.11.0 (`pnpm install --ignore-scripts`). One test double now adapts the bash tool to the 1.5.0 `AgentTool` parameter typing.
+
+### 2026-11-03 TypeBox to pi-schema: providers, prototype, usage, diagnostics (C21)
+
+`src/providers/**`, `src/prototype/**`, `src/codex-usage/**`, `src/diagnostics/**`, `native-binary-error.ts`, `adapter/provider-request.ts` and `adapter/local-version-warning.ts` no longer import `typebox`. Wire payloads (SSE/WebSocket events, OAuth responses, entitlement and model-catalog payloads, prototype frames, request-body checks) use module-level compiled pi-schema validators with open objects, as TypeBox objects were open. Live host values (daybreak/fast-mode bridges and controllers, WebSocket events, Blob-like data, registry objects) keep shallow property guards, because pi-schema reads only own enumerable properties and cannot check functions. Shared primitive guards live in `src/providers/value-guards.ts`; `isNumber`/`isRevision` keep rejecting NaN and Infinity.
+
+Behaviour notes: the recursive `ProtocolValue` check (`isProtocolObject`, `isResponsesBody`) is a hand-written deep predicate with the old rules (top-level `undefined` allowed, nested `undefined` and non-finite numbers rejected). `maxLength` on the prototype text frame now counts code points. Tool parameter schemas built with pi-schema emit `enum` without `type` (and closed objects emit `additionalProperties: false`) where TypeBox emitted `anyOf`/`const`; `buildRequestBody` and `makeStrictJsonSchema` pass them through unchanged (`tests/provider-schema-validators.test.ts`). Provider tool JSON therefore differs from the TypeBox form for the same tool, so the first request after the upgrade misses the prompt cache for tools declared with pi-schema.
+
+Unit C22 (extension, tools, UI, adapter validators): no first-party file except `src/schema-bridge.ts`
+imports `typebox` any more.
+
+- `src/schema-bridge.ts` (`hostParams`, `HostSchema`) wraps pi-schema parameters for `registerTool`;
+  every registered tool schema is a pi-schema `obj(..., { open: true })` (open, as TypeBox objects were)
+  with descriptions, defaults and bounds unchanged. Literal unions are now `enum` schemas.
+- `src/value-guards.ts` holds the compiled primitive guards (`num()` is bounded to finite values,
+  since pi-schema accepts NaN/Infinity).
+- The code-mode nested-tool validator (`adapter/code-mode/nested-tool-adapter.ts`) rechecks arguments
+  with `compile(schema, { formats, coerce: true, unresolvedRefs: "reject" })`, the options of Pi's own
+  `validateToolArguments`, cached per schema. pi-schema reports a failed union through one branch's
+  leaf errors, so the discriminator hint now walks up the error path to the enclosing union.
+- Persisted compaction details are cloned by one hand-written walk (`cloneCodexCompactionJson`);
+  `BackgroundNativeMetadataSchema` is a closed pi-schema object; `Value.Equal` became `jsonEqual`.
+- Live-object guards (registries, hooks, UI values) are plain predicates; `JsonObjectSchema` and
+  `BoundaryValueSchema` remain exported for C26 but are no longer used here.

@@ -1,8 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { CODEX_TURN_STATE_HEADER } from "../../providers/openai-codex/turn-state.ts";
 import { compile, obj, str } from "@earendil-works/pi-schema";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { isNonEmptyString, isString } from "../../value-guards.ts";
 import { normalizeContext } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import {
@@ -239,8 +238,6 @@ function withAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
-const CallIdSchema = Type.String({ minLength: 1 });
-
 /** Tracks open function/custom-tool groups; false when the input cannot form a legal cut. */
 function acceptLegalCutItem(
   item: ResponsesBody["input"][number],
@@ -250,12 +247,12 @@ function acceptLegalCutItem(
   if (!isJsonRecord(item)) return false;
   if (item["type"] === "compaction_trigger" || item["status"] === "in_progress") return false;
   if (item["type"] === "function_call" || item["type"] === "custom_tool_call") {
-    if (!Value.Check(CallIdSchema, item["call_id"]) || seen.has(item["call_id"])) return false;
+    if (!isNonEmptyString(item["call_id"]) || seen.has(item["call_id"])) return false;
     seen.add(item["call_id"]);
     open.add(item["call_id"]);
   }
   if (item["type"] === "function_call_output" || item["type"] === "custom_tool_call_output")
-    return Value.Check(Type.String(), item["call_id"]) && open.delete(item["call_id"]);
+    return isString(item["call_id"]) && open.delete(item["call_id"]);
   return true;
 }
 

@@ -1,8 +1,7 @@
+import { isBoolean, isNumber, isString } from "../../value-guards.ts";
 import { conditionalProperties } from "../runtime-values.ts";
-import { JsonObjectSchema } from "../runtime-values.ts";
+import { isJsonObject } from "../runtime-values.ts";
 import type { JsonObject, BoundaryValue } from "../runtime-values.ts";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import { normalizeExecutionMode, type ExecutionMode } from "./execution-mode.ts";
 
 export type CodexVerbosity = "low" | "medium" | "high";
@@ -167,7 +166,7 @@ export const DEFAULT_CODEX_CONVERSION_CONFIG: CodexConversionConfig = {
 };
 
 export function isObject(value: BoundaryValue): value is JsonObject {
-  return Value.Check(JsonObjectSchema, value);
+  return isJsonObject(value);
 }
 
 export function normalizeAllProvidersMode(value: BoundaryValue): AllProvidersMode | undefined {
@@ -177,7 +176,7 @@ export function normalizeAllProvidersMode(value: BoundaryValue): AllProvidersMod
 }
 
 export function normalizeCodexVerbosity(value: BoundaryValue): CodexVerbosity | undefined {
-  if (!Value.Check(Type.String(), value)) return undefined;
+  if (!isString(value)) return undefined;
   const normalized = value.trim().toLowerCase();
   return normalized === "low" || normalized === "medium" || normalized === "high"
     ? normalized
@@ -207,9 +206,7 @@ export function normalizeDictationShortcutMode(
 }
 
 export function normalizeRealtimeV3Voice(value: BoundaryValue): RealtimeV3Voice | undefined {
-  return Value.Check(Type.String(), value)
-    ? REALTIME_V3_VOICES.find((voice) => voice === value)
-    : undefined;
+  return isString(value) ? REALTIME_V3_VOICES.find((voice) => voice === value) : undefined;
 }
 
 export function normalizeProviderList(value: BoundaryValue): string[] {
@@ -217,7 +214,7 @@ export function normalizeProviderList(value: BoundaryValue): string[] {
   return [
     ...new Set(
       value
-        .filter((entry): entry is string => Value.Check(Type.String(), entry))
+        .filter((entry): entry is string => isString(entry))
         .map((entry) => entry.trim().toLowerCase())
         .filter(Boolean),
     ),
@@ -225,15 +222,15 @@ export function normalizeProviderList(value: BoundaryValue): string[] {
 }
 
 function bool(value: BoundaryValue, fallback: boolean): boolean {
-  return Value.Check(Type.Boolean(), value) ? value : fallback;
+  return isBoolean(value) ? value : fallback;
 }
 
 function stringValue(value: BoundaryValue, fallback: string): string {
-  return Value.Check(Type.String(), value) && value.trim() ? value.trim() : fallback;
+  return isString(value) && value.trim() ? value.trim() : fallback;
 }
 
 function optionalString(value: BoundaryValue): string | undefined {
-  if (!Value.Check(Type.String(), value)) return undefined;
+  if (!isString(value)) return undefined;
   const normalized = value.trim();
   return normalized && Buffer.byteLength(normalized) <= 512 ? normalized : undefined;
 }
@@ -244,10 +241,7 @@ function integerInRange(
   minimum: number,
   maximum: number,
 ): number {
-  return Value.Check(Type.Number(), value) &&
-    Number.isSafeInteger(value) &&
-    value >= minimum &&
-    value <= maximum
+  return isNumber(value) && Number.isSafeInteger(value) && value >= minimum && value <= maximum
     ? value
     : fallback;
 }

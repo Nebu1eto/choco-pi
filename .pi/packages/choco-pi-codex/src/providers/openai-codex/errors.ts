@@ -1,6 +1,6 @@
+import { isString, isNumber } from "../value-guards.ts";
+import { isJsonObject, type JsonObject } from "../../adapter/runtime-values.ts";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
 
 export class NonRetryableProviderError extends Error {}
 
@@ -22,25 +22,21 @@ type CodexErrorEnvelope = {
   headers?: Record<string, string | number | undefined> | undefined;
 };
 
-const ErrorRecordType = Type.Record(Type.String(), Type.Unknown());
-type ErrorRecord = Static<typeof ErrorRecordType>;
-const ErrorRecordSchema = Type.Unsafe<ErrorRecord>({ type: "object" });
-const StringSchema = Type.String();
-const NumberSchema = Type.Number();
+type ErrorRecord = JsonObject;
 
 function isRecord<T>(value: T): value is Extract<T, object> & ErrorRecord {
-  return Check(ErrorRecordSchema, value);
+  return isJsonObject(value);
 }
 
 function asNumber<T>(value: T): number | undefined {
-  if (Check(NumberSchema, value) && Number.isFinite(value)) return value;
-  if (!Check(StringSchema, value) || !value.trim()) return undefined;
+  if (isNumber(value) && Number.isFinite(value)) return value;
+  if (!isString(value) || !value.trim()) return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function asString<T>(value: T): string | undefined {
-  return Check(StringSchema, value) && value.trim() ? value.trim() : undefined;
+  return isString(value) && value.trim() ? value.trim() : undefined;
 }
 
 function parseJsonObject(value: string): ErrorRecord | undefined {
@@ -70,7 +66,7 @@ function normalizeCodexErrorEnvelope<T>(value: T): CodexErrorEnvelope | undefine
   const headers: Record<string, string | number | undefined> = {};
   if (isRecord(rawHeaders)) {
     for (const [key, headerValue] of Object.entries(rawHeaders)) {
-      if (Check(StringSchema, headerValue) || Check(NumberSchema, headerValue)) {
+      if (isString(headerValue) || isNumber(headerValue)) {
         headers[key] = headerValue;
       }
     }
@@ -98,7 +94,7 @@ function header(
   if (!headers) return undefined;
   for (const [key, value] of Object.entries(headers)) {
     if (key.toLowerCase() === name.toLowerCase())
-      return asString(value) ?? (Check(NumberSchema, value) ? String(value) : undefined);
+      return asString(value) ?? (isNumber(value) ? String(value) : undefined);
   }
   return undefined;
 }
@@ -165,9 +161,7 @@ function usageLimitDetails(
 
 export function parseCodexUsageLimitError<T>(value: T): CodexUsageLimitParseResult | undefined {
   const envelope = normalizeCodexErrorEnvelope(
-    Check(StringSchema, value)
-      ? (parseJsonObject(value) ?? extractJsonObjectFromMessage(value))
-      : value,
+    isString(value) ? (parseJsonObject(value) ?? extractJsonObjectFromMessage(value)) : value,
   );
   if (!envelope) return undefined;
   const code = envelope.error?.code ?? envelope.error?.type ?? "";

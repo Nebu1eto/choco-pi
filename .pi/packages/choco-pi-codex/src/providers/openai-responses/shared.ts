@@ -1,3 +1,5 @@
+import { isString } from "../value-guards.ts";
+import { isJsonObject, type JsonObject } from "../../adapter/runtime-values.ts";
 import {
   getCurrentTools,
   getInitialSystemMessage,
@@ -11,8 +13,7 @@ import {
   type TranscriptContext,
   type Usage,
 } from "@earendil-works/pi-ai";
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import { compile } from "@earendil-works/pi-schema";
 import type {
   ResponseCreateParamsStreaming,
   ResponseInput,
@@ -109,8 +110,9 @@ interface ConvertResponsesToolsOptions {
 }
 
 export const CODEX_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
-const StringSchema = Type.String();
-const ResponsesInputItemSchema = Type.Unsafe<ResponseInput[number]>({
+// Any JSON value passes, as the former union of JSON kinds accepted; parse output is typed
+// structurally by the caller.
+const responsesInputItemValidator = compile({
   anyOf: [
     { type: "object" },
     { type: "array" },
@@ -120,9 +122,10 @@ const ResponsesInputItemSchema = Type.Unsafe<ResponseInput[number]>({
     { type: "null" },
   ],
 });
-const JsonSchemaRecordType = Type.Record(Type.String(), Type.Unknown());
-type JsonSchemaRecord = Static<typeof JsonSchemaRecordType>;
-const JsonSchemaRecordSchema = Type.Unsafe<JsonSchemaRecord>({ type: "object" });
+function isResponsesInputItem<Value>(value: Value): value is Value & ResponseInput[number] {
+  return responsesInputItemValidator.check(value);
+}
+type JsonSchemaRecord = JsonObject;
 
 interface DeferredToolPlacement {
   immediate: Tool[];
@@ -163,7 +166,7 @@ function sanitizeSurrogates(text: string): string {
 function parseResponsesThinkingSignature(signature: string): ResponseInput[number] | undefined {
   try {
     const parsed: object = JSON.parse(signature);
-    return Check(ResponsesInputItemSchema, parsed) ? parsed : undefined;
+    return isResponsesInputItem(parsed) ? parsed : undefined;
   } catch {
     return undefined;
   }
@@ -261,7 +264,7 @@ export function convertResponsesMessages<TApi extends Api>(
         }
       }
     } else if (msg.role === "user") {
-      if (Check(StringSchema, msg.content)) {
+      if (isString(msg.content)) {
         messages.push({
           role: "user",
           content: [{ type: "input_text", text: sanitizeSurrogates(msg.content) }],
@@ -429,7 +432,7 @@ function getGrammarToolInputValue(
   inputProperty: string,
 ): string {
   const input = block.arguments[inputProperty];
-  if (!Check(StringSchema, input)) {
+  if (!isString(input)) {
     throw new Error(
       `Grammar tool call "${block.name}" requires argument "${inputProperty}" to be a string.`,
     );
@@ -465,7 +468,7 @@ export function convertResponsesTools(
     const constrainedStrict = resolveJsonSchemaStrictSampling(tool, supportsStrictMode);
     const strict = constrainedStrict ?? defaultStrict;
     const parameters = getJsonSchemaToolParameters(tool, strict === true);
-    if (!Check(JsonSchemaRecordSchema, parameters)) {
+    if (!isJsonObject(parameters)) {
       throw new Error(`Tool "${tool.name}" parameters must be a JSON schema object.`);
     }
     const parsedParameters: JsonSchemaRecord = parameters;

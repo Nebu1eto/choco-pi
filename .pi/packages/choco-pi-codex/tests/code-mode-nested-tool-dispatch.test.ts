@@ -11,21 +11,27 @@ import {
   type ExtensionToolContext,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { bool, compile, num, obj, opt, str } from "@earendil-works/pi-schema";
+import { formats } from "@earendil-works/pi-schema/formats";
+import { hostParams } from "../src/schema-bridge.ts";
 import { isObjectValue } from "../src/tools/boundary.ts";
 import type { BoundaryValue } from "../src/tools/boundary.ts";
 import { toNestedTool } from "../src/adapter/code-mode/nested-tool-adapter.ts";
 import { collectBridgedTools } from "../src/tools/code-mode/registered-tool-bridge.ts";
 import { createToolContextFixture } from "./tool-context-fixture.ts";
 
-const ShellResultSchema = Type.Object({
-  output: Type.String(),
-  truncated: Type.Boolean(),
-  full_output_path: Type.Optional(Type.String()),
-  exit_code: Type.Number(),
-  wall_time_seconds: Type.Number(),
-});
+const isShellResult = compile(
+  obj(
+    {
+      output: str(),
+      truncated: bool(),
+      full_output_path: opt(str()),
+      exit_code: num(),
+      wall_time_seconds: num(),
+    },
+    { open: true },
+  ),
+).check;
 
 async function scratchDir(t: TestContext): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "codex-nested-dispatch-"));
@@ -34,7 +40,7 @@ async function scratchDir(t: TestContext): Promise<string> {
 }
 
 function shellResult(value: BoundaryValue) {
-  assert.ok(Value.Check(ShellResultSchema, value), `not a shell result: ${JSON.stringify(value)}`);
+  assert.ok(isShellResult(value), `not a shell result: ${JSON.stringify(value)}`);
   return value;
 }
 
@@ -104,7 +110,7 @@ test("the direct path hands the caller's own tool context to execute", async () 
       name: "probe",
       label: "probe",
       description: "probe",
-      parameters: Type.Object({}),
+      parameters: hostParams(obj({}, { open: true })),
       async execute(_id, _params, _signal, _onUpdate, ctx) {
         received = ctx;
         return { content: [{ type: "text", text: "" }], details: undefined };
@@ -136,18 +142,27 @@ test("callable bridged tools dispatch through ctx.executeTool", async (t) => {
   const bashTool = createBashTool(cwd, { exposeSessionEnvironment: false });
   let directExecutions = 0;
   const calls: Array<{ name: string; args: unknown; signal: AbortSignal | undefined }> = [];
+  // The host's own validation options (pi-ai validateToolArguments).
+  const bashValidator = compile(bashTool.parameters, {
+    formats,
+    coerce: true,
+    unresolvedRefs: "reject",
+  });
   const extensionContext = createToolContextFixture({
     cwd,
     tools: [
       {
         ...bashTool,
-        execute: (id, params, signal, onUpdate) =>
-          bashTool.execute(id, Value.Parse(bashTool.parameters, params), signal, onUpdate),
+        execute: (id, params, signal, onUpdate) => {
+          const parsed = bashValidator.parse(params);
+          assert.ok(parsed.ok);
+          return bashTool.execute(id, parsed.value, signal, onUpdate);
+        },
       },
     ],
     async executeTool(name, args, options) {
       calls.push({ name, args, signal: options?.signal });
-      assert.ok(Value.Check(bashTool.parameters, args));
+      assert.ok(bashValidator.check(args));
       const toolCall = {
         type: "toolCall" as const,
         id: `exec-1/${calls.length}`,
@@ -196,7 +211,7 @@ test("session errors without structured content reject with the tool's text", as
     name: "lookup",
     label: "lookup",
     description: "lookup",
-    parameters: Type.Object({ key: Type.String() }),
+    parameters: hostParams(obj({ key: str() }, { open: true })),
     async execute() {
       throw new Error("direct execution must not run");
     },
@@ -236,7 +251,7 @@ test("registered tools the session cannot call keep running their definition", a
     name: "inactive",
     label: "inactive",
     description: "inactive",
-    parameters: Type.Object({}),
+    parameters: hostParams(obj({}, { open: true })),
     async execute(_id, _params, _signal, _onUpdate, ctx) {
       directExecutions += 1;
       assert.equal(ctx, extensionContext);
@@ -256,7 +271,7 @@ function detailsProbe(details: BoundaryValue | undefined, text = "page body") {
       name: "fetch_probe",
       label: "fetch_probe",
       description: "fetch_probe",
-      parameters: Type.Object({}),
+      parameters: hostParams(obj({}, { open: true })),
       async execute() {
         return { content: [{ type: "text", text }], details };
       },
@@ -315,7 +330,7 @@ test("session-dispatched results keep their responseId", async () => {
     name: "fetch_content",
     label: "fetch_content",
     description: "fetch_content",
-    parameters: Type.Object({ url: Type.String() }),
+    parameters: hostParams(obj({ url: str() }, { open: true })),
     async execute() {
       throw new Error("direct execution must not run");
     },

@@ -1,7 +1,6 @@
-import { JsonObjectSchema } from "../runtime-values.ts";
+import { isBoolean, isNumber, isString } from "../../value-guards.ts";
+import { isJsonObject } from "../runtime-values.ts";
 import type { JsonObject, BoundaryValue } from "../runtime-values.ts";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 export type CodexCompactionInputSource = "canonical" | "reconstructed";
 
 export type CodexCompactionContinuation =
@@ -63,7 +62,7 @@ const COMPACTION_REPLAY_DECISIONS = [
 ] as const;
 
 function isRecord(value: BoundaryValue): value is JsonObject {
-  return Value.Check(JsonObjectSchema, value);
+  return isJsonObject(value);
 }
 
 function isOneOf<T extends string>(values: readonly T[], value: BoundaryValue): value is T {
@@ -71,14 +70,11 @@ function isOneOf<T extends string>(values: readonly T[], value: BoundaryValue): 
 }
 
 function isOptionalString(value: BoundaryValue): value is string | undefined {
-  return value === undefined || Value.Check(Type.String(), value);
+  return value === undefined || isString(value);
 }
 
 function isOptionalNonNegativeNumber(value: BoundaryValue): value is number | undefined {
-  return (
-    value === undefined ||
-    (Value.Check(Type.Number(), value) && Number.isFinite(value) && value >= 0)
-  );
+  return value === undefined || (isNumber(value) && Number.isFinite(value) && value >= 0);
 }
 
 export function isCodexCompactionDiagnostic(
@@ -88,7 +84,7 @@ export function isCodexCompactionDiagnostic(
   return (
     isOneOf(COMPACTION_INPUT_SOURCES, value["inputSource"]) &&
     isOneOf(COMPACTION_REPLAY_DECISIONS, value["canonicalReplay"]) &&
-    Value.Check(Type.Boolean(), value["checkpointReused"]) &&
+    isBoolean(value["checkpointReused"]) &&
     isOptionalString(value["model"]) &&
     isOptionalString(value["checkpointModel"]) &&
     (value["transport"] === undefined ||
@@ -96,8 +92,7 @@ export function isCodexCompactionDiagnostic(
       value["transport"] === "sse") &&
     (value["continuation"] === undefined ||
       isOneOf(COMPACTION_CONTINUATIONS, value["continuation"])) &&
-    (value["previousResponseId"] === undefined ||
-      Value.Check(Type.Boolean(), value["previousResponseId"])) &&
+    (value["previousResponseId"] === undefined || isBoolean(value["previousResponseId"])) &&
     isOptionalNonNegativeNumber(value["fullInputItems"]) &&
     isOptionalNonNegativeNumber(value["sentInputItems"]) &&
     isOptionalNonNegativeNumber(value["rewrittenToolOutputs"])

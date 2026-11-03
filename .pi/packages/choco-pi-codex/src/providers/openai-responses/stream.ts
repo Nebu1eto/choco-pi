@@ -1,6 +1,7 @@
+import { isString } from "../value-guards.ts";
 import { calculateCost, type Api, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
+import { compile } from "@earendil-works/pi-schema";
+import { isJsonObject } from "../../adapter/runtime-values.ts";
 import type { ResponseStreamEvent } from "openai/resources/responses/responses.js";
 import type { AssistantMessageEventStream } from "@earendil-works/pi-ai";
 import {
@@ -21,7 +22,9 @@ type InternalAssistantContent =
   | ImageGenerationCallBlock
   | WebSearchCallBlock;
 
-const StreamingJsonSchema = Type.Unsafe<Record<string, never>>({
+// Any JSON value passes, as the former union of JSON kinds accepted; the caller treats it as a
+// partial-JSON record.
+const streamingJsonValidator = compile({
   anyOf: [
     { type: "object" },
     { type: "array" },
@@ -31,7 +34,10 @@ const StreamingJsonSchema = Type.Unsafe<Record<string, never>>({
     { type: "null" },
   ],
 });
-type StreamingJson = Static<typeof StreamingJsonSchema>;
+type StreamingJson = Record<string, never>;
+function isStreamingJson<Value>(value: Value): value is Value & StreamingJson {
+  return streamingJsonValidator.check(value);
+}
 interface CustomToolCallItem {
   type: "custom_tool_call";
   id?: string | undefined;
@@ -40,32 +46,42 @@ interface CustomToolCallItem {
   input?: string | undefined;
   namespace?: string | undefined;
 }
-const CustomToolCallSchema = Type.Unsafe<CustomToolCallItem>({
+const customToolCallValidator = compile({
   type: "object",
   properties: { type: { const: "custom_tool_call" } },
   required: ["type"],
 });
-const FunctionCallNamespaceSchema = Type.Unsafe<{ namespace?: string | undefined }>({
-  type: "object",
-});
-const InputTokenDetailsSchema = Type.Unsafe<{
+function isCustomToolCall<Value>(value: Value): value is Value & CustomToolCallItem {
+  return customToolCallValidator.check(value);
+}
+// Live SDK items: members are read through property access, so these stay shallow object guards.
+function hasFunctionCallNamespace<Value>(
+  value: Value,
+): value is Value & { namespace?: string | undefined } {
+  return isJsonObject(value);
+}
+interface InputTokenDetails {
   cached_tokens?: number | undefined;
   cache_write_tokens?: number | undefined;
-}>({ type: "object" });
-type InputTokenDetails = Static<typeof InputTokenDetailsSchema>;
-const IncompleteDetailsSchema = Type.Object({ reason: Type.Optional(Type.Unknown()) });
+}
+function isInputTokenDetails<Value>(value: Value): value is Value & InputTokenDetails {
+  return isJsonObject(value);
+}
+function hasIncompleteReason<Value>(value: Value): value is Value & { reason?: unknown } {
+  return isJsonObject(value);
+}
 
 type PartialJsonParser = (value: string) => StreamingJson | undefined;
 
 function parseInputTokenDetails<T>(value: T): InputTokenDetails | undefined {
-  return Check(InputTokenDetailsSchema, value) ? value : undefined;
+  return isInputTokenDetails(value) ? value : undefined;
 }
 
 function parseStreamingJson(partialJson: string, partialParse: PartialJsonParser): StreamingJson {
   if (!partialJson || partialJson.trim() === "") return {};
   try {
     const parsed: object = JSON.parse(partialJson);
-    return Check(StreamingJsonSchema, parsed) ? parsed : {};
+    return isStreamingJson(parsed) ? parsed : {};
   } catch {
     try {
       return partialParse(partialJson) ?? {};
@@ -85,7 +101,7 @@ export async function processResponsesStream<TApi extends Api>(
   const { parse } = await import("partial-json");
   const partialParse: PartialJsonParser = (value) => {
     const parsed = parse(value);
-    return parsed !== null && Check(StreamingJsonSchema, parsed) ? parsed : undefined;
+    return parsed !== null && isStreamingJson(parsed) ? parsed : undefined;
   };
   const blocks = output.content;
   const blockIndex = () => blocks.length - 1;
@@ -212,7 +228,7 @@ export async function processResponsesStream<TApi extends Api>(
       output.responseId = event.response.id;
     } else if (event.type === "response.output_item.added") {
       const item = event.item;
-      if (Check(CustomToolCallSchema, item)) {
+      if (isCustomToolCall(item)) {
         const customItem = item;
         const input = customItem.input ?? "";
         const property = options?.grammarToolInputProperties?.get(customItem.name) ?? "input";
@@ -254,7 +270,7 @@ export async function processResponsesStream<TApi extends Api>(
         });
         stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
       } else if (item.type === "function_call") {
-        const namespace = Check(FunctionCallNamespaceSchema, item) ? item.namespace : undefined;
+        const namespace = hasFunctionCallNamespace(item) ? item.namespace : undefined;
         const currentBlock: ToolCallBlock = {
           type: "toolCall",
           id: `${item.call_id}|${item.id}`,
@@ -368,7 +384,7 @@ export async function processResponsesStream<TApi extends Api>(
       }
     } else if (event.type === "response.output_item.done") {
       const item = event.item;
-      const customItem = Check(CustomToolCallSchema, item) ? item : undefined;
+      const customItem = isCustomToolCall(item) ? item : undefined;
       const customState = customItem ? outputStates.get(event.output_index) : undefined;
       const customInput = customItem
         ? (customItem.input ?? (customState?.kind === "custom_tool_call" ? customState.input : ""))
@@ -462,7 +478,7 @@ export async function processResponsesStream<TApi extends Api>(
         outputStates.delete(event.output_index);
       } else if (item.type === "function_call") {
         const state = outputStates.get(event.output_index);
-        const namespace = Check(FunctionCallNamespaceSchema, item) ? item.namespace : undefined;
+        const namespace = hasFunctionCallNamespace(item) ? item.namespace : undefined;
         const args =
           state?.kind === "function_call" && state.block.partialJson
             ? parseStreamingJson(state.block.partialJson, partialParse)
@@ -541,10 +557,10 @@ export async function processResponsesStream<TApi extends Api>(
           : (response?.service_tier ?? options.serviceTier);
         options.applyServiceTierPricing(output.usage, serviceTier);
       }
-      const incompleteDetails = Check(IncompleteDetailsSchema, response?.incomplete_details)
+      const incompleteDetails = hasIncompleteReason(response?.incomplete_details)
         ? response.incomplete_details
         : undefined;
-      const incompleteReason = Check(Type.String(), incompleteDetails?.reason)
+      const incompleteReason = isString(incompleteDetails?.reason)
         ? incompleteDetails.reason
         : undefined;
       const rawStopReason = incompleteReason
