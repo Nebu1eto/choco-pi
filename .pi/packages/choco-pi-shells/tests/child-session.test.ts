@@ -58,3 +58,22 @@ test("unrelated errors from a valid child identity probe are not contained", () 
     restoreRegistry(previous);
   }
 });
+
+test("array, function, and null-prototype registries follow the object-with-method rule", () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, MANAGER_KEY);
+  const nullProto = Object.create(null);
+  nullProto.isChildSessionId = () => true;
+  const arrayRegistry = Object.assign([], { isChildSessionId: () => true });
+  try {
+    for (const [value, expected] of [
+      [arrayRegistry, false],
+      [() => true, false],
+      [nullProto, true],
+    ] as const) {
+      Object.defineProperty(globalThis, MANAGER_KEY, { value, configurable: true });
+      assert.equal(isRegisteredChildSession("child"), expected);
+    }
+  } finally {
+    restoreRegistry(previous);
+  }
+});

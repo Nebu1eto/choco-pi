@@ -1,6 +1,5 @@
 import type { ShellManager, ShellResult } from "./shell-manager.ts";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, compile, lit, num, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
 
 import { isStaleContextError } from "./lifecycle.ts";
 import type { RuntimeValue } from "./validation.ts";
@@ -27,38 +26,43 @@ interface PendingCompletionData {
   shells: ShellResult[];
 }
 
-const PersistedShellSchema = Type.Object(
+// In-process numbers must stay finite (TypeBox rejected NaN/Infinity; pi-schema accepts them).
+const finiteNumber = () => num({ minimum: -Number.MAX_VALUE, maximum: Number.MAX_VALUE });
+
+const persistedShellSchema = obj(
   {
-    shellId: Type.String(),
-    ownerId: Type.String(),
-    name: Type.Optional(Type.String()),
-    command: Type.String(),
-    cwd: Type.String(),
-    state: Type.Union([Type.Literal("exited"), Type.Literal("stopped"), Type.Literal("failed")]),
-    pid: Type.Optional(Type.Number()),
-    exitCode: Type.Optional(Type.Number()),
-    signal: Type.Optional(Type.String()),
-    error: Type.Optional(Type.String()),
-    startedAt: Type.Number(),
-    endedAt: Type.Number(),
+    shellId: str(),
+    ownerId: str(),
+    name: opt(str()),
+    command: str(),
+    cwd: str(),
+    state: oneOf(["exited", "stopped", "failed"]),
+    pid: opt(finiteNumber()),
+    exitCode: opt(finiteNumber()),
+    signal: opt(str()),
+    error: opt(str()),
+    startedAt: finiteNumber(),
+    endedAt: finiteNumber(),
   },
-  { additionalProperties: false },
+  { open: false },
 );
 
-const PendingEntrySchema = Type.Object(
+const pendingEntrySchema = obj(
   {
-    type: Type.Literal("custom"),
-    customType: Type.Literal(SHELL_COMPLETION_PENDING_ENTRY),
-    data: Type.Object(
+    type: lit("custom"),
+    customType: lit(SHELL_COMPLETION_PENDING_ENTRY),
+    data: obj(
       {
-        keys: Type.Array(Type.String()),
-        shells: Type.Array(PersistedShellSchema),
+        keys: arr(str()),
+        shells: arr(persistedShellSchema),
       },
-      { additionalProperties: false },
+      { open: false },
     ),
   },
-  { additionalProperties: true },
+  { open: true },
 );
+
+const isPendingEntry = compile(pendingEntrySchema).check;
 
 export interface ShellNotificationGateOptions {
   manager: Pick<
@@ -115,8 +119,8 @@ export class ShellNotificationGate {
   sessionStart(sessionId: string, entries: readonly RuntimeValue[]): void {
     if (this.stopped) return;
     this.activateOwner(sessionId);
-    const entry = entries.findLast((candidate) => Value.Check(PendingEntrySchema, candidate));
-    if (!entry || !Value.Check(PendingEntrySchema, entry)) return;
+    const entry = entries.findLast((candidate) => isPendingEntry(candidate));
+    if (!entry || !isPendingEntry(entry)) return;
     for (let index = 0; index < entry.data.shells.length; index += 1) {
       const persisted = entry.data.shells[index];
       const persistedKey = entry.data.keys[index];

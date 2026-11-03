@@ -1,10 +1,11 @@
 import { defineTool, type ExtensionAPI, type Theme } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { resolve } from "node:path";
-import { Type } from "typebox";
+import { int, obj, opt, str } from "@earendil-works/pi-schema";
 
 import { inChildSessionContext } from "../../choco-pi-subagents/src/child-context.ts";
 import { isRegisteredChildSession } from "./child-session.ts";
+import { hostParams } from "./schema-bridge.ts";
 import { ShellNotificationGate } from "./notification-gate.ts";
 import { ShellManager } from "./shell-manager.ts";
 import type { ReadShellResult, ShellChangeEvent, ShellResult } from "./shell-manager.ts";
@@ -181,58 +182,58 @@ function jsonResult<Result>(value: Result) {
   };
 }
 
-const StartSchema = Type.Object(
+const startSchema = obj(
   {
-    command: Type.String({
+    command: str({
       minLength: 1,
       description:
         "Long-running shell command to run in the background. Leave stdout and stderr unredirected: the manager captures both for shell_read and the Shells viewer, and output redirected to a file is invisible there. Use `| tee file` when a file copy is also needed.",
     }),
-    cwd: Type.Optional(
-      Type.String({
+    cwd: opt(
+      str({
         minLength: 1,
         description: "Working directory; relative paths resolve from the calling session cwd.",
       }),
     ),
-    name: Type.Optional(Type.String({ minLength: 1, description: "Optional display name." })),
+    name: opt(str({ minLength: 1, description: "Optional display name." })),
   },
-  { additionalProperties: false },
+  { open: false },
 );
 
-const ReadSchema = Type.Object(
+const readSchema = obj(
   {
-    shell_id: Type.String({ minLength: 1, description: "Managed shell identifier." }),
-    stdout_offset: Type.Optional(
-      Type.Integer({
+    shell_id: str({ minLength: 1, description: "Managed shell identifier." }),
+    stdout_offset: opt(
+      int({
         minimum: 0,
         description: "Absolute stdout byte cursor returned as stdout.nextOffset by a prior read.",
       }),
     ),
-    stderr_offset: Type.Optional(
-      Type.Integer({
+    stderr_offset: opt(
+      int({
         minimum: 0,
         description: "Absolute stderr byte cursor returned as stderr.nextOffset by a prior read.",
       }),
     ),
-    max_bytes: Type.Optional(
-      Type.Integer({
+    max_bytes: opt(
+      int({
         minimum: 1,
         maximum: 262_144,
         description: "Maximum bytes returned from each stream.",
       }),
     ),
   },
-  { additionalProperties: false },
+  { open: false },
 );
 
-const StopSchema = Type.Object(
+const stopSchema = obj(
   {
-    shell_id: Type.String({ minLength: 1, description: "Managed shell identifier to stop." }),
+    shell_id: str({ minLength: 1, description: "Managed shell identifier to stop." }),
   },
-  { additionalProperties: false },
+  { open: false },
 );
 
-const ListSchema = Type.Object({}, { additionalProperties: false });
+const listSchema = obj({}, { open: false });
 
 export default function shellsExtension(pi: ExtensionAPI): void {
   // Child identity latches one way: the async-context marker is checked at load, and the
@@ -414,7 +415,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
       description:
         "Start a managed long-running background process. Exit is delivered as a shell-completion notification; do not poll. Keep stdout and stderr on the process (no `> file` redirection); the manager captures both and the Shells viewer shows them live.",
       promptSnippet: "Start a managed long-running background process.",
-      parameters: StartSchema,
+      parameters: hostParams(startSchema),
       execute: async (toolCallId, params, _signal, _onUpdate, ctx) => {
         try {
           currentSessionId = ctx.sessionManager.getSessionId();
@@ -442,7 +443,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
       label: "Read Shell",
       description: "Read managed process output from absolute byte cursors.",
       promptSnippet: "Read available output from a managed process.",
-      parameters: ReadSchema,
+      parameters: hostParams(readSchema),
       execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
         try {
           return jsonResult(
@@ -468,7 +469,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
       label: "Stop Shell",
       description: "Stop a managed shell process.",
       promptSnippet: "Stop a managed shell process.",
-      parameters: StopSchema,
+      parameters: hostParams(stopSchema),
       execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
         try {
           return jsonResult(
@@ -491,7 +492,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
       label: "List Shells",
       description: "List managed shell processes visible to this session.",
       promptSnippet: "List managed processes visible to this session.",
-      parameters: ListSchema,
+      parameters: hostParams(listSchema),
       execute: async (_toolCallId, _params, _signal, _onUpdate, ctx) => {
         try {
           return jsonResult(

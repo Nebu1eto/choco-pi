@@ -7,6 +7,7 @@ import {
   type ShellNotificationGateOptions,
 } from "../src/notification-gate.ts";
 import type { ShellResult } from "../src/shell-manager.ts";
+import type { RuntimeValue } from "../src/validation.ts";
 
 const nativeSteeringSymbol = Symbol.for("choco-pi-codex:native-steering");
 
@@ -360,4 +361,34 @@ test("an absent native steering bridge behaves as not pending", (t) => {
   gate.enqueue(completed);
   t.mock.timers.tick(250);
   assert.deepEqual(flushed, [[completed]]);
+});
+
+test("persisted pending entries are validated: extra top-level keys pass, malformed shells are ignored", (t) => {
+  delete registry()[nativeSteeringSymbol];
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+  const completed = shell(1);
+  const key = `${completed.shellId}:${completed.endedAt}`;
+  const restore = (data: RuntimeValue, extra: Record<string, string> = {}): ShellResult[][] => {
+    const flushed: ShellResult[][] = [];
+    const gate = new ShellNotificationGate({
+      manager: fakeManager([completed]),
+      flush: (shells) => flushed.push(shells),
+      appendEntry: () => {},
+    });
+    gate.sessionStart("session", [
+      { type: "custom", customType: SHELL_COMPLETION_PENDING_ENTRY, data, ...extra },
+    ]);
+    t.mock.timers.tick(250);
+    return flushed;
+  };
+  const valid = { keys: [key], shells: [completed] };
+  assert.deepEqual(restore(valid, { id: "extra-top-level-key" }), [[completed]]);
+  assert.deepEqual(restore({ ...valid, extra: 1 }), []);
+  assert.deepEqual(restore({ keys: [key], shells: [{ ...completed, extra: 1 }] }), []);
+  assert.deepEqual(restore({ keys: [key], shells: [{ ...completed, state: "running" }] }), []);
+  assert.deepEqual(restore({ keys: [key], shells: [{ ...completed, startedAt: Number.NaN }] }), []);
+  assert.deepEqual(restore({ keys: [key], shells: [{ ...completed, endedAt: "1001" }] }), []);
+  assert.deepEqual(restore({ keys: [key], shells: [{ ...completed, name: undefined }] }), [
+    [completed],
+  ]);
 });

@@ -1,10 +1,8 @@
-import { Type } from "typebox";
-import { Value } from "typebox/value";
-
 const SUBAGENTS_MANAGER_KEY = Symbol.for("pi-subagents:manager");
-const ChildSessionRegistrySchema = Type.Object({
-  isChildSessionId: Type.Function([Type.String()], Type.Boolean()),
-});
+
+interface ChildSessionRegistryCandidate {
+  isChildSessionId?: unknown;
+}
 
 /**
  * Ask the process-global subagents registry whether a session id belongs to a
@@ -14,6 +12,11 @@ const ChildSessionRegistrySchema = Type.Object({
  */
 export function isRegisteredChildSession(sessionId: string): boolean {
   const entry: unknown = Object.getOwnPropertyDescriptor(globalThis, SUBAGENTS_MANAGER_KEY)?.value;
-  if (!Value.Check(ChildSessionRegistrySchema, entry)) return false;
-  return entry.isChildSessionId(sessionId) === true;
+  // Object() boxes primitives, so the identity check keeps only real objects.
+  const candidate: ChildSessionRegistryCandidate = Object(entry);
+  if (candidate !== entry || candidate instanceof Function || Array.isArray(candidate))
+    return false;
+  const probe = candidate.isChildSessionId;
+  if (!(probe instanceof Function)) return false;
+  return probe.call(candidate, sessionId) === true;
 }
