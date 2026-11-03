@@ -403,6 +403,6 @@ Pi SDK pins move from `1.4.0` to exactly `1.5.0`. The package-local `minimumRele
 
 `src/boundary.ts` no longer imports `typebox`. `BoundaryValue` is an explicit recursive TypeScript type (the JavaScript value universe, not JSON) and `BoundaryRecord` is a string-keyed dictionary of it. `isString`, `isNumber`, `isFiniteNumber` and `isBoolean` use coercion-free primitive checks with the same accept/reject behaviour (boxed values rejected; `isNumber` still admits NaN and ±Infinity). The package no longer imports `typebox` anywhere; the `typebox` dependency in `package.json` and its lockfile entry are now unused and await removal. `tests/unit-boundary.test.ts` covers the guards.
 
-## 2026-11-03 note: unused typebox dependency (C26, pending)
+## 2026-11-03 note: unused typebox dependency removed (C26 follow-up)
 
-No first-party file imports `typebox` any more. `dependencies.typebox` in `package.json` and the `typebox@1.3.29` entries in `pnpm-lock.yaml` / `pnpm-workspace.yaml` are now unneeded. They are intentionally left because dropping them requires regenerating the frozen lockfile and the vendored `node_modules`, which is installer work outside this unit.
+No first-party file imports `typebox` any more. `dependencies.typebox` was removed from `package.json`, the `typebox@1.3.29` entry from `pnpm-lock.yaml` (regenerated with `pnpm install --lockfile-only`); the `minimumReleaseAgeExclude` line in `pnpm-workspace.yaml` stays because the vendored-install policy test requires one common workspace file. The vendored `node_modules` tree still contains the stale `typebox` copy until the next `pnpm install:profile` on the live checkout; nothing resolves it.
