@@ -97,6 +97,8 @@ const renderContext = {
   isError: false,
   durationMs: undefined,
   outputPad: 0,
+  keyText: (keybinding: string) => keybinding,
+  keyHint: (keybinding: string, description: string) => `${keybinding} ${description}`,
 };
 
 for (const background of [false, true]) {

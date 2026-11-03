@@ -138,7 +138,13 @@ test("callable bridged tools dispatch through ctx.executeTool", async (t) => {
   const calls: Array<{ name: string; args: unknown; signal: AbortSignal | undefined }> = [];
   const extensionContext = createToolContextFixture({
     cwd,
-    tools: [bashTool],
+    tools: [
+      {
+        ...bashTool,
+        execute: (id, params, signal, onUpdate) =>
+          bashTool.execute(id, Value.Parse(bashTool.parameters, params), signal, onUpdate),
+      },
+    ],
     async executeTool(name, args, options) {
       calls.push({ name, args, signal: options?.signal });
       assert.ok(Value.Check(bashTool.parameters, args));

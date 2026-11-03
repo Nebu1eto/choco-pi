@@ -1,15 +1,22 @@
-import { StringEnum } from "@earendil-works/pi-ai";
 import type {
   AgentToolResult,
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { Type, type TSchemaOptions, type TUnsafe } from "typebox";
 
 import { goalToolResponse, toToolText, type GoalToolResponse } from "./format.ts";
 import { createGoal, replaceGoal } from "./state.ts";
 import { TOOL_PROMPT_GUIDELINES } from "./prompts.ts";
 import type { GoalEntrySource, GoalResult, ThreadGoal } from "./types.ts";
+
+/** Local string-enum schema; Pi 1.5.0 pi-ai StringEnum returns a pi-schema Schema, not a TypeBox one. */
+function StringEnum<const T extends readonly string[]>(
+  values: T,
+  options?: TSchemaOptions,
+): TUnsafe<T[number]> {
+  return Type.Unsafe<T[number]>({ ...options, type: "string", enum: [...values] });
+}
 
 const EmptyParams = Type.Object({});
 

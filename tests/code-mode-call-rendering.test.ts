@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { stripVTControlCharacters } from "node:util";
+import { initTheme } from "@earendil-works/pi-coding-agent";
 import { renderExecCall } from "../.pi/packages/choco-pi-codex/src/tools/code-mode/call-rendering.ts";
 import { createCodeModeRenderTracker } from "../.pi/packages/choco-pi-codex/src/tools/code-mode/render-tracker.ts";
+
+// Pi 1.5.0 highlightCode reads the global theme, which the host initializes at startup.
+initTheme("dark", false);
 
 const PLAIN_THEME = {
   fg: (_role: string, text: string) => text,
@@ -93,7 +98,7 @@ test("Code Mode calls use the native tool title hierarchy after settling", () =>
     .join("\n");
 
   assert.match(rendered, /<toolTitle><bold>Ran code<\/bold><\/toolTitle>/);
-  assert.match(rendered, /text\('done'\)/);
+  assert.match(stripVTControlCharacters(rendered), /text\('done'\)/);
 });
 
 test("expanded orchestration hides wrapper code and patch text", () => {

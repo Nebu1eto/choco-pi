@@ -4,9 +4,9 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Box, Text, truncateToWidth, type KeyId } from "@earendil-works/pi-tui";
-import { Type, type Static } from "typebox";
+import { Type, type Static, type TSchemaOptions, type TUnsafe } from "typebox";
 import { Check } from "typebox/value";
-import { StringEnum, type ImageContent, type TextContent } from "@earendil-works/pi-ai/compat";
+import { type ImageContent, type TextContent } from "@earendil-works/pi-ai/compat";
 import {
   canonicalSearchParams,
   confirmCanonicalSearchRegistration,
@@ -104,6 +104,14 @@ import {
   type ResearchArtifact,
 } from "./source-check.ts";
 import { registerWebAccessSearchAdapters } from "./search-adapters.ts";
+
+/** Local string-enum schema; Pi 1.5.0 pi-ai StringEnum returns a pi-schema Schema, not a TypeBox one. */
+function StringEnum<const T extends readonly string[]>(
+  values: T,
+  options?: TSchemaOptions,
+): TUnsafe<T[number]> {
+  return Type.Unsafe<T[number]>({ ...options, type: "string", enum: [...values] });
+}
 
 type ExtensionTheme = ExtensionContext["ui"]["theme"];
 

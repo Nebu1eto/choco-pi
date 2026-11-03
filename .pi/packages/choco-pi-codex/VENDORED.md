@@ -1201,3 +1201,7 @@ The web-search model choices drop `gpt-5.5` and `gpt-5.3-codex-spark`, which Pi 
 from `openai-codex` because they always fail for ChatGPT accounts; a saved value naming either
 normalizes to the default `gpt-5.6-luna`.
 Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.
+
+## 2026-11-03 choco-pi patch: Pi SDK target 1.5.0 + pi-schema dependency
+
+Pi SDK pins move from `1.4.0` to exactly `1.5.0` and `@earendil-works/pi-schema@1.5.0` is added as a peer dependency (the extension loader has no alias for it). The package-local `minimumReleaseAgeExclude` entries move to `@1.5.0` and gain `pi-schema`. The lock was regenerated with pnpm 11.11.0 (`pnpm install --ignore-scripts`). One test double now adapts the bash tool to the 1.5.0 `AgentTool` parameter typing.

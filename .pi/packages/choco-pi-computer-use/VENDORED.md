@@ -310,3 +310,7 @@ A live re-run on headless Chrome on macOS confirmed that `keypress` `["cmd","a"]
 - **Description (`extensions/computer-use.ts`).** The `keys` description states the same macOS limit. README "Action results" repeats it.
 - **Tests.** `tests/browser-batch-validation.test.ts` pins both refusal messages exactly, and `tests/action-schema.test.ts` pins the new `keys` description; both fail on the previous source.
 - **Not done.** No macOS editing-command mapping (`Input.dispatchKeyEvent` `commands`). It would need the browser's platform and has not been verified against a live browser. `["cmd","a"]` is still accepted and still has no effect on macOS.
+
+## 2026-11-03 choco-pi patch: Pi SDK target 1.5.0 + pi-schema dependency
+
+Pi SDK pins move from `1.4.0` to exactly `1.5.0` and `@earendil-works/pi-schema@1.5.0` is added as a peer dependency (the extension loader has no alias for it).

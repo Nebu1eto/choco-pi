@@ -227,3 +227,7 @@ Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pas
 
 Pi SDK peer and development pins move from `1.3.0` to exactly `1.4.0`.
 Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.
+
+## 2026-11-03 choco-pi patch: Pi SDK target 1.5.0 + pi-schema dependency
+
+Pi SDK pins move from `1.4.0` to exactly `1.5.0` and `@earendil-works/pi-schema@1.5.0` is added as a peer dependency (the extension loader has no alias for it). The local `StringEnum` helper now builds the TypeBox schema with `Type.Unsafe` because the Pi 1.5.0 pi-ai export returns a pi-schema schema.

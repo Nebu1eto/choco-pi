@@ -277,3 +277,7 @@ Pi SDK peer and development pins move from `1.3.0` to exactly `1.4.0`. The packa
 `pnpm install --ignore-scripts` and restored with `pnpm install:vendored` (frozen). The only new
 locked package is `marked-cjk-friendly@0.1.2`, a new `pi-tui` dependency.
 Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.
+
+## 2026-11-03 choco-pi patch: Pi SDK target 1.5.0 + pi-schema dependency
+
+Pi SDK pins move from `1.4.0` to exactly `1.5.0` and `@earendil-works/pi-schema@1.5.0` is added as a peer dependency (the extension loader has no alias for it). The package-local `minimumReleaseAgeExclude` entries move to `@1.5.0` and gain `pi-schema`. The lock was regenerated with pnpm 11.11.0 (`pnpm install --ignore-scripts`).

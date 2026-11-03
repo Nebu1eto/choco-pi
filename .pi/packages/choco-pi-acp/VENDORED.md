@@ -394,3 +394,7 @@ isolated vendored installs that `npm run install:vendored` restores.
   root. Locked: `@agentclientprotocol/sdk@0.26.0`, `typebox@1.3.29`,
   `zod@3.25.76`. This replaces the 2026-10-07 note that the package has no
   package-local lockfile; it still declares no Pi SDK pin.
+
+## 2026-11-03 choco-pi patch: Pi SDK target 1.5.0 + pi-schema dependency
+
+Pi SDK pins move from `1.4.0` to exactly `1.5.0`. The package-local `minimumReleaseAgeExclude` entries move to `@1.5.0` and gain `pi-schema`.

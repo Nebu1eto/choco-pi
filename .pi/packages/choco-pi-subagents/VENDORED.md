@@ -2117,3 +2117,7 @@ locked package is `marked-cjk-friendly@0.1.2`, a new `pi-tui` dependency.
 e2e-revival (`tests/e2e-revival/run.ts` and its README) requires the Pi `1.4.0` launcher at
 `~/.local/pi-1.4.0`.
 Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.
+
+## 2026-11-03 choco-pi patch: Pi SDK target 1.5.0 + pi-schema dependency
+
+Pi SDK pins move from `1.4.0` to exactly `1.5.0` and `@earendil-works/pi-schema@1.5.0` is added as a peer dependency (the extension loader has no alias for it). The package-local `minimumReleaseAgeExclude` entries move to `@1.5.0` and gain `pi-schema`. The lock was regenerated with pnpm 11.11.0 (`pnpm install --ignore-scripts`). One render-context test double gained `keyText` and `keyHint`, required by the 1.5.0 types.
