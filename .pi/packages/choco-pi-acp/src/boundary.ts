@@ -1,57 +1,52 @@
-import { type Static, Type } from "typebox";
-import { Check } from "typebox/value";
-
-const BoundaryValueReference = Type.Ref("BoundaryValue");
-export const BoundaryValueSchema = Type.Cyclic(
-  {
-    BoundaryValue: Type.Union([
-      Type.Undefined(),
-      Type.Null(),
-      Type.Boolean(),
-      Type.Number(),
-      Type.BigInt(),
-      Type.String(),
-      Type.Symbol(),
-      Type.Function([], BoundaryValueReference),
-      Type.Array(BoundaryValueReference),
-      Type.Record(Type.String(), BoundaryValueReference),
-      Type.Object({}),
-    ]),
-  },
-  "BoundaryValue",
-);
-
-/** Any value crossing an I/O boundary before it has been decoded into a domain type. */
-export type BoundaryValue = Static<typeof BoundaryValueSchema>;
-
-export const BoundaryRecordSchema = Type.Record(Type.String(), BoundaryValueSchema);
+/**
+ * Any value crossing an I/O boundary before it has been decoded into a domain
+ * type. This is the JavaScript value universe, not JSON: it includes undefined,
+ * bigint, symbol and functions.
+ */
+export type BoundaryValue =
+  | undefined
+  | null
+  | boolean
+  | number
+  | bigint
+  | string
+  | symbol
+  | ((...args: never[]) => BoundaryValue)
+  | BoundaryValue[]
+  | BoundaryRecord
+  | {};
 
 /** An undecoded object crossing an I/O boundary, keyed by arbitrary strings. */
-export type BoundaryRecord = Static<typeof BoundaryRecordSchema>;
+interface KeyedValues<Value> {
+  [key: string]: Value;
+}
 
-const StringSchema = Type.String();
-const NumberSchema = Type.Number();
-const BooleanSchema = Type.Boolean();
+export type BoundaryRecord = KeyedValues<BoundaryValue>;
 
+// Primitive checks never coerce or call user code. Object(primitive) returns a
+// fresh wrapper, while Object(object) returns the same reference, so the
+// identity comparison rejects every object (including boxed strings) before
+// instanceof runs. The Number.is* helpers return false for non-numbers.
 export function isString(value: BoundaryValue): value is string {
-  return Check(StringSchema, value);
+  const boxed = Object(value);
+  return boxed !== value && boxed instanceof String;
 }
 
 export function isNumber(value: BoundaryValue): value is number {
   return (
-    Check(NumberSchema, value) ||
-    Object.is(value, Number.NaN) ||
+    Number.isFinite(value) ||
+    Number.isNaN(value) ||
     Object.is(value, Number.POSITIVE_INFINITY) ||
     Object.is(value, Number.NEGATIVE_INFINITY)
   );
 }
 
 export function isFiniteNumber(value: BoundaryValue): value is number {
-  return Check(NumberSchema, value) && Number.isFinite(value);
+  return Number.isFinite(value);
 }
 
 export function isBoolean(value: BoundaryValue): value is boolean {
-  return Check(BooleanSchema, value);
+  return value === true || value === false;
 }
 
 export function isObjectValue(value: BoundaryValue): value is object {
