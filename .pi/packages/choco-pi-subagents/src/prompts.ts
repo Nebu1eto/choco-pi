@@ -30,6 +30,8 @@ export interface PromptExtras {
   worktreeBase?: string;
   /** Restrict this run to read-only side-conversation behavior. */
   readOnly?: boolean;
+  /** Line naming the lineage's scratch directory; added to the environment block. */
+  scratchLine?: string;
 }
 
 /**
@@ -61,7 +63,7 @@ export function buildAgentPrompt(
   const envBlock = `# Environment
 Working directory: ${cwd}
 ${env.isGitRepo ? `Git repository: yes\nBranch: ${env.branch}` : "Not a git repository"}
-Platform: ${env.platform}`;
+Platform: ${env.platform}${extras?.scratchLine ? `\n${extras.scratchLine}` : ""}`;
 
   // A worktree agent is told its cwd twice: by the env block above (the copy)
   // and by whatever names the main checkout — the inherited parent prompt in

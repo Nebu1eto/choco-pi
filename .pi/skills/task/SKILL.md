@@ -38,7 +38,7 @@ When the orchestrator plans or conforms:
 
 - Make no implementation or checkout change until the plan is final; session scratch is allowed.
 - Send broad read-only discovery to `explore` leaves with exact questions, and keep the synthesis.
-- Write the final plan to `/tmp/choco-pi/${PI_SESSION_ID}/` and record its path in the acceptance ledger.
+- Write the final plan to `${PI_SCRATCH_DIR}` (/tmp/choco-pi/<root session id>/) and record its path in the acceptance ledger.
 - Under rule 3 only, if the current model leaves the Flagship tier before the plan is final, spawn the `planner` with the gathered evidence and the draft. A model change after the plan is final does not reopen it.
 
 Select each role from the unit's work before considering a model or reasoning override; an override must never replace a specialized role with `general`. Pass `model` and `thinking` in every spawn, taken from the role's effective definition shown by the Agent tool type list or `/agents`; when the definition shows none, choose both per `.pi/model-guidance.md` for the role's work. Every spawn manifest row records `model`, `thinking`, `source: role|chosen|override`, and `reason`. A value other than the declared one is an override: pass it only for a reason allowed by `.pi/model-guidance.md`, and record that reason. Restating the role default, the orchestrator's own model, or the plan owner's preference is not a reason. On a `Spawn refused` result, pass both and retry in the same turn. Do not set `max_tokens`, `max_tool_calls`, `timeout_ms`, or `idle_timeout_ms` unless the user asked; the first request alone costs roughly 15–25k tokens. Present the plan only when it contains a material user decision.

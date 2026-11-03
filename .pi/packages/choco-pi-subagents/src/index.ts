@@ -81,6 +81,10 @@ import {
   setFallbackSubagent,
 } from "./agent-types.ts";
 import { inChildSessionContext, isChildSessionId } from "./child-context.ts";
+import {
+  describeScratchChange,
+  setPreviousScratchDir,
+} from "../../../extensions/lib/scratch-path.ts";
 import { extractText } from "./context.ts";
 import { type RpcHandle, registerRpcHandlers } from "./cross-extension-rpc.ts";
 import { loadCustomAgents } from "./custom-agents.ts";
@@ -1393,10 +1397,26 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   // Capture ctx from session_start for RPC spawn handler + start the scheduler.
   // This also wires the RPC handlers and broadcasts readiness — on the first
   // bound session_start, so a filtered-out activation never advertises (#142).
-  pi.on("session_start", async (_event, ctx) => {
+  pi.on("session_start", async (event, ctx) => {
     activeMentionCloneGeneration = ++nextMentionCloneGeneration;
     const generation = ++revivalGeneration;
     currentCtx = ctx;
+    // Forked or resumed root: the scratch directory follows the session id, so name the old one once.
+    const startedSessionId = ctx.sessionManager.getSessionId();
+    if (!inChildSessionContext() && !isChildSessionId(startedSessionId)) {
+      const change = describeScratchChange({
+        reason: event.reason,
+        previousSessionFile: event.previousSessionFile,
+        currentSessionId: startedSessionId,
+      });
+      if (change) {
+        setPreviousScratchDir(startedSessionId, change.previousScratchDir);
+        pi.sendMessage(
+          { customType: "choco-pi-scratch", content: change.notice, display: true },
+          { deliverAs: "nextTurn" },
+        );
+      }
+    }
     // Background preload for this session's cwd (never rejects); the spawn
     // entry points still await it before their first Model Scope check.
     void ensureEnabledModels(ctx.cwd);

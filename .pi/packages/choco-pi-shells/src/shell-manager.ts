@@ -40,6 +40,8 @@ export interface StartShellInput {
   name?: string;
   /** Originating tool call; kept off ShellResult so tool output and persisted entries stay unchanged. */
   toolCallId?: string;
+  /** Extra variables for this process, layered over `process.env`. */
+  env?: Readonly<Record<string, string>>;
 }
 
 export interface ShellResult {
@@ -265,6 +267,7 @@ export class ShellManager {
     try {
       const child = spawn(this.shell, [...this.shellArgs, command], {
         cwd,
+        env: { ...process.env, ...input.env },
         detached: true,
         shell: false,
         stdio: ["ignore", "pipe", "pipe"],

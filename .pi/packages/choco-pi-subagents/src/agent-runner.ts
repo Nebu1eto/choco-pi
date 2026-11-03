@@ -40,6 +40,16 @@ import {
   unregisterChildSessionId,
 } from "./child-context.ts";
 import { buildParentContext, extractText } from "./context.ts";
+import {
+  registerScratchRoot,
+  scratchChangedNotice,
+  scratchDirForSession,
+  scratchPromptLine,
+  scratchRootFor,
+  setPreviousScratchDir,
+  unregisterScratchRoot,
+} from "../../../extensions/lib/scratch-path.ts";
+import { isJsonRecord } from "../../../extensions/lib/runtime-values.ts";
 import { DEFAULT_AGENTS } from "./default-agents.ts";
 import { detectEnv } from "./env.ts";
 import {
@@ -142,6 +152,8 @@ const EXCLUDED_TOOL_NAMES: string[] = Object.values(SUBAGENT_TOOL_NAMES);
  * sessions carrying it from user-facing session pickers.
  */
 export const SUBAGENT_SESSION_MARKER = "choco-pi:subagent";
+/** Records the scratch directory a child last ran under, so a revived or resumed child learns of a change. */
+export const SUBAGENT_SCRATCH_ENTRY = "choco-pi:scratch";
 
 /** Pi built-ins intentionally unavailable in every choco-pi child session. */
 const DISABLED_BUILTIN_TOOL_NAMES = new Set(["grep"]);
@@ -1278,6 +1290,10 @@ export async function runAgent(
 
   // Build prompt extras (memory, skill preloading)
   const extras: PromptExtras = {};
+  // The lineage root decides the scratch directory; a child never gets its own.
+  const parentSessionId = ctx.sessionManager?.getSessionId?.();
+  const scratchDir = parentSessionId ? scratchDirForSession(parentSessionId) : undefined;
+  if (parentSessionId) extras.scratchLine = scratchPromptLine(parentSessionId);
   if (options.worktreeBase) extras.worktreeBase = options.worktreeBase;
   if (options.readOnly) extras.readOnly = true;
   if (loadedSkills !== undefined && loadedSkills.length > 0) extras.skillBlocks = loadedSkills;
@@ -1704,6 +1720,7 @@ export async function runAgent(
   // manager registry probe to stay inert. The manager removes it on dispose.
   const childSessionId = session.sessionManager.getSessionId();
   registerChildSessionId(childSessionId);
+  if (parentSessionId) registerScratchRoot(childSessionId, scratchRootFor(parentSessionId));
   childCompaction?.bindSession(session);
 
   const baseSessionName = agentConfig?.name ?? type;
@@ -1723,6 +1740,25 @@ export async function runAgent(
     });
   }
 
+  let scratchNotice: string | undefined;
+  if (scratchDir) {
+    const recorded = session.sessionManager
+      .getEntries()
+      .findLast((entry) => entry.type === "custom" && entry.customType === SUBAGENT_SCRATCH_ENTRY);
+    const recordedData = recorded?.type === "custom" ? recorded.data : undefined;
+    const previous =
+      isJsonRecord(recordedData) && isString(recordedData["scratchDir"])
+        ? recordedData["scratchDir"]
+        : undefined;
+    if (previous !== scratchDir) {
+      if (previous) {
+        scratchNotice = scratchChangedNotice(previous, scratchDir);
+        setPreviousScratchDir(childSessionId, previous);
+      }
+      session.sessionManager.appendCustomEntry(SUBAGENT_SCRATCH_ENTRY, { scratchDir });
+    }
+  }
+
   // Bind extensions so that session_start fires and extensions can initialize
   // (e.g. loading credentials, setting up state). Tool gating already happened
   // at session construction via the `tools:` allowlist above — no separate
@@ -1739,6 +1775,7 @@ export async function runAgent(
   } catch (error) {
     // No record will own this session, so nothing else would remove its id.
     unregisterChildSessionId(childSessionId);
+    unregisterScratchRoot(childSessionId);
     childCompaction?.dispose();
     throw error;
   }
@@ -1814,6 +1851,9 @@ export async function runAgent(
   // Ordinary inherit_context callers retain the legacy text preamble. BTW uses
   // the cloned SessionManager state and therefore sends the question unchanged.
   const effectivePrompt = buildEffectivePrompt(ctx, prompt, options);
+  const promptWithNotice = scratchNotice
+    ? `${scratchNotice}\n\n${effectivePrompt}`
+    : effectivePrompt;
 
   // Boundary for the history fallback: only assistant text produced from here
   // on counts as this run's output (a fresh session, so usually 0).
@@ -1823,7 +1863,7 @@ export async function runAgent(
   // Fleet view compaction window, scoped to this run.
   const stopCompactionTracking = trackSessionCompaction(session);
   try {
-    if (!options.signal?.aborted) await session.prompt(effectivePrompt);
+    if (!options.signal?.aborted) await session.prompt(promptWithNotice);
     await turnLimit.settleCorrections();
   } finally {
     turnLimit.unsubscribe();

@@ -26,7 +26,7 @@ A follow-up continues the workflow. Use installed Pi docs before changing Pi con
 - Make the minimum complete change and preserve unaffected behavior, files, and user work.
 - Settle reversible choices from repository evidence; ask only when missing input materially changes behavior, risk, scope, or authority.
 - Change requests authorize in-scope local edits and non-destructive local validation.
-- Write only inside the active working directory, user-approved local data stores, and task scratch space (/tmp/choco-pi/${PI_SESSION_ID}/ is free scratch).
+- Write only inside the active working directory, user-approved local data stores, and task scratch space (`${PI_SCRATCH_DIR}`, i.e. /tmp/choco-pi/<root session id>/, is free scratch; subagents share their root session's directory, and a session that forks or resumes names the previous directory once).
 - Require explicit approval for destructive or hard-to-recover actions, unapproved data/external writes, deployment, migration, credential changes, publication, purchases, and third-party contact. Approval is action-specific; bypass requests are not approval.
 - Never reveal secrets, credentials, tokens, or keys.
 - Fix the cause at its boundary; if that exceeds scope, report it and ask.

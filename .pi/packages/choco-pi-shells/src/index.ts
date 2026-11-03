@@ -1,6 +1,11 @@
 import { defineTool, type ExtensionAPI, type Theme } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { resolve } from "node:path";
+import {
+  createScratchWarner,
+  loadScratchGrants,
+  scratchEnv,
+} from "../../../extensions/lib/scratch-path.ts";
 import { int, obj, opt, str } from "@earendil-works/pi-schema";
 
 import { inChildSessionContext } from "../../choco-pi-subagents/src/child-context.ts";
@@ -378,7 +383,14 @@ export default function shellsExtension(pi: ExtensionAPI): void {
     }
   };
 
+  let scratchGrants: Promise<string[]> | undefined;
+  const scratchWarner = createScratchWarner({
+    grants: () => (scratchGrants ??= loadScratchGrants()),
+  });
+
   pi.on("session_start", async (_event, ctx) => {
+    scratchGrants = undefined;
+    scratchWarner.reset();
     currentSessionId = ctx.sessionManager.getSessionId();
     isChildSession(currentSessionId);
     notificationGate.sessionStart(currentSessionId, ctx.sessionManager.getEntries());
@@ -421,15 +433,24 @@ export default function shellsExtension(pi: ExtensionAPI): void {
           currentSessionId = ctx.sessionManager.getSessionId();
           isChildSession(currentSessionId);
           notificationGate.activateOwner(currentSessionId);
-          return jsonResult(
-            manager.start({
-              ownerId: currentSessionId,
-              command: params.command,
-              cwd: resolve(ctx.cwd, params.cwd ?? "."),
-              name: params.name,
-              toolCallId,
-            }),
-          );
+          const ownerId = currentSessionId;
+          const cwd = resolve(ctx.cwd, params.cwd ?? ".");
+          const started = manager.start({
+            ownerId,
+            command: params.command,
+            cwd,
+            name: params.name,
+            toolCallId,
+            env: scratchEnv(ownerId),
+          });
+          // Warn mode: the process already runs; the agent learns where scratch files belong.
+          const warnings = await scratchWarner.check({
+            sessionId: ownerId,
+            toolName: "shell_start",
+            cwd,
+            destinations: [{ path: cwd, directory: true }],
+          });
+          return jsonResult(warnings.length === 0 ? started : { ...started, warnings });
         } catch (error) {
           return jsonResult({ error: error instanceof Error ? error.message : String(error) });
         }

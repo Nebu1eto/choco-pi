@@ -31,6 +31,10 @@ adapter reads `globalThis[Symbol.for("choco-pi-shells:manager")]`, including
 `list`, `read`, `stop`, and `toolCallIdOf`. The registry is removed synchronously
 when the owning root quits; delivery of shutdown-time events is best-effort.
 
+## Scratch environment
+
+`shell_start` exports `PI_ROOT_SESSION_ID` and `PI_SCRATCH_DIR` (`/tmp/choco-pi/<root session id>/`) to the process, plus `PI_PREVIOUS_SCRATCH_DIR` after a fork or resume. A cwd under `/tmp` outside that directory still runs and adds a `warnings` array to the result.
+
 ## Manager ownership
 
 The manager is a process singleton shared by root and child sessions. Only the

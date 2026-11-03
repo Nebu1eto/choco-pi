@@ -38,7 +38,7 @@ this extension out must stay completely silent.
 | `index.ts`                  | Extension factory: root tool registration (`Agent`, result/steer/stop, `agent_message`, workflows and limits), the `/agents` command tree, settings menus, the `input` mention hook, batch grouping, and lifecycle handlers.                                                                                                                     |
 | `agent-manager.ts`          | Record lifecycle: spawn, queue, concurrency, abort, steer, resume, completion callbacks, globally unique handle allocation and tombstones, `maxConcurrent` scheduling. Before disposing an owned child session it invokes the optional owner cleanup bridge. Workflow steps carry aggregate/step ids but otherwise use this lifecycle unchanged. |
 | `child-session-cleanup.ts`  | Optional cross-extension disposal seam: resolves shell and Codex cleanup registries, invokes each callable `cleanupOwner` with the child session id, and contains malformed registries and cleanup failures independently without delaying `AgentSession.dispose()`.                                                                             |
-| `workflow.ts`               | TypeBox workflow definition, graph/type/reference validation, bounded prompt rendering, mutable DAG scheduler, failure policy, cancellation and aggregate results. The runner interface keeps scheduling tests independent of live agents.                                                                                                       |
+| `workflow.ts`               | pi-schema workflow definition, graph/type/reference validation, bounded prompt rendering, mutable DAG scheduler, failure policy, cancellation and aggregate results. The runner interface keeps scheduling tests independent of live agents.                                                                                                     |
 | `agent-runner.ts`           | Builds and drives the child `AgentSession`: tool allow/denylists, always-on child messaging, `ext:` narrowing, extension filtering, model runtime inheritance, turn limits, final-status classification.                                                                                                                                         |
 | `agent-types.ts`            | The registry of spawnable types: defaults overlaid by user agents, `enabled` filtering, `resolveType`/`resolveSpawnType`, fallback policy.                                                                                                                                                                                                       |
 | `nested-tools.ts`           | The scoped `Agent`/`get_subagent_result`/`steer_subagent`/`stop_subagent` a subagent receives when its frontmatter sets `allowed_subagents`, plus the depth cap.                                                                                                                                                                                 |
@@ -46,7 +46,7 @@ this extension out must stay completely silent.
 | `messaging.ts`              | Pure tree-path computation, whole-tree recipient resolution, agent-message envelope formatting/parsing and delivery classification.                                                                                                                                                                                                              |
 | `agent-message.ts`          | Root/nested `agent_message` tool delivery through child sessions, `pendingSteers`, or the root follow-up queue; emits `subagents:message`.                                                                                                                                                                                                       |
 | `cross-extension-rpc.ts`    | `subagents:rpc:ping` / `:spawn` / `:stop` over the `pi.events` bus, with scoped reply channels.                                                                                                                                                                                                                                                  |
-| `revival-journal.ts`        | Durable revival contract: the TypeBox `subagent-journal` entry, latest-wins reduction per root session id, the startup decision for each saved agent (revive, re-arm a usage wait, keep dormant, capped) and the interruption prompt.                                                                                                            |
+| `revival-journal.ts`        | Durable revival contract: the pi-schema `subagent-journal` entry, latest-wins reduction per root session id, the startup decision for each saved agent (revive, re-arm a usage wait, keep dormant, capped) and the interruption prompt.                                                                                                          |
 | `session-file-ownership.ts` | Process-global claims on child session files. They survive `/reload`, so a revival never opens a file that the previous runtime's run is still writing.                                                                                                                                                                                          |
 | `worktree-probe.ts`         | Async check that a saved worktree still exists before a revival adopts it; the missing case names the branch that holds the work.                                                                                                                                                                                                                |
 
@@ -340,7 +340,7 @@ session/depth boundary remains the privilege boundary.
 
 ### Definition and validation
 
-`workflow.ts::WorkflowDefinitionSchema` is the single JSON/TypeBox definition.
+`workflow.ts::WorkflowDefinitionSchema` is the single JSON/pi-schema definition.
 A definition has a name, an optional `dynamic` flag and one or more steps. Each
 step has `id`, `subagent_type`, `prompt`, optional `needs`, `model`, `thinking`,
 `max_turns`, `timeout_ms`, `isolation`, and `continue_on_error`. Launch and every
@@ -492,3 +492,11 @@ across restart, and a fork.
 - Suspension is not a stop. A record suspended at shutdown gets no terminal
   status, completion notification or worktree cleanup, and its suspended entry
   must stay the latest one for that agent.
+
+### Scratch directory lineage
+
+A child never owns a scratch directory. `runAgent` registers the child session id with the
+lineage root (`.pi/extensions/lib/scratch-path.ts`), prints `Scratch directory: <dir>` in the
+child prompt and records a `choco-pi:scratch` entry. A revived or resumed child, or a root that
+forks or resumes under a new id, is told the previous directory once. This is warn mode:
+nothing is denied, moved or deleted, and command contents are not inspected.

@@ -25,6 +25,10 @@ A blocking `Stop` reason or `additionalContext` from `Stop` hooks continues the 
 
 `COMPATIBILITY.md` records every live binding and explicit host exclusion.
 
+### Scratch-path warnings
+
+For `write`, `edit`, `apply_patch` and `ast_grep_replace`, a destination under `/tmp` but outside `/tmp/choco-pi/<root session id>/` adds a warning to the tool result; the call still runs. To allow other temporary directories, list absolute paths under `scratchGrants` in a user-level settings file (`~/.claude/settings.json`, `~/.agents/settings.json` or `$PI_CODING_AGENT_DIR/settings.json`). Project settings are not read for this key. Command contents (`bash`, `exec_command`, `write_stdin`), browser, image and MCP tools are not inspected.
+
 ## Public API
 
 ```ts

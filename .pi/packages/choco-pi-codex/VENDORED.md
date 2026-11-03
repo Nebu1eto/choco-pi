@@ -1226,5 +1226,15 @@ imports `typebox` any more.
   leaf errors, so the discriminator hint now walks up the error path to the enclosing union.
 - Persisted compaction details are cloned by one hand-written walk (`cloneCodexCompactionJson`);
   `BackgroundNativeMetadataSchema` is a closed pi-schema object; `Value.Equal` became `jsonEqual`.
-- Live-object guards (registries, hooks, UI values) are plain predicates; `JsonObjectSchema` and
-  `BoundaryValueSchema` remain exported for C26 but are no longer used here.
+- Live-object guards (registries, hooks, UI values) are plain predicates; the unused `JsonObjectSchema` and
+  `BoundaryValueSchema` compatibility exports were deleted in C26 (see the 2026-11-03 entry below).
+
+## 2026-11-03 choco-pi patch: residual TypeBox compatibility removed (C26)
+
+- `src/adapter/runtime-values.ts` no longer exports `JsonObjectSchema`, `BoundaryValueSchema` or the internal `UnsafeSchemaOf` shape (no importer remained); use `isJsonObject` / `isBoundaryValue`. The test row that compiled the two schemas was removed from `tests/runtime-values-guards.test.ts`.
+- `tests/native-host-support.ts`: the synthetic code-mode tool `inputSchema` is `obj({}, { open: true })` (the TypeBox original was open).
+- `typebox` stays a peer only for `src/schema-bridge.ts`.
+
+## 2026-11-03 choco-pi patch: scratch-path ownership, warn mode (P15)
+
+Temporary files belong under `/tmp/choco-pi/<root session id>/`. `exec_command` adds `PI_ROOT_SESSION_ID` and `PI_SCRATCH_DIR` (and `PI_PREVIOUS_SCRATCH_DIR` after a fork or resume) next to `PI_SESSION_ID` per call (`src/tools/exec/command-tool.ts`); a value already present in the inherited `process.env` is never replaced, so a child process keeps its parent's root. The code-mode preflight broker (`src/tools/code-mode/nested-tool-preflight.ts`) now returns a list of non-blocking warnings: before the registered preflights it checks nested `write`/`edit`/`apply_patch`/`ast_grep_replace` destinations, and `delegate-runtime.ts` delivers each warning as a cell notification. A registered preflight can still block; `CodeModeToolPreflightRunner` now resolves to `readonly string[]`. Grants: `scratchGrants` (absolute directories) in user-level settings (`~/.claude`, `~/.agents`, `$PI_CODING_AGENT_DIR` `settings.json`); project settings are not read. Limits (warn mode): only the host `write`, `edit`, `apply_patch` and `ast_grep_replace` destinations and the `shell_start` cwd are inspected. Command contents of `bash`/`exec_command`/`write_stdin`, browser outputs, imagegen, MCP tools and notebook filesystem operations are not; the warning is advisory and never blocks. Only paths under `/tmp` (or macOS `/private/tmp`) are judged; `os.tmpdir()` locations such as `/var/folders` are not. The one shared implementation is `.pi/extensions/lib/scratch-path.ts`, imported by relative path. Tests: `tests/scratch-path-ownership.test.ts`.

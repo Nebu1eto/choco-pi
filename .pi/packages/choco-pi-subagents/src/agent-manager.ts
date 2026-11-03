@@ -21,6 +21,7 @@ import {
   type ToolActivity,
 } from "./agent-runner.ts";
 import { unregisterChildSessionId } from "./child-context.ts";
+import { unregisterScratchRoot } from "../../../extensions/lib/scratch-path.ts";
 import { cleanupChildSessionOwner, emitChildSessionShutdown } from "./child-session-cleanup.ts";
 import { setSessionFastMode, snapshotFastMode } from "./fast-mode-bridge.ts";
 import { setSessionDaybreak, snapshotDaybreak } from "./daybreak-bridge.ts";
@@ -4133,6 +4134,7 @@ export class AgentManager {
       const session = record.session;
       try {
         unregisterChildSessionId(session.sessionManager.getSessionId());
+        unregisterScratchRoot(session.sessionManager.getSessionId());
       } catch {
         /* a stub or retired session manager has no id to release */
       }

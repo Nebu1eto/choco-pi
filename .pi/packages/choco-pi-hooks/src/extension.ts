@@ -10,6 +10,11 @@ import type {
   ToolCallEvent,
   ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
+import {
+  createScratchWarner,
+  loadScratchGrants,
+  scratchDestinations,
+} from "../../../extensions/lib/scratch-path.ts";
 import { loadHookSources } from "./config.ts";
 import { createPiHookBackends } from "./backends.ts";
 import { HookEngine } from "./engine.ts";
@@ -220,6 +225,13 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
   let lastCwd = "";
   let lifecycleGeneration = 0;
   let unregisterResourceCleanup: (() => void) | undefined;
+  // Warn mode: write destinations under /tmp outside the session scratch directory are reported, never blocked.
+  let scratchGrants: Promise<string[]> | undefined;
+  const scratchWarner = createScratchWarner({
+    grants: () => (scratchGrants ??= loadScratchGrants()),
+  });
+  const pendingScratchWarnings = new Map<string, string[]>();
+  const MAX_PENDING_SCRATCH_WARNINGS = 256;
 
   function reload(ctx: ExtensionContext): void {
     const loaded = loadHookSources({ cwd: ctx.cwd });
@@ -396,6 +408,9 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
     watchers?.dispose();
     watchers = undefined;
     reload(ctx);
+    scratchGrants = undefined;
+    scratchWarner.reset();
+    pendingScratchWarnings.clear();
     rootSessionId = subagentRootSessionId(sessionId, ctx);
     if (rootSessionId) subagentSessionRoots().set(sessionId, rootSessionId);
     unregisterResourceCleanup?.();
@@ -501,6 +516,17 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
       result.permissionDecision !== "defer"
     )
       replaceToolInput(event.input, result.updatedInput);
+    const scratchWarnings = await scratchWarner.check({
+      sessionId: ctx.sessionManager.getSessionId(),
+      toolName: event.toolName,
+      cwd: ctx.cwd,
+      destinations: scratchDestinations(event.toolName, event.input),
+    });
+    if (scratchWarnings.length) {
+      if (pendingScratchWarnings.size >= MAX_PENDING_SCRATCH_WARNINGS)
+        pendingScratchWarnings.clear();
+      pendingScratchWarnings.set(event.toolCallId, scratchWarnings);
+    }
     if (result.blocked || result.permissionDecision === "deny" || !result.continue)
       return {
         block: true,
@@ -526,7 +552,9 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
     }
     const result = await dispatch(name, ctx, extra);
     notify(ctx, result.systemMessages);
-    const appended = result.additionalContext.map((value) => ({
+    const scratchWarnings = pendingScratchWarnings.get(event.toolCallId) ?? [];
+    pendingScratchWarnings.delete(event.toolCallId);
+    const appended = [...result.additionalContext, ...scratchWarnings].map((value) => ({
       type: "text" as const,
       text: value,
     }));

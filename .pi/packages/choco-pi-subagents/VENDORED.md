@@ -2128,7 +2128,7 @@ A run cancelled in an isolated worktree (cause `user_stop`, `parent_signal`, `bu
 
 ## 2026-11-03 choco-pi patch: Flagship-tier spawn guard
 
-- `src/model-tiers.ts` (new, not upstream): reads `.pi/model-fallbacks.json` (tiers.flagship), TypeBox-validated, cached per process, fails open to an empty set; maps `openai/<id>` to `openai-codex/<id>`.
+- `src/model-tiers.ts` (new, not upstream): reads `.pi/model-fallbacks.json` (tiers.flagship), pi-schema-validated, cached per process, fails open to an empty set; maps `openai/<id>` to `openai-codex/<id>`.
 - `src/invocation-config.ts`: `model_override_reason` on `AgentInvocationParams`; new `tierRefusal()` and `withOverrideReason()`.
 - `src/index.ts`, `src/nested-tools.ts`: `model_override_reason` schema field on the Agent and nested Agent tools; fresh spawns (not resume or schedule) call `tierRefusal` after `explicitModelRefusal`; the model line appends `override reason: <text>`. Workflow steps, resume, schedule and RPC stay exempt.
 - `tests/tier-guard.test.ts` added.
@@ -2157,3 +2157,7 @@ Infinity stay rejected. The `isolation` parameter is `oneOf(["off",
 description string. Runtime checks (`subagent-notification-pending` entry,
 tool-result `AgentDetails`, the coordination probe's completed event) are
 compiled pi-schema validators with the same open-object behaviour.
+
+## 2026-11-03 choco-pi patch: scratch-path ownership, warn mode (P15)
+
+The root session id owns the scratch directory `/tmp/choco-pi/<root session id>/`. `runAgent` (`src/agent-runner.ts`) registers each child session with the lineage root (`registerScratchRoot`; nested children resolve to the same root, `agent-manager.ts` unregisters on dispose), so the root id reaches every child's `exec_command` and `shell_start` env without touching `process.env`. `buildAgentPrompt` takes `PromptExtras.scratchLine` and prints `Scratch directory: <dir>` in the environment block. The runner records a `choco-pi:scratch` custom entry per child; a revived or resumed child whose recorded directory differs gets `Scratch directory changed: ...` prefixed to its first prompt and `PI_PREVIOUS_SCRATCH_DIR`. `index.ts` `session_start` on a root session with reason `fork` or `resume` and a different session id sends the same notice once as a next-turn custom message (`choco-pi-scratch`). Nothing is moved or deleted. Limits (warn mode): only the host `write`, `edit`, `apply_patch` and `ast_grep_replace` destinations and the `shell_start` cwd are inspected. Command contents of `bash`/`exec_command`/`write_stdin`, browser outputs, imagegen, MCP tools and notebook filesystem operations are not; the warning is advisory and never blocks. Only paths under `/tmp` (or macOS `/private/tmp`) are judged; `os.tmpdir()` locations such as `/var/folders` are not. The one shared implementation is `.pi/extensions/lib/scratch-path.ts`, imported by relative path. Tests: `tests/scratch-lineage.test.ts`, root `tests/scratch-path.test.ts`.

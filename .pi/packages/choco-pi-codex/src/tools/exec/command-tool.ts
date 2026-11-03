@@ -4,6 +4,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { keyHint, truncateToVisualLines } from "@earendil-works/pi-coding-agent";
 import { Container, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { bool, num, obj, opt, str } from "@earendil-works/pi-schema";
+import { scratchEnv } from "../../../../../extensions/lib/scratch-path.ts";
 import { hostParams } from "../../schema-bridge.ts";
 import { getPiConfiguredShellPath } from "../../adapter/prompt/runtime-shell.ts";
 import {
@@ -253,9 +254,10 @@ export function createExecCommandTool(
       if (signal?.aborted) throw new Error("exec_command aborted");
       // Mirror Pi's bash tool: the executing context's session id, set per
       // call. Never on process.env: subagent sessions share this process.
+      const sessionId = ctx.sessionManager.getSessionId();
       const parsedInput = {
         ...parseExecCommandParams(params),
-        env: { PI_SESSION_ID: ctx.sessionManager.getSessionId() },
+        env: { PI_SESSION_ID: sessionId, ...scratchEnv(sessionId) },
       };
       const input: ExecCommandInput =
         parsedInput.shell === undefined

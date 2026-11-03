@@ -216,7 +216,13 @@ export class CodeModeDelegateRuntime {
       refreshTrace: () => this.traces.emitUpdate(cellId, context),
     };
     try {
-      await runCodeModeToolPreflight(tool.name, input, invocationContext, controller.signal);
+      const warnings = await runCodeModeToolPreflight(
+        tool.name,
+        input,
+        invocationContext,
+        controller.signal,
+      );
+      for (const warning of warnings) this.notifyDirect(cellId, warning);
       if (isCustomToolDefinition(tool)) this.traces.emitUpdate(cellId, context);
       controller.signal.throwIfAborted();
       const result = isCustomToolDefinition(tool)

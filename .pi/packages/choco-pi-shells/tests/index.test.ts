@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
@@ -1323,5 +1324,47 @@ test("a root quit whose manager no longer owns the process slot leaves the slot 
   } finally {
     await replacement.dispose();
     delete registry()[managerKey];
+  }
+});
+
+test("shell_start exports the scratch environment and warns about a /tmp cwd outside scratch", async () => {
+  assert.equal(registry()[managerKey], undefined);
+  const inheritedRoot = process.env["PI_ROOT_SESSION_ID"];
+  delete process.env["PI_ROOT_SESSION_ID"];
+  delete process.env["PI_SCRATCH_DIR"];
+  const root = await activate(false);
+  const stray = await mkdtemp("/tmp/shell-scratch-stray-");
+  try {
+    const printed = await startShell(
+      root,
+      "scratch-env",
+      { command: 'printf "%s|%s" "$PI_ROOT_SESSION_ID" "$PI_SCRATCH_DIR"' },
+      "root-scratch",
+    );
+    await waitFor(() => eventsFor(root, printed.shellId).includes("shells:exited"), "scratch exit");
+    const read = details<{ stdout: { data: string } }>(
+      await execute(root, "shell_read", { shell_id: printed.shellId }, "root-scratch"),
+    );
+    assert.equal(read.stdout.data, "root-scratch|/tmp/choco-pi/root-scratch/");
+
+    const inside = details<{ warnings?: string[] }>(
+      await execute(root, "shell_start", { command: "exit 0", cwd: packageCwd }, "root-scratch"),
+    );
+    assert.equal(inside.warnings, undefined);
+    const warned = details<{ warnings?: string[] }>(
+      await execute(root, "shell_start", { command: "exit 0", cwd: stray }, "root-scratch"),
+    );
+    assert.deepEqual(warned.warnings, [
+      `Scratch path warning: ${stray} is outside this session's scratch directory /tmp/choco-pi/root-scratch/. Use /tmp/choco-pi/root-scratch/ for temporary files unless the user granted this path.`,
+    ]);
+    const again = details<{ warnings?: string[] }>(
+      await execute(root, "shell_start", { command: "exit 0", cwd: stray }, "root-scratch"),
+    );
+    assert.equal(again.warnings, undefined);
+  } finally {
+    assert.ok(root.shutdown);
+    await root.shutdown({ reason: "quit" }, context("root-scratch"));
+    await rm(stray, { recursive: true, force: true });
+    if (inheritedRoot !== undefined) process.env["PI_ROOT_SESSION_ID"] = inheritedRoot;
   }
 });
