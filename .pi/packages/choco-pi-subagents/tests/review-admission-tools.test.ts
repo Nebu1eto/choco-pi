@@ -179,9 +179,6 @@ test("/review-continue authorizes one more round after the cap", async (t) => {
   const s = await topLevel(t);
   for (let n = 0; n < 3; n++) await s.agent({ work_task: "grant" });
   assert.match(await s.agent({ work_task: "grant" }), /REVIEW_ROUND_LIMIT/);
-  assert.deepEqual(await s.command("bogus"), [
-    'No review rounds recorded for work task "bogus" in this session.',
-  ]);
   assert.deepEqual(await s.command("grant 9"), [
     "Usage: /review-continue [<work_task> [rounds 1-3]]",
   ]);
@@ -191,6 +188,21 @@ test("/review-continue authorizes one more round after the cap", async (t) => {
   const text = await s.agent({ work_task: "grant" });
   assert.ok(text.startsWith(admittedNotice("grant", 4, 4, 4, 10)), text.slice(0, 200));
   assert.deepEqual(await s.command(""), ['"grant": 4/4 review rounds\nSession total: 4/10']);
+});
+
+test("/review-continue admits a new work task refused at the session ceiling", async (t) => {
+  const s = await topLevel(t);
+  for (const task of ["s1", "s2", "s3"]) {
+    for (let n = 0; n < 3; n++) await s.agent({ work_task: task });
+  }
+  assert.match(await s.agent({ work_task: "fresh" }), /REVIEW_SESSION_LIMIT/);
+  assert.equal(s.spawns.length, 9, "the refused round starts no agent");
+  assert.deepEqual(await s.command("fresh 2"), [
+    'Granted 2 more review round(s) for work task "fresh" (now 0/5; session 9/11).',
+  ]);
+  const text = await s.agent({ work_task: "fresh" });
+  assert.ok(text.startsWith(admittedNotice("fresh", 1, 5, 10, 11)), text.slice(0, 200));
+  assert.equal(s.spawns.length, 10);
 });
 
 test("workflow reviewer steps share the work task cap; a refused step errors alone", async (t) => {

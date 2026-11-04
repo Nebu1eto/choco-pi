@@ -143,10 +143,6 @@ export function grantedMessage(
   return `Granted ${rounds} more review round(s) for work task "${workTask}" (now ${used}/${allowed}; session ${sessionUsed}/${sessionAllowed}).`;
 }
 
-export function unknownWorkTaskMessage(workTask: string): string {
-  return `No review rounds recorded for work task "${workTask}" in this session.`;
-}
-
 export const NO_ROUNDS_MESSAGE = "No review rounds recorded in this session.";
 export const REVIEW_CONTINUE_USAGE = "Usage: /review-continue [<work_task> [rounds 1-3]]";
 
@@ -460,7 +456,11 @@ export class ReviewRoundStore {
     }
   }
 
-  /** User-authorized extra rounds for one work task (and the session ceiling). */
+  /**
+   * User-authorized extra rounds for one work task (and the session ceiling).
+   * Creates the task's entry when absent: a task refused at the session ceiling
+   * has none, and this grant is the only way past that refusal.
+   */
   async grant(
     rootSessionId: string,
     workTask: string,
@@ -476,12 +476,10 @@ export class ReviewRoundStore {
     }
     try {
       return await this.mutate<{ ok: boolean; message: string }>(rootSessionId, (ledger) => {
-        const task = taskOf(ledger, workTask);
+        let task = taskOf(ledger, workTask);
         if (task === undefined) {
-          return {
-            result: { ok: false, message: unknownWorkTaskMessage(workTask) },
-            changed: false,
-          };
+          task = { createdAt: new Date().toISOString(), granted: 0, rounds: [] };
+          ledger.workTasks[workTask] = task;
         }
         task.granted += rounds;
         ledger.sessionGranted += rounds;

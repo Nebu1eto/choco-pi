@@ -157,7 +157,27 @@ test("grant raises both limits and persists across a new store instance", async 
   assert.equal(await reloaded.summary(SESSION), '"alpha": 4/5 review rounds\nSession total: 4/11');
 });
 
-test("grant rejects bad input and unknown tasks; summary of empty ledger", async (t) => {
+test("a work task first refused at the session ceiling can be granted, then admitted", async (t) => {
+  const store = new ReviewRoundStore(await tempDir(t));
+  for (const task of ["t1", "t2", "t3"]) {
+    for (let i = 0; i < 3; i++) assert.equal((await admit(store, task)).ok, true);
+  }
+  const refused = await admit(store, "t4");
+  assert.equal(!refused.ok && refused.code, "REVIEW_SESSION_LIMIT");
+  assert.deepEqual(await store.grant(SESSION, "t4", 1), {
+    ok: true,
+    message: 'Granted 1 more review round(s) for work task "t4" (now 0/4; session 9/10).',
+  });
+  const admitted = await admit(store, "t4");
+  assert.equal(
+    admitted.ok && admitted.notice,
+    'Review round 1/4 admitted for work task "t4" (new review budget; session total 10/10).',
+  );
+  const again = await admit(store, "t4");
+  assert.equal(!again.ok && again.code, "REVIEW_SESSION_LIMIT");
+});
+
+test("grant rejects bad input without writing; summary of empty ledger", async (t) => {
   const store = new ReviewRoundStore(await tempDir(t));
   assert.equal(await store.summary(SESSION), "No review rounds recorded in this session.");
   const usage = "Usage: /review-continue [<work_task> [rounds 1-3]]";
@@ -165,10 +185,7 @@ test("grant rejects bad input and unknown tasks; summary of empty ledger", async
   assert.deepEqual(await store.grant(SESSION, "alpha", 4), { ok: false, message: usage });
   assert.deepEqual(await store.grant(SESSION, "alpha", 1.5), { ok: false, message: usage });
   assert.deepEqual(await store.grant(SESSION, "Bad Id", 1), { ok: false, message: usage });
-  assert.deepEqual(await store.grant(SESSION, "alpha", 1), {
-    ok: false,
-    message: 'No review rounds recorded for work task "alpha" in this session.',
-  });
+  assert.equal(await store.summary(SESSION), "No review rounds recorded in this session.");
 });
 
 test("release refunds once; released and consumed tickets are single-use", async (t) => {
