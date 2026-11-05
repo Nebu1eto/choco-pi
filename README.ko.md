@@ -239,7 +239,7 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 - 루트와 경로별 `AGENTS.md` 파일은 에이전트가 하위 디렉터리에서 작업할 때 함께 불러옵니다.
 - 작업 절차 스킬은 직접 구현(`task-inline`), 병렬 구현 단위(`task`), 동적 분해 작업(`task-dynamic`), 긴급 수정(`task-hotfix`), 적대적 리뷰(`review`), 환경 점검(`check`), 서명된 로컬 커밋(`commit`), 문서 작성(`effective-writing`)을 다룹니다. 구현 절차는 체크아웃 변경 lease를 잡고 인수 기준표로 검증하며, 푸시하지 않습니다.
 - `/preferences`에서 응답 언어, 응답 스타일(`concise` 또는 `explanatory`), 에이전트 페르소나(`unset`, `critical`, 기본값인 `pessimistic`)를 설정합니다. 페르소나는 에이전트가 자신의 주장과 계획을 얼마나 엄격하게 검증할지 정합니다.
-- `/preferences` → Agent → On usage limit(`agentOnUsageLimit`)은 현재 provider가 사용량 한도를 보고했을 때의 동작을 정합니다. `none`(기본값)은 오류로 종료된 상태를 그대로 둡니다. `fallback`은 [`.pi/model-fallbacks.json`](.pi/model-fallbacks.json)의 같은 등급 다른 provider 모델로 전환하거나, 열린 등급 후보가 없으면 최후 수단인 `xai/grok-4.7`, 그다음 `synthetic/hf:moonshotai/Kimi-K3`로 전환한 뒤 작업을 이어갑니다. `auto-resume`은 한도가 초기화될 때까지 기다린 뒤 이어갑니다. 하위 에이전트는 한도에 걸리면 초기화 예정 시각과 범위 안의 추천 모델을 부모 에이전트에 보고하며, `auto-resume`일 때만 대기했다가 초기화 후 자동으로 재개됩니다. `/goal`이 active 또는 paused 상태이면 복구 주도권은 goal 런타임이 가집니다.
+- `/preferences` → Agent → On usage limit(`agentOnUsageLimit`)은 현재 provider가 사용량 한도를 보고했을 때의 동작을 정합니다. `none`(기본값)은 오류로 종료된 상태를 그대로 둡니다. `fallback`은 [`.pi/model-fallbacks.json`](.pi/model-fallbacks.json)의 같은 등급 다른 provider 모델로 전환하거나, 열린 등급 후보가 없으면 최후 수단인 `xai/grok-4.7`, 그다음 `synthetic/hf:moonshotai/Kimi-K3.1-Pro`(Kimi K3보다 우선), 마지막으로 `synthetic/hf:moonshotai/Kimi-K3`로 전환한 뒤 작업을 이어갑니다. `auto-resume`은 한도가 초기화될 때까지 기다린 뒤 이어갑니다. 하위 에이전트는 한도에 걸리면 초기화 예정 시각과 범위 안의 추천 모델을 부모 에이전트에 보고하며, `auto-resume`일 때만 대기했다가 초기화 후 자동으로 재개됩니다. `/goal`이 active 또는 paused 상태이면 복구 주도권은 goal 런타임이 가집니다.
 
 ### 에이전트와 오케스트레이션
 
@@ -429,7 +429,7 @@ Pi 1.0.3부터 `Home`/`End`는 편집기 커서를 이동합니다. 대화 기�
     "openai-codex/gpt-daybreak-blue-latest": "high",
     "openai/gpt-5.6-terra": "high",
     "openai/gpt-5.6-luna": "xhigh",
-    "synthetic/hf:moonshotai/Kimi-K3": "high",
+    "synthetic/hf:moonshotai/Kimi-K3.1-Pro": "high",
     "anthropic/claude-fable-5-1": "low",
     "anthropic/claude-opus-5-5": "medium",
     "openai/gpt-6-sol": "low",
@@ -459,7 +459,7 @@ Pi 1.0.3부터 `Home`/`End`는 편집기 커서를 이동합니다. 대화 기�
     "openai/gpt-5.6-terra",
     "openai/gpt-6-luna",
     "openai-codex/gpt-daybreak-blue-latest",
-    "synthetic/hf:moonshotai/Kimi-K3",
+    "synthetic/hf:moonshotai/Kimi-K3.1-Pro",
     "synthetic/hf:deepseek-ai/DeepSeek-V4.1-Flash",
     "synthetic/hf:zai-org/GLM-5.3",
     "synthetic/hf:zai-org/GLM-5.3-Flash"

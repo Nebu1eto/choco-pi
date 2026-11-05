@@ -268,7 +268,7 @@ The [RPC host bridge](docs/rpc-host-bridge.md) lets Waku identify the installed 
 - Root and path-scoped `AGENTS.md` files are loaded as the agent works in subdirectories.
 - Workflow skills cover direct implementation (`task-inline`), parallel units (`task`), dynamically decomposed work (`task-dynamic`), urgent fixes (`task-hotfix`), adversarial review (`review`), environment readiness (`check`), signed local commits (`commit`), and prose (`effective-writing`). Implementation workflows hold a checkout mutation lease, validate against an acceptance ledger, and never push.
 - `/preferences` sets the response language, response style (`concise` or `explanatory`), and agent persona (`unset`, `critical`, or the default `pessimistic`), which controls how strictly the agent tests its own claims and plans.
-- `/preferences` → Agent → On usage limit (`agentOnUsageLimit`) decides what happens when the active provider reports a usage quota: `none` (default) leaves the run settled with the error; `fallback` switches to a similar-tier model on another provider from [`.pi/model-fallbacks.json`](.pi/model-fallbacks.json), or, when no tier candidate is open, to the last-resort `xai/grok-4.7` and then `synthetic/hf:moonshotai/Kimi-K3`, and continues; `auto-resume` waits for the quota reset, then continues. Sub-agents report a limit to their parent with the reset estimate and a suggested in-scope model; under `auto-resume` they are parked and resumed after the reset. When a `/goal` is active or paused, the goal runtime keeps ownership of recovery.
+- `/preferences` → Agent → On usage limit (`agentOnUsageLimit`) decides what happens when the active provider reports a usage quota: `none` (default) leaves the run settled with the error; `fallback` switches to a similar-tier model on another provider from [`.pi/model-fallbacks.json`](.pi/model-fallbacks.json), or, when no tier candidate is open, to the last-resort `xai/grok-4.7`, then `synthetic/hf:moonshotai/Kimi-K3.1-Pro` (preferred over Kimi K3), then `synthetic/hf:moonshotai/Kimi-K3`, and continues; `auto-resume` waits for the quota reset, then continues. Sub-agents report a limit to their parent with the reset estimate and a suggested in-scope model; under `auto-resume` they are parked and resumed after the reset. When a `/goal` is active or paused, the goal runtime keeps ownership of recovery.
 
 ### Agents and orchestration
 
@@ -460,7 +460,7 @@ values are the maintainer's current settings. Secrets never belong in this file.
     "openai-codex/gpt-daybreak-blue-latest": "high",
     "openai/gpt-5.6-terra": "high",
     "openai/gpt-5.6-luna": "xhigh",
-    "synthetic/hf:moonshotai/Kimi-K3": "high",
+    "synthetic/hf:moonshotai/Kimi-K3.1-Pro": "high",
     "anthropic/claude-fable-5-1": "low",
     "anthropic/claude-opus-5-5": "medium",
     "openai/gpt-6-sol": "low",
@@ -490,7 +490,7 @@ values are the maintainer's current settings. Secrets never belong in this file.
     "openai/gpt-5.6-terra",
     "openai/gpt-6-luna",
     "openai-codex/gpt-daybreak-blue-latest",
-    "synthetic/hf:moonshotai/Kimi-K3",
+    "synthetic/hf:moonshotai/Kimi-K3.1-Pro",
     "synthetic/hf:deepseek-ai/DeepSeek-V4.1-Flash",
     "synthetic/hf:zai-org/GLM-5.3",
     "synthetic/hf:zai-org/GLM-5.3-Flash"

@@ -21,5 +21,9 @@
       "secondary": []
     }
   },
-  "lastResort": ["xai/grok-4.7", "synthetic/hf:moonshotai/Kimi-K3"]
+  "lastResort": [
+    "xai/grok-4.7",
+    "synthetic/hf:moonshotai/Kimi-K3.1-Pro",
+    "synthetic/hf:moonshotai/Kimi-K3"
+  ]
 }

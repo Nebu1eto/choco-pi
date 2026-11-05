@@ -654,7 +654,8 @@ test("the repository table offers xai/grok-4.7 only after every first-party cand
       return { provider: ref.slice(0, slash), id: ref.slice(slash + 1) };
     });
     const grok = { provider: "xai", id: "grok-4.7" };
-    const kimi = { provider: "synthetic", id: "hf:moonshotai/Kimi-K3" };
+    const kimi = { provider: "synthetic", id: "hf:moonshotai/Kimi-K3.1-Pro" };
+    const kimiK3 = { provider: "synthetic", id: "hf:moonshotai/Kimi-K3" };
     const closedOnly =
       (...providers: string[]) =>
       (provider: string): boolean =>
@@ -687,7 +688,7 @@ test("the repository table offers xai/grok-4.7 only after every first-party cand
       { provider: "openai-codex", id: "gpt-6.1-sol" },
     );
 
-    // (b) Every tier candidate closed: Grok 4.7 before Kimi K3.
+    // (b) Every tier candidate closed: Grok 4.7 before Kimi K3.1 Pro.
     const opus = { provider: "anthropic", id: "claude-opus-5-5" };
     const firstPartyClosed = closedOnly("anthropic", "openai-codex");
     assert.deepEqual(
@@ -704,7 +705,7 @@ test("the repository table offers xai/grok-4.7 only after every first-party cand
       grok,
     );
 
-    // (c) xai not available, or its account closed: Kimi K3.
+    // (c) xai not available, or its account closed: Kimi K3.1 Pro, then Kimi K3.
     assert.deepEqual(
       pickFallback(table, opus, {
         available: available.filter((ref) => ref.provider !== "xai"),
@@ -712,6 +713,14 @@ test("the repository table offers xai/grok-4.7 only after every first-party cand
         isClosed: firstPartyClosed,
       }),
       kimi,
+    );
+    assert.deepEqual(
+      pickFallback(table, opus, {
+        available: available.filter((ref) => ref.provider !== "xai" && ref.id !== kimi.id),
+        scoped: [],
+        isClosed: firstPartyClosed,
+      }),
+      kimiK3,
     );
     assert.deepEqual(
       pickFallback(table, opus, {
@@ -1102,7 +1111,11 @@ test("the repository fallback table loads and mirrors the model-guidance tiers",
       "openai-codex/gpt-6-luna",
       "anthropic/claude-haiku-5-5",
     ]);
-    assert.deepEqual(table.lastResort, ["xai/grok-4.7", "synthetic/hf:moonshotai/Kimi-K3"]);
+    assert.deepEqual(table.lastResort, [
+      "xai/grok-4.7",
+      "synthetic/hf:moonshotai/Kimi-K3.1-Pro",
+      "synthetic/hf:moonshotai/Kimi-K3",
+    ]);
     for (const refs of Object.values(table.tiers)) {
       for (const ref of [...refs.primary, ...(refs.secondary ?? [])]) {
         assert.equal(ref.startsWith("openai/"), false, `openai/* is no default fallback: ${ref}`);
