@@ -14,6 +14,22 @@ const NO_MATCHER = new Set<HookEventName>([
   "MessageDisplay",
 ]);
 
+/**
+ * The canonical model name model-switch matchers compare against: a dated ID,
+ * a context-size suffix such as `[1m]`, and Bedrock or Vertex spellings all
+ * reduce to the one name they resolve to.
+ */
+export function canonicalModelName(model: string): string {
+  return model
+    .trim()
+    .toLowerCase()
+    .replace(/\[[^\]]*\]$/, "")
+    .replace(/^(?:[a-z]{2}\.)?anthropic\./, "")
+    .replace(/@.*$/, "")
+    .replace(/-v\d+(?::\d+)?$/, "")
+    .replace(/-\d{8}$/, "");
+}
+
 export function matcherValue(event: HookEventName, input: JsonObject): string {
   if (
     [
@@ -45,6 +61,8 @@ export function matcherValue(event: HookEventName, input: JsonObject): string {
   if (event === "UserPromptExpansion") return String(input.command_name ?? "");
   if (event === "Elicitation" || event === "ElicitationResult")
     return String(input.mcp_server_name ?? "");
+  if (event === "PreModelSwitch" || event === "PostModelSwitch")
+    return canonicalModelName(String(input.to_model ?? ""));
   return "";
 }
 

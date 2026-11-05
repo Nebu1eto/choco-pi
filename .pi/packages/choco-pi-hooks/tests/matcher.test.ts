@@ -18,7 +18,7 @@ const base = (event: HookInput["hook_event_name"], extra = {}): HookInput => ({
 });
 
 test("exports every documented Claude Code hook event", () => {
-  assert.equal(HOOK_EVENTS.length, 31);
+  assert.equal(HOOK_EVENTS.length, 33);
   assert.deepEqual(HOOK_EVENTS.slice(0, 5), [
     "SessionStart",
     "Setup",

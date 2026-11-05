@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+import path from "node:path";
 import type { ExtensionAPI, ExtensionContext, TurnEndEvent } from "@earendil-works/pi-coding-agent";
 import type { HookEventName, JsonObject, MergedHookResult } from "./types.ts";
 import { isStringValue, parseRuntimeRecord } from "./validation.ts";
@@ -18,6 +20,19 @@ interface SupplementalLifecycle {
   dispose(): void;
 }
 
+export interface SupplementalOptions {
+  /** Whether this is a subagent session, which fires no session-level or display events. */
+  isSubagentSession?: () => boolean;
+}
+
+/** InstructionsLoaded `memory_type` for a loaded instruction file. */
+function memoryType(filePath: string, cwd: string): string {
+  if (filePath.includes(`${path.sep}ClaudeCode${path.sep}`)) return "Managed";
+  const relative = path.relative(cwd, filePath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) return "User";
+  return path.basename(filePath).includes(".local.") ? "Local" : "Project";
+}
+
 function toolCalls(event: TurnEndEvent): JsonObject[] {
   // SAFETY: Pi turn-end tool result content is JSON-serializable provider data.
   return event.toolResults.map((result) => ({
@@ -30,6 +45,7 @@ function toolCalls(event: TurnEndEvent): JsonObject[] {
 export function registerSupplementalEvents(
   pi: ExtensionAPI,
   dispatch: HookDispatch,
+  options: SupplementalOptions = {},
 ): SupplementalLifecycle {
   let context: ExtensionContext | undefined;
   const loadedInstructions = new Set<string>();
@@ -37,10 +53,14 @@ export function registerSupplementalEvents(
   const backgroundTasks = new Map<string, JsonObject>();
   let displayOriginal = "";
   let displayRendered = "";
+  let displayPending = "";
   let displayIndex = 0;
+  let displayMessageId = "";
+  let displayTurnId: string = crypto.randomUUID();
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
   let generation = 0;
+  const isSubagent = (): boolean => options.isSubagentSession?.() === true;
 
   const isGenerationCurrent = (token: number): boolean => !disposed && generation === token;
   const runDetached = (promise: Promise<unknown>): void => {
@@ -50,10 +70,13 @@ export function registerSupplementalEvents(
   pi.on("agent_settled", (_event, ctx) => {
     if (disposed) return;
     context = ctx;
+    if (isSubagent()) return;
     const generationToken = generation;
     clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
       if (!isGenerationCurrent(generationToken)) return;
+      // No idle notification while a background subagent is still running.
+      if (backgroundTasks.size) return;
       runDetached(
         dispatch("Notification", ctx, {
           notification_type: "idle_prompt",
@@ -84,64 +107,104 @@ export function registerSupplementalEvents(
     if (event.message.role !== "assistant") return;
     displayOriginal = "";
     displayRendered = "";
+    displayPending = "";
     displayIndex = 0;
+    displayMessageId = crypto.randomUUID();
+  });
+  pi.on("turn_start", () => {
+    if (disposed) return;
+    displayTurnId = crypto.randomUUID();
   });
 
   pi.on("turn_end", async (event, ctx) => {
     if (disposed) return;
     context = ctx;
-    await dispatch("PostToolBatch", ctx, { tool_calls: toolCalls(event) });
+    // PostToolBatch follows a batch of tool calls, before the next model request.
+    if (!event.toolResults.length) return;
+    const generationToken = generation;
+    const hasUI = ctx.hasUI;
+    const ui = ctx.ui;
+    const result = await dispatch("PostToolBatch", ctx, { tool_calls: toolCalls(event) });
+    if (!isGenerationCurrent(generationToken)) return;
+    if (result.blocked || !result.continue) {
+      if (hasUI && result.reason) ui.notify(result.reason, "warning");
+      ctx.abort();
+      return;
+    }
+    if (result.additionalContext.length)
+      pi.sendMessage(
+        {
+          customType: "choco-pi-hooks",
+          content: result.additionalContext.join("\n"),
+          display: false,
+        },
+        { deliverAs: "steer" },
+      );
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
     if (disposed) return;
     context = ctx;
     const generationToken = generation;
-    for (const file of event.systemPromptOptions.contextFiles ?? []) {
-      if (loadedInstructions.has(file.path)) continue;
-      loadedInstructions.add(file.path);
-      await dispatch("InstructionsLoaded", ctx, {
-        file_path: file.path,
-        memory_type: file.path.includes("/.claude/") ? "Project" : "User",
-        load_reason: "session_start",
-      });
-      if (!isGenerationCurrent(generationToken)) return;
-    }
+    const cwd = ctx.cwd;
+    const files = (event.systemPromptOptions.contextFiles ?? []).filter(
+      (file) => !loadedInstructions.has(file.path),
+    );
+    for (const file of files) loadedInstructions.add(file.path);
+    // InstructionsLoaded is observational and runs without delaying the run.
+    runDetached(
+      (async () => {
+        for (const file of files) {
+          await dispatch("InstructionsLoaded", ctx, {
+            file_path: file.path,
+            memory_type: memoryType(file.path, cwd),
+            load_reason: "session_start",
+          });
+          if (!isGenerationCurrent(generationToken)) return;
+        }
+      })(),
+    );
   });
 
-  pi.on("message_update", async (event, ctx) => {
-    if (disposed) return;
-    context = ctx;
+  /** Run MessageDisplay for one batch of displayed text and record what to render. */
+  const displayBatch = async (ctx: ExtensionContext, delta: string, final: boolean) => {
     const generationToken = generation;
-    const streamEvent = parseRuntimeRecord(event.assistantMessageEvent);
-    const delta = isStringValue(streamEvent?.delta) ? streamEvent.delta : undefined;
-    if (!delta) return;
     const result = await dispatch("MessageDisplay", ctx, {
-      turn_id: String(event.message.timestamp),
-      message_id: String(event.message.timestamp),
+      turn_id: displayTurnId,
+      message_id: displayMessageId,
       index: displayIndex++,
-      final: false,
+      final,
       delta,
     });
     if (!isGenerationCurrent(generationToken)) return;
     displayOriginal += delta;
     displayRendered += result.displayContent ?? delta;
+  };
+
+  // MessageDisplay sees assistant text in batches of completed lines; a
+  // subagent's messages are never displayed.
+  pi.on("message_update", async (event, ctx) => {
+    if (disposed || isSubagent()) return;
+    context = ctx;
+    const streamEvent = parseRuntimeRecord(event.assistantMessageEvent);
+    if (streamEvent?.type !== "text_delta" || !isStringValue(streamEvent.delta)) return;
+    displayPending += streamEvent.delta;
+    const cut = displayPending.lastIndexOf("\n");
+    if (cut < 0) return;
+    const batch = displayPending.slice(0, cut + 1);
+    displayPending = displayPending.slice(cut + 1);
+    await displayBatch(ctx, batch, false);
   });
 
   pi.on("message_end", async (event, ctx) => {
-    if (disposed) return;
+    if (disposed || isSubagent()) return;
     if (event.message.role !== "assistant") return;
     context = ctx;
-    const generationToken = generation;
-    const result = await dispatch("MessageDisplay", ctx, {
-      turn_id: String(event.message.timestamp),
-      message_id: String(event.message.timestamp),
-      index: displayIndex++,
-      final: true,
-      delta: "",
-    });
-    if (!isGenerationCurrent(generationToken)) return;
-    if (result.displayContent) displayRendered += result.displayContent;
+    // A message without text, such as a tool-call-only response, is not displayed.
+    if (displayIndex === 0 && !displayPending) return;
+    const rest = displayPending;
+    displayPending = "";
+    await displayBatch(ctx, rest, true);
   });
 
   const onSubagentStarted = <Value>(payload: Value): void => {
@@ -157,29 +220,25 @@ export function registerSupplementalEvents(
         description: isStringValue(data.description) ? data.description : "",
         agent_type: isStringValue(data.type) ? data.type : undefined,
       });
-    runDetached(
-      dispatch("SubagentStart", ctx, {
-        agent_id: isStringValue(data.id) ? data.id : undefined,
-        agent_type: isStringValue(data.type) ? data.type : undefined,
-      }),
-    );
   };
+  // SubagentStart and SubagentStop fire inside the subagent session itself, where
+  // SubagentStart can add context and SubagentStop can keep the subagent working.
+  // Here the parent only tracks background work and, for workflow members (the
+  // agent-team analog), runs TeammateIdle and TaskCompleted.
   const onSubagentStopped = <Value>(payload: Value): void => {
     const ctx = context;
     const generationToken = generation;
     const data = parseRuntimeRecord(payload);
     if (!ctx || !data) return;
     const agentId = isStringValue(data.id) ? data.id : undefined;
-    const agentType = isStringValue(data.type) ? data.type : undefined;
-    let lastAssistantMessage = "";
-    if (isStringValue(data.result)) lastAssistantMessage = data.result;
-    else if (isStringValue(data.error)) lastAssistantMessage = data.error;
     if (agentId) backgroundTasks.delete(agentId);
+    const workflowId = isStringValue(data.workflowId) ? data.workflowId : undefined;
+    if (!workflowId) return;
     runDetached(
       (async () => {
         const idle = await dispatch("TeammateIdle", ctx, {
           teammate_name: agentId,
-          team_name: isStringValue(data.workflowId) ? data.workflowId : undefined,
+          team_name: workflowId,
         });
         if (!isGenerationCurrent(generationToken)) return;
         let completion: MergedHookResult | undefined;
@@ -189,43 +248,16 @@ export function registerSupplementalEvents(
             task_id: workflowStep,
             task_subject: isStringValue(data.description) ? data.description : workflowStep,
             teammate_name: agentId,
-            team_name: isStringValue(data.workflowId) ? data.workflowId : undefined,
+            team_name: workflowId,
           });
         if (!isGenerationCurrent(generationToken)) return;
-        const stopped = await dispatch("SubagentStop", ctx, {
-          stop_hook_active: false,
-          agent_id: agentId,
-          agent_type: agentType,
-          agent_transcript_path: isStringValue(data.agentTranscriptPath)
-            ? data.agentTranscriptPath
-            : "",
-          last_assistant_message: lastAssistantMessage,
-          background_tasks: [...backgroundTasks.values()],
-          session_crons: [],
-        });
-        if (!isGenerationCurrent(generationToken)) return;
-        const blocked = [idle, completion, stopped].find((result) => result?.blocked);
+        const blocked = [idle, completion].find((result) => result?.blocked);
         if (blocked?.reason && agentId)
           pi.events.emit("choco-pi-hooks:subagent-continue", {
             id: agentId,
             reason: blocked.reason,
           });
       })(),
-    );
-  };
-  const onSubagentNotification = <Value>(payload: Value): void => {
-    const ctx = context;
-    const data = parseRuntimeRecord(payload);
-    if (!ctx || !data) return;
-    let message = "Subagent completed";
-    if (isStringValue(data.result)) message = data.result;
-    else if (isStringValue(data.error)) message = data.error;
-    runDetached(
-      dispatch("Notification", ctx, {
-        notification_type: "agent_completed",
-        message,
-        title: isStringValue(data.description) ? data.description : undefined,
-      }),
     );
   };
   const onInstructionsLoaded = <Value>(payload: Value): void => {
@@ -247,8 +279,6 @@ export function registerSupplementalEvents(
   unsubscribers.push(pi.events.on("subagents:started", onSubagentStarted));
   unsubscribers.push(pi.events.on("subagents:completed", onSubagentStopped));
   unsubscribers.push(pi.events.on("subagents:failed", onSubagentStopped));
-  unsubscribers.push(pi.events.on("subagents:completed", onSubagentNotification));
-  unsubscribers.push(pi.events.on("subagents:failed", onSubagentNotification));
   unsubscribers.push(pi.events.on("choco-pi-hooks:instructions-loaded", onInstructionsLoaded));
 
   return {

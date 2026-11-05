@@ -1,5 +1,35 @@
 # Package provenance
 
+## 2026-11-05 choco-pi patch: Claude Code hook reference parity
+
+Subagent sessions now fire only the hooks Claude Code fires for a subagent.
+Their input carries the top-level `session_id` and transcript with `agent_id`
+and `agent_type` from the subagent marker; `root_session_id` stays.
+`SubagentStart` runs in the subagent at each run start and injects its
+context once; `SubagentStop` runs at the subagent's `agent_end` with the
+Stop continuation cap. The parent no longer dispatches either, nor an
+`agent_completed` notification, and `TeammateIdle` is limited to workflow
+members. SessionStart, Setup, SessionEnd, prompt, Stop, StopFailure, idle,
+display, model-switch, working-directory, and watcher events are skipped in
+subagent sessions, so a SessionStart hook no longer runs once per subagent.
+
+Protocol changes from the current hooks reference: one-object stdout parsing
+with parse failures kept out of context, async one-line responses, the
+10,000-character cap, reminder-tag escaping, `onFailure`, the missing-script
+rule for continuation events, cross-settings-file deduplication, `once` only
+after success, the SessionEnd budget, untimed `async` hooks,
+`CLAUDE_PROJECT_DIR` fixed to the session's start directory, `CLAUDE_EFFORT`,
+a fallback working directory, `prompt_id`, `scratchpad_dir`,
+`session_title`, resume-cost fields, and per-event prompt/agent hook
+outcomes. Events gain SessionStart `clear`/`compact`, UserPromptSubmit on
+custom-message runs and its `sessionTitle`/`suppressOriginalPrompt`,
+PreToolUse context and exit-2 messages on tool results, PostToolUse feedback
+and `updatedMCPToolOutput`, PostToolBatch control, `continue: false` on
+Stop, background DirectoryAdded, line-batched MessageDisplay,
+`PostModelSwitch`, the `PreModelSwitch` name without a producer, and
+per-event output discarding. `if` rules match Bash subcommands and
+substitutions and gitignore-style file paths.
+
 ## 2026-10-12 choco-pi patch: subagent hook input names its root session
 
 Subagents run in the parent's process and share its terminal, so hook

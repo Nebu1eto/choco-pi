@@ -38,7 +38,13 @@ async function activate() {
   const extension = loaded.extensions.find((entry) => entry.path === "<inline:stop-cap>");
   assert.ok(extension);
   loaded.runtime.sendUserMessage = runtime.sendUserMessage;
-  const ctx = { cwd, mode: "json", thinkingLevel: "off", hasUI: false };
+  const ctx = {
+    cwd,
+    mode: "json",
+    thinkingLevel: "off",
+    hasUI: false,
+    sessionManager: { getSessionName: () => undefined },
+  };
   const emit = async (name: string, event: JsonObject) => {
     const handlers = extension.handlers.get(name);
     assert.ok(handlers, name);

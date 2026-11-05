@@ -58,6 +58,7 @@ function emptyResult(): MergedHookResult {
     systemMessages: [],
     terminalSequences: [],
     additionalContext: [],
+    exitTwoStderr: [],
   };
 }
 

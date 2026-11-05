@@ -59,6 +59,7 @@ interface SessionContextDouble {
   readonly sessionManager: {
     getSessionId(): string;
     getSessionFile(): undefined;
+    getSessionName(): undefined;
     getEntries(): CustomEntry[];
   };
 }
@@ -72,6 +73,7 @@ function sessionContext(sessionId: string): ExtensionContext {
     sessionManager: {
       getSessionId: () => sessionId,
       getSessionFile: () => undefined,
+      getSessionName: () => undefined,
       getEntries: () => [],
     },
   };
@@ -91,6 +93,14 @@ test("PreToolUse warns once per tool and directory about /tmp writes outside scr
   t.mock.method(HookEngine.prototype, "run", async (input: HookInput) =>
     mergeResults(input.hook_event_name, []),
   );
+  // The scratch root comes from the registry here, not from a host session's environment.
+  for (const name of ["PI_SCRATCH_DIR", "PI_ROOT_SESSION_ID", "PI_PREVIOUS_SCRATCH_DIR"]) {
+    const previous = process.env[name];
+    delete process.env[name];
+    t.after(() => {
+      if (previous !== undefined) process.env[name] = previous;
+    });
+  }
   const home = await mkdtemp(join(tmpdir(), "hooks-scratch-home-"));
   const previousHome = process.env["HOME"];
   process.env["HOME"] = home;

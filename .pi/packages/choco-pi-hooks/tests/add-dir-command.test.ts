@@ -51,7 +51,7 @@ test("/add-dir confirms with a notice outside the TUI and stays quiet inside it"
       notices,
       mode === "tui"
         ? []
-        : [{ message: "Ran DirectoryAdded hooks for /tmp/extra.", level: "info" }],
+        : [{ message: "Started DirectoryAdded hooks for /tmp/extra.", level: "info" }],
     );
   }
 });

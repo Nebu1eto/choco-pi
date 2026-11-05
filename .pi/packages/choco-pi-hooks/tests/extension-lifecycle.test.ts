@@ -197,6 +197,7 @@ test("SDK session cleanup disposes listeners and invalidates a pending session s
       sessionManager: {
         getSessionId: () => sessionId,
         getSessionFile: () => undefined,
+        getSessionName: () => undefined,
       },
     };
     const startCompletion = Promise.resolve(start({ reason: "startup" }, ctx));

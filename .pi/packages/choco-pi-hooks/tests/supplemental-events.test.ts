@@ -18,6 +18,7 @@ interface SupplementalApiDouble {
 
 interface SupplementalContextDouble {
   readonly mode?: "tui";
+  readonly cwd?: string;
 }
 
 interface SupplementalTestApi {
@@ -79,6 +80,7 @@ function emptyResult(): MergedHookResult {
     systemMessages: [],
     terminalSequences: [],
     additionalContext: [],
+    exitTwoStderr: [],
   };
 }
 
@@ -147,7 +149,7 @@ test("in-flight subagent completion survives an ordinary fresh context update", 
   await idle;
   await new Promise<void>((resolve) => setImmediate(resolve));
 
-  assert.deepEqual(dispatched, ["TeammateIdle", "TaskCompleted", "SubagentStop"]);
+  assert.deepEqual(dispatched, ["TeammateIdle", "TaskCompleted"]);
   assert.deepEqual(emitted, ["choco-pi-hooks:subagent-continue"]);
 });
 
@@ -158,7 +160,7 @@ test("in-flight instruction loading stops before dispatching again with a dispos
     resolveFirst = resolve;
   });
   const dispatched: string[] = [];
-  const ctx = extensionContext({});
+  const ctx = extensionContext({ cwd: "/one" });
   const supplemental = registerSupplementalEvents(api, (_event, dispatchContext, extra) => {
     assert.equal(dispatchContext, ctx);
     dispatched.push(String(extra?.file_path));
@@ -197,7 +199,12 @@ test("awaited supplemental handlers propagate unrelated dispatch errors", async 
   assert.ok(turnEnd);
 
   await assert.rejects(
-    Promise.resolve(turnEnd({ toolResults: [] }, extensionContext({}))),
+    Promise.resolve(
+      turnEnd(
+        { toolResults: [{ toolName: "bash", toolCallId: "call-1", content: [] }] },
+        extensionContext({}),
+      ),
+    ),
     (error) => error === failure,
   );
 });

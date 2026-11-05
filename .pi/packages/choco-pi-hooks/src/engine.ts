@@ -1,4 +1,12 @@
-import { executeHandler, parseOutput, type HookBackends } from "./executor.ts";
+import os from "node:os";
+import {
+  executeHandler,
+  parseAsyncOutput,
+  parseOutput,
+  sessionEndTimeouts,
+  type HookBackends,
+  type RawExecution,
+} from "./executor.ts";
 import { matches } from "./matcher.ts";
 import { isStringValue, parseRuntimeRecord } from "./validation.ts";
 import type {
@@ -25,6 +33,7 @@ const EXIT_TWO_BLOCKS = new Set<HookEventName>([
   "ConfigChange",
   "PostToolBatch",
   "PreCompact",
+  "PreModelSwitch",
   "Elicitation",
   "ElicitationResult",
   "WorktreeCreate",
@@ -33,6 +42,7 @@ const PLAIN_CONTEXT = new Set<HookEventName>([
   "UserPromptSubmit",
   "UserPromptExpansion",
   "SessionStart",
+  "PostModelSwitch",
 ]);
 const DECISION_BLOCKS = new Set<HookEventName>([
   "UserPromptSubmit",
@@ -44,9 +54,39 @@ const DECISION_BLOCKS = new Set<HookEventName>([
   "SubagentStop",
   "ConfigChange",
   "PreCompact",
+  "PreModelSwitch",
   "TaskCreated",
 ]);
 const PERMISSION_ORDER = { allow: 0, ask: 1, defer: 2, deny: 3 } as const;
+/** Events whose JSON output is discarded apart from `terminalSequence`. */
+const DISCARDS_OUTPUT = new Set<HookEventName>([
+  "StopFailure",
+  "Setup",
+  "InstructionsLoaded",
+  "SessionEnd",
+  "WorktreeRemove",
+]);
+/** Events that discard `systemMessage` and `continue`. */
+const DISCARDS_MESSAGE = new Set<HookEventName>([
+  "Notification",
+  "PreCompact",
+  "PostCompact",
+  "ConfigChange",
+  "WorktreeCreate",
+  "MessageDisplay",
+]);
+/** Events that discard `continue` only. */
+const DISCARDS_CONTINUE = new Set<HookEventName>(["CwdChanged", "FileChanged", "DirectoryAdded"]);
+/** Exit 2 sends these events back to work; `onFailure` has no effect on them. */
+const CONTINUATION_EVENTS = new Set<HookEventName>([
+  "Stop",
+  "SubagentStop",
+  "TaskCompleted",
+  "TeammateIdle",
+]);
+const TOOL_EVENTS = new Set<HookEventName>(["PreToolUse", "PostToolUse", "PostToolUseFailure"]);
+/** Settings files share one copy of an identical handler; plugin and skill copies stay separate. */
+const SETTINGS_KINDS = new Set<HookSource["kind"]>(["managed", "user", "project", "local"]);
 const MODEL_HANDLER_EVENTS = new Set<HookEventName>([
   "PermissionDenied",
   "PermissionRequest",
@@ -92,6 +132,81 @@ function glob(pattern: string, value: string): boolean {
   return false;
 }
 
+/**
+ * The subcommands a Bash command runs: each `&&`, `||`, `;`, `|`, or newline
+ * segment, plus the commands inside `$()` and backticks, each with leading
+ * `VAR=value` assignments removed.
+ */
+function bashSubcommands(command: string): string[] {
+  const nested = [
+    ...[...command.matchAll(/\$\(([^()]*)\)/g)].map((found) => found[1] ?? ""),
+    ...[...command.matchAll(/`([^`]*)`/g)].map((found) => found[1] ?? ""),
+  ];
+  return [command, ...nested]
+    .flatMap((text) => text.split(/&&|\|\||;|\||\n/))
+    .map((part) =>
+      part.trim().replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S*)\s+)+/, ""),
+    )
+    .filter(Boolean);
+}
+
+function bashPatternMatches(pattern: string, subcommand: string): boolean {
+  // Legacy `prefix:*` matches the prefix alone or followed by arguments.
+  if (pattern.endsWith(":*")) {
+    const prefix = pattern.slice(0, -2);
+    return subcommand === prefix || subcommand.startsWith(`${prefix} `);
+  }
+  // `git *` covers `git` with any arguments, including none.
+  if (pattern.endsWith(" *") && subcommand === pattern.slice(0, -2)) return true;
+  return glob(pattern, subcommand);
+}
+
+function matchesBash(pattern: string, command: string): boolean {
+  if (!pattern || pattern === "*") return true;
+  if (bashSubcommands(command).some((part) => bashPatternMatches(pattern, part))) return true;
+  // A pattern naming more than the command runs anyway when expansion hides what runs.
+  const words = pattern.replace(/:\*$/, "").trim().split(/\s+/);
+  const specific = words.slice(1).some((word) => word !== "*");
+  return specific && /\$\(|`|\$[A-Za-z_{]/.test(command);
+}
+
+function pathGlobRegex(pattern: string): RegExp {
+  let source = "";
+  for (let index = 0; index < pattern.length; index++) {
+    const character = pattern[index] ?? "";
+    if (character === "*" && pattern[index + 1] === "*") {
+      index++;
+      if (pattern[index + 1] === "/") {
+        index++;
+        source += "(?:.*/)?";
+      } else source += ".*";
+    } else if (character === "*") source += "[^/]*";
+    else if (character === "?") source += "[^/]";
+    else source += character.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${source}$`);
+}
+
+/**
+ * File-tool rules use gitignore-style paths: `//abs` is absolute, `~/` is under
+ * home, a pattern with a slash is relative to the working directory, and one
+ * without a slash matches a file name at any depth.
+ */
+function matchesFilePath(pattern: string, filePath: string, cwd: string): boolean {
+  if (!pattern || pattern === "*" || pattern === "**") return true;
+  const absolute = filePath.replaceAll("\\", "/");
+  const root = cwd.replaceAll("\\", "/").replace(/\/$/, "");
+  const relative = absolute.startsWith(`${root}/`) ? absolute.slice(root.length + 1) : absolute;
+  if (pattern.startsWith("//")) return pathGlobRegex(pattern.slice(1)).test(absolute);
+  if (pattern.startsWith("~/"))
+    return pathGlobRegex(`${os.homedir().replaceAll("\\", "/")}/${pattern.slice(2)}`).test(
+      absolute,
+    );
+  const local = pattern.replace(/^\.?\//, "");
+  if (!local.includes("/")) return pathGlobRegex(`**/${local}`).test(relative);
+  return pathGlobRegex(local).test(relative);
+}
+
 export function matchesIf(
   rule: string | undefined,
   event: HookEventName,
@@ -108,17 +223,26 @@ export function matchesIf(
     ].includes(event)
   )
     return false;
-  const match = rule.match(/^([^()]+)\((.*)\)$/);
-  if (!match || String(input.tool_name ?? "") !== match[1]) return false;
-  const pattern = match[2] ?? "";
-  const toolInput = input.tool_input;
-  const toolRecord = parseRuntimeRecord(toolInput);
+  const toolName = String(input.tool_name ?? "");
+  const match = rule.match(/^([^()]+)(?:\((.*)\))?$/);
+  if (!match) return false;
+  const ruleTool = (match[1] ?? "").trim();
+  // `mcp__server` names every tool from that server.
+  const toolMatches =
+    ruleTool === toolName ||
+    (ruleTool.startsWith("mcp__") &&
+      ruleTool.split("__").length === 2 &&
+      toolName.startsWith(`${ruleTool}__`));
+  if (!toolMatches) return false;
+  const pattern = match[2];
+  if (pattern === undefined) return true;
+  const toolRecord = parseRuntimeRecord(input.tool_input);
   if (!toolRecord) return pattern === "";
-  const candidate = String(toolRecord.command ?? toolRecord.file_path ?? toolRecord.path ?? "");
-  if (glob(pattern, candidate)) return true;
-  if (String(input.tool_name) === "Bash")
-    return candidate.split(/(?:&&|\|\||;|\n)/).some((part) => glob(pattern, part.trim()));
-  return false;
+  if (isStringValue(toolRecord.command) && (toolName === "Bash" || toolName === "PowerShell"))
+    return matchesBash(pattern, toolRecord.command);
+  const filePath = toolRecord.file_path ?? toolRecord.path;
+  if (isStringValue(filePath)) return matchesFilePath(pattern, filePath, input.cwd);
+  return glob(pattern, String(toolRecord.command ?? ""));
 }
 
 function validTerminalSequence(value: string): boolean {
@@ -149,26 +273,77 @@ function validTerminalSequence(value: string): boolean {
   return true;
 }
 
+interface ModelDecision {
+  output?: HookOutput;
+  modelBlock?: boolean;
+}
+
+/**
+ * Translate a prompt or agent hook's `{ok, reason}` answer into the outcome
+ * Claude Code gives it on each event. Agent hooks always behave as a prompt
+ * hook with `continueOnBlock: true`.
+ */
 function modelOutput(
   event: HookEventName,
   handler: HookHandler,
   parsed: HookOutput | undefined,
-): HookOutput | undefined {
-  if ((handler.type !== "prompt" && handler.type !== "agent") || !parsed) return parsed;
+): ModelDecision {
+  if ((handler.type !== "prompt" && handler.type !== "agent") || !parsed) return { output: parsed };
   const ok = parsed.ok;
-  if (ok === true) return {};
-  if (ok !== false || !isStringValue(parsed.reason)) return undefined;
-  if (
-    handler.type === "prompt" &&
-    parsed.impossible === true &&
-    (event === "Stop" || event === "SubagentStop")
-  )
-    return {};
-  return { decision: "block", reason: parsed.reason, impossible: parsed.impossible };
+  if (ok === true) return { output: {} };
+  if (ok !== false || !isStringValue(parsed.reason)) return {};
+  const reason = parsed.reason;
+  const continueOnBlock = handler.type === "agent" || handler.continueOnBlock === true;
+  const stop: HookOutput = { continue: false, stopReason: reason };
+  switch (event) {
+    case "Stop":
+    case "SubagentStop":
+      if (handler.type === "prompt" && parsed.impossible === true) return { output: {} };
+      return { output: { decision: "block", reason } };
+    case "PreToolUse": {
+      const deny: HookOutput = {
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+          permissionDecisionReason: reason,
+        },
+      };
+      return { output: continueOnBlock ? deny : { ...deny, ...stop } };
+    }
+    case "PostToolUse":
+      return { output: continueOnBlock ? { decision: "block", reason } : stop };
+    case "TeammateIdle":
+      return continueOnBlock ? { output: { reason }, modelBlock: true } : { output: stop };
+    case "TaskCompleted":
+      return { output: { reason }, modelBlock: true };
+    case "PermissionRequest":
+    case "PermissionDenied":
+      return { output: {} };
+    default:
+      return { output: { decision: "block", reason } };
+  }
 }
 
-function handlerKey(handler: HookHandler): string {
-  return JSON.stringify(handler);
+function handlerKey(source: HookSource, handler: HookHandler): string {
+  const scope = SETTINGS_KINDS.has(source.kind) ? "settings" : `${source.kind}:${source.id}`;
+  return `${scope}:${JSON.stringify(handler)}`;
+}
+
+function handlerLabel(handler: HookHandler): string {
+  if (handler.type === "command") return [handler.command, ...(handler.args ?? [])].join(" ");
+  if (handler.type === "http") return handler.url;
+  if (handler.type === "mcp_tool") return `${handler.server}:${handler.tool}`;
+  return handler.type;
+}
+
+/** `Stop`, `SubagentStop`, and `TaskCompleted` treat a hook whose file is missing as non-blocking. */
+function missingHookFile(event: HookEventName, raw: RawExecution): boolean {
+  return (
+    (event === "Stop" || event === "SubagentStop" || event === "TaskCompleted") &&
+    raw.exitCode === 2 &&
+    !raw.stdout.trim() &&
+    /No such file or directory/.test(raw.stderr)
+  );
 }
 
 export class HookEngine {
@@ -216,21 +391,27 @@ export class HookEngine {
               : configuredHandler;
           if (!supportsHandler(event, handler)) continue;
           if (!matchesIf(handler.if, event, input)) continue;
-          const key = `${source.kind}:${handlerKey(handler)}`;
+          const key = handlerKey(source, handler);
           const once = source.kind === "skill" && handler.once === true;
           if (seen.has(key) || (once && this.#once.has(key))) continue;
           seen.add(key);
-          if (once) this.#once.add(key);
           jobs.push({ source, handler, key });
         }
       }
+    const timeouts =
+      event === "SessionEnd" ? sessionEndTimeouts(jobs.map((job) => job.handler)) : undefined;
     let completionOrder = 0;
     const invocations = await Promise.all(
-      jobs.map(async ({ source, handler }) => {
+      jobs.map(async ({ source, handler, key }) => {
         if (handler.type === "command" && (handler.async || handler.asyncRewake)) {
-          const pending = executeHandler(handler, input, this.backends).then(async (raw) => {
+          const pending = executeHandler(
+            handler,
+            input,
+            this.backends,
+            timeouts?.get(handler),
+          ).then(async (raw) => {
             try {
-              const parsed = parseOutput(raw.stdout);
+              const parsed = parseAsyncOutput(raw.stdout);
               let status: HookInvocationResult["status"] = "success";
               if (raw.timedOut) status = "timeout";
               else if (raw.exitCode === 2) status = "blocking";
@@ -266,9 +447,16 @@ export class HookEngine {
             completionOrder: completionOrder++,
           } satisfies HookInvocationResult;
         }
-        const raw = await executeHandler(handler, input, this.backends);
+        const executed = await executeHandler(
+          handler,
+          input,
+          this.backends,
+          timeouts?.get(handler),
+        );
+        const raw = missingHookFile(event, executed) ? { ...executed, exitCode: 1 } : executed;
         const parsed = parseOutput(raw.stdout);
-        const output = modelOutput(event, handler, parsed.output);
+        const decision = modelOutput(event, handler, parsed.output);
+        let output = decision.output;
         const validationError =
           parsed.validationError ??
           (handler.type === "http" && parsed.plainText
@@ -277,20 +465,46 @@ export class HookEngine {
           ((handler.type === "prompt" || handler.type === "agent") && parsed.output && !output
             ? "invalid model hook response"
             : undefined);
-        const blocking = raw.exitCode === 2 && EXIT_TWO_BLOCKS.has(event);
+        let exitCode = raw.exitCode;
+        let stderr = raw.stderr;
+        // A failure of a hook set to `onFailure: "block"` acts as exit code 2 on its event.
+        const failed =
+          raw.timedOut === true ||
+          (exitCode !== 0 && exitCode !== 2) ||
+          validationError !== undefined;
+        if (
+          (handler.type === "command" || handler.type === "http") &&
+          handler.onFailure === "block" &&
+          failed &&
+          !CONTINUATION_EVENTS.has(event)
+        ) {
+          const what = raw.timedOut ? "timed out" : "failed";
+          stderr = [`${what}; blocking because onFailure is "block"`, raw.stderr.trim()]
+            .filter(Boolean)
+            .join("\n");
+          exitCode = 2;
+          output = undefined;
+        }
+        if (exitCode === 2 && TOOL_EVENTS.has(event))
+          stderr = `${event}:${String(input.tool_name ?? "")} hook error: [${handlerLabel(handler)}]: ${stderr.trim()}`;
+        const blocking = exitCode === 2 && EXIT_TWO_BLOCKS.has(event);
         let status: HookInvocationResult["status"] = "success";
         if (raw.timedOut) status = "timeout";
         else if (blocking) status = "blocking";
-        else if (validationError || (raw.exitCode !== 0 && !output)) status = "error";
+        else if (validationError || (exitCode !== 0 && !output)) status = "error";
+        // A skill hook with `once: true` is removed only after its first successful run.
+        if (status === "success" && source.kind === "skill" && handler.once === true)
+          this.#once.add(key);
         return {
           source,
           handler,
           status,
-          exitCode: raw.exitCode,
+          exitCode,
           output,
           plainText: parsed.plainText,
-          stderr: raw.stderr,
+          stderr,
           error: validationError,
+          modelBlock: decision.modelBlock,
           completionOrder: completionOrder++,
         } satisfies HookInvocationResult;
       }),
@@ -313,11 +527,11 @@ export function mergeResults(
 ): MergedHookResult {
   let blocked = false;
   let continueProcessing = true;
-  let reason: string | undefined;
   let permissionDecision: MergedHookResult["permissionDecision"];
   let permissionRequestDecision: MergedHookResult["permissionRequestDecision"];
   let updatedInput: JsonObject | undefined;
   let updatedToolOutput: JsonValue | undefined;
+  let updatedMCPToolOutput: JsonValue | undefined;
   let displayContent: string | undefined;
   let worktreePath: string | undefined;
   let retry: boolean | undefined;
@@ -328,15 +542,35 @@ export function mergeResults(
   let watchPaths: string[] | undefined;
   let reloadSkills: boolean | undefined;
   let updatedPermissions: JsonValue[] | undefined;
+  let suppressOriginalPrompt: boolean | undefined;
+  let exitReason: string | undefined;
+  let decisionReason: string | undefined;
+  let stopReason: string | undefined;
   const systemMessages: string[] = [];
   const terminalSequences: string[] = [];
   const additionalContext: string[] = [];
+  const exitTwoStderr: string[] = [];
+  const discardsOutput = DISCARDS_OUTPUT.has(event);
+  const discardsMessage = discardsOutput || DISCARDS_MESSAGE.has(event);
+  const discardsContinue = discardsMessage || DISCARDS_CONTINUE.has(event);
   for (const item of invocations) {
     const output = item.output;
+    if (item.exitCode === 2 && item.stderr) exitTwoStderr.push(item.stderr);
     if (item.exitCode === 2 && EXIT_TWO_BLOCKS.has(event)) {
       blocked = true;
-      reason ??= item.stderr;
+      exitReason ??= item.stderr;
     }
+    if (item.modelBlock) {
+      blocked = true;
+      decisionReason ??= isStringValue(output?.reason) ? output.reason : undefined;
+    }
+    if (output && isStringValue(output.terminalSequence)) {
+      if (validTerminalSequence(output.terminalSequence))
+        terminalSequences.push(output.terminalSequence);
+      else if (!discardsMessage)
+        systemMessages.push("Hook returned a disallowed terminal sequence");
+    }
+    if (discardsOutput) continue;
     if (!output) {
       if (item.plainText && PLAIN_CONTEXT.has(event) && item.exitCode === 0)
         additionalContext.push(item.plainText);
@@ -344,22 +578,18 @@ export function mergeResults(
         worktreePath = item.plainText.trim().split(/\r?\n/).filter(Boolean).at(-1);
       continue;
     }
-    if (output.continue === false) {
+    if (output.continue === false && !discardsContinue) {
       continueProcessing = false;
-      reason ??= isStringValue(output.stopReason) ? output.stopReason : undefined;
+      stopReason ??= isStringValue(output.stopReason) ? output.stopReason : undefined;
     }
-    if (isStringValue(output.systemMessage)) systemMessages.push(output.systemMessage);
+    if (isStringValue(output.systemMessage) && !discardsMessage)
+      systemMessages.push(output.systemMessage);
     if (isStringValue(output.additionalContext)) additionalContext.push(output.additionalContext);
     if (event === "PostToolUse" && output.updatedToolOutput !== undefined)
       updatedToolOutput = output.updatedToolOutput;
-    if (isStringValue(output.terminalSequence)) {
-      if (validTerminalSequence(output.terminalSequence))
-        terminalSequences.push(output.terminalSequence);
-      else systemMessages.push("Hook returned a disallowed terminal sequence");
-    }
     if (output.decision === "block" && DECISION_BLOCKS.has(event)) {
       blocked = true;
-      reason ??= output.reason;
+      decisionReason ??= output.reason;
     }
     const specific =
       item.exitCode === 2 && (event === "Elicitation" || event === "ElicitationResult")
@@ -374,10 +604,10 @@ export function mergeResults(
       additionalContext.push(specific.additionalContext);
     const candidate = specific.permissionDecision;
     if (
-      event === "PreToolUse" &&
+      (event === "PreToolUse" || event === "PreModelSwitch") &&
       (candidate === "allow" ||
         candidate === "ask" ||
-        candidate === "defer" ||
+        (candidate === "defer" && event === "PreToolUse") ||
         candidate === "deny")
     ) {
       if (
@@ -385,11 +615,11 @@ export function mergeResults(
         PERMISSION_ORDER[candidate] > PERMISSION_ORDER[permissionDecision]
       ) {
         permissionDecision = candidate;
-        reason = isStringValue(specific.permissionDecisionReason)
-          ? specific.permissionDecisionReason
-          : reason;
+        if (isStringValue(specific.permissionDecisionReason))
+          decisionReason = specific.permissionDecisionReason;
       }
       if (
+        event === "PreToolUse" &&
         (candidate === "allow" || candidate === "ask") &&
         specific.updatedInput &&
         parseRuntimeRecord(specific.updatedInput)
@@ -400,6 +630,8 @@ export function mergeResults(
     }
     if (event === "PostToolUse" && specific.updatedToolOutput !== undefined)
       updatedToolOutput = specific.updatedToolOutput;
+    if (event === "PostToolUse" && specific.updatedMCPToolOutput !== undefined)
+      updatedMCPToolOutput = specific.updatedMCPToolOutput;
     if (event === "MessageDisplay" && isStringValue(specific.displayContent))
       displayContent = specific.displayContent;
     if (event === "WorktreeCreate" && isStringValue(specific.worktreePath))
@@ -414,7 +646,7 @@ export function mergeResults(
       if (decision.behavior === "deny") {
         permissionRequestDecision = "deny";
         blocked = true;
-        reason = isStringValue(decision.message) ? decision.message : reason;
+        if (isStringValue(decision.message)) decisionReason = decision.message;
       }
       if (decision.behavior === "allow") permissionRequestDecision = "allow";
       if (decision.behavior === "allow" && Array.isArray(decision.updatedPermissions))
@@ -447,6 +679,10 @@ export function mergeResults(
       }
       if (specific.reloadSkills === true) reloadSkills = true;
     }
+    if (event === "UserPromptSubmit") {
+      if (isStringValue(specific.sessionTitle)) sessionTitle = specific.sessionTitle;
+      if (specific.suppressOriginalPrompt === true) suppressOriginalPrompt = true;
+    }
     if (
       (event === "CwdChanged" || event === "FileChanged") &&
       Array.isArray(specific.watchPaths) &&
@@ -457,6 +693,10 @@ export function mergeResults(
     }
   }
   if (permissionDecision === "deny") blocked = true;
+  // `continue: false` takes precedence; a JSON decision's reason replaces exit-code stderr.
+  const reason = continueProcessing
+    ? (decisionReason ?? exitReason ?? stopReason)
+    : (stopReason ?? decisionReason ?? exitReason);
   return {
     invocations,
     blocked,
@@ -465,10 +705,12 @@ export function mergeResults(
     systemMessages,
     terminalSequences,
     additionalContext,
+    exitTwoStderr,
     permissionDecision,
     permissionRequestDecision,
     updatedInput,
     updatedToolOutput,
+    updatedMCPToolOutput,
     displayContent,
     worktreePath,
     retry,
@@ -476,6 +718,7 @@ export function mergeResults(
     elicitationContent,
     initialUserMessage,
     sessionTitle,
+    suppressOriginalPrompt,
     watchPaths,
     reloadSkills,
     updatedPermissions,

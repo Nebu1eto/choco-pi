@@ -48,6 +48,7 @@ interface SessionContextDouble {
   readonly sessionManager: {
     getSessionId(): string;
     getSessionFile(): undefined;
+    getSessionName(): undefined;
     getEntries(): CustomEntry[];
   };
 }
@@ -61,7 +62,7 @@ function sessionContext(sessionId: string, parentSessionId?: string): ExtensionC
           parentId: null,
           timestamp: "",
           customType: "choco-pi:subagent",
-          data: { parentSessionId },
+          data: { parentSessionId, agentId: `agent-${sessionId}`, agentType: "Explore" },
         },
       ]
     : [];
@@ -73,6 +74,7 @@ function sessionContext(sessionId: string, parentSessionId?: string): ExtensionC
     sessionManager: {
       getSessionId: () => sessionId,
       getSessionFile: () => undefined,
+      getSessionName: () => undefined,
       getEntries: () => entries,
     },
   };
@@ -80,7 +82,7 @@ function sessionContext(sessionId: string, parentSessionId?: string): ExtensionC
   return double as ExtensionContext;
 }
 
-test("subagent hook input names its top-level session through shutdown", async (t) => {
+test("subagent hooks fire in the top-level session and skip session-level events", async (t) => {
   const inputs: HookInput[] = [];
   t.mock.method(HookEngine.prototype, "run", async (input: HookInput) => {
     inputs.push(input);
@@ -106,6 +108,20 @@ test("subagent hook input names its top-level session through shutdown", async (
   try {
     for (const [index, [id, parent]] of sessions.entries())
       await hooks[index]?.emit("session_start", { reason: "startup" }, sessionContext(id, parent));
+    for (const [index, [id, parent]] of sessions.entries()) {
+      const ctx = sessionContext(id, parent);
+      await hooks[index]?.emit("input", { source: "interactive", text: "task", images: [] }, ctx);
+      await hooks[index]?.emit(
+        "before_agent_start",
+        { messageType: "user", prompt: "task", systemPromptOptions: {} },
+        ctx,
+      );
+      await hooks[index]?.emit(
+        "tool_call",
+        { toolName: "read", toolCallId: `call-${id}`, input: { path: "x" } },
+        ctx,
+      );
+    }
     // The subagents manager drops a child id before emitting its shutdown.
     children.clear();
     for (const [index, [id, parent]] of sessions.entries())
@@ -114,13 +130,37 @@ test("subagent hook input names its top-level session through shutdown", async (
     for (const hook of hooks) hook.dispose();
   }
 
-  const roots = (event: string) =>
-    Object.fromEntries(
-      inputs
-        .filter((input) => input.hook_event_name === event)
-        .map((input) => [input.session_id, input.root_session_id ?? null]),
-    );
-  const expected = { root: null, child: "root", grandchild: "root", resumed: null };
-  assert.deepEqual(roots("SessionStart"), expected);
-  assert.deepEqual(roots("SessionEnd"), expected);
+  const fired = (event: string) =>
+    inputs
+      .filter((input) => input.hook_event_name === event)
+      .map((input) => [
+        input.session_id,
+        input.agent_id ?? null,
+        input.agent_type ?? null,
+        input.root_session_id ?? null,
+      ]);
+  // Session-level and prompt events belong to top-level sessions only.
+  assert.deepEqual(fired("SessionStart"), [
+    ["root", null, null, null],
+    ["resumed", null, null, null],
+  ]);
+  assert.deepEqual(
+    fired("UserPromptSubmit").map(([id]) => id),
+    ["root", "resumed"],
+  );
+  assert.deepEqual(
+    fired("SessionEnd").map(([id]) => id),
+    ["root", "resumed"],
+  );
+  // A subagent's hooks carry its top-level session id and its own identity.
+  assert.deepEqual(fired("SubagentStart"), [
+    ["root", "agent-child", "Explore", "root"],
+    ["root", "agent-grandchild", "Explore", "root"],
+  ]);
+  assert.deepEqual(fired("PreToolUse"), [
+    ["root", null, null, null],
+    ["root", "agent-child", "Explore", "root"],
+    ["root", "agent-grandchild", "Explore", "root"],
+    ["resumed", null, null, null],
+  ]);
 });

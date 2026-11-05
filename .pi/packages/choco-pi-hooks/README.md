@@ -7,21 +7,28 @@
 - Pi preferred: `$PI_CODING_AGENT_DIR/settings.json`, `<project>/.pi/settings.json`, `<project>/.pi/settings.local.json`
 - caller-provided managed, plugin, skill, agent, and session sources
 
-The engine exports all 31 documented hook event names and supports command, HTTP, prompt, and agent handlers. The Pi extension supplies the model backend and bridges task, sub-agent, worktree, configuration, file, and session events. `mcp_tool` handlers still parse but fail with a message to use a command hook, because Pi's built-in MCP runs tools only inside tool calls. `PermissionRequest` and `PermissionDenied` are ignored because Pi has no permission subsystem.
+The engine exports all 33 documented hook event names and supports command, HTTP, prompt, and agent handlers. The Pi extension supplies the model backend and bridges task, sub-agent, worktree, configuration, file, and session events. `mcp_tool` handlers still parse but fail with a message to use a command hook, because Pi's built-in MCP runs tools only inside tool calls. `PermissionRequest` and `PermissionDenied` are ignored because Pi has no permission subsystem.
 
 ## Pi integration
 
 The bundled extension maps Pi lifecycle events to their direct Claude Code equivalents:
 
-- `session_start` → `SessionStart`
-- `input` → `UserPromptSubmit`
+- `session_start` → `SessionStart` (`new` arrives as `clear`), and again with `compact` after each compaction
+- `input` → `UserPromptSubmit`, also for runs started by an idle custom message such as a subagent report
 - `tool_call` → `PreToolUse`
 - successful or failed `tool_result` → `PostToolUse` or `PostToolUseFailure`
+- `turn_end` after tool calls → `PostToolBatch`
 - `session_before_compact` / `session_compact` → `PreCompact` / `PostCompact`
-- `agent_end` → `Stop`
+- `model_select` → `PostModelSwitch`
+- `agent_end` → `Stop`, or `SubagentStop` in a subagent session
+- `before_agent_start` in a subagent session → `SubagentStart`
 - `session_shutdown` → `SessionEnd`
 
-A blocking `Stop` reason or `additionalContext` from `Stop` hooks continues the session with a follow-up message. Both count against `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP` (default 8), which resets on the next user input.
+A blocking `Stop` or `SubagentStop` reason, or their `additionalContext`, continues the session with a follow-up message. Both count against `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP` (default 8), which resets on the next tool call or user input.
+
+### Subagent sessions
+
+Each subagent is a separate Pi session in the parent's process, but Claude Code runs a subagent's hooks as part of the parent session. Hook input from a subagent session therefore carries the top-level session's `session_id` and `transcript_path`, plus `agent_id`, `agent_type`, and the choco-pi field `root_session_id`. A subagent session fires tool, compaction, task, and instruction events, plus `SubagentStart` (whose `additionalContext` reaches the subagent) and `SubagentStop` (which can keep it working). It never fires `SessionStart`, `Setup`, `SessionEnd`, prompt, `Stop`, `StopFailure`, idle-notification, display, model-switch, working-directory, or file-watcher events, so session-scoped hooks such as session naming run once per user session.
 
 `COMPATIBILITY.md` records every live binding and explicit host exclusion.
 

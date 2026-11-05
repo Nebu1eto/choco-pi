@@ -27,6 +27,8 @@ export const HOOK_EVENTS = [
   "WorktreeRemove",
   "PreCompact",
   "PostCompact",
+  "PreModelSwitch",
+  "PostModelSwitch",
   "Elicitation",
   "ElicitationResult",
   "SessionEnd",
@@ -75,12 +77,14 @@ export interface CommandHook extends HandlerCommon {
   async?: boolean;
   asyncRewake?: boolean;
   shell?: "bash" | "powershell";
+  onFailure?: "continue" | "block";
 }
 export interface HttpHook extends HandlerCommon {
   type: "http";
   url: string;
   headers?: Record<string, string>;
   allowedEnvVars?: string[];
+  onFailure?: "continue" | "block";
 }
 export interface McpToolHook extends HandlerCommon {
   type: "mcp_tool";
@@ -124,6 +128,8 @@ export interface HookInvocationResult {
   stderr?: string;
   error?: string;
   completionOrder?: number;
+  /** A prompt or agent hook answered `ok: false` on an event whose block is not a JSON decision. */
+  modelBlock?: boolean;
 }
 export interface MergedHookResult {
   invocations: HookInvocationResult[];
@@ -133,10 +139,14 @@ export interface MergedHookResult {
   systemMessages: string[];
   terminalSequences: string[];
   additionalContext: string[];
+  /** Stderr of every handler that exited 2, in completion order. */
+  exitTwoStderr: string[];
   permissionDecision?: "deny" | "defer" | "ask" | "allow";
   permissionRequestDecision?: "allow" | "deny";
   updatedInput?: JsonObject;
   updatedToolOutput?: JsonValue;
+  /** PostToolUse replacement that applies to MCP tools only. */
+  updatedMCPToolOutput?: JsonValue;
   displayContent?: string;
   worktreePath?: string;
   retry?: boolean;
@@ -144,6 +154,7 @@ export interface MergedHookResult {
   elicitationContent?: JsonObject;
   initialUserMessage?: string;
   sessionTitle?: string;
+  suppressOriginalPrompt?: boolean;
   watchPaths?: string[];
   reloadSkills?: boolean;
   updatedPermissions?: JsonValue[];

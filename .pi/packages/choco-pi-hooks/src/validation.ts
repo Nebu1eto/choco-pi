@@ -36,6 +36,9 @@ export interface RuntimeRecord {
   command?: RuntimeValue;
   file_path?: RuntimeValue;
   path?: RuntimeValue;
+  parentSessionId?: RuntimeValue;
+  agentId?: RuntimeValue;
+  agentType?: RuntimeValue;
 }
 
 export function isStringValue<Value>(value: Value): value is Value & string {
