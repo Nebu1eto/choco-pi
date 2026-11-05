@@ -73,6 +73,11 @@ export class NotificationGate<Record extends NotificationRecord> {
     if (this.keys.size === 0) this.clearTimer();
   }
 
+  /** Whether a completion notification is still held for delivery. */
+  hasPending(): boolean {
+    return this.keys.size > 0;
+  }
+
   agentStart(): void {
     this.streaming = true;
     this.turnBoundary = false;

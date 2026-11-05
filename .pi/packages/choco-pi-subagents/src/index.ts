@@ -265,6 +265,7 @@ import {
   type ReviewTicket,
 } from "./review-rounds.ts";
 import { isWorktreeIsolationEnabled, setWorktreeIsolationEnabled } from "./worktree.ts";
+import { installProgramStatusBridge, type ProgramStatusBridge } from "./program-status-bridge.ts";
 import {
   THINKING_LEVELS,
   thinkingLevelSchema,
@@ -573,6 +574,8 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   let shellSectionProvider: ShellSectionProvider | undefined;
   /** Root session this activation serves; set on session_start, cleared on shutdown. */
   let activeRootSessionId: string | undefined;
+  /** Keeps the root's terminal status `working` while its background agents run (TUI only). */
+  let programStatus: ProgramStatusBridge | undefined;
 
   // ---- Cancellable pending notifications ----
   // Holds notifications briefly so get_subagent_result can cancel them
@@ -646,6 +649,8 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         : "";
       return formatTaskNotification(record, limit) + footer;
     });
+    const triggerTurn = completionMayTriggerTurn(records);
+    if (triggerTurn) programStatus?.hold.expectWake();
     pi.sendMessage<NotificationDetails>(
       {
         customType: "subagent-notification",
@@ -653,7 +658,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         display: true,
         details,
       },
-      { deliverAs: "steer", triggerTurn: completionMayTriggerTurn(records) },
+      { deliverAs: "steer", triggerTurn },
     );
   }
 
@@ -1587,6 +1592,23 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       focus.setUICtx(ctx.ui);
       sideConversations.setUICtx(ctx.ui, ctx.mode === "tui");
     }
+    programStatus?.dispose();
+    programStatus = undefined;
+    if (ownsManagerRegistry && ctx.mode === "tui" && ctx.hasUI) {
+      const statusCtx = ctx;
+      programStatus = installProgramStatusBridge(ctx.ui, {
+        isBackgroundBusy: () =>
+          manager.hasRunning() || notificationGate.hasPending() || workflowNudges.size > 0,
+        isRootIdle: () => {
+          try {
+            return statusCtx.isIdle() && !statusCtx.hasPendingMessages();
+          } catch {
+            // A replaced session's context is stale; its successor owns the status.
+            return false;
+          }
+        },
+      });
+    }
     if (ownsManagerRegistry && !unregisterPreferencesProvider) {
       unregisterPreferencesProvider = registerSubagentPreferencesProvider((providerCtx) =>
         createSettingsController(providerCtx),
@@ -1982,7 +2004,10 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     stopScheduler();
   });
 
-  pi.on("agent_start", () => notificationGate.agentStart());
+  pi.on("agent_start", () => {
+    notificationGate.agentStart();
+    programStatus?.hold.rootRunStarted();
+  });
   pi.on("agent_end", () => notificationGate.agentEnd());
   pi.on("turn_end", () => notificationGate.turnEnd());
 
@@ -2002,6 +2027,9 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     // context and before any future cleanup step can introduce an await.
     activeMentionCloneGeneration = undefined;
     mainCompaction.bind(undefined);
+    // Before agents are aborted: a held `done` is written only once nothing is pending.
+    programStatus?.dispose();
+    programStatus = undefined;
     // Likewise for a revival that has not started or is still preparing.
     revivalGeneration++;
     agentReloader.invalidate();
@@ -2127,6 +2155,11 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       // A deliberate workflow_cancel is not a failure: report it as stopped.
       const cancelled = result.status === "cancelled";
       const failed = result.status === "error" || result.status === "completed_with_errors";
+      const workflowTriggerTurn = mayTriggerTurn(
+        admission?.root ?? activeRootSessionId,
+        admission?.epoch,
+      );
+      if (workflowTriggerTurn) programStatus?.hold.expectWake();
       pi.sendMessage<NotificationDetails>(
         {
           customType: "subagent-notification",
@@ -2150,7 +2183,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         },
         {
           deliverAs: "steer",
-          triggerTurn: mayTriggerTurn(admission?.root ?? activeRootSessionId, admission?.epoch),
+          triggerTurn: workflowTriggerTurn,
         },
       );
     });

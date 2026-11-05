@@ -2184,3 +2184,19 @@ The package takes part in the root `/stop` coordinator (`choco-pi:stop-control/v
 - `src/agent-manager.ts`: `AgentRecord.admissionRoot`/`admissionEpoch` (types.ts) are set at spawn and refreshed at resume. Admission (`requireAdmissionOpen`, verbatim refusal) runs at the final boundary of `spawnWith` (so also revival), `resume` (and again after the model-switch await), `resumeDormant` (and again after `prepareRevival`), inside `prepareRun` after each await, in `drainQueue` and in the `queueBackgroundResume` start closure (queued and parked-continuation starts). A refused queued or parked item settles `stopped` with cause `user_stop`, error `ADMISSION_CLOSED_MESSAGE`, through its finalizer when it has one. The refusal precedes the review-ticket check so a refused launch never burns a ticket; `admitReviewRound` also refuses before reserving a round and gives the reservation back if `/stop` lands during it. New methods `stopAllForRoot`, `stopTreeForUser`, `findRecordForStop` route through the existing `stopRecord(record, true)` (cause `user_stop`; `abortAll` is never used) after cancelling workflows, and return `{ agents, workflows, ownerSessionIds, records, settled }`. `settled` waits on terminal publication (`publishTerminal`/`markTerminalConsumed`), released early when a record is removed or the manager is disposed, and bounded by 30 s. Worktree retention itself (P4a) is unchanged.
 - `src/ui/focus-mode.ts`: `/stop …` and `/resume-work` submitted from a focused agent's editor are not steered to the child; the focus input patch passes Enter through to the host's own submit handler (the same editor, `onSubmit` left unswapped) so the root command runs. Esc is unchanged. Needs the live-host check in P4b-V.
 - Tests: `tests/stop-control-participant.test.ts`; one additive case in `tests/stop-result-delivery.test.ts`.
+
+## 2026-11-05 choco-pi patch: terminal status stays working during background agents
+
+Pi reports `done` (OSC 7501) whenever the root run settles, so a terminal
+such as Rex notified when the main agent ended its turn with subagents still
+running and again after each completion's wake turn. `src/program-status-hold.ts`
+withholds a root `done` while agents run or queue, a completion notification
+is held, or a workflow nudge is pending, keeping the existing `working`
+record; error, blocked, idle, and working reports pass through and drop the
+hold. The held report is written unchanged once nothing is pending, no
+requested wake turn is outstanding (5 s grace), and the root is idle, so the
+user is notified once. `src/program-status-bridge.ts` reaches the TUI terminal
+through a zero-row below-editor widget removed at once, and wraps its
+`setProgramStatus` with the instance method-patch registry (new adapter
+`background-program-status`); without a TUI terminal Pi's reporting is
+untouched. `NotificationGate.hasPending()` is new.

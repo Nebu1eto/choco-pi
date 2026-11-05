@@ -5,8 +5,9 @@ export const SUBAGENT_METHOD_PATCH_REGISTRY = Symbol.for(
 type PatchAdapter =
   | "focused-conversation-render"
   | "focused-conversation-mouse"
-  | "focused-editor-input";
-type PatchMethod = "render" | "handleInput" | "handleMouse";
+  | "focused-editor-input"
+  | "background-program-status";
+type PatchMethod = "render" | "handleInput" | "handleMouse" | "setProgramStatus";
 type Method = (this: any, ...args: any[]) => any;
 
 type PatchInvocation = {
