@@ -41,8 +41,10 @@ In choco-pi, `.pi/settings.json` loads this package as `./packages/choco-pi-prov
 Once installed, select `synthetic` as your provider and choose from available models:
 
 ```
-/model synthetic hf:moonshotai/Kimi-K3
+/model synthetic hf:moonshotai/Kimi-K3.1-Pro
 ```
+
+Kimi K3.1 Pro is recommended over Kimi K3: it is Synthetic's newer Kimi model, with the same 524288-token context and image input at lower per-token prices. `hf:moonshotai/Kimi-K3` remains available.
 
 ### Models
 
@@ -87,7 +89,7 @@ levels that the API does not advertise. Its offline catalog currently maps:
 - `syn:small:text`, `hf:openai/gpt-oss-120b`, `hf:zai-org/GLM-4.7-Flash`, and
   `hf:nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4`: off, low, medium, and
   high.
-- `syn:large:vision` and `hf:moonshotai/Kimi-K3`: low, high, and max. These
+- `syn:large:vision`, `hf:moonshotai/Kimi-K3`, and `hf:moonshotai/Kimi-K3.1-Pro`: low, high, and max. These
   models do not advertise an off effort.
 - `hf:zai-org/GLM-5.3-Flash` and `hf:zai-org/GLM-5.3`: high and max. Their
   advertised low effort is hidden because probes returned empty content or

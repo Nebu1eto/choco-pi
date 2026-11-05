@@ -199,7 +199,7 @@ function structuredClaudeWindow(value: RuntimeValue): UsageWindow | undefined {
 const CLAUDE_RATE_LIMIT_TIERS = recordOf<string, string>()({
   default_claude_pro: "Pro",
   default_claude_max_5x: "Max (5x)",
-  default_claude_max_20x: "Max (20x)",
+  default_claude_max_20x: "Ultra",
 });
 
 const CLAUDE_SUBSCRIPTION_LABELS = recordOf<string, string>()({

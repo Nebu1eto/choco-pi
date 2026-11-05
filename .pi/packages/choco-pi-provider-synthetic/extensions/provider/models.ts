@@ -315,6 +315,36 @@ export const SYNTHETIC_MODELS: SyntheticModel[] = [
     contextWindow: 524288,
     maxTokens: 65536,
   },
+  // API: hf:moonshotai/Kimi-K3.1-Pro → ctx=524288, out=65536
+  // API efforts: ['low', 'high', 'max'] — reasoning is always on (no 'none'
+  // advertised), so off is hidden. Live API/store models get this map from
+  // reasoning_parameters.efforts instead.
+  {
+    id: "hf:moonshotai/Kimi-K3.1-Pro",
+    name: "moonshotai/Kimi-K3.1-Pro",
+    reasoning: true,
+    thinkingLevelMap: {
+      off: null,
+      minimal: null,
+      low: "low",
+      medium: null,
+      high: "high",
+      xhigh: null,
+      max: "max",
+    },
+    compat: {
+      supportsReasoningEffort: true,
+    },
+    input: ["text", "image"],
+    cost: {
+      input: 2,
+      output: 10,
+      cacheRead: 0.2,
+      cacheWrite: 0,
+    },
+    contextWindow: 524288,
+    maxTokens: 65536,
+  },
   // API: hf:Qwen/Qwen3.8-27B → ctx=262144, out=65536
   // API efforts: ['low', 'medium', 'xhigh'] — reasoning is always on, so off is hidden.
   {

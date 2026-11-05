@@ -238,10 +238,7 @@ test("labels Claude plans from the live profile, with Team seats before the rate
   });
   assert.equal(claudePlanLabel(profile({ rate_limit_tier: "default_claude_pro" })), "Pro");
   assert.equal(claudePlanLabel(profile({ rate_limit_tier: "default_claude_max_5x" })), "Max (5x)");
-  assert.equal(
-    claudePlanLabel(profile({ rate_limit_tier: "default_claude_max_20x" })),
-    "Max (20x)",
-  );
+  assert.equal(claudePlanLabel(profile({ rate_limit_tier: "default_claude_max_20x" })), "Ultra");
   assert.equal(
     claudePlanLabel(
       profile({
@@ -276,8 +273,8 @@ test("shows the Claude plan next to the usage windows", () => {
     },
     { organization: { rate_limit_tier: "default_claude_max_20x" } },
   );
-  assert.equal(usage.plan, "Max (20x)");
-  assert.match(formatProviderUsage(usage), /^Claude — Max \(20x\) · extra usage 4% used\n/);
+  assert.equal(usage.plan, "Ultra");
+  assert.match(formatProviderUsage(usage), /^Claude — Ultra · extra usage 4% used\n/);
 });
 
 test("labels ChatGPT Codex plans and keeps unknown wire values readable", () => {
@@ -724,11 +721,11 @@ test("shares the snapshot and the gate with the next session", async () => {
 test("marks a usage report that was rebuilt from the cache", () => {
   const report = formatProviderUsage({
     name: "Claude",
-    plan: "Max (20x)",
+    plan: "Ultra",
     cached: { at: new Date(Date.now() - 12 * 60_000), reason: "HTTP 429" },
     windows: [{ label: "5h", percent: 40, qualifier: "used" }],
   });
-  assert.match(report, /^Claude — Max \(20x\) · cached 12m ago · HTTP 429\n/);
+  assert.match(report, /^Claude — Ultra · cached 12m ago · HTTP 429\n/);
   assert.match(
     formatProviderUsage({
       name: "Synthetic",
