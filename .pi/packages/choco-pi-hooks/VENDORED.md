@@ -30,6 +30,11 @@ Stop, background DirectoryAdded, line-batched MessageDisplay,
 per-event output discarding. `if` rules match Bash subcommands and
 substitutions and gitignore-style file paths.
 
+Background command hooks are cancelled at `session_shutdown`: those already
+running before SessionEnd, then SessionEnd's own after the SessionEnd budget.
+A cancelled hook delivers no result, so an untimed `async` hook can no longer
+block session replacement or exit.
+
 ## 2026-10-12 choco-pi patch: subagent hook input names its root session
 
 Subagents run in the parent's process and share its terminal, so hook

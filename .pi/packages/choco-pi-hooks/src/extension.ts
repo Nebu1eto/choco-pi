@@ -19,7 +19,7 @@ import {
 import { loadHookSources } from "./config.ts";
 import { createPiHookBackends } from "./backends.ts";
 import { HookEngine } from "./engine.ts";
-import { PROJECT_DIR_FIELD } from "./executor.ts";
+import { PROJECT_DIR_FIELD, sessionEndBudget } from "./executor.ts";
 import { hookOutputDirectory, limitHookResult } from "./output-limits.ts";
 import {
   registerRootSession,
@@ -884,12 +884,27 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
   pi.on("session_shutdown", async (event, ctx) => {
     disposeExternalProducers();
     const mode = ctx.mode;
+    // Background hooks deliver results only while their session runs: end
+    // those still running, then give SessionEnd's own a bounded wait.
+    engine.cancelBackground();
     if (identity) unregisterSubagentSession(sessionId);
     else {
       unregisterRoot?.();
       unregisterRoot = undefined;
       await dispatch("SessionEnd", ctx, { reason: endReason(event.reason, mode) });
     }
+    let budget: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      engine.waitForBackground(),
+      new Promise<void>((resolve) => {
+        const handlers = currentSources.flatMap((source) =>
+          (source.hooks.SessionEnd ?? []).flatMap((group) => group.hooks),
+        );
+        budget = setTimeout(resolve, sessionEndBudget(handlers));
+      }),
+    ]);
+    clearTimeout(budget);
+    engine.cancelBackground();
     await engine.waitForBackground();
     removeHookEnvironment(envFile);
   });

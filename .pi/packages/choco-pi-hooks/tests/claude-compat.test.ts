@@ -233,3 +233,37 @@ test("a subagent runs SubagentStop instead of Stop and a block keeps it working"
   assert.equal(stop?.last_assistant_message, "done");
   assert.deepEqual(followUps, ["run the tests first"]);
 });
+
+test("an untimed async hook is cancelled at teardown instead of blocking it", async () => {
+  const engine = new HookEngine([
+    source({
+      SessionStart: [
+        {
+          hooks: [
+            {
+              type: "command",
+              command: "node",
+              args: ["-e", "setInterval(() => {}, 1000)"],
+              async: true,
+              timeout: 1,
+            },
+          ],
+        },
+      ],
+    }),
+  ]);
+  const delivered: string[] = [];
+  engine.backends.onAsyncResult = () => {
+    delivered.push("result");
+  };
+  await engine.run({ ...input("SessionStart", { source: "startup" }), cwd: process.cwd() });
+  // Still running after its timeout: background command hooks are not bounded by it.
+  const settled = await Promise.race([
+    engine.waitForBackground().then(() => true),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 1_500)),
+  ]);
+  assert.equal(settled, false);
+  engine.cancelBackground();
+  await engine.waitForBackground();
+  assert.deepEqual(delivered, [], "a cancelled hook delivers nothing to an ending session");
+});

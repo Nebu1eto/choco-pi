@@ -70,13 +70,20 @@ function sessionEndOverrideMs(): number | undefined {
  * `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS`, which also becomes the default for
  * handlers without their own `timeout`.
  */
-export function sessionEndTimeouts(handlers: HookHandler[]): Map<HookHandler, number> {
-  const override = sessionEndOverrideMs();
+/** The shared SessionEnd budget for these handlers. */
+export function sessionEndBudget(handlers: HookHandler[]): number {
   const configured = handlers.flatMap((handler) =>
     handler.timeout === undefined ? [] : [handler.timeout * 1000],
   );
-  const budget =
-    override ?? Math.min(SESSION_END_MAX_MS, Math.max(SESSION_END_DEFAULT_MS, ...configured));
+  return (
+    sessionEndOverrideMs() ??
+    Math.min(SESSION_END_MAX_MS, Math.max(SESSION_END_DEFAULT_MS, ...configured))
+  );
+}
+
+export function sessionEndTimeouts(handlers: HookHandler[]): Map<HookHandler, number> {
+  const override = sessionEndOverrideMs();
+  const budget = sessionEndBudget(handlers);
   return new Map(
     handlers.map((handler) => [
       handler,
@@ -362,8 +369,13 @@ export async function executeHandler(
   input: HookInput,
   backends: HookBackends = {},
   timeoutMs?: number,
+  cancel?: AbortSignal,
 ): Promise<RawExecution> {
   const controller = new AbortController();
+  // Teardown cancellation ends a run that its timeout does not bound.
+  const onCancel = () => controller.abort();
+  if (cancel?.aborted) controller.abort();
+  else cancel?.addEventListener("abort", onCancel, { once: true });
   // A background command hook is not bounded by its timeout; `asyncRewake` still is.
   const timer = runsWithoutTimeout(handler)
     ? undefined
@@ -404,5 +416,6 @@ export async function executeHandler(
     };
   } finally {
     clearTimeout(timer);
+    cancel?.removeEventListener("abort", onCancel);
   }
 }

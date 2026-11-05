@@ -349,6 +349,8 @@ function missingHookFile(event: HookEventName, raw: RawExecution): boolean {
 export class HookEngine {
   readonly #once = new Set<string>();
   readonly #background = new Set<Promise<void>>();
+  /** Cancels background hooks still running when their session tears down. */
+  #backgroundCancel = new AbortController();
   readonly sources: HookSource[];
   readonly backends: HookBackends;
   readonly #httpUrlAllowlist: string[] | undefined;
@@ -404,12 +406,16 @@ export class HookEngine {
     const invocations = await Promise.all(
       jobs.map(async ({ source, handler, key }) => {
         if (handler.type === "command" && (handler.async || handler.asyncRewake)) {
+          const cancel = this.#backgroundCancel.signal;
           const pending = executeHandler(
             handler,
             input,
             this.backends,
             timeouts?.get(handler),
+            cancel,
           ).then(async (raw) => {
+            // A cancelled hook's output belongs to a session that is ending.
+            if (cancel.aborted) return;
             try {
               const parsed = parseAsyncOutput(raw.stdout);
               let status: HookInvocationResult["status"] = "success";
@@ -518,6 +524,12 @@ export class HookEngine {
 
   async waitForBackground(): Promise<void> {
     await Promise.all(this.#background);
+  }
+
+  /** Cancel every running background hook; hooks started later are unaffected. */
+  cancelBackground(): void {
+    this.#backgroundCancel.abort();
+    this.#backgroundCancel = new AbortController();
   }
 }
 
