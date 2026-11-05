@@ -887,6 +887,11 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
     // Background hooks deliver results only while their session runs: end
     // those still running, then give SessionEnd's own a bounded wait.
     engine.cancelBackground();
+    // One SessionEnd budget covers its synchronous and background hooks alike.
+    const handlers = currentSources.flatMap((source) =>
+      (source.hooks.SessionEnd ?? []).flatMap((group) => group.hooks),
+    );
+    const deadline = Date.now() + sessionEndBudget(handlers);
     if (identity) unregisterSubagentSession(sessionId);
     else {
       unregisterRoot?.();
@@ -897,10 +902,7 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
     await Promise.race([
       engine.waitForBackground(),
       new Promise<void>((resolve) => {
-        const handlers = currentSources.flatMap((source) =>
-          (source.hooks.SessionEnd ?? []).flatMap((group) => group.hooks),
-        );
-        budget = setTimeout(resolve, sessionEndBudget(handlers));
+        budget = setTimeout(resolve, Math.max(0, deadline - Date.now()));
       }),
     ]);
     clearTimeout(budget);
