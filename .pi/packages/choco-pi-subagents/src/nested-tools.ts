@@ -446,21 +446,21 @@ export async function createNestedSubagentTools(
           timeout_ms: opt(
             int({
               minimum: 1,
-              maximum: Number.MAX_VALUE,
+              maximum: Number.MAX_SAFE_INTEGER,
               description: "Per-run wall-clock budget in milliseconds.",
             }),
           ),
           max_tool_calls: opt(
             int({
               minimum: 1,
-              maximum: Number.MAX_VALUE,
+              maximum: Number.MAX_SAFE_INTEGER,
               description: "Per-run completed tool-call cap.",
             }),
           ),
           max_tokens: opt(
             int({
               minimum: 1,
-              maximum: Number.MAX_VALUE,
+              maximum: Number.MAX_SAFE_INTEGER,
               description:
                 "Omit unless the user sets a budget; the first request alone costs roughly 15–25k tokens.",
             }),
@@ -468,7 +468,7 @@ export async function createNestedSubagentTools(
           idle_timeout_ms: opt(
             int({
               minimum: 1,
-              maximum: Number.MAX_VALUE,
+              maximum: Number.MAX_SAFE_INTEGER,
               description:
                 "Tool-inactivity interval before one conclusion steering request, then watchdog stop.",
             }),

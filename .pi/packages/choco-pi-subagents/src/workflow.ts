@@ -50,12 +50,16 @@ export const WorkflowStepSchema = obj({
   fast_mode: opt(bool({ description: "Request fast mode for this step." })),
   daybreak: opt(bool({ description: "Request Daybreak for this step." })),
   max_turns: opt(
-    int({ minimum: 1, maximum: Number.MAX_VALUE, description: "Per-step turn limit override." }),
+    int({
+      minimum: 1,
+      maximum: Number.MAX_SAFE_INTEGER,
+      description: "Per-step turn limit override.",
+    }),
   ),
   timeout_ms: opt(
     int({
       minimum: 1,
-      maximum: Number.MAX_VALUE,
+      maximum: Number.MAX_SAFE_INTEGER,
       description: "Per-step wall-clock timeout. Omit for no timeout.",
     }),
   ),

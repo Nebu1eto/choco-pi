@@ -2200,3 +2200,16 @@ through a zero-row below-editor widget removed at once, and wraps its
 `setProgramStatus` with the instance method-patch registry (new adapter
 `background-program-status`); without a TUI terminal Pi's reporting is
 untouched. `NotificationGate.hasPending()` is new.
+
+## 2026-11-06 choco-pi patch: provider-safe integer bounds in tool schemas
+
+The C25 `int({ maximum: Number.MAX_VALUE })` caps in model-facing tool
+parameters are now `Number.MAX_SAFE_INTEGER`: Agent and nested Agent
+(`timeout_ms`, `max_tool_calls`, `max_tokens`, `idle_timeout_ms`),
+`subagent_limits.maxConcurrent`, and the `workflow_run`/`workflow_update`
+step `max_turns` and `timeout_ms`. xAI rejects the whole request with 400
+`Invalid arguments passed to the model.` when an `integer` bound lies
+outside int64, so every Grok turn failed while `Agent` was active. The bound
+still rejects NaN and Infinity. `num` fields (Agent `max_turns`) and internal
+validators keep `Number.MAX_VALUE`; xAI accepts it on `number`. Test:
+`tests/tool-schema-integer-bounds.test.ts`.

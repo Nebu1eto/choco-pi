@@ -134,7 +134,7 @@ export function createSubagentLimitsTool(controller: SubagentLimitController): T
           maxConcurrent: opt(
             int({
               minimum: 0,
-              maximum: Number.MAX_VALUE,
+              maximum: Number.MAX_SAFE_INTEGER,
               description: "Maximum concurrency; 0 means unlimited.",
             }),
           ),

@@ -2737,21 +2737,21 @@ export default async function (pi: ExtensionAPI): Promise<void> {
           timeout_ms: opt(
             int({
               minimum: 1,
-              maximum: Number.MAX_VALUE,
+              maximum: Number.MAX_SAFE_INTEGER,
               description: "Wall-clock run budget in milliseconds.",
             }),
           ),
           max_tool_calls: opt(
             int({
               minimum: 1,
-              maximum: Number.MAX_VALUE,
+              maximum: Number.MAX_SAFE_INTEGER,
               description: "Completed tool-call cap for this run.",
             }),
           ),
           max_tokens: opt(
             int({
               minimum: 1,
-              maximum: Number.MAX_VALUE,
+              maximum: Number.MAX_SAFE_INTEGER,
               description:
                 "Omit unless the user sets a budget; the first request alone costs roughly 15–25k tokens.",
             }),
@@ -2759,7 +2759,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
           idle_timeout_ms: opt(
             int({
               minimum: 1,
-              maximum: Number.MAX_VALUE,
+              maximum: Number.MAX_SAFE_INTEGER,
               description: "Inactivity interval before conclusion steering and watchdog stop.",
             }),
           ),
