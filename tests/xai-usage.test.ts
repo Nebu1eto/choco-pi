@@ -212,6 +212,57 @@ test("the Grok product breakdown keeps server order and shows unknown products v
   assert.doesNotMatch(detail, /GrokBot|GrokBuild|Api /);
 });
 
+test("a fresh Grok period without a usage percentage reads as 0% used", () => {
+  // Shape of a live response minutes after a weekly period started: the
+  // endpoint omits `creditUsagePercent` and `productUsage` before any use.
+  const usage = normalizeGrokUsage({
+    config: {
+      currentPeriod: {
+        type: "USAGE_PERIOD_TYPE_WEEKLY",
+        start: "2026-11-06T05:44:20.695+00:00",
+        end: "2026-11-13T05:44:20.695+00:00",
+      },
+      isUnifiedBillingUser: true,
+      prepaidBalance: { val: 0 },
+      topUpMethod: "TOP_UP_METHOD_SAVED_PAYMENT_METHOD",
+      billingPeriodStart: "2026-11-06T05:44:20.695+00:00",
+      billingPeriodEnd: "2026-11-13T05:44:20.695+00:00",
+    },
+  });
+  assert.deepEqual(usage, {
+    name: "Grok",
+    windows: [
+      {
+        label: "Weekly",
+        percent: 0,
+        qualifier: "used",
+        eventAt: new Date("2026-11-13T05:44:20.695Z"),
+        eventLabel: "resets",
+        windowSeconds: 7 * 86_400,
+      },
+    ],
+  });
+});
+
+test("a Grok response without a usage percentage or a valid period draws no window", () => {
+  const periods = [
+    undefined,
+    {},
+    { type: "USAGE_PERIOD_TYPE_WEEKLY", start: "2026-11-06T05:44:20Z" },
+    { type: "USAGE_PERIOD_TYPE_WEEKLY", start: "not a date", end: "2026-11-13T05:44:20Z" },
+    // An end that does not follow the start is not a period either.
+    {
+      type: "USAGE_PERIOD_TYPE_WEEKLY",
+      start: "2026-11-13T05:44:20Z",
+      end: "2026-11-06T05:44:20Z",
+    },
+  ];
+  for (const currentPeriod of periods) {
+    const usage = normalizeGrokUsage({ config: { currentPeriod, prepaidBalance: { val: 0 } } });
+    assert.deepEqual(usage.windows, [], JSON.stringify(currentPeriod));
+  }
+});
+
 test("rejects a Grok response without a config object", () => {
   assert.throws(() => normalizeGrokUsage({}), /Unexpected response/);
   assert.throws(() => normalizeGrokUsage([]), /Unexpected response/);

@@ -593,7 +593,9 @@ function grokCents(value: RuntimeValue): number | undefined {
  * Normalizes the private Grok Build billing response
  * (`/v1/billing?format=credits`): one credit window for the current period,
  * with per-product usage as its detail and a positive prepaid balance as the
- * status. Throws on a response without a `config` object.
+ * status. A valid period without `creditUsagePercent` reads as 0% used; without
+ * a valid period that reading stays unknown and no window is drawn. Throws on a
+ * response without a `config` object.
  */
 export function normalizeGrokUsage(payload: RuntimeValue): ProviderUsage {
   if (!isRecord(payload) || !isRecord(payload.config)) throw new Error("Unexpected response");
@@ -601,7 +603,10 @@ export function normalizeGrokUsage(payload: RuntimeValue): ProviderUsage {
   const period = isRecord(config.currentPeriod) ? config.currentPeriod : undefined;
   const start = dateValue(period?.start);
   const end = dateValue(period?.end);
-  const percent = numberValue(config.creditUsagePercent);
+  // A period with no credit used yet arrives without `creditUsagePercent` or
+  // `productUsage`, so a valid period alone is a fresh, unused window.
+  const validPeriod = start !== undefined && end !== undefined && end.getTime() > start.getTime();
+  const percent = numberValue(config.creditUsagePercent) ?? (validPeriod ? 0 : undefined);
   const products = Array.isArray(config.productUsage)
     ? config.productUsage.flatMap((entry) => {
         if (!isRecord(entry)) return [];
