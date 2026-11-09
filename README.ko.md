@@ -374,7 +374,9 @@ Pi 1.0.3부터 `Home`/`End`는 편집기 커서를 이동합니다. 대화 기�
 전역 파일 자체에서 가져옵니다. 체크아웃의 `.pi/packages` 아래를 가리키는
 `packages` 항목과 `extensions`의 내장 확장 정책이 그 정책입니다. 실행할 때마다
 다음과 같이 처리합니다. 번들 패키지가 하나도 없으면 `scripts/install-profile.ts`의
-프로필 기본값에서 시작합니다.
+프로필 기본값에서 시작합니다. 이 기본값에는 관리자의 모델 범위(`enabledModels`)와
+모델별 thinking 수준(`modelThinkingLevels`)이 들어 있습니다. 이런 첫 설치는 이미
+설정한 `enabledModels`를 유지하고, thinking 수준은 사용자 값이 우선하도록 합칩니다.
 
 - `packages`, `skills`, `prompts`를 체크아웃 절대 경로로 기록하고, `extensions`에는 [내장 확장 정책](#내장-확장)도 넣습니다. 사용자가 추가한 항목은 choco-pi 항목 뒤에 유지되며, 번들 패키지가 대체하는 패키지는 제거됩니다.
 - `theme`, `tuiMode`, `fullscreenExitOutput`, `fuzzyFileMentions`, `compaction`, `modelThinkingLevels`는 전역 파일에 설정된 값을 그대로 둡니다. 전역 파일에서 바꾸거나 `/preferences`를 쓰세요.
@@ -424,18 +426,31 @@ Pi 1.0.3부터 `Home`/`End`는 편집기 커서를 이동합니다. 대화 기�
     "anthropic/claude-opus-4-6": "high",
     "anthropic/claude-sonnet-5": "xhigh",
     "openai/gpt-6-astra": "low",
-    "openai/gpt-6-astra": "low",
+    "openai-codex/gpt-6-astra": "low",
     "openai/gpt-5.6-sol": "low",
-    "openai-codex/gpt-daybreak-blue-latest": "high",
+    "openai-codex/gpt-5.6-sol": "low",
+    "openai/gpt-daybreak-blue-latest": "high",
     "openai/gpt-5.6-terra": "high",
+    "openai-codex/gpt-5.6-terra": "high",
     "openai/gpt-5.6-luna": "xhigh",
-    "synthetic/hf:moonshotai/Kimi-K3.1-Pro": "high",
+    "openai-codex/gpt-5.6-luna": "xhigh",
+    "synthetic/hf:moonshotai/Kimi-K3": "high",
     "anthropic/claude-fable-5-1": "low",
     "anthropic/claude-opus-5-5": "medium",
+    "anthropic/claude-sonnet-5-5": "medium",
+    "anthropic/claude-haiku-5-5": "medium",
     "openai/gpt-6-sol": "low",
+    "openai-codex/gpt-6-sol": "low",
     "openai/gpt-6.1-sol": "low",
+    "openai-codex/gpt-6.1-sol": "low",
     "openai/gpt-6-luna": "high",
-    "synthetic/hf:deepseek-ai/DeepSeek-V4.1-Flash": "low"
+    "openai-codex/gpt-6-luna": "high",
+    "synthetic/hf:deepseek-ai/DeepSeek-V4.1-Flash": "low",
+    "synthetic/hf:zai-org/GLM-5.3": "high",
+    "synthetic/hf:zai-org/GLM-5.3-Flash": "high",
+    "anthropic/claude-mythos-5-1": "low",
+    "synthetic/hf:moonshotai/Kimi-K3.1-Pro": "high",
+    "synthetic/hf:deepseek-ai/DeepSeek-V4.1-Flash-1017": "high"
   },
   "compaction": {
     "enabled": true,
@@ -447,22 +462,24 @@ Pi 1.0.3부터 `Home`/`End`는 편집기 커서를 이동합니다. 대화 기�
   "defaultModel": "claude-opus-5-5",
   "defaultThinkingLevel": "low",
   "enabledModels": [
+    "anthropic/claude-mythos-5-1",
     "anthropic/claude-fable-5-1",
     "anthropic/claude-opus-5-5",
-    "anthropic/claude-opus-5",
     "anthropic/claude-opus-4-6",
-    "anthropic/claude-sonnet-5",
-    "openai/gpt-6-astra",
-    "openai/gpt-6-sol",
-    "openai/gpt-6.1-sol",
-    "openai/gpt-5.6-sol",
-    "openai/gpt-5.6-terra",
-    "openai/gpt-6-luna",
-    "openai-codex/gpt-daybreak-blue-latest",
+    "anthropic/claude-sonnet-5-5",
+    "anthropic/claude-haiku-5-5",
+    "openai-codex/gpt-6-astra",
+    "openai-codex/gpt-6.1-sol",
+    "openai-codex/gpt-6.1-terra",
+    "openai-codex/gpt-6-sol",
+    "openai-codex/gpt-5.6-sol",
+    "openai-codex/gpt-6-luna",
     "synthetic/hf:moonshotai/Kimi-K3.1-Pro",
-    "synthetic/hf:deepseek-ai/DeepSeek-V4.1-Flash",
+    "synthetic/hf:deepseek-ai/DeepSeek-V4.1-Flash-1017",
     "synthetic/hf:zai-org/GLM-5.3",
-    "synthetic/hf:zai-org/GLM-5.3-Flash"
+    "synthetic/hf:zai-org/GLM-5.3-Flash",
+    "xai/grok-4.6",
+    "xai/grok-4.7"
   ],
   "cacheWarming": "streaming",
   "transport": "auto",

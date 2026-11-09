@@ -56,6 +56,7 @@ const SettingsSchema = obj(
     skills: opt(arr(str())),
     prompts: opt(arr(str())),
     modelThinkingLevels: opt(map(str())),
+    enabledModels: opt(arr(str())),
   },
   { open: true },
 );
@@ -143,6 +144,70 @@ export const DEFAULT_PROFILE_PACKAGES: readonly string[] = [
 
 /** Built-in extension policy a clean install starts from. */
 const DEFAULT_PROFILE_EXTENSIONS: readonly string[] = ["-builtin:codemode"];
+
+/**
+ * Model scope (`/scoped-models`) a clean install starts from: the
+ * maintainer's current `enabledModels`. Pi warns about a pattern whose
+ * provider has no credentials, and the subagent scope check uses this list.
+ */
+export const DEFAULT_PROFILE_ENABLED_MODELS: readonly string[] = [
+  "anthropic/claude-mythos-5-1",
+  "anthropic/claude-fable-5-1",
+  "anthropic/claude-opus-5-5",
+  "anthropic/claude-opus-4-6",
+  "anthropic/claude-sonnet-5-5",
+  "anthropic/claude-haiku-5-5",
+  "openai-codex/gpt-6-astra",
+  "openai-codex/gpt-6.1-sol",
+  "openai-codex/gpt-6.1-terra",
+  "openai-codex/gpt-6-sol",
+  "openai-codex/gpt-5.6-sol",
+  "openai-codex/gpt-6-luna",
+  "synthetic/hf:moonshotai/Kimi-K3.1-Pro",
+  "synthetic/hf:deepseek-ai/DeepSeek-V4.1-Flash-1017",
+  "synthetic/hf:zai-org/GLM-5.3",
+  "synthetic/hf:zai-org/GLM-5.3-Flash",
+  "xai/grok-4.6",
+  "xai/grok-4.7",
+];
+
+/**
+ * Per-model default thinking levels a clean install starts from: the
+ * maintainer's current `modelThinkingLevels`, including models outside the
+ * scope that usage-limit fallback can switch to. The user's entries win.
+ */
+export const DEFAULT_PROFILE_MODEL_THINKING_LEVELS = {
+  "anthropic/claude-fable-5": "high",
+  "anthropic/claude-opus-5": "medium",
+  "anthropic/claude-opus-4-6": "high",
+  "anthropic/claude-sonnet-5": "xhigh",
+  "openai/gpt-6-astra": "low",
+  "openai-codex/gpt-6-astra": "low",
+  "openai/gpt-5.6-sol": "low",
+  "openai-codex/gpt-5.6-sol": "low",
+  "openai/gpt-daybreak-blue-latest": "high",
+  "openai/gpt-5.6-terra": "high",
+  "openai-codex/gpt-5.6-terra": "high",
+  "openai/gpt-5.6-luna": "xhigh",
+  "openai-codex/gpt-5.6-luna": "xhigh",
+  "synthetic/hf:moonshotai/Kimi-K3": "high",
+  "anthropic/claude-fable-5-1": "low",
+  "anthropic/claude-opus-5-5": "medium",
+  "anthropic/claude-sonnet-5-5": "medium",
+  "anthropic/claude-haiku-5-5": "medium",
+  "openai/gpt-6-sol": "low",
+  "openai-codex/gpt-6-sol": "low",
+  "openai/gpt-6.1-sol": "low",
+  "openai-codex/gpt-6.1-sol": "low",
+  "openai/gpt-6-luna": "high",
+  "openai-codex/gpt-6-luna": "high",
+  "synthetic/hf:deepseek-ai/DeepSeek-V4.1-Flash": "low",
+  "synthetic/hf:zai-org/GLM-5.3": "high",
+  "synthetic/hf:zai-org/GLM-5.3-Flash": "high",
+  "anthropic/claude-mythos-5-1": "low",
+  "synthetic/hf:moonshotai/Kimi-K3.1-Pro": "high",
+  "synthetic/hf:deepseek-ai/DeepSeek-V4.1-Flash-1017": "high",
+} as const satisfies Readonly<Record<string, string>>;
 
 /**
  * Remove each retired file that is still a symlink (dangling or not) or a
@@ -564,9 +629,16 @@ async function readProfileSettings(
     (spec) => path.isAbsolute(spec) && path.dirname(spec) === bundled,
   );
   if (packages.length === 0) {
+    // A first install also starts from the maintainer's model scope and
+    // per-model thinking levels; buildGlobalSettings merges the levels under
+    // the user's, and a scope the user already set is kept.
     return {
       packages: [...DEFAULT_PROFILE_PACKAGES],
       extensions: [...DEFAULT_PROFILE_EXTENSIONS],
+      modelThinkingLevels: { ...DEFAULT_PROFILE_MODEL_THINKING_LEVELS },
+      ...(existingSettings.enabledModels === undefined && {
+        enabledModels: [...DEFAULT_PROFILE_ENABLED_MODELS],
+      }),
     };
   }
   return { ...existingSettings, packages };

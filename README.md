@@ -405,7 +405,10 @@ keys it does not manage. The checkout ships no `.pi/settings.json`, so the
 profile policy comes from this global file itself: its `packages` entries under
 the checkout's `.pi/packages` and its `extensions` built-in policy. When it
 lists no bundled packages, the installer starts from the profile defaults in
-`scripts/install-profile.ts`. Each run:
+`scripts/install-profile.ts`, which include the maintainer's model scope
+(`enabledModels`) and per-model thinking levels (`modelThinkingLevels`). Such a
+first install keeps an `enabledModels` you already set and merges the thinking
+levels under yours. Each run:
 
 - Writes `packages`, `skills`, and `prompts` as absolute checkout paths; `extensions` also gets the [built-in policy](#built-in-extensions). Entries you added are kept after the choco-pi entries, except packages a bundled package supersedes.
 - Keeps `theme`, `tuiMode`, `fullscreenExitOutput`, `fuzzyFileMentions`, `compaction`, and `modelThinkingLevels` as set in the global file. Change them there or through `/preferences`.
@@ -455,18 +458,31 @@ values are the maintainer's current settings. Secrets never belong in this file.
     "anthropic/claude-opus-4-6": "high",
     "anthropic/claude-sonnet-5": "xhigh",
     "openai/gpt-6-astra": "low",
-    "openai/gpt-6-astra": "low",
+    "openai-codex/gpt-6-astra": "low",
     "openai/gpt-5.6-sol": "low",
-    "openai-codex/gpt-daybreak-blue-latest": "high",
+    "openai-codex/gpt-5.6-sol": "low",
+    "openai/gpt-daybreak-blue-latest": "high",
     "openai/gpt-5.6-terra": "high",
+    "openai-codex/gpt-5.6-terra": "high",
     "openai/gpt-5.6-luna": "xhigh",
-    "synthetic/hf:moonshotai/Kimi-K3.1-Pro": "high",
+    "openai-codex/gpt-5.6-luna": "xhigh",
+    "synthetic/hf:moonshotai/Kimi-K3": "high",
     "anthropic/claude-fable-5-1": "low",
     "anthropic/claude-opus-5-5": "medium",
+    "anthropic/claude-sonnet-5-5": "medium",
+    "anthropic/claude-haiku-5-5": "medium",
     "openai/gpt-6-sol": "low",
+    "openai-codex/gpt-6-sol": "low",
     "openai/gpt-6.1-sol": "low",
+    "openai-codex/gpt-6.1-sol": "low",
     "openai/gpt-6-luna": "high",
-    "synthetic/hf:deepseek-ai/DeepSeek-V4.1-Flash": "low"
+    "openai-codex/gpt-6-luna": "high",
+    "synthetic/hf:deepseek-ai/DeepSeek-V4.1-Flash": "low",
+    "synthetic/hf:zai-org/GLM-5.3": "high",
+    "synthetic/hf:zai-org/GLM-5.3-Flash": "high",
+    "anthropic/claude-mythos-5-1": "low",
+    "synthetic/hf:moonshotai/Kimi-K3.1-Pro": "high",
+    "synthetic/hf:deepseek-ai/DeepSeek-V4.1-Flash-1017": "high"
   },
   "compaction": {
     "enabled": true,
@@ -478,22 +494,24 @@ values are the maintainer's current settings. Secrets never belong in this file.
   "defaultModel": "claude-opus-5-5",
   "defaultThinkingLevel": "low",
   "enabledModels": [
+    "anthropic/claude-mythos-5-1",
     "anthropic/claude-fable-5-1",
     "anthropic/claude-opus-5-5",
-    "anthropic/claude-opus-5",
     "anthropic/claude-opus-4-6",
-    "anthropic/claude-sonnet-5",
-    "openai/gpt-6-astra",
-    "openai/gpt-6-sol",
-    "openai/gpt-6.1-sol",
-    "openai/gpt-5.6-sol",
-    "openai/gpt-5.6-terra",
-    "openai/gpt-6-luna",
-    "openai-codex/gpt-daybreak-blue-latest",
+    "anthropic/claude-sonnet-5-5",
+    "anthropic/claude-haiku-5-5",
+    "openai-codex/gpt-6-astra",
+    "openai-codex/gpt-6.1-sol",
+    "openai-codex/gpt-6.1-terra",
+    "openai-codex/gpt-6-sol",
+    "openai-codex/gpt-5.6-sol",
+    "openai-codex/gpt-6-luna",
     "synthetic/hf:moonshotai/Kimi-K3.1-Pro",
-    "synthetic/hf:deepseek-ai/DeepSeek-V4.1-Flash",
+    "synthetic/hf:deepseek-ai/DeepSeek-V4.1-Flash-1017",
     "synthetic/hf:zai-org/GLM-5.3",
-    "synthetic/hf:zai-org/GLM-5.3-Flash"
+    "synthetic/hf:zai-org/GLM-5.3-Flash",
+    "xai/grok-4.6",
+    "xai/grok-4.7"
   ],
   "cacheWarming": "streaming",
   "transport": "auto",
