@@ -22,6 +22,7 @@ import {
   bindSessionProjection,
   type CapturingProviderOptions,
   currentTransportCall,
+  type NativeProviderLookup,
   registerAnthropicCapture,
   type TransportResponseObserver,
   type WireBody,
@@ -110,7 +111,11 @@ export interface AnthropicReplayBinder {
    * the same session; the host releases them at shutdown and when the session
    * changes (`releaseSessionCaptures`).
    */
-  bindSession(sessionId: string, sessionManager: SessionSource): () => void;
+  bindSession(
+    sessionId: string,
+    sessionManager: SessionSource,
+    registry?: NativeProviderLookup,
+  ): () => void;
   /** Whether any session is bound (replay active). */
   readonly active: () => boolean;
   /** Whether this session is bound. */
@@ -130,11 +135,15 @@ export function createAnthropicReplayBinder(
   /** Bound sessions; the token identifies the newest binding of each. */
   const bound = new Map<string, object>();
 
-  const bindSession = (sessionId: string, sessionManager: SessionSource): (() => void) => {
+  const bindSession = (
+    sessionId: string,
+    sessionManager: SessionSource,
+    registry?: NativeProviderLookup,
+  ): (() => void) => {
     if (!captureRegistered) {
       captureRegistered = true;
       for (const provider of options.providers) {
-        registerAnthropicCapture(pi, provider, options.capture ?? {});
+        registerAnthropicCapture(pi, provider, options.capture ?? {}, registry);
       }
     }
     const token = {};

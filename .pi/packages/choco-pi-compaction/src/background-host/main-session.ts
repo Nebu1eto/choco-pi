@@ -306,14 +306,17 @@ function bindAnthropicReplay(
   target: ReplayTarget,
   settings: Readonly<BackgroundCompactionSettings>,
 ): void {
-  const { sessionId, sessionManager } = target;
+  const { sessionId, sessionManager, ctx } = target;
   const producing =
     rt.anthropicMode === "server-side" || isBackendEnabled(ANTHROPIC_BACKEND_ID, settings);
   const checkpoint = producing
     ? undefined
     : findActiveAnthropicCheckpoint(sessionManager.getBranch());
   if (!producing && checkpoint === undefined) return;
-  rt.replayUnbinds.set(sessionId, rt.replay.bindSession(sessionId, sessionManager));
+  rt.replayUnbinds.set(
+    sessionId,
+    rt.replay.bindSession(sessionId, sessionManager, ctx?.modelRegistry),
+  );
   if (checkpoint !== undefined) announceReplayKept(rt, target, "anthropic", checkpoint.entryId);
 }
 

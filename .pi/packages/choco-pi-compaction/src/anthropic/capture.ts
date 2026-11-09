@@ -26,6 +26,7 @@ import type {
   AssistantMessageEventStream,
   Message,
   Model,
+  Provider,
   SimpleStreamOptions,
   TranscriptContext,
 } from "@earendil-works/pi-ai";
@@ -993,18 +994,83 @@ function recordCapture(
   );
 }
 
+/** The registry read capture needs (a `ModelRegistry` fits). */
+export interface NativeProviderLookup {
+  getRegisteredNativeProvider(provider: string): Provider | undefined;
+}
+
+/**
+ * A native provider whose Anthropic `streamSimple` is `capture`; every other
+ * member delegates to `native` (its prototype, so wrappers built on it stay
+ * recognizable through the prototype chain).
+ */
+function capturingNativeProvider(native: Provider, capture: ProviderStream): Provider {
+  const wrapper: Provider = {
+    get id() {
+      return native.id;
+    },
+    get name() {
+      return native.name;
+    },
+    get auth() {
+      return native.auth;
+    },
+    getModels: () => native.getModels(),
+    stream: (model, context, options) => native.stream(model, context, options),
+    streamSimple: (model, context, options) =>
+      model.api === "anthropic-messages"
+        ? capture(model, context, options)
+        : native.streamSimple(model, context, options),
+  };
+  if ("baseUrl" in native) {
+    Object.defineProperty(wrapper, "baseUrl", {
+      get: () => native.baseUrl,
+      enumerable: true,
+      configurable: true,
+    });
+  }
+  if ("headers" in native) {
+    Object.defineProperty(wrapper, "headers", {
+      get: () => native.headers,
+      enumerable: true,
+      configurable: true,
+    });
+  }
+  if (native.getAllModels !== undefined) wrapper.getAllModels = native.getAllModels.bind(native);
+  if (native.refreshModels !== undefined) wrapper.refreshModels = native.refreshModels.bind(native);
+  if (native.filterModels !== undefined) wrapper.filterModels = native.filterModels.bind(native);
+  if (native.filterAllModels !== undefined) {
+    wrapper.filterAllModels = native.filterAllModels.bind(native);
+  }
+  if (native.fetchDeferred !== undefined) wrapper.fetchDeferred = native.fetchDeferred.bind(native);
+  if (native.cancelDeferred !== undefined) {
+    wrapper.cancelDeferred = native.cancelDeferred.bind(native);
+  }
+  if (native.generateImages !== undefined) {
+    wrapper.generateImages = native.generateImages.bind(native);
+  }
+  if (native.classify !== undefined) wrapper.classify = native.classify.bind(native);
+  Object.setPrototypeOf(wrapper, native);
+  return wrapper;
+}
+
 /**
  * Override `provider`'s Anthropic stream with the capturing wrapper (keeps the
  * provider's models and auth). Register for every provider the capability
- * allow-list admits.
+ * allow-list admits. A config registration would replace a registered native
+ * provider (and its model filter), so a native one is wrapped instead.
  */
 export function registerAnthropicCapture(
   pi: ExtensionAPI,
   provider: string,
   options: CapturingProviderOptions = {},
+  registry?: NativeProviderLookup,
 ): void {
-  pi.registerProvider(provider, {
-    api: "anthropic-messages",
-    streamSimple: createCapturingStreamSimple(options),
-  });
+  const capture = createCapturingStreamSimple(options);
+  const native = registry?.getRegisteredNativeProvider(provider);
+  if (native !== undefined) {
+    pi.registerProvider(capturingNativeProvider(native, capture));
+    return;
+  }
+  pi.registerProvider(provider, { api: "anthropic-messages", streamSimple: capture });
 }
