@@ -36,6 +36,7 @@ const NATIVE_ENTRIES: ReadonlySet<string> = new Set<string>([
   ".pi/extensions/apex-provider.ts",
   ".pi/extensions/autocomplete-anywhere.ts",
   ".pi/extensions/cache-probe.ts",
+  ".pi/extensions/clipboard-osc52.ts",
   ".pi/extensions/cache-retention.ts",
   ".pi/extensions/choco-pi-lsp-visibility.ts",
   ".pi/extensions/command-filter.ts",
