@@ -7,7 +7,14 @@ import { normalizeExecutionMode, type ExecutionMode } from "./execution-mode.ts"
 export type CodexVerbosity = "low" | "medium" | "high";
 export type CacheDiagnosticsMode = "off" | "status" | "status-and-log";
 export type AllProvidersMode = "off" | "on" | "extras";
-export type HelperModel = "gpt-5.6-luna" | "gpt-5.6-terra" | "gpt-5.6-sol" | "gpt-5.4-mini";
+export type HelperModel =
+  | "gpt-6.1-terra"
+  | "gpt-6.1-sol"
+  | "gpt-6-sol"
+  | "gpt-6-luna"
+  | "gpt-5.6-luna"
+  | "gpt-5.6-terra"
+  | "gpt-5.6-sol";
 export type WebSearchModel = HelperModel;
 export type V2UserMessageRetention = 16 | 32 | 64;
 export const MIN_NOTEBOOK_HEAP_MIB = 256;
@@ -40,12 +47,16 @@ export const REALTIME_V3_VOICES = [
 export type RealtimeV3Voice = (typeof REALTIME_V3_VOICES)[number];
 
 // Pi 1.4.0 removed gpt-5.5 and gpt-5.3-codex-spark from openai-codex: they always fail for
-// ChatGPT accounts. A saved value naming either normalizes to the default.
+// ChatGPT accounts. gpt-5.4-mini is retired from this list. A saved value naming any of
+// them normalizes to the default.
 export const WEB_SEARCH_MODELS: readonly WebSearchModel[] = [
+  "gpt-6.1-terra",
+  "gpt-6.1-sol",
+  "gpt-6-sol",
+  "gpt-6-luna",
   "gpt-5.6-luna",
   "gpt-5.6-terra",
   "gpt-5.6-sol",
-  "gpt-5.4-mini",
 ];
 export const V2_USER_MESSAGE_RETENTION_OPTIONS: readonly V2UserMessageRetention[] = [16, 32, 64];
 
@@ -161,7 +172,7 @@ export const DEFAULT_CODEX_CONVERSION_CONFIG: CodexConversionConfig = {
     midTurnSteering: true,
     asyncCodeMode: true,
     cacheDiagnostics: "off",
-    webSearchModel: "gpt-5.6-luna",
+    webSearchModel: "gpt-6.1-terra",
   },
 };
 

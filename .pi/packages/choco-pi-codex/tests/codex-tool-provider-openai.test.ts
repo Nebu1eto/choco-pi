@@ -528,6 +528,15 @@ test("web search model setting shows the credential provider and stores a bare i
       legacy.update("openai-codex/gpt-5.6-sol", config).openai.webSearchModel,
       "gpt-5.6-sol",
     );
+    for (const id of ["gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"]) {
+      assert.equal(legacy.update(`openai-codex/${id}`, config).openai.webSearchModel, id);
+    }
+    assert.equal(DEFAULT_CODEX_CONVERSION_CONFIG.openai.webSearchModel, "gpt-6.1-terra");
+    // gpt-5.4-mini is retired from the web search list; a stale choice falls back to the default.
+    assert.equal(
+      legacy.update("openai-codex/gpt-5.4-mini", config).openai.webSearchModel,
+      DEFAULT_CODEX_CONVERSION_CONFIG.openai.webSearchModel,
+    );
     // Pi 1.4.0 dropped gpt-5.5 from openai-codex; a stale choice falls back to the default.
     assert.equal(
       legacy.update("openai-codex/gpt-5.5", config).openai.webSearchModel,

@@ -39,7 +39,7 @@
     "forceCachedWebSockets": true,
     "cacheKeepalive": true,
     "cacheDiagnostics": "off",
-    "webSearchModel": "gpt-5.6-luna",
+    "webSearchModel": "gpt-6.1-terra",
     "proxyResponsesLite": false,
     "midTurnSteering": true,
     "asyncCodeMode": true
