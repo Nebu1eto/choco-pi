@@ -5,7 +5,7 @@ import { initTheme } from "@earendil-works/pi-coding-agent";
 import { renderExecCall } from "../.pi/packages/choco-pi-codex/src/tools/code-mode/call-rendering.ts";
 import { createCodeModeRenderTracker } from "../.pi/packages/choco-pi-codex/src/tools/code-mode/render-tracker.ts";
 
-// Pi 1.5.0 highlightCode reads the global theme, which the host initializes at startup.
+// Pi 1.5.1 highlightCode reads the global theme, which the host initializes at startup.
 initTheme("dark", false);
 
 const PLAIN_THEME = {

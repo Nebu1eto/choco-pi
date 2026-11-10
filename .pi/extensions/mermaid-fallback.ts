@@ -1,5 +1,5 @@
 import type { ExtensionAPI, MarkdownTransformContext } from "@earendil-works/pi-coding-agent";
-import { render } from "grok-mermaid";
+import { render } from "lovely-mermaid";
 
 const MERMAID_FENCE = /```mermaid[^\n]*\n([\s\S]*?)```/gi;
 

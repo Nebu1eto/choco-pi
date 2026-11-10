@@ -182,7 +182,7 @@ const capture = resolve(option("--capture"));
 const scratchParent = resolve(option("--scratch-dir", tmpdir()));
 const runFile = promisify(execFile);
 const version = await runFile(launcher, ["--version"], { timeout: 5000, maxBuffer: 4096 });
-assert.equal(version.stdout.trim(), "1.5.0", "Probe requires an installed Pi 1.5.0 launcher");
+assert.equal(version.stdout.trim(), "1.5.1", "Probe requires an installed Pi 1.5.1 launcher");
 await mkdir(scratchParent, { recursive: true });
 const scratch = await mkdtemp(join(scratchParent, "choco-pi-rpc-probe-"));
 const agentDir = join(scratch, "agent");

@@ -254,3 +254,7 @@ Pi SDK pins move from `1.4.0` to exactly `1.5.0` and `@earendil-works/pi-schema@
 ## 2026-11-04 choco-pi patch: TypeBox to pi-schema
 
 First-party code no longer imports `typebox` except `schema-bridge.ts`, which wraps pi-schema objects with `Type.Unsafe` because Pi 1.5.0 `registerTool` still requires a TypeBox schema. Tool schemas (`source_check`, `fetch_content`, `get_search_content`) are built with pi-schema builders and stay open (`open: true`), as TypeBox objects were. `web_search` merges the canonical shared-router properties plus `workflow` into a raw open schema (`additionalProperties: true`, as before) typed through `hostParamsAs`. The local `StringEnum` helper became `oneOf`. New `value-guards.ts` holds the string/number/boolean guards that replaced `Check(Type.String()...)`; the number guard keeps rejecting NaN and infinities (pi-schema `num()` alone accepts them). The command-failure check in `credential-source.ts` is a compiled pi-schema union (open object | array). Fixtures and tests use pi-schema validators; `tests/value-guards.test.ts` covers the guards and command-failure shapes. The package keeps its `typebox` peer only for the bridge file.
+
+## 2026-11-10 choco-pi patch: Pi SDK target 1.5.1
+
+Pi SDK pins move from `1.5.0` to exactly `1.5.1`; version references in comments, tests, and docs follow. The package-local `minimumReleaseAgeExclude` entries move to `@1.5.1`. The lock was regenerated with pnpm 11.11.0 (`pnpm install --ignore-scripts`); Pi 1.5.1 replaces `grok-mermaid` with `lovely-mermaid` transitively.

@@ -406,3 +406,7 @@ Pi SDK pins move from `1.4.0` to exactly `1.5.0`. The package-local `minimumRele
 ## 2026-11-03 note: unused typebox dependency removed (C26 follow-up)
 
 No first-party file imports `typebox` any more. `dependencies.typebox` was removed from `package.json`, the `typebox@1.3.29` entry from `pnpm-lock.yaml` (regenerated with `pnpm install --lockfile-only`); the `minimumReleaseAgeExclude` line in `pnpm-workspace.yaml` stays because the vendored-install policy test requires one common workspace file. The vendored `node_modules` tree still contains the stale `typebox` copy until the next `pnpm install:profile` on the live checkout; nothing resolves it.
+
+## 2026-11-10 choco-pi patch: Pi SDK target 1.5.1
+
+Pi SDK pins move from `1.5.0` to exactly `1.5.1`; version references in comments, tests, and docs follow. The package-local `minimumReleaseAgeExclude` entries move to `@1.5.1`.

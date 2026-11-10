@@ -328,3 +328,7 @@ Tool parameter schemas in `extensions/computer-use.ts` are built with `@earendil
 ## 2026-11-03 choco-pi patch: e2e scratch root follows PI_SCRATCH_DIR (P15)
 
 `e2e/isolation.ts` `scratchRoot()` now returns `<PI_SCRATCH_DIR>/e2e` when the host provides `PI_SCRATCH_DIR` (the root session's scratch directory, shared by subagents), and otherwise keeps the previous `/tmp/choco-pi/<sanitised PI_SESSION_ID or timestamp>/e2e`. It takes an optional env argument for tests. `e2e/README.md` states the same rule. Test: `tests/e2e-scratch-root.test.ts`.
+
+## 2026-11-10 choco-pi patch: Pi SDK target 1.5.1
+
+Pi SDK pins move from `1.5.0` to exactly `1.5.1`; version references in comments, tests, and docs follow.

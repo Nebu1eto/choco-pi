@@ -2213,3 +2213,7 @@ outside int64, so every Grok turn failed while `Agent` was active. The bound
 still rejects NaN and Infinity. `num` fields (Agent `max_turns`) and internal
 validators keep `Number.MAX_VALUE`; xAI accepts it on `number`. Test:
 `tests/tool-schema-integer-bounds.test.ts`.
+
+## 2026-11-10 choco-pi patch: Pi SDK target 1.5.1
+
+Pi SDK pins move from `1.5.0` to exactly `1.5.1`; version references in comments, tests, and docs follow. The package-local `minimumReleaseAgeExclude` entries move to `@1.5.1`. The lock was regenerated with pnpm 11.11.0 (`pnpm install --ignore-scripts`); Pi 1.5.1 replaces `grok-mermaid` with `lovely-mermaid` transitively.

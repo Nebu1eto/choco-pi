@@ -245,3 +245,7 @@ All runtime validation moved from `typebox` / `typebox/value` to `@earendil-work
 ## 2026-11-03 choco-pi patch: stop-control participant (P4b-3)
 
 The root activation joins the choco-pi stop-control v1 protocol through the package-local contract copy `src/stop-control.ts`. `src/goal-runtime-controller.ts` subscribes to `choco-pi:stop-control/v1/revoke` on session start (unsubscribed synchronously on shutdown) and keeps the latest live `ExtensionContext` (session start / agent start; cleared on shutdown). For scope `all` and a matching root session id it clears the provider-limit auto-resume timer, accounts elapsed time and applies the `abort_pause` transition (clears continuation, accounting and recovery) when the goal is active, then emits `acknowledged` and `settled` synchronously with detail `paused` or `not active`; a stale context emits `acknowledged` then `failed`. Tokens of the aborted turn are not accounted after the pause. Reopening admission never resumes the goal. Tests: `tests/stop-control.test.ts`.
+
+## 2026-11-10 choco-pi patch: Pi SDK target 1.5.1
+
+Pi SDK pins move from `1.5.0` to exactly `1.5.1`; version references in comments, tests, and docs follow.

@@ -1,4 +1,4 @@
-// The only first-party file that imports typebox: Pi 1.5.0 registerTool/ToolDefinition still require a TypeBox TSchema.
+// The only first-party file that imports typebox: Pi 1.5.1 registerTool/ToolDefinition still require a TypeBox TSchema.
 import type { JsonSchema, Static } from "@earendil-works/pi-schema";
 import { Type, type TUnsafe } from "typebox";
 

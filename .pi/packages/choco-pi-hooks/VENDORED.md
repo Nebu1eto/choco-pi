@@ -155,3 +155,7 @@ All TypeBox use is gone except `src/schema-bridge.ts` (`hostParams`, `Type.Unsaf
 ## 2026-11-03 choco-pi patch: stop-control participant (P4b-3)
 
 `src/stop-control.ts` is the package-local copy of the choco-pi stop-control v1 contract (read-only use here). `src/extension.ts` `agent_end`: for the root session (own session id, or `root_session_id` in a subagent) the Stop hook is not dispatched while the stop state is closed, and the continuation is dropped when the state closes during the awaited dispatch; both reset `stopHookActive`/`stopHookBlocks` and notify `Stop hook continuation skipped: session work is stopped.` once per epoch. An Esc-aborted run (last assistant `stopReason === "aborted"`) dispatches no Stop hook and sends no continuation, matching Claude Code, which does not run Stop hooks on a user interrupt. Tests: `tests/stop-control.test.ts`.
+
+## 2026-11-10 choco-pi patch: Pi SDK target 1.5.1
+
+Pi SDK pins move from `1.5.0` to exactly `1.5.1`; version references in comments, tests, and docs follow.

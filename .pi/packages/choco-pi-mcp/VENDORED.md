@@ -290,3 +290,7 @@ First-party `figma/src/figma-schemas.ts` and `figma/common/auth-config.ts` build
 `registerTool` still requires a TypeBox schema in Pi 1.5.0); `figma-tools.ts` and `auth-config.ts` pass
 `hostParams(...)`. No vendored provider or `node_modules` file changed. The `typebox` peer declaration is
 still needed for the bridge. Verification: `npx tsc --noEmit` and `node --test tests/figma-*.test.ts`.
+
+## 2026-11-10 choco-pi patch: Pi SDK target 1.5.1
+
+Pi SDK pins move from `1.5.0` to exactly `1.5.1`; version references in comments, tests, and docs follow. The package-local `minimumReleaseAgeExclude` entries move to `@1.5.1`. The lock was regenerated with pnpm 11.11.0 (`pnpm install --ignore-scripts`); Pi 1.5.1 replaces `grok-mermaid` with `lovely-mermaid` transitively.

@@ -307,3 +307,7 @@ Tests: `tests/pi-schema-clients-lsp-dispatch.test.ts`.
 ## 2026-11-03 choco-pi patch: install-diagnostics keeps typebox (C26)
 
 `clients/install-diagnostics.ts` CRITICAL_DEPS keeps `typebox`: `tools/schema-bridge.ts` still imports it at runtime (`Type.Unsafe`), so a failed resolution remains a real load-failure surface. A comment records why. `@earendil-works/pi-schema` is not listed because the probe uses `require.resolve`, which an ESM-only exports map would fail spuriously.
+
+## 2026-11-10 choco-pi patch: Pi SDK target 1.5.1
+
+Pi SDK pins move from `1.5.0` to exactly `1.5.1`; version references in comments, tests, and docs follow. The package-local `minimumReleaseAgeExclude` entries move to `@1.5.1`. The lock was regenerated with pnpm 11.11.0 (`pnpm install --ignore-scripts`); Pi 1.5.1 replaces `grok-mermaid` with `lovely-mermaid` transitively.

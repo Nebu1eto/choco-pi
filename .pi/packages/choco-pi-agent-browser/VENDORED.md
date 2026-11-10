@@ -186,3 +186,7 @@ Every `agent_browser` failure now carries `diagnostic: { code, origin, retryable
 ## 2026-11-03 choco-pi patch: TypeBox to pi-schema
 
 Parameter schemas for `agent_browser` and `agent_browser_web_search` are built with `@earendil-works/pi-schema` builders; the hand-written `lib/json-schema.ts` builder and `lib/string-enum-schema.ts` are replaced by `describe` helpers (`compactDescription` for the provider-facing schema, `fullDescription` for web search) and a local `stringEnum` that keeps `type: "string"` beside `enum`. Only `lib/schema-bridge.ts` imports `typebox` (`hostParams` wraps the schema with `Type.Unsafe` for `registerTool`); registration uses `AGENT_BROWSER_HOST_PARAMS` and `AgentBrowserWebSearchHostParams`, so `execute` params are now typed from the schema. Objects stay closed (`additionalProperties: false` as before); emitted validation and descriptions are unchanged. `hasRuntimeType` uses pi-schema checks (`instanceof` for functions, boxed-wrapper identity checks for bigint/symbol, finite-bounded number plus explicit NaN/infinities). `scripts/config.mjs` drops the `typebox/guard` import for a plain object check. Verification: package `npx tsc --noEmit`, `node --test tests/*.test.ts` (91 pass). The package no longer needs `typebox` beyond the bridge file; C26 owns the peer declaration.
+
+## 2026-11-10 choco-pi patch: Pi SDK target 1.5.1
+
+Pi SDK pins move from `1.5.0` to exactly `1.5.1`; version references in comments, tests, and docs follow.

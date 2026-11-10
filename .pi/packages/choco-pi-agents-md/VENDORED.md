@@ -156,3 +156,7 @@ Pi SDK pins move from `1.4.0` to exactly `1.5.0` and `@earendil-works/pi-schema@
 ## 2026-11-03 choco-pi patch: typebox peer removed (C26)
 
 No file in this package imports `typebox` and there is no schema bridge, so the `typebox` peer declaration is removed from `package.json`. The `@earendil-works/pi-schema` peer stays.
+
+## 2026-11-10 choco-pi patch: Pi SDK target 1.5.1
+
+Pi SDK pins move from `1.5.0` to exactly `1.5.1`; version references in comments, tests, and docs follow.

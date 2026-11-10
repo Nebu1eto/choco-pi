@@ -58,3 +58,7 @@ Public names are unchanged (`canonicalSearchParams`, `searchProviderSchema`); bo
 Function-valued checks (shared directory, scope rendezvous) are hand-written predicates; `Type.Cyclic` JSON values are a `$ref` definition on the adapter-response root; NaN/Infinity stay rejected via finite bounds.
 `isSearchError` snapshots the known fields before validation because pi-schema ignores non-enumerable own properties such as `Error.message`.
 Tests: `tests/schema.test.ts` added; fixtures register tools through `tests/fixtures/schema-bridge.ts` (the only `typebox` import, `Type.Unsafe`).
+
+## 2026-11-10 choco-pi patch: Pi SDK target 1.5.1
+
+Pi SDK pins move from `1.5.0` to exactly `1.5.1`; version references in comments, tests, and docs follow.

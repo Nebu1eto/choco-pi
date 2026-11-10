@@ -15,3 +15,7 @@ First-party package; this file records only the migration.
 ## 2026-11-03 choco-pi patch: stop-control participant (P4b-3)
 
 Root activations join the choco-pi stop-control v1 protocol through the package-local contract copy `src/stop-control.ts` (literal channel/registry strings, closed pi-schema validators, `readStopState`; absent or malformed registry reads as open epoch 0). `src/index.ts`: on `choco-pi:stop-control/v1/stop-shells` (matching root session id only) every running shell owned by each listed owner session is stopped with `manager.stop({ requesterId: <root>, isAdmin: true, shellId })` (root-owned shells included; no `cleanupOwner`/`dispose`, so output stays readable). The `acknowledged` report (`counts.shells`) is emitted synchronously; `settled` follows once every stop resolves, `failed` (with `detail`) on a rejection or a stop result carrying `error`. `shell_start` in a root activation returns `{ error: "shell_start refused: the user stopped this session's work (/stop). Ask the user to run /resume-work." }` while the epoch is closed. The stop epoch is recorded per started shell; a completion notification still steers but sets `triggerTurn` only when every completed shell's start epoch is still the open current epoch (shells started before this activation have no recorded epoch and fall back to "not closed"). Child activations are unchanged. Tests: `tests/stop-control.test.ts`.
+
+## 2026-11-10 choco-pi patch: Pi SDK target 1.5.1
+
+Pi SDK pins move from `1.5.0` to exactly `1.5.1`; version references in comments, tests, and docs follow.

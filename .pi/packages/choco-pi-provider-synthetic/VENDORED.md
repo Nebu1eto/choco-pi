@@ -298,3 +298,7 @@ All runtime validation (event payloads, quota header/API/history JSON, model API
 ## 2026-11-05 choco-pi patch: Kimi K3.1 Pro static catalog entry
 
 `extensions/provider/models.ts` adds `hf:moonshotai/Kimi-K3.1-Pro` to the static `SYNTHETIC_MODELS` fallback next to Kimi-K3, with values from the live models API (`https://api.synthetic.new/openai/v1/models`, unauthenticated GET; the model also appears in `https://dev.synthetic.new/docs/api/models`): text and image input, 524288-token context, 65536 maximum output tokens, and $2 input, $10 output, $0.20 cache-read, and $0 cache-write per million tokens. Its `thinkingLevelMap` exposes the advertised `low`, `high`, and `max` efforts and hides `off` (no `none` advertised) like Kimi-K3. The live refresh already discovered the model; this entry updates the offline fallback and the live parity test. The README effort list names it.
+
+## 2026-11-10 choco-pi patch: Pi SDK target 1.5.1
+
+Pi SDK pins move from `1.5.0` to exactly `1.5.1`; version references in comments, tests, and docs follow. The package-local `minimumReleaseAgeExclude` entries move to `@1.5.1`. The lock was regenerated with pnpm 11.11.0 (`pnpm install --ignore-scripts`); Pi 1.5.1 replaces `grok-mermaid` with `lovely-mermaid` transitively.

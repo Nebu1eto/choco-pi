@@ -1,6 +1,6 @@
 /**
  * Opt-in end-to-end harness for durable subagent revival against a REAL Pi
- * 1.5.0 process in RPC mode, driven by a scripted faux provider (no network,
+ * 1.5.1 process in RPC mode, driven by a scripted faux provider (no network,
  * no model credit). See README.md in this directory.
  *
  *   node .pi/packages/choco-pi-subagents/tests/e2e-revival/run.ts [--scenario S1] [--dry-run]
@@ -47,8 +47,8 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-const DEFAULT_PI = "/Users/Nebuleto/.local/pi-1.5.0/node_modules/.bin/pi";
-const REQUIRED_PI_VERSION = "1.5.0";
+const DEFAULT_PI = "/Users/Nebuleto/.local/pi-1.5.1/node_modules/.bin/pi";
+const REQUIRED_PI_VERSION = "1.5.1";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FAUX_EXTENSION = join(HERE, "faux-extension.ts");
 const SUBAGENTS_ENTRY = resolve(HERE, "../../src/index.ts");
@@ -1469,7 +1469,7 @@ async function main(): Promise<number> {
   });
   if (values.help) {
     process.stdout.write(
-      "usage: node run.ts [--scenario S1[,S2...]]... [--pi <pi 1.5.0 binary>] [--out <dir>] [--sleep-seconds N] [--subagents <index.ts>] [--dry-run]\n",
+      "usage: node run.ts [--scenario S1[,S2...]]... [--pi <pi 1.5.1 binary>] [--out <dir>] [--sleep-seconds N] [--subagents <index.ts>] [--dry-run]\n",
     );
     return 0;
   }
