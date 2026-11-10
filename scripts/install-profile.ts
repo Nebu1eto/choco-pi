@@ -201,6 +201,8 @@ export const DEFAULT_PROFILE_MODEL_THINKING_LEVELS = {
   "openai-codex/gpt-6-sol": "low",
   "openai/gpt-6.1-sol": "low",
   "openai-codex/gpt-6.1-sol": "low",
+  "openai/gpt-6.1-terra": "high",
+  "openai-codex/gpt-6.1-terra": "high",
   "openai/gpt-6-luna": "high",
   "openai-codex/gpt-6-luna": "high",
   "synthetic/hf:deepseek-ai/DeepSeek-V4.1-Flash": "low",

@@ -443,6 +443,8 @@ Pi 1.0.3부터 `Home`/`End`는 편집기 커서를 이동합니다. 대화 기�
     "openai-codex/gpt-6-sol": "low",
     "openai/gpt-6.1-sol": "low",
     "openai-codex/gpt-6.1-sol": "low",
+    "openai/gpt-6.1-terra": "high",
+    "openai-codex/gpt-6.1-terra": "high",
     "openai/gpt-6-luna": "high",
     "openai-codex/gpt-6-luna": "high",
     "synthetic/hf:deepseek-ai/DeepSeek-V4.1-Flash": "low",

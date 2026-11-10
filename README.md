@@ -475,6 +475,8 @@ values are the maintainer's current settings. Secrets never belong in this file.
     "openai-codex/gpt-6-sol": "low",
     "openai/gpt-6.1-sol": "low",
     "openai-codex/gpt-6.1-sol": "low",
+    "openai/gpt-6.1-terra": "high",
+    "openai-codex/gpt-6.1-terra": "high",
     "openai/gpt-6-luna": "high",
     "openai-codex/gpt-6-luna": "high",
     "synthetic/hf:deepseek-ai/DeepSeek-V4.1-Flash": "low",

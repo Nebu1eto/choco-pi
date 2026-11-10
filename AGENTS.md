@@ -10,7 +10,7 @@ Untracked `.pi/packages/*/node_modules` trees are load-bearing and enforced by i
 
 ## Model guidance
 
-`.pi/model-guidance.md` owns model routing and model-specific policy. Before changes, read each complete applicable source guide and update provenance. Provider-neutral wording may use current references; apply provider advice only to its model.
+`.pi/model-guidance.md` owns model routing and model-specific policy. Before changes, read each complete applicable source guide and append provenance to `docs/model-guidance-history.md`, a history-only record that is never routing input. Provider-neutral wording may use current references; apply provider advice only to its model.
 
 Cached recollection, summaries, excerpts, metadata, and navigation-only pages do not count as a refreshed guide.
 
