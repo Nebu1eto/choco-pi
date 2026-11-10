@@ -69,7 +69,11 @@ function passingTests(output: string): number {
 }
 
 function toolWasCalled(usage: SessionUsage, name: string): boolean {
-  return usage.directToolCalls.includes(name) || usage.inExecToolCalls.includes(name);
+  // Pi's tool search activates MCP tools directly as `mcp__<server>__<tool>`, so the `mcp`
+  // verdict also accepts an activated MCP tool, not only the `mcp` proxy.
+  const matches = (called: string): boolean =>
+    called === name || (name === "mcp" && called.startsWith("mcp__"));
+  return usage.directToolCalls.some(matches) || usage.inExecToolCalls.some(matches);
 }
 
 export async function evaluateVerdict(

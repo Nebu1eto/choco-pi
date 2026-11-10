@@ -10,7 +10,7 @@ import {
   diffToolNames,
   splitSystemSections,
 } from "../tools/prefix-eval/prefix-report.ts";
-import { parseSessionRecords } from "../tools/prefix-eval/session-usage.ts";
+import { parseSessionRecords, readSessionUsage } from "../tools/prefix-eval/session-usage.ts";
 import {
   adjudicateProcessOutcome,
   mergeMatrices,
@@ -333,4 +333,34 @@ test("merged matrix labels estimated and counted prefix measurements separately"
   assert.match(markdown, /Prefix estimated tokens/);
   assert.match(markdown, /Prefix counted tokens/);
   assert.match(markdown, /\| anthropic\/fixture \| 1 \| 0 \| 0 \| 0 \| 100 \| 80 \|/);
+});
+
+test("reads a session file with a system record and nested tool arguments", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "prefix-eval-session-"));
+  context.after(async () => rm(directory, { recursive: true, force: true }));
+  const record = {
+    message: {
+      role: "assistant",
+      content: [
+        { type: "toolCall", name: "exec", arguments: { code: "x", opts: [1, null, { a: true }] } },
+        { type: "text", text: "done" },
+      ],
+    },
+  };
+  const system = { message: { role: "system", content: "" } };
+  await writeFile(
+    join(directory, "session.jsonl"),
+    `${JSON.stringify(system)}\n${JSON.stringify(record)}\n`,
+  );
+  const usage = await readSessionUsage(directory);
+  assert.deepEqual(usage.directToolCalls, ["exec"]);
+  assert.equal(usage.finalMessage, "done");
+});
+
+test("the mcp verdict accepts an MCP tool activated through tool search", async () => {
+  const spec = { kind: "toolCalled", name: "mcp" } as const;
+  const activated = emptyUsage({ directToolCalls: ["tool_search", "mcp__linear__list_issues"] });
+  const unrelated = emptyUsage({ directToolCalls: ["tool_search", "mcpish"] });
+  assert.equal((await evaluateVerdict(spec, ".", ".", activated)).passed, true);
+  assert.equal((await evaluateVerdict(spec, ".", ".", unrelated)).passed, false);
 });

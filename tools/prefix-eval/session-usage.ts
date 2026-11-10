@@ -34,7 +34,8 @@ const SessionRecordSchema = obj(
           role: opt(str()),
           toolName: opt(str()),
           isError: opt(bool()),
-          content: opt(arr(MessageBlockSchema)),
+          // Pi 1.5.1 records the system prompt as a role "system" message with string content.
+          content: opt(union([str(), arr(MessageBlockSchema)])),
           usage: opt(UsagePayloadSchema),
         },
         { open: true },
@@ -101,7 +102,8 @@ function recordAssistantMessage(
   accumulator.cost += messageUsage.cost;
 
   const textBlocks: string[] = [];
-  for (const block of message.content ?? []) {
+  const blocks = Array.isArray(message.content) ? message.content : [];
+  for (const block of blocks) {
     if (block.type === "text" && block.text) textBlocks.push(block.text);
     if (block.type !== "toolCall" || !block.name) continue;
 

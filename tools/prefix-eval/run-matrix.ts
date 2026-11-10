@@ -488,6 +488,14 @@ export async function readjudicateMatrix(
       result.verdict = adjudication.verdict;
       result.reason = adjudication.reason;
       result.deviations = adjudication.deviations;
+      const denominator = usage.tokens.input + usage.tokens.cacheRead + usage.tokens.cacheWrite;
+      result.turns = usage.turns;
+      result.tokens = usage.tokens;
+      result.cacheHitRatio = denominator > 0 ? usage.tokens.cacheRead / denominator : 0;
+      result.cost = usage.cost;
+      result.directToolCalls = usage.directToolCalls;
+      result.inExecToolCalls = usage.inExecToolCalls;
+      result.discoveryFailures = usage.discoveryFailures;
       result.finalMessage = usage.finalMessage;
       result.requestOnePrefixTokens = requestOnePrefixTokens(captureRecords);
       result.rewrites = countStructuralRewrites(captureRecords);

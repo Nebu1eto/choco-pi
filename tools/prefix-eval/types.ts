@@ -3,11 +3,14 @@ import {
   bool,
   int,
   lit,
+  map,
+  nul,
   nullable,
   num,
   obj,
   oneOf,
   opt,
+  recursive,
   str,
   union,
   type Schema,
@@ -15,23 +18,20 @@ import {
 } from "@earendil-works/pi-schema";
 import type { JsonValue as RuntimeJsonValue } from "../../.pi/extensions/lib/runtime-values.ts";
 
-// A raw $defs/$ref schema: pi-schema builders cannot express recursion. Numbers are bounded to
-// reject NaN/Infinity as the previous schema library's number check did.
-export const JsonSchema: Schema<RuntimeJsonValue> = {
-  $ref: "#/$defs/JsonValue",
-  $defs: {
-    JsonValue: {
-      anyOf: [
-        { type: "null" },
-        { type: "boolean" },
-        { type: "number", minimum: -Number.MAX_VALUE, maximum: Number.MAX_VALUE },
-        { type: "string" },
-        { type: "array", items: { $ref: "#/$defs/JsonValue" } },
-        { type: "object", additionalProperties: { $ref: "#/$defs/JsonValue" } },
-      ],
-    },
-  },
-};
+// pi-schema 1.5.1 does not resolve a root $defs/$ref, so recursion goes through recursive().
+// Numbers are bounded to reject NaN/Infinity as the previous schema library's number check did.
+export const JsonSchema: Schema<RuntimeJsonValue> = recursive<RuntimeJsonValue>(
+  "JsonValue",
+  (self) =>
+    union([
+      nul(),
+      bool(),
+      num({ minimum: -Number.MAX_VALUE, maximum: Number.MAX_VALUE }),
+      str(),
+      arr(self),
+      map(self),
+    ]),
+);
 
 export type JsonValue = RuntimeJsonValue;
 
