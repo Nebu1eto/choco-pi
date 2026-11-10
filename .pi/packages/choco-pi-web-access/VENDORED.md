@@ -258,3 +258,7 @@ First-party code no longer imports `typebox` except `schema-bridge.ts`, which wr
 ## 2026-11-10 choco-pi patch: Pi SDK target 1.5.1
 
 Pi SDK pins move from `1.5.0` to exactly `1.5.1`; version references in comments, tests, and docs follow. The package-local `minimumReleaseAgeExclude` entries move to `@1.5.1`. The lock was regenerated with pnpm 11.11.0 (`pnpm install --ignore-scripts`); Pi 1.5.1 replaces `grok-mermaid` with `lovely-mermaid` transitively.
+
+## 2026-11-10 choco-pi patch: GPT-6.1 Terra defaults
+
+The API-key fallback search model in `openai-search.ts` moves from `gpt-5.6-terra` to `gpt-6.1-terra`. The registry path is unchanged: `pickSearchModel` already chooses the newest `terra` id the provider lists. The summary and query-rewrite defaults in `summary-review.ts` and `index.ts` replace both `gpt-5.6-terra` entries (`openai`, then `openai-codex`) with `gpt-6.1-terra` in the same positions; `tests/summary-model-scope.test.ts` follows. OpenAI's GPT-6.1 Terra model page lists web search as a supported Responses tool.

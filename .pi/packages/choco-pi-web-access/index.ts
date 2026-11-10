@@ -1662,10 +1662,10 @@ export default function (pi: ExtensionAPI) {
       { provider: "synthetic", id: "hf:deepseek-ai/DeepSeek-V4.1-Flash" },
       { provider: "anthropic", id: "claude-haiku-4-5" },
       { provider: "openai", id: "gpt-5.6-luna" },
-      { provider: "openai", id: "gpt-5.6-terra" },
+      { provider: "openai", id: "gpt-6.1-terra" },
       // Legacy ChatGPT-backend subscription provider.
       { provider: "openai-codex", id: "gpt-5.6-luna" },
-      { provider: "openai-codex", id: "gpt-5.6-terra" },
+      { provider: "openai-codex", id: "gpt-6.1-terra" },
       { provider: "google", id: "gemini-3.6-flash" },
       { provider: "openai", id: "gpt-5-mini" },
       { provider: "deepseek", id: "deepseek-v4-flash" },

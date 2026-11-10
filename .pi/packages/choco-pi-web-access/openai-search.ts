@@ -387,7 +387,7 @@ export async function resolveOpenAIAuth(
     transport: subscription ? "codex-subscription" : "responses-api",
     billing: subscription ? "subscription" : "api",
     apiKey,
-    model: modelOverride ?? "gpt-5.6-terra",
+    model: modelOverride ?? "gpt-6.1-terra",
     headers: {},
     responsesUrl,
   };
