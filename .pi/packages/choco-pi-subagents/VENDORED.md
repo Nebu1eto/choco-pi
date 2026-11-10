@@ -2233,3 +2233,17 @@ idle checks, on session replacement or a closed stop latch, or after
 modes are untouched. New `src/print-settle-wait.ts` (identical copy in
 choco-pi-shells); `emitNudges` and the workflow aggregate count their sends.
 Tests: `tests/print-settle-wait.test.ts`.
+
+## 2026-11-10 choco-pi patch: renarrow offers an in-scope tool once
+
+`installExtensionToolScope` in `src/agent-runner.ts` appended every registered
+in-scope tool to the active set on each `turn_end`. That restored the tools
+another extension had deactivated on purpose: choco-pi-codex hides `read`,
+`bash`, `edit`, `write`, `apply_patch`, `exec_command`, `write_stdin` and
+`view_image` in Code Mode, and child transcripts show all eight re-declared
+after the first turn and again after each resume, each time rebuilding the
+system prompt. `renarrow` now keeps an `offered` set and appends a name only
+the first time it is registered and in scope, so late registrations (MCP) still
+activate and a deactivated tool stays off until its owner re-activates it.
+Withdrawal of out-of-scope tools and the `beforeToolCall` guard are unchanged.
+Test: `tests/subagent-config-tool-scope.test.ts`.

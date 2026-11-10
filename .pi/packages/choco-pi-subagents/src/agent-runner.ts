@@ -681,6 +681,12 @@ export function installExtensionToolScope(
   // Keep the current order and append newcomers, so a tool `tool_search` loaded
   // stays where Pi put it instead of being re-sorted into registry order.
   // A loaded `deferred`/`codemode` tool survives only while it stays reachable.
+  //
+  // A name is offered once, the first time it is registered and in scope. Appending
+  // every in-scope name on each turn would restore the tools another extension
+  // deactivated on purpose: the Codex adapter hides the direct tools Code Mode
+  // replaces, and the next `turn_end` used to put them back.
+  const offered = new Set<string>();
   const renarrow = () => {
     const allowed = inScope();
     const reach = reachable();
@@ -693,10 +699,9 @@ export function installExtensionToolScope(
     const current = session.getActiveToolNames();
     const kept = current.filter((n) => allowed.has(n) || loadable.has(n));
     const keptSet = new Set(kept);
-    const next = [
-      ...kept,
-      ...registered.map((t) => t.name).filter((n) => allowed.has(n) && !keptSet.has(n)),
-    ];
+    const inScopeNames = registered.map((t) => t.name).filter((n) => allowed.has(n));
+    const next = [...kept, ...inScopeNames.filter((n) => !keptSet.has(n) && !offered.has(n))];
+    for (const name of inScopeNames) offered.add(name);
     // setActiveToolsByName unconditionally rebuilds the system prompt, so skip
     // the no-op that steady-state turns would otherwise pay for every turn.
     if (next.length !== current.length || next.some((n, i) => n !== current[i])) {

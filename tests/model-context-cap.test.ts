@@ -61,6 +61,7 @@ function model(contextWindow: number): Model<Api> {
 function overThresholdContext(options: { model: Model<Api>; onCompact: () => void }) {
   return {
     cwd: process.cwd(),
+    sessionManager: { getSessionId: () => "root-session" },
     model: options.model,
     modelRegistry: { getAll: () => [options.model] },
     getContextUsage: () => ({
@@ -132,6 +133,7 @@ test("a context-cap.json left in a project is ignored without a notice", async (
       let compactionRequests = 0;
       const context = {
         cwd,
+        sessionManager: { getSessionId: () => "root-session" },
         model: activeModel,
         modelRegistry: { getAll: () => [activeModel] },
         getContextUsage: () => ({ tokens, contextWindow: 600_000, percent: 0 }),
@@ -164,6 +166,7 @@ test("changing a preset re-applies the cap without a restart", async (t) => {
   let compactionRequests = 0;
   const context = {
     cwd: process.cwd(),
+    sessionManager: { getSessionId: () => "root-session" },
     model: activeModel,
     modelRegistry: { getAll: () => [registryModel] },
     getContextUsage: () => ({ tokens, contextWindow: 600_000, percent: 0 }),
@@ -220,6 +223,7 @@ test("compaction is requested only after the agent run settles", async () => {
   let compactionRequests = 0;
   const context = {
     cwd: process.cwd(),
+    sessionManager: { getSessionId: () => "root-session" },
     model: activeModel,
     modelRegistry: { getAll: () => [activeModel] },
     getContextUsage: () => ({
@@ -254,6 +258,7 @@ test("caps are re-applied to models replaced by a catalog refresh", async () => 
   let registryModel = startupModel;
   const context = {
     cwd: process.cwd(),
+    sessionManager: { getSessionId: () => "root-session" },
     model: startupModel,
     modelRegistry: { getAll: () => [registryModel] },
     getContextUsage: () => ({ tokens: 0, contextWindow: 600_000, percent: 0 }),
@@ -296,6 +301,7 @@ test("a replaced session cancels pending re-applications instead of crashing Pi"
   let registryReads = 0;
   const context = {
     cwd: process.cwd(),
+    sessionManager: { getSessionId: () => "root-session" },
     model: startupModel,
     // Pi's real context throws from this getter once the session is replaced.
     get modelRegistry() {
@@ -338,6 +344,7 @@ test("session shutdown stops scheduled re-applications", async (t) => {
   let registryReads = 0;
   const context = {
     cwd: process.cwd(),
+    sessionManager: { getSessionId: () => "root-session" },
     model: startupModel,
     modelRegistry: {
       getAll: () => {
@@ -364,6 +371,7 @@ test("session end restores native windows so a reloaded module sees them", async
   const activeModel = model(1_000_000);
   const context = {
     cwd: process.cwd(),
+    sessionManager: { getSessionId: () => "root-session" },
     model: activeModel,
     modelRegistry: { getAll: () => [activeModel] },
     getContextUsage: () => ({ tokens: 0, contextWindow: 600_000, percent: 0 }),
@@ -388,12 +396,60 @@ test("session end restores native windows so a reloaded module sees them", async
   await resetPresets();
 });
 
+test("a child session's shutdown leaves the caps its parent and siblings share", async () => {
+  await resetPresets();
+  const MANAGER_SLOT = Symbol.for("pi-subagents:manager");
+  const previous = Object.getOwnPropertyDescriptor(globalThis, MANAGER_SLOT);
+  // The subagents registry answers for a live child only: the manager drops
+  // the id before it emits the child's session_shutdown.
+  let childLive = true;
+  Object.defineProperty(globalThis, MANAGER_SLOT, {
+    value: { isChildSessionId: (id: string) => childLive && id === "child-session" },
+    configurable: true,
+  });
+  // Parent and child share one model object, as a child's model runtime is its parent's.
+  const sharedModel = model(1_000_000);
+  const contextFor = (sessionId: string) => ({
+    cwd: process.cwd(),
+    sessionManager: { getSessionId: () => sessionId },
+    model: sharedModel,
+    modelRegistry: { getAll: () => [sharedModel] },
+    getContextUsage: () => ({ tokens: 0, contextWindow: 600_000, percent: 0 }),
+    compact: () => {},
+    ui: { notify: () => {} },
+  });
+  const parent = registerCap();
+  const child = await registerReloadedCap("child-session");
+  try {
+    await parent.get("session_start")?.(
+      { type: "session_start", reason: "startup" },
+      contextFor("parent-session"),
+    );
+    await child.get("session_start")?.(
+      { type: "session_start", reason: "startup" },
+      contextFor("child-session"),
+    );
+    assert.equal(sharedModel.contextWindow, 600_000);
+
+    childLive = false;
+    child.get("session_shutdown")?.({ type: "session_shutdown" }, contextFor("child-session"));
+    assert.equal(sharedModel.contextWindow, 600_000, "the child's shutdown kept the cap");
+
+    parent.get("session_shutdown")?.({ type: "session_shutdown" }, contextFor("parent-session"));
+    assert.equal(sharedModel.contextWindow, 1_000_000, "the parent still hands windows back");
+  } finally {
+    if (previous) Object.defineProperty(globalThis, MANAGER_SLOT, previous);
+    else Reflect.deleteProperty(globalThis, MANAGER_SLOT);
+  }
+});
+
 test("a reloaded module never takes a capped window for the native one", async () => {
   await resetPresets();
   const handlers = registerCap();
   const activeModel = model(1_000_000);
   const context = {
     cwd: process.cwd(),
+    sessionManager: { getSessionId: () => "root-session" },
     model: activeModel,
     modelRegistry: { getAll: () => [activeModel] },
     getContextUsage: () => ({ tokens: 0, contextWindow: 600_000, percent: 0 }),
@@ -421,6 +477,7 @@ test("a reloaded module never takes a capped window for the native one", async (
 function singleModelContext(activeModel: Model<Api>) {
   return {
     cwd: process.cwd(),
+    sessionManager: { getSessionId: () => "root-session" },
     model: activeModel,
     modelRegistry: { getAll: () => [activeModel] },
     getContextUsage: () => ({

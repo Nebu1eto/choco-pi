@@ -48,6 +48,8 @@ interface Harness {
   executed: string[];
   bridgeResults: string[];
   setResponses: ReturnType<typeof createFauxCore>["setResponses"];
+  /** Register a tool after the scope is installed, as an MCP server connecting late does. */
+  registerLate(name: string): void;
   close(): Promise<void>;
 }
 
@@ -91,8 +93,10 @@ async function harness(): Promise<Harness> {
     ].map((tool) => [tool.name, tool]),
   );
   const slot: ScopeSlot = {};
+  let registerTool: ((tool: ToolDefinition) => void) | undefined;
 
   const tools: ExtensionFactory = (pi) => {
+    registerTool = (tool) => pi.registerTool(tool);
     pi.registerProvider(PROVIDER, {
       baseUrl: "http://127.0.0.1.invalid",
       apiKey: "inert",
@@ -183,7 +187,7 @@ async function harness(): Promise<Harness> {
   // A tool-denied child: the probes' extension loads, two of its tools are denied.
   const isReachable = installExtensionToolScope(session, {
     loader,
-    toolNames: ["read", "bridge", "raw_bridge"],
+    toolNames: ["read", "bridge", "raw_bridge", "late_probe"],
     disallowedSet: DENIED,
     extNames: new Set(),
     narrowing: new Map(),
@@ -198,6 +202,10 @@ async function harness(): Promise<Harness> {
     executed,
     bridgeResults,
     setResponses: (responses) => faux.setResponses(responses),
+    registerLate: (name) => {
+      assert.ok(registerTool, "the probe extension loaded");
+      registerTool(probe(name, "direct", executed));
+    },
     close: async () => {
       session.dispose();
       await rm(root, { recursive: true, force: true });
@@ -277,6 +285,34 @@ test("renarrow withdraws a deferred tool activated outside the child's reach", a
     h.setResponses([fauxAssistantMessage([fauxText("done")])]);
     await h.session.prompt("go");
     assert.ok(!h.session.getActiveToolNames().includes("mcp__denied__probe"));
+  } finally {
+    await h.close();
+  }
+});
+
+test("renarrow leaves a tool another extension deactivated and still admits a late one", async () => {
+  const h = await harness();
+  try {
+    assert.ok(h.session.getActiveToolNames().includes("bridge"), "in scope at install");
+    // The Codex adapter hides the direct tools Code Mode replaces this way.
+    h.session.setActiveToolsByName(
+      h.session.getActiveToolNames().filter((name) => name !== "bridge"),
+    );
+    h.registerLate("late_probe");
+    // An earlier narrowing dropped it again before the turn ended.
+    h.session.setActiveToolsByName(
+      h.session.getActiveToolNames().filter((name) => name !== "late_probe"),
+    );
+    h.setResponses([
+      fauxAssistantMessage([fauxText("one")]),
+      fauxAssistantMessage([fauxText("two")]),
+    ]);
+    await h.session.prompt("go");
+    assert.ok(!h.session.getActiveToolNames().includes("bridge"), "stays deactivated");
+    assert.ok(h.session.getActiveToolNames().includes("late_probe"), "late tool admitted once");
+
+    await h.session.prompt("again");
+    assert.ok(!h.session.getActiveToolNames().includes("bridge"), "stays off on a resumed run");
   } finally {
     await h.close();
   }

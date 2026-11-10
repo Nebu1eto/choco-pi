@@ -29,6 +29,7 @@ import {
   recordNativeContextWindow,
 } from "./lib/context-policy.ts";
 import { rethrowUnlessStaleContext } from "./lib/lifecycle.ts";
+import { isRegisteredChildSession } from "./lib/stop-control.ts";
 
 /** Everything besides the model that decides its policy. */
 export interface ContextCapSettings {
@@ -59,6 +60,12 @@ let preferenceRevision = 0;
 let sessionGeneration = 0;
 let unsubscribePreferences: (() => void) | undefined;
 let compactionRequested = false;
+/**
+ * Whether this module instance serves a subagent's child session. Read at
+ * session_start: the manager drops the child id before it emits the child's
+ * session_shutdown, so the registry no longer answers by then.
+ */
+let servesChildSession = false;
 // The interactive startup refresh replaces registry model objects a few seconds
 // after session_start, so caps are re-applied until that refresh has settled.
 const REAPPLY_DELAYS_MS = [2_000, 5_000, 10_000, 17_000];
@@ -340,6 +347,7 @@ export default function modelContextCap(pi: ExtensionAPI): void {
   pi.on("session_start", async (_event, ctx) => {
     endSession();
     const generation = sessionGeneration;
+    servesChildSession = isRegisteredChildSession(ctx.sessionManager.getSessionId());
     subscribeToPresets(ctx, generation);
     try {
       if (!(await applyContextCaps(ctx, generation))) return;
@@ -357,6 +365,10 @@ export default function modelContextCap(pi: ExtensionAPI): void {
   });
   pi.on("session_shutdown", (_event, ctx) => {
     endSession();
+    // A child session shares its parent's model objects. Restoring them when
+    // the child is disposed would lift the cap for the parent and for every
+    // sibling still running, which re-apply only at their next run boundary.
+    if (servesChildSession) return;
     // Pi re-evaluates extensions after this event on /reload; a switch keeps
     // this module and its records, so only shutdown hands the windows back.
     restoreNativeWindows(ctx);
