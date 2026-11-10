@@ -647,7 +647,13 @@ async function readProfileSettings(
       }),
     };
   }
-  return { ...existingSettings, packages };
+  // A reinstall keeps the user's settings but still fills in per-model thinking
+  // levels the profile added since; buildGlobalSettings lets the user's win.
+  return {
+    ...existingSettings,
+    packages,
+    modelThinkingLevels: { ...DEFAULT_PROFILE_MODEL_THINKING_LEVELS },
+  };
 }
 
 export async function installProfile({

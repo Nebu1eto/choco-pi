@@ -28,6 +28,7 @@ import {
 import { deriveBackgroundLanes } from "../.pi/packages/choco-pi-compaction/src/background/settings.ts";
 import {
   buildGlobalSettings,
+  DEFAULT_PROFILE_MODEL_THINKING_LEVELS,
   DEFAULT_PROFILE_PACKAGES,
   installProfile,
   MIGRATED_SIDECARS,
@@ -238,7 +239,12 @@ test("profile installer links tracked config and is idempotent", async (context)
   const settings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
   assert.deepEqual(settings.packages, BUNDLED_PACKAGES);
   assert.deepEqual(settings.extensions, [path.resolve(".pi/extensions"), "-builtin:codemode"]);
-  assert.deepEqual(settings.modelThinkingLevels, thinking);
+  // User levels win; profile defaults fill only the models the user has not set.
+  assert.deepEqual(settings.modelThinkingLevels, {
+    ...DEFAULT_PROFILE_MODEL_THINKING_LEVELS,
+    ...thinking,
+  });
+  assert.equal(settings.modelThinkingLevels["anthropic/claude-opus-5-5"], "medium");
 });
 
 test("without project settings, global settings supply the profile and lose superseded packages", async (context) => {
