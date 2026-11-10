@@ -392,3 +392,15 @@ test("persisted pending entries are validated: extra top-level keys pass, malfor
     [completed],
   ]);
 });
+
+test("hasPending reports a held completion until it flushes", (t) => {
+  delete registry()[nativeSteeringSymbol];
+  const completed = shell(1);
+  const { gate, flushed } = setup(t, [completed]);
+  assert.equal(gate.hasPending(), false);
+  gate.enqueue(completed);
+  assert.equal(gate.hasPending(), true);
+  t.mock.timers.tick(250);
+  assert.equal(flushed.length, 1);
+  assert.equal(gate.hasPending(), false);
+});

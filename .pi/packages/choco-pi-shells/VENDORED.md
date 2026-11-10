@@ -19,3 +19,16 @@ Root activations join the choco-pi stop-control v1 protocol through the package-
 ## 2026-11-10 choco-pi patch: Pi SDK target 1.5.1
 
 Pi SDK pins move from `1.5.0` to exactly `1.5.1`; version references in comments, tests, and docs follow.
+
+## 2026-11-10 print-mode settle waits for background shells
+
+Print and JSON mode exited before a background shell's completion
+notification could continue the run (prefix-eval `background-shell`). The
+root activation now handles `agent_before_settle` in those modes only and
+waits while `ShellManager.hasRunning(ownerId)` or
+`ShellNotificationGate.hasPending()` holds, returning once a completion is
+sent, after two idle checks, on shutdown, session replacement, or a closed
+stop latch, or after `CHOCO_PI_PRINT_BACKGROUND_WAIT_MS` (default 600000; 0
+disables). `src/print-settle-wait.ts` is an identical copy of the
+choco-pi-subagents helper. Tests: `tests/print-settle-wait.test.ts`, and the
+print-mode case in `tests/index.test.ts`.

@@ -184,6 +184,11 @@ export class ShellNotificationGate {
     this.tryFlush();
   }
 
+  /** A completion is held and not yet delivered. */
+  hasPending(): boolean {
+    return !this.stopped && this.held.size > 0;
+  }
+
   enqueue(shell: ShellResult): void {
     if (this.stopped || this.sessionId === undefined || shell.ownerId !== this.sessionId) return;
     const key = completionKey(shell);

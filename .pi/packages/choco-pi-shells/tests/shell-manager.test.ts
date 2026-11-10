@@ -879,3 +879,19 @@ test("start rejects missing and non-directory cwd before retaining a shell recor
     rmSync(fixtureDirectory, { recursive: true, force: true });
   }
 });
+
+test("hasRunning tracks running shells per owner", async () => {
+  const manager = new ShellManager({ shell: process.execPath, shellArgs: ["-e"] });
+  try {
+    const started = manager.start({ ownerId: "owner", cwd, command: "setTimeout(() => {}, 300)" });
+    assert.equal(manager.hasRunning("owner"), true);
+    assert.equal(manager.hasRunning("other"), false);
+    await waitFor(
+      () => readShell(manager, started.shellId),
+      (result) => isTerminal(result.shell),
+    );
+    assert.equal(manager.hasRunning("owner"), false);
+  } finally {
+    await manager.dispose();
+  }
+});

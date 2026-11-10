@@ -2217,3 +2217,19 @@ validators keep `Number.MAX_VALUE`; xAI accepts it on `number`. Test:
 ## 2026-11-10 choco-pi patch: Pi SDK target 1.5.1
 
 Pi SDK pins move from `1.5.0` to exactly `1.5.1`; version references in comments, tests, and docs follow. The package-local `minimumReleaseAgeExclude` entries move to `@1.5.1`. The lock was regenerated with pnpm 11.11.0 (`pnpm install --ignore-scripts`); Pi 1.5.1 replaces `grok-mermaid` with `lovely-mermaid` transitively.
+
+## 2026-11-10 choco-pi patch: print-mode settle waits for background agents
+
+`pi -p` and `pi --mode json` dispose the runtime as soon as the last prompt
+settles, so an agent or workflow started in the final turn was killed before
+its completion notification could start the follow-up turn the model
+announced (prefix-eval `delegate-readonly`). The root activation now handles
+`agent_before_settle` in print and JSON mode only: it waits while
+`manager.hasRunning()`, `NotificationGate.hasPending()`, or a pending workflow
+nudge holds, and returns once a completion has been sent (the queued steer
+makes Pi continue, and the boundary runs again for remaining work), after two
+idle checks, on session replacement or a closed stop latch, or after
+`CHOCO_PI_PRINT_BACKGROUND_WAIT_MS` (default 600000; 0 disables). TUI and RPC
+modes are untouched. New `src/print-settle-wait.ts` (identical copy in
+choco-pi-shells); `emitNudges` and the workflow aggregate count their sends.
+Tests: `tests/print-settle-wait.test.ts`.

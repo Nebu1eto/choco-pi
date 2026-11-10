@@ -12,6 +12,7 @@ import { inChildSessionContext } from "../../choco-pi-subagents/src/child-contex
 import { isRegisteredChildSession } from "./child-session.ts";
 import { hostParams } from "./schema-bridge.ts";
 import { ShellNotificationGate } from "./notification-gate.ts";
+import { printWaitLimitMs, PRINT_WAIT_ENV, waitForBackgroundSettle } from "./print-settle-wait.ts";
 import { ShellManager } from "./shell-manager.ts";
 import {
   isStopShellsRequest,
@@ -279,6 +280,8 @@ export default function shellsExtension(pi: ExtensionAPI): void {
   // Stop epoch each root-owned shell was authorised in; completions from an older epoch never trigger a turn.
   const shellStartEpochs = new Map<string, number>();
   let unsubscribeStopShells: (() => void) | undefined;
+  /** Completion notifications sent by this activation; the print-mode settle wait watches it. */
+  let completionDeliveries = 0;
 
   const flushCompletions = (completed: ShellResult[]): void => {
     if (shuttingDown) {
@@ -309,6 +312,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
         },
         { deliverAs: "steer", triggerTurn },
       );
+      completionDeliveries += 1;
     } catch (error) {
       // Session replacement or reload can stale this ctx without session_shutdown
       // firing before the debounced timer. Contain only the canonical stale-context
@@ -492,6 +496,27 @@ export default function shellsExtension(pi: ExtensionAPI): void {
 
   pi.on("turn_end", () => {
     notificationGate.turnEnd();
+  });
+
+  // Print and JSON mode exit when the last prompt settles; hold the settle until this root's
+  // background shells deliver their completion so the announced follow-up turn can run.
+  pi.on("agent_before_settle", async (_event, ctx) => {
+    if (ctx.mode !== "print" && ctx.mode !== "json") return;
+    const ownerId = currentSessionId;
+    if (ownerId === undefined || isChildSession(ownerId)) return;
+    const maxWaitMs = printWaitLimitMs(process.env[PRINT_WAIT_ENV]);
+    const outcome = await waitForBackgroundSettle({
+      isBusy: () => manager.hasRunning(ownerId) || notificationGate.hasPending(),
+      deliveries: () => completionDeliveries,
+      isCancelled: () =>
+        shuttingDown || currentSessionId !== ownerId || readStopState(ownerId).closed,
+      maxWaitMs,
+    });
+    if (outcome === "timeout") {
+      console.error(
+        `[choco-pi-shells] Background shells still running after ${maxWaitMs} ms; exiting without their completion. Set ${PRINT_WAIT_ENV} to change the limit.`,
+      );
+    }
   });
 
   if (!loadedInChildContext) {

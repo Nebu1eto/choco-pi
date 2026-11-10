@@ -81,6 +81,7 @@ import {
   setFallbackSubagent,
 } from "./agent-types.ts";
 import { inChildSessionContext, isChildSessionId } from "./child-context.ts";
+import { printWaitLimitMs, PRINT_WAIT_ENV, waitForBackgroundSettle } from "./print-settle-wait.ts";
 import {
   describeScratchChange,
   setPreviousScratchDir,
@@ -574,6 +575,8 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   let shellSectionProvider: ShellSectionProvider | undefined;
   /** Root session this activation serves; set on session_start, cleared on shutdown. */
   let activeRootSessionId: string | undefined;
+  /** Completion notifications sent to the root; the print-mode settle wait watches it. */
+  let completionDeliveries = 0;
   /** Keeps the root's terminal status `working` while its background agents run (TUI only). */
   let programStatus: ProgramStatusBridge | undefined;
 
@@ -660,6 +663,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       },
       { deliverAs: "steer", triggerTurn },
     );
+    completionDeliveries += 1;
   }
 
   /**
@@ -2011,6 +2015,31 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   pi.on("agent_end", () => notificationGate.agentEnd());
   pi.on("turn_end", () => notificationGate.turnEnd());
 
+  // Print and JSON mode exit when the last prompt settles; hold the settle until background
+  // agents and workflows deliver their completion so the announced follow-up turn can run.
+  pi.on("agent_before_settle", async (_event, ctx) => {
+    if (!ownsManagerRegistry || (ctx.mode !== "print" && ctx.mode !== "json")) return;
+    const rootSessionId = activeRootSessionId;
+    if (rootSessionId === undefined) return;
+    const generation = revivalGeneration;
+    const maxWaitMs = printWaitLimitMs(process.env[PRINT_WAIT_ENV]);
+    const outcome = await waitForBackgroundSettle({
+      isBusy: () =>
+        manager.hasRunning() || notificationGate.hasPending() || workflowNudges.size > 0,
+      deliveries: () => completionDeliveries,
+      isCancelled: () =>
+        generation !== revivalGeneration ||
+        activeRootSessionId !== rootSessionId ||
+        readStopState(rootSessionId).closed,
+      maxWaitMs,
+    });
+    if (outcome === "timeout") {
+      console.error(
+        `[choco-pi-subagents] Background agents still running after ${maxWaitMs} ms; exiting without their completion. Set ${PRINT_WAIT_ENV} to change the limit.`,
+      );
+    }
+  });
+
   // Main-session compaction for the fleet view's main row and status line.
   // An earlier handler's cancel skips this one, but the failed event still ends it.
   const mainCompaction = createMainCompactionActivity();
@@ -2186,6 +2215,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
           triggerTurn: workflowTriggerTurn,
         },
       );
+      completionDeliveries += 1;
     });
   });
   workflows = workflowManager;

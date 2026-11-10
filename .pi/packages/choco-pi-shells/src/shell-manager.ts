@@ -209,6 +209,14 @@ export class ShellManager {
     return [...(this.pendingByOwner.get(ownerId)?.values() ?? [])].map((shell) => ({ ...shell }));
   }
 
+  /** Whether `ownerId` owns a shell that has not reached a terminal state. */
+  hasRunning(ownerId: string): boolean {
+    for (const record of this.records.values()) {
+      if (record.ownerId === ownerId && record.state === "running") return true;
+    }
+    return false;
+  }
+
   isCompletionAcknowledged(shell: ShellResult): boolean {
     return this.acknowledgedCompletions.has(`${shell.shellId}:${shell.endedAt}`);
   }

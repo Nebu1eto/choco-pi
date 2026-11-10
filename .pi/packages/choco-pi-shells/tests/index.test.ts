@@ -126,6 +126,7 @@ interface Activation {
   agentStart?: LifecycleHandler;
   agentEnd?: LifecycleHandler;
   turnEnd?: LifecycleHandler;
+  agentBeforeSettle?: LifecycleHandler;
   shutdown?: LifecycleHandler;
 }
 
@@ -262,6 +263,8 @@ function activate(child: boolean): Promise<Activation> {
         activation.agentEnd = handler;
       } else if (event === "turn_end") {
         activation.turnEnd = handler;
+      } else if (event === "agent_before_settle") {
+        activation.agentBeforeSettle = handler;
       } else if (event === "session_shutdown") activation.shutdown = handler;
       else assert.fail(`unexpected event ${event}`);
     },
@@ -1366,5 +1369,34 @@ test("shell_start exports the scratch environment and warns about a /tmp cwd out
     await root.shutdown({ reason: "quit" }, context("root-scratch"));
     await rm(stray, { recursive: true, force: true });
     if (inheritedRoot !== undefined) process.env["PI_ROOT_SESSION_ID"] = inheritedRoot;
+  }
+});
+
+test("print mode holds the settle until a running shell delivers its completion", async () => {
+  assert.equal(registry()[managerKey], undefined);
+  const root = await activate(false);
+  try {
+    assert.ok(root.sessionStart);
+    assert.ok(root.agentBeforeSettle);
+    const tui = context("root-session", [], packageCwd, new TestUI(), "tui", true);
+    const print = context("root-session", [], packageCwd, new TestUI(), "print", false);
+    await root.sessionStart({}, print);
+    await execute(root, "shell_start", { command: "sleep 0.4" }, "root-session");
+
+    const tuiStartedAt = Date.now();
+    await root.agentBeforeSettle({}, tui);
+    assert.ok(Date.now() - tuiStartedAt < 200, "TUI mode never waits");
+    assert.equal(root.messages.length, 0);
+
+    await root.agentBeforeSettle({}, print);
+    assert.equal(root.messages.length, 1, "the completion was sent before the settle returned");
+    assert.deepEqual(root.messages[0]?.options, { deliverAs: "steer", triggerTurn: true });
+
+    const idleStartedAt = Date.now();
+    await root.agentBeforeSettle({}, print);
+    assert.ok(Date.now() - idleStartedAt < 200, "nothing pending: no wait");
+  } finally {
+    assert.ok(root.shutdown);
+    await root.shutdown({ reason: "quit" }, context("root-session"));
   }
 });
