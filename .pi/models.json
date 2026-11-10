@@ -51,6 +51,13 @@
       }
     },
     "anthropic": {
+      "modelOverrides": {
+        "claude-fable-5-2": {
+          "headers": {
+            "user-agent": "claude-cli/2.1.290"
+          }
+        }
+      },
       "models": [
         {
           "id": "claude-mythos-5-1",
@@ -136,6 +143,9 @@
                 "jpegQuality": 80
               }
             }
+          },
+          "headers": {
+            "user-agent": "claude-cli/2.1.290"
           }
         }
       ]

@@ -25,7 +25,7 @@ export interface AdvisorSettings {
 }
 export const DEFAULT_SETTINGS: AdvisorSettings = {
   enabled: false,
-  model: "anthropic/claude-fable-5-1",
+  model: "anthropic/claude-fable-5-2",
   effort: "low",
 };
 // Open object, as TypeBox's was: unknown keys pass validation (and are kept on read).

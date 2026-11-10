@@ -1092,8 +1092,13 @@ test("the repository fallback table loads and mirrors the model-guidance tiers",
   try {
     const table = await loadModelFallbacks(agentDir);
     assert.deepEqual(table.tiers.flagship?.primary, [
-      "anthropic/claude-fable-5-1",
+      "anthropic/claude-fable-5-2",
       "openai-codex/gpt-6-astra",
+    ]);
+    assert.deepEqual(table.tiers.flagship?.secondary, [
+      "anthropic/claude-mythos-5-2",
+      "anthropic/claude-fable-5-1",
+      "anthropic/claude-mythos-5-1",
     ]);
     assert.deepEqual(table.tiers.workhorse, {
       primary: ["anthropic/claude-opus-5-5", "openai-codex/gpt-6.1-sol"],

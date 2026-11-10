@@ -481,6 +481,8 @@ values are the maintainer's current settings. Secrets never belong in this file.
     "synthetic/hf:zai-org/GLM-5.3": "high",
     "synthetic/hf:zai-org/GLM-5.3-Flash": "high",
     "anthropic/claude-mythos-5-1": "low",
+    "anthropic/claude-fable-5-2": "high",
+    "anthropic/claude-mythos-5-2": "high",
     "synthetic/hf:moonshotai/Kimi-K3.1-Pro": "high",
     "synthetic/hf:deepseek-ai/DeepSeek-V4.1-Flash-1017": "high"
   },
@@ -494,6 +496,8 @@ values are the maintainer's current settings. Secrets never belong in this file.
   "defaultModel": "claude-opus-5-5",
   "defaultThinkingLevel": "low",
   "enabledModels": [
+    "anthropic/claude-mythos-5-2",
+    "anthropic/claude-fable-5-2",
     "anthropic/claude-mythos-5-1",
     "anthropic/claude-fable-5-1",
     "anthropic/claude-opus-5-5",
@@ -556,7 +560,7 @@ The advisor has its own file, `~/.pi/agent/advisor.json`, which a project
 ```json
 {
   "enabled": true,
-  "model": "anthropic/claude-fable-5-1",
+  "model": "anthropic/claude-fable-5-2",
   "effort": "low",
   "maxUses": 3
 }

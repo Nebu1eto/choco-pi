@@ -1,6 +1,6 @@
 ---
 description: Read-only planner that maps dependencies and write conflicts under project policy
-model: anthropic/claude-fable-5-1
+model: anthropic/claude-fable-5-2
 thinking: medium
 prompt_mode: append
 skills: true

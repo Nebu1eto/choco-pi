@@ -151,6 +151,8 @@ const DEFAULT_PROFILE_EXTENSIONS: readonly string[] = ["-builtin:codemode"];
  * provider has no credentials, and the subagent scope check uses this list.
  */
 export const DEFAULT_PROFILE_ENABLED_MODELS: readonly string[] = [
+  "anthropic/claude-mythos-5-2",
+  "anthropic/claude-fable-5-2",
   "anthropic/claude-mythos-5-1",
   "anthropic/claude-fable-5-1",
   "anthropic/claude-opus-5-5",
@@ -205,6 +207,8 @@ export const DEFAULT_PROFILE_MODEL_THINKING_LEVELS = {
   "synthetic/hf:zai-org/GLM-5.3": "high",
   "synthetic/hf:zai-org/GLM-5.3-Flash": "high",
   "anthropic/claude-mythos-5-1": "low",
+  "anthropic/claude-fable-5-2": "high",
+  "anthropic/claude-mythos-5-2": "high",
   "synthetic/hf:moonshotai/Kimi-K3.1-Pro": "high",
   "synthetic/hf:deepseek-ai/DeepSeek-V4.1-Flash-1017": "high",
 } as const satisfies Readonly<Record<string, string>>;

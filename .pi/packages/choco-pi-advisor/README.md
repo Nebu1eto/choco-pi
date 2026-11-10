@@ -29,7 +29,7 @@ Consults are skipped when the advisor model equals the session model with the me
 | Key       | Default                      | Values                                                    |
 | --------- | ---------------------------- | --------------------------------------------------------- |
 | `enabled` | `false`                      | Boolean                                                   |
-| `model`   | `anthropic/claude-fable-5-1` | Provider/model identifier                                 |
+| `model`   | `anthropic/claude-fable-5-2` | Provider/model identifier                                 |
 | `effort`  | `low`                        | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` |
 | `maxUses` | Absent (unlimited)           | Positive integer                                          |
 
