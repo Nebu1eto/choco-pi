@@ -2,8 +2,8 @@
  * Hide access-program Anthropic models from accounts that cannot use them.
  *
  * Pi lists every catalog model once a provider has credentials. Claude Mythos
- * 5.1 is served only to accounts in Anthropic's access program, so this
- * extension registers a native `anthropic` provider that delegates to the
+ * 5.1 and 5.2 are served only to accounts in Anthropic's access programs, so
+ * this extension registers a native `anthropic` provider that delegates to the
  * current one and adds `filterModels`. Both the model picker and the
  * usage-limit fallback read `ModelRegistry.getAvailable()`, which applies that
  * filter. A gated model stays hidden until `GET /v1/models` for the current
@@ -25,7 +25,7 @@ import { rethrowUnlessStaleContext } from "./lib/lifecycle.ts";
 
 const PROVIDER = "anthropic";
 /** Anthropic models served only to accounts in an access program. */
-const GATED_MODEL_IDS: ReadonlySet<string> = new Set(["claude-mythos-5-1"]);
+const GATED_MODEL_IDS: ReadonlySet<string> = new Set(["claude-mythos-5-1", "claude-mythos-5-2"]);
 const MODELS_URL = "https://api.anthropic.com/v1/models";
 const ANTHROPIC_VERSION = "2023-06-01";
 const OAUTH_BETA = "oauth-2025-04-20";
