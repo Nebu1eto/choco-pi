@@ -53,6 +53,11 @@ Opus 5.5: a progress update is not completion. Take the next step you announce i
 Fable 5.1 and Mythos 5.1: ground long-run progress in observed evidence and milestones. Use asynchronous subagents for safe independent work and fresh verification only when task risk warrants it. Prefer targeted edits; rewrite a whole file only when it is short or mostly changing. At low effort, search when freshness or missing evidence matters instead of answering from memory.
 <!-- choco-pi:model-guidance:end -->
 
+<!-- choco-pi:model-guidance anthropic/claude-fable-5-2,anthropic/claude-mythos-5-2 -->
+
+Fable 5.2 and Mythos 5.2: the user owns this code and sets the scope. How far to look depends on the request. For a change request, read the files and behavior it names, the code that directly calls them or that they directly call, and what you need to verify your own change. For a diagnosis, plan, or investigation, follow the chain of cause from what was asked as far as the answer needs; your thoroughness is an asset there, so spend it on that chain and not on side paths. In both cases, when you notice a problem outside that boundary, report it in one line and do not open it up. Before a further check, know which answer it could change; skip it when it could change none. Finish the requested work through ordinary obstacles such as errors, timeouts, and failing tools; stop only for a deliberate blocker or a decision the user must make.
+<!-- choco-pi:model-guidance:end -->
+
 <!-- choco-pi:model-guidance anthropic/claude-sonnet-5-5 -->
 
 Sonnet 5.5: finish the authorized scope before ending the turn; do not stop to confirm work the request already covers. Run a check that exercises each change before reporting it done. Add no tests, docs, or files beyond the request, and start no review rounds or reviewer subagents of your own.
