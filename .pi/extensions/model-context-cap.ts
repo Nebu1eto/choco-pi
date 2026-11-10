@@ -380,6 +380,16 @@ export default function modelContextCap(pi: ExtensionAPI): void {
   pi.on("before_agent_start", (_event, ctx) => {
     reapplyContextCaps(ctx);
   });
+  // The host can swap the session's model for a fresh registry object in the
+  // middle of a run (a provider registration refreshes it) without emitting
+  // model_select. Without these passes the new object keeps its native window
+  // until the run settles, which a long single run never does.
+  pi.on("turn_start", (_event, ctx) => {
+    reapplyContextCaps(ctx);
+  });
+  pi.on("turn_end", (_event, ctx) => {
+    reapplyContextCaps(ctx);
+  });
   pi.on("agent_settled", (_event, ctx) => {
     const model = ctx.model;
     if (!model) return;

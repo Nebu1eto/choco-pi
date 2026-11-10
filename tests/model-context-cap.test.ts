@@ -216,7 +216,6 @@ test("compaction is requested only after the agent run settles", async () => {
   });
   modelContextCap(pi);
 
-  assert.equal(handlers.has("turn_end"), false);
   assert.equal(handlers.has("agent_settled"), true);
 
   const activeModel = model(1_000_000);
@@ -238,6 +237,9 @@ test("compaction is requested only after the agent run settles", async () => {
   };
 
   await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, context);
+  // A turn boundary re-applies caps but never requests compaction mid-run.
+  await handlers.get("turn_end")?.({ type: "turn_end" }, context);
+  assert.equal(compactionRequests, 0);
   await handlers.get("agent_settled")?.({ type: "agent_settled" }, context);
   assert.equal(compactionRequests, 1);
 });
@@ -281,6 +283,33 @@ test("caps are re-applied to models replaced by a catalog refresh", async () => 
     context,
   );
   assert.equal(selectedModel.contextWindow, 600_000);
+});
+
+test("a model object swapped in mid-run is capped at the next turn boundary", async () => {
+  await resetPresets();
+  const handlers = registerCap();
+  const startupModel = model(1_000_000);
+  let registryModel = startupModel;
+  const context = {
+    cwd: process.cwd(),
+    sessionManager: { getSessionId: () => "root-session" },
+    model: startupModel,
+    modelRegistry: { getAll: () => [registryModel] },
+    getContextUsage: () => ({ tokens: 0, contextWindow: 600_000, percent: 0 }),
+    compact: () => {},
+    ui: { notify: () => {} },
+  };
+  await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, context);
+  handlers.get("before_agent_start")?.({ type: "before_agent_start" }, context);
+  assert.equal(startupModel.contextWindow, 600_000);
+
+  // The host refreshes the session model from the registry without model_select.
+  for (const boundary of ["turn_start", "turn_end"]) {
+    registryModel = model(1_000_000);
+    context.model = registryModel;
+    handlers.get(boundary)?.({ type: boundary }, context);
+    assert.equal(registryModel.contextWindow, 600_000, boundary);
+  }
 });
 
 test("a replaced session cancels pending re-applications instead of crashing Pi", async (t) => {
