@@ -870,8 +870,14 @@ function streamWithCapture(
   const capture: CaptureCall = { settings, model, call, base };
   const capturingFetch: typeof globalThis.fetch = (input, init) =>
     captureAndForward(capture, input, init);
+  // Pi 1.5.1 Anthropic message threads send only new messages on a `continue` and omit
+  // system and tools; captures, entry mapping, and replay checks need the full conversation.
   return runtime().calls.run(call, () =>
-    settings.delegate(model, context, { ...streamOptions, fetch: capturingFetch }),
+    settings.delegate(model, context, {
+      ...streamOptions,
+      fetch: capturingFetch,
+      disableContinuation: true,
+    }),
   );
 }
 

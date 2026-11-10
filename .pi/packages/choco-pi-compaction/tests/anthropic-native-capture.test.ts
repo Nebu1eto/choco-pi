@@ -15,6 +15,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  type AssistantMessage,
   InMemoryCredentialStore,
   InMemoryModelsStore,
   type JsonObject,
@@ -43,9 +44,11 @@ import {
   createCapturingStreamSimple,
   keyRef,
   mapWireToEntries,
+  parseWireBody,
   recentResponsesFor,
   registerAnthropicCapture,
   releaseSessionCaptures,
+  type WireBody,
   type WireCapture,
   isWireBody,
 } from "../src/anthropic/capture.ts";
@@ -438,4 +441,44 @@ test("mapping control: content no projected entry produced is reported", () => {
       ambiguous: [],
     },
   ]);
+});
+
+test("captured requests stay full: Anthropic message threads are not continued", async () => {
+  const sent: WireBody[] = [];
+  const stream = createCapturingStreamSimple({
+    fetch: async (_input, init) => {
+      const body = parseWireBody(String(init?.body ?? ""));
+      assert.ok(body, "request body is an Anthropic wire body");
+      sent.push(body);
+      return textReply("OK");
+    },
+  });
+  const model = { ...nativeModel(), compat: { supportsMessageThreads: true } };
+  const sessionId = "native-thread-session";
+  const first = { role: "user" as const, content: "NATIVE-THREAD-1", timestamp: 0 };
+  const replies: AssistantMessage[] = [];
+  for await (const event of stream(model, normalizeContext({ messages: [first] }), {
+    apiKey: API_KEY,
+    sessionId,
+  })) {
+    assert.notEqual(event.type, "error");
+    if (event.type === "done") replies.push(event.message);
+  }
+  const [reply] = replies;
+  assert.ok(reply, "first turn completed");
+  const second = { role: "user" as const, content: "NATIVE-THREAD-2", timestamp: 1 };
+  for await (const event of stream(model, normalizeContext({ messages: [first, reply, second] }), {
+    apiKey: API_KEY,
+    sessionId,
+  })) {
+    assert.notEqual(event.type, "error");
+  }
+  releaseSessionCaptures(sessionId);
+  assert.equal(sent.length, 2);
+  const continued = sent[1];
+  assert.ok(continued);
+  // A thread continue would send only the new message and omit system and tools,
+  // so captures and replay checks would see a partial conversation.
+  assert.equal(continued.thread, undefined, "no thread continuation on the wire");
+  assert.equal(continued.messages.length, 3, "the full conversation is sent");
 });
