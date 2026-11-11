@@ -38,7 +38,8 @@ function getFailedPaths(error: ExecutePatchError): string[] {
   );
 }
 
-function touchedPatchPaths(cwd: string, patchText: string): string[] {
+/** Absolute paths of every file the patch names; these key the file-mutation locks. */
+export function touchedPatchPaths(cwd: string, patchText: string): string[] {
   try {
     const paths = parsePatchActions({ text: patchText }).flatMap((action) => [
       action.path,

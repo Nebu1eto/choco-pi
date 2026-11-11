@@ -22,6 +22,7 @@
     "@earendil-works/pi-tui": "~1.5.2",
     "@oxlint/plugins": "1.79.0",
     "@types/node": "^26.0.0",
+    "fast-check": "4.10.2",
     "lovely-mermaid": "0.3.3",
     "oxfmt": "0.64.0",
     "oxlint": "1.79.0",
