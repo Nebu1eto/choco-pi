@@ -89,7 +89,8 @@ class PaneBody implements Component, Focusable {
           const visible = Math.max(-1, Math.min(height, event.screenY - this.viewportTop));
           this.surface.pointer({ kind: "drag", row: top + visible });
         }, undefined);
-        return { handled: true, render: true };
+        // The view asks for a frame itself, and only when the selection changed.
+        return { handled: true };
       }
       case "release":
         if (!this.selecting) return undefined;

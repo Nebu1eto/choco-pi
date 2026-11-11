@@ -541,3 +541,152 @@ test("mouse: a click on a file row expands or collapses it; a press and drags se
   assert.deepEqual(view.lineCursor(), { path: "a.ts", hunkId: "h2" }, "a header selects its hunk");
   assert.equal(view.pointer({ kind: "click", row: 999 }), false, "no row there");
 });
+
+/* ------------------------------------------- a cursor move is cheap work */
+
+test("moving the cursor or the selection never renders a file's hunks again; a fold or new contents do", async () => {
+  let renders = 0;
+  let frames = 0;
+  const { view, rowOf } = await paneLineView();
+  const counted = await lineView({
+    keys: PANE_KEYS,
+    hunkStops: true,
+    freeSelection: true,
+    renderFileBody: (file, width, styler, layout) => {
+      renders += 1;
+      return renderUnifiedBody(file, width, styler, layout);
+    },
+    actions: {
+      unfocus: () => {},
+      close: () => {},
+      resizeBy: () => {},
+      refresh: () => {},
+      requestRender: () => {
+        frames += 1;
+      },
+      isToggleKey: () => false,
+      isFocusKey: () => false,
+    },
+  });
+  const expected = view.renderBody(80, true);
+  assert.deepEqual(counted.renderBody(80, true), expected, "same rows as the plain view");
+  const drawn = renders;
+  assert.ok(drawn > 0);
+
+  // Keys, a press and drags move the cursor over both files' lines.
+  for (const key of [DOWN, DOWN, DOWN, SHIFT_DOWN, SHIFT_DOWN, "n", DOWN, "j", "k"]) {
+    counted.handleKey(key);
+    counted.renderBody(80, true);
+  }
+  counted.pointer({ kind: "press", row: rowOf(/old two/) });
+  counted.pointer({ kind: "drag", row: rowOf(/keep three/) });
+  const selected = counted.renderBody(80, true);
+  assert.equal(renders, drawn, "the hunks were rendered once");
+  assert.equal(inverted(counted).length, 3, "and the selection is drawn on them");
+
+  // A drag that leaves the selection as it was (the pointer moved inside a row) asks for no frame.
+  frames = 0;
+  counted.pointer({ kind: "drag", row: rowOf(/keep three/) });
+  counted.pointer({ kind: "drag", row: rowOf(/keep three/) });
+  assert.equal(frames, 0);
+  assert.deepEqual(counted.renderBody(80, true), selected);
+  counted.pointer({ kind: "drag", row: rowOf(/new two/) });
+  assert.equal(frames, 1, "a changed selection asks for one");
+
+  counted.invalidate();
+  counted.renderBody(80, true);
+  assert.ok(renders > drawn, "an invalidated view renders its hunks again");
+  const again = renders;
+  counted.renderBody(60, true);
+  assert.ok(renders > again, "and so does a new width");
+});
+
+test("the blocks kept for earlier cursor positions are bounded", async () => {
+  const lines = Array.from({ length: 80 }, (_unused, index) => ({
+    kind: "add" as const,
+    newLine: index + 1,
+    text: `line ${index + 1}`,
+  }));
+  const long: DiffFile = {
+    path: "long.ts",
+    kind: "added",
+    additions: 80,
+    deletions: 0,
+    hunks: [
+      {
+        id: "long",
+        header: "@@ -0,0 +1,80 @@",
+        oldStart: 0,
+        oldLines: 0,
+        newStart: 1,
+        newLines: 80,
+        lines,
+      },
+    ],
+  };
+  const view = new ChangesView({
+    store: { loadFile: async () => ({ revision: 1, body: { kind: "text", file: long } }) },
+    styler: MARKING,
+    keyHint: "hint",
+    helpLines: [],
+    cursor: "line",
+    keys: PANE_KEYS,
+    actions: {
+      unfocus: () => {},
+      close: () => {},
+      resizeBy: () => {},
+      refresh: () => {},
+      requestRender: () => {},
+      isToggleKey: () => false,
+      isFocusKey: () => false,
+    },
+  });
+  view.setState({
+    kind: "ready",
+    refreshing: false,
+    snapshot: {
+      revision: 1,
+      source: { kind: "uncommitted" },
+      repoRoot: "/repo",
+      head: "head",
+      branch: "main",
+      base: "head",
+      capturedAt: 0,
+      files: [
+        {
+          path: long.path,
+          status: "added",
+          additions: 80,
+          deletions: 0,
+          binary: false,
+          staged: false,
+          unstaged: true,
+        },
+      ],
+      totals: { files: 1, additions: 80, deletions: 0 },
+      omittedFiles: 0,
+    },
+  });
+  view.expand(long.path);
+  await until(() => view.bodies.size === 1, "body loaded");
+  view.renderBody(80, true);
+  view.handleKey(DOWN);
+  view.renderBody(80, true);
+  const first = view.blockRenders;
+  view.handleKey(DOWN);
+  view.renderBody(80, true);
+  view.handleKey("\u001b[A");
+  view.renderBody(80, true);
+  assert.equal(view.blockRenders, first + 1, "one position back is still kept");
+  for (let step = 0; step < 60; step += 1) {
+    view.handleKey(DOWN);
+    view.renderBody(80, true);
+  }
+  const far = view.blockRenders;
+  view.handleKey("g");
+  view.handleKey(DOWN);
+  const rows = view.renderBody(80, true);
+  assert.equal(view.blockRenders, far + 1, "sixty positions back was dropped and is drawn again");
+  assert.equal(inverted(view).length, 1);
+  assert.match(unmarked(rows.join("\n")), /line 80/);
+});

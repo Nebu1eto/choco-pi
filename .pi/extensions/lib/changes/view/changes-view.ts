@@ -28,6 +28,7 @@ import {
   bodyNote,
   hunkRowOfLine,
   renderHunkRows,
+  type HunkRows,
   splitRowCount,
   type BodyAnnotation,
   type BodyBlockInput,
@@ -145,6 +146,14 @@ type LoadedBody = { revision: number; body: FileBody };
 export type ViewStore = Pick<DiffStore, "loadFile"> & {
   peekFile?(path: string): LoadedBody | undefined;
 };
+
+/** A loaded file's hunks as rendered at one width and layout (`key`), from one body (`raw`). */
+type RenderedHunks = { raw: DiffFile; key: string; file: DiffFile; rows: HunkRows[] };
+
+/** Blocks kept however few files are listed; see `fileBlock`. */
+const MIN_CACHED_BLOCKS = 32;
+/** Past this many, the rows measured so far are forgotten and measured again as they are drawn. */
+const MAX_FITTED_ROWS = 50_000;
 
 type Block = {
   lines: string[];
@@ -316,6 +325,15 @@ export class ChangesView implements PaneSurface {
   readonly actions: PaneActions;
   readonly renderFileBody: FileBodyRenderer;
   private readonly cache = new Map<string, Block>();
+  /**
+   * Each loaded file's hunks as rendered, which no cursor position changes:
+   * a cursor move lays the file's block out again from these instead of
+   * highlighting and diffing the whole file once more.
+   */
+  private readonly renderedHunks = new Map<string, RenderedHunks>();
+  /** Rows already cut to `fittedWidth`; nearly every row of a frame was in the frame before. */
+  private readonly fittedRows = new Map<string, string>();
+  private fittedWidth = -1;
   private readonly requested = new Map<string, number>();
   private scroller: PaneScroller | undefined;
   private lastWidth = 0;
@@ -393,7 +411,7 @@ export class ChangesView implements PaneSurface {
     const snapshot = state.snapshot;
     this.source = snapshot.source;
     if (this.cachedRevision !== snapshot.revision) {
-      this.cache.clear();
+      this.invalidate();
       this.cachedRevision = snapshot.revision;
     }
     const paths = new Set(snapshot.files.map((file) => file.path));
@@ -437,7 +455,7 @@ export class ChangesView implements PaneSurface {
   /** Release references; late body loads are dropped. */
   dispose(): void {
     this.disposed = true;
-    this.cache.clear();
+    this.invalidate();
     this.bodies.clear();
     this.requested.clear();
     this.noteInput = undefined;
@@ -445,6 +463,8 @@ export class ChangesView implements PaneSurface {
 
   invalidate(): void {
     this.cache.clear();
+    this.renderedHunks.clear();
+    this.fittedRows.clear();
   }
 
   /* ------------------------------------------------------------ header */
@@ -532,14 +552,31 @@ export class ChangesView implements PaneSurface {
     const budget = createIntralineBudget();
     this.lastRenderBudget = budget;
     const snapshot = this.state.snapshot;
-    return withRenderBudget(budget, () => this.bodyRows(snapshot, width)).map((row) =>
-      truncateToWidth(row, columns, "…"),
-    );
+    const rows = withRenderBudget(budget, () => this.bodyRows(snapshot, width));
+    // The rows are cut to the width one column short, behind the selection gutter.
+    return columns >= 2 ? rows : rows.map((row) => truncateToWidth(row, columns, "…"));
+  }
+
+  /** A block's row cut to `width`; measured once for as long as the same text is drawn at that width. */
+  private fit(row: string, width: number): string {
+    if (width !== this.fittedWidth || this.fittedRows.size > MAX_FITTED_ROWS) {
+      this.fittedRows.clear();
+      this.fittedWidth = width;
+    }
+    let cut = this.fittedRows.get(row);
+    if (cut === undefined) {
+      cut = truncateToWidth(row, width, "…");
+      this.fittedRows.set(row, cut);
+    }
+    return cut;
   }
 
   private bodyRows(snapshot: DiffSnapshot, width: number): string[] {
     const styler = this.styler;
-    const trailer = [...this.unlistedLines(width), ...(this.options.trailer?.(width) ?? [])];
+    // Host rows are cut here; file blocks are cut as they are added below.
+    const trailer = [...this.unlistedLines(width), ...(this.options.trailer?.(width) ?? [])].map(
+      (line) => truncateToWidth(line, width, "…"),
+    );
     if (snapshot.files.length === 0 && snapshot.omittedFiles === 0) {
       // The empty message can be a sentence explaining why nothing is listed; it wraps.
       const columns = Math.max(1, width);
@@ -557,11 +594,13 @@ export class ChangesView implements PaneSurface {
       this.blockRows.push({ start: lines.length, block });
       const selected = index === this.selectedIndex;
       if (selected) this.selectedLine = lines.length + (block.anchor ?? 0);
-      const row = block.lines[0] ?? "";
+      const row = this.fit(block.lines[0] ?? "", blockWidth);
       // The line cursor on a file row inverts the row, as it does a selected line.
       const onRow = selected && this.cursorMode === "line" && this.selectedHunk === undefined;
       lines.push((selected ? styler.fg("accent", "❯") : " ") + (onRow ? styler.inverse(row) : row));
-      for (const line of block.lines.slice(1)) lines.push(` ${line}`);
+      for (let at = 1; at < block.lines.length; at += 1) {
+        lines.push(` ${this.fit(block.lines[at] ?? "", blockWidth)}`);
+      }
     });
     if (snapshot.omittedFiles > 0) {
       lines.push(
@@ -701,7 +740,12 @@ export class ChangesView implements PaneSurface {
     const expanded = this.expanded.has(file.path);
     const key = `${width}\u0000${revision}\u0000${file.path}\u0000${expanded ? 1 : 0}\u0000${this.decorationKey(file.path)}`;
     const cached = this.cache.get(key);
-    if (cached) return cached;
+    if (cached) {
+      // Most recently drawn last: the blocks dropped below are the ones no frame uses.
+      this.cache.delete(key);
+      this.cache.set(key, cached);
+      return cached;
+    }
     this.blockRenders += 1;
     const stops: Array<CursorRow | undefined> = [{ path: file.path }];
     const block: Block = {
@@ -720,6 +764,12 @@ export class ChangesView implements PaneSurface {
       if (body.anchor !== undefined) block.anchor = body.anchor + bodyOffset;
     }
     this.cache.set(key, block);
+    // Every cursor position makes a block of its file; only the newest are drawn again.
+    const kept = Math.max(MIN_CACHED_BLOCKS, 2 * this.files().length);
+    for (const stale of this.cache.keys()) {
+      if (this.cache.size <= kept) break;
+      this.cache.delete(stale);
+    }
     return block;
   }
 
@@ -759,19 +809,21 @@ export class ChangesView implements PaneSurface {
     }
     const line = this.cursorMode === "line";
     const raw = loaded.body.file;
-    const expand = this.options.expandContext;
-    // Revealed context is repository text too: it is made terminal-safe with the hunk.
-    const diffFile = terminalSafeFile(
-      line && expand ? { ...raw, hunks: raw.hunks.map((hunk) => expand(hunk)) } : raw,
-    );
     const innerWidth = Math.max(1, width - BODY_INDENT.length);
     const selectedHunkId = this.selectedHunk?.path === path ? this.selectedHunk.hunkId : undefined;
     const decorated =
       line || findings.length > 0 || notes.length > 0 || selectedHunkId !== undefined;
     const indent = (line: string) => truncateToWidth(`${BODY_INDENT}${line}`, width, "…");
     if (!decorated) {
-      return { lines: this.renderFileBody(diffFile, innerWidth, styler).map(indent) };
+      const expand = this.options.expandContext;
+      const plain = terminalSafeFile(
+        line && expand ? { ...raw, hunks: raw.hunks.map((hunk) => expand(hunk)) } : raw,
+      );
+      return { lines: this.renderFileBody(plain, innerWidth, styler).map(indent) };
     }
+    const layout = line ? this.layout() : undefined;
+    const mode = layout?.mode === "split" && innerWidth >= MIN_SPLIT_WIDTH ? "split" : "unified";
+    const { file: diffFile, rows } = this.hunksRendered(path, raw, innerWidth, layout, mode);
 
     // Findings outside every hunk, then notes whose hunk is gone, then the hunks.
     const lines: string[] = [];
@@ -813,21 +865,11 @@ export class ChangesView implements PaneSurface {
         });
       }
     }
-    const layout = line ? this.layout() : undefined;
-    const mode = layout?.mode === "split" && innerWidth >= MIN_SPLIT_WIDTH ? "split" : "unified";
     if (line) {
       for (const annotation of this.options.annotations?.(path, diffFile.hunks, width) ?? []) {
         if (!this.foldedHunks.has(annotation.hunkId)) annotations.push(annotation);
       }
     }
-    const rows = renderHunkRows(
-      diffFile,
-      (part) => this.renderFileBody(part, innerWidth, styler, layout),
-      (hunk) =>
-        layout?.fold(hunk.id)
-          ? 1
-          : 1 + (mode === "split" ? splitRowCount(hunk) : hunk.lines.length),
-    );
     const input: BodyBlockInput = {
       hunks: diffFile.hunks,
       rows,
@@ -879,6 +921,45 @@ export class ChangesView implements PaneSurface {
     return anchor === undefined ? { lines, stops } : { lines, anchor, stops };
   }
 
+  /**
+   * A loaded file's hunks, made terminal-safe, and their rendered rows. They
+   * are kept until the body, the width or the layout changes, or the view is
+   * invalidated (a fold, revealed context, a new theme): the cursor, notes
+   * and findings are drawn around these rows and never change them. Rows the
+   * frame's budget cut short are not kept, so a later frame draws them in full.
+   */
+  private hunksRendered(
+    path: string,
+    raw: DiffFile,
+    innerWidth: number,
+    layout: BodyLayout | undefined,
+    mode: "unified" | "split",
+  ): RenderedHunks {
+    const key = `${innerWidth}\u0000${layout ? mode : "plain"}`;
+    const kept = this.renderedHunks.get(path);
+    if (kept && kept.raw === raw && kept.key === key) return kept;
+    const expand = layout ? this.options.expandContext : undefined;
+    // Revealed context is repository text too: it is made terminal-safe with the hunk.
+    const file = terminalSafeFile(
+      expand ? { ...raw, hunks: raw.hunks.map((hunk) => expand(hunk)) } : raw,
+    );
+    const budget = this.lastRenderBudget;
+    const cutShort = () => (budget?.fallbacks ?? 0) + (budget?.highlightSkipped ?? 0);
+    const before = cutShort();
+    const rows = renderHunkRows(
+      file,
+      (part) => this.renderFileBody(part, innerWidth, this.styler, layout),
+      (hunk) =>
+        layout?.fold(hunk.id)
+          ? 1
+          : 1 + (mode === "split" ? splitRowCount(hunk) : hunk.lines.length),
+    );
+    const rendered: RenderedHunks = { raw, key, file, rows };
+    if (cutShort() === before) this.renderedHunks.set(path, rendered);
+    else this.renderedHunks.delete(path);
+    return rendered;
+  }
+
   /** The host's layout for line-cursor bodies. */
   private layout(): BodyLayout {
     return {
@@ -902,6 +983,7 @@ export class ChangesView implements PaneSurface {
   }
 
   private dropCachedBlocks(path: string): void {
+    this.renderedHunks.delete(path);
     for (const key of this.cache.keys()) {
       if (key.split("\u0000")[2] === path) this.cache.delete(key);
     }
@@ -1360,16 +1442,22 @@ export class ChangesView implements PaneSurface {
     return rows;
   }
 
-  /** Extend the selection to the line of the cursor's hunk nearest to `row`: it stays in one hunk. */
-  private dragTo(row: number): void {
+  /**
+   * Extend the selection to the line of the cursor's hunk nearest to `row`: it
+   * stays in one hunk. False when that leaves the selection as it was, which
+   * is most of a drag: a terminal reports every cell the pointer crosses.
+   */
+  private dragTo(row: number): boolean {
     const selection = this.selectedHunk;
     const from = this.cursorLine;
-    if (!selection || from === undefined) return;
+    if (!selection || from === undefined) return false;
     let nearest: { row: number; lineIndex: number } | undefined;
     for (const entry of this.lineRows(selection.path, selection.hunkId)) {
       if (!nearest || Math.abs(entry.row - row) < Math.abs(nearest.row - row)) nearest = entry;
     }
-    if (nearest) this.extendLineSelection(nearest.lineIndex - from);
+    if (!nearest || nearest.lineIndex === from) return false;
+    this.extendLineSelection(nearest.lineIndex - from);
+    return this.cursorLine !== from;
   }
 
   /**
@@ -1383,8 +1471,7 @@ export class ChangesView implements PaneSurface {
     const line = this.cursorMode === "line";
     if (gesture.kind === "drag") {
       if (!line) return false;
-      this.dragTo(gesture.row);
-      this.actions.requestRender();
+      if (this.dragTo(gesture.row)) this.actions.requestRender();
       return true;
     }
     const target = this.rowTarget(gesture.row);

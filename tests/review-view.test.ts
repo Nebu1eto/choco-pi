@@ -3312,7 +3312,7 @@ test("mouse: a press puts the cursor on a line, drags select lines of one side, 
   // Past the last drawn row the drag is read as one row below the diff.
   mouse(mouseOn(mounted, 29, "drag"));
   assert.match(statusOf(mounted), /Target src\/mixed\.ts:12-15 RIGHT/);
-  assert.deepEqual(mouse(mouseOn(mounted, 29, "release")), { handled: true, render: true });
+  assert.deepEqual(mouse(mouseOn(mounted, 29, "release")), { handled: true });
   assert.equal(mouse(mouseOn(mounted, "const before = 1;", "drag")), undefined, "released");
   assert.match(statusOf(mounted), /Target src\/mixed\.ts:12-15 RIGHT/);
 

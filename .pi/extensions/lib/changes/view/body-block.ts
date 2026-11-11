@@ -153,6 +153,28 @@ export type BodyBlock = {
   annotationRows: number[];
 };
 
+/**
+ * Rows of a rendered hunk already cut to a width behind a gutter. A body is
+ * laid out again on every cursor move, with the same rows except the few the
+ * cursor inverts, and measuring a row costs far more than looking it up.
+ */
+const fittedRows = new WeakMap<HunkRows, Map<string, Array<string | undefined>>>();
+
+function fitted(part: HunkRows, row: number, prefix: string, width: number): string {
+  let byGutter = fittedRows.get(part);
+  if (!byGutter) {
+    byGutter = new Map();
+    fittedRows.set(part, byGutter);
+  }
+  const key = `${width}\u0000${prefix}`;
+  let rows = byGutter.get(key);
+  if (!rows) {
+    rows = Array.from({ length: part.lines.length }, () => undefined);
+    byGutter.set(key, rows);
+  }
+  return (rows[row] ??= truncateToWidth(`${prefix}${part.lines[row] ?? ""}`, width, "…"));
+}
+
 /** Lay out hunk rows with the gutter, inverted rows, header suffixes and annotations. */
 export function bodyBlock(input: BodyBlockInput): BodyBlock {
   const { styler, width } = input;
@@ -186,13 +208,11 @@ export function bodyBlock(input: BodyBlockInput): BodyBlock {
     hunkStart.set(hunk.id, lines.length);
     part.lines.forEach((line, row) => {
       rows.set(row, lines.length);
-      let text = line;
-      if (row === 0) {
-        const suffix = input.headerSuffix?.(hunk.id);
-        if (suffix) text = `${text} ${suffix}`;
-      }
+      const suffix = row === 0 ? input.headerSuffix?.(hunk.id) : undefined;
       // An inverted row is inverted whole, gutter included, so a selection reads as one block.
-      const drawn = truncateToWidth(`${prefix}${text}`, width, "…");
+      const drawn = suffix
+        ? truncateToWidth(`${prefix}${line} ${suffix}`, width, "…")
+        : fitted(part, row, prefix, width);
       lines.push(inverted?.has(row) ? styler.inverse(drawn) : drawn);
       for (const index of after.get(row) ?? []) emit(index);
     });

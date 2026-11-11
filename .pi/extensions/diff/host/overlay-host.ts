@@ -124,7 +124,8 @@ class OverlayPane implements Component, Focusable {
       // At most one row past either edge, so the selection scrolls the body a row at a time.
       const row = this.scrollTop + Math.max(-1, Math.min(this.bodyRows, visible));
       this.surface.pointer({ kind: "drag", row });
-      return { handled: true, render: true };
+      // The view asks for a frame itself, and only when the selection changed.
+      return { handled: true };
     }
     if (event.type === "release" && this.selecting) {
       this.selecting = false;

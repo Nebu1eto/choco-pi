@@ -211,3 +211,51 @@ test("every line of a hunk ending in an uneven replacement maps to its own row a
     }
   }
 });
+
+test("laying the same rendered rows out again gives the same rows for every gutter, width and selection", () => {
+  const render = (file: DiffFile) =>
+    renderDiffFile(
+      file,
+      { mode: "unified", width: 60, highlight: (code) => code.split("\n"), fold: () => false },
+      plain,
+    ).slice(1);
+  const rows = renderHunkRows(FILE, render);
+  /** An id no hunk has: nothing is marked. */
+  const NO_HUNK = "none";
+  const layout = (width: number, marked: boolean, inverted: number[] = []) =>
+    bodyBlock({
+      hunks: FILE.hunks,
+      rows,
+      width,
+      styler: plain,
+      markedHunkId: marked ? HUNK.id : NO_HUNK,
+      inverted: new Map([[HUNK.id, new Set(inverted)]]),
+    }).lines;
+  // A fresh render of the same file is the reference for each variant.
+  const fresh = (width: number, marked: boolean, inverted: number[] = []) =>
+    bodyBlock({
+      hunks: FILE.hunks,
+      rows: renderHunkRows(FILE, render),
+      width,
+      styler: plain,
+      markedHunkId: marked ? HUNK.id : NO_HUNK,
+      inverted: new Map([[HUNK.id, new Set(inverted)]]),
+    }).lines;
+  const variants: [number, boolean, number[]][] = [
+    [60, false, []],
+    [60, true, [2, 3]],
+    [12, true, [1]],
+    [60, false, [4]],
+    [12, false, []],
+    [60, true, []],
+  ];
+  for (const [width, marked, inverted] of [...variants, ...variants]) {
+    assert.deepEqual(
+      layout(width, marked, inverted),
+      fresh(width, marked, inverted),
+      `width ${width}, marked ${marked}, inverted ${inverted.join(",")}`,
+    );
+  }
+  assert.ok(layout(60, true)[1]?.startsWith("▌ "), "the marked gutter");
+  assert.ok(layout(60, false)[1]?.startsWith("  "), "is not left on an unmarked hunk");
+});

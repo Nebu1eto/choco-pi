@@ -2495,7 +2495,8 @@ export async function openReviewView(
                 const visible = Math.max(-1, Math.min(area.rows, event.y - area.top));
                 changes.pointer({ kind: "drag", row: scrollTop + visible });
               }
-              return { handled: true, render: true };
+              // The view asks for a frame itself, and only when the selection changed.
+              return { handled: true };
             }
             if (event.button !== "left" || (event.type !== "press" && event.type !== "click")) {
               return undefined;
