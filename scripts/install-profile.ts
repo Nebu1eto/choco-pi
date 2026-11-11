@@ -92,6 +92,7 @@ export const PROFILE_LINKS: readonly (readonly [string, string])[] = [
   [".pi/agents/planner.md", "agents/planner.md"],
   [".pi/agents/implementer.md", "agents/implementer.md"],
   [".pi/agents/reviewer.md", "agents/reviewer.md"],
+  [".pi/agents/verifier.md", "agents/verifier.md"],
   [".pi/agents/handoff.md", "agents/handoff.md"],
   [".pi/agents/explore.md", "agents/explore.md"],
   [".pi/extensions/apex-provider.json", "extensions/apex-provider.json"],

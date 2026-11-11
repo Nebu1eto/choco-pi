@@ -27,7 +27,10 @@ This table is the routing reference when a role's effective definition shows no 
 | `implementer` | Workhorse | `medium`         |
 | `planner`     | Flagship  | `medium`         |
 | `reviewer`    | Flagship  | `medium`         |
+| `verifier`    | Workhorse | `medium`         |
 | `handoff`     | Workhorse | `low`            |
+
+Run `verifier` on a Workhorse model from a different provider family than the implementer whose work it checks, so the builder does not grade its own work; that is a valid override reason.
 
 ## Runtime sections
 

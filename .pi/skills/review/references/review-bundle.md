@@ -12,4 +12,6 @@ Include:
 
 Record the bundle path and the SHA-256 of its manifest in the reviewer prompt. After the manifest is written, treat the directory as immutable. If the target, requirements, policy, or relevant evidence changes, create a new bundle and a new review run rather than modifying or reusing the old one.
 
-The reviewer independently verifies the recorded manifest digest and every listed file before review. `target.diff` is the sole change target; live repository files may supply unchanged context only. If the digest mismatches or any target, requirement, applicable policy snapshot, or checksum is missing, the reviewer outputs `INCOMPLETE`, names the defect, and stops without a clean-review claim.
+The reviewer independently verifies the recorded manifest digest and every listed file before review. `target.diff` is the sole change target; live repository files may supply unchanged context only. If the digest mismatches or any target, requirement, applicable policy snapshot, or checksum is missing, the reviewer outputs `INCOMPLETE`, names the defect, and stops without a clean-review claim. Either way it ends with the policy's `choco-pi-review` block, whose `bundleDigest` is the manifest digest from its prompt.
+
+A `verifier` settling a review claim receives the same bundle path and manifest digest plus the claim itself, never the reviewer's other conclusions.

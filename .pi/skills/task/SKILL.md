@@ -14,7 +14,7 @@ When the user explicitly invokes `task-dynamic`, that workflow supersedes this o
 1. Read `../task-core/SKILL.md`, then run `check`, including sub-agent discovery.
 2. Read path-scoped instructions and apply the shared investigation and evidence mechanics.
 3. Record `review_base`, inspect the dirty tree, resolve `../../scripts/checkout-mutation-lease.ts` relative to this skill, and run `node <resolved-script> acquire --cwd "$PWD"`. The script identifies the calling session itself; stop on a conflicting owner it does not report as dead.
-4. Create the acceptance ledger required by `task-core`.
+4. Define the acceptance items required by `task-core`.
 5. If this workflow was automatically selected but safe parallel execution or sub-agents are unavailable, fall back to `task-inline`. If the user explicitly selected it, report the limitation and request direction.
 
 ## 2. Plan
@@ -26,19 +26,19 @@ Settle the plan owner once, when this step starts, by the first rule that applie
 3. **Flagship model:** when `../../model-guidance.md`, resolved relative to this skill, places the runtime `Current model` in the Flagship tier, the orchestrator plans. Astra qualifies under both `openai-codex/` and `openai/`.
 4. **Planner:** otherwise, including an `"unknown"` model, spawn one fresh `planner`.
 
-When a prior plan leaves part of the objective uncovered, rules 3 and 4 decide who plans that remainder. A spawned `planner` receives the objective, instructions, direct and indirect write risks, acceptance ledger, available model/reasoning choices, and any prior or conformed plan, whose recorded user decisions and exclusions are binding.
+When a prior plan leaves part of the objective uncovered, rules 3 and 4 decide who plans that remainder. A spawned `planner` receives the objective, instructions, direct and indirect write risks, acceptance items, available model/reasoning choices, and any prior or conformed plan, whose recorded user decisions and exclusions are binding.
 
 Every plan owner uses `../../model-guidance.md` as the selection reference and produces the smallest dependency-aware plan and spawn manifest containing each unit's objective, read/write scope, indirect effects, dependencies, done criteria, and verification plan. The plan preserves explicit exclusions, identifies direct and indirect write conflicts, and names each material ambiguity that repository evidence cannot resolve.
 
 Require the plan to carry a `mermaid` flowchart of the units, their dependencies, and the waves that run in parallel. Disjoint write scopes and wave ordering are what this workflow gets wrong most often, and both are easier to check as a graph than as a list.
 
-To conform a prior plan, keep its recorded user decisions and exclusions; requests added after it form the uncovered remainder. Re-verify its load-bearing evidence against `review_base` and the dirty tree. When current evidence contradicts a recorded decision, present the conflict as a material user decision instead of changing it. Add what this contract requires and the plan lacks: units, scopes, indirect effects, dependencies, done criteria, verification, the flowchart, role and model choices, and acceptance-ledger rows.
+To conform a prior plan, keep its recorded user decisions and exclusions; requests added after it form the uncovered remainder. Re-verify its load-bearing evidence against `review_base` and the dirty tree. When current evidence contradicts a recorded decision, present the conflict as a material user decision instead of changing it. Add what this contract requires and the plan lacks: units, scopes, indirect effects, dependencies, done criteria, verification, the flowchart, role and model choices, and acceptance items.
 
 When the orchestrator plans or conforms:
 
 - Make no implementation or checkout change until the plan is final; session scratch is allowed.
 - Send broad read-only discovery to `explore` leaves with exact questions, and keep the synthesis.
-- Write the final plan to `${PI_SCRATCH_DIR}` (/tmp/choco-pi/<root session id>/) and record its path in the acceptance ledger.
+- Write the final plan to `${PI_SCRATCH_DIR}` (/tmp/choco-pi/<root session id>/) and record its path with the acceptance items.
 - Under rule 3 only, if the current model leaves the Flagship tier before the plan is final, spawn the `planner` with the gathered evidence and the draft. A model change after the plan is final does not reopen it.
 
 Select each role from the unit's work before considering a model or reasoning override; an override must never replace a specialized role with `general`. Pass `model` and `thinking` in every spawn, taken from the role's effective definition shown by the Agent tool type list or `/agents`; when the definition shows none, choose both per `.pi/model-guidance.md` for the role's work. Every spawn manifest row records `model`, `thinking`, `source: role|chosen|override`, and `reason`. A value other than the declared one is an override: pass it only for a reason allowed by `.pi/model-guidance.md`, and record that reason. Restating the role default, the orchestrator's own model, or the plan owner's preference is not a reason. On a `Spawn refused` result, pass both and retry in the same turn. Do not set `max_tokens`, `max_tool_calls`, `timeout_ms`, or `idle_timeout_ms` unless the user asked; the first request alone costs roughly 15–25k tokens. Present the plan only when it contains a material user decision.
@@ -76,6 +76,6 @@ When the integrated diff contains more than one coherent change, follow the comm
 
 ## 5. Review and handoff
 
-Select review through `task-core`'s task-shaped rule. When selected, prepare the immutable input through `../review/references/review-bundle.md` and give one fresh `reviewer` only its bundle path and manifest digest, not claimed safety, expected findings, or previous conclusions. Findings remain advisory until the main agent reproduces or proves them. Pass `work_task` (a stable kebab-case id for this work task, reused across review rounds and follow-ups). A `Review round refused` result is not a spawn-parameter error: do not retry or rename the work task; triage, report remaining risk, and tell the user that `/review-continue <work_task>` authorizes another round.
+Select review and verification through `task-core`'s task-shaped rule. When review is selected, prepare the immutable input through `../review/references/review-bundle.md` and give one fresh `reviewer` only its bundle path and manifest digest, not claimed safety, expected findings, or previous conclusions. Findings and candidates remain advisory until proved; settle them under `task-core`'s **Settle review claims**. Pass `work_task` (a stable kebab-case id for this work task, reused across review rounds and follow-ups). A `Review round refused` result is not a spawn-parameter error: do not retry or rename the work task; triage, report remaining risk, and tell the user that `/review-continue <work_task>` authorizes another round.
 
 Use `handoff` only when it materially improves a complex delivery. Stop all children and owned runtimes, then release the lease with `node <resolved-script> release --cwd "$PWD"`. Report exact final revision, acceptance results, review disposition, waivers, and remaining risk. Never treat a worker report as completion proof.

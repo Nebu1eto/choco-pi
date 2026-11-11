@@ -22,6 +22,20 @@ test("read-only roles deny mutation tools while keeping extensions", async () =>
   }
 });
 
+test("the verifier role keeps write tools for scratch and runs with fresh context", async () => {
+  const packageRoot = resolve(".pi/packages/choco-pi-subagents/src");
+  const { loadCustomAgents } = await import(
+    pathToFileURL(resolve(packageRoot, "custom-agents.ts")).href
+  );
+  const verifier = (await loadCustomAgents(process.cwd())).get("verifier");
+  assert.ok(verifier, "verifier role loads");
+  assert.ok(
+    !(verifier.disallowedTools ?? []).includes("write"),
+    "verifier writes reproductions to scratch",
+  );
+  assert.equal(verifier.inheritContext, false);
+});
+
 test("role model and thinking follow model_locked pin, caller, then role default precedence", async () => {
   // The fork ships TypeScript source only, so these load straight from `src/`
   // under Node's type stripping.
@@ -197,6 +211,7 @@ test("fallbacks and role defaults route OpenAI through openai-codex only", async
     ["explore.md", "openai-codex/gpt-6.1-sol"],
     ["handoff.md", "openai-codex/gpt-6.1-sol"],
     ["reviewer.md", "openai-codex/gpt-6-astra"],
+    ["verifier.md", "openai-codex/gpt-6.1-sol"],
   ]);
   for (const file of expectedOpenAI.keys()) assert.ok(files.includes(file), file + " exists");
   for (const file of files) {

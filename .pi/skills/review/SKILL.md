@@ -26,12 +26,14 @@ For observation, cancellation, terminal-state classification, and recovery, foll
 
 ## 3. Validate findings
 
-The main agent independently checks every candidate against the exact diff and evidence. Reject findings that are pre-existing, speculative, prevented by an existing guarantee, outside scope, or unsupported by a reproducible failure or deterministic path.
+Read the `Verdict record:` line appended to the reviewer's result. A review recorded as `MISSING` or invalid is unrecorded: report it that way and never as clean.
+
+Findings and candidates stay advisory until proved. The main agent independently checks each one against the exact diff and evidence, or gives it to a fresh `verifier` as a claim under `task-core`'s **Settle review claims** section. Reject findings that are pre-existing, speculative, prevented by an existing guarantee, outside scope, or refuted by evidence. A claim nobody could reproduce keeps its severity until it gets an explicit disposition.
 
 Do not modify code while validating. If evidence requires a command, prefer read-only or non-mutating diagnostics and identify anything not run.
 
 ## 4. Report
 
-Return accepted findings first, ordered by severity, using the shared rules' fields. Then state rejected or unresolved candidates only when their disposition materially helps the user. If no finding survives validation, say that no actionable finding was verified and summarize the meaningful checks performed.
+Return accepted findings first, ordered by severity, using the shared rules' fields. Then give every other finding and candidate with its disposition: rejected with a reason, or carried as stated risk. If no finding survives validation, say that no actionable finding was verified and summarize the meaningful checks performed.
 
 Routine review stops here. When a harness maintainer explicitly requests live fresh-Pi evidence, load and follow the opt-in `references/maintainer-e2e.md` scenario.

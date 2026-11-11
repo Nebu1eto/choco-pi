@@ -23,16 +23,26 @@ Record the outcome, exclusions, affected scope, success criteria, authority boun
 - `regression_test`: durable coverage for important flows, authorization, data integrity, or public interfaces.
 - `direct_check`: a focused command, typecheck, lint, build, or inspection proves the requirement.
 - `runtime_e2e`: only the real application path can prove the behavior.
+- `property_test`: a property-based test of the real code over generated inputs, for parsers, reducers, and normalisation.
+- `model_check`: a bounded model under the `formal-verify` skill, for ordering and state rules. A pass covers the model within its bounds, not the code.
+
+When the repository has `formal/**/coverage.json` records, resolve `../formal-verify/scripts/drift.ts` relative to this skill and run `node <resolved-script> affected --files <planned files>` from the repository root. Exit 3 means the plan touches code a model or property test covers; re-run that artifact and then update its coverage record.
 
 Advisor output is never an evidence mode; it may only suggest what to verify.
 
 Add no test by default. A regression test must exercise production behavior or a real boundary and fail when the behavior regresses; a test that mirrors implementation constants or asserts its own fixture setup is not evidence.
 
-The `check` skill owns environment readiness. Choose validation from the acceptance ledger and applicable repository requirements; do not impose a full repository gate pass before editing. A fresh existing automatic result may satisfy a selected check only when its record includes the completed status, scope, repository revision or exact working-tree state, and all are current for the acceptance item. A pending, cancelled, stale, unavailable, or failed result is never a pass.
+The `check` skill owns environment readiness. Choose validation from the acceptance items and applicable repository requirements; do not impose a full repository gate pass before editing. A fresh existing automatic result may satisfy a selected check only when its record includes the completed status, scope, repository revision or exact working-tree state, and all are current for the acceptance item. A pending, cancelled, stale, unavailable, or failed result is never a pass.
 
 ## Select independent review by task shape
 
 Use a fresh read-only reviewer when the user or project risk policy requires one. Active-model guidance may also select review for a qualifying long-running task when fresh context materially improves evidence. Do not require or forbid a reviewer from the provider or model name alone, and do not add routine review to small work. Before every review handoff, follow `../review/references/review-bundle.md`.
+
+The same rule selects a fresh `verifier`, which follows the `verify` skill to reproduce review claims. Launch it on the exact state to verify, normally the checkpoint `HEAD`, with the work task, checkout path, and one or more review claims plus the bundle path and digest. Pass `work_task` as for a reviewer; verification launches do not consume review rounds. Treat `Verification round refused` like `Review round refused`; `/verify-continue <work_task>` authorizes another round. Small work gets no verifier.
+
+### Settle review claims
+
+Reviewer findings and candidates stay advisory until proved. Prove one yourself or give it to a `verifier` as a claim. Settle every candidate like a finding; never skip one for its class. The implementer turns a `CONFIRMED` reproduction into the regression test for the fix. A failed reproduction is not a refutation: an `UNPROVEN` claim keeps its severity and needs an explicit disposition (accept and fix, reject with a reason, or carry as stated risk), because some defects, such as a wrong test oracle, documentation, or policy, only a reader catches. Read the `Verdict record:` line on every reviewer and verifier result; a review recorded as `MISSING` or invalid is unrecorded and is never reported as clean.
 
 ### Observe and recover a review run
 

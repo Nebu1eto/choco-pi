@@ -10,7 +10,7 @@ Use this workflow only when the user explicitly invokes `/task-dynamic` or names
 
 ## 1. Bootstrap
 
-Follow the `task` skill's bootstrap, including `task-core`, `check`, path-scoped instructions, `review_base`, the mutation lease through the same resolved script, and the acceptance ledger. The sections below define only this workflow's planning and execution deltas.
+Follow the `task` skill's bootstrap, including `task-core`, `check`, path-scoped instructions, `review_base`, the mutation lease through the same resolved script, and the acceptance items. The sections below define only this workflow's planning and execution deltas.
 
 Explicit invocation authorizes the orchestrator to set `maxSubagentDepth` to the accepted plan's required depth, up to the existing cap of `16`. Each task packet must authorize any child that may spawn the next planned level. Do not increase concurrency or widen the planned depth without separate user authority; runtime limits are session-scoped.
 
@@ -39,7 +39,7 @@ A scope-owning `implementer` or `general` worker may spawn one bounded `reviewer
 
 The parent prepares the exact parent-owned diff, revision, or path-scoped patch through that reference, then gives the reviewer its bundle path and manifest digest, a narrow risk question, and bounded `max_turns`. The reviewer stays read-only, may not spawn another agent, and must ignore unrelated changes from parallel branches or the shared checkout. Pass `work_task` (a stable kebab-case id for this work task, reused across review rounds and follow-ups). A `Review round refused` result is not a spawn-parameter error: do not retry or rename the work task; triage, report remaining risk, and tell the user that `/review-continue <work_task>` authorizes another round.
 
-The worker forwards each finding and its evidence to the root orchestrator without applying it. Only the root orchestrator adjudicates the finding: it independently checks legitimacy, current-task scope, prevalence, and impact, then accepts, rejects, or defers it and sends any accepted correction back to the owning worker. One reviewer may not start a review loop.
+The worker forwards each finding and candidate with its evidence to the root orchestrator without applying it. Only the root orchestrator adjudicates it, under `task-core`'s **Settle review claims**: it independently checks legitimacy, current-task scope, prevalence, and impact, then accepts, rejects, or defers it and sends any accepted correction back to the owning worker. One reviewer may not start a review loop.
 
 ## 3. Coordinate the tree
 

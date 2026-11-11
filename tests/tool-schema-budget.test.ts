@@ -296,7 +296,7 @@ test("every first-party package tool has a bounded catalog snippet", async () =>
     .map((line) => /^- ([a-z-]+): model \S+, thinking \S+, definition \S+$/.exec(line)?.[1]);
   assert.deepEqual(
     typeLines,
-    ["explore", "general", "handoff", "implementer", "planner", "reviewer"],
+    ["explore", "general", "handoff", "implementer", "planner", "reviewer", "verifier"],
     "each type is one `- name: model X, thinking Y, definition <path>` line",
   );
   const agentSnippetWords = agent?.promptSnippet?.trim().split(/\s+/).filter(Boolean).length ?? 0;

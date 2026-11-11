@@ -394,7 +394,7 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
     const valid =
       subagents.disableDefaultAgents === true &&
       (subagents.fallbackSubagent === "none" || subagents.fallbackSubagent === "general");
-    const roleFiles = ["general", "planner", "implementer", "reviewer", "handoff"];
+    const roleFiles = ["general", "planner", "implementer", "reviewer", "verifier", "handoff"];
     const roleResults = await Promise.all(
       roleFiles.map(async (role) => {
         const content = await readText(path.join(configRoot, "agents", `${role}.md`));
@@ -462,6 +462,7 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
     "agents/planner.md",
     "agents/implementer.md",
     "agents/reviewer.md",
+    "agents/verifier.md",
     "agents/handoff.md",
     "skills/check/SKILL.md",
     "skills/effective-writing/SKILL.md",
@@ -471,6 +472,7 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
     "skills/task-hotfix/SKILL.md",
     "skills/commit/SKILL.md",
     "skills/review/SKILL.md",
+    "skills/verify/SKILL.md",
     "skills/check/scripts/check-harness.ts",
     "scripts/checkout-mutation-lease.ts",
     "prompts/check.md",

@@ -5,7 +5,7 @@ description: Direct implementation for an ordinary repository change.
 
 # choco-pi Direct Implementation
 
-Work in the main agent. Do not spawn implementation agents. A fresh read-only reviewer is the only optional child and follows `task-core`'s task-shaped selection rule.
+Work in the main agent. Do not spawn implementation agents. A fresh read-only reviewer and a fresh `verifier` are the only optional children and follow `task-core`'s task-shaped selection rule.
 
 ## 1. Prepare
 
@@ -13,13 +13,13 @@ Work in the main agent. Do not spawn implementation agents. A fresh read-only re
 2. Read the full path-scoped instruction chain and apply the shared investigation and evidence mechanics.
 3. Record the current `HEAD` as `review_base`, inspect the dirty tree, and preserve unrelated work.
 4. Resolve `../../scripts/checkout-mutation-lease.ts` relative to this skill and run `node <resolved-script> acquire --cwd "$PWD"`. The script identifies the calling session itself and reclaims a lease only from a provably dead holder. Stop on any other conflicting owner and never clear the lease directory by hand.
-5. Define the acceptance ledger required by `task-core` before editing.
+5. Define the acceptance items required by `task-core` before editing.
 
 ## 2. Implement and validate
 
 1. Inspect the closest implementation and validation surfaces.
 2. Make the smallest complete change directly.
-3. Add a persistent test only when the ledger justifies `regression_test`.
+3. Add a persistent test only when the acceptance items justify `regression_test`.
 4. Follow `task-core`'s diagnostics sequence, affected project gates, focused checks, and every non-runtime acceptance item.
 5. Inspect the actual diff for objective conformance, minimality, and unrelated edits. Do not commit with known failures.
 
@@ -33,8 +33,8 @@ When the integrated diff contains more than one coherent change, follow the comm
 
 ## 4. Review and finish
 
-When independent review is selected, prepare the exact `review_base..HEAD` input through `../review/references/review-bundle.md` and give the fresh read-only reviewer only its bundle path and manifest digest. Verify findings yourself before changing code.
+When independent review is selected, prepare the exact `review_base..HEAD` input through `../review/references/review-bundle.md` and give the fresh read-only reviewer only its bundle path and manifest digest. Settle findings and candidates under `task-core`'s **Settle review claims** before changing code.
 
 Spawn the reviewer with `model` and `thinking` taken from its effective definition shown by the Agent tool; when the definition shows none, choose both per `../../model-guidance.md`. Record `model`, `thinking`, `source: role|chosen|override`, and `reason` for the spawn; a value other than the declared one is an override and needs a reason from `../../model-guidance.md`. On a `Spawn refused` result, pass both and retry in the same turn. Do not set `max_tokens`, `max_tool_calls`, `timeout_ms`, or `idle_timeout_ms` unless the user asked; the first request alone costs roughly 15–25k tokens. Pass `work_task` (a stable kebab-case id for this work task, reused across review rounds and follow-ups). A `Review round refused` result is not a spawn-parameter error: do not retry or rename the work task; triage, report remaining risk, and tell the user that `/review-continue <work_task>` authorizes another round.
 
-After owned processes stop, release the lease with `node <resolved-script> release --cwd "$PWD"` only when the workflow completes or is deliberately abandoned. If retaining it for recoverable blocked work, report that ownership. Finish only when every required acceptance row is `pass` on the current state or explicitly user-`waived`.
+After owned processes stop, release the lease with `node <resolved-script> release --cwd "$PWD"` only when the workflow completes or is deliberately abandoned. If retaining it for recoverable blocked work, report that ownership. Finish only when every required acceptance item passes on the current state or is explicitly user-waived.
