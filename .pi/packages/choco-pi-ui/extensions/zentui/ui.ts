@@ -5,13 +5,19 @@ import {
   type EditorComponent,
   type EditorTheme,
   type TUI,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
   truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
 import { padsBottom, padsTop, type EditorStyle, type ZentuiConfig } from "./config";
 import { renderEditorMetadataFormat } from "./editor-metadata-format";
 import { readFocusedAgentRuntime, selectFocusScopedUsage } from "./focused-runtime";
-import { type MinimalistEditorMetadata, renderMinimalistFrame } from "./minimalist-editor";
+import {
+  type MinimalistEditorMetadata,
+  minimalistFrameGeometry,
+  renderMinimalistFrame,
+} from "./minimalist-editor";
 import { formatProviderLabel } from "./model-display";
 import {
   type BoundaryValue,
@@ -67,6 +73,7 @@ type PolishedFrameInspection = { safe: boolean; ownedFrame?: PolishedFrameSplit 
 type WrappedEditor = EditorComponent &
   AutocompleteEditorInternals & {
     focused?: boolean;
+    handleMouse?: (event: TuiMouseEvent) => TuiMouseEventResult | undefined;
     onEscape?: () => void;
     onCtrlD?: () => void;
     onPasteImage?: () => void;
@@ -138,7 +145,84 @@ type PolishedFrameOptions = {
 type PolishedFrameResult = {
   lines: string[];
   decorated: boolean;
+  /** Set for a decorated frame whose rows are the base editor's own. */
+  geometry?: EditorFrameGeometry;
 };
+
+/** A composed frame; the geometry is absent when the frame is too narrow to decorate. */
+type ComposedEditorFrame = {
+  lines: string[];
+  geometry?: EditorFrameGeometry;
+};
+
+/** Where the base editor's rows and columns are inside a decorated frame. */
+export type EditorFrameGeometry = {
+  /** Frame row of the first text row, and how many text rows there are. */
+  editorTop: number;
+  editorRows: number;
+  /** Columns drawn left of the text. */
+  editorLeft: number;
+  /** The width the base editor was rendered at. */
+  innerWidth: number;
+  /** Frame row and column where the autocomplete rows start. */
+  autocompleteTop: number;
+  autocompleteLeft: number;
+};
+
+/**
+ * What the last render drew: the base editor's frame unchanged, a decorated
+ * frame with known geometry, or a decorated frame whose rows cannot be mapped
+ * to the base editor (it re-framed another zentui frame).
+ */
+type MouseFrame = "base" | "opaque" | EditorFrameGeometry;
+
+/**
+ * `event` as the base editor expects it: its top border is row 0, its text
+ * starts on row 1 and its autocomplete rows follow the bottom border.
+ * Undefined for the frame's own rows.
+ */
+export function editorMouseEvent(
+  event: TuiMouseEvent,
+  frame: EditorFrameGeometry,
+): TuiMouseEvent | undefined {
+  const row = event.y - frame.editorTop;
+  if (row >= 0 && row < frame.editorRows) {
+    return {
+      ...event,
+      x: Math.max(0, event.x - frame.editorLeft),
+      y: row + 1,
+      width: frame.innerWidth,
+    };
+  }
+  const menuRow = event.y - frame.autocompleteTop;
+  if (menuRow < 0) return undefined;
+  return {
+    ...event,
+    x: Math.max(0, event.x - frame.autocompleteLeft),
+    y: frame.editorRows + 2 + menuRow,
+    width: frame.innerWidth,
+  };
+}
+
+/**
+ * Offer a mouse event on the drawn frame to the base editor. A left click the
+ * base does not take (the frame's own rows, or an editor without mouse
+ * support) still gives the editor the keyboard; presses and drags are left to
+ * Pi's text selection.
+ */
+function frameMouse(
+  event: TuiMouseEvent,
+  frame: MouseFrame,
+  base: (event: TuiMouseEvent) => TuiMouseEventResult | undefined,
+): TuiMouseEventResult | undefined {
+  const target =
+    frame === "base" ? event : frame === "opaque" ? undefined : editorMouseEvent(event, frame);
+  const result = target ? base(target) : undefined;
+  if (result) return result;
+  return event.type === "click" && event.button === "left"
+    ? { handled: true, focus: true }
+    : undefined;
+}
 
 type MinimalistFrameAdapterOptions = {
   width: number;
@@ -555,10 +639,11 @@ function renderMinimalistFrameFromBase({
     above: parsedTop?.count,
     below: parsedBottom?.count,
   };
+  const editorLines = ownedFrame?.editorLines ?? editorFrame.slice(1, -1);
   return {
     lines: renderMinimalistFrame({
       width,
-      editorLines: ownedFrame?.editorLines ?? editorFrame.slice(1, -1),
+      editorLines,
       autocompleteLines,
       viewport: config.components.editor.viewportIndicators ? viewport : undefined,
       inputText,
@@ -568,6 +653,7 @@ function renderMinimalistFrameFromBase({
       borderColor,
     }),
     decorated: true,
+    geometry: ownedFrame ? undefined : minimalistFrameGeometry(width, editorLines.length),
   };
 }
 
@@ -623,7 +709,7 @@ function renderPolishedFrame({
     above: parsedTop?.count,
     below: parsedBottom?.count,
   };
-  const lines = renderPolishedEditorFrame({
+  const { lines, geometry } = composePolishedEditorFrame({
     width,
     editorLines,
     autocompleteLines,
@@ -643,11 +729,15 @@ function renderPolishedFrame({
       viewport,
     },
   });
-  return { lines, decorated: true };
+  return { lines, decorated: true, geometry: ownedFrame ? undefined : geometry };
 }
 
 /** Pure Opencode frame composition shared by the live editor and settings preview. */
-export function renderPolishedEditorFrame({
+export function renderPolishedEditorFrame(options: PolishedEditorFrameOptions): string[] {
+  return composePolishedEditorFrame(options).lines;
+}
+
+function composePolishedEditorFrame({
   width,
   editorLines,
   autocompleteLines = [],
@@ -658,8 +748,8 @@ export function renderPolishedEditorFrame({
   thinkingLevel,
   rightStatus,
   borderColor,
-}: PolishedEditorFrameOptions): string[] {
-  if (width <= 2) return clampRenderedLines(editorLines, width);
+}: PolishedEditorFrameOptions): ComposedEditorFrame {
+  if (width <= 2) return { lines: clampRenderedLines(editorLines, width) };
   const reset = "\x1b[0m";
   const colorSource = config.components.editor.colorSource;
   const { prompt, promptWidth, rail, railWidth } = getEditorChromeWidths(config, uiTheme, reset);
@@ -756,7 +846,19 @@ export function renderPolishedEditorFrame({
         ...autocompleteLines,
       ];
 
-  return clampRenderedLines(renderedLines, width);
+  // Both layouts: border, padding, text, padding, metadata, border, autocomplete.
+  const editorTop = 1 + (padTop ? 1 : 0);
+  return {
+    lines: clampRenderedLines(renderedLines, width),
+    geometry: {
+      editorTop,
+      editorRows: editorLines.length,
+      editorLeft: railWidth,
+      innerWidth,
+      autocompleteTop: editorTop + editorLines.length + (padBottom ? 1 : 0) + 2,
+      autocompleteLeft: 0,
+    },
+  };
 }
 
 export class PolishedEditor extends CustomEditor {
@@ -766,6 +868,7 @@ export class PolishedEditor extends CustomEditor {
   private readonly onMinimalistDecorationChange: (active: boolean) => void;
   private readonly getConfig: () => ZentuiConfig;
   private readonly uiTheme: Theme;
+  private mouseFrame: MouseFrame = "base";
 
   constructor(
     tui: TUI,
@@ -792,8 +895,13 @@ export class PolishedEditor extends CustomEditor {
     this.onMinimalistDecorationChange(active);
   }
 
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    return frameMouse(event, this.mouseFrame, (target) => super.handleMouse(target));
+  }
+
   render(width: number): string[] {
     const config = this.getConfig();
+    this.mouseFrame = "base";
     if (!config.components.editor.enabled) {
       this.reportMinimalistDecoration(false);
       return clampRenderedLines(super.render(width), width);
@@ -820,6 +928,7 @@ export class PolishedEditor extends CustomEditor {
           borderColor: this.borderColor,
         });
         this.reportMinimalistDecoration(result.decorated);
+        if (result.decorated) this.mouseFrame = result.geometry ?? "opaque";
         return result.lines;
       } catch {
         this.reportMinimalistDecoration(false);
@@ -850,6 +959,7 @@ export class PolishedEditor extends CustomEditor {
         borderColor: this.borderColor,
       });
       if (result.decorated) {
+        this.mouseFrame = result.geometry ?? "opaque";
         return result.lines;
       }
     } catch {
@@ -865,6 +975,7 @@ export class WrappedPolishedEditor implements EditorComponent {
   declare readonly setAutocompleteProvider?: (provider: AutocompleteProvider) => void;
   declare readonly setPaddingX?: (padding: number) => void;
   declare readonly setAutocompleteMaxVisible?: (maxVisible: number) => void;
+  private mouseFrame: MouseFrame = "base";
 
   constructor(
     private readonly base: WrappedEditor,
@@ -973,8 +1084,13 @@ export class WrappedPolishedEditor implements EditorComponent {
     this.onMinimalistDecorationChange(active);
   }
 
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    return frameMouse(event, this.mouseFrame, (target) => this.base.handleMouse?.(target));
+  }
+
   render(width: number): string[] {
     const config = this.getConfig();
+    this.mouseFrame = "base";
     if (!config.components.editor.enabled) {
       this.reportMinimalistDecoration(false);
       return clampRenderedLines(this.base.render(width), width);
@@ -1015,6 +1131,7 @@ export class WrappedPolishedEditor implements EditorComponent {
           });
           if (result.decorated) {
             this.reportMinimalistDecoration(true);
+            this.mouseFrame = result.geometry ?? "opaque";
             return result.lines;
           }
         }
@@ -1062,6 +1179,7 @@ export class WrappedPolishedEditor implements EditorComponent {
       // Decoration is optional; re-render the base at the caller's width below.
     }
     if (result?.decorated) {
+      this.mouseFrame = result.geometry ?? "opaque";
       return result.lines;
     }
     return clampRenderedLines(this.base.render(width), width);

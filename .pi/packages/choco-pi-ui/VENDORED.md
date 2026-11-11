@@ -324,3 +324,21 @@ Pi SDK pins move from `1.5.0` to exactly `1.5.1`; version references in comments
 ## 2026-11-11 choco-pi patch: Pi SDK range ~1.5.2
 
 Pi SDK dependencies move from exactly `1.5.1` to the range `~1.5.2` (`>=1.5.2 <1.6.0`), so later 1.5 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow.
+
+## 2026-11-11 choco-pi patch: the framed editor takes mouse clicks
+
+- `extensions/zentui/ui.ts`: `WrappedPolishedEditor` had no `handleMouse`, so
+  a click on the prompt editor did nothing whenever another extension supplied
+  the editor (the harness's fuzzy-mention editor), and `PolishedEditor`
+  inherited pi-tui's handler, which read frame coordinates as if the frame
+  were undecorated. Both now map the event to the base editor's own frame
+  (`editorMouseEvent`) and pass it on: a click in the text moves the cursor
+  there, a click on an autocomplete row reaches the menu, and any left click
+  on the editor gives it keyboard focus, including on the frame's own rows
+  and over an editor that has no mouse support.
+- The frame composers report where the text is (`EditorFrameGeometry`):
+  `composePolishedEditorFrame` for both Opencode layouts and
+  `minimalistFrameGeometry` in `minimalist-editor.ts`. A frame built from
+  another zentui frame has no geometry and takes focus only.
+- Presses and drags stay unhandled so Pi's text selection still runs.
+- Tests: `tests/zentui-editor-mouse.test.ts` (root).

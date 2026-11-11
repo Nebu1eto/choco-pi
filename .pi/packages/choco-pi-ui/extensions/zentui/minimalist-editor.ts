@@ -342,6 +342,22 @@ function renderLabeledBorder(options: {
   )}${rightPart}${options.renderBorder(options.rightCorner)}`;
 }
 
+/**
+ * Where {@link renderMinimalistFrame} puts the editor's rows and its
+ * autocomplete rows, for mapping a mouse position back to the editor.
+ */
+export function minimalistFrameGeometry(width: number, editorRows: number) {
+  return {
+    editorTop: 1,
+    editorRows,
+    editorLeft: 2,
+    innerWidth: Math.max(0, width - 4),
+    // A separator row comes between the text and the menu.
+    autocompleteTop: editorRows + 2,
+    autocompleteLeft: 2,
+  };
+}
+
 export function renderMinimalistFrame({
   width,
   editorLines,
