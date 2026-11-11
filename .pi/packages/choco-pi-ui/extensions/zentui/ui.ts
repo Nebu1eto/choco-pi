@@ -12,6 +12,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { padsBottom, padsTop, type EditorStyle, type ZentuiConfig } from "./config";
 import { renderEditorMetadataFormat } from "./editor-metadata-format";
+import { EditorSelection, type TextOrigin, type TextPosition } from "./editor-selection";
 import { readFocusedAgentRuntime, selectFocusScopedUsage } from "./focused-runtime";
 import {
   type MinimalistEditorMetadata,
@@ -24,6 +25,7 @@ import {
   invokeWithReceiver,
   isBoundaryRecord,
   isCallable,
+  isNumber,
   isString,
 } from "./runtime-values";
 import {
@@ -176,6 +178,20 @@ export type EditorFrameGeometry = {
  */
 type MouseFrame = "base" | "opaque" | EditorFrameGeometry;
 
+/** Where the base editor's text starts in a drawn frame; undefined when its rows cannot be mapped. */
+function textOrigin(frame: MouseFrame): TextOrigin | undefined {
+  if (frame === "opaque") return undefined;
+  // The base editor's own frame: its top border, then its text.
+  if (frame === "base") return { top: 1, left: 0 };
+  return { top: frame.editorTop, left: frame.editorLeft };
+}
+
+function textPosition(value: BoundaryValue): TextPosition | undefined {
+  if (!isBoundaryRecord(value)) return undefined;
+  const { line, col } = value;
+  return isNumber(line) && isNumber(col) ? { line, col } : undefined;
+}
+
 /**
  * `event` as the base editor expects it: its top border is row 0, its text
  * starts on row 1 and its autocomplete rows follow the bottom border.
@@ -207,8 +223,8 @@ export function editorMouseEvent(
 /**
  * Offer a mouse event on the drawn frame to the base editor. A left click the
  * base does not take (the frame's own rows, or an editor without mouse
- * support) still gives the editor the keyboard; presses and drags are left to
- * Pi's text selection.
+ * support) still gives the editor the keyboard; a press or a drag the
+ * editor's selection did not take is left to Pi's text selection.
  */
 function frameMouse(
   event: TuiMouseEvent,
@@ -869,6 +885,7 @@ export class PolishedEditor extends CustomEditor {
   private readonly getConfig: () => ZentuiConfig;
   private readonly uiTheme: Theme;
   private mouseFrame: MouseFrame = "base";
+  private readonly selection: EditorSelection;
 
   constructor(
     tui: TUI,
@@ -889,14 +906,32 @@ export class PolishedEditor extends CustomEditor {
     this.getThinkingLevel = getThinkingLevel;
     this.getMinimalistMetadata = getMinimalistMetadata;
     this.onMinimalistDecorationChange = onMinimalistDecorationChange;
+    this.selection = new EditorSelection({
+      lines: () => this.getLines(),
+      cursor: () => this.getCursor(),
+      paddingX: () => this.getPaddingX(),
+      mouse: (event) => super.handleMouse(event),
+      input: (data) => super.handleInput(data),
+    });
   }
 
   private reportMinimalistDecoration(active: boolean): void {
     this.onMinimalistDecorationChange(active);
   }
 
+  /** The base editor's frame at `width`, with the mouse selection drawn on its text. */
+  private renderBase(width: number): string[] {
+    return this.selection.decorate(width, super.render(width));
+  }
+
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-    return frameMouse(event, this.mouseFrame, (target) => super.handleMouse(target));
+    const origin = textOrigin(this.mouseFrame);
+    const selected = origin ? this.selection.mouse(event, origin) : undefined;
+    return selected ?? frameMouse(event, this.mouseFrame, (target) => super.handleMouse(target));
+  }
+
+  handleInput(data: string): void {
+    if (!this.selection.key(data)) super.handleInput(data);
   }
 
   render(width: number): string[] {
@@ -904,16 +939,16 @@ export class PolishedEditor extends CustomEditor {
     this.mouseFrame = "base";
     if (!config.components.editor.enabled) {
       this.reportMinimalistDecoration(false);
-      return clampRenderedLines(super.render(width), width);
+      return clampRenderedLines(this.renderBase(width), width);
     }
     if (config.components.editor.style === "minimalist") {
       if (width <= 4) {
         this.reportMinimalistDecoration(false);
-        return clampRenderedLines(super.render(width), width);
+        return clampRenderedLines(this.renderBase(width), width);
       }
       try {
         const captured = renderWithAutocompleteCapture(autocompleteEditorInternals(this), () =>
-          super.render(Math.max(0, width - 4)),
+          this.renderBase(Math.max(0, width - 4)),
         );
         const result = renderMinimalistFrameFromBase({
           width,
@@ -932,19 +967,19 @@ export class PolishedEditor extends CustomEditor {
         return result.lines;
       } catch {
         this.reportMinimalistDecoration(false);
-        return clampRenderedLines(super.render(width), width);
+        return clampRenderedLines(this.renderBase(width), width);
       }
     }
     this.reportMinimalistDecoration(false);
     if (width <= 2) {
-      return clampRenderedLines(super.render(width), width);
+      return clampRenderedLines(this.renderBase(width), width);
     }
 
     const { railWidth } = getEditorChromeWidths(config, this.uiTheme, "\x1b[0m");
     const innerWidth = Math.max(0, width - railWidth);
     try {
       const captured = renderWithAutocompleteCapture(autocompleteEditorInternals(this), () =>
-        super.render(innerWidth),
+        this.renderBase(innerWidth),
       );
       const result = renderPolishedFrame({
         width,
@@ -965,7 +1000,7 @@ export class PolishedEditor extends CustomEditor {
     } catch {
       // Decoration is optional; re-render the base at the caller's width below.
     }
-    return clampRenderedLines(super.render(width), width);
+    return clampRenderedLines(this.renderBase(width), width);
   }
 }
 
@@ -976,6 +1011,7 @@ export class WrappedPolishedEditor implements EditorComponent {
   declare readonly setPaddingX?: (padding: number) => void;
   declare readonly setAutocompleteMaxVisible?: (maxVisible: number) => void;
   private mouseFrame: MouseFrame = "base";
+  private readonly selection: EditorSelection;
 
   constructor(
     private readonly base: WrappedEditor,
@@ -1001,6 +1037,13 @@ export class WrappedPolishedEditor implements EditorComponent {
     if (isCallable(base.setAutocompleteMaxVisible)) {
       this.setAutocompleteMaxVisible = (maxVisible) => base.setAutocompleteMaxVisible?.(maxVisible);
     }
+    this.selection = new EditorSelection({
+      lines: () => base.getLines?.(),
+      cursor: () => textPosition(base.getCursor?.()),
+      paddingX: () => base.getPaddingX?.() ?? 0,
+      mouse: (event) => base.handleMouse?.(event),
+      input: (data) => base.handleInput(data),
+    });
   }
 
   get focused(): boolean {
@@ -1085,7 +1128,16 @@ export class WrappedPolishedEditor implements EditorComponent {
   }
 
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-    return frameMouse(event, this.mouseFrame, (target) => this.base.handleMouse?.(target));
+    const origin = textOrigin(this.mouseFrame);
+    const selected = origin ? this.selection.mouse(event, origin) : undefined;
+    return (
+      selected ?? frameMouse(event, this.mouseFrame, (target) => this.base.handleMouse?.(target))
+    );
+  }
+
+  /** The base editor's frame at `width`, with the mouse selection drawn on its text. */
+  private renderBase(width: number): string[] {
+    return this.selection.decorate(width, this.base.render(width));
   }
 
   render(width: number): string[] {
@@ -1093,21 +1145,21 @@ export class WrappedPolishedEditor implements EditorComponent {
     this.mouseFrame = "base";
     if (!config.components.editor.enabled) {
       this.reportMinimalistDecoration(false);
-      return clampRenderedLines(this.base.render(width), width);
+      return clampRenderedLines(this.renderBase(width), width);
     }
     if (config.components.editor.style === "minimalist") {
       if (width <= 4) {
         this.reportMinimalistDecoration(false);
-        return clampRenderedLines(this.base.render(width), width);
+        return clampRenderedLines(this.renderBase(width), width);
       }
       let captured: { value: string[]; capture?: AutocompleteCapture };
       try {
         captured = renderWithAutocompleteCapture(this.base, () =>
-          this.base.render(Math.max(0, width - 4)),
+          this.renderBase(Math.max(0, width - 4)),
         );
       } catch {
         this.reportMinimalistDecoration(false);
-        return clampRenderedLines(this.base.render(width), width);
+        return clampRenderedLines(this.renderBase(width), width);
       }
       try {
         const provenance = inspectPolishedFrameProvenance(
@@ -1139,18 +1191,18 @@ export class WrappedPolishedEditor implements EditorComponent {
         // Decoration is optional; re-render the base at the caller's width below.
       }
       this.reportMinimalistDecoration(false);
-      return clampRenderedLines(this.base.render(width), width);
+      return clampRenderedLines(this.renderBase(width), width);
     }
     this.reportMinimalistDecoration(false);
-    if (width <= 2) return clampRenderedLines(this.base.render(width), width);
+    if (width <= 2) return clampRenderedLines(this.renderBase(width), width);
 
     const { railWidth } = getEditorChromeWidths(config, this.uiTheme, "\x1b[0m");
     const innerWidth = Math.max(0, width - railWidth);
     let captured: { value: string[]; capture?: AutocompleteCapture };
     try {
-      captured = renderWithAutocompleteCapture(this.base, () => this.base.render(innerWidth));
+      captured = renderWithAutocompleteCapture(this.base, () => this.renderBase(innerWidth));
     } catch {
-      return clampRenderedLines(this.base.render(width), width);
+      return clampRenderedLines(this.renderBase(width), width);
     }
     let result: PolishedFrameResult | undefined;
     try {
@@ -1182,7 +1234,7 @@ export class WrappedPolishedEditor implements EditorComponent {
       this.mouseFrame = result.geometry ?? "opaque";
       return result.lines;
     }
-    return clampRenderedLines(this.base.render(width), width);
+    return clampRenderedLines(this.renderBase(width), width);
   }
 
   invalidate(): void {
@@ -1190,7 +1242,7 @@ export class WrappedPolishedEditor implements EditorComponent {
   }
 
   handleInput(data: string): void {
-    this.base.handleInput(data);
+    if (!this.selection.key(data)) this.base.handleInput(data);
   }
 
   getText(): string {

@@ -1,110 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  Editor,
-  stripTerminalSequences,
-  visibleWidth,
-  type TUI,
-  type TuiMouseEvent,
-  type TuiMouseEventResult,
-} from "@earendil-works/pi-tui";
-import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
-import { loadZentuiModule, SKIP_WITHOUT_ZENTUI } from "./zentui-build.ts";
+import { Editor, stripTerminalSequences, type TuiMouseEvent } from "@earendil-works/pi-tui";
+import { SKIP_WITHOUT_ZENTUI } from "./zentui-build.ts";
+import { at, EDITOR_THEME, STYLES, TUI_FIXTURE, WIDTH, zentui } from "./zentui-editor-fixture.ts";
 
-/** The parts of a zentui editor these tests use. */
-type FramedEditor = {
-  focused: boolean;
-  render(width: number): string[];
-  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined;
-  setText(text: string): void;
-  getCursor(): RuntimeValue;
-};
-
-type EditorConfig = {
-  components: { editor: { enabled: boolean; style: string; paddingRows: string } };
-};
-
-type Constructor = new (...args: RuntimeValue[]) => FramedEditor;
-
-const WIDTH = 60;
 const TEXT = "hello world\nsecond line";
-const EDITOR_THEME = {
-  borderColor: (text: string) => text,
-  selectList: {
-    selectedPrefix: (text: string) => text,
-    selectedText: (text: string) => text,
-    description: (text: string) => text,
-    scrollInfo: (text: string) => text,
-    noMatch: (text: string) => text,
-  },
-};
-const UI_THEME = { fg: (_role: string, text: string) => text, bold: (text: string) => text };
-const MODEL_META = {
-  modelLabel: "model",
-  modelId: "model",
-  modelName: "Model",
-  providerLabel: "Provider",
-  sessionName: "",
-};
-const TUI_FIXTURE = reinterpretHostValue<TUI>({ terminal: { rows: 40 }, requestRender: () => {} });
-
-async function zentui(style: string, paddingRows: string, enabled = true) {
-  const ui = await loadZentuiModule("ui.js");
-  const { defaultConfig } = await loadZentuiModule("config.js");
-  // SAFETY: the clone copies the package's own default config, which has these members.
-  const config = structuredClone(defaultConfig) as EditorConfig;
-  config.components.editor.enabled = enabled;
-  config.components.editor.style = style;
-  config.components.editor.paddingRows = paddingRows;
-  const shared = [UI_THEME, () => config, () => MODEL_META, () => "high"];
-  // SAFETY: the compiled package exports these two editor classes.
-  const Wrapped = ui.WrappedPolishedEditor as Constructor;
-  // SAFETY: as above.
-  const Polished = ui.PolishedEditor as Constructor;
-  return {
-    /** zentui around another extension's editor, as the harness installs it. */
-    wrapped: (base: RuntimeValue = new Editor(TUI_FIXTURE, EDITOR_THEME)) =>
-      new Wrapped(base, ...shared),
-    /** zentui's own editor, used when no other extension supplies one. */
-    polished: () => new Polished(TUI_FIXTURE, EDITOR_THEME, {}, ...shared),
-  };
-}
-
-/** A mouse event on the cell where `text` starts in the frame the editor just drew. */
-function at(
-  editor: FramedEditor,
-  text: string,
-  type: TuiMouseEvent["type"] = "click",
-): TuiMouseEvent {
-  const rows = editor.render(WIDTH).map((row) => stripTerminalSequences(row));
-  const y = rows.findIndex((row) => row.includes(text));
-  assert.ok(y >= 0, `no row shows ${text}`);
-  const row = rows[y] ?? "";
-  const x = visibleWidth(row.slice(0, row.indexOf(text)));
-  return {
-    type,
-    button: "left",
-    x,
-    y,
-    screenX: x,
-    screenY: y + 20,
-    width: WIDTH,
-    height: rows.length,
-    shift: false,
-    alt: false,
-    ctrl: false,
-    clickCount: 1,
-  };
-}
-
-const STYLES: [style: string, paddingRows: string][] = [
-  ["opencode", "both"],
-  ["opencode", "none"],
-  ["opencode", "top"],
-  ["opencode-copy-friendly", "both"],
-  ["opencode-copy-friendly", "none"],
-  ["minimalist", "none"],
-];
 
 test(
   "a click in the editor's text puts the cursor on the clicked character in every style",
@@ -149,10 +49,24 @@ test(
         }
         assert.deepEqual(editor.getCursor(), { line: 1, col: 11 }, `${where}: unmoved`);
 
-        // A press is left to Pi, which starts its text selection with it.
-        assert.equal(editor.handleMouse(at(editor, "world", "press")), undefined, where);
-        assert.equal(editor.handleMouse(at(editor, "world", "drag")), undefined, where);
-        assert.deepEqual(editor.getCursor(), { line: 1, col: 11 }, `${where}: press`);
+        // A press on the text is taken (it may start a selection) and already moves the
+        // cursor; released on the same cell it is a click, and nothing is selected.
+        assert.deepEqual(
+          editor.handleMouse(at(editor, "world", "press")),
+          { handled: true, capture: true, focus: true, render: true },
+          where,
+        );
+        assert.deepEqual(editor.getCursor(), { line: 0, col: 6 }, `${where}: press`);
+        assert.equal(editor.handleMouse(at(editor, "world", "release"))?.handled, true, where);
+        assert.deepEqual(editor.handleMouse(at(editor, "world")), { handled: true, focus: true });
+        assert.equal(
+          editor.render(WIDTH).join("\n").includes("\u001b[7m"),
+          false,
+          `${where}: no selection`,
+        );
+        // A press on the frame's own rows is still left to Pi's text selection.
+        assert.equal(editor.handleMouse({ ...end, type: "press", x: 5, y: 0 }), undefined, where);
+        assert.equal(editor.handleMouse({ ...end, type: "drag", x: 9, y: 0 }), undefined, where);
       }
     }
   },

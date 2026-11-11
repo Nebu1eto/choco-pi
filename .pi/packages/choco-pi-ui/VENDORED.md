@@ -342,3 +342,30 @@ Pi SDK dependencies move from exactly `1.5.1` to the range `~1.5.2` (`>=1.5.2 <1
   another zentui frame has no geometry and takes focus only.
 - Presses and drags stay unhandled so Pi's text selection still runs.
 - Tests: `tests/zentui-editor-mouse.test.ts` (root).
+
+## 2026-11-11 choco-pi patch: a mouse drag selects text in the framed editor
+
+- `extensions/zentui/editor-selection.ts` (new): `EditorSelection` keeps a
+  selection beside pi-tui's editor, which has a cursor only and private state.
+  It uses what the editor offers any caller. A left press or a drag on the text
+  is passed on as the editor's own click, and the cursor the editor then
+  reports is one end of the selection. A deleting key (Backspace, Delete, the
+  word and line deletes) removes the selection and nothing more; input that
+  inserts text (a typed key, a paste, Shift+Enter, yank) removes it first, so
+  it is replaced; Escape only drops it; any other key drops it and runs.
+- Removal sends the editor its own delete keys until the selected text is gone
+  (whole lines with the line-kill key), so its paste registry and change
+  callbacks stay its own. `setText` is not used: it clears the paste registry.
+  Each key is one undo step, as held Backspace is.
+- Drawing lays the text out as the editor does (`visualLines`, a copy of
+  pi-tui's unexported `wordWrapLine`) and checks every row against the frame
+  the editor drew; on any difference the selection is dropped, not drawn. With
+  a selection the block cursor is not drawn; the cursor marker stays for the
+  input method. A change of text or cursor from elsewhere drops the selection.
+- `extensions/zentui/ui.ts`: `PolishedEditor` and `WrappedPolishedEditor`
+  route mouse events and keys through it and draw it on the base frame
+  (`renderBase`). A press on the text is now taken, so Pi's own
+  select-and-copy no longer starts from the editor's text; it still does from
+  the frame's border, padding and metadata rows.
+- Tests: `tests/zentui-editor-selection.test.ts`,
+  `tests/zentui-editor-mouse.test.ts` (root).
