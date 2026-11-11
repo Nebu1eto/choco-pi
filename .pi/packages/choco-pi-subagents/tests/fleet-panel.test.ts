@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { initTheme } from "@earendil-works/pi-coding-agent";
-import type { TUI } from "@earendil-works/pi-tui";
+import type { TUI, TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import type { AgentManager } from "../src/agent-manager.ts";
 import type { AgentRecord, WidgetMode } from "../src/types.ts";
@@ -182,7 +182,12 @@ function mount(
     hasOverlay: () => options.overlay === true,
     requestRender() {},
   });
-  let component: { render(width: number): string[] } | undefined;
+  let component:
+    | {
+        render(width: number): string[];
+        handleMouse?(event: TuiMouseEvent): TuiMouseEventResult | undefined;
+      }
+    | undefined;
   let handler: ((data: string) => { consume?: boolean } | undefined) | undefined;
   const ui = partialFixture<FleetPanelUICtx>({
     setStatus(_key, value) {
@@ -219,6 +224,27 @@ function mount(
     notices,
     statuses,
     press: (key: string) => handler?.(key),
+    /** A left click on the panel line showing `text`. */
+    click(text: string, clickCount = 1, type: "click" | "press" = "click") {
+      const y = (component?.render(options.width ?? 120) ?? []).findIndex((line) =>
+        stripTerminalSequences(line).includes(text),
+      );
+      assert.ok(y >= 0, `no panel line shows ${text}`);
+      return component?.handleMouse?.({
+        type,
+        button: "left",
+        x: 4,
+        y,
+        screenX: 4,
+        screenY: y,
+        width: options.width ?? 120,
+        height: 12,
+        shift: false,
+        alt: false,
+        ctrl: false,
+        clickCount,
+      });
+    },
     lines: (width = options.width ?? 120) => component?.render(width) ?? [],
     text: (width = options.width ?? 120) => (component?.render(width) ?? []).join("\n"),
     focused: () => focusedId,
@@ -749,6 +775,55 @@ test("status line appends the failed-descendant count", () => {
   });
   try {
     assert.equal(view.statuses.at(-1), "1 scheduled / cap 8 · 2 failed");
+  } finally {
+    view.panel.dispose();
+  }
+});
+
+test("a click selects a subagent, a shell or main as the arrow keys do", () => {
+  const view = mount({
+    records: [agent("a1", "first job"), agent("a2", "second job")],
+    shells: [shell("s", { label: "build" })],
+  });
+  try {
+    assert.deepEqual(
+      view.click("second job", 1, "press"),
+      { handled: true, render: false },
+      "the press is taken so that a double click arrives",
+    );
+    assert.equal(view.focused(), undefined);
+    assert.deepEqual(view.click("second job"), { handled: true, render: true });
+    assert.equal(view.focused(), "a2", "the clicked subagent is focused");
+    view.click("first job");
+    assert.equal(view.focused(), "a1");
+    view.click("build");
+    assert.equal(view.focused(), undefined, "a shell row is not a conversation");
+    assert.match(view.text(), /enter output · x stop/, "keys now go to the selected shell");
+    assert.deepEqual(view.press("x"), { consume: true });
+    assert.deepEqual(view.provider.stopCalls, ["s"]);
+    view.click("first job");
+    view.click("○ main");
+    assert.equal(view.focused(), undefined, "main returns to the orchestrator");
+    assert.equal(view.click("esc back"), undefined, "the hint line is not a row");
+  } finally {
+    view.panel.dispose();
+  }
+});
+
+test("a double click opens a shell's output; a click with text in the editor leaves the keys to it", async () => {
+  const view = mount({ shells: [shell("s", { label: "build" })], editorText: "x marks" });
+  const pending = deferred<void>();
+  view.provider.viewerResult = pending.promise;
+  try {
+    view.click("build");
+    assert.equal(view.press("x"), undefined, "typing continues: nothing is stopped");
+    assert.deepEqual(view.provider.stopCalls, []);
+    view.click("build", 2);
+    assert.deepEqual(view.provider.openCalls, ["s"]);
+    assert.equal(view.click("build"), undefined, "the open viewer owns the screen");
+    pending.resolve();
+    await pending.promise;
+    await Promise.resolve();
   } finally {
     view.panel.dispose();
   }

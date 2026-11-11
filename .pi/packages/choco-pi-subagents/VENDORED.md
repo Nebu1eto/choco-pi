@@ -2441,3 +2441,23 @@ files and the `Verdict record:` line are unchanged.
 - A reply without a block or record line renders byte-identically to the
   committed renderer (36 card and notification combinations compared).
 - Test: `tests/verdict-render.test.ts`.
+
+## choco-pi patch: fleet panel rows take mouse clicks
+
+- `src/ui/fleet-panel.ts`: the panel's widget implements `handleMouse`. Each
+  frame records which roster entry every panel line shows (`rowKeys`; an
+  agent's detail line belongs to its row, the hint and the "more" lines to
+  none). A left click on a row selects it and applies the selection as ↑/↓
+  do: a subagent is focused, `main` and a shell row unfocus. A double click
+  (`clickCount` 2 or more) also runs Enter on the row, which opens a shell's
+  output or a `/btw` overlay.
+- Keys go to the panel after a click only when the arrow keys could have
+  started navigation: the prompt editor has focus and is empty. Otherwise the
+  row is selected and typing continues, so `x` in a prompt never stops a shell.
+- The widget takes the left press on a row. Pi starts its own text selection
+  on a press nothing takes, and the second press of a double click then selects
+  a word and never arrives as a click; text on fleet rows can therefore no
+  longer be selected by dragging from them. The hint line is unchanged.
+- Clicks are ignored while a shell viewer is open.
+- Tests: `tests/fleet-panel.test.ts` (click on agent, shell and main rows;
+  double click; a click with text in the editor).

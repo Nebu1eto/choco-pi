@@ -73,7 +73,9 @@ away; Esc only leaves list navigation and never unfocuses. Enter does not open
 the modal viewer for an ordinary agent — the row is already focused in the main
 area, so it would duplicate what is on screen — and simply ends navigation. A
 `/btw` row is the exception: side conversations never take focus, so Enter opens
-their dismissible overlay. The main prompt steers whichever agent is focused.
+their dismissible overlay. A mouse click on a row selects it exactly as the
+arrow keys would, and a double click is Enter on that row, which opens a
+shell's output. The main prompt steers whichever agent is focused.
 The focused view streams the child's text and tool progress, renders its custom
 messages, and has its own thinking toggle, seeded from the host setting each
 time focus opens.

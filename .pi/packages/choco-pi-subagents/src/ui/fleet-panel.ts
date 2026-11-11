@@ -5,6 +5,8 @@ import {
   Key,
   matchesKey,
   type TUI,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
   truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
@@ -54,16 +56,19 @@ export type FleetPanelFocusOptions = {
   openSideConversation?: (record: AgentRecord) => boolean;
 };
 
+/** The panel's widget: Pi offers it the mouse events on its rows. */
+type FleetWidget = {
+  render(width: number): string[];
+  invalidate(): void;
+  dispose?(): void;
+  handleMouse?(event: TuiMouseEvent): TuiMouseEventResult | undefined;
+};
+
 export type FleetPanelUICtx = ShellViewerHost & {
   setStatus(key: string, text: string | undefined): void;
   setWidget(
     key: string,
-    content:
-      | undefined
-      | ((
-          tui: TUI,
-          theme: Theme,
-        ) => { render(width: number): string[]; invalidate(): void; dispose?(): void }),
+    content: undefined | ((tui: TUI, theme: Theme) => FleetWidget),
     options?: { placement?: "aboveEditor" | "belowEditor" },
   ): void;
   onTerminalInput(
@@ -195,6 +200,8 @@ export class FleetPanel {
   private agentSectionEnabled = true;
   private selectedKey: RowKey = "main";
   private lastIndex = 0;
+  /** The roster entry each panel line showed when it was last drawn, for the mouse. */
+  private rowKeys: Array<RowKey | undefined> = [];
   private viewerClose: (() => void) | undefined;
   private viewingAgentId: string | undefined;
   private viewingShellId: string | undefined;
@@ -303,6 +310,7 @@ export class FleetPanel {
           this.theme = theme;
           return {
             render: (width: number) => this.renderPanel(width, theme),
+            handleMouse: (event: TuiMouseEvent) => this.handleMouse(event),
             invalidate: () => {
               this.widgetRegistered = false;
               this.tui = undefined;
@@ -550,6 +558,35 @@ export class FleetPanel {
     return undefined;
   }
 
+  /**
+   * A click on a row selects it, as the arrow keys do: a subagent's row
+   * focuses it and `main` returns to the orchestrator. A double click is
+   * Enter on that row, which opens a shell's output. Keys go to the panel
+   * afterwards only where the arrow keys could have started that: with the
+   * editor focused and empty, so a click never turns typed text into commands.
+   */
+  private handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (this.disposed || !this.ui || this.viewerClose) return undefined;
+    if (event.button !== "left" || (event.type !== "press" && event.type !== "click")) {
+      return undefined;
+    }
+    const key = this.rowKeys[event.y];
+    if (key === undefined) return undefined;
+    // A press Pi keeps starts its text selection, and the second press of a
+    // double click then selects a word instead of arriving here as a click.
+    if (event.type === "press") return { handled: true, render: false };
+    const roster = this.roster();
+    const index = roster.findIndex((entry) => entry.key === key);
+    if (index < 0) return undefined;
+    this.selectedKey = key;
+    this.lastIndex = index;
+    this.active = this.editorHasFocus() && this.ui.getEditorText() === "";
+    this.applySelection(roster);
+    if ((event.clickCount ?? 1) >= 2) this.acceptSelection(roster);
+    this.update();
+    return { handled: true, render: true };
+  }
+
   private editorHasFocus(): boolean {
     if (this.tui?.hasOverlay?.() === true) return false;
     // SAFETY: Pi's TUI owns this optional private field for focus routing.
@@ -759,6 +796,7 @@ export class FleetPanel {
 
   private renderPanel(width: number, theme: Theme): string[] {
     const roster = this.roster();
+    this.rowKeys = [];
     if (roster.length === 1) return [];
     this.clampSelection(roster);
     const selectedIndex = roster.findIndex((entry) => entry.key === this.selectedKey);
@@ -791,38 +829,50 @@ export class FleetPanel {
     const agentWindow = windowRows(agents, agentLimit, selectedAgent);
     const shellWindow = windowRows(shells, shellLimit, selectedShell);
     const lines = [truncateToWidth(theme.fg("dim", this.hint(roster)), width)];
+    const keys: Array<RowKey | undefined> = [undefined, "main"];
     lines.push(this.renderMainRow(selectedIndex, width, theme));
     this.pushWindow(
       lines,
+      keys,
       agentWindow,
       width,
       theme,
       (entry) => this.renderAgentRow(entry, selectedIndex, width, theme),
       details ? (entry) => this.renderAgentDetail(entry, width, theme) : undefined,
     );
-    this.pushWindow(lines, shellWindow, width, theme, (entry) =>
+    this.pushWindow(lines, keys, shellWindow, width, theme, (entry) =>
       this.renderShellRow(entry, selectedIndex, width, theme),
     );
+    this.rowKeys = keys.slice(0, MAX_PANEL_LINES);
     return lines.slice(0, MAX_PANEL_LINES);
   }
 
-  private pushWindow<T>(
+  private pushWindow<T extends FleetEntry>(
     lines: string[],
+    keys: Array<RowKey | undefined>,
     window: WindowedRows<T>,
     width: number,
     theme: Theme,
     render: (row: T) => string,
     renderDetail?: (row: T) => string | undefined,
   ): void {
-    if (window.start > 0)
+    if (window.start > 0) {
       lines.push(rightAlign("", theme.fg("dim", `↑ ${window.start} more`), width));
+      keys.push(undefined);
+    }
     for (const row of window.rows) {
       lines.push(render(row));
+      keys.push(row.key);
       const detail = renderDetail?.(row);
-      if (detail) lines.push(detail);
+      if (detail) {
+        lines.push(detail);
+        // The detail line belongs to the row above it.
+        keys.push(row.key);
+      }
     }
     if (window.hiddenBelow > 0) {
       lines.push(rightAlign("", theme.fg("dim", `↓ ${window.hiddenBelow} more`), width));
+      keys.push(undefined);
     }
   }
 
