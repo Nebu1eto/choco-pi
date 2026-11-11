@@ -454,6 +454,7 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
     "extensions/harness-check.ts",
     "extensions/lib/pi-runtime-identity.ts",
     "extensions/provider-usage.ts",
+    "extensions/verdict-block-render.ts",
     "review-policy.md",
     "writing-policy.md",
     "subagents.json",
