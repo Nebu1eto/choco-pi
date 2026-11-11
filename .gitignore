@@ -18,6 +18,9 @@ node_modules/
 
 .DS_Store
 
+# Downloaded TLA+ tools (formal-verify skill: tlc-setup.ts --dir formal/.tools).
+formal/.tools/
+
 # Never commit local credentials or environment overrides.
 .env
 .env.*
