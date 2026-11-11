@@ -237,17 +237,27 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 
 - [`.pi/SYSTEM.md`](.pi/SYSTEM.md)는 범위, 권한, 증거, 완료 기준에 대한 공통 규칙을 정합니다. [`.pi/model-guidance.md`](.pi/model-guidance.md)는 모델별 지침을, [`.pi/writing-policy.md`](.pi/writing-policy.md)는 응답 문장 규칙을 더합니다.
 - 루트와 경로별 `AGENTS.md` 파일은 에이전트가 하위 디렉터리에서 작업할 때 함께 불러옵니다.
-- 작업 절차 스킬은 직접 구현(`task-inline`), 병렬 구현 단위(`task`), 동적 분해 작업(`task-dynamic`), 긴급 수정(`task-hotfix`), 적대적 리뷰(`review`), 환경 점검(`check`), 서명된 로컬 커밋(`commit`), 문서 작성(`effective-writing`)을 다룹니다. 구현 절차는 체크아웃 변경 lease를 잡고 인수 기준표로 검증하며, 푸시하지 않습니다.
+- 작업 절차 스킬은 직접 구현(`task-inline`), 병렬 구현 단위(`task`), 동적 분해 작업(`task-dynamic`), 긴급 수정(`task-hotfix`), 적대적 리뷰(`review`), 리뷰 주장 재현(`verify`), TLA+ 모델 검사(`formal-verify`), 환경 점검(`check`), 서명된 로컬 커밋(`commit`), 문서 작성(`effective-writing`)을 다룹니다. 구현 절차는 체크아웃 변경 lease를 잡고 인수 기준으로 검증하며, 푸시하지 않습니다. 리뷰와 증거 관련 스킬은 [리뷰와 검증](#리뷰와-검증)에서 설명합니다.
 - `/preferences`에서 응답 언어, 응답 스타일(`concise` 또는 `explanatory`), 에이전트 페르소나(`unset`, `critical`, 기본값인 `pessimistic`)를 설정합니다. 페르소나는 에이전트가 자신의 주장과 계획을 얼마나 엄격하게 검증할지 정합니다.
 - `/preferences` → Agent → On usage limit(`agentOnUsageLimit`)은 현재 provider가 사용량 한도를 보고했을 때의 동작을 정합니다. `none`(기본값)은 오류로 종료된 상태를 그대로 둡니다. `fallback`은 [`.pi/model-fallbacks.json`](.pi/model-fallbacks.json)의 같은 등급 다른 provider 모델로 전환하거나, 열린 등급 후보가 없으면 최후 수단인 `xai/grok-4.7`, 그다음 `synthetic/hf:moonshotai/Kimi-K3.1-Pro`(Kimi K3보다 우선), 마지막으로 `synthetic/hf:moonshotai/Kimi-K3`로 전환한 뒤 작업을 이어갑니다. `auto-resume`은 한도가 초기화될 때까지 기다린 뒤 이어갑니다. 하위 에이전트는 한도에 걸리면 초기화 예정 시각과 범위 안의 추천 모델을 부모 에이전트에 보고하며, `auto-resume`일 때만 대기했다가 초기화 후 자동으로 재개됩니다. `/goal`이 active 또는 paused 상태이면 복구 주도권은 goal 런타임이 가집니다.
 
 ### 에이전트와 오케스트레이션
 
-- [`.pi/agents`](.pi/agents)의 전문 역할(`advisor`, `explore`, `general`, `handoff`, `implementer`, `planner`, `reviewer`)은 백그라운드 서브 에이전트로 실행됩니다. 예약 실행, 격리된 Git worktree 실행, `workflow_run`으로 의존 관계 순서를 따르는 workflow 실행도 지원합니다. `/agents`로 관리합니다.
+- [`.pi/agents`](.pi/agents)의 전문 역할(`advisor`, `explore`, `general`, `handoff`, `implementer`, `planner`, `reviewer`, `verifier`)은 백그라운드 서브 에이전트로 실행됩니다. 예약 실행, 격리된 Git worktree 실행, `workflow_run`으로 의존 관계 순서를 따르는 workflow 실행도 지원합니다. `/agents`로 관리합니다.
 - `max_turns` 제한은 재개한 실행에도 적용되며, 토큰 예산이 있는 에이전트는 예산에 걸려 중단되기 전에 마무리하라는 지시를 받습니다.
 - fleet 패널은 실행 중인 서브 에이전트와 관리되는 백그라운드 셸을 함께 보여 줍니다. 서브 에이전트를 선택하면 그 대화 기록에 포커스가 가며, 텍스트, 도구 진행 상황, 사용자 정의 메시지가 실시간으로 표시됩니다. 이 화면에서 thinking 표시를 전환해도 포커스된 화면에만 적용됩니다. 셸은 소유자별로 격리되며 `shell_start`와 `/shells`로 관리합니다. 소유 세션이 비활성일 때 끝난 셸의 완료 알림은 그 세션이 다시 활성화되면 전달됩니다.
 - `/btw`는 병렬로 진행되는 읽기 전용 곁대화를 엽니다.
 - 루트 에이전트와 하위 에이전트는 응답을 기다리는 `advisor` 도구로, 설정된 고성능 모델에게서 새 읽기 전용 문맥의 두 번째 의견을 받습니다. 이 문맥에는 현재 세션의 제한된 발췌만 들어갑니다. 기본값은 비활성이며, advisor 모델이 세션 모델과 같으면 호출을 건너뜁니다. `/preferences`의 Agent → Advisor Agent나 [`advisor.json`](#advisor-설정)에서 설정하세요.
+
+### 리뷰와 검증
+
+- `/review [target]`은 에이전트가 직접 수행하는 적대적 리뷰입니다. `review` 스킬이 대상(기본값은 `HEAD` 대비 staged·unstaged 변경)을 변경할 수 없는 번들로 고정해 새 읽기 전용 `reviewer` 하나에게 넘깁니다. [`.pi/review-policy.md`](.pi/review-policy.md)에 따라 모든 리뷰는 세 관점을 다룹니다. 호출자·테스트·문서가 여전히 기대는 동작이 바뀌거나 사라졌는지, 바뀐 계약의 모든 호출자, 그리고 앞선 검토가 놓친 것만 찾는 마지막 점검입니다. 리뷰어는 finding과 별도로 candidate를 보고합니다. candidate는 위반에 이르는 추적 경로 중 한 고리가 빠졌거나 가정에 기댄 우려입니다. 위반까지 경로를 빠짐없이 추적했다면 아무것도 실행하지 않았어도 finding입니다. 둘 다 에이전트나 verifier가 확인하기 전까지는 참고 의견입니다.
+- 리뷰어와 verifier는 응답 끝에 구조화된 블록(`choco-pi-review` 또는 `choco-pi-verdict`)을 붙입니다. work task로 실행된 경우 subagents 패키지가 이 블록을 기록하고 결과에 `Verdict record:` 줄을 덧붙입니다. 블록이 없거나 잘못된 리뷰는 기록되지 않은 것으로 보며, 깨끗하다고 보고하지 않습니다. 리뷰와 검증 라운드는 work task마다 상한이 있습니다. `/review-continue <work_task>`와 `/verify-continue <work_task>`로 라운드를 더 허용합니다.
+- 터미널에서는 파싱되는 블록을 결과 카드, 완료 알림, 대화 기록의 Markdown에 짧은 요약(판정, 개수, finding이나 claim마다 한 줄)으로 보여 줍니다. 원본 블록은 카드를 펼치면 보입니다. 파싱되지 않는 블록은 파서가 밝힌 이유 한 줄 뒤에 그대로 보여 줍니다. 바뀌는 것은 표시뿐이며, 저장된 메시지, 모델이 받는 내용, 기록된 판정은 그대로입니다.
+- `verifier` 역할은 `verify` 스킬을 따라, 정확히 지정된 체크아웃 스냅숏에서 리뷰어의 주장을 재현해 봅니다. scratch에만 기록하고 코드를 고치지 않으며, `UNPROVEN`을 있는 그대로 보고합니다. 재현에 실패했다고 해서 주장이 반박된 것은 아닙니다. 작은 작업에는 verifier를 쓰지 않습니다.
+- `formal-verify` 스킬은 에이전트가 작업하는 프로젝트에서 순서와 상태에 관한 약속을 검사합니다. 실행이 정확히 한 번 끝나야 한다거나, lease가 동시에 두 번 잡혀서는 안 된다는 약속이 그 예입니다. 에이전트가 작은 TLA+ 모델을 쓰고, 스킬의 래퍼를 거쳐 TLC로 검사하며, 의도적인 mutation을 넣어 규칙마다 실패할 수 있음을 보입니다. 통과는 정해진 범위 안의 모델에 대한 것이지 코드에 대한 것이 아닙니다. drift 검사는 모델이 다루는 코드가 바뀌었는지 알려 줍니다. 모델은 어떤 언어의 코드든 다룰 수 있지만, drift 검사가 심벌 단위로 해시하는 언어는 TypeScript와 JavaScript뿐이고 그 밖의 파일은 파일 전체를 해시합니다. TLC를 쓰려면 Java 11 이상과 `tlc-setup.ts` 1회 실행이 필요합니다. 이 스크립트는 고정 버전 `tla2tools.jar`를 `${XDG_CACHE_HOME:-~/.cache}/choco-pi/formal`에 내려받습니다. 자세한 내용은 [스킬 문서](.pi/skills/formal-verify/SKILL.md)를 보세요. [`formal/tla/subagent-run`](formal/tla/subagent-run)은 이 저장소의 서브 에이전트 실행 생명주기를 모델링한 예시입니다.
+- `/diff`는 대화 기록 옆에 패널을 붙여 변경된 파일과 diff를 보여 주고, 에이전트가 작업하는 동안 내용을 새로 고칩니다. 기본으로는 세션이 시작된 뒤의 변경, 즉 세션의 첫 파일 체크포인트와 작업 트리의 비교를 보여 주며, 그사이 커밋된 변경도 포함합니다. `/diff source uncommitted`는 `HEAD`와 작업 트리를 비교하고, `/diff source turn [<n>]`은 작업 트리를 특정 턴의 체크포인트와 비교하며, `/diff source branch [<base>]`는 브랜치(기본값은 원격의 기본 브랜치, 없으면 `main`, 그다음 `master`)와의 merge base부터 비교합니다. 고른 소스는 패널을 닫을 때까지 유지되고, `/diff source session`으로 기본값에 돌아갑니다. 패널에서는 파일이나 hunk 참조를 입력창에 넣고, hunk에 메모를 남겼다가 한 메시지로 입력창에 모으고, 리뷰어와 verifier가 기록한 finding을 차례로 살펴보고, `/review` 지시문을 입력창에 넣을 수 있습니다(`/diff review`). Enter를 누르기 전에는 아무것도 전송되지 않습니다. 민감한 파일은 이름만 보이고, 그 파일에서 `v`를 누르기 전까지 내용은 숨겨집니다. 이 선택은 저장되지 않으며 패널을 다시 열면 다시 숨겨집니다. Ctrl+Alt+P로 패널을 열고 닫고, Ctrl+Alt+F로 패널 안팎으로 포커스를 옮기며, 패널에서 `?`를 누르면 키 목록이 나옵니다. `/diff ` 뒤의 자동 완성은 하위 명령을 보여 줍니다. 패널을 쓰려면 전체 화면 TUI와 폭 65열 이상의 터미널이 필요하며, 조건이 맞지 않으면 `/diff`가 변경 목록을 출력합니다. Zed에서는 대신 크기가 제한된 네이티브 diff를 보내며, 각 diff 앞에 파일 이름과 상태를 붙이고, 민감한 파일은 이름만 보여 줍니다. 세션에서는 아직 바뀐 파일이 없지만 작업 트리에는 변경이 있으면 `/diff source uncommitted`로 그 변경을 볼 수 있다고 알려 줍니다([자세히](docs/zed-command-parity.md#diff-in-zed)).
+- `/review-assist [target]`은 사용자가 직접 변경을 검토하는 화면이며, 모델 컨텍스트에는 아무것도 추가하지 않습니다. 대상은 현재 세션이나 그 세션의 턴 하나, 브랜치 범위, 커밋하지 않은 변경, 저장된 리뷰, GitHub 풀 리퀘스트입니다. 코멘트를 달고, 승인하거나 거절하고, 리뷰를 풀 리퀘스트에 제출할 수 있습니다. 이 화면은 `/diff` 패널의 뷰를 전체 화면으로 띄운 것이며, 두 명령이 함께 하는 일에는 패널의 키를 씁니다(`j`/`k`, hunk 이동은 `n`/`N` 또는 `[`/`]`, 접기는 Enter나 Space, `g`/`G`, `r`, `f`/`F`, `v`, `?`). 리뷰에만 있는 일에는 줄 커서를 씁니다. Shift+↑/↓로 여러 줄을 고르고, `c`로 코멘트를 달고, `m`으로 hunk를 검토 완료로 표시하고, `a`로 옆 채팅을 열고, `/`로 바뀐 줄을 검색하고(`>`/`<`로 다음 결과), `+`/`-`로 주변 맥락을 늘리거나 줄이고, `|`로 나란히 보기로 바꾸고, `e`/`E`로 편집기를 열고, `S`로 마치고, `q`나 Esc로 저장하고 나갑니다. `session`은 `/diff`와 같은 파일을 세션의 첫 체크포인트부터 보여 주고, `session turn <n>`은 체크포인트가 있는 턴을 1부터 셉니다. 변경이 작업 트리에서 끝나는 대상이면 `r`로, 그리고 옆 채팅의 도구 호출이 끝날 때마다 변경을 다시 읽으며, `f`/`F`로 리뷰어가 기록한 finding을 차례로 봅니다. 검토 표시와 코멘트는 내용이 바뀌지 않은 hunk에 그대로 남습니다. `.env`, 개인 키, 경로에 `secret`이나 `credential`이 들어간 파일 같은 민감한 파일은 내용을 숨긴 채 보여 주며, 그 파일에서 `v`를 눌러야 이 화면에서만 내용이 나타납니다. 옆 채팅에는 어떤 파일이 숨겨져 있는지 알려 주며, 그 파일에서 `v`를 누르기 전까지는 인자가 그 파일을 가리키는 도구 호출을 모두 거부합니다. 경로로서 가리키는 경우는 Pi 파일 도구가 경로를 해석하는 방식보다 넓게 판단하며(앞뒤 공백, `@`, `~`, `file://`, `..`, 끝의 슬래시, 심볼릭 링크와 하드 링크, 유니코드 정규화 형태, 파일 시스템이 대소문자를 구분하지 않으면 대소문자 차이까지), 인자 텍스트 어디에든 그 경로나 파일 이름이 들어 있으면 POSIX 셸, fish, PowerShell, cmd에서 따옴표나 이스케이프로 쓴 경우와 퍼센트 인코딩한 경우(`cat .e"n"v`, `cat o\'key.txt`, `type .e^nv`)도 거부하므로, 숨긴 파일과 이름이 따옴표나 이스케이프 문자만 다른 다른 파일도 거부됩니다. `write`와 `edit`가 파일에 써 넣는 텍스트는 경로로만 확인합니다. 이는 샌드박스가 아니라 이중 방어입니다. 이름의 모든 문자가 텍스트에 그대로 또는 퍼센트 인코딩으로 나타나면 거부하지만, 문자를 코드로 적거나 파일 이름을 쓰지 않고 파일에 닿는 명령(`cat .e*`나 `cat *` 같은 glob, 중괄호 확장, 변수, `$'\x2e'` 같은 이스케이프, 재귀 검색, 환경 변수 덤프, 미리 써 둔 스크립트)은 막지 못하며, 채팅이 이미 읽은 내용도 막지 못합니다. 메시지, 경고, 오류는 리뷰 화면의 메시지 줄에 표시되며, 오류는 리뷰를 닫은 뒤에도 읽을 수 있도록 Pi 알림에도 남습니다. 파일 이름, diff 같은 신뢰할 수 없는 텍스트는 화면에 그리기 전에 터미널 제어 시퀀스를 걸러 내고, 큰 변경은 한도 안에서 읽되 빠진 파일 수를 알려 주며, 그 뒤로 코드가 바뀐 코멘트는 outdated로 표시합니다. 저장된 리뷰는 Pi 에이전트 디렉터리의 `choco-pi/reviews`에 있으며, 파일을 마지막으로 수정한 지 7일이 지나면 보내지 않은 코멘트가 있더라도 삭제됩니다. 터미널 UI가 아닌 환경에서는 읽기 전용 요약을 출력하며, Zed에서는 이 요약이 Markdown이고 파일마다 변경을 코드 블록 안의 unified diff로 보여 줍니다.
 
 ### 세션, 컨텍스트, goal
 
@@ -300,8 +310,10 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 | `/task <task>`                                    | 독립적인 구현 단위를 병렬 실행                              |
 | `/task-dynamic <task>`                            | 동적으로 분해하는 중첩 작업을 명시적으로 활성화             |
 | `/task-hotfix <task>`                             | 긴급 운영 수정을 직접 적용                                  |
-| `/review [target]`                                | 세션, 브랜치, 풀 리퀘스트 변경을 직접 검토                  |
-| `/review-agent [target]`                          | 새 문맥의 에이전트가 코드를 고치지 않고 적대적 리뷰만 수행  |
+| `/review [target]`                                | 새 문맥의 에이전트가 코드를 고치지 않고 적대적 리뷰만 수행  |
+| `/review-assist [target]`                         | 세션, 브랜치, 풀 리퀘스트 변경을 직접 검토                  |
+| `/diff [subcommand]`                              | 대화 기록 옆 실시간 diff 패널을 열고 닫거나 제어            |
+| `/review-continue`, `/verify-continue`            | work task의 리뷰·검증 라운드 상한 확인 또는 추가 허용       |
 | `/commit [guidance]`                              | 푸시하지 않고 검증된 로컬 커밋 생성                         |
 | `/checkpoint`                                     | 턴에서 되감기, 롤백, 분기 또는 현재 상태 분기               |
 | `/rewind`, `/fork`                                | 턴으로 되감기만, 또는 턴이나 현재 상태에서 분기만           |
@@ -550,16 +562,16 @@ advisor 설정은 별도 파일인 `~/.pi/agent/advisor.json`에 두며, 프로�
 
 ## 개발 검증
 
-루트 검증 절차를 실행하세요.
+루트 검증 절차를 실행하세요. 에이전트의 도구 호출을 포함해 Pi가 시작한 셸에서는 `pnpm test` 전에 Pi가 내보내는 세션 변수를 해제해야 합니다. 그러지 않으면 서브 에이전트 scratch 디렉터리 테스트가 실패합니다.
 
 ```sh
 pnpm lint
 pnpm fmt:check
 pnpm typecheck
-pnpm test
+env -u PI_ROOT_SESSION_ID -u PI_SCRATCH_DIR -u PI_SESSION_ID -u PI_CODING_AGENT -u PI_MANAGED_INSTALL_ROOT pnpm test
 ```
 
-런타임과 TUI 변경은 새 Pi 프로세스에서도 검증해야 합니다. 패키지 정책에 따라 추가 검사가 필요할 수 있습니다.
+런타임과 TUI 변경은 새 Pi 프로세스에서도 검증해야 합니다. [검증 안내](docs/verification-map.md)에 영역별로 실행할 검사, 인증 정보 없이 테스트용 Pi를 실행하는 방법, ACP real-Pi 테스트, formal 모델·drift 검사를 정리해 두었습니다. 패키지 정책에 따라 추가 검사가 필요할 수 있습니다.
 
 ## 보안과 권한
 
