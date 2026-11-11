@@ -13,7 +13,12 @@ import type {
   PiRpcEvent,
   PiState,
 } from "../src/pi-rpc/protocol.ts";
-import { PiRpcProcess, type PiRpcExit, type PiRpcProcessLike } from "../src/pi-rpc/process.ts";
+import {
+  PiRpcProcess,
+  type PiPromptHooks,
+  type PiRpcExit,
+  type PiRpcProcessLike,
+} from "../src/pi-rpc/process.ts";
 import { FakeAgentSideConnection, asAgentConn } from "./helpers-fakes.ts";
 
 type SpawnParameters = Parameters<typeof PiRpcProcess.spawn>[0];
@@ -102,8 +107,14 @@ class RestorableFakeProcess implements PiRpcProcessLike {
     return () => {};
   }
 
-  async prompt(message: string, _images: PiPromptImage[] = []): Promise<PiPromptDisposition> {
+  async prompt(
+    message: string,
+    _images: PiPromptImage[] = [],
+    hooks: PiPromptHooks = {},
+  ): Promise<PiPromptDisposition> {
     this.promptCalls.push(message);
+    // Pi's response frame precedes the run's agent_settled on stdout.
+    hooks.onResponseFrame?.();
     queueMicrotask(() => this.eventHandler?.({ type: "agent_settled" }));
     return "started";
   }

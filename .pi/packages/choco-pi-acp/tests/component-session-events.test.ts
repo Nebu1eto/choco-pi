@@ -554,17 +554,13 @@ test("PiAcpSession: preserves ordering when auto_retry_start is interleaved with
 
   await new Promise((r) => setTimeout(r, 0));
 
-  assert.deepEqual(
-    conn.updates.map((u) => u.update),
-    [
-      { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "before " } },
-      {
-        sessionUpdate: "agent_message_chunk",
-        content: { type: "text", text: "Retrying (attempt 1/2, waiting 2s)..." },
-      },
-      { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "after" } },
-    ],
-  );
+  // The retry notice is a distinct output, so it and the text resumed after it each
+  // start a new paragraph instead of running into the previous text.
+  assert.deepEqual(conn.updates.map(chunkTextOf), [
+    "before ",
+    "\n\nRetrying (attempt 1/2, waiting 2s)...",
+    "\n\nafter",
+  ]);
 });
 
 test("PiAcpSession: emits streamed tool locations from pi path args", async () => {

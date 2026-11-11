@@ -712,6 +712,10 @@ export class PiAcpAgent implements ACPAgent {
     session: PiAcpSession,
     generation: number,
   ): Promise<PromptResponse> {
+    // The client has rendered this prompt as a new user entry; commands answered here
+    // and Pi's output both start a new block, so the first output needs no separator.
+    // (Tests sometimes stub out the session, so guard the call.)
+    session.beginClientPrompt?.();
     const { message, images } = promptToPiMessage(
       params.prompt,
       process.env.PI_ACP_ENABLE_EMBEDDED_CONTEXT === "true",
@@ -788,12 +792,9 @@ export class PiAcpAgent implements ACPAgent {
 
         const text = headerLines.join("\n") + (summary ? `\n\n${summary}` : "");
 
-        await this.conn.sessionUpdate({
-          sessionId: session.sessionId,
-          update: {
-            sessionUpdate: "agent_message_chunk",
-            content: { type: "text", text },
-          },
+        await session.sendUpdate({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text },
         });
 
         return { stopReason: "end_turn" };
@@ -827,12 +828,9 @@ export class PiAcpAgent implements ACPAgent {
           ? lines.join("\n")
           : `Session stats:\n${JSON.stringify(stats, null, 2)}`;
 
-        await this.conn.sessionUpdate({
-          sessionId: session.sessionId,
-          update: {
-            sessionUpdate: "agent_message_chunk",
-            content: { type: "text", text },
-          },
+        await session.sendUpdate({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text },
         });
 
         return { stopReason: "end_turn" };
@@ -841,12 +839,9 @@ export class PiAcpAgent implements ACPAgent {
       if (cmd === "name") {
         const name = args.join(" ").trim();
         if (!name) {
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: "agent_message_chunk",
-              content: { type: "text", text: "Usage: /name <name>" },
-            },
+          await session.sendUpdate({
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Usage: /name <name>" },
           });
           return { stopReason: "end_turn" };
         }
@@ -863,31 +858,22 @@ export class PiAcpAgent implements ACPAgent {
             ? " This requires a newer pi version that supports `set_session_name` in RPC mode."
             : "";
 
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: "agent_message_chunk",
-              content: { type: "text", text: `Failed to set session name: ${msg}${hint}` },
-            },
+          await session.sendUpdate({
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: `Failed to set session name: ${msg}${hint}` },
           });
           return { stopReason: "end_turn" };
         }
 
-        await this.conn.sessionUpdate({
-          sessionId: session.sessionId,
-          update: {
-            sessionUpdate: "session_info_update",
-            title: name,
-            updatedAt: new Date().toISOString(),
-          },
+        await session.sendUpdate({
+          sessionUpdate: "session_info_update",
+          title: name,
+          updatedAt: new Date().toISOString(),
         });
 
-        await this.conn.sessionUpdate({
-          sessionId: session.sessionId,
-          update: {
-            sessionUpdate: "agent_message_chunk",
-            content: { type: "text", text: `Session name set: ${name}` },
-          },
+        await session.sendUpdate({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: `Session name set: ${name}` },
         });
 
         return { stopReason: "end_turn" };
@@ -902,28 +888,22 @@ export class PiAcpAgent implements ACPAgent {
 
         // If no arg, just report current.
         if (!modeRaw) {
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: "agent_message_chunk",
-              content: {
-                type: "text",
-                text: `Steering mode: ${current || "unknown"}`,
-              },
+          await session.sendUpdate({
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text: `Steering mode: ${current || "unknown"}`,
             },
           });
           return { stopReason: "end_turn" };
         }
 
         if (modeRaw !== "all" && modeRaw !== "one-at-a-time") {
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: "agent_message_chunk",
-              content: {
-                type: "text",
-                text: "Usage: /steering all | /steering one-at-a-time",
-              },
+          await session.sendUpdate({
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text: "Usage: /steering all | /steering one-at-a-time",
             },
           });
           return { stopReason: "end_turn" };
@@ -933,12 +913,9 @@ export class PiAcpAgent implements ACPAgent {
         if (!setSteeringMode) throw missingPiCapability("set_steering_mode");
         await setSteeringMode.call(session.proc, modeRaw);
 
-        await this.conn.sessionUpdate({
-          sessionId: session.sessionId,
-          update: {
-            sessionUpdate: "agent_message_chunk",
-            content: { type: "text", text: `Steering mode set to: ${modeRaw}` },
-          },
+        await session.sendUpdate({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: `Steering mode set to: ${modeRaw}` },
         });
 
         return { stopReason: "end_turn" };
@@ -953,28 +930,22 @@ export class PiAcpAgent implements ACPAgent {
 
         // If no arg, just report current.
         if (!modeRaw) {
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: "agent_message_chunk",
-              content: {
-                type: "text",
-                text: `Follow-up mode: ${current || "unknown"}`,
-              },
+          await session.sendUpdate({
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text: `Follow-up mode: ${current || "unknown"}`,
             },
           });
           return { stopReason: "end_turn" };
         }
 
         if (modeRaw !== "all" && modeRaw !== "one-at-a-time") {
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: "agent_message_chunk",
-              content: {
-                type: "text",
-                text: "Usage: /follow-up all | /follow-up one-at-a-time",
-              },
+          await session.sendUpdate({
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text: "Usage: /follow-up all | /follow-up one-at-a-time",
             },
           });
           return { stopReason: "end_turn" };
@@ -984,12 +955,9 @@ export class PiAcpAgent implements ACPAgent {
         if (!setFollowUpMode) throw missingPiCapability("set_follow_up_mode");
         await setFollowUpMode.call(session.proc, modeRaw);
 
-        await this.conn.sessionUpdate({
-          sessionId: session.sessionId,
-          update: {
-            sessionUpdate: "agent_message_chunk",
-            content: { type: "text", text: `Follow-up mode set to: ${modeRaw}` },
-          },
+        await session.sendUpdate({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: `Follow-up mode set to: ${modeRaw}` },
         });
 
         return { stopReason: "end_turn" };
@@ -1034,14 +1002,11 @@ export class PiAcpAgent implements ACPAgent {
 
         const changelogPath = findChangelog();
         if (!changelogPath) {
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: "agent_message_chunk",
-              content: {
-                type: "text",
-                text: "Changelog not found (couldn't locate pi installation).",
-              },
+          await session.sendUpdate({
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text: "Changelog not found (couldn't locate pi installation).",
             },
           });
           return { stopReason: "end_turn" };
@@ -1054,14 +1019,11 @@ export class PiAcpAgent implements ACPAgent {
           // SAFETY: catch bindings may contain any thrown JavaScript value; `errorMessage`
           // handles Error instances and stringifies every other boundary value.
           const message = errorMessage(error as BoundaryValue);
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: "agent_message_chunk",
-              content: {
-                type: "text",
-                text: `Failed to read changelog: ${message}`,
-              },
+          await session.sendUpdate({
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text: `Failed to read changelog: ${message}`,
             },
           });
           return { stopReason: "end_turn" };
@@ -1071,12 +1033,9 @@ export class PiAcpAgent implements ACPAgent {
         const maxChars = 20_000;
         if (text.length > maxChars) text = text.slice(0, maxChars) + "\n\n...(truncated)...";
 
-        await this.conn.sessionUpdate({
-          sessionId: session.sessionId,
-          update: {
-            sessionUpdate: "agent_message_chunk",
-            content: { type: "text", text },
-          },
+        await session.sendUpdate({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text },
         });
 
         return { stopReason: "end_turn" };
@@ -1094,14 +1053,11 @@ export class PiAcpAgent implements ACPAgent {
         const messageCount = state.messageCount ?? 0;
 
         if (!sessionFile || messageCount === 0 || !existsSync(sessionFile)) {
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: "agent_message_chunk",
-              content: {
-                type: "text",
-                text: "Nothing to export yet (no session messages). Send a prompt first.",
-              },
+          await session.sendUpdate({
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text: "Nothing to export yet (no session messages). Send a prompt first.",
             },
           });
           return { stopReason: "end_turn" };
@@ -1110,27 +1066,21 @@ export class PiAcpAgent implements ACPAgent {
         try {
           const raw = readFileSync(sessionFile, "utf-8");
           if (raw.trim().length === 0) {
-            await this.conn.sessionUpdate({
-              sessionId: session.sessionId,
-              update: {
-                sessionUpdate: "agent_message_chunk",
-                content: {
-                  type: "text",
-                  text: "Nothing to export yet (empty session file). Send a prompt first.",
-                },
+            await session.sendUpdate({
+              sessionUpdate: "agent_message_chunk",
+              content: {
+                type: "text",
+                text: "Nothing to export yet (empty session file). Send a prompt first.",
               },
             });
             return { stopReason: "end_turn" };
           }
         } catch {
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: "agent_message_chunk",
-              content: {
-                type: "text",
-                text: "Couldn't read session file for export. Try sending a prompt first.",
-              },
+          await session.sendUpdate({
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text: "Couldn't read session file for export. Try sending a prompt first.",
             },
           });
           return { stopReason: "end_turn" };
@@ -1149,28 +1099,22 @@ export class PiAcpAgent implements ACPAgent {
           // SAFETY: catch bindings may contain any thrown JavaScript value; `errorMessage`
           // handles Error instances and stringifies every other boundary value.
           const message = errorMessage(error as BoundaryValue);
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: "agent_message_chunk",
-              content: {
-                type: "text",
-                text: `Export failed: ${message}`,
-              },
+          await session.sendUpdate({
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text: `Export failed: ${message}`,
             },
           });
           return { stopReason: "end_turn" };
         }
 
         if (!resultPath) {
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: "agent_message_chunk",
-              content: {
-                type: "text",
-                text: "Export failed: no output path returned by pi.",
-              },
+          await session.sendUpdate({
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text: "Export failed: no output path returned by pi.",
             },
           });
           return { stopReason: "end_turn" };
@@ -1180,28 +1124,22 @@ export class PiAcpAgent implements ACPAgent {
 
         // Emit a short prefix + a resource link. Many clients concatenate chunks into a single
         // assistant message, so this avoids the "link + duplicate plain text" look.
-        await this.conn.sessionUpdate({
-          sessionId: session.sessionId,
-          update: {
-            sessionUpdate: "agent_message_chunk",
-            content: {
-              type: "text",
-              text: "Session exported: ",
-            },
+        await session.sendUpdate({
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            type: "text",
+            text: "Session exported: ",
           },
         });
 
-        await this.conn.sessionUpdate({
-          sessionId: session.sessionId,
-          update: {
-            sessionUpdate: "agent_message_chunk",
-            content: {
-              type: "resource_link",
-              name: `pi-session-${safeSessionId}.html`,
-              uri,
-              mimeType: "text/html",
-              title: "Session exported",
-            },
+        await session.sendUpdate({
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            type: "resource_link",
+            name: `pi-session-${safeSessionId}.html`,
+            uri,
+            mimeType: "text/html",
+            title: "Session exported",
           },
         });
 
@@ -1229,14 +1167,11 @@ export class PiAcpAgent implements ACPAgent {
         if (!setAutoCompaction) throw missingPiCapability("set_auto_compaction");
         await setAutoCompaction.call(session.proc, enabled);
 
-        await this.conn.sessionUpdate({
-          sessionId: session.sessionId,
-          update: {
-            sessionUpdate: "agent_message_chunk",
-            content: {
-              type: "text",
-              text: `Auto-compaction ${enabled ? "enabled" : "disabled"}.`,
-            },
+        await session.sendUpdate({
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            type: "text",
+            text: `Auto-compaction ${enabled ? "enabled" : "disabled"}.`,
           },
         });
 
@@ -1341,12 +1276,9 @@ export class PiAcpAgent implements ACPAgent {
       if (m.role === "user") {
         const text = normalizePiMessageText(m.content);
         if (text) {
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: "user_message_chunk",
-              content: { type: "text", text },
-            },
+          await session.sendUpdate({
+            sessionUpdate: "user_message_chunk",
+            content: { type: "text", text },
           });
         }
       }
@@ -1354,12 +1286,9 @@ export class PiAcpAgent implements ACPAgent {
       if (m.role === "assistant") {
         const text = normalizePiAssistantText(m.content);
         if (text) {
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: "agent_message_chunk",
-              content: { type: "text", text },
-            },
+          await session.sendUpdate({
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text },
           });
         }
       }
@@ -1376,60 +1305,48 @@ export class PiAcpAgent implements ACPAgent {
           const updateMetadata = text
             ? Object.assign(bashTerminalOutputMeta(toolCallId, text), terminalExitMetadata)
             : terminalExitMetadata;
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: "tool_call",
-              toolCallId,
-              title: bashCommand(m) ?? toolName,
-              kind: "execute",
-              status: "in_progress",
-              content: bashTerminalContent(toolCallId),
-              _meta: bashTerminalInfoMeta(toolCallId, params.cwd),
-            },
+          await session.sendUpdate({
+            sessionUpdate: "tool_call",
+            toolCallId,
+            title: bashCommand(m) ?? toolName,
+            kind: "execute",
+            status: "in_progress",
+            content: bashTerminalContent(toolCallId),
+            _meta: bashTerminalInfoMeta(toolCallId, params.cwd),
           });
 
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: "tool_call_update",
-              toolCallId,
-              status: isError ? "failed" : "completed",
-              _meta: updateMetadata,
-            },
+          await session.sendUpdate({
+            sessionUpdate: "tool_call_update",
+            toolCallId,
+            status: isError ? "failed" : "completed",
+            _meta: updateMetadata,
           });
           continue;
         }
 
         // Create a synthetic ACP tool call to render historic tool usage.
-        await this.conn.sessionUpdate({
-          sessionId: session.sessionId,
-          update: {
-            sessionUpdate: "tool_call",
-            toolCallId,
-            title: toolName,
-            kind:
-              toolName === "read"
-                ? "read"
-                : toolName === "write" || toolName === "edit"
-                  ? "edit"
-                  : "other",
-            status: "in_progress",
-            rawInput: null,
-            rawOutput: m,
-          },
+        await session.sendUpdate({
+          sessionUpdate: "tool_call",
+          toolCallId,
+          title: toolName,
+          kind:
+            toolName === "read"
+              ? "read"
+              : toolName === "write" || toolName === "edit"
+                ? "edit"
+                : "other",
+          status: "in_progress",
+          rawInput: null,
+          rawOutput: m,
         });
 
         const text = toolResultToText(m);
-        await this.conn.sessionUpdate({
-          sessionId: session.sessionId,
-          update: {
-            sessionUpdate: "tool_call_update",
-            toolCallId,
-            status: isError ? "failed" : "completed",
-            content: text ? [{ type: "content", content: { type: "text", text } }] : null,
-            rawOutput: m,
-          },
+        await session.sendUpdate({
+          sessionUpdate: "tool_call_update",
+          toolCallId,
+          status: isError ? "failed" : "completed",
+          content: text ? [{ type: "content", content: { type: "text", text } }] : null,
+          rawOutput: m,
         });
       }
     }

@@ -195,7 +195,7 @@ test("agent separates immediate extension commands from prompt and skill session
       { name: "extension", description: "extension", source: "extension" },
       { name: "prompt", description: "prompt", source: "prompt" },
       { name: "skill:test", description: "skill", source: "skill" },
-      { name: "review", description: "review", source: "extension" },
+      { name: "review-assist", description: "review-assist", source: "extension" },
       { name: "reviewing", description: "not review", source: "extension" },
     ],
   });
@@ -218,10 +218,10 @@ test("agent separates immediate extension commands from prompt and skill session
   assert.deepEqual(
     advertised
       .filter((command: AvailableCommand) =>
-        ["extension", "prompt", "skill:test", "review"].includes(command.name),
+        ["extension", "prompt", "skill:test", "review-assist"].includes(command.name),
       )
       .map((command: AvailableCommand) => command.name),
-    ["extension", "prompt", "skill:test", "review"],
+    ["extension", "prompt", "skill:test", "review-assist"],
   );
 
   const extensionResult = await agent.prompt({
@@ -279,18 +279,18 @@ test("agent separates immediate extension commands from prompt and skill session
     [[], []],
   );
 
-  // The adapter no longer intercepts `/review`. It dispatches to Pi like any
-  // other extension command, where the headless presenter answers with bounded
-  // display-only output. `/reviewing` above still proves the prefix collision
-  // is not matched by this path.
+  // The adapter does not intercept the interactive review command, `/review-assist`.
+  // It dispatches to Pi like any other extension command, where the headless
+  // presenter answers with bounded display-only output. `/review` itself is a
+  // prompt template and takes the session-turn path like `/prompt` above.
   const reviewResult = await agent.prompt({
     sessionId: "s1",
-    prompt: [{ type: "text", text: "/review branch main" }],
+    prompt: [{ type: "text", text: "/review-assist branch main" }],
   });
   assert.equal(reviewResult.stopReason, "end_turn");
   assert.deepEqual(
     proc.prompts.map((prompt) => prompt.message),
-    ["/extension one  ", "/reviewing", "/review branch main"],
+    ["/extension one  ", "/reviewing", "/review-assist branch main"],
   );
   await assert.rejects(
     agent.prompt({

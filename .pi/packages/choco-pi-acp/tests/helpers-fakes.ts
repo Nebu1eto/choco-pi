@@ -4,7 +4,12 @@ import type {
   SessionNotification,
 } from "@agentclientprotocol/sdk";
 import type { AcpConnection } from "../src/acp/session.ts";
-import type { PiPromptDisposition, PiRpcEvent, PiRpcProcessLike } from "../src/pi-rpc/process.ts";
+import type {
+  PiPromptDisposition,
+  PiPromptHooks,
+  PiRpcEvent,
+  PiRpcProcessLike,
+} from "../src/pi-rpc/process.ts";
 import type {
   PiAvailableModels,
   PiExtensionUiResponse,
@@ -20,6 +25,8 @@ export type AcpConnectionLike = AcpConnection;
 type RecordedPrompt = {
   message: string;
   attachments: PiPromptImage[];
+  /** Marks the prompt's response frame as read, as `PiRpcProcess` does before resolving. */
+  respondFrame: () => void;
 };
 
 /**
@@ -55,6 +62,12 @@ export class FakePiRpcProcess implements PiRpcProcessLike {
   abortCount = 0;
   /** Decides each prompt's acknowledgement; defaults to Pi's `started` disposition. */
   promptResponder: (message: string) => Promise<PiPromptDisposition> = async () => "started";
+  /**
+   * When true (the default), each prompt's response frame counts as read as soon as the
+   * prompt is sent, so events a test emits afterwards follow it in stdout order. Set false
+   * to read the frame only when `promptResponder` resolves or the test calls `respondFrame`.
+   */
+  acknowledgeImmediately = true;
 
   onEvent(handler: (ev: PiRpcEvent) => void): () => void {
     this.handlers.push(handler);
@@ -67,9 +80,17 @@ export class FakePiRpcProcess implements PiRpcProcessLike {
     for (const h of this.handlers) h(ev);
   }
 
-  async prompt(message: string, attachments: PiPromptImage[] = []): Promise<PiPromptDisposition> {
-    this.prompts.push({ message, attachments });
-    return this.promptResponder(message);
+  async prompt(
+    message: string,
+    attachments: PiPromptImage[] = [],
+    hooks: PiPromptHooks = {},
+  ): Promise<PiPromptDisposition> {
+    const respondFrame = (): void => hooks.onResponseFrame?.();
+    this.prompts.push({ message, attachments, respondFrame });
+    if (this.acknowledgeImmediately) respondFrame();
+    const disposition = await this.promptResponder(message);
+    respondFrame();
+    return disposition;
   }
 
   async abort(): Promise<void> {

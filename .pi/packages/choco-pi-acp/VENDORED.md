@@ -102,8 +102,9 @@ The `zod` dependency is retained solely to fulfill the `@agentclientprotocol/sdk
     extension command execution and session replacement; unknown, removed, and
     stale commands fail directly. Extension commands use Pi's immediate RPC
     semantics, while prompt templates and skills stay attached to the full Pi
-    turn. The then-TUI-only `/review` command reported that limitation
-    explicitly; divergence 26 supersedes that behavior.
+    turn. The then-TUI-only `/review` command (the interactive review, since
+    renamed `/review-assist`) reported that limitation explicitly; divergence
+    26 supersedes that behavior.
 12. **Extension UI translation:** Pi select, confirm, input, and editor
     requests map to ACP elicitation with legacy permission fallback where
     appropriate. Notifications and best-effort status, widget, and title
@@ -198,8 +199,10 @@ prompts). Wait for a queued prompt to complete before sending another.`;
     input. Diagnostics contain only the violation reason, observed byte length,
     and configured cap; offending editor content is neither echoed nor logged.
 26. **Headless ACP review (supersedes divergence 11's `/review`
-    limitation):** discovered `/review` extension commands now dispatch through Pi
-    RPC like other extension commands. Branch and session reviews use Pi's
+    limitation):** the interactive review extension command, now `/review-assist`
+    (registered as `review` when this divergence was recorded; `/review` is now
+    the reviewer prompt template), dispatches through Pi RPC like other
+    extension commands. Branch and session reviews use Pi's
     bounded, display-only headless presenter; the no-argument picker uses ACP
     elicitation, and `Review:` notifications reach the ACP client without
     model-turn events or additions to Pi's model context. Pull request review
@@ -306,8 +309,10 @@ policy:
    preserve Pi's extension, prompt-template, and skill classifications, merge
    canonical names, refresh catalogs, and fail stale commands directly. The
    discovery and refresh mechanics are useful to upstream. The adapter applies
-   no command-specific policy: `/review` now dispatches through the same generic
-   extension-command path as every other discovered command.
+   no command-specific policy: `/review-assist` dispatches through the same
+   generic extension-command path as every other discovered command, and the
+   `/review` prompt template through the same session-turn path as every other
+   template.
 3. **Generic extension UI translation (divergence 12).**
    `src/acp/session.ts` maps Pi select, confirm, input, editor, notification,
    status, widget, and title requests to available ACP operations or bounded
@@ -414,3 +419,33 @@ Pi SDK pins move from `1.5.0` to exactly `1.5.1`; version references in comments
 ## 2026-11-11 choco-pi patch: Pi SDK range ~1.5.2
 
 Pi SDK release-age exclusions collapse from per-version `1.5.1` entries to the `"@earendil-works/pi-*"` name pattern, following the root `~1.5.2` SDK range, so new Pi releases install without waiting for the minimum release age. The lock was regenerated with pnpm 11.11.0 (`pnpm install --ignore-scripts`).
+
+## 2026-11-12 choco-pi patch: turn ownership by stdout order
+
+Pi's `agent_settled` carries no run identity (`{ type, aborted }`), and a run that an extension starts with `sendCustomMessage(..., { triggerTurn: true })` (a subagent completion, a goal continuation) emits one too. Before this patch, such a settle arriving while a prompt was sent but not yet answered ended that prompt's ACP turn early. `tests/component-turn-ownership.test.ts` reproduced it with the fake process and with a stub Pi over real stdio (the turn ended before its own run's events arrived).
+
+Fix: `PendingTurn.acknowledged` is set when the prompt's response frame is read (`PiRpcProcess.prompt` gains an `onResponseFrame` hook that runs synchronously in the stdout line handler, before later frames in the same chunk dispatch), and `agent_settled` is ignored while the pending turn is unacknowledged. Assumed ordering, from Pi 1.5.1 `rpc-mode.js` and `agent-session.js`: Pi writes a `started` prompt's response only after its run is active, and a prompt that arrives while an earlier run's `agent_settled` is being emitted waits for it, so a settle read before the response belongs to an earlier run. After the response the prompt's run is active, and Pi folds a `triggerTurn` message sent during it into that run as a steer or follow-up, so the next settle is the turn's own. Out of scope: a prompt that reaches Pi while an extension-triggered run is still active is rejected by Pi ("Agent is already processing") because the adapter sends no `streamingBehavior`; that fails the turn rather than ending it early. `FakePiRpcProcess` acknowledges at send time by default; `acknowledgeImmediately = false` defers it.
+
+## 2026-11-12 choco-pi patch: native /diff presentation
+
+`src/acp/native-diff.ts` (new) and `emitNativeDiff` in `src/acp/session.ts` render choco-pi's `/diff` notification (first line `choco-pi-native-diff/v1`) as one completed, display-only `tool_call` with ACP `diff` content, re-enforcing 30 files, 1 MiB of text, and a sensitive-path filter; malformed payloads become a one-line error. The check runs before the credential-prompt guard because diffs of ordinary code contain words such as `token`. `PiRpcProcess.spawn` adds `CHOCO_PI_ACP_NATIVE_DIFF=1` to Pi's environment so the extension knows the client renders it. Tests: `tests/component-native-diff.test.ts`; see `docs/zed-command-parity.md` (/diff in Zed).
+
+## 2026-11-12 choco-pi patch: credential guard inspects only requests that collect a reply
+
+The credential-prompt guard (`SENSITIVE_UI_REQUEST` in `src/acp/session.ts`) is the only keyword check in the adapter and applies only to Pi extension UI requests; tool output, assistant text, and custom messages never passed through it. It inspected every method, so a display-only `notify` whose text quoted code, a file name such as `auth.ts`, or a diff (the `/review-assist` headless summary, the `/diff` inline list, subagent messages) was replaced by the terminal-authentication warning. `isSensitiveUiRequest` now skips `notify`, `setStatus`, `setWidget`, and `setTitle`, which cannot collect input; `select`, `confirm`, `input`, `editor`, and unknown methods are inspected as before. The adapter's own warning now carries `_meta.piAcp.sensitiveUiRequest: true` so it is distinguishable from extension text repeating its words. The native-diff envelope moves into the `notify` branch after the guard: it selects a rendering and no longer needs to precede the guard (this supersedes that part of the native /diff entry above). Tests: `tests/component-sensitive-ui.test.ts` and the opt-in `tests/component-real-pi-sensitive-content.test.ts`; `tests/component-rpc-lifecycle.test.ts`'s real-Pi `/review-assist` check now passes from a repository whose diff contains such words.
+
+## 2026-11-12 choco-pi patch: distinct outputs start a new paragraph
+
+Zed appends consecutive `agent_message_chunk` updates to one rendered block until another thread entry (a user message or a new tool call) intervenes, so two outputs of one turn ran together ("...not sent through ACP.u27-cred: no value (cancelled)"). Every update now passes through `TextBoundary` (`src/acp/text-boundary.ts`, new), owned per session by `PiAcpSession` and applied in `emit` and the new `sendUpdate`, so it sees updates in delivery order. A text chunk whose source differs from the text it would be appended to, on the same channel (`agent_message_chunk` or `agent_thought_chunk`), is prefixed with the newlines still missing for a Markdown paragraph break (none if the previous text already ends with a blank line or the new text starts with one). Streamed deltas of one Pi assistant message share a source, `assistant:<n>`, where `n` changes at each Pi `message_start`/`message_end` (decoded as `unknown_event`); they are never altered. Every other text (notifications, the credential warning, retry and compaction notices, queue notices, command output, replayed messages) is a distinct source. `user_message_chunk` and `tool_call` reset the state; `tool_call_update` does not. `PiAcpAgent.promptActive` calls `beginClientPrompt` so the first output of each prompt carries no separator. Builtin command output and session replay go through `session.sendUpdate`, which queues behind pending notifications and still rejects on client failure. ACP SDK 0.26 also defines `ContentChunk.messageId` ("a change in messageId indicates a new message has started"); it is not used because Zed 1.27's handling of it is unverified and the paragraph break is needed for clients that ignore it. Tests: `tests/component-message-separation.test.ts`; the retry ordering test in `tests/component-session-events.test.ts` and one `tests/component-sensitive-ui.test.ts` lookup now expect the separators.
+
+## 2026-11-12 choco-pi patch: native /diff names each file
+
+Zed 1.27 draws an ACP `diff` item without its path, so a reader of the `/diff` card could not tell which file a block was. `src/acp/native-diff.ts` now accepts optional `status` (one of choco-pi's change kinds) and `additions`/`deletions` (null or a non-negative integer) on each payload file; anything else makes the payload malformed, and a payload without them still decodes. The summary text is Markdown built by the adapter: the files in diff order with status and line counts, then the skipped files, and a text item `File n of m: <name>` now precedes each `diff` item. Names are sanitised once by `visibleText` (every C0 control, newline and tab included, becomes its Control Picture; DEL, C1 and bidirectional controls become U+FFFD) and wrapped in a code span longer than any backtick run in them; the title and skip reasons are backslash-escaped, so no file name or reason forms Markdown structure. The title still passes through `sanitizeExtensionUiText` first, as the tool-call title does; the composed summary is no longer passed through it a second time. Caps, the sensitive-path filter and the display-only marking are unchanged. Tests: `tests/component-native-diff.test.ts`.
+
+## 2026-11-12 choco-pi patch: a form's title is shown once
+
+Zed 1.27 draws an elicitation's `message` and then its field's `title`; `handleExtensionSelect`, `handleExtensionConfirm` and `handleExtensionText` (`src/acp/session.ts`) put the request's title in both, so `/review-assist`'s picker read "Review target" twice. `message` is the one text ACP requires and already carries the title (`extensionUiMessage`), so the field's title is now a generic label for its kind (`Choose one`, `Confirm`, `Your answer`, `Edit text`), omitted when it equals the message. The credential check is unchanged. Test: `tests/component-extension-ui.test.ts`.
+
+## 2026-11-12 choco-pi patch: native /diff judges both sides of a rename
+
+Review finding F2: `decodeNativeDiff` (`src/acp/native-diff.ts`) tested a rename's combined display label (`.env -> public.txt`) as one path, so a sensitive rename source went unnoticed and its old text was forwarded. A file may now carry `oldPath` (absolute, allowed only with status `renamed` or `copied`; anything else makes the payload malformed). Contents are withheld, and the file listed by name, when `path` or `oldPath` is sensitive, when a rename or copy has no `oldPath` (an older extension), or when a file with old text has no change kind. `displayPath` is never tested as a path: it only shortens `path` when it is literally its end, and the adapter builds the shown names (`old → new`) from the validated paths. The sensitive-name patterns still duplicate choco-pi's `lib/changes/sensitive.ts`; the root test `tests/diff-sensitive-parity.test.ts` fails when the two lists diverge. Tests: `tests/component-native-diff.test.ts`.

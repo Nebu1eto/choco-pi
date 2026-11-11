@@ -47,8 +47,10 @@ import {
   type PiToolResult,
 } from "../pi-rpc/protocol.ts";
 import { maybeAuthRequiredError } from "./auth-required.ts";
+import { decodeNativeDiff, NATIVE_DIFF_NOTIFY_PREFIX, nativeDiffContent } from "./native-diff.ts";
 import { SessionStore } from "./session-store.ts";
 import { expandSlashCommand, type FileSlashCommand } from "./slash-commands.ts";
+import { TextBoundary } from "./text-boundary.ts";
 import {
   bashCommand,
   bashExitCode,
@@ -126,6 +128,8 @@ type PendingTurn = {
   resolve: (reason: StopReason) => void;
   reject: (error: BoundaryValue) => void;
   settling: boolean;
+  /** Pi's response frame for this turn's prompt has been read from stdout. */
+  acknowledged: boolean;
 };
 
 type QueuedTurn = {
@@ -233,6 +237,19 @@ const MAX_QUEUED_TURNS = 64;
 const PI_EXIT_EMIT_DRAIN_MS = 100;
 const SENSITIVE_UI_REQUEST =
   /\b(?:auth(?:entication|orization)?|credential|login|pass(?:code|phrase|word)?|secret|token|api[ _-]?key|private[ _-]?key)\b/i;
+/**
+ * Extension UI methods that only display text and never collect a reply. They cannot
+ * carry a credential prompt, so the keyword guard does not inspect them: their text is
+ * routinely source code, file names, and diffs, where those words are ordinary.
+ */
+const DISPLAY_ONLY_UI_METHODS: ReadonlySet<string> = new Set([
+  "notify",
+  "setStatus",
+  "setWidget",
+  "setTitle",
+]);
+const SENSITIVE_UI_REQUEST_WARNING =
+  "Pi requested sensitive authentication or credential input. Open a Terminal Thread and complete the authentication flow in the terminal; sensitive content was not sent through ACP.";
 
 /** Convert bounded TUI-oriented extension text into portable ACP text. */
 export function sanitizeExtensionUiText(input: string): string {
@@ -679,6 +696,12 @@ export class PiAcpSession {
     abandoned: false,
     release: Promise.withResolvers<void>(),
   };
+  // Separates distinct outputs that the client would otherwise append to one block.
+  // It sees every text update in delivery order, which is `emit`'s call order.
+  private readonly textBoundary = new TextBoundary();
+  // Changes at each Pi `message_start`/`message_end`, so text deltas of one assistant
+  // message share a source and the deltas of the next message start a new paragraph.
+  private assistantMessageSeq = 0;
   private extensionUiGeneration = 0;
   private extensionUiActive = true;
   private readonly pendingExtensionUi = new Map<string, PendingExtensionUi>();
@@ -863,6 +886,35 @@ export class PiAcpSession {
     return this.cancelRequested;
   }
 
+  /**
+   * The client sent a prompt and rendered it as a new user entry, so the next agent
+   * text opens a new block and needs no separator. Idempotent.
+   */
+  beginClientPrompt(): void {
+    this.textBoundary.reset();
+  }
+
+  /**
+   * Deliver one update through the ordered, boundary-aware queue and wait for it.
+   * Unlike `emit`, a client delivery failure rejects, so command handlers that report
+   * their result this way keep failing the prompt when the client cannot be reached.
+   */
+  async sendUpdate(update: SessionUpdate): Promise<void> {
+    const drain = this.emitDrain;
+    if (drain.abandoned) return;
+    const conn = this.conn;
+    const sessionId = this.sessionId;
+    const prepared = this.textBoundary.apply(update);
+    const delivery = this.lastEmit.then(() => {
+      if (drain.abandoned) return;
+      return conn.sessionUpdate({ sessionId, update: prepared });
+    });
+    this.lastEmit = delivery.catch(() => {
+      // The awaiting caller observes the failure; later updates still go out in order.
+    });
+    await delivery;
+  }
+
   /** Invalidate and settle UI requests before the owning subprocess is stopped. */
   async closeExtensionUi(): Promise<void> {
     this.cancelIdleTimer();
@@ -884,16 +936,18 @@ export class PiAcpSession {
     }
   }
 
-  private emit(update: SessionUpdate): void {
+  /** Queue one update; `source` groups text chunks that continue one streamed message. */
+  private emit(update: SessionUpdate, source?: string): void {
     const drain = this.emitDrain;
     if (drain.abandoned) return;
     const conn = this.conn;
     const sessionId = this.sessionId;
+    const prepared = this.textBoundary.apply(update, source);
     // Serialize update delivery, but do not restart abandoned work after a late reply.
     this.lastEmit = this.lastEmit
       .then(() => {
         if (drain.abandoned) return;
-        return conn.sessionUpdate({ sessionId, update });
+        return conn.sessionUpdate({ sessionId, update: prepared });
       })
       .catch(() => {
         // Ignore notification errors (client may have gone away). We still want
@@ -1060,9 +1114,17 @@ export class PiAcpSession {
     this.cancelRequested = false;
     // The object identity is this turn's ownership token: a late prompt acknowledgement
     // may only act while this exact turn is still pending and not already settling.
-    const turn: PendingTurn = { resolve: t.resolve, reject: t.reject, settling: false };
+    const turn: PendingTurn = {
+      resolve: t.resolve,
+      reject: t.reject,
+      settling: false,
+      acknowledged: false,
+    };
     this.pendingTurn = turn;
     const ownsTurn = (): boolean => this.pendingTurn === turn && !turn.settling;
+    const acknowledge = (): void => {
+      turn.acknowledged = true;
+    };
 
     // Publish queue depth (0 because we're starting the turn now).
     this.emit({
@@ -1073,13 +1135,18 @@ export class PiAcpSession {
     // For `started` and `queued`, completion is determined by pi events: retry,
     // compaction, or queued continuations may emit multiple `agent_end` events before
     // `agent_settled`. Only `handled` settles here, because no run follows it.
-    this.proc.prompt(t.message, t.images).then(
+    // `agent_settled` carries no run identity, so ownership comes from stdout order:
+    // Pi answers a started prompt only once its run is active, so a settle read before
+    // this response frame belongs to an earlier, extension-triggered run.
+    this.proc.prompt(t.message, t.images, { onResponseFrame: acknowledge }).then(
       (disposition) => {
+        acknowledge();
         if (disposition !== "handled" || !ownsTurn()) return;
         const reason: StopReason = this.cancelRequested ? "cancelled" : "end_turn";
         this.settlePendingTurn({ type: "resolve", reason }, { startNext: true });
       },
       (err) => {
+        acknowledge();
         if (!ownsTurn()) return;
         // If this looks like an auth/config issue, surface AUTH_REQUIRED so clients can offer terminal login.
         const authErr = maybeAuthRequiredError(err);
@@ -1161,21 +1228,28 @@ export class PiAcpSession {
   /** Render one streamed assistant message event as ACP session updates. */
   private handleAssistantMessageEvent(ame: PiAssistantMessageEvent | undefined): void {
     if (ame === undefined) return;
+    const source = `assistant:${this.assistantMessageSeq}`;
 
     // Stream assistant text.
     if (ame.type === "text_delta") {
-      this.emit({
-        sessionUpdate: "agent_message_chunk",
-        content: { type: "text", text: ame.delta } satisfies ContentBlock,
-      });
+      this.emit(
+        {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: ame.delta } satisfies ContentBlock,
+        },
+        source,
+      );
       return;
     }
 
     if (ame.type === "thinking_delta") {
-      this.emit({
-        sessionUpdate: "agent_thought_chunk",
-        content: { type: "text", text: ame.delta } satisfies ContentBlock,
-      });
+      this.emit(
+        {
+          sessionUpdate: "agent_thought_chunk",
+          content: { type: "text", text: ame.delta } satisfies ContentBlock,
+        },
+        source,
+      );
       return;
     }
 
@@ -1497,8 +1571,19 @@ export class PiAcpSession {
       }
 
       case "agent_settled": {
+        // A settle read before the pending prompt's response frame ended an earlier run
+        // (for example a triggerTurn custom message), not this turn.
+        if (this.pendingTurn && !this.pendingTurn.acknowledged) break;
         const reason: StopReason = this.cancelRequested ? "cancelled" : "end_turn";
         this.settlePendingTurn({ type: "resolve", reason }, { startNext: true });
+        break;
+      }
+
+      case "unknown_event": {
+        // Pi brackets every message, of any role, with these; only their order matters here.
+        if (ev.eventType === "message_start" || ev.eventType === "message_end") {
+          this.assistantMessageSeq += 1;
+        }
         break;
       }
 
@@ -1533,9 +1618,12 @@ export class PiAcpSession {
 
     try {
       if (isSensitiveUiRequest(ev)) {
-        this.emitExtensionUiMessage(
-          "Pi requested sensitive authentication or credential input. Open a Terminal Thread and complete the authentication flow in the terminal; sensitive content was not sent through ACP.",
-        );
+        this.emit({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: SENSITIVE_UI_REQUEST_WARNING } satisfies ContentBlock,
+          // Marks the adapter's own warning; extension text can repeat its words, not this.
+          _meta: { piAcp: { sensitiveUiRequest: true } },
+        });
         await this.settleExtensionUi(id, generation, { id, cancelled: true });
         return;
       }
@@ -1556,6 +1644,13 @@ export class PiAcpSession {
       }
 
       if (method === "notify") {
+        // A validated envelope renders as native diffs; a malformed one is dropped with a
+        // one-line error. Either way it is display-only, like every other notification.
+        if (ev.message?.startsWith(NATIVE_DIFF_NOTIFY_PREFIX)) {
+          this.emitNativeDiff(ev.message);
+          await this.settleExtensionUi(id, generation, { id, cancelled: true });
+          return;
+        }
         this.emit({
           sessionUpdate: "agent_message_chunk",
           content: {
@@ -1643,16 +1738,17 @@ export class PiAcpSession {
       return;
     }
 
+    const message = extensionUiMessage(ev);
     const response = await this.requestExtensionPermission(id, generation, {
       mode: "form",
       sessionId: this.sessionId,
-      message: extensionUiMessage(ev),
+      message,
       requestedSchema: {
         type: "object",
         properties: {
           value: {
             type: "string",
-            title: sanitizeExtensionUiText(ev.title ?? "Select"),
+            ...extensionUiFieldTitle("Choose one", message),
             oneOf: displayOptions.map((title, index) => ({
               const: `${CHOICE_OPTION_PREFIX}${index}`,
               title,
@@ -1705,16 +1801,17 @@ export class PiAcpSession {
       return;
     }
 
+    const message = extensionUiMessage(ev);
     const response = await this.requestExtensionPermission(id, generation, {
       mode: "form",
       sessionId: this.sessionId,
-      message: extensionUiMessage(ev),
+      message,
       requestedSchema: {
         type: "object",
         properties: {
           confirmed: {
             type: "boolean",
-            title: sanitizeExtensionUiText(ev.title ?? "Confirm"),
+            ...extensionUiFieldTitle("Confirm", message),
           },
         },
         required: ["confirmed"],
@@ -1783,18 +1880,17 @@ export class PiAcpSession {
       return;
     }
 
+    const message = extensionUiMessage(ev);
     const response = await this.requestExtensionPermission(id, generation, {
       mode: "form",
       sessionId: this.sessionId,
-      message: extensionUiMessage(ev),
+      message,
       requestedSchema: {
         type: "object",
         properties: {
           value: {
             type: "string",
-            title:
-              boundedExtensionUiString(ev.title, MAX_EXTENSION_UI_FALLBACK_LENGTH) ??
-              (method === "editor" ? "Edit text" : "Input"),
+            ...extensionUiFieldTitle(method === "editor" ? "Edit text" : "Your answer", message),
             description: boundedExtensionUiString(ev.placeholder, MAX_EXTENSION_UI_TEXT_LENGTH),
             default: boundedExtensionUiString(ev.prefill, MAX_EXTENSION_UI_TEXT_LENGTH),
             maxLength: MAX_EXTENSION_UI_TEXT_LENGTH,
@@ -1849,6 +1945,32 @@ export class PiAcpSession {
       content: { type: "text", text: sanitizeExtensionUiText(text) } satisfies ContentBlock,
     });
   }
+
+  /**
+   * Render choco-pi's `/diff` notification as a display-only, already completed tool
+   * call carrying native ACP diff content. Pi has no matching tool call or session
+   * entry, so the model's context and the persisted transcript are unchanged.
+   */
+  private emitNativeDiff(message: string): void {
+    const presentation = decodeNativeDiff(message);
+    if (!presentation) {
+      this.emitExtensionUiMessage(
+        "The /diff presentation from Pi was malformed and was not shown.",
+      );
+      return;
+    }
+    const { content, locations } = nativeDiffContent(presentation, sanitizeExtensionUiText);
+    this.emit({
+      sessionUpdate: "tool_call",
+      toolCallId: `choco-pi-diff-${crypto.randomUUID()}`,
+      title: sanitizeExtensionUiText(presentation.title),
+      kind: "read",
+      status: "completed",
+      content,
+      locations,
+      _meta: { piAcp: { nativeDiff: { displayOnly: true } } },
+    });
+  }
 }
 
 /**
@@ -1895,6 +2017,16 @@ function extensionUiMessage(ev: PiExtensionUiRequestEvent): string {
   return title || message || "Pi requests input";
 }
 
+/**
+ * The form field's label. The request's title is already the form's message
+ * (`extensionUiMessage`, the one text ACP requires), and Zed draws both, so
+ * the field gets a generic word for its kind instead; none when that word is
+ * the message itself.
+ */
+function extensionUiFieldTitle(label: string, message: string): { title?: string } {
+  return label === message ? {} : { title: label };
+}
+
 function extensionUiTitle(ev: PiExtensionUiRequestEvent): string | undefined {
   for (const candidate of [ev.title, ev.value, ev.text]) {
     const value = sanitizeExtensionUiText(candidate ?? "").trim();
@@ -1904,6 +2036,9 @@ function extensionUiTitle(ev: PiExtensionUiRequestEvent): string | undefined {
 }
 
 function isSensitiveUiRequest(ev: PiExtensionUiRequestEvent): boolean {
+  // Only a request that collects a reply (select, confirm, input, editor) or an unknown
+  // method can be a credential prompt. Display-only methods are never inspected.
+  if (ev.method !== undefined && DISPLAY_ONLY_UI_METHODS.has(ev.method)) return false;
   const parts: string[] = [ev.method ?? ""];
   for (const value of [ev.title, ev.message, ev.placeholder]) {
     if (value !== undefined) parts.push(value);

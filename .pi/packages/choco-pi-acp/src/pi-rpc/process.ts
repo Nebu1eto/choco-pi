@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import * as readline from "node:readline";
+import { NATIVE_DIFF_ENV } from "../acp/native-diff.ts";
 import { type BoundaryValue, errorCode, parseJsonLine } from "../boundary.ts";
 import { PiCommandResolutionError, resolvePiLaunch } from "./command.ts";
 import {
@@ -118,7 +119,11 @@ export type PiRpcPrelude = {
  */
 export type PiRpcProcessLike = {
   onEvent(handler: (ev: PiRpcEvent) => void): () => void;
-  prompt(message: string, images?: PiPromptImage[]): Promise<PiPromptDisposition>;
+  prompt(
+    message: string,
+    images?: PiPromptImage[],
+    hooks?: PiPromptHooks,
+  ): Promise<PiPromptDisposition>;
   onExit?(listener: (exit: PiRpcExit) => void): () => void;
   abort?(): Promise<void>;
   getState?(): Promise<PiState>;
@@ -153,6 +158,16 @@ export class PiRpcStaleContextError extends Error {
 type PendingRequest = {
   resolve: (value: PiRpcResponse) => void;
   reject: (error: BoundaryValue) => void;
+  /** Runs synchronously when the response frame is read, before later frames dispatch. */
+  onResponseFrame?: () => void;
+};
+
+/**
+ * Prompt hooks that observe Pi's stdout order. `onResponseFrame` runs synchronously when
+ * the prompt's response frame is read, so events that follow it in the same chunk see it.
+ */
+export type PiPromptHooks = {
+  onResponseFrame?: () => void;
 };
 
 function failureText(response: PiRpcResponse): string {
@@ -226,6 +241,7 @@ export class PiRpcProcess {
           const pending = this.pending.get(id);
           if (pending) {
             this.pending.delete(id);
+            pending.onResponseFrame?.();
             pending.resolve(response);
             return;
           }
@@ -335,7 +351,8 @@ export class PiRpcProcess {
     const child = spawn(launch.command, args, {
       cwd: params.cwd,
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env },
+      // The only addition: tells choco-pi's `/diff` that this client renders native diffs.
+      env: { ...process.env, [NATIVE_DIFF_ENV]: "1" },
       shell: false,
     });
     const proc = new PiRpcProcess(child);
@@ -457,8 +474,12 @@ export class PiRpcProcess {
    * recognized `data.disposition` is a protocol error: guessing `started` would wait for
    * events that may never arrive, and guessing `handled` would end a live run early.
    */
-  async prompt(message: string, images: PiPromptImage[] = []): Promise<PiPromptDisposition> {
-    const res = await this.request({ type: "prompt", message, images });
+  async prompt(
+    message: string,
+    images: PiPromptImage[] = [],
+    hooks: PiPromptHooks = {},
+  ): Promise<PiPromptDisposition> {
+    const res = await this.request({ type: "prompt", message, images }, hooks.onResponseFrame);
     if (!res.success) throw new Error(`pi prompt failed: ${failureText(res)}`);
     const disposition = decodePiPromptDisposition(res.data);
     if (disposition === undefined) {
@@ -555,7 +576,7 @@ export class PiRpcProcess {
     await this.writeLine(`${JSON.stringify({ type: "extension_ui_response", ...response })}\n`);
   }
 
-  private request(cmd: PiRpcCommand): Promise<PiRpcResponse> {
+  private request(cmd: PiRpcCommand, onResponseFrame?: () => void): Promise<PiRpcResponse> {
     const generation = this.generation;
     this.assertCurrent(generation);
     const id = crypto.randomUUID();
@@ -564,7 +585,7 @@ export class PiRpcProcess {
     const line = `${JSON.stringify(withId)}\n`;
 
     return new Promise<PiRpcResponse>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      this.pending.set(id, { resolve, reject, onResponseFrame });
 
       void this.writeLine(line, generation).catch((error) => {
         if (this.generation !== generation) return;

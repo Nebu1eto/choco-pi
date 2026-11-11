@@ -11,7 +11,7 @@ import type {
   PiPromptImage,
   PiRpcEvent,
 } from "../src/pi-rpc/protocol.ts";
-import type { PiRpcProcessLike } from "../src/pi-rpc/process.ts";
+import type { PiPromptHooks, PiRpcProcessLike } from "../src/pi-rpc/process.ts";
 import { createRealPiRpcHarness, type RpcHarness } from "./component-rpc-harness.ts";
 import { FakeAgentSideConnection, asAgentConn } from "./helpers-fakes.ts";
 
@@ -25,6 +25,7 @@ const COMMAND_MATRIX: ReadonlyArray<{ command: string; expected: ExpectedBehavio
   { command: "/goal", expected: "executes" },
   { command: "/sessions", expected: "executes" },
   { command: "/hooks", expected: "executes" },
+  { command: "/review-assist", expected: "executes" },
   { command: "/review", expected: "executes" },
   { command: "/preferences", expected: "fallback" },
   { command: "/agents", expected: "fallback" },
@@ -58,13 +59,24 @@ function commandName(message: string): string {
 
 class MatrixPiProcess implements PiRpcProcessLike {
   readonly prompts: Array<{ message: string; attachments: PiPromptImage[] }> = [];
+  /**
+   * Whether each prompt went through the session's full Pi turn. Only PiAcpSession.prompt
+   * passes response-frame hooks; the extension-command path calls prompt without them.
+   */
+  readonly fullTurn: boolean[] = [];
   readonly extensionUiResponses: PiExtensionUiResponse[] = [];
   private handlers: Array<(event: PiRpcEvent) => void> = [];
   private nextUiId = 0;
 
   readonly commands: CommandInfo[] = COMMAND_MATRIX.map(({ command }) => {
     const name = command.slice(1);
-    const source = name === "check" ? "prompt" : name.startsWith("skill:") ? "skill" : "extension";
+    // `/review` is the reviewer prompt template; `/review-assist` is the interactive extension.
+    const source =
+      name === "check" || name === "review"
+        ? "prompt"
+        : name.startsWith("skill:")
+          ? "skill"
+          : "extension";
     return { name, description: `Parity fixture for ${command}`, source };
   });
 
@@ -83,8 +95,13 @@ class MatrixPiProcess implements PiRpcProcessLike {
     return { commands: this.commands };
   }
 
-  async prompt(message: string, attachments: PiPromptImage[]): Promise<PiPromptDisposition> {
+  async prompt(
+    message: string,
+    attachments: PiPromptImage[],
+    hooks: PiPromptHooks = {},
+  ): Promise<PiPromptDisposition> {
     this.prompts.push({ message, attachments });
+    this.fullTurn.push(hooks.onResponseFrame !== undefined);
     const name = commandName(message);
     const id = `matrix-ui-${this.nextUiId++}`;
 
@@ -112,6 +129,8 @@ class MatrixPiProcess implements PiRpcProcessLike {
       });
     }
 
+    // Pi's response frame precedes the run's agent_settled on stdout.
+    hooks.onResponseFrame?.();
     queueMicrotask(() => this.emit({ type: "agent_settled" }));
     return "started";
   }
@@ -181,6 +200,12 @@ test(
           `${command} must be dispatched to Pi exactly once instead of being answered by an adapter-side gate`,
         );
         assert.deepEqual(outcome.value, { stopReason: "end_turn" });
+        const isPromptTemplate = command === "/check" || command === "/review";
+        assert.equal(
+          proc.fullTurn.at(-1),
+          isPromptTemplate || command.startsWith("/skill:"),
+          `${command} must ${isPromptTemplate ? "expand as a prompt template in a full turn" : "use its own command path"}`,
+        );
         await new Promise<void>((resolve) => setImmediate(resolve));
 
         if (expected === "fallback") {
@@ -223,7 +248,7 @@ test(
       assert.equal(created.kind, "resolved");
       if (created.kind !== "resolved") return;
 
-      for (const command of ["/status", "/preferences", "/agents", "/btw", "/review"]) {
+      for (const command of ["/status", "/preferences", "/agents", "/btw", "/review-assist"]) {
         const outcome: Settled<PromptResult> = await settleWithin(
           harness.agent.prompt({
             sessionId: created.value.sessionId,
@@ -232,16 +257,16 @@ test(
           5_000,
         );
         assert.notEqual(outcome.kind, "deadline", `${command} hung against real Pi`);
-        if (command === "/review") {
+        if (command === "/review-assist") {
           assert.equal(
             outcome.kind,
             "resolved",
-            `/review must resolve through real Pi${
+            `/review-assist must resolve through real Pi${
               outcome.kind === "rejected" ? `: ${errorMessage(outcome.error)}` : ""
             }`,
           );
           if (outcome.kind === "resolved") {
-            assert.ok(outcome.value.stopReason, "/review resolved without a stop reason");
+            assert.ok(outcome.value.stopReason, "/review-assist resolved without a stop reason");
           }
           continue;
         }

@@ -79,6 +79,8 @@ test(
         "hooks",
         "check",
         "skill:check",
+        "review",
+        "review-assist",
       ]) {
         assert.equal(commandNames.has(name), true, `missing real Pi command: ${name}`);
       }
@@ -94,7 +96,7 @@ test(
       }
 
       const reviewSession = sessions.maybeGet(created.sessionId);
-      assert.ok(reviewSession, "missing real Pi session for /review event observation");
+      assert.ok(reviewSession, "missing real Pi session for /review-assist event observation");
       assert.ok(reviewSession.proc.getMessages, "real Pi process must support message replay");
       const modelContextEventTypes = new Set([
         "agent_start",
@@ -120,7 +122,7 @@ test(
         assert.deepEqual(
           await harness.agent.prompt({
             sessionId: created.sessionId,
-            prompt: [{ type: "text", text: "/review branch main HEAD" }],
+            prompt: [{ type: "text", text: "/review-assist branch main HEAD" }],
           }),
           { stopReason: "end_turn" },
         );
@@ -140,14 +142,18 @@ test(
         .join("\n");
       assert.ok(
         reviewNotifications.some((message) => message.includes("Review:")),
-        "/review must emit a headless Review: notification",
+        "/review-assist must emit a headless Review: notification",
       );
       assert.match(reviewText, /Review:/);
-      assert.deepEqual(modelContextEvents, [], "/review must not start a model-context turn");
+      assert.deepEqual(
+        modelContextEvents,
+        [],
+        "/review-assist must not start a model-context turn",
+      );
       assert.deepEqual(
         await reviewSession.proc.getMessages(),
         messagesBeforeReview,
-        "/review must not add messages to Pi model context",
+        "/review-assist must not add messages to Pi model context",
       );
 
       for (const name of ["check", "skill:check"]) {

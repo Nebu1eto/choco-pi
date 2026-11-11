@@ -21,7 +21,12 @@ import type {
   PiRpcExit,
   PiRpcProcessLike,
 } from "../src/pi-rpc/process.ts";
-import { numberField, recordField, type PiExtensionUiResponse } from "../src/pi-rpc/protocol.ts";
+import {
+  numberField,
+  recordField,
+  type PiExtensionUiRequestEvent,
+  type PiExtensionUiResponse,
+} from "../src/pi-rpc/protocol.ts";
 import type { AcpConnectionLike } from "./helpers-fakes.ts";
 
 class UiConnection implements AcpConnectionLike {
@@ -199,6 +204,49 @@ test("extension UI maps accepted form values and settles duplicate requests once
   ]);
   assert.equal(stringProperty(conn.elicitations[2]!, "value").description, "Type here");
   assert.equal(stringProperty(conn.elicitations[2]!, "value").maxLength, 10_000);
+});
+
+test("a form shows the request's title once: as its message, never again as the field's title", async () => {
+  const { conn, proc } = makeSession();
+  conn.handler = async () => ({ action: "cancel" });
+  const requests: PiExtensionUiRequestEvent[] = [
+    {
+      type: "extension_ui_request",
+      id: "s",
+      method: "select",
+      title: "Review target",
+      options: ["Uncommitted changes"],
+    },
+    {
+      type: "extension_ui_request",
+      id: "c",
+      method: "confirm",
+      title: "Proceed?",
+      message: "This deletes the draft.",
+    },
+    { type: "extension_ui_request", id: "i", method: "input", title: "Branch name" },
+    { type: "extension_ui_request", id: "e", method: "editor", title: "Commit message" },
+    { type: "extension_ui_request", id: "bare", method: "confirm", title: "Confirm" },
+  ];
+  for (const request of requests) proc.emit(request);
+  await tick();
+
+  // The title is the form's message; the field's own label never repeats it.
+  assert.deepEqual(
+    conn.elicitations.map((request) => request.message),
+    [
+      "Review target",
+      "Proceed?\n\nThis deletes the draft.",
+      "Branch name",
+      "Commit message",
+      "Confirm",
+    ],
+  );
+  for (const request of conn.elicitations) {
+    const [key, field] = Object.entries(formProperties(request))[0] ?? [];
+    assert.ok(key === "value" || key === "confirmed", String(key));
+    assert.notEqual(field?.title, request.message, request.message);
+  }
 });
 
 test("extension UI accepts Zed selection IDs carried in elicitation metadata", async () => {
