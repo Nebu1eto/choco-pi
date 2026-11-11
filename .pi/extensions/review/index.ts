@@ -1,5 +1,7 @@
 import { propertiesWhen } from "../lib/runtime-values.ts";
 import { createLifecycleOwner, rethrowUnlessStaleContext } from "../lib/lifecycle.ts";
+import { lstat } from "node:fs/promises";
+import { join } from "node:path";
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
@@ -8,15 +10,27 @@ import type {
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import { createSessionCheckpointProvider } from "./adapters/session-checkpoints.ts";
 import { loadReviewConfig } from "./core/config.ts";
-import { parseGitDiff } from "./core/diff.ts";
+import {
+  DiffLoadCancelledError,
+  loadDiffModel,
+  type LoadDiffModelOptions,
+} from "../lib/changes/git/load-model.ts";
+import type { DiffLimits } from "../lib/changes/git/limits.ts";
+import type { DiffSource } from "../lib/changes/git/model.ts";
+import { readRecords, summarizeFindings } from "../lib/changes/findings.ts";
+import { isSensitiveFile } from "../lib/changes/sensitive.ts";
+import { normalizeFindingPath } from "../lib/changes/view/changes-view.ts";
+import { SCRATCH_DIR_ENV, scratchDirForSession } from "../lib/scratch-path.ts";
+import {
+  sanitizeTerminalLines,
+  sanitizeTerminalText as safe,
+} from "../lib/changes/terminal-text.ts";
+import { parseGitDiff } from "../lib/changes/patch.ts";
 import {
   defaultExecRunner,
   listBranches,
-  readBranchTargetDiff,
-  readRawDiff,
-  readRawDiffToWorkingTree,
   repositoryRoot,
-  resolveRevision,
+  resolveBranchTarget,
 } from "./core/git.ts";
 import {
   describeSubmissionPlan,
@@ -34,8 +48,9 @@ import {
   type PullRequestMetadata,
   type PullRequestReview,
 } from "./core/pr.ts";
-import { createReviewStore, repoKey, targetKey } from "./core/store.ts";
+import { createReviewStore, repoKey, stopReviewRecordCleanup, targetKey } from "./core/store.ts";
 import type {
+  DiffFile,
   DiffModel,
   ExecRunner,
   ResolvedReviewConfig,
@@ -44,13 +59,48 @@ import type {
   ReviewTarget,
   SessionCheckpointProvider,
 } from "./core/types.ts";
-import { chooseReviewTarget, presentHeadlessReview } from "./headless.ts";
-import { openReviewView, type ReviewViewResult } from "./ui/review-view.ts";
+import { presentHeadlessReview } from "./headless.ts";
+import {
+  openReviewView,
+  type OpenReviewViewOptions,
+  type RevealedFile,
+  type RevealFile,
+  type ReviewFindings,
+  type ReviewViewResult,
+} from "./ui/review-view.ts";
+import { chooseReviewTarget } from "./ui/target-choice.ts";
 import { describeReviewTarget, pickReviewRecord } from "./ui/target-picker.ts";
 import { installToolDiffRendering } from "./ui/tool-diff.ts";
 
+/**
+ * The interactive review command. `/review` is the agent review prompt;
+ * persisted names (entry types, review.json) keep `review`.
+ */
+export const REVIEW_ASSIST_COMMAND = "review-assist";
+
+/**
+ * A multi-line TUI notification built from repository and GitHub text (the
+ * submission plan): each line's control characters become glyphs.
+ */
+function safeLines(text: string): string {
+  return sanitizeTerminalLines(text, "picture");
+}
+
 export const REVIEW_USAGE =
-  "Usage: /review [session [turn <n>] | branch <base> [target] | resume | pr <number>]";
+  "Usage: /review-assist [session [turn <n>] | branch <base> [target] | uncommitted | resume | pr <number>]";
+
+/**
+ * Read limits for a review: every git call, every file body, and the number
+ * of files listed. Whatever they keep out is shown to the user.
+ */
+export const REVIEW_DIFF_LIMITS: Partial<DiffLimits> = {
+  timeoutMs: 30_000,
+  maxFileBytes: 1024 * 1024,
+  maxFiles: 2_000,
+};
+
+/** `/review-assist uncommitted`: the working tree against HEAD, an alias of `branch HEAD`. */
+export const UNCOMMITTED_TARGET = { kind: "branch", base: "HEAD" } as const satisfies ReviewTarget;
 
 export type ParsedReviewCommand =
   | { ok: true; action: "pick" }
@@ -62,7 +112,7 @@ function invalid(message: string): ParsedReviewCommand {
   return { ok: false, message: `${message} ${REVIEW_USAGE}` };
 }
 
-/** Parse `/review` arguments without performing I/O or throwing on user input. */
+/** Parse `/review-assist` arguments without performing I/O or throwing on user input. */
 export function parseReviewCommand(argumentText: string, sessionId: string): ParsedReviewCommand {
   const tokens = argumentText.trim().split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return { ok: true, action: "pick" };
@@ -77,8 +127,10 @@ export function parseReviewCommand(argumentText: string, sessionId: string): Par
       }
       const value = tokens[2] ?? "";
       const turnIndex = /^\d+$/.test(value) ? Number(value) : Number.NaN;
-      if (!Number.isSafeInteger(turnIndex))
-        return invalid("The session turn must be a non-negative integer.");
+      if (!Number.isSafeInteger(turnIndex) || turnIndex < 1)
+        return invalid(
+          "The session turn must be a positive integer (1 is the first checkpointed turn).",
+        );
       return {
         ok: true,
         action: "review",
@@ -102,6 +154,10 @@ export function parseReviewCommand(argumentText: string, sessionId: string): Par
       return tokens.length === 1
         ? { ok: true, action: "resume" }
         : invalid("Resume does not accept an argument; choose the record from the picker.");
+    case "uncommitted":
+      return tokens.length === 1
+        ? { ok: true, action: "review", target: { ...UNCOMMITTED_TARGET } }
+        : invalid("Uncommitted review does not accept an argument.");
     case "pr": {
       if (tokens.length !== 2 || !/^\d+$/.test(tokens[1] ?? "")) {
         return invalid("Pull request review requires a positive pull request number.");
@@ -124,6 +180,8 @@ export type ReviewExtensionDependencies = {
   openView?: typeof openReviewView;
   reviewDirectory?: string;
   now?: () => string;
+  /** Stops this session's review-record clean-up; replaced in tests. */
+  stopRecordCleanup?: () => void;
 };
 
 type CompletionContext = Pick<ExtensionContext, "cwd" | "sessionManager">;
@@ -131,6 +189,8 @@ type CompletionContext = Pick<ExtensionContext, "cwd" | "sessionManager">;
 function checkpointProvider(pi: ExtensionAPI, ctx: CompletionContext): SessionCheckpointProvider {
   return createSessionCheckpointProvider({
     entries: () => ctx.sessionManager.getBranch(),
+    // Every entry of the session file, so the session baseline is the one /diff uses.
+    sessionEntries: () => ctx.sessionManager.getEntries(),
     appendEntry: (customType, record) => pi.appendEntry(customType, record),
   });
 }
@@ -139,48 +199,167 @@ function currentSessionId(ctx: CompletionContext): string {
   return ctx.sessionManager.getSessionId();
 }
 
-async function readTargetDiff(
+export type TargetDiffReader = (
   root: string,
   target: ReviewTarget,
   provider: SessionCheckpointProvider,
   runner: ExecRunner,
+  isCurrent?: () => boolean,
+) => Promise<DiffModel>;
+
+const NO_CHECKPOINTS =
+  "No file checkpoints are available in this session. Session review needs checkpoints captured at turn start; branch review remains available.";
+
+/**
+ * The turn number saved review records hold from before turns were numbered
+ * by position: every checkpoint recorded 0. Such a record still opens the
+ * diff it showed then, the first checkpointed turn to the working tree.
+ */
+const LEGACY_TURN = 0;
+
+/**
+ * The shared-layer source that reads a local review target. A session uses
+ * the pane's own source and baseline, so `/diff` and `/review-assist
+ * session` list the same files; turns are numbered by position.
+ */
+async function sourceForTarget(
+  root: string,
+  target: Exclude<ReviewTarget, { kind: "pr" }>,
+  provider: SessionCheckpointProvider,
+  runner: ExecRunner,
+): Promise<DiffSource> {
+  if (target.kind === "branch") {
+    if (target.target === undefined) return { kind: "branch-base", base: target.base };
+    const resolved = await resolveBranchTarget(root, target, runner);
+    return {
+      kind: "range",
+      base: resolved.baseSha,
+      head: resolved.headSha,
+      label: `${target.base}…${target.target}`,
+    };
+  }
+
+  const turns = await provider.listTurns();
+  if (target.kind === "session") {
+    const baseline = await provider.sessionBaseline?.();
+    if (baseline ? baseline.kind === "none" : turns.length === 0) throw new Error(NO_CHECKPOINTS);
+    return { kind: "session" };
+  }
+  if (turns.length === 0) throw new Error(NO_CHECKPOINTS);
+  const legacy = target.turnIndex === LEGACY_TURN;
+  const position = legacy ? 1 : target.turnIndex;
+  const turn = turns.find((candidate) => candidate.turnIndex === position);
+  if (!turn) {
+    throw new Error(
+      `Session turn ${target.turnIndex} has no file checkpoint. Available turns: ${turns.map((candidate) => candidate.turnIndex).join(", ")}.`,
+    );
+  }
+  const next = legacy ? undefined : turns.find((candidate) => candidate.turnIndex === position + 1);
+  if (next) return { kind: "range", base: turn.tree, head: next.tree, label: `turn ${position}` };
+  return { kind: "since-checkpoint", checkpointId: turn.tree, label: `turn ${position}` };
+}
+
+/**
+ * Whether a local target's changes end at the working tree; a session turn
+ * does only when no later turn exists. Pull requests never do.
+ */
+async function includesWorkingTree(
+  target: ReviewTarget,
+  provider: SessionCheckpointProvider,
+): Promise<boolean> {
+  if (target.kind === "pr") return false;
+  if (target.kind === "branch") return target.target === undefined;
+  if (target.kind === "session") return true;
+  if (target.turnIndex === LEGACY_TURN) return true;
+  const turns = await provider.listTurns();
+  return !turns.some((turn) => turn.turnIndex > target.turnIndex);
+}
+
+/**
+ * Read a local target through the shared change layer, every body included,
+ * within `REVIEW_DIFF_LIMITS`. `exec` replaces the git process runner in
+ * tests; production uses the shared runner, which can kill its processes.
+ */
+async function loadTarget(
+  exec: ExecRunner | undefined,
+  root: string,
+  target: ReviewTarget,
+  provider: SessionCheckpointProvider,
+  runner: ExecRunner,
+  isCurrent: () => boolean,
+  onlyPath: string | undefined,
 ): Promise<DiffModel> {
   if (target.kind === "pr") throw new Error("Pull request review arrives in a later phase.");
-  if (target.kind === "branch") {
-    const result = await readBranchTargetDiff(root, target, runner);
-    return parseGitDiff(result.rawDiff, result.baseSha, result.headSha);
-  }
+  const source = await sourceForTarget(root, target, provider, runner);
+  if (!isCurrent()) throw new DiffLoadCancelledError();
+  const options: LoadDiffModelOptions = {
+    cwd: root,
+    source,
+    limits: REVIEW_DIFF_LIMITS,
+    turns: provider,
+    isCurrent,
+  };
+  if (onlyPath === undefined) options.skipContents = isSensitiveFile;
+  else options.onlyPath = onlyPath;
+  if (exec !== undefined) options.exec = exec;
+  return (await loadDiffModel(options)).model;
+}
 
-  const turns = [...(await provider.listTurns())].sort(
-    (left, right) => left.turnIndex - right.turnIndex,
-  );
-  if (turns.length === 0) {
-    throw new Error(
-      "No file checkpoints are available in this session. Session review needs checkpoints captured at turn start; branch review remains available.",
-    );
-  }
+/**
+ * Read a local target through the shared change layer, every body included,
+ * within `REVIEW_DIFF_LIMITS`. Sensitive files are listed by name only; their
+ * contents are not read. `exec` replaces the git process runner in tests;
+ * production uses the shared runner, which can kill its processes.
+ */
+export function createTargetDiffReader(exec: ExecRunner | undefined): TargetDiffReader {
+  return (root, target, provider, runner, isCurrent = () => true) =>
+    loadTarget(exec, root, target, provider, runner, isCurrent, undefined);
+}
 
-  const requestedTurn = target.kind === "session-turn" ? target.turnIndex : undefined;
-  const first =
-    requestedTurn === undefined ? turns[0] : turns.find((turn) => turn.turnIndex === requestedTurn);
-  if (!first) {
-    throw new Error(
-      `Session turn ${requestedTurn} has no file checkpoint. Available turns: ${turns.map((turn) => turn.turnIndex).join(", ")}.`,
-    );
-  }
+/** Read one hidden file of a local target after the user asked to see it. */
+function createRevealReader(
+  exec: ExecRunner | undefined,
+  root: string,
+  target: ReviewTarget,
+  provider: SessionCheckpointProvider,
+  runner: ExecRunner,
+  isCurrent: () => boolean,
+): RevealFile {
+  return async (path) => {
+    const model = await loadTarget(exec, root, target, provider, runner, isCurrent, path);
+    const file = model.files.find((candidate) => candidate.path === path);
+    const notice = model.notices?.find((candidate) => candidate.path === path)?.message;
+    const revealed: RevealedFile = {};
+    if (file) revealed.file = file;
+    if (notice !== undefined) revealed.notice = notice;
+    return revealed;
+  };
+}
 
-  const next =
-    requestedTurn === undefined ? undefined : turns.find((turn) => turn.turnIndex > requestedTurn);
-  if (next) {
-    const rawDiff = await readRawDiff(root, first.tree, next.tree, runner);
-    return parseGitDiff(rawDiff, first.tree, next.tree);
-  }
+/**
+ * A pull request's patch arrives whole from GitHub, so a sensitive file's
+ * text is already in memory: keep it out of the model the view and the
+ * assessor see, and hand it back only when the user reveals that file.
+ */
+/** A model with sensitive files emptied, and the way to read one back on request. */
+export type HiddenSensitiveModel = { model: DiffModel; reveal: RevealFile };
 
-  const [rawDiff, headSha] = await Promise.all([
-    readRawDiffToWorkingTree(root, first.tree, runner),
-    resolveRevision(root, "HEAD", runner),
-  ]);
-  return parseGitDiff(rawDiff, first.tree, headSha);
+export function hideSensitiveFiles(model: DiffModel): HiddenSensitiveModel {
+  const withheld = new Map<string, DiffFile>();
+  const files = model.files.map((file) => {
+    if (!isSensitiveFile(file)) return file;
+    withheld.set(file.path, file);
+    return { ...file, hunks: [] };
+  });
+  const hidden: DiffModel = { ...model, files };
+  if (withheld.size > 0) hidden.hidden = [...withheld.keys()];
+  return {
+    model: hidden,
+    reveal: async (path) => {
+      const file = withheld.get(path);
+      return file ? { file } : {};
+    },
+  };
 }
 
 async function loadOrCreateRecord(
@@ -216,12 +395,46 @@ async function loadOrCreateRecord(
   };
 }
 
+/** The session's scratch directory, where reviewer runs record findings (as `/diff` resolves it). */
+function scratchDirOf(sessionId: string): string | undefined {
+  const inherited = process.env[SCRATCH_DIR_ENV];
+  if (inherited) return inherited;
+  return sessionId ? scratchDirForSession(sessionId) : undefined;
+}
+
+/** Recorded reviewer findings, and when each listed file they name last changed. */
+async function readFindings(
+  scratch: string,
+  root: string,
+  paths: readonly string[],
+): Promise<ReviewFindings> {
+  const listing = await readRecords(scratch).catch((error: Error) => ({
+    tasks: [],
+    errors: [`Cannot read the review records: ${error.message}`],
+  }));
+  const recorded = summarizeFindings(listing);
+  const listed = new Set(paths);
+  const changeTimes = new Map<string, number | null>();
+  for (const finding of recorded.findings) {
+    const path = normalizeFindingPath(finding.path, root);
+    if (!listed.has(path) || changeTimes.has(path)) continue;
+    changeTimes.set(
+      path,
+      await lstat(join(root, path)).then(
+        (stat) => stat.mtimeMs,
+        () => null,
+      ),
+    );
+  }
+  return { recorded, changeTimes };
+}
+
 function recordCompletion(record: ReviewRecord): AutocompleteItem {
   return {
-    // `/review resume` deliberately opens the picker. The descriptive labels
+    // `/review-assist resume` deliberately opens the picker. The descriptive labels
     // expose available records without adding an undocumented selector grammar.
     value: "resume",
-    label: describeReviewTarget(record.target),
+    label: safe(describeReviewTarget(record.target)),
     description: `Updated ${new Date(record.updatedAt).toLocaleString()}`,
   };
 }
@@ -230,8 +443,8 @@ function pullRequestCompletion(pullRequest: PullRequestMetadata): AutocompleteIt
   const author = pullRequest.author?.login ? ` by @${pullRequest.author.login}` : "";
   return {
     value: `pr ${pullRequest.number}`,
-    label: `#${pullRequest.number} ${pullRequest.title}`,
-    description: `Base: ${pullRequest.baseRefName}${author}`,
+    label: safe(`#${pullRequest.number} ${pullRequest.title}`),
+    description: safe(`Base: ${pullRequest.baseRefName}${author}`),
   };
 }
 
@@ -243,6 +456,11 @@ function topLevelCompletions(prefix: string): AutocompleteItem[] | null {
       description: "Review changes from the current Pi session",
     },
     { value: "branch", label: "branch", description: "Review a merge-base Git range" },
+    {
+      value: "uncommitted",
+      label: "uncommitted",
+      description: "Review uncommitted changes against HEAD",
+    },
     { value: "resume", label: "resume", description: "Resume a saved review" },
     { value: "pr", label: "pr", description: "Review an open GitHub pull request" },
   ];
@@ -289,7 +507,7 @@ async function argumentCompletions(
         ? matches.map((turn) => ({
             value: `session turn ${turn.turnIndex}`,
             label: String(turn.turnIndex),
-            description: turn.label,
+            description: safe(turn.label),
           }))
         : null;
     }
@@ -309,7 +527,7 @@ async function argumentCompletions(
       return matches.length > 0
         ? matches.map((branch, index) => ({
             value: values[index]!,
-            label: branch,
+            label: safe(branch),
           }))
         : null;
     }
@@ -390,7 +608,9 @@ function keepMarkdownOffline(
 ): void {
   if (result.markdown) ctx.ui.setEditorText(result.markdown);
   ctx.ui.notify(
-    `${message} The local review record was kept${result.markdown ? ", and its Markdown was placed in the input editor" : ""}.`,
+    safeLines(
+      `${message} The local review record was kept${result.markdown ? ", and its Markdown was placed in the input editor" : ""}.`,
+    ),
     type,
   );
 }
@@ -409,10 +629,21 @@ async function submitPullRequestReview(
         record: result.record,
         pullRequest: pullRequestRef(review),
         event: eventForVerdict(result.record.verdict),
+        // Comments written on revealed context are located the way the view did.
+        ...propertiesWhen(result.expandedContext, () => ({
+          expandedContext: result.expandedContext,
+        })),
       },
       {
         cwd: review.repositoryRoot,
         runner,
+        // The diff the reader was shown, read once when the review opened. It
+        // decides what goes inline while GitHub's head is still its head; if
+        // the head moved since, the new head's diff is read (its worktree is
+        // named after that head, so it does not touch this review's) and the
+        // comments are re-anchored on it: the inline decision is always made
+        // against the diff of the head sent as commit_id.
+        reviewedDiff: parseGitDiff(review.rawDiff, review.baseSha, review.headSha),
         loadHeadDiff: (headSha) =>
           loadPullRequestHeadDiff(
             review.repositoryRoot,
@@ -443,7 +674,7 @@ async function submitPullRequestReview(
       return;
     }
   } else if (plan.headMoved || plan.relocatedCount > 0 || plan.demotedCount > 0) {
-    ctx.ui.notify(describeSubmissionPlan(plan), "warning");
+    ctx.ui.notify(safeLines(describeSubmissionPlan(plan)), "warning");
   }
 
   try {
@@ -475,6 +706,7 @@ export function registerReviewExtension(
   dependencies: ReviewExtensionDependencies = {},
 ): void {
   const runner = dependencies.runner ?? defaultExecRunner;
+  const readTargetDiff = createTargetDiffReader(dependencies.runner);
   const store = dependencies.store ?? createReviewStore();
   const readConfig = dependencies.loadConfig ?? loadReviewConfig;
   const showView = dependencies.openView ?? openReviewView;
@@ -490,6 +722,13 @@ export function registerReviewExtension(
   pi.on("session_shutdown", () => {
     completionContext = undefined;
     lifecycle.invalidate();
+    // Cancels a scheduled pass and stops a running one; a no-op when none was
+    // scheduled. Housekeeping must not make shutdown fail.
+    try {
+      (dependencies.stopRecordCleanup ?? stopReviewRecordCleanup)();
+    } catch {
+      // Nothing else to settle: the clean-up only ever deletes stale records.
+    }
   });
 
   // This patch changes rendering only. It neither changes tool execution nor
@@ -501,7 +740,7 @@ export function registerReviewExtension(
     // make every project fail while loading the global profile.
   }
 
-  pi.registerCommand("review", {
+  pi.registerCommand(REVIEW_ASSIST_COMMAND, {
     description: "Review session, branch, or pull request changes without model context",
     getArgumentCompletions: async (prefix) => {
       const lease = lifecycle.capture();
@@ -513,7 +752,7 @@ export function registerReviewExtension(
       const isCurrent = () => lifecycle.isCurrent(lease);
       const parsed = parseReviewCommand(args, currentSessionId(ctx));
       if (!parsed.ok) {
-        ctx.ui.notify(parsed.message, "warning");
+        ctx.ui.notify(safe(parsed.message), "warning");
         return;
       }
       if (ctx.mode !== "tui") {
@@ -609,19 +848,46 @@ export function registerReviewExtension(
                 })
               : undefined;
           if (!isCurrent()) return;
-          const model = pullRequest
-            ? parseGitDiff(pullRequest.rawDiff, pullRequest.baseSha, pullRequest.headSha)
-            : await readTargetDiff(root, target, provider, runner);
+          let model: DiffModel;
+          let revealFile: RevealFile;
+          if (pullRequest) {
+            const hidden = hideSensitiveFiles(
+              parseGitDiff(pullRequest.rawDiff, pullRequest.baseSha, pullRequest.headSha),
+            );
+            model = hidden.model;
+            revealFile = hidden.reveal;
+          } else {
+            model = await readTargetDiff(root, target, provider, runner, isCurrent);
+            revealFile = createRevealReader(
+              dependencies.runner,
+              root,
+              target,
+              provider,
+              runner,
+              isCurrent,
+            );
+          }
+          if (!isCurrent()) return;
+          const endsAtWorkingTree = await includesWorkingTree(target, provider);
           if (!isCurrent()) return;
           const assessments = assessDiff(model, config);
           const record = await loadOrCreateRecord(store, repository, target, model, now, preferred);
           if (!isCurrent()) return;
           preparingWidget(undefined);
-          const result = await showView({
+          // A target that ends at the working tree can change while it is reviewed
+          // (the side chat may edit files): `r` and finished chat tool calls read it
+          // again, and recorded reviewer findings apply to it. The others are fixed.
+          let viewOpen = true;
+          const localTarget = target;
+          const live = endsAtWorkingTree && !pullRequest;
+          const scratch = live ? scratchDirOf(currentSessionId(ctx)) : undefined;
+          const viewOptions: OpenReviewViewOptions = {
             model,
             assessments,
             record,
             config,
+            revealFile,
+            includesWorkingTree: endsAtWorkingTree,
             reviewRoot: pullRequest?.worktreePath ?? root,
             ...propertiesWhen(pullRequest, () => ({ pullRequest: pullRequest!.metadata })),
             // The side chat continues the user's own model choice: the
@@ -636,7 +902,28 @@ export function registerReviewExtension(
             store,
             styler: ctx.ui.theme,
             now,
-          });
+          };
+          if (live) {
+            viewOptions.reload = () =>
+              readTargetDiff(root, localTarget, provider, runner, () => isCurrent() && viewOpen);
+          }
+          if (scratch !== undefined) {
+            viewOptions.loadFindings = (paths) => readFindings(scratch, root, paths);
+          }
+          if (target.kind === "session") {
+            const baseline = await provider.sessionBaseline?.();
+            if (!isCurrent()) return;
+            if (baseline?.kind === "checkpoint") {
+              viewOptions.sessionBaseline = { kind: "checkpoint", label: baseline.label };
+            }
+          }
+          let result: ReviewViewResult | undefined;
+          try {
+            result = await showView(viewOptions);
+          } finally {
+            // A refresh still reading stops with the view.
+            viewOpen = false;
+          }
           if (!isCurrent()) return;
           if (result && (target.kind === "session" || target.kind === "session-turn")) {
             provider.appendReviewState?.(result.record);
@@ -656,11 +943,13 @@ export function registerReviewExtension(
         }
       } catch (error) {
         if (!isCurrent()) {
+          // The load stopped because this command no longer owns the session.
+          if (error instanceof DiffLoadCancelledError) return;
           rethrowUnlessStaleContext(error);
           return;
         }
         ctx.ui.notify(
-          `Review failed: ${error instanceof Error ? error.message : String(error)}`,
+          safe(`Review failed: ${error instanceof Error ? error.message : String(error)}`),
           "error",
         );
       }

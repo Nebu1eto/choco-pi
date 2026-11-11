@@ -1,84 +1,36 @@
 /**
- * Shared contracts for the interactive review view (`/review`).
+ * Shared contracts for the interactive review view (`/review-assist`).
  *
- * Two rules shape this file:
+ * The diff never enters model context. Diff computation, rendering, folding,
+ * risk ordering, comment collection, and later GitHub submission all run
+ * inside the extension process, so every type here describes local,
+ * in-process data. Session-aware behaviour arrives through
+ * `SessionCheckpointProvider`.
  *
- * 1. The diff never enters model context. Diff computation, rendering,
- *    folding, risk ordering, comment collection, and later GitHub submission
- *    all run inside the extension process, so every type here describes
- *    local, in-process data.
- * 2. `core/` stays free of choco-pi specifics so this directory can ship as a
- *    standalone Pi extension later. Session-aware behaviour arrives through
- *    `SessionCheckpointProvider`; process and rendering dependencies arrive
- *    through the injectable function types at the bottom of this file.
+ * The diff, process, and rendering contracts live in `lib/changes/types.ts`,
+ * shared with the changes pane; they are re-exported here so review importers
+ * keep one import site.
  */
 
-/* ------------------------------------------------------------------ diff */
+import type { DiffSide, HighlightLimits, TurnTreeProvider } from "../../lib/changes/types.ts";
 
-/**
- * Which side of the diff a position belongs to, using GitHub review
- * semantics: `LEFT` is the base revision (addressed by `DiffLine.oldLine`),
- * `RIGHT` is the head revision (addressed by `DiffLine.newLine`).
- */
-export type DiffSide = "LEFT" | "RIGHT";
-
-/**
- * One physical line of a hunk.
- *
- * `context` lines carry both `oldLine` and `newLine`, `del` lines carry only
- * `oldLine`, and `add` lines carry only `newLine`. `text` excludes the leading
- * ` `, `+`, or `-` marker and excludes the trailing newline.
- */
-export type DiffLine = {
-  kind: "context" | "add" | "del";
-  oldLine?: number;
-  newLine?: number;
-  text: string;
-};
-
-export type DiffHunk = {
-  /**
-   * Stable content hash identifying this hunk across recomputation.
-   *
-   * The hash covers the file path, the hunk header with its `@@ -a,b +c,d @@`
-   * range portion stripped (only the trailing section context contributes),
-   * and the hunk body normalized to per-line `kind` markers plus `text` with
-   * all line numbers excluded. Excluding the ranges and line numbers is
-   * deliberate: an unrelated edit earlier in the file shifts every later hunk,
-   * and reviewed-state and comment anchors must survive that shift.
-   */
-  id: string;
-  /** Raw `@@ -a,b +c,d @@ section` header line as produced by git. */
-  header: string;
-  oldStart: number;
-  oldLines: number;
-  newStart: number;
-  newLines: number;
-  lines: DiffLine[];
-};
-
-export type DiffFile = {
-  /** Path in the head revision; for a deletion, the path that was removed. */
-  path: string;
-  /** Path in the base revision, present only for renames and copies. */
-  oldPath?: string;
-  kind: "modified" | "added" | "deleted" | "renamed" | "copied" | "binary";
-  /** Empty for `binary` files, which carry no reviewable text. */
-  hunks: DiffHunk[];
-  additions: number;
-  deletions: number;
-};
-
-export type DiffModel = {
-  baseSha: string;
-  headSha: string;
-  files: DiffFile[];
-};
+export type {
+  DiffFile,
+  DiffHunk,
+  DiffLine,
+  DiffModel,
+  DiffRenderOptions,
+  DiffSide,
+  ExecRunner,
+  HighlightFn,
+  HighlightLimits,
+  TurnTreeProvider,
+} from "../../lib/changes/types.ts";
 
 /* ---------------------------------------------------------------- target */
 
 /**
- * What a review covers, mirroring the `/review` command grammar.
+ * What a review covers, mirroring the `/review-assist` command grammar.
  *
  * - `session`: every turn of a Pi session, resolved through an injected
  *   `SessionCheckpointProvider`.
@@ -115,6 +67,12 @@ export type CommentAnchor = {
   snippetHash: string;
   /** Verbatim source text the comment refers to. */
   snippet: string;
+  /**
+   * Index of the comment's first line among the hunk's lines on the comment's
+   * side. Written since comments are placed by text rather than by number;
+   * absent in older records, whose position is found from `snippet`.
+   */
+  position?: number;
 };
 
 export type ReviewComment = {
@@ -127,6 +85,15 @@ export type ReviewComment = {
   startLine?: number;
   body: string;
   anchor: CommentAnchor;
+  /**
+   * Absent while the comment's text was found where `line` says when the
+   * record was last saved. `outdated`: its text was not found in that
+   * comparison, and `line` is where it was last found. `unconfirmed`: work
+   * that could move it (a refresh, a context read, a reveal) had not finished
+   * when the record was saved, so `line` was not checked. Older records have
+   * neither; the view works it out again on open.
+   */
+  stale?: "outdated" | "unconfirmed";
   /** ISO 8601 timestamp. */
   createdAt: string;
   /** ISO 8601 timestamp. */
@@ -195,43 +162,6 @@ export type ReviewStore = {
   list(repoKey: string): Promise<ReviewRecord[]>;
 };
 
-/* ----------------------------------------------------------------- seams */
-
-/**
- * Child process seam. Implementations resolve rather than reject on a non-zero
- * exit so callers can inspect `code` and `stderr`; only a spawn failure
- * rejects.
- *
- * `input` is written to the child's stdin, which is then closed. Every
- * implementation must deliver it: `gh api --input -` waits for end-of-file on
- * stdin before it sends anything, so a runner that accepts `input` and drops it
- * leaves the child blocked forever instead of failing.
- */
-export type ExecRunner = (
-  cmd: string,
-  args: string[],
-  opts?: { cwd?: string; input?: string },
-) => Promise<{ stdout: string; stderr: string; code: number }>;
-
-/**
- * Syntax highlighting seam. Returns one ANSI-decorated output line per input
- * line, so callers can index the result by line number.
- *
- * A sibling unit implements this over Pi's `highlightCode`. The seam exists so
- * a richer highlighter can replace that implementation without touching
- * callers, and so `core/` stays testable without a highlighter.
- */
-export type HighlightFn = (code: string, lang?: string) => string[];
-
-export type DiffRenderOptions = {
-  mode: "unified" | "split";
-  /** Total render width in terminal columns. */
-  width: number;
-  highlight: HighlightFn;
-  /** Returns true when the hunk with this `DiffHunk.id` renders folded. */
-  fold: (hunkId: string) => boolean;
-};
-
 /* ---------------------------------------------------------- configuration */
 
 /**
@@ -280,11 +210,7 @@ export type ReviewConfig = {
  */
 export type ResolvedReviewConfig = {
   editor: EditorConfig;
-  highlight: {
-    enabled: boolean;
-    maxFileBytes: number;
-    maxDiffLines: number;
-  };
+  highlight: HighlightLimits;
   heuristics: {
     riskPatterns: string[];
     collapsePatterns: string[];
@@ -294,18 +220,15 @@ export type ResolvedReviewConfig = {
 /* --------------------------------------------------------------- adapter */
 
 /**
- * The single seam through which choco-pi session features reach `core/`.
- *
- * `tree` is a Git tree object id captured per turn by `file-checkpoints.ts`,
- * which is what makes a turn diffable without re-running the agent.
+ * The single seam through which choco-pi session features reach `core/`:
+ * the per-turn trees (`TurnTreeProvider`) plus review progress.
  *
  * `appendReviewState` lets the host record review progress as a custom session
  * entry; it is optional because a standalone Pi install has no such entry type.
  *
  * When no provider is injected, `session` and `session-turn` targets are
- * unavailable and `/review` reports that; `branch` targets keep working.
+ * unavailable and `/review-assist` reports that; `branch` targets keep working.
  */
-export type SessionCheckpointProvider = {
-  listTurns(): Promise<Array<{ turnIndex: number; tree: string; label: string }>>;
+export type SessionCheckpointProvider = TurnTreeProvider & {
   appendReviewState?(record: ReviewRecord): void;
 };

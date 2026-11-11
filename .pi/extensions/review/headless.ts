@@ -1,12 +1,15 @@
 import { rethrowUnlessStaleContext } from "../lib/lifecycle.ts";
+import { sanitizeTerminalText } from "../lib/changes/terminal-text.ts";
+import { DiffLoadCancelledError } from "../lib/changes/git/load-model.ts";
+import { editorRendersMarkdown, markdownFailure } from "../lib/changes/markdown.ts";
 import { loadReviewConfig } from "./core/config.ts";
-import { defaultExecRunner, listBranches, repositoryRoot } from "./core/git.ts";
+import { defaultExecRunner, repositoryRoot } from "./core/git.ts";
+import { renderHeadlessReviewMarkdown } from "./core/headless-markdown.ts";
 import {
   createHeadlessReviewPresentation,
   renderHeadlessReview,
 } from "./core/headless-presentation.ts";
 import { assessDiff } from "./core/heuristics.ts";
-import { listPullRequests } from "./core/pr.ts";
 import { createReviewStore, repoKey } from "./core/store.ts";
 import type {
   DiffModel,
@@ -15,17 +18,14 @@ import type {
   ReviewTarget,
   SessionCheckpointProvider,
 } from "./core/types.ts";
-import {
-  pickReviewRecord,
-  pickReviewTarget,
-  pullRequestTargetChoice,
-  type ReviewTargetChoice,
-  type TargetPickerHost,
-} from "./ui/target-picker.ts";
+import { chooseReviewTarget } from "./ui/target-choice.ts";
+import { pickReviewRecord, type TargetPickerHost } from "./ui/target-picker.ts";
 
 const MAX_HEADLESS_NOTIFICATION_BYTES = 256 * 1024;
 const NOTIFICATION_TRUNCATION = "\n…[notification truncated]";
 const encoder = new TextEncoder();
+/** How `ui/target-choice.ts` begins its warning when `gh` cannot list pull requests. */
+const PULL_REQUESTS_UNAVAILABLE = "Pull request targets are unavailable: ";
 
 type HeadlessReviewUi = TargetPickerHost & {
   notify(message: string, type?: "info" | "warning" | "error"): void;
@@ -37,11 +37,27 @@ export type HeadlessReviewRequest =
   | { action: "resume" }
   | { action: "review"; target: ReviewTarget };
 
-export type ChooseReviewTargetContext = {
-  cwd: string;
-  sessionId: string;
-  ui: HeadlessReviewUi;
-};
+/**
+ * Headless output carries file names, diff lines and git messages from the
+ * repository. Every control character becomes a visible glyph, as in the TUI,
+ * except tab, newline and the CR of a CRLF line ending, which keep their
+ * meaning. Without this the ACP adapter silently deletes escape sequences
+ * (so a name is shown wrong) and a raw RPC client receives them as bytes.
+ */
+export function headlessSafeText(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => {
+      const crlf = line.endsWith("\r");
+      const body = crlf ? line.slice(0, -1) : line;
+      const safeLine = body
+        .split("\t")
+        .map((part) => sanitizeTerminalText(part))
+        .join("\t");
+      return crlf ? `${safeLine}\r` : safeLine;
+    })
+    .join("\n");
+}
 
 export type HeadlessReviewDependencies = {
   store?: ReviewStore;
@@ -54,8 +70,16 @@ export type HeadlessReviewDependencies = {
     target: ReviewTarget,
     provider: SessionCheckpointProvider,
     runner: ExecRunner,
+    isCurrent?: () => boolean,
   ) => Promise<DiffModel>;
   isCurrent: () => boolean;
+  /**
+   * The environment the host started Pi with; `process.env` when absent. The
+   * choco-pi ACP adapter marks its Pi child with `CHOCO_PI_ACP_NATIVE_DIFF=1`,
+   * and its editor renders notifications as Markdown; every other host
+   * (print mode, other RPC clients) gets plain text.
+   */
+  env?: Readonly<Partial<Record<string, string>>>;
 };
 
 export type PresentHeadlessReviewOptions = {
@@ -79,64 +103,6 @@ function boundedNotification(message: string): string {
     used += size;
   }
   return `${output}${NOTIFICATION_TRUNCATION}`;
-}
-
-/** Shared target candidate resolution for TUI and headless review paths. */
-export async function chooseReviewTarget(
-  context: ChooseReviewTargetContext,
-  provider: SessionCheckpointProvider,
-  runner: ExecRunner,
-  isCurrent: () => boolean = () => true,
-): Promise<ReviewTarget | undefined> {
-  const cwd = context.cwd;
-  const sessionId = context.sessionId;
-  const ui = context.ui;
-  const root = await repositoryRoot(cwd, runner);
-  if (!isCurrent()) return undefined;
-  let pullRequestWarning: string | undefined;
-  const [turns, branches, pullRequests] = await Promise.all([
-    provider.listTurns().catch(() => []),
-    listBranches(root, runner),
-    listPullRequests(root, runner).catch((error) => {
-      pullRequestWarning = error instanceof Error ? error.message : String(error);
-      return [];
-    }),
-  ]);
-  if (!isCurrent()) return undefined;
-  if (pullRequestWarning) {
-    ui.notify(`Pull request targets are unavailable: ${pullRequestWarning}`, "warning");
-  }
-  const candidates: ReviewTargetChoice[] = [];
-  if (turns.length > 0) {
-    candidates.push({
-      label: "Current session",
-      target: { kind: "session", sessionId },
-    });
-  }
-  for (const pullRequest of pullRequests) {
-    candidates.push(pullRequestTargetChoice(pullRequest.number, pullRequest.title));
-  }
-  for (const branch of branches) {
-    candidates.push({ label: `Branch base: ${branch}`, target: { kind: "branch", base: branch } });
-  }
-  if (candidates.length === 0) {
-    ui.notify(
-      "No review targets are available. Session review needs file checkpoints, no open pull requests were found, and no branches were found.",
-      "warning",
-    );
-    return undefined;
-  }
-  const target = await pickReviewTarget(
-    {
-      select: async (title, options) => {
-        if (!isCurrent()) return undefined;
-        const selected = await ui.select(title, options);
-        return isCurrent() ? selected : undefined;
-      },
-    },
-    candidates,
-  );
-  return isCurrent() ? target : undefined;
 }
 
 function guardedPickerHost(ui: HeadlessReviewUi, isCurrent: () => boolean): TargetPickerHost {
@@ -163,9 +129,21 @@ export async function presentHeadlessReview(options: PresentHeadlessReviewOption
   const provider = dependencies.checkpointProvider;
   const readTargetDiff = dependencies.readTargetDiff;
   const isCurrent = dependencies.isCurrent;
+  const markdown = editorRendersMarkdown(dependencies.env ?? process.env);
+  // In the editor, untrusted detail in a failure is a code block, not Markdown.
+  const formatFailure = markdown
+    ? (prefix: string, detail: string) => markdownFailure(prefix.trimEnd(), detail)
+    : (prefix: string, detail: string) => `${prefix}${detail}`;
+  // The shared picker words its one failure as PULL_REQUESTS_UNAVAILABLE + gh's message.
+  const pickerNotice = (message: string): string =>
+    message.startsWith(PULL_REQUESTS_UNAVAILABLE)
+      ? formatFailure(PULL_REQUESTS_UNAVAILABLE, message.slice(PULL_REQUESTS_UNAVAILABLE.length))
+      : message;
 
   const notify = (message: string, type: "info" | "warning" | "error"): void => {
-    if (isCurrent()) ui.notify(boundedNotification(message), type);
+    // In the editor a message is our own text or Markdown already sanitised once; not again.
+    const safe = markdown ? message : headlessSafeText(message);
+    if (isCurrent()) ui.notify(boundedNotification(safe), type);
   };
 
   try {
@@ -203,7 +181,9 @@ export async function presentHeadlessReview(options: PresentHeadlessReviewOption
         isCurrent,
       );
       if (!isCurrent()) return;
-      for (const deferred of deferredNotifications) notify(deferred.message, deferred.type);
+      for (const deferred of deferredNotifications) {
+        notify(pickerNotice(deferred.message), deferred.type);
+      }
       if (!target) {
         if (pickerOpened) notify("Review target selection was cancelled.", "info");
         return;
@@ -237,7 +217,7 @@ export async function presentHeadlessReview(options: PresentHeadlessReviewOption
 
     const config = await readConfig({ cwd: root });
     if (!isCurrent()) return;
-    const model = await readTargetDiff(root, target, provider, runner);
+    const model = await readTargetDiff(root, target, provider, runner, isCurrent);
     if (!isCurrent()) return;
     const assessments = assessDiff(model, config);
     const savedReviews = await store.list(repository);
@@ -247,13 +227,21 @@ export async function presentHeadlessReview(options: PresentHeadlessReviewOption
       model,
       assessments,
       savedReviews,
+      format: markdown ? "markdown" : "plain",
     });
-    notify(renderHeadlessReview(presentation).join("\n"), "info");
+    if (!markdown) {
+      notify(renderHeadlessReview(presentation).join("\n"), "info");
+    } else if (isCurrent()) {
+      // Already sanitised piece by piece; sanitising the Markdown again would be a second pass.
+      ui.notify(boundedNotification(renderHeadlessReviewMarkdown(presentation)), "info");
+    }
   } catch (error) {
     if (!isCurrent()) {
+      if (error instanceof DiffLoadCancelledError) return;
       rethrowUnlessStaleContext(error);
       return;
     }
-    notify(`Review failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+    const detail = error instanceof Error ? error.message : String(error);
+    notify(formatFailure("Review failed: ", detail), "error");
   }
 }

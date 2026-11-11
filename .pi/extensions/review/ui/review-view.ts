@@ -1,5 +1,15 @@
+/**
+ * The full-screen review (`/review-assist`): the shared changes view
+ * (`lib/changes/view/changes-view.ts`, the same view `/diff` docks beside the
+ * transcript) with a line cursor, mounted in a host that fills the terminal
+ * and adds the review's footer, comment editor and side chat.
+ *
+ * The view reads a store that lives as long as the review: static for pull
+ * requests and commit ranges, re-read on `r` and after the side chat's tool
+ * calls for targets that end at the working tree.
+ */
 import { propertiesWhen } from "../../lib/runtime-values.ts";
-import type { RuntimeValue } from "../../lib/runtime-values.ts";
+import { isJsonRecord, isString, type RuntimeValue } from "../../lib/runtime-values.ts";
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import type { ExtensionUIContext, Theme } from "@earendil-works/pi-coding-agent";
@@ -35,18 +45,45 @@ import {
 } from "../core/ask.ts";
 import type { PullRequestMetadata } from "../core/pr.ts";
 import { launchEditor, launchEditorProject, type SpawnEditor } from "../core/editor-launch.ts";
-import { collapseHunkContext, expandHunkContext, hunkWithExpandedContext } from "../core/expand.ts";
-import type { DiffAssessment } from "../core/heuristics.ts";
-import { renderReviewMarkdown } from "../core/markdown-export.ts";
 import {
-  effectiveDiffMode,
-  renderDiffFile,
-  renderDiffFileHeader,
-  type DiffStyler,
-} from "../core/render/diff-render.ts";
-import { createHighlight } from "../core/render/highlight.ts";
+  collapseHunkContext,
+  EXPANSION_LIMIT,
+  EXPANSION_STEP,
+  expandHunkContext,
+  hunkWithExpandedContext,
+  type HunkExpansion,
+} from "../core/expand.ts";
+import { assessDiff, type DiffAssessment } from "../core/heuristics.ts";
+import { renderReviewMarkdown } from "../core/markdown-export.ts";
+import { locateComment, revealedContextFits, type CommentLocation } from "../core/anchor.ts";
+import { markHunksReviewed } from "../core/store.ts";
+import {
+  sanitizeTerminalLines,
+  sanitizeTerminalText as safe,
+} from "../../lib/changes/terminal-text.ts";
+import { renderDiffFile, type DiffStyler } from "../../lib/changes/render/diff-render.ts";
+import { createHighlight } from "../../lib/changes/render/highlight.ts";
+import type { DiffSource, FileSummary, SnapshotBaseline } from "../../lib/changes/git/model.ts";
+import { BODY_INDENT, type BodyAnnotation } from "../../lib/changes/view/body-block.ts";
+import {
+  ChangesView,
+  HIDDEN_CONTENTS,
+  type FileBodyRenderer,
+  type PaneActions,
+  type RowDetail,
+} from "../../lib/changes/view/changes-view.ts";
+import { actionFor } from "../../lib/changes/view/keys.ts";
+import { changedLineMatches } from "../../lib/changes/view/line-cursor.ts";
+import type { PaneStyler, RowBadge } from "../../lib/changes/view/rows.ts";
+import type { PaneScroller } from "../../lib/changes/view/surface.ts";
+import type { FindingsSummary } from "../../lib/changes/findings.ts";
+import {
+  createModelStore,
+  type ModelStoreOptions,
+  type RevealedFile,
+} from "../../lib/changes/model-store.ts";
+import { isSensitivePath } from "../../lib/changes/sensitive.ts";
 import type {
-  DiffFile,
   DiffHunk,
   DiffModel,
   ExecRunner,
@@ -56,34 +93,16 @@ import type {
   ReviewStore,
 } from "../core/types.ts";
 import { ReviewInput } from "./review-input.ts";
-import { createZentuiFrameAdapter, type ZentuiLoader } from "./zentui-frame.ts";
 import {
-  beginCommentDraft,
-  commitCommentDraft,
-  createReviewViewState,
-  currentCommentPosition,
-  currentDisplayHunk,
-  currentFile,
-  currentHunk,
-  discardCommentDraft,
-  extendSelection,
-  fileFoldReason,
-  hunkExpansion,
-  hunkFoldReason,
-  markCurrentHunkReviewed,
-  moveFile,
-  moveHunk,
-  moveLine,
-  moveSearchMatch,
-  saveAndClose,
-  selectedLineIndexes,
-  setHunkExpansion,
-  setSearchQuery,
-  toggleCurrentFold,
-  toggleDiffMode,
-  updateCommentDraft,
-  type ReviewViewState,
-} from "./view-state.ts";
+  REVIEW_HELP_LINES,
+  REVIEW_KEY_HINT,
+  REVIEW_KEYS,
+  SPLIT_TOGGLE_KEY,
+} from "./review-keys.ts";
+import { createZentuiFrameAdapter, type ZentuiLoader } from "./zentui-frame.ts";
+import { commitComment, type CommentDraft, type DiffViewMode } from "./view-state.ts";
+
+export type { RevealedFile } from "../../lib/changes/model-store.ts";
 
 export type ReviewViewHost = Pick<
   ExtensionUIContext,
@@ -106,12 +125,40 @@ export type ReviewViewDependencies = {
   listChatModels?: () => Promise<string[]>;
 };
 
+/** Recorded reviewer findings and the last change time of each listed file. */
+export type ReviewFindings = {
+  recorded: FindingsSummary;
+  changeTimes: ReadonlyMap<string, number | null>;
+};
+
 export type OpenReviewViewOptions = ReviewViewDependencies & {
   model: DiffModel;
   assessments: DiffAssessment;
   record: ReviewRecord;
   config: ResolvedReviewConfig;
   reviewRoot: string;
+  /**
+   * Reads a hidden sensitive file's contents after the user presses `v` on
+   * it. Without it the file stays hidden.
+   */
+  revealFile?: RevealFile;
+  /**
+   * Re-reads the target, for `r` and after the side chat's tool calls. Only
+   * targets that end at the working tree pass it; the others cannot change.
+   */
+  reload?: () => Promise<DiffModel>;
+  /** Recorded reviewer findings for `f`/`F`, read on open and after each refresh. */
+  loadFindings?: (paths: readonly string[]) => Promise<ReviewFindings>;
+  /** For a session target: where its changes start, as `/diff` names it. */
+  sessionBaseline?: SnapshotBaseline;
+  /**
+   * Whether the reviewed changes end at the working tree, so Finish places an
+   * instruction to address the comments in the prompt editor. Defaults to
+   * what the target implies (see `targetIncludesWorkingTree`).
+   */
+  includesWorkingTree?: boolean;
+  /** Tests only: shorter limits than FINISH_WAIT_MS and LEAVE_SAVE_MS. */
+  limits?: { finishWaitMs?: number; leaveSaveMs?: number };
   pullRequest?: PullRequestMetadata;
   /** Model for the side chat's own session, as `provider/id`; the caller passes the main session's current model. */
   chatModel?: string;
@@ -126,67 +173,144 @@ export type ReviewViewResult = {
   markdown?: string;
   /** Present only for session targets. It has been placed in Pi's input editor, not sent. */
   agentInstruction?: string;
+  /**
+   * Finish only: the context the reader revealed around hunks, by hunk id, so
+   * a pull-request submission locates comments written on it the way the
+   * view did.
+   */
+  expandedContext?: ReadonlyMap<string, HunkExpansion>;
 };
 
+/** The longest Finish waits for work that can move comments (refresh, context read, reveal). */
+export const FINISH_WAIT_MS = 10_000;
+/** The longest q's save may take before the review stays open and says so. */
+export const LEAVE_SAVE_MS = 5_000;
+
+/** A step in flight that can move where comments are; `settled` is false when it failed. */
+type CoordinateWork = {
+  label: string;
+  affects: (comment: ReviewComment) => boolean;
+  settled: Promise<boolean>;
+};
+
+export type RevealFile = (path: string) => Promise<RevealedFile>;
+
+/** The changes view's own words on a hidden sensitive file, repeated where `e` refuses one. */
+export const HIDDEN_FILE_HINT = HIDDEN_CONTENTS;
+
+/**
+ * True for targets whose head is the working tree: a whole session, a
+ * session turn with no later turn, and a branch review without a target. The
+ * caller knows which turn is last; without it a session turn counts.
+ */
+export function targetIncludesWorkingTree(target: ReviewRecord["target"]): boolean {
+  if (target.kind === "branch") return target.target === undefined;
+  return target.kind === "session" || target.kind === "session-turn";
+}
+
+/**
+ * The instruction Finish places in the prompt editor for a review of the
+ * working tree. It is never sent: the user reads it and presses Enter.
+ */
 export function composeSessionReviewInstruction(
   record: ReviewRecord,
   markdown: string,
+  includesWorkingTree = targetIncludesWorkingTree(record.target),
 ): string | undefined {
-  if (record.target.kind !== "session" && record.target.kind !== "session-turn") return undefined;
-  return [
-    "Please address the following human code review. Resolve each comment, preserve unrelated behavior, and report any comment you cannot address.",
-    "",
-    markdown.trimEnd(),
-  ].join("\n");
+  // A pull request's comments go to GitHub, not to the agent.
+  if (record.target.kind === "pr") return undefined;
+  // Every other target's comments reach the editor. Only a comparison that ends
+  // at the working tree can be "addressed" as is; an earlier turn or a fixed
+  // range is described as what it is.
+  const lead = includesWorkingTree
+    ? "Please address the following human code review. Resolve each comment, preserve unrelated behavior, and report any comment you cannot address."
+    : "The following human code review refers to an earlier comparison, not the working tree; its lines may not match the files as they are now. Read each comment against that comparison before acting on it.";
+  return [lead, "", markdown.trimEnd()].join("\n");
 }
 
-function assessmentForFile(state: ReviewViewState, path: string) {
-  return state.assessments.files.find((assessment) => assessment.path === path);
-}
-
-function fileListLines(state: ReviewViewState, width: number, theme: Theme): string[] {
-  if (state.fileOrder.length === 0) return [theme.fg("dim", "No changed files")];
-  const count = Math.min(5, state.fileOrder.length);
-  const start = Math.max(
-    0,
-    Math.min(state.fileIndex - Math.floor(count / 2), state.fileOrder.length - count),
-  );
-  const lines: string[] = [];
-  if (start > 0)
-    lines.push(theme.fg("dim", `  ↑ ${start} higher-risk file${start === 1 ? "" : "s"}`));
-  for (let index = start; index < start + count; index += 1) {
-    const path = state.fileOrder[index]!;
-    const file = state.model.files.find((candidate) => candidate.path === path);
-    const assessment = assessmentForFile(state, path);
-    const selected = index === state.fileIndex;
-    const folded = state.fileFolds.has(path);
-    const marker = selected ? theme.fg("accent", "❯") : " ";
-    const fold = folded ? "▸" : "▾";
-    const score = assessment?.riskScore ?? 0;
-    const reason = assessment?.reasons.length
-      ? assessment.reasons.join("; ")
-      : "No elevated risk signals";
-    const counts = `${theme.fg("toolDiffAdded", `+${file?.additions ?? 0}`)} ${theme.fg("toolDiffRemoved", `-${file?.deletions ?? 0}`)}`;
-    const badge =
-      score > 0
-        ? `${theme.fg(score >= 30 ? "error" : "warning", `▲${score}`)} ${theme.fg("muted", reason)}`
-        : theme.fg("dim", reason);
-    const name = selected ? theme.bold(path) : path;
-    const label = `${marker} ${theme.fg("dim", fold)} ${name}  ${counts}  ${badge}`;
-    lines.push(truncateToWidth(label, width, "…"));
-    if (folded) {
-      lines.push(
-        truncateToWidth(theme.fg("dim", `    Hidden: ${fileFoldReason(state, path)}`), width, "…"),
-      );
-    }
+/** What the view's header names for a review target (the review's own title line names it in full). */
+function sourceOfTarget(target: ReviewRecord["target"]): DiffSource {
+  switch (target.kind) {
+    case "session":
+      return { kind: "session" };
+    case "session-turn":
+      return { kind: "since-checkpoint", checkpointId: "", label: `turn ${target.turnIndex}` };
+    case "branch":
+      return target.target === undefined
+        ? { kind: "branch-base", base: target.base }
+        : {
+            kind: "range",
+            base: target.base,
+            head: target.target,
+            label: `${target.base}…${target.target}`,
+          };
+    case "pr":
+      return { kind: "range", base: "", head: "", label: `pull request #${target.number}` };
   }
-  const remaining = state.fileOrder.length - (start + count);
-  if (remaining > 0)
-    lines.push(theme.fg("dim", `  ↓ ${remaining} lower-risk file${remaining === 1 ? "" : "s"}`));
-  return lines;
 }
 
-type DiffBody = { lines: string[]; selectedLine: number };
+/** The pane's outdated-note line, for a review comment: `✎ (outdated, was path:line) text`. */
+function outdatedCommentLines(
+  comment: ReviewComment,
+  withPath: boolean,
+  width: number,
+  styler: Pick<DiffStyler, "fg">,
+): string[] {
+  const range = rangeLabel(comment);
+  const was = withPath
+    ? `${range.includes("-") ? "lines" : "line"} ${range}`
+    : `${comment.path}:${range}`;
+  const head = withPath ? `✎ ${comment.path} (outdated, was ${was})` : `✎ (outdated, was ${was})`;
+  const text = safe(`${head} ${comment.body.split("\n")[0] ?? ""}`);
+  return [truncateToWidth(`${BODY_INDENT}  ${styler.fg("dim", text)}`, width, "…")];
+}
+
+function commentBlock(
+  comment: ReviewComment,
+  width: number,
+  styler: Pick<DiffStyler, "fg">,
+): string[] {
+  const bar = styler.fg("accent", " ▎ ");
+  const label = `● ${rangeLabel(comment)} `;
+  const labelWidth = visibleWidth(label);
+  const bodyWidth = Math.max(1, width - 3 - labelWidth);
+  return wrapPlainText(sanitizeTerminalLines(comment.body), bodyWidth).map((line, index) =>
+    index === 0
+      ? `${bar}${styler.fg("accent", label)}${styler.fg("muted", line)}`
+      : `${bar}${" ".repeat(labelWidth)}${styler.fg("muted", line)}`,
+  );
+}
+
+/** The row a comment sits under: its line on its side, or undefined when no longer displayed. */
+function commentLineIndex(hunk: DiffHunk, comment: Pick<ReviewComment, "side" | "line">): number {
+  return hunk.lines.findIndex((line) =>
+    comment.side === "LEFT"
+      ? line.kind !== "add" && line.oldLine === comment.line
+      : line.kind !== "del" && line.newLine === comment.line,
+  );
+}
+
+/**
+ * A tool call's arguments or output with every string terminal-safe, for
+ * display only: the chat's agent and the repository control these strings.
+ * Tabs and line breaks stay, as the tool renderers lay them out.
+ */
+
+function terminalSafeValue(value: RuntimeValue): RuntimeValue {
+  if (isString(value)) {
+    return value
+      .split("\t")
+      .map((part) => sanitizeTerminalLines(part))
+      .join("\t");
+  }
+  if (Array.isArray(value)) return value.map((item: RuntimeValue) => terminalSafeValue(item));
+  if (isJsonRecord(value)) {
+    const safeRecord: Record<string, RuntimeValue> = {};
+    for (const [key, item] of Object.entries(value)) safeRecord[key] = terminalSafeValue(item);
+    return safeRecord;
+  }
+  return value;
+}
 type ReviewPaneFocus = "review" | "chat";
 type ToolExecutionDefinition = ConstructorParameters<typeof ToolExecutionComponent>[4];
 
@@ -275,214 +399,12 @@ export function reviewViewHeights(terminalRows: number): ReviewViewHeights {
   };
 }
 
-function oneHunkFile(file: DiffFile, hunk: DiffHunk): DiffFile {
-  return { ...file, hunks: [hunk] };
-}
-
-function splitRowForLine(hunk: DiffHunk, lineIndex: number): number {
-  let index = 0;
-  let row = 0;
-  while (index < hunk.lines.length) {
-    if (hunk.lines[index]?.kind === "context") {
-      if (index === lineIndex) return row;
-      index += 1;
-      row += 1;
-      continue;
-    }
-    if (hunk.lines[index]?.kind === "del") {
-      const deleted: number[] = [];
-      const added: number[] = [];
-      while (hunk.lines[index]?.kind === "del") deleted.push(index++);
-      while (hunk.lines[index]?.kind === "add") added.push(index++);
-      const pair = Math.max(deleted.indexOf(lineIndex), added.indexOf(lineIndex));
-      if (pair >= 0) return row + pair;
-      row += Math.max(deleted.length, added.length);
-      continue;
-    }
-    if (index === lineIndex) return row;
-    index += 1;
-    row += 1;
-  }
-  return 0;
-}
-
-function renderedRowForLine(
-  hunk: DiffHunk,
-  lineIndex: number,
-  mode: ReviewViewState["mode"],
-  width: number,
-): number {
-  return effectiveDiffMode({ mode, width, highlight: () => [], fold: () => false }) === "split"
-    ? splitRowForLine(hunk, lineIndex)
-    : lineIndex;
-}
-
-function commentsForHunk(state: ReviewViewState, hunkId: string): ReviewComment[] {
-  return state.record.comments.filter((comment) => comment.anchor.hunkHash === hunkId);
-}
-
-/**
- * Rendered row a committed comment sits under. A comment on a line that is
- * not currently displayed — its expanded context was collapsed again — falls
- * back to the hunk header, where its own line label still locates it.
- */
-function commentRowForHunk(
-  hunk: DiffHunk,
-  comment: ReviewComment,
-  mode: ReviewViewState["mode"],
-  width: number,
-): number {
-  const lineIndex = hunk.lines.findIndex((line) =>
-    comment.side === "LEFT"
-      ? line.kind !== "add" && line.oldLine === comment.line
-      : line.kind !== "del" && line.newLine === comment.line,
-  );
-  return lineIndex < 0 ? 0 : 1 + renderedRowForLine(hunk, lineIndex, mode, width);
-}
-
-function commentBlock(comment: ReviewComment, width: number, styler: DiffStyler): string[] {
-  const bar = styler.fg("accent", " ▎ ");
-  const label = `● ${rangeLabel(comment)} `;
-  const labelWidth = visibleWidth(label);
-  const bodyWidth = Math.max(1, width - 3 - labelWidth);
-  return wrapPlainText(comment.body, bodyWidth).map((line, index) =>
-    index === 0
-      ? `${bar}${styler.fg("accent", label)}${styler.fg("muted", line)}`
-      : `${bar}${" ".repeat(labelWidth)}${styler.fg("muted", line)}`,
-  );
-}
-
-function diffBody(
-  state: ReviewViewState,
-  width: number,
-  styler: DiffStyler,
-  config: ResolvedReviewConfig,
-): DiffBody {
-  const file = currentFile(state);
-  if (!file) return { lines: [styler.fg("dim", "No reviewable diff")], selectedLine: 0 };
-  if (state.fileFolds.has(file.path)) {
-    return {
-      lines: [
-        truncateToWidth(renderDiffFileHeader(file, styler), Math.max(1, width), "…"),
-        styler.fg("dim", `… File hidden: ${fileFoldReason(state, file.path)}`),
-      ],
-      selectedLine: 1,
-    };
-  }
-
-  const diffLines = file.hunks.reduce(
-    (total, hunk) =>
-      total + hunkWithExpandedContext(hunk, state.expandedContext.get(hunk.id)).lines.length,
-    0,
-  );
-  const highlight = createHighlight({
-    config: config.highlight,
-    filePath: file.path,
-    diffLines,
-  });
-  const renderOptions = {
-    mode: state.mode,
-    width,
-    highlight,
-    fold: (hunkId: string) => state.hunkFolds.has(hunkId),
-    foldReason: (hunkId: string) => {
-      const reason = hunkFoldReason(state, hunkId);
-      const count = commentsForHunk(state, hunkId).length;
-      if (count === 0) return reason;
-      const suffix = `${count} comment${count === 1 ? "" : "s"} inside`;
-      return reason ? `${reason} · ${suffix}` : suffix;
-    },
-  };
-  const header = renderDiffFile({ ...file, hunks: [] }, renderOptions, styler)[0] ?? file.path;
-  const lines = [header];
-  let selectedLine = 0;
-  const selected = currentHunk(state)?.id;
-  for (const originalHunk of file.hunks) {
-    const hunk = hunkWithExpandedContext(originalHunk, state.expandedContext.get(originalHunk.id));
-    const start = lines.length;
-    const rendered = renderDiffFile(oneHunkFile(file, hunk), renderOptions, styler).slice(1);
-    let selectedRow: number | undefined;
-    if (hunk.id === selected) {
-      selectedRow =
-        state.lineIndex === undefined
-          ? 0
-          : 1 + renderedRowForLine(hunk, state.lineIndex, state.mode, width);
-      // A selection must read as one block, so every covered row is inverted,
-      // not just its ends. Split mode can map two lines onto one rendered row,
-      // and inverting that row twice would cancel the highlight out.
-      const selectedRows = new Set(
-        selectedLineIndexes(state).map(
-          (lineIndex) => 1 + renderedRowForLine(hunk, lineIndex, state.mode, width),
-        ),
-      );
-      if (selectedRows.size === 0) selectedRows.add(selectedRow);
-      for (const row of selectedRows) {
-        if (rendered[row]) rendered[row] = styler.inverse(rendered[row]);
-      }
-    }
-    // Committed comments render beneath their anchored rows, GitHub-style,
-    // so a written remark stays visible instead of surviving only as a
-    // count in the footer. A folded hunk keeps them summarized in its
-    // placeholder rather than leaking bodies below the fold.
-    if (!state.hunkFolds.has(originalHunk.id)) {
-      // A reviewed hunk that the reviewer re-expanded keeps its verdict in
-      // sight on the hunk header.
-      if (state.record.cursor.reviewedHunkIds.includes(originalHunk.id) && rendered[0]) {
-        rendered[0] = `${rendered[0]} ${styler.fg("toolDiffAdded", "✓ reviewed")}`;
-      }
-      const anchored = commentsForHunk(state, originalHunk.id)
-        .map((comment) => ({ comment, row: commentRowForHunk(hunk, comment, state.mode, width) }))
-        .sort((first, second) => first.row - second.row);
-      let inserted = 0;
-      let shift = 0;
-      for (const { comment, row } of anchored) {
-        const block = commentBlock(comment, width, styler);
-        rendered.splice(row + 1 + inserted, 0, ...block);
-        if (selectedRow !== undefined && row < selectedRow) shift += block.length;
-        inserted += block.length;
-      }
-      if (selectedRow !== undefined) selectedRow += shift;
-    }
-    if (selectedRow !== undefined) selectedLine = start + selectedRow;
-    lines.push(...rendered);
-  }
-  return { lines, selectedLine };
-}
-
-function statusLine(state: ReviewViewState, theme: Theme): string {
-  const file = currentFile(state);
-  const hunk = currentHunk(state);
-  const reviewed = state.record.cursor.reviewedHunkIds.length;
-  const parts = [
-    `${state.fileIndex + (file ? 1 : 0)}/${state.fileOrder.length} files`,
-    file ? `${state.hunkIndex + (hunk ? 1 : 0)}/${file.hunks.length} hunks` : "0/0 hunks",
-    `${reviewed} reviewed`,
-    `${state.record.comments.length} comments`,
-    state.mode,
-  ];
-  const search = state.search;
-  if (search)
-    parts.push(
-      search.matches.length === 0
-        ? `search “${search.query}”: no matches`
-        : `search “${search.query}”: ${search.matchIndex + 1}/${search.matches.length}`,
-    );
-  return theme.fg("muted", parts.join(" · "));
-}
-
 /** `startLine` is absent for a single line, so the label never fakes a range. */
 function rangeLabel(position: { line: number; startLine?: number }): string {
   return position.startLine === undefined
     ? `${position.line}`
     : `${position.startLine}-${position.line}`;
 }
-
-function commentTargetLine(state: ReviewViewState, theme: Theme): string {
-  const position = state.commentDraft?.position ?? currentCommentPosition(state);
-  if (!position) return theme.fg("dim", "No line selected · j/k or ↑/↓ line");
-  return theme.fg("dim", `Target ${position.path}:${rangeLabel(position)} ${position.side}`);
-}
-
 function fullWidthLine(line: string, width: number): string {
   const clipped = truncateToWidth(line, width, "…");
   return `${clipped}${" ".repeat(Math.max(0, width - visibleWidth(clipped)))}`;
@@ -519,11 +441,11 @@ function reviewIdentity(options: OpenReviewViewOptions): string {
   const target = options.record.target;
   if (target.kind === "pr") {
     return options.pullRequest
-      ? `#${options.pullRequest.number} ${options.pullRequest.title}`
+      ? `#${options.pullRequest.number} ${safe(options.pullRequest.title)}`
       : `Pull request #${target.number}`;
   }
   if (target.kind === "branch") {
-    return `Branch ${target.base} → ${target.target ?? "working tree"}`;
+    return `Branch ${safe(target.base)} → ${target.target === undefined ? "working tree" : safe(target.target)}`;
   }
   if (target.kind === "session-turn") return `Session turn ${target.turnIndex}`;
   return "Session changes";
@@ -545,9 +467,11 @@ function reviewHeaderLine(options: {
     ...(options.scroll
       ? [{ kind: "scroll" as const, text: options.theme.fg("dim", options.scroll) }]
       : []),
-    ...(pullRequest ? [{ kind: "base" as const, text: `base ${pullRequest.baseRefName}` }] : []),
+    ...(pullRequest
+      ? [{ kind: "base" as const, text: `base ${safe(pullRequest.baseRefName)}` }]
+      : []),
     ...(pullRequest?.author
-      ? [{ kind: "author" as const, text: `@${pullRequest.author.login}` }]
+      ? [{ kind: "author" as const, text: `@${safe(pullRequest.author.login)}` }]
       : []),
     ...(relativeTime ? [{ kind: "updated" as const, text: relativeTime }] : []),
   ];
@@ -562,34 +486,6 @@ function reviewHeaderLine(options: {
   const left = leftWidth > 0 ? truncateToWidth(title, leftWidth, "…") : "";
   const gap = " ".repeat(Math.max(0, options.width - visibleWidth(left) - visibleWidth(right)));
   return `${left}${gap}${right}`;
-}
-
-function currentEditorLine(state: ReviewViewState): number {
-  const position = currentCommentPosition(state);
-  if (position) return position.line;
-  const hunk = currentHunk(state);
-  const file = currentFile(state);
-  if (!hunk || !file) return 1;
-  return file.kind === "deleted" ? hunk.oldStart : hunk.newStart;
-}
-
-function currentReviewChatContext(
-  state: ReviewViewState,
-  reviewRoot: string,
-): ReviewChatContext | undefined {
-  const position = currentCommentPosition(state);
-  const hunk = currentDisplayHunk(state);
-  if (!position || !hunk) return undefined;
-  const focusedLine = hunk.lines[state.lineIndex!];
-  if (!focusedLine) return undefined;
-  return {
-    path: position.path,
-    side: position.side,
-    line: position.line,
-    focusedLineText: focusedLine.text,
-    hunkHeader: hunk.header,
-    reviewRoot,
-  };
 }
 
 function reviewEditorTheme(theme: Theme): EditorTheme {
@@ -650,7 +546,10 @@ function chatBodyLines(
   for (const message of chat.messages) {
     if (content.length > 0) content.push("");
     if (message.role === "user") {
-      const wrapped = wrapPlainText(message.text, Math.max(1, messageWidth - 2));
+      const wrapped = wrapPlainText(
+        sanitizeTerminalLines(message.text),
+        Math.max(1, messageWidth - 2),
+      );
       content.push(
         ...wrapped.map((line, index) =>
           theme.fg("userMessageText", `${index === 0 ? "❯ " : "  "}${line}`),
@@ -662,7 +561,12 @@ function chatBodyLines(
       content.push(...renderTool(message, messageWidth));
       continue;
     }
-    content.push(...new Markdown(message.text, 0, 0, markdownTheme).render(messageWidth));
+    // Model output: its control characters are drawn as glyphs, never sent to the terminal.
+    content.push(
+      ...new Markdown(sanitizeTerminalLines(message.text), 0, 0, markdownTheme).render(
+        messageWidth,
+      ),
+    );
   }
   if (content.length === 0) content.push(theme.fg("dim", "Ask about the selected diff line."));
   if (chat.pending) content.push(theme.fg("dim", "Agent is replying…"));
@@ -678,6 +582,12 @@ function chatBodyLines(
   return { lines: lines.slice(0, height), offset };
 }
 
+/** The first line of a thrown value's message, safe to draw. */
+function failureLine(error: RuntimeValue): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  return safe((raw.split(/\r?\n/u)[0] ?? "").trim() || "unknown error");
+}
+
 export async function openReviewView(
   options: OpenReviewViewOptions,
 ): Promise<ReviewViewResult | undefined> {
@@ -686,24 +596,492 @@ export async function openReviewView(
   const createChat = options.createReviewChat ?? createDefaultReviewChat;
   const markdownTheme = options.markdownTheme ?? getMarkdownTheme();
   const frameAdapter = await createZentuiFrameAdapter(options.zentuiLoader);
-  let state = createReviewViewState(options);
+  const config = options.config;
+  let record = options.record;
+  let assessments = options.assessments;
+  let mode: DiffViewMode = "unified";
+  let commentDraft: CommentDraft | undefined;
+  /** Display-only context around hunks, keyed by the stable hunk id. */
+  const expansions = new Map<string, HunkExpansion>();
+  // Messages can embed repository text (paths, git errors) and chat errors.
+  // The review covers the whole screen, so Pi's own notifications are drawn
+  // behind it: while the view is open every message goes to its message line
+  // (which keeps it until another replaces it). Errors are also sent to Pi's
+  // notifications, so they can still be read after the review closes.
+  // Many callers report from work nothing awaits (refreshes, chat commands,
+  // key actions), so this never throws: a stale context after the session
+  // ended is silent, and any other host failure leaves the message line as
+  // the only copy.
+  let repaint: () => void = () => {};
+  const notify = (message: string, type?: Parameters<ReviewViewHost["notify"]>[1]): void => {
+    const open = view !== undefined && !closed;
+    if (open) {
+      view?.setMessage(message, type === "error" || type === "warning" ? type : "muted");
+      repaint();
+      if (type !== "error") return;
+    }
+    try {
+      options.host.notify(safe(message), type);
+    } catch {
+      // A stale context (the session ended) stays silent. Any other host failure has
+      // no other place to go: while the view is open its message line holds the text.
+    }
+  };
   let terminalRows = 24;
   let chat: ReviewChat | undefined;
   let unsubscribeChat: (() => void) | undefined;
+  let unsubscribeStore: (() => void) | undefined;
+  let view: ChangesView | undefined;
   // Handle for the review's own overlay, captured when Pi shows it. Needed so a
   // host prompt can be made visible; absent in hosts that ignore `onHandle`.
   let overlayHandle: OverlayHandle | undefined;
+  /** Set when the view closes; results that arrive later (a reveal, a refresh, a context read) are dropped. */
+  let closed = false;
+  const storeOptions: ModelStoreOptions = {
+    model: options.model,
+    source: sourceOfTarget(record.target),
+    repoRoot: options.reviewRoot,
+  };
+  /**
+   * Work in flight that can move where comments are: a refresh (r, or after a
+   * chat tool call), a reveal of a hidden file, a context read for comments
+   * on revealed context. Finish waits for it; q's save marks what it affects
+   * as unconfirmed. Each is bounded by the git runner's own limit (30 s per
+   * command); Finish waits at most FINISH_WAIT_MS for all of it.
+   */
+  const coordinateWork = new Set<CoordinateWork>();
+  const finishWaitMs = options.limits?.finishWaitMs ?? FINISH_WAIT_MS;
+  const leaveSaveMs = options.limits?.leaveSaveMs ?? LEAVE_SAVE_MS;
+  /** Set by the view: run after a tracked step settles, so the record follows it. */
+  let afterWork: (() => void) | undefined;
+  /**
+   * Reads that failed, by kind ("refresh", "context", "reveal:<path>"), with
+   * the comments they could have moved. Those comments stay unconfirmed in
+   * every follow, save and Finish until a later read of the same kind succeeds.
+   */
+  const failedReads = new Map<string, (comment: ReviewComment) => boolean>();
+  function trackWork<T>(
+    kind: string,
+    label: string,
+    affects: (comment: ReviewComment) => boolean,
+    work: Promise<T>,
+  ): Promise<T> {
+    void work.then(
+      () => failedReads.delete(kind),
+      () => failedReads.set(kind, affects),
+    );
+    const entry: CoordinateWork = {
+      label,
+      affects,
+      settled: work.then(
+        () => true,
+        () => false,
+      ),
+    };
+    coordinateWork.add(entry);
+    void entry.settled.then(() => {
+      coordinateWork.delete(entry);
+      // After the store's own continuation (it applies a reveal after this promise).
+      setImmediate(() => afterWork?.());
+    });
+    return work;
+  }
+  const revealFile = options.revealFile;
+  if (revealFile) {
+    storeOptions.reveal = (path) =>
+      trackWork(
+        `reveal:${path}`,
+        `reading ${path}`,
+        (comment) => comment.path === path,
+        revealFile(path),
+      );
+  }
+  const reload = options.reload;
+  if (reload) {
+    storeOptions.reload = () =>
+      trackWork("refresh", "reading the changes again", () => true, reload());
+  }
+  if (options.sessionBaseline) storeOptions.baseline = options.sessionBaseline;
+  const store = createModelStore(storeOptions);
 
   try {
     return await options.host.custom<ReviewViewResult | undefined>(
       (tui, theme, _keybindings, done) => {
         terminalRows = tui.terminal.rows;
-        let scrollOffset = 0;
-        let followCursor = true;
         let busy = false;
+        /**
+         * Leaving and finishing, as one explicit state machine (the table is
+         * in tests/review-lifecycle.test.ts):
+         *   open -> finishing (S) -> closed (its save done) | open (failed or cancelled prompt)
+         *   open | finishing -> leaving (q: one save, bounded by LEAVE_SAVE_MS)
+         *   leaving -> closed (save done, or q again) | open (save failed or too slow)
+         *   any -> closed (render failure, session ended)
+         * Every completion goes through `close`, which runs once. A Finish or a
+         * save that started under an earlier token finds it no longer owns the
+         * view after its await and does nothing: no editor text, no result that
+         * makes the command submit, no second completion.
+         */
+        type Phase =
+          | { kind: "open" }
+          | { kind: "finishing"; token: number }
+          | { kind: "leaving"; token: number; timer: ReturnType<typeof setTimeout> }
+          | { kind: "closed" };
+        let phase: Phase = { kind: "open" };
+        let tokens = 0;
+        function close(result: ReviewViewResult): boolean {
+          if (phase.kind === "closed" || closed) return false;
+          if (phase.kind === "leaving") clearTimeout(phase.timer);
+          phase = { kind: "closed" };
+          done(result);
+          return true;
+        }
+        /** True while the Finish or leave started with `token` still owns the view. */
+        const owns = (token: number) =>
+          !closed &&
+          (phase.kind === "finishing" || phase.kind === "leaving") &&
+          phase.token === token;
+        /**
+         * The record whose save on leaving failed. Leaving closes without
+         * saving only while `record` is still that very object: any change
+         * since (a comment, a mark, a verdict or body, a refresh that
+         * re-follows comments) makes a new record, and leaving then tries to
+         * save again under the same bounded rule. "Leave again to close without
+         * saving" covers only what the failed save held; nothing later is lost.
+         */
+        let saveFailedFor: ReviewRecord | undefined;
+
+        /** Pi's notifications, for what must outlive the view. Never throws; silent when stale. */
+        function hostNotice(text: string, type: "warning" | "error"): void {
+          try {
+            options.host.notify(safe(text), type);
+          } catch {
+            // A stale context: the session ended, there is nobody to tell.
+          }
+        }
         let chatOpen = false;
         let focus: ReviewPaneFocus = "review";
         let lastBodyHeight = reviewViewHeights(terminalRows).bodyHeight;
+        let scrollTop = 0;
+        let lastRevision = -1;
+        const seenHunks = new Set<string>();
+        const seenFiles = new Set<string>();
+        const seenTools = new Set<string>();
+
+        // Rows use the theme; diff text keeps the caller's styler for inversion and backgrounds.
+        const diffStyler = options.styler;
+        const styler: PaneStyler = {
+          fg: (color, text) => theme.fg(color, text),
+          bold: (text) => theme.bold(text),
+          inverse: (text) => diffStyler.inverse(text),
+        };
+        if (diffStyler.bg) styler.bg = diffStyler.bg.bind(diffStyler);
+        if (diffStyler.getFgAnsi) styler.getFgAnsi = diffStyler.getFgAnsi.bind(diffStyler);
+        if (diffStyler.getBgAnsi) styler.getBgAnsi = diffStyler.getBgAnsi.bind(diffStyler);
+        if (diffStyler.getColorMode) styler.getColorMode = diffStyler.getColorMode.bind(diffStyler);
+
+        const renderFileBody: FileBodyRenderer = (file, width, bodyStyler, layout) =>
+          renderDiffFile(
+            file,
+            {
+              mode: layout?.mode ?? "unified",
+              width,
+              highlight: createHighlight({
+                config: config.highlight,
+                filePath: file.path,
+                diffLines: file.hunks.reduce((total, hunk) => total + hunk.lines.length, 0),
+              }),
+              fold: (hunkId) => layout?.fold(hunkId) ?? false,
+              foldReason: (hunkId) => layout?.foldReason(hunkId),
+            },
+            bodyStyler,
+          ).slice(1);
+
+        const assessmentOf = (path: string) =>
+          assessments.files.find((assessment) => assessment.path === path);
+        const commentsOn = (hunkId: string) =>
+          record.comments.filter((comment) => comment.anchor.hunkHash === hunkId);
+
+        /** A hunk as the reader sees it, with the context revealed around it. */
+        const shownHunk = (hunk: DiffHunk) => {
+          const expansion = expansions.get(hunk.id);
+          return expansion ? hunkWithExpandedContext(hunk, expansion) : hunk;
+        };
+
+        /**
+         * Where a comment is now: `locateComment` (core/anchor.ts), the one
+         * decision the pull-request plan also makes, on the model shown and
+         * with the context revealed. Nothing here trusts a stored line.
+         */
+        function locationOf(comment: ReviewComment): CommentLocation {
+          return locateComment(comment, store.model(), { shown: shownHunk });
+        }
+
+        function placementOf(comment: ReviewComment) {
+          const location = locationOf(comment);
+          return location.status === "placed" ? location : undefined;
+        }
+
+        /**
+         * The only writer of where the record says comments are. Each comment
+         * takes what `locationOf` says now: placed, its current hunk,
+         * position and lines; outdated, its last lines, marked `outdated`; a
+         * withheld file, unchanged. Comments in `unconfirmed` (work that could
+         * move them has not finished) keep their lines and are marked so,
+         * never presented as current. Run on open, after each refresh, after
+         * a reveal or a context read lands, and before every save.
+         */
+        function followComments(given: ReadonlySet<string> = new Set()): void {
+          // A failed read leaves its comments uncertain until one succeeds.
+          const unconfirmed = new Set(given);
+          for (const affects of failedReads.values()) {
+            for (const comment of record.comments)
+              if (affects(comment)) unconfirmed.add(comment.id);
+          }
+          let changed = false;
+          const comments = record.comments.map((comment): ReviewComment => {
+            const { stale: _stale, ...current } = comment;
+            let next: ReviewComment;
+            if (unconfirmed.has(comment.id)) {
+              next = { ...current, stale: "unconfirmed" };
+            } else {
+              const location = locationOf(comment);
+              if (location.status === "hidden") return comment;
+              if (location.status === "outdated") {
+                next = { ...current, stale: "outdated" };
+              } else {
+                const { startLine: _startLine, ...rest } = current;
+                next = {
+                  ...rest,
+                  line: location.line,
+                  ...propertiesWhen(!(comment.startLine === undefined), () => ({
+                    startLine: location.startLine,
+                  })),
+                  anchor: {
+                    ...comment.anchor,
+                    hunkHash: location.hunkId,
+                    position: location.position,
+                  },
+                };
+              }
+            }
+            if (JSON.stringify(next) === JSON.stringify(comment)) return comment;
+            changed = true;
+            return next;
+          });
+          if (changed) record = { ...record, comments };
+        }
+
+        function riskOrder(files: readonly FileSummary[]): readonly FileSummary[] {
+          const rank = new Map(assessments.reviewOrder.map((path, index) => [path, index]));
+          return files
+            .map((file, index) => ({ file, rank: rank.get(file.path) ?? rank.size + index }))
+            .sort((left, right) => left.rank - right.rank)
+            .map((entry) => entry.file);
+        }
+
+        function riskBadges(path: string): RowBadge[] {
+          const score = assessmentOf(path)?.riskScore ?? 0;
+          return score > 0 ? [{ text: `▲${score}`, color: score >= 30 ? "error" : "warning" }] : [];
+        }
+
+        function foldReason(hunkId: string): string {
+          const reason = record.cursor.reviewedHunkIds.includes(hunkId)
+            ? "Already reviewed in this review"
+            : (assessments.hunks.find((hunk) => hunk.hunkId === hunkId)?.reason ??
+              "Folded by reviewer");
+          const count = commentsOn(hunkId).length;
+          if (count === 0) return reason;
+          return `${reason} · ${count} comment${count === 1 ? "" : "s"} inside`;
+        }
+
+        /** True while a listed file's contents are hidden as sensitive. */
+        function isHidden(path: string): boolean {
+          const summary = changes.files().find((file) => file.path === path);
+          return summary !== undefined && !changes.canShowContents(summary);
+        }
+
+        function rowDetails(path: string, expanded: boolean): RowDetail[] {
+          const details: RowDetail[] = [];
+          const assessment = assessmentOf(path);
+          if (assessment && assessment.riskScore > 0 && assessment.reasons.length > 0) {
+            details.push({ text: assessment.reasons.join("; "), color: "muted" });
+          }
+          if (!expanded && assessment?.collapsed) {
+            details.push({
+              text: `Hidden: ${assessment.collapseReason ?? "folded by the review's rules"} · ⏎ shows it`,
+              color: "dim",
+            });
+          }
+          // A read limit or error kept the body out; say so on the row, as the body does.
+          const notice = store.model().notices?.find((entry) => entry.path === path)?.message;
+          if (notice !== undefined) details.push({ text: notice, color: "warning" });
+          if (isHidden(path)) {
+            const count = record.comments.filter((comment) => comment.path === path).length;
+            if (count > 0) {
+              details.push({
+                text: `${count} comment${count === 1 ? "" : "s"} on this file, shown with its contents.`,
+                color: "dim",
+              });
+            }
+          }
+          return details;
+        }
+
+        function annotations(
+          path: string,
+          hunks: readonly DiffHunk[],
+          width: number,
+        ): BodyAnnotation[] {
+          const placed: BodyAnnotation[] = [];
+          for (const hunk of hunks) {
+            for (const comment of record.comments) {
+              if (comment.path !== path) continue;
+              // Placed by its text, in whichever hunk holds it now; a comment
+              // whose text is gone is drawn outdated below.
+              const at = placementOf(comment);
+              if (!at || at.hunkId !== hunk.id) continue;
+              const lineIndex = commentLineIndex(hunk, { side: comment.side, line: at.line });
+              placed.push({
+                hunkId: hunk.id,
+                // A line no longer displayed (its context collapsed) falls back to the header.
+                place: lineIndex < 0 ? "header" : { afterLine: lineIndex },
+                lines: commentBlock(comment, width, styler),
+              });
+            }
+          }
+          return placed;
+        }
+
+        /** Comments whose text is no longer in their listed file (hunk gone, or text not found in it). */
+        function fileTrailer(path: string, _hunks: readonly DiffHunk[], width: number): string[] {
+          return record.comments
+            .filter((comment) => comment.path === path && locationOf(comment).status === "outdated")
+            .flatMap((comment) => outdatedCommentLines(comment, false, width, styler));
+        }
+
+        /** Comments on files that left the diff, under the pane's heading. */
+        function trailer(width: number): string[] {
+          const listed = new Set(changes.files().map((file) => file.path));
+          const gone = record.comments.filter((comment) => !listed.has(comment.path));
+          if (gone.length === 0) return [];
+          return [
+            "",
+            styler.fg("dim", "Not in this diff:"),
+            ...gone.flatMap((comment) => outdatedCommentLines(comment, true, width, styler)),
+          ];
+        }
+
+        const actions: PaneActions = {
+          unfocus: () => leave(),
+          close: () => leave(),
+          resizeBy: () => {},
+          refresh: () => {
+            void refresh("manual");
+          },
+          requestRender: () => tui.requestRender(),
+          isToggleKey: () => false,
+          isFocusKey: () => false,
+        };
+
+        const changes = new ChangesView({
+          store,
+          styler,
+          actions,
+          renderFileBody,
+          keyHint: REVIEW_KEY_HINT,
+          helpLines: REVIEW_HELP_LINES,
+          keepMessages: true,
+          keys: REVIEW_KEYS,
+          title: "Review",
+          cursor: "line",
+          fileOrder: riskOrder,
+          rowBadges: riskBadges,
+          foldReason,
+          reviewedHunks: () => new Set(record.cursor.reviewedHunkIds),
+          mode: () => mode,
+          search: (query) => changedLineMatches(store.model().files, query),
+          expandContext: (hunk) => hunkWithExpandedContext(hunk, expansions.get(hunk.id)),
+          annotations,
+          fileTrailer,
+          rowDetails,
+          trailer,
+        });
+        view = changes;
+        repaint = () => tui.requestRender();
+        const scroller: PaneScroller = {
+          top: () => scrollTop,
+          viewportHeight: () => lastBodyHeight,
+          scrollTo: (top) => {
+            scrollTop = Math.max(0, top);
+          },
+          scrollBy: (lines) => {
+            scrollTop = Math.max(0, scrollTop + lines);
+          },
+        };
+        changes.attachScroller(scroller);
+
+        /** Fold reviewed and rule-folded hunks the first time each is seen; refreshes keep the reviewer's choices. */
+        function seedFolds(): void {
+          const reviewed = new Set(record.cursor.reviewedHunkIds);
+          const collapsed = new Set(
+            assessments.hunks.filter((hunk) => hunk.collapsed).map((hunk) => hunk.hunkId),
+          );
+          for (const file of store.model().files) {
+            for (const hunk of file.hunks) {
+              if (seenHunks.has(hunk.id)) continue;
+              seenHunks.add(hunk.id);
+              if (reviewed.has(hunk.id) || collapsed.has(hunk.id)) changes.setFolded(hunk.id, true);
+            }
+          }
+          for (const file of store.model().files) {
+            if (seenFiles.has(file.path)) continue;
+            seenFiles.add(file.path);
+            if (!assessmentOf(file.path)?.collapsed) changes.expand(file.path);
+          }
+        }
+
+        function applyStoreState(): void {
+          const state = store.getState();
+          const revision = state.kind === "ready" ? state.snapshot.revision : lastRevision;
+          if (revision !== lastRevision && lastRevision >= 0) {
+            assessments = assessDiff(store.model(), config);
+          }
+          changes.setState(state);
+          if (revision !== lastRevision) {
+            lastRevision = revision;
+            seedFolds();
+            changes.invalidate();
+          }
+        }
+
+        /** The first unreviewed hunk in risk order, as the review always opened. */
+        function placeInitialCursor(): void {
+          const reviewed = new Set(record.cursor.reviewedHunkIds);
+          const model = store.model();
+          const located = changes.files().flatMap((summary) =>
+            (model.files.find((file) => file.path === summary.path)?.hunks ?? []).map((hunk) => ({
+              path: summary.path,
+              hunk,
+            })),
+          );
+          const target = located.find((entry) => !reviewed.has(entry.hunk.id)) ?? located[0];
+          if (!target) {
+            const first = changes.files()[0];
+            if (first) changes.setCursor({ path: first.path });
+            return;
+          }
+          if (!changes.expanded.has(target.path)) {
+            changes.setCursor({ path: target.path });
+            return;
+          }
+          const folded = changes.foldedHunks.has(target.hunk.id);
+          changes.setCursor(
+            folded || target.hunk.lines.length === 0
+              ? { path: target.path, hunkId: target.hunk.id }
+              : { path: target.path, hunkId: target.hunk.id, lineIndex: 0 },
+          );
+        }
+
         const editorTheme = reviewEditorTheme(theme);
         // Two inputs, two providers, two histories. Both complete against the
         // review root rather than the process directory, because a pull request
@@ -814,7 +1192,7 @@ export async function openReviewView(
             const component = new ToolExecutionComponent(
               entry.toolName,
               entry.toolCallId,
-              entry.args,
+              terminalSafeValue(entry.args),
               undefined,
               definition,
               tui,
@@ -834,7 +1212,17 @@ export async function openReviewView(
             (view.result !== entry.result || view.done !== entry.done)
           ) {
             view.component.updateResult(
-              { content: result.content, details: result.details, isError: entry.isError === true },
+              {
+                content: result.content.map((item) =>
+                  isJsonRecord(item) && isString(item.text)
+                    ? { ...item, text: terminalSafeValue(item.text) }
+                    : item,
+                ),
+                // Pi's renderers draw details as given (an edit's diff, paths), so they are
+                // made terminal-safe here too.
+                details: terminalSafeValue(result.details),
+                isError: entry.isError === true,
+              },
               !entry.done,
             );
             view.result = entry.result;
@@ -860,15 +1248,19 @@ export async function openReviewView(
           tui.requestRender();
         }
 
-        function changed(next: ReviewViewState, follow = true): void {
-          state = next;
-          followCursor = follow;
+        function stopComment(): void {
+          commentInput.focused = false;
+          commentDraft = undefined;
           tui.requestRender();
         }
 
-        function stopComment(): void {
-          commentInput.focused = false;
-          changed(discardCommentDraft(state), false);
+        /** A hunk as displayed now (revealed context included), from the current model. */
+        function displayHunk(path: string, hunkId: string): DiffHunk | undefined {
+          const hunk = store
+            .model()
+            .files.find((file) => file.path === path)
+            ?.hunks.find((candidate) => candidate.id === hunkId);
+          return hunk ? hunkWithExpandedContext(hunk, expansions.get(hunk.id)) : undefined;
         }
 
         function submitComment(body: string): void {
@@ -876,18 +1268,26 @@ export async function openReviewView(
           // empty is dropped by the history itself, and one that lands is worth
           // recalling when the next hunk needs the same remark.
           commentInput.remember(body);
-          const withBody = updateCommentDraft(state, body);
+          if (!commentDraft) return;
+          commentDraft = { ...commentDraft, body };
           if (body.trim().length === 0) {
-            changed(withBody, false);
+            tui.requestRender();
             return;
           }
+          const draft = commentDraft;
+          const hunk = displayHunk(draft.position.path, draft.position.hunkId);
+          if (!hunk) {
+            notify(
+              "The comment's hunk is no longer in this review; the comment was not added.",
+              "warning",
+            );
+            return;
+          }
+          record = commitComment(record, draft, hunk, { id: createCommentId(), timestamp: now() });
+          commentDraft = undefined;
           commentInput.focused = false;
-          changed(
-            commitCommentDraft(withBody, {
-              id: createCommentId(),
-              timestamp: now(),
-            }),
-          );
+          changes.invalidate();
+          tui.requestRender();
         }
 
         commentInput.onSubmit = submitComment;
@@ -895,8 +1295,21 @@ export async function openReviewView(
         function setFocus(next: ReviewPaneFocus): void {
           focus = next;
           chatInput.focused = next === "chat";
-          followCursor = next === "review";
           tui.requestRender();
+        }
+
+        /** A side-chat tool call that finished may have edited files: read the changes again. */
+        function watchToolCalls(): void {
+          const current = chat;
+          if (!current || closed) return;
+          let finished = false;
+          for (const message of current.messages) {
+            if (message.role !== "tool" || !message.done || seenTools.has(message.toolCallId))
+              continue;
+            seenTools.add(message.toolCallId);
+            finished = true;
+          }
+          if (finished && store.canRefresh) void refresh("tool");
         }
 
         function openChat(): void {
@@ -904,12 +1317,17 @@ export async function openReviewView(
             if (!chat) {
               chat = createChat({
                 cwd: options.reviewRoot,
+                // Read at every tool call: a file revealed with v is allowed from then on.
+                hiddenPaths: () => hiddenPaths(),
                 ...propertiesWhen(options.chatModel, () => ({ model: options.chatModel })),
                 ...propertiesWhen(options.chatThinkingLevel, () => ({
                   thinkingLevel: options.chatThinkingLevel,
                 })),
               });
-              unsubscribeChat = chat.onUpdate(() => tui.requestRender());
+              unsubscribeChat = chat.onUpdate(() => {
+                watchToolCalls();
+                tui.requestRender();
+              });
               // Start the session now so the command menu, model status, and
               // first answer do not all wait for session creation later.
               void chat
@@ -920,8 +1338,34 @@ export async function openReviewView(
             chatOpen = true;
             setFocus("chat");
           } catch (error) {
-            options.host.notify(error instanceof Error ? error.message : String(error), "error");
+            notify(error instanceof Error ? error.message : String(error), "error");
           }
+        }
+
+        /** What the side chat may know: the selected line and its hunk, never the diff itself. */
+        function chatContext(): ReviewChatContext | undefined {
+          const position = changes.commentPosition();
+          const current = changes.currentDisplayHunk();
+          const focused = current?.hunk.lines[changes.cursorLine ?? -1];
+          if (!position || !current || !focused) return undefined;
+          const hidden = hiddenPaths();
+          return {
+            path: position.path,
+            side: position.side,
+            line: position.line,
+            focusedLineText: focused.text,
+            hunkHeader: current.hunk.header,
+            reviewRoot: options.reviewRoot,
+            ...propertiesWhen(hidden.length, () => ({ hiddenPaths: hidden })),
+          };
+        }
+
+        /** Sensitive files whose contents are hidden now. */
+        function hiddenPaths(): string[] {
+          return changes
+            .files()
+            .filter((file) => !changes.canShowContents(file))
+            .map((file) => file.path);
         }
 
         function closeChat(): void {
@@ -938,7 +1382,8 @@ export async function openReviewView(
           try {
             if (kind === "reload") {
               await chat.reload();
-              options.host.notify(
+              if (closed) return;
+              notify(
                 "Chat session resources reloaded: extensions, skills, prompts, and context files.",
                 "info",
               );
@@ -946,27 +1391,30 @@ export async function openReviewView(
             }
             if (kind === "model") {
               if (!argument) {
-                options.host.notify(
+                notify(
                   `Chat model: ${chat.status.model ?? "Pi default"} · effort ${chat.status.thinkingLevel ?? "default"}`,
                   "info",
                 );
                 return;
               }
               const applied = await chat.setModel(argument);
-              options.host.notify(`Chat model set to ${applied}.`, "info");
+              if (closed) return;
+              notify(`Chat model set to ${applied}.`, "info");
               return;
             }
             if (!argument) {
-              options.host.notify(
+              notify(
                 `Chat effort: ${chat.status.thinkingLevel ?? "default"} · levels: off, minimal, low, medium, high, xhigh, max`,
                 "info",
               );
               return;
             }
             const applied = await chat.setThinkingLevel(argument);
-            options.host.notify(`Chat effort set to ${applied}.`, "info");
+            if (closed) return;
+            notify(`Chat effort set to ${applied}.`, "info");
           } catch (error) {
-            options.host.notify(error instanceof Error ? error.message : String(error), "error");
+            if (closed) return;
+            notify(error instanceof Error ? error.message : String(error), "error");
           } finally {
             tui.requestRender();
           }
@@ -986,7 +1434,7 @@ export async function openReviewView(
             if (command[1] === "quit" || command[1] === "exit") {
               // Leaving from the chat behaves exactly like `q`: the review
               // record is saved and the view closes.
-              void guarded(() => save("save"));
+              leave();
               return;
             }
             const kind =
@@ -1003,22 +1451,22 @@ export async function openReviewView(
             if (!chat.commands().some((info) => info.name === name)) {
               // Leave the typo in the editor for correction.
               chatInput.setText(prompt);
-              options.host.notify(`/${name} is not available in the review chat.`, "warning");
+              notify(`/${name} is not available in the review chat.`, "warning");
               tui.requestRender();
               return;
             }
             chatInput.setText("");
             tui.requestRender();
             void chat.runCommand(prompt, options.reviewRoot).catch((error: RuntimeValue) => {
-              options.host.notify(error instanceof Error ? error.message : String(error), "error");
+              notify(error instanceof Error ? error.message : String(error), "error");
               tui.requestRender();
             });
             return;
           }
           if (chat.pending) return;
-          const context = currentReviewChatContext(state, options.reviewRoot);
+          const context = chatContext();
           if (!context) {
-            options.host.notify("Select an expanded diff line before asking the agent.", "warning");
+            notify("Select an expanded diff line before asking the agent.", "warning");
             return;
           }
           chatScrollOffset = 0;
@@ -1026,11 +1474,11 @@ export async function openReviewView(
           tui.requestRender();
           try {
             void chat.ask(prompt, context).catch((error: RuntimeValue) => {
-              options.host.notify(error instanceof Error ? error.message : String(error), "error");
+              notify(error instanceof Error ? error.message : String(error), "error");
               tui.requestRender();
             });
           } catch (error) {
-            options.host.notify(error instanceof Error ? error.message : String(error), "error");
+            notify(error instanceof Error ? error.message : String(error), "error");
           }
         }
 
@@ -1042,7 +1490,7 @@ export async function openReviewView(
           try {
             await action();
           } catch (error) {
-            options.host.notify(error instanceof Error ? error.message : String(error), "error");
+            notify(error instanceof Error ? error.message : String(error), "error");
           } finally {
             busy = false;
             tui.requestRender();
@@ -1071,149 +1519,439 @@ export async function openReviewView(
         }
 
         async function expandContext(): Promise<void> {
-          const file = currentFile(state);
-          const hunk = currentHunk(state);
-          if (!file || !hunk || !currentCommentPosition(state)) {
-            options.host.notify(
-              "Select an expanded hunk line before expanding context.",
-              "warning",
-            );
+          const current = changes.currentHunk();
+          if (!current || !changes.commentPosition()) {
+            notify("Select an expanded hunk line before expanding context.", "warning");
             return;
           }
-          const expansion = hunkExpansion(state, hunk.id) ?? { above: [], below: [] };
+          const model = store.model();
+          const file = model.files.find((entry) => entry.path === current.file.path);
+          if (!file) return;
+          const hunk = current.hunk;
+          const expansion = expansions.get(hunk.id) ?? { above: [], below: [] };
           const expandEdge = (edge: "above" | "below") =>
             expandHunkContext({
               cwd: options.reviewRoot,
-              model: state.model,
+              model,
               file,
               hunk,
               edge,
               expansion,
-              expandedContext: state.expandedContext,
+              expandedContext: expansions,
               runner: options.execRunner,
             });
           const [above, below] = await Promise.all([expandEdge("above"), expandEdge("below")]);
+          if (closed) return;
           if (above.addedLines + below.addedLines === 0) {
-            options.host.notify("No more unchanged context to expand.", "info");
+            notify("No more unchanged context to expand.", "info");
             return;
           }
-          changed(
-            setHunkExpansion(state, hunk.id, {
-              above: above.expansion.above,
-              below: below.expansion.below,
-            }),
+          setExpansion(hunk.id, { above: above.expansion.above, below: below.expansion.below });
+        }
+
+        /** Replace one hunk's context; the cursor stays on its line and a selection collapses. */
+        function setExpansion(hunkId: string, next: HunkExpansion): void {
+          const before = expansions.get(hunkId)?.above.length ?? 0;
+          if (next.above.length === 0 && next.below.length === 0) expansions.delete(hunkId);
+          else expansions.set(hunkId, next);
+          changes.contextChanged(hunkId, next.above.length - before);
+        }
+
+        /** Bumped by each restore; an older restore stops after its next await. */
+        let contextRestore = 0;
+
+        /**
+         * Revealed context is read for a hunk's place: a hunk id names content,
+         * not place, so after a refresh a hunk that moved (or left) loses the
+         * context read for where it was, which would show other lines under
+         * the old numbers. `restoreCommentContext` reads again what comments need.
+         */
+        function dropMovedContext(): void {
+          const hunks = new Map(
+            store
+              .model()
+              .files.flatMap((file) => file.hunks)
+              .map((hunk) => [hunk.id, hunk]),
           );
+          for (const [hunkId, expansion] of expansions) {
+            const hunk = hunks.get(hunkId);
+            if (!hunk || !revealedContextFits(hunk, expansion)) {
+              setExpansion(hunkId, { above: [], below: [] });
+            }
+          }
+        }
+
+        /**
+         * A comment written on expanded context (`+`) is not in its hunk as
+         * read, so after a resume or a refresh it would be outdated though
+         * nothing changed. Expand that hunk the way `+` does, step by step up
+         * to `EXPANSION_LIMIT`, until the comment's text is found; keep the
+         * expansion only then. A comment whose text is not found within the
+         * limit (its text is gone) stays outdated, and its hunk keeps the
+         * context it had. A failed read leaves it outdated too: that is what
+         * the reader can verify.
+         */
+        function restoreCommentContext(): void {
+          const started = (contextRestore += 1);
+          const model = store.model();
+          const targets = new Set(
+            record.comments
+              .filter((comment) => {
+                if (placementOf(comment)) return false;
+                const file = model.files.find((entry) => entry.path === comment.path);
+                return (
+                  file !== undefined &&
+                  !isHidden(file.path) &&
+                  file.hunks.some((hunk) => hunk.id === comment.anchor.hunkHash)
+                );
+              })
+              .map((comment) => comment.id),
+          );
+          if (targets.size === 0) return;
+          void trackWork(
+            "context",
+            "reading context for comments",
+            (comment) => targets.has(comment.id),
+            readCommentContext(started, model, targets),
+          ).catch(() => {
+            // Reported as unconfirmed by a Finish waiting for it; nothing else to do.
+          });
+        }
+
+        async function readCommentContext(
+          started: number,
+          model: DiffModel,
+          targets: ReadonlySet<string>,
+        ): Promise<void> {
+          const current = () => !closed && started === contextRestore && store.model() === model;
+          let restored = false;
+          for (const comment of record.comments) {
+            if (!targets.has(comment.id)) continue;
+            const file = model.files.find((entry) => entry.path === comment.path);
+            const hunk = file?.hunks.find((entry) => entry.id === comment.anchor.hunkHash);
+            if (!file || !hunk || isHidden(file.path)) continue;
+            const before = expansions.get(hunk.id);
+            let expansion = before ?? { above: [], below: [] };
+            for (let step = 0; step < EXPANSION_LIMIT / EXPANSION_STEP; step += 1) {
+              const edge = (side: "above" | "below") =>
+                expandHunkContext({
+                  cwd: options.reviewRoot,
+                  model,
+                  file,
+                  hunk,
+                  edge: side,
+                  expansion,
+                  expandedContext: expansions,
+                  runner: options.execRunner,
+                });
+              let read: [Awaited<ReturnType<typeof edge>>, Awaited<ReturnType<typeof edge>>];
+              try {
+                read = await Promise.all([edge("above"), edge("below")]);
+              } catch {
+                break;
+              }
+              if (!current()) return;
+              // The user changed this hunk's context meanwhile: theirs stands.
+              if (expansions.get(hunk.id) !== before) break;
+              const [above, below] = read;
+              if (above.addedLines + below.addedLines === 0) break;
+              expansion = { above: above.expansion.above, below: below.expansion.below };
+              const trial = hunkWithExpandedContext(hunk, expansion);
+              const found = locateComment(comment, model, {
+                shown: (candidate) => (candidate.id === hunk.id ? trial : shownHunk(candidate)),
+              });
+              if (found.status === "placed" && found.hunkId === hunk.id) {
+                setExpansion(hunk.id, expansion);
+                restored = true;
+                break;
+              }
+            }
+          }
+          if (!restored || !current()) return;
+          followComments();
+          tui.requestRender();
         }
 
         function collapseContext(): void {
-          const hunk = currentHunk(state);
-          if (!hunk || !currentCommentPosition(state)) {
-            options.host.notify(
-              "Select an expanded hunk line before collapsing context.",
+          const current = changes.currentHunk();
+          if (!current || !changes.commentPosition()) {
+            notify("Select an expanded hunk line before collapsing context.", "warning");
+            return;
+          }
+          const expansion = expansions.get(current.hunk.id) ?? { above: [], below: [] };
+          if (expansion.above.length === 0 && expansion.below.length === 0) {
+            notify("No expanded context to collapse.", "info");
+            return;
+          }
+          setExpansion(
+            current.hunk.id,
+            collapseHunkContext(collapseHunkContext(expansion, "above"), "below"),
+          );
+        }
+
+        /** Sensitive paths whose comments must not quote source lines. */
+        function hiddenCommentPaths(): string[] {
+          const listed = new Set(changes.files().map((file) => file.path));
+          const paths = new Set(hiddenPaths());
+          for (const comment of record.comments) {
+            if (!listed.has(comment.path) && isSensitivePath(comment.path)) paths.add(comment.path);
+          }
+          return [...paths];
+        }
+
+        /**
+         * The record as it is exported: every comment where `locateComment`
+         * finds it now, and `unconfirmed` ones (work that could move them did
+         * not finish) marked so rather than presented as current.
+         */
+        function prepareRecord(unconfirmed: ReadonlySet<string>): ReviewRecord {
+          followComments(unconfirmed);
+          record = { ...record, updatedAt: now() };
+          return record;
+        }
+
+        /** Comments that pending coordinate work could still move. */
+        function pendingComments(extra: readonly CoordinateWork[] = []): Set<string> {
+          const open = [...coordinateWork, ...extra];
+          return new Set(
+            record.comments
+              .filter((entry) => open.some((work) => work.affects(entry)))
+              .map((entry) => entry.id),
+          );
+        }
+
+        /**
+         * Finish waits for the work that can move comments (a refresh, a
+         * context read, a reveal), at most FINISH_WAIT_MS in all, saying so on
+         * the message line; q cancels the wait. Work that started meanwhile
+         * (a refresh starts a context read) is waited for too. Undefined when
+         * the Finish no longer owns the view; else the comments to export as
+         * unconfirmed (work still pending at the limit, or failed).
+         */
+        async function settleCoordinateWork(token: number): Promise<Set<string> | undefined> {
+          const deadline = Date.now() + finishWaitMs;
+          const failed: CoordinateWork[] = [];
+          while (coordinateWork.size > 0) {
+            const pending = [...coordinateWork];
+            const remaining = deadline - Date.now();
+            if (remaining <= 0) break;
+            const labels = [...new Set(pending.map((work) => work.label))].join(", ");
+            notify(
+              `Finishing: waiting for ${labels} (at most ${Math.ceil(remaining / 1000)} s; q cancels).`,
+              "info",
+            );
+            tui.requestRender();
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            const outcome = await Promise.race([
+              Promise.all(
+                pending.map((work) =>
+                  work.settled.then((ok) => {
+                    if (!ok) failed.push(work);
+                  }),
+                ),
+              ).then(() => "settled" as const),
+              new Promise<"timeout">((resolve) => {
+                timer = setTimeout(() => resolve("timeout"), remaining);
+              }),
+            ]);
+            clearTimeout(timer);
+            if (!owns(token)) return undefined;
+            // Let what the settled work does next run (the store's update, a follow-up read).
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            if (!owns(token)) return undefined;
+            if (outcome === "timeout") break;
+          }
+          return pendingComments(failed);
+        }
+
+        /**
+         * q, Esc and the chat's /quit. From open or finishing: one save of the
+         * record as it stands (a pending Finish is cancelled), at most
+         * LEAVE_SAVE_MS; the message line says that q again leaves without
+         * saving. While that save runs: q closes at once. A save that fails or
+         * takes too long keeps the review open and says so; leaving again then
+         * closes without saving, so a store that keeps failing can never keep
+         * the user in the review.
+         */
+        function leave(): void {
+          if (closed || phase.kind === "closed") return;
+          if (phase.kind === "leaving") {
+            close({ action: "save", record });
+            hostNotice(
+              "The review was closed without waiting for its save. If that save finishes, the review is saved; otherwise it is as it was last saved.",
               "warning",
             );
             return;
           }
-          const expansion = hunkExpansion(state, hunk.id) ?? { above: [], below: [] };
-          if (expansion.above.length === 0 && expansion.below.length === 0) {
-            options.host.notify("No expanded context to collapse.", "info");
+          if (saveFailedFor !== undefined && saveFailedFor === record) {
+            close({ action: "save", record });
+            hostNotice(
+              "The review was closed without saving; it is as it was last saved.",
+              "warning",
+            );
             return;
           }
-          changed(
-            setHunkExpansion(
-              state,
-              hunk.id,
-              collapseHunkContext(collapseHunkContext(expansion, "above"), "below"),
-            ),
+          saveFailedFor = undefined;
+          const token = (tokens += 1);
+          const kept = prepareRecord(pendingComments());
+          const timer = setTimeout(
+            () =>
+              leaveSaveFailed(
+                token,
+                new Error(`Saving the review took longer than ${leaveSaveMs / 1000} s.`),
+                kept,
+              ),
+            leaveSaveMs,
+          );
+          phase = { kind: "leaving", token, timer };
+          notify("Saving the review… q again leaves without saving.", "info");
+          tui.requestRender();
+          // Started now, in this key's turn; a store that throws at once counts as failing.
+          let saving: Promise<void>;
+          try {
+            saving = Promise.resolve(options.store.save(kept));
+          } catch (error) {
+            saving = Promise.reject(error instanceof Error ? error : new Error(String(error)));
+          }
+          void saving.then(
+            () => {
+              if (owns(token)) close({ action: "save", record: kept });
+            },
+            (error: RuntimeValue) => leaveSaveFailed(token, error, kept),
           );
         }
 
-        async function save(action: "save" | "finish"): Promise<void> {
-          state = saveAndClose(state, action, now());
-          await options.store.save(state.record);
-          if (action === "save") {
-            done({ action, record: state.record });
-            return;
-          }
-          const markdown = renderReviewMarkdown(state.record);
-          const agentInstruction = composeSessionReviewInstruction(state.record, markdown);
-          if (agentInstruction) options.host.setEditorText(agentInstruction);
-          done({
-            action,
-            record: state.record,
-            markdown,
-            ...propertiesWhen(agentInstruction, () => ({ agentInstruction })),
-          });
+        function leaveSaveFailed(token: number, error: RuntimeValue, kept: ReviewRecord): void {
+          if (!owns(token) || phase.kind !== "leaving") return;
+          clearTimeout(phase.timer);
+          phase = { kind: "open" };
+          saveFailedFor = kept;
+          notify(
+            `${error instanceof Error ? error.message : String(error)} Leave again to close without saving; after any change, leaving tries to save again.`,
+            "error",
+          );
+          tui.requestRender();
         }
 
         async function finish(): Promise<void> {
-          if (state.record.target.kind === "pr") {
-            const choices = [
-              "Comment",
-              "Approve",
-              "Request changes",
-              "Pending draft to inspect on GitHub",
-            ] as const;
-            const selected = await withHostPrompt(() =>
-              options.host.select("Pull request outcome", [...choices]),
+          if (closed || phase.kind !== "open") return;
+          const token = (tokens += 1);
+          phase = { kind: "finishing", token };
+          let outcome: { verdict: ReviewRecord["verdict"]; body: string } | undefined;
+          try {
+            if (record.target.kind === "pr") {
+              const choices = [
+                "Comment",
+                "Approve",
+                "Request changes",
+                "Pending draft to inspect on GitHub",
+              ] as const;
+              const selected = await withHostPrompt(() =>
+                options.host.select("Pull request outcome", [...choices]),
+              );
+              if (selected === undefined || !owns(token)) return;
+              const verdict =
+                selected === choices[0]
+                  ? "comment"
+                  : selected === choices[1]
+                    ? "approve"
+                    : selected === choices[2]
+                      ? "request-changes"
+                      : undefined;
+              const body = await withHostPrompt(() =>
+                options.host.input(
+                  "Overall review summary (required for comment and request changes)",
+                  record.body ?? "",
+                ),
+              );
+              if (body === undefined || !owns(token)) return;
+              outcome = { verdict, body: body.trim() };
+            }
+            const unconfirmed = await settleCoordinateWork(token);
+            if (unconfirmed === undefined || !owns(token)) return;
+            // Committed: the chosen outcome enters the record only now, so a
+            // Finish cancelled before its save leaves the verdict and body as
+            // they were. From here on the user has confirmed them; if this save
+            // fails they stay, and the next save (q or S) writes them.
+            if (outcome) {
+              const { verdict: _verdict, body: _body, ...rest } = record;
+              const chosen = outcome;
+              record = {
+                ...rest,
+                ...propertiesWhen(!(chosen.verdict === undefined), () => ({
+                  verdict: chosen.verdict,
+                })),
+                ...propertiesWhen(chosen.body, () => ({ body: chosen.body })),
+              };
+            }
+            const kept = prepareRecord(unconfirmed);
+            await options.store.save(kept);
+            if (!owns(token)) return;
+            const markdown = renderReviewMarkdown(kept, { hiddenPaths: hiddenCommentPaths() });
+            const agentInstruction = composeSessionReviewInstruction(
+              kept,
+              markdown,
+              options.includesWorkingTree ?? targetIncludesWorkingTree(kept.target),
             );
-            if (selected === undefined) return;
-            const verdict =
-              selected === choices[0]
-                ? "comment"
-                : selected === choices[1]
-                  ? "approve"
-                  : selected === choices[2]
-                    ? "request-changes"
-                    : undefined;
-            const body = await withHostPrompt(() =>
-              options.host.input(
-                "Overall review summary (required for comment and request changes)",
-                state.record.body ?? "",
-              ),
-            );
-            if (body === undefined) return;
-            const { verdict: _verdict, body: _body, ...record } = state.record;
-            state = {
-              ...state,
-              record: {
-                ...record,
-                ...propertiesWhen(!(verdict === undefined), () => ({ verdict })),
-                ...propertiesWhen(body.trim(), () => ({ body: body.trim() })),
-                updatedAt: now(),
-              },
-            };
+            const finished = close({
+              action: "finish",
+              record: kept,
+              markdown,
+              ...propertiesWhen(agentInstruction, () => ({ agentInstruction })),
+              ...propertiesWhen(expansions.size, () => ({ expandedContext: new Map(expansions) })),
+            });
+            if (finished && agentInstruction) options.host.setEditorText(agentInstruction);
+          } catch (error) {
+            // A Finish that a q cancelled stays silent, whatever its save does.
+            if (owns(token)) throw error;
+          } finally {
+            if (owns(token)) phase = { kind: "open" };
           }
-          await save("finish");
         }
 
         async function search(): Promise<void> {
           const query = await withHostPrompt(() =>
-            options.host.input("Search changed lines", state.search?.query ?? ""),
+            options.host.input("Search changed lines", changes.searchState?.query ?? ""),
           );
-          if (query === undefined) return;
-          changed(setSearchQuery(state, query));
+          if (query === undefined || closed) return;
+          changes.setSearch(query);
+          const found = changes.searchState;
+          if (found && found.matches.length === 0)
+            notify(`No changed line contains “${query}”.`, "info");
         }
 
         function comment(): void {
-          const withDraft = beginCommentDraft(state);
-          if (!withDraft.commentDraft) {
-            options.host.notify("Select an expanded diff line before commenting.", "warning");
+          const position = changes.commentPosition();
+          if (!position) {
+            notify("Select an expanded diff line before commenting.", "warning");
             return;
           }
+          commentDraft = { position, body: "" };
           commentInput.setText("");
           commentInput.focused = true;
-          changed(withDraft, false);
+          tui.requestRender();
+        }
+
+        function editorLine(): number {
+          const position = changes.commentPosition();
+          if (position) return position.line;
+          const current = changes.currentHunk();
+          if (!current) return 1;
+          return current.file.status === "deleted" ? current.hunk.oldStart : current.hunk.newStart;
         }
 
         async function editCurrentHunk(): Promise<void> {
-          const file = currentFile(state);
+          const file = changes.selectedFile();
           if (!file) return;
+          if (!changes.canShowContents(file)) {
+            notify(HIDDEN_FILE_HINT, "warning");
+            return;
+          }
           await launchEditor(
-            options.config.editor,
+            config.editor,
             {
               path: resolve(options.reviewRoot, file.path),
-              line: currentEditorLine(state),
+              line: editorLine(),
               column: 1,
               dir: options.reviewRoot,
             },
@@ -1222,7 +1960,225 @@ export async function openReviewView(
           );
         }
 
-        return {
+        function markReviewed(): void {
+          const current = changes.currentHunk();
+          if (!current) return;
+          record = {
+            ...markHunksReviewed(record, [current.hunk.id], store.model().headSha),
+            updatedAt: now(),
+          };
+          changes.setFolded(current.hunk.id, true);
+          changes.invalidate();
+        }
+
+        /** ←/→: the previous or next file, on its first line when it is open. */
+        function moveFile(delta: number): void {
+          const files = changes.files();
+          const file =
+            files[Math.max(0, Math.min(files.length - 1, changes.selectedIndex + delta))];
+          if (!file) return;
+          changes.setCursor({ path: file.path });
+          if (changes.expanded.has(file.path) && (changes.displayHunks(file)?.length ?? 0) > 0) {
+            changes.moveCursor(1);
+          }
+        }
+
+        async function reloadFindings(): Promise<void> {
+          const load = options.loadFindings;
+          if (!load) return;
+          try {
+            const found = await load(changes.files().map((file) => file.path));
+            if (closed) return;
+            changes.setRecorded(found.recorded, found.changeTimes);
+            tui.requestRender();
+          } catch (error) {
+            if (!closed)
+              notify(
+                `Review findings could not be read: ${error instanceof Error ? error.message : String(error)}`,
+                "warning",
+              );
+          }
+        }
+
+        /**
+         * Read the changes again (`r`, or after a side-chat tool call). Reviewed
+         * marks, folds and comments key on content-hash hunk ids, so an
+         * unchanged hunk keeps them across the refresh.
+         */
+        async function refresh(reason: "manual" | "tool"): Promise<void> {
+          if (!store.canRefresh) {
+            if (reason === "manual") {
+              changes.setMessage(
+                "This review's target cannot change, so there is nothing to refresh.",
+              );
+              tui.requestRender();
+            }
+            return;
+          }
+          try {
+            const outcome = await store.refresh();
+            if (closed || outcome === "stale") return;
+            followComparison();
+            if (reason === "manual") {
+              changes.setMessage(
+                outcome === "changed"
+                  ? "Read the changes again."
+                  : "Read the changes again; nothing changed.",
+              );
+            }
+            await reloadFindings();
+          } catch (error) {
+            if (!closed) {
+              notify(
+                `Refresh failed: ${error instanceof Error ? error.message : String(error)}`,
+                "error",
+              );
+            }
+          } finally {
+            if (!closed) tui.requestRender();
+          }
+        }
+
+        /**
+         * A refresh read the target again: the record names the comparison now
+         * shown (base, head, and the head the cursor was last moved on), so a
+         * saved review never describes one comparison while its comments and
+         * marks were made on another. It is saved through the normal path (q,
+         * Finish); comments and reviewed marks key on content-hash hunk ids and
+         * stay. A pull request cannot refresh, and its record keeps the head
+         * its comments were written on, which submission checks.
+         */
+        function followComparison(): void {
+          dropMovedContext();
+          followComments();
+          restoreCommentContext();
+          if (record.target.kind === "pr") return;
+          const { baseSha, headSha } = store.model();
+          if (record.baseSha === baseSha && record.headSha === headSha) return;
+          record = {
+            ...record,
+            baseSha,
+            headSha,
+            cursor: { ...record.cursor, lastHeadSha: headSha },
+          };
+        }
+
+        function outdatedCount(): number {
+          return record.comments.filter((entry) => locationOf(entry).status === "outdated").length;
+        }
+
+        function statusLine(): string {
+          const files = changes.files();
+          const file = changes.selectedFile();
+          const hunks = file ? (changes.visibleHunks(file) ?? []) : [];
+          const at = hunks.findIndex((hunk) => hunk.id === changes.selectedHunk?.hunkId);
+          const outdated = outdatedCount();
+          const comments = record.comments.length;
+          const parts = [
+            `${file ? changes.selectedIndex + 1 : 0}/${files.length} files`,
+            `${at + 1}/${hunks.length} hunks`,
+            `${record.cursor.reviewedHunkIds.length} reviewed`,
+            outdated > 0 ? `${comments} comments (${outdated} outdated)` : `${comments} comments`,
+            mode,
+          ];
+          const found = changes.searchState;
+          if (found) {
+            parts.push(
+              found.matches.length === 0
+                ? `search “${safe(found.query)}”: no matches`
+                : `search “${safe(found.query)}”: ${found.index + 1}/${found.matches.length}`,
+            );
+          }
+          return theme.fg("muted", parts.join(" · "));
+        }
+
+        function commentTargetLine(): string {
+          const position = commentDraft?.position ?? changes.commentPosition();
+          if (!position) return theme.fg("dim", "No line selected · j/k or ↑/↓ line");
+          return theme.fg(
+            "dim",
+            `Target ${safe(position.path)}:${rangeLabel(position)} ${position.side}`,
+          );
+        }
+
+        // A resumed record's comments take the line numbers their text has now.
+        followComments();
+        restoreCommentContext();
+        // A step that can move comments landed (a reveal, a context read, a refresh): follow it.
+        afterWork = () => {
+          if (closed) return;
+          followComments();
+          tui.requestRender();
+        };
+        applyStoreState();
+        placeInitialCursor();
+        unsubscribeStore = store.subscribe(() => {
+          if (closed) return;
+          applyStoreState();
+          tui.requestRender();
+        });
+        void reloadFindings();
+
+        /**
+         * pi-tui calls render and handleInput with nothing around them, and Pi
+         * exits on any throw that escapes (interactive mode's uncaughtCrash).
+         * A full-screen view that cannot draw would also trap the user, so a
+         * render failure closes the review at once (the terminal and the pane
+         * underneath come back), saves the record as it stands through the
+         * store, and says so in Pi's notifications. Later frames until the
+         * overlay is gone draw one fallback line without calling the view.
+         */
+        let renderFailure: { error: RuntimeValue } | undefined;
+
+        function renderFailed(error: RuntimeValue): void {
+          if (renderFailure) return;
+          renderFailure = { error };
+          const reason = failureLine(error);
+          // After this frame: closing inside pi-tui's render would re-enter it.
+          // Nothing in this microtask may throw: nothing above it would catch.
+          queueMicrotask(() => {
+            if (closed || phase.kind === "closed") return;
+            let updatedAt = record.updatedAt;
+            try {
+              updatedAt = now();
+            } catch {
+              // The clock is what failed: keep the last time.
+            }
+            const kept = { ...record, updatedAt };
+            try {
+              close({ action: "save", record: kept });
+            } catch {
+              // The host already tore the view down; the save below still runs.
+            }
+            void Promise.resolve()
+              .then(() => options.store.save(kept))
+              .then(
+                () =>
+                  hostNotice(
+                    `The review could not be drawn (${reason}) and was closed. Your comments and reviewed marks were saved; /review-assist resume opens it again.`,
+                    "warning",
+                  ),
+                (saveError: RuntimeValue) =>
+                  hostNotice(
+                    `The review could not be drawn (${reason}) and was closed, and saving it failed (${failureLine(saveError)}); the review is as it was last saved.`,
+                    "error",
+                  ),
+              );
+          });
+        }
+
+        function fallbackFrame(width: number): string[] {
+          const reason = renderFailure ? failureLine(renderFailure.error) : "unknown error";
+          return [
+            truncateToWidth(
+              `The review could not be drawn: ${reason}. Closing it.`,
+              Math.max(1, width),
+              "…",
+            ),
+          ];
+        }
+
+        const component = {
           render: (width: number) => {
             const contentWidth = Math.max(1, width);
             const splitChat = chatOpen && contentWidth >= REVIEW_CHAT_SPLIT_MIN_WIDTH;
@@ -1230,15 +2186,9 @@ export async function openReviewView(
               ? Math.max(40, Math.floor(contentWidth * 0.4))
               : contentWidth;
             const diffWidth = splitChat ? contentWidth - chatWidth - 1 : contentWidth;
-            const files = fileListLines(state, diffWidth, theme);
-            const diff = diffBody(state, diffWidth, options.styler, options.config);
-            // A rule reads as structure where a blank row reads as accident.
-            const rule = theme.fg("borderMuted", "─".repeat(Math.max(1, diffWidth)));
-            const body = [...files, rule, ...diff.lines];
-            const selectedLine = files.length + 1 + diff.selectedLine;
+            const diffVisible = splitChat || focus === "review";
             terminalRows = tui.terminal.rows;
-            const target = commentTargetLine(state, theme);
-            const status = `${statusLine(state, theme)} · ${target}`;
+            const status = `${statusLine()} · ${commentTargetLine()}`;
             let inputLines: string[];
             let hintLineOne: string;
             let hintLineTwo: string;
@@ -1265,8 +2215,8 @@ export async function openReviewView(
                 uiTheme: theme,
                 ...propertiesWhen(frameModel, () => ({ model: frameModel })),
               });
-            if (state.commentDraft) {
-              const draftPosition = state.commentDraft.position;
+            if (commentDraft) {
+              const draftPosition = commentDraft.position;
               inputLines = framedInput(commentInput);
               hintLineOne = "Comment · Enter submit · Shift+Enter newline · Tab path · Esc cancel";
               hintLineTwo =
@@ -1281,11 +2231,13 @@ export async function openReviewView(
                 "Context: selected file, side, line, focused row, and current hunk only · /model /effort /reload act on the chat";
             } else {
               inputLines = [
-                theme.fg("dim", "Input inactive · c writes a review comment · a asks the agent"),
+                theme.fg(
+                  "dim",
+                  "Input inactive · c writes a review comment · a asks in a side chat (the diff stays out of the main conversation)",
+                ),
               ];
-              hintLineOne = `j/k or ↑/↓ line · Shift+↑/↓ select lines · [/] hunk · n/p or →/← file · PgUp/PgDn page${chatOpen ? " · Tab focus chat · Ctrl+O tool output" : ""}`;
-              hintLineTwo =
-                "+/- hunk context · Space fold · c comment · a ask · / search · N/P match · v mode · m reviewed · e/E editor · S finish · q save";
+              hintLineOne = `Shift+↑/↓ select lines · ←/→ file · PgUp/PgDn page${chatOpen ? " · Tab focus chat · Ctrl+O tool output" : ""}`;
+              hintLineTwo = `+/- context · c comment · a ask · / search · >/< match · ${SPLIT_TOGGLE_KEY} split · m reviewed · e/E editor · S finish · q save`;
             }
             // Without zentui the input has no metadata row, so the keys row
             // carries the model and effort instead of dropping them.
@@ -1305,20 +2257,42 @@ export async function openReviewView(
               if (gap < 2) return left;
               return `${left}${" ".repeat(gap)}${right}`;
             })();
-            const footer = [status, ...inputLines, hintOneRow, theme.fg("dim", hintLineTwo)];
-            const reservedRows = Math.min(terminalRows, 1 + footer.length);
-            lastBodyHeight = Math.max(0, terminalRows - reservedRows);
-            const maximumOffset = Math.max(0, body.length - lastBodyHeight);
-            if (followCursor && lastBodyHeight > 0) {
-              if (selectedLine < scrollOffset) scrollOffset = selectedLine;
-              else if (selectedLine >= scrollOffset + lastBodyHeight) {
-                scrollOffset = selectedLine - lastBodyHeight + 1;
+            // The view's header holds the message line; when the chat replaces the diff
+            // (narrow terminals), the message moves above the status line instead.
+            const message = changes.message;
+            const messageRows =
+              !diffVisible && message
+                ? [truncateToWidth(styler.fg(message.color, message.text), contentWidth)]
+                : [];
+            const footer = [
+              ...messageRows,
+              status,
+              ...inputLines,
+              hintOneRow,
+              theme.fg("dim", hintLineTwo),
+            ];
+            // The shared view's header (totals, recorded findings, messages, keys or
+            // help, rule) sits under the review's title; its own title line is the
+            // review's first row instead.
+            const viewHeader = diffVisible
+              ? changes.renderHeader(diffWidth, focus === "review").slice(1)
+              : [];
+            const room = Math.max(0, terminalRows - 1 - footer.length);
+            const headerRows = viewHeader.slice(0, room);
+            lastBodyHeight = Math.max(0, room - headerRows.length);
+            const body = changes.renderBody(diffWidth, focus === "review");
+            // The view keeps its cursor visible through the scroller; a resize or
+            // a comment drawn above it can still move it, so check once more here.
+            const cursorRow = changes.selectionRow();
+            if (lastBodyHeight > 0) {
+              if (cursorRow < scrollTop) scrollTop = cursorRow;
+              else if (cursorRow >= scrollTop + lastBodyHeight) {
+                scrollTop = cursorRow - lastBodyHeight + 1;
               }
-              followCursor = false;
             }
-            scrollOffset = Math.max(0, Math.min(maximumOffset, scrollOffset));
-            const visibleDiff = body.slice(scrollOffset, scrollOffset + lastBodyHeight);
-            const hiddenBelow = Math.max(0, body.length - (scrollOffset + visibleDiff.length));
+            scrollTop = Math.max(0, Math.min(Math.max(0, body.length - lastBodyHeight), scrollTop));
+            const visibleDiff = body.slice(scrollTop, scrollTop + lastBodyHeight);
+            const hiddenBelow = Math.max(0, body.length - (scrollTop + visibleDiff.length));
             while (visibleDiff.length < lastBodyHeight) visibleDiff.push("");
 
             let visibleBody = visibleDiff.map((line) => fullWidthLine(line, contentWidth));
@@ -1326,7 +2300,7 @@ export async function openReviewView(
               const chatBody = chatBodyLines(
                 chat,
                 chatWidth,
-                lastBodyHeight,
+                lastBodyHeight + headerRows.length,
                 focus === "chat",
                 theme,
                 markdownTheme,
@@ -1336,7 +2310,7 @@ export async function openReviewView(
               chatScrollOffset = chatBody.offset;
               const visibleChat = chatBody.lines;
               if (splitChat) {
-                visibleBody = visibleDiff.map(
+                visibleBody = [...headerRows, ...visibleDiff].map(
                   (line, index) =>
                     `${fullWidthLine(line, diffWidth)}${theme.fg("dim", "│")}${fullWidthLine(visibleChat[index] ?? "", chatWidth)}`,
                 );
@@ -1344,11 +2318,11 @@ export async function openReviewView(
                 visibleBody = visibleChat.map((line) => fullWidthLine(line, contentWidth));
               }
             }
+            const leading = chatOpen && chat && (splitChat || focus === "chat") ? [] : headerRows;
 
-            const diffVisible = splitChat || focus === "review";
             const scroll =
-              diffVisible && (scrollOffset > 0 || hiddenBelow > 0)
-                ? `↑${scrollOffset} ↓${hiddenBelow}`
+              diffVisible && (scrollTop > 0 || hiddenBelow > 0)
+                ? `↑${scrollTop} ↓${hiddenBelow}`
                 : undefined;
             const reviewFocus = focus === "review" ? "Review [FOCUSED]" : "Review";
             const chatFocus = !chatOpen
@@ -1364,30 +2338,32 @@ export async function openReviewView(
               ...propertiesWhen(scroll, () => ({ scroll })),
               now: now(),
             });
-            const footerRows = footer.slice(0, Math.max(0, reservedRows - 1));
+            const footerRows = footer.slice(0, Math.max(0, terminalRows - 1));
             return [
-              ...(reservedRows > 0 ? [fullWidthLine(header, contentWidth)] : []),
+              ...(terminalRows > 0 ? [fullWidthLine(header, contentWidth)] : []),
+              ...leading.map((line) => fullWidthLine(line, contentWidth)),
               ...visibleBody,
               ...footerRows.map((line) => fullWidthLine(line, contentWidth)),
             ];
           },
           invalidate: () => {
-            followCursor = true;
+            changes.invalidate();
             commentInput.invalidate();
             chatInput.invalidate();
-            for (const view of toolViews.values()) view.component.invalidate();
+            for (const toolView of toolViews.values()) toolView.component.invalidate();
           },
           handleInput: (data: string) => {
+            if (closed) return;
             // A focused input owns the keys the prompt gives it: ↑/↓ move
             // through the text and reach history at the edges, Tab completes a
             // path, and an open completion list takes Esc to dismiss itself
             // before the view reads Esc as leaving.
-            if (state.commentDraft) {
+            if (commentDraft) {
               if (matchesKey(data, "escape") && !commentInput.isShowingAutocomplete())
                 stopComment();
               else {
                 commentInput.handleInput(data);
-                if (state.commentDraft) state = updateCommentDraft(state, commentInput.getText());
+                if (commentDraft) commentDraft = { ...commentDraft, body: commentInput.getText() };
                 tui.requestRender();
               }
               return;
@@ -1422,48 +2398,95 @@ export async function openReviewView(
               setFocus("chat");
               return;
             }
+            // Leaving (and closing the key list) never waits for other work.
+            if (actionFor(REVIEW_KEYS, data) === "back") {
+              changes.handleKey(data);
+              tui.requestRender();
+              return;
+            }
             if (busy) return;
-            // Shift is read before plain movement: extending keeps the anchor,
-            // while every plain move collapses the selection back to one line.
-            if (matchesKey(data, "shift+down")) changed(extendSelection(state, 1));
-            else if (matchesKey(data, "shift+up")) changed(extendSelection(state, -1));
-            else if (data === "j" || matchesKey(data, "down")) changed(moveLine(state, 1));
-            else if (data === "k" || matchesKey(data, "up")) changed(moveLine(state, -1));
-            else if (data === "]") changed(moveHunk(state, 1));
-            else if (data === "[") changed(moveHunk(state, -1));
-            else if (data === "n" || matchesKey(data, "right")) changed(moveFile(state, 1));
-            else if (data === "p" || matchesKey(data, "left")) changed(moveFile(state, -1));
-            else if (data === "N") changed(moveSearchMatch(state, 1));
-            else if (data === "P") changed(moveSearchMatch(state, -1));
-            else if (data === "+") void guarded(expandContext);
-            else if (data === "-") collapseContext();
-            else if (matchesKey(data, "space")) changed(toggleCurrentFold(state));
-            else if (data === "/") void guarded(search);
-            else if (data === "c") comment();
+            if (data === "c") comment();
             else if (data === "a") openChat();
             else if (data === "e") void guarded(editCurrentHunk);
             else if (data === "E")
               void guarded(() =>
-                launchEditorProject(
-                  options.config.editor,
-                  options.reviewRoot,
-                  tui,
-                  options.spawnEditor,
-                ),
+                launchEditorProject(config.editor, options.reviewRoot, tui, options.spawnEditor),
               );
-            else if (data === "v") changed(toggleDiffMode(state));
-            else if (data === "m") changed(markCurrentHunkReviewed(state, now()));
+            else if (data === "m") markReviewed();
             else if (data === "S") void guarded(finish);
-            else if (data === "q") void guarded(() => save("save"));
-            else if (matchesKey(data, "pageUp"))
-              changed(moveLine(state, -Math.max(1, lastBodyHeight - 2)));
-            else if (matchesKey(data, "pageDown"))
-              changed(moveLine(state, Math.max(1, lastBodyHeight - 2)));
+            else if (data === "/") void guarded(search);
+            else if (data === ">") changes.moveSearchMatch(1);
+            else if (data === "<") changes.moveSearchMatch(-1);
+            else if (data === "+") void guarded(expandContext);
+            else if (data === "-") collapseContext();
+            else if (data === SPLIT_TOGGLE_KEY) {
+              mode = mode === "unified" ? "split" : "unified";
+              changes.invalidate();
+            } else if (matchesKey(data, "right")) moveFile(1);
+            else if (matchesKey(data, "left")) moveFile(-1);
             else if (data === "t") {
-              options.host.notify(
-                "Type information from review is planned for a later phase.",
+              notify("Type information from review is planned for a later phase.", "info");
+            } else changes.handleKey(data);
+            tui.requestRender();
+          },
+        };
+        return {
+          render: (width: number): string[] => {
+            if (renderFailure) return fallbackFrame(width);
+            try {
+              return component.render(width);
+            } catch (error) {
+              renderFailed(error);
+              return fallbackFrame(width);
+            }
+          },
+          invalidate: () => {
+            if (renderFailure) return;
+            try {
+              component.invalidate();
+            } catch (error) {
+              renderFailed(error);
+            }
+          },
+          handleInput: (data: string) => {
+            if (renderFailure || closed) return;
+            // Closing: only leaving keys count. A change now would miss the copy
+            // being saved and be reported as kept when it was not.
+            if (phase.kind !== "open") {
+              // A leaving key leaves, whatever has focus (the chat after /quit
+              // too): the immediate escape must not depend on where focus is.
+              if (actionFor(REVIEW_KEYS, data) === "back") {
+                leave();
+                return;
+              }
+              notify(
+                phase.kind === "leaving"
+                  ? "Saving the review… q again leaves without saving."
+                  : "Finishing… q cancels.",
                 "info",
               );
+              try {
+                tui.requestRender();
+              } catch {
+                // Drawn with the next frame.
+              }
+              return;
+            }
+            try {
+              component.handleInput(data);
+            } catch (error) {
+              // The view stays: the failure is on its message line. If the key
+              // was one that leaves, leave anyway, so a failing handler can
+              // never keep the user in the review.
+              if (actionFor(REVIEW_KEYS, data) === "back" && !commentDraft && focus === "review") {
+                leave();
+              }
+              notify(`That key failed: ${failureLine(error)}`, "error");
+              try {
+                tui.requestRender();
+              } catch {
+                // Drawn with the next frame.
+              }
             }
           },
         };
@@ -1481,6 +2504,10 @@ export async function openReviewView(
       },
     );
   } finally {
+    closed = true;
+    unsubscribeStore?.();
+    view?.dispose();
+    store.dispose();
     unsubscribeChat?.();
     chat?.dispose();
   }

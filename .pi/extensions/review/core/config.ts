@@ -14,7 +14,10 @@ import { access, readFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { delimiter, join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { DEFAULT_HIGHLIGHT } from "../../lib/changes/render/highlight.ts";
 import type { EditorConfig, ResolvedReviewConfig, ReviewConfig } from "./types.ts";
+
+export { DEFAULT_HIGHLIGHT };
 
 export const REVIEW_CONFIG_FILE = "review.json";
 
@@ -23,8 +26,6 @@ export const DEFAULT_EDITOR: EditorConfig = {
   command: ["zed", "--wait", "{path}:{line}"],
   mode: "gui",
 };
-
-export const DEFAULT_HIGHLIGHT = { enabled: true, maxFileBytes: 512_000, maxDiffLines: 20_000 };
 
 export type ReviewConfigEnv = Record<string, string | undefined>;
 

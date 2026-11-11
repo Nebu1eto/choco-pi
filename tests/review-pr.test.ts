@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { parseGitDiff } from "../.pi/extensions/review/core/diff.ts";
+import { parseGitDiff } from "../.pi/extensions/lib/changes/patch.ts";
 import { defaultExecRunner, gitCommonDirectory } from "../.pi/extensions/review/core/git.ts";
 import {
   disposePullRequestWorktree,
@@ -339,4 +339,26 @@ test("owned leftovers and stale worktree entries recover without touching an uno
   assert.ok(removals.includes(first.worktreePath));
   assert.ok(removals.every((path) => path !== collidedPath));
   assert.equal(await readFile(join(collidedPath, "user-owned"), "utf8"), "keep\n");
+});
+
+test("without a review directory, a PR worktree follows the agent directory at the time of use", async (t) => {
+  const fixture = await pullRequestRepository(t);
+  const agentDirectory = join(dirname(fixture.root), "agent-set-after-import");
+  const previous = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = agentDirectory;
+  t.after(() => {
+    if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previous;
+  });
+  const runner = stubbedGitHubRunner(fixture.remote, fixture.headSha, []);
+  const review = await resolvePullRequestTarget(
+    fixture.root,
+    { kind: "pr", number: 7 },
+    { runner },
+  );
+  t.after(() => disposePullRequestWorktree(review, runner).catch(() => undefined));
+  assert.ok(
+    review.worktreePath.startsWith(`${join(agentDirectory, "choco-pi", "reviews")}/`),
+    review.worktreePath,
+  );
 });

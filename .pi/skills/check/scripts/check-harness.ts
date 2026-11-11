@@ -481,7 +481,7 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
     "prompts/task.md",
     "prompts/task-hotfix.md",
     "prompts/commit.md",
-    "prompts/review-agent.md",
+    "prompts/review.md",
   ];
   const resourceResults = await Promise.all(
     requiredResources.map(async (entry) => ({

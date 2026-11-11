@@ -14,7 +14,16 @@ import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { registerHooks } from "node:module";
 import { dirname, extname, relative, resolve as resolvePath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -98,7 +107,10 @@ async function compileZentui(): Promise<string | undefined> {
     resolvePath(REPOSITORY_ROOT, "node_modules/.cache/choco-pi-zentui");
   const outDir = resolvePath(cacheRoot, hash.digest("hex"));
   const marker = resolvePath(outDir, COMPLETION_MARKER);
-  if (await pathExists(marker)) return outDir;
+  // Node imports modules by their real path, and the import hook below compares
+  // against the directory returned here, so a checkout reached through a
+  // symbolic link (a relocated copy with linked node_modules) names it the same way.
+  if (await pathExists(marker)) return await realpath(outDir);
 
   const temporaryOutDir = `${outDir}.tmp-${process.pid}`;
   try {
@@ -125,7 +137,8 @@ async function compileZentui(): Promise<string | undefined> {
     await rm(temporaryOutDir, { force: true, recursive: true });
     return undefined;
   }
-  return (await pathExists(resolvePath(outDir, "ui.js"))) ? outDir : undefined;
+  if (!(await pathExists(resolvePath(outDir, "ui.js")))) return undefined;
+  return await realpath(outDir);
 }
 
 export const ZENTUI_BUILD = await compileZentui();

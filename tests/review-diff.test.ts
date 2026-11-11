@@ -6,12 +6,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { parseGitDiff } from "../.pi/extensions/review/core/diff.ts";
+import { loadDiffModel } from "../.pi/extensions/lib/changes/git/load-model.ts";
+import { parseGitDiff } from "../.pi/extensions/lib/changes/patch.ts";
 import {
   defaultExecRunner,
   listBranches,
   readRawDiff,
-  readRawDiffToWorkingTree,
   resolveBranchTarget,
   resolveRevision,
 } from "../.pi/extensions/review/core/git.ts";
@@ -42,6 +42,16 @@ async function commitAll(root: string, message: string): Promise<string> {
   await git(root, "add", "-A");
   await git(root, "commit", "-qm", message);
   return git(root, "rev-parse", "HEAD");
+}
+
+/** The working tree against `base`, read as /review-assist reads it. */
+async function workingModel(root: string, base: string) {
+  const loaded = await loadDiffModel({
+    cwd: root,
+    source: { kind: "branch-base", base },
+    isCurrent: () => true,
+  });
+  return loaded.model;
 }
 
 test("real git patches parse text, path, binary, and metadata edge cases", async (t) => {
@@ -145,6 +155,110 @@ test("real git patches parse text, path, binary, and metadata edge cases", async
   }
 });
 
+test("real git patches with C-quoted file names parse to the decoded paths", async (t) => {
+  const root = await repository(t);
+  const quote = 'quo"te.txt';
+  const tab = "tab\there.txt";
+  const backslash = "back\\slash.txt";
+  const newline = "new\nline.txt";
+  const control = "ctl\u0001-日本語.txt";
+  for (const name of [quote, tab, backslash, newline, control, "plain old.txt"]) {
+    await put(root, name, `${JSON.stringify(name)} before\n`);
+  }
+  const baseSha = await commitAll(root, "base");
+  for (const name of [quote, tab, backslash, newline, control]) {
+    await put(root, name, `${JSON.stringify(name)} after\n`);
+  }
+  await rename(join(root, "plain old.txt"), join(root, 'renamed "new".txt'));
+  const headSha = await commitAll(root, "changed");
+  await put(root, 'untracked "added".txt', "fresh\n");
+
+  const raw = await readRawDiff(root, baseSha, headSha);
+  assert.match(raw, /^diff --git "a\/quo\\"te\.txt" "b\/quo\\"te\.txt"$/m, "git quotes the header");
+  const byPath = new Map(
+    parseGitDiff(raw, baseSha, headSha).files.map((file) => [file.path, file]),
+  );
+  for (const name of [quote, tab, backslash, newline, control]) {
+    const file = byPath.get(name);
+    assert.equal(
+      file?.kind,
+      "modified",
+      `${JSON.stringify(name)} in ${JSON.stringify([...byPath.keys()])}`,
+    );
+    assert.deepEqual(
+      file?.hunks.flatMap((hunk) => hunk.lines).map((line) => `${line.kind}:${line.text}`),
+      [`del:${JSON.stringify(name)} before`, `add:${JSON.stringify(name)} after`],
+    );
+  }
+  assert.deepEqual(
+    {
+      kind: byPath.get('renamed "new".txt')?.kind,
+      oldPath: byPath.get('renamed "new".txt')?.oldPath,
+    },
+    { kind: "renamed", oldPath: "plain old.txt" },
+  );
+
+  const working = await workingModel(root, headSha);
+  assert.deepEqual(
+    working.files.map((file) => [file.path, file.kind]),
+    [['untracked "added".txt', "added"]],
+  );
+});
+
+test("hunk ids of paths git does not quote are unchanged", () => {
+  // Ids anchor saved review comments. These values were computed by the
+  // parser before it learned git's C-quoting; they must never change.
+  const fixture = [
+    "diff --git a/src/value.ts b/src/value.ts",
+    "--- a/src/value.ts",
+    "+++ b/src/value.ts",
+    "@@ -1 +1 @@ export",
+    "-export const value = 1;",
+    "+export const value = 2;",
+    "diff --git a/sp ace-日本語.txt b/sp ace-日本語.txt",
+    "--- a/sp ace-日本語.txt\t",
+    "+++ b/sp ace-日本語.txt\t",
+    "@@ -1 +1 @@",
+    "-before",
+    "+after",
+    "diff --git a/rename old.txt b/renamed new.txt",
+    "similarity index 80%",
+    "rename from rename old.txt",
+    "rename to renamed new.txt",
+    "--- a/rename old.txt",
+    "+++ b/renamed new.txt",
+    "@@ -1,2 +1,2 @@",
+    " keep",
+    "-old",
+    "+new",
+    "",
+  ].join("\n");
+  assert.deepEqual(
+    parseGitDiff(fixture, "base", "head").files.map((file) => [
+      file.path,
+      file.oldPath,
+      file.hunks.map((hunk) => hunk.id),
+    ]),
+    [
+      [
+        "src/value.ts",
+        undefined,
+        ["676443cc3b09fb2869e1be71128687d45be7bde481f2bde4eb321dbd4207df64"],
+      ],
+      [
+        "sp ace-日本語.txt",
+        undefined,
+        ["d8c343dea22e0e0ec2c79fd5ff7adb87855810cae548c7214ab85e299eada2f3"],
+      ],
+      [
+        "renamed new.txt",
+        "rename old.txt",
+        ["f8bd38122ed502aa1e8eab9dda0816e66c1f27905742bc263f80923346101316"],
+      ],
+    ],
+  );
+});
+
 test("hunk ids survive an unrelated edit earlier in the file", async (t) => {
   const root = await repository(t);
   const original = Array.from({ length: 40 }, (_, index) => `line ${index + 1}`);
@@ -154,12 +268,12 @@ test("hunk ids survive an unrelated edit earlier in the file", async (t) => {
   const laterOnly = [...original];
   laterOnly[29] = "later change";
   await put(root, "stable.txt", laterOnly.join("\n") + "\n");
-  const firstModel = parseGitDiff(await readRawDiffToWorkingTree(root, baseSha), baseSha, baseSha);
+  const firstModel = await workingModel(root, baseSha);
   const firstId = firstModel.files[0]?.hunks[0]?.id;
 
   const shifted = ["unrelated insertion", ...laterOnly];
   await put(root, "stable.txt", shifted.join("\n") + "\n");
-  const secondModel = parseGitDiff(await readRawDiffToWorkingTree(root, baseSha), baseSha, baseSha);
+  const secondModel = await workingModel(root, baseSha);
   const laterHunk = secondModel.files[0]?.hunks.find((hunk) =>
     hunk.lines.some((line) => line.text === "later change"),
   );
@@ -200,14 +314,17 @@ test("branch helpers resolve merge bases, include working changes, and list name
     includesWorkingTree: true,
   });
   assert.ok((await listBranches(root)).includes("review-base"));
-  const workingPatch = await readRawDiffToWorkingTree(root, baseSha);
-  assert.match(workingPatch, /\+working/);
-  assert.equal(
-    parseGitDiff(workingPatch, baseSha, headSha).files.find(
-      (file) => file.path === "untracked addition.txt",
-    )?.kind,
-    "added",
-  );
+  // The working tree against the merge base now reads through the shared change layer.
+  const { model } = await loadDiffModel({
+    cwd: root,
+    source: { kind: "branch-base", base: "review-base" },
+    isCurrent: () => true,
+  });
+  assert.equal(model.baseSha, baseSha);
+  assert.equal(model.headSha, headSha);
+  const working = model.files.find((file) => file.path === "file.txt");
+  assert.ok(working?.hunks.some((hunk) => hunk.lines.some((line) => line.text === "working")));
+  assert.equal(model.files.find((file) => file.path === "untracked addition.txt")?.kind, "added");
 });
 
 test("the default exec runner resolves non-zero exits and rejects spawn failures", async () => {

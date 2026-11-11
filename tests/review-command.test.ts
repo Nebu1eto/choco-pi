@@ -5,13 +5,15 @@ import assert from "node:assert/strict";
 import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
+import { buildCommentAnchor } from "../.pi/extensions/review/core/anchor.ts";
+import type { GithubReviewPayload } from "../.pi/extensions/review/core/github.ts";
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
   RegisteredCommand,
 } from "@earendil-works/pi-coding-agent";
-import { parseGitDiff } from "../.pi/extensions/review/core/diff.ts";
+import { parseGitDiff } from "../.pi/extensions/lib/changes/patch.ts";
 import { assessDiff } from "../.pi/extensions/review/core/heuristics.ts";
 import type {
   ExecRunner,
@@ -89,19 +91,38 @@ function createRunner(calls: string[][]): ExecRunner {
       return { stdout: JSON.stringify([pullRequest]), stderr: "", code: 0 };
     }
     if (args.includes("--show-toplevel")) return { stdout: `${root}\n`, stderr: "", code: 0 };
+    if (args.includes("symbolic-ref")) return { stdout: "feature\n", stderr: "", code: 0 };
     if (args.includes("for-each-ref")) {
       return { stdout: "feature\nmain\norigin/main\n", stderr: "", code: 0 };
     }
-    if (args.includes("merge-base")) return { stdout: "base-sha\n", stderr: "", code: 0 };
+    // The shared change layer validates object ids, so these are hexadecimal.
+    if (args.includes("merge-base")) return { stdout: `${BASE_ID}\n`, stderr: "", code: 0 };
     if (args.includes("--verify")) return { stdout: "head-sha\n", stderr: "", code: 0 };
-    if (args.includes("ls-files")) return { stdout: "", stderr: "", code: 0 };
+    if (args.includes("status")) {
+      return {
+        stdout: `# branch.oid ${HEAD_ID}\0# branch.head feature\0`,
+        stderr: "",
+        code: 0,
+      };
+    }
+    // An empty change list: these tests follow targets, not file content.
+    if (args.includes("diff-index") || args.includes("diff-tree")) {
+      return { stdout: "", stderr: "", code: 0 };
+    }
     if (args.includes("diff")) return { stdout: patch, stderr: "", code: 0 };
     throw new Error(`Unexpected ${command} invocation: ${args.join(" ")}`);
   };
 }
 
-function checkpointEntries(): any[] {
-  const checkpoint = (id: string, turnIndex: number, tree: string) => ({
+const BASE_ID = "b".repeat(40);
+const HEAD_ID = "a".repeat(40);
+const TREE_1 = "1".repeat(40);
+const TREE_2 = "2".repeat(40);
+const TREE_3 = "3".repeat(40);
+const TREE_4 = "4".repeat(40);
+
+function checkpointEntry(id: string, turnIndex: number, tree: string) {
+  return {
     type: "custom",
     id,
     parentId: null,
@@ -116,19 +137,37 @@ function checkpointEntries(): any[] {
       turnIndex,
       label: `Turn ${turnIndex}`,
     },
-  });
-  const user = (id: string, text: string) => ({
+  };
+}
+
+function userEntry(id: string, text: string) {
+  return {
     type: "message",
     id,
     parentId: null,
     timestamp: "2026-01-01T00:00:00.000Z",
     message: { role: "user", content: text, timestamp: Date.now() },
-  });
+  };
+}
+
+function checkpointEntries(): any[] {
   return [
-    checkpoint("checkpoint-2", 2, "tree-2"),
-    user("user-2", "Second turn"),
-    checkpoint("checkpoint-3", 3, "tree-3"),
-    user("user-3", "Third turn"),
+    checkpointEntry("checkpoint-2", 2, TREE_2),
+    userEntry("user-2", "Second turn"),
+    checkpointEntry("checkpoint-3", 3, TREE_3),
+    userEntry("user-3", "Third turn"),
+  ];
+}
+
+/** Three prompts as Pi records them: every checkpoint's own turnIndex is 0. */
+function threeTurnEntries(): any[] {
+  return [
+    checkpointEntry("checkpoint-a", 0, TREE_2),
+    userEntry("user-a", "First prompt"),
+    checkpointEntry("checkpoint-b", 0, TREE_3),
+    userEntry("user-b", "Second prompt"),
+    checkpointEntry("checkpoint-c", 0, TREE_4),
+    userEntry("user-c", "Third prompt"),
   ];
 }
 
@@ -138,6 +177,8 @@ function commandContext(
   select: (title: string, options: string[]) => Promise<string | undefined> = async () => undefined,
   editorText: string[] = [],
   widgets: Array<string | undefined> = [],
+  /** Every entry of the session file; the active branch (`entries`) when omitted. */
+  sessionEntries: any[] = entries,
 ): ExtensionCommandContext {
   // SAFETY: The fixture supplies every host member exercised by this test.
   return {
@@ -148,6 +189,7 @@ function commandContext(
     sessionManager: {
       getSessionId: () => sessionId,
       getBranch: () => entries,
+      getEntries: () => sessionEntries,
     } as any,
     // SAFETY: The fixture supplies every host member exercised by this test.
     ui: {
@@ -179,17 +221,21 @@ function register(
     ) => void;
     viewResult?: (record: ReviewRecord) => ReviewViewResult | undefined;
     viewError?: Error;
+    /** Sees each view's options: whether it ends at the working tree and can refresh. */
+    onOpen?: (view: { includesWorkingTree: boolean | undefined; refreshes: boolean }) => void;
+    /** Sees the session baseline label a session view names in its header. */
+    onBaseline?: (label: string | undefined) => void;
   } = {},
 ) {
   const calls = options.calls ?? [];
   const handlers = new Map<string, (event: RuntimeValue, ctx: any) => void>();
-  let command: Omit<RegisteredCommand, "name" | "sourceInfo"> | undefined;
+  const commands = new Map<string, Omit<RegisteredCommand, "name" | "sourceInfo">>();
   const api = reinterpretHostValue<ExtensionAPI>({
     on: (event: string, handler: (event: RuntimeValue, ctx: any) => void) =>
       handlers.set(event, handler),
     registerCommand: (name: string, value: Omit<RegisteredCommand, "name" | "sourceInfo">) => {
-      assert.equal(name, "review");
-      command = value;
+      assert.ok(!commands.has(name), `/${name} is registered once`);
+      commands.set(name, value);
     },
     appendEntry: () => undefined,
   });
@@ -199,6 +245,13 @@ function register(
     loadConfig: async () => config,
     openView: async (view) => {
       options.onView?.(view.record.target, view.pullRequest);
+      options.onOpen?.({
+        includesWorkingTree: view.includesWorkingTree,
+        refreshes: view.reload !== undefined,
+      });
+      options.onBaseline?.(
+        view.sessionBaseline?.kind === "checkpoint" ? view.sessionBaseline.label : undefined,
+      );
       if (options.viewError) throw options.viewError;
       return options.viewResult?.(view.record);
     },
@@ -207,7 +260,10 @@ function register(
     })),
     now: () => "2026-01-03T00:00:00.000Z",
   } satisfies ReviewExtensionDependencies);
-  assert.ok(command, "/review must be registered");
+  // `/review` belongs to the agent review prompt; this extension must not take it.
+  assert.deepEqual([...commands.keys()], ["review-assist"]);
+  const command = commands.get("review-assist");
+  assert.ok(command, "/review-assist must be registered");
   return { command, handlers, calls };
 }
 
@@ -345,6 +401,8 @@ test("invalid review arguments return helpful parse results", async () => {
   for (const input of [
     "session turn",
     "session turn -1",
+    // Turns are numbered from 1, the first checkpointed turn.
+    "session turn 0",
     "branch",
     "branch a b c",
     "resume extra",
@@ -353,7 +411,7 @@ test("invalid review arguments return helpful parse results", async () => {
   ]) {
     const result = parseReviewCommand(input, sessionId);
     assert.equal(result.ok, false, input);
-    if (!result.ok) assert.match(result.message, /Usage: \/review/);
+    if (!result.ok) assert.match(result.message, /Usage: \/review-assist \[/);
   }
 
   const notifications: Array<{ message: string; type?: string }> = [];
@@ -361,7 +419,7 @@ test("invalid review arguments return helpful parse results", async () => {
   await command.handler("branch", commandContext(notifications));
   assert.equal(calls.length, 0, "invalid input must not run git");
   assert.equal(notifications[0]?.type, "warning");
-  assert.match(notifications[0]?.message ?? "", /requires a base.*Usage: \/review/i);
+  assert.match(notifications[0]?.message ?? "", /requires a base.*Usage: \/review-assist /i);
 });
 
 test("registers contextual, non-throwing argument completions", async () => {
@@ -372,7 +430,7 @@ test("registers contextual, non-throwing argument completions", async () => {
 
   assert.deepEqual(
     (await complete(""))?.map((item) => item.value),
-    ["session", "branch", "resume", "pr"],
+    ["session", "branch", "uncommitted", "resume", "pr"],
   );
   assert.deepEqual(
     (await complete("br"))?.map((item) => item.value),
@@ -384,7 +442,8 @@ test("registers contextual, non-throwing argument completions", async () => {
   );
   assert.deepEqual(
     (await complete("session turn "))?.map((item) => item.value),
-    ["session turn 2", "session turn 3"],
+    ["session turn 1", "session turn 2"],
+    "turns are numbered by position, not by the checkpoint's own turnIndex",
   );
   assert.deepEqual(
     (await complete("branch "))?.map((item) => item.value),
@@ -400,7 +459,7 @@ test("registers contextual, non-throwing argument completions", async () => {
   );
   assert.deepEqual(
     (await complete("resume "))?.map((item) => ({ value: item.value, label: item.label })),
-    [{ value: "resume", label: "main…HEAD" }],
+    [{ value: "resume", label: "main → working tree" }],
   );
 });
 
@@ -410,8 +469,8 @@ test("completion failures are contained", async () => {
   const api = reinterpretHostValue<ExtensionAPI>({
     on: (event: string, handler: (event: RuntimeValue, ctx: any) => void) =>
       handlers.set(event, handler),
-    registerCommand: (_name: string, value: Omit<RegisteredCommand, "name" | "sourceInfo">) => {
-      command = value;
+    registerCommand: (name: string, value: Omit<RegisteredCommand, "name" | "sourceInfo">) => {
+      if (name === "review-assist") command = value;
     },
   });
   registerReviewExtension(api, {
@@ -433,7 +492,7 @@ test("runs branch review through the local diff pipeline", async () => {
   assert.deepEqual(seen, [{ kind: "branch", base: "main" }]);
   assert.ok(calls.some((args) => args.includes("merge-base")));
   assert.ok(
-    calls.some((args) => args.includes("ls-files")),
+    calls.some((args) => args.includes("status")),
     "one-argument branch review includes the working tree",
   );
 });
@@ -442,12 +501,110 @@ test("runs session and single-turn review through checkpoint data", async () => 
   const seen: ReviewTarget[] = [];
   const { command, calls } = register({ onView: (target) => seen.push(target) });
   await command.handler("session", commandContext([]));
-  await command.handler("session turn 2", commandContext([]));
+  await command.handler("session turn 1", commandContext([]));
   assert.deepEqual(seen, [
     { kind: "session", sessionId },
-    { kind: "session-turn", sessionId, turnIndex: 2 },
+    { kind: "session-turn", sessionId, turnIndex: 1 },
   ]);
-  assert.ok(calls.some((args) => args.includes("tree-2") && args.includes("tree-3")));
+  assert.ok(calls.some((args) => args.includes(TREE_2) && args.includes(TREE_3)));
+});
+
+test("session turn 2 of three selects the middle turn: its checkpoint to the next one", async () => {
+  const notifications: Array<{ message: string; type?: string }> = [];
+  const opened: Array<{ includesWorkingTree: boolean | undefined; refreshes: boolean }> = [];
+  const { command, calls } = register({ onOpen: (view) => opened.push(view) });
+  await command.handler("session turn 2", commandContext(notifications, threeTurnEntries()));
+  assert.deepEqual(notifications, []);
+  assert.ok(
+    calls.some((args) => args.includes(TREE_3) && args.includes(TREE_4)),
+    "turn 2 compares its own checkpoint with turn 3's",
+  );
+  assert.equal(
+    calls.some((args) => args.includes(TREE_2)),
+    false,
+    "turn 1 is not involved",
+  );
+  assert.deepEqual(opened, [{ includesWorkingTree: false, refreshes: false }]);
+
+  calls.length = 0;
+  opened.length = 0;
+  await command.handler("session turn 3", commandContext(notifications, threeTurnEntries()));
+  assert.ok(calls.some((args) => args.includes(TREE_4)));
+  assert.deepEqual(
+    opened,
+    [{ includesWorkingTree: true, refreshes: true }],
+    "the last turn ends at the working tree and can be refreshed",
+  );
+  const missing: Array<{ message: string; type?: string }> = [];
+  await command.handler("session turn 4", commandContext(missing, threeTurnEntries()));
+  assert.match(
+    missing.at(-1)?.message ?? "",
+    /Session turn 4 has no file checkpoint\. Available turns: 1, 2, 3\./,
+  );
+});
+
+test("a saved record from before positional turns (turnIndex 0) opens its first turn to the working tree", async () => {
+  const opened: Array<{ includesWorkingTree: boolean | undefined; refreshes: boolean }> = [];
+  const calls: string[][] = [];
+  const legacy: ReviewRecord = {
+    version: 1,
+    repoKey: "repo",
+    target: { kind: "session-turn", sessionId, turnIndex: 0 },
+    baseSha: TREE_2,
+    headSha: HEAD_ID,
+    cursor: { reviewedHunkIds: [], lastHeadSha: HEAD_ID },
+    comments: [],
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+  const store: ReviewStore = {
+    load: async () => undefined,
+    save: async () => undefined,
+    list: async () => [legacy],
+  };
+  const { command } = register({ calls, store, onOpen: (view) => opened.push(view) });
+  await command.handler(
+    "resume",
+    commandContext([], threeTurnEntries(), async (_title, options) => options[0]),
+  );
+  assert.ok(
+    calls.some((args) => args.includes(TREE_2)),
+    "the first checkpoint",
+  );
+  assert.equal(
+    calls.some((args) => args.includes(TREE_3) || args.includes(TREE_4)),
+    false,
+  );
+  assert.deepEqual(opened, [{ includesWorkingTree: true, refreshes: true }]);
+});
+
+test("session review starts at the session's first checkpoint, the same baseline as /diff", async () => {
+  const calls: string[][] = [];
+  const labels: Array<string | undefined> = [];
+  const { command } = register({ calls, onBaseline: (label) => labels.push(label) });
+  // The active branch starts after /tree navigation; the session file holds an earlier checkpoint.
+  const earlier = [checkpointEntry("checkpoint-1", 0, TREE_1), userEntry("user-1", "Earlier")];
+  await command.handler(
+    "session",
+    commandContext(
+      [],
+      checkpointEntries(),
+      undefined,
+      [],
+      [],
+      [...earlier, ...checkpointEntries()],
+    ),
+  );
+  assert.ok(
+    calls.some((args) => args.includes(TREE_1)),
+    "the first checkpoint in the session file",
+  );
+  assert.equal(
+    calls.some((args) => args.includes(TREE_2)),
+    false,
+    "not the branch's first turn",
+  );
+  assert.deepEqual(labels, ["turn 1 (Earlier)"], "the header names the pane's baseline");
 });
 
 test("reports missing session checkpoints without disabling branch review", async () => {
@@ -462,6 +619,27 @@ test("reports missing session checkpoints without disabling branch review", asyn
   );
   await command.handler("branch main", ctx);
   assert.deepEqual(seen, [{ kind: "branch", base: "main" }]);
+});
+
+test("the picker offers the default branch base first and never the checked-out branch", async () => {
+  let offered: string[] = [];
+  const { command } = register();
+  await command.handler(
+    "",
+    commandContext([], checkpointEntries(), async (title, options) => {
+      assert.equal(title, "Review target");
+      offered = options;
+      return undefined;
+    }),
+  );
+  const bases = offered.filter((option) => option.startsWith("Branch base: "));
+  assert.equal(
+    bases[0],
+    "Branch base: main",
+    "the default base (main, as no remote names one) comes first",
+  );
+  assert.equal(bases.includes("Branch base: feature"), false, "feature is checked out");
+  assert.deepEqual(bases, ["Branch base: main", "Branch base: origin/main"]);
 });
 
 test("includes pull requests in the target picker", async (t) => {
@@ -690,4 +868,183 @@ test("a plain comment submits through the stub runner without asking for confirm
   const submissions = calls.filter((call) => call.command === "gh" && call.args.includes("POST"));
   assert.equal(submissions.length, 1);
   assert.ok(submissions[0]?.input, "the stubbed submission receives a JSON payload on stdin");
+});
+
+/** ESC colour, OSC 52 ended by BEL, C1 CSI and right-to-left override; one line, as git and gh report names. */
+const CONTROL_NAME = "a\u001b[31mred\u001b]52;c;SGVsbG8=\u0007b\u009be\u202ef";
+
+function controlCount(text: string): number {
+  let count = 0;
+  for (const character of text) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code < 0x20 || (code >= 0x7f && code <= 0x9f) || code === 0x202e) count += 1;
+  }
+  return count;
+}
+
+test("completion labels and failure notifications draw branch names and pull request text as glyphs", async () => {
+  const calls: string[][] = [];
+  const base = createRunner(calls);
+  const runner: ExecRunner = async (command, args, opts) => {
+    if (command === "gh" && args[0] === "pr" && args[1] === "list") {
+      const nasty = {
+        ...pullRequest,
+        title: CONTROL_NAME,
+        baseRefName: CONTROL_NAME,
+        author: { ...pullRequest.author, login: CONTROL_NAME },
+      };
+      return { stdout: JSON.stringify([nasty]), stderr: "", code: 0 };
+    }
+    if (args.includes("for-each-ref")) return { stdout: `${CONTROL_NAME}\n`, stderr: "", code: 0 };
+    return base(command, args, opts);
+  };
+  const notifications: Array<{ message: string; type?: string }> = [];
+  const { command, handlers } = register({ runner, viewError: new Error(`view ${CONTROL_NAME}`) });
+  handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, commandContext([]));
+  const complete = command.getArgumentCompletions!;
+  const items = [...((await complete("branch ")) ?? []), ...((await complete("pr ")) ?? [])];
+  assert.equal(items.length, 2);
+  const drawn = items.map((item) => `${item.label} ${item.description ?? ""}`).join(" | ");
+  assert.equal(controlCount(drawn), 0);
+  assert.ok(drawn.includes("a␛[31mred␛]52;c;SGVsbG8=␇b\uFFFDe\uFFFDf"));
+  // The branch completion still inserts the real name.
+  assert.equal(items[0]?.value, `branch ${CONTROL_NAME}`);
+
+  await command.handler("branch main", commandContext(notifications));
+  const failure = notifications.at(-1)?.message ?? "";
+  assert.match(failure, /^Review failed: view a␛\[31mred/);
+  assert.equal(controlCount(failure), 0);
+});
+
+/* ------------- submission decides inline against the head it names */
+
+const movedHead = "c".repeat(40);
+/** The same change two lines lower, as after a force-push that added lines above it. */
+const movedPatch = patch.replace("@@ -1 +1 @@", "@@ -3 +3 @@");
+/** The changed line is different, so the comment's text is gone. */
+const rewrittenPatch = patch.replace("+export const value = 2;", "+export const value = 3;");
+
+/**
+ * The pull request runner, with GitHub's head (and the diff a re-read sees)
+ * switched to `movedHead` once the review has been shown.
+ */
+function movingRunner(calls: PrRunnerCall[], moved: { now: boolean; diff: string }): ExecRunner {
+  const base = createPullRequestRunner(calls, []);
+  return async (command, args, options) => {
+    if (!moved.now) return base(command, args, options);
+    if (command === "gh" && args[0] === "pr" && args[1] === "view") {
+      calls.push({ command, args: [...args] });
+      return {
+        stdout: JSON.stringify({ ...pullRequest, headRefOid: movedHead }),
+        stderr: "",
+        code: 0,
+      };
+    }
+    if (command === "gh" && args[0] === "api" && !args.includes("--method")) {
+      calls.push({ command, args: [...args] });
+      return {
+        stdout: JSON.stringify({
+          headSha: movedHead,
+          baseSha: prBase,
+          headRef: "topic",
+          state: "open",
+        }),
+        stderr: "",
+        code: 0,
+      };
+    }
+    if (command === "git" && args.includes("rev-parse") && args.includes("--verify")) {
+      calls.push({ command, args: [...args] });
+      return { stdout: `${movedHead}\n`, stderr: "", code: 0 };
+    }
+    if (command === "git" && args.includes("diff")) {
+      calls.push({ command, args: [...args] });
+      return { stdout: moved.diff, stderr: "", code: 0 };
+    }
+    return base(command, args, options);
+  };
+}
+
+async function submitWithHead(
+  t: TestContext,
+  moved: { now: boolean; diff: string },
+  move: boolean,
+) {
+  const reviewDirectory = await mkdtemp(join(tmpdir(), "choco-pi-review-head-"));
+  t.after(() => rm(reviewDirectory, { recursive: true, force: true }));
+  const calls: PrRunnerCall[] = [];
+  const notifications: Array<{ message: string; type?: string }> = [];
+  const shown = parseGitDiff(patch, prBase, prHead);
+  const hunk = shown.files[0]!.hunks[0]!;
+  const { command } = register({
+    runner: movingRunner(calls, moved),
+    reviewDirectory,
+    viewResult: (review) => {
+      moved.now = move;
+      const finished = finishedPullRequestRecord(review, "comment");
+      finished.record.comments = [
+        {
+          id: "c1",
+          path: "src/value.ts",
+          side: "RIGHT",
+          line: 1,
+          body: "Why 2?",
+          anchor: buildCommentAnchor(hunk, "RIGHT", 1),
+          createdAt: "2026-01-02T21:00:00.000Z",
+          updatedAt: "2026-01-02T21:00:00.000Z",
+        },
+      ];
+      return finished;
+    },
+  });
+  await command.handler(
+    "pr 42",
+    commandContext(notifications, checkpointEntries(), async () => undefined),
+  );
+  const post = calls.find((call) => call.command === "gh" && call.args.includes("--method"));
+  // SAFETY: The request body is the JSON this module wrote for GitHub's create-review call.
+  const sent = post?.input ? (JSON.parse(post.input) as GithubReviewPayload) : undefined;
+  const diffReads = calls.filter(
+    (call) => call.command === "git" && call.args.includes("diff"),
+  ).length;
+  return { sent, diffReads, notifications };
+}
+
+test("head unchanged: the shown diff decides, nothing is read again, and the comment goes inline", async (t) => {
+  const { sent, diffReads, notifications } = await submitWithHead(
+    t,
+    { now: false, diff: patch },
+    false,
+  );
+  assert.equal(diffReads, 1, "the diff is read once, when the review opens");
+  assert.equal(sent?.commit_id, prHead, notifications.at(-1)?.message ?? "");
+  assert.deepEqual(
+    sent?.comments?.map((entry) => [entry.side, entry.line]),
+    [["RIGHT", 1]],
+  );
+});
+
+test("head moved, text still there: the new head's diff is read and the comment goes inline where it is now", async (t) => {
+  const { sent, diffReads, notifications } = await submitWithHead(
+    t,
+    { now: false, diff: movedPatch },
+    true,
+  );
+  assert.equal(diffReads, 2, "the moved head's diff is read");
+  assert.equal(sent?.commit_id, movedHead, notifications.at(-1)?.message ?? "");
+  assert.deepEqual(
+    sent?.comments?.map((entry) => [entry.side, entry.line]),
+    [["RIGHT", 3]],
+  );
+});
+
+test("head moved, text gone: the comment goes into the body, never inline at its old line", async (t) => {
+  const { sent, notifications } = await submitWithHead(
+    t,
+    { now: false, diff: rewrittenPatch },
+    true,
+  );
+  assert.equal(sent?.commit_id, movedHead, notifications.at(-1)?.message ?? "");
+  assert.equal(sent?.comments, undefined);
+  assert.match(sent?.body ?? "", /src\/value\.ts`\*\* line 1 \(RIGHT\)[\s\S]*> Why 2\?/);
 });

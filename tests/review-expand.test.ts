@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import { buildCommentAnchor } from "../.pi/extensions/review/core/anchor.ts";
-import { parseGitDiff } from "../.pi/extensions/review/core/diff.ts";
+import { parseGitDiff } from "../.pi/extensions/lib/changes/patch.ts";
 import {
   collapseHunkContext,
   EXPANSION_LIMIT,

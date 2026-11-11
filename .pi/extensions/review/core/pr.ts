@@ -19,7 +19,7 @@ import {
   repositoryRoot,
   resolveRevision,
 } from "./git.ts";
-import { DEFAULT_REVIEW_DIRECTORY, repoKey } from "./store.ts";
+import { refuseRealStoreUnderTest, repoKey, resolveReviewDirectory } from "./store.ts";
 import type { ExecRunner, ReviewTarget } from "./types.ts";
 
 const GH_FIELDS = [
@@ -358,7 +358,10 @@ export async function resolvePullRequestTarget(
   options: PullRequestResolveOptions = {},
 ): Promise<PullRequestReview> {
   const runner = options.runner ?? defaultExecRunner;
-  const reviewDirectory = options.reviewDirectory ?? DEFAULT_REVIEW_DIRECTORY;
+  // Resolved per call, so worktrees follow this session's agent directory.
+  const reviewDirectory = refuseRealStoreUnderTest(
+    options.reviewDirectory ?? resolveReviewDirectory(),
+  );
   const root = await repositoryRoot(cwd, runner);
   const [metadata, remote, commonDirectory] = await Promise.all([
     getPullRequestMetadata(root, target.number, runner),

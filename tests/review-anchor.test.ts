@@ -3,9 +3,9 @@ import test from "node:test";
 import {
   buildCommentAnchor,
   hashSnippet,
-  relocateAnchor,
+  locateComment,
 } from "../.pi/extensions/review/core/anchor.ts";
-import { parseGitDiff } from "../.pi/extensions/review/core/diff.ts";
+import { parseGitDiff } from "../.pi/extensions/lib/changes/patch.ts";
 
 function patch(header: string, alpha = "alpha"): string {
   return [
@@ -63,85 +63,101 @@ test("a range anchor covers the whole range and round-trips to both of its ends"
   assert.equal(single.snippet, "two\nthree\nfour\nfive\nsix");
   assert.equal(range.snippetHash, hashSnippet(range.snippet));
 
-  // Relocating against the head file returns the matched snippet's own ends,
-  // which stay a fixed distance from the commented range.
-  const head = ["header", "one", "two", "three", "four", "five", "six", "seven", "eight", ""].join(
-    "\n",
+  // Located in the same hunk after it moved two lines down, the range keeps both ends.
+  const moved = parseGitDiff(
+    rangePatch().replace("@@ -1,6 +1,8 @@", "@@ -3,6 +3,8 @@"),
+    "base",
+    "head",
   );
-  assert.deepEqual(relocateAnchor(range, head), {
-    status: "mapped",
-    method: "exact",
-    startLine: 2,
-    line: 7,
-    matchedSnippet: "one\ntwo\nthree\nfour\nfive\nsix",
-  });
+  assert.deepEqual(
+    locateComment(
+      { path: "range.txt", side: "RIGHT", line: 4, startLine: 3, anchor: range },
+      moved,
+    ),
+    { status: "placed", side: "RIGHT", hunkId: hunk.id, startLine: 5, line: 6, position: 2 },
+  );
 
   // The range is verified against the requested side, not merely clamped.
   assert.throws(() => buildCommentAnchor(hunk, "RIGHT", 3, 4), /range is invalid/);
   assert.throws(() => buildCommentAnchor(hunk, "LEFT", 99, 98), /not present on the LEFT side/);
 });
 
-test("anchors relocate exactly in a recomputed model after line numbers move", () => {
+test("a comment is located in its hunk after line numbers move, by its text", () => {
   const original = parseGitDiff(patch("@@ -10,4 +10,4 @@ function example"), "base", "head-1");
   const moved = parseGitDiff(patch("@@ -20,4 +30,4 @@ function example"), "base", "head-2");
   const anchor = buildCommentAnchor(original.files[0]!.hunks[0]!, "RIGHT", 11);
-
   assert.equal(moved.files[0]!.hunks[0]!.id, anchor.hunkHash);
-  assert.deepEqual(relocateAnchor(anchor, moved, { path: "example.txt", side: "RIGHT" }), {
-    status: "mapped",
-    method: "exact",
-    startLine: 30,
-    line: 33,
-    matchedSnippet: "alpha\nnew\nomega\ntail",
-    path: "example.txt",
+  assert.deepEqual(locateComment({ path: "example.txt", side: "RIGHT", line: 11, anchor }, moved), {
+    status: "placed",
     side: "RIGHT",
-    hunkHash: moved.files[0]!.hunks[0]!.id,
+    hunkId: anchor.hunkHash,
+    startLine: 31,
+    line: 31,
+    position: 1,
   });
 });
 
-test("a unique substring relocates an anchor when surrounding file context changed", () => {
-  const model = parseGitDiff(patch("@@ -10,4 +10,4 @@ function example"), "base", "head");
-  const anchor = buildCommentAnchor(model.files[0]!.hunks[0]!, "RIGHT", 11);
-  const content = ["prefix", "alpha changed", "new", "omega", "tail", "suffix", ""].join("\n");
-
-  assert.deepEqual(relocateAnchor(anchor, content), {
-    status: "mapped",
-    method: "unique-substring",
-    startLine: 3,
-    line: 5,
-    matchedSnippet: "new\nomega\ntail",
-  });
-});
-
-test("ambiguous and absent snippets are explicitly unmappable", () => {
-  const model = parseGitDiff(patch("@@ -10,4 +10,4 @@ function example"), "base", "head");
-  const anchor = buildCommentAnchor(model.files[0]!.hunks[0]!, "RIGHT", 11);
-  const ambiguous = ["new", "omega", "tail", "separator", "new", "omega", "tail"].join("\n");
-
-  assert.deepEqual(relocateAnchor(anchor, ambiguous), {
-    status: "unmappable",
-    reason: "ambiguous",
-    message: "The anchor has multiple possible substring matches.",
-  });
-  assert.deepEqual(relocateAnchor(anchor, "unrelated\ncontent\n"), {
-    status: "unmappable",
-    reason: "not-found",
-    message: "The anchor snippet is no longer present in the review content.",
-  });
-});
-
-test("a corrupted anchor hash is rejected before relocation", () => {
-  const result = relocateAnchor(
-    {
-      hunkHash: "hunk",
-      snippet: "target",
-      snippetHash: "not-the-hash",
-    },
-    "target\n",
+test("when another line of its hunk changed, the comment is found in the new hunk by its exact text", () => {
+  const original = parseGitDiff(patch("@@ -10,4 +10,4 @@ function example"), "base", "head");
+  const anchor = buildCommentAnchor(original.files[0]!.hunks[0]!, "RIGHT", 13);
+  // "alpha" is outside the snippet of line 13 (omega's neighbours are new, tail).
+  const changed = parseGitDiff(
+    patch("@@ -10,4 +10,4 @@ function example", "alpha!"),
+    "base",
+    "head",
   );
-  assert.deepEqual(result, {
-    status: "unmappable",
-    reason: "invalid-anchor",
-    message: "The anchor snippet does not match its stored hash.",
-  });
+  const hunk = changed.files[0]!.hunks[0]!;
+  assert.notEqual(hunk.id, anchor.hunkHash);
+  assert.deepEqual(
+    locateComment({ path: "example.txt", side: "RIGHT", line: 13, anchor }, changed),
+    {
+      status: "placed",
+      side: "RIGHT",
+      hunkId: hunk.id,
+      startLine: 13,
+      line: 13,
+      position: 3,
+    },
+  );
+});
+
+test("a snippet whose context changed is outdated, never matched on part of it", () => {
+  const model = parseGitDiff(patch("@@ -10,4 +10,4 @@ function example"), "base", "head");
+  const anchor = buildCommentAnchor(model.files[0]!.hunks[0]!, "RIGHT", 11);
+  const changed = parseGitDiff(
+    patch("@@ -10,4 +10,4 @@ function example", "alpha changed"),
+    "base",
+    "head",
+  );
+  const located = locateComment({ path: "example.txt", side: "RIGHT", line: 11, anchor }, changed);
+  assert.equal(located.status, "outdated");
+  assert.equal(located.status === "outdated" ? located.reason : undefined, "not-found");
+});
+
+test("a snippet found twice in its file is ambiguous; a file not in the comparison is gone", () => {
+  const model = parseGitDiff(patch("@@ -10,4 +10,4 @@ function example"), "base", "head");
+  const anchor = buildCommentAnchor(model.files[0]!.hunks[0]!, "RIGHT", 11);
+  const twice = parseGitDiff(
+    [
+      patch("@@ -10,4 +10,4 @@ function example", "beta").trimEnd(),
+      ...patch("@@ -40,4 +40,4 @@ function example", "gamma").split("\n").slice(4),
+    ].join("\n"),
+    "base",
+    "head",
+  );
+  const sameSnippet = { ...anchor, hunkHash: "gone", snippet: "new\nomega\ntail" };
+  assert.equal(
+    locateComment({ path: "example.txt", side: "RIGHT", line: 11, anchor: sameSnippet }, twice)
+      .status,
+    "outdated",
+  );
+  const located = locateComment(
+    { path: "example.txt", side: "RIGHT", line: 11, anchor: sameSnippet },
+    twice,
+  );
+  assert.equal(located.status === "outdated" ? located.reason : undefined, "ambiguous");
+  assert.equal(
+    locateComment({ path: "other.txt", side: "RIGHT", line: 1, anchor }, model).status,
+    "outdated",
+  );
 });

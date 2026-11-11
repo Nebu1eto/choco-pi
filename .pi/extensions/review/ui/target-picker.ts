@@ -1,4 +1,8 @@
+import { sanitizeTerminalText as safe } from "../../lib/changes/terminal-text.ts";
 import type { ReviewRecord, ReviewStore, ReviewTarget } from "../core/types.ts";
+import { describeReviewTarget } from "../core/headless-presentation.ts";
+
+export { describeReviewTarget };
 
 export type TargetPickerHost = {
   select(title: string, options: string[]): Promise<string | undefined>;
@@ -16,21 +20,6 @@ export function pullRequestTargetChoice(number: number, title: string): ReviewTa
   };
 }
 
-export function describeReviewTarget(target: ReviewTarget): string {
-  switch (target.kind) {
-    case "session":
-      return `session ${target.sessionId}`;
-    case "session-turn":
-      return `session ${target.sessionId}, turn ${target.turnIndex}`;
-    case "branch":
-      return target.target === undefined
-        ? `${target.base}…HEAD`
-        : `${target.base}…${target.target}`;
-    case "pr":
-      return `pull request #${target.number}`;
-  }
-}
-
 function uniqueChoices(labels: readonly string[]): string[] {
   const counts = new Map<string, number>();
   return labels.map((label) => {
@@ -46,7 +35,7 @@ export async function pickReviewTarget(
   candidates: readonly ReviewTargetChoice[],
 ): Promise<ReviewTarget | undefined> {
   if (candidates.length === 0) return undefined;
-  const choices = uniqueChoices(candidates.map((candidate) => candidate.label));
+  const choices = uniqueChoices(candidates.map((candidate) => safe(candidate.label)));
   const selected = await host.select("Review target", choices);
   const index = selected === undefined ? -1 : choices.indexOf(selected);
   return index < 0 ? undefined : candidates[index]?.target;
@@ -69,7 +58,7 @@ export async function pickReviewRecord(
     (left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
   );
   if (records.length === 0) return undefined;
-  const choices = uniqueChoices(records.map(resumeLabel));
+  const choices = uniqueChoices(records.map((record) => safe(resumeLabel(record))));
   const selected = await host.select("Resume review", choices);
   const index = selected === undefined ? -1 : choices.indexOf(selected);
   return index < 0 ? undefined : records[index];

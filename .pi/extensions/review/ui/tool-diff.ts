@@ -4,9 +4,9 @@ import { isObject, isString, recordOf, type RuntimeValue } from "../../lib/runti
  *
  * `write`, `edit`, and `apply_patch` normally draw with Pi's plain built-in
  * diff. This module swaps only their `renderCall`/`renderResult` functions for
- * ones that build a `DiffModel` and hand it to `core/render/diff-render.ts`,
+ * ones that build a `DiffModel` and hand it to `lib/changes/render/diff-render.ts`,
  * so tool rows get the same syntax-highlighted, token-emphasised diff as the
- * `/review` view.
+ * `/review-assist` view.
  *
  * ## Why a prototype patch, and why this one
  *
@@ -44,11 +44,11 @@ import {
   type ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
 import { Box, type Component, Text, truncateToWidth } from "@earendil-works/pi-tui";
-import { DEFAULT_HIGHLIGHT } from "../core/config.ts";
-import { computeHunkId, parseGitDiff } from "../core/diff.ts";
-import { renderDiffFile } from "../core/render/diff-render.ts";
-import { createHighlight } from "../core/render/highlight.ts";
+import { computeHunkId, parseGitDiff } from "../../lib/changes/patch.ts";
+import { renderDiffFile } from "../../lib/changes/render/diff-render.ts";
+import { createHighlight, DEFAULT_HIGHLIGHT } from "../../lib/changes/render/highlight.ts";
 import type { DiffFile, DiffHunk, DiffLine, ResolvedReviewConfig } from "../core/types.ts";
+import { normalizePatchPath } from "../../../packages/choco-pi-codex/src/patch/paths.ts";
 
 /* ------------------------------------------------------------------ types */
 
@@ -286,7 +286,7 @@ export function buildWriteDiffFile(path: string, content: string): DiffFile {
  * `generateUnifiedPatch` emits bare `--- path` / `+++ path` headers with no
  * `diff --git` line, and a repository path that itself starts with `a/` would
  * be mangled by the parser's prefix stripping. Rebuilding the headers from the
- * tool's own path avoids both problems and keeps `core/diff.ts` as the single
+ * tool's own path avoids both problems and keeps `lib/changes/patch.ts` as the single
  * unified-patch parser.
  */
 export function parseEditPatch(patch: string, path: string): DiffFile[] {
@@ -323,10 +323,10 @@ function isCodexSectionStart(line: string): boolean {
 /**
  * Parse the `*** Begin Patch` envelope `apply_patch` receives.
  *
- * The provider package is installed only in the Pi profile, not in this
- * repository, so its parser cannot be imported here. This reads the same
- * grammar the tool documents and throws on anything it does not recognise,
- * which sends the caller back to the provider's own renderer.
+ * This reads the same grammar the tool documents and throws on anything it
+ * does not recognise, which sends the caller back to the provider's own
+ * renderer. Header paths are read with the applier's own `normalizePatchPath`,
+ * so the file shown is the file the patch edits.
  */
 export function parseCodexPatch(text: string): CodexAction[] {
   const lines = text.trim().split("\n");
@@ -340,11 +340,11 @@ export function parseCodexPatch(text: string): CodexAction[] {
   while (index < last) {
     const line = lines[index]!;
     if (line.startsWith(CODEX_UPDATE)) {
-      const path = line.slice(CODEX_UPDATE.length).trim();
+      const path = normalizePatchPath({ path: line.slice(CODEX_UPDATE.length) });
       index += 1;
       let movePath: string | undefined;
       if (index < last && lines[index]!.startsWith(CODEX_MOVE)) {
-        movePath = lines[index]!.slice(CODEX_MOVE.length).trim();
+        movePath = normalizePatchPath({ path: lines[index]!.slice(CODEX_MOVE.length) });
         index += 1;
       }
       const bodyStart = index;
@@ -353,12 +353,15 @@ export function parseCodexPatch(text: string): CodexAction[] {
       continue;
     }
     if (line.startsWith(CODEX_DELETE)) {
-      actions.push({ kind: "delete", path: line.slice(CODEX_DELETE.length).trim() });
+      actions.push({
+        kind: "delete",
+        path: normalizePatchPath({ path: line.slice(CODEX_DELETE.length) }),
+      });
       index += 1;
       continue;
     }
     if (line.startsWith(CODEX_ADD)) {
-      const path = line.slice(CODEX_ADD.length).trim();
+      const path = normalizePatchPath({ path: line.slice(CODEX_ADD.length) });
       index += 1;
       const added: string[] = [];
       while (index < last && !isCodexSectionStart(lines[index]!)) {

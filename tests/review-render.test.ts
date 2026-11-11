@@ -6,12 +6,12 @@ import {
   effectiveDiffMode,
   MIN_SPLIT_WIDTH,
   renderDiffFile,
-} from "../.pi/extensions/review/core/render/diff-render.ts";
+} from "../.pi/extensions/lib/changes/render/diff-render.ts";
 import type {
   DiffStyleBackground,
   DiffStyler,
-} from "../.pi/extensions/review/core/render/diff-render.ts";
-import { createHighlight } from "../.pi/extensions/review/core/render/highlight.ts";
+} from "../.pi/extensions/lib/changes/render/diff-render.ts";
+import { createHighlight } from "../.pi/extensions/lib/changes/render/highlight.ts";
 import type {
   DiffFile,
   DiffRenderOptions,

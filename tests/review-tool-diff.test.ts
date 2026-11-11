@@ -30,6 +30,8 @@ import {
   TOOL_DIFF_TOOLS,
 } from "../.pi/extensions/review/ui/tool-diff.ts";
 
+import { parsePatchActions } from "../.pi/packages/choco-pi-codex/src/patch/parser.ts";
+
 /* ------------------------------------------------------------------ setup */
 
 const plainConfig: ResolvedReviewConfig = {
@@ -423,6 +425,35 @@ test("covers add, delete and move actions in an apply_patch envelope", () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("apply_patch header paths read the same file name the patch applier edits", () => {
+  const envelope = [
+    "*** Begin Patch",
+    "*** Add File:  lead.ts",
+    "+x",
+    "*** Delete File: in\tner.ts\r",
+    '*** Update File: @"quoted".ts\t ',
+    "*** Move to: moved.ts\uFEFF",
+    "@@",
+    "-a",
+    "+b",
+    "*** End Patch",
+  ].join("\n");
+  const applied = parsePatchActions({ text: envelope }).flatMap((action) =>
+    action.movePath === undefined ? [action.path] : [action.path, action.movePath],
+  );
+  assert.deepEqual(applied, [" lead.ts", "inner.ts", '@"quoted".ts', "moved.ts\uFEFF"]);
+  const requested: string[] = [];
+  const files = buildApplyPatchDiffFiles(envelope, undefined, (path) => {
+    requested.push(path);
+    return undefined;
+  });
+  assert.deepEqual(
+    files.flatMap((file) => (file.oldPath === undefined ? [file.path] : [file.oldPath, file.path])),
+    applied,
+  );
+  assert.deepEqual(requested, ["inner.ts", '@"quoted".ts']);
 });
 
 test("rejects a malformed apply_patch envelope", () => {

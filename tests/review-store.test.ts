@@ -200,3 +200,114 @@ test("Markdown export includes verdict, body, file groups, locations, and standa
   assert.match(markdown, /```text\nconst value = load\(\);\nsave\(value\);\n```/);
   assert.match(markdown, /### src\/b\.ts[\s\S]*#### src\/b\.ts:4 \(LEFT\)/);
 });
+
+test("a save whose directory another session's clean-up removes mid-save creates it again and succeeds", async (t) => {
+  const directory = await sandbox(t);
+  const removed: string[] = [];
+  const store = createReviewStore(directory, undefined, {
+    cleanup: false,
+    beforeWrite: async (repositoryDirectory) => {
+      if (removed.length > 0) return;
+      // What the clean-up's removeIfEmpty does to a directory it has just emptied.
+      await rm(repositoryDirectory, { recursive: true });
+      removed.push(repositoryDirectory);
+    },
+  });
+  const saved = record();
+  await store.save(saved);
+  assert.equal(removed.length, 1);
+  assert.deepEqual(await store.load(saved.repoKey, targetKey(saved.target)), saved);
+});
+
+test("a save retries a vanished directory once, then reports the failure", async (t) => {
+  const directory = await sandbox(t);
+  let attempts = 0;
+  const store = createReviewStore(directory, undefined, {
+    cleanup: false,
+    beforeWrite: async (repositoryDirectory) => {
+      attempts += 1;
+      await rm(repositoryDirectory, { recursive: true });
+    },
+  });
+  await assert.rejects(store.save(record()), { code: "ENOENT" });
+  assert.equal(attempts, 2);
+});
+
+test("a save does not retry a failure other than a missing directory", async (t) => {
+  const directory = await sandbox(t);
+  let attempts = 0;
+  const failure = Object.assign(new Error("disk full"), { code: "ENOSPC" });
+  const store = createReviewStore(directory, undefined, {
+    cleanup: false,
+    beforeWrite: async () => {
+      attempts += 1;
+      throw failure;
+    },
+  });
+  await assert.rejects(store.save(record()), failure);
+  assert.equal(attempts, 1);
+});
+
+/* ----------------------------- an abandoned save never overwrites a newer one */
+
+/** Until the save the test holds is waiting in its write. */
+async function held(gates: readonly unknown[]): Promise<void> {
+  while (gates.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));
+}
+
+/** A store whose writes wait, in order, until the test releases them; the rest run as normal. */
+function heldWrites(directory: string) {
+  const gates: Array<{ release: () => void; fail: (error: Error) => void }> = [];
+  const holds: boolean[] = [];
+  const store = createReviewStore(directory, undefined, {
+    cleanup: false,
+    beforeWrite: () => {
+      if (!holds.shift()) return Promise.resolve();
+      return new Promise<void>((release, fail) => gates.push({ release, fail }));
+    },
+  });
+  return { store, gates, holds };
+}
+
+test("a save held in its write that finishes after a newer one leaves the newer on disk", async (t) => {
+  const directory = await sandbox(t);
+  const { store, gates, holds } = heldWrites(directory);
+  const older = record({ body: "A" });
+  const newer = record({ body: "B" });
+  holds.push(true, false);
+  const a = store.save(older);
+  await held(gates);
+  await store.save(newer);
+  gates[0]?.release();
+  await a;
+  assert.equal((await store.load(older.repoKey, targetKey(older.target)))?.body, "B");
+  const left = await readdir(join(directory, older.repoKey));
+  assert.deepEqual(
+    left.filter((name) => name.endsWith(".tmp")),
+    [],
+    "the superseded temporary file is removed",
+  );
+});
+
+test("saves that finish in order leave the last; a single save is unchanged; a failed older save does not matter", async (t) => {
+  const directory = await sandbox(t);
+  const { store, gates, holds } = heldWrites(directory);
+  const first = record({ body: "A" });
+  await store.save(first);
+  await store.save(record({ body: "B" }));
+  assert.equal((await store.load(first.repoKey, targetKey(first.target)))?.body, "B");
+
+  const single = createReviewStore(await sandbox(t), undefined, { cleanup: false });
+  const only = record({ body: "only" });
+  await single.save(only);
+  assert.deepEqual(await single.load(only.repoKey, targetKey(only.target)), only);
+
+  holds.push(true, false);
+  const failing = store.save(record({ body: "C" }));
+  await held(gates);
+  const succeeding = store.save(record({ body: "D" }));
+  gates[0]?.fail(Object.assign(new Error("disk full"), { code: "ENOSPC" }));
+  await assert.rejects(failing, /disk full/);
+  await succeeding;
+  assert.equal((await store.load(first.repoKey, targetKey(first.target)))?.body, "D");
+});

@@ -4,7 +4,11 @@ import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildCommentAnchor } from "../.pi/extensions/review/core/anchor.ts";
-import { parseGitDiff } from "../.pi/extensions/review/core/diff.ts";
+import {
+  hunkWithExpandedContext,
+  type HunkExpansion,
+} from "../.pi/extensions/review/core/expand.ts";
+import { parseGitDiff } from "../.pi/extensions/lib/changes/patch.ts";
 import {
   type GhRunner,
   type GithubReviewPayload,
@@ -159,6 +163,7 @@ function plan(event: SubmissionEvent, overrides: Partial<ReviewRecord> = {}): Re
     pullRequest: PR,
     event,
     currentHeadSha: "head-1",
+    currentDiff: originalModel(),
   });
 }
 
@@ -207,7 +212,7 @@ test("one request carries the body and every inline comment with GitHub's field 
 });
 
 test("a single-line comment omits start_line entirely rather than repeating line", () => {
-  const comments = plan("COMMENT").payload.comments;
+  const comments = plan("COMMENT").payload.comments ?? [];
   const single = comments.filter((entry) => entry.body !== BODY_RANGE);
   assert.equal(single.length, 2);
   for (const entry of single) {
@@ -246,7 +251,7 @@ test("a draft submission omits event so GitHub leaves the review pending", async
 
   const payload = sentPayload(calls[0]!);
   assert.equal(Object.hasOwn(payload, "event"), false);
-  assert.equal(payload.comments.length, 3);
+  assert.equal((payload.comments ?? []).length, 3);
   assert.equal(submitted.draft, true);
 });
 
@@ -296,7 +301,8 @@ test("a moved head relocates comments and demotes the unmappable ones into the b
   assert.equal(moved.relocatedCount, 3);
   assert.equal(moved.demotedCount, 1);
 
-  // src/app.ts is unchanged but shifted by 20 lines, so its comments follow.
+  // src/app.ts is unchanged but shifted (new side by 20, old side by 10), so
+  // its comments follow by their text and keep their width.
   const relocated = moved.placedComments.map((placed) => ({
     id: placed.commentId,
     line: placed.line,
@@ -306,16 +312,17 @@ test("a moved head relocates comments and demotes the unmappable ones into the b
     method: placed.relocationMethod,
   }));
   assert.deepEqual(relocated, [
-    { id: "c1", line: 33, startLine: 30, side: "RIGHT", origin: 11, method: "exact" },
-    { id: "c2", line: 34, startLine: 30, side: "RIGHT", origin: 12, method: "exact" },
-    { id: "c3", line: 23, startLine: 20, side: "LEFT", origin: 11, method: "exact" },
+    { id: "c1", line: 31, startLine: undefined, side: "RIGHT", origin: 11, method: "exact" },
+    { id: "c2", line: 32, startLine: 31, side: "RIGHT", origin: 12, method: "exact" },
+    { id: "c3", line: 21, startLine: undefined, side: "LEFT", origin: 11, method: "exact" },
   ]);
   assert.deepEqual(
-    moved.payload.comments.map((entry) => entry.path),
+    (moved.payload.comments ?? []).map((entry) => entry.path),
     ["src/app.ts", "src/app.ts", "src/app.ts"],
   );
-  assert.equal(moved.payload.comments[0]?.start_side, "RIGHT");
-  assert.equal(moved.payload.comments[2]?.start_side, "LEFT");
+  assert.equal((moved.payload.comments ?? [])[0]?.start_side, undefined, "a single line stays one");
+  assert.equal((moved.payload.comments ?? [])[1]?.start_side, "RIGHT");
+  assert.equal((moved.payload.comments ?? [])[2]?.side, "LEFT");
 
   // The unmappable comment survives as a file-level note instead of vanishing.
   assert.deepEqual(
@@ -335,7 +342,7 @@ test("a moved head relocates comments and demotes the unmappable ones into the b
   assert.match(body, /no longer present/i);
   assert.ok(body.includes(`> ${BODY_UTIL}`), "the demoted comment keeps its text");
   assert.ok(
-    !moved.payload.comments.some((entry) => entry.body === BODY_UTIL),
+    !(moved.payload.comments ?? []).some((entry) => entry.body === BODY_UTIL),
     "a demoted comment must not be posted inline",
   );
 });
@@ -360,7 +367,7 @@ test("the plan description tells a human exactly what is about to happen", () =>
   assert.match(description, /octo\/widget#42 — Approve/);
   assert.match(description, /Inline comments: 3 \(3 relocated\)/);
   assert.match(description, /Head moved since review started: head-1 -> head-2/);
-  assert.match(description, /Moved into the review body: 1/);
+  assert.match(description, /In the review body instead: 1/);
   assert.match(description, /src\/util\.ts line 5/);
   assert.match(description, /Confirmation required: Approving/);
   assert.ok(!description.includes(BODY_ADDED), "the dialog must not dump comment text");
@@ -715,4 +722,283 @@ test("a COMMENT review without any body is rejected before a request is made", (
       return true;
     },
   );
+});
+
+/* ------------------------------ only lines inside the diff go inline */
+
+const BODY_CONTEXT = "About an unchanged line above the hunk.";
+
+/** src/app.ts with a second hunk lower down, so a range can cross hunks. */
+function twoHunkModel(): DiffModel {
+  const raw = [
+    appPatch("@@ -10,4 +10,5 @@ export function app() {"),
+    "@@ -30,3 +31,3 @@ export function later() {",
+    " const a = 1;",
+    "-const b = 2;",
+    "+const b = 20;",
+    " const c = 3;",
+    "diff --git a/.env b/.env",
+    "--- a/.env",
+    "+++ b/.env",
+    "@@ -1 +1 @@",
+    "-TOKEN=old",
+    "+TOKEN=new",
+    "",
+  ].join("\n");
+  return parseGitDiff(raw, "base-1", "head-1");
+}
+
+/** A comment as the view writes it on lines it showed, anchored on `text`. */
+function looseComment(
+  id: string,
+  path: string,
+  side: DiffSide,
+  line: number,
+  body: string,
+  snippet: string,
+  startLine?: number,
+): ReviewComment {
+  const entry: ReviewComment = {
+    id,
+    path,
+    side,
+    line,
+    body,
+    anchor: { hunkHash: "h", snippet, snippetHash: "0".repeat(64) },
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+  if (startLine !== undefined) entry.startLine = startLine;
+  return entry;
+}
+
+function planOn(comments: ReviewComment[], event: SubmissionEvent = "COMMENT") {
+  return planReviewSubmission({
+    record: record({ comments: [...record().comments, ...comments] }),
+    pullRequest: PR,
+    event,
+    currentHeadSha: "head-1",
+    currentDiff: twoHunkModel(),
+  });
+}
+
+function inlineIds(planned: ReviewSubmissionPlan): string[] {
+  return planned.placedComments.map((entry) => entry.commentId);
+}
+
+function bodyIds(planned: ReviewSubmissionPlan): string[] {
+  return planned.demotedComments.map((entry) => entry.commentId);
+}
+
+/** Lines 1..9 of src/app.ts, revealed above its first hunk the way `+` reveals them. */
+function revealedAbove(): Map<string, HunkExpansion> {
+  const hunk = twoHunkModel().files[0]!.hunks[0]!;
+  const above = Array.from({ length: 9 }, (_unused, index) => ({
+    kind: "context" as const,
+    oldLine: index + 1,
+    newLine: index + 1,
+    text: `const n${index + 1} = ${index + 1};`,
+  }));
+  return new Map([[hunk.id, { above, below: [] }]]);
+}
+
+/** A comment written as the view writes it: anchored on hunk `hunkIndex` of src/app.ts as shown. */
+function shownComment(
+  id: string,
+  hunkIndex: number,
+  side: DiffSide,
+  line: number,
+  body: string,
+  startLine?: number,
+): ReviewComment {
+  const raw = twoHunkModel().files[0]!.hunks[hunkIndex]!;
+  const expansion = revealedAbove().get(raw.id);
+  const hunk = expansion ? hunkWithExpandedContext(raw, expansion) : raw;
+  const entry: ReviewComment = {
+    id,
+    path: "src/app.ts",
+    side,
+    line,
+    body,
+    anchor: buildCommentAnchor(hunk, side, line, startLine ?? line),
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+  if (startLine !== undefined) entry.startLine = startLine;
+  return entry;
+}
+
+function planShown(comments: ReviewComment[], event: SubmissionEvent = "COMMENT") {
+  return planReviewSubmission({
+    record: record({ comments: [...record().comments, ...comments] }),
+    pullRequest: PR,
+    event,
+    currentHeadSha: "head-1",
+    currentDiff: twoHunkModel(),
+    expandedContext: revealedAbove(),
+  });
+}
+
+test("a comment on expanded context goes into the body with its file, line and source, never inline", () => {
+  const planned = planShown([shownComment("ctx", 0, "RIGHT", 5, BODY_CONTEXT)]);
+  assert.deepEqual(inlineIds(planned), ["c1", "c2", "c3"], "the others still go inline");
+  assert.deepEqual(bodyIds(planned), ["ctx"]);
+  assert.equal(planned.demotedComments[0]?.reason, "outside-diff");
+  assert.ok(!planned.payload.comments?.some((entry) => entry.body === BODY_CONTEXT));
+  const body = planned.payload.body ?? "";
+  assert.ok(body.startsWith("Overall summary."));
+  assert.match(body, /\*\*`src\/app\.ts`\*\* line 5 \(RIGHT\)/);
+  assert.match(body, /outside the pull request's diff/);
+  assert.match(body, /const n5 = 5;/, "the source the record holds is quoted");
+  assert.ok(body.includes(`> ${BODY_CONTEXT}`));
+  assert.doesNotMatch(body, /head moved/, "the head did not move");
+  // Without the context it was written on, its place cannot be checked: outdated, still in the body.
+  const blind = planOn([shownComment("ctx", 0, "RIGHT", 5, BODY_CONTEXT)]);
+  assert.deepEqual(bodyIds(blind), ["ctx"]);
+  assert.match(
+    blind.payload.body ?? "",
+    /line 5 \(RIGHT\) — Outdated: its text is no longer present/,
+  );
+});
+
+test("a range across two hunks, or with one end outside the diff, goes into the body", () => {
+  // No view writes a range across hunks; a record that holds one cannot be located.
+  const planned = planShown([
+    looseComment("cross", "src/app.ts", "RIGHT", 32, "Across hunks.", "x", 12),
+    shownComment("half", 0, "RIGHT", 11, "Half outside.", 8),
+    shownComment("inside", 1, "RIGHT", 33, "Second hunk.", 31),
+  ]);
+  assert.deepEqual(bodyIds(planned), ["cross", "half"]);
+  assert.ok(inlineIds(planned).includes("inside"));
+  assert.equal(planned.demotedComments[1]?.reason, "outside-diff", "half: placed, one end outside");
+  assert.match(
+    planned.payload.body ?? "",
+    /lines 8-11 \(RIGHT\) — outside the pull request's diff/,
+  );
+});
+
+test("a comment on a deleted line (LEFT) inside its hunk stays inline", () => {
+  const planned = planOn([shownComment("gone", 1, "LEFT", 31, "Why drop b?")]);
+  assert.ok(inlineIds(planned).includes("gone"));
+  assert.ok(inlineIds(planned).includes("c3"), "the record's LEFT comment too");
+  // The same number on the other side is not in that hunk's new lines.
+  assert.deepEqual(bodyIds(planOn([looseComment("r", "src/app.ts", "RIGHT", 30, "b", "x")])), [
+    "r",
+  ]);
+});
+
+test("an outdated comment (its file is no longer in the diff) goes into the body", () => {
+  const planned = planOn([
+    looseComment("old", "src/removed.ts", "RIGHT", 3, "Stale.", "const z = 0;"),
+  ]);
+  assert.deepEqual(bodyIds(planned), ["old"]);
+  assert.match(planned.payload.body ?? "", /\*\*`src\/removed\.ts`\*\* line 3/);
+});
+
+test("a hidden sensitive file's comment goes into the body without its source", () => {
+  const planned = planOn([
+    looseComment("env", ".env", "RIGHT", 9, "Rotate this.", "TOKEN=live-secret-4242"),
+  ]);
+  assert.deepEqual(bodyIds(planned), ["env"]);
+  const body = planned.payload.body ?? "";
+  assert.match(body, /\*\*`\.env`\*\* line 9/);
+  assert.ok(body.includes("> Rotate this."));
+  assert.ok(!body.includes("live-secret-4242"), "no source from a sensitive file");
+});
+
+test("a review whose comments all go into the body sends no inline comments and a body", async () => {
+  const outside = [
+    looseComment("a", "src/app.ts", "RIGHT", 2, "First.", "x"),
+    looseComment("b", "src/app.ts", "RIGHT", 3, "Second.", "x"),
+  ];
+  for (const event of ["COMMENT", "DRAFT"] as const) {
+    const planned = planReviewSubmission({
+      record: record({ comments: outside, body: "" }),
+      pullRequest: PR,
+      event,
+      currentHeadSha: "head-1",
+      currentDiff: twoHunkModel(),
+    });
+    assert.equal(planned.commentCount, 0);
+    assert.equal(
+      Object.hasOwn(planned.payload, "comments"),
+      false,
+      "the optional field is left out",
+    );
+    assert.match(planned.payload.body ?? "", /First\.[\s\S]*Second\./);
+    const { runner, calls } = stubRunner(() => ({
+      stdout: JSON.stringify({ id: 1, state: "PENDING" }),
+    }));
+    await submitReviewPlan(planned, { confirmed: true, runner });
+    const sent = sentPayload(calls[0]!);
+    assert.equal(Object.hasOwn(sent, "comments"), false);
+    assert.ok(sent.body);
+  }
+});
+
+test("the confirmation says how many comments go inline and how many into the body", () => {
+  const description = describeSubmissionPlan(
+    planShown([shownComment("ctx", 0, "RIGHT", 5, BODY_CONTEXT)], "DRAFT"),
+  );
+  assert.match(description, /Inline comments: 3\b/);
+  assert.match(description, /In the review body instead: 1/);
+  assert.match(description, /src\/app\.ts line 5 — outside the pull request's diff/);
+  assert.ok(!description.includes(BODY_CONTEXT));
+});
+
+test("preparing an unmoved head still reads the diff, to check which comments go inline", async () => {
+  const { runner } = stubRunner(() => ({
+    stdout: JSON.stringify({
+      headSha: "head-1",
+      baseSha: "base-1",
+      headRef: "topic",
+      state: "open",
+    }),
+  }));
+  const reads: string[] = [];
+  const prepared = await prepareReviewSubmission(
+    {
+      record: record({
+        comments: [looseComment("ctx", "src/app.ts", "RIGHT", 5, BODY_CONTEXT, "x")],
+      }),
+      pullRequest: PR,
+      event: "COMMENT",
+    },
+    {
+      runner,
+      loadHeadDiff: async (headSha) => {
+        reads.push(headSha);
+        return twoHunkModel();
+      },
+    },
+  );
+  assert.deepEqual(reads, ["head-1"]);
+  assert.equal(prepared.headMoved, false);
+  assert.deepEqual(bodyIds(prepared), ["ctx"]);
+});
+
+test("preparing an unmoved head uses the diff the review was shown and reads nothing again", async () => {
+  const { runner } = stubRunner(() => ({
+    stdout: JSON.stringify({
+      headSha: "head-1",
+      baseSha: "base-1",
+      headRef: "topic",
+      state: "open",
+    }),
+  }));
+  const prepared = await prepareReviewSubmission(
+    {
+      record: record({
+        comments: [looseComment("ctx", "src/app.ts", "RIGHT", 5, BODY_CONTEXT, "x")],
+      }),
+      pullRequest: PR,
+      event: "COMMENT",
+    },
+    {
+      runner,
+      reviewedDiff: twoHunkModel(),
+      loadHeadDiff: async () => assert.fail("the reviewed diff covers this head"),
+    },
+  );
+  assert.deepEqual(bodyIds(prepared), ["ctx"]);
 });

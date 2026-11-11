@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseGitDiff } from "../.pi/extensions/review/core/diff.ts";
+import { parseGitDiff } from "../.pi/extensions/lib/changes/patch.ts";
 import {
   MAX_HEADLESS_PRESENTATION_BYTES,
   createHeadlessReviewPresentation,
@@ -10,9 +10,11 @@ import type {
   DiffModel,
   ExecRunner,
   ResolvedReviewConfig,
+  ReviewRecord,
   ReviewStore,
 } from "../.pi/extensions/review/core/types.ts";
 import { presentHeadlessReview } from "../.pi/extensions/review/headless.ts";
+import { pickReviewRecord } from "../.pi/extensions/review/ui/target-picker.ts";
 
 const root = "/repo";
 const target = { kind: "branch", base: "main" } as const;
@@ -225,5 +227,90 @@ test("many large files stay within the total presentation bound and flag truncat
   assert.ok(
     new TextEncoder().encode(JSON.stringify(presentation)).byteLength <=
       MAX_HEADLESS_PRESENTATION_BYTES,
+  );
+});
+
+test("headless output names each file a read limit kept out and the omitted-file count", () => {
+  const model: DiffModel = {
+    baseSha: "base",
+    headSha: "head",
+    files: [{ path: "big.txt", kind: "modified", hunks: [], additions: 1, deletions: 0 }],
+    notices: [{ path: "big.txt", message: "Not shown: 2 MiB is over the 1 MiB file limit." }],
+    omittedFiles: 1,
+  };
+  const presentation = createHeadlessReviewPresentation({
+    target,
+    model,
+    assessments: assessDiff(model, config),
+    savedReviews: [],
+  });
+  const limits = presentation.limitations.join("\n");
+  assert.ok(limits.includes("big.txt: Not shown: 2 MiB is over the 1 MiB file limit."), limits);
+  assert.match(limits, /\b1 more changed file\b.*not listed/u);
+  const empty: DiffModel = { baseSha: "base", headSha: "head", files: [] };
+  const plain = createHeadlessReviewPresentation({
+    target,
+    model: empty,
+    assessments: assessDiff(empty, config),
+    savedReviews: [],
+  });
+  assert.equal(plain.limitations.length, 1, "no limit hit adds nothing");
+});
+
+test("targets that end at the working tree are titled with the working tree", () => {
+  const titleOf = (reviewed: Parameters<typeof createHeadlessReviewPresentation>[0]["target"]) =>
+    createHeadlessReviewPresentation({
+      target: reviewed,
+      model: patchModel(),
+      assessments: assessDiff(patchModel(), config),
+      savedReviews: [],
+    }).title;
+  // Regression: uncommitted changes were titled "HEAD…HEAD".
+  assert.equal(
+    titleOf({ kind: "branch", base: "HEAD" }),
+    "Review: uncommitted changes (HEAD → working tree)",
+  );
+  assert.equal(titleOf({ kind: "branch", base: "main", target: "topic" }), "Review: main…topic");
+});
+
+test("the resume picker and every other target description name the working tree truthfully", async () => {
+  const record = (target: ReviewRecord["target"], updatedAt: string): ReviewRecord => ({
+    version: 1,
+    repoKey: "repo",
+    target,
+    baseSha: "b",
+    headSha: "h",
+    cursor: { reviewedHunkIds: [], lastHeadSha: "h" },
+    comments: [],
+    createdAt: updatedAt,
+    updatedAt,
+  });
+  const records = [
+    record({ kind: "branch", base: "HEAD" }, "2026-03-04T00:00:00.000Z"),
+    record({ kind: "branch", base: "main" }, "2026-03-03T00:00:00.000Z"),
+    record({ kind: "branch", base: "main", target: "topic" }, "2026-03-02T00:00:00.000Z"),
+    record({ kind: "pr", number: 42 }, "2026-03-01T00:00:00.000Z"),
+  ];
+  let shown: string[] = [];
+  await pickReviewRecord(
+    {
+      select: async (_title, options) => {
+        shown = options;
+        return undefined;
+      },
+    },
+    { load: async () => undefined, save: async () => {}, list: async () => records },
+    "repo",
+  );
+  const labels = shown.map((label) => label.split(" — ")[0]);
+  assert.deepEqual(labels, [
+    "uncommitted changes (HEAD → working tree)",
+    "main → working tree",
+    "main…topic",
+    "pull request #42",
+  ]);
+  assert.equal(
+    shown.some((label) => label.includes("…HEAD")),
+    false,
   );
 });

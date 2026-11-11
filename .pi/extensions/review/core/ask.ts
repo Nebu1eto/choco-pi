@@ -1,9 +1,9 @@
 import { propertiesWhen } from "../../lib/runtime-values.ts";
 import { isObject, isString, type RuntimeValue } from "../../lib/runtime-values.ts";
 /**
- * Side-chat transport for the interactive review view (`/review`).
+ * Side-chat transport for the interactive review view (`/review-assist`).
  *
- * The founding constraint of `/review` is that the diff never enters the main
+ * The founding constraint of `/review-assist` is that the diff never enters the main
  * session's model context. Letting the reviewer ask questions must not undo
  * that, so this module runs the chat on an independent agent session with its
  * own context. Nothing from the main session reaches it, and nothing it sends
@@ -28,6 +28,8 @@ import { isObject, isString, type RuntimeValue } from "../../lib/runtime-values.
  */
 
 import type { DiffSide } from "./types.ts";
+import type { HiddenPaths } from "./chat-guard.ts";
+import { agentStringLiteral, escapeForAgent } from "../../lib/changes/terminal-text.ts";
 
 /** Prefix on every transcript entry that reports a failure instead of an answer. */
 export const REVIEW_CHAT_FAILURE_PREFIX = "Review chat error: ";
@@ -53,6 +55,8 @@ export type ReviewChatContext = {
   hunkHeader: string;
   /** Worktree or repository root the chat may read. */
   reviewRoot: string;
+  /** Sensitive files whose contents the reviewer has not opened; named, never quoted. */
+  hiddenPaths?: readonly string[];
 };
 
 export type ReviewChatTextMessage = { role: "user" | "assistant"; text: string };
@@ -197,6 +201,11 @@ export type ReviewChatSessionRequest = {
   thinkingLevel?: ReviewChatThinkingLevel;
   /** Root the session's tools operate under. */
   reviewRoot: string;
+  /**
+   * Files the review keeps hidden right now, relative to `reviewRoot`. The
+   * default session refuses tool calls that target them (chat-guard.ts).
+   */
+  hiddenPaths?: HiddenPaths;
 };
 
 export type ReviewChatSessionFactory = (
@@ -207,6 +216,8 @@ export type ReviewChatOptions = {
   cwd: string;
   model?: string;
   thinkingLevel?: string;
+  /** Files the open review keeps hidden, read at each tool call; see chat-guard.ts. */
+  hiddenPaths?: HiddenPaths;
   /** Injection seam for tests. Defaults to an independent Pi session with the main toolset. */
   createSession?: ReviewChatSessionFactory;
 };
@@ -226,13 +237,19 @@ export function buildReviewChatPrompt(question: string, context: ReviewChatConte
     "A human reviewer is reading one hunk of a local code review and has a question about it.",
     "",
     "Review context (location only — the diff body is deliberately not included):",
-    `- file: ${context.path}`,
-    `- hunk: ${context.hunkHeader}`,
+    // Repository text is escaped: a control character in a name or line must not reach the model raw.
+    `- file: ${escapeForAgent(context.path)}`,
+    `- hunk: ${escapeForAgent(context.hunkHeader, true)}`,
     `- side: ${side}`,
     `- line: ${context.line}`,
-    `- focused row text: ${JSON.stringify(context.focusedLineText)}`,
-    `- repository root you may read: ${context.reviewRoot}`,
+    `- focused row text: ${agentStringLiteral(context.focusedLineText)}`,
+    `- repository root you may read: ${escapeForAgent(context.reviewRoot)}`,
   ];
+  if (context.hiddenPaths && context.hiddenPaths.length > 0) {
+    lines.push(
+      `- sensitive files the reviewer has kept hidden; do not read, print, or quote their contents: ${context.hiddenPaths.map((path) => agentStringLiteral(path)).join(", ")}`,
+    );
+  }
   lines.push(
     "",
     "Question:",
@@ -277,6 +294,12 @@ export function createReviewChat(options: ReviewChatOptions): ReviewChat {
 
   /* per-turn streaming state */
   let activeAssistant: number | undefined;
+  /** The entry of the assistant message that ended last; a retry of that message reuses it. */
+  let endedAssistant: number | undefined;
+  /** Set by `auto_retry_start`: the next assistant message replaces this partial answer. */
+  let retryEntry: number | undefined;
+  /** The current assistant message reuses a retried entry and has not streamed text yet. */
+  let retryUnfilled = false;
   let turnProducedText = false;
   let turnFailure: string | undefined;
 
@@ -346,9 +369,23 @@ export function createReviewChat(options: ReviewChatOptions): ReviewChat {
   function handleEvent(event: ReviewChatSessionEvent): void {
     if (disposed) return;
     if (handleToolEvent(event)) return;
+    if (event.type === "auto_retry_start") {
+      // Pi retries a cut-off answer as a fresh assistant message and leaves the
+      // failed attempt out of the model's context, so the transcript keeps one
+      // answer per question: the retry replaces the partial text in place. A
+      // final failure ends without another retry and is reported once, after
+      // the turn, from the last attempt's message.
+      retryEntry = endedAssistant;
+      turnFailure = undefined;
+      return;
+    }
     if (event.type === "message_start") {
       // A new message begins, so streamed text starts a new transcript entry.
-      activeAssistant = undefined;
+      // A retried assistant message continues in the entry of the attempt it replaces.
+      const retrying = retryEntry !== undefined && isAssistantMessage(event.message);
+      activeAssistant = retrying ? retryEntry : undefined;
+      retryUnfilled = retrying;
+      if (retrying) retryEntry = undefined;
       return;
     }
     if (event.type !== "message_update" && event.type !== "message_end") return;
@@ -356,6 +393,7 @@ export function createReviewChat(options: ReviewChatOptions): ReviewChat {
     const text = assistantText(event.message);
     if (text) {
       turnProducedText = true;
+      retryUnfilled = false;
       if (activeAssistant === undefined) {
         activeAssistant = push("assistant", text);
         notify();
@@ -371,6 +409,18 @@ export function createReviewChat(options: ReviewChatOptions): ReviewChat {
     if (event.type === "message_end") {
       const failure = messageFailure(event.message);
       if (failure) turnFailure = failure;
+      if (
+        retryUnfilled &&
+        activeAssistant !== undefined &&
+        activeAssistant === messages.length - 1
+      ) {
+        // The retry produced no text (for example only tool calls): drop the stale partial.
+        messages.pop();
+        activeAssistant = undefined;
+        notify();
+      }
+      retryUnfilled = false;
+      endedAssistant = activeAssistant;
       activeAssistant = undefined;
     }
   }
@@ -384,6 +434,7 @@ export function createReviewChat(options: ReviewChatOptions): ReviewChat {
             cwd: options.cwd,
             model: desiredModel,
             ...propertiesWhen(desiredThinking, () => ({ thinkingLevel: desiredThinking })),
+            ...propertiesWhen(options.hiddenPaths, () => ({ hiddenPaths: options.hiddenPaths })),
             reviewRoot: reviewRoot || options.cwd,
           }),
         )
@@ -412,6 +463,8 @@ export function createReviewChat(options: ReviewChatOptions): ReviewChat {
       if (!active || disposed) return;
 
       activeAssistant = undefined;
+      endedAssistant = undefined;
+      retryEntry = undefined;
       turnProducedText = false;
       turnFailure = undefined;
 
@@ -467,6 +520,8 @@ export function createReviewChat(options: ReviewChatOptions): ReviewChat {
       if (!active.runCommand) throw new Error("This chat session cannot run commands.");
 
       activeAssistant = undefined;
+      endedAssistant = undefined;
+      retryEntry = undefined;
       turnProducedText = false;
       turnFailure = undefined;
 
@@ -632,13 +687,20 @@ async function createDefaultReviewSession(
   const { ModelRuntime, SessionManager, createAgentSession, resolveCliModel } =
     await import("@earendil-works/pi-coding-agent");
   const { createToolSearchResourceLoader } = await import("../../lib/tool-surface.ts");
+  const { chatToolGuard } = await import("./chat-guard.ts");
 
   const root = request.reviewRoot || request.cwd;
   const modelRuntime = await ModelRuntime.create();
   // Default discovery plus Pi's built-in `tool_search`, which SDK sessions do
   // not load on their own, so deferred tools stay discoverable as in the main
-  // session.
-  const resourceLoader = await createToolSearchResourceLoader(root);
+  // session, plus the guard that refuses tool calls on files the review keeps
+  // hidden. The shared loader loads the guard last, so its `tool_call` handler
+  // sees every call, including tools found through `tool_search`. The guard is
+  // defence in depth, not a sandbox: chat-guard.ts lists what it does not stop.
+  const hiddenPaths = request.hiddenPaths;
+  const resourceLoader = await createToolSearchResourceLoader(root, {
+    extensionFactories: hiddenPaths ? [chatToolGuard(root, hiddenPaths)] : [],
+  });
 
   // Extension-registered providers (for example a proxy the main session's
   // model lives on) only enter `modelRuntime` during `bindExtensions`, so a
@@ -736,6 +798,10 @@ function parseThinkingLevel(level: string | undefined): ReviewChatThinkingLevel 
 
 function isRecord(value: RuntimeValue): value is Record<string, RuntimeValue> {
   return isObject(value) && value !== null;
+}
+
+function isAssistantMessage(message: RuntimeValue): boolean {
+  return isRecord(message) && message.role === "assistant";
 }
 
 /** Concatenated text content of an assistant message, ignoring thinking and tool calls. */

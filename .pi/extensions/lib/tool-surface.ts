@@ -143,10 +143,20 @@ export function sessionToolSearchExtension(): InlineExtension {
  * built-in `tool_search`. Used by every SDK session choco-pi starts with the
  * main harness (session bridge, review side chat), so deferred tools stay
  * discoverable from the first turn exactly as in the CLI session.
+ *
+ * `extensionFactories` adds a caller's own inline extensions. Pi loads inline
+ * extensions after every extension discovered on disk, in the order given, so
+ * their `tool_call` handlers run last and see each tool call, including calls
+ * of tools that other extensions register or that `tool_search` surfaces, with
+ * the input as earlier handlers left it.
  */
 export async function createToolSearchResourceLoader(
   cwd: string,
-  options: { agentDir?: string; settingsManager?: SettingsManager } = {},
+  options: {
+    agentDir?: string;
+    settingsManager?: SettingsManager;
+    extensionFactories?: readonly InlineExtension[];
+  } = {},
 ): Promise<DefaultResourceLoader> {
   const agentDir = options.agentDir ?? getAgentDir();
   const loader = new DefaultResourceLoader({
@@ -154,7 +164,7 @@ export async function createToolSearchResourceLoader(
     agentDir,
     // The same default DefaultResourceLoader and createAgentSession use.
     settingsManager: options.settingsManager ?? SettingsManager.create(cwd, agentDir),
-    extensionFactories: [sessionToolSearchExtension()],
+    extensionFactories: [sessionToolSearchExtension(), ...(options.extensionFactories ?? [])],
   });
   await loader.reload();
   return loader;

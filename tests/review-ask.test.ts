@@ -269,21 +269,21 @@ test("session commands run through the session's prompt path and stream into the
         commandTexts.push(text);
         emitFromCommand(text);
       },
-      listCommands: () => [{ name: "review-agent", description: "Adversarial review" }],
+      listCommands: () => [{ name: "review", description: "Adversarial review" }],
     }),
   });
 
   assert.deepEqual(chat.commands(), [], "no catalog before the session exists");
   await chat.prepare("/tmp/review-worktree");
-  assert.deepEqual(chat.commands(), [{ name: "review-agent", description: "Adversarial review" }]);
+  assert.deepEqual(chat.commands(), [{ name: "review", description: "Adversarial review" }]);
 
-  await chat.runCommand("/review-agent HEAD", "/tmp/review-worktree");
-  assert.deepEqual(commandTexts, ["/review-agent HEAD"]);
+  await chat.runCommand("/review HEAD", "/tmp/review-worktree");
+  assert.deepEqual(commandTexts, ["/review HEAD"]);
   assert.deepEqual(
     chat.messages.map((message) =>
       message.role === "tool" ? "tool" : `${message.role}:${message.text}`,
     ),
-    ["user:/review-agent HEAD", "assistant:Ran /review-agent HEAD."],
+    ["user:/review HEAD", "assistant:Ran /review HEAD."],
   );
   chat.dispose();
 });
@@ -565,6 +565,79 @@ test("a provider error carried on the final message becomes a transcript message
 
   assert.equal(textOf(chat.messages[1]), `${REVIEW_CHAT_FAILURE_PREFIX}rate limited`);
 
+  chat.dispose();
+});
+
+/** One attempt that streams `text` and is cut off with `error`, as Pi reports a dropped stream. */
+function cutAttempt(emit: (event: ReviewChatSessionEvent) => void, text: string): void {
+  emit({ type: "message_start", message: assistantMessage("") });
+  emit({ type: "message_update", message: assistantMessage(text) });
+  emit({
+    type: "message_end",
+    message: assistantMessage(text, { stopReason: "error", errorMessage: "terminated" }),
+  });
+}
+
+test("an answer cut off and retried by Pi stays one answer, with no error once a retry succeeds", async () => {
+  const fake = fakeSession((emit) => {
+    cutAttempt(emit, "This answer will be cut");
+    emit({ type: "auto_retry_start" });
+    cutAttempt(emit, "This answer will be cut off");
+    emit({ type: "auto_retry_start" });
+    emit({ type: "message_start", message: assistantMessage("") });
+    emit({ type: "message_update", message: assistantMessage("The whole answer.") });
+    emit({
+      type: "message_end",
+      message: assistantMessage("The whole answer.", { stopReason: "stop" }),
+    });
+    emit({ type: "auto_retry_end" });
+  });
+  const chat = createReviewChat({ cwd: "/repo", createSession: async () => fake.session });
+  await chat.ask("Explain again", context());
+  assert.deepEqual(
+    chat.messages.map((message) => message.role),
+    ["user", "assistant"],
+  );
+  assert.equal(textOf(chat.messages[1]), "The whole answer.");
+  chat.dispose();
+});
+
+test("retries that all fail leave one partial answer and one failure line", async () => {
+  const fake = fakeSession((emit) => {
+    cutAttempt(emit, "First try");
+    emit({ type: "auto_retry_start" });
+    cutAttempt(emit, "Second try");
+    emit({ type: "auto_retry_start" });
+    cutAttempt(emit, "Third try");
+    emit({ type: "auto_retry_end" });
+  });
+  const chat = createReviewChat({ cwd: "/repo", createSession: async () => fake.session });
+  await chat.ask("Explain again", context());
+  assert.equal(chat.messages.length, 3);
+  assert.equal(textOf(chat.messages[1]), "Third try");
+  assert.equal(textOf(chat.messages[2]), `${REVIEW_CHAT_FAILURE_PREFIX}terminated`);
+  chat.dispose();
+});
+
+test("a retry that only calls a tool drops the cut-off partial before the tool row", async () => {
+  const fake = fakeSession((emit) => {
+    cutAttempt(emit, "Let me");
+    emit({ type: "auto_retry_start" });
+    emit({ type: "message_start", message: assistantMessage("") });
+    emit({ type: "message_end", message: assistantMessage("", { stopReason: "toolUse" }) });
+    emit({ type: "tool_execution_start", toolCallId: "t1", toolName: "read", args: {} });
+    emit({ type: "tool_execution_end", toolCallId: "t1", result: {}, isError: false });
+    emit({ type: "message_start", message: assistantMessage("") });
+    emit({ type: "message_update", message: assistantMessage("It is safe.") });
+    emit({ type: "message_end", message: assistantMessage("It is safe.", { stopReason: "stop" }) });
+  });
+  const chat = createReviewChat({ cwd: "/repo", createSession: async () => fake.session });
+  await chat.ask("Is it safe?", context());
+  assert.deepEqual(
+    chat.messages.map((message) => message.role),
+    ["user", "tool", "assistant"],
+  );
+  assert.equal(textOf(chat.messages[2]), "It is safe.");
   chat.dispose();
 });
 

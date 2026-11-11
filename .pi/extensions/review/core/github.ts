@@ -29,9 +29,18 @@ import {
  * status code cannot tell a reviewer which comment GitHub refused.
  */
 
-import { relocateAnchor } from "./anchor.ts";
+import { locateComment, revealedContextFits, type LocateCommentOptions } from "./anchor.ts";
+import { hunkWithExpandedContext, type HunkExpansion } from "./expand.ts";
+import { isSensitivePath } from "../../lib/changes/sensitive.ts";
 import { defaultExecRunner } from "./git.ts";
-import type { DiffModel, DiffSide, ExecRunner, ReviewComment, ReviewRecord } from "./types.ts";
+import type {
+  DiffHunk,
+  DiffModel,
+  DiffSide,
+  ExecRunner,
+  ReviewComment,
+  ReviewRecord,
+} from "./types.ts";
 
 /* ------------------------------------------------------------------ seams */
 
@@ -82,7 +91,8 @@ export type GithubReviewPayload = {
   body?: string;
   /** Absent for a pending draft review. */
   event?: ReviewEvent;
-  comments: GithubReviewCommentPayload[];
+  /** Left out when no comment goes inline (the field is optional in GitHub's API). */
+  comments?: GithubReviewCommentPayload[];
 };
 
 export type PlannedComment = {
@@ -94,11 +104,9 @@ export type PlannedComment = {
   /** Where the comment was written, before any relocation. */
   origin: { side: DiffSide; line: number; startLine?: number };
   relocated: boolean;
-  relocationMethod?: "exact" | "unique-substring";
-  /**
-   * True when relocation could not preserve the original range width, so the
-   * comment attaches to the matched anchor range instead.
-   */
+  /** Present when the comment's lines moved: found again by its exact text. */
+  relocationMethod?: "exact";
+  /** Always false: a comment keeps its range's length or is not placed. */
   rangeAdjusted: boolean;
 };
 
@@ -109,9 +117,16 @@ export type DemotedComment = {
   /** Original position, preserved so the note can state where it came from. */
   line: number;
   startLine?: number;
-  reason: "invalid-anchor" | "not-found" | "ambiguous";
+  /**
+   * `outside-diff`: the line (or one end of the range) is not inside one hunk
+   * of the pull request's diff on its side, so GitHub would refuse the whole
+   * review; the others: the head moved and the anchor could not follow.
+   */
+  reason: "invalid-anchor" | "not-found" | "ambiguous" | "outside-diff";
   message: string;
   body: string;
+  /** Source text the record holds for the comment; absent for a sensitive file. */
+  snippet?: string;
 };
 
 export type ReviewSubmissionPlan = {
@@ -500,49 +515,28 @@ function rangeLabel(line: number, startLine?: number): string {
     : `lines ${startLine}-${line}`;
 }
 
-function commentLineCount(comment: ReviewComment): number {
-  return comment.line - (comment.startLine ?? comment.line) + 1;
-}
-
 type CommentPlacement =
   | { kind: "placed"; comment: PlannedComment }
   | { kind: "demoted"; comment: DemotedComment };
 
-function unchangedPlacement(comment: ReviewComment): CommentPlacement {
-  return {
-    kind: "placed",
-    comment: {
-      commentId: comment.id,
-      path: comment.path,
-      side: comment.side,
-      line: comment.line,
-      ...propertiesWhen(!(comment.startLine === undefined), () => ({
-        startLine: comment.startLine,
-      })),
-      origin: {
-        side: comment.side,
-        line: comment.line,
-        ...propertiesWhen(!(comment.startLine === undefined), () => ({
-          startLine: comment.startLine,
-        })),
-      },
-      relocated: false,
-      rangeAdjusted: false,
-    },
-  };
-}
-
-function relocatePlacement(comment: ReviewComment, currentDiff: DiffModel): CommentPlacement {
-  const relocation = relocateAnchor(comment.anchor, currentDiff, {
-    path: comment.path,
-    side: comment.side,
-  });
+/**
+ * Where a comment goes, decided by `locateComment` (core/anchor.ts) on the
+ * diff the review will be attached to: the same decision the view draws.
+ * `shown` is the context the reader revealed, which applies only while that
+ * diff is the one reviewed.
+ */
+function placementFor(
+  comment: ReviewComment,
+  diff: DiffModel,
+  shown: LocateCommentOptions["shown"],
+): CommentPlacement {
   const origin = {
     side: comment.side,
     line: comment.line,
     ...propertiesWhen(!(comment.startLine === undefined), () => ({ startLine: comment.startLine })),
   };
-  if (relocation.status === "unmappable") {
+  const location = locateComment(comment, diff, shown ? { shown } : {});
+  if (location.status !== "placed") {
     return {
       kind: "demoted",
       comment: {
@@ -553,38 +547,89 @@ function relocatePlacement(comment: ReviewComment, currentDiff: DiffModel): Comm
         ...propertiesWhen(!(comment.startLine === undefined), () => ({
           startLine: comment.startLine,
         })),
-        reason: relocation.reason,
-        message: relocation.message,
+        reason:
+          location.status === "outdated" && location.reason === "ambiguous"
+            ? "ambiguous"
+            : "not-found",
+        message:
+          location.status === "hidden"
+            ? "Its file's contents are withheld from this diff, so where it is cannot be checked."
+            : `Outdated: ${location.message.charAt(0).toLowerCase()}${location.message.slice(1)}`,
         body: comment.body,
       },
     };
   }
-
-  // The anchor snippet carries surrounding context and stores no offset back
-  // to the selected lines, so a matched range wider than the original comment
-  // cannot be narrowed without guessing. Attaching to the matched range keeps
-  // the comment on the code it was written about, and every line of that range
-  // is provably present in the current diff.
-  const matchedLines = relocation.line - relocation.startLine + 1;
-  const exactWidth = matchedLines === commentLineCount(comment);
   const startLine =
-    exactWidth && comment.startLine === undefined ? undefined : relocation.startLine;
+    comment.startLine === undefined || location.startLine === location.line
+      ? undefined
+      : location.startLine;
+  const relocated = location.line !== comment.line || startLine !== comment.startLine;
   return {
     kind: "placed",
     comment: {
       commentId: comment.id,
       path: comment.path,
-      side: relocation.side ?? comment.side,
-      line: relocation.line,
-      ...propertiesWhen(!(startLine === undefined || startLine === relocation.line), () => ({
-        startLine,
-      })),
+      side: location.side,
+      line: location.line,
+      ...propertiesWhen(!(startLine === undefined), () => ({ startLine })),
       origin,
-      relocated: true,
-      relocationMethod: relocation.method,
-      rangeAdjusted: !exactWidth,
+      relocated,
+      ...propertiesWhen(relocated, () => ({ relocationMethod: "exact" as const })),
+      rangeAdjusted: false,
     },
   };
+}
+
+/**
+ * Whether GitHub takes `comment` inline on `diff`. GitHub's REST docs say
+ * `line` and `start_line` are lines "in the pull request diff" and `side`
+ * is the side of the last line; this module sends `start_side` equal to
+ * `side`. Assumed beyond the docs (no GitHub page found offline or online
+ * states it): both ends of a range must be in the same hunk, with start
+ * before end, as the web UI only lets a selection stay inside one hunk.
+ * Within a hunk the lines of one side are numbered consecutively, so both
+ * ends in one hunk means every line between them is too.
+ */
+function insideOneHunk(
+  comment: { path: string; side: DiffSide; line: number; startLine?: number },
+  diff: DiffModel,
+): boolean {
+  const start = comment.startLine ?? comment.line;
+  if (start > comment.line) return false;
+  const file = diff.files.find((entry) => entry.path === comment.path);
+  if (!file) return false;
+  return file.hunks.some((hunk) => {
+    const numbers = new Set(
+      hunk.lines.flatMap((line) => {
+        const number = comment.side === "LEFT" ? line.oldLine : line.newLine;
+        return number === undefined ? [] : [number];
+      }),
+    );
+    return numbers.has(start) && numbers.has(comment.line);
+  });
+}
+
+const OUTSIDE_DIFF_MESSAGE =
+  "outside the pull request's diff, so GitHub cannot take it as an inline comment";
+
+function outsideDiff(comment: ReviewComment, placed: PlannedComment): DemotedComment {
+  return {
+    commentId: comment.id,
+    path: comment.path,
+    side: placed.side,
+    line: placed.line,
+    ...propertiesWhen(!(placed.startLine === undefined), () => ({ startLine: placed.startLine })),
+    reason: "outside-diff",
+    message: OUTSIDE_DIFF_MESSAGE,
+    body: comment.body,
+  };
+}
+
+/** A code block that no backtick run inside `text` can close early. */
+function fenced(text: string): string[] {
+  const longest = Math.max(2, ...[...text.matchAll(/`+/g)].map((match) => match[0].length));
+  const fence = "`".repeat(longest + 1);
+  return [fence, ...text.replaceAll("\r\n", "\n").split("\n"), fence];
 }
 
 function quote(text: string): string[] {
@@ -601,16 +646,22 @@ function demotionNotes(
   submitHeadSha: string,
 ): string[] {
   if (demoted.length === 0) return [];
-  const lines = [
-    "### Comments that could not be placed inline",
+  const lines = ["### Comments that could not be placed inline", ""];
+  if (recordHeadSha !== submitHeadSha) {
+    lines.push(
+      `The pull request head moved from \`${recordHeadSha}\` to \`${submitHeadSha}\` while this review was being written, so some lines below no longer map to the current diff.`,
+    );
+  }
+  lines.push(
+    "GitHub takes inline comments only on lines inside the pull request's diff; these comments are kept here as file-level notes.",
     "",
-    `The pull request head moved from \`${recordHeadSha}\` to \`${submitHeadSha}\` while this review was being written, so the lines below no longer map to the current diff. The comments are kept here as file-level notes.`,
-    "",
-  ];
+  );
   for (const comment of demoted) {
     lines.push(
       `- **\`${comment.path}\`** ${rangeLabel(comment.line, comment.startLine)} (${comment.side}) — ${comment.message}`,
       "",
+      ...(comment.snippet === undefined ? [] : fenced(comment.snippet).map((line) => `  ${line}`)),
+      ...(comment.snippet === undefined ? [] : [""]),
       ...quote(comment.body).map((line) => `  ${line}`),
       "",
     );
@@ -637,10 +688,14 @@ function payloadComment(comment: PlannedComment, body: string): GithubReviewComm
     body,
     line: comment.line,
     side: comment.side,
-    ...propertiesWhen(!(comment.startLine === undefined), () => ({
-      start_line: comment.startLine,
-      start_side: comment.side,
-    })),
+    // A one-line range is a single-line comment: GitHub wants start_line before line.
+    ...propertiesWhen(
+      !(comment.startLine === undefined || comment.startLine === comment.line),
+      () => ({
+        start_line: comment.startLine,
+        start_side: comment.side,
+      }),
+    ),
   };
 }
 
@@ -651,17 +706,30 @@ export type PlanReviewSubmissionInput = {
   event: SubmissionEvent;
   /** Head observed on GitHub immediately before planning. */
   currentHeadSha: string;
-  /** Diff of the current head; required only when the head moved. */
+  /**
+   * The pull request's diff at `currentHeadSha`. Required: only lines inside
+   * one of its hunks go inline, and when its base or head differs from the
+   * record's, comments are re-anchored on it by their text.
+   */
   currentDiff?: DiffModel;
+  /**
+   * Context the reader revealed around hunks (by hunk id), so comments written
+   * on it are found. Used only while `currentDiff` is the diff that was
+   * reviewed (same base and head); otherwise those comments are outdated.
+   */
+  expandedContext?: ReadonlyMap<string, HunkExpansion>;
 };
 
 /**
  * Turn a review record into one submission plan, without performing any I/O.
  *
- * When the pull request head no longer matches the head the comments were
- * written against, every comment is re-anchored through `relocateAnchor`;
- * comments that cannot be re-anchored are demoted into the review body rather
- * than dropped or attached to a line they no longer describe.
+ * Every comment is located on the current diff by `locateComment`, the one
+ * decision the view also draws, whether or not the head moved; no stored line
+ * is trusted. A comment goes inline only when it is placed and its line (both
+ * ends of a range) is inside one hunk of that diff on its side; every other
+ * one (written on expanded context, outdated) goes into the review body with
+ * its file, lines and source, never dropped and never sent inline, because
+ * GitHub refuses the whole review for one such line.
  */
 export function planReviewSubmission(input: PlanReviewSubmissionInput): ReviewSubmissionPlan {
   const { record, pullRequest, currentHeadSha } = input;
@@ -673,12 +741,36 @@ export function planReviewSubmission(input: PlanReviewSubmissionInput): ReviewSu
       `The pull request head moved from ${record.headSha} to ${currentHeadSha}. Re-read the diff for the new head before submitting, so comments are not attached to the wrong lines.`,
     );
   }
+  const diff = input.currentDiff;
+  if (diff === undefined) {
+    throw new ReviewSubmissionError(
+      "invalid-plan",
+      "The pull request's diff is needed to tell which comments GitHub can take inline. Nothing was submitted.",
+    );
+  }
+  // Revealed context is read from the base revision: it holds while the base is
+  // the reviewed one and the context still sits against its hunk, head moved or not.
+  const expansions = diff.baseSha === record.baseSha ? input.expandedContext : undefined;
+  const shown = expansions
+    ? (hunk: DiffHunk) => {
+        const expansion = expansions.get(hunk.id);
+        return expansion && revealedContextFits(hunk, expansion)
+          ? hunkWithExpandedContext(hunk, expansion)
+          : hunk;
+      }
+    : undefined;
 
-  const placements = record.comments.map((comment) =>
-    headMoved && input.currentDiff
-      ? relocatePlacement(comment, input.currentDiff)
-      : unchangedPlacement(comment),
-  );
+  const hiddenPaths = new Set(diff.hidden ?? []);
+  const placements = record.comments.map((comment): CommentPlacement => {
+    const placement = placementFor(comment, diff, shown);
+    if (placement.kind === "placed" && insideOneHunk(placement.comment, diff)) return placement;
+    const demoted =
+      placement.kind === "placed" ? outsideDiff(comment, placement.comment) : placement.comment;
+    // The body quotes the source the record holds, except for a file the view hides.
+    const hidden = hiddenPaths.has(comment.path) || isSensitivePath(comment.path);
+    if (hidden || comment.anchor.snippet.length === 0) return { kind: "demoted", comment: demoted };
+    return { kind: "demoted", comment: { ...demoted, snippet: comment.anchor.snippet } };
+  });
   const placedComments = placements.flatMap((placement) =>
     placement.kind === "placed" ? [placement.comment] : [],
   );
@@ -701,12 +793,12 @@ export function planReviewSubmission(input: PlanReviewSubmissionInput): ReviewSu
     );
   }
 
-  const payload: GithubReviewPayload = {
-    commit_id: currentHeadSha,
-    comments: placedComments.map((comment) =>
+  const payload: GithubReviewPayload = { commit_id: currentHeadSha };
+  if (placedComments.length > 0) {
+    payload.comments = placedComments.map((comment) =>
       payloadComment(comment, bodyById.get(comment.commentId) ?? ""),
-    ),
-  };
+    );
+  }
   if (body) payload.body = body;
   if (event !== "DRAFT") payload.event = event;
   const confirmationReason = confirmationReasonFor(event);
@@ -719,7 +811,7 @@ export function planReviewSubmission(input: PlanReviewSubmissionInput): ReviewSu
     payload,
     placedComments,
     demotedComments,
-    commentCount: payload.comments.length,
+    commentCount: placedComments.length,
     relocatedCount: placedComments.filter((comment) => comment.relocated).length,
     demotedCount: demotedComments.length,
     requiresConfirmation: confirmationReason !== undefined,
@@ -751,7 +843,7 @@ export function describeSubmissionPlan(plan: ReviewSubmissionPlan): string {
     lines.push(`Head moved since review started: ${plan.recordHeadSha} -> ${plan.submitHeadSha}`);
   }
   if (plan.demotedCount > 0) {
-    lines.push(`Moved into the review body: ${plan.demotedCount}`);
+    lines.push(`In the review body instead: ${plan.demotedCount}`);
     for (const comment of plan.demotedComments) {
       lines.push(
         `  - ${comment.path} ${rangeLabel(comment.line, comment.startLine)} — ${comment.message}`,
@@ -815,7 +907,7 @@ export async function submitReviewPlan(
       input: JSON.stringify(plan.payload),
       secrets: [
         ...(plan.payload.body === undefined ? [] : [plan.payload.body]),
-        ...plan.payload.comments.map((comment) => comment.body),
+        ...(plan.payload.comments ?? []).map((comment) => comment.body),
       ],
     },
   );
@@ -841,10 +933,17 @@ export type PrepareReviewSubmissionDeps = {
   cwd?: string;
   runner?: GhRunner;
   /**
-   * Diff of the pull request at the given head, used only when the head moved.
+   * Diff of the pull request at the given head: always read, since only lines
+   * inside its hunks go inline. Without it nothing is planned or sent.
    * Injected so this module stays independent of how the diff is fetched.
    */
   loadHeadDiff?: (headSha: string) => Promise<DiffModel>;
+  /**
+   * The diff the review was shown, used instead of `loadHeadDiff` while the
+   * head is still its head: reading it again would resolve the pull request a
+   * second time while the review still holds its worktree.
+   */
+  reviewedDiff?: DiffModel;
 };
 
 /**
@@ -858,6 +957,8 @@ export async function prepareReviewSubmission(
     record: ReviewRecord;
     pullRequest: PullRequestRef;
     event: SubmissionEvent;
+    /** The context the reader revealed, as the view returned it. */
+    expandedContext?: ReadonlyMap<string, HunkExpansion>;
   },
   deps: PrepareReviewSubmissionDeps = {},
 ): Promise<ReviewSubmissionPlan> {
@@ -872,13 +973,20 @@ export async function prepareReviewSubmission(
       `The pull request head moved from ${input.record.headSha} to ${head.headSha}. Refresh the review before submitting.`,
     );
   }
+  // Read even when the head did not move: it decides which comments go inline.
+  assertSubmissionEvent(input.event);
   const currentDiff =
-    headMoved && deps.loadHeadDiff ? await deps.loadHeadDiff(head.headSha) : undefined;
+    deps.reviewedDiff && deps.reviewedDiff.headSha === head.headSha
+      ? deps.reviewedDiff
+      : deps.loadHeadDiff
+        ? await deps.loadHeadDiff(head.headSha)
+        : undefined;
   return planReviewSubmission({
     record: input.record,
     pullRequest: input.pullRequest,
     event: input.event,
     currentHeadSha: head.headSha,
     ...propertiesWhen(!(currentDiff === undefined), () => ({ currentDiff })),
+    ...propertiesWhen(input.expandedContext, () => ({ expandedContext: input.expandedContext })),
   });
 }

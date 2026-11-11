@@ -219,35 +219,6 @@ export function readRawDiff(
   return runGit(cwd, ["diff", ...DIFF_ARGS, base, head, "--"], runner);
 }
 
-/** Read a patch from a committed tree to the current working tree and index. */
-export async function readRawDiffToWorkingTree(
-  cwd: string,
-  baseTree: string,
-  runner: ExecRunner = defaultExecRunner,
-): Promise<string> {
-  const trackedPatch = await runGit(cwd, ["diff", ...DIFF_ARGS, baseTree, "--"], runner);
-  const untrackedOutput = await runGit(
-    cwd,
-    ["ls-files", "--others", "--exclude-standard", "-z"],
-    runner,
-  );
-  const untrackedPaths = untrackedOutput.split("\0").filter(Boolean);
-  const untrackedPatches = await Promise.all(
-    untrackedPaths.map((path) =>
-      runGitAllowing(
-        cwd,
-        ["diff", "--patch", "--no-color", "--no-index", "--", "/dev/null", path],
-        [0, 1],
-        runner,
-      ),
-    ),
-  );
-  return [trackedPatch, ...untrackedPatches]
-    .filter(Boolean)
-    .map((patch) => (patch.endsWith("\n") ? patch : `${patch}\n`))
-    .join("");
-}
-
 export type ResolvedBranchTarget = {
   baseSha: string;
   headSha: string;
@@ -281,16 +252,4 @@ export async function resolveReviewTarget(
   if (target.kind === "branch") return resolveBranchTarget(cwd, target, runner);
   if (target.kind === "pr") throw new Error("Pull request review targets are not implemented yet.");
   throw new Error("Session review targets require a SessionCheckpointProvider.");
-}
-
-export async function readBranchTargetDiff(
-  cwd: string,
-  target: Extract<ReviewTarget, { kind: "branch" }>,
-  runner: ExecRunner = defaultExecRunner,
-): Promise<{ baseSha: string; headSha: string; rawDiff: string }> {
-  const resolved = await resolveBranchTarget(cwd, target, runner);
-  const rawDiff = resolved.includesWorkingTree
-    ? await readRawDiffToWorkingTree(cwd, resolved.baseSha, runner)
-    : await readRawDiff(cwd, resolved.baseSha, resolved.headSha, runner);
-  return { baseSha: resolved.baseSha, headSha: resolved.headSha, rawDiff };
 }

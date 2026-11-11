@@ -1,5 +1,5 @@
 import { propertiesWhen } from "../.pi/extensions/lib/runtime-values.ts";
-import { isFunction, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import { isFunction, isString, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -9,7 +9,10 @@ import test, { after } from "node:test";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, visibleWidth, type Component } from "@earendil-works/pi-tui";
-import { relocateAnchor } from "../.pi/extensions/review/core/anchor.ts";
+import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
+import { parseGitDiff } from "../.pi/extensions/lib/changes/patch.ts";
+import { buildCommentAnchor } from "../.pi/extensions/review/core/anchor.ts";
+import { hunkWithExpandedContext } from "../.pi/extensions/review/core/expand.ts";
 import type {
   ReviewChat,
   ReviewChatContext,
@@ -26,13 +29,14 @@ import {
 import { planReviewSubmission } from "../.pi/extensions/review/core/github.ts";
 import type { DiffAssessment } from "../.pi/extensions/review/core/heuristics.ts";
 import type { PullRequestMetadata } from "../.pi/extensions/review/core/pr.ts";
-import type { DiffStyler } from "../.pi/extensions/review/core/render/diff-render.ts";
+import type { DiffStyler } from "../.pi/extensions/lib/changes/render/diff-render.ts";
 import type {
   DiffFile,
   DiffHunk,
   DiffModel,
   ExecRunner,
   ResolvedReviewConfig,
+  ReviewComment,
   ReviewRecord,
   ReviewStore,
 } from "../.pi/extensions/review/core/types.ts";
@@ -42,36 +46,22 @@ import {
   REVIEW_CHAT_SPLIT_MIN_WIDTH,
   REVIEW_CHROME_ROWS,
   reviewViewHeights,
+  type OpenReviewViewOptions,
   type ReviewViewHost,
 } from "../.pi/extensions/review/ui/review-view.ts";
 import { type ZentuiLoader } from "../.pi/extensions/review/ui/zentui-frame.ts";
+import {
+  REVIEW_KEYS,
+  REVIEW_ONLY_KEYS,
+  SPLIT_TOGGLE_KEY,
+} from "../.pi/extensions/review/ui/review-keys.ts";
+import { PANE_KEYS, type ChangesKeyTable } from "../.pi/extensions/lib/changes/view/keys.ts";
+import type { FindingsSummary } from "../.pi/extensions/lib/changes/findings.ts";
 import {
   realBoxZentuiLoader as realZentuiLoader,
   SKIP_WITHOUT_ZENTUI,
   unavailableZentuiLoader,
 } from "./zentui-build.ts";
-import {
-  beginCommentDraft,
-  commitCommentDraft,
-  createReviewViewState,
-  currentCommentPosition,
-  currentFile,
-  currentHunk,
-  discardCommentDraft,
-  extendSelection,
-  fileFoldReason,
-  hunkFoldReason,
-  markCurrentHunkReviewed,
-  moveFile,
-  moveHunk,
-  moveLine,
-  moveSearchMatch,
-  selectedLineIndexes,
-  setSearchQuery,
-  toggleCurrentFold,
-  toggleHunkFold,
-  updateCommentDraft,
-} from "../.pi/extensions/review/ui/view-state.ts";
 
 const NOW = "2026-03-03T02:00:00.000Z";
 // The chat pane renders agent markdown and tool calls through the main
@@ -171,14 +161,6 @@ function record(reviewedHunkIds: string[] = []): ReviewRecord {
   };
 }
 
-function state(reviewedHunkIds: string[] = []) {
-  return createReviewViewState({
-    model: MODEL,
-    assessments: ASSESSMENTS,
-    record: record(reviewedHunkIds),
-  });
-}
-
 // SAFETY: The fixture supplies every host member exercised by this test.
 const PLAIN_THEME = {
   fg: (_color: string, text: string) => text,
@@ -219,6 +201,9 @@ async function mountReview(
     createCommentId?: () => string;
     zentuiLoader?: ZentuiLoader;
     reviewRoot?: string;
+    reload?: () => Promise<DiffModel>;
+    loadFindings?: OpenReviewViewOptions["loadFindings"];
+    input?: ReviewViewHost["input"];
   } = {},
 ): Promise<MountedReview> {
   let component: Component | undefined;
@@ -255,7 +240,7 @@ async function mountReview(
   };
   const host: ReviewViewHost = {
     custom,
-    input: async () => undefined,
+    input: options.input ?? (async () => undefined),
     notify: (message) => notifications.push(message),
     select: async () => undefined,
     setEditorText: () => {},
@@ -291,6 +276,8 @@ async function mountReview(
     ...propertiesWhen(options.execRunner, () => ({ execRunner: options.execRunner })),
     ...propertiesWhen(options.spawnEditor, () => ({ spawnEditor: options.spawnEditor })),
     ...propertiesWhen(options.zentuiLoader, () => ({ zentuiLoader: options.zentuiLoader })),
+    ...propertiesWhen(options.reload, () => ({ reload: options.reload })),
+    ...propertiesWhen(options.loadFindings, () => ({ loadFindings: options.loadFindings })),
   });
   await readyPromise;
   assert.ok(component?.handleInput);
@@ -498,189 +485,6 @@ test("session and branch targets render specific headers without pull request sl
   await branch.close();
 });
 
-test("hunk and file navigation follows heuristic risk order", () => {
-  let review = state();
-  assert.equal(currentFile(review)?.path, HIGH_FILE.path);
-  assert.equal(currentHunk(review)?.id, HIGH_HUNK.id);
-
-  review = moveHunk(review, 1);
-  assert.equal(currentFile(review)?.path, LOW_FILE.path);
-  assert.equal(currentHunk(review)?.id, LOW_HUNK_1.id);
-  review = moveHunk(review, 1);
-  assert.equal(currentHunk(review)?.id, LOW_HUNK_2.id);
-  review = moveHunk(review, -2);
-  assert.equal(currentHunk(review)?.id, HIGH_HUNK.id);
-
-  review = moveFile(review, 1);
-  assert.equal(currentFile(review)?.path, LOW_FILE.path);
-  assert.equal(currentHunk(review)?.id, LOW_HUNK_1.id);
-});
-
-test("line navigation crosses hunk and file boundaries in visible order", () => {
-  let review = toggleCurrentFold(state());
-  review = toggleHunkFold(review, LOW_HUNK_2.id);
-  assert.equal(currentHunk(review)?.id, HIGH_HUNK.id);
-  assert.equal(review.lineIndex, 0);
-
-  review = moveLine(review, 1);
-  assert.equal(currentHunk(review)?.id, HIGH_HUNK.id);
-  assert.equal(review.lineIndex, 1);
-  review = moveLine(review, 1);
-  assert.equal(currentFile(review)?.path, LOW_FILE.path);
-  assert.equal(currentHunk(review)?.id, LOW_HUNK_1.id);
-  assert.equal(review.lineIndex, 0);
-  review = moveLine(review, 2);
-  assert.equal(currentHunk(review)?.id, LOW_HUNK_2.id);
-  assert.equal(review.lineIndex, 0);
-  review = moveLine(review, -1);
-  assert.equal(currentHunk(review)?.id, LOW_HUNK_1.id);
-  assert.equal(review.lineIndex, 1);
-});
-
-test("folded file placeholder round-trips with line movement and expands to its first line", () => {
-  let review = state();
-  assert.equal(currentHunk(review)?.id, HIGH_HUNK.id);
-  assert.equal(review.lineIndex, undefined);
-
-  review = moveLine(review, 1);
-  assert.equal(currentHunk(review)?.id, LOW_HUNK_1.id);
-  assert.equal(review.lineIndex, 0);
-  review = moveLine(review, -1);
-  assert.equal(currentHunk(review)?.id, HIGH_HUNK.id);
-  assert.equal(review.lineIndex, undefined);
-  assert.equal(currentCommentPosition(review), undefined);
-
-  review = toggleCurrentFold(review);
-  assert.equal(review.lineIndex, 0);
-  assert.deepEqual(currentCommentPosition(review), {
-    path: HIGH_FILE.path,
-    hunkId: HIGH_HUNK.id,
-    side: "LEFT",
-    line: 5,
-  });
-});
-
-test("folded hunk placeholder round-trips with line movement and expands to its first line", () => {
-  const first = hunk("first-folded", 1, 1, "first");
-  const second = hunk("second-open", 10, 10, "second");
-  const model: DiffModel = {
-    baseSha: MODEL.baseSha,
-    headSha: MODEL.headSha,
-    files: [
-      {
-        path: "src/folds.ts",
-        kind: "modified",
-        hunks: [first, second],
-        additions: 2,
-        deletions: 0,
-      },
-    ],
-  };
-  const assessments: DiffAssessment = {
-    files: [{ path: "src/folds.ts", riskScore: 0, reasons: [], collapsed: false }],
-    hunks: [
-      { hunkId: first.id, collapsed: true, reason: "Seeded fold" },
-      { hunkId: second.id, collapsed: false },
-    ],
-    reviewOrder: ["src/folds.ts"],
-  };
-  let review = createReviewViewState({ model, assessments, record: record() });
-  assert.equal(currentHunk(review)?.id, first.id);
-  assert.equal(review.lineIndex, undefined);
-
-  review = moveLine(review, 1);
-  assert.equal(currentHunk(review)?.id, second.id);
-  assert.equal(review.lineIndex, 0);
-  review = moveLine(review, -1);
-  assert.equal(currentHunk(review)?.id, first.id);
-  assert.equal(review.lineIndex, undefined);
-
-  review = toggleCurrentFold(review);
-  assert.equal(review.lineIndex, 0);
-  assert.equal(currentCommentPosition(review)?.line, 1);
-});
-
-test("file and hunk folds seed from assessments and remain toggleable with reasons", () => {
-  let review = state();
-  assert.equal(review.fileFolds.has(HIGH_FILE.path), true);
-  assert.equal(fileFoldReason(review, HIGH_FILE.path), "Seeded file fold");
-  assert.equal(review.hunkFolds.has(LOW_HUNK_2.id), true);
-  assert.equal(hunkFoldReason(review, LOW_HUNK_2.id), "Formatting-only hunk");
-
-  review = toggleCurrentFold(review);
-  assert.equal(review.fileFolds.has(HIGH_FILE.path), false);
-  review = moveHunk(review, 2);
-  review = toggleHunkFold(review);
-  assert.equal(review.hunkFolds.has(LOW_HUNK_2.id), false);
-});
-
-test("search matches only changed lines and moves forward and backward with wraparound", () => {
-  let review = setSearchQuery(state(), "needle");
-  assert.equal(review.search?.matches.length, 2);
-  assert.deepEqual(
-    review.search?.matches.map((match) => [match.path, match.side, match.line]),
-    [
-      [LOW_FILE.path, "RIGHT", 2],
-      [HIGH_FILE.path, "LEFT", 6],
-    ],
-  );
-  assert.equal(currentHunk(review)?.id, LOW_HUNK_1.id);
-  assert.equal(review.fileFolds.has(LOW_FILE.path), false);
-
-  review = moveSearchMatch(review, 1);
-  assert.equal(currentHunk(review)?.id, HIGH_HUNK.id);
-  assert.equal(review.fileFolds.has(HIGH_FILE.path), false);
-  review = moveSearchMatch(review, -1);
-  assert.equal(currentHunk(review)?.id, LOW_HUNK_1.id);
-});
-
-test("comment cursor resolves context and removed lines on the LEFT side", () => {
-  let review = toggleCurrentFold(state());
-  assert.deepEqual(currentCommentPosition(review), {
-    path: HIGH_FILE.path,
-    hunkId: HIGH_HUNK.id,
-    side: "LEFT",
-    line: 5,
-  });
-  review = moveLine(review, 1);
-  assert.deepEqual(currentCommentPosition(review), {
-    path: HIGH_FILE.path,
-    hunkId: HIGH_HUNK.id,
-    side: "LEFT",
-    line: 6,
-  });
-  review = beginCommentDraft(review);
-  review = updateCommentDraft(review, "Explain why this removal is safe.");
-  review = commitCommentDraft(review, { id: "left-comment", timestamp: NOW });
-  assert.equal(review.record.comments[0]?.side, "LEFT");
-  assert.equal(review.record.comments[0]?.line, 6);
-  assert.match(review.record.comments[0]?.anchor.snippet ?? "", /NEEDLE second/);
-});
-
-test("comment draft attachment produces a valid side-specific anchor", () => {
-  let review = moveHunk(state(), 1);
-  review = moveLine(review, 1);
-  review = beginCommentDraft(review);
-  assert.deepEqual(review.commentDraft?.position, {
-    path: LOW_FILE.path,
-    hunkId: LOW_HUNK_1.id,
-    side: "RIGHT",
-    line: 2,
-  });
-  review = updateCommentDraft(review, "Please cover this branch.");
-  review = commitCommentDraft(review, { id: "comment-1", timestamp: NOW });
-
-  assert.equal(review.commentDraft, undefined);
-  assert.equal(review.record.comments.length, 1);
-  const comment = review.record.comments[0]!;
-  assert.equal(comment.path, LOW_FILE.path);
-  assert.equal(comment.side, "RIGHT");
-  assert.equal(comment.line, 2);
-  assert.equal(comment.anchor.hunkHash, LOW_HUNK_1.id);
-  assert.match(comment.anchor.snippet, /needle first/);
-  assert.match(comment.anchor.snippetHash, /^[a-f0-9]{64}$/);
-});
-
 /**
  * One hunk holding both sides, so a selection can be pushed at the boundary
  * between removed and added lines in either direction.
@@ -734,84 +538,6 @@ function mixedReviewFixture(): ReviewFixture {
   };
 }
 
-test("Shift+Up and Shift+Down extend one anchor in both directions and plain movement collapses it", () => {
-  let review = createReviewViewState(mixedReviewFixture());
-  // Anchor on the second added line, which comments on RIGHT line 13.
-  review = moveLine(review, 4);
-  assert.deepEqual(selectedLineIndexes(review), [4]);
-  assert.equal(currentCommentPosition(review)?.line, 13);
-  assert.equal(currentCommentPosition(review)?.startLine, undefined);
-
-  review = extendSelection(review, -1);
-  assert.deepEqual(selectedLineIndexes(review), [3, 4]);
-  assert.deepEqual(currentCommentPosition(review), {
-    path: "src/mixed.ts",
-    hunkId: "mixed-hunk",
-    side: "RIGHT",
-    line: 13,
-    startLine: 12,
-  });
-
-  // Reversing returns to the same anchor rather than starting a new one, so a
-  // one-line selection reports no range at all.
-  review = extendSelection(review, 1);
-  assert.deepEqual(selectedLineIndexes(review), [4]);
-  assert.equal(currentCommentPosition(review)?.startLine, undefined);
-
-  review = extendSelection(review, 1);
-  review = extendSelection(review, 1);
-  assert.deepEqual(selectedLineIndexes(review), [4, 5, 6]);
-  assert.deepEqual(currentCommentPosition(review), {
-    path: "src/mixed.ts",
-    hunkId: "mixed-hunk",
-    side: "RIGHT",
-    line: 15,
-    startLine: 13,
-  });
-
-  review = moveLine(review, -1);
-  assert.equal(review.selectionAnchor, undefined);
-  assert.deepEqual(selectedLineIndexes(review), [5]);
-  assert.equal(currentCommentPosition(review)?.startLine, undefined);
-});
-
-test("a selection stops at a side boundary and never leaves its hunk, file, or fold", () => {
-  let mixed = createReviewViewState(mixedReviewFixture());
-  mixed = moveLine(mixed, 1);
-  mixed = extendSelection(mixed, 1);
-  assert.deepEqual(selectedLineIndexes(mixed), [1, 2]);
-  assert.deepEqual(currentCommentPosition(mixed), {
-    path: "src/mixed.ts",
-    hunkId: "mixed-hunk",
-    side: "LEFT",
-    line: 12,
-    startLine: 11,
-  });
-  // The next row is an added line, which carries no LEFT number; the cursor
-  // itself still crosses that boundary under plain movement.
-  assert.equal(extendSelection(mixed, 1), mixed);
-  assert.equal(moveLine(mixed, 1).lineIndex, 3);
-
-  // A hunk edge ends the selection even though line movement continues into
-  // the next hunk of another file.
-  let across = toggleCurrentFold(state());
-  across = moveLine(across, 1);
-  assert.equal(across.lineIndex, 1);
-  assert.equal(extendSelection(across, 1), across);
-  assert.equal(currentFile(moveLine(across, 1))?.path, LOW_FILE.path);
-
-  // A folded hunk's placeholder is a movable row but never a selectable one.
-  let folded = moveHunk(state(), 1);
-  folded = moveLine(folded, 1);
-  assert.equal(folded.lineIndex, 1);
-  assert.equal(extendSelection(folded, 1), folded);
-  const placeholder = moveLine(folded, 1);
-  assert.equal(currentHunk(placeholder)?.id, LOW_HUNK_2.id);
-  assert.equal(placeholder.lineIndex, undefined);
-  assert.deepEqual(selectedLineIndexes(placeholder), []);
-  assert.equal(extendSelection(placeholder, 1), placeholder);
-});
-
 test("revealing context collapses an open selection instead of shifting its anchor", async () => {
   const mounted = await mountReview({ terminalRows: 50, ...expansionReviewFixture() });
   mounted.component.render(100);
@@ -827,10 +553,14 @@ test("revealing context collapses an open selection instead of shifting its anch
   await settleInput();
   assert.match(
     mounted.component.render(100).map(stripTerminalSequences).join("\n"),
-    /Target src\/expand\.ts:12 LEFT/,
+    // The cursor's unchanged line: old 12, new 13; it is addressed at its new number.
+    /Target src\/expand\.ts:13 RIGHT/,
   );
   await mounted.close();
 });
+
+/** A row drawn inverted whole, after the one-column selection marker. */
+const highlightedRow = (line: string) => line.slice(1).startsWith("«");
 
 test("every selected row renders highlighted, not only the ends", async () => {
   const mounted = await mountReview({
@@ -843,13 +573,13 @@ test("every selected row renders highlighted, not only the ends", async () => {
   let highlighted = mounted.component
     .render(100)
     .map(stripTerminalSequences)
-    .filter((line) => line.startsWith("«"));
+    .filter(highlightedRow);
   assert.equal(highlighted.length, 1, "a collapsed cursor highlights exactly one row");
 
   mounted.component.handleInput?.(SHIFT_DOWN);
   mounted.component.handleInput?.(SHIFT_DOWN);
   const rendered = mounted.component.render(100).map(stripTerminalSequences);
-  highlighted = rendered.filter((line) => line.startsWith("«"));
+  highlighted = rendered.filter(highlightedRow);
   assert.equal(highlighted.length, 3, "the middle row is highlighted too");
   assert.match(highlighted[0] ?? "", /const extra = 3;/);
   assert.match(highlighted[1] ?? "", /const after = 4;/);
@@ -857,20 +587,19 @@ test("every selected row renders highlighted, not only the ends", async () => {
   assert.match(rendered.join("\n"), /Target src\/mixed\.ts:13-15 RIGHT/);
 
   // Split mode pairs a removed line with an added one on the same row, so the
-  // three selected lines must still read as three highlighted rows.
-  mounted.component.handleInput?.("v");
+  // three selected lines must still read as three highlighted rows. Split moved
+  // from v (now reveal, as in the pane) to |.
+  mounted.component.handleInput?.("|");
   const split = mounted.component.render(100).map(stripTerminalSequences);
   assert.match(split.join("\n"), /· split ·/);
-  assert.equal(split.filter((line) => line.startsWith("«")).length, 3);
-  mounted.component.handleInput?.("v");
+  assert.equal(split.filter(highlightedRow).length, 3);
+  mounted.component.handleInput?.("|");
+  assert.match(mounted.component.render(100).map(stripTerminalSequences).join("\n"), /· unified ·/);
 
   mounted.component.handleInput?.(SHIFT_UP);
   mounted.component.handleInput?.(SHIFT_UP);
   assert.equal(
-    mounted.component
-      .render(100)
-      .map(stripTerminalSequences)
-      .filter((line) => line.startsWith("«")).length,
+    mounted.component.render(100).map(stripTerminalSequences).filter(highlightedRow).length,
     1,
   );
   await mounted.close();
@@ -934,11 +663,7 @@ test("a folded hunk's placeholder counts the comments it hides", async () => {
         side: "RIGHT",
         line: 21,
         body: "Hidden under the fold.",
-        anchor: {
-          hunkHash: LOW_HUNK_2.id,
-          snippetHash: "0".repeat(64),
-          snippet: "ordinary change",
-        },
+        anchor: buildCommentAnchor(LOW_HUNK_2, "RIGHT", 21),
         createdAt: NOW,
         updatedAt: NOW,
       },
@@ -948,7 +673,7 @@ test("a folded hunk's placeholder counts the comments it hides", async () => {
         side: "RIGHT",
         line: 2,
         body: "Visible inline.",
-        anchor: { hunkHash: LOW_HUNK_1.id, snippetHash: "1".repeat(64), snippet: "needle first" },
+        anchor: buildCommentAnchor(LOW_HUNK_1, "RIGHT", 2),
         createdAt: NOW,
         updatedAt: NOW,
       },
@@ -964,24 +689,31 @@ test("a folded hunk's placeholder counts the comments it hides", async () => {
   await mounted.close();
 });
 
-test("file list shows counts and risk badges, a rule separates it from the diff, and a re-expanded reviewed hunk keeps its verdict", async () => {
+test("file rows show counts, risk badges and reasons, a rule ends the header, and a re-expanded reviewed hunk keeps its verdict", async () => {
   const mounted = await mountReview({ terminalRows: 40 });
   let rendered = mounted.component.render(100).map(stripTerminalSequences);
+  // The pane's row: marker, fold arrow, status letter, path, risk badge and counts at the right;
+  // the risk reasons follow on their own line, then why a rule-folded file is collapsed.
   assert.match(
     rendered.join("\n"),
-    /❯ ▸ src\/auth\.ts {2}\+0 -1 {2}▲45 Authentication logic changed/,
+    /❯▸ M src\/auth\.ts +▲45 \+0 -1 *\n {3}Authentication logic changed *\n {3}Hidden: Seeded file fold · ⏎ shows it/,
   );
-  assert.match(
-    rendered.join("\n"),
-    / {2}▾ src\/ordinary\.ts {2}\+2 -0 {2}No elevated risk signals/,
-  );
+  assert.match(rendered.join("\n"), /\n ▾ M src\/ordinary\.ts +\+2 -0 *\n/);
   assert.ok(
     rendered.some((line) => /^─+$/.test(line.trimEnd())),
-    "a rule separates the file list from the diff",
+    "a rule separates the header from the files",
   );
 
+  // Space on the collapsed row expands the file; j enters its hunk; m folds it reviewed;
+  // Space on the placeholder unfolds it again, keeping the verdict on its header.
   mounted.component.handleInput?.(" ");
+  mounted.component.handleInput?.("j");
   mounted.component.handleInput?.("m");
+  rendered = mounted.component.render(100).map(stripTerminalSequences);
+  assert.match(
+    rendered.join("\n"),
+    /… @@ -5,2 \+5,2 @@ high-1 \(Already reviewed in this review\)/,
+  );
   mounted.component.handleInput?.(" ");
   rendered = mounted.component.render(100).map(stripTerminalSequences);
   assert.match(rendered.join("\n"), /@@ -5,2 \+5,2 @@ high-1 ✓ reviewed/);
@@ -1033,8 +765,9 @@ test("a range comment stores startLine and submits start_line and start_side; on
     pullRequest: { owner: "octo", repo: "widget", number: 42 },
     event: "COMMENT",
     currentHeadSha: saved.headSha,
+    currentDiff: { ...mixedReviewFixture().model, baseSha: saved.baseSha },
   });
-  assert.deepEqual(plan.payload.comments, [
+  assert.deepEqual(plan.payload.comments ?? [], [
     {
       path: "src/mixed.ts",
       body: "These lines belong together.",
@@ -1045,27 +778,40 @@ test("a range comment stores startLine and submits start_line and start_side; on
     },
     { path: "src/mixed.ts", body: "One line only.", line: 13, side: "RIGHT" },
   ]);
-  assert.equal(Object.hasOwn(plan.payload.comments[1]!, "start_line"), false);
-  assert.equal(Object.hasOwn(plan.payload.comments[1]!, "start_side"), false);
+  assert.equal(Object.hasOwn(plan.payload.comments?.[1] ?? {}, "start_line"), false);
+  assert.equal(Object.hasOwn(plan.payload.comments?.[1] ?? {}, "start_side"), false);
 });
 
-test("comment draft accumulates text and cancel leaves the record untouched", () => {
-  let review = toggleCurrentFold(state());
-  const before = structuredClone(review.record);
-  review = beginCommentDraft(review);
-  review = updateCommentDraft(review, "first");
-  review = updateCommentDraft(review, `${review.commentDraft?.body} second`);
-  assert.equal(review.commentDraft?.body, "first second");
-
-  review = discardCommentDraft(review);
-  assert.equal(review.commentDraft, undefined);
-  assert.deepEqual(review.record, before);
+test("comment draft accumulates text and cancel leaves the record untouched", async () => {
+  const before = record();
+  const mounted = await mountReview({ terminalRows: 30, record: record() });
+  mounted.component.handleInput?.(" ");
+  mounted.component.handleInput?.("j");
+  mounted.component.handleInput?.("c");
+  mounted.component.handleInput?.("first");
+  mounted.component.handleInput?.(" second");
+  assert.match(
+    mounted.component.render(100).map(stripTerminalSequences).join("\n"),
+    /first second/,
+  );
+  mounted.component.handleInput?.("\u001b");
+  const rendered = mounted.component.render(100).map(stripTerminalSequences).join("\n");
+  assert.doesNotMatch(rendered, /first second/);
+  assert.match(rendered, /Input inactive/);
+  await mounted.close();
+  assert.deepEqual(mounted.savedRecords[0]?.comments, before.comments);
 });
 
 test("in-view comment editor wraps, accepts newlines, submits, and cancels without a host input", async () => {
   let component: Component | undefined;
   let overlaySettings: unknown;
   let inputCalls = 0;
+  // The host keeps the view open until it calls done, as Pi does; keys after that are ignored.
+  let closeView: ((value: RuntimeValue) => void) | undefined;
+  let ready!: () => void;
+  const mounted = new Promise<void>((resolve) => {
+    ready = resolve;
+  });
   const sourceRecord = record();
   // SAFETY: The fixture supplies every host member exercised by this test.
   const plainTheme = {
@@ -1087,10 +833,13 @@ test("in-view comment editor wraps, accepts newlines, submits, and cancels witho
       plainTheme,
       // SAFETY: The fixture supplies every host member exercised by this test.
       {} as never,
-      () => {},
+      (value) => closeView?.(value),
     );
-    // SAFETY: The fixture supplies every host member exercised by this test.
-    return undefined as never;
+    ready();
+    // SAFETY: The view resolves with its own result type.
+    return (await new Promise<RuntimeValue>((resolve) => {
+      closeView = resolve;
+    })) as never;
   };
   const host: ReviewViewHost = {
     custom,
@@ -1107,7 +856,7 @@ test("in-view comment editor wraps, accepts newlines, submits, and cancels witho
     save: async () => {},
     list: async () => [],
   };
-  await openReviewView({
+  const completion = openReviewView({
     host,
     store,
     styler: {
@@ -1122,16 +871,18 @@ test("in-view comment editor wraps, accepts newlines, submits, and cancels witho
     now: () => NOW,
     createCommentId: () => "unused-comment",
   });
+  await mounted;
   assert.deepEqual(overlaySettings, { width: "100%", maxHeight: "100%", margin: 0 });
   assert.ok(component?.handleInput);
 
   component.handleInput(" ");
+  component.handleInput("j");
   component.handleInput("c");
   component.handleInput("draft");
   component.handleInput("\u001b[D");
   component.handleInput("\u007f");
   let rendered = component.render(100).map(stripTerminalSequences).join("\n");
-  assert.match(rendered, /Target src\/auth\.ts:5 LEFT/);
+  assert.match(rendered, /Target src\/auth\.ts:5 RIGHT/);
   assert.match(rendered, /drat/);
   assert.match(rendered, /Comment · Enter submit · Shift\+Enter newline · Tab path · Esc cancel/);
   assert.match(rendered, /─{10}/);
@@ -1155,15 +906,47 @@ test("in-view comment editor wraps, accepts newlines, submits, and cancels witho
   assert.match(rendered, /1 comments/);
   assert.equal(inputCalls, 0);
   assert.deepEqual(sourceRecord, record());
+  component.handleInput("q");
+  await completion;
 });
 
 test("commenting on a fold placeholder is refused", async () => {
   const mounted = await mountReview();
   mounted.component.handleInput?.("c");
-  assert.deepEqual(mounted.notifications, ["Select an expanded diff line before commenting."]);
   const rendered = mounted.component.render(100).map(stripTerminalSequences).join("\n");
+  // Pi's notifications are drawn behind the full-screen review: the warning is on its message line.
+  assert.match(rendered, /Select an expanded diff line before commenting\./);
+  assert.deepEqual(mounted.notifications, []);
   assert.match(rendered, /Input inactive/);
   assert.doesNotMatch(rendered, /Comment · Enter submit/);
+  await mounted.close();
+});
+
+test("a message stays on the review's line until another replaces it, in every layout", async () => {
+  const fakeChat = new FakeReviewChat();
+  const mounted = await mountReview({ terminalRows: 30, createReviewChat: () => fakeChat });
+  const screen = (width: number) =>
+    mounted.component.render(width).map(stripTerminalSequences).join("\n");
+  mounted.component.handleInput?.("c");
+  mounted.component.handleInput?.("j");
+  mounted.component.handleInput?.("k");
+  assert.match(
+    screen(100),
+    /Select an expanded diff line before commenting\./,
+    "keys do not clear it",
+  );
+
+  // Below 120 columns the chat replaces the diff and its header: the message moves above the status.
+  mounted.component.handleInput?.("a");
+  mounted.component.handleInput?.("why?");
+  mounted.component.handleInput?.("\r");
+  const narrow = screen(100);
+  assert.match(narrow, /Agent chat \[FOCUSED\]/);
+  assert.match(narrow, /Select an expanded diff line before asking the agent\./);
+  assert.match(screen(140), /Select an expanded diff line before asking the agent\./, "split view");
+  assert.equal(fakeChat.asks.length, 0);
+  assert.deepEqual(mounted.notifications, [], "a warning is not sent behind the review");
+  mounted.component.handleInput?.("\u001b");
   await mounted.close();
 });
 
@@ -1171,6 +954,7 @@ test("chat takes focus, routes typing, sends only bounded review context, and re
   const fakeChat = new FakeReviewChat();
   const mounted = await mountReview({ createReviewChat: () => fakeChat });
   mounted.component.handleInput?.(" ");
+  mounted.component.handleInput?.("j");
   mounted.component.handleInput?.("a");
 
   let rendered = mounted.component.render(140).map(stripTerminalSequences).join("\n");
@@ -1181,7 +965,7 @@ test("chat takes focus, routes typing, sends only bounded review context, and re
   mounted.component.handleInput?.("j");
   rendered = mounted.component.render(140).map(stripTerminalSequences).join("\n");
   assert.match(rendered, /\bj\b/);
-  assert.match(rendered, /Target src\/auth\.ts:5 LEFT/);
+  assert.match(rendered, /Target src\/auth\.ts:5 RIGHT/);
 
   // Tab belongs to the chat's editor, so Shift+Tab is what returns to the diff.
   mounted.component.handleInput?.(SHIFT_TAB);
@@ -1297,7 +1081,7 @@ test("page keys scroll the chat pane and the heading counts the rows below", asy
 
 test("the chat input completes /model and /effort like the main prompt", async () => {
   const fakeChat = new FakeReviewChat();
-  fakeChat.availableCommands = [{ name: "review-agent", description: "Adversarial review" }];
+  fakeChat.availableCommands = [{ name: "review", description: "Adversarial review" }];
   const mounted = await mountReview({
     terminalRows: 24,
     createReviewChat: () => fakeChat,
@@ -1342,7 +1126,7 @@ test("the chat input completes /model and /effort like the main prompt", async (
   mounted.component.handleInput?.("/rev");
   await settleCompletion();
   rendered = mounted.component.render(120).map(stripTerminalSequences).join("\n");
-  assert.match(rendered, /review-agent\s+Adversarial review/, "session commands join the menu");
+  assert.match(rendered, /review\s+Adversarial review/, "session commands join the menu");
   mounted.component.handleInput?.("\u001b");
 
   mounted.component.handleInput?.("\u001b");
@@ -1379,15 +1163,14 @@ test("without zentui the keys row carries model and effort, and /model and /effo
   mounted.component.handleInput?.("\r");
   await settleInput();
   assert.deepEqual(fakeChat.modelChanges, ["claude-sonnet-5"]);
-  assert.ok(
-    mounted.notifications.some((note) => note.includes("Chat model set to claude-sonnet-5")),
-  );
+  const screen = () => mounted.component.render(140).map(stripTerminalSequences).join("\n");
+  assert.match(screen(), /Chat model set to claude-sonnet-5/);
 
   mounted.component.handleInput?.("/effort low");
   mounted.component.handleInput?.("\r");
   await settleInput();
   assert.deepEqual(fakeChat.effortChanges, ["low"]);
-  assert.ok(mounted.notifications.some((note) => note.includes("Chat effort set to low")));
+  assert.match(screen(), /Chat effort set to low/);
 
   rendered = mounted.component.render(140).map(stripTerminalSequences);
   assert.match(
@@ -1403,32 +1186,30 @@ test("without zentui the keys row carries model and effort, and /model and /effo
   await settleInput();
   assert.equal(fakeChat.reloads, 1);
   assert.equal(fakeChat.messages.length, 1, "the transcript is kept");
-  assert.ok(mounted.notifications.some((note) => note.includes("Chat session resources reloaded")));
+  assert.match(screen(), /Chat session resources reloaded/);
 
   // A command the chat session registers routes through its prompt path;
   // an unknown command warns and puts the text back for correction.
-  fakeChat.availableCommands = [{ name: "review-agent", description: "Adversarial review" }];
-  mounted.component.handleInput?.("/review-agent HEAD");
+  fakeChat.availableCommands = [{ name: "review", description: "Adversarial review" }];
+  mounted.component.handleInput?.("/review HEAD");
   mounted.component.handleInput?.("\r");
   await settleInput();
-  assert.deepEqual(fakeChat.ranCommands, ["/review-agent HEAD"]);
+  assert.deepEqual(fakeChat.ranCommands, ["/review HEAD"]);
   mounted.component.handleInput?.("/frobnicate now");
   mounted.component.handleInput?.("\r");
   await settleInput();
-  assert.ok(
-    mounted.notifications.some((note) =>
-      note.includes("/frobnicate is not available in the review chat"),
-    ),
-  );
+  assert.match(screen(), /\/frobnicate is not available in the review chat/);
   assert.deepEqual(
     fakeChat.ranCommands,
-    ["/review-agent HEAD"],
+    ["/review HEAD"],
     "unknown commands never reach the session",
   );
-  assert.ok(
-    !mounted.notifications.some((note) => note.includes("Select an expanded diff line")),
+  assert.doesNotMatch(
+    screen(),
+    /Select an expanded diff line/,
     "commands run without a selected diff line",
   );
+  assert.deepEqual(mounted.notifications, [], "none of these is an error");
   assert.equal(fakeChat.asks.length, 0, "commands are not sent as questions");
 
   mounted.component.handleInput?.("\u001b");
@@ -1439,6 +1220,7 @@ test("agent replies render as markdown and tool calls render like the main trans
   const fakeChat = new FakeReviewChat();
   const mounted = await mountReview({ terminalRows: 40, createReviewChat: () => fakeChat });
   mounted.component.handleInput?.(" ");
+  mounted.component.handleInput?.("j");
   mounted.component.handleInput?.("a");
   fakeChat.messages.push(
     {
@@ -1487,6 +1269,7 @@ test("a collapsed tool preview truncates long lines to the pane instead of flood
   const fakeChat = new FakeReviewChat();
   const mounted = await mountReview({ terminalRows: 40, createReviewChat: () => fakeChat });
   mounted.component.handleInput?.(" ");
+  mounted.component.handleInput?.("j");
   mounted.component.handleInput?.("a");
   const longLine = `match start ${"x".repeat(300)}ENDMARK`;
   fakeChat.messages.push({
@@ -1500,8 +1283,13 @@ test("a collapsed tool preview truncates long lines to the pane instead of flood
   });
   fakeChat.emitUpdate();
 
-  // Wrapping can split the marker across rows, so search a squashed form.
-  const squash = (lines: string[]) => lines.join("").replace(/[\s│]+/g, "");
+  // Wrapping can split the marker across rows, so search a squashed form of the
+  // chat column alone (the text after the column divider; the diff sits left of it).
+  const squash = (lines: string[]) =>
+    lines
+      .map((line) => line.split("│").at(-1) ?? "")
+      .join("")
+      .replace(/\s+/g, "");
   // Collapsed to the maximum: only the one-line call title renders; the
   // preview and its long lines stay behind Ctrl+O.
   let rendered = mounted.component.render(200).map(stripTerminalSequences);
@@ -1564,6 +1352,7 @@ test("chat splits at 120 columns and replaces the diff below that width", async 
   const fakeChat = new FakeReviewChat();
   const mounted = await mountReview({ createReviewChat: () => fakeChat });
   mounted.component.handleInput?.(" ");
+  mounted.component.handleInput?.("j");
   mounted.component.handleInput?.("a");
 
   assert.equal(REVIEW_CHAT_SPLIT_MIN_WIDTH, 120);
@@ -1647,6 +1436,7 @@ test(
     const unframed = await mountReview({ terminalRows: 16, zentuiLoader: unavailableZentuiLoader });
     for (const mounted of [framed, unframed]) {
       mounted.component.handleInput?.(" ");
+      mounted.component.handleInput?.("j");
       mounted.component.handleInput?.("c");
       mounted.component.handleInput?.("draft");
     }
@@ -1713,6 +1503,7 @@ test(
     };
 
     mounted.component.handleInput?.(" ");
+    mounted.component.handleInput?.("j");
     mounted.component.handleInput?.("c");
     mounted.component.handleInput?.("kept");
     mounted.component.handleInput?.("\u001b\r");
@@ -1803,6 +1594,7 @@ test(
     });
     for (const mounted of [framed, unframed]) {
       mounted.component.handleInput?.(" ");
+      mounted.component.handleInput?.("j");
       mounted.component.handleInput?.("c");
       mounted.component.handleInput?.("al");
       mounted.component.handleInput?.("\t");
@@ -1852,6 +1644,7 @@ test(
 test("accepting a completion writes the review root's path into the comment", async () => {
   const mounted = await mountReview({ terminalRows: 24, reviewRoot: temporaryReviewRoot() });
   mounted.component.handleInput?.(" ");
+  mounted.component.handleInput?.("j");
   mounted.component.handleInput?.("c");
   mounted.component.handleInput?.("see alpha.");
   mounted.component.handleInput?.("\t");
@@ -1890,6 +1683,7 @@ test("each input recalls its own history and never the other's", async () => {
   };
 
   mounted.component.handleInput?.(" ");
+  mounted.component.handleInput?.("j");
   mounted.component.handleInput?.("c");
   mounted.component.handleInput?.(COMMENT);
   mounted.component.handleInput?.("\r");
@@ -1936,7 +1730,8 @@ test("a focused input owns the cursor keys and hands them back when it closes", 
   const read = () => mounted.component.render(120).map(stripTerminalSequences).join("\n");
 
   mounted.component.handleInput?.(" ");
-  assert.match(read(), /Target src\/auth\.ts:5 LEFT/);
+  mounted.component.handleInput?.("j");
+  assert.match(read(), /Target src\/auth\.ts:5 RIGHT/);
 
   mounted.component.handleInput?.("c");
   mounted.component.handleInput?.("first");
@@ -1946,9 +1741,9 @@ test("a focused input owns the cursor keys and hands them back when it closes", 
   let rendered = read();
   assert.match(rendered, /first/);
   assert.match(rendered, /second/);
-  assert.match(rendered, /Target src\/auth\.ts:5 LEFT/, "the diff cursor never moved");
+  assert.match(rendered, /Target src\/auth\.ts:5 RIGHT/, "the diff cursor never moved");
   for (let press = 0; press < 3; press += 1) mounted.component.handleInput?.(DOWN);
-  assert.match(read(), /Target src\/auth\.ts:5 LEFT/);
+  assert.match(read(), /Target src\/auth\.ts:5 RIGHT/);
 
   mounted.component.handleInput?.("\u001b");
   mounted.component.handleInput?.(DOWN);
@@ -1963,7 +1758,7 @@ test("a focused input owns the cursor keys and hands them back when it closes", 
 
   mounted.component.handleInput?.(SHIFT_TAB);
   mounted.component.handleInput?.(UP);
-  assert.match(read(), /Target src\/auth\.ts:5 LEFT/, "leaving the input returns the keys");
+  assert.match(read(), /Target src\/auth\.ts:5 RIGHT/, "leaving the input returns the keys");
   await mounted.close();
 });
 
@@ -2036,7 +1831,8 @@ async function settleInput(): Promise<void> {
 }
 
 test("+ and - change both hunk edges from an interior line and use the remaining side", async () => {
-  const mounted = await mountReview({ terminalRows: 50, ...expansionReviewFixture() });
+  // The shared header takes three rows (totals, keys, rule), so the screen is taller.
+  const mounted = await mountReview({ terminalRows: 60, ...expansionReviewFixture() });
   mounted.component.handleInput?.("j");
   mounted.component.handleInput?.("+");
   await settleInput();
@@ -2057,7 +1853,10 @@ test("+ and - change both hunk edges from an interior line and use the remaining
   assert.match(rendered, /\bbase line 40\b/);
   mounted.component.handleInput?.("+");
   await settleInput();
-  assert.equal(mounted.notifications.at(-1), "No more unchanged context to expand.");
+  assert.match(
+    mounted.component.render(100).map(stripTerminalSequences).join("\n"),
+    /No more unchanged context to expand\./,
+  );
 
   mounted.component.handleInput?.("-");
   rendered = mounted.component.render(100).map(stripTerminalSequences).join("\n");
@@ -2068,7 +1867,10 @@ test("+ and - change both hunk edges from an interior line and use the remaining
   mounted.component.handleInput?.("-");
   mounted.component.handleInput?.("-");
   mounted.component.handleInput?.("-");
-  assert.equal(mounted.notifications.at(-1), "No expanded context to collapse.");
+  assert.match(
+    mounted.component.render(100).map(stripTerminalSequences).join("\n"),
+    /No expanded context to collapse\./,
+  );
   await mounted.close();
 });
 
@@ -2086,28 +1888,36 @@ test("hunk-wide expansion keeps the 100-line per-edge ceiling", async () => {
   assert.match(rendered, /Target src\/expand\.ts:112 RIGHT/);
   mounted.component.handleInput?.("+");
   await settleInput();
-  assert.equal(mounted.notifications.at(-1), "No more unchanged context to expand.");
+  assert.match(
+    mounted.component.render(100).map(stripTerminalSequences).join("\n"),
+    /No more unchanged context to expand\./,
+  );
 
   for (let page = 0; page < 30; page += 1) mounted.component.handleInput?.("\u001b[5~");
   rendered = mounted.component.render(100).map(stripTerminalSequences).join("\n");
-  assert.match(rendered, /Target src\/expand\.ts:11 LEFT/);
+  // Paging up stops at the file row, the first stop; j enters the first revealed line.
+  assert.match(rendered, /No line selected/);
+  mounted.component.handleInput?.("j");
+  rendered = mounted.component.render(100).map(stripTerminalSequences).join("\n");
+  assert.match(rendered, /Target src\/expand\.ts:11 RIGHT/);
   for (let page = 0; page < 30; page += 1) mounted.component.handleInput?.("\u001b[6~");
   rendered = mounted.component.render(100).map(stripTerminalSequences).join("\n");
-  assert.match(rendered, /Target src\/expand\.ts:212 LEFT/);
+  assert.match(rendered, /Target src\/expand\.ts:213 RIGHT/);
   await mounted.close();
 });
 
 test("revealed rows participate in line and page movement and produce stable comment anchors", async () => {
-  const mounted = await mountReview({ terminalRows: 12, ...expansionReviewFixture() });
+  // 14 rows leave a six-row body under the shared header, so a page is five lines, as before.
+  const mounted = await mountReview({ terminalRows: 14, ...expansionReviewFixture() });
   mounted.component.handleInput?.("+");
   await settleInput();
   for (let line = 0; line < 9; line += 1) mounted.component.handleInput?.("k");
   let rendered = mounted.component.render(100).map(stripTerminalSequences).join("\n");
-  assert.match(rendered, /Target src\/expand\.ts:2 LEFT/);
+  assert.match(rendered, /Target src\/expand\.ts:2 RIGHT/);
 
   mounted.component.handleInput?.("\u001b[6~");
   rendered = mounted.component.render(100).map(stripTerminalSequences).join("\n");
-  assert.match(rendered, /Target src\/expand\.ts:7 LEFT/);
+  assert.match(rendered, /Target src\/expand\.ts:7 RIGHT/);
   assert.match(rendered, /base line 7/);
 
   mounted.component.handleInput?.("c");
@@ -2116,24 +1926,13 @@ test("revealed rows participate in line and page movement and produce stable com
   await mounted.close();
   const comment = mounted.savedRecords.at(-1)?.comments[0];
   assert.equal(comment?.path, "src/expand.ts");
-  assert.equal(comment?.side, "LEFT");
+  assert.equal(comment?.side, "RIGHT", "an unchanged line is addressed at its new number");
   assert.equal(comment?.line, 7);
   assert.equal(comment?.anchor.hunkHash, "expandable-hunk");
-  assert.match(comment?.anchor.snippet ?? "", /base line 7/);
-  assert.deepEqual(
-    comment
-      ? relocateAnchor(
-          comment.anchor,
-          `${Array.from({ length: 40 }, (_unused, index) => `base line ${index + 1}`).join("\n")}\n`,
-        )
-      : undefined,
-    {
-      status: "mapped",
-      method: "exact",
-      startLine: 5,
-      line: 9,
-      matchedSnippet: "base line 5\nbase line 6\nbase line 7\nbase line 8\nbase line 9",
-    },
+  // The anchor quotes the revealed lines around it, as they read in the file.
+  assert.equal(
+    comment?.anchor.snippet,
+    "base line 5\nbase line 6\nbase line 7\nbase line 8\nbase line 9",
   );
 });
 
@@ -2178,28 +1977,30 @@ function longReviewFixture(lineCount = 30): ReviewFixture {
 
 test("page keys move the line cursor, keep it rendered, and reach the final diff row", async () => {
   const fixture = longReviewFixture();
-  const mounted = await mountReview({ terminalRows: 12, ...fixture });
+  // 14 rows: identity line, the shared header's three, a six-row body, the four-row footer.
+  const mounted = await mountReview({ terminalRows: 14, ...fixture });
   let lines = mounted.component.render(100).map(stripTerminalSequences);
-  assert.equal(lines.length, 12);
+  assert.equal(lines.length, 14);
   assert.match(lines.at(-4) ?? "", /1\/1 files/);
   assert.match(lines.at(-3) ?? "", /Input inactive/);
   assert.match(lines.at(-2) ?? "", /PgUp\/PgDn page/);
-  assert.match(lines.at(-1) ?? "", /Space fold/);
-  assert.match(lines.join("\n"), /Target src\/long\.ts:1 LEFT/);
+  assert.match(lines.at(-1) ?? "", /\| split/);
+  assert.match(lines.join("\n"), /⏎\/space fold/, "the shared keys line under the header");
+  assert.match(lines.join("\n"), /Target src\/long\.ts:1 RIGHT/);
 
   mounted.component.handleInput?.("\u001b[6~");
   lines = mounted.component.render(100).map(stripTerminalSequences);
-  assert.match(lines.join("\n"), /Target src\/long\.ts:6 LEFT/);
-  assert.match(lines.slice(1, 1 + reviewViewHeights(12).bodyHeight).join("\n"), /line-6/);
+  assert.match(lines.join("\n"), /Target src\/long\.ts:6 RIGHT/);
+  assert.match(lines.slice(1, 1 + reviewViewHeights(14).bodyHeight).join("\n"), /line-6/);
   mounted.component.handleInput?.("\u001b[5~");
   lines = mounted.component.render(100).map(stripTerminalSequences);
-  assert.match(lines.join("\n"), /Target src\/long\.ts:1 LEFT/);
+  assert.match(lines.join("\n"), /Target src\/long\.ts:1 RIGHT/);
 
   for (let index = 0; index < 20; index += 1) mounted.component.handleInput?.("\u001b[6~");
   lines = mounted.component.render(100).map(stripTerminalSequences);
-  assert.match(lines.join("\n"), /Target src\/long\.ts:30 LEFT/);
-  assert.match(lines.slice(1, 1 + reviewViewHeights(12).bodyHeight).join("\n"), /line-30/);
-  assert.equal(lines.length, 12);
+  assert.match(lines.join("\n"), /Target src\/long\.ts:30 RIGHT/);
+  assert.match(lines.slice(1, 1 + reviewViewHeights(14).bodyHeight).join("\n"), /line-30/);
+  assert.equal(lines.length, 14);
   await mounted.close();
 });
 
@@ -2229,7 +2030,7 @@ test("page movement counts each folded hunk as one rendered placeholder row", as
     })),
     reviewOrder: ["src/folded-pages.ts"],
   };
-  const mounted = await mountReview({ terminalRows: 12, model, assessments, record: record() });
+  const mounted = await mountReview({ terminalRows: 14, model, assessments, record: record() });
   mounted.component.render(100);
   mounted.component.handleInput?.("\u001b[6~");
   let rendered = mounted.component.render(100).map(stripTerminalSequences).join("\n");
@@ -2241,24 +2042,6 @@ test("page movement counts each folded hunk as one rendered placeholder row", as
   assert.match(rendered, /12\/12 hunks/);
   assert.match(rendered, /fold-12/);
   await mounted.close();
-});
-
-test("mark reviewed updates the record head and folds the current hunk", () => {
-  const review = markCurrentHunkReviewed(state(), "2026-03-03T02:01:00.000Z");
-  assert.deepEqual(review.record.cursor.reviewedHunkIds, [HIGH_HUNK.id]);
-  assert.equal(review.record.cursor.lastHeadSha, MODEL.headSha);
-  assert.equal(review.record.updatedAt, "2026-03-03T02:01:00.000Z");
-  assert.equal(review.hunkFolds.has(HIGH_HUNK.id), true);
-  assert.equal(hunkFoldReason(review, HIGH_HUNK.id), "Already reviewed in this review");
-});
-
-test("resumed review folds reviewed hunks and starts at the first unreviewed hunk in risk order", () => {
-  const review = state([HIGH_HUNK.id, LOW_HUNK_1.id]);
-  assert.equal(currentFile(review)?.path, LOW_FILE.path);
-  assert.equal(currentHunk(review)?.id, LOW_HUNK_2.id);
-  assert.equal(review.hunkFolds.has(HIGH_HUNK.id), true);
-  assert.equal(review.hunkFolds.has(LOW_HUNK_1.id), true);
-  assert.equal(review.hunkFolds.has(LOW_HUNK_2.id), true);
 });
 
 class FakeChild extends EventEmitter implements SpawnedEditor {
@@ -2296,12 +2079,13 @@ test("e opens at the cursor's side-specific line, including revealed context", a
   mounted.component.handleInput?.("j");
   assert.match(
     mounted.component.render(100).map(stripTerminalSequences).join("\n"),
-    /Target src\/expand\.ts:13 LEFT/,
+    /Target src\/expand\.ts:14 RIGHT/,
   );
   mounted.component.handleInput?.("e");
   await settleInput();
 
-  assert.deepEqual(launches, [["/repo/src/expand.ts:12"], ["/repo/src/expand.ts:13"]]);
+  // The second line is unchanged (old 13, new 14): the editor opens the file as it is now, at 14.
+  assert.deepEqual(launches, [["/repo/src/expand.ts:12"], ["/repo/src/expand.ts:14"]]);
   await mounted.close();
 });
 
@@ -2552,4 +2336,813 @@ test("Search hides the review overlay while its prompt is open", async () => {
   assert.deepEqual(mounted.log.events, ["hide", "show"]);
   mounted.component.handleInput?.("q");
   await mounted.completion;
+});
+
+test("a file kept out by a read limit shows its notice in the list and the diff, and omitted files are counted", async () => {
+  const big: DiffFile = {
+    path: "assets/huge.json",
+    kind: "modified",
+    hunks: [],
+    additions: 9,
+    deletions: 1,
+  };
+  const notice = "Not shown: 2 MiB is over the 1 MiB file limit.";
+  const model: DiffModel = {
+    ...MODEL,
+    files: [...MODEL.files, big],
+    notices: [{ path: big.path, message: notice }],
+    omittedFiles: 3,
+  };
+  const assessments: DiffAssessment = {
+    ...ASSESSMENTS,
+    files: [{ path: big.path, riskScore: 0, reasons: [], collapsed: false }, ...ASSESSMENTS.files],
+    reviewOrder: [big.path, ...ASSESSMENTS.reviewOrder],
+  };
+  const mounted = await mountReview({ terminalRows: 40, model, assessments });
+  // The view opens on the first hunk to review; the notice file has none, so move back to it (←).
+  mounted.component.handleInput?.("\u001b[D");
+  const rendered = mounted.component.render(120).map(stripTerminalSequences).join("\n");
+  assert.ok(rendered.includes(`\n   ${notice}`), "the file row carries the notice");
+  assert.ok(
+    rendered.includes("Cannot read diff: 2 MiB is over the 1 MiB file limit."),
+    "the diff body explains the empty file",
+  );
+  assert.ok(
+    rendered.includes("3 more files not shown"),
+    "omitted files are counted, as in the pane",
+  );
+  await mounted.close();
+});
+
+/* ------------------------------------------------ the shared view's keys */
+
+const screenOf = (mounted: MountedReview, width = 100) =>
+  mounted.component.render(width).map(stripTerminalSequences).join("\n");
+
+async function settled(): Promise<void> {
+  for (let step = 0; step < 5; step += 1) await settleInput();
+}
+
+test("n/N and [/] move by hunk across files in risk order; ←/→ move by file", async () => {
+  const mounted = await mountReview({ terminalRows: 40 });
+  assert.match(
+    screenOf(mounted),
+    /1\/2 files · 0\/0 hunks .*No line selected/,
+    "on the folded auth.ts row",
+  );
+  mounted.component.handleInput?.("n");
+  assert.match(screenOf(mounted), /1\/2 files · 1\/1 hunks .*Target src\/auth\.ts:5 RIGHT/);
+  mounted.component.handleInput?.("n");
+  assert.match(screenOf(mounted), /2\/2 files · 1\/2 hunks .*Target src\/ordinary\.ts:1 RIGHT/);
+  mounted.component.handleInput?.("]");
+  assert.match(screenOf(mounted), /2\/2 files · 2\/2 hunks .*No line selected/, "the folded hunk");
+  mounted.component.handleInput?.("N");
+  assert.match(screenOf(mounted), /1\/2 hunks .*Target src\/ordinary\.ts:1 RIGHT/);
+  mounted.component.handleInput?.("[");
+  assert.match(screenOf(mounted), /1\/2 files · 1\/1 hunks .*Target src\/auth\.ts:5 RIGHT/);
+  mounted.component.handleInput?.("\u001b[C");
+  assert.match(screenOf(mounted), /2\/2 files .*Target src\/ordinary\.ts:1 RIGHT/);
+  mounted.component.handleInput?.("\u001b[D");
+  assert.match(screenOf(mounted), /1\/2 files .*Target src\/auth\.ts:5 RIGHT/);
+  await mounted.close();
+});
+
+test("j walks file rows, lines and fold placeholders; Enter unfolds a hunk at its first line", async () => {
+  const mounted = await mountReview({ terminalRows: 40 });
+  const steps: string[] = [];
+  const target = () => /(No line selected|Target \S+ \w+)/.exec(screenOf(mounted))?.[1] ?? "";
+  for (let step = 0; step < 4; step += 1) {
+    mounted.component.handleInput?.("j");
+    steps.push(target());
+  }
+  assert.deepEqual(steps, [
+    "No line selected",
+    "Target src/ordinary.ts:1 RIGHT",
+    "Target src/ordinary.ts:2 RIGHT",
+    "No line selected",
+  ]);
+  assert.match(screenOf(mounted), /2\/2 hunks/, "the last stop is low-2's placeholder");
+  mounted.component.handleInput?.("\r");
+  assert.equal(target(), "Target src/ordinary.ts:20 RIGHT");
+  mounted.component.handleInput?.("k");
+  assert.equal(target(), "Target src/ordinary.ts:2 RIGHT");
+  await mounted.close();
+});
+
+test("a rule-folded file opens with Space and closes again; a folded hunk names its reason", async () => {
+  const mounted = await mountReview({ terminalRows: 40 });
+  let screen = screenOf(mounted);
+  assert.match(screen, /Hidden: Seeded file fold/);
+  assert.match(screen, /… @@ -20,2 \+20,2 @@ low-2 \(Formatting-only hunk\)/);
+  assert.doesNotMatch(screen, /context high-1/);
+  mounted.component.handleInput?.(" ");
+  screen = screenOf(mounted);
+  assert.match(screen, /context high-1/);
+  assert.doesNotMatch(screen, /Hidden: Seeded file fold/);
+  mounted.component.handleInput?.("j");
+  assert.match(screenOf(mounted), /Target src\/auth\.ts:5 RIGHT/);
+  mounted.component.handleInput?.(" ");
+  assert.match(screenOf(mounted), /… @@ -5,2 \+5,2 @@ high-1 \(Folded by reviewer\)/);
+  mounted.component.handleInput?.("k");
+  mounted.component.handleInput?.(" ");
+  assert.match(screenOf(mounted), /Hidden: Seeded file fold/);
+  await mounted.close();
+});
+
+test("/ searches changed lines; > and < move between matches with wraparound, opening folded files", async () => {
+  const mounted = await mountReview({ terminalRows: 40, input: async () => "needle" });
+  mounted.component.handleInput?.("/");
+  await settled();
+  let screen = screenOf(mounted, 160);
+  assert.match(screen, /search “needle”: 1\/2 · Target src\/ordinary\.ts:2 RIGHT/);
+  mounted.component.handleInput?.(">");
+  screen = screenOf(mounted, 160);
+  assert.match(screen, /search “needle”: 2\/2 · Target src\/auth\.ts:6 LEFT/);
+  assert.match(screen, /❯▾ M src\/auth\.ts/, "the folded file opened");
+  mounted.component.handleInput?.(">");
+  assert.match(screenOf(mounted, 160), /1\/2 · Target src\/ordinary\.ts:2 RIGHT/, "wraps forward");
+  mounted.component.handleInput?.("<");
+  assert.match(screenOf(mounted, 160), /2\/2 · Target src\/auth\.ts:6 LEFT/, "wraps back");
+  await mounted.close();
+});
+
+test("comments take GitHub's side: removed and context lines LEFT, added lines RIGHT, with anchors", async () => {
+  let next = 0;
+  const mounted = await mountReview({
+    terminalRows: 40,
+    createCommentId: () => `c-${(next += 1)}`,
+  });
+  mounted.component.handleInput?.(" ");
+  mounted.component.handleInput?.("j");
+  mounted.component.handleInput?.("j");
+  assert.match(screenOf(mounted), /Target src\/auth\.ts:6 LEFT/);
+  mounted.component.handleInput?.("c");
+  mounted.component.handleInput?.("Explain why this removal is safe.");
+  mounted.component.handleInput?.("\r");
+  mounted.component.handleInput?.("\u001b[C");
+  mounted.component.handleInput?.("j");
+  assert.match(screenOf(mounted), /Target src\/ordinary\.ts:2 RIGHT/);
+  mounted.component.handleInput?.("c");
+  mounted.component.handleInput?.("Please cover this branch.");
+  mounted.component.handleInput?.("\r");
+  await mounted.close();
+  const comments = mounted.savedRecords.at(-1)?.comments ?? [];
+  assert.deepEqual(
+    comments.map((entry) => [entry.path, entry.side, entry.line, entry.anchor.hunkHash]),
+    [
+      [HIGH_FILE.path, "LEFT", 6, HIGH_HUNK.id],
+      [LOW_FILE.path, "RIGHT", 2, LOW_HUNK_1.id],
+    ],
+  );
+  assert.match(comments[0]?.anchor.snippet ?? "", /NEEDLE second/);
+  assert.match(comments[1]?.anchor.snippet ?? "", /needle first/);
+  assert.match(comments[1]?.anchor.snippetHash ?? "", /^[a-f0-9]{64}$/);
+});
+
+test("m marks the hunk reviewed: the record's head and time update and the hunk folds", async () => {
+  const mounted = await mountReview({ terminalRows: 40, now: () => "2026-03-03T02:01:00.000Z" });
+  mounted.component.handleInput?.("n");
+  mounted.component.handleInput?.("m");
+  const screen = screenOf(mounted);
+  assert.match(screen, /… @@ -5,2 \+5,2 @@ high-1 \(Already reviewed in this review\)/);
+  assert.match(screen, /1 reviewed/);
+  await mounted.close();
+  const saved = mounted.savedRecords.at(-1);
+  assert.deepEqual(saved?.cursor, { reviewedHunkIds: [HIGH_HUNK.id], lastHeadSha: MODEL.headSha });
+  assert.equal(saved?.updatedAt, "2026-03-03T02:01:00.000Z");
+});
+
+test("a resumed review folds reviewed hunks and starts at the first unreviewed hunk in risk order", async () => {
+  const mounted = await mountReview({
+    terminalRows: 40,
+    record: record([HIGH_HUNK.id, LOW_HUNK_1.id]),
+  });
+  const screen = screenOf(mounted);
+  assert.match(screen, /2\/2 files · 2\/2 hunks · 2 reviewed .*No line selected/, "on low-2");
+  assert.match(screen, /… @@ -1,2 \+1,2 @@ low-1 \(Already reviewed in this review\)/);
+  assert.match(screen, /… @@ -20,2 \+20,2 @@ low-2 \(Formatting-only hunk\)/);
+  mounted.component.handleInput?.("[");
+  mounted.component.handleInput?.("[");
+  assert.match(screenOf(mounted), /… @@ -5,2 \+5,2 @@ high-1 \(Already reviewed in this review\)/);
+  await mounted.close();
+});
+
+/* --------------------------------------------- refresh and recorded findings */
+
+function commentOn(id: string, hunkId: string, line: number, body: string): ReviewComment {
+  // A real anchor on the fixture hunk, as the view writes one: comments are placed by their text.
+  const anchoredHunk = [LOW_HUNK_1, LOW_HUNK_2].find((candidate) => candidate.id === hunkId);
+  return {
+    id,
+    path: LOW_FILE.path,
+    side: "RIGHT",
+    line,
+    body,
+    anchor: anchoredHunk
+      ? buildCommentAnchor(anchoredHunk, "RIGHT", line)
+      : { hunkHash: hunkId, snippetHash: "0".repeat(64), snippet: body },
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+}
+
+test("r reads the changes again; reviewed marks and comments follow their content-hash hunk ids", async () => {
+  const changedLow2: DiffHunk = {
+    ...hunk("low-2-edited", 20, 20, "edited change"),
+    header: "@@ -20,2 +20,2 @@ low-2 edited",
+  };
+  const refreshed: DiffModel = {
+    ...MODEL,
+    files: [{ ...LOW_FILE, hunks: [LOW_HUNK_1, changedLow2] }, HIGH_FILE],
+  };
+  let reads = 0;
+  const reviewed: ReviewRecord = {
+    ...record([LOW_HUNK_1.id]),
+    comments: [
+      commentOn("kept", LOW_HUNK_1.id, 2, "Still on an unchanged hunk."),
+      commentOn("moved", LOW_HUNK_2.id, 21, "Its hunk changes."),
+    ],
+  };
+  const mounted = await mountReview({
+    terminalRows: 50,
+    record: reviewed,
+    reload: async () => {
+      reads += 1;
+      return refreshed;
+    },
+  });
+  let screen = screenOf(mounted, 120);
+  assert.match(screen, /low-1 \(Already reviewed in this review · 1 comment inside\)/);
+  assert.match(screen, /2 comments ·/, "nothing outdated yet");
+  mounted.component.handleInput?.("r");
+  await settled();
+  assert.equal(reads, 1);
+  screen = screenOf(mounted, 120);
+  assert.match(screen, /Read the changes again\./);
+  assert.match(screen, /low-2 edited/, "the new content is shown");
+  assert.match(
+    screen,
+    /low-1 \(Already reviewed in this review · 1 comment inside\)/,
+    "the unchanged hunk keeps its reviewed mark, fold and comment",
+  );
+  assert.match(screen, /1 reviewed/);
+  assert.match(screen, /2 comments \(1 outdated\)/);
+  assert.match(screen, /✎ \(outdated, was src\/ordinary\.ts:21\) Its hunk changes\./);
+  mounted.component.handleInput?.("r");
+  await settled();
+  assert.match(screenOf(mounted, 120), /nothing changed/);
+  await mounted.close();
+  const saved = mounted.savedRecords.at(-1);
+  assert.deepEqual(saved?.cursor.reviewedHunkIds, [LOW_HUNK_1.id]);
+  assert.deepEqual(
+    saved?.comments.map((entry) => entry.id),
+    ["kept", "moved"],
+  );
+});
+
+test("a target that cannot change says so on r", async () => {
+  const mounted = await mountReview({ terminalRows: 40 });
+  mounted.component.handleInput?.("r");
+  assert.match(screenOf(mounted, 120), /This review's target cannot change/);
+  await mounted.close();
+});
+
+test("a finished side-chat tool call reads the changes again, once per call", async () => {
+  const fakeChat = new FakeReviewChat();
+  let reads = 0;
+  const mounted = await mountReview({
+    terminalRows: 40,
+    createReviewChat: () => fakeChat,
+    reload: async () => {
+      reads += 1;
+      return MODEL;
+    },
+  });
+  mounted.component.handleInput?.(" ");
+  mounted.component.handleInput?.("j");
+  mounted.component.handleInput?.("a");
+  const call = {
+    role: "tool" as const,
+    toolCallId: "edit-1",
+    toolName: "edit",
+    args: { path: "src/ordinary.ts" },
+    done: false,
+  };
+  fakeChat.messages.push(call);
+  fakeChat.emitUpdate();
+  await settled();
+  assert.equal(reads, 0, "a running call changes nothing yet");
+  call.done = true;
+  fakeChat.emitUpdate();
+  await settled();
+  assert.equal(reads, 1);
+  fakeChat.emitUpdate();
+  await settled();
+  assert.equal(reads, 1, "the same call does not refresh twice");
+  // Esc closes the chat (q there would be typed into it); then q leaves.
+  mounted.component.handleInput?.("\u001b");
+  await mounted.close();
+});
+
+test("f and F step through recorded reviewer findings on a working-tree review", async () => {
+  const recorded: FindingsSummary = {
+    tasks: [],
+    findings: [
+      {
+        id: "F1",
+        class: "finding",
+        severity: "high",
+        path: LOW_FILE.path,
+        invariant: "keeps the needle",
+        evidence: "code_path",
+        reproduction: "",
+        startLine: 2,
+        workTask: "wt-a",
+        agentId: "rev-1",
+        completedAt: Date.parse(NOW),
+      },
+    ],
+    malformed: 0,
+    errors: [],
+  };
+  const asked: string[][] = [];
+  const mounted = await mountReview({
+    terminalRows: 40,
+    loadFindings: async (paths) => {
+      asked.push([...paths]);
+      return { recorded, changeTimes: new Map() };
+    },
+  });
+  await settled();
+  assert.deepEqual(
+    asked.map((paths) => [...paths].sort()),
+    [[HIGH_FILE.path, LOW_FILE.path].sort()],
+    "asked once, for the listed files",
+  );
+  let screen = screenOf(mounted, 120);
+  assert.match(screen, /src\/ordinary\.ts +⚑1/);
+  mounted.component.handleInput?.("f");
+  screen = screenOf(mounted, 120);
+  assert.match(screen, /▶ ⚑ high finding F1 L2: keeps the needle/);
+  assert.match(screen, /2\/2 files/);
+  mounted.component.handleInput?.("F");
+  assert.match(screenOf(mounted, 120), /▶ ⚑ high finding F1 L2/, "one finding: F wraps to it");
+  await mounted.close();
+
+  const fixed = await mountReview({ terminalRows: 40 });
+  fixed.component.handleInput?.("f");
+  assert.match(screenOf(fixed, 120), /No recorded review findings\./);
+  await fixed.close();
+});
+
+test("the review's keys: one action per key, none shared with a review-only key; the pane reveals with v", () => {
+  const names = (table: ChangesKeyTable) =>
+    Object.values(table).flatMap((bindings) =>
+      bindings.map((binding) => (isString(binding) ? binding : binding.key)),
+    );
+  const review = names(REVIEW_KEYS);
+  assert.equal(new Set(review).size, review.length, "each key runs one action");
+  for (const key of REVIEW_ONLY_KEYS) {
+    assert.equal(review.includes(key), false, `${key} is the host's own`);
+  }
+  assert.equal(
+    names(PANE_KEYS).includes(SPLIT_TOGGLE_KEY),
+    false,
+    "the split key is free in the pane",
+  );
+  assert.equal(review.includes(SPLIT_TOGGLE_KEY), false);
+  assert.deepEqual(PANE_KEYS.reveal, ["v"]);
+});
+
+/* ------------------------------------- the record follows the comparison it shows */
+
+test("after r moves the comparison, the saved review names the new base and head and keeps marks and comments", async () => {
+  const changedLow2: DiffHunk = {
+    ...hunk("low-2-edited", 20, 20, "edited change"),
+    header: "@@ -20,2 +20,2 @@ low-2 edited",
+  };
+  const moved: DiffModel = {
+    baseSha: "moved-base",
+    headSha: "moved-head",
+    files: [{ ...LOW_FILE, hunks: [LOW_HUNK_1, changedLow2] }, HIGH_FILE],
+  };
+  const reviewed: ReviewRecord = {
+    ...record([LOW_HUNK_1.id]),
+    target: { kind: "branch", base: "HEAD" },
+    comments: [
+      commentOn("kept", LOW_HUNK_1.id, 2, "Still on an unchanged hunk."),
+      commentOn("moved", LOW_HUNK_2.id, 21, "Its hunk changes."),
+    ],
+  };
+  const mounted = await mountReview({
+    terminalRows: 50,
+    record: reviewed,
+    reload: async () => moved,
+  });
+  mounted.component.handleInput?.("r");
+  await settled();
+  assert.match(screenOf(mounted, 120), /2 comments \(1 outdated\)/, "drawn outdated as before");
+  await mounted.close();
+  const saved = mounted.savedRecords.at(-1);
+  assert.equal(saved?.baseSha, "moved-base");
+  assert.equal(saved?.headSha, "moved-head");
+  assert.equal(saved?.cursor.lastHeadSha, "moved-head");
+  assert.deepEqual(saved?.cursor.reviewedHunkIds, [LOW_HUNK_1.id]);
+  assert.deepEqual(
+    saved?.comments.map((entry) => entry.id),
+    ["kept", "moved"],
+  );
+  assert.equal(mounted.savedRecords.length, 1, "saved once, by q, through the normal path");
+});
+
+test("a failed refresh keeps the ids; a refresh that lands after the view closed writes nothing", async () => {
+  let fail = true;
+  const failing = await mountReview({
+    terminalRows: 40,
+    reload: async () => {
+      if (fail) throw new Error("git gone");
+      return MODEL;
+    },
+  });
+  failing.component.handleInput?.("r");
+  await settled();
+  await failing.close();
+  assert.equal(failing.savedRecords.at(-1)?.baseSha, MODEL.baseSha);
+  assert.equal(failing.savedRecords.at(-1)?.headSha, MODEL.headSha);
+  fail = false;
+
+  let land: ((model: DiffModel) => void) | undefined;
+  const late = await mountReview({
+    terminalRows: 40,
+    reload: () =>
+      new Promise<DiffModel>((resolve) => {
+        land = resolve;
+      }),
+  });
+  late.component.handleInput?.("r");
+  await settled();
+  await late.close();
+  assert.equal(late.savedRecords.length, 1);
+  land?.({ ...MODEL, baseSha: "late-base", headSha: "late-head" });
+  await settled();
+  assert.equal(late.savedRecords.length, 1, "nothing written after close");
+  assert.equal(late.savedRecords[0]?.baseSha, MODEL.baseSha);
+});
+
+/* -------------------------------------------- containment of render and input */
+
+test("a review that cannot draw closes at once, saves through the store, and says so once", async () => {
+  let broken = false;
+  let calls = 0;
+  const theme = reinterpretHostValue<Theme>({
+    fg: (_color: string, text: string) => {
+      calls += 1;
+      if (broken) throw new Error("theme \u001b]52;c;eA==\u0007broke\nmore");
+      return text;
+    },
+    bold: (text: string) => text,
+  });
+  const mounted = await mountReview({
+    terminalRows: 30,
+    theme,
+    record: { ...record(), comments: [commentOn("kept", LOW_HUNK_1.id, 2, "Unsent.")] },
+  });
+  broken = true;
+  let lines: string[] = [];
+  assert.doesNotThrow(() => {
+    lines = mounted.component.render(50);
+  });
+  assert.equal(lines.length, 1);
+  assert.ok(visibleWidth(lines[0] ?? "") <= 50);
+  const after = calls;
+  for (let frame = 0; frame < 60; frame += 1) mounted.component.render(50);
+  assert.equal(calls, after, "the view is not drawn again");
+  await mounted.close();
+  await settled();
+  assert.equal(mounted.savedRecords.length, 1);
+  assert.deepEqual(
+    mounted.savedRecords[0]?.comments.map((entry) => entry.id),
+    ["kept"],
+  );
+  const told = mounted.notifications.filter((note) => note.includes("could not be drawn"));
+  assert.equal(told.length, 1);
+  assert.match(told[0] ?? "", /were saved/);
+  const toldText = told[0] ?? "";
+  assert.equal(toldText.includes("\u0007") || toldText.includes("\u001b]"), false, "sanitised");
+});
+
+test("a key that throws in the review is shown and the review can still be left", async () => {
+  let failNow = false;
+  const mounted = await mountReview({
+    terminalRows: 30,
+    now: () => {
+      if (failNow) throw new Error("clock broke");
+      return NOW;
+    },
+  });
+  mounted.component.handleInput?.("]");
+  failNow = true;
+  assert.doesNotThrow(() => mounted.component.handleInput?.("m"));
+  failNow = false;
+  // The clock also draws relative times, so it is mended before the next frame.
+  assert.match(screenOf(mounted, 120), /That key failed: clock broke/);
+  await mounted.close();
+  assert.equal(mounted.savedRecords.length, 1);
+});
+
+/* ------------------------------------------ a comment stays with its text */
+
+const R2_PATH = "src/r2.ts";
+
+function r2Diff(insertAbove: boolean, bChanged = false, bLines = ["+added B"]): string {
+  const a = insertAbove
+    ? ["@@ -2,3 +2,4 @@", " line 2", "-line 3", "+line 3 edited", "+inserted above", " line 4"]
+    : ["@@ -2,3 +2,3 @@", " line 2", "-line 3", "+line 3 edited", " line 4"];
+  const shift = insertAbove ? 1 : 0;
+  const added = bLines.filter((line) => line.startsWith("+")).length;
+  const removed = bLines.filter((line) => line.startsWith("-")).length;
+  const b = [
+    `@@ -18,${6 + removed} +${18 + shift},${6 + added} @@`,
+    " line 18",
+    " line 19",
+    " line 20",
+    ...bLines.map((line) => (bChanged && line.startsWith("+") ? `${line} (edited)` : line)),
+    " line 21",
+    " line 22",
+    " line 23",
+  ];
+  return [
+    `diff --git a/${R2_PATH} b/${R2_PATH}`,
+    `--- a/${R2_PATH}`,
+    `+++ b/${R2_PATH}`,
+    ...a,
+    ...b,
+    "",
+  ].join("\n");
+}
+
+function r2Model(insertAbove: boolean, bChanged = false, bLines?: string[]): DiffModel {
+  return parseGitDiff(
+    r2Diff(insertAbove, bChanged, bLines),
+    "base-sha",
+    insertAbove ? "head-2" : "head-1",
+  );
+}
+
+function r2Comment(
+  model: DiffModel,
+  side: "LEFT" | "RIGHT",
+  line: number,
+  startLine?: number,
+): ReviewComment {
+  const hunk = model.files[0]?.hunks[1];
+  assert.ok(hunk);
+  const comment: ReviewComment = {
+    id: "r2",
+    path: R2_PATH,
+    side,
+    line,
+    body: "About this line.",
+    anchor: buildCommentAnchor(hunk, side, line, startLine),
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+  if (startLine !== undefined) comment.startLine = startLine;
+  return comment;
+}
+
+function r2Record(model: DiffModel, comment: ReviewComment): ReviewRecord {
+  return {
+    ...record(),
+    target: { kind: "branch", base: "HEAD" },
+    baseSha: model.baseSha,
+    headSha: model.headSha,
+    comments: [comment],
+  };
+}
+
+/** The diff row directly above the comment's block, as drawn. */
+function rowAbove(mounted: MountedReview, width = 140): string {
+  const rows = mounted.component.render(width).map(stripTerminalSequences);
+  const at = rows.findIndex((row) => row.includes("About this line."));
+  return at > 0 ? (rows[at - 1] ?? "") : "";
+}
+
+async function expandR2(mounted: MountedReview): Promise<void> {
+  // The only file opens expanded; draw once so its body is read.
+  mounted.component.render(140);
+  await settled();
+}
+
+test("after a refresh moves the hunk, the comment stays under its text and the record names the new line", async () => {
+  const first = r2Model(false);
+  const moved = r2Model(true);
+  assert.equal(first.files[0]?.hunks[1]?.id, moved.files[0]?.hunks[1]?.id, "same content hash");
+  const mounted = await mountReview({
+    terminalRows: 60,
+    model: first,
+    record: r2Record(first, r2Comment(first, "RIGHT", 21)),
+    reload: async () => moved,
+  });
+  await expandR2(mounted);
+  assert.match(rowAbove(mounted), /added B/);
+  mounted.component.handleInput?.("r");
+  await settled();
+  assert.match(rowAbove(mounted), /added B/, "still under its text");
+  assert.doesNotMatch(screenOf(mounted, 140), /outdated/);
+  await mounted.close();
+  assert.equal(mounted.savedRecords.at(-1)?.comments[0]?.line, 22);
+});
+
+test("a resumed review whose hunk moved since places the comment by its text", async () => {
+  const first = r2Model(false);
+  const moved = r2Model(true);
+  const mounted = await mountReview({
+    terminalRows: 60,
+    model: moved,
+    record: r2Record(first, r2Comment(first, "RIGHT", 21)),
+  });
+  await expandR2(mounted);
+  assert.match(rowAbove(mounted), /added B/);
+  await mounted.close();
+  assert.equal(mounted.savedRecords.at(-1)?.comments[0]?.line, 22);
+});
+
+test("a range comment moves as a whole; an old record without a position resolves by its snippet", async () => {
+  const first = r2Model(false);
+  const moved = r2Model(true);
+  const comment = r2Comment(first, "RIGHT", 21, 20);
+  const { position: _position, ...oldAnchor } = comment.anchor;
+  const mounted = await mountReview({
+    terminalRows: 60,
+    model: moved,
+    record: r2Record(first, { ...comment, anchor: oldAnchor }),
+  });
+  await expandR2(mounted);
+  await mounted.close();
+  const saved = mounted.savedRecords.at(-1)?.comments[0];
+  assert.equal(saved?.startLine, 21);
+  assert.equal(saved?.line, 22);
+});
+
+test("a comment on a deleted line (LEFT) follows its text when the new side moves", async () => {
+  const lines = ["-line 20 removed", "+line 20 replaced"];
+  const first = r2Model(false, false, lines);
+  const moved = r2Model(true, false, lines);
+  const hunk = first.files[0]?.hunks[1];
+  assert.ok(hunk);
+  const removed = hunk.lines.find((line) => line.kind === "del");
+  assert.ok(removed?.oldLine !== undefined);
+  const mounted = await mountReview({
+    terminalRows: 60,
+    model: first,
+    record: r2Record(first, r2Comment(first, "LEFT", removed.oldLine)),
+    reload: async () => moved,
+  });
+  await expandR2(mounted);
+  mounted.component.handleInput?.("r");
+  await settled();
+  assert.match(rowAbove(mounted), /line 20 removed/);
+  await mounted.close();
+  assert.equal(
+    mounted.savedRecords.at(-1)?.comments[0]?.line,
+    removed.oldLine,
+    "the old side did not move",
+  );
+});
+
+test("a comment whose text changed is drawn outdated, never under other text", async () => {
+  const first = r2Model(false);
+  const changed = r2Model(false, true);
+  const mounted = await mountReview({
+    terminalRows: 60,
+    model: first,
+    record: r2Record(first, r2Comment(first, "RIGHT", 21)),
+    reload: async () => changed,
+  });
+  await expandR2(mounted);
+  mounted.component.handleInput?.("r");
+  await settled();
+  assert.match(screenOf(mounted, 140), /1 comments \(1 outdated\)/);
+  assert.match(screenOf(mounted, 140), /outdated, was/);
+  await mounted.close();
+});
+
+test("a refresh in which only the commented hunk moved names its new line", async () => {
+  const only = (shift: number): DiffModel => {
+    const full = r2Model(false);
+    const moved = r2Model(shift > 0);
+    const hunk = (shift > 0 ? moved : full).files[0]?.hunks[1];
+    assert.ok(hunk);
+    return { ...full, headSha: "same-head", files: [{ ...full.files[0]!, hunks: [hunk] }] };
+  };
+  const first = only(0);
+  const moved = only(1);
+  assert.equal(first.files[0]?.hunks[0]?.id, moved.files[0]?.hunks[0]?.id);
+  const comment = r2Comment(r2Model(false), "RIGHT", 21);
+  const mounted = await mountReview({
+    terminalRows: 60,
+    model: first,
+    record: { ...r2Record(first, comment) },
+    reload: async () => moved,
+  });
+  await expandR2(mounted);
+  mounted.component.handleInput?.("r");
+  await settled();
+  assert.match(rowAbove(mounted), /added B/);
+  await mounted.close();
+  assert.equal(mounted.savedRecords.at(-1)?.comments[0]?.line, 22);
+});
+
+/* ----------------------- a comment on expanded context survives a resume */
+
+function expandedContextComment(fixture: ExpansionReviewFixture, line: number): ReviewComment {
+  const hunk = fixture.model.files[0]?.hunks[0];
+  assert.ok(hunk);
+  const above = Array.from({ length: 10 }, (_unused, index) => ({
+    kind: "context" as const,
+    oldLine: index + 1,
+    newLine: index + 1,
+    text: `base line ${index + 1}`,
+  }));
+  return {
+    id: "ctx",
+    path: "src/expand.ts",
+    side: "RIGHT",
+    line,
+    body: "About this unchanged line.",
+    anchor: buildCommentAnchor(hunkWithExpandedContext(hunk, { above, below: [] }), "RIGHT", line),
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+}
+
+test("resume: a comment on expanded context re-expands that context and sits under its line", async () => {
+  const fixture = expansionReviewFixture();
+  const mounted = await mountReview({
+    terminalRows: 60,
+    ...fixture,
+    record: { ...fixture.record, comments: [expandedContextComment(fixture, 5)] },
+  });
+  mounted.component.render(120);
+  await settleInput();
+  await settleInput();
+  const rows = mounted.component.render(120).map(stripTerminalSequences);
+  const at = rows.findIndex((row) => row.includes("About this unchanged line."));
+  assert.ok(at > 0, "drawn inline");
+  assert.match(rows[at - 1] ?? "", /\bbase line 5\b/);
+  assert.doesNotMatch(rows.join("\n"), /outdated/);
+  await mounted.close();
+  assert.equal(mounted.savedRecords.at(-1)?.comments[0]?.line, 5);
+});
+
+test("resume: a comment on expanded context whose text is gone is outdated, and keeps no expansion", async () => {
+  const fixture = expansionReviewFixture();
+  const changed: ExecRunner = async () => ({
+    stdout: `${Array.from({ length: 40 }, (_unused, index) => `other line ${index + 1}`).join("\n")}\n`,
+    stderr: "",
+    code: 0,
+  });
+  const mounted = await mountReview({
+    terminalRows: 60,
+    ...fixture,
+    execRunner: changed,
+    record: { ...fixture.record, comments: [expandedContextComment(fixture, 5)] },
+  });
+  mounted.component.render(120);
+  await settleInput();
+  await settleInput();
+  const screen = mounted.component.render(120).map(stripTerminalSequences).join("\n");
+  assert.match(screen, /outdated, was src\/expand\.ts:5\) About this unchanged line\./);
+  assert.doesNotMatch(screen, /other line/);
+  await mounted.close();
+});
+
+test("refresh: when a hunk moved, context read for its old place is dropped and the comment's context is read again", async () => {
+  const fixture = expansionReviewFixture();
+  const moved = expansionReviewFixture({ oldStart: 13 });
+  const mounted = await mountReview({
+    terminalRows: 70,
+    ...fixture,
+    record: { ...fixture.record, comments: [expandedContextComment(fixture, 5)] },
+    reload: async () => moved.model,
+  });
+  mounted.component.render(120);
+  await settleInput();
+  await settleInput();
+  mounted.component.handleInput?.("r");
+  await settleInput();
+  await settleInput();
+  await settleInput();
+  const rows = mounted.component.render(120).map(stripTerminalSequences);
+  const hunkTop = rows.findIndex((row) => /│ {3}base line 13\b/.test(row));
+  assert.ok(hunkTop > 0);
+  assert.match(
+    rows[hunkTop - 1] ?? "",
+    /\bbase line 12\b/,
+    "context is read for where the hunk is now",
+  );
+  const at = rows.findIndex((row) => row.includes("About this unchanged line."));
+  assert.match(rows[at - 1] ?? "", /\bbase line 5\b/);
+  await mounted.close();
 });
