@@ -140,6 +140,21 @@ export function linesReference(
 }
 
 /**
+ * The text the copy key puts on the clipboard. Selected lines are copied as the
+ * code they hold, without diff markers; a whole hunk is copied as a diff,
+ * its header first, because it has both sides of the change.
+ */
+export function clipboardText(hunk: DiffHunk, selection?: { first: number; last: number }): string {
+  if (selection) {
+    const lines = hunk.lines.slice(Math.max(0, selection.first), selection.last + 1);
+    if (lines.length > 0) return lines.map((line) => line.text).join("\n");
+  }
+  return [hunk.header, ...hunk.lines.map((line) => `${markerOf(line.kind)}${line.text}`)].join(
+    "\n",
+  );
+}
+
+/**
  * Append `insert` to the editor's current text without losing it. A one-line
  * reference ends with a space and a block ends with a newline, so the user can
  * type the question straight away.

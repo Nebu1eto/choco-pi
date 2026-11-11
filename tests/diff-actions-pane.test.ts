@@ -5,6 +5,7 @@ import type { PrefsIo } from "../.pi/extensions/diff/ui/prefs.ts";
 import { isSensitivePath } from "../.pi/extensions/lib/changes/sensitive.ts";
 import { inlineList, inlineMarkdown } from "../.pi/extensions/diff/ui/format.ts";
 import type { DiffSource, DiffStoreState } from "../.pi/extensions/lib/changes/git/model.ts";
+import { COPY_KEY } from "../.pi/extensions/lib/changes/view/keys.ts";
 import { file, flush, harness, hunk, snapshot, textBody } from "./diff-actions-fakes.ts";
 
 const TREE_1 = "1111111111111111111111111111111111111111";
@@ -530,4 +531,66 @@ test("a poll that lists a new prompt's edits moves the turn shown alone onto its
     label: "turn 2 (fix the parser please)",
     turnOnly: true,
   });
+});
+
+/* ------------------------------------------------------------- Ctrl+C */
+
+/** The copy key as a terminal sends it: Cmd+C (Kitty protocol) on macOS, Ctrl+C elsewhere. */
+const COPY = COPY_KEY.key === "super+c" ? "\u001b[99;9u" : "\u0003";
+
+async function copyHarness(options: Parameters<typeof harness>[0] = {}) {
+  const h = harness({ editorText: "draft", ...options });
+  await openFocused(h);
+  const change = hunk("h-copy", 3, [" keep", "-\told value", "+\tnew value", "+  second"]);
+  h.store().bodies.set("src/a.ts", textBody("src/a.ts", [change]));
+  h.store().ready(1, [file("src/a.ts")]);
+  return { h, change };
+}
+
+test("the copy key copies the selected lines as code and a hunk as a diff; the editor is untouched", async () => {
+  const { h, change } = await copyHarness();
+  h.tui.input(COPY);
+  assert.deepEqual(h.copied, [], "a file's row has no text");
+  assert.match(h.header(), /Nothing to copy on a file's row/);
+
+  h.tui.input("n");
+  await flush();
+  h.tui.input(COPY);
+  await flush();
+  assert.deepEqual(h.copied, [
+    [change.header, " keep", "-\told value", "+\tnew value", "+  second"].join("\n"),
+  ]);
+  assert.match(h.header(), /Copied the hunk as a diff \(4 lines\)/);
+
+  const DOWN = "\u001b[B";
+  h.tui.input(DOWN);
+  h.tui.input(DOWN);
+  h.tui.input(DOWN);
+  h.tui.input(COPY);
+  await flush();
+  assert.equal(h.copied.at(-1), "\tnew value", "one line: its text, indentation kept, no marker");
+  assert.match(h.header(), /Copied 1 line\./);
+  h.tui.input("\u001b[1;2B");
+  h.tui.input(COPY);
+  await flush();
+  assert.equal(h.copied.at(-1), "\tnew value\n  second");
+  assert.match(h.header(), /Copied 2 lines\./);
+
+  assert.equal(h.editor.text, "draft");
+  assert.equal(h.tui.paneFocused(), true, "the pane keeps the keyboard");
+});
+
+test("a clipboard that fails or is not there says so", async () => {
+  const failing = await copyHarness({ clipboardError: "no display" });
+  failing.h.tui.input("n");
+  await flush();
+  failing.h.tui.input(COPY);
+  await flush();
+  assert.match(failing.h.header(), /Cannot copy to the clipboard: no display/);
+
+  const none = await copyHarness({ noClipboard: true });
+  none.h.tui.input("n");
+  await flush();
+  none.h.tui.input(COPY);
+  assert.match(none.h.header(), /Copying is not available here/);
 });

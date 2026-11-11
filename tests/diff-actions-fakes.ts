@@ -247,6 +247,10 @@ export type HarnessOptions = {
   notesIo?: PrefsIo;
   /** Defaults to {@link renderPlain}; pass the production renderer to test it. */
   renderFileBody?: FileBodyRenderer;
+  /** The clipboard write fails with this message. */
+  clipboardError?: string;
+  /** No clipboard is wired. */
+  noClipboard?: boolean;
 };
 
 /** Plain unified rendering: the hunk header, then one `newLine|text` line per diff line. */
@@ -323,6 +327,14 @@ export function harness(options: HarnessOptions = {}) {
     },
     notesFile: () => "/scratch/diff-notes/session.json",
   };
+  /** What the pane put on the clipboard, oldest first. */
+  const copied: string[] = [];
+  if (!options.noClipboard) {
+    deps.copyText = async (text) => {
+      if (options.clipboardError) throw new Error(options.clipboardError);
+      copied.push(text);
+    };
+  }
   if (options.readRecords) deps.readRecords = options.readRecords;
   if (options.notesIo) deps.notesIo = options.notesIo;
   const probe = registerDiffPane(reinterpretHostValue<ExtensionAPI>(fakePi), deps);
@@ -361,6 +373,7 @@ export function harness(options: HarnessOptions = {}) {
     notices,
     editor,
     probe,
+    copied,
   };
 }
 

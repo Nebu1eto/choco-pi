@@ -35,6 +35,8 @@ import {
   type MarkdownTheme,
   type OverlayHandle,
   type SlashCommand,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
 import {
   createReviewChat as createDefaultReviewChat,
@@ -68,13 +70,15 @@ import { BODY_INDENT, type BodyAnnotation } from "../../lib/changes/view/body-bl
 import {
   ChangesView,
   HIDDEN_CONTENTS,
+  type AskTarget,
   type FileBodyRenderer,
   type PaneActions,
   type RowDetail,
 } from "../../lib/changes/view/changes-view.ts";
+import { clipboardText } from "../../lib/changes/references.ts";
 import { actionFor } from "../../lib/changes/view/keys.ts";
 import { changedLineMatches } from "../../lib/changes/view/line-cursor.ts";
-import type { PaneStyler, RowBadge } from "../../lib/changes/view/rows.ts";
+import { plural, type PaneStyler, type RowBadge } from "../../lib/changes/view/rows.ts";
 import type { PaneScroller } from "../../lib/changes/view/surface.ts";
 import type { FindingsSummary } from "../../lib/changes/findings.ts";
 import {
@@ -115,6 +119,8 @@ export type ReviewViewDependencies = {
   styler: DiffStyler;
   spawnEditor?: SpawnEditor;
   now?: () => string;
+  /** Puts text on the system clipboard; omitted means the review cannot copy. */
+  copyText?(text: string): Promise<void>;
   createCommentId?: () => string;
   createReviewChat?: typeof createDefaultReviewChat;
   execRunner?: ExecRunner;
@@ -762,6 +768,13 @@ export async function openReviewView(
         let focus: ReviewPaneFocus = "review";
         let lastBodyHeight = reviewViewHeights(terminalRows).bodyHeight;
         let scrollTop = 0;
+        /**
+         * Where the diff was last drawn: the rows of the view's header and body
+         * and its columns. Undefined while the chat is drawn in its place.
+         */
+        let diffArea: { headerTop: number; top: number; rows: number; width: number } | undefined;
+        /** A press on a line started a selection; drags extend it until the release. */
+        let selecting = false;
         let lastRevision = -1;
         const seenHunks = new Set<string>();
         const seenFiles = new Set<string>();
@@ -971,6 +984,31 @@ export async function openReviewView(
           ];
         }
 
+        /** The copy key: the selected lines as code, or a folded hunk as a diff. */
+        function copySelection(target: AskTarget): void {
+          const hunk = target.hunk;
+          if (!hunk) {
+            notify("Nothing to copy on a file's row: move to a line first.", "info");
+            return;
+          }
+          const write = options.copyText;
+          if (!write) {
+            notify("Copying is not available here.", "warning");
+            return;
+          }
+          const lines = target.lines;
+          const text = clipboardText(hunk, lines);
+          const copied = lines
+            ? `Copied ${plural(lines.last - lines.first + 1, "line")}.`
+            : `Copied the hunk as a diff (${plural(hunk.lines.length, "line")}).`;
+          void (async () => {
+            await write(text);
+            if (!closed) notify(copied, "info");
+          })().catch((error: RuntimeValue) =>
+            notify(`Cannot copy to the clipboard: ${failureLine(error)}`, "warning"),
+          );
+        }
+
         const actions: PaneActions = {
           unfocus: () => leave(),
           close: () => leave(),
@@ -981,6 +1019,7 @@ export async function openReviewView(
           requestRender: () => tui.requestRender(),
           isToggleKey: () => false,
           isFocusKey: () => false,
+          copy: copySelection,
         };
 
         const changes = new ChangesView({
@@ -2280,6 +2319,15 @@ export async function openReviewView(
             const room = Math.max(0, terminalRows - 1 - footer.length);
             const headerRows = viewHeader.slice(0, room);
             lastBodyHeight = Math.max(0, room - headerRows.length);
+            const titleRows = terminalRows > 0 ? 1 : 0;
+            diffArea = diffVisible
+              ? {
+                  headerTop: titleRows,
+                  top: titleRows + headerRows.length,
+                  rows: lastBodyHeight,
+                  width: diffWidth,
+                }
+              : undefined;
             const body = changes.renderBody(diffWidth, focus === "review");
             // The view keeps its cursor visible through the scroller; a resize or
             // a comment drawn above it can still move it, so check once more here.
@@ -2429,6 +2477,51 @@ export async function openReviewView(
             } else changes.handleKey(data);
             tui.requestRender();
           },
+          /**
+           * The mouse on the diff, as in the `/diff` pane: a press on a line
+           * puts the cursor there and drags select lines; a click on a file
+           * row opens or closes it. Every left press on the diff is taken,
+           * because Pi starts its own text selection on a press nothing takes
+           * and copies it on release. The chat, the input and the title row
+           * are left to Pi.
+           */
+          handleMouse: (event: TuiMouseEvent): TuiMouseEventResult | undefined => {
+            const area = diffArea;
+            if (closed || !area) return undefined;
+            if (selecting && (event.type === "drag" || event.type === "release")) {
+              if (event.type === "release") selecting = false;
+              else {
+                // At most one row past either edge, so the selection scrolls a row at a time.
+                const visible = Math.max(-1, Math.min(area.rows, event.y - area.top));
+                changes.pointer({ kind: "drag", row: scrollTop + visible });
+              }
+              return { handled: true, render: true };
+            }
+            if (event.button !== "left" || (event.type !== "press" && event.type !== "click")) {
+              return undefined;
+            }
+            const onDiff =
+              event.x < area.width && event.y >= area.headerTop && event.y < area.top + area.rows;
+            if (!onDiff) return undefined;
+            const visible = event.y - area.top;
+            const row = visible >= 0 ? scrollTop + visible : undefined;
+            // A comment being written keeps its lines, and a running action its target.
+            const usable = !commentDraft && !busy;
+            if (event.type === "press") {
+              const onLine =
+                usable &&
+                row !== undefined &&
+                changes.pointer({ kind: "press", row, extend: event.shift });
+              if (!onLine) return { handled: true, render: false };
+              selecting = true;
+              if (focus !== "review") setFocus("review");
+              return { handled: true, capture: true, render: true };
+            }
+            if (!usable) return { handled: true, render: false };
+            if (focus !== "review") setFocus("review");
+            if (row !== undefined) changes.pointer({ kind: "click", row });
+            return { handled: true, render: true };
+          },
         };
         return {
           render: (width: number): string[] => {
@@ -2487,6 +2580,17 @@ export async function openReviewView(
               } catch {
                 // Drawn with the next frame.
               }
+            }
+          },
+          handleMouse: (event: TuiMouseEvent): TuiMouseEventResult | undefined => {
+            if (renderFailure || closed || phase.kind !== "open") return undefined;
+            try {
+              return component.handleMouse(event);
+            } catch (error) {
+              // The view stays, as for a key that fails.
+              selecting = false;
+              notify(`That click failed: ${failureLine(error)}`, "error");
+              return { handled: true, render: true };
             }
           },
         };

@@ -1,5 +1,10 @@
 import { propertiesWhen } from "../.pi/extensions/lib/runtime-values.ts";
-import { isFunction, isString, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import {
+  isFunction,
+  isNumber,
+  isString,
+  type RuntimeValue,
+} from "../.pi/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -8,7 +13,12 @@ import { join } from "node:path";
 import test, { after } from "node:test";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { initTheme } from "@earendil-works/pi-coding-agent";
-import { stripTerminalSequences, visibleWidth, type Component } from "@earendil-works/pi-tui";
+import {
+  stripTerminalSequences,
+  visibleWidth,
+  type Component,
+  type TuiMouseEvent,
+} from "@earendil-works/pi-tui";
 import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
 import { parseGitDiff } from "../.pi/extensions/lib/changes/patch.ts";
 import { buildCommentAnchor } from "../.pi/extensions/review/core/anchor.ts";
@@ -55,7 +65,11 @@ import {
   REVIEW_ONLY_KEYS,
   SPLIT_TOGGLE_KEY,
 } from "../.pi/extensions/review/ui/review-keys.ts";
-import { PANE_KEYS, type ChangesKeyTable } from "../.pi/extensions/lib/changes/view/keys.ts";
+import {
+  COPY_KEY,
+  PANE_KEYS,
+  type ChangesKeyTable,
+} from "../.pi/extensions/lib/changes/view/keys.ts";
 import type { FindingsSummary } from "../.pi/extensions/lib/changes/findings.ts";
 import {
   realBoxZentuiLoader as realZentuiLoader,
@@ -204,6 +218,7 @@ async function mountReview(
     reload?: () => Promise<DiffModel>;
     loadFindings?: OpenReviewViewOptions["loadFindings"];
     input?: ReviewViewHost["input"];
+    copyText?: (text: string) => Promise<void>;
   } = {},
 ): Promise<MountedReview> {
   let component: Component | undefined;
@@ -278,6 +293,7 @@ async function mountReview(
     ...propertiesWhen(options.zentuiLoader, () => ({ zentuiLoader: options.zentuiLoader })),
     ...propertiesWhen(options.reload, () => ({ reload: options.reload })),
     ...propertiesWhen(options.loadFindings, () => ({ loadFindings: options.loadFindings })),
+    ...propertiesWhen(options.copyText, () => ({ copyText: options.copyText })),
   });
   await readyPromise;
   assert.ok(component?.handleInput);
@@ -3144,5 +3160,241 @@ test("refresh: when a hunk moved, context read for its old place is dropped and 
   );
   const at = rows.findIndex((row) => row.includes("About this unchanged line."));
   assert.match(rows[at - 1] ?? "", /\bbase line 5\b/);
+  await mounted.close();
+});
+
+/* ------------------------------------------------- Ctrl+C and the mouse */
+
+/** The copy key as a terminal sends it: Cmd+C (Kitty protocol) on macOS, Ctrl+C elsewhere. */
+const COPY = COPY_KEY.key === "super+c" ? "\u001b[99;9u" : "\u0003";
+const ESCAPE = "\u001b";
+
+/** A left-button mouse event on column `x` of the first drawn row showing `text`. */
+function mouseOn(
+  mounted: MountedReview,
+  text: string | number,
+  type: TuiMouseEvent["type"] = "click",
+  x = 20,
+  width = 100,
+): TuiMouseEvent {
+  const rows = mounted.component.render(width).map(stripTerminalSequences);
+  const y = isNumber(text) ? text : rows.findIndex((row) => row.includes(text));
+  assert.ok(y >= 0, `no row shows ${text}`);
+  return {
+    type,
+    button: "left",
+    x,
+    y,
+    screenX: x,
+    screenY: y,
+    width,
+    height: rows.length,
+    shift: false,
+    alt: false,
+    ctrl: false,
+    clickCount: 1,
+  };
+}
+
+const statusOf = (mounted: MountedReview, width = 100) =>
+  mounted.component
+    .render(width)
+    .map(stripTerminalSequences)
+    .find((row) => row.includes(" files · ")) ?? "";
+
+test("the copy key copies the selected lines as code and a folded hunk as a diff", async () => {
+  const copied: string[] = [];
+  const mounted = await mountReview({
+    terminalRows: 30,
+    ...mixedReviewFixture(),
+    copyText: async (text) => {
+      copied.push(text);
+    },
+  });
+  mounted.component.render(100);
+  for (let step = 0; step < 4; step += 1) mounted.component.handleInput?.("j");
+  mounted.component.handleInput?.(COPY);
+  await settleInput();
+  assert.deepEqual(copied, ["const extra = 3;"], "one line, without its + marker");
+  assert.match(
+    mounted.component.render(100).map(stripTerminalSequences).join("\n"),
+    /Copied 1 line\./,
+  );
+  mounted.component.handleInput?.(SHIFT_DOWN);
+  mounted.component.handleInput?.(SHIFT_DOWN);
+  mounted.component.handleInput?.(COPY);
+  await settleInput();
+  assert.equal(copied.at(-1), "const extra = 3;\nconst after = 4;\nconst tail = 5;");
+  assert.match(
+    mounted.component.render(100).map(stripTerminalSequences).join("\n"),
+    /Copied 3 lines\./,
+  );
+
+  // Folded, the hunk is one stop: the whole hunk is copied, as a diff.
+  mounted.component.handleInput?.(" ");
+  mounted.component.handleInput?.(COPY);
+  await settleInput();
+  assert.equal(
+    copied.at(-1),
+    [
+      "@@ -10,5 +10,6 @@ function mixed",
+      " const before = 1;",
+      " const guard = 0;",
+      "-const removed = 2;",
+      "+const added = 2;",
+      "+const extra = 3;",
+      " const after = 4;",
+      " const tail = 5;",
+    ].join("\n"),
+  );
+  assert.match(
+    mounted.component.render(100).map(stripTerminalSequences).join("\n"),
+    /Copied the hunk as a diff \(7 lines\)/,
+  );
+
+  // On the file's row there is no text to copy.
+  mounted.component.handleInput?.("g");
+  const before = copied.length;
+  mounted.component.handleInput?.(COPY);
+  await settleInput();
+  assert.equal(copied.length, before);
+  assert.match(
+    mounted.component.render(100).map(stripTerminalSequences).join("\n"),
+    /Nothing to copy on a file's row/,
+  );
+  await mounted.close();
+});
+
+test("the copy key says so when the clipboard fails or is not wired, and the review stays", async () => {
+  const failing = await mountReview({
+    terminalRows: 30,
+    ...mixedReviewFixture(),
+    copyText: async () => {
+      throw new Error("no display");
+    },
+  });
+  failing.component.render(100);
+  failing.component.handleInput?.("j");
+  failing.component.handleInput?.(COPY);
+  await settleInput();
+  assert.match(
+    failing.component.render(100).map(stripTerminalSequences).join("\n"),
+    /Cannot copy to the clipboard: no display/,
+  );
+  await failing.close();
+
+  const none = await mountReview({ terminalRows: 30, ...mixedReviewFixture() });
+  none.component.render(100);
+  none.component.handleInput?.("j");
+  none.component.handleInput?.(COPY);
+  assert.match(
+    none.component.render(100).map(stripTerminalSequences).join("\n"),
+    /Copying is not available here/,
+  );
+  await none.close();
+});
+
+test("mouse: a press puts the cursor on a line, drags select lines of one side, and a file row opens or closes", async () => {
+  const mounted = await mountReview({ terminalRows: 30, ...mixedReviewFixture() });
+  const mouse = (event: TuiMouseEvent) => mounted.component.handleMouse?.(event);
+
+  assert.deepEqual(mouse(mouseOn(mounted, "const added = 2;", "press")), {
+    handled: true,
+    capture: true,
+    render: true,
+  });
+  assert.match(statusOf(mounted), /Target src\/mixed\.ts:12 RIGHT/);
+  mouse(mouseOn(mounted, "const tail = 5;", "drag"));
+  assert.match(statusOf(mounted), /Target src\/mixed\.ts:12-15 RIGHT/);
+  // Upwards the removed line has no number on this side: the selection stops below it.
+  mouse(mouseOn(mounted, "const before = 1;", "drag"));
+  assert.match(statusOf(mounted), /Target src\/mixed\.ts:12 RIGHT/, "a range never mixes sides");
+  // Past the last drawn row the drag is read as one row below the diff.
+  mouse(mouseOn(mounted, 29, "drag"));
+  assert.match(statusOf(mounted), /Target src\/mixed\.ts:12-15 RIGHT/);
+  assert.deepEqual(mouse(mouseOn(mounted, 29, "release")), { handled: true, render: true });
+  assert.equal(mouse(mouseOn(mounted, "const before = 1;", "drag")), undefined, "released");
+  assert.match(statusOf(mounted), /Target src\/mixed\.ts:12-15 RIGHT/);
+
+  // An unfolded hunk's header is not a stop of the review's cursor: its first line is.
+  assert.deepEqual(mouse(mouseOn(mounted, "@@ -10,5 +10,6 @@", "press")), {
+    handled: true,
+    render: false,
+  });
+  mouse(mouseOn(mounted, "@@ -10,5 +10,6 @@"));
+  assert.match(statusOf(mounted), /Target src\/mixed\.ts:10 RIGHT/);
+
+  // A file's row closes and opens the file.
+  mouse(mouseOn(mounted, "M src/mixed.ts"));
+  assert.doesNotMatch(mounted.component.render(100).join("\n"), /const added = 2;/);
+  mouse(mouseOn(mounted, "M src/mixed.ts"));
+  assert.match(mounted.component.render(100).join("\n"), /const added = 2;/);
+  await mounted.close();
+});
+
+test("mouse: every left press on the diff is taken so Pi selects and copies nothing there; the rest is Pi's", async () => {
+  const mounted = await mountReview({ terminalRows: 30, ...mixedReviewFixture() });
+  const mouse = (event: TuiMouseEvent) => mounted.component.handleMouse?.(event);
+  const taken = { handled: true, render: false };
+
+  assert.deepEqual(mouse(mouseOn(mounted, "j/k line", "press")), taken, "the view's header");
+  assert.deepEqual(mouse(mouseOn(mounted, "M src/mixed.ts", "press")), taken, "a file row");
+  assert.deepEqual(mouse(mouseOn(mounted, 20, "press")), taken, "empty rows under the diff");
+  assert.equal(mouse(mouseOn(mounted, 0, "press")), undefined, "the review's title row");
+  assert.equal(mouse(mouseOn(mounted, "Input inactive", "press")), undefined, "the input");
+  assert.equal(mouse(mouseOn(mounted, 29, "press")), undefined, "the key rows");
+  assert.equal(
+    mouse({ ...mouseOn(mounted, "const added = 2;", "press"), button: "right" }),
+    undefined,
+    "another button",
+  );
+  assert.equal(mouse({ ...mouseOn(mounted, 20), type: "wheel" }), undefined);
+
+  // While a comment is being written the diff takes the press and keeps the cursor.
+  mounted.component.handleInput?.("j");
+  mounted.component.handleInput?.("j");
+  mounted.component.handleInput?.("c");
+  assert.deepEqual(mouse(mouseOn(mounted, "const tail = 5;", "press")), taken);
+  assert.deepEqual(mouse(mouseOn(mounted, "const tail = 5;")), taken);
+  mounted.component.handleInput?.(ESCAPE);
+  assert.match(
+    statusOf(mounted),
+    /Target src\/mixed\.ts:12 LEFT/,
+    "the cursor is where the keys left it",
+  );
+  await mounted.close();
+});
+
+test("mouse: with the chat beside the diff, a press on the diff focuses the review and the chat's columns are Pi's", async () => {
+  const mounted = await mountReview({
+    terminalRows: 30,
+    ...mixedReviewFixture(),
+    createReviewChat: () => new FakeReviewChat(),
+  });
+  const width = REVIEW_CHAT_SPLIT_MIN_WIDTH;
+  const mouse = (event: TuiMouseEvent) => mounted.component.handleMouse?.(event);
+  mounted.component.handleInput?.("j");
+  mounted.component.handleInput?.("a");
+  assert.match(
+    mounted.component.render(width).map(stripTerminalSequences)[0] ?? "",
+    /Chat \[FOCUSED\]/,
+  );
+
+  assert.equal(
+    mouse(mouseOn(mounted, "const added = 2;", "press", width - 10, width)),
+    undefined,
+    "right of the diff",
+  );
+  assert.equal(mouse(mouseOn(mounted, "const added = 2;", "press", 20, width))?.capture, true);
+  assert.match(
+    mounted.component.render(width).map(stripTerminalSequences)[0] ?? "",
+    /Review \[FOCUSED\] · Chat open/,
+  );
+  assert.match(statusOf(mounted, width), /Target src\/mixed\.ts:12 RIGHT/);
+
+  // Below the split width the chat replaces the diff: nothing there is the review's.
+  mounted.component.handleInput?.("\t");
+  assert.equal(mouse(mouseOn(mounted, 6, "press", 20, width - 1)), undefined);
+  mounted.component.handleInput?.(SHIFT_TAB);
   await mounted.close();
 });

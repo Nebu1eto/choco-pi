@@ -28,6 +28,8 @@ export type ChangesAction =
   | "nextFinding"
   | "previousFinding"
   | "ask"
+  /** Copy the cursor's lines, or its hunk, to the clipboard ({@link COPY_KEY}). */
+  | "copy"
   | "note"
   | "sendNotes"
   | "cycleSource"
@@ -43,6 +45,20 @@ export type ChangesAction =
 export type KeyBinding = string | { key: KeyId };
 
 export type ChangesKeyTable = Readonly<Record<ChangesAction, readonly KeyBinding[]>>;
+
+/**
+ * The key that copies, by platform: Cmd+C on macOS, where Ctrl+C is the
+ * interrupt key, and Ctrl+C elsewhere. Cmd+C reaches a program only from a
+ * terminal that speaks the Kitty keyboard protocol and does not keep the key
+ * for its own copy command.
+ */
+export function copyKeyFor(platform: NodeJS.Platform): { key: KeyId; label: string } {
+  return platform === "darwin"
+    ? { key: "super+c", label: "Cmd+C" }
+    : { key: "ctrl+c", label: "Ctrl+C" };
+}
+
+export const COPY_KEY = copyKeyFor(process.platform);
 
 /**
  * The pane's bindings. j/k step through files and ↑/↓ through the lines of
@@ -69,6 +85,7 @@ export const PANE_KEYS = {
   nextFinding: ["f"],
   previousFinding: ["F"],
   ask: ["a"],
+  copy: [{ key: COPY_KEY.key }],
   note: ["c"],
   sendNotes: ["C"],
   cycleSource: ["s"],
@@ -101,6 +118,7 @@ export const CHANGES_ACTIONS: readonly ChangesAction[] = [
   "nextFinding",
   "previousFinding",
   "ask",
+  "copy",
   "note",
   "sendNotes",
   "cycleSource",

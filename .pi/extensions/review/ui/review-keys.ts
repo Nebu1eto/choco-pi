@@ -4,7 +4,7 @@
  * full-screen view. Review-only keys are handled by the host before the
  * shared view sees a key; `REVIEW_ONLY_KEYS` lists them so no key means two things.
  */
-import type { ChangesKeyTable } from "../../lib/changes/view/keys.ts";
+import { COPY_KEY, type ChangesKeyTable } from "../../lib/changes/view/keys.ts";
 
 export const REVIEW_KEYS = {
   extendDown: [{ key: "shift+down" }],
@@ -30,6 +30,7 @@ export const REVIEW_KEYS = {
   note: [],
   sendNotes: [],
   cycleSource: [],
+  copy: [{ key: COPY_KEY.key }],
   olderTurn: [],
   newerTurn: [],
   review: [],
@@ -67,6 +68,8 @@ export const REVIEW_HELP_LINES: readonly string[] = [
   "⏎/space   fold or unfold the hunk; on a file row, expand or collapse the file",
   "n/N [/]   next/previous hunk       ←/→       previous/next file",
   "Shift+↑/↓ select lines             PgUp/PgDn page",
+  "mouse     click a line to move there, drag to select lines, click a file row to open it",
+  `${COPY_KEY.label.padEnd(10)}copy the selected lines as code (a folded hunk: the whole hunk as a diff)`,
   "c         comment on the selected lines      m   mark the hunk reviewed",
   "a         ask in a side chat (the diff stays out of the main conversation)",
   "/         search changed lines     >/<       next/previous match",

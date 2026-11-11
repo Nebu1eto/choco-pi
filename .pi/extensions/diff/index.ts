@@ -9,7 +9,7 @@
 import { lstat } from "node:fs/promises";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { copyToClipboard, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { createSystemClock } from "../lib/changes/git/clock.ts";
 import { resolveDefaultBranchBase } from "../lib/changes/git/default-base.ts";
 import { createGitExecRunner, createPinnedGitRunner } from "../lib/changes/git/exec.ts";
@@ -38,6 +38,7 @@ export default function diffPaneExtension(pi: ExtensionAPI): void {
     prefsIo: fileSystemPrefsIo,
     agentDir: getAgentDir,
     probe: probeTui,
+    copyText: copyToClipboard,
     styler: (ctx) => ctx.ui.theme,
     listTurns: (ctx) => turnCheckpointsOf(ctx.sessionManager.getBranch()),
     // Every entry of the session file, so /tree navigation and compaction keep the baseline.

@@ -111,11 +111,15 @@ class OverlayPane implements Component, Focusable {
     const onBody = event.x >= BORDER_WIDTH && visible >= 0 && visible < this.bodyRows;
     if (event.type === "press" && event.button === "left" && onBody) {
       const row = this.scrollTop + visible;
-      if (!this.surface.pointer({ kind: "press", row, extend: event.shift })) return undefined;
-      this.selecting = true;
-      this.requestFocus();
-      return { handled: true, capture: true, render: true };
+      if (this.surface.pointer({ kind: "press", row, extend: event.shift })) {
+        this.selecting = true;
+        this.requestFocus();
+        return { handled: true, capture: true, render: true };
+      }
     }
+    // Any other left press is taken too, or Pi would start its own text selection
+    // in the pane and copy it on release. pi-tui still sends the click here.
+    if (event.type === "press" && event.button === "left") return { handled: true, render: false };
     if (event.type === "drag" && this.selecting) {
       // At most one row past either edge, so the selection scrolls the body a row at a time.
       const row = this.scrollTop + Math.max(-1, Math.min(this.bodyRows, visible));

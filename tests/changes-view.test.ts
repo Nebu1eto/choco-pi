@@ -20,6 +20,8 @@ import {
 } from "../.pi/extensions/lib/changes/view/changes-view.ts";
 import {
   actionFor,
+  COPY_KEY,
+  copyKeyFor,
   CHANGES_ACTIONS,
   PANE_KEYS,
   type ChangesAction,
@@ -98,6 +100,18 @@ test("the pane's key table binds each key to exactly one action", () => {
   assert.equal(actionFor(PANE_KEYS, "\u001b[D"), "olderTurn");
   assert.equal(actionFor(PANE_KEYS, "\u001b[C"), "newerTurn");
   assert.equal(actionFor(PANE_KEYS, "\u001b[1;2D"), "back", "Shift+← still leaves the pane");
+  // Copying is Cmd+C on macOS, where Ctrl+C stays the interrupt key, and Ctrl+C elsewhere.
+  assert.deepEqual(copyKeyFor("darwin"), { key: "super+c", label: "Cmd+C" });
+  assert.deepEqual(copyKeyFor("linux"), { key: "ctrl+c", label: "Ctrl+C" });
+  const CMD_C = "\u001b[99;9u";
+  const CTRL_C = "\u0003";
+  const mac: ChangesKeyTable = { ...PANE_KEYS, copy: [{ key: copyKeyFor("darwin").key }] };
+  assert.equal(actionFor(mac, CMD_C), "copy");
+  assert.equal(actionFor(mac, CTRL_C), undefined);
+  const other: ChangesKeyTable = { ...PANE_KEYS, copy: [{ key: copyKeyFor("win32").key }] };
+  assert.equal(actionFor(other, CTRL_C), "copy");
+  assert.equal(actionFor(other, CMD_C), undefined);
+  assert.equal(actionFor(PANE_KEYS, COPY_KEY.key === "super+c" ? CMD_C : CTRL_C), "copy");
   assert.equal(actionFor(PANE_KEYS, "\r"), "toggle");
   assert.equal(actionFor(PANE_KEYS, "y"), undefined);
 });

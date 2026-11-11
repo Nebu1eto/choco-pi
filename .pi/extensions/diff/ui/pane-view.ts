@@ -3,6 +3,7 @@
  * key list. Hosts (dock, overlay) and the controller construct this.
  */
 import { ChangesView, type ChangesViewOptions } from "../../lib/changes/view/changes-view.ts";
+import { COPY_KEY } from "../../lib/changes/view/keys.ts";
 
 export {
   ChangesView,
@@ -31,6 +32,7 @@ export const HELP_LINES: readonly string[] = [
   "f/F       next/previous review finding",
   "s         cycle source: session, uncommitted, latest turn, branch base",
   "←/→       one turn's changes alone: ← older, → newer, and the whole session after the newest",
+  `${COPY_KEY.label.toLowerCase().padEnd(10)}copy the selected lines as code, or the whole hunk as a diff on its header`,
   "R         put a /review (agent review) instruction into the editor",
   "v         show a sensitive file's contents (this pane only, not saved)",
   "[ ]       wider/narrower        r        refresh",

@@ -331,8 +331,16 @@ test("dock mouse: a press on a line starts a selection that drags extend by scre
     y: screenY - 3 + 5,
   });
 
-  assert.equal(body.handleMouse(at("press", 4)), undefined, "not a line: the press stays Pi's");
+  assert.deepEqual(
+    body.handleMouse(at("press", 4)),
+    { handled: true, render: false },
+    "not a line: the press is taken so Pi selects and copies nothing, and the click follows",
+  );
   assert.equal(tui.focused, editor);
+  assert.equal(body.handleMouse(at("drag", 6)), undefined, "no selection: the drag does nothing");
+  const header = paneBox.children[0];
+  assert.deepEqual(header?.handleMouse?.(at("press", 1)), { handled: true, render: false });
+  assert.equal(header?.handleMouse?.({ ...at("press", 1), button: "right" }), undefined);
   onLine = true;
   assert.deepEqual(body.handleMouse(at("press", 4)), {
     handled: true,
@@ -376,7 +384,9 @@ test("dock mouse: a press beside the pane returns focus; a click on its empty sp
   host.focus();
   assert.equal(row.handleMouse(at("press", 10)), undefined, "left for Pi's text selection");
   assert.equal(tui.focused, editor);
-  assert.equal(row.handleMouse(at("press", 100)), undefined);
+  const taken = row.handleMouse(at("press", 100));
+  assert.equal(taken?.handled, true, "in the pane Pi's selection never starts");
+  assert.equal(taken?.target?.component, row, "the click comes back to the row");
   assert.equal(tui.focused, editor, "only a click focuses the pane");
   assert.equal(row.handleMouse(at("click", 100))?.handled, true);
   assert.equal(host.isFocused(), true);
@@ -409,6 +419,18 @@ test("overlay host is right-anchored, non-capturing, sized by getters, and hidde
   overlay.component.handleMouse?.({ ...mouse("press", 69), x: 0 });
   overlay.component.handleMouse?.(mouse("drag", 59));
   assert.deepEqual(resizes, [60]);
+  overlay.component.handleMouse?.(mouse("release", 59));
+  // A press anywhere else in the pane is taken, so Pi selects and copies nothing there.
+  for (const y of [0, 20]) {
+    assert.deepEqual(overlay.component.handleMouse?.({ ...mouse("press", 80), x: 10, y }), {
+      handled: true,
+      render: false,
+    });
+  }
+  assert.equal(
+    overlay.component.handleMouse?.({ ...mouse("press", 80), x: 10, y: 20, button: "right" }),
+    undefined,
+  );
   host.uninstall();
   assert.equal(overlay.hidden, true);
   host.uninstall();

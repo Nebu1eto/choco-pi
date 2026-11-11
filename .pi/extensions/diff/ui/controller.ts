@@ -36,6 +36,7 @@ import type {
   RefreshReason,
 } from "../../lib/changes/git/model.ts";
 import { sourceKey } from "../../lib/changes/git/snapshot.ts";
+import { plural } from "../../lib/changes/view/rows.ts";
 import { sanitizeTerminalText } from "../../lib/changes/terminal-text.ts";
 import type { DiffHunk, SessionBaselineChoice, TurnTreeProvider } from "../../lib/changes/types.ts";
 import {
@@ -94,6 +95,7 @@ import {
 } from "./prefs.ts";
 import {
   appendToEditor,
+  clipboardText,
   editorPath,
   fileMention,
   hunkRangeText,
@@ -170,6 +172,8 @@ export type DiffPaneDependencies = {
   /** File for this session's notes; undefined keeps notes in memory only. */
   notesFile?(ctx: ExtensionContext): string | undefined;
   notesIo?: PrefsIo;
+  /** Puts text on the system clipboard; omitted means the pane cannot copy. */
+  copyText?(text: string): Promise<void>;
   /**
    * The environment Pi was started with; `process.env` when absent. Under the
    * choco-pi ACP adapter's marker the editor renders notifications as Markdown,
@@ -721,6 +725,31 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
     }
   }
 
+  /** The pane's copy key: the selected lines as code, or the cursor's hunk as a diff. */
+  function copy(session: Session, target: AskTarget): void {
+    const hunk = target.hunk;
+    if (!hunk) {
+      say(session, "Nothing to copy on a file's row: move to a line or a hunk with ↑/↓ first.");
+      return;
+    }
+    const write = deps.copyText;
+    if (!write) {
+      say(session, "Copying is not available here.", "warning");
+      return;
+    }
+    const lines = target.lines;
+    const text = clipboardText(hunk, lines);
+    const copied = lines
+      ? `Copied ${plural(lines.last - lines.first + 1, "line")}.`
+      : `Copied the hunk as a diff (${plural(hunk.lines.length, "line")}).`;
+    void (async () => {
+      await write(text);
+      if (session.alive) say(session, copied);
+    })().catch((error: RuntimeValue) =>
+      reportFailure(session, `Cannot copy to the clipboard: ${errorText(error)}`, error),
+    );
+  }
+
   function notesFor(session: Session): NotesBook {
     if (session.notes) return session.notes;
     const book = new NotesBook({
@@ -895,6 +924,7 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
         isToggleKey: (data) => matchesKey(data, TOGGLE_SHORTCUT),
         isFocusKey: (data) => matchesKey(data, FOCUS_SHORTCUT),
         ask: (target) => ask(session, target),
+        copy: (target) => copy(session, target),
         addNote: (file, hunk, text) => addNote(session, file, hunk, text),
         sendNotes: () =>
           void sendNotes(session).catch((error: RuntimeValue) =>

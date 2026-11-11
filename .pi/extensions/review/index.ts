@@ -2,10 +2,11 @@ import { propertiesWhen } from "../lib/runtime-values.ts";
 import { createLifecycleOwner, rethrowUnlessStaleContext } from "../lib/lifecycle.ts";
 import { lstat } from "node:fs/promises";
 import { join } from "node:path";
-import type {
-  ExtensionAPI,
-  ExtensionCommandContext,
-  ExtensionContext,
+import {
+  copyToClipboard,
+  type ExtensionAPI,
+  type ExtensionCommandContext,
+  type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import { createSessionCheckpointProvider } from "./adapters/session-checkpoints.ts";
@@ -902,6 +903,7 @@ export function registerReviewExtension(
             store,
             styler: ctx.ui.theme,
             now,
+            copyText: copyToClipboard,
           };
           if (live) {
             viewOptions.reload = () =>

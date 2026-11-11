@@ -33,6 +33,13 @@ const BORDER_ACTIVE = "\u001b[1m┃\u001b[22m";
 
 type Viewport = { top: number; height: number };
 
+/**
+ * A left press the pane takes without acting on it. Pi starts a text selection
+ * on a press nothing takes and copies it when the button is released; inside
+ * the pane a press selects diff lines or leads to a click instead.
+ */
+const TAKEN_PRESS: TuiMouseEventResult = { handled: true, render: false };
+
 class PaneBody implements Component, Focusable {
   focused = false;
   readonly capturesViewportInput = true;
@@ -66,8 +73,9 @@ class PaneBody implements Component, Focusable {
           this.viewportTop = event.screenY - (event.y - this.viewport().top);
           return this.surface.pointer({ kind: "press", row: event.y, extend: event.shift });
         }, false);
-        // Not on a line: pi-tui keeps the press for its own text selection and sends the click.
-        if (!pressed) return undefined;
+        // Not on a line: the press is still taken, or Pi would start its own text
+        // selection here and copy it on release. pi-tui sends the click to whoever took it.
+        if (!pressed) return TAKEN_PRESS;
         this.selecting = true;
         this.surface.contain(() => this.requestFocus(), undefined);
         return { handled: true, capture: true, render: true };
@@ -115,6 +123,7 @@ class PaneHeader implements Component {
   }
 
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (event.type === "press" && event.button === "left") return TAKEN_PRESS;
     if (event.type !== "click") return undefined;
     this.surface.contain(() => this.body.requestFocus(), undefined);
     return { handled: true, render: true };
@@ -165,9 +174,10 @@ export class BorderHandle implements Component {
 /**
  * The transcript, the border and the pane side by side. A left press on the
  * transcript's columns gives keyboard focus back to what had it before the
- * pane, and is left unhandled so Pi still starts its text selection there; a
- * click on the pane's columns that nothing in the pane took (the space under
- * a short list) focuses the pane.
+ * pane, and is left unhandled so Pi still starts its text selection there. On
+ * the pane's columns the row takes what nothing in the pane took (the space
+ * under a short list): the press, so that Pi selects and copies nothing in
+ * the pane, and the click, which focuses the pane.
  */
 class PaneRow extends HStack {
   readonly paneColumn: (width: number) => number;
@@ -186,11 +196,11 @@ class PaneRow extends HStack {
     if (event.button !== "left") return undefined;
     const inPane = event.x >= this.paneColumn(event.width);
     if (event.type === "press" && !inPane) this.leavePane();
-    if (event.type !== "click" || !inPane) return undefined;
-    this.enterPane();
+    if (!inPane || (event.type !== "press" && event.type !== "click")) return undefined;
+    if (event.type === "click") this.enterPane();
     return {
       handled: true,
-      render: true,
+      render: event.type === "click",
       // The row itself took the event: the shape pi-tui's containers report for a child.
       target: {
         component: this,

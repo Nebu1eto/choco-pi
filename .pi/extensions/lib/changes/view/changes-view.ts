@@ -63,6 +63,7 @@ import { isSensitiveFile } from "../sensitive.ts";
 import type { RuntimeValue } from "../../runtime-values.ts";
 import {
   currentCommentPosition,
+  cursorRows,
   extendSelection,
   moveLine,
   selectedLineIndexes,
@@ -93,6 +94,8 @@ export type PaneActions = {
   isToggleKey(data: string): boolean;
   isFocusKey(data: string): boolean;
   ask?(target: AskTarget): void;
+  /** Copy what the cursor is on to the clipboard. */
+  copy?(target: AskTarget): void;
   addNote?(file: FileSummary, hunk: DiffHunk, text: string): void;
   sendNotes?(): void;
   cycleSource?(): void;
@@ -1410,7 +1413,15 @@ export class ChangesView implements PaneSurface {
       this.select(index);
       this.toggleExpanded();
     } else if (!onLine) {
-      this.setCursor({ path: target.path, hunkId: target.hunkId });
+      // Where an unfolded hunk's header is not a stop (the review), its first line is.
+      const header = { path: target.path, hunkId: target.hunkId };
+      const stop =
+        !line ||
+        cursorRows(this.cursorFiles()).some(
+          (row) =>
+            row.path === header.path && row.hunkId === header.hunkId && row.lineIndex === undefined,
+        );
+      this.setCursor(stop ? header : { ...header, lineIndex: 0 });
     }
     // A click on a line: its press already put the cursor there.
     this.actions.requestRender();
@@ -1471,9 +1482,8 @@ export class ChangesView implements PaneSurface {
     this.dropCachedBlocks(path);
   }
 
-  private ask(): void {
-    const ask = this.actions.ask;
-    if (!ask) return;
+  /** What the cursor is on: selected lines, a hunk, or a file; undefined without a file. */
+  private cursorTarget(): AskTarget | undefined {
     const current = this.currentHunk();
     if (current) {
       const shown = this.currentDisplayHunk();
@@ -1482,16 +1492,20 @@ export class ChangesView implements PaneSurface {
       const first = selected[0];
       const last = selected.at(-1);
       if (shown && first !== undefined && last !== undefined) {
-        ask({ file: shown.file, hunk: shown.hunk, lines: { first, last } });
-      } else ask({ file: current.file, hunk: current.hunk });
-      return;
+        return { file: shown.file, hunk: shown.hunk, lines: { first, last } };
+      }
+      return { file: current.file, hunk: current.hunk };
     }
     const file = this.selectedFile();
-    if (!file) {
-      this.setMessage("No file selected.");
-      return;
-    }
-    ask({ file });
+    return file ? { file } : undefined;
+  }
+
+  /** Hand the cursor's target to `action`, when the owner provides it. */
+  private withTarget(action: ((target: AskTarget) => void) | undefined): void {
+    if (!action) return;
+    const target = this.cursorTarget();
+    if (target) action(target);
+    else this.setMessage("No file selected.");
   }
 
   handleKey(data: string): void {
@@ -1586,7 +1600,10 @@ export class ChangesView implements PaneSurface {
         this.moveFinding(-1);
         break;
       case "ask":
-        this.ask();
+        this.withTarget(actions.ask);
+        break;
+      case "copy":
+        this.withTarget(actions.copy);
         break;
       case "note":
         this.startNote();
