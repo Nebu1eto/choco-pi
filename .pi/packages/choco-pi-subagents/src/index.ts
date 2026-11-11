@@ -252,19 +252,28 @@ import {
   SUBAGENTS_USAGE_LIMIT_EVENT,
   type SubagentsUsageLimitEvent,
 } from "./usage-limit-seam.ts";
-import { buildDetails, buildRecordDetails, delegationRenderers } from "./delegation-render.ts";
 import {
+  buildDetails,
+  buildRecordDetails,
+  delegationRenderers,
+  notificationVerdictReply,
+  renderVerdictNotification,
+} from "./delegation-render.ts";
+import {
+  continueUsage,
   defaultReviewRoundsDir,
-  isReviewRole,
+  isRoundGatedRole,
   issueExemptTicket,
-  REVIEW_CONTINUE_USAGE,
   ReviewRoundStore,
+  roundClassOf,
   stateUnavailableMessage,
   scheduleUnsupportedMessage,
   WORK_TASK_PATTERN,
   type ReviewEntry,
   type ReviewTicket,
+  type RoundClass,
 } from "./review-rounds.ts";
+import { verdictLineMissingFrom } from "./verdict-record.ts";
 import { isWorktreeIsolationEnabled, setWorktreeIsolationEnabled } from "./worktree.ts";
 import { installProgramStatusBridge, type ProgramStatusBridge } from "./program-status-bridge.ts";
 import {
@@ -380,6 +389,8 @@ function formatTaskNotification(record: AgentRecord, resultMaxLen: number): stri
         "\n...(truncated; after this terminal notification, retrieve the full result exactly once with get_subagent_result)"
       : record.result
     : "No output.";
+  // A truncated preview can cut off the verdict-record line appended to the result; repeat it.
+  const verdictRecord = verdictLineMissingFrom(record, resultPreview);
 
   return [
     `<task-notification>`,
@@ -401,6 +412,9 @@ function formatTaskNotification(record: AgentRecord, resultMaxLen: number): stri
     `<summary>Agent "${escapeXml(record.description)}" ${record.status}${getStatusNote(record.status)}</summary>`,
     record.modelProvenance ? escapeXml(formatModelLine(record.modelProvenance)) : null,
     `<result>${escapeXml(resultPreview)}</result>`,
+    verdictRecord === undefined
+      ? null
+      : `<verdict-record>${escapeXml(verdictRecord)}</verdict-record>`,
     record.pendingDependents
       ? `Pending dependents (terminal-boundary snapshot): ${escapeXml(record.pendingDependents.map((child) => child.handle ?? child.id).join(", "))}.`
       : null,
@@ -418,8 +432,12 @@ function buildNotificationDetails(
   activity?: AgentActivity,
 ): NotificationDetails {
   const totalTokens = getLifetimeTotal(record.lifetimeUsage);
-
-  return {
+  const resultPreview = record.result
+    ? record.result.length > resultMaxLen
+      ? record.result.slice(0, resultMaxLen) + "…"
+      : record.result
+    : "No output.";
+  const details: NotificationDetails = {
     id: record.id,
     description: record.description,
     type: record.type,
@@ -432,12 +450,11 @@ function buildNotificationDetails(
     outputFile: record.outputFile,
     error: record.error,
     usageLimit: record.usageLimit,
-    resultPreview: record.result
-      ? record.result.length > resultMaxLen
-        ? record.result.slice(0, resultMaxLen) + "…"
-        : record.result
-      : "No output.",
+    resultPreview,
   };
+  // Display only (details never reach the model): this run's reply, for its verdict summary.
+  const verdictReply = notificationVerdictReply(record.result, resultPreview);
+  return verdictReply === undefined ? details : Object.assign(details, { verdictReply });
 }
 
 /**
@@ -522,7 +539,11 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     (message, { expanded }, theme) => {
       const details = message.details;
       if (!details) return undefined;
-      return new Text(renderSubagentNotification(details, { expanded }, theme), 0, 0);
+      // A reviewer's or verifier's reply adds its verdict summary; any other is drawn as before.
+      return (
+        renderVerdictNotification(details, expanded, theme) ??
+        new Text(renderSubagentNotification(details, { expanded }, theme), 0, 0)
+      );
     },
   );
   // agent_message envelopes addressed to the root session (agent-message.ts).
@@ -1014,12 +1035,16 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     entry: ReviewEntry,
     expectedRoot?: string,
   ): Promise<ReviewAdmission> => {
-    if (!isReviewRole(type)) return { kind: "none" };
+    const roundClass = roundClassOf(type);
+    if (roundClass === undefined) return { kind: "none" };
     let rootSessionId: string;
     try {
       rootSessionId = ctxRef.sessionManager.getSessionId();
     } catch {
-      return { kind: "refused", message: stateUnavailableMessage("session unavailable") };
+      return {
+        kind: "refused",
+        message: stateUnavailableMessage("session unavailable", roundClass),
+      };
     }
     const stale = "Session changed while the review round was being admitted; nothing was started.";
     if (expectedRoot !== undefined && expectedRoot !== rootSessionId) {
@@ -2748,7 +2773,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
             str({
               pattern: WORK_TASK_PATTERN,
               description:
-                "Stable id of the work task this review belongs to (lowercase, digits, hyphens). Required for review roles; reuse it for every review round of the same task.",
+                "Stable id of the work task this review or verification belongs to (lowercase, digits, hyphens). Required for review roles (reviewer) and verification roles (verifier); reuse it for every round of the same task.",
             }),
           ),
           thinking: opt(
@@ -3027,7 +3052,9 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
       // ---- Schedule: register a job, don't spawn now ----
       if (params.schedule) {
-        if (isReviewRole(subagentType)) return textResult(scheduleUnsupportedMessage());
+        if (isRoundGatedRole(subagentType)) {
+          return textResult(scheduleUnsupportedMessage(subagentType));
+        }
         if (!isSchedulingEnabled()) {
           return textResult(
             "Scheduling is disabled in this project. Enable via /agents → Settings → Scheduling.",
@@ -5195,35 +5222,49 @@ Write the file using the write tool. Only write the file, nothing else.`;
   });
 
   // User-typed only: no tool can call a command, and no tool parameter approves a round.
+  const continueRounds = async (
+    roundClass: RoundClass,
+    args: string,
+    ctx: ExtensionContext,
+  ): Promise<void> => {
+    let rootSessionId: string;
+    try {
+      rootSessionId = ctx.sessionManager.getSessionId();
+    } catch {
+      ctx.ui.notify(stateUnavailableMessage("session unavailable", roundClass), "error");
+      return;
+    }
+    const parts = args
+      .trim()
+      .split(/\s+/)
+      .filter((part) => part !== "");
+    if (parts.length === 0) {
+      const message = await reviewRounds.summary(rootSessionId, roundClass);
+      ctx.ui.notify(message, "info");
+      return;
+    }
+    const roundsText = parts[1];
+    const rounds =
+      roundsText === undefined ? 1 : /^[0-9]{1,3}$/.test(roundsText) ? Number(roundsText) : 0;
+    if (parts.length > 2 || rounds === 0) {
+      ctx.ui.notify(continueUsage(roundClass), "warning");
+      return;
+    }
+    const result = await reviewRounds.grant(rootSessionId, parts[0], rounds, roundClass);
+    ctx.ui.notify(result.message, result.ok ? "info" : "warning");
+  };
   pi.registerCommand("review-continue", {
     description:
       "Review rounds per work task, or authorize more: /review-continue [<work_task> [rounds 1-3]]",
     handler: async (args, ctx) => {
-      let rootSessionId: string;
-      try {
-        rootSessionId = ctx.sessionManager.getSessionId();
-      } catch {
-        ctx.ui.notify(stateUnavailableMessage("session unavailable"), "error");
-        return;
-      }
-      const parts = args
-        .trim()
-        .split(/\s+/)
-        .filter((part) => part !== "");
-      if (parts.length === 0) {
-        const message = await reviewRounds.summary(rootSessionId);
-        ctx.ui.notify(message, "info");
-        return;
-      }
-      const roundsText = parts[1];
-      const rounds =
-        roundsText === undefined ? 1 : /^[0-9]{1,3}$/.test(roundsText) ? Number(roundsText) : 0;
-      if (parts.length > 2 || rounds === 0) {
-        ctx.ui.notify(REVIEW_CONTINUE_USAGE, "warning");
-        return;
-      }
-      const result = await reviewRounds.grant(rootSessionId, parts[0], rounds);
-      ctx.ui.notify(result.message, result.ok ? "info" : "warning");
+      await continueRounds("review", args, ctx);
+    },
+  });
+  pi.registerCommand("verify-continue", {
+    description:
+      "Verification rounds per work task, or authorize more: /verify-continue [<work_task> [rounds 1-3]]",
+    handler: async (args, ctx) => {
+      await continueRounds("verification", args, ctx);
     },
   });
 

@@ -79,7 +79,7 @@ export const WorkflowDefinitionSchema = obj({
     str({
       pattern: WORK_TASK_PATTERN,
       description:
-        "Stable id of the work task this review belongs to (lowercase, digits, hyphens). Required for review roles; reuse it for every review round of the same task.",
+        "Stable id of the work task this review or verification belongs to (lowercase, digits, hyphens). Required for review roles (reviewer) and verification roles (verifier); reuse it for every round of the same task.",
     }),
   ),
   dynamic: opt(

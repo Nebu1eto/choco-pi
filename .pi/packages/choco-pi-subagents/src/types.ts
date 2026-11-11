@@ -260,6 +260,16 @@ export interface AgentRecord {
   };
   /** Current generation whose final status/output has been published atomically. */
   terminalResultGeneration?: number;
+  /**
+   * Work task and root session of the admitted review or verification round
+   * this agent runs under; set from its admission ticket. Absent for ungated
+   * roles and exempt launches, which are not verdict-recorded.
+   */
+  verdictTask?: { workTask: string; rootSessionId: string };
+  /** Generation whose verdict recording has started (exactly once per run). */
+  verdictRecordedGeneration?: number;
+  /** Status line of the current generation's verdict record, also appended to `result`. */
+  verdictRecord?: string;
   /** Active generation for which one status read has already been returned. */
   activeResultReadGeneration?: number;
   /** Terminal generation whose result was returned by get_subagent_result. */

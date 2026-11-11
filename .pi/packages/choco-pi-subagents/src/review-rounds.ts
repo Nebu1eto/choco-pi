@@ -1,11 +1,15 @@
 /**
- * review-rounds.ts — Durable per-work-task cap on review-role launches.
+ * review-rounds.ts — Durable per-work-task cap on review-role and
+ * verification-role launches.
  *
- * Identity is (rootSessionId, work_task). Every admitted launch appends a
- * round to a per-session ledger file under a cross-process lock; the caller
- * receives an unforgeable single-use {@link ReviewTicket} that the manager
- * must consume before it starts a review-role agent. Any ledger problem fails
- * closed (REVIEW_STATE_UNAVAILABLE); the ledger is never reset.
+ * Identity is (round class, rootSessionId, work_task). Every admitted launch
+ * appends a round to a per-session ledger file under a cross-process lock; the
+ * caller receives an unforgeable single-use {@link ReviewTicket} that the
+ * manager must consume before it starts a gated agent. Review rounds and
+ * verification rounds live in separate files with the same schema, so a
+ * verifier never spends a review round and existing review ledgers load
+ * unchanged. Any ledger problem fails closed (*_STATE_UNAVAILABLE); the ledger
+ * is never reset.
  *
  * Caps are constants on purpose: settings files are agent-writable.
  */
@@ -20,8 +24,11 @@ import type { Static } from "@earendil-works/pi-schema";
 import { createExclusiveFile, readTextIfExists } from "./fs-async.ts";
 
 export const REVIEW_ROLES: readonly string[] = ["reviewer"];
+export const VERIFICATION_ROLES: readonly string[] = ["verifier"];
 export const MAX_REVIEW_ROUNDS_PER_TASK = 3;
 export const MAX_REVIEW_ROUNDS_PER_SESSION = 9;
+export const MAX_VERIFICATION_ROUNDS_PER_TASK = 6;
+export const MAX_VERIFICATION_ROUNDS_PER_SESSION = 18;
 export const MAX_GRANT_ROUNDS = 3;
 export const WORK_TASK_PATTERN = "^[a-z0-9][a-z0-9-]{0,63}$";
 const ROOT_SESSION_PATTERN = "^[A-Za-z0-9_-]{1,128}$";
@@ -35,11 +42,53 @@ const isWorkTask = compile(str({ pattern: WORK_TASK_PATTERN })).check;
 const isRootSessionId = compile(str({ pattern: ROOT_SESSION_PATTERN })).check;
 
 export type ReviewEntry = "agent" | "agent-resume" | "nested" | "nested-resume" | "workflow";
+export type RoundClass = "review" | "verification";
+type CodePrefix = "REVIEW" | "VERIFY";
 export type ReviewErrorCode =
-  | "REVIEW_ROUND_LIMIT"
-  | "REVIEW_SESSION_LIMIT"
-  | "REVIEW_WORK_TASK_REQUIRED"
-  | "REVIEW_STATE_UNAVAILABLE";
+  | `${CodePrefix}_ROUND_LIMIT`
+  | `${CodePrefix}_SESSION_LIMIT`
+  | `${CodePrefix}_WORK_TASK_REQUIRED`
+  | `${CodePrefix}_STATE_UNAVAILABLE`;
+
+interface RoundPolicy {
+  readonly roles: readonly string[];
+  readonly perTask: number;
+  readonly perSession: number;
+  /** Capitalized round noun: "Review" / "Verification". */
+  readonly title: string;
+  readonly noun: string;
+  readonly agentNoun: string;
+  readonly code: CodePrefix;
+  readonly command: string;
+  /** Ledger file name suffix; review keeps the original `<root>.json` name. */
+  readonly fileSuffix: string;
+}
+
+const POLICIES = {
+  review: {
+    roles: REVIEW_ROLES,
+    perTask: MAX_REVIEW_ROUNDS_PER_TASK,
+    perSession: MAX_REVIEW_ROUNDS_PER_SESSION,
+    title: "Review",
+    noun: "review",
+    agentNoun: "reviewer",
+    code: "REVIEW",
+    command: "/review-continue",
+    fileSuffix: "",
+  },
+  verification: {
+    roles: VERIFICATION_ROLES,
+    perTask: MAX_VERIFICATION_ROUNDS_PER_TASK,
+    perSession: MAX_VERIFICATION_ROUNDS_PER_SESSION,
+    title: "Verification",
+    noun: "verification",
+    agentNoun: "verifier",
+    code: "VERIFY",
+    command: "/verify-continue",
+    // Root session ids cannot contain ".", so this never collides with a review ledger.
+    fileSuffix: ".verification",
+  },
+} satisfies Record<RoundClass, RoundPolicy>;
 
 const roundSchema = obj({
   roundId: str({ minLength: 1 }),
@@ -66,10 +115,31 @@ const isLedger = compile(ledgerSchema).check;
 
 // --- Predicates ----------------------------------------------------------
 
-/** Whether `type` (case-insensitive) is a review role subject to the cap. */
-export function isReviewRole(type: string): boolean {
+function hasRole(roles: readonly string[], type: string): boolean {
   const lowered = type.toLowerCase();
-  return REVIEW_ROLES.some((role) => role.toLowerCase() === lowered);
+  return roles.some((role) => role.toLowerCase() === lowered);
+}
+
+/** Whether `type` (case-insensitive) is a review role subject to the review cap. */
+export function isReviewRole(type: string): boolean {
+  return hasRole(REVIEW_ROLES, type);
+}
+
+/** Whether `type` (case-insensitive) is a verification role subject to the verification cap. */
+export function isVerificationRole(type: string): boolean {
+  return hasRole(VERIFICATION_ROLES, type);
+}
+
+/** The round class gating `type`, or undefined for an ungated role. */
+export function roundClassOf(type: string): RoundClass | undefined {
+  if (isReviewRole(type)) return "review";
+  if (isVerificationRole(type)) return "verification";
+  return undefined;
+}
+
+/** Whether `type` needs an admission ticket (review or verification role). */
+export function isRoundGatedRole(type: string): boolean {
+  return roundClassOf(type) !== undefined;
 }
 
 export function isValidWorkTask(value: string): boolean {
@@ -78,43 +148,67 @@ export function isValidWorkTask(value: string): boolean {
 
 // --- Messages ------------------------------------------------------------
 
-export function roundLimitMessage(workTask: string, used: number, allowed: number): string {
+// Every builder defaults to the review class, whose wording is unchanged.
+
+export function roundLimitMessage(
+  workTask: string,
+  used: number,
+  allowed: number,
+  roundClass: RoundClass = "review",
+): string {
+  const p = POLICIES[roundClass];
+  const next =
+    roundClass === "review"
+      ? "triage the latest findings, finish in-scope fixes and validation, and report the remaining risk"
+      : "report the latest verification results and the remaining risk";
   return (
-    `Review round refused [REVIEW_ROUND_LIMIT]: work task "${workTask}" has used ${used}/${allowed} review rounds. ` +
-    "No reviewer was started. Do not retry: triage the latest findings, finish in-scope fixes and validation, and report the remaining risk. " +
-    `Only the user can authorize more rounds with /review-continue ${workTask} [rounds].`
+    `${p.title} round refused [${p.code}_ROUND_LIMIT]: work task "${workTask}" has used ${used}/${allowed} ${p.noun} rounds. ` +
+    `No ${p.agentNoun} was started. Do not retry: ${next}. ` +
+    `Only the user can authorize more rounds with ${p.command} ${workTask} [rounds].`
   );
 }
 
-export function sessionLimitMessage(used: number, allowed: number, taskCount: number): string {
+export function sessionLimitMessage(
+  used: number,
+  allowed: number,
+  taskCount: number,
+  roundClass: RoundClass = "review",
+): string {
+  const p = POLICIES[roundClass];
+  const verb = roundClass === "review" ? "reviewing" : "verifying";
   return (
-    `Review round refused [REVIEW_SESSION_LIMIT]: this session has used ${used}/${allowed} review rounds across ${taskCount} work tasks. ` +
-    "No reviewer was started. Do not retry or open a new work task to continue reviewing; report the remaining risk. " +
-    "Only the user can authorize more rounds with /review-continue <id> [rounds]."
+    `${p.title} round refused [${p.code}_SESSION_LIMIT]: this session has used ${used}/${allowed} ${p.noun} rounds across ${taskCount} work tasks. ` +
+    `No ${p.agentNoun} was started. Do not retry or open a new work task to continue ${verb}; report the remaining risk. ` +
+    `Only the user can authorize more rounds with ${p.command} <id> [rounds].`
   );
 }
 
 export function workTaskRequiredMessage(agentType: string): string {
+  const roundClass = roundClassOf(agentType) ?? "review";
+  const p = POLICIES[roundClass];
   return (
-    `Review round refused [REVIEW_WORK_TASK_REQUIRED]: "${agentType}" is a review role; pass work_task (lowercase letters, digits and hyphens, 1-64 characters) naming the work task. ` +
-    "Reuse the same work_task for every review round of that task, including after follow-ups."
+    `${p.title} round refused [${p.code}_WORK_TASK_REQUIRED]: "${agentType}" is a ${p.noun} role; pass work_task (lowercase letters, digits and hyphens, 1-64 characters) naming the work task. ` +
+    `Reuse the same work_task for every ${p.noun} round of that task, including after follow-ups.`
   );
 }
 
-export function stateUnavailableMessage(reason: string): string {
+export function stateUnavailableMessage(reason: string, roundClass: RoundClass = "review"): string {
+  const p = POLICIES[roundClass];
   return (
-    `Review round refused [REVIEW_STATE_UNAVAILABLE]: the review-round ledger could not be read or locked (${reason}). ` +
-    "No reviewer was started; report this to the user."
+    `${p.title} round refused [${p.code}_STATE_UNAVAILABLE]: the ${p.noun}-round ledger could not be read or locked (${reason}). ` +
+    `No ${p.agentNoun} was started; report this to the user.`
   );
 }
 
-export function scheduleUnsupportedMessage(): string {
-  return "Review round refused [REVIEW_SCHEDULE_UNSUPPORTED]: review roles cannot be scheduled; spawn the reviewer when the review is due.";
+export function scheduleUnsupportedMessage(agentType = "reviewer"): string {
+  const p = POLICIES[roundClassOf(agentType) ?? "review"];
+  return `${p.title} round refused [${p.code}_SCHEDULE_UNSUPPORTED]: ${p.noun} roles cannot be scheduled; spawn the ${p.agentNoun} when the ${p.noun} is due.`;
 }
 
 export function admissionRequiredMessage(agentType: string): string {
+  const p = POLICIES[roundClassOf(agentType) ?? "review"];
   return (
-    `Review admission required [REVIEW_ADMISSION_REQUIRED]: "${agentType}" is a review role and this launch path has no review-round admission. ` +
+    `${p.title} admission required [${p.code}_ADMISSION_REQUIRED]: "${agentType}" is a ${p.noun} role and this launch path has no ${p.noun}-round admission. ` +
     "Use the Agent tool with work_task."
   );
 }
@@ -125,11 +219,13 @@ export function admittedNotice(
   allowed: number,
   sessionUsed: number,
   sessionAllowed: number,
+  roundClass: RoundClass = "review",
 ): string {
+  const p = POLICIES[roundClass];
   const tail = `session total ${sessionUsed}/${sessionAllowed}).`;
   return round === 1
-    ? `Review round 1/${allowed} admitted for work task "${workTask}" (new review budget; ${tail}`
-    : `Review round ${round}/${allowed} admitted for work task "${workTask}" (${tail}`;
+    ? `${p.title} round 1/${allowed} admitted for work task "${workTask}" (new ${p.noun} budget; ${tail}`
+    : `${p.title} round ${round}/${allowed} admitted for work task "${workTask}" (${tail}`;
 }
 
 export function grantedMessage(
@@ -139,12 +235,24 @@ export function grantedMessage(
   allowed: number,
   sessionUsed: number,
   sessionAllowed: number,
+  roundClass: RoundClass = "review",
 ): string {
-  return `Granted ${rounds} more review round(s) for work task "${workTask}" (now ${used}/${allowed}; session ${sessionUsed}/${sessionAllowed}).`;
+  const p = POLICIES[roundClass];
+  return `Granted ${rounds} more ${p.noun} round(s) for work task "${workTask}" (now ${used}/${allowed}; session ${sessionUsed}/${sessionAllowed}).`;
 }
 
 export const NO_ROUNDS_MESSAGE = "No review rounds recorded in this session.";
+export const NO_VERIFICATION_ROUNDS_MESSAGE = "No verification rounds recorded in this session.";
 export const REVIEW_CONTINUE_USAGE = "Usage: /review-continue [<work_task> [rounds 1-3]]";
+export const VERIFY_CONTINUE_USAGE = "Usage: /verify-continue [<work_task> [rounds 1-3]]";
+
+export function continueUsage(roundClass: RoundClass): string {
+  return roundClass === "review" ? REVIEW_CONTINUE_USAGE : VERIFY_CONTINUE_USAGE;
+}
+
+function noRoundsMessage(roundClass: RoundClass): string {
+  return roundClass === "review" ? NO_ROUNDS_MESSAGE : NO_VERIFICATION_ROUNDS_MESSAGE;
+}
 
 // --- Tickets -------------------------------------------------------------
 
@@ -155,6 +263,8 @@ export interface ReviewTicket {
   readonly workTask: string;
   readonly rootSessionId: string;
   readonly exemptReason?: ExemptReason;
+  /** Ledger class of an admitted round; absent on exempt tickets (review by default). */
+  readonly roundClass?: RoundClass;
 }
 
 /** Tickets still consumable. Module-private: JSON/RPC callers cannot forge membership. */
@@ -208,22 +318,52 @@ function serialize<T>(key: string, fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
-async function acquireLock(lockPath: string): Promise<void> {
-  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+/** Test seams for the lock; production callers pass nothing. */
+export interface LockOptions {
+  timeoutMs?: number;
+  /** Runs after a lock was judged stale and before it is removed. */
+  beforeStaleRemoval?: () => Promise<void>;
+}
+
+/**
+ * Take the cross-process lock and resolve its owner token. The token is the
+ * lock file's content: stale recovery removes the lock only while it still
+ * holds the token that was judged stale, and {@link releaseLock} removes it
+ * only while it holds the caller's token, so neither can delete a lock another
+ * writer has since created. A residual window of one filesystem call between
+ * the token re-read and the unlink remains (plain files offer no atomic
+ * compare-and-delete); it needs a lock older than LOCK_STALE_MS to open.
+ */
+export async function acquireLock(lockPath: string, options: LockOptions = {}): Promise<string> {
+  const token = `${process.pid}:${randomUUID()}`;
+  const deadline = Date.now() + (options.timeoutMs ?? LOCK_TIMEOUT_MS);
   for (;;) {
-    if (await createExclusiveFile(lockPath, String(process.pid))) return;
+    if (await createExclusiveFile(lockPath, token)) return token;
+    let observed: string | undefined;
+    let stale = false;
     try {
+      observed = await readTextIfExists(lockPath);
+      if (observed === undefined) continue; // vanished — retry immediately
       const info = await stat(lockPath);
-      if (Date.now() - info.mtimeMs > LOCK_STALE_MS) {
-        await unlink(lockPath).catch(() => undefined);
-        continue;
-      }
+      stale = Date.now() - info.mtimeMs > LOCK_STALE_MS;
     } catch {
-      continue; // lock vanished between create and stat — retry immediately
+      continue; // lock vanished between read and stat — retry immediately
+    }
+    if (stale) {
+      await options.beforeStaleRemoval?.();
+      const current = await readTextIfExists(lockPath).catch(() => undefined);
+      if (current === observed) await unlink(lockPath).catch(() => undefined);
+      continue;
     }
     if (Date.now() >= deadline) throw new Error("timed out waiting for the ledger lock");
     await delay(LOCK_RETRY_MS);
   }
+}
+
+/** Remove the lock only while it still carries `token`. */
+export async function releaseLock(lockPath: string, token: string): Promise<void> {
+  const current = await readTextIfExists(lockPath).catch(() => undefined);
+  if (current === token) await unlink(lockPath).catch(() => undefined);
 }
 
 function usedOf(task: WorkTaskLedger): number {
@@ -269,8 +409,8 @@ export class ReviewRoundStore {
     this.rootDir = rootDir;
   }
 
-  private pathFor(rootSessionId: string): string {
-    return join(this.rootDir, `${rootSessionId}.json`);
+  private pathFor(rootSessionId: string, roundClass: RoundClass): string {
+    return join(this.rootDir, `${rootSessionId}${POLICIES[roundClass].fileSuffix}.json`);
   }
 
   private async read(rootSessionId: string, path: string): Promise<Ledger> {
@@ -311,16 +451,21 @@ export class ReviewRoundStore {
   }
 
   /** Lock, read, mutate, write, unlock. Throws {@link LedgerUnavailableError} on any I/O or state problem. */
-  private async mutate<T>(rootSessionId: string, fn: (ledger: Ledger) => Mutation<T>): Promise<T> {
+  private async mutate<T>(
+    rootSessionId: string,
+    roundClass: RoundClass,
+    fn: (ledger: Ledger) => Mutation<T>,
+  ): Promise<T> {
     if (!isRootSessionId(rootSessionId)) {
       throw new LedgerUnavailableError("invalid root session id");
     }
-    const path = this.pathFor(rootSessionId);
+    const path = this.pathFor(rootSessionId, roundClass);
     const lockPath = `${path}.lock`;
     return serialize(path, async () => {
+      let token: string;
       try {
         await mkdir(this.rootDir, { recursive: true, mode: 0o700 });
-        await acquireLock(lockPath);
+        token = await acquireLock(lockPath);
       } catch (error) {
         throw new LedgerUnavailableError(error instanceof Error ? reasonOf(error) : "lock failed");
       }
@@ -338,43 +483,54 @@ export class ReviewRoundStore {
         }
         return result;
       } finally {
-        await unlink(lockPath).catch(() => undefined);
+        await releaseLock(lockPath, token);
       }
     });
   }
 
-  /** Reserve a review round. The round stays counted unless {@link release}d. */
+  /**
+   * Reserve a round for a review or verification role (the class follows
+   * `agentType`; an ungated type is treated as review). The round stays
+   * counted unless {@link release}d.
+   */
   async admit(request: AdmitRequest): Promise<AdmitResult> {
+    const roundClass = roundClassOf(request.agentType) ?? "review";
+    const p = POLICIES[roundClass];
     if (!isValidWorkTask(request.workTask)) {
       return {
         ok: false,
-        code: "REVIEW_WORK_TASK_REQUIRED",
+        code: `${p.code}_WORK_TASK_REQUIRED`,
         message: workTaskRequiredMessage(request.agentType),
       };
     }
     try {
-      return await this.mutate<AdmitResult>(request.rootSessionId, (ledger) => {
+      return await this.mutate<AdmitResult>(request.rootSessionId, roundClass, (ledger) => {
         const existing = taskOf(ledger, request.workTask);
         const used = existing === undefined ? 0 : usedOf(existing);
-        const allowed = MAX_REVIEW_ROUNDS_PER_TASK + (existing?.granted ?? 0);
+        const allowed = p.perTask + (existing?.granted ?? 0);
         if (used >= allowed) {
           return {
             result: {
               ok: false,
-              code: "REVIEW_ROUND_LIMIT",
-              message: roundLimitMessage(request.workTask, used, allowed),
+              code: `${p.code}_ROUND_LIMIT`,
+              message: roundLimitMessage(request.workTask, used, allowed, roundClass),
             },
             changed: false,
           };
         }
         const sessionUsed = sessionUsedOf(ledger);
-        const sessionAllowed = MAX_REVIEW_ROUNDS_PER_SESSION + ledger.sessionGranted;
+        const sessionAllowed = p.perSession + ledger.sessionGranted;
         if (sessionUsed >= sessionAllowed) {
           return {
             result: {
               ok: false,
-              code: "REVIEW_SESSION_LIMIT",
-              message: sessionLimitMessage(sessionUsed, sessionAllowed, activeTaskCount(ledger)),
+              code: `${p.code}_SESSION_LIMIT`,
+              message: sessionLimitMessage(
+                sessionUsed,
+                sessionAllowed,
+                activeTaskCount(ledger),
+                roundClass,
+              ),
             },
             changed: false,
           };
@@ -396,6 +552,7 @@ export class ReviewRoundStore {
           roundId,
           workTask: request.workTask,
           rootSessionId: request.rootSessionId,
+          roundClass,
         });
         return {
           result: {
@@ -407,6 +564,7 @@ export class ReviewRoundStore {
               allowed,
               sessionUsed + 1,
               sessionAllowed,
+              roundClass,
             ),
           },
           changed: true,
@@ -423,8 +581,8 @@ export class ReviewRoundStore {
       if (error instanceof LedgerUnavailableError) {
         return {
           ok: false,
-          code: "REVIEW_STATE_UNAVAILABLE",
-          message: stateUnavailableMessage(reasonOf(error)),
+          code: `${p.code}_STATE_UNAVAILABLE`,
+          message: stateUnavailableMessage(reasonOf(error), roundClass),
         };
       }
       throw error;
@@ -440,7 +598,7 @@ export class ReviewRoundStore {
     liveTickets.delete(ticket);
     if (!ledgerTickets.delete(ticket)) return false;
     try {
-      return await this.mutate(ticket.rootSessionId, (ledger) => {
+      return await this.mutate(ticket.rootSessionId, ticket.roundClass ?? "review", (ledger) => {
         const round = taskOf(ledger, ticket.workTask)?.rounds.find(
           (entry) => entry.roundId === ticket.roundId,
         );
@@ -465,64 +623,73 @@ export class ReviewRoundStore {
     rootSessionId: string,
     workTask: string,
     rounds: number,
+    roundClass: RoundClass = "review",
   ): Promise<{ ok: boolean; message: string }> {
+    const p = POLICIES[roundClass];
     if (
       !isValidWorkTask(workTask) ||
       !Number.isInteger(rounds) ||
       rounds < 1 ||
       rounds > MAX_GRANT_ROUNDS
     ) {
-      return { ok: false, message: REVIEW_CONTINUE_USAGE };
+      return { ok: false, message: continueUsage(roundClass) };
     }
     try {
-      return await this.mutate<{ ok: boolean; message: string }>(rootSessionId, (ledger) => {
-        let task = taskOf(ledger, workTask);
-        if (task === undefined) {
-          task = { createdAt: new Date().toISOString(), granted: 0, rounds: [] };
-          ledger.workTasks[workTask] = task;
-        }
-        task.granted += rounds;
-        ledger.sessionGranted += rounds;
-        return {
-          result: {
-            ok: true,
-            message: grantedMessage(
-              rounds,
-              workTask,
-              usedOf(task),
-              MAX_REVIEW_ROUNDS_PER_TASK + task.granted,
-              sessionUsedOf(ledger),
-              MAX_REVIEW_ROUNDS_PER_SESSION + ledger.sessionGranted,
-            ),
-          },
-          changed: true,
-        };
-      });
+      return await this.mutate<{ ok: boolean; message: string }>(
+        rootSessionId,
+        roundClass,
+        (ledger) => {
+          let task = taskOf(ledger, workTask);
+          if (task === undefined) {
+            task = { createdAt: new Date().toISOString(), granted: 0, rounds: [] };
+            ledger.workTasks[workTask] = task;
+          }
+          task.granted += rounds;
+          ledger.sessionGranted += rounds;
+          return {
+            result: {
+              ok: true,
+              message: grantedMessage(
+                rounds,
+                workTask,
+                usedOf(task),
+                p.perTask + task.granted,
+                sessionUsedOf(ledger),
+                p.perSession + ledger.sessionGranted,
+                roundClass,
+              ),
+            },
+            changed: true,
+          };
+        },
+      );
     } catch (error) {
       if (error instanceof LedgerUnavailableError) {
-        return { ok: false, message: stateUnavailableMessage(reasonOf(error)) };
+        return { ok: false, message: stateUnavailableMessage(reasonOf(error), roundClass) };
       }
       throw error;
     }
   }
 
   /** One line per work task plus the session total, or the empty-ledger message. */
-  async summary(rootSessionId: string): Promise<string> {
+  async summary(rootSessionId: string, roundClass: RoundClass = "review"): Promise<string> {
+    const p = POLICIES[roundClass];
     try {
-      return await this.mutate(rootSessionId, (ledger) => {
+      return await this.mutate(rootSessionId, roundClass, (ledger) => {
         const entries = Object.entries(ledger.workTasks);
-        if (entries.length === 0) return { result: NO_ROUNDS_MESSAGE, changed: false };
+        if (entries.length === 0) return { result: noRoundsMessage(roundClass), changed: false };
         const lines = entries.map(
-          ([id, task]) =>
-            `"${id}": ${usedOf(task)}/${MAX_REVIEW_ROUNDS_PER_TASK + task.granted} review rounds`,
+          ([id, task]) => `"${id}": ${usedOf(task)}/${p.perTask + task.granted} ${p.noun} rounds`,
         );
         lines.push(
-          `Session total: ${sessionUsedOf(ledger)}/${MAX_REVIEW_ROUNDS_PER_SESSION + ledger.sessionGranted}`,
+          `Session total: ${sessionUsedOf(ledger)}/${p.perSession + ledger.sessionGranted}`,
         );
         return { result: lines.join("\n"), changed: false };
       });
     } catch (error) {
-      if (error instanceof LedgerUnavailableError) return stateUnavailableMessage(reasonOf(error));
+      if (error instanceof LedgerUnavailableError) {
+        return stateUnavailableMessage(reasonOf(error), roundClass);
+      }
       throw error;
     }
   }

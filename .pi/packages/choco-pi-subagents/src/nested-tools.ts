@@ -69,8 +69,8 @@ import { loadFlagshipModels } from "./model-tiers.ts";
 import { thinkingLevelSchema } from "./workflow.ts";
 import {
   defaultReviewRoundsDir,
-  isReviewRole,
   ReviewRoundStore,
+  roundClassOf,
   stateUnavailableMessage,
   WORK_TASK_PATTERN,
   type ReviewEntry,
@@ -364,10 +364,11 @@ export async function createNestedSubagentTools(
     entry: ReviewEntry,
     signal: AbortSignal | undefined,
   ): Promise<ReviewAdmission> => {
-    if (!isReviewRole(type)) return { ok: true, ticket: undefined, notice: "" };
+    const roundClass = roundClassOf(type);
+    if (roundClass === undefined) return { ok: true, ticket: undefined, notice: "" };
     const rootSessionId = context.manager.getRecord(context.parentAgentId)?.rootSessionId;
     if (rootSessionId === undefined) {
-      return { ok: false, message: stateUnavailableMessage("root session unknown") };
+      return { ok: false, message: stateUnavailableMessage("root session unknown", roundClass) };
     }
     const result = await reviewStore.admit({
       rootSessionId,
@@ -428,7 +429,7 @@ export async function createNestedSubagentTools(
             str({
               pattern: WORK_TASK_PATTERN,
               description:
-                "Stable id of the work task this review belongs to (lowercase, digits, hyphens). Required for review roles; reuse it for every review round of the same task.",
+                "Stable id of the work task this review or verification belongs to (lowercase, digits, hyphens). Required for review roles (reviewer) and verification roles (verifier); reuse it for every round of the same task.",
             }),
           ),
           thinking: opt(

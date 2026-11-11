@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 
 import type {
@@ -12,6 +15,7 @@ import { AgentManager, type AgentManagerRunner } from "../src/agent-manager.ts";
 import type { QueuedInputDisposition } from "../src/agent-message.ts";
 import subagentsExtension from "../src/index.ts";
 import { NUDGE_HOLD_MS } from "../src/notification-gate.ts";
+import { ReviewRoundStore } from "../src/review-rounds.ts";
 import { toolContext } from "./fixtures/tool-context.ts";
 
 function partialFixture<T extends object>(value: Partial<T>): T {
@@ -498,6 +502,87 @@ test("a user-stopped epoch delivers the stopped notice by steer without triggeri
     assert.deepEqual(host.deliveryOptions.at(-1), { deliverAs: "steer", triggerTurn: false });
     assert.match(await host.call("get_subagent_result", id), /preserved partial output/);
     assert.equal(record.consumedResultGeneration, record.resultGeneration);
+  } finally {
+    await host.close();
+  }
+});
+
+test("after a root stop, late verdict-role completions reach the context like any other, never as a turn", async (t) => {
+  // A queued reviewer and verifier publish after their verdict record is
+  // written, so they settle after the running filler. All three completions
+  // must still be sent as context messages (steer, no turn) while the latch is
+  // closed; none may be display-only and none may start a turn.
+  const host = await fixture(t);
+  const registryKey = Symbol.for("choco-pi:stop-control/v1");
+  let latchClosed = false;
+  Object.defineProperty(globalThis, registryKey, {
+    value: {
+      protocol: "choco-pi:stop-control/v1",
+      state: () => ({ epoch: latchClosed ? 1 : 0, closed: latchClosed }),
+    },
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  });
+  t.after(() => {
+    Reflect.deleteProperty(globalThis, registryKey);
+  });
+  const dir = await mkdtemp(join(tmpdir(), "stop-result-delivery-verdict-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const store = new ReviewRoundStore(join(dir, "rounds"));
+  const admit = async (agentType: string) => {
+    const result = await store.admit({
+      rootSessionId: "stop-result-delivery",
+      workTask: "stop-delivery-task",
+      agentType,
+      entry: "agent",
+    });
+    assert.equal(result.ok, true);
+    if (!result.ok) throw new Error("unreachable");
+    return result.ticket;
+  };
+  try {
+    const filler = host.spawn();
+    host.actualManager().setVerdictScratchResolver(() => join(dir, "scratch"));
+    const ids = [filler];
+    for (const type of ["reviewer", "verifier"]) {
+      ids.push(
+        host.manager.spawn(host.pi, host.ctx, type, "check", {
+          description: type,
+          isBackground: true,
+          isolated: true,
+          reviewTicket: await admit(type),
+        }),
+      );
+    }
+    assert.deepEqual(
+      ids.map((id) => host.manager.getRecord(id)?.status),
+      ["running", "queued", "queued"],
+    );
+    latchClosed = true;
+    const stop = host.actualManager().stopAllForRoot("stop-result-delivery");
+    assert.equal(stop.agents, 3);
+    host.pending[0]();
+    await bounded(stop.settled, 5_000, "stop never settled");
+    await waitForGate();
+    const sent = host.notices.map((notice) => JSON.stringify(notice));
+    t.diagnostic("completion messages sent: " + sent.length);
+    for (const id of ids) {
+      assert.equal(
+        sent.filter((text) => text.includes("<task-id>" + id + "</task-id>")).length,
+        1,
+        "one context notification for " + id,
+      );
+    }
+    for (const options of host.deliveryOptions) {
+      assert.deepEqual(options, { deliverAs: "steer", triggerTurn: false });
+    }
+    assert.equal(
+      sent.filter((text) => text.includes("Verdict record: MISSING - the run ended stopped"))
+        .length > 0,
+      true,
+      "the verdict lines travel in the context message",
+    );
   } finally {
     await host.close();
   }

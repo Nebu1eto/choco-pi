@@ -16,9 +16,10 @@ import { isString } from "./value-guards.ts";
 import {
   admissionRequiredMessage,
   consumeReviewTicket,
-  isReviewRole,
+  roundClassOf,
   type ReviewTicket,
 } from "./review-rounds.ts";
+import { failedVerdictLine, isVerdictRole, recordVerdict } from "./verdict-record.ts";
 import {
   resolveAgentMaxTurns,
   resumeAgent,
@@ -27,7 +28,10 @@ import {
   type ToolActivity,
 } from "./agent-runner.ts";
 import { unregisterChildSessionId } from "./child-context.ts";
-import { unregisterScratchRoot } from "../../../extensions/lib/scratch-path.ts";
+import {
+  scratchDirForSession,
+  unregisterScratchRoot,
+} from "../../../extensions/lib/scratch-path.ts";
 import { cleanupChildSessionOwner, emitChildSessionShutdown } from "./child-session-cleanup.ts";
 import { setSessionFastMode, snapshotFastMode } from "./fast-mode-bridge.ts";
 import { setSessionDaybreak, snapshotDaybreak } from "./daybreak-bridge.ts";
@@ -656,13 +660,27 @@ function cancellationForGeneration(
 }
 
 /**
- * Fail-closed review-round gate: a review-role launch must carry a one-shot
- * ticket issued by `ReviewRoundStore.admit` (or `issueExemptTicket`). Throws
- * before any record, queue or run state changes.
+ * Fail-closed round gate: a review-role or verification-role launch must carry
+ * a one-shot ticket issued by `ReviewRoundStore.admit` for that role's class
+ * (or `issueExemptTicket`). Throws before any record, queue or run state
+ * changes. Resolves the work task the run is verdict-recorded under (none for
+ * ungated roles and exempt tickets).
  */
-function requireReviewAdmission(type: string, ticket: ReviewTicket | undefined): void {
-  if (!isReviewRole(type)) return;
+function requireReviewAdmission(
+  type: string,
+  ticket: ReviewTicket | undefined,
+): AgentRecord["verdictTask"] {
+  const roundClass = roundClassOf(type);
+  if (roundClass === undefined) return undefined;
+  // A round admitted for the other class cannot start this role.
+  if (ticket?.roundClass !== undefined && ticket.roundClass !== roundClass) {
+    throw new Error(admissionRequiredMessage(type));
+  }
   if (!consumeReviewTicket(ticket)) throw new Error(admissionRequiredMessage(type));
+  if (ticket === undefined || ticket.exemptReason !== undefined || ticket.workTask === "") {
+    return undefined;
+  }
+  return { workTask: ticket.workTask, rootSessionId: ticket.rootSessionId };
 }
 
 interface SpawnOptions {
@@ -961,6 +979,9 @@ export class AgentManager {
   /** Worktree cleanup deferred by a parked spawn; runs on the task's final settle. */
   private deferredWorktrees = new Map<string, () => Promise<void>>();
   private usageLimitListener?: UsageLimitListener;
+  /** Lineage scratch root for a root session id; replaceable for tests. */
+  private verdictScratchDir: (rootSessionId: string) => string = (rootSessionId) =>
+    scratchDirForSession(rootSessionId);
 
   /** Durable-revival writer; undefined (child managers, tests) journals nothing. */
   private journalSink?: SubagentJournalSink;
@@ -1091,6 +1112,74 @@ export class AgentManager {
   /** Observe usage-limit transitions (reported, parked, resumed, exhausted). */
   setUsageLimitListener(listener: UsageLimitListener | undefined): void {
     this.usageLimitListener = listener;
+  }
+
+  /**
+   * Whether a settling run is subject to verdict recording. Settle paths await
+   * `recordRunVerdict` only when this holds, so every other run settles
+   * without the extra microtask hop the await would add.
+   */
+  private recordsVerdict(record: AgentRecord): boolean {
+    return record.verdictTask !== undefined && isVerdictRole(record.type);
+  }
+
+  /** Replace (or, with undefined, restore) how verdict records find the scratch root. */
+  setVerdictScratchResolver(resolver: ((rootSessionId: string) => string) | undefined): void {
+    this.verdictScratchDir = resolver ?? ((rootSessionId) => scratchDirForSession(rootSessionId));
+  }
+
+  /**
+   * Verdict recording for a settling run of a review or verification role
+   * admitted under a work task (it records and reports, never changes the
+   * outcome). Runs at most once per generation and never throws.
+   * Resolves the status line to append to the result, or undefined when
+   * nothing applies or the run went stale; a stale run never starts a write,
+   * and its line is dropped if it goes stale during one.
+   */
+  private async recordRunVerdict(
+    record: AgentRecord,
+    generation: number,
+    text: string | undefined,
+    status: string,
+    error: string | undefined,
+  ): Promise<string | undefined> {
+    const task = record.verdictTask;
+    if (task === undefined || !this.recordsVerdict(record)) return undefined;
+    if (record.verdictRecordedGeneration === generation) return undefined;
+    if (record.resultGeneration !== generation || this.disposed) return undefined;
+    record.verdictRecordedGeneration = generation;
+    record.verdictRecord = undefined;
+    let line: string;
+    try {
+      const scratchDir = this.verdictScratchDir(task.rootSessionId);
+      const outcome = await recordVerdict({
+        agentId: record.id,
+        agentType: record.type,
+        workTask: task.workTask,
+        scratchDir,
+        text,
+        status,
+        error,
+        // A stop that lands while the record is written wins: the recording
+        // reads this again before each durable write and after the last.
+        outcome: () =>
+          record.status === "stopped" && status !== "stopped"
+            ? {
+                status: "stopped",
+                error: cancellationForGeneration(record, generation)?.reason ?? error,
+              }
+            : { status, error },
+      });
+      line = outcome.line;
+    } catch (failure) {
+      line = failedVerdictLine(
+        record.type,
+        failure instanceof Error ? failure.message : "recording failed",
+      );
+    }
+    if (record.resultGeneration !== generation) return undefined;
+    record.verdictRecord = line;
+    return line;
   }
 
   private notifyUsageLimit(record: AgentRecord): void {
@@ -1737,7 +1826,26 @@ export class AgentManager {
     return key;
   }
 
-  /** Evaluate only while this generation may still settle normally. */
+  /** Whether this generation may still settle normally (not stopped, cancelled, forced, or superseded). */
+  private usageEvaluationEligible(
+    record: AgentRecord,
+    generation: number,
+    runBudget: RunBudgetState,
+  ): boolean {
+    return (
+      !this.disposed &&
+      record.resultGeneration === generation &&
+      record.status !== "stopped" &&
+      record.cancellation?.generation !== generation &&
+      runBudget.forcedStatus === undefined
+    );
+  }
+
+  /**
+   * Evaluate only while this generation may still settle normally. Callers
+   * pass the result through `currentUsageDecision` after their await: a stop
+   * can land between this function's last check and the caller's resumption.
+   */
   private async evaluateRunUsageLimit(
     record: AgentRecord,
     generation: number,
@@ -1749,12 +1857,7 @@ export class AgentManager {
     allowPark: boolean,
     reportStatus: "reported" | "exhausted",
   ): Promise<UsageLimitDecision | undefined> {
-    const eligible = () =>
-      !this.disposed &&
-      record.resultGeneration === generation &&
-      record.status !== "stopped" &&
-      record.cancellation?.generation !== generation &&
-      runBudget.forcedStatus === undefined;
+    const eligible = () => this.usageEvaluationEligible(record, generation, runBudget);
     if (failure === undefined || model === undefined || !eligible()) return undefined;
     let decision: UsageLimitDecision | undefined;
     try {
@@ -1772,6 +1875,18 @@ export class AgentManager {
       decision = undefined;
     }
     return decision !== undefined && eligible() ? decision : undefined;
+  }
+
+  /** Recheck after the caller's await: a stop in that gap discards the decision, so it never parks. */
+  private currentUsageDecision(
+    record: AgentRecord,
+    generation: number,
+    runBudget: RunBudgetState,
+    decision: UsageLimitDecision | undefined,
+  ): UsageLimitDecision | undefined {
+    return decision !== undefined && this.usageEvaluationEligible(record, generation, runBudget)
+      ? decision
+      : undefined;
   }
 
   /**
@@ -1972,7 +2087,9 @@ export class AgentManager {
 
   /**
    * Final outcome of a post-reset continuation that was queued and never
-   * started. The caller has already set the terminal status and published it.
+   * started. The caller has already set the terminal status but not published
+   * it: publication waits for the deferred worktree cleanup, which may append
+   * its note to `record.result` (as in `settleParked`).
    */
   private settleDroppedWake(
     record: AgentRecord,
@@ -1986,6 +2103,7 @@ export class AgentManager {
       record.usageLimit = { ...record.usageLimit, status: "exhausted" };
     }
     this.finishDeferredWorktreeThen(record, () => {
+      this.publishTerminal(record);
       wait.release(record.result ?? "");
       if (!notify || this.disposed) return;
       this.notifyUsageLimit(record);
@@ -2017,27 +2135,48 @@ export class AgentManager {
   }
 
   /**
-   * For synchronous settle paths: run `publish` immediately when nothing was
-   * deferred, otherwise once the deferred cleanup settled — the cleanup may
-   * append the branch note to `record.result`, which `publish` must carry.
-   * A record awaiting publication stays terminal-unpublished meanwhile, which
-   * `resumeBlockedByRun` already treats as busy. `publish` runs exactly once.
+   * For settle paths that never reach a runner (stopped while queued or
+   * parked, refused at admission, failed to start): run `publish` immediately
+   * when nothing is owed, otherwise after the deferred worktree cleanup (which
+   * may append the branch note to `record.result`) and, for a verdict-role
+   * run not yet recorded, after its verdict record (whose line is appended to
+   * `record.result`). A record awaiting publication stays terminal-unpublished
+   * meanwhile, which `resumeBlockedByRun` already treats as busy. `publish`
+   * runs exactly once.
    */
   private finishDeferredWorktreeThen(record: AgentRecord, publish: () => void): void {
     const finish = this.takeDeferredWorktree(record);
-    if (finish === undefined) {
+    const generation = record.resultGeneration ?? 1;
+    const recordVerdict =
+      !this.disposed &&
+      this.recordsVerdict(record) &&
+      record.verdictRecordedGeneration !== generation;
+    if (finish === undefined && !recordVerdict) {
       publish();
       return;
     }
-    void finish()
-      .catch(() => undefined)
-      .then(() => {
-        try {
-          publish();
-        } catch (error) {
-          console.warn("[choco-pi-subagents] Settling after worktree cleanup failed:", error);
+    const settle = async (): Promise<void> => {
+      if (finish !== undefined) await finish().catch(() => undefined);
+      if (recordVerdict) {
+        const line = await this.recordRunVerdict(
+          record,
+          generation,
+          undefined,
+          record.status,
+          // A queued stop sets only the cancellation; its reason is the error.
+          record.error ?? cancellationForGeneration(record, generation)?.reason,
+        );
+        if (line !== undefined) {
+          record.result = record.result ? `${record.result}\n\n${line}` : line;
         }
-      });
+      }
+      try {
+        publish();
+      } catch (error) {
+        console.warn("[choco-pi-subagents] Settling after worktree cleanup failed:", error);
+      }
+    };
+    void settle();
   }
 
   /**
@@ -2168,6 +2307,7 @@ export class AgentManager {
     for (const entry of continuations) {
       const record = this.agents.get(entry.id);
       if (record === undefined || record.status !== "queued") continue;
+      // The finalizer publishes once the deferred worktree cleanup settled.
       this.stopQueuedRecord(record, "shutdown", reason);
       entry.finalize?.(false);
       count++;
@@ -2198,20 +2338,44 @@ export class AgentManager {
       finalize(true);
       return;
     }
-    // Same as an explicit queued stop: only workflow controllers need the completion hook.
-    if (record.workflowId === undefined) return;
-    try {
-      this.onComplete?.(record);
-    } catch {
-      /* ignore completion side-effect errors */
-    }
+    this.publishStoppedQueued(record);
   }
 
+  /**
+   * Terminal state for a queued record that will never start. The caller
+   * publishes: a post-reset continuation through its finalizer, any other
+   * record through `publishStoppedQueued`.
+   */
   private stopQueuedRecord(record: AgentRecord, cause: CancellationCause, reason: string): void {
     this.transition(record, "stopped");
     this.requestCancellation(record, record.resultGeneration ?? 1, cause, reason);
     record.completedAt = Date.now();
-    this.publishTerminal(record);
+  }
+
+  /**
+   * Publish a stopped queued record that has no finalizer: at once, or for a
+   * verdict-role run after its verdict record. A record published at once is
+   * reported settled by the stop (stop_subagent: "stopped and settled") and,
+   * like any ordinary queued Agent call, gets no completion nudge; workflow
+   * controllers still need it for their aggregate/UI bookkeeping. A record
+   * published later was reported pending ("until the terminal completion
+   * notification arrives"), so it notifies once, after publication.
+   */
+  private publishStoppedQueued(record: AgentRecord): void {
+    let deferred = false;
+    this.finishDeferredWorktreeThen(record, () => {
+      this.publishTerminal(record);
+      // Ownership ended while publication was deferred: waiters settle, the host is not touched.
+      if (this.disposed) return;
+      if (record.workflowId === undefined && !deferred) return;
+      try {
+        this.onComplete?.(record);
+      } catch {
+        /* ignore completion side-effect errors */
+      }
+    });
+    // Set before an asynchronous publish runs, never before a synchronous one.
+    deferred = true;
   }
 
   /** Validate and apply a caller-selected model to an idle child session. */
@@ -2555,7 +2719,8 @@ export class AgentManager {
     // refused launch never burns the one-shot review ticket.
     requireAdmissionOpen(usageScope.owner);
     // Journal revival (identity set) recovers an already-admitted round.
-    if (identity === undefined) requireReviewAdmission(type, options.reviewTicket);
+    const verdictTask =
+      identity === undefined ? requireReviewAdmission(type, options.reviewTicket) : undefined;
 
     const id = identity?.id ?? randomUUID().slice(0, 17);
     const revivedHandle =
@@ -2633,6 +2798,7 @@ export class AgentManager {
           ? [...identity.steers]
           : undefined,
       outputFile: identity?.outputFile,
+      verdictTask,
     };
     const reclaimedTombstone =
       identity === undefined && options.parentAgentId === undefined && options.reclaim !== undefined
@@ -3078,7 +3244,7 @@ export class AgentManager {
           }
           runBudget.controller?.dispose();
           // Before detach: a parent abort during evaluation must still cancel.
-          const usageDecision = aborted
+          const evaluated = aborted
             ? undefined
             : await this.evaluateRunUsageLimit(
                 record,
@@ -3091,6 +3257,12 @@ export class AgentManager {
                 !isWakeRun && canParkForReset(record),
                 isWakeRun ? "exhausted" : "reported",
               );
+          const usageDecision = this.currentUsageDecision(
+            record,
+            runGeneration,
+            runBudget,
+            evaluated,
+          );
           // A suspend during the evaluation keeps the worktree and publishes nothing.
           if (this.isSuspendedGeneration(record, runGeneration)) {
             settleSuspendedRun(session);
@@ -3164,7 +3336,26 @@ export class AgentManager {
             }
           }
 
+          // Verdict record: the status and error mirror what is published below.
+          const verdictLine = this.recordsVerdict(record)
+            ? await this.recordRunVerdict(
+                record,
+                runGeneration,
+                responseText,
+                record.status === "stopped"
+                  ? "stopped"
+                  : (runBudget.forcedStatus ?? terminalStatus),
+                runBudget.forcedReason ??
+                  cancellationForGeneration(record, runGeneration)?.reason ??
+                  failure,
+              )
+            : undefined;
+          if (verdictLine !== undefined) finalResult = `${finalResult}\n\n${verdictLine}`;
           if (record.resultGeneration !== runGeneration) return responseText;
+          if (this.isSuspendedGeneration(record, runGeneration)) {
+            settleSuspendedRun(session);
+            return responseText;
+          }
           if (this.disposed) {
             record.session = session;
             this.abortOwnedChildren(id);
@@ -3284,7 +3475,26 @@ export class AgentManager {
             }
           }
 
+          const verdictLine = this.recordsVerdict(record)
+            ? await this.recordRunVerdict(
+                record,
+                runGeneration,
+                undefined,
+                record.status === "stopped" ? "stopped" : (runBudget.forcedStatus ?? "error"),
+                runBudget.forcedReason ??
+                  cancellationForGeneration(record, runGeneration)?.reason ??
+                  error,
+              )
+            : undefined;
+          if (verdictLine !== undefined) {
+            record.result =
+              record.result === undefined ? verdictLine : `${record.result}\n\n${verdictLine}`;
+          }
           if (record.resultGeneration !== runGeneration) return "";
+          if (this.isSuspendedGeneration(record, runGeneration)) {
+            settleSuspendedRun(undefined);
+            return "";
+          }
           if (this.disposed) {
             this.abortOwnedChildren(id);
             releaseRunPoolSlot();
@@ -3317,12 +3527,20 @@ export class AgentManager {
           if (options.isBackground) {
             releaseRunPoolSlot();
             currentRunSettled = true;
-            this.onComplete?.(record);
+            try {
+              this.onComplete?.(record);
+            } catch {
+              /* ignore completion side-effect errors */
+            }
             this.drainQueue();
           } else {
             this.markTerminalConsumed(record);
             currentRunSettled = true;
-            this.onComplete?.(record);
+            try {
+              this.onComplete?.(record);
+            } catch {
+              /* ignore completion side-effect errors */
+            }
           }
           return "";
         } finally {
@@ -3473,8 +3691,15 @@ export class AgentManager {
         this.transition(record, "error");
         record.error = providerUnavailableMessage(next.providerKey.toLowerCase(), block.closure);
         record.completedAt = Date.now();
-        this.publishTerminal(record);
-        this.onComplete?.(record);
+        this.finishDeferredWorktreeThen(record, () => {
+          this.publishTerminal(record);
+          if (this.disposed) return;
+          try {
+            this.onComplete?.(record);
+          } catch {
+            /* ignore completion side-effect errors */
+          }
+        });
         continue;
       }
       try {
@@ -3485,9 +3710,17 @@ export class AgentManager {
         this.transition(record, "error");
         record.error = err instanceof Error ? err.message : String(err);
         record.completedAt = Date.now();
-        this.publishTerminal(record);
-        if (next.finalize === undefined) this.onComplete?.(record);
-        else next.finalize(true);
+        if (next.finalize === undefined) {
+          this.finishDeferredWorktreeThen(record, () => {
+            this.publishTerminal(record);
+            if (this.disposed) return;
+            try {
+              this.onComplete?.(record);
+            } catch {
+              /* ignore completion side-effect errors */
+            }
+          });
+        } else next.finalize(true);
       }
     }
   }
@@ -3544,7 +3777,7 @@ export class AgentManager {
     const record = this.agents.get(id);
     if (!record?.session) return undefined;
     requireAdmissionOpen(this.recordRoot(record));
-    requireReviewAdmission(record.type, options?.reviewTicket);
+    const verdictTask = requireReviewAdmission(record.type, options?.reviewTicket);
 
     // A live run cannot be resumed safely in either mode: it owns the record's
     // abort controller and session prompt. Refuse before changing its alias or
@@ -3641,6 +3874,8 @@ export class AgentManager {
     if (options?.daybreakRequested !== undefined) {
       this.setDaybreak(id, options.daybreakRequested);
     }
+    // An exempt continuation keeps the work task the agent was admitted under.
+    if (verdictTask !== undefined) record.verdictTask = verdictTask;
 
     // Background resume: settle asynchronously and notify on completion exactly
     // like a background spawn, returning immediately with the record still
@@ -3709,7 +3944,7 @@ export class AgentManager {
         }
         // A limit under auto-resume parks exactly like a foreground spawn: the
         // caller gets the paused record now and the outcome as a notification.
-        const usageDecision = await this.evaluateRunUsageLimit(
+        const evaluated = await this.evaluateRunUsageLimit(
           record,
           runGeneration,
           runBudget,
@@ -3719,6 +3954,12 @@ export class AgentManager {
           session,
           canParkForReset(record),
           "reported",
+        );
+        const usageDecision = this.currentUsageDecision(
+          record,
+          runGeneration,
+          runBudget,
+          evaluated,
         );
         if (record.resultGeneration !== runGeneration) return record;
         // A suspend during the evaluation settles without an outcome.
@@ -3741,6 +3982,28 @@ export class AgentManager {
           });
           return record;
         }
+        // Verdict record: the status and error mirror what is published below.
+        const settling = cancellationForGeneration(record, runGeneration);
+        const verdictLine = this.recordsVerdict(record)
+          ? await this.recordRunVerdict(
+              record,
+              runGeneration,
+              text,
+              runBudget.forcedStatus ??
+                (settling ? "stopped" : terminalStatusFor({ aborted, failure, steered })),
+              runBudget.forcedReason ?? settling?.reason ?? failure,
+            )
+          : undefined;
+        if (record.resultGeneration !== runGeneration) return record;
+        if (this.isSuspendedGeneration(record, runGeneration)) {
+          this.finishSuspendedRun(record, undefined);
+          return record;
+        }
+        if (this.disposed) {
+          this.abortOwnedChildren(id);
+          this.removeRecord(id, record);
+          return record;
+        }
         // Same contract as the spawn path (#144): a failed final turn is an
         // error, not a completion — but the resumed text stays available.
         const cancellation = cancellationForGeneration(record, runGeneration);
@@ -3758,11 +4021,33 @@ export class AgentManager {
               : withUsageLimitNote(failure, usageDecision.usageLimit);
         }
         if (usageDecision !== undefined) record.usageLimit = usageDecision.usageLimit;
-        record.result = text;
+        record.result = verdictLine === undefined ? text : `${text}\n\n${verdictLine}`;
         record.completedAt = Date.now();
         this.markTerminalConsumed(record);
         if (usageDecision !== undefined) this.notifyUsageLimit(record);
       } catch (err) {
+        if (record.resultGeneration !== runGeneration) return record;
+        if (this.isSuspendedGeneration(record, runGeneration)) {
+          this.finishSuspendedRun(record, undefined);
+          return record;
+        }
+        if (this.disposed) {
+          this.abortOwnedChildren(id);
+          this.removeRecord(id, record);
+          return record;
+        }
+        const caught = cancellationForGeneration(record, runGeneration);
+        const verdictLine = this.recordsVerdict(record)
+          ? await this.recordRunVerdict(
+              record,
+              runGeneration,
+              undefined,
+              runBudget.forcedStatus ?? (caught ? "stopped" : "error"),
+              runBudget.forcedReason ??
+                caught?.reason ??
+                (err instanceof Error ? err.message : String(err)),
+            )
+          : undefined;
         if (record.resultGeneration !== runGeneration) return record;
         if (this.isSuspendedGeneration(record, runGeneration)) {
           this.finishSuspendedRun(record, undefined);
@@ -3779,6 +4064,10 @@ export class AgentManager {
           runBudget.forcedReason ??
           cancellation?.reason ??
           (err instanceof Error ? err.message : String(err));
+        if (verdictLine !== undefined) {
+          record.result =
+            record.result === undefined ? verdictLine : `${record.result}\n\n${verdictLine}`;
+        }
         record.completedAt = Date.now();
         this.markTerminalConsumed(record);
       } finally {
@@ -3943,7 +4232,7 @@ export class AgentManager {
           // A post-reset continuation that hits the limit again is exhausted;
           // any other resumed run may park like a fresh spawn.
           const isWakeRun = this.wakeRuns.get(id) === runGeneration;
-          const usageDecision = await this.evaluateRunUsageLimit(
+          const evaluated = await this.evaluateRunUsageLimit(
             record,
             runGeneration,
             runBudget,
@@ -3953,6 +4242,12 @@ export class AgentManager {
             record.session,
             !isWakeRun && canParkForReset(record),
             isWakeRun ? "exhausted" : "reported",
+          );
+          const usageDecision = this.currentUsageDecision(
+            record,
+            runGeneration,
+            runBudget,
+            evaluated,
           );
           if (record.resultGeneration !== runGeneration) return text;
           // A suspend during the evaluation settles without an outcome.
@@ -4009,6 +4304,13 @@ export class AgentManager {
           record.completedAt ??= Date.now();
           await this.finishDeferredWorktree(record);
           if (record.resultGeneration !== runGeneration) return text;
+          const verdictLine = this.recordsVerdict(record)
+            ? await this.recordRunVerdict(record, runGeneration, text, record.status, record.error)
+            : undefined;
+          if (record.resultGeneration !== runGeneration) return text;
+          if (verdictLine !== undefined) {
+            record.result = `${record.result ?? ""}\n\n${verdictLine}`;
+          }
           this.publishTerminal(record);
           if (usageDecision !== undefined) this.notifyUsageLimit(record);
           settle();
@@ -4043,6 +4345,20 @@ export class AgentManager {
           record.completedAt ??= Date.now();
           await this.finishDeferredWorktree(record);
           if (record.resultGeneration !== runGeneration) return "";
+          const verdictLine = this.recordsVerdict(record)
+            ? await this.recordRunVerdict(
+                record,
+                runGeneration,
+                undefined,
+                record.status,
+                record.error,
+              )
+            : undefined;
+          if (record.resultGeneration !== runGeneration) return "";
+          if (verdictLine !== undefined) {
+            record.result =
+              record.result === undefined ? verdictLine : `${record.result}\n\n${verdictLine}`;
+          }
           this.publishTerminal(record);
           settle();
           return "";
@@ -4336,22 +4652,14 @@ export class AgentManager {
       const entry = this.queue.find((q) => q.id === id);
       this.queue = this.queue.filter((q) => q.id !== id);
       this.stopQueuedRecord(record, "user_stop", "Stopped by user request.");
-      // A queued post-reset continuation still owes the parked task's promise
-      // and its one final notification.
+      // A queued post-reset continuation still owes the parked task's promise,
+      // its publication (after the deferred worktree cleanup) and its one final
+      // notification.
       if (entry?.finalize !== undefined) {
         entry.finalize(true);
         return true;
       }
-      // Ordinary queued Agent calls historically settle without a completion
-      // nudge. Workflow controllers still need this transition to reach their
-      // aggregate/UI bookkeeping after cancellation.
-      if (record.workflowId) {
-        try {
-          this.onComplete?.(record);
-        } catch {
-          /* ignore completion side-effect errors */
-        }
-      }
+      this.publishStoppedQueued(record);
       return true;
     }
 
@@ -5057,9 +5365,11 @@ export class AgentManager {
       this.transition(record, "error");
       record.error = err instanceof Error ? err.message : String(err);
       record.completedAt = Date.now();
-      this.publishTerminal(record);
+      // Published after the restored worktree cleanup, which may append its note.
       if (finalize === undefined) {
         this.finishDeferredWorktreeThen(record, () => {
+          this.publishTerminal(record);
+          if (this.disposed) return;
           try {
             this.onComplete?.(record);
           } catch {
@@ -5309,7 +5619,7 @@ export class AgentManager {
     if (saved === undefined) throw new Error(`No saved agent ${id} in this session.`);
     const dormantRoot = this.journalSink?.rootSessionId ?? sessionRootOf(context.ctx);
     requireAdmissionOpen(dormantRoot);
-    requireReviewAdmission(saved.type, options?.reviewTicket);
+    const verdictTask = requireReviewAdmission(saved.type, options?.reviewTicket);
     // A caller-selected model is validated like a live resume's (format,
     // availability, scope, provider closure; throws ResumeModelError) and
     // replaces the journaled one, so the revived run and its journal use it.
@@ -5353,7 +5663,10 @@ export class AgentManager {
           ? `${buildInterruptionPrompt({ unclean: undefined, steers: item.steers })}\n\n${prompt}`
           : prompt;
       try {
-        return this.startPreparedRevival(item, context, fullPrompt);
+        const revived = this.startPreparedRevival(item, context, fullPrompt);
+        // Synchronous after the start: the run cannot have settled yet.
+        if (verdictTask !== undefined) revived.verdictTask = verdictTask;
+        return revived;
       } catch (err) {
         if (item.claim !== undefined) releaseSessionFile(item.claim.file, item.claim.token);
         throw err;
@@ -5372,16 +5685,10 @@ export class AgentManager {
     for (const queued of this.queue) {
       const record = this.agents.get(queued.id);
       if (record) {
-        this.transition(record, "stopped");
-        this.requestCancellation(
-          record,
-          record.resultGeneration ?? 1,
-          "shutdown",
-          "Manager shutdown requested.",
-        );
-        record.completedAt = Date.now();
-        this.publishTerminal(record);
-        queued.finalize?.(false);
+        this.stopQueuedRecord(record, "shutdown", "Manager shutdown requested.");
+        // A post-reset continuation publishes through its finalizer, once.
+        if (queued.finalize !== undefined) queued.finalize(false);
+        else this.finishDeferredWorktreeThen(record, () => this.publishTerminal(record));
         count++;
       }
     }

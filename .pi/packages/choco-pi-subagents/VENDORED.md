@@ -2251,3 +2251,193 @@ Test: `tests/subagent-config-tool-scope.test.ts`.
 ## 2026-11-11 choco-pi patch: Pi SDK range ~1.5.2
 
 Pi SDK dependencies move from exactly `1.5.1` to the range `~1.5.2` (`>=1.5.2 <1.6.0`), so later 1.5 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow. The package-local `minimumReleaseAgeExclude` per-version Pi SDK entries collapse to the `"@earendil-works/pi-*"` name pattern, so new Pi releases install without waiting for the minimum release age. The lock was regenerated with pnpm 11.11.0 (`pnpm install --ignore-scripts`). The opt-in e2e-revival runner accepts any launcher in that range and defaults to `~/.local/pi-1.5.2`.
+
+## choco-pi patch: a user stop beats a usage-limit park
+
+`evaluateRunUsageLimit` rechecks eligibility before it returns, but its three
+callers (`startAgent`'s settle, foreground `resume`, background
+`startResume`) resumed a microtask later and parked without rechecking. A
+stop landing in that gap left the record `waiting_for_reset`; the wake then
+cleared `stoppedByUser`, resumed the run, and no completion was delivered.
+Each caller now passes the decision through `currentUsageDecision`, which
+drops it unless `usageEvaluationEligible` (the predicate the evaluation
+already used) still holds, so the stop settles exactly as if it had arrived
+one tick earlier. Test: `tests/usage-limit-stop-race.test.ts` (sweeps the
+stop across every microtask offset after corroboration resolves; covers the
+`startAgent` caller only).
+
+## choco-pi patch: a throwing onComplete is contained on every settle path
+
+The spawn `.catch` settle path and `drainQueue` (provider-block refusal and
+late start failure) called `onComplete` unguarded. A throw on the `.catch`
+path skipped `drainQueue` and rejected the run promise unhandled; a throw in
+`drainQueue` escaped into the calling run's `.catch`, which settled that run
+a second time (two completions). Each call now uses the same
+`try`/ignore wrapper as the other settle paths. Test:
+`tests/oncomplete-throw.test.ts`.
+
+## choco-pi patch: verdict records and verification rounds
+
+Reviewer and verifier agents end their final message with a fenced
+`choco-pi-review` / `choco-pi-verdict` block. The package parses it in code,
+records it, and tells the parent whether a valid verdict was recorded. It
+never changes a run's outcome.
+
+- `src/verdict-record.ts`: `recordVerdict` parses the role's block (review
+  roles: `choco-pi-review` only; verification roles: `choco-pi-verdict` only,
+  whose `workTask` must match), writes
+  `<scratch root>/verdicts/<work_task>/<agentId>.json` atomically through
+  `.pi/extensions/lib/verdict-blocks.ts` (which owns the path), and returns one
+  `Verdict record: parsed|MISSING|INVALID|FAILED ...` line. It never throws.
+  Runs that end anything other than `completed`/`steered`, or with no final
+  text, are `missing` with the reason. The record describes the latest
+  settled run of that agent under that work task, and the line agrees with
+  it: an `outcome` callback is read before the write and after it, and a run
+  seen stopped is written (or rewritten) as `missing`. A write failure gives
+  a FAILED line saying the run is unrecorded, plus "the agent record may still
+  read parsed" when a parsed record was renamed into place and its rewrite
+  failed. Residual: a crash between that rename and the post-write check
+  leaves a parsed record for a run whose stop was requested during the write.
+- `src/agent-manager.ts`: `requireReviewAdmission` gates review and
+  verification roles, refuses a ticket admitted for the other class, and
+  returns the ticket's work task and root session, stored as
+  `AgentRecord.verdictTask` (types.ts) at spawn, resume and `resumeDormant`.
+  Exempt tickets and journal revivals get no work task and are not recorded;
+  an exempt resume keeps the earlier work task. `recordRunVerdict` runs at
+  most once per generation (`verdictRecordedGeneration`), is a no-op for a
+  stale generation or a disposed manager, and drops its line if the generation
+  goes stale during the write. It runs before publication in the six runner
+  settle paths (`startAgent`, foreground `resume` and `startResume`, each on
+  success and rejection), and `finishDeferredWorktreeThen` owes it on every
+  runner-less terminal path (`settleParked`, `settleDroppedWake`,
+  `publishStoppedQueued` for a queued stop or an admission refusal,
+  `drainQueue`'s provider-block and start-failure branches,
+  `startRevivedContinuation`'s start failure, and `abortAll`'s queued branch).
+  A queued stop sets only the cancellation, so these paths fall back to its
+  reason ("Stopped by user request.", "Manager shutdown requested."). The line
+  is appended to `record.result`, so the inline result, the background
+  notification, `get_subagent_result`, nested tools and workflow outputs carry
+  it. The scratch root comes from `scratchDirForSession(rootSessionId)`; tests
+  replace it with `setVerdictScratchResolver`. Not recorded: runs settled by
+  `dispose()` and suspended runs (revival settles them later).
+- Delivery: a stopped queued verdict-role run publishes after its record is
+  written, so `stop_subagent` reports it pending and `publishStoppedQueued`
+  calls `onComplete` exactly once when publication was deferred; a record
+  published at once (any non-verdict run, or nothing owed) is reported settled
+  and gets no nudge. Shutdown (`abortAll`) and a session switch
+  (`cancelUsageLimitWaits`) never notify. `stopQueuedRecord` no longer
+  publishes; its callers do, and a workflow's completion hook runs after
+  publication. `abortAll` publishes a queued post-reset continuation only
+  through its finalizer. After `dispose()` the deferred callbacks still publish
+  for internal waiters but call no completion callback. Completions after
+  `/stop` follow the rule that predates this branch (`completionMayTriggerTurn`
+  at 1a0fd076): sent as a steer with `triggerTurn: false` while the latch is
+  closed, pinned by `tests/stop-result-delivery.test.ts`.
+- `src/index.ts`: `<task-notification>` adds `<verdict-record>` when the
+  truncated preview cut the line off (`verdictLineMissingFrom`). Admission,
+  schedule refusal and `/verify-continue` (sharing the `/review-continue`
+  handler) cover verification roles. The `work_task` description (also in
+  `nested-tools.ts` and `workflow.ts`) names both role classes.
+- `src/review-rounds.ts`: `VERIFICATION_ROLES = ["verifier"]`, with caps of 6
+  per work task and 18 per root session (constants). Review rounds stay
+  `["reviewer"]`, 3/9. Verification rounds use the same schema-1 ledger shape
+  in a separate file, `<root session id>.verification.json`, so existing
+  `<root session id>.json` review ledgers load and are written unchanged, and
+  a verifier never spends a review round. Message builders, `grant` and
+  `summary` take an optional round class that defaults to review (wording
+  unchanged). Tickets carry `roundClass` so `release` refunds the right file.
+  Codes are `VERIFY_*` for verification.
+- Lock fix: `acquireLock` removed a stale lock by path after a `stat`. A
+  contender paused between that `stat` and the `unlink` deleted the lock another
+  writer had just re-created, and both proceeded. The `finally` unlink was
+  also unconditional. The lock content is now a random owner token. Stale
+  recovery unlinks only if the token re-read right before the unlink is the
+  one judged stale, and `releaseLock` unlinks only its own token. One
+  filesystem call of residual window remains; it needs a lock older than 30 s.
+  `acquireLock`/`releaseLock` are exported with a `beforeStaleRemoval`/`timeoutMs`
+  test seam.
+- Tests: `tests/verdict-record.test.ts`, `tests/verdict-record-manager.test.ts`,
+  `tests/verdict-record-stop.test.ts`, `tests/verdict-stop-delivery.test.ts`,
+  `tests/verification-rounds.test.ts`, `tests/review-rounds-lock.test.ts`,
+  fixture `tests/fixtures/verdict-blocks.ts`.
+
+## choco-pi patch: a stopped post-reset continuation publishes after its worktree cleanup
+
+Found by the TLA+ model in `formal/tla/subagent-run` (invariants `StaleInert`,
+`ReadSeesFinal`). A post-reset continuation of a worktree agent that is stopped
+(or shut down, or refused at a closed latch) while queued was published at once by
+`stopQueuedRecord`, while `settleDroppedWake` ran the deferred worktree cleanup
+and only then called `onComplete`. The cleanup appends the retained-worktree note
+to `record.result`. In that window a resume was admitted, so the late completion
+reported the next run's status (`queued`), and a result read could see text that
+changed afterwards.
+
+- `src/agent-manager.ts`: `stopQueuedRecord` takes `publish = true`; the
+  queued-continuation callers (`stopRecord`, `cancelUsageLimitWaits`,
+  `refuseClosedStart`) pass `false`, and `settleDroppedWake` publishes inside its
+  `finishDeferredWorktreeThen` callback before releasing the wait and notifying,
+  as `settleParked` already did. `drainQueue`'s start-throws branch and
+  `startRevivedContinuation`'s start failure publish the same way (directly when
+  there is no finalizer, otherwise through it).
+- Kept promise: a published result is final and its completion reports its own
+  generation. Given up: a stop of a queued post-reset continuation of a worktree
+  agent is no longer published in the same tick; it publishes when the git
+  cleanup settles (`awaitTerminal` already waits for that, bounded). Meanwhile
+  `resumeBlockedByRun` refuses a resume and a result read is `terminal-pending`.
+  Without a deferred worktree the callback runs at once, so nothing changes there.
+- Test: `tests/model-replay-dropped-wake.test.ts`.
+
+## choco-pi patch: verdict recording awaits only for verdict-role runs
+
+`recordRunVerdict` is awaited on every settle path, so every run's settle took one
+more microtask turn even when the method returned at once. `recordsVerdict(record)`
+(a verdict task and a verdict role, the predicate the method uses) now guards each
+of the six call sites, so other runs settle with the same number of turns as
+before verdict recording. Test: `tests/model-replay-settle-hops.test.ts`, which
+pins the turn counts measured on the code before verdict recording.
+
+## choco-pi patch: verdict blocks shown as a summary in result cards and notifications
+
+Display only: the result text, what the parent model receives, the recorded
+files and the `Verdict record:` line are unchanged.
+
+- `src/delegation-render.ts`: a completed `Agent` / `get_subagent_result`
+  card whose reply has a `choco-pi-review` or `choco-pi-verdict` block or a
+  trailing `Verdict record:` line shows, when collapsed, a summary laid out
+  per width by `.pi/extensions/lib/verdict-summary.ts` under "Done"; expanded,
+  it shows the raw reply as before. The reply is read before the verbose
+  "--- Agent Conversation ---" section and without the trailing record line.
+  A block the strict parser rejects is never summarised: one notice with the
+  parser's reason is shown instead. A record line that says MISSING, INVALID
+  or FAILED is shown in both views, and a parsed block then gets a notice
+  instead of a summary. An unterminated block changes nothing.
+- `renderVerdictNotification` draws the same summary inside each agent's band
+  of a completion notification (the collapsed one-line preview skips the
+  block's lines); it returns undefined for a notification without a block or
+  record line, and the renderer in `src/index.ts` then draws it exactly as
+  before.
+- The stored notification preview is cut at 500 characters (300 when
+  grouped), which leaves any real block unterminated, so it alone would never
+  be summarised. `buildNotificationDetails` in `src/index.ts` therefore keeps
+  the run's whole reply in the notification's details as `verdictReply`, at
+  creation, and only when the preview cuts it, it has a verdict block or record
+  line, and it is at most 64 KiB of UTF-8 (`NOTIFICATION_REPLY_MAX_BYTES`); a
+  larger reply shows only its preview. The renderer reads nothing else: no
+  record is looked up at render time. Review F5: an earlier version read the
+  live record by agent id, and `resume` reuses the record and replaces its
+  result, so a FINDINGS notification could show a later run's NO_FINDINGS.
+  The kept reply is used only when it is a string that begins with the
+  preview. Details never reach the model (Pi's `convertToLlm` sends a custom
+  message's `content` only, and compaction summarises that), so model input is
+  byte-identical; the session file grows by at most 64 KiB (before JSON
+  escaping) per notified agent with such a reply. The summary is durable
+  across restarts; a notification stored before this change has no
+  `verdictReply` and is drawn as before. Tests:
+  `tests/verdict-notification-runs.test.ts` (resume with the same and a
+  different opening, stopped twice, grouped, restart, model input).
+- When the record line says INVALID, the block notice points to it instead of
+  repeating the parser's reason: the card's text starts with its own header,
+  so the reason's line number would differ from the record's.
+- A reply without a block or record line renders byte-identically to the
+  committed renderer (36 card and notification combinations compared).
+- Test: `tests/verdict-render.test.ts`.
