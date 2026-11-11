@@ -253,3 +253,7 @@ Pi SDK pins move from `1.5.0` to exactly `1.5.1`; version references in comments
 ## 2026-11-11 choco-pi patch: Pi SDK range ~1.5.2
 
 Pi SDK dependencies move from exactly `1.5.1` to the range `~1.5.2` (`>=1.5.2 <1.6.0`), so later 1.5 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow.
+
+## choco-pi patch: stale resume-confirmation guard
+
+`session_start` (reason `resume`) awaits `ctx.ui.confirm("Resume paused goal?")`. `src/goal-runtime-session-handlers.ts` now keeps a session generation, bumped synchronously on each `session_start` and `session_shutdown`; an answer that arrives after the generation changed resumes nothing and skips `maybeContinue`. A goal cleared or replaced while the dialog is open was already a no-op through the goal-id check in `resumeGoalWithContinuation` (`src/goal-runtime-controller.ts`). Tests: `tests/resume-confirm-stale.test.ts`.

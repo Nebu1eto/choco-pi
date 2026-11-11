@@ -163,14 +163,20 @@ export function createSessionEventHandlers(deps: GoalRuntimeSessionHandlerContex
     adoptionSubscription = { sessionId, stop: () => unsubscribe() };
   };
 
+  /** Bumped on each session start and shutdown; an await that outlives it is stale. */
+  let sessionGeneration = 0;
+
   return {
     onSessionStart: (async (event, ctx) => {
+      const generation = ++sessionGeneration;
+      const isCurrent = (): boolean => generation === sessionGeneration;
       startAdoptionRelay(ctx);
       continuation.clearPostCompactContinuationFallback();
       deps.providerLimitAutoResume.clear();
       stateController.reloadFromSession(ctx);
       goalAccounting.beginAccounting();
-      if (await confirmPausedGoalResume(deps, event, ctx)) return;
+      if (await confirmPausedGoalResume(deps, event, ctx, isCurrent)) return;
+      if (!isCurrent()) return;
       continuation.maybeContinue(ctx);
     }) satisfies ExtensionHandler<SessionStartEvent>,
 
@@ -203,6 +209,7 @@ export function createSessionEventHandlers(deps: GoalRuntimeSessionHandlerContex
     }) satisfies ExtensionHandler<SessionCompactEvent>,
 
     onSessionShutdown: (async (_event, ctx) => {
+      sessionGeneration++;
       stopAdoptionRelay();
       continuation.clearPostCompactContinuationFallback();
       deps.providerLimitAutoResume.clear();
@@ -239,17 +246,21 @@ function clearHostOverflowRecoveryForContinuation(
   return true;
 }
 
-/** On a session resume, offer to resume a paused goal; true when the user accepted. */
+/**
+ * On a session resume, offer to resume a paused goal; true when the user accepted.
+ * An answer that arrives after the session ended or restarted does nothing.
+ */
 async function confirmPausedGoalResume(
   { stateController, goalAccounting, resumeGoalWithContinuation }: GoalRuntimeSessionHandlerContext,
   event: SessionStartEvent,
   ctx: ExtensionContext,
+  isCurrent: () => boolean,
 ): Promise<boolean> {
   const goal = stateController.getGoal();
   const pausedGoal = goal?.status === "paused" ? goal : null;
   if (event.reason !== "resume" || !pausedGoal || !ctx.hasUI) return false;
   const shouldResume = await ctx.ui.confirm("Resume paused goal?", `Goal: ${pausedGoal.objective}`);
-  if (!shouldResume) return false;
+  if (!shouldResume || !isCurrent()) return false;
   resumeGoalWithContinuation(pausedGoal.goalId, "runtime", ctx);
   goalAccounting.beginAccounting();
   return true;
