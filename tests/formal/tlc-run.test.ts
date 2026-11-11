@@ -5,9 +5,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { type CheckResult, checkResult } from "../.pi/skills/formal-verify/scripts/tlc-result.ts";
+import {
+  type CheckResult,
+  checkResult,
+} from "../../.pi/skills/formal-verify/scripts/tlc-result.ts";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const TLC = path.join(ROOT, ".pi", "skills", "formal-verify", "scripts", "tlc.ts");
 const SPECS = path.join(ROOT, "tests", "fixtures", "tlc", "specs");
 const JAR = process.env.CHOCO_PI_TLA2TOOLS || path.join(ROOT, "formal", ".tools", "tla2tools.jar");

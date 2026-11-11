@@ -11,7 +11,7 @@ import { after, before, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const RUNNER = path.join(ROOT, ".pi", "skills", "formal-verify", "scripts", "check-all.ts");
 const FIXTURE = path.join(ROOT, "tests", "fixtures", "formal", "counter");
 const JAR = process.env.CHOCO_PI_TLA2TOOLS || path.join(ROOT, "formal", ".tools", "tla2tools.jar");

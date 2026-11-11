@@ -571,6 +571,8 @@ pnpm typecheck
 env -u PI_ROOT_SESSION_ID -u PI_SCRATCH_DIR -u PI_SESSION_ID -u PI_CODING_AGENT -u PI_MANAGED_INSTALL_ROOT pnpm test
 ```
 
+`pnpm test`는 Java와 TLC를 띄우는 `tests/formal/`의 formal 검증 테스트를 실행하지 않습니다. `pnpm test --formal`이 이 테스트를 함께 실행하며, `formal/`, `formal-verify` 스킬, 또는 그 테스트를 고칠 때만 필요합니다.
+
 런타임과 TUI 변경은 새 Pi 프로세스에서도 검증해야 합니다. [검증 안내](docs/verification-map.md)에 영역별로 실행할 검사, 인증 정보 없이 테스트용 Pi를 실행하는 방법, ACP real-Pi 테스트, formal 모델·drift 검사를 정리해 두었습니다. 패키지 정책에 따라 추가 검사가 필요할 수 있습니다.
 
 ## 보안과 권한

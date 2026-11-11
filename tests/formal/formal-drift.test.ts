@@ -5,19 +5,20 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { parseCoverage } from "../.pi/skills/formal-verify/scripts/drift-coverage.ts";
+import { parseCoverage } from "../../.pi/skills/formal-verify/scripts/drift-coverage.ts";
 import {
   extractSymbol,
   hashText,
   locateSymbol,
   parseSources,
-} from "../.pi/skills/formal-verify/scripts/drift-extract.ts";
-import { main } from "../.pi/skills/formal-verify/scripts/drift.ts";
-import { findFormalRoot } from "../.pi/skills/formal-verify/scripts/formal-root.ts";
+} from "../../.pi/skills/formal-verify/scripts/drift-extract.ts";
+import { main } from "../../.pi/skills/formal-verify/scripts/drift.ts";
+import { findFormalRoot } from "../../.pi/skills/formal-verify/scripts/formal-root.ts";
 
 const execFileAsync = promisify(execFile);
 const DRIFT_CLI = join(
   import.meta.dirname,
+  "..",
   "..",
   ".pi",
   "skills",
@@ -27,6 +28,7 @@ const DRIFT_CLI = join(
 );
 const AGENT_MANAGER = join(
   import.meta.dirname,
+  "..",
   "..",
   ".pi",
   "packages",

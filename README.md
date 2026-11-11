@@ -607,6 +607,8 @@ pnpm typecheck
 env -u PI_ROOT_SESSION_ID -u PI_SCRATCH_DIR -u PI_SESSION_ID -u PI_CODING_AGENT -u PI_MANAGED_INSTALL_ROOT pnpm test
 ```
 
+`pnpm test` leaves out the formal validation tests in `tests/formal/`, which start Java and TLC; `pnpm test --formal` adds them and is needed only when `formal/`, the `formal-verify` skill, or those tests change.
+
 Runtime and TUI changes also require verification in a fresh Pi process. The [verification map](docs/verification-map.md) lists what to run for each area, how to run a test Pi without credentials, the ACP real-Pi suites, and the formal model and drift checks. Package policies may require additional checks.
 
 ## Security and authority
