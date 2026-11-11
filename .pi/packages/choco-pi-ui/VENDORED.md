@@ -367,5 +367,12 @@ Pi SDK dependencies move from exactly `1.5.1` to the range `~1.5.2` (`>=1.5.2 <1
   (`renderBase`). A press on the text is now taken, so Pi's own
   select-and-copy no longer starts from the editor's text; it still does from
   the frame's border, padding and metadata rows.
+- Shift with an arrow key selects too: the editor's own cursor key moves the
+  cursor and the selection runs from where it began to the cursor. On the first
+  and the last row the keys for the line's start and end are sent instead of
+  Up and Down, which walk the prompt history there. A key that cannot move the
+  cursor is passed on when nothing is selected, so Shift+Right at the end of
+  the text still reaches `/diff`'s shortcut; an open autocomplete menu keeps
+  the arrows.
 - Tests: `tests/zentui-editor-selection.test.ts`,
   `tests/zentui-editor-mouse.test.ts` (root).

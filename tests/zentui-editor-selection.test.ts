@@ -6,6 +6,7 @@ import {
   stripTerminalSequences,
   type TuiMouseEvent,
 } from "@earendil-works/pi-tui";
+import { isJsonRecord, isNumber } from "../.pi/extensions/lib/runtime-values.ts";
 import { SKIP_WITHOUT_ZENTUI } from "./zentui-build.ts";
 import {
   at,
@@ -367,5 +368,248 @@ test(
       assert.equal(editor.getText(), [lines[0], lines[8], lines[9]].join("\n"), `${from} to ${to}`);
       assert.ok(keys <= 16, `${keys} keys for seven lines of 47 characters`);
     }
+  },
+);
+
+/* ------------------------------------------------ Shift and the arrow keys */
+
+const SHIFT_LEFT = "\x1b[1;2D";
+const SHIFT_RIGHT = "\x1b[1;2C";
+const SHIFT_UP = "\x1b[1;2A";
+const SHIFT_DOWN = "\x1b[1;2B";
+const RIGHT = "\x1b[C";
+const UP = "\x1b[A";
+/** Ctrl+E, the editor's key for the end of the line. */
+const LINE_END = "\x05";
+
+function cursorOf(editor: FramedEditor) {
+  const cursor = editor.getCursor();
+  assert.ok(isJsonRecord(cursor));
+  const { line, col } = cursor;
+  assert.ok(isNumber(line) && isNumber(col));
+  return { line, col };
+}
+
+/** Send keys with a frame drawn after each, as the terminal UI does. */
+function press(editor: FramedEditor, keys: readonly string[], width = WIDTH): void {
+  for (const key of keys) {
+    editor.handleInput(key);
+    editor.render(width);
+  }
+}
+
+test(
+  "Shift with Left and Right selects from the cursor, both ways, in every style",
+  { skip: SKIP_WITHOUT_ZENTUI },
+  async () => {
+    for (const [style, paddingRows] of STYLES) {
+      const make = await zentui(style, paddingRows);
+      for (const [name, editor] of [
+        ["wrapped", make.wrapped()],
+        ["polished", make.polished()],
+      ] as const) {
+        const where = `${name} ${style} padding ${paddingRows}`;
+        editor.focused = true;
+        editor.setText("hello world");
+        editor.render(WIDTH);
+        press(editor, [SHIFT_LEFT, SHIFT_LEFT, SHIFT_LEFT, SHIFT_LEFT, SHIFT_LEFT]);
+        assert.deepEqual(selected(editor), ["world"], where);
+        press(editor, [SHIFT_RIGHT, SHIFT_RIGHT]);
+        assert.deepEqual(selected(editor), ["rld"], `${where}: the end moves back`);
+        editor.handleInput(BACKSPACE);
+        assert.equal(editor.getText(), "hello wo", where);
+
+        // Back over where the selection began, and on to the other side of it.
+        press(editor, [LEFT, LEFT, LEFT, SHIFT_RIGHT, SHIFT_LEFT]);
+        assert.deepEqual(selected(editor), [], `${where}: back at its start`);
+        press(editor, [SHIFT_LEFT, SHIFT_LEFT]);
+        assert.deepEqual(selected(editor), ["lo"], where);
+        editor.handleInput("p");
+        assert.equal(editor.getText(), "help wo", where);
+        assert.deepEqual(editor.getCursor(), { line: 0, col: 4 }, where);
+      }
+    }
+  },
+);
+
+test(
+  "Shift with Up and Down selects by rows; on the first and last row to the line's start and end",
+  { skip: SKIP_WITHOUT_ZENTUI },
+  async () => {
+    const text = "first line\nsecond line is here\nthird";
+    const { editor } = await wrappedEditor({ text });
+    editor.render(WIDTH);
+    // The cursor is at the end. Up one row keeps the column where the row is long enough.
+    press(editor, [SHIFT_UP]);
+    assert.deepEqual(editor.getCursor(), { line: 1, col: 5 });
+    assert.deepEqual(selected(editor), ["d line is here ", "third"]);
+    press(editor, [SHIFT_UP]);
+    assert.deepEqual(selected(editor), [" line ", "second line is here ", "third"]);
+    // On the first row Up goes to the start of the text, and then there is nowhere to go.
+    press(editor, [SHIFT_UP, SHIFT_UP]);
+    assert.deepEqual(editor.getCursor(), { line: 0, col: 0 });
+    assert.equal(selected(editor).join("").replaceAll(" ", ""), text.replaceAll(/\s/g, ""));
+    press(editor, [SHIFT_DOWN]);
+    assert.equal(cursorOf(editor).line, 1, "Down takes the end back a row");
+    press(editor, [SHIFT_DOWN, SHIFT_DOWN, SHIFT_DOWN]);
+    assert.deepEqual(editor.getCursor(), { line: 2, col: 5 });
+    assert.deepEqual(selected(editor), [], "back where it began");
+
+    // From the middle of the last row, Down selects to the end of the text.
+    press(editor, [LEFT, LEFT, LEFT, SHIFT_DOWN]);
+    assert.deepEqual(selected(editor), ["ird"]);
+    editor.handleInput(BACKSPACE);
+    assert.equal(editor.getText(), "first line\nsecond line is here\nth");
+  },
+);
+
+test(
+  "on wrapped rows Up and Down move a row at a time, also when keys arrive faster than frames",
+  { skip: SKIP_WITHOUT_ZENTUI },
+  async () => {
+    const text =
+      "one long line of prompt text that wraps over several rows of a narrow editor here";
+    for (const framed of [true, false]) {
+      const { editor } = await wrappedEditor({ text });
+      const rows = editor
+        .render(24)
+        .map((row) => stripTerminalSequences(row))
+        .filter((row) => /[a-z]/.test(row) && !row.includes("Provider")).length;
+      assert.ok(rows >= 4, `${rows} rows of text`);
+      for (const key of [SHIFT_UP, SHIFT_UP]) {
+        editor.handleInput(key);
+        if (framed) editor.render(24);
+      }
+      const runs = selected(editor, 24);
+      assert.equal(runs.length, 3, `framed ${framed}: two rows up is three rows of selection`);
+      assert.ok(text.endsWith(runs.join("")), `framed ${framed}: ${JSON.stringify(runs)}`);
+      assert.ok(cursorOf(editor).col > 0, "not the line's start");
+    }
+  },
+);
+
+test(
+  "Shift with an arrow never walks the prompt history",
+  { skip: SKIP_WITHOUT_ZENTUI },
+  async () => {
+    const { editor, inner } = await wrappedEditor({ text: "" });
+    inner.addToHistory("an earlier prompt");
+    inner.addToHistory("the last prompt");
+    editor.setText("draft text");
+    editor.render(WIDTH);
+    // At the start of the text a plain Up would open the history.
+    press(editor, [SHIFT_UP, SHIFT_UP, SHIFT_UP]);
+    assert.equal(editor.getText(), "draft text");
+    assert.deepEqual(selected(editor), ["draft text"]);
+    press(editor, [SHIFT_DOWN, SHIFT_DOWN]);
+    assert.equal(editor.getText(), "draft text");
+
+    // While a recalled prompt is shown, plain Up and Down walk the history from any row.
+    editor.setText("");
+    press(editor, [UP]);
+    assert.equal(editor.getText(), "the last prompt");
+    press(editor, [RIGHT, RIGHT, RIGHT, SHIFT_UP]);
+    assert.equal(editor.getText(), "the last prompt", "Shift+Up selects to the start instead");
+    assert.deepEqual(selected(editor), ["the"]);
+    press(editor, [SHIFT_DOWN]);
+    assert.equal(editor.getText(), "the last prompt");
+    assert.deepEqual(selected(editor), [" last prompt"]);
+  },
+);
+
+test(
+  "a key that cannot move the cursor is passed on when nothing is selected, and kept when something is",
+  { skip: SKIP_WITHOUT_ZENTUI },
+  async () => {
+    const make = await zentui("opencode", "both");
+    const inner = new Editor(TUI_FIXTURE, EDITOR_THEME);
+    const received: string[] = [];
+    let menuOpen = false;
+    const editor = make.wrapped({
+      render: (width: number) => inner.render(width),
+      invalidate: () => inner.invalidate(),
+      handleInput: (data: string) => {
+        received.push(data);
+        inner.handleInput(data);
+      },
+      handleMouse: (event: TuiMouseEvent) => inner.handleMouse(event),
+      getText: () => inner.getText(),
+      setText: (text: string) => inner.setText(text),
+      getLines: () => inner.getLines(),
+      getCursor: () => inner.getCursor(),
+      getPaddingX: () => inner.getPaddingX(),
+      isShowingAutocomplete: () => menuOpen,
+    });
+    editor.setText("draft");
+    editor.render(WIDTH);
+    // At the end of the text Shift+Right is not a selection key: /diff's shortcut gets it.
+    press(editor, [SHIFT_RIGHT]);
+    assert.deepEqual(received, [SHIFT_RIGHT]);
+    press(editor, [SHIFT_DOWN]);
+    assert.deepEqual(received, [SHIFT_RIGHT, SHIFT_DOWN]);
+    assert.deepEqual(selected(editor), []);
+
+    // Selecting and then taking it all back leaves nothing selected: the key is passed on again.
+    received.length = 0;
+    press(editor, [SHIFT_LEFT, SHIFT_LEFT, SHIFT_RIGHT, SHIFT_RIGHT, SHIFT_RIGHT]);
+    assert.deepEqual(
+      received,
+      [LEFT, LEFT, RIGHT, RIGHT, SHIFT_RIGHT],
+      "the editor's own cursor keys, then the key that had nothing to select or move over",
+    );
+    // With text selected, a key at the edge does nothing and the selection stays.
+    press(editor, [LEFT, LEFT, LEFT, SHIFT_RIGHT]);
+    assert.deepEqual(selected(editor), ["a"]);
+    received.length = 0;
+    press(editor, [SHIFT_DOWN, SHIFT_DOWN, SHIFT_RIGHT]);
+    assert.deepEqual(received, [LINE_END], "to the end once; after that nothing is sent");
+    assert.deepEqual(selected(editor), ["aft"]);
+    press(editor, [RIGHT]);
+    press(editor, [
+      SHIFT_LEFT,
+      SHIFT_LEFT,
+      SHIFT_LEFT,
+      SHIFT_LEFT,
+      SHIFT_LEFT,
+      SHIFT_LEFT,
+      SHIFT_LEFT,
+    ]);
+    assert.deepEqual(selected(editor), ["draft"], "past the start it stays whole");
+
+    // An empty editor has nothing to select, and an open autocomplete menu owns the arrows.
+    editor.setText("");
+    received.length = 0;
+    press(editor, [SHIFT_LEFT, SHIFT_RIGHT, SHIFT_UP, SHIFT_DOWN]);
+    assert.deepEqual(received, [SHIFT_LEFT, SHIFT_RIGHT, SHIFT_UP, SHIFT_DOWN]);
+    editor.setText("draft");
+    menuOpen = true;
+    received.length = 0;
+    press(editor, [SHIFT_LEFT]);
+    assert.deepEqual(received, [SHIFT_LEFT]);
+    assert.deepEqual(selected(editor), []);
+  },
+);
+
+test(
+  "the keys extend a selection made with the mouse, and a plain arrow drops one made with the keys",
+  { skip: SKIP_WITHOUT_ZENTUI },
+  async () => {
+    const { editor } = await wrappedEditor({ text: TEXT });
+    drag(editor, "world", "line");
+    press(editor, [SHIFT_RIGHT, SHIFT_RIGHT]);
+    assert.deepEqual(selected(editor), ["world ", "second li"]);
+    press(editor, [SHIFT_UP]);
+    assert.deepEqual(selected(editor), ["wor"], "the end crossed back to the first line");
+    press(editor, [LEFT]);
+    assert.deepEqual(selected(editor), []);
+    editor.handleInput(BACKSPACE);
+    assert.equal(
+      editor.getText(),
+      "hello wrld\nsecond line",
+      "one character, as without a selection",
+    );
+    // Ctrl+Shift with an arrow is Pi's own key and not a selection.
+    press(editor, ["\x1b[1;6A", "\x1b[1;6D"]);
+    assert.deepEqual(selected(editor), []);
   },
 );

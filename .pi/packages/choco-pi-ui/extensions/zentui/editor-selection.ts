@@ -1,21 +1,24 @@
 /**
- * A mouse selection for the prompt editor.
+ * A selection for the prompt editor, made with the mouse or with Shift and
+ * the arrow keys.
  *
  * pi-tui's editor has a cursor and no selection, and its state is private. The
  * selection here is kept beside it and uses only what the editor offers any
  * caller. A press or a drag is passed on as the editor's own click, which puts
  * its cursor on that cell, and the cursor it then reports is one end of the
- * selection. Deleting sends the editor its own delete keys until the selected
- * text is gone, so its paste registry, undo history and change callbacks stay
- * its own. The rows are drawn by laying the text out as the editor does and
- * checking every row against what the editor drew: when they disagree the
- * selection is dropped, never drawn in the wrong place.
+ * selection; Shift with an arrow key moves the cursor with the editor's own
+ * cursor key in the same way. Deleting sends the editor its own delete keys
+ * until the selected text is gone, so its paste registry, undo history and
+ * change callbacks stay its own. The rows are drawn by laying the text out as
+ * the editor does and checking every row against what the editor drew: when
+ * they disagree the selection is dropped, never drawn in the wrong place.
  */
 import {
   CURSOR_MARKER,
   decodeKittyPrintable,
   getKeybindings,
   isKeyRelease,
+  type KeyId,
   matchesKey,
   stripTerminalSequences,
   type TuiMouseEvent,
@@ -38,6 +41,8 @@ export type SelectableEditor = {
   mouse(event: TuiMouseEvent): TuiMouseEventResult | undefined;
   /** The editor's own key handler. */
   input(data: string): void;
+  /** Whether the editor's autocomplete menu is open: it takes the arrow keys then. */
+  menuOpen(): boolean;
 };
 
 /** One drawn row of text: a slice of one of the text's lines. */
@@ -209,7 +214,7 @@ function insertsText(data: string): boolean {
 }
 
 type Selection = {
-  /** Where the press was, and where the pointer is now; the editor's cursor is on `focus`. */
+  /** Where the selection began and where it ends now; the editor's cursor is on `focus`. */
   anchor: TextPosition;
   focus: TextPosition;
   /** The text the positions are of. */
@@ -218,6 +223,28 @@ type Selection = {
 
 /** The text rows of the frame the editor last drew: `rows[i]` is frame row `i + 1`. */
 type Shown = { pad: number; rows: VisualLine[] };
+
+/** Every row of the text at the width last drawn, and the row the cursor is on. */
+type Layout = { pad: number; all: VisualLine[]; cursorLine: number };
+
+type Arrow = "left" | "right" | "up" | "down";
+
+/** Shift with an arrow key, and the editor's own key for that movement. */
+const ARROWS: readonly { arrow: Arrow; shifted: KeyId; key: string; binding: CursorBinding }[] = [
+  { arrow: "left", shifted: "shift+left", key: "\x1b[D", binding: "tui.editor.cursorLeft" },
+  { arrow: "right", shifted: "shift+right", key: "\x1b[C", binding: "tui.editor.cursorRight" },
+  { arrow: "up", shifted: "shift+up", key: "\x1b[A", binding: "tui.editor.cursorUp" },
+  { arrow: "down", shifted: "shift+down", key: "\x1b[B", binding: "tui.editor.cursorDown" },
+];
+type CursorBinding =
+  | "tui.editor.cursorLeft"
+  | "tui.editor.cursorRight"
+  | "tui.editor.cursorUp"
+  | "tui.editor.cursorDown"
+  | "tui.editor.cursorLineStart"
+  | "tui.editor.cursorLineEnd";
+const LINE_START = "\x01";
+const LINE_END = "\x05";
 
 /** Where the editor's first text row and column are in the coordinates mouse events arrive in. */
 export type TextOrigin = { top: number; left: number };
@@ -302,14 +329,20 @@ export class EditorSelection {
   }
 
   /**
-   * A key for the editor. True when the key was used up removing the
-   * selection or, for Escape, dropping it (Escape otherwise interrupts the
-   * agent); false when the caller should pass it on, which for input that
+   * A key for the editor. True when the key was used up: Shift with an arrow
+   * key that moved the selection's end, a deleting key that removed the
+   * selection, or Escape that dropped it (Escape otherwise interrupts the
+   * agent). False when the caller should pass it on, which for input that
    * inserts text is after the selection it replaces has been removed.
    */
   key(data: string): boolean {
-    if (!this.selection || isKeyRelease(data)) return false;
-    if (!this.range()) return false;
+    if (isKeyRelease(data)) return false;
+    const arrow = ARROWS.find((entry) => matchesKey(data, entry.shifted));
+    if (arrow) return this.extend(arrow);
+    if (!this.range()) {
+      this.selection = undefined;
+      return false;
+    }
     const keys = getKeybindings();
     if (DELETING.some((binding) => keys.matches(data, binding))) {
       this.remove();
@@ -322,6 +355,70 @@ export class EditorSelection {
     if (insertsText(data)) this.remove();
     this.selection = undefined;
     return false;
+  }
+
+  /**
+   * Shift with an arrow key: move the editor's cursor that way and select from
+   * where the selection began (the cursor, when there is none) to where the
+   * cursor now is. False when the cursor cannot move that way and nothing is
+   * selected, so the key keeps the meaning it has elsewhere (Shift+Right at
+   * the end of the text enters an open diff pane).
+   */
+  private extend(arrow: (typeof ARROWS)[number]): boolean {
+    const lines = this.editor.lines();
+    const cursor = this.editor.cursor();
+    if (!lines || !cursor || this.editor.menuOpen()) return false;
+    const held = this.held();
+    const anchor = held?.anchor ?? cursor;
+    const key = this.cursorKey(arrow, lines, cursor);
+    if (key) this.editor.input(key);
+    const moved = this.editor.cursor();
+    const text = lines.join("\n");
+    if (!moved || this.editor.lines()?.join("\n") !== text) {
+      // Not a cursor movement after all: the editor did something else with the key.
+      this.selection = undefined;
+      return true;
+    }
+    this.selection = { anchor, focus: moved, text };
+    if (compare(moved, cursor) !== 0) return true;
+    // The cursor is at an edge. A selection stays as it is; without one the key is not ours.
+    if (compare(anchor, moved) !== 0) return true;
+    this.selection = undefined;
+    return false;
+  }
+
+  /**
+   * The editor's key for a movement, or undefined when the cursor is already
+   * at that edge of the text. On the first and the last row the editor's Up
+   * and Down keys walk its prompt history instead of moving the cursor, so the
+   * keys for the line's start and end are sent there.
+   */
+  private cursorKey(
+    { arrow, key, binding }: (typeof ARROWS)[number],
+    lines: readonly string[],
+    cursor: TextPosition,
+  ): string | undefined {
+    const keys = getKeybindings();
+    const bound = (data: string, to: CursorBinding) => (keys.matches(data, to) ? data : undefined);
+    const lastLine = lines.length - 1;
+    if (arrow === "left") {
+      return cursor.line === 0 && cursor.col === 0 ? undefined : bound(key, binding);
+    }
+    if (arrow === "right") {
+      const atEnd = cursor.line === lastLine && cursor.col === (lines[lastLine]?.length ?? 0);
+      return atEnd ? undefined : bound(key, binding);
+    }
+    // Before the first frame there is no width: every row of the first or last line is an edge.
+    const layout = this.layout();
+    const up = arrow === "up";
+    const row = layout?.cursorLine ?? cursor.line;
+    const lastRow = (layout?.all.length ?? lines.length) - 1;
+    if (row !== (up ? 0 : lastRow)) return bound(key, binding);
+    const atEnd = cursor.col === (up ? 0 : (lines[cursor.line]?.length ?? 0));
+    if (atEnd) return undefined;
+    return up
+      ? bound(LINE_START, "tui.editor.cursorLineStart")
+      : bound(LINE_END, "tui.editor.cursorLineEnd");
   }
 
   /** Put the editor's cursor on a cell of its text rows and report where that is. */
@@ -343,8 +440,8 @@ export class EditorSelection {
     return this.editor.cursor();
   }
 
-  /** The selected range, when the text and the cursor are still the ones it was made on. */
-  private range(): { start: TextPosition; end: TextPosition } | undefined {
+  /** The selection, when the text and the cursor are still the ones it was made on. */
+  private held(): Selection | undefined {
     const selection = this.selection;
     if (!selection) return undefined;
     const lines = this.editor.lines();
@@ -359,6 +456,13 @@ export class EditorSelection {
       this.selection = undefined;
       return undefined;
     }
+    return selection;
+  }
+
+  /** The selected range; undefined when nothing is selected or the selection is empty. */
+  private range(): { start: TextPosition; end: TextPosition } | undefined {
+    const selection = this.held();
+    if (!selection) return undefined;
     const order = compare(selection.anchor, selection.focus);
     if (order === 0) return undefined;
     return order < 0
@@ -366,32 +470,40 @@ export class EditorSelection {
       : { start: selection.focus, end: selection.anchor };
   }
 
-  /**
-   * The text rows of the last frame, when it is the frame of the editor's
-   * current text and cursor and every row is where this layout puts it.
-   */
-  private shown(): Shown | undefined {
+  /** The text laid out at the width of the last frame; undefined before any frame. */
+  private layout(): Layout | undefined {
     const drawn = this.drawn;
     const lines = this.editor.lines();
     const cursor = this.editor.cursor();
     if (!drawn || !lines || !cursor) return undefined;
-    const { width, frame } = drawn;
     const pad = Math.min(
       Math.max(0, this.editor.paddingX()),
-      Math.max(0, Math.floor((width - 1) / 2)),
+      Math.max(0, Math.floor((drawn.width - 1) / 2)),
     );
-    const content = Math.max(1, width - pad * 2);
+    const content = Math.max(1, drawn.width - pad * 2);
     const all = visualLines(lines, Math.max(1, content - (pad > 0 ? 0 : 1)));
     const cursorLine = all.findIndex(
       (row) =>
         row.line === cursor.line && cursor.col >= row.start && (row.last || cursor.col < row.end),
     );
+    return cursorLine < 0 ? undefined : { pad, all, cursorLine };
+  }
+
+  /**
+   * The text rows of the last frame, when it is the frame of the editor's
+   * current text and cursor and every row is where this layout puts it.
+   */
+  private shown(): Shown | undefined {
+    const layout = this.layout();
+    const frame = this.drawn?.frame;
+    if (!layout || !frame) return undefined;
+    const { pad, all, cursorLine } = layout;
     // The cursor's row is the one text row drawn with more than text.
     const marked = frame.findIndex((row, index) => index > 0 && row.includes(CURSOR_MARKER));
     const cursorRow =
       marked > 0 ? marked : frame.findIndex((row, index) => index > 0 && row.includes("\x1b"));
     const first = cursorLine - (cursorRow - 1);
-    if (cursorLine < 0 || cursorRow < 1 || first < 0) return undefined;
+    if (cursorRow < 1 || first < 0) return undefined;
     const rows: VisualLine[] = [];
     for (let index = 1; index < frame.length; index += 1) {
       const row = all[first + index - 1];

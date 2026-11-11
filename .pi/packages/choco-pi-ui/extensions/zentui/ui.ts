@@ -912,6 +912,7 @@ export class PolishedEditor extends CustomEditor {
       paddingX: () => this.getPaddingX(),
       mouse: (event) => super.handleMouse(event),
       input: (data) => super.handleInput(data),
+      menuOpen: () => this.isShowingAutocomplete(),
     });
   }
 
@@ -1043,6 +1044,7 @@ export class WrappedPolishedEditor implements EditorComponent {
       paddingX: () => base.getPaddingX?.() ?? 0,
       mouse: (event) => base.handleMouse?.(event),
       input: (data) => base.handleInput(data),
+      menuOpen: () => base.isShowingAutocomplete?.() === true,
     });
   }
 
