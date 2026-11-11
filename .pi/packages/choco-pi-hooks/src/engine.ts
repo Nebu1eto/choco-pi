@@ -348,6 +348,8 @@ function missingHookFile(event: HookEventName, raw: RawExecution): boolean {
 
 export class HookEngine {
   readonly #once = new Set<string>();
+  /** Once-hook keys whose run is in progress, so an overlapping run skips them. */
+  readonly #onceRunning = new Set<string>();
   readonly #background = new Set<Promise<void>>();
   /** Cancels background hooks still running when their session tears down. */
   #backgroundCancel = new AbortController();
@@ -395,8 +397,10 @@ export class HookEngine {
           if (!matchesIf(handler.if, event, input)) continue;
           const key = handlerKey(source, handler);
           const once = source.kind === "skill" && handler.once === true;
-          if (seen.has(key) || (once && this.#once.has(key))) continue;
+          if (seen.has(key) || (once && (this.#once.has(key) || this.#onceRunning.has(key))))
+            continue;
           seen.add(key);
+          if (once) this.#onceRunning.add(key);
           jobs.push({ source, handler, key });
         }
       }
@@ -406,6 +410,7 @@ export class HookEngine {
     const invocations = await Promise.all(
       jobs.map(async ({ source, handler, key }) => {
         if (handler.type === "command" && (handler.async || handler.asyncRewake)) {
+          this.#onceRunning.delete(key);
           const cancel = this.#backgroundCancel.signal;
           const pending = executeHandler(
             handler,
@@ -453,12 +458,13 @@ export class HookEngine {
             completionOrder: completionOrder++,
           } satisfies HookInvocationResult;
         }
-        const executed = await executeHandler(
-          handler,
-          input,
-          this.backends,
-          timeouts?.get(handler),
-        );
+        let executed: RawExecution;
+        try {
+          executed = await executeHandler(handler, input, this.backends, timeouts?.get(handler));
+        } catch (error) {
+          this.#onceRunning.delete(key);
+          throw error;
+        }
         const raw = missingHookFile(event, executed) ? { ...executed, exitCode: 1 } : executed;
         const parsed = parseOutput(raw.stdout);
         const decision = modelOutput(event, handler, parsed.output);
@@ -499,6 +505,7 @@ export class HookEngine {
         else if (blocking) status = "blocking";
         else if (validationError || (exitCode !== 0 && !output)) status = "error";
         // A skill hook with `once: true` is removed only after its first successful run.
+        this.#onceRunning.delete(key);
         if (status === "success" && source.kind === "skill" && handler.once === true)
           this.#once.add(key);
         return {

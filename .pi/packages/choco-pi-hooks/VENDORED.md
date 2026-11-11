@@ -163,3 +163,7 @@ Pi SDK pins move from `1.5.0` to exactly `1.5.1`; version references in comments
 ## 2026-11-11 choco-pi patch: Pi SDK range ~1.5.2
 
 Pi SDK dependencies move from exactly `1.5.1` to the range `~1.5.2` (`>=1.5.2 <1.6.0`), so later 1.5 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow.
+
+## choco-pi patch: `once` skill hooks under overlapping dispatch
+
+Pi's default parallel tool mode runs `afterToolCall` for sibling tool calls concurrently, so two `HookEngine.run` calls for the same event (for example PostToolUse) can overlap. `src/engine.ts` reserved a `once` skill hook only after its awaited execution succeeded, so both runs executed it. The key is now reserved in `#onceRunning` synchronously when the job is selected and released when the run settles: success moves it to `#once`; failure, timeout, or a thrown backend releases it so a later run may retry (unchanged "once only after success"). An overlapping run skips the hook while it is in flight. Background (`async`) handlers release the reservation immediately, as before they are never recorded as done. Tests: `tests/once-concurrency.test.ts`.
