@@ -17,13 +17,13 @@ import { VERSION } from "@earendil-works/pi-coding-agent";
 import { compile, type JsonSchema, type Static } from "@earendil-works/pi-schema";
 import {
   checkoutRevision,
-  PROFILE_PI_TARGET,
   ProfileMarkerSchema,
   profileMarkerPath,
   readProfileMarker,
   writeProfileMarker as publishProfileMarker,
   resolvePiLauncher,
 } from "../.pi/extensions/lib/profile-marker.ts";
+import { PI_SDK_MINIMUM } from "../.pi/extensions/lib/pi-target.ts";
 import {
   executeHarnessCheck,
   type HarnessCheckExecutionDependencies,
@@ -45,7 +45,7 @@ async function fakeLauncher(directory: string, version: string): Promise<string>
 
 test("launcher selection prefers explicit override, then environment, then compatible PATH candidates", async () => {
   await fixture(async (directory) => {
-    const compatible = await fakeLauncher(path.join(directory, "compatible"), PROFILE_PI_TARGET);
+    const compatible = await fakeLauncher(path.join(directory, "compatible"), PI_SDK_MINIMUM);
     const incompatible = await fakeLauncher(path.join(directory, "incompatible"), "0.87.1");
     const previousPath = process.env.PATH;
     const previousLauncher = process.env.CHOCO_PI_LAUNCHER;
@@ -54,7 +54,7 @@ test("launcher selection prefers explicit override, then environment, then compa
     try {
       assert.deepEqual(await resolvePiLauncher(compatible), {
         launcher: compatible,
-        version: PROFILE_PI_TARGET,
+        version: PI_SDK_MINIMUM,
       });
       assert.deepEqual(await resolvePiLauncher(), {
         launcher: incompatible,
@@ -63,7 +63,7 @@ test("launcher selection prefers explicit override, then environment, then compa
       delete process.env.CHOCO_PI_LAUNCHER;
       assert.deepEqual(await resolvePiLauncher(), {
         launcher: compatible,
-        version: PROFILE_PI_TARGET,
+        version: PI_SDK_MINIMUM,
       });
       process.env.PATH = path.dirname(incompatible);
       assert.deepEqual(await resolvePiLauncher(), {
@@ -84,7 +84,7 @@ test("installer records an explicitly selected launcher and harness rechecks it 
     const root = path.join(directory, "checkout");
     await mkdir(path.join(root, ".pi"), { recursive: true });
     await writeFile(path.join(root, ".pi", "settings.json"), JSON.stringify({ packages: [] }));
-    const launcher = await fakeLauncher(path.join(directory, "launcher"), PROFILE_PI_TARGET);
+    const launcher = await fakeLauncher(path.join(directory, "launcher"), PI_SDK_MINIMUM);
     const agentDir = path.join(directory, "agent");
     const result = await installProfile({
       root,
@@ -107,14 +107,17 @@ test("installer records an explicitly selected launcher and harness rechecks it 
     if (healthy.profileMarker?.status === "valid")
       assert.deepEqual(healthy.profileMarker.marker.pi, {
         launcher,
-        version: PROFILE_PI_TARGET,
+        version: PI_SDK_MINIMUM,
       });
-    await fakeLauncher(path.dirname(launcher), "0.87.1");
+    await fakeLauncher(path.dirname(launcher), "1.5.3");
+    const patched = await executeHarnessCheck({ mode: "automatic" }, undefined, dependencies);
+    assert.equal(patched.status, "pass");
+    await fakeLauncher(path.dirname(launcher), "1.6.0");
     const stale = await executeHarnessCheck({ mode: "automatic" }, undefined, dependencies);
     assert.equal(stale.status, "warn");
     assert.match(
       stale.checks.find((check) => check.id === "profile-launcher")?.detail ?? "",
-      /0\.87\.1/,
+      /1\.6\.0/,
     );
     const incompatible = await installProfile({
       root,

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { VERSION } from "@earendil-works/pi-coding-agent";
 
 import {
   default as harnessCheckExtension,
@@ -9,7 +10,7 @@ import {
   type HarnessCheckRegistration,
   type HarnessCheckExecutionDependencies,
 } from "../.pi/extensions/harness-check.ts";
-import { PI_SDK_TARGET, type HarnessReport } from "../.pi/skills/check/scripts/check-harness.ts";
+import type { HarnessReport } from "../.pi/skills/check/scripts/check-harness.ts";
 import { isJsonRecord } from "../.pi/extensions/lib/runtime-values.ts";
 
 const report: HarnessReport = {
@@ -158,7 +159,7 @@ test("default extension registers a host-authenticated schema and reports failur
     context("session-a"),
   );
   assert.equal(observedSource, "active-host");
-  assert.equal(observedVersion, PI_SDK_TARGET);
+  assert.equal(observedVersion, VERSION);
   assert.equal(result.isError, true);
 });
 

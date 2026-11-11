@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { compile, lit, nullable, obj, opt, str, type Static } from "@earendil-works/pi-schema";
-import { PI_SDK_TARGET } from "./pi-target.ts";
+import { PI_SDK_REQUIREMENT, isSupportedPiVersion } from "./pi-target.ts";
 
 export const ProfileMarkerSchema = obj({
   schema: lit(1),
@@ -61,8 +61,6 @@ export async function checkoutRevision(checkout: string): Promise<string | null>
   }
 }
 
-export const PROFILE_PI_TARGET = PI_SDK_TARGET;
-
 export async function launcherVersion(launcher: string): Promise<string | null> {
   try {
     const { stdout } = await runFile(launcher, ["--version"], {
@@ -88,7 +86,7 @@ export async function resolvePiLauncher(override?: string): Promise<ProfileMarke
   );
   for (const launcher of candidates) {
     const version = await launcherVersion(launcher);
-    if (version === PROFILE_PI_TARGET) return { launcher, version };
+    if (version !== null && isSupportedPiVersion(version)) return { launcher, version };
   }
   return { launcher: null, version: null };
 }
@@ -184,9 +182,9 @@ export async function readProfileMarker(agentDir?: string): Promise<ProfileMarke
     parsed.pi.launcher === null ? null : await launcherVersion(parsed.pi.launcher);
   const warning =
     parsed.pi.launcher === null
-      ? `No compatible Pi launcher recorded (requires ${PROFILE_PI_TARGET})`
-      : observedPiVersion !== PROFILE_PI_TARGET
-        ? `Recorded Pi launcher reports ${observedPiVersion ?? "unavailable"}; requires ${PROFILE_PI_TARGET}`
+      ? `No compatible Pi launcher recorded (requires ${PI_SDK_REQUIREMENT})`
+      : observedPiVersion === null || !isSupportedPiVersion(observedPiVersion)
+        ? `Recorded Pi launcher reports ${observedPiVersion ?? "unavailable"}; requires ${PI_SDK_REQUIREMENT}`
         : undefined;
   const observation: ProfileMarkerObservation = {
     path: target,

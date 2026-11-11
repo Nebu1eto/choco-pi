@@ -10,7 +10,7 @@ Keep OAuth tokens, API keys, and machine-local configuration outside Git.
 
 - Node.js 24 or later
 - pnpm `11.11.0` exactly
-- Pi `1.5.1`, matching the SDK packages pinned by this checkout
+- Pi `1.5.x` from `1.5.2` (`>=1.5.2 <1.6.0`), matching the `~1.5.2` SDK range of this checkout
 - Git
 - Optional: [`agent-browser`](https://github.com/vercel-labs/agent-browser) for browser automation. Versions 0.34.0, 0.35.2, 0.36.0, 0.37.1, and 0.38.1 are tested; other versions run with an advisory warning.
 - Optional: macOS 14 or later for computer use (see [Set up computer use](#set-up-computer-use-macos))
@@ -63,11 +63,13 @@ export PATH="$HOME/.local/bin:$PATH"
 pi --version
 ```
 
-The command must print `1.5.1`. The installer installs Pi's current release;
-if it prints another version, `/check` fails and the profile installer does
-not record that launcher until this checkout's pins match it.
+The command must print a `1.5.x` release of `1.5.2` or later. Later 1.5 patch
+releases are accepted without a checkout change. The installer installs Pi's
+current release; if it prints a version outside that range, such as `1.6.0`,
+`/check` fails and the profile installer does not record that launcher until
+this checkout's range is reviewed and moved to it.
 
-Pi 1.5.1's `cli.js` launcher enables Node's compile cache. When diagnosing
+Pi 1.5's `cli.js` launcher enables Node's compile cache. When diagnosing
 unusual module-load errors, set `NODE_DISABLE_COMPILE_CACHE=1` to disable it.
 
 When Pi opens, run `/login` and select a provider. The installation scripts do
@@ -97,7 +99,7 @@ After installation succeeds, it atomically writes `choco-pi/profile.json` in
 that agent directory with the checkout path, Git revision (null if unavailable),
 observed Pi version, launcher path, and host-bridge schema. The installer selects
 `--pi-launcher <path>`, then `CHOCO_PI_LAUNCHER`, or the first `pi` on `PATH` that
-reports exactly `1.5.1`; missing launchers are recorded as null with a warning.
+reports a version in `>=1.5.2 <1.6.0`; missing launchers are recorded as null with a warning.
 External hosts such as Waku use this marker to identify the profile;
 `harness_check` warns about a missing marker, checkout mismatch, or incompatible
 launcher. It does not link MCP configuration. If a target already contains
@@ -124,7 +126,7 @@ files.
 
 ### Built-in extensions
 
-Pi 1.5.1 ships built-in `codemode`, `tool-search`, `mcp`, and `llama.cpp` extensions. choco-pi uses Pi's built-in tool search and MCP and disables only `codemode` with `"extensions": ["-builtin:codemode"]` because it keeps its own `exec` code-mode bridge. The profile installer carries this policy into global settings and removes other built-in exclusions.
+Pi 1.5 ships built-in `codemode`, `tool-search`, `mcp`, and `llama.cpp` extensions. choco-pi uses Pi's built-in tool search and MCP and disables only `codemode` with `"extensions": ["-builtin:codemode"]` because it keeps its own `exec` code-mode bridge. The profile installer carries this policy into global settings and removes other built-in exclusions.
 
 MCP servers are configured in Pi's `~/.pi/agent/mcp.json` format. To convert a file written for the retired `pi-mcp-adapter` fork, run `node scripts/translate-mcp-config.ts`; it prints a redacted dry-run diff and writes only with `--apply`, keeping a timestamped backup.
 

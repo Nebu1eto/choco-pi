@@ -62,3 +62,7 @@ Tests: `tests/schema.test.ts` added; fixtures register tools through `tests/fixt
 ## 2026-11-10 choco-pi patch: Pi SDK target 1.5.1
 
 Pi SDK pins move from `1.5.0` to exactly `1.5.1`; version references in comments, tests, and docs follow.
+
+## 2026-11-11 choco-pi patch: Pi SDK range ~1.5.2
+
+Pi SDK dependencies move from exactly `1.5.1` to the range `~1.5.2` (`>=1.5.2 <1.6.0`), so later 1.5 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow.

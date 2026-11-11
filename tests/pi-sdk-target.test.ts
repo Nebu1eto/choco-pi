@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
-import { PI_SDK_TARGET } from "../.pi/skills/check/scripts/check-harness.ts";
+import { PI_SDK_RANGE, isSupportedPiVersion } from "../.pi/skills/check/scripts/check-harness.ts";
 
 interface PackageManifest {
   dependencies?: Record<string, string>;
@@ -11,8 +11,8 @@ interface PackageManifest {
 }
 
 const ROOT = new URL("../", import.meta.url);
-const TARGET = "1.5.1";
-const SDK_NAMES = ["pi-ai", "pi-agent-core", "pi-coding-agent", "pi-tui"];
+const RANGE = "~1.5.2";
+const SDK_NAMES = ["pi-ai", "pi-agent-core", "pi-coding-agent", "pi-schema", "pi-tui"];
 const PACKAGE_PATHS = [
   "",
   ...(await readdir(new URL(".pi/packages/", ROOT), { withFileTypes: true }))
@@ -20,8 +20,8 @@ const PACKAGE_PATHS = [
     .map((entry) => `.pi/packages/${entry.name}/`),
 ];
 
-test("every direct Pi SDK contract requires the exact harness target", async () => {
-  assert.equal(PI_SDK_TARGET, TARGET, "readiness target");
+test("every direct Pi SDK contract declares the harness patch range", async () => {
+  assert.equal(PI_SDK_RANGE, RANGE, "readiness range");
   for (const path of PACKAGE_PATHS) {
     const manifest: PackageManifest = JSON.parse(
       await readFile(new URL(`${path}package.json`, ROOT), "utf8"),
@@ -34,18 +34,18 @@ test("every direct Pi SDK contract requires the exact harness target", async () 
     ]) {
       for (const name of SDK_NAMES) {
         const version = section?.[`@earendil-works/${name}`];
-        if (version !== undefined) assert.equal(version, TARGET, `${path}${name}`);
+        if (version !== undefined) assert.equal(version, RANGE, `${path}${name}`);
       }
     }
     if (path === "") {
       for (const name of SDK_NAMES) {
-        assert.equal(manifest.devDependencies?.[`@earendil-works/${name}`], TARGET, name);
+        assert.equal(manifest.devDependencies?.[`@earendil-works/${name}`], RANGE, name);
       }
     }
   }
 });
 
-test("every frozen lock resolves only the target SDK release", async () => {
+test("every frozen lock resolves only supported SDK releases", async () => {
   for (const path of PACKAGE_PATHS) {
     const lockPath = new URL(`${path}pnpm-lock.yaml`, ROOT);
     const entries = await readdir(new URL(path || ".", ROOT));
@@ -71,13 +71,13 @@ test("every frozen lock resolves only the target SDK release", async () => {
     );
     if (declaresSdk) assert.ok(references.length > 0, `${path} must lock the SDK`);
     for (const reference of references) {
-      assert.equal(reference[1], TARGET, `${path}${reference[0]}`);
+      assert.ok(isSupportedPiVersion(reference[1] ?? ""), `${path}${reference[0]}`);
     }
     for (const declaration of lock.matchAll(
-      /'@earendil-works\/(?:pi-ai|pi-agent-core|pi-coding-agent|pi-tui)':\n\s+specifier: ([^\n]+)\n\s+version: ([^\s(]+)/g,
+      /'@earendil-works\/(?:pi-ai|pi-agent-core|pi-coding-agent|pi-schema|pi-tui)':\n\s+specifier: ([^\n]+)\n\s+version: ([^\s(]+)/g,
     )) {
-      assert.equal(declaration[1], TARGET, `${path} importer specifier`);
-      assert.equal(declaration[2], TARGET, `${path} importer resolution`);
+      assert.equal(declaration[1], RANGE, `${path} importer specifier`);
+      assert.ok(isSupportedPiVersion(declaration[2] ?? ""), `${path} importer resolution`);
     }
   }
 });

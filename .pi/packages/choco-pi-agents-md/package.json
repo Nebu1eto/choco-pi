@@ -16,9 +16,9 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": "1.5.1",
-    "@earendil-works/pi-coding-agent": "1.5.1",
-    "@earendil-works/pi-schema": "1.5.1"
+    "@earendil-works/pi-ai": "~1.5.2",
+    "@earendil-works/pi-coding-agent": "~1.5.2",
+    "@earendil-works/pi-schema": "~1.5.2"
   },
   "chocoPi": {
     "supersedes": [

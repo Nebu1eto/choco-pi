@@ -12,7 +12,12 @@ import {
   probeLauncherVersion,
   readImportedSdkVersion,
 } from "../../../extensions/lib/pi-runtime-identity.ts";
-import { PI_SDK_TARGET } from "../../../extensions/lib/pi-target.ts";
+import {
+  PI_SDK_MINIMUM,
+  PI_SDK_RANGE,
+  PI_SDK_REQUIREMENT,
+  isSupportedPiVersion,
+} from "../../../extensions/lib/pi-target.ts";
 
 import { execFile } from "node:child_process";
 import { access, readFile, realpath } from "node:fs/promises";
@@ -23,7 +28,7 @@ import { promisify } from "node:util";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 
 export type Capability = "tui" | "subagents" | "resources" | "lsp";
-export { PI_SDK_TARGET };
+export { PI_SDK_MINIMUM, PI_SDK_RANGE, PI_SDK_REQUIREMENT, isSupportedPiVersion };
 type CheckStatus = "pass" | "warn" | "fail";
 
 type Check = { id: string; status: CheckStatus; detail: string };
@@ -218,8 +223,8 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
   } else {
     add(
       primaryId,
-      primaryRuntime.version === PI_SDK_TARGET ? "pass" : "fail",
-      `Pi ${primaryRuntime.version}; required exactly ${PI_SDK_TARGET}${primaryRuntime.path ? `; ${primaryRuntime.path}` : ""}`,
+      isSupportedPiVersion(primaryRuntime.version) ? "pass" : "fail",
+      `Pi ${primaryRuntime.version}; required ${PI_SDK_REQUIREMENT}${primaryRuntime.path ? `; ${primaryRuntime.path}` : ""}`,
     );
   }
   if (primaryRuntime.source !== "imported-sdk") {
@@ -230,8 +235,8 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
     } else {
       add(
         "imported-sdk",
-        importedRuntime.version === PI_SDK_TARGET ? "pass" : "fail",
-        `Pi ${importedRuntime.version}; required exactly ${PI_SDK_TARGET}${importedRuntime.path ? `; ${importedRuntime.path}` : ""}`,
+        isSupportedPiVersion(importedRuntime.version) ? "pass" : "fail",
+        `Pi ${importedRuntime.version}; required ${PI_SDK_REQUIREMENT}${importedRuntime.path ? `; ${importedRuntime.path}` : ""}`,
       );
     }
   }

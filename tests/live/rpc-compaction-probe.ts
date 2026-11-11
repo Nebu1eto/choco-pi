@@ -56,6 +56,7 @@ import {
   CONTEXT_SOFT_CAP_TOKENS,
 } from "../../.pi/extensions/lib/agent-preferences.ts";
 import { isString } from "../../.pi/extensions/lib/runtime-values.ts";
+import { PI_SDK_REQUIREMENT, isSupportedPiVersion } from "../../.pi/extensions/lib/pi-target.ts";
 import {
   type LaneEvent,
   REASONS,
@@ -2148,7 +2149,7 @@ async function main(): Promise<void> {
   const { launcher, capture } = options;
   assert(launcher !== undefined && capture !== undefined, "launcher and capture required");
   const version = await runFile(launcher, ["--version"], { timeout: 5000, maxBuffer: 4096 });
-  assert.equal(version.stdout.trim(), "1.5.1", "Probe requires Pi 1.5.1");
+  assert.ok(isSupportedPiVersion(version.stdout.trim()), `Probe requires Pi ${PI_SDK_REQUIREMENT}`);
   const scratch = await mkdtemp(join(tmpdir(), "choco-pi-rpc-compaction-"));
   const evidence = await open(capture, "wx", 0o600);
   liveState = { launcher, capture, scratch, evidence };

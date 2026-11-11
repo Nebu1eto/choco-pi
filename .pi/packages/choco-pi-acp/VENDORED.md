@@ -410,3 +410,7 @@ No first-party file imports `typebox` any more. `dependencies.typebox` was remov
 ## 2026-11-10 choco-pi patch: Pi SDK target 1.5.1
 
 Pi SDK pins move from `1.5.0` to exactly `1.5.1`; version references in comments, tests, and docs follow. The package-local `minimumReleaseAgeExclude` entries move to `@1.5.1`.
+
+## 2026-11-11 choco-pi patch: Pi SDK range ~1.5.2
+
+Pi SDK release-age exclusions collapse from per-version `1.5.1` entries to the `"@earendil-works/pi-*"` name pattern, following the root `~1.5.2` SDK range, so new Pi releases install without waiting for the minimum release age. The lock was regenerated with pnpm 11.11.0 (`pnpm install --ignore-scripts`).

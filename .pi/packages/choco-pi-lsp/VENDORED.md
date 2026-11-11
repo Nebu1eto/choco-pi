@@ -311,3 +311,7 @@ Tests: `tests/pi-schema-clients-lsp-dispatch.test.ts`.
 ## 2026-11-10 choco-pi patch: Pi SDK target 1.5.1
 
 Pi SDK pins move from `1.5.0` to exactly `1.5.1`; version references in comments, tests, and docs follow. The package-local `minimumReleaseAgeExclude` entries move to `@1.5.1`. The lock was regenerated with pnpm 11.11.0 (`pnpm install --ignore-scripts`); Pi 1.5.1 replaces `grok-mermaid` with `lovely-mermaid` transitively.
+
+## 2026-11-11 choco-pi patch: Pi SDK range ~1.5.2
+
+Pi SDK dependencies move from exactly `1.5.1` to the range `~1.5.2` (`>=1.5.2 <1.6.0`), so later 1.5 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow. The package-local `minimumReleaseAgeExclude` per-version Pi SDK entries collapse to the `"@earendil-works/pi-*"` name pattern, so new Pi releases install without waiting for the minimum release age. The lock was regenerated with pnpm 11.11.0 (`pnpm install --ignore-scripts`).

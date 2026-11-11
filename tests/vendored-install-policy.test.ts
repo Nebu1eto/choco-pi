@@ -18,32 +18,18 @@ const COMMON_WORKSPACE = `packages:
   - .
 
 minimumReleaseAgeExclude:
-  - "@earendil-works/pi-agent-core@1.5.1"
-  - "@earendil-works/pi-ai@1.5.1"
-  - "@earendil-works/pi-codemode@1.5.1"
-  - "@earendil-works/pi-coding-agent@1.5.1"
-  - "@earendil-works/pi-mcp@1.5.1"
-  - "@earendil-works/pi-schema@1.5.1"
-  - "@earendil-works/pi-telemetry@1.5.1"
-  - "@earendil-works/pi-tui@1.5.1"
+  - "@earendil-works/pi-*"
   - typebox@1.3.29
 `;
 const SYNTHETIC_WORKSPACE = `packages:
   - .
 
 overrides:
-  "@earendil-works/pi-ai": 1.5.1
-  "@earendil-works/pi-tui": 1.5.1
+  "@earendil-works/pi-ai": "~1.5.2"
+  "@earendil-works/pi-tui": "~1.5.2"
 
 minimumReleaseAgeExclude:
-  - "@earendil-works/pi-agent-core@1.5.1"
-  - "@earendil-works/pi-ai@1.5.1"
-  - "@earendil-works/pi-codemode@1.5.1"
-  - "@earendil-works/pi-coding-agent@1.5.1"
-  - "@earendil-works/pi-mcp@1.5.1"
-  - "@earendil-works/pi-schema@1.5.1"
-  - "@earendil-works/pi-telemetry@1.5.1"
-  - "@earendil-works/pi-tui@1.5.1"
+  - "@earendil-works/pi-*"
   - typebox@1.3.29
 `;
 
@@ -83,11 +69,11 @@ test("each vendored install is an isolated one-package workspace", async () => {
   }
 });
 
-test("the synthetic frozen lock retains exact SDK overrides and TypeBox", async () => {
+test("the synthetic frozen lock retains the SDK range overrides and TypeBox", async () => {
   const lock = await readText(".pi/packages/choco-pi-provider-synthetic/pnpm-lock.yaml");
   assert.match(
     lock,
-    /overrides:\n  '@earendil-works\/pi-ai': 1\.5\.1\n  '@earendil-works\/pi-tui': 1\.5\.1/,
+    /overrides:\n  '@earendil-works\/pi-ai': ~1\.5\.2\n  '@earendil-works\/pi-tui': ~1\.5\.2/,
   );
   assert.match(lock, /typebox:\n        specifier: \^1\.3\.29\n        version: 1\.3\.29/);
 });

@@ -2247,3 +2247,7 @@ the first time it is registered and in scope, so late registrations (MCP) still
 activate and a deactivated tool stays off until its owner re-activates it.
 Withdrawal of out-of-scope tools and the `beforeToolCall` guard are unchanged.
 Test: `tests/subagent-config-tool-scope.test.ts`.
+
+## 2026-11-11 choco-pi patch: Pi SDK range ~1.5.2
+
+Pi SDK dependencies move from exactly `1.5.1` to the range `~1.5.2` (`>=1.5.2 <1.6.0`), so later 1.5 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow. The package-local `minimumReleaseAgeExclude` per-version Pi SDK entries collapse to the `"@earendil-works/pi-*"` name pattern, so new Pi releases install without waiting for the minimum release age. The lock was regenerated with pnpm 11.11.0 (`pnpm install --ignore-scripts`). The opt-in e2e-revival runner accepts any launcher in that range and defaults to `~/.local/pi-1.5.2`.

@@ -285,5 +285,5 @@ export function createAgentBrowserParamsSchema(describe: SchemaDescribe = compac
 
 export const AGENT_BROWSER_PARAMS = createAgentBrowserParamsSchema();
 
-/** Registration form: Pi 1.5.1 still requires a TypeBox-shaped parameter schema. */
+/** Registration form: Pi 1.5 still requires a TypeBox-shaped parameter schema. */
 export const AGENT_BROWSER_HOST_PARAMS = hostParams(AGENT_BROWSER_PARAMS);

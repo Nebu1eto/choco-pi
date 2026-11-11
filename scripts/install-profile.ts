@@ -35,11 +35,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { isJsonRecord, type JsonRecord } from "../.pi/extensions/lib/runtime-values.ts";
-import {
-  PROFILE_PI_TARGET,
-  resolvePiLauncher,
-  writeProfileMarker,
-} from "../.pi/extensions/lib/profile-marker.ts";
+import { resolvePiLauncher, writeProfileMarker } from "../.pi/extensions/lib/profile-marker.ts";
+import { PI_SDK_REQUIREMENT, isSupportedPiVersion } from "../.pi/extensions/lib/pi-target.ts";
 import { readAnthropicCompactionMode } from "../.pi/packages/choco-pi-compaction/src/anthropic/mode.ts";
 import {
   deriveBackgroundLanes,
@@ -699,9 +696,9 @@ export async function installProfile({
   const warnings: string[] = [];
   const migrations = [await migrateBackgroundCompactionSidecar(agentDir, warnings)];
   const removed = await removeRetiredProfileFiles(agentDir, warnings);
-  if (pi.launcher === null || pi.version !== PROFILE_PI_TARGET) {
+  if (pi.launcher === null || pi.version === null || !isSupportedPiVersion(pi.version)) {
     warnings.push(
-      `No compatible Pi ${PROFILE_PI_TARGET} launcher: ${pi.launcher ?? "none found"} (${pi.version ?? "unavailable"}). Set --pi-launcher or CHOCO_PI_LAUNCHER.`,
+      `No compatible Pi ${PI_SDK_REQUIREMENT} launcher: ${pi.launcher ?? "none found"} (${pi.version ?? "unavailable"}). Set --pi-launcher or CHOCO_PI_LAUNCHER.`,
     );
   }
   return {

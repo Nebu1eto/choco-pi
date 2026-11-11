@@ -1248,3 +1248,7 @@ Pi SDK pins move from `1.5.0` to exactly `1.5.1`; version references in comments
 `WEB_SEARCH_MODELS` and `HelperModel` in `src/adapter/activation/config.ts` add `gpt-6.1-terra`, `gpt-6.1-sol`, `gpt-6-sol`, and `gpt-6-luna` and drop `gpt-5.4-mini`; a saved `gpt-5.4-mini` normalizes to the default. The default `openai.webSearchModel` moves from `gpt-5.6-luna` to `gpt-6.1-terra`, which also changes `PI_CODEX_MODEL` for the exec bridge. `PREFERRED_TOOL_MODEL_IDS` (credential-model lookup) and the `view_image` description model are unchanged.
 
 Live check (2026-11-10): `executeOpenAICodexWebRun` with the bundled darwin-arm64 `web_run` binary and an `openai-codex` subscription credential returned results for all four new ids. A nonexistent id also returned results, so the search endpoint does not reject unknown models; the check proves the new ids do not break search, not that the endpoint uses the selected model.
+
+## 2026-11-11 choco-pi patch: Pi SDK range ~1.5.2
+
+Pi SDK dependencies move from exactly `1.5.1` to the range `~1.5.2` (`>=1.5.2 <1.6.0`), so later 1.5 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow. The package-local `minimumReleaseAgeExclude` per-version Pi SDK entries collapse to the `"@earendil-works/pi-*"` name pattern, so new Pi releases install without waiting for the minimum release age. The lock was regenerated with pnpm 11.11.0 (`pnpm install --ignore-scripts`).

@@ -262,3 +262,7 @@ Pi SDK pins move from `1.5.0` to exactly `1.5.1`; version references in comments
 ## 2026-11-10 choco-pi patch: GPT-6.1 Terra defaults
 
 The API-key fallback search model in `openai-search.ts` moves from `gpt-5.6-terra` to `gpt-6.1-terra`. The registry path is unchanged: `pickSearchModel` already chooses the newest `terra` id the provider lists. The summary and query-rewrite defaults in `summary-review.ts` and `index.ts` replace both `gpt-5.6-terra` entries (`openai`, then `openai-codex`) with `gpt-6.1-terra` in the same positions; `tests/summary-model-scope.test.ts` follows. OpenAI's GPT-6.1 Terra model page lists web search as a supported Responses tool.
+
+## 2026-11-11 choco-pi patch: Pi SDK range ~1.5.2
+
+Pi SDK dependencies move from exactly `1.5.1` to the range `~1.5.2` (`>=1.5.2 <1.6.0`), so later 1.5 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow. The package-local `minimumReleaseAgeExclude` per-version Pi SDK entries collapse to the `"@earendil-works/pi-*"` name pattern, so new Pi releases install without waiting for the minimum release age. The lock was regenerated with pnpm 11.11.0 (`pnpm install --ignore-scripts`).

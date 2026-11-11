@@ -32,3 +32,7 @@ stop latch, or after `CHOCO_PI_PRINT_BACKGROUND_WAIT_MS` (default 600000; 0
 disables). `src/print-settle-wait.ts` is an identical copy of the
 choco-pi-subagents helper. Tests: `tests/print-settle-wait.test.ts`, and the
 print-mode case in `tests/index.test.ts`.
+
+## 2026-11-11 choco-pi patch: Pi SDK range ~1.5.2
+
+Pi SDK dependencies move from exactly `1.5.1` to the range `~1.5.2` (`>=1.5.2 <1.6.0`), so later 1.5 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow.
