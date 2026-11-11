@@ -1,0 +1,75 @@
+{
+  "schema": 1,
+  "name": "goal-reducer",
+  "kind": "property",
+  "artifact": "tests/prop-goal-reducer.test.ts",
+  "command": "env -u PI_ROOT_SESSION_ID -u PI_SCRATCH_DIR -u PI_SESSION_ID -u PI_CODING_AGENT -u PI_MANAGED_INSTALL_ROOT node --test tests/prop-goal-reducer.test.ts",
+  "covers": [
+    {
+      "file": ".pi/packages/choco-pi-goal/src/stale-queued-work-reducer.ts",
+      "symbol": "reduceStaleQueuedWork",
+      "hash": "sha256:a22d8fc8b69e37c06433b232c3fc9bea1c0df104c8f09ee6aae0e36078b26603"
+    },
+    {
+      "file": ".pi/packages/choco-pi-goal/src/stale-queued-work-reducer-defaults.ts",
+      "symbol": "IDLE_EVENT_DEFAULTS",
+      "hash": "sha256:2631d11c2d9fe93343fdcd91744c2bc95607fc5606811f2c4d5099f7f3cc4ca6"
+    },
+    {
+      "file": ".pi/packages/choco-pi-goal/src/stale-queued-work-reducer-defaults.ts",
+      "symbol": "OBSERVING_TURN_EVENT_DEFAULTS",
+      "hash": "sha256:12208e6dfc9d844f4fcf82a144c4fc3d1389c866cd9d5b78dfe78f361749a7f5"
+    },
+    {
+      "file": ".pi/packages/choco-pi-goal/src/stale-queued-work-reducer-defaults.ts",
+      "symbol": "ABORTING_TURN_EVENT_DEFAULTS",
+      "hash": "sha256:0de8b695fa9d1245035249cc4efaea68176636637215c5813902717421b4a7d5"
+    },
+    {
+      "file": ".pi/packages/choco-pi-goal/src/stale-queued-work-reducer-defaults.ts",
+      "symbol": "AWAITING_TERMINAL_CLEANUP_EVENT_DEFAULTS",
+      "hash": "sha256:0f69b8b49b3c9e182d7b467dbe3376bb71648bd916539c4cc48899aeed5bbf51"
+    },
+    {
+      "file": ".pi/packages/choco-pi-goal/src/stale-queued-work-obligations.ts",
+      "symbol": "consumePendingStaleAgentEnd",
+      "hash": "sha256:a959d2b8f15af9633a8fc5d32e6f52679078fca57f73ef14041bbf709cc8c65d"
+    },
+    {
+      "file": ".pi/packages/choco-pi-goal/src/stale-queued-work-obligations.ts",
+      "symbol": "consumeAbortingAgentEnd",
+      "hash": "sha256:ea66d57192d7f91eb505f0e791f2665fe82b5a1f412014107f49fc1dd1e123e7"
+    },
+    {
+      "file": ".pi/packages/choco-pi-goal/src/stale-queued-work-terminal-cleanup.ts",
+      "symbol": "resolveLifecycleAfterTerminalCleanup",
+      "hash": "sha256:117ac5c427614943d7646e7835449c3817ea589c345d23864d1aa63eab23ff81"
+    },
+    {
+      "file": ".pi/packages/choco-pi-goal/src/stale-queued-work-terminal-cleanup.ts",
+      "symbol": "awaitingFromCleanup",
+      "hash": "sha256:2277a2c88e72ea5ca8ad0f7c133808326f056603bd6b7c5cc4558b5ac2ef680d"
+    },
+    {
+      "file": ".pi/packages/choco-pi-goal/src/stale-queued-work-terminal-cleanup.ts",
+      "symbol": "consumePendingStaleTurnEnd",
+      "hash": "sha256:b7f73bb077ecf1aed95d4c2575dbd79e56eb3a14ab0f81e413819e8eef410420"
+    }
+  ],
+  "assumes": [
+    {
+      "note": "agent_end messages are classified by queuedGoalWorkMessageId; the test builds queued-goal messages as custom pi-codex-goal entries with continuation details.",
+      "file": ".pi/packages/choco-pi-goal/src/queued-goal-work.ts"
+    },
+    {
+      "note": "The runtime guard stores result.state after every dispatch and starts from createInitialStaleQueuedWorkState.",
+      "file": ".pi/packages/choco-pi-goal/src/stale-queued-work-guard.ts"
+    },
+    {
+      "note": "Event generator covers goal ids g1/g2 and turn indexes null/0/1; the continuation scheduler is not covered."
+    }
+  ],
+  "checkedAt": {
+    "commit": "1a0fd076f0472482058d13cc5550acdea66f9a57"
+  }
+}

@@ -1,0 +1,273 @@
+{
+  "schema": 1,
+  "name": "subagent-run",
+  "kind": "tla",
+  "artifact": "formal/tla/subagent-run/SubagentRun.tla",
+  "command": "node .pi/skills/formal-verify/scripts/check-all.ts --only subagent-run --tools-dir formal/.tools",
+  "covers": [
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.transition",
+      "hash": "sha256:41ea3d56170b6626765c100cde68de1004d1fbe9b90b538cf3fe31e01cdef52b"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.publishTerminal",
+      "hash": "sha256:134a8fa744d4757776895a29b236bd22795a04e524d5b03fab6066c93853f85b"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.markTerminalConsumed",
+      "hash": "sha256:35554fdec78879c68ba760dc6e20c628f723c4ca07ea1fd68eecccb30bcbde97"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.evaluateUsageLimit",
+      "hash": "sha256:7c948dc909bbb318967db3610a0dafbf19e4ba316e9513e5f535a53194bf653e"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.usageEvaluationEligible",
+      "hash": "sha256:e4cf689181fb5f399daa5a0d7a13c6fb11d6ffdaf3e0fcff1a40464eec00eaea"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.evaluateRunUsageLimit",
+      "hash": "sha256:0268ef62169692b9469982d1a78a89b2e1e108086cc46bf9aad225c4732c7c29"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.currentUsageDecision",
+      "hash": "sha256:72b23834f46c458d3b65131ea4ed600e80d3cf8bf6ed8c596928302e0cf2fc50"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.parkForReset",
+      "hash": "sha256:5f86bd0a60844a11072209d35083f01cdbb2858f4454c1ca1b34d154d8d2afec"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.isCurrentWait",
+      "hash": "sha256:339897f4e8fd14dd0f7cd3b996b8858b19c110473bed39c6fd2844715470d0ef"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.armUsageWake",
+      "hash": "sha256:5f0caed328d906f625a3a2c2da28fb9b84bd3339787fbe6b5387d6ac04c1fff1"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.armWakeTimer",
+      "hash": "sha256:0a0a31fee7f2a220023b68c4f29ba2a656da406b074ba061eea2d6ce4b2c2667"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.wakeUsageLimited",
+      "hash": "sha256:fe84afb9fbb9995e8f7a93afdd5650b7e171d1c12f31699b4503a6c4cd70e0df"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.resumeAfterReset",
+      "hash": "sha256:0b4f6334e686ecf924312c4c778f19362fe87dda3ea520dff6425698c054c96a"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.settleDroppedWake",
+      "hash": "sha256:15b3cec179bdb832288d4bb318e8f28147d2b5c4901a47507e94214c26c306df"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.takeDeferredWorktree",
+      "hash": "sha256:f56540318d2bee1bf456ef160fc23f7a873ca775beae1c892704626180e20311"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.finishDeferredWorktree",
+      "hash": "sha256:0a0446d56a7216c4aacffbb6f20b15c350129f21da646f492fb0f723bc15a411"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.finishDeferredWorktreeThen",
+      "hash": "sha256:397d94f5c462d016a01fd9a138fa5a3421eb2a8f419071edfdd874c420742ade"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.cleanupRecordWorktree",
+      "hash": "sha256:b321559f438964d9043c1d60561608fd0973fa346b56b906204652d1e97f3243"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.worktreeDispositionFor",
+      "hash": "sha256:c096287d6043de51374d927a846d8573ab97681a4a7641190c15fbbd2f9d28ae"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.settleParked",
+      "hash": "sha256:8dae83e36a356f9daecce74b2fdeb5ada8f89ea7e855a63e82c97e1799494f8d"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.stopQueuedRecord",
+      "hash": "sha256:e0ddbb16d471680bebb617c50ba56ee873ba5f3f10dfc333ee860b13ba523f87"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.publishStoppedQueued",
+      "hash": "sha256:e9553f940f12c4789e1a420df960a8555aa9a03d74abda61be5a517b19298f02"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.resumeBlockedByRun",
+      "hash": "sha256:991daa291a2b107db1266f9beab5d49b26aa0b63bbae038cab648fd9a3249d92"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.queueBackgroundResume",
+      "hash": "sha256:cc0cadd9a30b10f07840b3c0bfc6da7347830dc798bc79f69442b7c56f616766"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.requestCancellation",
+      "hash": "sha256:265e1952e7e840ea10ae3c726dc01a1298ed58119f1a6d1b803915c6d93a11d0"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.recordsVerdict",
+      "hash": "sha256:413ac3df8f3ae795e7ad4015b5ea7e343f527d1299a9e1345382c0587534df9f"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.recordRunVerdict",
+      "hash": "sha256:f1cb65da45b11591f94fce8ead9a4a7bd2107f0d9dd2887767da187b5492b5c0"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.spawn",
+      "hash": "sha256:80dcce323ae2a396411c50353875f935b62c79290d5ac4b1d0c7447818772ea8"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.spawnWith",
+      "hash": "sha256:f8c0c52335ab0c593a45c36df8ce645faee09f5a004030a9933e7cdb22448773"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.startAgent",
+      "hash": "sha256:ff5d0d59a74e2bc7585838c06848312e0f0f238f8ae48f1a8e91f3cbc376df4f"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.drainQueue",
+      "hash": "sha256:162e5701072c5155a213c788e4471d3c2ce0cab9bf2bb5fa2f7b7d011616bf1c"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.spawnAndWait",
+      "hash": "sha256:6f2eab3655db6679061e908a58c098f9a937861f3a0c6bd3c13f9f8a0a24dd9e"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.resume",
+      "hash": "sha256:6e0d74d415b141c1334c2f92a2977e364488bfc6116e19e112261257384d52ec"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.startResume",
+      "hash": "sha256:0db584bd7c8db9a4de8d37c6af4eedfb19f914fd627504835e3eacb4ebf50079"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.abort",
+      "hash": "sha256:fc8cc24a1a346ace4cf76b19d36d129cb47d636d50dc4dbc540cec23f404e7fe"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.stopRecord",
+      "hash": "sha256:287c40d08b9ddcb16925cb7e21223abb080c0015863f9c9cbf5cb00b2d198a24"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "AgentManager.ownsPreparedRun",
+      "hash": "sha256:4636a51a6d39305aed7aa35a9c559b81985cb832fc0e005c9bee4aa27d9b08d6"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "ownsUnsettledGeneration",
+      "hash": "sha256:30862db17cfb0e95a0d61fd0c42b5883d739fb5bbfb6efa16632fcf947d52abf"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "occupiesPoolSlot",
+      "hash": "sha256:6264388171fe897d8b769e7fbde3adaf752f4a31009e69fe04c38299a2704c55"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "canParkForReset",
+      "hash": "sha256:e65fe47338518469327264632a97ef302339690988e66053c567bbffc6ce7edd"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
+      "symbol": "cancellationForGeneration",
+      "hash": "sha256:ec2b0a0e974e93f5fe455989627e430712911e3d10789361880ae0b4ff90f10e"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/result-read.ts",
+      "symbol": "beginResultGeneration",
+      "hash": "sha256:708758ceffe4fb7a17f7a801efea4165442779878426beb0e3d94296c628b139"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/result-read.ts",
+      "symbol": "publishTerminalResult",
+      "hash": "sha256:c7737f58bd0681e8c3ce79a3f001a397604939455c2f84c96871d05bad2dea7e"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/result-read.ts",
+      "symbol": "markResultGenerationConsumed",
+      "hash": "sha256:896ffad35c626b852b036544f5d5c7877e69a914c7bf60326c1a19842141e87c"
+    },
+    {
+      "file": ".pi/packages/choco-pi-subagents/src/result-read.ts",
+      "symbol": "claimSubagentResultRead",
+      "hash": "sha256:f519846f65d00d0dcbab6ea57cbec5e2c9aa3d58f20118fdc08a715299a2aa78"
+    }
+  ],
+  "assumes": [
+    {
+      "note": "Every await is an interleaving point at which any other modelled action may run. This over-approximates JavaScript scheduling (a user stop arrives as a macrotask and can only land between microtasks when it is itself issued from a microtask chain), so the model may show interleavings the event loop makes rare, never fewer."
+    },
+    {
+      "note": "The runner promise (runAgent/resumeAgent) settles exactly once, with any of: success or a non-limit failure, a usage-limit failure, or a rejection (on the spawn path also an aborted run). Whether an aborted run settles promptly is not modelled.",
+      "file": ".pi/packages/choco-pi-subagents/src/agent-runner.ts"
+    },
+    {
+      "note": "The owner's usage-limit policy is installed for the whole run; its preference/corroboration answers are free choices. The policy-missing branches of wakeUsageLimited and the poll-deadline arithmetic of armUsageWake are abstracted to a nondeterministic give-up.",
+      "file": ".pi/packages/choco-pi-subagents/src/usage-limit-seam.ts"
+    },
+    {
+      "note": "git worktree cleanup always completes, so every finishDeferredWorktreeThen callback eventually runs; its duration is unbounded."
+    },
+    {
+      "note": "The /stop latch is always open: requireAdmissionOpen, isAdmissionOpen and refuseClosedStart are not modelled (the stop-control model is a separate target).",
+      "file": ".pi/extensions/lib/stop-control.ts"
+    },
+    {
+      "note": "Not modelled: suspend/dispose/revival/journal, run budgets (forcedStatus), parent abort signals, nested children (abortOwnedChildren, depth), workflow and /btw records (canParkForReset is always true), steering, drainQueue's provider-block/repark/start-throws branches, and cancelUsageLimitWaits."
+    },
+    {
+      "note": "onComplete may throw (EnvCallbackMayThrow = TRUE); every call site contains it in the current code."
+    },
+    {
+      "note": "Resumes and result reads may happen at any point, including while a stopped post-reset continuation's worktree cleanup is pending (the earlier EnvActDuringDroppedCleanup = FALSE exclusion was removed with the dropped-wake fix). Only the stopRecord path of that fix is modelled; cancelUsageLimitWaits, refuseClosedStart, drainQueue's start-throws branch and startRevivedContinuation's start failure follow the same rule and are covered by package tests."
+    },
+    {
+      "note": "recordRunVerdict is modelled only as the await it puts on a settle path, and only for runs in VerdictRole (recordsVerdict: a verdict task and a verdict role); other runs settle without it. Its record fields and result-line append are not modelled.",
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts"
+    },
+    {
+      "note": "Bounds: two agents, one pool slot, generation 3 (2 for resume-ignores-publication). Agent a1 exercises every caller action, spawns with a worktree and is a verdict-role run; a2 only spawns and resumes in the background, has no verdict await, and is never read. VerdictRole = {}, {a2} and {a1, a2} were checked once and pass."
+    }
+  ],
+  "checkedAt": {
+    "commit": "9816e0de3ce92f467cadc4f4f08e52056863b741"
+  }
+}

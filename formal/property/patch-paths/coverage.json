@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "name": "patch-paths",
+  "kind": "property",
+  "artifact": "tests/prop-patch-paths.test.ts",
+  "command": "env -u PI_ROOT_SESSION_ID -u PI_SCRATCH_DIR -u PI_SESSION_ID -u PI_CODING_AGENT -u PI_MANAGED_INSTALL_ROOT node --test tests/prop-patch-paths.test.ts",
+  "covers": [
+    {
+      "file": ".pi/packages/choco-pi-codex/src/patch/paths.ts",
+      "symbol": "normalizePatchPath",
+      "hash": "sha256:2e982efc23860b9a3033f8dfa4d97463d4b15b58b8281b18f0b68b1f417fd733"
+    },
+    {
+      "file": ".pi/packages/choco-pi-codex/src/patch/paths.ts",
+      "symbol": "resolvePatchPath",
+      "hash": "sha256:019a6b340e8d2b10a8b0fdda8bf8968bec3f0f1f66a6537978905f71b4e832a1"
+    },
+    {
+      "file": ".pi/packages/choco-pi-codex/src/patch/parser.ts",
+      "symbol": "parsePatchActions",
+      "hash": "sha256:b0bbcf1877a88c3ed3d7cfcad2ead756009e40be984b71eb0382d7ccb87b5bd5"
+    },
+    {
+      "file": ".pi/packages/choco-pi-codex/src/tools/apply-patch/execute.ts",
+      "symbol": "touchedPatchPaths",
+      "hash": "sha256:0cfa78382ab0572671ef3ddbc228bb1a2670135bafa933df067c5243f376dd46"
+    },
+    {
+      "file": ".pi/packages/choco-pi-codex/src/tools/apply-patch/executor.ts",
+      "symbol": "executePatchWithRust",
+      "hash": "sha256:9468c5bae13e7da838aed379562d8bcbe189652f35f1d838e4a670f099f96041"
+    },
+    {
+      "file": ".pi/packages/choco-pi-codex/src/tools/apply-patch/context-preflight.ts",
+      "symbol": "enrichApplyPatchContextFailure",
+      "hash": "sha256:249574ab02a70cd5f9d0bfdc44e7c2dffe01bc0edc7e5b157b248d801d4a347e"
+    },
+    {
+      "file": ".pi/packages/choco-pi-codex/src/tools/apply-patch/context-preflight.ts",
+      "symbol": "diagnoseAction",
+      "hash": "sha256:36ba85ceef846edadc19094f84f50e712a2cae96b4bdc8ae967ca474d6952ab1"
+    }
+  ],
+  "assumes": [
+    {
+      "note": "The bundled apply_patch binary is the reference for header paths; the differential properties run it only where a binary is bundled for the platform (darwin-arm64) and skip visibly elsewhere.",
+      "file": ".pi/packages/choco-pi-codex/src/tools/apply-patch/bin/darwin-arm64/apply_patch"
+    },
+    {
+      "note": "Header lines indented before the marker are accepted by the binary but rejected by the TypeScript parser, so they get no lock, preflight, or rendering; that divergence is not covered."
+    },
+    {
+      "note": "Generated relative paths never start with '/' and contain no '.' or '..' segment on their own; the lock-key property uses a fixed absolute POSIX cwd."
+    }
+  ],
+  "checkedAt": {
+    "commit": "1a0fd076f0472482058d13cc5550acdea66f9a57"
+  }
+}

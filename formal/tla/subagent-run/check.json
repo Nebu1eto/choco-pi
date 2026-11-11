@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "name": "subagent-run",
+  "spec": "SubagentRun.tla",
+  "config": "SubagentRun.cfg",
+  "expect": "pass",
+  "bounds": { "maxStates": 2000000, "timeoutMs": 180000 },
+  "mutations": [
+    {
+      "name": "no-caller-recheck",
+      "spec": "SubagentRun.tla",
+      "config": "mutations/no-caller-recheck.cfg",
+      "expectViolated": ["StopSticks"]
+    },
+    {
+      "name": "park-keeps-slot",
+      "spec": "SubagentRun.tla",
+      "config": "mutations/park-keeps-slot.cfg",
+      "expectViolated": ["PoolExact"]
+    },
+    {
+      "name": "no-rearm",
+      "spec": "SubagentRun.tla",
+      "config": "mutations/no-rearm.cfg",
+      "expectViolated": ["ParkedHasWake"]
+    },
+    {
+      "name": "stop-queued-no-publish",
+      "spec": "SubagentRun.tla",
+      "config": "mutations/stop-queued-no-publish.cfg",
+      "expectViolated": ["SettledIsPublished"]
+    },
+    {
+      "name": "verdict-line-after-publish",
+      "spec": "SubagentRun.tla",
+      "config": "mutations/verdict-line-after-publish.cfg",
+      "expectViolated": ["StaleInert", "ReadSeesFinal"]
+    },
+    {
+      "name": "dropped-wake-republishes",
+      "spec": "SubagentRun.tla",
+      "config": "mutations/dropped-wake-republishes.cfg",
+      "expectViolated": ["PublishOnce", "StaleInert", "ReadSeesFinal"]
+    },
+    {
+      "name": "catch-callback-uncontained",
+      "spec": "SubagentRun.tla",
+      "config": "mutations/catch-callback-uncontained.cfg",
+      "expectViolated": ["QueueProgress"]
+    },
+    {
+      "name": "parked-publish-before-cleanup",
+      "spec": "SubagentRun.tla",
+      "config": "mutations/parked-publish-before-cleanup.cfg",
+      "expectViolated": ["StaleInert", "ReadSeesFinal"]
+    },
+    {
+      "name": "resume-ignores-publication",
+      "spec": "SubagentRun.tla",
+      "config": "mutations/resume-ignores-publication.cfg",
+      "expectViolated": ["PublishOnce", "StaleInert", "ReadSeesFinal"]
+    },
+    {
+      "name": "dropped-wake-publishes-early",
+      "spec": "SubagentRun.tla",
+      "config": "mutations/dropped-wake-publishes-early.cfg",
+      "expectViolated": ["StaleInert", "ReadSeesFinal"]
+    }
+  ]
+}
