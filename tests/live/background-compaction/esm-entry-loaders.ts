@@ -42,6 +42,7 @@ const NATIVE_ENTRIES: ReadonlySet<string> = new Set<string>([
   ".pi/extensions/command-filter.ts",
   ".pi/extensions/context-status.ts",
   ".pi/extensions/diagram-policy.ts",
+  ".pi/extensions/diff/index.ts",
   ".pi/extensions/exec-session-guidance.ts",
   ".pi/extensions/file-checkpoints.ts",
   ".pi/extensions/harness-check.ts",
