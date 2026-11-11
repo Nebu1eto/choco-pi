@@ -407,7 +407,7 @@ test("a redraw that throws while the notes file loads is reported, and the notes
     h.notices.some((notice) => /Cannot redraw the diff pane: render broke/u.test(notice)),
     "the failure is told",
   );
-  h.view().handleKey("C");
+  h.view().handleKey("a");
   await noRejections("send notes");
   assert.match(h.editor.text, /check this/u, "the loaded note is sent");
 });
@@ -426,7 +426,23 @@ test("a key action that fails shows the failure in the pane and the key works ag
   await noRejections("cycle source again");
   assert.match(h.view().message?.text ?? "", /Diff source:/u);
 
-  h.view().handleKey("C");
+  // With a note in the pane, a asks about the notes.
+  h.view().notes?.add({
+    path: "a.ts",
+    hunk: {
+      id: "h-a",
+      header: "@@ -1 +1 @@",
+      oldStart: 1,
+      oldLines: 1,
+      newStart: 1,
+      newLines: 1,
+      lines: [],
+    },
+    range: "line 1",
+    text: "check this",
+    now: 1,
+  });
+  h.view().handleKey("a");
   h.tui.renderError = new Error("render broke");
   await noRejections("send notes");
   h.tui.renderError = undefined;
@@ -434,9 +450,10 @@ test("a key action that fails shows the failure in the pane and the key works ag
     h.notices.some((notice) => /Cannot put the notes in the editor: render broke/u.test(notice)),
     "a pane that cannot draw falls back to a notice",
   );
-  h.view().handleKey("C");
-  await noRejections("send notes again");
-  assert.match(h.view().message?.text ?? "", /No notes yet/u);
+  assert.match(h.editor.text, /check this/u, "the notes reached the editor before the redraw");
+  h.view().handleKey("a");
+  await noRejections("ask again");
+  assert.match(h.view().message?.text ?? "", /No file selected/u, "no notes are left to ask about");
 });
 
 /* ------------------------------------------------------ the shared view */

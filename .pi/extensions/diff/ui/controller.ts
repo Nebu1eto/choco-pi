@@ -784,7 +784,10 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
       text,
       now: deps.clock.now(),
     });
-    say(session, `Note added on ${file.path} ${hunkRangeText(hunk)}.`);
+    say(
+      session,
+      `Note added on ${file.path} ${hunkRangeText(hunk)}. Press a to put the notes in the editor.`,
+    );
   }
 
   /**
@@ -819,21 +822,30 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
     return loaded;
   }
 
-  /** All notes as one message in the editor, with each note's current or last known range. */
+  /**
+   * All notes as one message in the editor, with each note's current or last
+   * known range (the pane's `a` while there are notes, and `/diff notes
+   * send`). The notes are then cleared: they are in the editor, and `a` asks
+   * about the cursor's target again.
+   */
   async function sendNotes(session: Session): Promise<void> {
     const book = notesFor(session);
     await book.load();
     if (!session.alive) return;
-    const notes = book.notes;
-    if (notes.length === 0) {
+    const read = book.notes;
+    if (read.length === 0) {
       say(session, "No notes yet: select a hunk (n/N) and press c.", "warning");
       return;
     }
     const store = ensureStore(session);
-    const loaded = await noteHunks(session, store, notes);
+    const loaded = await noteHunks(session, store, read);
     if (!loaded) return;
     // No await below: the snapshot read here is the one the text is sent against, and a
     // body is used only when it is of that snapshot. Anything else leaves the note outdated.
+    // A note another send took while this one waited is not sent twice.
+    const held = new Set(book.notes.map((note) => note.id));
+    const notes = read.filter((note) => held.has(note.id));
+    if (notes.length === 0) return;
     const state = store.getState();
     const revision = state.kind === "ready" ? state.snapshot.revision : undefined;
     const files = new Map(
@@ -856,9 +868,10 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
       };
     });
     insertIntoEditor(session, notesMessage(entries));
+    book.remove(notes);
     say(
       session,
-      `${entries.length === 1 ? "1 note" : `${entries.length} notes`} put in the editor; nothing was sent.`,
+      `${plural(entries.length, "note")} put in the editor and cleared from the pane; nothing was sent.`,
     );
   }
 

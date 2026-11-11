@@ -31,7 +31,6 @@ export type ChangesAction =
   /** Copy the cursor's lines, or its hunk, to the clipboard ({@link COPY_KEY}). */
   | "copy"
   | "note"
-  | "sendNotes"
   | "cycleSource"
   /** One turn's changes alone: the turn before or after the one shown (the pane's ←/→). */
   | "olderTurn"
@@ -87,7 +86,6 @@ export const PANE_KEYS = {
   ask: ["a"],
   copy: [{ key: COPY_KEY.key }],
   note: ["c"],
-  sendNotes: ["C"],
   cycleSource: ["s"],
   olderTurn: [{ key: "left" }],
   newerTurn: [{ key: "right" }],
@@ -120,7 +118,6 @@ export const CHANGES_ACTIONS: readonly ChangesAction[] = [
   "ask",
   "copy",
   "note",
-  "sendNotes",
   "cycleSource",
   "olderTurn",
   "newerTurn",

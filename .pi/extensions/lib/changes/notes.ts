@@ -128,6 +128,15 @@ export class NotesBook {
     return count;
   }
 
+  /** Remove `notes` and leave every other note, such as one added since they were read. */
+  remove(notes: readonly DiffNote[]): void {
+    const gone = new Set(notes.map((note) => note.id));
+    const kept = this.notes.filter((note) => !gone.has(note.id));
+    if (kept.length === this.notes.length) return;
+    this.notes = kept;
+    this.changed(true);
+  }
+
   /** Resolves when every write started so far has finished. */
   flush(): Promise<void> {
     return this.chain;

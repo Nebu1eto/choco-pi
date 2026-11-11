@@ -240,7 +240,7 @@ function memoryIo(): PrefsIo & { files: Map<string, string> } {
   };
 }
 
-test("notes follow their hunk across a refresh, go outdated when it disappears, compose, and clear", async () => {
+test("notes follow their hunk across a refresh; a asks about them all at once and they are cleared", async () => {
   const io = memoryIo();
   const h = harness({ notesIo: io, editorText: "Before:" });
   await openFocused(h);
@@ -266,27 +266,97 @@ test("notes follow their hunk across a refresh, go outdated when it disappears, 
   await flush();
   assert.match(h.body(), /✎ check the bounds/);
   assert.doesNotMatch(h.body(), /outdated/);
-  h.tui.input("C");
+  assert.equal(h.tui.paneFocused(), true);
+  h.tui.input("a");
   await flush();
   assert.ok(h.editor.text.startsWith("Before:\n"), "the editor's text is kept");
   assert.match(h.editor.text, /@src\/a\.ts lines 10-11\b.*check the bounds/u);
   assert.doesNotMatch(h.editor.text, /outdated/u);
+  assert.doesNotMatch(h.editor.text, /```diff/u, "the notes, not the cursor's hunk");
   assert.equal(h.tui.paneFocused(), false, "focus returned; nothing sent");
+  assert.match(h.header(), /1 note put in the editor and cleared from the pane/);
+  assert.equal(h.probe.session()?.notes?.notes.length, 0, "asked about: the pane keeps none");
+  assert.doesNotMatch(h.body(), /✎/);
+  await h.probe.session()?.notes?.flush();
+  assert.match(io.files.get("/scratch/diff-notes/session.json") ?? "", /"notes":\[\]/);
+
+  // With no notes left, a asks about the cursor's hunk again.
+  h.editor.text = "";
+  await h.run("focus");
+  h.tui.input("a");
+  assert.match(h.editor.text, /^@src\/a\.ts lines 10-11\n```diff\n/u);
 
   // The hunk's content changed: its id is gone, so the note is outdated.
+  await h.run("focus");
+  h.tui.input("c");
+  h.tui.type("check the bounds");
+  h.tui.input("\r");
+  assert.match(
+    h.header(),
+    /Note added on src\/a\.ts lines 10-11\. Press a to put the notes in the editor/,
+  );
   h.store().bodies.set("src/a.ts", textBody("src/a.ts", [hunk("h-other", 10, ["+rewritten"])]));
   h.store().ready(3, [file("src/a.ts"), file("src/b.ts")]);
   await flush();
-  assert.match(h.body(), /✎ \(outdated, was lines 3-4\) check the bounds/);
+  assert.match(h.body(), /✎ \(outdated, was lines 10-11\) check the bounds/);
   h.editor.text = "";
   await h.run("notes send");
-  assert.match(h.editor.text, /@src\/a\.ts lines 3-4 \(outdated\b[^)]*\).*check the bounds/u);
+  assert.match(h.editor.text, /@src\/a\.ts lines 10-11 \(outdated\b[^)]*\).*check the bounds/u);
+  assert.equal(h.probe.session()?.notes?.notes.length, 0, "the command clears them too");
 
+  await h.run("focus");
+  h.tui.input("n");
+  await flush();
+  h.tui.input("c");
+  h.tui.type("dropped");
+  h.tui.input("\r");
+  assert.equal(h.probe.session()?.notes?.notes.length, 1);
   await h.run("notes clear");
   assert.equal(h.probe.session()?.notes?.notes.length, 0);
-  assert.doesNotMatch(h.body(), /check the bounds/);
+  assert.doesNotMatch(h.body(), /dropped/);
   await h.probe.session()?.notes?.flush();
   assert.match(io.files.get("/scratch/diff-notes/session.json") ?? "", /"notes":\[\]/);
+});
+
+test("several notes go as one message; C is no key; a note on a file that left the list is still asked about", async () => {
+  const h = harness({ editorText: "" });
+  await openFocused(h);
+  h.store().bodies.set("src/a.ts", textBody("src/a.ts", [hunk("h-a", 3, ["+one"])]));
+  h.store().bodies.set("src/b.ts", textBody("src/b.ts", [hunk("h-b", 7, ["+two"])]));
+  h.store().ready(1, [file("src/a.ts"), file("src/b.ts")]);
+  for (const text of ["first note", "second note"]) {
+    h.tui.input("n");
+    await flush();
+    h.tui.input("c");
+    h.tui.type(text);
+    h.tui.input("\r");
+  }
+  assert.match(h.header(), /2 notes/);
+  h.tui.input("C");
+  await flush();
+  assert.equal(h.editor.text, "", "C does nothing any more");
+  assert.equal(h.probe.session()?.notes?.notes.length, 2);
+
+  // Both files leave the list: nothing is selected, and a still has the notes to ask about.
+  h.store().ready(2, []);
+  await flush();
+  h.tui.input("a");
+  h.tui.input("a");
+  await flush();
+  assert.equal(
+    h.editor.text,
+    [
+      "Notes on the current diff:",
+      "- @src/a.ts line 3 (outdated: that hunk has changed since the note): first note",
+      "- @src/b.ts line 7 (outdated: that hunk has changed since the note): second note",
+      "",
+    ].join("\n"),
+    "one message, once, although a was pressed twice",
+  );
+  assert.equal(h.probe.session()?.notes?.notes.length, 0);
+  await h.run("focus");
+  h.tui.input("a");
+  assert.match(h.header(), /No file selected/);
 });
 
 test("c without a selected hunk explains how; Esc cancels a note", async () => {

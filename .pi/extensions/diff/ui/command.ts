@@ -35,7 +35,10 @@ export const DIFF_SUBCOMMANDS = [
   { value: "source branch", description: "Compare the merge base with a branch" },
   { value: "auto on", description: "Open the pane by itself when the agent changes code" },
   { value: "auto off", description: "Never open the pane by itself" },
-  { value: "notes send", description: "Put all notes into the editor as one message" },
+  {
+    value: "notes send",
+    description: "Put all notes into the editor as one message and clear them",
+  },
   { value: "notes clear", description: "Remove all notes" },
   { value: "review", description: "Put an agent review instruction into the editor" },
 ] as const;

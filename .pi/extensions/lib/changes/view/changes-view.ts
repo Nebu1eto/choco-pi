@@ -98,6 +98,7 @@ export type PaneActions = {
   /** Copy what the cursor is on to the clipboard. */
   copy?(target: AskTarget): void;
   addNote?(file: FileSummary, hunk: DiffHunk, text: string): void;
+  /** Ask about every note at once; the ask key runs this while there are notes. */
   sendNotes?(): void;
   cycleSource?(): void;
   /** Show the turn before (-1) or after (1) the one shown, alone. */
@@ -1687,16 +1688,15 @@ export class ChangesView implements PaneSurface {
         this.moveFinding(-1);
         break;
       case "ask":
-        this.withTarget(actions.ask);
+        // Notes are asked about together; with none, the cursor's target is asked about.
+        if (actions.sendNotes && (this.notes?.notes.length ?? 0) > 0) actions.sendNotes();
+        else this.withTarget(actions.ask);
         break;
       case "copy":
         this.withTarget(actions.copy);
         break;
       case "note":
         this.startNote();
-        break;
-      case "sendNotes":
-        actions.sendNotes?.();
         break;
       case "cycleSource":
         actions.cycleSource?.();

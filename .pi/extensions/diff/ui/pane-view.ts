@@ -17,7 +17,8 @@ export {
   type PaneActions,
 } from "../../lib/changes/view/changes-view.ts";
 
-export const KEY_HINT = "j/k file · ↑↓ line · ⇧↑↓ range · ←→ turn · a ask · tab editor · ? help";
+export const KEY_HINT =
+  "j/k file · ↑↓ line · ⇧↑↓ range · c note · a ask · ←→ turn · tab editor · ? help";
 
 /** The `?` key list, one entry per line. */
 export const HELP_LINES: readonly string[] = [
@@ -26,9 +27,9 @@ export const HELP_LINES: readonly string[] = [
   "⇧↑/⇧↓     select a range of lines (or drag over them with the mouse)",
   "⏎/space   expand or collapse the file (or click its row)",
   "n/N       next/previous hunk",
-  "a         put a reference to the selected file, hunk or lines in the prompt",
-  "c         add a note to the selected hunk",
-  "C         put all notes into the editor (not sent)",
+  "a         put a reference to the selected file, hunk or lines in the prompt (not sent);",
+  "          with notes, put all of them in the prompt as one message instead",
+  "c         add a note to the selected hunk, to ask about with a",
   "f/F       next/previous review finding",
   "s         cycle source: session, uncommitted, latest turn, branch base",
   "←/→       one turn's changes alone: ← older, → newer, and the whole session after the newest",

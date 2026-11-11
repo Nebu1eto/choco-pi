@@ -28,7 +28,6 @@ export const REVIEW_KEYS = {
   previousFinding: ["F"],
   ask: [],
   note: [],
-  sendNotes: [],
   cycleSource: [],
   copy: [{ key: COPY_KEY.key }],
   olderTurn: [],
