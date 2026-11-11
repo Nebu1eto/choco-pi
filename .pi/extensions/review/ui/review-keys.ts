@@ -30,6 +30,8 @@ export const REVIEW_KEYS = {
   note: [],
   sendNotes: [],
   cycleSource: [],
+  olderTurn: [],
+  newerTurn: [],
   review: [],
   reveal: ["v"],
   back: [{ key: "escape" }, "q"],

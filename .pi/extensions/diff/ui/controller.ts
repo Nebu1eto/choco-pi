@@ -35,11 +35,13 @@ import type {
   FileSummary,
   RefreshReason,
 } from "../../lib/changes/git/model.ts";
+import { sourceKey } from "../../lib/changes/git/snapshot.ts";
 import { sanitizeTerminalText } from "../../lib/changes/terminal-text.ts";
 import type { DiffHunk, SessionBaselineChoice, TurnTreeProvider } from "../../lib/changes/types.ts";
 import {
   chooseTurn,
   createTurnCheckpointProvider,
+  turnOnlySource,
   turnSource,
   type TurnCheckpointInfo,
 } from "../core/checkpoints.ts";
@@ -198,6 +200,8 @@ type Session = {
   branchBase?: string;
   /** The source the store was last given. */
   source: DiffSource;
+  /** The first turn of the turns shown alone (←/→ in the pane); undefined for every other source. */
+  turnOnly?: number;
   /** Bumped by every source change; a late default-base answer for an older request is dropped. */
   sourceGeneration: number;
   /** The `autoOpen` preference, or the user's `/diff auto` choice in this session. */
@@ -289,8 +293,13 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
       : undefined;
     const store = deps.createStore(ctx.cwd, checkpoints, session.source);
     session.store = store;
-    session.unsubscribeStore = store.subscribe((state) => {
+    session.unsubscribeStore = store.subscribe((update) => {
       if (!session.alive) return;
+      // A poll can list a new prompt's edits before any event names them. Following
+      // changes the source, and `update` is then older than what the store holds.
+      const generation = session.sourceGeneration;
+      followTurn(session);
+      const state = generation === session.sourceGeneration ? update : store.getState();
       session.view?.setState(state);
       if (
         state.kind === "ready" &&
@@ -456,6 +465,7 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
   }
 
   function manualRefresh(session: Session): void {
+    followTurn(session);
     session.store?.requestRefresh("manual");
     void reloadRecorded(session);
   }
@@ -465,6 +475,7 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
   function applySource(session: Session, source: DiffSource): void {
     if (source.kind === "branch-base") session.branchBase = source.base;
     session.source = source;
+    delete session.turnOnly;
     session.sourceGeneration += 1;
     const store = ensureStore(session);
     store.setSource(source);
@@ -554,6 +565,12 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
 
   /** The pane's `s` key: session, uncommitted, latest turn, branch base, and around again. */
   async function cycleSource(session: Session): Promise<void> {
+    // A turn shown alone is outside the cycle, which starts over from it.
+    if (session.turnOnly !== undefined) {
+      applySource(session, SESSION_SOURCE);
+      say(session, `Diff source: ${sourceLabel(SESSION_SOURCE)}.`);
+      return;
+    }
     const now = session.source;
     let next: DiffSource = SESSION_SOURCE;
     let note = "";
@@ -577,6 +594,77 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
     }
     applySource(session, next);
     say(session, `${note}Diff source: ${sourceLabel(next)}.`, note ? "warning" : "muted");
+  }
+
+  /** Show `turns[index]` alone; false when there is no such turn. */
+  function showTurnOnly(
+    session: Session,
+    turns: readonly TurnCheckpointInfo[],
+    index: number,
+  ): boolean {
+    const turn = turns[index];
+    const source = turnOnlySource(turns, index);
+    if (!turn || !source) return false;
+    applySource(session, source);
+    session.turnOnly = turn.turn;
+    return true;
+  }
+
+  /**
+   * The pane's ← and →. The turns are in order with every session change after
+   * the newest: ← goes to the turn before the one shown, or to the newest from
+   * any other source; → goes to the turn after it and then to the session.
+   */
+  function stepTurn(session: Session, delta: -1 | 1): void {
+    const turns = turnsOf(session);
+    const shown =
+      session.turnOnly === undefined
+        ? -1
+        : turns.findIndex((turn) => turn.turn === session.turnOnly);
+    const index = (shown < 0 ? turns.length : shown) + delta;
+    if (index >= turns.length) {
+      if (session.source.kind === "session") {
+        say(session, "Every change of the session is shown; ← shows its newest turn alone.");
+        return;
+      }
+      applySource(session, SESSION_SOURCE);
+      say(session, `Diff source: ${sourceLabel(SESSION_SOURCE)}.`);
+      return;
+    }
+    if (turns.length === 0) {
+      say(session, "No turn of this session has a file checkpoint, so no turn can be shown alone.");
+      return;
+    }
+    if (!showTurnOnly(session, turns, index)) {
+      say(session, "This is the session's first turn with a file checkpoint.");
+      return;
+    }
+    say(
+      session,
+      `Diff source: ${sourceLabel(session.source)}, ${index + 1} of ${turns.length} (← older, → newer).`,
+    );
+  }
+
+  /**
+   * Keep a turn shown alone on its own changes. The newest turn is compared
+   * with the working tree until the next prompt records a checkpoint, and with
+   * that checkpoint from then on; a turn that left the branch gives way to the
+   * session source.
+   */
+  function followTurn(session: Session): void {
+    if (session.turnOnly === undefined) return;
+    const turns = turnsOf(session);
+    const index = turns.findIndex((turn) => turn.turn === session.turnOnly);
+    const source = turnOnlySource(turns, index);
+    if (!source) {
+      applySource(session, SESSION_SOURCE);
+      say(
+        session,
+        "The turn that was shown is not on this branch any more. Diff source: Session changes.",
+      );
+      return;
+    }
+    if (sourceKey(source) !== sourceKey(session.source)) showTurnOnly(session, turns, index);
   }
 
   /* ---------------------------------------------------------- actions */
@@ -603,9 +691,15 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
       return;
     }
     const lines = target.lines;
+    // An earlier turn's numbers are of the file as that turn left it.
+    const shown = session.source;
+    const context =
+      shown.kind === "range" && shown.turnOnly
+        ? `as the file was after ${shown.label}; it may have changed since`
+        : undefined;
     const reference = lines
-      ? linesReference(mention, hunk, lines, sensitive)
-      : hunkReference(mention, hunk, sensitive);
+      ? linesReference(mention, hunk, lines, sensitive, context)
+      : hunkReference(mention, hunk, sensitive, context);
     insertIntoEditor(session, reference.text);
     if (sensitive) {
       say(
@@ -814,6 +908,7 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
           void cycleSource(session).catch((error: RuntimeValue) =>
             reportFailure(session, `Cannot change the diff source: ${errorText(error)}`, error),
           ),
+        stepTurn: (delta) => stepTurn(session, delta),
         startReview: () => startReview(session),
       },
     });
@@ -1002,6 +1097,7 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
   function requestRefresh(reason: RefreshReason): void {
     const session = current;
     if (!session?.alive || !session.host) return;
+    followTurn(session);
     session.store?.requestRefresh(reason);
     if (reason === "subagent") void reloadRecorded(session);
   }

@@ -62,11 +62,17 @@ export type HunkReference = {
 /**
  * `@path lines a-b` followed by the hunk as a fenced diff block, or the range
  * alone with a note when the hunk is longer than {@link MAX_INLINE_HUNK_LINES}.
- * A sensitive file gets the path only.
+ * A sensitive file gets the path only. `context` says which state of the file
+ * the numbers are of when that is not the working tree.
  */
-export function hunkReference(mention: string, hunk: DiffHunk, sensitive: boolean): HunkReference {
+export function hunkReference(
+  mention: string,
+  hunk: DiffHunk,
+  sensitive: boolean,
+  context?: string,
+): HunkReference {
   if (sensitive) return { text: mention, includesContent: false };
-  const head = `${mention} ${hunkRangeText(hunk)}`;
+  const head = `${mention} ${hunkRangeText(hunk)}${contextText(context)}`;
   if (hunk.lines.length > MAX_INLINE_HUNK_LINES) {
     return {
       text: `${head} (the hunk has ${hunk.lines.length} lines, more than ${MAX_INLINE_HUNK_LINES}, so its text is not included; read the file)`,
@@ -80,6 +86,10 @@ export function hunkReference(mention: string, hunk: DiffHunk, sensitive: boolea
   ].join("\n");
   const fence = fenceFor(body);
   return { text: `${head}\n${fence}diff\n${body}\n${fence}`, includesContent: true };
+}
+
+function contextText(context: string | undefined): string {
+  return context === undefined ? "" : ` (${escapeForAgent(context)})`;
 }
 
 function numberRange(numbers: readonly number[], one: string, many: string): string {
@@ -110,11 +120,12 @@ export function linesReference(
   hunk: DiffHunk,
   selection: { first: number; last: number },
   sensitive: boolean,
+  context?: string,
 ): HunkReference {
   if (sensitive) return { text: mention, includesContent: false };
   const lines = hunk.lines.slice(Math.max(0, selection.first), selection.last + 1);
-  if (lines.length === 0) return hunkReference(mention, hunk, sensitive);
-  const head = `${mention} ${lineRangeText(lines)}`;
+  if (lines.length === 0) return hunkReference(mention, hunk, sensitive, context);
+  const head = `${mention} ${lineRangeText(lines)}${contextText(context)}`;
   if (lines.length > MAX_INLINE_HUNK_LINES) {
     return {
       text: `${head} (the selection has ${lines.length} lines, more than ${MAX_INLINE_HUNK_LINES}, so its text is not included; read the file)`,

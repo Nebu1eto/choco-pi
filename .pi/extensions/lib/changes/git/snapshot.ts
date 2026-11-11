@@ -81,8 +81,10 @@ export function sourceKey(source: DiffSource): string {
   if (source.kind === "session") return "session";
   if (source.kind === "uncommitted") return "uncommitted";
   if (source.kind === "branch-base") return `branch-base\0${source.base}`;
-  if (source.kind === "range") return `range\0${source.base}\0${source.head}`;
-  return `since-checkpoint\0${source.checkpointId}`;
+  // A turn-only source is named by its label, which changes when its turns do.
+  const turns = source.turnOnly ? `\0turns\0${source.label}` : "";
+  if (source.kind === "range") return `range\0${source.base}\0${source.head}${turns}`;
+  return `since-checkpoint\0${source.checkpointId}${turns}`;
 }
 
 async function repositoryRootOf(context: RefreshContext): Promise<string | undefined> {

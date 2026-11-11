@@ -3,7 +3,9 @@ import test from "node:test";
 import type { TurnCheckpointInfo } from "../.pi/extensions/diff/core/checkpoints.ts";
 import type { PrefsIo } from "../.pi/extensions/diff/ui/prefs.ts";
 import { isSensitivePath } from "../.pi/extensions/lib/changes/sensitive.ts";
-import { file, flush, harness, hunk, textBody } from "./diff-actions-fakes.ts";
+import { inlineList, inlineMarkdown } from "../.pi/extensions/diff/ui/format.ts";
+import type { DiffSource, DiffStoreState } from "../.pi/extensions/lib/changes/git/model.ts";
+import { file, flush, harness, hunk, snapshot, textBody } from "./diff-actions-fakes.ts";
 
 const TREE_1 = "1111111111111111111111111111111111111111";
 const TREE_2 = "2222222222222222222222222222222222222222";
@@ -336,4 +338,196 @@ test("? toggles the key list; the focused hint mentions it", async () => {
   assert.equal(rows(), closed, "Esc closes the list first");
   assert.ok(h.tui.paneFocused());
   assert.ok(h.probe.session()?.host);
+});
+
+/* ------------------------------------------------------- one turn alone */
+
+const LEFT = "\u001b[D";
+const RIGHT = "\u001b[C";
+const TREE_3 = "3333333333333333333333333333333333333333";
+const TREE_4 = "4444444444444444444444444444444444444444";
+
+test("← and → step through each turn's changes alone, with the whole session after the newest", async () => {
+  const turns: TurnCheckpointInfo[] = [
+    ...TURNS,
+    {
+      turn: 3,
+      tree: TREE_3,
+      checkpointTurnIndex: 0,
+      prompt: "why is it slow",
+      through: { turn: 4, prompt: "make it faster" },
+    },
+  ];
+  const h = harness({ turns });
+  await openFocused(h);
+  h.store().ready(1, [file("src/a.ts")]);
+  const before = h.store().sources.length;
+  h.tui.input(RIGHT);
+  assert.equal(h.store().sources.length, before, "the session is already past the newest turn");
+  assert.match(h.header(), /Every change of the session is shown/);
+
+  h.tui.input(LEFT);
+  assert.deepEqual(
+    h.store().sources.at(-1),
+    {
+      kind: "since-checkpoint",
+      checkpointId: TREE_3,
+      label: "turns 3–4 (make it faster)",
+      turnOnly: true,
+    },
+    "the newest turns end at the working tree and are named by the prompt that changed files",
+  );
+  assert.match(h.header(), /Changes in turns 3–4 \(make it faster\), 3 of 3/);
+  h.tui.input(LEFT);
+  assert.deepEqual(h.store().sources.at(-1), {
+    kind: "range",
+    base: TREE_2,
+    head: TREE_3,
+    label: "turn 2 (fix the parser please)",
+    turnOnly: true,
+  });
+  h.tui.input(LEFT);
+  assert.match(h.header(), /Changes in turn 1 \(first prompt\), 1 of 3/);
+  const first = h.store().sources.length;
+  h.tui.input(LEFT);
+  assert.equal(h.store().sources.length, first);
+  assert.match(h.header(), /first turn with a file checkpoint/);
+
+  h.tui.input(RIGHT);
+  h.tui.input(RIGHT);
+  h.tui.input(RIGHT);
+  assert.deepEqual(h.store().sources.at(-1), { kind: "session" });
+  assert.match(h.header(), /Session changes/);
+
+  // From any other source ← starts at the newest turn and → returns to the session.
+  h.tui.input("s");
+  h.tui.input(LEFT);
+  assert.equal(h.store().sources.at(-1)?.kind, "since-checkpoint");
+  h.tui.input("s");
+  assert.deepEqual(
+    h.store().sources.at(-1),
+    { kind: "session" },
+    "s leaves a turn for the cycle's start",
+  );
+  h.tui.input("s");
+  h.tui.input(RIGHT);
+  assert.deepEqual(h.store().sources.at(-1), { kind: "session" });
+  h.store().ready(9, [], {
+    kind: "range",
+    base: TREE_1,
+    head: TREE_2,
+    label: "turn 1 (p)",
+    turnOnly: true,
+  });
+  assert.match(h.body(), /No changes in turn 1 \(p\)/);
+});
+
+test("a turn shown alone stays on its own changes when later prompts run", async () => {
+  const turns: TurnCheckpointInfo[] = [...TURNS];
+  const h = harness({ turns });
+  await openFocused(h);
+  h.tui.input(LEFT);
+  assert.equal(h.store().sources.at(-1)?.kind, "since-checkpoint");
+  const shown = h.store().sources.length;
+  await h.fire("tool_execution_end", { toolName: "edit" });
+  assert.equal(h.store().sources.length, shown, "nothing changed: the source is kept");
+
+  // The next prompt starts from unchanged files and records no checkpoint.
+  turns[1] = { ...TURNS[1]!, through: { turn: 3, prompt: "and the tests" } };
+  await h.fire("turn_start", {});
+  assert.deepEqual(h.store().sources.at(-1), {
+    kind: "since-checkpoint",
+    checkpointId: TREE_2,
+    label: "turns 2–3 (and the tests)",
+    turnOnly: true,
+  });
+
+  // The prompt after it does: the turns shown now end at its checkpoint.
+  turns.push({ turn: 4, tree: TREE_4, checkpointTurnIndex: 0, prompt: "later work" });
+  await h.fire("tool_execution_end", { toolName: "edit" });
+  assert.deepEqual(h.store().sources.at(-1), {
+    kind: "range",
+    base: TREE_2,
+    head: TREE_4,
+    label: "turns 2–3 (and the tests)",
+    turnOnly: true,
+  });
+  h.tui.input(RIGHT);
+  assert.match(h.header(), /Changes in turn 4 \(later work\), 3 of 3/);
+
+  // The branch changed under the pane and the turn is gone.
+  turns.length = 1;
+  h.tui.input("r");
+  assert.deepEqual(h.store().sources.at(-1), { kind: "session" });
+  assert.match(h.header(), /not on this branch any more/);
+});
+
+test("without a checkpoint ← says so and keeps the source", async () => {
+  const h = harness();
+  await openFocused(h);
+  const before = h.store().sources.length;
+  h.tui.input(LEFT);
+  assert.equal(h.store().sources.length, before);
+  assert.match(h.header(), /No turn of this session has a file checkpoint/);
+});
+
+test("the plain and Markdown lists name a turn shown alone as changes in it", () => {
+  const source: DiffSource = {
+    kind: "range",
+    base: TREE_1,
+    head: TREE_2,
+    label: "turn 1 (first prompt)",
+    turnOnly: true,
+  };
+  const listed: DiffStoreState = {
+    kind: "ready",
+    snapshot: snapshot(1, [], source),
+    refreshing: false,
+  };
+  assert.equal(
+    inlineList(listed),
+    "Changes in turn 1 (first prompt) on main: 0 files +0 -0\nNo changes in turn 1 (first prompt)",
+  );
+  assert.equal(
+    inlineMarkdown(listed),
+    "Changes in ` turn 1 (first prompt) ` on ` main `: 0 files \\+0 \\-0\n\nNo changes in ` turn 1 (first prompt) `",
+  );
+});
+
+test("a on a line of an earlier turn says which state of the file its number is of", async () => {
+  const h = harness({ turns: TURNS, editorText: "" });
+  await openFocused(h);
+  h.tui.input(LEFT);
+  h.tui.input(LEFT);
+  const short = hunk("h-short", 3, [" keep", "+new"]);
+  h.store().bodies.set("src/a.ts", textBody("src/a.ts", [short]));
+  h.store().ready(2, [file("src/a.ts")], h.store().sources.at(-1));
+  h.tui.input("n");
+  await flush();
+  h.tui.input("\u001b[B");
+  h.tui.input("\u001b[B");
+  h.tui.input("a");
+  assert.equal(
+    h.editor.text,
+    "@src/a.ts line 4 (as the file was after turn 1 (first prompt); it may have changed since)\n```diff\n+new\n```\n",
+  );
+});
+
+test("a poll that lists a new prompt's edits moves the turn shown alone onto its own changes first", async () => {
+  const turns: TurnCheckpointInfo[] = [...TURNS];
+  const h = harness({ turns });
+  await openFocused(h);
+  h.tui.input(LEFT);
+  const newest = h.store().sources.at(-1);
+  assert.equal(newest?.kind, "since-checkpoint");
+  // The next prompt recorded its checkpoint; no tool has finished yet.
+  turns.push({ turn: 3, tree: TREE_3, checkpointTurnIndex: 0, prompt: "next" });
+  h.store().ready(5, [file("src/a.ts"), file("src/new.ts")], newest);
+  assert.deepEqual(h.store().sources.at(-1), {
+    kind: "range",
+    base: TREE_2,
+    head: TREE_3,
+    label: "turn 2 (fix the parser please)",
+    turnOnly: true,
+  });
 });

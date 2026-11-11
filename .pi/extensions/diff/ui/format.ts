@@ -70,14 +70,14 @@ function sourceMarkdown(source: DiffSource): string {
   if (source.kind === "session") return "Session changes";
   if (source.kind === "uncommitted") return "Uncommitted changes";
   if (source.kind === "branch-base") return `Changes since ${markdownName(source.base)}`;
-  return `Changes since ${markdownName(source.label)}`;
+  return `Changes ${source.turnOnly ? "in" : "since"} ${markdownName(source.label)}`;
 }
 
 function emptyMarkdown(snapshot: DiffSnapshot): string {
   const source = snapshot.source;
   if (source.kind === "branch-base") return `No changes against ${markdownName(source.base)}`;
   if (source.kind === "since-checkpoint" || source.kind === "range") {
-    return `No changes since ${markdownName(source.label)}`;
+    return `No changes ${source.turnOnly ? "in" : "since"} ${markdownName(source.label)}`;
   }
   // Session and uncommitted sentences are ours (a session's reason is one of our constants).
   return markdownText(emptyMessage(snapshot));

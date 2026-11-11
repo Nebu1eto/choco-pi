@@ -16,7 +16,7 @@ export {
   type PaneActions,
 } from "../../lib/changes/view/changes-view.ts";
 
-export const KEY_HINT = "j/k file · ↑↓ line · ⇧↑↓ range · a ask · tab editor · ? help";
+export const KEY_HINT = "j/k file · ↑↓ line · ⇧↑↓ range · ←→ turn · a ask · tab editor · ? help";
 
 /** The `?` key list, one entry per line. */
 export const HELP_LINES: readonly string[] = [
@@ -30,6 +30,7 @@ export const HELP_LINES: readonly string[] = [
   "C         put all notes into the editor (not sent)",
   "f/F       next/previous review finding",
   "s         cycle source: session, uncommitted, latest turn, branch base",
+  "←/→       one turn's changes alone: ← older, → newer, and the whole session after the newest",
   "R         put a /review (agent review) instruction into the editor",
   "v         show a sensitive file's contents (this pane only, not saved)",
   "[ ]       wider/narrower        r        refresh",

@@ -96,6 +96,8 @@ export type PaneActions = {
   addNote?(file: FileSummary, hunk: DiffHunk, text: string): void;
   sendNotes?(): void;
   cycleSource?(): void;
+  /** Show the turn before (-1) or after (1) the one shown, alone. */
+  stepTurn?(delta: -1 | 1): void;
   startReview?(): void;
 };
 
@@ -1594,6 +1596,12 @@ export class ChangesView implements PaneSurface {
         break;
       case "cycleSource":
         actions.cycleSource?.();
+        break;
+      case "olderTurn":
+        actions.stepTurn?.(-1);
+        break;
+      case "newerTurn":
+        actions.stepTurn?.(1);
         break;
       case "review":
         actions.startReview?.();

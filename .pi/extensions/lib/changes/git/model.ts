@@ -5,10 +5,12 @@ export type DiffSource =
   // The first file checkpoint of the Pi session versus the working tree; see SnapshotBaseline.
   | { kind: "session" }
   | { kind: "uncommitted" } // HEAD versus working tree, staged and unstaged, plus untracked files
-  | { kind: "since-checkpoint"; checkpointId: string; label: string }
+  // `turnOnly`: the label names the turns whose changes are listed, not where a comparison starts.
+  | { kind: "since-checkpoint"; checkpointId: string; label: string; turnOnly?: true }
   | { kind: "branch-base"; base: string }
   // Tree against tree; the working tree is not read. Not offered by /diff.
-  | { kind: "range"; base: string; head: string; label: string };
+  // Tree against tree; the working tree is not read. /diff uses it for an earlier turn alone.
+  | { kind: "range"; base: string; head: string; label: string; turnOnly?: true };
 
 /**
  * Where a "session" snapshot's comparison starts: the checkpoint captured

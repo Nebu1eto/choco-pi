@@ -13,6 +13,7 @@ import {
   chooseTurn,
   createTurnCheckpointProvider,
   turnCheckpointsOf,
+  turnOnlySource,
   turnSource,
 } from "../.pi/extensions/diff/core/checkpoints.ts";
 import fileCheckpoints from "../.pi/extensions/file-checkpoints.ts";
@@ -152,4 +153,86 @@ test("/diff source turn picks a middle turn although every checkpoint recorded t
     state.snapshot.files.map((file) => file.path),
     ["a.txt"],
   );
+});
+
+test("each turn alone: its checkpoint against the next, and a prompt without one joins the turn before it", async (t) => {
+  const root = await repository(t);
+  const session = SessionManager.inMemory(root);
+  const trees: string[] = [];
+  const checkpoint = async (prompt: string) => {
+    await git(root, "add", "-A");
+    const tree = (await git(root, "write-tree")).trim();
+    trees.push(tree);
+    session.appendCustomEntry(CHECKPOINT_ENTRY, {
+      version: 2,
+      worktreeTree: tree,
+      timestamp: new Date().toISOString(),
+      turnIndex: 0,
+      label: prompt,
+    });
+  };
+  const prompt = (text: string) =>
+    session.appendMessage({ role: "user", content: text, timestamp: Date.now() });
+  await checkpoint("one");
+  prompt("one");
+  await writeFile(join(root, "b.txt"), "from turn one\n");
+  await checkpoint("two");
+  prompt("two");
+  // Turn two changed nothing, so file-checkpoints records no checkpoint for turn three.
+  prompt("three");
+  await writeFile(join(root, "c.txt"), "from turn three\n");
+  await checkpoint("four");
+  prompt("four");
+  await git(root, "reset", "-q");
+  await writeFile(join(root, "a.txt"), "one\nfrom turn four\n");
+  await writeFile(join(root, "d.txt"), "new in turn four\n");
+
+  const turns = turnCheckpointsOf(session.getBranch());
+  assert.deepEqual(
+    turns.map((turn) => [turn.turn, turn.through?.turn]),
+    [
+      [1, undefined],
+      [2, 3],
+      [4, undefined],
+    ],
+  );
+  const sources = turns.map((_turn, index) => turnOnlySource(turns, index));
+  assert.deepEqual(sources, [
+    { kind: "range", base: trees[0], head: trees[1], label: "turn 1 (one)", turnOnly: true },
+    { kind: "range", base: trees[1], head: trees[2], label: "turns 2–3 (three)", turnOnly: true },
+    { kind: "since-checkpoint", checkpointId: trees[2], label: "turn 4 (four)", turnOnly: true },
+  ]);
+  assert.equal(turnOnlySource(turns, 3), undefined);
+  assert.equal(turnOnlySource(turns, -1), undefined);
+
+  const listed: string[][] = [];
+  for (const source of sources) {
+    assert.ok(source);
+    const store = createDiffStore({
+      cwd: root,
+      checkpoints: createTurnCheckpointProvider(() => turns),
+      source,
+    });
+    t.after(() => store.dispose());
+    await store.refreshNow();
+    const state = store.getState();
+    assert.equal(state.kind, "ready", state.kind === "error" ? state.message : state.kind);
+    if (state.kind !== "ready") return;
+    listed.push(state.snapshot.files.map((file) => `${file.status} ${file.path}`));
+    if (source.kind !== "range") continue;
+    // An earlier turn's text is read from its trees, not from the working tree.
+    const path = state.snapshot.files[0]?.path ?? "";
+    const { body } = await store.loadFile(path);
+    assert.equal(body.kind, "text");
+    if (body.kind !== "text") return;
+    assert.deepEqual(
+      body.file.hunks.flatMap((hunk) => hunk.lines.map((line) => line.text)),
+      [path === "b.txt" ? "from turn one" : "from turn three"],
+    );
+  }
+  assert.deepEqual(listed, [
+    ["added b.txt"],
+    ["added c.txt"],
+    ["modified a.txt", "untracked d.txt"],
+  ]);
 });

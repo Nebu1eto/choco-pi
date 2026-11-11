@@ -8,7 +8,7 @@
  * no entry), so the tree is the checkpoint id.
  */
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-import { turnCheckpointsFromEntries } from "../../checkpoints/turns.ts";
+import { sessionTurnsFromEntries } from "../../checkpoints/turns.ts";
 import type { DiffSource } from "../../lib/changes/git/model.ts";
 import { shortPrompt } from "../../lib/changes/session-baseline.ts";
 import type { SessionBaselineChoice, TurnTreeProvider } from "../../lib/changes/types.ts";
@@ -28,15 +28,31 @@ export type TurnCheckpointInfo = {
   checkpointTurnIndex: number;
   /** One-line prompt summary. */
   prompt: string;
+  /**
+   * The last later turn that has no checkpoint of its own, when there is one.
+   * No checkpoint is recorded for a prompt that starts from unchanged files
+   * (or when the capture fails), so what changed between this checkpoint and
+   * the next belongs to these turns together.
+   */
+  through?: { turn: number; prompt: string };
 };
 
 export function turnCheckpointsOf(entries: readonly SessionEntry[]): TurnCheckpointInfo[] {
-  return turnCheckpointsFromEntries(entries).map((turn) => ({
-    turn: turn.userTurnIndex,
-    tree: turn.checkpoint.worktreeTree,
-    checkpointTurnIndex: turn.checkpoint.turnIndex,
-    prompt: turn.label,
-  }));
+  const turns: TurnCheckpointInfo[] = [];
+  for (const turn of sessionTurnsFromEntries(entries)) {
+    if (turn.checkpoint && turn.checkpointEntryId) {
+      turns.push({
+        turn: turn.index,
+        tree: turn.checkpoint.worktreeTree,
+        checkpointTurnIndex: turn.checkpoint.turnIndex,
+        prompt: turn.label,
+      });
+      continue;
+    }
+    const covering = turns.at(-1);
+    if (covering) covering.through = { turn: turn.index, prompt: turn.label };
+  }
+  return turns;
 }
 
 /** The provider the store uses to resolve a checkpoint id to its tree and the session baseline. */
@@ -63,6 +79,27 @@ export function turnSource(turn: TurnCheckpointInfo): DiffSource {
     checkpointId: turn.tree,
     label: `turn ${turn.turn} (${shortPrompt(turn.prompt)})`,
   };
+}
+
+/**
+ * What the turns of `turns[index]` changed and nothing later: its checkpoint
+ * against the next one, or against the working tree for the newest. Undefined
+ * when there is no such turn.
+ */
+export function turnOnlySource(
+  turns: readonly TurnCheckpointInfo[],
+  index: number,
+): DiffSource | undefined {
+  const turn = turns[index];
+  if (!turn) return undefined;
+  // With unchanged files before each later prompt, the last prompt made the changes.
+  const label = turn.through
+    ? `turns ${turn.turn}–${turn.through.turn} (${shortPrompt(turn.through.prompt)})`
+    : `turn ${turn.turn} (${shortPrompt(turn.prompt)})`;
+  const next = turns[index + 1];
+  return next
+    ? { kind: "range", base: turn.tree, head: next.tree, label, turnOnly: true }
+    : { kind: "since-checkpoint", checkpointId: turn.tree, label, turnOnly: true };
 }
 
 export type TurnChoice =

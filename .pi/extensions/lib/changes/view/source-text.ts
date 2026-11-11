@@ -7,7 +7,7 @@ export function sourceLabel(source: DiffSource): string {
   if (source.kind === "session") return "Session changes";
   if (source.kind === "uncommitted") return "Uncommitted changes";
   if (source.kind === "branch-base") return `Changes since ${safe(source.base)}`;
-  return `Changes since ${safe(source.label)}`;
+  return `Changes ${source.turnOnly ? "in" : "since"} ${safe(source.label)}`;
 }
 
 /** Where a session snapshot's comparison starts; undefined for every other source. */
@@ -30,7 +30,7 @@ export function emptyMessage(snapshot: DiffSnapshot): string {
   }
   if (source.kind === "uncommitted") return "No uncommitted changes";
   if (source.kind === "branch-base") return `No changes against ${safe(source.base)}`;
-  return `No changes since ${safe(source.label)}`;
+  return `No changes ${source.turnOnly ? "in" : "since"} ${safe(source.label)}`;
 }
 
 export function totalsText(snapshot: DiffSnapshot): string {

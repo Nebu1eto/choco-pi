@@ -31,6 +31,9 @@ export type ChangesAction =
   | "note"
   | "sendNotes"
   | "cycleSource"
+  /** One turn's changes alone: the turn before or after the one shown (the pane's ←/→). */
+  | "olderTurn"
+  | "newerTurn"
   | "review"
   /** Show a hidden sensitive file's contents at once, for this view only. */
   | "reveal"
@@ -69,6 +72,8 @@ export const PANE_KEYS = {
   note: ["c"],
   sendNotes: ["C"],
   cycleSource: ["s"],
+  olderTurn: [{ key: "left" }],
+  newerTurn: [{ key: "right" }],
   review: ["R"],
   reveal: ["v"],
   back: [{ key: "escape" }, "q", { key: "tab" }, { key: "shift+left" }],
@@ -99,6 +104,8 @@ export const CHANGES_ACTIONS: readonly ChangesAction[] = [
   "note",
   "sendNotes",
   "cycleSource",
+  "olderTurn",
+  "newerTurn",
   "review",
   "reveal",
   "back",

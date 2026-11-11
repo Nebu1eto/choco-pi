@@ -95,6 +95,9 @@ test("the pane's key table binds each key to exactly one action", () => {
   assert.equal(actionFor(PANE_KEYS, "j"), "fileDown");
   assert.equal(actionFor(PANE_KEYS, "\u001b[B"), "down");
   assert.equal(actionFor(PANE_KEYS, "\t"), "back");
+  assert.equal(actionFor(PANE_KEYS, "\u001b[D"), "olderTurn");
+  assert.equal(actionFor(PANE_KEYS, "\u001b[C"), "newerTurn");
+  assert.equal(actionFor(PANE_KEYS, "\u001b[1;2D"), "back", "Shift+← still leaves the pane");
   assert.equal(actionFor(PANE_KEYS, "\r"), "toggle");
   assert.equal(actionFor(PANE_KEYS, "y"), undefined);
 });
