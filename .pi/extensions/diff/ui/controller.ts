@@ -96,6 +96,7 @@ import {
   fileMention,
   hunkRangeText,
   hunkReference,
+  linesReference,
   notesMessage,
   reviewInstruction,
   type NoteForMessage,
@@ -104,6 +105,8 @@ import { isSensitiveFile } from "../../lib/changes/sensitive.ts";
 
 export const TOGGLE_SHORTCUT: KeyId = "ctrl+alt+p";
 export const FOCUS_SHORTCUT: KeyId = "ctrl+alt+f";
+/** From the editor into the open pane; the pane's own Shift+← (and Tab, Esc, q) goes back. */
+export const ENTER_PANE_SHORTCUT: KeyId = "shift+right";
 /** A second Esc within this window after Esc left the pane closes it. */
 export const DOUBLE_ESCAPE_MS = 500;
 export const SUBAGENT_DONE_EVENTS = [
@@ -599,7 +602,10 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
       );
       return;
     }
-    const reference = hunkReference(mention, hunk, sensitive);
+    const lines = target.lines;
+    const reference = lines
+      ? linesReference(mention, hunk, lines, sensitive)
+      : hunkReference(mention, hunk, sensitive);
     insertIntoEditor(session, reference.text);
     if (sensitive) {
       say(
@@ -608,9 +614,16 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
         "warning",
       );
     } else if (!reference.includesContent) {
-      say(session, "The hunk is longer than 60 lines, so only its range was inserted.", "warning");
+      say(
+        session,
+        `The ${lines ? "selection" : "hunk"} is longer than 60 lines, so only its range was inserted.`,
+        "warning",
+      );
     } else {
-      say(session, "Hunk added to the editor. Type your question; nothing was sent.");
+      say(
+        session,
+        `${lines ? "Selected lines" : "Hunk"} added to the editor. Type your question; nothing was sent.`,
+      );
     }
   }
 
@@ -1303,6 +1316,14 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
     description: "Move focus into or out of the diff pane",
     handler: async (ctx) => {
       if (ctx.mode === "tui") await focusToggle(sessionFor(ctx));
+    },
+  });
+  pi.registerShortcut(ENTER_PANE_SHORTCUT, {
+    description: "Move focus into the open diff pane",
+    handler: async (ctx) => {
+      if (ctx.mode !== "tui") return;
+      const host = sessionFor(ctx).host;
+      if (host && !host.isFocused()) host.focus();
     },
   });
 

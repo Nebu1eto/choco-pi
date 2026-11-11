@@ -16,14 +16,16 @@ export {
   type PaneActions,
 } from "../../lib/changes/view/changes-view.ts";
 
-export const KEY_HINT =
-  "j/k move · ⏎ expand · n/N hunk · a ask · c note · s source · ? help · esc back";
+export const KEY_HINT = "j/k file · ↑↓ line · ⇧↑↓ range · a ask · tab editor · ? help";
 
 /** The `?` key list, one entry per line. */
 export const HELP_LINES: readonly string[] = [
-  "j/k ↑/↓   move between files     g/G      first/last file",
-  "⏎/space   expand or collapse     n/N      next/previous hunk",
-  "a         put a reference to the selected file or hunk in the prompt",
+  "j/k       move between files     g/G      top/bottom",
+  "↑/↓       move through file rows and the lines of open files",
+  "⇧↑/⇧↓     select a range of lines (or drag over them with the mouse)",
+  "⏎/space   expand or collapse the file (or click its row)",
+  "n/N       next/previous hunk",
+  "a         put a reference to the selected file, hunk or lines in the prompt",
   "c         add a note to the selected hunk",
   "C         put all notes into the editor (not sent)",
   "f/F       next/previous review finding",
@@ -31,13 +33,22 @@ export const HELP_LINES: readonly string[] = [
   "R         put a /review (agent review) instruction into the editor",
   "v         show a sensitive file's contents (this pane only, not saved)",
   "[ ]       wider/narrower        r        refresh",
-  "esc/q     back to the editor     ?        close this list",
+  "tab/esc/q/⇧←  back to the editor (⇧→ or a click comes back)   ?  close this list",
 ];
 
 export type PaneViewDependencies = Omit<ChangesViewOptions, "keyHint" | "helpLines">;
 
 export class PaneView extends ChangesView {
   constructor(dependencies: PaneViewDependencies) {
-    super({ ...dependencies, keyHint: KEY_HINT, helpLines: HELP_LINES });
+    super({
+      // The line cursor, with a hunk's header as the stop that selects the whole hunk.
+      cursor: "line",
+      hunkStops: true,
+      freeSelection: true,
+      enterFolds: false,
+      ...dependencies,
+      keyHint: KEY_HINT,
+      helpLines: HELP_LINES,
+    });
   }
 }

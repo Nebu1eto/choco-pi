@@ -11,6 +11,8 @@ export const REVIEW_KEYS = {
   extendUp: [{ key: "shift+up" }],
   down: ["j", { key: "down" }],
   up: ["k", { key: "up" }],
+  fileDown: [],
+  fileUp: [],
   toggle: [{ key: "enter" }, { key: "space" }],
   pageDown: [{ key: "pageDown" }],
   pageUp: [{ key: "pageUp" }],

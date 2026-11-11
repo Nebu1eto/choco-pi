@@ -10,11 +10,23 @@ export interface PaneScroller {
   scrollBy(lines: number): void;
 }
 
+/**
+ * A left-button mouse gesture on the body. `row` counts body rows from the
+ * first one drawn, scrolled-off rows included; a drag may name a row outside
+ * the body. `extend` is Shift held on a press.
+ */
+export type PointerGesture = { kind: "press" | "drag" | "click"; row: number; extend?: boolean };
+
 /** The host-independent pane content and key handling. */
 export interface PaneSurface {
   renderHeader(width: number, focused: boolean): string[];
   renderBody(width: number, focused: boolean): string[];
   handleKey(data: string): void;
+  /**
+   * True when the view acted on the gesture. A press it acts on starts a
+   * line selection: the host sends it the drags that follow until the release.
+   */
+  pointer?(gesture: PointerGesture): boolean;
   attachScroller(scroller: PaneScroller): void;
   invalidate(): void;
 }

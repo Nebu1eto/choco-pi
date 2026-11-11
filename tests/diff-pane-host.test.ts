@@ -21,7 +21,11 @@ import {
 } from "../.pi/extensions/diff/host/geometry.ts";
 import { inspectHostRoot, readLayoutRoot } from "../.pi/extensions/diff/host/layout.ts";
 import { createOverlayHost } from "../.pi/extensions/diff/host/overlay-host.ts";
-import type { PaneScroller, PaneSurface } from "../.pi/extensions/lib/changes/view/surface.ts";
+import type {
+  PaneScroller,
+  PaneSurface,
+  PointerGesture,
+} from "../.pi/extensions/lib/changes/view/surface.ts";
 import type { PaneTui } from "../.pi/extensions/diff/host/types.ts";
 
 class Lines implements Component {
@@ -295,6 +299,89 @@ test("border drag arithmetic: the pane takes every column right of the border", 
   assert.deepEqual(resizes, [59, 124, 29]);
   border.handleMouse(mouse("drag", 10));
   assert.equal(resizes.length, 3, "drag after release is ignored");
+});
+
+test("dock mouse: a press on a line starts a selection that drags extend by screen row", () => {
+  const { root } = chatViewport();
+  const editor = new Lines(["editor"]);
+  const tui = new FakeTui(root, editor);
+  const gestures: PointerGesture[] = [];
+  let onLine = false;
+  const { surface } = fakeSurface();
+  surface.pointer = (gesture) => {
+    gestures.push(gesture);
+    return gesture.kind !== "press" || onLine;
+  };
+  const host = createDockHost(tui, surface, { width: () => 40, resizeTo: () => {} });
+  host.install();
+  const row = root.children[0];
+  assert.ok(row instanceof HStack);
+  const paneBox = row.children[2];
+  assert.ok(paneBox instanceof VStack);
+  const scroll = paneBox.children[1];
+  assert.ok(scroll instanceof ScrollView);
+  const body = scroll.children[0];
+  assert.ok(body?.handleMouse);
+  // Thirty body rows in a ten-row viewport scrolled to row 5, which is on screen row 3.
+  scroll.updateLayout(30, 10, () => {});
+  scroll.scrollTo(5);
+  const at = (type: TuiMouseEvent["type"], screenY: number): TuiMouseEvent => ({
+    ...mouse(type, 100),
+    screenY,
+    y: screenY - 3 + 5,
+  });
+
+  assert.equal(body.handleMouse(at("press", 4)), undefined, "not a line: the press stays Pi's");
+  assert.equal(tui.focused, editor);
+  onLine = true;
+  assert.deepEqual(body.handleMouse(at("press", 4)), {
+    handled: true,
+    capture: true,
+    render: true,
+  });
+  assert.equal(host.isFocused(), true, "selecting focuses the pane");
+  // The selection scrolled the body under the held button. pi-tui keeps the origin of
+  // the press for captured events, so their `y` is stale; the screen row is not.
+  scroll.scrollTo(7);
+  body.handleMouse({ ...at("drag", 6), y: 0 });
+  body.handleMouse({ ...at("drag", 39), y: 0 });
+  body.handleMouse({ ...at("drag", 0), y: 0 });
+  body.handleMouse(at("release", 0));
+  body.handleMouse(at("drag", 6));
+  body.handleMouse(at("click", 4));
+  assert.deepEqual(gestures, [
+    { kind: "press", row: 6, extend: false },
+    { kind: "press", row: 6, extend: false },
+    { kind: "drag", row: 10 },
+    { kind: "drag", row: 17 },
+    { kind: "drag", row: 6 },
+    { kind: "click", row: 6 },
+  ]);
+});
+
+test("dock mouse: a press beside the pane returns focus; a click on its empty space focuses it", () => {
+  const { root } = chatViewport();
+  const editor = new Lines(["editor"]);
+  const tui = new FakeTui(root, editor);
+  const host = createDockHost(tui, fakeSurface().surface, { width: () => 40, resizeTo: () => {} });
+  host.install();
+  const row = root.children[0];
+  assert.ok(row instanceof HStack);
+  // The border is on column 79 of 120: the transcript is left of it.
+  const at = (type: TuiMouseEvent["type"], x: number): TuiMouseEvent => ({
+    ...mouse(type, x),
+    x,
+    width: 120,
+  });
+  host.focus();
+  assert.equal(row.handleMouse(at("press", 10)), undefined, "left for Pi's text selection");
+  assert.equal(tui.focused, editor);
+  assert.equal(row.handleMouse(at("press", 100)), undefined);
+  assert.equal(tui.focused, editor, "only a click focuses the pane");
+  assert.equal(row.handleMouse(at("click", 100))?.handled, true);
+  assert.equal(host.isFocused(), true);
+  assert.equal(row.handleMouse(at("click", 10)), undefined);
+  assert.equal(host.isFocused(), true, "a click beside the pane is the press that already ran");
 });
 
 test("overlay host is right-anchored, non-capturing, sized by getters, and hidden on uninstall", () => {

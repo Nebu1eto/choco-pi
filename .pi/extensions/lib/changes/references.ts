@@ -6,7 +6,7 @@
 import { isAbsolute, join, relative, sep } from "node:path";
 import type { DiffSource } from "./git/model.ts";
 import { agentStringLiteral, escapeForAgent, needsSanitizing } from "./terminal-text.ts";
-import type { DiffHunk } from "./types.ts";
+import type { DiffHunk, DiffLine } from "./types.ts";
 
 /** Hunks up to this many lines are inserted as a fenced diff block. */
 export const MAX_INLINE_HUNK_LINES = 60;
@@ -78,6 +78,52 @@ export function hunkReference(mention: string, hunk: DiffHunk, sensitive: boolea
     escapeForAgent(hunk.header),
     ...hunk.lines.map((line) => `${markerOf(line.kind)}${escapeForAgent(line.text, true)}`),
   ].join("\n");
+  const fence = fenceFor(body);
+  return { text: `${head}\n${fence}diff\n${body}\n${fence}`, includesContent: true };
+}
+
+function numberRange(numbers: readonly number[], one: string, many: string): string {
+  const first = Math.min(...numbers);
+  const last = Math.max(...numbers);
+  return first === last ? `${one} ${first}` : `${many} ${first}-${last}`;
+}
+
+/**
+ * Where selected diff lines are, as prose: their numbers in the file as it is
+ * now, or the old numbers when every one of them was removed.
+ */
+export function lineRangeText(lines: readonly DiffLine[]): string {
+  const current = lines.flatMap((line) => (line.newLine === undefined ? [] : [line.newLine]));
+  if (current.length > 0) return numberRange(current, "line", "lines");
+  const removed = lines.flatMap((line) => (line.oldLine === undefined ? [] : [line.oldLine]));
+  if (removed.length === 0) return "selected lines";
+  return `${numberRange(removed, "removed line", "removed lines")} (numbered as before the change)`;
+}
+
+/**
+ * `@path lines a-b` followed by the selected lines of a hunk as a fenced diff
+ * block, under the same limits as {@link hunkReference}. A selection that
+ * names no line of the hunk gives the hunk's reference.
+ */
+export function linesReference(
+  mention: string,
+  hunk: DiffHunk,
+  selection: { first: number; last: number },
+  sensitive: boolean,
+): HunkReference {
+  if (sensitive) return { text: mention, includesContent: false };
+  const lines = hunk.lines.slice(Math.max(0, selection.first), selection.last + 1);
+  if (lines.length === 0) return hunkReference(mention, hunk, sensitive);
+  const head = `${mention} ${lineRangeText(lines)}`;
+  if (lines.length > MAX_INLINE_HUNK_LINES) {
+    return {
+      text: `${head} (the selection has ${lines.length} lines, more than ${MAX_INLINE_HUNK_LINES}, so its text is not included; read the file)`,
+      includesContent: false,
+    };
+  }
+  const body = lines
+    .map((line) => `${markerOf(line.kind)}${escapeForAgent(line.text, true)}`)
+    .join("\n");
   const fence = fenceFor(body);
   return { text: `${head}\n${fence}diff\n${body}\n${fence}`, includesContent: true };
 }

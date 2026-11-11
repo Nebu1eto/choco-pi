@@ -42,7 +42,12 @@ import {
   type RecordedFinding,
 } from "../findings.ts";
 import { actionFor, PANE_KEYS, type ChangesKeyTable } from "./keys.ts";
-import { KEYBOARD_RESIZE_STEP, type PaneScroller, type PaneSurface } from "./surface.ts";
+import {
+  KEYBOARD_RESIZE_STEP,
+  type PaneScroller,
+  type PaneSurface,
+  type PointerGesture,
+} from "./surface.ts";
 import {
   bodyNotice,
   fileRow,
@@ -63,12 +68,18 @@ import {
   selectedLineIndexes,
   type CommentPosition,
   type CursorFile,
+  type CursorRow,
   type LineCursor,
   type LineTarget,
 } from "./line-cursor.ts";
 
 /** What the pane can be asked about. */
-export type AskTarget = { file: FileSummary; hunk?: DiffHunk };
+export type AskTarget = {
+  file: FileSummary;
+  hunk?: DiffHunk;
+  /** The lines of `hunk` the cursor selects, as indexes into its lines; absent for the whole hunk. */
+  lines?: { first: number; last: number };
+};
 
 /** What the view asks of its owner. Optional members are features the owner may not provide. */
 export type PaneActions = {
@@ -133,6 +144,8 @@ export type ViewStore = Pick<DiffStore, "loadFile"> & {
 type Block = {
   lines: string[];
   /** Offset of the line to keep visible, when not the file row. */ anchor?: number;
+  /** What each row shows, for the mouse: a file row, a hunk header or a line. */
+  stops?: Array<CursorRow | undefined>;
 };
 
 type FindingsIndex = {
@@ -175,10 +188,27 @@ export type ChangesViewOptions = {
   title?: string;
   /**
    * "line" moves a cursor through file rows, folded hunks and displayed lines,
-   * with Shift range selection (the review). Defaults to "hunk" (the pane:
-   * files, then hunks with n/N).
+   * with Shift range selection (the review and the pane). Defaults to "hunk"
+   * (files, then hunks with n/N).
    */
   cursor?: "hunk" | "line";
+  /**
+   * Line cursor: an unfolded hunk's header is a stop where the whole hunk is
+   * selected, and n/N land on it (the pane). Otherwise a hunk is entered on
+   * its first line.
+   */
+  hunkStops?: boolean;
+  /**
+   * Line cursor: a selection may cover removed and added lines together (the
+   * pane, which quotes the lines). Otherwise it stays on lines one side
+   * numbers, as a review comment needs.
+   */
+  freeSelection?: boolean;
+  /**
+   * Line cursor: false makes Enter on a hunk or line collapse its file (the
+   * pane). Otherwise it folds the hunk.
+   */
+  enterFolds?: boolean;
   /** Text in a folded hunk's placeholder (line cursor); the view's fold set says which are folded. */
   foldReason?: (hunkId: string) => string | undefined;
   /** Hunks marked reviewed; an unfolded one shows "✓ reviewed" on its header. */
@@ -291,6 +321,8 @@ export class ChangesView implements PaneSurface {
   private pendingHunk: { path: string; direction: 1 | -1 } | undefined;
   /** A search match whose body was loading when the cursor was sent there. */
   private pendingLine: LineTarget | undefined;
+  /** First body row of each file block as last drawn, for `rowTarget`. */
+  private blockRows: Array<{ start: number; block: Block }> = [];
 
   /** Line cursor: index into the selected hunk's displayed lines; absent on a file row or a fold. */
   cursorLine: number | undefined;
@@ -487,6 +519,7 @@ export class ChangesView implements PaneSurface {
 
   renderBody(width: number, _focused: boolean): string[] {
     this.lastWidth = width;
+    this.blockRows = [];
     if (this.state.kind !== "ready") return [];
     // Every row is cut to the width after the selection gutter and host rows are added.
     const columns = Math.max(0, width);
@@ -516,6 +549,7 @@ export class ChangesView implements PaneSurface {
     const blockWidth = Math.max(1, width - 1);
     this.files().forEach((file, index) => {
       const block = this.fileBlock(file, snapshot.revision, blockWidth);
+      this.blockRows.push({ start: lines.length, block });
       const selected = index === this.selectedIndex;
       if (selected) this.selectedLine = lines.length + (block.anchor ?? 0);
       const row = block.lines[0] ?? "";
@@ -664,15 +698,19 @@ export class ChangesView implements PaneSurface {
     const cached = this.cache.get(key);
     if (cached) return cached;
     this.blockRenders += 1;
+    const stops: Array<CursorRow | undefined> = [{ path: file.path }];
     const block: Block = {
       lines: [fileRow(file, expanded, width, this.styler, this.badges(file.path))],
+      stops,
     };
     for (const detail of this.options.rowDetails?.(file.path, expanded) ?? []) {
       block.lines.push(bodyNote(safe(detail.text), width, this.styler, detail.color));
+      stops.push(undefined);
     }
     const bodyOffset = block.lines.length;
     if (expanded) {
       const body = this.bodyBlock(file, width);
+      stops.push(...(body.stops ?? []));
       block.lines.push(...body.lines);
       if (body.anchor !== undefined) block.anchor = body.anchor + bodyOffset;
     }
@@ -810,6 +848,19 @@ export class ChangesView implements PaneSurface {
     const block = bodyBlock(input);
     const offset = lines.length;
     lines.push(...block.lines);
+    const stops = Array.from({ length: lines.length }, (): CursorRow | undefined => undefined);
+    for (const hunk of diffFile.hunks) {
+      const start = block.hunkStart.get(hunk.id);
+      if (start === undefined) continue;
+      stops[offset + start] = { path, hunkId: hunk.id };
+      hunk.lines.forEach((_line, lineIndex) => {
+        // A line without a row of its own (a folded hunk) reports the header's.
+        const row = block.rowOfLine(hunk.id, lineIndex);
+        if (row !== undefined && row !== start) {
+          stops[offset + row] ??= { path, hunkId: hunk.id, lineIndex };
+        }
+      });
+    }
     const focusedRow = focused.length > 0 ? block.annotationRows[focused[0]!] : undefined;
     if (focusedRow !== undefined) anchor = offset + focusedRow;
     else if (anchor === undefined && selectedHunkId !== undefined) {
@@ -820,7 +871,7 @@ export class ChangesView implements PaneSurface {
       if (start !== undefined) anchor = offset + start;
     }
     lines.push(...(this.options.fileTrailer?.(path, diffFile.hunks, width) ?? []));
-    return anchor === undefined ? { lines } : { lines, anchor };
+    return anchor === undefined ? { lines, stops } : { lines, anchor, stops };
   }
 
   /** The host's layout for line-cursor bodies. */
@@ -1079,12 +1130,18 @@ export class ChangesView implements PaneSurface {
 
   /* ------------------------------------------------------ line cursor */
 
-  /** Select a hunk; the line cursor starts on its first displayed line unless it is folded. */
+  /**
+   * Select a hunk; the line cursor starts on its first displayed line unless
+   * it is folded or its header is a stop.
+   */
   private enterHunk(path: string, hunk: DiffHunk): void {
     this.selectedHunk = { path, hunkId: hunk.id };
     this.anchorLine = undefined;
     this.cursorLine =
-      this.cursorMode === "line" && !this.foldedHunks.has(hunk.id) && hunk.lines.length > 0
+      this.cursorMode === "line" &&
+      !this.options.hunkStops &&
+      !this.foldedHunks.has(hunk.id) &&
+      hunk.lines.length > 0
         ? 0
         : undefined;
   }
@@ -1128,6 +1185,7 @@ export class ChangesView implements PaneSurface {
       open: this.expanded.has(file.path) && this.canShowContents(file),
       hunks: this.displayHunks(file),
       folded: (hunkId) => this.foldedHunks.has(hunkId),
+      hunkStops: this.options.hunkStops === true,
     }));
   }
 
@@ -1160,7 +1218,21 @@ export class ChangesView implements PaneSurface {
     const cursor = this.lineCursor();
     const current = this.currentDisplayHunk();
     if (!cursor || !current || this.foldedHunks.has(current.hunk.id)) return;
-    this.setCursor(extendSelection(current.hunk, cursor, delta));
+    if (!this.options.freeSelection) {
+      this.setCursor(extendSelection(current.hunk, cursor, delta));
+      return;
+    }
+    const count = current.hunk.lines.length;
+    if (count === 0 || !Number.isInteger(delta) || delta === 0) return;
+    const index = cursor.lineIndex;
+    if (index === undefined) {
+      // From the hunk's header a selection starts on its first line.
+      if (delta > 0) this.setCursor({ ...cursor, lineIndex: 0 });
+      return;
+    }
+    const next = Math.max(0, Math.min(count - 1, index + delta));
+    if (next === index) return;
+    this.setCursor({ ...cursor, lineIndex: next, anchorIndex: cursor.anchorIndex ?? index });
   }
 
   /** Where a comment written now attaches; undefined off a line. */
@@ -1258,6 +1330,91 @@ export class ChangesView implements PaneSurface {
     });
   }
 
+  /* ------------------------------------------------------------ mouse */
+
+  /** What body row `row` showed when the body was last drawn; undefined on any other row. */
+  rowTarget(row: number): CursorRow | undefined {
+    for (const entry of this.blockRows) {
+      const offset = row - entry.start;
+      if (offset >= 0 && offset < entry.block.lines.length) return entry.block.stops?.[offset];
+    }
+    return undefined;
+  }
+
+  /** Body rows of a hunk's lines as last drawn. */
+  private lineRows(path: string, hunkId: string): Array<{ row: number; lineIndex: number }> {
+    const rows: Array<{ row: number; lineIndex: number }> = [];
+    for (const entry of this.blockRows) {
+      if (entry.block.stops?.[0]?.path !== path) continue;
+      entry.block.stops.forEach((stop, offset) => {
+        if (stop?.hunkId === hunkId && stop.lineIndex !== undefined) {
+          rows.push({ row: entry.start + offset, lineIndex: stop.lineIndex });
+        }
+      });
+    }
+    return rows;
+  }
+
+  /** Extend the selection to the line of the cursor's hunk nearest to `row`: it stays in one hunk. */
+  private dragTo(row: number): void {
+    const selection = this.selectedHunk;
+    const from = this.cursorLine;
+    if (!selection || from === undefined) return;
+    let nearest: { row: number; lineIndex: number } | undefined;
+    for (const entry of this.lineRows(selection.path, selection.hunkId)) {
+      if (!nearest || Math.abs(entry.row - row) < Math.abs(nearest.row - row)) nearest = entry;
+    }
+    if (nearest) this.extendLineSelection(nearest.lineIndex - from);
+  }
+
+  /**
+   * A click on a file row selects the file and expands or collapses it; on a
+   * hunk header it selects the hunk. With the line cursor, a press on a line
+   * puts the cursor there (Shift extends from where it was) and the drags
+   * that follow select a range.
+   */
+  pointer(gesture: PointerGesture): boolean {
+    if (this.noteInput || this.disposed) return false;
+    const line = this.cursorMode === "line";
+    if (gesture.kind === "drag") {
+      if (!line) return false;
+      this.dragTo(gesture.row);
+      this.actions.requestRender();
+      return true;
+    }
+    const target = this.rowTarget(gesture.row);
+    if (!target) return false;
+    const onLine = line && target.hunkId !== undefined && target.lineIndex !== undefined;
+    if (gesture.kind === "press") {
+      if (!onLine) return false;
+      if (!this.options.keepMessages) this.message = undefined;
+      const from = this.cursorLine;
+      const selection = this.selectedHunk;
+      if (
+        gesture.extend &&
+        from !== undefined &&
+        selection?.path === target.path &&
+        selection.hunkId === target.hunkId
+      ) {
+        this.extendLineSelection((target.lineIndex ?? from) - from);
+      } else this.setCursor(target);
+      this.actions.requestRender();
+      return true;
+    }
+    if (!this.options.keepMessages) this.message = undefined;
+    if (target.hunkId === undefined) {
+      const index = this.files().findIndex((file) => file.path === target.path);
+      if (index < 0) return false;
+      this.select(index);
+      this.toggleExpanded();
+    } else if (!onLine) {
+      this.setCursor({ path: target.path, hunkId: target.hunkId });
+    }
+    // A click on a line: its press already put the cursor there.
+    this.actions.requestRender();
+    return true;
+  }
+
   /* --------------------------------------------------------- actions */
 
   private startNote(): void {
@@ -1317,7 +1474,14 @@ export class ChangesView implements PaneSurface {
     if (!ask) return;
     const current = this.currentHunk();
     if (current) {
-      ask({ file: current.file, hunk: current.hunk });
+      const shown = this.currentDisplayHunk();
+      const cursor = this.lineCursor();
+      const selected = shown && cursor ? selectedLineIndexes(shown.hunk, cursor) : [];
+      const first = selected[0];
+      const last = selected.at(-1);
+      if (shown && first !== undefined && last !== undefined) {
+        ask({ file: shown.file, hunk: shown.hunk, lines: { first, last } });
+      } else ask({ file: current.file, hunk: current.hunk });
       return;
     }
     const file = this.selectedFile();
@@ -1367,8 +1531,14 @@ export class ChangesView implements PaneSurface {
         if (line) this.moveCursor(-1);
         else this.select(this.selectedIndex - 1);
         break;
+      case "fileDown":
+        this.select(this.selectedIndex + 1);
+        break;
+      case "fileUp":
+        this.select(this.selectedIndex - 1);
+        break;
       case "toggle":
-        if (line) this.toggleLine();
+        if (line && this.options.enterFolds !== false) this.toggleLine();
         else this.toggleExpanded();
         break;
       case "pageDown":

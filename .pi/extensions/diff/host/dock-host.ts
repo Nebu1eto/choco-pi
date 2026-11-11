@@ -7,6 +7,12 @@
  * of the same transcript, a one-column border and the pane; uninstall puts the
  * original two entries back. Because Pi keeps mounting the same root object,
  * the change survives a fullscreen/regular round trip without reinstalling.
+ *
+ * Mouse: pi-tui gives a component coordinates local to it, and a scrolled
+ * component its own rows, so a body event's `y` is the body row. It offers an
+ * event to every component under the pointer, innermost first, until one
+ * handles it; the row (`PaneRow`) is therefore asked after the transcript's
+ * own components declined, which is how a press beside the pane is seen.
  */
 import type {
   Component,
@@ -25,15 +31,23 @@ import type { PaneHost, PaneTui } from "./types.ts";
 const BORDER_IDLE = "\u001b[2m│\u001b[22m";
 const BORDER_ACTIVE = "\u001b[1m┃\u001b[22m";
 
+type Viewport = { top: number; height: number };
+
 class PaneBody implements Component, Focusable {
   focused = false;
   readonly capturesViewportInput = true;
+  /** A press on a line started a selection; drags extend it until the release. */
+  selecting = false;
+  /** Screen row of the first visible body row, as of that press. */
+  private viewportTop = 0;
   readonly surface: GuardedSurface;
   readonly requestFocus: () => void;
+  readonly viewport: () => Viewport;
 
-  constructor(surface: GuardedSurface, requestFocus: () => void) {
+  constructor(surface: GuardedSurface, requestFocus: () => void, viewport: () => Viewport) {
     this.surface = surface;
     this.requestFocus = requestFocus;
+    this.viewport = viewport;
   }
 
   render(width: number): string[] {
@@ -45,9 +59,41 @@ class PaneBody implements Component, Focusable {
   }
 
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-    if (event.type !== "click") return undefined;
-    this.surface.contain(() => this.requestFocus(), undefined);
-    return { handled: true, render: true };
+    switch (event.type) {
+      case "press": {
+        if (event.button !== "left") return undefined;
+        const pressed = this.surface.contain(() => {
+          this.viewportTop = event.screenY - (event.y - this.viewport().top);
+          return this.surface.pointer({ kind: "press", row: event.y, extend: event.shift });
+        }, false);
+        // Not on a line: pi-tui keeps the press for its own text selection and sends the click.
+        if (!pressed) return undefined;
+        this.selecting = true;
+        this.surface.contain(() => this.requestFocus(), undefined);
+        return { handled: true, capture: true, render: true };
+      }
+      case "drag": {
+        if (!this.selecting) return undefined;
+        this.surface.contain(() => {
+          // The body scrolls under a held button, so the row is read from the screen: at
+          // most one row past either edge, which scrolls the selection a row at a time.
+          const { top, height } = this.viewport();
+          const visible = Math.max(-1, Math.min(height, event.screenY - this.viewportTop));
+          this.surface.pointer({ kind: "drag", row: top + visible });
+        }, undefined);
+        return { handled: true, render: true };
+      }
+      case "release":
+        if (!this.selecting) return undefined;
+        this.selecting = false;
+        return { handled: true };
+      case "click":
+        this.surface.contain(() => this.requestFocus(), undefined);
+        if (event.button === "left") this.surface.pointer({ kind: "click", row: event.y });
+        return { handled: true, render: true };
+      default:
+        return undefined;
+    }
   }
 
   invalidate(): void {
@@ -116,9 +162,50 @@ export class BorderHandle implements Component {
   invalidate(): void {}
 }
 
+/**
+ * The transcript, the border and the pane side by side. A left press on the
+ * transcript's columns gives keyboard focus back to what had it before the
+ * pane, and is left unhandled so Pi still starts its text selection there; a
+ * click on the pane's columns that nothing in the pane took (the space under
+ * a short list) focuses the pane.
+ */
+class PaneRow extends HStack {
+  readonly paneColumn: (width: number) => number;
+  readonly leavePane: () => void;
+  readonly enterPane: () => void;
+
+  constructor(paneColumn: (width: number) => number, leavePane: () => void, enterPane: () => void) {
+    super();
+    this.paneColumn = paneColumn;
+    this.leavePane = leavePane;
+    this.enterPane = enterPane;
+  }
+
+  // pi-tui does not export the result type its containers return.
+  handleMouse(event: TuiMouseEvent): ReturnType<HStack["handleMouse"]> {
+    if (event.button !== "left") return undefined;
+    const inPane = event.x >= this.paneColumn(event.width);
+    if (event.type === "press" && !inPane) this.leavePane();
+    if (event.type !== "click" || !inPane) return undefined;
+    this.enterPane();
+    return {
+      handled: true,
+      render: true,
+      // The row itself took the event: the shape pi-tui's containers report for a child.
+      target: {
+        component: this,
+        originX: event.screenX - event.x,
+        originY: event.screenY - event.y,
+        width: event.width,
+        height: event.height,
+      },
+    };
+  }
+}
+
 type Mounted = {
   layout: DockableLayout;
-  row: HStack;
+  row: PaneRow;
   appliedWidth: number;
 };
 
@@ -132,7 +219,11 @@ export function createDockHost(
   let relayoutQueued = false;
   const surface = guardSurface(view, callbacks);
 
-  const body = new PaneBody(surface, () => host.focus());
+  const body = new PaneBody(
+    surface,
+    () => host.focus(),
+    () => ({ top: scroll.scrollTop, height: scroll.viewportHeight }),
+  );
   const header = new PaneHeader(surface, body);
   const scroll = new ScrollView(body, { follow: "none", overscroll: "contain", scrollbar: "auto" });
   const paneBox = new VStack([
@@ -195,7 +286,19 @@ export function createDockHost(
       if (tui.mode !== "fullscreen") return false;
       const layout = inspectHostRoot(readLayoutRoot(tui));
       if (!layout) return false;
-      const target: Mounted = { layout, row: new HStack(), appliedWidth: 0 };
+      const row = new PaneRow(
+        (width) =>
+          surface.contain(
+            () => (canHostPane(width) ? width - callbacks.width() - BORDER_WIDTH : width),
+            width,
+          ),
+        () =>
+          surface.contain(() => {
+            if (host.isFocused()) host.unfocus();
+          }, undefined),
+        () => surface.contain(() => host.focus(), undefined),
+      );
+      const target: Mounted = { layout, row, appliedWidth: 0 };
       layoutRow(target, callbacks.width());
       const [transcriptEntry, dockEntry] = layout.entries;
       restoreEntries(layout.root, [{ ...transcriptEntry, component: target.row }, dockEntry]);
@@ -215,6 +318,7 @@ export function createDockHost(
       }
       target.row.clear();
       border.dragging = false;
+      body.selecting = false;
       tui.requestRender();
     },
     setWidth(width) {

@@ -11,6 +11,9 @@ export type ChangesAction =
   | "extendUp"
   | "down"
   | "up"
+  /** The next or previous file row, whatever the cursor is on (the pane's j/k). */
+  | "fileDown"
+  | "fileUp"
   | "toggle"
   | "pageDown"
   | "pageUp"
@@ -38,12 +41,17 @@ export type KeyBinding = string | { key: KeyId };
 
 export type ChangesKeyTable = Readonly<Record<ChangesAction, readonly KeyBinding[]>>;
 
-/** The pane's bindings, unchanged from before the table existed. */
+/**
+ * The pane's bindings. j/k step through files and ↑/↓ through the lines of
+ * open files; Tab and Shift+← join Esc and q for going back to the editor.
+ */
 export const PANE_KEYS = {
-  extendDown: [],
-  extendUp: [],
-  down: ["j", { key: "down" }],
-  up: ["k", { key: "up" }],
+  extendDown: [{ key: "shift+down" }],
+  extendUp: [{ key: "shift+up" }],
+  down: [{ key: "down" }],
+  up: [{ key: "up" }],
+  fileDown: ["j"],
+  fileUp: ["k"],
   toggle: [{ key: "enter" }, { key: "space" }],
   pageDown: [{ key: "pageDown" }],
   pageUp: [{ key: "pageUp" }],
@@ -63,7 +71,7 @@ export const PANE_KEYS = {
   cycleSource: ["s"],
   review: ["R"],
   reveal: ["v"],
-  back: [{ key: "escape" }, "q"],
+  back: [{ key: "escape" }, "q", { key: "tab" }, { key: "shift+left" }],
 } as const satisfies ChangesKeyTable;
 
 /** Every action, in matching order: the first action bound to `data` wins. */
@@ -72,6 +80,8 @@ export const CHANGES_ACTIONS: readonly ChangesAction[] = [
   "extendUp",
   "down",
   "up",
+  "fileDown",
+  "fileUp",
   "toggle",
   "pageDown",
   "pageUp",

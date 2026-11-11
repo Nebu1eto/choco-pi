@@ -1,7 +1,9 @@
 /**
  * The line cursor of the changes view (the interactive review's cursor): pure
  * functions over the files as displayed. A stop is a file row, a folded
- * hunk's placeholder, or one displayed line of an unfolded hunk.
+ * hunk's placeholder, or one displayed line of an unfolded hunk; a host may
+ * make an unfolded hunk's header a stop too (the pane, where it selects the
+ * whole hunk).
  *
  * Line indexes count the hunk's displayed lines, which include any context
  * the reviewer revealed around it; hunk ids stay the content-hash ids.
@@ -27,6 +29,8 @@ export type CursorFile = {
   /** Displayed hunks; undefined while loading. */
   hunks: readonly DiffHunk[] | undefined;
   folded(hunkId: string): boolean;
+  /** The header of an unfolded hunk is a stop before its lines. */
+  hunkStops?: boolean;
 };
 
 export type CursorRow = { path: string; hunkId?: string; lineIndex?: number };
@@ -42,6 +46,7 @@ export function cursorRows(files: readonly CursorFile[]): CursorRow[] {
         rows.push({ path: file.path, hunkId: hunk.id });
         continue;
       }
+      if (file.hunkStops) rows.push({ path: file.path, hunkId: hunk.id });
       hunk.lines.forEach((_line, lineIndex) =>
         rows.push({ path: file.path, hunkId: hunk.id, lineIndex }),
       );

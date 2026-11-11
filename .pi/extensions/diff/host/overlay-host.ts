@@ -41,8 +41,11 @@ export function transcriptRows(tui: PaneTui): number {
 class OverlayPane implements Component, Focusable {
   focused = false;
   dragging = false;
+  /** A press on a line started a selection; drags extend it until the release. */
+  selecting = false;
   scrollTop = 0;
   bodyRows = 0;
+  private headerRows = 0;
   readonly tui: PaneTui;
   readonly surface: GuardedSurface;
   readonly callbacks: HostCallbacks;
@@ -73,6 +76,7 @@ class OverlayPane implements Component, Focusable {
     const header = this.surface.renderHeader(inner, this.focused).slice(0, height);
     const body = this.surface.renderBody(inner, this.focused);
     this.bodyRows = Math.max(0, height - header.length);
+    this.headerRows = header.length;
     this.scrollTop = Math.max(0, Math.min(this.scrollTop, body.length - this.bodyRows));
     const visible = [...header, ...body.slice(this.scrollTop, this.scrollTop + this.bodyRows)];
     while (visible.length < height) visible.push("");
@@ -102,8 +106,31 @@ class OverlayPane implements Component, Focusable {
       this.callbacks.resizeTo(widthFromBorderColumn(this.tui.terminal.columns, event.screenX));
       return { handled: true, render: true };
     }
+    // The body row under the pointer, counted from the first visible one.
+    const visible = event.y - this.headerRows;
+    const onBody = event.x >= BORDER_WIDTH && visible >= 0 && visible < this.bodyRows;
+    if (event.type === "press" && event.button === "left" && onBody) {
+      const row = this.scrollTop + visible;
+      if (!this.surface.pointer({ kind: "press", row, extend: event.shift })) return undefined;
+      this.selecting = true;
+      this.requestFocus();
+      return { handled: true, capture: true, render: true };
+    }
+    if (event.type === "drag" && this.selecting) {
+      // At most one row past either edge, so the selection scrolls the body a row at a time.
+      const row = this.scrollTop + Math.max(-1, Math.min(this.bodyRows, visible));
+      this.surface.pointer({ kind: "drag", row });
+      return { handled: true, render: true };
+    }
+    if (event.type === "release" && this.selecting) {
+      this.selecting = false;
+      return { handled: true };
+    }
     if (event.type === "click") {
       this.requestFocus();
+      if (event.button === "left" && onBody) {
+        this.surface.pointer({ kind: "click", row: this.scrollTop + visible });
+      }
       return { handled: true, render: true };
     }
     return undefined;
@@ -162,6 +189,7 @@ export function createOverlayHost(
       const current = handle;
       handle = undefined;
       pane.dragging = false;
+      pane.selecting = false;
       current.hide();
       tui.requestRender();
     },

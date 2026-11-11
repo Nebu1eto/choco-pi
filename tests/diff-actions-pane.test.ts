@@ -115,6 +115,32 @@ test("a on a short hunk inserts the range and a fenced diff; a long hunk only th
   assert.match(h.header(), /longer than 60 lines/);
 });
 
+test("a on selected lines inserts their range and only those lines", async () => {
+  const h = harness({ editorText: "" });
+  await openFocused(h);
+  const short = hunk("h-short", 3, [" keep", "-old", "+new", " tail"]);
+  h.store().bodies.set("src/a.ts", textBody("src/a.ts", [short]));
+  h.store().ready(1, [file("src/a.ts")]);
+  h.tui.input("n");
+  await flush();
+  const DOWN = "\u001b[B";
+  h.tui.input(DOWN);
+  h.tui.input(DOWN);
+  h.tui.input("a");
+  assert.equal(
+    h.editor.text,
+    "@src/a.ts removed line 4 (numbered as before the change)\n```diff\n-old\n```\n",
+    "a removed line has only its old number",
+  );
+  assert.equal(h.tui.paneFocused(), false, "focus is back in the editor");
+  h.editor.text = "";
+  await h.run("focus");
+  h.tui.input("\u001b[1;2B");
+  h.tui.input("a");
+  assert.equal(h.editor.text, "@src/a.ts line 4\n```diff\n-old\n+new\n```\n");
+  assert.match(h.header(), /Selected lines added to the editor/);
+});
+
 const SENSITIVE = [
   ".env",
   ".env.production",

@@ -17,7 +17,12 @@
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { sanitizeTerminalText } from "../../lib/changes/terminal-text.ts";
 import type { RuntimeValue } from "../../lib/runtime-values.ts";
-import type { HostCallbacks, PaneScroller, PaneSurface } from "../../lib/changes/view/surface.ts";
+import type {
+  HostCallbacks,
+  PaneScroller,
+  PaneSurface,
+  PointerGesture,
+} from "../../lib/changes/view/surface.ts";
 
 export type FailureKind = "render" | "input";
 
@@ -41,6 +46,8 @@ export type GuardedSurface = PaneSurface & {
   readonly renderFailure: RuntimeValue | undefined;
   /** Run host code pi-tui calls outside a view call; a throw counts as a render failure. */
   contain<Value>(run: () => Value, fallback: Value): Value;
+  /** The view's answer to a mouse gesture; false when it has none or it threw (reported as input). */
+  pointer(gesture: PointerGesture): boolean;
 };
 
 export function guardSurface(surface: PaneSurface, callbacks: HostCallbacks): GuardedSurface {
@@ -89,6 +96,15 @@ export function guardSurface(surface: PaneSurface, callbacks: HostCallbacks): Gu
         surface.handleKey(data);
       } catch (error) {
         report("input", error);
+      }
+    },
+    pointer(gesture) {
+      if (renderFailure) return false;
+      try {
+        return surface.pointer?.(gesture) ?? false;
+      } catch (error) {
+        report("input", error);
+        return false;
       }
     },
     attachScroller(scroller: PaneScroller) {

@@ -15,6 +15,7 @@ import { isString } from "../.pi/extensions/lib/runtime-values.ts";
 import {
   ChangesView,
   renderUnifiedBody,
+  type AskTarget,
   type ChangesViewOptions,
 } from "../.pi/extensions/lib/changes/view/changes-view.ts";
 import {
@@ -91,13 +92,15 @@ test("the pane's key table binds each key to exactly one action", () => {
     }
   }
   assert.equal(actionFor(PANE_KEYS, "v"), "reveal");
-  assert.equal(actionFor(PANE_KEYS, "j"), "down");
+  assert.equal(actionFor(PANE_KEYS, "j"), "fileDown");
+  assert.equal(actionFor(PANE_KEYS, "\u001b[B"), "down");
+  assert.equal(actionFor(PANE_KEYS, "\t"), "back");
   assert.equal(actionFor(PANE_KEYS, "\r"), "toggle");
   assert.equal(actionFor(PANE_KEYS, "y"), undefined);
 });
 
 test("a host's key table rebinds actions; unbound keys do nothing", async (t) => {
-  const keys: ChangesKeyTable = { ...PANE_KEYS, down: ["x"], back: ["Q"] };
+  const keys: ChangesKeyTable = { ...PANE_KEYS, fileDown: ["x"], back: ["Q"] };
   const { view, unfocused } = await mount(t, { keys });
   assert.equal(view.selectedIndex, 0);
   view.handleKey("j");
@@ -235,7 +238,14 @@ async function lineView(options: Partial<ChangesViewOptions> = {}): Promise<Chan
     keyHint: "hint",
     helpLines: [],
     cursor: "line",
-    keys: { ...PANE_KEYS, extendDown: [{ key: "shift+down" }], extendUp: [{ key: "shift+up" }] },
+    // The review's movement: j/k and the arrows both walk lines.
+    keys: {
+      ...PANE_KEYS,
+      down: ["j", { key: "down" }],
+      up: ["k", { key: "up" }],
+      fileDown: [],
+      fileUp: [],
+    },
     actions: {
       unfocus: () => {},
       close: () => {},
@@ -418,4 +428,99 @@ test("expandContext, annotations, rowDetails and trailers: host rows sit where t
   assert.match(body(view), /revealed zero/);
   view.setFolded("h1", true);
   assert.doesNotMatch(body(view), /COMMENT/, "a folded hunk's annotations are not drawn");
+});
+
+/* --------------------------------------------- the pane's cursor and mouse */
+
+const DOWN = "\u001b[B";
+
+/** The line view as the /diff pane configures it, recording what `a` asks about. */
+async function paneLineView() {
+  const asked: AskTarget[] = [];
+  const view = await lineView({
+    keys: PANE_KEYS,
+    hunkStops: true,
+    freeSelection: true,
+    enterFolds: false,
+    actions: {
+      unfocus: () => {},
+      close: () => {},
+      resizeBy: () => {},
+      refresh: () => {},
+      requestRender: () => {},
+      isToggleKey: () => false,
+      isFocusKey: () => false,
+      ask: (target) => asked.push(target),
+    },
+  });
+  /** The body row showing `pattern`, as just drawn. */
+  const rowOf = (pattern: RegExp) => {
+    const row = view.renderBody(80, true).findIndex((line) => pattern.test(unmarked(line)));
+    assert.ok(row >= 0, `no row matches ${pattern}`);
+    return row;
+  };
+  return { view, asked, rowOf };
+}
+
+test("pane cursor: j/k step files, the arrows walk a hunk's header and lines, and a asks about the selection", async () => {
+  const { view, asked } = await paneLineView();
+  view.handleKey(DOWN);
+  assert.deepEqual(view.lineCursor(), { path: "a.ts", hunkId: "h1" }, "the header is a stop");
+  view.handleKey("a");
+  assert.deepEqual(asked.at(-1), { file: view.selectedFile(), hunk: H1 }, "the whole hunk");
+  view.handleKey(DOWN);
+  view.handleKey(DOWN);
+  view.handleKey(SHIFT_DOWN);
+  assert.deepEqual(
+    view.lineCursor(),
+    { path: "a.ts", hunkId: "h1", lineIndex: 2, anchorIndex: 1 },
+    "a removed and an added line together",
+  );
+  view.handleKey("a");
+  assert.deepEqual(asked.at(-1), {
+    file: view.selectedFile(),
+    hunk: H1,
+    lines: { first: 1, last: 2 },
+  });
+  view.handleKey("j");
+  assert.deepEqual(view.lineCursor(), { path: "b.ts" }, "j leaves the lines for the next file");
+  view.handleKey("k");
+  view.handleKey("n");
+  assert.deepEqual(view.lineCursor(), { path: "a.ts", hunkId: "h1" }, "n lands on the header");
+  view.handleKey(DOWN);
+  view.handleKey(ENTER);
+  assert.equal(view.expanded.has("a.ts"), false, "Enter on a line collapses its file");
+  assert.deepEqual(view.lineCursor(), { path: "a.ts" });
+});
+
+test("mouse: a click on a file row expands or collapses it; a press and drags select lines of one hunk", async () => {
+  const { view, asked, rowOf } = await paneLineView();
+  assert.equal(
+    view.pointer({ kind: "press", row: rowOf(/b\.ts/) }),
+    false,
+    "a file row takes the click",
+  );
+  assert.equal(view.pointer({ kind: "click", row: rowOf(/b\.ts/) }), true);
+  assert.equal(view.selectedPath, "b.ts");
+  assert.equal(view.expanded.has("b.ts"), false);
+  view.pointer({ kind: "click", row: rowOf(/b\.ts/) });
+  assert.equal(view.expanded.has("b.ts"), true);
+
+  assert.equal(view.pointer({ kind: "press", row: rowOf(/old two/) }), true);
+  assert.deepEqual(view.lineCursor(), { path: "a.ts", hunkId: "h1", lineIndex: 1 });
+  view.pointer({ kind: "drag", row: rowOf(/added twenty-one/) });
+  assert.deepEqual(
+    view.lineCursor(),
+    { path: "a.ts", hunkId: "h1", lineIndex: 3, anchorIndex: 1 },
+    "a drag into the next hunk stops at this hunk's last line",
+  );
+  assert.equal(inverted(view).length, 3);
+  view.pointer({ kind: "drag", row: rowOf(/a\.ts/) });
+  assert.deepEqual(view.lineCursor(), { path: "a.ts", hunkId: "h1", lineIndex: 0, anchorIndex: 1 });
+  view.handleKey("a");
+  assert.deepEqual(asked.at(-1)?.lines, { first: 0, last: 1 });
+
+  view.pointer({ kind: "click", row: rowOf(/second/) });
+  assert.deepEqual(view.lineCursor(), { path: "a.ts", hunkId: "h2" }, "a header selects its hunk");
+  assert.equal(view.pointer({ kind: "click", row: 999 }), false, "no row there");
 });
