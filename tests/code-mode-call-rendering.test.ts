@@ -120,3 +120,58 @@ test("expanded orchestration hides wrapper code and patch text", () => {
   assert.match(rendered, /Ran code · Compose tools with JavaScript/);
   assert.doesNotMatch(rendered, /tools\.|tools\[|Begin Patch|src\/example\.ts|-old|\+new/);
 });
+
+const LONG =
+  "Qualify references made from an earlier turn; follow the shown turn on store updates too";
+
+function describedCall(description: string) {
+  const tracker = createCodeModeRenderTracker();
+  tracker.finish("call-long");
+  return renderExecCall(
+    { code: `// @description: ${description}\nawait tools.exec_command({ cmd: "pwd" });` },
+    PLAIN_THEME,
+    { toolCallId: "call-long", isPartial: false },
+    tracker,
+  );
+}
+
+test("a long description is cut two columns short of the line's end, and the cut follows the width", () => {
+  const call = describedCall(LONG);
+  const lines = (width: number) => call.render(width).map((line) => line.trimEnd());
+  assert.deepEqual(lines(200), [`• Ran code · ${LONG}`], "it fits: nothing is cut");
+  assert.deepEqual(lines(103), [`• Ran code · ${LONG}`], "it fits with two columns to spare");
+  assert.deepEqual(lines(102), [`• Ran code · ${LONG.slice(0, 86)}…`]);
+  assert.deepEqual(lines(80), [`• Ran code · ${LONG.slice(0, 64)}…`]);
+  assert.equal(lines(80)[0]?.length, 78, "two columns stay free after the ellipsis");
+  assert.deepEqual(lines(200), [`• Ran code · ${LONG}`], "a wider terminal shows it again");
+});
+
+test("a terminal narrower than sixty characters still shows that many, wrapped", () => {
+  const narrow = describedCall(LONG)
+    .render(40)
+    .map((line) => line.trim())
+    .join(" ");
+  assert.equal(narrow, `• Ran code · ${LONG.slice(0, 59)}…`);
+  const short = "Read the reference builders and the rest of ask()";
+  assert.equal(
+    describedCall(short)
+      .render(30)
+      .map((line) => line.trim())
+      .join(" "),
+    `• Ran code · ${short}`,
+    "a short description is never cut",
+  );
+});
+
+test("the cut counts columns, so wide characters end at the line's edge too", () => {
+  const wide = "가".repeat(80);
+  const call = describedCall(wide);
+  const [line] = call.render(150);
+  // Thirteen columns of title, then 67 two-column characters and the ellipsis; two stay free.
+  assert.equal(line?.trimEnd(), `• Ran code · ${"가".repeat(67)}…`);
+  assert.equal(
+    call.render(100).join("").replace(/\s+/g, ""),
+    `•Rancode·${"가".repeat(59)}…`,
+    "sixty characters are kept although they are wider than the line",
+  );
+});

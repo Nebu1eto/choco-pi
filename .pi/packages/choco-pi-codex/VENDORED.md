@@ -1258,3 +1258,21 @@ Pi SDK dependencies move from exactly `1.5.1` to the range `~1.5.2` (`>=1.5.2 <1
 Upstream `normalizePatchPath` (`src/patch/paths.ts`, unchanged since the 3.0.18 fork) trimmed the header, dropped one leading `@`, and dropped a leading and trailing quote, and `resolvePatchPath` applied it a second time. The bundled `apply_patch` binary is the only applier and receives the model's patch text unmodified; it does none of that stripping. Run on darwin-arm64, it takes the text after the one-space marker (Add, Delete, Update, and Move to alike), removes every tab and carriage return, trims trailing whitespace in Rust's sense (including U+0085 and U+00A0, not U+FEFF), and keeps leading spaces, `@`, and quotes. A header such as `"@0"` therefore created `"@0"` while the parser reported `@0` and the mutation lock and context preflight used `<cwd>/0`.
 
 `normalizePatchPath` now implements the binary's reading and is applied once, by the parser; it is idempotent. `resolvePatchPath` resolves a parsed path without normalizing it again. `touchedPatchPaths` in `src/tools/apply-patch/execute.ts` is exported for tests. The reported path, the lock key, the context preflight, and the renderer's file read now name the file the binary edits. Remaining divergence: the binary also accepts header lines indented before `***`, which the TypeScript parser rejects (no lock, preflight, or preview for those patches). CRLF headers agree: the carriage return is removed on both sides. Tests: root `tests/prop-patch-paths.test.ts`, including differential properties that run the bundled binary.
+
+## 2026-11-11 choco-pi patch: Code Mode descriptions are cut at the terminal's width
+
+- `src/tools/code-mode/display-description.ts`: the description shown after
+  `Ran code ·` and after a nested `Ran Exec command ·` was cut to 60
+  characters whatever the width. `displayDescription` now only makes it one
+  printable line, and `describedTitle` returns a component that cuts it with
+  an ellipsis where the line ends at the width being drawn
+  (`fitDisplayDescription`), so the cut moves when the terminal is resized. Two
+  columns stay free right of the ellipsis.
+- A terminal too narrow for 60 characters still shows 59 and the ellipsis,
+  wrapped, as before; the cut counts columns, so wide characters end at the
+  edge too.
+- `src/tools/code-mode/call-rendering.ts`, `trace-rendering.ts`: the call
+  title and the collapsed nested row use that component. An `apply_patch`
+  row's target is unchanged.
+- Tests: `tests/code-mode-call-rendering.test.ts` (root),
+  `tests/trace-rendering.test.ts`.

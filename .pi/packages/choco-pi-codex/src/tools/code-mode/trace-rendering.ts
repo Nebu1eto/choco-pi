@@ -5,7 +5,7 @@ import { formatPatchTarget } from "../apply-patch/rendering.ts";
 import { type Component, Container, Spacer, Text, visibleWidth } from "@earendil-works/pi-tui";
 import { previewText, renderTextAndImages } from "./render-content.ts";
 import { codeModeToolDisplayName } from "./tool-identity.ts";
-import { conciseDisplayDescription } from "./display-description.ts";
+import { describedTitle, displayDescription } from "./display-description.ts";
 import type {
   CodeModeRenderContext,
   CodeModeRenderTheme,
@@ -125,24 +125,21 @@ function renderCollapsedTraceCall(
   tool: CodeModeToolDefinition | undefined,
   theme: CodeModeRenderTheme,
   context: CodeModeRenderContext | undefined,
-): Text {
+): Component {
   const verb = trace.status === "running" ? "Running" : trace.status === "error" ? "Failed" : "Ran";
   const label = codeModeToolDisplayName(trace.name, tool?.label);
+  const title = `${theme.fg("dim", "•")} ${theme.fg("toolTitle", theme.bold(`${verb} ${label}`))}`;
   const description = shortExecDescription(trace);
+  if (description) return describedTitle(title, description, (text) => theme.fg("muted", text));
   const summary = shortApplyPatchTarget(trace, context?.cwd ?? process.cwd());
-  const detailText = [description, summary].filter(Boolean).join(" · ");
-  const detail = detailText ? theme.fg("muted", ` · ${detailText}`) : "";
-  return new Text(
-    `${theme.fg("dim", "•")} ${theme.fg("toolTitle", theme.bold(`${verb} ${label}`))}${detail}`,
-    0,
-    0,
-  );
+  const detail = summary ? theme.fg("muted", ` · ${summary}`) : "";
+  return new Text(`${title}${detail}`, 0, 0);
 }
 
 function shortExecDescription(trace: RuntimeToolTrace): string | undefined {
   if (trace.name !== "exec_command" || !isObjectValue(trace.input)) return undefined;
   const description = trace.input["description"];
-  return conciseDisplayDescription(isStringValue(description) ? description : undefined);
+  return displayDescription(isStringValue(description) ? description : undefined);
 }
 
 function shortApplyPatchTarget(trace: RuntimeToolTrace, cwd: string): string | undefined {

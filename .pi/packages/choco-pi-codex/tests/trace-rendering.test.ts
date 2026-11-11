@@ -200,3 +200,34 @@ test("nested view_image preserves the outer image preference and matches direct 
     else process.env.CHOCO_PI_IMAGE_MOSAIC = mosaic;
   }
 });
+
+test("a nested call's description is cut two columns short of the width left after its number", () => {
+  const description =
+    "Restart the live process on the final code and step through every turn of the seeded session";
+  const row = (width: number) =>
+    renderTraceAndOutput(
+      [
+        {
+          id: "trace-1",
+          name: "exec_command",
+          input: { cmd: "true", description },
+          status: "done",
+        },
+      ],
+      0,
+      [],
+      new Container(),
+      false,
+      { expanded: false, isPartial: false },
+      PLAIN_THEME,
+      { toolCallId: "call-1", cwd: "/workspace" },
+      new Map(),
+    )
+      .render(width)
+      .map((line) => line.trimEnd());
+  assert.deepEqual(row(240), [`1. • Ran Exec command · ${description}`]);
+  const cut = row(90);
+  assert.equal(cut.length, 1);
+  assert.equal(cut[0]?.length, 88, "two columns stay free after the ellipsis");
+  assert.equal(cut[0], `1. • Ran Exec command · ${description.slice(0, 63)}…`);
+});

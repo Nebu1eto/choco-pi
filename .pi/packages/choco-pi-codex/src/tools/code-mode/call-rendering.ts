@@ -1,9 +1,9 @@
 import { isStringValue } from "../boundary.ts";
 import { highlightCode } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
+import { type Component, Text } from "@earendil-works/pi-tui";
 import type { CodeModeRenderTracker } from "./render-tracker.ts";
 import { codeModeToolDisplayName } from "./tool-identity.ts";
-import { codeDisplayDescription } from "./display-description.ts";
+import { codeDisplayDescription, describedTitle } from "./display-description.ts";
 import type { CodeModeRenderContext, CodeModeRenderTheme } from "./types.ts";
 
 const EXEC_SUMMARY = "Compose tools with JavaScript";
@@ -13,23 +13,28 @@ export function renderExecCall(
   theme: CodeModeRenderTheme,
   context: CodeModeRenderContext | undefined,
   tracker: CodeModeRenderTracker,
-): Text {
+): Component {
   tracker.register(context?.toolCallId, context?.invalidate);
   const code = isStringValue(args.code) ? args.code : "";
   const status = tracker.status(context?.toolCallId);
   const verb = status === "running" ? "Running" : status === "yielded" ? "Started" : "Ran";
-  let text = `${theme.fg("dim", "•")} ${theme.fg("toolTitle", theme.bold(`${verb} code`))}`;
+  const title = `${theme.fg("dim", "•")} ${theme.fg("toolTitle", theme.bold(`${verb} code`))}`;
   const description = codeDisplayDescription(code);
-  text += theme.fg("muted", ` · ${description ?? EXEC_SUMMARY}`);
+  let rest = "";
   const names = customToolNames(code);
   const orchestratesTools = /\btools\s*(?:\.|\[)/.test(code);
   if (!context?.expanded && !description && names.length > 0) {
     const labels = names.map((name) => codeModeToolDisplayName(name));
-    text += `\n${theme.fg("dim", "  └ ")}${theme.fg("muted", "Calls ")}${theme.fg("accent", labels.join(" · "))}`;
+    rest += `\n${theme.fg("dim", "  └ ")}${theme.fg("muted", "Calls ")}${theme.fg("accent", labels.join(" · "))}`;
   }
   if (context?.expanded && code.trim() && !orchestratesTools)
-    text += `\n\n${highlightCode(code, "javascript").join("\n")}`;
-  return new Text(text, 0, 0);
+    rest += `\n\n${highlightCode(code, "javascript").join("\n")}`;
+  return describedTitle(
+    title,
+    description ?? EXEC_SUMMARY,
+    (text) => theme.fg("muted", text),
+    rest,
+  );
 }
 
 export function renderWaitCall(
