@@ -25,6 +25,7 @@ import {
   type TextPosition,
 } from "./editor-selection";
 import { readFocusedAgentRuntime, selectFocusScopedUsage } from "./focused-runtime";
+import { MouseReportTailFilter } from "./mouse-report-tail";
 import {
   type MinimalistEditorMetadata,
   minimalistFrameGeometry,
@@ -918,6 +919,8 @@ export class PolishedEditor extends CustomEditor {
   private readonly uiTheme: Theme;
   private mouseFrame: MouseFrame = "base";
   private readonly selection: EditorSelection;
+  /** Drops the tail of a mouse report that pi-tui split while the event loop was busy. */
+  private readonly mouseTail = new MouseReportTailFilter((text) => this.acceptInput(text));
 
   constructor(
     tui: TUI,
@@ -968,6 +971,12 @@ export class PolishedEditor extends CustomEditor {
   }
 
   handleInput(data: string): void {
+    const input = this.mouseTail.filter(data);
+    if (input) this.acceptInput(input);
+  }
+
+  /** Input that is not a split mouse report's tail: the selection's first, then the editor's. */
+  private acceptInput(data: string): void {
     if (!this.selection.key(data)) super.handleInput(data);
   }
 
@@ -1049,6 +1058,8 @@ export class WrappedPolishedEditor implements EditorComponent {
   declare readonly setAutocompleteMaxVisible?: (maxVisible: number) => void;
   private mouseFrame: MouseFrame = "base";
   private readonly selection: EditorSelection;
+  /** Drops the tail of a mouse report that pi-tui split while the event loop was busy. */
+  private readonly mouseTail = new MouseReportTailFilter((text) => this.acceptInput(text));
 
   constructor(
     private readonly base: WrappedEditor,
@@ -1284,6 +1295,12 @@ export class WrappedPolishedEditor implements EditorComponent {
   }
 
   handleInput(data: string): void {
+    const input = this.mouseTail.filter(data);
+    if (input) this.acceptInput(input);
+  }
+
+  /** Input that is not a split mouse report's tail: the selection's first, then the base editor's. */
+  private acceptInput(data: string): void {
     if (!this.selection.key(data)) this.base.handleInput(data);
   }
 

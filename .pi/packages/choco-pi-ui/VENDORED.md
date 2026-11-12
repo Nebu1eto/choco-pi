@@ -406,3 +406,22 @@ Pi SDK dependencies move from exactly `1.5.1` to the range `~1.5.2` (`>=1.5.2 <1
   passes the host TUI's to `WrappedPolishedEditor`.
 - Tests: `tests/zentui-editor-selection.test.ts`,
   `tests/zentui-editor-fixture.ts` (root).
+
+## 2026-11-12 choco-pi patch: split mouse reports never reach the draft
+
+- pi-tui's stdin buffer hands on an incomplete escape sequence after a fixed
+  time (10 ms after a bare ESC, 50 ms otherwise). When the event loop is busy
+  longer, as while the wheel scrolls the transcript, the rest of an SGR mouse
+  report is read afterwards and parsed one character at a time as typed text,
+  so `1;47M` or `[<64;191;47M` landed in the prompt editor.
+- `extensions/zentui/mouse-report-tail.ts`: `MouseReportTailFilter` drops a
+  fragment that starts `ESC [<` and the characters that continue it. After a
+  bare `ESC` or `ESC [`, which pass on as keys, it holds `[` and `<` until a
+  digit confirms a report, and hands them on as typed when a character breaks
+  the pattern or the burst of input ends. A report stays open only for the
+  burst that continued it.
+- `extensions/zentui/ui.ts`: both editor classes run input through the
+  filter before the selection and the editor; held characters are released
+  through the same path. An Escape that pi-tui flushed from a split report
+  has already reached Pi as a key and is not undone.
+- Tests: `tests/zentui-mouse-report-tail.test.ts` (root).
