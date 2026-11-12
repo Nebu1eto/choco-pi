@@ -376,3 +376,33 @@ Pi SDK dependencies move from exactly `1.5.1` to the range `~1.5.2` (`>=1.5.2 <1
   the arrows.
 - Tests: `tests/zentui-editor-selection.test.ts`,
   `tests/zentui-editor-mouse.test.ts` (root).
+
+## 2026-11-11 choco-pi patch: the editor selection can be copied
+
+- `extensions/zentui/editor-selection.ts`: with a non-empty selection, a key
+  bound to pi-tui's `tui.input.copy` (Ctrl+C), Pi's `app.message.copy`
+  (Ctrl+X), or `super+c` (Cmd+C, where the terminal passes it on) copies
+  the selected text and is used up: no clear, no exit, no transcript copy.
+  The draft and the selection stay. Without a selection these keys run as
+  before. Bindings come from pi-tui's `getKeybindings()`, which Pi's
+  interactive mode replaces with its own manager (it knows the `app.*`
+  actions and the user's rebinds); a host without that manager matches only
+  the first and the last.
+- The copied text is the editor's own text between the selection's ends, the
+  text a deleting key would remove, so a paste marker is copied as the marker
+  shown, not as the pasted contents.
+- `EditorSelection` now takes a `SelectionClipboard` (`write`,
+  `copyOnSelect`, `report`). Key handling stays synchronous; the write runs
+  on its own, and its result, or any error from `write` or `report`, is
+  caught, so nothing is thrown and no rejection goes unhandled.
+- `extensions/zentui/ui.ts`: `selectionClipboard(tui)` writes with Pi's
+  `copyToClipboard`. When the TUI is a `TuiAltScreen` (fullscreen), it
+  follows Pi's copy-on-select setting (`getCopyOnSelect()`; a finished drag
+  copies) and shows "Copied!" or the failure through `flash()`, as Pi's
+  transcript selection does. Other screens have no channel for an editor to
+  use, so the outcome goes unshown there and a drag does not copy. Both
+  editor classes take the clipboard as a new last constructor argument;
+  `PolishedEditor` defaults to its own TUI's, and `extensions/zentui/index.ts`
+  passes the host TUI's to `WrappedPolishedEditor`.
+- Tests: `tests/zentui-editor-selection.test.ts`,
+  `tests/zentui-editor-fixture.ts` (root).

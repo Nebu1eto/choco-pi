@@ -2,8 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   Editor,
+  getKeybindings,
   isKeyRelease,
+  KeybindingsManager,
+  setKeybindings,
   stripTerminalSequences,
+  TUI_KEYBINDINGS,
   type TuiMouseEvent,
 } from "@earendil-works/pi-tui";
 import { isJsonRecord, isNumber } from "../.pi/extensions/lib/runtime-values.ts";
@@ -13,6 +17,7 @@ import {
   EDITOR_THEME,
   type FramedEditor,
   STYLES,
+  testClipboard,
   TUI_FIXTURE,
   WIDTH,
   zentui,
@@ -611,5 +616,228 @@ test(
     // Ctrl+Shift with an arrow is Pi's own key and not a selection.
     press(editor, ["\x1b[1;6A", "\x1b[1;6D"]);
     assert.deepEqual(selected(editor), []);
+  },
+);
+
+const CTRL_C = "\x03";
+const CTRL_X = "\x18";
+/** Cmd+C from a terminal that passes it on in the Kitty keyboard protocol. */
+const SUPER_C = "\x1b[99;9u";
+
+/** Run `body` with Pi's keybindings installed as pi-tui's, as Pi's interactive mode does. */
+async function withPiKeybindings(body: () => Promise<void>): Promise<void> {
+  const previous = getKeybindings();
+  setKeybindings(
+    new KeybindingsManager({
+      ...TUI_KEYBINDINGS,
+      "app.clear": { defaultKeys: "ctrl+c", description: "Clear editor" },
+      "app.message.copy": {
+        defaultKeys: "ctrl+x",
+        description: "Copy selection or last assistant message",
+      },
+    }),
+  );
+  try {
+    await body();
+  } finally {
+    setKeybindings(previous);
+  }
+}
+
+/** Let pending clipboard writes settle. */
+async function settled(): Promise<void> {
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
+/** zentui around Pi's own editor through a base that records every key it is given. */
+async function recordedEditor(clipboard: ReturnType<typeof testClipboard>["clipboard"]) {
+  const make = await zentui("opencode", "both");
+  const inner = new Editor(TUI_FIXTURE, EDITOR_THEME);
+  const received: string[] = [];
+  const editor = make.wrapped(
+    {
+      render: (width: number) => inner.render(width),
+      invalidate: () => inner.invalidate(),
+      handleInput: (data: string) => {
+        received.push(data);
+        inner.handleInput(data);
+      },
+      handleMouse: (event: TuiMouseEvent) => inner.handleMouse(event),
+      getText: () => inner.getText(),
+      getExpandedText: () => inner.getExpandedText(),
+      setText: (text: string) => inner.setText(text),
+      getLines: () => inner.getLines(),
+      getCursor: () => inner.getCursor(),
+      getPaddingX: () => inner.getPaddingX(),
+    },
+    clipboard,
+  );
+  editor.focused = true;
+  return { editor, received };
+}
+
+test(
+  "with a selection, Ctrl+C, Ctrl+X and Cmd+C copy exactly the selected text and keep the draft and the selection",
+  { skip: SKIP_WITHOUT_ZENTUI },
+  async () => {
+    await withPiKeybindings(async () => {
+      const make = await zentui("opencode", "both");
+      const wrappedClipboard = testClipboard();
+      const recorded = await recordedEditor(wrappedClipboard.clipboard);
+      const polishedClipboard = testClipboard();
+      const polished = make.polished(polishedClipboard.clipboard);
+      const polishedReceived: string[] = [];
+      polished.onExtensionShortcut = (data) => {
+        polishedReceived.push(data);
+        return false;
+      };
+      polished.focused = true;
+      for (const [name, editor, clipboard, received] of [
+        ["wrapped", recorded.editor, wrappedClipboard, recorded.received],
+        ["polished", polished, polishedClipboard, polishedReceived],
+      ] as const) {
+        editor.setText(TEXT);
+        drag(editor, "world", "line");
+        const cursor = editor.getCursor();
+        received.length = 0;
+        for (const key of [CTRL_C, CTRL_X, SUPER_C]) editor.handleInput(key);
+        assert.deepEqual(clipboard.copied, Array(3).fill("world\nsecond "), name);
+        assert.deepEqual(received, [], `${name}: the copy keys go no further`);
+        assert.equal(editor.getText(), TEXT, `${name}: the draft stays`);
+        assert.deepEqual(editor.getCursor(), cursor, name);
+        assert.deepEqual(selected(editor), ["world ", "second "], `${name}: the selection stays`);
+        await settled();
+        assert.deepEqual(clipboard.reports, Array(3).fill({ copied: true }), name);
+
+        // The selection is still the editor's: Backspace removes what was copied.
+        editor.handleInput(BACKSPACE);
+        assert.equal(editor.getText(), "hello line", name);
+      }
+
+      // A selection made with the keys copies the same way.
+      const { editor } = recorded;
+      editor.setText("draft text");
+      press(editor, [SHIFT_LEFT, SHIFT_LEFT, SHIFT_LEFT, SHIFT_LEFT]);
+      wrappedClipboard.copied.length = 0;
+      editor.handleInput(CTRL_C);
+      assert.deepEqual(wrappedClipboard.copied, ["text"]);
+      assert.equal(editor.getText(), "draft text");
+    });
+  },
+);
+
+test(
+  "a paste marker is copied as the marker the editor shows",
+  { skip: SKIP_WITHOUT_ZENTUI },
+  async () => {
+    const clipboard = testClipboard();
+    const { editor } = await recordedEditor(clipboard.clipboard);
+    const pasted = Array.from({ length: 20 }, (_, index) => `line ${index}`).join("\n");
+    editor.handleInput(`\x1b[200~${pasted}\x1b[201~`);
+    editor.handleInput("!");
+    const shown = editor.getText();
+    assert.match(shown, /^\[paste #1 \+20 lines\]!$/);
+    press(editor, [SHIFT_UP]);
+    editor.handleInput(CTRL_C);
+    assert.deepEqual(clipboard.copied, [shown]);
+    assert.equal(editor.getExpandedText(), `${pasted}!`, "the paste itself stays in the draft");
+  },
+);
+
+test(
+  "without a selection, Ctrl+C, Ctrl+X and Cmd+C reach the editor unchanged",
+  { skip: SKIP_WITHOUT_ZENTUI },
+  async () => {
+    await withPiKeybindings(async () => {
+      const clipboard = testClipboard();
+      const { editor, received } = await recordedEditor(clipboard.clipboard);
+      editor.setText(TEXT);
+      for (const key of [CTRL_C, CTRL_X, SUPER_C]) editor.handleInput(key);
+      assert.deepEqual(received, [CTRL_C, CTRL_X, SUPER_C]);
+
+      // A selection that a cursor key dropped no longer takes them either.
+      drag(editor, "world", "line");
+      editor.handleInput(LEFT);
+      received.length = 0;
+      editor.handleInput(CTRL_C);
+      assert.deepEqual(received, [CTRL_C]);
+      assert.deepEqual(clipboard.copied, []);
+
+      const make = await zentui("opencode", "both");
+      const polished = make.polished(clipboard.clipboard);
+      const polishedReceived: string[] = [];
+      polished.onExtensionShortcut = (data) => {
+        polishedReceived.push(data);
+        return false;
+      };
+      polished.setText(TEXT);
+      polished.handleInput(CTRL_C);
+      assert.deepEqual(polishedReceived, [CTRL_C], "Pi's editor gets Ctrl+C as before");
+      assert.deepEqual(clipboard.copied, []);
+    });
+  },
+);
+
+test(
+  "a failed copy throws nothing and leaves no unhandled rejection",
+  { skip: SKIP_WITHOUT_ZENTUI },
+  async () => {
+    let unhandled = 0;
+    const onUnhandled = () => {
+      unhandled += 1;
+    };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const rejecting = testClipboard(new Error("no clipboard here"));
+      const { editor } = await recordedEditor(rejecting.clipboard);
+      editor.setText(TEXT);
+      drag(editor, "world", "line");
+      assert.doesNotThrow(() => editor.handleInput(CTRL_C));
+      await settled();
+      assert.deepEqual(rejecting.copied, ["world\nsecond "]);
+      assert.deepEqual(rejecting.reports, [
+        { copied: false, message: "Copy failed: no clipboard here" },
+      ]);
+      assert.equal(editor.getText(), TEXT);
+      assert.deepEqual(selected(editor), ["world ", "second "]);
+
+      // A write that throws at once, and a report that throws, are contained too.
+      const throwing = await recordedEditor({
+        write: () => {
+          throw new Error("thrown at once");
+        },
+        copyOnSelect: () => false,
+        report: () => {
+          throw new Error("no place to report");
+        },
+      });
+      throwing.editor.setText(TEXT);
+      drag(throwing.editor, "world", "line");
+      assert.doesNotThrow(() => throwing.editor.handleInput(CTRL_C));
+      await settled();
+      await settled();
+      assert.equal(unhandled, 0);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  },
+);
+
+test(
+  "with Pi's copy-on-select setting on, a finished drag copies what it selected",
+  { skip: SKIP_WITHOUT_ZENTUI },
+  async () => {
+    const clipboard = testClipboard();
+    const { editor } = await recordedEditor(clipboard.clipboard);
+    editor.setText(TEXT);
+    drag(editor, "world", "line");
+    assert.deepEqual(clipboard.copied, [], "off: a drag copies nothing");
+    clipboard.setCopyOnSelect(true);
+    drag(editor, "hello", "world");
+    assert.deepEqual(clipboard.copied, ["hello "]);
+    // A press without a drag selects nothing and copies nothing.
+    editor.handleMouse(at(editor, "second", "press"));
+    editor.handleMouse(at(editor, "second", "release"));
+    assert.deepEqual(clipboard.copied, ["hello "]);
   },
 );

@@ -1,10 +1,16 @@
-import { CustomEditor, type KeybindingsManager, type Theme } from "@earendil-works/pi-coding-agent";
+import {
+  copyToClipboard,
+  CustomEditor,
+  type KeybindingsManager,
+  type Theme,
+} from "@earendil-works/pi-coding-agent";
 import {
   type AutocompleteProvider,
   type Component,
   type EditorComponent,
   type EditorTheme,
   type TUI,
+  TuiAltScreen,
   type TuiMouseEvent,
   type TuiMouseEventResult,
   truncateToWidth,
@@ -12,7 +18,12 @@ import {
 } from "@earendil-works/pi-tui";
 import { padsBottom, padsTop, type EditorStyle, type ZentuiConfig } from "./config";
 import { renderEditorMetadataFormat } from "./editor-metadata-format";
-import { EditorSelection, type TextOrigin, type TextPosition } from "./editor-selection";
+import {
+  EditorSelection,
+  type SelectionClipboard,
+  type TextOrigin,
+  type TextPosition,
+} from "./editor-selection";
 import { readFocusedAgentRuntime, selectFocusScopedUsage } from "./focused-runtime";
 import {
   type MinimalistEditorMetadata,
@@ -36,6 +47,27 @@ import {
 } from "./style";
 
 const LEGACY_SPLIT_POLISHED_FRAME = Symbol.for("pi-zentui.polished-frame");
+/** How long a failed copy stays on screen, as long as Pi keeps its own copy errors. */
+const COPY_ERROR_FLASH_MS = 5000;
+
+/**
+ * The editor selection's clipboard: Pi's own clipboard write. In fullscreen
+ * mode it also follows Pi's copy-on-select setting and shows the outcome in
+ * Pi's flash messages, as Pi's transcript selection does; elsewhere Pi has no
+ * channel an editor can show it in, so a drag copies nothing by itself and
+ * the outcome goes unshown.
+ */
+export function selectionClipboard(tui: TUI | undefined): SelectionClipboard {
+  const screen = tui instanceof TuiAltScreen ? tui : undefined;
+  return {
+    write: (text) => copyToClipboard(text),
+    copyOnSelect: () => screen?.getCopyOnSelect() === true,
+    report: (outcome) => {
+      if (outcome.copied) screen?.flash("Copied!");
+      else screen?.flash(outcome.message, COPY_ERROR_FLASH_MS);
+    },
+  };
+}
 
 export type ViewportCounts = {
   above?: string;
@@ -897,6 +929,7 @@ export class PolishedEditor extends CustomEditor {
     getThinkingLevel: () => string | undefined,
     getMinimalistMetadata: () => MinimalistEditorMetadata = () => ({ cwd: "" }),
     onMinimalistDecorationChange: (active: boolean) => void = () => {},
+    clipboard: SelectionClipboard = selectionClipboard(tui),
   ) {
     super(tui, theme, keybindings, { paddingX: 0 });
     this.borderColor = (text: string) => safeThemeFg(uiTheme, "border", text);
@@ -906,14 +939,17 @@ export class PolishedEditor extends CustomEditor {
     this.getThinkingLevel = getThinkingLevel;
     this.getMinimalistMetadata = getMinimalistMetadata;
     this.onMinimalistDecorationChange = onMinimalistDecorationChange;
-    this.selection = new EditorSelection({
-      lines: () => this.getLines(),
-      cursor: () => this.getCursor(),
-      paddingX: () => this.getPaddingX(),
-      mouse: (event) => super.handleMouse(event),
-      input: (data) => super.handleInput(data),
-      menuOpen: () => this.isShowingAutocomplete(),
-    });
+    this.selection = new EditorSelection(
+      {
+        lines: () => this.getLines(),
+        cursor: () => this.getCursor(),
+        paddingX: () => this.getPaddingX(),
+        mouse: (event) => super.handleMouse(event),
+        input: (data) => super.handleInput(data),
+        menuOpen: () => this.isShowingAutocomplete(),
+      },
+      clipboard,
+    );
   }
 
   private reportMinimalistDecoration(active: boolean): void {
@@ -1022,6 +1058,7 @@ export class WrappedPolishedEditor implements EditorComponent {
     private readonly getThinkingLevel: () => string | undefined,
     private readonly getMinimalistMetadata: () => MinimalistEditorMetadata = () => ({ cwd: "" }),
     private readonly onMinimalistDecorationChange: (active: boolean) => void = () => {},
+    clipboard: SelectionClipboard = selectionClipboard(undefined),
   ) {
     if (isCallable(base.addToHistory)) {
       this.addToHistory = (text) => base.addToHistory?.(text);
@@ -1038,14 +1075,17 @@ export class WrappedPolishedEditor implements EditorComponent {
     if (isCallable(base.setAutocompleteMaxVisible)) {
       this.setAutocompleteMaxVisible = (maxVisible) => base.setAutocompleteMaxVisible?.(maxVisible);
     }
-    this.selection = new EditorSelection({
-      lines: () => base.getLines?.(),
-      cursor: () => textPosition(base.getCursor?.()),
-      paddingX: () => base.getPaddingX?.() ?? 0,
-      mouse: (event) => base.handleMouse?.(event),
-      input: (data) => base.handleInput(data),
-      menuOpen: () => base.isShowingAutocomplete?.() === true,
-    });
+    this.selection = new EditorSelection(
+      {
+        lines: () => base.getLines?.(),
+        cursor: () => textPosition(base.getCursor?.()),
+        paddingX: () => base.getPaddingX?.() ?? 0,
+        mouse: (event) => base.handleMouse?.(event),
+        input: (data) => base.handleInput(data),
+        menuOpen: () => base.isShowingAutocomplete?.() === true,
+      },
+      clipboard,
+    );
   }
 
   get focused(): boolean {

@@ -12,7 +12,18 @@
  * change callbacks stay its own. The rows are drawn by laying the text out as
  * the editor does and checking every row against what the editor drew: when
  * they disagree the selection is dropped, never drawn in the wrong place.
+ *
+ * A copy key (pi-tui's `tui.input.copy`, Ctrl+C; Pi's `app.message.copy`,
+ * Ctrl+X; or Cmd+C where the terminal passes it on) copies the selected text
+ * and keeps the draft and the selection; without a selection it keeps its
+ * usual meaning. The text copied is the editor's own text between the ends,
+ * the same text a deleting key removes, so a paste marker is copied as the
+ * marker the editor shows. The bindings come from pi-tui's keybindings, which
+ * Pi replaces with its own that know the `app.*` actions and the user's
+ * changes. The write is left to run: its outcome goes to the clipboard's
+ * report, and a failure is never thrown back into the key handling.
  */
+import type { AppKeybinding } from "@earendil-works/pi-coding-agent";
 import {
   CURSOR_MARKER,
   decodeKittyPrintable,
@@ -43,6 +54,19 @@ export type SelectableEditor = {
   input(data: string): void;
   /** Whether the editor's autocomplete menu is open: it takes the arrow keys then. */
   menuOpen(): boolean;
+};
+
+/** How a copy ended, for the person who asked for it. */
+export type CopyOutcome = { copied: true } | { copied: false; message: string };
+
+/** Where the selected text is copied to. */
+export type SelectionClipboard = {
+  /** Write `text` to the system clipboard. */
+  write(text: string): Promise<void>;
+  /** Whether a drag copies what it selected when the button is released. */
+  copyOnSelect(): boolean;
+  /** Show how a copy ended; called once the write has settled. */
+  report(outcome: CopyOutcome): void;
 };
 
 /** One drawn row of text: a slice of one of the text's lines. */
@@ -183,6 +207,18 @@ const BACKSPACE = "\x7f";
 const FORWARD_DELETE = "\x1b[3~";
 const KILL_TO_LINE_START = "\x15";
 const KILL_TO_LINE_END = "\x0b";
+/** Pi's key to copy a selection or its last message; a host that lacks it never matches. */
+const MESSAGE_COPY: AppKeybinding = "app.message.copy";
+
+/** Whether `data` is a key that copies a selection. */
+function copies(data: string): boolean {
+  const keys = getKeybindings();
+  return (
+    keys.matches(data, "tui.input.copy") ||
+    keys.matches(data, MESSAGE_COPY) ||
+    matchesKey(data, "super+c")
+  );
+}
 
 /** A printable key from a terminal in modifyOtherKeys mode: no modifier, or Shift alone. */
 function isModifyOtherKeysPrintable(data: string): boolean {
@@ -256,7 +292,10 @@ export class EditorSelection {
   /** The frame the editor last drew, and the width it was drawn at. */
   private drawn: { width: number; frame: readonly string[] } | undefined;
 
-  constructor(private readonly editor: SelectableEditor) {}
+  constructor(
+    private readonly editor: SelectableEditor,
+    private readonly clipboard: SelectionClipboard,
+  ) {}
 
   /** Whether text is selected now. */
   get active(): boolean {
@@ -303,6 +342,7 @@ export class EditorSelection {
       if (event.type === "release") {
         this.drag = undefined;
         if (!this.range()) this.selection = undefined;
+        else if (this.clipboard.copyOnSelect()) this.copy();
       }
       return { handled: true, render: moved || event.type === "release" };
     }
@@ -330,10 +370,11 @@ export class EditorSelection {
 
   /**
    * A key for the editor. True when the key was used up: Shift with an arrow
-   * key that moved the selection's end, a deleting key that removed the
-   * selection, or Escape that dropped it (Escape otherwise interrupts the
-   * agent). False when the caller should pass it on, which for input that
-   * inserts text is after the selection it replaces has been removed.
+   * key that moved the selection's end, a copy key that copied the selection,
+   * a deleting key that removed it, or Escape that dropped it (Escape
+   * otherwise interrupts the agent). False when the caller should pass it on,
+   * which for input that inserts text is after the selection it replaces has
+   * been removed.
    */
   key(data: string): boolean {
     if (isKeyRelease(data)) return false;
@@ -342,6 +383,10 @@ export class EditorSelection {
     if (!this.range()) {
       this.selection = undefined;
       return false;
+    }
+    if (copies(data)) {
+      this.copy();
+      return true;
     }
     const keys = getKeybindings();
     if (DELETING.some((binding) => keys.matches(data, binding))) {
@@ -468,6 +513,34 @@ export class EditorSelection {
     return order < 0
       ? { start: selection.anchor, end: selection.focus }
       : { start: selection.focus, end: selection.anchor };
+  }
+
+  /** Copy the selected text; the selection and the text stay as they are. */
+  private copy(): void {
+    const range = this.range();
+    const lines = this.editor.lines();
+    if (!range || !lines) return;
+    const text = lines
+      .join("\n")
+      .slice(unitsBefore(lines, range.start), unitsBefore(lines, range.end));
+    void this.write(text);
+  }
+
+  /** Write `text` to the clipboard and report how that ended. Never rejects. */
+  private async write(text: string): Promise<void> {
+    let outcome: CopyOutcome;
+    try {
+      await this.clipboard.write(text);
+      outcome = { copied: true };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "";
+      outcome = { copied: false, message: reason ? `Copy failed: ${reason}` : "Copy failed" };
+    }
+    try {
+      this.clipboard.report(outcome);
+    } catch {
+      // The report is the only place to show the outcome; with it gone there is nowhere left.
+    }
   }
 
   /** The text laid out at the width of the last frame; undefined before any frame. */

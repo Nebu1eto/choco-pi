@@ -10,6 +10,10 @@ import {
   type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
 import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import type {
+  CopyOutcome,
+  SelectionClipboard,
+} from "../.pi/packages/choco-pi-ui/extensions/zentui/editor-selection.ts";
 import { loadZentuiModule } from "./zentui-build.ts";
 
 /** The parts of a zentui editor the tests use. */
@@ -22,6 +26,8 @@ export type FramedEditor = {
   getText(): string;
   getExpandedText(): string;
   getCursor(): RuntimeValue;
+  /** The first stop of a key in Pi's editor, and passed on to the base by the wrapper. */
+  onExtensionShortcut?: (data: string) => boolean;
 };
 
 type EditorConfig = {
@@ -54,6 +60,31 @@ export const TUI_FIXTURE = reinterpretHostValue<TUI>({
   requestRender: () => {},
 });
 
+/** A clipboard that keeps what it is given instead of touching the system's. */
+export function testClipboard(fail?: Error) {
+  const copied: string[] = [];
+  const reports: CopyOutcome[] = [];
+  let copyOnSelect = false;
+  const clipboard: SelectionClipboard = {
+    write: async (text) => {
+      copied.push(text);
+      if (fail) throw fail;
+    },
+    copyOnSelect: () => copyOnSelect,
+    report: (outcome) => {
+      reports.push(outcome);
+    },
+  };
+  return {
+    clipboard,
+    copied,
+    reports,
+    setCopyOnSelect: (enabled: boolean) => {
+      copyOnSelect = enabled;
+    },
+  };
+}
+
 /** Every editor style with the padding rows that move its text. */
 export const STYLES: [style: string, paddingRows: string][] = [
   ["opencode", "both"],
@@ -72,18 +103,29 @@ export async function zentui(style: string, paddingRows: string, enabled = true)
   config.components.editor.enabled = enabled;
   config.components.editor.style = style;
   config.components.editor.paddingRows = paddingRows;
-  const shared = [UI_THEME, () => config, () => MODEL_META, () => "high"];
+  const shared = (clipboard: SelectionClipboard) => [
+    UI_THEME,
+    () => config,
+    () => MODEL_META,
+    () => "high",
+    undefined,
+    undefined,
+    clipboard,
+  ];
   // SAFETY: the compiled package exports these two editor classes.
   const Wrapped = ui.WrappedPolishedEditor as Constructor;
   // SAFETY: as above.
   const Polished = ui.PolishedEditor as Constructor;
   return {
     /** zentui around another extension's editor, as the harness installs it. */
-    wrapped: (base: RuntimeValue = new Editor(TUI_FIXTURE, EDITOR_THEME)) =>
-      new Wrapped(base, ...shared),
+    wrapped: (
+      base: RuntimeValue = new Editor(TUI_FIXTURE, EDITOR_THEME),
+      clipboard: SelectionClipboard = testClipboard().clipboard,
+    ) => new Wrapped(base, ...shared(clipboard)),
     /** zentui's own editor, used when no other extension supplies one. */
     // Pi installs its keybindings as pi-tui's; app actions it does not know never match.
-    polished: () => new Polished(TUI_FIXTURE, EDITOR_THEME, getKeybindings(), ...shared),
+    polished: (clipboard: SelectionClipboard = testClipboard().clipboard) =>
+      new Polished(TUI_FIXTURE, EDITOR_THEME, getKeybindings(), ...shared(clipboard)),
   };
 }
 

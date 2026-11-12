@@ -79,7 +79,7 @@ import { registerZentuiPreferencesProvider } from "./settings-command";
 import { createInitialState, type FooterState, modelLabelFor, syncState } from "./state";
 import { resolveFooterTelemetry } from "./telemetry";
 import { installToolRendering } from "./tool-rendering";
-import { PolishedEditor, WrappedPolishedEditor } from "./ui";
+import { PolishedEditor, selectionClipboard, WrappedPolishedEditor } from "./ui";
 import { installUserMessageStyle, removeUserMessageStyle } from "./user-message";
 import { type BoundaryValue, isBoundaryValue, isCallable, isSymbol } from "./runtime-values";
 import {
@@ -738,6 +738,7 @@ export default function (pi: ExtensionAPI) {
           agentActive: agentRunActive,
         }),
         setMinimalistDecorationActive,
+        selectionClipboard(tui),
       );
     }) as ZentuiEditorFactory;
     factory[ZENTUI_EDITOR_FACTORY] = true;
