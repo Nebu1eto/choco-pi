@@ -2,7 +2,6 @@ id: large-class
 valid:
   - "class A {}"
   - "class A { x = 1 }"
-invalid:
   - "class A { foo() {} }"
   - "class A { foo() {} bar() {} }"
   - |
@@ -10,6 +9,24 @@ invalid:
       foo() {} bar() {} baz() {} qux() {} quux() {} one() {} two() {}
       three() {} four() {} five() {} six() {} seven() {} eight() {}
       nine() {} ten() {} eleven() {} twelve() {} thirteen() {}
+      fourteen() {} fifteen() {}
+      a = 1; b = 2; c = 3; d = 4; e = 5; f = 6;
+    }
+invalid:
+  - |
+    class A {
+      foo() {} bar() {} baz() {} qux() {} quux() {} one() {} two() {}
+      three() {} four() {} five() {} six() {} seven() {} eight() {}
+      nine() {} ten() {} eleven() {} twelve() {} thirteen() {}
       fourteen() {} fifteen() {} sixteen() {} seventeen() {}
       eighteen() {} nineteen() {} twenty() {} twentyOne() {}
+    }
+  - |
+    class A {
+      x = 1;
+      foo() {} bar() {} baz() {} qux() {} quux() {} one() {} two() {}
+      three() {} four() {} five() {} six() {} seven() {} eight() {}
+      nine() {} ten() {} eleven() {} twelve() {} thirteen() {}
+      fourteen() {} fifteen() {} sixteen() {} seventeen() {}
+      eighteen() {} nineteen() {} twenty() {} get twentyOne() { return 1; }
     }
