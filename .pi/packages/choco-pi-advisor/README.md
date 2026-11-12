@@ -5,6 +5,18 @@ The `advisor` tool blocks inline while a fresh, read-only subagent answers a foc
 streams response progress, and forwards cancellation to the subagent manager.
 Advice is not evidence: the executor must verify claims before acting.
 
+The excerpt shows each tool call's arguments on one capped line: a string `description`
+becomes a quoted label, and the other fields read `key=value` joined by `·`, with
+strings raw and nested values as compact JSON. String values over
+200 characters are cut, and values under credential-like keys (`token`, `password`,
+`api_key`, `authorization`, ...) become `[redacted]`. Tools whose names suggest credential
+material (`auth`, `secret`, `token`, ...) show `[arguments redacted]`. `agent_message`
+shows its recipient and body. `exec` hides its script source. Instead, its result lists the
+script's nested tool calls with their arguments and outcome (`ok`, `error`,
+`unfinished`), taken from code-mode traces or, failing that, Pi's `nestedCalls` record.
+Redaction is key-based, so a secret embedded in a free-form string such as a shell command
+still reaches the advisor, just as one in a tool result does.
+
 Requires the existing subagents package and an authenticated, available model.
 The extension registers in root and child sessions. The advisor agent definition gives
 the leaf only read-only built-ins and no extensions, so it cannot delegate or recursively

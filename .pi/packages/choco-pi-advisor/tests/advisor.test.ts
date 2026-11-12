@@ -5,8 +5,20 @@ import { join } from "node:path";
 import test from "node:test";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { buildAdvisorPrompt } from "../src/consult.ts";
-import type { JsonObject } from "@earendil-works/pi-ai";
-import { compile } from "@earendil-works/pi-schema";
+import type { JsonObject, JsonValue, NestedToolCalls } from "@earendil-works/pi-ai";
+import {
+  arr,
+  bool,
+  compile,
+  map,
+  nul,
+  num,
+  recursive,
+  str,
+  union,
+} from "@earendil-works/pi-schema";
+import { toCodeModeToolResult } from "../../choco-pi-codex/src/tools/code-mode/tool-result.ts";
+import type { RuntimeToolTrace } from "../../choco-pi-codex/src/tools/code-mode/types.ts";
 import type { AgentMessageParams } from "../../choco-pi-subagents/src/agent-message.ts";
 import { AGENT_MESSAGE_TYPES as SUBAGENT_MESSAGE_TYPES } from "../../choco-pi-subagents/src/messaging.ts";
 import {
@@ -14,6 +26,7 @@ import {
   AgentMessageArgsSchema,
   type AgentMessageArgs,
   buildAdvisorExcerpt,
+  CODE_MODE_TRACE_STATUSES,
   countAdvisorCallsThisTurn,
 } from "../src/excerpt.ts";
 import { resolveAdvisorManager } from "../src/manager-slot.ts";
@@ -45,6 +58,11 @@ import {
 } from "../src/settings.ts";
 
 const isAgentMessageArgs = compile(AgentMessageArgsSchema).check;
+const isJsonValue = compile(
+  recursive<JsonValue>("TestJsonValue", (self) =>
+    union([nul(), bool(), num(), str(), arr(self), map(self)]),
+  ),
+).check;
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "advisor-test-"));
@@ -239,22 +257,22 @@ test("excerpt renders agent_message recipient, type, and capped body", () => {
   );
 });
 
-test("excerpt degrades invalid agent_message args and hides other tool args", () => {
-  const invalid: JsonObject[] = [
-    {},
-    { to: "a" },
-    { to: 1, message: "m" },
-    { to: "a", message: "m", type: "BOGUS" },
+test("excerpt degrades invalid agent_message args to generic argument rendering", () => {
+  const invalid: [JsonObject, string][] = [
+    [{}, ""],
+    [{ to: "a" }, " to=a"],
+    [{ to: 1, message: "m" }, " to=1 \u00b7 message=m"],
+    [{ to: "a", message: "m", type: "BOGUS" }, " to=a \u00b7 message=m \u00b7 type=BOGUS"],
   ];
-  for (const args of invalid) {
+  for (const [args, rendered] of invalid) {
     assert.equal(
       buildAdvisorExcerpt([toolCall("agent_message", args)]),
-      "assistant: [tool: agent_message]",
+      `assistant: [tool: agent_message]${rendered}`,
     );
   }
   assert.equal(
-    buildAdvisorExcerpt([toolCall("bash", { to: "a", message: "secret", command: "rm" })]),
-    "assistant: [tool: bash]",
+    buildAdvisorExcerpt([toolCall("bash", { to: "a", message: "m", command: "rm" })]),
+    "assistant: [tool: bash] to=a \u00b7 message=m \u00b7 command=rm",
   );
   assert.equal(
     buildAdvisorExcerpt([result("agent_message", "Message steered to /root")]),
@@ -303,6 +321,226 @@ test("agent_message schema accepts, rejects, is open, and treats type as optiona
   assert.ok(!isAgentMessageArgs({ to: "a", message: "m", type: null }));
   assert.ok(!isAgentMessageArgs({ to: 1, message: "m" }));
   assert.ok(!isAgentMessageArgs({ to: "a" }));
+});
+
+function codeResult(
+  toolName: string,
+  produced: ReturnType<typeof toCodeModeToolResult>,
+): SessionEntry {
+  // Round-trip like the session file so details are the persisted JSON shape.
+  const details: unknown = JSON.parse(JSON.stringify(produced.details));
+  assert.ok(isJsonValue(details));
+  return {
+    type: "message",
+    id: toolName,
+    parentId: null,
+    timestamp: "2026-01-01T00:00:00.000Z",
+    message: {
+      role: "toolResult",
+      toolName,
+      toolCallId: "call",
+      content: produced.content,
+      details,
+      isError: false,
+      timestamp: 2,
+    },
+  };
+}
+
+function nestedResult(nestedCalls: NestedToolCalls, details?: JsonValue): SessionEntry {
+  const entry: SessionEntry = {
+    type: "message",
+    id: "nested",
+    parentId: null,
+    timestamp: "2026-01-01T00:00:00.000Z",
+    message: {
+      role: "toolResult",
+      toolName: "bash",
+      toolCallId: "call",
+      content: [{ type: "text", text: "done" }],
+      nestedCalls,
+      isError: false,
+      timestamp: 2,
+    },
+  };
+  if (details !== undefined && entry.type === "message" && entry.message.role === "toolResult") {
+    entry.message.details = details;
+  }
+  return entry;
+}
+
+test("excerpt renders other tool args one-line, capped, and redacted", () => {
+  assert.equal(
+    buildAdvisorExcerpt([toolCall("bash", { command: "ls\n  -la" })]),
+    "assistant: [tool: bash] command=ls -la",
+  );
+  assert.equal(buildAdvisorExcerpt([toolCall("read", {})]), "assistant: [tool: read]");
+  assert.equal(
+    buildAdvisorExcerpt([
+      toolCall("exec_command", { cmd: "ls", description: "list", yield_time_ms: 5 }),
+    ]),
+    'assistant: [tool: exec_command] "list" cmd=ls \u00b7 yield_time_ms=5',
+  );
+  assert.equal(
+    buildAdvisorExcerpt([toolCall("note", { description: 7 })]),
+    "assistant: [tool: note] description=7",
+  );
+  assert.equal(
+    buildAdvisorExcerpt([toolCall("write", { path: "p", content: "x".repeat(1000) })]),
+    `assistant: [tool: write] path=p \u00b7 content=${"x".repeat(200)}\u2026`,
+  );
+  assert.equal(
+    buildAdvisorExcerpt([toolCall("bash", { command: "abcdefghijklmnop" })], {
+      maxToolResultChars: 10,
+    }),
+    "assistant: [tool: bash] command=ab",
+  );
+  assert.equal(
+    buildAdvisorExcerpt([
+      toolCall("http", {
+        api_key: "sk-1",
+        max_output_tokens: 5,
+        headers: { Authorization: "Bearer z" },
+        password: null,
+        items: ["a"],
+      }),
+    ]),
+    'assistant: [tool: http] api_key=[redacted] \u00b7 max_output_tokens=5 \u00b7 headers={"Authorization":"[redacted]"} \u00b7 password=null \u00b7 items=["a"]',
+  );
+  for (const name of ["figma_configure_auth", "mcp__1password__append_secrets"]) {
+    assert.equal(
+      buildAdvisorExcerpt([
+        toolCall(name, { token: "t0k", secrets: [{ name: "A", value: "v4lue" }] }),
+      ]),
+      `assistant: [tool: ${name}] [arguments redacted]`,
+    );
+  }
+  assert.equal(
+    buildAdvisorExcerpt([toolCall("exec", { code: "const hidden = 1;" })]),
+    "assistant: [tool: exec]",
+  );
+});
+
+test("excerpt lists nested calls from a real code-mode exec result", () => {
+  const produced = toCodeModeToolResult({
+    kind: "result",
+    cellId: "1",
+    contentItems: [{ type: "input_text", text: "out" }],
+    traces: [
+      {
+        id: "t1",
+        name: "exec_command",
+        input: { description: "list", cmd: "ls", token: "tk" },
+        status: "done",
+        result: { content: [{ type: "text", text: "nested output" }] },
+      },
+      {
+        id: "t2",
+        name: "apply_patch",
+        input: "*** Begin Patch",
+        status: "error",
+        error: "bad\n hunk",
+      },
+      { id: "t3", name: "web_search", input: { query: "q" }, status: "running" },
+    ],
+    droppedTraceCount: 2,
+  });
+  const excerpt = buildAdvisorExcerpt([
+    toolCall("exec", { code: "hidden source" }),
+    codeResult("exec", produced),
+  ]);
+  assert.equal(
+    excerpt,
+    [
+      "assistant: [tool: exec]",
+      "",
+      "toolResult: Script completed",
+      "out",
+      "[nested calls]",
+      '- exec_command "list" cmd=ls \u00b7 token=[redacted] \u2192 ok',
+      "- apply_patch *** Begin Patch \u2192 error: bad hunk",
+      "- web_search query=q \u2192 unfinished",
+      "[+2 more nested calls]",
+    ].join("\n"),
+  );
+  assert.ok(!excerpt.includes("hidden source"));
+  assert.ok(!excerpt.includes("nested output"));
+});
+
+test("excerpt caps code-mode result text, nested lines, and the entry", () => {
+  const traces = Array.from({ length: 30 }, (_, i) => ({
+    id: String(i),
+    name: "exec_command",
+    input: { cmd: `c${i} ${"y".repeat(150)}`, description: "z".repeat(150) },
+    status: "done" as const,
+  }));
+  const produced = toCodeModeToolResult({
+    kind: "result",
+    cellId: "1",
+    contentItems: [{ type: "input_text", text: "o".repeat(1000) }],
+    traces,
+  });
+  const excerpt = buildAdvisorExcerpt([codeResult("exec", produced)]);
+  assert.ok(excerpt.length <= 2000);
+  const lines = excerpt.split("\n");
+  assert.equal(lines[0], "toolResult: Script completed");
+  assert.equal(lines.slice(0, 2).join("\n").length, 500);
+  const calls = lines.filter((line) => line.startsWith("- exec_command"));
+  assert.ok(calls.length > 0);
+  for (const line of calls) assert.ok(line.length <= 300);
+  const more = /^\[\+(\d+) more nested calls\]$/.exec(lines.at(-1) ?? "");
+  assert.ok(more);
+  assert.equal(calls.length + Number(more[1]), 30);
+  assert.equal(buildAdvisorExcerpt([codeResult("exec", produced)], { maxToolResultChars: 0 }), "");
+});
+
+test("excerpt falls back to host nestedCalls and prefers code-mode traces", () => {
+  const record: NestedToolCalls = {
+    calls: [
+      { id: "1", name: "bash", arguments: { command: "ls" }, status: "ok" },
+      { id: "2", name: "write", argumentsBytes: 90000, status: "error", error: "EACCES" },
+      { id: "3", name: "read", arguments: { path: "a" }, status: "unfinished" },
+    ],
+    complete: false,
+  };
+  assert.equal(
+    buildAdvisorExcerpt([nestedResult(record)]),
+    [
+      "toolResult: done",
+      "[nested calls]",
+      "- bash command=ls \u2192 ok",
+      "- write [arguments omitted: 90000 bytes] \u2192 error: EACCES",
+      "- read path=a \u2192 unfinished",
+      "[nested call record incomplete]",
+    ].join("\n"),
+  );
+  assert.equal(
+    buildAdvisorExcerpt([
+      nestedResult(record, {
+        codeMode: true,
+        traces: [{ id: "t", name: "grep", input: { q: "x" }, status: "done" }],
+      }),
+    ]),
+    "toolResult: done\n[nested calls]\n- grep q=x \u2192 ok",
+  );
+  const invalid: JsonValue[] = [
+    { codeMode: true, traces: [{ name: "x", status: "bogus" }] },
+    { codeMode: false, traces: [] },
+    "text",
+  ];
+  for (const details of invalid) {
+    assert.equal(
+      buildAdvisorExcerpt([nestedResult({ calls: [], complete: true }, details)]),
+      "toolResult: done",
+    );
+  }
+});
+
+test("local code-mode trace statuses match the runtime trace type", () => {
+  type Local = (typeof CODE_MODE_TRACE_STATUSES)[number];
+  const toLocal = (status: RuntimeToolTrace["status"]): Local => status;
+  const toRemote = (status: Local): RuntimeToolTrace["status"] => status;
+  for (const status of CODE_MODE_TRACE_STATUSES) assert.equal(toLocal(toRemote(status)), status);
 });
 
 test("settings layers are open, reject nulls and bad values, and flagship table is open", async () => {
