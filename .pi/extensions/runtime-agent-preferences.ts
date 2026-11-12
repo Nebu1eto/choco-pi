@@ -3,12 +3,14 @@ import {
   AGENT_PREFERENCES_MARKER,
   DAYBREAK_DEFAULT_KEY,
   DEFAULT_PERSONA,
+  LANGUAGE_MESSAGE_TYPE,
   PERSONA_MESSAGE_TYPE,
   appendPersonaDefinitions,
   buildAgentPreferencesBlock,
   onAgentPreferenceChange,
   parseDaybreakPreference,
   readAgentPreferences,
+  renderLanguageReminder,
   renderPersonaAnnouncement,
   resolveAgentStyle,
   resolvePersona,
@@ -104,5 +106,21 @@ export default function runtimeAgentPreferences(pi: ExtensionAPI): void {
           };
     if (systemPrompt === event.systemPrompt) return message ? { message } : undefined;
     return message ? { systemPrompt, message } : { systemPrompt };
+  });
+
+  // Pi collects one message per handler, so the language reminder needs its
+  // own handler. It runs for every run, including extension-triggered ones,
+  // because autonomous continuations also reply to the user; the system-prompt
+  // directive alone loses to accumulated history in another language.
+  pi.on("before_agent_start", () => {
+    const language = readPreferences().language;
+    if (!language) return undefined;
+    return {
+      message: {
+        customType: LANGUAGE_MESSAGE_TYPE,
+        content: renderLanguageReminder(language),
+        display: false,
+      },
+    };
   });
 }

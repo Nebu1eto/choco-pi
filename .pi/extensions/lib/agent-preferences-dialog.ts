@@ -13,6 +13,7 @@ import {
   CONTEXT_SOFT_CAP_KEY,
   DAYBREAK_DEFAULT_KEY,
   DEFAULT_SESSION_AUTO_NAME_MODEL,
+  DEFAULT_STYLE,
   ON_USAGE_LIMIT_VALUES,
   PROMPT_SUGGESTION_KEY,
   SESSION_AUTO_NAME_KEY,
@@ -42,7 +43,8 @@ export const AGENT_SECTION_ID = "agent";
 
 const MATCH_USER_LABEL = "Match user";
 const CUSTOM_LANGUAGE_LABEL = "Custom…";
-const DEFAULT_STYLE_LABEL = "Default";
+/** The unset style row; distinct from choosing the default style by name, which pins it. */
+const DEFAULT_STYLE_LABEL = `Default (${DEFAULT_STYLE})`;
 const LANGUAGE_PRESETS = ["English", "Korean", "Japanese", "Chinese"];
 const ENABLED_LABEL = "Enabled";
 const DISABLED_LABEL = "Disabled";
@@ -129,7 +131,7 @@ async function writeStyle(ctx: ExtensionCommandContext, value: string | undefine
     ctx,
     () => writeAgentPreference(AGENT_STYLE_KEY, value),
     value === undefined
-      ? "Agent style: default"
+      ? `Agent style: default (${DEFAULT_STYLE})`
       : `Agent style: ${value} (applies from the next turn)`,
     (error) =>
       `Could not update agent style: ${error instanceof Error ? error.message : String(error)}`,
@@ -340,9 +342,9 @@ export function buildAgentPreferencesSection(
       const styleValues = [DEFAULT_STYLE_LABEL, ...styleNames];
       const styleMissing = preferences.style && !styleNames.includes(preferences.style);
       if (preferences.style && styleMissing) styleValues.push(preferences.style);
-      const activeStyle = preferences.style
-        ? styles.find((style) => style.name === preferences.style)
-        : undefined;
+      const activeStyle = styles.find(
+        (style) => style.name === (preferences.style ?? DEFAULT_STYLE),
+      );
       const styleDescription = styleMissing
         ? `"${preferences.style}" has no matching file under ~/.pi/agent/agent-styles and is ignored.`
         : (activeStyle?.description ??

@@ -93,6 +93,10 @@ export function parseAutoCompactionPoint(value: RuntimeValue): AutoCompactionPoi
   return parseContextPreset(value);
 }
 export const PERSONA_MESSAGE_TYPE = "choco-pi-agent-persona";
+/** Hidden per-run reminder of the configured response language. */
+export const LANGUAGE_MESSAGE_TYPE = "choco-pi-agent-language";
+/** Style in effect when `agentStyle` is unset or empty. */
+export const DEFAULT_STYLE = "balanced";
 export const PERSONA_DEFINITIONS_HEADING = "## Agent persona";
 export const SESSION_AUTO_NAME_KEY = "sessionAutoName";
 export const SESSION_AUTO_NAME_MODEL_KEY = "sessionAutoNameModel";
@@ -107,6 +111,19 @@ export const PREFERENCES_PROVIDER_SYMBOL = Symbol.for("choco-pi.preferences-prov
 /** The language directive line shared by the agent prompt and every side prompt that must honor it. */
 export function renderPreferredLanguageLine(language: string): string {
   return `Preferred response language: ${language}`;
+}
+
+/**
+ * The per-run language reminder. Its text depends only on the language so the
+ * hidden message stays byte-identical across turns and keeps the prompt cache.
+ */
+export function renderLanguageReminder(language: string): string {
+  return `Reply in ${language} unless the user explicitly names another language; writing in another language is not such a request.`;
+}
+
+/** The style name in effect: the configured one, or {@link DEFAULT_STYLE} when unset or empty. */
+export function effectiveStyleName(style: string | undefined): string {
+  return style === undefined || style === "" ? DEFAULT_STYLE : style;
 }
 
 export type Persona = "unset" | "critical" | "pessimistic";
@@ -563,8 +580,9 @@ export function resolveAgentStyle(
 
 /**
  * Builds the per-turn system-prompt block for the configured agent
- * preferences, or `undefined` when nothing is configured. A configured but
- * unresolved style contributes nothing to the block.
+ * preferences, or `undefined` when nothing applies. An unset style resolves
+ * to {@link DEFAULT_STYLE}; a configured but unresolved style contributes
+ * nothing to the block.
  *
  * The block closes with a precedence note because it is appended after the
  * project context: without it, this user-level configuration would silently
@@ -580,15 +598,13 @@ export function buildAgentPreferencesBlock(
     blocks.push(
       [
         renderPreferredLanguageLine(language),
-        `Governs responses, plans, reports, and generated prose regardless of message language, unless overridden for an artifact. Code, identifiers, and paths are unaffected. Commit messages follow the language established by the repository's own history and policy, not this setting.`,
+        `Governs responses, plans, reports, and generated prose, overriding the default of matching the user's language. A message written in another language is not a request to switch; only an explicit instruction naming a language is. Example: a message in another language with no such instruction still gets a reply in ${language}. Code, identifiers, and paths are unaffected. Commit messages follow the language established by the repository's own history and policy, not this setting.`,
       ].join("\n"),
     );
   }
-  if (preferences.style) {
-    const style = resolveStyle(preferences.style);
-    if (style) {
-      blocks.push(`Agent style: ${style.name}${style.body ? `\n${style.body}` : ""}`);
-    }
+  const style = resolveStyle(effectiveStyleName(preferences.style));
+  if (style) {
+    blocks.push(`Agent style: ${style.name}${style.body ? `\n${style.body}` : ""}`);
   }
   if (blocks.length === 0) return undefined;
   blocks.push(

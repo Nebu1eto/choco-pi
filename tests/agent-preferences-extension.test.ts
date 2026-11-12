@@ -6,7 +6,9 @@ import test from "node:test";
 import {
   appendPersonaDefinitions,
   DEFAULT_PERSONA,
+  LANGUAGE_MESSAGE_TYPE,
   readAgentPreferences,
+  renderLanguageReminder,
   renderPersonaAnnouncement,
 } from "../.pi/extensions/lib/agent-preferences.ts";
 import { runtimeTypeOf, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
@@ -15,7 +17,10 @@ import runtimeAgentPreferences from "../.pi/extensions/runtime-agent-preferences
 type Handler = (event: RuntimeValue, ctx: RuntimeValue) => RuntimeValue;
 
 interface ApiFixture {
+  /** The first handler registered per event: the persona and prompt handler for `before_agent_start`. */
   handlers: Map<string, Handler>;
+  /** Every handler registered per event, in registration order. */
+  allHandlers: Map<string, Handler[]>;
   api: RuntimeValue;
 }
 
@@ -41,9 +46,16 @@ function registerExtension(api: RuntimeValue): void {
 /** Minimal stand-in for the host extension API, capturing registered handlers. */
 function createApi(): ApiFixture {
   const handlers = new Map<string, Handler>();
+  const allHandlers = new Map<string, Handler[]>();
   return {
     handlers,
-    api: { on: (event: string, handler: Handler) => handlers.set(event, handler) },
+    allHandlers,
+    api: {
+      on: (event: string, handler: Handler) => {
+        if (!handlers.has(event)) handlers.set(event, handler);
+        allHandlers.set(event, [...(allHandlers.get(event) ?? []), handler]);
+      },
+    },
   };
 }
 
@@ -130,7 +142,7 @@ test(
 );
 
 test(
-  "an unset persona and profile inject nothing and a missing style warns once at session start",
+  "an unset persona injects only the default style and a missing style warns once at session start",
   withAgentDir((agentDir) => {
     writeSettings(agentDir, { agentPersona: "unset" });
     const { handlers, api } = createApi();
@@ -138,13 +150,17 @@ test(
 
     const before = handlers.get("before_agent_start");
     assert.ok(before);
-    assert.equal(
+    const defaulted = asBeforeAgentStartResult(
       before(
         { messageType: "user", prompt: "Root request", systemPrompt: SYSTEM_PROMPT_WITH_PERSONAS },
         { cwd: agentDir },
       ),
-      undefined,
     );
+    assert.equal(defaulted?.message, undefined);
+    const defaultedPrompt = defaulted?.systemPrompt;
+    assert.ok(defaultedPrompt);
+    assert.ok(defaultedPrompt.includes("Agent style: balanced"));
+    assert.ok(!defaultedPrompt.includes("Preferred response language"));
 
     writeSettings(agentDir, { agentPersona: "unset", agentStyle: "does-not-exist" });
     assert.equal(
@@ -257,11 +273,13 @@ test(
     assert.equal(configuredResult?.message?.content, renderPersonaAnnouncement(configured));
 
     writeSettings(agentDir, { agentPersona: "unset" });
-    const unsetResult = handler(
-      { messageType: "user", prompt: "Root request", systemPrompt: SYSTEM_PROMPT_WITH_PERSONAS },
-      { cwd: agentDir },
+    const unsetResult = asBeforeAgentStartResult(
+      handler(
+        { messageType: "user", prompt: "Root request", systemPrompt: SYSTEM_PROMPT_WITH_PERSONAS },
+        { cwd: agentDir },
+      ),
     );
-    assert.equal(unsetResult, undefined);
+    assert.equal(unsetResult?.message, undefined);
   }),
 );
 
@@ -309,7 +327,7 @@ test(
       );
 
     assert.equal(invoke()?.message?.content, renderPersonaAnnouncement("critical"));
-    assert.equal(invoke("Persona: unset"), undefined);
+    assert.equal(invoke("Persona: unset")?.message, undefined);
     assert.equal(
       invoke("Persona: pessimistic")?.message?.content,
       renderPersonaAnnouncement("pessimistic"),
@@ -334,8 +352,12 @@ test(
       ),
     );
     assert.ok(first?.systemPrompt);
-    assert.equal(first.systemPrompt, appendPersonaDefinitions(replaceSystemPrompt));
+    assert.ok(
+      first.systemPrompt.startsWith(`${replaceSystemPrompt}\n\n<choco_pi_agent_preferences>`),
+    );
+    assert.ok(first.systemPrompt.endsWith(appendPersonaDefinitions("")?.trimStart() ?? ""));
     assert.ok(first.systemPrompt.includes("## Agent persona"));
+    assert.equal(first.systemPrompt.split("## Agent persona").length - 1, 1);
 
     assert.equal(
       handler(
@@ -344,5 +366,88 @@ test(
       ),
       undefined,
     );
+  }),
+);
+
+function languageHandler(allHandlers: Map<string, Handler[]>): Handler {
+  const handlers = allHandlers.get("before_agent_start") ?? [];
+  assert.equal(handlers.length, 2, "persona and language reminders need separate handlers");
+  const handler = handlers[1];
+  assert.ok(handler);
+  return handler;
+}
+
+test(
+  "a configured language adds one stable hidden reminder per run, user or extension-triggered",
+  withAgentDir((agentDir) => {
+    writeSettings(agentDir, { agentLanguage: "English" });
+    const { handlers, allHandlers, api } = createApi();
+    registerExtension(api);
+    const reminder = languageHandler(allHandlers);
+    const expected = {
+      message: {
+        customType: LANGUAGE_MESSAGE_TYPE,
+        content: renderLanguageReminder("English"),
+        display: false,
+      },
+    };
+    assert.equal(LANGUAGE_MESSAGE_TYPE, "choco-pi-agent-language");
+
+    const first = reminder(
+      { messageType: "user", prompt: "첫 번째 요청", systemPrompt: SYSTEM_PROMPT_WITH_PERSONAS },
+      { cwd: agentDir },
+    );
+    const second = reminder(
+      { messageType: "user", prompt: "Another request", systemPrompt: "changed prompt" },
+      { cwd: agentDir },
+    );
+    const custom = reminder(
+      { messageType: "custom", systemPrompt: SYSTEM_PROMPT_WITH_PERSONAS },
+      { cwd: agentDir },
+    );
+    assert.deepEqual(first, expected);
+    assert.deepEqual(second, expected, "the reminder must be byte-identical across turns");
+    assert.deepEqual(custom, expected, "extension-triggered runs also reply to the user");
+
+    const persona = handlers.get("before_agent_start");
+    assert.ok(persona);
+    assert.deepEqual(
+      asBeforeAgentStartResult(
+        persona(
+          {
+            messageType: "user",
+            prompt: "Root request",
+            systemPrompt: SYSTEM_PROMPT_WITH_PERSONAS,
+          },
+          { cwd: agentDir },
+        ),
+      )?.message,
+      {
+        customType: "choco-pi-agent-persona",
+        content: renderPersonaAnnouncement(DEFAULT_PERSONA),
+        display: false,
+      },
+      "the persona message is unchanged",
+    );
+  }),
+);
+
+test(
+  "no configured language or an unreadable settings file adds no language reminder",
+  withAgentDir((agentDir) => {
+    const { allHandlers, api } = createApi();
+    registerExtension(api);
+    const reminder = languageHandler(allHandlers);
+    const event = {
+      messageType: "user",
+      prompt: "Root request",
+      systemPrompt: SYSTEM_PROMPT_WITH_PERSONAS,
+    };
+
+    assert.equal(reminder(event, { cwd: agentDir }), undefined);
+    writeSettings(agentDir, { agentLanguage: "" });
+    assert.equal(reminder(event, { cwd: agentDir }), undefined);
+    writeFileSync(path.join(agentDir, "settings.json"), "{ not json");
+    assert.equal(reminder(event, { cwd: agentDir }), undefined);
   }),
 );

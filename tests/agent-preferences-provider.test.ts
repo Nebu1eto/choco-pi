@@ -105,7 +105,13 @@ test(
       ],
     );
     assert.equal(items[0].currentValue, "Match user");
-    assert.equal(items[1].currentValue, "Default");
+    assert.equal(items[1].currentValue, "Default (balanced)");
+    assert.equal(
+      items[1].description,
+      "Concise final answers; brief status updates during long work",
+      "an unset style must describe the default style it resolves to",
+    );
+    assert.ok(items[1].values?.includes("balanced"), "the default style must stay choosable");
     assert.ok(items[1].values?.includes("concise"), "shipped presets must be offered");
     assert.equal(items[2].currentValue, "pessimistic");
     assert.deepEqual(items[2].values, PERSONA_VALUES);
@@ -197,7 +203,12 @@ test(
     });
 
     section.handleChange("agentLanguage", "Match user");
-    section.handleChange("agentStyle", "Default");
+    section.handleChange("agentStyle", "balanced");
+    await settleWrites();
+    const pinned = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
+    assert.equal(pinned.agentStyle, "balanced", "choosing the default by name pins it");
+
+    section.handleChange("agentStyle", "Default (balanced)");
     await settleWrites();
     const cleared = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
     assert.equal(cleared.agentLanguage, undefined);

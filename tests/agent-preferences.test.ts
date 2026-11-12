@@ -12,6 +12,7 @@ import {
   DEFAULT_CONTEXT_SOFT_CAP,
   DEFAULT_ON_USAGE_LIMIT,
   DEFAULT_PERSONA,
+  DEFAULT_STYLE,
   AGENT_PREFERENCES_MARKER,
   AGENT_PREFERENCES_MARKER_END,
   ON_USAGE_LIMIT_VALUES,
@@ -20,6 +21,7 @@ import {
   appendPersonaDefinitions,
   buildAgentPreferencesBlock,
   discoverAgentStyles,
+  effectiveStyleName,
   flushAgentPreferenceWrites,
   parseAgentStyleDocument,
   parseAutoCompactionPoint,
@@ -28,6 +30,8 @@ import {
   personaDirectiveFromPrompt,
   readAgentPreferences,
   readAgentPreferencesAsync,
+  renderLanguageReminder,
+  renderPreferredLanguageLine,
   resolveAgentPersonaOverride,
   resolveAgentStyle,
   resolvePersona,
@@ -428,6 +432,91 @@ test("injection block covers each settings combination and wraps markers", () =>
   assert.ok(styleOnly?.includes(AGENT_PREFERENCES_MARKER));
   assert.ok(styleOnly?.includes("Be brief."));
   assert.ok(!styleOnly?.includes("Korean") && !styleOnly?.includes("Japanese"));
+});
+
+test("the language block forbids mirroring the message language with an example", () => {
+  const block = buildAgentPreferencesBlock(
+    { persona: "critical", language: "English" },
+    () => undefined,
+  );
+  assert.ok(block);
+  const lines = block.split("\n");
+  assert.equal(lines[1], renderPreferredLanguageLine("English"));
+  assert.ok(
+    block.includes(
+      "A message written in another language is not a request to switch; only an explicit instruction naming a language is.",
+    ),
+  );
+  assert.ok(
+    block.includes(
+      "Example: a message in another language with no such instruction still gets a reply in English.",
+    ),
+  );
+  assert.ok(block.includes("Code, identifiers, and paths are unaffected."));
+  assert.ok(
+    block.includes(
+      "Commit messages follow the language established by the repository's own history and policy, not this setting.",
+    ),
+  );
+});
+
+test("the language reminder is one stable line per language", () => {
+  const reminder = renderLanguageReminder("Korean");
+  assert.equal(reminder, renderLanguageReminder("Korean"));
+  assert.ok(!reminder.includes("\n"));
+  assert.ok(
+    reminder.startsWith("Reply in Korean unless the user explicitly names another language"),
+  );
+  assert.notEqual(reminder, renderLanguageReminder("English"));
+});
+
+test("an unset or empty style resolves to the balanced default; a missing configured style does not", () => {
+  assert.equal(DEFAULT_STYLE, "balanced");
+  assert.equal(effectiveStyleName(undefined), "balanced");
+  assert.equal(effectiveStyleName(""), "balanced");
+  assert.equal(effectiveStyleName("concise"), "concise");
+
+  const resolver = (name: string) =>
+    name === "balanced" ? styleOf("balanced", "Brief status updates.") : undefined;
+  const unset = buildAgentPreferencesBlock({ persona: "critical" }, resolver);
+  assert.ok(unset?.includes("Agent style: balanced\nBrief status updates."));
+  assert.equal(
+    buildAgentPreferencesBlock({ persona: "critical", style: "missing" }, resolver),
+    undefined,
+    "a configured but unresolved style must not fall back to the default",
+  );
+});
+
+test(
+  "the shipped presets include balanced and concise with their update cadence",
+  withAgentDir(({ agentDir }) => {
+    const styles = discoverAgentStyles(agentDir);
+    const byName = new Map(styles.map((style) => [style.name, style]));
+    assert.ok(byName.has("explanatory"));
+    const balanced = byName.get("balanced");
+    assert.equal(balanced?.source, "preset");
+    assert.ok(balanced?.body.includes("after roughly every 5 to 8 tool calls or at a milestone"));
+    assert.ok(balanced?.body.includes("2-4 sentence status update"));
+    const concise = byName.get("concise");
+    assert.ok(concise?.body.includes("Keep every interim progress update to one line."));
+  }),
+);
+
+test("SYSTEM.md defers progress-update cadence to the style and keeps the language", () => {
+  const system = readFileSync(new URL("../.pi/SYSTEM.md", import.meta.url), "utf8");
+  assert.ok(!system.includes("Every few tool calls, give the user a one-line update"));
+  assert.ok(!system.includes("Use the configured language/style unless overridden"));
+  assert.ok(
+    system.includes(
+      "the configured language unless the user explicitly names another language or a path-scoped project rule fixes an artifact's language",
+    ),
+  );
+  assert.ok(
+    system.includes(
+      "Give interim progress updates at the cadence and length the active agent style sets, or a one-line update every few tool calls when none does.",
+    ),
+  );
+  assert.ok(system.includes("Before non-trivial tool use, state the next action briefly."));
 });
 
 test("persona parsing trims and normalizes only known string values", () => {

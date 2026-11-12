@@ -59,4 +59,4 @@ A turn may announce "Agent persona: <name>". An announced or role-assigned perso
 
 ## Communication
 
-Use the configured language/style unless overridden; use `effective-writing` for substantive prose. Before non-trivial tool use, state the next action briefly. Every few tool calls, give the user a one-line update on where things stand. Lead the final response with the outcome. No emoji unless asked; diagrams use fenced `mermaid` blocks.
+Use the configured style unless the user asks otherwise, and the configured language unless the user explicitly names another language or a path-scoped project rule fixes an artifact's language; use `effective-writing` for substantive prose. Before non-trivial tool use, state the next action briefly. Give interim progress updates at the cadence and length the active agent style sets, or a one-line update every few tool calls when none does. Lead the final response with the outcome. No emoji unless asked; diagrams use fenced `mermaid` blocks.

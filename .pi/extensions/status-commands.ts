@@ -20,6 +20,7 @@ import {
 } from "@earendil-works/pi-tui";
 import {
   AGENT_OUTCOME_PREFIX,
+  DEFAULT_STYLE,
   getPreferencesProvider,
   readAgentPreferences,
   type PreferencesExtraSection,
@@ -814,7 +815,7 @@ function preferencesSummary(ctx: ExtensionCommandContext): void {
     ctx.ui.notify(
       [
         `Agent language: ${preferences.language ?? "match user"}`,
-        `Agent style: ${preferences.style ?? "default"}`,
+        `Agent style: ${preferences.style ?? `default (${DEFAULT_STYLE})`}`,
         `On usage limit: ${preferences.onUsageLimit}`,
         `Daybreak default: ${preferences.daybreak ? "on" : "off"}`,
         "Run /preferences in the interactive TUI to change preferences.",
