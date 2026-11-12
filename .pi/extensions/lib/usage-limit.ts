@@ -519,11 +519,18 @@ const FallbackTierSchema = obj({
 
 export const ModelFallbacksSchema = obj({
   tiers: map(FallbackTierSchema),
+  /**
+   * `provider/id` -> `provider/id` of the same model behind an access program.
+   * Routing uses the value whenever it is available to the current account
+   * (choco-pi hides it otherwise) and keeps the key when it is not.
+   */
+  preferWhenAvailable: opt(map(str())),
   lastResort: arr(str()),
 });
 
 export const ModelFallbacksOverrideSchema = obj({
   tiers: opt(map(FallbackTierSchema)),
+  preferWhenAvailable: opt(map(str())),
   lastResort: opt(arr(str())),
 });
 
@@ -555,15 +562,22 @@ async function readJson(path: string): Promise<{ found: boolean; value: RuntimeV
   }
 }
 
-/** Override tiers replace base tiers of the same name; a given `lastResort` replaces the base list. */
+/**
+ * Override tiers replace base tiers of the same name, override preferences replace base
+ * preferences for the same key, and a given `lastResort` replaces the base list.
+ */
 export function mergeModelFallbacks(
   base: ModelFallbacks,
   override: ModelFallbacksOverride,
 ): ModelFallbacks {
-  return {
+  const merged: ModelFallbacks = {
     tiers: { ...base.tiers, ...override.tiers },
     lastResort: override.lastResort ?? base.lastResort,
   };
+  if (base.preferWhenAvailable !== undefined || override.preferWhenAvailable !== undefined) {
+    merged.preferWhenAvailable = { ...base.preferWhenAvailable, ...override.preferWhenAvailable };
+  }
+  return merged;
 }
 
 /**
@@ -618,6 +632,8 @@ function parseRefs(refs: readonly string[] | undefined): ModelRef[] {
  * resort list. A model outside every tier only gets the last resort. The
  * tiers list `openai-codex`; a limited model on the manually chosen `openai`
  * provider finds its tier through the same model id on `openai-codex`.
+ * A candidate with a `preferWhenAvailable` variant is preceded by that
+ * variant, which `pickFallback` skips when the account cannot use it.
  */
 export function fallbackCandidates(table: ModelFallbacks, current: ModelRef): ModelRef[] {
   const currentKey = refKey(current);
@@ -638,8 +654,13 @@ export function fallbackCandidates(table: ModelFallbacks, current: ModelRef): Mo
     ...secondary.filter((ref) => ref.provider === current.provider),
     ...parseRefs(table.lastResort),
   ];
+  const preferred = table.preferWhenAvailable ?? {};
+  const expanded = ordered.flatMap((ref) => {
+    const variant = parseModelRef(preferred[refKey(ref)] ?? "");
+    return variant ? [variant, ref] : [ref];
+  });
   const seen = new Set<string>([currentKey]);
-  return ordered.filter((ref) => {
+  return expanded.filter((ref) => {
     const key = refKey(ref);
     if (seen.has(key)) return false;
     seen.add(key);

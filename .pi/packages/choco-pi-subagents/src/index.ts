@@ -127,8 +127,18 @@ import { formatSteerMessage, ROOT_AGENT_PATH } from "./messaging.ts";
 import { type ModelRegistry, resolveModel } from "./model-resolver.ts";
 import { ensureEnabledModels } from "./enabled-models.ts";
 import { pathExists } from "./fs-async.ts";
-import { loadFlagshipModels } from "./model-tiers.ts";
-import { checkModelScope, isScopeModelsEnabled, setScopeModelsEnabled } from "./model-scope.ts";
+import {
+  chooseVariant,
+  loadFlagshipModels,
+  loadPreferredVariants,
+  variantNote,
+} from "./model-tiers.ts";
+import {
+  checkModelScope,
+  isScopeModelsEnabled,
+  isWithinModelScope,
+  setScopeModelsEnabled,
+} from "./model-scope.ts";
 import { getMaxSubagentDepth, setMaxSubagentDepth } from "./nested-tools.ts";
 import {
   buildSubagentStatusBatch,
@@ -2934,6 +2944,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       // role default, unless the role sets model_locked.
       let model = ctx.model;
       let modelUnavailable = false;
+      let preferredNote = "";
       if (resolvedConfig.modelInput) {
         const resolution = resolveModel(resolvedConfig.modelInput, ctx.modelRegistry);
         switch (resolution.tag) {
@@ -2943,9 +2954,18 @@ export default async function (pi: ExtensionAPI): Promise<void> {
             // result note and toast below are the only trace of this.
             modelUnavailable = true;
             break;
-          case "resolved":
-            model = resolution.model;
+          case "resolved": {
+            // Routing prefers the access-program variant (Fable -> Mythos) the account can use.
+            const choice = chooseVariant(
+              resolution.model,
+              await loadPreferredVariants(),
+              ctx.modelRegistry,
+              (candidate) => isWithinModelScope(candidate, ctx.cwd, ctx.modelRegistry),
+            );
+            model = choice.model;
+            preferredNote = variantNote(choice);
             break;
+          }
         }
       }
       const modelNote = describeModelResolution({
@@ -2955,7 +2975,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         parentModel: ctx.model,
       });
       if (modelUnavailable) ctx.ui.notify(modelNote.trim(), "warning");
-      const fallbackNote = typeNote + modelNote;
+      const fallbackNote = typeNote + modelNote + preferredNote;
 
       // Scope validation: the effective resolved model is checked against the
       // user's enabledModels list. Policy (hard error vs warn-and-proceed) lives
@@ -3583,6 +3603,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       worktreeAllowed: isWorktreeIsolationEnabled(),
     });
     let model = ctx.model;
+    let fromInput = false;
     if (resolvedConfig.modelInput) {
       const resolution = resolveModel(resolvedConfig.modelInput, ctx.modelRegistry);
       switch (resolution.tag) {
@@ -3591,10 +3612,11 @@ export default async function (pi: ExtensionAPI): Promise<void> {
           break;
         case "resolved":
           model = resolution.model;
+          fromInput = true;
           break;
       }
     }
-    return { config, resolvedConfig, model };
+    return { config, resolvedConfig, model, fromInput };
   };
 
   const createWorkflowRunner = (
@@ -3620,7 +3642,18 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       isProviderAvailable: (providerKey) => manager.isProviderAvailable(providerKey, owner),
       unavailableMessage: (providerKey) => manager.providerUnavailableMessage(providerKey, owner),
       run: async (step, prompt, workflowContext) => {
-        const { config, resolvedConfig, model } = resolveWorkflowStepModel(ctx, step);
+        const resolved = resolveWorkflowStepModel(ctx, step);
+        const { config, resolvedConfig } = resolved;
+        // Same-provider only, so `providerKey` above still names this step's provider.
+        const model =
+          resolved.fromInput && resolved.model
+            ? chooseVariant(
+                resolved.model,
+                await loadPreferredVariants(),
+                ctx.modelRegistry,
+                (candidate) => isWithinModelScope(candidate, ctx.cwd, ctx.modelRegistry),
+              ).model
+            : resolved.model;
         const scopeVerdict = checkModelScope({
           model,
           cwd: ctx.cwd,

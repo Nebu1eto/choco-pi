@@ -33,7 +33,7 @@ import { SUBAGENT_DEPTH_CEILING } from "./limits.ts";
 import { formatSteerMessage, getAgentIdentity } from "./messaging.ts";
 import { resolveModel } from "./model-resolver.ts";
 import { ensureEnabledModels } from "./enabled-models.ts";
-import { checkModelScope } from "./model-scope.ts";
+import { checkModelScope, isWithinModelScope } from "./model-scope.ts";
 import { ResumeModelError } from "./resume-model-error.ts";
 import {
   createOutputFilePath,
@@ -65,7 +65,12 @@ import type {
 } from "./types.ts";
 import { addUsage } from "./usage.ts";
 import { isWorktreeIsolationEnabled } from "./worktree.ts";
-import { loadFlagshipModels } from "./model-tiers.ts";
+import {
+  chooseVariant,
+  loadFlagshipModels,
+  loadPreferredVariants,
+  variantNote,
+} from "./model-tiers.ts";
 import { thinkingLevelSchema } from "./workflow.ts";
 import {
   defaultReviewRoundsDir,
@@ -624,6 +629,7 @@ export async function createNestedSubagentTools(
       ).__choco_hook_worktree_path;
       let model = ctx.model;
       let modelUnavailable = false;
+      let preferredNote = "";
       if (invocation.modelInput) {
         const resolution = resolveModel(invocation.modelInput, ctx.modelRegistry);
         switch (resolution.tag) {
@@ -631,19 +637,29 @@ export async function createNestedSubagentTools(
             if (invocation.modelFromParams) return textResult(resolution.message, true);
             modelUnavailable = true;
             break;
-          case "resolved":
-            model = resolution.model;
+          case "resolved": {
+            // Same access-program preference as the top-level Agent tool.
+            const choice = chooseVariant(
+              resolution.model,
+              await loadPreferredVariants(),
+              ctx.modelRegistry,
+              (candidate) => isWithinModelScope(candidate, ctx.cwd, ctx.modelRegistry),
+            );
+            model = choice.model;
+            preferredNote = variantNote(choice);
             break;
+          }
         }
       }
       // Child sessions have no UI surface to toast to, so the result text is
       // the only place a discarded override or an unavailable default shows up.
-      const modelNote = describeModelResolution({
-        agentLabel: config?.displayName ?? resolvedType,
-        resolved: invocation,
-        modelUnavailable,
-        parentModel: ctx.model,
-      });
+      const modelNote =
+        describeModelResolution({
+          agentLabel: config?.displayName ?? resolvedType,
+          resolved: invocation,
+          modelUnavailable,
+          parentModel: ctx.model,
+        }) + preferredNote;
 
       // Same scopeModels policy as the top-level Agent tool — a nested spawn
       // must not escape the allowlist. A "warn" verdict proceeds silently:

@@ -2461,3 +2461,10 @@ files and the `Verdict record:` line are unchanged.
 - Clicks are ignored while a shell viewer is open.
 - Tests: `tests/fleet-panel.test.ts` (click on agent, shell and main rows;
   double click; a click with text in the editor).
+
+## 2026-11-11 choco-pi patch: prefer an available access-program variant
+
+- `src/model-tiers.ts`: `loadPreferredVariants()` reads `preferWhenAvailable` from `.pi/model-fallbacks.json` (open pi-schema validator, cached per path, fails open to no variants). `chooseVariant()` returns the same-provider variant when the registry lists it in `getAvailable()` and `inScope` allows it, else the original; `variantNote()` renders the result note.
+- `src/model-scope.ts`: `isWithinModelScope()` applies the `scopeModels` allowlist as a predicate (true when scoping is off or there is no allowlist).
+- `src/index.ts` (Agent tool and workflow steps), `src/nested-tools.ts`, `src/cross-extension-rpc.ts`: a model resolved from a `model` input or role default runs as its variant when `chooseVariant` picks one; the Agent and nested tools add the note to their result. A model inherited from the parent is kept. The tier guard still runs on the requested model.
+- Tests: `tests/tier-guard.test.ts` (repository table, `chooseVariant` cases, Agent tool spawn with and without access).

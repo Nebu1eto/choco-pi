@@ -40,6 +40,20 @@ export type ModelScopeVerdict =
   | { kind: "warn"; message: string };
 
 /**
+ * Whether routing may pick `model` without leaving the user's allowlist: true
+ * when scoping is off or there is no allowlist, like `checkModelScope`.
+ */
+export function isWithinModelScope(
+  model: { provider: string; id: string },
+  cwd: string,
+  modelRegistry: ModelRegistryRef,
+): boolean {
+  if (!scopeModelsEnabled) return true;
+  const allowed = resolveEnabledModels(peekEnabledModels(cwd), modelRegistry);
+  return !allowed || isModelInScope(model, allowed);
+}
+
+/**
  * Check the effective resolved model against the user's enabledModels list.
  *
  * scopeModels guards against *runtime* LLM choices, not user-level config:

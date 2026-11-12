@@ -12,6 +12,8 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { validateSpawnCwd } from "./agent-manager.ts";
 import { type ModelRegistry, resolveModel } from "./model-resolver.ts";
+import { isWithinModelScope } from "./model-scope.ts";
+import { chooseVariant, loadPreferredVariants } from "./model-tiers.ts";
 import { isBoolean, isFiniteNumber, isString } from "./value-guards.ts";
 
 type RpcScalar = string | number | boolean | null;
@@ -198,9 +200,16 @@ export function registerRpcHandlers(deps: RpcDeps): RpcHandle {
         switch (resolution.tag) {
           case "error":
             throw new Error(resolution.message);
-          case "resolved":
-            normalizedOptions = { ...normalizedOptions, model: resolution.model };
+          case "resolved": {
+            const choice = chooseVariant(
+              resolution.model,
+              await loadPreferredVariants(),
+              ctx.modelRegistry,
+              (candidate) => isWithinModelScope(candidate, ctx.cwd, ctx.modelRegistry),
+            );
+            normalizedOptions = { ...normalizedOptions, model: choice.model };
             break;
+          }
         }
       }
       const fastModeRequested = wireBoolean(options?.fast_mode);

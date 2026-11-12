@@ -23,7 +23,11 @@ when set, otherwise the whole registry. The configured model always appears in t
 settings. The host builds Preferences sections synchronously, so the Advisor Agent
 section is omitted until that read completes rather than offering an unfiltered list;
 each later build revalidates the files in the background, so an edit shows on the next open.
-Consults are skipped when the advisor model equals the session model with the message
+A model with a `preferWhenAvailable` variant in `.pi/model-fallbacks.json` runs as that
+variant when the account can use it (Fable 5.2 as Mythos 5.2; the registry hides Mythos from
+accounts without access). When the advisor model equals the session model, or is its variant,
+the consult switches to the first available Flagship primary that differs, again preferring
+an available variant. Without one, consults are skipped with the message
 `advisor is disabled for this session: the advisor model (<provider>/<id>) is the same as the session model; pick a different advisor model in /preferences`.
 
 | Key       | Default                      | Values                                                    |

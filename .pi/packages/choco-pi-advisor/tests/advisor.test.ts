@@ -17,7 +17,11 @@ import {
   countAdvisorCallsThisTurn,
 } from "../src/excerpt.ts";
 import { resolveAdvisorManager } from "../src/manager-slot.ts";
-import { defaultFallbacksPath, loadFlagshipPrimaries } from "../src/flagship-models.ts";
+import {
+  defaultFallbacksPath,
+  loadFlagshipPrimaries,
+  loadPreferredVariants,
+} from "../src/flagship-models.ts";
 import {
   loadFlagshipModels,
   normalizeTierModel,
@@ -622,6 +626,53 @@ test("advisor switches to an available alternate when it equals the session mode
     tag: "selected",
     model: ASTRA,
   });
+});
+
+test("advisor prefers the access-program variant only when the account can use it", async () => {
+  const mythos = { provider: "anthropic", id: "claude-mythos-5-1" };
+  const variants = async () =>
+    new Map([["anthropic/claude-fable-5-1", "anthropic/claude-mythos-5-1"]]);
+  const registryWith = (available: readonly (typeof FABLE)[]) => ({
+    find: (provider: string, id: string) =>
+      [FABLE, ASTRA, mythos].find((m) => m.provider === provider && m.id === id),
+    getAvailable: () => available,
+  });
+  // The entitlement filter lists Mythos as available only for an account with access.
+  const granted = registryWith([FABLE, ASTRA, mythos]);
+  const denied = registryWith([FABLE, ASTRA]);
+  const candidates = async () => [FABLE, ASTRA];
+
+  // An Astra session with an Astra advisor switches to the Flagship Anthropic primary.
+  assert.deepEqual(await selectAdvisorModel(ASTRA, ASTRA, granted, candidates, variants), {
+    tag: "selected",
+    model: mythos,
+    notice: alternateModelNotice(mythos),
+  });
+  assert.deepEqual(await selectAdvisorModel(ASTRA, ASTRA, denied, candidates, variants), {
+    tag: "selected",
+    model: FABLE,
+    notice: alternateModelNotice(FABLE),
+  });
+  // A configured Fable advisor runs on Mythos when available, without a switch notice.
+  assert.deepEqual(await selectAdvisorModel(FABLE, ASTRA, granted, candidates, variants), {
+    tag: "selected",
+    model: mythos,
+  });
+  // Fable and Mythos share weights, so neither advises a session on the other.
+  for (const session of [FABLE, mythos]) {
+    assert.deepEqual(await selectAdvisorModel(FABLE, session, granted, candidates, variants), {
+      tag: "selected",
+      model: ASTRA,
+      notice: alternateModelNotice(ASTRA),
+    });
+  }
+});
+
+test("loadPreferredVariants reads the project table and fails open", async () => {
+  const variants = await loadPreferredVariants();
+  assert.equal(variants.get("anthropic/claude-fable-5-2"), "anthropic/claude-mythos-5-2");
+  assert.equal(variants.get("anthropic/claude-fable-5-1"), "anthropic/claude-mythos-5-1");
+  assert.equal((await loadPreferredVariants(join(defaultFallbacksPath(), "missing.json"))).size, 0);
 });
 
 test("advisor stays disabled, without consuming the cap, when no alternate resolves", async () => {

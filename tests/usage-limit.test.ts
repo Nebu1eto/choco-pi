@@ -8,6 +8,7 @@ import {
   corroborateUsageLimit,
   createUsageLimitPolicy,
   DEFAULT_MODEL_FALLBACKS_PATH,
+  fallbackCandidates,
   loadModelFallbacks,
   MAX_CLOSE_MS,
   pickFallback,
@@ -641,6 +642,31 @@ test("pickFallback walks primaries, secondaries, then the last resort", () => {
   );
 });
 
+test("pickFallback prefers an available access-program variant and skips a hidden one", () => {
+  const table: ModelFallbacks = {
+    ...TABLE,
+    preferWhenAvailable: { "anthropic/claude-fable-5-1": "anthropic/claude-mythos-5-1" },
+  };
+  const astra = { provider: "openai-codex", id: "gpt-6-astra" };
+  const mythos = { provider: "anthropic", id: "claude-mythos-5-1" };
+  const fable = { provider: "anthropic", id: "claude-fable-5-1" };
+  assert.deepEqual(fallbackCandidates(table, astra).slice(0, 2), [mythos, fable]);
+  assert.deepEqual(
+    pickFallback(table, astra, { available: [...ALL, mythos], scoped: [], isClosed: open }),
+    mythos,
+  );
+  // The entitlement filter leaves Mythos out of `available` for an account without access.
+  assert.deepEqual(
+    pickFallback(table, astra, { available: ALL, scoped: [], isClosed: open }),
+    fable,
+  );
+  // The variant of the limited model is never its own fallback.
+  assert.equal(
+    fallbackCandidates(table, mythos).some((ref) => ref.id === "claude-mythos-5-1"),
+    false,
+  );
+});
+
 test("the repository table offers xai/grok-4.7 only after every first-party candidate", async () => {
   const agentDir = await mkdtemp(join(tmpdir(), "choco-pi-fallbacks-xai-"));
   try {
@@ -1117,6 +1143,10 @@ test("the repository fallback table loads and mirrors the model-guidance tiers",
       "synthetic/hf:moonshotai/Kimi-K3.1-Pro",
       "synthetic/hf:moonshotai/Kimi-K3",
     ]);
+    assert.deepEqual(table.preferWhenAvailable, {
+      "anthropic/claude-fable-5-2": "anthropic/claude-mythos-5-2",
+      "anthropic/claude-fable-5-1": "anthropic/claude-mythos-5-1",
+    });
     for (const refs of Object.values(table.tiers)) {
       for (const ref of [...refs.primary, ...(refs.secondary ?? [])]) {
         assert.equal(ref.startsWith("openai/"), false, `openai/* is no default fallback: ${ref}`);
@@ -1137,6 +1167,19 @@ test("the repository fallback table loads and mirrors the model-guidance tiers",
     ]);
     assert.deepEqual(merged.tiers.flagship, table.tiers.flagship);
     assert.deepEqual(merged.lastResort, table.lastResort);
+    assert.deepEqual(merged.preferWhenAvailable, table.preferWhenAvailable);
+
+    await writeFile(
+      join(agentDir, "model-fallbacks.json"),
+      JSON.stringify({
+        preferWhenAvailable: { "anthropic/claude-fable-5-2": "anthropic/claude-fable-5-2" },
+      }),
+    );
+    const unpreferred = await loadModelFallbacks(agentDir);
+    assert.deepEqual(unpreferred.preferWhenAvailable, {
+      "anthropic/claude-fable-5-2": "anthropic/claude-fable-5-2",
+      "anthropic/claude-fable-5-1": "anthropic/claude-mythos-5-1",
+    });
 
     await writeFile(
       join(agentDir, "model-fallbacks.json"),

@@ -6,7 +6,7 @@ import { loadEnabledModels } from "../../choco-pi-subagents/src/enabled-models.t
 import { buildAdvisorPrompt } from "./consult.ts";
 import { buildAdvisorExcerpt, countAdvisorCallsThisTurn } from "./excerpt.ts";
 import { resolveAdvisorManager } from "./manager-slot.ts";
-import { loadFlagshipPrimaries } from "./flagship-models.ts";
+import { loadFlagshipPrimaries, loadPreferredVariants } from "./flagship-models.ts";
 import {
   registerAdvisorPreferencesProvider,
   surfaceAdvisorWriteError,
@@ -91,8 +91,12 @@ export default function (pi: ExtensionAPI) {
             return textResult(`advisor model not available: ${settings.model}`);
           // Resolve through the typed registry after the shared resolver chooses a model.
           const selected: Model<Api> = resolution.model;
-          const selection = await selectAdvisorModel(selected, ctx.model, ctx.modelRegistry, () =>
-            loadFlagshipPrimaries(),
+          const selection = await selectAdvisorModel(
+            selected,
+            ctx.model,
+            ctx.modelRegistry,
+            () => loadFlagshipPrimaries(),
+            () => loadPreferredVariants(),
           );
           if (!current()) return textResult("advisor consult failed: session ended");
           if (selection.tag === "disabled") return textResult(selection.message);
