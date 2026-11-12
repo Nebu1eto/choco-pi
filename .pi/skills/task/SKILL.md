@@ -23,7 +23,7 @@ Settle the plan owner once, when this step starts, by the first rule that applie
 
 1. **User request:** when the user explicitly asks for a `planner` subagent, spawn one fresh `planner`.
 2. **Prior plan:** when the current conversation or a file the user names holds a plan that decides the approach for this objective, the orchestrator conforms it, whatever the current model. A plan known only through a compaction summary qualifies only when its full text is in a readable file. An analysis without a chosen approach is evidence, not a plan.
-3. **Flagship model:** when `../../model-guidance.md`, resolved relative to this skill, places the runtime `Current model` in the Flagship tier, the orchestrator plans. Astra qualifies under both `openai-codex/` and `openai/`.
+3. **Flagship model:** when `../../model-guidance.md`, resolved relative to this skill, places the runtime `Current model` in the Flagship tier, the orchestrator plans. Every Fable and Mythos model that guide names qualifies, including `anthropic/claude-mythos-5-2` and the 5.1 fallbacks; Astra qualifies under both `openai-codex/` and `openai/`.
 4. **Planner:** otherwise, including an `"unknown"` model, spawn one fresh `planner`.
 
 When a prior plan leaves part of the objective uncovered, rules 3 and 4 decide who plans that remainder. A spawned `planner` receives the objective, instructions, direct and indirect write risks, acceptance items, available model/reasoning choices, and any prior or conformed plan, whose recorded user decisions and exclusions are binding.
