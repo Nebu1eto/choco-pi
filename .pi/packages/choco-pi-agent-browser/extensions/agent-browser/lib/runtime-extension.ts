@@ -192,6 +192,7 @@ import {
   type WebMcpOwner,
 } from "./webmcp-policy.ts";
 import { createDeferredAgentBrowserWebSearchTool } from "./web-search-registration.ts";
+import { getCurrentToolCallAdmission } from "./tool-call-admission.ts";
 import {
   isDirectAgentBrowserBashAllowed,
   isHarmlessAgentBrowserInspectionCommand,
@@ -2507,6 +2508,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
       return component;
     },
     async execute(toolCallId, params, signal, onUpdate, ctx): Promise<AgentBrowserToolResult> {
+      // The executable-resolution re-entry below inherits this turn through async context.
+      const admission = getCurrentToolCallAdmission();
       const promptPolicy = buildPromptPolicy(getLatestUserPrompt(ctx.sessionManager.getBranch()));
       const outputPath =
         isRecord(params) && hasRuntimeType(params.outputPath, "string")
@@ -2704,6 +2707,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
           }),
         );
       if (resolvedInput.kind === "script") {
+        // Script calls use their own isolated session and take their own turns, so this
+        // outer call must not hold its turn while they wait behind it.
+        admission?.release();
         if (!ctx.sessionManager.getSessionFile()) {
           return buildValidationFailureResult({
             attemptedKind: "script",
@@ -2754,8 +2760,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
             dispatch: async (innerParams, innerSignal) => {
               const remainingMs = Math.max(1, deadline - Date.now());
               const innerTimeoutMs = Math.min(innerParams.timeoutMs ?? remainingMs, remainingMs);
-              const innerResult: AgentBrowserToolResult = await withIsolatedAgentBrowserEnvironment(
-                () =>
+              const runInnerCall = () =>
+                withIsolatedAgentBrowserEnvironment(() =>
                   agentBrowserTool.execute(
                     `${toolCallId}:script:${innerResults.length + 1}`,
                     {
@@ -2773,7 +2779,10 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
                     undefined,
                     ctx,
                   ),
-              );
+                );
+              const innerResult: AgentBrowserToolResult = admission
+                ? await admission.gate.run(runInnerCall)
+                : await runInnerCall();
               innerResults.push(innerResult);
               return await buildScriptBrowserEnvelope(innerResult, innerParams.args, sessionName);
             },
@@ -2924,10 +2933,16 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
         }
         return electronHostResult;
       };
-      const runSerializedElectronHostInput = () =>
-        shouldSerializeElectronHostInput(compiledElectron)
+      const runSerializedElectronHostInput = () => {
+        const pending = shouldSerializeElectronHostInput(compiledElectron)
           ? managedSessionExecutionQueue.run(runElectronHostInput)
           : runElectronHostInput();
+        if (compiledElectron) admission?.release();
+        return pending;
+      };
+      // Preflight above may finish out of call order; wait until every earlier call has
+      // entered its queue so this call reads and queues behind their session state.
+      if (admission) await admission.ready;
       const electronHostResult =
         compiledElectron?.action === "cleanup"
           ? await artifactExecutionQueue.run(async () => {
@@ -3048,7 +3063,13 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
       const runBrowserCommand = async () => {
         const branchRestoreGenerationAtStart = branchRestoreGeneration;
         const generationAtStart = branchStateGeneration;
-        const sessionPageStateUpdate = sessionPageState.beginUpdate(webMcpSessionKey);
+        // Implicit calls read the managed session inside the queue, after earlier calls ran.
+        const sessionPageStateUpdate = sessionPageState.beginUpdate(
+          explicitSessionName
+            ? webMcpSessionKey
+            : (getSessionContextKey(managedSessionName, managedSessionNamespace) ??
+                managedSessionName),
+        );
         const browserRunState: BrowserRunState = {
           allowedDomainsBySession,
           artifactManifest,
@@ -3344,18 +3365,21 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
           )
         : undefined;
       const runWithinSessionQueue = () => {
-        if (closesAllSessions)
-          return managedSessionExecutionQueue.run(() =>
-            callerOwnedSessionExecutionQueues.runExclusive(closeAllNamespace, runBrowserCommand),
-          );
-        if (serializeBrowserCommand) return managedSessionExecutionQueue.run(runBrowserCommand);
-        return callerOwnedSessionQueueKey
-          ? callerOwnedSessionExecutionQueues.run(
-              callerOwnedSessionQueueKey,
-              callerOwnedSessionNamespace,
-              runBrowserCommand,
+        const pending = closesAllSessions
+          ? managedSessionExecutionQueue.run(() =>
+              callerOwnedSessionExecutionQueues.runExclusive(closeAllNamespace, runBrowserCommand),
             )
-          : runBrowserCommand();
+          : serializeBrowserCommand
+            ? managedSessionExecutionQueue.run(runBrowserCommand)
+            : callerOwnedSessionQueueKey
+              ? callerOwnedSessionExecutionQueues.run(
+                  callerOwnedSessionQueueKey,
+                  callerOwnedSessionNamespace,
+                  runBrowserCommand,
+                )
+              : runBrowserCommand();
+        admission?.release();
+        return pending;
       };
       if (!commandTouchesArtifactLifecycle(toolArgs, resolvedInput.toolStdin, outputPath))
         return appendCompatibilityWarnings(await runWithinSessionQueue());

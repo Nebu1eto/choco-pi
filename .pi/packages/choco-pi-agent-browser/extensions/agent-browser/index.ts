@@ -34,6 +34,7 @@ import {
   formatAgentBrowserRenderResult,
 } from "./lib/pi-tool-rendering.ts";
 import { buildToolPromptGuidelines } from "./lib/playbook.ts";
+import { ToolCallAdmissionGate } from "./lib/tool-call-admission.ts";
 import { registerAgentBrowserSearchAdapters } from "./lib/web-search-backend-registration.ts";
 import { createDeferredAgentBrowserWebSearchTool } from "./lib/web-search-registration.ts";
 
@@ -176,6 +177,7 @@ function registerResolvedAgentBrowserExtension(
     runtimePromise ??= captureRuntime(pi);
     return runtimePromise;
   };
+  const toolCallAdmissions = new ToolCallAdmissionGate();
 
   pi.on("session_start", async (event, ctx) => {
     await dispatchRuntimeEvent(getRuntime(), "session_start", event, ctx);
@@ -227,9 +229,12 @@ function registerResolvedAgentBrowserExtension(
       );
       return component;
     },
-    async execute(toolCallId, params, signal, onUpdate, ctx) {
-      const runtime = await getRuntime();
-      return runtime.tool.execute(toolCallId, params, signal, onUpdate, ctx);
+    execute(toolCallId, params, signal, onUpdate, ctx) {
+      // Reserve the call's turn before the first await so sibling calls keep their order.
+      return toolCallAdmissions.run(async () => {
+        const runtime = await getRuntime();
+        return runtime.tool.execute(toolCallId, params, signal, onUpdate, ctx);
+      });
     },
   } satisfies AgentBrowserTool;
   pi.registerTool(agentBrowserTool);
