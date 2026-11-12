@@ -1,110 +1,63 @@
-// @ts-nocheck
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 
-const extractUrl = new URL("../extract.ts", import.meta.url).href;
+// The config path is captured when the modules load, so every case shares one agent dir,
+// set before the imports below. Each case rewrites web-search.json in place.
+const ENV_KEYS = ["PI_CODING_AGENT_DIR", "XDG_CONFIG_HOME"] as const;
+const savedEnv = new Map(ENV_KEYS.map((key) => [key, process.env[key]]));
+const root = await mkdtemp(join(tmpdir(), "pi-ssrf-config-"));
+process.env.PI_CODING_AGENT_DIR = root;
+delete process.env.XDG_CONFIG_HOME;
+const configPath = join(root, "web-search.json");
 
-// `loadSsrfConfig().allowRanges` reads the config path captured at module load, so each
-// case runs in a child process with PI_CODING_AGENT_DIR pointed at a temp dir.
-function runLoad(env) {
-  const childEnv = { ...process.env };
-  delete childEnv.PI_CODING_AGENT_DIR;
-  delete childEnv.XDG_CONFIG_HOME;
-  for (const [key, value] of Object.entries(env)) {
-    if (value === undefined) delete childEnv[key];
-    else childEnv[key] = value;
+const { loadSsrfConfig } = await import("../extract.ts");
+const { loadFetchContentDomainPolicy } = await import("../ssrf-protection.ts");
+
+after(async () => {
+  for (const [key, value] of savedEnv) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
   }
-  const script = `
-		const { loadSsrfConfig } = await import(${JSON.stringify(extractUrl)});
-		try {
-			console.log(JSON.stringify({ ok: true, ranges: loadSsrfConfig().allowRanges }));
-		} catch (err) {
-			console.log(JSON.stringify({ ok: false, error: err instanceof Error ? err.message : String(err) }));
-		}
-	`;
-  const child = spawnSync(process.execPath, ["--input-type=module"], {
-    input: script,
-    encoding: "utf8",
-    env: childEnv,
-  });
-  assert.equal(child.status, 0, child.stderr);
-  return JSON.parse(child.stdout);
+  await rm(root, { recursive: true, force: true });
+});
+
+// The parsed config is cached by mtime and size, so every write gets a distinct mtime:
+// two same-size writes inside one clock tick must never read as the cached file.
+let mtimeSeconds = Math.floor(Date.now() / 1000);
+async function writeConfig(content: string): Promise<void> {
+  await writeFile(configPath, content, "utf8");
+  mtimeSeconds += 10;
+  await utimes(configPath, mtimeSeconds, mtimeSeconds);
 }
 
-function runLoadConfig(env) {
-  const childEnv = { ...process.env };
-  delete childEnv.PI_CODING_AGENT_DIR;
-  delete childEnv.XDG_CONFIG_HOME;
-  for (const [key, value] of Object.entries(env)) {
-    if (value === undefined) delete childEnv[key];
-    else childEnv[key] = value;
+async function removeConfig(): Promise<void> {
+  await rm(configPath, { force: true });
+}
+
+function errorOf(load: () => void): string {
+  try {
+    load();
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
   }
-  const script = `
-		const { loadSsrfConfig } = await import(${JSON.stringify(extractUrl)});
-		try {
-			console.log(JSON.stringify({ ok: true, config: loadSsrfConfig() }));
-		} catch (err) {
-			console.log(JSON.stringify({ ok: false, error: err instanceof Error ? err.message : String(err) }));
-		}
-	`;
-  const child = spawnSync(process.execPath, ["--input-type=module"], {
-    input: script,
-    encoding: "utf8",
-    env: childEnv,
-  });
-  assert.equal(child.status, 0, child.stderr);
-  return JSON.parse(child.stdout);
-}
-
-async function makeConfigDir(prefix) {
-  const root = await mkdtemp(join(tmpdir(), prefix));
-  const agentDir = join(root, "agent-dir");
-  await mkdir(agentDir, { recursive: true });
-  return { root, agentDir, configPath: join(agentDir, "web-search.json") };
-}
-
-function envFor(root, agentDir) {
-  return {
-    PI_CODING_AGENT_DIR: agentDir,
-    HOME: join(root, "home"),
-    USERPROFILE: join(root, "home"),
-  };
+  assert.fail("expected the config load to throw");
 }
 
 test("loadSsrfConfig defaults trustEnvProxy to false", async () => {
-  const { root, agentDir, configPath } = await makeConfigDir("pi-ssrf-proxy-default-");
-  await writeFile(configPath, JSON.stringify({ ssrf: { allowRanges: ["198.18.0.0/15"] } }), "utf8");
-
-  const result = runLoadConfig(envFor(root, agentDir));
-  assert.equal(result.ok, true, result.error);
-  assert.deepEqual(result.config, { allowRanges: ["198.18.0.0/15"], trustEnvProxy: false });
+  await writeConfig(JSON.stringify({ ssrf: { allowRanges: ["198.18.0.0/15"] } }));
+  assert.deepEqual(loadSsrfConfig(), { allowRanges: ["198.18.0.0/15"], trustEnvProxy: false });
 });
 
 test("loadFetchContentDomainPolicy reads normalized allow and deny hostnames", async () => {
-  const { root, agentDir, configPath } = await makeConfigDir("pi-domain-policy-valid-");
-  await writeFile(
-    configPath,
+  await writeConfig(
     JSON.stringify({
       fetchContent: { domainPolicy: { allow: [" Example.COM. "], deny: ["blocked.example.com"] } },
     }),
-    "utf8",
   );
-
-  const childEnv = envFor(root, agentDir);
-  const child = spawnSync(process.execPath, ["--input-type=module"], {
-    input: `
-			const { loadFetchContentDomainPolicy } = await import(${JSON.stringify(extractUrl.replace("/extract.ts", "/ssrf-protection.ts"))});
-			console.log(JSON.stringify(loadFetchContentDomainPolicy()));
-		`,
-    encoding: "utf8",
-    env: childEnv,
-  });
-  assert.equal(child.status, 0, child.stderr);
-  assert.deepEqual(JSON.parse(child.stdout), {
+  assert.deepEqual(loadFetchContentDomainPolicy(), {
     allow: ["example.com"],
     deny: ["blocked.example.com"],
   });
@@ -116,107 +69,64 @@ test("loadFetchContentDomainPolicy rejects malformed policy values", async () =>
     { deny: ["*.example.com"] },
     { allow: ["example.com", 42] },
   ]) {
-    const { root, agentDir, configPath } = await makeConfigDir("pi-domain-policy-invalid-");
-    await writeFile(configPath, JSON.stringify({ fetchContent: { domainPolicy } }), "utf8");
-    const childEnv = envFor(root, agentDir);
-    const child = spawnSync(process.execPath, ["--input-type=module"], {
-      input: `
-				const { loadFetchContentDomainPolicy } = await import(${JSON.stringify(extractUrl.replace("/extract.ts", "/ssrf-protection.ts"))});
-				try { loadFetchContentDomainPolicy(); console.log(JSON.stringify({ ok: true })); }
-				catch (err) { console.log(JSON.stringify({ ok: false, error: err.message })); }
-			`,
-      encoding: "utf8",
-      env: childEnv,
-    });
-    assert.equal(child.status, 0, child.stderr);
-    const result = JSON.parse(child.stdout);
-    assert.equal(result.ok, false, JSON.stringify(domainPolicy));
-    assert.match(result.error, /fetchContent\.domainPolicy\.(allow|deny)/);
+    await writeConfig(JSON.stringify({ fetchContent: { domainPolicy } }));
+    assert.match(
+      errorOf(loadFetchContentDomainPolicy),
+      /fetchContent\.domainPolicy\.(allow|deny)/,
+      JSON.stringify(domainPolicy),
+    );
   }
 });
 
 test("loadSsrfConfig accepts an explicit trustEnvProxy opt-in", async () => {
-  const { root, agentDir, configPath } = await makeConfigDir("pi-ssrf-proxy-enabled-");
-  await writeFile(configPath, JSON.stringify({ ssrf: { trustEnvProxy: true } }), "utf8");
-
-  const result = runLoadConfig(envFor(root, agentDir));
-  assert.equal(result.ok, true, result.error);
-  assert.deepEqual(result.config, { allowRanges: [], trustEnvProxy: true });
+  await writeConfig(JSON.stringify({ ssrf: { trustEnvProxy: true } }));
+  assert.deepEqual(loadSsrfConfig(), { allowRanges: [], trustEnvProxy: true });
 });
 
 test("loadSsrfConfig rejects a non-boolean trustEnvProxy value", async () => {
-  const { root, agentDir, configPath } = await makeConfigDir("pi-ssrf-proxy-invalid-");
-  await writeFile(configPath, JSON.stringify({ ssrf: { trustEnvProxy: "yes" } }), "utf8");
-
-  const result = runLoadConfig(envFor(root, agentDir));
-  assert.equal(result.ok, false);
-  assert.match(result.error, /ssrf\.trustEnvProxy in .* must be a boolean/);
+  await writeConfig(JSON.stringify({ ssrf: { trustEnvProxy: "yes" } }));
+  assert.match(errorOf(loadSsrfConfig), /ssrf\.trustEnvProxy in .* must be a boolean/);
 });
 
 test("loadSsrfConfig().allowRanges throws when ssrf.allowRanges is not an array", async () => {
   // Regression: a mistyped non-array value (bare string, object, number) must
   // fail loudly instead of being silently ignored as "no exemptions".
   for (const allowRanges of ["198.18.0.0/15", { "198.18.0.0/15": true }, 42]) {
-    const { root, agentDir, configPath } = await makeConfigDir("pi-ssrf-nonarray-");
-    await writeFile(configPath, JSON.stringify({ ssrf: { allowRanges } }), "utf8");
-
-    const result = runLoad(envFor(root, agentDir));
-    assert.equal(result.ok, false, `expected throw for ${JSON.stringify(allowRanges)}`);
-    assert.match(result.error, /ssrf\.allowRanges in .* must be an array of CIDR strings/);
+    await writeConfig(JSON.stringify({ ssrf: { allowRanges } }));
+    assert.match(
+      errorOf(() => loadSsrfConfig().allowRanges),
+      /ssrf\.allowRanges in .* must be an array of CIDR strings/,
+      `expected throw for ${JSON.stringify(allowRanges)}`,
+    );
   }
 });
 
 test("loadSsrfConfig().allowRanges throws when an ssrf.allowRanges entry is not a string", async () => {
-  const { root, agentDir, configPath } = await makeConfigDir("pi-ssrf-entry-type-");
-  await writeFile(
-    configPath,
-    JSON.stringify({ ssrf: { allowRanges: ["198.18.0.0/15", 123] } }),
-    "utf8",
-  );
-
-  const result = runLoad(envFor(root, agentDir));
-  assert.equal(result.ok, false);
+  await writeConfig(JSON.stringify({ ssrf: { allowRanges: ["198.18.0.0/15", 123] } }));
   assert.match(
-    result.error,
+    errorOf(() => loadSsrfConfig().allowRanges),
     /ssrf\.allowRanges in .* must contain only CIDR strings; entry 2 is number/,
   );
 });
 
 test("loadSsrfConfig().allowRanges returns trimmed, non-empty CIDR strings for a valid array", async () => {
-  const { root, agentDir, configPath } = await makeConfigDir("pi-ssrf-valid-");
-  await writeFile(
-    configPath,
+  await writeConfig(
     JSON.stringify({ ssrf: { allowRanges: ["198.18.0.0/15", "  fd00::/8  ", "", "   "] } }),
-    "utf8",
   );
-
-  const result = runLoad(envFor(root, agentDir));
-  assert.equal(result.ok, true, result.error);
-  assert.deepEqual(result.ranges, ["198.18.0.0/15", "fd00::/8"]);
+  assert.deepEqual(loadSsrfConfig().allowRanges, ["198.18.0.0/15", "fd00::/8"]);
 });
 
 test("loadSsrfConfig().allowRanges returns [] when the config file is missing", async () => {
-  const { root, agentDir } = await makeConfigDir("pi-ssrf-missing-");
-  // Intentionally do not write web-search.json.
-  const result = runLoad(envFor(root, agentDir));
-  assert.equal(result.ok, true, result.error);
-  assert.deepEqual(result.ranges, []);
+  await removeConfig();
+  assert.deepEqual(loadSsrfConfig().allowRanges, []);
 });
 
 test("loadSsrfConfig().allowRanges returns [] when ssrf.allowRanges is unset", async () => {
-  const { root, agentDir, configPath } = await makeConfigDir("pi-ssrf-unset-");
-  await writeFile(configPath, JSON.stringify({ exaApiKey: "exa-x" }), "utf8");
-
-  const result = runLoad(envFor(root, agentDir));
-  assert.equal(result.ok, true, result.error);
-  assert.deepEqual(result.ranges, []);
+  await writeConfig(JSON.stringify({ exaApiKey: "exa-x" }));
+  assert.deepEqual(loadSsrfConfig().allowRanges, []);
 });
 
 test("loadSsrfConfig().allowRanges reports malformed config JSON", async () => {
-  const { root, agentDir, configPath } = await makeConfigDir("pi-ssrf-badjson-");
-  await writeFile(configPath, "{ not valid json", "utf8");
-
-  const result = runLoad(envFor(root, agentDir));
-  assert.equal(result.ok, false);
-  assert.match(result.error, /Failed to parse .*web-search\.json/);
+  await writeConfig("{ not valid json");
+  assert.match(errorOf(loadSsrfConfig), /Failed to parse .*web-search\.json/);
 });

@@ -5,8 +5,14 @@
  * and are the slowest files of the suite, and only a change to `formal/`, to
  * the formal-verify skill or to those tests can break them. They run only
  * with `--formal`. Every other argument goes to `node --test` unchanged.
+ *
+ * The run lowers its own CPU priority before starting `node --test`, and every
+ * test process inherits it, so interactive work keeps the CPU first. Set
+ * `CHOCO_PI_TEST_NICE` to another niceness (0 keeps the current priority), and
+ * pass `--test-concurrency=N` to run fewer test files at once.
  */
 import { spawn } from "node:child_process";
+import { getPriority, setPriority } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -15,6 +21,22 @@ export const DEFAULT_TESTS = ["tests/*.test.ts", ".pi/packages/*/tests/*.test.ts
 export const FORMAL_TESTS = ["tests/formal/*.test.ts"];
 export const FORMAL_FLAG = "--formal";
 export const FORMAL_NOTICE = `The formal validation tests (${FORMAL_TESTS.join(", ")}) were not run; \`pnpm test ${FORMAL_FLAG}\` includes them.`;
+
+/** Niceness of a test run unless `CHOCO_PI_TEST_NICE` names another. */
+export const TEST_NICENESS = 10;
+export const NICENESS_ENV = "CHOCO_PI_TEST_NICE";
+
+/**
+ * The niceness to switch to, or undefined to keep the current one. A run only
+ * ever lowers its priority: raising it needs privileges and is never wanted here.
+ */
+export function testNiceness(current: number, requested: string | undefined): number | undefined {
+  const target = requested === undefined || requested === "" ? TEST_NICENESS : Number(requested);
+  if (!Number.isInteger(target) || target < 0 || target > 19) {
+    throw new Error(`${NICENESS_ENV} must be an integer from 0 to 19, got ${requested}`);
+  }
+  return target > current ? target : undefined;
+}
 
 /** What `pnpm test <args>` runs. */
 export type TestCommand = {
@@ -57,5 +79,7 @@ export async function runTests(root: string, args: readonly string[]): Promise<n
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const niceness = testNiceness(getPriority(), process.env[NICENESS_ENV]);
+  if (niceness !== undefined) setPriority(niceness);
   process.exitCode = await runTests(root, process.argv.slice(2));
 }

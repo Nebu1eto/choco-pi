@@ -14,7 +14,8 @@ const TransportSchema = oneOf(["exa-api", "exa-mcp", "kagi-api", "openai-respons
 const ScenarioOutputSchema = obj({
   error: opt(
     obj({
-      kind: oneOf(["auth", "cancelled", "invalid-request"]),
+      // Any kind parses so an unexpected one fails only its own test, by exact comparison.
+      kind: str({ minLength: 1 }),
       status: opt(int({ minimum: 100, maximum: 599 })),
     }),
   ),
@@ -34,18 +35,67 @@ const ScenarioOutputSchema = obj({
     }),
   ),
 });
-const isScenarioOutput = compile(ScenarioOutputSchema).check;
+const isScenarioOutputList = compile(arr(ScenarioOutputSchema)).check;
 
 type TransportCase = Static<typeof TransportSchema>;
 type FailureMode = "cancel" | number;
 type ScenarioOutput = Static<typeof ScenarioOutputSchema>;
 
+const transientCases: ReadonlyArray<{ status: 500 | 503; transport: TransportCase }> = [
+  { transport: "openai-responses", status: 503 },
+  { transport: "exa-api", status: 500 },
+  { transport: "exa-mcp", status: 503 },
+  { transport: "kagi-api", status: 500 },
+];
+
+const hardStopCases = [
+  { transport: "openai-responses", status: 401, kind: "auth" },
+  { transport: "exa-api", status: 400, kind: "invalid-request" },
+  { transport: "exa-mcp", status: 400, kind: "invalid-request" },
+  { transport: "kagi-api", status: 403, kind: "auth" },
+] as const;
+
+const cancelTransports = ["openai-responses", "exa-api", "exa-mcp", "kagi-api"] as const;
+
+// One runner child per transport runs all of that transport's scenarios: each child
+// imports the SDK once, and its env carries only that transport's key.
+const failuresByTransport = new Map<TransportCase, FailureMode[]>();
+function addFailure(transport: TransportCase, failure: FailureMode): void {
+  const failures = failuresByTransport.get(transport) ?? [];
+  failures.push(failure);
+  failuresByTransport.set(transport, failures);
+}
+for (const { transport, status } of transientCases) addFailure(transport, status);
+for (const { transport, status } of hardStopCases) addFailure(transport, status);
+for (const transport of cancelTransports) addFailure(transport, "cancel");
+
+const transportRuns = new Map<TransportCase, Promise<ScenarioOutput[]>>();
+
 async function runScenario(
   transport: TransportCase,
   failure: FailureMode,
 ): Promise<ScenarioOutput> {
+  const failures = failuresByTransport.get(transport) ?? [];
+  const index = failures.indexOf(failure);
+  assert.notEqual(index, -1, `no scenario for ${transport} ${failure}`);
+  let run = transportRuns.get(transport);
+  if (!run) {
+    run = runTransport(transport, failures);
+    transportRuns.set(transport, run);
+  }
+  const outputs = await run;
+  const output = outputs[index];
+  assert.ok(output, `the runner returned no result for ${transport} ${failure}`);
+  return output;
+}
+
+async function runTransport(
+  transport: TransportCase,
+  failures: readonly FailureMode[],
+): Promise<ScenarioOutput[]> {
   const root = await mkdtemp(join(tmpdir(), "choco-pi-transient-search-"));
-  const child = spawn(process.execPath, [runnerPath, JSON.stringify({ transport, failure })], {
+  const scenarios = failures.map((failure) => ({ transport, failure }));
+  const child = spawn(process.execPath, [runnerPath, JSON.stringify(scenarios)], {
     env: {
       ...process.env,
       HOME: root,
@@ -78,7 +128,7 @@ async function runScenario(
     } catch {
       throw new Error(`transient search runner returned invalid JSON: ${stdout}`);
     }
-    if (!isScenarioOutput(output)) {
+    if (!isScenarioOutputList(output) || output.length !== failures.length) {
       throw new Error(`transient search runner returned an invalid result: ${stdout}`);
     }
     return output;
@@ -86,13 +136,6 @@ async function runScenario(
     await rm(root, { recursive: true, force: true });
   }
 }
-
-const transientCases: ReadonlyArray<{ status: 500 | 503; transport: TransportCase }> = [
-  { transport: "openai-responses", status: 503 },
-  { transport: "exa-api", status: 500 },
-  { transport: "exa-mcp", status: 503 },
-  { transport: "kagi-api", status: 500 },
-];
 
 for (const { transport, status } of transientCases) {
   test(`${transport} HTTP ${status} is transient and reaches router fallback`, async () => {
@@ -123,12 +166,7 @@ for (const { transport, status } of transientCases) {
   });
 }
 
-for (const { transport, status, kind } of [
-  { transport: "openai-responses", status: 401, kind: "auth" },
-  { transport: "exa-api", status: 400, kind: "invalid-request" },
-  { transport: "exa-mcp", status: 400, kind: "invalid-request" },
-  { transport: "kagi-api", status: 403, kind: "auth" },
-] as const) {
+for (const { transport, status, kind } of hardStopCases) {
   test(`${transport} HTTP ${status} remains a hard stop`, async () => {
     const output = await runScenario(transport, status);
     assert.deepEqual(output.error, { kind, status });
@@ -138,7 +176,7 @@ for (const { transport, status, kind } of [
   });
 }
 
-for (const transport of ["openai-responses", "exa-api", "exa-mcp", "kagi-api"] as const) {
+for (const transport of cancelTransports) {
   test(`${transport} cancellation stops without fallback`, async () => {
     const output = await runScenario(transport, "cancel");
     assert.deepEqual(output.error, { kind: "cancelled" });

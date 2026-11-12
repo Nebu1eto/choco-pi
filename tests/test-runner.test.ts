@@ -8,7 +8,10 @@ import {
   FORMAL_FLAG,
   FORMAL_NOTICE,
   FORMAL_TESTS,
+  NICENESS_ENV,
   testCommand,
+  testNiceness,
+  TEST_NICENESS,
 } from "../scripts/test.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -62,4 +65,17 @@ test("every test file under tests/ is run by the default patterns or by --formal
     all.filter((file) => !run.has(file)),
     [],
   );
+});
+test("a test run lowers its CPU priority and never raises it", () => {
+  assert.equal(testNiceness(0, undefined), TEST_NICENESS);
+  assert.equal(testNiceness(0, ""), TEST_NICENESS);
+  assert.equal(testNiceness(0, "15"), 15);
+  // Already at or below the requested priority: keep it.
+  assert.equal(testNiceness(TEST_NICENESS, undefined), undefined);
+  assert.equal(testNiceness(15, "10"), undefined);
+  // 0 opts out from a normal shell.
+  assert.equal(testNiceness(0, "0"), undefined);
+  for (const bad of ["-1", "20", "1.5", "low"]) {
+    assert.throws(() => testNiceness(0, bad), new RegExp(NICENESS_ENV));
+  }
 });

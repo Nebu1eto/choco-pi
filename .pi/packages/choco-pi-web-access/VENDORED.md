@@ -278,3 +278,9 @@ Tool inputs, outputs, and option values use snake_case only (user decision; tool
 - Outputs: the `Artifact responseId:` line is `Artifact response_id:`; continuation calls print `get_search_content({ response_id, url_index, offset, limit })`; hints and error messages name the new fields. Research artifacts were already snake_case.
 - The four tool schemas are closed (the previous open objects accepted unknown keys), so old names fail validation; each `execute` also rejects the old names explicitly for direct calls.
 - Tests: `tests/source-check.test.ts` checks that the registered `source_check` schema accepts `num_results`, `fetch_content`, `recency_filter` and `domain_filter` and that each former camelCase name fails both schema validation and `execute`.
+
+## 2026-11-12 choco-pi patch: cheaper SSRF-config and transient-fallback tests
+
+`tests/ssrf-allow-ranges-config.test.ts` runs in-process instead of starting a Node child per case. It points `PI_CODING_AGENT_DIR` at one temp dir before importing `extract.ts` and `ssrf-protection.ts` (both capture the config path at load), rewrites `web-search.json` per case, and stamps each write with a distinct mtime so the `mtime:size` config cache never serves a previous case. It drops `// @ts-nocheck` and keeps every case and assertion.
+
+`tests/transient-search-fallback.test.ts` starts one runner child per transport instead of one per case: `tests/fixtures/transient-search-runner.ts` takes a list of scenarios and runs each with a fresh event bus, search scope, session, abort controller and counters, and each child's env still carries only its transport's key. The output schema accepts any error kind, so an unexpected kind fails only its own test by exact comparison. Source is unchanged; the two files went from about 9 CPU-seconds each to 1.0 and 2.9.

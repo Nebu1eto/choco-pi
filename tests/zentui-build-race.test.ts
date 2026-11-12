@@ -23,7 +23,8 @@ test("concurrent processes publish one complete zentui build", async () => {
   try {
     await Promise.all(
       Array.from(
-        { length: 6 },
+        // Each builder is a full Node process; three still race for one publish slot.
+        { length: 3 },
         async () =>
           await execFileAsync(process.execPath, ["--input-type=module", "--eval", childScript], {
             cwd: repositoryRoot,
