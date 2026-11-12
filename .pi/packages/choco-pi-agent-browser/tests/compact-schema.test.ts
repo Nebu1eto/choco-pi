@@ -33,19 +33,19 @@ test("compact and full schemas differ only by descriptions", () => {
 
 test("params schema is closed at every object level and keeps optional fields optional", () => {
   assert.equal(isParams({}), true);
-  assert.equal(isParams({ timeoutMs: undefined }), true);
+  assert.equal(isParams({ timeout_ms: undefined }), true);
   assert.equal(isParams({ unknownKey: 1 }), false);
-  assert.equal(isParams({ semanticAction: { action: "click", extra: true } }), false);
+  assert.equal(isParams({ semantic_action: { action: "click", extra: true } }), false);
   assert.equal(isParams({ job: { steps: [{ action: "open", extra: 1 }] } }), false);
   assert.equal(isParams({ job: { steps: [] } }), false);
-  assert.equal(isParams({ timeoutMs: 1.5 }), false);
-  assert.equal(isParams({ timeoutMs: 0 }), false);
-  assert.equal(isParams({ sessionMode: "fresh" }), true);
-  assert.equal(isParams({ sessionMode: "other" }), false);
+  assert.equal(isParams({ timeout_ms: 1.5 }), false);
+  assert.equal(isParams({ timeout_ms: 0 }), false);
+  assert.equal(isParams({ session_mode: "fresh" }), true);
+  assert.equal(isParams({ session_mode: "other" }), false);
   assert.equal(isParams({ qa: { url: "https://example.com", attached: false } }), true);
   assert.equal(isParams({ qa: { attached: true } }), true);
   assert.equal(isParams({ qa: { attached: false } }), false);
-  assert.equal(isParams({ electron: { action: "status", launchId: "x", all: true } }), false);
+  assert.equal(isParams({ electron: { action: "status", launch_id: "x", all: true } }), false);
 });
 
 test("string enums keep an explicit string type", () => {

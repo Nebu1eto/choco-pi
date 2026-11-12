@@ -450,12 +450,12 @@ export function getArtifactPreflightValidationError(options: {
         normalizeRequestedOutputPath(options.outputPath),
       );
       if (activeRecordingDestinations.has(canonicalOutputPath)) {
-        return `Unsupported outputPath: ${options.outputPath} is reserved by an active recording. Stop that recording first or use a distinct path.`;
+        return `Unsupported output_path: ${options.outputPath} is reserved by an active recording. Stop that recording first or use a distinct path.`;
       }
     } catch (canonicalizationError) {
       return canonicalizationError instanceof Error
         ? canonicalizationError.message
-        : `outputPath ${options.outputPath} could not be resolved safely.`;
+        : `output_path ${options.outputPath} could not be resolved safely.`;
     }
   }
   const artifactDestinations = new Map<string, number>();
@@ -488,7 +488,7 @@ export function getArtifactPreflightValidationError(options: {
           : `Artifact destination ${artifactDestination} could not be resolved safely.`;
       }
       if (canonicalOutputPath === canonicalDestination) {
-        return `Unsupported outputPath: ${options.outputPath} resolves to the same destination as artifact path ${artifactDestination}. Use distinct paths so the tool-result JSON cannot overwrite the browser artifact.`;
+        return `Unsupported output_path: ${options.outputPath} resolves to the same destination as artifact path ${artifactDestination}. Use distinct paths so the tool-result JSON cannot overwrite the browser artifact.`;
       }
       if (activeRecordingDestinations.has(canonicalDestination)) {
         const prefix = batch
@@ -2512,8 +2512,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
       const admission = getCurrentToolCallAdmission();
       const promptPolicy = buildPromptPolicy(getLatestUserPrompt(ctx.sessionManager.getBranch()));
       const outputPath =
-        isRecord(params) && hasRuntimeType(params.outputPath, "string")
-          ? params.outputPath
+        isRecord(params) && hasRuntimeType(params.output_path, "string")
+          ? params.output_path
           : undefined;
       const resolvedInput = resolveAgentBrowserInput({
         getBatchPreflightValidationError: (args, stdin) =>
@@ -2723,7 +2723,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
         }
         const sessionName = createAgentBrowserScriptSessionName();
         const innerResults: AgentBrowserToolResult[] = [];
-        const scriptTimeoutMs = params.timeoutMs ?? AGENT_BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS;
+        const scriptTimeoutMs = params.timeout_ms ?? AGENT_BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS;
         const deadline = Date.now() + scriptTimeoutMs;
         let leased = false;
         let cleanupError: string | undefined;
@@ -2773,7 +2773,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
                         ...innerParams.args,
                       ],
                       stdin: innerParams.stdin,
-                      timeoutMs: innerTimeoutMs,
+                      timeout_ms: innerTimeoutMs,
                     },
                     innerSignal,
                     undefined,
@@ -3101,7 +3101,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
           (resolvedInput.kind === "electron" && resolvedInput.compiledElectron.action === "launch");
         const allocatesFreshManagedSession =
           explicitSessionName === undefined &&
-          (params.sessionMode === "fresh" ||
+          (params.session_mode === "fresh" ||
             (resolvedInput.kind === "electron" &&
               resolvedInput.compiledElectron.action === "launch"));
         const reusableSessionKey = allocatesFreshManagedSession
@@ -3138,7 +3138,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
               args: cancelArgs,
               cwd: ctx.cwd,
               signal,
-              timeoutMs: params.timeoutMs,
+              timeoutMs: params.timeout_ms,
             });
             if (
               !cancellation.spawnError &&

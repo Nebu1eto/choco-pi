@@ -316,12 +316,12 @@ export class ShellManager {
     const record = this.authorizedRecord(input.requesterId, input.isAdmin, input.shellId);
     const maxBytes = boundedInteger(
       input.maxBytes ?? DEFAULT_READ_BYTES,
-      "maxBytes",
+      "max_bytes",
       1,
       MAX_READ_BYTES,
     );
-    const stdoutOffset = optionalOffset(input.stdoutOffset, "stdoutOffset");
-    const stderrOffset = optionalOffset(input.stderrOffset, "stderrOffset");
+    const stdoutOffset = optionalOffset(input.stdoutOffset, "stdout_offset");
+    const stderrOffset = optionalOffset(input.stderrOffset, "stderr_offset");
     return {
       shell: snapshot(record),
       stdout: readStream(record.stdout, stdoutOffset, maxBytes),
@@ -371,7 +371,7 @@ export class ShellManager {
   private authorizedRecord(requesterId: string, isAdmin: boolean, shellId: string): ShellRecord {
     const validRequesterId = requireNonEmpty(requesterId, "requesterId");
     requireBoolean(isAdmin, "isAdmin");
-    const validShellId = requireNonEmpty(shellId, "shellId");
+    const validShellId = requireNonEmpty(shellId, "shell_id");
     const record = this.records.get(validShellId);
     if (!record) throw new Error(`Shell not found: ${validShellId}`);
     if (!isAdmin && record.ownerId !== validRequesterId) {

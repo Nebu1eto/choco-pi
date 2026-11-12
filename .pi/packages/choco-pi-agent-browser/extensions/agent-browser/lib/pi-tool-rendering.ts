@@ -131,12 +131,12 @@ interface StructuredModeInput {
   args?: unknown;
   electron?: unknown;
   job?: unknown;
-  networkSourceLookup?: unknown;
+  network_source_lookup?: unknown;
   qa?: unknown;
   script?: unknown;
-  semanticAction?: unknown;
-  sessionMode?: unknown;
-  sourceLookup?: unknown;
+  semantic_action?: unknown;
+  session_mode?: unknown;
+  source_lookup?: unknown;
   stdin?: unknown;
 }
 
@@ -153,25 +153,25 @@ function getStructuredModeInvocation(input: StructuredModeInput): StructuredMode
     return {
       rawArgs: input.args.filter((value): value is string => hasRuntimeType(value, "string")),
     };
-  if (input.semanticAction !== undefined)
+  if (input.semantic_action !== undefined)
     return {
-      mode: "semanticAction",
-      rawArgs: compileAgentBrowserSemanticAction(input.semanticAction).compiled?.args ?? [],
+      mode: "semantic_action",
+      rawArgs: compileAgentBrowserSemanticAction(input.semantic_action).compiled?.args ?? [],
     };
   if (input.job !== undefined)
     return { mode: "job", rawArgs: compileAgentBrowserJob(input.job).compiled?.args ?? [] };
   if (input.qa !== undefined)
     return { mode: "qa", rawArgs: compileAgentBrowserQaPreset(input.qa).compiled?.args ?? [] };
-  if (input.sourceLookup !== undefined)
+  if (input.source_lookup !== undefined)
     return {
-      mode: "sourceLookup",
-      rawArgs: compileAgentBrowserSourceLookup(input.sourceLookup).compiled?.args ?? [],
+      mode: "source_lookup",
+      rawArgs: compileAgentBrowserSourceLookup(input.source_lookup).compiled?.args ?? [],
     };
-  if (input.networkSourceLookup !== undefined)
+  if (input.network_source_lookup !== undefined)
     return {
-      mode: "networkSourceLookup",
+      mode: "network_source_lookup",
       rawArgs:
-        compileAgentBrowserNetworkSourceLookup(input.networkSourceLookup).compiled?.args ?? [],
+        compileAgentBrowserNetworkSourceLookup(input.network_source_lookup).compiled?.args ?? [],
     };
   if (input.electron !== undefined) {
     const electron = compileAgentBrowserElectron(input.electron);
@@ -222,8 +222,8 @@ export function formatAgentBrowserRenderCall<Args>(
   } else if (invocationPreview.length > 0) {
     text += ` ${theme.fg("accent", invocationPreview)}`;
   }
-  if (input.sessionMode === "fresh") {
-    text += theme.fg("dim", " sessionMode=fresh");
+  if (input.session_mode === "fresh") {
+    text += theme.fg("dim", " session_mode=fresh");
   }
   if (hasRuntimeType(input.stdin, "string")) {
     text += theme.fg("dim", " + stdin");
@@ -270,7 +270,7 @@ function formatModelVisibleFailureCategoryNotice<Details>(details: Details): str
       ? details.failureCategory
       : undefined;
   const diagnostic = parseAgentBrowserDiagnostic(details.diagnostic);
-  return `Result category: failure${failureCategory ? `; failureCategory: ${failureCategory}` : ""}${diagnostic ? `; diagnostic.code: ${diagnostic.code}; diagnostic.outcome: ${diagnostic.outcome}` : ""}; Pi tool isError: true.`;
+  return `Result category: failure${failureCategory ? `; failure_category: ${failureCategory}` : ""}${diagnostic ? `; diagnostic.code: ${diagnostic.code}; diagnostic.outcome: ${diagnostic.outcome}` : ""}; Pi tool is_error: true.`;
 }
 
 type AgentBrowserToolContent = AgentToolResult<unknown>["content"];

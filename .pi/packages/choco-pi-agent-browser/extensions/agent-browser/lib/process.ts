@@ -59,7 +59,7 @@ const DEFAULT_AGENT_BROWSER_PROCESS_TIMEOUT_MS = 35_000;
 const EXIT_STDIO_GRACE_MS = 100;
 const WINDOWS_AGENT_BROWSER_MISSING_MARKER = "PI_AGENT_BROWSER_COMMAND_NOT_FOUND:agent-browser.cmd";
 const UNTRUSTED_LOCAL_FILE_SESSION_MESSAGE =
-  "Local file navigation requires a wrapper-managed local browser because caller-owned or attached sessions can retain unsafe file-access launch flags. Omit the explicit session or attachment and retry with sessionMode fresh.";
+  "Local file navigation requires a wrapper-managed local browser because caller-owned or attached sessions can retain unsafe file-access launch flags. Omit the explicit session or attachment and retry with session_mode fresh.";
 const attachedBrowserSessionContext = new AsyncLocalStorage<boolean>();
 const agentBrowserExecutableContext = new AsyncLocalStorage<AgentBrowserExecutableFingerprint>();
 const WINDOWS_COMMANDS_WITH_ADJACENT_SUBCOMMAND = new Set([
@@ -581,7 +581,7 @@ export function getAgentBrowserSocketPathValidationError(options: {
   const socketPath = join(socketRoot, `${sessionName}.sock`);
   const pathBytes = Buffer.byteLength(socketPath);
   if (pathBytes <= 103) return undefined;
-  return `Agent-browser Unix socket path would be ${pathBytes} bytes (max 103) for session ${JSON.stringify(sessionName)} under ${JSON.stringify(options.socketDir)}. Set PI_AGENT_BROWSER_SOCKET_DIR to a shorter absolute private directory such as /tmp/piab-<uid> with mode 0700; retrying sessionMode "fresh" cannot shorten this configured root.`;
+  return `Agent-browser Unix socket path would be ${pathBytes} bytes (max 103) for session ${JSON.stringify(sessionName)} under ${JSON.stringify(options.socketDir)}. Set PI_AGENT_BROWSER_SOCKET_DIR to a shorter absolute private directory such as /tmp/piab-<uid> with mode 0700; retrying session_mode "fresh" cannot shorten this configured root.`;
 }
 
 export function buildAgentBrowserProcessEnv(

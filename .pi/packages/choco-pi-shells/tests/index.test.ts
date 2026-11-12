@@ -5,6 +5,7 @@ import test from "node:test";
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
 
+import { toSnakeCaseKeys } from "../../../extensions/lib/tool-output-keys.ts";
 import { runInChildSessionContext } from "../../choco-pi-subagents/src/child-context.ts";
 import shellsExtension, {
   type ShellCompletionDetails,
@@ -335,7 +336,7 @@ function details<Details extends object>(result: ToolResult): Details {
   const content = result.content[0];
   assert.ok(content);
   assert.equal(content.type, "text");
-  assert.deepEqual(JSON.parse(content.text), result.details);
+  assert.deepEqual(JSON.parse(content.text), toSnakeCaseKeys(result.details));
   // SAFETY: The serialized content and details were compared above; callers provide the expected fixture type.
   return result.details as Details;
 }
@@ -381,8 +382,8 @@ test("extension registers documented portable tool schemas and the /shells comma
     assert.match(startTool.parameters.properties?.command?.description ?? "", /long-running/i);
     assert.match(startTool.parameters.properties?.command?.description ?? "", /unredirected/);
     assert.match(startTool.parameters.properties?.cwd?.description ?? "", /calling session cwd/);
-    assert.match(readTool.parameters.properties?.stdout_offset?.description ?? "", /nextOffset/);
-    assert.match(readTool.parameters.properties?.stderr_offset?.description ?? "", /nextOffset/);
+    assert.match(readTool.parameters.properties?.stdout_offset?.description ?? "", /next_offset/);
+    assert.match(readTool.parameters.properties?.stderr_offset?.description ?? "", /next_offset/);
     assert.equal(readTool.parameters.properties?.max_bytes?.maximum, 262_144);
     assert.equal(root.command?.description, "List, read, or stop managed shells");
 
@@ -578,6 +579,17 @@ test("terminal shells steer a compact grouped completion callback to their owner
     assert.equal(tailed?.stdout.nextOffset, tailed?.stdout.endOffset);
     assert.equal(tailed?.stderr.nextOffset, tailed?.stderr.endOffset);
     assert.match(completion?.message.content ?? "", /Use shell_read/);
+    assert.match(completion?.message.content ?? "", /stdout\.next_offset as stdout_offset/);
+    const wrapped = /<shell-completion>(.*)<\/shell-completion>/.exec(
+      completion?.message.content ?? "",
+    );
+    const wire: { shells: Array<Record<string, { next_offset?: number } | number | string>> } =
+      JSON.parse(wrapped?.[1] ?? "null");
+    assert.ok(wire.shells.every((shell) => "shell_id" in shell && !("shellId" in shell)));
+    assert.ok(wire.shells.some((shell) => shell.exit_code === 7));
+    assert.ok(wire.shells.every((shell) => !("exitCode" in shell)));
+    assert.equal(wrapped?.[1]?.includes("nextOffset"), false);
+    assert.equal(wrapped?.[1]?.includes("next_offset"), true);
 
     const notificationTheme: ShellNotificationTheme = {
       fg: (_color, text) => text,
@@ -818,6 +830,19 @@ test("tool and command handlers preserve ownership and defensively handle direct
       await execute(root, "shell_read", { shell_id: childStarted.shellId }, "root-session"),
     );
     assert.equal(rootRead.shell.ownerId, "child-session");
+    const readWire = JSON.parse(
+      (await execute(root, "shell_read", { shell_id: childStarted.shellId }, "root-session"))
+        .content[0]?.text ?? "null",
+    );
+    assert.deepEqual(Object.keys(readWire.stdout).sort(), [
+      "data",
+      "dropped",
+      "end_offset",
+      "next_offset",
+      "start_offset",
+    ]);
+    assert.equal(readWire.shell.owner_id, "child-session");
+    assert.equal(readWire.shell.ownerId, undefined);
 
     const commandNotices: Notice[] = [];
     const commandUI = new TestUI(commandNotices);

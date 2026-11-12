@@ -62,8 +62,9 @@ const isShellStructuredContent = compile(
 
 /**
  * Details that name stored, retrievable content: web-access `fetch_content`/`source_check` set
- * `responseId` and `web_search` sets `searchId`; `get_search_content` needs that id to page the
- * content, so a nested result must keep it instead of collapsing to text.
+ * `responseId` and `web_search` sets `searchId`; `get_search_content` needs that id (as its
+ * `response_id` parameter) to page the content, so a nested result must keep it instead of
+ * collapsing to text.
  */
 const isShortString = compile(str({ maxLength: 256 })).check;
 /** Keys the retrievable result owns; detail scalars never overwrite them. */
@@ -517,6 +518,11 @@ function resultText<TDetails>(result: AgentToolResult<TDetails>): string {
     .join("\n");
 }
 
+/** camelCase -> snake_case: "_" before each capital, lowercased (responseId -> response_id). */
+function snakeCaseKey(key: string): string {
+  return key.replace(/[A-Z]/g, (capital) => `_${capital.toLowerCase()}`);
+}
+
 function compactNestedResult<TDetails>(result: AgentToolResult<TDetails>): BoundaryValue {
   const images = result.content.filter((item) => item.type === "image");
   if (images.length > 0) return { content: result.content, details: result.details };
@@ -530,8 +536,10 @@ function compactNestedResult<TDetails>(result: AgentToolResult<TDetails>): Bound
 
 /**
  * Results naming stored content resolve to `{ output, ...scalars }` so a script can pass the
- * `responseId`/`searchId` on to `get_search_content`. Only top-level booleans, finite numbers
- * and short strings from `details` are copied; arrays, objects and long strings stay out.
+ * `response_id`/`search_id` on to `get_search_content`. Only top-level booleans, finite numbers
+ * and short strings from `details` are copied; arrays, objects and long strings stay out. The
+ * copied keys are model-visible tool output, so they are converted to snake_case here while
+ * `details` itself keeps its camelCase shape.
  */
 function retrievableResult<TDetails>(result: AgentToolResult<TDetails>): BoundaryValue | undefined {
   const details = result.details;
@@ -542,7 +550,7 @@ function retrievableResult<TDetails>(result: AgentToolResult<TDetails>): Boundar
     if (RETRIEVABLE_RESERVED_KEYS.has(key)) continue;
     // isNumber rejects NaN and Infinity, so copied scalars stay JSON-safe.
     if (!isBoolean(value) && !isNumber(value) && !isShortString(value)) continue;
-    scalars[key] = value;
+    scalars[snakeCaseKey(key)] = value;
   }
   return { output: resultText(result) || "(no output)", ...scalars };
 }

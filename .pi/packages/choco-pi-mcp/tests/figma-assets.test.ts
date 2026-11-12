@@ -61,7 +61,7 @@ test("collectAssetCandidates supports hidden nodes and caps results", () => {
   const result = collectAssetCandidates(assetTree, { includeHidden: true, maxAssets: 1 });
   assert.equal(result.assets.length, 1);
   assert.equal(result.metadata.truncated, true);
-  assert.ok(result.metadata.truncatedReasons.some((reason) => reason.includes("maxAssets")));
+  assert.ok(result.metadata.truncatedReasons.some((reason) => reason.includes("max_assets")));
 });
 
 test("asset helper utilities normalize names, hashes, and formats", () => {

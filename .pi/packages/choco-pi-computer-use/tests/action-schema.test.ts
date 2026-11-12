@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { discoverAndLoadExtensions } from "@earendil-works/pi-coding-agent";
 import { compile } from "@earendil-works/pi-schema";
-import type { UiAction } from "../src/contract.ts";
+import { toActParams, type WireUiAction } from "../src/tool-params.ts";
 import { isJsonObject, isString, type JsonObject, type JsonValue } from "../src/json.ts";
 
 /** The object at `key` of a JSON object, or undefined. */
@@ -27,17 +27,17 @@ function actionDescription(schema: JsonValue, action: string, property: string):
   return description;
 }
 
-const examples: UiAction[] = [
+const examples: WireUiAction[] = [
   { action: "press", ref: "@e1" },
-  { action: "click", ref: "@e1", button: "left", clickCount: 2 },
+  { action: "click", ref: "@e1", button: "left", click_count: 2 },
   { action: "click", x: 10, y: 20 },
-  { action: "setText", ref: "@e1", text: "value" },
-  { action: "typeText", ref: "@e1", text: "value" },
-  { action: "typeText", text: "value" },
+  { action: "set_text", ref: "@e1", text: "value" },
+  { action: "type_text", ref: "@e1", text: "value" },
+  { action: "type_text", text: "value" },
   { action: "keypress", ref: "@e1", keys: ["ENTER"] },
   { action: "keypress", keys: ["ENTER"] },
-  { action: "scroll", ref: "@e1", scrollY: 100 },
-  { action: "scroll", x: 10, y: 20, scrollX: -100 },
+  { action: "scroll", ref: "@e1", scroll_y: 100 },
+  { action: "scroll", x: 10, y: 20, scroll_x: -100 },
   {
     action: "drag",
     path: [
@@ -45,7 +45,7 @@ const examples: UiAction[] = [
       { x: 30, y: 40 },
     ],
   },
-  { action: "moveMouse", x: 10, y: 20 },
+  { action: "move_mouse", x: 10, y: 20 },
 ];
 
 test("registered act_ui schema accepts every action shape", async () => {
@@ -80,39 +80,62 @@ test("registered act_ui schema accepts every action shape", async () => {
     );
     assert.equal(
       check({
-        actions: [{ action: "click", ref: "@e1", clickCount: 1.5 }],
+        actions: [{ action: "click", ref: "@e1", click_count: 1.5 }],
       }),
       false,
-      "clickCount must be an integer",
+      "click_count must be an integer",
     );
 
-    // Objects stay open (TypeBox default): unknown keys are accepted.
+    // Objects are closed: unknown keys, including every former camelCase name, are rejected.
+    assert.equal(check({ actions: [{ action: "press", ref: "@e1", extra: 1 }] }), false);
+    assert.equal(check({ actions: [{ action: "press", ref: "@e1" }], extra: true }), false);
+    assert.equal(check({ stateId: "s1", actions: [{ action: "press", ref: "@e1" }] }), false);
     assert.equal(
-      check({ actions: [{ action: "press", ref: "@e1", extra: 1 }], extra: true }),
-      true,
+      check({ actions: [{ action: "click", ref: "@e1", clickCount: 2 }] }),
+      false,
+      "clickCount was renamed",
     );
-    // Optional stateId/expect may be omitted; required actions may not.
-    assert.equal(check({ stateId: "s1", actions: [{ action: "moveMouse", x: 1, y: 2 }] }), true);
-    assert.equal(check({ stateId: "s1" }), false, "actions required");
+    assert.equal(
+      check({ actions: [{ action: "scroll", ref: "@e1", scrollX: 1 }] }),
+      false,
+      "scrollX was renamed",
+    );
+    assert.equal(
+      check({ expect: { timeoutMs: 100 }, actions: [{ action: "press", ref: "@e1" }] }),
+      false,
+    );
+    assert.equal(
+      check({ expect: { scopeRef: "@e1" }, actions: [{ action: "press", ref: "@e1" }] }),
+      false,
+    );
+    for (const former of ["setText", "typeText", "moveMouse"])
+      assert.equal(
+        check({ actions: [{ action: former, ref: "@e1", text: "t", x: 1, y: 2 }] }),
+        false,
+        `${former} was renamed`,
+      );
+    // Optional state_id/expect may be omitted; required actions may not.
+    assert.equal(check({ state_id: "s1", actions: [{ action: "move_mouse", x: 1, y: 2 }] }), true);
+    assert.equal(check({ state_id: "s1" }), false, "actions required");
     assert.equal(check({ actions: [] }), false, "actions minItems");
-    assert.equal(check({ actions: [{ action: "click", ref: "@e1", clickCount: 4 }] }), false);
+    assert.equal(check({ actions: [{ action: "click", ref: "@e1", click_count: 4 }] }), false);
     assert.equal(check({ actions: [{ action: "click", button: "back" }] }), false, "button enum");
     assert.equal(check({ actions: [{ action: "nope" }] }), false, "unknown action");
-    assert.equal(check({ actions: [{ action: "moveMouse", x: "1", y: 2 }] }), false);
+    assert.equal(check({ actions: [{ action: "move_mouse", x: "1", y: 2 }] }), false);
     assert.equal(check({ actions: [{ action: "press" }] }), false, "press needs ref");
     assert.equal(
-      check({ expect: { timeoutMs: 50 }, actions: [{ action: "press", ref: "@e1" }] }),
+      check({ expect: { timeout_ms: 50 }, actions: [{ action: "press", ref: "@e1" }] }),
       false,
     );
     assert.equal(
       check({
-        expect: { until: "absent", timeoutMs: 100 },
+        expect: { until: "absent", timeout_ms: 100 },
         actions: [{ action: "press", ref: "@e1" }],
       }),
       true,
     );
 
-    const invalidTargets: UiAction[] = [
+    const invalidTargets: WireUiAction[] = [
       { action: "click" },
       { action: "click", ref: "@e1", x: 10, y: 20 },
       { action: "click", x: 10 },
@@ -132,7 +155,7 @@ test("registered act_ui schema accepts every action shape", async () => {
     // chord strings apply to desktop delivery only.
     const serialized: JsonValue = JSON.parse(described);
     assert.equal(
-      actionDescription(serialized, "typeText", "ref"),
+      actionDescription(serialized, "type_text", "ref"),
       "Input to focus first; omit to type into the target app's focused element (headless desktop mode requires ref)",
     );
     assert.equal(
@@ -141,13 +164,13 @@ test("registered act_ui schema accepts every action shape", async () => {
     );
     assert.equal(
       actionDescription(serialized, "keypress", "keys"),
-      'Modifiers then one key form one chord, e.g. ["cmd","shift","z"]; otherwise keys are pressed in order. Chord strings like "cmd+a" are desktop-only; browser pages reject them and take DOM key values (one character or a name such as "Enter" or "ArrowRight") with modifiers as separate keys. On macOS, Cmd editing shortcuts (select all, copy, cut, paste, undo, redo) do not run on browser pages; use setText to replace a field\'s text',
+      'Modifiers then one key form one chord, e.g. ["cmd","shift","z"]; otherwise keys are pressed in order. Chord strings like "cmd+a" are desktop-only; browser pages reject them and take DOM key values (one character or a name such as "Enter" or "ArrowRight") with modifiers as separate keys. On macOS, Cmd editing shortcuts (select all, copy, cut, paste, undo, redo) do not run on browser pages; use set_text to replace a field\'s text',
     );
     assert.doesNotMatch(described, /\(headless requires ref\)/);
     assert.doesNotMatch(described, /each may be a chord/);
     const guidelines = act.definition.promptGuidelines ?? [];
     assert.ok(
-      guidelines.some((line) => line.includes("typeText/keypress without ref go to")),
+      guidelines.some((line) => line.includes("type_text/keypress without ref go to")),
       "the act guideline describes ref-less keyboard input",
     );
     assert.ok(
@@ -170,7 +193,7 @@ test("registered act_ui schema accepts every action shape", async () => {
   }
 });
 
-test("registered read-side tool schemas keep bounds, optionality and open objects", async () => {
+test("registered read-side tool schemas keep bounds, optionality and closed objects", async () => {
   const cwd = await mkdtemp(path.join(os.tmpdir(), "computer-use-schema-"));
   try {
     const extensionPath = new URL("../extensions/computer-use.ts", import.meta.url).pathname;
@@ -185,15 +208,22 @@ test("registered read-side tool schemas keep bounds, optionality and open object
     };
     const findRoots = checkFor("find_roots");
     assert.equal(findRoots({}), true, "every find_roots field is optional");
-    assert.equal(findRoots({ kind: "dialog", pid: 3, extra: 1 }), true, "open object");
+    assert.equal(findRoots({ kind: "dialog", pid: 3 }), true);
+    assert.equal(findRoots({ kind: "dialog", extra: 1 }), false, "closed object");
+    assert.equal(findRoots({ bundle_id: "com.example.app" }), true);
+    assert.equal(findRoots({ bundleId: "com.example.app" }), false, "bundleId was renamed");
     assert.equal(findRoots({ kind: "tab" }), false);
     assert.equal(findRoots({ text: "x".repeat(257) }), false);
     const waitFor = checkFor("wait_for");
-    assert.equal(waitFor({ stateId: "s" }), true);
-    assert.equal(waitFor({}), false, "stateId required");
-    assert.equal(waitFor({ stateId: "s", timeoutMs: 99 }), false);
-    assert.equal(waitFor({ stateId: "s", timeoutMs: 60_001 }), false);
-    assert.equal(waitFor({ stateId: "s", until: "gone" }), false);
+    assert.equal(waitFor({ state_id: "s" }), true);
+    assert.equal(waitFor({}), false, "state_id required");
+    assert.equal(waitFor({ state_id: "s", timeout_ms: 99 }), false);
+    assert.equal(waitFor({ state_id: "s", timeout_ms: 60_001 }), false);
+    assert.equal(waitFor({ state_id: "s", until: "gone" }), false);
+    assert.equal(waitFor({ stateId: "s" }), false, "stateId was renamed");
+    assert.equal(waitFor({ state_id: "s", scope_ref: "@e1" }), true);
+    assert.equal(waitFor({ state_id: "s", scopeRef: "@e1" }), false, "scopeRef was renamed");
+    assert.equal(waitFor({ state_id: "s", timeoutMs: 200 }), false, "timeoutMs was renamed");
     const expand = checkFor("expand_ui");
     assert.equal(expand({ ref: "@e1", depth: 8 }), true);
     assert.equal(expand({ ref: "@e1", depth: 9 }), false);
@@ -205,9 +235,35 @@ test("registered read-side tool schemas keep bounds, optionality and open object
     assert.equal(observe({ mode: "visual" }), true);
     assert.equal(observe({ mode: "ocr" }), false);
     const evaluate = checkFor("evaluate_browser");
-    assert.equal(evaluate({ stateId: "s", expression: "1" }), true);
-    assert.equal(evaluate({ stateId: "s", expression: "x".repeat(65_537) }), false);
+    assert.equal(evaluate({ stateId: "s", expression: "1" }), false, "stateId was renamed");
+    assert.equal(evaluate({ state_id: "s", expression: "1" }), true);
+    assert.equal(evaluate({ state_id: "s", expression: "x".repeat(65_537) }), false);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
+});
+
+test("tool parameters convert to the internal action contract", () => {
+  const converted = toActParams({
+    state_id: "s1",
+    expect: { scope_ref: "@e1", timeout_ms: 500, until: "absent" },
+    actions: [
+      { action: "click", ref: "@e1", click_count: 2 },
+      { action: "set_text", ref: "@e2", text: "t" },
+      { action: "type_text", text: "u" },
+      { action: "scroll", x: 1, y: 2, scroll_x: 3, scroll_y: 4 },
+      { action: "move_mouse", x: 1, y: 2 },
+    ],
+  });
+  assert.deepEqual(converted, {
+    stateId: "s1",
+    expect: { scopeRef: "@e1", timeoutMs: 500, until: "absent" },
+    actions: [
+      { action: "click", ref: "@e1", clickCount: 2 },
+      { action: "setText", ref: "@e2", text: "t" },
+      { action: "typeText", text: "u" },
+      { action: "scroll", x: 1, y: 2, scrollX: 3, scrollY: 4 },
+      { action: "moveMouse", x: 1, y: 2 },
+    ],
+  });
 });

@@ -11,7 +11,7 @@ export interface FigmaFindNodesOptions {
   maxResults?: number;
 }
 
-export interface FigmaNodeSearchMatch {
+export interface FigmaNodeSearchMatch extends FigmaRecord {
   id?: string;
   name: string;
   type: string;
@@ -22,7 +22,7 @@ export interface FigmaNodeSearchMatch {
   roleHint?: string;
 }
 
-export interface FigmaNodeSearchResult {
+export interface FigmaNodeSearchResult extends FigmaRecord {
   query: string;
   matchType: "name" | "text";
   matches: FigmaNodeSearchMatch[];
@@ -113,9 +113,9 @@ function findNodes(
           parent,
           roleHint: roleHint(name, candidate, type),
         });
-      } else if (!truncatedReasons.some((reason) => reason.includes("maxResults"))) {
+      } else if (!truncatedReasons.some((reason) => reason.includes("max_results"))) {
         truncatedReasons.push(
-          `Reached maxResults ${options.maxResults}; additional matches were omitted.`,
+          `Reached max_results ${options.maxResults}; additional matches were omitted.`,
         );
       }
     }
@@ -149,15 +149,15 @@ function findNodes(
 
   if (skippedHidden)
     truncatedReasons.push(
-      `Skipped ${skippedHidden} hidden node(s). Set includeHidden=true to include them.`,
+      `Skipped ${skippedHidden} hidden node(s). Set include_hidden=true to include them.`,
     );
   if (skippedVectors)
     truncatedReasons.push(
-      `Skipped ${skippedVectors} vector/icon node(s). Set includeVectors=true to include them.`,
+      `Skipped ${skippedVectors} vector/icon node(s). Set include_vectors=true to include them.`,
     );
   if (skippedInstances)
     truncatedReasons.push(
-      `Collapsed ${skippedInstances} component instance subtree/subtrees. Set includeComponentInternals=true for internals.`,
+      `Collapsed ${skippedInstances} component instance subtree/subtrees. Set include_component_internals=true for internals.`,
     );
 
   const nextSteps = new Set<string>();
@@ -165,18 +165,18 @@ function findNodes(
     nextSteps.add(
       "Try a broader query, disable exact matching, or search visible text instead of names.",
     );
-  if (truncatedReasons.some((reason) => reason.includes("maxResults")))
-    nextSteps.add("Raise maxResults or narrow the search with nodeId/depth.");
+  if (truncatedReasons.some((reason) => reason.includes("max_results")))
+    nextSteps.add("Raise max_results or narrow the search with node_id/depth.");
   if (
     truncatedReasons.some((reason) => reason.includes("depth limit")) &&
     options.depth < MAX_DEPTH
   )
     nextSteps.add(
-      `Increase depth to ${options.depth + 1} or search within a more specific nodeId.`,
+      `Increase depth to ${options.depth + 1} or search within a more specific node_id.`,
     );
   if (skippedInstances)
     nextSteps.add(
-      "Set includeComponentInternals=true only for a focused component instance if internal layer matches matter.",
+      "Set include_component_internals=true only for a focused component instance if internal layer matches matter.",
     );
 
   return {

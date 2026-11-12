@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { InMemoryCredentialStore, type Api, type Model } from "@earendil-works/pi-ai";
-import { obj, opt, str } from "@earendil-works/pi-schema";
+import { arr, compile, map, obj, opt, str, unknown } from "@earendil-works/pi-schema";
 import { hostParams } from "../schema-bridge.ts";
 import {
   createEventBus,
@@ -198,27 +198,28 @@ interface Host {
 
 interface BoundaryToolParameters {
   action?: string;
-  answerMode?: string;
+  answer_mode?: string;
   click?: { id: number };
   country?: string;
-  domainFilter?: string[];
-  exaSearchType?: string;
+  domain_filter?: string[];
+  exa_search_type?: string;
   find?: { pattern: string };
-  imageQuery?: string;
-  includeContent?: boolean;
+  image_query?: string;
+  include_content?: boolean;
   language?: string;
-  numResults?: number;
+  num_results?: number;
+  numResults?: number; // pre-snake_case spelling, sent only to prove rejection
   offset?: number;
   provider?: string | string[];
   queries?: string[];
   query?: string;
-  recencyDays?: number;
-  recencyFilter?: string;
+  recency_days?: number;
+  recency_filter?: string;
   reference?: { id: string };
-  requiredCapabilities?: string[];
-  responseLength?: string;
+  required_capabilities?: string[];
+  response_length?: string;
   safesearch?: string;
-  searchContextSize?: string;
+  search_context_size?: string;
   url?: string;
   workflow?: string;
 }
@@ -385,7 +386,7 @@ test("configured Synthetic-only image rejects without OpenAI or network activity
   const beforeSynthetic = syntheticExecutions;
   const beforeOpenAI = openAIAvailabilityChecks;
   const beforeFetch = externalFetchAttempts;
-  await assert.rejects(execute({ imageQuery: "cats" }), /image is unsupported|compatible/i);
+  await assert.rejects(execute({ image_query: "cats" }), /image is unsupported|compatible/i);
   await assert.rejects(
     execute({ action: "open", url: "https://example.test/direct" }),
     /open is unsupported|compatible/i,
@@ -473,20 +474,20 @@ test("canonical constraints reach the selected Brave adapter exactly", async () 
     query: "constrained",
     provider: "brave",
     workflow: "none",
-    numResults: 7,
-    recencyFilter: "month",
-    recencyDays: 31,
-    domainFilter: ["example.test", "-blocked.test"],
-    includeContent: true,
+    num_results: 7,
+    recency_filter: "month",
+    recency_days: 31,
+    domain_filter: ["example.test", "-blocked.test"],
+    include_content: true,
     country: "GB",
     language: "en-GB",
     safesearch: "strict",
     offset: 20,
-    exaSearchType: "deep",
-    answerMode: "both",
-    responseLength: "long",
-    searchContextSize: "high",
-    requiredCapabilities: ["country", "safesearch", "offset"],
+    exa_search_type: "deep",
+    answer_mode: "both",
+    response_length: "long",
+    search_context_size: "high",
+    required_capabilities: ["country", "safesearch", "offset"],
   });
   assert.deepEqual(braveRequests, [
     {
@@ -614,7 +615,7 @@ test("curator searches preserve the same canonical constraints", async () => {
       language: "en",
       safesearch: "strict",
       offset: 4,
-      requiredCapabilities: ["country", "offset"],
+      required_capabilities: ["country", "offset"],
     },
     (update) => {
       const match = JSON.stringify(update).match(
@@ -720,14 +721,14 @@ test("command curator publishes initial and added references before storage", as
 
   const initialStored = await retrieval.execute(
     "command-initial-retrieval",
-    { responseId: searchId, queryIndex: 0 },
+    { response_id: searchId, query_index: 0 },
     undefined,
     undefined,
     host.runner.createToolContext("command-initial-retrieval", undefined),
   );
   const addedStored = await retrieval.execute(
     "command-added-retrieval",
-    { responseId: searchId, queryIndex: 1 },
+    { response_id: searchId, query_index: 1 },
     undefined,
     undefined,
     host.runner.createToolContext("command-added-retrieval", undefined),
@@ -754,7 +755,7 @@ test("legacy stored search retrieval remains compatible", async () => {
   assert.ok(tool);
   const result = await tool.execute(
     "legacy-retrieval",
-    { responseId: "legacy-result", queryIndex: 0 },
+    { response_id: "legacy-result", query_index: 0 },
     undefined,
     undefined,
     host.runner.createToolContext("legacy-retrieval", undefined),
@@ -774,7 +775,7 @@ test("result-only snippets remain visible in tool output and stored retrieval", 
   assert.ok(retrieval);
   const stored = await retrieval.execute(
     "snippet-retrieval",
-    { responseId: id, queryIndex: 0 },
+    { response_id: id, query_index: 0 },
     undefined,
     undefined,
     host.runner.createToolContext("snippet-retrieval", undefined),
@@ -811,4 +812,91 @@ test("total failure preserves the substantive cause and all attempt diagnostics"
   assert.match(serialized, /Synthetic secondary failed for total failure diagnostics/);
   assert.match(serialized, /billed API fallback is disabled after a subscription attempt/);
   assert.match(serialized, /fixture\.synthetic-api/);
+});
+
+const isSchemaWithProperties = compile(obj({ properties: map(unknown()) }, { open: true })).check;
+const isCapabilitySchema = compile(
+  obj(
+    {
+      properties: obj(
+        {
+          required_capabilities: obj(
+            { items: obj({ enum: arr(str()) }, { open: true }) },
+            { open: true },
+          ),
+        },
+        { open: true },
+      ),
+    },
+    { open: true },
+  ),
+).check;
+
+test("web_search schema exposes snake_case names and capability values only", () => {
+  const tool = host.runner.getToolDefinition("web_search");
+  assert.ok(tool);
+  const schema = JSON.parse(JSON.stringify(tool.parameters));
+  assert.ok(isSchemaWithProperties(schema));
+  const names = Object.keys(schema.properties);
+  for (const name of [
+    "image_query",
+    "num_results",
+    "required_capabilities",
+    "search_context_size",
+  ]) {
+    assert.ok(names.includes(name), name);
+  }
+  assert.deepEqual(
+    names.filter((name) => /[A-Z]/.test(name)),
+    [],
+  );
+  assert.ok(isCapabilitySchema(schema));
+  const capabilities = schema.properties.required_capabilities.items.enum;
+  assert.ok(compile(tool.parameters).check({ query: "q", num_results: 3 }));
+  assert.equal(compile(tool.parameters).check({ query: "q", numResults: 3 }), false);
+  assert.equal(
+    compile(tool.parameters).check({ query: "q", required_capabilities: ["numResults"] }),
+    false,
+  );
+  assert.ok(capabilities.includes("num_results"));
+  assert.ok(capabilities.includes("exa_search_type"));
+  assert.deepEqual(
+    capabilities.filter((name) => /[A-Z]/.test(name)),
+    [],
+  );
+});
+
+test("web_search rejects camelCase parameter names and capability values", async () => {
+  await assert.rejects(execute({ query: "q", numResults: 3 }), /numResults; use num_results/);
+  await assert.rejects(
+    execute({ query: "q", required_capabilities: ["numResults"] }),
+    /unsupported value "numResults"/,
+  );
+});
+
+test("get_search_content and fetch_content reject camelCase parameter names", async () => {
+  const retrieval = host.runner.getToolDefinition("get_search_content");
+  assert.ok(retrieval);
+  await assert.rejects(
+    retrieval.execute(
+      "legacy-name",
+      { responseId: "x", urlIndex: 0 },
+      undefined,
+      undefined,
+      host.runner.createToolContext("legacy-name", undefined),
+    ),
+    /Unknown parameter responseId; use response_id/,
+  );
+  const fetcher = host.runner.getToolDefinition("fetch_content");
+  assert.ok(fetcher);
+  await assert.rejects(
+    fetcher.execute(
+      "legacy-name",
+      { url: "https://example.test", forceClone: true },
+      undefined,
+      undefined,
+      host.runner.createToolContext("legacy-name", undefined),
+    ),
+    /Unknown parameter forceClone; use force_clone/,
+  );
 });

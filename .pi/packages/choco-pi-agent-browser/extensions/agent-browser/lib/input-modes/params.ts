@@ -40,7 +40,7 @@ export function createAgentBrowserParamsSchema(describe: SchemaDescribe = compac
           minItems: 1,
         }),
       ),
-      semanticAction: opt(
+      semantic_action: opt(
         obj(
           {
             action: stringEnum(AGENT_BROWSER_SEMANTIC_ACTIONS),
@@ -76,24 +76,24 @@ export function createAgentBrowserParamsSchema(describe: SchemaDescribe = compac
           [
             obj({
               attached: lit(true),
-              expectedText: opt(union([str(), arr(str())])),
-              expectedSelector: opt(str()),
-              screenshotPath: opt(str()),
-              checkConsole: opt(bool()),
-              checkErrors: opt(bool()),
-              checkNetwork: opt(bool()),
-              loadState: opt(stringEnum(AGENT_BROWSER_QA_LOAD_STATES)),
+              expected_text: opt(union([str(), arr(str())])),
+              expected_selector: opt(str()),
+              screenshot_path: opt(str()),
+              check_console: opt(bool()),
+              check_errors: opt(bool()),
+              check_network: opt(bool()),
+              load_state: opt(stringEnum(AGENT_BROWSER_QA_LOAD_STATES)),
             }),
             obj({
               url: str(),
               attached: opt(lit(false)),
-              expectedText: opt(union([str(), arr(str())])),
-              expectedSelector: opt(str()),
-              screenshotPath: opt(str()),
-              checkConsole: opt(bool()),
-              checkErrors: opt(bool()),
-              checkNetwork: opt(bool()),
-              loadState: opt(stringEnum(AGENT_BROWSER_QA_LOAD_STATES)),
+              expected_text: opt(union([str(), arr(str())])),
+              expected_selector: opt(str()),
+              screenshot_path: opt(str()),
+              check_console: opt(bool()),
+              check_errors: opt(bool()),
+              check_network: opt(bool()),
+              load_state: opt(stringEnum(AGENT_BROWSER_QA_LOAD_STATES)),
             }),
           ],
           {
@@ -103,16 +103,18 @@ export function createAgentBrowserParamsSchema(describe: SchemaDescribe = compac
           },
         ),
       ),
-      sourceLookup: opt(
+      source_lookup: opt(
         obj(
           {
             selector: opt(str({ ...describe("Visible selector or @ref.") })),
-            reactFiberId: opt(
+            react_fiber_id: opt(
               str({ ...describe("React fiber id; requires --enable react-devtools.") }),
             ),
-            componentName: opt(str({ ...describe("Component for local source search.") })),
-            includeDomHints: opt(bool({ ...describe("Inspect DOM source hints; default true.") })),
-            maxWorkspaceFiles: opt(
+            component_name: opt(str({ ...describe("Component for local source search.") })),
+            include_dom_hints: opt(
+              bool({ ...describe("Inspect DOM source hints; default true.") }),
+            ),
+            max_workspace_files: opt(
               num({
                 ...describe("Source scan cap; default 2000."),
                 minimum: 1,
@@ -125,15 +127,15 @@ export function createAgentBrowserParamsSchema(describe: SchemaDescribe = compac
           },
         ),
       ),
-      networkSourceLookup: opt(
+      network_source_lookup: opt(
         obj(
           {
             filter: opt(str({ ...describe("Network request filter.") })),
             namespace: opt(str()),
-            requestId: opt(str({ ...describe("Request id to inspect.") })),
+            request_id: opt(str({ ...describe("Request id to inspect.") })),
             session: opt(str()),
             url: opt(str({ ...describe("Failed URL or fragment.") })),
-            maxWorkspaceFiles: opt(
+            max_workspace_files: opt(
               num({
                 ...describe("Source scan cap; default 2000."),
                 minimum: 1,
@@ -152,7 +154,7 @@ export function createAgentBrowserParamsSchema(describe: SchemaDescribe = compac
             obj({
               action: stringEnum(["list"] as const),
               query: opt(str({ ...describe("Case-insensitive app filter."), minLength: 1 })),
-              maxResults: opt(
+              max_results: opt(
                 int({
                   ...describe(
                     `Result cap; default ${ELECTRON_DISCOVERY_DEFAULT_MAX_RESULTS}, values over ${ELECTRON_DISCOVERY_MAX_RESULTS} are clamped.`,
@@ -163,40 +165,40 @@ export function createAgentBrowserParamsSchema(describe: SchemaDescribe = compac
             }),
             obj({
               action: stringEnum(["launch"] as const),
-              appPath: opt(str({ ...describe("macOS .app path."), minLength: 1 })),
-              appName: opt(str({ ...describe("Name from electron.list."), minLength: 1 })),
-              bundleId: opt(str({ ...describe("Bundle id from electron.list."), minLength: 1 })),
-              executablePath: opt(str({ ...describe("Executable path."), minLength: 1 })),
-              appArgs: opt(arr(str({ minLength: 1 }))),
+              app_path: opt(str({ ...describe("macOS .app path."), minLength: 1 })),
+              app_name: opt(str({ ...describe("Name from electron.list."), minLength: 1 })),
+              bundle_id: opt(str({ ...describe("Bundle id from electron.list."), minLength: 1 })),
+              executable_path: opt(str({ ...describe("Executable path."), minLength: 1 })),
+              app_args: opt(arr(str({ minLength: 1 }))),
               handoff: opt(stringEnum(AGENT_BROWSER_ELECTRON_HANDOFFS)),
-              targetType: opt(stringEnum(AGENT_BROWSER_ELECTRON_TARGET_TYPES)),
-              timeoutMs: opt(int({ minimum: 1 })),
+              target_type: opt(stringEnum(AGENT_BROWSER_ELECTRON_TARGET_TYPES)),
+              timeout_ms: opt(int({ minimum: 1 })),
               allow: opt(arr(str({ minLength: 1 }))),
               deny: opt(arr(str({ minLength: 1 }))),
             }),
             obj({
               action: stringEnum(["status", "cleanup"] as const),
-              launchId: str({ ...describe("Tracked launch id."), minLength: 1 }),
-              timeoutMs: opt(int({ minimum: 1 })),
+              launch_id: str({ ...describe("Tracked launch id."), minLength: 1 }),
+              timeout_ms: opt(int({ minimum: 1 })),
             }),
             obj({
               action: stringEnum(["status", "cleanup"] as const),
               all: lit(true),
-              timeoutMs: opt(int({ minimum: 1 })),
+              timeout_ms: opt(int({ minimum: 1 })),
             }),
             obj({
               action: stringEnum(["status", "cleanup"] as const),
-              timeoutMs: opt(int({ minimum: 1 })),
+              timeout_ms: opt(int({ minimum: 1 })),
             }),
             obj({
               action: stringEnum(["probe"] as const),
-              launchId: opt(str({ ...describe("Tracked launch id."), minLength: 1 })),
-              timeoutMs: opt(int({ minimum: 1 })),
+              launch_id: opt(str({ ...describe("Tracked launch id."), minLength: 1 })),
+              timeout_ms: opt(int({ minimum: 1 })),
             }),
           ],
           {
             ...describe(
-              "Electron discovery, isolated-profile launch, status, probe, or cleanup. Launch defaults: handoff=snapshot, targetType=page; deny wins over allow; lifecycle/debug appArgs rejected.",
+              "Electron discovery, isolated-profile launch, status, probe, or cleanup. Launch defaults: handoff=snapshot, target_type=page; deny wins over allow; lifecycle/debug app_args rejected.",
             ),
           },
         ),
@@ -204,12 +206,12 @@ export function createAgentBrowserParamsSchema(describe: SchemaDescribe = compac
       job: opt(
         obj(
           {
-            failFast: opt(bool({ ...describe("Stop on first failure; default true.") })),
+            fail_fast: opt(bool({ ...describe("Stop on first failure; default true.") })),
             steps: arr(
               obj({
                 action: stringEnum(AGENT_BROWSER_JOB_STEP_ACTIONS),
-                url: opt(str({ ...describe("Open URL or assertUrl glob.") })),
-                loadState: opt(
+                url: opt(str({ ...describe("Open URL or assert_url glob.") })),
+                load_state: opt(
                   stringEnum(AGENT_BROWSER_QA_LOAD_STATES, {
                     ...describe("Readiness wait after open."),
                   }),
@@ -222,11 +224,11 @@ export function createAgentBrowserParamsSchema(describe: SchemaDescribe = compac
                 ),
                 role: opt(str({ ...describe("Role locator.") })),
                 name: opt(str({ ...describe("Accessible name.") })),
-                text: opt(str({ ...describe("Fill text or assertText target.") })),
+                text: opt(str({ ...describe("Fill text or assert_text target.") })),
                 value: opt(str({ ...describe("Select option or locator value.") })),
                 values: opt(arr(str(), { ...describe("Select options."), minItems: 1 })),
                 path: opt(str({ ...describe("Download or screenshot path.") })),
-                delayMs: opt(
+                delay_ms: opt(
                   int({
                     ...describe(
                       `Per-character type delay; text is capped at ${AGENT_BROWSER_JOB_TYPE_DELAYED_TEXT_MAX_CHARACTERS} characters.`,
@@ -250,7 +252,7 @@ export function createAgentBrowserParamsSchema(describe: SchemaDescribe = compac
           ),
         }),
       ),
-      outputPath: opt(
+      output_path: opt(
         str({
           ...describe(
             "Workspace-relative or absolute result-data path; keep it distinct from screenshot, download, recording, and other browser artifact destinations.",
@@ -258,15 +260,15 @@ export function createAgentBrowserParamsSchema(describe: SchemaDescribe = compac
           minLength: 1,
         }),
       ),
-      timeoutMs: opt(
+      timeout_ms: opt(
         int({
           ...describe(
-            "Wrapper timeout in ms; exceed explicit waits. Electron uses electron.timeoutMs.",
+            "Wrapper timeout in ms; exceed explicit waits. Electron uses electron.timeout_ms.",
           ),
           minimum: 1,
         }),
       ),
-      sessionMode: opt(
+      session_mode: opt(
         stringEnum(["auto", "fresh"] as const, {
           ...describe(
             "auto reuses the managed session; fresh starts one for launch-only flags, then makes it the managed session.",
@@ -277,7 +279,7 @@ export function createAgentBrowserParamsSchema(describe: SchemaDescribe = compac
     },
     {
       ...describe(
-        "Choose one input mode: script, args, semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron.",
+        "Choose one input mode: script, args, semantic_action, job, qa, source_lookup, network_source_lookup, or electron.",
       ),
     },
   );

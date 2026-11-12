@@ -23,6 +23,7 @@ import {
   renderCompactModuleReport,
 } from "../clients/module-report.ts";
 import { baseName, compactRenderResult } from "./render-compact.ts";
+import { stringifySnakeCase } from "./output-keys.ts";
 
 function resolveFile(filePath: string, cwd: string | undefined): string {
   return path.isAbsolute(filePath) ? filePath : path.resolve(cwd || ".", filePath);
@@ -56,62 +57,59 @@ export function createModuleReportTool(getProjectRoot: () => string) {
       return `module_report ${base}  ${parts.join(" · ")}${view}`;
     }),
     parameters: hostParams(
-      obj(
-        {
-          path: str({
-            description: "Absolute or workspace-relative path to the source file.",
+      obj({
+        path: str({
+          description: "Absolute or workspace-relative path to the source file.",
+        }),
+        max_refs_per_symbol: opt(
+          num({
+            description: "Cap on who-uses-this entries per symbol (default 10).",
           }),
-          maxRefsPerSymbol: opt(
-            num({
-              description: "Cap on who-uses-this entries per symbol (default 10).",
-            }),
-          ),
-          focus: opt(
-            str({
-              description: "Task hint used only to rank recommended reads.",
-            }),
-          ),
-          view: opt(
-            oneOf(["summary", "default", "compact"], {
-              description: "Select summary, default JSON, or compact text output.",
-            }),
-          ),
-          blastRadius: opt(
-            bool({
-              description: "Include ranked transitive module dependents.",
-            }),
-          ),
-          blastRadiusDepth: opt(
-            num({
-              description:
-                "Max hops for the blast-radius walk (default 3). Only used with blastRadius.",
-            }),
-          ),
-          callGraph: opt(
-            bool({
-              description: "Include bounded cached callers and callees.",
-            }),
-          ),
-          maxCallGraphEntries: opt(
-            num({
-              description: "Per-direction cap for call-graph relations (default 20).",
-            }),
-          ),
-        },
-        { open: true },
-      ),
+        ),
+        focus: opt(
+          str({
+            description: "Task hint used only to rank recommended reads.",
+          }),
+        ),
+        view: opt(
+          oneOf(["summary", "default", "compact"], {
+            description: "Select summary, default JSON, or compact text output.",
+          }),
+        ),
+        blast_radius: opt(
+          bool({
+            description: "Include ranked transitive module dependents.",
+          }),
+        ),
+        blast_radius_depth: opt(
+          num({
+            description:
+              "Max hops for the blast-radius walk (default 3). Only used with blast_radius.",
+          }),
+        ),
+        call_graph: opt(
+          bool({
+            description: "Include bounded cached callers and callees.",
+          }),
+        ),
+        max_call_graph_entries: opt(
+          num({
+            description: "Per-direction cap for call-graph relations (default 20).",
+          }),
+        ),
+      }),
     ),
     async execute(
       _toolCallId: string,
       params: {
         path: string;
-        maxRefsPerSymbol?: number;
+        max_refs_per_symbol?: number;
         focus?: string;
         view?: "summary" | "default" | "compact";
-        blastRadius?: boolean;
-        blastRadiusDepth?: number;
-        callGraph?: boolean;
-        maxCallGraphEntries?: number;
+        blast_radius?: boolean;
+        blast_radius_depth?: number;
+        call_graph?: boolean;
+        max_call_graph_entries?: number;
       },
       _signal: AbortSignal | undefined,
       _onUpdate: RuntimeValue,
@@ -124,13 +122,13 @@ export function createModuleReportTool(getProjectRoot: () => string) {
       let report: Awaited<ReturnType<typeof moduleReport>>;
       try {
         report = await moduleReport(absFile, cwd, {
-          maxRefsPerSymbol: params.maxRefsPerSymbol,
+          maxRefsPerSymbol: params.max_refs_per_symbol,
           focus: params.focus,
           view: params.view,
-          blastRadius: params.blastRadius,
-          blastRadiusDepth: params.blastRadiusDepth,
-          callGraph: params.callGraph,
-          maxCallGraphEntries: params.maxCallGraphEntries,
+          blastRadius: params.blast_radius,
+          blastRadiusDepth: params.blast_radius_depth,
+          callGraph: params.call_graph,
+          maxCallGraphEntries: params.max_call_graph_entries,
         });
       } catch (err) {
         return {
@@ -148,9 +146,11 @@ export function createModuleReportTool(getProjectRoot: () => string) {
       // quarter of the JSON cost for the same info) instead of JSON. Every
       // other view returns compact (unindented) JSON — omitting indentation
       // alone saves ~30% on the wire without changing the schema. Tests use
-      // JSON.parse for the JSON views, so they are agnostic to whitespace.
+      // JSON.parse for the JSON views, so they are agnostic to whitespace. The
+      // report object stays camelCase in memory; only the model-visible JSON
+      // uses snake_case keys.
       const text =
-        params.view === "compact" ? renderCompactModuleReport(report) : JSON.stringify(report);
+        params.view === "compact" ? renderCompactModuleReport(report) : stringifySnakeCase(report);
       return {
         content: [{ type: "text" as const, text }],
         isError: !report.available,
@@ -373,39 +373,36 @@ export function createReadEnclosingTool(
       );
     }),
     parameters: hostParams(
-      obj(
-        {
-          path: str({
-            description: "Absolute or workspace-relative path to the source file.",
+      obj({
+        path: str({
+          description: "Absolute or workspace-relative path to the source file.",
+        }),
+        line: num({
+          description: "1-based line number inside the desired symbol/callback.",
+        }),
+        kinds: opt(
+          arr(str(), {
+            description:
+              "Optional kind filter, e.g. function, method, callback, class, object_property_callback.",
           }),
-          line: num({
-            description: "1-based line number inside the desired symbol/callback.",
+        ),
+        max_lines: opt(
+          num({
+            description:
+              "Optional maximum body size to return. Oversized matches obey on_oversize.",
           }),
-          kinds: opt(
-            arr(str(), {
-              description:
-                "Optional kind filter, e.g. function, method, callback, class, object_property_callback.",
-            }),
-          ),
-          maxLines: opt(
-            num({
-              description:
-                "Optional maximum body size to return. Oversized matches obey onOversize.",
-            }),
-          ),
-          onOversize: opt(
-            oneOf(["error", "slice", "outline"], {
-              description: "Oversize handling: error, bounded slice, or nested outline.",
-            }),
-          ),
-          aroundLine: opt(
-            num({
-              description: "Maximum lines for onOversize=slice; defaults to maxLines, then 80.",
-            }),
-          ),
-        },
-        { open: true },
-      ),
+        ),
+        on_oversize: opt(
+          oneOf(["error", "slice", "outline"], {
+            description: "Oversize handling: error, bounded slice, or nested outline.",
+          }),
+        ),
+        around_line: opt(
+          num({
+            description: "Maximum lines for on_oversize=slice; defaults to max_lines, then 80.",
+          }),
+        ),
+      }),
     ),
     async execute(
       _toolCallId: string,
@@ -413,9 +410,9 @@ export function createReadEnclosingTool(
         path: string;
         line: number;
         kinds?: string[];
-        maxLines?: number;
-        onOversize?: "error" | "slice" | "outline";
-        aroundLine?: number;
+        max_lines?: number;
+        on_oversize?: "error" | "slice" | "outline";
+        around_line?: number;
       },
       _signal: AbortSignal | undefined,
       _onUpdate: RuntimeValue,
@@ -427,9 +424,9 @@ export function createReadEnclosingTool(
       try {
         result = await readEnclosing(absFile, params.line, cwd, {
           kinds: params.kinds,
-          maxLines: params.maxLines,
-          onOversize: params.onOversize,
-          aroundLine: params.aroundLine,
+          maxLines: params.max_lines,
+          onOversize: params.on_oversize,
+          aroundLine: params.around_line,
         });
       } catch (err) {
         return {
@@ -448,7 +445,7 @@ export function createReadEnclosingTool(
           ? ` Warnings: ${result.warnings.join("; ")}`
           : "";
         const outlineSuffix = result.outline?.length
-          ? `\n\nNested outline:\n${JSON.stringify(result.outline)}`
+          ? `\n\nNested outline:\n${stringifySnakeCase(result.outline)}`
           : "";
         const text = result.error
           ? `Could not read enclosing range in ${path.basename(absFile)}:${result.line}: ${result.error}${warningSuffix}${outlineSuffix}`

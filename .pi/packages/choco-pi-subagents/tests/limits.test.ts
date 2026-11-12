@@ -8,11 +8,13 @@ import {
   SessionManager,
   type BeforeAgentStartEventResult,
 } from "@earendil-works/pi-coding-agent";
+import { workflowResultView } from "../src/tool-output-keys.ts";
 import { AgentManager } from "../src/agent-manager.ts";
 import {
   applySubagentLimits,
   buildSubagentReminder,
   createSubagentLimitsTool,
+  formatSubagentLimits,
   MAX_CONCURRENT_SANITY_CAP,
   registerSubagentStatusMessage,
   type SubagentLimitController,
@@ -235,11 +237,11 @@ test("subagent_limits gets and sets runtime values with scheduled and tree count
   const oneScheduled = limitController(3, 1);
   assert.equal(
     applySubagentLimits({}, oneScheduled),
-    "subagent limits: maxConcurrent=4, maxSubagentDepth=2; 1 scheduled / cap 4; 3 in tree",
+    "subagent limits: max_concurrent=4, max_subagent_depth=2; 1 scheduled / cap 4; 3 in tree",
   );
   assert.equal(
     applySubagentLimits({ maxConcurrent: 0, maxSubagentDepth: 4 }, oneScheduled),
-    "subagent limits: maxConcurrent=unlimited (sanity cap 1024), maxSubagentDepth=4; 1 scheduled / cap unlimited; 3 in tree",
+    "subagent limits: max_concurrent=unlimited (sanity cap 1024), max_subagent_depth=4; 1 scheduled / cap unlimited; 3 in tree",
   );
 
   const twoScheduled = limitController(4, 2);
@@ -412,4 +414,49 @@ test("agent widget status compares scheduled and whole-tree active counts", () =
 
   assert.equal(statusText, "1 scheduled / cap 4 · 2 in tree");
   panel.dispose();
+});
+
+test("subagent_limits tool takes snake_case inputs, rejects camelCase ones and reports snake_case labels", () => {
+  const controller = limitController(3, 1);
+  const tool = createSubagentLimitsTool(controller);
+  const schema = JSON.parse(JSON.stringify(tool.parameters));
+  assert.deepEqual(Object.keys(schema.properties).sort(), ["max_concurrent", "max_subagent_depth"]);
+  assert.equal(schema.additionalProperties, false);
+  assert.equal(schema.properties.maxConcurrent, undefined);
+  assert.match(tool.description, /max_concurrent=0 means unlimited/);
+  assert.doesNotMatch(tool.description, /maxConcurrent/);
+  assert.match(
+    formatSubagentLimits(controller),
+    /^subagent limits: max_concurrent=4, max_subagent_depth=2; /,
+  );
+});
+
+test("workflow result view uses snake_case keys only", () => {
+  const view = workflowResultView({
+    workflowId: "w1",
+    name: "n",
+    dynamic: false,
+    sealed: true,
+    status: "completed",
+    startedAt: 1,
+    completedAt: 2,
+    steps: [{ id: "a", agentId: "x", status: "completed", output: "camelValue", startedAt: 1 }],
+  });
+  assert.deepEqual(Object.keys(view), [
+    "workflow_id",
+    "name",
+    "dynamic",
+    "sealed",
+    "status",
+    "started_at",
+    "completed_at",
+    "steps",
+  ]);
+  assert.deepEqual(Object.keys(view.steps[0] ?? {}), [
+    "id",
+    "agent_id",
+    "status",
+    "output",
+    "started_at",
+  ]);
 });

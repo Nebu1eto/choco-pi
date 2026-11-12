@@ -425,3 +425,7 @@ Pi SDK dependencies move from exactly `1.5.1` to the range `~1.5.2` (`>=1.5.2 <1
   through the same path. An Escape that pi-tui flushed from a split report
   has already reached Pi as a key and is not undone.
 - Tests: `tests/zentui-mouse-report-tail.test.ts` (root).
+
+## 2026-11-12 choco-pi patch: snake_case tool I/O
+
+Tool arguments and tool result text are snake_case (user decision; no aliases). `extensions/zentui/tool-rendering.ts` reads the renamed arguments `get_search_content.response_id`/`find_text` and `lsp_diagnostics.server_scope`. `summarizeRecord` summarizes both result `details` (camelCase, unchanged) and JSON parsed from result text (now snake_case), so it reads both spellings of `workflow_id`, `session_id`, `source_count`, `passage_count`, `message_count` and `timed_out`; `readableKey` renders both alike. `source_check` details keep `responseId`. Test: `tests/eager-tool-rendering.test.ts` (root).

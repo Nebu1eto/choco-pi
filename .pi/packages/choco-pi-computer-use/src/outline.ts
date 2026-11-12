@@ -375,7 +375,7 @@ function foldedSummary(node: OutlineNode): string {
 function annotationText(node: OutlineNode): string {
   const annotations = [
     node.offscreen ? "offscreen" : undefined,
-    node.pictureOnly ? "pictureOnly" : undefined,
+    node.pictureOnly ? "picture_only" : undefined,
     node.truncated ? "truncated" : undefined,
     node.scrollExtent
       ? `scrollable ${node.scrollExtent.seen}/${node.scrollExtent.total}`
@@ -465,11 +465,12 @@ export function foldToBudget(
 }
 
 function actionMatches(node: OutlineNode, action: string): boolean {
+  // Capability names are the snake_case labels the outline prints (set_value, text_input, ...).
   const query = action.toLowerCase();
   if (query === "press" && node.canPress) return true;
   if (query === "focus" && node.canFocus) return true;
-  if ((query === "setvalue" || query === "set_text" || query === "settext") && node.canSetValue)
-    return true;
+  if ((query === "set_value" || query === "set_text") && node.canSetValue) return true;
+  if (query === "text_input" && node.isTextInput) return true;
   if (query === "scroll" && node.canScroll) return true;
   if (query === "increment" && node.canIncrement) return true;
   if (query === "decrement" && node.canDecrement) return true;

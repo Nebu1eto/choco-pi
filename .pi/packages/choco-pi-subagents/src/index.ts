@@ -286,6 +286,7 @@ import {
 import { verdictLineMissingFrom } from "./verdict-record.ts";
 import { isWorktreeIsolationEnabled, setWorktreeIsolationEnabled } from "./worktree.ts";
 import { installProgramStatusBridge, type ProgramStatusBridge } from "./program-status-bridge.ts";
+import { workflowResultView } from "./tool-output-keys.ts";
 import {
   THINKING_LEVELS,
   thinkingLevelSchema,
@@ -3855,7 +3856,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
             : workflowManager.get(params.workflow_id);
           if (!result) return errorResult(`Workflow not found: "${params.workflow_id}".`);
           if (params.finish === true) result = workflowManager.finish(params.workflow_id);
-          return textResult(JSON.stringify(result, null, 2));
+          return textResult(JSON.stringify(workflowResultView(result), null, 2));
         } catch (error) {
           return errorResult(error instanceof Error ? error.message : String(error));
         }
@@ -3897,7 +3898,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
           workflowManager.markConsumed(params.workflow_id);
           cancelNudge(`workflow:${params.workflow_id}`);
         }
-        const serialized = JSON.stringify(result, null, 2);
+        const serialized = JSON.stringify(workflowResultView(result), null, 2);
         if (params.wait && result.dynamic && !result.sealed && result.status === "waiting") {
           return textResult(
             "Workflow is idle and remains open. Add steps with workflow_update, or seal it with workflow_update { finish: true }.\n\n" +
@@ -3918,7 +3919,9 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       parameters: hostParams(obj({ workflow_id: str() })),
       execute: async (_toolCallId, params) => {
         try {
-          return textResult(JSON.stringify(workflowManager.cancel(params.workflow_id), null, 2));
+          return textResult(
+            JSON.stringify(workflowResultView(workflowManager.cancel(params.workflow_id)), null, 2),
+          );
         } catch (error) {
           return errorResult(error instanceof Error ? error.message : String(error));
         }

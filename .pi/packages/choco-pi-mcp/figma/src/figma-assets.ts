@@ -12,7 +12,7 @@ import {
 export type FigmaAssetType = "svgIcons" | "nodeRenders" | "imageFills";
 export type FigmaAssetKind = "svgIcon" | "nodeRender" | "imageFill";
 
-export interface FigmaAssetCandidate {
+export interface FigmaAssetCandidate extends FigmaRecord {
   kind: FigmaAssetKind;
   nodeId?: string;
   nodeName?: string;
@@ -31,12 +31,12 @@ export interface FigmaAssetManifestEntry extends FigmaAssetCandidate {
   bytes?: number;
 }
 
-export interface FigmaAssetCollectionResult {
+export interface FigmaAssetCollectionResult extends FigmaRecord {
   assets: FigmaAssetCandidate[];
   metadata: { truncated: boolean; truncatedReasons: string[]; nextSteps: string[] };
 }
 
-export interface FigmaExtractAssetsResult {
+export interface FigmaExtractAssetsResult extends FigmaRecord {
   nodeId: string;
   assetTypes: FigmaAssetType[];
   assets: FigmaAssetManifestEntry[];
@@ -66,8 +66,8 @@ export function collectAssetCandidates(
 
   function push(candidate: FigmaAssetCandidate): void {
     if (assets.length >= maxAssets) {
-      if (!truncatedReasons.some((reason) => reason.includes("maxAssets")))
-        truncatedReasons.push(`Reached maxAssets ${maxAssets}; additional assets were omitted.`);
+      if (!truncatedReasons.some((reason) => reason.includes("max_assets")))
+        truncatedReasons.push(`Reached max_assets ${maxAssets}; additional assets were omitted.`);
       return;
     }
     assets.push(candidate);
@@ -127,7 +127,7 @@ export function collectAssetCandidates(
       truncated: truncatedReasons.length > 0,
       truncatedReasons,
       nextSteps: truncatedReasons.length
-        ? ["Raise maxAssets or extract assets from a narrower child node."]
+        ? ["Raise max_assets or extract assets from a narrower child node."]
         : [],
     },
   };

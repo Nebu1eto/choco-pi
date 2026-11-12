@@ -35,15 +35,15 @@ export interface AgentBrowserExecuteParams {
   args?: string[];
   electron?: unknown;
   job?: unknown;
-  networkSourceLookup?: unknown;
-  outputPath?: string;
+  network_source_lookup?: unknown;
+  output_path?: string;
   qa?: unknown;
   script?: unknown;
-  semanticAction?: unknown;
-  sessionMode?: "auto" | "fresh";
-  sourceLookup?: unknown;
+  semantic_action?: unknown;
+  session_mode?: "auto" | "fresh";
+  source_lookup?: unknown;
   stdin?: string;
-  timeoutMs?: number;
+  timeout_ms?: number;
 }
 
 export type ResolvedAgentBrowserInputKind =
@@ -252,17 +252,17 @@ export function resolveAgentBrowserInput(options: {
 }): ResolvedAgentBrowserInput {
   const { getBatchPreflightValidationError, managedSessionActive, params } = options;
   const semanticActionResult =
-    params.semanticAction === undefined
+    params.semantic_action === undefined
       ? {}
-      : compileAgentBrowserSemanticAction(params.semanticAction);
+      : compileAgentBrowserSemanticAction(params.semantic_action);
   const jobResult = params.job === undefined ? {} : compileAgentBrowserJob(params.job);
   const qaResult = params.qa === undefined ? {} : compileAgentBrowserQaPreset(params.qa);
   const sourceLookupResult =
-    params.sourceLookup === undefined ? {} : compileAgentBrowserSourceLookup(params.sourceLookup);
+    params.source_lookup === undefined ? {} : compileAgentBrowserSourceLookup(params.source_lookup);
   const networkSourceLookupResult =
-    params.networkSourceLookup === undefined
+    params.network_source_lookup === undefined
       ? {}
-      : compileAgentBrowserNetworkSourceLookup(params.networkSourceLookup);
+      : compileAgentBrowserNetworkSourceLookup(params.network_source_lookup);
   const electronResult =
     params.electron === undefined ? {} : compileAgentBrowserElectron(params.electron);
   const scriptResult = params.script === undefined ? {} : compileAgentBrowserScript(params.script);
@@ -280,7 +280,7 @@ export function resolveAgentBrowserInput(options: {
   ].filter(Boolean).length;
   const inputModeError =
     explicitInputModes !== 1
-      ? "Provide exactly one of script, args, semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron."
+      ? "Provide exactly one of script, args, semantic_action, job, qa, source_lookup, network_source_lookup, or electron."
       : undefined;
 
   const compiledSemanticAction = semanticActionResult.compiled;
@@ -303,7 +303,7 @@ export function resolveAgentBrowserInput(options: {
   const generatedStdinError =
     params.stdin !== undefined
       ? compiledGeneratedBatch
-        ? "Do not provide stdin with job, qa, sourceLookup, or networkSourceLookup; those modes generate their own batch stdin."
+        ? "Do not provide stdin with job, qa, source_lookup, or network_source_lookup; those modes generate their own batch stdin."
         : compiledElectron
           ? "Do not provide stdin with electron; electron mode is host-only or manages its own input."
           : compiledScript
@@ -311,30 +311,30 @@ export function resolveAgentBrowserInput(options: {
             : undefined
       : undefined;
   const outputPathError =
-    params.outputPath !== undefined &&
-    (!hasRuntimeType(params.outputPath, "string") || params.outputPath.trim().length === 0)
-      ? "outputPath must be a non-empty string when provided."
+    params.output_path !== undefined &&
+    (!hasRuntimeType(params.output_path, "string") || params.output_path.trim().length === 0)
+      ? "output_path must be a non-empty string when provided."
       : undefined;
   const timeoutMsError =
-    params.timeoutMs !== undefined &&
-    (!hasRuntimeType(params.timeoutMs, "number") ||
-      !Number.isSafeInteger(params.timeoutMs) ||
-      params.timeoutMs <= 0)
-      ? "timeoutMs must be a positive integer when provided."
-      : compiledElectron && params.timeoutMs !== undefined
-        ? "Use electron.timeoutMs for electron actions; top-level timeoutMs applies only to browser CLI subprocess calls."
+    params.timeout_ms !== undefined &&
+    (!hasRuntimeType(params.timeout_ms, "number") ||
+      !Number.isSafeInteger(params.timeout_ms) ||
+      params.timeout_ms <= 0)
+      ? "timeout_ms must be a positive integer when provided."
+      : compiledElectron && params.timeout_ms !== undefined
+        ? "Use electron.timeout_ms for electron actions; top-level timeout_ms applies only to browser CLI subprocess calls."
         : compiledScript &&
-            params.timeoutMs !== undefined &&
-            params.timeoutMs > AGENT_BROWSER_SCRIPT_MAX_TIMEOUT_MS
-          ? `script timeoutMs must be ${AGENT_BROWSER_SCRIPT_MAX_TIMEOUT_MS} or less.`
+            params.timeout_ms !== undefined &&
+            params.timeout_ms > AGENT_BROWSER_SCRIPT_MAX_TIMEOUT_MS
+          ? `script timeout_ms must be ${AGENT_BROWSER_SCRIPT_MAX_TIMEOUT_MS} or less.`
           : undefined;
   const scriptSessionModeError =
-    compiledScript && params.sessionMode !== undefined
-      ? "Do not provide sessionMode with script; script always uses its own isolated session."
+    compiledScript && params.session_mode !== undefined
+      ? "Do not provide session_mode with script; script always uses its own isolated session."
       : undefined;
   const attachedQaSessionError = compiledQaPreset?.checks.attached
-    ? params.sessionMode === "fresh"
-      ? "qa.attached cannot be used with sessionMode=fresh; attach or launch a session first, then run qa.attached with the current session."
+    ? params.session_mode === "fresh"
+      ? "qa.attached cannot be used with session_mode=fresh; attach or launch a session first, then run qa.attached with the current session."
       : !managedSessionActive
         ? "qa.attached requires an active attached session. Run electron.launch or connect to an Electron debug port first."
         : undefined

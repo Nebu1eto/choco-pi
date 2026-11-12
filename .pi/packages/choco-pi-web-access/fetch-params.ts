@@ -1,10 +1,10 @@
 export interface FetchContentParams {
   url?: unknown;
   urls?: unknown;
-  forceClone?: unknown;
+  force_clone?: unknown;
   prompt?: unknown;
   mode?: unknown;
-  answerModel?: unknown;
+  answer_model?: unknown;
   auth?: unknown;
 }
 
@@ -26,9 +26,9 @@ export function normalizeFetchContentParams(
   const urlList = normalizedUrls.length > 0 ? normalizedUrls : normalizeSingleUrl(params.url);
   const prompt = normalizeOptionalString(params.prompt);
   const forceClone =
-    params.forceClone === true ? true : params.forceClone === false ? false : undefined;
+    params.force_clone === true ? true : params.force_clone === false ? false : undefined;
   const mode = normalizeMode(params.mode);
-  const answerModel = normalizeOptionalString(params.answerModel);
+  const answerModel = normalizeOptionalString(params.answer_model);
   const auth = normalizeAuth(params.auth);
 
   const options: NormalizedFetchContentParams["options"] = {};

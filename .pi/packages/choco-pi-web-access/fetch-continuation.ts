@@ -20,7 +20,7 @@ export interface ContinuationSlice {
 
 /** Exact continuation call for one stored fetch URL slice. */
 export function continuationCall(slice: ContinuationSlice): string {
-  return `${slice.toolName}({ responseId: ${JSON.stringify(slice.responseId)}, urlIndex: ${slice.urlIndex}, offset: ${slice.offset}, limit: ${slice.limit} })`;
+  return `${slice.toolName}({ response_id: ${JSON.stringify(slice.responseId)}, url_index: ${slice.urlIndex}, offset: ${slice.offset}, limit: ${slice.limit} })`;
 }
 
 /**

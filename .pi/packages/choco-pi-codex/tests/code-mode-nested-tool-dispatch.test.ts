@@ -288,7 +288,7 @@ async function invokeProbe(details: BoundaryValue | undefined, text?: string) {
   );
 }
 
-test("results naming stored content keep their responseId and cheap scalars", async () => {
+test("results naming stored content keep their response id and cheap scalars as snake_case", async () => {
   const value = await invokeProbe({
     responseId: "resp-1",
     urlCount: 1,
@@ -303,19 +303,19 @@ test("results naming stored content keep their responseId and cheap scalars", as
   });
   assert.deepEqual(value, {
     output: "page body",
-    responseId: "resp-1",
-    urlCount: 1,
+    response_id: "resp-1",
+    url_count: 1,
     successful: 1,
     truncated: true,
     title: "Example",
   });
 });
 
-test("web_search searchId results keep the id; empty text keeps the no-output marker", async () => {
+test("web_search search_id results keep the id; empty text keeps the no-output marker", async () => {
   assert.deepEqual(await invokeProbe({ searchId: "search-1", fetchId: null, queryCount: 2 }, ""), {
     output: "(no output)",
-    searchId: "search-1",
-    queryCount: 2,
+    search_id: "search-1",
+    query_count: 2,
   });
 });
 
@@ -325,7 +325,7 @@ test("results without a retrievable id stay text", async () => {
   assert.equal(await invokeProbe(undefined), "page body");
 });
 
-test("session-dispatched results keep their responseId", async () => {
+test("session-dispatched results keep their response_id", async () => {
   const definition: ToolDefinition = {
     name: "fetch_content",
     label: "fetch_content",
@@ -354,6 +354,6 @@ test("session-dispatched results keep their responseId", async () => {
       { cwd: "/tmp", toolCallId: "exec-1", extensionContext },
       new AbortController().signal,
     ),
-    { output: "fetched", responseId: "resp-2", urlCount: 1 },
+    { output: "fetched", response_id: "resp-2", url_count: 1 },
   );
 });

@@ -239,7 +239,7 @@ function diagnosticBaseFor(options: {
   if (options.timedOut) {
     return {
       code: "wrapper_timeout",
-      hint: "The wrapper watchdog stopped the call before it reported a result. Shorten the call, use a bounded condition wait, or pass a higher bounded timeoutMs.",
+      hint: "The wrapper watchdog stopped the call before it reported a result. Shorten the call, use a bounded condition wait, or pass a higher bounded timeout_ms.",
       origin: "wrapper",
       outcome: "unknown",
       retryable: true,
@@ -372,7 +372,7 @@ function diagnosticBaseFor(options: {
   if (DAEMON_UNAVAILABLE_PATTERN.test(text)) {
     return {
       code: "daemon_unavailable",
-      hint: "The agent-browser daemon is not reachable. Check status or retry with sessionMode fresh after verifying the earlier call's effect.",
+      hint: "The agent-browser daemon is not reachable. Check status or retry with session_mode fresh after verifying the earlier call's effect.",
       origin: "daemon",
       outcome: "unknown",
       retryable: true,

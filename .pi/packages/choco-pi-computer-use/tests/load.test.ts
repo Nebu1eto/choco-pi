@@ -15,21 +15,21 @@ interface ToolDefinition {
 }
 
 const expectedTools = [
-  ["find_roots", ["text", "app", "bundleId", "pid", "kind"], []],
+  ["find_roots", ["text", "app", "bundle_id", "pid", "kind"], []],
   ["observe_ui", ["root", "mode"], []],
-  ["search_ui", ["text", "role", "capability", "stateId"], []],
-  ["expand_ui", ["ref", "depth", "stateId"], ["ref"]],
-  ["inspect_ui", ["ref", "stateId"], ["ref"]],
-  ["act_ui", ["stateId", "expect", "actions"], ["actions"]],
-  ["read_text", ["ref", "offset", "stateId"], ["ref"]],
+  ["search_ui", ["text", "role", "capability", "state_id"], []],
+  ["expand_ui", ["ref", "depth", "state_id"], ["ref"]],
+  ["inspect_ui", ["ref", "state_id"], ["ref"]],
+  ["act_ui", ["state_id", "expect", "actions"], ["actions"]],
+  ["read_text", ["ref", "offset", "state_id"], ["ref"]],
   [
     "wait_for",
-    ["ref", "scopeRef", "text", "role", "value", "until", "timeoutMs", "stateId"],
-    ["stateId"],
+    ["ref", "scope_ref", "text", "role", "value", "until", "timeout_ms", "state_id"],
+    ["state_id"],
   ],
   ["launch_browser", ["url"], []],
-  ["navigate_browser", ["url", "stateId"], ["url", "stateId"]],
-  ["evaluate_browser", ["stateId", "expression"], ["stateId", "expression"]],
+  ["navigate_browser", ["url", "state_id"], ["url", "state_id"]],
+  ["evaluate_browser", ["state_id", "expression"], ["state_id", "expression"]],
 ] as const;
 
 function assertPortableSchema(value: JsonValue): void {

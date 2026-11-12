@@ -290,7 +290,7 @@ function formatTypedSequenceSummary(
   const commandLabel = target ? `type ${target}` : "keyboard type";
   const lines = [
     `Step ${stepRange} — ${commandLabel} (succeeded)`,
-    `Typed ${typedCharCount} char${typedCharCount === 1 ? "" : "s"}${delayMs ? ` with delayMs=${delayMs}` : ""}.`,
+    `Typed ${typedCharCount} char${typedCharCount === 1 ? "" : "s"}${delayMs ? ` with delay_ms=${delayMs}` : ""}.`,
   ];
   if (pressedKey) lines.push(`Pressed ${pressedKey}.`);
   return { nextIndex: index, text: lines.join("\n") };

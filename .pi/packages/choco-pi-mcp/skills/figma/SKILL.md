@@ -38,9 +38,9 @@ Use `figma_parse_url` when you need to extract these values from a full URL.
 2. Use `figma_parse_url` for full Figma URLs.
 3. If the exact target node is unclear, use `figma_get_design_context` plus `figma_find_nodes_by_name` or `figma_find_nodes_by_text` before raw exploration.
 4. Use `figma_render_nodes` for screenshots and `figma_extract_assets` when icons, node renders, or image fills are needed for implementation.
-   - Do **not** pass `outputDir` unless the user explicitly requests persistent files in a specific location. Let the extension use its OS temp directory default for generated images/assets.
+   - Do **not** pass `output_dir` unless the user explicitly requests persistent files in a specific location. Let the extension use its OS temp directory default for generated images/assets.
 5. Use `figma_explain_node` or `figma_get_node_summary` for the target frame/component.
-6. Use enriched `figma_get_implementation_context` when coding from a design. Pass `framework`, `styling`, `resolveTokens`, and `includeCodeSnippets` when useful.
+6. Use enriched `figma_get_implementation_context` when coding from a design. Pass `framework`, `styling`, `resolve_tokens`, and `include_code_snippets` when useful.
 7. Use `figma_find_code_connect_mapping` only when the local repo may contain Code Connect mappings or Figma URL/node references.
 8. Use `figma_get_component_implementation_hints` for component-level implementation planning.
 9. Use `figma_get_nodes` only for raw debugging.
@@ -75,7 +75,7 @@ figma_get_node_summary for specific subnodes if needed
 figma_extract_assets
 ```
 
-Use this when visual assets are needed. Prefer the manifest's `nodePath`, `suggestedName`, hashes, and local paths over guessing layer-to-file mappings.
+Use this when visual assets are needed. Prefer the manifest's `node_path`, `suggested_name`, hashes, and local paths over guessing layer-to-file mappings.
 
 ### Finding local implementation mappings
 
@@ -108,13 +108,13 @@ Processed tools default to shallow, safe fetches:
 ```ts
 {
   depth: 2,
-  includeHidden: false,
-  includeVectors: false,
-  includeComponentInternals: false,
+  include_hidden: false,
+  include_vectors: false,
+  include_component_internals: false,
   framework?: "react" | "html" | "vue" | "angular" | "react-native",
   styling?: "css" | "css-modules" | "styled-components" | "tailwind" | "inline",
-  resolveTokens?: true,
-  includeCodeSnippets?: false
+  resolve_tokens?: true,
+  include_code_snippets?: false
 }
 ```
 
@@ -129,11 +129,11 @@ Use these only when raw Figma JSON is explicitly needed or when debugging the ex
 
 ## Output Limits
 
-Processed tools enforce compact defaults and may include `metadata.truncated: true` plus `nextSteps`, for example:
+Processed tools enforce compact defaults and may include `metadata.truncated: true` plus `next_steps`, for example:
 
 - Call `figma_get_node_summary` with a deeper `depth`.
 - Inspect a specific child node by ID.
-- Enable `includeComponentInternals=true` for a focused component instance.
+- Enable `include_component_internals=true` for a focused component instance.
 
 ## Notes
 

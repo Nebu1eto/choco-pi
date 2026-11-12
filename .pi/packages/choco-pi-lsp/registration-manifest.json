@@ -14,7 +14,7 @@
               "enum": ["delta", "all", "full"],
               "description": "Scan current-turn, edited-file, or project-wide diagnostics."
             },
-            "refreshRunners": {
+            "refresh_runners": {
               "anyOf": [
                 {
                   "type": "boolean"
@@ -26,15 +26,15 @@
               ],
               "description": "Project analyzer refresh level for full mode."
             },
-            "maxProjectFiles": {
+            "max_project_files": {
               "type": "number",
               "description": "Project-file cap for cheap analyzers."
             },
-            "maxLspFiles": {
+            "max_lsp_files": {
               "type": "number",
               "description": "File cap for the full LSP sweep."
             },
-            "includeGenerated": {
+            "include_generated": {
               "type": "boolean",
               "description": "Include generated-looking files in project analyzers."
             },
@@ -51,7 +51,8 @@
               "maxItems": 200,
               "description": "Limit diagnostics to at most 200 files or directories."
             }
-          }
+          },
+          "additionalProperties": false
         }
       },
       "functionKeys": ["renderResult", "execute"]
@@ -87,16 +88,17 @@
               "type": "number",
               "description": "Concurrent language-server groups; defaults to 8, maximum 16."
             },
-            "waitMs": {
+            "wait_ms": {
               "type": "number",
               "description": "Per-file wait budget in milliseconds."
             },
-            "serverScope": {
+            "server_scope": {
               "type": "string",
               "enum": ["primary", "all"],
               "description": "Use the primary server only or all auxiliary scanners."
             }
-          }
+          },
+          "additionalProperties": false
         }
       },
       "functionKeys": ["renderResult", "execute"]
@@ -176,7 +178,7 @@
               "type": "string",
               "description": "Absolute or workspace-relative path to the source file."
             },
-            "maxRefsPerSymbol": {
+            "max_refs_per_symbol": {
               "type": "number",
               "description": "Cap on who-uses-this entries per symbol (default 10)."
             },
@@ -189,23 +191,24 @@
               "enum": ["summary", "default", "compact"],
               "description": "Select summary, default JSON, or compact text output."
             },
-            "blastRadius": {
+            "blast_radius": {
               "type": "boolean",
               "description": "Include ranked transitive module dependents."
             },
-            "blastRadiusDepth": {
+            "blast_radius_depth": {
               "type": "number",
-              "description": "Max hops for the blast-radius walk (default 3). Only used with blastRadius."
+              "description": "Max hops for the blast-radius walk (default 3). Only used with blast_radius."
             },
-            "callGraph": {
+            "call_graph": {
               "type": "boolean",
               "description": "Include bounded cached callers and callees."
             },
-            "maxCallGraphEntries": {
+            "max_call_graph_entries": {
               "type": "number",
               "description": "Per-direction cap for call-graph relations (default 20)."
             }
-          }
+          },
+          "additionalProperties": false
         }
       },
       "functionKeys": ["renderResult", "execute"]
@@ -262,20 +265,21 @@
               },
               "description": "Optional kind filter, e.g. function, method, callback, class, object_property_callback."
             },
-            "maxLines": {
+            "max_lines": {
               "type": "number",
-              "description": "Optional maximum body size to return. Oversized matches obey onOversize."
+              "description": "Optional maximum body size to return. Oversized matches obey on_oversize."
             },
-            "onOversize": {
+            "on_oversize": {
               "type": "string",
               "enum": ["error", "slice", "outline"],
               "description": "Oversize handling: error, bounded slice, or nested outline."
             },
-            "aroundLine": {
+            "around_line": {
               "type": "number",
-              "description": "Maximum lines for onOversize=slice; defaults to maxLines, then 80."
+              "description": "Maximum lines for on_oversize=slice; defaults to max_lines, then 80."
             }
-          }
+          },
+          "additionalProperties": false
         }
       },
       "functionKeys": ["renderResult", "execute"]
@@ -315,7 +319,7 @@
       "metadata": {
         "name": "ast_grep_search",
         "label": "AST Search",
-        "description": "Search code using AST-aware pattern matching. IMPORTANT: Use specific AST patterns, NOT text search.\n\n✅ GOOD patterns (complete AST shapes; $$$ accepts zero or more nodes):\n  - function $NAME($$$ARGS) { $$$BODY } (function declaration)\n  - fetchMetrics($$$ARGS)             (call with any arguments)\n  - import { $$$NAMES } from \"module-name\" (exact string-literal import)\n  - console.log($MSG)                 (method call)\n\n❌ BAD patterns (multiple nodes / raw text):\n  - it\"test name\"                     (missing parens - use it($TEST))\n  - console.log without args           (incomplete code)\n  - arbitrary text without code structure\n\nMetavariables match AST nodes, not text inside quoted string literals: `from \"$PATH\"` matches the literal text $PATH. Use an exact quoted string for a known import, or grep for wildcard text. Use 'paths' to scope to specific files/folders. Use 'nodeKind' to find every node of a known AST kind, or 'ast_grep_dump' first when the kind is unknown. Avoid 'selector' unless you know the exact AST node kind; it narrows matching and does not extract fields. If this tool is inactive, call lsp_activate_tools with tools=[\"ast_grep_search\"]; activation takes effect next turn. If zero matches, retry once with a simpler AST pattern, then use ast_grep_dump on a small representative snippet before falling back to grep.",
+        "description": "Search code using AST-aware pattern matching. IMPORTANT: Use specific AST patterns, NOT text search.\n\n✅ GOOD patterns (complete AST shapes; $$$ accepts zero or more nodes):\n  - function $NAME($$$ARGS) { $$$BODY } (function declaration)\n  - fetchMetrics($$$ARGS)             (call with any arguments)\n  - import { $$$NAMES } from \"module-name\" (exact string-literal import)\n  - console.log($MSG)                 (method call)\n\n❌ BAD patterns (multiple nodes / raw text):\n  - it\"test name\"                     (missing parens - use it($TEST))\n  - console.log without args           (incomplete code)\n  - arbitrary text without code structure\n\nMetavariables match AST nodes, not text inside quoted string literals: `from \"$PATH\"` matches the literal text $PATH. Use an exact quoted string for a known import, or grep for wildcard text. Use 'paths' to scope to specific files/folders. Use 'node_kind' to find every node of a known AST kind, or 'ast_grep_dump' first when the kind is unknown. Avoid 'selector' unless you know the exact AST node kind; it narrows matching and does not extract fields. If this tool is inactive, call lsp_activate_tools with tools=[\"ast_grep_search\"]; activation takes effect next turn. If zero matches, retry once with a simpler AST pattern, then use ast_grep_dump on a small representative snippet before falling back to grep.",
         "promptSnippet": "AST-aware structural code search",
         "parameters": {
           "type": "object",
@@ -323,7 +327,7 @@
           "properties": {
             "pattern": {
               "type": "string",
-              "description": "AST pattern (use function/class/call context, not text). Required unless `rule` or `nodeKind` is provided. Do not put metavariables inside quoted string literals; they match literally."
+              "description": "AST pattern (use function/class/call context, not text). Required unless `rule` or `node_kind` is provided. Do not put metavariables inside quoted string literals; they match literally."
             },
             "lang": {
               "type": "string",
@@ -372,21 +376,21 @@
               "type": "number",
               "description": "Show N lines before/after each match for context"
             },
-            "nodeKind": {
+            "node_kind": {
               "type": "string",
               "description": "Expert grammar-specific escape hatch: find every node of this exact AST kind (for example `call_expression`) without writing a pattern. Node kinds are not universal across languages; use ast_grep_dump to discover them. Mutually exclusive with `pattern` and `rule`; can be combined with structural constraints."
             },
-            "insideKind": {
+            "inside_kind": {
               "type": "string",
-              "description": "Restrict matches to nodes inside an ancestor of this AST node kind. Example: `insideKind: \"function_declaration\"` finds the pattern only when it appears inside a function body. Searches all ancestors (stopBy: end), not just the immediate parent. Synthesizes a YAML rule — takes precedence over `selector` and `strictness`."
+              "description": "Restrict matches to nodes inside an ancestor of this AST node kind. Example: `inside_kind: \"function_declaration\"` finds the pattern only when it appears inside a function body. Searches all ancestors (stopBy: end), not just the immediate parent. Synthesizes a YAML rule — takes precedence over `selector` and `strictness`."
             },
-            "hasKind": {
+            "has_kind": {
               "type": "string",
-              "description": "Restrict matches to nodes whose immediate child has this AST node kind (ast-grep default stopBy: neighbor). Example: `hasKind: \"await_expression\"`."
+              "description": "Restrict matches to nodes whose immediate child has this AST node kind (ast-grep default stopBy: neighbor). Example: `has_kind: \"await_expression\"`."
             },
-            "hasDescendantKind": {
+            "has_descendant_kind": {
               "type": "string",
-              "description": "Restrict matches to nodes containing this AST node kind anywhere in their descendants. Explicit recursive form (`stopBy: end`); use this instead of `hasKind` when nesting is not immediate."
+              "description": "Restrict matches to nodes containing this AST node kind anywhere in their descendants. Explicit recursive form (`stopBy: end`); use this instead of `has_kind` when nesting is not immediate."
             },
             "follows": {
               "type": "string",
@@ -404,11 +408,11 @@
               "type": "number",
               "description": "Match offset for pagination. Skip the first N matches and return the next page. Use when results are truncated — increment by the page size to retrieve subsequent pages."
             },
-            "maxMatches": {
+            "max_matches": {
               "type": "number",
               "description": "Cap on matches returned per call (default 50, max 200). Lower it to keep a broad search compact; raise it to page less. Also sets the pagination step for skip."
             },
-            "groupByFile": {
+            "group_by_file": {
               "type": "boolean",
               "description": "Render results grouped by file (one line per file with L<line>:<col> locations) instead of each match's body. Compact distribution view for high-volume searches; match read-slices remain in details.matchLocations."
             },
@@ -417,11 +421,12 @@
               "enum": ["smart", "relaxed", "ast", "cst", "signature", "template"],
               "description": "Pattern matching strictness. 'smart' (default) ignores comments and whitespace. 'relaxed' also ignores unnamed nodes like punctuation — useful when optional trailing commas cause misses. 'ast' ignores all whitespace. 'signature' matches only structural shape, ignoring bodies."
             },
-            "validateOnly": {
+            "validate_only": {
               "type": "boolean",
               "description": "Validate/compile the pattern or rule without scanning project files. Helps distinguish a bad pattern/rule from a real no-match result."
             }
-          }
+          },
+          "additionalProperties": false
         },
         "defaultActive": false
       },
@@ -483,17 +488,17 @@
               },
               "description": "Specific files/folders"
             },
-            "insideKind": {
+            "inside_kind": {
               "type": "string",
               "description": "Restrict matches to nodes inside an ancestor of this AST node kind. Synthesizes a YAML rule."
             },
-            "hasKind": {
+            "has_kind": {
               "type": "string",
-              "description": "Restrict matches to nodes whose immediate child has this AST node kind (ast-grep default stopBy: neighbor). Example: `hasKind: \"await_expression\"`."
+              "description": "Restrict matches to nodes whose immediate child has this AST node kind (ast-grep default stopBy: neighbor). Example: `has_kind: \"await_expression\"`."
             },
-            "hasDescendantKind": {
+            "has_descendant_kind": {
               "type": "string",
-              "description": "Restrict matches to nodes containing this AST node kind anywhere in their descendants. Explicit recursive form (`stopBy: end`); use this instead of `hasKind` when nesting is not immediate."
+              "description": "Restrict matches to nodes containing this AST node kind anywhere in their descendants. Explicit recursive form (`stopBy: end`); use this instead of `has_kind` when nesting is not immediate."
             },
             "follows": {
               "type": "string",
@@ -512,7 +517,8 @@
               "enum": ["smart", "relaxed", "ast", "cst", "signature", "template"],
               "description": "Pattern matching strictness. 'smart' (default) ignores comments and whitespace. 'relaxed' also ignores unnamed nodes like punctuation. 'ast' ignores all whitespace."
             }
-          }
+          },
+          "additionalProperties": false
         },
         "defaultActive": false
       },
@@ -522,7 +528,7 @@
       "metadata": {
         "name": "ast_grep_outline",
         "label": "AST-Grep Outline",
-        "description": "Syntax-only code structure (symbols, imports, exports, and members) via `ast-grep outline`. Fast, local, no index/LSP/cross-file semantics — useful for languages or structures where choco-pi-lsp's own extractor is weak, or for a raw second opinion.\n\nPrefer module_report for choco-pi-lsp-aware navigation (who-uses-this, complexity/fanout, recommendedReads, blast radius, callback handles). Use ast_grep_outline when you want the syntax tree's own view of a file or a whole directory.\n\nReturns JSON: per file, `items[]` with name/symbolType/signature/range, `isExported`/`isImport`, nested `members[]` (with `isPublic`), and ready `read` args on every entry. NOTE: structure only — an outline is NOT a read of a symbol's body (use read_symbol/read_enclosing for that).",
+        "description": "Syntax-only code structure (symbols, imports, exports, and members) via `ast-grep outline`. Fast, local, no index/LSP/cross-file semantics — useful for languages or structures where choco-pi-lsp's own extractor is weak, or for a raw second opinion.\n\nPrefer module_report for choco-pi-lsp-aware navigation (who-uses-this, complexity/fanout, recommended_reads, blast radius, callback handles). Use ast_grep_outline when you want the syntax tree's own view of a file or a whole directory.\n\nReturns JSON: per file, `items[]` with name/symbolType/signature/range, `isExported`/`isImport`, nested `members[]` (with `isPublic`), and ready `read` args on every entry. NOTE: structure only — an outline is NOT a read of a symbol's body (use read_symbol/read_enclosing for that).",
         "promptSnippet": "Inspect a syntax-only ast-grep code outline.",
         "parameters": {
           "type": "object",
@@ -589,7 +595,7 @@
               "type": "string",
               "description": "Keep only top-level items whose name matches this regex."
             },
-            "pubMembers": {
+            "pub_members": {
               "type": "boolean",
               "description": "Show only public members in member views."
             },
@@ -600,7 +606,8 @@
               },
               "description": "Include/exclude file globs for directory input, e.g. [\"*.ts\",\"!**/dist/**\"]."
             }
-          }
+          },
+          "additionalProperties": false
         },
         "defaultActive": false
       },
@@ -610,7 +617,7 @@
       "metadata": {
         "name": "ast_grep_dump",
         "label": "AST-Grep Dump",
-        "description": "Dump the tree-sitter AST for a source snippet using ast-grep CLI. Use when ast_grep_search returns zero matches and you need exact node kinds, field names, or nesting. Named nodes only by default; includeAnonymous=true shows punctuation/CST nodes too.",
+        "description": "Dump the tree-sitter AST for a source snippet using ast-grep CLI. Use when ast_grep_search returns zero matches and you need exact node kinds, field names, or nesting. Named nodes only by default; include_anonymous=true shows punctuation/CST nodes too.",
         "promptSnippet": "Inspect AST node kinds before writing ast-grep patterns",
         "parameters": {
           "type": "object",
@@ -651,11 +658,12 @@
               ],
               "description": "Target language"
             },
-            "includeAnonymous": {
+            "include_anonymous": {
               "type": "boolean",
               "description": "Show anonymous punctuation/CST nodes too (default false)"
             }
-          }
+          },
+          "additionalProperties": false
         },
         "defaultActive": false
       },
@@ -665,7 +673,7 @@
       "metadata": {
         "name": "lsp_navigation",
         "label": "LSP Navigate",
-        "description": "Navigate code using LSP (Language Server Protocol). LSP is enabled by default; disable with --no-lsp.\nOperations:\n- definition: Jump to where a symbol is defined\n- typeDefinition: Jump to the definition of a symbol's TYPE (e.g. the class/interface of a variable)\n- declaration: Jump to a symbol's declaration (e.g. an extern/forward decl, distinct from its definition)\n- references: Find all usages of a symbol\n- hover: Get type/doc info at a position\n- signatureHelp: Show callable signatures at cursor\n- documentSymbol: List all symbols (functions/classes/vars) in a file\n- findSymbol: Search document symbols in a file by name/detail with optional kind/top-level/exact filters\n- workspaceSymbol: Search symbols across the whole project (best with path context)\n- codeAction: Find available quick fixes/refactors at a range\n- rename: Compute or apply workspace edits for renaming a symbol\n- rename_file: Preview/apply LSP-aware source file rename notifications\n- implementation: Jump to interface implementations\n- prepareCallHierarchy: Get callable item at position (for incoming/outgoing)\n- incomingCalls: Find all functions/methods that CALL this function\n- outgoingCalls: Find all functions/methods CALLED by this function\n- executeCommand: Run a server-advertised command via workspace/executeCommand. HARDENED: allowlisted to commands the server advertised; dry-run by default (reports whether advertised) — set apply:true to actually run. Pass command (+ optional commandArguments).\n- workspaceDiagnostics: List all diagnostics tracked by active LSP clients\n- capabilities: Show cached operation support for active LSP servers\n\nLine and character are 1-based (as shown in editors). For position-based operations, prefer passing symbol when you know the line but not the exact character; character can be omitted or -1 and choco-pi-lsp will resolve the symbol column. Use symbol#N for repeated symbols on the same line (1-based occurrence).",
+        "description": "Navigate code using LSP (Language Server Protocol). LSP is enabled by default; disable with --no-lsp.\nOperations:\n- definition: Jump to where a symbol is defined\n- type_definition: Jump to the definition of a symbol's TYPE (e.g. the class/interface of a variable)\n- declaration: Jump to a symbol's declaration (e.g. an extern/forward decl, distinct from its definition)\n- references: Find all usages of a symbol\n- hover: Get type/doc info at a position\n- signature_help: Show callable signatures at cursor\n- document_symbol: List all symbols (functions/classes/vars) in a file\n- find_symbol: Search document symbols in a file by name/detail with optional kind/top-level/exact filters\n- workspace_symbol: Search symbols across the whole project (best with path context)\n- code_action: Find available quick fixes/refactors at a range\n- rename: Compute or apply workspace edits for renaming a symbol\n- rename_file: Preview/apply LSP-aware source file rename notifications\n- implementation: Jump to interface implementations\n- prepare_call_hierarchy: Get callable item at position (for incoming/outgoing)\n- incoming_calls: Find all functions/methods that CALL this function\n- outgoing_calls: Find all functions/methods CALLED by this function\n- execute_command: Run a server-advertised command via workspace/executeCommand. HARDENED: allowlisted to commands the server advertised; dry-run by default (reports whether advertised) — set apply:true to actually run. Pass command (+ optional command_arguments).\n- workspace_diagnostics: List all diagnostics tracked by active LSP clients\n- capabilities: Show cached operation support for active LSP servers\n\nLine and character are 1-based (as shown in editors). For position-based operations, prefer passing symbol when you know the line but not the exact character; character can be omitted or -1 and choco-pi-lsp will resolve the symbol column. Use symbol#N for repeated symbols on the same line (1-based occurrence).",
         "promptSnippet": "Find definitions, references, and hover info via LSP",
         "parameters": {
           "type": "object",
@@ -673,11 +681,32 @@
           "properties": {
             "operation": {
               "type": "string",
-              "description": "LSP operation to perform. Valid values: definition, typeDefinition, declaration, references, hover, signatureHelp, documentSymbol, findSymbol, workspaceSymbol, codeAction, rename, rename_file, implementation, prepareCallHierarchy, incomingCalls, outgoingCalls, executeCommand, workspaceDiagnostics, capabilities"
+              "enum": [
+                "definition",
+                "type_definition",
+                "declaration",
+                "references",
+                "hover",
+                "signature_help",
+                "document_symbol",
+                "find_symbol",
+                "workspace_symbol",
+                "code_action",
+                "rename",
+                "rename_file",
+                "implementation",
+                "prepare_call_hierarchy",
+                "incoming_calls",
+                "outgoing_calls",
+                "execute_command",
+                "workspace_diagnostics",
+                "capabilities"
+              ],
+              "description": "LSP operation to perform."
             },
             "path": {
               "type": "string",
-              "description": "Absolute or relative file path. Required for file-scoped operations; optional for workspaceSymbol/workspaceDiagnostics."
+              "description": "Absolute or relative file path. Required for file-scoped operations; optional for workspace_symbol/workspace_diagnostics."
             },
             "line": {
               "type": "number",
@@ -691,59 +720,59 @@
               "type": "string",
               "description": "Symbol name on the target line for automatic character resolution. Use symbol#N to select the Nth occurrence on the line."
             },
-            "endLine": {
+            "end_line": {
               "type": "number",
-              "description": "End line (1-based). Optional; used by codeAction range."
+              "description": "End line (1-based). Optional; used by code_action range."
             },
-            "endCharacter": {
+            "end_character": {
               "type": "number",
-              "description": "End character (1-based). Optional; used by codeAction range."
+              "description": "End character (1-based). Optional; used by code_action range."
             },
-            "newName": {
+            "new_name": {
               "type": "string",
               "description": "Required for rename operation."
             },
-            "newFilePath": {
+            "new_file_path": {
               "type": "string",
               "description": "Required for rename_file operation."
             },
             "apply": {
               "type": "boolean",
-              "description": "rename/executeCommand: apply for real. rename defaults to preview; executeCommand defaults to a dry-run that only reports whether the command is advertised — set apply:true to actually run it."
+              "description": "rename/execute_command: apply for real. rename defaults to preview; execute_command defaults to a dry-run that only reports whether the command is advertised — set apply:true to actually run it."
             },
             "command": {
               "type": "string",
-              "description": "executeCommand only: the server command id to run. Must be one the server advertised (see the capabilities operation)."
+              "description": "execute_command only: the server command id to run. Must be one the server advertised (see the capabilities operation)."
             },
-            "commandArguments": {
+            "command_arguments": {
               "type": "array",
               "items": {},
-              "description": "executeCommand only: arguments array passed to workspace/executeCommand."
+              "description": "execute_command only: arguments array passed to workspace/executeCommand."
             },
             "query": {
               "type": "string",
-              "description": "Symbol name to search. Used by workspaceSymbol and findSymbol."
+              "description": "Symbol name to search. Used by workspace_symbol and find_symbol."
             },
             "kinds": {
               "type": "array",
               "items": {
                 "type": "string"
               },
-              "description": "findSymbol only: restrict matches to symbol kind labels such as function, class, method, variable, interface."
+              "description": "find_symbol only: restrict matches to symbol kind labels such as function, class, method, variable, interface."
             },
-            "exactMatch": {
+            "exact_match": {
               "type": "boolean",
-              "description": "findSymbol only: match whole symbol names/details exactly instead of substring matching."
+              "description": "find_symbol only: match whole symbol names/details exactly instead of substring matching."
             },
-            "topLevelOnly": {
+            "top_level_only": {
               "type": "boolean",
-              "description": "findSymbol only: do not search nested child symbols."
+              "description": "find_symbol only: do not search nested child symbols."
             },
-            "maxResults": {
+            "max_results": {
               "type": "number",
-              "description": "findSymbol only: maximum matches to return. Default 20."
+              "description": "find_symbol only: maximum matches to return. Default 20."
             },
-            "callHierarchyItem": {
+            "call_hierarchy_item": {
               "type": "object",
               "required": ["name", "kind", "uri", "range", "selectionRange"],
               "properties": {
@@ -817,9 +846,10 @@
                   }
                 }
               },
-              "description": "Call hierarchy item. Required for incomingCalls/outgoingCalls"
+              "description": "Call hierarchy item. Required for incoming_calls/outgoing_calls"
             }
-          }
+          },
+          "additionalProperties": false
         },
         "defaultActive": false
       },
@@ -829,13 +859,13 @@
       "metadata": {
         "name": "diagnostic_mark",
         "label": "Mark Diagnostic",
-        "description": "Record a disposition for a diagnostics_report finding, using the exact filePath/rule/message/line it was reported with. false-positive/suppress persist across sessions; defer lasts only for the current session (resurfaces next time); flagged marks it for you to come back and fix, and shows up tagged in a later diagnostics_report mode=full. suppress additionally writes a `choco-pi-lsp-ignore: <rule>` comment into the source above the flagged line — rule is required for suppress. The line is verified/reanchored against current diagnostics before writing (#802): if a live diagnostic for this tool/rule/message is now at a different line, that line is used instead of the one you passed. When suppressing several findings in the SAME file in one turn, work bottom-up (highest line number first) — each inserted comment shifts later lines down by one, and reanchoring can't always disambiguate two nearby findings.",
+        "description": "Record a disposition for a diagnostics_report finding, using the exact file_path/rule/message/line it was reported with. false-positive/suppress persist across sessions; defer lasts only for the current session (resurfaces next time); flagged marks it for you to come back and fix, and shows up tagged in a later diagnostics_report mode=full. suppress additionally writes a `choco-pi-lsp-ignore: <rule>` comment into the source above the flagged line — rule is required for suppress. The line is verified/reanchored against current diagnostics before writing (#802): if a live diagnostic for this tool/rule/message is now at a different line, that line is used instead of the one you passed. When suppressing several findings in the SAME file in one turn, work bottom-up (highest line number first) — each inserted comment shifts later lines down by one, and reanchoring can't always disambiguate two nearby findings.",
         "promptSnippet": "Record a diagnostic disposition or deferred fix.",
         "parameters": {
           "type": "object",
-          "required": ["filePath", "line", "message", "disposition"],
+          "required": ["file_path", "line", "message", "disposition"],
           "properties": {
-            "filePath": {
+            "file_path": {
               "type": "string",
               "description": "The file the diagnostic was reported on (relative or absolute)."
             },
@@ -864,7 +894,8 @@
               "type": "string",
               "description": "Optional short reason, kept alongside the disposition."
             }
-          }
+          },
+          "additionalProperties": false
         },
         "defaultActive": false
       },
@@ -1127,61 +1158,61 @@
     },
     {
       "toolName": "diagnostics_report",
-      "path": ["properties", "refreshRunners", "anyOf", "0"],
+      "path": ["properties", "refresh_runners", "anyOf", "0"],
       "key": "~kind",
       "value": "Boolean"
     },
     {
       "toolName": "diagnostics_report",
-      "path": ["properties", "refreshRunners", "anyOf", "1"],
+      "path": ["properties", "refresh_runners", "anyOf", "1"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "diagnostics_report",
-      "path": ["properties", "refreshRunners"],
+      "path": ["properties", "refresh_runners"],
       "key": "~kind",
       "value": "Union"
     },
     {
       "toolName": "diagnostics_report",
-      "path": ["properties", "refreshRunners"],
+      "path": ["properties", "refresh_runners"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "diagnostics_report",
-      "path": ["properties", "maxProjectFiles"],
+      "path": ["properties", "max_project_files"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "diagnostics_report",
-      "path": ["properties", "maxProjectFiles"],
+      "path": ["properties", "max_project_files"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "diagnostics_report",
-      "path": ["properties", "maxLspFiles"],
+      "path": ["properties", "max_lsp_files"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "diagnostics_report",
-      "path": ["properties", "maxLspFiles"],
+      "path": ["properties", "max_lsp_files"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "diagnostics_report",
-      "path": ["properties", "includeGenerated"],
+      "path": ["properties", "include_generated"],
       "key": "~kind",
       "value": "Boolean"
     },
     {
       "toolName": "diagnostics_report",
-      "path": ["properties", "includeGenerated"],
+      "path": ["properties", "include_generated"],
       "key": "~optional",
       "value": true
     },
@@ -1277,25 +1308,25 @@
     },
     {
       "toolName": "lsp_diagnostics",
-      "path": ["properties", "waitMs"],
+      "path": ["properties", "wait_ms"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "lsp_diagnostics",
-      "path": ["properties", "waitMs"],
+      "path": ["properties", "wait_ms"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "lsp_diagnostics",
-      "path": ["properties", "serverScope"],
+      "path": ["properties", "server_scope"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "lsp_diagnostics",
-      "path": ["properties", "serverScope"],
+      "path": ["properties", "server_scope"],
       "key": "~optional",
       "value": true
     },
@@ -1409,13 +1440,13 @@
     },
     {
       "toolName": "module_report",
-      "path": ["properties", "maxRefsPerSymbol"],
+      "path": ["properties", "max_refs_per_symbol"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "module_report",
-      "path": ["properties", "maxRefsPerSymbol"],
+      "path": ["properties", "max_refs_per_symbol"],
       "key": "~optional",
       "value": true
     },
@@ -1445,49 +1476,49 @@
     },
     {
       "toolName": "module_report",
-      "path": ["properties", "blastRadius"],
+      "path": ["properties", "blast_radius"],
       "key": "~kind",
       "value": "Boolean"
     },
     {
       "toolName": "module_report",
-      "path": ["properties", "blastRadius"],
+      "path": ["properties", "blast_radius"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "module_report",
-      "path": ["properties", "blastRadiusDepth"],
+      "path": ["properties", "blast_radius_depth"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "module_report",
-      "path": ["properties", "blastRadiusDepth"],
+      "path": ["properties", "blast_radius_depth"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "module_report",
-      "path": ["properties", "callGraph"],
+      "path": ["properties", "call_graph"],
       "key": "~kind",
       "value": "Boolean"
     },
     {
       "toolName": "module_report",
-      "path": ["properties", "callGraph"],
+      "path": ["properties", "call_graph"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "module_report",
-      "path": ["properties", "maxCallGraphEntries"],
+      "path": ["properties", "max_call_graph_entries"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "module_report",
-      "path": ["properties", "maxCallGraphEntries"],
+      "path": ["properties", "max_call_graph_entries"],
       "key": "~optional",
       "value": true
     },
@@ -1559,37 +1590,37 @@
     },
     {
       "toolName": "read_enclosing",
-      "path": ["properties", "maxLines"],
+      "path": ["properties", "max_lines"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "read_enclosing",
-      "path": ["properties", "maxLines"],
+      "path": ["properties", "max_lines"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "read_enclosing",
-      "path": ["properties", "onOversize"],
+      "path": ["properties", "on_oversize"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "read_enclosing",
-      "path": ["properties", "onOversize"],
+      "path": ["properties", "on_oversize"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "read_enclosing",
-      "path": ["properties", "aroundLine"],
+      "path": ["properties", "around_line"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "read_enclosing",
-      "path": ["properties", "aroundLine"],
+      "path": ["properties", "around_line"],
       "key": "~optional",
       "value": true
     },
@@ -1679,49 +1710,49 @@
     },
     {
       "toolName": "ast_grep_search",
-      "path": ["properties", "nodeKind"],
+      "path": ["properties", "node_kind"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_search",
-      "path": ["properties", "nodeKind"],
+      "path": ["properties", "node_kind"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_search",
-      "path": ["properties", "insideKind"],
+      "path": ["properties", "inside_kind"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_search",
-      "path": ["properties", "insideKind"],
+      "path": ["properties", "inside_kind"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_search",
-      "path": ["properties", "hasKind"],
+      "path": ["properties", "has_kind"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_search",
-      "path": ["properties", "hasKind"],
+      "path": ["properties", "has_kind"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_search",
-      "path": ["properties", "hasDescendantKind"],
+      "path": ["properties", "has_descendant_kind"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_search",
-      "path": ["properties", "hasDescendantKind"],
+      "path": ["properties", "has_descendant_kind"],
       "key": "~optional",
       "value": true
     },
@@ -1775,25 +1806,25 @@
     },
     {
       "toolName": "ast_grep_search",
-      "path": ["properties", "maxMatches"],
+      "path": ["properties", "max_matches"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "ast_grep_search",
-      "path": ["properties", "maxMatches"],
+      "path": ["properties", "max_matches"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_search",
-      "path": ["properties", "groupByFile"],
+      "path": ["properties", "group_by_file"],
       "key": "~kind",
       "value": "Boolean"
     },
     {
       "toolName": "ast_grep_search",
-      "path": ["properties", "groupByFile"],
+      "path": ["properties", "group_by_file"],
       "key": "~optional",
       "value": true
     },
@@ -1811,13 +1842,13 @@
     },
     {
       "toolName": "ast_grep_search",
-      "path": ["properties", "validateOnly"],
+      "path": ["properties", "validate_only"],
       "key": "~kind",
       "value": "Boolean"
     },
     {
       "toolName": "ast_grep_search",
-      "path": ["properties", "validateOnly"],
+      "path": ["properties", "validate_only"],
       "key": "~optional",
       "value": true
     },
@@ -1865,37 +1896,37 @@
     },
     {
       "toolName": "ast_grep_replace",
-      "path": ["properties", "insideKind"],
+      "path": ["properties", "inside_kind"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_replace",
-      "path": ["properties", "insideKind"],
+      "path": ["properties", "inside_kind"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_replace",
-      "path": ["properties", "hasKind"],
+      "path": ["properties", "has_kind"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_replace",
-      "path": ["properties", "hasKind"],
+      "path": ["properties", "has_kind"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_replace",
-      "path": ["properties", "hasDescendantKind"],
+      "path": ["properties", "has_descendant_kind"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_replace",
-      "path": ["properties", "hasDescendantKind"],
+      "path": ["properties", "has_descendant_kind"],
       "key": "~optional",
       "value": true
     },
@@ -2033,13 +2064,13 @@
     },
     {
       "toolName": "ast_grep_outline",
-      "path": ["properties", "pubMembers"],
+      "path": ["properties", "pub_members"],
       "key": "~kind",
       "value": "Boolean"
     },
     {
       "toolName": "ast_grep_outline",
-      "path": ["properties", "pubMembers"],
+      "path": ["properties", "pub_members"],
       "key": "~optional",
       "value": true
     },
@@ -2081,13 +2112,13 @@
     },
     {
       "toolName": "ast_grep_dump",
-      "path": ["properties", "includeAnonymous"],
+      "path": ["properties", "include_anonymous"],
       "key": "~kind",
       "value": "Boolean"
     },
     {
       "toolName": "ast_grep_dump",
-      "path": ["properties", "includeAnonymous"],
+      "path": ["properties", "include_anonymous"],
       "key": "~optional",
       "value": true
     },
@@ -2153,49 +2184,49 @@
     },
     {
       "toolName": "lsp_navigation",
-      "path": ["properties", "endLine"],
+      "path": ["properties", "end_line"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "lsp_navigation",
-      "path": ["properties", "endLine"],
+      "path": ["properties", "end_line"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "lsp_navigation",
-      "path": ["properties", "endCharacter"],
+      "path": ["properties", "end_character"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "lsp_navigation",
-      "path": ["properties", "endCharacter"],
+      "path": ["properties", "end_character"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "lsp_navigation",
-      "path": ["properties", "newName"],
+      "path": ["properties", "new_name"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "lsp_navigation",
-      "path": ["properties", "newName"],
+      "path": ["properties", "new_name"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "lsp_navigation",
-      "path": ["properties", "newFilePath"],
+      "path": ["properties", "new_file_path"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "lsp_navigation",
-      "path": ["properties", "newFilePath"],
+      "path": ["properties", "new_file_path"],
       "key": "~optional",
       "value": true
     },
@@ -2225,19 +2256,19 @@
     },
     {
       "toolName": "lsp_navigation",
-      "path": ["properties", "commandArguments", "items"],
+      "path": ["properties", "command_arguments", "items"],
       "key": "~kind",
       "value": "Unknown"
     },
     {
       "toolName": "lsp_navigation",
-      "path": ["properties", "commandArguments"],
+      "path": ["properties", "command_arguments"],
       "key": "~kind",
       "value": "Array"
     },
     {
       "toolName": "lsp_navigation",
-      "path": ["properties", "commandArguments"],
+      "path": ["properties", "command_arguments"],
       "key": "~optional",
       "value": true
     },
@@ -2273,55 +2304,55 @@
     },
     {
       "toolName": "lsp_navigation",
-      "path": ["properties", "exactMatch"],
+      "path": ["properties", "exact_match"],
       "key": "~kind",
       "value": "Boolean"
     },
     {
       "toolName": "lsp_navigation",
-      "path": ["properties", "exactMatch"],
+      "path": ["properties", "exact_match"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "lsp_navigation",
-      "path": ["properties", "topLevelOnly"],
+      "path": ["properties", "top_level_only"],
       "key": "~kind",
       "value": "Boolean"
     },
     {
       "toolName": "lsp_navigation",
-      "path": ["properties", "topLevelOnly"],
+      "path": ["properties", "top_level_only"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "lsp_navigation",
-      "path": ["properties", "maxResults"],
+      "path": ["properties", "max_results"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "lsp_navigation",
-      "path": ["properties", "maxResults"],
+      "path": ["properties", "max_results"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "lsp_navigation",
-      "path": ["properties", "callHierarchyItem", "properties", "name"],
+      "path": ["properties", "call_hierarchy_item", "properties", "name"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "lsp_navigation",
-      "path": ["properties", "callHierarchyItem", "properties", "kind"],
+      "path": ["properties", "call_hierarchy_item", "properties", "kind"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "lsp_navigation",
-      "path": ["properties", "callHierarchyItem", "properties", "uri"],
+      "path": ["properties", "call_hierarchy_item", "properties", "uri"],
       "key": "~kind",
       "value": "String"
     },
@@ -2329,7 +2360,7 @@
       "toolName": "lsp_navigation",
       "path": [
         "properties",
-        "callHierarchyItem",
+        "call_hierarchy_item",
         "properties",
         "range",
         "properties",
@@ -2344,7 +2375,7 @@
       "toolName": "lsp_navigation",
       "path": [
         "properties",
-        "callHierarchyItem",
+        "call_hierarchy_item",
         "properties",
         "range",
         "properties",
@@ -2357,7 +2388,7 @@
     },
     {
       "toolName": "lsp_navigation",
-      "path": ["properties", "callHierarchyItem", "properties", "range", "properties", "start"],
+      "path": ["properties", "call_hierarchy_item", "properties", "range", "properties", "start"],
       "key": "~kind",
       "value": "Object"
     },
@@ -2365,7 +2396,7 @@
       "toolName": "lsp_navigation",
       "path": [
         "properties",
-        "callHierarchyItem",
+        "call_hierarchy_item",
         "properties",
         "range",
         "properties",
@@ -2380,7 +2411,7 @@
       "toolName": "lsp_navigation",
       "path": [
         "properties",
-        "callHierarchyItem",
+        "call_hierarchy_item",
         "properties",
         "range",
         "properties",
@@ -2393,13 +2424,13 @@
     },
     {
       "toolName": "lsp_navigation",
-      "path": ["properties", "callHierarchyItem", "properties", "range", "properties", "end"],
+      "path": ["properties", "call_hierarchy_item", "properties", "range", "properties", "end"],
       "key": "~kind",
       "value": "Object"
     },
     {
       "toolName": "lsp_navigation",
-      "path": ["properties", "callHierarchyItem", "properties", "range"],
+      "path": ["properties", "call_hierarchy_item", "properties", "range"],
       "key": "~kind",
       "value": "Object"
     },
@@ -2407,7 +2438,7 @@
       "toolName": "lsp_navigation",
       "path": [
         "properties",
-        "callHierarchyItem",
+        "call_hierarchy_item",
         "properties",
         "selectionRange",
         "properties",
@@ -2422,7 +2453,7 @@
       "toolName": "lsp_navigation",
       "path": [
         "properties",
-        "callHierarchyItem",
+        "call_hierarchy_item",
         "properties",
         "selectionRange",
         "properties",
@@ -2437,7 +2468,7 @@
       "toolName": "lsp_navigation",
       "path": [
         "properties",
-        "callHierarchyItem",
+        "call_hierarchy_item",
         "properties",
         "selectionRange",
         "properties",
@@ -2450,7 +2481,7 @@
       "toolName": "lsp_navigation",
       "path": [
         "properties",
-        "callHierarchyItem",
+        "call_hierarchy_item",
         "properties",
         "selectionRange",
         "properties",
@@ -2465,7 +2496,7 @@
       "toolName": "lsp_navigation",
       "path": [
         "properties",
-        "callHierarchyItem",
+        "call_hierarchy_item",
         "properties",
         "selectionRange",
         "properties",
@@ -2480,7 +2511,7 @@
       "toolName": "lsp_navigation",
       "path": [
         "properties",
-        "callHierarchyItem",
+        "call_hierarchy_item",
         "properties",
         "selectionRange",
         "properties",
@@ -2491,19 +2522,19 @@
     },
     {
       "toolName": "lsp_navigation",
-      "path": ["properties", "callHierarchyItem", "properties", "selectionRange"],
+      "path": ["properties", "call_hierarchy_item", "properties", "selectionRange"],
       "key": "~kind",
       "value": "Object"
     },
     {
       "toolName": "lsp_navigation",
-      "path": ["properties", "callHierarchyItem"],
+      "path": ["properties", "call_hierarchy_item"],
       "key": "~kind",
       "value": "Object"
     },
     {
       "toolName": "lsp_navigation",
-      "path": ["properties", "callHierarchyItem"],
+      "path": ["properties", "call_hierarchy_item"],
       "key": "~optional",
       "value": true
     },
@@ -2515,7 +2546,7 @@
     },
     {
       "toolName": "diagnostic_mark",
-      "path": ["properties", "filePath"],
+      "path": ["properties", "file_path"],
       "key": "~kind",
       "value": "String"
     },

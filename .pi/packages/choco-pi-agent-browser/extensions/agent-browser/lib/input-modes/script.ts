@@ -21,6 +21,11 @@ import {
 import { validateToolArgs } from "../runtime.ts";
 import { classifyAgentBrowserDiagnostic } from "../results/categories.ts";
 import { parseAgentBrowserDiagnostic } from "../results/presentation/errors.ts";
+import {
+  toModelVisibleData,
+  toSnakeCaseKeys,
+  type ToolOutputValue,
+} from "../results/tool-output-keys.ts";
 import type {
   AgentBrowserDiagnostic,
   AgentBrowserFailureCategory,
@@ -89,6 +94,7 @@ export interface CompiledAgentBrowserScript {
 export interface AgentBrowserScriptBrowserParams {
   args: string[];
   stdin?: string;
+  /** Internal name; the script passes it as `timeout_ms`. */
   timeoutMs?: number;
 }
 
@@ -158,7 +164,45 @@ type ScriptChildMessage =
 
 type ScriptParentMessage =
   | { code: string; type: "start" }
-  | { envelope: AgentBrowserScriptBrowserEnvelope; id: number; type: "response" };
+  | { envelope: AgentBrowserScriptBrowserEnvelopeView; id: number; type: "response" };
+
+/** The browser() response as the script sees it: snake_case keys. */
+export interface AgentBrowserScriptBrowserEnvelopeView {
+  data: AgentBrowserScriptBrowserEnvelope["data"] | ToolOutputValue;
+  details: AgentBrowserScriptBrowserEnvelope["details"] | ToolOutputValue;
+  diagnostic: AgentBrowserScriptBrowserEnvelope["diagnostic"] | ToolOutputValue;
+  error: string | undefined;
+  failure_category: AgentBrowserFailureCategory | undefined;
+  next_actions: AgentBrowserScriptBrowserEnvelope["nextActions"] | ToolOutputValue;
+  ok: boolean;
+  result_category: AgentBrowserResultCategory;
+  success_category: AgentBrowserSuccessCategory | undefined;
+  summary: string;
+  text: string;
+}
+
+/**
+ * Converts the internal envelope to the script-visible view at the IPC boundary. Wrapper-built
+ * parts (details, diagnostic, next_actions) get snake_case keys; `data` follows the JSON-mode rule
+ * (wrapper-compacted data converts, upstream CLI keys stay verbatim).
+ */
+export function toScriptBrowserEnvelopeView(
+  envelope: AgentBrowserScriptBrowserEnvelope,
+): AgentBrowserScriptBrowserEnvelopeView {
+  return {
+    data: toModelVisibleData(envelope.data),
+    details: toSnakeCaseKeys(envelope.details),
+    diagnostic: toSnakeCaseKeys(envelope.diagnostic),
+    error: envelope.error,
+    failure_category: envelope.failureCategory,
+    next_actions: toSnakeCaseKeys(envelope.nextActions),
+    ok: envelope.ok,
+    result_category: envelope.resultCategory,
+    success_category: envelope.successCategory,
+    summary: envelope.summary,
+    text: envelope.text,
+  };
+}
 
 export function compileAgentBrowserScript<Input>(
   input: Input,
@@ -205,11 +249,11 @@ export function validateAgentBrowserScriptBrowserParams<Input>(
 ): AgentBrowserScriptBrowserParamsValidation {
   if (!isInputRecord(input)) return { error: "script browser(params) requires an object." };
   const unsupportedField = Object.keys(input).find(
-    (field) => !["args", "stdin", "timeoutMs"].includes(field),
+    (field) => !["args", "stdin", "timeout_ms"].includes(field),
   );
   if (unsupportedField)
     return {
-      error: `script browser(params) does not support ${unsupportedField}; use only args, stdin, and timeoutMs.`,
+      error: `script browser(params) does not support ${unsupportedField}; use only args, stdin, and timeout_ms.`,
     };
   if (!isStringArray(input.args) || input.args.length === 0) {
     return { error: "script browser(params).args must be a non-empty string array." };
@@ -218,15 +262,17 @@ export function validateAgentBrowserScriptBrowserParams<Input>(
     return { error: "script browser(params).stdin must be a string when provided." };
   }
   if (
-    input.timeoutMs !== undefined &&
-    (!isNumber(input.timeoutMs) || !Number.isSafeInteger(input.timeoutMs) || input.timeoutMs <= 0)
+    input.timeout_ms !== undefined &&
+    (!isNumber(input.timeout_ms) ||
+      !Number.isSafeInteger(input.timeout_ms) ||
+      input.timeout_ms <= 0)
   ) {
-    return { error: "script browser(params).timeoutMs must be a positive integer when provided." };
+    return { error: "script browser(params).timeout_ms must be a positive integer when provided." };
   }
   const params: AgentBrowserScriptBrowserParams = {
     args: input.args,
     stdin: isString(input.stdin) ? input.stdin : undefined,
-    timeoutMs: isNumber(input.timeoutMs) ? input.timeoutMs : undefined,
+    timeoutMs: isNumber(input.timeout_ms) ? input.timeout_ms : undefined,
   };
   const policyError = getScriptCallPolicyError(params.args);
   if (policyError) return { error: policyError, policyBlocked: true };
@@ -393,7 +439,7 @@ export async function runAgentBrowserScript(
     return buildFailedRun({
       callCount: 0,
       emitCount: 0,
-      error: `script timeoutMs must be between 1 and ${AGENT_BROWSER_SCRIPT_MAX_TIMEOUT_MS}.`,
+      error: `script timeout_ms must be between 1 and ${AGENT_BROWSER_SCRIPT_MAX_TIMEOUT_MS}.`,
       failureCategory: "validation-error",
       rejectedCallCount: 0,
       steps: [],
@@ -643,7 +689,11 @@ export async function runAgentBrowserScript(
         }
         steps.push(buildStepSummary(callCount - 1, envelope));
         try {
-          await sendParentMessage({ envelope, id: message.id, type: "response" });
+          await sendParentMessage({
+            envelope: toScriptBrowserEnvelopeView(envelope),
+            id: message.id,
+            type: "response",
+          });
         } catch {
           await fail("Unable to return a browser result to the script sandbox.", "upstream-error");
           return;

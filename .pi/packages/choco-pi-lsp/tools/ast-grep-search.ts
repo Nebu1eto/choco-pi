@@ -59,7 +59,7 @@ function toSearchReads(matches: AstGrepMatch[]): SearchReadLocation[] {
   return out;
 }
 
-// Default and ceilings for agent-facing search inputs. `maxMatches` lets a caller
+// Default and ceilings for agent-facing search inputs. `max_matches` lets a caller
 // trade volume for completeness within these bounds (the default preserves the
 // historical page size). Explicit path lists are capped like the other bounded
 // multi-file tools, while a single directory path remains a valid project scope.
@@ -253,7 +253,7 @@ function getPatternHint(pattern: string, lang: string, selector?: string): strin
     }
   }
 
-  return "Hint: No matches. Retry once with a smaller valid AST pattern scoped to the same paths (for example a call like `foo($$$ARGS)`, an import statement, or `function $NAME($$$ARGS) { $$$BODY }`). If you're actually looking for a name/usage rather than a structural pattern, prefer symbol_search (ranked identifier search) or module_report (file outline) over another AST retry; lsp_navigation findReferences finds exact call sites once you have a definition. If that also fails, use grep for text search, or ast_grep_dump on a small representative snippet to inspect node kinds.";
+  return "Hint: No matches. Retry once with a smaller valid AST pattern scoped to the same paths (for example a call like `foo($$$ARGS)`, an import statement, or `function $NAME($$$ARGS) { $$$BODY }`). If you're actually looking for a name/usage rather than a structural pattern, prefer symbol_search (ranked identifier search) or module_report (file outline) over another AST retry; lsp_navigation operation=references finds exact call sites once you have a definition. If that also fails, use grep for text search, or ast_grep_dump on a small representative snippet to inspect node kinds.";
 }
 
 export function createAstGrepSearchTool(astGrepClient: AstGrepClient) {
@@ -273,7 +273,7 @@ export function createAstGrepSearchTool(astGrepClient: AstGrepClient) {
       "  - arbitrary text without code structure\n\n" +
       'Metavariables match AST nodes, not text inside quoted string literals: `from "$PATH"` matches the literal text $PATH. Use an exact quoted string for a known import, or grep for wildcard text. ' +
       "Use 'paths' to scope to specific files/folders. " +
-      "Use 'nodeKind' to find every node of a known AST kind, or 'ast_grep_dump' first when the kind is unknown. " +
+      "Use 'node_kind' to find every node of a known AST kind, or 'ast_grep_dump' first when the kind is unknown. " +
       "Avoid 'selector' unless you know the exact AST node kind; it narrows matching and does not extract fields. " +
       'If this tool is inactive, call lsp_activate_tools with tools=["ast_grep_search"]; activation takes effect next turn. If zero matches, retry once with a simpler AST pattern, then use ast_grep_dump on a small representative snippet before falling back to grep.',
     promptSnippet: "AST-aware structural code search",
@@ -302,108 +302,105 @@ export function createAstGrepSearchTool(astGrepClient: AstGrepClient) {
       return `ast_grep_search — ${count}${ofTotal} match${count === 1 && !ofTotal ? "" : "es"}${applied}`;
     }),
     parameters: hostParams(
-      obj(
-        {
-          pattern: opt(
-            str({
-              description:
-                "AST pattern (use function/class/call context, not text). Required unless `rule` or `nodeKind` is provided. Do not put metavariables inside quoted string literals; they match literally.",
-            }),
-          ),
-          lang: oneOf(LANGUAGES, {
-            description: "Target language",
+      obj({
+        pattern: opt(
+          str({
+            description:
+              "AST pattern (use function/class/call context, not text). Required unless `rule` or `node_kind` is provided. Do not put metavariables inside quoted string literals; they match literally.",
           }),
-          paths: opt(
-            arr(str(), {
-              maxItems: MAX_PATHS,
-              description: `Specific files/folders to search (max ${MAX_PATHS} entries)`,
-            }),
-          ),
-          selector: opt(
-            str({
-              description:
-                "Advanced: restrict search to a specific AST node kind (for example 'call_expression' or 'function_declaration'). This narrows matching; it does not extract fields from matches.",
-            }),
-          ),
-          context: opt(
-            num({
-              description: "Show N lines before/after each match for context",
-            }),
-          ),
-          nodeKind: opt(
-            str({
-              description:
-                "Expert grammar-specific escape hatch: find every node of this exact AST kind (for example `call_expression`) without writing a pattern. Node kinds are not universal across languages; use ast_grep_dump to discover them. Mutually exclusive with `pattern` and `rule`; can be combined with structural constraints.",
-            }),
-          ),
-          insideKind: opt(
-            str({
-              description:
-                'Restrict matches to nodes inside an ancestor of this AST node kind. Example: `insideKind: "function_declaration"` finds the pattern only when it appears inside a function body. Searches all ancestors (stopBy: end), not just the immediate parent. Synthesizes a YAML rule — takes precedence over `selector` and `strictness`.',
-            }),
-          ),
-          hasKind: opt(
-            str({
-              description:
-                'Restrict matches to nodes whose immediate child has this AST node kind (ast-grep default stopBy: neighbor). Example: `hasKind: "await_expression"`.',
-            }),
-          ),
-          hasDescendantKind: opt(
-            str({
-              description:
-                "Restrict matches to nodes containing this AST node kind anywhere in their descendants. Explicit recursive form (`stopBy: end`); use this instead of `hasKind` when nesting is not immediate.",
-            }),
-          ),
-          follows: opt(
-            str({
-              description:
-                'Restrict matches to nodes that immediately follow a sibling matching this pattern. Example: `follows: "return $X"` finds the pattern only when preceded by a return statement.',
-            }),
-          ),
-          precedes: opt(
-            str({
-              description:
-                "Restrict matches to nodes that immediately precede a sibling matching this pattern.",
-            }),
-          ),
-          rule: opt(
-            str({
-              description:
-                "Raw ast-grep YAML rule. When provided, routes through `sg scan --config` instead of `sg run -p`, unlocking the full rule DSL. Takes precedence over `pattern` and structural-intent params. The YAML must include `id` and `language` fields.",
-            }),
-          ),
-          skip: opt(
-            num({
-              description:
-                "Match offset for pagination. Skip the first N matches and return the next page. Use when results are truncated — increment by the page size to retrieve subsequent pages.",
-            }),
-          ),
-          maxMatches: opt(
-            num({
-              description: `Cap on matches returned per call (default ${DEFAULT_PAGE_SIZE}, max ${MAX_PAGE_SIZE}). Lower it to keep a broad search compact; raise it to page less. Also sets the pagination step for skip.`,
-            }),
-          ),
-          groupByFile: opt(
-            bool({
-              description:
-                "Render results grouped by file (one line per file with L<line>:<col> locations) instead of each match's body. Compact distribution view for high-volume searches; match read-slices remain in details.matchLocations.",
-            }),
-          ),
-          strictness: opt(
-            oneOf(["smart", "relaxed", "ast", "cst", "signature", "template"], {
-              description:
-                "Pattern matching strictness. 'smart' (default) ignores comments and whitespace. 'relaxed' also ignores unnamed nodes like punctuation — useful when optional trailing commas cause misses. 'ast' ignores all whitespace. 'signature' matches only structural shape, ignoring bodies.",
-            }),
-          ),
-          validateOnly: opt(
-            bool({
-              description:
-                "Validate/compile the pattern or rule without scanning project files. Helps distinguish a bad pattern/rule from a real no-match result.",
-            }),
-          ),
-        },
-        { open: true },
-      ),
+        ),
+        lang: oneOf(LANGUAGES, {
+          description: "Target language",
+        }),
+        paths: opt(
+          arr(str(), {
+            maxItems: MAX_PATHS,
+            description: `Specific files/folders to search (max ${MAX_PATHS} entries)`,
+          }),
+        ),
+        selector: opt(
+          str({
+            description:
+              "Advanced: restrict search to a specific AST node kind (for example 'call_expression' or 'function_declaration'). This narrows matching; it does not extract fields from matches.",
+          }),
+        ),
+        context: opt(
+          num({
+            description: "Show N lines before/after each match for context",
+          }),
+        ),
+        node_kind: opt(
+          str({
+            description:
+              "Expert grammar-specific escape hatch: find every node of this exact AST kind (for example `call_expression`) without writing a pattern. Node kinds are not universal across languages; use ast_grep_dump to discover them. Mutually exclusive with `pattern` and `rule`; can be combined with structural constraints.",
+          }),
+        ),
+        inside_kind: opt(
+          str({
+            description:
+              'Restrict matches to nodes inside an ancestor of this AST node kind. Example: `inside_kind: "function_declaration"` finds the pattern only when it appears inside a function body. Searches all ancestors (stopBy: end), not just the immediate parent. Synthesizes a YAML rule — takes precedence over `selector` and `strictness`.',
+          }),
+        ),
+        has_kind: opt(
+          str({
+            description:
+              'Restrict matches to nodes whose immediate child has this AST node kind (ast-grep default stopBy: neighbor). Example: `has_kind: "await_expression"`.',
+          }),
+        ),
+        has_descendant_kind: opt(
+          str({
+            description:
+              "Restrict matches to nodes containing this AST node kind anywhere in their descendants. Explicit recursive form (`stopBy: end`); use this instead of `has_kind` when nesting is not immediate.",
+          }),
+        ),
+        follows: opt(
+          str({
+            description:
+              'Restrict matches to nodes that immediately follow a sibling matching this pattern. Example: `follows: "return $X"` finds the pattern only when preceded by a return statement.',
+          }),
+        ),
+        precedes: opt(
+          str({
+            description:
+              "Restrict matches to nodes that immediately precede a sibling matching this pattern.",
+          }),
+        ),
+        rule: opt(
+          str({
+            description:
+              "Raw ast-grep YAML rule. When provided, routes through `sg scan --config` instead of `sg run -p`, unlocking the full rule DSL. Takes precedence over `pattern` and structural-intent params. The YAML must include `id` and `language` fields.",
+          }),
+        ),
+        skip: opt(
+          num({
+            description:
+              "Match offset for pagination. Skip the first N matches and return the next page. Use when results are truncated — increment by the page size to retrieve subsequent pages.",
+          }),
+        ),
+        max_matches: opt(
+          num({
+            description: `Cap on matches returned per call (default ${DEFAULT_PAGE_SIZE}, max ${MAX_PAGE_SIZE}). Lower it to keep a broad search compact; raise it to page less. Also sets the pagination step for skip.`,
+          }),
+        ),
+        group_by_file: opt(
+          bool({
+            description:
+              "Render results grouped by file (one line per file with L<line>:<col> locations) instead of each match's body. Compact distribution view for high-volume searches; match read-slices remain in details.matchLocations.",
+          }),
+        ),
+        strictness: opt(
+          oneOf(["smart", "relaxed", "ast", "cst", "signature", "template"], {
+            description:
+              "Pattern matching strictness. 'smart' (default) ignores comments and whitespace. 'relaxed' also ignores unnamed nodes like punctuation — useful when optional trailing commas cause misses. 'ast' ignores all whitespace. 'signature' matches only structural shape, ignoring bodies.",
+          }),
+        ),
+        validate_only: opt(
+          bool({
+            description:
+              "Validate/compile the pattern or rule without scanning project files. Helps distinguish a bad pattern/rule from a real no-match result.",
+          }),
+        ),
+      }),
     ),
     async execute(
       _toolCallId: string,
@@ -420,38 +417,38 @@ export function createAstGrepSearchTool(astGrepClient: AstGrepClient) {
       // SAFETY: The host validates params against this tool's TypeBox parameter schema before execute runs.
       const {
         paths,
-        nodeKind,
+        node_kind: nodeKind,
         selector,
         context,
         skip,
-        maxMatches,
-        groupByFile,
+        max_matches: maxMatches,
+        group_by_file: groupByFile,
         strictness,
         rule,
-        insideKind,
-        hasKind,
-        hasDescendantKind,
+        inside_kind: insideKind,
+        has_kind: hasKind,
+        has_descendant_kind: hasDescendantKind,
         follows,
         precedes,
-        validateOnly,
+        validate_only: validateOnly,
       } = params as {
         pattern?: string;
         lang?: string;
         paths?: string[];
-        nodeKind?: string;
+        node_kind?: string;
         selector?: string;
         context?: number;
         skip?: number;
-        maxMatches?: number;
-        groupByFile?: boolean;
+        max_matches?: number;
+        group_by_file?: boolean;
         strictness?: string;
         rule?: string;
-        insideKind?: string;
-        hasKind?: string;
-        hasDescendantKind?: string;
+        inside_kind?: string;
+        has_kind?: string;
+        has_descendant_kind?: string;
         follows?: string;
         precedes?: string;
-        validateOnly?: boolean;
+        validate_only?: boolean;
       };
       const pattern = isRuntimeString(params.pattern) ? params.pattern : "";
       const rawLang = isRuntimeString(params.lang) ? params.lang : "";
@@ -539,13 +536,13 @@ export function createAstGrepSearchTool(astGrepClient: AstGrepClient) {
 
         if (!hasPattern && !hasRawRule && !hasNodeKind) {
           logOutcome("error", {
-            errorRaw: "pattern is required unless rule or nodeKind is provided",
+            errorRaw: "pattern is required unless rule or node_kind is provided",
           });
           return {
             content: [
               {
                 type: "text" as const,
-                text: "Error: pattern is required unless rule or nodeKind is provided",
+                text: "Error: pattern is required unless rule or node_kind is provided",
               },
             ],
             isError: true,
@@ -629,7 +626,7 @@ export function createAstGrepSearchTool(astGrepClient: AstGrepClient) {
           };
         }
         if (hasNodeKind && hasPattern) {
-          const errorRaw = "nodeKind cannot be combined with pattern";
+          const errorRaw = "node_kind cannot be combined with pattern";
           logOutcome("error", { errorRaw });
           return {
             content: [{ type: "text" as const, text: `Error: ${errorRaw}` }],
@@ -638,7 +635,7 @@ export function createAstGrepSearchTool(astGrepClient: AstGrepClient) {
           };
         }
         if (hasNodeKind && hasRawRule) {
-          const errorRaw = "nodeKind cannot be combined with rule";
+          const errorRaw = "node_kind cannot be combined with rule";
           logOutcome("error", { errorRaw });
           return {
             content: [{ type: "text" as const, text: `Error: ${errorRaw}` }],

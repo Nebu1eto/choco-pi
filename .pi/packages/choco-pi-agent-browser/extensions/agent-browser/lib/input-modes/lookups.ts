@@ -35,45 +35,45 @@ export function compileAgentBrowserSourceLookup<Input>(
   input: Input,
 ): CompilationResult<CompiledAgentBrowserSourceLookup> {
   if (!isInputRecord(input)) {
-    return { error: "sourceLookup must be an object." };
+    return { error: "source_lookup must be an object." };
   }
   const selector = input.selector;
-  const reactFiberId = input.reactFiberId;
-  const componentName = input.componentName;
+  const reactFiberId = input.react_fiber_id;
+  const componentName = input.component_name;
   if (selector !== undefined && !isNonEmptyString(selector)) {
-    return { error: "sourceLookup.selector must be a non-empty string when provided." };
+    return { error: "source_lookup.selector must be a non-empty string when provided." };
   }
   if (reactFiberId !== undefined && !isNonEmptyString(reactFiberId)) {
-    return { error: "sourceLookup.reactFiberId must be a non-empty string when provided." };
+    return { error: "source_lookup.react_fiber_id must be a non-empty string when provided." };
   }
   if (componentName !== undefined && !isNonEmptyString(componentName)) {
-    return { error: "sourceLookup.componentName must be a non-empty string when provided." };
+    return { error: "source_lookup.component_name must be a non-empty string when provided." };
   }
   if (selector === undefined && reactFiberId === undefined && componentName === undefined) {
-    return { error: "sourceLookup requires selector, reactFiberId, or componentName." };
+    return { error: "source_lookup requires selector, react_fiber_id, or component_name." };
   }
   if (
-    input.includeDomHints !== undefined &&
-    input.includeDomHints !== true &&
-    input.includeDomHints !== false
+    input.include_dom_hints !== undefined &&
+    input.include_dom_hints !== true &&
+    input.include_dom_hints !== false
   ) {
-    return { error: "sourceLookup.includeDomHints must be a boolean when provided." };
+    return { error: "source_lookup.include_dom_hints must be a boolean when provided." };
   }
-  const rawMaxWorkspaceFiles = input.maxWorkspaceFiles;
+  const rawMaxWorkspaceFiles = input.max_workspace_files;
   if (
     rawMaxWorkspaceFiles !== undefined &&
     (!isNumber(rawMaxWorkspaceFiles) ||
       !Number.isInteger(rawMaxWorkspaceFiles) ||
       rawMaxWorkspaceFiles <= 0)
   ) {
-    return { error: "sourceLookup.maxWorkspaceFiles must be a positive integer when provided." };
+    return { error: "source_lookup.max_workspace_files must be a positive integer when provided." };
   }
   if (isNumber(rawMaxWorkspaceFiles) && rawMaxWorkspaceFiles > SOURCE_LOOKUP_MAX_WORKSPACE_FILES) {
     return {
-      error: `sourceLookup.maxWorkspaceFiles must be ${SOURCE_LOOKUP_MAX_WORKSPACE_FILES} or less.`,
+      error: `source_lookup.max_workspace_files must be ${SOURCE_LOOKUP_MAX_WORKSPACE_FILES} or less.`,
     };
   }
-  const includeDomHints = input.includeDomHints !== false;
+  const includeDomHints = input.include_dom_hints !== false;
   const maxWorkspaceFiles = isNumber(rawMaxWorkspaceFiles)
     ? rawMaxWorkspaceFiles
     : SOURCE_LOOKUP_DEFAULT_MAX_WORKSPACE_FILES;
@@ -342,33 +342,33 @@ export async function analyzeSourceLookupResults<Data>(
 export function compileAgentBrowserNetworkSourceLookup<Input>(
   input: Input,
 ): CompilationResult<CompiledAgentBrowserNetworkSourceLookup> {
-  if (!isInputRecord(input)) return { error: "networkSourceLookup must be an object." };
+  if (!isInputRecord(input)) return { error: "network_source_lookup must be an object." };
   const filter = input.filter;
-  const requestId = input.requestId;
+  const requestId = input.request_id;
   const namespace = input.namespace;
   const session = input.session;
   const url = input.url;
   if (filter !== undefined && !isNonEmptyString(filter))
-    return { error: "networkSourceLookup.filter must be a non-empty string when provided." };
+    return { error: "network_source_lookup.filter must be a non-empty string when provided." };
   if (requestId !== undefined && !isNonEmptyString(requestId))
-    return { error: "networkSourceLookup.requestId must be a non-empty string when provided." };
+    return { error: "network_source_lookup.request_id must be a non-empty string when provided." };
   if (
     namespace !== undefined &&
     (!isString(namespace) || (namespace !== "" && namespace.trim().length === 0))
   )
     return {
       error:
-        "networkSourceLookup.namespace must be a non-empty string or the empty default namespace when provided.",
+        "network_source_lookup.namespace must be a non-empty string or the empty default namespace when provided.",
     };
   if (session !== undefined && !isNonEmptyString(session))
-    return { error: "networkSourceLookup.session must be a non-empty string when provided." };
+    return { error: "network_source_lookup.session must be a non-empty string when provided." };
   if (url !== undefined && !isNonEmptyString(url))
-    return { error: "networkSourceLookup.url must be a non-empty string when provided." };
+    return { error: "network_source_lookup.url must be a non-empty string when provided." };
   if (filter === undefined && requestId === undefined && url === undefined)
-    return { error: "networkSourceLookup requires requestId, filter, or url." };
+    return { error: "network_source_lookup requires request_id, filter, or url." };
   const maxWorkspaceFiles = validateLookupMaxWorkspaceFiles(
-    input.maxWorkspaceFiles,
-    "networkSourceLookup.maxWorkspaceFiles",
+    input.max_workspace_files,
+    "network_source_lookup.max_workspace_files",
   );
   if (maxWorkspaceFiles.error) return { error: maxWorkspaceFiles.error };
   const steps: Array<{ action: "network"; args: string[] }> = [];

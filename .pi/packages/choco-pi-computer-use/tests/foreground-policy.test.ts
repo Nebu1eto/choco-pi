@@ -26,6 +26,7 @@ import type { UiAction } from "../src/contract.ts";
 import { isJsonObject, isString, type JsonObject, type JsonValue } from "../src/json.ts";
 import { restoreOutline, type LookResponse, type SerializedOutlineNode } from "../src/outline.ts";
 import { replacePlatformBackendForTest } from "../src/platform/index.ts";
+import { actionLabel } from "../src/tool-params.ts";
 import type {
   ComputerUsePlatformBackend,
   HelperActResult,
@@ -237,7 +238,7 @@ function stateIdFromContent<T>(content: AgentToolResult<T>["content"]): string {
     )
     .map((part) => part.text)
     .join("\n");
-  const match = /\bstate(?:Id)? ([0-9a-f-]{36})\b/i.exec(text);
+  const match = /\bstate(?:_id)? ([0-9a-f-]{36})\b/i.exec(text);
   if (!match?.[1]) throw new Error("Expected a state id in tool output.");
   return match[1];
 }
@@ -1014,7 +1015,7 @@ test("headless mode refuses keyboard input without ref before delivery", async (
         await assert.rejects(
           executeAct("headless", { stateId, actions: [action] }, signal, undefined, ctx),
           new RegExp(
-            `^Error: ${action.action} without ref is unavailable in headless mode: .* Pass the @e ref`,
+            `^Error: ${actionLabel(action.action)} without ref is unavailable in headless mode: .* Pass the @e ref`,
           ),
         );
       }
@@ -1038,7 +1039,7 @@ test("keyboard actions reject x/y before delivery", async () => {
         await assert.rejects(
           executeAct("xy", { stateId, actions: [action] }, signal, undefined, ctx),
           new RegExp(
-            `^Error: ${action.action} does not take x/y: .*Click the point first.*pass the control's ref\\.$`,
+            `^Error: ${actionLabel(action.action)} does not take x/y: .*Click the point first.*pass the control's ref\\.$`,
           ),
         );
       }

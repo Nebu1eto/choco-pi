@@ -1,5 +1,6 @@
 import type { ProtocolDictionary } from "./runtime-values.ts";
 import { isRuntimeNumber, isRuntimeObject, isRuntimeString } from "./runtime-values.ts";
+import { toSnakeCaseKeys } from "./output-keys.ts";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 export type LspToolName = "lsp_navigation" | "lsp_diagnostics";
@@ -360,4 +361,32 @@ export function buildLspNavigationEnvelope(
   if (errors.length > 0) envelope.errors = errors;
   if (options.details !== undefined) envelope.metadata = options.details;
   return envelope;
+}
+
+/**
+ * Model-visible JSON for an envelope. Envelope, location and metadata keys are
+ * snake_case; `result` (LSP protocol data, or a result the tool already
+ * converted) is emitted unchanged. The in-memory LspToolEnvelope keeps its
+ * camelCase shape for internal consumers.
+ */
+export function serializeLspToolEnvelope(envelope: LspToolEnvelope, operation?: string): string {
+  return JSON.stringify({
+    tool: envelope.tool,
+    operation: operation ?? envelope.operation,
+    ok: envelope.ok,
+    status: envelope.status,
+    result_count: envelope.resultCount,
+    result: envelope.result,
+    diagnostics: envelope.diagnostics,
+    file_path: envelope.filePath,
+    locations: envelope.locations?.map((location) => ({
+      uri: location.uri,
+      file_path: location.filePath,
+      range: location.range,
+    })),
+    notes: envelope.notes,
+    hints: envelope.hints,
+    errors: envelope.errors,
+    metadata: envelope.metadata === undefined ? undefined : toSnakeCaseKeys(envelope.metadata),
+  });
 }

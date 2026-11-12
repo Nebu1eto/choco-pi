@@ -837,7 +837,7 @@ export async function extractGitHub(
         const sizeNote =
           `Note: Repository is ${Math.round(sizeMB)}MB (threshold: ${config.maxRepoSizeMB}MB). ` +
           `Showing API-fetched content instead of full clone. Ask the user if they'd like to clone the full repo -- ` +
-          `if yes, call fetch_content again with the same URL and add forceClone: true to the params.`;
+          `if yes, call fetch_content again with the same URL and add force_clone: true to the params.`;
         const apiView = await fetchViaApi(url, owner, repo, info, sizeNote);
         if (apiView) {
           activityMonitor.logComplete(activityId, 200);

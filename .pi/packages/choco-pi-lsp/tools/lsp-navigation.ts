@@ -28,7 +28,8 @@ import { compactRenderResult } from "./render-compact.ts";
 import { applyWorkspaceEdit, summarizeWorkspaceEdit } from "../clients/lsp/edits.ts";
 import { getLSPService } from "../clients/lsp/index.ts";
 import type { SearchReadLocation } from "../clients/search-read-registration.ts";
-import { buildLspNavigationEnvelope } from "./lsp-structured-output.ts";
+import { buildLspNavigationEnvelope, serializeLspToolEnvelope } from "./lsp-structured-output.ts";
+import { stringifySnakeCase, toSnakeCaseKeys, type SnakeJsonValue } from "./output-keys.ts";
 import { SYMBOL_KIND_NAMES } from "../clients/lsp-document-symbols.ts";
 
 const POSITION_SCHEMA = obj({ line: num(), character: num() }, { open: true });
@@ -56,6 +57,64 @@ const VALID_OPERATIONS = [
   "capabilities",
 ] as const;
 
+/**
+ * Model-facing operation names (snake_case tool I/O). VALID_OPERATIONS above
+ * stays the internal vocabulary; INTERNAL_OPERATION maps at the tool boundary.
+ */
+const TOOL_OPERATIONS = [
+  "definition",
+  "type_definition",
+  "declaration",
+  "references",
+  "hover",
+  "signature_help",
+  "document_symbol",
+  "find_symbol",
+  "workspace_symbol",
+  "code_action",
+  "rename",
+  "rename_file",
+  "implementation",
+  "prepare_call_hierarchy",
+  "incoming_calls",
+  "outgoing_calls",
+  "execute_command",
+  "workspace_diagnostics",
+  "capabilities",
+] as const;
+
+type ToolOperation = (typeof TOOL_OPERATIONS)[number];
+
+const INTERNAL_OPERATION = {
+  definition: "definition",
+  type_definition: "typeDefinition",
+  declaration: "declaration",
+  references: "references",
+  hover: "hover",
+  signature_help: "signatureHelp",
+  document_symbol: "documentSymbol",
+  find_symbol: "findSymbol",
+  workspace_symbol: "workspaceSymbol",
+  code_action: "codeAction",
+  rename: "rename",
+  rename_file: "rename_file",
+  implementation: "implementation",
+  prepare_call_hierarchy: "prepareCallHierarchy",
+  incoming_calls: "incomingCalls",
+  outgoing_calls: "outgoingCalls",
+  execute_command: "executeCommand",
+  workspace_diagnostics: "workspaceDiagnostics",
+  capabilities: "capabilities",
+} as const satisfies { readonly [Name in ToolOperation]: LspNavigationOperation };
+
+/** LSP protocol subtrees embedded in results this tool builds; their keys stay verbatim. */
+const LSP_PASSTHROUGH_KEYS: ReadonlySet<string> = new Set([
+  "edit",
+  "location",
+  "range",
+  "diagnostics",
+]);
+
 const NAVIGABLE_SYMBOL_KINDS = new Set([
   5, // Class
   6, // Method
@@ -75,19 +134,20 @@ interface LspNavigationParams {
   line?: number;
   character?: number;
   symbol?: string;
-  endLine?: number;
-  endCharacter?: number;
-  newName?: string;
-  newFilePath?: string;
+  end_line?: number;
+  end_character?: number;
+  new_name?: string;
+  new_file_path?: string;
   apply?: boolean;
   command?: string;
-  commandArguments?: unknown[];
+  command_arguments?: unknown[];
   query?: string;
   kinds?: string[];
-  exactMatch?: boolean;
-  topLevelOnly?: boolean;
-  maxResults?: number;
-  callHierarchyItem?: LSPCallHierarchyItem;
+  exact_match?: boolean;
+  top_level_only?: boolean;
+  max_results?: number;
+  /** LSP CallHierarchyItem pass-through: inner keys (selectionRange, ...) stay as the protocol spells them. */
+  call_hierarchy_item?: LSPCallHierarchyItem;
 }
 
 function normalizeOperation<T>(value: T): string {
@@ -95,9 +155,35 @@ function normalizeOperation<T>(value: T): string {
   return value.trim().replace(/^["']+|["']+$/g, "");
 }
 
-function isValidOperation(value: string): value is LspNavigationOperation {
-  // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
-  return (VALID_OPERATIONS as readonly string[]).includes(value);
+function isToolOperation(value: string): value is ToolOperation {
+  return TOOL_OPERATIONS.some((name) => name === value);
+}
+
+/** Model-facing name of an internal operation; labels such as "precheck" pass through. */
+function toolOperationName(operation: string): string {
+  for (const name of TOOL_OPERATIONS) {
+    if (INTERNAL_OPERATION[name] === operation) return name;
+  }
+  return operation;
+}
+
+/**
+ * Result JSON shown to the model. Raw LSP responses stay verbatim; results this
+ * tool builds itself (find_symbol matches, rename/rename_file summaries, the
+ * execute_command dry-run report) get snake_case keys, keeping embedded LSP
+ * objects verbatim.
+ */
+function modelResult(
+  operation: LspNavigationOperation,
+  result: RuntimeValue,
+  requestedApply: boolean,
+): RuntimeValue | SnakeJsonValue {
+  const ownedResult =
+    operation === "findSymbol" ||
+    operation === "rename" ||
+    operation === "rename_file" ||
+    (operation === "executeCommand" && !requestedApply);
+  return ownedResult ? toSnakeCaseKeys(result, { verbatimKeys: LSP_PASSTHROUGH_KEYS }) : result;
 }
 
 function operationSupportStatus(
@@ -599,19 +685,19 @@ function formatCapabilities(snapshots: CapabilitySnapshot[], filePath?: string):
 
   const rows: Array<[string, (snapshot: CapabilitySnapshot) => boolean, string?]> = [
     ["definition", (s) => !!s.operationSupport.definition],
-    ["typeDefinition", (s) => !!s.operationSupport.typeDefinition],
+    ["type_definition", (s) => !!s.operationSupport.typeDefinition],
     ["declaration", (s) => !!s.operationSupport.declaration],
     ["references", (s) => !!s.operationSupport.references],
     ["hover", (s) => !!s.operationSupport.hover],
     ["rename", (s) => !!s.operationSupport.rename],
-    ["codeAction", (s) => !!s.operationSupport.codeAction],
-    ["workspaceSymbol", (s) => !!s.operationSupport.workspaceSymbol],
+    ["code_action", (s) => !!s.operationSupport.codeAction],
+    ["workspace_symbol", (s) => !!s.operationSupport.workspaceSymbol],
     ["implementation", (s) => !!s.operationSupport.implementation],
-    ["signatureHelp", (s) => !!s.operationSupport.signatureHelp],
-    ["incomingCalls", (s) => !!s.operationSupport.callHierarchy],
-    ["outgoingCalls", (s) => !!s.operationSupport.callHierarchy],
+    ["signature_help", (s) => !!s.operationSupport.signatureHelp],
+    ["incoming_calls", (s) => !!s.operationSupport.callHierarchy],
+    ["outgoing_calls", (s) => !!s.operationSupport.callHierarchy],
     [
-      "workspaceDiagnostics",
+      "workspace_diagnostics",
       (s) => s.workspaceDiagnosticsSupport.mode === "pull",
       "pull diagnostics",
     ],
@@ -630,7 +716,7 @@ function formatCapabilities(snapshots: CapabilitySnapshot[], filePath?: string):
     }
     const commands = snapshot.advertisedCommands ?? [];
     lines.push(
-      `  executeCommand ${commands.length > 0 ? "✓" : "✗"} (${commands.length} advertised command(s)` +
+      `  execute_command ${commands.length > 0 ? "✓" : "✗"} (${commands.length} advertised command(s)` +
         (commands.length > 0 ? `: ${commands.slice(0, 20).join(", ")}` : "") +
         ")",
     );
@@ -698,23 +784,23 @@ export function createLspNavigationTool(
       "Navigate code using LSP (Language Server Protocol). LSP is enabled by default; disable with --no-lsp.\n" +
       "Operations:\n" +
       "- definition: Jump to where a symbol is defined\n" +
-      "- typeDefinition: Jump to the definition of a symbol's TYPE (e.g. the class/interface of a variable)\n" +
+      "- type_definition: Jump to the definition of a symbol's TYPE (e.g. the class/interface of a variable)\n" +
       "- declaration: Jump to a symbol's declaration (e.g. an extern/forward decl, distinct from its definition)\n" +
       "- references: Find all usages of a symbol\n" +
       "- hover: Get type/doc info at a position\n" +
-      "- signatureHelp: Show callable signatures at cursor\n" +
-      "- documentSymbol: List all symbols (functions/classes/vars) in a file\n" +
-      "- findSymbol: Search document symbols in a file by name/detail with optional kind/top-level/exact filters\n" +
-      "- workspaceSymbol: Search symbols across the whole project (best with path context)\n" +
-      "- codeAction: Find available quick fixes/refactors at a range\n" +
+      "- signature_help: Show callable signatures at cursor\n" +
+      "- document_symbol: List all symbols (functions/classes/vars) in a file\n" +
+      "- find_symbol: Search document symbols in a file by name/detail with optional kind/top-level/exact filters\n" +
+      "- workspace_symbol: Search symbols across the whole project (best with path context)\n" +
+      "- code_action: Find available quick fixes/refactors at a range\n" +
       "- rename: Compute or apply workspace edits for renaming a symbol\n" +
       "- rename_file: Preview/apply LSP-aware source file rename notifications\n" +
       "- implementation: Jump to interface implementations\n" +
-      "- prepareCallHierarchy: Get callable item at position (for incoming/outgoing)\n" +
-      "- incomingCalls: Find all functions/methods that CALL this function\n" +
-      "- outgoingCalls: Find all functions/methods CALLED by this function\n" +
-      "- executeCommand: Run a server-advertised command via workspace/executeCommand. HARDENED: allowlisted to commands the server advertised; dry-run by default (reports whether advertised) — set apply:true to actually run. Pass command (+ optional commandArguments).\n" +
-      "- workspaceDiagnostics: List all diagnostics tracked by active LSP clients\n" +
+      "- prepare_call_hierarchy: Get callable item at position (for incoming/outgoing)\n" +
+      "- incoming_calls: Find all functions/methods that CALL this function\n" +
+      "- outgoing_calls: Find all functions/methods CALLED by this function\n" +
+      "- execute_command: Run a server-advertised command via workspace/executeCommand. HARDENED: allowlisted to commands the server advertised; dry-run by default (reports whether advertised) — set apply:true to actually run. Pass command (+ optional command_arguments).\n" +
+      "- workspace_diagnostics: List all diagnostics tracked by active LSP clients\n" +
       "- capabilities: Show cached operation support for active LSP servers\n\n" +
       "Line and character are 1-based (as shown in editors). For position-based operations, prefer passing symbol when you know the line but not the exact character; character can be omitted or -1 and choco-pi-lsp will resolve the symbol column. Use symbol#N for repeated symbols on the same line (1-based occurrence).",
     promptSnippet: "Find definitions, references, and hover info via LSP",
@@ -724,7 +810,11 @@ export function createLspNavigationTool(
       supported?: boolean;
       emptyReason?: string;
     }>(({ details, args, isError, text }) => {
-      const op = details?.operation ?? (isRuntimeString(args.operation) ? args.operation : "lsp");
+      const op = details?.operation
+        ? toolOperationName(details.operation)
+        : isRuntimeString(args.operation)
+          ? args.operation
+          : "lsp";
       if (isError || details?.supported === false) {
         return `lsp_navigation ${op} — ${details?.emptyReason ?? text.split("\n")[0] ?? "unavailable"}`;
       }
@@ -735,116 +825,114 @@ export function createLspNavigationTool(
       return `lsp_navigation ${op} — ${n} result${n === 1 ? "" : "s"}`;
     }),
     parameters: hostParams(
-      obj(
-        {
-          operation: oneOf(VALID_OPERATIONS, { description: "LSP operation to perform." }),
-          path: opt(
-            str({
-              description:
-                "Absolute or relative file path. Required for file-scoped operations; optional for workspaceSymbol/workspaceDiagnostics.",
-            }),
+      obj({
+        operation: oneOf(TOOL_OPERATIONS, { description: "LSP operation to perform." }),
+        path: opt(
+          str({
+            description:
+              "Absolute or relative file path. Required for file-scoped operations; optional for workspace_symbol/workspace_diagnostics.",
+          }),
+        ),
+        line: opt(
+          num({
+            description:
+              "Line number (1-based). Required for definition/references/hover/implementation",
+          }),
+        ),
+        character: opt(
+          num({
+            description:
+              "Character offset (1-based). Optional when symbol is provided; use -1 to force symbol-column resolution.",
+          }),
+        ),
+        symbol: opt(
+          str({
+            description:
+              "Symbol name on the target line for automatic character resolution. Use symbol#N to select the Nth occurrence on the line.",
+          }),
+        ),
+        end_line: opt(
+          num({
+            description: "End line (1-based). Optional; used by code_action range.",
+          }),
+        ),
+        end_character: opt(
+          num({
+            description: "End character (1-based). Optional; used by code_action range.",
+          }),
+        ),
+        new_name: opt(
+          str({
+            description: "Required for rename operation.",
+          }),
+        ),
+        new_file_path: opt(
+          str({
+            description: "Required for rename_file operation.",
+          }),
+        ),
+        apply: opt(
+          bool({
+            description:
+              "rename/execute_command: apply for real. rename defaults to preview; execute_command defaults to a dry-run that only reports whether the command is advertised — set apply:true to actually run it.",
+          }),
+        ),
+        command: opt(
+          str({
+            description:
+              "execute_command only: the server command id to run. Must be one the server advertised (see the capabilities operation).",
+          }),
+        ),
+        command_arguments: opt(
+          arr(unknown(), {
+            description:
+              "execute_command only: arguments array passed to workspace/executeCommand.",
+          }),
+        ),
+        query: opt(
+          str({
+            description: "Symbol name to search. Used by workspace_symbol and find_symbol.",
+          }),
+        ),
+        kinds: opt(
+          arr(str(), {
+            description:
+              "find_symbol only: restrict matches to symbol kind labels such as function, class, method, variable, interface.",
+          }),
+        ),
+        exact_match: opt(
+          bool({
+            description:
+              "find_symbol only: match whole symbol names/details exactly instead of substring matching.",
+          }),
+        ),
+        top_level_only: opt(
+          bool({
+            description: "find_symbol only: do not search nested child symbols.",
+          }),
+        ),
+        max_results: opt(
+          num({
+            description: "find_symbol only: maximum matches to return. Default 20.",
+          }),
+        ),
+        // Pass-through LSP CallHierarchyItem: its own level (and ranges) stay open and keep protocol key names.
+        call_hierarchy_item: opt(
+          obj(
+            {
+              name: str(),
+              kind: num(),
+              uri: str(),
+              range: RANGE_SCHEMA,
+              selectionRange: RANGE_SCHEMA,
+            },
+            {
+              open: true,
+              description: "Call hierarchy item. Required for incoming_calls/outgoing_calls",
+            },
           ),
-          line: opt(
-            num({
-              description:
-                "Line number (1-based). Required for definition/references/hover/implementation",
-            }),
-          ),
-          character: opt(
-            num({
-              description:
-                "Character offset (1-based). Optional when symbol is provided; use -1 to force symbol-column resolution.",
-            }),
-          ),
-          symbol: opt(
-            str({
-              description:
-                "Symbol name on the target line for automatic character resolution. Use symbol#N to select the Nth occurrence on the line.",
-            }),
-          ),
-          endLine: opt(
-            num({
-              description: "End line (1-based). Optional; used by codeAction range.",
-            }),
-          ),
-          endCharacter: opt(
-            num({
-              description: "End character (1-based). Optional; used by codeAction range.",
-            }),
-          ),
-          newName: opt(
-            str({
-              description: "Required for rename operation.",
-            }),
-          ),
-          newFilePath: opt(
-            str({
-              description: "Required for rename_file operation.",
-            }),
-          ),
-          apply: opt(
-            bool({
-              description:
-                "rename/executeCommand: apply for real. rename defaults to preview; executeCommand defaults to a dry-run that only reports whether the command is advertised — set apply:true to actually run it.",
-            }),
-          ),
-          command: opt(
-            str({
-              description:
-                "executeCommand only: the server command id to run. Must be one the server advertised (see the capabilities operation).",
-            }),
-          ),
-          commandArguments: opt(
-            arr(unknown(), {
-              description:
-                "executeCommand only: arguments array passed to workspace/executeCommand.",
-            }),
-          ),
-          query: opt(
-            str({
-              description: "Symbol name to search. Used by workspaceSymbol and findSymbol.",
-            }),
-          ),
-          kinds: opt(
-            arr(str(), {
-              description:
-                "findSymbol only: restrict matches to symbol kind labels such as function, class, method, variable, interface.",
-            }),
-          ),
-          exactMatch: opt(
-            bool({
-              description:
-                "findSymbol only: match whole symbol names/details exactly instead of substring matching.",
-            }),
-          ),
-          topLevelOnly: opt(
-            bool({
-              description: "findSymbol only: do not search nested child symbols.",
-            }),
-          ),
-          maxResults: opt(
-            num({
-              description: "findSymbol only: maximum matches to return. Default 20.",
-            }),
-          ),
-          callHierarchyItem: opt(
-            obj(
-              {
-                name: str(),
-                kind: num(),
-                uri: str(),
-                range: RANGE_SCHEMA,
-                selectionRange: RANGE_SCHEMA,
-              },
-              {
-                open: true,
-                description: "Call hierarchy item. Required for incomingCalls/outgoingCalls",
-              },
-            ),
-          ),
-        },
-        { open: true },
-      ),
+        ),
+      }),
     ),
     async execute(
       _toolCallId: string,
@@ -859,6 +947,8 @@ export function createLspNavigationTool(
       let columnResolution: SymbolColumnResolution | undefined;
       let mutationContext: LspMutationContext | undefined;
       let requestedApply = false;
+      // Model-facing operation name for the result envelope; set once the input is classified.
+      let modelOperation: string | undefined;
 
       const finalize = (
         payload: {
@@ -902,6 +992,11 @@ export function createLspNavigationTool(
         });
 
         const text = payload.content[0]?.text ?? "";
+        const envelopeOperation = modelOperation ?? meta.operation;
+        const modelDetails =
+          payload.details !== undefined && "operation" in payload.details
+            ? { ...payload.details, operation: envelopeOperation }
+            : payload.details;
         const envelope = buildLspNavigationEnvelope({
           operation: meta.operation,
           filePath: meta.filePath,
@@ -909,7 +1004,7 @@ export function createLspNavigationTool(
           resultCount: meta.resultCount,
           text,
           isError: payload.isError,
-          details: payload.details,
+          details: modelDetails,
         });
 
         return {
@@ -920,7 +1015,8 @@ export function createLspNavigationTool(
               // Compact JSON: omit indentation. Saves ~50% on rename / workspace-edits payloads
               // while keeping the envelope machine-parseable. Tests use JSON.parse so
               // they are agnostic to whitespace.
-              text: JSON.stringify(envelope),
+              // Envelope and metadata keys are snake_case; LSP results stay verbatim.
+              text: serializeLspToolEnvelope(envelope, envelopeOperation),
             },
           ],
           details: {
@@ -956,22 +1052,23 @@ export function createLspNavigationTool(
         line,
         character,
         symbol,
-        endLine,
-        endCharacter,
-        newName,
-        newFilePath,
+        end_line: endLine,
+        end_character: endCharacter,
+        new_name: newName,
+        new_file_path: newFilePath,
         apply,
         command,
-        commandArguments,
+        command_arguments: commandArguments,
         query,
         kinds,
-        exactMatch,
-        topLevelOnly,
-        maxResults,
-        callHierarchyItem,
+        exact_match: exactMatch,
+        top_level_only: topLevelOnly,
+        max_results: maxResults,
+        call_hierarchy_item: callHierarchyItem,
       } = params;
       const normalizedOperation = normalizeOperation(rawOperation);
-      if (!isValidOperation(normalizedOperation)) {
+      if (!isToolOperation(normalizedOperation)) {
+        modelOperation = normalizedOperation || "invalid";
         return finalize(
           {
             content: [
@@ -979,14 +1076,14 @@ export function createLspNavigationTool(
                 type: "text" as const,
                 text:
                   `Unknown lsp_navigation operation "${normalizedOperation || String(rawOperation ?? "") || ""}". ` +
-                  `Valid operations: ${VALID_OPERATIONS.join(", ")}`,
+                  `Valid operations: ${TOOL_OPERATIONS.join(", ")}`,
               },
             ],
             isError: true,
             details: {
               rawOperation,
               normalizedOperation,
-              validOperations: VALID_OPERATIONS,
+              validOperations: TOOL_OPERATIONS,
             },
           },
           {
@@ -997,7 +1094,9 @@ export function createLspNavigationTool(
           },
         );
       }
-      const operation = normalizedOperation;
+      const toolOperation = normalizedOperation;
+      const operation = INTERNAL_OPERATION[toolOperation];
+      modelOperation = toolOperation;
       requestedApply = apply === true;
       if (requestedApply && ["rename", "rename_file", "executeCommand"].includes(operation)) {
         const cwd = ctx.cwd || ".";
@@ -1025,7 +1124,7 @@ export function createLspNavigationTool(
             content: [
               {
                 type: "text" as const,
-                text: `path is required for ${operation}`,
+                text: `path is required for ${toolOperation}`,
               },
             ],
             isError: true,
@@ -1127,7 +1226,7 @@ export function createLspNavigationTool(
               content: [
                 {
                   type: "text" as const,
-                  text: `${note}\n${JSON.stringify(result)}`,
+                  text: `${note}\n${stringifySnakeCase(result, { verbatimKeys: LSP_PASSTHROUGH_KEYS })}`,
                 },
               ],
               details: {
@@ -1165,7 +1264,7 @@ export function createLspNavigationTool(
             content: [
               {
                 type: "text" as const,
-                text: `${note}\n${JSON.stringify(result)}`,
+                text: `${note}\n${stringifySnakeCase(result, { verbatimKeys: LSP_PASSTHROUGH_KEYS })}`,
               },
             ],
             details: {
@@ -1234,7 +1333,7 @@ export function createLspNavigationTool(
               content: [
                 {
                   type: "text" as const,
-                  text: `LSP server for ${path.basename(filePath)} does not advertise support for ${operation}`,
+                  text: `LSP server for ${path.basename(filePath)} does not advertise support for ${toolOperation}`,
                 },
               ],
               isError: true,
@@ -1289,11 +1388,11 @@ export function createLspNavigationTool(
         );
         if (supported === false) {
           throw new Error(
-            "__UNSUPPORTED__ Active LSP server does not advertise support for workspaceSymbol",
+            "__UNSUPPORTED__ Active LSP server does not advertise support for workspace_symbol",
           );
         }
         if (!query || query.trim().length === 0) {
-          throw new Error("__BADINPUT__ query parameter required for workspaceSymbol");
+          throw new Error("__BADINPUT__ query parameter required for workspace_symbol");
         }
         if (rawPath) {
           await openFileBestEffort(lspService, filePath);
@@ -1340,7 +1439,7 @@ export function createLspNavigationTool(
             return lspService.documentSymbol(filePath);
           case "findSymbol": {
             if (!query || query.trim().length === 0) {
-              throw new Error("__BADINPUT__ query parameter required for findSymbol");
+              throw new Error("__BADINPUT__ query parameter required for find_symbol");
             }
             // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
             const symbols = (await lspService.documentSymbol(filePath)) as SymbolNode[];
@@ -1359,7 +1458,7 @@ export function createLspNavigationTool(
             return lspService.codeAction(filePath, lspLine, lspChar, lspEndLine, lspEndChar);
           case "rename": {
             if (!newName || newName.trim().length === 0) {
-              throw new Error("__BADINPUT__ newName parameter required for rename");
+              throw new Error("__BADINPUT__ new_name parameter required for rename");
             }
             const edit = await lspService.rename(filePath, lspLine, lspChar, newName);
             if (!edit) return null;
@@ -1382,7 +1481,7 @@ export function createLspNavigationTool(
           }
           case "rename_file": {
             if (!newFilePath || newFilePath.trim().length === 0) {
-              throw new Error("__BADINPUT__ newFilePath parameter required for rename_file");
+              throw new Error("__BADINPUT__ new_file_path parameter required for rename_file");
             }
             const resolvedNewFilePath = path.isAbsolute(newFilePath)
               ? newFilePath
@@ -1409,7 +1508,7 @@ export function createLspNavigationTool(
             return lspService.prepareCallHierarchy(filePath, lspLine, lspChar);
           case "executeCommand": {
             if (!command || command.trim().length === 0) {
-              throw new Error("__BADINPUT__ command parameter required for executeCommand");
+              throw new Error("__BADINPUT__ command parameter required for execute_command");
             }
             const advertised = await lspService.getAdvertisedCommands(
               rawPath ? filePath : undefined,
@@ -1445,7 +1544,7 @@ export function createLspNavigationTool(
           case "incomingCalls": {
             if (!callHierarchyItem) {
               throw new Error(
-                "__BADINPUT__ callHierarchyItem parameter required for incomingCalls",
+                "__BADINPUT__ call_hierarchy_item parameter required for incoming_calls",
               );
             }
             return lspService.incomingCalls(callHierarchyItem);
@@ -1453,7 +1552,7 @@ export function createLspNavigationTool(
           case "outgoingCalls": {
             if (!callHierarchyItem) {
               throw new Error(
-                "__BADINPUT__ callHierarchyItem parameter required for outgoingCalls",
+                "__BADINPUT__ call_hierarchy_item parameter required for outgoing_calls",
               );
             }
             return lspService.outgoingCalls(callHierarchyItem);
@@ -1463,7 +1562,7 @@ export function createLspNavigationTool(
         }
       };
 
-      let result: unknown;
+      let result: RuntimeValue;
       let usedDocumentSymbolFallback = false;
       try {
         result = await runOperation();
@@ -1575,14 +1674,14 @@ export function createLspNavigationTool(
       const fileCtx = filePath ? " at " + path.basename(filePath) : "";
       const lineCtx = line ? ":" + line + ":" + character : "";
       let output = isEmpty
-        ? "No results for " + operation + fileCtx + lineCtx
-        : JSON.stringify(result);
+        ? "No results for " + toolOperation + fileCtx + lineCtx
+        : JSON.stringify(modelResult(operation, result, requestedApply));
       if (isEmpty && operation === "workspaceSymbol" && !rawPath) {
         output +=
-          "\nHint: provide path to scope workspaceSymbol to the active language server/root.";
+          "\nHint: provide path to scope workspace_symbol to the active language server/root.";
       }
       if (usedDocumentSymbolFallback) {
-        output += "\nNote: served from documentSymbol fallback due to empty primary result.";
+        output += "\nNote: served from document_symbol fallback due to empty primary result.";
       }
       if (operation === "references" && Array.isArray(result) && result.length <= 2) {
         output +=

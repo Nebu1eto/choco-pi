@@ -14,7 +14,7 @@ export interface FigmaComponentHintOptions {
   includeCodeConnect?: boolean;
 }
 
-export interface FigmaComponentImplementationHints {
+export interface FigmaComponentImplementationHints extends FigmaRecord {
   componentName: string;
   suggestedFiles: string[];
   suggestedProps: FigmaRecord[];

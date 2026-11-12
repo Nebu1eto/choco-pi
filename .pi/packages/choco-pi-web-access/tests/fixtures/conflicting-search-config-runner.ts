@@ -131,7 +131,7 @@ const results = [
   await rejection(async () => {
     await tool.execute(
       "direct-conflict-1",
-      { imageQuery: "conflict" },
+      { image_query: "conflict" },
       undefined,
       undefined,
       context,
@@ -140,7 +140,7 @@ const results = [
   await rejection(async () => {
     await tool.execute(
       "direct-conflict-2",
-      { imageQuery: "conflict" },
+      { image_query: "conflict" },
       undefined,
       undefined,
       context,

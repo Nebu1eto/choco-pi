@@ -5,6 +5,7 @@ import {
   type AuthConfiguratorOptions,
 } from "../common/auth-config.ts";
 import { jsonToolResult, textToolResult } from "../common/tool-result.ts";
+import type { FigmaAssetKind, FigmaAssetType, FigmaExtractAssetsResult } from "./figma-assets.ts";
 import { FigmaClient, parseFigmaUrl } from "./figma-client.ts";
 import {
   FigmaGetDesignContextParams,
@@ -22,30 +23,32 @@ import {
   FigmaSearchComponentsParams,
   FigmaSingleFileParams,
 } from "./figma-schemas.ts";
+import { toFigmaOutput } from "./figma-output-keys.ts";
+import type { FigmaValue } from "./figma-values.ts";
 import { hostParams } from "./schema-bridge.ts";
 
 const DEFAULT_PROCESSED_MAX_CHARS = 20_000;
 const DEFAULT_RAW_MAX_CHARS = 40_000;
 
-interface ProcessedNodeParams {
-  fileKey: string;
-  nodeId: string;
+/** snake_case tool input; the client and summarizers keep their internal camelCase option names. */
+interface ToolNodeParams {
+  file_key: string;
+  node_id?: string;
   depth?: number;
-  includeHidden?: boolean;
-  includeVectors?: boolean;
-  includeComponentInternals?: boolean;
-  renderImage?: boolean;
-  outputDir?: string;
+  include_hidden?: boolean;
+  include_vectors?: boolean;
+  include_component_internals?: boolean;
+  render_image?: boolean;
+  output_dir?: string;
   format?: "png" | "jpg" | "svg" | "pdf";
   scale?: number;
-  maxResponseChars?: number;
 }
 
-interface ImplementationContextParams extends ProcessedNodeParams {
+interface ToolImplementationParams extends ToolNodeParams {
   framework?: "react" | "html" | "vue" | "angular" | "react-native";
   styling?: "css" | "css-modules" | "styled-components" | "tailwind" | "inline";
-  resolveTokens?: boolean;
-  includeCodeSnippets?: boolean;
+  resolve_tokens?: boolean;
+  include_code_snippets?: boolean;
 }
 
 const FIGMA_AUTH: AuthConfiguratorOptions = {
@@ -73,11 +76,11 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "figma_parse_url",
     label: "Figma Parse URL",
-    description: "Parse a Figma URL into fileKey and nodeId values for the other figma_* tools.",
+    description: "Parse a Figma URL into file_key and node_id values for the other figma_* tools.",
     promptSnippet: "Parse Figma URLs into file key and node ID.",
     parameters: hostParams(FigmaParseUrlParams),
     async execute(_toolCallId, params) {
-      return jsonToolResult(parseFigmaUrl(params.url));
+      return jsonToolResult(toFigmaOutput(parseFigmaUrl(params.url)));
     },
   });
 
@@ -85,7 +88,7 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     name: "figma_get_design_context",
     label: "Figma Design Context",
     description:
-      "Fetch compact LLM-ready Figma context. With nodeId returns target node summary, ancestors/page, and sibling names; without nodeId returns canvases and top-level frames only.",
+      "Fetch compact LLM-ready Figma context. With node_id returns target node summary, ancestors/page, and sibling names; without node_id returns canvases and top-level frames only.",
     promptSnippet: "Explore compact Figma file and node structure.",
     promptGuidelines: [
       "Use figma_configure_auth only when Figma auth is missing, invalid, expired, or the user asks to update the token; never ask the user to paste tokens in chat.",
@@ -97,10 +100,10 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     parameters: hostParams(FigmaGetDesignContextParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await withFigmaAuth(ctx, () =>
-        client.getDesignContext(params.fileKey, params.nodeId),
+        client.getDesignContext(params.file_key, params.node_id),
       );
-      return jsonToolResult(result, {
-        maxChars: params.maxResponseChars ?? DEFAULT_PROCESSED_MAX_CHARS,
+      return jsonToolResult(toFigmaOutput(result), {
+        maxChars: params.max_response_chars ?? DEFAULT_PROCESSED_MAX_CHARS,
       });
     },
   });
@@ -113,9 +116,11 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     promptSnippet: "Find Figma nodes/layers by name before choosing a target frame.",
     parameters: hostParams(FigmaFindNodesParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const result = await withFigmaAuth(ctx, () => client.findNodesByName(params.fileKey, params));
-      return jsonToolResult(result, {
-        maxChars: params.maxResponseChars ?? DEFAULT_PROCESSED_MAX_CHARS,
+      const result = await withFigmaAuth(ctx, () =>
+        client.findNodesByName(params.file_key, findOptions(params)),
+      );
+      return jsonToolResult(toFigmaOutput(result), {
+        maxChars: params.max_response_chars ?? DEFAULT_PROCESSED_MAX_CHARS,
       });
     },
   });
@@ -128,9 +133,11 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     promptSnippet: "Find Figma nodes by visible text.",
     parameters: hostParams(FigmaFindNodesParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const result = await withFigmaAuth(ctx, () => client.findNodesByText(params.fileKey, params));
-      return jsonToolResult(result, {
-        maxChars: params.maxResponseChars ?? DEFAULT_PROCESSED_MAX_CHARS,
+      const result = await withFigmaAuth(ctx, () =>
+        client.findNodesByText(params.file_key, findOptions(params)),
+      );
+      return jsonToolResult(toFigmaOutput(result), {
+        maxChars: params.max_response_chars ?? DEFAULT_PROCESSED_MAX_CHARS,
       });
     },
   });
@@ -144,10 +151,10 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     parameters: hostParams(FigmaProcessedNodeParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await withFigmaAuth(ctx, () =>
-        client.getNodeSummary(params.fileKey, params.nodeId, processedOptions(params)),
+        client.getNodeSummary(params.file_key, params.node_id, processedOptions(params)),
       );
-      return jsonToolResult(result, {
-        maxChars: params.maxResponseChars ?? DEFAULT_PROCESSED_MAX_CHARS,
+      return jsonToolResult(toFigmaOutput(result), {
+        maxChars: params.max_response_chars ?? DEFAULT_PROCESSED_MAX_CHARS,
       });
     },
   });
@@ -161,10 +168,10 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     parameters: hostParams(FigmaProcessedNodeParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await withFigmaAuth(ctx, () =>
-        client.extractText(params.fileKey, params.nodeId, processedOptions(params)),
+        client.extractText(params.file_key, params.node_id, processedOptions(params)),
       );
-      return jsonToolResult(result, {
-        maxChars: params.maxResponseChars ?? DEFAULT_PROCESSED_MAX_CHARS,
+      return jsonToolResult(toFigmaOutput(result), {
+        maxChars: params.max_response_chars ?? DEFAULT_PROCESSED_MAX_CHARS,
       });
     },
   });
@@ -177,13 +184,19 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     promptSnippet: "Explain a Figma component/frame in Markdown without raw JSON.",
     parameters: hostParams(FigmaProcessedNodeWithRenderParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const assets = params.renderImage
-        ? await withFigmaAuth(ctx, () => renderAssets(client, ctx, params))
+      const assets = params.render_image
+        ? await withFigmaAuth(ctx, () => renderAssets(client, ctx, params.node_id, params))
         : undefined;
       const result = await withFigmaAuth(ctx, () =>
-        client.explainNode(params.fileKey, params.nodeId, { ...processedOptions(params), assets }),
+        client.explainNode(params.file_key, params.node_id, {
+          ...processedOptions(params),
+          assets,
+        }),
       );
-      return limitedTextToolResult(result, params.maxResponseChars ?? DEFAULT_PROCESSED_MAX_CHARS);
+      return limitedTextToolResult(
+        result,
+        params.max_response_chars ?? DEFAULT_PROCESSED_MAX_CHARS,
+      );
     },
   });
 
@@ -195,18 +208,18 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     promptSnippet: "Get coding-ready Figma implementation context.",
     parameters: hostParams(FigmaImplementationContextParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const assets = params.renderImage
-        ? await withFigmaAuth(ctx, () => renderAssets(client, ctx, params))
+      const assets = params.render_image
+        ? await withFigmaAuth(ctx, () => renderAssets(client, ctx, params.node_id, params))
         : undefined;
       const result = await withFigmaAuth(ctx, () =>
-        client.getImplementationContext(params.fileKey, params.nodeId, {
+        client.getImplementationContext(params.file_key, params.node_id, {
           ...processedOptions(params),
           assets,
           ...implementationOptions(params),
         }),
       );
-      return jsonToolResult(result, {
-        maxChars: params.maxResponseChars ?? DEFAULT_PROCESSED_MAX_CHARS,
+      return jsonToolResult(toFigmaOutput(result), {
+        maxChars: params.max_response_chars ?? DEFAULT_PROCESSED_MAX_CHARS,
       });
     },
   });
@@ -219,8 +232,10 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     promptSnippet: "Fetch raw Figma file JSON for debugging.",
     parameters: hostParams(FigmaGetFileParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const result = await withFigmaAuth(ctx, () => client.getFile(params.fileKey, params.depth));
-      return jsonToolResult(result, { maxChars: params.maxResponseChars ?? DEFAULT_RAW_MAX_CHARS });
+      const result = await withFigmaAuth(ctx, () => client.getFile(params.file_key, params.depth));
+      return jsonToolResult(result, {
+        maxChars: params.max_response_chars ?? DEFAULT_RAW_MAX_CHARS,
+      });
     },
   });
 
@@ -233,9 +248,11 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     parameters: hostParams(FigmaGetNodesParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await withFigmaAuth(ctx, () =>
-        client.getNodes(params.fileKey, params.nodeIds),
+        client.getNodes(params.file_key, params.node_ids),
       );
-      return jsonToolResult(result, { maxChars: params.maxResponseChars ?? DEFAULT_RAW_MAX_CHARS });
+      return jsonToolResult(result, {
+        maxChars: params.max_response_chars ?? DEFAULT_RAW_MAX_CHARS,
+      });
     },
   });
 
@@ -247,10 +264,10 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     parameters: hostParams(FigmaGetNodesParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await withFigmaAuth(ctx, () =>
-        client.getNodeMetadata(params.fileKey, params.nodeIds),
+        client.getNodeMetadata(params.file_key, params.node_ids),
       );
-      return jsonToolResult(result, {
-        maxChars: params.maxResponseChars ?? DEFAULT_PROCESSED_MAX_CHARS,
+      return jsonToolResult(toFigmaOutput(result), {
+        maxChars: params.max_response_chars ?? DEFAULT_PROCESSED_MAX_CHARS,
       });
     },
   });
@@ -263,9 +280,9 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     promptSnippet: "Fetch named Figma styles.",
     parameters: hostParams(FigmaSingleFileParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const result = await withFigmaAuth(ctx, () => client.getStyles(params.fileKey));
+      const result = await withFigmaAuth(ctx, () => client.getStyles(params.file_key));
       return jsonToolResult(result, {
-        maxChars: params.maxResponseChars ?? DEFAULT_PROCESSED_MAX_CHARS,
+        maxChars: params.max_response_chars ?? DEFAULT_PROCESSED_MAX_CHARS,
       });
     },
   });
@@ -277,9 +294,9 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     promptSnippet: "Fetch Figma variables and design tokens.",
     parameters: hostParams(FigmaSingleFileParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const result = await withFigmaAuth(ctx, () => client.getVariables(params.fileKey));
+      const result = await withFigmaAuth(ctx, () => client.getVariables(params.file_key));
       return jsonToolResult(result, {
-        maxChars: params.maxResponseChars ?? DEFAULT_PROCESSED_MAX_CHARS,
+        maxChars: params.max_response_chars ?? DEFAULT_PROCESSED_MAX_CHARS,
       });
     },
   });
@@ -291,9 +308,9 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     promptSnippet: "Fetch Figma component metadata.",
     parameters: hostParams(FigmaSingleFileParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const result = await withFigmaAuth(ctx, () => client.getComponents(params.fileKey));
+      const result = await withFigmaAuth(ctx, () => client.getComponents(params.file_key));
       return jsonToolResult(result, {
-        maxChars: params.maxResponseChars ?? DEFAULT_PROCESSED_MAX_CHARS,
+        maxChars: params.max_response_chars ?? DEFAULT_PROCESSED_MAX_CHARS,
       });
     },
   });
@@ -305,9 +322,9 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     promptSnippet: "Fetch Figma component-set metadata.",
     parameters: hostParams(FigmaSingleFileParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const result = await withFigmaAuth(ctx, () => client.getComponentSets(params.fileKey));
+      const result = await withFigmaAuth(ctx, () => client.getComponentSets(params.file_key));
       return jsonToolResult(result, {
-        maxChars: params.maxResponseChars ?? DEFAULT_PROCESSED_MAX_CHARS,
+        maxChars: params.max_response_chars ?? DEFAULT_PROCESSED_MAX_CHARS,
       });
     },
   });
@@ -320,10 +337,10 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     parameters: hostParams(FigmaSearchComponentsParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await withFigmaAuth(ctx, () =>
-        client.searchComponents(params.fileKey, params.query),
+        client.searchComponents(params.file_key, params.query),
       );
       return jsonToolResult(result, {
-        maxChars: params.maxResponseChars ?? DEFAULT_PROCESSED_MAX_CHARS,
+        maxChars: params.max_response_chars ?? DEFAULT_PROCESSED_MAX_CHARS,
       });
     },
   });
@@ -337,16 +354,16 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     parameters: hostParams(FigmaRenderNodesParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await withFigmaAuth(ctx, () =>
-        client.renderNodes(params.fileKey, params.nodeIds, {
+        client.renderNodes(params.file_key, params.node_ids, {
           cwd: ctx.cwd,
-          outputDir: params.outputDir,
+          outputDir: params.output_dir,
           format: params.format,
           scale: params.scale,
           download: params.download,
         }),
       );
-      return jsonToolResult(result, {
-        maxChars: params.maxResponseChars ?? DEFAULT_PROCESSED_MAX_CHARS,
+      return jsonToolResult(toFigmaOutput(result), {
+        maxChars: params.max_response_chars ?? DEFAULT_PROCESSED_MAX_CHARS,
       });
     },
   });
@@ -360,10 +377,17 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     parameters: hostParams(FigmaExtractAssetsParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await withFigmaAuth(ctx, () =>
-        client.extractAssets(params.fileKey, params.nodeId, { ...params, cwd: ctx.cwd }),
+        client.extractAssets(params.file_key, params.node_id, {
+          depth: params.depth,
+          assetTypes: params.asset_types?.map(toAssetType),
+          outputDir: params.output_dir,
+          includeHidden: params.include_hidden,
+          maxAssets: params.max_assets,
+          cwd: ctx.cwd,
+        }),
       );
-      return jsonToolResult(result, {
-        maxChars: params.maxResponseChars ?? DEFAULT_PROCESSED_MAX_CHARS,
+      return jsonToolResult(toExtractAssetsOutput(result), {
+        maxChars: params.max_response_chars ?? DEFAULT_PROCESSED_MAX_CHARS,
       });
     },
   });
@@ -376,9 +400,16 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     promptSnippet: "Find local Figma component mappings.",
     parameters: hostParams(FigmaFindCodeConnectMappingParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const result = await client.findCodeConnectMapping({ ...params, cwd: ctx.cwd });
-      return jsonToolResult(result, {
-        maxChars: params.maxResponseChars ?? DEFAULT_PROCESSED_MAX_CHARS,
+      const result = await client.findCodeConnectMapping({
+        fileKey: params.file_key,
+        nodeId: params.node_id,
+        componentKey: params.component_key,
+        rootDir: params.root_dir,
+        maxMatches: params.max_matches,
+        cwd: ctx.cwd,
+      });
+      return jsonToolResult(toFigmaOutput(result), {
+        maxChars: params.max_response_chars ?? DEFAULT_PROCESSED_MAX_CHARS,
       });
     },
   });
@@ -392,45 +423,96 @@ export function registerFigmaTools(pi: ExtensionAPI): void {
     parameters: hostParams(FigmaComponentImplementationHintsParams),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await withFigmaAuth(ctx, () =>
-        client.getComponentImplementationHints(params.fileKey, params.nodeId, {
+        client.getComponentImplementationHints(params.file_key, params.node_id, {
           ...processedOptions(params),
-          ...params,
+          framework: params.framework,
+          styling: params.styling,
+          includeCodeConnect: params.include_code_connect,
+          includeSnippet: params.include_snippet,
+          rootDir: params.root_dir,
           cwd: ctx.cwd,
         }),
       );
-      return jsonToolResult(result, {
-        maxChars: params.maxResponseChars ?? DEFAULT_PROCESSED_MAX_CHARS,
+      return jsonToolResult(toFigmaOutput(result), {
+        maxChars: params.max_response_chars ?? DEFAULT_PROCESSED_MAX_CHARS,
       });
     },
   });
 }
 
-function processedOptions(params: ProcessedNodeParams) {
+function processedOptions(params: ToolNodeParams) {
   return {
     depth: params.depth,
-    includeHidden: params.includeHidden,
-    includeVectors: params.includeVectors,
-    includeComponentInternals: params.includeComponentInternals,
+    includeHidden: params.include_hidden,
+    includeVectors: params.include_vectors,
+    includeComponentInternals: params.include_component_internals,
   };
 }
 
-function implementationOptions(params: ImplementationContextParams) {
+function implementationOptions(params: ToolImplementationParams) {
   return {
     framework: params.framework,
     styling: params.styling,
-    resolveTokens: params.resolveTokens,
-    includeCodeSnippets: params.includeCodeSnippets,
+    resolveTokens: params.resolve_tokens,
+    includeCodeSnippets: params.include_code_snippets,
   };
+}
+
+function findOptions(
+  params: ToolNodeParams & {
+    query: string;
+    exact?: boolean;
+    case_sensitive?: boolean;
+    max_results?: number;
+  },
+) {
+  return {
+    query: params.query,
+    nodeId: params.node_id,
+    exact: params.exact,
+    caseSensitive: params.case_sensitive,
+    maxResults: params.max_results,
+    ...processedOptions(params),
+  };
+}
+
+function toAssetType(value: "svg_icons" | "node_renders" | "image_fills"): FigmaAssetType {
+  if (value === "svg_icons") return "svgIcons";
+  if (value === "node_renders") return "nodeRenders";
+  return "imageFills";
+}
+
+// Asset types and kinds are wrapper-owned option values; print them in the snake_case the
+// asset_types input accepts so the manifest can be fed back into figma_extract_assets.
+function toAssetTypeOutput(value: FigmaAssetType): "svg_icons" | "node_renders" | "image_fills" {
+  if (value === "svgIcons") return "svg_icons";
+  if (value === "nodeRenders") return "node_renders";
+  return "image_fills";
+}
+
+function toAssetKindOutput(kind: FigmaAssetKind): "svg_icon" | "node_render" | "image_fill" {
+  if (kind === "svgIcon") return "svg_icon";
+  if (kind === "nodeRender") return "node_render";
+  return "image_fill";
+}
+
+export function toExtractAssetsOutput(result: FigmaExtractAssetsResult): FigmaValue {
+  return toFigmaOutput({
+    ...result,
+    assetTypes: result.assetTypes.map(toAssetTypeOutput),
+    assets: result.assets.map((asset) => ({ ...asset, kind: toAssetKindOutput(asset.kind) })),
+  });
 }
 
 async function renderAssets(
   client: FigmaClient,
   ctx: ExtensionContext,
-  params: ProcessedNodeParams,
+  nodeId: string,
+  params: ToolNodeParams,
 ): Promise<Array<{ nodeId: string; url?: string | null; path?: string }>> {
-  const rendered = await client.renderNodes(params.fileKey, [params.nodeId], {
+  const rendered = await client.renderNodes(params.file_key, [nodeId], {
     cwd: ctx.cwd,
-    outputDir: params.outputDir,
+    outputDir: params.output_dir,
     format: params.format,
     scale: params.scale,
     download: true,

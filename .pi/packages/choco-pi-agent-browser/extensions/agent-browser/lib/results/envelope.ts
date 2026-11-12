@@ -214,7 +214,7 @@ function buildWatchdogTimeoutMessage(options: { timeoutMs?: number }): string {
       : "after waiting beyond the upstream CLI's 30s IPC retry window";
   return [
     `agent-browser exceeded ${timeoutText} and was stopped ${ipcTiming}.`,
-    "Prefer a condition wait or split long work into shorter calls; for legitimately long opens or captures, pass agent_browser timeoutMs with a bounded higher value and inspect details.timeoutPartialProgress before retrying.",
+    "Prefer a condition wait or split long work into shorter calls; for legitimately long opens or captures, pass agent_browser timeout_ms with a bounded higher value and inspect details.timeoutPartialProgress before retrying.",
   ].join(" ");
 }
 
@@ -227,7 +227,7 @@ function isUpstreamIpcReadTimeoutMessage(message: string): boolean {
 function buildUpstreamIpcReadTimeoutMessage(): string {
   return [
     "agent-browser hit the upstream CLI 30s IPC read timeout while waiting for the daemon response.",
-    'The daemon may still be alive; do not blindly retry a non-idempotent command. Prefer a shorter command, split long waits, or retry with sessionMode: "fresh" after checking tab list.',
+    'The daemon may still be alive; do not blindly retry a non-idempotent command. Prefer a shorter command, split long waits, or retry with session_mode: "fresh" after checking tab list.',
   ].join(" ");
 }
 

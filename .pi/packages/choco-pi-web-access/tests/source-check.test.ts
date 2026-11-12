@@ -79,7 +79,7 @@ interface StoredEntry {
 
 interface SourceCheckParams {
   claim: string;
-  fetchContent?: boolean;
+  fetch_content?: boolean;
   provider?: "openai";
   queries?: string[];
 }
@@ -389,7 +389,7 @@ test("source_check retains a rejected page fetch in the artifact", async (t) => 
     const details = await executeSourceCheck(host, {
       claim: "API docs",
       provider: "openai",
-      fetchContent: true,
+      fetch_content: true,
     });
     assert.equal(details.sourceCount, 1);
     const source = details.artifact.sources[0];
@@ -399,6 +399,35 @@ test("source_check retains a rejected page fetch in the artifact", async (t) => 
     globalThis.fetch = previousFetch;
     if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = previousKey;
+  }
+});
+
+test("source_check accepts snake_case parameters and rejects the former camelCase names", async (t) => {
+  const host = await createSourceCheckHost(t);
+  const check = compile(host.tool.parameters).check;
+  assert.equal(
+    check({
+      claim: "c",
+      num_results: 2,
+      fetch_content: true,
+      recency_filter: "week",
+      domain_filter: ["example.com"],
+    }),
+    true,
+  );
+  const legacy = [
+    ["numResults", 2, "num_results"],
+    ["fetchContent", true, "fetch_content"],
+    ["recencyFilter", "week", "recency_filter"],
+    ["domainFilter", ["example.com"], "domain_filter"],
+  ] as const;
+  for (const [name, value, replacement] of legacy) {
+    const params = { claim: "c", [name]: value };
+    assert.equal(check(params), false, name);
+    await assert.rejects(
+      host.tool.execute("call", params, undefined, undefined, host.context),
+      new RegExp(`Unknown parameter ${name}; use ${replacement}`),
+    );
   }
 });
 

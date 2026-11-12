@@ -50,7 +50,7 @@ export async function assertRecordingDestinationsAvailable(options: {
       throw new Error(`Recording destinations collide at '${destination.path}'.`);
     seen.add(destination.absolutePath);
     if (options.outputAbsolutePath === destination.absolutePath)
-      throw new Error(`Recording destination '${destination.path}' collides with outputPath.`);
+      throw new Error(`Recording destination '${destination.path}' collides with output_path.`);
     if (options.activeAbsolutePaths.has(destination.absolutePath))
       throw new Error(
         `Recording destination '${destination.path}' is reserved by an active recording.`,

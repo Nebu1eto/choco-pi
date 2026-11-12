@@ -20,6 +20,7 @@ Cached recollection, summaries, excerpts, metadata, and navigation-only pages do
 - Validate with pi-schema (`@earendil-works/pi-schema`); import `typebox` (host alias, `^1.3.29`) only inside a package's `schema-bridge.ts` for the `registerTool` boundary. Add no other schema library or build output.
 - Never edit generated dependencies. After adding a bundled package to `packages` in `~/.pi/agent/settings.json` (the checkout ships no `.pi/settings.json`), run `pnpm install:profile`.
 - ACP/editor-context require Node 24+; ACP runs `bin/choco-pi-acp.ts` without build output or a manifest entry.
+- Tool inputs and outputs use snake_case keys and option values, with no camelCase aliases; convert at the tool boundary and keep internal names. Tool names and pass-through external data are exempt. `tests/tool-io-naming.test.ts` enforces parameter schemas.
 
 ## Mandatory implementation constraints
 

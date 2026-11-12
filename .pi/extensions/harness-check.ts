@@ -21,6 +21,7 @@ import {
 import { captureHostIdentity, type CapturedHostIdentity } from "./lib/pi-runtime-identity.ts";
 import { readProfileMarker, type ProfileMarkerObservation } from "./lib/profile-marker.ts";
 import { hostParams } from "./lib/schema-bridge.ts";
+import { toSnakeCaseKeys } from "./lib/tool-output-keys.ts";
 
 export type HarnessCheckReport = HarnessReport & {
   profileMarker?: ProfileMarkerObservation;
@@ -262,7 +263,7 @@ export default function harnessCheckExtension(host: ExtensionAPI | HarnessCheckR
         observeActiveHostTools: registration.observeActiveHostTools,
       });
       return {
-        content: [{ type: "text", text: JSON.stringify(report, null, 2) }],
+        content: [{ type: "text", text: JSON.stringify(toSnakeCaseKeys(report), null, 2) }],
         details: report,
         isError: report.status === "fail",
       };

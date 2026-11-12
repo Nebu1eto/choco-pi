@@ -1,4 +1,5 @@
 import { rm } from "node:fs/promises";
+import { toModelVisibleData } from "../../results/tool-output-keys.ts";
 import { runAgentBrowserProcess } from "../../process.ts";
 
 import {
@@ -1705,7 +1706,7 @@ export async function processBrowserOutput(
         presentation.data = { ...presentation.data, noMovement: true, scrolled: false };
       if (presentation.content[0]?.type === "text") {
         const details = isRecord(presentation.data)
-          ? JSON.stringify(omitUpstreamLifecycle(presentation.data), null, 2)
+          ? JSON.stringify(toModelVisibleData(omitUpstreamLifecycle(presentation.data)), null, 2)
           : presentation.content[0].text;
         presentation.content[0] = {
           ...presentation.content[0],

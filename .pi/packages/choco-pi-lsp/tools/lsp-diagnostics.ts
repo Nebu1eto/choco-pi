@@ -467,43 +467,40 @@ export function createLspDiagnosticsTool(
       return `lsp_diagnostics${scope} — ${count} ${noun}`;
     }),
     parameters: hostParams(
-      obj(
-        {
-          path: opt(
-            str({
-              description: "File or directory to check.",
-            }),
-          ),
-          paths: opt(
-            arr(str(), {
-              minItems: 1,
-              maxItems: MAX_BATCH_FILES,
-              description: "Explicit file batch; overrides path.",
-            }),
-          ),
-          severity: opt(
-            oneOf(["error", "warning", "information", "hint", "all"], {
-              description: "Filter by severity level (default: all)",
-            }),
-          ),
-          concurrency: opt(
-            num({
-              description: "Concurrent language-server groups; defaults to 8, maximum 16.",
-            }),
-          ),
-          waitMs: opt(
-            num({
-              description: "Per-file wait budget in milliseconds.",
-            }),
-          ),
-          serverScope: opt(
-            oneOf(["primary", "all"], {
-              description: "Use the primary server only or all auxiliary scanners.",
-            }),
-          ),
-        },
-        { open: true },
-      ),
+      obj({
+        path: opt(
+          str({
+            description: "File or directory to check.",
+          }),
+        ),
+        paths: opt(
+          arr(str(), {
+            minItems: 1,
+            maxItems: MAX_BATCH_FILES,
+            description: "Explicit file batch; overrides path.",
+          }),
+        ),
+        severity: opt(
+          oneOf(["error", "warning", "information", "hint", "all"], {
+            description: "Filter by severity level (default: all)",
+          }),
+        ),
+        concurrency: opt(
+          num({
+            description: "Concurrent language-server groups; defaults to 8, maximum 16.",
+          }),
+        ),
+        wait_ms: opt(
+          num({
+            description: "Per-file wait budget in milliseconds.",
+          }),
+        ),
+        server_scope: opt(
+          oneOf(["primary", "all"], {
+            description: "Use the primary server only or all auxiliary scanners.",
+          }),
+        ),
+      }),
     ),
     async execute(
       _toolCallId: string,
@@ -535,8 +532,8 @@ export function createLspDiagnosticsTool(
         paths?: string[];
         severity?: string;
         concurrency?: number;
-        waitMs?: number;
-        serverScope?: string;
+        wait_ms?: number;
+        server_scope?: string;
       };
       // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
       const severity = (typedParams.severity ?? "all") as string;
@@ -548,11 +545,11 @@ export function createLspDiagnosticsTool(
         MAX_BATCH_CONCURRENCY,
       );
       const waitMs =
-        isRuntimeNumber(typedParams.waitMs) && typedParams.waitMs >= 0
-          ? Math.floor(typedParams.waitMs)
+        isRuntimeNumber(typedParams.wait_ms) && typedParams.wait_ms >= 0
+          ? Math.floor(typedParams.wait_ms)
           : undefined;
       const serverScope: "primary" | "all" =
-        typedParams.serverScope === "primary" ? "primary" : "all";
+        typedParams.server_scope === "primary" ? "primary" : "all";
 
       const lspService = getLSPService();
       if (!lspService) {
@@ -1409,7 +1406,7 @@ async function runFileDiagnostics(
       return (
         "Primary LSP: check timed out — NOT the same as 0 diagnostics; the " +
         "file may still have errors that just hadn't been reported yet. " +
-        "Re-check after the server settles, or increase waitMs."
+        "Re-check after the server settles, or increase wait_ms."
       );
     }
     // #1470: a file demoted ONLY because an auxiliary was cut off must not render
@@ -1422,7 +1419,7 @@ async function runFileDiagnostics(
         "cannot confirm clean (push-only, silent-on-clean, e.g. classic " +
         "typescript-language-server never publishes on a clean re-check). " +
         "NOT the same as 0 diagnostics; re-check after an edit, or use " +
-        "waitMs to wait longer."
+        "wait_ms to wait longer."
       );
     }
     if (primaryDiags.length === 0) {
@@ -1436,7 +1433,7 @@ async function runFileDiagnostics(
   // as "the security scanners found nothing".
   const coverageLine =
     unconfirmedServerIds.length > 0
-      ? `Auxiliary coverage INCOMPLETE — ${[...unconfirmedServerIds].join(", ")} did not answer within the wait budget, so ${unconfirmedServerIds.length === 1 ? "its findings are" : "their findings are"} NOT included here. This is not a clean bill of health for ${unconfirmedServerIds.length === 1 ? "that scanner" : "those scanners"}; re-check after the next edit, or use waitMs to wait longer.`
+      ? `Auxiliary coverage INCOMPLETE — ${[...unconfirmedServerIds].join(", ")} did not answer within the wait budget, so ${unconfirmedServerIds.length === 1 ? "its findings are" : "their findings are"} NOT included here. This is not a clean bill of health for ${unconfirmedServerIds.length === 1 ? "that scanner" : "those scanners"}; re-check after the next edit, or use wait_ms to wait longer.`
       : undefined;
 
   let text: string;

@@ -152,8 +152,8 @@ function resultText(result: AgentToolResult<unknown>): string {
 }
 
 async function getContent(params: {
-  responseId: string;
-  urlIndex?: number;
+  response_id: string;
+  url_index?: number;
 }): Promise<AgentToolResult<unknown>> {
   return host.getSearchContent.execute(
     "stored-result-recovery",
@@ -179,7 +179,7 @@ async function emitSessionTree(): Promise<void> {
 
 test("get_search_content recovers a fetch result from disk after session_tree drops it", async () => {
   storeFetch("recoverfromdisk1", Date.now(), "recovered body text");
-  const before = await getContent({ responseId: "recoverfromdisk1", urlIndex: 0 });
+  const before = await getContent({ response_id: "recoverfromdisk1", url_index: 0 });
   assert.match(resultText(before), /recovered body text/);
 
   resetLogs.length = 0;
@@ -191,21 +191,21 @@ test("get_search_content recovers a fetch result from disk after session_tree dr
     `expected a reset log, got ${JSON.stringify(resetLogs)}`,
   );
 
-  const after = await getContent({ responseId: "recoverfromdisk1", urlIndex: 0 });
+  const after = await getContent({ response_id: "recoverfromdisk1", url_index: 0 });
   assert.match(resultText(after), /# Doc\n\nrecovered body text/);
 });
 
 test("missing results name the reset reason and disk status", async () => {
   await emitSessionTree();
-  const missing = await getContent({ responseId: "nowhereatall1", urlIndex: 0 });
+  const missing = await getContent({ response_id: "nowhereatall1", url_index: 0 });
   assert.match(
     resultText(missing),
-    /No stored results for responseId "?nowhereatall1"?: not in memory \(reset by session_tree\); disk: miss\./,
+    /No stored results for response_id "?nowhereatall1"?: not in memory \(reset by session_tree\); disk: miss\./,
   );
 
   storeFetch("expiredondisk1", Date.now() - 2 * 60 * 60 * 1000, "stale");
   await host.runner.emit({ type: "session_shutdown", reason: "quit" });
-  const expired = await getContent({ responseId: "expiredondisk1", urlIndex: 0 });
+  const expired = await getContent({ response_id: "expiredondisk1", url_index: 0 });
   assert.match(resultText(expired), /not in memory \(reset by shutdown\); disk: expired/);
 });
 
@@ -250,12 +250,12 @@ test("multi-URL fetch footer prints exact per-URL continuation calls", () => {
   assert.match(output, /\[0\] A \(https:\/\/a\.test\/\) offset 0, length 45000 chars/);
   assert.match(
     output,
-    /Continue with get_search_content\(\{ responseId: "rid123", urlIndex: 0, offset: 0, limit: 30000 \}\)/,
+    /Continue with get_search_content\(\{ response_id: "rid123", url_index: 0, offset: 0, limit: 30000 \}\)/,
   );
   assert.match(
     output,
-    /Continue with get_search_content\(\{ responseId: "rid123", urlIndex: 1, offset: 0, limit: 5 \}\)/,
+    /Continue with get_search_content\(\{ response_id: "rid123", url_index: 1, offset: 0, limit: 5 \}\)/,
   );
   assert.match(output, /\[2\] https:\/\/c\.test\/: Error - HTTP 500/);
-  assert.doesNotMatch(output, /urlIndex: 2/);
+  assert.doesNotMatch(output, /url_index: 2/);
 });

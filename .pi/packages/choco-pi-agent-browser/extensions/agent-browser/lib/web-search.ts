@@ -1120,8 +1120,8 @@ export function createAgentBrowserWebSearchTool(
         offset,
         query,
         safesearch: params.safesearch,
-        searchLang: params.searchLang,
-        searchType: params.searchType ?? "auto",
+        searchLang: params.search_lang,
+        searchType: params.search_type ?? "auto",
       };
       const runtimeConfigState =
         context && options.loadConfigState ? await options.loadConfigState(context) : configState;

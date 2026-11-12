@@ -149,7 +149,7 @@ test("root steer_subagent accepts a queued agent and rejects a settled one", asy
   await withRootTools("tool-error-steer", async (tools, context, pi) => {
     const manager = managerRegistry()[Symbol.for("pi-subagents:manager")];
     assert.ok(manager);
-    await call(tools, context, "subagent_limits", { maxConcurrent: 1 });
+    await call(tools, context, "subagent_limits", { max_concurrent: 1 });
     const spawn = (label: string) =>
       manager.spawn(pi, context, "implementer", label, {
         description: label,

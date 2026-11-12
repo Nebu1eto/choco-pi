@@ -70,7 +70,7 @@ export const ELECTRON_PROFILE_ISOLATION_DETAILS = {
   attachesToAlreadyRunningApp: false,
   existingAuthenticatedAppGuidance: ELECTRON_EXISTING_AUTH_GUIDANCE,
   hostDebugLaunchExample:
-    "macOS: open -a <App Name> --args --remote-debugging-port=9222 --remote-allow-origins='*'; then agent_browser connect 9222 with sessionMode=fresh",
+    "macOS: open -a <App Name> --args --remote-debugging-port=9222 --remote-allow-origins='*'; then agent_browser connect 9222 with session_mode=fresh",
   isolatedLaunch: true,
   note: ELECTRON_PROFILE_ISOLATION_NOTE,
   reusesExistingSignedInProfile: false,
@@ -135,7 +135,7 @@ function formatElectronListVisibleText(result: ElectronDiscoveryResult): string 
     );
   }
   if (result.omittedCount > 0) {
-    lines.push(`${result.omittedCount} app(s) omitted by maxResults=${result.maxResults}.`);
+    lines.push(`${result.omittedCount} app(s) omitted by max_results=${result.maxResults}.`);
   }
   if (result.apps.some((app) => app.sensitivity?.level === "likely-sensitive")) {
     lines.push(
@@ -263,7 +263,7 @@ function selectElectronRecords(
     return record
       ? { records: [record] }
       : {
-          error: `No wrapper-tracked Electron launch found for launchId ${compiledElectron.launchId}.`,
+          error: `No wrapper-tracked Electron launch found for launch_id ${compiledElectron.launchId}.`,
         };
   }
   if (compiledElectron.all) return { records: getActiveElectronRecords(records) };
@@ -272,7 +272,7 @@ function selectElectronRecords(
   if (activeRecords.length > 1)
     return {
       error:
-        "Multiple wrapper-tracked Electron launches are active; pass electron.launchId or electron.all.",
+        "Multiple wrapper-tracked Electron launches are active; pass electron.launch_id or electron.all.",
     };
   return { records: activeRecords };
 }
@@ -304,12 +304,12 @@ function formatElectronStatusVisibleText(
     const record = recordsByLaunchId.get(status.launchId);
     const sessionName = record?.sessionName;
     const appName = record?.appName ?? "Electron launch";
-    const sessionText = sessionName ? `, sessionName ${sessionName}` : "";
+    const sessionText = sessionName ? `, session_name ${sessionName}` : "";
     lines.push(
       `- ${status.launchId}: ${appName}${sessionText}; ${status.portAlive ? "debug port alive" : "debug port dead"}${status.pidAlive === undefined ? "" : status.pidAlive ? ", pid alive" : ", pid dead"} (port ${status.port})`,
     );
     lines.push(
-      `  Identifiers: launchId ${status.launchId}; sessionName ${sessionName ?? "not attached"}.`,
+      `  Identifiers: launch_id ${status.launchId}; session_name ${sessionName ?? "not attached"}.`,
     );
     for (const targetLine of formatElectronTargetLines(status.targets, 4))
       lines.push(`  ${targetLine}`);
@@ -870,7 +870,7 @@ async function collectElectronProbe(options: {
   return { ...probeWithoutSummary, summary: getElectronProbeSummary(probeWithoutSummary) };
 }
 
-function formatElectronProbeFocusedElement(
+export function formatElectronProbeFocusedElement(
   focusedElement: ElectronProbeFocusedElement | undefined,
 ): string | undefined {
   if (!focusedElement) return undefined;
@@ -886,9 +886,11 @@ function formatElectronProbeFocusedElement(
     focusedElement.id ? `#${focusedElement.id}` : undefined,
     focusedElement.type ? `type=${focusedElement.type}` : undefined,
     focusedElement.valueLength !== undefined
-      ? `valueLength=${focusedElement.valueLength}`
+      ? `value_length=${focusedElement.valueLength}`
       : undefined,
-    focusedElement.textLength !== undefined ? `textLength=${focusedElement.textLength}` : undefined,
+    focusedElement.textLength !== undefined
+      ? `text_length=${focusedElement.textLength}`
+      : undefined,
   ]
     .filter((item): item is string => item !== undefined)
     .join(", ");
@@ -905,7 +907,7 @@ function formatElectronProbeContextText(context: ElectronProbeContext): string {
   if (context.launchId) {
     return `Probe context: current managed session ${context.sessionName} maps to Electron launch ${context.launchId}.`;
   }
-  return `Probe context: current managed session ${context.sessionName} only; pass electron.probe.launchId to compare wrapper-tracked launch status.`;
+  return `Probe context: current managed session ${context.sessionName} only; pass electron.probe.launch_id to compare wrapper-tracked launch status.`;
 }
 
 function formatElectronProbeLaunchStatusText(
@@ -1278,14 +1280,14 @@ async function handleElectronHostInputInContext(
     if (compiledElectron.launchId && !launchRecord) {
       return buildElectronHostFailureResult({
         compiledElectron: redactedCompiledElectron ?? compiledElectron,
-        errorText: `No wrapper-tracked Electron launch found for launchId ${compiledElectron.launchId}.`,
+        errorText: `No wrapper-tracked Electron launch found for launch_id ${compiledElectron.launchId}.`,
         failureCategory: "validation-error",
       });
     }
     if (compiledElectron.launchId && !launchRecord?.sessionName) {
       return buildElectronHostFailureResult({
         compiledElectron: redactedCompiledElectron ?? compiledElectron,
-        errorText: `electron.probe launchId ${compiledElectron.launchId} has no attached managed sessionName; reattach with connect or run electron.launch again.`,
+        errorText: `electron.probe launch_id ${compiledElectron.launchId} has no attached managed session_name; reattach with connect or run electron.launch again.`,
         failureCategory: "validation-error",
       });
     }
@@ -1364,7 +1366,7 @@ async function handleElectronHostInputInContext(
         : !compiledElectron.launchId &&
             launchRecord.sessionName &&
             launchRecord.sessionName !== probe.sessionName
-          ? `single active Electron launch ${launchRecord.launchId} uses wrapper session ${launchRecord.sessionName}; pass electron.probe.launchId to inspect that launch session directly.`
+          ? `single active Electron launch ${launchRecord.launchId} uses wrapper session ${launchRecord.sessionName}; pass electron.probe.launch_id to inspect that launch session directly.`
           : undefined;
       const probeContext: ElectronProbeContext = {
         launchId: launchRecord?.launchId,

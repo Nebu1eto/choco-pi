@@ -163,6 +163,26 @@ test("default extension registers a host-authenticated schema and reports failur
   assert.equal(result.isError, true);
 });
 
+test("tool result text and its nested keys are snake_case", async () => {
+  const { registration, captured } = createRegistration(async () => report);
+  harnessCheckExtension(registration);
+  assert.ok(captured.tool);
+  await captured.start?.({ type: "session_start", reason: "startup" }, context("session-a"));
+  const result = await captured.tool.execute(
+    "call-1",
+    { mode: "automatic" },
+    undefined,
+    undefined,
+    context("session-a"),
+  );
+  const text = result.content.flatMap((item) => (item.type === "text" ? [item.text] : [])).join("");
+  const parsed = JSON.parse(text);
+  assert.equal(parsed.config_root, "/fixture/.pi");
+  assert.deepEqual(parsed.required_capabilities, []);
+  assert.equal("configRoot" in parsed, false);
+  assert.equal("requiredCapabilities" in parsed, false);
+});
+
 for (const lifecycle of ["start", "shutdown", "tree"] as const) {
   test(`default extension rejects an in-flight result invalidated by session ${lifecycle}`, async () => {
     let release: (() => void) | undefined;

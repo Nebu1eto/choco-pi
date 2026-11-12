@@ -24,7 +24,7 @@ interface ModelSelector {
 function parseModelSelector(value: string): ModelSelector {
   const separator = value.indexOf("/");
   if (separator <= 0 || separator === value.length - 1) {
-    throw new Error(`Invalid answerModel: ${value}. Use provider/model-id.`);
+    throw new Error(`Invalid answer_model: ${value}. Use provider/model-id.`);
   }
   return { provider: value.slice(0, separator), id: value.slice(separator + 1) };
 }

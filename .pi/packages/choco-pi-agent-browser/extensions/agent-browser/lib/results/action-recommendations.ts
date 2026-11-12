@@ -49,7 +49,7 @@ function buildElectronToolAction(options: {
   if (options.safety) {
     return {
       id: options.id,
-      params: { electron: { action: options.action, launchId: options.launchId } },
+      params: { electron: { action: options.action, launch_id: options.launchId } },
       reason: options.reason,
       safety: options.safety,
       tool: "agent_browser",
@@ -57,7 +57,7 @@ function buildElectronToolAction(options: {
   }
   return {
     id: options.id,
-    params: { electron: { action: options.action, launchId: options.launchId } },
+    params: { electron: { action: options.action, launch_id: options.launchId } },
     reason: options.reason,
     tool: "agent_browser",
   };
@@ -118,7 +118,7 @@ export function buildAgentBrowserNextActions(options: {
           id: "probe-electron-launch",
           launchId,
           reason:
-            "Probe the attached Electron managed session and carry the wrapper launchId for follow-up diagnostics.",
+            "Probe the attached Electron managed session and carry the wrapper launch_id for follow-up diagnostics.",
         }),
         buildElectronToolAction({
           action: "cleanup",
@@ -127,7 +127,7 @@ export function buildAgentBrowserNextActions(options: {
           reason:
             "Clean the wrapper-owned Electron process and isolated userDataDir when the run is complete.",
           safety:
-            "Only operates on the launchId created by electron.launch; explicit artifacts and manually launched apps remain host-owned.",
+            "Only operates on the launch_id created by electron.launch; explicit artifacts and manually launched apps remain host-owned.",
         }),
       );
       if (sessionName) {
@@ -164,7 +164,7 @@ export function buildAgentBrowserNextActions(options: {
           reason:
             "Retry cleanup for the same wrapper-owned Electron launch after reviewing remaining resources.",
           safety:
-            "Only retry for the same launchId; do not use cleanup for manually launched Electron apps.",
+            "Only retry for the same launch_id; do not use cleanup for manually launched Electron apps.",
         }),
       );
     }
@@ -207,7 +207,7 @@ export function buildAgentBrowserNextActions(options: {
               reason:
                 "Upstream reported a download path, but the wrapper did not verify the file on disk.",
               safety:
-                "Use an explicit wait timeout; if you set top-level timeoutMs, keep it above the wait duration plus a small grace window.",
+                "Use an explicit wait timeout; if you set top-level timeout_ms, keep it above the wait duration plus a small grace window.",
             }),
           );
         } else {
@@ -236,7 +236,7 @@ export function buildAgentBrowserNextActions(options: {
                 reason:
                   "The requested download artifact was not found on disk after upstream reported completion.",
                 safety:
-                  "Use an explicit wait timeout; if you set top-level timeoutMs, keep it above the wait duration plus a small grace window.",
+                  "Use an explicit wait timeout; if you set top-level timeout_ms, keep it above the wait duration plus a small grace window.",
               }),
             );
           } else {
@@ -290,7 +290,7 @@ export function buildAgentBrowserNextActions(options: {
               reason:
                 "Wait for the browser download and let the wrapper verify saved-file metadata.",
               safety:
-                "Use an explicit wait timeout; if you set top-level timeoutMs, keep it above the wait duration plus a small grace window.",
+                "Use an explicit wait timeout; if you set top-level timeout_ms, keep it above the wait duration plus a small grace window.",
             }),
           );
         }

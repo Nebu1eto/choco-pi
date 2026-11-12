@@ -86,33 +86,33 @@ export function synthesizeRule(intent: StructuralIntent): string {
   const hasPattern = !!intent.pattern?.trim();
   const hasNodeKind = !!intent.nodeKind?.trim();
   if (hasPattern === hasNodeKind) {
-    throw new Error("provide exactly one of pattern or nodeKind");
+    throw new Error("provide exactly one of pattern or node_kind");
   }
   const pattern = intent.pattern;
   if (hasPattern && pattern) assertSafePattern(pattern, "pattern");
   if (intent.hasKind?.trim() && intent.hasDescendantKind?.trim()) {
-    throw new Error("hasKind and hasDescendantKind are mutually exclusive");
+    throw new Error("has_kind and has_descendant_kind are mutually exclusive");
   }
 
   // Canonical language name for the YAML header (ast-grep is case-sensitive here).
   const language = canonicalLanguage(intent.lang);
 
   const rule: SynthesizedRule = hasNodeKind
-    ? { kind: assertSafeNodeKind(intent.nodeKind ?? "", "nodeKind") }
+    ? { kind: assertSafeNodeKind(intent.nodeKind ?? "", "node_kind") }
     : { pattern };
 
   if (intent.insideKind) {
     rule.inside = {
-      kind: assertSafeNodeKind(intent.insideKind, "insideKind"),
+      kind: assertSafeNodeKind(intent.insideKind, "inside_kind"),
       stopBy: "end",
     };
   }
   if (intent.hasKind) {
-    rule.has = { kind: assertSafeNodeKind(intent.hasKind, "hasKind") };
+    rule.has = { kind: assertSafeNodeKind(intent.hasKind, "has_kind") };
   }
   if (intent.hasDescendantKind) {
     rule.has = {
-      kind: assertSafeNodeKind(intent.hasDescendantKind, "hasDescendantKind"),
+      kind: assertSafeNodeKind(intent.hasDescendantKind, "has_descendant_kind"),
       stopBy: "end",
     };
   }

@@ -210,7 +210,7 @@ function textOf<T>(content: AgentToolResult<T>["content"]): string {
 }
 
 function stateIdFromContent<T>(content: AgentToolResult<T>["content"]): string {
-  const match = /\bstate(?:Id)? ([0-9a-f-]{36})\b/i.exec(textOf(content));
+  const match = /\bstate(?:_id)? ([0-9a-f-]{36})\b/i.exec(textOf(content));
   if (!match?.[1]) throw new Error("Expected a state id in tool output.");
   return match[1];
 }

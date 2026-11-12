@@ -52,22 +52,22 @@ Use `$$$` when you don't need the captured value; `$$$NAME` when you do.
 
 Use these instead of writing raw YAML:
 
-| Parameter           | Tool | What it does                                                                                                                                                 |
-| ------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `insideKind`        | both | Only match inside an ancestor of this node kind (searches ALL ancestors, `stopBy: end`)                                                                      |
-| `hasKind`           | both | Only match nodes whose **immediate child** has this kind (`stopBy: neighbor` — NOT recursive)                                                                |
-| `hasDescendantKind` | both | Only match nodes containing this kind **anywhere in their descendants** (`stopBy: end`) — use this instead of `hasKind` when the target isn't a direct child |
-| `follows`           | both | Only match nodes preceded by a sibling matching this pattern                                                                                                 |
-| `precedes`          | both | Only match nodes followed by a sibling matching this pattern                                                                                                 |
+| Parameter             | Tool | What it does                                                                                                                                                  |
+| --------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `inside_kind`         | both | Only match inside an ancestor of this node kind (searches ALL ancestors, `stopBy: end`)                                                                       |
+| `has_kind`            | both | Only match nodes whose **immediate child** has this kind (`stopBy: neighbor` — NOT recursive)                                                                 |
+| `has_descendant_kind` | both | Only match nodes containing this kind **anywhere in their descendants** (`stopBy: end`) — use this instead of `has_kind` when the target isn't a direct child |
+| `follows`             | both | Only match nodes preceded by a sibling matching this pattern                                                                                                  |
+| `precedes`            | both | Only match nodes followed by a sibling matching this pattern                                                                                                  |
 
-`hasKind` and `hasDescendantKind` are mutually exclusive on both tools — combining them errors.
+`has_kind` and `has_descendant_kind` are mutually exclusive on both tools — combining them errors.
 
 ```
 # console.log only inside functions
-ast_grep_search pattern="console.log($MSG)" lang="typescript" insideKind="function_declaration"
+ast_grep_search pattern="console.log($MSG)" lang="typescript" inside_kind="function_declaration"
 
 # replace var with let, scoped to functions only
-ast_grep_replace pattern="var $X" rewrite="let $X" lang="javascript" insideKind="function_declaration"
+ast_grep_replace pattern="var $X" rewrite="let $X" lang="javascript" inside_kind="function_declaration"
 ```
 
 These synthesize a YAML rule automatically. Use `rule:` for the full DSL when you need `all`/`any`/`not`, `nthChild`, `regex`, or other advanced constraints.
@@ -94,7 +94,7 @@ When a pattern returns zero matches and you don't know the correct node kind or 
 ast_grep_dump source="function foo() { return 1; }" lang="typescript"
 ```
 
-Returns the full indented AST with node kinds and positions. Then use the correct kind in your pattern or `insideKind`. `ast_grep_dump` is registered but inactive by default — call `lsp_activate_tools` with `tools: ["ast_grep_dump"]` first if it isn't already active.
+Returns the full indented AST with node kinds and positions. Then use the correct kind in your pattern or `inside_kind`. `ast_grep_dump` is registered but inactive by default — call `lsp_activate_tools` with `tools: ["ast_grep_dump"]` first if it isn't already active.
 
 ### Composite (has/inside) in raw YAML
 

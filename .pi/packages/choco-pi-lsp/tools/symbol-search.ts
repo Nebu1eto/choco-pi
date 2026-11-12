@@ -12,6 +12,7 @@ import { arr, num, obj, opt, str } from "@earendil-works/pi-schema";
 import { hostParams } from "./schema-bridge.ts";
 import { symbolSearch, type SymbolSearchResult } from "../clients/lsp-engine.ts";
 import { baseName, compactRenderResult } from "./render-compact.ts";
+import { stringifySnakeCase } from "./output-keys.ts";
 
 /**
  * Machine-actionable follow-up hint (#771) — mirrors ast-grep-search.ts's
@@ -145,7 +146,8 @@ export function createSymbolSearchTool(getProjectRoot: () => string) {
       ];
       // Compact (unindented) JSON payload, matching module_report/read_symbol
       // (#517): path relative-to-cwd once per hit, no per-hit `read` block —
-      // startLine/endLine already derive offset/limit for a one-line peek.
+      // start_line/end_line already derive offset/limit for a one-line peek.
+      // Built camelCase like the engine result; keys become snake_case at serialization.
       const payload = {
         available: true,
         query: result.query,
@@ -165,7 +167,7 @@ export function createSymbolSearchTool(getProjectRoot: () => string) {
       };
       return {
         content: [
-          { type: "text" as const, text: `${lines.join("\n")}\n\n${JSON.stringify(payload)}` },
+          { type: "text" as const, text: `${lines.join("\n")}\n\n${stringifySnakeCase(payload)}` },
         ],
         details: {
           available: true,

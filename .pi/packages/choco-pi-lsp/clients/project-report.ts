@@ -879,7 +879,7 @@ export function renderCompactProjectReport(report: ProjectReport): string {
     lines.push("HUBS:");
     for (const h of report.hubs) {
       const role = h.role ? ` — ${h.role}` : "";
-      lines.push(`  ${h.file}${role}; ${h.fanIn} importer(s), blastRadius ${h.blastRadius}`);
+      lines.push(`  ${h.file}${role}; ${h.fanIn} importer(s), blast_radius ${h.blastRadius}`);
     }
   }
   if (report.entryPoints?.length) {

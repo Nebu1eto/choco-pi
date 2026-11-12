@@ -1,5 +1,6 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import type { FigmaRecord } from "./figma-values.ts";
 
 export interface CodeConnectScanOptions {
   fileKey: string;
@@ -12,7 +13,7 @@ export interface CodeConnectScanOptions {
   maxFileBytes?: number;
 }
 
-export interface CodeConnectMatch {
+export interface CodeConnectMatch extends FigmaRecord {
   path: string;
   line: number;
   kind:
@@ -24,7 +25,7 @@ export interface CodeConnectMatch {
   preview: string;
 }
 
-export interface CodeConnectScanResult {
+export interface CodeConnectScanResult extends FigmaRecord {
   rootDir: string;
   matches: CodeConnectMatch[];
   metadata: { truncated: boolean; truncatedReasons: string[]; nextSteps: string[] };
@@ -84,7 +85,9 @@ export async function findCodeConnectMapping(
       if (info.size > maxFileBytes) continue;
       await scanFile(filePath);
       if (matches.length >= maxMatches) {
-        truncatedReasons.push(`Reached maxMatches ${maxMatches}; additional matches were omitted.`);
+        truncatedReasons.push(
+          `Reached max_matches ${maxMatches}; additional matches were omitted.`,
+        );
         return;
       }
     }
@@ -120,7 +123,7 @@ export async function findCodeConnectMapping(
         "No local Code Connect mapping was found; use Figma implementation context and existing component search next.",
       ];
   if (truncatedReasons.length)
-    nextSteps.push("Narrow rootDir or raise maxMatches/maxFiles if you expect more mappings.");
+    nextSteps.push("Narrow root_dir or raise max_matches if you expect more mappings.");
   return {
     rootDir,
     matches,
@@ -162,7 +165,7 @@ function resolveRoot(cwd: string, rootDir?: string): string {
   const resolved = isAbsolute(rootDir) ? resolve(rootDir) : resolve(cwd, rootDir);
   const cwdResolved = resolve(cwd);
   if (resolved !== cwdResolved && !resolved.startsWith(`${cwdResolved}/`))
-    throw new Error("rootDir must be inside the current working directory.");
+    throw new Error("root_dir must be inside the current working directory.");
   return resolved;
 }
 

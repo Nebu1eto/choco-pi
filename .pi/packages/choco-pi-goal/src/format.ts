@@ -230,6 +230,35 @@ export function goalToolResponse(
   };
 }
 
+/** Goal status as the goal tools show it: snake_case, while ThreadGoal and persisted state keep camelCase. */
+export type ToolGoalStatus = "active" | "paused" | "budget_limited" | "complete";
+
+export function toolGoalStatus(status: GoalStatus): ToolGoalStatus {
+  return status === "budgetLimited" ? "budget_limited" : status;
+}
+
 export function toToolText(goal: ThreadGoal | null, includeCompletionBudgetReport = false): string {
-  return JSON.stringify(goalToolResponse(goal, includeCompletionBudgetReport), null, 2);
+  const response = goalToolResponse(goal, includeCompletionBudgetReport);
+  const record = response.goal;
+  return JSON.stringify(
+    {
+      goal:
+        record === null
+          ? null
+          : {
+              goal_id: record.goalId,
+              objective: record.objective,
+              status: toolGoalStatus(record.status),
+              token_budget: record.tokenBudget,
+              tokens_used: record.tokensUsed,
+              time_used_seconds: record.timeUsedSeconds,
+              created_at: record.createdAt,
+              updated_at: record.updatedAt,
+            },
+      remaining_tokens: response.remainingTokens,
+      completion_budget_report: response.completionBudgetReport,
+    },
+    null,
+    2,
+  );
 }

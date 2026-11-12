@@ -126,7 +126,7 @@ export async function applyAgentBrowserOutputPath(options: {
   for (const artifactPath of getArtifactPaths(options.result, options.cwd)) {
     if (!(await pathsReferToSameFile(absolutePath, artifactPath))) continue;
     const message =
-      "outputPath resolves to the same file as a browser artifact destination; choose a separate outputPath or omit it. The browser artifact was preserved.";
+      "output_path resolves to the same file as a browser artifact destination; choose a separate output_path or omit it. The browser artifact was preserved.";
     const outputFile: AgentBrowserOutputFileDetails = {
       absolutePath,
       error: message,

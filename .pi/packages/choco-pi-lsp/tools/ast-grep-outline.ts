@@ -53,7 +53,7 @@ export function createAstGrepOutlineTool(astGrepClient: AstGrepClient) {
       "for languages or structures where choco-pi-lsp's own extractor is weak, or for a " +
       "raw second opinion.\n\n" +
       "Prefer module_report for choco-pi-lsp-aware navigation (who-uses-this, " +
-      "complexity/fanout, recommendedReads, blast radius, callback handles). Use " +
+      "complexity/fanout, recommended_reads, blast radius, callback handles). Use " +
       "ast_grep_outline when you want the syntax tree's own view of a file or a " +
       "whole directory.\n\n" +
       "Returns JSON: per file, `items[]` with name/symbolType/signature/range, " +
@@ -75,55 +75,52 @@ export function createAstGrepOutlineTool(astGrepClient: AstGrepClient) {
       return `ast_grep_outline — ${items} symbols across ${files} file${files === 1 ? "" : "s"}${trunc}`;
     }),
     parameters: hostParams(
-      obj(
-        {
-          paths: arr(str(), {
-            minItems: 1,
-            maxItems: 100,
-            description: "Files or directories to outline (workspace-relative or absolute).",
+      obj({
+        paths: arr(str(), {
+          minItems: 1,
+          maxItems: 100,
+          description: "Files or directories to outline (workspace-relative or absolute).",
+        }),
+        lang: opt(
+          oneOf(LANGUAGES, {
+            description:
+              "Restrict to one language. Required for stdin; for paths, ast-grep infers per file when omitted.",
           }),
-          lang: opt(
-            oneOf(LANGUAGES, {
-              description:
-                "Restrict to one language. Required for stdin; for paths, ast-grep infers per file when omitted.",
-            }),
-          ),
-          items: opt(
-            oneOf(["auto", "structure", "exports", "imports", "all"], {
-              description:
-                "Which top-level items to include. auto = `structure` for a file, `exports` for a directory (default).",
-            }),
-          ),
-          view: opt(
-            oneOf(["auto", "names", "signatures", "digest", "expanded"], {
-              description:
-                "Text presentation level for the underlying outline; `expanded` shows members.",
-            }),
-          ),
-          type: opt(
-            arr(str(), {
-              description: 'Keep only these symbol types, e.g. ["class","function"].',
-            }),
-          ),
-          match: opt(
-            str({
-              description: "Keep only top-level items whose name matches this regex.",
-            }),
-          ),
-          pubMembers: opt(
-            bool({
-              description: "Show only public members in member views.",
-            }),
-          ),
-          globs: opt(
-            arr(str(), {
-              description:
-                'Include/exclude file globs for directory input, e.g. ["*.ts","!**/dist/**"].',
-            }),
-          ),
-        },
-        { open: true },
-      ),
+        ),
+        items: opt(
+          oneOf(["auto", "structure", "exports", "imports", "all"], {
+            description:
+              "Which top-level items to include. auto = `structure` for a file, `exports` for a directory (default).",
+          }),
+        ),
+        view: opt(
+          oneOf(["auto", "names", "signatures", "digest", "expanded"], {
+            description:
+              "Text presentation level for the underlying outline; `expanded` shows members.",
+          }),
+        ),
+        type: opt(
+          arr(str(), {
+            description: 'Keep only these symbol types, e.g. ["class","function"].',
+          }),
+        ),
+        match: opt(
+          str({
+            description: "Keep only top-level items whose name matches this regex.",
+          }),
+        ),
+        pub_members: opt(
+          bool({
+            description: "Show only public members in member views.",
+          }),
+        ),
+        globs: opt(
+          arr(str(), {
+            description:
+              'Include/exclude file globs for directory input, e.g. ["*.ts","!**/dist/**"].',
+          }),
+        ),
+      }),
     ),
     async execute(
       _toolCallId: string,
@@ -134,7 +131,7 @@ export function createAstGrepOutlineTool(astGrepClient: AstGrepClient) {
         view?: string;
         type?: string[];
         match?: string;
-        pubMembers?: boolean;
+        pub_members?: boolean;
         globs?: string[];
       },
       _signal: AbortSignal | undefined,
@@ -162,7 +159,7 @@ export function createAstGrepOutlineTool(astGrepClient: AstGrepClient) {
           view: params.view,
           types: params.type,
           match: params.match,
-          pubMembers: params.pubMembers,
+          pubMembers: params.pub_members,
           globs: params.globs,
         });
       } catch (err) {
@@ -178,8 +175,9 @@ export function createAstGrepOutlineTool(astGrepClient: AstGrepClient) {
         items: file.items
           .slice(0, MAX_ITEMS_PER_FILE)
           .map((item) => withReadHandles(file.path, item)),
+        // Wrapper-added key; outline items themselves are ast-grep CLI JSON and stay verbatim.
         ...includePropertiesWhen(file.items.length > MAX_ITEMS_PER_FILE, () => ({
-          truncatedItems: file.items.length - MAX_ITEMS_PER_FILE,
+          truncated_items: file.items.length - MAX_ITEMS_PER_FILE,
         })),
       }));
 

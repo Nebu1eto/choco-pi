@@ -30,7 +30,7 @@ export function buildPlaywrightSelectorHint(input: SelectorHintInput): AgentBrow
   if (prefix?.[1] === "role") locator = "role";
   else if (prefix?.[1] === "label") locator = "label";
   const semanticAction: NonNullable<
-    NonNullable<AgentBrowserNextAction["params"]>["semanticAction"]
+    NonNullable<AgentBrowserNextAction["params"]>["semantic_action"]
   > = {
     action: target.action,
     locator,
@@ -42,7 +42,7 @@ export function buildPlaywrightSelectorHint(input: SelectorHintInput): AgentBrow
   return [
     {
       id: "use-semantic-action-for-playwright-selector",
-      params: { semanticAction },
+      params: { semantic_action: semanticAction },
       reason: "Playwright selector dialect is not supported by agent-browser",
       safety:
         "Inspect the current snapshot to confirm the intended target; CSS constraints are not carried into the text locator.",

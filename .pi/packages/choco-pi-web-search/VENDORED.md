@@ -66,3 +66,7 @@ Pi SDK pins move from `1.5.0` to exactly `1.5.1`; version references in comments
 ## 2026-11-11 choco-pi patch: Pi SDK range ~1.5.2
 
 Pi SDK dependencies move from exactly `1.5.1` to the range `~1.5.2` (`>=1.5.2 <1.6.0`), so later 1.5 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow.
+
+## 2026-11-12 choco-pi patch: snake_case tool I/O
+
+Model-visible search messages name the `web_search` tool parameters, which are snake_case (user decision; no aliases). The adapter contract (`SearchRequest`, `SearchCapability`, `requiredCapabilities`, `CONTRACT.md`) keeps its camelCase names. Only message text changes: the incompatibility reason recorded in attempts and errors reads `<capability> is unsupported` with the snake_case name (`recency_filter is unsupported`; mapped by the private `toolParamName` in `index.ts`), the hint warning reads `<adapter> treats num_results as a non-binding hint`, and the request errors read `Image search requires image_query or query` and `domain_filter contains an invalid domain`. Test: `tests/core.test.ts` ("model-visible capability warnings and reasons use the web_search parameter names").

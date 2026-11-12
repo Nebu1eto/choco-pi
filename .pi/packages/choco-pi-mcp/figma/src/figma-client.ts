@@ -58,7 +58,7 @@ export interface FigmaGetNodesOptions {
   depth?: number;
 }
 
-export interface ParsedFigmaUrl {
+export interface ParsedFigmaUrl extends FigmaRecord {
   fileKey: string;
   nodeId?: string;
 }
@@ -183,7 +183,7 @@ export class FigmaClient {
       },
       metadata: {
         truncated: true,
-        note: "Only canvases and top-level frames are returned by default. Pass nodeId and use processed node tools for details.",
+        note: "Only canvases and top-level frames are returned by default. Pass node_id and use processed node tools for details.",
         nextSteps: [
           "Call figma_get_node_summary or figma_explain_node for a specific node.",
           "Use figma_get_file only for raw debugging.",
@@ -254,7 +254,7 @@ export class FigmaClient {
     const result = findNodesByName(document, params);
     if (!params.nodeId) {
       result.metadata.nextSteps.unshift(
-        "Full-file search is depth-limited; pass nodeId from figma_get_design_context to search a specific frame more precisely.",
+        "Full-file search is depth-limited; pass node_id from figma_get_design_context to search a specific frame more precisely.",
       );
     }
     return result;
@@ -268,7 +268,7 @@ export class FigmaClient {
     const result = findNodesByText(document, params);
     if (!params.nodeId) {
       result.metadata.nextSteps.unshift(
-        "Full-file search is depth-limited; pass nodeId from figma_get_design_context to search a specific frame more precisely.",
+        "Full-file search is depth-limited; pass node_id from figma_get_design_context to search a specific frame more precisely.",
       );
     }
     return result;
@@ -464,7 +464,7 @@ export class FigmaClient {
         ],
         nextSteps: [
           ...collected.metadata.nextSteps,
-          "Use manifest nodePath values to map downloaded files back to source Figma layers.",
+          "Use manifest node_path values to map downloaded files back to source Figma layers.",
         ],
       },
     };
@@ -593,7 +593,7 @@ export function parseFigmaUrl(url: string): ParsedFigmaUrl {
   const parts = parsed.pathname.split("/").filter(Boolean);
   const fileKey = parts[1];
   if (!fileKey || !["design", "file", "proto"].includes(parts[0] ?? "")) {
-    throw new Error("Expected a Figma URL like https://www.figma.com/design/<fileKey>/...");
+    throw new Error("Expected a Figma URL like https://www.figma.com/design/<file_key>/...");
   }
   const nodeId = parsed.searchParams.get("node-id") ?? undefined;
   return { fileKey, nodeId: nodeId ? normalizeNodeId(nodeId) : undefined };

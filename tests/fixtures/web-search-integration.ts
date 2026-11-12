@@ -127,12 +127,12 @@ interface JwtPayload {
 
 interface ToolParameters {
   claim?: string;
-  fetchContent?: boolean;
+  fetch_content?: boolean;
   limit?: number;
   provider?: string;
   query?: string;
-  queryIndex?: number;
-  responseId?: string;
+  query_index?: number;
+  response_id?: string;
   workflow?: string;
 }
 
@@ -720,7 +720,7 @@ assert.equal(synthetic.credentials.reads.includes("synthetic"), false);
   const beforeNative = (await nativeQueries(nativeLog)).length;
   const result = await executeTool(anthropic, "source_check", {
     claim: "The integration source exists",
-    fetchContent: false,
+    fetch_content: false,
   });
   assert.match(JSON.stringify(result), /Native source/);
   assert.equal((await nativeQueries(nativeLog)).length, beforeNative + 1);
@@ -728,8 +728,8 @@ assert.equal(synthetic.credentials.reads.includes("synthetic"), false);
 
 {
   const result = await executeTool(anthropic, "get_search_content", {
-    responseId: "legacy-provider-result",
-    queryIndex: 0,
+    response_id: "legacy-provider-result",
+    query_index: 0,
   });
   assert.match(JSON.stringify(result), /Legacy provider answer/);
   assert.match(JSON.stringify(result), /Legacy provider source/);

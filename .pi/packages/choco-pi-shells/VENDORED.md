@@ -36,3 +36,7 @@ print-mode case in `tests/index.test.ts`.
 ## 2026-11-11 choco-pi patch: Pi SDK range ~1.5.2
 
 Pi SDK dependencies move from exactly `1.5.1` to the range `~1.5.2` (`>=1.5.2 <1.6.0`), so later 1.5 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow.
+
+## 2026-11-12 choco-pi patch: snake_case tool I/O
+
+Tool outputs are model-visible, so they now use snake_case. `shell_start`/`shell_read`/`shell_stop`/`shell_list` result text, the `<shell-completion>` notification JSON and the `/shells` command JSON map: `shellId`→`shell_id`, `ownerId`→`owner_id`, `startedAt`→`started_at`, `endedAt`→`ended_at`, `exitCode`→`exit_code`, stream `startOffset`/`nextOffset`/`endOffset`→`start_offset`/`next_offset`/`end_offset`. Inputs were already snake_case (`shell_id`, `stdout_offset`, `stderr_offset`, `max_bytes`); schemas stay closed, so camelCase inputs are rejected. The mapping lives in `src/tool-view.ts` and is applied only where tool content or notification text is built; `ShellManager` objects, `result.details`, and the frozen `shells:*` `pi.events` payloads keep camelCase. The notification hint now reads "pass stdout.next_offset as stdout_offset and stderr.next_offset as stderr_offset", the `stdout_offset`/`stderr_offset` descriptions name `next_offset`, and manager validation messages name `shell_id`, `stdout_offset`, `stderr_offset`, `max_bytes`. Tests: `tests/index.test.ts`, `tests/stop-control.test.ts`.

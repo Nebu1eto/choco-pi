@@ -12,7 +12,7 @@ function createAstDumpToolWithName(astGrepClient: AstGrepClient, name: "ast_grep
     name,
     label: "AST-Grep Dump",
     description:
-      "Dump the tree-sitter AST for a source snippet using ast-grep CLI. Use when ast_grep_search returns zero matches and you need exact node kinds, field names, or nesting. Named nodes only by default; includeAnonymous=true shows punctuation/CST nodes too.",
+      "Dump the tree-sitter AST for a source snippet using ast-grep CLI. Use when ast_grep_search returns zero matches and you need exact node kinds, field names, or nesting. Named nodes only by default; include_anonymous=true shows punctuation/CST nodes too.",
     promptSnippet: "Inspect AST node kinds before writing ast-grep patterns",
     renderResult: compactRenderResult<{ lang?: string }>(
       ({ details, args, isError, lineCount, text }) => {
@@ -24,22 +24,19 @@ function createAstDumpToolWithName(astGrepClient: AstGrepClient, name: "ast_grep
       },
     ),
     parameters: hostParams(
-      obj(
-        {
-          source: str({
-            description: "Source code snippet to parse and dump",
+      obj({
+        source: str({
+          description: "Source code snippet to parse and dump",
+        }),
+        lang: oneOf(LANGUAGES, {
+          description: "Target language",
+        }),
+        include_anonymous: opt(
+          bool({
+            description: "Show anonymous punctuation/CST nodes too (default false)",
           }),
-          lang: oneOf(LANGUAGES, {
-            description: "Target language",
-          }),
-          includeAnonymous: opt(
-            bool({
-              description: "Show anonymous punctuation/CST nodes too (default false)",
-            }),
-          ),
-        },
-        { open: true },
-      ),
+        ),
+      }),
     ),
     async execute(
       _toolCallId: string,
@@ -49,7 +46,7 @@ function createAstDumpToolWithName(astGrepClient: AstGrepClient, name: "ast_grep
     ) {
       const source = isRuntimeString(params.source) ? params.source : "";
       const lang = isRuntimeString(params.lang) ? params.lang.replace(/^"|"$/g, "") : "";
-      const includeAnonymous = params.includeAnonymous === true;
+      const includeAnonymous = params.include_anonymous === true;
 
       try {
         if (!source.trim()) {

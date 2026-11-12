@@ -42,7 +42,7 @@ function toDiagnosticOutcome(value: string): AgentBrowserDiagnostic["outcome"] |
 /** Single-line model-visible rendering of a failure diagnostic; contains only fixed text and a validated code. */
 export function formatAgentBrowserDiagnosticText(diagnostic: AgentBrowserDiagnostic): string {
   const retryAfter =
-    diagnostic.retryAfterMs === undefined ? "" : ` retryAfterMs=${diagnostic.retryAfterMs}`;
+    diagnostic.retryAfterMs === undefined ? "" : ` retry_after_ms=${diagnostic.retryAfterMs}`;
   return `Diagnostic: code=${diagnostic.code} origin=${diagnostic.origin} outcome=${diagnostic.outcome} retryable=${diagnostic.retryable}${retryAfter}. ${diagnostic.hint}`;
 }
 

@@ -205,7 +205,7 @@ function cdpModifierBit(key: string): number | undefined {
  * (confirmed live for ["cmd","a"]: the selection stayed collapsed).
  */
 const CDP_MACOS_EDITING_LIMIT =
-  'On macOS, Cmd editing shortcuts such as ["cmd","a"] (select all, copy, cut, paste, undo, redo) do not run on browser pages; use setText to replace a field\'s text.';
+  'On macOS, Cmd editing shortcuts such as ["cmd","a"] (select all, copy, cut, paste, undo, redo) do not run on browser pages; use set_text to replace a field\'s text.';
 
 /**
  * Why CDP keypress cannot send `keys`, or undefined when it can. CDP sends each

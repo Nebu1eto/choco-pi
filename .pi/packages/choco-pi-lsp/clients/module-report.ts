@@ -2813,14 +2813,14 @@ export async function readEnclosing(
           confidence: "medium",
         },
         outline: enclosingOutline(selected, symbols, callbacks, filters, absPath),
-        error: `Enclosing ${selected.kind} spans ${limit} lines, above maxLines ${options.maxLines}`,
+        error: `Enclosing ${selected.kind} spans ${limit} lines, above max_lines ${options.maxLines}`,
       };
     }
     log(false);
     return {
       ...base,
       found: false,
-      error: `Enclosing ${selected.kind} spans ${limit} lines, above maxLines ${options.maxLines}`,
+      error: `Enclosing ${selected.kind} spans ${limit} lines, above max_lines ${options.maxLines}`,
     };
   }
   const source = lines.slice(selected.startLine - 1, selected.endLine).join("\n");

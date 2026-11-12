@@ -17,6 +17,7 @@ import {
   type ProjectReport,
 } from "../clients/lsp-engine.ts";
 import { compactRenderResult } from "./render-compact.ts";
+import { stringifySnakeCase } from "./output-keys.ts";
 
 function errorMessage<T>(err: T): string {
   return err instanceof Error ? err.message : String(err);
@@ -104,7 +105,7 @@ export function createProjectReportTool(getProjectRoot: () => string) {
         };
       }
       const text =
-        params.view === "compact" ? renderCompactProjectReport(report) : JSON.stringify(report);
+        params.view === "compact" ? renderCompactProjectReport(report) : stringifySnakeCase(report);
       return {
         content: [{ type: "text" as const, text }],
         details: {

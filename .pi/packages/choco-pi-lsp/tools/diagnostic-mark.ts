@@ -206,7 +206,7 @@ export function createLensDiagnosticMarkTool(
     name: "diagnostic_mark" as const,
     label: "Mark Diagnostic",
     description:
-      "Record a disposition for a diagnostics_report finding, using the exact filePath/rule/message/line " +
+      "Record a disposition for a diagnostics_report finding, using the exact file_path/rule/message/line " +
       "it was reported with. false-positive/suppress persist across sessions; defer lasts only for the " +
       "current session (resurfaces next time); flagged marks it for you to come back and fix, and shows " +
       "up tagged in a later diagnostics_report mode=full. suppress additionally writes a `choco-pi-lsp-ignore: " +
@@ -218,34 +218,29 @@ export function createLensDiagnosticMarkTool(
       "and reanchoring can't always disambiguate two nearby findings.",
     promptSnippet: "Record a diagnostic disposition or deferred fix.",
     parameters: hostParams(
-      obj(
-        {
-          filePath: str({
-            description: "The file the diagnostic was reported on (relative or absolute).",
-          }),
-          line: num({
-            description: "The 1-based line the diagnostic was reported at.",
-          }),
-          message: str({
-            description: "The diagnostic's message, exactly as diagnostics_report reported it.",
-          }),
-          rule: opt(
-            str({
-              description:
-                "The diagnostic's rule id, if it has one (shown in diagnostics_report as [rule]). Required for disposition=suppress.",
-            }),
-          ),
-          tool: opt(str({ description: "The tool that produced the diagnostic, if known." })),
-          disposition: oneOf(DISPOSITIONS, {
+      obj({
+        file_path: str({
+          description: "The file the diagnostic was reported on (relative or absolute).",
+        }),
+        line: num({
+          description: "The 1-based line the diagnostic was reported at.",
+        }),
+        message: str({
+          description: "The diagnostic's message, exactly as diagnostics_report reported it.",
+        }),
+        rule: opt(
+          str({
             description:
-              "false-positive = the rule misfired. suppress = real finding, won't fix (writes an inline ignore comment). defer = fix later, this session only. flagged = mark for you to fix.",
+              "The diagnostic's rule id, if it has one (shown in diagnostics_report as [rule]). Required for disposition=suppress.",
           }),
-          reason: opt(
-            str({ description: "Optional short reason, kept alongside the disposition." }),
-          ),
-        },
-        { open: true },
-      ),
+        ),
+        tool: opt(str({ description: "The tool that produced the diagnostic, if known." })),
+        disposition: oneOf(DISPOSITIONS, {
+          description:
+            "false-positive = the rule misfired. suppress = real finding, won't fix (writes an inline ignore comment). defer = fix later, this session only. flagged = mark for you to fix.",
+        }),
+        reason: opt(str({ description: "Optional short reason, kept alongside the disposition." })),
+      }),
     ),
     async execute(
       _toolCallId: string,
@@ -255,7 +250,7 @@ export function createLensDiagnosticMarkTool(
       ctx: { cwd?: string },
     ) {
       const cwd = ctx.cwd ?? getCwd();
-      const filePathArg = params.filePath;
+      const filePathArg = params.file_path;
       const line = params.line;
       const message = params.message;
       // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
@@ -278,7 +273,7 @@ export function createLensDiagnosticMarkTool(
           content: [
             {
               type: "text" as const,
-              text: "filePath, line, message, and a valid disposition are required.",
+              text: "file_path, line, message, and a valid disposition are required.",
             },
           ],
           isError: true,

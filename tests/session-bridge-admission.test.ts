@@ -201,6 +201,12 @@ test("concurrent idle managed sends admit once, then steer in order", async () =
         .flatMap((item) => (item.type === "text" ? [item.text] : []))
         .join("\n");
       assert.match(text, /"accepted": "direct"/);
+      assert.match(text, /"effective_mode": "steer"/);
+      assert.doesNotMatch(text, /effectiveMode/);
+      assert.deepEqual(
+        Object.keys(JSON.parse(text)).filter((key) => /[A-Z]/.test(key)),
+        [],
+      );
     }
     await target.session.waitForIdle();
     assert.equal(target.session.state.errorMessage?.includes("already processing") ?? false, false);

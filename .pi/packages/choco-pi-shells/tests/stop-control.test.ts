@@ -187,7 +187,7 @@ test("stop-shells stops a TERM-resistant group for the listed owners only and ke
     });
     await waitFor(() =>
       manager()
-        .read({ requesterId: ROOT, isAdmin: false, shellId: started.shellId })
+        .read({ requesterId: ROOT, isAdmin: false, shellId: started.shell_id })
         .stdout.data.includes("ready"),
     );
 
@@ -215,7 +215,7 @@ test("stop-shells stops a TERM-resistant group for the listed owners only and ke
     await waitFor(() => root.reports.length === 2);
     assert.equal(root.reports[1]?.phase, "settled");
     assert.equal(root.reports[1]?.requestId, "req-1");
-    const after = manager().read({ requesterId: ROOT, isAdmin: false, shellId: started.shellId });
+    const after = manager().read({ requesterId: ROOT, isAdmin: false, shellId: started.shell_id });
     assert.equal(after.shell.state, "stopped");
     assert.match(after.stdout.data, /ready/);
     assert.equal(

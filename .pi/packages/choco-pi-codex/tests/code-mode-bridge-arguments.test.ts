@@ -42,7 +42,7 @@ test("invalid bridged arguments are rejected before executor side effects", asyn
     label: "read_text",
     description: "Read observed UI text",
     parameters: hostParams(
-      obj({ ref: str(), offset: opt(num({ minimum: 0 })), stateId: opt(str()) }, { open: true }),
+      obj({ ref: str(), offset: opt(num({ minimum: 0 })), state_id: opt(str()) }, { open: true }),
     ),
     async execute() {
       executions += 1;
@@ -117,7 +117,7 @@ test("valid read_text input preserves UI observation failure", async () => {
     label: "read_text",
     description: "Read observed UI text",
     parameters: hostParams(
-      obj({ ref: str(), offset: opt(num({ minimum: 0 })), stateId: opt(str()) }, { open: true }),
+      obj({ ref: str(), offset: opt(num({ minimum: 0 })), state_id: opt(str()) }, { open: true }),
     ),
     async execute() {
       executions += 1;

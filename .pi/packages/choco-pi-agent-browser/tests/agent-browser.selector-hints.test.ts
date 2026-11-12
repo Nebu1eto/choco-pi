@@ -12,10 +12,10 @@ import {
 void test("Playwright text selector compiles to an equivalent semantic click", () => {
   const [hint] = buildPlaywrightSelectorHint({ commandTokens: ["click", "text=Claude Haiku 5.5"] });
   assert.deepEqual(hint.params, {
-    semanticAction: { action: "click", locator: "text", value: "Claude Haiku 5.5" },
+    semantic_action: { action: "click", locator: "text", value: "Claude Haiku 5.5" },
   });
   assert.equal(hint.reason, "Playwright selector dialect is not supported by agent-browser");
-  assert.deepEqual(compileAgentBrowserSemanticAction(hint.params?.semanticAction), {
+  assert.deepEqual(compileAgentBrowserSemanticAction(hint.params?.semantic_action), {
     compiled: {
       action: "click",
       locator: "text",
@@ -29,7 +29,7 @@ void test("dialect hints preserve fill payload and explicit session", () => {
     commandTokens: ["fill", "label=Search", "model"],
     sessionName: "session-a",
   });
-  assert.deepEqual(hint.params?.semanticAction, {
+  assert.deepEqual(hint.params?.semantic_action, {
     action: "fill",
     locator: "label",
     value: "Search",
@@ -38,7 +38,7 @@ void test("dialect hints preserve fill payload and explicit session", () => {
   });
   for (const selector of ["role=button", "button:has-text('Close')"]) {
     const [candidate] = buildPlaywrightSelectorHint({ commandTokens: ["click", selector] });
-    assert.ok(compileAgentBrowserSemanticAction(candidate.params?.semanticAction).compiled);
+    assert.ok(compileAgentBrowserSemanticAction(candidate.params?.semantic_action).compiled);
   }
 });
 

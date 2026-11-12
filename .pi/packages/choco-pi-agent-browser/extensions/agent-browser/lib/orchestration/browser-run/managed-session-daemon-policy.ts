@@ -19,7 +19,7 @@ import { redactInvocationArgs } from "../../runtime.ts";
 
 const MANAGED_SESSION_DAEMON_INSPECTION_TIMEOUT_MS = 35_000;
 const RUNNING_HEADED_AUTOSAVE_POLICY_CHANGE_ERROR =
-  'AGENT_BROWSER_AUTOSAVE_INTERVAL_MS cannot change a running wrapper-owned headed session\'s launch-time periodic autosave interval. Close that session first, then retry with sessionMode: "fresh" so the new daemon starts with the requested interval.';
+  'AGENT_BROWSER_AUTOSAVE_INTERVAL_MS cannot change a running wrapper-owned headed session\'s launch-time periodic autosave interval. Close that session first, then retry with session_mode: "fresh" so the new daemon starts with the requested interval.';
 
 export function getRunningHeadedAutosavePolicyChangeError(
   recordedInterval: string | undefined,
@@ -159,7 +159,7 @@ export async function acquireOwnedManagedSessionDaemonPolicy(options: {
     if (daemon.status === "unknown") {
       return {
         error:
-          'The wrapper could not verify this managed session\'s live daemon restore policy. Retry, close that session, or use sessionMode: "fresh".',
+          'The wrapper could not verify this managed session\'s live daemon restore policy. Retry, close that session, or use session_mode: "fresh".',
         lock,
       };
     }
@@ -180,7 +180,7 @@ export async function acquireOwnedManagedSessionDaemonPolicy(options: {
           daemonStatus: daemon.status,
           error: [
             "This wrapper-owned session's live daemon does not match the requested managed-restore policy.",
-            'Close that session first, retry with sessionMode: "fresh", or use a distinct explicit --session.',
+            'Close that session first, retry with session_mode: "fresh", or use a distinct explicit --session.',
           ].join(" "),
           lock,
         }

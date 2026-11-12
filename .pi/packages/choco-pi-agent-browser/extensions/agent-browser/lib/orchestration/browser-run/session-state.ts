@@ -243,24 +243,24 @@ function formatManagedSessionOutcomeRecoveryGuidance(outcome: ManagedSessionOutc
   const lines = ["Recovery:"];
   if (outcome.status === "preserved") {
     lines.push(
-      '- Continue with sessionMode "auto" on the current session, or retry the intended launch with sessionMode "fresh".',
+      '- Continue with session_mode "auto" on the current session, or retry the intended launch with session_mode "fresh".',
     );
     lines.push(
       "- Run doctor to verify agent-browser install and environment when failures persist.",
     );
   } else if (outcome.status === "abandoned") {
     lines.push(
-      '- Retry with sessionMode "fresh" (for example args: ["open", "<url>"]) after verifying agent-browser is on PATH.',
+      '- Retry with session_mode "fresh" (for example args: ["open", "<url>"]) after verifying agent-browser is on PATH.',
     );
     lines.push("- Run doctor when install or environment issues are suspected.");
   } else if (isFreshPostLaunchFailure(outcome)) {
     lines.push(
-      '- Continue with sessionMode "auto" on the current session, or inspect failureCategory / qaPreset to fix the post-launch failure.',
+      '- Continue with session_mode "auto" on the current session, or inspect failureCategory / qaPreset to fix the post-launch failure.',
     );
     lines.push("- Run doctor only if later browser commands also fail.");
   } else {
     lines.push(
-      '- Retry with sessionMode "fresh" when launch-scoped flags must apply, or run doctor to verify the environment.',
+      '- Retry with session_mode "fresh" when launch-scoped flags must apply, or run doctor to verify the environment.',
     );
   }
   lines.push(
@@ -287,7 +287,7 @@ export function formatManagedSessionOutcomeText(
   if (outcome.status === "closed" && outcome.succeeded) {
     return [
       "Managed session outcome: The current wrapper-managed browser session was closed.",
-      "Next sessionMode auto call will start or attach a managed session as needed. If upstream session list still shows rows, they are separate saved/upstream sessions; use close --all only when full cleanup is intended.",
+      "Next session_mode auto call will start or attach a managed session as needed. If upstream session list still shows rows, they are separate saved/upstream sessions; use close --all only when full cleanup is intended.",
       "Full session names and transition details remain in details.managedSessionOutcome.",
     ].join("\n");
   }
@@ -330,7 +330,7 @@ export function buildManagedSessionFreshFailureNextActions(
       buildNextToolAction({
         args: currentSessionArgs(["get", "url"]),
         id: "verify-current-managed-session",
-        reason: `Confirm the ${sessionLabel} before continuing with sessionMode auto.`,
+        reason: `Confirm the ${sessionLabel} before continuing with session_mode auto.`,
         safety: `Read-only URL check on the ${sessionLabel}.`,
       }),
       buildNextToolAction({
@@ -452,14 +452,14 @@ export function mergeNavigationSummaryIntoData(
 }
 
 export function buildAboutBlankRecoveryHint(): string {
-  return "agent_browser detected that the active tab became about:blank while this session still had a prior intended tab. Run tab list for this session and re-select the intended tab, or retry with sessionMode:fresh if the tab is gone.".replace(
-    "sessionMode:fresh",
-    "sessionMode=fresh",
+  return "agent_browser detected that the active tab became about:blank while this session still had a prior intended tab. Run tab list for this session and re-select the intended tab, or retry with session_mode:fresh if the tab is gone.".replace(
+    "session_mode:fresh",
+    "session_mode=fresh",
   );
 }
 
 export function buildAboutBlankWarning(mismatch: AboutBlankSessionMismatch): string {
-  return `Warning: agent_browser detected that this session returned about:blank while the prior intended tab was ${mismatch.targetUrl}. ${mismatch.recoveryApplied ? "The wrapper re-selected the intended tab for the session." : "No matching tab could be re-selected; run tab list for the same session or retry with sessionMode=fresh."}`;
+  return `Warning: agent_browser detected that this session returned about:blank while the prior intended tab was ${mismatch.targetUrl}. ${mismatch.recoveryApplied ? "The wrapper re-selected the intended tab for the session." : "No matching tab could be re-selected; run tab list for the same session or retry with session_mode=fresh."}`;
 }
 
 function extractBatchResultCommand(item: RuntimeRecord<RuntimeValue>): string[] {
@@ -1061,11 +1061,11 @@ function buildElectronReattachNextAction(
     liveTarget?.webSocketDebuggerUrl ?? record.webSocketDebuggerUrl ?? String(record.port);
   return {
     id: "reattach-electron-launch",
-    params: { args: ["connect", endpoint], sessionMode: "fresh" },
+    params: { args: ["connect", endpoint], session_mode: "fresh" },
     reason:
       "Attach a fresh managed session to the same wrapper-tracked Electron debug endpoint when the current session no longer matches the live renderer.",
     safety:
-      "Creates a new managed browser session; it does not mutate the Electron app. Keep the launchId for later status and cleanup.",
+      "Creates a new managed browser session; it does not mutate the Electron app. Keep the launch_id for later status and cleanup.",
     tool: "agent_browser",
   };
 }
@@ -1144,7 +1144,7 @@ export function buildElectronSessionMismatch(options: {
 }
 
 export function formatElectronSessionMismatchText(mismatch: ElectronSessionMismatch): string {
-  return `${mismatch.summary}\nNext: run electron.status/electron.probe with launchId ${mismatch.launchId}, reattach with the reattach-electron-launch nextAction if needed, or cleanup when finished.`;
+  return `${mismatch.summary}\nNext: run electron.status/electron.probe with launch_id ${mismatch.launchId}, reattach with the reattach-electron-launch nextAction if needed, or cleanup when finished.`;
 }
 
 export function shouldInspectElectronPostCommandHealth(command: string | undefined): boolean {
@@ -1210,7 +1210,7 @@ export function formatElectronPostCommandHealthText(
     `Status: ${diagnostic.status.portAlive ? "debug port alive" : "debug port dead"}${diagnostic.status.pidAlive === undefined ? "" : diagnostic.status.pidAlive ? ", pid alive" : ", pid dead"}; ${diagnostic.status.targets.length} CDP target(s).`,
   );
   lines.push(
-    `Next: run electron.status/electron.probe with launchId ${diagnostic.launchId}, cleanup the wrapper-owned launch if dead, or relaunch the app.`,
+    `Next: run electron.status/electron.probe with launch_id ${diagnostic.launchId}, cleanup the wrapper-owned launch if dead, or relaunch the app.`,
   );
   return lines.join("\n");
 }

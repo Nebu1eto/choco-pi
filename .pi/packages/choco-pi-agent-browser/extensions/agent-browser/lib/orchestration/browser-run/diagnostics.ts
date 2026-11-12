@@ -934,9 +934,9 @@ export function buildSourceLookupElectronNextActions(
   if (launchId)
     actions.push({
       id: "probe-electron-launch",
-      params: { electron: { action: "probe", launchId } },
+      params: { electron: { action: "probe", launch_id: launchId } },
       reason:
-        "Collect bounded wrapper/session context for the packaged Electron launch after sourceLookup found no candidates.",
+        "Collect bounded wrapper/session context for the packaged Electron launch after source_lookup found no candidates.",
       safety: "Read-only probe of title, URL, focus, tabs, and compact snapshot metadata.",
       tool: "agent_browser",
     });

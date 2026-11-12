@@ -191,7 +191,7 @@ test("browser batches are validated before anything is sent and keep the state u
           { action: "typeText", text: "a" },
           { action: "moveMouse", ref: "@e2" },
         ],
-        message: /^act_ui action 2 \(moveMouse\): Browser moveMouse takes x and y only/,
+        message: /^act_ui action 2 \(move_mouse\): Browser move_mouse takes x and y only/,
       },
       {
         actions: [
@@ -263,7 +263,7 @@ test("browser batches are validated before anything is sent and keep the state u
           { action: "moveMouse", x: 5, y: 700 },
         ],
         message:
-          /^act_ui action 2 \(moveMouse\): moveMouse \(5, 700\) is outside the page viewport/,
+          /^act_ui action 2 \(move_mouse\): move_mouse \(5, 700\) is outside the page viewport/,
       },
     ];
     for (const { actions, message } of cases) {
@@ -282,7 +282,7 @@ test("browser batches are validated before anything is sent and keep the state u
     await assert.rejects(
       browser.act(stateId, [{ action: "moveMouse", ref: "@e2" }]),
       messageMatches(
-        /^Browser moveMouse takes x and y only; browser outlines carry no element coordinates\.$/,
+        /^Browser move_mouse takes x and y only; browser outlines carry no element coordinates\.$/,
       ),
     );
     await assertUsable(browser, stateId);
@@ -316,7 +316,7 @@ test("the read-only preflight refuses stale refs and a missing page before sendi
         { action: "setText", ref: "@e3", text: "x" },
       ]),
       messageMatches(
-        /^act_ui action 2 \(setText\): Ref '@e3' no longer resolves to an element on the page; .* Nothing was sent\.$/,
+        /^act_ui action 2 \(set_text\): Ref '@e3' no longer resolves to an element on the page; .* Nothing was sent\.$/,
       ),
     );
     assert.deepEqual(browser.fake.inputCommands(start), []);
@@ -398,7 +398,7 @@ test("a mid-batch failure returns a partial successor and invalidates the base s
     assert.deepEqual(execution.error, execution.steps?.[1]?.error);
     assert.match(
       resultText(result),
-      /^act_ui stopped at action 2 \(setText\) in "Fixture": CDP error: No node with given id found\. Action 1 was delivered; action 2 \(setText\) delivered nothing; later actions were not sent\. Returned state [0-9a-f-]{36}\./,
+      /^act_ui stopped at action 2 \(set_text\) in "Fixture": CDP error: No node with given id found\. Action 1 was delivered; action 2 \(set_text\) delivered nothing; later actions were not sent\. Returned state [0-9a-f-]{36}\./,
     );
     assert.deepEqual(
       insertedTexts(browser.fake.commands.slice(start)),
@@ -536,7 +536,7 @@ test("a page that disappears mid-batch gives target_closed without a successor",
     assert.deepEqual(insertedTexts(browser.fake.commands), ["a", "b"]);
     assert.match(
       resultText(result),
-      /^act_ui stopped at action 3 \(typeText\) in "Fixture": .* Actions 1-2 were delivered; action 3 \(typeText\) delivered nothing; later actions were not sent\. Then the browser page "Fixture" closed before a successor observation could be captured\.\nNo successor state was created\./,
+      /^act_ui stopped at action 3 \(type_text\) in "Fixture": .* Actions 1-2 were delivered; action 3 \(type_text\) delivered nothing; later actions were not sent\. Then the browser page "Fixture" closed before a successor observation could be captured\.\nNo successor state was created\./,
     );
   });
 });
@@ -862,7 +862,7 @@ test("the preflight refuses a ref whose element was removed from the page", asyn
         { action: "setText", ref: "@e3", text: "x" },
       ]),
       messageMatches(
-        /^act_ui action 2 \(setText\): Ref '@e3' no longer resolves to an element on the page; .* Nothing was sent\.$/,
+        /^act_ui action 2 \(set_text\): Ref '@e3' no longer resolves to an element on the page; .* Nothing was sent\.$/,
       ),
     );
     assert.deepEqual(browser.fake.inputCommands(start), [], "nothing was sent");
@@ -943,7 +943,7 @@ test("browser keypress refusals do not recommend a key form that has no effect",
       (error: Error) => {
         assert.equal(
           error.message,
-          'Browser keypress cannot send "cmd+a": browser pages take DOM key values, either one character or a named key such as "Enter", "Tab", "Escape", "Backspace", "ArrowRight", "PageDown", or "F5", with any modifiers (shift, ctrl, alt/option, cmd/meta) as separate keys before it. On macOS, Cmd editing shortcuts such as ["cmd","a"] (select all, copy, cut, paste, undo, redo) do not run on browser pages; use setText to replace a field\'s text.',
+          'Browser keypress cannot send "cmd+a": browser pages take DOM key values, either one character or a named key such as "Enter", "Tab", "Escape", "Backspace", "ArrowRight", "PageDown", or "F5", with any modifiers (shift, ctrl, alt/option, cmd/meta) as separate keys before it. On macOS, Cmd editing shortcuts such as ["cmd","a"] (select all, copy, cut, paste, undo, redo) do not run on browser pages; use set_text to replace a field\'s text.',
         );
         assert.doesNotMatch(error.message, /e\.g\. \["cmd","a"\]/);
         return true;

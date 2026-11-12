@@ -32,6 +32,7 @@ import {
   type ShellLifecycleKind,
   type ShellLifecyclePayload,
 } from "./lifecycle-events.ts";
+import { viewCompletion, viewList, viewRead, viewShell } from "./tool-view.ts";
 import { openShellsOverlay, type ShellsUICtx } from "./ui/shells-overlay.ts";
 import { createShellSectionProvider, findShellSectionHost } from "./ui/shell-section.ts";
 import type { ShellSectionRegistration } from "../../choco-pi-subagents/src/ui/shell-section-contract.ts";
@@ -185,16 +186,20 @@ interface ProcessRegistry {
   [MANAGER_KEY]?: ShellManager;
 }
 
-function jsonResult<Result>(value: Result) {
+function viewedResult<Result, View>(value: Result, view: View) {
   return {
     content: [
       {
         type: "text" as const,
-        text: JSON.stringify(value, null, 2) ?? "null",
+        text: JSON.stringify(view, null, 2) ?? "null",
       },
     ],
     details: value,
   };
+}
+
+function jsonResult<Result>(value: Result) {
+  return viewedResult(value, value);
 }
 
 const startSchema = obj(
@@ -221,13 +226,13 @@ const readSchema = obj(
     stdout_offset: opt(
       int({
         minimum: 0,
-        description: "Absolute stdout byte cursor returned as stdout.nextOffset by a prior read.",
+        description: "Absolute stdout byte cursor returned as stdout.next_offset by a prior read.",
       }),
     ),
     stderr_offset: opt(
       int({
         minimum: 0,
-        description: "Absolute stderr byte cursor returned as stderr.nextOffset by a prior read.",
+        description: "Absolute stderr byte cursor returned as stderr.next_offset by a prior read.",
       }),
     ),
     max_bytes: opt(
@@ -306,7 +311,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
       pi.sendMessage<ShellCompletionDetails>(
         {
           customType: SHELL_NOTIFICATION_TYPE,
-          content: `<shell-completion>${JSON.stringify(details)}</shell-completion>\nUse shell_read with the reported cursors only when more output is needed.`,
+          content: `<shell-completion>${JSON.stringify(viewCompletion(details))}</shell-completion>\nUse shell_read with the reported cursors (pass stdout.next_offset as stdout_offset and stderr.next_offset as stderr_offset) only when more output is needed.`,
           display: true,
           details,
         },
@@ -568,7 +573,10 @@ export default function shellsExtension(pi: ExtensionAPI): void {
             cwd,
             destinations: [{ path: cwd, directory: true }],
           });
-          return jsonResult(warnings.length === 0 ? started : { ...started, warnings });
+          return viewedResult(
+            warnings.length === 0 ? started : { ...started, warnings },
+            warnings.length === 0 ? viewShell(started) : { ...viewShell(started), warnings },
+          );
         } catch (error) {
           return jsonResult({ error: error instanceof Error ? error.message : String(error) });
         }
@@ -585,16 +593,15 @@ export default function shellsExtension(pi: ExtensionAPI): void {
       parameters: hostParams(readSchema),
       execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
         try {
-          return jsonResult(
-            manager.read({
-              requesterId: ctx.sessionManager.getSessionId(),
-              isAdmin: adminFor(ctx.sessionManager.getSessionId()),
-              shellId: params.shell_id,
-              stdoutOffset: params.stdout_offset,
-              stderrOffset: params.stderr_offset,
-              maxBytes: params.max_bytes,
-            }),
-          );
+          const result = manager.read({
+            requesterId: ctx.sessionManager.getSessionId(),
+            isAdmin: adminFor(ctx.sessionManager.getSessionId()),
+            shellId: params.shell_id,
+            stdoutOffset: params.stdout_offset,
+            stderrOffset: params.stderr_offset,
+            maxBytes: params.max_bytes,
+          });
+          return viewedResult(result, viewRead(result));
         } catch (error) {
           return jsonResult({ error: error instanceof Error ? error.message : String(error) });
         }
@@ -611,13 +618,12 @@ export default function shellsExtension(pi: ExtensionAPI): void {
       parameters: hostParams(stopSchema),
       execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
         try {
-          return jsonResult(
-            await manager.stop({
-              requesterId: ctx.sessionManager.getSessionId(),
-              isAdmin: adminFor(ctx.sessionManager.getSessionId()),
-              shellId: params.shell_id,
-            }),
-          );
+          const result = await manager.stop({
+            requesterId: ctx.sessionManager.getSessionId(),
+            isAdmin: adminFor(ctx.sessionManager.getSessionId()),
+            shellId: params.shell_id,
+          });
+          return viewedResult(result, viewShell(result));
         } catch (error) {
           return jsonResult({ error: error instanceof Error ? error.message : String(error) });
         }
@@ -634,12 +640,11 @@ export default function shellsExtension(pi: ExtensionAPI): void {
       parameters: hostParams(listSchema),
       execute: async (_toolCallId, _params, _signal, _onUpdate, ctx) => {
         try {
-          return jsonResult(
-            manager.list({
-              requesterId: ctx.sessionManager.getSessionId(),
-              isAdmin: adminFor(ctx.sessionManager.getSessionId()),
-            }),
-          );
+          const result = manager.list({
+            requesterId: ctx.sessionManager.getSessionId(),
+            isAdmin: adminFor(ctx.sessionManager.getSessionId()),
+          });
+          return viewedResult(result, viewList(result));
         } catch (error) {
           return jsonResult({ error: error instanceof Error ? error.message : String(error) });
         }
@@ -662,7 +667,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
             return;
           }
           const result = manager.list({ requesterId, isAdmin });
-          ctx.ui.notify(JSON.stringify(result, null, 2) ?? "null", "info");
+          ctx.ui.notify(JSON.stringify(viewList(result), null, 2) ?? "null", "info");
           return;
         }
 
@@ -672,7 +677,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
             return;
           }
           const result = manager.read({ requesterId, isAdmin, shellId: id });
-          ctx.ui.notify(JSON.stringify(result, null, 2) ?? "null", "info");
+          ctx.ui.notify(JSON.stringify(viewRead(result), null, 2) ?? "null", "info");
           return;
         }
 
@@ -683,7 +688,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
           }
           const result = await manager.stop({ requesterId, isAdmin, shellId: id });
           if (shuttingDown) return;
-          ctx.ui.notify(JSON.stringify(result, null, 2) ?? "null", "info");
+          ctx.ui.notify(JSON.stringify(viewShell(result), null, 2) ?? "null", "info");
           return;
         }
 

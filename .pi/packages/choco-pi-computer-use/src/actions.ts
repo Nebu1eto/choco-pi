@@ -1,6 +1,7 @@
 import type { MouseButtonName, UiAction } from "./contract.ts";
 import type { OutlineNode } from "./outline.ts";
 import { toFiniteNumber } from "./platform/coerce.ts";
+import { actionLabel } from "./tool-params.ts";
 
 export type ActionTarget =
   | { ref: string }
@@ -175,9 +176,9 @@ function nativeTarget(
   if (operation === "drag" && action.path?.length) return path(action.path, env)[0];
   if (operation === "typeText" || operation === "keypress")
     throw new Error(
-      `${operation} has no usable ref; omit ref to use the app's focused element, or pass an @e ref.`,
+      `${actionLabel(operation)} has no usable ref; omit ref to use the app's focused element, or pass an @e ref.`,
     );
-  throw new Error(`${operation} requires either ref or both x and y.`);
+  throw new Error(`${actionLabel(operation)} requires either ref or both x and y.`);
 }
 
 function focusedTarget(env: ActionEnvironment): ActionTarget {
@@ -187,7 +188,7 @@ function focusedTarget(env: ActionEnvironment): ActionTarget {
 
 /** Message for keyboard input without a ref in headless mode, which only allows ref targets. */
 export function headlessKeyboardRefusal(operation: "typeText" | "keypress"): string {
-  return `${operation} without ref is unavailable in headless mode: headless delivery cannot send keys to the app's focused element. Pass the @e ref of the control that should receive the input.`;
+  return `${actionLabel(operation)} without ref is unavailable in headless mode: headless delivery cannot send keys to the app's focused element. Pass the @e ref of the control that should receive the input.`;
 }
 
 /** The ref's node when it is a text input the helper can target by ref. */

@@ -1,3 +1,4 @@
+import { toFigmaOutput } from "./figma-output-keys.ts";
 import {
   buildAccessibilityHints,
   buildCssLayoutHints,
@@ -26,7 +27,7 @@ export interface FigmaSummarizerOptions {
   maxChildren?: number;
 }
 
-export interface FigmaRenderedAsset {
+export interface FigmaRenderedAsset extends FigmaRecord {
   nodeId: string;
   url?: string | null;
   path?: string;
@@ -54,14 +55,14 @@ export interface FigmaNodeSummary extends FigmaRecord {
   metadata?: FigmaSummaryMetadata;
 }
 
-export interface FigmaTextExtractionResult {
+export interface FigmaTextExtractionResult extends FigmaRecord {
   node: string;
   nodeId?: string;
   texts: string[];
   metadata: FigmaSummaryMetadata;
 }
 
-export interface FigmaImplementationContext {
+export interface FigmaImplementationContext extends FigmaRecord {
   purpose: string;
   node: FigmaNodeSummary;
   sections: FigmaRecord[];
@@ -502,7 +503,7 @@ function buildMetadata(state: SummaryState, summary?: FigmaNodeSummary): FigmaSu
   }
   if (truncatedReasons.some((reason) => reason.includes("Collapsed component instance"))) {
     nextSteps.add(
-      "Set includeComponentInternals=true for a specific component instance if its internals matter.",
+      "Set include_component_internals=true for a specific component instance if its internals matter.",
     );
   }
   if (truncatedReasons.some((reason) => reason.includes("visible text"))) {
@@ -829,5 +830,5 @@ function dedupeObjects(values: FigmaRecord[], keys: string[]): FigmaRecord[] {
 }
 
 function compactInline(value: FigmaRecord): string {
-  return JSON.stringify(value).replace(/[{}]/g, "").replace(/"/g, "");
+  return JSON.stringify(toFigmaOutput(value)).replace(/[{}]/g, "").replace(/"/g, "");
 }

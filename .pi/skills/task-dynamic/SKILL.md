@@ -12,7 +12,7 @@ Use this workflow only when the user explicitly invokes `/task-dynamic` or names
 
 Follow the `task` skill's bootstrap, including `task-core`, `check`, path-scoped instructions, `review_base`, the mutation lease through the same resolved script, and the acceptance items. The sections below define only this workflow's planning and execution deltas.
 
-Explicit invocation authorizes the orchestrator to set `maxSubagentDepth` to the accepted plan's required depth, up to the existing cap of `16`. Each task packet must authorize any child that may spawn the next planned level. Do not increase concurrency or widen the planned depth without separate user authority; runtime limits are session-scoped.
+Explicit invocation authorizes the orchestrator to set `max_subagent_depth` to the accepted plan's required depth, up to the existing cap of `16`. Each task packet must authorize any child that may spawn the next planned level. Do not increase concurrency or widen the planned depth without separate user authority; runtime limits are session-scoped.
 
 ## 2. Decompose recursively
 
@@ -43,7 +43,7 @@ The worker forwards each finding and candidate with its evidence to the root orc
 
 ## 3. Coordinate the tree
 
-Every agent must read the per-turn `<system-reminder>`, which compares the scheduled top-level background count with the concurrency cap and also shows the whole-tree total and nesting depth whenever at least one subagent is active. When the scheduled count reaches the cap, finish work sequentially instead of queueing spawns. The root-only `subagent_limits` tool reads or sets session-scoped limits: `maxConcurrent` is unlimited at `0` with sanity cap `1024`, and `maxSubagentDepth` accepts `0`–`16`; the explicit invocation authorizes only the accepted planned depth described above.
+Every agent must read the per-turn `<system-reminder>`, which compares the scheduled top-level background count with the concurrency cap and also shows the whole-tree total and nesting depth whenever at least one subagent is active. When the scheduled count reaches the cap, finish work sequentially instead of queueing spawns. The root-only `subagent_limits` tool reads or sets session-scoped limits: `max_concurrent` is unlimited at `0` with sanity cap `1024`, and `max_subagent_depth` accepts `0`–`16`; the explicit invocation authorizes only the accepted planned depth described above.
 
 Every agent may use `agent_message({ to, message, type? })`, addressing a recipient by unique alias such as `explorer-scout` (or `/root`). Delivery uses `<agent-message from="…" type="MESSAGE|TASK|FINAL">…</agent-message>`, where `from` is the sender's alias name (or `/root`); plain unwrapped conversation text is always the real user. Use `MESSAGE` for coordination, `TASK` only to request work from an agent you own, and `FINAL` for a result summary to the parent. A parent relays across branches when a decision needs orchestrator authority. User steering always outranks agent messages.
 

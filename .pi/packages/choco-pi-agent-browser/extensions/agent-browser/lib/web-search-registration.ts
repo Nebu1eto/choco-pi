@@ -56,8 +56,8 @@ export type AgentBrowserWebSearchParamsInput = {
   provider?: WebSearchProviderParam;
   query: string;
   safesearch?: "off" | "moderate" | "strict";
-  searchLang?: string;
-  searchType?: ExaSearchType;
+  search_lang?: string;
+  search_type?: ExaSearchType;
 };
 
 export function createAgentBrowserWebSearchParamsSchema(
@@ -75,7 +75,7 @@ export function createAgentBrowserWebSearchParamsSchema(
         ),
       }),
     ),
-    searchType: opt(
+    search_type: opt(
       stringEnum(EXA_SEARCH_TYPES, {
         ...describe(
           "Optional Exa search type. Defaults to auto; ignored by Brave. Use deep/deep-reasoning only for harder research because they are slower.",
@@ -104,7 +104,7 @@ export function createAgentBrowserWebSearchParamsSchema(
         ...describe("Optional 2-letter country code, such as US or GB."),
       }),
     ),
-    searchLang: opt(
+    search_lang: opt(
       str({
         minLength: 2,
         maxLength: 8,

@@ -92,7 +92,7 @@ export type SessionMode = "auto" | "fresh";
 
 export interface SessionRecoveryHint {
   exampleArgs: string[];
-  exampleParams: { args: string[]; sessionMode: "fresh" };
+  exampleParams: { args: string[]; session_mode: "fresh" };
   reason: string;
   recommendedSessionMode: "fresh";
 }
@@ -963,7 +963,7 @@ export function validateToolArgs(args: string[]): string | undefined {
     (token) => token === "--session-mode" || token.startsWith("--session-mode="),
   );
   if (sessionModeArg) {
-    return 'Do not pass `--session-mode` in args. Use the top-level agent_browser `sessionMode` field instead, for example { args: ["--profile", "Default", "open", "https://example.com"], sessionMode: "fresh" }.';
+    return 'Do not pass `--session-mode` in args. Use the top-level agent_browser `session_mode` field instead, for example { args: ["--profile", "Default", "open", "https://example.com"], session_mode: "fresh" }.';
   }
 
   return (
@@ -1276,13 +1276,13 @@ export function buildExecutionPlan(
     if (options.managedSessionActive && startupScopedFlags.length > 0) {
       recoveryHint = {
         exampleArgs: args,
-        exampleParams: { args, sessionMode: "fresh" },
+        exampleParams: { args, session_mode: "fresh" },
         reason: `Launch-scoped flags (${LAUNCH_SCOPED_FLAG_LABEL}) need a fresh upstream launch once the extension-managed session is already active.`,
         recommendedSessionMode: "fresh",
       };
       validationError = [
         `The current extension-managed agent-browser session is already running, so launch-scoped flags ${startupScopedFlags.join(", ")} would be ignored by upstream agent-browser.`,
-        'Retry this call with `sessionMode: "fresh"` to force a fresh upstream launch, or pass an explicit `--session ...` if you want to name the new session yourself.',
+        'Retry this call with `session_mode: "fresh"` to force a fresh upstream launch, or pass an explicit `--session ...` if you want to name the new session yourself.',
       ].join(" ");
     } else {
       namespace = explicitNamespacePresent ? (explicitNamespace ?? "") : managedSessionNamespace;
@@ -1318,15 +1318,15 @@ export function buildExecutionPlan(
     const recoveryArgs = explicitSessionName ? stripExplicitSessionArgs(args) : args;
     recoveryHint = {
       exampleArgs: recoveryArgs,
-      exampleParams: { args: recoveryArgs, sessionMode: "fresh" },
+      exampleParams: { args: recoveryArgs, session_mode: "fresh" },
       reason: `Launch-scoped flags (${LAUNCH_SCOPED_FLAG_LABEL}) need a fresh upstream launch once the extension-managed session is already active.`,
       recommendedSessionMode: "fresh",
     };
     validationError = [
       `The current extension-managed agent-browser session is already running, so launch-scoped flags ${startupScopedFlags.join(", ")} would replace or be ignored by upstream agent-browser.`,
       explicitSessionName
-        ? 'Remove the explicit `--session` and retry with `sessionMode: "fresh"` to force a fresh upstream launch.'
-        : 'Retry this call with `sessionMode: "fresh"` to force a fresh upstream launch.',
+        ? 'Remove the explicit `--session` and retry with `session_mode: "fresh"` to force a fresh upstream launch.'
+        : 'Retry this call with `session_mode: "fresh"` to force a fresh upstream launch.',
     ].join(" ");
   }
   if (targetsActiveManagedSession && canUseHeadlessCompatibilityUserAgent(args)) {
@@ -1339,14 +1339,14 @@ export function buildExecutionPlan(
       const recoveryArgs = explicitSessionName ? stripExplicitSessionArgs(args) : args;
       recoveryHint = {
         exampleArgs: recoveryArgs,
-        exampleParams: { args: recoveryArgs, sessionMode: "fresh" },
+        exampleParams: { args: recoveryArgs, session_mode: "fresh" },
         reason:
           "The requested site compatibility user agent is launch-scoped and needs a fresh browser session.",
         recommendedSessionMode: "fresh",
       };
       validationError = explicitSessionName
-        ? 'The current extension-managed agent-browser session is already running without the user agent required by this site. Remove the explicit `--session` and retry with `sessionMode: "fresh"` so the compatibility user agent is applied at launch.'
-        : 'The current extension-managed agent-browser session is already running without the user agent required by this site. Retry this call with `sessionMode: "fresh"` so the compatibility user agent is applied at launch.';
+        ? 'The current extension-managed agent-browser session is already running without the user agent required by this site. Remove the explicit `--session` and retry with `session_mode: "fresh"` so the compatibility user agent is applied at launch.'
+        : 'The current extension-managed agent-browser session is already running without the user agent required by this site. Retry this call with `session_mode: "fresh"` so the compatibility user agent is applied at launch.';
     } else {
       compatibilityWorkaround =
         requestedCompatibilityWorkaround ?? options.managedSessionCompatibilityWorkaround;

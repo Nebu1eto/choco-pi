@@ -266,3 +266,15 @@ The API-key fallback search model in `openai-search.ts` moves from `gpt-5.6-terr
 ## 2026-11-11 choco-pi patch: Pi SDK range ~1.5.2
 
 Pi SDK dependencies move from exactly `1.5.1` to the range `~1.5.2` (`>=1.5.2 <1.6.0`), so later 1.5 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow. The package-local `minimumReleaseAgeExclude` per-version Pi SDK entries collapse to the `"@earendil-works/pi-*"` name pattern, so new Pi releases install without waiting for the minimum release age. The lock was regenerated with pnpm 11.11.0 (`pnpm install --ignore-scripts`).
+
+## 2026-11-12 choco-pi patch: snake_case tool I/O
+
+Tool inputs, outputs, and option values use snake_case only (user decision; tool names unchanged; no aliases). Conversion happens at the tool boundary; the internal search request contract (`choco-pi-web-search/CONTRACT.md`, adapters), curator wire data, config files, and `details` payloads keep their names.
+
+- `web_search`: `imageQuery`, `responseLength`, `numResults`, `recencyFilter`, `recencyDays`, `domainFilter`, `includeContent`, `exaSearchType`, `answerMode`, `searchContextSize`, `requiredCapabilities` become `image_query`, `response_length`, `num_results`, `recency_filter`, `recency_days`, `domain_filter`, `include_content`, `exa_search_type`, `answer_mode`, `search_context_size`, `required_capabilities`. The `required_capabilities` enum values are snake_case (`num_results`, `recency_filter`, `recency_days`, `domain_filter`, `domain_exclusions`, `include_content`, `exa_search_type`, `answer_mode`, `response_length`, `search_context_size`). `snake-params.ts` builds the schema from the canonical properties and maps parameters (and each capability value) back to the camelCase request at the execute boundary.
+- `source_check`: `numResults`, `fetchContent`, `recencyFilter`, `domainFilter` become `num_results`, `fetch_content`, `recency_filter`, `domain_filter`.
+- `fetch_content`: `forceClone`, `answerModel` become `force_clone`, `answer_model`.
+- `get_search_content`: `responseId`, `queryIndex`, `urlIndex`, `findText`, `findMode` become `response_id`, `query_index`, `url_index`, `find_text`, `find_mode`.
+- Outputs: the `Artifact responseId:` line is `Artifact response_id:`; continuation calls print `get_search_content({ response_id, url_index, offset, limit })`; hints and error messages name the new fields. Research artifacts were already snake_case.
+- The four tool schemas are closed (the previous open objects accepted unknown keys), so old names fail validation; each `execute` also rejects the old names explicitly for direct calls.
+- Tests: `tests/source-check.test.ts` checks that the registered `source_check` schema accepts `num_results`, `fetch_content`, `recency_filter` and `domain_filter` and that each former camelCase name fails both schema validation and `execute`.

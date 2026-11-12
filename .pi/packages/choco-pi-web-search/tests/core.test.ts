@@ -321,6 +321,31 @@ test("capabilities preserve hard constraints while numResults remains a warned h
   );
 });
 
+test("model-visible capability warnings and reasons use the web_search parameter names", async () => {
+  const { scope } = setup();
+  registerSearchAdapter(
+    scope,
+    adapter("openai", "openai", { capabilities: { actions: ["search"], constraints: {} } }),
+  );
+  const hinted = await search({ query: "q", numResults: 9 }, { scope });
+  assert.equal(hinted.warnings?.[0], "openai treats num_results as a non-binding hint");
+  await assert.rejects(
+    search({ query: "q", provider: "openai", recencyFilter: "day" }, { scope }),
+    (failure) => {
+      assert.ok(isSearchError(failure));
+      assert.deepEqual(
+        failure.attempts?.map(({ reason }) => reason),
+        ["recency_filter is unsupported"],
+      );
+      return true;
+    },
+  );
+  await assert.rejects(
+    search({ query: "q", domainFilter: ["not a domain"] }, { scope }),
+    /domain_filter contains an invalid domain/,
+  );
+});
+
 test("billed API does not follow an attempted subscription unless enabled", async () => {
   const { scope } = setup();
   let apiCalls = 0;

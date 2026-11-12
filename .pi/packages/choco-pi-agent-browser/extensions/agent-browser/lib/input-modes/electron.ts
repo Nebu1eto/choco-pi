@@ -32,7 +32,7 @@ function validateOptionalNonEmptyString(
 
 function validateOptionalElectronStringArray(
   input: InputRecord,
-  fieldName: "allow" | "appArgs" | "deny",
+  fieldName: "allow" | "app_args" | "deny",
 ): ValueValidationResult<string[]> {
   const value = input[fieldName];
   if (value === undefined) return {};
@@ -70,13 +70,13 @@ function getReservedElectronAppArg(appArgs: string[] | undefined): string | unde
 function validateElectronLaunchAppArgs(appArgs: string[] | undefined): string | undefined {
   const reservedArg = getReservedElectronAppArg(appArgs);
   return reservedArg
-    ? `electron.appArgs must not include wrapper-owned launch flag ${reservedArg}.`
+    ? `electron.app_args must not include wrapper-owned launch flag ${reservedArg}.`
     : undefined;
 }
 
 function validateOptionalElectronPositiveInteger(
   input: InputRecord,
-  fieldName: "maxResults" | "timeoutMs",
+  fieldName: "max_results" | "timeout_ms",
 ): ValueValidationResult<number> {
   const value = input[fieldName];
   if (value === undefined) return {};
@@ -109,16 +109,16 @@ export function compileAgentBrowserElectron<Input>(
   }
   for (const fieldName of [
     "query",
-    "appPath",
-    "appName",
-    "bundleId",
-    "executablePath",
-    "launchId",
+    "app_path",
+    "app_name",
+    "bundle_id",
+    "executable_path",
+    "launch_id",
   ] as const) {
     const validation = validateOptionalNonEmptyString(input, fieldName);
     if (validation.error) return { error: validation.error };
   }
-  for (const fieldName of ["appArgs", "allow", "deny"] as const) {
+  for (const fieldName of ["app_args", "allow", "deny"] as const) {
     const validation = validateOptionalElectronStringArray(input, fieldName);
     if (validation.error) return { error: validation.error };
   }
@@ -126,11 +126,11 @@ export function compileAgentBrowserElectron<Input>(
   if (handoff.error) return { error: handoff.error };
   const targetType = validateOptionalElectronEnum(
     input,
-    "targetType",
+    "target_type",
     AGENT_BROWSER_ELECTRON_TARGET_TYPES,
   );
   if (targetType.error) return { error: targetType.error };
-  for (const fieldName of ["maxResults", "timeoutMs"] as const) {
+  for (const fieldName of ["max_results", "timeout_ms"] as const) {
     const validation = validateOptionalElectronPositiveInteger(input, fieldName);
     if (validation.error) return { error: validation.error };
   }
@@ -143,13 +143,13 @@ export function compileAgentBrowserElectron<Input>(
     );
     if (unsupportedListField) {
       return {
-        error: `electron.list only supports query and maxResults; remove electron.${unsupportedListField}.`,
+        error: `electron.list only supports query and max_results; remove electron.${unsupportedListField}.`,
       };
     }
     return {
       compiled: {
         action: "list",
-        maxResults: validateOptionalElectronPositiveInteger(input, "maxResults").value,
+        maxResults: validateOptionalElectronPositiveInteger(input, "max_results").value,
         query: validateOptionalNonEmptyString(input, "query").value,
       },
     };
@@ -160,11 +160,11 @@ export function compileAgentBrowserElectron<Input>(
     );
     if (unsupportedProbeField) {
       return {
-        error: `electron.probe only supports action, launchId, and timeoutMs; remove electron.${unsupportedProbeField}.`,
+        error: `electron.probe only supports action, launch_id, and timeout_ms; remove electron.${unsupportedProbeField}.`,
       };
     }
-    const launchId = validateOptionalNonEmptyString(input, "launchId").value;
-    const timeoutMs = validateOptionalElectronPositiveInteger(input, "timeoutMs").value;
+    const launchId = validateOptionalNonEmptyString(input, "launch_id").value;
+    const timeoutMs = validateOptionalElectronPositiveInteger(input, "timeout_ms").value;
     const compiled: CompiledAgentBrowserElectron = { action: "probe" };
     if (launchId) compiled.launchId = launchId;
     if (timeoutMs) compiled.timeoutMs = timeoutMs;
@@ -174,27 +174,27 @@ export function compileAgentBrowserElectron<Input>(
     const allowedFields = new Set([
       "action",
       "allow",
-      "appArgs",
-      "appName",
-      "appPath",
-      "bundleId",
+      "app_args",
+      "app_name",
+      "app_path",
+      "bundle_id",
       "deny",
-      "executablePath",
+      "executable_path",
       "handoff",
-      "targetType",
-      "timeoutMs",
+      "target_type",
+      "timeout_ms",
     ]);
     const unsupportedFieldError = onlyAllowedElectronFields(input, action, allowedFields);
     if (unsupportedFieldError) return { error: unsupportedFieldError };
-    const appArgs = validateOptionalElectronStringArray(input, "appArgs").value;
+    const appArgs = validateOptionalElectronStringArray(input, "app_args").value;
     const appArgsError = validateElectronLaunchAppArgs(appArgs);
     if (appArgsError) return { error: appArgsError };
-    const targetFields = ["appPath", "appName", "bundleId", "executablePath"] as const;
+    const targetFields = ["app_path", "app_name", "bundle_id", "executable_path"] as const;
     const providedTargets = targetFields.filter((fieldName) => input[fieldName] !== undefined);
     if (providedTargets.length !== 1) {
       return {
         error:
-          "electron.launch requires exactly one of appPath, appName, bundleId, or executablePath.",
+          "electron.launch requires exactly one of app_path, app_name, bundle_id, or executable_path.",
       };
     }
     return {
@@ -203,28 +203,28 @@ export function compileAgentBrowserElectron<Input>(
         allow: validateOptionalElectronStringArray(input, "allow").value,
         appArgs,
         deny: validateOptionalElectronStringArray(input, "deny").value,
-        appName: validateOptionalNonEmptyString(input, "appName").value,
-        appPath: validateOptionalNonEmptyString(input, "appPath").value,
-        bundleId: validateOptionalNonEmptyString(input, "bundleId").value,
-        executablePath: validateOptionalNonEmptyString(input, "executablePath").value,
+        appName: validateOptionalNonEmptyString(input, "app_name").value,
+        appPath: validateOptionalNonEmptyString(input, "app_path").value,
+        bundleId: validateOptionalNonEmptyString(input, "bundle_id").value,
+        executablePath: validateOptionalNonEmptyString(input, "executable_path").value,
         handoff: handoff.value ?? "snapshot",
         targetType: targetType.value ?? "page",
-        timeoutMs: validateOptionalElectronPositiveInteger(input, "timeoutMs").value,
+        timeoutMs: validateOptionalElectronPositiveInteger(input, "timeout_ms").value,
       },
     };
   }
-  const allowedFields = new Set(["action", "all", "launchId", "timeoutMs"]);
+  const allowedFields = new Set(["action", "all", "launch_id", "timeout_ms"]);
   const unsupportedFieldError = onlyAllowedElectronFields(input, action, allowedFields);
   if (unsupportedFieldError) return { error: unsupportedFieldError };
-  if (input.all === true && input.launchId !== undefined) {
-    return { error: `electron.${action} accepts launchId or all, not both.` };
+  if (input.all === true && input.launch_id !== undefined) {
+    return { error: `electron.${action} accepts launch_id or all, not both.` };
   }
   return {
     compiled: {
       action,
       all: input.all === true || undefined,
-      launchId: validateOptionalNonEmptyString(input, "launchId").value,
-      timeoutMs: validateOptionalElectronPositiveInteger(input, "timeoutMs").value,
+      launchId: validateOptionalNonEmptyString(input, "launch_id").value,
+      timeoutMs: validateOptionalElectronPositiveInteger(input, "timeout_ms").value,
     },
   };
 }

@@ -214,7 +214,7 @@ export function generatedSkipNotice(
     `ℹ ${parts.join(" and ")} excluded by generated-name heuristics with no ` +
     "confirming evidence — a real hand-written file/directory whose name " +
     "looks generated (e.g. `gen.ts`, `generated/`) can be excluded too; " +
-    "pass includeGenerated: true to pilens_project_scan / diagnostics_report " +
+    "pass include_generated: true to diagnostics_report " +
     "to scan without this filter if you suspect a false skip."
   );
 }

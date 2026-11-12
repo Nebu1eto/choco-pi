@@ -620,7 +620,7 @@ export async function prepareBrowserRun(
   let runtimeToolStdin = toolStdin;
   let electronLaunch: ElectronLaunchSuccess | undefined;
   const sessionMode =
-    compiledElectron?.action === "launch" ? "fresh" : (params.sessionMode ?? "auto");
+    compiledElectron?.action === "launch" ? "fresh" : (params.session_mode ?? "auto");
   const freshSessionName = createFreshSessionName(
     managedSessionBaseName,
     ephemeralSessionSeed,
@@ -849,7 +849,7 @@ export async function prepareBrowserRun(
         executionPlan = {
           ...executionPlan,
           recoveryHint: undefined,
-          validationError: `This older wrapper-owned session is already running, so launch-scoped flags ${offCurrentLaunchScopedFlags.join(", ")} would replace or be ignored by upstream agent-browser. Close it first, or remove the explicit --session and retry with sessionMode: "fresh".`,
+          validationError: `This older wrapper-owned session is already running, so launch-scoped flags ${offCurrentLaunchScopedFlags.join(", ")} would replace or be ignored by upstream agent-browser. Close it first, or remove the explicit --session and retry with session_mode: "fresh".`,
         };
       } else if (
         !closeCommand &&
@@ -860,7 +860,7 @@ export async function prepareBrowserRun(
           ...executionPlan,
           recoveryHint: undefined,
           validationError:
-            'This older wrapper-owned session is already running without the user agent required by this site. Close it first, or remove the explicit --session and retry with sessionMode: "fresh".',
+            'This older wrapper-owned session is already running without the user agent required by this site. Close it first, or remove the explicit --session and retry with session_mode: "fresh".',
         };
       } else if (
         !closeCommand &&
@@ -1008,15 +1008,15 @@ export async function prepareBrowserRun(
       ) {
         const freshLocatorError =
           executionPlan.managedSessionName === freshSessionName
-            ? "semanticAction select with locator cannot resolve a current @ref in sessionMode fresh. Open the page first, then reuse that session, or pass selector plus value/values."
+            ? "semantic_action select with locator cannot resolve a current @ref in session_mode fresh. Open the page first, then reuse that session, or pass selector plus value/values."
             : undefined;
         executionPlan = {
           ...executionPlan,
           validationError:
             freshLocatorError ??
             (hasPotentialLiveSemanticSession
-              ? "semanticAction select with locator could not resolve to exactly one current visible combobox/listbox ref. Run snapshot -i and retry with selector or a more specific role/name."
-              : "semanticAction select with locator requires an active browser session so the wrapper can resolve a current @ref; open a page first or pass selector plus value/values."),
+              ? "semantic_action select with locator could not resolve to exactly one current visible combobox/listbox ref. Run snapshot -i and retry with selector or a more specific role/name."
+              : "semantic_action select with locator requires an active browser session so the wrapper can resolve a current @ref; open a page first or pass selector plus value/values."),
         };
       }
       if (semanticActionVisibleRefResolution) {
@@ -1658,7 +1658,7 @@ export async function prepareBrowserRun(
           : undefined;
       let readTimeoutPageUrl = priorSessionTabTarget?.url;
       if (
-        options.params.timeoutMs === undefined &&
+        options.params.timeout_ms === undefined &&
         readTimeoutPageUrl === undefined &&
         executionPlan.sessionName &&
         commandTimeoutNeedsActivePageUrl(commandTokens, processStdin)
@@ -1676,7 +1676,7 @@ export async function prepareBrowserRun(
         } catch {}
       }
       const processTimeoutMs =
-        options.params.timeoutMs ??
+        options.params.timeout_ms ??
         getDialogAwareProcessTimeoutMs(commandTokens, promptRefSnapshot, processStdin) ??
         getCommandAwareProcessTimeoutMs(commandTokens, processStdin, readTimeoutPageUrl);
       const redactedProcessArgs = redactInvocationArgs(processArgs);

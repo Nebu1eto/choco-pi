@@ -135,7 +135,19 @@ export function formatResultReadRefusal(
     action,
   };
   if (record.cancellation?.generation === claim.generation) {
-    return JSON.stringify({ ...payload, cancellation: record.cancellation }, null, 2);
+    return JSON.stringify(
+      {
+        ...payload,
+        cancellation: {
+          generation: record.cancellation.generation,
+          cause: record.cancellation.cause,
+          reason: record.cancellation.reason,
+          requested_at: record.cancellation.requestedAt,
+        },
+      },
+      null,
+      2,
+    );
   }
   return JSON.stringify(payload, null, 2);
 }

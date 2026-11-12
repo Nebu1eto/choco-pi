@@ -315,3 +315,52 @@ Pi SDK pins move from `1.5.0` to exactly `1.5.1`; version references in comments
 ## 2026-11-11 choco-pi patch: Pi SDK range ~1.5.2
 
 Pi SDK dependencies move from exactly `1.5.1` to the range `~1.5.2` (`>=1.5.2 <1.6.0`), so later 1.5 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow. The package-local `minimumReleaseAgeExclude` per-version Pi SDK entries collapse to the `"@earendil-works/pi-*"` name pattern, so new Pi releases install without waiting for the minimum release age. The lock was regenerated with pnpm 11.11.0 (`pnpm install --ignore-scripts`).
+
+## 2026-11-12 choco-pi patch: snake_case tool I/O
+
+Tool inputs and model-visible outputs use snake_case keys and option values (user decision; tool names unchanged, no
+aliases). This supersedes the "parameter schemas ... unchanged" statement under _Deferred runtime loading_ for the
+parameters listed here. The tool modules and `registration-manifest.json` (properties, `required`, `schemaMetadata`
+paths, descriptions) change together; `tests/snake-case-tool-io.test.ts` checks they agree.
+
+Renamed inputs:
+
+- `diagnostics_report`: `refresh_runners`, `max_project_files`, `max_lsp_files`, `include_generated`.
+- `lsp_diagnostics`: `wait_ms`, `server_scope`.
+- `module_report`: `max_refs_per_symbol`, `blast_radius`, `blast_radius_depth`, `call_graph`,
+  `max_call_graph_entries`.
+- `read_enclosing`: `max_lines`, `on_oversize`, `around_line`.
+- `ast_grep_search`: `node_kind`, `inside_kind`, `has_kind`, `has_descendant_kind`, `max_matches`, `group_by_file`,
+  `validate_only`; `ast_grep_replace`: `inside_kind`, `has_kind`, `has_descendant_kind`; `ast_grep_outline`:
+  `pub_members`; `ast_grep_dump`: `include_anonymous`.
+- `lsp_navigation`: `end_line`, `end_character`, `new_name`, `new_file_path`, `command_arguments`, `exact_match`,
+  `top_level_only`, `max_results`, `call_hierarchy_item`.
+- `diagnostic_mark`: `file_path`.
+
+Renamed values: `lsp_navigation.operation` is now `definition`, `type_definition`, `declaration`, `references`,
+`hover`, `signature_help`, `document_symbol`, `find_symbol`, `workspace_symbol`, `code_action`, `rename`,
+`rename_file`, `implementation`, `prepare_call_hierarchy`, `incoming_calls`, `outgoing_calls`, `execute_command`,
+`workspace_diagnostics`, `capabilities`. The manifest now declares this as an `enum` (previously a free string whose
+description listed the values), matching the runtime schema, so old values fail host validation.
+
+Closed schemas: the root parameter object of the ten tools above is closed (`additionalProperties: false`), so an old
+camelCase key fails validation instead of being ignored. `lsp_navigation.call_hierarchy_item` (and its ranges) stays
+open and keeps LSP protocol key names (`selectionRange`, ...), because it is a pass-through `CallHierarchyItem`.
+`symbol_search`, `project_report`, `read_symbol`, and `lsp_activate_tools` had no renamed keys and keep their schemas.
+
+Boundary: `execute` reads the snake_case params and passes the existing camelCase internal options
+(`ModuleReportOptions`, `ReadEnclosingOptions`, YAML-synthesis intent, the LSP service). `INTERNAL_OPERATION` in
+`tools/lsp-navigation.ts` maps tool operation names to the unchanged internal operation union. Internal objects, details,
+telemetry, and the MCP/IPC engine shapes keep their names.
+
+Outputs: `tools/output-keys.ts` (`toSnakeCaseKeys`/`stringifySnakeCase`) converts plain-object keys at serialization
+only. It is used for `module_report` and `project_report` JSON, the `symbol_search` payload, and `read_enclosing`
+nested outlines (`start_line`, `recommended_reads`, `used_by`, `blast_radius`, `suggested_next`, ...).
+`lsp_navigation` results are serialized by `serializeLspToolEnvelope` (`result_count`, `file_path`,
+`locations[].file_path`, snake_case `metadata`, operation shown by its tool name). Results the tool builds itself
+(`find_symbol` matches, `rename`/`rename_file` summaries, the `execute_command` dry-run, `workspace_diagnostics`
+entries) get snake_case keys, while embedded LSP objects (`location`, `range`, `edit`, `diagnostics`) and raw LSP responses
+stay verbatim. `ast_grep_outline` keeps ast-grep CLI item keys verbatim and only renames its own `truncated_items`. Model-facing
+hints and errors name the new parameters and operations (`wait_ms`, `max_lsp_files`, `refresh_runners`, `node_kind`,
+`max_lines`, `blast_radius`, `include_generated`, `find_symbol`, ...); the `lsp_navigation` capabilities listing uses
+tool operation names. `result.details` shapes are unchanged.

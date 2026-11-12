@@ -82,7 +82,8 @@ function storeOutput(value: string): StoredOutput {
 
 function refinementFor(tool: string): string {
   if (tool === "search_ui") return "use a more selective text, role, or capability predicate";
-  if (tool === "find_roots") return "use a more selective text, app, bundleId, pid, or kind filter";
+  if (tool === "find_roots")
+    return "use a more selective text, app, bundle_id, pid, or kind filter";
   if (tool === "evaluate_browser")
     return "return selected fields, an aggregate, or a smaller slice";
   if (tool === "observe_ui" || tool === "expand_ui")

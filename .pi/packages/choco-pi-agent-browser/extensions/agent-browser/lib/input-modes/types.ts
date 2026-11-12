@@ -21,9 +21,9 @@ export const AGENT_BROWSER_JOB_STEP_ACTIONS = [
   "press",
   "select",
   "wait",
-  "assertText",
-  "assertUrl",
-  "waitForDownload",
+  "assert_text",
+  "assert_url",
+  "wait_for_download",
   "screenshot",
   "snapshot",
 ] as const;
@@ -42,9 +42,9 @@ export const AGENT_BROWSER_ELECTRON_HANDOFFS = ["connect", "tabs", "snapshot"] a
 
 export const AGENT_BROWSER_ELECTRON_TARGET_TYPES = ["page", "webview", "any"] as const;
 
-export const AGENT_BROWSER_ELECTRON_LIST_FIELDS = new Set(["action", "query", "maxResults"]);
+export const AGENT_BROWSER_ELECTRON_LIST_FIELDS = new Set(["action", "query", "max_results"]);
 
-export const AGENT_BROWSER_ELECTRON_PROBE_FIELDS = new Set(["action", "launchId", "timeoutMs"]);
+export const AGENT_BROWSER_ELECTRON_PROBE_FIELDS = new Set(["action", "launch_id", "timeout_ms"]);
 
 export const AGENT_BROWSER_ELECTRON_RESERVED_APP_ARGS = [
   "--user-data-dir",

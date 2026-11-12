@@ -60,8 +60,8 @@ export function formatSubagentLimits(controller: SubagentLimitController): strin
       ? `unlimited (sanity cap ${MAX_CONCURRENT_SANITY_CAP})`
       : String(maxConcurrent);
   return (
-    `subagent limits: maxConcurrent=${concurrency}, ` +
-    `maxSubagentDepth=${controller.getMaxSubagentDepth()}; ` +
+    `subagent limits: max_concurrent=${concurrency}, ` +
+    `max_subagent_depth=${controller.getMaxSubagentDepth()}; ` +
     formatActivityCounts(
       controller.getScheduledActiveCount(),
       controller.getActiveCount(),
@@ -126,19 +126,19 @@ export function createSubagentLimitsTool(controller: SubagentLimitController): T
     description:
       "Read or adjust subagent limits only when the user asks for a different limit. " +
       "Values apply to this session only and are not persisted. " +
-      "maxConcurrent=0 means unlimited concurrency (with a sanity cap of 1024).",
+      "max_concurrent=0 means unlimited concurrency (with a sanity cap of 1024).",
     promptSnippet: "Inspect or adjust this session's subagent limits.",
     parameters: hostParams(
       obj(
         {
-          maxConcurrent: opt(
+          max_concurrent: opt(
             int({
               minimum: 0,
               maximum: Number.MAX_SAFE_INTEGER,
               description: "Maximum concurrency; 0 means unlimited.",
             }),
           ),
-          maxSubagentDepth: opt(
+          max_subagent_depth: opt(
             int({
               minimum: 0,
               maximum: SUBAGENT_DEPTH_CEILING,
@@ -146,11 +146,19 @@ export function createSubagentLimitsTool(controller: SubagentLimitController): T
             }),
           ),
         },
-        { open: true },
+        { open: false },
       ),
     ),
     execute: async (_toolCallId, params) => ({
-      content: [{ type: "text" as const, text: applySubagentLimits(params, controller) }],
+      content: [
+        {
+          type: "text" as const,
+          text: applySubagentLimits(
+            { maxConcurrent: params.max_concurrent, maxSubagentDepth: params.max_subagent_depth },
+            controller,
+          ),
+        },
+      ],
       details: {},
     }),
   });

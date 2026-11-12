@@ -7,16 +7,16 @@ export interface AgentBrowserNextAction {
       action: "cleanup" | "list" | "launch" | "probe" | "status";
       all?: boolean;
       handoff?: "connect" | "snapshot" | "tabs";
-      launchId?: string;
+      launch_id?: string;
     };
-    networkSourceLookup?: {
+    network_source_lookup?: {
       filter?: string;
       namespace?: string;
-      requestId?: string;
+      request_id?: string;
       session?: string;
       url?: string;
     };
-    semanticAction?: {
+    semantic_action?: {
       action: "click" | "fill";
       locator: "text" | "label" | "role";
       value?: string;
@@ -25,7 +25,7 @@ export interface AgentBrowserNextAction {
       text?: string;
       session?: string;
     };
-    sessionMode?: "auto" | "fresh";
+    session_mode?: "auto" | "fresh";
     stdin?: string;
   };
   reason: string;
@@ -63,11 +63,14 @@ export function applyNamespaceToNextActions(
         ...action,
         params: { ...action.params, args: withOptionalNamespaceArgs(namespace, args) },
       };
-    const networkSourceLookup = action.params?.networkSourceLookup;
+    const networkSourceLookup = action.params?.network_source_lookup;
     return networkSourceLookup
       ? {
           ...action,
-          params: { ...action.params, networkSourceLookup: { ...networkSourceLookup, namespace } },
+          params: {
+            ...action.params,
+            network_source_lookup: { ...networkSourceLookup, namespace },
+          },
         }
       : action;
   });
@@ -81,7 +84,7 @@ export function applySessionToNextActions(
   return actions.map((action) => {
     // Fresh-session actions deliberately target a new session; the planner ignores sessionMode when an
     // explicit --session is present, so prefixing one here would silently downgrade them to reuse.
-    if (action.params?.sessionMode === "fresh") return action;
+    if (action.params?.session_mode === "fresh") return action;
     const args = action.params?.args;
     return args
       ? {
@@ -101,7 +104,7 @@ export function buildNextToolAction(options: {
   stdin?: string;
 }): AgentBrowserNextAction {
   const params: NonNullable<AgentBrowserNextAction["params"]> = { args: options.args };
-  if (options.sessionMode) params.sessionMode = options.sessionMode;
+  if (options.sessionMode) params.session_mode = options.sessionMode;
   if (options.stdin) params.stdin = options.stdin;
   if (options.safety) {
     return {

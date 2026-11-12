@@ -34,10 +34,10 @@ test("findCodeConnectMapping ignores node_modules and enforces caps", async () =
   assert.equal(result.metadata.truncated, true);
 });
 
-test("findCodeConnectMapping rejects rootDir outside cwd", async () => {
+test("findCodeConnectMapping rejects root_dir outside cwd", async () => {
   const root = await mkdtemp(join(tmpdir(), "figma-code-connect-"));
   await assert.rejects(
     () => findCodeConnectMapping({ cwd: root, rootDir: "/", fileKey: "FILE123" }),
-    /rootDir/,
+    /root_dir/,
   );
 });

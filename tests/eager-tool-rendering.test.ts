@@ -151,3 +151,37 @@ test(
     );
   },
 );
+
+test(
+  "tool summaries read snake_case arguments and snake_case result text",
+  { skip: SKIP_WITHOUT_ZENTUI },
+  async () => {
+    const rendering = await loadZentuiModule("tool-rendering.js");
+    // SAFETY: the compiled module exports the pure input summarizer.
+    const summarizeInput = rendering.summarizeToolInput as (
+      name: string,
+      value: RuntimeValue,
+    ) => string;
+    // SAFETY: the compiled module exports the pure result summarizer.
+    const summarizeResult = rendering.summarizeToolResult as (
+      name: string,
+      result: RuntimeValue,
+      expanded?: boolean,
+    ) => string;
+
+    assert.equal(
+      summarizeInput("get_search_content", { response_id: "resp-1", find_text: "needle" }),
+      "resp-1 · find needle",
+    );
+    assert.equal(summarizeInput("get_search_content", { responseId: "resp-1" }), "");
+    assert.equal(
+      summarizeInput("lsp_diagnostics", { path: "src/a.ts", server_scope: "primary" }),
+      "src/a.ts · primary",
+    );
+    const text = JSON.stringify({ workflow_id: "wf-1", timed_out: false, message_count: 3 });
+    assert.equal(
+      summarizeResult("workflow_update", { content: [{ type: "text", text }] }),
+      "workflow id wf-1 · message count 3 · timed out no",
+    );
+  },
+);

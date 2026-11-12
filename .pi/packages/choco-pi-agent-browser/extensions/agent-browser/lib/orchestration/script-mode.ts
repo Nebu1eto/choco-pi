@@ -10,6 +10,7 @@ import {
   isAgentBrowserScriptSessionName,
   type AgentBrowserScriptBrowserEnvelope,
   type AgentBrowserScriptRunResult,
+  toScriptBrowserEnvelopeView,
   validateAgentBrowserScriptBrowserParams,
 } from "../input-modes/script.ts";
 import { hasRuntimeType, isRecord, type RuntimeRecord, type RuntimeValue } from "../parsing.ts";
@@ -237,7 +238,11 @@ function scriptBrowserEnvelopeFitsIpc(envelope: AgentBrowserScriptBrowserEnvelop
   try {
     return (
       Buffer.byteLength(
-        JSON.stringify({ envelope, id: Number.MAX_SAFE_INTEGER, type: "response" }),
+        JSON.stringify({
+          envelope: toScriptBrowserEnvelopeView(envelope),
+          id: Number.MAX_SAFE_INTEGER,
+          type: "response",
+        }),
         "utf8",
       ) +
         1 <=

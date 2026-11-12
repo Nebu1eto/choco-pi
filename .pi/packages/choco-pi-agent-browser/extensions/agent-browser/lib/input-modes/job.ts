@@ -84,7 +84,7 @@ function compileJobClickOrFillStep(
     value: step.value,
   });
   if (compiled.error)
-    return { error: compiled.error.replaceAll("semanticAction", `job step ${action}`) };
+    return { error: compiled.error.replaceAll("semantic_action", `job step ${action}`) };
   // SAFETY: compileAgentBrowserSemanticAction returns a compiled action whenever it does not return an error.
   const compiledAction = compiled.compiled as CompiledAgentBrowserSemanticAction;
   return { args: compiledAction.args };
@@ -113,18 +113,18 @@ function getUnsupportedJobStepFieldError(
 }
 
 const JOB_STEP_ALLOWED_FIELDS = {
-  assertText: new Set(["action", "text"]),
-  assertUrl: new Set(["action", "url"]),
+  assert_text: new Set(["action", "text"]),
+  assert_url: new Set(["action", "url"]),
   click: new Set(["action", "locator", "name", "role", "selector", "value"]),
   fill: new Set(["action", "locator", "name", "role", "selector", "text", "value"]),
-  open: new Set(["action", "loadState", "url"]),
+  open: new Set(["action", "load_state", "url"]),
   press: new Set(["action", "press"]),
   screenshot: new Set(["action", "path"]),
   select: new Set(["action", "selector", "value", "values"]),
   snapshot: new Set(["action"]),
-  type: new Set(["action", "delayMs", "press", "selector", "text"]),
+  type: new Set(["action", "delay_ms", "press", "selector", "text"]),
   wait: new Set(["action", "milliseconds"]),
-  waitForDownload: new Set(["action", "path"]),
+  wait_for_download: new Set(["action", "path"]),
 } satisfies Record<AgentBrowserJobStepAction, ReadonlySet<string>>;
 
 type JobStepCompiler = (step: InputRecord, index: number) => CompileJobStepResult;
@@ -136,9 +136,9 @@ function compileJobTypeSteps(step: InputRecord): CompileJobTypeResult {
   if (selector !== undefined && !isNonEmptyString(selector)) {
     return { error: "job step type selector must be a non-empty string when provided." };
   }
-  const delayMs = step.delayMs;
+  const delayMs = step.delay_ms;
   if (delayMs !== undefined && (!isNumber(delayMs) || !Number.isInteger(delayMs) || delayMs <= 0)) {
-    return { error: "job step type delayMs must be a positive integer when provided." };
+    return { error: "job step type delay_ms must be a positive integer when provided." };
   }
   const press = step.press;
   if (press !== undefined && !isNonEmptyString(press)) {
@@ -152,7 +152,7 @@ function compileJobTypeSteps(step: InputRecord): CompileJobTypeResult {
     typedChars.length > AGENT_BROWSER_JOB_TYPE_DELAYED_TEXT_MAX_CHARACTERS
   ) {
     return {
-      error: `job step type delayMs supports at most ${AGENT_BROWSER_JOB_TYPE_DELAYED_TEXT_MAX_CHARACTERS} characters; split longer text into shorter calls or omit delayMs.`,
+      error: `job step type delay_ms supports at most ${AGENT_BROWSER_JOB_TYPE_DELAYED_TEXT_MAX_CHARACTERS} characters; split longer text into shorter calls or omit delay_ms.`,
     };
   }
   const compiledSteps: CompiledAgentBrowserJobStep[] = [];
@@ -172,13 +172,13 @@ function compileJobTypeSteps(step: InputRecord): CompileJobTypeResult {
       compiledSteps.push({
         action: "type",
         args: ["keyboard", "type", char],
-        generatedFrom: "type.delayMs",
+        generatedFrom: "type.delay_ms",
       });
       if (index < typedChars.length - 1)
         compiledSteps.push({
           action: "wait",
           args: ["wait", String(delayMs)],
-          generatedFrom: "type.delayMs",
+          generatedFrom: "type.delay_ms",
         });
     }
   }
@@ -191,16 +191,16 @@ function compileOpenJobStep(step: InputRecord, index: number): CompileJobStepRes
   const result = getRequiredJobString(step, "url", "open");
   if ("error" in result) return { error: result.error };
   const extraSteps: CompiledAgentBrowserJobStep[] = [];
-  if (step.loadState !== undefined) {
-    if (!isOneOf(step.loadState, AGENT_BROWSER_QA_LOAD_STATES)) {
+  if (step.load_state !== undefined) {
+    if (!isOneOf(step.load_state, AGENT_BROWSER_QA_LOAD_STATES)) {
       return {
-        error: `job.steps[${index}].loadState must be one of: ${AGENT_BROWSER_QA_LOAD_STATES.join(", ")}.`,
+        error: `job.steps[${index}].load_state must be one of: ${AGENT_BROWSER_QA_LOAD_STATES.join(", ")}.`,
       };
     }
     extraSteps.push({
       action: "wait",
-      args: ["wait", "--load", step.loadState],
-      generatedFrom: "open.loadState",
+      args: ["wait", "--load", step.load_state],
+      generatedFrom: "open.load_state",
     });
   }
   return { args: ["open", result.value], extraSteps };
@@ -247,26 +247,26 @@ function compileWaitJobStep(step: InputRecord): CompileJobStepResult {
 }
 
 function compileAssertTextJobStep(step: InputRecord): CompileJobStepResult {
-  const result = getRequiredJobString(step, "text", "assertText");
+  const result = getRequiredJobString(step, "text", "assert_text");
   if ("error" in result) return { error: result.error };
   return { args: ["wait", "--text", result.value] };
 }
 
 function compileAssertUrlJobStep(step: InputRecord): CompileJobStepResult {
-  const result = getRequiredJobString(step, "url", "assertUrl");
+  const result = getRequiredJobString(step, "url", "assert_url");
   if ("error" in result) return { error: result.error };
   return { args: ["wait", "--url", result.value] };
 }
 
 function compilePathArtifactJobStep(
   step: InputRecord,
-  action: "screenshot" | "waitForDownload",
+  action: "screenshot" | "wait_for_download",
 ): CompileJobStepResult {
   const result = getRequiredJobString(step, "path", action);
   if ("error" in result) return { error: result.error };
   return {
     args:
-      action === "waitForDownload"
+      action === "wait_for_download"
         ? ["wait", "--download", result.value]
         : ["screenshot", result.value],
   };
@@ -276,8 +276,8 @@ function compilePathArtifactJobStep(
 // alignment enforced by Record<AgentBrowserJobStepAction, …>), so the compiler map no
 // longer mirrors that set per entry; the call site looks it up by action.
 const JOB_STEP_COMPILERS = {
-  assertText: compileAssertTextJobStep,
-  assertUrl: compileAssertUrlJobStep,
+  assert_text: compileAssertTextJobStep,
+  assert_url: compileAssertUrlJobStep,
   click: compileClickJobStep,
   fill: compileFillJobStep,
   open: compileOpenJobStep,
@@ -287,7 +287,7 @@ const JOB_STEP_COMPILERS = {
   snapshot: () => ({ args: ["snapshot", "-i"] }),
   type: compileTypeJobStep,
   wait: compileWaitJobStep,
-  waitForDownload: (step) => compilePathArtifactJobStep(step, "waitForDownload"),
+  wait_for_download: (step) => compilePathArtifactJobStep(step, "wait_for_download"),
 } satisfies Record<AgentBrowserJobStepAction, JobStepCompiler>;
 
 export function compileAgentBrowserJob<Input>(
@@ -296,9 +296,9 @@ export function compileAgentBrowserJob<Input>(
   if (!isInputRecord(input)) {
     return { error: "job must be an object." };
   }
-  const rawFailFast = input.failFast;
+  const rawFailFast = input.fail_fast;
   if (rawFailFast !== undefined && !isBoolean(rawFailFast)) {
-    return { error: "job.failFast must be a boolean when provided." };
+    return { error: "job.fail_fast must be a boolean when provided." };
   }
   const failFast = rawFailFast !== false;
   const rawSteps = input.steps;
@@ -587,7 +587,7 @@ export function analyzeQaPresetTimeout(
     passed: false,
     summary: `QA preset failed: ${failedChecks.join("; ")}.`,
     warnings: [
-      "The wrapper timed out before expected-text evidence could be verified; inspect timeoutPartialProgress and retry with a narrower readiness condition if the page was still loading.",
+      "The wrapper timed out before expected-text evidence could be verified; inspect details.timeoutPartialProgress and retry with a narrower readiness condition if the page was still loading.",
     ],
   };
 }
@@ -602,7 +602,7 @@ export function analyzeQaPresetResults<Data>(
   const warnings: string[] = [];
   const baselineErrorIndex =
     compiled?.checks.diagnosticsResetAtStart && compiled.checks.checkErrors
-      ? compiled.steps.findIndex((step) => step.generatedFrom === "qa.errorBaselineAfterClear")
+      ? compiled.steps.findIndex((step) => step.generatedFrom === "qa.error_baseline_after_clear")
       : -1;
   const baselineErrorItem = baselineErrorIndex >= 0 ? items[baselineErrorIndex] : undefined;
   const baselineErrorResult = isInputRecord(baselineErrorItem?.result)
@@ -647,7 +647,7 @@ export function analyzeQaPresetResults<Data>(
   if (compiled?.checks.expectedText.length) {
     let expectedTextIndex = 0;
     compiled.steps.forEach((step, index) => {
-      if (step.action !== "assertText") return;
+      if (step.action !== "assert_text") return;
       const expected = compiled.checks.expectedText[expectedTextIndex++];
       if (!expected) return;
       const visibleTextPassed = qaVisibleTextWaitPassed(items[index], step);
@@ -691,44 +691,44 @@ export function compileAgentBrowserQaPreset<Input>(
   }
   const normalizedUrl = isString(url) ? url.trim() : undefined;
   const expectedTextInput =
-    input.expectedText === undefined
+    input.expected_text === undefined
       ? []
-      : isString(input.expectedText)
-        ? [input.expectedText]
-        : input.expectedText;
+      : isString(input.expected_text)
+        ? [input.expected_text]
+        : input.expected_text;
   const expectedText = parseStringArray(expectedTextInput);
   if (!expectedText) {
     return {
       error:
-        "qa.expectedText must be a non-empty string or array of non-empty strings when provided.",
+        "qa.expected_text must be a non-empty string or array of non-empty strings when provided.",
     };
   }
   if (expectedText.some((text) => text.trim().length === 0)) {
     return {
       error:
-        "qa.expectedText must be a non-empty string or array of non-empty strings when provided.",
+        "qa.expected_text must be a non-empty string or array of non-empty strings when provided.",
     };
   }
-  const expectedSelector = input.expectedSelector;
+  const expectedSelector = input.expected_selector;
   if (expectedSelector !== undefined && !isNonEmptyString(expectedSelector)) {
-    return { error: "qa.expectedSelector must be a non-empty string when provided." };
+    return { error: "qa.expected_selector must be a non-empty string when provided." };
   }
-  const screenshotPath = input.screenshotPath;
+  const screenshotPath = input.screenshot_path;
   if (screenshotPath !== undefined && !isNonEmptyString(screenshotPath)) {
-    return { error: "qa.screenshotPath must be a non-empty string when provided." };
+    return { error: "qa.screenshot_path must be a non-empty string when provided." };
   }
-  for (const field of ["checkConsole", "checkErrors", "checkNetwork"] as const) {
+  for (const field of ["check_console", "check_errors", "check_network"] as const) {
     if (input[field] !== undefined && !isBoolean(input[field])) {
       return { error: `qa.${field} must be a boolean when provided.` };
     }
   }
-  const rawLoadState = input.loadState;
+  const rawLoadState = input.load_state;
   if (rawLoadState !== undefined && !isOneOf(rawLoadState, AGENT_BROWSER_QA_LOAD_STATES)) {
-    return { error: `qa.loadState must be one of: ${AGENT_BROWSER_QA_LOAD_STATES.join(", ")}.` };
+    return { error: `qa.load_state must be one of: ${AGENT_BROWSER_QA_LOAD_STATES.join(", ")}.` };
   }
-  const checkConsole = isBoolean(input.checkConsole) ? input.checkConsole : !attached;
-  const checkErrors = isBoolean(input.checkErrors) ? input.checkErrors : !attached;
-  const checkNetwork = isBoolean(input.checkNetwork) ? input.checkNetwork : !attached;
+  const checkConsole = isBoolean(input.check_console) ? input.check_console : !attached;
+  const checkErrors = isBoolean(input.check_errors) ? input.check_errors : !attached;
+  const checkNetwork = isBoolean(input.check_network) ? input.check_network : !attached;
   const loadState = isOneOf(rawLoadState, AGENT_BROWSER_QA_LOAD_STATES)
     ? rawLoadState
     : "domcontentloaded";
@@ -740,15 +740,19 @@ export function compileAgentBrowserQaPreset<Input>(
     steps.push({ action: "wait", args: ["console", "--clear"] });
   if (diagnosticsResetAtStart && checkErrors) {
     steps.push({ action: "wait", args: ["errors", "--clear"] });
-    steps.push({ action: "wait", args: ["errors"], generatedFrom: "qa.errorBaselineAfterClear" });
+    steps.push({
+      action: "wait",
+      args: ["errors"],
+      generatedFrom: "qa.error_baseline_after_clear",
+    });
   }
   if (!attached && normalizedUrl) steps.push({ action: "open", args: ["open", normalizedUrl] });
   steps.push({ action: "wait", args: ["wait", "--load", loadState] });
   if (checkConsole || checkErrors)
-    steps.push({ action: "wait", args: ["wait", "150"], generatedFrom: "qa.diagnosticSettle" });
+    steps.push({ action: "wait", args: ["wait", "150"], generatedFrom: "qa.diagnostic_settle" });
   for (const text of expectedText) {
     steps.push({
-      action: "assertText",
+      action: "assert_text",
       args: [
         "wait",
         "--fn",

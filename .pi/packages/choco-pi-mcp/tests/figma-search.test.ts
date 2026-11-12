@@ -46,7 +46,7 @@ test("findNodesByText searches collapsed instance text but not vector internals"
   const result = findNodesByText(node, { query: "Continue" });
   assert.equal(result.matches.length, 1);
   assert.equal(result.matches[0]?.parent?.name, "Primary CTA instance");
-  assert.ok(result.metadata.nextSteps.some((step) => step.includes("includeComponentInternals")));
+  assert.ok(result.metadata.nextSteps.some((step) => step.includes("include_component_internals")));
 });
 
 test("findNodesByName enforces depth and result caps", async () => {
@@ -59,5 +59,5 @@ test("findNodesByName enforces depth and result caps", async () => {
 
   const capped = findNodesByName(node, { query: "", maxResults: 1 });
   assert.equal(capped.matches.length, 1);
-  assert.ok(capped.metadata.truncatedReasons.some((reason) => reason.includes("maxResults")));
+  assert.ok(capped.metadata.truncatedReasons.some((reason) => reason.includes("max_results")));
 });

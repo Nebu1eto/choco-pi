@@ -197,7 +197,7 @@ test("registered search schemas expose canonical logical providers and actions",
     assert.deepEqual(schema.provider.anyOf[0]?.enum, expected);
     assert.deepEqual(schema.provider.anyOf[1]?.items?.enum, expected.slice(2));
   }
-  for (const property of ["action", "imageQuery", "url", "reference"]) {
+  for (const property of ["action", "image_query", "url", "reference"]) {
     assert.ok(output.properties.includes(property), property);
   }
 });

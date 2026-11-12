@@ -848,7 +848,7 @@ function validateRequest(request: SearchRequest): void {
     throw new SearchError("invalid-request", "Search requires query or queries");
   }
   if (action === "image" && !request.imageQuery && !request.query) {
-    throw new SearchError("invalid-request", "Image search requires imageQuery or query");
+    throw new SearchError("invalid-request", "Image search requires image_query or query");
   }
   if (action === "open" && !request.url && !request.reference) {
     throw new SearchError("invalid-request", "open requires an http(s) URL or owned reference");
@@ -880,7 +880,7 @@ function validateRequest(request: SearchRequest): void {
     if (!isValidDomain(domain)) {
       throw new SearchError(
         "invalid-request",
-        `domainFilter contains an invalid domain: ${domain}`,
+        `domain_filter contains an invalid domain: ${domain}`,
       );
     }
   }
@@ -924,12 +924,20 @@ function requiredCapabilities(request: SearchRequest): SearchCapability[] {
   return [...required];
 }
 
+/**
+ * The web_search tool spelling of an internal (camelCase) capability or request field, for
+ * model-visible messages only; the adapter contract keeps the camelCase names.
+ */
+function toolParamName(name: string): string {
+  return name.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+}
+
 function incompatibility(adapter: SearchAdapter, request: SearchRequest): string | undefined {
   const action = actionFor(request);
   if (!adapter.capabilities.actions.includes(action)) return `action ${action} is unsupported`;
   for (const capability of requiredCapabilities(request)) {
     if (adapter.capabilities.constraints?.[capability] !== true)
-      return `${capability} is unsupported`;
+      return `${toolParamName(capability)} is unsupported`;
   }
   return undefined;
 }
@@ -1388,7 +1396,7 @@ async function attemptAdapter(
       request.numResults !== undefined &&
       !request.requiredCapabilities?.includes("numResults") &&
       adapter.capabilities.constraints?.numResults !== true
-        ? [`${adapter.id} treats numResults as a non-binding hint`]
+        ? [`${adapter.id} treats num_results as a non-binding hint`]
         : [];
     return responseFromAdapter(
       adapter,

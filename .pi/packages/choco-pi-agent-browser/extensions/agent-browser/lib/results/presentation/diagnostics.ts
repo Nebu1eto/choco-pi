@@ -780,11 +780,11 @@ export function buildNetworkRequestsNextActions<Value>(
   if (selected.kind === "actionable") {
     const networkSourceLookup: NonNullable<
       AgentBrowserNextAction["params"]
-    >["networkSourceLookup"] = { requestId: selected.requestId };
+    >["network_source_lookup"] = { request_id: selected.requestId };
     if (sessionName) networkSourceLookup.session = sessionName;
     actions.push({
       id: "trace-actionable-network-source",
-      params: { networkSourceLookup },
+      params: { network_source_lookup: networkSourceLookup },
       reason: `Look for local source candidates related to ${descriptor}.`,
       safety:
         "Read-only experimental helper; it reports bounded candidates and may miss bundled or dynamic call sites.",

@@ -225,9 +225,9 @@ export function summarizeToolInput(name: string, value: BoundaryValue): string {
       ]);
     case "get_search_content":
       return join([
-        compact(stringField(args, "responseId") ?? "", 48),
-        stringField(args, "findText")
-          ? `find ${compact(stringField(args, "findText")!, 60)}`
+        compact(stringField(args, "response_id") ?? "", 48),
+        stringField(args, "find_text")
+          ? `find ${compact(stringField(args, "find_text")!, 60)}`
           : undefined,
       ]);
     case "symbol_search":
@@ -250,7 +250,7 @@ export function summarizeToolInput(name: string, value: BoundaryValue): string {
       return join([
         pathSummary(args),
         stringField(args, "severity"),
-        stringField(args, "serverScope"),
+        stringField(args, "server_scope"),
       ]);
     case "diagnostics_report":
       return join([
@@ -294,13 +294,19 @@ function scalar(value: BoundaryValue): string | undefined {
   return undefined;
 }
 
+/**
+ * Named facts from a result record. Tool result text uses snake_case keys while result
+ * details keep their camelCase shape, so both spellings of a key are read.
+ */
 function summarizeRecord(value: BoundaryRecord): string {
   const parts: string[] = [];
   for (const key of [
     "status",
     "name",
     "workflowId",
+    "workflow_id",
     "sessionId",
+    "session_id",
     "id",
     "model",
     "delivered",
@@ -322,11 +328,18 @@ function summarizeRecord(value: BoundaryRecord): string {
     const count = Array.isArray(value[key]) ? value[key].length : undefined;
     if (count !== undefined) parts.push(`${count} ${readableKey(key)}`);
   }
-  for (const key of ["sourceCount", "passageCount", "messageCount"]) {
+  for (const key of [
+    "sourceCount",
+    "source_count",
+    "passageCount",
+    "passage_count",
+    "messageCount",
+    "message_count",
+  ]) {
     const count = numberField(value, key);
     if (count !== undefined) parts.push(`${readableKey(key)} ${count}`);
   }
-  for (const key of ["changed", "timedOut", "dynamic", "sealed"]) {
+  for (const key of ["changed", "timedOut", "timed_out", "dynamic", "sealed"]) {
     const flag = booleanField(value, key);
     if (flag !== undefined) parts.push(`${readableKey(key)} ${flag ? "yes" : "no"}`);
   }

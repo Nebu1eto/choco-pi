@@ -23,10 +23,10 @@ test("fetch_content params normalize retained options", () => {
   assert.deepEqual(
     normalizeFetchContentParams({
       url: "https://example.test",
-      forceClone: true,
+      force_clone: true,
       prompt: " question ",
       mode: "answer",
-      answerModel: " openai/gpt-5 ",
+      answer_model: " openai/gpt-5 ",
       auth: " profile ",
     }).options,
     {

@@ -27,6 +27,7 @@ import {
   classifyAgentBrowserDiagnostic,
 } from "../../results/categories.ts";
 import { extractUpstreamErrorCode } from "../../results/envelope.ts";
+import { toModelVisibleData, toSnakeCaseKeys } from "../../results/tool-output-keys.ts";
 import { formatAgentBrowserDiagnosticText } from "../../results/presentation/errors.ts";
 import { type AgentBrowserEnvelope, type AgentBrowserNextAction } from "../../results/contracts.ts";
 import { formatSessionArtifactRetentionSummary } from "../../results/artifact-manifest.ts";
@@ -247,8 +248,8 @@ export function buildJsonVisibleContent(options: {
 }): AgentBrowserToolResult["content"] {
   const { error, presentation, succeeded, warnings } = options;
   const payload = redactSensitiveValue({
-    artifacts: presentation.artifacts,
-    data: presentation.data,
+    artifacts: toSnakeCaseKeys(presentation.artifacts),
+    data: toModelVisibleData(presentation.data),
     error,
     success: succeeded,
     warnings: warnings && warnings.length > 0 ? warnings : undefined,
@@ -259,7 +260,7 @@ export function buildJsonVisibleContent(options: {
     isRecord(presentation.data) &&
     hasRuntimeType(presentation.data.wsUrl, "string")
   )
-    payload.data.wsUrl = presentation.data.wsUrl;
+    payload.data.ws_url = presentation.data.wsUrl;
   const images = presentation.content.filter(
     (item): item is { data: string; mimeType: string; type: "image" } => item.type === "image",
   );
@@ -315,7 +316,7 @@ function formatElectronLaunchFailureDiagnostics(
     lines.push("- App stdout/stderr: not captured by this wrapper launch path.");
   if (failure?.reason !== "aborted")
     lines.push(
-      "Retry guidance: increase electron.timeoutMs, try targetType:'any', pass an explicit appPath/executablePath, quit any already-running singleton instance, then retry launch.",
+      "Retry guidance: increase electron.timeout_ms, try target_type:'any', pass an explicit app_path/executable_path, quit any already-running singleton instance, then retry launch.",
     );
   return lines.join("\n");
 }
@@ -398,8 +399,8 @@ export function formatElectronLaunchText(options: {
   upstreamText: string;
 }): string {
   const lines = [
-    `Electron launch: ${options.record.appName} attached as ${options.record.sessionName ?? "managed session"} (launchId ${options.record.launchId}, port ${options.record.port}).`,
-    `Identifiers: launchId ${options.record.launchId} for electron.status/electron.cleanup/electron.probe; sessionName ${options.record.sessionName ?? "not attached"} for browser snapshot/tab commands.`,
+    `Electron launch: ${options.record.appName} attached as ${options.record.sessionName ?? "managed session"} (launch_id ${options.record.launchId}, port ${options.record.port}).`,
+    `Identifiers: launch_id ${options.record.launchId} for electron.status/electron.cleanup/electron.probe; session_name ${options.record.sessionName ?? "not attached"} for browser snapshot/tab commands.`,
     ELECTRON_PROFILE_ISOLATION_NOTE,
     ELECTRON_EXISTING_AUTH_GUIDANCE,
     ...formatElectronTargetLines(options.targets),
@@ -417,7 +418,7 @@ export function formatElectronLaunchText(options: {
   else if (options.handoff?.handoff === "connect")
     lines.push("Connect handoff completed: run snapshot -i before using interactive refs.");
   lines.push(
-    `Cleanup: use details.nextActions cleanup-electron-launch or call electron.cleanup with launchId ${options.record.launchId} when finished.`,
+    `Cleanup: use details.nextActions cleanup-electron-launch or call electron.cleanup with launch_id ${options.record.launchId} when finished.`,
   );
   if (options.handoff?.error) lines.push(`Handoff warning: ${options.handoff.error}`);
   if (options.upstreamText.trim().length > 0) lines.push("", options.upstreamText.trim());
@@ -598,7 +599,7 @@ function buildTimeoutPartialProgressNextActions(
       {
         id: "retry-timeout-step",
         params: freshSessionAbandoned
-          ? { args: retryArgs, sessionMode: "fresh" }
+          ? { args: retryArgs, session_mode: "fresh" }
           : { args: withOptionalSessionArgs(options.executionPlan.sessionName, retryArgs) },
         reason: freshSessionAbandoned
           ? `Retry the first incomplete timed-out step${stepIndex === undefined ? "" : ` ${stepIndex}`} in a fresh browser session because the timed-out fresh session was not proven live.`
@@ -661,7 +662,7 @@ function buildDialogTimeoutNextActions(options: {
     },
     {
       id: "recover-fresh-session-after-dialog-timeout",
-      params: { args: ["open", "about:blank"], sessionMode: "fresh" as const },
+      params: { args: ["open", "about:blank"], session_mode: "fresh" as const },
       reason:
         "Start a clean browser session if the current session remains blocked behind a JavaScript dialog.",
       safety:
@@ -894,7 +895,7 @@ export function addDiagnosticToJsonContent(
   if (!isRecord(payload) || payload.success !== false) return content;
   const fields: RuntimeRecord<RuntimeValue> = payload;
   const text = redactExactSensitiveText(
-    JSON.stringify({ ...fields, diagnostic }, null, 2),
+    JSON.stringify({ ...fields, diagnostic: toSnakeCaseKeys(diagnostic) }, null, 2),
     exactSensitiveValues,
   );
   return [{ ...first, text }, ...content.slice(1)];
@@ -914,7 +915,7 @@ function formatFailureNextActionsText(
     const params = action.params ? { ...action.params } : undefined;
     if (params && action.params?.stdin !== undefined)
       params.stdin = "[omitted; use details.nextActions]";
-    const payload = action.artifactPath ? { artifactPath: action.artifactPath } : params;
+    const payload = action.artifactPath ? { artifact_path: action.artifactPath } : params;
     return `- ${action.id}${payload ? ` ${JSON.stringify(payload)}` : ""}: ${action.reason}`;
   });
   return [

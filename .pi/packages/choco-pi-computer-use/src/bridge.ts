@@ -118,6 +118,7 @@ import {
   type WaitForParams,
 } from "./contract.ts";
 import { toFiniteNumber } from "./platform/coerce.ts";
+import { actionLabel } from "./tool-params.ts";
 import { currentPlatformBackend } from "./platform/index.ts";
 import {
   HelperInterruption,
@@ -842,12 +843,12 @@ function formatOutlineNodeLabel(node: OutlineNode): string {
   const label = outlineNodeLabel(node) || "(unlabeled)";
   const identifier = node.identifier ? ` id=${JSON.stringify(node.identifier)}` : "";
   const capabilities = [
-    node.canSetValue ? "setValue" : undefined,
+    node.canSetValue ? "set_value" : undefined,
     node.canPress ? "press" : undefined,
     node.canFocus ? "focus" : undefined,
     node.canScroll ? "scroll" : undefined,
     node.canIncrement || node.canDecrement ? "adjust" : undefined,
-    node.pictureOnly ? "pictureOnly" : undefined,
+    node.pictureOnly ? "picture_only" : undefined,
   ].filter((item): item is string => Boolean(item));
   return `${node.ref} ${node.role}${node.subrole ? `/${node.subrole}` : ""}${identifier} ${JSON.stringify(label)}${capabilities.length ? ` [${capabilities.join(",")}]` : ""}`;
 }
@@ -870,7 +871,7 @@ function outlineNodeByRef(ref: string): OutlineNode {
 function wireRefForNode(node: OutlineNode): string {
   if (node.pictureOnly || !node.wireRef) {
     throw new Error(
-      `Outline ref '${node.ref}' is pictureOnly and has no semantic element. It can be clicked by coordinates, but semantic-only actions are not available.`,
+      `Outline ref '${node.ref}' is picture_only and has no semantic element. It can be clicked by coordinates, but semantic-only actions are not available.`,
     );
   }
   return node.wireRef;
@@ -1007,9 +1008,9 @@ function formatWindowLine(window: ListWindowsDetails["windows"][number]): string
     .join(", ");
   const frame = `${Math.round(window.framePoints.x)},${Math.round(window.framePoints.y)} ${Math.round(window.framePoints.w)}x${Math.round(window.framePoints.h)}`;
   const id = window.windowId
-    ? `windowId ${window.windowId}`
+    ? `window_id ${window.windowId}`
     : window.nativeWindowRef
-      ? `nativeRootRef ${window.nativeWindowRef}`
+      ? `native_root_ref ${window.nativeWindowRef}`
       : "unstable root id";
   const pairing = window.pairing
     ? `, pairing ${window.pairing.confidence}/${Math.round(window.pairing.score)}`
@@ -1203,7 +1204,7 @@ async function resolveTargetByWindowSelector(
 ): Promise<ResolvedTarget> {
   const normalized = normalizeWindowSelector(selector);
   if (!normalized) {
-    throw new Error("root target must be a non-empty @r ref or numeric windowId.");
+    throw new Error("root target must be a non-empty @r ref or numeric window_id.");
   }
 
   const current = operationState().currentTarget;
@@ -1603,8 +1604,8 @@ async function buildToolResult(
   // helper-internal lookId here makes a plausible but invalid stateId easy to use.
   const renderedChanges = useDiff ? renderChanges(transition!.changes) : "";
   const outlineText = useDiff
-    ? `\n\nChanges (${transition!.changedNodeCount}, ${base!.stateId} → ${result.capture.stateId}):\n${renderedChanges || "(no element changes)"}\nUse stateId ${result.capture.stateId} for subsequent actions and queries.`
-    : `\n\nOutline (${folded.nodeCount} nodes, stateId ${result.capture.stateId}${transition?.reason ? `, full view: ${transition.reason}` : ""}${folded.truncated ? ", folded output truncated" : ""}):\n${folded.text}`;
+    ? `\n\nChanges (${transition!.changedNodeCount}, ${base!.stateId} → ${result.capture.stateId}):\n${renderedChanges || "(no element changes)"}\nUse state_id ${result.capture.stateId} for subsequent actions and queries.`
+    : `\n\nOutline (${folded.nodeCount} nodes, state_id ${result.capture.stateId}${transition?.reason ? `, full view: ${transition.reason}` : ""}${folded.truncated ? ", folded output truncated" : ""}):\n${folded.text}`;
   const fallbackText = fallbackReason ? `\n\n${fallbackReason.message}` : "";
   const deltaText = rootDeltaLines(execution).join("\n");
   const content: AgentToolResult<ComputerUseDetails>["content"] = [
@@ -1749,7 +1750,7 @@ function foregroundGrantHint(
   if (foregroundGrantCovers(target.bundleId))
     return policy === "foreground" || action.wantsForeground
       ? "A host foreground grant covers this app, and the helper still could not deliver this action. Observe the current state before choosing another approach."
-      : "A host foreground grant covers this app, but the background attempt may have had an effect, so it was not retried in the foreground. Observe the current state; setText on an editable ref needs no foreground input.";
+      : "A host foreground grant covers this app, but the background attempt may have had an effect, so it was not retried in the foreground. Observe the current state; set_text on an editable ref needs no foreground input.";
   const grantValue = target.bundleId ?? "*";
   const fileHint = `add "${grantValue}" to "foreground_grant" in ~/.pi/agent/extensions/pi-computer-use.json or .pi/computer-use.json (applies on the next call, no restart), set PI_COMPUTER_USE_FOREGROUND_GRANT before starting pi, or run /computer-use grant always to allow every app without asking; /computer-use shows the active grants`;
   if (isSessionDenied(target.bundleId))
@@ -2022,7 +2023,7 @@ function deferRetryAfterDelivery(trace: ExecutionTrace, target: ResolvedTarget):
   refusal.nextStep = "observe_then_retry";
   refusal.grantedForNextCall = granted;
   refusal.grantHint = granted
-    ? `The helper already sent this ${refusal.action} to ${target.appName} as background pid-targeted pointer input and observed no change, so it was not sent again in this call; it may still have had an effect that is not visible. A host foreground grant now covers ${target.appName}, so the next act_ui on it uses foreground input. Call observe_ui on the target and confirm whether the action took effect before acting again.`
+    ? `The helper already sent this ${actionLabel(refusal.action)} to ${target.appName} as background pid-targeted pointer input and observed no change, so it was not sent again in this call; it may still have had an effect that is not visible. A host foreground grant now covers ${target.appName}, so the next act_ui on it uses foreground input. Call observe_ui on the target and confirm whether the action took effect before acting again.`
     : `${refusal.grantHint} Call observe_ui on the target and confirm whether the action took effect before acting on it again.`;
 }
 
@@ -2434,7 +2435,7 @@ function browserObservationResult(
     renderedOutline: folded.text,
   };
   const viewText = useDiff
-    ? `Changes (${transition!.changedNodeCount}, ${base!.stateId} → ${browser.snapshotId}):\n${renderChanges(transition!.changes) || "(no element changes)"}\nUse stateId ${browser.snapshotId} for subsequent actions and queries.`
+    ? `Changes (${transition!.changedNodeCount}, ${base!.stateId} → ${browser.snapshotId}):\n${renderChanges(transition!.changes) || "(no element changes)"}\nUse state_id ${browser.snapshotId} for subsequent actions and queries.`
     : folded.text;
   return {
     content: [
@@ -2583,7 +2584,7 @@ function conditionScopeRef(
 ): string | undefined {
   const ref = trimOrUndefined(params.ref);
   const scopeRef = trimOrUndefined(params.scopeRef);
-  if (ref && scopeRef) throw new Error("A UI condition accepts ref or scopeRef, not both.");
+  if (ref && scopeRef) throw new Error("A UI condition accepts ref or scope_ref, not both.");
   return ref ?? scopeRef;
 }
 
@@ -2606,7 +2607,7 @@ function validateCondition(
   const scopeRef = conditionScopeRef(params);
   if (!text && !role && !value) throw new Error("A UI condition requires text, role, or value.");
   if (role && !text && !value && !scopeRef)
-    throw new Error("A role-only UI condition requires ref or scopeRef.");
+    throw new Error("A role-only UI condition requires ref or scope_ref.");
   if (value && !params.ref) throw new Error("A value UI condition requires an exact ref.");
   return {
     text,
@@ -2723,7 +2724,7 @@ async function performWaitFor(
           : "Condition appeared."
         : `Timed out after ${timeoutMs}ms waiting for condition.`;
       const viewText = useDiff
-        ? `${renderChanges(transition.changes) || "(no element changes)"}\nUse stateId ${lastSnapshot.snapshotId} for subsequent actions and queries.`
+        ? `${renderChanges(transition.changes) || "(no element changes)"}\nUse state_id ${lastSnapshot.snapshotId} for subsequent actions and queries.`
         : renderedOutline;
       return { content: [{ type: "text", text: `${message}\n${viewText}` }], details };
     };
@@ -2803,7 +2804,7 @@ async function performWaitFor(
       : "Condition appeared."
     : `Timed out after ${timeoutMs}ms waiting for condition.`;
   const viewText = useDiff
-    ? `${renderChanges(transition.changes) || "(no element changes)"}\nUse stateId ${refreshed.capture.stateId} for subsequent actions and queries.`
+    ? `${renderChanges(transition.changes) || "(no element changes)"}\nUse state_id ${refreshed.capture.stateId} for subsequent actions and queries.`
     : details.renderedOutline;
   return { content: [{ type: "text", text: `${message}\n${viewText}` }], details };
 }
@@ -3091,11 +3092,11 @@ async function performInspectUi(
       [
         target.canPress ? "press" : undefined,
         target.canFocus ? "focus" : undefined,
-        target.canSetValue ? "setValue" : undefined,
+        target.canSetValue ? "set_value" : undefined,
         target.canScroll ? "scroll" : undefined,
         target.canIncrement ? "increment" : undefined,
         target.canDecrement ? "decrement" : undefined,
-        target.isTextInput ? "textInput" : undefined,
+        target.isTextInput ? "text_input" : undefined,
       ]
         .filter(Boolean)
         .join(",") || "none"
@@ -3103,7 +3104,7 @@ async function performInspectUi(
     `annotations: ${
       [
         target.offscreen ? "offscreen" : undefined,
-        target.pictureOnly ? "pictureOnly" : undefined,
+        target.pictureOnly ? "picture_only" : undefined,
         target.truncated ? "truncated" : undefined,
         target.scrollExtent
           ? `scrollable ${target.scrollExtent.seen}/${target.scrollExtent.total}`
@@ -3173,7 +3174,7 @@ function prepareDesktopTransaction(
 function batchPreparationError(actions: UiAction[], index: number, error: Error): Error {
   if (actions.length === 1) return error;
   return new Error(
-    `act_ui action ${index + 1} (${actions[index]?.action ?? "unknown"}): ${asSentence(error.message)} Nothing was sent.`,
+    `act_ui action ${index + 1} (${actionLabel(actions[index]?.action ?? "unknown")}): ${asSentence(error.message)} Nothing was sent.`,
     { cause: error },
   );
 }
@@ -3338,7 +3339,10 @@ function unverifiedActions(execution: ExecutionTrace, actions: UiAction[]): Unve
 function unverifiedEffectText(unverified: UnverifiedAction[]): string {
   if (unverified.length === 0) return "";
   const listed = unverified
-    .map(({ index, action, outcome }) => `action ${index + 1} (${action.action}: ${outcome})`)
+    .map(
+      ({ index, action, outcome }) =>
+        `action ${index + 1} (${actionLabel(action.action)}: ${outcome})`,
+    )
     .join(", ");
   return ` Effect not verified for ${listed}; confirm it in the returned state before reporting success.`;
 }
@@ -3562,7 +3566,7 @@ function foregroundRequiredResult(
       {
         type: "text",
         text: [
-          `foreground_required: ${refusal.action}${step} in ${target.appName} — ${target.windowTitle} needs ${refusal.capability}, which requires granted foreground delivery. It will not be retried automatically.`,
+          `foreground_required: ${actionLabel(refusal.action)}${step} in ${target.appName} — ${target.windowTitle} needs ${refusal.capability}, which requires granted foreground delivery. It will not be retried automatically.`,
           `${effect}${prefix}`,
           refusal.grantHint,
           refusal.nextStep
@@ -3910,7 +3914,7 @@ function stoppedSummary(
   where: string,
   subject: string,
 ): string {
-  const failed = `action ${failure.index + 1} (${actions[failure.index]?.action ?? "unknown"})`;
+  const failed = `action ${failure.index + 1} (${actionLabel(actions[failure.index]?.action ?? "unknown")})`;
   const landed = errorEffectPossible(failure.error)
     ? `may have reached ${subject}`
     : "delivered nothing";
@@ -3959,16 +3963,20 @@ function browserActionNode(action: BrowserPreparedAction): number | undefined {
 /** The backend node id of an actionable ref in the base state. */
 function browserRefNode(base: BrowserBase, operation: string, ref: string | undefined): number {
   if (!ref)
-    throw new Error(`Browser ${operation} requires an actionable @e ref owned by ${base.stateId}.`);
+    throw new Error(
+      `Browser ${actionLabel(operation)} requires an actionable @e ref owned by ${base.stateId}.`,
+    );
   const target = base.snapshot.targets.find((candidate) => candidate.ref === ref);
   if (!target)
     throw new Error(
       nodeByRef(base.outline, ref)
-        ? `Browser ${operation} ref '${ref}' is in state ${base.stateId} but is not an actionable control; browser actions target named buttons, links, and text inputs.`
-        : `Browser ${operation} ref '${ref}' is not in state ${base.stateId}; pass a ref from this state.`,
+        ? `Browser ${actionLabel(operation)} ref '${ref}' is in state ${base.stateId} but is not an actionable control; browser actions target named buttons, links, and text inputs.`
+        : `Browser ${actionLabel(operation)} ref '${ref}' is not in state ${base.stateId}; pass a ref from this state.`,
     );
   if (target.backendNodeId === undefined || !Number.isFinite(target.backendNodeId))
-    throw new Error(`Browser ${operation} requires an actionable @e ref owned by ${base.stateId}.`);
+    throw new Error(
+      `Browser ${actionLabel(operation)} requires an actionable @e ref owned by ${base.stateId}.`,
+    );
   return target.backendNodeId;
 }
 
@@ -3993,7 +4001,7 @@ function browserPoint(
 
 function prepareBrowserAction(action: UiAction, base: BrowserBase): BrowserPreparedAction {
   if (!BROWSER_TRANSACTION_ACTIONS.has(action.action))
-    throw new Error(`Browser transactions do not support '${action.action}'.`);
+    throw new Error(`Browser transactions do not support '${actionLabel(action.action)}'.`);
   const ref = trimOrUndefined(action.ref);
   const clickCount = action.clickCount ?? 1;
   switch (action.action) {
@@ -4064,9 +4072,9 @@ function prepareBrowserAction(action: UiAction, base: BrowserBase): BrowserPrepa
     case "moveMouse":
       if (ref)
         throw new Error(
-          "Browser moveMouse takes x and y only; browser outlines carry no element coordinates.",
+          "Browser move_mouse takes x and y only; browser outlines carry no element coordinates.",
         );
-      return { action: "moveMouse", ...browserPoint(base, action.x, action.y, "moveMouse") };
+      return { action: "moveMouse", ...browserPoint(base, action.x, action.y, "move_mouse") };
   }
 }
 
@@ -4441,12 +4449,15 @@ function validateActionTarget(action: UiAction): void {
   const hasY = Number.isFinite(action.y);
   if (isKeyboardUiAction(action) && (action.x !== undefined || action.y !== undefined))
     throw new Error(
-      `${action.action} does not take x/y: keyboard input goes to a focused control, not a point. Click the point first and then send ${action.action} without ref, or pass the control's ref.`,
+      `${actionLabel(action.action)} does not take x/y: keyboard input goes to a focused control, not a point. Click the point first and then send ${actionLabel(action.action)} without ref, or pass the control's ref.`,
     );
-  if (hasX !== hasY) throw new Error(`${action.action} coordinates require both x and y.`);
+  if (hasX !== hasY)
+    throw new Error(`${actionLabel(action.action)} coordinates require both x and y.`);
   const hasPoint = hasX && hasY;
   if ((action.action === "click" || action.action === "moveMouse") && hasRef === hasPoint) {
-    throw new Error(`${action.action} requires exactly one target: ref or x/y coordinates.`);
+    throw new Error(
+      `${actionLabel(action.action)} requires exactly one target: ref or x/y coordinates.`,
+    );
   }
   if (action.action === "press" && !hasRef) throw new Error("press requires an actionable ref.");
   if (
@@ -4454,12 +4465,12 @@ function validateActionTarget(action: UiAction): void {
     toFiniteNumber(action.scrollX, 0) === 0 &&
     toFiniteNumber(action.scrollY, 0) === 0
   )
-    throw new Error("scroll requires a non-zero scrollX or scrollY delta.");
+    throw new Error("scroll requires a non-zero scroll_x or scroll_y delta.");
   if (
     action.clickCount !== undefined &&
     (!Number.isInteger(action.clickCount) || action.clickCount < 1 || action.clickCount > 3)
   )
-    throw new Error("clickCount must be an integer from 1 to 3.");
+    throw new Error("click_count must be an integer from 1 to 3.");
 }
 
 async function performAct(
@@ -4696,7 +4707,7 @@ async function performNavigateBrowser(
   const url = trimOrUndefined(params.url);
   if (!contextId)
     throw new Error(
-      "navigate_browser.stateId must belong to a CDP browser-page observation. Native browser windows use act_ui.",
+      "navigate_browser.state_id must belong to a CDP browser-page observation. Native browser windows use act_ui.",
     );
   if (!url || !/^https?:\/\//i.test(url))
     throw new Error("navigate_browser.url must be an absolute HTTP(S) URL.");
@@ -4718,7 +4729,8 @@ async function performEvaluateBrowser(
 ): Promise<AgentToolResult<EvaluateBrowserDetails>> {
   const contextId = browserContextForOperation();
   const expression = isString(params.expression) ? params.expression : "";
-  if (!contextId) throw new Error("evaluate_browser.stateId must belong to a browser observation.");
+  if (!contextId)
+    throw new Error("evaluate_browser.state_id must belong to a browser observation.");
   if (!expression.trim())
     throw new Error("evaluate_browser.expression must be non-empty JavaScript.");
   const baseSnapshot = operationState().browserSnapshot;

@@ -71,58 +71,55 @@ export function createAstGrepReplaceTool(astGrepClient: AstGrepClient) {
       return `ast_grep_replace — ${n} match${n === 1 ? "" : "es"}, ${state}`;
     }),
     parameters: hostParams(
-      obj(
-        {
-          pattern: str({
-            description: "AST pattern to match (be specific with context)",
+      obj({
+        pattern: str({
+          description: "AST pattern to match (be specific with context)",
+        }),
+        rewrite: str({
+          description: "Replacement using meta-variables from pattern",
+        }),
+        lang: oneOf(LANGUAGES, {
+          description: "Target language",
+        }),
+        paths: opt(arr(str(), { description: "Specific files/folders" })),
+        inside_kind: opt(
+          str({
+            description:
+              "Restrict matches to nodes inside an ancestor of this AST node kind. Synthesizes a YAML rule.",
           }),
-          rewrite: str({
-            description: "Replacement using meta-variables from pattern",
+        ),
+        has_kind: opt(
+          str({
+            description:
+              'Restrict matches to nodes whose immediate child has this AST node kind (ast-grep default stopBy: neighbor). Example: `has_kind: "await_expression"`.',
           }),
-          lang: oneOf(LANGUAGES, {
-            description: "Target language",
+        ),
+        has_descendant_kind: opt(
+          str({
+            description:
+              "Restrict matches to nodes containing this AST node kind anywhere in their descendants. Explicit recursive form (`stopBy: end`); use this instead of `has_kind` when nesting is not immediate.",
           }),
-          paths: opt(arr(str(), { description: "Specific files/folders" })),
-          insideKind: opt(
-            str({
-              description:
-                "Restrict matches to nodes inside an ancestor of this AST node kind. Synthesizes a YAML rule.",
-            }),
-          ),
-          hasKind: opt(
-            str({
-              description:
-                'Restrict matches to nodes whose immediate child has this AST node kind (ast-grep default stopBy: neighbor). Example: `hasKind: "await_expression"`.',
-            }),
-          ),
-          hasDescendantKind: opt(
-            str({
-              description:
-                "Restrict matches to nodes containing this AST node kind anywhere in their descendants. Explicit recursive form (`stopBy: end`); use this instead of `hasKind` when nesting is not immediate.",
-            }),
-          ),
-          follows: opt(
-            str({
-              description:
-                "Restrict matches to nodes that immediately follow a sibling matching this pattern.",
-            }),
-          ),
-          precedes: opt(
-            str({
-              description:
-                "Restrict matches to nodes that immediately precede a sibling matching this pattern.",
-            }),
-          ),
-          apply: opt(bool({ description: "Apply changes (default: false)" })),
-          strictness: opt(
-            oneOf(["smart", "relaxed", "ast", "cst", "signature", "template"], {
-              description:
-                "Pattern matching strictness. 'smart' (default) ignores comments and whitespace. 'relaxed' also ignores unnamed nodes like punctuation. 'ast' ignores all whitespace.",
-            }),
-          ),
-        },
-        { open: true },
-      ),
+        ),
+        follows: opt(
+          str({
+            description:
+              "Restrict matches to nodes that immediately follow a sibling matching this pattern.",
+          }),
+        ),
+        precedes: opt(
+          str({
+            description:
+              "Restrict matches to nodes that immediately precede a sibling matching this pattern.",
+          }),
+        ),
+        apply: opt(bool({ description: "Apply changes (default: false)" })),
+        strictness: opt(
+          oneOf(["smart", "relaxed", "ast", "cst", "signature", "template"], {
+            description:
+              "Pattern matching strictness. 'smart' (default) ignores comments and whitespace. 'relaxed' also ignores unnamed nodes like punctuation. 'ast' ignores all whitespace.",
+          }),
+        ),
+      }),
     ),
     async execute(
       _toolCallId: string,
@@ -139,9 +136,9 @@ export function createAstGrepReplaceTool(astGrepClient: AstGrepClient) {
         paths,
         apply,
         strictness,
-        insideKind,
-        hasKind,
-        hasDescendantKind,
+        inside_kind: insideKind,
+        has_kind: hasKind,
+        has_descendant_kind: hasDescendantKind,
         follows,
         precedes,
       } = params as {
@@ -151,9 +148,9 @@ export function createAstGrepReplaceTool(astGrepClient: AstGrepClient) {
         paths?: string[];
         apply?: boolean;
         strictness?: string;
-        insideKind?: string;
-        hasKind?: string;
-        hasDescendantKind?: string;
+        inside_kind?: string;
+        has_kind?: string;
+        has_descendant_kind?: string;
         follows?: string;
         precedes?: string;
       };

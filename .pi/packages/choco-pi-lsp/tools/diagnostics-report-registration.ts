@@ -87,47 +87,44 @@ export function createLensDiagnosticsTool(
       return `diagnostics_report ${mode} — ${b} blocking · ${e} errors · ${w} warnings (${files} files)${coldSuffix}${failedSuffix}`;
     }),
     parameters: hostParams(
-      obj(
-        {
-          mode: opt(
-            oneOf(["delta", "all", "full"], {
-              description: "Scan current-turn, edited-file, or project-wide diagnostics.",
-            }),
-          ),
-          refreshRunners: opt(
-            union([bool(), oneOf(["cached", "cheap", "all", "none"])], {
-              description: "Project analyzer refresh level for full mode.",
-            }),
-          ),
-          maxProjectFiles: opt(
-            num({
-              description: "Project-file cap for cheap analyzers.",
-            }),
-          ),
-          maxLspFiles: opt(
-            num({
-              description: "File cap for the full LSP sweep.",
-            }),
-          ),
-          includeGenerated: opt(
-            bool({
-              description: "Include generated-looking files in project analyzers.",
-            }),
-          ),
-          severity: opt(
-            oneOf(["error", "warning", "all"], {
-              description: "Filter by severity (default: all).",
-            }),
-          ),
-          paths: opt(
-            arr(str(), {
-              maxItems: MAX_PATHS_ENTRIES,
-              description: `Limit diagnostics to at most ${MAX_PATHS_ENTRIES} files or directories.`,
-            }),
-          ),
-        },
-        { open: true },
-      ),
+      obj({
+        mode: opt(
+          oneOf(["delta", "all", "full"], {
+            description: "Scan current-turn, edited-file, or project-wide diagnostics.",
+          }),
+        ),
+        refresh_runners: opt(
+          union([bool(), oneOf(["cached", "cheap", "all", "none"])], {
+            description: "Project analyzer refresh level for full mode.",
+          }),
+        ),
+        max_project_files: opt(
+          num({
+            description: "Project-file cap for cheap analyzers.",
+          }),
+        ),
+        max_lsp_files: opt(
+          num({
+            description: "File cap for the full LSP sweep.",
+          }),
+        ),
+        include_generated: opt(
+          bool({
+            description: "Include generated-looking files in project analyzers.",
+          }),
+        ),
+        severity: opt(
+          oneOf(["error", "warning", "all"], {
+            description: "Filter by severity (default: all).",
+          }),
+        ),
+        paths: opt(
+          arr(str(), {
+            maxItems: MAX_PATHS_ENTRIES,
+            description: `Limit diagnostics to at most ${MAX_PATHS_ENTRIES} files or directories.`,
+          }),
+        ),
+      }),
     ),
     async execute(
       toolCallId: string,

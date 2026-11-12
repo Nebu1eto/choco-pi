@@ -1276,3 +1276,7 @@ Upstream `normalizePatchPath` (`src/patch/paths.ts`, unchanged since the 3.0.18 
   row's target is unchanged.
 - Tests: `tests/code-mode-call-rendering.test.ts` (root),
   `tests/trace-rendering.test.ts`.
+
+## 2026-11-12 choco-pi patch: snake_case tool I/O
+
+Code-mode nested tool results are model-visible tool output, so the retrievable-result fallback in `src/adapter/code-mode/nested-tool-adapter.ts` (2026-10-09 patch) now converts the copied `details` scalar keys to snake_case: a script reads `response_id`/`search_id`, `url_count`, `query_count`, ... and passes `response_id` to `get_search_content`. Detection still reads `details.responseId`/`details.searchId`, and `details` itself is unchanged. Tests: `tests/code-mode-nested-tool-dispatch.test.ts`; `tests/code-mode-bridge-arguments.test.ts` mirrors the renamed `read_text.state_id`.

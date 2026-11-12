@@ -34,6 +34,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { bool, int, nullable, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
 import { hostParams } from "./lib/schema-bridge.ts";
+import { toSnakeCaseKeys } from "./lib/tool-output-keys.ts";
 import { formatHeldMessageNotice, onStopReopen, readStopState } from "./lib/stop-control.ts";
 import {
   assertSessionId,
@@ -760,7 +761,7 @@ async function sessionSnapshotReader(
 
 function toolResult(value: RuntimeValue) {
   return {
-    content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
+    content: [{ type: "text" as const, text: JSON.stringify(toSnakeCaseKeys(value), null, 2) }],
     details: value,
   };
 }
@@ -796,7 +797,7 @@ function installUserCommands(pi: ExtensionAPI): void {
           effort,
           name,
         });
-        ctx.ui.notify(JSON.stringify(snapshot, null, 2), "info");
+        ctx.ui.notify(JSON.stringify(toSnakeCaseKeys(snapshot), null, 2), "info");
       } catch (error) {
         commandError(ctx, error);
       }
@@ -812,7 +813,10 @@ function installUserCommands(pi: ExtensionAPI): void {
         if (!Number.isSafeInteger(requestedLimit) || requestedLimit < 1) {
           throw new Error("Usage: /sessions [positive-limit]");
         }
-        ctx.ui.notify(JSON.stringify(sessions.slice(0, requestedLimit), null, 2), "info");
+        ctx.ui.notify(
+          JSON.stringify(toSnakeCaseKeys(sessions.slice(0, requestedLimit)), null, 2),
+          "info",
+        );
       } catch (error) {
         commandError(ctx, error);
       }
@@ -851,7 +855,7 @@ function installUserCommands(pi: ExtensionAPI): void {
         if (!Number.isFinite(limit)) throw new Error("Limit must be a number.");
         const includeTools = includeToolsValue === "true" || includeToolsValue === "include-tools";
         const result = await readSessionTranscript(ctx.cwd, sessionId, limit, includeTools);
-        ctx.ui.notify(JSON.stringify(result, null, 2), "info");
+        ctx.ui.notify(JSON.stringify(toSnakeCaseKeys(result), null, 2), "info");
       } catch (error) {
         commandError(ctx, error);
       }
@@ -873,7 +877,10 @@ function installUserCommands(pi: ExtensionAPI): void {
           afterCursor === "null" ? null : afterCursor,
           seconds * 1_000,
         );
-        ctx.ui.notify(JSON.stringify(result, null, 2), result.timedOut ? "warning" : "info");
+        ctx.ui.notify(
+          JSON.stringify(toSnakeCaseKeys(result), null, 2),
+          result.timedOut ? "warning" : "info",
+        );
       } catch (error) {
         commandError(ctx, error);
       }
