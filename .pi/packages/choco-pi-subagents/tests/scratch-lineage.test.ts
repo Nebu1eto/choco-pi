@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { after, before } from "node:test";
 
 import { scratchDirFor, scratchEnv, scratchRootFor } from "../../../extensions/lib/scratch-path.ts";
 import { registerAgents } from "../src/agent-types.ts";
@@ -11,6 +11,21 @@ import { buildAgentPrompt } from "../src/prompts.ts";
 import { unregisterChildSessionId } from "../src/child-context.ts";
 import type { AgentConfig } from "../src/types.ts";
 import { createSdkFixture } from "./sdk-fixture.ts";
+
+// Run free of the ambient lineage: a Pi session running these tests exports its own scratch root.
+const SCRATCH_ENV_KEYS = ["PI_ROOT_SESSION_ID", "PI_SCRATCH_DIR", "PI_PREVIOUS_SCRATCH_DIR"];
+const ambientScratchEnv = new Map<string, string>();
+before(() => {
+  for (const key of SCRATCH_ENV_KEYS) {
+    const value = process.env[key];
+    if (value === undefined) continue;
+    ambientScratchEnv.set(key, value);
+    delete process.env[key];
+  }
+});
+after(() => {
+  for (const [key, value] of ambientScratchEnv) process.env[key] = value;
+});
 
 function config(sessionDir: string): AgentConfig {
   return {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import test from "node:test";
+import test, { after, before } from "node:test";
 
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
@@ -15,6 +15,21 @@ import { createLazyExecSessionManager } from "../src/tools/exec/lazy-session-man
 import { registerCodeModePreflightBroker } from "../src/tools/code-mode/nested-tool-preflight.ts";
 import { createSdkFixture } from "./sdk-fixture.ts";
 import { createToolContextFixture } from "./tool-context-fixture.ts";
+
+// Run free of the ambient lineage: a Pi session running these tests exports its own scratch root.
+const SCRATCH_ENV_KEYS = ["PI_ROOT_SESSION_ID", "PI_SCRATCH_DIR", "PI_PREVIOUS_SCRATCH_DIR"];
+const ambientScratchEnv = new Map<string, string>();
+before(() => {
+  for (const key of SCRATCH_ENV_KEYS) {
+    const value = process.env[key];
+    if (value === undefined) continue;
+    ambientScratchEnv.set(key, value);
+    delete process.env[key];
+  }
+});
+after(() => {
+  for (const [key, value] of ambientScratchEnv) process.env[key] = value;
+});
 
 async function runPrintf(
   sessions: ReturnType<typeof createLazyExecSessionManager>,

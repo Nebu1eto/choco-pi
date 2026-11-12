@@ -1008,8 +1008,9 @@ test("lifecycle events publish flat started/exited payloads with the tool call i
       { command: "exit 7", name: "seven" },
       "root-session",
     );
-    // started is emitted synchronously inside shell_start.
-    assert.deepEqual(eventsFor(root, started.shellId), ["shells:started"]);
+    // started is emitted synchronously inside shell_start, so it always comes first; a fast
+    // `exit 7` may already have emitted exited by the time the awaited tool call returns.
+    assert.equal(eventsFor(root, started.shellId)[0], "shells:started");
     await waitFor(() => eventsFor(root, started.shellId).length === 2, "exit event");
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.deepEqual(eventsFor(root, started.shellId), ["shells:started", "shells:exited"]);
