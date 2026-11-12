@@ -3,7 +3,19 @@ import { isNumberValue } from "../boundary.ts";
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { promisify } from "node:util";
 import { StringDecoder } from "node:string_decoder";
-import { bool, compile, nullable, obj, opt, str, unknown } from "@earendil-works/pi-schema";
+import {
+  arr,
+  bool,
+  compile,
+  nullable,
+  num,
+  obj,
+  oneOf,
+  opt,
+  str,
+  unknown,
+  type Static,
+} from "@earendil-works/pi-schema";
 import { finiteNum } from "../../value-guards.ts";
 import { formatNativeBinaryError } from "../../native-binary-error.ts";
 import { getBundledToolBinaryPath } from "../native/binary.ts";
@@ -24,24 +36,40 @@ const isBridgeResponse = compile(
   ),
 ).check;
 
-interface BridgeResponse<T = unknown> {
+interface BridgeResponse {
   request_id: number;
   ok: boolean;
-  result?: T | undefined;
+  result?: unknown;
   error?: string | null | undefined;
 }
 
-export interface BridgeReadResponse {
-  chunks: Array<{ seq: number; stream: "stdout" | "stderr" | "pty"; chunk: string }>;
-  nextSeq: number;
-  exited: boolean;
-  exitCode?: number | null | undefined;
-  closed: boolean;
-  failure?: string | null | undefined;
-}
+const BridgeReadResponseSchema = obj(
+  {
+    // Optional: the former reader treated a missing list as empty.
+    chunks: opt(
+      arr(
+        obj(
+          { seq: num(), stream: oneOf(["stdout", "stderr", "pty"]), chunk: str() },
+          { open: true },
+        ),
+      ),
+    ),
+    nextSeq: num(),
+    exited: bool(),
+    exitCode: opt(nullable(num())),
+    closed: bool(),
+    failure: opt(nullable(str())),
+  },
+  { open: true },
+);
+const isBridgeReadResponse = compile(BridgeReadResponseSchema).check;
+export type BridgeReadResponse = Static<typeof BridgeReadResponseSchema>;
 
 export interface ExecBridgeClient {
-  request<T = unknown>(request: BoundaryRecord): Promise<T>;
+  /** Sends a command whose result the caller does not use. */
+  request(request: BoundaryRecord): Promise<void>;
+  /** Sends a `read` and validates its result. */
+  read(request: BoundaryRecord): Promise<BridgeReadResponse>;
   shutdown(): Promise<void>;
 }
 
@@ -79,139 +107,147 @@ function formatExecBridgeWriteError(
   });
 }
 
-export function createExecBridgeClient(
-  binaryPath: () => string | undefined = () => getBundledToolBinaryPath("exec_bridge"),
-): ExecBridgeClient {
-  let bridge: ChildProcessWithoutNullStreams | undefined;
-  let nextBridgeRequestId = 1;
-  const pendingBridgeRequests = new Map<
-    number,
-    { resolve: (value: BridgeResponse) => void; reject: (error: Error) => void }
-  >();
-  let bridgeLineBuffer = "";
-  let bridgeStderr = "";
-  let bridgeStdoutDecoder = new StringDecoder("utf8");
-  let bridgeStderrDecoder = new StringDecoder("utf8");
-  let bridgeClosing = false;
-  let bridgeResponded = false;
-  let bridgeShutdownPromise: Promise<void> | undefined;
-  let bridgeClosed = false;
+interface PendingRequest {
+  resolve(response: BridgeResponse): void;
+  reject(error: Error): void;
+}
 
-  function rejectPending(error: Error): void {
-    for (const pending of pendingBridgeRequests.values()) pending.reject(error);
-    pendingBridgeRequests.clear();
+/**
+ * Reads one bridge process's newline-delimited JSON stdout and settles the matching pending
+ * request. A line that is not JSON, names no pending request, or arrives after its request
+ * settled is ignored: the bridge may log, and a write failure can settle a request first.
+ */
+export class BridgeResponseRouter {
+  readonly #pending = new Map<number, PendingRequest>();
+  readonly #decoder = new StringDecoder("utf8");
+  #lineBuffer = "";
+  #responded = false;
+
+  /** Whether the bridge has answered any request yet (a write failure before that is a startup failure). */
+  get responded(): boolean {
+    return this.#responded;
   }
 
-  function handleStdout(data: Buffer): void {
-    bridgeLineBuffer += bridgeStdoutDecoder.write(data);
-    for (;;) {
-      const newline = bridgeLineBuffer.indexOf("\n");
-      if (newline === -1) break;
-      const line = bridgeLineBuffer.slice(0, newline).trim();
-      bridgeLineBuffer = bridgeLineBuffer.slice(newline + 1);
-      if (!line) continue;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(line);
-      } catch {
-        continue;
-      }
-      if (!isBridgeResponseIdentity(parsed)) continue;
-      const pending = pendingBridgeRequests.get(parsed.request_id);
-      if (!pending) continue;
-      pendingBridgeRequests.delete(parsed.request_id);
-      bridgeResponded = true;
-      if (!isBridgeResponse(parsed)) {
-        pending.reject(new Error("exec_bridge returned an invalid response"));
-        continue;
-      }
-      pending.resolve(parsed);
+  register(requestId: number, pending: PendingRequest): void {
+    this.#pending.set(requestId, pending);
+  }
+
+  forget(requestId: number): void {
+    this.#pending.delete(requestId);
+  }
+
+  rejectAll(error: Error): void {
+    for (const pending of this.#pending.values()) pending.reject(error);
+    this.#pending.clear();
+  }
+
+  push(data: Buffer): void {
+    this.#lineBuffer += this.#decoder.write(data);
+    let newline = this.#lineBuffer.indexOf("\n");
+    while (newline !== -1) {
+      const line = this.#lineBuffer.slice(0, newline).trim();
+      this.#lineBuffer = this.#lineBuffer.slice(newline + 1);
+      if (line) this.#dispatch(line);
+      newline = this.#lineBuffer.indexOf("\n");
     }
   }
 
-  function getBridge(): ChildProcessWithoutNullStreams {
-    if (bridgeClosed) throw new Error("exec_bridge is shut down");
-    if (bridge && !bridge.killed) return bridge;
-    const binary = binaryPath();
-    if (!binary)
-      throw new Error(`exec_bridge binary is not bundled for ${process.platform}-${process.arch}`);
-    bridgeClosing = false;
-    bridgeLineBuffer = "";
-    bridgeStderr = "";
-    bridgeResponded = false;
-    bridgeStdoutDecoder = new StringDecoder("utf8");
-    bridgeStderrDecoder = new StringDecoder("utf8");
-    bridge = spawn(binary, [], { stdio: "pipe", env: process.env });
-    bridge.stdout.on("data", handleStdout);
-    bridge.stderr.on("data", (data: Buffer) => {
-      bridgeStderr = appendBoundedText(bridgeStderr, bridgeStderrDecoder.write(data));
+  /** The process closed; a trailing unterminated line is never a complete response. */
+  close(): void {
+    this.#decoder.end();
+    this.#lineBuffer = "";
+  }
+
+  #dispatch(line: string): void {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      return; // not a response line
+    }
+    if (!isBridgeResponseIdentity(parsed)) return;
+    const pending = this.#pending.get(parsed.request_id);
+    if (!pending) return;
+    this.#pending.delete(parsed.request_id);
+    this.#responded = true;
+    if (isBridgeResponse(parsed)) pending.resolve(parsed);
+    else pending.reject(new Error("exec_bridge returned an invalid response"));
+  }
+}
+
+/** One spawned bridge process: its pipes, its bounded stderr, and the requests written to it. */
+class BridgeConnection {
+  readonly child: ChildProcessWithoutNullStreams;
+  /** Set once shutdown asked the bridge to exit, so its close is not reported as a crash. */
+  closing = false;
+  readonly #router = new BridgeResponseRouter();
+  readonly #stderrDecoder = new StringDecoder("utf8");
+  #stderr = "";
+
+  constructor(binary: string, onClose: (connection: BridgeConnection) => void) {
+    this.child = spawn(binary, [], { stdio: "pipe", env: process.env });
+    this.child.stdout.on("data", (data: Buffer) => this.#router.push(data));
+    this.child.stderr.on("data", (data: Buffer) => {
+      this.#stderr = appendBoundedText(this.#stderr, this.#stderrDecoder.write(data));
     });
-    bridge.stdin.on("error", (error: Error) => {
-      rejectPending(new Error(formatExecBridgeWriteError(error, bridgeStderr, !bridgeResponded)));
+    this.child.stdin.on("error", (error: Error) => this.#router.rejectAll(this.#writeError(error)));
+    this.child.on("close", (code, signal) => {
+      this.#router.close();
+      this.#stderr = appendBoundedText(this.#stderr, this.#stderrDecoder.end());
+      const reason = this.closing
+        ? "exec_bridge closed"
+        : formatExecBridgeExitError(this.#stderr, code, signal);
+      this.#router.rejectAll(new Error(reason));
+      this.#stderr = "";
+      onClose(this);
     });
-    bridge.on("close", (code, signal) => {
-      bridgeLineBuffer += bridgeStdoutDecoder.end();
-      bridgeStderr = appendBoundedText(bridgeStderr, bridgeStderrDecoder.end());
-      rejectPending(
-        new Error(
-          bridgeClosing
-            ? "exec_bridge closed"
-            : formatExecBridgeExitError(bridgeStderr, code, signal),
-        ),
-      );
-      bridge = undefined;
-      bridgeLineBuffer = "";
-      bridgeStderr = "";
-    });
-    bridge.on("error", (error) =>
-      rejectPending(
+    this.child.on("error", (error) =>
+      this.#router.rejectAll(
         new Error(formatNativeBinaryError("exec_bridge", error, { binaryPath: binary })),
       ),
     );
-    return bridge;
   }
 
-  async function sendRequest<T = unknown>(
-    value: BoundaryRecord,
-    existingChild?: ChildProcessWithoutNullStreams,
-  ): Promise<T> {
-    const requestId = nextBridgeRequestId++;
-    const child = existingChild ?? getBridge();
-    const response = await new Promise<BridgeResponse<T>>((resolve, reject) => {
-      // SAFETY: requestId binds this resolver to the same validated BridgeResponse envelope regardless of its caller-owned result type.
-      pendingBridgeRequests.set(requestId, {
-        resolve: resolve as (value: BridgeResponse) => void,
-        reject,
-      });
-      child.stdin.write(`${JSON.stringify({ ...value, request_id: requestId })}\n`, (error) => {
-        if (!error) return;
-        pendingBridgeRequests.delete(requestId);
-        reject(new Error(formatExecBridgeWriteError(error, bridgeStderr, !bridgeResponded)));
-      });
+  get exited(): boolean {
+    return this.child.exitCode !== null || this.child.signalCode !== null;
+  }
+
+  /** Writes one request line and resolves with the bridge's response envelope. */
+  send(requestId: number, value: BoundaryRecord): Promise<BridgeResponse> {
+    return new Promise((resolve, reject) => {
+      this.#router.register(requestId, { resolve, reject });
+      this.child.stdin.write(
+        `${JSON.stringify({ ...value, request_id: requestId })}\n`,
+        (error) => {
+          if (!error) return;
+          this.#router.forget(requestId);
+          reject(this.#writeError(error));
+        },
+      );
     });
+  }
+
+  /** Sends a request and fails unless the bridge reports success. */
+  async request(requestId: number, value: BoundaryRecord): Promise<BridgeResponse> {
+    const response = await this.send(requestId, value);
     if (!response.ok) throw new Error(response.error ?? "exec_bridge request failed");
-    // SAFETY: The request operation determines T; the response envelope is schema-validated and matched by request_id above.
-    return response.result as T;
+    return response;
   }
 
-  async function request<T = unknown>(value: BoundaryRecord): Promise<T> {
-    if (bridgeClosed) throw new Error("exec_bridge is shut down");
-    return sendRequest<T>(value);
-  }
-
-  async function shutdownBridge(): Promise<void> {
-    bridgeClosed = true;
-    const child = bridge;
-    if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  /**
+   * Asks the bridge to exit and waits for it; on failure or timeout kills its process tree.
+   * Kill failures other than "already gone" join the original error in an AggregateError.
+   */
+  async shutdown(requestId: number): Promise<void> {
     const deadline = performance.now() + BRIDGE_SHUTDOWN_TIMEOUT_MS;
-    const shutdownRequest = sendRequest({ op: "shutdown" }, child);
-    bridgeClosing = true;
+    const shutdownRequest = this.request(requestId, { op: "shutdown" });
+    this.closing = true;
     try {
       await withTimeout(shutdownRequest, remainingMs(deadline), "exec_bridge shutdown timed out");
-      await waitForBridgeClose(child, remainingMs(deadline));
+      await waitForBridgeClose(this.child, remainingMs(deadline));
     } catch (error) {
-      if (child.exitCode !== null || child.signalCode !== null) throw error;
-      const killFailures = await killBridgeProcessTree(child);
+      if (this.exited) throw error;
+      const killFailures = await killBridgeProcessTree(this.child);
       if (killFailures.length === 0) throw error;
       throw new AggregateError(
         [error, ...killFailures],
@@ -220,9 +256,53 @@ export function createExecBridgeClient(
     }
   }
 
+  #writeError(error: Error): Error {
+    return new Error(formatExecBridgeWriteError(error, this.#stderr, !this.#router.responded));
+  }
+}
+
+export function createExecBridgeClient(
+  binaryPath: () => string | undefined = () => getBundledToolBinaryPath("exec_bridge"),
+): ExecBridgeClient {
+  let connection: BridgeConnection | undefined;
+  let nextRequestId = 1;
+  let closed = false;
+  let shutdownPromise: Promise<void> | undefined;
+
+  function currentConnection(): BridgeConnection {
+    if (closed) throw new Error("exec_bridge is shut down");
+    if (connection && !connection.child.killed) return connection;
+    const binary = binaryPath();
+    if (!binary)
+      throw new Error(`exec_bridge binary is not bundled for ${process.platform}-${process.arch}`);
+    // A close only clears the connection it belongs to, never a newer one.
+    const started = new BridgeConnection(binary, (ended) => {
+      if (connection === ended) connection = undefined;
+    });
+    connection = started;
+    return started;
+  }
+
+  async function shutdownBridge(): Promise<void> {
+    closed = true;
+    const target = connection;
+    if (target && !target.exited) await target.shutdown(nextRequestId++);
+  }
+
   return {
-    request,
-    shutdown: () => (bridgeShutdownPromise ??= shutdownBridge()),
+    async request(value) {
+      // The id is taken before the connection, which throws once shut down.
+      const requestId = nextRequestId++;
+      await currentConnection().request(requestId, value);
+    },
+    async read(value) {
+      const requestId = nextRequestId++;
+      const { result } = await currentConnection().request(requestId, value);
+      if (!isBridgeReadResponse(result))
+        throw new Error("exec_bridge returned an invalid read response");
+      return result;
+    },
+    shutdown: () => (shutdownPromise ??= shutdownBridge()),
   };
 }
 
