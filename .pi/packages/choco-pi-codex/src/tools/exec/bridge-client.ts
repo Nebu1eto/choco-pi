@@ -1,11 +1,14 @@
 import type { BoundaryRecord } from "../boundary.ts";
-import { isNumberValue, isStringValue } from "../boundary.ts";
-import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { isNumberValue } from "../boundary.ts";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { promisify } from "node:util";
 import { StringDecoder } from "node:string_decoder";
 import { bool, compile, nullable, obj, opt, str, unknown } from "@earendil-works/pi-schema";
 import { finiteNum } from "../../value-guards.ts";
 import { formatNativeBinaryError } from "../../native-binary-error.ts";
 import { getBundledToolBinaryPath } from "../native/binary.ts";
+
+const execFileAsync = promisify(execFile);
 
 // Decoded from the bridge's stdout (JSON): open objects, as the former TypeBox objects were.
 const isBridgeResponseIdentity = compile(obj({ request_id: finiteNum() }, { open: true })).check;
@@ -57,7 +60,9 @@ export function formatExecBridgeExitError(
   signal?: NodeJS.Signals | null | undefined,
 ): string {
   const detail = stderr.trim();
-  const status = isNumberValue(code) ? `code ${code}` : signal ? `signal ${signal}` : undefined;
+  let status: string | undefined;
+  if (isNumberValue(code)) status = `code ${code}`;
+  else if (signal) status = `signal ${signal}`;
   const prefix = status ? `exec_bridge exited (${status})` : "exec_bridge exited";
   const message = detail ? `${prefix}: ${detail}` : prefix;
   return formatNativeBinaryError("exec_bridge", message);
@@ -205,8 +210,13 @@ export function createExecBridgeClient(
       await withTimeout(shutdownRequest, remainingMs(deadline), "exec_bridge shutdown timed out");
       await waitForBridgeClose(child, remainingMs(deadline));
     } catch (error) {
-      if (child.exitCode === null && child.signalCode === null) killBridgeProcessTree(child);
-      throw error;
+      if (child.exitCode !== null || child.signalCode !== null) throw error;
+      const killFailures = await killBridgeProcessTree(child);
+      if (killFailures.length === 0) throw error;
+      throw new AggregateError(
+        [error, ...killFailures],
+        `exec_bridge shutdown failed, and ${killFailures.length} bridge process kill(s) failed`,
+      );
     }
   }
 
@@ -216,61 +226,119 @@ export function createExecBridgeClient(
   };
 }
 
-function killBridgeProcessTree(child: ChildProcessWithoutNullStreams): void {
+/** Kills the bridge and its descendants; returns every kill that failed for a reason other than "already gone". */
+async function killBridgeProcessTree(child: ChildProcessWithoutNullStreams): Promise<Error[]> {
   const pid = child.pid;
+  const failures: Error[] = [];
   if (pid && process.platform === "win32") {
-    spawnSync("taskkill", ["/pid", String(pid), "/t", "/f"], {
-      stdio: "ignore",
+    const failure = await killWindowsTree(pid);
+    if (failure) failures.push(failure);
+  } else if (pid) {
+    failures.push(...(await killUnixDescendants(pid)));
+  }
+  if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  return failures;
+}
+
+/** taskkill exits 128 when the process is already gone, the Windows form of ESRCH. */
+const TASKKILL_NOT_FOUND = 128;
+
+async function killWindowsTree(pid: number): Promise<Error | undefined> {
+  try {
+    await execFileAsync("taskkill", ["/pid", String(pid), "/t", "/f"], {
       timeout: 2_000,
       windowsHide: true,
     });
-  } else if (pid) {
-    killUnixDescendants(pid);
+    return undefined;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === TASKKILL_NOT_FOUND) {
+      return undefined;
+    }
+    return error instanceof Error ? error : new Error(String(error));
   }
-  if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
 }
 
-function killUnixDescendants(rootPid: number): void {
-  const result = spawnSync("ps", ["-axo", "pid=,ppid=,pgid="], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"],
-    timeout: 2_000,
-  });
-  if (result.status !== 0 || !isStringValue(result.stdout)) return;
-  const processes = result.stdout.split("\n").flatMap((line) => {
+/**
+ * SIGKILLs a process (positive id) or process group (negative id). ESRCH means the target already
+ * exited, which is the expected race here; any other failure (EPERM, ...) is returned, not thrown,
+ * so the remaining kills still run.
+ */
+export function killProcessTarget(target: number): Error | undefined {
+  try {
+    process.kill(target, "SIGKILL");
+    return undefined;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ESRCH") return undefined;
+    return error instanceof Error ? error : new Error(String(error));
+  }
+}
+
+export interface ProcessEntry {
+  pid: number;
+  parentPid: number;
+  processGroupId: number;
+}
+
+/** Parses `ps -axo pid=,ppid=,pgid=` output; malformed lines are skipped. */
+export function parseProcessTable(stdout: string): ProcessEntry[] {
+  return stdout.split("\n").flatMap((line) => {
     const [pid, parentPid, processGroupId] = line.trim().split(/\s+/).map(Number);
     return pid && parentPid !== undefined && processGroupId
       ? [{ pid, parentPid, processGroupId }]
       : [];
   });
+}
+
+/** Every process below `rootPid` (transitively), plus `rootPid` itself. */
+export function descendantPids(processes: readonly ProcessEntry[], rootPid: number): Set<number> {
   const descendants = new Set([rootPid]);
-  for (;;) {
-    let changed = false;
+  let changed = true;
+  while (changed) {
+    changed = false;
     for (const entry of processes) {
-      if (!descendants.has(entry.parentPid) || descendants.has(entry.pid)) continue;
-      descendants.add(entry.pid);
-      changed = true;
+      if (descendants.has(entry.parentPid) && !descendants.has(entry.pid)) {
+        descendants.add(entry.pid);
+        changed = true;
+      }
     }
-    if (!changed) break;
   }
-  const ownProcessGroup = processes.find((entry) => entry.pid === process.pid)?.processGroupId;
-  const groups = new Set(
-    processes
-      .filter((entry) => entry.pid !== rootPid && descendants.has(entry.pid))
-      .map((entry) => entry.processGroupId)
-      .filter((processGroupId) => processGroupId !== ownProcessGroup),
-  );
-  for (const processGroupId of groups) {
-    try {
-      process.kill(-processGroupId, "SIGKILL");
-    } catch {}
+  return descendants;
+}
+
+/** Process groups of the descendants, except the root's own process and the caller's group. */
+export function descendantGroups(
+  processes: readonly ProcessEntry[],
+  descendants: ReadonlySet<number>,
+  rootPid: number,
+  ownPid: number,
+): Set<number> {
+  const ownProcessGroup = processes.find((entry) => entry.pid === ownPid)?.processGroupId;
+  const groups = new Set<number>();
+  for (const entry of processes) {
+    if (entry.pid === rootPid || !descendants.has(entry.pid)) continue;
+    if (entry.processGroupId !== ownProcessGroup) groups.add(entry.processGroupId);
   }
-  for (const pid of descendants) {
-    if (pid === rootPid) continue;
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {}
+  return groups;
+}
+
+export async function killUnixDescendants(rootPid: number): Promise<Error[]> {
+  let stdout: string;
+  try {
+    ({ stdout } = await execFileAsync("ps", ["-axo", "pid=,ppid=,pgid="], {
+      encoding: "utf8",
+      timeout: 2_000,
+    }));
+  } catch (error) {
+    // Without the process table the descendants cannot be found, so none of them is killed.
+    return [error instanceof Error ? error : new Error(String(error))];
   }
+  const processes = parseProcessTable(stdout);
+  const descendants = descendantPids(processes, rootPid);
+  const targets = [
+    ...[...descendantGroups(processes, descendants, rootPid, process.pid)].map((group) => -group),
+    ...[...descendants].filter((pid) => pid !== rootPid),
+  ];
+  return targets.flatMap((target) => killProcessTarget(target) ?? []);
 }
 
 function remainingMs(deadline: number): number {
