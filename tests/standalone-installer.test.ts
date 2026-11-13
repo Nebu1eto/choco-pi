@@ -33,6 +33,7 @@ import {
   PROVENANCE_NAME,
   provenanceEntryProblem,
   readProvenance,
+  resolveOwnedEntry,
 } from "../scripts/standalone/provenance.ts";
 import {
   BUN_PLATFORMS,
@@ -236,7 +237,10 @@ test("install.sh verifies the Node tarball before extracting it", async (t) => {
   };
   const run = async (pins: string, label: string) => {
     const home = path.join(directory, `home-${label}`);
-    const source = await pinsOnlySource(path.join(directory, label), pins);
+    const source = await pinsOnlySource(
+      path.join(directory, label),
+      `installer_protocol ${INSTALLER_PROTOCOL}\n${pins}`,
+    );
     const args = [
       INSTALL_SH,
       "--home",
@@ -932,7 +936,7 @@ test("install.sh installs into CHOCO_PI_HOME unless --home overrides it", async 
   await writeFile(path.join(tools, "node"), STUB_NODE, { mode: 0o755 });
   const source = await pinsOnlySource(
     directory,
-    pinsText("24.0.0", "0".repeat(64), ZERO_INTEGRITY),
+    `installer_protocol ${INSTALLER_PROTOCOL}\n${pinsText("24.0.0", "0".repeat(64), ZERO_INTEGRITY)}`,
   );
   const userHome = path.join(directory, "user-home");
   const envHome = path.join(directory, "env-home");
@@ -1110,6 +1114,149 @@ test("the creation journal yields only ownable paths and is empty when absent", 
   assert.equal(provenanceEntryProblem(home, null, path.join(home, "runtime", "pnpm")), null);
 });
 
+/** Runs `self uninstall` of this checkout's manage.ts against `home`, as the launcher would. */
+async function uninstallHome(
+  home: string,
+  userHome: string,
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  return runFile(
+    process.execPath,
+    [path.join(ROOT, "scripts", "standalone", "manage.ts"), "self", "uninstall"],
+    {
+      env: {
+        PATH: `${NODE_DIR}:/usr/bin:/bin`,
+        HOME: userHome,
+        CHOCO_PI_STANDALONE: "1",
+        CHOCO_PI_HOME: home,
+        CHOCO_PI_LAUNCHER: path.join(home, "app", "bin", "choco-pi"),
+      },
+    },
+  ).then(
+    ({ stdout, stderr }) => ({ code: 0, stdout, stderr }),
+    (error: Failure) => ({
+      code: error.code ?? -1,
+      stdout: error.stdout ?? "",
+      stderr: error.stderr ?? "",
+    }),
+  );
+}
+
+/** An install home with an app and a runtime/node, and `<home>/alias` linked to a sibling. */
+async function aliasedHome(directory: string, label: string) {
+  const home = path.join(directory, label);
+  const outside = path.join(directory, `${label}-outside`);
+  const userHome = path.join(directory, `${label}-user`);
+  await mkdir(path.join(home, "app", "bin"), { recursive: true });
+  await writeFile(path.join(home, "app", "bin", "choco-pi"), "#!/bin/sh\n", { mode: 0o755 });
+  await mkdir(path.join(home, "runtime", "node", "bin"), { recursive: true });
+  await mkdir(outside);
+  await mkdir(userHome);
+  await writeFile(path.join(outside, "valuable.txt"), "keep me\n");
+  await symlink(outside, path.join(home, "alias"));
+  return { home, outside, userHome, escaping: path.join(home, "alias", "valuable.txt") };
+}
+
+test("uninstall never deletes through a symlinked ancestor, with or without install.json", async (t) => {
+  const directory = await scratch(t);
+
+  // No install.json: only the journal records the install.
+  const bare = await aliasedHome(directory, "journal-only");
+  await writeFile(
+    path.join(bare.home, PROVENANCE_NAME),
+    [path.join(bare.home, "app"), bare.escaping, ""].join("\n"),
+  );
+  const fromJournal = await uninstallHome(bare.home, bare.userHome);
+  assert.equal(fromJournal.code, 0, fromJournal.stderr);
+  assert.equal(await readFile(path.join(bare.outside, "valuable.txt"), "utf8"), "keep me\n");
+  assert.match(
+    fromJournal.stdout,
+    new RegExp(`^kept: ${literal(bare.escaping)} \\(.*outside the install home`, "m"),
+  );
+  assert.equal(await exists(path.join(bare.home, "app")), false, "the real entry is removed");
+
+  // install.json lists the escaping path; app, runtime and the bin link still go.
+  const recorded = await aliasedHome(directory, "manifest");
+  const binDir = path.join(directory, "bin");
+  await mkdir(binDir);
+  const binLink = path.join(binDir, "choco-pi");
+  await symlink(path.join(recorded.home, "app", "bin", "choco-pi"), binLink);
+  const manifest: InstallManifest = {
+    ...validManifest(recorded.home),
+    node_path: process.execPath,
+    bin_link: binLink,
+    created: [
+      path.join(recorded.home, "app"),
+      path.join(recorded.home, "runtime", "node"),
+      recorded.escaping,
+      path.join(recorded.home, "install.json"),
+      binLink,
+    ],
+  };
+  assert.deepEqual(manifestProblems(manifest), [], "lexically, the escaping path looks owned");
+  await writeFile(path.join(recorded.home, "install.json"), JSON.stringify(manifest));
+  const fromManifest = await uninstallHome(recorded.home, recorded.userHome);
+  assert.equal(fromManifest.code, 0, fromManifest.stderr);
+  assert.equal(await readFile(path.join(recorded.outside, "valuable.txt"), "utf8"), "keep me\n");
+  assert.match(fromManifest.stdout, new RegExp(`^kept: ${literal(recorded.escaping)} \\(`, "m"));
+  assert.deepEqual(await readdir(recorded.home), ["alias"], "app, runtime and install.json go");
+  assert.deepEqual(await readdir(binDir), [], "our bin link goes");
+});
+
+test("a recorded entry that is a symlink to an outside directory loses only the link", async (t) => {
+  const directory = await scratch(t);
+  const { home, outside, userHome } = await aliasedHome(directory, "home");
+  const linked = path.join(home, "runtime", "bun");
+  await symlink(outside, linked);
+  const manifest: InstallManifest = {
+    ...validManifest(home),
+    node_path: process.execPath,
+    bin_link: null,
+    created: [path.join(home, "app"), linked, path.join(home, "install.json")],
+  };
+  await writeFile(path.join(home, "install.json"), JSON.stringify(manifest));
+  const result = await uninstallHome(home, userHome);
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(`^removed: ${literal(linked)}$`, "m"));
+  assert.equal(await exists(linked), false, "the link is removed");
+  assert.deepEqual(await readdir(outside), ["valuable.txt"], "its target is untouched");
+});
+
+test("owned entries are resolved through the filesystem, not just lexically", async (t) => {
+  const directory = await scratch(t);
+  const home = path.join(directory, "home");
+  const userHome = path.join(home, "user");
+  await mkdir(path.join(home, "agent"), { recursive: true });
+  await mkdir(path.join(userHome, ".pi"), { recursive: true });
+  await mkdir(path.join(directory, "outside"));
+  await symlink(path.join(home, "agent"), path.join(home, "state"));
+  await symlink(path.join(userHome, ".pi"), path.join(home, "pi"));
+  await symlink(path.join(directory, "outside"), path.join(home, "alias"));
+  const refused = async (entry: string) =>
+    (await resolveOwnedEntry(home, entry, userHome)).kind === "refused";
+  assert.equal(await refused(path.join(home, "state", "auth.json")), true, "user state via a link");
+  assert.equal(await refused(path.join(home, "pi", "agent")), true, "~/.pi via a link");
+  assert.equal(await refused(userHome), true, "the user's home itself");
+  assert.equal(await refused(path.join(home, "alias", "x", "y")), true, "a missing parent outside");
+  assert.deepEqual(await resolveOwnedEntry(home, path.join(home, "runtime", "node"), userHome), {
+    kind: "missing",
+  });
+  assert.deepEqual(await resolveOwnedEntry(home, path.join(home, "alias"), userHome), {
+    kind: "resolved",
+    path: path.join(home, "alias"),
+  });
+  await writeFile(
+    path.join(home, PROVENANCE_NAME),
+    [path.join(home, "app"), path.join(home, "alias", "x"), ""].join("\n"),
+  );
+  const journal = await readProvenance(home, null);
+  assert.deepEqual(journal.accepted, [path.join(home, "app")]);
+  assert.deepEqual(
+    journal.rejected.map(({ entry }) => entry),
+    [path.join(home, "alias", "x")],
+    "a journal entry through an outside link never becomes owned",
+  );
+});
+
 /** Pins naming a fixture Node tarball (wrapping this node) served from a file: mirror. */
 async function nodeDownloadFixture(
   directory: string,
@@ -1253,9 +1400,10 @@ async function stageOneSource(directory: string, pins: string, stageOne: string)
   return source;
 }
 
-test("install.sh hands a protocol 1 app only the arguments its stage 1 accepts", async (t) => {
-  if (!(await onPath("git", "/usr/bin:/bin"))) {
-    t.skip("needs git in /usr/bin:/bin");
+test("install.sh refuses an app without installer_protocol before downloading Node", async (t) => {
+  const basePath = "/usr/bin:/bin";
+  if ((await onPath("node", basePath)) || !(await onPath("git", basePath))) {
+    t.skip("needs git but no node in /usr/bin:/bin");
     return;
   }
   const directory = await scratch(t);
@@ -1264,27 +1412,47 @@ test("install.sh hands a protocol 1 app only the arguments its stage 1 accepts",
     pinsText("24.0.0", "0".repeat(64), ZERO_INTEGRITY),
     PROTOCOL_ONE_STAGE_ONE,
   );
+  const binDir = path.join(directory, "bin");
+  const installSh = (home: string) =>
+    runFile(
+      "/bin/sh",
+      [INSTALL_SH, "--home", home, "--bin-dir", binDir, "--source", source, "--ref", "main"],
+      {
+        env: {
+          HOME: path.join(directory, "user-home"),
+          PATH: basePath,
+          CHOCO_PI_NODE_MIRROR: pathToFileURL(path.join(directory, "no-node")).href,
+        },
+      },
+    ).then(
+      () => null,
+      (error: Failure) => error,
+    );
+  const refusal =
+    /the app at main predates the standalone installer protocol .*that ref's own install\.sh/;
+
+  // A fresh home: this run's clone, and the journal and home it made, are undone.
   const home = path.join(directory, "home");
-  const { stdout } = await runFile(
-    "/bin/sh",
-    [
-      INSTALL_SH,
-      "--home",
-      home,
-      "--bin-dir",
-      path.join(directory, "bin"),
-      "--source",
-      source,
-    ].concat(["--ref", "main", "--runtime", "node"]),
-    { env: { HOME: path.join(directory, "user-home"), PATH: `${NODE_DIR}:/usr/bin:/bin` } },
-  ).catch((error: Failure) =>
-    assert.fail(`install.sh failed (${error.code}):\n${error.stdout ?? ""}${error.stderr ?? ""}`),
+  const fresh = await installSh(home);
+  assert.ok(fresh !== null, "install.sh must fail");
+  assert.equal(fresh.code, 1);
+  assert.match(String(fresh.stderr), refusal);
+  assert.doesNotMatch(
+    String(fresh.stdout) + String(fresh.stderr),
+    /downloading Node|download failed|STAGE1/,
   );
-  assert.match(
-    stdout,
-    /^OLD STAGE1 install --home \S+ --bin-dir \S+ --source \S+ --ref main --runtime node$/m,
-  );
-  assert.equal(await exists(path.join(home, PROVENANCE_NAME)), false, "no journal left for it");
+  assert.equal(await exists(path.join(home, "runtime", "node")), false, "no Node provisioned");
+  assert.equal(await exists(home), false, "the clone, journal and new home are removed");
+
+  // A checkout this run did not clone is left as it is.
+  const kept = path.join(directory, "kept");
+  await runFile("git", ["clone", "--quiet", source, path.join(kept, "app")]);
+  const existing = await installSh(kept);
+  assert.ok(existing !== null, "install.sh must fail");
+  assert.match(String(existing.stderr), refusal);
+  assert.equal(await exists(path.join(kept, "app", ".git")), true);
+  assert.equal(await exists(path.join(kept, "runtime")), false, "no Node provisioned");
+  assert.equal(await exists(path.join(kept, PROVENANCE_NAME)), false);
 });
 
 test("install.sh refuses an app that needs a newer installer protocol before downloading Node", async (t) => {

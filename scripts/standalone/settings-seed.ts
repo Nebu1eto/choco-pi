@@ -10,7 +10,13 @@
  * - `version`: the newest seed version applied. A key whose `since` is at most
  *   this version was already offered, so it is never added again, whether the
  *   user kept, changed or deleted it. A newer seed adds only its new keys.
- * - `seeded`: the keys a setup actually wrote.
+ * - `seeded`: the keys a setup wrote, or was about to write.
+ *
+ * Seeding is at most once per key: the state naming the keys about to be
+ * added is persisted before settings.json is written. If that settings write
+ * then fails, those keys are simply not seeded, and a retry does not add them
+ * either; that is intended, since adding a key twice could bring back one the
+ * user deleted. If the state write fails, settings.json is left untouched.
  *
  * Nothing is read from `~/.pi`. The legacy `pnpm install:profile` never
  * calls this module.
@@ -169,7 +175,7 @@ export type SeedResult = {
 /**
  * Applies `seed` to `<agentDir>/settings.json` once per key (see the module
  * comment). settings.json is rewritten only when a key is added, keeping the
- * installer's 2-space JSON format; the state file is written afterwards.
+ * installer's 2-space JSON format; the state file is written first.
  */
 export async function applySettingsSeed(agentDir: string, seed: SettingsSeed): Promise<SeedResult> {
   const settingsPath = path.join(agentDir, "settings.json");
@@ -197,11 +203,11 @@ export async function applySettingsSeed(agentDir: string, seed: SettingsSeed): P
     added.push(key);
     seeded.add(key);
   }
-  if (added.length > 0) await writeTextAtomically(settingsPath, jsonText(settings));
   const version = Math.max(appliedVersion, seed.version);
   if (state === null || version !== state.version || added.length > 0) {
     const next: SeedState = { schema: 1, version, seeded: [...seeded] };
     await writeTextAtomically(statePath, jsonText(next));
   }
+  if (added.length > 0) await writeTextAtomically(settingsPath, jsonText(settings));
   return { added, firstSeed: state === null, statePath };
 }

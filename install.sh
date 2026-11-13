@@ -28,7 +28,8 @@ set -eu
 
 DEFAULT_SOURCE=https://github.com/Nebu1eto/choco-pi.git
 # The newest stage 0 -> stage 1 handoff this script speaks (installer_protocol
-# in runtime-pins.txt): 1 passes only arguments; 2 adds the creation journal.
+# in runtime-pins.txt). 2 is the creation journal; an app without the pin
+# predates it and is refused (see below).
 SUPPORTED_INSTALLER_PROTOCOL=2
 
 say() { printf 'choco-pi install: %s\n' "$*"; }
@@ -165,6 +166,8 @@ case $source in
   file://* | /*) local_clone=--no-hardlinks ;;
 esac
 
+home_created=
+[ -e "$home" ] || home_created=1
 mkdir -p "$home"
 home=$(cd -P -- "$home" && pwd -P)
 case $home in
@@ -176,9 +179,12 @@ app=$home/app
 # per line, appended the moment the path exists. Stage 1 merges it into
 # install.json and removes it; ownership never comes from mere existence.
 journal=$home/.install-provenance
+journal_created=
+[ -e "$journal" ] || journal_created=1
 record_created() {
   printf '%s\n' "$1" >>"$journal"
 }
+app_cloned=
 if [ -e "$app/.git" ]; then
   say "using the existing app checkout in $app"
 elif [ -e "$app" ]; then
@@ -190,6 +196,7 @@ else
   [ -z "$ref" ] || set -- "$@" --branch "$ref"
   git "$@" -- "$source" "$app"
   record_created "$app"
+  app_cloned=1
 fi
 
 pins_file=$app/scripts/standalone/runtime-pins.txt
@@ -209,9 +216,22 @@ pin() {
   die "runtime pin $1 is missing in $pins_file"
 }
 
-# Checked before any download: an app needing a newer handoff gets nothing
-# provisioned by this script.
-protocol=$(pin installer_protocol 1)
+# Checked before any download: an app needing another handoff gets nothing
+# provisioned by this script. The default contains a space, which a pin value
+# (one whitespace-free word) never does, so it means "no installer_protocol".
+protocol=$(pin installer_protocol 'no pin')
+if [ "$protocol" = 'no pin' ]; then
+  # Every app without the pin predates the creation journal; its stage 1
+  # would not own what this script creates. Undo this run's clone (and the
+  # journal and home it alone created) so that ref's own install.sh starts
+  # clean; an existing checkout is not this run's and stays untouched.
+  if [ -n "$app_cloned" ]; then
+    rm -rf "$app"
+    [ -z "$journal_created" ] || rm -f "$journal"
+    [ -z "$home_created" ] || rmdir "$home" 2>/dev/null || :
+  fi
+  die "the app${ref:+ at $ref} predates the standalone installer protocol (its scripts/standalone/runtime-pins.txt has no installer_protocol); install it with that ref's own install.sh instead"
+fi
 case $protocol in
   '' | *[!0-9]* | 0*) die "installer_protocol in $pins_file is not a positive integer: '$protocol'" ;;
 esac
@@ -322,9 +342,6 @@ say "using Node.js $("$NODE" --version) at $NODE"
 set -- install --home "$home" --bin-dir "$bin_dir" --source "$source"
 [ -z "$ref" ] || set -- "$@" --ref "$ref"
 [ -z "$runtime" ] || set -- "$@" --runtime "$runtime"
-# Protocol 1 stage 1 never reads the journal (it owns by existence instead);
-# do not strand the file in the home.
-[ "$protocol" -ge 2 ] || rm -f "$journal"
 trap - EXIT
 cleanup
 exec "$NODE" "$app/scripts/standalone/manage.ts" "$@"

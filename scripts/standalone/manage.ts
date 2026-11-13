@@ -27,6 +27,7 @@ import {
   rm,
   rmdir,
   symlink,
+  unlink,
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -51,6 +52,7 @@ import {
   provenancePath,
   readProvenance,
   recordCreated,
+  resolveOwnedEntry,
 } from "./provenance.ts";
 import {
   bunVersionQualifies,
@@ -471,7 +473,9 @@ export async function installCommand(args: readonly string[]): Promise<void> {
     args,
     ["--home", "--bin-dir", "--source", "--ref", "--runtime"],
     // Stage 0 reports what it created in the creation journal. The two switches
-    // are what an earlier install.sh passed instead; they are still honored.
+    // are what the install.sh of f0138431 passed instead; that script checks no
+    // installer_protocol, so it may still hand them to this stage 1, and
+    // honoring them keeps ownership of the clone and Node it created.
     ["--local-app", "--app-cloned", "--node-provisioned"],
   );
   const runtimeFlag = flags.values.get("--runtime");
@@ -691,6 +695,12 @@ function isInsideOrSame(parent: string, child: string): boolean {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
+/** Removes `target` without following it: a symlink loses only the link. */
+async function removeWithoutFollowing(target: string): Promise<void> {
+  if ((await lstat(target)).isSymbolicLink()) await unlink(target);
+  else await rm(target, { recursive: true, force: true });
+}
+
 export async function uninstallCommand(args: readonly string[]): Promise<void> {
   const flags = parseFlags(args, [], ["--purge"]);
   const { home, launcher } = requireContract();
@@ -704,20 +714,27 @@ export async function uninstallCommand(args: readonly string[]): Promise<void> {
   const installHome = manifest?.home ?? (await realpath(home));
   const binLink = manifest?.bin_link ?? null;
   const journal = await readProvenance(installHome, binLink);
-  for (const { entry, problem } of journal.rejected)
-    console.warn(`warning: ignoring ${PROVENANCE_NAME} entry ${JSON.stringify(entry)}: ${problem}`);
-  if (manifest === null && journal.accepted.length === 0)
+  const removed: string[] = [];
+  const kept: string[] = [];
+  for (const { entry, problem } of journal.rejected) {
+    if (await exists(entry)) kept.push(`${entry} (${PROVENANCE_NAME} entry refused: ${problem})`);
+    else
+      console.warn(
+        `warning: ignoring ${PROVENANCE_NAME} entry ${JSON.stringify(entry)}: ${problem}`,
+      );
+  }
+  if (manifest === null && journal.accepted.length === 0) {
+    for (const target of kept) console.log(`kept: ${target}`);
     throw new Error(`${home}/install.json is missing; nothing is recorded to uninstall`);
+  }
   const owned = [...new Set([...(manifest?.created ?? []), ...journal.accepted])];
   const piHome = path.join(homedir(), ".pi");
   const purge = flags.switches.has("--purge");
   const userState = purge ? ["agent", "lsp"].map((entry) => path.join(installHome, entry)) : [];
-  for (const target of [...owned, ...userState]) {
+  for (const target of userState) {
     if (isInsideOrSame(piHome, target))
       throw new Error(`refusing to remove ${target}: it is under ${piHome}`);
   }
-  const removed: string[] = [];
-  const kept: string[] = [];
   const installedLauncher = path.join(
     manifest?.app ?? path.join(installHome, "app"),
     "bin",
@@ -735,9 +752,23 @@ export async function uninstallCommand(args: readonly string[]): Promise<void> {
   const ordered = owned
     .filter((entry) => entry !== binLink && entry !== manifestFile)
     .toSorted((left, right) => right.length - left.length);
-  for (const target of [...ordered, ...userState]) {
+  // Each entry is resolved right before its removal, and the resolved path is
+  // what gets removed: an ancestor symlinked out of the home, or a path that
+  // lands in user state, ~/.pi or the user's home, is kept and reported.
+  for (const target of ordered) {
+    const resolution = await resolveOwnedEntry(installHome, target);
+    if (resolution.kind === "missing") continue;
+    if (resolution.kind === "refused") {
+      if (await exists(target)) kept.push(`${target} (not removed: ${resolution.problem})`);
+      continue;
+    }
+    if (!(await exists(resolution.path))) continue;
+    await removeWithoutFollowing(resolution.path);
+    removed.push(target);
+  }
+  for (const target of userState) {
     if (!(await exists(target))) continue;
-    await rm(target, { recursive: true, force: true });
+    await removeWithoutFollowing(target);
     removed.push(target);
   }
   for (const file of [manifestFile, provenancePath(installHome)]) {

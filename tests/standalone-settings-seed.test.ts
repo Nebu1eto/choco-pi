@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
@@ -217,6 +217,69 @@ test("a newer seed version adds only the keys new in that version", async (t) =>
   });
   assert.deepEqual((await applySettingsSeed(agentDir, v1)).added, [], "an older seed adds nothing");
   assert.equal((await readJson(seedStatePath(agentDir))).version, 2);
+});
+
+/** Runs `body` with `directory` made read-only, restoring its mode afterwards. */
+async function whileReadOnly<Result>(directory: string, body: () => Promise<Result>) {
+  await chmod(directory, 0o500);
+  try {
+    return await body();
+  } finally {
+    await chmod(directory, 0o700);
+  }
+}
+
+const rootSkip = process.getuid?.() === 0 ? "root ignores directory permissions" : null;
+
+test("a failed seed state write leaves settings.json unchanged, so a deleted key never returns", async (t) => {
+  if (rootSkip !== null) {
+    t.skip(rootSkip);
+    return;
+  }
+  const seed = await readSettingsSeed();
+  const agentDir = await agentDirectory(await scratch(t), INSTALLED);
+  const settingsPath = path.join(agentDir, "settings.json");
+  const before = await readFile(settingsPath, "utf8");
+  const stateDirectory = path.dirname(seedStatePath(agentDir));
+  await mkdir(stateDirectory);
+  await whileReadOnly(stateDirectory, () =>
+    assert.rejects(applySettingsSeed(agentDir, seed), /EACCES/),
+  );
+  assert.equal(await readFile(settingsPath, "utf8"), before, "nothing was seeded");
+
+  // Permissions restored: the retry is the first real seed, and the only one.
+  assert.deepEqual((await applySettingsSeed(agentDir, seed)).added, Object.keys(seed.settings));
+  const { theme: _deleted, ...withoutTheme } = await readJson(settingsPath);
+  await writeFile(settingsPath, `${JSON.stringify(withoutTheme, null, 2)}\n`);
+  assert.deepEqual((await applySettingsSeed(agentDir, seed)).added, []);
+  assert.equal(Object.hasOwn(await readJson(settingsPath), "theme"), false, "not added again");
+});
+
+test("a failed settings write after the state was saved is not retried: under-seeding is intended", async (t) => {
+  if (rootSkip !== null) {
+    t.skip(rootSkip);
+    return;
+  }
+  const seed = await readSettingsSeed();
+  const agentDir = await agentDirectory(await scratch(t), INSTALLED);
+  const settingsPath = path.join(agentDir, "settings.json");
+  const before = await readFile(settingsPath, "utf8");
+  await mkdir(path.dirname(seedStatePath(agentDir)));
+  // The state directory stays writable; settings.json's temporary file cannot be created.
+  await whileReadOnly(agentDir, () => assert.rejects(applySettingsSeed(agentDir, seed), /EACCES/));
+  assert.equal(await readFile(settingsPath, "utf8"), before);
+  assert.deepEqual(await readJson(seedStatePath(agentDir)), {
+    schema: 1,
+    version: seed.version,
+    seeded: Object.keys(seed.settings),
+  });
+  // At most once: the keys were offered, so a retry leaves them unseeded.
+  assert.deepEqual(await applySettingsSeed(agentDir, seed), {
+    added: [],
+    firstSeed: false,
+    statePath: seedStatePath(agentDir),
+  });
+  assert.equal(await readFile(settingsPath, "utf8"), before);
 });
 
 test("the legacy profile install keeps the default model scope and seeds nothing; standalone omits the scope", async (t) => {
