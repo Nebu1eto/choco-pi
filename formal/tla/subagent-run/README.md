@@ -136,4 +136,4 @@ node .pi/skills/formal-verify/scripts/tlc.ts check --spec formal/tla/subagent-ru
   --max-states 2000000 --timeout-ms 180000
 ```
 
-The full set takes about 140 s with `--jobs 2`. The replay tests run under `node --test` like any package test; `model-replay-settle-hops.test.ts` pins how many microtask turns a non-verdict run's settle takes.
+The full set takes about 95 s with the defaults (2 jobs of 2 workers) on a 14-core machine. The replay tests run under `node --test` like any package test; `model-replay-settle-hops.test.ts` pins how many microtask turns a non-verdict run's settle takes.

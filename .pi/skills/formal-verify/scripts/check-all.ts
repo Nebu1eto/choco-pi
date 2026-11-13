@@ -4,7 +4,13 @@
 // on import and exports nothing). Prints one JSON summary.
 //
 //   node check-all.ts [--root <dir>] [--tools-dir <dir>] [--jar <path>]
-//     [--jobs <n>] [--only <name>]
+//     [--jobs <n>] [--workers <n>] [--heap-mb <n>] [--only <name>]
+//
+// --jobs runs that many tlc.ts processes at once and --workers gives each that
+// many TLC worker threads. Both default to 2, or 1 on a small machine (fewer
+// than 8 cores or 8 GiB for --jobs, fewer than 4 cores for --workers), so a
+// full run keeps about four cores and two capped heaps busy. Verdicts do not
+// depend on either: every rule is decided by a complete run.
 //
 // Without --root it searches the current directory and its parents, up to the
 // git repository root, for the nearest one containing formal/.
@@ -20,6 +26,7 @@
 
 import type { Stats } from "node:fs";
 import { lstat, readFile, readdir, stat } from "node:fs/promises";
+import { availableParallelism, totalmem } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -42,6 +49,16 @@ const TLC_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "tlc.
 const MAX_OUTPUT_BYTES = 256 << 20;
 /** Extra time past a run's own timeout before the runner kills tlc.ts itself. */
 const KILL_MARGIN_MS = 60_000;
+const GIB = 1024 ** 3;
+
+/** Default concurrency for this machine; see the header comment. */
+function defaultParallelism() {
+  const cores = availableParallelism();
+  return {
+    jobs: cores >= 8 && totalmem() >= 8 * GIB ? 2 : 1,
+    workers: cores >= 4 ? 2 : 1,
+  };
+}
 
 const MutationSchema = obj({
   name: str({ minLength: 1 }),
@@ -71,6 +88,8 @@ type Options = {
   toolsDir: string | undefined;
   jar: string | undefined;
   jobs: number;
+  workers: number;
+  heapMb: number | undefined;
   only: string | undefined;
 };
 
@@ -114,19 +133,32 @@ function parseOptions(argv: string[]): Arguments {
       "tools-dir": { type: "string" },
       jar: { type: "string" },
       jobs: { type: "string" },
+      workers: { type: "string" },
+      "heap-mb": { type: "string" },
       only: { type: "string" },
     },
   });
   if (positionals.length > 0) throw new UsageError(`unexpected argument: ${positionals[0]}`);
-  const jobs = values.jobs === undefined ? 1 : Number(values.jobs);
+  const defaults = defaultParallelism();
+  const jobs = values.jobs === undefined ? defaults.jobs : Number(values.jobs);
   if (!Number.isInteger(jobs) || jobs < 1 || jobs > 16) {
     throw new UsageError("--jobs must be an integer from 1 to 16");
+  }
+  const workers = values.workers === undefined ? defaults.workers : Number(values.workers);
+  if (!Number.isInteger(workers) || workers < 1 || workers > 64) {
+    throw new UsageError("--workers must be an integer from 1 to 64");
+  }
+  const heapMb = values["heap-mb"] === undefined ? undefined : Number(values["heap-mb"]);
+  if (heapMb !== undefined && (!Number.isInteger(heapMb) || heapMb < 256 || heapMb > 1_048_576)) {
+    throw new UsageError("--heap-mb must be an integer from 256 to 1048576");
   }
   return {
     root: values.root,
     toolsDir: values["tools-dir"] === undefined ? undefined : path.resolve(values["tools-dir"]),
     jar: values.jar === undefined ? undefined : path.resolve(values.jar),
     jobs,
+    workers,
+    heapMb,
     only: values.only,
   };
 }
@@ -319,7 +351,10 @@ async function runJob(job: Job, options: Options): Promise<JobResult> {
     String(job.maxStates),
     "--timeout-ms",
     String(job.timeoutMs),
+    "--workers",
+    String(options.workers),
   ];
+  if (options.heapMb !== undefined) args.push("--heap-mb", String(options.heapMb));
   if (options.toolsDir !== undefined) args.push("--tools-dir", options.toolsDir);
   if (options.jar !== undefined) args.push("--jar", options.jar);
   const base = {

@@ -4,7 +4,7 @@
 //
 //   node tlc.ts check --spec <file.tla> --config <file.cfg> [--jar <path>]
 //     [--tools-dir <dir>] [--max-states <n>] [--timeout-ms <n>] [--workers <n>]
-//     [--out <dir>] [--no-deadlock]
+//     [--heap-mb <n>] [--out <dir>] [--no-deadlock]
 //
 // Exit codes: 0 pass, 3 violated, 4 inconclusive (bound or timeout), 2 error.
 // It fails closed: output it cannot parse, an unknown TLC exit, or a run that
@@ -60,6 +60,14 @@ import {
 
 const DEFAULT_MAX_STATES = 1_000_000;
 const DEFAULT_TIMEOUT_MS = 120_000;
+// TLC's JVM heap. Without a cap the JVM reserves a quarter of physical memory
+// and TLC sizes its fingerprint set from it; 2 GiB ran the 1.5M-state model as
+// fast as an uncapped heap at half the resident memory. Larger state spaces
+// spill to disk under the cap rather than fail.
+const DEFAULT_HEAP_MB = 2048;
+// Garbage-collector threads. ParallelGC otherwise starts one per core; two kept
+// a single-worker run's speed unchanged.
+const GC_THREADS = 2;
 const MAX_OUTPUT_BYTES = 64 << 20;
 const MAX_SPEC_FILES = 200;
 const BOUND_MODULE = "ChocoPiTlcBound";
@@ -77,6 +85,7 @@ type Options = {
   maxStates: number;
   timeoutMs: number;
   workers: number;
+  heapMb: number;
   out: string | undefined;
   noDeadlock: boolean;
 };
@@ -108,6 +117,7 @@ function readOptions(argv: string[]): Options {
       "max-states": { type: "string" },
       "timeout-ms": { type: "string" },
       workers: { type: "string" },
+      "heap-mb": { type: "string" },
       out: { type: "string" },
       "no-deadlock": { type: "boolean" },
     },
@@ -124,6 +134,7 @@ function readOptions(argv: string[]): Options {
     maxStates: positiveInt("max-states", values["max-states"], DEFAULT_MAX_STATES, 2_000_000_000),
     timeoutMs: positiveInt("timeout-ms", values["timeout-ms"], DEFAULT_TIMEOUT_MS, 86_400_000),
     workers: positiveInt("workers", values.workers, 1, 256),
+    heapMb: positiveInt("heap-mb", values["heap-mb"], DEFAULT_HEAP_MB, 1_048_576),
     out: values.out ? path.resolve(values.out) : undefined,
     noDeadlock: values["no-deadlock"] ?? false,
   };
@@ -395,6 +406,8 @@ async function check(options: Options): Promise<CheckResult> {
       await writeFile(path.join(ws.dir, cfgName), cfgText);
       const args = [
         "-XX:+UseParallelGC",
+        `-XX:ParallelGCThreads=${GC_THREADS}`,
+        `-Xmx${options.heapMb}m`,
         ...jvm,
         "tlc2.TLC",
         "-tool",
