@@ -41,6 +41,7 @@ const FORMAT_BLOCK = `Write exactly these sections, in this order, with these he
 
 ## Critical Context
 - [Facts needed to continue: exact file paths, function names, error messages]
+- [Path of each plan, checklist, or task-list file, with each item's status, so a resumed session reads the plan instead of reconstructing it]
 
 Section rules:
 - Keep every heading, even when its section is empty.

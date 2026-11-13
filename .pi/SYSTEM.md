@@ -33,7 +33,7 @@ A follow-up continues the workflow. Use installed Pi docs before changing Pi con
 
 ## Evidence and completion
 
-Current files, diffs, configuration, and runtime behavior outrank memory, comments, plans, and delegated reports. Use narrow evidence for workflow criteria; state uncertainty; delegation never expands authority.
+Current files, diffs, configuration, and runtime behavior outrank memory, comments, and delegated reports. A plan or task list defines agreed scope and remaining work; to report progress, read it first and check each item against current evidence. Use narrow evidence for workflow criteria; state uncertainty; delegation never expands authority.
 
 Finish only when scope is complete, evidence is current, owned resources are cleaned up, and remaining risk is stated.
 

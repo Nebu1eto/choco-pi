@@ -34,8 +34,8 @@ async function hostFor(contextWindow: number, keepRecentTokens = 200): Promise<C
 }
 
 test("S7: a context window too small for one request produces two passes", async () => {
-  // One combined request for this fixture estimates at 1025 prompt tokens;
-  // with a 400-token output reserve and the margin it needs 1937, so it does
+  // One combined request for this fixture estimates at 1060 prompt tokens;
+  // with a 400-token output reserve and the margin it needs 1972, so it does
   // not fit a 1900-token window while the two smaller passes do.
   const host = await hostFor(1_900);
   try {
@@ -67,9 +67,9 @@ test("S7: a context window too small for one request produces two passes", async
 });
 
 test("S7: a tail that cannot fit at all fails instead of summarizing history alone", async () => {
-  // The history pass fits a 1600-token window, the reconciliation pass does
+  // The history pass fits a 1650-token window, the reconciliation pass does
   // not, and dropping down to the newest retained message still does not fit.
-  const host = await hostFor(1_600);
+  const host = await hostFor(1_650);
   try {
     ordinaryCut(host.sessionManager);
     await assert.rejects(host.session.compact(), /Compaction cancelled/);
