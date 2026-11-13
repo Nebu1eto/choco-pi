@@ -250,6 +250,42 @@ export function resolveSpawnType(requested: string | null | undefined): SpawnTyp
   return resolveSpawnTypeIn(agents, requested);
 }
 
+/**
+ * Resolve a first-party spawn of an `internal` agent. The name must match the
+ * registry key exactly (no case folding, no trimming) and name an enabled
+ * internal agent; anything else is refused, never redirected to
+ * `fallbackSubagent`. A misspelt or missing internal type that fell back would
+ * run a different prompt and tool policy than the caller relies on — the
+ * advisor once ran as an edit-capable general agent that way.
+ *
+ * Only the registry entry's `spawnInternal` uses this. Every caller-supplied
+ * path (Agent tool, nested tools, RPC, schedules, mentions) keeps
+ * {@link resolveSpawnTypeIn}, which treats internal agents as unknown.
+ */
+export function resolveInternalSpawnTypeIn(
+  registry: Map<string, AgentConfig>,
+  requested: string,
+): SpawnTypeResolution {
+  const config = registry.get(requested);
+  if (config === undefined || config.enabled === false || config.internal !== true) {
+    const internal = [...registry.entries()]
+      .filter(([, candidate]) => candidate.enabled !== false && candidate.internal === true)
+      .map(([name]) => name);
+    return {
+      ok: false,
+      message:
+        `Unknown or disabled internal agent type: "${requested}". ` +
+        `Internal spawns name an enabled internal agent exactly. Internal: ${internal.join(", ") || "(none)"}.`,
+    };
+  }
+  return { ok: true, type: requested };
+}
+
+/** Resolve a first-party internal spawn against the process-wide registry. */
+export function resolveInternalSpawnType(requested: string): SpawnTypeResolution {
+  return resolveInternalSpawnTypeIn(agents, requested);
+}
+
 /** Resolve a type name case-insensitively. Returns the canonical key or undefined. */
 export function resolveType(name: string): string | undefined {
   return resolveKey(name);

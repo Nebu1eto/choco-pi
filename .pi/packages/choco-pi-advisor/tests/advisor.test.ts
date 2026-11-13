@@ -777,7 +777,7 @@ test("preferences notify immediately and revert after a failed write", async () 
   }
 });
 
-test("manager slot is resolved lazily and rejects non-callable shapes", () => {
+test("manager slot is resolved lazily and requires the internal spawn path", () => {
   const symbol = Symbol.for("pi-subagents:manager");
   const previous = Object.getOwnPropertyDescriptor(globalThis, symbol);
   try {
@@ -785,12 +785,18 @@ test("manager slot is resolved lazily and rejects non-callable shapes", () => {
     assert.equal(resolveAdvisorManager(), undefined);
     Object.defineProperty(globalThis, symbol, {
       configurable: true,
-      value: { spawn: "invalid", getRecord: () => undefined },
+      value: { spawnInternal: "invalid", getRecord: () => undefined },
+    });
+    assert.equal(resolveAdvisorManager(), undefined);
+    // A build with only `spawn` would run the internal advisor as fallbackSubagent.
+    Object.defineProperty(globalThis, symbol, {
+      configurable: true,
+      value: { spawn: () => "id", getRecord: () => undefined },
     });
     assert.equal(resolveAdvisorManager(), undefined);
     Object.defineProperty(globalThis, symbol, {
       configurable: true,
-      value: { spawn: () => "id", getRecord: () => undefined },
+      value: { spawnInternal: () => "id", getRecord: () => undefined },
     });
     assert.ok(resolveAdvisorManager());
   } finally {

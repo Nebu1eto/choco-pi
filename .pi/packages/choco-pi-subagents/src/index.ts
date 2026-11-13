@@ -75,6 +75,7 @@ import {
   isDefaultsDisabled,
   NO_FALLBACK,
   registerAgents,
+  resolveInternalSpawnType,
   resolveSpawnType,
   resolveType,
   setDefaultsDisabled,
@@ -1109,8 +1110,10 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     if (!dispatch.ok) throw new Error(dispatch.message);
     return manager.spawn(piRef, ctxRef, dispatch.type, prompt, options);
   };
+  type SpawnArgs = Parameters<typeof spawnResolved>;
 
-  const spawnTopLevel = (piRef: any, ctxRef: any, type: string, prompt: string, options: any) => {
+  /** Drop the internal capabilities a process-external caller must never set. */
+  const callerSafeOptions = (options: Parameters<typeof spawnResolved>[4]) => {
     const safeOptions = { ...options };
     delete safeOptions.parentAgentId;
     delete safeOptions.depth;
@@ -1134,7 +1137,23 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     delete safeOptions.mainSessionFork;
     delete safeOptions.workflowId;
     delete safeOptions.workflowStepId;
-    return spawnResolved(piRef, ctxRef, type, prompt, safeOptions);
+    return safeOptions;
+  };
+
+  const spawnTopLevel = (...[piRef, ctxRef, type, prompt, options]: SpawnArgs) =>
+    spawnResolved(piRef, ctxRef, type, prompt, callerSafeOptions(options));
+
+  /**
+   * First-party spawn of an `internal` agent by its exact registry name (the
+   * advisor tool). Same option stripping as `spawnTopLevel`, but the type must
+   * name an enabled internal agent exactly: no case folding and no
+   * `fallbackSubagent`, so a typo errors instead of running another agent.
+   * Exposed only on the in-process registry entry, never through RPC.
+   */
+  const spawnInternalTopLevel = (...[piRef, ctxRef, type, prompt, options]: SpawnArgs) => {
+    const dispatch = resolveInternalSpawnType(type);
+    if (!dispatch.ok) throw new Error(dispatch.message);
+    return manager.spawn(piRef, ctxRef, dispatch.type, prompt, callerSafeOptions(options));
   };
 
   /**
@@ -1181,6 +1200,13 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     spawn: (...args: Parameters<typeof spawnTopLevel>) => {
       refreshAgentsInBackground();
       return spawnTopLevel(...args);
+    },
+    // In-process first-party callers only (the advisor tool): spawns an
+    // `internal` agent by exact name. `spawn` above keeps rejecting internal
+    // types like every other caller-supplied path.
+    spawnInternal: (...args: Parameters<typeof spawnInternalTopLevel>) => {
+      refreshAgentsInBackground();
+      return spawnInternalTopLevel(...args);
     },
     getRecord: (id: string) => {
       const record = manager.getRecord(id);

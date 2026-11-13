@@ -193,6 +193,13 @@ export function toNestedTool<TParams extends HostSchema, TDetails, TState>(
       }
       const validated = validation.value;
       if (signal.aborted) throw new Error(`${tool.name} aborted`);
+      // Before either dispatch path: the direct `execute()` fallback below gets
+      // no `tool_call` hooks, so the session's published call guard (the same
+      // decision as its hook) is applied here.
+      const blockReason = sessionToolCallBlock(extensionContext, tool.name, validated);
+      if (blockReason !== undefined) {
+        throw new Error(`Code mode tool error [blocked]: ${blockReason}`);
+      }
       const toolCallId = context.toolCallId ?? `code-mode-${tool.name}`;
       const lifecycleInput = isBoundaryValue(validated) ? validated : undefined;
       lifecycle.start?.(toolCallId, lifecycleInput);
@@ -481,20 +488,46 @@ interface ToolScopeRegistry {
     sessionManager: ExtensionToolContext["sessionManager"],
     name: string,
   ): BoundaryValue;
+  /** Optional per-call guard; absent in registries that predate it. */
+  toolCallBlock?(
+    sessionManager: ExtensionToolContext["sessionManager"],
+    name: string,
+    input: BoundaryValue,
+  ): BoundaryValue;
 }
 
 function isToolScopeRegistry<T>(value: T): value is T & ToolScopeRegistry {
   return isJsonObject(value) && value["isToolAllowed"] instanceof Function;
 }
 
-/** Whether the calling session's published tool scope admits `name`. */
-function isInSessionToolScope(context: ExtensionToolContext, name: string): boolean {
+function publishedToolScope(): ToolScopeRegistry | undefined {
   const registry: BoundaryValue = Object.getOwnPropertyDescriptor(
     globalThis,
     TOOL_SCOPE_SYMBOL,
   )?.value;
-  if (!isToolScopeRegistry(registry)) return true;
+  return isToolScopeRegistry(registry) ? registry : undefined;
+}
+
+/** Whether the calling session's published tool scope admits `name`. */
+function isInSessionToolScope(context: ExtensionToolContext, name: string): boolean {
+  const registry = publishedToolScope();
+  if (registry === undefined) return true;
   return Boolean(registry.isToolAllowed(context.sessionManager, name));
+}
+
+/**
+ * The calling session's refusal reason for this call, from the published
+ * per-call guard; undefined (allow) when no registry, guard or reason exists.
+ */
+function sessionToolCallBlock(
+  context: ExtensionToolContext,
+  name: string,
+  input: BoundaryValue,
+): string | undefined {
+  const registry = publishedToolScope();
+  if (!(registry?.toolCallBlock instanceof Function)) return undefined;
+  const reason = registry.toolCallBlock(context.sessionManager, name, input);
+  return isString(reason) ? reason : undefined;
 }
 
 /** Whether `ctx.executeTool()` can reach `name`: active `direct` tools and `codemode`/`deferred` ones. */

@@ -18,10 +18,20 @@ Redaction is key-based, so a secret embedded in a free-form string such as a she
 still reaches the advisor, just as one in a tool result does.
 
 Requires the existing subagents package and an authenticated, available model.
-The extension registers in root and child sessions. The advisor agent definition gives
-the leaf only read-only built-ins and no extensions, so it cannot delegate or recursively
-consult an advisor. Other child agents consult through the process-wide subagents manager
-slot.
+The extension registers in root and child sessions. Consults spawn the internal
+`advisor` agent through the manager slot's `spawnInternal`, which takes only the exact
+name of an enabled internal agent and never substitutes `fallbackSubagent`; a subagents
+build without it is refused instead of running the consult as another agent type.
+Other child agents consult through the same process-wide slot.
+
+The advisor may make up to 10 short read-only lookups (`max_turns: 10`), only on facts its
+answer depends on, and lists what it checked. Its definition loads only `choco-pi-lsp` and
+narrows it to `lsp_navigation`, `read_symbol`, `read_enclosing`, `symbol_search`,
+`ast_grep_search`, and `ast_grep_outline` beside the `read`, `find`, and `ls` built-ins,
+all active from its first turn. It has neither `edit` nor `write`, so the subagents runner
+refuses its file-changing calls: `lsp_navigation` rename, rename_file, code_action,
+execute_command, or any `apply`. It loads neither the subagents nor the advisor
+extension, so it cannot delegate or recursively consult an advisor.
 
 ## Settings
 
@@ -66,10 +76,13 @@ advisor: <provider>/<modelId> effort=<effort>
 Consult records are disposed immediately after settlement; with an older subagents
 build lacking `disposeSettledRecord`, interactive sessions may hold closed advisor
 sessions (and their cached transports) until the retention timer evicts them.
-Advisor consults exit cleanly in headless print mode because the advisor leaf loads
-no extensions; print-mode runs that spawn extension-loaded subagents may still linger,
-an upstream, advisor-independent behavior reproduced with a plain Agent consult.
+The advisor leaf now loads `choco-pi-lsp`, so headless print-mode consults can linger
+like other extension-loaded subagents, an upstream, advisor-independent behavior
+reproduced with a plain Agent consult. Its LSP lookups share the parent's language
+servers and may wait for a cold server to start.
 Child consult records are not attributed to the calling child. Non-advisor children can
 fan out advisor usage and cost, so configure `maxUses` with that risk in mind.
-The concise answer target is a prompt instruction, not an enforced token budget.
+The concise answer target is a prompt instruction, not an enforced token budget. The
+lookup budget is a turn limit: the runner asks the advisor to wrap up at 10 turns and
+aborts it after the configured grace turns.
 Preferences load file values at session start; tool calls reload them live.

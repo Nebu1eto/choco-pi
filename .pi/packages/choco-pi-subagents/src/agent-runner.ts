@@ -367,14 +367,107 @@ const SEARCH_LOADED_EXPOSURES: ReadonlySet<string> = new Set(["deferred", "codem
 export function createChildToolSearchExtension(
   isReachable: (name: string) => boolean,
   onActivate?: (names: readonly string[]) => void,
+  readOnly = false,
 ): ExtensionFactory {
   return (childPi) => {
     const host = reachableToolsView(childPi, isReachable);
     childPi.registerTool(
       createToolSearchToolDefinition(onActivate === undefined ? { host } : { host, onActivate }),
     );
-    childPi.on("tool_call", (event) => blockUnreachableToolCall(isReachable, event.toolName));
+    childPi.on(
+      "tool_call",
+      (event) =>
+        (readOnly ? readOnlyToolCallBlock(event.toolName, event.input) : undefined) ??
+        blockUnreachableToolCall(isReachable, event.toolName),
+    );
   };
+}
+
+/**
+ * Extension tools a child without `edit` and `write` may never reach: every
+ * call can change files. Added to that child's `disallowedTools`, so the
+ * registry drops them and no tool bridge can run them directly either.
+ */
+export const READ_ONLY_DENIED_TOOL_NAMES: readonly string[] = ["ast_grep_replace"];
+
+/** `lsp_navigation` operations that can change files or run server commands. */
+const LSP_MUTATING_OPERATIONS: ReadonlySet<string> = new Set([
+  "rename",
+  "renamefile",
+  "codeaction",
+  "executecommand",
+]);
+
+/** A `tool_call` handler result that refuses the call. */
+export interface ToolCallBlock {
+  block: true;
+  reason: string;
+}
+
+/** The `lsp_navigation` `operation` argument, or undefined when absent or not a string. */
+function operationField(input: HostValue): string | undefined {
+  if (!isHostObject(input) || !("operation" in input)) return undefined;
+  return isString(input.operation) ? input.operation : undefined;
+}
+
+/** The `diagnostic_mark` `disposition` argument, or undefined when absent or not a string. */
+function dispositionField(input: HostValue): string | undefined {
+  if (!isHostObject(input) || !("disposition" in input)) return undefined;
+  return isString(input.disposition) ? input.disposition : undefined;
+}
+
+/** Operation spelling-insensitive: `rename_file`, `renameFile` and `"rename_file"` match. */
+function operationKey(operation: string | undefined): string {
+  return (operation ?? "").toLowerCase().replace(/[^a-z]/g, "");
+}
+
+/** `apply` asks for a real change unless it is absent, null, or exactly false. */
+function requestsApply(input: HostValue): boolean {
+  if (!isHostObject(input) || !("apply" in input)) return false;
+  return input.apply !== undefined && input.apply !== null && input.apply !== false;
+}
+
+/** `<tool>/<operation>` label for the block reason. */
+function readOnlyBlock(label: string): ToolCallBlock {
+  return { block: true, reason: `read-only agent: ${label} can change files` };
+}
+
+/**
+ * The `tool_call` guard for a child whose effective tools exclude both `edit`
+ * and `write`. Narrowing by `ext:` selectors is per tool, but
+ * `lsp_navigation` and `diagnostic_mark` mix reads with file mutations, so
+ * the mutating operations are refused here per call; read operations pass.
+ *
+ * Covers model-issued calls and nested `ctx.executeTool()` calls (code-mode
+ * `exec` when the target tool is session-callable). A bridge that runs a
+ * tool's `execute()` directly never reaches this hook.
+ */
+export function readOnlyToolCallBlock(
+  toolName: string,
+  input: HostValue,
+): ToolCallBlock | undefined {
+  if (READ_ONLY_DENIED_TOOL_NAMES.includes(toolName)) return readOnlyBlock(toolName);
+  if (toolName === "lsp_navigation") {
+    const operation = operationField(input);
+    if (LSP_MUTATING_OPERATIONS.has(operationKey(operation)) || requestsApply(input)) {
+      return readOnlyBlock(`lsp_navigation/${operation ?? "unknown"}`);
+    }
+    return undefined;
+  }
+  if (toolName === "diagnostic_mark" && operationKey(dispositionField(input)) === "suppress") {
+    // `suppress` writes an inline ignore comment into the source file.
+    return readOnlyBlock("diagnostic_mark/suppress");
+  }
+  return undefined;
+}
+
+/** Whether a child's effective built-in tools exclude both `edit` and `write`. */
+export function lacksFileMutationTools(
+  toolNames: readonly string[],
+  disallowed: ReadonlySet<string> | undefined,
+): boolean {
+  const has = (name: string) => toolNames.includes(name) && disallowed?.has(name) !== true;
+  return !has("edit") && !has("write");
 }
 
 /**
@@ -415,9 +508,24 @@ const TOOL_SCOPE_SYMBOL = Symbol.for("choco-pi.tool-scope.v1");
 /** The session identity a scope is keyed by: the session's own SessionManager. */
 type ToolScopeOwner = Pick<SessionManager, "getSessionId">;
 
+/**
+ * Per-call decision for a session: the refusal reason, or undefined to allow.
+ * Bridges that run a tool without Pi's `tool_call` hooks consult it so the
+ * child's call guard applies on every path.
+ */
+type ToolCallGuard = (name: string, input: HostValue) => string | undefined;
+
 interface ToolScopeRegistry {
   isToolAllowed(sessionManager: ToolScopeOwner, name: string): boolean;
   restrict(sessionManager: ToolScopeOwner, allows: (name: string) => boolean): void;
+  /** Install the per-call guard for a session (optional: older registries lack it). */
+  guardToolCalls?(sessionManager: ToolScopeOwner, guard: ToolCallGuard): void;
+  /** The session guard's refusal reason for this call, or undefined to allow. */
+  toolCallBlock?(
+    sessionManager: ToolScopeOwner,
+    name: string,
+    input: HostValue,
+  ): string | undefined;
 }
 
 /** Members of a registry found on `globalThis`, unvalidated until checked. */
@@ -433,9 +541,29 @@ function isToolScopeRegistry(value: HostValue): value is ToolScopeRegistry {
   return candidate.isToolAllowed instanceof Function && candidate.restrict instanceof Function;
 }
 
-function toolScopeRegistry(): ToolScopeRegistry {
+/** Give a registry the call-guard members when it predates them. */
+function withCallGuards(registry: ToolScopeRegistry): Required<ToolScopeRegistry> {
+  const guardToolCalls = registry.guardToolCalls;
+  const toolCallBlock = registry.toolCallBlock;
+  if (guardToolCalls instanceof Function && toolCallBlock instanceof Function) {
+    return { ...registry, guardToolCalls, toolCallBlock };
+  }
+  const guards = new WeakMap<ToolScopeOwner, ToolCallGuard>();
+  registry.guardToolCalls = (sessionManager, guard) => {
+    guards.set(sessionManager, guard);
+  };
+  registry.toolCallBlock = (sessionManager, name, input) =>
+    guards.get(sessionManager)?.(name, input);
+  return {
+    ...registry,
+    guardToolCalls: registry.guardToolCalls,
+    toolCallBlock: registry.toolCallBlock,
+  };
+}
+
+function toolScopeRegistry(): Required<ToolScopeRegistry> {
   const existing: HostValue = Object.getOwnPropertyDescriptor(globalThis, TOOL_SCOPE_SYMBOL)?.value;
-  if (isToolScopeRegistry(existing)) return existing;
+  if (isToolScopeRegistry(existing)) return withCallGuards(existing);
   const scopes = new WeakMap<ToolScopeOwner, (name: string) => boolean>();
   const registry: ToolScopeRegistry = {
     isToolAllowed: (sessionManager, name) => scopes.get(sessionManager)?.(name) ?? true,
@@ -448,7 +576,7 @@ function toolScopeRegistry(): ToolScopeRegistry {
     writable: true,
     value: registry,
   });
-  return registry;
+  return withCallGuards(registry);
 }
 
 /** Restrict what tool bridges may run inside the session owning `sessionManager`. */
@@ -457,6 +585,19 @@ export function restrictSessionToolScope(
   allows: (name: string) => boolean,
 ): void {
   toolScopeRegistry().restrict(sessionManager, allows);
+}
+
+/**
+ * Refuse file-changing calls in a read-only child on every bridge path. The
+ * guard is {@link readOnlyToolCallBlock}, the same decision the child's
+ * `tool_call` hook makes, published through the tool-scope seam so a bridge
+ * that runs `execute()` directly (no hooks) refuses the same calls.
+ */
+export function guardSessionReadOnlyToolCalls(sessionManager: ToolScopeOwner): void {
+  toolScopeRegistry().guardToolCalls(
+    sessionManager,
+    (name, input) => readOnlyToolCallBlock(name, input)?.reason,
+  );
 }
 
 /** Built-ins available to read-only side conversations. No shell or write path. */
@@ -731,7 +872,16 @@ function addExtensionScopeTools(
     if (disallowedSet?.has(name)) continue;
     // An explicitly configured tool name stays available; the lean surface
     // only gates what an extension contributes on its own.
-    if (options.applyLean && !toolNames.includes(name) && !leanAllows(name)) continue;
+    // A tool named by an `ext:<extension>/<tool>` selector is configured just as
+    // explicitly, so it is active from turn 1 even when the extension registered
+    // it inactive (choco-pi-lsp's situational tools) or the lean surface omits it.
+    if (
+      options.applyLean &&
+      !toolNames.includes(name) &&
+      narrowed?.has(name) !== true &&
+      !leanAllows(name)
+    )
+      continue;
     keep.add(name);
   }
 }
@@ -1397,6 +1547,14 @@ export async function runAgent(
 
   // Environment detection, skill preloading (when skills is string[]) and the
   // memory block are independent reads: run them together.
+  // A child that can use neither `edit` nor `write` must not change files
+  // through an extension tool either (`ast_grep_replace`, `lsp_navigation`
+  // rename/code actions, ...). Decided from the final built-in set, before
+  // memory or extensions could add anything.
+  const fileReadOnly = lacksFileMutationTools(
+    toolNames,
+    agentConfig?.disallowedTools ? new Set(agentConfig.disallowedTools) : undefined,
+  );
   const [env, loadedSkills, loadedMemoryBlock] = await Promise.all([
     detectEnv(options.pi, effectiveCwd),
     Array.isArray(skills) ? preloadSkills(skills, configCwd) : undefined,
@@ -1582,6 +1740,7 @@ export async function runAgent(
                 (names) => {
                   for (const name of names) childToolScope.searchLoaded.add(name);
                 },
+                fileReadOnly,
               ),
             },
           ]),
@@ -1697,9 +1856,11 @@ export async function runAgent(
     model = resolveDefaultModel(ctx.model, ctx.modelRegistry, agentConfig?.model);
   }
 
-  const disallowedSet = agentConfig?.disallowedTools
-    ? new Set(agentConfig.disallowedTools)
-    : undefined;
+  const disallowedNames = [
+    ...(agentConfig?.disallowedTools ?? []),
+    ...(fileReadOnly ? READ_ONLY_DENIED_TOOL_NAMES : []),
+  ];
+  const disallowedSet = disallowedNames.length > 0 ? new Set(disallowedNames) : undefined;
 
   // Messaging belongs to every child session, including isolated/read-only and
   // depth-capped leaves. It coordinates existing work and never grants spawning.
@@ -1936,6 +2097,9 @@ export async function runAgent(
     childToolScope.isReachable = isReachable;
     restrictSessionToolScope(session.sessionManager, isReachable);
   }
+  // Before the first prompt: a read-only child's bridged calls get the same
+  // refusal as its `tool_call` hook, including direct-`execute()` bridge paths.
+  if (fileReadOnly) guardSessionReadOnlyToolCalls(session.sessionManager);
 
   // The tools are known now: the Codex adapter set Code Mode at session_start and
   // the scope above narrowed the active set. Recompose the prompt only when the

@@ -1325,3 +1325,10 @@ A model guessed `tools.diagnostic_mark({path, line, disposition: "false_positive
 - `src/adapter/code-mode/nested-tool-adapter.ts`: for session-dispatched (bridged) tools, the `invalid_arguments` error appends `Unknown keys: path → file_path.` and `Expected: tools.<name>({…}).` with the full, uncapped signature. Errors for natively wrapped tools are unchanged.
 - `.pi/extensions/lib/tool-search-tool.ts` (root): a Code Mode result's `call` is `tools.<name>({…}) inside exec`, using the full signature. Tools code mode ships natively under another name (`web_run`) and tools whose schema has no property map keep `(...)`.
 - Tests: `tests/code-mode-bridge-arguments.test.ts`; root `tests/codex-code-mode-bridge.test.ts` and `tests/tool-search.test.ts` expect the new line and call formats.
+
+## 2026-11-14 choco-pi patch: bridged calls honor the session's read-only call guard
+
+A bridged tool that the session lists as reachable but not active runs through its `execute()` without Pi's `tool_call` hooks, so choco-pi-subagents' read-only guard (no file-changing `lsp_navigation` operations in children without edit and write) did not apply to calls made through `exec`.
+
+- `src/adapter/code-mode/nested-tool-adapter.ts`: after argument validation and before either dispatch path (`ctx.executeTool()` or direct `execute()`), `toNestedTool` asks the `choco-pi.tool-scope.v1` registry's optional `toolCallBlock(sessionManager, name, input)` and throws `Code mode tool error [blocked]: <reason>` when it returns a reason. No registry, no `toolCallBlock` member, or no guard for the session leaves the call unchanged. The decision and its wording are owned by choco-pi-subagents (`readOnlyToolCallBlock`), which the bridge only relays. The existing scope (`isToolAllowed`) check is unchanged and still runs first for session-dispatched tools.
+- Tests: `tests/code-mode-bridge-call-guard.test.ts`; choco-pi-subagents `tests/read-only-agent-tools.test.ts` drives this bridge inside a real read-only child.

@@ -105,9 +105,11 @@ export default function (pi: ExtensionAPI) {
           if (!model) return textResult(`advisor model not available: ${settings.model}`);
           const manager = resolveAdvisorManager();
           if (!manager)
-            return textResult("advisor consult failed: the subagents package is not loaded");
+            return textResult(
+              "advisor consult failed: the subagents package is not loaded or cannot spawn internal agents",
+            );
           const prompt = buildAdvisorPrompt(buildAdvisorExcerpt(entries), context, question);
-          const id = manager.spawn(pi, ctx, "advisor", prompt, {
+          const id = manager.spawnInternal(pi, ctx, "advisor", prompt, {
             description: "Advisor consult",
             model,
             thinkingLevel: settings.effort,

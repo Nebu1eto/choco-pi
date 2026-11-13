@@ -17,7 +17,12 @@ export interface AdvisorRecord {
   error?: string;
 }
 export interface AdvisorManager {
-  spawn(
+  /**
+   * Spawn an `internal` agent by its exact registry name. Unlike `spawn`, which
+   * treats internal agents as unknown and may substitute `fallbackSubagent`,
+   * this refuses anything but the named internal agent.
+   */
+  spawnInternal(
     pi: ExtensionAPI,
     ctx: ExtensionContext,
     type: string,
@@ -30,15 +35,20 @@ export interface AdvisorManager {
 
 type ManagerCandidate = {} | null | undefined;
 interface ManagerMethods {
-  spawn: Function;
+  spawnInternal: Function;
   getRecord: Function;
 }
 
+/**
+ * A subagents build without `spawnInternal` is refused rather than used through
+ * `spawn`: there the internal advisor type resolves to `fallbackSubagent`, so
+ * the consult would run as an edit-capable agent with the wrong prompt.
+ */
 function hasManagerMethods(value: ManagerCandidate): value is ManagerMethods {
   return (
     value instanceof Object &&
-    "spawn" in value &&
-    value.spawn instanceof Function &&
+    "spawnInternal" in value &&
+    value.spawnInternal instanceof Function &&
     "getRecord" in value &&
     value.getRecord instanceof Function
   );
