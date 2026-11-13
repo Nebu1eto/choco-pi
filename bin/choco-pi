@@ -1,0 +1,168 @@
+#!/bin/sh
+# choco-pi: run the workspace-pinned Pi with the choco-pi profile, fully
+# separated from a user-installed pi (~/.pi is never used).
+#
+# Environment contract (set unconditionally before Pi starts):
+#   CHOCO_PI_HOME          absolute install home: $CHOCO_PI_HOME, else the parent
+#                          of the app when it holds install.json, else ~/.choco-pi
+#   CHOCO_PI_STANDALONE    1
+#   CHOCO_PI_LAUNCHER      real path of this script
+#   PI_CODING_AGENT_DIR    $CHOCO_PI_HOME/agent
+#   CHOCO_PI_LSP_HOME      $CHOCO_PI_HOME/lsp
+#   PI_ACP_PI_COMMAND      real path of this script
+#   CHOCO_PI_HOOKS_PI_BIN  real path of this script (choco-pi-hooks evaluators)
+#   PI_SKIP_VERSION_CHECK  1 unless already set (Pi is pinned by the lockfile)
+# PATH is unchanged, except that the selected Node's directory is appended when
+# PATH has no node. Every other variable passes through untouched (REX_*,
+# PI_PROGRAM_STATUS, ...). No PI_* wildcard is ever used.
+#
+# Every PI_* variable Pi 1.5.2 reads (pi-coding-agent, pi-ai, pi-tui,
+# pi-agent-core dist), classified:
+#   unset (Pi state or Pi install location):
+#     PI_CODING_AGENT_SESSION_DIR  session storage directory
+#     PI_PACKAGE_DIR               Pi package/install directory override
+#     PI_MANAGED_INSTALL_ROOT      managed-install root used by `pi update`
+#     PI_SELF_UPDATE_COMMAND       command `pi update` runs to replace Pi
+#     PI_INSTALLER_API_BASE        installer endpoint of managed self-update
+#     PI_SESSION_FILE              session file a parent Pi exports to its tools
+#   set by the contract:
+#     PI_CODING_AGENT_DIR, PI_SKIP_VERSION_CHECK
+#   pass through (behavior toggles, endpoints, or a parent session's labels):
+#     PI_OFFLINE PI_TELEMETRY PI_EXPERIMENTAL PI_TIMING PI_STARTUP_BENCHMARK
+#     PI_CACHE_RETENTION PI_OAUTH_CALLBACK_HOST PI_RADIUS_GATEWAY
+#     PI_SHARE_VIEWER_URL PI_CODEMODE_MAX_WORKERS PI_CLIPBOARD_OSC52
+#     PI_CLEAR_ON_SHRINK PI_HARDWARE_CURSOR PI_HYPERLINKS PI_IMAGE_PROTOCOL
+#     PI_TRUE_COLOR PI_PROGRAM_STATUS PI_TUI_DEBUG PI_TUI_DEBUG_REDRAW
+#     PI_TUI_ESC_TIMEOUT PI_TUI_WRITE_LOG PI_SESSION_ID PI_MODEL PI_PROVIDER
+#     PI_REASONING_LEVEL PI_CODING_AGENT (Pi overwrites it itself)
+#   not environment reads (bundle constants): PI_BUNDLED_NODE PI_AI_VERSION
+#     PI_ATTRIBUTION PI_CLIENT PI_CLIENT_METADATA_DOCUMENTS PI_LOGO_* PI_BY_TWO
+#
+# Dispatch: "self <verb>" with a known verb is management; everything else
+# ends in a plain exec of node on Pi's CLI, so the foreground process is Pi
+# itself (Rex and terminals see node with title "pi"). Keep it that way: no
+# subshell, pipeline, trap, "exec -a" or title change on that path.
+set -eu
+
+PI_CLI_RELATIVE=node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js
+
+die() {
+  printf 'choco-pi: %s\n' "$*" >&2
+  exit 1
+}
+
+# 1. Own real path, through symlinks.
+self=$0
+case $self in
+  */*) ;;
+  *) self=$(command -v -- "$self") || die "cannot locate the launcher"
+     case $self in */*) ;; *) self=./$self ;; esac ;;
+esac
+hops=0
+while [ -L "$self" ]; do
+  hops=$((hops + 1))
+  [ "$hops" -le 40 ] || die "too many symlinks at $self"
+  if command -v readlink >/dev/null 2>&1; then
+    target=$(readlink -- "$self")
+  else
+    target=$(ls -ld -- "$self")
+    target=${target#* -> }
+  fi
+  case $target in
+    /*) self=$target ;;
+    *) self=${self%/*}/$target ;;
+  esac
+done
+bin_dir=$(cd -P -- "${self%/*}" && pwd -P) || die "cannot resolve ${self%/*}"
+LAUNCHER=$bin_dir/${self##*/}
+APP=${bin_dir%/*}
+
+# 2. Install home.
+if [ -n "${CHOCO_PI_HOME:-}" ]; then
+  home=$CHOCO_PI_HOME
+elif [ -f "${APP%/*}/install.json" ]; then
+  home=${APP%/*}
+else
+  [ -n "${HOME:-}" ] || die "HOME is not set; set CHOCO_PI_HOME"
+  home=$HOME/.choco-pi
+fi
+case $home in
+  /*) ;;
+  *) home=$PWD/$home ;;
+esac
+if [ -d "$home" ]; then
+  home=$(cd -P -- "$home" && pwd -P) || die "cannot resolve $home"
+fi
+
+# 3. Node: recorded path, private runtime, then PATH node >= 24.
+NODE=
+recorded=
+if [ -f "$home/install.json" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    case $line in
+      *'"node_path": "'*)
+        recorded=${line#*'"node_path": "'}
+        recorded=${recorded%%'"'*}
+        break ;;
+    esac
+  done <"$home/install.json"
+fi
+if [ -n "$recorded" ] && [ -x "$recorded" ]; then
+  NODE=$recorded
+elif [ -x "$home/runtime/node/bin/node" ]; then
+  NODE=$home/runtime/node/bin/node
+elif path_node=$(command -v node 2>/dev/null); then
+  major=$("$path_node" -e 'process.stdout.write(process.versions.node.split(".")[0])' 2>/dev/null) || major=0
+  case $major in
+    '' | *[!0-9]*) major=0 ;;
+  esac
+  if [ "$major" -ge 24 ]; then NODE=$path_node; fi
+fi
+if [ -z "$NODE" ]; then
+  printf '%s\n' \
+    "choco-pi: no Node.js >= 24 found." \
+    "  Re-run install.sh to provision a private Node in $home/runtime/node," \
+    "  or install Node.js 24 or newer and put it on PATH." >&2
+  exit 1
+fi
+
+# 4. Environment contract.
+CHOCO_PI_HOME=$home
+CHOCO_PI_STANDALONE=1
+CHOCO_PI_LAUNCHER=$LAUNCHER
+PI_CODING_AGENT_DIR=$home/agent
+CHOCO_PI_LSP_HOME=$home/lsp
+PI_ACP_PI_COMMAND=$LAUNCHER
+CHOCO_PI_HOOKS_PI_BIN=$LAUNCHER
+: "${PI_SKIP_VERSION_CHECK=1}"
+export CHOCO_PI_HOME CHOCO_PI_STANDALONE CHOCO_PI_LAUNCHER PI_CODING_AGENT_DIR \
+  CHOCO_PI_LSP_HOME PI_ACP_PI_COMMAND CHOCO_PI_HOOKS_PI_BIN PI_SKIP_VERSION_CHECK
+unset PI_CODING_AGENT_SESSION_DIR PI_PACKAGE_DIR PI_MANAGED_INSTALL_ROOT PI_SELF_UPDATE_COMMAND PI_INSTALLER_API_BASE PI_SESSION_FILE
+if ! command -v node >/dev/null 2>&1; then
+  PATH=${PATH:+$PATH:}${NODE%/*}
+  export PATH
+fi
+
+# 5. Dispatch.
+if [ "$#" -ge 2 ] && [ "$1" = self ]; then
+  case $2 in
+    exec)
+      shift 2
+      [ "$#" -ge 1 ] || die "usage: choco-pi self exec <command> [args...]"
+      exec "$@" ;;
+    acp)
+      shift 2
+      exec "$NODE" "$APP/packages/choco-pi-acp/bin/choco-pi-acp.ts" "$@" ;;
+    setup | update | uninstall | env | help)
+      exec "$NODE" "$APP/scripts/standalone/manage.ts" "$@" ;;
+  esac
+fi
+
+if [ ! -f "$home/agent/choco-pi/profile.json" ]; then
+  # --version alone needs no profile; self setup uses it to record the launcher.
+  case "$#:${1:-}" in
+    1:--version | 1:-v) ;;
+    *) die "no choco-pi profile in $home/agent; run choco-pi self setup" ;;
+  esac
+fi
+exec "$NODE" "$APP/$PI_CLI_RELATIVE" "$@"
