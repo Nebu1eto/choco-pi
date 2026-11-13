@@ -32,7 +32,6 @@
       "optional": true
     }
   },
-  "packageManager": "pnpm@11.11.0",
   "chocoPi": {
     "supersedes": [
       "@tintinweb/pi-subagents",

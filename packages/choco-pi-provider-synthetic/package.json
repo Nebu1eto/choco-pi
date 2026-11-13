@@ -29,8 +29,6 @@
     "format": "oxfmt .",
     "test": "vitest run extensions src && node --test tests/*.test.ts",
     "test:watch": "vitest",
-    "check:lockfile": "pnpm install --frozen-lockfile --ignore-scripts",
-    "prepare": "[ -d .git ] && husky || true",
     "changeset": "changeset",
     "version": "changeset version",
     "release": "pnpm changeset publish",
@@ -76,7 +74,6 @@
       "optional": true
     }
   },
-  "packageManager": "pnpm@11.11.0",
   "chocoPi": {
     "supersedes": [
       "@aliou/pi-synthetic",

@@ -41,8 +41,15 @@ test("every direct Pi SDK contract declares the harness patch range", async () =
       }
     }
     if (path === "") {
+      // Pi and its schema library are runtime dependencies of the root; the rest are dev-only.
       for (const name of SDK_NAMES) {
-        assert.equal(manifest.devDependencies?.[`@earendil-works/${name}`], RANGE, name);
+        const declared =
+          manifest.dependencies?.[`@earendil-works/${name}`] ??
+          manifest.devDependencies?.[`@earendil-works/${name}`];
+        assert.equal(declared, RANGE, name);
+      }
+      for (const name of ["pi-coding-agent", "pi-schema"]) {
+        assert.equal(manifest.dependencies?.[`@earendil-works/${name}`], RANGE, `runtime ${name}`);
       }
     }
   }

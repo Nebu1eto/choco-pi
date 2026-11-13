@@ -313,3 +313,7 @@ User-authorized rename (tool inputs and outputs use snake_case; tool names uncha
 - Verification: `npx tsc --noEmit` and `node --test tests/*.test.ts`.
 - Tests: `tests/figma-schemas.test.ts` checks the file_key-only schemas (`FigmaSingleFileParams` for `figma_get_styles`/`figma_get_variables`/`figma_get_components`/`figma_get_component_sets`, and `FigmaGetFileParams`) accept `file_key` and reject `fileKey`/`maxResponseChars`.
 - Review fix: `figma_extract_assets` output prints `asset_types` values (`svg_icons`, `node_renders`, `image_fills`) and asset `kind` values (`svg_icon`, `node_render`, `image_fill`) in snake_case via `toExtractAssetsOutput`, so the manifest round-trips into the `asset_types` input; the internal `FigmaAssetType`/`FigmaAssetKind` values are unchanged. Test: `tests/figma-tool-output.test.ts`.
+
+## 2026-11-13 choco-pi patch: root pnpm workspace install
+
+This package is now a member of the root pnpm workspace (`packages/*`) and installs from the single root `pnpm-lock.yaml` with `pnpm install --frozen-lockfile` at the repository root; the root `postinstall` bootstrap (`scripts/bootstrap-vendored.ts`) is gone. Removed: this package's `pnpm-lock.yaml`, `pnpm-workspace.yaml` and `packageManager` field (the root pins `pnpm@11.11.0`). The dependency, devDependency and peerDependency fields are unchanged, and every direct dependency resolves to the same version as in the removed lockfile. Dependency build scripts still never run: the root `allowBuilds` lists each one as `false`, replacing `--ignore-scripts`.

@@ -368,3 +368,7 @@ tool operation names. `result.details` shapes are unchanged.
 ## 2026-11-12 choco-pi patch: `large-class` counts methods
 
 `rules/ast-grep-rules/rules/large-class.yml` flagged every class whose body contained any `name(` text, so a class with one method was reported as large, contradicting the rule's own note (more than 20 methods). The rule now matches a class whose body has a 21st `method_definition` (`nthChild` with `ofRule`), and `rule-tests/large-class-test.yml` lists 1-, 2- and 15-method classes as valid and 21-method classes as invalid. Checked with `ast-grep test` and with `@ast-grep/napi`, which the runner uses: 1 and 20 methods do not match, 21 do. The bundled catalog is cached per process, so a running session sees the change after its next start.
+
+## 2026-11-13 choco-pi patch: root pnpm workspace install
+
+This package is now a member of the root pnpm workspace (`packages/*`) and installs from the single root `pnpm-lock.yaml` with `pnpm install --frozen-lockfile` at the repository root; the root `postinstall` bootstrap (`scripts/bootstrap-vendored.ts`) is gone. Removed: this package's `pnpm-lock.yaml`, `pnpm-workspace.yaml` and `packageManager` field (the root pins `pnpm@11.11.0`). The dependency, devDependency and peerDependency fields are unchanged, and every direct dependency resolves to the same version as in the removed lockfile. Dependency build scripts still never run: the root `allowBuilds` lists each one as `false`, replacing `--ignore-scripts`.

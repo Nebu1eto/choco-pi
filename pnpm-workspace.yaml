@@ -1,7 +1,16 @@
+packages:
+  - packages/*
+
 allowBuilds:
   "@google/genai": false
   esbuild: false
   protobufjs: false
+  tree-sitter-bash: false
+
+overrides:
+  "@earendil-works/pi-ai": "~1.5.2"
+  "@earendil-works/pi-tui": "~1.5.2"
+
 minimumReleaseAgeExclude:
   - "@earendil-works/pi-*"
   - typebox@1.3.29

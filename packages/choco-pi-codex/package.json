@@ -42,7 +42,6 @@
   "engines": {
     "node": ">=22.19.0"
   },
-  "packageManager": "pnpm@11.11.0",
   "chocoPi": {
     "supersedes": [
       "@howaboua/pi-codex-conversion"

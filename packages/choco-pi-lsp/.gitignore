@@ -1,1 +1,1 @@
-# This package vendors its runtime dependency closure on disk only; never tracked.
+# Dependencies install through the root pnpm workspace into node_modules/; never tracked.
