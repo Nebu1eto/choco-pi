@@ -11,11 +11,11 @@ import {
   type AgentSession,
   type AgentSessionEvent,
   createAgentSession,
-  createToolSearchExtension,
   DefaultResourceLoader,
   type ExtensionAPI,
   type ExtensionFactory,
   getAgentDir,
+  type ResourceLoader,
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
@@ -50,6 +50,7 @@ import {
   unregisterScratchRoot,
 } from "../../../extensions/lib/scratch-path.ts";
 import { isJsonRecord } from "../../../extensions/lib/runtime-values.ts";
+import { createToolSearchToolDefinition } from "../../../extensions/lib/tool-search-tool.ts";
 import { DEFAULT_AGENTS } from "./default-agents.ts";
 import { detectEnv } from "./env.ts";
 import {
@@ -72,11 +73,14 @@ import {
 import {
   buildAgentPrompt,
   buildReadOnlySideConversationPrompt,
+  buildToolGuidance,
   type PromptExtras,
+  READ_ONLY_SIDE_CONVERSATION_TOOLS,
+  type ToolSurface,
 } from "./prompts.ts";
 import { preloadSkills } from "./skill-loader.ts";
 import { SUBAGENT_STATUS_TOOL_NAME, SUBAGENT_TREE_TOOL_NAME } from "./subagent-tree.ts";
-import type { SubagentType, ThinkingLevel } from "./types.ts";
+import type { AgentConfig, SubagentType, ThinkingLevel } from "./types.ts";
 
 interface ModelRegistryWithRuntime {
   runtime?: unknown;
@@ -157,6 +161,101 @@ export const SUBAGENT_SCRATCH_ENTRY = "choco-pi:scratch";
 
 /** Pi built-ins intentionally unavailable in every choco-pi child session. */
 const DISABLED_BUILTIN_TOOL_NAMES = new Set(["grep"]);
+
+/**
+ * Unknown type fallback: the canonical general-purpose config under the
+ * requested name (defensive — index.ts resolves unknown types before runAgent).
+ */
+function fallbackAgentConfig(type: string): AgentConfig {
+  const fallback = DEFAULT_AGENTS.get("general-purpose");
+  if (!fallback) throw new Error(`No fallback config available for unknown type "${type}"`);
+  return { ...fallback, name: type };
+}
+
+/** The parent's active tools, or none when the host cannot report them. */
+function parentActiveToolNames(pi: Pick<ExtensionAPI, "getActiveTools">): string[] {
+  try {
+    return pi.getActiveTools();
+  } catch {
+    return [];
+  }
+}
+
+/** The Code Mode entry point; an active one means the child runs in Code Mode. */
+const CODE_MODE_TOOL_NAME = "exec";
+
+/**
+ * The tool surface a child is expected to start with, for the prompt composed
+ * before its extensions bind. A child with extensions inherits the parent's
+ * mode: the Codex adapter decides Code Mode from the same configuration for
+ * both. In Code Mode the adapter ships exec_command and apply_patch inside exec.
+ * {@link observedChildToolSurface} replaces the prediction once binding is done.
+ */
+export function predictChildToolSurface(input: {
+  parentActiveTools: readonly string[];
+  extensionsEnabled: boolean;
+  toolNames: readonly string[];
+  disallowedTools?: readonly string[] | undefined;
+}): ToolSurface {
+  const denied = new Set(input.disallowedTools ?? []);
+  const allowed = input.toolNames.filter(
+    (name) => !DISABLED_BUILTIN_TOOL_NAMES.has(name) && !denied.has(name),
+  );
+  if (!input.extensionsEnabled) return { codeMode: false, tools: allowed };
+  const search = denied.has(TOOL_SEARCH_TOOL_NAME) ? [] : [TOOL_SEARCH_TOOL_NAME];
+  if (input.parentActiveTools.includes(CODE_MODE_TOOL_NAME))
+    return { codeMode: true, tools: ["exec", "wait", "exec_command", "apply_patch", ...search] };
+  return { codeMode: false, tools: [...allowed, ...search] };
+}
+
+/**
+ * The tool surface a bound child actually has: its active tools and, in Code
+ * Mode, every registered tool it may reach, since those are callable in exec.
+ */
+export function observedChildToolSurface(
+  session: {
+    getActiveToolNames(): string[];
+    getAllTools(): ReadonlyArray<{ name: string }>;
+  },
+  isReachable?: (name: string) => boolean,
+): ToolSurface {
+  const active = session.getActiveToolNames();
+  if (!active.includes(CODE_MODE_TOOL_NAME)) return { codeMode: false, tools: active };
+  const callable = session
+    .getAllTools()
+    .map((tool) => tool.name)
+    .filter((name) => isReachable?.(name) ?? true);
+  return { codeMode: true, tools: [...new Set([...active, ...callable])] };
+}
+
+/** Whether two surfaces produce the same sub-agent guidance text. */
+export function sameToolGuidance(left: ToolSurface, right: ToolSurface): boolean {
+  return buildToolGuidance(left).join("\n") === buildToolGuidance(right).join("\n");
+}
+
+/**
+ * `inner` with a system prompt read on every call. DefaultResourceLoader
+ * computes its prompt once, at reload; a child's guidance can change after its
+ * extensions bind, and Pi re-reads the loader whenever it rebuilds the prompt.
+ */
+export function withLiveSystemPrompt(
+  inner: ResourceLoader,
+  systemPrompt: () => string,
+): ResourceLoader {
+  return {
+    getExtensions: () => inner.getExtensions(),
+    getSkills: () => inner.getSkills(),
+    getPrompts: () => inner.getPrompts(),
+    getThemes: () => inner.getThemes(),
+    getAgentsFiles: () => inner.getAgentsFiles(),
+    getSystemPrompt: () => systemPrompt(),
+    getSystemPromptSource: () => inner.getSystemPromptSource(),
+    getAppendSystemPrompt: () => inner.getAppendSystemPrompt(),
+    getAppendSystemPromptSources: () => inner.getAppendSystemPromptSources(),
+    extendResources: (paths) => inner.extendResources(paths),
+    reload: (reloadOptions) => inner.reload(reloadOptions),
+  };
+}
 
 export function computeChildToolGate({
   noExtensions,
@@ -239,32 +338,41 @@ function leanSurfaceNames(): Set<string> | undefined {
 /** Late-bound reachability of one child, filled after its scope is installed. */
 interface ChildToolScopeSlot {
   isReachable?: (name: string) => boolean;
+  /** Tools the child's `tool_search` activated; the scope keeps them while reachable. */
+  searchLoaded: Set<string>;
 }
 
-/** Pi's built-in discovery tool, registered in every extension-enabled child. */
+/** choco-pi's discovery tool, registered in every extension-enabled child. */
 const TOOL_SEARCH_TOOL_NAME = "tool_search";
 
 /** Exposures only `tool_search` can activate; an active one was loaded by a search. */
 const SEARCH_LOADED_EXPOSURES: ReadonlySet<string> = new Set(["deferred", "codemode"]);
 
 /**
- * Pi's built-in `tool_search`, seeing only the tools this child may reach.
+ * choco-pi's `tool_search`, seeing only the tools this child may reach.
  *
- * The built-in searches the session's inactive `deferred`/`codemode` tools and
- * activates the matches. Handing it a view whose `getAllTools()` is filtered by
- * the child's scope keeps a search from naming, let alone loading, a tool the
- * child was denied. The same predicate blocks every `tool_call` outside the
- * scope, which also covers calls other tools issue through `ctx.executeTool()`
- * (`parentToolCallId` set); `agent.beforeToolCall` never sees those.
+ * Outside Code Mode it activates matching inactive tools, including `direct`
+ * tools the lean surface withholds, and reports them through `onActivate` so
+ * the scope keeps them; in Code Mode it only lists the tools callable inside
+ * `exec`. Handing it a view whose `getAllTools()` is filtered by the child's
+ * scope keeps a search from naming, let alone loading, a tool the child was
+ * denied. The same predicate blocks every `tool_call` outside the scope, which
+ * also covers calls other tools issue through `ctx.executeTool()`
+ * (`parentToolCallId` set); `agent.beforeToolCall` never sees those. The root
+ * `tool-search.ts` registers nothing while a child loads, so this is the
+ * child's only `tool_search`.
  *
  * `isReachable` must fail closed until the scope is installed.
  */
 export function createChildToolSearchExtension(
   isReachable: (name: string) => boolean,
+  onActivate?: (names: readonly string[]) => void,
 ): ExtensionFactory {
-  const registerToolSearch = createToolSearchExtension();
-  return async (childPi) => {
-    await registerToolSearch(reachableToolsView(childPi, isReachable));
+  return (childPi) => {
+    const host = reachableToolsView(childPi, isReachable);
+    childPi.registerTool(
+      createToolSearchToolDefinition(onActivate === undefined ? { host } : { host, onActivate }),
+    );
     childPi.on("tool_call", (event) => blockUnreachableToolCall(isReachable, event.toolName));
   };
 }
@@ -352,7 +460,7 @@ export function restrictSessionToolScope(
 }
 
 /** Built-ins available to read-only side conversations. No shell or write path. */
-const READ_ONLY_TOOL_NAMES = new Set(["read", "find", "ls"]);
+const READ_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set(READ_ONLY_SIDE_CONVERSATION_TOOLS);
 
 /**
  * Canonical name of an extension for `extensions: [...]` allowlist matching.
@@ -668,6 +776,8 @@ export function installExtensionToolScope(
     nestedToolNames: Set<string>;
     /** Tree messaging is always available, regardless of depth or frontmatter tool denies. */
     alwaysToolNames: Set<string>;
+    /** Tools the child's `tool_search` activated; kept active while reachable. */
+    searchLoaded?: ReadonlySet<string>;
   },
 ): (name: string) => boolean {
   const lean = leanSurfaceNames();
@@ -697,7 +807,10 @@ export function installExtensionToolScope(
         .map((tool) => tool.name),
     );
     const current = session.getActiveToolNames();
-    const kept = current.filter((n) => allowed.has(n) || loadable.has(n));
+    const searched = ctx.searchLoaded;
+    const kept = current.filter(
+      (n) => allowed.has(n) || loadable.has(n) || (searched?.has(n) === true && reach.has(n)),
+    );
     const keptSet = new Set(kept);
     const inScopeNames = registered.map((t) => t.name).filter((n) => allowed.has(n));
     const next = [...kept, ...inScopeNames.filter((n) => !keptSet.has(n) && !offered.has(n))];
@@ -1306,26 +1419,30 @@ export async function runAgent(
 
   // Build system prompt from agent config. A BTW fork keeps the main agent's
   // effective identity verbatim, adding only the read-only capability notice.
-  let systemPrompt: string;
-  if (options.mainSessionFork) {
-    if (!options.readOnly)
-      throw new Error("Main-session forks are restricted to read-only side conversations.");
-    systemPrompt = buildReadOnlySideConversationPrompt(options.mainSessionFork.systemPrompt);
-  } else if (agentConfig) {
-    systemPrompt = buildAgentPrompt(agentConfig, effectiveCwd, env, parentSystemPrompt, extras);
-  } else {
-    // Unknown type fallback: spread the canonical general-purpose config (defensive —
-    // unreachable in practice since index.ts resolves unknown types before calling runAgent).
-    const fallback = DEFAULT_AGENTS.get("general-purpose");
-    if (!fallback) throw new Error(`No fallback config available for unknown type "${type}"`);
-    systemPrompt = buildAgentPrompt(
-      { ...fallback, name: type },
-      effectiveCwd,
-      env,
-      parentSystemPrompt,
-      extras,
-    );
-  }
+  //
+  // The append-mode guidance names the child's tools, which are final only once
+  // its extensions bound (the Codex adapter swaps the file tools for Code Mode's
+  // exec/wait at session_start). The prompt is first composed from a prediction,
+  // the parent's mode plus this agent's tools, and recomposed from the observed
+  // surface after binding when the guidance differs (after the scope install below).
+  const mainSessionFork = options.mainSessionFork;
+  if (mainSessionFork && !options.readOnly)
+    throw new Error("Main-session forks are restricted to read-only side conversations.");
+  const promptConfig = mainSessionFork ? undefined : (agentConfig ?? fallbackAgentConfig(type));
+  const composePrompt = (surface: ToolSurface): string =>
+    promptConfig === undefined
+      ? buildReadOnlySideConversationPrompt(options.mainSessionFork?.systemPrompt ?? "")
+      : buildAgentPrompt(promptConfig, effectiveCwd, env, parentSystemPrompt, {
+          ...extras,
+          toolSurface: surface,
+        });
+  const toolSurface = predictChildToolSurface({
+    parentActiveTools: parentActiveToolNames(options.pi),
+    extensionsEnabled: extensions !== false,
+    toolNames,
+    disallowedTools: agentConfig?.disallowedTools,
+  });
+  let systemPrompt = composePrompt(toolSurface);
 
   // When skills is string[], we've already preloaded them into the prompt.
   // Still pass noSkills: true since we don't need the skill loader to load them again.
@@ -1399,7 +1516,7 @@ export async function runAgent(
 
   // Filled once the child's scope is installed; the search and `tool_call`
   // guard fail closed until then.
-  const childToolScope: ChildToolScopeSlot = {};
+  const childToolScope: ChildToolScopeSlot = { searchLoaded: new Set() };
   // Absent unless the compaction extension published an enabled provider.
   const childCompaction = createChildCompactionBridge({
     parentSessionId: ctx.sessionManager?.getSessionId?.(),
@@ -1462,6 +1579,9 @@ export async function runAgent(
               hidden: true,
               factory: createChildToolSearchExtension(
                 (name) => childToolScope.isReachable?.(name) === true,
+                (names) => {
+                  for (const name of names) childToolScope.searchLoaded.add(name);
+                },
               ),
             },
           ]),
@@ -1710,7 +1830,8 @@ export async function runAgent(
     model,
     tools: sessionTools,
     customTools: childTools,
-    resourceLoader: loader,
+    // The loader's own prompt is fixed at reload; the guidance may still change below.
+    resourceLoader: withLiveSystemPrompt(loader, () => systemPrompt),
   };
   if (sessionExcludeTools) {
     sessionOpts.excludeTools = sessionExcludeTools;
@@ -1810,9 +1931,22 @@ export async function runAgent(
       narrowing,
       nestedToolNames,
       alwaysToolNames,
+      searchLoaded: childToolScope.searchLoaded,
     });
     childToolScope.isReachable = isReachable;
     restrictSessionToolScope(session.sessionManager, isReachable);
+  }
+
+  // The tools are known now: the Codex adapter set Code Mode at session_start and
+  // the scope above narrowed the active set. Recompose the prompt only when the
+  // guidance differs from the prediction, so a correct prediction leaves the
+  // prompt untouched; a rebuild before the first request costs no cached prefix.
+  if (!mainSessionFork) {
+    const observed = observedChildToolSurface(session, childToolScope.isReachable);
+    if (!sameToolGuidance(toolSurface, observed)) {
+      systemPrompt = composePrompt(observed);
+      session.setActiveToolsByName(session.getActiveToolNames());
+    }
   }
 
   options.onSessionCreated?.(session);

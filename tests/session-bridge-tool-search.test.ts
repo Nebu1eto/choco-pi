@@ -23,6 +23,7 @@ import { chatToolGuard } from "../.pi/extensions/review/core/chat-guard.ts";
 import { hostParams } from "../.pi/extensions/lib/schema-bridge.ts";
 import { isJsonRecord, isString } from "../.pi/extensions/lib/runtime-values.ts";
 import { createToolSearchResourceLoader } from "../.pi/extensions/lib/tool-surface.ts";
+import rootToolSearch from "../.pi/extensions/tool-search.ts";
 
 async function withSession(
   settings: Parameters<typeof SettingsManager.inMemory>[0],
@@ -65,7 +66,7 @@ async function withSession(
   }
 }
 
-test("SDK sessions declare Pi's built-in tool_search before their first request", async () => {
+test("SDK sessions declare choco-pi's tool_search before their first request", async () => {
   await withSession({}, (activeTools) => {
     assert.ok(activeTools.includes("tool_search"));
     // The default tool set is kept; the activation is additive.
@@ -73,11 +74,33 @@ test("SDK sessions declare Pi's built-in tool_search before their first request"
   });
 });
 
-test("SDK sessions honor -builtin:tool-search exactly like the CLI", async () => {
+test("SDK sessions keep choco-pi's tool_search under the profile's -builtin:tool-search", async () => {
   await withSession({ extensions: ["-builtin:tool-search"] }, (activeTools, registered) => {
-    assert.ok(!registered.includes("tool_search"));
-    assert.ok(!activeTools.includes("tool_search"));
+    assert.equal(registered.filter((name) => name === "tool_search").length, 1);
+    assert.ok(activeTools.includes("tool_search"));
   });
+});
+
+test("with the root tool-search extension loaded, an SDK session has one tool_search and no load warning", async () => {
+  const root = await mkdtemp(join(tmpdir(), "choco-pi-session-tool-search-"));
+  try {
+    const loader = await createToolSearchResourceLoader(root, {
+      agentDir: root,
+      settingsManager: SettingsManager.inMemory({}),
+      extensionFactories: [{ name: "root-tool-search", factory: rootToolSearch }],
+    });
+    const result = loader.getExtensions();
+    const owners = result.extensions.filter((extension) => extension.tools.has("tool_search"));
+    assert.deepEqual(
+      owners.map((extension) => extension.path),
+      ["<inline:root-tool-search>"],
+      "the root extension owns tool_search; the replaceable session copy is left out",
+    );
+    assert.deepEqual(result.errors, []);
+    assert.deepEqual(result.warnings ?? [], []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("session bridge and review side chat build their sessions with the shared loader", async () => {
@@ -109,7 +132,10 @@ test("extra extension factories load after the shared ones, and tool_search stay
     const paths = loader.getExtensions().extensions.map((extension) => extension.path);
     const toolSearch = paths.findIndex((path) => path.includes("tool-search"));
     assert.ok(toolSearch >= 0, "the shared tool_search extension is still loaded");
-    assert.ok(toolSearch < paths.indexOf("<inline:1>"), "a caller's factories come after it");
+    const firstCaller = paths.findIndex(
+      (path) => path.startsWith("<inline:") && !path.includes("tool-search"),
+    );
+    assert.ok(firstCaller >= 0 && toolSearch < firstCaller, "a caller's factories come after it");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

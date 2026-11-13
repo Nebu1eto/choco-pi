@@ -140,8 +140,28 @@ export const DEFAULT_PROFILE_PACKAGES: readonly string[] = [
   "./packages/choco-pi-editor-context",
 ];
 
-/** Built-in extension policy a clean install starts from. */
-const DEFAULT_PROFILE_EXTENSIONS: readonly string[] = ["-builtin:codemode"];
+/**
+ * Built-in extension policy every install carries. choco-pi keeps its own
+ * `exec` code-mode bridge and registers its own `tool_search`, so Pi's
+ * built-in `codemode` and `tool-search` stay off; with `tool-search` left on,
+ * Pi would omit it anyway but report the replacement at every startup.
+ */
+export const DEFAULT_PROFILE_EXTENSIONS: readonly string[] = [
+  "-builtin:codemode",
+  "-builtin:tool-search",
+];
+
+/**
+ * `extensions` with the profile's built-in policy enforced: entries for the
+ * same built-ins are replaced, everything else keeps its place.
+ */
+function withProfileExtensionPolicy(extensions: readonly string[] | undefined): string[] {
+  const policyNames = new Set(DEFAULT_PROFILE_EXTENSIONS.map(builtinOverrideName));
+  return [
+    ...(extensions ?? []).filter((entry) => !policyNames.has(builtinOverrideName(entry))),
+    ...DEFAULT_PROFILE_EXTENSIONS,
+  ];
+}
 
 /**
  * Model scope (`/scoped-models`) a clean install starts from: the
@@ -650,6 +670,8 @@ async function readProfileSettings(
   return {
     ...existingSettings,
     packages,
+    // A reinstall picks up built-in policy the profile added since.
+    extensions: withProfileExtensionPolicy(existingSettings.extensions),
     modelThinkingLevels: { ...DEFAULT_PROFILE_MODEL_THINKING_LEVELS },
   };
 }

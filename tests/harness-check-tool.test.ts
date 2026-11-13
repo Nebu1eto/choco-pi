@@ -21,20 +21,24 @@ const report: HarnessReport = {
   checks: [],
 };
 
-test("active tools require built-in search provenance and expose custom adapters", () => {
+test("active tools require choco-pi tool_search provenance and expose custom adapters", () => {
   const entry = (name: string, path: string) => ({ name, sourceInfo: { path } });
   assert.deepEqual(
     activeHostTools([
-      entry("tool_search", "builtin:tool-search"),
+      entry("tool_search", "/repo/.pi/extensions/tool-search.ts"),
       entry("mcp", "/custom/adapter.ts"),
       entry("mcpScript", "/custom/adapter.ts"),
     ]),
-    { builtinToolSearch: true, adapterTools: ["mcp", "mcpScript"] },
+    { chocoToolSearch: true, adapterTools: ["mcp", "mcpScript"] },
   );
   assert.equal(
-    activeHostTools([entry("tool_search", "/custom/search.ts")]).builtinToolSearch,
-    false,
+    activeHostTools([entry("tool_search", "<inline:subagent-tool-search>")]).chocoToolSearch,
+    true,
+    "a child's scoped search counts",
   );
+  for (const path of ["builtin:tool-search", "/custom/search.ts", "<inline:other-search>"]) {
+    assert.equal(activeHostTools([entry("tool_search", path)]).chocoToolSearch, false, path);
+  }
 });
 
 function dependencies(): HarnessCheckExecutionDependencies {
@@ -225,11 +229,11 @@ test("in-host observation of built-in extensions reaches the readiness check", a
   const deps = dependencies();
   let observed: readonly string[] | undefined;
   deps.observeBuiltinExtensions = () => ["codemode"];
-  deps.observeActiveHostTools = () => ({ builtinToolSearch: true, adapterTools: ["mcpScript"] });
+  deps.observeActiveHostTools = () => ({ chocoToolSearch: true, adapterTools: ["mcpScript"] });
   deps.check = async (options) => {
     observed = options.loadedBuiltinExtensions;
     assert.deepEqual(options.activeHostTools, {
-      builtinToolSearch: true,
+      chocoToolSearch: true,
       adapterTools: ["mcpScript"],
     });
     return report;
@@ -254,7 +258,8 @@ test("built-in extensions are identified by their builtin source path", () => {
       entry("builtin:llama.cpp"),
       entry("/repo/.pi/extensions/tool-search.ts"),
       entry("builtin:mcp"),
+      entry("builtin:tool-search"),
     ]),
-    ["codemode"],
+    ["codemode", "tool-search"],
   );
 });

@@ -173,3 +173,19 @@ test("bridged catalog is sorted and renders one bounded summary per line", () =>
     /\ndiagnostics_report: Review current diagnostics across every edited file before…\nmodule_report: Describe a module\.\nsession_send: Send a message to another session\.\nunknown: Deferred Pi tool/,
   );
 });
+
+test("the prompt says Code Mode has no read or grep tool, and names tool_search only when present", () => {
+  const without = buildCodeModeToolsPrompt([tool("exec_command"), tool("module_report", true)]);
+  assert.match(without, /^Code Mode has no read or grep tool\.$/m);
+  assert.doesNotMatch(without, /tool_search finds/);
+  const withSearch = buildCodeModeToolsPrompt([tool("exec_command"), tool("tool_search", true)]);
+  assert.match(
+    withSearch,
+    /^Code Mode has no read or grep tool\. tool_search finds Pi tools callable as tools\.<name>\.$/m,
+  );
+  assert.equal(
+    buildCodeModeToolsPrompt([tool("exec_command"), tool("tool_search", true)]),
+    withSearch,
+    "byte-identical for the same tools",
+  );
+});

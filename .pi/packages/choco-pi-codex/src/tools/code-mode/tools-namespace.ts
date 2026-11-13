@@ -1,3 +1,8 @@
+/**
+ * Guard for `tools.<name>` lookups that name no tool in the cell. Suggestions
+ * compare names ignoring case and separators (`SymbolSearch` finds
+ * `symbol_search`), then by edit distance, then by containment, nearest first.
+ */
 export function unavailableToolsGuardPreamble(
   toolNames: readonly string[],
   outsideToolNames: readonly string[] = [],
@@ -15,11 +20,13 @@ export function unavailableToolsGuardPreamble(
   return [
     "globalThis.tools=((__codeModeTools,__directPiTools,__directOnlyTools)=>{",
     "const __toolDistance=(a,b)=>{let p=Array.from({length:b.length+1},(_,i)=>i);for(let i=1;i<=a.length;i++){let c=[i];for(let j=1;j<=b.length;j++)c[j]=Math.min(c[j-1]+1,p[j]+1,p[j-1]+(a[i-1]===b[j-1]?0:1));p=c;}return p[b.length];};",
+    "const __toolKey=s=>s.toLowerCase().replace(/[^a-z0-9]/g,'');",
+    "const __toolRank=(a,b)=>{const x=__toolKey(a),y=__toolKey(b),t=Math.max(2,Math.floor(x.length/3)),d=__toolDistance(x,y);return d<=t?d:x.length>=4&&y.includes(x)?t+1:-1;};",
     "return new Proxy(globalThis.tools,{",
     "get(target,property,receiver){",
     'if(typeof property==="string"&&!Reflect.has(target,property)){',
     "if(__directOnlyTools.includes(property))throw new Error('Code mode tool error [unavailable_tool]: tools.'+property+' is direct-only; call it natively outside exec.');",
-    "const suggestions=[...new Set([...__codeModeTools,...__directPiTools])].filter(name=>name!==property).map(name=>({name,d:__toolDistance(property,name)})).filter(({d})=>d<=Math.max(2,Math.floor(property.length/3))).sort((a,b)=>a.d-b.d||a.name.localeCompare(b.name)).slice(0,3).map(({name})=>name+(__directPiTools.includes(name)&&!__codeModeTools.includes(name)?' (direct Pi tool only)':''));",
+    "const suggestions=[...new Set([...__codeModeTools,...__directPiTools])].filter(name=>name!==property).map(name=>({name,d:__toolRank(property,name)})).filter(({d})=>d>=0).sort((a,b)=>a.d-b.d||a.name.localeCompare(b.name)).slice(0,3).map(({name})=>name+(__directPiTools.includes(name)&&!__codeModeTools.includes(name)?' (direct Pi tool only)':''));",
     "const direct=__directPiTools.includes(property);",
     "throw new Error('Code mode tool error [unavailable_tool]: tools.'+property+' is not available in this cell. Close matches: '+(suggestions.join(', ')||'(none)')+'. See ALL_TOOLS for the full catalog. Outside code mode: '+(direct?'yes — '+property+' is registered as a direct Pi tool; call it directly outside exec when active':'no — it is not registered as a direct Pi tool either')+'.');",
     "}",

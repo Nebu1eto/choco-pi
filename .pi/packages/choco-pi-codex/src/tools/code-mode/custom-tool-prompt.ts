@@ -3,6 +3,8 @@ import type {
   CodeModeToolMetadata,
   CustomToolDefinition,
 } from "./types.ts";
+import { isBoundaryValue } from "../../adapter/runtime-values.ts";
+import { toolCallSignature } from "./tool-signature.ts";
 
 export const CODE_MODE_DEFAULT_ROUTING =
   "Use code mode by default for bounded tool workflows; use one exec block per coherent step, not one wrapper per call";
@@ -33,6 +35,8 @@ const CUSTOM_TOOLS_GUIDANCE = "Prefer custom tools for command-backed capabiliti
 const CODE_MODE_PROMPT_START = "<code_mode_tools>";
 const CODE_MODE_PROMPT_END = "</code_mode_tools>";
 const BRIDGED_SUMMARY_WORD_LIMIT = 8;
+const CODE_MODE_NO_FILE_TOOLS = "Code Mode has no read or grep tool.";
+const CODE_MODE_TOOL_SEARCH = "tool_search finds Pi tools callable as tools.<name>.";
 const CODE_MODE_ROUTING_GUIDANCE = `Composition: ${CODE_MODE_DEFAULT_ROUTING}.
 Parallelize only independent calls; sequence dependent work. Preserve Promise.allSettled failures instead of hiding them.
 ${CODE_MODE_DIRECT_EXCEPTIONS}. Inspect one unfamiliar schema in ALL_TOOLS; never dump the catalog.
@@ -41,8 +45,13 @@ Long commands: keep the default yield_time_ms, resume the returned session_id wi
 ${CODE_MODE_RUNTIME_CONTRACTS}`;
 
 function buildCapabilityGuidance(tools: CodeModeToolDefinition[]): string {
-  if (!tools.some((tool) => tool.name === "read_text")) return CODE_MODE_ROUTING_GUIDANCE;
-  return `${CODE_MODE_ROUTING_GUIDANCE}\nread_text reads observed UI text by reference; it is not a filesystem reader. Read files with an available exec_command or a direct read outside code mode, as capabilities permit.`;
+  const names = new Set(tools.map((tool) => tool.name));
+  const discovery = names.has("tool_search")
+    ? `${CODE_MODE_NO_FILE_TOOLS} ${CODE_MODE_TOOL_SEARCH}`
+    : CODE_MODE_NO_FILE_TOOLS;
+  const guidance = `${CODE_MODE_ROUTING_GUIDANCE}\n${discovery}`;
+  if (!names.has("read_text")) return guidance;
+  return `${guidance}\nread_text reads observed UI text by reference; it is not a filesystem reader. Read files with an available exec_command or a direct read outside code mode, as capabilities permit.`;
 }
 
 const READ_ONLY_EXAMPLES = new Map<string, string>([
@@ -90,6 +99,16 @@ function isConfiguredCustomTool(tool: CodeModeToolDefinition): tool is CustomToo
   return "command" in tool;
 }
 
+/**
+ * `name({a, b?})` from a bridged tool's input schema (required names then `…` past six
+ * properties), or the bare name when the schema is opaque.
+ */
+function bridgedToolCall(tool: CodeModeToolDefinition): string {
+  if (isConfiguredCustomTool(tool)) return tool.name;
+  const schema = isBoundaryValue(tool.inputSchema) ? tool.inputSchema : undefined;
+  return toolCallSignature(tool.name, schema, true) ?? tool.name;
+}
+
 export function formatCodeModeToolHelp(tool: CodeModeToolMetadata): string {
   return [
     `Usage: ${tool.usage}`,
@@ -130,7 +149,7 @@ export function buildBridgedToolsLine(tools: CodeModeToolDefinition[]): string {
         words.length > BRIDGED_SUMMARY_WORD_LIMIT
           ? `${words.slice(0, BRIDGED_SUMMARY_WORD_LIMIT).join(" ")}…`
           : words.join(" ");
-      return `${tool.name}: ${boundedSummary}`;
+      return `${bridgedToolCall(tool)}: ${boundedSummary}`;
     })
     .join("\n")}`;
 }

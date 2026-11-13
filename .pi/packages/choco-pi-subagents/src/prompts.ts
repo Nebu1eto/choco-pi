@@ -4,16 +4,74 @@
 
 import type { AgentConfig, EnvInfo } from "./types.ts";
 
+/** Tools a read-only side conversation may use; mirrors agent-runner's static allowlist. */
+export const READ_ONLY_SIDE_CONVERSATION_TOOLS = ["read", "find", "ls"] as const;
+
 /** Capability restriction shared by BTW twins and legacy read-only agents. */
 const READ_ONLY_SIDE_CONVERSATION_BLOCK = `<read_only_side_conversation>
 You are answering a parallel side conversation owned by the main orchestrator.
 Use the inherited conversation only as context. Do not edit files, run commands, delegate work, or alter the main conversation.
-You may inspect the project with read, grep, find, and ls when needed, then answer the user's question directly.
+You may inspect the project with read, find, and ls when needed, then answer the user's question directly.
 </read_only_side_conversation>`;
 
 /** Preserve the main agent identity while adding the BTW capability restriction. */
 export function buildReadOnlySideConversationPrompt(parentSystemPrompt: string): string {
   return `${parentSystemPrompt}\n\n${READ_ONLY_SIDE_CONVERSATION_BLOCK}`;
+}
+
+/**
+ * The tools a child can actually call, which the sub-agent guidance names.
+ * `codeMode` is true when Code Mode's `exec` is active; `tools` then also
+ * holds the tools callable inside `exec`.
+ */
+export interface ToolSurface {
+  codeMode: boolean;
+  tools: readonly string[];
+}
+
+/** The surface assumed when a caller supplies none: Pi's default file tools. */
+const DEFAULT_TOOL_SURFACE: ToolSurface = {
+  codeMode: false,
+  tools: ["read", "bash", "edit", "write", "find", "ls"],
+};
+
+/** Lines naming file tools, in a fixed order so equal surfaces give byte-identical text. */
+const NORMAL_TOOL_LINES: ReadonlyArray<readonly [string, string]> = [
+  ["read", "Use the read tool instead of cat/head/tail"],
+  ["edit", "Use the edit tool instead of sed/awk"],
+  ["write", "Use the write tool instead of echo/heredoc"],
+  ["find", "Use the find tool instead of bash find/ls for file search"],
+  ["grep", "Use the grep tool instead of bash grep/rg for content search"],
+];
+
+/**
+ * Tool guidance for the sub-agent block. It names only tools in `surface`, and
+ * the same mode and tool set always give the same text, because the block sits
+ * in the cached prompt prefix.
+ */
+export function buildToolGuidance(surface: ToolSurface): string[] {
+  const has = new Set(surface.tools);
+  const lines: string[] = [];
+  if (surface.codeMode) {
+    lines.push(
+      has.has("exec_command")
+        ? "Code Mode has no read or grep tool: read and search files with tools.exec_command (rg, sed -n) inside exec"
+        : "Code Mode has no read or grep tool",
+    );
+    if (has.has("apply_patch")) lines.push("Edit files with tools.apply_patch inside exec");
+    lines.push(
+      has.has("tool_search")
+        ? "Call Pi tools as tools.<name> inside exec; the exec description lists them and tool_search finds the rest"
+        : "Call Pi tools as tools.<name> inside exec; the exec description lists them",
+    );
+    return lines;
+  }
+  for (const [name, line] of NORMAL_TOOL_LINES) if (has.has(name)) lines.push(line);
+  if (has.has("exec_command") && !has.has("read"))
+    lines.push("Read and search files with exec_command (rg, sed -n)");
+  if (has.has("apply_patch") && !has.has("edit")) lines.push("Edit files with apply_patch");
+  if (has.has("tool_search")) lines.push("Use tool_search to find tools that are not loaded yet");
+  return lines;
 }
 
 /** Extra sections to inject into the system prompt (memory, skills, etc.). */
@@ -32,6 +90,8 @@ export interface PromptExtras {
   readOnly?: boolean;
   /** Line naming the lineage's scratch directory; added to the environment block. */
   scratchLine?: string;
+  /** The child's callable tools, for the append-mode guidance; Pi's defaults when absent. */
+  toolSurface?: ToolSurface;
 }
 
 /**
@@ -93,15 +153,13 @@ Work only inside it — never in ${extras.worktreeBase}, even if other instructi
 
   if (config.promptMode === "append") {
     const identity = parentSystemPrompt || genericBase;
+    const toolLines = buildToolGuidance(extras?.toolSurface ?? DEFAULT_TOOL_SURFACE)
+      .map((line) => `- ${line}\n`)
+      .join("");
 
     const bridge = `<sub_agent_context>
 You are operating as a sub-agent invoked to handle a specific task.
-- Use the read tool instead of cat/head/tail
-- Use the edit tool instead of sed/awk
-- Use the write tool instead of echo/heredoc
-- Use the find tool instead of bash find/ls for file search
-- Use the grep tool instead of bash grep/rg for content search
-- Make independent tool calls in parallel
+${toolLines}- Make independent tool calls in parallel
 - Use absolute file paths
 - Do not use emojis
 - Be concise but complete

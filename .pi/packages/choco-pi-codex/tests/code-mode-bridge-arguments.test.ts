@@ -405,3 +405,51 @@ test("object-union failures name the discriminator and its accepted values once"
     },
   );
 });
+
+test("a guessed argument name is mapped to its declared name and the signature is shown", async () => {
+  let executions = 0;
+  const tool = bridge({
+    name: "diagnostic_mark",
+    label: "diagnostic_mark",
+    description: "Record a disposition for a diagnostics_report finding.",
+    parameters: hostParams(
+      obj(
+        {
+          file_path: str(),
+          line: num(),
+          message: str(),
+          disposition: union([
+            lit("false-positive"),
+            lit("suppress"),
+            lit("defer"),
+            lit("flagged"),
+          ]),
+          reason: opt(str()),
+        },
+        { open: true },
+      ),
+    ),
+    async execute() {
+      executions += 1;
+      return success("unexpected");
+    },
+  });
+
+  await assert.rejects(
+    tool.invoke(
+      { path: "src/a.ts", line: 3, disposition: "false_positive", reason: "ok" },
+      context,
+      new AbortController().signal,
+    ),
+    (error: Error) => {
+      assert.match(error.message, /\[invalid_arguments\]/);
+      assert.match(error.message, /Unknown keys: path → file_path\./);
+      assert.match(
+        error.message,
+        /Expected: tools\.diagnostic_mark\(\{file_path, line, message, disposition:"false-positive"\|"suppress"\|"defer"\|"flagged", reason\?\}\)\./,
+      );
+      return true;
+    },
+  );
+  assert.equal(executions, 0);
+});

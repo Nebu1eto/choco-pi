@@ -1308,3 +1308,20 @@ Daybreak no longer reads `response.completed.access_programs`, matching upstream
 - `stream-events.ts`, `websocket-stream.ts`, `native-steering.ts`: removed the completion observer and the echo-authority and ignored-echo plumbing. `cyber_policy` is unchanged: it stays a fatal, non-retryable `CodexApiError` that surfaces to the user and leaves the Daybreak toggle and outcome alone.
 - The toggle is the request; availability is re-resolved per request from the selected model's catalog entry, so switching to a model without Daybreak and back resumes it without another toggle.
 - Tests: `tests/daybreak-decision.test.ts` asserts that any echo (standard, other program, absent, malformed, incomplete, steered) leaves the outcome, the caches, and the next request's program unchanged, and covers the model switch away and back.
+
+## 2026-11-12 choco-pi patch: tool_search inside exec and exact-name suggestions
+
+- `src/tools/code-mode/registered-tool-bridge.ts`: `tool_search` is no longer in `BRIDGE_EXCLUDED_TOOLS`. choco-pi's own `tool_search` (`.pi/extensions/lib/tool-search-tool.ts`) replaces Pi's built-in and is a pure lookup while `exec` is active, so `tools.tool_search({query})` returns `{mode, tools: [{name, description, call}], loaded: [], output}` without changing the active tools. The direct-only remainder of the exclusion list is mirrored by `EXEC_DIRECT_ONLY_TOOL_NAMES` there; `tests/codex-code-mode-bridge.test.ts` keeps the two equal.
+- `src/tools/code-mode/tools-namespace.ts` (runtime `unavailable_tool` guard) and `src/tools/code-mode/source-preflight.ts` (`unknown_tool`): close matches compare names lowercased with separators removed, then by edit distance, then by containment, so `tools.SYMBOLSEARCH` suggests `symbol_search` first. Message format is unchanged.
+- `src/tools/code-mode/custom-tool-prompt.ts`: the `<code_mode_tools>` block adds "Code Mode has no read or grep tool." and, when `tool_search` is among the exec tools, "tool_search finds Pi tools callable as tools.<name>."
+- Tests: `tests/codex-code-mode-bridge.test.ts`, `tests/code-mode-tools-guard.test.ts`, `tests/code-mode-preflight.test.ts`, `tests/code-mode-guidance.test.ts`.
+
+## 2026-11-13 choco-pi patch: bridged tool signatures in the exec list and argument errors
+
+A model guessed `tools.diagnostic_mark({path, line, disposition: "false_positive", reason})` twice because the "Pi tools callable in exec" list showed only names and summaries, and the `invalid_arguments` error named missing fields but not the unknown key.
+
+- `src/tools/code-mode/tool-signature.ts` (new): renders a schema's top-level parameters as `{a, b?, mode:"x"|"y"}`, spelling out an enum or literal union only when it has at most 4 values of at most 20 characters each. It also maps each undeclared input key to the nearest declared key the input left out (`path → file_path`). Signatures are memoized per schema object.
+- `src/tools/code-mode/custom-tool-prompt.ts`: each bridged line is `name({…}): summary` (`name(): summary` without parameters; the bare name for an opaque schema), sorted as before. A tool with more than 6 properties shows its required properties and then `…`. For the 55 bridged tools in a choco-pi session this adds about 1.7 KB to the list; uncapped signatures would add about 4.5 KB.
+- `src/adapter/code-mode/nested-tool-adapter.ts`: for session-dispatched (bridged) tools, the `invalid_arguments` error appends `Unknown keys: path → file_path.` and `Expected: tools.<name>({…}).` with the full, uncapped signature. Errors for natively wrapped tools are unchanged.
+- `.pi/extensions/lib/tool-search-tool.ts` (root): a Code Mode result's `call` is `tools.<name>({…}) inside exec`, using the full signature. Tools code mode ships natively under another name (`web_run`) and tools whose schema has no property map keep `(...)`.
+- Tests: `tests/code-mode-bridge-arguments.test.ts`; root `tests/codex-code-mode-bridge.test.ts` and `tests/tool-search.test.ts` expect the new line and call formats.

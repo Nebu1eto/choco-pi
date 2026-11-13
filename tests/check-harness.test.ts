@@ -374,27 +374,35 @@ test("checks never read credential files", async () => {
   );
 });
 
-test("built-in policy keeps codemode disabled and tool search and MCP enabled", async () => {
+test("built-in policy keeps codemode and tool search disabled and MCP enabled", async () => {
   const noneLoaded: string[] = [];
   const cases = [
     {
-      extensions: ["-builtin:codemode"],
-      loaded: noneLoaded,
-      status: "pass",
-      detail: /project settings disable builtin:codemode and enable built-in tool search and MCP/,
-    },
-    {
       extensions: ["-builtin:codemode", "-builtin:tool-search"],
       loaded: noneLoaded,
+      status: "pass",
+      detail:
+        /project settings disable builtin:codemode and builtin:tool-search and enable built-in MCP/,
+    },
+    {
+      // The pre-change profile: Pi's built-in tool_search would be replaced with a startup warning.
+      extensions: ["-builtin:codemode"],
+      loaded: noneLoaded,
       status: "warn",
-      detail: /must not exclude builtin:tool-search/,
+      detail: /does not disable builtin:tool-search/,
     },
     {
       // Pi applies project entries in order, so a later + re-enables the built-in.
-      extensions: ["-builtin:codemode", "-builtin:tool-search", "-builtin:mcp", "+builtin:mcp"],
+      extensions: [
+        "-builtin:codemode",
+        "-builtin:tool-search",
+        "+builtin:tool-search",
+        "-builtin:mcp",
+      ],
       loaded: noneLoaded,
       status: "warn",
-      detail: /must not exclude builtin:tool-search, builtin:mcp/,
+      detail:
+        /does not disable builtin:tool-search; settings\.extensions must not exclude builtin:mcp/,
     },
     {
       extensions: ["!builtin:codemode"],
@@ -415,7 +423,7 @@ test("built-in policy keeps codemode disabled and tool search and MCP enabled", 
       detail: /does not disable builtin:codemode/,
     },
     {
-      extensions: ["-builtin:codemode"],
+      extensions: ["-builtin:codemode", "-builtin:tool-search"],
       loaded: ["codemode"],
       status: "warn",
       detail: /active host registered tools or commands from builtin:codemode/,
@@ -450,7 +458,7 @@ test("standalone built-in extension check states that no host was observed", asy
       if (target === path.join(root, "settings.json")) {
         return JSON.stringify({
           packages: [],
-          extensions: ["-builtin:codemode"],
+          extensions: ["-builtin:codemode", "-builtin:tool-search"],
         });
       }
       throw new Error(`missing fixture: ${target}`);
@@ -462,23 +470,24 @@ test("standalone built-in extension check states that no host was observed", asy
   assert.match(check?.detail ?? "", /active host not observed/);
 });
 
-test("active host must register built-in tool search without custom MCP adapters", async () => {
+test("active host must register choco-pi tool_search without custom MCP adapters", async () => {
   for (const tools of [
-    { builtinToolSearch: true, adapterTools: [] },
-    { builtinToolSearch: false, adapterTools: [] },
-    { builtinToolSearch: true, adapterTools: ["mcp", "mcpScript"] },
+    { chocoToolSearch: true, adapterTools: [] },
+    { chocoToolSearch: false, adapterTools: [] },
+    { chocoToolSearch: true, adapterTools: ["mcp", "mcpScript"] },
   ]) {
     const { options } = fixture({
       activeHostTools: tools,
       loadedBuiltinExtensions: [],
-      readText: async () => JSON.stringify({ packages: [], extensions: ["-builtin:codemode"] }),
+      readText: async () =>
+        JSON.stringify({ packages: [], extensions: ["-builtin:codemode", "-builtin:tool-search"] }),
     });
     const result = (await checkHarness(options)).checks.find(
       (check) => check.id === "builtin-extensions",
     );
     assert.equal(
       result?.status,
-      tools.builtinToolSearch && tools.adapterTools.length === 0 ? "pass" : "warn",
+      tools.chocoToolSearch && tools.adapterTools.length === 0 ? "pass" : "warn",
     );
   }
 });
@@ -499,7 +508,7 @@ test("without project settings, the agent settings supply the profile policy", a
   // As an install leaves them: bundled packages by absolute path, plus the user's own.
   await write({
     packages: [path.join(configRoot, "packages", "choco-pi-lsp"), "npm:user-package@1.0.0"],
-    extensions: [path.join(configRoot, "extensions"), "-builtin:codemode"],
+    extensions: [path.join(configRoot, "extensions"), "-builtin:codemode", "-builtin:tool-search"],
     tuiMode: "fullscreen",
   });
   assert.equal((await status("settings"))?.status, "pass");

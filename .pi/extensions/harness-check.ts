@@ -92,12 +92,22 @@ export type HarnessCheckExecutionDependencies = {
 
 type SourcedEntry = { name?: string; sourceInfo: { path: string } };
 
+/**
+ * Whether a source path registers choco-pi's `tool_search`: the root `tool-search.ts`
+ * extension, or the scoped search choco-pi-subagents adds to an extension-enabled child
+ * as the inline extension `subagent-tool-search` (the root extension skips children).
+ */
+function isChocoToolSearchSource(sourcePath: string): boolean {
+  if (sourcePath === "<inline:subagent-tool-search>") return true;
+  return sourcePath.replaceAll("\\", "/").endsWith("/extensions/tool-search.ts");
+}
+
 export function activeHostTools(
   entries: readonly SourcedEntry[],
 ): NonNullable<HarnessOptions["activeHostTools"]> {
   return {
-    builtinToolSearch: entries.some(
-      (entry) => entry.name === "tool_search" && entry.sourceInfo.path === "builtin:tool-search",
+    chocoToolSearch: entries.some(
+      (entry) => entry.name === "tool_search" && isChocoToolSearchSource(entry.sourceInfo.path),
     ),
     adapterTools: entries.flatMap((entry) =>
       entry.name === "mcp" || entry.name === "mcpScript" ? [entry.name] : [],

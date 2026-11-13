@@ -383,3 +383,10 @@ test("applier failures add anchored stale-context ranges and exact re-read windo
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("preflight close matches ignore case and separators", () => {
+  const message = messageFromThrown(() =>
+    preflightCodeModeSource("await tools.EXEC_COMMAND({cmd: 'ls'});", RESTRICTED),
+  );
+  assert.match(message, /Close matches: exec_command[,.]/);
+});

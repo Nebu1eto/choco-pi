@@ -23,6 +23,10 @@ import {
 import { buildBridgedToolsLine } from "../.pi/packages/choco-pi-codex/src/tools/code-mode/custom-tool-prompt.ts";
 import { scopeAllToolsToDeferredCustom } from "../.pi/packages/choco-pi-codex/src/tools/code-mode/tool-source.ts";
 import type { CodeModeToolDefinition } from "../.pi/packages/choco-pi-codex/src/tools/code-mode/types.ts";
+import {
+  createToolSearchToolDefinition,
+  EXEC_DIRECT_ONLY_TOOL_NAMES,
+} from "../.pi/extensions/lib/tool-search-tool.ts";
 
 function makeTool(name: string, parameters: JsonSchema, promptSnippet?: string): ToolDefinition {
   return {
@@ -99,6 +103,37 @@ test("a cold capture yields no bridged tools instead of throwing", () => {
   assert.deepEqual(collectBridgedTools(undefined), []);
 });
 
+test("tool_search is callable inside exec as tools.tool_search", () => {
+  const search = createToolSearchToolDefinition({
+    host: { getAllTools: () => [], getActiveTools: () => [], setActiveTools: () => {} },
+  });
+  assert.equal(BRIDGE_EXCLUDED_TOOLS.has("tool_search"), false);
+  // The registered schema, under a test executor.
+  const registered = { ...makeTool(search.name, obj({})), parameters: search.parameters };
+  const [bridged] = collectBridgedTools(makeRunner([registered]));
+  assert.equal(bridged?.name, "tool_search");
+  assert.equal(bridged?.usage, "await tools.tool_search({query, limit?})");
+});
+
+test("tool_search's direct-only list matches the bridge's non-native exclusions", () => {
+  // Code mode entry points and the tools it ships natively are callable inside exec.
+  const native = new Set([
+    "exec",
+    "wait",
+    "apply_patch",
+    "exec_command",
+    "write_stdin",
+    "view_image",
+    "web__run",
+    "web_run",
+    "image_gen__imagegen",
+  ]);
+  assert.deepEqual(
+    [...BRIDGE_EXCLUDED_TOOLS].filter((name) => !native.has(name)).sort(),
+    [...EXEC_DIRECT_ONLY_TOOL_NAMES].sort(),
+  );
+});
+
 test("the prompt catalogs bridged tools with deterministic summaries", () => {
   const bridged = collectBridgedTools(
     makeRunner([
@@ -112,7 +147,7 @@ test("the prompt catalogs bridged tools with deterministic summaries", () => {
   assert.match(line, /ALL_TOOLS/);
   assert.match(
     line,
-    /lsp_diagnostics: lsp_diagnostics description\nsession_send: session_send description/,
+    /lsp_diagnostics\(\{path\?\}\): lsp_diagnostics description\nsession_send\(\{session_id\}\): session_send description/,
   );
 
   assert.equal(buildBridgedToolsLine([]), "", "no line without bridged tools");

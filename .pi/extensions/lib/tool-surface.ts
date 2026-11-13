@@ -2,15 +2,15 @@
  * choco-pi's tool-surface policy, shared by the root lean-surface extension and
  * the SDK sessions choco-pi creates itself.
  *
- * Discovery belongs to Pi's built-in `tool_search` (`builtin:tool-search`):
- * it searches `deferred` and `codemode` tools and loads the matches as
+ * Discovery belongs to choco-pi's `tool_search` (tool-search-tool.ts), which
+ * replaces Pi's built-in: outside Code Mode it loads matching inactive tools as
  * additive tool changes, which Pi anchors in the transcript instead of
- * rewriting the cached request prefix on providers that support it. This
- * module only decides which tools are declared without a search, and makes
- * sure `tool_search` itself is one of them.
+ * rewriting the cached request prefix on providers that support it; in Code
+ * Mode it only lists the tools callable inside `exec`. This module decides
+ * which tools are declared without a search, and makes sure `tool_search`
+ * itself is one of them.
  */
 import {
-  createToolSearchExtension,
   DefaultResourceLoader,
   getAgentDir,
   type ExtensionAPI,
@@ -18,8 +18,9 @@ import {
   SettingsManager,
   type ToolExposure,
 } from "@earendil-works/pi-coding-agent";
+import { createToolSearchToolDefinition } from "./tool-search-tool.ts";
 
-/** Name of Pi's built-in discovery tool. */
+/** Name of the discovery tool. */
 export const TOOL_SEARCH_TOOL_NAME = "tool_search";
 
 // Keep the minimum execution, orchestration, and discovery path available
@@ -115,22 +116,22 @@ export function activateToolSearch(pi: ToolActivationHost): boolean {
 }
 
 /**
- * Pi's built-in `tool_search` for an SDK session choco-pi creates.
+ * choco-pi's `tool_search` for an SDK session choco-pi creates.
  *
- * SDK sessions do not load the CLI's built-in extensions, so this supplies the
- * same `builtin:tool-search` resource: like the CLI's, it honors
- * `-builtin:tool-search` in settings and `noExtensions`, and an extension that
- * registers its own `tool_search` replaces it. Pi registers the tool inactive;
- * this activates it at `session_start`, before the first request is built.
+ * SDK sessions do not load the CLI's built-in extensions. When the session also
+ * loads choco-pi's root extensions, their `tool-search.ts` registers the tool
+ * and owns the surface; this extension is replaceable, so Pi then leaves it out
+ * without a warning or a duplicate registration (only `builtin:` replacements
+ * are reported). It is not a `builtin:` resource, so the profile's
+ * `-builtin:tool-search` does not remove it. The tool registers inactive; this
+ * activates it at `session_start`, before the first request is built.
  */
 export function sessionToolSearchExtension(): InlineExtension {
-  const registerToolSearch = createToolSearchExtension();
   return {
-    name: "tool-search",
-    builtin: true,
+    name: "choco-tool-search",
     replaceable: true,
-    factory: async (pi) => {
-      await registerToolSearch(pi);
+    factory: (pi) => {
+      pi.registerTool(createToolSearchToolDefinition({ host: pi }));
       pi.on("session_start", () => {
         activateToolSearch(pi);
       });
@@ -139,8 +140,8 @@ export function sessionToolSearchExtension(): InlineExtension {
 }
 
 /**
- * The resource loader `createAgentSession` would build by default, plus Pi's
- * built-in `tool_search`. Used by every SDK session choco-pi starts with the
+ * The resource loader `createAgentSession` would build by default, plus
+ * choco-pi's `tool_search`. Used by every SDK session choco-pi starts with the
  * main harness (session bridge, review side chat), so deferred tools stay
  * discoverable from the first turn exactly as in the CLI session.
  *

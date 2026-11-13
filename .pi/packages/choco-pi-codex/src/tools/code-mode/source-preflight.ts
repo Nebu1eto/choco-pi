@@ -340,6 +340,21 @@ function isIdentifier(value: string | undefined): value is string {
   return Boolean(value && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(value));
 }
 
+/** Names compared ignoring case and separators, so `SymbolSearch` finds `symbol_search`. */
+function toolKey(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/** Rank of a candidate name for a requested one, nearest first; -1 when it is not close. */
+function toolRank(requested: string, name: string): number {
+  const wanted = toolKey(requested);
+  const candidate = toolKey(name);
+  const threshold = Math.max(2, Math.floor(wanted.length / 3));
+  const distance = levenshtein(wanted, candidate);
+  if (distance <= threshold) return distance;
+  return wanted.length >= 4 && candidate.includes(wanted) ? threshold + 1 : -1;
+}
+
 function closeMatches(
   requested: string,
   available: readonly string[],
@@ -348,8 +363,8 @@ function closeMatches(
   const candidates = new Set([...available, ...outside]);
   candidates.delete(requested);
   return [...candidates]
-    .map((name) => ({ name, distance: levenshtein(requested, name) }))
-    .filter(({ distance }) => distance <= Math.max(2, Math.floor(requested.length / 3)))
+    .map((name) => ({ name, distance: toolRank(requested, name) }))
+    .filter(({ distance }) => distance >= 0)
     .sort((left, right) => left.distance - right.distance || left.name.localeCompare(right.name))
     .slice(0, 3)
     .map(

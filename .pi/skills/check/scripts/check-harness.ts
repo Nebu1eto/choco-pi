@@ -35,8 +35,11 @@ type Check = { id: string; status: CheckStatus; detail: string };
 type Settings = { packages?: unknown; tuiMode?: unknown; extensions?: unknown };
 type SubagentsSettings = { disableDefaultAgents?: unknown; fallbackSubagent?: unknown };
 
-/** choco-pi keeps its exec bridge and uses Pi's built-in tool search and MCP. */
-export const DISABLED_BUILTIN_EXTENSIONS = ["codemode"] as const;
+/**
+ * choco-pi keeps its exec bridge and registers its own `tool_search`, so Pi's
+ * built-in `codemode` and `tool-search` stay off; it uses Pi's built-in MCP.
+ */
+export const DISABLED_BUILTIN_EXTENSIONS = ["codemode", "tool-search"] as const;
 
 /**
  * Whether the project `extensions` entries disable `builtin:<name>`. Pi applies
@@ -73,7 +76,7 @@ export type HarnessOptions = {
    */
   loadedBuiltinExtensions?: readonly string[];
   /** Tool names registered by the active host, with built-in tool search provenance. */
-  activeHostTools?: { builtinToolSearch: boolean; adapterTools: readonly string[] };
+  activeHostTools?: { chocoToolSearch: boolean; adapterTools: readonly string[] };
   readImportedRuntime?: () => Promise<RuntimeVersionObservation>;
   readText?: (target: string) => Promise<string>;
   pathExists?: (target: string) => Promise<boolean>;
@@ -347,7 +350,7 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
     const observedLoaded = (options.loadedBuiltinExtensions ?? []).filter((name) =>
       DISABLED_BUILTIN_EXTENSIONS.some((disabled) => disabled === name),
     );
-    const disabledReplacements = ["tool-search", "mcp"].filter((name) =>
+    const disabledReplacements = ["mcp"].filter((name) =>
       entries.some((entry) => entry === `-builtin:${name}` || entry === `!builtin:${name}`),
     );
     const findings = [
@@ -360,8 +363,8 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
       disabledReplacements.length
         ? `settings.extensions must not exclude ${disabledReplacements.map((name) => `builtin:${name}`).join(", ")}`
         : null,
-      options.activeHostTools !== undefined && !options.activeHostTools.builtinToolSearch
-        ? "active host has not registered built-in tool_search"
+      options.activeHostTools !== undefined && !options.activeHostTools.chocoToolSearch
+        ? "active host has not registered choco-pi's tool_search"
         : null,
       options.activeHostTools?.adapterTools.length
         ? `active host registered custom MCP adapter tools: ${options.activeHostTools.adapterTools.join(", ")}`
@@ -373,14 +376,14 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
     const hostEvidence =
       options.loadedBuiltinExtensions === undefined
         ? "active host not observed"
-        : "active host registers no built-in codemode tools or commands";
+        : "active host registers no built-in codemode or tool-search tools or commands";
     add(
       "builtin-extensions",
       findings.length ? "warn" : "pass",
       [
         findings.length
           ? findings.join("; ")
-          : `${settingsLabel} settings disable builtin:codemode and enable built-in tool search and MCP; ${hostEvidence}`,
+          : `${settingsLabel} settings disable builtin:codemode and builtin:tool-search and enable built-in MCP; ${hostEvidence}`,
         "Pi does not expose extension load warnings to extensions; check [Extension issues] at startup",
       ].join("; "),
     );

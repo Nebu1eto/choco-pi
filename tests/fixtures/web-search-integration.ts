@@ -12,7 +12,6 @@ import type {
 } from "@earendil-works/pi-ai";
 import {
   createEventBus,
-  createToolSearchExtension,
   DefaultResourceLoader,
   ExtensionRunner,
   ModelRegistry,
@@ -248,7 +247,6 @@ async function createHarness(
     { factory: codexSearchFactory(), name: "codex-search-registration" },
     { factory: browserSearchFactory(), name: "browser-search-registration" },
     { factory: legacySearchFactory, name: "late-legacy-discovery-fixture" },
-    { factory: createToolSearchExtension(), name: "builtin-tool-search" },
     { factory: deferredResearchFactory, name: "deferred-research-fixture" },
   );
   const settingsManager = SettingsManager.inMemory();
@@ -399,7 +397,8 @@ async function createHarness(
   };
   runner.bindCore(actions, contextActions);
   // Pi activates registered direct tools by default; deferred, codemode, and
-  // inactive-by-default tools (the built-in tool_search) start inactive.
+  // inactive-by-default tools start inactive. The profile disables Pi's built-in
+  // tool_search (-builtin:tool-search); choco-pi's tool-search.ts supplies it.
   activeTools = runner
     .getAllRegisteredTools()
     .filter(
@@ -429,7 +428,7 @@ async function createHarness(
     runner.getActiveTools().filter((name) => LEGACY_SEARCH_NAME_SET.has(name)),
     [],
   );
-  assert.ok(runner.getActiveTools().includes("tool_search"), "built-in tool_search is declared");
+  assert.ok(runner.getActiveTools().includes("tool_search"), "choco-pi tool_search is declared");
   assert.ok(!runner.getActiveTools().includes(DEFERRED_RESEARCH_TOOL));
   return {
     runner,
@@ -598,9 +597,8 @@ for (const harness of [anthropic, synthetic]) {
     limit: 5,
   });
   const discoveryText = JSON.stringify(discovery);
-  // Pi's built-in tool_search loads deferred tools only; the canonical
-  // web_search stays a direct tool reached through the exec bridge catalog,
-  // and legacy names never surface.
+  // Outside Code Mode, choco-pi's tool_search loads the matching deferred tool;
+  // legacy search names never surface.
   assert.match(discoveryText, new RegExp(DEFERRED_RESEARCH_TOOL));
   assert.ok(harness.runner.getActiveTools().includes(DEFERRED_RESEARCH_TOOL));
   for (const legacyName of LEGACY_SEARCH_NAMES) {

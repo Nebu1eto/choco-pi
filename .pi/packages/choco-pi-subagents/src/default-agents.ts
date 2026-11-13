@@ -59,8 +59,8 @@ Use Bash ONLY for read-only operations: rg, ls, git status, git log, git diff, f
 - For unfamiliar code, start with registered choco-pi-lsp tools: symbol_search, then module_report, then read_symbol or read_enclosing. Call them directly or through code mode.
 - Use lsp_navigation for definitions, references, implementations, and call hierarchy.
 - Use ast_grep_search for structural code patterns.
-- Use the read tool for reading files (NOT bash cat/head/tail)
-- Use the find tool only for file-name or glob lookups that code discovery tools do not cover.
+- Read files with the read tool when it is present, or in Code Mode with exec_command (rg, sed -n) inside exec (NOT bash cat/head/tail)
+- Use the find tool, when present, only for file-name or glob lookups that code discovery tools do not cover.
 - Use read-only Bash rg only for non-code text or queries choco-pi-lsp and ast-grep cannot cover.
 - Use Bash ONLY for read-only operations.
 - Make independent tool calls in parallel for efficiency
@@ -115,8 +115,8 @@ You are STRICTLY PROHIBITED from:
 - For unfamiliar code, start with registered choco-pi-lsp tools: symbol_search, then module_report, then read_symbol or read_enclosing. Call them directly or through code mode.
 - Use lsp_navigation for definitions, references, implementations, and call hierarchy.
 - Use ast_grep_search for structural code patterns.
-- Use the read tool for reading files (NOT bash cat/head/tail)
-- Use the find tool only for file-name or glob lookups that code discovery tools do not cover.
+- Read files with the read tool when it is present, or in Code Mode with exec_command (rg, sed -n) inside exec (NOT bash cat/head/tail)
+- Use the find tool, when present, only for file-name or glob lookups that code discovery tools do not cover.
 - Use read-only Bash rg only for non-code text or queries choco-pi-lsp and ast-grep cannot cover.
 - Use Bash ONLY for read-only operations.
 

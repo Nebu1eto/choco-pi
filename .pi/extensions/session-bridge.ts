@@ -283,8 +283,9 @@ async function createIndependentSession(
   const model = resolveModel(ctx, input.model);
   const effort = resolveEffort(input.effort, ctx.thinkingLevel);
   const sessionManager = SessionManager.create(ctx.cwd);
-  // SDK sessions do not load Pi's built-in tool_search on their own; an
-  // independent session discovers deferred tools like the session that made it.
+  // SDK sessions do not load the CLI's extensions on their own; this loader adds
+  // choco-pi's tool_search so an independent session discovers tools like the
+  // session that made it.
   const resourceLoader = await createToolSearchResourceLoader(ctx.cwd);
   const { session } = await createAgentSession({
     cwd: ctx.cwd,

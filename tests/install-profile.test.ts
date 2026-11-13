@@ -29,6 +29,7 @@ import { deriveBackgroundLanes } from "../.pi/packages/choco-pi-compaction/src/b
 import {
   buildGlobalSettings,
   DEFAULT_PROFILE_MODEL_THINKING_LEVELS,
+  DEFAULT_PROFILE_EXTENSIONS,
   DEFAULT_PROFILE_PACKAGES,
   installProfile,
   MIGRATED_SIDECARS,
@@ -238,7 +239,10 @@ test("profile installer links tracked config and is idempotent", async (context)
   assert.equal(codexConfig.openai.fast, sourceCodexConfig.openai.fast);
   const settings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
   assert.deepEqual(settings.packages, BUNDLED_PACKAGES);
-  assert.deepEqual(settings.extensions, [path.resolve(".pi/extensions"), "-builtin:codemode"]);
+  assert.deepEqual(settings.extensions, [
+    path.resolve(".pi/extensions"),
+    ...DEFAULT_PROFILE_EXTENSIONS,
+  ]);
   // User levels win; profile defaults fill only the models the user has not set.
   assert.deepEqual(settings.modelThinkingLevels, {
     ...DEFAULT_PROFILE_MODEL_THINKING_LEVELS,
@@ -269,7 +273,10 @@ test("a clean machine with no settings at all bootstraps the bundled profile", a
 
   const settings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
   assert.deepEqual(settings.packages, BUNDLED_PACKAGES);
-  assert.deepEqual(settings.extensions, [path.resolve(".pi/extensions"), "-builtin:codemode"]);
+  assert.deepEqual(settings.extensions, [
+    path.resolve(".pi/extensions"),
+    ...DEFAULT_PROFILE_EXTENSIONS,
+  ]);
   assert.deepEqual(settings.skills, [path.resolve(".pi/skills")]);
   assert.deepEqual(settings.prompts, [path.resolve(".pi/prompts")]);
   assert.equal(await readlink(path.join(agentDir, "SYSTEM.md")), path.resolve(".pi/SYSTEM.md"));
@@ -287,7 +294,35 @@ test("global settings with only user packages bootstrap the profile and keep the
 
   const settings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
   assert.deepEqual(settings.packages, [...BUNDLED_PACKAGES, "npm:user-package@2.0.0"]);
-  assert.deepEqual(settings.extensions, [path.resolve(".pi/extensions"), "-builtin:codemode"]);
+  assert.deepEqual(settings.extensions, [
+    path.resolve(".pi/extensions"),
+    ...DEFAULT_PROFILE_EXTENSIONS,
+  ]);
+});
+
+test("a reinstall disables Pi's built-in tool-search, which choco-pi's tool_search replaces", async (context) => {
+  assert.deepEqual(DEFAULT_PROFILE_EXTENSIONS, ["-builtin:codemode", "-builtin:tool-search"]);
+  const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-tool-search-"));
+  context.after(() => rm(agentDir, { recursive: true, force: true }));
+  // An install from before the change, where the user re-enabled the built-in.
+  await seedProfileSettings(agentDir, {
+    extensions: [
+      path.resolve(".pi/extensions"),
+      "-builtin:codemode",
+      "+builtin:tool-search",
+      "+builtin:llama.cpp",
+    ],
+  });
+
+  await installProfile({ root: process.cwd(), agentDir });
+
+  const settings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
+  assert.deepEqual(settings.extensions, [
+    path.resolve(".pi/extensions"),
+    "+builtin:llama.cpp",
+    "-builtin:codemode",
+    "-builtin:tool-search",
+  ]);
 });
 
 test("the clean-install defaults list every bundled package Pi loads", async () => {

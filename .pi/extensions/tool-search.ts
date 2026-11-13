@@ -1,15 +1,25 @@
 /**
- * Lean active-tool surface and provider prefix lock.
+ * choco-pi's `tool_search`, lean active-tool surface, and provider prefix lock.
  *
- * Discovery is Pi's built-in `tool_search` (`builtin:tool-search`); this
- * extension registers no tool. It decides which tools are declared without a
- * search, activates `tool_search` with them, and locks the surface once the
- * first request of a session is built so the cached provider prefix stays
- * stable. After the lock, only `tool_search` changes the surface: its loads
- * are additive, so Pi anchors them in the transcript on providers that support
- * mid-conversation tool additions instead of rewriting the request prefix.
+ * Discovery is choco-pi's own `tool_search` (lib/tool-search-tool.ts), which
+ * replaces Pi's built-in by registering the same name and also finds the
+ * `direct` tools this surface withholds and the tools callable inside Code
+ * Mode's `exec`. The profile disables `builtin:tool-search` so Pi does not
+ * report the replacement at startup. A subagent child gets its scoped copy from
+ * choco-pi-subagents instead, so this extension registers nothing while a child
+ * session loads.
+ *
+ * The extension decides which tools are declared without a search, activates
+ * `tool_search` with them, and locks the surface once the first request of a
+ * session is built so the cached provider prefix stays stable. After the lock,
+ * only `tool_search` changes the surface: outside Code Mode its loads are
+ * additive, so Pi anchors them in the transcript on providers that support
+ * mid-conversation tool additions instead of rewriting the request prefix; in
+ * Code Mode it only looks tools up.
  */
 import { isPrefixLocked, lockPrefix, publishPrefixLock, unlockPrefix } from "./lib/prefix-lock.ts";
+import { createToolSearchToolDefinition, DISABLED_TOOL_NAMES } from "./lib/tool-search-tool.ts";
+import { readChildSessionProbe } from "./lib/usage-limit-contract.ts";
 import {
   ALWAYS_ACTIVE_TOOL_NAMES,
   isDeclarableExposure,
@@ -31,13 +41,26 @@ export {
   type LeanSurfacePolicy,
 } from "./lib/tool-surface.ts";
 
-const DISABLED_TOOL_NAMES = new Set<string>(["grep"]);
 const LEGACY_SEARCH_TOOL_NAMES = new Set<string>([
   "web_run",
   "web__run",
   "synthetic_web_search",
   "agent_browser_web_search",
 ]);
+
+/**
+ * Whether this extension is loading for a subagent child. choco-pi-subagents
+ * loads a child's extensions inside its child-session context and registers a
+ * `tool_search` scoped to the child; a second registration here would shadow
+ * it. A probe that throws counts as a child, which only skips a duplicate.
+ */
+function loadingForChildSession(): boolean {
+  try {
+    return readChildSessionProbe()?.isChildSessionContext() === true;
+  } catch {
+    return true;
+  }
+}
 
 export default function toolSearch(pi: ExtensionAPI): void {
   publishLeanSurface();
@@ -52,6 +75,15 @@ export default function toolSearch(pi: ExtensionAPI): void {
         !DISABLED_TOOL_NAMES.has(name) && (!canonicalSearch || !LEGACY_SEARCH_TOOL_NAMES.has(name)),
     );
   };
+
+  if (!loadingForChildSession()) {
+    pi.registerTool(
+      createToolSearchToolDefinition({
+        host: pi,
+        isAvailable: (name) => withoutUnavailableTools([name]).length === 1,
+      }),
+    );
+  }
 
   /**
    * The always-active tools, then tools already active that must stay, then

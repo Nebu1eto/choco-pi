@@ -12,6 +12,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import type { HostSchema } from "../../schema-bridge.ts";
 import { finiteNum } from "../../value-guards.ts";
+import { toolCallSignature, unknownParameterHints } from "../../tools/code-mode/tool-signature.ts";
 
 /**
  * JSON object whose values are JSON (the argument shape Pi's validator takes). Numbers are bounded
@@ -184,8 +185,10 @@ export function toNestedTool<TParams extends HostSchema, TDetails, TState>(
           tool.name === "read_text"
             ? " read_text accepts UI refs, not filesystem paths; use an available filesystem reader for files."
             : "";
+        const guidance =
+          contract.dispatch === "session" ? bridgedArgumentGuidance(tool, prepared) : "";
         throw new Error(
-          `Code mode tool error [invalid_arguments]: ${tool.name} prepared input does not match its registered schema${issues ? ` (${issues})` : ""}.${hint}`,
+          `Code mode tool error [invalid_arguments]: ${tool.name} prepared input does not match its registered schema${issues ? ` (${issues})` : ""}.${guidance}${hint}`,
         );
       }
       const validated = validation.value;
@@ -229,6 +232,24 @@ export function toNestedTool<TParams extends HostSchema, TDetails, TState>(
 
 /** Prepared code-mode payloads crossing the bridge before schema validation. */
 type BridgeCandidate = BoundaryValue | undefined;
+
+/**
+ * For a bridged Pi tool, the keys its schema does not declare with their nearest declared name
+ * (`path → file_path`) and the expected call signature, so a guessed argument name is
+ * corrected in one retry.
+ */
+function bridgedArgumentGuidance<TParams extends HostSchema, TDetails, TState>(
+  tool: ToolDefinition<TParams, TDetails, TState>,
+  prepared: BoundaryValue,
+): string {
+  const schema = isBoundaryValue(tool.parameters) ? tool.parameters : undefined;
+  const unknownKeys = unknownParameterHints(schema, prepared);
+  const signature = toolCallSignature(tool.name, schema);
+  return [
+    unknownKeys.length > 0 ? ` Unknown keys: ${unknownKeys.join(", ")}.` : "",
+    signature ? ` Expected: tools.${signature}.` : "",
+  ].join("");
+}
 
 /** The executor's own parameter type. */
 type ExecuteParams<TParams extends HostSchema, TDetails, TState> = Parameters<

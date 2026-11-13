@@ -257,3 +257,21 @@ test("a session without write or shell permissions cannot reach the notebook", (
   assert.equal(codeModeExecutionKindForPermissions("notebook", writable), "notebook");
   assert.equal(codeModeExecutionKindForPermissions("code", writable), "code");
 });
+
+test("the runtime guard suggests the exact name for a case or separator variant", () => {
+  const source = `${unavailableToolsGuardPreamble([
+    "exec_command",
+    "symbol_search",
+    "session_read",
+  ])}tools.SYMBOLSEARCH({ query: "x" });`;
+  assert.throws(
+    () =>
+      runInNewContext(source, {
+        tools: { exec_command() {}, symbol_search() {}, session_read() {} },
+      }),
+    (error: Error) => {
+      assert.match(error.message, /Close matches: symbol_search[,.]/);
+      return true;
+    },
+  );
+});

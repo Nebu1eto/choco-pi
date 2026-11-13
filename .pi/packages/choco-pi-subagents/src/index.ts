@@ -2747,7 +2747,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     promptSnippet: "Launch a specialized subagent for a bounded task.",
     promptGuidelines: [
       "Use Agent with specialized agents when the task matches an agent type's description. Subagents are valuable for parallelizing independent queries or for protecting the main context window from excessive results, but should not be used excessively when not needed. Importantly, avoid duplicating work that subagents are already doing — if you delegate research to a subagent, do not also perform the same searches yourself.",
-      "For broad codebase exploration or research, spawn Agent with an appropriate subagent_type (e.g. Explore). Otherwise use direct tools (read, grep, find) when the target is already known.",
+      "For broad codebase exploration or research, spawn Agent with an appropriate subagent_type (e.g. Explore). Otherwise read the files yourself when the target is already known.",
       "When an agent runs in the background, you will be notified on completion — do not poll or sleep waiting for it. Continue with other work instead.",
       "Trust but verify: an agent's summary describes intent, not outcome. When an agent writes or edits code, check the actual changes before reporting work as done.",
     ],
@@ -4833,7 +4833,7 @@ The file format is a markdown file with YAML frontmatter and a system prompt bod
 ---
 description: <one-line description shown in UI>
 color: <optional agent name badge color: red, blue, green, yellow, purple, orange, pink, cyan, an Agency Agents alias, or quoted "#RRGGBB">
-tools: <comma-separated built-in tools: read, bash, edit, write, grep, find, ls. Use "none" for no tools. Omit for all tools>
+tools: <comma-separated built-in tools: read, bash, edit, write, find, ls. Use "none" for no tools. Omit for all tools>
 model: <optional default model as "provider/modelId"; a caller's model overrides it unless model_locked. Omit to inherit the parent model>
 thinking: <optional default thinking level: ${THINKING_LEVELS.join(", ")}; a caller's thinking overrides it unless model_locked>
 model_locked: <true pins model and thinking so callers cannot override them. Default: false>
@@ -4862,7 +4862,7 @@ memory: <"user" (global), "project" (per-project), or "local" (gitignored per-pr
 \`\`\`
 
 Guidelines for choosing settings:
-- For read-only tasks (review, analysis): tools: read, bash, grep, find, ls
+- For read-only tasks (review, analysis): tools: read, bash, find, ls
 - For code modification tasks: include edit, write
 - Use prompt_mode: append if the agent should keep the default system prompt and add specialization on top
 - Use prompt_mode: replace for fully custom agents with their own personality/instructions
@@ -4871,7 +4871,7 @@ Guidelines for choosing settings:
 - Set output_transcript: false to skip writing this agent's transcript; this alone doesn't keep the run off disk (persist_session, isolation: worktree commits, and memory still write) — set those too if that's the goal
 - Only include frontmatter fields that differ from defaults — omit fields where the default is fine
 
-Write the file using the write tool. Only write the file, nothing else.`;
+Write the file with your file-writing tool (write, or apply_patch inside exec in Code Mode). Only write the file, nothing else.`;
 
     const { record } = await manager.spawnAndWait(pi, ctx, "general-purpose", generatePrompt, {
       description: `Generate ${name} agent`,
@@ -4911,7 +4911,7 @@ Write the file using the write tool. Only write the file, nothing else.`;
     const toolChoice = await ctx.ui.select("Tools", [
       "all",
       "none",
-      "read-only (read, bash, grep, find, ls)",
+      "read-only (read, bash, find, ls)",
       "custom...",
     ]);
     if (!toolChoice) return;
@@ -4922,7 +4922,7 @@ Write the file using the write tool. Only write the file, nothing else.`;
     } else if (toolChoice === "none") {
       tools = "none";
     } else if (toolChoice.startsWith("read-only")) {
-      tools = "read, bash, grep, find, ls";
+      tools = "read, bash, find, ls";
     } else {
       const customTools = await ctx.ui.input(
         "Tools (comma-separated)",

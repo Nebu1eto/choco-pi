@@ -87,17 +87,17 @@ function fakeHost(tools: FakeTool[], active: string[]): FakeHost {
   return host;
 }
 
-const builtinSearch: FakeTool = { name: "tool_search", exposure: "model-only" };
+const searchTool: FakeTool = { name: "tool_search" };
 
-test("registers no tool of its own; Pi's built-in owns tool_search", () => {
-  const host = fakeHost([builtinSearch], []);
-  assert.deepEqual(host.registered, []);
+test("registers choco-pi's tool_search, which replaces Pi's built-in", () => {
+  const host = fakeHost([searchTool], []);
+  assert.deepEqual(host.registered, ["tool_search"]);
 });
 
-test("activates the built-in tool_search with the lean surface before the first request", async () => {
-  // Pi registers the built-in inactive (defaultActive: false).
+test("activates tool_search with the lean surface before the first request", async () => {
+  // tool_search registers inactive (defaultActive: false).
   const host = fakeHost(
-    [{ name: "read" }, { name: "deferred_probe" }, { name: "apply_patch" }, builtinSearch],
+    [{ name: "read" }, { name: "deferred_probe" }, { name: "apply_patch" }, searchTool],
     ["deferred_probe"],
   );
   host.emit("session_start");
@@ -110,23 +110,23 @@ test("activates the built-in tool_search with the lean surface before the first 
   assert.equal(host.commits.length, 1, "the cancelled deferred commit must not run");
 });
 
-test("omits tool_search when the built-in is not registered", () => {
+test("omits tool_search when it is not registered", () => {
   const host = fakeHost([{ name: "read" }], []);
   host.emit("session_start");
   host.emit("before_agent_start");
   assert.deepEqual(host.active, ["read"]);
 });
 
-test("built-in search loads after the lock survive later turns and model changes", async () => {
+test("search loads after the lock survive later turns and model changes", async () => {
   const host = fakeHost(
-    [{ name: "read" }, builtinSearch, { name: "mcp__radius__issues", exposure: "deferred" }],
+    [{ name: "read" }, searchTool, { name: "mcp__radius__issues", exposure: "deferred" }],
     [],
   );
   host.emit("session_start");
   host.emit("before_agent_start");
   assert.deepEqual(host.active, ["read", "tool_search"]);
 
-  // What the built-in tool_search does on a match: an additive activation.
+  // What tool_search does on a match outside Code Mode: an additive activation.
   host.active = [...host.active, "mcp__radius__issues"];
   const commits = host.commits.length;
   host.emit("before_agent_start");
@@ -143,7 +143,7 @@ test("a fresh session start carries search-loaded tools but not inactive-by-poli
   const host = fakeHost(
     [
       { name: "read" },
-      builtinSearch,
+      searchTool,
       { name: "mcp__radius__issues", exposure: "deferred" },
       { name: "symbol_search" },
       { name: "probe_hidden", exposure: "hidden" },
@@ -156,14 +156,14 @@ test("a fresh session start carries search-loaded tools but not inactive-by-poli
 });
 
 test("removes disabled grep from the surface", () => {
-  const host = fakeHost([{ name: "read" }, { name: "grep" }, builtinSearch], ["read", "grep"]);
+  const host = fakeHost([{ name: "read" }, { name: "grep" }, searchTool], ["read", "grep"]);
   host.emit("session_start");
   host.emit("before_agent_start");
   assert.ok(!host.active.includes("grep"));
 });
 
 test("an always-active name with no registered tool does not corrupt the active set", () => {
-  const host = fakeHost([{ name: "read" }, builtinSearch], []);
+  const host = fakeHost([{ name: "read" }, searchTool], []);
   host.emit("session_start");
   host.emit("before_agent_start");
   for (const name of host.active) {
@@ -273,14 +273,14 @@ async function runToolSearch(session: AgentSession, query: string): Promise<stri
     { query },
     undefined,
     undefined,
-    // SAFETY: The built-in tool_search ignores its context.
+    // SAFETY: tool_search ignores its context.
     reinterpretHostValue<Parameters<typeof definition.execute>[4]>({}),
   );
   const details = reinterpretHostValue<{ loaded: string[] }>(result.details);
   return details.loaded;
 }
 
-test("real Pi session: built-in tool_search is active on turn one and loads late deferred tools", async () => {
+test("real Pi session: tool_search is active on turn one and loads late deferred tools", async () => {
   let registerLate: (() => void) | undefined;
   const lateDeferred: ExtensionFactory = (pi) => {
     // A built-in MCP server connects after session_start and registers its
@@ -298,7 +298,7 @@ test("real Pi session: built-in tool_search is active on turn one and loads late
         }),
       });
   };
-  const fixture = await sdkSession([toolSearch, createToolSearchExtension(), lateDeferred]);
+  const fixture = await sdkSession([toolSearch, lateDeferred]);
   try {
     const { session } = fixture;
     await new Promise((resolve) => setImmediate(resolve));
@@ -377,11 +377,9 @@ async function lateToolFixture(options: LateToolOptions = {}): Promise<LateToolF
         }),
       });
   };
-  const policy = options.toolSearch === false ? [] : [toolSearch];
-  const fixture = await sdkSession(
-    [...policy, createToolSearchExtension(), fixtureTools],
-    options.resume,
-  );
+  // The control runs Pi's own built-in search in place of choco-pi's.
+  const search = options.toolSearch === false ? createToolSearchExtension() : toolSearch;
+  const fixture = await sdkSession([search, fixtureTools], options.resume);
   const { session, modelRuntime } = fixture;
   const model = modelRuntime.getModel("faux-tree", "m");
   assert.ok(model, "faux model registered");
@@ -550,6 +548,84 @@ test("real Pi session: a tool the transcript removed stays inactive after resume
     fixture.registerLate();
     await fixture.prompt("go");
     assert.ok(!fixture.session.getActiveToolNames().includes(LATE_TOOL));
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("loading for a subagent child registers no tool_search; the child gets its scoped copy", () => {
+  const slot = Symbol.for("pi-subagents:manager");
+  const previous = Object.getOwnPropertyDescriptor(globalThis, slot);
+  Object.defineProperty(globalThis, slot, {
+    configurable: true,
+    writable: true,
+    value: { isChildSessionContext: () => true, isChildSessionId: () => false },
+  });
+  try {
+    assert.deepEqual(fakeHost([searchTool], []).registered, []);
+  } finally {
+    if (previous) Object.defineProperty(globalThis, slot, previous);
+    else Reflect.deleteProperty(globalThis, slot);
+  }
+});
+
+test("real Pi session: tool_search activates a direct tool the lean surface withholds, and it stays", async () => {
+  const fixture = await lateToolFixture();
+  try {
+    assert.ok(!fixture.started.includes(UNRECORDED_TOOL), "the lean surface withholds it");
+    assert.deepEqual(await runToolSearch(fixture.session, "extra direct"), [UNRECORDED_TOOL]);
+    const before = fixture.session.getActiveToolNames();
+    assert.deepEqual(
+      before.slice(0, fixture.started.length),
+      fixture.started,
+      "activation only adds",
+    );
+    await fixture.prompt("go");
+    assert.ok(fixture.session.getActiveToolNames().includes(UNRECORDED_TOOL));
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("real Pi session: in Code Mode tool_search lists exec-callable tools and loads nothing", async () => {
+  const codeMode: ExtensionFactory = (pi) => {
+    for (const name of ["exec", "wait", "symbol_search"]) {
+      pi.registerTool({
+        name,
+        label: name,
+        description: name,
+        parameters: hostParams(obj({}, { open: true })),
+        execute: async () => ({ content: [{ type: "text", text: name }], details: {} }),
+      });
+    }
+  };
+  const fixture = await sdkSession([toolSearch, codeMode]);
+  try {
+    const { session } = fixture;
+    // Let the lean surface's deferred session-start commit run first.
+    await new Promise((resolve) => setImmediate(resolve));
+    session.setActiveToolsByName(["exec", "wait", "tool_search"]);
+    const active = session.getActiveToolNames();
+    const definition = session.getToolDefinition("tool_search");
+    assert.ok(definition);
+    const result = await definition.execute(
+      "search",
+      { query: "symbol_search" },
+      undefined,
+      undefined,
+      // SAFETY: tool_search ignores its context.
+      reinterpretHostValue<Parameters<typeof definition.execute>[4]>({}),
+    );
+    const details = reinterpretHostValue<{
+      mode: string;
+      loaded: string[];
+      tools: Array<{ name: string; call: string }>;
+    }>(result.details);
+    assert.equal(details.mode, "code");
+    assert.deepEqual(details.loaded, []);
+    assert.equal(details.tools[0]?.name, "symbol_search");
+    assert.match(details.tools[0]?.call ?? "", /^tools\.symbol_search\(\) inside exec$/);
+    assert.deepEqual(session.getActiveToolNames(), active, "the active tool set is unchanged");
   } finally {
     await fixture.close();
   }

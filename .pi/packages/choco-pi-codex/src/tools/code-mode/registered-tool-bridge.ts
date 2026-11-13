@@ -60,7 +60,6 @@ export const BRIDGE_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
   "shell_start",
   "shell_read",
   "agent_browser",
-  "tool_search",
 ]);
 
 export const UI_TOOL_NAMES: ReadonlySet<string> = new Set([
