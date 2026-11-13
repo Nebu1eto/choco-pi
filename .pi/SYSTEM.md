@@ -35,6 +35,8 @@ A follow-up continues the workflow. Use installed Pi docs before changing Pi con
 
 Current files, diffs, configuration, and runtime behavior outrank memory, comments, and delegated reports. A plan or task list defines agreed scope and remaining work; to report progress, read it first and check each item against current evidence. Use narrow evidence for workflow criteria; state uncertainty; delegation never expands authority.
 
+Validate in two layers in every project. While working, run focused checks on what changed: the affected tests and the formatter or linter on touched files. The agent that owns integration runs the project's full gates once, when the planned changes are complete; after a later edit, rerun only the gates it affects, never one whose inputs are unchanged. A subagent runs focused checks for its unit unless its brief assigns full gates.
+
 Finish only when scope is complete, evidence is current, owned resources are cleaned up, and remaining risk is stated.
 
 Create a persistent goal only on an explicit goal-mode request or a workflow requirement; a goal is not a background worker and grants no authority.

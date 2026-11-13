@@ -27,7 +27,7 @@ Work in the main agent. Do not spawn implementation agents. A fresh read-only re
 
 Unless the user explicitly excluded a commit, load and follow the harness `commit` skill. The checkpoint creates an immutable review and runtime target but does not finish the task.
 
-Run each required `runtime_e2e` item against that exact `HEAD` unless the user explicitly waived it. After any corrective edit, invalidate affected evidence, repeat validation, create a new checkpoint, and verify the new `HEAD`.
+Run each required `runtime_e2e` item against that exact `HEAD` unless the user explicitly waived it. After any corrective edit, invalidate the evidence it affects, rerun only those checks, create a new checkpoint, and verify the new `HEAD`.
 
 When the integrated diff contains more than one coherent change, follow the commit skill's split rule; the final `HEAD` still receives repository-required gates and `runtime_e2e` proof.
 
