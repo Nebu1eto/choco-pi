@@ -33,8 +33,11 @@ export type HeaderBox = {
   /** Rows inside the box, already styled; each is cut to the inner width. */
   lines: string[];
   topLeft: string;
-  topRight: string;
+  /** Cells on the right of the top border, joined by ` – ` in the border's color as the editor's are. */
+  topRight: readonly string[];
   bottomLeft: string;
+  /** Cells on the right of the bottom border, joined like `topRight`. */
+  bottomRight: readonly string[];
   /** The border takes the accent color while the view has focus. */
   focused: boolean;
 };
@@ -82,6 +85,8 @@ function labeledBorder(
 /** The box in the theme's colors: `borderMuted`, or `accent` while focused. */
 export function themedHeaderBox(box: HeaderBox, styler: Pick<PaneStyler, "fg">): string[] {
   const paint = (text: string) => styler.fg(box.focused ? "accent" : "borderMuted", text);
+  const cells = (values: readonly string[]) =>
+    values.filter((value) => value.length > 0).join(paint(" – "));
   const inner = Math.max(0, box.width - HEADER_BOX_CHROME);
   const rows = box.lines.map((line) => {
     const cut = truncateToWidth(line, inner, "…");
@@ -89,9 +94,9 @@ export function themedHeaderBox(box: HeaderBox, styler: Pick<PaneStyler, "fg">):
     return `${paint("│")} ${cut}${padding} ${paint("│")}`;
   });
   return [
-    labeledBorder(box.width, box.topLeft, box.topRight, ["╭", "╮"], paint),
+    labeledBorder(box.width, box.topLeft, cells(box.topRight), ["╭", "╮"], paint),
     ...rows,
-    labeledBorder(box.width, box.bottomLeft, "", ["╰", "╯"], paint),
+    labeledBorder(box.width, box.bottomLeft, cells(box.bottomRight), ["╰", "╯"], paint),
   ];
 }
 
@@ -114,8 +119,9 @@ type LabeledBoxOptions = {
   width: number;
   lines: string[];
   topLeft?: string;
-  topRight?: string;
+  topRightCells?: readonly string[];
   bottomLeft?: string;
+  bottomRightCells?: readonly string[];
   uiTheme: Theme;
   config: ZentuiModule;
   borderColor?: (text: string) => string;
@@ -162,8 +168,9 @@ export async function loadZentuiHeaderBox(
         width: box.width,
         lines: box.lines,
         topLeft: box.topLeft,
-        topRight: box.topRight,
+        topRightCells: box.topRight,
         bottomLeft: box.bottomLeft,
+        bottomRightCells: box.bottomRight,
         uiTheme,
         config: zentuiConfig,
       };

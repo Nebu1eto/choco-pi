@@ -350,6 +350,20 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
   }
 
   /**
+   * Confirm a source switch. The open pane names its source on the header's
+   * border, so there it only clears an older message (an earlier failure
+   * would otherwise stay up); a closed pane gets a notice.
+   */
+  function saySource(session: Session, source: DiffSource): void {
+    if (session.view && session.host) {
+      session.view.clearMessage();
+      session.host.requestRender();
+    } else {
+      say(session, `Diff source: ${sourceLabel(source)}.`);
+    }
+  }
+
+  /**
    * Show a failure of work nothing awaits: in the open pane, else as a notice.
    * Silent once the session ended or its context went stale. Never throws, so
    * it is safe as the last handler of a fire-and-forget promise.
@@ -584,11 +598,11 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
   async function showSource(session: Session, source: DiffSource): Promise<void> {
     applySource(session, source);
     if (session.host) {
-      say(session, `Diff source: ${sourceLabel(source)}.`);
+      saySource(session, source);
       return;
     }
     if (await userOpen(session, { keepSource: true })) {
-      say(session, `Diff source: ${sourceLabel(source)}.`);
+      saySource(session, source);
       return;
     }
     // The inline list showed it; the pane is still closed, so the explicit source ends here.
@@ -621,7 +635,7 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
     // A turn shown alone is outside the cycle, which starts over from it.
     if (session.turnOnly !== undefined) {
       applySource(session, SESSION_SOURCE);
-      say(session, `Diff source: ${sourceLabel(SESSION_SOURCE)}.`);
+      saySource(session, SESSION_SOURCE);
       return;
     }
     const now = session.source;
@@ -646,7 +660,8 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
       else note = `${branch.message} `;
     }
     applySource(session, next);
-    say(session, `${note}Diff source: ${sourceLabel(next)}.`, note ? "warning" : "muted");
+    if (note) say(session, `${note}Diff source: ${sourceLabel(next)}.`, "warning");
+    else saySource(session, next);
   }
 
   /** Show `turns[index]` alone; false when there is no such turn. */
@@ -681,7 +696,7 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
         return;
       }
       applySource(session, SESSION_SOURCE);
-      say(session, `Diff source: ${sourceLabel(SESSION_SOURCE)}.`);
+      saySource(session, SESSION_SOURCE);
       return;
     }
     if (turns.length === 0) {

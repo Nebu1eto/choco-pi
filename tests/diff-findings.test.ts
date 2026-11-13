@@ -150,7 +150,7 @@ test("findings render from recorded agents with candidates, claim outcomes, may-
     const header = h.header();
     assert.match(
       header,
-      /Review wt-a ⚑3 \?1 · wt-b unrecorded · wt-c unrecorded · 1 malformed record/,
+      /╰─ wt-a ⚑3 \?1 · wt-b unrecorded · wt-c unrecorded · 1 malformed record /,
     );
     let body = h.body();
     assert.match(body, /src\/a\.ts\s+⚑2/);
@@ -265,7 +265,7 @@ test("unreadable review records are reported in the header and never thrown", as
     await h.run("open");
     h.store().ready(1, []);
     await until(() => h.view().recorded.errors.length > 0, "error recorded");
-    assert.match(h.header(), /Review 1 read error/);
+    assert.match(h.header(), /╰─ 1 read error /);
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }

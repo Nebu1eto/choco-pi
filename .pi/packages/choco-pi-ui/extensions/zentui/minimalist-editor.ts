@@ -364,8 +364,15 @@ export type LabeledBoxOptions = {
   lines: string[];
   topLeft?: string;
   topRight?: string;
+  /**
+   * Cells on the right of the top border, joined by ` – ` in the border's
+   * color the way the editor joins its model and cost; used instead of `topRight`.
+   */
+  topRightCells?: readonly string[];
   bottomLeft?: string;
   bottomRight?: string;
+  /** Cells on the right of the bottom border, joined like `topRightCells`. */
+  bottomRightCells?: readonly string[];
   uiTheme: Theme;
   config: ZentuiConfig;
   /** Paints the border instead of the editor's border color; a throw falls back to it. */
@@ -383,8 +390,10 @@ export function renderLabeledBox({
   lines,
   topLeft = "",
   topRight = "",
+  topRightCells,
   bottomLeft = "",
   bottomRight = "",
+  bottomRightCells,
   uiTheme,
   config,
   borderColor,
@@ -408,10 +417,12 @@ export function renderLabeledBox({
       return renderStaticBorder(text);
     }
   };
+  const cells = (values: readonly string[] | undefined, label: string) =>
+    values ? values.filter((value) => value.length > 0).join(renderBorder(" – ")) : label;
   const top = renderLabeledBorder({
     width,
     left: topLeft,
-    right: topRight,
+    right: cells(topRightCells, topRight),
     leftCorner: "╭",
     rightCorner: "╮",
     renderBorder,
@@ -419,7 +430,7 @@ export function renderLabeledBox({
   const bottom = renderLabeledBorder({
     width,
     left: bottomLeft,
-    right: bottomRight,
+    right: cells(bottomRightCells, bottomRight),
     leftCorner: "╰",
     rightCorner: "╯",
     renderBorder,

@@ -295,7 +295,20 @@ export type ItemDrawing = {
   mayBeOutdated?: boolean;
   /** Finding: its work task's review verdict, when recorded. */
   verdict?: string;
+  /**
+   * The column the item's text starts at: the text column of the code line it
+   * sits under, so it reads as part of the code. Defaults to the body's indent.
+   */
+  textColumn?: number;
 };
+
+/** An item keeps at least this many columns for its text, however deep its line is indented. */
+export const ITEM_MIN_TEXT_COLUMNS = 40;
+
+/** `column` limited so an item drawn there keeps {@link ITEM_MIN_TEXT_COLUMNS} of `width`. */
+export function itemTextColumn(column: number, width: number): number {
+  return Math.max(BODY_INDENT.length, Math.min(column, width - ITEM_MIN_TEXT_COLUMNS));
+}
 
 function rangeText(start: number | undefined, end: number | undefined): string {
   if (start === undefined) return "";
@@ -331,7 +344,11 @@ function paragraph(
 export function itemLines(item: ViewItem, drawing: ItemDrawing): string[] {
   const { styler, width, open } = drawing;
   const marker = open ? "▾" : "▸";
-  const detailIndent = `${BODY_INDENT}    `;
+  // The marker and its lead take the two columns before the text column.
+  const pad = " ".repeat(
+    itemTextColumn(drawing.textColumn ?? BODY_INDENT.length, width) - BODY_INDENT.length,
+  );
+  const detailIndent = `${pad}${BODY_INDENT}    `;
   const muted = (text: string) => styler.fg("muted", text);
   let first: string;
   const rest: string[] = [];
@@ -416,9 +433,9 @@ export function itemLines(item: ViewItem, drawing: ItemDrawing): string[] {
   }
   // The cursor's item is marked as well as inverted, so it shows without colors too.
   const lead = drawing.selected ? styler.fg("accent", "▶ ") : BODY_INDENT;
-  const head = truncateToWidth(`${lead}${first}`, width, "…");
+  const head = truncateToWidth(`${lead}${first}`, Math.max(1, width - pad.length), "…");
   return [
-    drawing.selected ? styler.inverse(head) : head,
+    `${pad}${drawing.selected ? styler.inverse(head) : head}`,
     ...rest.map((line) => truncateToWidth(line, width, "…")),
   ];
 }

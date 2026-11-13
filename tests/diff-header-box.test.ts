@@ -11,7 +11,7 @@ import {
 } from "../.pi/extensions/lib/changes/view/header-box.ts";
 import { plainPaneStyler, type PaneStyler } from "../.pi/extensions/lib/changes/view/rows.ts";
 import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
-import { file, harness } from "./diff-actions-fakes.ts";
+import { file, flush, harness } from "./diff-actions-fakes.ts";
 import { loadZentuiModule, SKIP_WITHOUT_ZENTUI } from "./zentui-build.ts";
 
 /** Wraps colored text as <color>text</color>, so a test can read which color drew what. */
@@ -29,11 +29,12 @@ const TAG_THEME = reinterpretHostValue<Theme>({
 });
 
 const BOX: HeaderBox = {
-  width: 40,
-  lines: ["2 files +3 -1", "Baseline: HEAD"],
-  topLeft: "Diff Uncommitted changes",
-  topRight: "main",
-  bottomLeft: "j/k file · ? help",
+  width: 44,
+  lines: ["Baseline: HEAD"],
+  topLeft: "Diff · Uncommitted",
+  topRight: ["2 files", "+3 -1"],
+  bottomLeft: "wt ✓",
+  bottomRight: ["? help", "main"],
   focused: true,
 };
 
@@ -47,17 +48,35 @@ async function opened() {
   return h;
 }
 
-test("the pane's header is a box: title and source with the branch on the top border, stats inside, key hint below only while focused", async () => {
+test("the pane's header is a box with its facts as border cells, like zentui's prompt frame", async () => {
   const h = await opened();
   const focused = h.view().renderHeader(80, true);
   const unfocused = h.view().renderHeader(80, false);
   assert.equal(focused.length, unfocused.length, "focus never changes the header's height");
   for (const line of [...focused, ...unfocused]) assert.equal(visibleWidth(line), 80, line);
-  assert.match(focused[0] ?? "", /^╭─ Diff Uncommitted changes ─+ main ─╮$/u);
-  assert.match(focused[1] ?? "", /^│ 2 files \+2 -0 +│$/u);
-  assert.match(focused.at(-1) ?? "", /^╰─ j\/k file · .* ─+╯$/u);
-  assert.match(unfocused.at(-1) ?? "", /^╰─+╯$/u, "no key hint while unfocused");
+  assert.match(focused[0] ?? "", /^╭─ Diff · Uncommitted changes ─+ 2 files – \+2 -0 ─╮$/u);
+  assert.match(focused.at(-1) ?? "", /^╰─+ \? help – main ─╯$/u, "help cue and branch");
+  assert.match(unfocused.at(-1) ?? "", /^╰─+ main ─╯$/u, "no help cue while unfocused");
+  assert.ok(
+    focused.every((line) => !line.includes("j/k file")),
+    "the long key list is behind ?, not cut off on a border",
+  );
   for (const line of focused.slice(1, -1)) assert.match(line, /^│ .* │$/u);
+});
+
+test("switching the source in the open pane adds no row repeating it and clears an older message", async () => {
+  const h = await opened();
+  const rows = h.view().renderHeader(80, true).length;
+  h.view().setMessage("an older message");
+  h.view().handleKey("s");
+  await flush();
+  const header = plain(h.view().renderHeader(80, true));
+  assert.equal(h.view().message, undefined);
+  assert.ok(
+    header.every((line) => !line.includes("Diff source:") && !line.includes("older")),
+    header.join("\n"),
+  );
+  assert.equal(header.length, rows);
 });
 
 test("below the minimum width the header falls back to plain lines", async () => {
@@ -82,10 +101,9 @@ test("without zentui the box takes the theme's colors: borderMuted, accent while
   assert.ok(!unfocused.join("").includes("<accent>"), "no accent while unfocused");
   const text = plain(themedHeaderBox(BOX, plainPaneStyler));
   assert.deepEqual(text, [
-    "╭─ Diff Uncommitted changes ──── main ─╮",
-    "│ 2 files +3 -1                        │",
-    "│ Baseline: HEAD                       │",
-    "╰─ j/k file · ? help ──────────────────╯",
+    `╭─ Diff · Uncommitted ${"─".repeat(3)} 2 files – +3 -1 ─╮`,
+    `│ Baseline: HEAD${" ".repeat(26)} │`,
+    `╰─ wt ✓ ${"─".repeat(19)} ? help – main ─╯`,
   ]);
 });
 
@@ -200,9 +218,9 @@ test(
     assert.ok(focused && unfocused);
     assert.equal(focused.length, BOX.lines.length + 2);
     const text = plain(focused);
-    assert.match(text[0] ?? "", /^╭─ Diff Uncommitted changes ─+ main ─╮$/u);
-    assert.match(text[1] ?? "", /^│ 2 files \+3 -1 +│$/u);
-    assert.match(text.at(-1) ?? "", /^╰─ j\/k file · \? help ─+╯$/u);
+    assert.match(text[0] ?? "", /^╭─ Diff · Uncommitted ─+ 2 files – \+3 -1 ─╮$/u);
+    assert.match(text[1] ?? "", /^│ Baseline: HEAD +│$/u);
+    assert.match(text.at(-1) ?? "", /^╰─ wt ✓ ─+ \? help – main ─╯$/u);
     for (const line of text) assert.equal(visibleWidth(line), BOX.width, line);
     assert.ok((focused[0] ?? "").includes(`${ACCENT}╭`), "focused: accent border");
     assert.ok(!(unfocused[0] ?? "").includes(ACCENT), "unfocused: the editor's border color");
@@ -210,6 +228,7 @@ test(
     const h = await opened();
     h.view().headerBox = box;
     const header = plain(h.view().renderHeader(80, true));
-    assert.match(header[0] ?? "", /^╭─ Diff Uncommitted changes ─+ main ─╮$/u);
+    assert.match(header[0] ?? "", /^╭─ Diff · Uncommitted changes ─+ 2 files – \+2 -0 ─╮$/u);
+    assert.match(header.at(-1) ?? "", /^╰─+ \? help – main ─╯$/u);
   },
 );

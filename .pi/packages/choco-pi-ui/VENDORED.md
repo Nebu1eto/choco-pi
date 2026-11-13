@@ -440,6 +440,10 @@ Tool arguments and tool result text are snake_case (user decision; no aliases). 
   `colors.editorBorder`, `EDITOR_BORDER_FALLBACK`) unless a
   `borderColor` callback paints it; a throwing callback falls back to the
   editor color. `renderMinimalistFrame` and every other export are unchanged.
+- `topRightCells` / `bottomRightCells` (optional, additive): right-hand
+  labels given as cells and joined by `–` in the border's color, the way
+  `renderTopRight` joins the editor's cost and model. Given, they replace
+  `topRight` / `bottomRight`; empty cells are skipped.
 - Consumer: the `/diff` pane's boxed header
   (`.pi/extensions/lib/changes/view/header-box.ts`), loaded optionally
   through `.pi/extensions/lib/zentui-loader.ts`.

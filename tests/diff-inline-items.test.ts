@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import type { FindingsSummary, RecordedFinding } from "../.pi/extensions/lib/changes/findings.ts";
 import {
   createCommentReader,
@@ -17,7 +18,11 @@ import {
   type ReviewTarget,
 } from "../.pi/extensions/lib/changes/review-records.ts";
 import type { DiffHunk } from "../.pi/extensions/lib/changes/types.ts";
-import { HIDDEN_CONTENTS } from "../.pi/extensions/lib/changes/view/changes-view.ts";
+import {
+  HIDDEN_CONTENTS,
+  renderUnifiedBody,
+} from "../.pi/extensions/lib/changes/view/changes-view.ts";
+import { itemTextColumn } from "../.pi/extensions/lib/changes/view/items.ts";
 import { buildCommentAnchor } from "../.pi/extensions/review/core/anchor.ts";
 import {
   file,
@@ -436,4 +441,45 @@ test("a placed comment is labelled with the lines it was found at, not the lines
   assert.equal(stored.line, 11, "the stored record is untouched");
   assert.equal(range.startLine, 11);
   assert.equal(range.line, 12);
+});
+
+test("an item sits inside the code: its marker at the text column of the line it follows", async () => {
+  const h = harness({ renderFileBody: renderUnifiedBody });
+  await h.fire("session_start", { reason: "startup" });
+  await h.run("focus");
+  h.store().bodies.set(
+    "src/a.ts",
+    textBody("src/a.ts", [hunk("a-h", 10, [" ten() {", "+    eleven();", " }"])]),
+  );
+  h.store().ready(1, [file("src/a.ts")]);
+  h.view().setRecorded(summary([finding("F1", "src/a.ts", 11)]), new Map());
+  await expandFirst(h);
+  const rows = h
+    .body()
+    .split("\n")
+    .map((row) => stripTerminalSequences(row));
+  const code = indexOf(rows, "eleven();");
+  assert.ok(code >= 0, rows.join("\n"));
+  const column = (rows[code] ?? "").indexOf("eleven();");
+  const item = rows[code + 1] ?? "";
+  assert.equal(item.indexOf("▾ ⚑ high finding F1"), column, `${rows[code]}\n${item}`);
+  assert.equal(
+    (rows[code + 2] ?? "").indexOf("F1 claim"),
+    column + 4,
+    "its details are indented under it",
+  );
+});
+
+test("an item under a quoted line sits at that line's text; a deep indent keeps 40 columns for the text", async () => {
+  const h = await pane();
+  h.view().setRecorded(summary([finding("F2", "src/a.ts", 30)]), new Map());
+  await expandFirst(h);
+  await until(() => h.body().includes("line 30"), "quote loaded");
+  const rows = lines(h).map((row) => stripTerminalSequences(row));
+  const quoted = rows.findIndex((row) => row.includes("┆ line 30"));
+  assert.ok(quoted >= 0, rows.join("\n"));
+  assert.equal((rows[quoted + 1] ?? "").indexOf("▾ ⚑"), (rows[quoted] ?? "").indexOf("line 30"));
+  assert.equal(itemTextColumn(70, 80), 40, "past width - 40 the item stops moving right");
+  assert.equal(itemTextColumn(1, 80), 2, "never left of the body's indent");
+  assert.equal(itemTextColumn(12, 30), 2, "a narrow pane keeps the body's indent");
 });

@@ -450,6 +450,41 @@ function gutter(value: number | undefined, width: number): string {
   return value === undefined ? " ".repeat(width) : String(value).padStart(width);
 }
 
+/** Columns of `text`'s leading spaces and tabs, a tab taking `tabColumns`. */
+export function leadingColumns(text: string, tabColumns: number): number {
+  let columns = 0;
+  for (const character of text) {
+    if (character === " ") columns += 1;
+    else if (character === "\t") columns += tabColumns;
+    else break;
+  }
+  return columns;
+}
+
+/**
+ * The column a line's text starts at in its rendered row (as
+ * {@link renderDiffFile} lays it out at `width` in `mode`), past the line
+ * numbers, the marker and the line's own indentation. A line that is not
+ * given (a hunk's header) answers the column the hunk's code starts at.
+ */
+export function lineTextColumn(
+  file: DiffFile,
+  line: DiffLine | undefined,
+  mode: "unified" | "split",
+  width: number,
+): number {
+  // Tabs are drawn as three spaces (`normalized`).
+  const indentation = line ? leadingColumns(line.text, 3) : 0;
+  if (mode === "unified") {
+    // `old new │ + `
+    return numberWidth(file, "old") + 1 + numberWidth(file, "new") + 5 + indentation;
+  }
+  // `number + ` on the side the line is drawn: deletions left, the rest right.
+  if (line?.kind === "del") return numberWidth(file, "old") + 3 + indentation;
+  const leftWidth = Math.floor((width - 3) / 2);
+  return leftWidth + 3 + numberWidth(file, "new") + 3 + indentation;
+}
+
 function renderUnifiedHunk(
   file: DiffFile,
   lines: readonly DiffLine[],

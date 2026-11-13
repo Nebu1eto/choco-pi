@@ -320,7 +320,7 @@ test("a review-record read that throws keeps the pane and shows a read error; th
   assert.deepEqual(h.view().recorded.errors, [
     "Cannot read the review records: no scratch directory",
   ]);
-  assert.match(h.header(), /Review 1 read error/u);
+  assert.match(h.header(), /╰─ 1 read error /u);
 
   scratchFails = false;
   rejectWith = { value: undefined };
@@ -361,7 +361,7 @@ test("a change-time scan that throws keeps the last findings and shows a read er
   assert.deepEqual(h.view().recorded.errors, [
     "Cannot read the review records: cannot stat /repo/a.ts",
   ]);
-  assert.match(h.header(), /Review wt-a ⚑1 · 1 read error/u);
+  assert.match(h.header(), /╰─ wt-a ⚑1 · 1 read error /u);
 
   statFails = false;
   await h.run("refresh");
@@ -424,6 +424,8 @@ test("a key action that fails shows the failure in the pane and the key works ag
   h.store().sourceError = undefined;
   h.view().handleKey("s");
   await noRejections("cycle source again");
+  // The failure's message is gone; a skipped source is still explained.
+  assert.doesNotMatch(h.view().message?.text ?? "", /Cannot change/u);
   assert.match(h.view().message?.text ?? "", /Diff source:/u);
 
   // With a note in the pane, a asks about the notes.

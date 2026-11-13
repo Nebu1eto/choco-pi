@@ -19,6 +19,8 @@ import type {
 } from "../git/model.ts";
 import {
   createIntralineBudget,
+  leadingColumns,
+  lineTextColumn,
   MIN_SPLIT_WIDTH,
   renderDiffFile,
   withRenderBudget,
@@ -506,6 +508,10 @@ export class ChangesView implements PaneSurface {
     this.message = { text: safe(text), color };
   }
 
+  clearMessage(): void {
+    this.message = undefined;
+  }
+
   /** Release references; late body loads are dropped. */
   dispose(): void {
     this.disposed = true;
@@ -533,10 +539,11 @@ export class ChangesView implements PaneSurface {
   }
 
   /**
-   * The header as a box: title and source on the top border, the branch on
-   * its right; totals, baseline, review labels, the message, a note being
-   * written and the key list inside; the key hint on the bottom border while
-   * focused. Focus changes the border's color, never the number of rows.
+   * The header as a box laid out like zentui's prompt frame, its facts as
+   * cells on the borders: title and source top left, totals top right,
+   * review verdicts bottom left, the branch (and `? help` while focused)
+   * bottom right. Inside: the baseline, the message, a note being written and
+   * the key list. Focus changes the border's color, never the number of rows.
    */
   private boxedHeader(width: number, focused: boolean): string[] {
     const styler = this.styler;
@@ -546,6 +553,9 @@ export class ChangesView implements PaneSurface {
     const rows: string[] = [];
     const cut = (line: string) => truncateToWidth(line, inner, "…");
     const wrap = (line: string) => wrapTextWithAnsi(line, inner).map(cut);
+    const dot = styler.fg("muted", " · ");
+    const topLeft = [styler.bold(this.title), styler.fg("muted", sourceLabel(source))];
+    let totals: string[] = [];
     switch (this.state.kind) {
       case "idle":
         rows.push(cut(styler.fg("dim", "Loading…")));
@@ -558,17 +568,16 @@ export class ChangesView implements PaneSurface {
         break;
       case "ready": {
         const snapshot = this.state.snapshot;
-        rows.push(cut(this.statsLine(snapshot, this.state.refreshing)));
+        totals = this.totalCells(snapshot);
+        if (this.state.refreshing) topLeft.push(styler.fg("dim", "refreshing…"));
         const baseline = baselineText(snapshot);
         if (baseline !== undefined) rows.push(cut(styler.fg("dim", baseline)));
         break;
       }
     }
-    const labels = reviewLabels(this.recorded);
-    if (labels.length > 0) {
-      const parts = labels.map((label) => styler.fg(TONE_COLORS[label.tone], safe(label.text)));
-      rows.push(...wrap(`${styler.fg("dim", "Review")} ${parts.join(styler.fg("dim", " · "))}`));
-    }
+    const review = reviewLabels(this.recorded).map((label) =>
+      styler.fg(TONE_COLORS[label.tone], safe(label.text)),
+    );
     if (this.message) rows.push(...wrap(styler.fg(this.message.color, this.message.text)));
     if (this.noteInput) {
       const target = this.noteInput;
@@ -587,9 +596,13 @@ export class ChangesView implements PaneSurface {
     const box = {
       width,
       lines: rows,
-      topLeft: `${styler.bold(this.title)} ${styler.fg("muted", sourceLabel(source))}`,
-      topRight: branch ? styler.fg("dim", safe(branch)) : "",
-      bottomLeft: focused ? styler.fg("dim", this.keyHint) : "",
+      topLeft: topLeft.join(dot),
+      topRight: totals,
+      bottomLeft: review.join(dot),
+      bottomRight: [
+        focused && !this.helpOpen ? styler.fg("dim", "? help") : "",
+        branch ? styler.fg("accent", safe(branch)) : "",
+      ],
       focused,
     };
     let drawn: string[] | undefined;
@@ -601,17 +614,18 @@ export class ChangesView implements PaneSurface {
     return (drawn ?? themedHeaderBox(box, styler)).map((line) => truncateToWidth(line, width, ""));
   }
 
-  /** `3 files +12 -4 · 1 note · 2 comments · refreshing…` */
-  private statsLine(snapshot: DiffSnapshot, refreshing: boolean): string {
+  /** The totals as border cells: `3 files`, `+12 -4`, `1 note`, `2 comments`. */
+  private totalCells(snapshot: DiffSnapshot): string[] {
     const styler = this.styler;
     const { files, additions, deletions } = snapshot.totals;
     const noteCount = this.notes?.notes.length ?? 0;
-    const notes = noteCount > 0 ? styler.fg("accent", ` · ${plural(noteCount, "note")}`) : "";
     const commentCount = this.comments.length;
-    const comments =
-      commentCount > 0 ? styler.fg("accent", ` · ${plural(commentCount, "comment")}`) : "";
-    const busy = refreshing ? styler.fg("dim", " · refreshing…") : "";
-    return `${plural(files, "file")} ${styler.fg("toolDiffAdded", `+${additions}`)} ${styler.fg("toolDiffRemoved", `-${deletions}`)}${notes}${comments}${busy}`;
+    return [
+      plural(files, "file"),
+      `${styler.fg("toolDiffAdded", `+${additions}`)} ${styler.fg("toolDiffRemoved", `-${deletions}`)}`,
+      noteCount > 0 ? styler.fg("accent", plural(noteCount, "note")) : "",
+      commentCount > 0 ? styler.fg("accent", plural(commentCount, "comment")) : "",
+    ].filter((cell) => cell.length > 0);
   }
 
   /** The header as stacked lines (the review, and the pane when too narrow for a box). */
@@ -833,11 +847,12 @@ export class ChangesView implements PaneSurface {
   }
 
   /** An item's rows as drawn now (open or closed, selected or not). */
-  private itemRows(item: ViewItem, path: string, width: number): string[] {
+  private itemRows(item: ViewItem, path: string, width: number, textColumn?: number): string[] {
     const selected = this.selectedItem === item.id && this.selectedPath === path;
     const open = this.isItemOpen(item.id);
+    const at = textColumn === undefined ? {} : { textColumn };
     if (item.kind === "comment") {
-      return itemLines(item, { open, selected, width, styler: this.styler });
+      return itemLines(item, { open, selected, width, styler: this.styler, ...at });
     }
     const review = this.recorded.tasks.find(
       (task) => task.workTask === item.finding.workTask,
@@ -848,6 +863,7 @@ export class ChangesView implements PaneSurface {
       width,
       styler: this.styler,
       mayBeOutdated: this.mayBeOutdated(item.finding, path),
+      ...at,
     };
     return itemLines(
       item,
@@ -1004,10 +1020,12 @@ export class ChangesView implements PaneSurface {
       out.push(row);
       stops.push(stop);
     };
-    const pushItem = (entry: PlacedItem) => {
+    const pushItem = (entry: PlacedItem, textColumn?: number) => {
       const itemId = entry.item.id;
       if (this.selectedItem === itemId && this.selectedPath === path) anchor = out.length;
-      for (const row of this.itemRows(entry.item, path, width)) push(row, { path, itemId });
+      for (const row of this.itemRows(entry.item, path, width, textColumn)) {
+        push(row, { path, itemId });
+      }
     };
     // Items between hunks: those without a line, then each quote of the file with its items.
     const pushGap = (hunkIndex: number) => {
@@ -1081,11 +1099,15 @@ export class ChangesView implements PaneSurface {
       if ((place.kind !== "line" && place.kind !== "header") || !hunkIds.has(place.hunkId)) {
         continue;
       }
+      // Under its line, at that line's text, the way a reviewer's note sits in the code.
+      const hunk = diffFile.hunks.find((candidate) => candidate.id === place.hunkId);
+      const codeLine = place.kind === "line" ? hunk?.lines[place.lineIndex] : undefined;
+      const textColumn = BODY_INDENT.length + lineTextColumn(diffFile, codeLine, mode, innerWidth);
       itemAnnotations.push({ index: annotations.length, itemId: entry.item.id });
       annotations.push({
         hunkId: place.hunkId,
         place: place.kind === "header" ? "header" : { afterLine: place.lineIndex },
-        lines: this.itemRows(entry.item, path, width),
+        lines: this.itemRows(entry.item, path, width, textColumn),
       });
     }
     for (const entry of notes) {
@@ -1193,7 +1215,7 @@ export class ChangesView implements PaneSurface {
     members: readonly PlacedItem[],
     width: number,
     push: (row: string) => void,
-    pushItem: (entry: PlacedItem) => void,
+    pushItem: (entry: PlacedItem, textColumn?: number) => void,
   ): void {
     const styler = this.styler;
     const excerpt = this.excerptFor(file, group);
@@ -1210,7 +1232,9 @@ export class ChangesView implements PaneSurface {
     excerpt.lines.forEach((text, offset) => {
       const number = excerpt.from + offset;
       push(excerptLine(number, text, numberWidth, width, styler));
-      for (const entry of members) if (entry.line === number) pushItem(entry);
+      // `number ┆ ` behind the body indent; a tab is drawn as one picture column.
+      const textColumn = BODY_INDENT.length + numberWidth + 3 + leadingColumns(text, 1);
+      for (const entry of members) if (entry.line === number) pushItem(entry, textColumn);
     });
     // The file ends before an item's line: it follows the last line quoted.
     for (const entry of members) if ((entry.line ?? 0) > last) pushItem(entry);
