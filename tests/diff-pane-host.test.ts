@@ -394,6 +394,36 @@ test("dock mouse: a press beside the pane returns focus; a click on its empty sp
   assert.equal(host.isFocused(), true, "a click beside the pane is the press that already ran");
 });
 
+test("overlay host draws the view's pinned row over its first visible body row, after clamping", () => {
+  const tui = new FakeTui(undefined, new Lines(["editor"]));
+  tui.children = [new Lines([]), new Lines(["e1", "e2"]), new Lines(["footer"])];
+  const { surface, scrollers } = fakeSurface();
+  const asked: number[] = [];
+  surface.renderBody = () => Array.from({ length: 100 }, (_, index) => `l ${index}`);
+  surface.stickyRow = (top) => {
+    asked.push(top);
+    return top > 0 ? `PIN ${top}` : undefined;
+  };
+  const host = createOverlayHost(tui, surface, { width: () => 30, resizeTo: () => {} });
+  assert.equal(host.install(), true);
+  const overlay = tui.overlays[0];
+  const scroller = scrollers[0];
+  assert.ok(overlay && scroller);
+  let lines = overlay.component.render(31);
+  assert.match(lines[1] ?? "", /l 0$|l 0\s/u, "nothing pinned at the top");
+  scroller.scrollTo(10);
+  lines = overlay.component.render(31);
+  assert.match(lines[1] ?? "", /PIN 10\b/u);
+  assert.match(lines[2] ?? "", /l 11\b/u);
+  scroller.scrollTo(1000);
+  lines = overlay.component.render(31);
+  const top = scroller.top();
+  assert.ok(top < 1000, "clamped to the last page");
+  assert.equal(asked.at(-1), top);
+  assert.match(lines[1] ?? "", new RegExp(`PIN ${top}\\b`, "u"));
+  host.uninstall();
+});
+
 test("overlay host is right-anchored, non-capturing, sized by getters, and hidden on uninstall", () => {
   const editor = new Lines(["editor"]);
   const tui = new FakeTui(undefined, editor);

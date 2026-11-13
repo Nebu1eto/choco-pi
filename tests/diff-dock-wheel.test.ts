@@ -5,7 +5,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Component, ProgramStatus, Terminal } from "@earendil-works/pi-tui";
-import { Container, ScrollView, TuiAltScreen, VStack } from "@earendil-works/pi-tui";
+import {
+  Container,
+  ScrollView,
+  stripTerminalSequences,
+  TuiAltScreen,
+  VStack,
+} from "@earendil-works/pi-tui";
+import { renderLayoutFrame } from "@earendil-works/pi-tui/dist/layout.js";
 import { createDockHost } from "../.pi/extensions/diff/host/dock-host.ts";
 import type {
   PaneScroller,
@@ -73,7 +80,7 @@ function numbered(prefix: string, count: number): string[] {
 }
 
 /** Pi's fullscreen layout (modes/interactive/chat-viewport.js) on a real alt-screen TUI, with the pane docked. */
-function dockedPane(bodyLines: number) {
+function dockedPane(bodyLines: number, overrides: Partial<PaneSurface> = {}) {
   const document = new Container();
   document.addChild(new Lines(numbered("transcript", 200)));
   const transcript = new ScrollView(document, {
@@ -108,6 +115,7 @@ function dockedPane(bodyLines: number) {
     },
     attachScroller: (scroller) => scrollers.push(scroller),
     invalidate: () => {},
+    ...overrides,
   };
   const resizes: number[] = [];
   const host = createDockHost(tui, surface, {
@@ -127,13 +135,17 @@ function dockedPane(bodyLines: number) {
   };
   const state = () => ({ transcript: transcript.scrollTop, pane: pane.top() });
   const maxPaneTop = () => Math.max(0, bodyLines - pane.viewportHeight());
-  return { tui, host, transcript, editor, pane, send, state, maxPaneTop, gestures, resizes };
+  return { root, tui, host, transcript, editor, pane, send, state, maxPaneTop, gestures, resizes };
 }
 
 type Docked = ReturnType<typeof dockedPane>;
 
-function withPane(bodyLines: number, run: (docked: Docked) => void): void {
-  const docked = dockedPane(bodyLines);
+function withPane(
+  bodyLines: number,
+  run: (docked: Docked) => void,
+  overrides: Partial<PaneSurface> = {},
+): void {
+  const docked = dockedPane(bodyLines, overrides);
   try {
     // The transcript sits mid-way, so a leaked wheel in either direction would move it.
     docked.transcript.scrollTo(100);
@@ -263,4 +275,54 @@ test("a horizontal wheel inside the pane changes nothing and leaves no press tar
     assert.equal(host.isFocused(), true);
     assert.equal(state().transcript, before.transcript);
   });
+});
+
+/** A frame of the whole layout as pi-tui draws it now, one string per terminal row, escapes removed. */
+function screen(root: Component): string[] {
+  return renderLayoutFrame(root, COLUMNS, ROWS, () => {}).lines.map((row) =>
+    stripTerminalSequences(row),
+  );
+}
+
+test("a scrolled pane draws the view's pinned row over its first visible body row", () => {
+  const asked: number[] = [];
+  withPane(
+    60,
+    ({ root, pane, send }) => {
+      assert.match(screen(root)[HEADER_ROW + 1] ?? "", /line 0\b/u, "nothing pinned at the top");
+      send(WHEEL_DOWN, PANE_COLUMN, BODY_ROW);
+      const top = pane.top();
+      assert.ok(top > 0);
+      const rows = screen(root);
+      assert.match(rows[HEADER_ROW + 1] ?? "", new RegExp(`PINNED ${top}\\b`, "u"));
+      assert.match(rows[HEADER_ROW + 2] ?? "", new RegExp(`line ${top + 1}\\b`, "u"));
+      assert.equal(asked.at(-1), top);
+    },
+    {
+      stickyRow: (top) => {
+        asked.push(top);
+        return top > 0 ? `PINNED ${top}` : undefined;
+      },
+    },
+  );
+});
+
+test("when the body shrinks under a scrolled pane the pinned row still lands on the first visible row", () => {
+  let count = 60;
+  withPane(
+    60,
+    ({ root, tui, pane, maxPaneTop }) => {
+      pane.scrollTo(maxPaneTop());
+      tui.renderNow();
+      // The first frame after the shrink: pi-tui clamps the scroll position only after the body drew.
+      count = 45;
+      const rows = screen(root);
+      const pinned = rows.flatMap((row, index) => (row.includes("PINNED") ? [index] : []));
+      assert.deepEqual(pinned, [HEADER_ROW + 1], rows.join("\n"));
+    },
+    {
+      renderBody: () => numbered("line", count),
+      stickyRow: (top) => (top > 0 ? `PINNED ${top}` : undefined),
+    },
+  );
 });

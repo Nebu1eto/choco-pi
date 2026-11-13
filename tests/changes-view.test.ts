@@ -450,6 +450,7 @@ test("expandContext, annotations, rowDetails and trailers: host rows sit where t
 /* --------------------------------------------- the pane's cursor and mouse */
 
 const DOWN = "\u001b[B";
+const UP = "\u001b[A";
 
 /** The line view as the /diff pane configures it, recording what `a` asks about. */
 async function paneLineView() {
@@ -540,6 +541,55 @@ test("mouse: a click on a file row expands or collapses it; a press and drags se
   view.pointer({ kind: "click", row: rowOf(/second/) });
   assert.deepEqual(view.lineCursor(), { path: "a.ts", hunkId: "h2" }, "a header selects its hunk");
   assert.equal(view.pointer({ kind: "click", row: 999 }), false, "no row there");
+});
+
+test("sticky file row: inside an open file's block its row is pinned; a click goes to the file; the cursor never hides under it", async () => {
+  const { view, rowOf } = await paneLineView();
+  const body = view.renderBody(80, true);
+  const fileRow = rowOf(/a\.ts/);
+  const inside = rowOf(/old two/);
+  assert.ok(inside > fileRow + 1);
+  assert.equal(view.stickyRow(fileRow), undefined, "the file's own row is showing");
+  assert.equal(view.stickyRow(0), undefined);
+  assert.equal(
+    view.stickyRow(inside),
+    body[fileRow],
+    "the row as drawn, selection gutter included",
+  );
+  assert.equal(view.stickyRow(rowOf(/b\.ts/)), undefined, "the next file's own row");
+
+  let top = 0;
+  view.attachScroller({
+    top: () => top,
+    viewportHeight: () => 6,
+    scrollTo: (next) => {
+      top = Math.max(0, next);
+    },
+    scrollBy: (lines) => {
+      top = Math.max(0, top + lines);
+    },
+  });
+
+  // A press on the line below the pinned row puts the cursor there; up moves it under the pin.
+  top = inside;
+  view.stickyRow(top);
+  assert.equal(view.pointer({ kind: "press", row: inside + 1 }), true);
+  view.handleKey(UP);
+  assert.equal(top, inside - 1, "scrolled one more so the line shows below the pinned row");
+
+  // A click on the pinned row: the file is selected and its own row scrolled into view, not folded.
+  top = inside;
+  view.stickyRow(top);
+  assert.equal(
+    view.pointer({ kind: "press", row: inside }),
+    false,
+    "a press there selects nothing",
+  );
+  assert.equal(view.pointer({ kind: "click", row: inside }), true);
+  assert.deepEqual(view.lineCursor(), { path: "a.ts" });
+  assert.equal(view.expanded.has("a.ts"), true, "still open");
+  assert.equal(top, fileRow);
+  assert.equal(view.stickyRow(top), undefined);
 });
 
 /* ------------------------------------------- a cursor move is cheap work */

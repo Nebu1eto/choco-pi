@@ -380,7 +380,12 @@ export class ChangesView implements PaneSurface {
   /** An item f/F went to while its file's body was loading. */
   private pendingItem: { path: string; itemId: string } | undefined;
   /** First body row of each file block as last drawn, for `rowTarget`. */
-  private blockRows: Array<{ start: number; block: Block }> = [];
+  /** Each file's block as last drawn: its first row, the file's row as drawn, and the path. */
+  private blockRows: Array<{ start: number; block: Block; row: string; path: string }> = [];
+  /** The body row the hosts drew a file's row over in the last frame, for a click on it. */
+  private pinned: { row: number; path: string } | undefined;
+  /** The host pins file rows (it asked for one); hosts that never ask scroll as before. */
+  private pinning = false;
 
   /** Line cursor: index into the selected hunk's displayed lines; absent on a file row or a fold. */
   cursorLine: number | undefined;
@@ -751,9 +756,9 @@ export class ChangesView implements PaneSurface {
     const blockWidth = Math.max(1, width - 1);
     this.files().forEach((file, index) => {
       const block = this.fileBlock(file, snapshot.revision, blockWidth);
-      this.blockRows.push({ start: lines.length, block });
+      const start = lines.length;
       const selected = index === this.selectedIndex;
-      if (selected) this.selectedLine = lines.length + (block.anchor ?? 0);
+      if (selected) this.selectedLine = start + (block.anchor ?? 0);
       const row = this.fit(block.lines[0] ?? "", blockWidth);
       // The line cursor on a file row inverts the row, as it does a selected line.
       const onRow =
@@ -761,7 +766,10 @@ export class ChangesView implements PaneSurface {
         this.cursorMode === "line" &&
         this.selectedHunk === undefined &&
         this.selectedItem === undefined;
-      lines.push((selected ? styler.fg("accent", "❯") : " ") + (onRow ? styler.inverse(row) : row));
+      const drawn =
+        (selected ? styler.fg("accent", "❯") : " ") + (onRow ? styler.inverse(row) : row);
+      this.blockRows.push({ start, block, row: drawn, path: file.path });
+      lines.push(drawn);
       for (let at = 1; at < block.lines.length; at += 1) {
         lines.push(` ${this.fit(block.lines[at] ?? "", blockWidth)}`);
       }
@@ -777,6 +785,26 @@ export class ChangesView implements PaneSurface {
     }
     lines.push(...trailer);
     return lines;
+  }
+
+  /** The file block whose own row is above body row `top` while `top` is still inside it. */
+  private blockUnder(top: number): { start: number; row: string; path: string } | undefined {
+    return this.blockRows.find(
+      (entry) => entry.start < top && top < entry.start + entry.block.lines.length,
+    );
+  }
+
+  /**
+   * A file's row stays at the top while its open diff scrolls under it: the
+   * row to draw over body row `top` when that row is inside a file's block
+   * and the file's own row has scrolled off. Remembered so a click on it acts
+   * on the file, not on the line it covers.
+   */
+  stickyRow(top: number): string | undefined {
+    this.pinning = true;
+    const entry = this.blockUnder(top);
+    this.pinned = entry ? { row: top, path: entry.path } : undefined;
+    return entry?.row;
   }
 
   private findings(): FindingsIndex {
@@ -1631,8 +1659,11 @@ export class ChangesView implements PaneSurface {
     const height = scroller.viewportHeight();
     if (height <= 0) return;
     const top = scroller.top();
-    if (this.selectedLine < top) scroller.scrollTo(this.selectedLine);
-    else if (this.selectedLine >= top + height) scroller.scrollTo(this.selectedLine - height + 1);
+    // At the top, a line inside a file's block is covered by the file's pinned row: keep it one below.
+    const covered = this.pinning && this.blockUnder(this.selectedLine) !== undefined;
+    if (this.selectedLine < top || (covered && this.selectedLine === top)) {
+      scroller.scrollTo(covered ? this.selectedLine - 1 : this.selectedLine);
+    } else if (this.selectedLine >= top + height) scroller.scrollTo(this.selectedLine - height + 1);
   }
 
   private page(): number {
@@ -1909,6 +1940,17 @@ export class ChangesView implements PaneSurface {
    */
   pointer(gesture: PointerGesture): boolean {
     if (this.noteInput || this.disposed) return false;
+    const pinned = this.pinned;
+    if (pinned && gesture.row === pinned.row && gesture.kind !== "drag") {
+      // The pinned file row: a click goes to the file's row (it does not fold the file).
+      if (gesture.kind !== "click") return false;
+      const index = this.files().findIndex((file) => file.path === pinned.path);
+      if (index < 0) return false;
+      if (!this.options.keepMessages) this.message = undefined;
+      this.select(index);
+      this.actions.requestRender();
+      return true;
+    }
     const line = this.cursorMode === "line";
     if (gesture.kind === "drag") {
       if (!line) return false;

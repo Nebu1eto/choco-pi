@@ -21,6 +21,12 @@ export type PointerGesture = { kind: "press" | "drag" | "click"; row: number; ex
 export interface PaneSurface {
   renderHeader(width: number, focused: boolean): string[];
   renderBody(width: number, focused: boolean): string[];
+  /**
+   * The row to draw over the first visible body row when that row is `top`
+   * (as of the last `renderBody`): the row of the open file it belongs to,
+   * once that row has scrolled off. Undefined when nothing is pinned.
+   */
+  stickyRow?(top: number): string | undefined;
   handleKey(data: string): void;
   /**
    * True when the view acted on the gesture. A press it acts on starts a

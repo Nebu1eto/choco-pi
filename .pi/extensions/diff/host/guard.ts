@@ -48,7 +48,20 @@ export type GuardedSurface = PaneSurface & {
   contain<Value>(run: () => Value, fallback: Value): Value;
   /** The view's answer to a mouse gesture; false when it has none or it threw (reported as input). */
   pointer(gesture: PointerGesture): boolean;
+  /** The view's pinned row; undefined when it has none or it threw (reported as render). */
+  stickyRow(top: number): string | undefined;
 };
+
+/**
+ * `lines` with `row` drawn over line `top`, the first visible one. The view's
+ * lines are left alone (they may be cached); a row past the end is ignored.
+ */
+export function pinRow(lines: string[], top: number, row: string | undefined): string[] {
+  if (row === undefined || top <= 0 || top >= lines.length) return lines;
+  const pinned = [...lines];
+  pinned[top] = row;
+  return pinned;
+}
 
 export function guardSurface(surface: PaneSurface, callbacks: HostCallbacks): GuardedSurface {
   let renderFailure: { error: RuntimeValue } | undefined;
@@ -109,6 +122,15 @@ export function guardSurface(surface: PaneSurface, callbacks: HostCallbacks): Gu
     },
     attachScroller(scroller: PaneScroller) {
       surface.attachScroller(scroller);
+    },
+    stickyRow(top) {
+      if (renderFailure) return undefined;
+      try {
+        return surface.stickyRow?.(top);
+      } catch (error) {
+        renderFailed(error);
+        return undefined;
+      }
     },
     invalidate() {
       if (renderFailure) return;

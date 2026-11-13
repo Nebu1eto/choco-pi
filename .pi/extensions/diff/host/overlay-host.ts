@@ -22,7 +22,7 @@ import type {
 } from "@earendil-works/pi-tui";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { BORDER_WIDTH, canHostPane, widthFromBorderColumn } from "./geometry.ts";
-import { fallbackLines, guardSurface, type GuardedSurface } from "./guard.ts";
+import { fallbackLines, guardSurface, pinRow, type GuardedSurface } from "./guard.ts";
 import type { HostCallbacks, PaneSurface } from "../../lib/changes/view/surface.ts";
 import type { PaneHost, PaneTui } from "./types.ts";
 
@@ -78,7 +78,8 @@ class OverlayPane implements Component, Focusable {
     this.bodyRows = Math.max(0, height - header.length);
     this.headerRows = header.length;
     this.scrollTop = Math.max(0, Math.min(this.scrollTop, body.length - this.bodyRows));
-    const visible = [...header, ...body.slice(this.scrollTop, this.scrollTop + this.bodyRows)];
+    const pinned = pinRow(body, this.scrollTop, this.surface.stickyRow(this.scrollTop));
+    const visible = [...header, ...pinned.slice(this.scrollTop, this.scrollTop + this.bodyRows)];
     while (visible.length < height) visible.push("");
     const glyph = this.dragging ? BORDER_ACTIVE : BORDER_IDLE;
     return visible.map((line) => glyph + truncateToWidth(line, inner, "…", true));
