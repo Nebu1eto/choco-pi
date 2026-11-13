@@ -4,8 +4,8 @@
 #   sh install.sh [--home DIR] [--bin-dir DIR] [--source URL|PATH] [--ref REF]
 #                 [--runtime node|bun]
 #
-# Defaults: --home ~/.choco-pi, --bin-dir ~/.local/bin,
-# --source https://github.com/Nebu1eto/choco-pi.git, --ref the default branch.
+# Defaults: --home $CHOCO_PI_HOME, else ~/.choco-pi; --bin-dir ~/.local/bin;
+# --source https://github.com/Nebu1eto/choco-pi.git; --ref the default branch.
 # REF must be a branch or tag name. --runtime selects what runs Pi itself
 # (default node, or the runtime an earlier install recorded); Node.js is
 # required either way. bun uses a bun >= the pinned minimum or downloads the
@@ -69,6 +69,8 @@ case $os in
     die "Windows is not supported by the standalone installer; use WSL2 with a glibc Linux distribution." ;;
 esac
 
+# The launcher resolves CHOCO_PI_HOME the same way, so the install lands where it looks.
+[ -n "$home" ] || home=${CHOCO_PI_HOME:-}
 if [ -z "$home" ] || [ -z "$bin_dir" ]; then
   [ -n "${HOME:-}" ] || die "HOME is not set; pass --home and --bin-dir"
 fi
@@ -161,6 +163,8 @@ esac
 mkdir -p "$home"
 home=$(cd -P -- "$home" && pwd -P)
 app=$home/app
+# Stage 1 records only what this run created; it never infers ownership from existence.
+app_cloned= node_provisioned=
 if [ -e "$app/.git" ]; then
   say "using the existing app checkout in $app"
 elif [ -e "$app" ]; then
@@ -171,6 +175,7 @@ else
   [ -z "$local_clone" ] || set -- "$@" "$local_clone"
   [ -z "$ref" ] || set -- "$@" --branch "$ref"
   git "$@" -- "$source" "$app"
+  app_cloned=1
 fi
 
 pins_file=$app/scripts/standalone/runtime-pins.txt
@@ -238,6 +243,9 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 
+# Functions share the global scope: never assign a name the main script uses
+# (home, bin_dir, source, ref, runtime, app, ...). staging and archive are
+# deliberately global for the EXIT cleanup.
 provision_node() {
   platform=$(node_platform) ||
     die "no pinned Node.js build for $os $(uname -m); install Node.js 24+ yourself and re-run."
@@ -245,9 +253,9 @@ provision_node() {
   expected=$(pin "node_sha256_$platform")
   name=node-v$version-$platform
   mirror=${CHOCO_PI_NODE_MIRROR:-https://nodejs.org/dist}
-  runtime=$home/runtime
-  mkdir -p "$runtime"
-  archive=$runtime/.$name.tar.gz.$$
+  runtime_dir=$home/runtime
+  mkdir -p "$runtime_dir"
+  archive=$runtime_dir/.$name.tar.gz.$$
   say "downloading Node.js $version ($platform)"
   fetch "$mirror/v$version/$name.tar.gz" "$archive" || die "download failed: $mirror/v$version/$name.tar.gz"
   actual=$(sha256_of "$archive")
@@ -255,18 +263,19 @@ provision_node() {
     rm -f "$archive"
     die "checksum mismatch for $name.tar.gz: expected sha256 $expected, got $actual; nothing was extracted"
   fi
-  staging=$runtime/.node-staging.$$
+  staging=$runtime_dir/.node-staging.$$
   rm -rf "$staging"
   mkdir "$staging"
   tar -xzf "$archive" -C "$staging"
   rm -f "$archive"
   archive=
   [ -x "$staging/$name/bin/node" ] || die "$name.tar.gz has no bin/node"
-  rm -rf "$runtime/node"
-  mv "$staging/$name" "$runtime/node"
+  rm -rf "$runtime_dir/node"
+  mv "$staging/$name" "$runtime_dir/node"
   rmdir "$staging"
   staging=
-  node_qualifies "$runtime/node/bin/node" || die "the downloaded Node.js does not run on this system"
+  node_provisioned=1
+  node_qualifies "$runtime_dir/node/bin/node" || die "the downloaded Node.js does not run on this system"
 }
 
 NODE=
@@ -284,6 +293,8 @@ say "using Node.js $("$NODE" --version) at $NODE"
 set -- install --home "$home" --bin-dir "$bin_dir" --source "$source"
 [ -z "$ref" ] || set -- "$@" --ref "$ref"
 [ -z "$runtime" ] || set -- "$@" --runtime "$runtime"
+[ -z "$app_cloned" ] || set -- "$@" --app-cloned
+[ -z "$node_provisioned" ] || set -- "$@" --node-provisioned
 trap - EXIT
 cleanup
 exec "$NODE" "$app/scripts/standalone/manage.ts" "$@"

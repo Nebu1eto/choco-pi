@@ -52,7 +52,7 @@ to install Git on your system and stops. Running it again is idempotent.
 
 | Flag                  | Default                                            | Effect                                                      |
 | --------------------- | -------------------------------------------------- | ----------------------------------------------------------- |
-| `--home DIR`          | `~/.choco-pi`                                      | Install home (`CHOCO_PI_HOME`)                              |
+| `--home DIR`          | `$CHOCO_PI_HOME`, else `~/.choco-pi`               | Install home (`CHOCO_PI_HOME`)                              |
 | `--bin-dir DIR`       | `~/.local/bin`                                     | Directory for the `choco-pi` link                           |
 | `--source URL\|PATH`  | `https://github.com/Nebu1eto/choco-pi.git`         | Repository to clone; a local path also works                |
 | `--ref REF`           | The default branch                                 | Branch or tag to install                                    |

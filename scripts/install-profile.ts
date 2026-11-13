@@ -25,6 +25,7 @@ import {
   mkdir,
   readFile,
   readlink,
+  realpath,
   rename,
   rm,
   stat,
@@ -904,7 +905,23 @@ function parseArgs(args: string[]) {
   return options;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+/**
+ * True when `entry` (process.argv[1]) names this module. Node runs the real
+ * path of the main module, so compare real paths: a symlinked directory in
+ * `entry` (macOS /tmp -> /private/tmp) must still count as a direct run.
+ */
+async function isMainModule(entry: string | undefined): Promise<boolean> {
+  if (!entry) return false;
+  const modulePath = fileURLToPath(import.meta.url);
+  const resolved = path.resolve(entry);
+  try {
+    return (await realpath(resolved)) === (await realpath(modulePath));
+  } catch {
+    return resolved === modulePath;
+  }
+}
+
+if (await isMainModule(process.argv[1])) {
   try {
     const result = await installProfile(parseArgs(process.argv.slice(2)));
     for (const link of result.links) {

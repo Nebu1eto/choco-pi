@@ -1031,3 +1031,21 @@ test("an old-layout upgrade still refuses to replace a foreign file without --ba
   const savedForeign = backedUp.find(({ target }) => target === foreign)?.backup ?? "";
   assert.equal(await readFile(savedForeign, "utf8"), "user-owned\n");
 });
+
+test("the CLI installs when its path runs through a symlinked directory", async (context) => {
+  // Node runs the main module's real path; argv[1] keeps the symlink (macOS /tmp -> /private/tmp).
+  const directory = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-cli-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const linkedCheckout = path.join(directory, "checkout");
+  await symlink(process.cwd(), linkedCheckout);
+  const agentDir = path.join(directory, "agent");
+  const environment: NodeJS.ProcessEnv = { HOME: directory, PATH: "/usr/bin:/bin" };
+  const { stdout } = await promisify(execFile)(
+    process.execPath,
+    [path.join(linkedCheckout, "scripts", "install-profile.ts"), "--agent-dir", agentDir],
+    { cwd: directory, env: environment },
+  );
+  assert.match(stdout, /^updated: .*settings\.json$/m);
+  assert.ok((await lstat(path.join(agentDir, "settings.json"))).isFile());
+  assert.ok((await lstat(path.join(agentDir, "choco-pi-ui.json"))).isSymbolicLink());
+});

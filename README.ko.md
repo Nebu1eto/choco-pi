@@ -52,7 +52,7 @@ choco-pi
 
 | 옵션                  | 기본값                                     | 효과                                                 |
 | --------------------- | ------------------------------------------ | ---------------------------------------------------- |
-| `--home DIR`          | `~/.choco-pi`                              | 설치 홈(`CHOCO_PI_HOME`)                             |
+| `--home DIR`          | `$CHOCO_PI_HOME`, 없으면 `~/.choco-pi`     | 설치 홈(`CHOCO_PI_HOME`)                             |
 | `--bin-dir DIR`       | `~/.local/bin`                             | `choco-pi` 링크를 둘 디렉터리                        |
 | `--source URL\|PATH`  | `https://github.com/Nebu1eto/choco-pi.git` | clone할 저장소. 로컬 경로도 쓸 수 있습니다           |
 | `--ref REF`           | 기본 브랜치                                | 설치할 브랜치나 태그                                 |

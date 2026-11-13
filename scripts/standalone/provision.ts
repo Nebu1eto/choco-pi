@@ -347,6 +347,13 @@ export async function currentBunPlatform(
 export type BunCommand = { path: string; version: string };
 
 /**
+ * A provisioned tool: its entry point and the directories this call wrote
+ * (empty when an installed copy was reused). Install ownership comes only from
+ * these reports, never from a directory merely existing.
+ */
+export type Provisioned = { path: string; created: readonly string[] };
+
+/**
  * Runs `candidate` as Bun from `probeDirectory` (no project bunfig or .env)
  * and returns its real binary (a version-manager shim resolves to the
  * binary it runs) and version; null when it does not run.
@@ -422,13 +429,13 @@ export type BunProvisionOptions = {
 /**
  * Ensures `<runtimeDir>/bun/bin/bun` is the pinned Bun: downloads the release
  * zip, verifies the pinned sha256 before `unzip` sees it, and installs the
- * binary. Returns the binary path.
+ * binary. Returns the binary path and, when it downloaded, `<runtimeDir>/bun`.
  */
 export async function provisionPrivateBun(
   runtimeDirectory: string,
   pins: RuntimePins,
   options: BunProvisionOptions,
-): Promise<string> {
+): Promise<Provisioned> {
   const bunDirectory = path.join(runtimeDirectory, "bun");
   const binary = path.join(bunDirectory, PRIVATE_BUN_ENTRY);
   await mkdir(runtimeDirectory, { recursive: true });
@@ -436,7 +443,7 @@ export async function provisionPrivateBun(
     (await isExecutable(binary)) &&
     (await probeBun(binary, runtimeDirectory))?.version === pins.bunVersion
   )
-    return binary;
+    return { path: binary, created: [] };
   const platform = options.platform === undefined ? await currentBunPlatform() : options.platform;
   if (platform === null) {
     throw new Error(
@@ -475,25 +482,26 @@ export async function provisionPrivateBun(
       `${url} did not install a working Bun ${pins.bunVersion} (got ${installed?.version ?? "nothing runnable"})`,
     );
   }
-  return binary;
+  return { path: binary, created: [bunDirectory] };
 }
 
 /**
  * Ensures `<runtimeDir>/pnpm` holds the pinned pnpm, downloading the registry
  * tarball and verifying its sha512 integrity before extraction when needed.
+ * Returns the entry script and, when it downloaded, `<runtimeDir>/pnpm`.
  */
 export async function provisionPrivatePnpm(
   runtimeDirectory: string,
   pins: RuntimePins,
   registry: string,
-): Promise<string> {
+): Promise<Provisioned> {
   const pnpmDirectory = path.join(runtimeDirectory, "pnpm");
   const entry = path.join(pnpmDirectory, PRIVATE_PNPM_ENTRY);
   if (
     (await privatePnpmVersion(pnpmDirectory)) === pins.pnpmVersion &&
     (await isExecutable(entry))
   ) {
-    return entry;
+    return { path: entry, created: [] };
   }
   const base = registry.replace(/\/+$/, "");
   const url = `${base}/pnpm/-/pnpm-${pins.pnpmVersion}.tgz`;
@@ -507,5 +515,5 @@ export async function provisionPrivatePnpm(
   if ((await privatePnpmVersion(pnpmDirectory)) !== pins.pnpmVersion) {
     throw new Error(`${url} did not contain pnpm ${pins.pnpmVersion}`);
   }
-  return entry;
+  return { path: entry, created: [pnpmDirectory] };
 }

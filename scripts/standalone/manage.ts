@@ -165,23 +165,33 @@ export async function syncCheckout(
   return target;
 }
 
-export async function selectPnpm(runtime: string, pins: RuntimePins): Promise<PnpmCommand> {
+/** The pnpm to run and the runtime directories selecting it created. */
+export async function selectPnpm(
+  runtime: string,
+  pins: RuntimePins,
+): Promise<{ pnpm: PnpmCommand; created: readonly string[] }> {
   await mkdir(runtime, { recursive: true });
   const system = await findSystemPnpm(process.env.PATH ?? "", pins.pnpmVersion, runtime);
-  if (system !== null) return { command: system, prefixArgs: [], source: "system" };
+  if (system !== null)
+    return { pnpm: { command: system, prefixArgs: [], source: "system" }, created: [] };
   const registry = process.env.CHOCO_PI_NPM_REGISTRY ?? DEFAULT_NPM_REGISTRY;
-  const entry = await provisionPrivatePnpm(runtime, pins, registry);
-  return { command: process.execPath, prefixArgs: [entry], source: "private" };
+  const provisioned = await provisionPrivatePnpm(runtime, pins, registry);
+  return {
+    pnpm: { command: process.execPath, prefixArgs: [provisioned.path], source: "private" },
+    created: provisioned.created,
+  };
 }
+
+const PNPM_DIRECTORIES = ["pnpm-store", "pnpm-cache", "pnpm-state"] as const;
 
 export function pnpmInstallArgs(runtime: string): string[] {
   return [
     "install",
     "--frozen-lockfile",
     "--prod",
-    `--config.store-dir=${path.join(runtime, "pnpm-store")}`,
-    `--config.cache-dir=${path.join(runtime, "pnpm-cache")}`,
-    `--config.state-dir=${path.join(runtime, "pnpm-state")}`,
+    `--config.store-dir=${path.join(runtime, PNPM_DIRECTORIES[0])}`,
+    `--config.cache-dir=${path.join(runtime, PNPM_DIRECTORIES[1])}`,
+    `--config.state-dir=${path.join(runtime, PNPM_DIRECTORIES[2])}`,
     "--config.confirm-modules-purge=false",
     "--config.manage-package-manager-versions=false",
     "--config.update-notifier=false",
@@ -199,16 +209,33 @@ async function assertPackageManagerPin(app: string, pins: RuntimePins): Promise<
   }
 }
 
-async function installDependencies(app: string, runtime: string): Promise<PnpmCommand> {
+/**
+ * Installs the app's dependencies and appends to `created` every runtime
+ * directory this call created (a downloaded pnpm, pnpm directories that did
+ * not exist before), even when the install itself fails.
+ */
+async function installDependencies(app: string, runtime: string, created: string[]): Promise<void> {
   const pins = await readRuntimePins(path.join(app, path.relative(APP_ROOT, PINS_FILE)));
   await assertPackageManagerPin(app, pins);
-  const pnpm = await selectPnpm(runtime, pins);
+  const absent: string[] = [];
+  for (const entry of PNPM_DIRECTORIES) {
+    const directory = path.join(runtime, entry);
+    if (!(await exists(directory))) absent.push(directory);
+  }
+  const selected = await selectPnpm(runtime, pins);
+  created.push(...selected.created);
+  const { pnpm } = selected;
   console.log(`pnpm: ${pnpm.source} ${pnpm.prefixArgs[0] ?? pnpm.command}`);
-  await run(pnpm.command, [...pnpm.prefixArgs, ...pnpmInstallArgs(runtime)], app, {
-    ...process.env,
-    COREPACK_ENABLE_NETWORK: "0",
-  });
-  return pnpm;
+  try {
+    await run(pnpm.command, [...pnpm.prefixArgs, ...pnpmInstallArgs(runtime)], app, {
+      ...process.env,
+      COREPACK_ENABLE_NETWORK: "0",
+    });
+  } finally {
+    for (const directory of absent) {
+      if (await exists(directory)) created.push(directory);
+    }
+  }
 }
 
 function launcherOf(app: string): string {
@@ -257,7 +284,11 @@ async function launcherVersionMatches(
   }
 }
 
-export type BunChoice = BunCommand & { source: "recorded" | "private" | "system" | "provisioned" };
+/** `created` lists what provisioning wrote; it is empty unless `source` is "provisioned". */
+export type BunChoice = BunCommand & {
+  source: "recorded" | "private" | "system" | "provisioned";
+  created: readonly string[];
+};
 
 /**
  * A Bun for runtime bun: the recorded `bun_path`, the private
@@ -282,22 +313,28 @@ export async function ensureBun(
   };
   if (recorded !== undefined && recorded !== null) {
     const found = await qualifying(recorded);
-    if (found !== null) return { path: recorded, version: found.version, source: "recorded" };
+    if (found !== null)
+      return { path: recorded, version: found.version, source: "recorded", created: [] };
   }
   const privateBinary = path.join(runtime, "bun", "bin", "bun");
   const existing = await qualifying(privateBinary);
   if (existing !== null)
-    return { path: privateBinary, version: existing.version, source: "private" };
+    return { path: privateBinary, version: existing.version, source: "private", created: [] };
   const system = await findSystemBun(searchPath, pins.bunMinimumVersion, runtime);
-  if (system !== null) return { ...system, source: "system" };
+  if (system !== null) return { ...system, source: "system", created: [] };
   console.log(
     `no Bun >= ${pins.bunMinimumVersion} found; provisioning Bun ${pins.bunVersion} into ${runtime}/bun`,
   );
-  const binary = await provisionPrivateBun(runtime, pins, {
+  const provisioned = await provisionPrivateBun(runtime, pins, {
     mirror: process.env.CHOCO_PI_BUN_MIRROR ?? DEFAULT_BUN_MIRROR,
     searchPath,
   });
-  return { path: binary, version: pins.bunVersion, source: "provisioned" };
+  return {
+    path: provisioned.path,
+    version: pins.bunVersion,
+    source: "provisioned",
+    created: provisioned.created,
+  };
 }
 
 function runtimeArgument(value: string, origin: string): Runtime {
@@ -356,25 +393,20 @@ export async function isOurLink(link: string, launcher: string): Promise<boolean
   }
 }
 
-const RUNTIME_ENTRIES = ["node", "pnpm", "pnpm-store", "pnpm-cache", "pnpm-state", "bun"] as const;
-
-async function createdPaths(
+/**
+ * The paths an install owns: those an earlier manifest recorded plus those
+ * this run reported creating, and install.json. A path that merely exists is
+ * never owned: uninstall deletes every owned path recursively.
+ */
+function ownedPaths(
   home: string,
-  app: string,
-  gitManaged: boolean,
   previous: InstallManifest | null,
-): Promise<string[]> {
-  const candidates = [
-    ...(gitManaged ? [app] : []),
-    ...RUNTIME_ENTRIES.map((entry) => path.join(home, "runtime", entry)),
-    path.join(home, "install.json"),
-  ];
-  const created = new Set(previous?.created ?? []);
-  for (const candidate of candidates) {
-    if (await exists(candidate)) created.add(candidate);
-  }
-  created.add(path.join(home, "install.json"));
-  return [...created];
+  createdNow: readonly string[],
+): string[] {
+  const owned = new Set(previous?.created ?? []);
+  for (const entry of createdNow) owned.add(entry);
+  owned.add(path.join(home, "install.json"));
+  return [...owned];
 }
 
 async function loadManifestModule() {
@@ -411,7 +443,8 @@ export async function installCommand(args: readonly string[]): Promise<void> {
   const flags = parseFlags(
     args,
     ["--home", "--bin-dir", "--source", "--ref", "--runtime"],
-    ["--local-app"],
+    // Stage 0 (install.sh) reports what it created: the app clone, the Node download.
+    ["--local-app", "--app-cloned", "--node-provisioned"],
   );
   const runtimeFlag = flags.values.get("--runtime");
   const requestedRuntime =
@@ -455,11 +488,17 @@ export async function installCommand(args: readonly string[]): Promise<void> {
     rev = await syncCheckout(app, ref, previous === null || previous.ref !== ref);
   }
   const runtime = path.join(home, "runtime");
-  await installDependencies(app, runtime);
+  const createdNow: string[] = [];
+  if (!local && flags.switches.has("--app-cloned")) createdNow.push(app);
+  if (flags.switches.has("--node-provisioned")) createdNow.push(path.join(runtime, "node"));
+  await installDependencies(app, runtime, createdNow);
   await assertPiBinEntry(app);
   const piRuntime = requestedRuntime ?? previous?.runtime ?? DEFAULT_RUNTIME;
   const bun = piRuntime === "bun" ? await ensureBun(home, app, previous?.bun_path) : null;
-  if (bun !== null) console.log(`bun: ${bun.source} ${bun.path} (${bun.version})`);
+  if (bun !== null) {
+    console.log(`bun: ${bun.source} ${bun.path} (${bun.version})`);
+    createdNow.push(...bun.created);
+  }
   const { writeInstallManifest, isLauncherReadablePath } =
     manifestModule ?? (await loadManifestModule());
   const nodePath = process.execPath;
@@ -478,7 +517,7 @@ export async function installCommand(args: readonly string[]): Promise<void> {
     runtime: piRuntime,
     bun_path: bun?.path ?? previous?.bun_path ?? null,
     bin_link: previous?.bin_link ?? null,
-    created: await createdPaths(home, app, !local, previous),
+    created: ownedPaths(home, previous, createdNow),
     installed_at: previous?.installed_at ?? now,
     updated_at: now,
   };
@@ -554,8 +593,9 @@ export async function updateCommand(args: readonly string[]): Promise<void> {
   const oldRev = await git(app, ["rev-parse", "--verify", "HEAD"]);
   const rev = await syncCheckout(app, ref, ref !== manifest.ref);
   const runtime = path.join(home, "runtime");
+  const createdNow: string[] = [];
   try {
-    await installDependencies(app, runtime);
+    await installDependencies(app, runtime, createdNow);
     await assertPiBinEntry(app);
     await runLauncher(home, app, ["self", "setup"]);
   } catch (error) {
@@ -564,16 +604,20 @@ export async function updateCommand(args: readonly string[]): Promise<void> {
     );
     console.error(`returning to ${oldRev.slice(0, 12)}`);
     await git(app, ["checkout", "--quiet", "--force", "--detach", oldRev]);
-    await installDependencies(app, runtime);
-    await runLauncher(home, app, ["self", "setup"]);
+    try {
+      await installDependencies(app, runtime, createdNow);
+      await runLauncher(home, app, ["self", "setup"]);
+    } finally {
+      // Keep ownership of whatever the failed update created.
+      await writeInstallManifest({ ...manifest, created: ownedPaths(home, manifest, createdNow) });
+    }
     throw new Error(`update failed; restored ${oldRev.slice(0, 12)}`, { cause: error });
   }
-  const created = await createdPaths(home, app, true, manifest);
   await writeInstallManifest({
     ...manifest,
     ref,
     rev,
-    created,
+    created: ownedPaths(home, manifest, createdNow),
     updated_at: new Date().toISOString(),
   });
   console.log(
@@ -690,12 +734,14 @@ export async function runtimeCommand(args: readonly string[]): Promise<void> {
     );
   }
   let bunPath = manifest.bun_path ?? null;
+  let createdNow: readonly string[] = [];
   if (runtime === "bun") {
     const bun = await ensureBun(home, manifest.app, manifest.bun_path);
     console.log(`bun: ${bun.source} ${bun.path} (${bun.version})`);
     bunPath = bun.path;
+    createdNow = bun.created;
   }
-  const created = await createdPaths(home, manifest.app, manifest.source !== null, manifest);
+  const created = ownedPaths(home, manifest, createdNow);
   await writeInstallManifest({
     ...manifest,
     runtime,
@@ -706,7 +752,8 @@ export async function runtimeCommand(args: readonly string[]): Promise<void> {
   try {
     await launcherVersionMatches(home, manifest.app, runtime);
   } catch (error) {
-    await writeInstallManifest(manifest);
+    // Keep the old runtime but still own what provisioning just downloaded.
+    await writeInstallManifest({ ...manifest, created });
     throw new Error(
       `Pi does not start on ${runtime}; kept runtime ${manifest.runtime ?? DEFAULT_RUNTIME}`,
       {

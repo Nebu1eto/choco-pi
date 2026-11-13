@@ -334,17 +334,19 @@ test("the private pnpm is verified against the pinned integrity before extractio
     ChecksumMismatchError,
   );
   assert.deepEqual(await readdir(runtime), [], "nothing extracted after a mismatch");
-  const entry = await provisionPrivatePnpm(
+  const provisioned = await provisionPrivatePnpm(
     runtime,
     pinsFor(integrity),
     pathToFileURL(registry).href,
   );
+  const entry = provisioned.path;
   assert.equal(entry, path.join(runtime, "pnpm", "bin", "pnpm.mjs"));
+  assert.deepEqual(provisioned.created, [path.join(runtime, "pnpm")]);
   await rm(registry, { recursive: true });
-  assert.equal(
+  assert.deepEqual(
     await provisionPrivatePnpm(runtime, pinsFor(integrity), pathToFileURL(registry).href),
-    entry,
-    "re-run reuses it",
+    { path: entry, created: [] },
+    "re-run reuses it and creates nothing",
   );
 });
 
@@ -491,15 +493,17 @@ test("the private Bun zip is verified against the pinned sha256 before unzip eve
   assert.equal(await exists(marker), false, "unzip never ran on the mismatched zip");
 
   const digest = (await sha(archive, "sha256")).toString("hex");
-  const binary = await provisionPrivateBun(runtime, pinsFor(digest), options);
+  const provisioned = await provisionPrivateBun(runtime, pinsFor(digest), options);
+  const binary = provisioned.path;
   assert.equal(binary, path.join(runtime, "bun", "bin", "bun"));
+  assert.deepEqual(provisioned.created, [path.join(runtime, "bun")]);
   assert.equal(await exists(marker), true);
   assert.deepEqual(await readdir(runtime), ["bun"]);
   assert.equal((await runFile(binary, ["--version"])).stdout.trim(), "1.5.2");
   await rm(mirror, { recursive: true });
-  assert.equal(
+  assert.deepEqual(
     await provisionPrivateBun(runtime, pinsFor(digest), options),
-    binary,
+    { path: binary, created: [] },
     "an installed pinned Bun is reused without downloading",
   );
 });
@@ -629,29 +633,97 @@ async function snapshot(root: string): Promise<string[]> {
   return entries.filter((entry) => !entry.split(path.sep).includes("node_modules")).toSorted();
 }
 
-test("stage 1 install is idempotent, updates by fast-forward, and uninstall removes exactly what it recorded", async (t) => {
-  const pnpmVersion = await runFile("pnpm", ["--version"]).then(
+/** The skip reason when pnpm on PATH is not the pinned 11.11.0, else null. */
+async function pinnedPnpmMissing(): Promise<string | null> {
+  const version = await runFile("pnpm", ["--version"]).then(
     ({ stdout }) => stdout.trim(),
     () => null,
   );
-  if (pnpmVersion !== "11.11.0") {
-    t.skip(`needs pnpm 11.11.0 on PATH (found ${pnpmVersion ?? "none"})`);
-    return;
-  }
-  const directory = await scratch(t);
+  return version === "11.11.0" ? null : `needs pnpm 11.11.0 on PATH (found ${version ?? "none"})`;
+}
+
+/** A user home under `directory` and an environment that resolves node and pnpm. */
+async function fixtureEnvironment(
+  directory: string,
+): Promise<{ userHome: string; environment: NodeJS.ProcessEnv }> {
   const userHome = path.join(directory, "user-home");
   await mkdir(userHome);
-  const runtimeDirs = [
-    `--config.store-dir=${path.join(directory, "lock-store")}`,
-    `--config.cache-dir=${path.join(directory, "lock-cache")}`,
-    `--config.state-dir=${path.join(directory, "lock-state")}`,
-  ];
   const environment: NodeJS.ProcessEnv = {
     ...process.env,
     HOME: userHome,
     PATH: `${NODE_DIR}:${process.env.PATH ?? ""}`,
   };
   delete environment.CHOCO_PI_HOME;
+  return { userHome, environment };
+}
+
+/** Locks the fixture's dependencies and commits it as branch main. */
+async function commitFixture(
+  source: string,
+  directory: string,
+  environment: NodeJS.ProcessEnv,
+): Promise<void> {
+  const lockDirs = [
+    `--config.store-dir=${path.join(directory, "lock-store")}`,
+    `--config.cache-dir=${path.join(directory, "lock-cache")}`,
+    `--config.state-dir=${path.join(directory, "lock-state")}`,
+  ];
+  await runFile("pnpm", ["install", "--lockfile-only", ...lockDirs], {
+    cwd: source,
+    env: environment,
+  });
+  await runFile("git", ["init", "--quiet", "--initial-branch=main", source]);
+  await runFile("git", ["-C", source, "add", "-A"]);
+  await runFile("git", ["-C", source, ...GIT_IDENTITY, "commit", "--quiet", "-m", "fixture"]);
+}
+
+async function commitChange(source: string): Promise<string> {
+  await writeFile(path.join(source, "CHANGELOG"), "next\n");
+  await runFile("git", ["-C", source, "add", "-A"]);
+  await runFile("git", ["-C", source, ...GIT_IDENTITY, "commit", "--quiet", "-m", "next"]);
+  return (await runFile("git", ["-C", source, "rev-parse", "HEAD"])).stdout.trim();
+}
+
+/** Runs stage 1 the way install.sh does right after it cloned `app`. */
+async function stageOneInstall(
+  app: string,
+  home: string,
+  binDir: string,
+  source: string,
+  environment: NodeJS.ProcessEnv,
+): Promise<string> {
+  const args = [
+    path.join(app, "scripts", "standalone", "manage.ts"),
+    "install",
+    "--home",
+    home,
+    "--bin-dir",
+    binDir,
+    "--source",
+    source,
+    "--ref",
+    "main",
+    "--app-cloned",
+  ];
+  const { stdout } = await runFile(process.execPath, args, { env: environment, timeout: 120_000 });
+  return stdout;
+}
+
+async function readManifest(home: string): Promise<InstallManifest> {
+  return parseInstallManifest(
+    await readFile(path.join(home, "install.json"), "utf8"),
+    "install.json",
+  );
+}
+
+test("stage 1 install is idempotent, updates by fast-forward, and uninstall removes exactly what it recorded", async (t) => {
+  const skipReason = await pinnedPnpmMissing();
+  if (skipReason !== null) {
+    t.skip(skipReason);
+    return;
+  }
+  const directory = await scratch(t);
+  const { userHome, environment } = await fixtureEnvironment(directory);
   const source = await fixtureSource(directory);
   // The app's pins name a fixture Bun zip, served from a file: mirror below.
   const bunPlatform = await currentBunPlatform();
@@ -673,37 +745,13 @@ test("stage 1 install is idempotent, updates by fast-forward, and uninstall remo
       pinsText.replace(/^(bun_sha256_\S+) [a-f0-9]{64}$/gm, `$1 ${digest}`),
     );
   }
-  await runFile("pnpm", ["install", "--lockfile-only", ...runtimeDirs], {
-    cwd: source,
-    env: environment,
-  });
-  await runFile("git", ["init", "--quiet", "--initial-branch=main", source]);
-  await runFile("git", ["-C", source, "add", "-A"]);
-  await runFile("git", ["-C", source, ...GIT_IDENTITY, "commit", "--quiet", "-m", "fixture"]);
+  await commitFixture(source, directory, environment);
 
   const home = path.join(directory, "choco");
   const binDir = path.join(directory, "bin");
   const app = path.join(home, "app");
   await runFile("git", ["clone", "--quiet", "--no-hardlinks", source, app]);
-  const install = async () => {
-    const args = [
-      path.join(app, "scripts", "standalone", "manage.ts"),
-      "install",
-      "--home",
-      home,
-      "--bin-dir",
-      binDir,
-      "--source",
-      source,
-      "--ref",
-      "main",
-    ];
-    const { stdout } = await runFile(process.execPath, args, {
-      env: environment,
-      timeout: 120_000,
-    });
-    return stdout;
-  };
+  const install = () => stageOneInstall(app, home, binDir, source, environment);
   const first = await install();
   assert.match(first, /created: .*choco-pi ->/);
   const manifestText = await readFile(path.join(home, "install.json"), "utf8");
@@ -730,10 +778,7 @@ test("stage 1 install is idempotent, updates by fast-forward, and uninstall remo
   assert.deepEqual({ ...again, updated_at: "" }, { ...manifest, updated_at: "" });
   assert.deepEqual(await snapshot(home), tree, "re-run creates nothing new");
 
-  await writeFile(path.join(source, "CHANGELOG"), "next\n");
-  await runFile("git", ["-C", source, "add", "-A"]);
-  await runFile("git", ["-C", source, ...GIT_IDENTITY, "commit", "--quiet", "-m", "next"]);
-  const head = (await runFile("git", ["-C", source, "rev-parse", "HEAD"])).stdout.trim();
+  const head = await commitChange(source);
   await runFile(path.join(binDir, "choco-pi"), ["self", "update"], {
     env: launcherEnvironment,
     timeout: 120_000,
@@ -784,4 +829,214 @@ test("stage 1 install is idempotent, updates by fast-forward, and uninstall remo
   assert.equal(await readFile(path.join(home, "agent", "auth.json"), "utf8"), "{}\n");
   assert.deepEqual(await readdir(binDir), []);
   assert.deepEqual(await readdir(userHome), [], "nothing written to the user's home");
+});
+
+test("a runtime directory the installer did not create survives install, update and uninstall", async (t) => {
+  const skipReason = await pinnedPnpmMissing();
+  if (skipReason !== null) {
+    t.skip(skipReason);
+    return;
+  }
+  const directory = await scratch(t);
+  const { environment } = await fixtureEnvironment(directory);
+  const source = await fixtureSource(directory);
+  await commitFixture(source, directory, environment);
+  const home = path.join(directory, "choco");
+  const binDir = path.join(directory, "bin");
+  const app = path.join(home, "app");
+  const foreignBun = path.join(home, "runtime", "bun");
+  await mkdir(foreignBun, { recursive: true });
+  await writeFile(path.join(foreignBun, "unrelated"), "not the installer's\n");
+  await runFile("git", ["clone", "--quiet", "--no-hardlinks", source, app]);
+  await stageOneInstall(app, home, binDir, source, environment);
+  const installed = await readManifest(home);
+  assert.ok(installed.created.includes(app), "stage 0 reported the clone");
+  assert.equal(installed.created.includes(foreignBun), false, "existence is not ownership");
+  assert.ok(installed.created.includes(path.join(home, "runtime", "pnpm-store")));
+
+  const launcherEnvironment = { ...environment, PATH: "/usr/bin:/bin" };
+  const head = await commitChange(source);
+  await runFile(path.join(binDir, "choco-pi"), ["self", "update"], {
+    env: launcherEnvironment,
+    timeout: 120_000,
+  });
+  const updated = await readManifest(home);
+  assert.equal(updated.rev, head);
+  // No pnpm on this PATH, so the update provisions (and owns) a private pnpm.
+  assert.deepEqual(updated.created.slice(0, installed.created.length), installed.created);
+  assert.equal(updated.created.includes(foreignBun), false, "update does not claim it either");
+
+  await runFile(path.join(binDir, "choco-pi"), ["self", "uninstall"], { env: launcherEnvironment });
+  assert.equal(await readFile(path.join(foreignBun, "unrelated"), "utf8"), "not the installer's\n");
+  assert.deepEqual((await readdir(home)).toSorted(), ["agent", "runtime"]);
+  assert.deepEqual(await readdir(path.join(home, "runtime")), ["bun"]);
+});
+
+/** Matches `text` literally inside a RegExp. */
+function literal(text: string): string {
+  return text.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** A stand-in node that answers install.sh's probes and prints the stage 1 command. */
+const STUB_NODE = [
+  "#!/bin/sh",
+  'case "$1" in',
+  '  -e) case "$2" in *execPath*) printf %s "$0" ;; *) printf 24 ;; esac ;;',
+  "  --version) echo v24.0.0 ;;",
+  '  *) echo "STAGE1 $*" ;;',
+  "esac",
+  "",
+].join("\n");
+
+test("install.sh installs into CHOCO_PI_HOME unless --home overrides it", async (t) => {
+  if (!(await onPath("git", "/usr/bin:/bin"))) {
+    t.skip("needs git in /usr/bin:/bin");
+    return;
+  }
+  const directory = await scratch(t);
+  const tools = path.join(directory, "tools");
+  await mkdir(tools);
+  await writeFile(path.join(tools, "node"), STUB_NODE, { mode: 0o755 });
+  const source = await pinsOnlySource(
+    directory,
+    pinsText("24.0.0", "0".repeat(64), ZERO_INTEGRITY),
+  );
+  const userHome = path.join(directory, "user-home");
+  const envHome = path.join(directory, "env-home");
+  const run = async (args: readonly string[]) => {
+    const { stdout } = await runFile(
+      "/bin/sh",
+      [INSTALL_SH, "--bin-dir", path.join(directory, "bin"), "--source", source, ...args],
+      { env: { HOME: userHome, PATH: `${tools}:/usr/bin:/bin`, CHOCO_PI_HOME: envHome } },
+    );
+    return stdout;
+  };
+  const fromEnvironment = await run([]);
+  assert.match(fromEnvironment, new RegExp(`STAGE1 \\S+ install --home ${literal(envHome)} `));
+  assert.equal(await exists(path.join(envHome, "app", ".git")), true);
+  assert.equal(await exists(path.join(userHome, ".choco-pi")), false);
+
+  const flagHome = path.join(directory, "flag-home");
+  const fromFlag = await run(["--home", flagHome]);
+  assert.match(fromFlag, new RegExp(`STAGE1 \\S+ install --home ${literal(flagHome)} `));
+  assert.equal(await exists(path.join(flagHome, "app", ".git")), true);
+});
+
+test("install.sh downloads Node, then hands stage 1 the runtime name rather than a path", async (t) => {
+  const platform = nodePlatform();
+  const basePath = "/usr/bin:/bin";
+  const skipReason =
+    (await pinnedPnpmMissing()) ??
+    (platform === null || (await onPath("node", basePath)) || !(await onPath("git", basePath))
+      ? "needs darwin/linux with git but no node in /usr/bin:/bin"
+      : null);
+  if (skipReason !== null || platform === null) {
+    t.skip(skipReason ?? "unsupported platform");
+    return;
+  }
+  const directory = await scratch(t);
+  const { environment } = await fixtureEnvironment(directory);
+  const source = await fixtureSource(directory);
+  // The downloaded "Node.js" runs the real node, so stage 1 is the real manage.ts.
+  const calls = path.join(directory, "node-calls.log");
+  const nodeName = `node-v24.0.0-${platform}`;
+  const nodeMirror = path.join(directory, "node-mirror");
+  const nodeArchive = path.join(nodeMirror, "v24.0.0", `${nodeName}.tar.gz`);
+  const nodeWrapper = [
+    "#!/bin/sh",
+    `printf '%s\\n' "$*" >> '${calls}'`,
+    `exec '${process.execPath}' "$@"`,
+    "",
+  ].join("\n");
+  await fixtureTarball(directory, nodeName, new Map([["bin/node", nodeWrapper]]), nodeArchive);
+  const nodeDigest = (await sha(nodeArchive, "sha256")).toString("hex");
+  const bunPlatform = await currentBunPlatform();
+  const withBun =
+    bunPlatform !== null &&
+    (await zipToolsPresent()) &&
+    (await onPath("unzip", basePath)) &&
+    !(await onPath("bun", basePath));
+  const bunMirror = path.join(directory, "bun-mirror");
+  const pinsFile = path.join(source, "scripts", "standalone", "runtime-pins.txt");
+  let pins = (await readFile(pinsFile, "utf8"))
+    .replace(/^node_version \S+$/m, "node_version 24.0.0")
+    .replace(/^(node_sha256_\S+) [a-f0-9]{64}$/gm, `$1 ${nodeDigest}`);
+  if (withBun) {
+    const version = (await readRuntimePins()).bunVersion;
+    const zip = path.join(bunMirror, `bun-v${version}`, `bun-${bunPlatform}.zip`);
+    await fixtureBunZip(directory, bunPlatform, version, zip);
+    const bunDigest = (await sha(zip, "sha256")).toString("hex");
+    pins = pins.replace(/^(bun_sha256_\S+) [a-f0-9]{64}$/gm, `$1 ${bunDigest}`);
+  }
+  await writeFile(pinsFile, pins);
+  await commitFixture(source, directory, environment);
+  // Stage 1 finds this pnpm on PATH; only pnpm itself sees a node on PATH.
+  const shims = path.join(directory, "shims");
+  await mkdir(shims);
+  const pnpm = (
+    await runFile("/bin/sh", ["-c", "command -v pnpm"], { env: environment })
+  ).stdout.trim();
+  await writeFile(
+    path.join(shims, "pnpm"),
+    ["#!/bin/sh", `PATH='${NODE_DIR}':"$PATH" exec '${pnpm}' "$@"`, ""].join("\n"),
+    { mode: 0o755 },
+  );
+  const userHome = path.join(directory, "user-home");
+  const installEnvironment = {
+    HOME: userHome,
+    PATH: `${shims}:${basePath}`,
+    CHOCO_PI_NODE_MIRROR: pathToFileURL(nodeMirror).href,
+    CHOCO_PI_BUN_MIRROR: pathToFileURL(bunMirror).href,
+  };
+  const install = async (label: string, extra: readonly string[]) => {
+    const home = path.join(directory, `home-${label}`);
+    const binDir = path.join(directory, `bin-${label}`);
+    const args = [
+      INSTALL_SH,
+      "--home",
+      home,
+      "--bin-dir",
+      binDir,
+      "--source",
+      source,
+      "--ref",
+      "main",
+    ];
+    await runFile("/bin/sh", [...args, ...extra], {
+      env: installEnvironment,
+      timeout: 180_000,
+    }).catch((error: Failure) => {
+      assert.fail(
+        `install.sh ${label} failed (${error.code}):\n${error.stdout ?? ""}${error.stderr ?? ""}`,
+      );
+    });
+    const stageOne = (await readFile(calls, "utf8"))
+      .split("\n")
+      .filter((line) => line.includes(" install --home ") && line.includes(home));
+    assert.equal(stageOne.length, 1, `one stage 1 call for ${label}`);
+    const version = await runFile(path.join(binDir, "choco-pi"), ["--version"], {
+      env: { HOME: userHome, PATH: basePath },
+    });
+    assert.equal(version.stdout.trim(), "1.5.2");
+    return { home, stageOne: stageOne[0] ?? "", manifest: await readManifest(home) };
+  };
+
+  const byDefault = await install("default", []);
+  assert.doesNotMatch(byDefault.stageOne, /--runtime/, "the default leaves the runtime to stage 1");
+  assert.match(byDefault.stageOne, / --app-cloned --node-provisioned$/);
+  assert.equal(byDefault.manifest.runtime, "node");
+  assert.ok(byDefault.manifest.created.includes(path.join(byDefault.home, "app")));
+  assert.ok(byDefault.manifest.created.includes(path.join(byDefault.home, "runtime", "node")));
+
+  if (!withBun) {
+    t.diagnostic(
+      "--runtime bun part skipped (needs zip, unzip, a pinned platform, no bun in /usr/bin:/bin)",
+    );
+    return;
+  }
+  const onBun = await install("bun", ["--runtime", "bun"]);
+  assert.match(onBun.stageOne, / --runtime bun --app-cloned --node-provisioned$/);
+  assert.equal(onBun.manifest.runtime, "bun");
+  assert.equal(onBun.manifest.bun_path, path.join(onBun.home, "runtime", "bun", "bin", "bun"));
+  assert.ok(onBun.manifest.created.includes(path.join(onBun.home, "runtime", "bun")));
 });
