@@ -181,6 +181,20 @@ export function chooseLegalCutEntry(
     readonly branchExtendsCapture?: boolean;
   } = {},
 ): string | "defer" {
+  const first = legalCutEntries(capture, preferredCutEntryId, options).next();
+  return first.done === true ? "defer" : first.value;
+}
+
+/**
+ * Every legal entry cut at or before `preferredCutEntryId` in the capture's
+ * projection, latest first, under {@link chooseLegalCutEntry}'s rules. A caller
+ * that cannot use one cut (the branch refuses it) walks on to the next.
+ */
+export function* legalCutEntries(
+  capture: WireCapture,
+  preferredCutEntryId: string,
+  options: { readonly branchExtendsCapture?: boolean } = {},
+): Generator<string, void, undefined> {
   const projection = capture.mapping?.projection ?? [];
   const preferred = projection.findIndex((ref) => ref.entryId === preferredCutEntryId);
   for (let index = preferred; index >= 0; index--) {
@@ -189,9 +203,8 @@ export function chooseLegalCutEntry(
     const cut = resolveEntryCut(capture, entryId);
     if (!cut.ok) continue;
     if (cut.projectedSuccessor !== undefined || options.branchExtendsCapture === true)
-      return entryId;
+      yield entryId;
   }
-  return "defer";
 }
 
 /** Wire-capture match: exact provider and model, and equal normalized base URLs; a scope without baseUrl never matches. */

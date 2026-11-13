@@ -45,6 +45,7 @@ import {
 import { type AnthropicDetails, isAnthropicDetails } from "../src/anthropic/details.ts";
 import type { CoordinatorStatus } from "../src/background/contract.ts";
 import { getCoordinator } from "../src/background/registry.ts";
+import { freezeSnapshot, isSnapshotRefusal } from "../src/background/snapshot.ts";
 import type { TextSummarizer } from "../src/background/text-backend.ts";
 import registerCompaction from "../src/index.ts";
 import { mainOwnerKey } from "../src/ownership.ts";
@@ -64,6 +65,9 @@ const MODEL: Model<"anthropic-messages"> = {
 };
 const PERSONA_TYPE = "choco-pi-agent-persona";
 const PERSONA_TEXT = "Agent persona: pessimistic";
+const LANGUAGE_TYPE = "choco-pi-agent-language";
+const LANGUAGE_TEXT = "Reply in English.";
+const TURN_METADATA_TYPE = "turn-summary";
 const BLOCK = {
   type: "compaction",
   content: "PERSONA synthetic native summary",
@@ -158,7 +162,21 @@ interface Rig {
   dispose(): Promise<void>;
 }
 
-async function createRig(keepRecentTokens: number): Promise<Rig> {
+interface SessionExtras {
+  /** A second identical per-turn message after the persona, as the language preference appends. */
+  readonly language?: boolean;
+  /** A context-invisible custom entry appended after every turn (timing, turn summaries). */
+  readonly turnMetadata?: boolean;
+  /** Keep window read on every cut search, so a test can set it after seeding. */
+  readonly keepWindow?: KeepWindow;
+}
+
+interface KeepWindow {
+  value: number;
+}
+
+async function createRig(keepRecentTokens: number, extras: SessionExtras = {}): Promise<Rig> {
+  const keep = extras.keepWindow ?? { value: keepRecentTokens };
   const dir = await mkdtemp(join(tmpdir(), "choco-pi-anthropic-persona-"));
   const sidecar = join(dir, "background-compaction.json");
   // Background on with both lanes; the usage threshold is never crossed, so
@@ -198,7 +216,7 @@ async function createRig(keepRecentTokens: number): Promise<Rig> {
     },
   });
   const settings = SettingsManager.inMemory({
-    compaction: { enabled: false, keepRecentTokens, reserveTokens: 16_384 },
+    compaction: { enabled: false, keepRecentTokens: keep.value, reserveTokens: 16_384 },
     retry: { enabled: false },
   });
   const persona = (pi: ExtensionAPI): void => {
@@ -206,11 +224,21 @@ async function createRig(keepRecentTokens: number): Promise<Rig> {
     pi.on("before_agent_start", () => ({
       message: { customType: PERSONA_TYPE, content: PERSONA_TEXT, display: false },
     }));
+    if (extras.language === true) {
+      pi.on("before_agent_start", () => ({
+        message: { customType: LANGUAGE_TYPE, content: LANGUAGE_TEXT, display: false },
+      }));
+    }
+    if (extras.turnMetadata === true) {
+      pi.on("agent_end", () => {
+        pi.appendEntry(TURN_METADATA_TYPE, { turn: true });
+      });
+    }
   };
   const compaction = (pi: ExtensionAPI): void => {
     registerCompaction(pi, {
       retryPolicy: { enabled: false, maxRetries: 0, baseDelayMs: 0, maxAgentDelayMs: 0 },
-      compactionPolicy: () => ({ keepRecentTokens, reserveTokens: 16_384 }),
+      compactionPolicy: () => ({ keepRecentTokens: keep.value, reserveTokens: 16_384 }),
       background: {
         settingsPaths: () => [sidecar],
         createTextSummarizer: () => textSummarizer,
@@ -396,6 +424,77 @@ test(
       // The first kept message is a user message the wire places right after the prefix.
       assert.equal(capture.body.messages[details.wire.prefixLength]?.role, "user");
       assert.equal(entry.firstKeptEntryId, branch[cutIndex + 1]?.id);
+    } finally {
+      await rig.dispose();
+    }
+  },
+);
+
+/**
+ * The keep window whose own cut falls between a turn's persona and language
+ * messages: locally a legal turn boundary, but the two are consecutive user
+ * wire messages, so the replay cannot cut there and the Anthropic lane must
+ * move the cut back to the previous turn end.
+ */
+function splitPersonaWindow(manager: SessionManager): number {
+  const branch = manager.getBranch();
+  const personas = new Set(personaEntryIds(manager));
+  const scope = { provider: MODEL.provider, model: MODEL.id };
+  for (let keep = 1; keep <= 5_000; keep++) {
+    const snapshot = freezeSnapshot(branch, {
+      ownerKey: "probe",
+      ownerGeneration: 0,
+      providerScope: scope,
+      keepRecentTokens: keep,
+      capturedAt: 0,
+    });
+    if (!isSnapshotRefusal(snapshot) && personas.has(snapshot.cutEntryId)) return keep;
+  }
+  return assert.fail("no keep window cuts between a persona and a language message");
+}
+
+test(
+  "turn-end metadata: the lane freezes the replay-legal cut instead of reporting nothing to summarize",
+  { timeout: 30_000 },
+  async () => {
+    const keepWindow: KeepWindow = { value: 1 };
+    const rig = await createRig(1, { language: true, turnMetadata: true, keepWindow });
+    try {
+      await seedTurns(rig);
+      const branch = rig.manager.getBranch();
+      assert.ok(
+        branch.some((entry) => entry.type === "custom" && entry.customType === TURN_METADATA_TYPE),
+        "every turn ends with a metadata entry",
+      );
+      keepWindow.value = splitPersonaWindow(rig.manager);
+
+      const status = await prepareNative(rig);
+      // Before the fix: { state: "failed", reason: "no-legal-cut", detail: "nothing-to-summarize" }.
+      assert.equal(status.state, "ready", JSON.stringify(status));
+      assert.equal(status.backendId, ANTHROPIC_BACKEND_ID);
+
+      const { entry, details } = await adopt(rig);
+      const adopted = rig.manager.getBranch();
+      const cutIndex = adopted.findIndex((item) => item.id === details.cut.cutEntryId);
+      const firstKeptIndex = adopted.findIndex((item) => item.id === entry.firstKeptEntryId);
+      assert.ok(cutIndex >= 0 && firstKeptIndex === cutIndex + 1);
+      // A turn-end cut: only context-invisible entries lie between the last
+      // summarized message and the user message that starts the kept range.
+      const keptUser = adopted
+        .slice(firstKeptIndex)
+        .find((item) => item.type === "message" && item.message.role === "user");
+      assert.ok(keptUser);
+      const between = adopted.slice(firstKeptIndex, adopted.indexOf(keptUser));
+      assert.ok(
+        between.every((item) => item.type === "custom"),
+        JSON.stringify(between),
+      );
+      const lastSummarized = adopted
+        .slice(0, cutIndex + 1)
+        .findLast((item) => item.type === "message" || item.type === "custom_message");
+      assert.ok(lastSummarized?.type === "message" && lastSummarized.message.role === "assistant");
+      const capture = capturesFor(rig.manager.getSessionId()).at(-1);
+      assert.equal(capture?.body.messages[details.wire.prefixLength]?.role, "user");
     } finally {
       await rig.dispose();
     }

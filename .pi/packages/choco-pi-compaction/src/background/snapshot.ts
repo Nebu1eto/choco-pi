@@ -63,6 +63,9 @@ export interface FreezeOptions {
   readonly capturedAt: number;
 }
 
+/** Inputs of {@link freezeSnapshotAt}: an exact cut takes no retention window. */
+export type ExactFreezeOptions = Omit<FreezeOptions, "keepRecentTokens" | "maxKeepTokens">;
+
 /**
  * Frozen snapshot produced here.
  *
@@ -83,6 +86,8 @@ type SnapshotRefusalDetail =
   | "duplicate-entry-id"
   | "nothing-to-summarize"
   | "no-legal-cut"
+  | "cut-not-on-branch"
+  | "cut-not-reproducible"
   | "split-turn-without-governing-request";
 
 /** Typed refusal; history is untouched and nothing was captured. */
@@ -510,13 +515,23 @@ function hasSummarizableContent(
   return false;
 }
 
+/** The legal cut at raw index `cut`, or undefined when cutting there is illegal. */
+function legalCutAt(
+  entries: readonly SessionEntry[],
+  analysis: BranchAnalysis,
+  cut: number,
+): CutCandidate | undefined {
+  if (cut < Math.max(analysis.compactionIndex, 0) || cut > entries.length - 2) return undefined;
+  if ((analysis.blocked[cut] ?? 0) > 0) return undefined;
+  if (!hasSummarizableContent(entries, analysis, cut)) return undefined;
+  return { cut, turnBoundary: isTurnBoundary(entries, analysis, cut) };
+}
+
 function legalCuts(entries: readonly SessionEntry[], analysis: BranchAnalysis): CutCandidate[] {
   const candidates: CutCandidate[] = [];
-  const lowest = Math.max(analysis.compactionIndex, 0);
-  for (let cut = lowest; cut <= entries.length - 2; cut++) {
-    if ((analysis.blocked[cut] ?? 0) > 0) continue;
-    if (!hasSummarizableContent(entries, analysis, cut)) continue;
-    candidates.push({ cut, turnBoundary: isTurnBoundary(entries, analysis, cut) });
+  for (let cut = Math.max(analysis.compactionIndex, 0); cut <= entries.length - 2; cut++) {
+    const candidate = legalCutAt(entries, analysis, cut);
+    if (candidate) candidates.push(candidate);
   }
   return candidates;
 }
@@ -658,7 +673,57 @@ export function freezeSnapshot(
       chosen = boundary;
     }
   }
+  return buildSnapshot(entries, analysis, chosen, governing, options);
+}
 
+/**
+ * Freeze the committed branch exactly at `cutEntryId` (the last summarized
+ * entry), or refuse. For a cut chosen elsewhere, such as a provider-native
+ * lane's replay-legal cut: no retention window moves it, and it is legal only
+ * under the same rules {@link freezeSnapshot} applies to its own choice.
+ *
+ * `entries` is the whole current branch, so the retained side (turn boundary,
+ * metadata entries after the cut) is judged as it really is.
+ */
+export function freezeSnapshotAt(
+  entries: readonly SessionEntry[],
+  cutEntryId: string,
+  options: ExactFreezeOptions,
+): PrefixSnapshot | SnapshotRefusal {
+  if (entries.length === 0) {
+    return refuse("no-legal-cut", "empty-branch");
+  }
+  const chain = chainProblem(entries);
+  if (chain) {
+    return refuse("malformed", chain);
+  }
+  const index = entries.findIndex((entry) => entry.id === cutEntryId);
+  if (index < 0) {
+    return refuse("no-legal-cut", "cut-not-on-branch");
+  }
+  const analysis = analyzeBranch(entries);
+  const chosen = legalCutAt(entries, analysis, index);
+  if (!chosen) {
+    return refuse("no-legal-cut", "no-legal-cut");
+  }
+  let governing: GoverningRequest | null = null;
+  if (!chosen.turnBoundary) {
+    governing = resolveGoverningRequest(entries, analysis, chosen.cut);
+    if (!governing && analysis.compactionIndex < 0) {
+      return refuse("no-legal-cut", "split-turn-without-governing-request");
+    }
+  }
+  return buildSnapshot(entries, analysis, chosen, governing, options);
+}
+
+/** Build the frozen snapshot of a cut already judged legal. */
+function buildSnapshot(
+  entries: readonly SessionEntry[],
+  analysis: BranchAnalysis,
+  chosen: CutCandidate,
+  governing: GoverningRequest | null,
+  options: ExactFreezeOptions,
+): PrefixSnapshot | SnapshotRefusal {
   const cutEntry = entries[chosen.cut];
   const firstKept = entries[chosen.cut + 1];
   if (!cutEntry || !firstKept) {

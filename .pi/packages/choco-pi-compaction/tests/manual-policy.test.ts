@@ -167,6 +167,17 @@ test("nothing to summarize stops with an informational notice", () => {
   assert.deepEqual(outcome, { action: "stop", level: "info", notice: NOTHING_TO_SUMMARIZE_NOTICE });
 });
 
+test("a replay-legal cut the branch cannot freeze retries on text, never as nothing to summarize", () => {
+  const outcome = manualFallbackPolicy(
+    input(status("failed", "no-legal-cut", { detail: "cut-not-reproducible" })),
+  );
+  assert.deepEqual(outcome, {
+    action: "retry-text",
+    notice:
+      "checkpoint made by the text lane after the Anthropic lane failed (no-legal-cut: cut-not-reproducible)",
+  });
+});
+
 test("a thrown wait failure and an unclassified reason stop with a warning", () => {
   const thrown = manualFallbackPolicy(
     input(status("preparing"), { failure: new Error("synthetic wait failure") }),

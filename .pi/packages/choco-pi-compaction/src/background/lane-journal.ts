@@ -172,6 +172,8 @@ export const REASONS = {
   brokenChain: "broken-chain",
   duplicateEntryId: "duplicate-entry-id",
   nothingToSummarize: "nothing-to-summarize",
+  cutNotOnBranch: "cut-not-on-branch",
+  cutNotReproducible: "cut-not-reproducible",
   splitTurnWithoutGoverningRequest: "split-turn-without-governing-request",
   noRetainedEntry: "no-retained-entry",
   unmappedCapture: "unmapped-capture",

@@ -20,7 +20,12 @@ import {
 import { streamSimple } from "@earendil-works/pi-ai/api/anthropic-messages";
 import type { ProjectedSessionEntry, SessionEntry } from "@earendil-works/pi-coding-agent";
 
-import { chooseLegalCutEntry, judgeWireCut, resolveEntryCut } from "../src/anthropic/backend.ts";
+import {
+  chooseLegalCutEntry,
+  judgeWireCut,
+  legalCutEntries,
+  resolveEntryCut,
+} from "../src/anthropic/backend.ts";
 import {
   mapWireToEntries,
   parseWireBody,
@@ -278,6 +283,13 @@ test("entry-level cuts are judged on the mapped wire", { timeout: 20_000 }, asyn
   assert.equal(chooseLegalCutEntry(capture, "e7"), "e4");
   assert.equal(chooseLegalCutEntry(capture, "e9"), "e8");
   assert.equal(chooseLegalCutEntry(capture, "e3"), "defer");
+  // Every legal cut, latest first, for a caller whose branch refuses the first.
+  assert.deepEqual([...legalCutEntries(capture, "e9")], ["e8", "e4"]);
+  assert.deepEqual(
+    [...legalCutEntries(capture, "e9", { branchExtendsCapture: true })],
+    ["e9", "e8", "e4"],
+  );
+  assert.deepEqual([...legalCutEntries(capture, "e3")], []);
   assert.deepEqual(capture.body, before, "the captured wire is never edited");
 });
 

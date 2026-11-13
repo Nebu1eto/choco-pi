@@ -20,6 +20,7 @@ import {
   checkSnapshotLegality,
   findPrefixInvalidation,
   freezeSnapshot,
+  freezeSnapshotAt,
   isSnapshotRefusal,
   listLegalCuts,
   type FreezeOptions,
@@ -288,6 +289,93 @@ test("representative transcript: every chosen cut is legal, exact on replay, and
     assert.equal(findPrefixInvalidation(result, branch.entries), null);
   }
   assert.equal(splitTurns.size, 2, "both split-turn and whole-turn cuts exercised");
+});
+
+/**
+ * Random transcript shaped like a real session: a context-invisible state
+ * entry after every message (timing, journals) and a run of them at each turn
+ * end, so most cuts are followed by metadata rather than a cut-point message.
+ */
+function metadataDenseBranch(seed: number): Branch {
+  const next = lcg(seed);
+  const branch = new Branch();
+  let call = 0;
+  const turns = 2 + (next() % 4);
+  for (let turn = 0; turn < turns; turn++) {
+    branch.user(`request ${seed}-${turn} ${"u".repeat(next() % 200)}`);
+    if (next() % 2 === 0) branch.state();
+    const batches = next() % 5;
+    for (let batch = 0; batch < batches; batch++) {
+      const ids = Array.from({ length: 1 + (next() % 3) }, () => `m${seed}-${call++}`);
+      branch.calls(ids);
+      if (next() % 3 === 0) branch.state();
+      for (const id of ids) branch.result(id, `out ${id} ${"r".repeat(next() % 400)}`);
+      branch.state();
+    }
+    branch.text(`done ${turn} ${"a".repeat(next() % 300)}`);
+    const trailing = 1 + (next() % 3);
+    for (let index = 0; index < trailing; index++) branch.state();
+  }
+  branch.user("latest request");
+  return branch;
+}
+
+const EXACT_OPTIONS = OPTIONS;
+
+test("an exact cut freezes at every legal cut of a metadata-dense branch", () => {
+  let metadataCuts = 0;
+  for (let seed = 1; seed <= 12; seed++) {
+    const branch = metadataDenseBranch(seed);
+    const cuts = listLegalCuts(branch.entries);
+    assert.ok(cuts.length > 0, `seed ${seed} has legal cuts`);
+    for (const cut of cuts) {
+      const result = freezeSnapshotAt(branch.entries, cut.cutEntryId, EXACT_OPTIONS);
+      if (isSnapshotRefusal(result)) {
+        assert.fail(`seed ${seed} cut ${cut.cutEntryId}: ${result.reason}/${result.detail}`);
+      }
+      assert.equal(result.cutEntryId, cut.cutEntryId);
+      assert.equal(result.firstKeptEntryId, cut.firstKeptEntryId);
+      assert.equal(result.splitTurn, !cut.turnBoundary);
+      const cutIndex = branch.entries.findIndex((entry) => entry.id === cut.cutEntryId);
+      expectNoSplitToolGroup(branch.entries, cutIndex);
+      assertExactReplay(branch.entries, result);
+      assert.deepEqual(checkSnapshotLegality(result), { legal: true });
+      if (branch.entries[cutIndex]?.type === "custom") metadataCuts += 1;
+    }
+  }
+  assert.ok(metadataCuts > 10, `only ${metadataCuts} cuts land on a metadata entry`);
+});
+
+test("an exact cut at the chosen cut reproduces the windowed snapshot", () => {
+  for (const seed of [3, 5, 9]) {
+    const branch = metadataDenseBranch(seed);
+    for (const keep of KEEP_WINDOWS) {
+      const windowed = freezeSnapshot(branch.entries, { ...OPTIONS, keepRecentTokens: keep });
+      if (isSnapshotRefusal(windowed)) continue;
+      const exact = freezeSnapshotAt(branch.entries, windowed.cutEntryId, EXACT_OPTIONS);
+      assert.deepEqual(exact, windowed, `seed ${seed} keep ${keep}`);
+    }
+  }
+});
+
+test("an exact cut refuses an unknown entry, an open tool group, and the leaf", () => {
+  const branch = new Branch();
+  branch.user("request");
+  const call = branch.calls(["x1"]);
+  branch.state();
+  branch.result("x1", "out");
+  branch.text("done");
+  const leaf = branch.state();
+  const detail = (cutEntryId: string): string | undefined => {
+    const result = freezeSnapshotAt(branch.entries, cutEntryId, EXACT_OPTIONS);
+    return isSnapshotRefusal(result) ? result.detail : undefined;
+  };
+  assert.equal(detail("missing"), "cut-not-on-branch");
+  assert.equal(detail(call), "no-legal-cut");
+  assert.equal(detail(leaf), "no-legal-cut");
+  const empty = freezeSnapshotAt([], "e0", EXACT_OPTIONS);
+  assert.ok(isSnapshotRefusal(empty));
+  assert.equal(empty.detail, "empty-branch");
 });
 
 test("snapshot is detached, deeply frozen, and carries owner scalars", () => {

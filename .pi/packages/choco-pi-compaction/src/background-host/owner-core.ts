@@ -6,8 +6,8 @@ import type {
 
 import {
   ANTHROPIC_BACKEND_ID,
-  chooseLegalCutEntry,
   hasUsableCapture,
+  legalCutEntries,
   selectCapture,
 } from "../anthropic/backend.ts";
 import { capturesFor, type WireCapture } from "../anthropic/capture.ts";
@@ -40,8 +40,10 @@ import { CODEX_BACKEND_SETTING_ID, isBackendEnabled } from "../background/settin
 import { TEXT_BACKEND_ID } from "../background/text-backend.ts";
 import { deliveredAdoptionsFor } from "../background/registry.ts";
 import {
+  type ExactFreezeOptions,
   findPrefixInvalidation,
   freezeSnapshot,
+  freezeSnapshotAt,
   isSnapshotRefusal,
   type PrefixSnapshot,
   type SnapshotRefusal,
@@ -73,8 +75,12 @@ import type { BackgroundCompactionOptions, OwnerSpec } from "./owner-spec.ts";
 /** Host compaction default when no settings were loaded (pi's own default). */
 const DEFAULT_KEEP_RECENT_TOKENS = 20_000;
 
-/** Retention that freezes exactly at a chosen cut: one retained entry, no more. */
-const EXACT_CUT_RETENTION: KeepTokens = { keepRecentTokens: 1, maxKeepTokens: 0 };
+/**
+ * Replay-legal Anthropic cuts tried, latest first, before the lane refuses.
+ * Each try maps the cut onto the capture and the branch; the first legal one
+ * normally freezes, so the bound only caps a pathological walk.
+ */
+const MAX_NATIVE_CUT_ATTEMPTS = 16;
 
 const OUTSTANDING: ReadonlySet<CandidateState> = new Set([
   "queued",
@@ -126,11 +132,6 @@ export interface OwnerCore {
   /** Settle earlier proposals whose boundary has completed. */
   settle(): Promise<void>;
   dispose(): void;
-}
-
-interface KeepTokens {
-  readonly keepRecentTokens: number;
-  readonly maxKeepTokens?: number;
 }
 
 /** Mutable trigger and branch state of one owner, shared by its port and coordinator callbacks. */
@@ -404,32 +405,24 @@ function branchKey(state: OwnerCoreState): string {
   return `${state.spec.sessionId}#${state.branchEpoch}`;
 }
 
-function freezeOptions(state: OwnerCoreState, context: SnapshotContext, keep: KeepTokens) {
-  const base = {
+function exactFreezeOptions(state: OwnerCoreState, context: SnapshotContext): ExactFreezeOptions {
+  return {
     ownerKey: state.spec.ownerKey,
     ownerGeneration: state.spec.ownerGeneration,
     providerScope: context.providerScope,
-    keepRecentTokens: keep.keepRecentTokens,
     capturedAt: context.capturedAt,
   };
-  return keep.maxKeepTokens === undefined ? base : { ...base, maxKeepTokens: keep.maxKeepTokens };
 }
 
-/** Freeze exactly at cutEntryId (the next entry retained), or refuse. */
+/** Freeze exactly at cutEntryId (the last summarized entry), or refuse. */
 function freezeAt(
   state: OwnerCoreState,
   entries: readonly SessionEntry[],
   cutEntryId: string,
   context: SnapshotContext,
 ): PrefixSnapshot | undefined {
-  const index = entries.findIndex((entry) => entry.id === cutEntryId);
-  if (index < 0 || index + 1 >= entries.length) return undefined;
-  const result = freezeSnapshot(
-    entries.slice(0, index + 2),
-    freezeOptions(state, context, EXACT_CUT_RETENTION),
-  );
-  if (isSnapshotRefusal(result) || result.cutEntryId !== cutEntryId) return undefined;
-  return result;
+  const result = freezeSnapshotAt(entries, cutEntryId, exactFreezeOptions(state, context));
+  return isSnapshotRefusal(result) || result.cutEntryId !== cutEntryId ? undefined : result;
 }
 
 function freeze(state: OwnerCoreState, context: SnapshotContext): FrozenSnapshot | SnapshotRefused {
@@ -459,10 +452,10 @@ function freezeFresh(
   state: OwnerCoreState,
   context: SnapshotContext,
 ): PrefixSnapshot | SnapshotRefusal {
-  const base = freezeSnapshot(
-    context.entries,
-    freezeOptions(state, context, { keepRecentTokens: keepRecentTokens(state.spec) }),
-  );
+  const base = freezeSnapshot(context.entries, {
+    ...exactFreezeOptions(state, context),
+    keepRecentTokens: keepRecentTokens(state.spec),
+  });
   if (isSnapshotRefusal(base)) return base;
   // Wire-replay cut rules bind only the lane that replays the wire.
   if (context.backendId !== ANTHROPIC_BACKEND_ID) return base;
@@ -481,14 +474,22 @@ function legalAnthropicCut(
     context.providerScope,
   );
   if (capture === undefined) return base;
-  const legal = chooseLegalCutEntry(capture, base.cutEntryId, {
+  const legalCuts = legalCutEntries(capture, base.cutEntryId, {
     branchExtendsCapture: branchExtendsCapture(capture, context.entries),
   });
-  if (legal === "defer") return refusedCut("no-legal-cut", true);
-  if (legal === base.cutEntryId) return base;
-  return (
-    freezeAt(state, context.entries, legal, context) ?? refusedCut("nothing-to-summarize", true)
-  );
+  let attempts = 0;
+  for (const legal of legalCuts) {
+    if (legal === base.cutEntryId) return base;
+    const exact = freezeAt(state, context.entries, legal, context);
+    if (exact !== undefined) return exact;
+    attempts += 1;
+    if (attempts >= MAX_NATIVE_CUT_ATTEMPTS) break;
+  }
+  // No replay-legal cut: wait for a capture that has one. Replay-legal cuts the
+  // branch refuses are a different failure, never "nothing to summarize".
+  return attempts === 0
+    ? refusedCut("no-legal-cut", true)
+    : refusedCut("cut-not-reproducible", true);
 }
 
 /**
@@ -504,7 +505,7 @@ function branchExtendsCapture(capture: WireCapture, entries: readonly SessionEnt
 }
 
 function refusedCut(
-  detail: "no-legal-cut" | "nothing-to-summarize",
+  detail: "no-legal-cut" | "cut-not-reproducible",
   retryable: boolean,
 ): SnapshotRefusal {
   return { ok: false, reason: "no-legal-cut", retryable, detail };
