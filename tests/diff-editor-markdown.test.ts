@@ -78,6 +78,9 @@ class StateStore implements DiffStore {
   async loadFile(): Promise<never> {
     throw new Error("not used");
   }
+  async loadContext(): Promise<never> {
+    throw new Error("not used");
+  }
   setSource(): void {}
   setVisible(): void {}
   dispose(): void {}

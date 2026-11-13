@@ -216,6 +216,9 @@ class FakeStore implements DiffStore {
     const revision = this.state.kind === "ready" ? this.state.snapshot.revision : 0;
     return { revision, body: this.bodies.get(path) ?? { kind: "binary" } };
   }
+  async loadContext(): Promise<never> {
+    throw new Error("not used");
+  }
   setSource(): void {}
   setVisible(visible: boolean): void {
     this.visible.push(visible);

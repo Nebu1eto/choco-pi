@@ -83,6 +83,18 @@ export type RefreshReason =
   | "manual"
   | "source";
 
+/** Most lines one `loadContext` call returns. */
+export const MAX_EXCERPT_LINES = 20;
+
+/**
+ * Lines of a listed file as it is now, around a place no hunk shows: the
+ * working tree for working-tree sources, the head tree for a "range" source.
+ * `from` numbers the first line; `lines` stops early at the file's end.
+ */
+export type FileExcerpt =
+  | { kind: "lines"; from: number; lines: string[] }
+  | { kind: "unavailable"; reason: string };
+
 export type DiffStore = {
   getState(): DiffStoreState;
   /** The listener is called after every state change; returns an unsubscribe function. */
@@ -93,6 +105,16 @@ export type DiffStore = {
   refreshNow(): Promise<void>;
   /** Hunks for one listed file, cached per snapshot revision and path. */
   loadFile(path: string): Promise<{ revision: number; body: FileBody }>;
+  /**
+   * Lines `from`..`to` (1-based, inclusive, at most {@link MAX_EXCERPT_LINES})
+   * of one listed file, cached per snapshot revision. A file that is not
+   * listed, too large, binary or unreadable is "unavailable"; never rejects.
+   */
+  loadContext(
+    path: string,
+    from: number,
+    to: number,
+  ): Promise<{ revision: number; excerpt: FileExcerpt }>;
   setSource(source: DiffSource): void;
   /** Polling runs only while visible. */
   setVisible(visible: boolean): void;

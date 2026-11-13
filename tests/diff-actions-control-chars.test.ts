@@ -279,7 +279,9 @@ test("reviewer findings read from the review records are sanitised in place and 
     wide.reduce((sum, line) => sum + unsafeCount(withoutOwnEscapes(line)), 0),
     0,
   );
-  assert.ok(wide.some((line) => line.includes(": inv a")));
+  // Open by default: the finding's whole invariant is drawn under it.
+  assert.ok(wide.some((line) => line.includes("▾ ⚑ high finding Fa")));
+  assert.ok(wide.some((line) => line.includes("inv a")));
 });
 
 /** The `@"..."` mention in `text`, decoded as JSON, or the bare `@path` token. */

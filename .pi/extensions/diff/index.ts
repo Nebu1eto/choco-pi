@@ -18,6 +18,9 @@ import { createDiffStore } from "../lib/changes/git/store.ts";
 import { SCRATCH_DIR_ENV, scratchDirForSession } from "../lib/scratch-path.ts";
 import { sessionBaselineOf, turnCheckpointsOf } from "./core/checkpoints.ts";
 import { readRecords } from "../lib/changes/findings.ts";
+import { reviewRecordsDirectory } from "../lib/changes/review-records.ts";
+import { createCommentReader } from "../lib/changes/review-comments.ts";
+import { loadZentuiHeaderBox } from "../lib/changes/view/header-box.ts";
 import { probeTui } from "./host/probe.ts";
 import { registerDiffPane } from "./ui/controller.ts";
 import { notesFilePath } from "../lib/changes/notes.ts";
@@ -58,6 +61,9 @@ export default function diffPaneExtension(pi: ExtensionAPI): void {
     },
     scratchDir,
     readRecords,
+    // Read-only: the pane lists /review-assist's records and never cleans them up.
+    readComments: createCommentReader(() => reviewRecordsDirectory(getAgentDir())),
+    headerBox: (ctx) => loadZentuiHeaderBox(() => ctx.ui.theme),
     fileChangedAt: async (path) => {
       try {
         return (await lstat(path)).mtimeMs;

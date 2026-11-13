@@ -7,19 +7,39 @@
  *
  * Line indexes count the hunk's displayed lines, which include any context
  * the reviewer revealed around it; hunk ids stay the content-hash ids.
+ *
+ * An item (a recorded finding or a review comment shown in the body) is a
+ * stop too, at the place the body draws it; see {@link ItemPlace}.
  */
 import type { DiffFile, DiffHunk, DiffLine, DiffSide } from "../types.ts";
 
 /** Where the cursor sits. */
 export type LineCursor = {
   path: string;
-  /** Absent on a file row. */
+  /** Absent on a file row and on an item. */
   hunkId?: string;
   /** Index into the hunk's displayed lines; absent on a file row or a folded hunk. */
   lineIndex?: number;
   /** Fixed end of a multi-line selection in the same hunk; absent for one line. */
   anchorIndex?: number;
+  /** The item the cursor is on (a finding or comment row); absent everywhere else. */
+  itemId?: string;
 };
+
+/**
+ * Where an item sits in its file's body:
+ * - `line`: after a displayed line of a hunk (after the hunk's only row when it is folded);
+ * - `header`: after a hunk's header;
+ * - `before`: between hunks, before the hunk at `hunkIndex` (`hunks.length`: after the last);
+ * - `end`: after everything else in the body.
+ */
+export type ItemPlace =
+  | { kind: "line"; hunkId: string; lineIndex: number }
+  | { kind: "header"; hunkId: string }
+  | { kind: "before"; hunkIndex: number }
+  | { kind: "end" };
+
+export type CursorItem = { id: string; place: ItemPlace };
 
 /** One listed file as the cursor walks it. */
 export type CursorFile = {
@@ -31,35 +51,95 @@ export type CursorFile = {
   folded(hunkId: string): boolean;
   /** The header of an unfolded hunk is a stop before its lines. */
   hunkStops?: boolean;
+  /** Items in the body, in the order the body draws those at one place. */
+  items?: readonly CursorItem[];
+  /**
+   * The body lists the items without its contents (a hidden sensitive file
+   * that is expanded): they follow the file row, in order.
+   */
+  itemsOnly?: boolean;
 };
 
-export type CursorRow = { path: string; hunkId?: string; lineIndex?: number };
+export type CursorRow = { path: string; hunkId?: string; lineIndex?: number; itemId?: string };
+
+/** Items of `file` at one place, in their given order. */
+function itemsAt(
+  file: CursorFile,
+  test: (place: ItemPlace) => boolean,
+): Array<{ path: string; itemId: string }> {
+  return (file.items ?? [])
+    .filter((item) => test(item.place))
+    .map((item) => ({ path: file.path, itemId: item.id }));
+}
 
 /** Every stop, in display order. */
 export function cursorRows(files: readonly CursorFile[]): CursorRow[] {
   const rows: CursorRow[] = [];
   for (const file of files) {
     rows.push({ path: file.path });
+    if (!file.open && file.itemsOnly) {
+      rows.push(...itemsAt(file, () => true));
+      continue;
+    }
     if (!file.open || !file.hunks) continue;
-    for (const hunk of file.hunks) {
+    const hunks = file.hunks;
+    hunks.forEach((hunk, hunkIndex) => {
+      rows.push(
+        ...itemsAt(file, (place) => place.kind === "before" && place.hunkIndex === hunkIndex),
+      );
+      const inHunk = (place: ItemPlace) =>
+        (place.kind === "line" || place.kind === "header") && place.hunkId === hunk.id;
       if (file.folded(hunk.id) || hunk.lines.length === 0) {
         rows.push({ path: file.path, hunkId: hunk.id });
-        continue;
+        rows.push(...itemsAt(file, inHunk));
+        return;
       }
       if (file.hunkStops) rows.push({ path: file.path, hunkId: hunk.id });
-      hunk.lines.forEach((_line, lineIndex) =>
-        rows.push({ path: file.path, hunkId: hunk.id, lineIndex }),
+      rows.push(...itemsAt(file, (place) => place.kind === "header" && place.hunkId === hunk.id));
+      const lineItems = (file.items ?? []).filter(
+        (item) => item.place.kind === "line" && item.place.hunkId === hunk.id,
       );
-    }
+      hunk.lines.forEach((_line, lineIndex) => {
+        rows.push({ path: file.path, hunkId: hunk.id, lineIndex });
+        for (const item of lineItems) {
+          if (item.place.kind === "line" && item.place.lineIndex === lineIndex) {
+            rows.push({ path: file.path, itemId: item.id });
+          }
+        }
+      });
+      // A line past the hunk's displayed lines (its context collapsed): after its last row.
+      for (const item of lineItems) {
+        if (item.place.kind === "line" && item.place.lineIndex >= hunk.lines.length) {
+          rows.push({ path: file.path, itemId: item.id });
+        }
+      }
+    });
+    rows.push(
+      ...itemsAt(
+        file,
+        (place) =>
+          (place.kind === "before" && place.hunkIndex >= hunks.length) ||
+          // An item naming a hunk the file no longer shows goes to the end with the rest.
+          ((place.kind === "line" || place.kind === "header") &&
+            !hunks.some((hunk) => hunk.id === place.hunkId)),
+      ),
+    );
+    rows.push(...itemsAt(file, (place) => place.kind === "end"));
   }
   return rows;
 }
 
 function rowIndex(rows: readonly CursorRow[], cursor: LineCursor | undefined): number {
   if (!cursor) return -1;
+  if (cursor.itemId !== undefined) {
+    const item = rows.findIndex((row) => row.path === cursor.path && row.itemId === cursor.itemId);
+    if (item >= 0) return item;
+    return rows.findIndex((row) => row.path === cursor.path);
+  }
   const exact = rows.findIndex(
     (row) =>
       row.path === cursor.path &&
+      row.itemId === undefined &&
       row.hunkId === cursor.hunkId &&
       row.lineIndex === cursor.lineIndex,
   );

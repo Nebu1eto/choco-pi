@@ -358,6 +358,78 @@ export function minimalistFrameGeometry(width: number, editorRows: number) {
   };
 }
 
+export type LabeledBoxOptions = {
+  width: number;
+  /** Rows inside the box; each is cut or padded to the inner width. */
+  lines: string[];
+  topLeft?: string;
+  topRight?: string;
+  bottomLeft?: string;
+  bottomRight?: string;
+  uiTheme: Theme;
+  config: ZentuiConfig;
+  /** Paints the border instead of the editor's border color; a throw falls back to it. */
+  borderColor?: (text: string) => string;
+};
+
+/**
+ * A box drawn like the minimalist editor frame — labeled `╭`/`╮` and
+ * `╰`/`╯` borders around `│` rows — with caller-chosen labels, in the
+ * editor's border color unless `borderColor` paints it. Other extensions use
+ * it to frame their own panels the way the prompt is framed.
+ */
+export function renderLabeledBox({
+  width,
+  lines,
+  topLeft = "",
+  topRight = "",
+  bottomLeft = "",
+  bottomRight = "",
+  uiTheme,
+  config,
+  borderColor,
+}: LabeledBoxOptions): string[] {
+  if (width <= 4) return clampLines(lines, width);
+  const contentWidth = Math.max(0, width - 4);
+  const renderStaticBorder = (text: string) =>
+    renderStyleForSourceOrFallback(
+      uiTheme,
+      config.components.editor.colorSource,
+      config.colors.editorBorder,
+      EDITOR_BORDER_FALLBACK,
+      text,
+    );
+  const renderBorder = (text: string) => {
+    if (!borderColor) return renderStaticBorder(text);
+    try {
+      const rendered = borderColor(text);
+      return isString(rendered) ? rendered : renderStaticBorder(text);
+    } catch {
+      return renderStaticBorder(text);
+    }
+  };
+  const top = renderLabeledBorder({
+    width,
+    left: topLeft,
+    right: topRight,
+    leftCorner: "╭",
+    rightCorner: "╮",
+    renderBorder,
+  });
+  const bottom = renderLabeledBorder({
+    width,
+    left: bottomLeft,
+    right: bottomRight,
+    leftCorner: "╰",
+    rightCorner: "╯",
+    renderBorder,
+  });
+  const content = lines.map(
+    (line) => `${renderBorder("│")} ${fillLine(line, contentWidth)} ${renderBorder("│")}`,
+  );
+  return clampLines([top, ...content, bottom], width);
+}
+
 export function renderMinimalistFrame({
   width,
   editorLines,

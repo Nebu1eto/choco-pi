@@ -3,6 +3,7 @@ import type { ExecRunner, TurnTreeProvider } from "../types.ts";
 import { createSystemClock, type DiffClock } from "./clock.ts";
 import { readFileBody, type BodyContext, type BodyRead } from "./file-body.ts";
 import { createGitExecRunner, createPinnedGitRunner, shortErrorMessage } from "./exec.ts";
+import { excerptRange, readExcerpt, type ExcerptContext } from "./excerpt.ts";
 import { resolveDiffLimits, type DiffLimits } from "./limits.ts";
 import type {
   DiffSnapshot,
@@ -10,6 +11,7 @@ import type {
   DiffStore,
   DiffStoreState,
   FileBody,
+  FileExcerpt,
   RefreshReason,
 } from "./model.ts";
 import { readSnapshot, sourceKey, type ListedFile, type RefreshOutcome } from "./snapshot.ts";
@@ -59,6 +61,11 @@ function comparisonOf(target: { compareBase: string; compareHead?: string }): st
 }
 
 type Outcome = RefreshOutcome | { kind: "error"; message: string } | { kind: "superseded" };
+
+/** Excerpts kept at once; each is at most MAX_EXCERPT_LINES short lines. */
+const MAX_CACHED_EXCERPTS = 64;
+
+type CachedExcerpt = { revision: number; generation: number; read: Promise<FileExcerpt> };
 
 class SupersededError extends Error {
   constructor() {
@@ -112,6 +119,8 @@ export function createDiffStore(options: DiffStoreOptions): DiffStore {
   let applied: Applied | undefined;
   let lastRevision = 0;
   const bodies = new Map<string, CachedBody>();
+  /** By revision, path and range; only the current revision's are kept. */
+  const excerpts = new Map<string, CachedExcerpt>();
 
   function setState(next: DiffStoreState): void {
     state = next;
@@ -277,6 +286,7 @@ export function createDiffStore(options: DiffStoreOptions): DiffStore {
       case "not-a-repository":
         applied = undefined;
         bodies.clear();
+        excerpts.clear();
         setState({ kind: "not-a-repository", cwd });
         return;
       case "unchanged":
@@ -298,6 +308,8 @@ export function createDiffStore(options: DiffStoreOptions): DiffStore {
       return;
     }
     lastRevision += 1;
+    // Excerpts belong to one snapshot: the working tree they quote may have changed since.
+    excerpts.clear();
     const snapshot: DiffSnapshot = {
       revision: lastRevision,
       source: runSource,
@@ -414,11 +426,56 @@ export function createDiffStore(options: DiffStoreOptions): DiffStore {
       return { revision, body };
     },
 
+    async loadContext(path, from, to) {
+      const current = applied;
+      const generationAtCall = generation;
+      if (disposed || state.kind !== "ready" || !current) {
+        return {
+          revision: state.kind === "ready" ? state.snapshot.revision : 0,
+          excerpt: { kind: "unavailable", reason: "No diff snapshot is loaded." },
+        };
+      }
+      const revision = current.snapshot.revision;
+      // Only a listed file is read: a recorded path never reaches the file system unchecked.
+      if (!current.files.has(path)) {
+        return { revision, excerpt: { kind: "unavailable", reason: "Not in this diff." } };
+      }
+      const { first, last } = excerptRange(from, to);
+      const key = JSON.stringify([revision, path, first, last]);
+      const cached = excerpts.get(key);
+      if (cached && cached.generation === generationAtCall) {
+        excerpts.delete(key);
+        excerpts.set(key, cached);
+        return { revision, excerpt: await cached.read };
+      }
+      const context: ExcerptContext = {
+        runner: git.run,
+        repoRoot: current.snapshot.repoRoot,
+        limits,
+      };
+      if (current.compareHead !== undefined) context.head = current.compareHead;
+      const entry: CachedExcerpt = {
+        revision,
+        generation: generationAtCall,
+        read: readExcerpt(context, path, first, last),
+      };
+      excerpts.set(key, entry);
+      for (const stale of excerpts.keys()) {
+        if (excerpts.size <= MAX_CACHED_EXCERPTS) break;
+        excerpts.delete(stale);
+      }
+      const excerpt = await entry.read;
+      // A failure may pass (a timeout); it is read again next time.
+      if (excerpt.kind === "unavailable" && excerpts.get(key) === entry) excerpts.delete(key);
+      return { revision, excerpt };
+    },
+
     setSource(next) {
       if (disposed || sameSource(source, next)) return;
       source = next;
       generation += 1;
       bodies.clear();
+      excerpts.clear();
       // The refresh in flight belongs to the old source: it is discarded when
       // it settles, and the new source does not wait for it.
       const superseded = running;
@@ -456,6 +513,7 @@ export function createDiffStore(options: DiffStoreOptions): DiffStore {
       git.cancelAll();
       listeners.clear();
       bodies.clear();
+      excerpts.clear();
       const superseded = running;
       running = undefined;
       if (superseded) resolveAll(superseded.waiters);

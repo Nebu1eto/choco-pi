@@ -1,7 +1,8 @@
 /**
  * One file row and the short texts around it, shared by the changes pane
  * (`/diff`) and the interactive review (`/review-assist`). The pane's layout
- * is the reference: `▾ M path  badges  +3 -1`, with a middle-truncated path.
+ * is the reference: `▾ M path  badges  +3 -1`, with the path shortened by
+ * {@link fitPath} so the file name survives.
  *
  * Pure: every function takes its data and width as arguments. Untrusted names
  * are sanitised here, once, so callers pass raw paths.
@@ -68,6 +69,92 @@ export function displayPath(file: FileSummary): string {
   return file.oldPath && file.oldPath !== file.path ? `${file.oldPath} → ${file.path}` : file.path;
 }
 
+/** The extension a name keeps when it is cut: `.ts` of `changes-view.ts`; empty without one. */
+function extensionOf(name: string): string {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? name.slice(dot) : "";
+}
+
+/**
+ * A file name cut to `width` columns in its middle, keeping its extension
+ * whole when there is room for it and one character in front.
+ */
+function cutName(name: string, width: number): string {
+  const total = visibleWidth(name);
+  if (total <= width) return name;
+  const extension = extensionOf(name);
+  const extensionWidth = visibleWidth(extension);
+  if (extensionWidth === 0 || extensionWidth + 2 > width) return middleTruncate(name, width);
+  const available = width - 1;
+  let tail = Math.floor(available / 2);
+  if (tail < extensionWidth) tail = extensionWidth;
+  const head = available - tail;
+  const start = sliceByColumn(name, 0, head, true);
+  const end = sliceByColumn(name, total - tail, tail, true);
+  return `${start}…${end}`;
+}
+
+/**
+ * `path` shortened to `width` display columns so its file name survives:
+ * the full path; else its first segment, `…` and as many of the trailing
+ * directories as fit before the name (`.pi/…/view/changes-view.ts`); else
+ * the first segment, `…` and the name (`.pi/…/changes-view.ts`); else
+ * `…/name`; and as a last resort the name cut in its middle, keeping its
+ * extension.
+ */
+export function fitPath(path: string, width: number): string {
+  if (width <= 0) return "";
+  if (visibleWidth(path) <= width) return path;
+  const segments = path.split("/");
+  const name = segments.at(-1) ?? path;
+  if (segments.length >= 3) {
+    const first = segments[0] ?? "";
+    const directories = segments.slice(1, -1);
+    // Every directory kept is the full path; it did not fit, so at least one goes.
+    for (let kept = directories.length - 1; kept >= 0; kept -= 1) {
+      const tail = [...directories.slice(directories.length - kept), name].join("/");
+      const candidate = `${first}/…/${tail}`;
+      if (visibleWidth(candidate) <= width) return candidate;
+    }
+  }
+  if (segments.length >= 2) {
+    const short = `…/${name}`;
+    if (visibleWidth(short) <= width) return short;
+  }
+  return cutName(name, width);
+}
+
+/**
+ * A renamed file's `old → new` in `width` columns: in full; else the old
+ * path shortened to its name; else the old name and the new path shortened
+ * by {@link fitPath}; else both cut, the old name to at most a third of the
+ * room; below 12 columns the new path alone (the row's `R` says it moved).
+ */
+export function fitRename(oldPath: string, path: string, width: number): string {
+  if (width <= 0) return "";
+  const full = `${oldPath} → ${path}`;
+  if (visibleWidth(full) <= width) return full;
+  const oldName = oldPath.split("/").at(-1) ?? oldPath;
+  const named = `${oldName} → ${path}`;
+  if (visibleWidth(named) <= width) return named;
+  const lead = `${oldName} → `;
+  const name = path.split("/").at(-1) ?? path;
+  const room = width - visibleWidth(lead);
+  if (room >= visibleWidth(name)) return `${lead}${fitPath(path, room)}`;
+  const arrow = " → ";
+  if (width < 12) return fitPath(path, width);
+  const oldRoom = Math.max(2, Math.floor((width - arrow.length) / 3));
+  const oldPart = cutName(oldName, oldRoom);
+  return `${oldPart}${arrow}${fitPath(path, width - visibleWidth(oldPart) - arrow.length)}`;
+}
+
+/** A file row's path text in `width` columns, each name made terminal-safe. */
+export function fittedFilePath(file: FileSummary, width: number): string {
+  return file.oldPath && file.oldPath !== file.path
+    ? fitRename(safe(file.oldPath), safe(file.path), width)
+    : fitPath(safe(file.path), width);
+}
+
 /** {@link displayPath} with each name made terminal-safe (the arrow is ours). */
 export function terminalPath(file: FileSummary): string {
   return file.oldPath && file.oldPath !== file.path
@@ -93,8 +180,8 @@ export type RowBadge = { text: string; color: PaneColor };
 
 /**
  * One file row without the selection marker column:
- * `▸ M path/to/file.ts  ⚑2 ✎1  +3 -1`, with the path middle-truncated so the
- * badges and counts stay right-aligned in `width` columns.
+ * `▸ M path/to/file.ts  ⚑2 ✎1  +3 -1`, with the path shortened by
+ * {@link fitPath} so the badges and counts stay right-aligned in `width` columns.
  */
 export function fileRow(
   file: FileSummary,
@@ -109,7 +196,7 @@ export function fileRow(
   const badgeText = badges.map((badge) => badge.text).join(" ");
   const badgeWidth = badgeText.length > 0 ? visibleWidth(badgeText) + 1 : 0;
   const pathWidth = Math.max(0, width - visibleWidth(prefix) - countsWidth - badgeWidth);
-  const path = middleTruncate(terminalPath(file), pathWidth);
+  const path = fittedFilePath(file, pathWidth);
   const padding = " ".repeat(Math.max(0, pathWidth - visibleWidth(path)));
   const letterColor: PaneColor =
     file.status === "deleted"

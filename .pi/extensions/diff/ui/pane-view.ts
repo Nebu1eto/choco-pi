@@ -18,19 +18,20 @@ export {
 } from "../../lib/changes/view/changes-view.ts";
 
 export const KEY_HINT =
-  "j/k file · ↑↓ line · ⇧↑↓ range · c note · a ask · ←→ turn · tab editor · ? help";
+  "j/k file · ↑↓ line · ⇧↑↓ range · f/F finding · e open all · c note · a ask · ←→ turn · tab editor · ? help";
 
 /** The `?` key list, one entry per line. */
 export const HELP_LINES: readonly string[] = [
   "j/k       move between files     g/G      top/bottom",
   "↑/↓       move through file rows and the lines of open files",
   "⇧↑/⇧↓     select a range of lines (or drag over them with the mouse)",
-  "⏎/space   expand or collapse the file (or click its row)",
+  "⏎/space   expand or collapse the file (or click its row); on a finding or comment, open or close it",
   "n/N       next/previous hunk",
   "a         put a reference to the selected file, hunk or lines in the prompt (not sent);",
   "          with notes, put all of them in the prompt as one message instead",
   "c         add a note to the selected hunk, to ask about with a",
-  "f/F       next/previous review finding",
+  "f/F       next/previous review finding or /review-assist comment",
+  "e         open or close every finding and comment of the file",
   "s         cycle source: session, uncommitted, latest turn, branch base",
   "←/→       one turn's changes alone: ← older, → newer, and the whole session after the newest",
   `${COPY_KEY.label.toLowerCase().padEnd(10)}copy the selected lines as code, or the whole hunk as a diff on its header`,
@@ -50,6 +51,7 @@ export class PaneView extends ChangesView {
       hunkStops: true,
       freeSelection: true,
       enterFolds: false,
+      boxedHeader: true,
       ...dependencies,
       keyHint: KEY_HINT,
       helpLines: HELP_LINES,

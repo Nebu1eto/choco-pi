@@ -134,6 +134,9 @@ class SourceStore implements DiffStore {
   async loadFile(): Promise<{ revision: number; body: FileBody }> {
     return { revision: this.reads, body: { kind: "binary" } };
   }
+  async loadContext(): Promise<never> {
+    throw new Error("not used");
+  }
   setSource(source: DiffSource): void {
     this.sources.push(source);
     this.source = source;
@@ -300,7 +303,7 @@ test("bare /diff, open, focus and the toggle shortcut open on the session source
     "the store starts on the session source",
   );
   h.store().requestRefresh("manual");
-  assert.match(h.header(), /^Diff Session changes on main/u);
+  assert.match(h.header(), /^╭─ Diff Session changes ─+ main ─╮/u);
   assert.match(h.header(), /Baseline: checkpoint before turn 1 \(edit b please\)/u);
   assert.match(h.body(), /b\.txt/u);
 
@@ -324,7 +327,7 @@ test("an explicit source applies until the pane closes and is never remembered",
   await h.fire("session_start", { reason: "startup" });
   await h.run("source uncommitted");
   assert.ok(h.docked(), "/diff source opens the pane when it is closed");
-  assert.match(h.header(), /^Diff Uncommitted changes/u);
+  assert.match(h.header(), /^╭─ Diff Uncommitted changes /u);
   assert.match(h.body(), /a\.txt[\s\S]*b\.txt/u);
   await h.fire("tool_execution_end", { toolName: "edit" });
   assert.equal(h.store().source.kind, "uncommitted", "a refresh keeps the explicit source");
@@ -333,14 +336,14 @@ test("an explicit source applies until the pane closes and is never remembered",
   assert.equal(h.docked(), false);
   assert.equal(h.store().source.kind, "session", "closing returns the store to the session source");
   await h.run("");
-  assert.match(h.header(), /^Diff Session changes/u);
+  assert.match(h.header(), /^╭─ Diff Session changes /u);
   assert.doesNotMatch(h.header(), /Diff source: Uncommitted/u, "no stale source message");
   assert.doesNotMatch(h.body(), /a\.txt/u);
 
   await h.run("source uncommitted");
   await h.run("source session");
   assert.equal(h.store().source.kind, "session", "/diff source session returns explicitly");
-  assert.match(h.header(), /^Diff Session changes/u);
+  assert.match(h.header(), /^╭─ Diff Session changes /u);
 
   await h.run("source uncommitted");
   await h.settle();
@@ -445,7 +448,7 @@ test("a file-changing tool call docks the pane without focus; read-only tools an
   assert.ok(h.docked(), "opened by itself");
   assert.equal(h.tui.paneFocused(), false, "focus stays in the prompt editor");
   assert.equal(h.tui.overlays, 0);
-  assert.match(h.header(), /^Diff Session changes/u);
+  assert.match(h.header(), /^╭─ Diff Session changes /u);
   assert.equal(h.notices.length, 0, "no inline list and no notice");
 });
 

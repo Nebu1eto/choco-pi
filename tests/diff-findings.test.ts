@@ -150,7 +150,7 @@ test("findings render from recorded agents with candidates, claim outcomes, may-
     const header = h.header();
     assert.match(
       header,
-      /Review: wt-a FINDINGS 3 findings, 1 candidate · wt-b unrecorded · wt-c unrecorded · 1 malformed record/,
+      /Review wt-a ⚑3 \?1 · wt-b unrecorded · wt-c unrecorded · 1 malformed record/,
     );
     let body = h.body();
     assert.match(body, /src\/a\.ts\s+⚑2/);
@@ -169,18 +169,18 @@ test("findings render from recorded agents with candidates, claim outcomes, may-
     const f1 = lines.findIndex((line) => line.includes("finding F1"));
     assert.ok(
       candidate >= 0 && candidate < header3,
-      "a finding outside every hunk sits at the top",
+      "a finding before every hunk sits above the first one",
     );
+    // Open by default: the heading row, then the whole record under it.
     assert.match(
       lines[candidate] ?? "",
-      /⚑ low candidate C1 L1: C1 invariant \[REFUTED\] \(may be outdated\)/,
+      /▶ ▾ ⚑ low candidate C1 L1 \[REFUTED\] \(may be outdated\)/,
     );
+    assert.match(lines[candidate + 1] ?? "", /^\s+C1 invariant$/);
     assert.equal(f1, line4 + 1, "a finding inside a hunk sits right after its line");
-    assert.match(
-      lines[f1] ?? "",
-      /⚑ high finding F1 L4: F1 invariant \[CONFIRMED\] \(may be outdated\)/,
-    );
-    assert.equal(h.view().focusedFinding, "wt-a/C1");
+    assert.match(lines[f1] ?? "", /⚑ high finding F1 L4 \[CONFIRMED\] \(may be outdated\)/);
+    assert.match(lines[f1 + 1] ?? "", /^\s+F1 invariant$/);
+    assert.equal(h.view().selectedItem, "finding:wt-a/C1");
 
     h.tui.input("f");
     h.tui.input("f");
@@ -188,7 +188,7 @@ test("findings render from recorded agents with candidates, claim outcomes, may-
     assert.equal(h.view().selectedPath, "src/b.ts");
     body = h.body();
     const f3 = body.split("\n").find((line) => line.includes("finding F3")) ?? "";
-    assert.match(f3, /▶ ⚑ medium finding F3 L2: F3 invariant$/, "not outdated, focused");
+    assert.match(f3, /▶ ▾ ⚑ medium finding F3 L2$/, "not outdated, focused");
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }
@@ -216,7 +216,7 @@ test("a further edit after the review marks its findings may-be-outdated", async
     times.set("src/a.ts", REVIEWED_MS + 5_000);
     store.ready(2, [file("src/a.ts")]);
     await until(() => /may be outdated/.test(h.body()), "outdated mark after the edit");
-    assert.match(h.body(), /finding F1 L4: F1 invariant \[CONFIRMED\] \(may be outdated\)/);
+    assert.match(h.body(), /finding F1 L4 \[CONFIRMED\] \(may be outdated\)\n\s+F1 invariant/);
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }
@@ -265,7 +265,7 @@ test("unreadable review records are reported in the header and never thrown", as
     await h.run("open");
     h.store().ready(1, []);
     await until(() => h.view().recorded.errors.length > 0, "error recorded");
-    assert.match(h.header(), /Review: 1 read error/);
+    assert.match(h.header(), /Review 1 read error/);
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }

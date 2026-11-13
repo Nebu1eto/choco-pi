@@ -1,10 +1,11 @@
 /**
  * Host-independent changes view: header, file list, expanded hunks, notes and
- * recorded review findings, and the keys the pane handles while it has focus.
+ * recorded review findings and comments, and the keys the pane handles while
+ * it has focus.
  *
  * Rendered file blocks are cached by (width, snapshot revision, path,
- * expanded, decorations), so a refresh that produces the same revision renders
- * nothing new.
+ * expanded, decorations: notes, cursor, which findings and comments are open),
+ * so a refresh that produces the same revision renders nothing new.
  */
 import { Input, matchesKey, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type {
@@ -13,6 +14,7 @@ import type {
   DiffStore,
   DiffStoreState,
   FileBody,
+  FileExcerpt,
   FileSummary,
 } from "../git/model.ts";
 import {
@@ -38,11 +40,32 @@ import { sanitizeTerminalText as safe, terminalSafeFile } from "../terminal-text
 import type { DiffFile, DiffHunk } from "../types.ts";
 import {
   EMPTY_FINDINGS,
+  reviewLabels,
   reviewLine,
   type FindingsSummary,
   type RecordedFinding,
+  type ReviewTone,
 } from "../findings.ts";
 import { actionFor, PANE_KEYS, type ChangesKeyTable } from "./keys.ts";
+import {
+  HEADER_BOX_CHROME,
+  HEADER_BOX_MIN_WIDTH,
+  themedHeaderBox,
+  type HeaderBoxRenderer,
+} from "./header-box.ts";
+import {
+  EMPTY_FILE_ITEMS,
+  excerptHeader,
+  excerptLine,
+  itemLines,
+  placeItems,
+  severityColor,
+  type ExcerptGroup,
+  type FileItems,
+  type PaneComment,
+  type PlacedItem,
+  type ViewItem,
+} from "./items.ts";
 import {
   KEYBOARD_RESIZE_STEP,
   type PaneScroller,
@@ -69,11 +92,14 @@ import {
   moveLine,
   selectedLineIndexes,
   type CommentPosition,
+  type CursorItem,
   type CursorFile,
   type CursorRow,
   type LineCursor,
   type LineTarget,
 } from "./line-cursor.ts";
+
+export type { CommentPlacement, PaneComment } from "./items.ts";
 
 /** What the pane can be asked about. */
 export type AskTarget = {
@@ -142,11 +168,14 @@ type LoadedBody = { revision: number; body: FileBody };
 
 /**
  * Where the view reads bodies. `peekFile` returns a body the store already
- * holds for the current revision, so it can be drawn without a loading row.
+ * holds for the current revision, so it can be drawn without a loading row;
+ * `loadContext` quotes the file around findings outside every hunk (without
+ * it, those findings are drawn without a quote).
  */
-export type ViewStore = Pick<DiffStore, "loadFile"> & {
-  peekFile?(path: string): LoadedBody | undefined;
-};
+export type ViewStore = Pick<DiffStore, "loadFile"> &
+  Partial<Pick<DiffStore, "loadContext">> & {
+    peekFile?(path: string): LoadedBody | undefined;
+  };
 
 /** A loaded file's hunks as rendered at one width and layout (`key`), from one body (`raw`). */
 type RenderedHunks = { raw: DiffFile; key: string; file: DiffFile; rows: HunkRows[] };
@@ -166,8 +195,8 @@ type Block = {
 type FindingsIndex = {
   byPath: Map<string, RecordedFinding[]>;
   unlisted: RecordedFinding[];
-  /** Findings on listed files in display order, for f/F. */
-  order: Array<{ path: string; key: string }>;
+  commentsByPath: Map<string, PaneComment[]>;
+  unlistedComments: PaneComment[];
 };
 
 type PaneMessage = { text: string; color: PaneColor };
@@ -201,6 +230,11 @@ export type ChangesViewOptions = {
   rowBadges?: (path: string) => readonly RowBadge[];
   /** Header title; defaults to "Diff". */
   title?: string;
+  /**
+   * Draw the header as a labeled box (the pane), like zentui's prompt frame;
+   * plain lines otherwise, and below {@link HEADER_BOX_MIN_WIDTH} columns.
+   */
+  boxedHeader?: boolean;
   /**
    * "line" moves a cursor through file rows, folded hunks and displayed lines,
    * with Shift range selection (the review and the pane). Defaults to "hunk"
@@ -262,32 +296,16 @@ function findingRange(finding: RecordedFinding): string {
   return end !== undefined && end !== start ? `L${start}-${end}` : `L${start}`;
 }
 
-function severityColor(finding: RecordedFinding): PaneColor {
-  if (finding.class === "candidate") return "muted";
-  if (finding.severity === "critical" || finding.severity === "high") return "error";
-  if (finding.severity === "medium") return "warning";
-  return "muted";
-}
-
-function hunkContains(hunk: DiffHunk, line: number): boolean {
-  return hunk.newLines > 0 && line >= hunk.newStart && line <= hunk.newStart + hunk.newLines - 1;
-}
+const TONE_COLORS = {
+  success: "success",
+  error: "error",
+  warning: "warning",
+  muted: "muted",
+} satisfies Record<ReviewTone, PaneColor>;
 
 export { terminalSafeFile };
 
 /** A finding path made repository-relative with forward slashes. */
-/**
- * Index of the last line at or before new-side line `target`, after which a
- * finding on that line is shown; undefined when it belongs after the header.
- */
-function insertionLine(hunk: DiffHunk, target: number): number | undefined {
-  let index: number | undefined;
-  hunk.lines.forEach((line, lineIndex) => {
-    if (line.newLine !== undefined && line.newLine <= target) index = lineIndex;
-  });
-  return index;
-}
-
 export function normalizeFindingPath(path: string, repoRoot: string): string {
   let result = path.replaceAll("\\", "/");
   const root = repoRoot.replaceAll("\\", "/").replace(/\/+$/u, "");
@@ -317,9 +335,16 @@ export class ChangesView implements PaneSurface {
   message: PaneMessage | undefined;
   notes: NotesBook | undefined;
   recorded: FindingsSummary = EMPTY_FINDINGS;
+  /** `/review-assist` comments of reviews of this session or branch, shown read-only. */
+  comments: readonly PaneComment[] = [];
   /** Epoch ms of each listed file's last change; null when it could not be read. */
   changeTimes: ReadonlyMap<string, number | null> = new Map();
-  focusedFinding: string | undefined;
+  /** The finding or comment the cursor is on (its item id); absent everywhere else. */
+  selectedItem: string | undefined;
+  /** Findings and comments closed or opened by the user, by item id; absent means open. */
+  readonly itemOpen = new Map<string, boolean>();
+  /** zentui's box for the header; the theme's own box when absent or failing. */
+  headerBox: HeaderBoxRenderer | undefined;
   noteInput: { input: Input; path: string; hunkId: string; range: string } | undefined;
 
   readonly store: ViewStore;
@@ -341,10 +366,17 @@ export class ChangesView implements PaneSurface {
   private selectedLine = 0;
   private cachedRevision: number | undefined;
   private recordedVersion = 0;
+  private commentsVersion = 0;
   private findingsCache: { key: string; index: FindingsIndex } | undefined;
+  /** Each file's placed items, for the body it was placed against (undefined: no hunks shown). */
+  private readonly layouts = new Map<string, { raw: DiffFile | undefined; items: FileItems }>();
+  /** Quotes of the current revision by path and range; "loading" while read. */
+  private readonly excerpts = new Map<string, FileExcerpt | "loading">();
   private pendingHunk: { path: string; direction: 1 | -1 } | undefined;
   /** A search match whose body was loading when the cursor was sent there. */
   private pendingLine: LineTarget | undefined;
+  /** An item f/F went to while its file's body was loading. */
+  private pendingItem: { path: string; itemId: string } | undefined;
   /** First body row of each file block as last drawn, for `rowTarget`. */
   private blockRows: Array<{ start: number; block: Block }> = [];
 
@@ -413,6 +445,7 @@ export class ChangesView implements PaneSurface {
     this.source = snapshot.source;
     if (this.cachedRevision !== snapshot.revision) {
       this.invalidate();
+      this.excerpts.clear();
       this.cachedRevision = snapshot.revision;
     }
     const paths = new Set(snapshot.files.map((file) => file.path));
@@ -432,6 +465,12 @@ export class ChangesView implements PaneSurface {
     if (this.selectedHunk && this.selectedHunk.path !== this.selectedPath) {
       this.selectedHunk = undefined;
     }
+    if (
+      this.selectedItem !== undefined &&
+      !this.itemIds(this.selectedPath).includes(this.selectedItem)
+    ) {
+      this.selectedItem = undefined;
+    }
     if (!this.selectedHunk) this.clearLine();
     for (const path of this.expanded) this.ensureBody(path);
   }
@@ -441,10 +480,24 @@ export class ChangesView implements PaneSurface {
     this.recorded = recorded;
     this.changeTimes = changeTimes;
     this.recordedVersion += 1;
+    this.itemsChanged();
+  }
+
+  /** Replace the review comments shown; their open or closed state is kept by id. */
+  setComments(comments: readonly PaneComment[]): void {
+    this.comments = comments;
+    this.commentsVersion += 1;
+    this.itemsChanged();
+  }
+
+  private itemsChanged(): void {
     this.findingsCache = undefined;
-    const keys = new Set(recorded.findings.map(findingKey));
-    if (this.focusedFinding !== undefined && !keys.has(this.focusedFinding)) {
-      this.focusedFinding = undefined;
+    this.layouts.clear();
+    if (
+      this.selectedItem !== undefined &&
+      !this.itemIds(this.selectedPath).includes(this.selectedItem)
+    ) {
+      this.selectedItem = undefined;
     }
   }
 
@@ -459,6 +512,7 @@ export class ChangesView implements PaneSurface {
     this.invalidate();
     this.bodies.clear();
     this.requested.clear();
+    this.excerpts.clear();
     this.noteInput = undefined;
   }
 
@@ -466,11 +520,102 @@ export class ChangesView implements PaneSurface {
     this.cache.clear();
     this.renderedHunks.clear();
     this.fittedRows.clear();
+    this.layouts.clear();
   }
 
   /* ------------------------------------------------------------ header */
 
   renderHeader(width: number, focused: boolean): string[] {
+    if (!this.options.boxedHeader || width < HEADER_BOX_MIN_WIDTH) {
+      return this.plainHeader(width, focused);
+    }
+    return this.boxedHeader(width, focused);
+  }
+
+  /**
+   * The header as a box: title and source on the top border, the branch on
+   * its right; totals, baseline, review labels, the message, a note being
+   * written and the key list inside; the key hint on the bottom border while
+   * focused. Focus changes the border's color, never the number of rows.
+   */
+  private boxedHeader(width: number, focused: boolean): string[] {
+    const styler = this.styler;
+    const inner = Math.max(1, width - HEADER_BOX_CHROME);
+    const source = this.state.kind === "ready" ? this.state.snapshot.source : this.source;
+    const branch = this.state.kind === "ready" ? this.state.snapshot.branch : null;
+    const rows: string[] = [];
+    const cut = (line: string) => truncateToWidth(line, inner, "…");
+    const wrap = (line: string) => wrapTextWithAnsi(line, inner).map(cut);
+    switch (this.state.kind) {
+      case "idle":
+        rows.push(cut(styler.fg("dim", "Loading…")));
+        break;
+      case "not-a-repository":
+        rows.push(cut(styler.fg("warning", "Not a git repository")));
+        break;
+      case "error":
+        rows.push(...wrap(styler.fg("error", `Error: ${safe(this.state.message)}`)));
+        break;
+      case "ready": {
+        const snapshot = this.state.snapshot;
+        rows.push(cut(this.statsLine(snapshot, this.state.refreshing)));
+        const baseline = baselineText(snapshot);
+        if (baseline !== undefined) rows.push(cut(styler.fg("dim", baseline)));
+        break;
+      }
+    }
+    const labels = reviewLabels(this.recorded);
+    if (labels.length > 0) {
+      const parts = labels.map((label) => styler.fg(TONE_COLORS[label.tone], safe(label.text)));
+      rows.push(...wrap(`${styler.fg("dim", "Review")} ${parts.join(styler.fg("dim", " · "))}`));
+    }
+    if (this.message) rows.push(...wrap(styler.fg(this.message.color, this.message.text)));
+    if (this.noteInput) {
+      const target = this.noteInput;
+      rows.push(
+        cut(
+          styler.fg(
+            "accent",
+            `Note on ${safe(target.path)} ${safe(target.range)} (⏎ save, esc cancel):`,
+          ),
+        ),
+      );
+      rows.push(...target.input.render(inner).map(cut));
+    }
+    if (this.helpOpen)
+      for (const line of this.helpLines) rows.push(...wrap(styler.fg("muted", line)));
+    const box = {
+      width,
+      lines: rows,
+      topLeft: `${styler.bold(this.title)} ${styler.fg("muted", sourceLabel(source))}`,
+      topRight: branch ? styler.fg("dim", safe(branch)) : "",
+      bottomLeft: focused ? styler.fg("dim", this.keyHint) : "",
+      focused,
+    };
+    let drawn: string[] | undefined;
+    try {
+      drawn = this.headerBox?.(box);
+    } catch {
+      drawn = undefined;
+    }
+    return (drawn ?? themedHeaderBox(box, styler)).map((line) => truncateToWidth(line, width, ""));
+  }
+
+  /** `3 files +12 -4 · 1 note · 2 comments · refreshing…` */
+  private statsLine(snapshot: DiffSnapshot, refreshing: boolean): string {
+    const styler = this.styler;
+    const { files, additions, deletions } = snapshot.totals;
+    const noteCount = this.notes?.notes.length ?? 0;
+    const notes = noteCount > 0 ? styler.fg("accent", ` · ${plural(noteCount, "note")}`) : "";
+    const commentCount = this.comments.length;
+    const comments =
+      commentCount > 0 ? styler.fg("accent", ` · ${plural(commentCount, "comment")}`) : "";
+    const busy = refreshing ? styler.fg("dim", " · refreshing…") : "";
+    return `${plural(files, "file")} ${styler.fg("toolDiffAdded", `+${additions}`)} ${styler.fg("toolDiffRemoved", `-${deletions}`)}${notes}${comments}${busy}`;
+  }
+
+  /** The header as stacked lines (the review, and the pane when too narrow for a box). */
+  private plainHeader(width: number, focused: boolean): string[] {
     const styler = this.styler;
     const source = this.state.kind === "ready" ? this.state.snapshot.source : this.source;
     const branch =
@@ -597,7 +742,11 @@ export class ChangesView implements PaneSurface {
       if (selected) this.selectedLine = lines.length + (block.anchor ?? 0);
       const row = this.fit(block.lines[0] ?? "", blockWidth);
       // The line cursor on a file row inverts the row, as it does a selected line.
-      const onRow = selected && this.cursorMode === "line" && this.selectedHunk === undefined;
+      const onRow =
+        selected &&
+        this.cursorMode === "line" &&
+        this.selectedHunk === undefined &&
+        this.selectedItem === undefined;
       lines.push((selected ? styler.fg("accent", "❯") : " ") + (onRow ? styler.inverse(row) : row));
       for (let at = 1; at < block.lines.length; at += 1) {
         lines.push(` ${this.fit(block.lines[at] ?? "", blockWidth)}`);
@@ -618,7 +767,7 @@ export class ChangesView implements PaneSurface {
 
   private findings(): FindingsIndex {
     const snapshot = this.state.kind === "ready" ? this.state.snapshot : undefined;
-    const key = `${this.recordedVersion}\u0000${snapshot?.revision ?? -1}`;
+    const key = `${this.recordedVersion}\u0000${this.commentsVersion}\u0000${snapshot?.revision ?? -1}`;
     if (this.findingsCache?.key === key) return this.findingsCache.index;
     const listed = new Map(this.files().map((file, index) => [file.path, index]));
     const byPath = new Map<string, RecordedFinding[]>();
@@ -633,14 +782,77 @@ export class ChangesView implements PaneSurface {
     }
     const lineOf = (finding: RecordedFinding) => finding.startLine ?? 0;
     for (const list of byPath.values()) list.sort((a, b) => lineOf(a) - lineOf(b));
-    const order = [...byPath.keys()]
-      .sort((a, b) => (listed.get(a) ?? 0) - (listed.get(b) ?? 0))
-      .flatMap((path) =>
-        (byPath.get(path) ?? []).map((finding) => ({ path, key: findingKey(finding) })),
-      );
-    const index = { byPath, unlisted, order };
+    const commentsByPath = new Map<string, PaneComment[]>();
+    const unlistedComments: PaneComment[] = [];
+    for (const comment of this.comments) {
+      if (!listed.has(comment.path)) {
+        unlistedComments.push(comment);
+        continue;
+      }
+      commentsByPath.set(comment.path, [...(commentsByPath.get(comment.path) ?? []), comment]);
+    }
+    for (const list of commentsByPath.values()) list.sort((a, b) => a.line - b.line);
+    const index = { byPath, unlisted, commentsByPath, unlistedComments };
     this.findingsCache = { key, index };
     return index;
+  }
+
+  /** Ids of the findings and comments on `path`, whether or not its body is shown. */
+  private itemIds(path: string | undefined): string[] {
+    if (path === undefined) return [];
+    const file = this.files().find((entry) => entry.path === path);
+    return file ? this.fileItems(file).items.map((entry) => entry.item.id) : [];
+  }
+
+  /**
+   * A file's findings and comments, placed against its body as displayed.
+   * While the body loads, or when it shows no hunks, they are placed at the end.
+   */
+  private fileItems(file: FileSummary): FileItems {
+    const index = this.findings();
+    const findings = index.byPath.get(file.path) ?? [];
+    const comments = index.commentsByPath.get(file.path) ?? [];
+    if (findings.length === 0 && comments.length === 0) return EMPTY_FILE_ITEMS;
+    const loaded = this.bodies.get(file.path);
+    const raw =
+      this.canShowContents(file) && loaded?.body.kind === "text" ? loaded.body.file : undefined;
+    const known = this.layouts.get(file.path);
+    if (known && known.raw === raw) return known.items;
+    const hunks = raw ? this.displayHunks(file) : undefined;
+    const items = placeItems(
+      findings,
+      comments,
+      raw && hunks ? { ...raw, hunks: [...hunks] } : undefined,
+    );
+    this.layouts.set(file.path, { raw, items });
+    return items;
+  }
+
+  isItemOpen(itemId: string): boolean {
+    return this.itemOpen.get(itemId) ?? true;
+  }
+
+  /** An item's rows as drawn now (open or closed, selected or not). */
+  private itemRows(item: ViewItem, path: string, width: number): string[] {
+    const selected = this.selectedItem === item.id && this.selectedPath === path;
+    const open = this.isItemOpen(item.id);
+    if (item.kind === "comment") {
+      return itemLines(item, { open, selected, width, styler: this.styler });
+    }
+    const review = this.recorded.tasks.find(
+      (task) => task.workTask === item.finding.workTask,
+    )?.review;
+    const drawing = {
+      open,
+      selected,
+      width,
+      styler: this.styler,
+      mayBeOutdated: this.mayBeOutdated(item.finding, path),
+    };
+    return itemLines(
+      item,
+      review?.kind === "parsed" ? { ...drawing, verdict: review.verdict } : drawing,
+    );
   }
 
   /** True when the record predates the file's last change, so its lines may have moved. */
@@ -652,26 +864,6 @@ export class ChangesView implements PaneSurface {
     return finding.completedAt < changed;
   }
 
-  private findingText(finding: RecordedFinding, path: string): string {
-    const range = findingRange(finding);
-    const outcome = finding.outcome ? ` [${finding.outcome}]` : "";
-    const outdated = this.mayBeOutdated(finding, path) ? " (may be outdated)" : "";
-    return safe(
-      `⚑ ${finding.severity} ${finding.class} ${finding.id}${range ? ` ${range}` : ""}: ${finding.invariant}${outcome}${outdated}`,
-    );
-  }
-
-  private findingLine(finding: RecordedFinding, path: string, width: number): string {
-    const focused = this.focusedFinding === findingKey(finding);
-    const text = this.findingText(finding, path);
-    const marker = focused ? this.styler.fg("accent", "▶ ") : "  ";
-    return truncateToWidth(
-      `${BODY_INDENT}${marker}${this.styler.fg(severityColor(finding), text)}`,
-      width,
-      "…",
-    );
-  }
-
   private noteLine(note: DiffNote, outdated: boolean, width: number): string {
     const text = safe(outdated ? `✎ (outdated, was ${note.range}) ${note.text}` : `✎ ${note.text}`);
     return truncateToWidth(
@@ -681,12 +873,12 @@ export class ChangesView implements PaneSurface {
     );
   }
 
-  /** Findings and notes on files that are not in the current list. */
+  /** Findings, comments and notes on files that are not in the current list. */
   private unlistedLines(width: number): string[] {
     const listed = new Set(this.files().map((file) => file.path));
-    const findings = this.findings().unlisted;
+    const { unlisted: findings, unlistedComments: comments } = this.findings();
     const notes = (this.notes?.notes ?? []).filter((note) => !listed.has(note.path));
-    if (findings.length === 0 && notes.length === 0) return [];
+    if (findings.length === 0 && comments.length === 0 && notes.length === 0) return [];
     const styler = this.styler;
     const lines = ["", styler.fg("dim", "Not in this diff:")];
     for (const finding of findings) {
@@ -696,6 +888,14 @@ export class ChangesView implements PaneSurface {
         `⚑ ${finding.severity} ${finding.class} ${finding.id} ${finding.path}${range ? ` ${range}` : ""}: ${finding.invariant}${outcome}`,
       );
       lines.push(`  ${styler.fg(severityColor(finding), text)}`);
+    }
+    for (const comment of comments) {
+      const range =
+        comment.startLine !== undefined && comment.startLine !== comment.line
+          ? `L${comment.startLine}-${comment.line}`
+          : `L${comment.line}`;
+      const text = safe(`● ${comment.path} ${range}: ${comment.body.split("\n")[0] ?? ""}`);
+      lines.push(`  ${styler.fg("dim", text)}`);
     }
     for (const note of notes) {
       lines.push(
@@ -714,22 +914,27 @@ export class ChangesView implements PaneSurface {
     }
     const notes = this.notes?.forPath(path).length ?? 0;
     if (notes > 0) badges.push({ text: `✎${notes}`, color: "accent" });
+    const comments = this.findings().commentsByPath.get(path)?.length ?? 0;
+    if (comments > 0) badges.push({ text: `●${comments}`, color: "accent" });
     if (this.rowBadges) badges.push(...this.rowBadges(path));
     return badges;
   }
 
   private decorationKey(path: string): string {
-    const findings = this.findings().byPath.get(path);
-    const focused =
-      this.focusedFinding !== undefined &&
-      findings?.some((f) => findingKey(f) === this.focusedFinding)
-        ? this.focusedFinding
-        : "";
+    const index = this.findings();
+    const ids = [
+      ...(index.byPath.get(path) ?? []).map((finding) => `finding:${findingKey(finding)}`),
+      ...(index.commentsByPath.get(path) ?? []).map((comment) => `comment:${comment.id}`),
+    ];
+    // Which items are closed: toggling one draws its file again.
+    const closed = ids.filter((id) => !this.isItemOpen(id)).join("\u0001");
     return [
       this.notes?.version ?? 0,
       this.recordedVersion,
+      this.commentsVersion,
       this.selectedHunk?.path === path ? this.selectedHunk.hunkId : "",
-      focused,
+      this.selectedPath === path ? (this.selectedItem ?? "") : "",
+      closed,
       this.revealed.has(path) ? 1 : 0,
       // Host badges can change without a new snapshot (a risk score is not one).
       this.rowBadges ? JSON.stringify(this.rowBadges(path)) : "",
@@ -790,31 +995,69 @@ export class ChangesView implements PaneSurface {
     const styler = this.styler;
     const path = file.path;
     const note = (text: string, color: PaneColor = "dim") => bodyNote(text, width, styler, color);
-    const findings = this.findings().byPath.get(path) ?? [];
+    const placed = this.fileItems(file);
     const notes = this.notes?.forPath(path) ?? [];
+    const out: string[] = [];
+    const stops: Array<CursorRow | undefined> = [];
+    let anchor: number | undefined;
+    const push = (row: string, stop?: CursorRow) => {
+      out.push(row);
+      stops.push(stop);
+    };
+    const pushItem = (entry: PlacedItem) => {
+      const itemId = entry.item.id;
+      if (this.selectedItem === itemId && this.selectedPath === path) anchor = out.length;
+      for (const row of this.itemRows(entry.item, path, width)) push(row, { path, itemId });
+    };
+    // Items between hunks: those without a line, then each quote of the file with its items.
+    const pushGap = (hunkIndex: number) => {
+      const here = placed.items.filter(
+        (entry) => entry.place.kind === "before" && entry.place.hunkIndex === hunkIndex,
+      );
+      if (here.length === 0) return;
+      for (const entry of here) if (!placed.groupOf.has(entry.item.id)) pushItem(entry);
+      for (const group of placed.groups) {
+        if (group.hunkIndex !== hunkIndex) continue;
+        const members = here.filter((entry) => placed.groupOf.get(entry.item.id) === group);
+        this.pushExcerpt(file, group, members, width, push, pushItem);
+      }
+    };
+    const pushEnd = (hunkIds: ReadonlySet<string>) => {
+      for (const entry of placed.items) {
+        const place = entry.place;
+        const lost =
+          (place.kind === "line" || place.kind === "header") && !hunkIds.has(place.hunkId);
+        if (lost) pushItem(entry);
+      }
+      for (const entry of placed.items) if (entry.place.kind === "end") pushItem(entry);
+    };
+    const done = (): Block =>
+      anchor === undefined ? { lines: out, stops } : { lines: out, anchor, stops };
     if (!this.canShowContents(file)) {
-      const lines = [note(HIDDEN_CONTENTS, "warning")];
-      for (const finding of findings) lines.push(this.findingLine(finding, path, width));
-      for (const entry of notes) lines.push(this.noteLine(entry, false, width));
-      return { lines };
+      // Never quoted: the items are listed, as the contents are not.
+      push(note(HIDDEN_CONTENTS, "warning"));
+      for (const entry of placed.items) pushItem(entry);
+      for (const entry of notes) push(this.noteLine(entry, false, width));
+      return done();
     }
     const loaded = this.bodies.get(path);
     if (!loaded) return { lines: [note("Loading…")] };
     const notice = bodyNotice(loaded.body);
     if (notice !== undefined || loaded.body.kind !== "text") {
-      const lines = [note(notice ?? "")];
-      for (const finding of findings) lines.push(this.findingLine(finding, path, width));
-      for (const entry of notes) lines.push(this.noteLine(entry, true, width));
-      lines.push(...(this.options.fileTrailer?.(path, [], width) ?? []));
-      return { lines };
+      push(note(notice ?? ""));
+      pushGap(0);
+      pushEnd(new Set());
+      for (const entry of notes) push(this.noteLine(entry, true, width));
+      for (const row of this.options.fileTrailer?.(path, [], width) ?? []) push(row);
+      return done();
     }
     const line = this.cursorMode === "line";
     const raw = loaded.body.file;
     const innerWidth = Math.max(1, width - BODY_INDENT.length);
     const selectedHunkId = this.selectedHunk?.path === path ? this.selectedHunk.hunkId : undefined;
     const decorated =
-      line || findings.length > 0 || notes.length > 0 || selectedHunkId !== undefined;
-    const indent = (line: string) => truncateToWidth(`${BODY_INDENT}${line}`, width, "…");
+      line || placed.items.length > 0 || notes.length > 0 || selectedHunkId !== undefined;
+    const indent = (row: string) => truncateToWidth(BODY_INDENT + row, width, "…");
     if (!decorated) {
       const expand = this.options.expandContext;
       const plain = terminalSafeFile(
@@ -826,35 +1069,23 @@ export class ChangesView implements PaneSurface {
     const mode = layout?.mode === "split" && innerWidth >= MIN_SPLIT_WIDTH ? "split" : "unified";
     const { file: diffFile, rows } = this.hunksRendered(path, raw, innerWidth, layout, mode);
 
-    // Findings outside every hunk, then notes whose hunk is gone, then the hunks.
-    const lines: string[] = [];
-    let anchor: number | undefined;
-    const hunkOf = (finding: RecordedFinding) => {
-      const line = finding.startLine;
-      return line === undefined
-        ? undefined
-        : diffFile.hunks.find((entry) => hunkContains(entry, line));
-    };
-    for (const finding of findings) {
-      if (hunkOf(finding)) continue;
-      if (this.focusedFinding === findingKey(finding)) anchor = lines.length;
-      lines.push(this.findingLine(finding, path, width));
-    }
+    // Notes whose hunk is gone come first; findings and comments sit at their lines.
     const hunkIds = new Set(diffFile.hunks.map((hunk) => hunk.id));
     for (const entry of notes) {
-      if (!hunkIds.has(entry.hunkId)) lines.push(this.noteLine(entry, true, width));
+      if (!hunkIds.has(entry.hunkId)) push(this.noteLine(entry, true, width));
     }
     const annotations: BodyAnnotation[] = [];
-    const focused: number[] = [];
-    for (const finding of findings) {
-      const hunk = hunkOf(finding);
-      if (!hunk) continue;
-      if (this.focusedFinding === findingKey(finding)) focused.push(annotations.length);
-      const after = insertionLine(hunk, finding.endLine ?? finding.startLine ?? hunk.newStart);
+    const itemAnnotations: Array<{ index: number; itemId: string }> = [];
+    for (const entry of placed.items) {
+      const place = entry.place;
+      if ((place.kind !== "line" && place.kind !== "header") || !hunkIds.has(place.hunkId)) {
+        continue;
+      }
+      itemAnnotations.push({ index: annotations.length, itemId: entry.item.id });
       annotations.push({
-        hunkId: hunk.id,
-        place: after === undefined ? "header" : { afterLine: after },
-        lines: [this.findingLine(finding, path, width)],
+        hunkId: place.hunkId,
+        place: place.kind === "header" ? "header" : { afterLine: place.lineIndex },
+        lines: this.itemRows(entry.item, path, width),
       });
     }
     for (const entry of notes) {
@@ -894,32 +1125,138 @@ export class ChangesView implements PaneSurface {
         ]);
     }
     const block = bodyBlock(input);
-    const offset = lines.length;
-    lines.push(...block.lines);
-    const stops = Array.from({ length: lines.length }, (): CursorRow | undefined => undefined);
+    const blockStops = Array.from(
+      { length: block.lines.length },
+      (): CursorRow | undefined => undefined,
+    );
     for (const hunk of diffFile.hunks) {
       const start = block.hunkStart.get(hunk.id);
       if (start === undefined) continue;
-      stops[offset + start] = { path, hunkId: hunk.id };
+      blockStops[start] = { path, hunkId: hunk.id };
       hunk.lines.forEach((_line, lineIndex) => {
         // A line without a row of its own (a folded hunk) reports the header's.
         const row = block.rowOfLine(hunk.id, lineIndex);
         if (row !== undefined && row !== start) {
-          stops[offset + row] ??= { path, hunkId: hunk.id, lineIndex };
+          blockStops[row] ??= { path, hunkId: hunk.id, lineIndex };
         }
       });
     }
-    const focusedRow = focused.length > 0 ? block.annotationRows[focused[0]!] : undefined;
-    if (focusedRow !== undefined) anchor = offset + focusedRow;
-    else if (anchor === undefined && selectedHunkId !== undefined) {
+    let selectedItemRow: number | undefined;
+    for (const { index, itemId } of itemAnnotations) {
+      const start = block.annotationRows[index] ?? -1;
+      const count = annotations[index]?.lines.length ?? 0;
+      if (start < 0) continue;
+      if (this.selectedItem === itemId && this.selectedPath === path) selectedItemRow = start;
+      for (let row = start; row < start + count; row += 1) blockStops[row] = { path, itemId };
+    }
+    // The hunks in order, with the quoted lines between them.
+    const placedRow = Array.from({ length: block.lines.length }, () => -1);
+    diffFile.hunks.forEach((hunk, hunkIndex) => {
+      pushGap(hunkIndex);
+      const start = block.hunkStart.get(hunk.id) ?? block.lines.length;
+      const next = diffFile.hunks[hunkIndex + 1];
+      const end = next ? (block.hunkStart.get(next.id) ?? block.lines.length) : block.lines.length;
+      for (let row = start; row < end; row += 1) {
+        placedRow[row] = out.length;
+        push(block.lines[row] ?? "", blockStops[row]);
+      }
+    });
+    pushGap(diffFile.hunks.length);
+    pushEnd(hunkIds);
+    const blockAnchor = (row: number | undefined): number | undefined => {
+      if (row === undefined) return undefined;
+      const at = placedRow[row] ?? -1;
+      return at < 0 ? undefined : at;
+    };
+    if (anchor === undefined && selectedItemRow !== undefined) {
+      anchor = blockAnchor(selectedItemRow);
+    }
+    if (anchor === undefined && selectedHunkId !== undefined) {
       const onLine = line && this.cursorLine !== undefined && !this.foldedHunks.has(selectedHunkId);
       const start = onLine
         ? block.rowOfLine(selectedHunkId, this.cursorLine ?? 0)
         : block.hunkStart.get(selectedHunkId);
-      if (start !== undefined) anchor = offset + start;
+      anchor = blockAnchor(start);
     }
-    lines.push(...(this.options.fileTrailer?.(path, diffFile.hunks, width) ?? []));
-    return anchor === undefined ? { lines, stops } : { lines, anchor, stops };
+    for (const row of this.options.fileTrailer?.(path, diffFile.hunks, width) ?? []) push(row);
+    return done();
+  }
+
+  /**
+   * Lines of the file around findings between two hunks, each item after its
+   * line. While the quote loads, or when the store cannot quote, the items
+   * are drawn alone; an unavailable quote says why in one row.
+   */
+  private pushExcerpt(
+    file: FileSummary,
+    group: ExcerptGroup,
+    members: readonly PlacedItem[],
+    width: number,
+    push: (row: string) => void,
+    pushItem: (entry: PlacedItem) => void,
+  ): void {
+    const styler = this.styler;
+    const excerpt = this.excerptFor(file, group);
+    if (excerpt?.kind !== "lines" || excerpt.lines.length === 0) {
+      if (excerpt?.kind === "unavailable") {
+        push(excerptHeader(group, width, styler, excerpt.reason));
+      }
+      for (const entry of members) pushItem(entry);
+      return;
+    }
+    push(excerptHeader(group, width, styler));
+    const last = excerpt.from + excerpt.lines.length - 1;
+    const numberWidth = String(last).length;
+    excerpt.lines.forEach((text, offset) => {
+      const number = excerpt.from + offset;
+      push(excerptLine(number, text, numberWidth, width, styler));
+      for (const entry of members) if (entry.line === number) pushItem(entry);
+    });
+    // The file ends before an item's line: it follows the last line quoted.
+    for (const entry of members) if ((entry.line ?? 0) > last) pushItem(entry);
+  }
+
+  /**
+   * The quote of a group for the snapshot shown, or undefined while it loads
+   * (the first call starts the read) and when the store cannot quote.
+   * Hidden sensitive files are never quoted.
+   */
+  private excerptFor(file: FileSummary, group: ExcerptGroup): FileExcerpt | undefined {
+    const store = this.store;
+    if (!store.loadContext || !this.canShowContents(file) || this.state.kind !== "ready") {
+      return undefined;
+    }
+    const key = JSON.stringify([file.path, group.from, group.to]);
+    const known = this.excerpts.get(key);
+    if (known === "loading") return undefined;
+    if (known) return known;
+    this.excerpts.set(key, "loading");
+    const revision = this.state.snapshot.revision;
+    const path = file.path;
+    const accept = (excerpt: FileExcerpt, at: number) => {
+      if (this.disposed || this.excerpts.get(key) !== "loading") return;
+      const current = this.state.kind === "ready" ? this.state.snapshot.revision : undefined;
+      // A quote of another snapshot is dropped; the view asks again for its own.
+      if (at !== revision || current !== revision) return;
+      this.excerpts.set(key, excerpt);
+      this.dropCachedBlocks(path);
+      this.actions.requestRender();
+    };
+    void store
+      .loadContext(path, group.from, group.to)
+      .then(
+        (result) => accept(result.excerpt, result.revision),
+        (error: RuntimeValue) =>
+          accept(
+            {
+              kind: "unavailable",
+              reason: error instanceof Error ? error.message : String(error),
+            },
+            revision,
+          ),
+      )
+      .catch((error: RuntimeValue) => this.bodyFailed(path, error));
+    return undefined;
   }
 
   /**
@@ -985,6 +1322,7 @@ export class ChangesView implements PaneSurface {
 
   private dropCachedBlocks(path: string): void {
     this.renderedHunks.delete(path);
+    this.layouts.delete(path);
     for (const key of this.cache.keys()) {
       if (key.split("\u0000")[2] === path) this.cache.delete(key);
     }
@@ -1068,6 +1406,15 @@ export class ChangesView implements PaneSurface {
       this.pendingLine = undefined;
       this.goTo(target);
     }
+    // Placed against the new body; an item f/F went to while it loaded gets the cursor now.
+    this.layouts.delete(path);
+    const item = this.pendingItem;
+    if (item?.path === path) {
+      this.pendingItem = undefined;
+      if (this.selectedPath === path && this.hasItemStop(path, item.itemId)) {
+        this.setCursor({ path, itemId: item.itemId });
+      }
+    }
     this.dropCachedBlocks(path);
     this.keepSelectionVisible();
     this.actions.requestRender();
@@ -1111,8 +1458,8 @@ export class ChangesView implements PaneSurface {
     this.selectedIndex = Math.max(0, Math.min(index, files.length - 1));
     this.selectedPath = files[this.selectedIndex]?.path;
     this.selectedHunk = undefined;
+    this.selectedItem = undefined;
     this.clearLine();
-    this.focusedFinding = undefined;
     this.keepSelectionVisible();
   }
 
@@ -1121,6 +1468,7 @@ export class ChangesView implements PaneSurface {
     if (path === undefined) return;
     if (this.expanded.has(path)) {
       this.expanded.delete(path);
+      this.selectedItem = undefined;
       if (this.selectedHunk?.path === path) {
         this.selectedHunk = undefined;
         this.clearLine();
@@ -1160,7 +1508,6 @@ export class ChangesView implements PaneSurface {
       const hunk = hunks[next];
       if (hunk && next >= 0) {
         this.enterHunk(file.path, hunk);
-        this.focusedFinding = undefined;
         this.keepSelectionVisible();
         return;
       }
@@ -1173,31 +1520,83 @@ export class ChangesView implements PaneSurface {
     }
   }
 
-  /** f/F: the next or previous recorded finding on a listed file. */
+  /**
+   * f/F: the next or previous finding or comment on a listed file, in
+   * display order, wrapping at the ends. With the cursor off every item, the
+   * first one in or after the cursor's file (F: in or before it). Its file
+   * expands; an item of a loading body gets the cursor when the body arrives.
+   */
   moveFinding(direction: 1 | -1): void {
-    const order = this.findings().order;
-    if (order.length === 0) {
+    const entries: Array<{ path: string; itemId: string; fileIndex: number }> = [];
+    this.files().forEach((file, fileIndex) => {
+      for (const entry of this.fileItems(file).items) {
+        entries.push({ path: file.path, itemId: entry.item.id, fileIndex });
+      }
+    });
+    if (entries.length === 0) {
+      const elsewhere = this.recorded.findings.length > 0 || this.comments.length > 0;
       this.setMessage(
-        this.recorded.findings.length > 0
-          ? "No findings on files in this diff; see the list at the bottom."
+        elsewhere
+          ? "No findings or comments on files in this diff; see the list at the bottom."
           : "No recorded review findings.",
       );
       return;
     }
-    const at = order.findIndex((entry) => entry.key === this.focusedFinding);
-    const next =
-      at < 0
-        ? direction > 0
-          ? 0
-          : order.length - 1
-        : (at + direction + order.length) % order.length;
-    const target = order[next];
-    if (!target) return;
-    const index = this.files().findIndex((file) => file.path === target.path);
+    const count = entries.length;
+    const at = entries.findIndex(
+      (entry) => entry.itemId === this.selectedItem && entry.path === this.selectedPath,
+    );
+    let next: number;
+    if (at >= 0) next = (at + direction + count) % count;
+    else if (direction > 0) {
+      next = Math.max(
+        0,
+        entries.findIndex((entry) => entry.fileIndex >= this.selectedIndex),
+      );
+    } else {
+      const before = entries.filter((entry) => entry.fileIndex <= this.selectedIndex).length;
+      next = before > 0 ? before - 1 : count - 1;
+    }
+    const target = entries[next];
+    if (target) this.goToItem(target.path, target.itemId);
+  }
+
+  /** Put the cursor on an item: its file expands; a loading body is awaited. */
+  goToItem(path: string, itemId: string): void {
+    const index = this.files().findIndex((file) => file.path === path);
     if (index < 0) return;
-    this.select(index);
-    this.focusedFinding = target.key;
-    this.expand(target.path);
+    this.expand(path);
+    if (this.hasItemStop(path, itemId)) {
+      this.pendingItem = undefined;
+      this.setCursor({ path, itemId });
+      return;
+    }
+    this.pendingItem = { path, itemId };
+    this.setCursor({ path });
+  }
+
+  /** True when the cursor can land on the item now (its file is open and placed). */
+  private hasItemStop(path: string, itemId: string): boolean {
+    const file = this.cursorFiles().find((entry) => entry.path === path);
+    return file !== undefined && cursorRows([file]).some((row) => row.itemId === itemId);
+  }
+
+  /** Open or close one finding or comment; the cursor stays on it. */
+  toggleItem(itemId: string): void {
+    this.itemOpen.set(itemId, !this.isItemOpen(itemId));
+    this.keepSelectionVisible();
+  }
+
+  /** e: close every finding and comment of the cursor's file when all are open; else open them all. */
+  toggleFileItems(): void {
+    const path = this.selectedPath;
+    const ids = this.itemIds(path);
+    if (ids.length === 0) {
+      this.setMessage("No findings or comments on this file.");
+      return;
+    }
+    const open = !ids.every((id) => this.isItemOpen(id));
+    for (const id of ids) this.itemOpen.set(id, open);
     this.keepSelectionVisible();
   }
 
@@ -1224,6 +1623,7 @@ export class ChangesView implements PaneSurface {
    */
   private enterHunk(path: string, hunk: DiffHunk): void {
     this.selectedHunk = { path, hunkId: hunk.id };
+    this.selectedItem = undefined;
     this.anchorLine = undefined;
     this.cursorLine =
       this.cursorMode === "line" &&
@@ -1244,6 +1644,10 @@ export class ChangesView implements PaneSurface {
     const path = this.selectedPath;
     if (path === undefined) return undefined;
     const cursor: LineCursor = { path };
+    if (this.selectedItem !== undefined) {
+      cursor.itemId = this.selectedItem;
+      return cursor;
+    }
     const hunkId = this.selectedHunk?.path === path ? this.selectedHunk.hunkId : undefined;
     if (hunkId === undefined) return cursor;
     cursor.hunkId = hunkId;
@@ -1268,13 +1672,25 @@ export class ChangesView implements PaneSurface {
   }
 
   private cursorFiles(): CursorFile[] {
-    return this.files().map((file) => ({
-      path: file.path,
-      open: this.expanded.has(file.path) && this.canShowContents(file),
-      hunks: this.displayHunks(file),
-      folded: (hunkId) => this.foldedHunks.has(hunkId),
-      hunkStops: this.options.hunkStops === true,
-    }));
+    return this.files().map((file) => {
+      const expanded = this.expanded.has(file.path);
+      const shown = this.canShowContents(file);
+      const cursorFile: CursorFile = {
+        path: file.path,
+        open: expanded && shown,
+        hunks: this.displayHunks(file),
+        folded: (hunkId) => this.foldedHunks.has(hunkId),
+        hunkStops: this.options.hunkStops === true,
+      };
+      const items: CursorItem[] = this.fileItems(file).items.map((entry) => ({
+        id: entry.item.id,
+        place: entry.place,
+      }));
+      if (items.length > 0) cursorFile.items = items;
+      // A hidden file's body lists its items under the hidden notice.
+      if (expanded && !shown) cursorFile.itemsOnly = true;
+      return cursorFile;
+    });
   }
 
   /** Put the line cursor at `cursor` (a listed path) and keep it visible. */
@@ -1284,8 +1700,8 @@ export class ChangesView implements PaneSurface {
     if (index < 0) return;
     this.selectedIndex = index;
     this.selectedPath = cursor.path;
-    this.focusedFinding = undefined;
-    if (cursor.hunkId === undefined) {
+    this.selectedItem = cursor.itemId;
+    if (cursor.itemId !== undefined || cursor.hunkId === undefined) {
       this.selectedHunk = undefined;
       this.clearLine();
     } else {
@@ -1477,6 +1893,15 @@ export class ChangesView implements PaneSurface {
     }
     const target = this.rowTarget(gesture.row);
     if (!target) return false;
+    if (target.itemId !== undefined) {
+      // A finding or comment: a click puts the cursor on it and opens or closes it.
+      if (gesture.kind !== "click") return false;
+      if (!this.options.keepMessages) this.message = undefined;
+      this.setCursor({ path: target.path, itemId: target.itemId });
+      this.toggleItem(target.itemId);
+      this.actions.requestRender();
+      return true;
+    }
     const onLine = line && target.hunkId !== undefined && target.lineIndex !== undefined;
     if (gesture.kind === "press") {
       if (!onLine) return false;
@@ -1642,8 +2067,12 @@ export class ChangesView implements PaneSurface {
         this.select(this.selectedIndex - 1);
         break;
       case "toggle":
-        if (line && this.options.enterFolds !== false) this.toggleLine();
+        if (this.selectedItem !== undefined) this.toggleItem(this.selectedItem);
+        else if (line && this.options.enterFolds !== false) this.toggleLine();
         else this.toggleExpanded();
+        break;
+      case "toggleItems":
+        this.toggleFileItems();
         break;
       case "pageDown":
         if (line) this.moveCursor(this.page());

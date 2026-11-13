@@ -66,7 +66,7 @@ async function compileZentui(): Promise<string | undefined> {
   // covers an installed package or a fork pinned elsewhere.
   const manifest = (await pathExists(PINNED_MANIFEST))
     ? PINNED_MANIFEST
-    : resolveZentuiFile("package.json");
+    : await resolveZentuiFile("package.json");
   if (!manifest) return undefined;
   const sourceDirectory = resolvePath(dirname(manifest), "extensions/zentui");
   const compiler = resolvePath(REPOSITORY_ROOT, "node_modules/.bin/tsc");

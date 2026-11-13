@@ -17,12 +17,14 @@ import type {
 import type { TurnCheckpointInfo } from "../.pi/extensions/diff/core/checkpoints.ts";
 import type { DiffClock } from "../.pi/extensions/lib/changes/git/clock.ts";
 import type { RecordsReader } from "../.pi/extensions/lib/changes/findings.ts";
+import type { CommentReader } from "../.pi/extensions/lib/changes/review-comments.ts";
 import type {
   DiffSnapshot,
   DiffSource,
   DiffStore,
   DiffStoreState,
   FileBody,
+  FileExcerpt,
   FileSummary,
   RefreshReason,
 } from "../.pi/extensions/lib/changes/git/model.ts";
@@ -184,6 +186,9 @@ export class FakeStore implements DiffStore {
   sources: DiffSource[] = [];
   loads: string[] = [];
   bodies = new Map<string, FileBody>();
+  /** File contents by path, one entry per line, for `loadContext`; a missing path is unavailable. */
+  contents = new Map<string, string[]>();
+  contextLoads: Array<{ path: string; from: number; to: number }> = [];
   /**
    * While true, loads wait in `held` until released. Like the real store (see the
    * contract test in changes-store-contract.test.ts), a load answers with the revision
@@ -222,6 +227,17 @@ export class FakeStore implements DiffStore {
       this.held.push({ path, revision, release: () => resolve(result) });
     });
   }
+  async loadContext(
+    path: string,
+    from: number,
+    to: number,
+  ): Promise<{ revision: number; excerpt: FileExcerpt }> {
+    this.contextLoads.push({ path, from, to });
+    const revision = this.state.kind === "ready" ? this.state.snapshot.revision : 0;
+    const lines = this.contents.get(path);
+    if (!lines) return { revision, excerpt: { kind: "unavailable", reason: "no contents" } };
+    return { revision, excerpt: { kind: "lines", from, lines: lines.slice(from - 1, to) } };
+  }
   /** Like the real store: the next snapshot carries the new source. */
   setSource(source: DiffSource): void {
     this.sources.push(source);
@@ -251,6 +267,10 @@ export type HarnessOptions = {
   clipboardError?: string;
   /** No clipboard is wired. */
   noClipboard?: boolean;
+  /** Reads /review-assist comments; the context then has a session manager naming `sessionId`. */
+  readComments?: CommentReader;
+  /** Defaults to "session-1". */
+  sessionId?: string;
 };
 
 /** Plain unified rendering: the hunk header, then one `newLine|text` line per diff line. */
@@ -294,7 +314,7 @@ export function harness(options: HarnessOptions = {}) {
     },
     registerShortcut: () => {},
   };
-  const ctx = reinterpretHostValue<ExtensionCommandContext>({
+  const host = {
     mode: options.mode ?? "tui",
     hasUI: true,
     cwd: "/repo",
@@ -306,7 +326,11 @@ export function harness(options: HarnessOptions = {}) {
         editor.sets += 1;
       },
     },
-  });
+  };
+  const sessionManager = { getSessionId: () => options.sessionId ?? "session-1" };
+  const ctx = reinterpretHostValue<ExtensionCommandContext>(
+    options.readComments ? { ...host, sessionManager } : host,
+  );
   const deps: DiffPaneDependencies = {
     createStore: (_cwd, checkpoints) => {
       const store = new FakeStore(checkpoints);
@@ -336,6 +360,7 @@ export function harness(options: HarnessOptions = {}) {
     };
   }
   if (options.readRecords) deps.readRecords = options.readRecords;
+  if (options.readComments) deps.readComments = options.readComments;
   if (options.notesIo) deps.notesIo = options.notesIo;
   const probe = registerDiffPane(reinterpretHostValue<ExtensionAPI>(fakePi), deps);
   const fire = async (event: string, payload: RuntimeValue = {}) => {

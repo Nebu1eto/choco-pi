@@ -38,12 +38,20 @@ export type ChangesAction =
   | "review"
   /** Show a hidden sensitive file's contents at once, for this view only. */
   | "reveal"
+  /** Open or close every finding and comment of the cursor's file (the pane's e). */
+  | "toggleItems"
   | "back";
 
 /** A literal character, or a named key matched with pi-tui's `matchesKey`. */
 export type KeyBinding = string | { key: KeyId };
 
-export type ChangesKeyTable = Readonly<Record<ChangesAction, readonly KeyBinding[]>>;
+/** Actions a table may leave out; a host that uses their keys for itself does (the review's e). */
+type OptionalAction = "toggleItems";
+
+export type ChangesKeyTable = Readonly<
+  Record<Exclude<ChangesAction, OptionalAction>, readonly KeyBinding[]>
+> &
+  Readonly<Partial<Record<OptionalAction, readonly KeyBinding[]>>>;
 
 /**
  * The key that copies, by platform: Cmd+C on macOS, where Ctrl+C is the
@@ -91,6 +99,7 @@ export const PANE_KEYS = {
   newerTurn: [{ key: "right" }],
   review: ["R"],
   reveal: ["v"],
+  toggleItems: ["e"],
   back: [{ key: "escape" }, "q", { key: "tab" }, { key: "shift+left" }],
 } as const satisfies ChangesKeyTable;
 
@@ -123,6 +132,7 @@ export const CHANGES_ACTIONS: readonly ChangesAction[] = [
   "newerTurn",
   "review",
   "reveal",
+  "toggleItems",
   "back",
 ];
 
@@ -132,5 +142,7 @@ function matches(data: string, binding: KeyBinding): boolean {
 
 /** The action `data` runs under `table`, if any. */
 export function actionFor(table: ChangesKeyTable, data: string): ChangesAction | undefined {
-  return CHANGES_ACTIONS.find((action) => table[action].some((binding) => matches(data, binding)));
+  return CHANGES_ACTIONS.find((action) =>
+    (table[action] ?? []).some((binding) => matches(data, binding)),
+  );
 }

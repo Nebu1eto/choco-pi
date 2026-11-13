@@ -33,13 +33,20 @@ import {
  * A zentui too old to export the polished renderer keeps the boxed frame.
  */
 
-import { existsSync } from "node:fs";
-import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
+import {
+  importAtRuntime,
+  importZentuiModule,
+  resolveZentuiFile,
+  ZENTUI_CONFIG,
+  ZENTUI_FORMAT,
+  ZENTUI_MINIMALIST_EDITOR,
+  ZENTUI_UI,
+} from "../../lib/zentui-loader.ts";
 import { parseEditorRule } from "./review-input.ts";
+
+export { resolveZentuiFile };
 
 /** Model and effort the metadata row names, as the review knows them. */
 export type FrameModel = {
@@ -144,12 +151,6 @@ export const FRAME_BORDER_WIDTH = 4;
  */
 export const FRAME_BORDER_ROWS = 2;
 
-const ZENTUI_PACKAGES = ["choco-pi-ui", "pi-choco-ui", "pi-zentui"];
-const ZENTUI_MINIMALIST_EDITOR = "extensions/zentui/minimalist-editor.ts";
-const ZENTUI_CONFIG = "extensions/zentui/config.ts";
-const ZENTUI_UI = "extensions/zentui/ui.ts";
-const ZENTUI_FORMAT = "extensions/zentui/format.ts";
-
 function isRecord(value: RuntimeValue): value is Record<string, RuntimeValue> {
   return isObject(value) && value !== null;
 }
@@ -163,74 +164,6 @@ function unframed(options: FrameOptions): string[] {
   return options.autocompleteLines?.length
     ? [...options.editorLines, ...options.autocompleteLines]
     : options.editorLines;
-}
-
-/**
- * Bases to resolve zentui from, in Node's own resolution order. The module's own
- * location comes first, which covers a plain dependency. Pi installs extension
- * packages under `<pi home>/npm/node_modules`, which is not on the lookup path of
- * a file in `<pi home>/extensions`, so every ancestor's `npm/` root follows.
- */
-function resolutionBases(): string[] {
-  const self = fileURLToPath(import.meta.url);
-  const bases = [self];
-  let directory = dirname(self);
-  for (;;) {
-    bases.push(join(directory, "npm", "package.json"));
-    const parent = dirname(directory);
-    if (parent === directory) return bases;
-    directory = parent;
-  }
-}
-
-/**
- * Directories a fork pinned by path can sit in. A `./packages/choco-pi-ui`
- * entry in Pi's settings is loaded from that directory and never installed
- * under the package name, so name resolution alone would miss the very copy
- * the session is running. The former `pi-choco-ui` and upstream `pi-zentui`
- * names stay as migration fallbacks.
- */
-function localForkCandidates(subpath: string): string[] {
-  const candidates: string[] = [];
-  let directory = dirname(fileURLToPath(import.meta.url));
-  for (;;) {
-    for (const pkg of ZENTUI_PACKAGES) {
-      candidates.push(join(directory, "packages", pkg, subpath));
-    }
-    const parent = dirname(directory);
-    if (parent === directory) return candidates;
-    directory = parent;
-  }
-}
-
-/** Locate one zentui source file, whether it is installed or pinned by path. */
-export function resolveZentuiFile(subpath: string): string | undefined {
-  // A path-pinned fork is the copy the session actually loads, so it wins
-  // over any npm-installed namesake left in an ancestor's node_modules.
-  for (const candidate of localForkCandidates(subpath)) {
-    if (existsSync(candidate)) return candidate;
-  }
-  for (const pkg of ZENTUI_PACKAGES) {
-    const specifier = `${pkg}/${subpath}`;
-    for (const base of resolutionBases()) {
-      try {
-        return createRequire(base).resolve(specifier);
-      } catch {
-        // Not installed relative to this base; try the next one.
-      }
-    }
-  }
-  return undefined;
-}
-
-/**
- * Import through a specifier built at runtime. A string literal would make
- * TypeScript resolve zentui's sources into this project's program, where their
- * extensionless relative imports fail node16 module resolution.
- */
-async function importAtRuntime(path: string): Promise<RuntimeValue> {
-  const specifier = pathToFileURL(path).href;
-  return await import(specifier);
 }
 
 /** Accept a candidate only when it still has the exports this adapter calls. */
@@ -261,27 +194,17 @@ function validateModules(candidate: RuntimeValue): ZentuiModules | undefined {
   };
 }
 
-/** Import a zentui module, treating an absent or unloadable file as absent. */
-async function importOptional(subpath: string): Promise<Record<string, RuntimeValue> | undefined> {
-  const path = resolveZentuiFile(subpath);
-  if (!path) return undefined;
-  try {
-    const loaded = await importAtRuntime(path);
-    return isRecord(loaded) ? loaded : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 const defaultLoader: ZentuiLoader = async () => {
-  const editorPath = resolveZentuiFile(ZENTUI_MINIMALIST_EDITOR);
-  const configPath = resolveZentuiFile(ZENTUI_CONFIG);
+  const [editorPath, configPath] = await Promise.all([
+    resolveZentuiFile(ZENTUI_MINIMALIST_EDITOR),
+    resolveZentuiFile(ZENTUI_CONFIG),
+  ]);
   if (!editorPath || !configPath) return undefined;
   const [editor, config, ui, format] = await Promise.all([
     importAtRuntime(editorPath),
     importAtRuntime(configPath),
-    importOptional(ZENTUI_UI),
-    importOptional(ZENTUI_FORMAT),
+    importZentuiModule(ZENTUI_UI),
+    importZentuiModule(ZENTUI_FORMAT),
   ]);
   if (!isRecord(editor) || !isRecord(config)) return undefined;
   return validateModules({

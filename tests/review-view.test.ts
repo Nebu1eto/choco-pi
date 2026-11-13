@@ -2699,10 +2699,11 @@ test("f and F step through recorded reviewer findings on a working-tree review",
   assert.match(screen, /src\/ordinary\.ts +⚑1/);
   mounted.component.handleInput?.("f");
   screen = screenOf(mounted, 120);
-  assert.match(screen, /▶ ⚑ high finding F1 L2: keeps the needle/);
+  // Open by default: the focused heading row, then the claim under it.
+  assert.match(screen, /▶ ▾ ⚑ high finding F1 L2\s*\n\s+keeps the needle/);
   assert.match(screen, /2\/2 files/);
   mounted.component.handleInput?.("F");
-  assert.match(screenOf(mounted, 120), /▶ ⚑ high finding F1 L2/, "one finding: F wraps to it");
+  assert.match(screenOf(mounted, 120), /▶ ▾ ⚑ high finding F1 L2/, "one finding: F wraps to it");
   await mounted.close();
 
   const fixed = await mountReview({ terminalRows: 40 });

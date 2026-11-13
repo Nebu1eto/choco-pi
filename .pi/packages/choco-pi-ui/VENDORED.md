@@ -429,3 +429,18 @@ Pi SDK dependencies move from exactly `1.5.1` to the range `~1.5.2` (`>=1.5.2 <1
 ## 2026-11-12 choco-pi patch: snake_case tool I/O
 
 Tool arguments and tool result text are snake_case (user decision; no aliases). `extensions/zentui/tool-rendering.ts` reads the renamed arguments `get_search_content.response_id`/`find_text` and `lsp_diagnostics.server_scope`. `summarizeRecord` summarizes both result `details` (camelCase, unchanged) and JSON parsed from result text (now snake_case), so it reads both spellings of `workflow_id`, `session_id`, `source_count`, `passage_count`, `message_count` and `timed_out`; `readableKey` renders both alike. `source_check` details keep `responseId`. Test: `tests/eager-tool-rendering.test.ts` (root).
+
+## 2026-11-13 choco-pi patch: `renderLabeledBox` for other panels
+
+- `extensions/zentui/minimalist-editor.ts`: new exported `renderLabeledBox`
+  (and its `LabeledBoxOptions` type), additive only. It draws caller-chosen
+  rows inside the minimalist frame's labeled `╭ … ╮` / `╰ … ╯` borders and
+  `│` sides, through the existing private `renderLabeledBorder`, in the
+  editor's border color (`components.editor.colorSource`,
+  `colors.editorBorder`, `EDITOR_BORDER_FALLBACK`) unless a
+  `borderColor` callback paints it; a throwing callback falls back to the
+  editor color. `renderMinimalistFrame` and every other export are unchanged.
+- Consumer: the `/diff` pane's boxed header
+  (`.pi/extensions/lib/changes/view/header-box.ts`), loaded optionally
+  through `.pi/extensions/lib/zentui-loader.ts`.
+- Test: `tests/diff-header-box.test.ts` (root).

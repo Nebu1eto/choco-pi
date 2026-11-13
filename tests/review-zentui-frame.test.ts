@@ -600,8 +600,8 @@ test(
   },
 );
 
-test("a zentui pinned by path is found like an installed one", () => {
-  const manifest = resolveZentuiFile("package.json");
+test("a zentui pinned by path is found like an installed one", async () => {
+  const manifest = await resolveZentuiFile("package.json");
   assert.equal(runtimeTypeOf(manifest), "string", "the pinned fork in .pi/packages must resolve");
   assert.match(manifest!, /choco-pi-ui[/\\]package\.json$/);
   assert.equal(existsSync(manifest!), true);

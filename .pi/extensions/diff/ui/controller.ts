@@ -106,6 +106,8 @@ import {
   type NoteForMessage,
 } from "../../lib/changes/references.ts";
 import { isSensitiveFile } from "../../lib/changes/sensitive.ts";
+import type { HeaderBoxRenderer } from "../../lib/changes/view/header-box.ts";
+import type { CommentReader } from "../../lib/changes/review-comments.ts";
 
 export const TOGGLE_SHORTCUT: KeyId = "ctrl+alt+p";
 export const FOCUS_SHORTCUT: KeyId = "ctrl+alt+f";
@@ -167,6 +169,14 @@ export type DiffPaneDependencies = {
   scratchDir?(ctx: ExtensionContext): string | undefined;
   /** Reads recorded reviewer and verifier output; omitted means findings are not shown. */
   readRecords?: RecordsReader;
+  /**
+   * Reads `/review-assist` comments of reviews of this session or branch;
+   * omitted means comments are not shown. Read with the review records and
+   * whenever the pane shows a new snapshot.
+   */
+  readComments?: CommentReader;
+  /** zentui's box for the pane's header; omitted or undefined draws the theme's own box. */
+  headerBox?(ctx: ExtensionContext): Promise<HeaderBoxRenderer | undefined>;
   /** Epoch ms of a file's last change, or null when it cannot be read (for example deleted). */
   fileChangedAt?(absolutePath: string): Promise<number | null>;
   /** File for this session's notes; undefined keeps notes in memory only. */
@@ -200,6 +210,10 @@ type Session = {
   recordedGeneration: number;
   recorded?: FindingsSummary;
   timesRevision?: number;
+  /** Bumped by every comment read; a stale result is dropped. */
+  commentsGeneration: number;
+  /** The snapshot revision comments were last read for. */
+  commentsRevision?: number;
   /** The base last used for a branch source; resolved from git on first use. */
   branchBase?: string;
   /** The source the store was last given. */
@@ -264,6 +278,7 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
       userActed: false,
       width: DEFAULT_PANE_PREFS.width,
       recordedGeneration: 0,
+      commentsGeneration: 0,
       source: SESSION_SOURCE,
       sourceGeneration: 0,
       autoOpen: DEFAULT_PANE_PREFS.autoOpen,
@@ -311,6 +326,9 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
         (session.recorded?.findings.length ?? 0) > 0
       ) {
         void refreshChangeTimes(session);
+      }
+      if (state.kind === "ready" && state.snapshot.revision !== session.commentsRevision) {
+        void reloadComments(session);
       }
       session.host?.requestRender();
     });
@@ -472,6 +490,37 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
     followTurn(session);
     session.store?.requestRefresh("manual");
     void reloadRecorded(session);
+    void reloadComments(session);
+  }
+
+  /**
+   * Re-read the `/review-assist` comments for the snapshot shown (first use, each new
+   * snapshot, manual refresh, subagent completion). Never rejects: a failure is shown
+   * in the pane's message line and the comments last read stay.
+   */
+  async function reloadComments(session: Session): Promise<void> {
+    const read = deps.readComments;
+    const view = session.view;
+    const state = session.store?.getState();
+    if (!read || !view || state?.kind !== "ready") return;
+    session.commentsGeneration += 1;
+    const generation = session.commentsGeneration;
+    const snapshot = state.snapshot;
+    session.commentsRevision = snapshot.revision;
+    try {
+      const sessionId = session.ctx.sessionManager.getSessionId();
+      const comments = await read({
+        repoRoot: snapshot.repoRoot,
+        sessionId: sessionId || undefined,
+        branch: snapshot.branch,
+      });
+      if (!session.alive || generation !== session.commentsGeneration) return;
+      session.view?.setComments(comments);
+      session.host?.requestRender();
+    } catch (error) {
+      if (generation !== session.commentsGeneration) return;
+      reportFailure(session, `Cannot read the review comments: ${errorText(error)}`, error);
+    }
   }
 
   /* ---------------------------------------------------------- sources */
@@ -960,7 +1009,23 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
     session.view = view;
     view.notes = notesFor(session);
     void reloadRecorded(session);
+    void reloadComments(session);
+    loadHeaderBox(session, view);
     return view;
+  }
+
+  /** zentui's header box, when installed; the view draws its own until it arrives. */
+  function loadHeaderBox(session: Session, view: PaneView): void {
+    const load = deps.headerBox;
+    if (!load) return;
+    void (async () => {
+      const box = await load(session.ctx);
+      if (!session.alive || session.view !== view || !box) return;
+      view.headerBox = box;
+      session.host?.requestRender();
+    })().catch(() => {
+      // zentui could not be loaded: the header keeps the theme's own box, which is complete.
+    });
   }
 
   /** Why the pane cannot dock now, or undefined when it can try. */
@@ -1142,7 +1207,10 @@ export function registerDiffPane(pi: ExtensionAPI, deps: DiffPaneDependencies): 
     if (!session?.alive || !session.host) return;
     followTurn(session);
     session.store?.requestRefresh(reason);
-    if (reason === "subagent") void reloadRecorded(session);
+    if (reason === "subagent") {
+      void reloadRecorded(session);
+      void reloadComments(session);
+    }
   }
 
   /* --------------------------------------------------- automatic opening */
