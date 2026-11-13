@@ -799,3 +799,235 @@ test("every profile extension sidecar is linked or migrated by the installer", a
     );
   }
 });
+
+test("bundled packages and profile directories of any checkout layout dedupe to this checkout", () => {
+  const root = "/repo";
+  const settings = buildGlobalSettings(
+    { packages: ["./packages/choco-pi-lsp", "./packages/choco-pi-ui"] },
+    {
+      packages: [
+        "/repo/.pi/packages/choco-pi-lsp",
+        "/old/.pi/packages/choco-pi-ui",
+        "/other/packages/choco-pi-lsp",
+        "/other/packages/user-package",
+        "/Users/someone/own-packages/choco-pi-ui",
+      ],
+      extensions: [
+        "/repo/.pi/extensions",
+        "/other/profile/extensions",
+        "/Users/someone/profile-tools/extensions",
+      ],
+      skills: ["/repo/.pi/skills", "/other/profile/skills", "/repo/profile/skills"],
+      prompts: ["/other/.pi/prompts", "/Users/someone/prompts", "/unmarked/profile/prompts"],
+    },
+    root,
+    [],
+    // Only /other was confirmed as a choco-pi checkout.
+    new Set(["/other"]),
+  );
+
+  // A bundled name under another checkout's packages/ is this profile's copy;
+  // any other name under packages/ and any other parent stay the user's.
+  assert.deepEqual(settings.packages, [
+    path.resolve("/repo/packages/choco-pi-lsp"),
+    path.resolve("/repo/packages/choco-pi-ui"),
+    "/other/packages/user-package",
+    "/Users/someone/own-packages/choco-pi-ui",
+  ]);
+  assert.deepEqual(settings.extensions, [
+    path.resolve("/repo/profile/extensions"),
+    "/Users/someone/profile-tools/extensions",
+  ]);
+  assert.deepEqual(settings.skills, [path.resolve("/repo/profile/skills")]);
+  assert.deepEqual(settings.prompts, [
+    path.resolve("/repo/profile/prompts"),
+    "/Users/someone/prompts",
+    "/unmarked/profile/prompts",
+  ]);
+});
+
+test("another checkout's profile directory is dropped only with choco-pi checkout evidence", async (context) => {
+  const fixture = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-evidence-"));
+  context.after(() => rm(fixture, { recursive: true, force: true }));
+  // A user's own project that happens to have profile/skills: no checkout markers.
+  const userSkills = path.join(fixture, "user-proj", "profile", "skills");
+  await mkdir(userSkills, { recursive: true });
+  // A checkout recognized by its profile and bundled package markers.
+  const markedCheckout = path.join(fixture, "other-checkout");
+  await mkdir(path.join(markedCheckout, "profile", "skills"), { recursive: true });
+  await writeFile(path.join(markedCheckout, "profile", "SYSTEM.md"), "system\n", "utf8");
+  await mkdir(path.join(markedCheckout, "packages", "choco-pi-ui"), { recursive: true });
+  await writeFile(path.join(markedCheckout, "packages", "choco-pi-ui", "package.json"), "{}\n");
+  // A checkout recognized by its root manifest name.
+  const harnessCheckout = path.join(fixture, "harness-checkout");
+  await mkdir(path.join(harnessCheckout, "profile", "prompts"), { recursive: true });
+  await writeFile(
+    path.join(harnessCheckout, "package.json"),
+    `${JSON.stringify({ name: "choco-pi-harness", private: true })}\n`,
+  );
+  // Only one of the two markers is not enough.
+  const halfMarked = path.join(fixture, "half-marked");
+  await mkdir(path.join(halfMarked, "profile", "extensions"), { recursive: true });
+  await writeFile(path.join(halfMarked, "profile", "SYSTEM.md"), "system\n", "utf8");
+  const agentDir = path.join(fixture, "agent");
+  await mkdir(agentDir, { recursive: true });
+  await writeFile(
+    path.join(agentDir, "settings.json"),
+    `${JSON.stringify({
+      packages: BUNDLED_PACKAGES,
+      extensions: [path.join(halfMarked, "profile", "extensions"), "-builtin:codemode"],
+      skills: [path.join(markedCheckout, "profile", "skills"), userSkills],
+      prompts: [path.join(harnessCheckout, "profile", "prompts")],
+    })}\n`,
+    "utf8",
+  );
+
+  await installProfile({ root: process.cwd(), agentDir });
+
+  const settings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
+  assert.deepEqual(settings.skills, [path.resolve("profile/skills"), userSkills]);
+  assert.deepEqual(settings.prompts, [path.resolve("profile/prompts")]);
+  assert.deepEqual(settings.extensions, [
+    path.resolve("profile/extensions"),
+    path.join(halfMarked, "profile", "extensions"),
+    ...DEFAULT_PROFILE_EXTENSIONS,
+  ]);
+});
+
+/** Where the old layout kept each linked profile file, relative to the checkout. */
+function oldLayoutSource(sourceRelative: string) {
+  assert.ok(sourceRelative.startsWith("profile/"));
+  return `.pi/${sourceRelative.slice("profile/".length)}`;
+}
+
+/**
+ * A checkout in the new layout (`packages` and `profile` borrowed from this
+ * one) plus an agent directory an old-layout install of the same checkout
+ * wrote: settings name `<root>/.pi/packages/*` in load order and the old
+ * profile directories, and every profile link points into `<root>/.pi`. The
+ * old `.pi/SYSTEM.md` source still exists; every other old link is dangling,
+ * and `agents/planner.md` points into an old checkout that has since moved.
+ */
+async function oldLayoutFixture(context: TestContext) {
+  const fixture = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-old-layout-"));
+  context.after(() => rm(fixture, { recursive: true, force: true }));
+  const root = path.join(fixture, "checkout");
+  const agentDir = path.join(fixture, "agent");
+  await mkdir(path.join(root, ".pi"), { recursive: true });
+  await symlink(path.resolve("packages"), path.join(root, "packages"));
+  await symlink(path.resolve("profile"), path.join(root, "profile"));
+  await writeFile(path.join(root, ".pi", "SYSTEM.md"), "old system prompt\n", "utf8");
+  for (const [sourceRelative, targetRelative] of PROFILE_LINKS) {
+    const target = path.join(agentDir, targetRelative);
+    await mkdir(path.dirname(target), { recursive: true });
+    const oldSource =
+      targetRelative === "agents/planner.md"
+        ? path.join(fixture, "moved-away", oldLayoutSource(sourceRelative))
+        : path.join(root, oldLayoutSource(sourceRelative));
+    await symlink(oldSource, target);
+  }
+  const userFile = path.join(agentDir, "user-notes.md");
+  await writeFile(userFile, "mine\n", "utf8");
+  const oldPackages = BUNDLED_PACKAGES.map((dir) =>
+    path.join(root, ".pi", "packages", path.basename(dir)),
+  );
+  const userPackages = ["npm:user-package@2.0.0", "/Users/someone/own-packages/my-pkg"];
+  await writeFile(
+    path.join(agentDir, "settings.json"),
+    `${JSON.stringify({
+      packages: [...oldPackages, ...userPackages],
+      extensions: [
+        path.join(root, ".pi", "extensions"),
+        "-builtin:codemode",
+        "-builtin:tool-search",
+        "+builtin:llama.cpp",
+      ],
+      skills: [path.join(root, ".pi", "skills"), "/Users/someone/my-skills"],
+      prompts: [path.join(root, ".pi", "prompts")],
+      defaultModel: "user-model",
+      enabledModels: ["user/model"],
+    })}\n`,
+    "utf8",
+  );
+  return { root, agentDir, userFile, userPackages };
+}
+
+test("an old-layout install upgrades in place without --backup and is idempotent", async (context) => {
+  const { root, agentDir, userFile, userPackages } = await oldLayoutFixture(context);
+
+  const first = await installProfile({ root, agentDir });
+
+  assert.ok(first.links.every(({ action }) => action === "linked"));
+  const settingsPath = path.join(agentDir, "settings.json");
+  const settingsText = await readFile(settingsPath, "utf8");
+  const settings = JSON.parse(settingsText);
+  const expectedPackages = DEFAULT_PROFILE_PACKAGES.map((spec) => path.resolve(root, spec));
+  assert.deepEqual(settings.packages, [...expectedPackages, ...userPackages]);
+  assert.ok(
+    settings.packages.indexOf(path.join(root, "packages", "choco-pi-web-search")) <
+      settings.packages.indexOf(path.join(root, "packages", "choco-pi-web-access")),
+  );
+  assert.ok(!settings.packages.some((spec: string) => spec.includes("choco-pi-acp")));
+  assert.ok(!settings.packages.some((spec: string) => spec.includes(`${path.sep}.pi${path.sep}`)));
+  assert.deepEqual(settings.extensions, [
+    path.join(root, "profile", "extensions"),
+    "+builtin:llama.cpp",
+    ...DEFAULT_PROFILE_EXTENSIONS,
+  ]);
+  assert.deepEqual(settings.skills, [
+    path.join(root, "profile", "skills"),
+    "/Users/someone/my-skills",
+  ]);
+  assert.deepEqual(settings.prompts, [path.join(root, "profile", "prompts")]);
+  assert.equal(settings.defaultModel, "user-model");
+  assert.deepEqual(settings.enabledModels, ["user/model"]);
+  for (const [sourceRelative, targetRelative] of PROFILE_LINKS) {
+    assert.equal(
+      await readlink(path.join(agentDir, targetRelative)),
+      path.join(root, sourceRelative),
+      targetRelative,
+    );
+  }
+  assert.equal(await readFile(path.join(root, ".pi", "SYSTEM.md"), "utf8"), "old system prompt\n");
+  assert.equal(await readFile(userFile, "utf8"), "mine\n");
+  const leftovers = (await readdir(agentDir, { recursive: true })).filter(
+    (name) => name.includes(".backup-") || name.endsWith(".tmp"),
+  );
+  assert.deepEqual(leftovers, []);
+
+  const second = await installProfile({ root, agentDir });
+
+  assert.ok(second.links.every(({ action }) => action === "unchanged"));
+  assert.equal(await readFile(settingsPath, "utf8"), settingsText);
+});
+
+test("an old-layout upgrade still refuses to replace a foreign file without --backup", async (context) => {
+  const { root, agentDir } = await oldLayoutFixture(context);
+  const settingsPath = path.join(agentDir, "settings.json");
+  const settingsBefore = await readFile(settingsPath, "utf8");
+  const foreign = path.join(agentDir, "review-policy.md");
+  await rm(foreign);
+  await writeFile(foreign, "user-owned\n", "utf8");
+  // A live link into another checkout's .pi is someone else's file too.
+  const elsewhere = path.join(path.dirname(root), "elsewhere", ".pi", "SYSTEM.md");
+  await mkdir(path.dirname(elsewhere), { recursive: true });
+  await writeFile(elsewhere, "elsewhere\n", "utf8");
+  const liveLink = path.join(agentDir, "SYSTEM.md");
+  await rm(liveLink);
+  await symlink(elsewhere, liveLink);
+
+  await assert.rejects(installProfile({ root, agentDir }), /already exists; rerun with --backup/);
+  assert.equal(await readFile(foreign, "utf8"), "user-owned\n");
+  assert.equal(await readlink(liveLink), elsewhere);
+  assert.equal(await readFile(settingsPath, "utf8"), settingsBefore);
+
+  const result = await installProfile({ root, agentDir, backup: true });
+
+  const backedUp = result.links.filter(({ action }) => action === "backed-up");
+  assert.deepEqual(backedUp.map(({ target }) => target).sort(), [foreign, liveLink].sort());
+  for (const link of result.links) {
+    if (link.action !== "backed-up") assert.equal(link.action, "linked", link.target);
+  }
+  const savedForeign = backedUp.find(({ target }) => target === foreign)?.backup ?? "";
+  assert.equal(await readFile(savedForeign, "utf8"), "user-owned\n");
+});

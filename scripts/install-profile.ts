@@ -17,7 +17,7 @@
  * A file an earlier profile installed and HEAD no longer ships is listed in
  * `RETIRED_PROFILE_FILES` and removed on install.
  */
-import { constants } from "node:fs";
+import { constants, type Stats } from "node:fs";
 import {
   access,
   chmod,
@@ -27,6 +27,7 @@ import {
   readlink,
   rename,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -384,20 +385,26 @@ function unique(values: string[]) {
 
 /**
  * Identity of a package spec. A bundled package is `local:<name>` whether it
- * is named relatively, by this checkout's `packages/<name>` path, or by the
- * `packages/<name>` path inside the `.pi` directory of an old-layout checkout.
+ * is named relatively, by this checkout's `packages/<name>` path, by the
+ * `packages/<name>` path inside the `.pi` directory of an old-layout checkout,
+ * or by another checkout's `packages/<name>` path when `<name>` is one of
+ * `bundledNames`. The last shape is generic, so only bundled names qualify.
  */
-function packageIdentity(spec: string, root: string) {
+function packageIdentity(
+  spec: string,
+  root: string,
+  bundledNames: ReadonlySet<string> = new Set(),
+) {
   const relativeMatch = spec.match(/^\.\/packages\/([^/]+)$/);
   if (relativeMatch) return `local:${relativeMatch[1]}`;
   if (path.isAbsolute(spec)) {
-    const packageDir = path.dirname(spec);
-    if (packageDir === path.join(root, "packages")) return `local:${path.basename(spec)}`;
-    if (
-      path.basename(packageDir) === "packages" &&
-      path.basename(path.dirname(packageDir)) === ".pi"
-    ) {
-      return `local:${path.basename(spec)}`;
+    const resolved = path.resolve(spec);
+    const packageDir = path.dirname(resolved);
+    const name = path.basename(resolved);
+    if (packageDir === path.resolve(root, "packages")) return `local:${name}`;
+    if (path.basename(packageDir) === "packages") {
+      if (path.basename(path.dirname(packageDir)) === ".pi") return `local:${name}`;
+      if (bundledNames.has(name)) return `local:${name}`;
     }
   }
   if (spec.startsWith("npm:")) return `npm:${npmPackageName(spec.slice(4))}`;
@@ -434,10 +441,16 @@ function compareSpecVersions(left: string, right: string) {
 }
 
 function mergePackages(canonical: string[], existing: string[], root: string) {
-  const canonicalIds = new Set(canonical.map((spec) => packageIdentity(spec, root)));
+  const bundledDir = path.resolve(root, "packages");
+  const bundledNames = new Set(
+    canonical
+      .filter((spec) => path.isAbsolute(spec) && path.dirname(path.resolve(spec)) === bundledDir)
+      .map((spec) => path.basename(path.resolve(spec))),
+  );
+  const canonicalIds = new Set(canonical.map((spec) => packageIdentity(spec, root, bundledNames)));
   const extras = new Map<string, string>();
   for (const spec of existing) {
-    const identity = packageIdentity(spec, root);
+    const identity = packageIdentity(spec, root, bundledNames);
     if (canonicalIds.has(identity)) continue;
     const current = extras.get(identity);
     if (current === undefined || compareSpecVersions(spec, current) > 0) extras.set(identity, spec);
@@ -457,8 +470,13 @@ function identityName(identity: string) {
 }
 
 /**
- * True when the entry is a .pi/extensions, .pi/skills or .pi/prompts directory
- * of a checkout in the old layout, other than this checkout's profile directory.
+ * True when the entry is a profile resource directory (`extensions`, `skills`
+ * or `prompts`) other than this checkout's `profile/<name>`: the `.pi/<name>`
+ * directory of any old-layout checkout, this one included, or the
+ * `profile/<name>` directory of another checkout that `foreignCheckouts` lists.
+ * `profile` is a generic directory name, so a `<x>/profile/<name>` entry is
+ * dropped only when `<x>` was confirmed as a choco-pi checkout (see
+ * `confirmedForeignCheckouts`); otherwise it is the user's.
  *
  * Such a directory is a previous install of this same profile. Keeping it
  * alongside the new root makes pi load two copies of every extension, and it
@@ -466,11 +484,66 @@ function identityName(identity: string) {
  * conflicts with ..."). Directories outside that shape belong to the user and
  * are preserved.
  */
-function isForeignProfileDirectory(entry: string, root: string, name: string) {
+function isForeignProfileDirectory(
+  entry: string,
+  root: string,
+  name: string,
+  foreignCheckouts: ReadonlySet<string>,
+) {
   if (!path.isAbsolute(entry)) return false;
-  if (path.basename(entry) !== name) return false;
-  if (path.basename(path.dirname(entry)) !== ".pi") return false;
-  return path.resolve(entry) !== path.resolve(root, "profile", name);
+  const resolved = path.resolve(entry);
+  if (path.basename(resolved) !== name) return false;
+  if (resolved === path.resolve(root, "profile", name)) return false;
+  const parent = path.basename(path.dirname(resolved));
+  if (parent === ".pi") return true;
+  return parent === "profile" && foreignCheckouts.has(path.dirname(path.dirname(resolved)));
+}
+
+const PROFILE_DIRECTORY_NAMES = ["extensions", "skills", "prompts"] as const;
+const RootManifestSchema = obj({ name: opt(str()) }, { open: true });
+const isRootManifest = compile(RootManifestSchema).check;
+
+/**
+ * Whether `checkout` is a choco-pi checkout in the new layout: it ships
+ * `profile/SYSTEM.md` and the bundled `packages/choco-pi-ui`, or its root
+ * `package.json` is the `choco-pi-harness` workspace.
+ */
+async function isChocoPiCheckout(checkout: string) {
+  if (
+    (await exists(path.join(checkout, "profile", "SYSTEM.md"))) &&
+    (await exists(path.join(checkout, "packages", "choco-pi-ui", "package.json")))
+  ) {
+    return true;
+  }
+  try {
+    const parsed: unknown = JSON.parse(await readFile(path.join(checkout, "package.json"), "utf8"));
+    return isRootManifest(parsed) && parsed.name === "choco-pi-harness";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Other checkouts whose `profile/<name>` directories the existing settings
+ * list and that are confirmed choco-pi checkouts, by absolute root path.
+ */
+async function confirmedForeignCheckouts(existingSettings: Settings, root: string) {
+  const candidates = new Set<string>();
+  for (const name of PROFILE_DIRECTORY_NAMES) {
+    for (const entry of existingSettings[name] ?? []) {
+      if (!path.isAbsolute(entry)) continue;
+      const resolved = path.resolve(entry);
+      if (path.basename(resolved) !== name) continue;
+      if (path.basename(path.dirname(resolved)) !== "profile") continue;
+      const checkout = path.dirname(path.dirname(resolved));
+      if (checkout !== path.resolve(root)) candidates.add(checkout);
+    }
+  }
+  const confirmed = new Set<string>();
+  for (const checkout of candidates) {
+    if (await isChocoPiCheckout(checkout)) confirmed.add(checkout);
+  }
+  return confirmed;
 }
 
 /**
@@ -487,6 +560,7 @@ export function buildGlobalSettings(
   existingSettings: Settings,
   root: string,
   supersededNames: string[] = [],
+  foreignCheckouts: ReadonlySet<string> = new Set(),
 ): Settings & {
   packages: string[];
   extensions: string[];
@@ -504,7 +578,7 @@ export function buildGlobalSettings(
   const profileDirectories = (name: "extensions" | "skills" | "prompts") => [
     rooted(name),
     ...(existingSettings[name] ?? []).filter(
-      (entry) => !isForeignProfileDirectory(entry, root, name),
+      (entry) => !isForeignProfileDirectory(entry, root, name, foreignCheckouts),
     ),
   ];
   const thinkingLevels = {
@@ -553,55 +627,112 @@ async function sameFileContents(left: string, right: string) {
   }
 }
 
-async function linkConflict(source: string, target: string) {
+function isMissingPathError(error: Error) {
+  return "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
+}
+
+/**
+ * Where an old-layout install linked a profile file from: the tracked source
+ * path before `.pi/` became `profile/`, such as `.pi/SYSTEM.md`.
+ */
+function legacySourceRelative(sourceRelative: string) {
+  const prefix = "profile/";
+  return sourceRelative.startsWith(prefix)
+    ? `.pi/${sourceRelative.slice(prefix.length)}`
+    : undefined;
+}
+
+/**
+ * State of an installed profile link target:
+ * - `absent`: nothing there yet;
+ * - `current`: a symlink to the tracked source;
+ * - `same-file`: a regular file with the source's contents;
+ * - `legacy`: a symlink an old-layout install wrote, either to this checkout's
+ *   old source path (`<root>/.pi/...`) or a dangling one whose target ends with
+ *   that old relative path (a moved or deleted old-layout checkout);
+ * - `conflict`: anything else, which only `--backup` may replace.
+ */
+type LinkState = "absent" | "current" | "same-file" | "legacy" | "conflict";
+
+async function classifyLink(
+  root: string,
+  sourceRelative: string,
+  target: string,
+): Promise<LinkState> {
+  const source = path.resolve(root, sourceRelative);
+  let status: Stats;
   try {
-    const status = await lstat(target);
-    if (status.isSymbolicLink()) {
-      const current = path.resolve(path.dirname(target), await readlink(target));
-      return current === source ? undefined : target;
-    }
-    if (status.isFile() && (await sameFileContents(source, target))) return undefined;
-    return target;
+    status = await lstat(target);
   } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+    if (error instanceof Error && isMissingPathError(error)) return "absent";
+    throw error;
+  }
+  if (!status.isSymbolicLink()) {
+    return status.isFile() && (await sameFileContents(source, target)) ? "same-file" : "conflict";
+  }
+  const current = path.resolve(path.dirname(target), await readlink(target));
+  if (current === source) return "current";
+  const legacy = legacySourceRelative(sourceRelative);
+  if (legacy === undefined) return "conflict";
+  if (current === path.resolve(root, legacy)) return "legacy";
+  try {
+    await stat(target);
+    return "conflict";
+  } catch (error) {
+    if (!(error instanceof Error && isMissingPathError(error))) throw error;
+  }
+  // Dangling: the old checkout moved or its `.pi` sources are gone.
+  return current.endsWith(`${path.sep}${path.normalize(legacy)}`) ? "legacy" : "conflict";
+}
+
+/** Replace the symlink at `target` with one to `source` in a single rename. */
+async function replaceSymlink(source: string, target: string) {
+  const temporary = `${target}.${process.pid}.link.tmp`;
+  await rm(temporary, { force: true });
+  await symlink(source, temporary);
+  try {
+    await rename(temporary, target);
+  } catch (error) {
+    await rm(temporary, { force: true });
     throw error;
   }
 }
 
 async function installLink(
-  source: string,
+  root: string,
+  sourceRelative: string,
   target: string,
   backup: boolean,
 ): Promise<InstallLinkResult> {
+  const source = path.resolve(root, sourceRelative);
   await mkdir(path.dirname(target), { recursive: true });
-  try {
-    const status = await lstat(target);
-    if (status.isSymbolicLink()) {
-      const current = path.resolve(path.dirname(target), await readlink(target));
-      if (current === source) return { target, action: "unchanged" };
-    } else if (status.isFile() && (await sameFileContents(source, target))) {
-      await rm(target);
-      await symlink(source, target);
-      return { target, action: "linked" };
-    }
-
-    if (!backup) {
-      throw new Error(`${target} already exists; rerun with --backup to preserve and replace it`);
-    }
-    const saved = backupPath(target);
-    await rename(target, saved);
-    try {
-      await symlink(source, target);
-    } catch (error) {
-      await rename(saved, target);
-      throw error;
-    }
-    return { target, action: "backed-up", backup: saved };
-  } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+  const state = await classifyLink(root, sourceRelative, target);
+  if (state === "absent") {
     await symlink(source, target);
     return { target, action: "linked" };
   }
+  if (state === "current") return { target, action: "unchanged" };
+  if (state === "same-file") {
+    await rm(target);
+    await symlink(source, target);
+    return { target, action: "linked" };
+  }
+  if (state === "legacy") {
+    await replaceSymlink(source, target);
+    return { target, action: "linked" };
+  }
+  if (!backup) {
+    throw new Error(`${target} already exists; rerun with --backup to preserve and replace it`);
+  }
+  const saved = backupPath(target);
+  await rename(target, saved);
+  try {
+    await symlink(source, target);
+  } catch (error) {
+    await rename(saved, target);
+    throw error;
+  }
+  return { target, action: "backed-up", backup: saved };
 }
 
 async function writeSettings(target: string, settings: Settings) {
@@ -664,9 +795,21 @@ async function readProfileSettings(
   // are profile-owned; the rest merge back as retained packages, where
   // superseded predecessors are dropped.
   const bundled = path.join(root, "packages");
-  const packages = (existingSettings.packages ?? []).filter(
-    (spec) => path.isAbsolute(spec) && path.dirname(spec) === bundled,
-  );
+  // An install from before the move of `.pi/packages` to `packages` named this
+  // checkout's bundled packages under `.pi/packages`. Those count as this
+  // profile's packages at their new path, in the same order, so the upgrade is
+  // a reinstall that keeps the user's choices rather than a first install.
+  const legacyBundled = path.join(root, ".pi", "packages");
+  const packages: string[] = [];
+  for (const spec of existingSettings.packages ?? []) {
+    if (!path.isAbsolute(spec)) continue;
+    if (path.dirname(spec) === bundled) {
+      packages.push(spec);
+    } else if (path.dirname(path.resolve(spec)) === legacyBundled) {
+      const moved = path.join(bundled, path.basename(path.resolve(spec)));
+      if (await exists(path.join(moved, "package.json"))) packages.push(moved);
+    }
+  }
   if (packages.length === 0) {
     // A first install also starts from the maintainer's model scope and
     // per-model thinking levels; buildGlobalSettings merges the levels under
@@ -684,7 +827,7 @@ async function readProfileSettings(
   // levels the profile added since; buildGlobalSettings lets the user's win.
   return {
     ...existingSettings,
-    packages,
+    packages: unique(packages),
     // A reinstall picks up built-in policy the profile added since.
     extensions: withProfileExtensionPolicy(existingSettings.extensions),
     modelThinkingLevels: { ...DEFAULT_PROFILE_MODEL_THINKING_LEVELS },
@@ -708,7 +851,7 @@ export async function installProfile({
   if (!backup) {
     for (const [sourceRelative, targetRelative] of links) {
       const target = path.resolve(agentDir, targetRelative);
-      if (await linkConflict(path.resolve(root, sourceRelative), target)) {
+      if ((await classifyLink(root, sourceRelative, target)) === "conflict") {
         throw new Error(`${target} already exists; rerun with --backup to preserve and replace it`);
       }
     }
@@ -717,17 +860,14 @@ export async function installProfile({
   const results = [];
   for (const [sourceRelative, targetRelative] of links) {
     results.push(
-      await installLink(
-        path.resolve(root, sourceRelative),
-        path.resolve(agentDir, targetRelative),
-        backup,
-      ),
+      await installLink(root, sourceRelative, path.resolve(agentDir, targetRelative), backup),
     );
   }
   const superseded = await supersededPackageNames(root, project);
+  const foreignCheckouts = await confirmedForeignCheckouts(existingSettings, root);
   await writeSettings(
     settingsPath,
-    buildGlobalSettings(project, existingSettings, root, superseded),
+    buildGlobalSettings(project, existingSettings, root, superseded, foreignCheckouts),
   );
   const pi = await resolvePiLauncher(piLauncher);
   const markerPath = await writeProfileMarker(agentDir, root, pi);
