@@ -1050,3 +1050,52 @@ test("provider precheck names a usage-limit closure's reset and suggestion", asy
     resetProviderHealth(providerKey);
   }
 });
+
+/** Runner on a closed provider whose re-check runs `onRefresh`. */
+class RecheckingRunner extends DeferredRunner {
+  available = false;
+  refreshes = 0;
+  private readonly onRefresh: (runner: RecheckingRunner) => void;
+  constructor(onRefresh: (runner: RecheckingRunner) => void) {
+    super();
+    this.onRefresh = onRefresh;
+  }
+  providerKey = () => "anthropic";
+  isProviderAvailable = () => this.available;
+  refreshProvider = async () => {
+    this.refreshes++;
+    this.onRefresh(this);
+  };
+}
+
+test("a closed provider is re-checked once before its steps are skipped", async () => {
+  const reopened = new RecheckingRunner((runner) => {
+    runner.available = true;
+  });
+  const manager = new WorkflowManager();
+  const twoSteps = definition([
+    { id: "a", subagent_type: "Explore", prompt: "a" },
+    { id: "b", subagent_type: "Explore", prompt: "b" },
+  ]);
+  const started = manager.start(twoSteps, resolveType, reopened, 2);
+  await flush();
+  assert.equal(reopened.refreshes, 1, "both held steps share one re-check");
+  assert.deepEqual(reopened.starts, ["a", "b"]);
+  reopened.finish("a");
+  reopened.finish("b");
+  const result = await manager.wait(started.workflowId)!;
+  assert.deepEqual(
+    result.steps.map((step) => step.status),
+    ["completed", "completed"],
+  );
+
+  const stillClosed = new RecheckingRunner(() => undefined);
+  const refused = manager.start(twoSteps, resolveType, stillClosed, 2);
+  const skipped = await manager.wait(refused.workflowId)!;
+  assert.equal(stillClosed.refreshes, 1);
+  assert.deepEqual(stillClosed.starts, []);
+  assert.deepEqual(
+    skipped.steps.map((step) => step.error),
+    Array(2).fill("Provider anthropic unavailable (temporarily rate limited); 2 steps skipped."),
+  );
+});

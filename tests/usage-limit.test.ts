@@ -1194,3 +1194,131 @@ test("the repository fallback table loads and mirrors the model-guidance tiers",
     await rm(agentDir, { recursive: true, force: true });
   }
 });
+
+/** A real policy whose clock and usage reader the test drives. */
+function recheckPolicy(read: (provider: string) => Promise<ProviderUsageSnapshot | undefined>) {
+  let clock = NOW;
+  let reads = 0;
+  const policy = createUsageLimitPolicy({
+    owner: "recheck-owner",
+    generation: 1,
+    readPreference: async () => "none",
+    fallbacks: { tiers: {}, lastResort: [] },
+    now: () => clock,
+    usageSnapshot: async (provider) => {
+      reads += 1;
+      return read(provider);
+    },
+  });
+  return {
+    policy,
+    reads: () => reads,
+    advance: (ms: number) => {
+      clock += ms;
+    },
+    now: () => clock,
+  };
+}
+
+for (const provider of ["anthropic", "openai-codex"]) {
+  test(`${provider}: a closure reopens once a reading taken after it shows capacity`, async () => {
+    const h = recheckPolicy(async () => ({ observedAt: h.now(), windows: [windowAt(40)] }));
+    h.policy.closeProvider(provider, "acct", NOW + 24 * HOUR);
+    h.advance(MIN);
+    assert.equal(
+      h.policy.isClosed(provider, "acct"),
+      true,
+      "the stored closure alone still blocks",
+    );
+    assert.deepEqual(await h.policy.recheck(provider, "acct"), {
+      open: true,
+      detail: "live usage shows capacity",
+    });
+    assert.equal(h.policy.isClosed(provider, "acct"), false);
+    assert.equal(h.reads(), 1);
+  });
+}
+
+test("recheck keeps a closure an exhausted window still enforces, ending it at that reset", async () => {
+  const h = recheckPolicy(async () => ({
+    observedAt: h.now(),
+    windows: [{ ...windowAt(100, NOW + 2 * HOUR), label: "Opus 7d" }],
+  }));
+  h.policy.closeProvider("anthropic", "acct", NOW + 24 * HOUR);
+  h.advance(MIN);
+  assert.deepEqual(await h.policy.recheck("anthropic", "acct"), {
+    open: false,
+    until: NOW + 2 * HOUR,
+    detail: "live usage shows Opus 7d exhausted",
+  });
+  assert.equal(h.policy.isClosed("anthropic", "acct", NOW + 2 * HOUR - 1), true);
+  assert.equal(h.policy.isClosed("anthropic", "acct", NOW + 2 * HOUR), false);
+});
+
+test("a reading older than the closure keeps it only through a window still exhausted", async () => {
+  let snapshot: ProviderUsageSnapshot = {
+    observedAt: NOW - MIN,
+    windows: [windowAt(100, NOW + HOUR)],
+  };
+  const h = recheckPolicy(async () => snapshot);
+  h.policy.closeProvider("anthropic", "acct", NOW + 24 * HOUR);
+  assert.equal((await h.policy.recheck("anthropic", "acct")).open, false);
+  // The same stale reading without a blocking window proves nothing, so the provider is tried.
+  snapshot = { observedAt: NOW - MIN, windows: [windowAt(100, NOW - 1)] };
+  assert.deepEqual(await h.policy.recheck("anthropic", "acct"), {
+    open: true,
+    detail: "no current usage data",
+  });
+  assert.equal(h.policy.isClosed("anthropic", "acct"), false);
+});
+
+test("a provider without a usage reading is reopened and tried", async () => {
+  const h = recheckPolicy(async () => undefined);
+  h.policy.closeProvider("openai", "default", NOW + 30 * MIN);
+  assert.deepEqual(await h.policy.recheck("openai", "default"), {
+    open: true,
+    detail: "no live usage data",
+  });
+  assert.equal(h.policy.isClosed("openai", "default"), false);
+});
+
+test("a success reopens only when its request started after the closure, and skips the read", async () => {
+  const h = recheckPolicy(async () => ({
+    observedAt: h.now(),
+    windows: [windowAt(100, NOW + HOUR)],
+  }));
+  h.policy.closeProvider("anthropic", "acct", NOW + 24 * HOUR);
+  h.policy.reopen("anthropic", "acct", NOW - 1);
+  assert.equal(h.policy.isClosed("anthropic", "acct"), true, "an earlier request proves nothing");
+  assert.equal((await h.policy.recheck("anthropic", "acct")).open, false);
+  const reads = h.reads();
+  h.advance(MIN);
+  h.policy.reopen("anthropic", "acct", h.now());
+  assert.equal(h.policy.isClosed("anthropic", "acct"), false);
+  // A caller's own closure written before that success is answered from it alone.
+  assert.deepEqual(await h.policy.recheck("anthropic", "acct", NOW), {
+    open: true,
+    detail: "a request succeeded after the limit",
+  });
+  assert.equal(h.reads(), reads);
+  // A caller's closure written after the success still needs live evidence.
+  assert.equal((await h.policy.recheck("anthropic", "acct", h.now() + 1)).open, false);
+});
+
+test("a closure written while the reading is in flight survives the recheck", async () => {
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const h = recheckPolicy(async () => {
+    await gate;
+    return { observedAt: h.now(), windows: [windowAt(10)] };
+  });
+  h.policy.closeProvider("anthropic", "acct", NOW + HOUR);
+  const pending = h.policy.recheck("anthropic", "acct");
+  h.advance(MIN);
+  h.policy.closeProvider("anthropic", "acct", NOW + 3 * HOUR);
+  release();
+  assert.deepEqual(await pending, { open: false, until: NOW + 3 * HOUR });
+  assert.equal(h.policy.isClosed("anthropic", "acct"), true);
+});

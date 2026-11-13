@@ -90,6 +90,19 @@ export type FallbackCandidateContext = {
   isClosed(providerKey: string, accountId: string): boolean;
 };
 
+/**
+ * Answer of `UsageLimitPolicy.recheck`. `open` means current evidence no longer
+ * shows the limit in force: a request succeeded after the closure, a reading
+ * taken after it shows capacity, or no live reading exists. A closed answer
+ * carries the updated end of the closure when the reading names one.
+ */
+export type UsageLimitRecheck = {
+  open: boolean;
+  until?: number;
+  /** Short reason for refusal text, such as the exhausted window names. */
+  detail?: string;
+};
+
 export type UsageLimitPolicy = {
   owner: string;
   generation: number;
@@ -107,6 +120,18 @@ export type UsageLimitPolicy = {
   ): { provider: string; id: string } | undefined;
   closeProvider(providerKey: string, accountId: string, untilMs: number): void;
   isClosed(providerKey: string, accountId: string, now?: number): boolean;
+  /**
+   * Re-checks a closure against live evidence and reopens the owner's own
+   * closure when the limit is gone. `since` is when the caller's closure was
+   * written; evidence older than it proves nothing. Absent from policies that
+   * predate it; readers then keep the stored closure.
+   */
+  recheck?(providerKey: string, accountId: string, since?: number): Promise<UsageLimitRecheck>;
+  /**
+   * Reopens the closure after a request that started at `at` succeeded; a
+   * success that started before the closure was written changes nothing.
+   */
+  reopen?(providerKey: string, accountId: string, at?: number): void;
   /**
    * Account id the owner keys `provider`'s closures under (`"default"` when unknown).
    * Absent from policies that predate it; readers then use `"default"`.
@@ -126,7 +151,9 @@ export function isUsageLimitPolicy(value: RuntimeValue): value is UsageLimitPoli
     isFunction(record.pickFallback) &&
     isFunction(record.closeProvider) &&
     isFunction(record.isClosed) &&
-    (record.accountId === undefined || isFunction(record.accountId))
+    (record.accountId === undefined || isFunction(record.accountId)) &&
+    (record.recheck === undefined || isFunction(record.recheck)) &&
+    (record.reopen === undefined || isFunction(record.reopen))
   );
 }
 

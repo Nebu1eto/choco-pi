@@ -50,6 +50,7 @@ import {
   classifyTerminalFailure,
   clearUsageLimitClosure,
   closeUntil,
+  confirmUsageLimitClosure,
   isAvailable,
   ProviderUnavailableError,
   providerUnavailableMessage,
@@ -120,6 +121,8 @@ import {
   pickFallbackWithPolicy,
   preferenceFromPolicy,
   readUsageLimitPolicy,
+  recheckWithPolicy,
+  reopenWithPolicy,
   type Corroboration,
   type UsageLimitClassification,
   type UsageLimitPolicy,
@@ -451,6 +454,21 @@ function sessionRootOf(ctx: ExtensionContext): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Start time of the session's last request when it succeeded, or undefined
+ * when the last assistant message failed, was aborted, or does not exist.
+ */
+function lastSuccessfulRequestStart(session: AgentSession | undefined): number | undefined {
+  const messages = session?.messages ?? [];
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (message?.role !== "assistant") continue;
+    if (message.stopReason === "error" || message.stopReason === "aborted") return undefined;
+    return message.timestamp;
+  }
+  return undefined;
 }
 
 function childSessionId(record: AgentRecord, session: AgentSession | undefined): string {
@@ -1020,6 +1038,8 @@ export class AgentManager {
   private terminalWaiters = new Map<string, TerminalWaiter[]>();
   /** Bumped by dispose, suspend and root switches; stale revivals stop. */
   private revivalEpoch = 0;
+  /** In-flight usage-limit closure re-checks, keyed by owner, provider and account. */
+  private closureRechecks = new Map<string, Promise<void>>();
 
   constructor(
     onComplete?: OnAgentComplete,
@@ -1067,6 +1087,126 @@ export class AgentManager {
   private unavailableError(providerKey: string, owner: string | undefined): Error {
     const key = providerKey.toLowerCase();
     return new ProviderUnavailableError(key, this.providerBlock(key, owner)?.closure);
+  }
+
+  /**
+   * Re-check `owner`'s usage-limit closure on `providerKey` against live
+   * evidence, for callers about to run a synchronous availability gate. A
+   * closure is reopened when the owner's policy finds the limit gone (a later
+   * success, a reading showing capacity, or no live reading at all) and keeps
+   * the policy's reset and reason otherwise. Concurrent callers share one
+   * check. A policy without `recheck`, a failed check, or a closure written
+   * during the check leaves the stored state. Never rejects.
+   */
+  async refreshProviderBlock(providerKey: string, owner: string | undefined): Promise<void> {
+    await this.closureRecheck(providerKey, owner);
+  }
+
+  /**
+   * The shared re-check for `refreshProviderBlock`, or undefined (decided
+   * synchronously) when no usage-limit closure blocks, so callers whose
+   * ordering is synchronous only yield when there is something to check.
+   */
+  private closureRecheck(
+    providerKey: string,
+    owner: string | undefined,
+  ): Promise<void> | undefined {
+    if (owner === undefined || this.disposed) return undefined;
+    const key = providerKey.toLowerCase();
+    if (this.providerBlock(key, owner)?.usage !== true) return undefined;
+    const policy = readUsageLimitPolicy(owner);
+    if (policy?.recheck === undefined) return undefined;
+    const accountId = this.accountFor(owner, key, policy);
+    const id = `${owner}\u0000${key}\u0000${accountId}`;
+    const existing = this.closureRechecks.get(id);
+    if (existing !== undefined) return existing;
+    const recheck = this.recheckClosure(policy, { owner, providerKey: key, accountId }).finally(
+      () => {
+        if (this.closureRechecks.get(id) === recheck) this.closureRechecks.delete(id);
+      },
+    );
+    this.closureRechecks.set(id, recheck);
+    return recheck;
+  }
+
+  private async recheckClosure(
+    policy: UsageLimitPolicy,
+    key: { owner: string; providerKey: string; accountId: string },
+  ): Promise<void> {
+    const before = usageLimitClosure(key);
+    const result = await recheckWithPolicy(
+      policy,
+      key.providerKey,
+      key.accountId,
+      before?.closedAt,
+    );
+    if (this.disposed || readUsageLimitPolicy(key.owner) !== policy || result === undefined) return;
+    const after = usageLimitClosure(key);
+    // A failure that closed the account during the check is newer evidence.
+    if (after !== undefined && after.closedAt !== before?.closedAt) return;
+    if (result.open) clearUsageLimitClosure(key);
+    else confirmUsageLimitClosure(key, result.until, result.detail);
+  }
+
+  /** Root owner a spawn with `options` is accounted to (see `captureUsageScope`). */
+  private spawnOwner(ctx: ExtensionContext, options: SpawnOptions): string | undefined {
+    const parent =
+      options.parentAgentId === undefined ? undefined : this.usageScopes.get(options.parentAgentId);
+    return options.rootSessionId ?? parent?.owner ?? sessionRootOf(ctx);
+  }
+
+  /** `refreshProviderBlock` for the provider and owner `spawn` would check. Never rejects. */
+  async refreshSpawnProvider(ctx: ExtensionContext, options: SpawnOptions): Promise<void> {
+    await this.closureRecheck(providerKeyFor(options, ctx), this.spawnOwner(ctx, options));
+  }
+
+  /**
+   * `refreshProviderBlock` for the provider a resume of `id` would check:
+   * the `provider/id` it switches to, else the session's current provider.
+   * A dormant agent is checked under the journal root. Never rejects.
+   */
+  async refreshResumeProvider(id: string, model?: string, ctx?: ExtensionContext): Promise<void> {
+    await this.resumeRecheck(id, model, ctx);
+  }
+
+  /** The re-check `refreshResumeProvider` awaits, or undefined when nothing blocks. */
+  private resumeRecheck(
+    id: string,
+    model: string | undefined,
+    ctx: ExtensionContext | undefined,
+  ): Promise<void> | undefined {
+    const slash = model?.indexOf("/") ?? -1;
+    const target = model !== undefined && slash > 0 ? model.slice(0, slash) : undefined;
+    const record = this.agents.get(id);
+    if (record !== undefined) {
+      const provider = target ?? record.session?.model?.provider;
+      if (provider === undefined) return undefined;
+      return this.closureRecheck(provider, this.usageScopes.get(id)?.owner);
+    }
+    const saved = this.getDormant(id);
+    if (saved === undefined) return undefined;
+    const provider = target ?? saved.model?.provider ?? ctx?.model?.provider;
+    if (provider === undefined) return undefined;
+    const owner =
+      this.journalSink?.rootSessionId ?? (ctx === undefined ? undefined : sessionRootOf(ctx));
+    return this.closureRecheck(provider, owner);
+  }
+
+  /**
+   * A request that started at `startedAt` succeeded on `providerKey`: reopen
+   * `owner`'s usage-limit closure there, unless it was written after that start.
+   */
+  private reopenAfterSuccess(owner: string | undefined, providerKey: string, startedAt: number) {
+    if (owner === undefined) return;
+    const key = providerKey.toLowerCase();
+    const policy = readUsageLimitPolicy(owner);
+    const accountId = this.accountFor(owner, key, policy);
+    if (policy !== undefined) reopenWithPolicy(policy, key, accountId, startedAt);
+    const closureKey = { owner, providerKey: key, accountId };
+    const closure = usageLimitClosure(closureKey);
+    if (closure !== undefined && startedAt >= (closure.closedAt ?? Number.POSITIVE_INFINITY)) {
+      clearUsageLimitClosure(closureKey);
+    }
   }
 
   /**
@@ -1657,14 +1797,7 @@ export class AgentManager {
   private captureUsageScope(ctx: ExtensionContext, options: SpawnOptions): UsageLimitScope {
     const parent =
       options.parentAgentId === undefined ? undefined : this.usageScopes.get(options.parentAgentId);
-    let owner = options.rootSessionId ?? parent?.owner;
-    if (owner === undefined) {
-      try {
-        owner = ctx.sessionManager?.getSessionId?.();
-      } catch {
-        owner = undefined;
-      }
-    }
+    const owner = this.spawnOwner(ctx, options);
     const scoped = scopedModelKeys(ctx);
     // Widened read: test fixtures and RPC contexts may omit the registry.
     const modelRegistry: UsageModelRegistry | undefined = ctx.modelRegistry;
@@ -3391,7 +3524,13 @@ export class AgentManager {
             if (failure !== undefined && usageDecision === undefined) {
               const kind = classifyTerminalFailure(failure);
               if (kind) recordFailure(providerKey, kind, retryAfterMsFromFailure(failure));
-            } else if (failure === undefined && !aborted) recordSuccess(providerKey);
+            } else if (failure === undefined && !aborted) {
+              recordSuccess(providerKey);
+              const startedAt = lastSuccessfulRequestStart(session);
+              if (startedAt !== undefined) {
+                this.reopenAfterSuccess(this.usageScopes.get(id)?.owner, providerKey, startedAt);
+              }
+            }
           }
           this.publishTerminal(record);
           if (usageDecision !== undefined) this.notifyUsageLimit(record);
@@ -3774,6 +3913,11 @@ export class AgentManager {
     signal?: AbortSignal,
     options?: ResumeOptions,
   ): Promise<AgentRecord | undefined> {
+    // Re-check a stored usage-limit closure before the synchronous gates below
+    // read it; nothing about the record is captured or changed before this.
+    // Without a closure this stays synchronous, as concurrent resumes rely on.
+    const recheck = this.resumeRecheck(id, options?.model, undefined);
+    if (recheck !== undefined) await recheck;
     const record = this.agents.get(id);
     if (!record?.session) return undefined;
     requireAdmissionOpen(this.recordRoot(record));
@@ -5611,6 +5755,9 @@ export class AgentManager {
     context: RevivalContext,
     options?: { model?: string; reviewTicket?: ReviewTicket },
   ): Promise<AgentRecord> {
+    // Re-check a stored usage-limit closure before the synchronous checks below read it.
+    const recheck = this.resumeRecheck(id, options?.model, context.ctx);
+    if (recheck !== undefined) await recheck;
     if (this.disposed) throw new Error("The subagent manager is shut down.");
     if (this.agents.has(id) || this.revivalReservations.has(id)) {
       throw new Error(`Agent ${id} is live; resume it directly.`);

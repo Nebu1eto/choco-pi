@@ -1359,3 +1359,19 @@ test("a pending entry written by another session (fork/clone copy) does not repl
   }
   assert.deepEqual(harness.resolved(), []);
 });
+
+test("a successful turn that started after a closure reopens the provider", async () => {
+  const harness = await started((h) => {
+    h.preferences = ["none"];
+    h.sessionId = "reopen-1";
+  });
+  harness.snapshot = exhausted(T0 + HOUR_MS, T0);
+  harness.pushAssistant("anthropic", "claude-opus-5-5", ANTHROPIC_429);
+  await harness.settle();
+  const policy = getUsageLimitPolicy("reopen-1");
+  assert.equal(policy?.isClosed("anthropic", "default", T0 + 1), true);
+  await harness.advance(1_000);
+  harness.pushAssistant("anthropic", "claude-opus-5-5");
+  await harness.settle();
+  assert.equal(policy?.isClosed("anthropic", "default", T0 + 2_000), false);
+});

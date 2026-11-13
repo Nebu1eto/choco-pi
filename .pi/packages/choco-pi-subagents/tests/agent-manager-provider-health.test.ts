@@ -168,7 +168,12 @@ test("usage-limit closures are owner+account keyed, cap at 24 h, and stay out of
 
     recordFailure(provider, "rate_limit", 1_000);
     recordSuccess(provider);
-    assert.deepEqual(usageLimitClosure(key, now + 400_000), { until, suggestedModel: undefined });
+    assert.deepEqual(usageLimitClosure(key, now + 400_000), {
+      until,
+      suggestedModel: undefined,
+      closedAt: now,
+      detail: undefined,
+    });
 
     const message = new ProviderUnavailableError(provider, {
       until,

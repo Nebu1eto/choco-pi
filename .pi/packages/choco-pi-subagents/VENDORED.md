@@ -2487,3 +2487,15 @@ files and the `Verdict record:` line are unchanged.
 - A failed write warns once per transcript path, with the reason; later failures for that path stay silent until a write to it succeeds.
 - `createOutputFilePath` takes an optional `root` (tests). Writes are now queued as data (`append` or `replace`) instead of closures.
 - Tests: `tests/output-file.test.ts` (root deleted between writes, a restored path never written in this process, one warning per path under a persistent failure); the file's tests now use a base directory they create next to the test file instead of `os.tmpdir()`.
+
+## 2026-11-13 choco-pi patch: usage-limit closures are re-checked before a refusal
+
+A stored usage-limit closure is no longer trusted on its own: providers can lift a limit early (a reset or plan change), and a root closure lasted up to 24 h with nothing reopening it.
+
+- `src/usage-limit-seam.ts`: mirrors the root contract's optional `recheck(providerKey, accountId, since?)` and `reopen(providerKey, accountId, at?)` and the `UsageLimitRecheck` answer (`open`, optional `until`, `detail`). `recheckWithPolicy` is timeout-bounded and validates the answer (undefined keeps the stored closure); `reopenWithPolicy` contains a throwing policy.
+- `src/provider-health.ts`: a closure records `closedAt` (its latest failure write) and an optional `detail`. `confirmUsageLimitClosure` applies a re-check that found the limit in force: it may move the end earlier or later (24 h cap) and mirrors a root-only closure so the refusal names its end. The refusal text appends `; <detail>` after the suggestion; `providerKeyFromUnavailableMessage` still parses it.
+- `src/agent-manager.ts`: `refreshProviderBlock(providerKey, owner)` re-checks the owner's blocking closure through the policy (concurrent callers share one check). It skips policies without `recheck`, and it makes no change when the policy changed during the check or a failure wrote a newer closure meanwhile. `refreshResumeProvider` does the same for a live or dormant resume. `resume()` and `resumeDormant()` await it only when a closure blocks, so their synchronous ordering is unchanged otherwise. A child whose last assistant request succeeded and started after the closure reopens it (policy and manager closure).
+- `src/index.ts`: the Agent tool awaits the re-check before a spawn, a background resume (`startBackgroundResume`) and a dormant resume; the workflow runner exposes `refreshProvider`.
+- `src/nested-tools.ts`: the nested Agent tool awaits the optional `NestedAgentManager.refreshSpawnProvider` (the manager re-checks under the parent's root owner) before review admission and spawn.
+- `src/workflow.ts`: `WorkflowStepRunner.refreshProvider` is optional. A step whose provider is closed holds that provider's steps while one re-check runs, then the scheduler runs again; a provider still closed after the check fails its steps as before.
+- Tests: new `tests/usage-limit-recheck.test.ts`; `tests/workflow.test.ts` (re-check once before skipping); `tests/agent-manager-provider-health.test.ts` (closure shape).

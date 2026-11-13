@@ -9,6 +9,10 @@ type ProviderHealth = {
 export type UsageLimitClosure = {
   until: number;
   suggestedModel?: string;
+  /** When the latest failure wrote this closure; evidence older than it proves nothing. */
+  closedAt?: number;
+  /** What the latest live re-check found, for refusal text. */
+  detail?: string;
 };
 
 /**
@@ -79,7 +83,12 @@ export function usageLimitClosure(
     usageClosures.delete(id);
     return undefined;
   }
-  return { until: closure.until, suggestedModel: closure.suggestedModel };
+  return {
+    until: closure.until,
+    suggestedModel: closure.suggestedModel,
+    closedAt: closure.closedAt,
+    detail: closure.detail,
+  };
 }
 
 /**
@@ -100,8 +109,37 @@ export function closeUntil(
     ...key,
     until: effectiveUntil,
     suggestedModel: details.suggestedModel,
+    closedAt: now,
   });
   return effectiveUntil;
+}
+
+/**
+ * Record a live re-check that found the limit still in force: the closure ends
+ * at `untilMs` when the reading names a reset (capped at 24 h, and possibly
+ * earlier than before), keeps its end otherwise, and carries `detail`. A
+ * closure that does not exist yet is created, keeping `closedAt` unset so a
+ * later failure is still newer evidence.
+ */
+export function confirmUsageLimitClosure(
+  key: UsageLimitClosureKey,
+  untilMs: number | undefined,
+  detail: string | undefined,
+): void {
+  const now = Date.now();
+  const previous = usageClosures.get(closureKey(key));
+  const until =
+    untilMs !== undefined && Number.isFinite(untilMs)
+      ? Math.min(untilMs, now + MAX_USAGE_LIMIT_CLOSED_MS)
+      : previous?.until;
+  if (until === undefined || until <= now) return;
+  usageClosures.set(closureKey(key), {
+    ...key,
+    until,
+    suggestedModel: previous?.suggestedModel,
+    closedAt: previous?.closedAt,
+    detail,
+  });
 }
 
 /** Drop one usage-limit closure once the owner's policy confirms the window reset. */
@@ -145,7 +183,8 @@ export function providerUnavailableMessage(
   if (closure === undefined) return base;
   const suggestion =
     closure.suggestedModel === undefined ? "" : `; suggested: ${closure.suggestedModel}`;
-  return `${base} Usage limit until ${new Date(closure.until).toISOString()}${suggestion}.`;
+  const detail = closure.detail === undefined ? "" : `; ${closure.detail}`;
+  return `${base} Usage limit until ${new Date(closure.until).toISOString()}${suggestion}${detail}.`;
 }
 
 /** Provider key named by a ProviderUnavailableError message, with or without the usage-limit suffix. */

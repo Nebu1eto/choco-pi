@@ -61,10 +61,25 @@ export type UsageLimitPolicy = {
   closeProvider(providerKey: string, accountId: string, untilMs: number): void;
   isClosed(providerKey: string, accountId: string, now?: number): boolean;
   /**
+   * Optional: re-check a closure against live evidence, reopening the owner's
+   * own closure when the limit is gone. `since` is when the caller's closure
+   * was written. Absent from policies that predate it.
+   */
+  recheck?(providerKey: string, accountId: string, since?: number): Promise<UsageLimitRecheck>;
+  /** Optional: reopen after a request that started at `at` succeeded. */
+  reopen?(providerKey: string, accountId: string, at?: number): void;
+  /**
    * Optional: the account the owner currently uses for `provider`, the key
    * its own closures are written under. Absent means `"default"`.
    */
   accountId?(provider: string): string;
+};
+
+/** Copy of the root contract's `UsageLimitRecheck`. */
+export type UsageLimitRecheck = {
+  open: boolean;
+  until?: number;
+  detail?: string;
 };
 
 export type SubagentUsageLimit = {
@@ -113,6 +128,10 @@ const isCorroboration = compile(
 
 const isFallbackModel = compile(obj({ provider: str(), id: str() }, { open: true })).check;
 
+const isRecheck = compile(
+  obj({ open: bool(), until: opt(finiteNum()), detail: opt(str()) }, { open: true }),
+).check;
+
 /** Any value read from a process-global slot before validation. */
 export type HostSlotValue = {} | null | undefined;
 
@@ -127,6 +146,8 @@ interface UsageLimitPolicyCandidate {
   closeProvider?: HostSlotValue;
   isClosed?: HostSlotValue;
   accountId?: HostSlotValue;
+  recheck?: HostSlotValue;
+  reopen?: HostSlotValue;
 }
 
 interface UsageLimitPolicyRegistry {
@@ -147,7 +168,9 @@ export function isUsageLimitPolicy(value: HostSlotValue): value is UsageLimitPol
     candidate.pickFallback instanceof Function &&
     candidate.closeProvider instanceof Function &&
     candidate.isClosed instanceof Function &&
-    (candidate.accountId === undefined || candidate.accountId instanceof Function)
+    (candidate.accountId === undefined || candidate.accountId instanceof Function) &&
+    (candidate.recheck === undefined || candidate.recheck instanceof Function) &&
+    (candidate.reopen === undefined || candidate.reopen instanceof Function)
   );
 }
 
@@ -278,6 +301,47 @@ export function isClosedWithPolicy(
     return policy.isClosed(providerKey, accountId) === true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * The policy's re-check of one closure, or undefined when the policy has no
+ * `recheck`, fails, times out, or answers malformed data. Undefined keeps the
+ * stored closure.
+ */
+export async function recheckWithPolicy(
+  policy: UsageLimitPolicy,
+  providerKey: string,
+  accountId: string,
+  since: number | undefined,
+): Promise<UsageLimitRecheck | undefined> {
+  if (policy.recheck === undefined) return undefined;
+  try {
+    const result: HostSlotValue = await withinPolicyTimeout(
+      policy.recheck(providerKey, accountId, since),
+    );
+    if (!isRecheck(result)) return undefined;
+    const answer: UsageLimitRecheck = { open: result.open };
+    if (result.until !== undefined) answer.until = result.until;
+    if (result.detail !== undefined) answer.detail = result.detail;
+    return answer;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Reopen through the policy after a success; a missing or throwing method changes nothing. */
+export function reopenWithPolicy(
+  policy: UsageLimitPolicy,
+  providerKey: string,
+  accountId: string,
+  at: number,
+): void {
+  if (policy.reopen === undefined) return;
+  try {
+    policy.reopen(providerKey, accountId, at);
+  } catch {
+    /* The manager's own closure is still reopened. */
   }
 }
 

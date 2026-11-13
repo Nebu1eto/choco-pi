@@ -158,6 +158,8 @@ export interface NestedAgentManager {
   ): Promise<{ id: string; record: AgentRecord }>;
   getRecord(id: string): AgentRecord | undefined;
   listAgents(): AgentRecord[];
+  /** Re-check a stored usage-limit closure the spawn would be refused on. Never rejects. */
+  refreshSpawnProvider?(ctx: ExtensionContext, options: NestedSpawnOptions): Promise<void>;
   getActiveCount(): number;
   getScheduledActiveCount(): number;
   getMaxConcurrent(): number;
@@ -780,6 +782,8 @@ export async function createNestedSubagentTools(
       // spawn() throws on strict worktree-isolation failure and cwd validation —
       // report it as a tool error, like the top-level Agent tool does, instead of
       // letting it escape into the child's turn.
+      // A stored usage-limit closure is re-checked before spawn's synchronous gate reads it.
+      await context.manager.refreshSpawnProvider?.(ctx, options);
       const admission = await admitReview(resolvedType, params.work_task, "nested", signal);
       if (!admission.ok) return textResult(admission.message, true);
       options.reviewTicket = admission.ticket;

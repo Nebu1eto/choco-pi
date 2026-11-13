@@ -168,21 +168,17 @@ test("preference none: child limit is reported, provider closed, model untouched
     assert.deepEqual(usageLimitPolicyOwners(), [parentId]);
     assert.notEqual(child.sessionId, parentId);
 
-    await assert.rejects(
-      runTool(e2e.session, "Agent", {
-        prompt: "Try again.",
-        description: "second spawn",
-        subagent_type: E2E_AGENT_TYPE,
-        ...E2E_SPAWN_MODEL,
-      }),
-      (error: Error) => {
-        assert.match(error.message, /Provider openai-codex unavailable/);
-        assert.match(error.message, /Usage limit until \d{4}-\d{2}-\d{2}T/);
-        assert.match(error.message, /suggested: anthropic\/e2e-claude/);
-        return true;
-      },
-    );
-    assert.equal(e2e.providers.requestsFor(CODEX_MODEL).length, 1);
+    // No usage reading exists for this account, so the stored closure is not
+    // trusted: the next spawn re-checks it and tries the provider again.
+    const retried = await runTool(e2e.session, "Agent", {
+      prompt: "Try again.",
+      description: "second spawn",
+      subagent_type: E2E_AGENT_TYPE,
+      ...E2E_SPAWN_MODEL,
+      run_in_background: false,
+    });
+    assert.doesNotMatch(resultText(retried), /unavailable/);
+    assert.equal(e2e.providers.requestsFor(CODEX_MODEL).length, 2);
     assert.deepEqual(e2e.fetchCalls, []);
   } finally {
     await e2e.close();
@@ -476,6 +472,40 @@ test("real policy corroboration without provider auth resolves not-ready with no
     });
     assert.equal(codex.ready, false);
     assert.deepEqual(e2e.fetchCalls, []);
+  } finally {
+    await e2e.close();
+  }
+});
+
+test("real root closure from an Anthropic 429 is re-checked before the next Anthropic spawn", async () => {
+  const e2e = await createUsageLimitE2e({
+    preference: "none",
+    parentModel: CLAUDE_MODEL,
+    factories: [rootController, subagents],
+    projectExtensions: { "usage-limit-policy.ts": CHILD_CONTROLLER_SHIM },
+  });
+  try {
+    const policy = getUsageLimitPolicy(e2e.session.sessionId);
+    assert.ok(policy);
+    const account = (): string => policy.accountId?.("anthropic") ?? "default";
+    e2e.providers.script(CLAUDE_MODEL, { kind: "error", message: ANTHROPIC_LIMIT_TEXT });
+    await e2e.session.prompt("Do the task.");
+    await e2e.session.waitForIdle();
+    await waitFor(() => policy.isClosed("anthropic", account()), 5_000, "root closure");
+
+    // The usage endpoint is refused here, so no reading exists: the closure is
+    // not trusted and the spawn goes to the provider instead of being refused.
+    const result = await runTool(e2e.session, "Agent", {
+      prompt: "Summarise the repository.",
+      description: "after reset",
+      subagent_type: E2E_AGENT_TYPE,
+      model: "anthropic/e2e-claude",
+      thinking: "medium",
+      run_in_background: false,
+    });
+    assert.doesNotMatch(resultText(result), /unavailable/);
+    assert.equal(e2e.providers.requestsFor(CLAUDE_MODEL).length, 2);
+    assert.equal(policy.isClosed("anthropic", account()), false);
   } finally {
     await e2e.close();
   }

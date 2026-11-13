@@ -1455,6 +1455,8 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         `Agent "${id}" is being revived right now. ${TERMINAL_RESULT_RETRIEVAL_GUIDANCE}`,
       );
     }
+    // A stored usage-limit closure is re-checked before the synchronous gate reads it.
+    await manager.refreshResumeProvider(id, model, ctx);
     let resumable: boolean;
     try {
       resumable = manager.assertResumable(id, model, { dormant: true, ctx });
@@ -2514,6 +2516,8 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     const refund = async (): Promise<void> => {
       if (opts.reviewTicket !== undefined) await reviewRounds.release(opts.reviewTicket);
     };
+    // A stored usage-limit closure is re-checked before the synchronous gate reads it.
+    await manager.refreshResumeProvider(id, opts.model);
     let resumable: boolean;
     try {
       resumable = manager.assertResumable(id, opts.model);
@@ -3307,6 +3311,13 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         );
       }
 
+      // A stored usage-limit closure on the target provider is re-checked
+      // against live evidence before spawn's synchronous gate reads it.
+      await manager.refreshProviderBlock(
+        model?.provider ?? ctx.model?.provider ?? "unknown",
+        ctx.sessionManager.getSessionId(),
+      );
+
       // Review roles: reserve a round (or refuse) after every other early return
       // and immediately before the manager call.
       const admission = await admitReviewRound(ctx, subagentType, params.work_task, "agent");
@@ -3641,6 +3652,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         }
       },
       isProviderAvailable: (providerKey) => manager.isProviderAvailable(providerKey, owner),
+      refreshProvider: (providerKey) => manager.refreshProviderBlock(providerKey, owner),
       unavailableMessage: (providerKey) => manager.providerUnavailableMessage(providerKey, owner),
       run: async (step, prompt, workflowContext) => {
         const resolved = resolveWorkflowStepModel(ctx, step);

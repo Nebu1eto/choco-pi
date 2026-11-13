@@ -29,6 +29,7 @@ import type {
   UsageLimitClassifyInput,
   UsageLimitEvidence,
   UsageLimitPolicy,
+  UsageLimitRecheck,
 } from "./usage-limit-contract.ts";
 import type { RuntimeValue } from "./runtime-values.ts";
 
@@ -189,7 +190,7 @@ function classifyOpenAI(
 }
 
 /** One quota window that currently blocks requests, with the time it restores capacity. */
-type ExhaustedWindow = { resetAt?: number };
+type ExhaustedWindow = { resetAt?: number; label?: string };
 
 /** A provider reading reduced to what readiness needs. */
 type QuotaReading = { exhausted: ExhaustedWindow[]; observedAt: number };
@@ -231,7 +232,9 @@ function windowReading(snapshot: ProviderUsageSnapshot): QuotaReading {
       .filter((window) => window.percent >= 100)
       .map((window) => {
         const time = window.eventAt?.getTime();
-        return time === undefined || Number.isNaN(time) ? {} : { resetAt: time };
+        return time === undefined || Number.isNaN(time)
+          ? { label: window.label }
+          : { resetAt: time, label: window.label };
       }),
   };
 }
@@ -721,6 +724,8 @@ export type UsageLimitPolicyOptions = {
 
 export type UsageLimitPolicyInstance = Omit<UsageLimitPolicy, "corroborate"> & {
   corroborate(classification: UsageLimitClassification): Promise<UsageLimitCorroboration>;
+  recheck(providerKey: string, accountId: string, since?: number): Promise<UsageLimitRecheck>;
+  reopen(providerKey: string, accountId: string, at?: number): void;
   accountId(provider: string): string;
   /** Settles once the fallback table is available (or failed to load). */
   fallbacksLoaded: Promise<void>;
@@ -730,11 +735,55 @@ function closedKey(providerKey: string, accountId: string): string {
   return `${providerKey}\u0000${accountId}`;
 }
 
+/** A provider account closure and when it was written. */
+type ClosedAccount = { until: number; closedAt: number };
+
+function exhaustedDetail(windows: readonly ExhaustedWindow[]): string {
+  const labels = windows.flatMap((window) => (window.label ? [window.label] : []));
+  return labels.length > 0
+    ? `live usage shows ${labels.join(", ")} exhausted`
+    : "live usage shows the quota exhausted";
+}
+
+/**
+ * Re-checks a closure written at `closedAt` against a live reading. A reading
+ * taken at or after `closedAt` is authoritative both ways. An older one keeps
+ * the closure only through an exhausted window whose reset is ahead or unknown;
+ * without such a window it proves nothing, and nothing proven reopens.
+ * The closed answer's `until` is the latest reset among the blocking windows,
+ * and is absent when any of them has no reset time.
+ */
+export function recheckReading(
+  reading: QuotaReading | undefined,
+  closedAt: number,
+  now: number,
+): UsageLimitRecheck {
+  if (!reading) return { open: true, detail: "no live usage data" };
+  const fresh = reading.observedAt >= closedAt;
+  const blocking = reading.exhausted.filter(
+    (window) => fresh || window.resetAt === undefined || window.resetAt > now,
+  );
+  if (blocking.length === 0) {
+    return { open: true, detail: fresh ? "live usage shows capacity" : "no current usage data" };
+  }
+  const resets = blocking.map((window) => window.resetAt);
+  const known = resets.every((reset) => reset !== undefined && reset > now);
+  const result: UsageLimitRecheck = { open: false, detail: exhaustedDetail(blocking) };
+  if (known) {
+    let until = now;
+    for (const reset of resets) if (reset !== undefined && reset > until) until = reset;
+    result.until = until;
+  }
+  return result;
+}
+
 /** Builds the owner policy the usage-limit seam publishes. */
 export function createUsageLimitPolicy(options: UsageLimitPolicyOptions): UsageLimitPolicyInstance {
   const now = options.now ?? Date.now;
   const resolveAccountId = options.resolveAccountId ?? defaultAccountId;
-  const closed = new Map<string, number>();
+  const closed = new Map<string, ClosedAccount>();
+  /** Start time of the latest successful request per provider account. */
+  const succeededAt = new Map<string, number>();
   let fallbacks = options.fallbacks;
   const loadFallbacks = options.loadFallbacks ?? (() => loadModelFallbacks());
   // Settles exactly once and never rejects: a failed load leaves no fallbacks.
@@ -799,15 +848,59 @@ export function createUsageLimitPolicy(options: UsageLimitPolicyOptions): UsageL
     },
     closeProvider(providerKey, accountId, untilMs) {
       if (Number.isNaN(untilMs)) return;
-      closed.set(closedKey(providerKey, accountId), Math.min(untilMs, now() + MAX_CLOSE_MS));
+      const closedAt = now();
+      closed.set(closedKey(providerKey, accountId), {
+        until: Math.min(untilMs, closedAt + MAX_CLOSE_MS),
+        closedAt,
+      });
     },
     isClosed(providerKey, accountId, at = now()) {
       const key = closedKey(providerKey, accountId);
-      const until = closed.get(key);
-      if (until === undefined) return false;
-      if (at < until) return true;
+      const entry = closed.get(key);
+      if (entry === undefined) return false;
+      if (at < entry.until) return true;
       closed.delete(key);
       return false;
+    },
+    reopen(providerKey, accountId, at = now()) {
+      const key = closedKey(providerKey, accountId);
+      succeededAt.set(key, Math.max(succeededAt.get(key) ?? at, at));
+      const entry = closed.get(key);
+      if (entry !== undefined && at >= entry.closedAt) closed.delete(key);
+    },
+    async recheck(providerKey, accountId, since) {
+      const key = closedKey(providerKey, accountId);
+      const entry = closed.get(key);
+      const closedAt = Math.max(entry?.closedAt ?? Number.NEGATIVE_INFINITY, since ?? 0);
+      // Drops the closure this check started from; a closure written meanwhile stays.
+      const reopenChecked = (): void => {
+        if (entry !== undefined && closed.get(key) === entry) closed.delete(key);
+      };
+      const success = succeededAt.get(key);
+      if (success !== undefined && success >= closedAt) {
+        reopenChecked();
+        return { open: true, detail: "a request succeeded after the limit" };
+      }
+      const reading = await liveReading(
+        { usageSnapshot: options.usageSnapshot, extension: options.ctx, events: options.events },
+        providerKey,
+      );
+      const current = now();
+      const latest = closed.get(key);
+      if (latest !== undefined && latest !== entry) {
+        // Another failure closed the account during the read; that closure is newer evidence.
+        return current < latest.until ? { open: false, until: latest.until } : { open: true };
+      }
+      const result = recheckReading(reading, closedAt, current);
+      if (result.open) {
+        reopenChecked();
+        return result;
+      }
+      if (entry !== undefined && result.until !== undefined) {
+        entry.until = Math.min(result.until, current + MAX_CLOSE_MS);
+        return { ...result, until: entry.until };
+      }
+      return entry === undefined ? result : { ...result, until: entry.until };
     },
   };
 }

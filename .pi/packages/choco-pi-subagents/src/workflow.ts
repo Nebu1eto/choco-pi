@@ -148,6 +148,12 @@ export type WorkflowRunnerContext = {
 export type WorkflowStepRunner = {
   providerKey?(step: WorkflowStepDefinition): string | undefined;
   isProviderAvailable?(providerKey: string): boolean;
+  /**
+   * Re-check a closed provider against live evidence; the scheduler holds that
+   * provider's steps until it settles and then reads availability once more.
+   * Never rejects.
+   */
+  refreshProvider?(providerKey: string): Promise<void>;
   /** Refusal text for a closed provider (owner-scoped usage-limit details). */
   unavailableMessage?(providerKey: string): string;
   run(
@@ -330,6 +336,10 @@ class WorkflowController {
   private readonly progressWaiters = new Set<(result: WorkflowResult) => void>();
   private resolveCompletion!: (result: WorkflowResult) => void;
   private runningCount = 0;
+  /** Providers being re-checked; their steps wait instead of failing. */
+  private providerRechecks = new Set<string>();
+  /** Providers whose re-check settled; the next refusal fails their steps. */
+  private recheckedProviders = new Set<string>();
   private sealed: boolean;
   private settled = false;
   private cancelled = false;
@@ -455,18 +465,27 @@ class WorkflowController {
 
     let providerError: string | undefined;
     while (this.runningCount < this.maxConcurrent) {
+      const holding = this.providerRechecks.size > 0;
       const step = this.definition.steps.find((candidate) => {
         const state = this.states.get(candidate.id)!;
         return (
           state.status === "pending" &&
-          (candidate.needs ?? []).every((id) => terminal(this.states.get(id)!.status))
+          (candidate.needs ?? []).every((id) => terminal(this.states.get(id)!.status)) &&
+          !(holding && this.providerRechecks.has(this.runner.providerKey?.(candidate) ?? ""))
         );
       });
       if (!step) break;
       const providerKey = this.runner.providerKey?.(step);
-      if (providerKey !== undefined && this.runner.isProviderAvailable?.(providerKey) === false) {
-        providerError = this.failProviderUnavailable(providerKey);
-        continue;
+      if (providerKey !== undefined) {
+        const rechecked = this.recheckedProviders.delete(providerKey);
+        if (this.runner.isProviderAvailable?.(providerKey) === false) {
+          if (!rechecked && this.runner.refreshProvider !== undefined) {
+            this.recheckProvider(providerKey, this.runner.refreshProvider);
+            continue;
+          }
+          providerError = this.failProviderUnavailable(providerKey);
+          continue;
+        }
       }
       this.launch(step);
     }
@@ -486,6 +505,19 @@ class WorkflowController {
       );
       this.settle(hasErrors ? "completed_with_errors" : "completed");
     }
+  }
+
+  /** Hold `providerKey`'s steps while `refresh` re-checks it, then schedule again. */
+  private recheckProvider(providerKey: string, refresh: (providerKey: string) => Promise<void>) {
+    this.providerRechecks.add(providerKey);
+    void Promise.resolve()
+      .then(() => refresh(providerKey))
+      .catch(() => undefined)
+      .then(() => {
+        this.providerRechecks.delete(providerKey);
+        this.recheckedProviders.add(providerKey);
+        this.pump();
+      });
   }
 
   private launch(step: WorkflowStepDefinition): void {

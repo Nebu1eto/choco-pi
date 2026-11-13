@@ -778,6 +778,8 @@ export function registerUsageLimitController<
     if (isSuccessfulStop(message)) {
       state.handledEntryId = turn.entryId;
       resetBudgets();
+      // The request began at `timestamp`; one that began after a closure proves the account serves again.
+      policy.reopen(message.provider, accountIdFor(session, message.provider), message.timestamp);
       return;
     }
     if (!isInterruptedByLimit(message)) return;
