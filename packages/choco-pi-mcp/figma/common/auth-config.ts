@@ -1,7 +1,6 @@
 import { execFile } from "node:child_process";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { dirname } from "node:path";
 import { promisify } from "node:util";
 import type {
   ExtensionAPI,
@@ -12,6 +11,7 @@ import { Key, matchesKey } from "@earendil-works/pi-tui";
 import { bool, obj, opt } from "@earendil-works/pi-schema";
 import { ApiError } from "./errors.ts";
 import {
+  defaultAuthFile,
   MissingAuthTokenError,
   readAuthToken,
   setAuthTokenOverride,
@@ -138,7 +138,7 @@ export async function configureAuthToken(
   return {
     stored: true,
     envWasSet,
-    message: `${options.displayName} token stored in ~/.pi/agent/auth.json at ${options.authPath.join(".")}.${envNote}`,
+    message: `${options.displayName} token stored in ${options.authFile ?? defaultAuthFile()} at ${options.authPath.join(".")}.${envNote}`,
   };
 }
 
@@ -147,7 +147,7 @@ export async function writeAuthToken(options: {
   token: string;
   authFile?: string;
 }): Promise<void> {
-  const authFile = options.authFile ?? resolve(homedir(), ".pi", "agent", "auth.json");
+  const authFile = options.authFile ?? defaultAuthFile();
   await mkdir(dirname(authFile), { recursive: true });
   await safeChmod(dirname(authFile), 0o700);
 

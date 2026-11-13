@@ -6,7 +6,7 @@
  *   - <cwd>/.agents/skills       (project, cross-tool Agent Skills spec — https://agentskills.io)
  *   - getAgentDir()/skills       (user, default ~/.pi/agent/skills — Pi's standard)
  *   - ~/.agents/skills           (user, cross-tool Agent Skills spec)
- *   - ~/.pi/skills               (legacy global, pre-Pi)
+ *   - ~/.pi/skills               (legacy global, pre-Pi; skipped in standalone choco-pi)
  *
  * Layout per root:
  *   - <root>/<name>.md            (flat file at the top level)
@@ -23,6 +23,7 @@ import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { legacyPiFallbacks } from "../../../profile/extensions/lib/pi-paths.ts";
 import { pathExists } from "./fs-async.ts";
 import { isSymlink, isUnsafeName, safeReadFile } from "./memory.ts";
 
@@ -42,19 +43,24 @@ async function loadSkillContent(name: string, cwd: string): Promise<string> {
   if (isUnsafeName(name)) {
     return `(Skill "${name}" skipped: name contains path traversal characters)`;
   }
-  const roots = [
-    join(cwd, ".pi", "skills"), // project — Pi standard
-    join(cwd, ".agents", "skills"), // project — Agent Skills spec
-    join(getAgentDir(), "skills"), // user — Pi standard
-    join(homedir(), ".agents", "skills"), // user — Agent Skills spec
-    join(homedir(), ".pi", "skills"), // legacy global, pre-Pi
-  ];
+  const roots = skillRoots(cwd);
   // Sequential on purpose: roots are in precedence order and the first hit wins.
   for (const root of roots) {
     const content = await findInRoot(root, name);
     if (content !== undefined) return content;
   }
   return `(Skill "${name}" not found in .pi/skills/, .agents/skills/, or global skill locations)`;
+}
+
+/** Skill roots in precedence order; the pre-Pi `~/.pi/skills` root appears only in legacy mode. */
+export function skillRoots(cwd: string): string[] {
+  return [
+    join(cwd, ".pi", "skills"), // project — Pi standard
+    join(cwd, ".agents", "skills"), // project — Agent Skills spec
+    join(getAgentDir(), "skills"), // user — Pi standard
+    join(homedir(), ".agents", "skills"), // user — Agent Skills spec
+    ...legacyPiFallbacks(process.env, homedir()).map((root) => join(root, "skills")), // legacy global, pre-Pi
+  ];
 }
 
 async function findInRoot(root: string, name: string): Promise<string | undefined> {

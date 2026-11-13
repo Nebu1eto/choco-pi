@@ -4,6 +4,7 @@ import { hasRuntimeType } from "./parsing.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { piStateRoot } from "../../../../../profile/extensions/lib/pi-paths.ts";
 
 export type BrowserDefaultProfilePolicy = "explicit-only" | "authenticated-only" | "always";
 export type AgentBrowserConfigScope = "global" | "project" | "override" | "env-fallback";
@@ -175,10 +176,15 @@ export function getWebSearchProviderConfigKey(provider) {
   return getWebSearchProviderDescriptor(provider).configKey;
 }
 
-/** @param {NodeJS.ProcessEnv} [env] */
+/**
+ * Global config under Pi's state root: `~/.pi/config/...` in legacy mode,
+ * `$CHOCO_PI_HOME/config/...` in standalone choco-pi.
+ * @param {NodeJS.ProcessEnv} [env]
+ */
 export function getGlobalAgentBrowserConfigPath(env = process.env) {
   const home = env.HOME?.trim() || env.USERPROFILE?.trim() || homedir();
-  return join(home, ...GLOBAL_CONFIG_RELATIVE_PATH);
+  const [, ...relativeToStateRoot] = GLOBAL_CONFIG_RELATIVE_PATH;
+  return join(piStateRoot(env, home), ...relativeToStateRoot);
 }
 
 /** @param {string} [cwd] */

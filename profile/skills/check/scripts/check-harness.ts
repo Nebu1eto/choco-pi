@@ -18,6 +18,7 @@ import {
   PI_SDK_REQUIREMENT,
   isSupportedPiVersion,
 } from "../../../extensions/lib/pi-target.ts";
+import { piAgentDir, standaloneHome } from "../../../extensions/lib/pi-paths.ts";
 
 import { execFile } from "node:child_process";
 import { access, readFile, realpath } from "node:fs/promises";
@@ -81,6 +82,10 @@ export type HarnessOptions = {
   readText?: (target: string) => Promise<string>;
   pathExists?: (target: string) => Promise<boolean>;
   runCommand?: RunCommand;
+  /** Environment for the launcher and agent-dir defaults; defaults to `process.env`. */
+  env?: Readonly<Record<string, string | undefined>>;
+  /** Home directory for the legacy agent-dir default; defaults to `os.homedir()`. */
+  homeDir?: string;
 };
 
 export type HarnessReport = {
@@ -211,6 +216,7 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
   };
 
   const nodeVersion = options.nodeVersion ?? process.version;
+  const env = options.env ?? process.env;
   add("node", atLeast(nodeVersion, "24.0.0") ? "pass" : "fail", `${nodeVersion}; required >=24`);
 
   const importedRuntime = await (options.readImportedRuntime ?? readImportedSdkVersion)();
@@ -248,11 +254,30 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
     }
   }
   if (options.mode === "full") {
-    const launcher = await probeLauncherVersion({ runCommand: run, signal: options.signal });
-    const launcherDetail = launcher.version
-      ? `direct PATH resolves Pi ${launcher.version}; not used for ${primaryId} validation`
-      : `${launcher.error ?? "unavailable"}; not used for ${primaryId} validation`;
-    add("launcher", launcher.version === primaryRuntime.version ? "pass" : "warn", launcherDetail);
+    // The standalone launcher names itself; a PATH `pi` is irrelevant there.
+    const chocoLauncher = env.CHOCO_PI_LAUNCHER || undefined;
+    if (chocoLauncher === undefined && standaloneHome(env) !== undefined) {
+      add(
+        "launcher",
+        "warn",
+        `standalone mode without CHOCO_PI_LAUNCHER; start Pi through the choco-pi launcher; not used for ${primaryId} validation`,
+      );
+    } else {
+      const launcher = await probeLauncherVersion({
+        runCommand: run,
+        signal: options.signal,
+        executable: chocoLauncher ?? "pi",
+      });
+      const subject = chocoLauncher ? `choco-pi launcher ${chocoLauncher}` : "direct PATH";
+      const launcherDetail = launcher.version
+        ? `${subject} resolves Pi ${launcher.version}; not used for ${primaryId} validation`
+        : `${subject}: ${launcher.error ?? "unavailable"}; not used for ${primaryId} validation`;
+      add(
+        "launcher",
+        launcher.version === primaryRuntime.version ? "pass" : "warn",
+        launcherDetail,
+      );
+    }
   }
 
   let settings: Settings | undefined;
@@ -260,8 +285,7 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
   // otherwise the global settings an earlier install wrote carry it. Only a
   // missing project file falls back; any other read failure is reported.
   const projectSettingsPath = path.join(checkoutRoot, ".pi", "settings.json");
-  const agentDir =
-    options.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? path.join(homedir(), ".pi", "agent");
+  const agentDir = options.agentDir ?? piAgentDir(env, options.homeDir ?? homedir());
   let fromProject = true;
   let settingsPath = projectSettingsPath;
   try {

@@ -350,3 +350,11 @@ The user explicitly authorized this schema change (all choco-pi tool inputs, out
 - **Left unchanged.** `details` objects and their keys (`stoppedAt`, `effectPossible`, ...), the helper's `canSetValue`/`isTextInput` fields, and `e2e/fixtures/`.
 - **Tests.** `tests/action-schema.test.ts` validates the new names and values, rejects the old ones, and checks the conversion; `tests/load.test.ts` pins the new property names; message pins in `tests/browser-batch-validation.test.ts` and `tests/foreground-policy.test.ts` use the new labels.
 - **Review fix.** `search_ui` rejects the former capability spellings `setValue`, `setText` and `textInput` (case-insensitive) in `toSearchUiParams` with an error naming the snake_case value, instead of returning a successful empty search. Test: `tests/search-capability.test.ts`.
+
+## 2026-11-13 choco-pi patch: standalone state paths
+
+Standalone mode is the `choco-pi` launcher's env contract (`CHOCO_PI_STANDALONE=1` with an absolute `CHOCO_PI_HOME`); the shared resolver is `profile/extensions/lib/pi-paths.ts`, imported by relative path. Legacy mode (contract unset) keeps the previous paths.
+
+- `src/platform/linux/helper.ts` and `src/platform/windows/helper.ts`: the default helper path is `<agent dir>/helpers/pi-computer-use/...` through `piAgentDir()` (was `~/.pi/agent/...`, ignoring `PI_CODING_AGENT_DIR`). New `linuxHelperPath(env?, home?)` / `windowsHelperPath(env?, home?)`; `LINUX_HELPER_PATH` / `WINDOWS_HELPER_PATH` and the `PI_COMPUTER_USE_*_HELPER_PATH` overrides are unchanged.
+- `tsconfig.json`: removed `compilerOptions.rootDir` ("."). The root config sets `noEmit`, so `rootDir` only raised TS6059 for the import of `profile/extensions/lib/pi-paths.ts`.
+- Tests: `tests/helper-transport.test.ts`.

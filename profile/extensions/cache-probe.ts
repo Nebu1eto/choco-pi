@@ -3,6 +3,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { piAgentDir, type PiPathEnv } from "./lib/pi-paths.ts";
 import {
   isBoolean,
   isJsonRecord,
@@ -528,18 +529,17 @@ function safeIdentifier(value: string | undefined): string {
   return value;
 }
 
-function datePath(now: Date): string {
-  return path.join(
-    homedir(),
-    ".pi",
-    "agent",
-    "cache-probe",
-    `${now.toISOString().slice(0, 10)}.jsonl`,
-  );
+/** The day's probe log under Pi's agent directory. */
+export function cacheProbeLogPath(
+  now: Date,
+  env: PiPathEnv = process.env,
+  home: string = homedir(),
+): string {
+  return path.join(piAgentDir(env, home), "cache-probe", `${now.toISOString().slice(0, 10)}.jsonl`);
 }
 
 function appendRecord(record: ProbeRecord): void {
-  const file = datePath(new Date(record.ts));
+  const file = cacheProbeLogPath(new Date(record.ts));
   mkdirSync(path.dirname(file), { recursive: true });
   appendFileSync(file, `${JSON.stringify(record)}\n`, "utf8");
 }

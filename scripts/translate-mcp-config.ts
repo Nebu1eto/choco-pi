@@ -24,8 +24,17 @@ import {
   isString,
   type JsonValue,
 } from "../profile/extensions/lib/runtime-values.ts";
+import { piAgentDir, type PiPathEnv } from "../profile/extensions/lib/pi-paths.ts";
 
 class McpTranslationError extends Error {}
+
+/** The file translated without `--file`: `mcp.json` in Pi's agent directory. */
+export function defaultMcpConfigPath(
+  env: PiPathEnv = process.env,
+  home: string = homedir(),
+): string {
+  return resolve(piAgentDir(env, home), "mcp.json");
+}
 
 /** A closed record whose keys must all match `pattern` (pi-schema's map() accepts any key). */
 function patternMap<T>(pattern: string, value: Schema<T>): Schema<Record<string, T>> {
@@ -397,7 +406,7 @@ export async function translateMcpFile(
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const args = process.argv.slice(2);
   const fileIndex = args.indexOf("--file");
-  const path = fileIndex < 0 ? resolve(homedir(), ".pi/agent/mcp.json") : args[fileIndex + 1];
+  const path = fileIndex < 0 ? defaultMcpConfigPath() : args[fileIndex + 1];
   const skip: string[] = [];
   const valueIndexes = new Set<number>();
   if (fileIndex >= 0) valueIndexes.add(fileIndex + 1);

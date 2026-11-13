@@ -274,6 +274,73 @@ test("marker path honors PI_CODING_AGENT_DIR", async () => {
   });
 });
 
+async function withEnv(
+  patch: Record<string, string | undefined>,
+  run: () => Promise<void> | void,
+): Promise<void> {
+  const previous = Object.fromEntries(Object.keys(patch).map((key) => [key, process.env[key]]));
+  const apply = (values: Record<string, string | undefined>) => {
+    for (const [key, value] of Object.entries(values)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  };
+  apply(patch);
+  try {
+    await run();
+  } finally {
+    apply(previous);
+  }
+}
+
+test("marker path defaults under CHOCO_PI_HOME in standalone mode and under ~/.pi in legacy mode", async () => {
+  await fixture(async (directory) => {
+    const home = path.join(directory, "home");
+    const chocoHome = path.join(directory, "choco");
+    await withEnv(
+      {
+        HOME: home,
+        PI_CODING_AGENT_DIR: undefined,
+        CHOCO_PI_STANDALONE: "1",
+        CHOCO_PI_HOME: chocoHome,
+      },
+      () => {
+        assert.equal(
+          profileMarkerPath(),
+          path.join(chocoHome, "agent", "choco-pi", "profile.json"),
+        );
+      },
+    );
+    await withEnv(
+      {
+        HOME: home,
+        PI_CODING_AGENT_DIR: undefined,
+        CHOCO_PI_STANDALONE: undefined,
+        CHOCO_PI_HOME: chocoHome,
+      },
+      () => {
+        assert.equal(
+          profileMarkerPath(),
+          path.join(home, ".pi", "agent", "choco-pi", "profile.json"),
+        );
+      },
+    );
+  });
+});
+
+test("launcher selection ignores an empty CHOCO_PI_LAUNCHER and records the standalone launcher", async () => {
+  await fixture(async (directory) => {
+    const pathPi = await fakeLauncher(path.join(directory, "path"), PI_SDK_MINIMUM);
+    const standalone = await fakeLauncher(path.join(directory, "standalone"), VERSION);
+    await withEnv({ PATH: path.dirname(pathPi), CHOCO_PI_LAUNCHER: "" }, async () => {
+      assert.deepEqual(await resolvePiLauncher(), { launcher: pathPi, version: PI_SDK_MINIMUM });
+    });
+    await withEnv({ PATH: "", CHOCO_PI_LAUNCHER: standalone }, async () => {
+      assert.deepEqual(await resolvePiLauncher(), { launcher: standalone, version: VERSION });
+    });
+  });
+});
+
 function harnessDependencies(): HarnessCheckExecutionDependencies {
   const owner = { sessionId: "marker-test", generation: 1 };
   return {

@@ -49,10 +49,102 @@ function fixture(overrides: Partial<HarnessOptions> = {}) {
       },
       pathExists: async () => true,
       runCommand: async () => ({ status: 0, stdout: `${PI_SDK_MINIMUM}\n`, stderr: "" }),
+      env: {},
       ...overrides,
     },
   };
 }
+
+const standaloneEnv = {
+  CHOCO_PI_STANDALONE: "1",
+  CHOCO_PI_HOME: "/choco",
+  CHOCO_PI_LAUNCHER: "/choco/app/bin/choco-pi",
+  PI_CODING_AGENT_DIR: "/choco/agent",
+};
+
+test("full check probes the choco-pi launcher instead of a PATH pi and compares its version", async () => {
+  const executables: string[] = [];
+  for (const [stdout, status] of [
+    [PI_SDK_MINIMUM, "pass"],
+    ["0.85.1", "warn"],
+  ] as const) {
+    const { options } = fixture({
+      mode: "full",
+      env: standaloneEnv,
+      runCommand: async (executable) => {
+        executables.push(executable);
+        return { status: 0, stdout: `${stdout}\n`, stderr: "" };
+      },
+    });
+    const launcher = (await checkHarness(options)).checks.find((check) => check.id === "launcher");
+    assert.equal(launcher?.status, status);
+    assert.match(
+      launcher?.detail ?? "",
+      /^choco-pi launcher \/choco\/app\/bin\/choco-pi resolves Pi/,
+    );
+  }
+  assert.deepEqual(executables, [standaloneEnv.CHOCO_PI_LAUNCHER, standaloneEnv.CHOCO_PI_LAUNCHER]);
+});
+
+test("standalone mode never warns about a missing PATH pi", async () => {
+  const executables: string[] = [];
+  const { options } = fixture({
+    mode: "full",
+    env: standaloneEnv,
+    runCommand: async (executable) => {
+      executables.push(executable);
+      return executable === "pi"
+        ? { status: 127, stdout: "", stderr: "pi: command not found" }
+        : { status: 0, stdout: `${PI_SDK_MINIMUM}\n`, stderr: "" };
+    },
+  });
+  const report = await checkHarness(options);
+  assert.equal(report.checks.find((check) => check.id === "launcher")?.status, "pass");
+  assert.ok(!executables.includes("pi"));
+  assert.ok(report.checks.every((check) => !/PATH/.test(check.detail)));
+});
+
+test("legacy full check still probes the PATH pi", async () => {
+  const executables: string[] = [];
+  const { options } = fixture({
+    mode: "full",
+    runCommand: async (executable) => {
+      executables.push(executable);
+      return { status: 0, stdout: `${PI_SDK_MINIMUM}\n`, stderr: "" };
+    },
+  });
+  const launcher = (await checkHarness(options)).checks.find((check) => check.id === "launcher");
+  assert.deepEqual(executables, ["pi"]);
+  assert.match(launcher?.detail ?? "", /^direct PATH resolves Pi/);
+});
+
+test("agent settings default under CHOCO_PI_HOME in standalone mode and ~/.pi in legacy mode", async () => {
+  const missingProject = Object.assign(new Error("missing project settings"), { code: "ENOENT" });
+  for (const [env, expected] of [
+    [
+      { CHOCO_PI_STANDALONE: "1", CHOCO_PI_HOME: "/choco" },
+      path.join("/choco", "agent", "settings.json"),
+    ],
+    [{}, path.join("/home/user", ".pi", "agent", "settings.json")],
+  ] as const) {
+    const reads: string[] = [];
+    const { options } = fixture({
+      env,
+      homeDir: "/home/user",
+      readText: async (target) => {
+        reads.push(target);
+        if (target === projectSettings) throw missingProject;
+        if (target === expected) return JSON.stringify({ packages: [], tuiMode: "fullscreen" });
+        throw new Error(`missing fixture: ${target}`);
+      },
+    });
+    const settings = (await checkHarness(options)).checks.find((check) => check.id === "settings");
+    assert.equal(settings?.status, "pass");
+    assert.ok(reads.includes(expected));
+    if ("CHOCO_PI_HOME" in env)
+      assert.ok(reads.every((target) => !target.startsWith(path.join("/home/user", ".pi"))));
+  }
+});
 
 test("active host readiness accepts only stable releases in the supported patch line", async () => {
   const supported = new Set(["1.5.2", "1.5.3", "1.5.10"]);

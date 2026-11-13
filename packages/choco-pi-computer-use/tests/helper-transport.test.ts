@@ -1272,3 +1272,37 @@ test("a stale_look at action 2 over the wire returns a partial successor with bo
     /act_ui stopped at action 2 \(press\).*Action 1 was delivered; action 2 \(press\) delivered nothing/,
   );
 });
+
+test("linux and windows helpers live under CHOCO_PI_HOME/agent standalone and ~/.pi/agent legacy", async () => {
+  const { linuxHelperPath } = await import("../src/platform/linux/helper.ts");
+  const { windowsHelperPath } = await import("../src/platform/windows/helper.ts");
+  const standalone = { CHOCO_PI_STANDALONE: "1", CHOCO_PI_HOME: "/choco" };
+  const home = "/home/user";
+  assert.equal(
+    linuxHelperPath(standalone, home),
+    path.join("/choco", "agent", "helpers", "pi-computer-use", "linux-bridge"),
+  );
+  assert.equal(
+    windowsHelperPath(standalone, home),
+    path.join("/choco", "agent", "helpers", "pi-computer-use", "windows-bridge.exe"),
+  );
+  assert.equal(
+    linuxHelperPath({}, home),
+    path.join(home, ".pi", "agent", "helpers", "pi-computer-use", "linux-bridge"),
+  );
+  assert.equal(
+    windowsHelperPath({}, home),
+    path.join(home, ".pi", "agent", "helpers", "pi-computer-use", "windows-bridge.exe"),
+  );
+  assert.equal(
+    linuxHelperPath({ ...standalone, PI_COMPUTER_USE_LINUX_HELPER_PATH: "/override" }, home),
+    "/override",
+  );
+  assert.equal(
+    windowsHelperPath(
+      { ...standalone, PI_COMPUTER_USE_WINDOWS_HELPER_PATH: "/override.exe" },
+      home,
+    ),
+    "/override.exe",
+  );
+});

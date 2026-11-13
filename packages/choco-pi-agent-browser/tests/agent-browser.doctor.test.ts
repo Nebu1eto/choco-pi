@@ -10,6 +10,46 @@ import {
   isDirectRun,
   parseCliArgs,
 } from "../scripts/doctor.ts";
+import { getGlobalAgentBrowserConfigPath } from "../extensions/agent-browser/lib/config-policy.ts";
+
+test("doctor agent dir defaults to CHOCO_PI_HOME/agent standalone and ~/.pi/agent legacy", () => {
+  assert.equal(
+    parseCliArgs([], { CHOCO_PI_STANDALONE: "1", CHOCO_PI_HOME: "/choco" }, "/home/user").agentDir,
+    join("/choco", "agent"),
+  );
+  assert.equal(parseCliArgs([], {}, "/home/user").agentDir, join("/home/user", ".pi", "agent"));
+  assert.equal(
+    parseCliArgs([], { PI_CODING_AGENT_DIR: "/agent" }, "/home/user").agentDir,
+    "/agent",
+  );
+  assert.equal(
+    parseCliArgs(["--agent-dir", "/explicit"], {
+      CHOCO_PI_STANDALONE: "1",
+      CHOCO_PI_HOME: "/choco",
+    }).agentDir,
+    "/explicit",
+  );
+});
+
+test("global agent-browser config lives under CHOCO_PI_HOME standalone and ~/.pi legacy", () => {
+  const tail = ["config", "pi-agent-browser-native", "config.json"];
+  assert.equal(
+    getGlobalAgentBrowserConfigPath({
+      HOME: "/home/user",
+      CHOCO_PI_STANDALONE: "1",
+      CHOCO_PI_HOME: "/choco",
+    }),
+    join("/choco", ...tail),
+  );
+  assert.equal(
+    getGlobalAgentBrowserConfigPath({ HOME: "/home/user" }),
+    join("/home/user", ".pi", ...tail),
+  );
+  assert.equal(
+    getGlobalAgentBrowserConfigPath({ HOME: "", USERPROFILE: "C:/Users/u" }),
+    join("C:/Users/u", ".pi", ...tail),
+  );
+});
 
 test("browser doctor warns rather than fails on future versions", async () => {
   const check = await checkAgentBrowserVersion({

@@ -2514,3 +2514,11 @@ Since the advisor role became `internal`, its registry spawn went through `resol
 ## 2026-11-13 choco-pi patch: root pnpm workspace install
 
 This package is now a member of the root pnpm workspace (`packages/*`) and installs from the single root `pnpm-lock.yaml` with `pnpm install --frozen-lockfile` at the repository root; the root `postinstall` bootstrap (`scripts/bootstrap-vendored.ts`) is gone. Removed: this package's `pnpm-lock.yaml`, `pnpm-workspace.yaml` and `packageManager` field (the root pins `pnpm@11.11.0`). The dependency, devDependency and peerDependency fields are unchanged, and every direct dependency resolves to the same version as in the removed lockfile. Dependency build scripts still never run: the root `allowBuilds` lists each one as `false`, replacing `--ignore-scripts`.
+
+## 2026-11-13 choco-pi patch: standalone state paths
+
+Standalone mode is the `choco-pi` launcher's env contract (`CHOCO_PI_STANDALONE=1` with an absolute `CHOCO_PI_HOME`); the shared resolver is `profile/extensions/lib/pi-paths.ts`, imported by relative path. Legacy mode (contract unset) keeps the previous paths.
+
+- `src/memory.ts` (`resolveMemoryDir`, user scope): the `~/.pi/agent-memory/<agent>` fallback comes from `legacyPiFallbacks()`, so standalone mode never consults it; the current `getAgentDir()/agent-memory` location is unchanged and still wins when it exists.
+- `src/skill-loader.ts`: roots move into the exported `skillRoots(cwd)`; the pre-Pi `~/.pi/skills` root comes from `legacyPiFallbacks()` and is dropped in standalone mode. `~/.agents/skills` (where `rex skill setup --agent pi` installs) stays.
+- Tests: `tests/standalone-paths.test.ts`.

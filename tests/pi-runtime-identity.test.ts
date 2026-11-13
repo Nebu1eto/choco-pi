@@ -67,3 +67,23 @@ test("launcher probe preserves cancellation and timeout failures as launcher evi
   assert.equal(observation.version, undefined);
   assert.equal(observation.error, "cancelled");
 });
+
+test("launcher probe defaults to CHOCO_PI_LAUNCHER, else the PATH pi", async () => {
+  const executables: string[] = [];
+  const runCommand = async (executable: string) => {
+    executables.push(executable);
+    return { status: 0, stdout: "1.5.2\n", stderr: "" };
+  };
+  await probeLauncherVersion({
+    runCommand,
+    env: { CHOCO_PI_LAUNCHER: "/opt/choco/app/bin/choco-pi" },
+  });
+  await probeLauncherVersion({ runCommand, env: { CHOCO_PI_LAUNCHER: "" } });
+  await probeLauncherVersion({ runCommand, env: {} });
+  await probeLauncherVersion({
+    runCommand,
+    env: { CHOCO_PI_LAUNCHER: "/ignored" },
+    executable: "/explicit",
+  });
+  assert.deepEqual(executables, ["/opt/choco/app/bin/choco-pi", "pi", "pi", "/explicit"]);
+});

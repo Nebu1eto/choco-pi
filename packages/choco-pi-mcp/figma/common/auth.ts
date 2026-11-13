@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { piAgentDir } from "../../../../profile/extensions/lib/pi-paths.ts";
 import {
   isPropertyContainer,
   isStringValue,
@@ -16,6 +17,14 @@ export interface ReadAuthTokenOptions {
 
 const authTokenOverrides = new Map<string, string>();
 
+/** Pi's credential file: `auth.json` in the agent directory (`~/.pi/agent` in legacy mode). */
+export function defaultAuthFile(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  home: string = homedir(),
+): string {
+  return resolve(piAgentDir(env, home), "auth.json");
+}
+
 export function setAuthTokenOverride(options: ReadAuthTokenOptions, token: string): void {
   authTokenOverrides.set(authTokenKey(options), token);
 }
@@ -28,9 +37,9 @@ export class MissingAuthTokenError extends Error {
   public readonly envName: string;
   public readonly authPath: readonly string[];
 
-  constructor(envName: string, authPath: readonly string[]) {
+  constructor(envName: string, authPath: readonly string[], authFile: string = defaultAuthFile()) {
     super(
-      `No auth token found. Set ${envName} or store it in ~/.pi/agent/auth.json at ${authPath.join(".")}`,
+      `No auth token found. Set ${envName} or store it in ${authFile} at ${authPath.join(".")}`,
     );
     this.name = "MissingAuthTokenError";
     this.envName = envName;
@@ -45,7 +54,7 @@ export async function readAuthToken(options: ReadAuthTokenOptions): Promise<stri
   const envValue = process.env[options.envName]?.trim();
   if (envValue) return envValue;
 
-  const authFile = options.authFile ?? resolve(homedir(), ".pi", "agent", "auth.json");
+  const authFile = options.authFile ?? defaultAuthFile();
   try {
     const raw = await readFile(authFile, "utf8");
     const parsed = parseFigmaJson(raw);
@@ -57,7 +66,7 @@ export async function readAuthToken(options: ReadAuthTokenOptions): Promise<stri
     }
   }
 
-  throw new MissingAuthTokenError(options.envName, options.authPath);
+  throw new MissingAuthTokenError(options.envName, options.authPath, authFile);
 }
 
 function getPath(value: FigmaValue, path: readonly string[]): FigmaValue {

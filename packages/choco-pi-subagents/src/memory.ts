@@ -8,13 +8,15 @@
  *
  * The user scope previously hardcoded ~/.pi/agent-memory/. That legacy location
  * is still honored (read + write) when it exists and the new location doesn't,
- * so existing memories aren't orphaned.
+ * so existing memories aren't orphaned. Standalone choco-pi (CHOCO_PI_STANDALONE)
+ * has no legacy location and never consults ~/.pi.
  */
 
 import { lstat, mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { legacyPiFallbacks } from "../../../profile/extensions/lib/pi-paths.ts";
 import { pathExists } from "./fs-async.ts";
 import type { MemoryScope } from "./types.ts";
 
@@ -73,13 +75,11 @@ export async function resolveMemoryDir(
       // Legacy location from when this path was hardcoded. Keep using it if it
       // already holds this agent's memory and the new location hasn't been
       // created yet — otherwise existing memories would be silently orphaned.
-      const legacy = join(homedir(), ".pi", "agent-memory", agentName);
-      if (
-        !(await pathExists(current)) &&
-        (await pathExists(legacy)) &&
-        !(await isSymlink(legacy))
-      ) {
-        return legacy;
+      // Standalone mode has no legacy location.
+      if (await pathExists(current)) return current;
+      for (const root of legacyPiFallbacks(process.env, homedir())) {
+        const legacy = join(root, "agent-memory", agentName);
+        if ((await pathExists(legacy)) && !(await isSymlink(legacy))) return legacy;
       }
       return current;
     }

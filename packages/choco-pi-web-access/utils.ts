@@ -1,11 +1,22 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { join } from "node:path";
+import { legacyPiFallbacks, piAgentDir } from "../../profile/extensions/lib/pi-paths.ts";
 
-export function getWebSearchConfigDir(): string {
-  if (process.env.PI_CODING_AGENT_DIR) return process.env.PI_CODING_AGENT_DIR;
-  if (process.env.XDG_CONFIG_HOME) return join(process.env.XDG_CONFIG_HOME, "pi");
-  return join(homedir(), ".pi");
+/**
+ * Directory holding web-search.json: PI_CODING_AGENT_DIR, else (legacy mode
+ * only) XDG_CONFIG_HOME/pi or ~/.pi. Standalone choco-pi falls back to its own
+ * agent directory and never to XDG or ~/.pi.
+ */
+export function getWebSearchConfigDir(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  home: string = homedir(),
+): string {
+  if (env.PI_CODING_AGENT_DIR) return env.PI_CODING_AGENT_DIR;
+  const [legacyRoot] = legacyPiFallbacks(env, home);
+  if (legacyRoot === undefined) return piAgentDir(env, home);
+  if (env.XDG_CONFIG_HOME) return join(env.XDG_CONFIG_HOME, "pi");
+  return legacyRoot;
 }
 
 export function getWebSearchConfigPath(): string {

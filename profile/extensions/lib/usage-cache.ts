@@ -1,4 +1,5 @@
 import { isNumber, isObject, isString, type RuntimeValue } from "./runtime-values.ts";
+import { piAgentDir, type PiPathEnv } from "./pi-paths.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -15,13 +16,12 @@ import { dirname, join } from "node:path";
  * the snapshot and the backoff instead of hammering the endpoint again.
  */
 
-export const DEFAULT_USAGE_CACHE_PATH = join(
-  homedir(),
-  ".pi",
-  "agent",
-  "choco-pi",
-  "usage-cache.json",
-);
+/** The shared usage cache file under Pi's agent directory. */
+export function usageCachePath(env: PiPathEnv = process.env, home: string = homedir()): string {
+  return join(piAgentDir(env, home), "choco-pi", "usage-cache.json");
+}
+
+export const DEFAULT_USAGE_CACHE_PATH = usageCachePath();
 
 const CACHE_VERSION = 1;
 const REQUEST_TIMEOUT_MS = 10_000;

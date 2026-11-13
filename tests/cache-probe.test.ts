@@ -7,6 +7,7 @@ import cacheProbe from "../profile/extensions/cache-probe.ts";
 import { reinterpretHostValue } from "../profile/extensions/lib/runtime-values.ts";
 import {
   cachePayloadMetadata,
+  cacheProbeLogPath,
   createRequestLinker,
   cacheableSegments,
   canonicalJson,
@@ -18,6 +19,36 @@ import {
   systemText,
   toolNamesHash,
 } from "../profile/extensions/cache-probe.ts";
+
+/** Point HOME at a scratch directory in legacy mode so probe logs land under it; returns the restore. */
+function isolateHome(home: string): () => void {
+  const keys = ["HOME", "PI_CODING_AGENT_DIR", "CHOCO_PI_STANDALONE", "CHOCO_PI_HOME"] as const;
+  const previous = keys.map((key) => [key, process.env[key]] as const);
+  for (const key of keys) delete process.env[key];
+  process.env.HOME = home;
+  return () => {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  };
+}
+
+test("probe logs live under CHOCO_PI_HOME in standalone mode and ~/.pi in legacy mode", () => {
+  const now = new Date("2026-01-02T03:04:05Z");
+  assert.equal(
+    cacheProbeLogPath(now, { CHOCO_PI_STANDALONE: "1", CHOCO_PI_HOME: "/choco" }, "/home/user"),
+    path.join("/choco", "agent", "cache-probe", "2026-01-02.jsonl"),
+  );
+  assert.equal(
+    cacheProbeLogPath(now, {}, "/home/user"),
+    path.join("/home/user", ".pi", "agent", "cache-probe", "2026-01-02.jsonl"),
+  );
+  assert.equal(
+    cacheProbeLogPath(now, { PI_CODING_AGENT_DIR: "/agent" }, "/home/user"),
+    path.join("/agent", "cache-probe", "2026-01-02.jsonl"),
+  );
+});
 
 test("canonicalJson is stable across object key order", () => {
   assert.equal(
@@ -412,8 +443,7 @@ test("tool name hashes preserve ordered active-tool identity", () => {
 
 test("transport observations stay bounded and the newest links to later usage", () => {
   const home = mkdtempSync(path.join(tmpdir(), "cache-probe-transport-"));
-  const previousHome = process.env.HOME;
-  process.env.HOME = home;
+  const restoreEnv = isolateHome(home);
   try {
     type TestEvent = {
       payload?: {
@@ -531,16 +561,14 @@ test("transport observations stay bounded and the newest links to later usage", 
     assert.equal(usage?.sentInputItemCount, 1);
     assert.equal(usage?.probeInstance, records[0]?.probeInstance);
   } finally {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
+    restoreEnv();
     rmSync(home, { recursive: true, force: true });
   }
 });
 
 test("reload creates a fresh instance and cannot link the old pending request", () => {
   const home = mkdtempSync(path.join(tmpdir(), "cache-probe-reload-"));
-  const previousHome = process.env.HOME;
-  process.env.HOME = home;
+  const restoreEnv = isolateHome(home);
   try {
     type Event = {
       payload?: { provider: string; model: string; instructions: string; input: never[] };
@@ -646,16 +674,14 @@ test("reload creates a fresh instance and cannot link the old pending request", 
     assert.notEqual(usage?.probeInstance, oldInstance);
     assert.equal(usage?.continuation, undefined);
   } finally {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
+    restoreEnv();
     rmSync(home, { recursive: true, force: true });
   }
 });
 
 test("cache-less assistant events do not consume observable usage linkage", () => {
   const home = mkdtempSync(path.join(tmpdir(), "cache-probe-test-"));
-  const previousHome = process.env.HOME;
-  process.env.HOME = home;
+  const restoreEnv = isolateHome(home);
   try {
     type TestProviderEvent = {
       payload: {
@@ -722,8 +748,7 @@ test("cache-less assistant events do not consume observable usage linkage", () =
     assert.equal(usageRecords.length, 1);
     assert.equal(usageRecords[0]?.requestId, 1);
   } finally {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
+    restoreEnv();
     rmSync(home, { recursive: true, force: true });
   }
 });

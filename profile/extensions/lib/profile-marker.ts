@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { compile, lit, nullable, obj, opt, str, type Static } from "@earendil-works/pi-schema";
+import { piAgentDir } from "./pi-paths.ts";
 import { PI_SDK_REQUIREMENT, isSupportedPiVersion } from "./pi-target.ts";
 
 export const ProfileMarkerSchema = obj({
@@ -41,9 +42,7 @@ export type ProfileMarkerObservation =
       reason: string;
     };
 
-export function profileMarkerPath(
-  agentDir = process.env.PI_CODING_AGENT_DIR ?? path.join(homedir(), ".pi", "agent"),
-): string {
+export function profileMarkerPath(agentDir = piAgentDir(process.env, homedir())): string {
   return path.resolve(agentDir, "choco-pi", "profile.json");
 }
 
@@ -74,7 +73,8 @@ export async function launcherVersion(launcher: string): Promise<string | null> 
 }
 
 export async function resolvePiLauncher(override?: string): Promise<ProfileMarker["pi"]> {
-  const selected = override ?? process.env.CHOCO_PI_LAUNCHER;
+  // The standalone launcher names itself; otherwise search PATH for `pi`.
+  const selected = override ?? (process.env.CHOCO_PI_LAUNCHER || undefined);
   if (selected !== undefined) {
     const launcher = path.resolve(selected);
     return { launcher, version: await launcherVersion(launcher) };

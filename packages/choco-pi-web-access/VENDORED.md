@@ -288,3 +288,10 @@ Tool inputs, outputs, and option values use snake_case only (user decision; tool
 ## 2026-11-13 choco-pi patch: root pnpm workspace install
 
 This package is now a member of the root pnpm workspace (`packages/*`) and installs from the single root `pnpm-lock.yaml` with `pnpm install --frozen-lockfile` at the repository root; the root `postinstall` bootstrap (`scripts/bootstrap-vendored.ts`) is gone. Removed: this package's `pnpm-lock.yaml`, `pnpm-workspace.yaml` and `packageManager` field (the root pins `pnpm@11.11.0`). The dependency, devDependency and peerDependency fields are unchanged, and every direct dependency resolves to the same version as in the removed lockfile. Dependency build scripts still never run: the root `allowBuilds` lists each one as `false`, replacing `--ignore-scripts`.
+
+## 2026-11-13 choco-pi patch: standalone state paths
+
+Standalone mode is the `choco-pi` launcher's env contract (`CHOCO_PI_STANDALONE=1` with an absolute `CHOCO_PI_HOME`); the shared resolver is `profile/extensions/lib/pi-paths.ts`, imported by relative path. Legacy mode (contract unset) keeps the previous paths.
+
+- `utils.ts` (`getWebSearchConfigDir(env?, home?)`): `PI_CODING_AGENT_DIR` still wins. The `XDG_CONFIG_HOME/pi` and `~/.pi` fallbacks apply only in legacy mode; standalone mode falls back to `$CHOCO_PI_HOME/agent`. Callers pass no arguments and are unchanged.
+- Tests: `tests/config-path.test.ts`.

@@ -6,7 +6,22 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { translateMcpFile } from "../scripts/translate-mcp-config.ts";
+import { defaultMcpConfigPath, translateMcpFile } from "../scripts/translate-mcp-config.ts";
+
+test("default MCP config is mcp.json in CHOCO_PI_HOME/agent standalone and ~/.pi/agent legacy", () => {
+  assert.equal(
+    defaultMcpConfigPath({ CHOCO_PI_STANDALONE: "1", CHOCO_PI_HOME: "/choco" }, "/home/user"),
+    join("/choco", "agent", "mcp.json"),
+  );
+  assert.equal(
+    defaultMcpConfigPath({}, "/home/user"),
+    join("/home/user", ".pi", "agent", "mcp.json"),
+  );
+  assert.equal(
+    defaultMcpConfigPath({ PI_CODING_AGENT_DIR: "/agent" }, "/home/user"),
+    join("/agent", "mcp.json"),
+  );
+});
 
 async function fixture(t: test.TestContext, source: string) {
   const root = await mkdtemp(join(tmpdir(), "translate-mcp-"));

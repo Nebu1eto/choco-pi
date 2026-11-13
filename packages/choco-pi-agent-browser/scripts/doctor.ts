@@ -6,6 +6,7 @@ import { dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import { piAgentDir } from "../../../profile/extensions/lib/pi-paths.ts";
 import {
   AGENT_BROWSER_LATEST_TESTED_VERSION,
   AGENT_BROWSER_TESTED_VERSIONS,
@@ -35,9 +36,13 @@ interface DoctorCheck {
   title: string;
 }
 
-export function parseCliArgs(argv: string[] = process.argv.slice(2)): DoctorOptions {
+export function parseCliArgs(
+  argv: string[] = process.argv.slice(2),
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  home: string = homedir(),
+): DoctorOptions {
   const options: DoctorOptions = {
-    agentDir: resolve(homedir(), ".pi/agent"),
+    agentDir: resolve(piAgentDir(env, home)),
     cwd: process.cwd(),
     settingsPaths: [],
     showHelp: false,
@@ -64,7 +69,8 @@ function printHelp(): void {
 
 Usage: node scripts/doctor.ts [options]
   --cwd <path>          Project directory to inspect
-  --agent-dir <path>    Pi agent directory (default: ~/.pi/agent)
+  --agent-dir <path>    Pi agent directory (default: $PI_CODING_AGENT_DIR, else
+                        $CHOCO_PI_HOME/agent in standalone mode, else ~/.pi/agent)
   --settings <path>     Additional settings file (repeatable)
   --skip-source-check   Skip duplicate source inspection
   -h, --help            Show help

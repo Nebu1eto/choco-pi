@@ -68,3 +68,23 @@ test("XDG_CONFIG_HOME is used when PI_CODING_AGENT_DIR is absent", async () => {
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout.trim(), join(xdg, "pi", "web-search.json"));
 });
+
+test("standalone web-search config never falls back to XDG pi or ~/.pi", async () => {
+  const { getWebSearchConfigDir } = await import(utilsUrl);
+  const standalone = { CHOCO_PI_STANDALONE: "1", CHOCO_PI_HOME: "/choco", XDG_CONFIG_HOME: "/xdg" };
+  assert.equal(getWebSearchConfigDir(standalone, "/home/user"), join("/choco", "agent"));
+  assert.equal(
+    getWebSearchConfigDir({ ...standalone, PI_CODING_AGENT_DIR: "/choco/agent" }, "/home/user"),
+    "/choco/agent",
+  );
+});
+
+test("legacy web-search config keeps the XDG pi and ~/.pi fallbacks", async () => {
+  const { getWebSearchConfigDir } = await import(utilsUrl);
+  assert.equal(
+    getWebSearchConfigDir({ XDG_CONFIG_HOME: "/xdg" }, "/home/user"),
+    join("/xdg", "pi"),
+  );
+  assert.equal(getWebSearchConfigDir({}, "/home/user"), join("/home/user", ".pi"));
+  assert.equal(getWebSearchConfigDir({ PI_CODING_AGENT_DIR: "/agent" }, "/home/user"), "/agent");
+});

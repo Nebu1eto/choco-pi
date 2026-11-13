@@ -317,3 +317,12 @@ User-authorized rename (tool inputs and outputs use snake_case; tool names uncha
 ## 2026-11-13 choco-pi patch: root pnpm workspace install
 
 This package is now a member of the root pnpm workspace (`packages/*`) and installs from the single root `pnpm-lock.yaml` with `pnpm install --frozen-lockfile` at the repository root; the root `postinstall` bootstrap (`scripts/bootstrap-vendored.ts`) is gone. Removed: this package's `pnpm-lock.yaml`, `pnpm-workspace.yaml` and `packageManager` field (the root pins `pnpm@11.11.0`). The dependency, devDependency and peerDependency fields are unchanged, and every direct dependency resolves to the same version as in the removed lockfile. Dependency build scripts still never run: the root `allowBuilds` lists each one as `false`, replacing `--ignore-scripts`.
+
+## 2026-11-13 choco-pi patch: standalone state paths
+
+Standalone mode is the `choco-pi` launcher's env contract (`CHOCO_PI_STANDALONE=1` with an absolute `CHOCO_PI_HOME`); the shared resolver is `profile/extensions/lib/pi-paths.ts`, imported by relative path. Legacy mode (contract unset) keeps the previous paths.
+
+- `figma/common/auth.ts`: new `defaultAuthFile(env?, home?)` = `<agent dir>/auth.json` through `piAgentDir()` (was a hard-coded `~/.pi/agent/auth.json` that ignored `PI_CODING_AGENT_DIR`). `readAuthToken` uses it, and `MissingAuthTokenError` names the resolved file (optional third constructor argument).
+- `figma/common/auth-config.ts`: `writeAuthToken` and the "token stored in" message use the same resolved file.
+- `tsconfig.json`: removed `compilerOptions.rootDir` ("."). The root config sets `noEmit`, so `rootDir` only raised TS6059 for the import of `profile/extensions/lib/pi-paths.ts`.
+- Tests: `tests/figma-auth-path.test.ts`.

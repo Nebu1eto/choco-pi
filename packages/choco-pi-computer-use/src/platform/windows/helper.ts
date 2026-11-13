@@ -5,6 +5,7 @@ import { access } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { piAgentDir } from "../../../../../profile/extensions/lib/pi-paths.ts";
 import type { JsonValue } from "../../json.ts";
 
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -13,9 +14,17 @@ const HELPER_SETUP_TIMEOUT_MS = 60_000;
 const COMMAND_TIMEOUT_MS = 15_000;
 
 export const WINDOWS_HELPER_PROTOCOL_VERSION = 4;
-export const WINDOWS_HELPER_PATH =
-  process.env.PI_COMPUTER_USE_WINDOWS_HELPER_PATH ||
-  path.join(os.homedir(), ".pi", "agent", "helpers", "pi-computer-use", "windows-bridge.exe");
+/** The Windows helper path: the explicit override, else `<agent dir>/helpers/pi-computer-use/windows-bridge.exe`. */
+export function windowsHelperPath(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  home: string = os.homedir(),
+): string {
+  return (
+    env.PI_COMPUTER_USE_WINDOWS_HELPER_PATH ||
+    path.join(piAgentDir(env, home), "helpers", "pi-computer-use", "windows-bridge.exe")
+  );
+}
+export const WINDOWS_HELPER_PATH = windowsHelperPath();
 
 interface HelperResponseEnvelope {
   id: string;

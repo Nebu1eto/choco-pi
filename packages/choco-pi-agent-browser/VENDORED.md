@@ -214,3 +214,11 @@ Tool inputs and model-visible outputs use snake_case. Tool names are unchanged. 
 - Deliberately unchanged: prose references to `details.*` keys; config keys such as `browser.executablePath` and `webSearch.preferredProvider`; and the `outputPath` file contents, which serialize `details.data`.
 - Regression coverage: `tests/agent-browser.snake-case-io.test.ts`.
 - Review fix: the Electron probe's focused-element line prints `text_length=` (was `textLength=`), matching `value_length=`; `formatElectronProbeFocusedElement` is exported for its test in `tests/agent-browser.snake-case-io.test.ts`.
+
+## 2026-11-13 choco-pi patch: standalone state paths
+
+Standalone mode is the `choco-pi` launcher's env contract (`CHOCO_PI_STANDALONE=1` with an absolute `CHOCO_PI_HOME`); the shared resolver is `profile/extensions/lib/pi-paths.ts`, imported by relative path. Legacy mode (contract unset) keeps the previous paths.
+
+- `extensions/agent-browser/lib/config-policy.ts` (`getGlobalAgentBrowserConfigPath`): the global config is `piStateRoot()/config/pi-agent-browser-native/config.json`: `~/.pi/...` in legacy mode (same `HOME`/`USERPROFILE` home), `$CHOCO_PI_HOME/config/...` in standalone mode. `GLOBAL_CONFIG_RELATIVE_PATH`, the project config, and `PI_AGENT_BROWSER_CONFIG` are unchanged. The `scripts/config.mjs` help text still names the legacy location.
+- `scripts/doctor.ts` (`parseCliArgs(argv?, env?, home?)`): the `--agent-dir` default is `piAgentDir()` (was `~/.pi/agent`, ignoring `PI_CODING_AGENT_DIR`).
+- Tests: `tests/agent-browser.doctor.test.ts`.
