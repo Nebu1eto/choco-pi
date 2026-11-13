@@ -1,4 +1,4 @@
-import { isString } from "../.pi/extensions/lib/runtime-values.ts";
+import { isString } from "../profile/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { chmod, copyFile, mkdir, mkdtemp, rename, rm, unlink, writeFile } from "node:fs/promises";
@@ -6,15 +6,15 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { loadDiffModel } from "../.pi/extensions/lib/changes/git/load-model.ts";
-import { parseGitDiff } from "../.pi/extensions/lib/changes/patch.ts";
+import { loadDiffModel } from "../profile/extensions/lib/changes/git/load-model.ts";
+import { parseGitDiff } from "../profile/extensions/lib/changes/patch.ts";
 import {
   defaultExecRunner,
   listBranches,
   readRawDiff,
   resolveBranchTarget,
   resolveRevision,
-} from "../.pi/extensions/review/core/git.ts";
+} from "../profile/extensions/review/core/git.ts";
 
 const execFileAsync = promisify(execFile);
 

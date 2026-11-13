@@ -10,26 +10,29 @@ import {
   type ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
 import { getCapabilities, setCapabilities, type SettingItem } from "@earendil-works/pi-tui";
-import { buildAgentPreferencesSection } from "../.pi/extensions/lib/agent-preferences-dialog.ts";
-import type { PreferencesExtraSection } from "../.pi/extensions/lib/agent-preferences.ts";
-import { buildBackgroundCompactionPreferencesSections } from "../.pi/extensions/lib/background-compaction-preferences.ts";
+import { buildAgentPreferencesSection } from "../profile/extensions/lib/agent-preferences-dialog.ts";
+import type { PreferencesExtraSection } from "../profile/extensions/lib/agent-preferences.ts";
+import { buildBackgroundCompactionPreferencesSections } from "../profile/extensions/lib/background-compaction-preferences.ts";
 import {
   buildNativeSettingsSections,
   installNativeSettingsBridge,
   MODEL_SECTION_ID,
   type NativeSettingsHost,
-} from "../.pi/extensions/lib/native-settings.ts";
+} from "../profile/extensions/lib/native-settings.ts";
 import {
   PREFERENCES_HIDDEN_ROWS,
   PREFERENCES_LAYOUT,
-} from "../.pi/extensions/lib/preferences-layout.ts";
-import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
-import { buildAdvisorPreferencesSection } from "../.pi/packages/choco-pi-advisor/src/preferences-section.ts";
-import { DEFAULT_SETTINGS } from "../.pi/packages/choco-pi-advisor/src/settings.ts";
-import { DEFAULT_CODEX_CONVERSION_CONFIG } from "../.pi/packages/choco-pi-codex/src/adapter/activation/config.ts";
-import { buildCodexPreferencesSections } from "../.pi/packages/choco-pi-codex/src/ui/settings/preferences-sections.ts";
-import { publishBackgroundCompactionPreferences } from "../.pi/packages/choco-pi-compaction/src/preferences-section.ts";
-import { SUBAGENT_SETTING_DEFINITIONS } from "../.pi/packages/choco-pi-subagents/src/preferences-section.ts";
+} from "../profile/extensions/lib/preferences-layout.ts";
+import {
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "../profile/extensions/lib/runtime-values.ts";
+import { buildAdvisorPreferencesSection } from "../packages/choco-pi-advisor/src/preferences-section.ts";
+import { DEFAULT_SETTINGS } from "../packages/choco-pi-advisor/src/settings.ts";
+import { DEFAULT_CODEX_CONVERSION_CONFIG } from "../packages/choco-pi-codex/src/adapter/activation/config.ts";
+import { buildCodexPreferencesSections } from "../packages/choco-pi-codex/src/ui/settings/preferences-sections.ts";
+import { publishBackgroundCompactionPreferences } from "../packages/choco-pi-compaction/src/preferences-section.ts";
+import { SUBAGENT_SETTING_DEFINITIONS } from "../packages/choco-pi-subagents/src/preferences-section.ts";
 import { loadZentuiModule, SKIP_WITHOUT_ZENTUI } from "./zentui-build.ts";
 
 initTheme("dark", false);

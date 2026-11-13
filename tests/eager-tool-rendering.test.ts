@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
-import { ALWAYS_ACTIVE_TOOL_NAMES } from "../.pi/extensions/tool-search.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
+import { ALWAYS_ACTIVE_TOOL_NAMES } from "../profile/extensions/tool-search.ts";
 import { loadZentuiModule, SKIP_WITHOUT_ZENTUI } from "./zentui-build.ts";
 
 const THEME = {

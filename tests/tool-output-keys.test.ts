@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { snakeCaseKey, toSnakeCaseKeys } from "../.pi/extensions/lib/tool-output-keys.ts";
+import { snakeCaseKey, toSnakeCaseKeys } from "../profile/extensions/lib/tool-output-keys.ts";
 
 test("snakeCaseKey follows the camel to snake rule", () => {
   assert.equal(snakeCaseKey("fileKey"), "file_key");

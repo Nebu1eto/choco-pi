@@ -14,10 +14,13 @@ import {
   pickFallback,
   type ModelFallbacks,
   type SyntheticQuotaEvents,
-} from "../.pi/extensions/lib/usage-limit.ts";
-import type { UsageLimitClassification } from "../.pi/extensions/lib/usage-limit-contract.ts";
-import type { ProviderUsageSnapshot, UsageWindow } from "../.pi/extensions/provider-usage.ts";
-import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/lib/usage-limit.ts";
+import type { UsageLimitClassification } from "../profile/extensions/lib/usage-limit-contract.ts";
+import type { ProviderUsageSnapshot, UsageWindow } from "../profile/extensions/provider-usage.ts";
+import {
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "../profile/extensions/lib/runtime-values.ts";
 
 const NOW = Date.parse("2026-05-01T12:00:00.000Z");
 const MIN = 60_000;
@@ -1189,7 +1192,7 @@ test("the repository fallback table loads and mirrors the model-guidance tiers",
     await writeFile(join(agentDir, "model-fallbacks.json"), "{");
     await assert.rejects(loadModelFallbacks(agentDir), /Malformed JSON/);
     await assert.rejects(loadModelFallbacks(agentDir, join(agentDir, "missing.json")), /not found/);
-    assert.match(DEFAULT_MODEL_FALLBACKS_PATH, /\.pi\/model-fallbacks\.json$/);
+    assert.match(DEFAULT_MODEL_FALLBACKS_PATH, /profile\/model-fallbacks\.json$/);
   } finally {
     await rm(agentDir, { recursive: true, force: true });
   }

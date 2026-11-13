@@ -1,4 +1,4 @@
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -6,16 +6,16 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { parseGitDiff } from "../.pi/extensions/lib/changes/patch.ts";
-import { defaultExecRunner, gitCommonDirectory } from "../.pi/extensions/review/core/git.ts";
+import { parseGitDiff } from "../profile/extensions/lib/changes/patch.ts";
+import { defaultExecRunner, gitCommonDirectory } from "../profile/extensions/review/core/git.ts";
 import {
   disposePullRequestWorktree,
   getPullRequestMetadata,
   listPullRequests,
   resolvePullRequestTarget,
-} from "../.pi/extensions/review/core/pr.ts";
-import { repoKey } from "../.pi/extensions/review/core/store.ts";
-import type { ExecRunner } from "../.pi/extensions/review/core/types.ts";
+} from "../profile/extensions/review/core/pr.ts";
+import { repoKey } from "../profile/extensions/review/core/store.ts";
+import type { ExecRunner } from "../profile/extensions/review/core/types.ts";
 
 const execFileAsync = promisify(execFile);
 

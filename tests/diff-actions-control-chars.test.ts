@@ -3,16 +3,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CURSOR_MARKER, visibleWidth } from "@earendil-works/pi-tui";
-import type { RecordsReader } from "../.pi/extensions/lib/changes/findings.ts";
+import type { RecordsReader } from "../profile/extensions/lib/changes/findings.ts";
 import {
   agentStringLiteral,
   escapeForAgent,
   sanitizeTerminalText,
-} from "../.pi/extensions/lib/changes/terminal-text.ts";
-import { fileRow, plainPaneStyler } from "../.pi/extensions/diff/ui/format.ts";
-import { renderUnifiedBody } from "../.pi/extensions/diff/ui/pane-view.ts";
-import type { PrefsIo } from "../.pi/extensions/diff/ui/prefs.ts";
-import type { AgentParseRecord } from "../.pi/extensions/lib/verdict-blocks.ts";
+} from "../profile/extensions/lib/changes/terminal-text.ts";
+import { fileRow, plainPaneStyler } from "../profile/extensions/diff/ui/format.ts";
+import { renderUnifiedBody } from "../profile/extensions/diff/ui/pane-view.ts";
+import type { PrefsIo } from "../profile/extensions/diff/ui/prefs.ts";
+import type { AgentParseRecord } from "../profile/extensions/lib/verdict-blocks.ts";
 import { file, flush, harness, hunk, snapshot, textBody, until } from "./diff-actions-fakes.ts";
 
 /** ESC colour, OSC 52 clipboard write ended by BEL, CR, LF, C1 CSI, right-to-left override, tab. */

@@ -4,7 +4,7 @@ import {
   isString,
   reinterpretHostValue,
   type RuntimeValue,
-} from "../../.pi/extensions/lib/runtime-values.ts";
+} from "../../profile/extensions/lib/runtime-values.ts";
 import { JsonSchema, type JsonValue } from "./types.ts";
 
 const jsonCheck = compile(JsonSchema).check;

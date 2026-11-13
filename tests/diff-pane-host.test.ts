@@ -10,23 +10,23 @@ import type {
   TuiMouseEvent,
 } from "@earendil-works/pi-tui";
 import { Container, HStack, ScrollView, VStack, isFocusable } from "@earendil-works/pi-tui";
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
-import { createDockHost } from "../.pi/extensions/diff/host/dock-host.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
+import { createDockHost } from "../profile/extensions/diff/host/dock-host.ts";
 import {
   canHostPane,
   clampPaneWidth,
   maxPaneWidth,
   MIN_PANE_WIDTH,
   widthFromBorderColumn,
-} from "../.pi/extensions/diff/host/geometry.ts";
-import { inspectHostRoot, readLayoutRoot } from "../.pi/extensions/diff/host/layout.ts";
-import { createOverlayHost } from "../.pi/extensions/diff/host/overlay-host.ts";
+} from "../profile/extensions/diff/host/geometry.ts";
+import { inspectHostRoot, readLayoutRoot } from "../profile/extensions/diff/host/layout.ts";
+import { createOverlayHost } from "../profile/extensions/diff/host/overlay-host.ts";
 import type {
   PaneScroller,
   PaneSurface,
   PointerGesture,
-} from "../.pi/extensions/lib/changes/view/surface.ts";
-import type { PaneTui } from "../.pi/extensions/diff/host/types.ts";
+} from "../profile/extensions/lib/changes/view/surface.ts";
+import type { PaneTui } from "../profile/extensions/diff/host/types.ts";
 
 class Lines implements Component {
   readonly lines: string[];

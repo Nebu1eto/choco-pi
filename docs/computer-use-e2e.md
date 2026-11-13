@@ -2,11 +2,11 @@
 
 # Computer-use end-to-end validation
 
-The isolated harness is `CU/e2e/run.ts` (`CU/` means `.pi/packages/choco-pi-computer-use/`). Run it only from `/Users/Nebuleto/Workspace/choco-pi-dev`. It pins `~/.pi/agent/bin/pi`, the managed launcher installed by `curl -fsSL https://pi.dev/install.sh | sh` (`piPath` in `CU/e2e/isolation.ts`) and refuses any other launcher, including Homebrew's. Begin with:
+The isolated harness is `CU/e2e/run.ts` (`CU/` means `packages/choco-pi-computer-use/`). Run it only from `/Users/Nebuleto/Workspace/choco-pi-dev`. It pins `~/.pi/agent/bin/pi`, the managed launcher installed by `curl -fsSL https://pi.dev/install.sh | sh` (`piPath` in `CU/e2e/isolation.ts`) and refuses any other launcher, including Homebrew's. Begin with:
 
 ```sh
-node --experimental-strip-types .pi/packages/choco-pi-computer-use/e2e/run.ts --tier a --dry-run --preflight-only --baseline /tmp/choco-pi/$PI_SESSION_ID/e2e/baseline.json --waive-gate 'typecheck=pre-existing unrelated SDK mismatch' --waive-gate 'test=pre-existing subagent-config model expectation'
-node --experimental-strip-types .pi/packages/choco-pi-computer-use/e2e/run.ts --tier a --baseline /tmp/choco-pi/$PI_SESSION_ID/e2e/baseline.json --main-daemon-pid 5914 --waive-gate 'typecheck=pre-existing unrelated SDK mismatch' --waive-gate 'test=pre-existing subagent-config model expectation'
+node --experimental-strip-types packages/choco-pi-computer-use/e2e/run.ts --tier a --dry-run --preflight-only --baseline /tmp/choco-pi/$PI_SESSION_ID/e2e/baseline.json --waive-gate 'typecheck=pre-existing unrelated SDK mismatch' --waive-gate 'test=pre-existing subagent-config model expectation'
+node --experimental-strip-types packages/choco-pi-computer-use/e2e/run.ts --tier a --baseline /tmp/choco-pi/$PI_SESSION_ID/e2e/baseline.json --main-daemon-pid 5914 --waive-gate 'typecheck=pre-existing unrelated SDK mismatch' --waive-gate 'test=pre-existing subagent-config model expectation'
 ```
 
 To rerun a subset, add `--models <comma-separated ids>` and `--scenarios <comma-separated S-ids>` (default: all). A scenario filter must include `S1`: S1's isolation checks gate the other scenarios, so a filtered run cannot skip them. For example, `--models openai/gpt-6-sol --scenarios S1,S3` runs S1 then S3 for that model only. Preflight still checks every configured model, and `summary.json` records the selection under `filters` (`null` for an unfiltered dimension).
@@ -47,7 +47,7 @@ Each `summary.json` verdict entry has informational `notes`: `actCalls`, `dispat
 Tier B drives the real native helper against a disposable AppKit fixture on the live desktop. It needs separate authorization: an independently installed and signed dev helper, its TCC grants, and permission to operate the desktop. The harness neither installs nor signs the helper, and it never launches a helper daemon. It uses the dev daemon that is already running:
 
 ```sh
-node --experimental-strip-types .pi/packages/choco-pi-computer-use/e2e/run.ts --tier b --baseline /tmp/choco-pi/$PI_SESSION_ID/e2e/baseline.json --helper-app /tmp/choco-pi/e2e-b/pi-computer-use.app --helper-socket /tmp/choco-pi/e2e-b/bridge.sock --main-daemon-pid 5914 --waive-gate 'typecheck=pre-existing unrelated SDK mismatch' --waive-gate 'test=pre-existing subagent-config model expectation'
+node --experimental-strip-types packages/choco-pi-computer-use/e2e/run.ts --tier b --baseline /tmp/choco-pi/$PI_SESSION_ID/e2e/baseline.json --helper-app /tmp/choco-pi/e2e-b/pi-computer-use.app --helper-socket /tmp/choco-pi/e2e-b/bridge.sock --main-daemon-pid 5914 --waive-gate 'typecheck=pre-existing unrelated SDK mismatch' --waive-gate 'test=pre-existing subagent-config model expectation'
 ```
 
 Tier B requires both `--helper-app` and `--helper-socket`, and it refuses the main helper app or socket (`HELPER_IS_MAIN`). Preflight checks, in order: arm64, `codesign --verify --strict` on the app, the app's `source.sha256` against `helperSourceHash("arm64")` over the checkout's Swift sources (`src/platform/macos/helper-source.mjs`), and a live daemon on the helper socket. Before each scenario the harness checks the daemon directly: protocol 7, an executable realpath equal to the dev app's, and granted Accessibility and Screen Recording. It then claims and releases a harness session to prove that no earlier Pi session still owns the daemon; if one does, it waits up to 40 s, longer than the 30 s owner TTL. Tier B has no S7; S7 is tier A only.

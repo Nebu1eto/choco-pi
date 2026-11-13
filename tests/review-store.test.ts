@@ -3,20 +3,20 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { renderReviewMarkdown } from "../.pi/extensions/review/core/markdown-export.ts";
+import { renderReviewMarkdown } from "../profile/extensions/review/core/markdown-export.ts";
 import {
   createReviewStore,
   markHunksReviewed,
   repoKey,
   targetKey,
   unreviewedHunks,
-} from "../.pi/extensions/review/core/store.ts";
+} from "../profile/extensions/review/core/store.ts";
 import type {
   DiffHunk,
   DiffModel,
   ReviewRecord,
   ReviewTarget,
-} from "../.pi/extensions/review/core/types.ts";
+} from "../profile/extensions/review/core/types.ts";
 
 const NOW = "2026-03-01T12:00:00.000Z";
 

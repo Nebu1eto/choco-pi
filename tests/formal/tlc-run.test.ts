@@ -8,10 +8,10 @@ import { fileURLToPath } from "node:url";
 import {
   type CheckResult,
   checkResult,
-} from "../../.pi/skills/formal-verify/scripts/tlc-result.ts";
+} from "../../profile/skills/formal-verify/scripts/tlc-result.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const TLC = path.join(ROOT, ".pi", "skills", "formal-verify", "scripts", "tlc.ts");
+const TLC = path.join(ROOT, "profile", "skills", "formal-verify", "scripts", "tlc.ts");
 const SPECS = path.join(ROOT, "tests", "fixtures", "tlc", "specs");
 const JAR = process.env.CHOCO_PI_TLA2TOOLS || path.join(ROOT, "formal", ".tools", "tla2tools.jar");
 
@@ -74,7 +74,7 @@ async function probeTlc(): Promise<string | undefined> {
   try {
     await access(JAR);
   } catch {
-    return `no tla2tools.jar at ${JAR}; run .pi/skills/formal-verify/scripts/tlc-setup.ts --dir formal/.tools or set CHOCO_PI_TLA2TOOLS`;
+    return `no tla2tools.jar at ${JAR}; run profile/skills/formal-verify/scripts/tlc-setup.ts --dir formal/.tools or set CHOCO_PI_TLA2TOOLS`;
   }
   const java = await new Promise<boolean>((resolve) => {
     const child = spawn("java", ["-version"], { stdio: "ignore" });
@@ -414,7 +414,7 @@ describe("tlc.ts with a fake Java", () => {
       CHOCO_PI_JAVA: java,
     });
     assert.equal(code, 2);
-    const setup = path.join(ROOT, ".pi", "skills", "formal-verify", "scripts", "tlc-setup.ts");
+    const setup = path.join(ROOT, "profile", "skills", "formal-verify", "scripts", "tlc-setup.ts");
     assert.ok(
       result.errors.join("\n").includes(`run node ${setup} --dir ${dir}`),
       result.errors.join("\n"),

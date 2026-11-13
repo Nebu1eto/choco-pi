@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 import test from "node:test";
 import {
   AUTO_COMPACTION_POINT_TOKENS,
   CONTEXT_SOFT_CAP_TOKENS,
   type AutoCompactionPoint,
   type ContextSoftCap,
-} from "../.pi/extensions/lib/agent-preferences.ts";
+} from "../profile/extensions/lib/agent-preferences.ts";
 import {
   computeContextPolicy,
   computeHeadroom,
@@ -16,7 +16,7 @@ import {
   HEADROOM_MARGIN_TOKENS,
   HEADROOM_MAX_TOKENS,
   HEADROOM_RATIO,
-} from "../.pi/extensions/lib/context-policy.ts";
+} from "../profile/extensions/lib/context-policy.ts";
 
 interface PolicyCase {
   name: string;

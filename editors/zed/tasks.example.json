@@ -4,7 +4,7 @@
     "description": "Requires a text editor with a selection focused before opening the Task picker.",
     "command": "node",
     "args": [
-      ".pi/packages/choco-pi-editor-context/src/cli.ts",
+      "packages/choco-pi-editor-context/src/cli.ts",
       "publish",
       "--cwd",
       "$ZED_WORKTREE_ROOT",
@@ -34,7 +34,7 @@
     "description": "Requires a text editor focused before opening the Task picker; selection text is excluded.",
     "command": "node",
     "args": [
-      ".pi/packages/choco-pi-editor-context/src/cli.ts",
+      "packages/choco-pi-editor-context/src/cli.ts",
       "publish",
       "--cwd",
       "$ZED_WORKTREE_ROOT",
@@ -61,7 +61,7 @@
     "description": "Requires a text editor focused before opening the Task picker.",
     "command": "node",
     "args": [
-      ".pi/packages/choco-pi-editor-context/src/cli.ts",
+      "packages/choco-pi-editor-context/src/cli.ts",
       "publish",
       "--cwd",
       "$ZED_WORKTREE_ROOT",
@@ -82,12 +82,7 @@
   {
     "label": "Choco Pi: List Live Sessions",
     "command": "node",
-    "args": [
-      ".pi/packages/choco-pi-editor-context/src/cli.ts",
-      "list",
-      "--cwd",
-      "$ZED_WORKTREE_ROOT"
-    ],
+    "args": ["packages/choco-pi-editor-context/src/cli.ts", "list", "--cwd", "$ZED_WORKTREE_ROOT"],
     "env": {},
     "cwd": "$ZED_WORKTREE_ROOT"
   },
@@ -95,12 +90,7 @@
     "label": "Choco Pi: Select Context Target",
     "description": "Run Choco Pi: List Live Sessions, then run the printed select command in Zed's terminal.",
     "command": "node",
-    "args": [
-      ".pi/packages/choco-pi-editor-context/src/cli.ts",
-      "list",
-      "--cwd",
-      "$ZED_WORKTREE_ROOT"
-    ],
+    "args": ["packages/choco-pi-editor-context/src/cli.ts", "list", "--cwd", "$ZED_WORKTREE_ROOT"],
     "env": {},
     "cwd": "$ZED_WORKTREE_ROOT"
   },

@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ExtensionRunner } from "@earendil-works/pi-coding-agent";
-import commandFilter from "../.pi/extensions/command-filter.ts";
-import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import commandFilter from "../profile/extensions/command-filter.ts";
+import {
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "../profile/extensions/lib/runtime-values.ts";
 
 type Handler = (event: RuntimeValue, ctx: RuntimeValue) => void;
 type AutocompleteFactory = (current: RuntimeValue) => RuntimeValue;

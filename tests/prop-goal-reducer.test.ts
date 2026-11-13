@@ -8,8 +8,8 @@ import {
   type AgentEndMessage,
   type StaleQueuedWorkEvent,
   type StaleQueuedWorkState,
-} from "../.pi/packages/choco-pi-goal/src/stale-queued-work-reducer.ts";
-import { CUSTOM_ENTRY_TYPE } from "../.pi/packages/choco-pi-goal/src/types.ts";
+} from "../packages/choco-pi-goal/src/stale-queued-work-reducer.ts";
+import { CUSTOM_ENTRY_TYPE } from "../packages/choco-pi-goal/src/types.ts";
 
 // Fixed seed and run count keep the suite deterministic; fast-check prints the
 // seed, path, and shrunk counterexample when a property fails.

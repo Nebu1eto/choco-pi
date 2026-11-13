@@ -16,12 +16,9 @@ import {
   predictChildToolSurface,
   sameToolGuidance,
   withLiveSystemPrompt,
-} from "../.pi/packages/choco-pi-subagents/src/agent-runner.ts";
-import {
-  buildAgentPrompt,
-  buildToolGuidance,
-} from "../.pi/packages/choco-pi-subagents/src/prompts.ts";
-import type { AgentConfig } from "../.pi/packages/choco-pi-subagents/src/types.ts";
+} from "../packages/choco-pi-subagents/src/agent-runner.ts";
+import { buildAgentPrompt, buildToolGuidance } from "../packages/choco-pi-subagents/src/prompts.ts";
+import type { AgentConfig } from "../packages/choco-pi-subagents/src/types.ts";
 
 const ENV = { isGitRepo: true, branch: "main", platform: "darwin" };
 const CONFIG: AgentConfig = {

@@ -8,9 +8,9 @@ import {
   CONTEXT_SOFT_CAP_KEY,
   writeAgentPreference,
   type ContextPreset,
-} from "../../../../.pi/extensions/lib/agent-preferences.ts";
-import { REPORT_STATUS_KEY } from "../../../../.pi/extensions/lib/host-bridge/schema.ts";
-import { resolvePolicy } from "../../../../.pi/extensions/model-context-cap.ts";
+} from "../../../../profile/extensions/lib/agent-preferences.ts";
+import { REPORT_STATUS_KEY } from "../../../../profile/extensions/lib/host-bridge/schema.ts";
+import { resolvePolicy } from "../../../../profile/extensions/model-context-cap.ts";
 import { FAKE_MODEL, sseResponse } from "../fake-sse.ts";
 import type { CheckEvidence, Observation } from "../checks.ts";
 import { replyPrompt } from "./prompts.ts";

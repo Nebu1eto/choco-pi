@@ -9,4 +9,4 @@
 - `pstack/`: three recorded outputs copied unchanged from pstack's `statechart` test corpus
   (`skills/statechart/scripts/test/corpus/{TwoPhase/verdict-1.out,TypeGuard/verdict-2.out,CounterLoop/verdict-1.out}`),
   Copyright (c) 2026 Lauren Tan, MIT licence; the licence text is in
-  `.pi/skills/formal-verify/THIRD_PARTY.md`.
+  `profile/skills/formal-verify/THIRD_PARTY.md`.

@@ -3,8 +3,11 @@ import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import anthropicErrorToolResults, {
   sanitizeErrorToolResults,
-} from "../.pi/extensions/anthropic-error-tool-results.ts";
-import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/anthropic-error-tool-results.ts";
+import {
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "../profile/extensions/lib/runtime-values.ts";
 
 const image = {
   type: "image",

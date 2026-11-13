@@ -1,0 +1,30 @@
+# choco-pi-agent-browser — working rules
+
+Vendored fork of `pi-agent-browser-native@0.5.0`. Read `VENDORED.md` before changing vendored code.
+
+## Hard constraints
+
+- Use erasable TypeScript syntax only: no `enum`, `namespace`, decorators, or constructor parameter properties. Node strip-types must load every module.
+- Every relative TypeScript import or export must use an explicit `.ts` specifier.
+- Do not add a build step or compiled output. Pi loads `extensions/agent-browser/index.ts` directly.
+- Keep `agent-browser` as an external executable on `PATH`. Never vendor, bundle, install, or launch the CLI from package code.
+- Preserve the tested compatibility profiles and operation-specific capability gates. Version drift alone is advisory, including newer versions.
+- Keep `agent_browser` unchanged. Keep `agent_browser_web_search` in standalone mode; when the
+  canonical choco-pi web-search scope is present, that integrated tool exclusively owns search
+  discovery and the companion name must not be advertised or revivable.
+- Keep `typebox` and all `@earendil-works/*` imports as host-provided peer dependencies.
+- Validate with `@earendil-works/pi-schema`; import `typebox` only in `extensions/agent-browser/lib/schema-bridge.ts` (`Type.Unsafe` at the `registerTool` boundary). Pi's loader aliases only `typebox`, `typebox/compile`, and `typebox/value`; any other subpath breaks extension loading.
+- Record every difference from upstream in `VENDORED.md` when making it.
+
+## Operator commands
+
+Run the read-only doctor manually with `node scripts/doctor.ts`. Manage package configuration manually with `node scripts/config.mjs`; this private local package exposes no npm bin links.
+
+## Verification
+
+```bash
+cd packages/choco-pi-agent-browser && npx tsc --noEmit
+cd <repo-root> && node --test packages/choco-pi-agent-browser/tests/*.test.ts
+```
+
+Also prove that relative `.js` specifiers are absent and the entrypoint imports under Node strip-types. Do not launch a browser or the external CLI for static package changes.

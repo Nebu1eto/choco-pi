@@ -3,9 +3,12 @@
 // when the comparison itself did not move (a session's baseline while HEAD moves), it is kept.
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { DiffSource, FileBody } from "../.pi/extensions/lib/changes/git/model.ts";
-import { createDiffStore, type DiffStoreOptions } from "../.pi/extensions/lib/changes/git/store.ts";
-import type { ExecRunner } from "../.pi/extensions/review/core/types.ts";
+import type { DiffSource, FileBody } from "../profile/extensions/lib/changes/git/model.ts";
+import {
+  createDiffStore,
+  type DiffStoreOptions,
+} from "../profile/extensions/lib/changes/git/store.ts";
+import type { ExecRunner } from "../profile/extensions/review/core/types.ts";
 
 const ROOT = "/nonexistent-diff-body-base/repo";
 const id = (character: string): string => character.repeat(40);

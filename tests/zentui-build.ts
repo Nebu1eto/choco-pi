@@ -1,4 +1,4 @@
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 /**
  * Loading the real zentui from a test process.
  *
@@ -32,11 +32,11 @@ import {
   resolveZentuiFile,
   type ZentuiLoader,
   type ZentuiModules,
-} from "../.pi/extensions/review/ui/zentui-frame.ts";
+} from "../profile/extensions/review/ui/zentui-frame.ts";
 
 const REPOSITORY_ROOT = resolvePath(dirname(fileURLToPath(import.meta.url)), "..");
 /** The fork this repository pins, after it was renamed from `pi-zentui`. */
-const PINNED_MANIFEST = resolvePath(REPOSITORY_ROOT, ".pi/packages/choco-pi-ui/package.json");
+const PINNED_MANIFEST = resolvePath(REPOSITORY_ROOT, "packages/choco-pi-ui/package.json");
 const execFileAsync = promisify(execFile);
 const COMPLETION_MARKER = ".complete";
 const COMPILER_FLAGS = [

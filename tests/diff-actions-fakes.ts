@@ -8,16 +8,19 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import type { Component, OverlayHandle, TuiInputListener, TuiMode } from "@earendil-works/pi-tui";
 import { Container, ScrollView, VStack, isFocusable } from "@earendil-works/pi-tui";
-import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import {
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "../profile/extensions/lib/runtime-values.ts";
 import type {
   DiffHunk,
   DiffLine,
   SessionCheckpointProvider,
-} from "../.pi/extensions/review/core/types.ts";
-import type { TurnCheckpointInfo } from "../.pi/extensions/diff/core/checkpoints.ts";
-import type { DiffClock } from "../.pi/extensions/lib/changes/git/clock.ts";
-import type { RecordsReader } from "../.pi/extensions/lib/changes/findings.ts";
-import type { CommentReader } from "../.pi/extensions/lib/changes/review-comments.ts";
+} from "../profile/extensions/review/core/types.ts";
+import type { TurnCheckpointInfo } from "../profile/extensions/diff/core/checkpoints.ts";
+import type { DiffClock } from "../profile/extensions/lib/changes/git/clock.ts";
+import type { RecordsReader } from "../profile/extensions/lib/changes/findings.ts";
+import type { CommentReader } from "../profile/extensions/lib/changes/review-comments.ts";
 import type {
   DiffSnapshot,
   DiffSource,
@@ -27,15 +30,15 @@ import type {
   FileExcerpt,
   FileSummary,
   RefreshReason,
-} from "../.pi/extensions/lib/changes/git/model.ts";
-import type { PaneTui } from "../.pi/extensions/diff/host/types.ts";
+} from "../profile/extensions/lib/changes/git/model.ts";
+import type { PaneTui } from "../profile/extensions/diff/host/types.ts";
 import {
   registerDiffPane,
   type DiffPaneDependencies,
-} from "../.pi/extensions/diff/ui/controller.ts";
-import { plainPaneStyler } from "../.pi/extensions/diff/ui/format.ts";
-import type { FileBodyRenderer } from "../.pi/extensions/diff/ui/pane-view.ts";
-import type { PrefsIo } from "../.pi/extensions/diff/ui/prefs.ts";
+} from "../profile/extensions/diff/ui/controller.ts";
+import { plainPaneStyler } from "../profile/extensions/diff/ui/format.ts";
+import type { FileBodyRenderer } from "../profile/extensions/diff/ui/pane-view.ts";
+import type { PrefsIo } from "../profile/extensions/diff/ui/prefs.ts";
 
 class Lines implements Component {
   readonly lines: string[];

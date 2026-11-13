@@ -3,9 +3,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import type { CodexConversionConfig } from "../.pi/packages/choco-pi-codex/src/adapter/activation/config.ts";
-import { DEFAULT_CODEX_CONVERSION_CONFIG } from "../.pi/packages/choco-pi-codex/src/adapter/activation/config.ts";
-import type { CodexConversionConfigScope } from "../.pi/packages/choco-pi-codex/src/adapter/activation/config-store.ts";
+import type { CodexConversionConfig } from "../packages/choco-pi-codex/src/adapter/activation/config.ts";
+import { DEFAULT_CODEX_CONVERSION_CONFIG } from "../packages/choco-pi-codex/src/adapter/activation/config.ts";
+import type { CodexConversionConfigScope } from "../packages/choco-pi-codex/src/adapter/activation/config-store.ts";
 import {
   buildCodexPreferencesSections,
   CODEX_EDIT_CONFIG_OUTCOME,
@@ -13,9 +13,12 @@ import {
   registerCodexPreferencesProvider,
   type CodexPreferencesSection,
   type CodexPreferencesDeps,
-} from "../.pi/packages/choco-pi-codex/src/ui/settings/preferences-sections.ts";
-import { buildCodexPreferencesSections as readPublishedSections } from "../.pi/extensions/lib/codex-preferences.ts";
-import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+} from "../packages/choco-pi-codex/src/ui/settings/preferences-sections.ts";
+import { buildCodexPreferencesSections as readPublishedSections } from "../profile/extensions/lib/codex-preferences.ts";
+import {
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "../profile/extensions/lib/runtime-values.ts";
 
 const CODEX_PROVIDER_SYMBOL = Symbol.for("choco-pi.codex-preferences-provider");
 

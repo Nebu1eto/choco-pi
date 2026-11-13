@@ -1,20 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseGitDiff } from "../.pi/extensions/lib/changes/patch.ts";
+import { parseGitDiff } from "../profile/extensions/lib/changes/patch.ts";
 import {
   MAX_HEADLESS_PRESENTATION_BYTES,
   createHeadlessReviewPresentation,
-} from "../.pi/extensions/review/core/headless-presentation.ts";
-import { assessDiff } from "../.pi/extensions/review/core/heuristics.ts";
+} from "../profile/extensions/review/core/headless-presentation.ts";
+import { assessDiff } from "../profile/extensions/review/core/heuristics.ts";
 import type {
   DiffModel,
   ExecRunner,
   ResolvedReviewConfig,
   ReviewRecord,
   ReviewStore,
-} from "../.pi/extensions/review/core/types.ts";
-import { presentHeadlessReview } from "../.pi/extensions/review/headless.ts";
-import { pickReviewRecord } from "../.pi/extensions/review/ui/target-picker.ts";
+} from "../profile/extensions/review/core/types.ts";
+import { presentHeadlessReview } from "../profile/extensions/review/headless.ts";
+import { pickReviewRecord } from "../profile/extensions/review/ui/target-picker.ts";
 
 const root = "/repo";
 const target = { kind: "branch", base: "main" } as const;

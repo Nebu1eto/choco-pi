@@ -1,5 +1,5 @@
-import { isJsonRecord, reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import { isJsonRecord, reinterpretHostValue } from "../profile/extensions/lib/runtime-values.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -11,13 +11,13 @@ import {
   default as modelContextCap,
   resolvePolicy,
   shouldRequestCompaction,
-} from "../.pi/extensions/model-context-cap.ts";
+} from "../profile/extensions/model-context-cap.ts";
 import {
   AUTO_COMPACTION_POINT_KEY,
   CONTEXT_SOFT_CAP_KEY,
   flushAgentPreferenceWrites,
   writeAgentPreference,
-} from "../.pi/extensions/lib/agent-preferences.ts";
+} from "../profile/extensions/lib/agent-preferences.ts";
 
 // Every test reads presets from an isolated agent directory, never the user's.
 const agentDir = await mkdtemp(path.join(tmpdir(), "model-context-cap-"));
@@ -634,8 +634,10 @@ function isCapModule<Candidate>(
  * ESM module cache.
  */
 async function registerReloadedCap(tag: string): Promise<Map<string, CapHandler>> {
-  const specifier = new URL(`../.pi/extensions/model-context-cap.ts?reload=${tag}`, import.meta.url)
-    .href;
+  const specifier = new URL(
+    `../profile/extensions/model-context-cap.ts?reload=${tag}`,
+    import.meta.url,
+  ).href;
   const loaded: RuntimeValue = await import(specifier);
   assert.ok(isCapModule(loaded), "the reloaded module exports the extension factory");
   const handlers = new Map<string, CapHandler>();

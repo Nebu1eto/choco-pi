@@ -20,7 +20,7 @@ import {
   type SearchError,
   type SearchErrorKind,
   type SearchScope,
-} from "../.pi/packages/choco-pi-web-search/index.ts";
+} from "../packages/choco-pi-web-search/index.ts";
 import {
   createXaiRegistrationGate,
   createXaiSearchAdapter,
@@ -31,8 +31,8 @@ import {
   type XaiModelRegistry,
   type XaiResolvedAuth,
   type XaiSearchAdapterOptions,
-} from "../.pi/extensions/lib/xai-search.ts";
-import xaiSearchExtension from "../.pi/extensions/xai-search.ts";
+} from "../profile/extensions/lib/xai-search.ts";
+import xaiSearchExtension from "../profile/extensions/xai-search.ts";
 
 const API_KEY = "xai-secret-fixture-key";
 

@@ -8,31 +8,34 @@ import test from "node:test";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, type Component } from "@earendil-works/pi-tui";
-import { parseGitDiff } from "../.pi/extensions/lib/changes/patch.ts";
+import { parseGitDiff } from "../profile/extensions/lib/changes/patch.ts";
 import type {
   ReviewChat,
   ReviewChatContext,
   ReviewChatMessage,
-} from "../.pi/extensions/review/core/ask.ts";
-import { createReviewStore, targetKey } from "../.pi/extensions/review/core/store.ts";
-import { buildCommentAnchor } from "../.pi/extensions/review/core/anchor.ts";
-import { hunkWithExpandedContext } from "../.pi/extensions/review/core/expand.ts";
-import { planReviewSubmission } from "../.pi/extensions/review/core/github.ts";
-import type { DiffAssessment } from "../.pi/extensions/review/core/heuristics.ts";
+} from "../profile/extensions/review/core/ask.ts";
+import { createReviewStore, targetKey } from "../profile/extensions/review/core/store.ts";
+import { buildCommentAnchor } from "../profile/extensions/review/core/anchor.ts";
+import { hunkWithExpandedContext } from "../profile/extensions/review/core/expand.ts";
+import { planReviewSubmission } from "../profile/extensions/review/core/github.ts";
+import type { DiffAssessment } from "../profile/extensions/review/core/heuristics.ts";
 import type {
   DiffModel,
   ExecRunner,
   ResolvedReviewConfig,
   ReviewComment,
   ReviewRecord,
-} from "../.pi/extensions/review/core/types.ts";
+} from "../profile/extensions/review/core/types.ts";
 import {
   openReviewView,
   type OpenReviewViewOptions,
   type ReviewViewHost,
   type ReviewViewResult,
-} from "../.pi/extensions/review/ui/review-view.ts";
-import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/review/ui/review-view.ts";
+import {
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "../profile/extensions/lib/runtime-values.ts";
 import { unavailableZentuiLoader } from "./zentui-build.ts";
 
 initTheme("dark", false);

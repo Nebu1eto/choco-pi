@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { axisLevels, columnWidths, lineChart } from "../.pi/extensions/lib/stats/chart.ts";
+import { axisLevels, columnWidths, lineChart } from "../profile/extensions/lib/stats/chart.ts";
 
 const id = (text: string): string => text;
 const upper = (text: string): string => text.replace(/─/g, "═");

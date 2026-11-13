@@ -13,8 +13,8 @@ import {
   readAgentParseRecords,
   writeAgentParseRecord,
   type BlockParse,
-} from "../.pi/extensions/lib/verdict-blocks.ts";
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/lib/verdict-blocks.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 
 const FENCE = "```";
 

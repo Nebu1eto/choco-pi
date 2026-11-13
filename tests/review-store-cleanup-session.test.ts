@@ -8,14 +8,14 @@ import {
   nodeReviewCleanupFileSystem,
   type ReviewCleanupFileSystem,
   type ReviewCleanupSession,
-} from "../.pi/extensions/review/core/store-cleanup.ts";
+} from "../profile/extensions/review/core/store-cleanup.ts";
 import {
   createReviewStore,
   isStoredReviewRecord,
   repoKey,
   targetKey,
-} from "../.pi/extensions/review/core/store.ts";
-import type { ReviewRecord, ReviewTarget } from "../.pi/extensions/review/core/types.ts";
+} from "../profile/extensions/review/core/store.ts";
+import type { ReviewRecord, ReviewTarget } from "../profile/extensions/review/core/types.ts";
 
 const NOW = Date.parse("2026-03-10T00:00:00.000Z");
 const DAY = 24 * 60 * 60 * 1000;

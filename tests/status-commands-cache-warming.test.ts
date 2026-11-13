@@ -10,8 +10,8 @@ import statusCommands, {
   createTabController,
   renderTabBody,
   statusBody,
-} from "../.pi/extensions/status-commands.ts";
-import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/status-commands.ts";
+import { reinterpretHostValue } from "../profile/extensions/lib/runtime-values.ts";
 
 function fakeContext(): ExtensionCommandContext {
   const ctx = {

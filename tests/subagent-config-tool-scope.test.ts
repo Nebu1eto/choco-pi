@@ -31,14 +31,14 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { obj, str } from "@earendil-works/pi-schema";
-import { hostParams } from "../.pi/extensions/lib/schema-bridge.ts";
-import { publishLeanSurface } from "../.pi/extensions/lib/tool-surface.ts";
-import { toNestedTool } from "../.pi/packages/choco-pi-codex/src/adapter/code-mode/nested-tool-adapter.ts";
+import { hostParams } from "../profile/extensions/lib/schema-bridge.ts";
+import { publishLeanSurface } from "../profile/extensions/lib/tool-surface.ts";
+import { toNestedTool } from "../packages/choco-pi-codex/src/adapter/code-mode/nested-tool-adapter.ts";
 import {
   createChildToolSearchExtension,
   installExtensionToolScope,
   restrictSessionToolScope,
-} from "../.pi/packages/choco-pi-subagents/src/agent-runner.ts";
+} from "../packages/choco-pi-subagents/src/agent-runner.ts";
 
 const PROVIDER = "faux-tool-scope";
 const DENIED = new Set(["mcp__denied__probe", "direct_denied_probe"]);

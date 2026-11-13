@@ -3,22 +3,22 @@
 // spends nothing.
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { FileBody, FileSummary } from "../.pi/extensions/lib/changes/git/model.ts";
+import type { FileBody, FileSummary } from "../profile/extensions/lib/changes/git/model.ts";
 import {
   createIntralineBudget,
   HIGHLIGHT_FRAME_CHARS,
   INTRALINE_RENDER_CELLS,
   renderDiffFile,
   withRenderBudget,
-} from "../.pi/extensions/lib/changes/render/diff-render.ts";
-import { renderHunkRows } from "../.pi/extensions/lib/changes/view/body-block.ts";
+} from "../profile/extensions/lib/changes/render/diff-render.ts";
+import { renderHunkRows } from "../profile/extensions/lib/changes/view/body-block.ts";
 import {
   ChangesView,
   renderUnifiedBody,
   type FileBodyRenderer,
-} from "../.pi/extensions/lib/changes/view/changes-view.ts";
-import { plainPaneStyler } from "../.pi/extensions/lib/changes/view/rows.ts";
-import type { DiffHunk } from "../.pi/extensions/lib/changes/types.ts";
+} from "../profile/extensions/lib/changes/view/changes-view.ts";
+import { plainPaneStyler } from "../profile/extensions/lib/changes/view/rows.ts";
+import type { DiffHunk } from "../profile/extensions/lib/changes/types.ts";
 import { file, flush, hunk, snapshot, textBody } from "./diff-actions-fakes.ts";
 
 /** Hunks where each pair costs 65 x 65 cells with no common prefix or suffix. */

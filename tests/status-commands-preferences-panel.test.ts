@@ -14,10 +14,10 @@ import statusCommands, {
   statsViewportRows,
   type TextTabId,
   renderTabBody,
-} from "../.pi/extensions/status-commands.ts";
-import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
-import { STATS_CACHE_TTL_MS } from "../.pi/extensions/lib/stats/report.ts";
-import { STATS_SECTION_ROWS } from "../.pi/extensions/lib/stats/format.ts";
+} from "../profile/extensions/status-commands.ts";
+import { reinterpretHostValue } from "../profile/extensions/lib/runtime-values.ts";
+import { STATS_CACHE_TTL_MS } from "../profile/extensions/lib/stats/report.ts";
+import { STATS_SECTION_ROWS } from "../profile/extensions/lib/stats/format.ts";
 
 function openDialog(tab: TextTabId, terminalRows = 200) {
   let color = 31;

@@ -9,12 +9,12 @@ import {
   DAYBREAK_DEFAULT_KEY,
   flushAgentPreferenceWrites,
   readAgentPreferencesAsync,
-} from "../.pi/extensions/lib/agent-preferences.ts";
+} from "../profile/extensions/lib/agent-preferences.ts";
 import {
   agentPreferencesCompletions,
   parseDaybreakValue,
   resolveAgentPreferencesArgs,
-} from "../.pi/extensions/lib/agent-preferences-dialog.ts";
+} from "../profile/extensions/lib/agent-preferences-dialog.ts";
 import {
   createDaybreakBridge,
   DAYBREAK_ENTRY,
@@ -23,14 +23,14 @@ import {
   getDaybreakBridge,
   installDaybreakExtension,
   OPENAI_SIGN_IN_DAYBREAK_REASON,
-} from "../.pi/extensions/lib/daybreak-state.ts";
+} from "../profile/extensions/lib/daybreak-state.ts";
 import {
   isJsonRecord,
   reinterpretHostValue,
   type RuntimeValue,
-} from "../.pi/extensions/lib/runtime-values.ts";
-import modelControls, { applyDaybreakAction } from "../.pi/extensions/model-controls.ts";
-import { reseedDaybreakDefault } from "../.pi/extensions/runtime-agent-preferences.ts";
+} from "../profile/extensions/lib/runtime-values.ts";
+import modelControls, { applyDaybreakAction } from "../profile/extensions/model-controls.ts";
+import { reseedDaybreakDefault } from "../profile/extensions/runtime-agent-preferences.ts";
 
 type Handler = (event: RuntimeValue, ctx: RuntimeValue) => RuntimeValue;
 type FocusedControls = Map<

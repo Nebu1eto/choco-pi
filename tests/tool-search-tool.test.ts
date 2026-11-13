@@ -7,8 +7,8 @@ import {
   rankTools,
   searchTools,
   type ToolSearchHost,
-} from "../.pi/extensions/lib/tool-search-tool.ts";
-import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/lib/tool-search-tool.ts";
+import { reinterpretHostValue } from "../profile/extensions/lib/runtime-values.ts";
 
 /** Registered tools as a choco-pi Code Mode session sees them, with their real descriptions. */
 const CATALOG: Array<{

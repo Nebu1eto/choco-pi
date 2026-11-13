@@ -13,17 +13,20 @@ import type {
   RegisteredCommand,
 } from "@earendil-works/pi-coding-agent";
 import { Container, ScrollView, VStack } from "@earendil-works/pi-tui";
-import { registerDiffPane } from "../.pi/extensions/diff/ui/controller.ts";
-import { plainPaneStyler } from "../.pi/extensions/diff/ui/format.ts";
-import { createSystemClock } from "../.pi/extensions/lib/changes/git/clock.ts";
+import { registerDiffPane } from "../profile/extensions/diff/ui/controller.ts";
+import { plainPaneStyler } from "../profile/extensions/diff/ui/format.ts";
+import { createSystemClock } from "../profile/extensions/lib/changes/git/clock.ts";
 import {
   NO_DEFAULT_BASE_MESSAGE,
   resolveDefaultBranchBase,
-} from "../.pi/extensions/lib/changes/git/default-base.ts";
-import { createGitExecRunner } from "../.pi/extensions/lib/changes/git/exec.ts";
-import { DEFAULT_DIFF_LIMITS } from "../.pi/extensions/lib/changes/git/limits.ts";
-import { createDiffStore } from "../.pi/extensions/lib/changes/git/store.ts";
-import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/lib/changes/git/default-base.ts";
+import { createGitExecRunner } from "../profile/extensions/lib/changes/git/exec.ts";
+import { DEFAULT_DIFF_LIMITS } from "../profile/extensions/lib/changes/git/limits.ts";
+import { createDiffStore } from "../profile/extensions/lib/changes/git/store.ts";
+import {
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "../profile/extensions/lib/runtime-values.ts";
 import { FakeTui } from "./diff-actions-fakes.ts";
 
 const execFileAsync = promisify(execFile);

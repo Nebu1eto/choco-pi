@@ -1,0 +1,263 @@
+# Vendored: choco-pi-goal (fork of pi-codex-goal)
+
+Goal tool metadata is compacted to the repository's provider schema budgets;
+goal policy remains in the owning prompt guidelines.
+
+This directory is a **vendored, renamed copy** of the upstream open-source
+package **pi-codex-goal**. This is not the original source repository.
+
+- Original source code: <https://github.com/fitchmultz/pi-codex-goal>
+- Package on npm: <https://www.npmjs.com/package/pi-codex-goal>
+- Base version: `pi-codex-goal@0.2.0`
+- Tarball shasum: `c37c5d0b9e27a28ad74f1232a04e391e474f782a`
+- Tarball integrity: `sha512-NCL7WJ1wLwMyiTlKlc9sTTTZdTQzSS2HJcuth3PYD8YWDjt9eVpNQdAGVW/sz7UjvCCpzlD9dAg7yRIt9H3t7g==`
+- Vendored on: 2026-08-20
+- License: MIT (see `LICENSE`)
+- Runtime dependencies: none. `@earendil-works/pi-ai`,
+  `@earendil-works/pi-coding-agent`, and `typebox` are optional peers supplied
+  by the Pi host.
+
+## Why the fork
+
+choco-pi removes its dependency on externally published `pi-codex-*` packages
+and keeps the persistent goal mode under harness control. The fork exists to
+own the package identity and the user-facing wording, not to change behavior.
+
+## What was copied
+
+`src/`, `prompts/`, and `LICENSE` from the published tarball; `prompts/` was
+later folded into `src/prompts.ts` (change 4 below). Upstream
+`README.md`, `CHANGELOG.md`, `AGENTS.md`, `docs/`, `scripts/`,
+`platform-smoke.config.mjs`, and `.crabboxignore` are not vendored; they cover
+the upstream release process, which does not apply to a local harness package.
+
+## Behavior parity
+
+Full parity with `0.2.0` is intended and preserved:
+
+- `/goal` command (show, clear, pause, resume, copy, and completion flows).
+- `get_goal`, `create_goal`, `update_goal` tools — **names are unchanged** on
+  purpose, because harness documentation and prompts reference them.
+- Continuation scheduler, recovery machinery (including provider-limit
+  auto-resume and host-overflow recovery), goal accounting, and the
+  stale-queued-work guard.
+
+Setting a goal and guarding asynchronous command completion across session
+replacement are deliberate divergences; see changes 4 and 5 below.
+
+## choco-pi changes on top of `0.2.0`
+
+1. `package.json`: renamed to `choco-pi-goal`, marked `private`, description
+   updated, upstream release scripts and repository metadata dropped. Only the
+   `pi.extensions` → `./src/index.ts` entry point is kept; `pi.prompts` is
+   dropped with the prompt directory (change 4).
+2. `tsconfig.json`: added for package-local `tsc --noEmit`; upstream does not
+   ship one in the tarball. Matches the harness root compiler options.
+3. `src/commands.ts`: the user-visible `/goal` command description now reads
+   "Show or manage the current choco-pi goal; /goal <objective> drafts and
+   creates one." (was "Codex-style goal").
+4. `prompts/create-goal.md` is removed, and with it the `/create-goal` command.
+   Its text lives in `src/prompts.ts` as `goalObjectivePrompt`, which
+   `/goal <objective>` now sends: the agent drafts the completion contract and
+   calls `create_goal` itself, where upstream stored the typed words verbatim
+   after a "Replace goal?" confirmation. A prompt template named `goal` could
+   not replace the rename, because Pi dispatches an extension command before it
+   expands a template of the same name. The prompt keeps the choco-pi wording
+   and the added paragraph requiring the agent to draft the objective and call
+   the tool in the same turn without asking for confirmation.
+5. `src/commands.ts` owns an activation/session generation for the `/goal`
+   command. A clipboard copy that finishes after `session_shutdown` or a newer
+   `session_start` returns without reading the obsolete command context; copy
+   success and failure notifications are unchanged in the current session.
+
+Deliberately **not** renamed, because they are internal identifiers rather than
+user-visible branding, and changing them would break behavior parity:
+
+- `CUSTOM_ENTRY_TYPE = "pi-codex-goal"` (`src/types.ts`) — the session custom
+  entry type used to persist goal state. Renaming it would make goals recorded
+  by earlier sessions unreadable.
+- `OVERFLOW_CHECK_API` / `OVERFLOW_CHECK_PROVIDER` (`src/recovery-adapters.ts`)
+  — synthetic identifiers on an internal assistant message used only for
+  context-overflow detection.
+- Model-facing tool descriptions in `src/tools.ts` still say "Codex-style
+  goal". These are part of the prompt the model reads; rewording them is a
+  behavior change, not a branding fix.
+
+## Verification of this copy
+
+- `npx tsc --noEmit` in this directory against `@earendil-works/*@0.84.2` — clean.
+- Standalone import smoke of `src/index.ts` with a stubbed `ExtensionAPI`:
+  registers `get_goal`, `create_goal`, `update_goal`, the `goal` command, and
+  14 session event handlers.
+
+## How this copy is used
+
+`.pi/settings.json` references it as a local Pi package
+(`./packages/choco-pi-goal`, resolved against this `.pi` directory), replacing
+the former `npm:pi-codex-goal@0.2.0` entry.
+
+## Updating
+
+Re-run `npm pack pi-codex-goal@<version>` and diff `src/` against this copy;
+upstream `prompts/create-goal.md` diffs against `goalObjectivePrompt` in
+`src/prompts.ts`. Re-apply the five changes listed above.
+
+## Pi SDK target alignment
+
+Host-provided Pi SDK peer contracts and any development SDK dependencies now
+require exactly `1.0.4`, matching the harness target. This SDK alignment is
+separate from installer policy; TypeBox and unrelated
+dependencies retain their existing contracts.
+
+## 2026-09-21 choco-pi patch: Pi 0.86.1 transcript migration
+
+Test fixtures now provide the `ExtensionAPI["on"]` return value required by Pi
+0.86.1. This is a test-only type update; runtime source is unchanged.
+
+## choco-pi patch: usage-limit recovery ownership and shared classifier
+
+The root usage-limit policy (`profile/extensions/lib/usage-limit-contract.ts`)
+must know when this package owns provider-limit recovery, and goal mode must
+recognise the limits the shared classifier detects. The package still imports
+nothing from the repository root; both seams are validated structurally.
+
+- `src/recovery-ownership.ts` (new): publishes
+  `globalThis[Symbol.for("choco-pi-goal:recovery")]` with
+  `recoveryOwnership(owner?)`, which returns the root `GoalRecoveryOwnership`
+  contract `{ owner, goalId, status, providerLimitResumeScheduled }` (copied by name)
+  for an `active` or `paused` goal and `undefined` otherwise. Several runtimes in one process share the entry;
+  an owner argument restricts lookup to that runtime, while the no-argument lookup preserves the first owning runtime.
+- `src/goal-runtime-controller.ts`: installs the reader when the runtime is
+  started, refreshes its owner from `ctx.sessionManager.getSessionId()` on each
+  `session_start`, and removes it after `session_shutdown` (the slot is deleted
+  once no runtime remains).
+- `src/usage-limit-seam.ts` (new): `classifyViaSeam(owner, input)` reads
+  `globalThis[Symbol.for("choco-pi.usage-limit-policy")]` as
+  `Map<ownerSessionId, policy>`, validates `classify` and its result, and never
+  throws.
+- `src/recovery.ts`: `AssistantErrorMessage` carries optional `provider` and
+  `model`; `isProviderLimitError` accepts an optional classifier context and
+  treats `quota` or `billing` as a provider limit. A `transient` result, an
+  absent seam, or an absent owner policy falls back to the upstream regex.
+- `src/recovery-machine.ts` / `src/recovery-runtime.ts`: a classifier-confirmed
+  provider limit is planned as a pause even when its wording (such as a bare
+  `429`) reads as retryable, so the unchanged 5-minute provider-limit
+  auto-resume is scheduled.
+- `tests/recovery-ownership.test.ts` (new) covers ownership states, dispose,
+  seam use, regex fallback, and the resume schedule.
+
+## 2026-10-07 choco-pi patch: Pi SDK 1.0.4
+
+Pi SDK peer and development pins move from `0.87.1` to exactly `1.0.4`,
+matching the harness target. Other dependency contracts are unchanged.
+
+## choco-pi patch: goal change events and runtime access for the host bridge
+
+The Waku host bridge (`docs/waku-integration.md` C5) mirrors goal state and
+completes a goal on request. The package still imports nothing from the
+repository root; consumers validate both seams structurally.
+
+- `src/goal-persistence.ts`: exports `GOAL_CHANGED_EVENT = "goal:changed"` and
+  emits `pi.events.emit("goal:changed", ThreadGoal | null)` (a copy) after every
+  `pi-codex-goal` set, usage, or clear entry is appended. This covers create,
+  pause/resume, complete, budget limits, runtime usage flushes, and clear.
+  Skipped equivalent sets and `host_overflow_cap_reset` entries do not emit.
+- `src/goal-state-controller.ts`: `reloadFromSession` (session start/tree) also
+  emits when the reconstructed goal differs from the in-memory goal, without
+  appending an entry. Its context parameter narrows to the branch reader and
+  status UI it uses.
+- `src/goal-runtime-access.ts` (new): publishes
+  `globalThis[Symbol.for("choco-pi-goal:runtime")]` as
+  `Map<ownerSessionId, { owner, getGoal(), completeGoal(ctx) }>`. `getGoal`
+  returns a copy with live usage; `completeGoal` runs the `update_goal` path
+  recorded with source `command`. It returns `ok: false` for a disposed or
+  replaced runtime, a context from another session, or a stale context (only
+  the host's canonical stale-context error is contained; other errors rethrow).
+  A foreign value in the slot is never overwritten.
+- `src/goal-runtime-controller.ts`: installs the access on `session_start` under
+  the same owner as the recovery reader and removes it synchronously when
+  `session_shutdown` begins, before any await, so a session started while the
+  old shutdown is pending keeps its own access.
+- `tests/goal-events.test.ts` (new) covers emission per mutation, reload
+  emission, copy isolation, owner keying, foreign/stale/unrelated context
+  errors, replacement, slot preservation, and a pending shutdown overlapping
+  the next session start.
+
+## choco-pi patch: background-compaction adoption notifications
+
+Background compaction (`choco-pi-compaction`, off by default) can commit a
+checkpoint at a `turn_end`/`agent_before_settle` boundary, which emits no
+`session_compact`. The goal runtime's post-compaction work must still run once.
+
+- `src/goal-runtime-session-handlers.ts`: the `session_compact` body is a shared
+  `afterCompaction(ctx, willRetry)`. `session_start` subscribes to the
+  compaction package's adoption signal
+  (`Symbol.for("choco-pi:compaction-background-adoption")`, typebox-validated;
+  an absent or foreign slot means no subscription and unchanged behavior) and
+  `session_shutdown` unsubscribes. Notices for this session run
+  `afterCompaction(ctx, false)` except `"recovered"` ones, which happened in an
+  earlier process. Idle and host adoptions also arrive as a real
+  `session_compact`, so while subscribed both paths key on the committed entry
+  ID (a per-session set cleared on session change) and run it once. No host
+  event is forged. `createSessionEventHandlers` also extracts
+  `clearHostOverflowRecoveryForContinuation` and `confirmPausedGoalResume`
+  (behavior-preserving).
+- `tests/background-compaction-adoption.test.ts` (new): real SDK session with the
+  real compaction extension. A boundary adoption, loaded in production order
+  (goal first, no pre-existing slot), notifies once and a later host compaction
+  once more; an idle-route adoption notifies once through its `session_compact`.
+  The later compaction carries instructions, which `choco-pi-compaction` now
+  takes over at `AgentSession.prototype.compact` (`compact()` resolves at
+  once, no host compaction starts) and adopts through the idle route; the test
+  asserts that resolution instead of the former `Compaction cancelled`
+  rejection. Test-only; goal behavior is unchanged.
+
+## 2026-10-09 choco-pi patch: Pi SDK 1.2.0
+
+Pi SDK peer and development pins move from `1.0.4` to exactly `1.2.0`.
+`before_agent_start` now also fires for custom-message runs, including this
+package's own continuation; those runs no longer clear continuation state.
+
+## 2026-10-16 choco-pi patch: Pi SDK target 1.3.0
+
+Pi SDK peer and development pins move from `1.2.0` to exactly `1.3.0`.
+Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.
+
+## 2026-10-22 choco-pi patch: Pi SDK target 1.4.0
+
+Pi SDK peer and development pins move from `1.3.0` to exactly `1.4.0`.
+Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.
+
+## 2026-11-03 choco-pi patch: Pi SDK target 1.5.0 + pi-schema dependency
+
+Pi SDK pins move from `1.4.0` to exactly `1.5.0` and `@earendil-works/pi-schema@1.5.0` is added as a peer dependency (the extension loader has no alias for it). The local `StringEnum` helper now builds the TypeBox schema with `Type.Unsafe` because the Pi 1.5.0 pi-ai export returns a pi-schema schema.
+
+## 2026-11-03: TypeBox validators replaced by pi-schema
+
+All runtime validation moved from `typebox` / `typebox/value` to `@earendil-works/pi-schema` compiled validators. Only `src/schema-bridge.ts` still imports `typebox` (`Type.Unsafe`), because Pi 1.5.0 `registerTool` still requires a TypeBox schema.
+
+- Tool parameters (`src/tools.ts`): builders with `{ open: true }` (TypeBox objects were open), wrapped by `hostParams`; `StringEnum` became `oneOf(["complete"])`. Names, descriptions and defaults are unchanged. `registerGoalTools` now accepts `Pick<ExtensionAPI, "registerTool">`.
+- Persisted journal entries and goals (`src/state.ts`), queued-message details/parts, the recovery-ownership slot, the usage-limit seam and the compaction adoption relay keep their previous openness (all `open: true`) and optional/null handling.
+- pi-schema `num()` accepts NaN and +/-Infinity, which TypeBox `Number` rejected; every number uses `finiteNumber` (`src/guards.ts`, bounded by +/-`Number.MAX_VALUE`).
+- Function-valued members (reader, `classify`, `subscribe`, unsubscribe) are not JSON: the object is checked with a pi-schema `unknown()` member and `instanceof Function` confirms the member.
+- `typebox` is now needed only by the bridge file; the optional peer declaration stays because that bridge resolves it at runtime.
+
+## 2026-11-03 choco-pi patch: stop-control participant (P4b-3)
+
+The root activation joins the choco-pi stop-control v1 protocol through the package-local contract copy `src/stop-control.ts`. `src/goal-runtime-controller.ts` subscribes to `choco-pi:stop-control/v1/revoke` on session start (unsubscribed synchronously on shutdown) and keeps the latest live `ExtensionContext` (session start / agent start; cleared on shutdown). For scope `all` and a matching root session id it clears the provider-limit auto-resume timer, accounts elapsed time and applies the `abort_pause` transition (clears continuation, accounting and recovery) when the goal is active, then emits `acknowledged` and `settled` synchronously with detail `paused` or `not active`; a stale context emits `acknowledged` then `failed`. Tokens of the aborted turn are not accounted after the pause. Reopening admission never resumes the goal. Tests: `tests/stop-control.test.ts`.
+
+## 2026-11-10 choco-pi patch: Pi SDK target 1.5.1
+
+Pi SDK pins move from `1.5.0` to exactly `1.5.1`; version references in comments, tests, and docs follow.
+
+## 2026-11-11 choco-pi patch: Pi SDK range ~1.5.2
+
+Pi SDK dependencies move from exactly `1.5.1` to the range `~1.5.2` (`>=1.5.2 <1.6.0`), so later 1.5 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow.
+
+## choco-pi patch: stale resume-confirmation guard
+
+`session_start` (reason `resume`) awaits `ctx.ui.confirm("Resume paused goal?")`. `src/goal-runtime-session-handlers.ts` now keeps a session generation, bumped synchronously on each `session_start` and `session_shutdown`; an answer that arrives after the generation changed resumes nothing and skips `maybeContinue`. A goal cleared or replaced while the dialog is open was already a no-op through the goal-id check in `resumeGoalWithContinuation` (`src/goal-runtime-controller.ts`). Tests: `tests/resume-confirm-stale.test.ts`.
+
+## 2026-11-12 choco-pi patch: snake_case tool I/O
+
+`get_goal`/`create_goal`/`update_goal` result text keys are now snake_case, mapped explicitly in `toToolText` (`src/format.ts`): `remainingTokens`→`remaining_tokens`, `completionBudgetReport`→`completion_budget_report`, goal `goalId`→`goal_id`, `tokenBudget`→`token_budget`, `tokensUsed`→`tokens_used`, `timeUsedSeconds`→`time_used_seconds`, `createdAt`→`created_at`, `updatedAt`→`updated_at`. `result.details` and persisted state keep camelCase. Inputs were already snake_case and are unchanged. The `status` value `budgetLimited` is shown as `budget_limited` (`toolGoalStatus` in `src/format.ts`), and the budget-limit steering prompt (`src/prompts.ts`) says `budget_limited`; `ThreadGoal.status`, persisted state, `details` and the host-bridge goal schema keep `budgetLimited`. No goal tool accepts the value as input (`update_goal.status` accepts only `complete`). Tests: `tests/tool-output.test.ts`.

@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { InteractiveMode, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import fileCheckpoints from "../.pi/extensions/file-checkpoints.ts";
+import fileCheckpoints from "../profile/extensions/file-checkpoints.ts";
 import {
   isFunction,
   reinterpretHostValue,
   type RuntimeValue,
-} from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/lib/runtime-values.ts";
 
 type ForkSelectorPrototype = {
   showUserMessageSelector: () => void;

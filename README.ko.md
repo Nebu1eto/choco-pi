@@ -119,14 +119,14 @@ Pi 세션에서 인증하세요.
 
 Pi는 인증 정보를 저장소 밖에 보관합니다. 인증 정보가 담긴 파일을 Git에 복사하지 마세요.
 
-`/login openai`는 Pi의 "Sign in with ChatGPT"이며 `openai` 공급자(api.openai.com)를 사용합니다. 기존 `openai-codex` 공급자(chatgpt.com 백엔드)는 선택형 레거시로 남아 있으며 `/login openai-codex`로 로그인합니다. `openai` 로그인에서는 Fast 모드가 수락되지만 적용되지 않고 전송되지도 않으며, Daybreak은 사용할 수 없고, 서버 측 압축은 시도하지 않고(로컬 압축 실행), 네이티브 `web_run` 검색도 쓸 수 없습니다(웹 검색은 `choco-pi-web-access`를 거칩니다). `imagegen`과 `view_image`는 `openai` 인증 정보를 찾지만 실제 환경에서는 검증되지 않았습니다. Pi에 내장된 `xai` 공급자(Grok)는 `/login xai`(SuperGrok 또는 X Premium)로 로그인하거나 `XAI_API_KEY`를 읽으며, Fast 모드는 api.x.ai의 `xai/grok-4.7`에만 적용됩니다. choco-pi는 Pi에 내장된 Anthropic, OpenAI, xAI 로그인 외에 Synthetic 공급자를 추가하고, [`apex-provider.json`](.pi/extensions/apex-provider.json)을 통해 Callstack Apex 모델을 찾습니다.
+`/login openai`는 Pi의 "Sign in with ChatGPT"이며 `openai` 공급자(api.openai.com)를 사용합니다. 기존 `openai-codex` 공급자(chatgpt.com 백엔드)는 선택형 레거시로 남아 있으며 `/login openai-codex`로 로그인합니다. `openai` 로그인에서는 Fast 모드가 수락되지만 적용되지 않고 전송되지도 않으며, Daybreak은 사용할 수 없고, 서버 측 압축은 시도하지 않고(로컬 압축 실행), 네이티브 `web_run` 검색도 쓸 수 없습니다(웹 검색은 `choco-pi-web-access`를 거칩니다). `imagegen`과 `view_image`는 `openai` 인증 정보를 찾지만 실제 환경에서는 검증되지 않았습니다. Pi에 내장된 `xai` 공급자(Grok)는 `/login xai`(SuperGrok 또는 X Premium)로 로그인하거나 `XAI_API_KEY`를 읽으며, Fast 모드는 api.x.ai의 `xai/grok-4.7`에만 적용됩니다. choco-pi는 Pi에 내장된 Anthropic, OpenAI, xAI 로그인 외에 Synthetic 공급자를 추가하고, [`apex-provider.json`](profile/extensions/apex-provider.json)을 통해 Callstack Apex 모델을 찾습니다.
 
 ## computer use 설정하기 (macOS)
 
 computer-use 도구(`observe_ui`, `act_ui` 등)는 네이티브 helper 앱인
 `pi-computer-use.app`을 통해 동작합니다. helper는 접근성 트리를 읽고, 창을 캡처하고,
 입력을 전달합니다. helper 바이너리는 커밋되어 있지 않습니다. 설치 스크립트가 설치할
-때마다 `.pi/packages/choco-pi-computer-use/native/macos`의 Swift 소스를 현재 Mac의
+때마다 `packages/choco-pi-computer-use/native/macos`의 Swift 소스를 현재 Mac의
 아키텍처용으로 컴파일하며, 내려받는 파일은 없습니다. macOS가 아닌 운영체제에는
 helper를 설치할 수 없습니다.
 
@@ -142,7 +142,7 @@ helper를 설치할 수 없습니다.
 설치하며, 수십 초가 걸립니다. 미리 설치하거나 다시 설치하려면 체크아웃에서 다음을 실행하세요.
 
 ```sh
-node .pi/packages/choco-pi-computer-use/scripts/setup-helper.mjs
+node packages/choco-pi-computer-use/scripts/setup-helper.mjs
 ```
 
 스크립트는 설치한 경로를 출력하며, 다음 작업을 합니다.
@@ -235,15 +235,15 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 
 ### 운용 규칙과 작업 절차
 
-- [`.pi/SYSTEM.md`](.pi/SYSTEM.md)는 범위, 권한, 증거, 완료 기준에 대한 공통 규칙을 정합니다. [`.pi/model-guidance.md`](.pi/model-guidance.md)는 모델별 지침을, [`.pi/writing-policy.md`](.pi/writing-policy.md)는 응답 문장 규칙을 더합니다.
+- [`profile/SYSTEM.md`](profile/SYSTEM.md)는 범위, 권한, 증거, 완료 기준에 대한 공통 규칙을 정합니다. [`profile/model-guidance.md`](profile/model-guidance.md)는 모델별 지침을, [`profile/writing-policy.md`](profile/writing-policy.md)는 응답 문장 규칙을 더합니다.
 - 루트와 경로별 `AGENTS.md` 파일은 에이전트가 하위 디렉터리에서 작업할 때 함께 불러옵니다.
 - 작업 절차 스킬은 직접 구현(`task-inline`), 병렬 구현 단위(`task`), 동적 분해 작업(`task-dynamic`), 긴급 수정(`task-hotfix`), 적대적 리뷰(`review`), 리뷰 주장 재현(`verify`), TLA+ 모델 검사(`formal-verify`), 환경 점검(`check`), 서명된 로컬 커밋(`commit`), 문서 작성(`effective-writing`)을 다룹니다. 구현 절차는 체크아웃 변경 lease를 잡고 인수 기준으로 검증하며, 푸시하지 않습니다. 리뷰와 증거 관련 스킬은 [리뷰와 검증](#리뷰와-검증)에서 설명합니다.
 - `/preferences`에서 응답 언어, 응답 스타일(기본값 `balanced`는 최종 답을 짧게 유지하고 긴 작업 중에는 몇 문장으로 상태를 알리며, `concise`는 모든 중간 보고를 한 줄로 줄이고, `explanatory`도 고를 수 있습니다), 에이전트 페르소나(`unset`, `critical`, 기본값인 `pessimistic`)를 설정합니다. 페르소나는 에이전트가 자신의 주장과 계획을 얼마나 엄격하게 검증할지 정합니다.
-- `/preferences` → Agent → On usage limit(`agentOnUsageLimit`)은 현재 provider가 사용량 한도를 보고했을 때의 동작을 정합니다. `none`(기본값)은 오류로 종료된 상태를 그대로 둡니다. `fallback`은 [`.pi/model-fallbacks.json`](.pi/model-fallbacks.json)의 같은 등급 다른 provider 모델로 전환하거나, 열린 등급 후보가 없으면 최후 수단인 `xai/grok-4.7`, 그다음 `synthetic/hf:moonshotai/Kimi-K3.1-Pro`(Kimi K3보다 우선), 마지막으로 `synthetic/hf:moonshotai/Kimi-K3`로 전환한 뒤 작업을 이어갑니다. `auto-resume`은 한도가 초기화될 때까지 기다린 뒤 이어갑니다. 하위 에이전트는 한도에 걸리면 초기화 예정 시각과 범위 안의 추천 모델을 부모 에이전트에 보고하며, `auto-resume`일 때만 대기했다가 초기화 후 자동으로 재개됩니다. `/goal`이 active 또는 paused 상태이면 복구 주도권은 goal 런타임이 가집니다.
+- `/preferences` → Agent → On usage limit(`agentOnUsageLimit`)은 현재 provider가 사용량 한도를 보고했을 때의 동작을 정합니다. `none`(기본값)은 오류로 종료된 상태를 그대로 둡니다. `fallback`은 [`profile/model-fallbacks.json`](profile/model-fallbacks.json)의 같은 등급 다른 provider 모델로 전환하거나, 열린 등급 후보가 없으면 최후 수단인 `xai/grok-4.7`, 그다음 `synthetic/hf:moonshotai/Kimi-K3.1-Pro`(Kimi K3보다 우선), 마지막으로 `synthetic/hf:moonshotai/Kimi-K3`로 전환한 뒤 작업을 이어갑니다. `auto-resume`은 한도가 초기화될 때까지 기다린 뒤 이어갑니다. 하위 에이전트는 한도에 걸리면 초기화 예정 시각과 범위 안의 추천 모델을 부모 에이전트에 보고하며, `auto-resume`일 때만 대기했다가 초기화 후 자동으로 재개됩니다. `/goal`이 active 또는 paused 상태이면 복구 주도권은 goal 런타임이 가집니다.
 
 ### 에이전트와 오케스트레이션
 
-- [`.pi/agents`](.pi/agents)의 전문 역할(`advisor`, `explore`, `general`, `handoff`, `implementer`, `planner`, `reviewer`, `verifier`)은 백그라운드 서브 에이전트로 실행됩니다. 예약 실행, 격리된 Git worktree 실행, `workflow_run`으로 의존 관계 순서를 따르는 workflow 실행도 지원합니다. `/agents`로 관리합니다.
+- [`profile/agents`](profile/agents)의 전문 역할(`advisor`, `explore`, `general`, `handoff`, `implementer`, `planner`, `reviewer`, `verifier`)은 백그라운드 서브 에이전트로 실행됩니다. 예약 실행, 격리된 Git worktree 실행, `workflow_run`으로 의존 관계 순서를 따르는 workflow 실행도 지원합니다. `/agents`로 관리합니다.
 - `max_turns` 제한은 재개한 실행에도 적용되며, 토큰 예산이 있는 에이전트는 예산에 걸려 중단되기 전에 마무리하라는 지시를 받습니다.
 - fleet 패널은 실행 중인 서브 에이전트와 관리되는 백그라운드 셸을 함께 보여 줍니다. 행을 클릭하면 화살표 키와 같이 그 행이 선택되고, 더블 클릭하면 셸의 출력이 열립니다. 서브 에이전트를 선택하면 그 대화 기록에 포커스가 가며, 텍스트, 도구 진행 상황, 사용자 정의 메시지가 실시간으로 표시됩니다. 이 화면에서 thinking 표시를 전환해도 포커스된 화면에만 적용됩니다. 셸은 소유자별로 격리되며 `shell_start`와 `/shells`로 관리합니다. 소유 세션이 비활성일 때 끝난 셸의 완료 알림은 그 세션이 다시 활성화되면 전달됩니다.
 - `/btw`는 병렬로 진행되는 읽기 전용 곁대화를 엽니다.
@@ -251,11 +251,11 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 
 ### 리뷰와 검증
 
-- `/review [target]`은 에이전트가 직접 수행하는 적대적 리뷰입니다. `review` 스킬이 대상(기본값은 `HEAD` 대비 staged·unstaged 변경)을 변경할 수 없는 번들로 고정해 새 읽기 전용 `reviewer` 하나에게 넘깁니다. [`.pi/review-policy.md`](.pi/review-policy.md)에 따라 모든 리뷰는 세 관점을 다룹니다. 호출자·테스트·문서가 여전히 기대는 동작이 바뀌거나 사라졌는지, 바뀐 계약의 모든 호출자, 그리고 앞선 검토가 놓친 것만 찾는 마지막 점검입니다. 리뷰어는 finding과 별도로 candidate를 보고합니다. candidate는 위반에 이르는 추적 경로 중 한 고리가 빠졌거나 가정에 기댄 우려입니다. 위반까지 경로를 빠짐없이 추적했다면 아무것도 실행하지 않았어도 finding입니다. 둘 다 에이전트나 verifier가 확인하기 전까지는 참고 의견입니다.
+- `/review [target]`은 에이전트가 직접 수행하는 적대적 리뷰입니다. `review` 스킬이 대상(기본값은 `HEAD` 대비 staged·unstaged 변경)을 변경할 수 없는 번들로 고정해 새 읽기 전용 `reviewer` 하나에게 넘깁니다. [`profile/review-policy.md`](profile/review-policy.md)에 따라 모든 리뷰는 세 관점을 다룹니다. 호출자·테스트·문서가 여전히 기대는 동작이 바뀌거나 사라졌는지, 바뀐 계약의 모든 호출자, 그리고 앞선 검토가 놓친 것만 찾는 마지막 점검입니다. 리뷰어는 finding과 별도로 candidate를 보고합니다. candidate는 위반에 이르는 추적 경로 중 한 고리가 빠졌거나 가정에 기댄 우려입니다. 위반까지 경로를 빠짐없이 추적했다면 아무것도 실행하지 않았어도 finding입니다. 둘 다 에이전트나 verifier가 확인하기 전까지는 참고 의견입니다.
 - 리뷰어와 verifier는 응답 끝에 구조화된 블록(`choco-pi-review` 또는 `choco-pi-verdict`)을 붙입니다. work task로 실행된 경우 subagents 패키지가 이 블록을 기록하고 결과에 `Verdict record:` 줄을 덧붙입니다. 블록이 없거나 잘못된 리뷰는 기록되지 않은 것으로 보며, 깨끗하다고 보고하지 않습니다. 리뷰와 검증 라운드는 work task마다 상한이 있습니다. `/review-continue <work_task>`와 `/verify-continue <work_task>`로 라운드를 더 허용합니다.
 - 터미널에서는 파싱되는 블록을 결과 카드, 완료 알림, 대화 기록의 Markdown에 짧은 요약(판정, 개수, finding이나 claim마다 한 줄)으로 보여 줍니다. 원본 블록은 카드를 펼치면 보입니다. 파싱되지 않는 블록은 파서가 밝힌 이유 한 줄 뒤에 그대로 보여 줍니다. 바뀌는 것은 표시뿐이며, 저장된 메시지, 모델이 받는 내용, 기록된 판정은 그대로입니다.
 - `verifier` 역할은 `verify` 스킬을 따라, 정확히 지정된 체크아웃 스냅숏에서 리뷰어의 주장을 재현해 봅니다. scratch에만 기록하고 코드를 고치지 않으며, `UNPROVEN`을 있는 그대로 보고합니다. 재현에 실패했다고 해서 주장이 반박된 것은 아닙니다. 작은 작업에는 verifier를 쓰지 않습니다.
-- `formal-verify` 스킬은 에이전트가 작업하는 프로젝트에서 순서와 상태에 관한 약속을 검사합니다. 실행이 정확히 한 번 끝나야 한다거나, lease가 동시에 두 번 잡혀서는 안 된다는 약속이 그 예입니다. 에이전트가 작은 TLA+ 모델을 쓰고, 스킬의 래퍼를 거쳐 TLC로 검사하며, 의도적인 mutation을 넣어 규칙마다 실패할 수 있음을 보입니다. 통과는 정해진 범위 안의 모델에 대한 것이지 코드에 대한 것이 아닙니다. drift 검사는 모델이 다루는 코드가 바뀌었는지 알려 줍니다. 모델은 어떤 언어의 코드든 다룰 수 있지만, drift 검사가 심벌 단위로 해시하는 언어는 TypeScript와 JavaScript뿐이고 그 밖의 파일은 파일 전체를 해시합니다. TLC를 쓰려면 Java 11 이상과 `tlc-setup.ts` 1회 실행이 필요합니다. 이 스크립트는 고정 버전 `tla2tools.jar`를 `${XDG_CACHE_HOME:-~/.cache}/choco-pi/formal`에 내려받습니다. 자세한 내용은 [스킬 문서](.pi/skills/formal-verify/SKILL.md)를 보세요. [`formal/tla/subagent-run`](formal/tla/subagent-run)은 이 저장소의 서브 에이전트 실행 생명주기를 모델링한 예시입니다.
+- `formal-verify` 스킬은 에이전트가 작업하는 프로젝트에서 순서와 상태에 관한 약속을 검사합니다. 실행이 정확히 한 번 끝나야 한다거나, lease가 동시에 두 번 잡혀서는 안 된다는 약속이 그 예입니다. 에이전트가 작은 TLA+ 모델을 쓰고, 스킬의 래퍼를 거쳐 TLC로 검사하며, 의도적인 mutation을 넣어 규칙마다 실패할 수 있음을 보입니다. 통과는 정해진 범위 안의 모델에 대한 것이지 코드에 대한 것이 아닙니다. drift 검사는 모델이 다루는 코드가 바뀌었는지 알려 줍니다. 모델은 어떤 언어의 코드든 다룰 수 있지만, drift 검사가 심벌 단위로 해시하는 언어는 TypeScript와 JavaScript뿐이고 그 밖의 파일은 파일 전체를 해시합니다. TLC를 쓰려면 Java 11 이상과 `tlc-setup.ts` 1회 실행이 필요합니다. 이 스크립트는 고정 버전 `tla2tools.jar`를 `${XDG_CACHE_HOME:-~/.cache}/choco-pi/formal`에 내려받습니다. 자세한 내용은 [스킬 문서](profile/skills/formal-verify/SKILL.md)를 보세요. [`formal/tla/subagent-run`](formal/tla/subagent-run)은 이 저장소의 서브 에이전트 실행 생명주기를 모델링한 예시입니다.
 - `/diff`는 대화 기록 옆에 패널을 붙여 변경된 파일과 diff를 보여 주고, 에이전트가 작업하는 동안 내용을 새로 고칩니다. 기본으로는 세션이 시작된 뒤의 변경, 즉 세션의 첫 파일 체크포인트와 작업 트리의 비교를 보여 주며, 그사이 커밋된 변경도 포함합니다. `/diff source uncommitted`는 `HEAD`와 작업 트리를 비교하고, `/diff source turn [<n>]`은 작업 트리를 특정 턴의 체크포인트와 비교하며, `/diff source branch [<base>]`는 브랜치(기본값은 원격의 기본 브랜치, 없으면 `main`, 그다음 `master`)와의 merge base부터 비교합니다. 고른 소스는 패널을 닫을 때까지 유지되고, `/diff source session`으로 기본값에 돌아갑니다. 패널에서는 파일, hunk, 또는 고른 줄의 참조를 입력창에 넣고, `c`로 hunk에 메모를 남겼다가 `a`로 한꺼번에 묻고(메모가 한 메시지로 입력창에 들어가고 패널에서는 지워지며, 메모가 없으면 `a`는 커서가 있는 파일, hunk, 줄의 참조를 넣습니다), 리뷰어와 verifier가 기록한 finding을 차례로 살펴보고, `/review` 지시문을 입력창에 넣을 수 있습니다(`/diff review`). Enter를 누르기 전에는 아무것도 전송되지 않습니다. 민감한 파일은 이름만 보이고, 그 파일에서 `v`를 누르기 전까지 내용은 숨겨집니다. 이 선택은 저장되지 않으며 패널을 다시 열면 다시 숨겨집니다. Ctrl+Alt+P로 패널을 열고 닫고, Ctrl+Alt+F로 패널 안팎으로 포커스를 옮기며, 패널에서 `?`를 누르면 키 목록이 나옵니다. 패널 안에서 `j`/`k`는 파일 사이를, ↑/↓는 펼친 파일의 줄 사이를 움직입니다. Shift+↑/↓나 마우스 드래그로 여러 줄을 고르고, 클릭으로 줄이나 hunk에 커서를 놓으며, 파일 행을 클릭하면 그 파일을 펼치거나 접습니다. macOS에서는 Cmd+C(그 밖에서는 Ctrl+C)가 고른 줄을 코드 그대로 복사하고, 커서가 hunk 헤더에 있으면 hunk 전체를 diff로 복사합니다. Cmd+C는 터미널이 그 키를 Pi에 넘겨줄 때만 동작합니다. 패널 안과 리뷰 화면의 diff에서는 마우스가 diff 줄을 고르는 데 쓰이므로, Pi의 마우스 선택 자동 복사는 동작하지 않습니다. ←와 →는 한 턴의 변경만 보여 줍니다. ←는 가장 최근 턴부터 이전 턴으로, →는 다음 턴으로 가고, 가장 최근 턴 다음에는 세션 전체 변경으로 돌아옵니다. 한 턴의 변경은 그 턴의 파일 체크포인트부터 다음 체크포인트까지(가장 최근 턴은 작업 트리까지)이므로, 두 프롬프트 사이에 직접 고친 내용은 앞 턴에 포함되고, 파일이 바뀌지 않은 상태에서 시작한 프롬프트는 앞 턴과 함께 표시됩니다. Shift+→는 커서가 글의 끝에 있고 선택한 부분이 없을 때 입력창에서 열려 있는 패널로 포커스를 옮기고(그 밖에서는 입력창의 선택을 넓힙니다), Tab, Esc, `q`, Shift+←, 또는 패널 옆이나 입력창을 클릭하면 입력창으로 돌아갑니다. 입력창의 글자를 클릭하면 커서도 그 자리로 옮겨집니다. 입력창의 글자를 드래그하거나 Shift와 방향키를 누르면 그 부분이 선택되며, Backspace나 Delete로 한 번에 지우고, 입력하거나 붙여 넣으면 선택한 부분이 바뀌고, Ctrl+C나 Ctrl+X로 선택을 유지한 채 복사하며(터미널이 Cmd+C를 Pi에 넘겨주면 Cmd+C도 됩니다. 선택한 부분이 없으면 이 키들은 원래대로 동작합니다), Esc로 선택을 풉니다. `/diff` 뒤의 자동 완성은 하위 명령을 보여 줍니다. 패널을 쓰려면 전체 화면 TUI와 폭 65열 이상의 터미널이 필요하며, 조건이 맞지 않으면 `/diff`가 변경 목록을 출력합니다. Zed에서는 대신 크기가 제한된 네이티브 diff를 보내며, 각 diff 앞에 파일 이름과 상태를 붙이고, 민감한 파일은 이름만 보여 줍니다. 세션에서는 아직 바뀐 파일이 없지만 작업 트리에는 변경이 있으면 `/diff source uncommitted`로 그 변경을 볼 수 있다고 알려 줍니다([자세히](docs/zed-command-parity.md#diff-in-zed)).
 - `/review-assist [target]`은 사용자가 직접 변경을 검토하는 화면이며, 모델 컨텍스트에는 아무것도 추가하지 않습니다. 대상은 현재 세션이나 그 세션의 턴 하나, 브랜치 범위, 커밋하지 않은 변경, 저장된 리뷰, GitHub 풀 리퀘스트입니다. 코멘트를 달고, 승인하거나 거절하고, 리뷰를 풀 리퀘스트에 제출할 수 있습니다. 이 화면은 `/diff` 패널의 뷰를 전체 화면으로 띄운 것이며, 두 명령이 함께 하는 일에는 패널의 키를 씁니다(hunk 이동은 `n`/`N` 또는 `[`/`]`, 접기는 Enter나 Space, `g`/`G`, `r`, `f`/`F`, `v`, `?`). 리뷰에만 있는 일에는 `j`/`k`나 ↑/↓로 움직이는 줄 커서를 씁니다. Shift+↑/↓나 마우스 드래그로 여러 줄을 고르고, 클릭으로 줄에 커서를 놓거나 파일을 펼치고 접으며, Cmd+C(macOS 밖에서는 Ctrl+C)로 고른 줄을 코드 그대로(접힌 hunk는 diff로) 복사하고, `c`로 코멘트를 달고, `m`으로 hunk를 검토 완료로 표시하고, `a`로 옆 채팅을 열고, `/`로 바뀐 줄을 검색하고(`>`/`<`로 다음 결과), `+`/`-`로 주변 맥락을 늘리거나 줄이고, `|`로 나란히 보기로 바꾸고, `e`/`E`로 편집기를 열고, `S`로 마치고, `q`나 Esc로 저장하고 나갑니다. `session`은 `/diff`와 같은 파일을 세션의 첫 체크포인트부터 보여 주고, `session turn <n>`은 체크포인트가 있는 턴을 1부터 셉니다. 변경이 작업 트리에서 끝나는 대상이면 `r`로, 그리고 옆 채팅의 도구 호출이 끝날 때마다 변경을 다시 읽으며, `f`/`F`로 리뷰어가 기록한 finding을 차례로 봅니다. 검토 표시와 코멘트는 내용이 바뀌지 않은 hunk에 그대로 남습니다. `.env`, 개인 키, 경로에 `secret`이나 `credential`이 들어간 파일 같은 민감한 파일은 내용을 숨긴 채 보여 주며, 그 파일에서 `v`를 눌러야 이 화면에서만 내용이 나타납니다. 옆 채팅에는 어떤 파일이 숨겨져 있는지 알려 주며, 그 파일에서 `v`를 누르기 전까지는 인자가 그 파일을 가리키는 도구 호출을 모두 거부합니다. 경로로서 가리키는 경우는 Pi 파일 도구가 경로를 해석하는 방식보다 넓게 판단하며(앞뒤 공백, `@`, `~`, `file://`, `..`, 끝의 슬래시, 심볼릭 링크와 하드 링크, 유니코드 정규화 형태, 파일 시스템이 대소문자를 구분하지 않으면 대소문자 차이까지), 인자 텍스트 어디에든 그 경로나 파일 이름이 들어 있으면 POSIX 셸, fish, PowerShell, cmd에서 따옴표나 이스케이프로 쓴 경우와 퍼센트 인코딩한 경우(`cat .e"n"v`, `cat o\'key.txt`, `type .e^nv`)도 거부하므로, 숨긴 파일과 이름이 따옴표나 이스케이프 문자만 다른 다른 파일도 거부됩니다. `write`와 `edit`가 파일에 써 넣는 텍스트는 경로로만 확인합니다. 이는 샌드박스가 아니라 이중 방어입니다. 이름의 모든 문자가 텍스트에 그대로 또는 퍼센트 인코딩으로 나타나면 거부하지만, 문자를 코드로 적거나 파일 이름을 쓰지 않고 파일에 닿는 명령(`cat .e*`나 `cat *` 같은 glob, 중괄호 확장, 변수, `$'\x2e'` 같은 이스케이프, 재귀 검색, 환경 변수 덤프, 미리 써 둔 스크립트)은 막지 못하며, 채팅이 이미 읽은 내용도 막지 못합니다. 메시지, 경고, 오류는 리뷰 화면의 메시지 줄에 표시되며, 오류는 리뷰를 닫은 뒤에도 읽을 수 있도록 Pi 알림에도 남습니다. 파일 이름, diff 같은 신뢰할 수 없는 텍스트는 화면에 그리기 전에 터미널 제어 시퀀스를 걸러 내고, 큰 변경은 한도 안에서 읽되 빠진 파일 수를 알려 주며, 그 뒤로 코드가 바뀐 코멘트는 outdated로 표시합니다. 저장된 리뷰는 Pi 에이전트 디렉터리의 `choco-pi/reviews`에 있으며, 파일을 마지막으로 수정한 지 7일이 지나면 보내지 않은 코멘트가 있더라도 삭제됩니다. 터미널 UI가 아닌 환경에서는 읽기 전용 요약을 출력하며, Zed에서는 이 요약이 Markdown이고 파일마다 변경을 코드 블록 안의 unified diff로 보여 줍니다.
 
@@ -265,7 +265,7 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 - `/goal`은 여러 턴과 compaction에 걸쳐 지속되는 목표를 유지합니다.
 - `/checkpoint`는 체크포인트가 있는 턴 기준으로 세션을 되감거나, 파일을 롤백하거나, 분기하고, 현재 상태 그대로 분기할 수도 있습니다. `/rewind`는 대화 되감기만, `/fork`는 이전 턴이나 현재 상태에서 분기만 합니다.
 - 컨텍스트 한도는 `/preferences`에서 프리셋으로 고릅니다. soft cap은 Session → Context에, compaction 지점은 Session → Compaction에 있습니다. **Context soft cap**은 사용 가능한 컨텍스트 상한으로 strictest 250K, strict 400K, standard 600K, permissive 800K, unlimited 중 하나이고, **Auto-compaction point**는 compaction이 시작되는 지점으로 strictest 200K, strict 300K, standard 450K, permissive 600K, unlimited 중 하나입니다. soft cap 기본값은 unlimited, compaction 지점 기본값은 standard입니다. 각 프리셋은 모델의 네이티브 창에 맞춰 조정됩니다. 상한은 네이티브 창을 넘지 않고, compaction 지점은 상한보다 `min(100K, 상한의 15%)`(최소 host reserve + 8K)만큼 아래에 머뭅니다. 네이티브 창이 64K 미만인 모델은 Pi 자체 트리거에 맡기며, OpenAI 네이티브 compaction 예산이 게시되어 있으면 compaction 지점도 그 안으로 제한됩니다. 설정은 이 두 프리셋뿐이며 headroom은 고정값입니다.
-- compaction 방식은 `/preferences`의 Session → Compaction에서 정합니다. **OpenAI compaction**은 Codex 전송과 설정된 Responses 공급자에서 OpenAI 원격 compaction을 쓰며, 이 프로필의 [`.pi/choco-pi-codex.json`](.pi/choco-pi-codex.json)은 server-side로 설정합니다. **Anthropic compaction**은 기본값이 server-side이며, `api.anthropic.com`에 OAuth로 접속한 Fable 5+, Mythos 5+와 Preview, Opus 4.6+, Sonnet 4.6+, Haiku 5.5+에서만 Anthropic on-demand compaction을 씁니다. **xAI compaction**은 기본값이 server-side이며, `api.x.ai`의 `grok-*` 모델에서 OAuth나 API 키로 xAI `/responses/compact`를 씁니다. 포그라운드 compaction에만 적용됩니다. 어떤 실패든 최근 메시지와 대조하는 choco-pi 로컬 요약으로 대체됩니다. 백그라운드 compaction은 기본적으로 켜져 있고, 켜져 있으면 텍스트 레인은 항상 돌며 각 네이티브 레인(OpenAI, Anthropic)은 해당 공급자 행이 server-side일 때만 돕니다.
+- compaction 방식은 `/preferences`의 Session → Compaction에서 정합니다. **OpenAI compaction**은 Codex 전송과 설정된 Responses 공급자에서 OpenAI 원격 compaction을 쓰며, 이 프로필의 [`profile/choco-pi-codex.json`](profile/choco-pi-codex.json)은 server-side로 설정합니다. **Anthropic compaction**은 기본값이 server-side이며, `api.anthropic.com`에 OAuth로 접속한 Fable 5+, Mythos 5+와 Preview, Opus 4.6+, Sonnet 4.6+, Haiku 5.5+에서만 Anthropic on-demand compaction을 씁니다. **xAI compaction**은 기본값이 server-side이며, `api.x.ai`의 `grok-*` 모델에서 OAuth나 API 키로 xAI `/responses/compact`를 씁니다. 포그라운드 compaction에만 적용됩니다. 어떤 실패든 최근 메시지와 대조하는 choco-pi 로컬 요약으로 대체됩니다. 백그라운드 compaction은 기본적으로 켜져 있고, 켜져 있으면 텍스트 레인은 항상 돌며 각 네이티브 레인(OpenAI, Anthropic)은 해당 공급자 행이 server-side일 때만 돕니다.
 - 새 세션에는 이름이 자동으로 붙습니다. 이름을 짓는 모델은 `sessionAutoNameModel`로 정하며 기본값은 `openai/gpt-6-luna`입니다. 끄려면 `sessionAutoName`을 `false`로 설정하세요.
 - 에이전트 턴이 끝날 때마다 `openai/gpt-6-luna`(실패 시 `anthropic/claude-haiku-5-5`)로 다음 프롬프트를 예측해 빈 입력창에 흐린 글자로 보여 줍니다. Tab을 누르면 채워지며, Enter를 누르기 전에는 전송되지 않습니다. 제안은 보수적으로 나옵니다. 에이전트의 마지막 답이 사용자 입력을 필요로 할 때만 보이고, 대기 중인 메시지·실행 중인 서브에이전트나 백그라운드 셸·활성 `/goal`이 에이전트를 스스로 다시 움직일 때는 나오지 않습니다. 사용자의 프롬프트와 `agentLanguage` 어디에도 쓰이지 않은 문자 체계로 된 제안은 버립니다. 턴마다 최근 대화 내용을 담은 작은 요청이 제안 모델로 한 번 나갑니다. 끄려면 `promptSuggestion`을 `false`로 설정하세요.
 
@@ -332,47 +332,47 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 
 ## 설치된 패키지
 
-프로필은 다음 로컬 패키지 17개를 불러오며, 이 목록은 `~/.pi/agent/settings.json`의 `packages`에 절대 경로로 들어 있습니다. 이와 별도로 [`choco-pi-acp`](.pi/packages/choco-pi-acp) 0.0.33 패키지는 Pi가 불러오지 않으며, 에디터와 연결하는 독립 ACP 프로세스로 실행됩니다([Zed에서 choco-pi 사용하기](#zed에서-choco-pi-사용하기) 참고).
+프로필은 다음 로컬 패키지 17개를 불러오며, 이 목록은 `~/.pi/agent/settings.json`의 `packages`에 절대 경로로 들어 있습니다. 이와 별도로 [`choco-pi-acp`](packages/choco-pi-acp) 0.0.33 패키지는 Pi가 불러오지 않으며, 에디터와 연결하는 독립 ACP 프로세스로 실행됩니다([Zed에서 choco-pi 사용하기](#zed에서-choco-pi-사용하기) 참고).
 
-| 패키지                                                                    |           버전 | 용도                                             |
-| ------------------------------------------------------------------------- | -------------: | ------------------------------------------------ |
-| [`choco-pi-web-search`](.pi/packages/choco-pi-web-search)                 |          0.1.0 | 단일 웹 검색 도구의 세션별 라우팅                |
-| [`choco-pi-web-access`](.pi/packages/choco-pi-web-access)                 | 0.24.1-choco.0 | 웹 검색, 출처 검증, 콘텐츠 추출                  |
-| [`choco-pi-provider-synthetic`](.pi/packages/choco-pi-provider-synthetic) |          0.1.0 | Synthetic 공급자, 인증, 사용량, 검색             |
-| [`choco-pi-ui`](.pi/packages/choco-pi-ui)                                 |          0.1.0 | TUI, 상태 표시줄, 환경 설정, Nord 테마           |
-| [`choco-pi-shells`](.pi/packages/choco-pi-shells)                         |          0.1.0 | 소유자별 백그라운드 셸 프로세스                  |
-| [`choco-pi-hooks`](.pi/packages/choco-pi-hooks)                           |          0.1.0 | Claude Code 호환 생명주기 훅                     |
-| [`choco-pi-subagents`](.pi/packages/choco-pi-subagents)                   |          0.1.0 | 서브 에이전트, 작업 절차, 세션, fleet UI         |
-| [`choco-pi-advisor`](.pi/packages/choco-pi-advisor)                       |          0.1.0 | 서브 에이전트를 통한 읽기 전용 advisor 자문      |
-| [`choco-pi-editor-context`](.pi/packages/choco-pi-editor-context)         |          0.1.0 | 에디터 컨텍스트 프로토콜, 저장, 주입             |
-| [`choco-pi-goal`](.pi/packages/choco-pi-goal)                             |          0.1.0 | Codex 형태의 지속형 goal                         |
-| [`choco-pi-mcp`](.pi/packages/choco-pi-mcp)                               |          0.1.0 | 네이티브 Figma 도구(MCP 자체는 Pi 내장)          |
-| [`choco-pi-lsp`](.pi/packages/choco-pi-lsp)                               |          0.1.0 | LSP, lint, 구조 분석, 시맨틱 도구                |
-| [`choco-pi-compaction`](.pi/packages/choco-pi-compaction)                 |          0.1.0 | 유지된 최근 메시지와 대조한 로컬 compaction 요약 |
-| [`choco-pi-codex`](.pi/packages/choco-pi-codex)                           |          0.1.0 | Codex 도구, Code Mode, Responses compaction      |
-| [`choco-pi-agents-md`](.pi/packages/choco-pi-agents-md)                   |          0.1.0 | 하위 `AGENTS.md` 지침 로딩                       |
-| [`choco-pi-agent-browser`](.pi/packages/choco-pi-agent-browser)           |  0.5.0-choco.0 | 네이티브 브라우저 자동화 도구                    |
-| [`choco-pi-computer-use`](.pi/packages/choco-pi-computer-use)             |  0.5.0-choco.0 | macOS 데스크톱 확인 및 조작                      |
+| 패키지                                                                |           버전 | 용도                                             |
+| --------------------------------------------------------------------- | -------------: | ------------------------------------------------ |
+| [`choco-pi-web-search`](packages/choco-pi-web-search)                 |          0.1.0 | 단일 웹 검색 도구의 세션별 라우팅                |
+| [`choco-pi-web-access`](packages/choco-pi-web-access)                 | 0.24.1-choco.0 | 웹 검색, 출처 검증, 콘텐츠 추출                  |
+| [`choco-pi-provider-synthetic`](packages/choco-pi-provider-synthetic) |          0.1.0 | Synthetic 공급자, 인증, 사용량, 검색             |
+| [`choco-pi-ui`](packages/choco-pi-ui)                                 |          0.1.0 | TUI, 상태 표시줄, 환경 설정, Nord 테마           |
+| [`choco-pi-shells`](packages/choco-pi-shells)                         |          0.1.0 | 소유자별 백그라운드 셸 프로세스                  |
+| [`choco-pi-hooks`](packages/choco-pi-hooks)                           |          0.1.0 | Claude Code 호환 생명주기 훅                     |
+| [`choco-pi-subagents`](packages/choco-pi-subagents)                   |          0.1.0 | 서브 에이전트, 작업 절차, 세션, fleet UI         |
+| [`choco-pi-advisor`](packages/choco-pi-advisor)                       |          0.1.0 | 서브 에이전트를 통한 읽기 전용 advisor 자문      |
+| [`choco-pi-editor-context`](packages/choco-pi-editor-context)         |          0.1.0 | 에디터 컨텍스트 프로토콜, 저장, 주입             |
+| [`choco-pi-goal`](packages/choco-pi-goal)                             |          0.1.0 | Codex 형태의 지속형 goal                         |
+| [`choco-pi-mcp`](packages/choco-pi-mcp)                               |          0.1.0 | 네이티브 Figma 도구(MCP 자체는 Pi 내장)          |
+| [`choco-pi-lsp`](packages/choco-pi-lsp)                               |          0.1.0 | LSP, lint, 구조 분석, 시맨틱 도구                |
+| [`choco-pi-compaction`](packages/choco-pi-compaction)                 |          0.1.0 | 유지된 최근 메시지와 대조한 로컬 compaction 요약 |
+| [`choco-pi-codex`](packages/choco-pi-codex)                           |          0.1.0 | Codex 도구, Code Mode, Responses compaction      |
+| [`choco-pi-agents-md`](packages/choco-pi-agents-md)                   |          0.1.0 | 하위 `AGENTS.md` 지침 로딩                       |
+| [`choco-pi-agent-browser`](packages/choco-pi-agent-browser)           |  0.5.0-choco.0 | 네이티브 브라우저 자동화 도구                    |
+| [`choco-pi-computer-use`](packages/choco-pi-computer-use)             |  0.5.0-choco.0 | macOS 데스크톱 확인 및 조작                      |
 
 ## 설정과 사용자화
 
-| 파일 또는 디렉터리                                                                                                                            | 용도                                                            |
-| --------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| 전역 `~/.pi/agent/settings.json`(체크아웃에는 `.pi/settings.json` 없음)                                                                       | 불러올 패키지, 테마, TUI 모드, 모델별 thinking 수준, compaction |
-| [`.pi/SYSTEM.md`](.pi/SYSTEM.md)                                                                                                              | 프로필 전체에 적용되는 에이전트 동작과 권한 규칙                |
-| [`.pi/model-guidance.md`](.pi/model-guidance.md)                                                                                              | 모델 라우팅과 모델별 정책                                       |
-| [`.pi/writing-policy.md`](.pi/writing-policy.md)와 [`.pi/review-policy.md`](.pi/review-policy.md)                                             | 응답 문장 규칙과 리뷰 정책                                      |
-| [`AGENTS.md`](AGENTS.md)와 [패키지 예시](.pi/packages/choco-pi-subagents/AGENTS.md)                                                           | 루트 및 경로별 저장소 규칙                                      |
-| [`.pi/agents`](.pi/agents), [`.pi/skills`](.pi/skills), [`.pi/prompts`](.pi/prompts)                                                          | 에이전트 역할, 작업 절차 스킬, 슬래시 명령 프롬프트             |
-| [`.pi/subagents.json`](.pi/subagents.json)                                                                                                    | 서브 에이전트 동시 실행 수, 깊이, fleet 화면, worktree 격리     |
-| [`.pi/choco-pi-codex.json`](.pi/choco-pi-codex.json)                                                                                          | Code Mode, Codex 도구, notebook, compaction 설정                |
-| [`.pi/zentui.json`](.pi/zentui.json)                                                                                                          | TUI 색상, 구성 요소, 아이콘                                     |
-| [`.pi/models.json`](.pi/models.json)과 [`.pi/keybindings.json`](.pi/keybindings.json)                                                         | 공급자 모델 재정의와 키 바인딩                                  |
-| [`apex-provider.json`](.pi/extensions/apex-provider.json)                                                                                     | Callstack Apex 공급자 탐색 기본값                               |
-| [`review.json`](.pi/extensions/review.json)                                                                                                   | 로컬 리뷰 인터페이스 설정                                       |
-| 전역 `~/.pi/agent/advisor.json`과 프로젝트 재정의 `.pi/advisor.json`                                                                          | advisor 활성화, 모델, effort, 턴별 사용 한도                    |
-| `~/.pi/agent/mcp.json`과 그 예시인 [`.pi/mcp.example.json`](.pi/mcp.example.json)                                                             | 추적하지 않는 Pi 내장 형식의 MCP 서버 설정                      |
-| 패키지별 [`AGENTS.md`](.pi/packages/choco-pi-agent-browser/AGENTS.md)와 [`VENDORED.md`](.pi/packages/choco-pi-agent-browser/VENDORED.md) 파일 | 패키지 정책과 기록된 업스트림 변경 사항                         |
+| 파일 또는 디렉터리                                                                                                                    | 용도                                                            |
+| ------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| 전역 `~/.pi/agent/settings.json`(체크아웃에는 `.pi/settings.json` 없음)                                                               | 불러올 패키지, 테마, TUI 모드, 모델별 thinking 수준, compaction |
+| [`profile/SYSTEM.md`](profile/SYSTEM.md)                                                                                              | 프로필 전체에 적용되는 에이전트 동작과 권한 규칙                |
+| [`profile/model-guidance.md`](profile/model-guidance.md)                                                                              | 모델 라우팅과 모델별 정책                                       |
+| [`profile/writing-policy.md`](profile/writing-policy.md)와 [`profile/review-policy.md`](profile/review-policy.md)                     | 응답 문장 규칙과 리뷰 정책                                      |
+| [`AGENTS.md`](AGENTS.md)와 [패키지 예시](packages/choco-pi-subagents/AGENTS.md)                                                       | 루트 및 경로별 저장소 규칙                                      |
+| [`profile/agents`](profile/agents), [`profile/skills`](profile/skills), [`profile/prompts`](profile/prompts)                          | 에이전트 역할, 작업 절차 스킬, 슬래시 명령 프롬프트             |
+| [`profile/subagents.json`](profile/subagents.json)                                                                                    | 서브 에이전트 동시 실행 수, 깊이, fleet 화면, worktree 격리     |
+| [`profile/choco-pi-codex.json`](profile/choco-pi-codex.json)                                                                          | Code Mode, Codex 도구, notebook, compaction 설정                |
+| [`profile/zentui.json`](profile/zentui.json)                                                                                          | TUI 색상, 구성 요소, 아이콘                                     |
+| [`profile/models.json`](profile/models.json)과 [`profile/keybindings.json`](profile/keybindings.json)                                 | 공급자 모델 재정의와 키 바인딩                                  |
+| [`apex-provider.json`](profile/extensions/apex-provider.json)                                                                         | Callstack Apex 공급자 탐색 기본값                               |
+| [`review.json`](profile/extensions/review.json)                                                                                       | 로컬 리뷰 인터페이스 설정                                       |
+| 전역 `~/.pi/agent/advisor.json`과 프로젝트 재정의 `.pi/advisor.json`                                                                  | advisor 활성화, 모델, effort, 턴별 사용 한도                    |
+| `~/.pi/agent/mcp.json`과 그 예시인 [`profile/mcp.example.json`](profile/mcp.example.json)                                             | 추적하지 않는 Pi 내장 형식의 MCP 서버 설정                      |
+| 패키지별 [`AGENTS.md`](packages/choco-pi-agent-browser/AGENTS.md)와 [`VENDORED.md`](packages/choco-pi-agent-browser/VENDORED.md) 파일 | 패키지 정책과 기록된 업스트림 변경 사항                         |
 
 Pi 1.0.3부터 `Home`/`End`는 편집기 커서를 이동합니다. 대화 기록의 맨 위/아래로 이동하려면 `Ctrl+Home`/`Ctrl+End`를 사용하세요.
 
@@ -383,7 +383,7 @@ Pi 1.0.3부터 `Home`/`End`는 편집기 커서를 이동합니다. 대화 기�
 
 `npm run install:profile`은 `~/.pi/agent/settings.json`을 다시 쓰며, 관리하지 않는
 키는 그대로 둡니다. 체크아웃에는 `.pi/settings.json`이 없으므로 프로필 정책은 이
-전역 파일 자체에서 가져옵니다. 체크아웃의 `.pi/packages` 아래를 가리키는
+전역 파일 자체에서 가져옵니다. 체크아웃의 `packages` 아래를 가리키는
 `packages` 항목과 `extensions`의 내장 확장 정책이 그 정책입니다. 실행할 때마다
 다음과 같이 처리합니다. 번들 패키지가 하나도 없으면 `scripts/install-profile.ts`의
 프로필 기본값에서 시작합니다. 이 기본값에는 관리자의 모델 범위(`enabledModels`)와
@@ -406,27 +406,31 @@ Pi 1.0.3부터 `Home`/`End`는 편집기 커서를 이동합니다. 대화 기�
 ```json
 {
   "packages": [
-    "/path/to/choco-pi/.pi/packages/choco-pi-web-search",
-    "/path/to/choco-pi/.pi/packages/choco-pi-web-access",
-    "/path/to/choco-pi/.pi/packages/choco-pi-provider-synthetic",
-    "/path/to/choco-pi/.pi/packages/choco-pi-ui",
-    "/path/to/choco-pi/.pi/packages/choco-pi-shells",
-    "/path/to/choco-pi/.pi/packages/choco-pi-hooks",
-    "/path/to/choco-pi/.pi/packages/choco-pi-subagents",
-    "/path/to/choco-pi/.pi/packages/choco-pi-advisor",
-    "/path/to/choco-pi/.pi/packages/choco-pi-goal",
-    "/path/to/choco-pi/.pi/packages/choco-pi-mcp",
-    "/path/to/choco-pi/.pi/packages/choco-pi-lsp",
-    "/path/to/choco-pi/.pi/packages/choco-pi-compaction",
-    "/path/to/choco-pi/.pi/packages/choco-pi-codex",
-    "/path/to/choco-pi/.pi/packages/choco-pi-agents-md",
-    "/path/to/choco-pi/.pi/packages/choco-pi-agent-browser",
-    "/path/to/choco-pi/.pi/packages/choco-pi-computer-use",
-    "/path/to/choco-pi/.pi/packages/choco-pi-editor-context"
+    "/path/to/choco-pi/packages/choco-pi-web-search",
+    "/path/to/choco-pi/packages/choco-pi-web-access",
+    "/path/to/choco-pi/packages/choco-pi-provider-synthetic",
+    "/path/to/choco-pi/packages/choco-pi-ui",
+    "/path/to/choco-pi/packages/choco-pi-shells",
+    "/path/to/choco-pi/packages/choco-pi-hooks",
+    "/path/to/choco-pi/packages/choco-pi-subagents",
+    "/path/to/choco-pi/packages/choco-pi-advisor",
+    "/path/to/choco-pi/packages/choco-pi-goal",
+    "/path/to/choco-pi/packages/choco-pi-mcp",
+    "/path/to/choco-pi/packages/choco-pi-lsp",
+    "/path/to/choco-pi/packages/choco-pi-compaction",
+    "/path/to/choco-pi/packages/choco-pi-codex",
+    "/path/to/choco-pi/packages/choco-pi-agents-md",
+    "/path/to/choco-pi/packages/choco-pi-agent-browser",
+    "/path/to/choco-pi/packages/choco-pi-computer-use",
+    "/path/to/choco-pi/packages/choco-pi-editor-context"
   ],
-  "extensions": ["/path/to/choco-pi/.pi/extensions", "-builtin:codemode", "-builtin:tool-search"],
-  "skills": ["/path/to/choco-pi/.pi/skills"],
-  "prompts": ["/path/to/choco-pi/.pi/prompts"],
+  "extensions": [
+    "/path/to/choco-pi/profile/extensions",
+    "-builtin:codemode",
+    "-builtin:tool-search"
+  ],
+  "skills": ["/path/to/choco-pi/profile/skills"],
+  "prompts": ["/path/to/choco-pi/profile/prompts"],
 
   "theme": "nord-dark",
   "tuiMode": "fullscreen",
@@ -532,7 +536,7 @@ Pi 1.0.3부터 `Home`/`End`는 편집기 커서를 이동합니다. 대화 기�
 | `defaultProvider`, `defaultModel`, `defaultThinkingLevel`, `enabledModels`                                                        | 사용자                     | 시작 모델과 thinking 수준입니다. `enabledModels`는 모델 전환 대상을 제한합니다.                                                                                                                                                                                                                                                                                                                 |
 | `cacheWarming`, `transport`, `httpIdleTimeoutMs`, `quietStartup`, `enableInstallTelemetry`, `markdown`, `terminal`                | 사용자                     | Pi 런타임 설정입니다. `cacheWarming`은 전역 파일에서만 읽으며 `off`, `streaming`, `idle`(기본값) 중 하나입니다.                                                                                                                                                                                                                                                                                 |
 | `agentLanguage`, `agentStyle`, `agentPersona`, `agentOnUsageLimit`, `sessionAutoName`, `sessionAutoNameModel`, `promptSuggestion` | 사용자 또는 `/preferences` | choco-pi는 이 키를 전역 파일에서만 읽습니다. `agentStyle`은 `balanced`(기본값), `concise`, `explanatory`, 또는 `~/.pi/agent/agent-styles/`에 둔 스타일 파일 이름입니다. `agentPersona`의 기본값은 `pessimistic`, `agentOnUsageLimit`의 기본값은 `none`(`fallback`, `auto-resume` 선택 가능), `sessionAutoNameModel`의 기본값은 `openai/gpt-6-luna`, `promptSuggestion`의 기본값은 `true`입니다. |
-| `hooks`                                                                                                                           | 사용자                     | Claude Code 훅 형식입니다. choco-pi-hooks는 `.claude`, `.agents` 설정 파일의 훅도 읽습니다. 자세한 내용은 [README](.pi/packages/choco-pi-hooks/README.md)를 참고하세요.                                                                                                                                                                                                                         |
+| `hooks`                                                                                                                           | 사용자                     | Claude Code 훅 형식입니다. choco-pi-hooks는 `.claude`, `.agents` 설정 파일의 훅도 읽습니다. 자세한 내용은 [README](packages/choco-pi-hooks/README.md)를 참고하세요.                                                                                                                                                                                                                             |
 
 ### advisor 설정
 
@@ -550,12 +554,12 @@ advisor 설정은 별도 파일인 `~/.pi/agent/advisor.json`에 두며, 프로�
 
 `effort`에는 `off`부터 `max`까지 쓸 수 있고, `maxUses`는 1 이상이어야 합니다. 파일이
 없으면 advisor는 비활성 상태입니다. 기본값과 제한은
-[advisor README](.pi/packages/choco-pi-advisor/README.md)를 참고하세요.
+[advisor README](packages/choco-pi-advisor/README.md)를 참고하세요.
 
 ## Zed에서 choco-pi 사용하기
 
-`.pi/packages/choco-pi-acp`는 Agent Client Protocol로 Zed와 choco-pi를 연결하고,
-`.pi/packages/choco-pi-editor-context`는 Zed Task를 통해 현재 파일, 커서, 선택 영역을
+`packages/choco-pi-acp`는 Agent Client Protocol로 Zed와 choco-pi를 연결하고,
+`packages/choco-pi-editor-context`는 Zed Task를 통해 현재 파일, 커서, 선택 영역을
 대상 Pi 세션에 동기화합니다. [Zed 설정 안내](docs/zed-setup.md)부터 시작하세요.
 [호환성 기준](docs/zed-acp-compatibility.md), [명령 호환 목록](docs/zed-command-parity.md),
 [런타임 E2E 증거](docs/zed-e2e-evidence.md)에 검증된 내용이 기록되어 있습니다.

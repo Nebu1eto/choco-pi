@@ -10,7 +10,7 @@ import {
   TUI_KEYBINDINGS,
   type TuiMouseEvent,
 } from "@earendil-works/pi-tui";
-import { isJsonRecord, isNumber } from "../.pi/extensions/lib/runtime-values.ts";
+import { isJsonRecord, isNumber } from "../profile/extensions/lib/runtime-values.ts";
 import { SKIP_WITHOUT_ZENTUI } from "./zentui-build.ts";
 import {
   at,

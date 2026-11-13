@@ -4,17 +4,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { initTheme } from "@earendil-works/pi-coding-agent";
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
-import { buildCommentAnchor } from "../.pi/extensions/review/core/anchor.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
+import { buildCommentAnchor } from "../profile/extensions/review/core/anchor.ts";
 import {
   buildReviewChatPrompt,
   type ReviewChat,
   type ReviewChatMessage,
-} from "../.pi/extensions/review/core/ask.ts";
-import { renderReviewMarkdown } from "../.pi/extensions/review/core/markdown-export.ts";
-import { headlessSafeText } from "../.pi/extensions/review/headless.ts";
-import type { DiffModel, ReviewRecord } from "../.pi/extensions/review/core/types.ts";
-import { pickReviewRecord, pickReviewTarget } from "../.pi/extensions/review/ui/target-picker.ts";
+} from "../profile/extensions/review/core/ask.ts";
+import { renderReviewMarkdown } from "../profile/extensions/review/core/markdown-export.ts";
+import { headlessSafeText } from "../profile/extensions/review/headless.ts";
+import type { DiffModel, ReviewRecord } from "../profile/extensions/review/core/types.ts";
+import {
+  pickReviewRecord,
+  pickReviewTarget,
+} from "../profile/extensions/review/ui/target-picker.ts";
 import {
   baseRecord,
   changedFile,

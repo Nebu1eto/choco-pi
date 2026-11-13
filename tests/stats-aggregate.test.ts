@@ -11,8 +11,8 @@ import {
   scopeLabel,
   toggleScope,
   type PriceLookup,
-} from "../.pi/extensions/lib/stats/aggregate.ts";
-import type { CallRecord } from "../.pi/extensions/lib/stats/records.ts";
+} from "../profile/extensions/lib/stats/aggregate.ts";
+import type { CallRecord } from "../profile/extensions/lib/stats/records.ts";
 
 const NOW = Date.parse("2026-10-27T12:00:00.000Z");
 const DAY = 86_400_000;
@@ -337,7 +337,7 @@ test("speed rows split a model by Fast state, carry estimates, and keep Fast row
 test("period starts are local calendar days: Asia/Seoul boundaries", async () => {
   // The zone is process-wide, so the check runs in a child with TZ set.
   const script = [
-    "import { dayKey, filterRecords, periodStart } from './.pi/extensions/lib/stats/aggregate.ts';",
+    "import { dayKey, filterRecords, periodStart } from './profile/extensions/lib/stats/aggregate.ts';",
     "const now = Date.parse('2026-10-28T03:00:00+09:00');",
     "const base = { sessionId: 's', file: '/s', cwd: '/w', kind: 'assistant', provider: 'p', model: 'm', tokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 }, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }, durationMs: 1, ttftMs: undefined, stopReason: 'stop', responseModel: undefined, fastRequested: undefined, feature: 'conversation', isSubagent: false, failed: false };",
     "const late = { ...base, key: 'late', at: Date.parse('2026-10-27T16:30:00Z') };",
@@ -430,7 +430,7 @@ test("zero-cost calls reprice at the tier list rate, times the Fast multiple whe
 test("hour buckets keep both occurrences of a DST fall-back hour: America/New_York and Asia/Kathmandu", async () => {
   // The zone is process-wide, so the check runs in a child with TZ set.
   const script = [
-    "import { hourStart, timelineOf } from './.pi/extensions/lib/stats/aggregate.ts';",
+    "import { hourStart, timelineOf } from './profile/extensions/lib/stats/aggregate.ts';",
     "const first = Date.parse('2026-11-01T01:30:00-04:00');",
     "const second = Date.parse('2026-11-01T01:30:00-05:00');",
     "const keys = timelineOf('24h', Date.parse('2026-11-01T03:30:00-05:00')).keys.map(Number);",
@@ -459,7 +459,7 @@ test("hour buckets keep both occurrences of a DST fall-back hour: America/New_Yo
     [
       "--input-type=module",
       "-e",
-      "import { hourStart } from './.pi/extensions/lib/stats/aggregate.ts'; console.log(new Date(hourStart(Date.parse('2026-10-27T12:00:00Z'))).toISOString());",
+      "import { hourStart } from './profile/extensions/lib/stats/aggregate.ts'; console.log(new Date(hourStart(Date.parse('2026-10-27T12:00:00Z'))).toISOString());",
     ],
     { cwd: process.cwd(), env: { ...process.env, TZ: "Asia/Kathmandu" } },
   );

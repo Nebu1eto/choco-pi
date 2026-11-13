@@ -2,12 +2,16 @@ import { createHash } from "node:crypto";
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { canonicalJson, systemText, cacheableSegments } from "../../.pi/extensions/cache-probe.ts";
+import {
+  canonicalJson,
+  systemText,
+  cacheableSegments,
+} from "../../profile/extensions/cache-probe.ts";
 import {
   isJsonRecord,
   isString,
   type RuntimeValue,
-} from "../../.pi/extensions/lib/runtime-values.ts";
+} from "../../profile/extensions/lib/runtime-values.ts";
 import { parseJson } from "./io.ts";
 import type { CaptureRecord, JsonValue } from "./types.ts";
 

@@ -4,12 +4,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { configPathsAliasSameFile } from "../.pi/packages/choco-pi-codex/src/adapter/activation/config-path-alias.ts";
+import { configPathsAliasSameFile } from "../packages/choco-pi-codex/src/adapter/activation/config-path-alias.ts";
 import {
   clearFolderCodexConversionConfig,
   hasFolderCodexConversionConfig,
   materializeFolderCodexConversionConfig,
-} from "../.pi/packages/choco-pi-codex/src/adapter/activation/config-store.ts";
+} from "../packages/choco-pi-codex/src/adapter/activation/config-store.ts";
 
 const CONFIG_BASENAME = "choco-pi-codex.json";
 

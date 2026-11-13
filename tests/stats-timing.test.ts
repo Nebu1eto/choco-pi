@@ -5,9 +5,9 @@ import {
   isJsonRecord,
   reinterpretHostValue,
   type RuntimeValue,
-} from "../.pi/extensions/lib/runtime-values.ts";
-import { TIMING_ENTRY_TYPE } from "../.pi/extensions/lib/stats/scan.ts";
-import { registerStatsTiming } from "../.pi/extensions/lib/stats/timing.ts";
+} from "../profile/extensions/lib/runtime-values.ts";
+import { TIMING_ENTRY_TYPE } from "../profile/extensions/lib/stats/scan.ts";
+import { registerStatsTiming } from "../profile/extensions/lib/stats/timing.ts";
 
 type Handler = (event: RuntimeValue) => void;
 

@@ -12,15 +12,16 @@ import {
   checkHarness,
   parseCliArgs,
   type HarnessOptions,
-} from "../.pi/skills/check/scripts/check-harness.ts";
+} from "../profile/skills/check/scripts/check-harness.ts";
 
-const root = "/fixture/.pi";
+const root = "/fixture/profile";
+const projectSettings = path.join("/fixture", ".pi", "settings.json");
 const execFileAsync = promisify(execFile);
 
 function fixture(overrides: Partial<HarnessOptions> = {}) {
   const reads: string[] = [];
   const files = new Map<string, string>([
-    [path.join(root, "settings.json"), JSON.stringify({ packages: [], tuiMode: "inline" })],
+    [projectSettings, JSON.stringify({ packages: [], tuiMode: "inline" })],
   ]);
   return {
     reads,
@@ -239,7 +240,7 @@ test("subagent readiness accepts only supported fallback roles", async () => {
     const { options } = fixture({
       requiredCapabilities: ["subagents"],
       readText: async (target) => {
-        if (target === path.join(root, "settings.json")) {
+        if (target === projectSettings) {
           return JSON.stringify({ packages: [], tuiMode: "inline" });
         }
         if (target === path.join(root, "subagents.json")) {
@@ -267,7 +268,7 @@ test("subagent readiness requires overridable model and thinking on every role",
     const { options } = fixture({
       requiredCapabilities: ["subagents"],
       readText: async (target) => {
-        if (target === path.join(root, "settings.json")) {
+        if (target === projectSettings) {
           return JSON.stringify({ packages: [], tuiMode: "inline" });
         }
         if (target === path.join(root, "subagents.json")) {
@@ -321,7 +322,7 @@ test("invalid CLI input is rejected before a check can run", () => {
 
 test("direct and symlink CLI entries reject invalid input", async () => {
   const scriptPath = fileURLToPath(
-    new URL("../.pi/skills/check/scripts/check-harness.ts", import.meta.url),
+    new URL("../profile/skills/check/scripts/check-harness.ts", import.meta.url),
   );
   const executable = process.execPath;
   const tempRoot = await mkdtemp(path.join(tmpdir(), "choco-pi-check-"));
@@ -342,7 +343,8 @@ test("direct and symlink CLI entries reject invalid input", async () => {
 });
 
 test("importing the harness does not run the CLI with absent or unrelated entry paths", async () => {
-  const scriptUrl = new URL("../.pi/skills/check/scripts/check-harness.ts", import.meta.url).href;
+  const scriptUrl = new URL("../profile/skills/check/scripts/check-harness.ts", import.meta.url)
+    .href;
   const executable = process.execPath;
   for (const entry of [
     undefined,
@@ -433,7 +435,7 @@ test("built-in policy keeps codemode and tool search disabled and MCP enabled", 
     const { options } = fixture({
       loadedBuiltinExtensions: testCase.loaded,
       readText: async (target) => {
-        if (target === path.join(root, "settings.json")) {
+        if (target === projectSettings) {
           return JSON.stringify({
             packages: [],
             tuiMode: "fullscreen",
@@ -455,7 +457,7 @@ test("standalone built-in extension check states that no host was observed", asy
   const { options } = fixture({
     runtimeIdentity: undefined,
     readText: async (target) => {
-      if (target === path.join(root, "settings.json")) {
+      if (target === projectSettings) {
         return JSON.stringify({
           packages: [],
           extensions: ["-builtin:codemode", "-builtin:tool-search"],
@@ -493,7 +495,7 @@ test("active host must register choco-pi tool_search without custom MCP adapters
 });
 
 test("without project settings, the agent settings supply the profile policy", async (context) => {
-  const configRoot = fileURLToPath(new URL("../.pi", import.meta.url));
+  const configRoot = fileURLToPath(new URL("../profile", import.meta.url));
   const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-check-agent-"));
   context.after(() => rm(agentDir, { recursive: true, force: true }));
   const settingsPath = path.join(agentDir, "settings.json");
@@ -507,7 +509,7 @@ test("without project settings, the agent settings supply the profile policy", a
 
   // As an install leaves them: bundled packages by absolute path, plus the user's own.
   await write({
-    packages: [path.join(configRoot, "packages", "choco-pi-lsp"), "npm:user-package@1.0.0"],
+    packages: [path.join(configRoot, "..", "packages", "choco-pi-lsp"), "npm:user-package@1.0.0"],
     extensions: [path.join(configRoot, "extensions"), "-builtin:codemode", "-builtin:tool-search"],
     tuiMode: "fullscreen",
   });

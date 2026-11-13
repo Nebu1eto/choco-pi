@@ -57,7 +57,7 @@ test("every test file under tests/ is run by the default patterns or by --formal
     "the default run starts no formal test",
   );
   assert.ok(standard.includes("tests/test-runner.test.ts"));
-  assert.ok(standard.some((file) => file.startsWith(".pi/packages/")));
+  assert.ok(standard.some((file) => file.startsWith("packages/")));
   // A test file in a directory neither pattern names would never run.
   const all = await matched(["tests/**/*.test.ts"]);
   const run = new Set([...standard, ...formal]);

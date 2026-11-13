@@ -3,7 +3,7 @@ import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { dedupeRecords } from "../.pi/extensions/lib/stats/aggregate.ts";
+import { dedupeRecords } from "../profile/extensions/lib/stats/aggregate.ts";
 import {
   FEATURE_CACHE_WARMING,
   FEATURE_CODE_MODE,
@@ -11,19 +11,19 @@ import {
   FEATURE_CONVERSATION,
   FEATURE_SUBAGENTS,
   FEATURE_TOOL_INTERNAL,
-} from "../.pi/extensions/lib/stats/features.ts";
+} from "../profile/extensions/lib/stats/features.ts";
 import {
   FAST_MODE_ENTRY_TYPE,
   scanSessions,
   SUBAGENT_MARKER_TYPE,
   TIMING_ENTRY_TYPE,
   type ScanCache,
-} from "../.pi/extensions/lib/stats/scan.ts";
+} from "../profile/extensions/lib/stats/scan.ts";
 
 import {
   COMPACTION_CANDIDATE_TYPE,
   COMPACTION_LANE_TYPE,
-} from "../.pi/extensions/lib/stats/compaction.ts";
+} from "../profile/extensions/lib/stats/compaction.ts";
 
 const T0 = Date.parse("2026-10-20T10:00:00.000Z");
 

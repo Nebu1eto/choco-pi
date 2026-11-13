@@ -18,7 +18,7 @@ import {
   sessionIdFromFile,
   setPreviousScratchDir,
   unregisterScratchRoot,
-} from "../.pi/extensions/lib/scratch-path.ts";
+} from "../profile/extensions/lib/scratch-path.ts";
 
 const NO_ENV = {};
 

@@ -3,8 +3,8 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import cacheProbe from "../.pi/extensions/cache-probe.ts";
-import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
+import cacheProbe from "../profile/extensions/cache-probe.ts";
+import { reinterpretHostValue } from "../profile/extensions/lib/runtime-values.ts";
 import {
   cachePayloadMetadata,
   createRequestLinker,
@@ -17,7 +17,7 @@ import {
   systemRegionHashes,
   systemText,
   toolNamesHash,
-} from "../.pi/extensions/cache-probe.ts";
+} from "../profile/extensions/cache-probe.ts";
 
 test("canonicalJson is stable across object key order", () => {
   assert.equal(

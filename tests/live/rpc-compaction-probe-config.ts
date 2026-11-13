@@ -18,19 +18,19 @@ import {
   CONTEXT_SOFT_CAP_KEY,
   CONTEXT_SOFT_CAP_TOKENS,
   type ContextPreset,
-} from "../../.pi/extensions/lib/agent-preferences.ts";
+} from "../../profile/extensions/lib/agent-preferences.ts";
 import {
   computeContextPolicy,
   HEADROOM_MARGIN_TOKENS,
-} from "../../.pi/extensions/lib/context-policy.ts";
-import { OPAQUE_HISTORY_KEY } from "../../.pi/packages/choco-pi-compaction/src/anthropic/mode.ts";
-import { XAI_COMPACTION_MODE_KEY } from "../../.pi/packages/choco-pi-compaction/src/xai/mode.ts";
+} from "../../profile/extensions/lib/context-policy.ts";
+import { OPAQUE_HISTORY_KEY } from "../../packages/choco-pi-compaction/src/anthropic/mode.ts";
+import { XAI_COMPACTION_MODE_KEY } from "../../packages/choco-pi-compaction/src/xai/mode.ts";
 import {
   APPROVED_LIVE_MODELS,
   MANUAL_ONLY_LIVE_MODELS,
   SWITCH_ONLY_LIVE_MODELS,
 } from "./background-compaction/budget.ts";
-import { isJsonRecord, type JsonRecord } from "../../.pi/extensions/lib/runtime-values.ts";
+import { isJsonRecord, type JsonRecord } from "../../profile/extensions/lib/runtime-values.ts";
 
 export const USAGE = `Manual, billable real-Pi RPC compaction probe (never run by the unit suite).
 
@@ -230,7 +230,7 @@ export function resolveCells(options: ProbeOptions): Cell[] {
 /** The native lane a server-side cell must prove, per provider. */
 export interface NativeLane {
   /**
-   * Background backend id (`.pi/packages/choco-pi-compaction/src/background/settings.ts`);
+   * Background backend id (`packages/choco-pi-compaction/src/background/settings.ts`);
    * undefined for a lane with no background backend (xAI).
    */
   readonly backendId: "anthropic-native" | "codex-native-v2" | undefined;
@@ -384,12 +384,12 @@ export async function buildAgentFiles(
   const sourceSettings = parseObject(await readFile(settingsPath, "utf8"), settingsPath);
   const settingsOverrides: JsonRecord = {
     packages: [
-      join(options.checkout, ".pi/packages/choco-pi-compaction"),
+      join(options.checkout, "packages/choco-pi-compaction"),
       // Codex-owned models are served only by the Codex lane this package registers.
-      join(options.checkout, ".pi/packages/choco-pi-codex"),
+      join(options.checkout, "packages/choco-pi-codex"),
     ],
     // The profile extensions, so the context cap (model-context-cap.ts) is active.
-    extensions: [join(options.checkout, ".pi/extensions")],
+    extensions: [join(options.checkout, "profile/extensions")],
     compaction: { enabled: true, reserveTokens: launch.reserveTokens, keepRecentTokens: 1 },
     compactionAnthropic: switches.compactionAnthropic,
     [XAI_COMPACTION_MODE_KEY]: switches.compactionXai,

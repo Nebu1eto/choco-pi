@@ -1,4 +1,4 @@
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -10,7 +10,7 @@ import {
   type ReviewChatSession,
   type ReviewChatSessionEvent,
   type ReviewChatSessionRequest,
-} from "../.pi/extensions/review/core/ask.ts";
+} from "../profile/extensions/review/core/ask.ts";
 
 /* ------------------------------------------------------------------ fixtures */
 

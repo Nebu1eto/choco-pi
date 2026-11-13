@@ -16,7 +16,7 @@ import {
   type Schema,
   type Static,
 } from "@earendil-works/pi-schema";
-import type { JsonValue as RuntimeJsonValue } from "../../.pi/extensions/lib/runtime-values.ts";
+import type { JsonValue as RuntimeJsonValue } from "../../profile/extensions/lib/runtime-values.ts";
 
 // pi-schema 1.5.1 does not resolve a root $defs/$ref, so recursion goes through recursive().
 // Numbers are bounded to reject NaN/Infinity as the previous schema library's number check did.

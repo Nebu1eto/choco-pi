@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseNamedOptions, requiredStringOption } from "./io.ts";
-import { isString } from "../../.pi/extensions/lib/runtime-values.ts";
+import { isString } from "../../profile/extensions/lib/runtime-values.ts";
 import { runPi } from "./pi-runner.ts";
 import { buildPrefixReport } from "./prefix-report.ts";
 import { readSessionUsage } from "./session-usage.ts";

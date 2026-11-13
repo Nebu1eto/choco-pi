@@ -4,8 +4,8 @@ import {
   limitSessionWait,
   SESSION_WAIT_LIMIT_MS,
   submitSessionDelivery,
-} from "../.pi/extensions/lib/session-communication.ts";
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/lib/session-communication.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 
 test("session waits are limited to one five-second grace period", () => {
   assert.equal(SESSION_WAIT_LIMIT_MS, 5_000);

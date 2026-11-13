@@ -6,8 +6,8 @@ import {
   fastStateOf,
   listOutputRate,
   type ModelPrices,
-} from "../.pi/extensions/lib/stats/fast.ts";
-import type { CallRecord } from "../.pi/extensions/lib/stats/records.ts";
+} from "../profile/extensions/lib/stats/fast.ts";
+import type { CallRecord } from "../profile/extensions/lib/stats/records.ts";
 
 const ASTRA: ModelPrices = {
   input: 10,

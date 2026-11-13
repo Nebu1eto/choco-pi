@@ -16,7 +16,7 @@ import {
   isCompactionWireItem,
   isInstructionItem,
   parseXaiWireBody,
-} from "../../../.pi/packages/choco-pi-compaction/src/xai/capture.ts";
+} from "../../../packages/choco-pi-compaction/src/xai/capture.ts";
 import type { Recorder } from "./artifacts.ts";
 import type { HostState } from "./host-state.ts";
 import { requestOrigin } from "./live-transport.ts";

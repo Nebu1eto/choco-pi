@@ -13,12 +13,12 @@ import {
   VStack,
 } from "@earendil-works/pi-tui";
 import { renderLayoutFrame } from "@earendil-works/pi-tui/dist/layout.js";
-import { createDockHost } from "../.pi/extensions/diff/host/dock-host.ts";
+import { createDockHost } from "../profile/extensions/diff/host/dock-host.ts";
 import type {
   PaneScroller,
   PaneSurface,
   PointerGesture,
-} from "../.pi/extensions/lib/changes/view/surface.ts";
+} from "../profile/extensions/lib/changes/view/surface.ts";
 
 const COLUMNS = 120;
 const ROWS = 40;

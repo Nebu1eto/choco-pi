@@ -4,11 +4,11 @@ import {
   createModelSummarizer,
   createTextBackend,
   TEXT_BACKEND_ID,
-} from "../../../.pi/packages/choco-pi-compaction/src/background/text-backend.ts";
+} from "../../../packages/choco-pi-compaction/src/background/text-backend.ts";
 import {
   getRegistry,
   registerBackendFactory,
-} from "../../../.pi/packages/choco-pi-compaction/src/background/registry.ts";
+} from "../../../packages/choco-pi-compaction/src/background/registry.ts";
 import { digest, type Recorder } from "./artifacts.ts";
 export interface SummaryOwner {
   ownerKey: string;

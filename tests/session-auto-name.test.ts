@@ -4,11 +4,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import {
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "../profile/extensions/lib/runtime-values.ts";
 import {
   DEFAULT_SESSION_AUTO_NAME_MODEL,
   SESSION_AUTO_NAME_FALLBACK_MODEL,
-} from "../.pi/extensions/lib/agent-preferences.ts";
+} from "../profile/extensions/lib/agent-preferences.ts";
 import {
   firstSuccessfulInteraction,
   registerSessionAutoName,
@@ -16,7 +19,7 @@ import {
   SESSION_TITLE_PROMPT,
   sessionTitleSystemPrompt,
   type SessionTitleGenerator,
-} from "../.pi/extensions/session-auto-name.ts";
+} from "../profile/extensions/session-auto-name.ts";
 
 type Handler = (event: RuntimeValue, ctx: ExtensionContext) => RuntimeValue | Promise<RuntimeValue>;
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { findDuplicateKey, parseStrictJson } from "../.pi/extensions/lib/strict-json.ts";
+import { findDuplicateKey, parseStrictJson } from "../profile/extensions/lib/strict-json.ts";
 
 test("findDuplicateKey finds a duplicate in any object at any depth", () => {
   assert.equal(findDuplicateKey('{"a":1,"a":2}'), "a");

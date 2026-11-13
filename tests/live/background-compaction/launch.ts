@@ -17,19 +17,19 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { obj, str } from "@earendil-works/pi-schema";
 import { matches } from "./schema-check.ts";
-import { hostParams } from "../../../.pi/extensions/lib/schema-bridge.ts";
+import { hostParams } from "../../../profile/extensions/lib/schema-bridge.ts";
 import {
   BackgroundCompactionSidecarSchema,
   DEFAULT_BACKGROUND_COMPACTION_SETTINGS,
   type BackgroundCompactionSettings,
-} from "../../../.pi/packages/choco-pi-compaction/src/background/contract.ts";
+} from "../../../packages/choco-pi-compaction/src/background/contract.ts";
 import {
   getCoordinator,
   getRegistry,
   release,
-} from "../../../.pi/packages/choco-pi-compaction/src/background/registry.ts";
-import { crossFieldProblem } from "../../../.pi/packages/choco-pi-compaction/src/background/settings.ts";
-import { mainOwnerKey } from "../../../.pi/packages/choco-pi-compaction/src/index.ts";
+} from "../../../packages/choco-pi-compaction/src/background/registry.ts";
+import { crossFieldProblem } from "../../../packages/choco-pi-compaction/src/background/settings.ts";
+import { mainOwnerKey } from "../../../packages/choco-pi-compaction/src/index.ts";
 import { installAdoptionProbe } from "./adoption-probe.ts";
 import {
   digest,
@@ -77,7 +77,7 @@ import {
 import { WORKTREE } from "./profile.ts";
 import { installTextFakeFactory } from "./text-factory.ts";
 import { capturePayload, recordBranch } from "./transport-capture.ts";
-import { xaiCapturesFor } from "../../../.pi/packages/choco-pi-compaction/src/xai/capture.ts";
+import { xaiCapturesFor } from "../../../packages/choco-pi-compaction/src/xai/capture.ts";
 import {
   FAKE_XAI_KEY,
   registerOfflineXaiProvider,
@@ -119,7 +119,7 @@ export interface LaunchOptions {
   agentSettings?: Readonly<Record<string, string>>;
   /**
    * Seed every live catalog mirror into the in-memory models store and apply the
-   * worktree `.pi/models.json` overrides (the real agent dir symlinks it), copied
+   * worktree `profile/models.json` overrides (the real agent dir symlinks it), copied
    * into the isolated agent dir. Both tiers.
    */
   catalog?: boolean;

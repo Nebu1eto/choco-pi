@@ -51,7 +51,7 @@ test("root and vendored packages require the exact pnpm toolchain", async () => 
 
   for (const packageName of PACKAGE_NAMES) {
     // SAFETY: each repository-controlled manifest is exercised only through optional policy fields.
-    const manifest = JSON.parse(await readText(`.pi/packages/${packageName}/package.json`)) as {
+    const manifest = JSON.parse(await readText(`packages/${packageName}/package.json`)) as {
       packageManager?: string;
       pnpm?: unknown;
     };
@@ -62,7 +62,7 @@ test("root and vendored packages require the exact pnpm toolchain", async () => 
 
 test("each vendored install is an isolated one-package workspace", async () => {
   for (const packageName of PACKAGE_NAMES) {
-    const workspace = await readText(`.pi/packages/${packageName}/pnpm-workspace.yaml`);
+    const workspace = await readText(`packages/${packageName}/pnpm-workspace.yaml`);
     const expected =
       packageName === "choco-pi-provider-synthetic" ? SYNTHETIC_WORKSPACE : COMMON_WORKSPACE;
     assert.equal(workspace, expected, packageName);
@@ -70,7 +70,7 @@ test("each vendored install is an isolated one-package workspace", async () => {
 });
 
 test("the synthetic frozen lock retains the SDK range overrides and TypeBox", async () => {
-  const lock = await readText(".pi/packages/choco-pi-provider-synthetic/pnpm-lock.yaml");
+  const lock = await readText("packages/choco-pi-provider-synthetic/pnpm-lock.yaml");
   assert.match(
     lock,
     /overrides:\n  '@earendil-works\/pi-ai': ~1\.5\.2\n  '@earendil-works\/pi-tui': ~1\.5\.2/,

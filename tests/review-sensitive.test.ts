@@ -5,27 +5,27 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { createGitExecRunner } from "../.pi/extensions/lib/changes/git/exec.ts";
-import { loadDiffModel } from "../.pi/extensions/lib/changes/git/load-model.ts";
-import type { ExecRunner } from "../.pi/extensions/lib/changes/types.ts";
-import { buildCommentAnchor } from "../.pi/extensions/review/core/anchor.ts";
-import { buildReviewChatPrompt } from "../.pi/extensions/review/core/ask.ts";
-import { defaultExecRunner } from "../.pi/extensions/review/core/git.ts";
+import { createGitExecRunner } from "../profile/extensions/lib/changes/git/exec.ts";
+import { loadDiffModel } from "../profile/extensions/lib/changes/git/load-model.ts";
+import type { ExecRunner } from "../profile/extensions/lib/changes/types.ts";
+import { buildCommentAnchor } from "../profile/extensions/review/core/anchor.ts";
+import { buildReviewChatPrompt } from "../profile/extensions/review/core/ask.ts";
+import { defaultExecRunner } from "../profile/extensions/review/core/git.ts";
 import {
   createHeadlessReviewPresentation,
   renderHeadlessReview,
-} from "../.pi/extensions/review/core/headless-presentation.ts";
-import { assessDiff } from "../.pi/extensions/review/core/heuristics.ts";
-import { renderReviewMarkdown } from "../.pi/extensions/review/core/markdown-export.ts";
+} from "../profile/extensions/review/core/headless-presentation.ts";
+import { assessDiff } from "../profile/extensions/review/core/heuristics.ts";
+import { renderReviewMarkdown } from "../profile/extensions/review/core/markdown-export.ts";
 import type {
   DiffFile,
   DiffModel,
   ReviewComment,
   ReviewRecord,
-} from "../.pi/extensions/review/core/types.ts";
-import { presentHeadlessReview } from "../.pi/extensions/review/headless.ts";
-import { createTargetDiffReader, hideSensitiveFiles } from "../.pi/extensions/review/index.ts";
-import { HIDDEN_FILE_HINT } from "../.pi/extensions/review/ui/review-view.ts";
+} from "../profile/extensions/review/core/types.ts";
+import { presentHeadlessReview } from "../profile/extensions/review/headless.ts";
+import { createTargetDiffReader, hideSensitiveFiles } from "../profile/extensions/review/index.ts";
+import { HIDDEN_FILE_HINT } from "../profile/extensions/review/ui/review-view.ts";
 import { baseRecord, CONFIG, changedFile, mount, NOW } from "./review-safety-fakes.ts";
 
 /**

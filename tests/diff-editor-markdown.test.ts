@@ -7,16 +7,16 @@ import type {
   ExtensionCommandContext,
   RegisteredCommand,
 } from "@earendil-works/pi-coding-agent";
-import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
-import type { DefaultBaseChoice } from "../.pi/extensions/lib/changes/git/default-base.ts";
+import { reinterpretHostValue } from "../profile/extensions/lib/runtime-values.ts";
+import type { DefaultBaseChoice } from "../profile/extensions/lib/changes/git/default-base.ts";
 import type {
   DiffSnapshot,
   DiffStore,
   DiffStoreState,
   FileSummary,
-} from "../.pi/extensions/lib/changes/git/model.ts";
-import { registerDiffPane } from "../.pi/extensions/diff/ui/controller.ts";
-import { plainPaneStyler } from "../.pi/extensions/diff/ui/format.ts";
+} from "../profile/extensions/lib/changes/git/model.ts";
+import { registerDiffPane } from "../profile/extensions/diff/ui/controller.ts";
+import { plainPaneStyler } from "../profile/extensions/diff/ui/format.ts";
 
 const EDITOR = { CHOCO_PI_ACP_NATIVE_DIFF: "1" };
 const ESC = "\u001b";

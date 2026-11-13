@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildCommentAnchor } from "../.pi/extensions/review/core/anchor.ts";
-import type { DiffModel, ReviewComment } from "../.pi/extensions/review/core/types.ts";
+import { buildCommentAnchor } from "../profile/extensions/review/core/anchor.ts";
+import type { DiffModel, ReviewComment } from "../profile/extensions/review/core/types.ts";
 import { baseRecord, changedFile, mount, NOW } from "./review-safety-fakes.ts";
 
 /**

@@ -9,19 +9,19 @@ import {
   agentPreferencesCompletions,
   buildAgentPreferencesSection,
   resolveAgentPreferencesArgs,
-} from "../.pi/extensions/lib/agent-preferences-dialog.ts";
+} from "../profile/extensions/lib/agent-preferences-dialog.ts";
 import {
   flushAgentPreferenceWrites,
   getPreferencesProvider,
   onAgentPreferenceChange,
   ON_USAGE_LIMIT_VALUES,
   PERSONA_VALUES,
-} from "../.pi/extensions/lib/agent-preferences.ts";
+} from "../profile/extensions/lib/agent-preferences.ts";
 import {
   isJsonRecord,
   reinterpretHostValue,
   type RuntimeValue,
-} from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/lib/runtime-values.ts";
 import { realZentuiLoader, SKIP_WITHOUT_ZENTUI, ZENTUI_BUILD } from "./zentui-build.ts";
 
 type Notice = [string, string];

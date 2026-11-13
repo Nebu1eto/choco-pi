@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { compile, type JsonSchema, type Static } from "@earendil-works/pi-schema";
-import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import { reinterpretHostValue } from "../profile/extensions/lib/runtime-values.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 import {
   CODEX_USAGE_LIMIT_ENTRY,
   CodexUsageLimitEntrySchema,
@@ -30,7 +30,7 @@ import {
   readGoalRecoveryOwnership,
   registerUsageLimitPolicy,
   type UsageLimitPolicy,
-} from "../.pi/extensions/lib/usage-limit-contract.ts";
+} from "../profile/extensions/lib/usage-limit-contract.ts";
 
 const managerSymbol = Symbol.for("pi-subagents:manager");
 

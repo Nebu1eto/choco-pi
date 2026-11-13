@@ -6,7 +6,7 @@ import {
   detectMultiplexer,
   readImageProtocolPreference,
   resolveImageProtocol,
-} from "../.pi/extensions/lib/multiplexer-images.ts";
+} from "../profile/extensions/lib/multiplexer-images.ts";
 
 const GHOSTTY = { TERM: "xterm-ghostty" };
 const GHOSTTY_IN_ZELLIJ = { TERM: "xterm-ghostty", ZELLIJ: "0", ZELLIJ_SESSION_NAME: "Main" };
@@ -85,7 +85,7 @@ test("capabilities are left untouched when detection already agrees", () => {
 });
 
 test("parseZellijVersion reads the CLI banner and rejects garbage", async () => {
-  const { parseZellijVersion } = await import("../.pi/extensions/lib/multiplexer-images.ts");
+  const { parseZellijVersion } = await import("../profile/extensions/lib/multiplexer-images.ts");
   assert.deepEqual(parseZellijVersion("zellij 0.45.0"), [0, 45, 0]);
   assert.deepEqual(parseZellijVersion("zellij 1.2.10\n"), [1, 2, 10]);
   assert.equal(parseZellijVersion("zellij"), null);

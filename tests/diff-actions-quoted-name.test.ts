@@ -7,10 +7,10 @@ import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { createDiffStore } from "../.pi/extensions/lib/changes/git/store.ts";
-import { computeHunkId } from "../.pi/extensions/lib/changes/patch.ts";
-import { plainPaneStyler } from "../.pi/extensions/diff/ui/format.ts";
-import { PaneView, renderUnifiedBody } from "../.pi/extensions/diff/ui/pane-view.ts";
+import { createDiffStore } from "../profile/extensions/lib/changes/git/store.ts";
+import { computeHunkId } from "../profile/extensions/lib/changes/patch.ts";
+import { plainPaneStyler } from "../profile/extensions/diff/ui/format.ts";
+import { PaneView, renderUnifiedBody } from "../profile/extensions/diff/ui/pane-view.ts";
 import { flush, until } from "./diff-actions-fakes.ts";
 
 const execFileAsync = promisify(execFile);

@@ -25,14 +25,14 @@ import {
   InMemoryModelsStore,
 } from "@earendil-works/pi-ai";
 import { obj } from "@earendil-works/pi-schema";
-import { hostParams } from "../.pi/extensions/lib/schema-bridge.ts";
+import { hostParams } from "../profile/extensions/lib/schema-bridge.ts";
 import toolSearch, {
   ALWAYS_ACTIVE_TOOL_NAMES,
   LEAN_SURFACE_SYMBOL,
   type LeanSurfacePolicy,
-} from "../.pi/extensions/tool-search.ts";
-import { isPrefixLocked } from "../.pi/extensions/lib/prefix-lock.ts";
-import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/tool-search.ts";
+import { isPrefixLocked } from "../profile/extensions/lib/prefix-lock.ts";
+import { reinterpretHostValue } from "../profile/extensions/lib/runtime-values.ts";
 
 interface FakeTool {
   name: string;

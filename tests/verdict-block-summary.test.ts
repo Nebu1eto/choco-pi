@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import fc from "fast-check";
 import { Markdown, visibleWidth, type MarkdownTheme } from "@earendil-works/pi-tui";
-import { isUnsafeCodePoint } from "../.pi/extensions/lib/changes/terminal-text.ts";
+import { isUnsafeCodePoint } from "../profile/extensions/lib/changes/terminal-text.ts";
 import type {
   ReviewBlock,
   ReviewFinding,
   VerdictBlock,
-} from "../.pi/extensions/lib/verdict-blocks.ts";
+} from "../profile/extensions/lib/verdict-blocks.ts";
 import {
   entryText,
   layoutNotice,
@@ -18,7 +18,7 @@ import {
   wrapText,
   type SummaryLine,
   type VerdictSummary,
-} from "../.pi/extensions/lib/verdict-summary.ts";
+} from "../profile/extensions/lib/verdict-summary.ts";
 
 function finding(overrides: Partial<ReviewFinding> = {}): ReviewFinding {
   return {

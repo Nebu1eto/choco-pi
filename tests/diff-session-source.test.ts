@@ -7,20 +7,20 @@ import { join, sep } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { CHECKPOINT_ENTRY } from "../.pi/extensions/checkpoints/turns.ts";
+import { CHECKPOINT_ENTRY } from "../profile/extensions/checkpoints/turns.ts";
 import {
   createTurnCheckpointProvider,
   SESSION_WITHOUT_CHECKPOINTS,
   sessionBaselineOf,
-} from "../.pi/extensions/diff/core/checkpoints.ts";
-import { emptyMessage, inlineList } from "../.pi/extensions/diff/ui/format.ts";
-import type { DiffSnapshot, DiffStoreState } from "../.pi/extensions/lib/changes/git/model.ts";
-import { NO_SESSION_CHECKPOINT } from "../.pi/extensions/lib/changes/git/snapshot.ts";
-import { createDiffStore } from "../.pi/extensions/lib/changes/git/store.ts";
+} from "../profile/extensions/diff/core/checkpoints.ts";
+import { emptyMessage, inlineList } from "../profile/extensions/diff/ui/format.ts";
+import type { DiffSnapshot, DiffStoreState } from "../profile/extensions/lib/changes/git/model.ts";
+import { NO_SESSION_CHECKPOINT } from "../profile/extensions/lib/changes/git/snapshot.ts";
+import { createDiffStore } from "../profile/extensions/lib/changes/git/store.ts";
 import type {
   SessionBaselineChoice,
   TurnTreeProvider,
-} from "../.pi/extensions/lib/changes/types.ts";
+} from "../profile/extensions/lib/changes/types.ts";
 
 const execFileAsync = promisify(execFile);
 const TEMP = tmpdir();

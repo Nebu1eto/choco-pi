@@ -6,7 +6,7 @@ import test from "node:test";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 const STALE_CONTEXT_MESSAGE = "This extension ctx is stale after session replacement or reload.";
-const SYNTHETIC_PACKAGE_PATH = "/.pi/packages/choco-pi-provider-synthetic/";
+const SYNTHETIC_PACKAGE_PATH = "/packages/choco-pi-provider-synthetic/";
 
 registerHooks({
   resolve(specifier, context, nextResolve) {
@@ -23,11 +23,11 @@ registerHooks({
 });
 
 const commandUrl = new URL(
-  "../.pi/packages/choco-pi-provider-synthetic/extensions/command-quotas/command.ts",
+  "../packages/choco-pi-provider-synthetic/extensions/command-quotas/command.ts",
   import.meta.url,
 );
 const handlerUrl = new URL(
-  "../.pi/packages/choco-pi-provider-synthetic/extensions/command-quotas/handler.ts",
+  "../packages/choco-pi-provider-synthetic/extensions/command-quotas/handler.ts",
   import.meta.url,
 );
 const { registerQuotasCommand } = await import(commandUrl.href);

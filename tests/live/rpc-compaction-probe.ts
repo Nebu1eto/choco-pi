@@ -54,18 +54,21 @@ import { matches } from "./background-compaction/schema-check.ts";
 import {
   AUTO_COMPACTION_POINT_TOKENS,
   CONTEXT_SOFT_CAP_TOKENS,
-} from "../../.pi/extensions/lib/agent-preferences.ts";
-import { isString } from "../../.pi/extensions/lib/runtime-values.ts";
-import { PI_SDK_REQUIREMENT, isSupportedPiVersion } from "../../.pi/extensions/lib/pi-target.ts";
+} from "../../profile/extensions/lib/agent-preferences.ts";
+import { isString } from "../../profile/extensions/lib/runtime-values.ts";
+import {
+  PI_SDK_REQUIREMENT,
+  isSupportedPiVersion,
+} from "../../profile/extensions/lib/pi-target.ts";
 import {
   type LaneEvent,
   REASONS,
-} from "../../.pi/packages/choco-pi-compaction/src/background/lane-journal.ts";
+} from "../../packages/choco-pi-compaction/src/background/lane-journal.ts";
 import {
   OPAQUE_GUARD_NOTICE,
   OPAQUE_STRATEGIES,
-} from "../../.pi/packages/choco-pi-compaction/src/opaque-checkpoint.ts";
-import { isXaiDetails } from "../../.pi/packages/choco-pi-compaction/src/xai/details.ts";
+} from "../../packages/choco-pi-compaction/src/opaque-checkpoint.ts";
+import { isXaiDetails } from "../../packages/choco-pi-compaction/src/xai/details.ts";
 import {
   APPROVED_LIVE_MODELS,
   type Expectation,
@@ -648,11 +651,11 @@ interface Session {
 function probeExtensionSource(hostReserve: number): string {
   const imports = {
     api: join(checkout, "node_modules/@earendil-works/pi-coding-agent/dist/index.js"),
-    registry: join(checkout, ".pi/packages/choco-pi-compaction/src/background/registry.ts"),
-    capture: join(checkout, ".pi/packages/choco-pi-compaction/src/anthropic/capture.ts"),
-    xaiCapture: join(checkout, ".pi/packages/choco-pi-compaction/src/xai/capture.ts"),
-    cap: join(checkout, ".pi/extensions/model-context-cap.ts"),
-    policy: join(checkout, ".pi/extensions/lib/context-policy.ts"),
+    registry: join(checkout, "packages/choco-pi-compaction/src/background/registry.ts"),
+    capture: join(checkout, "packages/choco-pi-compaction/src/anthropic/capture.ts"),
+    xaiCapture: join(checkout, "packages/choco-pi-compaction/src/xai/capture.ts"),
+    cap: join(checkout, "profile/extensions/model-context-cap.ts"),
+    policy: join(checkout, "profile/extensions/lib/context-policy.ts"),
   };
   // Codex traffic rides choco-pi-codex's WebSocket. Its modules load per
   // extension (jiti, no module cache), so their in-memory request state is

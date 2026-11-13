@@ -5,10 +5,10 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { readFileBody } from "../.pi/extensions/lib/changes/git/file-body.ts";
-import { DEFAULT_DIFF_LIMITS } from "../.pi/extensions/lib/changes/git/limits.ts";
-import { bodyNotice } from "../.pi/extensions/lib/changes/view/rows.ts";
-import type { ExecRunner } from "../.pi/extensions/lib/changes/types.ts";
+import { readFileBody } from "../profile/extensions/lib/changes/git/file-body.ts";
+import { DEFAULT_DIFF_LIMITS } from "../profile/extensions/lib/changes/git/limits.ts";
+import { bodyNotice } from "../profile/extensions/lib/changes/view/rows.ts";
+import type { ExecRunner } from "../profile/extensions/lib/changes/types.ts";
 import { file } from "./diff-actions-fakes.ts";
 
 async function read(t: { after(fn: () => Promise<void>): void }, patch: string[]) {

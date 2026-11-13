@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 import {
   CODE_MODE_PREFLIGHT_AVAILABLE,
   CODE_MODE_PREFLIGHT_PROTOCOL,
@@ -31,7 +31,7 @@ import {
   type StopController,
   type StopEventPayload,
   type StopState,
-} from "../.pi/extensions/lib/stop-control.ts";
+} from "../profile/extensions/lib/stop-control.ts";
 
 type Handler = (data: RuntimeValue) => void;
 type BusData = StopEventPayload | ParticipantReport | FakeBroker | { protocol: string };

@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
-import { PI_SDK_RANGE, isSupportedPiVersion } from "../.pi/skills/check/scripts/check-harness.ts";
+import {
+  PI_SDK_RANGE,
+  isSupportedPiVersion,
+} from "../profile/skills/check/scripts/check-harness.ts";
 
 interface PackageManifest {
   dependencies?: Record<string, string>;
@@ -15,9 +18,9 @@ const RANGE = "~1.5.2";
 const SDK_NAMES = ["pi-ai", "pi-agent-core", "pi-coding-agent", "pi-schema", "pi-tui"];
 const PACKAGE_PATHS = [
   "",
-  ...(await readdir(new URL(".pi/packages/", ROOT), { withFileTypes: true }))
+  ...(await readdir(new URL("packages/", ROOT), { withFileTypes: true }))
     .filter((entry) => entry.isDirectory())
-    .map((entry) => `.pi/packages/${entry.name}/`),
+    .map((entry) => `packages/${entry.name}/`),
 ];
 
 test("every direct Pi SDK contract declares the harness patch range", async () => {

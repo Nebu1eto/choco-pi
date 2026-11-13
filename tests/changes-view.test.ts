@@ -7,17 +7,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { createDiffStore } from "../.pi/extensions/lib/changes/git/store.ts";
-import type { FileSummary } from "../.pi/extensions/lib/changes/git/model.ts";
-import type { DiffFile, DiffHunk } from "../.pi/extensions/lib/changes/types.ts";
-import { changedLineMatches } from "../.pi/extensions/lib/changes/view/line-cursor.ts";
-import { isString } from "../.pi/extensions/lib/runtime-values.ts";
+import { createDiffStore } from "../profile/extensions/lib/changes/git/store.ts";
+import type { FileSummary } from "../profile/extensions/lib/changes/git/model.ts";
+import type { DiffFile, DiffHunk } from "../profile/extensions/lib/changes/types.ts";
+import { changedLineMatches } from "../profile/extensions/lib/changes/view/line-cursor.ts";
+import { isString } from "../profile/extensions/lib/runtime-values.ts";
 import {
   ChangesView,
   renderUnifiedBody,
   type AskTarget,
   type ChangesViewOptions,
-} from "../.pi/extensions/lib/changes/view/changes-view.ts";
+} from "../profile/extensions/lib/changes/view/changes-view.ts";
 import {
   actionFor,
   COPY_KEY,
@@ -26,8 +26,8 @@ import {
   PANE_KEYS,
   type ChangesAction,
   type ChangesKeyTable,
-} from "../.pi/extensions/lib/changes/view/keys.ts";
-import { plainPaneStyler, type PaneStyler } from "../.pi/extensions/lib/changes/view/rows.ts";
+} from "../profile/extensions/lib/changes/view/keys.ts";
+import { plainPaneStyler, type PaneStyler } from "../profile/extensions/lib/changes/view/rows.ts";
 import { flush, until } from "./diff-actions-fakes.ts";
 
 const execFileAsync = promisify(execFile);

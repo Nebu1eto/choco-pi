@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import {
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "../profile/extensions/lib/runtime-values.ts";
 import {
   COMPOSED_PROMPT_MARKER,
   registerStableSystemPrompt,
   restoreComposedPrompt,
-} from "../.pi/extensions/stable-system-prompt.ts";
+} from "../profile/extensions/stable-system-prompt.ts";
 
 type Handler = (event: RuntimeValue, ctx: ExtensionContext) => RuntimeValue | Promise<RuntimeValue>;
 

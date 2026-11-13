@@ -1,4 +1,4 @@
-import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
+import { reinterpretHostValue } from "../profile/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,7 +14,7 @@ import {
   findFdOnPath,
   parseEditorRule,
   ReviewInput,
-} from "../.pi/extensions/review/ui/review-input.ts";
+} from "../profile/extensions/review/ui/review-input.ts";
 
 const EDITOR_THEME: EditorTheme = {
   borderColor: (text) => text,

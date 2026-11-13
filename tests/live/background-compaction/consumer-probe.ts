@@ -2,8 +2,8 @@ import type {
   Adoption,
   AdoptionConsumer,
   CoordinatorApi,
-} from "../../../.pi/packages/choco-pi-compaction/src/background/contract.ts";
-import { getRegistry } from "../../../.pi/packages/choco-pi-compaction/src/background/registry.ts";
+} from "../../../packages/choco-pi-compaction/src/background/contract.ts";
+import { getRegistry } from "../../../packages/choco-pi-compaction/src/background/registry.ts";
 import type { Recorder } from "./artifacts.ts";
 export interface ConsumerNotice {
   consumer: string;

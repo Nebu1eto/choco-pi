@@ -7,7 +7,7 @@ import { readFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { lit, nullable, obj, opt, str, unknown } from "@earendil-works/pi-schema";
 import { matches } from "../schema-check.ts";
-import { isCandidateRecord } from "../../../../.pi/packages/choco-pi-compaction/src/background/contract.ts";
+import { isCandidateRecord } from "../../../../packages/choco-pi-compaction/src/background/contract.ts";
 import { writeArtifact, parseArtifactInput } from "../artifacts.ts";
 import { evaluateChecks } from "../checks.ts";
 import { launch } from "../launch.ts";

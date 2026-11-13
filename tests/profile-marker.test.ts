@@ -22,13 +22,13 @@ import {
   readProfileMarker,
   writeProfileMarker as publishProfileMarker,
   resolvePiLauncher,
-} from "../.pi/extensions/lib/profile-marker.ts";
-import { PI_SDK_MINIMUM } from "../.pi/extensions/lib/pi-target.ts";
+} from "../profile/extensions/lib/profile-marker.ts";
+import { PI_SDK_MINIMUM } from "../profile/extensions/lib/pi-target.ts";
 import {
   executeHarnessCheck,
   type HarnessCheckExecutionDependencies,
-} from "../.pi/extensions/harness-check.ts";
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/harness-check.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 import { installProfile } from "../scripts/install-profile.ts";
 
 async function fakeLauncher(directory: string, version: string): Promise<string> {
@@ -95,7 +95,7 @@ test("installer records an explicitly selected launcher and harness rechecks it 
     const dependencies = harnessDependencies();
     dependencies.check = async () => ({
       status: "pass",
-      configRoot: path.join(root, ".pi"),
+      configRoot: path.join(root, "profile"),
       mode: "automatic",
       requiredCapabilities: [],
       checks: [],

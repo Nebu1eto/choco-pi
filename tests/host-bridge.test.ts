@@ -13,7 +13,7 @@ import {
   type HostBridgeContext,
   mapRecordStatus,
   registerHostBridge,
-} from "../.pi/extensions/lib/host-bridge/bridge.ts";
+} from "../profile/extensions/lib/host-bridge/bridge.ts";
 import {
   GOAL_ENTRY_TYPE,
   GoalEntrySchema,
@@ -30,14 +30,14 @@ import {
   SubagentEntrySchema,
   WORKFLOW_ENTRY_TYPE,
   WorkflowEntrySchema,
-} from "../.pi/extensions/lib/host-bridge/schema.ts";
+} from "../profile/extensions/lib/host-bridge/schema.ts";
 import {
   createProcessSources,
   GOAL_RUNTIME_SYMBOL,
   SHELL_MANAGER_SYMBOL,
   SUBAGENT_REGISTRY_SYMBOL,
-} from "../.pi/extensions/lib/host-bridge/sources.ts";
-import { isJsonRecord, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/lib/host-bridge/sources.ts";
+import { isJsonRecord, type RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 
 const STALE = "This extension ctx is stale after session replacement or reload.";
 

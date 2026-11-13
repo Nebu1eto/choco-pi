@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { InteractiveMode, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-import statusCommands from "../.pi/extensions/status-commands.ts";
+import statusCommands from "../profile/extensions/status-commands.ts";
 import {
   computeCacheWaste,
   formatSessionInfo,
@@ -17,12 +17,12 @@ import {
   type CacheWaste,
   type MainUsage,
   type SubagentUsage,
-} from "../.pi/extensions/lib/session-usage.ts";
+} from "../profile/extensions/lib/session-usage.ts";
 import {
   isFunction,
   reinterpretHostValue,
   type RuntimeValue,
-} from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/lib/runtime-values.ts";
 
 type UsageInput = {
   input?: number;
@@ -501,7 +501,7 @@ test("the extension points Pi's built-in /session at /status", (t) => {
 });
 
 test("the status provider row names a ChatGPT sign-in on the stock openai endpoint", async () => {
-  const { providerDisplay } = await import("../.pi/extensions/session-status.ts");
+  const { providerDisplay } = await import("../profile/extensions/session-status.ts");
   const stock = { baseUrl: "https://api.openai.com/v1" };
   assert.equal(providerDisplay("openai", stock, true), "openai (ChatGPT sign-in)");
   assert.equal(providerDisplay("openai", { baseUrl: "https://api.openai.com/v1/" }), "openai");

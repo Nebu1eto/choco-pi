@@ -1,10 +1,10 @@
-import { propertiesWhen } from "../.pi/extensions/lib/runtime-values.ts";
+import { propertiesWhen } from "../profile/extensions/lib/runtime-values.ts";
 import {
   isFunction,
   isNumber,
   isString,
   type RuntimeValue,
-} from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -19,27 +19,27 @@ import {
   type Component,
   type TuiMouseEvent,
 } from "@earendil-works/pi-tui";
-import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
-import { parseGitDiff } from "../.pi/extensions/lib/changes/patch.ts";
-import { buildCommentAnchor } from "../.pi/extensions/review/core/anchor.ts";
-import { hunkWithExpandedContext } from "../.pi/extensions/review/core/expand.ts";
+import { reinterpretHostValue } from "../profile/extensions/lib/runtime-values.ts";
+import { parseGitDiff } from "../profile/extensions/lib/changes/patch.ts";
+import { buildCommentAnchor } from "../profile/extensions/review/core/anchor.ts";
+import { hunkWithExpandedContext } from "../profile/extensions/review/core/expand.ts";
 import type {
   ReviewChat,
   ReviewChatContext,
   ReviewChatMessage,
   ReviewChatOptions,
-} from "../.pi/extensions/review/core/ask.ts";
+} from "../profile/extensions/review/core/ask.ts";
 import {
   launchEditor,
   resolveEditorCommand,
   type EditorSpawnOptions,
   type SpawnedEditor,
   type SpawnEditor,
-} from "../.pi/extensions/review/core/editor-launch.ts";
-import { planReviewSubmission } from "../.pi/extensions/review/core/github.ts";
-import type { DiffAssessment } from "../.pi/extensions/review/core/heuristics.ts";
-import type { PullRequestMetadata } from "../.pi/extensions/review/core/pr.ts";
-import type { DiffStyler } from "../.pi/extensions/lib/changes/render/diff-render.ts";
+} from "../profile/extensions/review/core/editor-launch.ts";
+import { planReviewSubmission } from "../profile/extensions/review/core/github.ts";
+import type { DiffAssessment } from "../profile/extensions/review/core/heuristics.ts";
+import type { PullRequestMetadata } from "../profile/extensions/review/core/pr.ts";
+import type { DiffStyler } from "../profile/extensions/lib/changes/render/diff-render.ts";
 import type {
   DiffFile,
   DiffHunk,
@@ -49,7 +49,7 @@ import type {
   ReviewComment,
   ReviewRecord,
   ReviewStore,
-} from "../.pi/extensions/review/core/types.ts";
+} from "../profile/extensions/review/core/types.ts";
 import {
   formatRelativeTime,
   openReviewView,
@@ -58,19 +58,19 @@ import {
   reviewViewHeights,
   type OpenReviewViewOptions,
   type ReviewViewHost,
-} from "../.pi/extensions/review/ui/review-view.ts";
-import { type ZentuiLoader } from "../.pi/extensions/review/ui/zentui-frame.ts";
+} from "../profile/extensions/review/ui/review-view.ts";
+import { type ZentuiLoader } from "../profile/extensions/review/ui/zentui-frame.ts";
 import {
   REVIEW_KEYS,
   REVIEW_ONLY_KEYS,
   SPLIT_TOGGLE_KEY,
-} from "../.pi/extensions/review/ui/review-keys.ts";
+} from "../profile/extensions/review/ui/review-keys.ts";
 import {
   COPY_KEY,
   PANE_KEYS,
   type ChangesKeyTable,
-} from "../.pi/extensions/lib/changes/view/keys.ts";
-import type { FindingsSummary } from "../.pi/extensions/lib/changes/findings.ts";
+} from "../profile/extensions/lib/changes/view/keys.ts";
+import type { FindingsSummary } from "../profile/extensions/lib/changes/findings.ts";
 import {
   realBoxZentuiLoader as realZentuiLoader,
   SKIP_WITHOUT_ZENTUI,

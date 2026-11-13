@@ -21,11 +21,11 @@ import {
   type JsonValue,
   type TaskLineageSummary,
   type TaskSessionSnapshot,
-} from "../.pi/extensions/task-lineage/store.ts";
+} from "../profile/extensions/task-lineage/store.ts";
 import {
   createTaskLineageExtension,
   type TaskLineageDependencies,
-} from "../.pi/extensions/task-lineage.ts";
+} from "../profile/extensions/task-lineage.ts";
 
 type Handler = (event: ExtensionEvent, ctx: ExtensionContext) => Promise<void> | void;
 type Appended = { customType: string; data: JsonValue };
@@ -858,7 +858,7 @@ for (const kind of ["task", "task-inline", "task-hotfix", "task-dynamic"]) {
     const harness = createHarness();
     await harness.emit("session_start", event({ type: "session_start", reason: "startup" }));
     await startRootTask(harness, "work");
-    await readSkill(harness, "r1", `/repo/.pi/skills/${kind}/SKILL.md`);
+    await readSkill(harness, "r1", `/repo/profile/skills/${kind}/SKILL.md`);
     await settle(harness);
     assert.equal(archiveOf(harness)?.workflowKind, kind);
     assert.equal(archiveOf(harness)?.workflowKindChanges, undefined);
@@ -869,7 +869,7 @@ test("archive records workflowKind none when no workflow skill loads", async () 
   const harness = createHarness();
   await harness.emit("session_start", event({ type: "session_start", reason: "startup" }));
   await startRootTask(harness, "work");
-  await readSkill(harness, "r1", "/repo/.pi/skills/commit/SKILL.md");
+  await readSkill(harness, "r1", "/repo/profile/skills/commit/SKILL.md");
   await readSkill(harness, "r2", "/repo/src/skills/task/notes.md");
   await settle(harness);
   assert.equal(archiveOf(harness)?.workflowKind, "none");
@@ -879,8 +879,8 @@ test("first workflow kind wins and later different kinds only bump the counter",
   const harness = createHarness();
   await harness.emit("session_start", event({ type: "session_start", reason: "startup" }));
   await startRootTask(harness, "work");
-  await readSkill(harness, "r1", "/repo/.pi/skills/task-inline/SKILL.md");
-  await readSkill(harness, "r2", "/repo/.pi/skills/task-inline/SKILL.md");
+  await readSkill(harness, "r1", "/repo/profile/skills/task-inline/SKILL.md");
+  await readSkill(harness, "r2", "/repo/profile/skills/task-inline/SKILL.md");
   await readSkill(harness, "r3", "/home/u/.pi/agent/skills/task-hotfix/SKILL.md");
   await settle(harness);
   assert.equal(archiveOf(harness)?.workflowKind, "task-inline");
@@ -891,7 +891,7 @@ test("a /skill: command at the prompt seeds the start record and survives reload
   const harness = createHarness();
   await harness.emit("session_start", event({ type: "session_start", reason: "startup" }));
   await startRootTask(harness, "/skill:task-hotfix fix it");
-  await readSkill(harness, "r1", "/repo/.pi/skills/task/SKILL.md");
+  await readSkill(harness, "r1", "/repo/profile/skills/task/SKILL.md");
   await harness.emit("session_shutdown", event({ type: "session_shutdown", reason: "reload" }));
   await harness.emit("session_start", event({ type: "session_start", reason: "reload" }));
   await settle(harness);

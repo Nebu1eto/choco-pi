@@ -7,7 +7,7 @@ import {
   DEFAULT_EDITOR,
   loadReviewConfig,
   resolveEditor,
-} from "../.pi/extensions/review/core/config.ts";
+} from "../profile/extensions/review/core/config.ts";
 
 /** Isolated project and agent directories; the real ~/.pi is never touched. */
 async function sandbox(t: { after(fn: () => void | Promise<void>): void }): Promise<{

@@ -3,11 +3,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Input, visibleWidth } from "@earendil-works/pi-tui";
-import type { DiffStoreState, FileBody } from "../.pi/extensions/lib/changes/git/model.ts";
-import { EMPTY_FINDINGS, type RecordedFinding } from "../.pi/extensions/lib/changes/findings.ts";
-import { NotesBook } from "../.pi/extensions/lib/changes/notes.ts";
-import { ChangesView } from "../.pi/extensions/lib/changes/view/changes-view.ts";
-import { plainPaneStyler } from "../.pi/extensions/lib/changes/view/rows.ts";
+import type { DiffStoreState, FileBody } from "../profile/extensions/lib/changes/git/model.ts";
+import {
+  EMPTY_FINDINGS,
+  type RecordedFinding,
+} from "../profile/extensions/lib/changes/findings.ts";
+import { NotesBook } from "../profile/extensions/lib/changes/notes.ts";
+import { ChangesView } from "../profile/extensions/lib/changes/view/changes-view.ts";
+import { plainPaneStyler } from "../profile/extensions/lib/changes/view/rows.ts";
 import { file, flush, hunk, snapshot, textBody } from "./diff-actions-fakes.ts";
 
 const WIDE = "漢字ファイル";

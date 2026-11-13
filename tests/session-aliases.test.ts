@@ -1,11 +1,11 @@
-import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
+import { reinterpretHostValue } from "../profile/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import sessionAliases, { deleteSessionRecord } from "../.pi/extensions/session-aliases.ts";
+import sessionAliases, { deleteSessionRecord } from "../profile/extensions/session-aliases.ts";
 
 test("deleteSessionRecord permanently removes a persisted session", async (context) => {
   const directory = await mkdtemp(path.join(tmpdir(), "choco-pi-delete-"));

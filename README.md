@@ -143,7 +143,7 @@ Authenticate from a Pi session:
 
 Pi stores credentials outside the repository; do not copy credential files into Git.
 
-`/login openai` is Pi's "Sign in with ChatGPT" on provider `openai` (api.openai.com). The legacy `openai-codex` provider (chatgpt.com backend) stays available as an opt-in: `/login openai-codex`. On `openai` sign-in, Fast mode is accepted but not honored and never sent, Daybreak is unavailable, server-side compaction is never attempted (local compaction runs), and native `web_run` search is unavailable (web search goes through `choco-pi-web-access`). `imagegen` and `view_image` resolve `openai` credentials but are unverified live. Pi's built-in `xai` provider (Grok) signs in with `/login xai` (SuperGrok or X Premium) or reads `XAI_API_KEY`; Fast mode applies only to `xai/grok-4.7` on api.x.ai. Besides Pi's built-in Anthropic, OpenAI, and xAI logins, choco-pi adds a Synthetic provider and discovers Callstack Apex models from [`apex-provider.json`](.pi/extensions/apex-provider.json).
+`/login openai` is Pi's "Sign in with ChatGPT" on provider `openai` (api.openai.com). The legacy `openai-codex` provider (chatgpt.com backend) stays available as an opt-in: `/login openai-codex`. On `openai` sign-in, Fast mode is accepted but not honored and never sent, Daybreak is unavailable, server-side compaction is never attempted (local compaction runs), and native `web_run` search is unavailable (web search goes through `choco-pi-web-access`). `imagegen` and `view_image` resolve `openai` credentials but are unverified live. Pi's built-in `xai` provider (Grok) signs in with `/login xai` (SuperGrok or X Premium) or reads `XAI_API_KEY`; Fast mode applies only to `xai/grok-4.7` on api.x.ai. Besides Pi's built-in Anthropic, OpenAI, and xAI logins, choco-pi adds a Synthetic provider and discovers Callstack Apex models from [`apex-provider.json`](profile/extensions/apex-provider.json).
 
 ## Set up computer use (macOS)
 
@@ -151,7 +151,7 @@ The computer-use tools (`observe_ui`, `act_ui`, and related tools) work through
 a native helper app, `pi-computer-use.app`. The helper reads accessibility
 trees, captures windows, and delivers input. No helper binary is committed: the
 setup script compiles the Swift sources in
-`.pi/packages/choco-pi-computer-use/native/macos` for your Mac's architecture on
+`packages/choco-pi-computer-use/native/macos` for your Mac's architecture on
 every install, and downloads nothing. Other operating systems cannot install the
 helper.
 
@@ -168,7 +168,7 @@ builds and installs it, which takes tens of seconds. To install it ahead of
 time, or to reinstall it, run this from the checkout:
 
 ```sh
-node .pi/packages/choco-pi-computer-use/scripts/setup-helper.mjs
+node packages/choco-pi-computer-use/scripts/setup-helper.mjs
 ```
 
 The script prints the path it installed to. It does the following:
@@ -266,15 +266,15 @@ The [RPC host bridge](docs/rpc-host-bridge.md) lets Waku identify the installed 
 
 ### Operating rules and workflows
 
-- [`.pi/SYSTEM.md`](.pi/SYSTEM.md) sets shared rules for scope, authority, evidence, and completion. [`.pi/model-guidance.md`](.pi/model-guidance.md) adds per-model guidance and [`.pi/writing-policy.md`](.pi/writing-policy.md) governs response prose.
+- [`profile/SYSTEM.md`](profile/SYSTEM.md) sets shared rules for scope, authority, evidence, and completion. [`profile/model-guidance.md`](profile/model-guidance.md) adds per-model guidance and [`profile/writing-policy.md`](profile/writing-policy.md) governs response prose.
 - Root and path-scoped `AGENTS.md` files are loaded as the agent works in subdirectories.
 - Workflow skills cover direct implementation (`task-inline`), parallel units (`task`), dynamically decomposed work (`task-dynamic`), urgent fixes (`task-hotfix`), adversarial review (`review`), reproducing review claims (`verify`), TLA+ model checking (`formal-verify`), environment readiness (`check`), signed local commits (`commit`), and prose (`effective-writing`). Implementation workflows hold a checkout mutation lease, validate against acceptance criteria, and never push. [Review and verification](#review-and-verification) describes the review and evidence skills.
 - `/preferences` sets the response language, response style (`balanced`, the default, which keeps final answers short and gives a few sentences of status during long work; `concise`, which keeps every update to one line; or `explanatory`), and agent persona (`unset`, `critical`, or the default `pessimistic`), which controls how strictly the agent tests its own claims and plans.
-- `/preferences` → Agent → On usage limit (`agentOnUsageLimit`) decides what happens when the active provider reports a usage quota: `none` (default) leaves the run settled with the error; `fallback` switches to a similar-tier model on another provider from [`.pi/model-fallbacks.json`](.pi/model-fallbacks.json), or, when no tier candidate is open, to the last-resort `xai/grok-4.7`, then `synthetic/hf:moonshotai/Kimi-K3.1-Pro` (preferred over Kimi K3), then `synthetic/hf:moonshotai/Kimi-K3`, and continues; `auto-resume` waits for the quota reset, then continues. Sub-agents report a limit to their parent with the reset estimate and a suggested in-scope model; under `auto-resume` they are parked and resumed after the reset. When a `/goal` is active or paused, the goal runtime keeps ownership of recovery.
+- `/preferences` → Agent → On usage limit (`agentOnUsageLimit`) decides what happens when the active provider reports a usage quota: `none` (default) leaves the run settled with the error; `fallback` switches to a similar-tier model on another provider from [`profile/model-fallbacks.json`](profile/model-fallbacks.json), or, when no tier candidate is open, to the last-resort `xai/grok-4.7`, then `synthetic/hf:moonshotai/Kimi-K3.1-Pro` (preferred over Kimi K3), then `synthetic/hf:moonshotai/Kimi-K3`, and continues; `auto-resume` waits for the quota reset, then continues. Sub-agents report a limit to their parent with the reset estimate and a suggested in-scope model; under `auto-resume` they are parked and resumed after the reset. When a `/goal` is active or paused, the goal runtime keeps ownership of recovery.
 
 ### Agents and orchestration
 
-- Specialist roles in [`.pi/agents`](.pi/agents) (`advisor`, `explore`, `general`, `handoff`, `implementer`, `planner`, `reviewer`, `verifier`) run as background subagents, as scheduled runs, in isolated Git worktrees, or as dependency-ordered workflows through `workflow_run`. `/agents` manages them.
+- Specialist roles in [`profile/agents`](profile/agents) (`advisor`, `explore`, `general`, `handoff`, `implementer`, `planner`, `reviewer`, `verifier`) run as background subagents, as scheduled runs, in isolated Git worktrees, or as dependency-ordered workflows through `workflow_run`. `/agents` manages them.
 - `max_turns` also limits resumed runs, and an agent with a token budget is told to conclude before the budget stops it.
 - A fleet panel shows running subagents and managed background shells together. A click on a row selects it as the arrow keys do, and a double click opens a shell's output. Selecting a subagent focuses its transcript, which streams text, tool progress, and custom messages; the thinking toggle there affects only the focused view. Shells are owner-scoped and managed with `shell_start` and `/shells`; a completion that arrives while its owning session is inactive is delivered when that session becomes active again.
 - `/btw` opens a parallel read-only side conversation on the main session's model and thinking level. It runs as the internal `side-chat` agent, named `side-chat`, `side-chat-2`, and so on; other callers cannot spawn that role.
@@ -282,11 +282,11 @@ The [RPC host bridge](docs/rpc-host-bridge.md) lets Waku identify the installed 
 
 ### Review and verification
 
-- `/review [target]` runs the agent's own adversarial review. The `review` skill freezes the target (by default, staged and unstaged changes against `HEAD`) into an immutable bundle and gives it to one fresh, read-only `reviewer`. [`.pi/review-policy.md`](.pi/review-policy.md) makes every review cover three angles: changed behavior that callers, tests, or documentation still rely on; callers of every changed contract; and a last pass for what the earlier passes missed. The reviewer reports findings and, separately, candidates: concerns whose traced path to a violation has a missing or assumed link. A violation traced completely is a finding even when the reviewer ran nothing. Both stay advisory until the agent or a verifier checks them.
+- `/review [target]` runs the agent's own adversarial review. The `review` skill freezes the target (by default, staged and unstaged changes against `HEAD`) into an immutable bundle and gives it to one fresh, read-only `reviewer`. [`profile/review-policy.md`](profile/review-policy.md) makes every review cover three angles: changed behavior that callers, tests, or documentation still rely on; callers of every changed contract; and a last pass for what the earlier passes missed. The reviewer reports findings and, separately, candidates: concerns whose traced path to a violation has a missing or assumed link. A violation traced completely is a finding even when the reviewer ran nothing. Both stay advisory until the agent or a verifier checks them.
 - Reviewers and verifiers end their reply with a structured block (`choco-pi-review` or `choco-pi-verdict`). When one runs under a work task, the subagents package records the block and adds a `Verdict record:` line to the result; a review whose block is missing or invalid is unrecorded and is never reported as clean. Review and verification rounds are capped per work task. `/review-continue <work_task>` and `/verify-continue <work_task>` allow more.
 - In the terminal, a block that parses is shown as a short summary (verdict, counts, one line per finding or claim) in the result card, the completion notification and transcript Markdown; expand the card to see the raw block. A block that does not parse is shown as it is, after one line giving the parser's reason. Only the display changes: the stored message, what the model receives and the recorded verdict stay as they were.
 - The `verifier` role follows the `verify` skill: it tries to reproduce a reviewer's claim against an exact checkout snapshot. It writes only to scratch, never fixes code, and reports `UNPROVEN` as it is; a failed reproduction does not refute a claim. Small work gets no verifier.
-- The `formal-verify` skill checks ordering and state promises in the projects the agent works on, such as a run that must settle exactly once or a lease that must never be held twice. The agent writes a small TLA+ model, checks it with TLC through the skill's wrapper, and shows that each rule fails under a deliberate mutation. A pass covers the model within its bounds, not the code; a drift check reports when code a model covers has changed. Models can describe code in any language, but the drift check hashes individual symbols only in TypeScript and JavaScript and hashes other files whole. TLC needs Java 11 or newer and a one-time `tlc-setup.ts` run, which downloads the pinned `tla2tools.jar` into `${XDG_CACHE_HOME:-~/.cache}/choco-pi/formal`. See the [skill](.pi/skills/formal-verify/SKILL.md); [`formal/tla/subagent-run`](formal/tla/subagent-run) is a worked example that models this repository's subagent run lifecycle.
+- The `formal-verify` skill checks ordering and state promises in the projects the agent works on, such as a run that must settle exactly once or a lease that must never be held twice. The agent writes a small TLA+ model, checks it with TLC through the skill's wrapper, and shows that each rule fails under a deliberate mutation. A pass covers the model within its bounds, not the code; a drift check reports when code a model covers has changed. Models can describe code in any language, but the drift check hashes individual symbols only in TypeScript and JavaScript and hashes other files whole. TLC needs Java 11 or newer and a one-time `tlc-setup.ts` run, which downloads the pinned `tla2tools.jar` into `${XDG_CACHE_HOME:-~/.cache}/choco-pi/formal`. See the [skill](profile/skills/formal-verify/SKILL.md); [`formal/tla/subagent-run`](formal/tla/subagent-run) is a worked example that models this repository's subagent run lifecycle.
 - `/diff` docks a pane beside the transcript that lists changed files with their diffs and refreshes as the agent works. By default it shows the changes made since the session began: the working tree against the session's first file checkpoint, including changes committed since. `/diff source uncommitted` compares `HEAD` with the working tree, `/diff source turn [<n>]` compares the working tree with a turn's checkpoint, and `/diff source branch [<base>]` compares from the merge base with a branch (by default the remote's default branch, else `main`, else `master`); a chosen source applies until the pane closes, and `/diff source session` returns to the default. From the pane you can put a reference to a file, a hunk or selected lines into the editor, keep notes on hunks with `c` and ask about all of them at once with `a`, which puts them into the editor as one message and clears them from the pane (with no notes, `a` puts the cursor's file, hunk or lines there), step through findings recorded by reviewers and verifiers, and put a `/review` instruction into the editor (`/diff review`); nothing is sent until you press Enter. Sensitive files are listed by name, and their contents stay hidden until you press `v` on one; nothing is saved, and the file is hidden again when the pane reopens. Ctrl+Alt+P toggles the pane, Ctrl+Alt+F moves focus into and out of it, and `?` inside it lists its keys. Inside the pane `j`/`k` step through files and ↑/↓ through the lines of open files; Shift+↑/↓ or a mouse drag selects a range of lines, a click puts the cursor on a line or hunk, and a click on a file's row expands or collapses it. Cmd+C on macOS (Ctrl+C elsewhere) copies the selected lines as plain code (the whole hunk as a diff when the cursor is on its header), provided the terminal passes Cmd+C on to Pi; Pi's own select-and-copy with the mouse is off inside the pane and on the review's diff, where the mouse selects diff lines. ← and → show one turn's changes alone: ← steps back from the newest turn, → steps forward and, after the newest, returns to every change of the session. A turn's changes run from its file checkpoint to the next one (to the working tree for the newest), so edits you make between two prompts count toward the earlier turn, and a prompt that started from unchanged files is shown together with the turn before it. Shift+→ moves focus from the editor into the open pane when the cursor is at the end of the text and nothing is selected (elsewhere it extends the editor's selection), and Tab, Esc, `q`, Shift+←, a click beside the pane or a click in the prompt editor gives it back, and a click in the editor's text also puts the cursor on the clicked character. A drag over the editor's text, or Shift with the arrow keys, selects it: Backspace or Delete removes the selection, typing or pasting replaces it, Ctrl+C or Ctrl+X copies it and keeps it selected (Cmd+C too, where the terminal passes it on to Pi; with nothing selected these keys keep their usual meaning), and Escape drops it; completion after `/diff` lists the subcommands. The pane needs the fullscreen TUI and a terminal at least 65 columns wide; otherwise `/diff` prints the list of changes. In Zed it sends bounded native diffs instead, each preceded by its file name and status, with sensitive files listed by name only; when the session has changed nothing yet but the working tree has, it says that `/diff source uncommitted` shows those changes ([details](docs/zed-command-parity.md#diff-in-zed)).
 - `/review-assist [target]` is where you review changes yourself, without adding anything to the model's context. The target is the current session or one of its turns, a branch range, uncommitted changes, a saved review, or a GitHub pull request; you can comment, approve or reject, and submit the review to the pull request. It is the `/diff` pane's view at full screen, with the pane's keys for what both do (`n`/`N` or `[`/`]` for hunks, Enter or Space to fold, `g`/`G`, `r`, `f`/`F`, `v`, `?`) and a line cursor, moved with `j`/`k` or ↑/↓, for the review's own work: Shift+↑/↓ or a mouse drag selects lines, a click puts the cursor on a line or opens and closes a file, Cmd+C (Ctrl+C off macOS) copies the selected lines as plain code (a folded hunk as a diff), `c` comments, `m` marks a hunk reviewed, `a` opens a side chat, `/` searches changed lines (`>`/`<` for the next match), `+`/`-` show more or less context, `|` switches to a split view, `e`/`E` open the editor, `S` finishes and `q` or Esc saves and leaves. `session` lists the same files as `/diff`, from the session's first checkpoint, and `session turn <n>` counts checkpointed turns from 1. When the changes end at the working tree, `r` reads them again, as does each finished side-chat tool call, and `f`/`F` step through findings recorded by reviewers; reviewed marks and comments stay with hunks whose content is unchanged. Sensitive files such as `.env`, private keys, and paths containing `secret` or `credential` are listed with their contents hidden until you press `v` on the file, for this view only. The side chat is told which files are hidden, and until you press `v` on one, any of its tool calls with an argument that names that file is refused: as a path, resolved the way Pi's file tools resolve it and more broadly (surrounding spaces, `@`, `~`, `file://`, `..`, trailing slashes, symbolic and hard links, Unicode forms, and letter case where the file system ignores it), or anywhere in the argument's text as the path or base name, also when written quoted or escaped in a POSIX shell, fish, PowerShell, or cmd, or percent-encoded (`cat .e"n"v`, `cat o\'key.txt`, `type .e^nv`), which also refuses a different file whose name differs from a hidden one only by quote or escape characters; text that `write` and `edit` put into a file is checked as a path only. This is a second line of defence, not a sandbox: a name is refused when every character of it appears in the text as itself or percent-encoded, and a command that writes a character by its code or reaches the file without naming it (a glob such as `cat .e*` or `cat *`, brace expansion, a variable, an escape such as `$'\x2e'`, a recursive search, an environment dump, a script written earlier) is not stopped, and neither is anything the chat already read. Messages, warnings, and errors appear on the review's own message line; errors are also left in Pi's notifications, to read after the review closes. File names, diffs, and other untrusted text are stripped of terminal control sequences before display, large changes are read within limits and the view says how many files it left out, and comments whose code has changed since are shown as outdated. Saved reviews live in `choco-pi/reviews` under Pi's agent directory and are deleted seven days after their file was last modified, including reviews with unsent comments. Outside the terminal UI it prints a read-only summary; in Zed the summary is Markdown with each file's changes as a unified diff in a code block.
 
@@ -296,7 +296,7 @@ The [RPC host bridge](docs/rpc-host-bridge.md) lets Waku identify the installed 
 - `/goal` keeps a persistent objective across turns and compaction.
 - `/checkpoint` rewinds, rolls back files, or forks at a checkpointed turn, or forks the current state. `/rewind` only rewinds the conversation; `/fork` only forks, from an earlier turn or the current state.
 - Context limits are presets in `/preferences`: the soft cap under Session → Context and the compaction point under Session → Compaction. **Context soft cap** caps usable context: strictest 250K, strict 400K, standard 600K, permissive 800K, or unlimited. **Auto-compaction point** sets where compaction starts: strictest 200K, strict 300K, standard 450K, permissive 600K, or unlimited. The soft cap defaults to permissive and the compaction point to standard. Each preset is fitted to the model's native window: the cap never exceeds it, and the compaction point stays a headroom of `min(100K, 15% of the cap)`, at least the host reserve plus 8K, below the cap. A model with a native window under 64K is left to Pi's own trigger, and an OpenAI native-compaction budget, when published, also bounds the compaction point. These two presets are the only configuration; the headroom is fixed.
-- Compaction modes are set in `/preferences` under Session → Compaction. **OpenAI compaction** uses OpenAI's remote compaction for the Codex transport and configured Responses providers; this profile's [`.pi/choco-pi-codex.json`](.pi/choco-pi-codex.json) sets it to server-side. **Anthropic compaction** defaults to server-side and uses Anthropic's on-demand compaction only with OAuth on `api.anthropic.com` for Fable 5+, Mythos 5+ and Preview, Opus 4.6+, Sonnet 4.6+, and Haiku 5.5+. **xAI compaction** defaults to server-side and uses xAI's `/responses/compact` for `grok-*` models on `api.x.ai`, with OAuth or an API key; it covers foreground compaction only. Any failure falls back to choco-pi's local summary, which is reconciled with retained messages. Background compaction is on by default; when on, it always runs the text lane and runs each native lane (OpenAI and Anthropic) only while its vendor row is server-side.
+- Compaction modes are set in `/preferences` under Session → Compaction. **OpenAI compaction** uses OpenAI's remote compaction for the Codex transport and configured Responses providers; this profile's [`profile/choco-pi-codex.json`](profile/choco-pi-codex.json) sets it to server-side. **Anthropic compaction** defaults to server-side and uses Anthropic's on-demand compaction only with OAuth on `api.anthropic.com` for Fable 5+, Mythos 5+ and Preview, Opus 4.6+, Sonnet 4.6+, and Haiku 5.5+. **xAI compaction** defaults to server-side and uses xAI's `/responses/compact` for `grok-*` models on `api.x.ai`, with OAuth or an API key; it covers foreground compaction only. Any failure falls back to choco-pi's local summary, which is reconciled with retained messages. Background compaction is on by default; when on, it always runs the text lane and runs each native lane (OpenAI and Anthropic) only while its vendor row is server-side.
 - New sessions are named automatically. `sessionAutoNameModel` selects the naming model (default `openai/gpt-6-luna`); set `sessionAutoName` to `false` to disable naming.
 - After each completed agent turn, choco-pi predicts your next prompt with `openai/gpt-6-luna` (falling back to `anthropic/claude-haiku-5-5`) and shows it as dim text in the empty editor. Tab fills it in; nothing is sent until you press Enter. Suggestions are conservative: one appears only when the agent's last reply needs your input, never while a queued message, running sub-agent or background shell, or active `/goal` will resume the agent on its own. A suggestion written in a script that neither your own prompts nor `agentLanguage` use is dropped. Each turn sends recent conversation text to the suggestion model in one small request; set `promptSuggestion` to `false` to disable it.
 
@@ -365,47 +365,47 @@ The [RPC host bridge](docs/rpc-host-bridge.md) lets Waku identify the installed 
 
 ## Installed packages
 
-The profile loads these 17 local packages, listed by absolute path under `packages` in `~/.pi/agent/settings.json`. An eighteenth package, [`choco-pi-acp`](.pi/packages/choco-pi-acp) 0.0.33, is not loaded by Pi; it runs as a separate ACP process for editors (see [Use choco-pi in Zed](#use-choco-pi-in-zed)).
+The profile loads these 17 local packages, listed by absolute path under `packages` in `~/.pi/agent/settings.json`. An eighteenth package, [`choco-pi-acp`](packages/choco-pi-acp) 0.0.33, is not loaded by Pi; it runs as a separate ACP process for editors (see [Use choco-pi in Zed](#use-choco-pi-in-zed)).
 
-| Package                                                                   |        Version | Purpose                                                      |
-| ------------------------------------------------------------------------- | -------------: | ------------------------------------------------------------ |
-| [`choco-pi-web-search`](.pi/packages/choco-pi-web-search)                 |          0.1.0 | Session-scoped routing for the canonical web search tool     |
-| [`choco-pi-web-access`](.pi/packages/choco-pi-web-access)                 | 0.24.1-choco.0 | Web search, source checks, and content extraction            |
-| [`choco-pi-provider-synthetic`](.pi/packages/choco-pi-provider-synthetic) |          0.1.0 | Synthetic provider, authentication, usage, and search        |
-| [`choco-pi-ui`](.pi/packages/choco-pi-ui)                                 |          0.1.0 | TUI, status line, preferences, and Nord themes               |
-| [`choco-pi-shells`](.pi/packages/choco-pi-shells)                         |          0.1.0 | Owner-scoped background shell processes                      |
-| [`choco-pi-hooks`](.pi/packages/choco-pi-hooks)                           |          0.1.0 | Claude Code-compatible lifecycle hooks                       |
-| [`choco-pi-subagents`](.pi/packages/choco-pi-subagents)                   |          0.1.0 | Sub-agents, workflows, sessions, and fleet UI                |
-| [`choco-pi-advisor`](.pi/packages/choco-pi-advisor)                       |          0.1.0 | Read-only advisor consults through sub-agents                |
-| [`choco-pi-editor-context`](.pi/packages/choco-pi-editor-context)         |          0.1.0 | Editor-context protocol, storage, and injection              |
-| [`choco-pi-goal`](.pi/packages/choco-pi-goal)                             |          0.1.0 | Persistent Codex-style goals                                 |
-| [`choco-pi-mcp`](.pi/packages/choco-pi-mcp)                               |          0.1.0 | Native Figma tools; MCP itself is Pi's built-in              |
-| [`choco-pi-lsp`](.pi/packages/choco-pi-lsp)                               |          0.1.0 | LSP, lint, structural analysis, and semantic tools           |
-| [`choco-pi-compaction`](.pi/packages/choco-pi-compaction)                 |          0.1.0 | Local compaction summaries reconciled with retained messages |
-| [`choco-pi-codex`](.pi/packages/choco-pi-codex)                           |          0.1.0 | Codex tools, Code Mode, and Responses compaction             |
-| [`choco-pi-agents-md`](.pi/packages/choco-pi-agents-md)                   |          0.1.0 | Descendant `AGENTS.md` instruction loading                   |
-| [`choco-pi-agent-browser`](.pi/packages/choco-pi-agent-browser)           |  0.5.0-choco.0 | Native browser automation tools                              |
-| [`choco-pi-computer-use`](.pi/packages/choco-pi-computer-use)             |  0.5.0-choco.0 | macOS desktop inspection and interaction                     |
+| Package                                                               |        Version | Purpose                                                      |
+| --------------------------------------------------------------------- | -------------: | ------------------------------------------------------------ |
+| [`choco-pi-web-search`](packages/choco-pi-web-search)                 |          0.1.0 | Session-scoped routing for the canonical web search tool     |
+| [`choco-pi-web-access`](packages/choco-pi-web-access)                 | 0.24.1-choco.0 | Web search, source checks, and content extraction            |
+| [`choco-pi-provider-synthetic`](packages/choco-pi-provider-synthetic) |          0.1.0 | Synthetic provider, authentication, usage, and search        |
+| [`choco-pi-ui`](packages/choco-pi-ui)                                 |          0.1.0 | TUI, status line, preferences, and Nord themes               |
+| [`choco-pi-shells`](packages/choco-pi-shells)                         |          0.1.0 | Owner-scoped background shell processes                      |
+| [`choco-pi-hooks`](packages/choco-pi-hooks)                           |          0.1.0 | Claude Code-compatible lifecycle hooks                       |
+| [`choco-pi-subagents`](packages/choco-pi-subagents)                   |          0.1.0 | Sub-agents, workflows, sessions, and fleet UI                |
+| [`choco-pi-advisor`](packages/choco-pi-advisor)                       |          0.1.0 | Read-only advisor consults through sub-agents                |
+| [`choco-pi-editor-context`](packages/choco-pi-editor-context)         |          0.1.0 | Editor-context protocol, storage, and injection              |
+| [`choco-pi-goal`](packages/choco-pi-goal)                             |          0.1.0 | Persistent Codex-style goals                                 |
+| [`choco-pi-mcp`](packages/choco-pi-mcp)                               |          0.1.0 | Native Figma tools; MCP itself is Pi's built-in              |
+| [`choco-pi-lsp`](packages/choco-pi-lsp)                               |          0.1.0 | LSP, lint, structural analysis, and semantic tools           |
+| [`choco-pi-compaction`](packages/choco-pi-compaction)                 |          0.1.0 | Local compaction summaries reconciled with retained messages |
+| [`choco-pi-codex`](packages/choco-pi-codex)                           |          0.1.0 | Codex tools, Code Mode, and Responses compaction             |
+| [`choco-pi-agents-md`](packages/choco-pi-agents-md)                   |          0.1.0 | Descendant `AGENTS.md` instruction loading                   |
+| [`choco-pi-agent-browser`](packages/choco-pi-agent-browser)           |  0.5.0-choco.0 | Native browser automation tools                              |
+| [`choco-pi-computer-use`](packages/choco-pi-computer-use)             |  0.5.0-choco.0 | macOS desktop inspection and interaction                     |
 
 ## Configuration and customization
 
-| File or directory                                                                                                                               | Purpose                                                                     |
-| ----------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| Global `~/.pi/agent/settings.json`; the checkout ships no `.pi/settings.json`                                                                   | Loaded packages, theme, TUI mode, per-model thinking levels, and compaction |
-| [`.pi/SYSTEM.md`](.pi/SYSTEM.md)                                                                                                                | Profile-wide agent behavior and authority rules                             |
-| [`.pi/model-guidance.md`](.pi/model-guidance.md)                                                                                                | Model routing and model-specific policy                                     |
-| [`.pi/writing-policy.md`](.pi/writing-policy.md) and [`.pi/review-policy.md`](.pi/review-policy.md)                                             | Response prose and review policy                                            |
-| [`AGENTS.md`](AGENTS.md) and [package example](.pi/packages/choco-pi-subagents/AGENTS.md)                                                       | Root and path-scoped repository rules                                       |
-| [`.pi/agents`](.pi/agents), [`.pi/skills`](.pi/skills), and [`.pi/prompts`](.pi/prompts)                                                        | Agent roles, workflow skills, and slash-command prompts                     |
-| [`.pi/subagents.json`](.pi/subagents.json)                                                                                                      | Subagent concurrency, depth, fleet view, and worktree isolation             |
-| [`.pi/choco-pi-codex.json`](.pi/choco-pi-codex.json)                                                                                            | Code Mode, Codex tools, notebook, and compaction settings                   |
-| [`.pi/zentui.json`](.pi/zentui.json)                                                                                                            | TUI colors, components, and icons                                           |
-| [`.pi/models.json`](.pi/models.json) and [`.pi/keybindings.json`](.pi/keybindings.json)                                                         | Provider model overrides and key bindings                                   |
-| [`apex-provider.json`](.pi/extensions/apex-provider.json)                                                                                       | Callstack Apex provider discovery defaults                                  |
-| [`review.json`](.pi/extensions/review.json)                                                                                                     | Local review interface configuration                                        |
-| Global `~/.pi/agent/advisor.json` with project override `.pi/advisor.json`                                                                      | Advisor enablement, model, effort, and per-turn cap                         |
-| `~/.pi/agent/mcp.json` from [`.pi/mcp.example.json`](.pi/mcp.example.json)                                                                      | Untracked MCP server configuration in Pi's built-in format                  |
-| Package [`AGENTS.md`](.pi/packages/choco-pi-agent-browser/AGENTS.md) and [`VENDORED.md`](.pi/packages/choco-pi-agent-browser/VENDORED.md) files | Package policy and recorded upstream differences                            |
+| File or directory                                                                                                                       | Purpose                                                                     |
+| --------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Global `~/.pi/agent/settings.json`; the checkout ships no `.pi/settings.json`                                                           | Loaded packages, theme, TUI mode, per-model thinking levels, and compaction |
+| [`profile/SYSTEM.md`](profile/SYSTEM.md)                                                                                                | Profile-wide agent behavior and authority rules                             |
+| [`profile/model-guidance.md`](profile/model-guidance.md)                                                                                | Model routing and model-specific policy                                     |
+| [`profile/writing-policy.md`](profile/writing-policy.md) and [`profile/review-policy.md`](profile/review-policy.md)                     | Response prose and review policy                                            |
+| [`AGENTS.md`](AGENTS.md) and [package example](packages/choco-pi-subagents/AGENTS.md)                                                   | Root and path-scoped repository rules                                       |
+| [`profile/agents`](profile/agents), [`profile/skills`](profile/skills), and [`profile/prompts`](profile/prompts)                        | Agent roles, workflow skills, and slash-command prompts                     |
+| [`profile/subagents.json`](profile/subagents.json)                                                                                      | Subagent concurrency, depth, fleet view, and worktree isolation             |
+| [`profile/choco-pi-codex.json`](profile/choco-pi-codex.json)                                                                            | Code Mode, Codex tools, notebook, and compaction settings                   |
+| [`profile/zentui.json`](profile/zentui.json)                                                                                            | TUI colors, components, and icons                                           |
+| [`profile/models.json`](profile/models.json) and [`profile/keybindings.json`](profile/keybindings.json)                                 | Provider model overrides and key bindings                                   |
+| [`apex-provider.json`](profile/extensions/apex-provider.json)                                                                           | Callstack Apex provider discovery defaults                                  |
+| [`review.json`](profile/extensions/review.json)                                                                                         | Local review interface configuration                                        |
+| Global `~/.pi/agent/advisor.json` with project override `.pi/advisor.json`                                                              | Advisor enablement, model, effort, and per-turn cap                         |
+| `~/.pi/agent/mcp.json` from [`profile/mcp.example.json`](profile/mcp.example.json)                                                      | Untracked MCP server configuration in Pi's built-in format                  |
+| Package [`AGENTS.md`](packages/choco-pi-agent-browser/AGENTS.md) and [`VENDORED.md`](packages/choco-pi-agent-browser/VENDORED.md) files | Package policy and recorded upstream differences                            |
 
 Pi 1.0.3 changed `Home`/`End` to move the editor cursor. Use `Ctrl+Home`/`Ctrl+End` to jump to the transcript top/bottom.
 
@@ -417,7 +417,7 @@ It also migrates an existing `~/.pi/agent/extensions/background-compaction.json`
 `npm run install:profile` rewrites `~/.pi/agent/settings.json` and keeps any
 keys it does not manage. The checkout ships no `.pi/settings.json`, so the
 profile policy comes from this global file itself: its `packages` entries under
-the checkout's `.pi/packages` and its `extensions` built-in policy. When it
+the checkout's `packages` and its `extensions` built-in policy. When it
 lists no bundled packages, the installer starts from the profile defaults in
 `scripts/install-profile.ts`, which include the maintainer's model scope
 (`enabledModels`) and per-model thinking levels (`modelThinkingLevels`). Such a
@@ -440,27 +440,31 @@ values are the maintainer's current settings. Secrets never belong in this file.
 ```json
 {
   "packages": [
-    "/path/to/choco-pi/.pi/packages/choco-pi-web-search",
-    "/path/to/choco-pi/.pi/packages/choco-pi-web-access",
-    "/path/to/choco-pi/.pi/packages/choco-pi-provider-synthetic",
-    "/path/to/choco-pi/.pi/packages/choco-pi-ui",
-    "/path/to/choco-pi/.pi/packages/choco-pi-shells",
-    "/path/to/choco-pi/.pi/packages/choco-pi-hooks",
-    "/path/to/choco-pi/.pi/packages/choco-pi-subagents",
-    "/path/to/choco-pi/.pi/packages/choco-pi-advisor",
-    "/path/to/choco-pi/.pi/packages/choco-pi-goal",
-    "/path/to/choco-pi/.pi/packages/choco-pi-mcp",
-    "/path/to/choco-pi/.pi/packages/choco-pi-lsp",
-    "/path/to/choco-pi/.pi/packages/choco-pi-compaction",
-    "/path/to/choco-pi/.pi/packages/choco-pi-codex",
-    "/path/to/choco-pi/.pi/packages/choco-pi-agents-md",
-    "/path/to/choco-pi/.pi/packages/choco-pi-agent-browser",
-    "/path/to/choco-pi/.pi/packages/choco-pi-computer-use",
-    "/path/to/choco-pi/.pi/packages/choco-pi-editor-context"
+    "/path/to/choco-pi/packages/choco-pi-web-search",
+    "/path/to/choco-pi/packages/choco-pi-web-access",
+    "/path/to/choco-pi/packages/choco-pi-provider-synthetic",
+    "/path/to/choco-pi/packages/choco-pi-ui",
+    "/path/to/choco-pi/packages/choco-pi-shells",
+    "/path/to/choco-pi/packages/choco-pi-hooks",
+    "/path/to/choco-pi/packages/choco-pi-subagents",
+    "/path/to/choco-pi/packages/choco-pi-advisor",
+    "/path/to/choco-pi/packages/choco-pi-goal",
+    "/path/to/choco-pi/packages/choco-pi-mcp",
+    "/path/to/choco-pi/packages/choco-pi-lsp",
+    "/path/to/choco-pi/packages/choco-pi-compaction",
+    "/path/to/choco-pi/packages/choco-pi-codex",
+    "/path/to/choco-pi/packages/choco-pi-agents-md",
+    "/path/to/choco-pi/packages/choco-pi-agent-browser",
+    "/path/to/choco-pi/packages/choco-pi-computer-use",
+    "/path/to/choco-pi/packages/choco-pi-editor-context"
   ],
-  "extensions": ["/path/to/choco-pi/.pi/extensions", "-builtin:codemode", "-builtin:tool-search"],
-  "skills": ["/path/to/choco-pi/.pi/skills"],
-  "prompts": ["/path/to/choco-pi/.pi/prompts"],
+  "extensions": [
+    "/path/to/choco-pi/profile/extensions",
+    "-builtin:codemode",
+    "-builtin:tool-search"
+  ],
+  "skills": ["/path/to/choco-pi/profile/skills"],
+  "prompts": ["/path/to/choco-pi/profile/prompts"],
 
   "theme": "nord-dark",
   "tuiMode": "fullscreen",
@@ -566,7 +570,7 @@ values are the maintainer's current settings. Secrets never belong in this file.
 | `defaultProvider`, `defaultModel`, `defaultThinkingLevel`, `enabledModels`                                                        | You                   | Startup model and thinking level; `enabledModels` limits model cycling.                                                                                                                                                                                                                                                                                               |
 | `cacheWarming`, `transport`, `httpIdleTimeoutMs`, `quietStartup`, `enableInstallTelemetry`, `markdown`, `terminal`                | You                   | Pi runtime settings. `cacheWarming` is read only from the global file and accepts `off`, `streaming`, or `idle` (default).                                                                                                                                                                                                                                            |
 | `agentLanguage`, `agentStyle`, `agentPersona`, `agentOnUsageLimit`, `sessionAutoName`, `sessionAutoNameModel`, `promptSuggestion` | You or `/preferences` | choco-pi reads these only from the global file. `agentStyle` is `balanced` (the default), `concise`, `explanatory`, or the name of a style file in `~/.pi/agent/agent-styles/`. `agentPersona` defaults to `pessimistic`, `agentOnUsageLimit` to `none` (`fallback`, `auto-resume`), `sessionAutoNameModel` to `openai/gpt-6-luna`, and `promptSuggestion` to `true`. |
-| `hooks`                                                                                                                           | You                   | Claude Code hook format. choco-pi-hooks also reads hooks from `.claude` and `.agents` settings files, as described in its [README](.pi/packages/choco-pi-hooks/README.md).                                                                                                                                                                                            |
+| `hooks`                                                                                                                           | You                   | Claude Code hook format. choco-pi-hooks also reads hooks from `.claude` and `.agents` settings files, as described in its [README](packages/choco-pi-hooks/README.md).                                                                                                                                                                                                |
 
 ### Advisor settings
 
@@ -583,13 +587,13 @@ The advisor has its own file, `~/.pi/agent/advisor.json`, which a project
 ```
 
 `effort` accepts `off` through `max`, and `maxUses` must be at least 1. Without
-the file the advisor is disabled. The [advisor README](.pi/packages/choco-pi-advisor/README.md)
+the file the advisor is disabled. The [advisor README](packages/choco-pi-advisor/README.md)
 lists defaults and limits.
 
 ## Use choco-pi in Zed
 
-`.pi/packages/choco-pi-acp` connects Zed to choco-pi over the Agent Client Protocol,
-and `.pi/packages/choco-pi-editor-context` syncs the focused file, cursor, and
+`packages/choco-pi-acp` connects Zed to choco-pi over the Agent Client Protocol,
+and `packages/choco-pi-editor-context` syncs the focused file, cursor, and
 selection into the targeted Pi session through Zed Tasks. Start with the
 [Zed setup guide](docs/zed-setup.md); the
 [compatibility baseline](docs/zed-acp-compatibility.md),

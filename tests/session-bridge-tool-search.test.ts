@@ -19,11 +19,11 @@ import {
   type ExtensionFactory,
 } from "@earendil-works/pi-coding-agent";
 import { obj, str } from "@earendil-works/pi-schema";
-import { chatToolGuard } from "../.pi/extensions/review/core/chat-guard.ts";
-import { hostParams } from "../.pi/extensions/lib/schema-bridge.ts";
-import { isJsonRecord, isString } from "../.pi/extensions/lib/runtime-values.ts";
-import { createToolSearchResourceLoader } from "../.pi/extensions/lib/tool-surface.ts";
-import rootToolSearch from "../.pi/extensions/tool-search.ts";
+import { chatToolGuard } from "../profile/extensions/review/core/chat-guard.ts";
+import { hostParams } from "../profile/extensions/lib/schema-bridge.ts";
+import { isJsonRecord, isString } from "../profile/extensions/lib/runtime-values.ts";
+import { createToolSearchResourceLoader } from "../profile/extensions/lib/tool-surface.ts";
+import rootToolSearch from "../profile/extensions/tool-search.ts";
 
 async function withSession(
   settings: Parameters<typeof SettingsManager.inMemory>[0],
@@ -107,8 +107,8 @@ test("session bridge and review side chat build their sessions with the shared l
   // Both production factories must route through createToolSearchResourceLoader;
   // an SDK session created without it silently loses tool discovery.
   const [bridge, ask] = await Promise.all([
-    readFile(new URL("../.pi/extensions/session-bridge.ts", import.meta.url), "utf8"),
-    readFile(new URL("../.pi/extensions/review/core/ask.ts", import.meta.url), "utf8"),
+    readFile(new URL("../profile/extensions/session-bridge.ts", import.meta.url), "utf8"),
+    readFile(new URL("../profile/extensions/review/core/ask.ts", import.meta.url), "utf8"),
   ]);
   for (const [name, source] of [
     ["session-bridge", bridge],

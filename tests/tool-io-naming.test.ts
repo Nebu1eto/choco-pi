@@ -18,7 +18,11 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { compile, map, obj, str, unknown } from "@earendil-works/pi-schema";
 import { OUTPUT_PREFIX } from "./helpers/collect-tool-schemas.ts";
-import { isJsonRecord, isString, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import {
+  isJsonRecord,
+  isString,
+  type RuntimeValue,
+} from "../profile/extensions/lib/runtime-values.ts";
 
 const execFileAsync = promisify(execFile);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -55,8 +59,8 @@ const ALLOWED_VALUES = new Set([
  * Node import with a stub API, so their schemas are checked too.
  */
 const KNOWN_LOAD_FAILURES = {
-  ".pi/packages/choco-pi-compaction/src/index.ts": "pi-ai-extension-view.js/api/anthropic-messages",
-  ".pi/packages/choco-pi-subagents/src/index.ts": "pi-tui/dist/index.js/dist/tui.js",
+  "packages/choco-pi-compaction/src/index.ts": "pi-ai-extension-view.js/api/anthropic-messages",
+  "packages/choco-pi-subagents/src/index.ts": "pi-tui/dist/index.js/dist/tui.js",
 } satisfies Record<string, string>;
 
 /** Tools whose absence would mean a package silently stopped loading. */

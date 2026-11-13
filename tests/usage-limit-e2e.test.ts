@@ -12,17 +12,17 @@ import { compile, num, obj, opt, str } from "@earendil-works/pi-schema";
 
 import usageLimitPolicy, {
   USAGE_LIMIT_MESSAGE_TYPE,
-} from "../.pi/extensions/usage-limit-policy.ts";
-import { readAgentPreferencesAsync } from "../.pi/extensions/lib/agent-preferences.ts";
-import { createUsageLimitPolicy } from "../.pi/extensions/lib/usage-limit.ts";
+} from "../profile/extensions/usage-limit-policy.ts";
+import { readAgentPreferencesAsync } from "../profile/extensions/lib/agent-preferences.ts";
+import { createUsageLimitPolicy } from "../profile/extensions/lib/usage-limit.ts";
 import {
   getUsageLimitPolicy,
   registerUsageLimitPolicy,
-} from "../.pi/extensions/lib/usage-limit-contract.ts";
-import subagentsExtension from "../.pi/packages/choco-pi-subagents/src/index.ts";
-import { USAGE_LIMIT_RESUME_PROMPT } from "../.pi/packages/choco-pi-subagents/src/agent-manager.ts";
-import { resetProviderHealth } from "../.pi/packages/choco-pi-subagents/src/provider-health.ts";
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/lib/usage-limit-contract.ts";
+import subagentsExtension from "../packages/choco-pi-subagents/src/index.ts";
+import { USAGE_LIMIT_RESUME_PROMPT } from "../packages/choco-pi-subagents/src/agent-manager.ts";
+import { resetProviderHealth } from "../packages/choco-pi-subagents/src/provider-health.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 import {
   ANTHROPIC_LIMIT_TEXT,
   CLAUDE_MODEL,
@@ -42,7 +42,7 @@ import {
 } from "./helpers/usage-limit-e2e-fixture.ts";
 
 const CONTROLLER_PATH = fileURLToPath(
-  new URL("../.pi/extensions/usage-limit-policy.ts", import.meta.url),
+  new URL("../profile/extensions/usage-limit-policy.ts", import.meta.url),
 );
 /** Loads the real root controller inside child sessions through project extension discovery. */
 const CHILD_CONTROLLER_SHIM = `export { default } from ${JSON.stringify(CONTROLLER_PATH)};\n`;

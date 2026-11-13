@@ -1,9 +1,9 @@
 // The review's model store: a refresh whose comparison moved is a new model even when the hunks match.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createModelStore } from "../.pi/extensions/lib/changes/model-store.ts";
-import { parseGitDiff } from "../.pi/extensions/lib/changes/patch.ts";
-import type { DiffModel } from "../.pi/extensions/lib/changes/types.ts";
+import { createModelStore } from "../profile/extensions/lib/changes/model-store.ts";
+import { parseGitDiff } from "../profile/extensions/lib/changes/patch.ts";
+import type { DiffModel } from "../profile/extensions/lib/changes/types.ts";
 
 const PATCH = [
   "diff --git a/a.txt b/a.txt",

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { renderNarrowMermaid } from "../.pi/extensions/mermaid-fallback.ts";
+import { renderNarrowMermaid } from "../profile/extensions/mermaid-fallback.ts";
 
 const SCREENSHOT_DIAGRAM = `\`\`\`mermaid
 flowchart LR

@@ -1,9 +1,0 @@
-{
-  "extends": "../../../tsconfig.json",
-  "compilerOptions": {
-    "exactOptionalPropertyTypes": true,
-    "skipLibCheck": true
-  },
-  "include": ["*.ts", "tests/**/*.ts"],
-  "exclude": ["node_modules"]
-}

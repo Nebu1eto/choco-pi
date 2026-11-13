@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assessDiff } from "../.pi/extensions/review/core/heuristics.ts";
+import { assessDiff } from "../profile/extensions/review/core/heuristics.ts";
 import type {
   DiffFile,
   DiffHunk,
   DiffLine,
   DiffModel,
   ResolvedReviewConfig,
-} from "../.pi/extensions/review/core/types.ts";
+} from "../profile/extensions/review/core/types.ts";
 
 const baseConfig: ResolvedReviewConfig = {
   editor: { command: ["true"], mode: "terminal" },

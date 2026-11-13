@@ -1,6 +1,6 @@
 import { arr, bool, int, lit, obj, opt, str, union, type Static } from "@earendil-works/pi-schema";
 import { isString, matches } from "../schema-check.ts";
-import { isCandidateRecord } from "../../../../.pi/packages/choco-pi-compaction/src/background/contract.ts";
+import { isCandidateRecord } from "../../../../packages/choco-pi-compaction/src/background/contract.ts";
 import { InputSchema, withArtifactDefs, type ArtifactInput } from "../artifacts.ts";
 import type { CheckEvidence, Observation } from "../checks.ts";
 import { FAKE_CHECKPOINT_MARKER } from "../fake-sse.ts";

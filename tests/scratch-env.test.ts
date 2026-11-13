@@ -21,8 +21,8 @@ import {
   type ExtensionFactory,
 } from "@earendil-works/pi-coding-agent";
 
-import scratchEnvExtension from "../.pi/extensions/scratch-env.ts";
-import { isString } from "../.pi/extensions/lib/runtime-values.ts";
+import scratchEnvExtension from "../profile/extensions/scratch-env.ts";
+import { isString } from "../profile/extensions/lib/runtime-values.ts";
 import {
   PREVIOUS_SCRATCH_DIR_ENV,
   ROOT_SESSION_ENV,
@@ -30,7 +30,7 @@ import {
   registerScratchRoot,
   setPreviousScratchDir,
   unregisterScratchRoot,
-} from "../.pi/extensions/lib/scratch-path.ts";
+} from "../profile/extensions/lib/scratch-path.ts";
 
 const model: Model<Api> = {
   id: "scratch",

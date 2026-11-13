@@ -1,0 +1,8 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "skipLibCheck": true
+  },
+  "include": ["*.ts", "tests/**/*.ts"],
+  "exclude": ["node_modules"]
+}

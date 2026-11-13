@@ -15,8 +15,11 @@ import type {
   TuiMode,
 } from "@earendil-works/pi-tui";
 import { Container, HStack, ScrollView, VStack, isFocusable } from "@earendil-works/pi-tui";
-import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
-import type { DiffClock } from "../.pi/extensions/lib/changes/git/clock.ts";
+import {
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "../profile/extensions/lib/runtime-values.ts";
+import type { DiffClock } from "../profile/extensions/lib/changes/git/clock.ts";
 import type {
   DiffSnapshot,
   DiffStore,
@@ -24,16 +27,16 @@ import type {
   FileBody,
   FileSummary,
   RefreshReason,
-} from "../.pi/extensions/lib/changes/git/model.ts";
-import type { PaneTui } from "../.pi/extensions/diff/host/types.ts";
+} from "../profile/extensions/lib/changes/git/model.ts";
+import type { PaneTui } from "../profile/extensions/diff/host/types.ts";
 import {
   FOCUS_SHORTCUT,
   registerDiffPane,
   TOGGLE_SHORTCUT,
-} from "../.pi/extensions/diff/ui/controller.ts";
-import { plainPaneStyler } from "../.pi/extensions/diff/ui/format.ts";
-import { PaneView } from "../.pi/extensions/diff/ui/pane-view.ts";
-import { prefsPath, type PrefsIo } from "../.pi/extensions/diff/ui/prefs.ts";
+} from "../profile/extensions/diff/ui/controller.ts";
+import { plainPaneStyler } from "../profile/extensions/diff/ui/format.ts";
+import { PaneView } from "../profile/extensions/diff/ui/pane-view.ts";
+import { prefsPath, type PrefsIo } from "../profile/extensions/diff/ui/prefs.ts";
 
 /* ------------------------------------------------------------------ fakes */
 

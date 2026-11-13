@@ -8,7 +8,7 @@ import {
   visibleWidth,
   type TUI,
 } from "@earendil-works/pi-tui";
-import { createPromptEditor, decoratePromptEditor } from "../.pi/extensions/prompt-editor.ts";
+import { createPromptEditor, decoratePromptEditor } from "../profile/extensions/prompt-editor.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   createPromptSuggestionController,
@@ -21,8 +21,11 @@ import {
   suggestionTranscript,
   type PromptSuggestionGenerator,
   type PromptSuggestionSlot,
-} from "../.pi/extensions/lib/prompt-suggestion.ts";
-import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/lib/prompt-suggestion.ts";
+import {
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "../profile/extensions/lib/runtime-values.ts";
 
 const TAB = "\t";
 

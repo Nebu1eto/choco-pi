@@ -12,20 +12,23 @@ import type {
   ReviewChat,
   ReviewChatContext,
   ReviewChatMessage,
-} from "../.pi/extensions/review/core/ask.ts";
-import type { DiffAssessment } from "../.pi/extensions/review/core/heuristics.ts";
+} from "../profile/extensions/review/core/ask.ts";
+import type { DiffAssessment } from "../profile/extensions/review/core/heuristics.ts";
 import type {
   DiffFile,
   DiffModel,
   ResolvedReviewConfig,
   ReviewRecord,
-} from "../.pi/extensions/review/core/types.ts";
+} from "../profile/extensions/review/core/types.ts";
 import {
   openReviewView,
   type OpenReviewViewOptions,
   type ReviewViewHost,
-} from "../.pi/extensions/review/ui/review-view.ts";
-import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/review/ui/review-view.ts";
+import {
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "../profile/extensions/lib/runtime-values.ts";
 import { unavailableZentuiLoader } from "./zentui-build.ts";
 
 initTheme("dark", false);

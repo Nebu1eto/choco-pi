@@ -1,0 +1,166 @@
+# Vendored: choco-pi-agents-md
+
+This directory is **not** a vendored copy of any upstream package. It is a
+from-scratch reimplementation written for choco-pi.
+
+- Status: from-scratch, MIT licensed (see `LICENSE`).
+- Behavior reference (read-only, not copied): the installed tree of
+  `@howaboua/pi-markdown-workflows@0.2.20` (MIT licensed) at
+  `dist/src/core/subdir/{agents-chain,paths,appendix,branch-state,shell-targets,tool-events,details}.js`
+  and `dist/src/core/subdir.js` (the `registerSubdirContextAutoload`
+  registration function), plus `dist/src/hooks/before-agent-start.js` for
+  contrast (that hook is unrelated workflow-prompt logic, not subdir
+  context — it was read to confirm it is _not_ the injection mechanism).
+- Reference source: <https://github.com/IgorWarzocha/howaboua-pi-stuff/tree/main/packages/pi-markdown-workflows>
+- Written on: 2026-08-20.
+
+## Why this exists
+
+choco-pi retires its dependency on `@howaboua/pi-markdown-workflows`. That
+package bundled two unrelated features: (1) subdirectory `AGENTS.md` context
+autoloading, and (2) a "workflows" markdown-SOP tool/command system. Feature
+(2) is superseded by a different, unrelated workflow system elsewhere in this
+fork and is not ported here. Feature (1) — the AGENTS.md chain injection — is
+still wanted, so it is reimplemented here as its own minimal package with no
+external runtime dependency beyond the pi host's peer packages.
+
+## Behavior parity with the reference
+
+Reproduced faithfully:
+
+- Root-to-leaf `AGENTS.md` chain resolution bounded by the nearest ancestor
+  `.git` directory (or the highest ancestor containing an `AGENTS.md` if no
+  `.git` is found) — `contentRootForTarget` / `findAgentsFiles`.
+- The session root's own `AGENTS.md` is excluded from injection (it is
+  already part of the base system prompt).
+- The `<subdirectory_agents_context>` / `<agents_file path="...">` wire
+  format, including the same XML-escaping rules, so downstream consumers of
+  the tool-result text see an identical shape.
+- `tool_result` hook registration; `read`, `grep`, `find`, `ls` tool inputs
+  drive target-path resolution; grep-formatted `path:line:` output lines are
+  parsed back into path candidates from tool text output. Pi code-mode results
+  are expanded through completed `event.details.traces` entries, including
+  nested `exec_command` calls whose shell text is carried in `input.cmd`.
+- Per-session, per-absolute-path dedup: an `AGENTS.md` already injected once
+  this session is not injected again on a later matching tool call.
+- `session_start` / `session_tree` reset the dedup state (new session, or
+  navigating the session tree, gets a fresh injection pass).
+- `session_shutdown` synchronously invalidates pending asynchronous reads and
+  clears session state, so a replaced extension instance cannot access its
+  stale host context or emit lifecycle events after a read resolves.
+
+## Deliberate deviations
+
+- **No total-size cap in the reference; this package adds one.** The
+  reference injects every applicable `AGENTS.md` at full size on every
+  first-touch. This package adds `MAX_FILE_CHARS` (12,000 chars/file) and
+  `MAX_TOTAL_APPENDIX_CHARS` (40,000 chars/tool-result) caps, dropping the
+  root-most files first when the chain is large, because uncapped injection
+  of an accidentally huge `AGENTS.md` is a latent context-blowup risk. See
+  `src/appendix.ts`.
+- **No cross-fork/branch dedup persistence.** The reference persists which
+  `AGENTS.md` files were injected into `message.details[subdirContextAutoload]`
+  so that forking or resuming a session restores prior dedup state
+  (`core/subdir/branch-state.js`, `core/subdir/details.js`). This package
+  only tracks dedup state in an in-memory `Set` for the lifetime of the
+  extension process; forking or resuming a session re-injects previously
+  seen files once. This trades a minor amount of redundant injection after
+  a fork/resume for a much smaller, dependency-free implementation.
+- **Simplified shell-command target parsing.** The reference
+  (`core/subdir/shell-targets.js`) has a full tokenizer plus `git`
+  subcommand/flag grammar (`git -C dir ls-files`, `git --git-dir=`, etc.) and
+  distinguishes `ls`/`find`/`rg`/`grep`/`fd`/`tree`/`git ls-files`/`git grep`
+  as both "discovery" and "path-output" commands with different handling.
+  This package (`src/shell-targets.ts`) recognizes a smaller, no-`git`
+  command set (`ls find rg grep fd tree cat sed head tail`), tracks `cd`
+  across `;`/`|`/`&` separated segments, and skips the first non-flag
+  argument after `rg`/`grep` (the search pattern, not a path) but does not
+  special-case `git` subcommands, `--git-dir=`, or `-C`.
+- **`write`/`edit` tool calls are not treated as touched-path targets.**
+  Matches the reference: it also does not treat `write`/`edit` as
+  AGENTS.md-triggering events, only `read`/`grep`/`find`/`ls`/shell.
+
+## Hook lifecycle bridge
+
+After a nested `AGENTS.md` file is successfully selected for injection, the
+package emits `choco-pi-hooks:instructions-loaded` with its absolute path and
+the `nested_traversal` reason. This lets `choco-pi-hooks` fire Claude-compatible
+`InstructionsLoaded` handlers at the actual lazy-load boundary without parsing
+the rendered XML appendix back out of the tool result.
+
+## What was read but not reused
+
+`dist/src/hooks/before-agent-start.js` (workflow-prompt system-prompt suffix)
+and everything under `dist/src/core/workflow*`, `dist/src/core/skill*`,
+`dist/src/tools/workflows-create.js`, `dist/src/commands/*`, and
+`dist/src/ui/*` — all workflows/skills-command machinery, out of scope for
+this package.
+
+## Pi SDK target alignment
+
+Host-provided Pi SDK peer contracts and any development SDK dependencies now
+require exactly `1.0.4`, matching the harness target. This SDK alignment is
+separate from installer policy; TypeBox and unrelated
+dependencies retain their existing contracts.
+
+## 2026-10-07 choco-pi patch: Pi SDK 1.0.4
+
+Pi SDK peer and development pins move from `0.87.1` to exactly `1.0.4`,
+matching the harness target. Other dependency contracts are unchanged.
+
+## 2026-10-09 choco-pi patch: Pi SDK 1.2.0
+
+Pi SDK peer and development pins move from `1.0.4` to exactly `1.2.0`.
+
+## 2026-10-16 choco-pi patch: Pi SDK target 1.3.0
+
+Pi SDK peer and development pins move from `1.2.0` to exactly `1.3.0`.
+Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.
+
+## choco-pi patch: project-root containment
+
+Deviation from the reference, which bounds each chain only by the target's
+own nearest `.git`. Any touched path outside the session project root
+(nearest `.git` ancestor of the cwd, else the cwd) used to inline that
+foreign repository's `AGENTS.md` with instruction framing into the root
+session and every child session.
+
+- Targets and found files are classified by real path (each discovered
+  `AGENTS.md` goes through async `realpath` before classification, dedup,
+  and reading; the lexical path is kept only for the displayed label) against
+  the session root and the new `agentsMd.trustedRoots` setting in
+  `<agentDir>/settings.json` (`src/settings.ts`, async read at session start).
+- Files outside every allowed root are never read; each gets one
+  `<foreign_agents_file path bytes note/>` pointer per session, deduplicated
+  through the same per-session set.
+- `<agents_file>` carries `source="project|trusted-root"`.
+- Each registration counts inlined files, pointers, and appended characters
+  and emits `choco-pi-agents-md:session-stats` on `pi.events` at session end.
+
+Verification: `npx tsc --noEmit` in the package and
+`node --test packages/choco-pi-agents-md/tests/*.test.ts` pass.
+
+## 2026-10-22 choco-pi patch: Pi SDK target 1.4.0
+
+Pi SDK peer and development pins move from `1.3.0` to exactly `1.4.0`.
+Verification: `node --test tests/pi-sdk-target.test.ts` and `pnpm typecheck` pass.
+
+## 2026-11-03 choco-pi patch: Pi SDK target 1.5.0 + pi-schema dependency
+
+Pi SDK pins move from `1.4.0` to exactly `1.5.0` and `@earendil-works/pi-schema@1.5.0` is added as a peer dependency (the extension loader has no alias for it).
+
+## 2026-11-03 choco-pi patch: TypeBox to pi-schema
+
+`src/settings.ts` and `src/tool-events.ts` drop `typebox`/`typebox/value` and use compiled `@earendil-works/pi-schema` validators (open objects, no coercion, same accept/reject behaviour). The package no longer imports `typebox`.
+
+## 2026-11-03 choco-pi patch: typebox peer removed (C26)
+
+No file in this package imports `typebox` and there is no schema bridge, so the `typebox` peer declaration is removed from `package.json`. The `@earendil-works/pi-schema` peer stays.
+
+## 2026-11-10 choco-pi patch: Pi SDK target 1.5.1
+
+Pi SDK pins move from `1.5.0` to exactly `1.5.1`; version references in comments, tests, and docs follow.
+
+## 2026-11-11 choco-pi patch: Pi SDK range ~1.5.2
+
+Pi SDK dependencies move from exactly `1.5.1` to the range `~1.5.2` (`>=1.5.2 <1.6.0`), so later 1.5 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow.

@@ -1,4 +1,7 @@
-import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import {
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "../profile/extensions/lib/runtime-values.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -10,7 +13,7 @@ import statusCommands, {
   tabBody,
   renderTabBody,
   USAGE_REFRESH_MS,
-} from "../.pi/extensions/status-commands.ts";
+} from "../profile/extensions/status-commands.ts";
 import {
   claudePlanLabel,
   chatgptUsageProvider,
@@ -28,7 +31,7 @@ import {
   refillPace,
   usageFailureMessage,
   windowElapsedPercent,
-} from "../.pi/extensions/provider-usage.ts";
+} from "../profile/extensions/provider-usage.ts";
 import {
   createUsageCache,
   UsageHttpError,
@@ -36,7 +39,7 @@ import {
   type UsageCacheEntry,
   type UsageCacheStorage,
   type UsageRequestPolicy,
-} from "../.pi/extensions/lib/usage-cache.ts";
+} from "../profile/extensions/lib/usage-cache.ts";
 
 const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 

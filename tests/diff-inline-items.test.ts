@@ -4,11 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
-import type { FindingsSummary, RecordedFinding } from "../.pi/extensions/lib/changes/findings.ts";
+import type {
+  FindingsSummary,
+  RecordedFinding,
+} from "../profile/extensions/lib/changes/findings.ts";
 import {
   createCommentReader,
   paneComments,
-} from "../.pi/extensions/lib/changes/review-comments.ts";
+} from "../profile/extensions/lib/changes/review-comments.ts";
 import {
   listReviewRecords,
   repoKey,
@@ -16,14 +19,14 @@ import {
   type ReviewComment,
   type ReviewRecord,
   type ReviewTarget,
-} from "../.pi/extensions/lib/changes/review-records.ts";
-import type { DiffHunk } from "../.pi/extensions/lib/changes/types.ts";
+} from "../profile/extensions/lib/changes/review-records.ts";
+import type { DiffHunk } from "../profile/extensions/lib/changes/types.ts";
 import {
   HIDDEN_CONTENTS,
   renderUnifiedBody,
-} from "../.pi/extensions/lib/changes/view/changes-view.ts";
-import { itemTextColumn } from "../.pi/extensions/lib/changes/view/items.ts";
-import { buildCommentAnchor } from "../.pi/extensions/review/core/anchor.ts";
+} from "../profile/extensions/lib/changes/view/changes-view.ts";
+import { itemTextColumn } from "../profile/extensions/lib/changes/view/items.ts";
+import { buildCommentAnchor } from "../profile/extensions/review/core/anchor.ts";
 import {
   file,
   flush,

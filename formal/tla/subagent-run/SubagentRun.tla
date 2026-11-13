@@ -1,7 +1,7 @@
 ------------------------------ MODULE SubagentRun ------------------------------
 (***************************************************************************)
 (* The subagent run lifecycle of AgentManager                               *)
-(* (.pi/packages/choco-pi-subagents/src/agent-manager.ts): spawn, run to    *)
+(* (packages/choco-pi-subagents/src/agent-manager.ts): spawn, run to    *)
 (* an outcome, usage-limit evaluation, park and wake at reset, user stop,   *)
 (* foreground and background resume, deferred worktree cleanup, result      *)
 (* publication, completion delivery and result reads.                       *)

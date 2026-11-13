@@ -6,7 +6,7 @@
  * (or shown notice) carries credential-looking text.
  */
 import { str } from "@earendil-works/pi-schema";
-import type { JsonRecord, RuntimeValue } from "../../../.pi/extensions/lib/runtime-values.ts";
+import type { JsonRecord, RuntimeValue } from "../../../profile/extensions/lib/runtime-values.ts";
 import { isRecord, matches } from "./schema-check.ts";
 
 import {
@@ -15,7 +15,7 @@ import {
   type LaneEvent,
   type LaneRecord,
   LaneRecordSchema,
-} from "../../../.pi/packages/choco-pi-compaction/src/background/lane-journal.ts";
+} from "../../../packages/choco-pi-compaction/src/background/lane-journal.ts";
 
 export { LANE_RECORD_TYPE };
 

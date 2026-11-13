@@ -8,9 +8,9 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { arr, int, obj, str } from "@earendil-works/pi-schema";
 import { matches } from "../schema-check.ts";
-import { hostParams } from "../../../../.pi/extensions/lib/schema-bridge.ts";
-import type { RunOptions } from "../../../../.pi/packages/choco-pi-subagents/src/agent-runner.ts";
-import { CHILD_OWNER_KEY_PREFIX } from "../../../../.pi/packages/choco-pi-subagents/src/child-compaction-bridge.ts";
+import { hostParams } from "../../../../profile/extensions/lib/schema-bridge.ts";
+import type { RunOptions } from "../../../../packages/choco-pi-subagents/src/agent-runner.ts";
+import { CHILD_OWNER_KEY_PREFIX } from "../../../../packages/choco-pi-subagents/src/child-compaction-bridge.ts";
 import { type EvidenceRecord, parseArtifactInput } from "../artifacts.ts";
 import type { CheckEvidence, Observation } from "../checks.ts";
 import { STEP_TOOL, stepResultText } from "../fake-sse.ts";
@@ -164,12 +164,11 @@ async function runChildren(host: Host): Promise<ChildRuns> {
   const { pi, ctx } = host.parent();
   const parentEntries = structuredClone(host.manager.getBranch());
   const parentLeaf = host.manager.getLeafId();
-  const runner = await import("../../../../.pi/packages/choco-pi-subagents/src/agent-runner.ts");
+  const runner = await import("../../../../packages/choco-pi-subagents/src/agent-runner.ts");
   assertParent(host, parentLeaf);
-  const agents = await import("../../../../.pi/packages/choco-pi-subagents/src/agent-types.ts");
+  const agents = await import("../../../../packages/choco-pi-subagents/src/agent-types.ts");
   assertParent(host, parentLeaf);
-  const childContext =
-    await import("../../../../.pi/packages/choco-pi-subagents/src/child-context.ts");
+  const childContext = await import("../../../../packages/choco-pi-subagents/src/child-context.ts");
   assertParent(host, parentLeaf);
   const configs = Array.from({ length: CHILD_COUNT }, (_unused, index) => childConfig(index));
   agents.registerAgents(new Map(configs.map((config) => [config.name, config])));

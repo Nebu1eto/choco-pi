@@ -75,7 +75,7 @@ export const LIVE_FABLE_MODEL: Model<"anthropic-messages"> = {
 /**
  * Mirrors the user's refreshed catalog entry for `openai-codex/gpt-6-luna`
  * (`<agent dir>/models-store.json`; absent from the installed SDK's built-in
- * catalog). Its 272K window is the catalog value; the worktree `.pi/models.json`
+ * catalog). Its 272K window is the catalog value; the worktree `profile/models.json`
  * override raises it to 1,050,000 when a launch applies that file.
  */
 export const LIVE_LUNA_MODEL: Model<"openai-codex-responses"> = {

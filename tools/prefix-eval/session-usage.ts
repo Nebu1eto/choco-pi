@@ -1,7 +1,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { arr, bool, num, obj, opt, str, union, type Static } from "@earendil-works/pi-schema";
-import { isJsonRecord, isNumber, isString } from "../../.pi/extensions/lib/runtime-values.ts";
+import { isJsonRecord, isNumber, isString } from "../../profile/extensions/lib/runtime-values.ts";
 import { parseJson, validateValue } from "./io.ts";
 import { JsonSchema, type JsonValue, type SessionUsage, type TokenUsage } from "./types.ts";
 

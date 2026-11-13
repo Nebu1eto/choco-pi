@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { createDiffStore } from "../.pi/extensions/lib/changes/git/store.ts";
+import { createDiffStore } from "../profile/extensions/lib/changes/git/store.ts";
 
 const execFileAsync = promisify(execFile);
 const FIXTURE_ENV = {

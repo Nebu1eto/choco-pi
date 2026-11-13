@@ -2,15 +2,15 @@
 
 ## Commit policy
 
-When a task/task-inline/task-dynamic/task-hotfix workflow completes and the user has not excluded a commit, the orchestrator commits locally per `.pi/skills/commit/SKILL.md` (sign, trailer, never push).
+When a task/task-inline/task-dynamic/task-hotfix workflow completes and the user has not excluded a commit, the orchestrator commits locally per `profile/skills/commit/SKILL.md` (sign, trailer, never push).
 
 ## Vendored dependencies
 
-Untracked `.pi/packages/*/node_modules` trees are load-bearing and enforced by install profiles. Record each package divergence in `VENDORED.md` with the change.
+Untracked `packages/*/node_modules` trees are load-bearing and enforced by install profiles. Record each package divergence in `VENDORED.md` with the change.
 
 ## Model guidance
 
-`.pi/model-guidance.md` owns model routing and model-specific policy. Before changes, read each complete applicable source guide and append provenance to `docs/model-guidance-history.md`, a history-only record that is never routing input. Provider-neutral wording may use current references; apply provider advice only to its model.
+`profile/model-guidance.md` owns model routing and model-specific policy. Before changes, read each complete applicable source guide and append provenance to `docs/model-guidance-history.md`, a history-only record that is never routing input. Provider-neutral wording may use current references; apply provider advice only to its model.
 
 Cached recollection, summaries, excerpts, metadata, and navigation-only pages do not count as a refreshed guide.
 
@@ -35,5 +35,5 @@ Cached recollection, summaries, excerpts, metadata, and navigation-only pages do
 - Before the first `await` or dynamic import, snapshot scalars and an owner/generation; invalidate synchronously and recheck after each await before host objects.
 - Settle lifecycle callbacks exactly once; contain only stale-context errors and rethrow unrelated failures.
 - Root code changes require `pnpm lint`, `pnpm fmt:check`, `pnpm typecheck`, and `pnpm test` on the final state before completion; while working, run focused checks instead.
-- `pnpm test` does not run the formal validation tests in `tests/formal/`; `pnpm test --formal` adds them. Run them only for a change to `formal/`, `.pi/skills/formal-verify/`, or `tests/formal/`. Run a model check (`check-all.ts`) only for a model whose files changed or that `drift.ts affected` names.
+- `pnpm test` does not run the formal validation tests in `tests/formal/`; `pnpm test --formal` adds them. Run them only for a change to `formal/`, `profile/skills/formal-verify/`, or `tests/formal/`. Run a model check (`check-all.ts`) only for a model whose files changed or that `drift.ts affected` names.
 - Prefer subagents for delegated work; spawn a dedicated Pi session or process only when the user explicitly asks.

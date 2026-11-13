@@ -11,7 +11,7 @@
  *   layout, listed in `MIGRATED_SIDECARS` and rewritten by a migration step
  *   below that keeps the user's own keys.
  *
- * A new `.pi/extensions/*.json` sidecar must join one of the two lists; a test
+ * A new `profile/extensions/*.json` sidecar must join one of the two lists; a test
  * fails until it does.
  *
  * A file an earlier profile installed and HEAD no longer ships is listed in
@@ -34,16 +34,16 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { isJsonRecord, type JsonRecord } from "../.pi/extensions/lib/runtime-values.ts";
-import { resolvePiLauncher, writeProfileMarker } from "../.pi/extensions/lib/profile-marker.ts";
-import { PI_SDK_REQUIREMENT, isSupportedPiVersion } from "../.pi/extensions/lib/pi-target.ts";
-import { readAnthropicCompactionMode } from "../.pi/packages/choco-pi-compaction/src/anthropic/mode.ts";
+import { isJsonRecord, type JsonRecord } from "../profile/extensions/lib/runtime-values.ts";
+import { resolvePiLauncher, writeProfileMarker } from "../profile/extensions/lib/profile-marker.ts";
+import { PI_SDK_REQUIREMENT, isSupportedPiVersion } from "../profile/extensions/lib/pi-target.ts";
+import { readAnthropicCompactionMode } from "../packages/choco-pi-compaction/src/anthropic/mode.ts";
 import {
   deriveBackgroundLanes,
   globalBackgroundSettingsPath,
   SidecarRefusedError,
   writeGlobalBackgroundSettings,
-} from "../.pi/packages/choco-pi-compaction/src/background/settings.ts";
+} from "../packages/choco-pi-compaction/src/background/settings.ts";
 import { arr, compile, map, obj, opt, str, unknown, type Static } from "@earendil-works/pi-schema";
 
 const SettingsSchema = obj(
@@ -79,24 +79,24 @@ export type SidecarMigrationResult = {
 const SCRIPT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 export const PROFILE_LINKS: readonly (readonly [string, string])[] = [
-  [".pi/SYSTEM.md", "SYSTEM.md"],
-  [".pi/writing-policy.md", "writing-policy.md"],
-  [".pi/review-policy.md", "review-policy.md"],
-  [".pi/choco-pi-codex.json", "choco-pi-codex.json"],
-  [".pi/subagents.json", "subagents.json"],
-  [".pi/zentui.json", "choco-pi-ui.json"],
-  [".pi/models.json", "models.json"],
-  [".pi/keybindings.json", "keybindings.json"],
-  [".pi/agents/advisor.md", "agents/advisor.md"],
-  [".pi/agents/general.md", "agents/general.md"],
-  [".pi/agents/planner.md", "agents/planner.md"],
-  [".pi/agents/implementer.md", "agents/implementer.md"],
-  [".pi/agents/reviewer.md", "agents/reviewer.md"],
-  [".pi/agents/verifier.md", "agents/verifier.md"],
-  [".pi/agents/handoff.md", "agents/handoff.md"],
-  [".pi/agents/explore.md", "agents/explore.md"],
-  [".pi/extensions/apex-provider.json", "extensions/apex-provider.json"],
-  [".pi/extensions/review.json", "extensions/review.json"],
+  ["profile/SYSTEM.md", "SYSTEM.md"],
+  ["profile/writing-policy.md", "writing-policy.md"],
+  ["profile/review-policy.md", "review-policy.md"],
+  ["profile/choco-pi-codex.json", "choco-pi-codex.json"],
+  ["profile/subagents.json", "subagents.json"],
+  ["profile/zentui.json", "choco-pi-ui.json"],
+  ["profile/models.json", "models.json"],
+  ["profile/keybindings.json", "keybindings.json"],
+  ["profile/agents/advisor.md", "agents/advisor.md"],
+  ["profile/agents/general.md", "agents/general.md"],
+  ["profile/agents/planner.md", "agents/planner.md"],
+  ["profile/agents/implementer.md", "agents/implementer.md"],
+  ["profile/agents/reviewer.md", "agents/reviewer.md"],
+  ["profile/agents/verifier.md", "agents/verifier.md"],
+  ["profile/agents/handoff.md", "agents/handoff.md"],
+  ["profile/agents/explore.md", "agents/explore.md"],
+  ["profile/extensions/apex-provider.json", "extensions/apex-provider.json"],
+  ["profile/extensions/review.json", "extensions/review.json"],
 ];
 
 /**
@@ -115,7 +115,7 @@ export const MIGRATED_SIDECARS: readonly string[] = ["extensions/background-comp
 export const RETIRED_PROFILE_FILES: readonly string[] = ["extensions/context-cap.json"];
 
 /**
- * Bundled packages Pi loads, in load order, named relative to `.pi`. Order is
+ * Bundled packages Pi loads, in load order, named relative to the checkout root. Order is
  * load-bearing: `choco-pi-web-search` must precede `choco-pi-web-access`.
  * `choco-pi-acp` is absent because Pi never loads it. A test fails until a new
  * bundled Pi package joins this list.
@@ -382,11 +382,17 @@ function unique(values: string[]) {
   return [...new Set(values)];
 }
 
-function packageIdentity(spec: string) {
+/**
+ * Identity of a package spec. A bundled package is `local:<name>` whether it
+ * is named relatively, by this checkout's `packages/<name>` path, or by the
+ * `packages/<name>` path inside the `.pi` directory of an old-layout checkout.
+ */
+function packageIdentity(spec: string, root: string) {
   const relativeMatch = spec.match(/^\.\/packages\/([^/]+)$/);
   if (relativeMatch) return `local:${relativeMatch[1]}`;
   if (path.isAbsolute(spec)) {
     const packageDir = path.dirname(spec);
+    if (packageDir === path.join(root, "packages")) return `local:${path.basename(spec)}`;
     if (
       path.basename(packageDir) === "packages" &&
       path.basename(path.dirname(packageDir)) === ".pi"
@@ -427,11 +433,11 @@ function compareSpecVersions(left: string, right: string) {
   return 0;
 }
 
-function mergePackages(canonical: string[], existing: string[]) {
-  const canonicalIds = new Set(canonical.map(packageIdentity));
+function mergePackages(canonical: string[], existing: string[], root: string) {
+  const canonicalIds = new Set(canonical.map((spec) => packageIdentity(spec, root)));
   const extras = new Map<string, string>();
   for (const spec of existing) {
-    const identity = packageIdentity(spec);
+    const identity = packageIdentity(spec, root);
     if (canonicalIds.has(identity)) continue;
     const current = extras.get(identity);
     if (current === undefined || compareSpecVersions(spec, current) > 0) extras.set(identity, spec);
@@ -451,8 +457,8 @@ function identityName(identity: string) {
 }
 
 /**
- * True when the entry is some other checkout's .pi/extensions, .pi/skills or
- * .pi/prompts directory.
+ * True when the entry is a .pi/extensions, .pi/skills or .pi/prompts directory
+ * of a checkout in the old layout, other than this checkout's profile directory.
  *
  * Such a directory is a previous install of this same profile. Keeping it
  * alongside the new root makes pi load two copies of every extension, and it
@@ -464,7 +470,7 @@ function isForeignProfileDirectory(entry: string, root: string, name: string) {
   if (!path.isAbsolute(entry)) return false;
   if (path.basename(entry) !== name) return false;
   if (path.basename(path.dirname(entry)) !== ".pi") return false;
-  return path.resolve(entry) !== path.resolve(root, ".pi", name);
+  return path.resolve(entry) !== path.resolve(root, "profile", name);
 }
 
 /**
@@ -488,12 +494,12 @@ export function buildGlobalSettings(
   prompts: string[];
 } {
   const canonicalPackages = projectSettings.packages.map((spec) =>
-    spec.startsWith("./") ? path.resolve(root, ".pi", spec) : spec,
+    spec.startsWith("./") ? path.resolve(root, spec) : spec,
   );
-  const rooted = (name: string) => path.resolve(root, ".pi", name);
+  const rooted = (name: string) => path.resolve(root, "profile", name);
   const superseded = new Set(supersededNames);
   const retainedPackages = (existingSettings.packages ?? []).filter(
-    (spec) => !superseded.has(identityName(packageIdentity(spec))),
+    (spec) => !superseded.has(identityName(packageIdentity(spec, root))),
   );
   const profileDirectories = (name: "extensions" | "skills" | "prompts") => [
     rooted(name),
@@ -527,7 +533,7 @@ export function buildGlobalSettings(
     ...(Object.keys(thinkingLevels).length > 0 && {
       modelThinkingLevels: thinkingLevels,
     }),
-    packages: mergePackages(canonicalPackages, retainedPackages),
+    packages: mergePackages(canonicalPackages, retainedPackages, root),
     extensions: unique([...extensions, ...builtinPolicy]),
     skills: unique(profileDirectories("skills")),
     prompts: unique(profileDirectories("prompts")),
@@ -616,11 +622,11 @@ async function writeSettings(target: string, settings: Settings) {
  */
 async function supersededPackageNames(root: string, projectSettings: ProjectSettings) {
   const names = [];
-  const bundled = path.join(root, ".pi", "packages");
+  const bundled = path.join(root, "packages");
   for (const spec of projectSettings.packages) {
-    // Project settings name bundled packages as `./packages/<name>`; global
-    // settings, written by an earlier install, name them by absolute path.
-    const packageDir = spec.startsWith("./") ? path.resolve(root, ".pi", spec) : spec;
+    // The defaults name bundled packages as `./packages/<name>`; project and
+    // global settings name them by absolute path (see readProfileSettings).
+    const packageDir = spec.startsWith("./") ? path.resolve(root, spec) : spec;
     if (!path.isAbsolute(packageDir) || path.dirname(packageDir) !== bundled) continue;
     const manifest = await readJson(path.join(packageDir, "package.json"), {});
     if (!hasValidSupersedes(manifest)) throw new Error(`invalid chocoPi.supersedes in ${spec}`);
@@ -643,12 +649,21 @@ async function readProfileSettings(
   if (await exists(projectPath)) {
     const project = await readJson(projectPath);
     if (project.packages === undefined) throw new Error(`${projectPath} must declare packages`);
-    return { ...project, packages: project.packages };
+    // Pi resolves a relative package path in project settings against the
+    // project's `.pi` directory; resolve it here so later steps see the same
+    // absolute path whichever source the policy came from.
+    const projectDir = path.dirname(projectPath);
+    return {
+      ...project,
+      packages: project.packages.map((spec) =>
+        spec.startsWith("./") || spec.startsWith("../") ? path.resolve(projectDir, spec) : spec,
+      ),
+    };
   }
   // Global settings also hold the user's own packages. Only the bundled ones
   // are profile-owned; the rest merge back as retained packages, where
   // superseded predecessors are dropped.
-  const bundled = path.join(root, ".pi", "packages");
+  const bundled = path.join(root, "packages");
   const packages = (existingSettings.packages ?? []).filter(
     (spec) => path.isAbsolute(spec) && path.dirname(spec) === bundled,
   );

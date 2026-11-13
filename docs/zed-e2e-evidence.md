@@ -47,7 +47,7 @@ Attempt 2 re-ran the steps that attempt 1 could not reach.
 - Node: v26.8.1 (`/opt/homebrew/Cellar/node/26.8.1/bin/node`)
 - Adapter under test: this working tree at `HEAD` `a6f8d70e`
   ("feat: harden ACP adapter and ship Zed setup docs"), executed from source as
-  `node /Users/Nebuleto/Workspace/choco-pi/.pi/packages/choco-pi-acp/bin/choco-pi-acp.ts`.
+  `node /Users/Nebuleto/Workspace/choco-pi/packages/choco-pi-acp/bin/choco-pi-acp.ts`.
   The only uncommitted file during the run was this document. No Git write
   command was executed.
 - Result: 6 PASS, 3 FAIL, 3 BLOCKED, over the 12 numbered steps.
@@ -72,9 +72,9 @@ directory only, then launched through LaunchServices:
 
 ```sh
 PROFILE_DIR=$(mktemp -d); FIXTURE=$(mktemp -d)
-node .pi/packages/choco-pi-acp/bin/choco-pi-acp.ts zed setup \
+node packages/choco-pi-acp/bin/choco-pi-acp.ts zed setup \
   --dry-run --zed-config-dir "$PROFILE_DIR/config"
-node .pi/packages/choco-pi-acp/bin/choco-pi-acp.ts zed setup \
+node packages/choco-pi-acp/bin/choco-pi-acp.ts zed setup \
   --apply --zed-config-dir "$PROFILE_DIR/config"
 open -n -a /Applications/Zed.app --args --user-data-dir "$PROFILE_DIR" "$FIXTURE"
 ```
@@ -166,7 +166,7 @@ Equal. The user's Zed `settings.json` was not modified.
 #### Step 0 — Isolated profile setup, apply, and doctor — PASS
 
 ```text
-$ node .pi/packages/choco-pi-acp/bin/choco-pi-acp.ts zed setup \
+$ node packages/choco-pi-acp/bin/choco-pi-acp.ts zed setup \
     --dry-run --zed-config-dir "$PROFILE_DIR/config"
 Project execution: local
 Zed config directory: /tmp/choco-pi-zed-e2e2/profile.u7Xneo/config
@@ -177,7 +177,7 @@ Dry run: no files written.
 
 The dry run printed the intended `agent_servers.choco-pi` entry with
 `"type": "custom"`, the absolute Node path, the absolute
-`.pi/packages/choco-pi-acp/bin/choco-pi-acp.ts` argument, and
+`packages/choco-pi-acp/bin/choco-pi-acp.ts` argument, and
 `"PI_ACP_ENABLE_EMBEDDED_CONTEXT": "true"`.
 
 `--apply` reported `Applied setup settings; backup: not needed` and
@@ -234,7 +234,7 @@ The adapter was spawned by the isolated Zed instance:
 ```text
 $ ps -ww -o pid=,ppid=,command= -x | grep choco-pi-acp
 8944 37591 /opt/homebrew/Cellar/node/26.8.1/bin/node \
-  /Users/Nebuleto/Workspace/choco-pi/.pi/packages/choco-pi-acp/bin/choco-pi-acp.ts
+  /Users/Nebuleto/Workspace/choco-pi/packages/choco-pi-acp/bin/choco-pi-acp.ts
 ```
 
 Parent pid 37591 is the verified-isolated Zed instance.
@@ -263,7 +263,7 @@ resembling startup information appeared before or after the first prompt.
 Because half of the step's required observation is absent, the step is FAIL,
 not a partial pass. The runner did not determine whether a `quietStartup`
 setting suppressed it; `getQuietStartup` exists in
-`.pi/packages/choco-pi-acp/src/acp/pi-settings.ts`, but its effective value for
+`packages/choco-pi-acp/src/acp/pi-settings.ts`, but its effective value for
 this session was not read, so no cause is claimed.
 
 #### Step 3 — Attach a selected code range and submit a prompt — PASS
@@ -331,7 +331,7 @@ Skill command: PASS. Filtering with `/skill` showed skill commands namespaced as
 
 Prompt-template command: BLOCKED. Prompt templates are read from
 `~/.pi/agent/prompts/*.md`
-(`.pi/packages/choco-pi-acp/src/acp/agent.ts:1801`). That directory does not
+(`packages/choco-pi-acp/src/acp/agent.ts:1801`). That directory does not
 exist on this machine, so no prompt-template command existed to invoke. The
 runner is limited to writing `docs/zed-e2e-evidence.md` and `/tmp`, so creating
 one was out of authority. No claim is made about prompt-template commands.
@@ -414,7 +414,7 @@ sees an opaque tool call where a reviewable diff is expected. Recorded as FAIL.
 CLI, against the fixture cwd:
 
 ```text
-$ node .pi/packages/choco-pi-editor-context/src/cli.ts list --cwd /tmp/choco-pi-zed-e2e2/fixture.gBoGnM
+$ node packages/choco-pi-editor-context/src/cli.ts list --cwd /tmp/choco-pi-zed-e2e2/fixture.gBoGnM
 Matching live sessions: 1
 '... cli.ts' 'select' '--session-id' '01a06738-d889-74e6-9ced-54714b604ea4' \
   '--owner-id' '637ed99b-0913-403c-84b0-06d068caa3d6' \
@@ -662,7 +662,7 @@ The first ACP startup attempt used
 `session/new` failing with `Authentication required`, and no Pi child started.
 The run removed that override from the throwaway Zed profile, leaving the
 authenticated global Pi profile in use. It copied the existing repository
-template `.pi/prompts/check.md` verbatim to the fixture's project profile at
+template `profile/prompts/check.md` verbatim to the fixture's project profile at
 `.pi/prompts/check.md`, and added project-local `quietStartup: false` so the run
 could exercise the shipped default startup behavior. No credential file was
 read, copied, or changed.

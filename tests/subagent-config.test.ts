@@ -5,10 +5,13 @@ import test from "node:test";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { useProfileAgents } from "./helpers/profile-agents.ts";
+
 const READ_ONLY_ROLES = ["explore", "planner", "reviewer", "handoff"];
 
-test("read-only roles deny mutation tools while keeping extensions", async () => {
-  const packageRoot = resolve(".pi/packages/choco-pi-subagents/src");
+test("read-only roles deny mutation tools while keeping extensions", async (t) => {
+  await useProfileAgents(t);
+  const packageRoot = resolve("packages/choco-pi-subagents/src");
   const { loadCustomAgents } = await import(
     pathToFileURL(resolve(packageRoot, "custom-agents.ts")).href
   );
@@ -22,8 +25,9 @@ test("read-only roles deny mutation tools while keeping extensions", async () =>
   }
 });
 
-test("the verifier role keeps write tools for scratch and runs with fresh context", async () => {
-  const packageRoot = resolve(".pi/packages/choco-pi-subagents/src");
+test("the verifier role keeps write tools for scratch and runs with fresh context", async (t) => {
+  await useProfileAgents(t);
+  const packageRoot = resolve("packages/choco-pi-subagents/src");
   const { loadCustomAgents } = await import(
     pathToFileURL(resolve(packageRoot, "custom-agents.ts")).href
   );
@@ -36,10 +40,11 @@ test("the verifier role keeps write tools for scratch and runs with fresh contex
   assert.equal(verifier.inheritContext, false);
 });
 
-test("role model and thinking follow model_locked pin, caller, then role default precedence", async () => {
+test("role model and thinking follow model_locked pin, caller, then role default precedence", async (t) => {
+  await useProfileAgents(t);
   // The fork ships TypeScript source only, so these load straight from `src/`
   // under Node's type stripping.
-  const packageRoot = resolve(".pi/packages/choco-pi-subagents/src");
+  const packageRoot = resolve("packages/choco-pi-subagents/src");
   const { loadCustomAgents } = await import(
     pathToFileURL(resolve(packageRoot, "custom-agents.ts")).href
   );
@@ -125,7 +130,7 @@ test("role model and thinking follow model_locked pin, caller, then role default
 });
 
 test("spawn results explain discarded overrides and unavailable role models", async () => {
-  const packageRoot = resolve(".pi/packages/choco-pi-subagents/src");
+  const packageRoot = resolve("packages/choco-pi-subagents/src");
   const { describeModelResolution, resolveAgentInvocationConfig } = await import(
     pathToFileURL(resolve(packageRoot, "invocation-config.ts")).href
   );
@@ -199,12 +204,12 @@ test("spawn results explain discarded overrides and unavailable role models", as
 });
 
 test("fallbacks and role defaults route OpenAI through openai-codex only", async () => {
-  const fallbacks = await readFile(resolve(".pi/model-fallbacks.json"), "utf8");
+  const fallbacks = await readFile(resolve("profile/model-fallbacks.json"), "utf8");
   assert.doesNotMatch(fallbacks, /"openai\//u, "no openai/* fallback defaults");
   for (const id of ["gpt-6-astra", "gpt-6.1-sol", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-luna"]) {
     assert.ok(fallbacks.includes(`"openai-codex/${id}"`), id);
   }
-  const files = (await readdir(resolve(".pi/agents"))).filter((file) => file.endsWith(".md"));
+  const files = (await readdir(resolve("profile/agents"))).filter((file) => file.endsWith(".md"));
   assert.ok(files.length > 0);
   const expectedOpenAI = new Map([
     ["general.md", "openai-codex/gpt-6.1-sol"],
@@ -215,7 +220,7 @@ test("fallbacks and role defaults route OpenAI through openai-codex only", async
   ]);
   for (const file of expectedOpenAI.keys()) assert.ok(files.includes(file), file + " exists");
   for (const file of files) {
-    const content = await readFile(resolve(".pi/agents", file), "utf8");
+    const content = await readFile(resolve("profile/agents", file), "utf8");
     const model = /^model:\s*(\S+)$/mu.exec(content)?.[1];
     assert.doesNotMatch(content, /^default_(?:model|thinking):/mu, file + " uses model:/thinking:");
     const expected = expectedOpenAI.get(file);
@@ -224,8 +229,9 @@ test("fallbacks and role defaults route OpenAI through openai-codex only", async
   }
 });
 
-test("the advisor role is internal: only the advisor tool may spawn it", async () => {
-  const packageRoot = resolve(".pi/packages/choco-pi-subagents/src");
+test("the advisor role is internal: only the advisor tool may spawn it", async (t) => {
+  await useProfileAgents(t);
+  const packageRoot = resolve("packages/choco-pi-subagents/src");
   const { loadCustomAgents } = await import(
     pathToFileURL(resolve(packageRoot, "custom-agents.ts")).href
   );

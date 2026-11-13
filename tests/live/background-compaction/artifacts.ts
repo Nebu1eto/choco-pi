@@ -3,7 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { compile, int, lit, obj, str } from "@earendil-works/pi-schema";
 import type { Schema } from "@earendil-works/pi-schema";
-import type { RuntimeValue } from "../../../.pi/extensions/lib/runtime-values.ts";
+import type { RuntimeValue } from "../../../profile/extensions/lib/runtime-values.ts";
 import { isArray, isBoolean, isNumber, isRecord, isString, matches } from "./schema-check.ts";
 
 /** Decoded-JSON values: what an artifact file can hold. */

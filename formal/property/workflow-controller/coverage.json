@@ -6,22 +6,22 @@
   "command": "env -u PI_ROOT_SESSION_ID -u PI_SCRATCH_DIR -u PI_SESSION_ID -u PI_CODING_AGENT -u PI_MANAGED_INSTALL_ROOT node --test tests/prop-workflow-controller.test.ts",
   "covers": [
     {
-      "file": ".pi/packages/choco-pi-subagents/src/workflow.ts",
+      "file": "packages/choco-pi-subagents/src/workflow.ts",
       "symbol": "WorkflowController",
       "hash": "sha256:eeee548153787afe759361484fc936c71a8a6d6935ceb4748b00b490e07b444e"
     },
     {
-      "file": ".pi/packages/choco-pi-subagents/src/workflow.ts",
+      "file": "packages/choco-pi-subagents/src/workflow.ts",
       "symbol": "WorkflowManager",
       "hash": "sha256:f93d7ff276da9614656f0974669f6fb6f370216ad85a2ad8958500e921595afb"
     },
     {
-      "file": ".pi/packages/choco-pi-subagents/src/workflow.ts",
+      "file": "packages/choco-pi-subagents/src/workflow.ts",
       "symbol": "validateWorkflowDefinition",
       "hash": "sha256:81f968728772cdf86354730a391d84ba67f8b082b6ee09d8ef575d19eae36d27"
     },
     {
-      "file": ".pi/packages/choco-pi-subagents/src/workflow.ts",
+      "file": "packages/choco-pi-subagents/src/workflow.ts",
       "symbol": "renderWorkflowPrompt",
       "hash": "sha256:9b8d9019f31d32af444259800f2f177e5ce920037f11d894cd9868bc2a1413f1"
     }
@@ -29,11 +29,11 @@
   "assumes": [
     {
       "note": "The fake runner settles each run exactly once and ignores the abort signal; the real runner bridge is assumed to settle its promise once and to reject or return cancelled after abort.",
-      "file": ".pi/packages/choco-pi-subagents/src/index.ts"
+      "file": "packages/choco-pi-subagents/src/index.ts"
     },
     {
       "note": "Provider-unavailable errors use the message format parsed by providerKeyFromUnavailableMessage.",
-      "file": ".pi/packages/choco-pi-subagents/src/provider-health.ts"
+      "file": "packages/choco-pi-subagents/src/provider-health.ts"
     },
     {
       "note": "Not exercised: step timeout_ms timers and workflow_update (updateSteps); graphs are limited to 6 steps, 3 needs per step, maxConcurrent 1-3."

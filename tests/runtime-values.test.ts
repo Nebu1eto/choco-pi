@@ -10,7 +10,7 @@ import {
   isString,
   isSymbol,
   runtimeTypeOf,
-} from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/lib/runtime-values.ts";
 
 class Sample {}
 

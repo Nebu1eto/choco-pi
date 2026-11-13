@@ -39,8 +39,8 @@ import {
   writeAgentPreference,
   type AgentPreferenceChange,
   type AgentStyle,
-} from "../.pi/extensions/lib/agent-preferences.ts";
-import { isJsonRecord, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/lib/agent-preferences.ts";
+import { isJsonRecord, type RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 function isPreferenceModuleCopy<Candidate>(value: Candidate): value is Candidate & {
   onAgentPreferenceChange: typeof onAgentPreferenceChange;
 } {
@@ -224,8 +224,10 @@ test(
     // Pi loads each extension through its own module loader, so the dialog
     // and its subscribers hold separate copies of this module. The query
     // string defeats the ESM module cache the same way.
-    const specifier = new URL("../.pi/extensions/lib/agent-preferences.ts?copy=1", import.meta.url)
-      .href;
+    const specifier = new URL(
+      "../profile/extensions/lib/agent-preferences.ts?copy=1",
+      import.meta.url,
+    ).href;
     const copy: RuntimeValue = await import(specifier);
     assert.ok(isPreferenceModuleCopy(copy), "the module copy exposes the subscription API");
     const seen: { key: string; value: unknown }[] = [];
@@ -503,7 +505,7 @@ test(
 );
 
 test("SYSTEM.md defers progress-update cadence to the style and keeps the language", () => {
-  const system = readFileSync(new URL("../.pi/SYSTEM.md", import.meta.url), "utf8");
+  const system = readFileSync(new URL("../profile/SYSTEM.md", import.meta.url), "utf8");
   assert.ok(!system.includes("Every few tool calls, give the user a one-line update"));
   assert.ok(!system.includes("Use the configured language/style unless overridden"));
   assert.ok(
@@ -679,6 +681,6 @@ test("persona definitions append once and remain synchronized with the system pr
   assert.equal(appended, `Base prompt\n\n${PERSONA_DEFINITIONS_BLOCK}`);
   assert.equal(appendPersonaDefinitions(appended), undefined);
 
-  const systemPrompt = readFileSync(new URL("../.pi/SYSTEM.md", import.meta.url), "utf8");
+  const systemPrompt = readFileSync(new URL("../profile/SYSTEM.md", import.meta.url), "utf8");
   assert.ok(systemPrompt.includes(PERSONA_DEFINITIONS_BLOCK));
 });

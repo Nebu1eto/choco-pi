@@ -5,7 +5,7 @@ import {
   MIN_CONFIDENT_SAMPLES,
   MIN_ESTIMATE_SAMPLES,
   type SpeedSample,
-} from "../.pi/extensions/lib/stats/estimate.ts";
+} from "../profile/extensions/lib/stats/estimate.ts";
 
 /** Deterministic pseudo-random numbers so the fixture is stable across runs. */
 function lcg(seed: number): () => number {

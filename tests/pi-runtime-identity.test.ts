@@ -5,8 +5,8 @@ import {
   compareVersion,
   probeLauncherVersion,
   readImportedSdkVersion,
-} from "../.pi/extensions/lib/pi-runtime-identity.ts";
-import { isSupportedPiVersion } from "../.pi/extensions/lib/pi-target.ts";
+} from "../profile/extensions/lib/pi-runtime-identity.ts";
+import { isSupportedPiVersion } from "../profile/extensions/lib/pi-target.ts";
 
 test("imported SDK identity uses supported public exports", async () => {
   const observation = await readImportedSdkVersion();

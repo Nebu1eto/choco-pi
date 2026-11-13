@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { cleanupSessionResources, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 import {
   applyFastModeRequest,
   createXaiFastPricing,
@@ -14,7 +14,7 @@ import {
   XAI_FAST_HOST_REASON,
   XAI_FAST_MODEL_REASON,
   type FastModeExtensionContext,
-} from "../.pi/extensions/lib/fast-mode-state.ts";
+} from "../profile/extensions/lib/fast-mode-state.ts";
 
 const owner = {};
 const model = (provider: string): Model<"openai-responses"> => ({

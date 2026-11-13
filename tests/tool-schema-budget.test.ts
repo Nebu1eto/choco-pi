@@ -7,23 +7,24 @@ import {
   type ExtensionFactory,
 } from "@earendil-works/pi-coding-agent";
 
-import { installAgentTools } from "../.pi/extensions/session-bridge.ts";
+import { useProfileAgents } from "./helpers/profile-agents.ts";
+import { installAgentTools } from "../profile/extensions/session-bridge.ts";
 import {
   isObject,
   reinterpretHostValue,
   type RuntimeValue,
-} from "../.pi/extensions/lib/runtime-values.ts";
-import { registerGoalTools } from "../.pi/packages/choco-pi-goal/src/tools.ts";
-import { createLensDiagnosticsTool } from "../.pi/packages/choco-pi-lsp/tools/diagnostics-report-registration.ts";
-import { createLspDiagnosticsTool } from "../.pi/packages/choco-pi-lsp/tools/lsp-diagnostics.ts";
+} from "../profile/extensions/lib/runtime-values.ts";
+import { registerGoalTools } from "../packages/choco-pi-goal/src/tools.ts";
+import { createLensDiagnosticsTool } from "../packages/choco-pi-lsp/tools/diagnostics-report-registration.ts";
+import { createLspDiagnosticsTool } from "../packages/choco-pi-lsp/tools/lsp-diagnostics.ts";
 import {
   createModuleReportTool,
   createReadEnclosingTool,
   createReadSymbolTool,
-} from "../.pi/packages/choco-pi-lsp/tools/module-report.ts";
-import { createProjectReportTool } from "../.pi/packages/choco-pi-lsp/tools/project-report.ts";
-import { createSymbolSearchTool } from "../.pi/packages/choco-pi-lsp/tools/symbol-search.ts";
-import { loadExtensionFromFactory } from "../.pi/packages/choco-pi-codex/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/index.js";
+} from "../packages/choco-pi-lsp/tools/module-report.ts";
+import { createProjectReportTool } from "../packages/choco-pi-lsp/tools/project-report.ts";
+import { createSymbolSearchTool } from "../packages/choco-pi-lsp/tools/symbol-search.ts";
+import { loadExtensionFromFactory } from "../packages/choco-pi-codex/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/index.js";
 
 const DESCRIPTION_CHARACTER_LIMIT = 60 * 4;
 const PARAMETER_DESCRIPTION_CHARACTER_LIMIT = 25 * 4;
@@ -197,16 +198,16 @@ const FIRST_PARTY_TOOL_INVENTORY = new Map<string, readonly string[]>([
 
 async function loadFirstPartyTools(): Promise<Map<string, ToolMetadata[]>> {
   const extensionPaths = new Map<string, string>([
-    ["web-search", "../.pi/packages/choco-pi-web-search/extension.ts"],
-    ["advisor", "../.pi/packages/choco-pi-advisor/src/index.ts"],
-    ["codex", "../.pi/packages/choco-pi-codex/src/index.ts"],
-    ["goal", "../.pi/packages/choco-pi-goal/src/index.ts"],
-    ["lsp", "../.pi/packages/choco-pi-lsp/index.ts"],
-    ["mcp-figma", "../.pi/packages/choco-pi-mcp/figma/index.ts"],
-    ["sessions", "../.pi/extensions/session-bridge.ts"],
-    ["shells", "../.pi/packages/choco-pi-shells/src/index.ts"],
-    ["subagents", "../.pi/packages/choco-pi-subagents/src/index.ts"],
-    ["web-access", "../.pi/packages/choco-pi-web-access/index.ts"],
+    ["web-search", "../packages/choco-pi-web-search/extension.ts"],
+    ["advisor", "../packages/choco-pi-advisor/src/index.ts"],
+    ["codex", "../packages/choco-pi-codex/src/index.ts"],
+    ["goal", "../packages/choco-pi-goal/src/index.ts"],
+    ["lsp", "../packages/choco-pi-lsp/index.ts"],
+    ["mcp-figma", "../packages/choco-pi-mcp/figma/index.ts"],
+    ["sessions", "../profile/extensions/session-bridge.ts"],
+    ["shells", "../packages/choco-pi-shells/src/index.ts"],
+    ["subagents", "../packages/choco-pi-subagents/src/index.ts"],
+    ["web-access", "../packages/choco-pi-web-access/index.ts"],
   ]);
   const factories = new Map<string, ExtensionFactory>();
   for (const [packageName, path] of extensionPaths) {
@@ -262,7 +263,8 @@ test("first-party tool schemas stay within provider prompt budgets", () => {
   assert.deepEqual(failures, []);
 });
 
-test("every first-party package tool has a bounded catalog snippet", async () => {
+test("every first-party package tool has a bounded catalog snippet", async (t) => {
+  await useProfileAgents(t);
   const toolsByPackage = await loadFirstPartyTools();
   const failures: string[] = [];
   for (const [packageName, expectedNames] of FIRST_PARTY_TOOL_INVENTORY) {

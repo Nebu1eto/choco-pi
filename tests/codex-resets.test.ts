@@ -5,9 +5,9 @@ import {
   createCodexResetClient,
   runCodexResetFlow,
   type CodexResetClient,
-} from "../.pi/extensions/lib/codex-resets.ts";
-import { formatProviderUsage, normalizeCodexUsage } from "../.pi/extensions/provider-usage.ts";
-import { createUsageCache } from "../.pi/extensions/lib/usage-cache.ts";
+} from "../profile/extensions/lib/codex-resets.ts";
+import { formatProviderUsage, normalizeCodexUsage } from "../profile/extensions/provider-usage.ts";
+import { createUsageCache } from "../profile/extensions/lib/usage-cache.ts";
 
 test("usage reports saved resets separately from purchased credits", () => {
   for (const count of [0, 1, 4]) {

@@ -1,6 +1,6 @@
 import { arr, bool, compile, map, num, str, unknown } from "@earendil-works/pi-schema";
 import type { Static, Validator } from "@earendil-works/pi-schema";
-import type { JsonRecord, RuntimeValue } from "../../../.pi/extensions/lib/runtime-values.ts";
+import type { JsonRecord, RuntimeValue } from "../../../profile/extensions/lib/runtime-values.ts";
 
 /**
  * Shared runtime guards for the live harness. Harness input is decoded JSON or live host

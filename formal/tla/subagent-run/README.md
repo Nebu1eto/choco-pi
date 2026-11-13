@@ -1,6 +1,6 @@
 # subagent-run: the subagent run lifecycle
 
-A TLA+ model of `AgentManager` in `.pi/packages/choco-pi-subagents/src/agent-manager.ts`: spawn, a run's outcome, usage-limit evaluation, parking and waking at reset, user stop, foreground and background resume, deferred worktree cleanup, result publication, completion delivery and result reads.
+A TLA+ model of `AgentManager` in `packages/choco-pi-subagents/src/agent-manager.ts`: spawn, a run's outcome, usage-limit evaluation, parking and waking at reset, user stop, foreground and background resume, deferred worktree cleanup, result publication, completion delivery and result reads.
 
 ## Claims checked
 
@@ -72,7 +72,7 @@ Hops with no state change between them (for example the two returns of a non-lim
 
 The `/stop` latch (`isAdmissionOpen`, `requireAdmissionOpen`, `refuseClosedStart`), suspend, dispose, revival and the journal, run budgets (`forcedStatus`), parent abort signals, nested children and `abortOwnedChildren`, workflow and `/btw` records (`canParkForReset` is taken as true), steering, `drainQueue`'s provider-block, repark and start-throws branches, `cancelUsageLimitWaits`, active result reads, and what `recordRunVerdict` does (only its await is modelled). Each await is treated as a point where any other action may run, which admits interleavings the event loop makes rare (a user stop is a macrotask). It never admits fewer.
 
-What a verdict record contains is not modelled: a stop that lands while `recordVerdict` writes (the record is rewritten as `missing`) is checked by `.pi/packages/choco-pi-subagents/tests/verdict-record-stop.test.ts`, not by TLC. The model covers only when publication happens relative to the recording.
+What a verdict record contains is not modelled: a stop that lands while `recordVerdict` writes (the record is rewritten as `missing`) is checked by `packages/choco-pi-subagents/tests/verdict-record-stop.test.ts`, not by TLC. The model covers only when publication happens relative to the recording.
 
 The publication change for stopped post-reset continuations also reaches `cancelUsageLimitWaits`, `refuseClosedStart`, `drainQueue`'s start-throws branch and `startRevivedContinuation`'s start failure. The model covers only the `stopRecord` path; the others follow the same rule (the finalizer publishes after the cleanup) and are covered by the package tests, not by TLC.
 
@@ -97,7 +97,7 @@ Size: 18 actions, 8 variables, 230,522 distinct states, depth 54, about 11 s on 
 
 ## Findings
 
-**Dropped-wake cleanup raced a resume and a read (fixed).** The 14-state trace: `a1` (worktree) parks on a quota limit, the reset is confirmed, its continuation queues behind `a2`, the user stops it. `stopQueuedRecord` published the stopped generation at once, but `settleDroppedWake` deferred `onComplete` until the worktree cleanup settled, and the cleanup appends the "Work retained in worktree" note to `record.result`. In that window a resume was admitted (the generation was published), so the late `onComplete` reported the record while it belonged to the new run, and a result read saw text that changed afterwards. Now `stopQueuedRecord` leaves a post-reset continuation unpublished and `settleDroppedWake` publishes after the cleanup, as `settleParked` does; until then `resumeBlockedByRun` refuses a resume and a read reports `terminal-pending`. Mutation `dropped-wake-publishes-early` restores the old behaviour. `.pi/packages/choco-pi-subagents/tests/model-replay-dropped-wake.test.ts` replays both halves and fails with the fix reverted.
+**Dropped-wake cleanup raced a resume and a read (fixed).** The 14-state trace: `a1` (worktree) parks on a quota limit, the reset is confirmed, its continuation queues behind `a2`, the user stops it. `stopQueuedRecord` published the stopped generation at once, but `settleDroppedWake` deferred `onComplete` until the worktree cleanup settled, and the cleanup appends the "Work retained in worktree" note to `record.result`. In that window a resume was admitted (the generation was published), so the late `onComplete` reported the record while it belonged to the new run, and a result read saw text that changed afterwards. Now `stopQueuedRecord` leaves a post-reset continuation unpublished and `settleDroppedWake` publishes after the cleanup, as `settleParked` does; until then `resumeBlockedByRun` refuses a resume and a read reports `terminal-pending`. Mutation `dropped-wake-publishes-early` restores the old behaviour. `packages/choco-pi-subagents/tests/model-replay-dropped-wake.test.ts` replays both halves and fails with the fix reverted.
 
 **S2 (an uncontained completion callback on the `.catch` path).** The model expresses it: mutation `catch-callback-uncontained` violates `QueueProgress` in five states. `tests/model-replay-catch-callback.test.ts` replays it. On the branch's base commit it fails (the queued agent stays `queued`); on the current tree, where another change wrapped every `onComplete` call, it passes and is kept as a regression test.
 
@@ -124,14 +124,14 @@ Several break more than one invariant, because a stale publication is also a wri
 
 ## Running
 
-From the repository root, after `node .pi/skills/formal-verify/scripts/tlc-setup.ts --dir formal/.tools`:
+From the repository root, after `node profile/skills/formal-verify/scripts/tlc-setup.ts --dir formal/.tools`:
 
 ```sh
 # base model and every mutation, against check.json
-node .pi/skills/formal-verify/scripts/check-all.ts --only subagent-run --tools-dir formal/.tools --jobs 2
+node profile/skills/formal-verify/scripts/check-all.ts --only subagent-run --tools-dir formal/.tools --jobs 2
 
 # one config
-node .pi/skills/formal-verify/scripts/tlc.ts check --spec formal/tla/subagent-run/SubagentRun.tla \
+node profile/skills/formal-verify/scripts/tlc.ts check --spec formal/tla/subagent-run/SubagentRun.tla \
   --config formal/tla/subagent-run/mutations/no-caller-recheck.cfg --tools-dir formal/.tools \
   --max-states 2000000 --timeout-ms 180000
 ```

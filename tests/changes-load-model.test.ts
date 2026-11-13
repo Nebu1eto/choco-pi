@@ -9,13 +9,16 @@ import {
   DiffLoadCancelledError,
   loadDiffModel,
   type LoadDiffModelOptions,
-} from "../.pi/extensions/lib/changes/git/load-model.ts";
-import { createGitExecRunner, DiffDisposedError } from "../.pi/extensions/lib/changes/git/exec.ts";
-import { parseGitDiff } from "../.pi/extensions/lib/changes/patch.ts";
-import type { DiffModel, ExecRunner } from "../.pi/extensions/lib/changes/types.ts";
-import { buildCommentAnchor } from "../.pi/extensions/review/core/anchor.ts";
-import { createReviewStore, unreviewedHunks } from "../.pi/extensions/review/core/store.ts";
-import type { ReviewComment, ReviewRecord } from "../.pi/extensions/review/core/types.ts";
+} from "../profile/extensions/lib/changes/git/load-model.ts";
+import {
+  createGitExecRunner,
+  DiffDisposedError,
+} from "../profile/extensions/lib/changes/git/exec.ts";
+import { parseGitDiff } from "../profile/extensions/lib/changes/patch.ts";
+import type { DiffModel, ExecRunner } from "../profile/extensions/lib/changes/types.ts";
+import { buildCommentAnchor } from "../profile/extensions/review/core/anchor.ts";
+import { createReviewStore, unreviewedHunks } from "../profile/extensions/review/core/store.ts";
+import type { ReviewComment, ReviewRecord } from "../profile/extensions/review/core/types.ts";
 
 /**
  * /review-assist reads local targets through the shared change layer. Saved

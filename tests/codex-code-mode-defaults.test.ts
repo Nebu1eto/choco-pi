@@ -21,36 +21,36 @@ import {
   type RegisteredTool,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { DEFAULT_CODEX_CONVERSION_CONFIG } from "../.pi/packages/choco-pi-codex/src/adapter/activation/config.ts";
-import { resolveCodexRuntimePlan } from "../.pi/packages/choco-pi-codex/src/adapter/activation/runtime-plan.ts";
+import { DEFAULT_CODEX_CONVERSION_CONFIG } from "../packages/choco-pi-codex/src/adapter/activation/config.ts";
+import { resolveCodexRuntimePlan } from "../packages/choco-pi-codex/src/adapter/activation/runtime-plan.ts";
 import {
   CodexToolProviderError,
   type CodexToolProvider,
   type CodexToolProviderModelRegistry,
   resolveOpenAICodexToolProvider,
-} from "../.pi/packages/choco-pi-codex/src/adapter/codex-tool-provider.ts";
+} from "../packages/choco-pi-codex/src/adapter/codex-tool-provider.ts";
 import {
   createCodeModeWebSearchTool,
   createNestedTools,
-} from "../.pi/packages/choco-pi-codex/src/adapter/code-mode.ts";
+} from "../packages/choco-pi-codex/src/adapter/code-mode.ts";
 import {
   createCodexWebRunSearchAdapter,
   registerCodexWebRunSearchAdapter,
-} from "../.pi/packages/choco-pi-codex/src/extension/search-adapter.ts";
-import { registerCodexTools } from "../.pi/packages/choco-pi-codex/src/extension/tools.ts";
-import { syncAdapter } from "../.pi/packages/choco-pi-codex/src/adapter/activation/activation.ts";
-import type { AdapterState } from "../.pi/packages/choco-pi-codex/src/adapter/activation/state.ts";
-import { createCodexTurnState } from "../.pi/packages/choco-pi-codex/src/providers/openai-codex/turn-state.ts";
-import { createCodexExtensionRuntime } from "../.pi/packages/choco-pi-codex/src/extension/runtime.ts";
-import { openAICodexModelsWithDaybreak } from "../.pi/packages/choco-pi-codex/src/providers/openai-codex/model-catalog.ts";
-import { buildCodexSystemPrompt } from "../.pi/packages/choco-pi-codex/src/prompt/build-system-prompt.ts";
-import { buildCodeModeToolsPrompt } from "../.pi/packages/choco-pi-codex/src/tools/code-mode/custom-tool-prompt.ts";
-import type { CodeModeToolDefinition } from "../.pi/packages/choco-pi-codex/src/tools/code-mode/types.ts";
+} from "../packages/choco-pi-codex/src/extension/search-adapter.ts";
+import { registerCodexTools } from "../packages/choco-pi-codex/src/extension/tools.ts";
+import { syncAdapter } from "../packages/choco-pi-codex/src/adapter/activation/activation.ts";
+import type { AdapterState } from "../packages/choco-pi-codex/src/adapter/activation/state.ts";
+import { createCodexTurnState } from "../packages/choco-pi-codex/src/providers/openai-codex/turn-state.ts";
+import { createCodexExtensionRuntime } from "../packages/choco-pi-codex/src/extension/runtime.ts";
+import { openAICodexModelsWithDaybreak } from "../packages/choco-pi-codex/src/providers/openai-codex/model-catalog.ts";
+import { buildCodexSystemPrompt } from "../packages/choco-pi-codex/src/prompt/build-system-prompt.ts";
+import { buildCodeModeToolsPrompt } from "../packages/choco-pi-codex/src/tools/code-mode/custom-tool-prompt.ts";
+import type { CodeModeToolDefinition } from "../packages/choco-pi-codex/src/tools/code-mode/types.ts";
 import {
   CodexWebRunTransportError,
   executeOpenAICodexWebRun,
-} from "../.pi/packages/choco-pi-codex/src/tools/web-run/backend.ts";
-import { executeCodexWebSearch } from "../.pi/packages/choco-pi-codex/src/tools/web-run/tool.ts";
+} from "../packages/choco-pi-codex/src/tools/web-run/backend.ts";
+import { executeCodexWebSearch } from "../packages/choco-pi-codex/src/tools/web-run/tool.ts";
 import {
   bindSearchSession,
   createSearchScope,
@@ -61,16 +61,16 @@ import {
   search,
   SearchError,
   type JsonValue,
-} from "../.pi/packages/choco-pi-web-search/index.ts";
+} from "../packages/choco-pi-web-search/index.ts";
 import { obj, opt, str } from "@earendil-works/pi-schema";
-import { hostParams } from "../.pi/extensions/lib/schema-bridge.ts";
+import { hostParams } from "../profile/extensions/lib/schema-bridge.ts";
 import {
   BRIDGE_EXCLUDED_TOOLS,
   collectBridgedTools,
   type RegisteredToolSource,
-} from "../.pi/packages/choco-pi-codex/src/tools/code-mode/registered-tool-bridge.ts";
-import { snapshotCodexSSEBody } from "../.pi/packages/choco-pi-codex/src/providers/openai-codex/transport-recovery.ts";
-import { isObjectValue } from "../.pi/packages/choco-pi-codex/src/tools/boundary.ts";
+} from "../packages/choco-pi-codex/src/tools/code-mode/registered-tool-bridge.ts";
+import { snapshotCodexSSEBody } from "../packages/choco-pi-codex/src/providers/openai-codex/transport-recovery.ts";
+import { isObjectValue } from "../packages/choco-pi-codex/src/tools/boundary.ts";
 
 test("Code Mode is the append-style default for every OpenAI Codex model", () => {
   const config = structuredClone(DEFAULT_CODEX_CONVERSION_CONFIG);
@@ -204,7 +204,7 @@ test("Code Mode activates on non-OpenAI models without changing their transport"
 
 test("the choco-pi profile keeps appended prompts and concise Code Mode results", () => {
   const profile = JSON.parse(
-    readFileSync(new URL("../.pi/choco-pi-codex.json", import.meta.url), "utf8"),
+    readFileSync(new URL("../profile/choco-pi-codex.json", import.meta.url), "utf8"),
   );
 
   assert.equal(profile.executionMode, "code");

@@ -7,26 +7,26 @@ import { compile, int, obj, opt, str } from "@earendil-works/pi-schema";
 import {
   readNativeContextWindow,
   NATIVE_CONTEXT_WINDOW_KEY,
-} from "../.pi/extensions/lib/context-policy.ts";
+} from "../profile/extensions/lib/context-policy.ts";
 import {
   createProcessSources,
   SHELL_MANAGER_SYMBOL,
   SUBAGENT_REGISTRY_SYMBOL,
-} from "../.pi/extensions/lib/host-bridge/sources.ts";
-import { hostParams } from "../.pi/extensions/lib/schema-bridge.ts";
-import { loadModelFallbacks, MODEL_FALLBACKS_FILE } from "../.pi/extensions/lib/usage-limit.ts";
+} from "../profile/extensions/lib/host-bridge/sources.ts";
+import { hostParams } from "../profile/extensions/lib/schema-bridge.ts";
+import { loadModelFallbacks, MODEL_FALLBACKS_FILE } from "../profile/extensions/lib/usage-limit.ts";
 import {
   isString,
   type JsonRecord,
   type JsonValue,
   type RuntimeValue,
-} from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/lib/runtime-values.ts";
 
 type FallbackFile = JsonRecord | string;
 import {
   parseSubagentUsageLimit,
   parseUsageLimitPendingEntry,
-} from "../.pi/extensions/lib/usage-limit-contract.ts";
+} from "../profile/extensions/lib/usage-limit-contract.ts";
 
 describe("loadModelFallbacks (replaces three Value.Check + Value.Parse sites)", () => {
   const base = {

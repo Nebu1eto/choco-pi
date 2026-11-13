@@ -5,14 +5,14 @@ import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { decodeNativeDiff } from "../.pi/packages/choco-pi-acp/src/acp/native-diff.ts";
-import { createSystemClock } from "../.pi/extensions/lib/changes/git/clock.ts";
+import { decodeNativeDiff } from "../packages/choco-pi-acp/src/acp/native-diff.ts";
+import { createSystemClock } from "../profile/extensions/lib/changes/git/clock.ts";
 import type {
   DiffSnapshot,
   DiffStoreState,
   FileSummary,
-} from "../.pi/extensions/lib/changes/git/model.ts";
-import { createDiffStore } from "../.pi/extensions/lib/changes/git/store.ts";
+} from "../profile/extensions/lib/changes/git/model.ts";
+import { createDiffStore } from "../profile/extensions/lib/changes/git/store.ts";
 import {
   NATIVE_DIFF_ENV,
   NATIVE_DIFF_NOTIFY_PREFIX,
@@ -21,7 +21,7 @@ import {
   type SideRead,
   selectNativeDiff,
   uncommittedHint,
-} from "../.pi/extensions/diff/native-diff.ts";
+} from "../profile/extensions/diff/native-diff.ts";
 
 const SECRET = "TOP-SECRET-CONTENT-7f3a";
 const TEMP_ROOT = tmpdir();

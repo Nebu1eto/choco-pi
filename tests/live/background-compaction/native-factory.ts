@@ -6,16 +6,16 @@ import {
   ANTHROPIC_BACKEND_ID,
   resolveEntryCut,
   selectCapture,
-} from "../../../.pi/packages/choco-pi-compaction/src/anthropic/backend.ts";
+} from "../../../packages/choco-pi-compaction/src/anthropic/backend.ts";
 import {
   AnthropicCapabilityGate,
   authModeOf,
-} from "../../../.pi/packages/choco-pi-compaction/src/anthropic/capability.ts";
-import { capturesFor } from "../../../.pi/packages/choco-pi-compaction/src/anthropic/capture.ts";
+} from "../../../packages/choco-pi-compaction/src/anthropic/capability.ts";
+import { capturesFor } from "../../../packages/choco-pi-compaction/src/anthropic/capture.ts";
 import {
   getRegistry,
   registerBackendFactory,
-} from "../../../.pi/packages/choco-pi-compaction/src/background/registry.ts";
+} from "../../../packages/choco-pi-compaction/src/background/registry.ts";
 import { sseResponse, type SseFrame } from "./fake-sse.ts";
 import type { Recorder } from "./artifacts.ts";
 import { sessionIdForOwner } from "./host-provider.ts";

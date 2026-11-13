@@ -10,9 +10,9 @@ import {
   readAgentPreferences,
   renderLanguageReminder,
   renderPersonaAnnouncement,
-} from "../.pi/extensions/lib/agent-preferences.ts";
-import { runtimeTypeOf, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
-import runtimeAgentPreferences from "../.pi/extensions/runtime-agent-preferences.ts";
+} from "../profile/extensions/lib/agent-preferences.ts";
+import { runtimeTypeOf, type RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
+import runtimeAgentPreferences from "../profile/extensions/runtime-agent-preferences.ts";
 
 type Handler = (event: RuntimeValue, ctx: RuntimeValue) => RuntimeValue;
 

@@ -2,18 +2,18 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { obj, str } from "@earendil-works/pi-schema";
 import { jsonEqual, matches } from "../schema-check.ts";
 
-import { OPAQUE_HISTORY_KEY } from "../../../../.pi/packages/choco-pi-compaction/src/anthropic/mode.ts";
-import { REASONS } from "../../../../.pi/packages/choco-pi-compaction/src/background/lane-journal.ts";
+import { OPAQUE_HISTORY_KEY } from "../../../../packages/choco-pi-compaction/src/anthropic/mode.ts";
+import { REASONS } from "../../../../packages/choco-pi-compaction/src/background/lane-journal.ts";
 import {
   countCompactionItems,
   isCompactionWireItem,
-} from "../../../../.pi/packages/choco-pi-compaction/src/xai/capture.ts";
+} from "../../../../packages/choco-pi-compaction/src/xai/capture.ts";
 import {
   isXaiDetails,
   placeholderSummary,
   type XaiDetails,
-} from "../../../../.pi/packages/choco-pi-compaction/src/xai/details.ts";
-import { XAI_COMPACTION_MODE_KEY } from "../../../../.pi/packages/choco-pi-compaction/src/xai/mode.ts";
+} from "../../../../packages/choco-pi-compaction/src/xai/details.ts";
+import { XAI_COMPACTION_MODE_KEY } from "../../../../packages/choco-pi-compaction/src/xai/mode.ts";
 import type { EvidenceRecord } from "../artifacts.ts";
 import type { CheckEvidence, Observation } from "../checks.ts";
 import type { XaiWireRequest } from "../host-state.ts";

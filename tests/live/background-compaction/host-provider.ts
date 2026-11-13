@@ -9,8 +9,8 @@ import {
   parseWireBody,
   wireBlocks,
   type WireBody,
-} from "../../../.pi/packages/choco-pi-compaction/src/anthropic/capture.ts";
-import { CHILD_OWNER_KEY_PREFIX } from "../../../.pi/packages/choco-pi-subagents/src/child-compaction-bridge.ts";
+} from "../../../packages/choco-pi-compaction/src/anthropic/capture.ts";
+import { CHILD_OWNER_KEY_PREFIX } from "../../../packages/choco-pi-subagents/src/child-compaction-bridge.ts";
 import { errorResponse, fakeResponse, fakeSummary } from "./fake-sse.ts";
 import type { HostState, ResponseDispatch } from "./host-state.ts";
 import { captureRequestBranch } from "./request-branch.ts";

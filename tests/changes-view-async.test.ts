@@ -1,9 +1,9 @@
 // Body loads that finish after a newer snapshot was applied are dropped.
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { FileBody } from "../.pi/extensions/lib/changes/git/model.ts";
-import { ChangesView } from "../.pi/extensions/lib/changes/view/changes-view.ts";
-import { plainPaneStyler } from "../.pi/extensions/lib/changes/view/rows.ts";
+import type { FileBody } from "../profile/extensions/lib/changes/git/model.ts";
+import { ChangesView } from "../profile/extensions/lib/changes/view/changes-view.ts";
+import { plainPaneStyler } from "../profile/extensions/lib/changes/view/rows.ts";
 import { file, flush, hunk, snapshot, textBody } from "./diff-actions-fakes.ts";
 
 type Load = {

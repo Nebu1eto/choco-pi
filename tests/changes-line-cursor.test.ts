@@ -12,8 +12,8 @@ import {
   selectedLineIndexes,
   type CursorFile,
   type LineCursor,
-} from "../.pi/extensions/lib/changes/view/line-cursor.ts";
-import type { DiffFile, DiffHunk } from "../.pi/extensions/lib/changes/types.ts";
+} from "../profile/extensions/lib/changes/view/line-cursor.ts";
+import type { DiffFile, DiffHunk } from "../profile/extensions/lib/changes/types.ts";
 
 function hunk(
   id: string,

@@ -1,4 +1,4 @@
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import { execFile, spawn, spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -8,7 +8,7 @@ import test, { type TestContext } from "node:test";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const script = path.resolve(".pi/scripts/checkout-mutation-lease.ts");
+const script = path.resolve("profile/scripts/checkout-mutation-lease.ts");
 
 type LeaseResult = { code: number; payload: Record<string, RuntimeValue> };
 

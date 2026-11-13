@@ -12,8 +12,11 @@ import {
   type MessageStartEvent,
   type TurnStartEvent,
 } from "@earendil-works/pi-coding-agent";
-import fileCheckpoints, { type FileCheckpoint } from "../.pi/extensions/file-checkpoints.ts";
-import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import fileCheckpoints, { type FileCheckpoint } from "../profile/extensions/file-checkpoints.ts";
+import {
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "../profile/extensions/lib/runtime-values.ts";
 
 const execFileAsync = promisify(execFile);
 

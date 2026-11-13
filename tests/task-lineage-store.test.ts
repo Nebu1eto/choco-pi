@@ -3,7 +3,7 @@ import { appendFile, chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 import {
   TASK_BOUNDARY_CUSTOM_TYPE,
   TASK_OUTCOME_CUSTOM_TYPE,
@@ -22,7 +22,7 @@ import {
   TaskLineageOperationalError,
   type FindingCounts,
   type TaskLineageSummary,
-} from "../.pi/extensions/task-lineage/store.ts";
+} from "../profile/extensions/task-lineage/store.ts";
 
 const START = "2026-08-28T10:00:00.000Z";
 const END = "2026-08-28T10:05:00.000Z";

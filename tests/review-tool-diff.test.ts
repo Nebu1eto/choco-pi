@@ -1,6 +1,6 @@
-import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
-import { runtimeTypeOf } from "../.pi/extensions/lib/runtime-values.ts";
+import { reinterpretHostValue } from "../profile/extensions/lib/runtime-values.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
+import { runtimeTypeOf } from "../profile/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,8 +17,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
 import { obj, str } from "@earendil-works/pi-schema";
-import { hostParams } from "../.pi/extensions/lib/schema-bridge.ts";
-import type { ResolvedReviewConfig } from "../.pi/extensions/review/core/types.ts";
+import { hostParams } from "../profile/extensions/lib/schema-bridge.ts";
+import type { ResolvedReviewConfig } from "../profile/extensions/review/core/types.ts";
 import {
   buildApplyPatchDiffFiles,
   buildWriteDiffFile,
@@ -28,9 +28,9 @@ import {
   parseCodexPatch,
   parseEditPatch,
   TOOL_DIFF_TOOLS,
-} from "../.pi/extensions/review/ui/tool-diff.ts";
+} from "../profile/extensions/review/ui/tool-diff.ts";
 
-import { parsePatchActions } from "../.pi/packages/choco-pi-codex/src/patch/parser.ts";
+import { parsePatchActions } from "../packages/choco-pi-codex/src/patch/parser.ts";
 
 /* ------------------------------------------------------------------ setup */
 

@@ -1,4 +1,4 @@
-import { formatTokens } from "../.pi/extensions/lib/session-usage.ts";
+import { formatTokens } from "../profile/extensions/lib/session-usage.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
@@ -7,7 +7,7 @@ import {
   bucketUnitOf,
   dayKey,
   filterRecords,
-} from "../.pi/extensions/lib/stats/aggregate.ts";
+} from "../profile/extensions/lib/stats/aggregate.ts";
 import {
   fitLabel,
   shortenToFit,
@@ -22,12 +22,12 @@ import {
   STATS_SECTIONS,
   stepStatsSection,
   type StatsSection,
-} from "../.pi/extensions/lib/stats/format.ts";
+} from "../profile/extensions/lib/stats/format.ts";
 import {
   formatModelId,
   modelRowLabel,
   providerDisplayName,
-} from "../.pi/extensions/lib/stats/names.ts";
+} from "../profile/extensions/lib/stats/names.ts";
 import {
   CODE_MODE_BROWSER,
   CODE_MODE_EXEC,
@@ -35,8 +35,8 @@ import {
   CODE_MODE_LSP,
   CODE_MODE_SCRIPT,
   FEATURE_CODE_MODE,
-} from "../.pi/extensions/lib/stats/features.ts";
-import type { CallRecord } from "../.pi/extensions/lib/stats/records.ts";
+} from "../profile/extensions/lib/stats/features.ts";
+import type { CallRecord } from "../profile/extensions/lib/stats/records.ts";
 
 const NOW = Date.parse("2026-10-27T12:00:00.000Z");
 const DAY = 86_400_000;

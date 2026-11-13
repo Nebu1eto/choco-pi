@@ -2,8 +2,8 @@
 // package boundary). Both classifiers must withhold the same paths: one sample per category.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isSensitiveDiffPath } from "../.pi/packages/choco-pi-acp/src/acp/native-diff.ts";
-import { isSensitivePath } from "../.pi/extensions/lib/changes/sensitive.ts";
+import { isSensitiveDiffPath } from "../packages/choco-pi-acp/src/acp/native-diff.ts";
+import { isSensitivePath } from "../profile/extensions/lib/changes/sensitive.ts";
 
 test("the two rules agree on names, path words, case and separators", () => {
   const samples = [

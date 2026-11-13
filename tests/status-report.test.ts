@@ -14,17 +14,20 @@ import statusCommands, {
   REPORT_DEBOUNCE_MS,
   USAGE_REPORT_INTERVAL_MS,
   type ReportAutoPublishOptions,
-} from "../.pi/extensions/status-commands.ts";
-import { buildContextReport } from "../.pi/extensions/lib/context-report.ts";
-import { usageReportFrame } from "../.pi/extensions/lib/usage-report.ts";
-import type { ProviderUsageReport } from "../.pi/extensions/provider-usage.ts";
+} from "../profile/extensions/status-commands.ts";
+import { buildContextReport } from "../profile/extensions/lib/context-report.ts";
+import { usageReportFrame } from "../profile/extensions/lib/usage-report.ts";
+import type { ProviderUsageReport } from "../profile/extensions/provider-usage.ts";
 import {
   ReportFrameSchema,
   type ReportFrame,
-} from "../.pi/extensions/lib/host-bridge/report-schema.ts";
-import { REPORT_STATUS_KEY } from "../.pi/extensions/lib/host-bridge/schema.ts";
-import { ProfileMarkerSchema } from "../.pi/extensions/lib/profile-marker.ts";
-import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/lib/host-bridge/report-schema.ts";
+import { REPORT_STATUS_KEY } from "../profile/extensions/lib/host-bridge/schema.ts";
+import { ProfileMarkerSchema } from "../profile/extensions/lib/profile-marker.ts";
+import {
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "../profile/extensions/lib/runtime-values.ts";
 
 const TOOLS = [
   {

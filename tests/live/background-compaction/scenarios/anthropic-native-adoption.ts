@@ -9,12 +9,12 @@ import {
   wireBlocks,
   type WireBlock,
   type WireMessage,
-} from "../../../../.pi/packages/choco-pi-compaction/src/anthropic/capture.ts";
+} from "../../../../packages/choco-pi-compaction/src/anthropic/capture.ts";
 import {
   COMPACT_BETA,
   isAnthropicDetails,
   type AnthropicDetails,
-} from "../../../../.pi/packages/choco-pi-compaction/src/anthropic/details.ts";
+} from "../../../../packages/choco-pi-compaction/src/anthropic/details.ts";
 import type { CheckEvidence, Observation } from "../checks.ts";
 import type { WireRequest } from "../host-state.ts";
 import { replyPrompt, stepsPrompt } from "./prompts.ts";

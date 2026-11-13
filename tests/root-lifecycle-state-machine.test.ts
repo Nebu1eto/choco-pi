@@ -5,20 +5,20 @@ import type {
   ExtensionCommandContext,
   RegisteredCommand,
 } from "@earendil-works/pi-coding-agent";
-import { submitSessionDelivery } from "../.pi/extensions/lib/session-communication.ts";
-import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import { submitSessionDelivery } from "../profile/extensions/lib/session-communication.ts";
+import { reinterpretHostValue } from "../profile/extensions/lib/runtime-values.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 import type {
   ExecRunner,
   ResolvedReviewConfig,
   ReviewRecord,
   ReviewStore,
-} from "../.pi/extensions/review/core/types.ts";
+} from "../profile/extensions/review/core/types.ts";
 import {
   registerReviewExtension,
   type ReviewExtensionDependencies,
-} from "../.pi/extensions/review/index.ts";
-import type { ReviewViewResult } from "../.pi/extensions/review/ui/review-view.ts";
+} from "../profile/extensions/review/index.ts";
+import type { ReviewViewResult } from "../profile/extensions/review/ui/review-view.ts";
 
 const STALE_CONTEXT_MESSAGE =
   "This extension ctx is stale after session replacement or reload. Do not use the old owner.";

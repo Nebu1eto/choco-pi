@@ -12,7 +12,7 @@
     "fmt": "oxfmt .",
     "fmt:check": "oxfmt --check .",
     "test": "node scripts/test.ts",
-    "typecheck": "tsc --noEmit && node scripts/typecheck-packages.mjs"
+    "typecheck": "tsc --noEmit && node scripts/typecheck-packages.ts"
   },
   "devDependencies": {
     "@earendil-works/pi-agent-core": "~1.5.2",

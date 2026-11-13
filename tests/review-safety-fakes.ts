@@ -1,12 +1,12 @@
 /** A small, real \`openReviewView\` mount for the sensitive-file and control-character tests. */
 import assert from "node:assert/strict";
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { visibleWidth, type Component } from "@earendil-works/pi-tui";
-import { computeHunkId } from "../.pi/extensions/lib/changes/patch.ts";
-import type { ReviewChat, ReviewChatOptions } from "../.pi/extensions/review/core/ask.ts";
-import type { DiffAssessment } from "../.pi/extensions/review/core/heuristics.ts";
-import type { PullRequestMetadata } from "../.pi/extensions/review/core/pr.ts";
+import { computeHunkId } from "../profile/extensions/lib/changes/patch.ts";
+import type { ReviewChat, ReviewChatOptions } from "../profile/extensions/review/core/ask.ts";
+import type { DiffAssessment } from "../profile/extensions/review/core/heuristics.ts";
+import type { PullRequestMetadata } from "../profile/extensions/review/core/pr.ts";
 import type {
   DiffFile,
   DiffHunk,
@@ -14,15 +14,15 @@ import type {
   DiffModel,
   ResolvedReviewConfig,
   ReviewRecord,
-} from "../.pi/extensions/review/core/types.ts";
-import type { SpawnEditor } from "../.pi/extensions/review/core/editor-launch.ts";
+} from "../profile/extensions/review/core/types.ts";
+import type { SpawnEditor } from "../profile/extensions/review/core/editor-launch.ts";
 import {
   openReviewView,
   type OpenReviewViewOptions,
   type RevealFile,
   type ReviewViewHost,
   type ReviewViewResult,
-} from "../.pi/extensions/review/ui/review-view.ts";
+} from "../profile/extensions/review/ui/review-view.ts";
 import { unavailableZentuiLoader } from "./zentui-build.ts";
 
 export const NOW = "2026-03-03T02:00:00.000Z";

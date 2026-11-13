@@ -15,9 +15,9 @@ import verdictBlockRender, {
   RAW_BLOCK_MAX_MESSAGE_LINES,
   renderVerdictBlocks,
   VERDICT_RENDER_MESSAGE_TYPES,
-} from "../.pi/extensions/verdict-block-render.ts";
-import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
-import { MAX_ANALYZED_CHARS } from "../.pi/extensions/lib/verdict-summary.ts";
+} from "../profile/extensions/verdict-block-render.ts";
+import { reinterpretHostValue } from "../profile/extensions/lib/runtime-values.ts";
+import { MAX_ANALYZED_CHARS } from "../profile/extensions/lib/verdict-summary.ts";
 
 const FENCE = "\u0060\u0060\u0060";
 
@@ -271,11 +271,11 @@ test("Pi applies Markdown transformers only in interactive mode; print, RPC and 
     );
   }
   const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
-  for (const file of await readdir(path.join(root, ".pi/packages/choco-pi-acp/src"), {
+  for (const file of await readdir(path.join(root, "packages/choco-pi-acp/src"), {
     recursive: true,
   })) {
     if (!file.endsWith(".ts")) continue;
-    const text = await readFile(path.join(root, ".pi/packages/choco-pi-acp/src", file), "utf8");
+    const text = await readFile(path.join(root, "packages/choco-pi-acp/src", file), "utf8");
     assert.ok(!/MarkdownTransform|markdownTransform/.test(text), file);
   }
 });

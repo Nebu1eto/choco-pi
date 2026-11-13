@@ -3,13 +3,13 @@ import test from "node:test";
 import {
   effectiveSessionDeliveryMode,
   submitSessionDelivery,
-} from "../.pi/extensions/lib/session-communication.ts";
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/lib/session-communication.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 import {
   releaseMailboxSubmission,
   reserveMailboxSubmission,
   type SubmittedMailboxClaim,
-} from "../.pi/extensions/lib/session-mailbox-delivery.ts";
+} from "../profile/extensions/lib/session-mailbox-delivery.ts";
 
 interface Deferred {
   promise: Promise<void>;

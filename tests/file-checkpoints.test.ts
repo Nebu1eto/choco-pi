@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SessionEntry, Theme } from "@earendil-works/pi-coding-agent";
-import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import {
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "../profile/extensions/lib/runtime-values.ts";
 import {
   checkpointAnchorsFromEntries,
   renderCheckpointPicker,
@@ -11,7 +14,7 @@ import {
   turnCheckpointsFromEntries,
   type GitSnapshot,
   type SessionTurn,
-} from "../.pi/extensions/file-checkpoints.ts";
+} from "../profile/extensions/file-checkpoints.ts";
 
 // SAFETY: The fixture supplies every host member exercised by this test.
 const plainTheme = {

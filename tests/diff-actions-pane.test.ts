@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { TurnCheckpointInfo } from "../.pi/extensions/diff/core/checkpoints.ts";
-import type { PrefsIo } from "../.pi/extensions/diff/ui/prefs.ts";
-import { isSensitivePath } from "../.pi/extensions/lib/changes/sensitive.ts";
-import { inlineList, inlineMarkdown } from "../.pi/extensions/diff/ui/format.ts";
-import type { DiffSource, DiffStoreState } from "../.pi/extensions/lib/changes/git/model.ts";
-import { COPY_KEY } from "../.pi/extensions/lib/changes/view/keys.ts";
+import type { TurnCheckpointInfo } from "../profile/extensions/diff/core/checkpoints.ts";
+import type { PrefsIo } from "../profile/extensions/diff/ui/prefs.ts";
+import { isSensitivePath } from "../profile/extensions/lib/changes/sensitive.ts";
+import { inlineList, inlineMarkdown } from "../profile/extensions/diff/ui/format.ts";
+import type { DiffSource, DiffStoreState } from "../profile/extensions/lib/changes/git/model.ts";
+import { COPY_KEY } from "../profile/extensions/lib/changes/view/keys.ts";
 import { file, flush, harness, hunk, snapshot, textBody } from "./diff-actions-fakes.ts";
 
 const TREE_1 = "1111111111111111111111111111111111111111";

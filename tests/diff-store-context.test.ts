@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { MAX_EXCERPT_LINES, type DiffStore } from "../.pi/extensions/lib/changes/git/model.ts";
-import { createDiffStore } from "../.pi/extensions/lib/changes/git/store.ts";
+import { MAX_EXCERPT_LINES, type DiffStore } from "../profile/extensions/lib/changes/git/model.ts";
+import { createDiffStore } from "../profile/extensions/lib/changes/git/store.ts";
 
 const execFileAsync = promisify(execFile);
 const FIXTURE_ENV = {

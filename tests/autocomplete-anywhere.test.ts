@@ -11,8 +11,11 @@ import {
   isAutocompleteSuppressedContext,
   SLASH_COMPLETION_ITEM,
   slashTokenBeforeCursor,
-} from "../.pi/extensions/lib/autocomplete-anywhere.ts";
-import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/lib/autocomplete-anywhere.ts";
+import {
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "../profile/extensions/lib/runtime-values.ts";
 
 type PrototypeRecord = Record<PropertyKey, RuntimeValue>;
 

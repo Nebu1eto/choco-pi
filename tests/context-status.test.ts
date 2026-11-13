@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { CompactionSettings } from "@earendil-works/pi-coding-agent";
-import { renderContext, usageBar } from "../.pi/extensions/lib/context-report.ts";
-import statusCommands, { tabBody } from "../.pi/extensions/status-commands.ts";
+import { renderContext, usageBar } from "../profile/extensions/lib/context-report.ts";
+import statusCommands, { tabBody } from "../profile/extensions/status-commands.ts";
 
 const GRID_ROWS = 10;
 const GRID_COLUMNS = 10;
@@ -373,7 +373,7 @@ test("fresh measured usage after compaction removes the estimated label", () => 
 });
 
 test("a reloaded status module refreshes the inventory used by an older handler", async () => {
-  const moduleUrl = new URL("../.pi/extensions/status-commands.ts", import.meta.url).href;
+  const moduleUrl = new URL("../profile/extensions/status-commands.ts", import.meta.url).href;
   const older = await import(`${moduleUrl}?context-before-reload`);
   const reloaded = await import(`${moduleUrl}?context-after-reload`);
   // SAFETY: the fixture supplies every extension API member statusCommands registers against.

@@ -15,8 +15,8 @@ import {
   parseAgentFrontmatter,
   summarizeStatusRows,
   summarizeMcpServers,
-} from "../.pi/extensions/session-status.ts";
-import { recordNativeContextWindow } from "../.pi/extensions/lib/context-policy.ts";
+} from "../profile/extensions/session-status.ts";
+import { recordNativeContextWindow } from "../profile/extensions/lib/context-policy.ts";
 
 test("MCP status counts merged config and registrations without adapter cache", async (context) => {
   const directory = await mkdtemp(path.join(tmpdir(), "choco-pi-status-mcp-"));

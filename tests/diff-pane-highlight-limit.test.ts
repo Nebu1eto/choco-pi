@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { initTheme } from "@earendil-works/pi-coding-agent";
-import { plainPaneStyler } from "../.pi/extensions/diff/ui/format.ts";
-import { renderUnifiedBody } from "../.pi/extensions/diff/ui/pane-view.ts";
-import { DEFAULT_HIGHLIGHT } from "../.pi/extensions/lib/changes/render/highlight.ts";
-import type { DiffFile } from "../.pi/extensions/lib/changes/types.ts";
+import { plainPaneStyler } from "../profile/extensions/diff/ui/format.ts";
+import { renderUnifiedBody } from "../profile/extensions/diff/ui/pane-view.ts";
+import { DEFAULT_HIGHLIGHT } from "../profile/extensions/lib/changes/render/highlight.ts";
+import type { DiffFile } from "../profile/extensions/lib/changes/types.ts";
 
 initTheme("dark", false);
 

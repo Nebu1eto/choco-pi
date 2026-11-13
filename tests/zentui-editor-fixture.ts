@@ -9,11 +9,14 @@ import {
   type TuiMouseEvent,
   type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
-import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import {
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "../profile/extensions/lib/runtime-values.ts";
 import type {
   CopyOutcome,
   SelectionClipboard,
-} from "../.pi/packages/choco-pi-ui/extensions/zentui/editor-selection.ts";
+} from "../packages/choco-pi-ui/extensions/zentui/editor-selection.ts";
 import { loadZentuiModule } from "./zentui-build.ts";
 
 /** The parts of a zentui editor the tests use. */

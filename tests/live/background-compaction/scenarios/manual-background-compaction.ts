@@ -2,7 +2,7 @@ import { setTimeout } from "node:timers/promises";
 import { InteractiveMode } from "@earendil-works/pi-coding-agent";
 import { obj, str } from "@earendil-works/pi-schema";
 import { matches } from "../schema-check.ts";
-import type { CompactCommandHost } from "../../../../.pi/packages/choco-pi-compaction/src/background-host/host-command.ts";
+import type { CompactCommandHost } from "../../../../packages/choco-pi-compaction/src/background-host/host-command.ts";
 import { statusArtifact, type ArtifactInput } from "../artifacts.ts";
 import type { CheckEvidence, Observation } from "../checks.ts";
 import type { SeedToolResults } from "../host-seed.ts";

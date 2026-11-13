@@ -8,8 +8,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { createDiffStore } from "../.pi/extensions/lib/changes/git/store.ts";
-import type { DiffStore, DiffStoreState } from "../.pi/extensions/lib/changes/git/model.ts";
+import { createDiffStore } from "../profile/extensions/lib/changes/git/store.ts";
+import type { DiffStore, DiffStoreState } from "../profile/extensions/lib/changes/git/model.ts";
 import { FakeStore, file, textBody, hunk } from "./diff-actions-fakes.ts";
 
 const run = promisify(execFile);

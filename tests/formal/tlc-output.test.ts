@@ -7,7 +7,7 @@ import {
   ConfigError,
   readModelConfig,
   runConfig,
-} from "../../.pi/skills/formal-verify/scripts/tlc-config.ts";
+} from "../../profile/skills/formal-verify/scripts/tlc-config.ts";
 import {
   EC,
   completeRunProblem,
@@ -21,7 +21,7 @@ import {
   readTrace,
   readVersion,
   unexpectedStderr,
-} from "../../.pi/skills/formal-verify/scripts/tlc-output.ts";
+} from "../../profile/skills/formal-verify/scripts/tlc-output.ts";
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "tlc");
 

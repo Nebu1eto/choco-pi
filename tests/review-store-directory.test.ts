@@ -13,8 +13,8 @@ const previousHome = process.env.HOME;
 const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
 process.env.HOME = home;
 process.env.PI_CODING_AGENT_DIR = agentDirectory;
-const store = await import("../.pi/extensions/review/core/store.ts");
-type ReviewRecord = import("../.pi/extensions/review/core/types.ts").ReviewRecord;
+const store = await import("../profile/extensions/review/core/store.ts");
+type ReviewRecord = import("../profile/extensions/review/core/types.ts").ReviewRecord;
 
 test.after(async () => {
   if (previousHome === undefined) delete process.env.HOME;

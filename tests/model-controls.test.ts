@@ -1,9 +1,9 @@
-import { isJsonRecord, reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import { isJsonRecord, reinterpretHostValue } from "../profile/extensions/lib/runtime-values.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { runInChildSessionContext } from "../.pi/packages/choco-pi-subagents/src/child-context.ts";
+import { runInChildSessionContext } from "../packages/choco-pi-subagents/src/child-context.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
@@ -16,14 +16,14 @@ import {
   restoreFastMode,
   wrapFastModeEditorFactory,
   type DaybreakEditorState,
-} from "../.pi/extensions/model-controls.ts";
+} from "../profile/extensions/model-controls.ts";
 
 type EditorFactory = NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]>;
 
 // Per-model thinking defaults are user settings now; the checkout ships no
 // settings.json, so only the tracked model overrides are checked here.
 test("OpenAI model overrides set only context windows without overriding stock authentication", async () => {
-  const models: unknown = JSON.parse(await readFile(".pi/models.json", "utf8"));
+  const models: unknown = JSON.parse(await readFile("profile/models.json", "utf8"));
   assert.ok(isJsonRecord(models));
   assert.ok(isJsonRecord(models.providers));
   const openai = models.providers.openai;

@@ -2,16 +2,19 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import runtimeModelPrompt from "../.pi/extensions/runtime-model-prompt.ts";
+import runtimeModelPrompt from "../profile/extensions/runtime-model-prompt.ts";
 import {
   composeModelGuidancePrompt,
   MODEL_GUIDANCE_START,
   parseModelGuidance,
-} from "../.pi/extensions/lib/model-guidance.ts";
+} from "../profile/extensions/lib/model-guidance.ts";
 
-const guidanceSource = readFileSync(new URL("../.pi/model-guidance.md", import.meta.url), "utf8");
+const guidanceSource = readFileSync(
+  new URL("../profile/model-guidance.md", import.meta.url),
+  "utf8",
+);
 const parsedGuidance = parseModelGuidance(guidanceSource);
-if (!parsedGuidance) throw new Error(".pi/model-guidance.md must parse");
+if (!parsedGuidance) throw new Error("profile/model-guidance.md must parse");
 const guidance = parsedGuidance;
 const modelBodies = [...new Set(guidance.models.values())];
 
@@ -89,7 +92,7 @@ test("repeated injection and model switches replace the owned region", () => {
 });
 
 test("real SYSTEM composition replaces model identity across switches", () => {
-  const systemPrompt = readFileSync(new URL("../.pi/SYSTEM.md", import.meta.url), "utf8");
+  const systemPrompt = readFileSync(new URL("../profile/SYSTEM.md", import.meta.url), "utf8");
   const switched = runtimeResult(runtimeResult(systemPrompt, first), second);
   assert.equal(switched.split(MODEL_GUIDANCE_START).length - 1, 1);
   assert.ok(switched.includes("Current model: " + JSON.stringify(keyOf(second))));
@@ -97,7 +100,7 @@ test("real SYSTEM composition replaces model identity across switches", () => {
 });
 
 test("legacy real SYSTEM identity is safely replaced", () => {
-  const systemPrompt = readFileSync(new URL("../.pi/SYSTEM.md", import.meta.url), "utf8");
+  const systemPrompt = readFileSync(new URL("../profile/SYSTEM.md", import.meta.url), "utf8");
   const legacySystem = systemPrompt.replace("{{PI_CURRENT_MODEL}}", JSON.stringify(keyOf(first)));
   const prompt = runtimeResult(legacySystem, second);
   assert.ok(!prompt.includes(JSON.stringify(keyOf(first))));

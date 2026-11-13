@@ -3,8 +3,8 @@ import test from "node:test";
 import {
   composeWritingPolicyPrompt,
   WRITING_POLICY_MARKER,
-} from "../.pi/extensions/runtime-writing-prompt.ts";
-import { buildCodexSystemPrompt } from "../.pi/packages/choco-pi-codex/src/prompt/build-system-prompt.ts";
+} from "../profile/extensions/runtime-writing-prompt.ts";
+import { buildCodexSystemPrompt } from "../packages/choco-pi-codex/src/prompt/build-system-prompt.ts";
 
 test("writing policy composes once and recomposition is idempotent", () => {
   const assembled = composeWritingPolicyPrompt("BASE", "POLICY BODY");
@@ -31,7 +31,7 @@ test("skill index groups skills under their root and bounds descriptions", () =>
       {
         name: "packaged",
         description: "Packaged skill",
-        filePath: "/project/.pi/packages/example/skills/packaged/SKILL.md",
+        filePath: "/project/packages/example/skills/packaged/SKILL.md",
       },
     ],
   });
@@ -45,7 +45,7 @@ test("skill index groups skills under their root and bounds descriptions", () =>
   assert.equal(prompt.match(/Skill files:/g)?.length, 2);
   // A skill is listed directly under the root that contains it.
   const packagedRootIndex = prompt.indexOf(
-    "Skill files: /project/.pi/packages/example/skills/<name>/SKILL.md",
+    "Skill files: /project/packages/example/skills/<name>/SKILL.md",
   );
   const packagedSkillIndex = prompt.indexOf("- packaged: Packaged skill");
   assert.ok(packagedRootIndex >= 0 && packagedSkillIndex > packagedRootIndex);

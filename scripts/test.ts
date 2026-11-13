@@ -17,7 +17,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** Patterns `node --test` expands itself, relative to the repository root. */
-export const DEFAULT_TESTS = ["tests/*.test.ts", ".pi/packages/*/tests/*.test.ts"];
+export const DEFAULT_TESTS = ["tests/*.test.ts", "packages/*/tests/*.test.ts"];
 export const FORMAL_TESTS = ["tests/formal/*.test.ts"];
 export const FORMAL_FLAG = "--formal";
 export const FORMAL_NOTICE = `The formal validation tests (${FORMAL_TESTS.join(", ")}) were not run; \`pnpm test ${FORMAL_FLAG}\` includes them.`;

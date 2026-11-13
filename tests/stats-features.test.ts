@@ -22,7 +22,7 @@ import {
   featureForTrigger,
   isNamedToolFeature,
   mcpServerOf,
-} from "../.pi/extensions/lib/stats/features.ts";
+} from "../profile/extensions/lib/stats/features.ts";
 
 test("tool names map to one feature bucket each", () => {
   const cases: Array<[string, string[], string]> = [

@@ -2,7 +2,7 @@
 // it cannot read by name instead of giving its lines to another file.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseGitDiff } from "../.pi/extensions/lib/changes/patch.ts";
+import { parseGitDiff } from "../profile/extensions/lib/changes/patch.ts";
 
 const parse = (lines: string[]) => parseGitDiff(lines.join("\n"), "base", "head");
 

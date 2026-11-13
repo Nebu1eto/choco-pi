@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { DiffClock } from "../.pi/extensions/lib/changes/git/clock.ts";
-import type { DiffStoreState } from "../.pi/extensions/lib/changes/git/model.ts";
-import { createDiffStore } from "../.pi/extensions/lib/changes/git/store.ts";
-import { isNumber } from "../.pi/extensions/lib/runtime-values.ts";
-import type { ExecRunner } from "../.pi/extensions/review/core/types.ts";
+import type { DiffClock } from "../profile/extensions/lib/changes/git/clock.ts";
+import type { DiffStoreState } from "../profile/extensions/lib/changes/git/model.ts";
+import { createDiffStore } from "../profile/extensions/lib/changes/git/store.ts";
+import { isNumber } from "../profile/extensions/lib/runtime-values.ts";
+import type { ExecRunner } from "../profile/extensions/review/core/types.ts";
 
 /* ------------------------------------------------------------- fake clock */
 

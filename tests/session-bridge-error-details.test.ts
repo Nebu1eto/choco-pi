@@ -9,8 +9,8 @@ import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import {
   installLiveSessionBridge,
   type LiveSessionBridgeDependencies,
-} from "../.pi/extensions/session-bridge.ts";
-import { isObject, isString, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/session-bridge.ts";
+import { isObject, isString, type RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 import { createSessionSdkFixture } from "./helpers/session-sdk-fixture.ts";
 
 type ErrorRecord = { content: RuntimeValue; details: RuntimeValue };

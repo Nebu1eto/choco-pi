@@ -24,22 +24,19 @@ import {
   type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import { obj, opt, str, type Static } from "@earendil-works/pi-schema";
-import toolSearch from "../../.pi/extensions/tool-search.ts";
-import { hostParams } from "../../.pi/extensions/lib/schema-bridge.ts";
-import { DEFAULT_CODEX_CONVERSION_CONFIG } from "../../.pi/packages/choco-pi-codex/src/adapter/activation/config.ts";
-import { registerCodexWebRunSearchAdapter } from "../../.pi/packages/choco-pi-codex/src/extension/search-adapter.ts";
-import { loadAgentBrowserConfig } from "../../.pi/packages/choco-pi-agent-browser/extensions/agent-browser/lib/config.ts";
-import { registerAgentBrowserSearchAdapters } from "../../.pi/packages/choco-pi-agent-browser/extensions/agent-browser/lib/web-search-backend-registration.ts";
+import toolSearch from "../../profile/extensions/tool-search.ts";
+import { hostParams } from "../../profile/extensions/lib/schema-bridge.ts";
+import { DEFAULT_CODEX_CONVERSION_CONFIG } from "../../packages/choco-pi-codex/src/adapter/activation/config.ts";
+import { registerCodexWebRunSearchAdapter } from "../../packages/choco-pi-codex/src/extension/search-adapter.ts";
+import { loadAgentBrowserConfig } from "../../packages/choco-pi-agent-browser/extensions/agent-browser/lib/config.ts";
+import { registerAgentBrowserSearchAdapters } from "../../packages/choco-pi-agent-browser/extensions/agent-browser/lib/web-search-backend-registration.ts";
 import {
   SYNTHETIC_CONFIG_UPDATED_EVENT,
   SyntheticConfigUpdatedPayloadSchema,
-} from "../../.pi/packages/choco-pi-provider-synthetic/src/config-events.ts";
-import unifiedSearchCore from "../../.pi/packages/choco-pi-web-search/extension.ts";
-import {
-  getSearchScope,
-  hasCanonicalSearch,
-} from "../../.pi/packages/choco-pi-web-search/index.ts";
-import webAccess from "../../.pi/packages/choco-pi-web-access/index.ts";
+} from "../../packages/choco-pi-provider-synthetic/src/config-events.ts";
+import unifiedSearchCore from "../../packages/choco-pi-web-search/extension.ts";
+import { getSearchScope, hasCanonicalSearch } from "../../packages/choco-pi-web-search/index.ts";
+import webAccess from "../../packages/choco-pi-web-access/index.ts";
 
 const LEGACY_SEARCH_NAMES = [
   "web_run",
@@ -268,7 +265,7 @@ async function createHarness(
 
   const syntheticExtensionPath = fileURLToPath(
     new URL(
-      "../../.pi/packages/choco-pi-provider-synthetic/extensions/web-search/index.ts",
+      "../../packages/choco-pi-provider-synthetic/extensions/web-search/index.ts",
       import.meta.url,
     ),
   );

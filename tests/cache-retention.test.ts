@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applyDefaultCacheRetention } from "../.pi/extensions/cache-retention.ts";
+import { applyDefaultCacheRetention } from "../profile/extensions/cache-retention.ts";
 
 test("defaults PI_CACHE_RETENTION to long when unset", () => {
   const env: Record<string, string | undefined> = {};

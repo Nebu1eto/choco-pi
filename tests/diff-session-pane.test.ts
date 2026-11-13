@@ -9,7 +9,10 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import type { Component, OverlayHandle } from "@earendil-works/pi-tui";
 import { Container, HStack, ScrollView, VStack } from "@earendil-works/pi-tui";
-import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import {
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "../profile/extensions/lib/runtime-values.ts";
 import type {
   DiffSnapshot,
   DiffSource,
@@ -19,23 +22,23 @@ import type {
   FileSummary,
   RefreshReason,
   SnapshotBaseline,
-} from "../.pi/extensions/lib/changes/git/model.ts";
-import type { TurnTreeProvider } from "../.pi/extensions/lib/changes/types.ts";
-import { DIFF_SUBCOMMANDS, parseDiffCommand } from "../.pi/extensions/diff/ui/command.ts";
-import { registerDiffPane, TOGGLE_SHORTCUT } from "../.pi/extensions/diff/ui/controller.ts";
-import { plainPaneStyler } from "../.pi/extensions/diff/ui/format.ts";
+} from "../profile/extensions/lib/changes/git/model.ts";
+import type { TurnTreeProvider } from "../profile/extensions/lib/changes/types.ts";
+import { DIFF_SUBCOMMANDS, parseDiffCommand } from "../profile/extensions/diff/ui/command.ts";
+import { registerDiffPane, TOGGLE_SHORTCUT } from "../profile/extensions/diff/ui/controller.ts";
+import { plainPaneStyler } from "../profile/extensions/diff/ui/format.ts";
 import {
   NATIVE_DIFF_ENV,
   NATIVE_DIFF_NOTIFY_PREFIX,
   presentNativeDiff,
-} from "../.pi/extensions/diff/native-diff.ts";
-import { createSystemClock } from "../.pi/extensions/lib/changes/git/clock.ts";
+} from "../profile/extensions/diff/native-diff.ts";
+import { createSystemClock } from "../profile/extensions/lib/changes/git/clock.ts";
 import {
   parsePrefs,
   prefsPath,
   serializePrefs,
   type PrefsIo,
-} from "../.pi/extensions/diff/ui/prefs.ts";
+} from "../profile/extensions/diff/ui/prefs.ts";
 import { FakeClock, FakeTui } from "./diff-actions-fakes.ts";
 
 const PREFS = prefsPath("/agent");

@@ -2,7 +2,7 @@ import {
   getBackgroundAdoptionSignal,
   type BackgroundAdoptionNotice,
   type BackgroundAdoptionListener,
-} from "../../../.pi/packages/choco-pi-compaction/src/index.ts";
+} from "../../../packages/choco-pi-compaction/src/index.ts";
 import { obj, str } from "@earendil-works/pi-schema";
 import { matches } from "./schema-check.ts";
 import type { Recorder } from "./artifacts.ts";

@@ -11,18 +11,21 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import type { Component, OverlayHandle } from "@earendil-works/pi-tui";
 import { Container, HStack, ScrollView, VStack, visibleWidth } from "@earendil-works/pi-tui";
-import type { DiffSource } from "../.pi/extensions/lib/changes/git/model.ts";
-import type { RecordsRead, RecordsReader } from "../.pi/extensions/lib/changes/findings.ts";
-import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import type { DiffSource } from "../profile/extensions/lib/changes/git/model.ts";
+import type { RecordsRead, RecordsReader } from "../profile/extensions/lib/changes/findings.ts";
+import {
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "../profile/extensions/lib/runtime-values.ts";
 import {
   registerDiffPane,
   type DiffPaneDependencies,
-} from "../.pi/extensions/diff/ui/controller.ts";
-import { plainPaneStyler } from "../.pi/extensions/diff/ui/format.ts";
-import type { PrefsIo } from "../.pi/extensions/diff/ui/prefs.ts";
-import { ChangesView } from "../.pi/extensions/lib/changes/view/changes-view.ts";
-import type { PaneStyler } from "../.pi/extensions/lib/changes/view/rows.ts";
-import type { FileBody } from "../.pi/extensions/lib/changes/git/model.ts";
+} from "../profile/extensions/diff/ui/controller.ts";
+import { plainPaneStyler } from "../profile/extensions/diff/ui/format.ts";
+import type { PrefsIo } from "../profile/extensions/diff/ui/prefs.ts";
+import { ChangesView } from "../profile/extensions/lib/changes/view/changes-view.ts";
+import type { PaneStyler } from "../profile/extensions/lib/changes/view/rows.ts";
+import type { FileBody } from "../profile/extensions/lib/changes/git/model.ts";
 import {
   FakeClock,
   FakeStore,

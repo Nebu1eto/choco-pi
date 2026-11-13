@@ -8,17 +8,20 @@ import test from "node:test";
 import { promisify } from "node:util";
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { CHECKPOINT_ENTRY, type FileCheckpoint } from "../.pi/extensions/checkpoints/turns.ts";
+import { CHECKPOINT_ENTRY, type FileCheckpoint } from "../profile/extensions/checkpoints/turns.ts";
 import {
   chooseTurn,
   createTurnCheckpointProvider,
   turnCheckpointsOf,
   turnOnlySource,
   turnSource,
-} from "../.pi/extensions/diff/core/checkpoints.ts";
-import fileCheckpoints from "../.pi/extensions/file-checkpoints.ts";
-import { createDiffStore } from "../.pi/extensions/lib/changes/git/store.ts";
-import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/diff/core/checkpoints.ts";
+import fileCheckpoints from "../profile/extensions/file-checkpoints.ts";
+import { createDiffStore } from "../profile/extensions/lib/changes/git/store.ts";
+import {
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "../profile/extensions/lib/runtime-values.ts";
 
 const execFileAsync = promisify(execFile);
 const TEMP = tmpdir();

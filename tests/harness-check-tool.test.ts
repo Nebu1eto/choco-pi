@@ -9,9 +9,9 @@ import {
   activeHostTools,
   type HarnessCheckRegistration,
   type HarnessCheckExecutionDependencies,
-} from "../.pi/extensions/harness-check.ts";
-import type { HarnessReport } from "../.pi/skills/check/scripts/check-harness.ts";
-import { isJsonRecord } from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/harness-check.ts";
+import type { HarnessReport } from "../profile/skills/check/scripts/check-harness.ts";
+import { isJsonRecord } from "../profile/extensions/lib/runtime-values.ts";
 
 const report: HarnessReport = {
   status: "pass",
@@ -25,7 +25,7 @@ test("active tools require choco-pi tool_search provenance and expose custom ada
   const entry = (name: string, path: string) => ({ name, sourceInfo: { path } });
   assert.deepEqual(
     activeHostTools([
-      entry("tool_search", "/repo/.pi/extensions/tool-search.ts"),
+      entry("tool_search", "/repo/profile/extensions/tool-search.ts"),
       entry("mcp", "/custom/adapter.ts"),
       entry("mcpScript", "/custom/adapter.ts"),
     ]),
@@ -256,7 +256,7 @@ test("built-in extensions are identified by their builtin source path", () => {
       entry("builtin:read"),
       entry("builtin:codemode"),
       entry("builtin:llama.cpp"),
-      entry("/repo/.pi/extensions/tool-search.ts"),
+      entry("/repo/profile/extensions/tool-search.ts"),
       entry("builtin:mcp"),
       entry("builtin:tool-search"),
     ]),

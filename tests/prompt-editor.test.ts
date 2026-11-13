@@ -1,4 +1,7 @@
-import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import {
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "../profile/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionAPI, ExtensionContext, InputEvent } from "@earendil-works/pi-coding-agent";
@@ -12,7 +15,7 @@ import {
   wrapPromptEditorFactory,
   type PromptStash,
   type PromptStashStore,
-} from "../.pi/extensions/prompt-editor.ts";
+} from "../profile/extensions/prompt-editor.ts";
 
 type EditorFactory = NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]>;
 

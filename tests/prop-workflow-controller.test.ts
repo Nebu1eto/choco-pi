@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import fc from "fast-check";
 
-import { providerUnavailableMessage } from "../.pi/packages/choco-pi-subagents/src/provider-health.ts";
+import { providerUnavailableMessage } from "../packages/choco-pi-subagents/src/provider-health.ts";
 import {
   WorkflowManager,
   type WorkflowDefinition,
@@ -11,7 +11,7 @@ import {
   type WorkflowRunnerResult,
   type WorkflowStepDefinition,
   type WorkflowStepRunner,
-} from "../.pi/packages/choco-pi-subagents/src/workflow.ts";
+} from "../packages/choco-pi-subagents/src/workflow.ts";
 
 // Fixed seed and run count keep the suite deterministic; fast-check prints the
 // seed, path, and shrunk counterexample when a property fails.

@@ -13,8 +13,8 @@ import {
   type DaybreakBridge,
   type DaybreakExtensionContext,
   type DaybreakState,
-} from "../.pi/extensions/lib/daybreak-state.ts";
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/lib/daybreak-state.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 
 type ChildHandlers = {
   start?: (ctx: DaybreakExtensionContext) => void;

@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { buildCommentAnchor } from "../.pi/extensions/review/core/anchor.ts";
-import { parseGitDiff } from "../.pi/extensions/lib/changes/patch.ts";
+import { buildCommentAnchor } from "../profile/extensions/review/core/anchor.ts";
+import { parseGitDiff } from "../profile/extensions/lib/changes/patch.ts";
 import {
   collapseHunkContext,
   EXPANSION_LIMIT,
@@ -14,9 +14,9 @@ import {
   expandHunkContext,
   hunkWithExpandedContext,
   type HunkExpansion,
-} from "../.pi/extensions/review/core/expand.ts";
-import { readRawDiff } from "../.pi/extensions/review/core/git.ts";
-import type { DiffFile, DiffHunk, DiffModel } from "../.pi/extensions/review/core/types.ts";
+} from "../profile/extensions/review/core/expand.ts";
+import { readRawDiff } from "../profile/extensions/review/core/git.ts";
+import type { DiffFile, DiffHunk, DiffModel } from "../profile/extensions/review/core/types.ts";
 
 const execFileAsync = promisify(execFile);
 

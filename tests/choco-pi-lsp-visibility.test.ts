@@ -1,9 +1,9 @@
-import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import { reinterpretHostValue } from "../profile/extensions/lib/runtime-values.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { installChocoPiLspVisibility } from "../.pi/extensions/choco-pi-lsp-visibility.ts";
+import { installChocoPiLspVisibility } from "../profile/extensions/choco-pi-lsp-visibility.ts";
 
 type Ui = ExtensionContext["ui"];
 

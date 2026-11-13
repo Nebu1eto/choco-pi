@@ -15,11 +15,15 @@ import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import type { DiffStore, FileBody, FileSummary } from "../.pi/extensions/lib/changes/git/model.ts";
-import { createDiffStore } from "../.pi/extensions/lib/changes/git/store.ts";
-import { parseGitDiff } from "../.pi/extensions/lib/changes/patch.ts";
-import { defaultExecRunner } from "../.pi/extensions/review/core/git.ts";
-import type { DiffFile } from "../.pi/extensions/review/core/types.ts";
+import type {
+  DiffStore,
+  FileBody,
+  FileSummary,
+} from "../profile/extensions/lib/changes/git/model.ts";
+import { createDiffStore } from "../profile/extensions/lib/changes/git/store.ts";
+import { parseGitDiff } from "../profile/extensions/lib/changes/patch.ts";
+import { defaultExecRunner } from "../profile/extensions/review/core/git.ts";
+import type { DiffFile } from "../profile/extensions/review/core/types.ts";
 
 const execFileAsync = promisify(execFile);
 const TEMP_ROOT = tmpdir();

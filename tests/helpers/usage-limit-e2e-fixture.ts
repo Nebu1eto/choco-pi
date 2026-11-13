@@ -28,15 +28,15 @@ import {
   type ExtensionFactory,
 } from "@earendil-works/pi-coding-agent";
 
-import type { OnUsageLimit } from "../../.pi/extensions/lib/usage-limit-contract.ts";
+import type { OnUsageLimit } from "../../profile/extensions/lib/usage-limit-contract.ts";
 import {
   isFunction,
   isJsonRecord,
   isString,
   reinterpretHostValue,
   type RuntimeValue,
-} from "../../.pi/extensions/lib/runtime-values.ts";
-import type { AgentRecord } from "../../.pi/packages/choco-pi-subagents/src/types.ts";
+} from "../../profile/extensions/lib/runtime-values.ts";
+import type { AgentRecord } from "../../packages/choco-pi-subagents/src/types.ts";
 
 // SAFETY: Custom provider API identifiers are runtime strings accepted by registerProvider.
 const E2E_API = "usage-limit-e2e-api" as Api;

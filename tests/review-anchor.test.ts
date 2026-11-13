@@ -4,8 +4,8 @@ import {
   buildCommentAnchor,
   hashSnippet,
   locateComment,
-} from "../.pi/extensions/review/core/anchor.ts";
-import { parseGitDiff } from "../.pi/extensions/lib/changes/patch.ts";
+} from "../profile/extensions/review/core/anchor.ts";
+import { parseGitDiff } from "../profile/extensions/lib/changes/patch.ts";
 
 function patch(header: string, alpha = "alpha"): string {
   return [

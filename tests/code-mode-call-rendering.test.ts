@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import { initTheme } from "@earendil-works/pi-coding-agent";
-import { renderExecCall } from "../.pi/packages/choco-pi-codex/src/tools/code-mode/call-rendering.ts";
-import { createCodeModeRenderTracker } from "../.pi/packages/choco-pi-codex/src/tools/code-mode/render-tracker.ts";
+import { renderExecCall } from "../packages/choco-pi-codex/src/tools/code-mode/call-rendering.ts";
+import { createCodeModeRenderTracker } from "../packages/choco-pi-codex/src/tools/code-mode/render-tracker.ts";
 
 // Pi 1.5 highlightCode reads the global theme, which the host initializes at startup.
 initTheme("dark", false);

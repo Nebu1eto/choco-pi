@@ -7,7 +7,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 
 const STALE_CONTEXT_MESSAGE = "This extension ctx is stale after session replacement or reload.";
 const SYNTHETIC_CONFIG_UPDATED_EVENT = "synthetic:config:updated";
-const SYNTHETIC_PACKAGE_PATH = "/.pi/packages/choco-pi-provider-synthetic/";
+const SYNTHETIC_PACKAGE_PATH = "/packages/choco-pi-provider-synthetic/";
 
 registerHooks({
   resolve(specifier, context, nextResolve) {
@@ -88,10 +88,7 @@ type ActivateQuotaWarnings = (
   dependencies: QuotaWarningsDependencies,
 ) => Promise<void>;
 
-const syntheticPackageUrl = new URL(
-  "../.pi/packages/choco-pi-provider-synthetic/",
-  import.meta.url,
-);
+const syntheticPackageUrl = new URL("../packages/choco-pi-provider-synthetic/", import.meta.url);
 // SAFETY: These local module paths are fixed, and the assertions describe only their exported activators.
 const usageRuntime = (await import(
   new URL("extensions/usage-status/runtime.ts", syntheticPackageUrl).href

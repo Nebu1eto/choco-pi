@@ -6,21 +6,21 @@ import {
   fitPath,
   fitRename,
   plainPaneStyler,
-} from "../.pi/extensions/lib/changes/view/rows.ts";
+} from "../profile/extensions/lib/changes/view/rows.ts";
 import { file } from "./diff-actions-fakes.ts";
 
-const PATH = ".pi/extensions/lib/changes/view/changes-view.ts";
+const PATH = "profile/extensions/lib/changes/view/changes-view.ts";
 
 test("fitPath keeps the file name: full, first segment with trailing directories, first segment and name, …/name, cut name", () => {
   assert.equal(fitPath(PATH, 100), PATH, "fits: unchanged");
   assert.equal(fitPath(PATH, PATH.length), PATH);
   assert.equal(
-    fitPath(PATH, 30),
-    ".pi/…/view/changes-view.ts",
+    fitPath(PATH, 34),
+    "profile/…/view/changes-view.ts",
     "as many trailing directories as fit",
   );
-  assert.equal(fitPath(PATH, 37), ".pi/…/changes/view/changes-view.ts");
-  assert.equal(fitPath(PATH, 24), ".pi/…/changes-view.ts", "first segment and the name");
+  assert.equal(fitPath(PATH, 41), "profile/…/changes/view/changes-view.ts");
+  assert.equal(fitPath(PATH, 28), "profile/…/changes-view.ts", "first segment and the name");
   assert.equal(fitPath(PATH, 18), "…/changes-view.ts");
   assert.equal(fitPath(PATH, 10), "chang…w.ts", "the name cut in its middle, extension kept");
   assert.equal(fitPath(PATH, 5), "c….ts");

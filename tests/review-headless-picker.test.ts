@@ -6,8 +6,8 @@ import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import type { ExecRunner, ResolvedReviewConfig } from "../.pi/extensions/review/core/types.ts";
-import { presentHeadlessReview } from "../.pi/extensions/review/headless.ts";
+import type { ExecRunner, ResolvedReviewConfig } from "../profile/extensions/review/core/types.ts";
+import { presentHeadlessReview } from "../profile/extensions/review/headless.ts";
 
 const execFileAsync = promisify(execFile);
 const TEMP = tmpdir();

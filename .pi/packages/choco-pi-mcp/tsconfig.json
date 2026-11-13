@@ -1,6 +1,0 @@
-{
-  "extends": "../../../tsconfig.json",
-  "compilerOptions": { "rootDir": "." },
-  "include": ["./figma/**/*.ts", "./tests/figma-*.test.ts"],
-  "exclude": ["./node_modules"]
-}

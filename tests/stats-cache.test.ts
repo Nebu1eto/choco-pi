@@ -9,8 +9,8 @@ import {
   peekStatsSnapshot,
   STATS_CACHE_TTL_MS,
   type StatsDataOptions,
-} from "../.pi/extensions/lib/stats/report.ts";
-import { scanSessions } from "../.pi/extensions/lib/stats/scan.ts";
+} from "../profile/extensions/lib/stats/report.ts";
+import { scanSessions } from "../profile/extensions/lib/stats/scan.ts";
 
 /** One session file holding one billed call from a minute ago. */
 async function writeSession(root: string, id: string): Promise<void> {

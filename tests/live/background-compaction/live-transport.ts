@@ -3,7 +3,7 @@ import { isString, matches } from "./schema-check.ts";
 import {
   parseBetaHeader,
   parseWireBody,
-} from "../../../.pi/packages/choco-pi-compaction/src/anthropic/capture.ts";
+} from "../../../packages/choco-pi-compaction/src/anthropic/capture.ts";
 import { InputSchema, isArtifactInput, withArtifactDefs, type ArtifactInput } from "./artifacts.ts";
 import { estimateTokens } from "./budget.ts";
 import type { HostState, ResponseDispatch } from "./host-state.ts";

@@ -1,0 +1,756 @@
+import { defineTool, type ExtensionAPI, type Theme } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
+import { resolve } from "node:path";
+import {
+  createScratchWarner,
+  loadScratchGrants,
+  scratchEnv,
+} from "../../../profile/extensions/lib/scratch-path.ts";
+import { int, obj, opt, str } from "@earendil-works/pi-schema";
+
+import { inChildSessionContext } from "../../choco-pi-subagents/src/child-context.ts";
+import { isRegisteredChildSession } from "./child-session.ts";
+import { hostParams } from "./schema-bridge.ts";
+import { ShellNotificationGate } from "./notification-gate.ts";
+import { printWaitLimitMs, PRINT_WAIT_ENV, waitForBackgroundSettle } from "./print-settle-wait.ts";
+import { ShellManager } from "./shell-manager.ts";
+import {
+  isStopShellsRequest,
+  mayTriggerTurn,
+  readStopState,
+  STOP_CONTROL_REPORT_CHANNEL,
+  STOP_CONTROL_STOP_SHELLS_CHANNEL,
+  type StopReport,
+  type StopShellsRequest,
+} from "./stop-control.ts";
+import type { ReadShellResult, ShellChangeEvent, ShellResult } from "./shell-manager.ts";
+import { isStaleContextError, type RuntimeValue } from "./lifecycle.ts";
+import {
+  lifecycleKindForChange,
+  SHELL_LIFECYCLE_CHANNELS,
+  shellLifecyclePayload,
+  type ShellLifecycleKind,
+  type ShellLifecyclePayload,
+} from "./lifecycle-events.ts";
+import { viewCompletion, viewList, viewRead, viewShell } from "./tool-view.ts";
+import { openShellsOverlay, type ShellsUICtx } from "./ui/shells-overlay.ts";
+import { createShellSectionProvider, findShellSectionHost } from "./ui/shell-section.ts";
+import type { ShellSectionRegistration } from "../../choco-pi-subagents/src/ui/shell-section-contract.ts";
+
+const MANAGER_KEY = Symbol.for("choco-pi-shells:manager");
+const COMPLETION_TAIL_CHARACTERS = 480;
+const COMPLETION_TAIL_BYTES = 2_048;
+const SHELL_NOTIFICATION_TYPE = "shell-completion-notification";
+
+export interface ShellCompletionDetails {
+  shells: Array<{
+    shellId: string;
+    name?: string;
+    state: ShellResult["state"];
+    exitCode?: number;
+    signal?: NodeJS.Signals;
+    error?: string;
+    stdout: CompletionStreamDetails;
+    stderr: CompletionStreamDetails;
+  }>;
+}
+
+interface CompletionStreamDetails {
+  tail: string;
+  startOffset: number;
+  nextOffset: number;
+  endOffset: number;
+  dropped: boolean;
+}
+
+interface StatusPresentation {
+  icon: string;
+  color: "success" | "error" | "dim";
+  label: string;
+}
+
+export interface ShellNotificationTheme {
+  fg: Theme["fg"];
+  bold: Theme["bold"];
+  getBgAnsi?: Theme["getBgAnsi"];
+}
+
+function lastCharacters(value: string, maximum: number): string {
+  if (maximum <= 0) return "";
+  const characters = Array.from(value);
+  return characters.length <= maximum ? value : characters.slice(-maximum).join("");
+}
+
+function boundGroupedTails(shells: ShellCompletionDetails["shells"]): void {
+  let remaining = COMPLETION_TAIL_CHARACTERS;
+  for (const shell of shells) {
+    for (const stream of [shell.stdout, shell.stderr]) {
+      stream.tail = lastCharacters(stream.tail, remaining);
+      remaining -= Array.from(stream.tail).length;
+    }
+  }
+}
+
+function completionStream(
+  stream: ReadShellResult["stdout"],
+  tail: string,
+): CompletionStreamDetails {
+  return {
+    tail,
+    startOffset: stream.startOffset,
+    nextOffset: stream.nextOffset,
+    endOffset: stream.endOffset,
+    dropped: stream.dropped,
+  };
+}
+
+export function buildCompletionDetails(
+  manager: ShellManager,
+  shell: ShellResult,
+): ShellCompletionDetails["shells"][number] {
+  const metadata = manager.read({
+    requesterId: shell.ownerId,
+    isAdmin: false,
+    shellId: shell.shellId,
+    maxBytes: 1,
+  });
+  const output = manager.read({
+    requesterId: shell.ownerId,
+    isAdmin: false,
+    shellId: shell.shellId,
+    stdoutOffset: Math.max(
+      metadata.stdout.startOffset,
+      metadata.stdout.endOffset - COMPLETION_TAIL_BYTES,
+    ),
+    stderrOffset: Math.max(
+      metadata.stderr.startOffset,
+      metadata.stderr.endOffset - COMPLETION_TAIL_BYTES,
+    ),
+    maxBytes: COMPLETION_TAIL_BYTES,
+  });
+  const hasBoth = output.stdout.data.length > 0 && output.stderr.data.length > 0;
+  const stdoutLimit = hasBoth ? COMPLETION_TAIL_CHARACTERS / 2 : COMPLETION_TAIL_CHARACTERS;
+  const stdoutTail = lastCharacters(output.stdout.data, stdoutLimit);
+  const remaining = COMPLETION_TAIL_CHARACTERS - Array.from(stdoutTail).length;
+  const stderrTail = lastCharacters(output.stderr.data, remaining);
+  return {
+    shellId: shell.shellId,
+    ...(shell.name !== undefined && { name: shell.name }),
+    state: shell.state,
+    ...(shell.exitCode !== undefined && { exitCode: shell.exitCode }),
+    ...(shell.signal !== undefined && { signal: shell.signal }),
+    ...(shell.error !== undefined && { error: shell.error }),
+    stdout: completionStream(output.stdout, stdoutTail),
+    stderr: completionStream(output.stderr, stderrTail),
+  };
+}
+
+function statusPresentation(state: ShellResult["state"]): StatusPresentation {
+  if (state === "exited") return { icon: "✓", color: "success", label: "Completed" };
+  if (state === "stopped") return { icon: "■", color: "dim", label: "Stopped" };
+  return { icon: "✗", color: "error", label: "Failed" };
+}
+
+export function renderShellCompletion(
+  details: ShellCompletionDetails,
+  theme: ShellNotificationTheme,
+): string {
+  return details.shells
+    .map((shell) => {
+      const status = statusPresentation(shell.state);
+      const metadata = [
+        shell.name ?? shell.shellId,
+        shell.exitCode === undefined ? undefined : `exit ${shell.exitCode}`,
+        shell.signal,
+      ].filter(Boolean);
+      const tail = [shell.stdout.tail, shell.stderr.tail]
+        .filter(Boolean)
+        .join(" | ")
+        .replace(/\s+/g, " ");
+      const background =
+        theme.getBgAnsi?.(shell.state === "failed" ? "toolErrorBg" : "toolSuccessBg") ?? "";
+      const outputColor = shell.state === "failed" ? "error" : "toolOutput";
+      const lines = [
+        "",
+        ` ${theme.fg("dim", "•")} ${theme.fg(status.color, status.icon)} ${theme.fg("toolTitle", theme.bold(`Shell: ${status.label}`))}`,
+        `    ${theme.fg("dim", "└ ")}${theme.fg("accent", metadata.join(" · "))}`,
+        ...(tail ? [theme.fg(outputColor, `      ${tail}`)] : []),
+        "",
+      ];
+      return lines.map((line) => background + line).join("\n");
+    })
+    .join("\n");
+}
+
+interface ProcessRegistry {
+  [MANAGER_KEY]?: ShellManager;
+}
+
+function viewedResult<Result, View>(value: Result, view: View) {
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify(view, null, 2) ?? "null",
+      },
+    ],
+    details: value,
+  };
+}
+
+function jsonResult<Result>(value: Result) {
+  return viewedResult(value, value);
+}
+
+const startSchema = obj(
+  {
+    command: str({
+      minLength: 1,
+      description:
+        "Long-running shell command to run in the background. Leave stdout and stderr unredirected: the manager captures both for shell_read and the Shells viewer, and output redirected to a file is invisible there. Use `| tee file` when a file copy is also needed.",
+    }),
+    cwd: opt(
+      str({
+        minLength: 1,
+        description: "Working directory; relative paths resolve from the calling session cwd.",
+      }),
+    ),
+    name: opt(str({ minLength: 1, description: "Optional display name." })),
+  },
+  { open: false },
+);
+
+const readSchema = obj(
+  {
+    shell_id: str({ minLength: 1, description: "Managed shell identifier." }),
+    stdout_offset: opt(
+      int({
+        minimum: 0,
+        description: "Absolute stdout byte cursor returned as stdout.next_offset by a prior read.",
+      }),
+    ),
+    stderr_offset: opt(
+      int({
+        minimum: 0,
+        description: "Absolute stderr byte cursor returned as stderr.next_offset by a prior read.",
+      }),
+    ),
+    max_bytes: opt(
+      int({
+        minimum: 1,
+        maximum: 262_144,
+        description: "Maximum bytes returned from each stream.",
+      }),
+    ),
+  },
+  { open: false },
+);
+
+const stopSchema = obj(
+  {
+    shell_id: str({ minLength: 1, description: "Managed shell identifier to stop." }),
+  },
+  { open: false },
+);
+
+const listSchema = obj({}, { open: false });
+
+export default function shellsExtension(pi: ExtensionAPI): void {
+  // Child identity latches one way: the async-context marker is checked at load, and the
+  // subagents registry is probed for every session id this activation observes. The
+  // registry drops a child id before its session_shutdown, so the latch must already be
+  // set by session_start; a child must never be treated as the process-singleton owner.
+  const loadedInChildContext = inChildSessionContext();
+  let isChildActivation = loadedInChildContext;
+  const isChildSession = (sessionId: string): boolean => {
+    if (!isChildActivation && isRegisteredChildSession(sessionId)) isChildActivation = true;
+    return isChildActivation;
+  };
+  const adminFor = (sessionId: string): boolean => !isChildSession(sessionId);
+  // SAFETY: Symbol.for provides the process-wide slot used only for ShellManager instances here.
+  const registry = globalThis as typeof globalThis & ProcessRegistry;
+
+  let manager = registry[MANAGER_KEY];
+  if (!manager) {
+    manager = new ShellManager();
+    registry[MANAGER_KEY] = manager;
+  }
+
+  let shellSectionProvider: ReturnType<typeof createShellSectionProvider> | undefined;
+  let shellSectionRegistration: ShellSectionRegistration | undefined;
+  let rootSessionId: string | undefined;
+  let rootUI: ShellsUICtx | undefined;
+  let currentSessionId: string | undefined;
+  let shuttingDown = false;
+  // Stop epoch each root-owned shell was authorised in; completions from an older epoch never trigger a turn.
+  const shellStartEpochs = new Map<string, number>();
+  let unsubscribeStopShells: (() => void) | undefined;
+  /** Completion notifications sent by this activation; the print-mode settle wait watches it. */
+  let completionDeliveries = 0;
+
+  const flushCompletions = (completed: ShellResult[]): void => {
+    if (shuttingDown) {
+      throw new Error("This extension ctx is stale after session replacement or reload.");
+    }
+    if (completed.length === 0) return;
+    const shells = completed.map((shell) => buildCompletionDetails(manager, shell));
+    if (shells.length === 0) return;
+    boundGroupedTails(shells);
+    const details: ShellCompletionDetails = { shells };
+    const stopRoot = isChildActivation ? undefined : currentSessionId;
+    const triggerTurn =
+      stopRoot === undefined ||
+      completed.every((shell) =>
+        mayTriggerTurn(
+          stopRoot,
+          shellStartEpochs.get(shell.shellId) ?? readStopState(stopRoot).epoch,
+        ),
+      );
+    for (const shell of completed) shellStartEpochs.delete(shell.shellId);
+    try {
+      pi.sendMessage<ShellCompletionDetails>(
+        {
+          customType: SHELL_NOTIFICATION_TYPE,
+          content: `<shell-completion>${JSON.stringify(viewCompletion(details))}</shell-completion>\nUse shell_read with the reported cursors (pass stdout.next_offset as stdout_offset and stderr.next_offset as stderr_offset) only when more output is needed.`,
+          display: true,
+          details,
+        },
+        { deliverAs: "steer", triggerTurn },
+      );
+      completionDeliveries += 1;
+    } catch (error) {
+      // Session replacement or reload can stale this ctx without session_shutdown
+      // firing before the debounced timer. Contain only the canonical stale-context
+      // error and stop scheduling flushes for the dead runtime; rethrow the rest.
+      // SAFETY: catch produces unknown; the helper narrows via instanceof before reading the message.
+      if (!isStaleContextError(error as RuntimeValue)) throw error;
+      shuttingDown = true;
+      throw error;
+    }
+  };
+
+  const notificationGate = new ShellNotificationGate({
+    manager,
+    flush: flushCompletions,
+    appendEntry: (type, data) => pi.appendEntry(type, data),
+  });
+
+  const unsubscribeCompletions = manager.onChange((event: ShellChangeEvent) => {
+    if (
+      event.type !== "end" ||
+      shuttingDown ||
+      currentSessionId === undefined ||
+      event.shell.ownerId !== currentSessionId
+    )
+      return;
+    notificationGate.enqueue(event.shell);
+  });
+
+  // Lifecycle events stay attached through quit/child cleanup so stop transitions
+  // are still published; they detach synchronously on every other shutdown path.
+  let lifecycleEventsActive = true;
+  const emitLifecycle = (kind: ShellLifecycleKind, payload: ShellLifecyclePayload): void => {
+    if (!lifecycleEventsActive) return;
+    try {
+      pi.events.emit(SHELL_LIFECYCLE_CHANNELS[kind], payload);
+    } catch (error) {
+      // SAFETY: catch produces unknown; the helper narrows via instanceof before reading the message.
+      if (isStaleContextError(error as RuntimeValue)) {
+        detachLifecycle();
+        return;
+      }
+      // ShellManager swallows listener exceptions so its lifecycle cannot be
+      // interrupted; rethrow unrelated failures outside that boundary instead.
+      queueMicrotask(() => {
+        throw error;
+      });
+    }
+  };
+  const unsubscribeLifecycle = manager.onChange((event: ShellChangeEvent) => {
+    if (
+      !lifecycleEventsActive ||
+      currentSessionId === undefined ||
+      event.shell.ownerId !== currentSessionId
+    )
+      return;
+    const kind = lifecycleKindForChange(event);
+    if (kind === undefined) return;
+    emitLifecycle(
+      kind,
+      shellLifecyclePayload(event.shell, manager.toolCallIdOf(event.shell.shellId)),
+    );
+  });
+  const detachLifecycle = (): void => {
+    lifecycleEventsActive = false;
+    unsubscribeLifecycle();
+  };
+  const emitLostForOwner = (ownerId: string | undefined): void => {
+    if (ownerId === undefined) return;
+    for (const shell of manager.list({ requesterId: ownerId, isAdmin: false }).shells) {
+      if (shell.state !== "running") continue;
+      emitLifecycle("lost", shellLifecyclePayload(shell, manager.toolCallIdOf(shell.shellId)));
+    }
+  };
+
+  pi.registerMessageRenderer<ShellCompletionDetails>(
+    SHELL_NOTIFICATION_TYPE,
+    (message, _options, theme) =>
+      message.details ? new Text(renderShellCompletion(message.details, theme), 0, 0) : undefined,
+  );
+
+  const bindRootUI = (ui: ShellsUICtx, sessionId: string): void => {
+    if (isChildActivation) return;
+    rootUI = ui;
+    if (!shellSectionProvider || rootSessionId !== sessionId) {
+      shellSectionRegistration?.unregister();
+      shellSectionProvider?.dispose();
+      shellSectionRegistration = undefined;
+      rootSessionId = sessionId;
+      shellSectionProvider = createShellSectionProvider({ manager, rootSessionId: sessionId });
+    }
+    if (!shellSectionRegistration) {
+      const host = findShellSectionHost();
+      if (host) shellSectionRegistration = host.registerShellSection(shellSectionProvider);
+    }
+  };
+
+  let scratchGrants: Promise<string[]> | undefined;
+  const scratchWarner = createScratchWarner({
+    grants: () => (scratchGrants ??= loadScratchGrants()),
+  });
+
+  const emitStopReport = (report: StopReport): void => {
+    try {
+      pi.events.emit(STOP_CONTROL_REPORT_CHANNEL, report);
+    } catch (error) {
+      // SAFETY: catch produces unknown; the helper narrows via instanceof before reading the message.
+      if (isStaleContextError(error as RuntimeValue)) return;
+      queueMicrotask(() => {
+        throw error;
+      });
+    }
+  };
+
+  // Revocation and the acknowledgement run synchronously inside the handler; only the
+  // settled/failed report waits for the SIGTERM/SIGKILL escalation to finish.
+  const handleStopShells = (payload: StopShellsRequest): void => {
+    const requesterId = currentSessionId;
+    if (shuttingDown || isChildActivation || requesterId === undefined) return;
+    if (payload.rootSessionId !== requesterId) return;
+    const requestId = payload.requestId;
+    const targets: string[] = [];
+    for (const ownerId of new Set(payload.ownerSessionIds)) {
+      for (const shell of manager.list({ requesterId: ownerId, isAdmin: false }).shells) {
+        if (shell.state === "running") targets.push(shell.shellId);
+      }
+    }
+    // Admin stop keeps output readable; cleanupOwner/dispose would drop the owner's records.
+    const stops = targets.map((shellId) => manager.stop({ requesterId, isAdmin: true, shellId }));
+    emitStopReport({
+      requestId,
+      participant: "shells",
+      phase: "acknowledged",
+      counts: { shells: targets.length },
+    });
+    void Promise.allSettled(stops).then((results) => {
+      const failures: string[] = [];
+      results.forEach((result, index) => {
+        const shellId = targets[index];
+        if (result.status === "rejected") {
+          const reason =
+            result.reason instanceof Error ? result.reason.message : String(result.reason);
+          failures.push(`${shellId}: ${reason}`);
+        } else if (result.value.error !== undefined) {
+          failures.push(`${shellId}: ${result.value.error}`);
+        }
+      });
+      if (failures.length === 0) {
+        emitStopReport({ requestId, participant: "shells", phase: "settled" });
+      } else {
+        emitStopReport({
+          requestId,
+          participant: "shells",
+          phase: "failed",
+          detail: `shell stop failed: ${failures.join("; ")}`,
+        });
+      }
+    });
+  };
+
+  pi.on("session_start", async (_event, ctx) => {
+    scratchGrants = undefined;
+    scratchWarner.reset();
+    currentSessionId = ctx.sessionManager.getSessionId();
+    isChildSession(currentSessionId);
+    if (!isChildActivation && unsubscribeStopShells === undefined) {
+      unsubscribeStopShells = pi.events.on(STOP_CONTROL_STOP_SHELLS_CHANNEL, (data) => {
+        if (isStopShellsRequest(data)) handleStopShells(data);
+      });
+    }
+    notificationGate.sessionStart(currentSessionId, ctx.sessionManager.getEntries());
+    if (!isChildActivation && ctx.hasUI) bindRootUI(ctx.ui, currentSessionId);
+  });
+
+  pi.on("agent_start", () => {
+    notificationGate.agentStart();
+  });
+
+  pi.on("agent_end", () => {
+    notificationGate.agentEnd();
+  });
+
+  pi.on("turn_end", () => {
+    notificationGate.turnEnd();
+  });
+
+  // Print and JSON mode exit when the last prompt settles; hold the settle until this root's
+  // background shells deliver their completion so the announced follow-up turn can run.
+  pi.on("agent_before_settle", async (_event, ctx) => {
+    if (ctx.mode !== "print" && ctx.mode !== "json") return;
+    const ownerId = currentSessionId;
+    if (ownerId === undefined || isChildSession(ownerId)) return;
+    const maxWaitMs = printWaitLimitMs(process.env[PRINT_WAIT_ENV]);
+    const outcome = await waitForBackgroundSettle({
+      isBusy: () => manager.hasRunning(ownerId) || notificationGate.hasPending(),
+      deliveries: () => completionDeliveries,
+      isCancelled: () =>
+        shuttingDown || currentSessionId !== ownerId || readStopState(ownerId).closed,
+      maxWaitMs,
+    });
+    if (outcome === "timeout") {
+      console.error(
+        `[choco-pi-shells] Background shells still running after ${maxWaitMs} ms; exiting without their completion. Set ${PRINT_WAIT_ENV} to change the limit.`,
+      );
+    }
+  });
+
+  if (!loadedInChildContext) {
+    pi.on("tool_execution_start", async (_event, ctx) => {
+      const sessionId = ctx.sessionManager.getSessionId();
+      if (isChildSession(sessionId)) return;
+      currentSessionId = sessionId;
+      notificationGate.activateOwner(currentSessionId);
+      if (!ctx.hasUI) return;
+      bindRootUI(ctx.ui, currentSessionId);
+    });
+  }
+
+  pi.registerTool(
+    defineTool({
+      name: "shell_start",
+      label: "Start Shell",
+      description:
+        "Start a managed long-running background process. Exit is delivered as a shell-completion notification; do not poll. Keep stdout and stderr on the process (no `> file` redirection); the manager captures both and the Shells viewer shows them live.",
+      promptSnippet: "Start a managed long-running background process.",
+      parameters: hostParams(startSchema),
+      execute: async (toolCallId, params, _signal, _onUpdate, ctx) => {
+        try {
+          currentSessionId = ctx.sessionManager.getSessionId();
+          isChildSession(currentSessionId);
+          notificationGate.activateOwner(currentSessionId);
+          const ownerId = currentSessionId;
+          const startState = isChildActivation ? undefined : readStopState(ownerId);
+          if (startState?.closed === true) {
+            return jsonResult({
+              error:
+                "shell_start refused: the user stopped this session's work (/stop). Ask the user to run /resume-work.",
+            });
+          }
+          const cwd = resolve(ctx.cwd, params.cwd ?? ".");
+          const started = manager.start({
+            ownerId,
+            command: params.command,
+            cwd,
+            name: params.name,
+            toolCallId,
+            env: scratchEnv(ownerId),
+          });
+          if (startState !== undefined) shellStartEpochs.set(started.shellId, startState.epoch);
+          // Warn mode: the process already runs; the agent learns where scratch files belong.
+          const warnings = await scratchWarner.check({
+            sessionId: ownerId,
+            toolName: "shell_start",
+            cwd,
+            destinations: [{ path: cwd, directory: true }],
+          });
+          return viewedResult(
+            warnings.length === 0 ? started : { ...started, warnings },
+            warnings.length === 0 ? viewShell(started) : { ...viewShell(started), warnings },
+          );
+        } catch (error) {
+          return jsonResult({ error: error instanceof Error ? error.message : String(error) });
+        }
+      },
+    }),
+  );
+
+  pi.registerTool(
+    defineTool({
+      name: "shell_read",
+      label: "Read Shell",
+      description: "Read managed process output from absolute byte cursors.",
+      promptSnippet: "Read available output from a managed process.",
+      parameters: hostParams(readSchema),
+      execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
+        try {
+          const result = manager.read({
+            requesterId: ctx.sessionManager.getSessionId(),
+            isAdmin: adminFor(ctx.sessionManager.getSessionId()),
+            shellId: params.shell_id,
+            stdoutOffset: params.stdout_offset,
+            stderrOffset: params.stderr_offset,
+            maxBytes: params.max_bytes,
+          });
+          return viewedResult(result, viewRead(result));
+        } catch (error) {
+          return jsonResult({ error: error instanceof Error ? error.message : String(error) });
+        }
+      },
+    }),
+  );
+
+  pi.registerTool(
+    defineTool({
+      name: "shell_stop",
+      label: "Stop Shell",
+      description: "Stop a managed shell process.",
+      promptSnippet: "Stop a managed shell process.",
+      parameters: hostParams(stopSchema),
+      execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
+        try {
+          const result = await manager.stop({
+            requesterId: ctx.sessionManager.getSessionId(),
+            isAdmin: adminFor(ctx.sessionManager.getSessionId()),
+            shellId: params.shell_id,
+          });
+          return viewedResult(result, viewShell(result));
+        } catch (error) {
+          return jsonResult({ error: error instanceof Error ? error.message : String(error) });
+        }
+      },
+    }),
+  );
+
+  pi.registerTool(
+    defineTool({
+      name: "shell_list",
+      label: "List Shells",
+      description: "List managed shell processes visible to this session.",
+      promptSnippet: "List managed processes visible to this session.",
+      parameters: hostParams(listSchema),
+      execute: async (_toolCallId, _params, _signal, _onUpdate, ctx) => {
+        try {
+          const result = manager.list({
+            requesterId: ctx.sessionManager.getSessionId(),
+            isAdmin: adminFor(ctx.sessionManager.getSessionId()),
+          });
+          return viewedResult(result, viewList(result));
+        } catch (error) {
+          return jsonResult({ error: error instanceof Error ? error.message : String(error) });
+        }
+      },
+    }),
+  );
+
+  pi.registerCommand("shells", {
+    description: "List, read, or stop managed shells",
+    handler: async (args, ctx) => {
+      const [action, id] = args.trim().split(/\s+/, 2);
+      const requesterId = ctx.sessionManager.getSessionId();
+      const isAdmin = adminFor(requesterId);
+
+      try {
+        if (!action || action === "list") {
+          if (!isChildActivation && ctx.mode === "tui") {
+            bindRootUI(ctx.ui, requesterId);
+            await openShellsOverlay(rootUI ?? ctx.ui, manager, requesterId);
+            return;
+          }
+          const result = manager.list({ requesterId, isAdmin });
+          ctx.ui.notify(JSON.stringify(viewList(result), null, 2) ?? "null", "info");
+          return;
+        }
+
+        if (action === "read") {
+          if (!id) {
+            ctx.ui.notify("Usage: /shells read <id>", "warning");
+            return;
+          }
+          const result = manager.read({ requesterId, isAdmin, shellId: id });
+          ctx.ui.notify(JSON.stringify(viewRead(result), null, 2) ?? "null", "info");
+          return;
+        }
+
+        if (action === "stop") {
+          if (!id) {
+            ctx.ui.notify("Usage: /shells stop <id>", "warning");
+            return;
+          }
+          const result = await manager.stop({ requesterId, isAdmin, shellId: id });
+          if (shuttingDown) return;
+          ctx.ui.notify(JSON.stringify(viewShell(result), null, 2) ?? "null", "info");
+          return;
+        }
+
+        ctx.ui.notify("Usage: /shells [list | read <id> | stop <id>]", "warning");
+      } catch (error) {
+        if (shuttingDown) return;
+        ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+      }
+    },
+  });
+
+  let shutdownHandled = false;
+  pi.on("session_shutdown", async (event, ctx) => {
+    if (shutdownHandled) return;
+    shutdownHandled = true;
+    notificationGate.shutdown();
+    shuttingDown = true;
+    unsubscribeCompletions();
+    unsubscribeStopShells?.();
+    unsubscribeStopShells = undefined;
+    shellStartEpochs.clear();
+    // Snapshot identity before any await; this activation is already invalidated above.
+    const shutdownSessionId = currentSessionId ?? ctx.sessionManager.getSessionId();
+
+    if (isChildSession(shutdownSessionId)) {
+      // A child quit releases only its own shells; the shared manager stays with root.
+      const ownerId = shutdownSessionId;
+      try {
+        await manager.cleanupOwner(ownerId);
+      } finally {
+        detachLifecycle();
+      }
+      return;
+    }
+
+    shellSectionRegistration?.unregister();
+    shellSectionProvider?.dispose();
+    shellSectionRegistration = undefined;
+    shellSectionProvider = undefined;
+    rootUI = undefined;
+    rootSessionId = undefined;
+
+    if (event.reason !== "quit") {
+      // Session replacement leaves shells running under the outgoing owner with no
+      // runtime to report them; reload keeps the same session id, so its new
+      // activation continues reporting and nothing is lost.
+      if (event.reason !== "reload") emitLostForOwner(currentSessionId);
+      detachLifecycle();
+      return;
+    }
+    // Only the root activation whose manager still occupies the process-wide slot owns
+    // teardown. Release the slot synchronously before awaiting so an activation created
+    // during disposal builds a fresh manager and is never torn down by this one.
+    if (registry[MANAGER_KEY] !== manager) {
+      detachLifecycle();
+      return;
+    }
+    delete registry[MANAGER_KEY];
+    try {
+      await manager.dispose();
+    } finally {
+      detachLifecycle();
+    }
+  });
+}

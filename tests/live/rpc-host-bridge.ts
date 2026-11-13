@@ -22,8 +22,11 @@ import {
 } from "@earendil-works/pi-schema";
 import { matches } from "./background-compaction/schema-check.ts";
 
-import { ShellEntrySchema } from "../../.pi/extensions/lib/host-bridge/schema.ts";
-import { PI_SDK_REQUIREMENT, isSupportedPiVersion } from "../../.pi/extensions/lib/pi-target.ts";
+import { ShellEntrySchema } from "../../profile/extensions/lib/host-bridge/schema.ts";
+import {
+  PI_SDK_REQUIREMENT,
+  isSupportedPiVersion,
+} from "../../profile/extensions/lib/pi-target.ts";
 
 const AgentSchema = obj(
   {
@@ -272,7 +275,7 @@ try {
   await writeFile(
     extension,
     `import type { ExtensionAPI } from ${JSON.stringify(join(checkout, "node_modules/@earendil-works/pi-coding-agent/dist/index.js"))};
-import { getFastModeBridge } from ${JSON.stringify(join(checkout, ".pi/extensions/lib/fast-mode-state.ts"))};
+import { getFastModeBridge } from ${JSON.stringify(join(checkout, "profile/extensions/lib/fast-mode-state.ts"))};
 export default function (pi: ExtensionAPI) {
   let generation = 0;
   let sessionId: string | undefined;

@@ -1,23 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-import type { ProviderUsageSnapshot } from "../.pi/extensions/provider-usage.ts";
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import type { ProviderUsageSnapshot } from "../profile/extensions/provider-usage.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 import {
   CODEX_USAGE_LIMIT_ENTRY,
   getUsageLimitPolicy,
   USAGE_LIMIT_PENDING_ENTRY,
   USAGE_LIMIT_RESOLVED_ENTRY,
-} from "../.pi/extensions/lib/usage-limit-contract.ts";
+} from "../profile/extensions/lib/usage-limit-contract.ts";
 import type {
   ChildSessionProbe,
   GoalRecoveryOwnership,
   OnUsageLimit,
   UsageLimitPendingEntry,
   UsageLimitResolvedEntry,
-} from "../.pi/extensions/lib/usage-limit-contract.ts";
-import { createUsageLimitPolicy } from "../.pi/extensions/lib/usage-limit.ts";
-import type { ModelFallbacks } from "../.pi/extensions/lib/usage-limit.ts";
+} from "../profile/extensions/lib/usage-limit-contract.ts";
+import { createUsageLimitPolicy } from "../profile/extensions/lib/usage-limit.ts";
+import type { ModelFallbacks } from "../profile/extensions/lib/usage-limit.ts";
 import {
   MAX_WAIT_MS,
   POLL_INTERVAL_MS,
@@ -26,14 +26,14 @@ import {
   RESET_MARGIN_MS,
   RESUME_MESSAGE,
   USAGE_LIMIT_MESSAGE_TYPE,
-} from "../.pi/extensions/usage-limit-policy.ts";
+} from "../profile/extensions/usage-limit-policy.ts";
 import type {
   TimerHandle,
   UsageLimitHost,
   UsageLimitHostContext,
   UsageLimitHostEvents,
   UsageLimitPreferenceChange,
-} from "../.pi/extensions/usage-limit-policy.ts";
+} from "../profile/extensions/usage-limit-policy.ts";
 
 const T0 = Date.UTC(2026, 0, 1, 12, 0, 0);
 const HOUR_MS = 3_600_000;

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 import {
   adoptCheckpoints,
   captureGitSnapshot,
@@ -19,8 +19,8 @@ import {
   restoreSnapshotFiles,
   sessionCheckpointRef,
   summarizeChanges,
-} from "../.pi/extensions/checkpoints/git-snapshot.ts";
-import { buildTurnTimeline, type SessionTurn } from "../.pi/extensions/checkpoints/turns.ts";
+} from "../profile/extensions/checkpoints/git-snapshot.ts";
+import { buildTurnTimeline, type SessionTurn } from "../profile/extensions/checkpoints/turns.ts";
 
 const execFileAsync = promisify(execFile);
 const REF = sessionCheckpointRef("test-session");

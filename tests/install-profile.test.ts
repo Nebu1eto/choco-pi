@@ -25,7 +25,7 @@ import {
   type JsonSchema,
   type Static,
 } from "@earendil-works/pi-schema";
-import { deriveBackgroundLanes } from "../.pi/packages/choco-pi-compaction/src/background/settings.ts";
+import { deriveBackgroundLanes } from "../packages/choco-pi-compaction/src/background/settings.ts";
 import {
   buildGlobalSettings,
   DEFAULT_PROFILE_MODEL_THINKING_LEVELS,
@@ -66,7 +66,7 @@ const BUNDLED_PACKAGES = [
   "choco-pi-agent-browser",
   "choco-pi-computer-use",
   "choco-pi-editor-context",
-].map((name) => path.resolve(".pi/packages", name));
+].map((name) => path.resolve("packages", name));
 
 /**
  * The checkout ships no `.pi/settings.json`, so the installer takes its policy
@@ -82,7 +82,7 @@ async function seedProfileSettings(agentDir: string, extra: SeedSettings = {}) {
   await mkdir(agentDir, { recursive: true });
   const settings = {
     packages: BUNDLED_PACKAGES,
-    extensions: [path.resolve(".pi/extensions"), "-builtin:codemode"],
+    extensions: [path.resolve("profile/extensions"), "-builtin:codemode"],
     ...extra,
   };
   await writeFile(path.join(agentDir, "settings.json"), `${JSON.stringify(settings)}\n`, "utf8");
@@ -106,10 +106,11 @@ async function sidecarFixture(
   const root = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-sidecar-"));
   context.after(() => rm(root, { recursive: true, force: true }));
   const agentDir = path.join(root, "agent");
+  await mkdir(path.join(root, "profile"), { recursive: true });
   await mkdir(path.join(root, ".pi"), { recursive: true });
   await writeFile(path.join(root, ".pi", "settings.json"), '{"packages":[]}\n', "utf8");
   const codex = responsesCompaction === undefined ? {} : { compaction: { responsesCompaction } };
-  await writeFile(path.join(root, ".pi", "choco-pi-codex.json"), JSON.stringify(codex), "utf8");
+  await writeFile(path.join(root, "profile", "choco-pi-codex.json"), JSON.stringify(codex), "utf8");
   await mkdir(path.join(agentDir, "extensions"), { recursive: true });
   if (compactionAnthropic !== undefined) {
     await writeFile(
@@ -149,8 +150,8 @@ test("global settings preserve user preferences and dedupe every tracked local p
   );
 
   assert.deepEqual(settings.packages, [
-    path.resolve(".pi/packages/choco-pi-provider-synthetic"),
-    path.resolve(".pi/packages/choco-pi-lsp"),
+    path.resolve("packages/choco-pi-provider-synthetic"),
+    path.resolve("packages/choco-pi-lsp"),
     "npm:user-package",
   ]);
   assert.equal(settings.defaultModel, "user-model");
@@ -203,7 +204,7 @@ test("user-added duplicate pins keep the newer version", () => {
   );
 
   assert.deepEqual(settings.packages, [
-    path.resolve(".pi/packages/choco-pi-provider-synthetic"),
+    path.resolve("packages/choco-pi-provider-synthetic"),
     "npm:user-package@1.2.0",
   ]);
 });
@@ -222,25 +223,25 @@ test("profile installer links tracked config and is idempotent", async (context)
 
   assert.equal(
     await readlink(path.join(agentDir, "choco-pi-ui.json")),
-    path.resolve(".pi/zentui.json"),
+    path.resolve("profile/zentui.json"),
   );
   assert.equal(
     await readlink(path.join(agentDir, "choco-pi-codex.json")),
-    path.resolve(".pi/choco-pi-codex.json"),
+    path.resolve("profile/choco-pi-codex.json"),
   );
   const codexConfig = parseJson(
     await readFile(path.join(agentDir, "choco-pi-codex.json"), "utf8"),
     CodexConfigSchema,
   );
   const sourceCodexConfig = parseJson(
-    await readFile(path.resolve(".pi/choco-pi-codex.json"), "utf8"),
+    await readFile(path.resolve("profile/choco-pi-codex.json"), "utf8"),
     CodexConfigSchema,
   );
   assert.equal(codexConfig.openai.fast, sourceCodexConfig.openai.fast);
   const settings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
   assert.deepEqual(settings.packages, BUNDLED_PACKAGES);
   assert.deepEqual(settings.extensions, [
-    path.resolve(".pi/extensions"),
+    path.resolve("profile/extensions"),
     ...DEFAULT_PROFILE_EXTENSIONS,
   ]);
   // User levels win; profile defaults fill only the models the user has not set.
@@ -274,12 +275,12 @@ test("a clean machine with no settings at all bootstraps the bundled profile", a
   const settings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
   assert.deepEqual(settings.packages, BUNDLED_PACKAGES);
   assert.deepEqual(settings.extensions, [
-    path.resolve(".pi/extensions"),
+    path.resolve("profile/extensions"),
     ...DEFAULT_PROFILE_EXTENSIONS,
   ]);
-  assert.deepEqual(settings.skills, [path.resolve(".pi/skills")]);
-  assert.deepEqual(settings.prompts, [path.resolve(".pi/prompts")]);
-  assert.equal(await readlink(path.join(agentDir, "SYSTEM.md")), path.resolve(".pi/SYSTEM.md"));
+  assert.deepEqual(settings.skills, [path.resolve("profile/skills")]);
+  assert.deepEqual(settings.prompts, [path.resolve("profile/prompts")]);
+  assert.equal(await readlink(path.join(agentDir, "SYSTEM.md")), path.resolve("profile/SYSTEM.md"));
 });
 
 test("global settings with only user packages bootstrap the profile and keep them", async (context) => {
@@ -295,7 +296,7 @@ test("global settings with only user packages bootstrap the profile and keep the
   const settings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
   assert.deepEqual(settings.packages, [...BUNDLED_PACKAGES, "npm:user-package@2.0.0"]);
   assert.deepEqual(settings.extensions, [
-    path.resolve(".pi/extensions"),
+    path.resolve("profile/extensions"),
     ...DEFAULT_PROFILE_EXTENSIONS,
   ]);
 });
@@ -307,7 +308,7 @@ test("a reinstall disables Pi's built-in tool-search, which choco-pi's tool_sear
   // An install from before the change, where the user re-enabled the built-in.
   await seedProfileSettings(agentDir, {
     extensions: [
-      path.resolve(".pi/extensions"),
+      path.resolve("profile/extensions"),
       "-builtin:codemode",
       "+builtin:tool-search",
       "+builtin:llama.cpp",
@@ -318,7 +319,7 @@ test("a reinstall disables Pi's built-in tool-search, which choco-pi's tool_sear
 
   const settings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
   assert.deepEqual(settings.extensions, [
-    path.resolve(".pi/extensions"),
+    path.resolve("profile/extensions"),
     "+builtin:llama.cpp",
     "-builtin:codemode",
     "-builtin:tool-search",
@@ -328,10 +329,10 @@ test("a reinstall disables Pi's built-in tool-search, which choco-pi's tool_sear
 test("the clean-install defaults list every bundled package Pi loads", async () => {
   const PiManifestSchema = obj({ pi: opt(unknown()) }, { open: true });
   const loaded: string[] = [];
-  for (const entry of await readdir(".pi/packages", { withFileTypes: true })) {
+  for (const entry of await readdir("packages", { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     const manifest = parseJson(
-      await readFile(path.join(".pi/packages", entry.name, "package.json"), "utf8"),
+      await readFile(path.join("packages", entry.name, "package.json"), "utf8"),
       PiManifestSchema,
     );
     if (manifest.pi !== undefined) loaded.push(`./packages/${entry.name}`);
@@ -361,7 +362,7 @@ test("the profile removes stale built-in exclusions and preserves unrelated sett
   );
 
   assert.deepEqual(settings.extensions, [
-    path.resolve("/repo/.pi/extensions"),
+    path.resolve("/repo/profile/extensions"),
     "+builtin:llama.cpp",
     "/Users/someone/my-tools",
     "-builtin:codemode",
@@ -394,7 +395,7 @@ test("reinstalling keeps exactly one copy of the built-in extension policy", asy
 
   const settings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
   assert.deepEqual(settings.extensions, [
-    path.join(root, ".pi", "extensions"),
+    path.join(root, "profile", "extensions"),
     "-builtin:codemode",
   ]);
   assert.equal(settings.deviceId, "d-1");
@@ -407,8 +408,9 @@ test("profile installer preserves enabled and disabled fast preferences", async 
   for (const fast of [true, false]) {
     const root = path.join(fixtureDir, fast ? "enabled" : "disabled");
     const agentDir = path.join(root, "agent");
-    const sourceConfig = path.join(root, ".pi", "choco-pi-codex.json");
+    const sourceConfig = path.join(root, "profile", "choco-pi-codex.json");
     await mkdir(path.dirname(sourceConfig), { recursive: true });
+    await mkdir(path.join(root, ".pi"), { recursive: true });
     await writeFile(path.join(root, ".pi", "settings.json"), '{"packages":[]}\n', "utf8");
     await writeFile(sourceConfig, `${JSON.stringify({ openai: { fast } })}\n`, "utf8");
 
@@ -459,7 +461,7 @@ test("installing the profile removes the packages each bundled fork replaces", (
   const existingSettings = {
     packages: [
       "npm:pi-lens@4.0.0",
-      "/Users/someone/Workspace/choco-pi/.pi/packages/pi-zentui",
+      path.join("/Users/someone/Workspace/choco-pi", ".pi", "packages", "pi-zentui"),
       "npm:@maddeye/pi-nord@1.0.0",
       "npm:pi-mono-figma",
     ],
@@ -472,8 +474,8 @@ test("installing the profile removes the packages each bundled fork replaces", (
   ]);
 
   assert.deepEqual(settings.packages, [
-    path.resolve("/repo/.pi/packages/choco-pi-lsp"),
-    path.resolve("/repo/.pi/packages/choco-pi-ui"),
+    path.resolve("/repo/packages/choco-pi-lsp"),
+    path.resolve("/repo/packages/choco-pi-ui"),
     "npm:pi-mono-figma",
   ]);
 });
@@ -491,16 +493,16 @@ test("installing the profile drops another checkout's resource directories", () 
   // A previous checkout's .pi/extensions would load a second copy of every
   // extension; pi then refuses to start because both register the same tools.
   assert.deepEqual(settings.extensions, [
-    path.resolve("/repo/.pi/extensions"),
+    path.resolve("/repo/profile/extensions"),
     "/Users/someone/my-tools",
   ]);
-  assert.deepEqual(settings.skills, [path.resolve("/repo/.pi/skills")]);
+  assert.deepEqual(settings.skills, [path.resolve("/repo/profile/skills")]);
 });
 
 test("every bundled fork declares the packages it supersedes", async () => {
-  for (const name of await readdir(".pi/packages")) {
+  for (const name of await readdir("packages")) {
     const manifest = JSON.parse(
-      await readFile(path.resolve(".pi/packages", name, "package.json"), "utf8"),
+      await readFile(path.resolve("packages", name, "package.json"), "utf8"),
     );
     // Only Pi packages are installed; choco-pi-acp is a standalone binary.
     if (manifest.pi === undefined) continue;
@@ -564,7 +566,7 @@ test("built-in exclusion removal preserves arbitrary unrelated JSON fields", () 
     "/repo",
   );
   assert.deepEqual(settings.extensions, [
-    "/repo/.pi/extensions",
+    "/repo/profile/extensions",
     "/user/extension.ts",
     "+builtin:other",
     "-builtin:codemode",
@@ -693,7 +695,7 @@ test("an unreadable codex config skips the sidecar migration with a warning", as
   const { root, agentDir, sidecarPath } = await sidecarFixture(context, {
     sidecar: LEGACY_SIDECAR,
   });
-  await writeFile(path.join(root, ".pi", "choco-pi-codex.json"), "{ not json", "utf8");
+  await writeFile(path.join(root, "profile", "choco-pi-codex.json"), "{ not json", "utf8");
 
   const result = await installProfile({ root, agentDir });
 
@@ -709,7 +711,7 @@ test("install removes a stale context-cap.json link and reports it once", async 
   const target = path.join(agentDir, "extensions", "context-cap.json");
   await mkdir(path.dirname(target), { recursive: true });
   // An earlier install linked the tracked file, which no longer exists: dangling.
-  await symlink(path.resolve(".pi/extensions/context-cap.json"), target);
+  await symlink(path.resolve("profile/extensions/context-cap.json"), target);
 
   const first = await installProfile({ root: process.cwd(), agentDir });
   assert.deepEqual(first.removed, [target]);
@@ -748,7 +750,7 @@ test("a directory at a retired path is left in place with a warning", async (con
 
 test("retired profile files are neither shipped, linked, nor migrated", async () => {
   for (const target of RETIRED_PROFILE_FILES) {
-    await assert.rejects(lstat(path.resolve(".pi", target)), {
+    await assert.rejects(lstat(path.resolve("profile", target)), {
       code: "ENOENT",
     });
     assert.ok(!PROFILE_LINKS.some(([, linkedTarget]) => linkedTarget === target));
@@ -765,25 +767,25 @@ test("every profile extension sidecar is linked or migrated by the installer", a
     "--others",
     "--exclude-standard",
     "--",
-    ".pi/extensions",
+    "profile/extensions",
   ]);
   // A tracked file deleted in the working tree is no longer shipped.
   const deleted = new Set(
     (
-      await promisify(execFile)("git", ["ls-files", "--deleted", "--", ".pi/extensions"])
+      await promisify(execFile)("git", ["ls-files", "--deleted", "--", "profile/extensions"])
     ).stdout.split("\n"),
   );
   const sidecars = stdout
     .split("\n")
     .filter(
       (file) =>
-        path.posix.dirname(file) === ".pi/extensions" &&
+        path.posix.dirname(file) === "profile/extensions" &&
         file.endsWith(".json") &&
         !deleted.has(file),
     );
   assert.ok(sidecars.length > 0, "the profile ships extension sidecars");
   const linked = new Set(PROFILE_LINKS.map(([source]) => source));
-  const migrated = new Set(MIGRATED_SIDECARS.map((target) => `.pi/${target}`));
+  const migrated = new Set(MIGRATED_SIDECARS.map((target) => `profile/${target}`));
   for (const sidecar of sidecars) {
     assert.ok(
       linked.has(sidecar) || migrated.has(sidecar),

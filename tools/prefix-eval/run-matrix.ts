@@ -15,7 +15,7 @@ import {
   type TaskSpec,
 } from "./types.ts";
 import { evaluateTaskVerdict } from "./verdict.ts";
-import { isString } from "../../.pi/extensions/lib/runtime-values.ts";
+import { isString } from "../../profile/extensions/lib/runtime-values.ts";
 
 interface ModelSpec {
   model: string;

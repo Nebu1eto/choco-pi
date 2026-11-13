@@ -9,8 +9,8 @@ import {
   DISPLAY_SCAN_UNITS,
   renderDiffFile,
   type DiffStyler,
-} from "../.pi/extensions/lib/changes/render/diff-render.ts";
-import type { DiffFile, DiffLine } from "../.pi/extensions/lib/changes/types.ts";
+} from "../profile/extensions/lib/changes/render/diff-render.ts";
+import type { DiffFile, DiffLine } from "../profile/extensions/lib/changes/types.ts";
 
 const FAMILY = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466}";
 const CLUSTERS = [

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { getSettingsListTheme, initTheme } from "@earendil-works/pi-coding-agent";
 import { SettingsList, stripTerminalSequences } from "@earendil-works/pi-tui";
-import { modelPickerSubmenu } from "../.pi/extensions/lib/model-picker.ts";
+import { modelPickerSubmenu } from "../profile/extensions/lib/model-picker.ts";
 
 initTheme("dark", false);
 

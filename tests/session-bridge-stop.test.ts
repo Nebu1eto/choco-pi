@@ -25,9 +25,9 @@ import {
 import {
   installLiveSessionBridge,
   type LiveSessionBridgeDependencies,
-} from "../.pi/extensions/session-bridge.ts";
-import { isString } from "../.pi/extensions/lib/runtime-values.ts";
-import { publishStopState, removeStopState } from "../.pi/extensions/lib/stop-control.ts";
+} from "../profile/extensions/session-bridge.ts";
+import { isString } from "../profile/extensions/lib/runtime-values.ts";
+import { publishStopState, removeStopState } from "../profile/extensions/lib/stop-control.ts";
 
 const model: Model<Api> = {
   id: "stop",

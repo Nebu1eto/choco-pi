@@ -138,7 +138,7 @@ including providers that only carry a `status` such as
 Providers without credentials are never queried; they appear only in the
 `Not signed in` section.
 
-`statusText` is schema-1 JSON (`.pi/extensions/lib/host-bridge/report-schema.ts`,
+`statusText` is schema-1 JSON (`profile/extensions/lib/host-bridge/report-schema.ts`,
 all objects closed):
 
 | Field       | Type                                   | Meaning                                                       |

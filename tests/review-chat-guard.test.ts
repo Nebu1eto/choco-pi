@@ -11,14 +11,17 @@ import {
   chatToolGuard,
   hiddenFileRefusal,
   hiddenTargetOf,
-} from "../.pi/extensions/review/core/chat-guard.ts";
+} from "../profile/extensions/review/core/chat-guard.ts";
 import {
   createReviewChat,
   type ReviewChat,
   type ReviewChatOptions,
   type ReviewChatSessionRequest,
-} from "../.pi/extensions/review/core/ask.ts";
-import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/review/core/ask.ts";
+import {
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "../profile/extensions/lib/runtime-values.ts";
 import { changedFile, mount } from "./review-safety-fakes.ts";
 
 const SECRET = "TOKEN=guard-secret-4242";

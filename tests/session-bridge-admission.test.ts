@@ -27,8 +27,8 @@ import {
   installLiveSessionBridge,
   registerManagedSession,
   type LiveSessionBridgeDependencies,
-} from "../.pi/extensions/session-bridge.ts";
-import { isString } from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/session-bridge.ts";
+import { isString } from "../profile/extensions/lib/runtime-values.ts";
 import { createSessionSdkFixture } from "./helpers/session-sdk-fixture.ts";
 
 type Deferred = { promise: Promise<void>; resolve(): void };

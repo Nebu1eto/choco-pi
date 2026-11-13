@@ -1,14 +1,14 @@
-import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
-import { propertiesWhen } from "../.pi/extensions/lib/runtime-values.ts";
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import { reinterpretHostValue } from "../profile/extensions/lib/runtime-values.ts";
+import { propertiesWhen } from "../profile/extensions/lib/runtime-values.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildCommentAnchor } from "../.pi/extensions/review/core/anchor.ts";
+import { buildCommentAnchor } from "../profile/extensions/review/core/anchor.ts";
 import {
   hunkWithExpandedContext,
   type HunkExpansion,
-} from "../.pi/extensions/review/core/expand.ts";
-import { parseGitDiff } from "../.pi/extensions/lib/changes/patch.ts";
+} from "../profile/extensions/review/core/expand.ts";
+import { parseGitDiff } from "../profile/extensions/lib/changes/patch.ts";
 import {
   type GhRunner,
   type GithubReviewPayload,
@@ -21,13 +21,13 @@ import {
   planReviewSubmission,
   prepareReviewSubmission,
   submitReviewPlan,
-} from "../.pi/extensions/review/core/github.ts";
+} from "../profile/extensions/review/core/github.ts";
 import type {
   DiffModel,
   DiffSide,
   ReviewComment,
   ReviewRecord,
-} from "../.pi/extensions/review/core/types.ts";
+} from "../profile/extensions/review/core/types.ts";
 
 const NOW = "2026-03-01T12:00:00.000Z";
 const PR: PullRequestRef = { owner: "octo", repo: "widget", number: 42 };

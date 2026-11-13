@@ -1,4 +1,4 @@
-import type { BackgroundCompactionSettings } from "../../../../.pi/packages/choco-pi-compaction/src/background/contract.ts";
+import type { BackgroundCompactionSettings } from "../../../../packages/choco-pi-compaction/src/background/contract.ts";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import type { CheckEvidence, ObservedCheck } from "../checks.ts";

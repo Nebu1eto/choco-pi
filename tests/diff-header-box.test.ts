@@ -2,15 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
-import { reviewLabels, type FindingsSummary } from "../.pi/extensions/lib/changes/findings.ts";
+import { reviewLabels, type FindingsSummary } from "../profile/extensions/lib/changes/findings.ts";
 import {
   HEADER_BOX_MIN_WIDTH,
   loadZentuiHeaderBox,
   themedHeaderBox,
   type HeaderBox,
-} from "../.pi/extensions/lib/changes/view/header-box.ts";
-import { plainPaneStyler, type PaneStyler } from "../.pi/extensions/lib/changes/view/rows.ts";
-import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/lib/changes/view/header-box.ts";
+import { plainPaneStyler, type PaneStyler } from "../profile/extensions/lib/changes/view/rows.ts";
+import { reinterpretHostValue } from "../profile/extensions/lib/runtime-values.ts";
 import { file, flush, harness } from "./diff-actions-fakes.ts";
 import { loadZentuiModule, SKIP_WITHOUT_ZENTUI } from "./zentui-build.ts";
 

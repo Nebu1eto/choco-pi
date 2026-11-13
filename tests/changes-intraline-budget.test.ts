@@ -11,8 +11,8 @@ import {
   HIGHLIGHT_MAX_LINE_CHARS,
   renderDiffFile,
   type DiffStyler,
-} from "../.pi/extensions/lib/changes/render/diff-render.ts";
-import type { DiffFile, DiffLine } from "../.pi/extensions/lib/changes/types.ts";
+} from "../profile/extensions/lib/changes/render/diff-render.ts";
+import type { DiffFile, DiffLine } from "../profile/extensions/lib/changes/types.ts";
 
 /** Changed spans are marked with « », which ANSI resets never contain, so a test can see what was emphasised. */
 const marking: DiffStyler = { fg: (_color, text) => text, inverse: (text) => `«${text}»` };

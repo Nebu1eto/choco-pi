@@ -8,7 +8,7 @@ Two modes:
 
 - **Offline** (default, no network): one fresh process per scenario, an offline fake Anthropic provider (or, for `xai-foreground-compaction`, an xAI Grok mirror behind production's xAI capturing stream), global `fetch` replaced by a blocker, sealed in-memory credentials, isolated agent, project, session and HOME directories.
 
-The extension profile is the checkout's `.pi/settings.json` when present, else the bundled packages named in the global agent `settings.json` (`$PI_CODING_AGENT_DIR` or `~/.pi/agent`, read before the launcher scopes the environment), mapped onto this worktree's `.pi/packages`; `scripts/install-profile.ts` resolves the profile the same way.
+The extension profile is the checkout's `.pi/settings.json` when present, else the bundled packages named in the global agent `settings.json` (`$PI_CODING_AGENT_DIR` or `~/.pi/agent`, read before the launcher scopes the environment), mapped onto this worktree's `packages`; `scripts/install-profile.ts` resolves the profile the same way.
 
 - **Live** (opt-in, paid): the same scenarios against a real provider; see below.
 
@@ -46,7 +46,7 @@ The `anthropic-foreground-compaction` live run (`anthropic/claude-fable-5-1`, su
 
 ## Context window presets
 
-`context-window-presets` seeds the live catalog mirrors (Haiku 5.5 at 1,000,000, GPT-6 Luna at 272,000; Kimi-K3 at 524,288 is registered as a mirror of the Synthetic provider extension's static registration, because an extension provider resolves no store entry before its extension loads, and the real extension re-registers over it) and applies a copy of the worktree `.pi/models.json`, which the real agent dir symlinks (Luna becomes 1,050,000). It runs one short turn, then three preset phases (four for Kimi-K3, below). Each phase runs the real `/status` and `/context` commands, keeps their report frames, and reads `ctx.model.contextWindow`, `getContextUsage().contextWindow` and the footer expression `ctx.model?.contextWindow ?? getContextUsage()?.contextWindow` in-host. The phases change no request; only the first turn reaches the provider.
+`context-window-presets` seeds the live catalog mirrors (Haiku 5.5 at 1,000,000, GPT-6 Luna at 272,000; Kimi-K3 at 524,288 is registered as a mirror of the Synthetic provider extension's static registration, because an extension provider resolves no store entry before its extension loads, and the real extension re-registers over it) and applies a copy of the worktree `profile/models.json`, which the real agent dir symlinks (Luna becomes 1,050,000). It runs one short turn, then three preset phases (four for Kimi-K3, below). Each phase runs the real `/status` and `/context` commands, keeps their report frames, and reads `ctx.model.contextWindow`, `getContextUsage().contextWindow` and the footer expression `ctx.model?.contextWindow ?? getContextUsage()?.contextWindow` in-host. The phases change no request; only the first turn reaches the provider.
 
 The footer and statusline themselves are not observed: the SDK host has no TUI, so zentui renders nothing. The artifacts show their input (that expression) only.
 

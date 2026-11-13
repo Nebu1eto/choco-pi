@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { renderDiffFile } from "../.pi/extensions/lib/changes/render/diff-render.ts";
-import { buildCommentAnchor } from "../.pi/extensions/review/core/anchor.ts";
+import { renderDiffFile } from "../profile/extensions/lib/changes/render/diff-render.ts";
+import { buildCommentAnchor } from "../profile/extensions/review/core/anchor.ts";
 import { baseRecord, mount, NOW } from "./review-safety-fakes.ts";
-import type { DiffFile, DiffHunk } from "../.pi/extensions/lib/changes/types.ts";
+import type { DiffFile, DiffHunk } from "../profile/extensions/lib/changes/types.ts";
 import {
   bodyBlock,
   hunkRowOfLine,
   renderHunkRows,
   splitRowForLine,
   type BodyAnnotation,
-} from "../.pi/extensions/lib/changes/view/body-block.ts";
+} from "../profile/extensions/lib/changes/view/body-block.ts";
 
 const plain = { fg: (_color: string, text: string) => text, inverse: (text: string) => `«${text}` };
 

@@ -8,8 +8,8 @@ import {
   writeAgentParseRecord,
   type AgentParseRecord,
   type ReviewFinding,
-} from "../.pi/extensions/lib/verdict-blocks.ts";
-import { readRecords, type RecordsReader } from "../.pi/extensions/lib/changes/findings.ts";
+} from "../profile/extensions/lib/verdict-blocks.ts";
+import { readRecords, type RecordsReader } from "../profile/extensions/lib/changes/findings.ts";
 import { file, flush, harness, hunk, textBody, until } from "./diff-actions-fakes.ts";
 
 const REVIEWED_AT = "2026-01-01T00:00:00.000Z";

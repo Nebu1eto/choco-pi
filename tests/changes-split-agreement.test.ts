@@ -1,14 +1,14 @@
 // The renderer and the body layout share one split pairing: the rows drawn and the rows mapped never disagree.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseGitDiff } from "../.pi/extensions/lib/changes/patch.ts";
-import { renderDiffFile } from "../.pi/extensions/lib/changes/render/diff-render.ts";
-import type { DiffFile } from "../.pi/extensions/lib/changes/types.ts";
+import { parseGitDiff } from "../profile/extensions/lib/changes/patch.ts";
+import { renderDiffFile } from "../profile/extensions/lib/changes/render/diff-render.ts";
+import type { DiffFile } from "../profile/extensions/lib/changes/types.ts";
 import {
   bodyBlock,
   renderHunkRows,
   splitRowCount,
-} from "../.pi/extensions/lib/changes/view/body-block.ts";
+} from "../profile/extensions/lib/changes/view/body-block.ts";
 
 const plain = { fg: (_color: string, text: string) => text, inverse: (text: string) => text };
 

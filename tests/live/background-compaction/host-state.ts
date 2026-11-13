@@ -1,5 +1,5 @@
-import type { WireBody } from "../../../.pi/packages/choco-pi-compaction/src/anthropic/capture.ts";
-import type { XaiWireBody } from "../../../.pi/packages/choco-pi-compaction/src/xai/capture.ts";
+import type { WireBody } from "../../../packages/choco-pi-compaction/src/anthropic/capture.ts";
+import type { XaiWireBody } from "../../../packages/choco-pi-compaction/src/xai/capture.ts";
 import type { Recorder } from "./artifacts.ts";
 import { MarkerBook } from "./host-seed.ts";
 import type { RequestBranch } from "./request-branch.ts";

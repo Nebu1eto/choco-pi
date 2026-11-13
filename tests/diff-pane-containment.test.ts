@@ -18,11 +18,11 @@ import {
   isFocusable,
   visibleWidth,
 } from "@earendil-works/pi-tui";
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
-import { createDockHost } from "../.pi/extensions/diff/host/dock-host.ts";
-import { createOverlayHost } from "../.pi/extensions/diff/host/overlay-host.ts";
-import type { HostCallbacks, PaneSurface } from "../.pi/extensions/lib/changes/view/surface.ts";
-import type { PaneHost, PaneTui } from "../.pi/extensions/diff/host/types.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
+import { createDockHost } from "../profile/extensions/diff/host/dock-host.ts";
+import { createOverlayHost } from "../profile/extensions/diff/host/overlay-host.ts";
+import type { HostCallbacks, PaneSurface } from "../profile/extensions/lib/changes/view/surface.ts";
+import type { PaneHost, PaneTui } from "../profile/extensions/diff/host/types.ts";
 
 class Lines implements Component {
   readonly lines: string[];

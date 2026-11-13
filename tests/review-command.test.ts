@@ -1,34 +1,37 @@
-import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
-import { propertiesWhen } from "../.pi/extensions/lib/runtime-values.ts";
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import { reinterpretHostValue } from "../profile/extensions/lib/runtime-values.ts";
+import { propertiesWhen } from "../profile/extensions/lib/runtime-values.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
-import { buildCommentAnchor } from "../.pi/extensions/review/core/anchor.ts";
-import type { GithubReviewPayload } from "../.pi/extensions/review/core/github.ts";
+import { buildCommentAnchor } from "../profile/extensions/review/core/anchor.ts";
+import type { GithubReviewPayload } from "../profile/extensions/review/core/github.ts";
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
   RegisteredCommand,
 } from "@earendil-works/pi-coding-agent";
-import { parseGitDiff } from "../.pi/extensions/lib/changes/patch.ts";
-import { assessDiff } from "../.pi/extensions/review/core/heuristics.ts";
+import { parseGitDiff } from "../profile/extensions/lib/changes/patch.ts";
+import { assessDiff } from "../profile/extensions/review/core/heuristics.ts";
 import type {
   ExecRunner,
   ResolvedReviewConfig,
   ReviewRecord,
   ReviewStore,
   ReviewTarget,
-} from "../.pi/extensions/review/core/types.ts";
-import { repoKey, targetKey } from "../.pi/extensions/review/core/store.ts";
+} from "../profile/extensions/review/core/types.ts";
+import { repoKey, targetKey } from "../profile/extensions/review/core/store.ts";
 import {
   parseReviewCommand,
   registerReviewExtension,
   type ReviewExtensionDependencies,
-} from "../.pi/extensions/review/index.ts";
-import { openReviewView, type ReviewViewResult } from "../.pi/extensions/review/ui/review-view.ts";
+} from "../profile/extensions/review/index.ts";
+import {
+  openReviewView,
+  type ReviewViewResult,
+} from "../profile/extensions/review/ui/review-view.ts";
 
 const root = "/work/repository";
 const sessionId = "session-9";

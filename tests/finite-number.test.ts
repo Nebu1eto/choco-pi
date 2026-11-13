@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { compile } from "@earendil-works/pi-schema";
-import { finiteNum } from "../.pi/extensions/lib/finite-number.ts";
-import { AgentRecordSchema } from "../.pi/extensions/lib/host-bridge/sources.ts";
+import { finiteNum } from "../profile/extensions/lib/finite-number.ts";
+import { AgentRecordSchema } from "../profile/extensions/lib/host-bridge/sources.ts";
 import {
   CodexUsageLimitEntrySchema,
   SubagentUsageLimitSchema,
-} from "../.pi/extensions/lib/usage-limit-contract.ts";
+} from "../profile/extensions/lib/usage-limit-contract.ts";
 
 const NON_FINITE = [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY];
 

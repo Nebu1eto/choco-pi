@@ -1,8 +1,8 @@
 /**
  * Child-process collector for "tests/tool-io-naming.test.ts".
  *
- * Loads every repository extension entry (each ".pi/packages/<name>/package.json"
- * "pi.extensions" entry plus the project-local ".pi/extensions" entries) with
+ * Loads every repository extension entry (each "packages/<name>/package.json"
+ * "pi.extensions" entry plus the profile's "profile/extensions" entries) with
  * Pi's own extension loader and prints the parameter schema of every tool
  * registered during load. Run it with PI_CODING_AGENT_DIR and HOME pointing at
  * an empty scratch directory so nothing under ~/.pi is read.
@@ -19,7 +19,7 @@ import {
   type ExtensionFactory,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { isFunction, reinterpretHostValue } from "../../.pi/extensions/lib/runtime-values.ts";
+import { isFunction, reinterpretHostValue } from "../../profile/extensions/lib/runtime-values.ts";
 
 export const OUTPUT_PREFIX = "TOOL_SCHEMAS_JSON:";
 
@@ -63,7 +63,7 @@ async function entriesInDirectory(dir: string): Promise<string[]> {
 
 /** Every "pi.extensions" entry of the repository's packages, expanded to files. */
 export async function packageExtensionEntries(root: string): Promise<string[]> {
-  const packagesDir = path.join(root, ".pi", "packages");
+  const packagesDir = path.join(root, "packages");
   const entries: string[] = [];
   for (const name of (await readdir(packagesDir)).sort()) {
     const manifestPath = path.join(packagesDir, name, "package.json");
@@ -118,8 +118,11 @@ export async function collectToolSchemas(
   root: string,
   agentDir: string,
 ): Promise<CollectedSchemas> {
-  const configured = await packageExtensionEntries(root);
-  // Pi itself adds the project-local ".pi/extensions" entries for cwd = root.
+  // The profile extension directory, which an install lists in settings.extensions.
+  const configured = [
+    path.join(root, "profile", "extensions"),
+    ...(await packageExtensionEntries(root)),
+  ];
   const result = await discoverAndLoadExtensions(configured, root, agentDir);
   const tools: Record<string, CollectedTool> = {};
   for (const extension of result.extensions) {

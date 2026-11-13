@@ -3,7 +3,7 @@
 // current when each load began (tests/changes-store-contract.test.ts checks that).
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { DiffHunk } from "../.pi/extensions/lib/changes/types.ts";
+import type { DiffHunk } from "../profile/extensions/lib/changes/types.ts";
 import { file, flush, harness, hunk, textBody } from "./diff-actions-fakes.ts";
 
 const OUTDATED =

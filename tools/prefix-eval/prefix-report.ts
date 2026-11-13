@@ -8,8 +8,8 @@ import {
   providerPrefixMetricsFromPayload,
   systemRegionHashes,
   systemText,
-} from "../../.pi/extensions/cache-probe.ts";
-import { isJsonRecord, type JsonRecord } from "../../.pi/extensions/lib/runtime-values.ts";
+} from "../../profile/extensions/cache-probe.ts";
+import { isJsonRecord, type JsonRecord } from "../../profile/extensions/lib/runtime-values.ts";
 import { parseJson, validateValue } from "./io.ts";
 import {
   CaptureRecordSchema,

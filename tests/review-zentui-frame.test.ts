@@ -3,7 +3,7 @@ import {
   reinterpretHostValue,
   runtimeTypeOf,
   type RuntimeValue,
-} from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import test from "node:test";
@@ -16,7 +16,7 @@ import {
   resolveZentuiFile,
   type ZentuiLoader,
   type ZentuiModules,
-} from "../.pi/extensions/review/ui/zentui-frame.ts";
+} from "../profile/extensions/review/ui/zentui-frame.ts";
 import {
   realBoxZentuiLoader,
   realZentuiLoader,
@@ -602,7 +602,7 @@ test(
 
 test("a zentui pinned by path is found like an installed one", async () => {
   const manifest = await resolveZentuiFile("package.json");
-  assert.equal(runtimeTypeOf(manifest), "string", "the pinned fork in .pi/packages must resolve");
+  assert.equal(runtimeTypeOf(manifest), "string", "the pinned fork in packages must resolve");
   assert.match(manifest!, /choco-pi-ui[/\\]package\.json$/);
   assert.equal(existsSync(manifest!), true);
 });

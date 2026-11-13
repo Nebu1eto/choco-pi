@@ -1,10 +1,10 @@
 // /review-assist in an editor that renders Markdown (Zed through the choco-pi ACP adapter).
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseGitDiff } from "../.pi/extensions/lib/changes/patch.ts";
-import { MAX_HEADLESS_MARKDOWN_CHARS } from "../.pi/extensions/review/core/headless-markdown.ts";
-import type { DiffModel, ResolvedReviewConfig } from "../.pi/extensions/review/core/types.ts";
-import { presentHeadlessReview } from "../.pi/extensions/review/headless.ts";
+import { parseGitDiff } from "../profile/extensions/lib/changes/patch.ts";
+import { MAX_HEADLESS_MARKDOWN_CHARS } from "../profile/extensions/review/core/headless-markdown.ts";
+import type { DiffModel, ResolvedReviewConfig } from "../profile/extensions/review/core/types.ts";
+import { presentHeadlessReview } from "../profile/extensions/review/headless.ts";
 
 const MARKER = { CHOCO_PI_ACP_NATIVE_DIFF: "1" };
 const SECRET = "SECRET-VALUE-7f3a";

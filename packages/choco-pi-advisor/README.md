@@ -1,0 +1,88 @@
+# Advisor
+
+The `advisor` tool blocks inline while a fresh, read-only subagent answers a focused
+`question` with optional `context`. It includes a bounded excerpt of the live branch,
+streams response progress, and forwards cancellation to the subagent manager.
+Advice is not evidence: the executor must verify claims before acting.
+
+The excerpt shows each tool call's arguments on one capped line: a string `description`
+becomes a quoted label, and the other fields read `key=value` joined by `·`, with
+strings raw and nested values as compact JSON. String values over
+200 characters are cut, and values under credential-like keys (`token`, `password`,
+`api_key`, `authorization`, ...) become `[redacted]`. Tools whose names suggest credential
+material (`auth`, `secret`, `token`, ...) show `[arguments redacted]`. `agent_message`
+shows its recipient and body. `exec` hides its script source. Instead, its result lists the
+script's nested tool calls with their arguments and outcome (`ok`, `error`,
+`unfinished`), taken from code-mode traces or, failing that, Pi's `nestedCalls` record.
+Redaction is key-based, so a secret embedded in a free-form string such as a shell command
+still reaches the advisor, just as one in a tool result does.
+
+Requires the existing subagents package and an authenticated, available model.
+The extension registers in root and child sessions. Consults spawn the internal
+`advisor` agent through the manager slot's `spawnInternal`, which takes only the exact
+name of an enabled internal agent and never substitutes `fallbackSubagent`; a subagents
+build without it is refused instead of running the consult as another agent type.
+Other child agents consult through the same process-wide slot.
+
+The advisor may make up to 10 short read-only lookups (`max_turns: 10`), only on facts its
+answer depends on, and lists what it checked. Its definition loads only `choco-pi-lsp` and
+narrows it to `lsp_navigation`, `read_symbol`, `read_enclosing`, `symbol_search`,
+`ast_grep_search`, and `ast_grep_outline` beside the `read`, `find`, and `ls` built-ins,
+all active from its first turn. It has neither `edit` nor `write`, so the subagents runner
+refuses its file-changing calls: `lsp_navigation` rename, rename_file, code_action,
+execute_command, or any `apply`. It loads neither the subagents nor the advisor
+extension, so it cannot delegate or recursively consult an advisor.
+
+## Settings
+
+Read `advisor.json` from the agent directory, then overlay `.pi/advisor.json` in the
+project. Preferences writes go only to the global file, so project settings still
+take precedence. Unknown keys are ignored. Invalid layers use defaults and warn in
+interactive sessions.
+The picker lists registry models scoped by Pi's `enabledModels` (project over global)
+when set, otherwise the whole registry. The configured model always appears in the in-place searchable `provider/id` selector.
+`enabledModels` is read asynchronously at `session_start`, alongside the advisor
+settings. The host builds Preferences sections synchronously, so the Advisor Agent
+section is omitted until that read completes rather than offering an unfiltered list;
+each later build revalidates the files in the background, so an edit shows on the next open.
+A model with a `preferWhenAvailable` variant in `profile/model-fallbacks.json` runs as that
+variant when the account can use it (Fable 5.2 as Mythos 5.2; the registry hides Mythos from
+accounts without access). When the advisor model equals the session model, or is its variant,
+the consult switches to the first available Flagship primary that differs, again preferring
+an available variant. Without one, consults are skipped with the message
+`advisor is disabled for this session: the advisor model (<provider>/<id>) is the same as the session model; pick a different advisor model in /preferences`.
+
+| Key       | Default                      | Values                                                    |
+| --------- | ---------------------------- | --------------------------------------------------------- |
+| `enabled` | `false`                      | Boolean                                                   |
+| `model`   | `anthropic/claude-fable-5-2` | Provider/model identifier                                 |
+| `effort`  | `low`                        | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` |
+| `maxUses` | Absent (unlimited)           | Positive integer                                          |
+
+The preferences cap input accepts `0` or empty to remove `maxUses`; a literal zero
+in a settings file is invalid. The cap counts advisor tool results after the latest
+user message, including unsuccessful calls.
+
+## Trailer contract
+
+Every successful result ends with this deterministic line, using the resolved model:
+
+```text
+advisor: <provider>/<modelId> effort=<effort>
+```
+
+## Known gaps
+
+Consult records are disposed immediately after settlement; with an older subagents
+build lacking `disposeSettledRecord`, interactive sessions may hold closed advisor
+sessions (and their cached transports) until the retention timer evicts them.
+The advisor leaf now loads `choco-pi-lsp`, so headless print-mode consults can linger
+like other extension-loaded subagents, an upstream, advisor-independent behavior
+reproduced with a plain Agent consult. Its LSP lookups share the parent's language
+servers and may wait for a cold server to start.
+Child consult records are not attributed to the calling child. Non-advisor children can
+fan out advisor usage and cost, so configure `maxUses` with that risk in mind.
+The concise answer target is a prompt instruction, not an enforced token budget. The
+lookup budget is a turn limit: the runner asks the advisor to wrap up at 10 turns and
+aborts it after the configured grace turns.
+Preferences load file values at session start; tool calls reload them live.

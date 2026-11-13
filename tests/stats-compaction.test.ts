@@ -8,14 +8,14 @@ import {
   triggerOfField,
   triggerOfRoute,
   type LaneEvent,
-} from "../.pi/extensions/lib/stats/compaction.ts";
+} from "../profile/extensions/lib/stats/compaction.ts";
 import {
   compactionSummary,
   contextStats,
   filterEvents,
-} from "../.pi/extensions/lib/stats/aggregate.ts";
-import type { CompactionEvent } from "../.pi/extensions/lib/stats/compaction.ts";
-import type { CallRecord } from "../.pi/extensions/lib/stats/records.ts";
+} from "../profile/extensions/lib/stats/aggregate.ts";
+import type { CompactionEvent } from "../profile/extensions/lib/stats/compaction.ts";
+import type { CallRecord } from "../profile/extensions/lib/stats/records.ts";
 
 test("the method comes from the checkpoint strategy, else from who wrote it", () => {
   assert.equal(compactionMethod("local-reconciled", true), "built-in");

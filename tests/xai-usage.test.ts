@@ -13,11 +13,14 @@ import {
   providerUsageWindows,
   readProviderUsages,
   type ProviderUsageReport,
-} from "../.pi/extensions/provider-usage.ts";
-import { createUsageCache } from "../.pi/extensions/lib/usage-cache.ts";
-import { hasUsageWindows, usageReportFrame } from "../.pi/extensions/lib/usage-report.ts";
-import { ReportFrameSchema } from "../.pi/extensions/lib/host-bridge/report-schema.ts";
-import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/provider-usage.ts";
+import { createUsageCache } from "../profile/extensions/lib/usage-cache.ts";
+import { hasUsageWindows, usageReportFrame } from "../profile/extensions/lib/usage-report.ts";
+import { ReportFrameSchema } from "../profile/extensions/lib/host-bridge/report-schema.ts";
+import {
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "../profile/extensions/lib/runtime-values.ts";
 
 const BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
 const USER_URL = "https://cli-chat-proxy.grok.com/v1/user?include=subscription";

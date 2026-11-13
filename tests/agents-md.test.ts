@@ -1,4 +1,4 @@
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -10,7 +10,7 @@ import { resolve } from "node:path";
 // The package ships TypeScript source only (`pi.extensions: ["./index.ts"]`),
 // so these load straight from `src/` under Node's type stripping instead of
 // from a built `dist/`. Mirrors tests/subagent-config.test.ts.
-const packageRoot = resolve(".pi/packages/choco-pi-agents-md/src");
+const packageRoot = resolve("packages/choco-pi-agents-md/src");
 const STALE_CONTEXT_MESSAGE = "This extension ctx is stale after session replacement or reload.";
 // Lifecycle accounting the shutdown/session_start handlers flush themselves;
 // the zero-emission assertions below cover only the stale tool_result path.

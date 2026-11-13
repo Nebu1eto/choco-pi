@@ -9,9 +9,12 @@ import {
   installNativeSettingsBridge,
   MODEL_PICKER_FOCUS,
   type NativeSettingsHost,
-} from "../.pi/extensions/lib/native-settings.ts";
-import type { PreferencesExtraSection } from "../.pi/extensions/lib/agent-preferences.ts";
-import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/lib/native-settings.ts";
+import type { PreferencesExtraSection } from "../profile/extensions/lib/agent-preferences.ts";
+import {
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "../profile/extensions/lib/runtime-values.ts";
 
 const BRIDGE_SYMBOL = Symbol.for("choco-pi.native-settings-bridge");
 const RULE = "─".repeat(20);

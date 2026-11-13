@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 import diagramPolicy, {
   containsDrawnDiagram,
   DIAGRAM_REMINDER,
-} from "../.pi/extensions/diagram-policy.ts";
+} from "../profile/extensions/diagram-policy.ts";
 
 type Handler = (event: RuntimeValue, ctx: RuntimeValue) => RuntimeValue;
 

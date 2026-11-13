@@ -12,14 +12,17 @@ import {
   createMouseEscapeGuardExtension,
   installMouseEscapeGuard,
   type RawInput,
-} from "../.pi/extensions/mouse-escape-guard.ts";
+} from "../profile/extensions/mouse-escape-guard.ts";
 import {
   containsMouseReport,
   HOLD_MS,
   isMouseReport,
   MOUSE_WINDOW_MS,
-} from "../.pi/extensions/lib/mouse-escape-guard.ts";
-import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+} from "../profile/extensions/lib/mouse-escape-guard.ts";
+import {
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "../profile/extensions/lib/runtime-values.ts";
 
 const ESC = "\u001b";
 const WHEEL = `${ESC}[<65;10;5M`;

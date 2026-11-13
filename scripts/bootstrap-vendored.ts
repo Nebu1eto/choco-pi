@@ -6,13 +6,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const VENDORED = [
-  ".pi/packages/choco-pi-acp",
-  ".pi/packages/choco-pi-codex",
-  ".pi/packages/choco-pi-lsp",
-  ".pi/packages/choco-pi-mcp",
-  ".pi/packages/choco-pi-provider-synthetic",
-  ".pi/packages/choco-pi-subagents",
-  ".pi/packages/choco-pi-web-access",
+  "packages/choco-pi-acp",
+  "packages/choco-pi-codex",
+  "packages/choco-pi-lsp",
+  "packages/choco-pi-mcp",
+  "packages/choco-pi-provider-synthetic",
+  "packages/choco-pi-subagents",
+  "packages/choco-pi-web-access",
 ] as const;
 
 export type Runner = (args: readonly string[], cwd: string) => Promise<string>;

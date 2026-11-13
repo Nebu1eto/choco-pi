@@ -19,7 +19,11 @@ import {
   type Schema,
   type Static,
 } from "@earendil-works/pi-schema";
-import { isJsonRecord, isString, type JsonValue } from "../.pi/extensions/lib/runtime-values.ts";
+import {
+  isJsonRecord,
+  isString,
+  type JsonValue,
+} from "../profile/extensions/lib/runtime-values.ts";
 
 class McpTranslationError extends Error {}
 

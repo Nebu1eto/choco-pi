@@ -6,18 +6,18 @@ import {
   effectiveDiffMode,
   MIN_SPLIT_WIDTH,
   renderDiffFile,
-} from "../.pi/extensions/lib/changes/render/diff-render.ts";
+} from "../profile/extensions/lib/changes/render/diff-render.ts";
 import type {
   DiffStyleBackground,
   DiffStyler,
-} from "../.pi/extensions/lib/changes/render/diff-render.ts";
-import { createHighlight } from "../.pi/extensions/lib/changes/render/highlight.ts";
+} from "../profile/extensions/lib/changes/render/diff-render.ts";
+import { createHighlight } from "../profile/extensions/lib/changes/render/highlight.ts";
 import type {
   DiffFile,
   DiffRenderOptions,
   HighlightFn,
   ResolvedReviewConfig,
-} from "../.pi/extensions/review/core/types.ts";
+} from "../profile/extensions/review/core/types.ts";
 
 initTheme("dark", false);
 

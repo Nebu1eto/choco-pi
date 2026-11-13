@@ -10,14 +10,14 @@
     "types": ["node"]
   },
   "include": [
-    ".pi/extensions/**/*.ts",
-    ".pi/scripts/**/*.ts",
-    ".pi/skills/**/scripts/**/*.ts",
+    "profile/extensions/**/*.ts",
+    "profile/scripts/**/*.ts",
+    "profile/skills/**/scripts/**/*.ts",
     "scripts/**/*.mts",
     "scripts/**/*.ts",
     "tests/**/*.ts",
     "tools/**/*.ts"
   ],
-  "files": [".pi/packages/choco-pi-web-access/promise-try.d.ts"],
-  "exclude": [".pi/npm", ".pi/packages"]
+  "files": ["packages/choco-pi-web-access/promise-try.d.ts"],
+  "exclude": [".pi/npm", "packages"]
 }

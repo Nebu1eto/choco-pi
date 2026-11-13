@@ -8,11 +8,11 @@ import {
   type LiveSessionState,
   parseLiveState,
   readJson,
-} from "../.pi/packages/choco-pi-editor-context/src/live-session-client.ts";
+} from "../packages/choco-pi-editor-context/src/live-session-client.ts";
 import {
   installLiveSessionBridge,
   type LiveSessionBridgeDependencies,
-} from "../.pi/extensions/session-bridge.ts";
+} from "../profile/extensions/session-bridge.ts";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
 import { createSessionSdkFixture } from "./helpers/session-sdk-fixture.ts";

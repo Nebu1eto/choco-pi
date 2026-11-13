@@ -118,7 +118,7 @@ async function manifestEntryFiles(packageDir: string, entry: string): Promise<st
 }
 
 async function packageEntries(source: string): Promise<string[]> {
-  const packageDir = resolve(WORKTREE, ".pi", source);
+  const packageDir = resolve(WORKTREE, source);
   const extensions = await readManifestExtensions(packageDir);
   if (extensions === undefined || extensions.length === 0)
     throw new Error(`Package declares no pi.extensions: ${packageDir}`);
@@ -127,7 +127,7 @@ async function packageEntries(source: string): Promise<string[]> {
 }
 
 async function looseEntries(): Promise<string[]> {
-  const dir = join(WORKTREE, ".pi", "extensions");
+  const dir = join(WORKTREE, "profile", "extensions");
   if ((await entryKind(dir)) !== "directory") return [];
   return expandExtensionDirectory(dir);
 }
@@ -145,8 +145,8 @@ async function canonicalUnique(paths: string[]): Promise<string[]> {
 
 /**
  * Resolves the worktree host extension profile into canonical absolute entry
- * files in the order DefaultPackageManager.resolve() reports them: project-local
- * `.pi/extensions` auto-discovery first, then configured packages.
+ * files in the order DefaultPackageManager.resolve() reports them: the profile
+ * `profile/extensions` directory first, then configured packages.
  */
 export async function loadExtensionProfile(): Promise<string[]> {
   const settings = await profileSettings();
@@ -156,28 +156,35 @@ export async function loadExtensionProfile(): Promise<string[]> {
   return canonicalUnique([...loose, ...packages.flat()]);
 }
 
-/** `./packages/<name>` for a bundled package path of any checkout (`<root>/.pi/packages/<name>`). */
+/** `./packages/<name>` for a bundled package path of any checkout (`<root>/packages/<name>`). */
 function bundledSpec(spec: string): string | undefined {
   if (/^\.\/packages\/[^/]+$/u.test(spec)) return spec;
   const parent = dirname(spec);
-  if (basename(parent) !== "packages" || basename(dirname(parent)) !== ".pi") return undefined;
+  if (basename(parent) !== "packages") return undefined;
   return `./packages/${basename(spec)}`;
 }
 
-/** A global `extensions` entry naming a checkout's `.pi/extensions` directory (discovered as loose entries). */
+/** A global `extensions` entry naming a checkout's `profile/extensions` directory (discovered as loose entries). */
 function isProfileExtensionsDir(entry: string): boolean {
-  return basename(entry) === "extensions" && basename(dirname(entry)) === ".pi";
+  return basename(entry) === "extensions" && basename(dirname(entry)) === "profile";
 }
 
 /**
  * The profile policy, as `scripts/install-profile.ts` resolves it: the
  * checkout's `.pi/settings.json` when present, else the bundled packages of
  * the global agent `settings.json` (the checkout ships no project settings),
- * each mapped onto this worktree's `.pi/packages`.
+ * each mapped onto this worktree's `packages`.
  */
 async function profileSettings(): Promise<Static<typeof settingsSchema>> {
   const projectPath = join(WORKTREE, ".pi", "settings.json");
-  if ((await entryKind(projectPath)) === "file") return readJsonFile(projectPath, settingsSchema);
+  if ((await entryKind(projectPath)) === "file") {
+    // Pi resolves project package paths against the project's `.pi` directory.
+    const project = await readJsonFile(projectPath, settingsSchema);
+    return {
+      ...project,
+      packages: project.packages.map((spec) => resolve(dirname(projectPath), spec)),
+    };
+  }
   const globalPath = join(GLOBAL_AGENT_DIR, "settings.json");
   const global = await readJsonFile(globalPath, settingsSchema);
   const packages = global.packages.flatMap((spec) => bundledSpec(spec) ?? []);

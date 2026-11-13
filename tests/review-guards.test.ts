@@ -2,18 +2,18 @@ import assert from "node:assert/strict";
 import { userInfo } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import type { RuntimeValue } from "../profile/extensions/lib/runtime-values.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
+import { reinterpretHostValue } from "../profile/extensions/lib/runtime-values.ts";
 import {
   createReviewStore,
   resolveReviewDirectory,
   stopReviewRecordCleanup,
-} from "../.pi/extensions/review/core/store.ts";
+} from "../profile/extensions/review/core/store.ts";
 import {
   registerReviewExtension,
   type ReviewExtensionDependencies,
-} from "../.pi/extensions/review/index.ts";
+} from "../profile/extensions/review/index.ts";
 
 const REAL_AGENT = join(userInfo().homedir, ".pi", "agent");
 

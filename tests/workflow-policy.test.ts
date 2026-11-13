@@ -6,7 +6,7 @@ import {
   REVIEW_INFO,
   VERDICT_INFO,
   parseStructuredBlock,
-} from "../.pi/extensions/lib/verdict-blocks.ts";
+} from "../profile/extensions/lib/verdict-blocks.ts";
 
 function frontmatter(path: string): string {
   const source = readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
@@ -17,15 +17,18 @@ function frontmatter(path: string): string {
 }
 
 test("internal workflow skills are hidden from model invocation; entry skills are not", () => {
-  for (const path of [".pi/skills/task-core/SKILL.md", ".pi/skills/task-dynamic/SKILL.md"]) {
+  for (const path of [
+    "profile/skills/task-core/SKILL.md",
+    "profile/skills/task-dynamic/SKILL.md",
+  ]) {
     assert.match(frontmatter(path), /^disable-model-invocation: true$/m, path);
   }
   for (const path of [
-    ".pi/skills/task/SKILL.md",
-    ".pi/skills/task-inline/SKILL.md",
-    ".pi/skills/task-hotfix/SKILL.md",
-    ".pi/skills/review/SKILL.md",
-    ".pi/skills/verify/SKILL.md",
+    "profile/skills/task/SKILL.md",
+    "profile/skills/task-inline/SKILL.md",
+    "profile/skills/task-hotfix/SKILL.md",
+    "profile/skills/review/SKILL.md",
+    "profile/skills/verify/SKILL.md",
   ]) {
     assert.doesNotMatch(frontmatter(path), /disable-model-invocation/, path);
   }
@@ -39,12 +42,12 @@ async function exampleBlocks(path: string, info: string): Promise<string[]> {
 }
 
 test("the documented review and verdict block examples parse as valid blocks", async () => {
-  const review = await exampleBlocks(".pi/review-policy.md", REVIEW_INFO);
+  const review = await exampleBlocks("profile/review-policy.md", REVIEW_INFO);
   assert.equal(review.length, 1, "the review policy shows one choco-pi-review example");
   for (const block of review) {
     assert.deepEqual(parseStructuredBlock(block, REVIEW_INFO).status, "parsed", block);
   }
-  const verdict = await exampleBlocks(".pi/skills/verify/SKILL.md", VERDICT_INFO);
+  const verdict = await exampleBlocks("profile/skills/verify/SKILL.md", VERDICT_INFO);
   assert.equal(verdict.length, 1, "the verify skill shows one choco-pi-verdict example");
   for (const block of verdict) {
     assert.deepEqual(parseStructuredBlock(block, VERDICT_INFO).status, "parsed", block);
@@ -55,9 +58,9 @@ test("a fully traced rule violation is a finding without execution; a candidate 
   const read = (path: string): Promise<string> =>
     readFile(new URL(`../${path}`, import.meta.url), "utf8");
   const [policy, role, taskCore] = await Promise.all([
-    read(".pi/review-policy.md"),
-    read(".pi/agents/reviewer.md"),
-    read(".pi/skills/task-core/SKILL.md"),
+    read("profile/review-policy.md"),
+    read("profile/agents/reviewer.md"),
+    read("profile/skills/task-core/SKILL.md"),
   ]);
   assert.match(policy, /A finding needs no execution\./);
   assert.match(policy, /`evidence` names the missing or assumed link\./);

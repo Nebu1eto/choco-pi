@@ -4,8 +4,11 @@ import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
 import { arr, compile, num, obj, str } from "@earendil-works/pi-schema";
 import { createEventBus } from "@earendil-works/pi-coding-agent";
-import toolSearch, { ALWAYS_ACTIVE_TOOL_NAMES } from "../.pi/extensions/tool-search.ts";
-import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import toolSearch, { ALWAYS_ACTIVE_TOOL_NAMES } from "../profile/extensions/tool-search.ts";
+import {
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "../profile/extensions/lib/runtime-values.ts";
 
 const PrefixBudgetCaptureSchema = obj(
   {

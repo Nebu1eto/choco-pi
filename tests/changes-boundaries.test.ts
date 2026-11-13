@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
  * without breaking the other, and the shared layer depends on neither.
  */
 
-const EXTENSIONS = resolve(dirname(fileURLToPath(import.meta.url)), "../.pi/extensions");
+const EXTENSIONS = resolve(dirname(fileURLToPath(import.meta.url)), "../profile/extensions");
 
 type Area = "review" | "diff" | "lib/changes";
 
