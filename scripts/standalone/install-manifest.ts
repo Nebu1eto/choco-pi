@@ -6,11 +6,25 @@
  * either inside the home (but never the home itself, `agent/` or `lsp/`) or
  * the recorded bin link. `node_path` is also read by the POSIX launcher with
  * a line-based parser, so it may not contain characters JSON would escape.
+ *
+ * `runtime` and `bun_path` were added for the Bun runtime option; manifests
+ * written before them stay valid and mean runtime node. The launcher reads
+ * both with the same line parser.
  */
 import { randomUUID } from "node:crypto";
 import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { arr, compile, lit, nullable, obj, str, type Static } from "@earendil-works/pi-schema";
+import {
+  arr,
+  compile,
+  lit,
+  nullable,
+  obj,
+  oneOf,
+  opt,
+  str,
+  type Static,
+} from "@earendil-works/pi-schema";
 
 export const INSTALL_MANIFEST_NAME = "install.json";
 
@@ -23,6 +37,8 @@ export const InstallManifestSchema = obj({
   ref: nullable(str()),
   rev: nullable(str()),
   node_path: str(),
+  runtime: opt(oneOf(["node", "bun"])),
+  bun_path: opt(nullable(str())),
   bin_link: nullable(str()),
   created: arr(str()),
   installed_at: str(),
@@ -58,6 +74,7 @@ export function manifestProblems(manifest: InstallManifest): string[] {
     ["home", manifest.home],
     ["app", manifest.app],
     ["node_path", manifest.node_path],
+    ["bun_path", manifest.bun_path ?? null],
     ["bin_link", manifest.bin_link],
   ];
   for (const [key, value] of absolute) {
@@ -66,6 +83,10 @@ export function manifestProblems(manifest: InstallManifest): string[] {
   }
   if (!isLauncherReadablePath(manifest.node_path))
     problems.push("node_path contains characters JSON escapes");
+  if (manifest.bun_path !== undefined && manifest.bun_path !== null) {
+    if (!isLauncherReadablePath(manifest.bun_path))
+      problems.push("bun_path contains characters JSON escapes");
+  }
   if (!Number.isFinite(Date.parse(manifest.installed_at)))
     problems.push("installed_at is not a timestamp");
   if (!Number.isFinite(Date.parse(manifest.updated_at)))

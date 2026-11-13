@@ -372,3 +372,13 @@ tool operation names. `result.details` shapes are unchanged.
 ## 2026-11-13 choco-pi patch: root pnpm workspace install
 
 This package is now a member of the root pnpm workspace (`packages/*`) and installs from the single root `pnpm-lock.yaml` with `pnpm install --frozen-lockfile` at the repository root; the root `postinstall` bootstrap (`scripts/bootstrap-vendored.ts`) is gone. Removed: this package's `pnpm-lock.yaml`, `pnpm-workspace.yaml` and `packageManager` field (the root pins `pnpm@11.11.0`). The dependency, devDependency and peerDependency fields are unchanged, and every direct dependency resolves to the same version as in the removed lockfile. Dependency build scripts still never run: the root `allowBuilds` lists each one as `false`, replacing `--ignore-scripts`.
+
+## 2026-11-13 choco-pi patch: Node children under the Bun runtime
+
+Under the `choco-pi` launcher, Pi itself can run on Bun (`CHOCO_PI_RUNTIME=bun`), where `process.execPath` is the bun binary. Children that need Node semantics now take their executable from `profile/extensions/lib/node-runtime.ts` (imported by relative path): `process.execPath` under Node, the launcher's `CHOCO_PI_NODE` (else a PATH `node`) under Bun. Behavior under Node is unchanged.
+
+- `clients/lsp/launch.ts`: `buildAugmentedPath` adds `nodeBinDirectory()` (was `dirname(process.execPath)`) so `#!/usr/bin/env node` servers find Node; the Windows `.ps1` bypass and `launchViaNode` spawn `nodeExecutable()`.
+- `clients/installer/index.ts` (`getToolEnvironment`): the PATH entry for npm-installed tools is `nodeBinDirectory()`.
+- `clients/mcp/review.ts` (`analyzeFileFresh`): the fresh analyze worker runs on `nodeExecutable()`.
+- Unchanged: the `CHOCO_PI_LSP_TEST_NPM_SCRIPT` hooks in `installer/index.ts` and `installer/managed-tool-refresh.ts` (test mode only, run from `node --test`).
+- Tests: `tests/node-runtime-children.test.ts`.

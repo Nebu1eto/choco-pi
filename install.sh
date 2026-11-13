@@ -2,10 +2,14 @@
 # choco-pi standalone installer, stage 0.
 #
 #   sh install.sh [--home DIR] [--bin-dir DIR] [--source URL|PATH] [--ref REF]
+#                 [--runtime node|bun]
 #
 # Defaults: --home ~/.choco-pi, --bin-dir ~/.local/bin,
 # --source https://github.com/Nebu1eto/choco-pi.git, --ref the default branch.
-# REF must be a branch or tag name.
+# REF must be a branch or tag name. --runtime selects what runs Pi itself
+# (default node, or the runtime an earlier install recorded); Node.js is
+# required either way. bun uses a bun >= the pinned minimum or downloads the
+# pinned Bun into <home>/runtime/bun (sha256-verified before unzip).
 #
 # Stage 0 (this script) checks the tools it needs, clones the app into
 # <home>/app, and finds Node.js >= 24 or downloads the pinned Node into
@@ -17,6 +21,7 @@
 # Mirrors (downloads are still verified against the pins):
 #   CHOCO_PI_NODE_MIRROR   default https://nodejs.org/dist
 #   CHOCO_PI_NPM_REGISTRY  default https://registry.npmjs.org (stage 1)
+#   CHOCO_PI_BUN_MIRROR    default https://github.com/oven-sh/bun/releases/download (stage 1)
 set -eu
 
 DEFAULT_SOURCE=https://github.com/Nebu1eto/choco-pi.git
@@ -28,29 +33,35 @@ die() {
 }
 
 usage() {
-  sed -n '2,19p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'
+  sed -n '2,24p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'
 }
 
-home= bin_dir= source= ref=
+home= bin_dir= source= ref= runtime=
 while [ "$#" -gt 0 ]; do
   case $1 in
-    --home | --bin-dir | --source | --ref)
+    --home | --bin-dir | --source | --ref | --runtime)
       [ "$#" -ge 2 ] && [ -n "$2" ] || die "$1 needs a value"
       case $1 in
         --home) home=$2 ;;
         --bin-dir) bin_dir=$2 ;;
         --source) source=$2 ;;
         --ref) ref=$2 ;;
+        --runtime) runtime=$2 ;;
       esac
       shift 2 ;;
     --home=* ) home=${1#*=}; shift ;;
     --bin-dir=*) bin_dir=${1#*=}; shift ;;
     --source=*) source=${1#*=}; shift ;;
     --ref=*) ref=${1#*=}; shift ;;
+    --runtime=*) runtime=${1#*=}; shift ;;
     -h | --help) usage; exit 0 ;;
     *) die "unknown argument: $1 (see --help)" ;;
   esac
 done
+case $runtime in
+  '' | node | bun) ;;
+  *) die "--runtime must be node or bun, got '$runtime'" ;;
+esac
 
 os=$(uname -s)
 case $os in
@@ -272,6 +283,7 @@ say "using Node.js $("$NODE" --version) at $NODE"
 
 set -- install --home "$home" --bin-dir "$bin_dir" --source "$source"
 [ -z "$ref" ] || set -- "$@" --ref "$ref"
+[ -z "$runtime" ] || set -- "$@" --runtime "$runtime"
 trap - EXIT
 cleanup
 exec "$NODE" "$app/scripts/standalone/manage.ts" "$@"

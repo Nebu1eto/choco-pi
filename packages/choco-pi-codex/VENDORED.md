@@ -1336,3 +1336,10 @@ A bridged tool that the session lists as reachable but not active runs through i
 ## 2026-11-13 choco-pi patch: root pnpm workspace install
 
 This package is now a member of the root pnpm workspace (`packages/*`) and installs from the single root `pnpm-lock.yaml` with `pnpm install --frozen-lockfile` at the repository root; the root `postinstall` bootstrap (`scripts/bootstrap-vendored.ts`) is gone. Removed: this package's `pnpm-lock.yaml`, `pnpm-workspace.yaml` and `packageManager` field (the root pins `pnpm@11.11.0`). The dependency, devDependency and peerDependency fields are unchanged, and every direct dependency resolves to the same version as in the removed lockfile. Dependency build scripts still never run: the root `allowBuilds` lists each one as `false`, replacing `--ignore-scripts`.
+
+## 2026-11-13 choco-pi patch: JavaScript custom tools run on Node under the Bun runtime
+
+Under the `choco-pi` launcher, Pi itself can run on Bun (`CHOCO_PI_RUNTIME=bun`), where `process.execPath` is the bun binary. Children that need Node semantics now take their executable from `profile/extensions/lib/node-runtime.ts` (imported by relative path): `process.execPath` under Node, the launcher's `CHOCO_PI_NODE` (else a PATH `node`) under Bun. Behavior under Node is unchanged.
+
+- `src/tools/code-mode/custom-tools.ts` (`parseCustomTool`): a `.js`/`.mjs`/`.cjs` custom tool command runs on `nodeExecutable()` (was `process.execPath`).
+- Tests: `tests/custom-tools-node-runtime.test.ts`.

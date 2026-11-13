@@ -23,6 +23,10 @@ import { findGlobalBinary } from "../package-manager.ts";
 import { redactSecrets } from "../redact/secrets.ts";
 import { classifySpawnFailure, SpawnFailureError } from "../safe-spawn.ts";
 import { getRubyVersionDirNamesAsync } from "./ruby-drive-dirs.ts";
+import {
+  nodeBinDirectory,
+  nodeExecutable,
+} from "../../../../profile/extensions/lib/node-runtime.ts";
 
 export interface LSPProcess {
   process: ChildProcess;
@@ -150,7 +154,8 @@ function getLiveWindowsPath(): string {
 
 async function buildAugmentedPath(basePath?: string): Promise<string> {
   const candidates: string[] = [];
-  const nodeDir = path.dirname(process.execPath);
+  // Under Bun, execPath is bun: shebang servers need the launcher's Node first.
+  const nodeDir = nodeBinDirectory();
   if (nodeDir) {
     candidates.push(nodeDir);
   }
@@ -252,7 +257,7 @@ function bypassPs1OnWindows(
       const jsPath = path.resolve(path.dirname(ps1Path), "..", relPath);
       if (fs.existsSync(jsPath)) {
         return {
-          command: process.execPath,
+          command: nodeExecutable(),
           args: [jsPath, ...args],
           needsShell: false,
         };
@@ -685,7 +690,7 @@ export async function launchViaNode(
   args: string[] = [],
   options: SpawnOptions = {},
 ): Promise<LSPProcess> {
-  return launchLSP(process.execPath, [scriptPath, ...args], options);
+  return launchLSP(nodeExecutable(), [scriptPath, ...args], options);
 }
 
 /**

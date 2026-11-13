@@ -4,6 +4,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { parse } from "smol-toml";
+import { nodeExecutable } from "../../../../../profile/extensions/lib/node-runtime.ts";
 import type { CustomToolDefinition, CustomToolInputMode } from "./types.ts";
 
 export interface CustomToolDiscoveryError {
@@ -103,7 +104,7 @@ export function parseCustomTool(path: string, text: string): CustomToolDefinitio
     description: optionalString(value["description"], "description", path),
     output: optionalString(value["output"], "output", path),
     deferLoading: deferLoading(value["defer_loading"], path),
-    command: nodeScript ? process.execPath : resolvedCommand,
+    command: nodeScript ? nodeExecutable() : resolvedCommand,
     args: nodeScript ? [resolvedCommand, ...args] : args,
     input: inputMode(value["input"], path),
     yieldTimeMs: optionalNonNegativeInteger(value["yield_time_ms"], "yield_time_ms", path),

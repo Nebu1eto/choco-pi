@@ -7,6 +7,8 @@
  *   are imported after `pnpm install`.
  * - `self setup|update|uninstall|env|help`: reached through bin/choco-pi, so
  *   the launcher's environment contract is already in place.
+ * - `self runtime [node|bun]`: shows or persists the runtime Pi runs on;
+ *   choosing bun finds a qualifying bun or provisions the pinned one.
  *
  * Local development: populate `<home>/app` with any app tree (for example a
  * tar copy of a working checkout) and run
@@ -34,16 +36,27 @@ import { promisify } from "node:util";
 import {
   assertPiBinEntry,
   CONTRACT_VARIABLES,
+  DEFAULT_RUNTIME,
   installedPiVersion,
+  isRuntime,
+  RUNTIME_REPORT_VARIABLES,
+  RUNTIMES,
+  type Runtime,
   UNSET_PI_VARIABLES,
 } from "./contract.ts";
 import type { InstallManifest } from "./install-manifest.ts";
 import {
+  bunVersionQualifies,
+  DEFAULT_BUN_MIRROR,
   DEFAULT_NPM_REGISTRY,
+  findSystemBun,
   findSystemPnpm,
   PINS_FILE,
+  probeBun,
+  provisionPrivateBun,
   provisionPrivatePnpm,
   readRuntimePins,
+  type BunCommand,
   type PnpmCommand,
   type RuntimePins,
 } from "./provision.ts";
@@ -202,21 +215,97 @@ function launcherOf(app: string): string {
   return path.join(app, "bin", "choco-pi");
 }
 
-async function runLauncher(home: string, app: string, args: readonly string[]): Promise<void> {
-  await run(launcherOf(app), args, app, { ...process.env, CHOCO_PI_HOME: home });
+/**
+ * Environment for a nested launcher run. The launcher exports the resolved
+ * runtime to management verbs; that must not turn into a per-invocation
+ * override for the child unless the user set it. `runtime` forces one.
+ */
+export function launcherEnvironment(
+  home: string,
+  runtime: Runtime | null,
+  environment: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const child: NodeJS.ProcessEnv = { ...environment, CHOCO_PI_HOME: home };
+  const fromUser =
+    environment.CHOCO_PI_RUNTIME_SOURCE === undefined ||
+    environment.CHOCO_PI_RUNTIME_SOURCE === "env";
+  for (const name of RUNTIME_REPORT_VARIABLES) {
+    if (name !== "CHOCO_PI_RUNTIME" || !fromUser) delete child[name];
+  }
+  if (runtime !== null) child.CHOCO_PI_RUNTIME = runtime;
+  return child;
 }
 
-async function launcherVersionMatches(home: string, app: string): Promise<void> {
+async function runLauncher(home: string, app: string, args: readonly string[]): Promise<void> {
+  await run(launcherOf(app), args, app, launcherEnvironment(home, null));
+}
+
+async function launcherVersionMatches(
+  home: string,
+  app: string,
+  runtime: Runtime | null,
+): Promise<void> {
   const expected = await installedPiVersion(app);
   const { stdout } = await runFile(launcherOf(app), ["--version"], {
-    env: { ...process.env, CHOCO_PI_HOME: home },
+    env: launcherEnvironment(home, runtime),
     timeout: 30_000,
   });
   if (stdout.trim() !== expected) {
     throw new Error(
-      `launcher reports Pi ${JSON.stringify(stdout.trim())}; the app pins Pi ${expected}`,
+      `launcher${runtime === null ? "" : ` (runtime ${runtime})`} reports Pi ${JSON.stringify(stdout.trim())}; the app pins Pi ${expected}`,
     );
   }
+}
+
+export type BunChoice = BunCommand & { source: "recorded" | "private" | "system" | "provisioned" };
+
+/**
+ * A Bun for runtime bun: the recorded `bun_path`, the private
+ * `runtime/bun`, a PATH bun at least the pinned minimum, else the pinned
+ * release downloaded into `runtime/bun` (sha256-verified before unzip).
+ */
+export async function ensureBun(
+  home: string,
+  app: string,
+  recorded: string | null | undefined,
+  searchPath: string = process.env.PATH ?? "",
+): Promise<BunChoice> {
+  const pins = await readRuntimePins(path.join(app, path.relative(APP_ROOT, PINS_FILE)));
+  const runtime = path.join(home, "runtime");
+  await mkdir(runtime, { recursive: true });
+  const qualifying = async (candidate: string): Promise<BunCommand | null> => {
+    if (!(await exists(candidate))) return null;
+    const probed = await probeBun(candidate, runtime);
+    return probed !== null && bunVersionQualifies(probed.version, pins.bunMinimumVersion)
+      ? probed
+      : null;
+  };
+  if (recorded !== undefined && recorded !== null) {
+    const found = await qualifying(recorded);
+    if (found !== null) return { path: recorded, version: found.version, source: "recorded" };
+  }
+  const privateBinary = path.join(runtime, "bun", "bin", "bun");
+  const existing = await qualifying(privateBinary);
+  if (existing !== null)
+    return { path: privateBinary, version: existing.version, source: "private" };
+  const system = await findSystemBun(searchPath, pins.bunMinimumVersion, runtime);
+  if (system !== null) return { ...system, source: "system" };
+  console.log(
+    `no Bun >= ${pins.bunMinimumVersion} found; provisioning Bun ${pins.bunVersion} into ${runtime}/bun`,
+  );
+  const binary = await provisionPrivateBun(runtime, pins, {
+    mirror: process.env.CHOCO_PI_BUN_MIRROR ?? DEFAULT_BUN_MIRROR,
+    searchPath,
+  });
+  return { path: binary, version: pins.bunVersion, source: "provisioned" };
+}
+
+function runtimeArgument(value: string, origin: string): Runtime {
+  if (!isRuntime(value))
+    throw new UsageError(
+      `${origin} must be one of ${RUNTIMES.join(", ")}, got ${JSON.stringify(value)}`,
+    );
+  return value;
 }
 
 export type LinkResult = { link: string; action: "created" | "replaced" | "unchanged" };
@@ -267,7 +356,7 @@ export async function isOurLink(link: string, launcher: string): Promise<boolean
   }
 }
 
-const RUNTIME_ENTRIES = ["node", "pnpm", "pnpm-store", "pnpm-cache", "pnpm-state"] as const;
+const RUNTIME_ENTRIES = ["node", "pnpm", "pnpm-store", "pnpm-cache", "pnpm-state", "bun"] as const;
 
 async function createdPaths(
   home: string,
@@ -319,7 +408,14 @@ function pathHint(binDir: string): string | null {
 }
 
 export async function installCommand(args: readonly string[]): Promise<void> {
-  const flags = parseFlags(args, ["--home", "--bin-dir", "--source", "--ref"], ["--local-app"]);
+  const flags = parseFlags(
+    args,
+    ["--home", "--bin-dir", "--source", "--ref", "--runtime"],
+    ["--local-app"],
+  );
+  const runtimeFlag = flags.values.get("--runtime");
+  const requestedRuntime =
+    runtimeFlag === undefined ? null : runtimeArgument(runtimeFlag, "--runtime");
   const home = await canonicalDirectory(
     flags.values.get("--home") ?? process.env.CHOCO_PI_HOME ?? defaultHome(),
   );
@@ -361,6 +457,9 @@ export async function installCommand(args: readonly string[]): Promise<void> {
   const runtime = path.join(home, "runtime");
   await installDependencies(app, runtime);
   await assertPiBinEntry(app);
+  const piRuntime = requestedRuntime ?? previous?.runtime ?? DEFAULT_RUNTIME;
+  const bun = piRuntime === "bun" ? await ensureBun(home, app, previous?.bun_path) : null;
+  if (bun !== null) console.log(`bun: ${bun.source} ${bun.path} (${bun.version})`);
   const { writeInstallManifest, isLauncherReadablePath } =
     manifestModule ?? (await loadManifestModule());
   const nodePath = process.execPath;
@@ -376,6 +475,8 @@ export async function installCommand(args: readonly string[]): Promise<void> {
     ref,
     rev,
     node_path: nodePath,
+    runtime: piRuntime,
+    bun_path: bun?.path ?? previous?.bun_path ?? null,
     bin_link: previous?.bin_link ?? null,
     created: await createdPaths(home, app, !local, previous),
     installed_at: previous?.installed_at ?? now,
@@ -383,6 +484,7 @@ export async function installCommand(args: readonly string[]): Promise<void> {
   };
   await writeInstallManifest(manifest);
   await runLauncher(home, app, ["self", "setup"]);
+  if (piRuntime !== DEFAULT_RUNTIME) await launcherVersionMatches(home, app, piRuntime);
   const linked = await linkLauncher(binDir, launcherOf(app), previous?.bin_link ?? null);
   const created = manifest.created.filter(
     (entry) => entry !== previous?.bin_link || entry === linked.link,
@@ -399,7 +501,7 @@ export async function installCommand(args: readonly string[]): Promise<void> {
   await writeInstallManifest({ ...manifest, bin_link: linked.link, created });
   console.log(`${linked.action}: ${linked.link} -> ${launcherOf(app)}`);
   console.log(
-    `installed choco-pi in ${home}${rev === null ? " (local app)" : ` at ${rev.slice(0, 12)} (${ref})`}`,
+    `installed choco-pi in ${home}${rev === null ? " (local app)" : ` at ${rev.slice(0, 12)} (${ref})`}; Pi runs on ${piRuntime}`,
   );
   const hint = pathHint(binDir);
   if (hint !== null) console.log(hint);
@@ -433,7 +535,7 @@ export async function setupCommand(args: readonly string[]): Promise<void> {
   console.log(`updated: ${result.markerPath}`);
   for (const target of result.removed) console.log(`removed: ${target}`);
   for (const warning of result.warnings) console.warn(`warning: ${warning}`);
-  await launcherVersionMatches(home, APP_ROOT);
+  await launcherVersionMatches(home, APP_ROOT, null);
 }
 
 export async function updateCommand(args: readonly string[]): Promise<void> {
@@ -548,6 +650,80 @@ export async function uninstallCommand(args: readonly string[]): Promise<void> {
   for (const target of kept) console.log(`kept: ${target}`);
 }
 
+/** The launcher's runtime resolution, as exported to management verbs. */
+export type RuntimeReport = { name: string; source: string; binary: string | null };
+
+export function runtimeReport(environment: NodeJS.ProcessEnv = process.env): RuntimeReport {
+  const name = environment.CHOCO_PI_RUNTIME ?? DEFAULT_RUNTIME;
+  const bun = environment.CHOCO_PI_BUN;
+  const binary =
+    name === "bun"
+      ? bun === undefined || bun === ""
+        ? null
+        : bun
+      : (environment.CHOCO_PI_NODE ?? null);
+  return { name, source: environment.CHOCO_PI_RUNTIME_SOURCE ?? "default", binary };
+}
+
+export async function runtimeCommand(args: readonly string[]): Promise<void> {
+  if (args.length > 1) throw new UsageError("usage: choco-pi self runtime [node|bun]");
+  const { home } = requireContract();
+  const { readInstallManifest, writeInstallManifest } = await loadManifestModule();
+  const manifest = await readInstallManifest(home);
+  const current = runtimeReport();
+  const value = args[0];
+  if (value === undefined) {
+    console.log(`runtime=${current.name}`);
+    console.log(
+      `source=${current.source === "env" ? "env CHOCO_PI_RUNTIME" : current.source === "install.json" ? manifestPathOf(home) : "default"}`,
+    );
+    console.log(`binary=${current.binary ?? "(no usable bun found)"}`);
+    console.log(`node=${process.env.CHOCO_PI_NODE ?? process.execPath}`);
+    if (manifest !== null)
+      console.log(`persisted=${manifest.runtime ?? `${DEFAULT_RUNTIME} (default)`}`);
+    return;
+  }
+  const runtime = runtimeArgument(value, "self runtime");
+  if (manifest === null) {
+    throw new Error(
+      `${manifestPathOf(home)} is missing, so there is nothing to persist; set CHOCO_PI_RUNTIME=${runtime} per invocation instead`,
+    );
+  }
+  let bunPath = manifest.bun_path ?? null;
+  if (runtime === "bun") {
+    const bun = await ensureBun(home, manifest.app, manifest.bun_path);
+    console.log(`bun: ${bun.source} ${bun.path} (${bun.version})`);
+    bunPath = bun.path;
+  }
+  const created = await createdPaths(home, manifest.app, manifest.source !== null, manifest);
+  await writeInstallManifest({
+    ...manifest,
+    runtime,
+    bun_path: bunPath,
+    created,
+    updated_at: new Date().toISOString(),
+  });
+  try {
+    await launcherVersionMatches(home, manifest.app, runtime);
+  } catch (error) {
+    await writeInstallManifest(manifest);
+    throw new Error(
+      `Pi does not start on ${runtime}; kept runtime ${manifest.runtime ?? DEFAULT_RUNTIME}`,
+      {
+        cause: error,
+      },
+    );
+  }
+  console.log(`runtime=${runtime} (persisted in ${manifestPathOf(home)})`);
+  if (current.source === "env" && current.name !== runtime) {
+    console.log(`note: CHOCO_PI_RUNTIME=${current.name} in this environment still overrides it`);
+  }
+}
+
+function manifestPathOf(home: string): string {
+  return path.join(home, "install.json");
+}
+
 export async function envCommand(args: readonly string[]): Promise<void> {
   const json = args.includes("--json");
   const names = args.filter((argument) => argument !== "--json");
@@ -562,6 +738,7 @@ export async function envCommand(args: readonly string[]): Promise<void> {
     contract: pick(CONTRACT_VARIABLES),
     unset: pick(UNSET_PI_VARIABLES),
     requested: pick(names),
+    runtime: runtimeReport(),
     node: process.execPath,
     app: APP_ROOT,
     path: process.env.PATH ?? null,
@@ -575,6 +752,8 @@ export async function envCommand(args: readonly string[]): Promise<void> {
     console.log(value === null ? `unset ${key}` : `${key}=${value}`);
   for (const [key, value] of Object.entries(report.requested))
     console.log(value === null ? `unset ${key}` : `${key}=${value}`);
+  console.log(`CHOCO_PI_RUNTIME=${report.runtime.name} (${report.runtime.source})`);
+  console.log(`runtime_binary=${report.runtime.binary ?? ""}`);
   console.log(`node=${report.node}`);
   console.log(`app=${report.app}`);
 }
@@ -587,11 +766,14 @@ Management commands:
   self update [--ref REF]    Fast-forward the app, reinstall dependencies, run setup
   self uninstall [--purge]   Remove what install.json records; keeps agent/ and lsp/ unless --purge
   self env [--json] [NAME...] Print the launcher environment contract (and the named variables)
+  self runtime [node|bun]    Show the runtime Pi runs on and its source, or persist one
+                             (bun: uses a bun >= the pinned minimum or downloads the pinned Bun)
   self exec <cmd> [args...]  Run a command under the launcher environment
   self acp [args...]         Run the choco-pi ACP adapter under the launcher environment
   self help                  Show this help
 
 Everything else is passed to Pi unchanged, e.g. choco-pi --version, choco-pi --mode rpc.
+CHOCO_PI_RUNTIME=node|bun overrides the persisted runtime for one invocation.
 `;
 
 export async function main(argv: readonly string[]): Promise<number> {
@@ -603,6 +785,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     else if (verb === "update") await updateCommand(rest);
     else if (verb === "uninstall") await uninstallCommand(rest);
     else if (verb === "env") await envCommand(rest);
+    else if (verb === "runtime") await runtimeCommand(rest);
     else if (verb === "help") process.stdout.write(USAGE);
     else if (verb === "exec" || verb === "acp")
       throw new UsageError(`self ${verb} is handled by bin/choco-pi`);

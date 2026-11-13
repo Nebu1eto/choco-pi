@@ -1,0 +1,5 @@
+# Bun configuration for Pi under the choco-pi launcher (CHOCO_PI_RUNTIME=bun).
+#
+# bin/choco-pi passes this file with --config so Bun never reads the
+# bunfig.toml of the directory Pi starts in: a project's preload scripts must
+# not run inside Pi. It is intentionally empty.

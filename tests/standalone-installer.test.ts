@@ -29,15 +29,19 @@ import {
 } from "../scripts/standalone/install-manifest.ts";
 import { isOurLink, linkLauncher } from "../scripts/standalone/manage.ts";
 import {
+  BUN_PLATFORMS,
   ChecksumMismatchError,
+  currentBunPlatform,
   extractVerifiedArchive,
   findSystemPnpm,
   parseIntegrity,
   parseRuntimePins,
   pnpmVersionQualifies,
+  provisionPrivateBun,
   provisionPrivatePnpm,
   readRuntimePins,
   sha256Expected,
+  UNZIP_GUIDANCE,
   type RuntimePins,
 } from "../scripts/standalone/provision.ts";
 
@@ -94,13 +98,21 @@ async function fixtureTarball(
   await rm(staging, { recursive: true, force: true });
 }
 
-function pinsText(nodeVersion: string, nodeSha256: string, pnpmIntegrity: string): string {
+function pinsText(
+  nodeVersion: string,
+  nodeSha256: string,
+  pnpmIntegrity: string,
+  bunSha256 = "0".repeat(64),
+): string {
   const platforms = ["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64"];
   return [
     `node_version ${nodeVersion}`,
     ...platforms.map((platform) => `node_sha256_${platform} ${nodeSha256}`),
     "pnpm_version 11.11.0",
     `pnpm_integrity ${pnpmIntegrity}`,
+    "bun_version 1.4.4",
+    "bun_minimum_version 1.4.4",
+    ...BUN_PLATFORMS.map((platform) => `bun_sha256_${platform} ${bunSha256}`),
     "",
   ].join("\n");
 }
@@ -115,10 +127,21 @@ test("the shipped pins parse and match package.json's pnpm", async () => {
   const declared =
     manifest instanceof Object && "packageManager" in manifest ? manifest.packageManager : null;
   assert.equal(declared, `pnpm@${pins.pnpmVersion}`);
+  assert.match(pins.bunVersion, /^\d+\.\d+\.\d+$/);
+  assert.deepEqual([...pins.bunSha256.keys()].toSorted(), [...BUN_PLATFORMS].toSorted());
   assert.throws(() => parseRuntimePins("node_version 22.1.0\n"), /24\.x\.y/);
   assert.throws(
     () => parseRuntimePins(pinsText("24.0.0", "0".repeat(64), "sha1-abc")),
     /unsupported integrity/,
+  );
+  const valid = pinsText("24.0.0", "0".repeat(64), ZERO_INTEGRITY);
+  assert.throws(
+    () => parseRuntimePins(valid.replace(/^bun_sha256_linux-aarch64 .*$/m, "")),
+    /missing runtime pin: bun_sha256_linux-aarch64/,
+  );
+  assert.throws(
+    () => parseRuntimePins(valid.replace("bun_minimum_version 1.4.4", "bun_minimum_version 1.5.0")),
+    /older than bun_minimum_version/,
   );
 });
 
@@ -378,6 +401,136 @@ test("install.json is schema-validated and confined to installer-owned paths", (
   assert.match(problems({ installed_at: "yesterday" }).join(), /installed_at/);
 });
 
+test("install.json written before the runtime option stays valid; runtime and bun_path are checked", () => {
+  const home = "/home/u/.choco-pi";
+  const legacy = validManifest(home);
+  const parsed = parseInstallManifest(JSON.stringify(legacy), "legacy");
+  assert.equal(parsed.runtime, undefined);
+  assert.equal(parsed.bun_path, undefined);
+  const withBun: InstallManifest = {
+    ...legacy,
+    runtime: "bun",
+    bun_path: path.join(home, "runtime", "bun", "bin", "bun"),
+  };
+  assert.deepEqual(parseInstallManifest(JSON.stringify(withBun), "bun"), withBun);
+  const withNode = { ...legacy, runtime: "node", bun_path: null };
+  assert.deepEqual(parseInstallManifest(JSON.stringify(withNode), "node"), withNode);
+  assert.throws(
+    () => parseInstallManifest(JSON.stringify({ ...legacy, runtime: "deno" }), "deno"),
+    /schema 1/,
+  );
+  assert.match(manifestProblems({ ...legacy, bun_path: "bun" }).join(), /bun_path is not/);
+  assert.match(manifestProblems({ ...legacy, bun_path: '/a"b/bun' }).join(), /bun_path contains/);
+});
+
+/** A fake bun: answers the installer's probe as `version`, prints Pi's 1.5.2 for --version, else its argv. */
+function fakeBunScript(version: string): string {
+  return [
+    "#!/bin/sh",
+    `if [ "$1" = --no-env-file ] && [ "$2" = -e ]; then printf '%s\\n%s' '${version}' "$0"; exit 0; fi`,
+    'for a; do [ "$a" != --version ] || { echo 1.5.2; exit 0; }; done',
+    'echo "FAKEBUN $*"',
+    "",
+  ].join("\n");
+}
+
+/** Zips a fake bun as `bun-<platform>/bun`, the layout of Bun's release assets. */
+async function fixtureBunZip(
+  directory: string,
+  platform: string,
+  version: string,
+  archive: string,
+): Promise<void> {
+  const staging = await mkdtemp(path.join(directory, "zip-"));
+  await mkdir(path.join(staging, `bun-${platform}`));
+  await writeFile(path.join(staging, `bun-${platform}`, "bun"), fakeBunScript(version), {
+    mode: 0o755,
+  });
+  await mkdir(path.dirname(archive), { recursive: true });
+  await runFile("zip", ["-qr", archive, `bun-${platform}`], { cwd: staging });
+  await rm(staging, { recursive: true, force: true });
+}
+
+async function zipToolsPresent(): Promise<boolean> {
+  const searchPath = process.env.PATH ?? "";
+  return (await onPath("zip", searchPath)) && (await onPath("unzip", searchPath));
+}
+
+test("the private Bun zip is verified against the pinned sha256 before unzip ever runs", async (t) => {
+  if (!(await zipToolsPresent())) {
+    t.skip("needs zip and unzip on PATH");
+    return;
+  }
+  const directory = await scratch(t);
+  const mirror = path.join(directory, "mirror");
+  const archive = path.join(mirror, "bun-v1.4.4", "bun-darwin-aarch64.zip");
+  await fixtureBunZip(directory, "darwin-aarch64", "1.4.4", archive);
+  const realUnzip = (await runFile("/bin/sh", ["-c", "command -v unzip"])).stdout.trim();
+  const tools = path.join(directory, "tools");
+  await mkdir(tools);
+  const marker = path.join(directory, "unzip-ran");
+  await writeFile(
+    path.join(tools, "unzip"),
+    `#!/bin/sh\n: > '${marker}'\nexec '${realUnzip}' "$@"\n`,
+    { mode: 0o755 },
+  );
+  const options = {
+    mirror: pathToFileURL(mirror).href,
+    searchPath: tools,
+    platform: "darwin-aarch64" as const,
+  };
+  const runtime = path.join(directory, "runtime");
+  const pinsFor = (sha256: string) =>
+    parseRuntimePins(pinsText("24.0.0", "0".repeat(64), ZERO_INTEGRITY, sha256));
+
+  await assert.rejects(
+    provisionPrivateBun(runtime, pinsFor("f".repeat(64)), options),
+    ChecksumMismatchError,
+  );
+  assert.deepEqual(await readdir(runtime), [], "no bun, archive or staging left");
+  assert.equal(await exists(marker), false, "unzip never ran on the mismatched zip");
+
+  const digest = (await sha(archive, "sha256")).toString("hex");
+  const binary = await provisionPrivateBun(runtime, pinsFor(digest), options);
+  assert.equal(binary, path.join(runtime, "bun", "bin", "bun"));
+  assert.equal(await exists(marker), true);
+  assert.deepEqual(await readdir(runtime), ["bun"]);
+  assert.equal((await runFile(binary, ["--version"])).stdout.trim(), "1.5.2");
+  await rm(mirror, { recursive: true });
+  assert.equal(
+    await provisionPrivateBun(runtime, pinsFor(digest), options),
+    binary,
+    "an installed pinned Bun is reused without downloading",
+  );
+});
+
+test("provisioning Bun without unzip or on an unpinned platform explains and downloads nothing", async (t) => {
+  const directory = await scratch(t);
+  const runtime = path.join(directory, "runtime");
+  const pins = parseRuntimePins(pinsText("24.0.0", "0".repeat(64), ZERO_INTEGRITY));
+  const mirror = pathToFileURL(path.join(directory, "no-mirror")).href;
+  const noUnzip = path.join(directory, "empty-bin");
+  await mkdir(noUnzip);
+  const failure = await provisionPrivateBun(runtime, pins, {
+    mirror,
+    searchPath: noUnzip,
+    platform: "linux-x64",
+  }).then(
+    () => null,
+    (error: Error) => error,
+  );
+  assert.equal(failure?.message, UNZIP_GUIDANCE);
+  assert.doesNotMatch(UNZIP_GUIDANCE, /\bsudo\b/);
+  assert.deepEqual(await readdir(runtime), []);
+  await assert.rejects(
+    provisionPrivateBun(runtime, pins, { mirror, searchPath: noUnzip, platform: null }),
+    /no pinned Bun build/,
+  );
+  const platform = await currentBunPlatform();
+  if (process.platform === "darwin") assert.match(String(platform), /^darwin-(aarch64|x64)$/);
+  assert.equal(await currentBunPlatform("win32", "x64"), null);
+});
+
 test("the launcher link replaces only our own link and refuses a foreign file", async (t) => {
   const directory = await scratch(t);
   const binDir = path.join(directory, "bin");
@@ -500,6 +653,26 @@ test("stage 1 install is idempotent, updates by fast-forward, and uninstall remo
   };
   delete environment.CHOCO_PI_HOME;
   const source = await fixtureSource(directory);
+  // The app's pins name a fixture Bun zip, served from a file: mirror below.
+  const bunPlatform = await currentBunPlatform();
+  const shippedPins = await readRuntimePins();
+  const bunMirror = path.join(directory, "bun-mirror");
+  const withBun =
+    bunPlatform !== null &&
+    (await zipToolsPresent()) &&
+    (await onPath("unzip", "/usr/bin:/bin")) &&
+    !(await onPath("bun", "/usr/bin:/bin"));
+  if (withBun) {
+    const zip = path.join(bunMirror, `bun-v${shippedPins.bunVersion}`, `bun-${bunPlatform}.zip`);
+    await fixtureBunZip(directory, bunPlatform, shippedPins.bunVersion, zip);
+    const digest = (await sha(zip, "sha256")).toString("hex");
+    const pinsFile = path.join(source, "scripts", "standalone", "runtime-pins.txt");
+    const pinsText = await readFile(pinsFile, "utf8");
+    await writeFile(
+      pinsFile,
+      pinsText.replace(/^(bun_sha256_\S+) [a-f0-9]{64}$/gm, `$1 ${digest}`),
+    );
+  }
   await runFile("pnpm", ["install", "--lockfile-only", ...runtimeDirs], {
     cwd: source,
     env: environment,
@@ -571,6 +744,34 @@ test("stage 1 install is idempotent, updates by fast-forward, and uninstall remo
   );
   assert.equal(updated.rev, head);
   assert.equal((await runFile("git", ["-C", app, "rev-parse", "HEAD"])).stdout.trim(), head);
+
+  if (withBun) {
+    const bunEnvironment = {
+      ...launcherEnvironment,
+      CHOCO_PI_BUN_MIRROR: pathToFileURL(bunMirror).href,
+    };
+    const { stdout: switched } = await runFile(
+      path.join(binDir, "choco-pi"),
+      ["self", "runtime", "bun"],
+      { env: bunEnvironment, timeout: 60_000 },
+    );
+    assert.match(switched, /bun: provisioned /);
+    const bunManifest = parseInstallManifest(
+      await readFile(path.join(home, "install.json"), "utf8"),
+      "install.json",
+    );
+    assert.equal(bunManifest.runtime, "bun");
+    assert.equal(bunManifest.bun_path, path.join(home, "runtime", "bun", "bin", "bun"));
+    assert.ok(bunManifest.created.includes(path.join(home, "runtime", "bun")));
+    const { stdout: viaBun } = await runFile(path.join(binDir, "choco-pi"), ["hello"], {
+      env: launcherEnvironment,
+    });
+    assert.match(viaBun, /^FAKEBUN --no-env-file --no-install --config=\S+ \S+cli\.js hello$/m);
+  } else {
+    t.diagnostic(
+      "Bun provisioning part skipped (needs zip, unzip, a pinned platform, no bun in /usr/bin:/bin)",
+    );
+  }
 
   await writeFile(path.join(home, "agent", "auth.json"), "{}\n");
   await writeFile(path.join(home, "notes.txt"), "user file\n");

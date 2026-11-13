@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { nodeExecutable } from "../../../../../../profile/extensions/lib/node-runtime.ts";
 
 import { parseArgvDescriptor } from "../argv-descriptor.ts";
 import { getFlagName } from "../argv-grammar.ts";
@@ -473,7 +474,8 @@ export async function runAgentBrowserScript(
   }
 
   const child = spawn(
-    process.execPath,
+    // Node's permission model sandboxes the worker; Bun would ignore or reject these flags.
+    nodeExecutable(),
     [
       "--permission",
       `--allow-fs-read=${workerPath}`,

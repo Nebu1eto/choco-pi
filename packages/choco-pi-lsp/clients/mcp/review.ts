@@ -11,6 +11,7 @@ import { type ChildProcessByStdio, spawn } from "node:child_process";
 import type { Readable } from "node:stream";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { nodeExecutable } from "../../../../profile/extensions/lib/node-runtime.ts";
 import {
   type NodePackageManager,
   pmBinary,
@@ -62,7 +63,7 @@ export function analyzeFileFresh(
 
     let child: ChildProcessByStdio<null, Readable, Readable>;
     try {
-      child = spawn(process.execPath, args, {
+      child = spawn(nodeExecutable(), args, {
         stdio: ["ignore", "pipe", "pipe"],
       });
     } catch (err) {

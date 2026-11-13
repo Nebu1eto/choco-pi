@@ -1,7 +1,7 @@
 /**
  * Manual sentinel probe for the standalone launcher (plan section 7). Never run by the unit suite.
  *
- *   node tests/live/standalone-sentinel.ts --home <scratch HOME> [--launcher <choco-pi>] [--path <PATH>] [--project <cwd>]
+ *   node tests/live/standalone-sentinel.ts --home <scratch HOME> [--launcher <choco-pi>] [--path <PATH>] [--project <cwd>] [--runtime node|bun]
  *
  * <scratch HOME> must already hold a standalone install (default launcher
  * <home>/.local/bin/choco-pi). Sessions run in --project (default a sibling
@@ -18,10 +18,18 @@
  * 4. repeats the RPC round with `chmod 000 ~/.pi`: the session must start
  *    with no EACCES/EPERM on stderr.
  *
- * Limit: only node processes are traced (NODE_OPTIONS is inherited); the
- * listing comparison covers writes by other processes. Hits are written to
- * stderr and to a log file asynchronously, so a hit in the last instant
- * before a forced exit could be missed.
+ * --runtime sets CHOCO_PI_RUNTIME for every launcher run (default: whatever
+ * the install selects); the summary records the runtime the launcher resolved.
+ *
+ * Limits: Node processes are traced through NODE_OPTIONS. Bun ignores
+ * NODE_OPTIONS; BUN_OPTIONS preloads the same tracer, but in Bun it only sees
+ * calls made through the `fs` / `fs/promises` objects, not named ESM
+ * imports. To cover that gap, every poison file's atime is backdated before
+ * the runs and compared afterwards: a content read by any process (Node, Bun
+ * or a tool) updates it (relatime), while a stat does not. The listing
+ * comparison covers writes by any process. Hits are written to stderr and to
+ * a log file asynchronously, so a hit in the last instant before a forced exit
+ * could be missed.
  */
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -93,31 +101,44 @@ function installProbe(roots: readonly string[], logFile: string | undefined): vo
 }
 
 const probeRoots = process.env[ROOTS_VARIABLE];
-const isMain = process.argv[1] !== undefined && path.resolve(process.argv[1]) === SELF;
+// The module URL is a real path; argv[1] may go through a symlink (/tmp on macOS).
+const mainArgument = process.argv[1];
+const isMain =
+  mainArgument !== undefined &&
+  (await fsPromises.realpath(mainArgument).catch(() => path.resolve(mainArgument))) === SELF;
 if (probeRoots !== undefined && !isMain) {
   installProbe(probeRoots.split(path.delimiter).filter(Boolean), process.env[LOG_VARIABLE]);
 }
 
 // --------------------------------------------------------- orchestrator side
 
-type Options = { home: string; launcher: string; searchPath: string; project: string };
+type Options = {
+  home: string;
+  launcher: string;
+  searchPath: string;
+  project: string;
+  runtime: "node" | "bun" | null;
+};
 
 function parseOptions(args: readonly string[]): Options {
   const values = new Map<string, string>();
   for (let index = 0; index < args.length; index += 2) {
     const value = args[index + 1];
     if (
-      !["--home", "--launcher", "--path", "--project"].includes(args[index]) ||
+      !["--home", "--launcher", "--path", "--project", "--runtime"].includes(args[index]) ||
       value === undefined
     ) {
       throw new Error(
-        `usage: standalone-sentinel.ts --home DIR [--launcher FILE] [--path PATH] [--project DIR]; bad argument ${args[index]}`,
+        `usage: standalone-sentinel.ts --home DIR [--launcher FILE] [--path PATH] [--project DIR] [--runtime node|bun]; bad argument ${args[index]}`,
       );
     }
     values.set(args[index], value);
   }
   const home = values.get("--home");
   if (home === undefined) throw new Error("--home is required");
+  const runtime = values.get("--runtime") ?? null;
+  if (runtime !== null && runtime !== "node" && runtime !== "bun")
+    throw new Error(`--runtime must be node or bun, got ${runtime}`);
   return {
     home: path.resolve(home),
     launcher: path.resolve(
@@ -125,6 +146,7 @@ function parseOptions(args: readonly string[]): Options {
     ),
     searchPath: values.get("--path") ?? `${path.dirname(process.execPath)}:/usr/bin:/bin`,
     project: path.resolve(values.get("--project") ?? path.join(home, "..", "sentinel-project")),
+    runtime,
   };
 }
 
@@ -174,6 +196,42 @@ async function listing(root: string): Promise<string> {
     lines.push(`${entry}\t${info.mode.toString(8)}\t${info.size}\t${info.mtimeMs}`);
   }
   return lines.join("\n");
+}
+
+/** Backdated atime of the poison files: any content read moves it forward. */
+const BACKDATED_ATIME = new Date("2001-01-01T00:00:00.000Z");
+
+async function backdatePoisonAtimes(piDir: string): Promise<void> {
+  for (const relative of POISON.keys()) {
+    const file = path.join(piDir, relative);
+    const info = await fsPromises.lstat(file);
+    await fsPromises.utimes(file, BACKDATED_ATIME, info.mtime);
+  }
+}
+
+async function readPoisonFiles(piDir: string): Promise<string[]> {
+  const read: string[] = [];
+  for (const relative of POISON.keys()) {
+    const info = await fsPromises.lstat(path.join(piDir, relative));
+    if (info.atimeMs !== BACKDATED_ATIME.getTime()) read.push(relative);
+  }
+  return read;
+}
+
+/** `self env --json`'s runtime report under the probe environment. */
+async function resolvedRuntime(options: Options, environment: NodeJS.ProcessEnv): Promise<string> {
+  const child = spawn(options.launcher, ["self", "env", "--json"], {
+    cwd: options.project,
+    env: environment,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let output = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => (output += chunk));
+  child.stderr.resume();
+  const code = await new Promise<number | null>((resolve) => child.once("exit", resolve));
+  if (code !== 0) return `self env failed (exit ${code})`;
+  return String(jsonField(output, "runtime"));
 }
 
 type Exchange = {
@@ -288,6 +346,7 @@ async function main(): Promise<number> {
   await fsPromises.mkdir(work, { recursive: true });
   await fsPromises.mkdir(options.project, { recursive: true });
   await preparePoison(piDir);
+  await backdatePoisonAtimes(piDir);
   const before = await listing(piDir);
   const logFile = path.join(work, "hits.log");
   const environment: NodeJS.ProcessEnv = {
@@ -296,9 +355,12 @@ async function main(): Promise<number> {
     TERM: "dumb",
     PI_OFFLINE: "1",
     NODE_OPTIONS: `--import=${SELF}`,
+    BUN_OPTIONS: `--preload=${SELF}`,
     [ROOTS_VARIABLE]: [...new Set([piDir, realPiDir])].join(path.delimiter),
     [LOG_VARIABLE]: logFile,
   };
+  if (options.runtime !== null) environment.CHOCO_PI_RUNTIME = options.runtime;
+  const runtime = await resolvedRuntime(options, environment);
 
   const rpc = await runRpc(options, environment, path.join(work, "rpc.stderr"));
   const acp = await exchange(
@@ -333,6 +395,7 @@ async function main(): Promise<number> {
     await fsPromises.chmod(piDir, originalMode);
   }
   const afterLocked = await listing(piDir);
+  const readFiles = await readPoisonFiles(piDir);
   const logged = (await exists(logFile)) ? await fsPromises.readFile(logFile, "utf8") : "";
   const hits = [
     ...new Set(
@@ -343,7 +406,9 @@ async function main(): Promise<number> {
   ];
   const acpSession = acp.responses.get("2");
   const summary = {
+    runtime,
     hits,
+    read_files: readFiles,
     listing_unchanged: before === afterFirst && before === afterLocked,
     rpc_started: rpc.started,
     rpc_commands_listed: rpc.commandsListed,
@@ -367,6 +432,8 @@ async function main(): Promise<number> {
   };
   const pass =
     hits.length === 0 &&
+    readFiles.length === 0 &&
+    (options.runtime === null || runtime.includes(`"name":"${options.runtime}"`)) &&
     summary.listing_unchanged &&
     summary.rpc_started &&
     summary.rpc_commands_listed &&

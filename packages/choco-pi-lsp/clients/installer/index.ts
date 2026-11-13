@@ -1,4 +1,5 @@
 import { isRuntimeFunction, isRuntimeObject, isRuntimeString } from "../../tools/runtime-values.ts";
+import { nodeBinDirectory } from "../../../../profile/extensions/lib/node-runtime.ts";
 /**
  * Auto-Installation System for choco-pi-lsp
  *
@@ -4011,7 +4012,8 @@ export async function getToolEnvironment(): Promise<NodeJS.ProcessEnv> {
   const localBin = path.join(TOOLS_DIR, "node_modules", ".bin");
   const currentPath = process.env.PATH || process.env.Path || process.env.path || "";
   const separator = process.platform === "win32" ? ";" : ":";
-  const nodeDir = path.dirname(process.execPath);
+  // Under Bun, execPath is bun: npm-installed shebang tools need the launcher's Node.
+  const nodeDir = nodeBinDirectory();
   const withNode = nodeDir ? `${nodeDir}${separator}${currentPath}` : currentPath;
   const augmentedPath = `${GITHUB_BIN_DIR}${separator}${localBin}${separator}${withNode}`;
 

@@ -11,6 +11,30 @@ export const PI_PACKAGE_RELATIVE = "node_modules/@earendil-works/pi-coding-agent
 export const PI_BIN_ENTRY = "dist/bundle/cli.js";
 export const PI_CLI_RELATIVE = `${PI_PACKAGE_RELATIVE}/${PI_BIN_ENTRY}`;
 export const ACP_ENTRY_RELATIVE = "packages/choco-pi-acp/bin/choco-pi-acp.ts";
+/** Passed to Bun with --config so a project's bunfig.toml never applies to Pi. */
+export const BUNFIG_RELATIVE = "scripts/standalone/bunfig.toml";
+
+/** Runtimes Pi can run on; node is the default. */
+export const RUNTIMES = ["node", "bun"] as const;
+export type Runtime = (typeof RUNTIMES)[number];
+export const DEFAULT_RUNTIME: Runtime = "node";
+
+export function isRuntime(value: string): value is Runtime {
+  return RUNTIMES.some((runtime) => runtime === value);
+}
+
+/** Validates a runtime name; the error names the allowed values. */
+export function parseRuntime(value: string, origin: string): Runtime {
+  if (!isRuntime(value)) {
+    throw new Error(
+      `${origin} must be one of ${RUNTIMES.join(", ")}, got ${JSON.stringify(value)}`,
+    );
+  }
+  return value;
+}
+
+/** Where the launcher's runtime choice came from (exported to management verbs). */
+export const RUNTIME_SOURCES = ["env", "install.json", "default"] as const;
 
 /** `choco-pi self <verb>`; anything else goes to Pi unchanged. */
 export const MANAGEMENT_VERBS = [
@@ -20,6 +44,7 @@ export const MANAGEMENT_VERBS = [
   "env",
   "exec",
   "acp",
+  "runtime",
   "help",
 ] as const;
 
@@ -44,7 +69,15 @@ export const CONTRACT_VARIABLES = [
   "CHOCO_PI_LSP_HOME",
   "PI_ACP_PI_COMMAND",
   "CHOCO_PI_HOOKS_PI_BIN",
+  "CHOCO_PI_NODE",
   "PI_SKIP_VERSION_CHECK",
+] as const;
+
+/** Exported only to management verbs: the resolved runtime, its source and bun. */
+export const RUNTIME_REPORT_VARIABLES = [
+  "CHOCO_PI_RUNTIME",
+  "CHOCO_PI_RUNTIME_SOURCE",
+  "CHOCO_PI_BUN",
 ] as const;
 
 /**

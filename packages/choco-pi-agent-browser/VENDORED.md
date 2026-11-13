@@ -222,3 +222,11 @@ Standalone mode is the `choco-pi` launcher's env contract (`CHOCO_PI_STANDALONE=
 - `extensions/agent-browser/lib/config-policy.ts` (`getGlobalAgentBrowserConfigPath`): the global config is `piStateRoot()/config/pi-agent-browser-native/config.json`: `~/.pi/...` in legacy mode (same `HOME`/`USERPROFILE` home), `$CHOCO_PI_HOME/config/...` in standalone mode. `GLOBAL_CONFIG_RELATIVE_PATH`, the project config, and `PI_AGENT_BROWSER_CONFIG` are unchanged. The `scripts/config.mjs` help text still names the legacy location.
 - `scripts/doctor.ts` (`parseCliArgs(argv?, env?, home?)`): the `--agent-dir` default is `piAgentDir()` (was `~/.pi/agent`, ignoring `PI_CODING_AGENT_DIR`).
 - Tests: `tests/agent-browser.doctor.test.ts`.
+
+## 2026-11-13 choco-pi patch: script worker keeps Node's permission model under the Bun runtime
+
+Under the `choco-pi` launcher, Pi itself can run on Bun (`CHOCO_PI_RUNTIME=bun`), where `process.execPath` is the bun binary. Children that need Node semantics now take their executable from `profile/extensions/lib/node-runtime.ts` (imported by relative path): `process.execPath` under Node, the launcher's `CHOCO_PI_NODE` (else a PATH `node`) under Bun. Behavior under Node is unchanged.
+
+- `extensions/agent-browser/lib/input-modes/script.ts` (`runAgentBrowserScript`): the sandboxed worker (`--permission`, `--allow-fs-read`, `--max-old-space-size`, all Node flags) is spawned with `nodeExecutable()` (was `process.execPath`).
+- Unchanged: `lib/process-identity.ts` (`dirname(process.execPath)/ps` on Android only).
+- Tests: `tests/agent-browser.script-node-runtime.test.ts`.
