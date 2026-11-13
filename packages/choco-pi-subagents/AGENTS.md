@@ -14,11 +14,12 @@ changing anything under `src/`, and `ARCHITECTURE.md` before adding a feature.
   event name.** They are a cross-extension interface matched by literal string;
   renaming them fails silently at runtime, not at compile time.
 - **No build step.** Pi loads `src/index.ts` through jiti. Do not add a `dist/`.
-- **Runtime dependencies are vendored and exactly pinned** under
-  `node_modules/`, except for the host-provided `typebox` alias (used only by
-  `src/schema-bridge.ts`) declared as an optional peer; validation uses
-  `@earendil-works/pi-schema`. Adding another dependency means copying the package in and
-  pinning the exact version; do not rely on other repository-root modules.
+- **Runtime dependencies are exactly pinned** in `package.json` and installed
+  into `node_modules/` from the root `pnpm-lock.yaml`, except for the
+  host-provided `typebox` alias (used only by `src/schema-bridge.ts`) declared
+  as an optional peer; validation uses `@earendil-works/pi-schema`. Adding
+  another dependency means declaring its exact version here and updating the
+  root lockfile; do not rely on other repository-root modules.
 
 ## Before finishing a change
 

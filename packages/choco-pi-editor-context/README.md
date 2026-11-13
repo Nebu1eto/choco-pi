@@ -12,17 +12,17 @@ and runs from TypeScript source with no build step.
 
 ## Installation
 
-Pi loads the extension from `.pi/settings.json` inside this checkout and, for
-sessions started elsewhere, from the global choco-pi profile. From the
-repository root, follow the root README's install steps:
+Pi loads the extension from the installed choco-pi profile, like every bundled
+package. From the repository root, follow the root README's install steps:
 
 ```sh
 pnpm install --frozen-lockfile
 npm run install:profile
 ```
 
-Without `install:profile`, `publish` can still write a snapshot, but Pi sessions
-outside this checkout will not consume it.
+A standalone `choco-pi` install loads it through `choco-pi self setup`, which
+its installer runs. Without a profile install, `publish` can still write a
+snapshot, but Pi sessions will not consume it.
 
 ## CLI
 

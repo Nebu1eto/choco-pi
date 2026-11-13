@@ -14,7 +14,7 @@ Pi extension providing models available through the Synthetic provider.
 
 ```bash
 pnpm typecheck    # Type check
-pnpm lint         # Lint (runs on pre-commit)
+pnpm lint         # Lint
 pnpm format       # Format
 pnpm fmt:check    # Check formatting
 pnpm test         # Run tests

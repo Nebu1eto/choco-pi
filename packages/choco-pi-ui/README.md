@@ -192,12 +192,12 @@ Detects Starship Nerd Font runtime/language modules, uses the Starship Nerd Font
 
 ## Install
 
-This package is loaded from the repository, not from npm. `.pi/settings.json`
-lists it as a path package:
+This package is loaded from the repository, not from npm. The profile installer
+lists it as a path package in the agent directory's `settings.json`:
 
 ```json
 {
-  "packages": ["./packages/choco-pi-ui"]
+  "packages": ["/path/to/choco-pi/packages/choco-pi-ui"]
 }
 ```
 

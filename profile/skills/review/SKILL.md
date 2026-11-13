@@ -9,7 +9,7 @@ This workflow reports findings only. It never edits, commits, or expands into im
 
 ## 1. Resolve the target
 
-1. Load `references/review-bundle.md` relative to this `SKILL.md`, then load `.pi/review-policy.md` from the current project, or `~/.pi/agent/review-policy.md` from the global choco-pi profile, as the authoritative review rules.
+1. Load `references/review-bundle.md` relative to this `SKILL.md`, then load `.pi/review-policy.md` from the current project, or `review-policy.md` in Pi's agent directory (`PI_CODING_AGENT_DIR`, else `~/.pi/agent`) from the global choco-pi profile, as the authoritative review rules.
 2. Read applicable `AGENTS.md` and repository review policy.
 3. Resolve the user's explicit diff, revision, or comparison range. If omitted, use the current staged and unstaged working-tree diff against `HEAD`, including relevant untracked files.
 4. Prepare the immutable review bundle exactly as `references/review-bundle.md` specifies.

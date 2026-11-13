@@ -82,15 +82,16 @@ time focus opens.
 
 ## Wiring
 
-`.pi/settings.json`:
+The profile installer lists the package by absolute path in the agent
+directory's `settings.json`:
 
 ```json
 {
-  "packages": ["./packages/choco-pi-subagents"]
+  "packages": ["/path/to/choco-pi/packages/choco-pi-subagents"]
 }
 ```
 
-The path is resolved against the `.pi` directory. This entry replaces
+This entry replaces
 `npm:@tintinweb/pi-subagents@<version>`; running both at once is not supported —
 they claim the same manager registry slot and register the same tool names.
 
@@ -101,7 +102,7 @@ Project configuration is unchanged and still lives in `.pi/subagents.json` and
 
 ```
 src/                  TypeScript source; src/index.ts is the extension entry
-node_modules/         vendored runtime deps (croner, nanoid); typebox (bridge only) and pi-schema are host-provided
+node_modules/         runtime deps (croner, nanoid) from the root pnpm-lock.yaml; typebox (bridge only) and pi-schema are host-provided
 tsconfig.json         package-local typecheck config
 CHANGELOG.upstream.md upstream history, for provenance only
 ```

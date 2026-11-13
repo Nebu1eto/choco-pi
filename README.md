@@ -8,18 +8,140 @@ Keep OAuth tokens, API keys, and machine-local configuration outside Git.
 
 ## Requirements
 
-- Node.js 24 or later
-- pnpm `11.11.0` exactly
-- Pi `1.5.x` from `1.5.2` (`>=1.5.2 <1.6.0`), matching the `~1.5.2` SDK range of this checkout
 - Git
 - Optional: [`agent-browser`](https://github.com/vercel-labs/agent-browser) for browser automation. Versions 0.34.0, 0.35.2, 0.36.0, 0.37.1, and 0.38.1 are tested; other versions run with an advisory warning.
 - Optional: macOS 14 or later for computer use (see [Set up computer use](#set-up-computer-use-macos))
 
-If `pnpm --version` does not print `11.11.0`, install the required version with
-`npm install --global pnpm@11.11.0`, then check again. The vendored-package
-installer refuses a different pnpm version before changing package trees.
+Each [installation method](#installation) adds its own requirements:
 
-## Initial installation
+- **Standalone `choco-pi` command**: macOS on arm64 or x64, or Linux with glibc on x64 or arm64; `tar`; `curl` or `wget`; and a SHA-256 tool (`shasum`, `sha256sum`, or `openssl`). Node.js 24 or later and pnpm `11.11.0` are used when they are on `PATH`; otherwise the installer downloads pinned copies. Windows and musl-based Linux such as Alpine are not supported; on Windows, use WSL2 with a glibc distribution.
+- **Profile installed into Pi**: Node.js 24 or later, pnpm `11.11.0` exactly, and Pi `1.5.x` from `1.5.2` (`>=1.5.2 <1.6.0`), matching the `~1.5.2` SDK range of this checkout. If `pnpm --version` does not print `11.11.0`, install the required version with `npm install --global pnpm@11.11.0`, then check again.
+
+## Installation
+
+choco-pi installs in one of two ways. Both load the same profile; they differ in
+which Pi runs it and where its state lives. Both can be installed on the same
+machine.
+
+|                           | Standalone `choco-pi` command               | Profile installed into Pi          |
+| ------------------------- | ------------------------------------------- | ---------------------------------- |
+| Command                   | `choco-pi`                                  | `pi`                               |
+| Pi                        | The version this repository's lockfile pins | The `pi` you installed             |
+| Code                      | A clone in `~/.choco-pi/app`                | Your checkout                      |
+| Login, sessions, settings | `~/.choco-pi/agent`, separate from `pi`     | `~/.pi/agent`, shared with `pi`    |
+| Update                    | `choco-pi self update`                      | Pull, then rerun the install steps |
+
+### Install the standalone `choco-pi` command
+
+```sh
+git clone https://github.com/Nebu1eto/choco-pi.git
+sh choco-pi/install.sh
+choco-pi
+```
+
+The installer clones its own copy of the repository into `~/.choco-pi/app`, so
+the first clone is needed only to run the script. The installer:
+
+- Uses Node.js 24 or later from `PATH`, or downloads the pinned Node.js into `~/.choco-pi/runtime/node` and checks its SHA-256 against `scripts/standalone/runtime-pins.txt` before extracting it.
+- Uses pnpm from `PATH` only when it is exactly `11.11.0`; otherwise it downloads the pinned pnpm and checks its integrity. pnpm's store and cache stay under `~/.choco-pi/runtime`.
+- Installs the production dependencies from the lockfile, installs the profile into `~/.choco-pi/agent`, and records what it created in `~/.choco-pi/install.json`.
+- Links `~/.local/bin/choco-pi` to the launcher. When that directory is not on `PATH`, it prints the `export PATH=...` line to add to your shell configuration.
+
+It never uses `sudo` or a global npm install. If Git is missing, it prints how
+to install Git on your system and stops. Running it again is idempotent.
+
+| Flag                  | Default                                            | Effect                                                      |
+| --------------------- | -------------------------------------------------- | ----------------------------------------------------------- |
+| `--home DIR`          | `~/.choco-pi`                                      | Install home (`CHOCO_PI_HOME`)                              |
+| `--bin-dir DIR`       | `~/.local/bin`                                     | Directory for the `choco-pi` link                           |
+| `--source URL\|PATH`  | `https://github.com/Nebu1eto/choco-pi.git`         | Repository to clone; a local path also works                |
+| `--ref REF`           | The default branch                                 | Branch or tag to install                                    |
+| `--runtime node\|bun` | `node`, or the runtime an earlier install recorded | What runs Pi; see [Choose the runtime](#choose-the-runtime) |
+
+`sh install.sh --help` also lists the mirror variables `CHOCO_PI_NODE_MIRROR`,
+`CHOCO_PI_NPM_REGISTRY`, and `CHOCO_PI_BUN_MIRROR`; downloads from a mirror are
+still checked against the pins.
+
+The launcher finds its install home from its own path, so you do not need to set
+`CHOCO_PI_HOME`; a value you set takes precedence. When `choco-pi` opens, run
+`/login`: the standalone command does not use `pi`'s login.
+
+#### Update and uninstall
+
+```sh
+choco-pi self update
+choco-pi self uninstall
+```
+
+`self update` fast-forwards `~/.choco-pi/app` to the recorded branch or tag,
+reinstalls the dependencies, and runs `self setup`; `--ref REF` moves to another
+branch or tag. It refuses an app checkout with local changes, and when a step
+fails it returns to the previous revision. Stop running sessions first.
+
+`self uninstall` removes what `install.json` records: the `choco-pi` link (only
+while it still points to this launcher), `app/`, `runtime/`, and `install.json`.
+It keeps `agent/` (login, sessions, settings) and `lsp/`;
+`choco-pi self uninstall --purge` removes them too. It never touches `~/.pi`.
+
+| Command                              | Purpose                                                       |
+| ------------------------------------ | ------------------------------------------------------------- |
+| `choco-pi self setup`                | Reinstall the profile into `~/.choco-pi/agent` (idempotent)   |
+| `choco-pi self runtime [node\|bun]`  | Show the runtime Pi runs on, or set it                        |
+| `choco-pi self env`                  | Print the launcher's environment contract                     |
+| `choco-pi self exec <cmd> [args...]` | Run a command under that environment                          |
+| `choco-pi self acp [args...]`        | Run the ACP adapter for editors ([Zed](#use-choco-pi-in-zed)) |
+| `choco-pi self help`                 | List the `self` commands                                      |
+
+The launcher intercepts only `self` followed by one of these verbs as the first
+two arguments. Everything else goes to Pi unchanged, for example
+`choco-pi --version` or `choco-pi --mode rpc`.
+
+#### Choose the runtime
+
+Pi runs on Node.js by default. Bun is opt-in:
+
+```sh
+choco-pi self runtime bun
+choco-pi self runtime node
+choco-pi self runtime
+```
+
+`self runtime bun` uses a `bun` on `PATH` at the pinned minimum version or
+later, or downloads the pinned Bun into `~/.choco-pi/runtime/bun` and checks its
+SHA-256. It records the choice in `install.json` only after Pi starts on it.
+`sh install.sh --runtime bun` does the same at install time, `self runtime node`
+switches back, and `self runtime` alone shows the runtime and where the choice
+came from. `CHOCO_PI_RUNTIME=node` or `CHOCO_PI_RUNTIME=bun` overrides it for
+one invocation. When Bun is selected but missing, the launcher stops with
+instructions instead of falling back to Node.js.
+
+Node.js stays required with Bun: the installer, every `self` command including
+`self acp`, and child processes that need Node.js run on it. Bun starts Pi with
+`--no-env-file` and `--no-install`, so a project's `.env`, `bunfig.toml`
+preloads, and Bun's auto-install do not reach Pi.
+
+#### Separation from `pi`
+
+The standalone command keeps its own login (`auth.json`), sessions, settings,
+trust decisions, MCP configuration, and caches under `~/.choco-pi`, and never
+reads or writes `~/.pi`. Where this README names a path under `~/.pi/agent`,
+the standalone command uses the same path under `~/.choco-pi/agent`
+(`$CHOCO_PI_HOME/agent`).
+
+Some things are shared by design:
+
+- A project's `.pi/` directory, such as `.pi/settings.json` or `.pi/mcp.json`, is project configuration that `choco-pi` reads as `pi` does. Started with your home directory as the working directory, Pi treats `~/.pi` as that project's configuration directory. This is stock Pi behavior and goes through Pi's project trust check.
+- Cross-agent locations: hooks in `~/.claude/settings.json` and `~/.agents/settings.json`, and skills in `~/.agents/skills`.
+- The help text and terminal title still say `pi` (π), because choco-pi runs Pi unmodified.
+
+In the Rex terminal:
+
+- Under Node.js, Rex shows a `choco-pi` pane exactly like a `pi` pane. The launcher replaces itself with Node.js running Pi, so Rex sees the same foreground process, title (`π - …`), and program status (`app: pi`).
+- Under Bun, the title and program status are the same, but the foreground process is `bun` running Pi's `cli.js`.
+- Rex's SessionStart context reaches choco-pi through its hook in `~/.claude/settings.json`. A Rex hook that exists only in `~/.pi/agent/settings.json` does not reach standalone sessions.
+- The `rex` skill in `~/.agents/skills` is shared with `pi`.
+
+### Install the profile into Pi
 
 Clone the repository to a stable path. The profile installer records absolute
 paths into Pi's user configuration, so moving the checkout later requires
@@ -45,7 +167,7 @@ missing or lists no bundled packages, the installer writes the bundled package
 list and built-in policy itself; add the other keys from
 [Example global settings](#example-global-settings) afterward if you want them.
 
-### Install Pi without Homebrew
+#### Install Pi without Homebrew
 
 Homebrew is not supported for choco-pi because its `pi-coding-agent` formula
 lags the pinned release. Install Pi with the official installer:
@@ -75,22 +197,18 @@ unusual module-load errors, set `NODE_DISABLE_COMPILE_CACHE=1` to disable it.
 When Pi opens, run `/login` and select a provider. The installation scripts do
 not authenticate, open a login flow, or copy credentials into the repository.
 
-The root install and all seven vendored-package installs use their committed
-lockfiles. The root `postinstall` script runs `npm run install:vendored`, which
-installs each package in its isolated workspace and attempts to restore that
-package's previous dependency tree if its install fails. A vendored failure
-fails the root install; rerunning the root install retries it. An interrupted
-process can leave a
-`node_modules.bootstrap-lock` claim directory and a
-`node_modules.bootstrap-backup*` dependency backup. The installer does not
-automatically prune this recoverable state or guarantee rollback after an
-interrupt such as SIGINT; inspect and preserve it before retrying rather than
-deleting it blindly.
+The repository is one pnpm workspace: `pnpm install --frozen-lockfile` installs
+the root and all 18 packages under `packages/` from the single root
+`pnpm-lock.yaml`. Dependency build scripts never run, because
+`pnpm-workspace.yaml` sets each one to `false` under `allowBuilds`.
 
-Run `npm run install:vendored` directly to repair the vendored trees. A root
-install that reports `Already up to date` does not run `postinstall`, even when
-a vendored `node_modules` is missing or damaged, and `--ignore-scripts` (or
-`ignore-scripts=true` in an npmrc) skips it entirely.
+A checkout installed before the profile moved from `.pi/` to `profile/` and
+`packages/` upgrades in place: after pulling, rerun `pnpm install --frozen-lockfile`
+and `npm run install:profile`. The profile installer rewrites this checkout's old
+paths in your settings in the same order, keeps your own entries, and relinks
+the profile files; a file you replaced yourself still needs `--backup`. Git
+leaves the old, ignored `node_modules` directories under `.pi/` in place;
+delete them once the new install works.
 
 `npm run install:profile` preserves existing runtime and authentication state
 plus user-added packages, writes absolute checkout paths, and links tracked
@@ -109,26 +227,26 @@ it when appropriate.
 
 ## Updating and reloading
 
-Stop active Pi sessions before replacing their dependency trees. Every root
-install that is not a no-op, including `pnpm add` and `pnpm remove`, replaces
-all seven vendored trees through `postinstall`. After pulling repository
-changes, keep the same Node and pnpm versions, then rerun the frozen root
-install, which also restores the vendored packages, and the profile install:
+Stop active Pi sessions before replacing their dependency trees. The standalone
+command updates with `choco-pi self update`
+([Update and uninstall](#update-and-uninstall)). For the profile installed into
+Pi, pull the repository changes, keep the same Node and pnpm versions, then
+rerun the frozen install and the profile install:
 
 ```sh
 pnpm install --frozen-lockfile
 npm run install:profile
 ```
 
-Restart Pi after an update. For edits under `.pi` during an existing Pi session,
-run `/reload` to reload extensions, skills, prompts, themes, and linked profile
-files.
+Restart Pi after an update. For edits under `profile/` or `packages/` during an
+existing Pi session, run `/reload` to reload extensions, skills, prompts, themes,
+and linked profile files.
 
 ### Built-in extensions
 
 Pi 1.5 ships built-in `codemode`, `tool-search`, `mcp`, and `llama.cpp` extensions. choco-pi uses Pi's built-in MCP and disables `codemode` and `tool-search` with `"extensions": ["-builtin:codemode", "-builtin:tool-search"]`, because it keeps its own `exec` code-mode bridge and its own `tool_search`. The profile installer carries this policy into global settings and removes other built-in exclusions.
 
-MCP servers are configured in Pi's `~/.pi/agent/mcp.json` format. To convert a file written for the retired `pi-mcp-adapter` fork, run `node scripts/translate-mcp-config.ts`; it prints a redacted dry-run diff and writes only with `--apply`, keeping a timestamped backup.
+MCP servers are configured in Pi's built-in format in the agent directory's `mcp.json`: `~/.pi/agent/mcp.json` for the profile installed into Pi, `~/.choco-pi/agent/mcp.json` for the standalone command. To convert a file written for the retired `pi-mcp-adapter` fork, run `node scripts/translate-mcp-config.ts` from the checkout, or `choco-pi self exec node ~/.choco-pi/app/scripts/translate-mcp-config.ts` for the standalone command; it prints a redacted dry-run diff and writes only with `--apply`, keeping a timestamped backup.
 
 ## Authentication
 
@@ -365,7 +483,7 @@ The [RPC host bridge](docs/rpc-host-bridge.md) lets Waku identify the installed 
 
 ## Installed packages
 
-The profile loads these 17 local packages, listed by absolute path under `packages` in `~/.pi/agent/settings.json`. An eighteenth package, [`choco-pi-acp`](packages/choco-pi-acp) 0.0.33, is not loaded by Pi; it runs as a separate ACP process for editors (see [Use choco-pi in Zed](#use-choco-pi-in-zed)).
+The profile loads these 17 local packages, listed by absolute path under `packages` in the agent directory's `settings.json`. An eighteenth package, [`choco-pi-acp`](packages/choco-pi-acp) 0.0.33, is not loaded by Pi; it runs as a separate ACP process for editors (see [Use choco-pi in Zed](#use-choco-pi-in-zed)).
 
 | Package                                                               |        Version | Purpose                                                      |
 | --------------------------------------------------------------------- | -------------: | ------------------------------------------------------------ |
@@ -404,18 +522,19 @@ The profile loads these 17 local packages, listed by absolute path under `packag
 | [`apex-provider.json`](profile/extensions/apex-provider.json)                                                                           | Callstack Apex provider discovery defaults                                  |
 | [`review.json`](profile/extensions/review.json)                                                                                         | Local review interface configuration                                        |
 | Global `~/.pi/agent/advisor.json` with project override `.pi/advisor.json`                                                              | Advisor enablement, model, effort, and per-turn cap                         |
-| `~/.pi/agent/mcp.json` from [`profile/mcp.example.json`](profile/mcp.example.json)                                                      | Untracked MCP server configuration in Pi's built-in format                  |
+| `~/.pi/agent/mcp.json` (standalone: `~/.choco-pi/agent/mcp.json`) from [`profile/mcp.example.json`](profile/mcp.example.json)           | Untracked MCP server configuration in Pi's built-in format                  |
 | Package [`AGENTS.md`](packages/choco-pi-agent-browser/AGENTS.md) and [`VENDORED.md`](packages/choco-pi-agent-browser/VENDORED.md) files | Package policy and recorded upstream differences                            |
 
 Pi 1.0.3 changed `Home`/`End` to move the editor cursor. Use `Ctrl+Home`/`Ctrl+End` to jump to the transcript top/bottom.
 
-`npm run install:profile` links the policy files, `subagents.json`, `choco-pi-codex.json`, `models.json`, `keybindings.json`, the agent definitions, and the three extension JSON files into `~/.pi/agent`; `zentui.json` is linked as `choco-pi-ui.json`.
+`npm run install:profile` (`choco-pi self setup` for the standalone command) links the policy files, `subagents.json`, `choco-pi-codex.json`, `models.json`, `keybindings.json`, the agent definitions, and the three extension JSON files into `~/.pi/agent`; `zentui.json` is linked as `choco-pi-ui.json`.
 It also migrates an existing `~/.pi/agent/extensions/background-compaction.json` to the current layout: the backend switches are rederived from the OpenAI and Anthropic compaction modes, while `enabled` and other keys are kept, and a missing file is not created.
 
 ### Example global settings
 
 `npm run install:profile` rewrites `~/.pi/agent/settings.json` and keeps any
-keys it does not manage. The checkout ships no `.pi/settings.json`, so the
+keys it does not manage; `choco-pi self setup` runs the same installer on
+`~/.choco-pi/agent/settings.json`. The checkout ships no `.pi/settings.json`, so the
 profile policy comes from this global file itself: its `packages` entries under
 the checkout's `packages` and its `extensions` built-in policy. When it
 lists no bundled packages, the installer starts from the profile defaults in
@@ -434,7 +553,8 @@ A checkout that adds a `.pi/settings.json` takes precedence: the installer and
 `modelThinkingLevels` under your global entries.
 
 A complete global file looks like this. Replace `/path/to/choco-pi` with your
-checkout path. The `defaultModel`, `modelThinkingLevels`, and `enabledModels`
+checkout path, or with the absolute path of `~/.choco-pi/app` for the standalone
+command. The `defaultModel`, `modelThinkingLevels`, and `enabledModels`
 values are the maintainer's current settings. Secrets never belong in this file.
 
 ```json
@@ -600,7 +720,27 @@ selection into the targeted Pi session through Zed Tasks. Start with the
 [command parity inventory](docs/zed-command-parity.md), and
 [runtime E2E evidence](docs/zed-e2e-evidence.md) record what was verified.
 
+With the standalone command, run the Zed setup through `choco-pi self acp`, as
+the guide's [standalone section](docs/zed-setup.md#standalone-install-choco-pi-launcher)
+shows. The setup records the absolute paths of the launcher and Node.js, so run
+it again after moving the install.
+
 ## Development verification
+
+Starting Pi in this checkout does not load the checkout's profile: the
+extensions, skills, and prompts moved from `.pi/` to `profile/`, so Pi finds no
+project resources here. Load them through an agent directory instead, either
+with `npm run install:profile` (into `~/.pi/agent`, or another directory with
+`--agent-dir <dir>`) or with the checkout's own launcher and a separate home:
+
+```sh
+export CHOCO_PI_HOME="$HOME/.choco-pi-dev"
+bin/choco-pi self setup
+bin/choco-pi
+```
+
+Without `CHOCO_PI_HOME`, a launcher started from a checkout uses `~/.choco-pi`,
+the home of a standalone install.
 
 Run the root verification gates. From a shell that Pi started, including any agent tool call, unset the session variables Pi exports before `pnpm test`, or a subagent scratch-directory test fails:
 
@@ -610,6 +750,8 @@ pnpm fmt:check
 pnpm typecheck
 env -u PI_ROOT_SESSION_ID -u PI_SCRATCH_DIR -u PI_SESSION_ID -u PI_CODING_AGENT -u PI_MANAGED_INSTALL_ROOT pnpm test
 ```
+
+`pnpm typecheck` checks the root and each package that has a `tsconfig.json`, and `pnpm test` runs `tests/` and every `packages/*/tests/`.
 
 `pnpm test` leaves out the formal validation tests in `tests/formal/`, which start Java and TLC; `pnpm test --formal` adds them and is needed only when `formal/`, the `formal-verify` skill, or those tests change.
 

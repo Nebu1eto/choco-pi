@@ -43,7 +43,7 @@ Adapter availability, required request capabilities, and transport priority dete
 
 The `xai` family is explicit-only: automatic routing and `all` never use it, and it runs only when a request's `provider` (a single family or a family list) or `searchRouting.providers` names `xai`. Its adapter is registered only while Pi's model registry reports configured `xai` credentials, from `/login xai` (OAuth) or `XAI_API_KEY`; a sign-in made mid-session is picked up at the next session start, tree navigation, or model selection. It sends one Responses request with the `web_search` tool to `grok-4.3` at the `xai` provider's base URL and returns the cited sources. Domain filters accept up to five allowed or five excluded domains, never both in one request. Every call is billed by xAI, which is why it is never chosen automatically.
 
-The configuration file is `$PI_CODING_AGENT_DIR/web-search.json` when `PI_CODING_AGENT_DIR` is set, `$XDG_CONFIG_HOME/pi/web-search.json` when only `XDG_CONFIG_HOME` is set, and `~/.pi/web-search.json` otherwise. For example:
+The configuration file is `$PI_CODING_AGENT_DIR/web-search.json` when `PI_CODING_AGENT_DIR` is set, `$XDG_CONFIG_HOME/pi/web-search.json` when only `XDG_CONFIG_HOME` is set, and `~/.pi/web-search.json` otherwise. The standalone `choco-pi` launcher always sets `PI_CODING_AGENT_DIR`, so there the file is `$CHOCO_PI_HOME/agent/web-search.json` (default `~/.choco-pi/agent/web-search.json`) and the XDG and `~/.pi` fallbacks never apply. For example:
 
 ```json
 {

@@ -8,18 +8,137 @@ OAuth 토큰, API 키, 컴퓨터별 로컬 설정은 Git 밖에 보관하세요.
 
 ## 요구 사항
 
-- Node.js 24 이상
-- pnpm `11.11.0` (다른 버전은 사용할 수 없음)
-- Pi `1.5.2` 이상의 `1.5.x` (`>=1.5.2 <1.6.0`, 이 체크아웃의 SDK 범위 `~1.5.2`와 동일)
 - Git
 - 선택 사항: 브라우저 자동화를 위한 [`agent-browser`](https://github.com/vercel-labs/agent-browser). 0.34.0, 0.35.2, 0.36.0, 0.37.1, 0.38.1 버전을 검증했으며, 그 외 버전은 경고만 표시하고 실행합니다.
 - 선택 사항: 데스크톱 조작(computer use)을 위한 macOS 14 이상([computer use 설정하기](#computer-use-설정하기-macos) 참고)
 
-`pnpm --version`이 `11.11.0`을 출력하지 않으면 `npm install --global pnpm@11.11.0`으로
-필요한 버전을 설치한 뒤 다시 확인하세요. vendored 패키지 설치 프로그램은 pnpm 버전이
-다르면 패키지 트리를 바꾸기 전에 중단합니다.
+[설치 방법](#설치)마다 추가로 필요한 것이 다릅니다.
 
-## 처음 설치하기
+- **독립 실행형 `choco-pi` 명령**: arm64 또는 x64 macOS, 또는 x64나 arm64의 glibc 기반 Linux와 `tar`, `curl` 또는 `wget`, SHA-256 도구(`shasum`, `sha256sum`, `openssl` 중 하나)가 필요합니다. Node.js 24 이상과 pnpm `11.11.0`이 `PATH`에 있으면 그것을 쓰고, 없으면 설치 프로그램이 고정된 버전을 내려받습니다. Windows와 Alpine 같은 musl 기반 Linux는 지원하지 않습니다. Windows에서는 glibc 배포판을 쓰는 WSL2를 사용하세요.
+- **Pi에 프로필 설치**: Node.js 24 이상, pnpm `11.11.0`(다른 버전은 사용할 수 없음), Pi `1.5.2` 이상의 `1.5.x`(`>=1.5.2 <1.6.0`, 이 체크아웃의 SDK 범위 `~1.5.2`와 동일)가 필요합니다. `pnpm --version`이 `11.11.0`을 출력하지 않으면 `npm install --global pnpm@11.11.0`으로 필요한 버전을 설치한 뒤 다시 확인하세요.
+
+## 설치
+
+choco-pi는 두 가지 방법으로 설치합니다. 두 방법 모두 같은 프로필을 불러오며, 어떤
+Pi가 프로필을 실행하고 상태를 어디에 두는지만 다릅니다. 한 컴퓨터에 둘 다 설치할
+수 있습니다.
+
+|                    | 독립 실행형 `choco-pi` 명령        | Pi에 프로필 설치              |
+| ------------------ | ---------------------------------- | ----------------------------- |
+| 명령               | `choco-pi`                         | `pi`                          |
+| Pi                 | 이 저장소의 lockfile이 고정한 버전 | 직접 설치한 `pi`              |
+| 코드               | `~/.choco-pi/app`의 clone          | 직접 clone한 체크아웃         |
+| 로그인, 세션, 설정 | `~/.choco-pi/agent` (`pi`와 분리)  | `~/.pi/agent` (`pi`와 공유)   |
+| 업데이트           | `choco-pi self update`             | pull 후 설치 단계를 다시 실행 |
+
+### 독립 실행형 `choco-pi` 명령 설치
+
+```sh
+git clone https://github.com/Nebu1eto/choco-pi.git
+sh choco-pi/install.sh
+choco-pi
+```
+
+설치 프로그램은 저장소를 `~/.choco-pi/app`에 따로 clone하므로, 처음 clone한
+저장소는 스크립트를 실행하는 데만 필요합니다. 설치 프로그램은 다음을 수행합니다.
+
+- `PATH`의 Node.js 24 이상을 쓰거나, 고정된 Node.js를 `~/.choco-pi/runtime/node`에 내려받고 압축을 풀기 전에 SHA-256을 `scripts/standalone/runtime-pins.txt`와 대조합니다.
+- `PATH`의 pnpm은 정확히 `11.11.0`일 때만 쓰고, 그렇지 않으면 고정된 pnpm을 내려받아 무결성을 확인합니다. pnpm의 저장소와 캐시는 `~/.choco-pi/runtime` 아래에 둡니다.
+- lockfile에서 프로덕션 의존성을 설치하고, 프로필을 `~/.choco-pi/agent`에 설치한 다음, 만든 항목을 `~/.choco-pi/install.json`에 기록합니다.
+- `~/.local/bin/choco-pi`를 실행기에 링크합니다. 이 디렉터리가 `PATH`에 없으면 셸 설정에 추가할 `export PATH=...` 줄을 출력합니다.
+
+`sudo`나 전역 npm 설치는 쓰지 않습니다. Git이 없으면 시스템에 맞는 Git 설치 방법을
+출력하고 멈춥니다. 다시 실행해도 결과는 같습니다(idempotent).
+
+| 옵션                  | 기본값                                     | 효과                                                 |
+| --------------------- | ------------------------------------------ | ---------------------------------------------------- |
+| `--home DIR`          | `~/.choco-pi`                              | 설치 홈(`CHOCO_PI_HOME`)                             |
+| `--bin-dir DIR`       | `~/.local/bin`                             | `choco-pi` 링크를 둘 디렉터리                        |
+| `--source URL\|PATH`  | `https://github.com/Nebu1eto/choco-pi.git` | clone할 저장소. 로컬 경로도 쓸 수 있습니다           |
+| `--ref REF`           | 기본 브랜치                                | 설치할 브랜치나 태그                                 |
+| `--runtime node\|bun` | `node` 또는 이전 설치가 기록한 런타임      | Pi를 실행할 런타임. [런타임 선택](#런타임-선택) 참고 |
+
+`sh install.sh --help`는 미러 변수 `CHOCO_PI_NODE_MIRROR`, `CHOCO_PI_NPM_REGISTRY`,
+`CHOCO_PI_BUN_MIRROR`도 보여 줍니다. 미러에서 내려받은 파일도 고정값과 대조합니다.
+
+실행기는 자기 경로에서 설치 홈을 찾으므로 `CHOCO_PI_HOME`을 설정하지 않아도 됩니다.
+설정하면 그 값이 우선합니다. `choco-pi`가 열리면 `/login`을 실행하세요. 독립 실행형
+명령은 `pi`의 로그인을 쓰지 않습니다.
+
+#### 업데이트와 제거
+
+```sh
+choco-pi self update
+choco-pi self uninstall
+```
+
+`self update`는 `~/.choco-pi/app`을 기록된 브랜치나 태그로 fast-forward하고,
+의존성을 다시 설치한 뒤 `self setup`을 실행합니다. `--ref REF`를 주면 다른
+브랜치나 태그로 옮깁니다. app 체크아웃에 로컬 변경이 있으면 거부하고, 중간 단계가
+실패하면 이전 리비전으로 돌아갑니다. 먼저 실행 중인 세션을 종료하세요.
+
+`self uninstall`은 `install.json`에 기록된 항목, 즉 `choco-pi` 링크(이 실행기를
+가리키는 동안만), `app/`, `runtime/`, `install.json`을 제거합니다. `agent/`(로그인,
+세션, 설정)와 `lsp/`는 남기며, `choco-pi self uninstall --purge`는 이 둘도
+제거합니다. `~/.pi`는 건드리지 않습니다.
+
+| 명령                                 | 용도                                                        |
+| ------------------------------------ | ----------------------------------------------------------- |
+| `choco-pi self setup`                | 프로필을 `~/.choco-pi/agent`에 다시 설치(idempotent)        |
+| `choco-pi self runtime [node\|bun]`  | Pi를 실행하는 런타임을 확인하거나 설정                      |
+| `choco-pi self env`                  | 실행기의 환경 계약 출력                                     |
+| `choco-pi self exec <cmd> [args...]` | 그 환경에서 명령 실행                                       |
+| `choco-pi self acp [args...]`        | 에디터용 ACP 어댑터 실행([Zed](#zed에서-choco-pi-사용하기)) |
+| `choco-pi self help`                 | `self` 명령 목록 출력                                       |
+
+실행기는 처음 두 인자가 `self`와 이 동사 중 하나일 때만 가로챕니다. 나머지는
+`choco-pi --version`이나 `choco-pi --mode rpc`처럼 그대로 Pi에 전달됩니다.
+
+#### 런타임 선택
+
+Pi는 기본적으로 Node.js에서 실행됩니다. Bun은 직접 선택할 때만 씁니다.
+
+```sh
+choco-pi self runtime bun
+choco-pi self runtime node
+choco-pi self runtime
+```
+
+`self runtime bun`은 `PATH`에 고정된 최소 버전 이상의 `bun`이 있으면 그것을 쓰고,
+없으면 고정된 Bun을 `~/.choco-pi/runtime/bun`에 내려받아 SHA-256을 확인합니다.
+Pi가 그 런타임에서 실제로 시작될 때만 선택을 `install.json`에 기록합니다.
+`sh install.sh --runtime bun`은 설치할 때 같은 일을 하고, `self runtime node`는
+Node.js로 되돌리며, 인자 없는 `self runtime`은 현재 런타임과 그 선택의 출처를
+보여 줍니다. `CHOCO_PI_RUNTIME=node`나 `CHOCO_PI_RUNTIME=bun`은 한 번의 실행에서만
+이 선택을 덮어씁니다. Bun을 선택했는데 찾을 수 없으면 실행기는 Node.js로 대신
+실행하지 않고 안내를 출력한 뒤 멈춥니다.
+
+Bun을 쓰더라도 Node.js는 필요합니다. 설치 프로그램, `self acp`를 포함한 모든
+`self` 명령, Node.js가 필요한 자식 프로세스는 Node.js에서 실행됩니다. Bun은
+`--no-env-file`과 `--no-install`로 Pi를 시작하므로 프로젝트의 `.env`,
+`bunfig.toml` preload, Bun 자동 설치가 Pi에 영향을 주지 않습니다.
+
+#### `pi`와의 분리
+
+독립 실행형 명령은 로그인(`auth.json`), 세션, 설정, 신뢰 결정, MCP 설정, 캐시를
+`~/.choco-pi` 아래에 따로 두며 `~/.pi`를 읽거나 쓰지 않습니다. 이 README가
+`~/.pi/agent` 아래 경로를 말할 때, 독립 실행형 명령은 `~/.choco-pi/agent`
+(`$CHOCO_PI_HOME/agent`) 아래의 같은 경로를 씁니다.
+
+다음은 의도적으로 공유합니다.
+
+- `.pi/settings.json`이나 `.pi/mcp.json` 같은 프로젝트의 `.pi/` 디렉터리는 프로젝트 설정이며, `choco-pi`도 `pi`와 똑같이 읽습니다. 홈 디렉터리를 작업 디렉터리로 삼아 시작하면 Pi는 `~/.pi`를 그 프로젝트의 설정 디렉터리로 취급합니다. 이는 Pi 본래의 동작이며 Pi의 프로젝트 신뢰 확인을 거칩니다.
+- 에이전트 간 공용 위치: `~/.claude/settings.json`과 `~/.agents/settings.json`의 hook, `~/.agents/skills`의 스킬.
+- choco-pi는 Pi를 수정하지 않고 실행하므로 도움말과 터미널 제목은 여전히 `pi`(π)로 표시됩니다.
+
+Rex 터미널에서는 다음과 같습니다.
+
+- Node.js에서는 Rex가 `choco-pi` 창을 `pi` 창과 똑같이 표시합니다. 실행기가 Pi를 실행하는 Node.js로 자신을 대체하므로 Rex는 같은 foreground 프로세스, 제목(`π - …`), 프로그램 상태(`app: pi`)를 봅니다.
+- Bun에서는 제목과 프로그램 상태는 같지만, foreground 프로세스가 Pi의 `cli.js`를 실행하는 `bun`입니다.
+- Rex의 SessionStart 컨텍스트는 `~/.claude/settings.json`에 있는 Rex hook을 통해 choco-pi에 전달됩니다. `~/.pi/agent/settings.json`에만 있는 Rex hook은 독립 실행형 세션에 전달되지 않습니다.
+- `~/.agents/skills`의 `rex` 스킬은 `pi`와 공유합니다.
+
+### Pi에 프로필 설치
 
 저장소는 경로가 바뀌지 않는 곳에 clone하세요. 프로필 설치 프로그램은 Pi 사용자 설정에
 절대 경로를 기록하므로, 나중에 체크아웃을 옮기면 새 위치에서 다시 실행해야 합니다.
@@ -44,7 +163,7 @@ pi
 기록합니다. 나머지 키가 필요하면 그다음에 [전역 설정 예시](#전역-설정-예시)를
 참고해 추가하세요.
 
-### Homebrew를 사용하지 않고 Pi 설치
+#### Homebrew를 사용하지 않고 Pi 설치
 
 Homebrew의 `pi-coding-agent` formula는 고정된 릴리스보다 늦게 갱신되므로 choco-pi는 Homebrew 설치를 지원하지 않습니다. 공식 설치 프로그램으로 Pi를 설치하세요.
 
@@ -65,20 +184,18 @@ Pi 1.5의 `cli.js` 실행기는 Node 컴파일 캐시를 활성화합니다. 원
 
 Pi가 열리면 `/login`을 실행하고 공급자를 선택하세요. 설치 스크립트는 인증을 수행하거나 로그인 화면을 열지 않으며, 인증 정보를 저장소에 복사하지 않습니다.
 
-루트 설치와 vendored 패키지 7개의 설치는 모두 커밋된 lockfile을 사용합니다.
-루트 `postinstall` 스크립트가 `npm run install:vendored`를 실행하며, 이 명령은 각 패키지를
-독립된 workspace에 설치하고, 설치에 실패하면 해당 패키지의 이전 의존성 트리 복원을
-시도합니다. vendored 설치가 실패하면 루트 설치도 실패하며, 루트 설치를 다시 실행하면
-재시도합니다. 프로세스가 중단되면
-`node_modules.bootstrap-lock` 점유 디렉터리와 `node_modules.bootstrap-backup*` 의존성
-백업이 남을 수 있습니다. 설치 프로그램은 이 복구 가능한 상태를 자동으로 정리하지 않으며,
-SIGINT 같은 중단 뒤의 롤백도 보장하지 않습니다. 다시 시도하기 전에 무작정 지우지 말고
-내용을 확인해 보존하세요.
+저장소는 하나의 pnpm workspace입니다. `pnpm install --frozen-lockfile`은 루트와
+`packages/` 아래 패키지 18개를 하나뿐인 루트 `pnpm-lock.yaml`로 설치합니다.
+`pnpm-workspace.yaml`이 `allowBuilds`에서 빌드 스크립트가 있는 의존성을 모두
+`false`로 지정하므로 의존성 빌드 스크립트는 실행되지 않습니다.
 
-vendored 트리를 복구하려면 `npm run install:vendored`를 직접 실행하세요. 루트 설치가
-`Already up to date`를 출력하면 vendored `node_modules`가 없거나 손상되었더라도
-`postinstall`이 실행되지 않으며, `--ignore-scripts`(또는 npmrc의 `ignore-scripts=true`)를
-사용하면 `postinstall`을 아예 건너뜁니다.
+프로필이 `.pi/`에서 `profile/`과 `packages/`로 옮겨지기 전에 설치한 체크아웃은
+그 자리에서 업그레이드됩니다. pull한 뒤 `pnpm install --frozen-lockfile`과
+`npm run install:profile`을 다시 실행하세요. 프로필 설치 프로그램은 설정에 남은 이
+체크아웃의 예전 경로를 같은 순서로 다시 쓰고, 사용자가 추가한 항목은 유지하며,
+프로필 파일을 다시 연결합니다. 직접 바꾼 파일은 여전히 `--backup`이 필요합니다.
+Git은 `.pi/` 아래에서 무시되던 예전 `node_modules` 디렉터리를 그대로 남기므로,
+새 설치가 동작하면 지우세요.
 
 `npm run install:profile`은 기존 런타임·인증 상태와 사용자가 추가한 패키지를 보존하고,
 체크아웃의 절대 경로를 기록한 다음 추적 중인 프로필 리소스를 `~/.pi/agent`에 연결합니다.
@@ -87,24 +204,25 @@ MCP 설정은 연결하지 않습니다. 대상에 관련 없는 내용이 이�
 
 ## 업데이트와 다시 불러오기
 
-의존성 트리를 교체하기 전에 실행 중인 Pi 세션을 종료하세요. 변경이 없는 경우를 제외한
-모든 루트 설치는 `pnpm add`와 `pnpm remove`를 포함해 `postinstall`로 vendored 트리
-7개를 모두 교체합니다. 저장소 변경을 pull한 뒤에는 같은 Node와 pnpm 버전을 유지한 채
-vendored 패키지까지 복원하는 frozen 루트 설치와 프로필 설치를 다시 실행하세요.
+의존성 트리를 교체하기 전에 실행 중인 Pi 세션을 종료하세요. 독립 실행형 명령은
+`choco-pi self update`로 업데이트합니다([업데이트와 제거](#업데이트와-제거)). Pi에
+설치한 프로필은 저장소 변경을 pull한 뒤 같은 Node와 pnpm 버전을 유지한 채 frozen
+설치와 프로필 설치를 다시 실행하세요.
 
 ```sh
 pnpm install --frozen-lockfile
 npm run install:profile
 ```
 
-업데이트 후에는 Pi를 다시 시작하세요. 실행 중인 세션에서 `.pi` 아래 파일을 수정했다면
-`/reload`를 실행해 확장, 스킬, 프롬프트, 테마, 연결된 프로필 파일을 다시 불러오세요.
+업데이트 후에는 Pi를 다시 시작하세요. 실행 중인 세션에서 `profile/`이나 `packages/`
+아래 파일을 수정했다면 `/reload`를 실행해 확장, 스킬, 프롬프트, 테마, 연결된 프로필
+파일을 다시 불러오세요.
 
 ### 내장 확장
 
 Pi 1.5에는 `codemode`, `tool-search`, `mcp`, `llama.cpp` 확장이 내장되어 있습니다. choco-pi는 Pi에 내장된 MCP를 그대로 쓰고, 자체 `exec` 코드 모드 브리지와 자체 `tool_search`를 유지하기 위해 `"extensions": ["-builtin:codemode", "-builtin:tool-search"]`로 `codemode`와 `tool-search`를 비활성화합니다. 프로필 설치 프로그램은 이 정책을 전역 설정에 반영하고 그 밖의 내장 확장 비활성화 항목은 제거합니다.
 
-MCP 서버는 Pi의 `~/.pi/agent/mcp.json` 형식으로 설정합니다. 폐기된 `pi-mcp-adapter` 포크용으로 작성한 파일은 `node scripts/translate-mcp-config.ts`로 변환하세요. 이 스크립트는 값을 가린 dry-run diff를 출력하며, `--apply`를 줄 때만 시각이 붙은 백업을 남기고 파일을 씁니다.
+MCP 서버는 Pi 내장 형식으로 에이전트 디렉터리의 `mcp.json`에 설정합니다. Pi에 설치한 프로필은 `~/.pi/agent/mcp.json`, 독립 실행형 명령은 `~/.choco-pi/agent/mcp.json`입니다. 폐기된 `pi-mcp-adapter` 포크용으로 작성한 파일은 체크아웃에서 `node scripts/translate-mcp-config.ts`로, 독립 실행형 명령에서는 `choco-pi self exec node ~/.choco-pi/app/scripts/translate-mcp-config.ts`로 변환하세요. 이 스크립트는 값을 가린 dry-run diff를 출력하며, `--apply`를 줄 때만 시각이 붙은 백업을 남기고 파일을 씁니다.
 
 ## 인증
 
@@ -332,7 +450,7 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 
 ## 설치된 패키지
 
-프로필은 다음 로컬 패키지 17개를 불러오며, 이 목록은 `~/.pi/agent/settings.json`의 `packages`에 절대 경로로 들어 있습니다. 이와 별도로 [`choco-pi-acp`](packages/choco-pi-acp) 0.0.33 패키지는 Pi가 불러오지 않으며, 에디터와 연결하는 독립 ACP 프로세스로 실행됩니다([Zed에서 choco-pi 사용하기](#zed에서-choco-pi-사용하기) 참고).
+프로필은 다음 로컬 패키지 17개를 불러오며, 이 목록은 에이전트 디렉터리의 `settings.json`에 있는 `packages`에 절대 경로로 들어 있습니다. 이와 별도로 [`choco-pi-acp`](packages/choco-pi-acp) 0.0.33 패키지는 Pi가 불러오지 않으며, 에디터와 연결하는 독립 ACP 프로세스로 실행됩니다([Zed에서 choco-pi 사용하기](#zed에서-choco-pi-사용하기) 참고).
 
 | 패키지                                                                |           버전 | 용도                                             |
 | --------------------------------------------------------------------- | -------------: | ------------------------------------------------ |
@@ -371,18 +489,19 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 | [`apex-provider.json`](profile/extensions/apex-provider.json)                                                                         | Callstack Apex 공급자 탐색 기본값                               |
 | [`review.json`](profile/extensions/review.json)                                                                                       | 로컬 리뷰 인터페이스 설정                                       |
 | 전역 `~/.pi/agent/advisor.json`과 프로젝트 재정의 `.pi/advisor.json`                                                                  | advisor 활성화, 모델, effort, 턴별 사용 한도                    |
-| `~/.pi/agent/mcp.json`과 그 예시인 [`profile/mcp.example.json`](profile/mcp.example.json)                                             | 추적하지 않는 Pi 내장 형식의 MCP 서버 설정                      |
+| `~/.pi/agent/mcp.json`(독립 실행형은 `~/.choco-pi/agent/mcp.json`)과 그 예시인 [`profile/mcp.example.json`](profile/mcp.example.json) | 추적하지 않는 Pi 내장 형식의 MCP 서버 설정                      |
 | 패키지별 [`AGENTS.md`](packages/choco-pi-agent-browser/AGENTS.md)와 [`VENDORED.md`](packages/choco-pi-agent-browser/VENDORED.md) 파일 | 패키지 정책과 기록된 업스트림 변경 사항                         |
 
 Pi 1.0.3부터 `Home`/`End`는 편집기 커서를 이동합니다. 대화 기록의 맨 위/아래로 이동하려면 `Ctrl+Home`/`Ctrl+End`를 사용하세요.
 
-`npm run install:profile`은 정책 파일, `subagents.json`, `choco-pi-codex.json`, `models.json`, `keybindings.json`, 에이전트 정의, 확장 JSON 파일 3개를 `~/.pi/agent`에 연결합니다. `zentui.json`은 `choco-pi-ui.json`이라는 이름으로 연결됩니다.
+`npm run install:profile`(독립 실행형 명령은 `choco-pi self setup`)은 정책 파일, `subagents.json`, `choco-pi-codex.json`, `models.json`, `keybindings.json`, 에이전트 정의, 확장 JSON 파일 3개를 `~/.pi/agent`에 연결합니다. `zentui.json`은 `choco-pi-ui.json`이라는 이름으로 연결됩니다.
 기존 `~/.pi/agent/extensions/background-compaction.json`도 현재 구조로 이전합니다. 백엔드 스위치는 OpenAI·Anthropic 압축 모드에서 다시 계산하고, `enabled`와 다른 키는 유지하며, 파일이 없으면 만들지 않습니다.
 
 ### 전역 설정 예시
 
 `npm run install:profile`은 `~/.pi/agent/settings.json`을 다시 쓰며, 관리하지 않는
-키는 그대로 둡니다. 체크아웃에는 `.pi/settings.json`이 없으므로 프로필 정책은 이
+키는 그대로 둡니다. `choco-pi self setup`은 같은 설치 프로그램으로
+`~/.choco-pi/agent/settings.json`을 다시 씁니다. 체크아웃에는 `.pi/settings.json`이 없으므로 프로필 정책은 이
 전역 파일 자체에서 가져옵니다. 체크아웃의 `packages` 아래를 가리키는
 `packages` 항목과 `extensions`의 내장 확장 정책이 그 정책입니다. 실행할 때마다
 다음과 같이 처리합니다. 번들 패키지가 하나도 없으면 `scripts/install-profile.ts`의
@@ -399,8 +518,9 @@ Pi 1.0.3부터 `Home`/`End`는 편집기 커서를 이동합니다. 대화 기�
 `fuzzyFileMentions`, `compaction`을 전역 값 위에 덮어쓰며, `modelThinkingLevels`는
 전역 값이 우선하도록 합칩니다.
 
-완성된 전역 파일은 다음과 같습니다. `/path/to/choco-pi`는 실제 체크아웃 경로로
-바꾸세요. `defaultModel`, `modelThinkingLevels`, `enabledModels` 값은 관리자의 현재
+완성된 전역 파일은 다음과 같습니다. `/path/to/choco-pi`는 실제 체크아웃 경로로,
+독립 실행형 명령이라면 `~/.choco-pi/app`의 절대 경로로 바꾸세요.
+`defaultModel`, `modelThinkingLevels`, `enabledModels` 값은 관리자의 현재
 설정입니다. 비밀 값은 이 파일에 두지 마세요.
 
 ```json
@@ -564,7 +684,26 @@ advisor 설정은 별도 파일인 `~/.pi/agent/advisor.json`에 두며, 프로�
 [호환성 기준](docs/zed-acp-compatibility.md), [명령 호환 목록](docs/zed-command-parity.md),
 [런타임 E2E 증거](docs/zed-e2e-evidence.md)에 검증된 내용이 기록되어 있습니다.
 
+독립 실행형 명령에서는 안내서의 [독립 실행형 설치 절](docs/zed-setup.md#standalone-install-choco-pi-launcher)처럼
+`choco-pi self acp`로 Zed 설정을 실행하세요. 설정에는 실행기와 Node.js의 절대 경로가
+기록되므로, 설치 위치를 옮긴 뒤에는 설정을 다시 실행하세요.
+
 ## 개발 검증
+
+이 체크아웃에서 Pi를 시작해도 체크아웃의 프로필은 불러오지 않습니다. 확장, 스킬,
+프롬프트가 `.pi/`에서 `profile/`로 옮겨져 Pi가 여기서 프로젝트 리소스를 찾지 않기
+때문입니다. 대신 에이전트 디렉터리를 통해 불러오세요. `npm run install:profile`로
+`~/.pi/agent`(또는 `--agent-dir <dir>`로 지정한 디렉터리)에 설치하거나, 체크아웃의
+실행기를 별도 홈과 함께 쓰면 됩니다.
+
+```sh
+export CHOCO_PI_HOME="$HOME/.choco-pi-dev"
+bin/choco-pi self setup
+bin/choco-pi
+```
+
+`CHOCO_PI_HOME`이 없으면 체크아웃에서 시작한 실행기도 독립 실행형 설치의 홈인
+`~/.choco-pi`를 씁니다.
 
 루트 검증 절차를 실행하세요. 에이전트의 도구 호출을 포함해 Pi가 시작한 셸에서는 `pnpm test` 전에 Pi가 내보내는 세션 변수를 해제해야 합니다. 그러지 않으면 서브 에이전트 scratch 디렉터리 테스트가 실패합니다.
 
@@ -574,6 +713,8 @@ pnpm fmt:check
 pnpm typecheck
 env -u PI_ROOT_SESSION_ID -u PI_SCRATCH_DIR -u PI_SESSION_ID -u PI_CODING_AGENT -u PI_MANAGED_INSTALL_ROOT pnpm test
 ```
+
+`pnpm typecheck`는 루트와 `tsconfig.json`이 있는 각 패키지를 검사하고, `pnpm test`는 `tests/`와 모든 `packages/*/tests/`를 실행합니다.
 
 `pnpm test`는 Java와 TLC를 띄우는 `tests/formal/`의 formal 검증 테스트를 실행하지 않습니다. `pnpm test --formal`이 이 테스트를 함께 실행하며, `formal/`, `formal-verify` 스킬, 또는 그 테스트를 고칠 때만 필요합니다.
 

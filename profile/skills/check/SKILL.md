@@ -21,7 +21,7 @@ Never read or print `auth.json`, API keys, OAuth tokens, environment secrets, or
 
 Core readiness requires Node `>=24` and an actual runtime source of a stable Pi release in `>=1.5.2 <1.6.0`, matching the repository's `~1.5.2` SDK range. In-host checks name `active-host`; standalone checks name `imported-sdk`. Older releases, a new minor or major release, prereleases, and missing or malformed actual runtime versions fail; a new minor release must be reviewed before the range moves. A different or unavailable direct PATH launcher does not override a verified runtime and warns only in a full diagnostic.
 
-The `builtin-extensions` check requires `-builtin:codemode` and `-builtin:tool-search` and warns if project settings exclude `builtin:mcp`. In-host, it requires choco-pi's `tool_search` (registered by `profile/extensions/tool-search.ts`) and warns if custom `mcp` or `mcpScript` adapter tools or built-in codemode or tool-search resources are registered. choco-pi keeps its own `exec` code-mode bridge and `tool_search`, and uses Pi's built-in MCP. Pi does not expose extension load warnings to extensions; when this check warns, ask the user what `[Extension issues]` reported at startup. Run `pnpm install:profile` to carry the policy into the global settings.
+The `builtin-extensions` check requires `-builtin:codemode` and `-builtin:tool-search` and warns if project settings exclude `builtin:mcp`. In-host, it requires choco-pi's `tool_search` (registered by `profile/extensions/tool-search.ts`) and warns if custom `mcp` or `mcpScript` adapter tools or built-in codemode or tool-search resources are registered. choco-pi keeps its own `exec` code-mode bridge and `tool_search`, and uses Pi's built-in MCP. Pi does not expose extension load warnings to extensions; when this check warns, ask the user what `[Extension issues]` reported at startup. Run `pnpm install:profile` (or `choco-pi self setup` for a `choco-pi` launcher install) to carry the policy into the global settings.
 
 The host tool also reports `profile_marker` for `<agentDir>/choco-pi/profile.json`,
 where `agentDir` is `PI_CODING_AGENT_DIR` or `~/.pi/agent`. Its status is `valid`,
@@ -31,7 +31,7 @@ revision (possibly null), installation time, observed Pi version and launcher
 invalid, points to a different checkout, has no launcher, or its launcher no longer
 reports a version in `>=1.5.2 <1.6.0`. This is installation evidence, not proof that the active
 host loaded the bridge. A missing or invalid marker can be repaired with
-an approved `pnpm install:profile` run; the standalone fallback does not report it.
+an approved `pnpm install:profile` or `choco-pi self setup` run; the standalone fallback does not report it.
 
 A successful automatic check may be reused within the same session only while its relevant runtime, configuration, resources, and required live tools remain unchanged. Always rerun a fresh explicit `/check`.
 
@@ -40,7 +40,7 @@ A successful automatic check may be reused within the same session only while it
 Run only additions required by the current task:
 
 - Browser work: run `agent-browser --version` and the repository-documented browser doctor. Its absence blocks only browser work.
-- MCP work: validate `~/.pi/agent/mcp.json` syntax and inspect `/mcp` status without starting unrelated servers. Report a project `.pi/mcp.json` as a duplicate configuration source rather than treating it as the expected location.
+- MCP work: validate `<agentDir>/mcp.json` syntax (`~/.pi/agent/mcp.json` by default) and inspect `/mcp` status without starting unrelated servers. Report a project `.pi/mcp.json` as a duplicate configuration source rather than treating it as the expected location.
 - Provider setup: use Pi's status or model-listing commands for the named provider without displaying credentials.
 - Repository work: run any additional environment gate explicitly required by applicable `AGENTS.md`.
 

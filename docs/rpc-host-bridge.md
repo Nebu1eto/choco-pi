@@ -6,7 +6,8 @@ progress frames to RPC stdout. It does not replace Pi's RPC protocol.
 
 ## Identify and launch the profile
 
-`pnpm install:profile` writes `<agentDir>/choco-pi/profile.json`. The marker
+`pnpm install:profile`, or `choco-pi self setup` for the standalone command,
+writes `<agentDir>/choco-pi/profile.json`. The marker
 identifies the profile and records the checkout, revision, installation time,
 observed Pi version, launcher, and bridge schema:
 

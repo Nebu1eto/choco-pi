@@ -34,7 +34,7 @@ Credentials are resolved in this order:
 
 ### Install Extension
 
-In choco-pi, `.pi/settings.json` loads this package as `./packages/choco-pi-provider-synthetic`; the root README's installation steps add it to the global profile. Do not also install the upstream `npm:@aliou/pi-synthetic` package.
+In choco-pi, the profile installer lists this package by absolute path (`<checkout>/packages/choco-pi-provider-synthetic`) in the agent directory's `settings.json`; either installation method in the root README adds it. Do not also install the upstream `npm:@aliou/pi-synthetic` package.
 
 ## Usage
 
@@ -174,7 +174,7 @@ See `AGENTS.md` for the full model entry shape and the update workflow.
 
 ## Development
 
-The repository root's `npm run install:vendored` installs this package's dependencies from its lockfile. Run the package scripts from this directory:
+This package is a member of the repository's pnpm workspace: `pnpm install --frozen-lockfile` at the repository root installs its dependencies from the root `pnpm-lock.yaml`. Run the package scripts from this directory:
 
 ```bash
 # Type check
