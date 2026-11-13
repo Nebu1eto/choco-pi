@@ -3333,6 +3333,30 @@ test("mouse: a press puts the cursor on a line, drags select lines of one side, 
   await mounted.close();
 });
 
+test("the open file's row stays pinned on the first diff row while its body scrolls; a click on it goes to the file", async () => {
+  const mounted = await mountReview({ terminalRows: 12, ...mixedReviewFixture() });
+  const frame = () => mounted.component.render(100).map(stripTerminalSequences);
+  const fileRows = (rows: string[]) =>
+    rows.flatMap((row, index) => (row.includes("M src/mixed.ts") ? [index] : []));
+  const atTop = frame();
+  const firstDiffRow = fileRows(atTop)[0];
+  assert.ok(firstDiffRow !== undefined, atTop.join("\n"));
+  for (let step = 0; step < 8; step += 1) mounted.component.handleInput?.("j");
+  const scrolled = frame();
+  assert.match(scrolled.join("\n"), /↑[1-9]/u, "the diff scrolled");
+  assert.deepEqual(fileRows(scrolled), [firstDiffRow], scrolled.join("\n"));
+  assert.ok(
+    scrolled.some((row) => row.includes("«") || /▶|❯/u.test(row)),
+    "the cursor is still drawn below the pinned row",
+  );
+  mounted.component.handleMouse?.(mouseOn(mounted, firstDiffRow));
+  const after = frame();
+  assert.deepEqual(fileRows(after), [firstDiffRow], "back at the file's own row");
+  assert.match(after.join("\n"), /↑0 /u, "scrolled back to the file's own row");
+  assert.match(after.join("\n"), /const before = 1;/u, "the click did not fold the file");
+  await mounted.close();
+});
+
 test("mouse: every left press on the diff is taken so Pi selects and copies nothing there; the rest is Pi's", async () => {
   const mounted = await mountReview({ terminalRows: 30, ...mixedReviewFixture() });
   const mouse = (event: TuiMouseEvent) => mounted.component.handleMouse?.(event);

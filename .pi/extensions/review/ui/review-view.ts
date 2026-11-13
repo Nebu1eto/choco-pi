@@ -2333,13 +2333,19 @@ export async function openReviewView(
             // a comment drawn above it can still move it, so check once more here.
             const cursorRow = changes.selectionRow();
             if (lastBodyHeight > 0) {
-              if (cursorRow < scrollTop) scrollTop = cursorRow;
-              else if (cursorRow >= scrollTop + lastBodyHeight) {
+              // At the top, a line inside a file's block sits under the file's pinned row.
+              const covered = changes.coveredAtTop(cursorRow);
+              if (cursorRow < scrollTop || (covered && cursorRow === scrollTop)) {
+                scrollTop = covered ? cursorRow - 1 : cursorRow;
+              } else if (cursorRow >= scrollTop + lastBodyHeight) {
                 scrollTop = cursorRow - lastBodyHeight + 1;
               }
             }
             scrollTop = Math.max(0, Math.min(Math.max(0, body.length - lastBodyHeight), scrollTop));
             const visibleDiff = body.slice(scrollTop, scrollTop + lastBodyHeight);
+            // The open file's row stays on the first visible line while its body scrolls under it.
+            const pinned = changes.stickyRow(scrollTop);
+            if (pinned !== undefined && visibleDiff.length > 0) visibleDiff[0] = pinned;
             const hiddenBelow = Math.max(0, body.length - (scrollTop + visibleDiff.length));
             while (visibleDiff.length < lastBodyHeight) visibleDiff.push("");
 

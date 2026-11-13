@@ -807,6 +807,11 @@ export class ChangesView implements PaneSurface {
     return entry?.row;
   }
 
+  /** True when body row `row`, scrolled to the top, would be covered by its file's pinned row. */
+  coveredAtTop(row: number): boolean {
+    return this.blockUnder(row) !== undefined;
+  }
+
   private findings(): FindingsIndex {
     const snapshot = this.state.kind === "ready" ? this.state.snapshot : undefined;
     const key = `${this.recordedVersion}\u0000${this.commentsVersion}\u0000${snapshot?.revision ?? -1}`;
