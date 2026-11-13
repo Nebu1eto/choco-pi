@@ -11,6 +11,10 @@
  *   this version was already offered, so it is never added again, whether the
  *   user kept, changed or deleted it. A newer seed adds only its new keys.
  * - `seeded`: the keys a setup wrote, or was about to write.
+ * - `values`: the value each of those keys was given. `self setup
+ *   --import-pi-settings` replaces a key only while it still holds exactly
+ *   this value. A state written before this field existed falls back to the
+ *   current seed file's value.
  *
  * Seeding is at most once per key: the state naming the keys about to be
  * added is persisted before settings.json is written. If that settings write
@@ -31,16 +35,24 @@ import {
   compile,
   int,
   lit,
+  map,
+  nul,
+  num,
   obj,
   oneOf,
   opt,
+  recursive,
   str,
   union,
   type Schema,
   type Static,
 } from "@earendil-works/pi-schema";
 
-import { isJsonRecord, type JsonRecord } from "../../profile/extensions/lib/runtime-values.ts";
+import {
+  isJsonRecord,
+  type JsonRecord,
+  type JsonValue,
+} from "../../profile/extensions/lib/runtime-values.ts";
 
 export const SETTINGS_SEED_FILE = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -84,10 +96,16 @@ const SeedFileSchema = obj({
 const isSeedFile = compile(SeedFileSchema).check;
 export type SettingsSeed = Static<typeof SeedFileSchema>;
 
+/** Any JSON value. */
+export const JsonValueSchema = recursive<JsonValue>("JsonValue", (value) =>
+  union([nul(), bool(), num(), str(), arr(value), map(value)]),
+);
+
 const SeedStateSchema = obj({
   schema: lit(1),
   version: int({ minimum: 0 }),
   seeded: arr(str()),
+  values: opt(map(JsonValueSchema)),
 });
 const isSeedState = compile(SeedStateSchema).check;
 type SeedState = Static<typeof SeedStateSchema>;
@@ -123,7 +141,7 @@ export function seedStatePath(agentDir: string): string {
   return path.join(agentDir, "choco-pi", "settings-seed.json");
 }
 
-async function readOptional(file: string): Promise<string | null> {
+export async function readOptional(file: string): Promise<string | null> {
   try {
     return await readFile(file, "utf8");
   } catch (error) {
@@ -147,7 +165,7 @@ async function readSeedState(file: string): Promise<SeedState | null> {
 }
 
 /** Writes `text` to `file` through a temporary file and a rename. */
-async function writeTextAtomically(file: string, text: string): Promise<void> {
+export async function writeTextAtomically(file: string, text: string): Promise<void> {
   await mkdir(path.dirname(file), { recursive: true });
   const temporary = `${file}.${process.pid}.seed.tmp`;
   try {
@@ -160,8 +178,45 @@ async function writeTextAtomically(file: string, text: string): Promise<void> {
 }
 
 /** The installer's settings.json format (install-profile.ts writeSettings). */
-function jsonText(value: JsonRecord | SeedState): string {
+export function jsonText(value: JsonValue): string {
   return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+/** `<agentDir>/settings.json` as an object; an absent file is empty. */
+export async function readAgentSettings(agentDir: string): Promise<JsonRecord> {
+  const settingsPath = path.join(agentDir, "settings.json");
+  const settingsText = await readOptional(settingsPath);
+  if (settingsText === null) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(settingsText);
+  } catch (error) {
+    throw new Error(`${settingsPath} does not contain valid JSON`, { cause: error });
+  }
+  if (!isJsonRecord(parsed)) throw new Error(`${settingsPath} is not a JSON object`);
+  return parsed;
+}
+
+/**
+ * The value the seed gave each key it seeded in `agentDir`: the recorded
+ * value, or for a state from before values were recorded, the value `seed`
+ * holds now. Empty when no seed was applied.
+ */
+export async function seededValues(
+  agentDir: string,
+  seed: SettingsSeed,
+): Promise<Map<string, JsonValue>> {
+  const state = await readSeedState(seedStatePath(agentDir));
+  const values = new Map<string, JsonValue>();
+  for (const key of state?.seeded ?? []) {
+    if (state?.values !== undefined && Object.hasOwn(state.values, key))
+      values.set(key, state.values[key]);
+    else {
+      const entry = Object.entries(seed.settings).find(([name]) => name === key)?.[1];
+      if (entry !== undefined) values.set(key, entry.value);
+    }
+  }
+  return values;
 }
 
 export type SeedResult = {
@@ -181,31 +236,22 @@ export async function applySettingsSeed(agentDir: string, seed: SettingsSeed): P
   const settingsPath = path.join(agentDir, "settings.json");
   const statePath = seedStatePath(agentDir);
   const state = await readSeedState(statePath);
-  const settingsText = await readOptional(settingsPath);
-  let settings: JsonRecord = {};
-  if (settingsText !== null) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(settingsText);
-    } catch (error) {
-      throw new Error(`${settingsPath} does not contain valid JSON`, { cause: error });
-    }
-    if (!isJsonRecord(parsed)) throw new Error(`${settingsPath} is not a JSON object`);
-    settings = parsed;
-  }
+  const settings = await readAgentSettings(agentDir);
   const appliedVersion = state?.version ?? 0;
   const seeded = new Set(state?.seeded ?? []);
+  const values: JsonRecord = { ...state?.values };
   const added: string[] = [];
   for (const [key, entry] of Object.entries(seed.settings)) {
     if (entry === undefined || entry.since <= appliedVersion || seeded.has(key)) continue;
     if (Object.hasOwn(settings, key)) continue;
     settings[key] = entry.value;
+    values[key] = entry.value;
     added.push(key);
     seeded.add(key);
   }
   const version = Math.max(appliedVersion, seed.version);
   if (state === null || version !== state.version || added.length > 0) {
-    const next: SeedState = { schema: 1, version, seeded: [...seeded] };
+    const next: SeedState = { schema: 1, version, seeded: [...seeded], values };
     await writeTextAtomically(statePath, jsonText(next));
   }
   if (added.length > 0) await writeTextAtomically(settingsPath, jsonText(settings));

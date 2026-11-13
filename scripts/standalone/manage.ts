@@ -595,11 +595,20 @@ function requireContract(): Contract {
 }
 
 export async function setupCommand(args: readonly string[]): Promise<void> {
-  parseFlags(args, [], []);
+  const flags = parseFlags(args, ["--from"], ["--import-pi-settings", "--force"]);
+  const importing = flags.switches.has("--import-pi-settings");
+  if (!importing && (flags.values.has("--from") || flags.switches.has("--force")))
+    throw new UsageError("--from and --force apply only with --import-pi-settings");
   const { home, launcher } = requireContract();
+  const agentDir = path.join(home, "agent");
+  // The only standalone step that reads ~/.pi, and only when asked for. A
+  // repeated import is refused before setup changes anything.
+  const settingsImport = importing ? await import("./settings-import.ts") : null;
+  const importSource = settingsImport?.importSourcePath(flags.values.get("--from")) ?? null;
+  if (settingsImport !== null)
+    await settingsImport.assertImportAllowed(agentDir, flags.switches.has("--force"));
   await assertPiBinEntry(APP_ROOT);
   const { installProfile } = await import("../install-profile.ts");
-  const agentDir = path.join(home, "agent");
   const result = await installProfile({
     root: APP_ROOT,
     agentDir,
@@ -616,6 +625,12 @@ export async function setupCommand(args: readonly string[]): Promise<void> {
   const { applySettingsSeed, readSettingsSeed } = await import("./settings-seed.ts");
   const seed = await applySettingsSeed(agentDir, await readSettingsSeed());
   if (seed.added.length > 0) console.log(`seeded: ${seed.added.join(", ")}`);
+  if (settingsImport !== null && importSource !== null) {
+    const imported = await settingsImport.importPiSettings(agentDir, importSource, {
+      force: flags.switches.has("--force"),
+    });
+    for (const line of settingsImport.importReport(imported)) console.log(line);
+  }
   await launcherVersionMatches(home, APP_ROOT, null);
   if (seed.firstSeed) process.stdout.write(nextStepsHint(home));
 }
@@ -632,6 +647,9 @@ export function nextStepsHint(home: string): string {
       `sign in to a provider (stored only in ${path.join(home, "agent", "auth.json")})`,
     ),
     step("/preferences", "change language, style, persona and other preferences"),
+    "",
+    "Optional: choco-pi self setup --import-pi-settings copies your preferences once from",
+    "~/.pi/agent/settings.json (only that file; never login, sessions, trust, MCP or packages).",
     "",
   ].join("\n");
 }
@@ -916,6 +934,9 @@ export const USAGE = `Usage: choco-pi [pi arguments...]
 
 Management commands:
   self setup                 Install the choco-pi profile into $CHOCO_PI_HOME/agent (idempotent)
+  self setup --import-pi-settings [--from FILE] [--force]
+                             Also copy preferences once from ~/.pi/agent/settings.json
+                             (or FILE); the only command that reads ~/.pi
   self update [--ref REF]    Fast-forward the app, reinstall dependencies, run setup
   self uninstall [--purge]   Remove what install.json records; keeps agent/ and lsp/ unless --purge
   self env [--json] [NAME...] Print the launcher environment contract (and the named variables)

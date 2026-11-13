@@ -144,6 +144,9 @@ test("a fresh standalone agent directory gets exactly the seed keys, once", asyn
     schema: 1,
     version: seed.version,
     seeded: Object.keys(seed.settings),
+    values: Object.fromEntries(
+      Object.entries(seed.settings).map(([key, entry]) => [key, entry?.value]),
+    ),
   });
   const before = await readFile(path.join(agentDir, "settings.json"), "utf8");
   const second = await applySettingsSeed(agentDir, seed);
@@ -214,6 +217,7 @@ test("a newer seed version adds only the keys new in that version", async (t) =>
     schema: 1,
     version: 2,
     seeded: ["theme", "cacheWarming"],
+    values: { theme: "nord-dark", cacheWarming: "streaming" },
   });
   assert.deepEqual((await applySettingsSeed(agentDir, v1)).added, [], "an older seed adds nothing");
   assert.equal((await readJson(seedStatePath(agentDir))).version, 2);
@@ -272,6 +276,9 @@ test("a failed settings write after the state was saved is not retried: under-se
     schema: 1,
     version: seed.version,
     seeded: Object.keys(seed.settings),
+    values: Object.fromEntries(
+      Object.entries(seed.settings).map(([key, entry]) => [key, entry?.value]),
+    ),
   });
   // At most once: the keys were offered, so a retry leaves them unseeded.
   assert.deepEqual(await applySettingsSeed(agentDir, seed), {

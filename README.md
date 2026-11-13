@@ -88,7 +88,7 @@ new in that version. What was offered is recorded in
 `~/.choco-pi/agent/choco-pi/settings-seed.json`. Change the values in
 `settings.json` or through `/preferences` and Pi's `/settings`.
 
-Nothing is imported from `pi` or `~/.pi`. Values that depend on your provider
+Setup imports nothing from `pi` or `~/.pi` unless you ask (see below). Values that depend on your provider
 or are personal are left unset: `defaultProvider`, `defaultModel`,
 `defaultThinkingLevel`, `enabledModels`, `agentLanguage`, `sessionAutoNameModel`, and
 `hooks`. The standalone setup writes no `enabledModels` scope, because Pi warns
@@ -96,6 +96,31 @@ at every start about each scoped model whose provider has no login yet. After
 `/login`, set a scope with `/scoped-models` if you want one. The first setup
 ends with these next steps: start `choco-pi`, run `/login` (credentials are
 stored only in `~/.choco-pi/agent/auth.json`), and open `/preferences`.
+
+#### Optional: import your `pi` preferences once
+
+```sh
+choco-pi self setup --import-pi-settings [--from FILE] [--force]
+```
+
+This is the only standalone command that reads `~/.pi`, and only when you run
+it. It reads exactly one file, `$HOME/.pi/agent/settings.json` (or `FILE`),
+and copies preference keys that Pi 1.5.2 or choco-pi itself reads, such as
+`theme`, `defaultModel`, `modelThinkingLevels`, `agentLanguage` and
+`agentStyle`, each checked against the value its reader accepts. It never
+copies paths, commands, identities, trust or credentials (`packages`,
+`extensions`, `skills`, `prompts`, `hooks`, `deviceId`, changelog markers,
+`defaultProjectTrust`, `httpProxy`, and similar), and it never opens
+`auth.json`, `sessions/`, `trust.json`, `mcp.json`, `models.json` or any
+other file under `~/.pi`.
+
+A value you set in choco-pi always wins: a key is copied only when
+`~/.choco-pi/agent/settings.json` lacks it or still holds the first-run seed
+value, and a `modelThinkingLevels` entry only replaces a profile default. The
+run prints the copied, skipped and kept key names (never values) and records
+itself in `~/.choco-pi/agent/choco-pi/settings-import.json`. A second run
+refuses unless you pass `--force`, which still leaves every key an earlier
+import set, or you changed, as it is.
 
 #### Update and uninstall
 
@@ -114,14 +139,15 @@ while it still points to this launcher), `app/`, `runtime/`, and `install.json`.
 It keeps `agent/` (login, sessions, settings) and `lsp/`;
 `choco-pi self uninstall --purge` removes them too. It never touches `~/.pi`.
 
-| Command                              | Purpose                                                       |
-| ------------------------------------ | ------------------------------------------------------------- |
-| `choco-pi self setup`                | Reinstall the profile into `~/.choco-pi/agent` (idempotent)   |
-| `choco-pi self runtime [node\|bun]`  | Show the runtime Pi runs on, or set it                        |
-| `choco-pi self env`                  | Print the launcher's environment contract                     |
-| `choco-pi self exec <cmd> [args...]` | Run a command under that environment                          |
-| `choco-pi self acp [args...]`        | Run the ACP adapter for editors ([Zed](#use-choco-pi-in-zed)) |
-| `choco-pi self help`                 | List the `self` commands                                      |
+| Command                                    | Purpose                                                           |
+| ------------------------------------------ | ----------------------------------------------------------------- |
+| `choco-pi self setup`                      | Reinstall the profile into `~/.choco-pi/agent` (idempotent)       |
+| `choco-pi self setup --import-pi-settings` | Optionally copy preferences once from `~/.pi/agent/settings.json` |
+| `choco-pi self runtime [node\|bun]`        | Show the runtime Pi runs on, or set it                            |
+| `choco-pi self env`                        | Print the launcher's environment contract                         |
+| `choco-pi self exec <cmd> [args...]`       | Run a command under that environment                              |
+| `choco-pi self acp [args...]`              | Run the ACP adapter for editors ([Zed](#use-choco-pi-in-zed))     |
+| `choco-pi self help`                       | List the `self` commands                                          |
 
 The launcher intercepts only `self` followed by one of these verbs as the first
 two arguments. Everything else goes to Pi unchanged, for example
@@ -155,7 +181,9 @@ preloads, and Bun's auto-install do not reach Pi.
 
 The standalone command keeps its own login (`auth.json`), sessions, settings,
 trust decisions, MCP configuration, and caches under `~/.choco-pi`, and never
-reads or writes `~/.pi`. Where this README names a path under `~/.pi/agent`,
+writes `~/.pi`. It reads `~/.pi` only through the optional
+`self setup --import-pi-settings`, which reads `~/.pi/agent/settings.json` and
+nothing else. Where this README names a path under `~/.pi/agent`,
 the standalone command uses the same path under `~/.choco-pi/agent`
 (`$CHOCO_PI_HOME/agent`).
 

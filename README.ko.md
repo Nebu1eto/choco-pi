@@ -87,13 +87,36 @@ choco-pi
 제시한 내용은 `~/.choco-pi/agent/choco-pi/settings-seed.json`에 기록됩니다. 값은
 `settings.json`에서 직접 바꾸거나 `/preferences`와 Pi의 `/settings`로 바꿉니다.
 
-`pi`나 `~/.pi`에서는 아무것도 가져오지 않습니다. 공급자에 따라 달라지거나 개인적인
+요청하지 않으면 설정은 `pi`나 `~/.pi`에서 아무것도 가져오지 않습니다(아래 참고). 공급자에 따라 달라지거나 개인적인
 값은 비워 둡니다: `defaultProvider`, `defaultModel`, `defaultThinkingLevel`,
 `enabledModels`, `agentLanguage`, `sessionAutoNameModel`, `hooks`. 독립 실행형 설정은
 `enabledModels` 범위를 쓰지 않습니다. 로그인하지 않은 공급자의 모델이 범위에 있으면 Pi가
 시작할 때마다 경고하기 때문입니다. `/login` 후 원하면 `/scoped-models`로 범위를
 정하세요. 첫 설정은 마지막에 다음 단계를 안내합니다: `choco-pi` 실행, `/login`(인증
 정보는 `~/.choco-pi/agent/auth.json`에만 저장), `/preferences` 열기.
+
+#### 선택: `pi` 환경설정을 한 번 가져오기
+
+```sh
+choco-pi self setup --import-pi-settings [--from FILE] [--force]
+```
+
+독립 실행형 명령 중 `~/.pi`를 읽는 것은 이 명령뿐이며, 직접 실행할 때만 읽습니다.
+읽는 파일은 `$HOME/.pi/agent/settings.json`(또는 `FILE`) 하나뿐입니다. Pi 1.5.2나
+choco-pi가 읽는 환경설정 키(`theme`, `defaultModel`, `modelThinkingLevels`,
+`agentLanguage`, `agentStyle` 등)만 복사하며, 각 값은 그 키를 읽는 코드가 받는
+값인지 확인합니다. 경로, 명령, 식별자, 신뢰 결정, 자격 증명(`packages`,
+`extensions`, `skills`, `prompts`, `hooks`, `deviceId`, 변경 기록 표시,
+`defaultProjectTrust`, `httpProxy` 등)은 복사하지 않고, `auth.json`,
+`sessions/`, `trust.json`, `mcp.json`, `models.json`을 비롯한 `~/.pi`의 다른
+파일은 열지 않습니다.
+
+choco-pi에서 정한 값이 항상 우선합니다. 키는 `~/.choco-pi/agent/settings.json`에
+없거나 아직 첫 실행 시드 값일 때만 복사하고, `modelThinkingLevels` 항목은 프로필
+기본값일 때만 바꿉니다. 실행하면 복사한 키, 건너뛴 키, 유지한 키의 이름만(값은
+출력하지 않음) 보여 주고 `~/.choco-pi/agent/choco-pi/settings-import.json`에
+기록합니다. 두 번째 실행은 `--force` 없이는 거부하며, `--force`를 주어도 이전에
+가져왔거나 사용자가 바꾼 키는 그대로 둡니다.
 
 #### 업데이트와 제거
 
@@ -112,14 +135,15 @@ choco-pi self uninstall
 세션, 설정)와 `lsp/`는 남기며, `choco-pi self uninstall --purge`는 이 둘도
 제거합니다. `~/.pi`는 건드리지 않습니다.
 
-| 명령                                 | 용도                                                        |
-| ------------------------------------ | ----------------------------------------------------------- |
-| `choco-pi self setup`                | 프로필을 `~/.choco-pi/agent`에 다시 설치(idempotent)        |
-| `choco-pi self runtime [node\|bun]`  | Pi를 실행하는 런타임을 확인하거나 설정                      |
-| `choco-pi self env`                  | 실행기의 환경 계약 출력                                     |
-| `choco-pi self exec <cmd> [args...]` | 그 환경에서 명령 실행                                       |
-| `choco-pi self acp [args...]`        | 에디터용 ACP 어댑터 실행([Zed](#zed에서-choco-pi-사용하기)) |
-| `choco-pi self help`                 | `self` 명령 목록 출력                                       |
+| 명령                                       | 용도                                                            |
+| ------------------------------------------ | --------------------------------------------------------------- |
+| `choco-pi self setup`                      | 프로필을 `~/.choco-pi/agent`에 다시 설치(idempotent)            |
+| `choco-pi self setup --import-pi-settings` | 선택: `~/.pi/agent/settings.json`에서 환경설정을 한 번 가져오기 |
+| `choco-pi self runtime [node\|bun]`        | Pi를 실행하는 런타임을 확인하거나 설정                          |
+| `choco-pi self env`                        | 실행기의 환경 계약 출력                                         |
+| `choco-pi self exec <cmd> [args...]`       | 그 환경에서 명령 실행                                           |
+| `choco-pi self acp [args...]`              | 에디터용 ACP 어댑터 실행([Zed](#zed에서-choco-pi-사용하기))     |
+| `choco-pi self help`                       | `self` 명령 목록 출력                                           |
 
 실행기는 처음 두 인자가 `self`와 이 동사 중 하나일 때만 가로챕니다. 나머지는
 `choco-pi --version`이나 `choco-pi --mode rpc`처럼 그대로 Pi에 전달됩니다.
@@ -151,7 +175,9 @@ Bun을 쓰더라도 Node.js는 필요합니다. 설치 프로그램, `self acp`�
 #### `pi`와의 분리
 
 독립 실행형 명령은 로그인(`auth.json`), 세션, 설정, 신뢰 결정, MCP 설정, 캐시를
-`~/.choco-pi` 아래에 따로 두며 `~/.pi`를 읽거나 쓰지 않습니다. 이 README가
+`~/.choco-pi` 아래에 따로 두며 `~/.pi`에 쓰지 않습니다. `~/.pi`는 선택 명령
+`self setup --import-pi-settings`로만 읽으며, 그때도 `~/.pi/agent/settings.json`
+하나만 읽습니다. 이 README가
 `~/.pi/agent` 아래 경로를 말할 때, 독립 실행형 명령은 `~/.choco-pi/agent`
 (`$CHOCO_PI_HOME/agent`) 아래의 같은 경로를 씁니다.
 
