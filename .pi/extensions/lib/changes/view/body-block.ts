@@ -139,6 +139,8 @@ export type BodyBlockInput = {
   inverted?: ReadonlyMap<string, ReadonlySet<number>>;
   /** Text appended to a hunk's header row. */
   headerSuffix?: (hunkId: string) => string | undefined;
+  /** `▾ `/`▸ ` before a hunk's header row, as a file row has, when hunks fold. */
+  foldMarker?: (hunkId: string) => string | undefined;
   /** In the order to place them; annotations at the same place keep this order. */
   annotations?: readonly BodyAnnotation[];
 };
@@ -209,10 +211,12 @@ export function bodyBlock(input: BodyBlockInput): BodyBlock {
     part.lines.forEach((line, row) => {
       rows.set(row, lines.length);
       const suffix = row === 0 ? input.headerSuffix?.(hunk.id) : undefined;
+      const marker = row === 0 ? input.foldMarker?.(hunk.id) : undefined;
+      const lead = marker === undefined ? prefix : `${prefix}${marker} `;
       // An inverted row is inverted whole, gutter included, so a selection reads as one block.
       const drawn = suffix
-        ? truncateToWidth(`${prefix}${line} ${suffix}`, width, "…")
-        : fitted(part, row, prefix, width);
+        ? truncateToWidth(`${lead}${line} ${suffix}`, width, "…")
+        : fitted(part, row, lead, width);
       lines.push(inverted?.has(row) ? styler.inverse(drawn) : drawn);
       for (const index of after.get(row) ?? []) emit(index);
     });

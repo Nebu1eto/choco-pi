@@ -29,7 +29,7 @@ import type {
 } from "@earendil-works/pi-tui";
 import { HStack, ScrollView, VStack } from "@earendil-works/pi-tui";
 import { BORDER_WIDTH, canHostPane, widthFromBorderColumn } from "./geometry.ts";
-import { guardSurface, pinRow, type GuardedSurface } from "./guard.ts";
+import { guardSurface, pinRows, type GuardedSurface } from "./guard.ts";
 import { inspectHostRoot, readLayoutRoot, type DockableLayout } from "./layout.ts";
 import type { HostCallbacks, PaneSurface } from "../../lib/changes/view/surface.ts";
 import type { PaneHost, PaneTui } from "./types.ts";
@@ -69,7 +69,7 @@ class PaneBody implements Component, Focusable {
     // again; clamping the same way puts the pinned row on the first visible line.
     const { top, height } = this.viewport();
     const first = Math.max(0, Math.min(top, lines.length - height));
-    return pinRow(lines, first, this.surface.stickyRow(first));
+    return pinRows(lines, first, this.surface.stickyRows(first, height));
   }
 
   handleInput(data: string): void {

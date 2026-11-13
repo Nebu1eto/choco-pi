@@ -2333,19 +2333,22 @@ export async function openReviewView(
             // a comment drawn above it can still move it, so check once more here.
             const cursorRow = changes.selectionRow();
             if (lastBodyHeight > 0) {
-              // At the top, a line inside a file's block sits under the file's pinned row.
-              const covered = changes.coveredAtTop(cursorRow);
-              if (cursorRow < scrollTop || (covered && cursorRow === scrollTop)) {
-                scrollTop = covered ? cursorRow - 1 : cursorRow;
+              // The rows pinned at the top cover the rows under them: keep the cursor below them.
+              const covered = changes.pinnedRowCount(scrollTop, lastBodyHeight);
+              if (cursorRow < scrollTop + covered) {
+                scrollTop = changes.topShowing(cursorRow, lastBodyHeight);
               } else if (cursorRow >= scrollTop + lastBodyHeight) {
                 scrollTop = cursorRow - lastBodyHeight + 1;
               }
             }
             scrollTop = Math.max(0, Math.min(Math.max(0, body.length - lastBodyHeight), scrollTop));
             const visibleDiff = body.slice(scrollTop, scrollTop + lastBodyHeight);
-            // The open file's row stays on the first visible line while its body scrolls under it.
-            const pinned = changes.stickyRow(scrollTop);
-            if (pinned !== undefined && visibleDiff.length > 0) visibleDiff[0] = pinned;
+            // The open file's row and its hunk's header stay at the top while the rows under them scroll.
+            if (scrollTop > 0) {
+              changes.stickyRows(scrollTop, lastBodyHeight).forEach((row, index) => {
+                if (index < visibleDiff.length) visibleDiff[index] = row;
+              });
+            }
             const hiddenBelow = Math.max(0, body.length - (scrollTop + visibleDiff.length));
             while (visibleDiff.length < lastBodyHeight) visibleDiff.push("");
 

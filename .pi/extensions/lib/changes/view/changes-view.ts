@@ -192,7 +192,14 @@ type Block = {
   /** Offset of the line to keep visible, when not the file row. */ anchor?: number;
   /** What each row shows, for the mouse: a file row, a hunk header or a line. */
   stops?: Array<CursorRow | undefined>;
+  /** Each drawn hunk's rows: its header's offset and the offset after its last row (its items included). */
+  hunks?: HunkSpan[];
 };
+
+type HunkSpan = { hunkId: string; start: number; end: number };
+
+/** A row drawn over the top of the body while the rows under it scroll: a file's, then its hunk's. */
+type PinnedRow = { row: number; path: string; hunkId?: string };
 
 type FindingsIndex = {
   byPath: Map<string, RecordedFinding[]>;
@@ -379,11 +386,10 @@ export class ChangesView implements PaneSurface {
   private pendingLine: LineTarget | undefined;
   /** An item f/F went to while its file's body was loading. */
   private pendingItem: { path: string; itemId: string } | undefined;
-  /** First body row of each file block as last drawn, for `rowTarget`. */
   /** Each file's block as last drawn: its first row, the file's row as drawn, and the path. */
   private blockRows: Array<{ start: number; block: Block; row: string; path: string }> = [];
-  /** The body row the hosts drew a file's row over in the last frame, for a click on it. */
-  private pinned: { row: number; path: string } | undefined;
+  /** The body rows the hosts drew pinned rows over in the last frame, for a click on them. */
+  private pinned: PinnedRow[] = [];
   /** The host pins file rows (it asked for one); hosts that never ask scroll as before. */
   private pinning = false;
 
@@ -788,28 +794,64 @@ export class ChangesView implements PaneSurface {
   }
 
   /** The file block whose own row is above body row `top` while `top` is still inside it. */
-  private blockUnder(top: number): { start: number; row: string; path: string } | undefined {
+  private blockUnder(
+    top: number,
+  ): { start: number; block: Block; row: string; path: string } | undefined {
     return this.blockRows.find(
       (entry) => entry.start < top && top < entry.start + entry.block.lines.length,
     );
   }
 
   /**
-   * A file's row stays at the top while its open diff scrolls under it: the
-   * row to draw over body row `top` when that row is inside a file's block
-   * and the file's own row has scrolled off. Remembered so a click on it acts
-   * on the file, not on the line it covers.
+   * Rows pinned while body row `top` is the first visible one, at most
+   * `limit`: the file's row once it scrolled off while its block goes on,
+   * then the header of the hunk under it once that header is hidden and the
+   * hunk's rows go on below the pins.
    */
-  stickyRow(top: number): string | undefined {
-    this.pinning = true;
+  private pins(top: number, limit: number): Array<{ text: string; path: string; hunkId?: string }> {
+    if (limit <= 0) return [];
     const entry = this.blockUnder(top);
-    this.pinned = entry ? { row: top, path: entry.path } : undefined;
-    return entry?.row;
+    if (!entry) return [];
+    const pins: Array<{ text: string; path: string; hunkId?: string }> = [
+      { text: entry.row, path: entry.path },
+    ];
+    const span = entry.block.hunks?.find(
+      (hunk) => entry.start + hunk.start <= top && top + 1 < entry.start + hunk.end,
+    );
+    if (span && limit >= 2) {
+      // As drawn by `bodyRows`: behind the one-column selection gutter, cut to the block's width.
+      const header = entry.block.lines[span.start] ?? "";
+      const text = ` ${this.fit(header, Math.max(1, this.lastWidth - 1))}`;
+      pins.push({ text, path: entry.path, hunkId: span.hunkId });
+    }
+    return pins;
   }
 
-  /** True when body row `row`, scrolled to the top, would be covered by its file's pinned row. */
-  coveredAtTop(row: number): boolean {
-    return this.blockUnder(row) !== undefined;
+  /**
+   * The rows to draw over body rows `top`, `top + 1`, … (as of the last
+   * `renderBody`) in a viewport `height` rows tall: the open file's row and
+   * its hunk's header once they scrolled off, so they stay at the top while
+   * the rows under them scroll. At least one row is left unpinned. Remembered
+   * so a click on one acts on its file or hunk, not on the line it covers.
+   */
+  stickyRows(top: number, height: number): string[] {
+    this.pinning = true;
+    const pins = this.pins(top, height - 1);
+    this.pinned = pins.map((pin, index) => ({ ...pin, row: top + index }));
+    return pins.map((pin) => pin.text);
+  }
+
+  /** How many rows are pinned while `top` is the first visible row of a viewport `height` tall. */
+  pinnedRowCount(top: number, height: number): number {
+    return this.pins(top, height - 1).length;
+  }
+
+  /** The highest first visible row that shows body row `line` below the pinned rows. */
+  topShowing(line: number, height: number): number {
+    for (let top = line; top >= Math.max(0, line - height + 1); top -= 1) {
+      if (line >= top + this.pinnedRowCount(top, height)) return top;
+    }
+    return line;
   }
 
   private findings(): FindingsIndex {
@@ -1017,6 +1059,13 @@ export class ChangesView implements PaneSurface {
       stops.push(...(body.stops ?? []));
       block.lines.push(...body.lines);
       if (body.anchor !== undefined) block.anchor = body.anchor + bodyOffset;
+      if (body.hunks) {
+        block.hunks = body.hunks.map((span) => ({
+          ...span,
+          start: span.start + bodyOffset,
+          end: span.end + bodyOffset,
+        }));
+      }
     }
     this.cache.set(key, block);
     // Every cursor position makes a block of its file; only the newest are drawn again.
@@ -1082,8 +1131,13 @@ export class ChangesView implements PaneSurface {
       }
       for (const entry of placed.items) if (entry.place.kind === "end") pushItem(entry);
     };
-    const done = (): Block =>
-      anchor === undefined ? { lines: out, stops } : { lines: out, anchor, stops };
+    const hunkSpans: HunkSpan[] = [];
+    const done = (): Block => {
+      const block: Block = { lines: out, stops };
+      if (anchor !== undefined) block.anchor = anchor;
+      if (hunkSpans.length > 0) block.hunks = hunkSpans;
+      return block;
+    };
     if (!this.canShowContents(file)) {
       // Never quoted: the items are listed, as the contents are not.
       push(note(HIDDEN_CONTENTS, "warning"));
@@ -1168,6 +1222,7 @@ export class ChangesView implements PaneSurface {
     if (line) {
       input.mode = mode;
       const reviewed = this.options.reviewedHunks?.();
+      input.foldMarker = (hunkId) => (this.foldedHunks.has(hunkId) ? "▸" : "▾");
       input.headerSuffix = (hunkId) =>
         reviewed?.has(hunkId) && !this.foldedHunks.has(hunkId)
           ? styler.fg("toolDiffAdded", "✓ reviewed")
@@ -1211,6 +1266,8 @@ export class ChangesView implements PaneSurface {
       const start = block.hunkStart.get(hunk.id) ?? block.lines.length;
       const next = diffFile.hunks[hunkIndex + 1];
       const end = next ? (block.hunkStart.get(next.id) ?? block.lines.length) : block.lines.length;
+      if (start < end)
+        hunkSpans.push({ hunkId: hunk.id, start: out.length, end: out.length + end - start });
       for (let row = start; row < end; row += 1) {
         placedRow[row] = out.length;
         push(block.lines[row] ?? "", blockStops[row]);
@@ -1664,10 +1721,11 @@ export class ChangesView implements PaneSurface {
     const height = scroller.viewportHeight();
     if (height <= 0) return;
     const top = scroller.top();
-    // At the top, a line inside a file's block is covered by the file's pinned row: keep it one below.
-    const covered = this.pinning && this.blockUnder(this.selectedLine) !== undefined;
-    if (this.selectedLine < top || (covered && this.selectedLine === top)) {
-      scroller.scrollTo(covered ? this.selectedLine - 1 : this.selectedLine);
+    const line = this.selectedLine;
+    // The pinned rows at the top cover the rows under them: keep the line below them.
+    const covered = this.pinning ? this.pinnedRowCount(top, height) : 0;
+    if (line < top + covered) {
+      scroller.scrollTo(this.pinning ? this.topShowing(line, height) : line);
     } else if (this.selectedLine >= top + height) scroller.scrollTo(this.selectedLine - height + 1);
   }
 
@@ -1814,9 +1872,27 @@ export class ChangesView implements PaneSurface {
     else this.foldedHunks.delete(hunkId);
     if (this.selectedHunk?.hunkId === hunkId) {
       this.anchorLine = undefined;
-      this.cursorLine = folded ? undefined : 0;
+      // Where headers are stops (the pane), the cursor stays on the header it folded from.
+      this.cursorLine = folded || this.options.hunkStops ? undefined : 0;
     }
     this.invalidate();
+  }
+
+  /** Fold or unfold a hunk and keep the cursor in view. */
+  private toggleHunk(hunkId: string): void {
+    this.setFolded(hunkId, !this.foldedHunks.has(hunkId));
+    this.keepSelectionVisible();
+  }
+
+  /** The hunk whose header (or folded placeholder) the line cursor is on, not a line or item. */
+  private headerHunkId(): string | undefined {
+    const hunk = this.selectedHunk;
+    const onHeader =
+      hunk !== undefined &&
+      hunk.path === this.selectedPath &&
+      this.selectedItem === undefined &&
+      this.cursorLine === undefined;
+    return onHeader ? hunk.hunkId : undefined;
   }
 
   /** Enter/space with the line cursor: fold the cursor's hunk, or expand its file row. */
@@ -1945,14 +2021,19 @@ export class ChangesView implements PaneSurface {
    */
   pointer(gesture: PointerGesture): boolean {
     if (this.noteInput || this.disposed) return false;
-    const pinned = this.pinned;
-    if (pinned && gesture.row === pinned.row && gesture.kind !== "drag") {
-      // The pinned file row: a click goes to the file's row (it does not fold the file).
+    const pinned = this.pinned.find((pin) => pin.row === gesture.row);
+    if (pinned && gesture.kind !== "drag") {
+      // A pinned row: a click goes to its file's row or hunk (it does not fold either).
       if (gesture.kind !== "click") return false;
       const index = this.files().findIndex((file) => file.path === pinned.path);
       if (index < 0) return false;
       if (!this.options.keepMessages) this.message = undefined;
-      this.select(index);
+      if (pinned.hunkId === undefined) this.select(index);
+      else {
+        // Where a hunk's header is not a stop (the review), its first line is.
+        const header = { path: pinned.path, hunkId: pinned.hunkId };
+        this.setCursor(this.options.hunkStops ? header : { ...header, lineIndex: 0 });
+      }
       this.actions.requestRender();
       return true;
     }
@@ -2006,6 +2087,8 @@ export class ChangesView implements PaneSurface {
             row.path === header.path && row.hunkId === header.hunkId && row.lineIndex === undefined,
         );
       this.setCursor(stop ? header : { ...header, lineIndex: 0 });
+      // Where headers are stops (the pane), a click on one folds or unfolds its hunk.
+      if (line && this.options.hunkStops && stop) this.toggleHunk(header.hunkId);
     }
     // A click on a line: its press already put the cursor there.
     this.actions.requestRender();
@@ -2140,7 +2223,12 @@ export class ChangesView implements PaneSurface {
       case "toggle":
         if (this.selectedItem !== undefined) this.toggleItem(this.selectedItem);
         else if (line && this.options.enterFolds !== false) this.toggleLine();
-        else this.toggleExpanded();
+        else {
+          // The pane: on a hunk's header Enter folds the hunk; elsewhere it folds the file.
+          const header = line ? this.headerHunkId() : undefined;
+          if (header !== undefined) this.toggleHunk(header);
+          else this.toggleExpanded();
+        }
         break;
       case "toggleItems":
         this.toggleFileItems();

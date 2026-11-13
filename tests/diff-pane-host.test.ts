@@ -400,9 +400,9 @@ test("overlay host draws the view's pinned row over its first visible body row, 
   const { surface, scrollers } = fakeSurface();
   const asked: number[] = [];
   surface.renderBody = () => Array.from({ length: 100 }, (_, index) => `l ${index}`);
-  surface.stickyRow = (top) => {
+  surface.stickyRows = (top, height) => {
     asked.push(top);
-    return top > 0 ? `PIN ${top}` : undefined;
+    return top > 0 ? [`PIN ${top}`, `HUNK ${height}`] : [];
   };
   const host = createOverlayHost(tui, surface, { width: () => 30, resizeTo: () => {} });
   assert.equal(host.install(), true);
@@ -414,7 +414,12 @@ test("overlay host draws the view's pinned row over its first visible body row, 
   scroller.scrollTo(10);
   lines = overlay.component.render(31);
   assert.match(lines[1] ?? "", /PIN 10\b/u);
-  assert.match(lines[2] ?? "", /l 11\b/u);
+  assert.match(
+    lines[2] ?? "",
+    /HUNK 36\b/u,
+    "the second pinned row; the view gets the body height",
+  );
+  assert.match(lines[3] ?? "", /l 12\b/u);
   scroller.scrollTo(1000);
   lines = overlay.component.render(31);
   const top = scroller.top();

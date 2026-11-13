@@ -284,7 +284,7 @@ function screen(root: Component): string[] {
   );
 }
 
-test("a scrolled pane draws the view's pinned row over its first visible body row", () => {
+test("a scrolled pane draws the view's pinned rows over its first visible body rows", () => {
   const asked: number[] = [];
   withPane(
     60,
@@ -295,13 +295,14 @@ test("a scrolled pane draws the view's pinned row over its first visible body ro
       assert.ok(top > 0);
       const rows = screen(root);
       assert.match(rows[HEADER_ROW + 1] ?? "", new RegExp(`PINNED ${top}\\b`, "u"));
-      assert.match(rows[HEADER_ROW + 2] ?? "", new RegExp(`line ${top + 1}\\b`, "u"));
+      assert.match(rows[HEADER_ROW + 2] ?? "", new RegExp(`HUNK ${top}\\b`, "u"));
+      assert.match(rows[HEADER_ROW + 3] ?? "", new RegExp(`line ${top + 2}\\b`, "u"));
       assert.equal(asked.at(-1), top);
     },
     {
-      stickyRow: (top) => {
+      stickyRows: (top) => {
         asked.push(top);
-        return top > 0 ? `PINNED ${top}` : undefined;
+        return top > 0 ? [`PINNED ${top}`, `HUNK ${top}`] : [];
       },
     },
   );
@@ -322,7 +323,7 @@ test("when the body shrinks under a scrolled pane the pinned row still lands on 
     },
     {
       renderBody: () => numbered("line", count),
-      stickyRow: (top) => (top > 0 ? `PINNED ${top}` : undefined),
+      stickyRows: (top) => (top > 0 ? [`PINNED ${top}`] : []),
     },
   );
 });

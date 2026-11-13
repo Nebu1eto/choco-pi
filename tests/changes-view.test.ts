@@ -543,20 +543,35 @@ test("mouse: a click on a file row expands or collapses it; a press and drags se
   assert.equal(view.pointer({ kind: "click", row: 999 }), false, "no row there");
 });
 
-test("sticky file row: inside an open file's block its row is pinned; a click goes to the file; the cursor never hides under it", async () => {
+test("sticky rows: an open file's row, then its hunk's header, stay pinned; a click goes to them; the cursor never hides under them", async () => {
   const { view, rowOf } = await paneLineView();
   const body = view.renderBody(80, true);
-  const fileRow = rowOf(/a\.ts/);
-  const inside = rowOf(/old two/);
-  assert.ok(inside > fileRow + 1);
-  assert.equal(view.stickyRow(fileRow), undefined, "the file's own row is showing");
-  assert.equal(view.stickyRow(0), undefined);
-  assert.equal(
-    view.stickyRow(inside),
-    body[fileRow],
-    "the row as drawn, selection gutter included",
+  const file = rowOf(/a\.ts/);
+  const first = rowOf(/@@ -1,3 \+1,3 @@ first/);
+  const second = rowOf(/@@ -20,1 \+20,2 @@ second/);
+  assert.deepEqual([first, second], [file + 1, file + 6], "h1 spans five rows; h2 follows");
+  assert.match(
+    body[first] ?? "",
+    /▾ @@ -1,3/u,
+    "an open hunk's header is marked like an open file",
   );
-  assert.equal(view.stickyRow(rowOf(/b\.ts/)), undefined, "the next file's own row");
+  assert.deepEqual(view.stickyRows(file, 6), [], "the file's own row is showing");
+  assert.deepEqual(view.stickyRows(0, 6), []);
+  const both = [body[file], body[first]];
+  assert.deepEqual(
+    view.stickyRows(first, 6),
+    both,
+    "the header under the file's pin is pinned below it",
+  );
+  assert.deepEqual(view.stickyRows(file + 4, 6), both);
+  assert.deepEqual(
+    view.stickyRows(file + 5, 6),
+    [body[file]],
+    "h1's last row: h2's header shows below",
+  );
+  assert.deepEqual(view.stickyRows(second, 6), [body[file], body[second]]);
+  assert.deepEqual(view.stickyRows(first, 2), [body[file]], "never every row of the viewport");
+  assert.deepEqual(view.stickyRows(rowOf(/b\.ts/), 6), [], "the next file's own row");
 
   let top = 0;
   view.attachScroller({
@@ -570,26 +585,70 @@ test("sticky file row: inside an open file's block its row is pinned; a click go
     },
   });
 
-  // A press on the line below the pinned row puts the cursor there; up moves it under the pin.
-  top = inside;
-  view.stickyRow(top);
-  assert.equal(view.pointer({ kind: "press", row: inside + 1 }), true);
+  // A press on the first unpinned row puts the cursor there; up moves it under the pins.
+  top = file + 3;
+  view.stickyRows(top, 6);
+  assert.equal(view.pointer({ kind: "press", row: top + 2 }), true);
   view.handleKey(UP);
-  assert.equal(top, inside - 1, "scrolled one more so the line shows below the pinned row");
+  assert.equal(top, file + 2, "scrolled so the line shows below both pinned rows");
 
-  // A click on the pinned row: the file is selected and its own row scrolled into view, not folded.
-  top = inside;
-  view.stickyRow(top);
+  // A click on the pinned hunk header: the hunk is selected and its header shown, not folded.
+  top = file + 3;
+  view.stickyRows(top, 6);
   assert.equal(
-    view.pointer({ kind: "press", row: inside }),
+    view.pointer({ kind: "press", row: top + 1 }),
     false,
     "a press there selects nothing",
   );
-  assert.equal(view.pointer({ kind: "click", row: inside }), true);
+  assert.equal(view.pointer({ kind: "click", row: top + 1 }), true);
+  assert.deepEqual(view.lineCursor(), { path: "a.ts", hunkId: "h1" });
+  assert.equal(view.foldedHunks.has("h1"), false, "still open");
+  assert.equal(top, file, "its header shows below the file's row");
+
+  // A click on the pinned file row: the file is selected and its own row scrolled into view, not folded.
+  top = file + 3;
+  view.stickyRows(top, 6);
+  assert.equal(view.pointer({ kind: "click", row: top }), true);
   assert.deepEqual(view.lineCursor(), { path: "a.ts" });
   assert.equal(view.expanded.has("a.ts"), true, "still open");
-  assert.equal(top, fileRow);
-  assert.equal(view.stickyRow(top), undefined);
+  assert.equal(top, file);
+  assert.deepEqual(view.stickyRows(top, 6), []);
+});
+
+test("hunks fold: Enter or a click on a header folds and unfolds its hunk; the cursor stays on the header", async () => {
+  const { view, rowOf } = await paneLineView();
+  view.handleKey("n");
+  assert.deepEqual(view.lineCursor(), { path: "a.ts", hunkId: "h1" }, "n lands on the header");
+  view.handleKey(ENTER);
+  assert.equal(view.foldedHunks.has("h1"), true);
+  assert.equal(view.expanded.has("a.ts"), true, "the file stays open");
+  assert.match(
+    view.renderBody(80, true)[rowOf(/@@ -1,3/)] ?? "",
+    /▸ … @@ -1,3 \+1,3 @@ first \(folded\)/u,
+  );
+  assert.ok(
+    !view.renderBody(80, true).some((row) => row.includes("old two")),
+    "its lines are hidden",
+  );
+  view.handleKey(DOWN);
+  assert.deepEqual(
+    view.lineCursor(),
+    { path: "a.ts", hunkId: "h2" },
+    "the cursor steps over a folded hunk",
+  );
+  view.handleKey(UP);
+  view.handleKey(ENTER);
+  assert.equal(view.foldedHunks.has("h1"), false);
+  assert.deepEqual(view.lineCursor(), { path: "a.ts", hunkId: "h1" }, "still on the header");
+
+  view.pointer({ kind: "click", row: rowOf(/@@ -20,1/) });
+  assert.equal(view.foldedHunks.has("h2"), true, "a click on a header folds its hunk");
+  view.pointer({ kind: "click", row: rowOf(/@@ -20,1/) });
+  assert.equal(view.foldedHunks.has("h2"), false, "and on the folded row unfolds it");
+
+  view.handleKey(DOWN);
+  view.handleKey(ENTER);
+  assert.equal(view.expanded.has("a.ts"), false, "Enter on a line still collapses its file");
 });
 
 /* ------------------------------------------- a cursor move is cheap work */

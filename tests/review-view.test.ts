@@ -3345,6 +3345,11 @@ test("the open file's row stays pinned on the first diff row while its body scro
   const scrolled = frame();
   assert.match(scrolled.join("\n"), /↑[1-9]/u, "the diff scrolled");
   assert.deepEqual(fileRows(scrolled), [firstDiffRow], scrolled.join("\n"));
+  assert.match(
+    scrolled[firstDiffRow + 1] ?? "",
+    /▾ @@ -10,5 \+10,6 @@/u,
+    "the hunk's header is pinned below the file's row",
+  );
   assert.ok(
     scrolled.some((row) => row.includes("«") || /▶|❯/u.test(row)),
     "the cursor is still drawn below the pinned row",

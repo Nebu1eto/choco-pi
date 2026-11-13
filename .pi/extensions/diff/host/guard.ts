@@ -48,18 +48,20 @@ export type GuardedSurface = PaneSurface & {
   contain<Value>(run: () => Value, fallback: Value): Value;
   /** The view's answer to a mouse gesture; false when it has none or it threw (reported as input). */
   pointer(gesture: PointerGesture): boolean;
-  /** The view's pinned row; undefined when it has none or it threw (reported as render). */
-  stickyRow(top: number): string | undefined;
+  /** The view's pinned rows; empty when it has none or it threw (reported as render). */
+  stickyRows(top: number, height: number): string[];
 };
 
 /**
- * `lines` with `row` drawn over line `top`, the first visible one. The view's
- * lines are left alone (they may be cached); a row past the end is ignored.
+ * `lines` with `rows` drawn over lines `top`, `top + 1`, …, the first visible
+ * ones. The view's lines are left alone (they may be cached); rows past the end are ignored.
  */
-export function pinRow(lines: string[], top: number, row: string | undefined): string[] {
-  if (row === undefined || top <= 0 || top >= lines.length) return lines;
+export function pinRows(lines: string[], top: number, rows: readonly string[]): string[] {
+  if (rows.length === 0 || top <= 0 || top >= lines.length) return lines;
   const pinned = [...lines];
-  pinned[top] = row;
+  rows.forEach((row, index) => {
+    if (top + index < pinned.length) pinned[top + index] = row;
+  });
   return pinned;
 }
 
@@ -123,13 +125,13 @@ export function guardSurface(surface: PaneSurface, callbacks: HostCallbacks): Gu
     attachScroller(scroller: PaneScroller) {
       surface.attachScroller(scroller);
     },
-    stickyRow(top) {
-      if (renderFailure) return undefined;
+    stickyRows(top, height) {
+      if (renderFailure) return [];
       try {
-        return surface.stickyRow?.(top);
+        return surface.stickyRows?.(top, height) ?? [];
       } catch (error) {
         renderFailed(error);
-        return undefined;
+        return [];
       }
     },
     invalidate() {
