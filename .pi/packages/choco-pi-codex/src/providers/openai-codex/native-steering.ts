@@ -21,7 +21,6 @@ import {
   responseInputsEqual,
 } from "./websocket-continuation.ts";
 import { extractCodexTurnStateFromWebSocketEvent } from "./turn-state.ts";
-import { ignoreCodexDaybreakEcho } from "./daybreak-decision.ts";
 
 // Server events are open JSON objects: only the members read here are checked.
 const eventValidator = compile(
@@ -249,13 +248,11 @@ export class NativeSteeringConnection {
         ) {
           this.steered = true;
           // The server finished the current item: this is not a token-truncated tool call.
-          // It is also not a Daybreak attestation; the fresh create echo remains authoritative.
           const rewritten = {
             ...event,
             type: "response.completed",
             response: { ...event.response, status: "completed", incomplete_details: undefined },
           };
-          ignoreCodexDaybreakEcho(rewritten);
           yield rewritten;
         } else {
           yield event;

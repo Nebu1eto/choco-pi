@@ -19,7 +19,6 @@ import {
   startWebSocketOutputOnFirstEvent,
   recordWebSocketSseFallback,
 } from "./websocket.ts";
-import { noteCodexDaybreakEchoAuthority } from "./daybreak-decision.ts";
 import {
   assertSuccessfulCodexOutput,
   assertSuccessfulCodexStatus,
@@ -239,14 +238,6 @@ export async function processWebSocketStream<TApi extends Api>(
       native && preparation.kind === "send"
         ? { ...transportProbe, nativeSteering: preparation.body !== requestBody }
         : transportProbe,
-    );
-    // Upstream resends the explicit program on continuation and does not read that echo.
-    noteCodexDaybreakEchoAuthority(
-      options?.daybreakTicket,
-      preparation.kind === "automatic" ||
-        (preparation.kind === "send" && preparation.body.previous_response_id)
-        ? "continuation"
-        : "create",
     );
     await processMappedCodexResponsesStream(
       startWebSocketOutputOnFirstEvent(

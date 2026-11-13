@@ -754,6 +754,10 @@ continuation and does not read completion echoes, so a `previous_response_id` re
 a native automatic successor, and a steered or normalized `response.incomplete` do not
 retract a grant or write an echo denial.
 
+Superseded 2026-11-12: the echo validation, echo-refusal record, and echo-authority
+plumbing described above are removed. See "2026-11-12 choco-pi patch: Daybreak ignores
+the completion echo".
+
 ## 2026-10-08 choco-pi patch: WebSocket decode ownership
 
 `websocket-parser.ts` invalidates its decoding generation synchronously on abort,
@@ -1294,3 +1298,13 @@ Code-mode nested tool results are model-visible tool output, so the retrievable-
 `src/tools/exec/bridge-client.ts`: `createExecBridgeClient` (cyclomatic complexity 26, 36 distinct calls) now keeps only the connection lifecycle, the request-id counter and shutdown. `BridgeResponseRouter` (exported for tests) owns one process's stdout line parsing and pending requests, and `BridgeConnection` owns one spawned process: pipes, bounded stderr, the `closing` flag, ok-checked requests and the shutdown/kill sequence. A connection's close clears the client's current connection only if it is still current, so a stale close can no longer reset a newer process's state. The generic `request<T>` and its two unchecked casts are gone: `request()` resolves `void`, and `read()` validates the result against `BridgeReadResponseSchema` (open object; `chunks` optional as the former reader allowed). Messages, ordering and the request-id sequence are unchanged.
 
 `src/tools/exec/bridge-session.ts`: `createBridgeSessionRuntime` (complexity 34, 27 calls) and `poll` (15) are split into module-level helpers (`noteDroppedChunks`, `emitChunks`, `noteExit`, `closeSession`, `newBridgeExecSession`, `waitForStartup`, `failSession`), and the poll is bound to the client by `createSessionPoller`. `setClosedExitCode` drops its never-passed `signal` parameter and the nested ternary with it, and `signalNumber` is removed as unused. Tests: `tests/exec-bridge-router.test.ts`.
+
+## 2026-11-12 choco-pi patch: Daybreak ignores the completion echo
+
+Daybreak no longer reads `response.completed.access_programs`, matching upstream Codex, which decides from the model catalog plus the toggle and reports a refusal as a `cyber_policy` error. Why: on gpt-6-sol the server echo differed from the sent program on the first response even though the catalog advertises `daybreak_blue`, so the echo check reported `not-granted`, recorded an echo denial, and omitted `access_programs` from every later request until the user toggled `/daybreak` off and on.
+
+- `daybreak-decision.ts`: removed `reportCodexDaybreakResponse`, `noteCodexDaybreakEchoAuthority`, `ignoreCodexDaybreakEcho`, `isIgnoredCodexDaybreakEcho`, the completed-response validator, the ticket's `decision`/`responseObserved`/`echoAuthority` fields, the owner's `account`, and the `refused` branch in `resolveTicket`. The echo is not logged, warned about, or used to change state. A toggle-on still invalidates both lookup caches; owner, generation, and revision guards are unchanged, and so is catalog gating (`model-not-supported`, `lookup-failed`, `security-key-required`, `auth-not-eligible`).
+- `daybreak-entitlement.ts`: removed the `echoDenials` map with `recordCodexDaybreakEchoDenial`, `isCodexDaybreakEchoDenied`, and `clearCodexDaybreakEchoDenials`.
+- `stream-events.ts`, `websocket-stream.ts`, `native-steering.ts`: removed the completion observer and the echo-authority and ignored-echo plumbing. `cyber_policy` is unchanged: it stays a fatal, non-retryable `CodexApiError` that surfaces to the user and leaves the Daybreak toggle and outcome alone.
+- The toggle is the request; availability is re-resolved per request from the selected model's catalog entry, so switching to a model without Daybreak and back resumes it without another toggle.
+- Tests: `tests/daybreak-decision.test.ts` asserts that any echo (standard, other program, absent, malformed, incomplete, steered) leaves the outcome, the caches, and the next request's program unchanged, and covers the model switch away and back.

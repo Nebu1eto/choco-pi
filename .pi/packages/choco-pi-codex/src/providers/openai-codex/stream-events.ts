@@ -1,11 +1,5 @@
 import { isString, isNumber, isBoolean } from "../value-guards.ts";
 import { isJsonObject, type JsonObject } from "../../adapter/runtime-values.ts";
-import {
-  ignoreCodexDaybreakEcho,
-  isIgnoredCodexDaybreakEcho,
-  reportCodexDaybreakResponse,
-  type CodexDaybreakTicket,
-} from "./daybreak-decision.ts";
 import { processResponsesStream } from "../openai-responses/shared.ts";
 import type {
   Api,
@@ -308,11 +302,6 @@ export async function* mapCodexEvents(
           ? { ...response, status: normalizeCodexStatus(response.status) }
           : response,
       };
-      // `response.incomplete`, including a steered rewrite already marked ignored,
-      // is not a fresh-create echo. Upstream does not retract Daybreak from it.
-      if (type === "response.incomplete" || isIgnoredCodexDaybreakEcho(event)) {
-        ignoreCodexDaybreakEcho(completed);
-      }
       yield completed;
       return;
     }
@@ -345,17 +334,6 @@ function responseStreamOptions<TApi extends Api>(
   }
   if (options?.onOutputItemDone) streamOptions.onOutputItemDone = options.onOutputItemDone;
   return streamOptions;
-}
-
-async function* observeDaybreakCompletion(
-  events: AsyncIterable<CodexStreamEvent>,
-  ticket: CodexDaybreakTicket | undefined,
-): AsyncIterable<CodexStreamEvent> {
-  for await (const event of events) {
-    if (event.type === "response.completed" && !isIgnoredCodexDaybreakEcho(event))
-      reportCodexDaybreakResponse(ticket, event.response);
-    yield event;
-  }
 }
 
 function observeProviderEvents<TApi extends Api>(
@@ -393,7 +371,7 @@ export async function processMappedCodexResponsesStream<TApi extends Api>(
   await processResponsesStream(
     // SAFETY: mapCodexEvents validates the discriminator and normalizes Codex terminal events to
     // the Responses event names consumed by processResponsesStream before this adapter runs.
-    observeDaybreakCompletion(events, options?.daybreakTicket) as AsyncIterable<never>,
+    events as AsyncIterable<never>,
     output,
     stream,
     model,

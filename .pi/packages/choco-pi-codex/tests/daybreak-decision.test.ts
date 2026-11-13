@@ -26,9 +26,7 @@ import {
   configureCodexDaybreakEntitlementForTest,
   invalidateCodexDaybreakEntitlement,
   isCurrentCodexDaybreakDecision,
-  noteCodexDaybreakEchoAuthority,
   resolveCodexDaybreakTicket,
-  reportCodexDaybreakResponse,
   snapshotCodexDaybreakDecision,
   type CodexDaybreakTicket,
 } from "../src/providers/openai-codex/daybreak-decision.ts";
@@ -912,14 +910,13 @@ test("frozen decision: revision drift keeps start state; identity or generation 
   assert.deepEqual(owned.reports, [["blue", 1]]);
 });
 
-test("HTTP and normalized WebSocket terminal echoes attest the applied Daybreak program", async (t) => {
+test("HTTP and normalized WebSocket terminal echoes never change the Daybreak outcome", async (t) => {
   t.after(cleanup);
   const bridge = installBridge();
   const account = daybreakAccount(token("acct-1"), model.baseUrl);
   assert.ok(account);
   for (const transport of ["http", "ws"]) {
-    for (const echo of ["standard", "daybreak_blue", "absent", "malformed"]) {
-      // Each echo is an independent scenario; a refusal must not leak into the next one.
+    for (const echo of ["standard", "daybreak_red", "daybreak_blue", "absent", "malformed"]) {
       fakeLookup(() => Response.json(grantsPayload("tac1")));
       const id = `${transport}-${echo}`;
       const fake = bridge.add(id, true);
@@ -929,45 +926,26 @@ test("HTTP and normalized WebSocket terminal echoes attest the applied Daybreak 
       const response: CodexStreamEvent["response"] = { status: "completed" };
       if (echo !== "absent")
         response.access_programs = echo === "malformed" ? { cyber: 5 } : { cyber: echo };
-      const output: AssistantMessage = {
-        role: "assistant",
-        content: [],
-        api: model.api,
-        provider: model.provider,
-        model: model.id,
-        usage: {
-          input: 0,
-          output: 0,
-          cacheRead: 0,
-          cacheWrite: 0,
-          totalTokens: 0,
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-        },
-        stopReason: "stop",
-        timestamp: 1,
-      };
       async function* events(): AsyncIterable<CodexStreamEvent> {
         yield { type: transport === "http" ? "response.done" : "response.completed", response };
       }
       const process =
         transport === "http" ? processCodexResponsesStream : processMappedCodexResponsesStream;
-      await process(events(), output, createAssistantMessageEventStream(), model, {
+      await process(events(), assistantOutput(), createAssistantMessageEventStream(), model, {
         daybreakTicket: requestTicket,
       });
-      assert.equal(fake.state.outcome, echo === "standard" ? "not-granted" : "blue");
-      assert.equal(hasCodexDaybreakEntitlementEntry(account), echo !== "standard");
-      assert.equal(fake.reports.length, echo === "standard" || echo === "daybreak_blue" ? 2 : 1);
-      reportCodexDaybreakResponse(requestTicket, { access_programs: { cyber: "standard" } });
-      assert.equal(
-        fake.reports.length,
-        echo === "standard" || echo === "daybreak_blue" ? 2 : 1,
-        "terminal observation settles once",
-      );
+      // Upstream Codex never reads the echo: no report, no cache invalidation, no later downgrade.
+      assert.equal(fake.state.outcome, "blue");
+      assert.deepEqual(fake.reports, [["blue", 1]]);
+      assert.equal(hasCodexDaybreakEntitlementEntry(account), true);
+      const next = await resolve(ticket(id));
+      assert.equal(next.outcome, "blue");
+      assert.equal(cyberOf(applyCodexDaybreakAccessPrograms({}, next)), "daybreak_blue");
     }
   }
 });
 
-test("custom HTTP provider carries its frozen Daybreak ticket through terminal echo observation", async (t) => {
+test("custom HTTP provider keeps sending Daybreak after a downgraded completion echo", async (t) => {
   const originalFetch = globalThis.fetch;
   t.after(() => {
     globalThis.fetch = originalFetch;
@@ -976,97 +954,32 @@ test("custom HTTP provider carries its frozen Daybreak ticket through terminal e
   const bridge = installBridge();
   fakeLookup(() => Response.json(grantsPayload("tac1")));
   const fake = bridge.add("http-echo", true);
-  let requests = 0;
-  globalThis.fetch = async () => {
-    requests++;
+  const sent: string[] = [];
+  globalThis.fetch = async (_input, init) => {
+    sent.push(await requestText(init));
     return new Response(
       `data: ${JSON.stringify({ type: "response.completed", response: { status: "completed", access_programs: { cyber: "standard" } } })}\n\n`,
       { headers: { "content-type": "text/event-stream" } },
     );
   };
-  const stream = createOpenAICodexProviderStream(
-    model,
-    context,
-    { sessionId: "http-echo", apiKey: token("acct-1"), transport: "sse", maxRetries: 0 },
-    {},
-  );
-  for await (const _event of stream);
-  assert.equal(fake.state.outcome, "not-granted");
-  assert.equal(requests, 1, "the echo never retries or resends the request");
-  const account = daybreakAccount(token("acct-1"), model.baseUrl);
-  assert.ok(account);
-  assert.equal(hasCodexDaybreakEntitlementEntry(account), false);
-});
-
-test("server echoes from superseded Daybreak revisions do not report or invalidate the cache", async (t) => {
-  t.after(cleanup);
-  const bridge = installBridge();
-  fakeLookup(() => Response.json(grantsPayload("tac1")));
-  const fake = bridge.add("echo-stale", true);
-  const requestTicket = ticket("echo-stale");
-  await resolve(requestTicket);
-  fake.controller.set(false);
-  fake.controller.set(true);
-  const before = fake.reports.length;
-  reportCodexDaybreakResponse(requestTicket, { access_programs: { cyber: "standard" } });
-  assert.equal(fake.reports.length, before);
+  for (let turn = 0; turn < 2; turn++) {
+    const stream = createOpenAICodexProviderStream(
+      model,
+      context,
+      { sessionId: "http-echo", apiKey: token("acct-1"), transport: "sse", maxRetries: 0 },
+      {},
+    );
+    for await (const _event of stream);
+    assert.equal(fake.state.outcome, "blue");
+  }
+  assert.equal(sent.length, 2, "the echo never retries or resends the request");
+  for (const text of sent) assert.equal(cyberOf(parseWire(text)), "daybreak_blue");
   const account = daybreakAccount(token("acct-1"), model.baseUrl);
   assert.ok(account);
   assert.equal(hasCodexDaybreakEntitlementEntry(account), true);
 });
 
-test("an echo refusal settles not-granted until re-login or toggle-on instead of flipping back", async (t) => {
-  t.after(cleanup);
-  const bridge = installBridge();
-  // Empty grants do not gate (the catalog does), so the first request carries Daybreak Blue.
-  fakeLookup(() => Response.json(grantsPayload()));
-  const fake = bridge.add("sticky", true);
-  const first = ticket("sticky");
-  assert.equal((await resolve(first)).outcome, "blue");
-  reportCodexDaybreakResponse(first, { access_programs: { cyber: "standard" } });
-  assert.equal(fake.state.outcome, "not-granted");
-  const refusedAt = fake.reports.length;
-
-  // Later turns and re-probes (session switch, tree navigation) stay refused and send nothing.
-  for (let turn = 0; turn < 3; turn++) {
-    const next = await resolve(ticket("sticky"));
-    assert.equal(next.outcome, "not-granted");
-    assert.equal(next.cyber, undefined);
-    assert.equal(hasAccessPrograms(applyCodexDaybreakAccessPrograms({}, next)), false);
-  }
-  assert.deepEqual(
-    fake.reports.slice(refusedAt).map(([outcome]) => outcome),
-    ["not-granted", "not-granted", "not-granted"],
-  );
-  const sibling = bridge.add("sticky-sibling", true);
-  assert.equal((await resolve(ticket("sticky-sibling"))).outcome, "not-granted");
-  assert.equal(sibling.state.outcome, "not-granted");
-
-  // A new token (re-login or refresh) and an explicit off->on toggle each try the program again.
-  bridge.add("sticky-relogin", true);
-  assert.equal((await resolve(ticket("sticky-relogin", token("acct-1", "b")))).outcome, "blue");
-  fake.controller.set(false);
-  fake.controller.set(true);
-  assert.equal((await resolve(ticket("sticky"))).outcome, "blue");
-});
-
-test("a continuation echo does not sticky-deny an eligible Daybreak Blue grant", async (t) => {
-  t.after(cleanup);
-  const bridge = installBridge();
-  fakeLookup(() => Response.json(grantsPayload()));
-  const fake = bridge.add("continuation-echo", true);
-  const first = ticket("continuation-echo");
-  assert.equal((await resolve(first)).outcome, "blue");
-  noteCodexDaybreakEchoAuthority(first, "continuation");
-  reportCodexDaybreakResponse(first, { access_programs: { cyber: "standard" } });
-  assert.equal(fake.state.outcome, "blue");
-  const next = await resolve(ticket("continuation-echo"));
-  assert.equal(next.outcome, "blue");
-  assert.equal(next.cyber, "daybreak_blue");
-  assert.equal(cyberOf(applyCodexDaybreakAccessPrograms({}, next)), "daybreak_blue");
-});
-
-test("an incomplete completion does not sticky-deny Daybreak", async (t) => {
+test("an incomplete completion keeps Daybreak", async (t) => {
   t.after(cleanup);
   const bridge = installBridge();
   fakeLookup(() => Response.json(grantsPayload("tac1")));
@@ -1096,7 +1009,7 @@ test("an incomplete completion does not sticky-deny Daybreak", async (t) => {
   assert.equal(next.cyber, "daybreak_blue");
 });
 
-test("a steered incomplete rewrite does not sticky-deny Daybreak", async (t) => {
+test("a steered incomplete rewrite keeps Daybreak", async (t) => {
   t.after(cleanup);
   const bridge = installBridge();
   fakeLookup(() => Response.json(grantsPayload("tac1")));
@@ -1143,17 +1056,57 @@ test("a steered incomplete rewrite does not sticky-deny Daybreak", async (t) => 
   assert.equal((await resolve(ticket("steer-echo"))).cyber, "daybreak_blue");
 });
 
-test("a refused red program falls back to blue when the catalog advertises it", async (t) => {
+test("a downgraded echo on a red request keeps sending red", async (t) => {
   t.after(cleanup);
   const bridge = installBridge();
   fakeLookup(() => Response.json(grantsPayload("tac3")));
-  bridge.add("red-refused", true);
-  const first = ticket("red-refused");
+  const fake = bridge.add("red-echo", true);
+  const first = ticket("red-echo");
   assert.equal((await resolve(first)).outcome, "red");
-  reportCodexDaybreakResponse(first, { access_programs: { cyber: "standard" } });
-  const next = await resolve(ticket("red-refused"));
-  assert.equal(next.outcome, "blue");
-  assert.equal(next.cyber, "daybreak_blue");
+  async function* events(): AsyncIterable<CodexStreamEvent> {
+    yield {
+      type: "response.completed",
+      response: { status: "completed", access_programs: { cyber: "standard" } },
+    };
+  }
+  await processMappedCodexResponsesStream(
+    events(),
+    assistantOutput(),
+    createAssistantMessageEventStream(),
+    model,
+    { daybreakTicket: first },
+  );
+  assert.equal(fake.state.outcome, "red");
+  const next = await resolve(ticket("red-echo"));
+  assert.equal(next.outcome, "red");
+  assert.equal(next.cyber, "daybreak_red");
+});
+
+test("switching to an unsupported model and back resumes Daybreak without a toggle", async (t) => {
+  t.after(cleanup);
+  const bridge = installBridge();
+  fakeLookup(() => Response.json(grantsPayload("tac1")));
+  configureCodexDaybreakModelSupportForTest({
+    fetch: async () =>
+      Response.json({
+        models: [{ slug: model.id, available_access_programs: { cyber: ["daybreak_blue"] } }],
+      }),
+  });
+  const other: Model<Api> = { ...model, id: "codex-without-daybreak" };
+  const fake = bridge.add("switch", true);
+  assert.equal((await resolve(ticket("switch"))).outcome, "blue");
+  const away = await resolve(ticket("switch", token("acct-1"), other));
+  assert.equal(away.outcome, "model-not-supported");
+  assert.equal(hasAccessPrograms(applyCodexDaybreakAccessPrograms({}, away)), false);
+  assert.equal(fake.state.requested, true, "the toggle stays on while the model lacks Daybreak");
+  const back = await resolve(ticket("switch"));
+  assert.equal(back.outcome, "blue");
+  assert.equal(cyberOf(applyCodexDaybreakAccessPrograms({}, back)), "daybreak_blue");
+  assert.equal(fake.state.revision, 1, "no toggle was needed");
+  assert.deepEqual(
+    fake.reports.map(([outcome]) => outcome),
+    ["blue", "model-not-supported", "blue"],
+  );
 });
 
 test("HTTP provider path applies after payload hooks and 401 invalidates entitlement", async (t) => {
