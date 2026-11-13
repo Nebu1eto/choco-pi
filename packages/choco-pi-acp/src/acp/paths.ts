@@ -1,15 +1,16 @@
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { piStateRoot } from "../../../../profile/extensions/lib/pi-paths.ts";
 
 /**
  * Storage owned by the ACP adapter.
  *
- * We intentionally keep this separate from pi's own ~/.pi/agent/* directory.
+ * We intentionally keep this separate from pi's own agent directory. Legacy mode keeps
+ * `~/.pi/pi-acp`; under the standalone `choco-pi` launcher it is `$CHOCO_PI_HOME/pi-acp`.
  */
-export function getPiAcpDir(): string {
-  return join(homedir(), ".pi", "pi-acp");
+export function getPiAcpDir(env: NodeJS.ProcessEnv = process.env): string {
+  return join(piStateRoot(env), "pi-acp");
 }
 
-export function getPiAcpSessionMapPath(): string {
-  return join(getPiAcpDir(), "session-map.json");
+export function getPiAcpSessionMapPath(env: NodeJS.ProcessEnv = process.env): string {
+  return join(getPiAcpDir(env), "session-map.json");
 }

@@ -38,7 +38,7 @@ test("shouldUseShellForPiCommand: never enables shell interpolation", () => {
   }
 });
 
-test("resolvePiLaunch: resolves an exact executable from PATH without a shell", () => {
+test("resolvePiLaunch: resolves an exact executable from PATH without a shell", async () => {
   const root = mkdtempSync(join(tmpdir(), "choco-pi-command-"));
   const bin = join(root, "bin with spaces");
   const executable = join(bin, "pi");
@@ -46,7 +46,7 @@ test("resolvePiLaunch: resolves an exact executable from PATH without a shell", 
   writeFileSync(executable, "#!/bin/sh\nexit 0\n");
   chmodSync(executable, 0o755);
 
-  assert.deepEqual(resolvePiLaunch(undefined, { PATH: bin }, "darwin"), {
+  assert.deepEqual(await resolvePiLaunch(undefined, { PATH: bin }, "darwin"), {
     command: executable,
     argsPrefix: [],
   });

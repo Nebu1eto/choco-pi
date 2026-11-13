@@ -1,4 +1,6 @@
 import type { AuthMethod } from "@agentclientprotocol/sdk";
+import { isAbsolute } from "node:path";
+import { standaloneHome } from "../../../../profile/extensions/lib/pi-paths.ts";
 
 export const PI_SETUP_METHOD_ID = "pi_terminal_login";
 
@@ -11,6 +13,8 @@ type TerminalAuthLaunchSpec = {
 /** Options accepted by {@link getAuthMethods}. */
 export type AuthMethodOptions = {
   supportsTerminalAuthMeta?: boolean;
+  /** Environment that selects the launch spec; defaults to `process.env`. */
+  env?: NodeJS.ProcessEnv;
 };
 
 /**
@@ -38,7 +42,7 @@ export function getAuthMethods(opts?: AuthMethodOptions): AuthMethod[] {
   if (supportsTerminalAuthMeta) {
     // Best-effort launch spec for Zed's terminal-auth banner.
     // Zed expects a full command+args (see mistral-vibe implementation).
-    const launch = terminalAuthLaunchSpec();
+    const launch = terminalAuthLaunchSpec(opts?.env);
 
     method._meta = {
       ...method._meta,
@@ -52,7 +56,14 @@ export function getAuthMethods(opts?: AuthMethodOptions): AuthMethod[] {
   return [method];
 }
 
-function terminalAuthLaunchSpec(): TerminalAuthLaunchSpec {
+function terminalAuthLaunchSpec(env: NodeJS.ProcessEnv = process.env): TerminalAuthLaunchSpec {
+  // Under the standalone `choco-pi` launcher, re-enter the adapter through the launcher so the
+  // login runs with the same env contract (state under CHOCO_PI_HOME, pinned Pi).
+  const launcher = env.CHOCO_PI_LAUNCHER;
+  if (standaloneHome(env) !== undefined && launcher !== undefined && isAbsolute(launcher)) {
+    return { command: launcher, args: ["self", "acp", "--terminal-login"] };
+  }
+
   // If we were launched as `node /path/to/dist/index.js`, reuse that.
   // This is the most reliable in local dev and custom Zed configurations.
   const argv0 = process.argv[0] || "node";

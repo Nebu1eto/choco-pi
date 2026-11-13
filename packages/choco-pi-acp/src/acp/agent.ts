@@ -66,10 +66,14 @@ import {
 } from "./pi-commands.ts";
 import { maybeAuthRequiredError } from "./auth-required.ts";
 import { isAbsolute } from "node:path";
-import { existsSync, readFileSync, realpathSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { access, readFile, realpath } from "node:fs/promises";
 import type { AvailableCommand } from "@agentclientprotocol/sdk";
 import { join, dirname, basename } from "node:path";
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { piAgentDir, standaloneHome } from "../../../../profile/extensions/lib/pi-paths.ts";
+import { resolvePiLaunch } from "../pi-rpc/command.ts";
 
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 type AdvertisedModel = {
@@ -532,6 +536,8 @@ export class PiAcpAgent implements ACPAgent {
 
     const fileCommands = loadSlashCommands(cwd);
     const enableSkillCommands = getEnableSkillCommands(cwd);
+    // Started now so the version and update probes overlap the Pi child's startup; it never rejects.
+    const startupProbe = probePiStartup(this.piCommand);
 
     // Pi doesn't support mcpServers, but we accept and store.
     const session = await this.sessions.create({
@@ -605,7 +611,8 @@ export class PiAcpAgent implements ACPAgent {
     this.assertCurrent(generation);
 
     const quietStartup = getQuietStartup(cwd);
-    const updateNotice = buildUpdateNotice();
+    const { piVersion, updateNotice } = await startupProbe;
+    this.assertCurrent(generation);
 
     // If quietStartup is enabled, suppress the full "startup info" prelude, but still surface
     // the "New version available" notice (if any) since it's high-signal and actionable.
@@ -617,6 +624,7 @@ export class PiAcpAgent implements ACPAgent {
           cwd,
           fileCommands,
           updateNotice,
+          piVersion,
         });
 
     if (preludeText) session.setStartupInfo(preludeText);
@@ -965,42 +973,8 @@ export class PiAcpAgent implements ACPAgent {
 
       if (cmd === "changelog") {
         // Read pi's installed CHANGELOG.md. Adapter-side, no model call.
-        const findChangelog = (): string | null => {
-          // 1) Locate the installed pi package by resolving the `pi` executable.
-          // On Node installs, `pi` typically resolves to .../@earendil-works/pi-coding-agent/dist/cli.js
-          try {
-            const whichCmd = process.platform === "win32" ? "where" : "which";
-            const which = spawnSync(whichCmd, ["pi"], { encoding: "utf-8" });
-            const piPath = String(which.stdout ?? "")
-              .split(/\r?\n/)[0]
-              ?.trim();
-
-            if (piPath) {
-              const resolved = realpathSync(piPath);
-              const pkgRoot = dirname(dirname(resolved));
-              const p = join(pkgRoot, "CHANGELOG.md");
-              if (existsSync(p)) return p;
-            }
-          } catch {
-            // ignore
-          }
-
-          // 2) Fallback: ask npm where global modules live.
-          try {
-            const npmRoot = spawnSync("npm", ["root", "-g"], { encoding: "utf-8" });
-            const root = String(npmRoot.stdout ?? "").trim();
-            if (root) {
-              const p = join(root, "@earendil-works", "pi-coding-agent", "CHANGELOG.md");
-              if (existsSync(p)) return p;
-            }
-          } catch {
-            // ignore
-          }
-
-          return null;
-        };
-
-        const changelogPath = findChangelog();
+        const changelogPath = await findPiChangelog(this.piCommand);
+        this.assertCurrent(generation);
         if (!changelogPath) {
           await session.sendUpdate({
             sessionUpdate: "agent_message_chunk",
@@ -1014,8 +988,9 @@ export class PiAcpAgent implements ACPAgent {
 
         let text = "";
         try {
-          text = readFileSync(changelogPath, "utf-8");
+          text = await readFile(changelogPath, "utf-8");
         } catch (error) {
+          this.assertCurrent(generation);
           // SAFETY: catch bindings may contain any thrown JavaScript value; `errorMessage`
           // handles Error instances and stringifies every other boundary value.
           const message = errorMessage(error as BoundaryValue);
@@ -1028,6 +1003,7 @@ export class PiAcpAgent implements ACPAgent {
           });
           return { stopReason: "end_turn" };
         }
+        this.assertCurrent(generation);
 
         // Keep it reasonably sized in chat.
         const maxChars = 20_000;
@@ -1729,56 +1705,161 @@ function compareSemver(a: string, b: string): number {
   return 0;
 }
 
-function buildUpdateNotice(): string | null {
-  // Best-effort update check against npm registry.
-  // Important: keep it fast to not slow down session/new.
+const execFileAsync = promisify(execFile);
+
+/** Upper bound for `pi --version`; the previous blocking call had none. */
+const PI_VERSION_TIMEOUT_MS = 10_000;
+
+async function pathExists(path: string): Promise<boolean> {
   try {
-    const piVersion = spawnSync("pi", ["--version"], { encoding: "utf-8" });
-    const installed = (
-      String(piVersion.stdout ?? "").trim() || String(piVersion.stderr ?? "").trim()
-    ).replace(/^v/i, "");
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
-    if (!installed || !isSemver(installed)) return null;
+/**
+ * The command whose installation the version header, update notice and `/changelog` describe.
+ * Legacy mode keeps the upstream lookup of `pi` on PATH; standalone mode uses the configured
+ * command, which defaults to the `choco-pi` launcher that sessions run.
+ */
+function piInfoCommand(piCommand: string | undefined, env: NodeJS.ProcessEnv): string | undefined {
+  return standaloneHome(env) === undefined ? "pi" : piCommand;
+}
 
-    const latestRes = spawnSync("npm", ["view", "@earendil-works/pi-coding-agent", "version"], {
-      encoding: "utf-8",
-      timeout: 800,
-    });
-    const latest = String(latestRes.stdout ?? "")
-      .trim()
-      .replace(/^v/i, "");
-
-    if (!latest || !isSemver(latest)) return null;
-    if (compareSemver(latest, installed) <= 0) return null;
-
-    return `New version available: v${latest} (installed v${installed}). Run: \`npm i -g @earendil-works/pi-coding-agent\``;
+/**
+ * The installed Pi version (without a leading `v`), read from `--version` of
+ * {@link piInfoCommand}. Null when Pi cannot be run.
+ */
+export async function readPiVersion(
+  piCommand?: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string | null> {
+  try {
+    const launch = await resolvePiLaunch(piInfoCommand(piCommand, env), env);
+    const { stdout, stderr } = await execFileAsync(
+      launch.command,
+      [...launch.argsPrefix, "--version"],
+      { encoding: "utf8", env, timeout: PI_VERSION_TIMEOUT_MS, windowsHide: true },
+    );
+    const installed = (stdout.trim() || stderr.trim()).replace(/^v/i, "");
+    return installed || null;
   } catch {
     return null;
   }
+}
+
+/**
+ * Locate Pi's CHANGELOG.md from {@link piInfoCommand}. A Node install of `pi` resolves to
+ * `.../@earendil-works/pi-coding-agent/dist/cli.js`; the standalone launcher resolves to
+ * `<app>/bin/choco-pi`, whose pinned Pi lives in `<app>/node_modules`. Only legacy mode falls
+ * back to the global npm root, which in standalone mode would describe a different Pi.
+ */
+export async function findPiChangelog(
+  piCommand?: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string | null> {
+  const standalone = standaloneHome(env) !== undefined;
+  try {
+    const launch = await resolvePiLaunch(piInfoCommand(piCommand, env), env);
+    const resolved = await realpath(launch.argsPrefix[0] ?? launch.command);
+    const pkgRoot = standalone
+      ? join(dirname(dirname(resolved)), "node_modules", "@earendil-works", "pi-coding-agent")
+      : dirname(dirname(resolved));
+    const p = join(pkgRoot, "CHANGELOG.md");
+    if (await pathExists(p)) return p;
+  } catch {
+    // ignore
+  }
+  if (standalone) return null;
+
+  // Fallback: ask npm where global modules live.
+  try {
+    const { stdout } = await execFileAsync("npm", ["root", "-g"], {
+      encoding: "utf8",
+      env,
+      windowsHide: true,
+    });
+    const root = stdout.trim();
+    if (root) {
+      const p = join(root, "@earendil-works", "pi-coding-agent", "CHANGELOG.md");
+      if (await pathExists(p)) return p;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+/**
+ * Best-effort latest Pi version from the npm registry. Standalone mode runs the
+ * lockfile-pinned Pi, which `npm i -g` cannot update, so it never asks.
+ */
+async function readLatestPiVersion(env: NodeJS.ProcessEnv): Promise<string | null> {
+  // Important: keep it fast to not slow down session/new.
+  if (standaloneHome(env) !== undefined) return null;
+  try {
+    const { stdout } = await execFileAsync(
+      "npm",
+      ["view", "@earendil-works/pi-coding-agent", "version"],
+      { encoding: "utf8", env, timeout: 800, windowsHide: true },
+    );
+    return stdout.trim().replace(/^v/i, "") || null;
+  } catch {
+    return null;
+  }
+}
+
+function buildUpdateNotice(installed: string | null, latest: string | null): string | null {
+  if (!installed || !isSemver(installed)) return null;
+  if (!latest || !isSemver(latest)) return null;
+  if (compareSemver(latest, installed) <= 0) return null;
+
+  return `New version available: v${latest} (installed v${installed}). Run: \`npm i -g @earendil-works/pi-coding-agent\``;
+}
+
+/** The Pi version header and npm update notice for session/new, probed in parallel. */
+type PiStartupProbe = Readonly<{ piVersion: string | null; updateNotice: string | null }>;
+
+async function probePiStartup(
+  piCommand: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<PiStartupProbe> {
+  const [piVersion, latest] = await Promise.all([
+    readPiVersion(piCommand, env),
+    readLatestPiVersion(env),
+  ]);
+  return { piVersion, updateNotice: buildUpdateNotice(piVersion, latest) };
+}
+
+/** Agent-directory folders listed in the startup info. */
+type StartupInfoAgentDirs = Readonly<{ prompts: string; extensions: string }>;
+
+/**
+ * Agent-directory folders listed in the startup info: Pi's agent directory
+ * (`PI_CODING_AGENT_DIR`, else `$CHOCO_PI_HOME/agent` in standalone mode, else `$HOME/.pi/agent`).
+ */
+export function startupInfoAgentDirs(env: NodeJS.ProcessEnv = process.env): StartupInfoAgentDirs {
+  const agentDir = piAgentDir(env, env.HOME ?? "");
+  return { prompts: join(agentDir, "prompts"), extensions: join(agentDir, "extensions") };
 }
 
 function buildStartupInfo(opts: {
   cwd: string;
   fileCommands: ReturnType<typeof loadSlashCommands>;
   updateNotice: string | null;
+  piVersion: string | null;
 }): string {
   void opts.fileCommands;
 
   const md: string[] = [];
 
   // pi version header
-  try {
-    const piVersion = spawnSync("pi", ["--version"], { encoding: "utf-8" });
-    const installed = (
-      String(piVersion.stdout ?? "").trim() || String(piVersion.stderr ?? "").trim()
-    ).replace(/^v/i, "");
-    if (installed) {
-      md.push(`pi v${installed}`);
-      md.push("---");
-      md.push("");
-    }
-  } catch {
-    // ignore
+  if (opts.piVersion) {
+    md.push(`pi v${opts.piVersion}`);
+    md.push("---");
+    md.push("");
   }
 
   const addSection = (title: string, items: string[]) => {
@@ -1864,7 +1945,8 @@ function buildStartupInfo(opts: {
 
   // Prompts
   const promptsItems: string[] = [];
-  const promptsDir = join(process.env.HOME ?? "", ".pi", "agent", "prompts");
+  const agentDirs = startupInfoAgentDirs();
+  const promptsDir = agentDirs.prompts;
   try {
     const prompts = readdirSync(promptsDir).filter((f) => f.endsWith(".md"));
     for (const f of prompts) promptsItems.push(`/${basename(f, ".md")}`);
@@ -1875,7 +1957,7 @@ function buildStartupInfo(opts: {
 
   // Extensions
   const extItems: string[] = [];
-  const extDir = join(process.env.HOME ?? "", ".pi", "agent", "extensions");
+  const extDir = agentDirs.extensions;
   try {
     const exts = readdirSync(extDir).filter((f) => f.endsWith(".ts") || f.endsWith(".js"));
     for (const f of exts) extItems.push(join(extDir, f));

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { piAgentDir } from "../../../../profile/extensions/lib/pi-paths.ts";
 import { type BoundaryRecord, isBoolean, isBoundaryRecord, parseJsonLine } from "../boundary.ts";
 
 function deepMerge(a: BoundaryRecord, b: BoundaryRecord): BoundaryRecord {
@@ -36,9 +36,7 @@ function getMergedSettings(cwd: string): BoundaryRecord {
 }
 
 export function getAgentDir(): string {
-  return process.env.PI_CODING_AGENT_DIR
-    ? resolve(process.env.PI_CODING_AGENT_DIR)
-    : join(homedir(), ".pi", "agent");
+  return resolve(piAgentDir(process.env));
 }
 
 /**

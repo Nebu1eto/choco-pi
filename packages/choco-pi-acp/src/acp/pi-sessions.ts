@@ -8,8 +8,8 @@ import {
   existsSync,
   realpathSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { piAgentDir } from "../../../../profile/extensions/lib/pi-paths.ts";
 import { isBoundaryArray, isBoundaryRecord, isString, parseJsonLine } from "../boundary.ts";
 
 export type PiSessionListItem = {
@@ -25,11 +25,9 @@ const DEFAULT_HEAD_BYTES = 64 * 1024;
 const SESSION_METADATA_BYTES = 256 * 1024;
 
 function getPiAgentDir(): string {
-  // pi supports overriding config dir via PI_CODING_AGENT_DIR.
-  // See pi README.
-  return process.env.PI_CODING_AGENT_DIR
-    ? resolve(process.env.PI_CODING_AGENT_DIR)
-    : join(homedir(), ".pi", "agent");
+  // pi supports overriding config dir via PI_CODING_AGENT_DIR; without it the shared
+  // resolver gives `$CHOCO_PI_HOME/agent` in standalone mode and `~/.pi/agent` otherwise.
+  return resolve(piAgentDir(process.env));
 }
 
 function readSessionDirFromSettings(agentDir: string): string | null {

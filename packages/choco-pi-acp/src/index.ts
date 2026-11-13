@@ -1,5 +1,5 @@
 import { AgentSideConnection, ndJsonStream } from "@agentclientprotocol/sdk";
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { PiAcpAgent } from "./acp/agent.ts";
@@ -11,10 +11,10 @@ export const ACP_MAX_INBOUND_FRAME_BYTES = 1_048_576;
 
 type InboundFrameViolation = "frame_too_large" | "malformed_json";
 
-function runInteractivePi(cwd: string): never {
+async function runInteractivePi(cwd: string): Promise<never> {
   let launch;
   try {
-    launch = resolvePiLaunch(process.env.PI_ACP_PI_COMMAND);
+    launch = await resolvePiLaunch(process.env.PI_ACP_PI_COMMAND);
   } catch (failure) {
     // SAFETY: command resolution may throw an arbitrary runtime value; errorMessage handles every value.
     const cause = failure as BoundaryValue;
@@ -22,21 +22,33 @@ function runInteractivePi(cwd: string): never {
     process.exit(1);
   }
 
-  const result = spawnSync(launch.command, launch.argsPrefix, {
-    cwd,
-    stdio: ["inherit", "inherit", "inherit"],
-    env: { ...process.env },
-    shell: false,
+  const { command, argsPrefix } = launch;
+  const status = await new Promise<number | null>((settle) => {
+    const child = spawn(command, argsPrefix, {
+      cwd,
+      stdio: ["inherit", "inherit", "inherit"],
+      env: { ...process.env },
+      shell: false,
+    });
+    let settled = false;
+    child.once("error", () => {
+      if (settled) return;
+      settled = true;
+      process.stderr.write("choco-pi-acp: could not start the interactive Pi setup.\n");
+      settle(null);
+    });
+    child.once("exit", (code) => {
+      if (settled) return;
+      settled = true;
+      settle(code);
+    });
   });
-  if (result.error) {
-    process.stderr.write("choco-pi-acp: could not start the interactive Pi setup.\n");
-  }
-  process.exit(isNumber(result.status) ? result.status : 1);
+  process.exit(isNumber(status) ? status : 1);
 }
 
 // Terminal Auth entrypoint. The ACP client launches the agent with `--terminal-login`.
 if (process.argv.includes("--terminal-login")) {
-  runInteractivePi(process.cwd());
+  await runInteractivePi(process.cwd());
 }
 
 const trustArgIndex = process.argv.indexOf("--terminal-trust");
@@ -58,7 +70,7 @@ if (trustArgIndex >= 0) {
   process.stderr.write(
     `Review the project-local Pi files in ${cwd}. Pi will ask whether to trust them; this adapter does not pass --approve. Exit Pi after completing the one-time choice.\n`,
   );
-  runInteractivePi(cwd);
+  await runInteractivePi(cwd);
 }
 
 function writeStdout(chunk: Uint8Array): Promise<void> {

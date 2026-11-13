@@ -1,6 +1,7 @@
-import { accessSync, constants, readFileSync } from "node:fs";
+import { constants } from "node:fs";
+import { access, readFile } from "node:fs/promises";
 import { delimiter, dirname, extname, isAbsolute, join, resolve, win32 } from "node:path";
-import { platform } from "node:os";
+import { standaloneHome } from "../../../../profile/extensions/lib/pi-paths.ts";
 import { type BoundaryValue, isBoundaryRecord, isString, parseJsonLine } from "../boundary.ts";
 
 export type PiLaunchSpec = {
@@ -17,17 +18,26 @@ export class PiCommandResolutionError extends Error {
   }
 }
 
-export function defaultPiCommand(): string {
-  return platform() === "win32" ? "pi" : "pi";
+/**
+ * The Pi command used when no override is given: `pi` from PATH, or, under the standalone
+ * `choco-pi` launcher's env contract, the launcher itself (`CHOCO_PI_LAUNCHER`), which runs the
+ * workspace-pinned Pi with the choco-pi state directories and runtime preference.
+ */
+export function defaultPiCommand(env: NodeJS.ProcessEnv = process.env): string {
+  const launcher = env.CHOCO_PI_LAUNCHER;
+  if (standaloneHome(env) !== undefined && launcher !== undefined && isAbsolute(launcher)) {
+    return launcher;
+  }
+  return "pi";
 }
 
-export function getPiCommand(override?: string): string {
-  return override ?? defaultPiCommand();
+export function getPiCommand(override?: string, env: NodeJS.ProcessEnv = process.env): string {
+  return override ?? defaultPiCommand(env);
 }
 
-function executable(path: string, os: NodeJS.Platform): boolean {
+async function executable(path: string, os: NodeJS.Platform): Promise<boolean> {
   try {
-    accessSync(path, os === "win32" ? constants.F_OK : constants.X_OK);
+    await access(path, os === "win32" ? constants.F_OK : constants.X_OK);
     return true;
   } catch {
     return false;
@@ -62,7 +72,10 @@ function manifestPiBin(manifest: BoundaryValue): string | undefined {
   return isString(pi) ? pi : undefined;
 }
 
-function nodeLaunchForNpmShim(shimPath: string, os: NodeJS.Platform): PiLaunchSpec | null {
+async function nodeLaunchForNpmShim(
+  shimPath: string,
+  os: NodeJS.Platform,
+): Promise<PiLaunchSpec | null> {
   const packageJsonPath = join(
     dirname(shimPath),
     "node_modules",
@@ -72,11 +85,11 @@ function nodeLaunchForNpmShim(shimPath: string, os: NodeJS.Platform): PiLaunchSp
   );
 
   try {
-    const manifest = parseJsonLine(readFileSync(packageJsonPath, "utf8"));
+    const manifest = parseJsonLine(await readFile(packageJsonPath, "utf8"));
     const bin = manifestPiBin(manifest);
     if (!bin) return null;
     const entry = resolve(dirname(packageJsonPath), bin);
-    if (!executable(entry, os)) return null;
+    if (!(await executable(entry, os))) return null;
     return { command: process.execPath, argsPrefix: [entry] };
   } catch {
     return null;
@@ -84,17 +97,17 @@ function nodeLaunchForNpmShim(shimPath: string, os: NodeJS.Platform): PiLaunchSp
 }
 
 /** Resolve Pi to an exact executable/argv pair. No returned launch requires a shell. */
-export function resolvePiLaunch(
+export async function resolvePiLaunch(
   override?: string,
   env: NodeJS.ProcessEnv = process.env,
   os: NodeJS.Platform = process.platform,
-): PiLaunchSpec {
-  const requested = getPiCommand(override);
+): Promise<PiLaunchSpec> {
+  const requested = getPiCommand(override, env);
   for (const candidate of candidates(requested, env, os)) {
-    if (!executable(candidate, os)) continue;
+    if (!(await executable(candidate, os))) continue;
     const extension = extname(candidate).toLowerCase();
     if (os === "win32" && (extension === ".cmd" || extension === ".bat")) {
-      const nodeLaunch = nodeLaunchForNpmShim(candidate, os);
+      const nodeLaunch = await nodeLaunchForNpmShim(candidate, os);
       if (nodeLaunch) return nodeLaunch;
       continue;
     }

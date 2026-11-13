@@ -40,6 +40,15 @@ node packages/choco-pi-acp/bin/choco-pi-acp.ts zed setup --dry-run
 See [the Zed setup guide](../../docs/zed-setup.md) before applying changes to
 a real Zed profile.
 
+In a standalone install, the `choco-pi` launcher runs the adapter under its
+environment contract: `choco-pi self acp [arguments]` stands for
+`node packages/choco-pi-acp/bin/choco-pi-acp.ts [arguments]` everywhere in this
+README. In that mode (`CHOCO_PI_STANDALONE=1` with an absolute `CHOCO_PI_HOME`)
+the adapter starts Pi through the launcher, keeps its session map under
+`$CHOCO_PI_HOME/pi-acp/`, reads prompts and extensions from Pi's agent
+directory (`$CHOCO_PI_HOME/agent`), and `zed setup` writes launcher-based
+definitions. Without the contract, every default below is unchanged.
+
 When the Pi child exits, the adapter gives pending editor updates at most 100 ms
 to drain and then settles the active prompt, so an unresponsive client cannot
 leave the turn hanging.
@@ -74,7 +83,7 @@ in the shell that starts the adapter.
 
 | Variable                         | Default                 | Effect                                                                                                              |
 | -------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `PI_ACP_PI_COMMAND`              | `pi` resolved on `PATH` | Executable path of the Pi CLI to spawn in RPC mode.                                                                 |
+| `PI_ACP_PI_COMMAND`              | `pi` resolved on `PATH` | Executable path of the Pi CLI to spawn in RPC mode. In standalone mode the default is `CHOCO_PI_LAUNCHER`.          |
 | `PI_ACP_ENABLE_EMBEDDED_CONTEXT` | unset (disabled)        | Exactly `true` advertises the ACP embedded-context capability; otherwise resource blocks are discarded. See below.  |
 | `PI_ACP_MAX_LIVE_SESSIONS`       | `8`                     | Live Pi children retained per adapter connection, 1 through 32; the least recently used beyond the bound is closed. |
 | `PI_ACP_SESSION_IDLE_MS`         | `600000` (10 minutes)   | Idle timeout before an otherwise idle Pi child is reaped, clamped to 60,000 through 7,200,000 ms.                   |

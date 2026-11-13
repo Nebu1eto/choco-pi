@@ -1,7 +1,12 @@
 # Use choco-pi in Zed
 
-This guide configures a repository checkout of choco-pi as a custom Zed ACP
-agent. It does not install or fetch a published package.
+This guide configures choco-pi as a custom Zed ACP agent, either from a
+repository checkout (legacy install, sharing `~/.pi` with `pi`) or from a
+standalone `choco-pi` install (state under `$CHOCO_PI_HOME`, default
+`~/.choco-pi`). It does not install or fetch a published package. The
+standalone differences are collected in
+[Standalone install](#standalone-install-choco-pi-launcher); everything else
+applies to both.
 
 ## Prerequisites
 
@@ -10,8 +15,9 @@ agent. It does not install or fetch a published package.
 - Zed. The currently installed and verified editor is Zed 1.18.0; that is a
   baseline, not a hard minimum. Older Zed releases receive best-effort support.
 - A local clone of this repository whose path will remain stable.
-- `pi` installed and available on `PATH`, with a model provider configured.
-  Set `PI_ACP_PI_COMMAND` to an executable path if `pi` is elsewhere.
+- Legacy install: `pi` installed and available on `PATH`, with a model
+  provider configured. Set `PI_ACP_PI_COMMAND` to an executable path if `pi`
+  is elsewhere. A standalone install needs neither; it runs its own pinned Pi.
 
 From the repository root, install dependencies and the choco-pi profile as the
 root README describes:
@@ -28,6 +34,45 @@ not consume it.
 The installer reports every linked or updated path. If it finds conflicting
 profile files, review them and rerun `npm run install:profile -- --backup` only if
 you want it to preserve and replace those files.
+
+## Standalone install (`choco-pi` launcher)
+
+A standalone install runs every entry point through the `choco-pi` launcher,
+which sets its environment contract (`CHOCO_PI_STANDALONE=1`,
+`CHOCO_PI_HOME`, `CHOCO_PI_LAUNCHER`, `PI_CODING_AGENT_DIR=$CHOCO_PI_HOME/agent`,
+`PI_ACP_PI_COMMAND` = the launcher) before Node starts. Run the Zed commands of
+this guide as `choco-pi self acp ...` instead of
+`node packages/choco-pi-acp/bin/choco-pi-acp.ts ...`:
+
+```sh
+choco-pi self acp zed setup --dry-run
+choco-pi self acp zed setup --apply
+choco-pi self acp zed doctor
+choco-pi self acp zed remove --apply
+```
+
+Run under the contract, setup writes launcher-based definitions; the maintained
+equivalents are `editors/zed/settings.standalone.example.json` and
+`editors/zed/tasks.standalone.example.json`:
+
+- `agent_servers.choco-pi` runs the launcher's absolute path with
+  `["self", "acp"]`, so the adapter, every Pi child it starts, `/changelog`,
+  the version header, and terminal login (`self acp --terminal-login`) all use
+  the pinned Pi and `$CHOCO_PI_HOME`.
+- The five context Tasks run `<launcher> self exec <node> <app>/packages/choco-pi-editor-context/src/cli.ts ...`,
+  so the editor-context CLI reads the same agent directory as the sessions.
+- **Open Terminal Thread** runs the launcher instead of `pi`.
+
+In standalone mode the adapter keeps its session map in
+`$CHOCO_PI_HOME/pi-acp/` instead of `~/.pi/pi-acp/`, lists prompts and
+extensions from `$CHOCO_PI_HOME/agent/`, and never reads `~/.pi`. It shows no
+"New version available" notice, because the lockfile pins Pi and
+`npm i -g` cannot update it. Setup refuses to run with
+`CHOCO_PI_STANDALONE=1` but no absolute `CHOCO_PI_LAUNCHER`, rather than
+writing a definition that would start outside the contract. A legacy setup and a
+standalone setup both own the `choco-pi` agent key and the six Task labels;
+switching between them needs `--replace`. The launcher's absolute path is
+captured, so rerun setup after moving the install.
 
 ## Preview and apply Zed setup
 
@@ -141,7 +186,8 @@ history.
 A new thread normally opens with a startup block that reports the Pi version,
 context, skills, prompts, and extensions, mirroring what `pi` prints in a
 terminal. That block is suppressed when Pi's `quietStartup` setting is `true`
-or `"header"` in `~/.pi/agent/settings.json` or `<project>/.pi/settings.json`;
+or `"header"` in `settings.json` of Pi's agent directory (`~/.pi/agent`, or
+`$CHOCO_PI_HOME/agent` in a standalone install) or `<project>/.pi/settings.json`;
 the shipped default is `quietStartup: false`, so the block appears unless you
 turned it off. With either suppressing value the adapter still emits a "New version available"
 notice when the installed Pi is outdated. If a fresh thread shows no startup
@@ -209,8 +255,8 @@ pass them through unchanged as the editor-context line and column.
   canonical worktree and prints a ready-to-run targeting command.
 - **Choco Pi: Select Context Target** performs the same listing and tells you
   to run the chosen command in Zed's terminal.
-- **Choco Pi: Open Terminal Thread** runs `pi` in the worktree as the fallback
-  for TUI-only workflows.
+- **Choco Pi: Open Terminal Thread** runs `pi` (the `choco-pi` launcher in a
+  standalone install) in the worktree as the fallback for TUI-only workflows.
 
 Setup does not change your keymap. To make focused sync a one-key action, merge
 the binding from `editors/zed/keymap.example.json` into
@@ -381,7 +427,9 @@ session mappings. No profile-uninstall command is shipped.
   selection text, and rejection diagnostics contain bounded codes rather than
   the text.
 - Editor-context files live under
-  `~/.pi/agent/choco-pi/session-bridge/editor-context/` by default. Directories
+  `~/.pi/agent/choco-pi/session-bridge/editor-context/` by default
+  (`$CHOCO_PI_HOME/agent/choco-pi/session-bridge/editor-context/` in a
+  standalone install). Directories
   are created with owner-only `0700` permissions and atomic temporary files
   with `0600` permissions. A consumed file is removed whether validation
   accepts or rejects it; bounded cleanup removes expired owner-verified
@@ -429,3 +477,10 @@ choice. For provider login or API-key setup, run the source entry with
 `--terminal-login` instead. If the adapter cannot locate Pi, install
 `@earendil-works/pi-coding-agent` or set `PI_ACP_PI_COMMAND` to its executable
 path.
+
+In a standalone install, run these through the launcher so they use its state
+directories: `choco-pi self acp zed doctor`,
+`choco-pi self acp --terminal-trust <absolute-project-path>`,
+`choco-pi self acp --terminal-login`, and
+`choco-pi self exec node <app>/packages/choco-pi-editor-context/src/cli.ts diagnose --cwd <absolute-worktree-path>`
+(`<app>` is `$CHOCO_PI_HOME/app`; any Node 24 or newer works for `self exec`).

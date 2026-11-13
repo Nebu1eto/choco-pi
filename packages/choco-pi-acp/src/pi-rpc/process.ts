@@ -333,7 +333,7 @@ export class PiRpcProcess {
   static async spawn(params: SpawnParams): Promise<PiRpcProcess> {
     let launch;
     try {
-      launch = resolvePiLaunch(params.piCommand);
+      launch = await resolvePiLaunch(params.piCommand);
     } catch (error) {
       if (error instanceof PiCommandResolutionError) {
         throw new PiRpcSpawnError(error.message, { code: error.code, cause: error });

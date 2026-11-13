@@ -2,6 +2,7 @@ import { lstatSync, realpathSync } from "node:fs";
 import { copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { standaloneHome } from "../../../../profile/extensions/lib/pi-paths.ts";
 import {
   type BoundaryRecord,
   type BoundaryValue,
@@ -431,11 +432,45 @@ function removeProperty(source: string, object: ObjectRange, range: PropertyRang
   return source.slice(0, start) + source.slice(range.valueEnd);
 }
 
-function desiredAgent(commandPath: string, adapterPath: string) {
+/**
+ * How Zed starts choco-pi. Legacy mode runs `<node> <adapter>` and `pi` from PATH. Standalone
+ * mode (the `choco-pi` launcher's env contract) routes every entry point through the launcher,
+ * so each one runs with the launcher's state directories and pinned Pi.
+ */
+type ZedLaunch =
+  | Readonly<{ kind: "legacy"; commandPath: string; adapterPath: string }>
+  | Readonly<{ kind: "standalone"; launcherPath: string; nodePath: string; adapterPath: string }>;
+
+function zedLaunch(
+  environment: NodeJS.ProcessEnv,
+  commandPath: string,
+  adapterPath: string,
+): ZedLaunch {
+  if (standaloneHome(environment) === undefined) {
+    return { kind: "legacy", commandPath, adapterPath };
+  }
+  const launcher = environment.CHOCO_PI_LAUNCHER;
+  if (launcher === undefined || !isAbsolute(launcher)) {
+    throw new Error(
+      "Standalone mode (CHOCO_PI_STANDALONE=1) needs an absolute CHOCO_PI_LAUNCHER; run this through `choco-pi self acp zed ...`",
+    );
+  }
+  return { kind: "standalone", launcherPath: launcher, nodePath: commandPath, adapterPath };
+}
+
+function desiredAgent(launch: ZedLaunch) {
+  if (launch.kind === "standalone") {
+    return {
+      type: "custom",
+      command: launch.launcherPath,
+      args: ["self", "acp"],
+      env: { [EMBEDDED_CONTEXT_ENV]: "true" },
+    };
+  }
   return {
     type: "custom",
-    command: commandPath,
-    args: [adapterPath],
+    command: launch.commandPath,
+    args: [launch.adapterPath],
     env: { [EMBEDDED_CONTEXT_ENV]: "true" },
   };
 }
@@ -445,8 +480,16 @@ function editorContextCliPath(adapterPath: string): string {
   return resolve(dirname(adapterPackage), "choco-pi-editor-context", "src", "cli.ts");
 }
 
-function desiredTasks(commandPath: string, adapterPath: string): ZedTask[] {
-  const contextCliPath = editorContextCliPath(adapterPath);
+function desiredTasks(launch: ZedLaunch): ZedTask[] {
+  const contextCliPath = editorContextCliPath(launch.adapterPath);
+  // The editor-context CLI reads Pi's agent directory, so standalone mode runs it under the
+  // launcher's contract: `choco-pi self exec <node> <cli> ...`.
+  const commandPath = launch.kind === "standalone" ? launch.launcherPath : launch.commandPath;
+  const cliPrefix =
+    launch.kind === "standalone"
+      ? ["self", "exec", launch.nodePath, contextCliPath]
+      : [contextCliPath];
+  const piCommand = launch.kind === "standalone" ? launch.launcherPath : "pi";
   return [
     {
       label: TASK_LABELS[0],
@@ -454,7 +497,7 @@ function desiredTasks(commandPath: string, adapterPath: string): ZedTask[] {
         "Requires a text editor with a selection focused before opening the Task picker.",
       command: commandPath,
       args: [
-        contextCliPath,
+        ...cliPrefix,
         "publish",
         "--cwd",
         "$ZED_WORKTREE_ROOT",
@@ -483,7 +526,7 @@ function desiredTasks(commandPath: string, adapterPath: string): ZedTask[] {
         "Requires a text editor focused before opening the Task picker; selection text is excluded.",
       command: commandPath,
       args: [
-        contextCliPath,
+        ...cliPrefix,
         "publish",
         "--cwd",
         "$ZED_WORKTREE_ROOT",
@@ -510,7 +553,7 @@ function desiredTasks(commandPath: string, adapterPath: string): ZedTask[] {
       description: "Requires a text editor focused before opening the Task picker.",
       command: commandPath,
       args: [
-        contextCliPath,
+        ...cliPrefix,
         "publish",
         "--cwd",
         "$ZED_WORKTREE_ROOT",
@@ -531,7 +574,7 @@ function desiredTasks(commandPath: string, adapterPath: string): ZedTask[] {
     {
       label: TASK_LABELS[3],
       command: commandPath,
-      args: [contextCliPath, "list", "--cwd", "$ZED_WORKTREE_ROOT"],
+      args: [...cliPrefix, "list", "--cwd", "$ZED_WORKTREE_ROOT"],
       env: {},
       cwd: "$ZED_WORKTREE_ROOT",
     },
@@ -540,13 +583,13 @@ function desiredTasks(commandPath: string, adapterPath: string): ZedTask[] {
       description:
         "Run Choco Pi: List Live Sessions, then run the printed select command in Zed's terminal.",
       command: commandPath,
-      args: [contextCliPath, "list", "--cwd", "$ZED_WORKTREE_ROOT"],
+      args: [...cliPrefix, "list", "--cwd", "$ZED_WORKTREE_ROOT"],
       env: {},
       cwd: "$ZED_WORKTREE_ROOT",
     },
     {
       label: TASK_LABELS[5],
-      command: "pi",
+      command: piCommand,
       args: [],
       env: {},
       cwd: "$ZED_WORKTREE_ROOT",
@@ -703,6 +746,7 @@ export async function runZedSetupCli(
     const environment = dependencies.environment ?? process.env;
     const adapterPath = resolve(dependencies.adapterPath ?? process.argv[1] ?? "choco-pi-acp");
     const commandPath = resolve(dependencies.commandPath ?? process.execPath);
+    const launch = zedLaunch(environment, commandPath, adapterPath);
     const requestedConfigDirectory =
       parsed.zedConfigDirectory === undefined
         ? undefined
@@ -728,7 +772,7 @@ export async function runZedSetupCli(
     }
     output(`Zed settings: ${settingsPath}`);
     output(`Zed tasks: ${tasksPath}`);
-    output(`Command path: ${commandPath}`);
+    output(`Command path: ${launch.kind === "standalone" ? launch.launcherPath : commandPath}`);
     output(`${EMBEDDED_CONTEXT_ENV}=true`);
 
     const [currentSettings, currentTasks] = await Promise.all([
@@ -737,8 +781,8 @@ export async function runZedSetupCli(
         current.exists ? current : { exists: false, source: "[]\n" },
       ),
     ]);
-    const desiredAgentDefinition = desiredAgent(commandPath, adapterPath);
-    const desiredTaskDefinitions = desiredTasks(commandPath, adapterPath);
+    const desiredAgentDefinition = desiredAgent(launch);
+    const desiredTaskDefinitions = desiredTasks(launch);
     if (parsed.action === "doctor") {
       const settingsResult = updateAgent(currentSettings.source, desiredAgentDefinition, false);
       const tasksResult = updateTasks(currentTasks.source, desiredTaskDefinitions, false);
