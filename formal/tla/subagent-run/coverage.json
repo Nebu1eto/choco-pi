@@ -153,7 +153,7 @@
     {
       "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
       "symbol": "AgentManager.startAgent",
-      "hash": "sha256:ff5d0d59a74e2bc7585838c06848312e0f0f238f8ae48f1a8e91f3cbc376df4f"
+      "hash": "sha256:97d5e788c3a587b717514da98337728552d41d766a1fd9575830e502312cc70a"
     },
     {
       "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
@@ -168,7 +168,7 @@
     {
       "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
       "symbol": "AgentManager.resume",
-      "hash": "sha256:6e0d74d415b141c1334c2f92a2977e364488bfc6116e19e112261257384d52ec"
+      "hash": "sha256:54733c2be1fc60f447c6a6f08f8538364a72f2753a9923f07324833b942f7b5f"
     },
     {
       "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts",
@@ -265,9 +265,13 @@
     },
     {
       "note": "Bounds: two agents, one pool slot, generation 3 (2 for resume-ignores-publication). Agent a1 exercises every caller action, spawns with a worktree and is a verdict-role run; a2 only spawns and resumes in the background, has no verdict await, and is never read. VerdictRole = {}, {a2} and {a1, a2} were checked once and pass."
+    },
+    {
+      "note": "resume and revive first await a usage-limit closure re-check when a closure blocks; nothing is read or changed before that await, so it is the same Resume taking place later. Provider closures, their re-check, and startAgent's reopen after a successful run are not modelled.",
+      "file": ".pi/packages/choco-pi-subagents/src/agent-manager.ts"
     }
   ],
   "checkedAt": {
-    "commit": "9816e0de3ce92f467cadc4f4f08e52056863b741"
+    "commit": "4de824bc8928a27bbb3585ccd8f6af9c883a31d6"
   }
 }

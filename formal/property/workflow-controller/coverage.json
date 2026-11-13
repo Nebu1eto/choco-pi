@@ -8,7 +8,7 @@
     {
       "file": ".pi/packages/choco-pi-subagents/src/workflow.ts",
       "symbol": "WorkflowController",
-      "hash": "sha256:93ec7ae35f51ee6684039bd9fb9b8b9e68a933864a4de2f999ce5d3828d5b0ff"
+      "hash": "sha256:eeee548153787afe759361484fc936c71a8a6d6935ceb4748b00b490e07b444e"
     },
     {
       "file": ".pi/packages/choco-pi-subagents/src/workflow.ts",
@@ -40,9 +40,12 @@
     },
     {
       "note": "Observations happen after a setImmediate flush, so properties hold at macrotask boundaries, not between microtasks."
+    },
+    {
+      "note": "refreshProvider is a deferred fake that reopens the provider, keeps it closed, or rejects; scenarios run with and without it."
     }
   ],
   "checkedAt": {
-    "commit": "1a0fd076f0472482058d13cc5550acdea66f9a57"
+    "commit": "4de824bc8928a27bbb3585ccd8f6af9c883a31d6"
   }
 }

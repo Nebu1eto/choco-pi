@@ -30,17 +30,23 @@ type GeneratedStep = {
 
 type Outcome = "completed" | "error" | "cancelled" | "reject" | "providerError";
 
+/** How a provider re-check settles: reopened, still closed, or rejected. */
+type RefreshResult = "open" | "closed" | "reject";
+
 type Operation =
   | { kind: "settle"; pick: number; outcome: Outcome }
   | { kind: "cancel" }
   | { kind: "finish" }
-  | { kind: "toggleProvider"; provider: Provider };
+  | { kind: "toggleProvider"; provider: Provider }
+  | { kind: "refresh"; pick: number; result: RefreshResult };
 
 type Scenario = {
   steps: GeneratedStep[];
   order: number[];
   dynamic: boolean;
   maxConcurrent: number;
+  /** Whether the runner can re-check a closed provider (`refreshProvider`). */
+  refresh: boolean;
   operations: Operation[];
 };
 
@@ -89,6 +95,14 @@ const operation: fc.Arbitrary<Operation> = fc.oneof(
       provider: fc.constantFrom(...providers),
     }),
   },
+  {
+    weight: 2,
+    arbitrary: fc.record({
+      kind: fc.constant("refresh" as const),
+      pick: fc.nat({ max: 3 }),
+      result: fc.constantFrom<RefreshResult>("open", "closed", "reject"),
+    }),
+  },
 );
 
 const scenario: fc.Arbitrary<Scenario> = generatedSteps.chain((steps) =>
@@ -101,6 +115,7 @@ const scenario: fc.Arbitrary<Scenario> = generatedSteps.chain((steps) =>
     ),
     dynamic: fc.boolean(),
     maxConcurrent: fc.integer({ min: 1, max: 3 }),
+    refresh: fc.boolean(),
     operations: fc.array(operation, { maxLength: 16 }),
   }),
 );
@@ -134,12 +149,19 @@ type PendingRun = {
   fail: (error: Error) => void;
 };
 
+type PendingRefresh = {
+  key: string;
+  done: () => void;
+  fail: (error: Error) => void;
+};
+
 type Trace = {
   violations: string[];
   completions: WorkflowResult[];
   completionResolved: boolean;
   finalSnapshot: WorkflowResult | undefined;
   outstandingAtEnd: number;
+  refreshCalls: number;
 };
 
 /** Drives one workflow against a deferred fake runner and records violations. */
@@ -147,15 +169,31 @@ async function runScenario(input: Scenario): Promise<Trace> {
   const violations: string[] = [];
   const completions: WorkflowResult[] = [];
   const pending: PendingRun[] = [];
+  const refreshes: PendingRefresh[] = [];
+  let refreshCalls = 0;
   const unavailable = new Set<Provider>();
   const manager = new WorkflowManager((result) => completions.push(result));
   let workflowId = "";
+
+  const refreshProvider = (key: string) => {
+    refreshCalls++;
+    if (refreshes.some((refresh) => refresh.key === key)) {
+      violations.push(`concurrent refresh of ${key}`);
+    }
+    return new Promise<void>((done, fail) => {
+      refreshes.push({ key, done, fail });
+    });
+  };
 
   const runner: WorkflowStepRunner = {
     providerKey: (step) => step.model?.split("/")[0],
     isProviderAvailable: (key) => !providers.some((p) => p === key && unavailable.has(p)),
     run(step: WorkflowStepDefinition, _prompt: string, context: WorkflowRunnerContext) {
       if (completions.length > 0) violations.push(`run(${step.id}) after settle`);
+      const provider = step.model?.split("/")[0];
+      if (refreshes.some((refresh) => refresh.key === provider)) {
+        violations.push(`run(${step.id}) while its provider is rechecked`);
+      }
       const snapshot = manager.get(context.workflowId);
       for (const need of step.needs ?? []) {
         const status = snapshot?.steps.find((candidate) => candidate.id === need)?.status;
@@ -171,6 +209,8 @@ async function runScenario(input: Scenario): Promise<Trace> {
       });
     },
   };
+
+  if (input.refresh) runner.refreshProvider = refreshProvider;
 
   const observe = (label: string) => {
     const snapshot = manager.get(workflowId);
@@ -199,9 +239,20 @@ async function runScenario(input: Scenario): Promise<Trace> {
     }
   };
 
+  const settleRefresh = (index: number, result: RefreshResult) => {
+    const [refresh] = refreshes.splice(index, 1);
+    if (!refresh) return;
+    if (result === "open") {
+      for (const provider of providers) if (provider === refresh.key) unavailable.delete(provider);
+    }
+    if (result === "reject") refresh.fail(new Error("refresh failed"));
+    else refresh.done();
+  };
+
   const drain = async (label: string) => {
-    for (let guard = 0; pending.length > 0 && guard < 64; guard++) {
-      settleRun(0, "completed");
+    for (let guard = 0; (pending.length > 0 || refreshes.length > 0) && guard < 64; guard++) {
+      if (refreshes.length > 0) settleRefresh(0, "closed");
+      else settleRun(0, "completed");
       await flush();
       observe(label);
     }
@@ -231,6 +282,9 @@ async function runScenario(input: Scenario): Promise<Trace> {
           if (unavailable.has(op.provider)) unavailable.delete(op.provider);
           else unavailable.add(op.provider);
           break;
+        case "refresh":
+          if (refreshes.length > 0) settleRefresh(op.pick % refreshes.length, op.result);
+          break;
       }
       await flush();
       observe(op.kind);
@@ -252,7 +306,8 @@ async function runScenario(input: Scenario): Promise<Trace> {
       completions: [...completions],
       completionResolved,
       finalSnapshot: manager.get(workflowId),
-      outstandingAtEnd: pending.length,
+      outstandingAtEnd: pending.length + refreshes.length,
+      refreshCalls,
     };
   } finally {
     manager.dispose();
@@ -289,6 +344,25 @@ test("live runs never exceed maxConcurrent and always match the running steps", 
     }),
     RUNS,
   );
+});
+
+test("a closed provider's steps wait for one re-check and never start during it", async () => {
+  let refreshCalls = 0;
+  await fc.assert(
+    fc.asyncProperty(scenario, async (input) => {
+      const trace = await runScenario(input);
+      refreshCalls += trace.refreshCalls;
+      assert.deepEqual(
+        trace.violations.filter(
+          (violation) =>
+            violation.includes("rechecked") || violation.includes("concurrent refresh"),
+        ),
+        [],
+      );
+    }),
+    RUNS,
+  );
+  assert.ok(refreshCalls > 0, "no scenario re-checked a closed provider");
 });
 
 test("the workflow settles exactly once and starts nothing afterwards", async () => {
