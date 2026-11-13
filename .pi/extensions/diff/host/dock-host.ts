@@ -13,6 +13,12 @@
  * event to every component under the pointer, innermost first, until one
  * handles it; the row (`PaneRow`) is therefore asked after the transcript's
  * own components declined, which is how a press beside the pane is seen.
+ *
+ * Wheel: pi-tui scrolls the scroll views under the pointer only when no
+ * component handled the wheel event, and then passes whatever the innermost
+ * view could not take on to the transcript, whatever that view's overscroll
+ * setting. The row therefore scrolls the pane itself for a wheel anywhere on
+ * the pane's columns and reports it handled, so the transcript never moves.
  */
 import type {
   Component,
@@ -153,6 +159,11 @@ export class BorderHandle implements Component {
   }
 
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    // The wheel scrolls the pane; the row does that. A press with another button
+    // includes a horizontal wheel, which pi-tui reports as a press with no
+    // release: taking it would leave the border the target of the next press.
+    if (event.type === "wheel") return undefined;
+    if (event.type === "press" && event.button !== "left") return undefined;
     if (event.type === "press" && event.button === "left") {
       this.dragging = true;
       return { handled: true, capture: true, render: true };
@@ -178,30 +189,49 @@ export class BorderHandle implements Component {
  * pane, and is left unhandled so Pi still starts its text selection there. On
  * the pane's columns the row takes what nothing in the pane took (the space
  * under a short list): the press, so that Pi selects and copies nothing in
- * the pane, and the click, which focuses the pane.
+ * the pane, and the click, which focuses the pane. A wheel on the pane's
+ * columns, header and border included, scrolls the pane and nothing else.
+ * Other buttons, which include a horizontal wheel, are left to pi-tui, which
+ * does nothing with them.
  */
 class PaneRow extends HStack {
   readonly paneColumn: (width: number) => number;
   readonly leavePane: () => void;
   readonly enterPane: () => void;
+  readonly scrollPane: (lines: number) => void;
 
-  constructor(paneColumn: (width: number) => number, leavePane: () => void, enterPane: () => void) {
+  constructor(
+    paneColumn: (width: number) => number,
+    leavePane: () => void,
+    enterPane: () => void,
+    scrollPane: (lines: number) => void,
+  ) {
     super();
     this.paneColumn = paneColumn;
     this.leavePane = leavePane;
     this.enterPane = enterPane;
+    this.scrollPane = scrollPane;
   }
 
   // pi-tui does not export the result type its containers return.
   handleMouse(event: TuiMouseEvent): ReturnType<HStack["handleMouse"]> {
+    if (event.type === "wheel") {
+      if (event.x < this.paneColumn(event.width)) return undefined;
+      this.scrollPane(event.wheelDelta ?? 0);
+      return this.taken(event, true);
+    }
     if (event.button !== "left") return undefined;
     const inPane = event.x >= this.paneColumn(event.width);
     if (event.type === "press" && !inPane) this.leavePane();
     if (!inPane || (event.type !== "press" && event.type !== "click")) return undefined;
     if (event.type === "click") this.enterPane();
+    return this.taken(event, event.type === "click");
+  }
+
+  private taken(event: TuiMouseEvent, render: boolean): ReturnType<HStack["handleMouse"]> {
     return {
       handled: true,
-      render: event.type === "click",
+      render,
       // The row itself took the event: the shape pi-tui's containers report for a child.
       target: {
         component: this,
@@ -308,6 +338,11 @@ export function createDockHost(
             if (host.isFocused()) host.unfocus();
           }, undefined),
         () => surface.contain(() => host.focus(), undefined),
+        // The pane's own scroll view clamps to its content.
+        (lines) =>
+          surface.contain(() => {
+            scroll.scrollBy(lines);
+          }, undefined),
       );
       const target: Mounted = { layout, row, appliedWidth: 0 };
       layoutRow(target, callbacks.width());
