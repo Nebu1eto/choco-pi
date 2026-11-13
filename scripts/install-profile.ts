@@ -72,6 +72,13 @@ export type InstallProfileOptions = {
   agentDir?: string;
   backup?: boolean;
   piLauncher?: string;
+  /**
+   * The model scope a first install writes as `enabledModels`; defaults to
+   * {@link DEFAULT_PROFILE_ENABLED_MODELS}. Empty writes no scope: the
+   * standalone setup passes it, because Pi warns at every start about each
+   * pattern whose provider has no credentials yet.
+   */
+  defaultEnabledModels?: readonly string[];
 };
 export type SidecarMigrationResult = {
   target: string;
@@ -776,6 +783,7 @@ async function supersededPackageNames(root: string, projectSettings: ProjectSett
 async function readProfileSettings(
   root: string,
   existingSettings: Settings,
+  defaultEnabledModels: readonly string[],
 ): Promise<ProjectSettings> {
   const projectPath = path.join(root, ".pi", "settings.json");
   if (await exists(projectPath)) {
@@ -819,9 +827,10 @@ async function readProfileSettings(
       packages: [...DEFAULT_PROFILE_PACKAGES],
       extensions: [...DEFAULT_PROFILE_EXTENSIONS],
       modelThinkingLevels: { ...DEFAULT_PROFILE_MODEL_THINKING_LEVELS },
-      ...(existingSettings.enabledModels === undefined && {
-        enabledModels: [...DEFAULT_PROFILE_ENABLED_MODELS],
-      }),
+      ...(existingSettings.enabledModels === undefined &&
+        defaultEnabledModels.length > 0 && {
+          enabledModels: [...defaultEnabledModels],
+        }),
     };
   }
   // A reinstall keeps the user's settings but still fills in per-model thinking
@@ -840,10 +849,11 @@ export async function installProfile({
   agentDir = process.env.PI_CODING_AGENT_DIR ?? path.join(homedir(), ".pi", "agent"),
   backup = false,
   piLauncher,
+  defaultEnabledModels = DEFAULT_PROFILE_ENABLED_MODELS,
 }: InstallProfileOptions = {}) {
   const settingsPath = path.join(agentDir, "settings.json");
   const existingSettings = await readJson(settingsPath, {});
-  const project = await readProfileSettings(root, existingSettings);
+  const project = await readProfileSettings(root, existingSettings, defaultEnabledModels);
   // MCP configuration is deliberately not linked. Pi reads ~/.pi/agent/mcp.json and a
   // project .pi/mcp.json as separate sources, so linking a repo-local copy registers every
   // server twice when Pi runs from this checkout, and the ignored file disappearing leaves

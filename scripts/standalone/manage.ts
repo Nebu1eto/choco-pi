@@ -595,17 +595,41 @@ export async function setupCommand(args: readonly string[]): Promise<void> {
   const { home, launcher } = requireContract();
   await assertPiBinEntry(APP_ROOT);
   const { installProfile } = await import("../install-profile.ts");
+  const agentDir = path.join(home, "agent");
   const result = await installProfile({
     root: APP_ROOT,
-    agentDir: path.join(home, "agent"),
+    agentDir,
     piLauncher: launcher,
+    // No model scope until the user logs in: each scoped pattern without
+    // credentials is a startup warning.
+    defaultEnabledModels: [],
   });
   for (const link of result.links) console.log(`${link.action}: ${link.target}`);
   console.log(`updated: ${result.settingsPath}`);
   console.log(`updated: ${result.markerPath}`);
   for (const target of result.removed) console.log(`removed: ${target}`);
   for (const warning of result.warnings) console.warn(`warning: ${warning}`);
+  const { applySettingsSeed, readSettingsSeed } = await import("./settings-seed.ts");
+  const seed = await applySettingsSeed(agentDir, await readSettingsSeed());
+  if (seed.added.length > 0) console.log(`seeded: ${seed.added.join(", ")}`);
   await launcherVersionMatches(home, APP_ROOT, null);
+  if (seed.firstSeed) process.stdout.write(nextStepsHint(home));
+}
+
+/** Printed after the first standalone setup of an agent directory. */
+export function nextStepsHint(home: string): string {
+  const step = (command: string, purpose: string) => `  ${command.padEnd(14)} ${purpose}`;
+  return [
+    "",
+    "Next steps:",
+    step("choco-pi", "start choco-pi"),
+    step(
+      "/login",
+      `sign in to a provider (stored only in ${path.join(home, "agent", "auth.json")})`,
+    ),
+    step("/preferences", "change language, style, persona and other preferences"),
+    "",
+  ].join("\n");
 }
 
 export async function updateCommand(args: readonly string[]): Promise<void> {

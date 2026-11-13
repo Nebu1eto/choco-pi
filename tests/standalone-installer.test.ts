@@ -51,6 +51,7 @@ import {
   UNZIP_GUIDANCE,
   type RuntimePins,
 } from "../scripts/standalone/provision.ts";
+import { readSettingsSeed } from "../scripts/standalone/settings-seed.ts";
 
 const runFile = promisify(execFile);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -581,6 +582,13 @@ async function fixtureSource(directory: string): Promise<string> {
   await cp(path.join(ROOT, "scripts", "standalone"), path.join(source, "scripts", "standalone"), {
     recursive: true,
   });
+  // self setup applies the standalone settings seed.
+  await cp(path.join(ROOT, "profile", "standalone"), path.join(source, "profile", "standalone"), {
+    recursive: true,
+  });
+  const runtimeValues = path.join("profile", "extensions", "lib", "runtime-values.ts");
+  await mkdir(path.dirname(path.join(source, runtimeValues)), { recursive: true });
+  await cp(path.join(ROOT, runtimeValues), path.join(source, runtimeValues));
   await writeFile(
     path.join(source, "scripts", "install-profile.ts"),
     [
@@ -768,6 +776,16 @@ test("stage 1 install is idempotent, updates by fast-forward, and uninstall remo
   const install = () => stageOneInstall(app, home, binDir, source, environment);
   const first = await install();
   assert.match(first, /created: .*choco-pi ->/);
+  assert.match(first, /^Next steps:$/m, "the first setup prints the next steps");
+  const seed = await readSettingsSeed();
+  const seeded: unknown = JSON.parse(
+    await readFile(path.join(home, "agent", "settings.json"), "utf8"),
+  );
+  assert.deepEqual(
+    seeded,
+    Object.fromEntries(Object.entries(seed.settings).map(([key, entry]) => [key, entry?.value])),
+    "the stub profile writes no settings, so exactly the seed keys are there",
+  );
   const manifestText = await readFile(path.join(home, "install.json"), "utf8");
   const manifest = parseInstallManifest(manifestText, "install.json");
   assert.equal(manifest.node_path, process.execPath);
@@ -785,6 +803,7 @@ test("stage 1 install is idempotent, updates by fast-forward, and uninstall remo
 
   const second = await install();
   assert.match(second, /unchanged: .*choco-pi ->/);
+  assert.doesNotMatch(second, /seeded:|Next steps:/, "a re-run seeds nothing");
   const again = parseInstallManifest(
     await readFile(path.join(home, "install.json"), "utf8"),
     "install.json",

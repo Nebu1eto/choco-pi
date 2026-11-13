@@ -66,6 +66,37 @@ The launcher finds its install home from its own path, so you do not need to set
 `CHOCO_PI_HOME`; a value you set takes precedence. When `choco-pi` opens, run
 `/login`: the standalone command does not use `pi`'s login.
 
+#### First-run settings
+
+The first `choco-pi self setup` (run by `install.sh`) adds these settings to
+`~/.choco-pi/agent/settings.json` from `profile/standalone/settings.seed.json`:
+
+| Key                      | Seeded value                       | Pi's default             |
+| ------------------------ | ---------------------------------- | ------------------------ |
+| `theme`                  | `nord-dark` (from `choco-pi-ui`)   | terminal's dark or light |
+| `fullscreenExitOutput`   | `resume-hint`                      | `transcript`             |
+| `fuzzyFileMentions`      | `true`                             | `false`                  |
+| `cacheWarming`           | `streaming`                        | `idle`                   |
+| `quietStartup`           | `true`                             | `false`                  |
+| `enableInstallTelemetry` | `false`                            | `true`                   |
+| `terminal`               | `{ "showTerminalProgress": true }` | `false`                  |
+
+Each key is added once: only when the file lacks it and no earlier setup
+already offered it. `self setup` and `self update` never overwrite a value you
+set and never add back a key you deleted; a later seed version adds only keys
+new in that version. What was offered is recorded in
+`~/.choco-pi/agent/choco-pi/settings-seed.json`. Change the values in
+`settings.json` or through `/preferences` and Pi's `/settings`.
+
+Nothing is imported from `pi` or `~/.pi`. Values that depend on your provider
+or are personal are left unset: `defaultProvider`, `defaultModel`,
+`defaultThinkingLevel`, `enabledModels`, `agentLanguage`, `sessionAutoNameModel`, and
+`hooks`. The standalone setup writes no `enabledModels` scope, because Pi warns
+at every start about each scoped model whose provider has no login yet. After
+`/login`, set a scope with `/scoped-models` if you want one. The first setup
+ends with these next steps: start `choco-pi`, run `/login` (credentials are
+stored only in `~/.choco-pi/agent/auth.json`), and open `/preferences`.
+
 #### Update and uninstall
 
 ```sh

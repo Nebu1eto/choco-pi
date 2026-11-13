@@ -65,6 +65,36 @@ choco-pi
 설정하면 그 값이 우선합니다. `choco-pi`가 열리면 `/login`을 실행하세요. 독립 실행형
 명령은 `pi`의 로그인을 쓰지 않습니다.
 
+#### 첫 실행 설정
+
+처음 실행하는 `choco-pi self setup`(`install.sh`가 실행)은
+`profile/standalone/settings.seed.json`에서 다음 설정을
+`~/.choco-pi/agent/settings.json`에 추가합니다.
+
+| 키                       | 넣는 값                            | Pi 기본값                |
+| ------------------------ | ---------------------------------- | ------------------------ |
+| `theme`                  | `nord-dark` (`choco-pi-ui` 제공)   | 터미널의 dark 또는 light |
+| `fullscreenExitOutput`   | `resume-hint`                      | `transcript`             |
+| `fuzzyFileMentions`      | `true`                             | `false`                  |
+| `cacheWarming`           | `streaming`                        | `idle`                   |
+| `quietStartup`           | `true`                             | `false`                  |
+| `enableInstallTelemetry` | `false`                            | `true`                   |
+| `terminal`               | `{ "showTerminalProgress": true }` | `false`                  |
+
+각 키는 한 번만 추가됩니다. 파일에 그 키가 없고 이전 설정 실행에서 아직 제시한 적이 없을
+때만 넣습니다. `self setup`과 `self update`는 사용자가 정한 값을 덮어쓰지 않고, 사용자가
+지운 키를 다시 넣지 않습니다. 이후 시드 버전은 그 버전에서 새로 생긴 키만 추가합니다.
+제시한 내용은 `~/.choco-pi/agent/choco-pi/settings-seed.json`에 기록됩니다. 값은
+`settings.json`에서 직접 바꾸거나 `/preferences`와 Pi의 `/settings`로 바꿉니다.
+
+`pi`나 `~/.pi`에서는 아무것도 가져오지 않습니다. 공급자에 따라 달라지거나 개인적인
+값은 비워 둡니다: `defaultProvider`, `defaultModel`, `defaultThinkingLevel`,
+`enabledModels`, `agentLanguage`, `sessionAutoNameModel`, `hooks`. 독립 실행형 설정은
+`enabledModels` 범위를 쓰지 않습니다. 로그인하지 않은 공급자의 모델이 범위에 있으면 Pi가
+시작할 때마다 경고하기 때문입니다. `/login` 후 원하면 `/scoped-models`로 범위를
+정하세요. 첫 설정은 마지막에 다음 단계를 안내합니다: `choco-pi` 실행, `/login`(인증
+정보는 `~/.choco-pi/agent/auth.json`에만 저장), `/preferences` 열기.
+
 #### 업데이트와 제거
 
 ```sh

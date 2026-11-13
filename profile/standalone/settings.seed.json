@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "settings": {
+    "theme": {
+      "since": 1,
+      "value": "nord-dark"
+    },
+    "fullscreenExitOutput": {
+      "since": 1,
+      "value": "resume-hint"
+    },
+    "fuzzyFileMentions": {
+      "since": 1,
+      "value": true
+    },
+    "cacheWarming": {
+      "since": 1,
+      "value": "streaming"
+    },
+    "quietStartup": {
+      "since": 1,
+      "value": true
+    },
+    "enableInstallTelemetry": {
+      "since": 1,
+      "value": false
+    },
+    "terminal": {
+      "since": 1,
+      "value": {
+        "showTerminalProgress": true
+      }
+    }
+  }
+}
