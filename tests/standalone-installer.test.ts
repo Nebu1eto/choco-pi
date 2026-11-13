@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  appendFile,
   chmod,
   cp,
   lstat,
@@ -29,11 +30,17 @@ import {
 } from "../scripts/standalone/install-manifest.ts";
 import { isOurLink, linkLauncher } from "../scripts/standalone/manage.ts";
 import {
+  PROVENANCE_NAME,
+  provenanceEntryProblem,
+  readProvenance,
+} from "../scripts/standalone/provenance.ts";
+import {
   BUN_PLATFORMS,
   ChecksumMismatchError,
   currentBunPlatform,
   extractVerifiedArchive,
   findSystemPnpm,
+  INSTALLER_PROTOCOL,
   parseIntegrity,
   parseRuntimePins,
   pnpmVersionQualifies,
@@ -143,6 +150,12 @@ test("the shipped pins parse and match package.json's pnpm", async () => {
     () => parseRuntimePins(valid.replace("bun_minimum_version 1.4.4", "bun_minimum_version 1.5.0")),
     /older than bun_minimum_version/,
   );
+  assert.equal(parseRuntimePins(valid).installerProtocol, 1, "an absent key means protocol 1");
+  assert.equal(parseRuntimePins(`installer_protocol 7\n${valid}`).installerProtocol, 7);
+  assert.throws(() => parseRuntimePins(`installer_protocol 02\n${valid}`), /installer_protocol/);
+  assert.equal(pins.installerProtocol, INSTALLER_PROTOCOL, "the app declares what stage 1 speaks");
+  const script = await readFile(INSTALL_SH, "utf8");
+  assert.match(script, new RegExp(`^SUPPORTED_INSTALLER_PROTOCOL=${INSTALLER_PROTOCOL}$`, "m"));
 });
 
 test("a checksum mismatch aborts before extraction; a match extracts", async (t) => {
@@ -684,7 +697,7 @@ async function commitChange(source: string): Promise<string> {
   return (await runFile("git", ["-C", source, "rev-parse", "HEAD"])).stdout.trim();
 }
 
-/** Runs stage 1 the way install.sh does right after it cloned `app`. */
+/** Runs stage 1 the way install.sh does right after it cloned (and journaled) `app`. */
 async function stageOneInstall(
   app: string,
   home: string,
@@ -692,6 +705,8 @@ async function stageOneInstall(
   source: string,
   environment: NodeJS.ProcessEnv,
 ): Promise<string> {
+  if (!(await exists(path.join(home, "install.json"))))
+    await appendFile(path.join(home, PROVENANCE_NAME), `${app}\n`);
   const args = [
     path.join(app, "scripts", "standalone", "manage.ts"),
     "install",
@@ -703,7 +718,6 @@ async function stageOneInstall(
     source,
     "--ref",
     "main",
-    "--app-cloned",
   ];
   const { stdout } = await runFile(process.execPath, args, { env: environment, timeout: 120_000 });
   return stdout;
@@ -1023,10 +1037,11 @@ test("install.sh downloads Node, then hands stage 1 the runtime name rather than
 
   const byDefault = await install("default", []);
   assert.doesNotMatch(byDefault.stageOne, /--runtime/, "the default leaves the runtime to stage 1");
-  assert.match(byDefault.stageOne, / --app-cloned --node-provisioned$/);
+  assert.match(byDefault.stageOne, / --ref main$/, "only arguments every stage 1 accepts");
   assert.equal(byDefault.manifest.runtime, "node");
   assert.ok(byDefault.manifest.created.includes(path.join(byDefault.home, "app")));
   assert.ok(byDefault.manifest.created.includes(path.join(byDefault.home, "runtime", "node")));
+  assert.equal(await exists(path.join(byDefault.home, PROVENANCE_NAME)), false);
 
   if (!withBun) {
     t.diagnostic(
@@ -1035,8 +1050,263 @@ test("install.sh downloads Node, then hands stage 1 the runtime name rather than
     return;
   }
   const onBun = await install("bun", ["--runtime", "bun"]);
-  assert.match(onBun.stageOne, / --runtime bun --app-cloned --node-provisioned$/);
+  assert.match(onBun.stageOne, / --runtime bun$/);
   assert.equal(onBun.manifest.runtime, "bun");
   assert.equal(onBun.manifest.bun_path, path.join(onBun.home, "runtime", "bun", "bin", "bun"));
   assert.ok(onBun.manifest.created.includes(path.join(onBun.home, "runtime", "bun")));
+});
+
+test("the creation journal yields only ownable paths and is empty when absent", async (t) => {
+  const directory = await scratch(t);
+  const home = path.join(directory, "home");
+  await mkdir(home);
+  const link = path.join(directory, "bin", "choco-pi");
+  assert.deepEqual(await readProvenance(home, link), { accepted: [], rejected: [] });
+  const app = path.join(home, "app");
+  const node = path.join(home, "runtime", "node");
+  const invalid = [
+    home,
+    path.join(home, "agent"),
+    path.join(home, "lsp", "x"),
+    path.join(home, PROVENANCE_NAME),
+    "/etc",
+    "rel/x",
+    `${home}/../x`,
+  ];
+  await writeFile(
+    path.join(home, PROVENANCE_NAME),
+    [app, node, app, ...invalid, link, ""].join("\n"),
+  );
+  const withLink = await readProvenance(home, link);
+  assert.deepEqual(withLink.accepted, [app, node, link]);
+  assert.deepEqual(
+    withLink.rejected.map(({ entry }) => entry),
+    invalid,
+  );
+  assert.deepEqual(
+    (await readProvenance(home, null)).accepted,
+    [app, node],
+    "a path outside the home is owned only as the recorded bin link",
+  );
+  assert.equal(provenanceEntryProblem(home, null, path.join(home, "runtime", "pnpm")), null);
+});
+
+/** Pins naming a fixture Node tarball (wrapping this node) served from a file: mirror. */
+async function nodeDownloadFixture(
+  directory: string,
+  source: string,
+  platform: string,
+): Promise<string> {
+  const nodeName = `node-v24.0.0-${platform}`;
+  const nodeMirror = path.join(directory, "node-mirror");
+  const nodeArchive = path.join(nodeMirror, "v24.0.0", `${nodeName}.tar.gz`);
+  const nodeWrapper = ["#!/bin/sh", `exec '${process.execPath}' "$@"`, ""].join("\n");
+  await fixtureTarball(directory, nodeName, new Map([["bin/node", nodeWrapper]]), nodeArchive);
+  const nodeDigest = (await sha(nodeArchive, "sha256")).toString("hex");
+  const pinsFile = path.join(source, "scripts", "standalone", "runtime-pins.txt");
+  await writeFile(
+    pinsFile,
+    (await readFile(pinsFile, "utf8"))
+      .replace(/^node_version \S+$/m, "node_version 24.0.0")
+      .replace(/^(node_sha256_\S+) [a-f0-9]{64}$/gm, `$1 ${nodeDigest}`),
+  );
+  return pathToFileURL(nodeMirror).href;
+}
+
+test("a failed install keeps ownership of what it created, for the retry and for uninstall", async (t) => {
+  const platform = nodePlatform();
+  const basePath = "/usr/bin:/bin";
+  const skipReason =
+    (await pinnedPnpmMissing()) ??
+    (platform === null || (await onPath("node", basePath)) || !(await onPath("git", basePath))
+      ? "needs darwin/linux with git but no node in /usr/bin:/bin"
+      : null);
+  if (skipReason !== null || platform === null) {
+    t.skip(skipReason ?? "unsupported platform");
+    return;
+  }
+  const directory = await scratch(t);
+  const { environment } = await fixtureEnvironment(directory);
+  const source = await fixtureSource(directory);
+  const nodeMirror = await nodeDownloadFixture(directory, source, platform);
+  await commitFixture(source, directory, environment);
+  const shims = path.join(directory, "shims");
+  await mkdir(shims);
+  const pnpm = (
+    await runFile("/bin/sh", ["-c", "command -v pnpm"], { env: environment })
+  ).stdout.trim();
+  await writeFile(
+    path.join(shims, "pnpm"),
+    ["#!/bin/sh", `PATH='${NODE_DIR}':"$PATH" exec '${pnpm}' "$@"`, ""].join("\n"),
+    { mode: 0o755 },
+  );
+  const userHome = path.join(directory, "user-home");
+  const binDir = path.join(directory, "bin");
+  // Stage 1 finds no pnpm on PATH and cannot download one from here.
+  const noPnpm = {
+    PATH: basePath,
+    CHOCO_PI_NODE_MIRROR: nodeMirror,
+    CHOCO_PI_NPM_REGISTRY: pathToFileURL(path.join(directory, "no-registry")).href,
+  };
+  const installSh = async (home: string, extra: Record<string, string>) =>
+    runFile(
+      "/bin/sh",
+      [INSTALL_SH, "--home", home, "--bin-dir", binDir, "--source", source, "--ref", "main"],
+      { env: { HOME: userHome, ...extra }, timeout: 180_000 },
+    ).then(
+      ({ stdout, stderr }) => ({ code: 0, output: stdout + stderr }),
+      (error: Failure) => ({
+        code: error.code ?? -1,
+        output: `${error.stdout ?? ""}${error.stderr ?? ""}`,
+      }),
+    );
+  const journal = async (home: string) => (await readProvenance(home, null)).accepted;
+  const home = path.join(directory, "home");
+  const app = path.join(home, "app");
+  const runtime = path.join(home, "runtime");
+  const pnpmDirectories = ["pnpm-store", "pnpm-cache", "pnpm-state"].map((entry) =>
+    path.join(runtime, entry),
+  );
+
+  const nodeFails = await installSh(home, {
+    PATH: basePath,
+    CHOCO_PI_NODE_MIRROR: pathToFileURL(path.join(directory, "no-node")).href,
+  });
+  assert.equal(nodeFails.code, 1, nodeFails.output);
+  assert.match(nodeFails.output, /download failed/);
+  assert.deepEqual(await journal(home), [app], "stage 0 journaled the clone before failing");
+
+  const pnpmFails = await installSh(home, noPnpm);
+  assert.equal(pnpmFails.code, 1, pnpmFails.output);
+  assert.equal(await exists(path.join(home, "install.json")), false, "failed before install.json");
+  assert.deepEqual(await journal(home), [app, path.join(runtime, "node"), ...pnpmDirectories]);
+
+  const retry = await installSh(home, {
+    PATH: `${shims}:${basePath}`,
+    CHOCO_PI_NODE_MIRROR: nodeMirror,
+  });
+  assert.equal(retry.code, 0, retry.output);
+  const manifest = await readManifest(home);
+  for (const owned of [app, path.join(runtime, "node"), ...pnpmDirectories]) {
+    assert.ok(manifest.created.includes(owned), `${owned} is owned after the retry`);
+  }
+  assert.equal(await exists(path.join(home, PROVENANCE_NAME)), false, "merged, then removed");
+  await runFile(path.join(binDir, "choco-pi"), ["self", "uninstall"], {
+    env: { HOME: userHome, PATH: basePath },
+  });
+  assert.deepEqual(await readdir(home), ["agent"]);
+  assert.deepEqual(await readdir(binDir), []);
+
+  // An install abandoned after a failure is uninstalled from its journal alone.
+  const abandoned = path.join(directory, "abandoned");
+  const failed = await installSh(abandoned, noPnpm);
+  assert.equal(failed.code, 1, failed.output);
+  const { stdout: removal } = await runFile(
+    path.join(abandoned, "app", "bin", "choco-pi"),
+    ["self", "uninstall"],
+    { env: { HOME: userHome, PATH: basePath } },
+  );
+  assert.match(removal, new RegExp(`removed: ${literal(path.join(abandoned, "app"))}$`, "m"));
+  assert.deepEqual(await readdir(abandoned), []);
+  assert.deepEqual(await readdir(userHome), [], "nothing written to the user's home");
+});
+
+/** A stage 1 that, like the one at a1a0efa0, rejects every argument it does not know. */
+const PROTOCOL_ONE_STAGE_ONE = [
+  'const valued = new Set(["--home", "--bin-dir", "--source", "--ref", "--runtime"]);',
+  "const args = process.argv.slice(2);",
+  "for (let index = 1; index < args.length; index += 2) {",
+  '  if (args[0] !== "install" || !valued.has(args[index])) {',
+  "    process.stderr.write(`unknown argument: ${args[index]}\\n`);",
+  "    process.exit(2);",
+  "  }",
+  "}",
+  'process.stdout.write(`OLD STAGE1 ${args.join(" ")}\\n`);',
+  "",
+].join("\n");
+
+/** A git source holding only `pins` and `stageOne` as scripts/standalone/manage.ts. */
+async function stageOneSource(directory: string, pins: string, stageOne: string): Promise<string> {
+  const source = await pinsOnlySource(directory, pins);
+  await writeFile(path.join(source, "scripts", "standalone", "manage.ts"), stageOne);
+  await runFile("git", ["-C", source, "add", "-A"]);
+  await runFile("git", ["-C", source, ...GIT_IDENTITY, "commit", "--quiet", "-m", "stage 1"]);
+  return source;
+}
+
+test("install.sh hands a protocol 1 app only the arguments its stage 1 accepts", async (t) => {
+  if (!(await onPath("git", "/usr/bin:/bin"))) {
+    t.skip("needs git in /usr/bin:/bin");
+    return;
+  }
+  const directory = await scratch(t);
+  const source = await stageOneSource(
+    directory,
+    pinsText("24.0.0", "0".repeat(64), ZERO_INTEGRITY),
+    PROTOCOL_ONE_STAGE_ONE,
+  );
+  const home = path.join(directory, "home");
+  const { stdout } = await runFile(
+    "/bin/sh",
+    [
+      INSTALL_SH,
+      "--home",
+      home,
+      "--bin-dir",
+      path.join(directory, "bin"),
+      "--source",
+      source,
+    ].concat(["--ref", "main", "--runtime", "node"]),
+    { env: { HOME: path.join(directory, "user-home"), PATH: `${NODE_DIR}:/usr/bin:/bin` } },
+  ).catch((error: Failure) =>
+    assert.fail(`install.sh failed (${error.code}):\n${error.stdout ?? ""}${error.stderr ?? ""}`),
+  );
+  assert.match(
+    stdout,
+    /^OLD STAGE1 install --home \S+ --bin-dir \S+ --source \S+ --ref main --runtime node$/m,
+  );
+  assert.equal(await exists(path.join(home, PROVENANCE_NAME)), false, "no journal left for it");
+});
+
+test("install.sh refuses an app that needs a newer installer protocol before downloading Node", async (t) => {
+  if (!(await onPath("git", "/usr/bin:/bin"))) {
+    t.skip("needs git in /usr/bin:/bin");
+    return;
+  }
+  const directory = await scratch(t);
+  const source = await stageOneSource(
+    directory,
+    `installer_protocol ${INSTALLER_PROTOCOL + 1}\n${pinsText("24.0.0", "0".repeat(64), ZERO_INTEGRITY)}`,
+    PROTOCOL_ONE_STAGE_ONE,
+  );
+  const home = path.join(directory, "home");
+  const failure = await runFile(
+    "/bin/sh",
+    [INSTALL_SH, "--home", home, "--bin-dir", path.join(directory, "bin"), "--source", source],
+    {
+      env: {
+        HOME: path.join(directory, "user-home"),
+        PATH: "/usr/bin:/bin",
+        CHOCO_PI_NODE_MIRROR: pathToFileURL(path.join(directory, "no-node")).href,
+      },
+    },
+  ).then(
+    () => null,
+    (error: Failure) => error,
+  );
+  assert.ok(failure !== null, "install.sh must fail");
+  assert.equal(failure.code, 1);
+  assert.match(
+    String(failure.stderr),
+    new RegExp(
+      `needs installer protocol ${INSTALLER_PROTOCOL + 1}, but this install\\.sh supports up to ${INSTALLER_PROTOCOL}; .*${literal(path.join(home, "app", "install.sh"))}`,
+    ),
+  );
+  assert.doesNotMatch(String(failure.stdout), /downloading Node|STAGE1/);
+  assert.equal(await exists(path.join(home, "runtime")), false, "nothing provisioned");
+  assert.deepEqual(
+    (await readProvenance(home, null)).accepted,
+    [path.join(home, "app")],
+    "the clone stays owned for the matching installer",
+  );
 });

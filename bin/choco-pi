@@ -4,7 +4,8 @@
 #
 # Environment contract (set unconditionally before Pi starts):
 #   CHOCO_PI_HOME          absolute install home: $CHOCO_PI_HOME, else the parent
-#                          of the app when it holds install.json, else ~/.choco-pi
+#                          of the app when it holds install.json (or, after a
+#                          failed install, .install-provenance), else ~/.choco-pi
 #   CHOCO_PI_STANDALONE    1
 #   CHOCO_PI_LAUNCHER      real path of this script
 #   PI_CODING_AGENT_DIR    $CHOCO_PI_HOME/agent
@@ -137,7 +138,7 @@ APP=${bin_dir%/*}
 # 2. Install home.
 if [ -n "${CHOCO_PI_HOME:-}" ]; then
   home=$CHOCO_PI_HOME
-elif [ -f "${APP%/*}/install.json" ]; then
+elif [ -f "${APP%/*}/install.json" ] || [ -f "${APP%/*}/.install-provenance" ]; then
   home=${APP%/*}
 else
   [ -n "${HOME:-}" ] || die "HOME is not set; set CHOCO_PI_HOME"

@@ -16,7 +16,9 @@
 # <home>/runtime/node, verifying its sha256 against
 # scripts/standalone/runtime-pins.txt before extracting anything. Stage 1 is
 # scripts/standalone/manage.ts install (pnpm, dependencies, profile, link).
-# Never uses sudo or a global npm install. Re-running is idempotent.
+# Each path it creates is journaled in <home>/.install-provenance at once, so
+# a failed run keeps ownership for the retry. Never uses sudo or a global npm
+# install. Re-running is idempotent.
 #
 # Mirrors (downloads are still verified against the pins):
 #   CHOCO_PI_NODE_MIRROR   default https://nodejs.org/dist
@@ -25,6 +27,9 @@
 set -eu
 
 DEFAULT_SOURCE=https://github.com/Nebu1eto/choco-pi.git
+# The newest stage 0 -> stage 1 handoff this script speaks (installer_protocol
+# in runtime-pins.txt): 1 passes only arguments; 2 adds the creation journal.
+SUPPORTED_INSTALLER_PROTOCOL=2
 
 say() { printf 'choco-pi install: %s\n' "$*"; }
 die() {
@@ -33,7 +38,7 @@ die() {
 }
 
 usage() {
-  sed -n '2,24p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'
+  sed -n '2,26p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'
 }
 
 home= bin_dir= source= ref= runtime=
@@ -162,9 +167,18 @@ esac
 
 mkdir -p "$home"
 home=$(cd -P -- "$home" && pwd -P)
+case $home in
+  *'
+'*) die "the install home path contains a newline" ;;
+esac
 app=$home/app
-# Stage 1 records only what this run created; it never infers ownership from existence.
-app_cloned= node_provisioned=
+# The creation journal (scripts/standalone/provenance.ts): one absolute path
+# per line, appended the moment the path exists. Stage 1 merges it into
+# install.json and removes it; ownership never comes from mere existence.
+journal=$home/.install-provenance
+record_created() {
+  printf '%s\n' "$1" >>"$journal"
+}
 if [ -e "$app/.git" ]; then
   say "using the existing app checkout in $app"
 elif [ -e "$app" ]; then
@@ -175,11 +189,12 @@ else
   [ -z "$local_clone" ] || set -- "$@" "$local_clone"
   [ -z "$ref" ] || set -- "$@" --branch "$ref"
   git "$@" -- "$source" "$app"
-  app_cloned=1
+  record_created "$app"
 fi
 
 pins_file=$app/scripts/standalone/runtime-pins.txt
 [ -f "$pins_file" ] || die "$pins_file is missing; the source is not a standalone-capable choco-pi"
+# pin KEY [DEFAULT]: the value of KEY, else DEFAULT, else a fatal error.
 pin() {
   while read -r key value rest; do
     if [ "$key" = "$1" ]; then
@@ -187,8 +202,22 @@ pin() {
       return 0
     fi
   done <"$pins_file"
+  if [ "$#" -ge 2 ]; then
+    printf '%s' "$2"
+    return 0
+  fi
   die "runtime pin $1 is missing in $pins_file"
 }
+
+# Checked before any download: an app needing a newer handoff gets nothing
+# provisioned by this script.
+protocol=$(pin installer_protocol 1)
+case $protocol in
+  '' | *[!0-9]* | 0*) die "installer_protocol in $pins_file is not a positive integer: '$protocol'" ;;
+esac
+if [ "${#protocol}" -gt 9 ] || [ "$protocol" -gt "$SUPPORTED_INSTALLER_PROTOCOL" ]; then
+  die "the app in $app needs installer protocol $protocol, but this install.sh supports up to $SUPPORTED_INSTALLER_PROTOCOL; run the app's own installer with the same arguments: sh $app/install.sh"
+fi
 
 node_major() {
   major=$("$1" -e 'process.stdout.write(process.versions.node.split(".")[0])' 2>/dev/null) || return 1
@@ -272,9 +301,9 @@ provision_node() {
   [ -x "$staging/$name/bin/node" ] || die "$name.tar.gz has no bin/node"
   rm -rf "$runtime_dir/node"
   mv "$staging/$name" "$runtime_dir/node"
+  record_created "$runtime_dir/node"
   rmdir "$staging"
   staging=
-  node_provisioned=1
   node_qualifies "$runtime_dir/node/bin/node" || die "the downloaded Node.js does not run on this system"
 }
 
@@ -293,8 +322,9 @@ say "using Node.js $("$NODE" --version) at $NODE"
 set -- install --home "$home" --bin-dir "$bin_dir" --source "$source"
 [ -z "$ref" ] || set -- "$@" --ref "$ref"
 [ -z "$runtime" ] || set -- "$@" --runtime "$runtime"
-[ -z "$app_cloned" ] || set -- "$@" --app-cloned
-[ -z "$node_provisioned" ] || set -- "$@" --node-provisioned
+# Protocol 1 stage 1 never reads the journal (it owns by existence instead);
+# do not strand the file in the home.
+[ "$protocol" -ge 2 ] || rm -f "$journal"
 trap - EXIT
 cleanup
 exec "$NODE" "$app/scripts/standalone/manage.ts" "$@"

@@ -40,6 +40,8 @@ export const BUN_PLATFORMS = [
 export type BunPlatform = (typeof BUN_PLATFORMS)[number];
 
 export type RuntimePins = {
+  /** The stage 0 -> stage 1 handoff the app expects (runtime-pins.txt explains it). */
+  installerProtocol: number;
   nodeVersion: string;
   nodeSha256: ReadonlyMap<NodePlatform, string>;
   pnpmVersion: string;
@@ -76,6 +78,12 @@ function isBunPlatform(value: string): value is BunPlatform {
 
 const EXACT_VERSION = /^\d+\.\d+\.\d+$/;
 
+/**
+ * The handoff this stage 1 implements: 2 reads install.sh's creation journal
+ * (provenance.ts). runtime-pins.txt declares it as installer_protocol.
+ */
+export const INSTALLER_PROTOCOL = 2;
+
 export function parseRuntimePins(text: string): RuntimePins {
   const values = new Map<string, string>();
   for (const raw of text.split("\n")) {
@@ -91,6 +99,11 @@ export function parseRuntimePins(text: string): RuntimePins {
     if (value === undefined) throw new Error(`missing runtime pin: ${key}`);
     return value;
   };
+  // Absent means protocol 1, the shape before the key existed.
+  const protocolText = values.get("installer_protocol") ?? "1";
+  if (!/^[1-9]\d{0,8}$/.test(protocolText))
+    throw new Error(`installer_protocol is not a positive integer: ${protocolText}`);
+  const installerProtocol = Number.parseInt(protocolText, 10);
   const nodeVersion = required("node_version");
   if (!/^24\.\d+\.\d+$/.test(nodeVersion))
     throw new Error(`node_version must be 24.x.y: ${nodeVersion}`);
@@ -132,6 +145,7 @@ export function parseRuntimePins(text: string): RuntimePins {
     if (!bunSha256.has(platform)) throw new Error(`missing runtime pin: bun_sha256_${platform}`);
   }
   return {
+    installerProtocol,
     nodeVersion,
     nodeSha256,
     pnpmVersion,
@@ -354,6 +368,12 @@ export type BunCommand = { path: string; version: string };
 export type Provisioned = { path: string; created: readonly string[] };
 
 /**
+ * Called with a directory the moment provisioning has put it in place, before
+ * any later check can fail, so the caller can journal its ownership.
+ */
+export type OnCreated = (directory: string) => Promise<void>;
+
+/**
  * Runs `candidate` as Bun from `probeDirectory` (no project bunfig or .env)
  * and returns its real binary (a version-manager shim resolves to the
  * binary it runs) and version; null when it does not run.
@@ -424,6 +444,8 @@ export type BunProvisionOptions = {
   searchPath: string;
   /** Overrides the detected platform (tests). */
   platform?: BunPlatform | null;
+  /** Told about `<runtimeDir>/bun` as soon as a download replaced it. */
+  onCreated?: OnCreated;
 };
 
 /**
@@ -471,6 +493,7 @@ export async function provisionPrivateBun(
     await chmod(path.join(staged, PRIVATE_BUN_ENTRY), 0o755);
     await rm(bunDirectory, { recursive: true, force: true });
     await rename(staged, bunDirectory);
+    await options.onCreated?.(bunDirectory);
   } finally {
     await rm(archive, { force: true });
     await rm(unpacked, { recursive: true, force: true });
@@ -488,12 +511,14 @@ export async function provisionPrivateBun(
 /**
  * Ensures `<runtimeDir>/pnpm` holds the pinned pnpm, downloading the registry
  * tarball and verifying its sha512 integrity before extraction when needed.
- * Returns the entry script and, when it downloaded, `<runtimeDir>/pnpm`.
+ * Returns the entry script and, when it downloaded, `<runtimeDir>/pnpm`;
+ * `onCreated` hears of that directory as soon as the extraction placed it.
  */
 export async function provisionPrivatePnpm(
   runtimeDirectory: string,
   pins: RuntimePins,
   registry: string,
+  onCreated?: OnCreated,
 ): Promise<Provisioned> {
   const pnpmDirectory = path.join(runtimeDirectory, "pnpm");
   const entry = path.join(pnpmDirectory, PRIVATE_PNPM_ENTRY);
@@ -509,6 +534,7 @@ export async function provisionPrivatePnpm(
   try {
     await download(url, archive);
     await extractVerifiedArchive(archive, parseIntegrity(pins.pnpmIntegrity), pnpmDirectory);
+    await onCreated?.(pnpmDirectory);
   } finally {
     await rm(archive, { force: true });
   }
