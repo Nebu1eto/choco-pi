@@ -130,7 +130,7 @@ function isPnpmEntry(line: string, version: string): boolean {
 
 /** The field lines pnpm 12 writes under its own packages and snapshots entries. */
 const SELF_LOCK_FIELDS = [
-  /^    resolution: \{integrity: sha512-[\w+/]+=*\}$/,
+  /^    resolution: \{integrity: sha512-[A-Za-z0-9+/]{86}==\}$/,
   /^    engines: \{node: '>=\d+'\}$/,
   /^    (?:hasBin|optional): true$/,
   /^    (?:cpu|os|libc): \[[\w-]+\]$/,
@@ -149,8 +149,9 @@ function isPnpmField(line: string, version: string): boolean {
  * `version`, or undefined when it matches. The top-level lines and the importers block must be
  * that output byte for byte, and packageManagerDependencies may appear only once. Every
  * packages or snapshots line must be a pnpm or pnpm platform binary key, or a field pnpm 12
- * writes for them. Any other dependency, importer, document, placement, or YAML spelling
- * fails instead of being parsed around.
+ * writes for them. Any other dependency, importer, document, or placement fails instead of
+ * being parsed around; YAML that pnpm itself refuses, such as a duplicated key, is left to
+ * its frozen install.
  */
 function selfLockMismatch(lockfile: string, version: string): string | undefined {
   if (lockfile.split(/^---$/m).length !== 3) return "the lockfile must hold exactly two documents";
@@ -213,6 +214,7 @@ test("the self-lock check accepts only what pnpm 12 writes to lock itself", () =
   const lockfile = (text: string): string => `---\n${text}\n---\nlockfileVersion: '9.0'\n`;
   const pnpmLock = `      pnpm:\n        specifier: ${version}\n        version: ${version}\n`;
   const managers = "    packageManagerDependencies:\n";
+  const integrity = `sha512-${"A".repeat(86)}==`;
   const pnpmOnly = [
     "lockfileVersion: '9.0'",
     "",
@@ -224,10 +226,10 @@ test("the self-lock check accepts only what pnpm 12 writes to lock itself", () =
     "packages:",
     "",
     `  pnpm@${version}:`,
-    "    resolution: {integrity: sha512-pnpm}",
+    `    resolution: {integrity: ${integrity}}`,
     "",
     `  '@pnpm/exe.darwin-arm64@${version}':`,
-    "    resolution: {integrity: sha512-exe}",
+    `    resolution: {integrity: ${integrity}}`,
     "",
     "snapshots:",
     "",
@@ -275,9 +277,10 @@ test("the self-lock check accepts only what pnpm 12 writes to lock itself", () =
     ),
     pnpmOnly.replace(`'@pnpm/exe.darwin-arm64': ${version}`, "'@pnpm/exe.darwin-arm64': 12.18.0"),
     pnpmOnly.replace(
-      "    resolution: {integrity: sha512-pnpm}",
-      "    resolution: {integrity: sha512-pnpm} # pinned",
+      `    resolution: {integrity: ${integrity}}`,
+      `    resolution: {integrity: ${integrity}} # pinned`,
     ),
+    pnpmOnly.replace(integrity, "sha512-A"),
     `${pnpmOnly}---\nextra: true\n`,
   ];
   for (const variant of variants) {
