@@ -84,6 +84,25 @@ async function miseTools(): Promise<Map<string, string>> {
   return tomlTable(await readText("mise.toml"), "tools", true);
 }
 
+/**
+ * Lines of a mise.toml outside the tools-only grammar: comments and blank lines, then one
+ * `[tools]` header, then `name = "x.y.z"` pins. Every other line is reported, however it is
+ * indented: another table, a dotted key, an inline table, or a template can make mise run
+ * code or require `mise trust`.
+ */
+function miseConfigViolations(text: string): string[] {
+  const violations: string[] = [];
+  let tools = false;
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed === "" || trimmed.startsWith("#")) continue;
+    if (!tools && trimmed === "[tools]") tools = true;
+    else if (!tools || !/^[a-z][a-z0-9-]* = "\d+\.\d+\.\d+"$/.test(trimmed)) violations.push(line);
+  }
+  if (!tools) violations.push("(no [tools] table)");
+  return violations;
+}
+
 /** `key value` pairs of scripts/standalone/runtime-pins.txt. */
 async function runtimePins(): Promise<Map<string, string>> {
   const pins = new Map<string, string>();
@@ -106,7 +125,11 @@ function lockedPackageManager(lockfile: string): string | undefined {
   return match?.[2];
 }
 
-/** The dependency names the lockfile's self-lock lists directly under packageManagerDependencies. */
+/**
+ * The dependency names the lockfile's self-lock lists directly under packageManagerDependencies.
+ * A direct line that is not a block-mapping key (an inline entry, odd indentation) is returned
+ * as an "unsupported entry" so the caller's comparison fails instead of skipping it.
+ */
 function lockedPackageManagerNames(lockfile: string): string[] {
   const documents = lockfile.split(/^---$/m);
   const selfLock = documents[0]?.trim() === "" ? documents[1] : undefined;
@@ -120,20 +143,51 @@ function lockedPackageManagerNames(lockfile: string): string[] {
     if (line.trim() === "") continue;
     const depth = line.length - line.trimStart().length;
     if (depth <= indent) break;
-    const entry = /^'?([^':]+)'?:$/.exec(line.trim());
-    if (depth === indent + 2 && entry?.[1]) names.push(entry[1]);
+    if (depth > indent + 2) continue;
+    const entry = /^('?)([^':\s{}]+)\1:$/.exec(line.trim());
+    names.push(depth === indent + 2 && entry?.[2] ? entry[2] : `unsupported entry: ${line.trim()}`);
   }
   return names;
 }
 
 test("mise.toml pins only tools, as exact versions", async () => {
-  const text = await readText("mise.toml");
-  const tables = [...text.matchAll(/^\[([^\]]+)\]\s*$/gm)].map((match) => match[1]);
-  assert.deepEqual(tables, ["tools"], "any other table can make mise require trust");
-  assert.ok(!text.includes("{{"), "templates make mise require trust");
+  assert.deepEqual(miseConfigViolations(await readText("mise.toml")), []);
   const tools = await miseTools();
   assert.deepEqual([...tools.keys()].sort(), ["node", "pnpm"]);
-  for (const [name, version] of tools) assert.match(version, /^\d+\.\d+\.\d+$/, name);
+});
+
+test("the mise.toml check rejects everything beyond exact tool pins", () => {
+  const pins = '[tools]\nnode = "24.22.3"\npnpm = "12.21.0"\n';
+  assert.deepEqual(miseConfigViolations(pins), []);
+  const extras = [
+    ' [env]\nNODE_OPTIONS = "--require=./hook.cjs"',
+    'env.NODE_OPTIONS = "--require=./hook.cjs"',
+    "[[hooks.enter]]",
+    'bun = "{{ env.BUN_VERSION }}"',
+    'bun = { version = "1.4.4" }',
+    'bun = "latest"',
+    "[tools]",
+  ];
+  for (const extra of extras)
+    assert.notDeepEqual(miseConfigViolations(`${pins}${extra}\n`), [], extra);
+  assert.notDeepEqual(miseConfigViolations(`[env]\nX = "1"\n${pins}`), []);
+  assert.notDeepEqual(miseConfigViolations("# comments only\n"), []);
+});
+
+test("the self-lock check rejects any dependency beside pnpm, in either YAML form", () => {
+  const selfLock = (entries: string): string =>
+    `---\nlockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    configDependencies: {}\n    packageManagerDependencies:\n${entries}\n\npackages: {}\n---\nlockfileVersion: '9.0'\n`;
+  const pnpm = "      pnpm:\n        specifier: 12.21.0\n        version: 12.21.0";
+  assert.deepEqual(lockedPackageManagerNames(selfLock(pnpm)), ["pnpm"]);
+  assert.equal(lockedPackageManager(selfLock(pnpm)), "12.21.0");
+  const extras = [
+    "      '@pnpm/exe':\n        specifier: 12.21.0\n        version: 12.21.0",
+    "      '@pnpm/exe': {specifier: 12.21.0, version: 12.21.0}",
+    "     '@pnpm/exe':\n        specifier: 12.21.0",
+  ];
+  for (const extra of extras) {
+    assert.notDeepEqual(lockedPackageManagerNames(selfLock(`${pnpm}\n${extra}`)), ["pnpm"], extra);
+  }
 });
 
 test("mise, package.json, the lockfile, and the runtime pins name one toolchain", async () => {
