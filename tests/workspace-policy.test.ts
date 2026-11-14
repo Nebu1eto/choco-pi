@@ -128,14 +128,32 @@ function isPnpmEntry(line: string, version: string): boolean {
   return bare === "pnpm" || /^@pnpm\/exe\.[a-z0-9-]+$/.test(bare);
 }
 
+/** The field lines pnpm 12 writes under its own packages and snapshots entries. */
+const SELF_LOCK_FIELDS = [
+  /^    resolution: \{integrity: sha512-[\w+/]+=*\}$/,
+  /^    engines: \{node: '>=\d+'\}$/,
+  /^    (?:hasBin|optional): true$/,
+  /^    (?:cpu|os|libc): \[[\w-]+\]$/,
+  /^    optionalDependencies:$/,
+];
+
+/** Whether a self-lock line is allowed below a packages or snapshots key at `version`. */
+function isPnpmField(line: string, version: string): boolean {
+  if (SELF_LOCK_FIELDS.some((field) => field.test(line))) return true;
+  const binary = /^      '@pnpm\/exe\.[a-z0-9-]+': (\S+)$/.exec(line);
+  return binary?.[1] === version;
+}
+
 /**
  * Why a lockfile's self-lock differs from the one pnpm 12 writes when it locks only itself at
  * `version`, or undefined when it matches. The top-level lines and the importers block must be
- * that output byte for byte, packageManagerDependencies may appear only once, and every
- * packages or snapshots key must be pnpm or one of its platform binaries. Any other
- * dependency, importer, placement, or YAML spelling fails instead of being parsed around.
+ * that output byte for byte, and packageManagerDependencies may appear only once. Every
+ * packages or snapshots line must be a pnpm or pnpm platform binary key, or a field pnpm 12
+ * writes for them. Any other dependency, importer, document, placement, or YAML spelling
+ * fails instead of being parsed around.
  */
 function selfLockMismatch(lockfile: string, version: string): string | undefined {
+  if (lockfile.split(/^---$/m).length !== 3) return "the lockfile must hold exactly two documents";
   const text = selfLock(lockfile);
   if (text === undefined) return "no self-lock document";
   const lines = text.split("\n");
@@ -159,9 +177,11 @@ function selfLockMismatch(lockfile: string, version: string): string | undefined
   if (text.split("packageManagerDependencies").length !== 2) {
     return "packageManagerDependencies outside the root importer";
   }
-  const entries = lines.slice(lines.indexOf("packages:")).filter((line) => /^ {1,3}\S/.test(line));
-  const unexpected = entries.filter((line) => !isPnpmEntry(line, version));
-  return unexpected.length > 0 ? `unexpected entries: ${unexpected.join(" | ")}` : undefined;
+  const unexpected = lines
+    .slice(lines.indexOf("packages:"))
+    .filter((line) => /^\s+\S/.test(line))
+    .filter((line) => !isPnpmEntry(line, version) && !isPnpmField(line, version));
+  return unexpected.length > 0 ? `unexpected lines: ${unexpected.join(" | ")}` : undefined;
 }
 
 test("mise.toml pins only tools, as exact versions", async () => {
@@ -245,6 +265,20 @@ test("the self-lock check accepts only what pnpm 12 writes to lock itself", () =
     ),
     pnpmOnly.replace(`specifier: ${version}`, `specifier: ^${version}`),
     pnpmOnly.replaceAll("\n", "\r\n"),
+    pnpmOnly.replace(
+      "    optionalDependencies:\n",
+      "    dependencies:\n      extra: 1.0.0\n    optionalDependencies:\n",
+    ),
+    pnpmOnly.replace(
+      "packages:\n\n",
+      "packages:\n\n  extra@1.0.0: {resolution: {integrity: sha512-extra}}\n\n",
+    ),
+    pnpmOnly.replace(`'@pnpm/exe.darwin-arm64': ${version}`, "'@pnpm/exe.darwin-arm64': 12.18.0"),
+    pnpmOnly.replace(
+      "    resolution: {integrity: sha512-pnpm}",
+      "    resolution: {integrity: sha512-pnpm} # pinned",
+    ),
+    `${pnpmOnly}---\nextra: true\n`,
   ];
   for (const variant of variants) {
     assert.notEqual(selfLockMismatch(lockfile(variant), version), undefined, variant);
