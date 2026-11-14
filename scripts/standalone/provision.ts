@@ -17,6 +17,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  realpath,
   rename,
   rm,
   writeFile,
@@ -88,25 +89,32 @@ function isBunPlatform(value: string): value is BunPlatform {
 const EXACT_VERSION = /^\d+\.\d+\.\d+$/;
 
 /**
- * The handoff this stage 1 implements: 2 reads install.sh's creation journal
- * (provenance.ts). runtime-pins.txt declares it as installer_protocol.
+ * The handoff this revision implements (runtime-pins.txt declares it as
+ * installer_protocol): stage 0 moves the checkout and runs bootstrap.ts, stage 1
+ * reads the creation journal (provenance.ts), and `self update` hands off to
+ * the target revision's install.sh, which needs a target at this protocol or later.
  */
-export const INSTALLER_PROTOCOL = 2;
+export const INSTALLER_PROTOCOL = 3;
 
 /**
- * A free-text line for stage 1 code older than the per-platform pnpm pins:
- * that parser rejects any line with more than two words and quotes it in its
- * error, which is the only message an older `self update` can show. This
- * parser skips the line.
+ * The value of `key` in a pins text of any revision, read the way install.sh
+ * reads it (first word is the key, second the value), or null. Unlike
+ * parseRuntimePins it validates nothing else, so it can read pins whose format
+ * this revision does not know.
  */
-export const UPGRADE_NOTICE_KEY = "upgrade_notice";
+export function readPin(text: string, key: string): string | null {
+  for (const line of text.split("\n")) {
+    const [name, value] = line.trim().split(/\s+/);
+    if (name === key && value !== undefined) return value;
+  }
+  return null;
+}
 
 export function parseRuntimePins(text: string): RuntimePins {
   const values = new Map<string, string>();
   for (const raw of text.split("\n")) {
     const line = raw.trim();
     if (line === "" || line.startsWith("#")) continue;
-    if (line.startsWith(`${UPGRADE_NOTICE_KEY} `)) continue;
     const match = /^(\S+)\s+(\S+)$/.exec(line);
     if (match === null) throw new Error(`malformed runtime pin line: ${line}`);
     if (values.has(match[1])) throw new Error(`duplicate runtime pin: ${match[1]}`);
@@ -652,4 +660,21 @@ export async function provisionPrivatePnpm(
     );
   }
   return { path: binary, created: [pnpmDirectory] };
+}
+
+export async function exists(file: string): Promise<boolean> {
+  try {
+    await lstat(file);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function samePath(left: string, right: string): Promise<boolean> {
+  try {
+    return (await realpath(left)) === (await realpath(right));
+  } catch {
+    return false;
+  }
 }

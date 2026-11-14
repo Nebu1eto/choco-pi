@@ -51,13 +51,14 @@ the first clone is needed only to run the script. The installer:
 It never uses `sudo` or a global npm install. If Git is missing, it prints how
 to install Git on your system and stops. Running it again is idempotent.
 
-| Flag                  | Default                                            | Effect                                                      |
-| --------------------- | -------------------------------------------------- | ----------------------------------------------------------- |
-| `--home DIR`          | `$CHOCO_PI_HOME`, else `~/.choco-pi`               | Install home (`CHOCO_PI_HOME`)                              |
-| `--bin-dir DIR`       | `~/.local/bin`                                     | Directory for the `choco-pi` link                           |
-| `--source URL\|PATH`  | `https://github.com/Nebu1eto/choco-pi.git`         | Repository to clone; a local path also works                |
-| `--ref REF`           | The default branch                                 | Branch or tag to install                                    |
-| `--runtime node\|bun` | `node`, or the runtime an earlier install recorded | What runs Pi; see [Choose the runtime](#choose-the-runtime) |
+| Flag                  | Default                                                              | Effect                                                      |
+| --------------------- | -------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `--home DIR`          | `$CHOCO_PI_HOME`, else `~/.choco-pi`                                 | Install home (`CHOCO_PI_HOME`)                              |
+| `--bin-dir DIR`       | `~/.local/bin`                                                       | Directory for the `choco-pi` link                           |
+| `--source URL\|PATH`  | The recorded source, else `https://github.com/Nebu1eto/choco-pi.git` | Repository to clone; a local path also works                |
+| `--ref REF`           | The recorded ref, else the default branch                            | Branch or tag to install                                    |
+| `--rev COMMIT`        | The tip of REF                                                       | Install exactly this commit of REF (`self update` uses it)  |
+| `--runtime node\|bun` | `node`, or the runtime an earlier install recorded                   | What runs Pi; see [Choose the runtime](#choose-the-runtime) |
 
 `sh install.sh --help` also lists the mirror variables `CHOCO_PI_NODE_MIRROR`,
 `CHOCO_PI_NPM_REGISTRY`, and `CHOCO_PI_BUN_MIRROR`; downloads from a mirror are
@@ -130,18 +131,19 @@ choco-pi self update
 choco-pi self uninstall
 ```
 
-`self update` fast-forwards `~/.choco-pi/app` to the recorded branch or tag,
-reinstalls the dependencies, and runs `self setup`; `--ref REF` moves to another
-branch or tag. It refuses an app checkout with local changes, and when a step
-fails it returns to the previous revision. Stop running sessions first.
+`self update` fetches the recorded branch or tag (`--ref REF` picks another),
+checks out the new revision, and runs that revision's own `install.sh`. The new
+revision's code therefore installs its own Node.js, pnpm, and dependencies, so an
+update also crosses a change of toolchain or pin format. It refuses an app
+checkout with local changes, a move that is not a fast-forward of the recorded
+ref, and a revision older than this hand-off. When the new revision's installer
+fails, it checks out the previous revision and reinstalls it with that
+revision's own installer. Stop running sessions first.
 
-An install made before the move to pnpm 12 cannot `self update` to it: the update
-fails with a notice to re-run `install.sh` and returns to the previous revision,
-which keeps working. Re-run `install.sh` from an up-to-date clone with the
-`--home`, `--bin-dir`, and `--source` you installed with; without `--source`,
-the checkout is pointed at the GitHub repository. If the old installer code fails
-after moving the checkout, `install.sh` runs the new revision's installer once
-more to finish the switch.
+Running `install.sh` again over an install does the same steps: it moves the
+checkout first, then runs that revision's code, and without `--source` or
+`--ref` it keeps the recorded ones. Add `--help` after a `self` command to see
+its options.
 
 `self uninstall` removes what `install.json` records: the `choco-pi` link (only
 while it still points to this launcher), `app/`, `runtime/`, and `install.json`.

@@ -51,13 +51,14 @@ choco-pi
 `sudo`나 전역 npm 설치는 쓰지 않습니다. Git이 없으면 시스템에 맞는 Git 설치 방법을
 출력하고 멈춥니다. 다시 실행해도 결과는 같습니다(idempotent).
 
-| 옵션                  | 기본값                                     | 효과                                                 |
-| --------------------- | ------------------------------------------ | ---------------------------------------------------- |
-| `--home DIR`          | `$CHOCO_PI_HOME`, 없으면 `~/.choco-pi`     | 설치 홈(`CHOCO_PI_HOME`)                             |
-| `--bin-dir DIR`       | `~/.local/bin`                             | `choco-pi` 링크를 둘 디렉터리                        |
-| `--source URL\|PATH`  | `https://github.com/Nebu1eto/choco-pi.git` | clone할 저장소. 로컬 경로도 쓸 수 있습니다           |
-| `--ref REF`           | 기본 브랜치                                | 설치할 브랜치나 태그                                 |
-| `--runtime node\|bun` | `node` 또는 이전 설치가 기록한 런타임      | Pi를 실행할 런타임. [런타임 선택](#런타임-선택) 참고 |
+| 옵션                  | 기본값                                                         | 효과                                                 |
+| --------------------- | -------------------------------------------------------------- | ---------------------------------------------------- |
+| `--home DIR`          | `$CHOCO_PI_HOME`, 없으면 `~/.choco-pi`                         | 설치 홈(`CHOCO_PI_HOME`)                             |
+| `--bin-dir DIR`       | `~/.local/bin`                                                 | `choco-pi` 링크를 둘 디렉터리                        |
+| `--source URL\|PATH`  | 기록된 소스, 없으면 `https://github.com/Nebu1eto/choco-pi.git` | clone할 저장소. 로컬 경로도 쓸 수 있습니다           |
+| `--ref REF`           | 기록된 ref, 없으면 기본 브랜치                                 | 설치할 브랜치나 태그                                 |
+| `--rev COMMIT`        | REF의 최신 커밋                                                | REF의 이 커밋을 그대로 설치(`self update`가 사용)    |
+| `--runtime node\|bun` | `node` 또는 이전 설치가 기록한 런타임                          | Pi를 실행할 런타임. [런타임 선택](#런타임-선택) 참고 |
 
 `sh install.sh --help`는 미러 변수 `CHOCO_PI_NODE_MIRROR`, `CHOCO_PI_NPM_REGISTRY`,
 `CHOCO_PI_BUN_MIRROR`도 보여 줍니다. 미러에서 내려받은 파일도 고정값과 대조합니다.
@@ -126,17 +127,17 @@ choco-pi self update
 choco-pi self uninstall
 ```
 
-`self update`는 `~/.choco-pi/app`을 기록된 브랜치나 태그로 fast-forward하고,
-의존성을 다시 설치한 뒤 `self setup`을 실행합니다. `--ref REF`를 주면 다른
-브랜치나 태그로 옮깁니다. app 체크아웃에 로컬 변경이 있으면 거부하고, 중간 단계가
-실패하면 이전 리비전으로 돌아갑니다. 먼저 실행 중인 세션을 종료하세요.
+`self update`는 기록된 브랜치나 태그(`--ref REF`를 주면 그 ref)를 fetch하고, 새
+리비전을 체크아웃한 뒤 그 리비전의 `install.sh`를 실행합니다. 따라서 Node.js,
+pnpm, 의존성은 새 리비전의 코드가 직접 설치하고, 툴체인이나 핀 형식이 바뀌어도
+업데이트할 수 있습니다. app 체크아웃에 로컬 변경이 있거나, 기록된 ref에서
+fast-forward가 아니거나, 이 방식보다 오래된 리비전이면 거부합니다. 새 리비전의
+설치가 실패하면 이전 리비전을 체크아웃하고 그 리비전의 `install.sh`로 다시
+설치합니다. 먼저 실행 중인 세션을 종료하세요.
 
-pnpm 12로 바뀌기 전에 만든 설치는 `self update`로 이 버전까지 업데이트할 수
-없습니다. 업데이트는 `install.sh`를 다시 실행하라는 안내와 함께 실패하고, 계속
-동작하는 이전 리비전으로 돌아갑니다. 최신 상태의 clone에서 설치할 때 쓴 `--home`,
-`--bin-dir`, `--source`로 `install.sh`를 다시 실행하세요. `--source`를 빼면
-체크아웃이 GitHub 저장소를 가리키게 됩니다. 예전 설치 코드가 체크아웃을 옮긴 뒤
-실패하면 `install.sh`가 새 리비전의 설치 코드를 한 번 더 실행해 전환을 마칩니다.
+기존 설치 위에서 `install.sh`를 다시 실행해도 같은 단계를 거칩니다. 체크아웃을
+먼저 옮긴 뒤 그 리비전의 코드를 실행하며, `--source`나 `--ref`를 빼면 기록된 값을
+그대로 씁니다. `self` 명령 뒤에 `--help`를 붙이면 그 명령의 옵션을 볼 수 있습니다.
 
 `self uninstall`은 `install.json`에 기록된 항목, 즉 `choco-pi` 링크(이 실행기를
 가리키는 동안만), `app/`, `runtime/`, `install.json`을 제거합니다. `agent/`(로그인,

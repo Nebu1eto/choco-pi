@@ -2,6 +2,13 @@
 
 Package-level divergences live in each package's `VENDORED.md`. This file records harness-wide notes.
 
+## 2026-11-14: self update hands off to the target revision's installer
+
+- `self update` no longer installs a new revision with the running code. It fetches the target, reads only `installer_protocol` from the target's `runtime-pins.txt` (`readPin`, which accepts any pins format), checks the revision out, and runs its own `install.sh` with `--home`, `--bin-dir`, `--source`, `--ref`, `--rev`, and `--runtime`. On failure it restores the previous `install.json`, checks out the previous revision, and reinstalls it with that revision's `install.sh`; the creation journal keeps what the failed run created.
+- `install.sh` moves an existing checkout (only forward on the recorded ref, unless `--ref` changes or `--rev` is given) after it read and checked the target's pins with `git show`, provisions Node.js from those pins, then runs `scripts/standalone/bootstrap.ts` (pnpm and dependencies) and stage 1. Without `--source` or `--ref` it uses the values `install.json` records. `installer_protocol` is `3`; `install.sh` refuses any other value, and `self update` refuses a target below `3`.
+- Removed: the `upgrade_notice` pin line and its parser exception, the `install.sh` rerun of a moved checkout's stage 1, and the `--app-cloned` and `--node-provisioned` stage 1 switches. None of the installs they served was released.
+- `scripts/standalone/manage.ts` is now a dependency-free entry point. The commands (`cli.ts`) parse arguments with `@optique/core` `1.3.6` and log progress and warnings through `@logtape/logtape` `2.4.2` (a synchronous terminal sink: info on stdout, warnings and errors on stderr); data output such as `self env` is written directly. Both are new root dependencies without dependencies of their own. Without `node_modules`, `manage.ts` still runs `self uninstall [--purge]` from the creation journal (`uninstall.ts`) and refuses every other command.
+
 ## 2026-11-14: mise development toolchain and pnpm 12.21.0
 
 - `mise.toml` (new) pins the development toolchain: Node.js `24.22.3` (equal to `node_version` in `scripts/standalone/runtime-pins.txt`, the supported floor) and pnpm `12.21.0`. It holds only `[tools]` with plain version strings, so mise loads it without `mise trust` outside paranoid mode. mise installs pnpm through its `aqua:pnpm/pnpm` backend, the native binary from the pnpm GitHub release.

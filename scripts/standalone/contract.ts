@@ -129,3 +129,24 @@ export async function installedPiVersion(appRoot: string): Promise<string> {
   }
   return String(version);
 }
+
+/** A command-line mistake: reported with usage, exit status 2. */
+export class UsageError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UsageError";
+  }
+}
+
+export type Contract = { home: string; launcher: string };
+
+export function requireContract(): Contract {
+  const home = process.env.CHOCO_PI_HOME;
+  const launcher = process.env.CHOCO_PI_LAUNCHER;
+  if (process.env.CHOCO_PI_STANDALONE !== "1" || home === undefined || launcher === undefined) {
+    throw new UsageError("run this through the choco-pi launcher (bin/choco-pi self ...)");
+  }
+  if (!path.isAbsolute(home) || !path.isAbsolute(launcher))
+    throw new Error("launcher contract paths must be absolute");
+  return { home, launcher };
+}

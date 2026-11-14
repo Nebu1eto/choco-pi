@@ -2,35 +2,41 @@
 # choco-pi standalone installer, stage 0.
 #
 #   sh install.sh [--home DIR] [--bin-dir DIR] [--source URL|PATH] [--ref REF]
-#                 [--runtime node|bun]
+#                 [--rev COMMIT] [--runtime node|bun]
 #
 # Defaults: --home $CHOCO_PI_HOME, else ~/.choco-pi; --bin-dir ~/.local/bin;
-# --source https://github.com/Nebu1eto/choco-pi.git; --ref the default branch.
-# REF must be a branch or tag name. --runtime selects what runs Pi itself
-# (default node, or the runtime an earlier install recorded); Node.js is
-# required either way. bun uses a bun >= the pinned minimum or downloads the
-# pinned Bun into <home>/runtime/bun (sha256-verified before unzip).
+# --source and --ref the ones an existing install recorded, else
+# https://github.com/Nebu1eto/choco-pi.git and its default branch. REF must be
+# a branch or tag name. --rev installs exactly that commit (hex id) after
+# fetching REF, instead of REF's tip; "choco-pi self update" passes it.
+# --runtime selects what runs Pi itself (default node, or the runtime an
+# earlier install recorded); Node.js is required either way. bun uses a bun >=
+# the pinned minimum or downloads the pinned Bun into <home>/runtime/bun
+# (sha256-verified before unzip).
 #
 # Stage 0 (this script) checks the tools it needs, clones the app into
-# <home>/app, and finds Node.js >= 24 or downloads the pinned Node into
-# <home>/runtime/node, verifying its sha256 against
-# scripts/standalone/runtime-pins.txt before extracting anything. Stage 1 is
-# scripts/standalone/manage.ts install (pnpm, dependencies, profile, link).
-# Each path it creates is journaled in <home>/.install-provenance at once, so
-# a failed run keeps ownership for the retry. Never uses sudo or a global npm
-# install. Re-running is idempotent.
+# <home>/app or moves an existing checkout to the revision to install (only
+# forward, unless --ref changes or --rev is given), and finds Node.js >= 24 or
+# downloads the pinned Node into <home>/runtime/node, verifying its sha256
+# before extracting anything. It reads that revision's
+# scripts/standalone/runtime-pins.txt before it moves the checkout or downloads
+# anything, then runs that revision's own code: scripts/standalone/bootstrap.ts
+# (pnpm and dependencies), then stage 1, scripts/standalone/manage.ts install
+# (profile, link). Each path they create is journaled in
+# <home>/.install-provenance at once, so a failed run keeps ownership for the
+# retry. Never uses sudo or a global npm install. Re-running is idempotent.
 #
 # Mirrors (downloads are still verified against the pins):
 #   CHOCO_PI_NODE_MIRROR   default https://nodejs.org/dist
-#   CHOCO_PI_NPM_REGISTRY  default https://registry.npmjs.org (stage 1)
+#   CHOCO_PI_NPM_REGISTRY  default https://registry.npmjs.org (bootstrap.ts)
 #   CHOCO_PI_BUN_MIRROR    default https://github.com/oven-sh/bun/releases/download (stage 1)
 set -eu
 
 DEFAULT_SOURCE=https://github.com/Nebu1eto/choco-pi.git
-# The newest stage 0 -> stage 1 handoff this script speaks (installer_protocol
-# in runtime-pins.txt). 2 is the creation journal; an app without the pin
-# predates it and is refused (see below).
-SUPPORTED_INSTALLER_PROTOCOL=2
+# The stage 0 -> stage 1 handoff this script speaks (installer_protocol in
+# runtime-pins.txt): 3 moves the checkout here, runs bootstrap.ts, then stage 1
+# with --home, --bin-dir, --source, --ref and --runtime. Other values are refused.
+SUPPORTED_INSTALLER_PROTOCOL=3
 
 say() { printf 'choco-pi install: %s\n' "$*"; }
 die() {
@@ -39,19 +45,20 @@ die() {
 }
 
 usage() {
-  sed -n '2,26p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'
+  sed -n '2,/^set -eu$/p' "$0" 2>/dev/null | sed '$d' | sed 's/^# \{0,1\}//'
 }
 
-home= bin_dir= source= ref= runtime=
+home= bin_dir= source= ref= rev= runtime=
 while [ "$#" -gt 0 ]; do
   case $1 in
-    --home | --bin-dir | --source | --ref | --runtime)
+    --home | --bin-dir | --source | --ref | --rev | --runtime)
       [ "$#" -ge 2 ] && [ -n "$2" ] || die "$1 needs a value"
       case $1 in
         --home) home=$2 ;;
         --bin-dir) bin_dir=$2 ;;
         --source) source=$2 ;;
         --ref) ref=$2 ;;
+        --rev) rev=$2 ;;
         --runtime) runtime=$2 ;;
       esac
       shift 2 ;;
@@ -59,6 +66,7 @@ while [ "$#" -gt 0 ]; do
     --bin-dir=*) bin_dir=${1#*=}; shift ;;
     --source=*) source=${1#*=}; shift ;;
     --ref=*) ref=${1#*=}; shift ;;
+    --rev=*) rev=${1#*=}; shift ;;
     --runtime=*) runtime=${1#*=}; shift ;;
     -h | --help) usage; exit 0 ;;
     *) die "unknown argument: $1 (see --help)" ;;
@@ -67,6 +75,14 @@ done
 case $runtime in
   '' | node | bun) ;;
   *) die "--runtime must be node or bun, got '$runtime'" ;;
+esac
+case $ref in
+  -*) die "--ref must be a branch or tag name, got '$ref'" ;;
+esac
+case $rev in
+  '') ;;
+  *[!0-9a-f]*) die "--rev must be a commit id in lowercase hex, got '$rev'" ;;
+  *) [ "${#rev}" -ge 7 ] || die "--rev must have at least 7 hex digits, got '$rev'" ;;
 esac
 
 os=$(uname -s)
@@ -82,7 +98,6 @@ if [ -z "$home" ] || [ -z "$bin_dir" ]; then
 fi
 home=${home:-$HOME/.choco-pi}
 bin_dir=${bin_dir:-$HOME/.local/bin}
-source=${source:-$DEFAULT_SOURCE}
 case $home in /*) ;; *) home=$PWD/$home ;; esac
 case $bin_dir in /*) ;; *) bin_dir=$PWD/$bin_dir ;; esac
 
@@ -153,91 +168,6 @@ fetch() {
   esac
 }
 
-# Clone the app (or keep an existing checkout; stage 1 fast-forwards it).
-case $source in
-  file://* | *://*) ;;
-  *@*:*) ;;
-  *)
-    [ -d "$source" ] || die "--source $source is neither a URL nor a directory"
-    source=$(cd -P -- "$source" && pwd -P) ;;
-esac
-local_clone=
-case $source in
-  file://* | /*) local_clone=--no-hardlinks ;;
-esac
-
-home_created=
-[ -e "$home" ] || home_created=1
-mkdir -p "$home"
-home=$(cd -P -- "$home" && pwd -P)
-case $home in
-  *'
-'*) die "the install home path contains a newline" ;;
-esac
-app=$home/app
-# The creation journal (scripts/standalone/provenance.ts): one absolute path
-# per line, appended the moment the path exists. Stage 1 merges it into
-# install.json and removes it; ownership never comes from mere existence.
-journal=$home/.install-provenance
-journal_created=
-[ -e "$journal" ] || journal_created=1
-record_created() {
-  printf '%s\n' "$1" >>"$journal"
-}
-app_cloned=
-if [ -e "$app/.git" ]; then
-  say "using the existing app checkout in $app"
-elif [ -e "$app" ]; then
-  die "$app exists but is not a git checkout; move it away or use manage.ts install --local-app"
-else
-  say "cloning $source${ref:+ ($ref)} into $app"
-  set -- clone --quiet
-  [ -z "$local_clone" ] || set -- "$@" "$local_clone"
-  [ -z "$ref" ] || set -- "$@" --branch "$ref"
-  git "$@" -- "$source" "$app"
-  record_created "$app"
-  app_cloned=1
-fi
-
-pins_file=$app/scripts/standalone/runtime-pins.txt
-[ -f "$pins_file" ] || die "$pins_file is missing; the source is not a standalone-capable choco-pi"
-# pin KEY [DEFAULT]: the value of KEY, else DEFAULT, else a fatal error.
-pin() {
-  while read -r key value rest; do
-    if [ "$key" = "$1" ]; then
-      printf '%s' "$value"
-      return 0
-    fi
-  done <"$pins_file"
-  if [ "$#" -ge 2 ]; then
-    printf '%s' "$2"
-    return 0
-  fi
-  die "runtime pin $1 is missing in $pins_file"
-}
-
-# Checked before any download: an app needing another handoff gets nothing
-# provisioned by this script. The default contains a space, which a pin value
-# (one whitespace-free word) never does, so it means "no installer_protocol".
-protocol=$(pin installer_protocol 'no pin')
-if [ "$protocol" = 'no pin' ]; then
-  # Every app without the pin predates the creation journal; its stage 1
-  # would not own what this script creates. Undo this run's clone (and the
-  # journal and home it alone created) so that ref's own install.sh starts
-  # clean; an existing checkout is not this run's and stays untouched.
-  if [ -n "$app_cloned" ]; then
-    rm -rf "$app"
-    [ -z "$journal_created" ] || rm -f "$journal"
-    [ -z "$home_created" ] || rmdir "$home" 2>/dev/null || :
-  fi
-  die "the app${ref:+ at $ref} predates the standalone installer protocol (its scripts/standalone/runtime-pins.txt has no installer_protocol); install it with that ref's own install.sh instead"
-fi
-case $protocol in
-  '' | *[!0-9]* | 0*) die "installer_protocol in $pins_file is not a positive integer: '$protocol'" ;;
-esac
-if [ "${#protocol}" -gt 9 ] || [ "$protocol" -gt "$SUPPORTED_INSTALLER_PROTOCOL" ]; then
-  die "the app in $app needs installer protocol $protocol, but this install.sh supports up to $SUPPORTED_INSTALLER_PROTOCOL; run the app's own installer with the same arguments: sh $app/install.sh"
-fi
 
 node_major() {
   major=$("$1" -e 'process.stdout.write(process.versions.node.split(".")[0])' 2>/dev/null) || return 1
@@ -327,35 +257,186 @@ provision_node() {
   node_qualifies "$runtime_dir/node/bin/node" || die "the downloaded Node.js does not run on this system"
 }
 
+# normalize_source SOURCE: URLs as given, a directory as its physical path.
+normalize_source() {
+  case $1 in
+    file://* | *://* | *@*:*) printf '%s' "$1" ;;
+    *)
+      [ -d "$1" ] || die "--source $1 is neither a URL nor a directory"
+      (cd -P -- "$1" && pwd -P) ;;
+  esac
+}
+
+home_created=
+[ -e "$home" ] || home_created=1
+mkdir -p "$home"
+home=$(cd -P -- "$home" && pwd -P)
+case $home in
+  *'
+'*) die "the install home path contains a newline" ;;
+esac
+app=$home/app
+# The creation journal (scripts/standalone/provenance.ts): one absolute path
+# per line, appended the moment the path exists. Stage 1 merges it into
+# install.json and removes it; ownership never comes from mere existence.
+journal=$home/.install-provenance
+journal_created=
+[ -e "$journal" ] || journal_created=1
+record_created() {
+  printf '%s\n' "$1" >>"$journal"
+}
+
+# A Node.js found without downloading anything; the download, if needed,
+# waits until the revision to install, and so its pins, is known.
 NODE=
 if path_node=$(command -v node 2>/dev/null) && node_qualifies "$path_node"; then
   NODE=$("$path_node" -e 'process.stdout.write(process.execPath)')
 elif node_qualifies "$home/runtime/node/bin/node"; then
   NODE=$home/runtime/node/bin/node
+fi
+
+# recorded KEY: the string install.json records for KEY, "-" for null, else
+# nothing. Run only when install.json exists and NODE is set.
+recorded() {
+  "$NODE" -e '
+const fs = require("node:fs");
+let value;
+try {
+  value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"))[process.argv[2]];
+} catch {}
+process.stdout.write(value === null ? "-" : typeof value === "string" ? value : "");
+' "$home/install.json" "$1"
+}
+
+app_cloned=
+existing=
+recorded_ref=
+if [ -e "$app/.git" ]; then
+  existing=1
+  say "using the existing app checkout in $app"
+  recorded_source=
+  if [ -f "$home/install.json" ]; then
+    if [ -n "$NODE" ]; then
+      recorded_source=$(recorded source)
+      recorded_ref=$(recorded ref)
+    elif [ -z "$source" ] || [ -z "$ref" ]; then
+      die "reading $home/install.json needs Node.js >= 24, and none was found; pass --source and --ref"
+    fi
+  fi
+  [ "$recorded_source" != "-" ] ||
+    die "$home was installed from a local app tree (install.json records no source); install.sh manages only git checkouts"
+  [ -n "$source" ] || source=$recorded_source
+  [ -n "$source" ] || source=$(git -C "$app" remote get-url origin)
+  source=$(normalize_source "$source")
+  [ -n "$ref" ] || ref=$recorded_ref
+  if [ -z "$ref" ]; then
+    ref=$(git -C "$app" symbolic-ref --quiet --short HEAD) || die "cannot tell which ref to install; pass --ref"
+  fi
+  dirty=$(git -C "$app" status --porcelain --untracked-files=normal)
+  [ -z "$dirty" ] || die "$app has local changes; refusing to move it:
+$dirty"
+  [ "$(git -C "$app" remote get-url origin)" = "$source" ] || git -C "$app" remote set-url origin "$source"
+  git -C "$app" fetch --quiet --no-auto-gc origin "$ref"
+  target=$(git -C "$app" rev-parse --verify --quiet "${rev:-FETCH_HEAD}^{commit}") ||
+    die "commit $rev is not in $app after fetching $ref"
+elif [ -e "$app" ]; then
+  die "$app exists but is not a git checkout; move it away or use manage.ts install --local-app"
 else
+  source=$(normalize_source "${source:-$DEFAULT_SOURCE}")
+  say "cloning $source${ref:+ ($ref)} into $app"
+  set -- clone --quiet
+  case $source in file://* | /*) set -- "$@" --no-hardlinks ;; esac
+  [ -z "$ref" ] || set -- "$@" --branch "$ref"
+  git "$@" -- "$source" "$app"
+  record_created "$app"
+  app_cloned=1
+  if [ -z "$ref" ]; then
+    ref=$(git -C "$app" symbolic-ref --quiet --short HEAD) || die "cannot tell which ref $source checks out; pass --ref"
+  fi
+  target=$(git -C "$app" rev-parse --verify --quiet "${rev:-HEAD}^{commit}") ||
+    die "commit $rev is not in $source at $ref"
+  # This run's own clone: move it before anything reads it.
+  git -C "$app" checkout --quiet --detach "$target"
+fi
+short=$(printf '%.12s' "$target")
+
+# Undoes this run's clone, and the journal and home it alone created, so that
+# another install.sh starts clean; an existing checkout is not this run's.
+undo_clone() {
+  [ -n "$app_cloned" ] || return 0
+  rm -rf "$app"
+  [ -z "$journal_created" ] || rm -f "$journal"
+  [ -z "$home_created" ] || rmdir "$home" 2>/dev/null || :
+}
+
+pins_path=scripts/standalone/runtime-pins.txt
+if ! pins_text=$(git -C "$app" show "$target:$pins_path" 2>/dev/null); then
+  undo_clone
+  die "$ref ($short) has no $pins_path; the source is not a standalone-capable choco-pi"
+fi
+# pin KEY [DEFAULT]: the target revision's value of KEY, else DEFAULT, else a fatal error.
+pin() {
+  while read -r key value rest; do
+    if [ "$key" = "$1" ]; then
+      printf '%s' "$value"
+      return 0
+    fi
+  done <<EOF
+$pins_text
+EOF
+  if [ "$#" -ge 2 ]; then
+    printf '%s' "$2"
+    return 0
+  fi
+  die "runtime pin $1 is missing in $ref ($short):$pins_path"
+}
+
+# Checked before the checkout moves and before any download. The default
+# contains a space, which a pin value (one whitespace-free word) never does.
+protocol=$(pin installer_protocol 'no pin')
+case $protocol in
+  'no pin') ;;
+  '' | *[!0-9]* | 0*) die "installer_protocol of $ref ($short) is not a positive integer: '$protocol'" ;;
+  *) [ "${#protocol}" -le 9 ] || die "installer_protocol of $ref ($short) is out of range: '$protocol'" ;;
+esac
+if [ "$protocol" = 'no pin' ] || [ "$protocol" -lt "$SUPPORTED_INSTALLER_PROTOCOL" ]; then
+  undo_clone
+  [ "$protocol" != 'no pin' ] || protocol=none
+  die "the app at $ref ($short) predates standalone installer protocol $SUPPORTED_INSTALLER_PROTOCOL (it declares $protocol); install it with that revision's own install.sh instead"
+fi
+if [ "$protocol" -gt "$SUPPORTED_INSTALLER_PROTOCOL" ]; then
+  if [ -n "$existing" ]; then
+    hint="git -C $app show $target:install.sh | sh -s -- <the same arguments>"
+  else
+    hint="sh $app/install.sh"
+  fi
+  die "the app at $ref ($short) needs installer protocol $protocol, but this install.sh supports only $SUPPORTED_INSTALLER_PROTOCOL; run that revision's own installer with the same arguments: $hint"
+fi
+
+if [ -n "$existing" ]; then
+  head=$(git -C "$app" rev-parse --verify HEAD)
+  if [ "$target" != "$head" ]; then
+    # Only forward on the recorded ref; a new ref or an explicit --rev may go anywhere.
+    if [ -z "$rev" ] && [ -n "$recorded_ref" ] && [ "$ref" = "$recorded_ref" ] &&
+      ! git -C "$app" merge-base --is-ancestor "$head" "$target"; then
+      die "origin $ref ($short) is not a fast-forward of $(printf '%.12s' "$head")"
+    fi
+    say "moving $app from $(printf '%.12s' "$head") to $short ($ref)"
+    git -C "$app" checkout --quiet --detach "$target"
+  fi
+fi
+
+if [ -z "$NODE" ]; then
   say "no Node.js >= 24 on PATH; provisioning the pinned Node.js into $home/runtime/node"
   provision_node
   NODE=$home/runtime/node/bin/node
 fi
 say "using Node.js $("$NODE" --version) at $NODE"
 
-set -- install --home "$home" --bin-dir "$bin_dir" --source "$source"
-[ -z "$ref" ] || set -- "$@" --ref "$ref"
-[ -z "$runtime" ] || set -- "$@" --runtime "$runtime"
 trap - EXIT
 cleanup
-# Stage 1 runs from the checkout as it is, then moves it to the requested ref.
-# When an existing checkout is older than its new revision's runtime pins (for
-# example a pnpm 11 install meeting the pnpm 12 pins), that older stage 1
-# stops after the move; the moved checkout's own stage 1 then finishes the
-# install. It runs at most once more, and only when the checkout moved.
-head_before=$(git -C "$app" rev-parse --verify --quiet HEAD) || head_before=
-status=0
-"$NODE" "$app/scripts/standalone/manage.ts" "$@" || status=$?
-[ "$status" -ne 0 ] || exit 0
-head_after=$(git -C "$app" rev-parse --verify --quiet HEAD) || head_after=
-if [ -n "$head_before" ] && [ -n "$head_after" ] && [ "$head_after" != "$head_before" ]; then
-  say "the app moved from $head_before to $head_after; running that revision's stage 1"
-  exec "$NODE" "$app/scripts/standalone/manage.ts" "$@"
-fi
-exit "$status"
+# Everything from here on is the installed revision's own code.
+"$NODE" "$app/scripts/standalone/bootstrap.ts"
+set -- install --home "$home" --bin-dir "$bin_dir" --source "$source" --ref "$ref"
+[ -z "$runtime" ] || set -- "$@" --runtime "$runtime"
+exec "$NODE" "$app/scripts/standalone/manage.ts" "$@"

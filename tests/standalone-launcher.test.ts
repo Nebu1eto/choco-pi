@@ -147,6 +147,13 @@ async function copyApp(app: string): Promise<void> {
   await cp(path.join(ROOT, "scripts", "standalone"), path.join(app, "scripts", "standalone"), {
     recursive: true,
   });
+  // The management CLI's dependencies, linked one by one: tests write a stub
+  // Pi into app/node_modules, which must never reach this checkout's own.
+  for (const name of ["@optique/core", "@logtape/logtape", "@earendil-works/pi-schema"]) {
+    const link = path.join(app, "node_modules", name);
+    await mkdir(path.dirname(link), { recursive: true });
+    await symlink(await realpath(path.join(ROOT, "node_modules", name)), link);
+  }
 }
 
 test("home and node selection: symlinked launcher, install.json parent, recorded node, PATH without node", async (t) => {
@@ -556,6 +563,7 @@ test("Bun selected but unavailable exits 1 with guidance and never falls back to
 async function linkedApp(directory: string): Promise<string> {
   const app = path.join(directory, "app");
   await copyApp(app);
+  await rm(path.join(app, "node_modules"), { recursive: true });
   await symlink(path.join(ROOT, "node_modules"), path.join(app, "node_modules"));
   return path.join(app, "bin", "choco-pi");
 }
@@ -636,7 +644,7 @@ test("self runtime shows the effective runtime and its source, and persists node
 
   const invalid = await runLauncher(launcher, ["self", "runtime", "deno"], environment);
   assert.equal(invalid.code, 2);
-  assert.match(invalid.stderr, /self runtime must be one of node, bun, got "deno"/);
+  assert.match(invalid.stderr, /Expected one of "node" and "bun", but got "deno"/);
   await rm(manifestFile);
   const unmanaged = await runLauncher(launcher, ["self", "runtime", "bun"], {
     ...environment,

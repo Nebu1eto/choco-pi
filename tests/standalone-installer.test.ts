@@ -28,7 +28,8 @@ import {
   parseInstallManifest,
   type InstallManifest,
 } from "../scripts/standalone/install-manifest.ts";
-import { isOurLink, linkLauncher } from "../scripts/standalone/manage.ts";
+import { linkLauncher } from "../scripts/standalone/cli.ts";
+import { isOurLink } from "../scripts/standalone/uninstall.ts";
 import {
   PROVENANCE_NAME,
   provenanceEntryProblem,
@@ -51,9 +52,9 @@ import {
   provisionPrivateBun,
   provisionPrivatePnpm,
   readRuntimePins,
+  readPin,
   sha256Expected,
   UNZIP_GUIDANCE,
-  UPGRADE_NOTICE_KEY,
   type PnpmPlatform,
   type RuntimePins,
 } from "../scripts/standalone/provision.ts";
@@ -207,25 +208,26 @@ test("pnpm pins name one integrity per platform; the old single pin is not enoug
     () => parseRuntimePins(valid.replace(/^(pnpm_integrity_darwin-x64) .*$/m, "$1 sha1-abc")),
     /unsupported integrity/,
   );
-  const notice = `${UPGRADE_NOTICE_KEY} free text, with spaces\n`;
-  assert.deepEqual(parseRuntimePins(notice + valid), parsed, "this parser skips the notice");
 });
 
-test("the shipped upgrade notice is what an older stage 1 reports instead of installing", async () => {
-  const text = await readFile(path.join(ROOT, "scripts", "standalone", "runtime-pins.txt"), "utf8");
-  const notices = text.split("\n").filter((line) => line.startsWith(`${UPGRADE_NOTICE_KEY} `));
-  assert.equal(notices.length, 1);
-  const notice = notices[0] ?? "";
-  // The pins parser of every stage 1 before per-platform pnpm pins (one "key
-  // value" per line) refuses this line and quotes it in its error.
-  assert.doesNotMatch(notice, /^(\S+)\s+(\S+)$/);
-  assert.match(notice, /re-run install\.sh/);
-  // install.sh and bin/choco-pi read pins as "key value rest" by key; the notice key is not one of theirs.
-  const readers = [
-    await readFile(INSTALL_SH, "utf8"),
-    await readFile(path.join(ROOT, "bin", "choco-pi"), "utf8"),
-  ];
-  for (const reader of readers) assert.doesNotMatch(reader, new RegExp(UPGRADE_NOTICE_KEY));
+test("readPin reads one pin from pins of a format this revision does not know", () => {
+  const future = [
+    "# comment installer_protocol 9",
+    "installer_protocol 4",
+    "node_version 26.1.0",
+    "free_text line with many words",
+    "installer_protocol 5",
+    "",
+  ].join("\n");
+  assert.throws(() => parseRuntimePins(future), /malformed runtime pin line/);
+  assert.equal(readPin(future, "installer_protocol"), "4", "the first line naming the key wins");
+  assert.equal(readPin(future, "free_text"), "line");
+  assert.equal(readPin(future, "bun_version"), null);
+  assert.equal(
+    readPin("installer_protocol\n", "installer_protocol"),
+    null,
+    "a key without a value",
+  );
 });
 
 test("a checksum mismatch aborts before extraction; a match extracts", async (t) => {
@@ -789,6 +791,8 @@ async function fixtureSource(directory: string): Promise<string> {
   const source = path.join(directory, "source");
   await mkdir(path.join(source, "bin"), { recursive: true });
   await cp(path.join(ROOT, "bin", "choco-pi"), path.join(source, "bin", "choco-pi"));
+  // self update hands off to the target revision's own install.sh.
+  await cp(INSTALL_SH, path.join(source, "install.sh"));
   await cp(path.join(ROOT, "scripts", "standalone"), path.join(source, "scripts", "standalone"), {
     recursive: true,
   });
@@ -837,11 +841,17 @@ async function fixtureSource(directory: string): Promise<string> {
     'process.stdout.write("1.5.2\\n");\n',
     { mode: 0o755 },
   );
-  const piSchema = await realpath(path.join(ROOT, "node_modules", "@earendil-works", "pi-schema"));
-  await cp(piSchema, path.join(source, "vendor", "pi-schema"), {
-    recursive: true,
-    dereference: true,
-  });
+  // The management CLI's own dependencies, vendored so pnpm links them offline.
+  const vendored: Record<string, string> = {};
+  for (const name of ["@earendil-works/pi-schema", "@optique/core", "@logtape/logtape"]) {
+    const directoryName = name.replace("/", "__");
+    await cp(
+      await realpath(path.join(ROOT, "node_modules", name)),
+      path.join(source, "vendor", directoryName),
+      { recursive: true, dereference: true },
+    );
+    vendored[name] = `link:./vendor/${directoryName}`;
+  }
   await writeFile(
     path.join(source, "package.json"),
     JSON.stringify({
@@ -849,10 +859,7 @@ async function fixtureSource(directory: string): Promise<string> {
       private: true,
       type: "module",
       packageManager: `pnpm@${(await readRuntimePins()).pnpmVersion}`,
-      dependencies: {
-        "@earendil-works/pi-coding-agent": "link:./fake-pi",
-        "@earendil-works/pi-schema": "link:./vendor/pi-schema",
-      },
+      dependencies: { "@earendil-works/pi-coding-agent": "link:./fake-pi", ...vendored },
     }),
   );
   await writeFile(path.join(source, ".gitignore"), "node_modules/\n");
@@ -965,7 +972,7 @@ async function commitChange(source: string): Promise<string> {
   return (await runFile("git", ["-C", source, "rev-parse", "HEAD"])).stdout.trim();
 }
 
-/** Runs stage 1 the way install.sh does right after it cloned (and journaled) `app`. */
+/** Runs bootstrap.ts and stage 1 the way install.sh does right after it cloned (and journaled) `app`. */
 async function stageOneInstall(
   app: string,
   home: string,
@@ -975,6 +982,11 @@ async function stageOneInstall(
 ): Promise<string> {
   if (!(await exists(path.join(home, "install.json"))))
     await appendFile(path.join(home, PROVENANCE_NAME), `${app}\n`);
+  const { stdout: bootstrap } = await runFile(
+    process.execPath,
+    [path.join(app, "scripts", "standalone", "bootstrap.ts")],
+    { env: environment, timeout: 120_000 },
+  );
   const args = [
     path.join(app, "scripts", "standalone", "manage.ts"),
     "install",
@@ -988,7 +1000,7 @@ async function stageOneInstall(
     "main",
   ];
   const { stdout } = await runFile(process.execPath, args, { env: environment, timeout: 120_000 });
-  return stdout;
+  return bootstrap + stdout;
 }
 
 async function readManifest(home: string): Promise<InstallManifest> {
@@ -1717,7 +1729,7 @@ test("install.sh refuses an app without installer_protocol before downloading No
       (error: Failure) => error,
     );
   const refusal =
-    /the app at main predates the standalone installer protocol .*that ref's own install\.sh/;
+    /the app at main \([0-9a-f]{12}\) predates standalone installer protocol 3 \(it declares none\); install it with that revision's own install\.sh/;
 
   // A fresh home: this run's clone, and the journal and home it made, are undone.
   const home = path.join(directory, "home");
@@ -1774,7 +1786,7 @@ test("install.sh refuses an app that needs a newer installer protocol before dow
   assert.match(
     String(failure.stderr),
     new RegExp(
-      `needs installer protocol ${INSTALLER_PROTOCOL + 1}, but this install\\.sh supports up to ${INSTALLER_PROTOCOL}; .*${literal(path.join(home, "app", "install.sh"))}`,
+      `needs installer protocol ${INSTALLER_PROTOCOL + 1}, but this install\\.sh supports only ${INSTALLER_PROTOCOL}; .*${literal(path.join(home, "app", "install.sh"))}`,
     ),
   );
   assert.doesNotMatch(String(failure.stdout), /downloading Node|STAGE1/);
@@ -1786,64 +1798,168 @@ test("install.sh refuses an app that needs a newer installer protocol before dow
   );
 });
 
-/**
- * A stage 1 older than its new revision's pins: it moves the checkout to
- * origin main, then stops (as one meeting the per-platform pnpm pins does).
- */
-const MOVING_STAGE_ONE = [
-  'import { execFile } from "node:child_process";',
-  'import path from "node:path";',
-  'import { fileURLToPath } from "node:url";',
-  'import { promisify } from "node:util";',
-  "const run = promisify(execFile);",
-  'const app = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");',
-  'await run("git", ["-C", app, "fetch", "--quiet", "origin", "main"]);',
-  'await run("git", ["-C", app, "checkout", "--quiet", "--detach", "FETCH_HEAD"]);',
-  'process.stdout.write("OLD STAGE1 moved\\n");',
-  "process.exit(1);",
-  "",
-].join("\n");
-
-test("install.sh runs a moved checkout's own stage 1 once after an older stage 1 stopped", async (t) => {
-  const basePath = "/usr/bin:/bin";
-  if (!(await onPath("git", basePath))) {
-    t.skip("needs git in /usr/bin:/bin");
-    return;
-  }
+/** A first install of the fixture app, ready for self update without a pnpm on PATH; null without a pnpm pin for this platform. */
+async function installedFixture(t: test.TestContext) {
   const directory = await scratch(t);
-  const source = await stageOneSource(
-    directory,
-    `installer_protocol ${INSTALLER_PROTOCOL}\n${pinsText("24.0.0", "0".repeat(64), ZERO_INTEGRITY)}`,
-    MOVING_STAGE_ONE,
-  );
-  const home = path.join(directory, "home");
-  const installSh = () =>
-    runFile(
-      "/bin/sh",
-      [INSTALL_SH, "--home", home, "--bin-dir", path.join(directory, "bin"), "--source", source],
-      { env: { HOME: path.join(directory, "user-home"), PATH: `${NODE_DIR}:${basePath}` } },
-    ).then(
+  const { environment } = await fixtureEnvironment(directory);
+  const source = await fixtureSource(directory);
+  const registry = await fixturePnpmRegistry(directory, source, environment);
+  if (registry === null) return null;
+  await commitFixture(source, directory, environment);
+  const home = path.join(directory, "choco");
+  const binDir = path.join(directory, "bin");
+  const app = path.join(home, "app");
+  await runFile("git", ["clone", "--quiet", "--no-hardlinks", source, app]);
+  await stageOneInstall(app, home, binDir, source, environment);
+  const launcherEnvironment = {
+    ...environment,
+    PATH: "/usr/bin:/bin",
+    CHOCO_PI_NPM_REGISTRY: registry,
+  };
+  const launcher = path.join(binDir, "choco-pi");
+  const selfUpdate = () =>
+    runFile(launcher, ["self", "update"], { env: launcherEnvironment, timeout: 180_000 }).then(
       ({ stdout, stderr }) => ({ code: 0, output: stdout + stderr }),
       (error: Failure) => ({
         code: error.code ?? -1,
         output: `${error.stdout ?? ""}${error.stderr ?? ""}`,
       }),
     );
-  const count = (output: string, pattern: RegExp) => output.match(pattern)?.length ?? 0;
+  const head = async () => (await runFile("git", ["-C", app, "rev-parse", "HEAD"])).stdout.trim();
+  const version = async () =>
+    (await runFile(launcher, ["--version"], { env: launcherEnvironment })).stdout.trim();
+  return { source, home, app, selfUpdate, head, version };
+}
 
-  const unmoved = await installSh();
-  assert.equal(unmoved.code, 1, unmoved.output);
-  assert.equal(count(unmoved.output, /OLD STAGE1/g), 1, "a failure without a move is final");
-  assert.doesNotMatch(unmoved.output, /running that revision/);
-
-  await writeFile(
-    path.join(source, "scripts", "standalone", "manage.ts"),
-    'process.stdout.write(`NEW STAGE1 ${process.argv.slice(2).join(" ")}\\n`);\n',
-  );
+/** Commits the working tree of `source` and returns the new HEAD. */
+async function commitSource(source: string, message: string): Promise<string> {
   await runFile("git", ["-C", source, "add", "-A"]);
-  await runFile("git", ["-C", source, ...GIT_IDENTITY, "commit", "--quiet", "-m", "new stage 1"]);
-  const moved = await installSh();
-  assert.equal(moved.code, 0, moved.output);
-  assert.match(moved.output, /OLD STAGE1 moved\n[^]*running that revision's stage 1/);
-  assert.equal(count(moved.output, /NEW STAGE1 install --home /g), 1, moved.output);
+  await runFile("git", ["-C", source, ...GIT_IDENTITY, "commit", "--quiet", "-m", message]);
+  return (await runFile("git", ["-C", source, "rev-parse", "HEAD"])).stdout.trim();
+}
+
+test("self update runs the target's own installer, so it crosses a pins format the running code rejects", async (t) => {
+  const skipReason = await pinnedPnpmMissing();
+  if (skipReason !== null) {
+    t.skip(skipReason);
+    return;
+  }
+  const fixture = await installedFixture(t);
+  if (fixture === null) {
+    t.skip("no pnpm pin for this platform");
+    return;
+  }
+  const pinsFile = path.join(fixture.source, "scripts", "standalone", "runtime-pins.txt");
+  const provisionFile = path.join(fixture.source, "scripts", "standalone", "provision.ts");
+  const skipLine = 'if (line === "" || line.startsWith("#")) continue;';
+  const provision = await readFile(provisionFile, "utf8");
+  assert.ok(provision.includes(skipLine), "the fixture parser has the comment skip to extend");
+  await writeFile(
+    provisionFile,
+    provision.replace(skipLine, `${skipLine}\n    if (line.startsWith("future_pin ")) continue;`),
+  );
+  await appendFile(pinsFile, "future_pin in a format the installed code does not know\n");
+  const targetPins = await readFile(pinsFile, "utf8");
+  // The installed revision's parser is this checkout's: run in place, it would stop here.
+  assert.throws(() => parseRuntimePins(targetPins), /malformed runtime pin line: future_pin/);
+  const target = await commitSource(fixture.source, "new pins format");
+
+  const update = await fixture.selfUpdate();
+  assert.equal(update.code, 0, update.output);
+  assert.match(
+    update.output,
+    new RegExp(`updated [0-9a-f]{12} -> ${target.slice(0, 12)} \\(main\\)`),
+  );
+  assert.equal(await fixture.head(), target);
+  assert.equal((await readManifest(fixture.home)).rev, target);
+  assert.equal(await fixture.version(), "1.5.2");
+});
+
+test("a failed self update reinstalls the old revision with its own installer and keeps what the failed run created", async (t) => {
+  const skipReason = await pinnedPnpmMissing();
+  if (skipReason !== null) {
+    t.skip(skipReason);
+    return;
+  }
+  const fixture = await installedFixture(t);
+  if (fixture === null) {
+    t.skip("no pnpm pin for this platform");
+    return;
+  }
+  const before = await readManifest(fixture.home);
+  const oldRev = await fixture.head();
+  await writeFile(
+    path.join(fixture.source, "scripts", "install-profile.ts"),
+    'export async function installProfile(): Promise<never> {\n  throw new Error("target setup fails");\n}\n',
+  );
+  const target = await commitSource(fixture.source, "broken setup");
+
+  const update = await fixture.selfUpdate();
+  assert.equal(update.code, 1, update.output);
+  assert.match(update.output, /target setup fails/, "the target's stage 1 ran and failed");
+  assert.match(update.output, new RegExp(`update to ${target.slice(0, 12)} failed`));
+  assert.match(update.output, new RegExp(`update failed; restored ${oldRev.slice(0, 12)}`));
+  assert.equal(await fixture.head(), oldRev);
+  const after = await readManifest(fixture.home);
+  assert.equal(after.rev, oldRev);
+  assert.equal(after.ref, before.ref);
+  // The failed run downloaded the private pnpm (no pnpm on PATH); it stays owned.
+  const pnpmDirectory = path.join(fixture.home, "runtime", "pnpm");
+  assert.equal(before.created.includes(pnpmDirectory), false);
+  assert.ok(after.created.includes(pnpmDirectory), "the failed run's pnpm is owned");
+  assert.equal(await exists(path.join(fixture.home, PROVENANCE_NAME)), false, "journal merged");
+  assert.equal(await fixture.version(), "1.5.2");
+});
+
+test("self update refuses a target older than the installer hand-off before it moves anything", async (t) => {
+  const skipReason = await pinnedPnpmMissing();
+  if (skipReason !== null) {
+    t.skip(skipReason);
+    return;
+  }
+  const fixture = await installedFixture(t);
+  if (fixture === null) {
+    t.skip("no pnpm pin for this platform");
+    return;
+  }
+  const manifestFile = path.join(fixture.home, "install.json");
+  const manifestBefore = await readFile(manifestFile, "utf8");
+  const oldRev = await fixture.head();
+  const pinsFile = path.join(fixture.source, "scripts", "standalone", "runtime-pins.txt");
+  const pins = await readFile(pinsFile, "utf8");
+  assert.match(pins, /^installer_protocol 3$/m);
+  await writeFile(pinsFile, pins.replace(/^installer_protocol 3$/m, "installer_protocol 2"));
+  await commitSource(fixture.source, "older protocol");
+
+  const update = await fixture.selfUpdate();
+  assert.equal(update.code, 1, update.output);
+  assert.match(update.output, /declares installer_protocol 2, older than 3/);
+  assert.doesNotMatch(update.output, /choco-pi install:/, "no installer ran");
+  assert.equal(await fixture.head(), oldRev);
+  assert.equal(await readFile(manifestFile, "utf8"), manifestBefore);
+});
+
+test("the management CLI answers usage errors with exit 2 and --help with exit 0", async () => {
+  const manage = path.join(ROOT, "scripts", "standalone", "manage.ts");
+  const run = (args: readonly string[]) =>
+    runFile(process.execPath, [manage, ...args]).then(
+      ({ stdout, stderr }) => ({ code: 0, stdout, stderr }),
+      (error: Failure) => ({
+        code: error.code ?? -1,
+        stdout: String(error.stdout ?? ""),
+        stderr: String(error.stderr ?? ""),
+      }),
+    );
+  for (const args of [
+    ["self", "update", "--bogus"],
+    ["self", "update", "--ref"],
+    ["self", "nope"],
+  ]) {
+    const result = await run(args);
+    assert.equal(result.code, 2, args.join(" "));
+    assert.match(result.stderr, /^Usage: /m, args.join(" "));
+  }
+  const help = await run(["self", "update", "--help"]);
+  assert.equal(help.code, 0, help.stderr);
+  assert.match(help.stdout, /--ref/);
 });
