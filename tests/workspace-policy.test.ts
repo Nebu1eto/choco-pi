@@ -113,56 +113,55 @@ async function runtimePins(): Promise<Map<string, string>> {
   return pins;
 }
 
-/** The pnpm version the lockfile's first YAML document locks under packageManagerDependencies. */
-function lockedPackageManager(lockfile: string): string | undefined {
+/** The lockfile's first YAML document: the self-lock pnpm 12 writes for packageManager. */
+function selfLock(lockfile: string): string | undefined {
   const documents = lockfile.split(/^---$/m);
-  const selfLock = documents[0]?.trim() === "" ? documents[1] : undefined;
-  if (selfLock === undefined) return undefined;
-  const match =
-    /^( +)packageManagerDependencies:\n(?:\1 +.*\n)*?\1 +pnpm:\n\1 + +specifier: \S+\n\1 + +version: (\S+)$/m.exec(
-      selfLock,
-    );
-  return match?.[2];
+  return documents[0]?.trim() === "" ? documents[1] : undefined;
+}
+
+/** Whether a self-lock packages or snapshots key names pnpm or a pnpm platform binary at `version`. */
+function isPnpmEntry(line: string, version: string): boolean {
+  const key = /^  (?:'([^']+)'|([^'\s]+)):$/.exec(line);
+  const name = key?.[1] ?? key?.[2] ?? "";
+  if (!name.endsWith(`@${version}`)) return false;
+  const bare = name.slice(0, -version.length - 1);
+  return bare === "pnpm" || /^@pnpm\/exe\.[a-z0-9-]+$/.test(bare);
 }
 
 /**
- * Keys of the block mapping that opens at `lines[start]`, one level deeper. A direct line that
- * is not a plain block-mapping key (an inline entry, odd indentation) comes back as an
- * "unsupported entry", so a caller's comparison fails instead of skipping it.
+ * Why a lockfile's self-lock differs from the one pnpm 12 writes when it locks only itself at
+ * `version`, or undefined when it matches. The top-level lines and the importers block must be
+ * that output byte for byte, packageManagerDependencies may appear only once, and every
+ * packages or snapshots key must be pnpm or one of its platform binaries. Any other
+ * dependency, importer, placement, or YAML spelling fails instead of being parsed around.
  */
-function blockKeys(lines: string[], start: number): string[] {
-  const header = lines[start] ?? "";
-  const indent = header.length - header.trimStart().length;
-  const keys: string[] = [];
-  for (const line of lines.slice(start + 1)) {
-    if (line.trim() === "") continue;
-    const depth = line.length - line.trimStart().length;
-    if (depth <= indent) break;
-    if (depth > indent + 2) continue;
-    const entry = /^('?)([^':\s{}]+)\1:$/.exec(line.trim());
-    keys.push(depth === indent + 2 && entry?.[2] ? entry[2] : `unsupported entry: ${line.trim()}`);
+function selfLockMismatch(lockfile: string, version: string): string | undefined {
+  const text = selfLock(lockfile);
+  if (text === undefined) return "no self-lock document";
+  const lines = text.split("\n");
+  const topLevel = lines.filter((line) => /^\S/.test(line));
+  const keys = ["lockfileVersion: '9.0'", "importers:", "packages:", "snapshots:"];
+  if (topLevel.join("\n") !== keys.join("\n")) return `top-level lines: ${topLevel.join(" | ")}`;
+  const importers = /^importers:\n[\s\S]*?(?=^\S)/m.exec(text)?.[0];
+  const root = [
+    "importers:",
+    "",
+    "  .:",
+    "    configDependencies: {}",
+    "    packageManagerDependencies:",
+    "      pnpm:",
+    `        specifier: ${version}`,
+    `        version: ${version}`,
+    "",
+    "",
+  ].join("\n");
+  if (importers !== root) return `importers block: ${JSON.stringify(importers)}`;
+  if (text.split("packageManagerDependencies").length !== 2) {
+    return "packageManagerDependencies outside the root importer";
   }
-  return keys;
-}
-
-/**
- * The lockfile self-lock's importers, and every name that any packageManagerDependencies in it
- * lists. A packageManagerDependencies line in any other form counts as an unsupported entry.
- */
-function selfLockEntries(lockfile: string) {
-  const documents = lockfile.split(/^---$/m);
-  const selfLock = documents[0]?.trim() === "" ? documents[1] : undefined;
-  const lines = selfLock?.split("\n") ?? [];
-  const importersAt = lines.indexOf("importers:");
-  const importers = importersAt < 0 ? [] : blockKeys(lines, importersAt);
-  const packageManagers: string[] = [];
-  for (const [index, line] of lines.entries()) {
-    if (!line.includes("packageManagerDependencies")) continue;
-    if (/^ +packageManagerDependencies:$/.test(line))
-      packageManagers.push(...blockKeys(lines, index));
-    else packageManagers.push(`unsupported entry: ${line.trim()}`);
-  }
-  return { importers, packageManagers };
+  const entries = lines.slice(lines.indexOf("packages:")).filter((line) => /^ {1,3}\S/.test(line));
+  const unexpected = entries.filter((line) => !isPnpmEntry(line, version));
+  return unexpected.length > 0 ? `unexpected entries: ${unexpected.join(" | ")}` : undefined;
 }
 
 test("mise.toml pins only tools, as exact versions", async () => {
@@ -189,27 +188,66 @@ test("the mise.toml check rejects everything beyond exact tool pins", () => {
   assert.notDeepEqual(miseConfigViolations("# comments only\n"), []);
 });
 
-test("the self-lock check rejects any dependency beside pnpm, in any YAML form or importer", () => {
-  const lockfile = (importers: string): string =>
-    `---\nlockfileVersion: '9.0'\n\nimporters:\n\n${importers}\n\npackages: {}\n---\nlockfileVersion: '9.0'\n`;
-  const pnpm = "      pnpm:\n        specifier: 12.21.0\n        version: 12.21.0";
-  const root = (entries: string): string =>
-    `  .:\n    configDependencies: {}\n    packageManagerDependencies:\n${entries}`;
-  const only = { importers: ["."], packageManagers: ["pnpm"] };
-  assert.deepEqual(selfLockEntries(lockfile(root(pnpm))), only);
-  assert.equal(lockedPackageManager(lockfile(root(pnpm))), "12.21.0");
-  const exe = "      '@pnpm/exe':\n        specifier: 12.21.0\n        version: 12.21.0";
-  const bypasses = [
-    root(`${exe}\n${pnpm}`),
-    root(`${pnpm}\n      '@pnpm/exe': {specifier: 12.21.0, version: 12.21.0}`),
-    root(`${pnpm}\n     '@pnpm/exe':\n        specifier: 12.21.0`),
-    root(`${pnpm}\n      "@pnpm/exe":\n        specifier: 12.21.0`),
-    `  decoy:\n    packageManagerDependencies:\n${pnpm}\n\n${root(`${exe}\n${pnpm}`)}`,
-    "  .:\n    packageManagerDependencies: {'@pnpm/exe': {specifier: 12.21.0, version: 12.21.0}}\n" +
-      `  other:\n    packageManagerDependencies:\n${pnpm}`,
+test("the self-lock check accepts only what pnpm 12 writes to lock itself", () => {
+  const version = "12.21.0";
+  const lockfile = (text: string): string => `---\n${text}\n---\nlockfileVersion: '9.0'\n`;
+  const pnpmLock = `      pnpm:\n        specifier: ${version}\n        version: ${version}\n`;
+  const managers = "    packageManagerDependencies:\n";
+  const pnpmOnly = [
+    "lockfileVersion: '9.0'",
+    "",
+    "importers:",
+    "",
+    "  .:",
+    "    configDependencies: {}",
+    `${managers}${pnpmLock}`,
+    "packages:",
+    "",
+    `  pnpm@${version}:`,
+    "    resolution: {integrity: sha512-pnpm}",
+    "",
+    `  '@pnpm/exe.darwin-arm64@${version}':`,
+    "    resolution: {integrity: sha512-exe}",
+    "",
+    "snapshots:",
+    "",
+    `  pnpm@${version}:`,
+    "    optionalDependencies:",
+    `      '@pnpm/exe.darwin-arm64': ${version}`,
+    "",
+  ].join("\n");
+  assert.equal(selfLockMismatch(lockfile(pnpmOnly), version), undefined);
+  assert.notEqual(selfLockMismatch(lockfile(pnpmOnly), "12.18.0"), undefined);
+  const exe = `      '@pnpm/exe':\n        specifier: ${version}\n        version: ${version}\n`;
+  const variants = [
+    pnpmOnly.replace(managers, `${managers}${exe}`),
+    pnpmOnly.replace(
+      pnpmLock,
+      `${pnpmLock}      '@pnpm/exe': {specifier: ${version}, version: ${version}}\n`,
+    ),
+    pnpmOnly.replace(pnpmLock, `${pnpmLock}      "@pnpm/exe":\n        specifier: ${version}\n`),
+    pnpmOnly.replace("importers:\n\n", `importers:\n\n  decoy:\n${managers}${pnpmLock}\n`),
+    pnpmOnly.replace(
+      `${managers}${pnpmLock}`,
+      `    packageManagerDependencies: {pnpm: {specifier: ${version}, version: ${version}}}\n`,
+    ),
+    pnpmOnly
+      .replace(`${managers}${pnpmLock}`, "")
+      .replace("packages:\n", `decoy:\n  packageManagerDependencies:\n${pnpmLock}\npackages:\n`),
+    pnpmOnly.replace(`${managers}${pnpmLock}`, ""),
+    pnpmOnly.replace(
+      "    optionalDependencies:\n",
+      `${managers}      pnpm: ${version}\n    optionalDependencies:\n`,
+    ),
+    pnpmOnly.replace(
+      "snapshots:\n",
+      `  '@pnpm/exe@${version}':\n    resolution: {integrity: sha512-x}\n\nsnapshots:\n`,
+    ),
+    pnpmOnly.replace(`specifier: ${version}`, `specifier: ^${version}`),
+    pnpmOnly.replaceAll("\n", "\r\n"),
   ];
-  for (const importers of bypasses) {
-    assert.notDeepEqual(selfLockEntries(lockfile(importers)), only, importers);
+  for (const variant of variants) {
+    assert.notEqual(selfLockMismatch(lockfile(variant), version), undefined, variant);
   }
 });
 
@@ -219,13 +257,9 @@ test("mise, package.json, the lockfile, and the runtime pins name one toolchain"
   assert.ok(pnpm, "mise.toml pins pnpm");
   const manifest = await readManifest("package.json");
   assert.equal(manifest.packageManager, `pnpm@${pnpm}`);
-  assert.equal(lockedPackageManager(await readText("pnpm-lock.yaml")), pnpm);
-  // pnpm 12 locks only itself, for the root importer. An older pnpm that switches to
-  // the pinned version adds @pnpm/exe, which pnpm 12 then keeps: revert that change.
-  assert.deepEqual(selfLockEntries(await readText("pnpm-lock.yaml")), {
-    importers: ["."],
-    packageManagers: ["pnpm"],
-  });
+  // pnpm 12 locks only itself here. An older pnpm that switches to the pinned
+  // version adds @pnpm/exe, which pnpm 12 then keeps: revert that change.
+  assert.equal(selfLockMismatch(await readText("pnpm-lock.yaml"), pnpm), undefined);
   assert.equal(tools.get("node"), (await runtimePins()).get("node_version"));
 });
 
