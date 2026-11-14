@@ -1817,8 +1817,11 @@ async function installedFixture(t: test.TestContext) {
     CHOCO_PI_NPM_REGISTRY: registry,
   };
   const launcher = path.join(binDir, "choco-pi");
-  const selfUpdate = () =>
-    runFile(launcher, ["self", "update"], { env: launcherEnvironment, timeout: 180_000 }).then(
+  const selfUpdate = (extra: readonly string[] = []) =>
+    runFile(launcher, ["self", "update", ...extra], {
+      env: launcherEnvironment,
+      timeout: 180_000,
+    }).then(
       ({ stdout, stderr }) => ({ code: 0, output: stdout + stderr }),
       (error: Failure) => ({
         code: error.code ?? -1,
@@ -1875,7 +1878,7 @@ test("self update runs the target's own installer, so it crosses a pins format t
   assert.equal(await fixture.version(), "1.5.2");
 });
 
-test("a failed self update reinstalls the old revision with its own installer and keeps what the failed run created", async (t) => {
+test("a failed self update reinstalls the old revision with its own installer, even after its ref is gone, and keeps what the failed run created", async (t) => {
   const skipReason = await pinnedPnpmMissing();
   if (skipReason !== null) {
     t.skip(skipReason);
@@ -1893,8 +1896,10 @@ test("a failed self update reinstalls the old revision with its own installer an
     'export async function installProfile(): Promise<never> {\n  throw new Error("target setup fails");\n}\n',
   );
   const target = await commitSource(fixture.source, "broken setup");
+  // The recorded ref no longer exists upstream: the rollback must not need it.
+  await runFile("git", ["-C", fixture.source, "branch", "--move", "main", "replacement"]);
 
-  const update = await fixture.selfUpdate();
+  const update = await fixture.selfUpdate(["--ref", "replacement"]);
   assert.equal(update.code, 1, update.output);
   assert.match(update.output, /target setup fails/, "the target's stage 1 ran and failed");
   assert.match(update.output, new RegExp(`update to ${target.slice(0, 12)} failed`));
@@ -1954,6 +1959,11 @@ test("the management CLI answers usage errors with exit 2 and --help with exit 0
     ["self", "update", "--bogus"],
     ["self", "update", "--ref"],
     ["self", "nope"],
+    // Empty values were usage errors before the CLI moved to Optique, too.
+    ["self", "update", "--ref="],
+    ["self", "update", "--ref", ""],
+    ["self", "setup", "--import-pi-settings", "--from="],
+    ["install", "--home="],
   ]) {
     const result = await run(args);
     assert.equal(result.code, 2, args.join(" "));

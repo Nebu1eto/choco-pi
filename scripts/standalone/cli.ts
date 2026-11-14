@@ -30,6 +30,7 @@ import {
   constant,
   type InferValue,
   multiple,
+  type NonEmptyString,
   object,
   option,
   optional,
@@ -111,14 +112,19 @@ export function configureLogging(): void {
 
 const runtimeValue = choice(RUNTIMES, { metavar: "RUNTIME" });
 
+/** A valued option's argument; an empty one (`--ref=` or `--ref ""`) is a usage error. */
+function nonEmpty(metavar: NonEmptyString) {
+  return string({ metavar, pattern: /^.+$/su });
+}
+
 const installParser = command(
   "install",
   object({
     verb: constant("install"),
-    home: optional(option("--home", string({ metavar: "DIR" }))),
-    binDir: optional(option("--bin-dir", string({ metavar: "DIR" }))),
-    source: optional(option("--source", string({ metavar: "SOURCE" }))),
-    ref: optional(option("--ref", string({ metavar: "REF" }))),
+    home: optional(option("--home", nonEmpty("DIR"))),
+    binDir: optional(option("--bin-dir", nonEmpty("DIR"))),
+    source: optional(option("--source", nonEmpty("SOURCE"))),
+    ref: optional(option("--ref", nonEmpty("REF"))),
     runtime: optional(option("--runtime", runtimeValue)),
     localApp: option("--local-app"),
   }),
@@ -130,14 +136,14 @@ const setupParser = command(
   object({
     verb: constant("setup"),
     importPiSettings: option("--import-pi-settings"),
-    from: optional(option("--from", string({ metavar: "FILE" }))),
+    from: optional(option("--from", nonEmpty("FILE"))),
     force: option("--force"),
   }),
 );
 
 const updateParser = command(
   "update",
-  object({ verb: constant("update"), ref: optional(option("--ref", string({ metavar: "REF" }))) }),
+  object({ verb: constant("update"), ref: optional(option("--ref", nonEmpty("REF"))) }),
 );
 
 const uninstallParser = command(

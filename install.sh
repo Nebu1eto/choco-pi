@@ -299,12 +299,13 @@ fi
 # nothing. Run only when install.json exists and NODE is set.
 recorded() {
   "$NODE" -e '
-const fs = require("node:fs");
-let value;
-try {
-  value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"))[process.argv[2]];
-} catch {}
-process.stdout.write(value === null ? "-" : typeof value === "string" ? value : "");
+require("node:fs/promises")
+  .readFile(process.argv[1], "utf8")
+  .then((text) => JSON.parse(text)[process.argv[2]])
+  .catch(() => undefined)
+  .then((value) => {
+    process.stdout.write(value === null ? "-" : typeof value === "string" ? value : "");
+  });
 ' "$home/install.json" "$1"
 }
 
@@ -336,7 +337,11 @@ if [ -e "$app/.git" ]; then
   [ -z "$dirty" ] || die "$app has local changes; refusing to move it:
 $dirty"
   [ "$(git -C "$app" remote get-url origin)" = "$source" ] || git -C "$app" remote set-url origin "$source"
-  git -C "$app" fetch --quiet --no-auto-gc origin "$ref"
+  # A --rev already here (self update fetched it, or restores it after a failed
+  # update) needs no fetch, so a ref since deleted upstream cannot stop it.
+  if [ -z "$rev" ] || ! git -C "$app" cat-file -e "$rev^{commit}" 2>/dev/null; then
+    git -C "$app" fetch --quiet --no-auto-gc origin "$ref"
+  fi
   target=$(git -C "$app" rev-parse --verify --quiet "${rev:-FETCH_HEAD}^{commit}") ||
     die "commit $rev is not in $app after fetching $ref"
 elif [ -e "$app" ]; then
