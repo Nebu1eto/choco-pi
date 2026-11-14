@@ -24,3 +24,7 @@ formal/.tools/
 .env.*
 !.env.example
 *.local
+
+# Machine-local mise overrides and their lockfile.
+mise.local.toml
+mise.local.lock

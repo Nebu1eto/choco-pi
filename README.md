@@ -14,8 +14,8 @@ Keep OAuth tokens, API keys, and machine-local configuration outside Git.
 
 Each [installation method](#installation) adds its own requirements:
 
-- **Standalone `choco-pi` command**: macOS on arm64 or x64, or Linux with glibc on x64 or arm64; `tar`; `curl` or `wget`; and a SHA-256 tool (`shasum`, `sha256sum`, or `openssl`). Node.js 24 or later and pnpm `11.11.0` are used when they are on `PATH`; otherwise the installer downloads pinned copies. Windows and musl-based Linux such as Alpine are not supported; on Windows, use WSL2 with a glibc distribution.
-- **Profile installed into Pi**: Node.js 24 or later, pnpm `11.11.0` exactly, and Pi `1.5.x` from `1.5.2` (`>=1.5.2 <1.6.0`), matching the `~1.5.2` SDK range of this checkout. If `pnpm --version` does not print `11.11.0`, install the required version with `npm install --global pnpm@11.11.0`, then check again.
+- **Standalone `choco-pi` command**: macOS on arm64 or x64, or Linux with glibc on x64 or arm64; `tar`; `curl` or `wget`; and a SHA-256 tool (`shasum`, `sha256sum`, or `openssl`). Node.js 24 or later and pnpm `12.21.0` are used when they are on `PATH`; otherwise the installer downloads pinned copies. Windows and musl-based Linux such as Alpine are not supported; on Windows, use WSL2 with a glibc distribution.
+- **Profile installed into Pi**: Node.js 24 or later, pnpm `12.21.0` exactly, and Pi `1.5.x` from `1.5.2` (`>=1.5.2 <1.6.0`), matching the `~1.5.2` SDK range of this checkout. [Development environment](#development-environment) shows how to install the pinned Node.js and pnpm with mise or without it.
 
 ## Installation
 
@@ -43,7 +43,8 @@ The installer clones its own copy of the repository into `~/.choco-pi/app`, so
 the first clone is needed only to run the script. The installer:
 
 - Uses Node.js 24 or later from `PATH`, or downloads the pinned Node.js into `~/.choco-pi/runtime/node` and checks its SHA-256 against `scripts/standalone/runtime-pins.txt` before extracting it.
-- Uses pnpm from `PATH` only when it is exactly `11.11.0`; otherwise it downloads the pinned pnpm and checks its integrity. pnpm's store and cache stay under `~/.choco-pi/runtime`.
+- Uses pnpm from `PATH` only when it is exactly `12.21.0`. Otherwise, on macOS or glibc Linux on arm64 or x64, it downloads the native pnpm binary from `@pnpm/exe.<platform>`, checks it against the pinned integrity, and stores it as `~/.choco-pi/runtime/pnpm/pnpm`; pnpm never runs through Node.js. On other platforms, put pnpm `12.21.0` on `PATH` first.
+- Keeps all pnpm data in `pnpm-store`, `pnpm-cache`, `pnpm-state`, and `pnpm-home` under `~/.choco-pi/runtime`. It sets `PNPM_HOME` for pnpm, so pnpm writes nothing to `~/Library/pnpm` or the XDG directories.
 - Installs the production dependencies from the lockfile, installs the profile into `~/.choco-pi/agent`, and records what it created in `~/.choco-pi/install.json`.
 - Links `~/.local/bin/choco-pi` to the launcher. When that directory is not on `PATH`, it prints the `export PATH=...` line to add to your shell configuration.
 
@@ -134,6 +135,14 @@ reinstalls the dependencies, and runs `self setup`; `--ref REF` moves to another
 branch or tag. It refuses an app checkout with local changes, and when a step
 fails it returns to the previous revision. Stop running sessions first.
 
+An install made before the move to pnpm 12 cannot `self update` to it: the update
+fails with a notice to re-run `install.sh` and returns to the previous revision,
+which keeps working. Re-run `install.sh` from an up-to-date clone with the
+`--home`, `--bin-dir`, and `--source` you installed with; without `--source`,
+the checkout is pointed at the GitHub repository. If the old installer code fails
+after moving the checkout, `install.sh` runs the new revision's installer once
+more to finish the switch.
+
 `self uninstall` removes what `install.json` records: the `choco-pi` link (only
 while it still points to this launcher), `app/`, `runtime/`, and `install.json`.
 It keeps `agent/` (login, sessions, settings) and `lsp/`;
@@ -212,13 +221,17 @@ profile:
 git clone https://github.com/Nebu1eto/choco-pi.git
 cd choco-pi
 
-npm install --global pnpm@11.11.0
+mise install
 pnpm --version
 
 pnpm install --frozen-lockfile
 npm run install:profile
 pi
 ```
+
+`mise install` installs the Node.js and pnpm versions that `mise.toml` pins, and
+`pnpm --version` must then print `12.21.0`. To set them up without mise, see
+[Development environment](#development-environment).
 
 The checkout ships no `.pi/settings.json`. The installer reads the profile
 policy from `~/.pi/agent/settings.json`. On a new machine, where that file is
@@ -783,6 +796,44 @@ With the standalone command, run the Zed setup through `choco-pi self acp`, as
 the guide's [standalone section](docs/zed-setup.md#standalone-install-choco-pi-launcher)
 shows. The setup records the absolute paths of the launcher and Node.js, so run
 it again after moving the install.
+
+## Development environment
+
+`mise.toml` at the repository root pins the toolchain this checkout is developed
+and tested with: Node.js `24.22.3`, the oldest supported release and the one the
+standalone installer downloads, and pnpm `12.21.0`, the version `package.json`
+names in `packageManager`. `mise.lock` records the download URL and checksum of
+each tool for macOS and Linux on arm64 and x64.
+
+1. Install [mise](https://mise.jdx.dev/getting-started.html) and activate it in
+   your shell (`mise activate`), so `node` and `pnpm` in the checkout run the
+   pinned versions.
+2. In the checkout, run `mise install`. `mise.toml` holds only tool versions, so
+   mise loads it without `mise trust`, unless you turned on paranoid mode.
+3. Install the dependencies with `pnpm install --frozen-lockfile`.
+
+```sh
+mise install
+node --version   # v24.22.3
+pnpm --version   # 12.21.0
+pnpm install --frozen-lockfile
+```
+
+In a shell without mise activation, prefix each command with `mise exec --`, for
+example `mise exec -- pnpm test`.
+
+Without mise, install Node.js 24 or later and run
+`npm install --global pnpm@12.21.0`. npm installs pnpm's native binary for your
+platform; check that `pnpm --version` prints `12.21.0`.
+
+pnpm `11.11.0`, the previous pin, still works on `PATH`: in this checkout it
+reads `packageManager`, installs pnpm `12.21.0` into its own store, and runs that
+version for every command, so `pnpm --version` prints `12.21.0` here and
+`11.11.0` elsewhere. That switch also adds an `@pnpm/exe` entry to the pnpm
+self-lock at the top of `pnpm-lock.yaml`, which `tests/workspace-policy.test.ts`
+rejects; revert it before committing. Other pnpm versions on `PATH` are untested; if
+`pnpm --version` in the checkout prints anything but `12.21.0`, use mise or the
+npm command above.
 
 ## Development verification
 

@@ -39,17 +39,22 @@ import {
   BUN_PLATFORMS,
   ChecksumMismatchError,
   currentBunPlatform,
+  currentPnpmPlatform,
   extractVerifiedArchive,
   findSystemPnpm,
   INSTALLER_PROTOCOL,
   parseIntegrity,
   parseRuntimePins,
+  PNPM_PLATFORMS,
+  pnpmTarballUrl,
   pnpmVersionQualifies,
   provisionPrivateBun,
   provisionPrivatePnpm,
   readRuntimePins,
   sha256Expected,
   UNZIP_GUIDANCE,
+  UPGRADE_NOTICE_KEY,
+  type PnpmPlatform,
   type RuntimePins,
 } from "../scripts/standalone/provision.ts";
 import { readSettingsSeed } from "../scripts/standalone/settings-seed.ts";
@@ -107,6 +112,11 @@ async function fixtureTarball(
   await rm(staging, { recursive: true, force: true });
 }
 
+const ZERO_INTEGRITY = `sha512-${Buffer.alloc(64).toString("base64")}`;
+
+/** The pinned pnpm of these fixtures; tests that run a real pnpm use the shipped pin. */
+const FIXTURE_PNPM = "12.21.0";
+
 function pinsText(
   nodeVersion: string,
   nodeSha256: string,
@@ -117,8 +127,8 @@ function pinsText(
   return [
     `node_version ${nodeVersion}`,
     ...platforms.map((platform) => `node_sha256_${platform} ${nodeSha256}`),
-    "pnpm_version 11.11.0",
-    `pnpm_integrity ${pnpmIntegrity}`,
+    `pnpm_version ${FIXTURE_PNPM}`,
+    ...PNPM_PLATFORMS.map((platform) => `pnpm_integrity_${platform} ${pnpmIntegrity}`),
     "bun_version 1.4.4",
     "bun_minimum_version 1.4.4",
     ...BUN_PLATFORMS.map((platform) => `bun_sha256_${platform} ${bunSha256}`),
@@ -126,7 +136,19 @@ function pinsText(
   ].join("\n");
 }
 
-const ZERO_INTEGRITY = `sha512-${Buffer.alloc(64).toString("base64")}`;
+/** Fixture pins whose pnpm integrity is `integrities` for those platforms and ZERO_INTEGRITY for the rest. */
+function pnpmPins(integrities: Partial<Record<PnpmPlatform, string>>): RuntimePins {
+  let text = pinsText("24.0.0", "0".repeat(64), ZERO_INTEGRITY);
+  for (const platform of PNPM_PLATFORMS) {
+    const integrity = integrities[platform];
+    if (integrity === undefined) continue;
+    text = text.replace(
+      new RegExp(`^pnpm_integrity_${platform} .*$`, "m"),
+      `pnpm_integrity_${platform} ${integrity}`,
+    );
+  }
+  return parseRuntimePins(text);
+}
 
 test("the shipped pins parse and match package.json's pnpm", async () => {
   const pins = await readRuntimePins();
@@ -136,6 +158,8 @@ test("the shipped pins parse and match package.json's pnpm", async () => {
   const declared =
     manifest instanceof Object && "packageManager" in manifest ? manifest.packageManager : null;
   assert.equal(declared, `pnpm@${pins.pnpmVersion}`);
+  assert.match(pins.pnpmVersion, /^12\.\d+\.\d+$/, "pnpm 12: the native-binary layout");
+  assert.deepEqual([...pins.pnpmIntegrity.keys()].toSorted(), [...PNPM_PLATFORMS].toSorted());
   assert.match(pins.bunVersion, /^\d+\.\d+\.\d+$/);
   assert.deepEqual([...pins.bunSha256.keys()].toSorted(), [...BUN_PLATFORMS].toSorted());
   assert.throws(() => parseRuntimePins("node_version 22.1.0\n"), /24\.x\.y/);
@@ -158,6 +182,50 @@ test("the shipped pins parse and match package.json's pnpm", async () => {
   assert.equal(pins.installerProtocol, INSTALLER_PROTOCOL, "the app declares what stage 1 speaks");
   const script = await readFile(INSTALL_SH, "utf8");
   assert.match(script, new RegExp(`^SUPPORTED_INSTALLER_PROTOCOL=${INSTALLER_PROTOCOL}$`, "m"));
+});
+
+test("pnpm pins name one integrity per platform; the old single pin is not enough", async () => {
+  const valid = pinsText("24.0.0", "0".repeat(64), ZERO_INTEGRITY);
+  const parsed = parseRuntimePins(valid);
+  assert.equal(parsed.pnpmVersion, FIXTURE_PNPM);
+  assert.equal(parsed.pnpmIntegrity.size, PNPM_PLATFORMS.length);
+  assert.throws(
+    () => parseRuntimePins(valid.replace(/^pnpm_integrity_linux-arm64 .*$/m, "")),
+    /missing runtime pin: pnpm_integrity_linux-arm64/,
+  );
+  const legacy = valid
+    .split("\n")
+    .filter((line) => !line.startsWith("pnpm_integrity_"))
+    .concat(`pnpm_integrity ${ZERO_INTEGRITY}`)
+    .join("\n");
+  assert.throws(() => parseRuntimePins(legacy), /missing runtime pin: pnpm_integrity_darwin-arm64/);
+  assert.throws(
+    () => parseRuntimePins(`${valid}pnpm_integrity_linux-x64-musl ${ZERO_INTEGRITY}\n`),
+    /unsupported pnpm platform pin: pnpm_integrity_linux-x64-musl/,
+  );
+  assert.throws(
+    () => parseRuntimePins(valid.replace(/^(pnpm_integrity_darwin-x64) .*$/m, "$1 sha1-abc")),
+    /unsupported integrity/,
+  );
+  const notice = `${UPGRADE_NOTICE_KEY} free text, with spaces\n`;
+  assert.deepEqual(parseRuntimePins(notice + valid), parsed, "this parser skips the notice");
+});
+
+test("the shipped upgrade notice is what an older stage 1 reports instead of installing", async () => {
+  const text = await readFile(path.join(ROOT, "scripts", "standalone", "runtime-pins.txt"), "utf8");
+  const notices = text.split("\n").filter((line) => line.startsWith(`${UPGRADE_NOTICE_KEY} `));
+  assert.equal(notices.length, 1);
+  const notice = notices[0] ?? "";
+  // The pins parser of every stage 1 before per-platform pnpm pins (one "key
+  // value" per line) refuses this line and quotes it in its error.
+  assert.doesNotMatch(notice, /^(\S+)\s+(\S+)$/);
+  assert.match(notice, /re-run install\.sh/);
+  // install.sh and bin/choco-pi read pins as "key value rest" by key; the notice key is not one of theirs.
+  const readers = [
+    await readFile(INSTALL_SH, "utf8"),
+    await readFile(path.join(ROOT, "bin", "choco-pi"), "utf8"),
+  ];
+  for (const reader of readers) assert.doesNotMatch(reader, new RegExp(UPGRADE_NOTICE_KEY));
 });
 
 test("a checksum mismatch aborts before extraction; a match extracts", async (t) => {
@@ -326,46 +394,184 @@ test("pnpm qualifies only at exactly the pinned version", async (t) => {
     await findSystemPnpm([newer, prerelease].join(path.delimiter), "11.11.0", directory),
     null,
   );
+  // pnpm 11 and 12 switch to (and download) a packageManager version found
+  // above the probe directory unless pm-on-fail says otherwise.
+  const guarded = path.join(directory, "guarded");
+  await mkdir(guarded);
+  await writeFile(
+    path.join(guarded, "pnpm"),
+    '#!/bin/sh\nif [ "$pnpm_config_pm_on_fail" = ignore ]; then echo 11.11.0; else echo 99.0.0; fi\n',
+    { mode: 0o755 },
+  );
+  assert.equal(await findSystemPnpm(guarded, "11.11.0", directory), path.join(guarded, "pnpm"));
 });
 
-test("the private pnpm is verified against the pinned integrity before extraction", async (t) => {
-  const directory = await scratch(t);
-  const registry = path.join(directory, "registry");
-  const archive = path.join(registry, "pnpm", "-", "pnpm-11.11.0.tgz");
+/**
+ * Writes an `@pnpm/exe.<platform>` tarball, whose `package/pnpm` is
+ * `script`, where stage 1 fetches it from `registry`; returns its integrity.
+ */
+async function fixturePnpmExe(
+  directory: string,
+  registry: string,
+  platform: PnpmPlatform,
+  version: string,
+  script: string,
+): Promise<string> {
+  const archive = fileURLToPath(pnpmTarballUrl(pathToFileURL(registry).href, platform, version));
   await fixtureTarball(
     directory,
     "package",
     new Map([
-      ["package.json", JSON.stringify({ name: "pnpm", version: "11.11.0" })],
-      ["bin/pnpm.mjs", "console.log('11.11.0');\n"],
+      ["package.json", JSON.stringify({ name: `@pnpm/exe.${platform}`, version })],
+      ["LICENSE", "fixture\n"],
+      ["pnpm", script],
     ]),
     archive,
   );
-  const integrity = `sha512-${(await sha(archive, "sha512")).toString("base64")}`;
-  assert.deepEqual(parseIntegrity(integrity).digest, await sha(archive, "sha512"));
-  const pinsFor = (value: string): RuntimePins =>
-    parseRuntimePins(pinsText("24.0.0", "0".repeat(64), value));
+  const digest = await sha(archive, "sha512");
+  const integrity = `sha512-${digest.toString("base64")}`;
+  assert.deepEqual(parseIntegrity(integrity).digest, digest);
+  return integrity;
+}
+
+const versionScript = (version: string) => `#!/bin/sh\necho ${version}\n`;
+
+test("the private pnpm is the platform's native binary, verified before extraction", async (t) => {
+  const directory = await scratch(t);
+  const registry = path.join(directory, "registry");
+  const href = pathToFileURL(registry).href;
+  const integrity = await fixturePnpmExe(
+    directory,
+    registry,
+    "linux-arm64",
+    FIXTURE_PNPM,
+    versionScript(FIXTURE_PNPM),
+  );
+  // The same bytes under another platform's name: only that platform's pin counts.
+  const other = fileURLToPath(pnpmTarballUrl(href, "darwin-x64", FIXTURE_PNPM));
+  await mkdir(path.dirname(other), { recursive: true });
+  await cp(fileURLToPath(pnpmTarballUrl(href, "linux-arm64", FIXTURE_PNPM)), other);
+  const pins = pnpmPins({ "linux-arm64": integrity });
   const runtime = path.join(directory, "runtime");
-  await mkdir(runtime);
   await assert.rejects(
-    provisionPrivatePnpm(runtime, pinsFor(ZERO_INTEGRITY), pathToFileURL(registry).href),
+    provisionPrivatePnpm(runtime, pins, { registry: href, platform: "darwin-x64" }),
     ChecksumMismatchError,
   );
-  assert.deepEqual(await readdir(runtime), [], "nothing extracted after a mismatch");
-  const provisioned = await provisionPrivatePnpm(
-    runtime,
-    pinsFor(integrity),
-    pathToFileURL(registry).href,
+  assert.deepEqual(await readdir(runtime), [], "nothing extracted, no archive or staging left");
+  // An unreachable registry: the platform check fails before any download.
+  await assert.rejects(
+    provisionPrivatePnpm(runtime, pins, { registry: "https://registry.invalid", platform: null }),
+    /no pinned pnpm build for .*glibc Linux and macOS only.* put pnpm 12\.21\.0 on PATH/,
   );
-  const entry = provisioned.path;
-  assert.equal(entry, path.join(runtime, "pnpm", "bin", "pnpm.mjs"));
-  assert.deepEqual(provisioned.created, [path.join(runtime, "pnpm")]);
+  assert.deepEqual(await readdir(runtime), []);
+  const journaled: string[] = [];
+  const onCreated = async (created: string) => {
+    journaled.push(created);
+  };
+  const binary = path.join(runtime, "pnpm", "pnpm");
+  assert.deepEqual(
+    await provisionPrivatePnpm(runtime, pins, {
+      registry: href,
+      platform: "linux-arm64",
+      onCreated,
+    }),
+    { path: binary, created: [path.join(runtime, "pnpm")] },
+  );
+  assert.deepEqual(journaled, [path.join(runtime, "pnpm")], "journaled once it is in place");
+  assert.deepEqual(await readdir(runtime), ["pnpm"], "no archive or staging left");
+  assert.deepEqual(await readdir(path.join(runtime, "pnpm")), ["pnpm"], "only package/pnpm");
+  assert.equal((await lstat(binary)).mode & 0o777, 0o755);
   await rm(registry, { recursive: true });
   assert.deepEqual(
-    await provisionPrivatePnpm(runtime, pinsFor(integrity), pathToFileURL(registry).href),
-    { path: entry, created: [] },
+    await provisionPrivatePnpm(runtime, pins, { registry: href, platform: "linux-arm64" }),
+    { path: binary, created: [] },
     "re-run reuses it and creates nothing",
   );
+});
+
+test("pnpm platforms: macOS and glibc Linux on arm64 and x64 only", async () => {
+  assert.equal(await currentPnpmPlatform("darwin", "arm64"), "darwin-arm64");
+  assert.equal(await currentPnpmPlatform("darwin", "x64"), "darwin-x64");
+  assert.equal(await currentPnpmPlatform("win32", "x64"), null);
+  assert.equal(await currentPnpmPlatform("freebsd", "x64"), null);
+  assert.equal(await currentPnpmPlatform("linux", "ia32"), null);
+  const musl = (await readdir("/lib").catch(() => [])).some((entry) =>
+    entry.startsWith("ld-musl-"),
+  );
+  assert.equal(await currentPnpmPlatform("linux", "arm64"), musl ? null : "linux-arm64");
+});
+
+/** A runtime/pnpm in an earlier layout whose executables leave `marker` when run. */
+async function earlierPnpmLayout(
+  pnpmDirectory: string,
+  version: string,
+  wrapper: boolean,
+  marker: string,
+): Promise<void> {
+  const script = `#!/bin/sh\ntouch '${marker}'\necho ${version}\n`;
+  await mkdir(path.join(pnpmDirectory, "bin"), { recursive: true });
+  await writeFile(
+    path.join(pnpmDirectory, "package.json"),
+    JSON.stringify({ name: "pnpm", version }),
+  );
+  await writeFile(path.join(pnpmDirectory, "bin", "pnpm.mjs"), script, { mode: 0o755 });
+  // The pnpm 12 npm wrapper also has a top-level `pnpm` placeholder.
+  if (wrapper) await writeFile(path.join(pnpmDirectory, "pnpm"), script, { mode: 0o755 });
+}
+
+test("an earlier runtime/pnpm layout is replaced without running anything in it", async (t) => {
+  const directory = await scratch(t);
+  const registry = path.join(directory, "registry");
+  const href = pathToFileURL(registry).href;
+  const integrity = await fixturePnpmExe(
+    directory,
+    registry,
+    "linux-x64",
+    FIXTURE_PNPM,
+    versionScript(FIXTURE_PNPM),
+  );
+  const pins = pnpmPins({ "linux-x64": integrity });
+  for (const [label, version, wrapper] of [
+    ["pnpm 11 package", "11.11.0", false],
+    ["pnpm 12 npm wrapper", FIXTURE_PNPM, true],
+  ] as const) {
+    const runtime = path.join(directory, label.replaceAll(" ", "-"));
+    const marker = path.join(directory, `${label.replaceAll(" ", "-")}.ran`);
+    await earlierPnpmLayout(path.join(runtime, "pnpm"), version, wrapper, marker);
+    const provisioned = await provisionPrivatePnpm(runtime, pins, {
+      registry: href,
+      platform: "linux-x64",
+    });
+    assert.deepEqual(provisioned.created, [path.join(runtime, "pnpm")], label);
+    assert.deepEqual(await readdir(path.join(runtime, "pnpm")), ["pnpm"], label);
+    assert.equal(await exists(marker), false, `${label}: nothing in it ran`);
+  }
+});
+
+test("a download that does not report the pinned version leaves runtime/pnpm as it was", async (t) => {
+  const directory = await scratch(t);
+  const registry = path.join(directory, "registry");
+  const integrity = await fixturePnpmExe(
+    directory,
+    registry,
+    "linux-x64",
+    FIXTURE_PNPM,
+    versionScript("12.21.1"),
+  );
+  const pins = pnpmPins({ "linux-x64": integrity });
+  const runtime = path.join(directory, "runtime");
+  const marker = path.join(directory, "ran");
+  await earlierPnpmLayout(path.join(runtime, "pnpm"), "11.11.0", false, marker);
+  await assert.rejects(
+    provisionPrivatePnpm(runtime, pins, {
+      registry: pathToFileURL(registry).href,
+      platform: "linux-x64",
+    }),
+    /did not contain a working pnpm 12\.21\.0 \(got "12\.21\.1"\); .* is unchanged/,
+  );
+  assert.deepEqual(await readdir(runtime), ["pnpm"], "no archive or staging left");
+  assert.deepEqual((await readdir(path.join(runtime, "pnpm"))).toSorted(), ["bin", "package.json"]);
+  assert.equal(await exists(marker), false);
 });
 
 function validManifest(home: string): InstallManifest {
@@ -642,7 +848,7 @@ async function fixtureSource(directory: string): Promise<string> {
       name: "fixture-app",
       private: true,
       type: "module",
-      packageManager: "pnpm@11.11.0",
+      packageManager: `pnpm@${(await readRuntimePins()).pnpmVersion}`,
       dependencies: {
         "@earendil-works/pi-coding-agent": "link:./fake-pi",
         "@earendil-works/pi-schema": "link:./vendor/pi-schema",
@@ -658,13 +864,51 @@ async function snapshot(root: string): Promise<string[]> {
   return entries.filter((entry) => !entry.split(path.sep).includes("node_modules")).toSorted();
 }
 
-/** The skip reason when pnpm on PATH is not the pinned 11.11.0, else null. */
+/** The skip reason when pnpm on PATH is not the shipped pin, else null. */
 async function pinnedPnpmMissing(): Promise<string | null> {
+  const pinned = (await readRuntimePins()).pnpmVersion;
   const version = await runFile("pnpm", ["--version"]).then(
     ({ stdout }) => stdout.trim(),
     () => null,
   );
-  return version === "11.11.0" ? null : `needs pnpm 11.11.0 on PATH (found ${version ?? "none"})`;
+  return version === pinned ? null : `needs pnpm ${pinned} on PATH (found ${version ?? "none"})`;
+}
+
+/**
+ * A file: registry serving this machine's `@pnpm/exe` package as a wrapper
+ * around the real pnpm on PATH, with `source`'s pins rewritten to its
+ * integrity: stage 1 provisions a private pnpm without the network. Null on a
+ * platform without a pnpm pin.
+ */
+async function fixturePnpmRegistry(
+  directory: string,
+  source: string,
+  environment: NodeJS.ProcessEnv,
+): Promise<string | null> {
+  const platform = await currentPnpmPlatform();
+  if (platform === null) return null;
+  const realPnpm = (
+    await runFile("/bin/sh", ["-c", "command -v pnpm"], { env: environment })
+  ).stdout.trim();
+  const registry = path.join(directory, "pnpm-registry");
+  const pinsFile = path.join(source, "scripts", "standalone", "runtime-pins.txt");
+  const version = (await readRuntimePins(pinsFile)).pnpmVersion;
+  const integrity = await fixturePnpmExe(
+    directory,
+    registry,
+    platform,
+    version,
+    `#!/bin/sh\nPATH='${NODE_DIR}':"$PATH" exec '${realPnpm}' "$@"\n`,
+  );
+  const pins = await readFile(pinsFile, "utf8");
+  await writeFile(
+    pinsFile,
+    pins.replace(
+      new RegExp(`^pnpm_integrity_${platform} \\S+$`, "m"),
+      `pnpm_integrity_${platform} ${integrity}`,
+    ),
+  );
+  return pathToFileURL(registry).href;
 }
 
 /** A user home under `directory` and an environment that resolves node and pnpm. */
@@ -679,6 +923,17 @@ async function fixtureEnvironment(
     PATH: `${NODE_DIR}:${process.env.PATH ?? ""}`,
   };
   delete environment.CHOCO_PI_HOME;
+  // pnpm's own home and the XDG directories would otherwise point pnpm at the
+  // developer's real ones; unset, pnpm falls back to HOME, which the
+  // nothing-written-to-the-user's-home checks watch.
+  for (const name of [
+    "PNPM_HOME",
+    "XDG_DATA_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_STATE_HOME",
+    "XDG_CONFIG_HOME",
+  ])
+    delete environment[name];
   return { userHome, environment };
 }
 
@@ -695,7 +950,8 @@ async function commitFixture(
   ];
   await runFile("pnpm", ["install", "--lockfile-only", ...lockDirs], {
     cwd: source,
-    env: environment,
+    // pnpm 12 creates PNPM_HOME (default ~/Library/pnpm or ~/.local/share/pnpm) even here.
+    env: { ...environment, PNPM_HOME: path.join(directory, "lock-home") },
   });
   await runFile("git", ["init", "--quiet", "--initial-branch=main", source]);
   await runFile("git", ["-C", source, "add", "-A"]);
@@ -798,6 +1054,10 @@ test("stage 1 install is idempotent, updates by fast-forward, and uninstall remo
   assert.ok(
     manifest.created.includes(app) && manifest.created.includes(path.join(binDir, "choco-pi")),
   );
+  for (const entry of ["pnpm-store", "pnpm-cache", "pnpm-state", "pnpm-home"]) {
+    const owned = path.join(home, "runtime", entry);
+    assert.ok(manifest.created.includes(owned), `${owned} is owned`);
+  }
   const launcherEnvironment = { ...environment, PATH: "/usr/bin:/bin" };
   const version = await runFile(path.join(binDir, "choco-pi"), ["--version"], {
     env: launcherEnvironment,
@@ -877,6 +1137,7 @@ test("a runtime directory the installer did not create survives install, update 
   const directory = await scratch(t);
   const { environment } = await fixtureEnvironment(directory);
   const source = await fixtureSource(directory);
+  const pnpmRegistry = await fixturePnpmRegistry(directory, source, environment);
   await commitFixture(source, directory, environment);
   const home = path.join(directory, "choco");
   const binDir = path.join(directory, "bin");
@@ -891,17 +1152,44 @@ test("a runtime directory the installer did not create survives install, update 
   assert.equal(installed.created.includes(foreignBun), false, "existence is not ownership");
   assert.ok(installed.created.includes(path.join(home, "runtime", "pnpm-store")));
 
-  const launcherEnvironment = { ...environment, PATH: "/usr/bin:/bin" };
+  if (pnpmRegistry === null) {
+    t.diagnostic("private pnpm part skipped (no pnpm pin for this platform)");
+    return;
+  }
+  // What a pnpm 11 install leaves in runtime/pnpm: never run, replaced by the native binary.
+  const pnpmDirectory = path.join(home, "runtime", "pnpm");
+  const marker = path.join(directory, "old-pnpm-ran");
+  await earlierPnpmLayout(pnpmDirectory, "11.11.0", false, marker);
+  const launcherEnvironment = {
+    ...environment,
+    PATH: "/usr/bin:/bin",
+    CHOCO_PI_NPM_REGISTRY: pnpmRegistry,
+  };
   const head = await commitChange(source);
-  await runFile(path.join(binDir, "choco-pi"), ["self", "update"], {
-    env: launcherEnvironment,
-    timeout: 120_000,
-  });
+  const { stdout: updateOutput } = await runFile(
+    path.join(binDir, "choco-pi"),
+    ["self", "update"],
+    {
+      env: launcherEnvironment,
+      timeout: 120_000,
+    },
+  );
+  assert.match(
+    updateOutput,
+    new RegExp(`^pnpm: private ${literal(path.join(pnpmDirectory, "pnpm"))}$`, "m"),
+  );
   const updated = await readManifest(home);
   assert.equal(updated.rev, head);
   // No pnpm on this PATH, so the update provisions (and owns) a private pnpm.
   assert.deepEqual(updated.created.slice(0, installed.created.length), installed.created);
+  assert.ok(updated.created.includes(pnpmDirectory));
+  assert.deepEqual(await readdir(pnpmDirectory), ["pnpm"]);
+  assert.equal(await exists(marker), false, "the pnpm 11 layout never ran");
   assert.equal(updated.created.includes(foreignBun), false, "update does not claim it either");
+  const version = await runFile(path.join(binDir, "choco-pi"), ["--version"], {
+    env: launcherEnvironment,
+  });
+  assert.equal(version.stdout.trim(), "1.5.2");
 
   await runFile(path.join(binDir, "choco-pi"), ["self", "uninstall"], { env: launcherEnvironment });
   assert.equal(await readFile(path.join(foreignBun, "unrelated"), "utf8"), "not the installer's\n");
@@ -1330,7 +1618,7 @@ test("a failed install keeps ownership of what it created, for the retry and for
   const home = path.join(directory, "home");
   const app = path.join(home, "app");
   const runtime = path.join(home, "runtime");
-  const pnpmDirectories = ["pnpm-store", "pnpm-cache", "pnpm-state"].map((entry) =>
+  const pnpmDirectories = ["pnpm-store", "pnpm-cache", "pnpm-state", "pnpm-home"].map((entry) =>
     path.join(runtime, entry),
   );
 
@@ -1496,4 +1784,66 @@ test("install.sh refuses an app that needs a newer installer protocol before dow
     [path.join(home, "app")],
     "the clone stays owned for the matching installer",
   );
+});
+
+/**
+ * A stage 1 older than its new revision's pins: it moves the checkout to
+ * origin main, then stops (as one meeting the per-platform pnpm pins does).
+ */
+const MOVING_STAGE_ONE = [
+  'import { execFile } from "node:child_process";',
+  'import path from "node:path";',
+  'import { fileURLToPath } from "node:url";',
+  'import { promisify } from "node:util";',
+  "const run = promisify(execFile);",
+  'const app = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");',
+  'await run("git", ["-C", app, "fetch", "--quiet", "origin", "main"]);',
+  'await run("git", ["-C", app, "checkout", "--quiet", "--detach", "FETCH_HEAD"]);',
+  'process.stdout.write("OLD STAGE1 moved\\n");',
+  "process.exit(1);",
+  "",
+].join("\n");
+
+test("install.sh runs a moved checkout's own stage 1 once after an older stage 1 stopped", async (t) => {
+  const basePath = "/usr/bin:/bin";
+  if (!(await onPath("git", basePath))) {
+    t.skip("needs git in /usr/bin:/bin");
+    return;
+  }
+  const directory = await scratch(t);
+  const source = await stageOneSource(
+    directory,
+    `installer_protocol ${INSTALLER_PROTOCOL}\n${pinsText("24.0.0", "0".repeat(64), ZERO_INTEGRITY)}`,
+    MOVING_STAGE_ONE,
+  );
+  const home = path.join(directory, "home");
+  const installSh = () =>
+    runFile(
+      "/bin/sh",
+      [INSTALL_SH, "--home", home, "--bin-dir", path.join(directory, "bin"), "--source", source],
+      { env: { HOME: path.join(directory, "user-home"), PATH: `${NODE_DIR}:${basePath}` } },
+    ).then(
+      ({ stdout, stderr }) => ({ code: 0, output: stdout + stderr }),
+      (error: Failure) => ({
+        code: error.code ?? -1,
+        output: `${error.stdout ?? ""}${error.stderr ?? ""}`,
+      }),
+    );
+  const count = (output: string, pattern: RegExp) => output.match(pattern)?.length ?? 0;
+
+  const unmoved = await installSh();
+  assert.equal(unmoved.code, 1, unmoved.output);
+  assert.equal(count(unmoved.output, /OLD STAGE1/g), 1, "a failure without a move is final");
+  assert.doesNotMatch(unmoved.output, /running that revision/);
+
+  await writeFile(
+    path.join(source, "scripts", "standalone", "manage.ts"),
+    'process.stdout.write(`NEW STAGE1 ${process.argv.slice(2).join(" ")}\\n`);\n',
+  );
+  await runFile("git", ["-C", source, "add", "-A"]);
+  await runFile("git", ["-C", source, ...GIT_IDENTITY, "commit", "--quiet", "-m", "new stage 1"]);
+  const moved = await installSh();
+  assert.equal(moved.code, 0, moved.output);
+  assert.match(moved.output, /OLD STAGE1 moved\n[^]*running that revision's stage 1/);
+  assert.equal(count(moved.output, /NEW STAGE1 install --home /g), 1, moved.output);
 });

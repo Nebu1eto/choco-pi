@@ -57,13 +57,13 @@ const MIXED_AGENT_END = JSON.stringify({
     },
     {
       role: "assistant",
-      content: [{ type: "text", text: "choco-pi-harness pnpm@11.11.0 choco-pi-codex 0.1.0" }],
+      content: [{ type: "text", text: "choco-pi-harness pnpm@12.21.0 choco-pi-codex 0.1.0" }],
       stopReason: "stop",
       timestamp: 6,
     },
   ],
 });
-const EXPECTED = ["choco-pi-harness", "pnpm@11.11.0", "choco-pi-codex", "0.1.0"];
+const EXPECTED = ["choco-pi-harness", "pnpm@12.21.0", "choco-pi-codex", "0.1.0"];
 
 test("agent_end decodes when custom messages carry string content", () => {
   const event = decodeProbeEventLine(MIXED_AGENT_END);

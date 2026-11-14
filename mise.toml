@@ -1,0 +1,13 @@
+# Development toolchain for this checkout. Run `mise install` here, then
+# `pnpm install --frozen-lockfile`.
+#
+# Tools only: no [env], [tasks], hooks, or templates, so mise needs no
+# `mise trust` for this file.
+#
+# node is the supported floor and the runtime the standalone installer ships.
+# Move both versions together with package.json packageManager and
+# scripts/standalone/runtime-pins.txt (node_version, pnpm_version);
+# tests/workspace-policy.test.ts checks that they agree.
+[tools]
+node = "24.22.3"
+pnpm = "12.21.0"

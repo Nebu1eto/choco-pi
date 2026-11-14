@@ -1343,3 +1343,9 @@ Under the `choco-pi` launcher, Pi itself can run on Bun (`CHOCO_PI_RUNTIME=bun`)
 
 - `src/tools/code-mode/custom-tools.ts` (`parseCustomTool`): a `.js`/`.mjs`/`.cjs` custom tool command runs on `nodeExecutable()` (was `process.execPath`).
 - Tests: `tests/custom-tools-node-runtime.test.ts`.
+
+## 2026-11-14 choco-pi patch: probe fixtures follow the pnpm 12.21.0 root pin
+
+The root `package.json` now pins `pnpm@12.21.0` (the toolchain `mise.toml` installs), so the code-mode probe fixtures expect that value.
+
+- `tests/code-mode-first.e2e.ts` (`EXPECTED`, checked against the real root `package.json`) and `tests/code-mode-probe-events.test.ts` (the canned probe result and `EXPECTED`): `pnpm@11.11.0` becomes `pnpm@12.21.0`. No source file changes.

@@ -14,8 +14,8 @@ OAuth 토큰, API 키, 컴퓨터별 로컬 설정은 Git 밖에 보관하세요.
 
 [설치 방법](#설치)마다 추가로 필요한 것이 다릅니다.
 
-- **독립 실행형 `choco-pi` 명령**: arm64 또는 x64 macOS, 또는 x64나 arm64의 glibc 기반 Linux와 `tar`, `curl` 또는 `wget`, SHA-256 도구(`shasum`, `sha256sum`, `openssl` 중 하나)가 필요합니다. Node.js 24 이상과 pnpm `11.11.0`이 `PATH`에 있으면 그것을 쓰고, 없으면 설치 프로그램이 고정된 버전을 내려받습니다. Windows와 Alpine 같은 musl 기반 Linux는 지원하지 않습니다. Windows에서는 glibc 배포판을 쓰는 WSL2를 사용하세요.
-- **Pi에 프로필 설치**: Node.js 24 이상, pnpm `11.11.0`(다른 버전은 사용할 수 없음), Pi `1.5.2` 이상의 `1.5.x`(`>=1.5.2 <1.6.0`, 이 체크아웃의 SDK 범위 `~1.5.2`와 동일)가 필요합니다. `pnpm --version`이 `11.11.0`을 출력하지 않으면 `npm install --global pnpm@11.11.0`으로 필요한 버전을 설치한 뒤 다시 확인하세요.
+- **독립 실행형 `choco-pi` 명령**: arm64 또는 x64 macOS, 또는 x64나 arm64의 glibc 기반 Linux와 `tar`, `curl` 또는 `wget`, SHA-256 도구(`shasum`, `sha256sum`, `openssl` 중 하나)가 필요합니다. Node.js 24 이상과 pnpm `12.21.0`이 `PATH`에 있으면 그것을 쓰고, 없으면 설치 프로그램이 고정된 버전을 내려받습니다. Windows와 Alpine 같은 musl 기반 Linux는 지원하지 않습니다. Windows에서는 glibc 배포판을 쓰는 WSL2를 사용하세요.
+- **Pi에 프로필 설치**: Node.js 24 이상, pnpm `12.21.0`(다른 버전은 사용할 수 없음), Pi `1.5.2` 이상의 `1.5.x`(`>=1.5.2 <1.6.0`, 이 체크아웃의 SDK 범위 `~1.5.2`와 동일)가 필요합니다. 고정된 Node.js와 pnpm을 mise로 설치하는 방법과 mise 없이 설치하는 방법은 [개발 환경](#개발-환경)에 있습니다.
 
 ## 설치
 
@@ -43,7 +43,8 @@ choco-pi
 저장소는 스크립트를 실행하는 데만 필요합니다. 설치 프로그램은 다음을 수행합니다.
 
 - `PATH`의 Node.js 24 이상을 쓰거나, 고정된 Node.js를 `~/.choco-pi/runtime/node`에 내려받고 압축을 풀기 전에 SHA-256을 `scripts/standalone/runtime-pins.txt`와 대조합니다.
-- `PATH`의 pnpm은 정확히 `11.11.0`일 때만 쓰고, 그렇지 않으면 고정된 pnpm을 내려받아 무결성을 확인합니다. pnpm의 저장소와 캐시는 `~/.choco-pi/runtime` 아래에 둡니다.
+- `PATH`의 pnpm은 정확히 `12.21.0`일 때만 씁니다. 그렇지 않으면 arm64나 x64의 macOS 또는 glibc Linux에서 `@pnpm/exe.<platform>`의 pnpm 네이티브 바이너리를 내려받아 고정된 무결성 값과 대조한 뒤 `~/.choco-pi/runtime/pnpm/pnpm`에 둡니다. pnpm은 Node.js를 거쳐 실행되지 않습니다. 다른 플랫폼에서는 먼저 pnpm `12.21.0`을 `PATH`에 두세요.
+- pnpm의 모든 데이터는 `~/.choco-pi/runtime` 아래의 `pnpm-store`, `pnpm-cache`, `pnpm-state`, `pnpm-home`에 둡니다. pnpm에 `PNPM_HOME`을 지정하므로 pnpm은 `~/Library/pnpm`이나 XDG 디렉터리에 아무것도 쓰지 않습니다.
 - lockfile에서 프로덕션 의존성을 설치하고, 프로필을 `~/.choco-pi/agent`에 설치한 다음, 만든 항목을 `~/.choco-pi/install.json`에 기록합니다.
 - `~/.local/bin/choco-pi`를 실행기에 링크합니다. 이 디렉터리가 `PATH`에 없으면 셸 설정에 추가할 `export PATH=...` 줄을 출력합니다.
 
@@ -130,6 +131,13 @@ choco-pi self uninstall
 브랜치나 태그로 옮깁니다. app 체크아웃에 로컬 변경이 있으면 거부하고, 중간 단계가
 실패하면 이전 리비전으로 돌아갑니다. 먼저 실행 중인 세션을 종료하세요.
 
+pnpm 12로 바뀌기 전에 만든 설치는 `self update`로 이 버전까지 업데이트할 수
+없습니다. 업데이트는 `install.sh`를 다시 실행하라는 안내와 함께 실패하고, 계속
+동작하는 이전 리비전으로 돌아갑니다. 최신 상태의 clone에서 설치할 때 쓴 `--home`,
+`--bin-dir`, `--source`로 `install.sh`를 다시 실행하세요. `--source`를 빼면
+체크아웃이 GitHub 저장소를 가리키게 됩니다. 예전 설치 코드가 체크아웃을 옮긴 뒤
+실패하면 `install.sh`가 새 리비전의 설치 코드를 한 번 더 실행해 전환을 마칩니다.
+
 `self uninstall`은 `install.json`에 기록된 항목, 즉 `choco-pi` 링크(이 실행기를
 가리키는 동안만), `app/`, `runtime/`, `install.json`을 제거합니다. `agent/`(로그인,
 세션, 설정)와 `lsp/`는 남기며, `choco-pi self uninstall --purge`는 이 둘도
@@ -205,13 +213,17 @@ Pi를 설치한 후 프로필을 설치하세요.
 git clone https://github.com/Nebu1eto/choco-pi.git
 cd choco-pi
 
-npm install --global pnpm@11.11.0
+mise install
 pnpm --version
 
 pnpm install --frozen-lockfile
 npm run install:profile
 pi
 ```
+
+`mise install`은 `mise.toml`이 고정한 Node.js와 pnpm 버전을 설치하며, 그다음
+`pnpm --version`은 `12.21.0`을 출력해야 합니다. mise 없이 준비하는 방법은
+[개발 환경](#개발-환경)을 참고하세요.
 
 체크아웃에는 `.pi/settings.json`이 없습니다. 설치 프로그램은 프로필 정책을
 `~/.pi/agent/settings.json`에서 읽습니다. 새 컴퓨터처럼 이 파일이 없거나 번들
@@ -743,6 +755,46 @@ advisor 설정은 별도 파일인 `~/.pi/agent/advisor.json`에 두며, 프로�
 독립 실행형 명령에서는 안내서의 [독립 실행형 설치 절](docs/zed-setup.md#standalone-install-choco-pi-launcher)처럼
 `choco-pi self acp`로 Zed 설정을 실행하세요. 설정에는 실행기와 Node.js의 절대 경로가
 기록되므로, 설치 위치를 옮긴 뒤에는 설정을 다시 실행하세요.
+
+## 개발 환경
+
+저장소 루트의 `mise.toml`은 이 체크아웃을 개발하고 테스트하는 도구 버전을
+고정합니다. Node.js는 지원하는 가장 오래된 릴리스이자 독립 실행형 설치 프로그램이
+내려받는 `24.22.3`이고, pnpm은 `package.json`의 `packageManager`가 지정한
+`12.21.0`입니다. `mise.lock`에는 arm64와 x64의 macOS와 Linux용으로 각 도구의
+다운로드 URL과 체크섬이 기록되어 있습니다.
+
+1. [mise](https://mise.jdx.dev/getting-started.html)를 설치하고 셸에서
+   활성화(`mise activate`)하세요. 그러면 체크아웃 안에서 `node`와 `pnpm`이
+   고정된 버전으로 실행됩니다.
+2. 체크아웃에서 `mise install`을 실행하세요. `mise.toml`에는 도구 버전만 있으므로
+   paranoid 모드를 켜지 않았다면 `mise trust` 없이 불러옵니다.
+3. `pnpm install --frozen-lockfile`로 의존성을 설치하세요.
+
+```sh
+mise install
+node --version   # v24.22.3
+pnpm --version   # 12.21.0
+pnpm install --frozen-lockfile
+```
+
+mise를 활성화하지 않은 셸에서는 `mise exec -- pnpm test`처럼 각 명령 앞에
+`mise exec --`를 붙이세요.
+
+mise를 쓰지 않으려면 Node.js 24 이상을 설치하고
+`npm install --global pnpm@12.21.0`을 실행하세요. npm이 플랫폼에 맞는 pnpm
+네이티브 바이너리를 설치합니다. `pnpm --version`이 `12.21.0`을 출력하는지
+확인하세요.
+
+이전에 고정했던 pnpm `11.11.0`이 `PATH`에 있어도 됩니다. 이 체크아웃 안에서는
+`packageManager`를 읽어 pnpm `12.21.0`을 자체 저장소에 설치하고 모든 명령을 그
+버전으로 실행하므로, `pnpm --version`은 이 체크아웃에서는 `12.21.0`, 다른
+곳에서는 `11.11.0`을 출력합니다. 이렇게 전환할 때 `pnpm-lock.yaml` 맨 앞의
+pnpm 자체 잠금에 `@pnpm/exe` 항목이 추가되는데,
+`tests/workspace-policy.test.ts`가 이를 거부하므로 커밋하기 전에 되돌리세요.
+다른 pnpm 버전은 테스트하지 않았습니다. 체크아웃
+안에서 `pnpm --version`이 `12.21.0`이 아닌 값을 출력하면 mise나 위의 npm 명령을
+쓰세요.
 
 ## 개발 검증
 

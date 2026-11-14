@@ -13,6 +13,7 @@ import {
   access,
   chmod,
   copyFile,
+  lstat,
   mkdir,
   readFile,
   readdir,
@@ -30,6 +31,13 @@ const runFile = promisify(execFile);
 export const NODE_PLATFORMS = ["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64"] as const;
 export type NodePlatform = (typeof NODE_PLATFORMS)[number];
 
+/**
+ * pnpm 12 native binary platforms (`@pnpm/exe.<platform>` on npm; glibc on
+ * Linux). The names match the Node.js ones.
+ */
+export const PNPM_PLATFORMS = NODE_PLATFORMS;
+export type PnpmPlatform = NodePlatform;
+
 /** Bun release asset platforms (`bun-<platform>.zip`; glibc builds on Linux). */
 export const BUN_PLATFORMS = [
   "darwin-aarch64",
@@ -45,7 +53,8 @@ export type RuntimePins = {
   nodeVersion: string;
   nodeSha256: ReadonlyMap<NodePlatform, string>;
   pnpmVersion: string;
-  pnpmIntegrity: string;
+  /** dist.integrity of `@pnpm/exe.<platform>@<pnpmVersion>`, per platform. */
+  pnpmIntegrity: ReadonlyMap<PnpmPlatform, string>;
   bunVersion: string;
   bunMinimumVersion: string;
   bunSha256: ReadonlyMap<BunPlatform, string>;
@@ -84,11 +93,20 @@ const EXACT_VERSION = /^\d+\.\d+\.\d+$/;
  */
 export const INSTALLER_PROTOCOL = 2;
 
+/**
+ * A free-text line for stage 1 code older than the per-platform pnpm pins:
+ * that parser rejects any line with more than two words and quotes it in its
+ * error, which is the only message an older `self update` can show. This
+ * parser skips the line.
+ */
+export const UPGRADE_NOTICE_KEY = "upgrade_notice";
+
 export function parseRuntimePins(text: string): RuntimePins {
   const values = new Map<string, string>();
   for (const raw of text.split("\n")) {
     const line = raw.trim();
     if (line === "" || line.startsWith("#")) continue;
+    if (line.startsWith(`${UPGRADE_NOTICE_KEY} `)) continue;
     const match = /^(\S+)\s+(\S+)$/.exec(line);
     if (match === null) throw new Error(`malformed runtime pin line: ${line}`);
     if (values.has(match[1])) throw new Error(`duplicate runtime pin: ${match[1]}`);
@@ -121,8 +139,18 @@ export function parseRuntimePins(text: string): RuntimePins {
   const pnpmVersion = required("pnpm_version");
   if (!/^\d+\.\d+\.\d+$/.test(pnpmVersion))
     throw new Error(`pnpm_version is not exact: ${pnpmVersion}`);
-  const pnpmIntegrity = required("pnpm_integrity");
-  parseIntegrity(pnpmIntegrity);
+  const pnpmIntegrity = new Map<PnpmPlatform, string>();
+  for (const [key, value] of values) {
+    if (!key.startsWith("pnpm_integrity_")) continue;
+    const platform = key.slice("pnpm_integrity_".length);
+    if (!isNodePlatform(platform)) throw new Error(`unsupported pnpm platform pin: ${key}`);
+    parseIntegrity(value);
+    pnpmIntegrity.set(platform, value);
+  }
+  for (const platform of PNPM_PLATFORMS) {
+    if (!pnpmIntegrity.has(platform))
+      throw new Error(`missing runtime pin: pnpm_integrity_${platform}`);
+  }
   const bunVersion = required("bun_version");
   const bunMinimumVersion = required("bun_minimum_version");
   for (const [key, value] of [
@@ -246,9 +274,9 @@ export function pnpmVersionQualifies(versionOutput: string, pinned: string): boo
   return versionOutput.trim() === pinned;
 }
 
+/** A pnpm executable, run directly: a PATH pnpm or the private native binary. */
 export type PnpmCommand = {
   command: string;
-  prefixArgs: readonly string[];
   source: "system" | "private";
 };
 
@@ -263,16 +291,38 @@ async function isExecutable(file: string): Promise<boolean> {
 
 /**
  * Environment for probing a foreign pnpm: never let corepack or pnpm download
- * another version into the user's home while answering `--version`.
+ * another version into the user's home while answering `--version`. A
+ * `packageManager` field above the probe directory would otherwise make pnpm
+ * 11 and 12 switch to (and download) that version: `pm-on-fail` is the
+ * setting both honor; `manage-package-manager-versions` is the older one.
  */
 export function probeEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return {
     ...environment,
     COREPACK_ENABLE_NETWORK: "0",
     COREPACK_ENABLE_DOWNLOAD_PROMPT: "0",
+    pnpm_config_pm_on_fail: "ignore",
     pnpm_config_manage_package_manager_versions: "false",
     npm_config_manage_package_manager_versions: "false",
   };
+}
+
+/** What `binary --version` prints (trimmed), run from `probeDirectory`; null when it does not run. */
+export async function probePnpmVersion(
+  binary: string,
+  probeDirectory: string,
+): Promise<string | null> {
+  try {
+    const { stdout } = await runFile(binary, ["--version"], {
+      cwd: probeDirectory,
+      env: probeEnvironment(process.env),
+      timeout: 15_000,
+      maxBuffer: 64 * 1024,
+    });
+    return stdout.trim();
+  } catch {
+    return null;
+  }
 }
 
 /** Returns the first `pnpm` on `searchPath` that reports exactly `pinned`. */
@@ -287,32 +337,28 @@ export async function findSystemPnpm(
     const candidate = path.join(directory, "pnpm");
     if (seen.has(candidate) || !(await isExecutable(candidate))) continue;
     seen.add(candidate);
-    try {
-      const { stdout } = await runFile(candidate, ["--version"], {
-        cwd: probeDirectory,
-        env: probeEnvironment(process.env),
-        timeout: 15_000,
-        maxBuffer: 64 * 1024,
-      });
-      if (pnpmVersionQualifies(stdout, pinned)) return candidate;
-    } catch {
-      continue;
-    }
+    const version = await probePnpmVersion(candidate, probeDirectory);
+    if (version !== null && pnpmVersionQualifies(version, pinned)) return candidate;
   }
   return null;
 }
 
-export const PRIVATE_PNPM_ENTRY = path.join("bin", "pnpm.mjs");
+/** The private pnpm: `<runtime>/pnpm/pnpm`, the native binary and nothing else. */
+export const PRIVATE_PNPM_BINARY = "pnpm";
 
-async function privatePnpmVersion(pnpmDirectory: string): Promise<string | null> {
+/**
+ * True when `pnpmDirectory` holds exactly the native binary layout this
+ * installer writes: one regular file named `pnpm`. Earlier layouts (the pnpm
+ * 11 npm package with bin/pnpm.mjs, the pnpm 12 npm wrapper whose fallback
+ * downloads a binary) fail this before anything in them runs.
+ */
+async function isNativePnpmLayout(pnpmDirectory: string): Promise<boolean> {
   try {
-    const manifest: unknown = JSON.parse(
-      await readFile(path.join(pnpmDirectory, "package.json"), "utf8"),
-    );
-    const version = manifest instanceof Object && "version" in manifest ? manifest.version : null;
-    return version === null || version === undefined ? null : String(version);
+    const entries = await readdir(pnpmDirectory);
+    if (entries.length !== 1 || entries[0] !== PRIVATE_PNPM_BINARY) return false;
+    return (await lstat(path.join(pnpmDirectory, PRIVATE_PNPM_BINARY))).isFile();
   } catch {
-    return null;
+    return false;
   }
 }
 
@@ -359,6 +405,17 @@ export async function currentBunPlatform(
 }
 
 export type BunCommand = { path: string; version: string };
+
+/** The pinned pnpm build for this machine; null when none is pinned (musl, Windows, ...). */
+export async function currentPnpmPlatform(
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+): Promise<PnpmPlatform | null> {
+  if (arch !== "arm64" && arch !== "x64") return null;
+  if (platform === "darwin") return `darwin-${arch}`;
+  if (platform === "linux" && !(await isMuslLinux())) return `linux-${arch}`;
+  return null;
+}
 
 /**
  * A provisioned tool: its entry point and the directories this call wrote
@@ -508,38 +565,91 @@ export async function provisionPrivateBun(
   return { path: binary, created: [bunDirectory] };
 }
 
+export type PnpmProvisionOptions = {
+  /** npm registry base URL (https: or file:). */
+  registry: string;
+  /** Overrides the detected platform (tests). */
+  platform?: PnpmPlatform | null;
+  /** Told about `<runtimeDir>/pnpm` as soon as a download replaced it. */
+  onCreated?: OnCreated;
+};
+
+/** The registry tarball of `@pnpm/exe.<platform>@<version>`. */
+export function pnpmTarballUrl(registry: string, platform: PnpmPlatform, version: string): string {
+  const name = `exe.${platform}`;
+  return `${registry.replace(/\/+$/, "")}/@pnpm/${name}/-/${name}-${version}.tgz`;
+}
+
 /**
- * Ensures `<runtimeDir>/pnpm` holds the pinned pnpm, downloading the registry
- * tarball and verifying its sha512 integrity before extraction when needed.
- * Returns the entry script and, when it downloaded, `<runtimeDir>/pnpm`;
- * `onCreated` hears of that directory as soon as the extraction placed it.
+ * Ensures `<runtimeDir>/pnpm/pnpm` is the pinned pnpm 12 native binary:
+ * downloads `@pnpm/exe.<platform>`, verifies its pinned sha512 integrity
+ * before `tar` sees it, extracts only `package/pnpm`, and checks that the
+ * staged binary reports the pinned version before it replaces
+ * `<runtimeDir>/pnpm`, so a bad download never displaces a working pnpm.
+ * Returns the binary and, when it downloaded, `<runtimeDir>/pnpm`.
+ * Nothing runs pnpm through Node or the npm `pnpm` wrapper, whose fallback
+ * downloads a binary on its own.
  */
 export async function provisionPrivatePnpm(
   runtimeDirectory: string,
   pins: RuntimePins,
-  registry: string,
-  onCreated?: OnCreated,
+  options: PnpmProvisionOptions,
 ): Promise<Provisioned> {
   const pnpmDirectory = path.join(runtimeDirectory, "pnpm");
-  const entry = path.join(pnpmDirectory, PRIVATE_PNPM_ENTRY);
+  const binary = path.join(pnpmDirectory, PRIVATE_PNPM_BINARY);
+  await mkdir(runtimeDirectory, { recursive: true });
   if (
-    (await privatePnpmVersion(pnpmDirectory)) === pins.pnpmVersion &&
-    (await isExecutable(entry))
-  ) {
-    return { path: entry, created: [] };
+    (await isNativePnpmLayout(pnpmDirectory)) &&
+    (await isExecutable(binary)) &&
+    pnpmVersionQualifies((await probePnpmVersion(binary, runtimeDirectory)) ?? "", pins.pnpmVersion)
+  )
+    return { path: binary, created: [] };
+  const platform = options.platform === undefined ? await currentPnpmPlatform() : options.platform;
+  if (platform === null) {
+    throw new Error(
+      `no pinned pnpm build for ${process.platform} ${process.arch} (glibc Linux and macOS only); put pnpm ${pins.pnpmVersion} on PATH yourself and retry`,
+    );
   }
-  const base = registry.replace(/\/+$/, "");
-  const url = `${base}/pnpm/-/pnpm-${pins.pnpmVersion}.tgz`;
-  const archive = path.join(runtimeDirectory, `.pnpm-${pins.pnpmVersion}-${randomUUID()}.tgz`);
+  const integrity = pins.pnpmIntegrity.get(platform);
+  if (integrity === undefined) throw new Error(`missing runtime pin: pnpm_integrity_${platform}`);
+  const url = pnpmTarballUrl(options.registry, platform, pins.pnpmVersion);
+  const id = randomUUID();
+  const archive = path.join(runtimeDirectory, `.pnpm-${pins.pnpmVersion}-${id}.tgz`);
+  const unpacked = path.join(runtimeDirectory, `.pnpm-unpacked-${id}`);
+  const staged = path.join(runtimeDirectory, `.pnpm-staged-${id}`);
   try {
     await download(url, archive);
-    await extractVerifiedArchive(archive, parseIntegrity(pins.pnpmIntegrity), pnpmDirectory);
-    await onCreated?.(pnpmDirectory);
+    await verifyArchive(archive, parseIntegrity(integrity));
+    await mkdir(unpacked);
+    await runFile("tar", ["-xzf", archive, "-C", unpacked, "package/pnpm"], {
+      maxBuffer: 1024 * 1024,
+    });
+    const extracted = path.join(unpacked, "package", PRIVATE_PNPM_BINARY);
+    if (!(await lstat(extracted)).isFile())
+      throw new Error(`${url}: package/pnpm is not a regular file`);
+    await mkdir(staged);
+    const stagedBinary = path.join(staged, PRIVATE_PNPM_BINARY);
+    await rename(extracted, stagedBinary);
+    await chmod(stagedBinary, 0o755);
+    const version = await probePnpmVersion(stagedBinary, runtimeDirectory);
+    if (version === null || !pnpmVersionQualifies(version, pins.pnpmVersion)) {
+      throw new Error(
+        `${url} did not contain a working pnpm ${pins.pnpmVersion} (got ${version === null ? "nothing runnable" : JSON.stringify(version)}); ${pnpmDirectory} is unchanged`,
+      );
+    }
+    await rm(pnpmDirectory, { recursive: true, force: true });
+    await rename(staged, pnpmDirectory);
+    await options.onCreated?.(pnpmDirectory);
   } finally {
     await rm(archive, { force: true });
+    await rm(unpacked, { recursive: true, force: true });
+    await rm(staged, { recursive: true, force: true });
   }
-  if ((await privatePnpmVersion(pnpmDirectory)) !== pins.pnpmVersion) {
-    throw new Error(`${url} did not contain pnpm ${pins.pnpmVersion}`);
+  const installed = await probePnpmVersion(binary, runtimeDirectory);
+  if (installed === null || !pnpmVersionQualifies(installed, pins.pnpmVersion)) {
+    throw new Error(
+      `${binary} does not run as pnpm ${pins.pnpmVersion} (got ${installed === null ? "nothing runnable" : JSON.stringify(installed)})`,
+    );
   }
-  return { path: entry, created: [pnpmDirectory] };
+  return { path: binary, created: [pnpmDirectory] };
 }

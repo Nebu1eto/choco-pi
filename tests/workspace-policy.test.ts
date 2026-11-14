@@ -8,7 +8,6 @@ import { compile, map, obj, opt, str, type Static } from "@earendil-works/pi-sch
 
 const run = promisify(execFile);
 const ROOT = new URL("../", import.meta.url);
-const EXACT_PACKAGE_MANAGER = "pnpm@11.11.0";
 const MEMBER_COUNT = 18;
 
 const ManifestSchema = obj(
@@ -57,6 +56,116 @@ async function members(): Promise<string[]> {
   return names.sort();
 }
 
+/**
+ * `key = "value"` pairs of one TOML table. Strict mode rejects any other line in it, which is
+ * the whole of mise.toml's [tools]; mise.lock tables also hold arrays, which are skipped.
+ */
+function tomlTable(text: string, table: string, strict: boolean): Map<string, string> {
+  const values = new Map<string, string>();
+  let inside = false;
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed === "" || trimmed.startsWith("#")) continue;
+    const header = /^\[\[?([^\]]+)\]\]?$/.exec(trimmed);
+    if (header) {
+      inside = header[1] === table;
+      continue;
+    }
+    if (!inside) continue;
+    const pair = /^([\w.-]+|"[^"]+")\s*=\s*"([^"]*)"$/.exec(trimmed);
+    if (pair?.[1] && pair[2] !== undefined) values.set(pair[1].replace(/^"|"$/g, ""), pair[2]);
+    else assert.ok(!strict, `unexpected [${table}] line: ${line}`);
+  }
+  return values;
+}
+
+/** The tools mise.toml pins, by tool name. */
+async function miseTools(): Promise<Map<string, string>> {
+  return tomlTable(await readText("mise.toml"), "tools", true);
+}
+
+/** `key value` pairs of scripts/standalone/runtime-pins.txt. */
+async function runtimePins(): Promise<Map<string, string>> {
+  const pins = new Map<string, string>();
+  for (const line of (await readText("scripts/standalone/runtime-pins.txt")).split("\n")) {
+    const match = /^(\S+) (\S+)$/.exec(line.trim());
+    if (match?.[1] && match[2]) pins.set(match[1], match[2]);
+  }
+  return pins;
+}
+
+/** The pnpm version the lockfile's first YAML document locks under packageManagerDependencies. */
+function lockedPackageManager(lockfile: string): string | undefined {
+  const documents = lockfile.split(/^---$/m);
+  const selfLock = documents[0]?.trim() === "" ? documents[1] : undefined;
+  if (selfLock === undefined) return undefined;
+  const match =
+    /^( +)packageManagerDependencies:\n(?:\1 +.*\n)*?\1 +pnpm:\n\1 + +specifier: \S+\n\1 + +version: (\S+)$/m.exec(
+      selfLock,
+    );
+  return match?.[2];
+}
+
+/** The dependency names the lockfile's self-lock lists directly under packageManagerDependencies. */
+function lockedPackageManagerNames(lockfile: string): string[] {
+  const documents = lockfile.split(/^---$/m);
+  const selfLock = documents[0]?.trim() === "" ? documents[1] : undefined;
+  if (selfLock === undefined) return [];
+  const lines = selfLock.split("\n");
+  const start = lines.findIndex((line) => /^ +packageManagerDependencies:$/.test(line));
+  if (start < 0) return [];
+  const indent = (lines[start]?.length ?? 0) - (lines[start]?.trimStart().length ?? 0);
+  const names: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (line.trim() === "") continue;
+    const depth = line.length - line.trimStart().length;
+    if (depth <= indent) break;
+    const entry = /^'?([^':]+)'?:$/.exec(line.trim());
+    if (depth === indent + 2 && entry?.[1]) names.push(entry[1]);
+  }
+  return names;
+}
+
+test("mise.toml pins only tools, as exact versions", async () => {
+  const text = await readText("mise.toml");
+  const tables = [...text.matchAll(/^\[([^\]]+)\]\s*$/gm)].map((match) => match[1]);
+  assert.deepEqual(tables, ["tools"], "any other table can make mise require trust");
+  assert.ok(!text.includes("{{"), "templates make mise require trust");
+  const tools = await miseTools();
+  assert.deepEqual([...tools.keys()].sort(), ["node", "pnpm"]);
+  for (const [name, version] of tools) assert.match(version, /^\d+\.\d+\.\d+$/, name);
+});
+
+test("mise, package.json, the lockfile, and the runtime pins name one toolchain", async () => {
+  const tools = await miseTools();
+  const pnpm = tools.get("pnpm");
+  assert.ok(pnpm, "mise.toml pins pnpm");
+  const manifest = await readManifest("package.json");
+  assert.equal(manifest.packageManager, `pnpm@${pnpm}`);
+  assert.equal(lockedPackageManager(await readText("pnpm-lock.yaml")), pnpm);
+  // pnpm 12 locks only itself here. An older pnpm that switches to the pinned
+  // version adds @pnpm/exe, which pnpm 12 then keeps: revert that change.
+  assert.deepEqual(lockedPackageManagerNames(await readText("pnpm-lock.yaml")), ["pnpm"]);
+  assert.equal(tools.get("node"), (await runtimePins()).get("node_version"));
+});
+
+test("mise.lock locks the mise.toml versions and the runtime-pins Node checksums", async () => {
+  const lock = await readText("mise.lock");
+  const tools = await miseTools();
+  for (const name of ["node", "pnpm"]) {
+    assert.equal(tomlTable(lock, `tools.${name}`, false).get("version"), tools.get(name), name);
+  }
+  const pins = await runtimePins();
+  for (const platform of ["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64"]) {
+    const table = `tools.node."platforms.${platform.replace("darwin", "macos")}"`;
+    assert.equal(
+      tomlTable(lock, table, false).get("checksum"),
+      `sha256:${pins.get(`node_sha256_${platform}`)}`,
+      platform,
+    );
+  }
+});
+
 test("the workspace includes every bundled package through one packages glob", async () => {
   const blocks = workspaceBlocks(await readText("pnpm-workspace.yaml"));
   assert.deepEqual(blocks.get("packages"), ["- packages/*"]);
@@ -73,9 +182,9 @@ test("members carry no lockfile, workspace file, or package manager pin", async 
   }
 });
 
-test("the root pins the exact pnpm toolchain and runs no install hook", async () => {
+test("the root pins an exact pnpm toolchain and runs no install hook", async () => {
   const manifest = await readManifest("package.json");
-  assert.equal(manifest.packageManager, EXACT_PACKAGE_MANAGER);
+  assert.match(manifest.packageManager ?? "", /^pnpm@\d+\.\d+\.\d+$/);
   for (const hook of ["preinstall", "install", "postinstall", "prepare"]) {
     assert.equal(manifest.scripts?.[hook], undefined, hook);
   }

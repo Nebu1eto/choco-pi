@@ -5,7 +5,10 @@
 # before anything is extracted.
 #
 # node_sha256_* come from https://nodejs.org/dist/v<node_version>/SHASUMS256.txt.
-# pnpm_integrity is dist.integrity of https://registry.npmjs.org/pnpm/<pnpm_version>.
+# pnpm 12 is a native binary: pnpm_integrity_<platform> is dist.integrity of
+# https://registry.npmjs.org/@pnpm/exe.<platform>/<pnpm_version> (glibc on
+# Linux); stage 1 extracts only its package/pnpm. package.json packageManager
+# must be pnpm@<pnpm_version>.
 # bun_sha256_* (the bun-<platform>.zip assets, glibc on Linux) come from
 # https://github.com/oven-sh/bun/releases/download/bun-v<bun_version>/SHASUMS256.txt.
 # bun_minimum_version is the oldest PATH bun the launcher and installer accept
@@ -16,14 +19,22 @@
 # newer than it supports. Absent means 1: stage 1 takes only --home, --bin-dir,
 # --source, --ref and --runtime. 2 adds the <home>/.install-provenance creation
 # journal (scripts/standalone/provenance.ts); the arguments are unchanged.
+#
+# upgrade_notice is free text for older stage 1 code: its parser predates the
+# per-platform pnpm pins, refuses this line as malformed and quotes it, which
+# is the only message an older "self update" shows before it rolls back.
 installer_protocol 2
 node_version 24.22.3
 node_sha256_darwin-arm64 ff6e17d4874b76d272212b908cc020d6e815fba5a6c7eaaa06add725840307fd
 node_sha256_darwin-x64 977614af0504c81045e7fd85596dbca0e5f951b96681516dadafedcca8c447f7
 node_sha256_linux-x64 061ec3e3062115705b56b51fa9cc330ab50d34b6969387d4e4b1a50c6809acc2
 node_sha256_linux-arm64 261af2af250dfd7e9f25cf151d1b2713a0adf8f10a9ad116c4947f68627affe8
-pnpm_version 11.11.0
-pnpm_integrity sha512-RGP2X9gO2A1pvB1L8WPulPYFxzgPwxi7Wy6+FfjNEtScUaTVnpUbQB52TTtsp1HL9RvFDtcAGmvLSTXmhMNIgg==
+pnpm_version 12.21.0
+pnpm_integrity_darwin-arm64 sha512-F5OyMX/6zLSowpTZEQRojbCmPS1Pq+fyRaIinslsIe6Glh3qbyQ52u+Fe0eEzSaRuIbWZkXmAAXSWh6Q5Wrlgg==
+pnpm_integrity_darwin-x64 sha512-EzpvcsaE6hrrgYeEiAFYd2rSgFybYyxXhkAY7K3y6Hg3loVfcyJ81hHczpFzi8lW5RXtUlFECRPZ8ZAMRFQYYg==
+pnpm_integrity_linux-x64 sha512-8eufCjHXspKbNS/kh8q4Q0gqJoOuvC4Q5pgos6XS8By/nAMtP+jf8F1Cw9er840kfAX+PJ/ts+A9qnLE91rvXQ==
+pnpm_integrity_linux-arm64 sha512-4Oj/iF2TDCe2lcH0n4TupPR5sSdrNLclJB6xBElLMPCUOAvBhdf2rRlSaO5M4erJ6g4Fyy7YTXTpcmfFsKyxEA==
+upgrade_notice this choco-pi install predates pnpm 12 and cannot update itself to this version; re-run install.sh with the --home, --bin-dir and --source you installed with to update
 bun_version 1.4.4
 bun_minimum_version 1.4.4
 bun_sha256_darwin-aarch64 c240d7f0ccb90c263a849fcdb09b7ee62630d921348ed6aafda86b9d577bc510

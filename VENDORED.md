@@ -2,6 +2,17 @@
 
 Package-level divergences live in each package's `VENDORED.md`. This file records harness-wide notes.
 
+## 2026-11-14: mise development toolchain and pnpm 12.21.0
+
+- `mise.toml` (new) pins the development toolchain: Node.js `24.22.3` (equal to `node_version` in `scripts/standalone/runtime-pins.txt`, the supported floor) and pnpm `12.21.0`. It holds only `[tools]` with plain version strings, so mise loads it without `mise trust` outside paranoid mode. mise installs pnpm through its `aqua:pnpm/pnpm` backend, the native binary from the pnpm GitHub release.
+- `mise.lock` (new, `mise lock` for linux-x64, linux-arm64, macos-arm64, and macos-x64) records each download URL and checksum; its Node.js checksums equal the runtime pins. `mise.local.toml` and `mise.local.lock` are ignored.
+- `package.json` `packageManager` moves from `pnpm@11.11.0` to `pnpm@12.21.0`, and `pnpm-lock.yaml` gains pnpm 12's leading document that locks pnpm itself (`packageManagerDependencies`); the dependency document is unchanged.
+- `tests/workspace-policy.test.ts` checks that `mise.toml`, `mise.lock`, `package.json`, the lockfile's `packageManagerDependencies`, and the runtime pins name one toolchain.
+- Standalone installer: stage 1 (`scripts/standalone/provision.ts`, `manage.ts`) provisions pnpm 12 as the native binary from `@pnpm/exe.<platform>` instead of the `pnpm` npm package run through Node. It extracts only `package/pnpm` into `$CHOCO_PI_HOME/runtime/pnpm/pnpm`, checks that it reports the pinned version before replacing an earlier copy, and runs it directly. Platforms without a pinned build (musl Linux, Windows) need pnpm `12.21.0` on `PATH`.
+- `runtime-pins.txt`: `pnpm_version 12.21.0`, and the single `pnpm_integrity` became `pnpm_integrity_<platform>` for darwin-arm64, darwin-x64, linux-x64, and linux-arm64. A new `upgrade_notice` line is free text that the current parser skips; the older parser rejects it as malformed and quotes it, which is how a pre-pnpm-12 `self update` tells the user to re-run `install.sh` before it rolls back.
+- pnpm containment: `pnpm install` gets `PNPM_HOME=$CHOCO_PI_HOME/runtime/pnpm-home` next to the existing store, cache, and state flags, and `--config.pm-on-fail=error` replaces `manage-package-manager-versions=false`; the PATH probe also sets `pnpm_config_pm_on_fail=ignore`.
+- `install.sh` reruns stage 1 once from the moved checkout when the first stage 1 failed after moving `$CHOCO_PI_HOME/app` to another revision, which completes an upgrade from a pnpm 11 install.
+
 ## 2026-11-13: one pnpm workspace and two install methods
 
 Layout: the 18 bundled packages moved from the `.pi` directory to `packages/`, and the profile resources (extensions, skills, prompts, agents, `profile/scripts`, and the policy and configuration files) moved to `profile/`. Nothing tracked remains in `.pi/`; it holds only ignored project-local Pi state.

@@ -186,18 +186,32 @@ export async function selectPnpm(
 ): Promise<{ pnpm: PnpmCommand; created: readonly string[] }> {
   await mkdir(runtime, { recursive: true });
   const system = await findSystemPnpm(process.env.PATH ?? "", pins.pnpmVersion, runtime);
-  if (system !== null)
-    return { pnpm: { command: system, prefixArgs: [], source: "system" }, created: [] };
+  if (system !== null) return { pnpm: { command: system, source: "system" }, created: [] };
   const registry = process.env.CHOCO_PI_NPM_REGISTRY ?? DEFAULT_NPM_REGISTRY;
-  const provisioned = await provisionPrivatePnpm(runtime, pins, registry, onCreated);
+  const provisioned = await provisionPrivatePnpm(runtime, pins, { registry, onCreated });
   return {
-    pnpm: { command: process.execPath, prefixArgs: [provisioned.path], source: "private" },
+    pnpm: { command: provisioned.path, source: "private" },
     created: provisioned.created,
   };
 }
 
-const PNPM_DIRECTORIES = ["pnpm-store", "pnpm-cache", "pnpm-state"] as const;
+/**
+ * pnpm's writable locations, all under `runtime`: the store, metadata cache
+ * and state (flags below) and PNPM_HOME (environment only), which pnpm 12
+ * otherwise creates as ~/Library/pnpm or $XDG_DATA_HOME/pnpm even for a
+ * project install.
+ */
+const PNPM_DIRECTORIES = ["pnpm-store", "pnpm-cache", "pnpm-state", "pnpm-home"] as const;
 
+/**
+ * pnpm 12 accepts any `--config.<key>` silently, so each of these was checked
+ * against its effect: store-dir, cache-dir and state-dir each keep their
+ * files out of the user's home, and an explicit store-dir is used as given
+ * instead of a default or volume-root store. `pm-on-fail=error` makes a
+ * packageManager mismatch an error instead of a download of another pnpm
+ * (`manage-package-manager-versions` no longer does);
+ * assertPackageManagerPin already rules that mismatch out.
+ */
 export function pnpmInstallArgs(runtime: string): string[] {
   return [
     "install",
@@ -207,9 +221,21 @@ export function pnpmInstallArgs(runtime: string): string[] {
     `--config.cache-dir=${path.join(runtime, PNPM_DIRECTORIES[1])}`,
     `--config.state-dir=${path.join(runtime, PNPM_DIRECTORIES[2])}`,
     "--config.confirm-modules-purge=false",
-    "--config.manage-package-manager-versions=false",
+    "--config.pm-on-fail=error",
     "--config.update-notifier=false",
   ];
+}
+
+/** The environment of `pnpm install`: PNPM_HOME has no command-line form. */
+export function pnpmInstallEnvironment(
+  runtime: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  return {
+    ...environment,
+    COREPACK_ENABLE_NETWORK: "0",
+    PNPM_HOME: path.join(runtime, PNPM_DIRECTORIES[3]),
+  };
 }
 
 async function assertPackageManagerPin(app: string, pins: RuntimePins): Promise<void> {
@@ -240,11 +266,8 @@ async function installDependencies(app: string, runtime: string, record: OnCreat
     await mkdir(directory);
   }
   const { pnpm } = await selectPnpm(runtime, pins, record);
-  console.log(`pnpm: ${pnpm.source} ${pnpm.prefixArgs[0] ?? pnpm.command}`);
-  await run(pnpm.command, [...pnpm.prefixArgs, ...pnpmInstallArgs(runtime)], app, {
-    ...process.env,
-    COREPACK_ENABLE_NETWORK: "0",
-  });
+  console.log(`pnpm: ${pnpm.source} ${pnpm.command}`);
+  await run(pnpm.command, pnpmInstallArgs(runtime), app, pnpmInstallEnvironment(runtime));
 }
 
 function launcherOf(app: string): string {

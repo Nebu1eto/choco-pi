@@ -5,7 +5,7 @@ Pi extension providing models available through the Synthetic provider.
 ## Stack
 
 - TypeScript (strict mode)
-- pnpm 11.11.0
+- pnpm 12.21.0, pinned with Node.js by the root `mise.toml`
 - oxlint for linting and oxfmt for formatting, using the choco-pi root configs
 - Changesets for versioning
 - Vitest for testing

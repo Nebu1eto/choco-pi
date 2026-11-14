@@ -344,4 +344,18 @@ set -- install --home "$home" --bin-dir "$bin_dir" --source "$source"
 [ -z "$runtime" ] || set -- "$@" --runtime "$runtime"
 trap - EXIT
 cleanup
-exec "$NODE" "$app/scripts/standalone/manage.ts" "$@"
+# Stage 1 runs from the checkout as it is, then moves it to the requested ref.
+# When an existing checkout is older than its new revision's runtime pins (for
+# example a pnpm 11 install meeting the pnpm 12 pins), that older stage 1
+# stops after the move; the moved checkout's own stage 1 then finishes the
+# install. It runs at most once more, and only when the checkout moved.
+head_before=$(git -C "$app" rev-parse --verify --quiet HEAD) || head_before=
+status=0
+"$NODE" "$app/scripts/standalone/manage.ts" "$@" || status=$?
+[ "$status" -ne 0 ] || exit 0
+head_after=$(git -C "$app" rev-parse --verify --quiet HEAD) || head_after=
+if [ -n "$head_before" ] && [ -n "$head_after" ] && [ "$head_after" != "$head_before" ]; then
+  say "the app moved from $head_before to $head_after; running that revision's stage 1"
+  exec "$NODE" "$app/scripts/standalone/manage.ts" "$@"
+fi
+exit "$status"

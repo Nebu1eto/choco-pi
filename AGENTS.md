@@ -8,6 +8,8 @@ When a task/task-inline/task-dynamic/task-hotfix workflow completes and the user
 
 The repository is one pnpm workspace (`packages/*`) with one lockfile, the root `pnpm-lock.yaml`; no package has its own lockfile or workspace file. `pnpm install --frozen-lockfile` at the root generates the untracked, load-bearing `node_modules` trees. Dependency build scripts stay disabled: each dependency that has one is listed as `false` under `allowBuilds` in `pnpm-workspace.yaml`. Record each package divergence in that package's `VENDORED.md` with the change.
 
+The root `mise.toml` pins Node.js and pnpm (locked in `mise.lock`); its versions move together with `package.json` `packageManager` and `scripts/standalone/runtime-pins.txt`, which `tests/workspace-policy.test.ts` enforces. Run installs and gates under that toolchain: `mise install`, then an activated shell or `mise exec --`.
+
 ## Model guidance
 
 `profile/model-guidance.md` owns model routing and model-specific policy. Before changes, read each complete applicable source guide and append provenance to `docs/model-guidance-history.md`, a history-only record that is never routing input. Provider-neutral wording may use current references; apply provider advice only to its model.
