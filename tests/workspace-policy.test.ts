@@ -126,28 +126,43 @@ function lockedPackageManager(lockfile: string): string | undefined {
 }
 
 /**
- * The dependency names the lockfile's self-lock lists directly under packageManagerDependencies.
- * A direct line that is not a block-mapping key (an inline entry, odd indentation) is returned
- * as an "unsupported entry" so the caller's comparison fails instead of skipping it.
+ * Keys of the block mapping that opens at `lines[start]`, one level deeper. A direct line that
+ * is not a plain block-mapping key (an inline entry, odd indentation) comes back as an
+ * "unsupported entry", so a caller's comparison fails instead of skipping it.
  */
-function lockedPackageManagerNames(lockfile: string): string[] {
-  const documents = lockfile.split(/^---$/m);
-  const selfLock = documents[0]?.trim() === "" ? documents[1] : undefined;
-  if (selfLock === undefined) return [];
-  const lines = selfLock.split("\n");
-  const start = lines.findIndex((line) => /^ +packageManagerDependencies:$/.test(line));
-  if (start < 0) return [];
-  const indent = (lines[start]?.length ?? 0) - (lines[start]?.trimStart().length ?? 0);
-  const names: string[] = [];
+function blockKeys(lines: string[], start: number): string[] {
+  const header = lines[start] ?? "";
+  const indent = header.length - header.trimStart().length;
+  const keys: string[] = [];
   for (const line of lines.slice(start + 1)) {
     if (line.trim() === "") continue;
     const depth = line.length - line.trimStart().length;
     if (depth <= indent) break;
     if (depth > indent + 2) continue;
     const entry = /^('?)([^':\s{}]+)\1:$/.exec(line.trim());
-    names.push(depth === indent + 2 && entry?.[2] ? entry[2] : `unsupported entry: ${line.trim()}`);
+    keys.push(depth === indent + 2 && entry?.[2] ? entry[2] : `unsupported entry: ${line.trim()}`);
   }
-  return names;
+  return keys;
+}
+
+/**
+ * The lockfile self-lock's importers, and every name that any packageManagerDependencies in it
+ * lists. A packageManagerDependencies line in any other form counts as an unsupported entry.
+ */
+function selfLockEntries(lockfile: string) {
+  const documents = lockfile.split(/^---$/m);
+  const selfLock = documents[0]?.trim() === "" ? documents[1] : undefined;
+  const lines = selfLock?.split("\n") ?? [];
+  const importersAt = lines.indexOf("importers:");
+  const importers = importersAt < 0 ? [] : blockKeys(lines, importersAt);
+  const packageManagers: string[] = [];
+  for (const [index, line] of lines.entries()) {
+    if (!line.includes("packageManagerDependencies")) continue;
+    if (/^ +packageManagerDependencies:$/.test(line))
+      packageManagers.push(...blockKeys(lines, index));
+    else packageManagers.push(`unsupported entry: ${line.trim()}`);
+  }
+  return { importers, packageManagers };
 }
 
 test("mise.toml pins only tools, as exact versions", async () => {
@@ -174,19 +189,27 @@ test("the mise.toml check rejects everything beyond exact tool pins", () => {
   assert.notDeepEqual(miseConfigViolations("# comments only\n"), []);
 });
 
-test("the self-lock check rejects any dependency beside pnpm, in either YAML form", () => {
-  const selfLock = (entries: string): string =>
-    `---\nlockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    configDependencies: {}\n    packageManagerDependencies:\n${entries}\n\npackages: {}\n---\nlockfileVersion: '9.0'\n`;
+test("the self-lock check rejects any dependency beside pnpm, in any YAML form or importer", () => {
+  const lockfile = (importers: string): string =>
+    `---\nlockfileVersion: '9.0'\n\nimporters:\n\n${importers}\n\npackages: {}\n---\nlockfileVersion: '9.0'\n`;
   const pnpm = "      pnpm:\n        specifier: 12.21.0\n        version: 12.21.0";
-  assert.deepEqual(lockedPackageManagerNames(selfLock(pnpm)), ["pnpm"]);
-  assert.equal(lockedPackageManager(selfLock(pnpm)), "12.21.0");
-  const extras = [
-    "      '@pnpm/exe':\n        specifier: 12.21.0\n        version: 12.21.0",
-    "      '@pnpm/exe': {specifier: 12.21.0, version: 12.21.0}",
-    "     '@pnpm/exe':\n        specifier: 12.21.0",
+  const root = (entries: string): string =>
+    `  .:\n    configDependencies: {}\n    packageManagerDependencies:\n${entries}`;
+  const only = { importers: ["."], packageManagers: ["pnpm"] };
+  assert.deepEqual(selfLockEntries(lockfile(root(pnpm))), only);
+  assert.equal(lockedPackageManager(lockfile(root(pnpm))), "12.21.0");
+  const exe = "      '@pnpm/exe':\n        specifier: 12.21.0\n        version: 12.21.0";
+  const bypasses = [
+    root(`${exe}\n${pnpm}`),
+    root(`${pnpm}\n      '@pnpm/exe': {specifier: 12.21.0, version: 12.21.0}`),
+    root(`${pnpm}\n     '@pnpm/exe':\n        specifier: 12.21.0`),
+    root(`${pnpm}\n      "@pnpm/exe":\n        specifier: 12.21.0`),
+    `  decoy:\n    packageManagerDependencies:\n${pnpm}\n\n${root(`${exe}\n${pnpm}`)}`,
+    "  .:\n    packageManagerDependencies: {'@pnpm/exe': {specifier: 12.21.0, version: 12.21.0}}\n" +
+      `  other:\n    packageManagerDependencies:\n${pnpm}`,
   ];
-  for (const extra of extras) {
-    assert.notDeepEqual(lockedPackageManagerNames(selfLock(`${pnpm}\n${extra}`)), ["pnpm"], extra);
+  for (const importers of bypasses) {
+    assert.notDeepEqual(selfLockEntries(lockfile(importers)), only, importers);
   }
 });
 
@@ -197,9 +220,12 @@ test("mise, package.json, the lockfile, and the runtime pins name one toolchain"
   const manifest = await readManifest("package.json");
   assert.equal(manifest.packageManager, `pnpm@${pnpm}`);
   assert.equal(lockedPackageManager(await readText("pnpm-lock.yaml")), pnpm);
-  // pnpm 12 locks only itself here. An older pnpm that switches to the pinned
-  // version adds @pnpm/exe, which pnpm 12 then keeps: revert that change.
-  assert.deepEqual(lockedPackageManagerNames(await readText("pnpm-lock.yaml")), ["pnpm"]);
+  // pnpm 12 locks only itself, for the root importer. An older pnpm that switches to
+  // the pinned version adds @pnpm/exe, which pnpm 12 then keeps: revert that change.
+  assert.deepEqual(selfLockEntries(await readText("pnpm-lock.yaml")), {
+    importers: ["."],
+    packageManagers: ["pnpm"],
+  });
   assert.equal(tools.get("node"), (await runtimePins()).get("node_version"));
 });
 
