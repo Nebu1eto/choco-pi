@@ -760,10 +760,11 @@ advisor 설정은 별도 파일인 `~/.pi/agent/advisor.json`에 두며, 프로�
 ## 개발 환경
 
 저장소 루트의 `mise.toml`은 이 체크아웃을 개발하고 테스트하는 도구 버전을
-고정합니다. Node.js는 지원하는 가장 오래된 릴리스이자 독립 실행형 설치 프로그램이
-내려받는 `24.22.3`이고, pnpm은 `package.json`의 `packageManager`가 지정한
-`12.21.0`입니다. `mise.lock`에는 arm64와 x64의 macOS와 Linux용으로 각 도구의
-다운로드 URL과 체크섬이 기록되어 있습니다.
+고정합니다. Node.js는 최신 릴리스인 `26.13.1`이고, pnpm은 `package.json`의
+`packageManager`가 지정한 `12.21.0`입니다. 독립 실행형 설치 프로그램은 여전히
+Node.js 24 이상을 받아들이고 없으면 `24.22.3`을 내려받으므로, 코드는 Node.js
+24에서도 계속 동작해야 합니다. `mise.lock`에는 arm64와 x64의 macOS와 Linux용으로
+각 도구의 다운로드 URL과 체크섬이 기록되어 있습니다.
 
 1. [mise](https://mise.jdx.dev/getting-started.html)를 설치하고 셸에서
    활성화(`mise activate`)하세요. 그러면 체크아웃 안에서 `node`와 `pnpm`이
@@ -774,7 +775,7 @@ advisor 설정은 별도 파일인 `~/.pi/agent/advisor.json`에 두며, 프로�
 
 ```sh
 mise install
-node --version   # v24.22.3
+node --version   # v26.13.1
 pnpm --version   # 12.21.0
 pnpm install --frozen-lockfile
 ```

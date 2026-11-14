@@ -802,10 +802,11 @@ it again after moving the install.
 ## Development environment
 
 `mise.toml` at the repository root pins the toolchain this checkout is developed
-and tested with: Node.js `24.22.3`, the oldest supported release and the one the
-standalone installer downloads, and pnpm `12.21.0`, the version `package.json`
-names in `packageManager`. `mise.lock` records the download URL and checksum of
-each tool for macOS and Linux on arm64 and x64.
+and tested with: Node.js `26.13.1`, the newest release, and pnpm `12.21.0`, the
+version `package.json` names in `packageManager`. The standalone installer still
+accepts Node.js 24 or later and downloads `24.22.3` when it finds none, so code
+must keep running on Node.js 24. `mise.lock` records the download URL and
+checksum of each tool for macOS and Linux on arm64 and x64.
 
 1. Install [mise](https://mise.jdx.dev/getting-started.html) and activate it in
    your shell (`mise activate`), so `node` and `pnpm` in the checkout run the
@@ -816,7 +817,7 @@ each tool for macOS and Linux on arm64 and x64.
 
 ```sh
 mise install
-node --version   # v24.22.3
+node --version   # v26.13.1
 pnpm --version   # 12.21.0
 pnpm install --frozen-lockfile
 ```

@@ -2,6 +2,11 @@
 
 Package-level divergences live in each package's `VENDORED.md`. This file records harness-wide notes.
 
+## 2026-11-14: mise develops on the newest Node.js
+
+- `mise.toml` pins Node.js `26.13.1` (the newest release, LTS line 26) instead of the runtime pins' `24.22.3`; `mise.lock` was regenerated with `mise lock` for the same four platforms, and its Node.js checksums equal nodejs.org's `SHASUMS256.txt` for v26.13.1. The standalone installer's `node_version`, checksums, and Node.js 24 floor are unchanged.
+- `tests/workspace-policy.test.ts` now requires the mise Node.js to be no older than `node_version` instead of equal to it, and checks each `mise.lock` Node.js entry's release URL instead of comparing its checksum with the runtime pins.
+
 ## 2026-11-14: self update hands off to the target revision's installer
 
 - `self update` no longer installs a new revision with the running code. It fetches the target, reads only `installer_protocol` from the target's `runtime-pins.txt` (`readPin`, which accepts any pins format), checks the revision out, and runs its own `install.sh` with `--home`, `--bin-dir`, `--source`, `--ref`, `--rev`, and `--runtime`. On failure it restores the previous `install.json`, checks out the previous revision, and reinstalls it with that revision's `install.sh`; the creation journal keeps what the failed run created.

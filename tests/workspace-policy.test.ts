@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { compile, map, obj, opt, str, type Static } from "@earendil-works/pi-schema";
 
+import { compareVersions } from "../scripts/standalone/provision.ts";
+
 const run = promisify(execFile);
 const ROOT = new URL("../", import.meta.url);
 const MEMBER_COUNT = 18;
@@ -297,23 +299,36 @@ test("mise, package.json, the lockfile, and the runtime pins name one toolchain"
   // pnpm 12 locks only itself here. An older pnpm that switches to the pinned
   // version adds @pnpm/exe, which pnpm 12 then keeps: revert that change.
   assert.equal(selfLockMismatch(await readText("pnpm-lock.yaml"), pnpm), undefined);
-  assert.equal(tools.get("node"), (await runtimePins()).get("node_version"));
+  // Development runs on the newest Node.js; the runtime pins hold the floor
+  // the standalone installer ships, which development must not be older than.
+  const node = tools.get("node");
+  const floor = (await runtimePins()).get("node_version");
+  assert.ok(
+    node !== undefined && floor !== undefined,
+    "mise.toml and the runtime pins pin Node.js",
+  );
+  assert.ok(compareVersions(node, floor) >= 0, `mise.toml node ${node} is older than ${floor}`);
 });
 
-test("mise.lock locks the mise.toml versions and the runtime-pins Node checksums", async () => {
+test("mise.lock locks the mise.toml versions and each platform's Node.js release", async () => {
   const lock = await readText("mise.lock");
   const tools = await miseTools();
   for (const name of ["node", "pnpm"]) {
     assert.equal(tomlTable(lock, `tools.${name}`, false).get("version"), tools.get(name), name);
   }
-  const pins = await runtimePins();
+  const node = tools.get("node");
   for (const platform of ["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64"]) {
-    const table = `tools.node."platforms.${platform.replace("darwin", "macos")}"`;
+    const entry = tomlTable(
+      lock,
+      `tools.node."platforms.${platform.replace("darwin", "macos")}"`,
+      false,
+    );
     assert.equal(
-      tomlTable(lock, table, false).get("checksum"),
-      `sha256:${pins.get(`node_sha256_${platform}`)}`,
+      entry.get("url"),
+      `https://nodejs.org/dist/v${node}/node-v${node}-${platform}.tar.gz`,
       platform,
     );
+    assert.match(entry.get("checksum") ?? "", /^sha256:[a-f0-9]{64}$/, platform);
   }
 });
 

@@ -8,7 +8,7 @@ When a task/task-inline/task-dynamic/task-hotfix workflow completes and the user
 
 The repository is one pnpm workspace (`packages/*`) with one lockfile, the root `pnpm-lock.yaml`; no package has its own lockfile or workspace file. `pnpm install --frozen-lockfile` at the root generates the untracked, load-bearing `node_modules` trees. Dependency build scripts stay disabled: each dependency that has one is listed as `false` under `allowBuilds` in `pnpm-workspace.yaml`. Record each package divergence in that package's `VENDORED.md` with the change.
 
-The root `mise.toml` pins Node.js and pnpm (locked in `mise.lock`); its versions move together with `package.json` `packageManager` and `scripts/standalone/runtime-pins.txt`, which `tests/workspace-policy.test.ts` enforces. Run installs and gates under that toolchain: `mise install`, then an activated shell or `mise exec --`.
+The root `mise.toml` pins Node.js and pnpm (locked in `mise.lock`). Its pnpm moves together with `package.json` `packageManager` and `scripts/standalone/runtime-pins.txt`; its Node.js is the newest release and must not be older than the runtime pins' `node_version`, the Node.js 24 floor the standalone installer ships, so code must keep running on Node.js 24. `tests/workspace-policy.test.ts` enforces both. Run installs and gates under that toolchain: `mise install`, then an activated shell or `mise exec --`.
 
 ## Model guidance
 

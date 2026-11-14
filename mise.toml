@@ -4,10 +4,10 @@
 # Tools only: no [env], [tasks], hooks, or templates, so mise needs no
 # `mise trust` for this file.
 #
-# node is the supported floor and the runtime the standalone installer ships.
-# Move both versions together with package.json packageManager and
-# scripts/standalone/runtime-pins.txt (node_version, pnpm_version);
-# tests/workspace-policy.test.ts checks that they agree.
+# node is the newest Node.js release; it must not be older than node_version in
+# scripts/standalone/runtime-pins.txt, the supported floor the standalone
+# installer ships. pnpm moves together with package.json packageManager and
+# pnpm_version there. tests/workspace-policy.test.ts checks both.
 [tools]
-node = "24.22.3"
+node = "26.13.1"
 pnpm = "12.21.0"
