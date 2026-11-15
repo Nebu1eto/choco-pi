@@ -1,4 +1,7 @@
-# choco-pi
+<h1>
+  <img src="assets/choco-pi-logo.svg" alt="choco-pi 로고" width="40" height="40" align="absmiddle" />
+  choco-pi
+</h1>
 
 [English](README.md)
 

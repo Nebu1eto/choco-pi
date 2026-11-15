@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-labelledby="title">
+  <title id="title">choco-pi</title>
+  <defs>
+    <path id="shell" d="M24 140C24 88 70 56 128 56s104 32 104 84v32c0 26-18 40-44 40H68c-26 0-44-14-44-40z" />
+    <clipPath id="shell-clip">
+      <use href="#shell" />
+    </clipPath>
+    <clipPath id="face-clip">
+      <rect x="40" y="142" width="176" height="56" rx="14" />
+    </clipPath>
+  </defs>
+  <ellipse cx="128" cy="222" rx="86" ry="8" fill="#2b140a" opacity="0.15" />
+  <use href="#shell" fill="#6b3519" />
+  <rect x="0" y="200" width="256" height="20" fill="#522812" clip-path="url(#shell-clip)" />
+  <g clip-path="url(#face-clip)">
+    <rect x="40" y="142" width="176" height="56" fill="#eab04a" />
+    <path
+      d="M36 166c24-6 48 6 72 0s48-6 72 0 32 4 40-1v17c-24 6-48-4-72 1s-48 6-72 0-32-4-40 0z"
+      fill="#fff8ea"
+    />
+    <g fill="#c98a2a">
+      <circle cx="84" cy="150" r="2.2" />
+      <circle cx="100" cy="157" r="1.8" />
+      <circle cx="150" cy="150" r="2.2" />
+      <circle cx="166" cy="158" r="1.8" />
+      <circle cx="206" cy="151" r="2" />
+      <circle cx="62" cy="190" r="2" />
+      <circle cx="96" cy="192" r="1.8" />
+      <circle cx="128" cy="189" r="2.2" />
+      <circle cx="160" cy="192" r="1.8" />
+      <circle cx="196" cy="189" r="2" />
+    </g>
+  </g>
+  <g fill="#6b3519">
+    <rect x="54" y="136" width="14" height="22" rx="7" />
+    <rect x="122" y="136" width="16" height="24" rx="8" />
+    <rect x="184" y="136" width="12" height="18" rx="6" />
+  </g>
+  <use href="#shell" fill="none" stroke="#2b140a" stroke-width="6" stroke-linejoin="round" />
+  <g fill="none" stroke="#8e5130" stroke-width="5" stroke-linecap="round">
+    <path d="M88 74c12-8 24 2 38-4s26-8 40 0" />
+    <path d="M70 110c14-9 28 3 42-2s28-8 42 0 24 5 36-1" />
+  </g>
+  <ellipse cx="62" cy="92" rx="11" ry="6" transform="rotate(-40 62 92)" fill="#fff" opacity="0.45" />
+  <g fill="#f2c14e">
+    <path d="M220 38Q220 50 232 50Q220 50 220 62Q220 50 208 50Q220 50 220 38Z" />
+    <path d="M38 54Q38 62 46 62Q38 62 38 70Q38 62 30 62Q38 62 38 54Z" />
+  </g>
+</svg>
