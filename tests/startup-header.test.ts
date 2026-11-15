@@ -96,13 +96,15 @@ test("installing twice in one process patches once and shares the policy", () =>
   assert.equal(call(prototype, "shouldShowStartupHeader", false), true);
 });
 
-test("the header shows the logo, both versions, key hints, and the description", () => {
+test("the header shows the logo, the title above both versions, key hints, and the description", () => {
   const header = new StartupHeader(plainTheme, "1.0.0-alpha.1", true);
   const lines = header.render(120);
   const text = lines.map((line) => stripTerminalSequences(line));
+  const column = (row: number): string => (text[row] ?? "").slice(1 + LOGO_WIDTH + 1);
+  assert.equal(column(0), "choco-pi");
   assert.match(
-    text[0] ?? "",
-    new RegExp(`v1\\.0\\.0-alpha\\.1 \\(pi v${VERSION.replaceAll(".", "\\.")}\\)`),
+    column(1),
+    new RegExp(`^v1\\.0\\.0-alpha\\.1 \\(pi v${VERSION.replaceAll(".", "\\.")}\\)$`),
   );
   assert.ok(text.some((line) => line.includes(CHOCO_PI_DESCRIPTION)));
   assert.ok(text.some((line) => line.includes("commands")));

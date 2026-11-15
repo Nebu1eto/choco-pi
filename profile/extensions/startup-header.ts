@@ -247,12 +247,16 @@ export function startupHeaderContent(
   options: { expanded: boolean; harnessVersion: string | undefined; showLogo: boolean },
 ): StartupHeaderContent {
   const versions = theme.fg("dim", versionLabel(options.harnessVersion, VERSION));
-  const first = options.showLogo ? versions : `${theme.bold("choco-pi")} ${versions}`;
+  const title = theme.bold("choco-pi");
+  // Beside the logo the title gets its own row; without it, one row names both.
+  const heading = options.showLogo
+    ? [plain(title), plain(versions)]
+    : [plain(`${title} ${versions}`)];
   const description = theme.fg("dim", CHOCO_PI_DESCRIPTION);
   const lines: HeaderLine[] = options.expanded
-    ? [plain(first), ...keyHints(theme, true), plain(""), plain(description)]
+    ? [...heading, ...keyHints(theme, true), plain(""), plain(description)]
     : [
-        plain(first),
+        ...heading,
         ...keyHints(theme, false),
         plain(theme.fg("dim", `Press ${keyText("app.tools.expand")} to show full startup help.`)),
         plain(description),
