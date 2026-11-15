@@ -24,11 +24,13 @@ import {
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { compile, obj, str } from "@earendil-works/pi-schema";
 import {
-  Text,
   backgroundAnsi,
   foregroundAnsi,
   isAppleTerminalSession,
   rgbColor,
+  truncateToWidth,
+  visibleWidth,
+  wrapTextWithAnsi,
   type Component,
   type RgbColorValue,
   type TerminalColorMode,
@@ -122,17 +124,20 @@ export function logoLines(mode: TerminalColorMode): string[] {
 
 export const LOGO_WIDTH = LOGO_PIXELS[0]?.length ?? 0;
 
-/** Pi's startup key hints, compact (one line) or expanded (one hint per line). */
-function keyHints(theme: HeaderTheme, expanded: boolean): string[] {
+/** Pi's startup key hints: compact (one group of segments) or expanded (one hint per line). */
+function keyHints(theme: HeaderTheme, expanded: boolean): HeaderLine[] {
   if (!expanded) {
     return [
-      [
-        keyHint("app.interrupt", "interrupt"),
-        rawKeyHint(`${keyText("app.clear")}/${keyText("app.exit")}`, "clear/exit"),
-        rawKeyHint("/", "commands"),
-        rawKeyHint("!", "bash"),
-        keyHint("app.tools.expand", "more"),
-      ].join(theme.fg("muted", " · ")),
+      {
+        segments: [
+          keyHint("app.interrupt", "interrupt"),
+          rawKeyHint(`${keyText("app.clear")}/${keyText("app.exit")}`, "clear/exit"),
+          rawKeyHint("/", "commands"),
+          rawKeyHint("!", "bash"),
+          keyHint("app.tools.expand", "more"),
+        ],
+        separator: theme.fg("muted", " · "),
+      },
     ];
   }
   return [
@@ -158,27 +163,83 @@ function keyHints(theme: HeaderTheme, expanded: boolean): string[] {
     keyHint("app.message.dequeue", "to edit all queued messages"),
     keyHint("app.clipboard.pasteImage", "to paste files on macOS, images, or text"),
     rawKeyHint("drop files", "to attach"),
-  ];
+  ].map(plain);
 }
 
 export interface StartupHeaderContent {
   /** Logo lines; empty where the terminal cannot draw half blocks. */
   logo: readonly string[];
   /** Text lines; the first holds the versions. */
-  lines: readonly string[];
+  lines: readonly HeaderLine[];
 }
 
-/** Places text lines beside the logo; lines past the logo's height keep its indent. */
-export function composeHeader(content: StartupHeaderContent): string {
-  if (content.logo.length === 0) return content.lines.join("\n");
-  const blank = " ".repeat(LOGO_WIDTH);
-  const rows = Math.max(content.logo.length, content.lines.length);
+/**
+ * Segments joined by `separator` that wrap only between segments, so a key
+ * hint never splits across rows; a segment wider than the column still wraps.
+ */
+export interface HeaderLine {
+  segments: readonly string[];
+  separator: string;
+}
+
+function plain(text: string): HeaderLine {
+  return { segments: [text], separator: "" };
+}
+
+/** The header's left and right margin, matching Pi's own header. */
+const MARGIN = 1;
+/** The gap between the logo and the text column. */
+const GAP = 1;
+/** Below this text-column width the logo is dropped so the text stays readable. */
+export const MIN_TEXT_COLUMN = 30;
+
+/** The text column's width beside the logo at terminal `width`. */
+export function textColumnWidth(width: number, withLogo: boolean): number {
+  return width - 2 * MARGIN - (withLogo ? LOGO_WIDTH + GAP : 0);
+}
+
+/** Whether the logo fits at terminal `width` with a readable text column beside it. */
+export function logoFits(width: number): boolean {
+  return textColumnWidth(width, true) >= MIN_TEXT_COLUMN;
+}
+
+/** Wraps one header line to `width` cells. */
+function wrapLine(line: HeaderLine, width: number): string[] {
+  const rows: string[] = [];
+  let current = "";
+  for (const segment of line.segments) {
+    const joined = current === "" ? segment : `${current}${line.separator}${segment}`;
+    if (current !== "" && visibleWidth(joined) > width) {
+      rows.push(current);
+      current = segment;
+    } else current = joined;
+  }
+  if (current !== "") rows.push(current);
+  if (rows.length === 0) return [""];
+  return rows.flatMap((row) => (visibleWidth(row) > width ? wrapTextWithAnsi(row, width) : [row]));
+}
+
+/**
+ * Lays the header out at terminal `width`: text wrapped inside its column
+ * beside the logo, rows past the logo indented to the column, and every row
+ * at most `width` cells, so Pi never re-wraps a row and splits the logo.
+ */
+export function layoutHeader(content: StartupHeaderContent, width: number): string[] {
+  const withLogo = content.logo.length > 0;
+  const column = Math.max(1, textColumnWidth(width, withLogo));
+  const text = content.lines.flatMap((line) => wrapLine(line, column));
+  const margin = " ".repeat(MARGIN);
+  const indent = withLogo ? " ".repeat(LOGO_WIDTH + GAP) : "";
+  const rows = Math.max(content.logo.length, text.length);
   const out: string[] = [];
   for (let row = 0; row < rows; row += 1) {
-    const text = content.lines[row] ?? "";
-    out.push(text === "" ? (content.logo[row] ?? "") : `${content.logo[row] ?? blank} ${text}`);
+    const logo = content.logo[row];
+    const line = text[row] ?? "";
+    const left = logo === undefined ? indent : `${logo}${" ".repeat(GAP)}`;
+    const composed = line === "" ? (logo ?? "") : `${left}${line}`;
+    out.push(composed === "" ? "" : truncateToWidth(`${margin}${composed}`, width));
   }
-  return out.join("\n");
+  return out;
 }
 
 export function startupHeaderContent(
@@ -188,23 +249,26 @@ export function startupHeaderContent(
   const versions = theme.fg("dim", versionLabel(options.harnessVersion, VERSION));
   const first = options.showLogo ? versions : `${theme.bold("choco-pi")} ${versions}`;
   const description = theme.fg("dim", CHOCO_PI_DESCRIPTION);
-  const lines = options.expanded
-    ? [first, ...keyHints(theme, true), "", description]
+  const lines: HeaderLine[] = options.expanded
+    ? [plain(first), ...keyHints(theme, true), plain(""), plain(description)]
     : [
-        first,
+        plain(first),
         ...keyHints(theme, false),
-        theme.fg("dim", `Press ${keyText("app.tools.expand")} to show full startup help.`),
-        description,
+        plain(theme.fg("dim", `Press ${keyText("app.tools.expand")} to show full startup help.`)),
+        plain(description),
       ];
   return { logo: options.showLogo ? logoLines(theme.getColorMode()) : [], lines };
 }
 
-/** The header component; rebuilt on every render so it follows theme changes. */
+/**
+ * The header component; laid out on every render so it follows theme and
+ * width changes. The logo shows only where the terminal can draw it and the
+ * width leaves a readable text column beside it.
+ */
 export class StartupHeader implements Component {
   private readonly theme: HeaderTheme;
   private readonly harnessVersion: string | undefined;
   private readonly showLogo: boolean;
-  private readonly text = new Text("", 1, 0);
   private expanded = false;
 
   constructor(theme: HeaderTheme, harnessVersion: string | undefined, showLogo: boolean) {
@@ -217,18 +281,15 @@ export class StartupHeader implements Component {
     this.expanded = expanded;
   }
 
-  invalidate(): void {
-    this.text.invalidate();
-  }
+  invalidate(): void {}
 
   render(width: number): string[] {
     const content = startupHeaderContent(this.theme, {
       expanded: this.expanded,
       harnessVersion: this.harnessVersion,
-      showLogo: this.showLogo,
+      showLogo: this.showLogo && logoFits(width),
     });
-    this.text.setText(composeHeader(content));
-    return this.text.render(width);
+    return layoutHeader(content, width);
   }
 }
 

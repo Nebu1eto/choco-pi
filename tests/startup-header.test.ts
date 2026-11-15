@@ -8,6 +8,7 @@ import {
   LOGO_WIDTH,
   StartupHeader,
   installStartupPolicy,
+  logoFits,
   readHarnessVersion,
   type HeaderTheme,
 } from "../profile/extensions/startup-header.ts";
@@ -127,4 +128,43 @@ test("without half-block support the header names choco-pi in text", () => {
     .map((line) => stripTerminalSequences(line));
   assert.equal(text[0]?.trim(), `choco-pi (pi v${VERSION})`);
   assert.ok(!text.join("\n").match(/[▀▄█]/));
+});
+
+const HALF_BLOCKS = /[▀▄█]/;
+
+test("at every width each row fits, so Pi never re-wraps a row through the logo", () => {
+  for (const expanded of [false, true]) {
+    for (let width = 8; width <= 140; width += 1) {
+      const header = new StartupHeader(plainTheme, "1.0.0-alpha.1", true);
+      header.setExpanded(expanded);
+      const lines = header.render(width);
+      for (const line of lines) assert.ok(visibleWidth(line) <= width, `width ${width}: ${line}`);
+      const text = lines.map((line) => stripTerminalSequences(line));
+      if (!logoFits(width)) {
+        assert.ok(!text.some((line) => HALF_BLOCKS.test(line)), `width ${width} drops the logo`);
+        continue;
+      }
+      // The logo's four rows come first, whole, at the margin; no other row draws it.
+      for (const [row, line] of text.entries()) {
+        const cell = line.slice(1, 1 + LOGO_WIDTH);
+        if (row < 4) assert.match(cell, HALF_BLOCKS, `width ${width} row ${row}`);
+        else assert.equal(cell.trim(), "", `width ${width} row ${row} keeps the text column`);
+        assert.ok(line.length <= 1 + LOGO_WIDTH || line[1 + LOGO_WIDTH] === " ");
+      }
+    }
+  }
+});
+
+test("a narrow header wraps hints between hints and keeps every word", () => {
+  const header = new StartupHeader(plainTheme, "1.0.0-alpha.1", true);
+  const text = header
+    .render(60)
+    .map((line) => stripTerminalSequences(line).slice(1 + LOGO_WIDTH + 1));
+  const joined = text.join(" ").replaceAll(/\s+/g, " ");
+  for (const hint of ["interrupt", "clear/exit", "commands", "bash", "more"]) {
+    assert.ok(joined.includes(hint), hint);
+  }
+  assert.ok(joined.includes(CHOCO_PI_DESCRIPTION));
+  // No row starts or ends with a dangling separator.
+  for (const line of text) assert.doesNotMatch(line.trim(), /^·|·$/);
 });
