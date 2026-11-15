@@ -2522,3 +2522,7 @@ Standalone mode is the `choco-pi` launcher's env contract (`CHOCO_PI_STANDALONE=
 - `src/memory.ts` (`resolveMemoryDir`, user scope): the `~/.pi/agent-memory/<agent>` fallback comes from `legacyPiFallbacks()`, so standalone mode never consults it; the current `getAgentDir()/agent-memory` location is unchanged and still wins when it exists.
 - `src/skill-loader.ts`: roots move into the exported `skillRoots(cwd)`; the pre-Pi `~/.pi/skills` root comes from `legacyPiFallbacks()` and is dropped in standalone mode. `~/.agents/skills` (where `rex skill setup --agent pi` installs) stays.
 - Tests: `tests/standalone-paths.test.ts`.
+
+## 2026-11-15 choco-pi patch: `@choco-pi` package name
+
+- `package.json` `name`: `choco-pi-subagents` → `@choco-pi/subagents`; `version`: `0.1.0` → `1.0.0-alpha.1`, the root package's version. The directory stays `packages/choco-pi-subagents`, so path-based settings entries, imports, and the path-derived extension name are unchanged.

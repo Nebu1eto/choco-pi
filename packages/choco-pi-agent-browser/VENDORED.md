@@ -230,3 +230,7 @@ Under the `choco-pi` launcher, Pi itself can run on Bun (`CHOCO_PI_RUNTIME=bun`)
 - `extensions/agent-browser/lib/input-modes/script.ts` (`runAgentBrowserScript`): the sandboxed worker (`--permission`, `--allow-fs-read`, `--max-old-space-size`, all Node flags) is spawned with `nodeExecutable()` (was `process.execPath`).
 - Unchanged: `lib/process-identity.ts` (`dirname(process.execPath)/ps` on Android only).
 - Tests: `tests/agent-browser.script-node-runtime.test.ts`.
+
+## 2026-11-15 choco-pi patch: `@choco-pi` package name
+
+- `package.json` `name`: `choco-pi-agent-browser` → `@choco-pi/agent-browser`; `version`: `0.5.0-choco.0` → `1.0.0-alpha.1`, the root package's version. The directory stays `packages/choco-pi-agent-browser`, so path-based settings entries, imports, and the path-derived extension name are unchanged.

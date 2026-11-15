@@ -1,6 +1,6 @@
 {
-  "name": "choco-pi-codex",
-  "version": "0.1.0",
+  "name": "@choco-pi/codex",
+  "version": "1.0.0-alpha.1",
   "private": true,
   "description": "choco-pi fork of @howaboua/pi-codex-conversion: Codex tool and prompt adapter with OpenAI server-side compaction, loaded from TypeScript source as a local pi package.",
   "keywords": [

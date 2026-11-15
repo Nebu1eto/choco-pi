@@ -110,7 +110,7 @@ test("the shipped seed validates, and every seeded value is accepted by its read
     ["theme", (m: SettingsManager) => m.getTheme(), "nord-dark"],
     ["fullscreenExitOutput", (m: SettingsManager) => m.getFullscreenExitOutput(), "resume-hint"],
     ["cacheWarming", (m: SettingsManager) => m.getCacheWarmingMode(), "streaming"],
-    ["quietStartup", (m: SettingsManager) => m.getQuietStartup(), true],
+    ["quietStartup", (m: SettingsManager) => m.getQuietStartup(), "header"],
     ["enableInstallTelemetry", (m: SettingsManager) => m.getEnableInstallTelemetry(), false],
     ["terminal", (m: SettingsManager) => m.getShowTerminalProgress(), true],
   ] as const;

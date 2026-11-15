@@ -358,3 +358,7 @@ Standalone mode is the `choco-pi` launcher's env contract (`CHOCO_PI_STANDALONE=
 - `src/platform/linux/helper.ts` and `src/platform/windows/helper.ts`: the default helper path is `<agent dir>/helpers/pi-computer-use/...` through `piAgentDir()` (was `~/.pi/agent/...`, ignoring `PI_CODING_AGENT_DIR`). New `linuxHelperPath(env?, home?)` / `windowsHelperPath(env?, home?)`; `LINUX_HELPER_PATH` / `WINDOWS_HELPER_PATH` and the `PI_COMPUTER_USE_*_HELPER_PATH` overrides are unchanged.
 - `tsconfig.json`: removed `compilerOptions.rootDir` ("."). The root config sets `noEmit`, so `rootDir` only raised TS6059 for the import of `profile/extensions/lib/pi-paths.ts`.
 - Tests: `tests/helper-transport.test.ts`.
+
+## 2026-11-15 choco-pi patch: `@choco-pi` package name
+
+- `package.json` `name`: `choco-pi-computer-use` → `@choco-pi/computer-use`; `version`: `0.5.0-choco.0` → `1.0.0-alpha.1`, the root package's version. The directory stays `packages/choco-pi-computer-use`, so path-based settings entries, imports, and the path-derived extension name are unchanged.

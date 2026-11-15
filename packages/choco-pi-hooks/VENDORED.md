@@ -167,3 +167,7 @@ Pi SDK dependencies move from exactly `1.5.1` to the range `~1.5.2` (`>=1.5.2 <1
 ## choco-pi patch: `once` skill hooks under overlapping dispatch
 
 Pi's default parallel tool mode runs `afterToolCall` for sibling tool calls concurrently, so two `HookEngine.run` calls for the same event (for example PostToolUse) can overlap. `src/engine.ts` reserved a `once` skill hook only after its awaited execution succeeded, so both runs executed it. The key is now reserved in `#onceRunning` synchronously when the job is selected and released when the run settles: success moves it to `#once`; failure, timeout, or a thrown backend releases it so a later run may retry (unchanged "once only after success"). An overlapping run skips the hook while it is in flight. Background (`async`) handlers release the reservation immediately, as before they are never recorded as done. Tests: `tests/once-concurrency.test.ts`.
+
+## 2026-11-15 choco-pi patch: `@choco-pi` package name
+
+- `package.json` `name`: `choco-pi-hooks` → `@choco-pi/hooks`; `version`: `0.1.0` → `1.0.0-alpha.1`, the root package's version. The directory stays `packages/choco-pi-hooks`, so path-based settings entries, imports, and the path-derived extension name are unchanged. The README's import example uses the new name.

@@ -1349,3 +1349,7 @@ Under the `choco-pi` launcher, Pi itself can run on Bun (`CHOCO_PI_RUNTIME=bun`)
 The root `package.json` now pins `pnpm@12.21.0` (the toolchain `mise.toml` installs), so the code-mode probe fixtures expect that value.
 
 - `tests/code-mode-first.e2e.ts` (`EXPECTED`, checked against the real root `package.json`) and `tests/code-mode-probe-events.test.ts` (the canned probe result and `EXPECTED`): `pnpm@11.11.0` becomes `pnpm@12.21.0`. No source file changes.
+
+## 2026-11-15 choco-pi patch: `@choco-pi` package name
+
+- `package.json` `name`: `choco-pi-codex` → `@choco-pi/codex`; `version`: `0.1.0` → `1.0.0-alpha.1`, the root package's version. The directory stays `packages/choco-pi-codex`, so path-based settings entries, imports, and the path-derived extension name are unchanged. `tests/code-mode-probe-events.test.ts` and `tests/code-mode-first.e2e.ts` expect the new root and package names and version.

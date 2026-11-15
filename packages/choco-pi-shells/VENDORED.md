@@ -40,3 +40,7 @@ Pi SDK dependencies move from exactly `1.5.1` to the range `~1.5.2` (`>=1.5.2 <1
 ## 2026-11-12 choco-pi patch: snake_case tool I/O
 
 Tool outputs are model-visible, so they now use snake_case. `shell_start`/`shell_read`/`shell_stop`/`shell_list` result text, the `<shell-completion>` notification JSON and the `/shells` command JSON map: `shellId`→`shell_id`, `ownerId`→`owner_id`, `startedAt`→`started_at`, `endedAt`→`ended_at`, `exitCode`→`exit_code`, stream `startOffset`/`nextOffset`/`endOffset`→`start_offset`/`next_offset`/`end_offset`. Inputs were already snake_case (`shell_id`, `stdout_offset`, `stderr_offset`, `max_bytes`); schemas stay closed, so camelCase inputs are rejected. The mapping lives in `src/tool-view.ts` and is applied only where tool content or notification text is built; `ShellManager` objects, `result.details`, and the frozen `shells:*` `pi.events` payloads keep camelCase. The notification hint now reads "pass stdout.next_offset as stdout_offset and stderr.next_offset as stderr_offset", the `stdout_offset`/`stderr_offset` descriptions name `next_offset`, and manager validation messages name `shell_id`, `stdout_offset`, `stderr_offset`, `max_bytes`. Tests: `tests/index.test.ts`, `tests/stop-control.test.ts`.
+
+## 2026-11-15 choco-pi patch: `@choco-pi` package name
+
+- `package.json` `name`: `choco-pi-shells` → `@choco-pi/shells`; `version`: `0.1.0` → `1.0.0-alpha.1`, the root package's version. The directory stays `packages/choco-pi-shells`, so path-based settings entries, imports, and the path-derived extension name are unchanged.

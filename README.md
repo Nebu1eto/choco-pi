@@ -82,7 +82,7 @@ The first `choco-pi self setup` (run by `install.sh`) adds these settings to
 | `fullscreenExitOutput`   | `resume-hint`                      | `transcript`             |
 | `fuzzyFileMentions`      | `true`                             | `false`                  |
 | `cacheWarming`           | `streaming`                        | `idle`                   |
-| `quietStartup`           | `true`                             | `false`                  |
+| `quietStartup`           | `"header"`                         | `false`                  |
 | `enableInstallTelemetry` | `false`                            | `true`                   |
 | `terminal`               | `{ "showTerminalProgress": true }` | `false`                  |
 
@@ -492,6 +492,7 @@ The [RPC host bridge](docs/rpc-host-bridge.md) lets Waku identify the installed 
 - `/checkpoint` rewinds, rolls back files, or forks at a checkpointed turn, or forks the current state. `/rewind` only rewinds the conversation; `/fork` only forks, from an earlier turn or the current state.
 - Context limits are presets in `/preferences`: the soft cap under Session → Context and the compaction point under Session → Compaction. **Context soft cap** caps usable context: strictest 250K, strict 400K, standard 600K, permissive 800K, or unlimited. **Auto-compaction point** sets where compaction starts: strictest 200K, strict 300K, standard 450K, permissive 600K, or unlimited. The soft cap defaults to permissive and the compaction point to standard. Each preset is fitted to the model's native window: the cap never exceeds it, and the compaction point stays a headroom of `min(100K, 15% of the cap)`, at least the host reserve plus 8K, below the cap. A model with a native window under 64K is left to Pi's own trigger, and an OpenAI native-compaction budget, when published, also bounds the compaction point. These two presets are the only configuration; the headroom is fixed.
 - Compaction modes are set in `/preferences` under Session → Compaction. **OpenAI compaction** uses OpenAI's remote compaction for the Codex transport and configured Responses providers; this profile's [`profile/choco-pi-codex.json`](profile/choco-pi-codex.json) sets it to server-side. **Anthropic compaction** defaults to server-side and uses Anthropic's on-demand compaction only with OAuth on `api.anthropic.com` for Fable 5+, Mythos 5+ and Preview, Opus 4.6+, Sonnet 4.6+, and Haiku 5.5+. **xAI compaction** defaults to server-side and uses xAI's `/responses/compact` for `grok-*` models on `api.x.ai`, with OAuth or an API key; it covers foreground compaction only. Any failure falls back to choco-pi's local summary, which is reconciled with retained messages. Background compaction is on by default; when on, it always runs the text lane and runs each native lane (OpenAI and Anthropic) only while its vendor row is server-side.
+- The startup header shows the choco-pi logo, the choco-pi and Pi versions, and the key hints. Pi's model scope and loaded-resource listing are hidden unless you start with `--verbose`; load problems such as skill collisions still show. `quietStartup: true` hides the header too.
 - New sessions are named automatically. `sessionAutoNameModel` selects the naming model (default `openai/gpt-6-luna`); set `sessionAutoName` to `false` to disable naming.
 - After each completed agent turn, choco-pi predicts your next prompt with `openai/gpt-6-luna` (falling back to `anthropic/claude-haiku-5-5`) and shows it as dim text in the empty editor. Tab fills it in; nothing is sent until you press Enter. Suggestions are conservative: one appears only when the agent's last reply needs your input, never while a queued message, running sub-agent or background shell, or active `/goal` will resume the agent on its own. A suggestion written in a script that neither your own prompts nor `agentLanguage` use is dropped. Each turn sends recent conversation text to the suggestion model in one small request; set `promptSuggestion` to `false` to disable it.
 
@@ -560,27 +561,27 @@ The [RPC host bridge](docs/rpc-host-bridge.md) lets Waku identify the installed 
 
 ## Installed packages
 
-The profile loads these 17 local packages, listed by absolute path under `packages` in the agent directory's `settings.json`. An eighteenth package, [`choco-pi-acp`](packages/choco-pi-acp) 0.0.33, is not loaded by Pi; it runs as a separate ACP process for editors (see [Use choco-pi in Zed](#use-choco-pi-in-zed)).
+The profile loads these 17 local packages, listed by absolute path under `packages` in the agent directory's `settings.json`. An eighteenth package, [`@choco-pi/acp`](packages/choco-pi-acp) 1.0.0-alpha.1, is not loaded by Pi; it runs as a separate ACP process for editors (see [Use choco-pi in Zed](#use-choco-pi-in-zed)).
 
-| Package                                                               |        Version | Purpose                                                      |
-| --------------------------------------------------------------------- | -------------: | ------------------------------------------------------------ |
-| [`choco-pi-web-search`](packages/choco-pi-web-search)                 |          0.1.0 | Session-scoped routing for the canonical web search tool     |
-| [`choco-pi-web-access`](packages/choco-pi-web-access)                 | 0.24.1-choco.0 | Web search, source checks, and content extraction            |
-| [`choco-pi-provider-synthetic`](packages/choco-pi-provider-synthetic) |          0.1.0 | Synthetic provider, authentication, usage, and search        |
-| [`choco-pi-ui`](packages/choco-pi-ui)                                 |          0.1.0 | TUI, status line, preferences, and Nord themes               |
-| [`choco-pi-shells`](packages/choco-pi-shells)                         |          0.1.0 | Owner-scoped background shell processes                      |
-| [`choco-pi-hooks`](packages/choco-pi-hooks)                           |          0.1.0 | Claude Code-compatible lifecycle hooks                       |
-| [`choco-pi-subagents`](packages/choco-pi-subagents)                   |          0.1.0 | Sub-agents, workflows, sessions, and fleet UI                |
-| [`choco-pi-advisor`](packages/choco-pi-advisor)                       |          0.1.0 | Read-only advisor consults through sub-agents                |
-| [`choco-pi-editor-context`](packages/choco-pi-editor-context)         |          0.1.0 | Editor-context protocol, storage, and injection              |
-| [`choco-pi-goal`](packages/choco-pi-goal)                             |          0.1.0 | Persistent Codex-style goals                                 |
-| [`choco-pi-mcp`](packages/choco-pi-mcp)                               |          0.1.0 | Native Figma tools; MCP itself is Pi's built-in              |
-| [`choco-pi-lsp`](packages/choco-pi-lsp)                               |          0.1.0 | LSP, lint, structural analysis, and semantic tools           |
-| [`choco-pi-compaction`](packages/choco-pi-compaction)                 |          0.1.0 | Local compaction summaries reconciled with retained messages |
-| [`choco-pi-codex`](packages/choco-pi-codex)                           |          0.1.0 | Codex tools, Code Mode, and Responses compaction             |
-| [`choco-pi-agents-md`](packages/choco-pi-agents-md)                   |          0.1.0 | Descendant `AGENTS.md` instruction loading                   |
-| [`choco-pi-agent-browser`](packages/choco-pi-agent-browser)           |  0.5.0-choco.0 | Native browser automation tools                              |
-| [`choco-pi-computer-use`](packages/choco-pi-computer-use)             |  0.5.0-choco.0 | macOS desktop inspection and interaction                     |
+| Package                                                                |       Version | Purpose                                                      |
+| ---------------------------------------------------------------------- | ------------: | ------------------------------------------------------------ |
+| [`@choco-pi/web-search`](packages/choco-pi-web-search)                 | 1.0.0-alpha.1 | Session-scoped routing for the canonical web search tool     |
+| [`@choco-pi/web-access`](packages/choco-pi-web-access)                 | 1.0.0-alpha.1 | Web search, source checks, and content extraction            |
+| [`@choco-pi/provider-synthetic`](packages/choco-pi-provider-synthetic) | 1.0.0-alpha.1 | Synthetic provider, authentication, usage, and search        |
+| [`@choco-pi/ui`](packages/choco-pi-ui)                                 | 1.0.0-alpha.1 | TUI, status line, preferences, and Nord themes               |
+| [`@choco-pi/shells`](packages/choco-pi-shells)                         | 1.0.0-alpha.1 | Owner-scoped background shell processes                      |
+| [`@choco-pi/hooks`](packages/choco-pi-hooks)                           | 1.0.0-alpha.1 | Claude Code-compatible lifecycle hooks                       |
+| [`@choco-pi/subagents`](packages/choco-pi-subagents)                   | 1.0.0-alpha.1 | Sub-agents, workflows, sessions, and fleet UI                |
+| [`@choco-pi/advisor`](packages/choco-pi-advisor)                       | 1.0.0-alpha.1 | Read-only advisor consults through sub-agents                |
+| [`@choco-pi/editor-context`](packages/choco-pi-editor-context)         | 1.0.0-alpha.1 | Editor-context protocol, storage, and injection              |
+| [`@choco-pi/goal`](packages/choco-pi-goal)                             | 1.0.0-alpha.1 | Persistent Codex-style goals                                 |
+| [`@choco-pi/mcp`](packages/choco-pi-mcp)                               | 1.0.0-alpha.1 | Native Figma tools; MCP itself is Pi's built-in              |
+| [`@choco-pi/lsp`](packages/choco-pi-lsp)                               | 1.0.0-alpha.1 | LSP, lint, structural analysis, and semantic tools           |
+| [`@choco-pi/compaction`](packages/choco-pi-compaction)                 | 1.0.0-alpha.1 | Local compaction summaries reconciled with retained messages |
+| [`@choco-pi/codex`](packages/choco-pi-codex)                           | 1.0.0-alpha.1 | Codex tools, Code Mode, and Responses compaction             |
+| [`@choco-pi/agents-md`](packages/choco-pi-agents-md)                   | 1.0.0-alpha.1 | Descendant `AGENTS.md` instruction loading                   |
+| [`@choco-pi/agent-browser`](packages/choco-pi-agent-browser)           | 1.0.0-alpha.1 | Native browser automation tools                              |
+| [`@choco-pi/computer-use`](packages/choco-pi-computer-use)             | 1.0.0-alpha.1 | macOS desktop inspection and interaction                     |
 
 ## Configuration and customization
 

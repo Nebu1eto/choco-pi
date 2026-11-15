@@ -2,6 +2,12 @@
 
 Package-level divergences live in each package's `VENDORED.md`. This file records harness-wide notes.
 
+## 2026-11-15: choco-pi startup header and `@choco-pi` package names
+
+- The root package is `choco-pi` `1.0.0-alpha.1` (was `choco-pi-harness` `0.1.0`). `scripts/install-profile.ts` recognizes a checkout by that name. Every bundled package is `@choco-pi/<directory without the choco-pi- prefix>` at the same version; directories keep their names, so settings entries and relative imports are unchanged. Subagent extension allowlists match a package entry by its path-derived name and by the unscoped package name, so `choco-pi-lsp` (an `index.ts` entry named after its directory) still matches, while the package-name alias of each bundled package changes from `choco-pi-<x>` to `<x>`.
+- `profile/extensions/startup-header.ts` (new) replaces Pi's startup header through `ctx.ui.setHeader`: the choco-pi logo in half blocks (from `assets/choco-pi-logo.svg`), `v<choco-pi> (pi v<pi>)`, Pi's key hints, and a one-line description. It shows only where Pi decided to show its own header, so `quietStartup: true` still hides it. Pi decides inside `InteractiveMode`, before `session_start`, whether to print the model scope and the loaded-resource listing, and no extension API reaches that decision. The extension therefore patches `InteractiveMode.prototype.shouldShowStartupDetails` to answer only `--verbose`, and wraps `shouldShowStartupHeader` to record the host's choice. Pi still renders load diagnostics when quiet.
+- `profile/standalone/settings.seed.json` seeds `quietStartup: "header"` instead of `true`, so a new standalone install shows the header. Existing installs keep the value they have.
+
 ## 2026-11-14: mise develops on the newest Node.js
 
 - `mise.toml` pins Node.js `26.13.1` (the newest release, LTS line 26) instead of the runtime pins' `24.22.3`; `mise.lock` was regenerated with `mise lock` for the same four platforms, and its Node.js checksums equal nodejs.org's `SHASUMS256.txt` for v26.13.1. The standalone installer's `node_version`, checksums, and Node.js 24 floor are unchanged.

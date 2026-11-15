@@ -310,3 +310,7 @@ Pi SDK dependencies move from exactly `1.5.1` to the range `~1.5.2` (`>=1.5.2 <1
 ## 2026-11-13 choco-pi patch: root pnpm workspace install
 
 This package is now a member of the root pnpm workspace (`packages/*`) and installs from the single root `pnpm-lock.yaml` with `pnpm install --frozen-lockfile` at the repository root; the root `postinstall` bootstrap (`scripts/bootstrap-vendored.ts`) is gone. Removed: this package's `pnpm-lock.yaml`, `pnpm-workspace.yaml` and `packageManager` field (the root pins `pnpm@11.11.0`); also `scripts.prepare` (`husky`, which a workspace install would run) and `scripts["check:lockfile"]`. The `@earendil-works/pi-ai` and `pi-tui` overrides moved to the root `pnpm-workspace.yaml` unchanged. The dependency, devDependency and peerDependency fields are unchanged, and every direct dependency resolves to the same version as in the removed lockfile. Dependency build scripts still never run: the root `allowBuilds` lists each one as `false`, replacing `--ignore-scripts`.
+
+## 2026-11-15 choco-pi patch: `@choco-pi` package name
+
+- `package.json` `name`: `choco-pi-provider-synthetic` → `@choco-pi/provider-synthetic`; `version`: `0.1.0` → `1.0.0-alpha.1`, the root package's version. The directory stays `packages/choco-pi-provider-synthetic`, so path-based settings entries, imports, and the path-derived extension name are unchanged. The pending `.changeset/*.md` files name the new package.

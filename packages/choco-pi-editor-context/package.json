@@ -1,6 +1,6 @@
 {
-  "name": "choco-pi-editor-context",
-  "version": "0.1.0",
+  "name": "@choco-pi/editor-context",
+  "version": "1.0.0-alpha.1",
   "private": true,
   "description": "Shared editor-context protocol, validation, storage, and injection for choco-pi editor integrations.",
   "keywords": [

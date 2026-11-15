@@ -1,6 +1,6 @@
 {
-  "name": "choco-pi-web-search",
-  "version": "0.1.0",
+  "name": "@choco-pi/web-search",
+  "version": "1.0.0-alpha.1",
   "private": true,
   "description": "Provider-neutral session-scoped web search router for choco-pi.",
   "type": "module",

@@ -295,3 +295,7 @@ Standalone mode is the `choco-pi` launcher's env contract (`CHOCO_PI_STANDALONE=
 
 - `utils.ts` (`getWebSearchConfigDir(env?, home?)`): `PI_CODING_AGENT_DIR` still wins. The `XDG_CONFIG_HOME/pi` and `~/.pi` fallbacks apply only in legacy mode; standalone mode falls back to `$CHOCO_PI_HOME/agent`. Callers pass no arguments and are unchanged.
 - Tests: `tests/config-path.test.ts`.
+
+## 2026-11-15 choco-pi patch: `@choco-pi` package name
+
+- `package.json` `name`: `choco-pi-web-access` → `@choco-pi/web-access`; `version`: `0.24.1-choco.0` → `1.0.0-alpha.1`, the root package's version. The directory stays `packages/choco-pi-web-access`, so path-based settings entries, imports, and the path-derived extension name are unchanged.

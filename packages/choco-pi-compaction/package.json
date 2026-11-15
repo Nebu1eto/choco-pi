@@ -1,6 +1,6 @@
 {
-  "name": "choco-pi-compaction",
-  "version": "0.1.0",
+  "name": "@choco-pi/compaction",
+  "version": "1.0.0-alpha.1",
   "private": true,
   "description": "Local compaction summaries reconciled against the retained recent messages.",
   "keywords": [

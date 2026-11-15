@@ -82,7 +82,7 @@ choco-pi
 | `fullscreenExitOutput`   | `resume-hint`                      | `transcript`             |
 | `fuzzyFileMentions`      | `true`                             | `false`                  |
 | `cacheWarming`           | `streaming`                        | `idle`                   |
-| `quietStartup`           | `true`                             | `false`                  |
+| `quietStartup`           | `"header"`                         | `false`                  |
 | `enableInstallTelemetry` | `false`                            | `true`                   |
 | `terminal`               | `{ "showTerminalProgress": true }` | `false`                  |
 
@@ -456,6 +456,7 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 - `/checkpoint`는 체크포인트가 있는 턴 기준으로 세션을 되감거나, 파일을 롤백하거나, 분기하고, 현재 상태 그대로 분기할 수도 있습니다. `/rewind`는 대화 되감기만, `/fork`는 이전 턴이나 현재 상태에서 분기만 합니다.
 - 컨텍스트 한도는 `/preferences`에서 프리셋으로 고릅니다. soft cap은 Session → Context에, compaction 지점은 Session → Compaction에 있습니다. **Context soft cap**은 사용 가능한 컨텍스트 상한으로 strictest 250K, strict 400K, standard 600K, permissive 800K, unlimited 중 하나이고, **Auto-compaction point**는 compaction이 시작되는 지점으로 strictest 200K, strict 300K, standard 450K, permissive 600K, unlimited 중 하나입니다. soft cap 기본값은 unlimited, compaction 지점 기본값은 standard입니다. 각 프리셋은 모델의 네이티브 창에 맞춰 조정됩니다. 상한은 네이티브 창을 넘지 않고, compaction 지점은 상한보다 `min(100K, 상한의 15%)`(최소 host reserve + 8K)만큼 아래에 머뭅니다. 네이티브 창이 64K 미만인 모델은 Pi 자체 트리거에 맡기며, OpenAI 네이티브 compaction 예산이 게시되어 있으면 compaction 지점도 그 안으로 제한됩니다. 설정은 이 두 프리셋뿐이며 headroom은 고정값입니다.
 - compaction 방식은 `/preferences`의 Session → Compaction에서 정합니다. **OpenAI compaction**은 Codex 전송과 설정된 Responses 공급자에서 OpenAI 원격 compaction을 쓰며, 이 프로필의 [`profile/choco-pi-codex.json`](profile/choco-pi-codex.json)은 server-side로 설정합니다. **Anthropic compaction**은 기본값이 server-side이며, `api.anthropic.com`에 OAuth로 접속한 Fable 5+, Mythos 5+와 Preview, Opus 4.6+, Sonnet 4.6+, Haiku 5.5+에서만 Anthropic on-demand compaction을 씁니다. **xAI compaction**은 기본값이 server-side이며, `api.x.ai`의 `grok-*` 모델에서 OAuth나 API 키로 xAI `/responses/compact`를 씁니다. 포그라운드 compaction에만 적용됩니다. 어떤 실패든 최근 메시지와 대조하는 choco-pi 로컬 요약으로 대체됩니다. 백그라운드 compaction은 기본적으로 켜져 있고, 켜져 있으면 텍스트 레인은 항상 돌며 각 네이티브 레인(OpenAI, Anthropic)은 해당 공급자 행이 server-side일 때만 돕니다.
+- 시작 헤더에는 choco-pi 로고, choco-pi와 Pi 버전, 단축키 안내가 표시됩니다. Pi의 모델 범위와 불러온 리소스 목록은 `--verbose`로 시작할 때만 표시되며, 스킬 충돌 같은 로딩 문제는 계속 표시됩니다. `quietStartup: true`로 설정하면 헤더도 숨겨집니다.
 - 새 세션에는 이름이 자동으로 붙습니다. 이름을 짓는 모델은 `sessionAutoNameModel`로 정하며 기본값은 `openai/gpt-6-luna`입니다. 끄려면 `sessionAutoName`을 `false`로 설정하세요.
 - 에이전트 턴이 끝날 때마다 `openai/gpt-6-luna`(실패 시 `anthropic/claude-haiku-5-5`)로 다음 프롬프트를 예측해 빈 입력창에 흐린 글자로 보여 줍니다. Tab을 누르면 채워지며, Enter를 누르기 전에는 전송되지 않습니다. 제안은 보수적으로 나옵니다. 에이전트의 마지막 답이 사용자 입력을 필요로 할 때만 보이고, 대기 중인 메시지·실행 중인 서브에이전트나 백그라운드 셸·활성 `/goal`이 에이전트를 스스로 다시 움직일 때는 나오지 않습니다. 사용자의 프롬프트와 `agentLanguage` 어디에도 쓰이지 않은 문자 체계로 된 제안은 버립니다. 턴마다 최근 대화 내용을 담은 작은 요청이 제안 모델로 한 번 나갑니다. 끄려면 `promptSuggestion`을 `false`로 설정하세요.
 
@@ -522,27 +523,27 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 
 ## 설치된 패키지
 
-프로필은 다음 로컬 패키지 17개를 불러오며, 이 목록은 에이전트 디렉터리의 `settings.json`에 있는 `packages`에 절대 경로로 들어 있습니다. 이와 별도로 [`choco-pi-acp`](packages/choco-pi-acp) 0.0.33 패키지는 Pi가 불러오지 않으며, 에디터와 연결하는 독립 ACP 프로세스로 실행됩니다([Zed에서 choco-pi 사용하기](#zed에서-choco-pi-사용하기) 참고).
+프로필은 다음 로컬 패키지 17개를 불러오며, 이 목록은 에이전트 디렉터리의 `settings.json`에 있는 `packages`에 절대 경로로 들어 있습니다. 이와 별도로 [`@choco-pi/acp`](packages/choco-pi-acp) 1.0.0-alpha.1 패키지는 Pi가 불러오지 않으며, 에디터와 연결하는 독립 ACP 프로세스로 실행됩니다([Zed에서 choco-pi 사용하기](#zed에서-choco-pi-사용하기) 참고).
 
-| 패키지                                                                |           버전 | 용도                                             |
-| --------------------------------------------------------------------- | -------------: | ------------------------------------------------ |
-| [`choco-pi-web-search`](packages/choco-pi-web-search)                 |          0.1.0 | 단일 웹 검색 도구의 세션별 라우팅                |
-| [`choco-pi-web-access`](packages/choco-pi-web-access)                 | 0.24.1-choco.0 | 웹 검색, 출처 검증, 콘텐츠 추출                  |
-| [`choco-pi-provider-synthetic`](packages/choco-pi-provider-synthetic) |          0.1.0 | Synthetic 공급자, 인증, 사용량, 검색             |
-| [`choco-pi-ui`](packages/choco-pi-ui)                                 |          0.1.0 | TUI, 상태 표시줄, 환경 설정, Nord 테마           |
-| [`choco-pi-shells`](packages/choco-pi-shells)                         |          0.1.0 | 소유자별 백그라운드 셸 프로세스                  |
-| [`choco-pi-hooks`](packages/choco-pi-hooks)                           |          0.1.0 | Claude Code 호환 생명주기 훅                     |
-| [`choco-pi-subagents`](packages/choco-pi-subagents)                   |          0.1.0 | 서브 에이전트, 작업 절차, 세션, fleet UI         |
-| [`choco-pi-advisor`](packages/choco-pi-advisor)                       |          0.1.0 | 서브 에이전트를 통한 읽기 전용 advisor 자문      |
-| [`choco-pi-editor-context`](packages/choco-pi-editor-context)         |          0.1.0 | 에디터 컨텍스트 프로토콜, 저장, 주입             |
-| [`choco-pi-goal`](packages/choco-pi-goal)                             |          0.1.0 | Codex 형태의 지속형 goal                         |
-| [`choco-pi-mcp`](packages/choco-pi-mcp)                               |          0.1.0 | 네이티브 Figma 도구(MCP 자체는 Pi 내장)          |
-| [`choco-pi-lsp`](packages/choco-pi-lsp)                               |          0.1.0 | LSP, lint, 구조 분석, 시맨틱 도구                |
-| [`choco-pi-compaction`](packages/choco-pi-compaction)                 |          0.1.0 | 유지된 최근 메시지와 대조한 로컬 compaction 요약 |
-| [`choco-pi-codex`](packages/choco-pi-codex)                           |          0.1.0 | Codex 도구, Code Mode, Responses compaction      |
-| [`choco-pi-agents-md`](packages/choco-pi-agents-md)                   |          0.1.0 | 하위 `AGENTS.md` 지침 로딩                       |
-| [`choco-pi-agent-browser`](packages/choco-pi-agent-browser)           |  0.5.0-choco.0 | 네이티브 브라우저 자동화 도구                    |
-| [`choco-pi-computer-use`](packages/choco-pi-computer-use)             |  0.5.0-choco.0 | macOS 데스크톱 확인 및 조작                      |
+| 패키지                                                                 |          버전 | 용도                                             |
+| ---------------------------------------------------------------------- | ------------: | ------------------------------------------------ |
+| [`@choco-pi/web-search`](packages/choco-pi-web-search)                 | 1.0.0-alpha.1 | 단일 웹 검색 도구의 세션별 라우팅                |
+| [`@choco-pi/web-access`](packages/choco-pi-web-access)                 | 1.0.0-alpha.1 | 웹 검색, 출처 검증, 콘텐츠 추출                  |
+| [`@choco-pi/provider-synthetic`](packages/choco-pi-provider-synthetic) | 1.0.0-alpha.1 | Synthetic 공급자, 인증, 사용량, 검색             |
+| [`@choco-pi/ui`](packages/choco-pi-ui)                                 | 1.0.0-alpha.1 | TUI, 상태 표시줄, 환경 설정, Nord 테마           |
+| [`@choco-pi/shells`](packages/choco-pi-shells)                         | 1.0.0-alpha.1 | 소유자별 백그라운드 셸 프로세스                  |
+| [`@choco-pi/hooks`](packages/choco-pi-hooks)                           | 1.0.0-alpha.1 | Claude Code 호환 생명주기 훅                     |
+| [`@choco-pi/subagents`](packages/choco-pi-subagents)                   | 1.0.0-alpha.1 | 서브 에이전트, 작업 절차, 세션, fleet UI         |
+| [`@choco-pi/advisor`](packages/choco-pi-advisor)                       | 1.0.0-alpha.1 | 서브 에이전트를 통한 읽기 전용 advisor 자문      |
+| [`@choco-pi/editor-context`](packages/choco-pi-editor-context)         | 1.0.0-alpha.1 | 에디터 컨텍스트 프로토콜, 저장, 주입             |
+| [`@choco-pi/goal`](packages/choco-pi-goal)                             | 1.0.0-alpha.1 | Codex 형태의 지속형 goal                         |
+| [`@choco-pi/mcp`](packages/choco-pi-mcp)                               | 1.0.0-alpha.1 | 네이티브 Figma 도구(MCP 자체는 Pi 내장)          |
+| [`@choco-pi/lsp`](packages/choco-pi-lsp)                               | 1.0.0-alpha.1 | LSP, lint, 구조 분석, 시맨틱 도구                |
+| [`@choco-pi/compaction`](packages/choco-pi-compaction)                 | 1.0.0-alpha.1 | 유지된 최근 메시지와 대조한 로컬 compaction 요약 |
+| [`@choco-pi/codex`](packages/choco-pi-codex)                           | 1.0.0-alpha.1 | Codex 도구, Code Mode, Responses compaction      |
+| [`@choco-pi/agents-md`](packages/choco-pi-agents-md)                   | 1.0.0-alpha.1 | 하위 `AGENTS.md` 지침 로딩                       |
+| [`@choco-pi/agent-browser`](packages/choco-pi-agent-browser)           | 1.0.0-alpha.1 | 네이티브 브라우저 자동화 도구                    |
+| [`@choco-pi/computer-use`](packages/choco-pi-computer-use)             | 1.0.0-alpha.1 | macOS 데스크톱 확인 및 조작                      |
 
 ## 설정과 사용자화
 

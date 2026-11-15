@@ -1,6 +1,6 @@
 {
-  "name": "choco-pi-provider-synthetic",
-  "version": "0.1.0",
+  "name": "@choco-pi/provider-synthetic",
+  "version": "1.0.0-alpha.1",
   "private": false,
   "keywords": [
     "pi",

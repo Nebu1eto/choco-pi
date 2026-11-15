@@ -382,3 +382,7 @@ Under the `choco-pi` launcher, Pi itself can run on Bun (`CHOCO_PI_RUNTIME=bun`)
 - `clients/mcp/review.ts` (`analyzeFileFresh`): the fresh analyze worker runs on `nodeExecutable()`.
 - Unchanged: the `CHOCO_PI_LSP_TEST_NPM_SCRIPT` hooks in `installer/index.ts` and `installer/managed-tool-refresh.ts` (test mode only, run from `node --test`).
 - Tests: `tests/node-runtime-children.test.ts`.
+
+## 2026-11-15 choco-pi patch: `@choco-pi` package name
+
+- `package.json` `name`: `choco-pi-lsp` → `@choco-pi/lsp`; `version`: `0.1.0` → `1.0.0-alpha.1`, the root package's version. The directory stays `packages/choco-pi-lsp`, so path-based settings entries, imports, and the path-derived extension name are unchanged.

@@ -465,3 +465,7 @@ Standalone mode is the `choco-pi` launcher's env contract (`CHOCO_PI_STANDALONE=
 - `src/acp/auth.ts`: in standalone mode the Zed terminal-auth launch is `<launcher> self acp --terminal-login`; `getAuthMethods` accepts an `env` option for tests.
 - `src/zed/setup.ts`: under the contract, the agent entry is `CHOCO_PI_LAUNCHER` with `["self", "acp"]`, the context Tasks run `<launcher> self exec <node> <editor-context cli> ...`, **Open Terminal Thread** runs the launcher, and `Command path:` names the launcher. A standalone environment without an absolute `CHOCO_PI_LAUNCHER` fails setup. Maintained examples: `editors/zed/settings.standalone.example.json`, `editors/zed/tasks.standalone.example.json`.
 - Tests: `tests/unit-standalone-entrypoints.test.ts` (both modes: session map, startup-info dirs, launch command, version/changelog lookup, `session/new` startup info, terminal auth, Zed dry run and examples); `tests/unit-pi-command.test.ts` awaits `resolvePiLaunch`.
+
+## 2026-11-15 choco-pi patch: `@choco-pi` package name
+
+- `package.json` `name`: `choco-pi-acp` → `@choco-pi/acp`; `version`: `0.0.33` → `1.0.0-alpha.1`, the root package's version. The directory stays `packages/choco-pi-acp`, so path-based settings entries, imports, and the path-derived extension name are unchanged.

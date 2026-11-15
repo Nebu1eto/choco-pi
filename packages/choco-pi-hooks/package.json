@@ -1,6 +1,6 @@
 {
-  "name": "choco-pi-hooks",
-  "version": "0.1.0",
+  "name": "@choco-pi/hooks",
+  "version": "1.0.0-alpha.1",
   "private": true,
   "description": "Claude Code-compatible lifecycle hooks for choco-pi.",
   "keywords": [

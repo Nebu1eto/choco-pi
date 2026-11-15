@@ -1,6 +1,6 @@
 {
-  "name": "choco-pi-agents-md",
-  "version": "0.1.0",
+  "name": "@choco-pi/agents-md",
+  "version": "1.0.0-alpha.1",
   "private": true,
   "description": "Recursive subdirectory AGENTS.md context injection for choco-pi, implemented from scratch as a local pi package.",
   "keywords": [

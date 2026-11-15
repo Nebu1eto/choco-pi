@@ -514,7 +514,7 @@ const isRootManifest = compile(RootManifestSchema).check;
 /**
  * Whether `checkout` is a choco-pi checkout in the new layout: it ships
  * `profile/SYSTEM.md` and the bundled `packages/choco-pi-ui`, or its root
- * `package.json` is the `choco-pi-harness` workspace.
+ * `package.json` is the `choco-pi` workspace.
  */
 async function isChocoPiCheckout(checkout: string) {
   if (
@@ -525,7 +525,7 @@ async function isChocoPiCheckout(checkout: string) {
   }
   try {
     const parsed: unknown = JSON.parse(await readFile(path.join(checkout, "package.json"), "utf8"));
-    return isRootManifest(parsed) && parsed.name === "choco-pi-harness";
+    return isRootManifest(parsed) && parsed.name === "choco-pi";
   } catch {
     return false;
   }

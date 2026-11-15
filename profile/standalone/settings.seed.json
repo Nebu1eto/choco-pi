@@ -19,7 +19,7 @@
     },
     "quietStartup": {
       "since": 1,
-      "value": true
+      "value": "header"
     },
     "enableInstallTelemetry": {
       "since": 1,

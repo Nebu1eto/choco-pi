@@ -28,7 +28,7 @@ const enabled = process.env["CHOCO_PI_CODE_MODE_FIRST_E2E"] === "1";
 const MODEL = "openai-codex/gpt-5.6-sol";
 const PROMPT = `This is an authorized, bounded read-only runtime acceptance probe, not an implementation task. Do not edit files, run setup, commit, create goals, change settings, or start any workflow. Do not read credentials. Choose available tools naturally; do not assume a named tool is a filesystem reader. First perform both independent lookups yourself: (1) read package.json and report name and packageManager; (2) read packages/choco-pi-codex/package.json and report name and version. Then use the Agent tool to launch exactly one explore child, model openai-codex/gpt-5.6-sol, named probe-code-child, with the same two independent read-only lookups. Include all these exclusions and the explicit Sol model restriction in its self-contained prompt. Do not spawn Astra or Fable. The child must not delegate. Retrieve the child's result once after completion; use the notification rather than polling. Report your answers and the child's answers. Keep final output short. No historical session audit: the owning orchestrator audits this probe's lineage.
 `;
-const EXPECTED = ["choco-pi-harness", "pnpm@12.21.0", "choco-pi-codex", "0.1.0"];
+const EXPECTED = ["choco-pi", "pnpm@12.21.0", "@choco-pi/codex", "1.0.0-alpha.1"];
 const execFileAsync = promisify(execFile);
 
 type RootMetrics = {

@@ -1,6 +1,6 @@
 {
-  "name": "choco-pi-subagents",
-  "version": "0.1.0",
+  "name": "@choco-pi/subagents",
+  "version": "1.0.0-alpha.1",
   "private": true,
   "description": "choco-pi fork of @tintinweb/pi-subagents: Claude Code-style autonomous sub-agents for pi, loaded from TypeScript source as a local pi package.",
   "keywords": [

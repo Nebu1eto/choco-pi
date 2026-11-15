@@ -1,6 +1,6 @@
 {
-  "name": "choco-pi-web-access",
-  "version": "0.24.1-choco.0",
+  "name": "@choco-pi/web-access",
+  "version": "1.0.0-alpha.1",
   "private": true,
   "description": "Vendored pi web search and content extraction with OpenAI, Exa, and Kagi search providers.",
   "license": "MIT",

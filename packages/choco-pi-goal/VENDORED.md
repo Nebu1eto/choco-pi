@@ -261,3 +261,7 @@ Pi SDK dependencies move from exactly `1.5.1` to the range `~1.5.2` (`>=1.5.2 <1
 ## 2026-11-12 choco-pi patch: snake_case tool I/O
 
 `get_goal`/`create_goal`/`update_goal` result text keys are now snake_case, mapped explicitly in `toToolText` (`src/format.ts`): `remainingTokens`→`remaining_tokens`, `completionBudgetReport`→`completion_budget_report`, goal `goalId`→`goal_id`, `tokenBudget`→`token_budget`, `tokensUsed`→`tokens_used`, `timeUsedSeconds`→`time_used_seconds`, `createdAt`→`created_at`, `updatedAt`→`updated_at`. `result.details` and persisted state keep camelCase. Inputs were already snake_case and are unchanged. The `status` value `budgetLimited` is shown as `budget_limited` (`toolGoalStatus` in `src/format.ts`), and the budget-limit steering prompt (`src/prompts.ts`) says `budget_limited`; `ThreadGoal.status`, persisted state, `details` and the host-bridge goal schema keep `budgetLimited`. No goal tool accepts the value as input (`update_goal.status` accepts only `complete`). Tests: `tests/tool-output.test.ts`.
+
+## 2026-11-15 choco-pi patch: `@choco-pi` package name
+
+- `package.json` `name`: `choco-pi-goal` → `@choco-pi/goal`; `version`: `0.1.0` → `1.0.0-alpha.1`, the root package's version. The directory stays `packages/choco-pi-goal`, so path-based settings entries, imports, and the path-derived extension name are unchanged.

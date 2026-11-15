@@ -245,7 +245,7 @@ test("a key is imported when absent or still the seeded value; a value changed i
       cacheWarming: "idle",
       agentStyle: "detailed",
       agentLanguage: "Korean",
-      quietStartup: true,
+      quietStartup: "header",
       terminal: { showTerminalProgress: false, showImages: false },
     }),
   );
@@ -257,7 +257,7 @@ test("a key is imported when absent or still the seeded value; a value changed i
   assert.equal(settings.agentLanguage, "Korean", "an absent key is added");
   assert.equal(settings.cacheWarming, "off", "the user's change wins");
   assert.equal(settings.agentStyle, "concise", "the user's own key wins");
-  assert.equal(settings.quietStartup, true);
+  assert.equal(settings.quietStartup, "header");
   assert.match(importReport(result).join("\n"), /^kept: cacheWarming \(/m);
 });
 

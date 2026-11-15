@@ -1,6 +1,6 @@
 {
-  "name": "choco-pi-mcp",
-  "version": "0.1.0",
+  "name": "@choco-pi/mcp",
+  "version": "1.0.0-alpha.1",
   "description": "Native Figma design extension for choco-pi; MCP is provided by Pi",
   "license": "MIT",
   "files": [
@@ -80,6 +80,7 @@
     ],
     "skills": [
       "./skills"
-    ]
+    ],
+    "changelogPath": ""
   }
 }

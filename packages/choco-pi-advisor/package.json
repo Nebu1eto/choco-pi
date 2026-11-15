@@ -1,6 +1,6 @@
 {
-  "name": "choco-pi-advisor",
-  "version": "0.1.0",
+  "name": "@choco-pi/advisor",
+  "version": "1.0.0-alpha.1",
   "private": true,
   "description": "Inline, read-only advisor consults for pi.",
   "license": "MIT",

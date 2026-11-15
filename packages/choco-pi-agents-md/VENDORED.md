@@ -164,3 +164,7 @@ Pi SDK pins move from `1.5.0` to exactly `1.5.1`; version references in comments
 ## 2026-11-11 choco-pi patch: Pi SDK range ~1.5.2
 
 Pi SDK dependencies move from exactly `1.5.1` to the range `~1.5.2` (`>=1.5.2 <1.6.0`), so later 1.5 patch releases need no pin change while a new minor release still needs review; version references in comments, tests, and docs follow.
+
+## 2026-11-15 choco-pi patch: `@choco-pi` package name
+
+- `package.json` `name`: `choco-pi-agents-md` → `@choco-pi/agents-md`; `version`: `0.1.0` → `1.0.0-alpha.1`, the root package's version. The directory stays `packages/choco-pi-agents-md`, so path-based settings entries, imports, and the path-derived extension name are unchanged.

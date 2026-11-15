@@ -70,3 +70,7 @@ Pi SDK dependencies move from exactly `1.5.1` to the range `~1.5.2` (`>=1.5.2 <1
 ## 2026-11-12 choco-pi patch: snake_case tool I/O
 
 Model-visible search messages name the `web_search` tool parameters, which are snake_case (user decision; no aliases). The adapter contract (`SearchRequest`, `SearchCapability`, `requiredCapabilities`, `CONTRACT.md`) keeps its camelCase names. Only message text changes: the incompatibility reason recorded in attempts and errors reads `<capability> is unsupported` with the snake_case name (`recency_filter is unsupported`; mapped by the private `toolParamName` in `index.ts`), the hint warning reads `<adapter> treats num_results as a non-binding hint`, and the request errors read `Image search requires image_query or query` and `domain_filter contains an invalid domain`. Test: `tests/core.test.ts` ("model-visible capability warnings and reasons use the web_search parameter names").
+
+## 2026-11-15 choco-pi patch: `@choco-pi` package name
+
+- `package.json` `name`: `choco-pi-web-search` → `@choco-pi/web-search`; `version`: `0.1.0` → `1.0.0-alpha.1`, the root package's version. The directory stays `packages/choco-pi-web-search`, so path-based settings entries, imports, and the path-derived extension name are unchanged.

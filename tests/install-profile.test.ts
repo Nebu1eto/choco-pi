@@ -863,7 +863,7 @@ test("another checkout's profile directory is dropped only with choco-pi checkou
   await mkdir(path.join(harnessCheckout, "profile", "prompts"), { recursive: true });
   await writeFile(
     path.join(harnessCheckout, "package.json"),
-    `${JSON.stringify({ name: "choco-pi-harness", private: true })}\n`,
+    `${JSON.stringify({ name: "choco-pi", private: true })}\n`,
   );
   // Only one of the two markers is not enough.
   const halfMarked = path.join(fixture, "half-marked");

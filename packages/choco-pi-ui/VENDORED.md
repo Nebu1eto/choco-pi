@@ -448,3 +448,7 @@ Tool arguments and tool result text are snake_case (user decision; no aliases). 
   (`profile/extensions/lib/changes/view/header-box.ts`), loaded optionally
   through `profile/extensions/lib/zentui-loader.ts`.
 - Test: `tests/diff-header-box.test.ts` (root).
+
+## 2026-11-15 choco-pi patch: `@choco-pi` package name
+
+- `package.json` `name`: `choco-pi-ui` → `@choco-pi/ui`; `version`: `0.1.0` → `1.0.0-alpha.1`, the root package's version. The directory stays `packages/choco-pi-ui`, so path-based settings entries, imports, and the path-derived extension name are unchanged.

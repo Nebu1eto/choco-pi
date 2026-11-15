@@ -39,7 +39,7 @@ For `write`, `edit`, `apply_patch` and `ast_grep_replace`, a destination under `
 ## Public API
 
 ```ts
-import { HookEngine, loadHookSources } from "choco-pi-hooks";
+import { HookEngine, loadHookSources } from "@choco-pi/hooks";
 
 const { sources } = loadHookSources({ cwd: process.cwd() });
 const hooks = new HookEngine(sources, {

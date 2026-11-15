@@ -1,6 +1,6 @@
 {
-  "name": "choco-pi-shells",
-  "version": "0.1.0",
+  "name": "@choco-pi/shells",
+  "version": "1.0.0-alpha.1",
   "private": true,
   "description": "Provider-neutral background shell process tools for choco-pi sessions.",
   "keywords": [

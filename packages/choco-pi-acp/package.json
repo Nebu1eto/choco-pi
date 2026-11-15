@@ -1,6 +1,6 @@
 {
-  "name": "choco-pi-acp",
-  "version": "0.0.33",
+  "name": "@choco-pi/acp",
+  "version": "1.0.0-alpha.1",
   "private": true,
   "description": "Vendored ACP adapter baseline for choco-pi editor integrations.",
   "license": "MIT",
