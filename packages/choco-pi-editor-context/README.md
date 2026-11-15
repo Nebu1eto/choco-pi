@@ -72,5 +72,5 @@ pnpm --dir packages/choco-pi-editor-context test
 ```
 
 The repository gates (`pnpm lint`, `pnpm fmt:check`, `pnpm typecheck`, `pnpm test`)
-also cover this package. See [the Zed setup guide](../../docs/zed-setup.md)
+also cover this package. See [the Zed setup guide](../../docs/en/zed-setup.md)
 for the editor-side workflow.

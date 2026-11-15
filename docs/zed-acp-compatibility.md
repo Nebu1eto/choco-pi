@@ -16,4 +16,4 @@ This table is the package-level baseline only. Runtime evidence for the
 complete choco-pi and Zed integration, gathered by driving real Zed 1.18.0
 against a fresh Pi process, is recorded in
 [zed-e2e-evidence.md](./zed-e2e-evidence.md). Setup instructions are in
-[zed-setup.md](./zed-setup.md).
+[zed-setup.md](./en/zed-setup.md).

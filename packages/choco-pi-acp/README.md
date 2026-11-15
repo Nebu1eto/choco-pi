@@ -37,7 +37,7 @@ Zed setup writes the equivalent invocation with absolute paths:
 node packages/choco-pi-acp/bin/choco-pi-acp.ts zed setup --dry-run
 ```
 
-See [the Zed setup guide](../../docs/zed-setup.md) before applying changes to
+See [the Zed setup guide](../../docs/en/zed-setup.md) before applying changes to
 a real Zed profile.
 
 In a standalone install, the `choco-pi` launcher runs the adapter under its
