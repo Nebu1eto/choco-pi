@@ -23,7 +23,7 @@
     {
       "file": "packages/choco-pi-subagents/src/agent-manager.ts",
       "symbol": "AgentManager.evaluateUsageLimit",
-      "hash": "sha256:7c948dc909bbb318967db3610a0dafbf19e4ba316e9513e5f535a53194bf653e"
+      "hash": "sha256:fdd9f303ce0bcbdd0fac4fd0fa33b8e94c61928ebf87aba48aa132f025aa9b74"
     },
     {
       "file": "packages/choco-pi-subagents/src/agent-manager.ts",
@@ -68,7 +68,7 @@
     {
       "file": "packages/choco-pi-subagents/src/agent-manager.ts",
       "symbol": "AgentManager.resumeAfterReset",
-      "hash": "sha256:0b4f6334e686ecf924312c4c778f19362fe87dda3ea520dff6425698c054c96a"
+      "hash": "sha256:7d7617765ede86b9a6c9f678d98f1fc692d39f4bd2f35024afde7e3be1b9706c"
     },
     {
       "file": "packages/choco-pi-subagents/src/agent-manager.ts",
@@ -123,7 +123,7 @@
     {
       "file": "packages/choco-pi-subagents/src/agent-manager.ts",
       "symbol": "AgentManager.queueBackgroundResume",
-      "hash": "sha256:cc0cadd9a30b10f07840b3c0bfc6da7347830dc798bc79f69442b7c56f616766"
+      "hash": "sha256:62b352e3b6fcf6097076ed81a65c0286c0c23e99674492b473181cf604df7e61"
     },
     {
       "file": "packages/choco-pi-subagents/src/agent-manager.ts",
@@ -148,17 +148,17 @@
     {
       "file": "packages/choco-pi-subagents/src/agent-manager.ts",
       "symbol": "AgentManager.spawnWith",
-      "hash": "sha256:f8c0c52335ab0c593a45c36df8ce645faee09f5a004030a9933e7cdb22448773"
+      "hash": "sha256:9e9fbc74ab1ed281dbe99cc8f699cbdb0cb95a868c782c9a8fc41f939ec6b473"
     },
     {
       "file": "packages/choco-pi-subagents/src/agent-manager.ts",
       "symbol": "AgentManager.startAgent",
-      "hash": "sha256:97d5e788c3a587b717514da98337728552d41d766a1fd9575830e502312cc70a"
+      "hash": "sha256:21ed625057895b07a093cc5761029542d2dc0127312c97969b27cdb0ad21c0e7"
     },
     {
       "file": "packages/choco-pi-subagents/src/agent-manager.ts",
       "symbol": "AgentManager.drainQueue",
-      "hash": "sha256:162e5701072c5155a213c788e4471d3c2ce0cab9bf2bb5fa2f7b7d011616bf1c"
+      "hash": "sha256:662e1698c8f73b7bbf326764dd7e8d9cee132f25fcfff06249c909481a7288ec"
     },
     {
       "file": "packages/choco-pi-subagents/src/agent-manager.ts",
@@ -272,6 +272,6 @@
     }
   ],
   "checkedAt": {
-    "commit": "4de824bc8928a27bbb3585ccd8f6af9c883a31d6"
+    "commit": "1f9e644259d2a2d46674d984417c45e96303fd01"
   }
 }

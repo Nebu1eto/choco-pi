@@ -8,7 +8,7 @@
     {
       "file": "packages/choco-pi-subagents/src/workflow.ts",
       "symbol": "WorkflowController",
-      "hash": "sha256:eeee548153787afe759361484fc936c71a8a6d6935ceb4748b00b490e07b444e"
+      "hash": "sha256:a2751d25b321b37361bc5018373d9e0e02bf0638f259b812cfa3296a400769c5"
     },
     {
       "file": "packages/choco-pi-subagents/src/workflow.ts",
@@ -46,6 +46,6 @@
     }
   ],
   "checkedAt": {
-    "commit": "4de824bc8928a27bbb3585ccd8f6af9c883a31d6"
+    "commit": "1f9e644259d2a2d46674d984417c45e96303fd01"
   }
 }
