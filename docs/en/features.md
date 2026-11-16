@@ -105,7 +105,7 @@ This page describes what choco-pi adds to Pi, grouped by area. [Common commands]
 ## Interface
 
 - A fullscreen TUI with Nord themes, a status line, and a `/status` dialog with Status, Context, Usage, Preferences, and Statistics tabs.
-- `/stats` opens the Statistics tab, which shows token usage and metered list-price cost computed from every session log, with fork and rewind copies counted once.
+- `/stats` opens the Statistics tab, which shows token usage and metered list-price cost computed from this installation's session logs (`<agent dir>/sessions`, plus the session directory set by `sessionDir` or `PI_CODING_AGENT_SESSION_DIR`), with fork and rewind copies counted once.
   - **Period and scope.** The period is the rolling last 24 hours, the last 3, 7, or 30 days, or all time (`r` cycles). The scope is all projects or this one (`p` toggles).
   - **Sections.** Below the header, ←/→ switches between five sections, as in Preferences. Each section is 25 rows tall (fewer in a short terminal), and a longer section scrolls.
     - **Summary**: totals, and a token chart per day (per hour for the last 24 hours) fitted to the section.

@@ -1,6 +1,6 @@
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { execFile } from "node:child_process";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { SessionInfoStyle } from "../session-usage.ts";
 import {
@@ -116,8 +116,8 @@ export type StatsDataOptions = {
   priceLookup?: PriceLookup;
   /** End of every period for a new scan; a scan still in the cache keeps its own. */
   now?: number;
-  /** Session roots; defaults to Pi's `~/.pi/agent/sessions` plus a configured session directory. */
-  roots?: readonly string[];
+  /** Session roots to scan; `sessionsRoots` gives this agent's own. */
+  roots: readonly string[];
   cache?: StatsCache;
 };
 
@@ -129,14 +129,27 @@ export type StatsBodyOptions = Omit<StatsDataOptions, "period" | "scope"> & {
 };
 
 /**
- * Where Pi writes session files: `<agent dir>/sessions/<project>/` (CA/config.js
- * `getSessionsDir`, not exported) and, when set, the `PI_CODING_AGENT_SESSION_DIR`
- * directory that replaces it.
+ * Where this agent writes session files, so the report covers its own sessions
+ * only: `<agent dir>/sessions/<project>/` (CA/config.js `getSessionsDir`, not
+ * exported), and the session directory Pi uses instead when one is configured,
+ * resolved with CA/main.js precedence: `PI_CODING_AGENT_SESSION_DIR`, else the
+ * effective `sessionDir` setting (`pi.getSettings()`), normalized as Pi does.
+ * The agent directory stays a root, since sessions written before a session
+ * directory was configured remain there. A one-run `--session-dir` flag is not
+ * visible to extensions and is not covered.
  */
-export function defaultSessionsRoots(env: NodeJS.ProcessEnv = process.env): string[] {
-  const roots = [join(getAgentDir(), "sessions")];
-  const configured = env["PI_CODING_AGENT_SESSION_DIR"];
-  if (configured !== undefined && configured.length > 0) roots.push(configured);
+export function sessionsRoots(
+  sessionDirSetting: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const roots = [resolve(getAgentDir(), "sessions")];
+  const fromEnv = env["PI_CODING_AGENT_SESSION_DIR"];
+  const configured = fromEnv !== undefined && fromEnv.length > 0 ? fromEnv : sessionDirSetting;
+  if (configured === undefined || configured.length === 0) return roots;
+  const normalized = SettingsManager.inMemory({ sessionDir: configured }).getSessionDir();
+  if (normalized === undefined || normalized.length === 0) return roots;
+  const dir = resolve(normalized);
+  if (!roots.includes(dir)) roots.push(dir);
   return roots;
 }
 
@@ -219,7 +232,7 @@ async function computeSnapshot(
 /** The view already computed from a live scan, without waiting; undefined when it must be loaded. */
 export function peekStatsSnapshot(options: StatsDataOptions): StatsSnapshot | undefined {
   const cache = options.cache ?? processStatsCache;
-  const entry = liveEntry(cache, rootsKey(options.roots ?? defaultSessionsRoots()));
+  const entry = liveEntry(cache, rootsKey(options.roots));
   return entry?.ready.get(viewKey(options));
 }
 
@@ -231,7 +244,7 @@ export function peekStatsSnapshot(options: StatsDataOptions): StatsSnapshot | un
  */
 export function loadStatsSnapshot(options: StatsDataOptions): Promise<StatsSnapshot> {
   const cache = options.cache ?? processStatsCache;
-  const roots = options.roots ?? defaultSessionsRoots();
+  const roots = options.roots;
   const key = rootsKey(roots);
   let entry = liveEntry(cache, key);
   if (entry === undefined) {

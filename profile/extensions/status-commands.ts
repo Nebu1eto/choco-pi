@@ -82,6 +82,7 @@ import {
   peekStatsSnapshot,
   registryModelNames,
   registryPriceLookup,
+  sessionsRoots,
   statsBody,
   statsVariant,
   type StatsSnapshot,
@@ -222,6 +223,11 @@ function getToolInventory(): ToolInventory | undefined {
 function setToolInventory(inventory: ToolInventory): void {
   reinterpretHostValue<{ [TOOL_INVENTORY_KEY]?: ToolInventory }>(globalThis)[TOOL_INVENTORY_KEY] =
     inventory;
+}
+
+/** This agent's session roots, with the session directory its effective settings configure. */
+function statsRoots(): string[] {
+  return sessionsRoots(getToolInventory()?.getSettings?.().sessionDir);
 }
 
 export type TabController = {
@@ -730,6 +736,7 @@ export function tabBody(
     const view = statsViewOf(variant);
     return statsBody({
       cwd: ctx.cwd,
+      roots: statsRoots(),
       view: { period: view.period, scope: view.scope, expanded },
       priceLookup: registryPriceLookup(ctx.modelRegistry),
       modelNames: registryModelNames(ctx.modelRegistry),
@@ -867,6 +874,7 @@ async function showTabOnce(
       const view = statsViewOf("");
       const body = await statsBody({
         cwd: ctx.cwd,
+        roots: statsRoots(),
         view: {
           period: view.period,
           scope: view.scope,
@@ -941,6 +949,7 @@ async function showTabOnce(
       if (statsShown?.key === key) return layoutStats(statsShown.snapshot, layout);
       const options = {
         cwd: ctx.cwd,
+        roots: statsRoots(),
         period: view.period,
         scope: view.scope,
         priceLookup: registryPriceLookup(ctx.modelRegistry),
