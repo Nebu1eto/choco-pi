@@ -452,3 +452,32 @@ Tool arguments and tool result text are snake_case (user decision; no aliases). 
 ## 2026-11-15 choco-pi patch: `@choco-pi` package name
 
 - `package.json` `name`: `choco-pi-ui` → `@choco-pi/ui`; `version`: `0.1.0` → `1.0.0-alpha.1`, the root package's version. The directory stays `packages/choco-pi-ui`, so path-based settings entries, imports, and the path-derived extension name are unchanged.
+
+## 2026-11-16 choco-pi patch: the preferences panel takes the mouse
+
+- `extensions/zentui/settings-command.ts`: `ZentuiPreferencesPanelHandle`
+  gained `handleMouse(event)`, in the panel's own rows. A left click on a
+  section label in the full tab strip shows that section (leaving any
+  search); a press on a row selects it and its click changes it as Enter
+  does, through `SettingsList.handleMouse`; the wheel moves the selection.
+  A heading takes no press, so it never holds the selection. An open submenu,
+  or the search list, receives the events over the list area, and the strip
+  stands down while a submenu is open, as it does for keys. Results never ask
+  for keyboard focus (`keepHostFocus`): the embedding dialog keeps it.
+- To map a list row back to its item, `visibleListRange` repeats pi-tui
+  `SettingsList`'s window rule (centered on the selection, `LIST_ROWS` = 8,
+  the list's `maxVisible`). A pi-tui change to that rule breaks
+  `tests/settings-mouse.test.ts`.
+- That mapping needs the panel's selection record to be the list's own, so
+  Page Up/Down in the section view now go through the panel
+  (`pageSelection`): same page size, but landing on the nearest row past a
+  heading instead of on the heading.
+- ←/→ and the strip click share `showSection`.
+- When the strip is too wide, `formatSectionTabs` now shows the widest run
+  of labels around the active section with a `‹`/`›` marker on each side
+  that hides sections, instead of the active label alone with its position.
+  A click on a marker shows the nearest hidden section. Both the drawing and
+  the click map come from `sectionStrip`; the old `Label (i/n)` form
+  remains only when not even the active label fits.
+- Consumer: the Preferences tab of `profile/extensions/status-commands.ts`.
+- Test: `tests/settings-mouse.test.ts` (this package).

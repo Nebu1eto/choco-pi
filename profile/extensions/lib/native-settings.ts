@@ -1,5 +1,10 @@
 import { InteractiveMode } from "@earendil-works/pi-coding-agent";
-import { stripTerminalSequences, type Component, type SettingItem } from "@earendil-works/pi-tui";
+import {
+  stripTerminalSequences,
+  type Component,
+  type SettingItem,
+  type TuiMouseEvent,
+} from "@earendil-works/pi-tui";
 import type { PreferencesExtraSection, PreferencesSectionChange } from "./agent-preferences.ts";
 import { isStaleContextError } from "./lifecycle.ts";
 import { isFunction, isString, reinterpretHostValue, type RuntimeValue } from "./runtime-values.ts";
@@ -355,15 +360,24 @@ function isRuleLine(line: string): boolean {
  * double the line above and below it.
  */
 function withoutOuterRules(component: Component): Component {
+  // The rows the last frame dropped, so a mouse row maps back to the selector's own.
+  let dropped = { top: 0, total: 0 };
   return {
     render: (width: number) => {
       const lines = component.render(width);
       const first = isRuleLine(lines[0] ?? "") ? 1 : 0;
       const last = lines.length > first && isRuleLine(lines.at(-1) ?? "") ? 1 : 0;
+      dropped = { top: first, total: first + last };
       return lines.slice(first, lines.length - last);
     },
     invalidate: () => component.invalidate?.(),
     handleInput: (data: string) => component.handleInput?.(data),
+    handleMouse: (event: TuiMouseEvent) =>
+      component.handleMouse?.({
+        ...event,
+        y: event.y + dropped.top,
+        height: event.height + dropped.total,
+      }),
   };
 }
 
@@ -463,6 +477,7 @@ function relabelSubmenu(component: Component, from: string, to: string): Compone
     render: (width: number) => component.render(width).map((line) => line.replace(pattern, to)),
     invalidate: () => component.invalidate?.(),
     handleInput: (data: string) => component.handleInput?.(data),
+    handleMouse: (event: TuiMouseEvent) => component.handleMouse?.(event),
   };
 }
 

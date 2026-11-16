@@ -16,7 +16,10 @@ import {
   ScrollView,
   Text,
   truncateToWidth,
+  visibleWidth,
   type Component,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
 import {
   AGENT_OUTCOME_PREFIX,
@@ -73,6 +76,7 @@ import {
   DEFAULT_STATS_SECTION,
   isStatsSection,
   STATS_SECTION_ROWS,
+  statsSectionAt,
   stepStatsSection,
   type StatsSection,
 } from "./lib/stats/format.ts";
@@ -130,6 +134,29 @@ export const STATUS_TABS: ReadonlyArray<{ id: StatusTabId; title: string }> = [
   { id: "preferences", title: "Preferences" },
   { id: "stats", title: "Statistics" },
 ];
+
+/** Columns of padding each side of a tab title in the header row. */
+const TAB_PADDING = 2;
+
+/** Rows and columns of padding around a text tab's frame. */
+const TEXT_PADDING = 1;
+
+/**
+ * The tab whose padded title covers column `x` of one header row. The row
+ * is searched rather than measured, so a header that wrapped onto a second
+ * row or was cut at the right edge still maps each title it shows.
+ */
+export function statusTabAt(row: string, x: number): StatusTabId | undefined {
+  const text = stripVTControlCharacters(row);
+  for (const tab of STATUS_TABS) {
+    const title = stripVTControlCharacters(tab.title);
+    const at = text.indexOf(title);
+    if (title.length === 0 || at < 0) continue;
+    const start = visibleWidth(text.slice(0, at));
+    if (x >= start - TAB_PADDING && x < start + visibleWidth(title) + TAB_PADDING) return tab.id;
+  }
+  return undefined;
+}
 
 /** How often an open Usage tab re-queries the providers. */
 export const USAGE_REFRESH_MS = 3 * 60_000;
@@ -1006,6 +1033,11 @@ async function showTabOnce(
       statsTop = clampScrollTop(statsTop + delta, window.total, window.height);
       tui.requestRender();
     };
+    /**
+     * What the last text-tab frame drew, for the mouse: the header rows and
+     * the body rows on screen, in the body view's own rows.
+     */
+    let textFrame: { header: string[]; bodyTop: number; body: string[] } | undefined;
     const bodyView: Component = {
       render: (width) => {
         if (!isString(painted) && width !== paintedWidth) {
@@ -1021,6 +1053,7 @@ async function showTabOnce(
         setText(hintText, textHint({ top: lines.length - 1, height: 1, total: lines.length }));
         const body = windowed(lines, headerRows.length + hintText.render(width).length);
         setText(hintText, textHint(statsWindow));
+        textFrame = { header: headerRows, bodyTop: headerRows.length + 1, body };
         const blank = " ".repeat(width);
         return [...headerRows, blank, ...body, blank, ...hintText.render(width)];
       },
@@ -1030,7 +1063,7 @@ async function showTabOnce(
         hintText.invalidate();
       },
     };
-    const component = new Box(1, 1, (value) => theme.fg("border", value));
+    const component = new Box(TEXT_PADDING, TEXT_PADDING, (value) => theme.fg("border", value));
     component.addChild(bodyView);
     const scrollView = new ScrollView(component, {
       primary: true,
@@ -1041,7 +1074,8 @@ async function showTabOnce(
 
     const header = (): string =>
       STATUS_TABS.map((tab) => {
-        const label = `  ${tab.title}  `;
+        const padding = " ".repeat(TAB_PADDING);
+        const label = `${padding}${tab.title}${padding}`;
         return tab.id === active ? theme.fg("accent", theme.bold(label)) : theme.fg("dim", label);
       }).join(theme.fg("dim", "·"));
     const digitHint = STATUS_TABS.map((_tab, index) => index + 1).join("/");
@@ -1206,6 +1240,50 @@ async function showTabOnce(
       dispose: () => {
         panel?.dispose();
         controller.dispose();
+      },
+      /**
+       * Clicks do what keys do: a tab title switches tabs, a Statistics
+       * section title switches section, and the Preferences panel takes the
+       * rest of its tab. The wheel scrolls the Statistics window. A press is
+       * taken only where its click acts, so text elsewhere stays selectable.
+       */
+      handleMouse: (event: TuiMouseEvent): TuiMouseEventResult | undefined => {
+        if (finished) return undefined;
+        const leftPress = event.button === "left" && event.type === "press";
+        const leftClick = event.button === "left" && event.type === "click";
+        const clickTo = (act: () => void): TuiMouseEventResult | undefined => {
+          if (leftClick) act();
+          return leftPress || leftClick ? { handled: true, render: leftClick } : undefined;
+        };
+        const tabAt = (row: string, x: number): TuiMouseEventResult | undefined => {
+          const tab = statusTabAt(row, x);
+          // An open submenu holds the tab shortcuts, and so the tab titles.
+          if (tab === undefined || panel?.hasOpenSubmenu?.()) return undefined;
+          return clickTo(() => activate(tab));
+        };
+        if (active === "preferences") {
+          if (event.y === 0) return tabAt(header(), event.x);
+          // The panel starts below the header and a blank row.
+          return panel?.handleMouse?.({ ...event, y: event.y - 2 });
+        }
+        const frame = textFrame;
+        if (frame === undefined) return undefined;
+        if (active === "stats" && event.type === "wheel") {
+          if (statsWindow === undefined || !event.wheelDelta) return undefined;
+          scrollStats(event.wheelDelta);
+          return { handled: true };
+        }
+        const x = event.x - TEXT_PADDING;
+        const y = event.y - TEXT_PADDING;
+        const headerRow = frame.header[y];
+        if (headerRow !== undefined) return tabAt(headerRow, x);
+        const bodyRow = frame.body[y - frame.bodyTop];
+        if (active !== "stats" || bodyRow === undefined) return undefined;
+        const section = statsSectionAt(bodyRow, x);
+        if (section === undefined) return undefined;
+        return clickTo(() => {
+          if (section !== statsView.section) changeStatsView({ ...statsView, section });
+        });
       },
       handleInput: (data: string) => {
         if (finished) return;

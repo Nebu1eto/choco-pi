@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { Component } from "@earendil-works/pi-tui";
+import type { Component, TuiMouseEvent } from "@earendil-works/pi-tui";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import statusCommands, {
   createTabController,
@@ -15,7 +15,10 @@ import statusCommands, {
   type TextTabId,
   renderTabBody,
 } from "../profile/extensions/status-commands.ts";
-import { reinterpretHostValue } from "../profile/extensions/lib/runtime-values.ts";
+import {
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "../profile/extensions/lib/runtime-values.ts";
 import { STATS_CACHE_TTL_MS } from "../profile/extensions/lib/stats/report.ts";
 import { STATS_SECTION_ROWS } from "../profile/extensions/lib/stats/format.ts";
 
@@ -591,5 +594,139 @@ test("every Statistics sub-menu takes the same 25 body rows in a tall terminal",
     if (previousAgentDir === undefined) delete process.env["PI_CODING_AGENT_DIR"];
     else process.env["PI_CODING_AGENT_DIR"] = previousAgentDir;
     await rm(agentDir, { recursive: true, force: true });
+  }
+});
+
+function mouse(
+  type: TuiMouseEvent["type"],
+  x: number,
+  y: number,
+  extra: Partial<TuiMouseEvent> = {},
+): TuiMouseEvent {
+  return {
+    type,
+    button: type === "wheel" ? "none" : "left",
+    x,
+    y,
+    screenX: x,
+    screenY: y,
+    width: 120,
+    height: 60,
+    shift: false,
+    alt: false,
+    ctrl: false,
+    ...extra,
+  };
+}
+
+/** The cell where `text` starts on the first dialog row whose plain text includes `row`. */
+function cellOf(dialog: Component, width: number, row: string, text: string) {
+  const lines = dialog.render(width).map((line) => stripVTControlCharacters(line));
+  const y = lines.findIndex((line) => line.includes(row));
+  assert.ok(y >= 0, `${row} is on screen`);
+  return { x: lines[y]?.indexOf(text) ?? -1, y };
+}
+
+/** A press and its click at one cell, with the frame Pi draws between them. */
+function clickAt(dialog: Component, width: number, at: ReturnType<typeof cellOf>) {
+  const press = dialog.handleMouse?.(mouse("press", at.x, at.y));
+  dialog.render(width);
+  return { press, click: dialog.handleMouse?.(mouse("click", at.x, at.y)) };
+}
+
+test("a click on a tab title switches tabs; a press on plain text is left to Pi", async () => {
+  const view = openDialog("context");
+  try {
+    const plain = (): string => stripVTControlCharacters(view.dialog.render(120).join("\n"));
+    assert.ok(plain().includes("Context Usage"));
+    const { press, click } = clickAt(
+      view.dialog,
+      120,
+      cellOf(view.dialog, 120, "Status  ·  Context", "Status"),
+    );
+    assert.deepEqual(press, { handled: true, render: false });
+    assert.deepEqual(click, { handled: true, render: true });
+    assert.ok(plain().includes("Session Info"), "the Status tab shows");
+    const body = cellOf(view.dialog, 120, "Session Info", "Session Info");
+    assert.equal(view.dialog.handleMouse?.(mouse("press", body.x, body.y)), undefined);
+    // The padding around a title belongs to it, the separator to neither.
+    const header = cellOf(view.dialog, 120, "Status  ·  Context", "·  Context");
+    assert.equal(view.dialog.handleMouse?.(mouse("press", header.x, header.y)), undefined);
+    clickAt(view.dialog, 120, { x: header.x + 1, y: header.y });
+    assert.ok(plain().includes("Context Usage"), "a click on the padding picks the tab");
+  } finally {
+    await view.close();
+  }
+});
+
+test("Statistics: a click on a section title shows it and the wheel scrolls the window", async () => {
+  const previousAgentDir = process.env["PI_CODING_AGENT_DIR"];
+  const agentDir = await statsAgentDir();
+  process.env["PI_CODING_AGENT_DIR"] = agentDir;
+  const view = openDialog("stats", 20);
+  try {
+    const plain = (): string => stripVTControlCharacters(view.dialog.render(100).join("\n"));
+    await settle(() => plain().includes("Statistics · Last 30 days"));
+    assert.match(plain(), /scrolls \(1–/);
+    const anywhere = cellOf(view.dialog, 100, "Statistics · Last 30 days", "Statistics");
+    assert.deepEqual(
+      view.dialog.handleMouse?.(mouse("wheel", anywhere.x, anywhere.y, { wheelDelta: 2 })),
+      { handled: true },
+    );
+    assert.match(plain(), /scrolls \(3–/, "the wheel moves the window two rows");
+    view.dialog.handleMouse?.(mouse("wheel", anywhere.x, anywhere.y, { wheelDelta: -5 }));
+    assert.match(plain(), /scrolls \(1–/, "and stops at the top");
+
+    const bar = "Summary / By Model";
+    clickAt(view.dialog, 100, cellOf(view.dialog, 100, bar, "By Model"));
+    assert.ok(plain().includes("Claude Opus 5.5 (Anthropic)"), "By Model shows");
+    assert.ok(!plain().includes("Tokens per day"));
+    const gap = cellOf(view.dialog, 100, bar, " / By Model");
+    assert.equal(view.dialog.handleMouse?.(mouse("press", gap.x + 1, gap.y)), undefined);
+  } finally {
+    await view.close();
+    if (previousAgentDir === undefined) delete process.env["PI_CODING_AGENT_DIR"];
+    else process.env["PI_CODING_AGENT_DIR"] = previousAgentDir;
+    await rm(agentDir, { recursive: true, force: true });
+  }
+});
+
+test("the Preferences tab hands its panel mouse events in the panel's own rows", async () => {
+  const seen: TuiMouseEvent[] = [];
+  const key = Symbol.for("choco-pi.preferences-provider");
+  const registry = reinterpretHostValue<Record<PropertyKey, RuntimeValue>>(globalThis);
+  const previous = registry[key];
+  registry[key] = {
+    createPanel: () => ({
+      render: () => ["panel row 0", "panel row 1"],
+      invalidate: () => {},
+      handleInput: () => {},
+      dispose: () => {},
+      getActiveSection: () => "agent",
+      handleMouse: (event: TuiMouseEvent) => {
+        seen.push(event);
+        return { handled: true };
+      },
+    }),
+    runOutcome: async () => undefined,
+    resolveArgs: async () => undefined,
+  };
+  const view = openDialog("context");
+  try {
+    view.dialog.handleInput?.("4");
+    const row = cellOf(view.dialog, 120, "panel row 1", "row 1");
+    assert.deepEqual(view.dialog.handleMouse?.(mouse("press", row.x, row.y)), { handled: true });
+    assert.deepEqual(
+      seen.map((event) => [event.x, event.y]),
+      [[row.x, 1]],
+    );
+    clickAt(view.dialog, 120, cellOf(view.dialog, 120, "Status  ·  Context", "Context"));
+    assert.ok(
+      stripVTControlCharacters(view.dialog.render(120).join("\n")).includes("Context Usage"),
+    );
+  } finally {
+    await view.close();
+    if (previous === undefined) delete registry[key];
+    else registry[key] = previous;
   }
 });

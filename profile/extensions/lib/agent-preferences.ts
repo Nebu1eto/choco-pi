@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
-import type { SettingItem } from "@earendil-works/pi-tui";
+import type { SettingItem, TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
 import {
   isJsonRecord,
   isBoolean,
@@ -659,6 +659,11 @@ export interface PreferencesPanelHandle {
   render: (width: number) => string[];
   invalidate: () => void;
   handleInput: (data: string) => void;
+  /**
+   * Mouse input in the panel's coordinates; the result never takes keyboard
+   * focus from the host.
+   */
+  handleMouse?: (event: TuiMouseEvent) => TuiMouseEventResult | undefined;
   dispose: () => void;
   getActiveSection: () => string;
   /** True while a row's submenu owns the panel and needs every key. */

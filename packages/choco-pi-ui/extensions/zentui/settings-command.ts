@@ -3,10 +3,13 @@ import { getSettingsListTheme } from "@earendil-works/pi-coding-agent";
 import {
   type AutocompleteItem,
   getKeybindings,
+  getSelectPageIndex,
   matchesKey,
   type SettingItem,
   SettingsList,
   type SettingsListTheme,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
   truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
@@ -270,6 +273,14 @@ export interface ZentuiPreferencesPanelHandle {
   render: (width: number) => string[];
   invalidate: () => void;
   handleInput: (data: string) => void;
+  /**
+   * Mouse input in the panel's own coordinates (row 0 is its top border). A
+   * click on a section in the tab strip shows it; a click on a row selects
+   * and changes it as Enter does; the wheel moves the selection. An open
+   * submenu or the search field receives the events over the list area. The
+   * result never asks for keyboard focus: the host keeps it.
+   */
+  handleMouse: (event: TuiMouseEvent) => TuiMouseEventResult | undefined;
   dispose: () => void;
   /**
    * True while a row's submenu owns the panel. The host must stop claiming its
@@ -1385,6 +1396,97 @@ function previousSection(section: string, order: readonly string[]): string {
     order[(order.indexOf(section) - 1 + order.length) % order.length] ?? order[0] ?? "appearance"
   );
 }
+/** Rows the settings list shows at once; it scrolls to keep the selection in view. */
+const LIST_ROWS = 8;
+
+/**
+ * The rows the settings list draws in its window, as pi-tui's SettingsList
+ * picks them: centered on the selection where the list allows. The mouse
+ * maps a row back to its item with it.
+ */
+function visibleListRange(selected: number, count: number) {
+  const start = Math.max(0, Math.min(selected - Math.floor(LIST_ROWS / 2), count - LIST_ROWS));
+  return { start, end: Math.min(start + LIST_ROWS, count) };
+}
+
+/** A forwarded mouse result without its focus request: the host keeps keyboard focus. */
+function keepHostFocus(result: TuiMouseEventResult | undefined): TuiMouseEventResult | undefined {
+  if (result === undefined || !(result.handled || result.capture || result.focus)) return undefined;
+  const kept: TuiMouseEventResult = { handled: true };
+  if (result.capture) kept.capture = true;
+  if (result.render !== undefined) kept.render = result.render;
+  return kept;
+}
+
+/**
+ * One cell of the section strip: a section's label, or a `‹`/`›` marker
+ * that stands for the sections hidden on its side and names the nearest one.
+ */
+interface StripCell {
+  section: string;
+  kind: "label" | "more";
+  text: string;
+  column: number;
+}
+
+/**
+ * The section strip laid out for `width`: every label when they fit,
+ * otherwise the widest run of neighbours around the active section, with a
+ * marker on each side that hides sections. `undefined` when not even the
+ * active label fits that way.
+ */
+function sectionStrip(
+  active: string,
+  labelOf: (section: string) => string,
+  width: number,
+  order: readonly string[],
+): StripCell[] | undefined {
+  const count = order.length;
+  const widths = order.map((section) => visibleWidth(labelOf(section)));
+  const span = (low: number, high: number): number => {
+    let total = 2 + (low > 0 ? 2 : 0) + (high < count - 1 ? 2 : 0) + 3 * (high - low);
+    for (let index = low; index <= high; index += 1) total += widths[index] ?? 0;
+    return total;
+  };
+  let low = 0;
+  let high = count - 1;
+  if (count === 0) return undefined;
+  if (span(low, high) > width) {
+    low = Math.max(0, order.indexOf(active));
+    high = low;
+    if (span(low, high) > width) return undefined;
+    for (let grew = true; grew;) {
+      grew = false;
+      if (high < count - 1 && span(low, high + 1) <= width) {
+        high += 1;
+        grew = true;
+      }
+      if (low > 0 && span(low - 1, high) <= width) {
+        low -= 1;
+        grew = true;
+      }
+    }
+  }
+  const cells: StripCell[] = [];
+  let column = 2;
+  const before = order[low - 1];
+  if (before !== undefined) {
+    cells.push({ section: before, kind: "more", text: "‹", column });
+    column += 2;
+  }
+  for (let index = low; index <= high; index += 1) {
+    const section = order[index];
+    if (section === undefined) continue;
+    cells.push({ section, kind: "label", text: labelOf(section), column });
+    column += (widths[index] ?? 0) + 3;
+  }
+  const after = order[high + 1];
+  // The marker follows the last label after one space, not a separator.
+  if (after !== undefined)
+    cells.push({ section: after, kind: "more", text: "›", column: column - 2 });
+  return cells;
+}
+
 function formatSectionTabs(
   active: string,
   labelOf: (section: string) => string,
@@ -1392,14 +1494,39 @@ function formatSectionTabs(
   width: number,
   order: readonly string[],
 ): string {
-  const rendered = order.map((section) =>
-    section === active
-      ? theme.bold(labelOf(section))
-      : safeThemeFg(theme, "muted", labelOf(section)),
-  );
-  const full = `  ${rendered.join(safeThemeFg(theme, "muted", " / "))}`;
-  if (visibleWidth(full) <= width) return full;
-  return `  ${theme.bold(labelOf(active))} (${order.indexOf(active) + 1}/${order.length})`;
+  const cells = sectionStrip(active, labelOf, width, order);
+  if (cells === undefined)
+    return `  ${theme.bold(labelOf(active))} (${order.indexOf(active) + 1}/${order.length})`;
+  let strip = "  ";
+  let previous: StripCell | undefined;
+  for (const cell of cells) {
+    if (previous !== undefined)
+      strip +=
+        previous.kind === "label" && cell.kind === "label"
+          ? safeThemeFg(theme, "muted", " / ")
+          : " ";
+    strip +=
+      cell.kind === "label" && cell.section === active
+        ? theme.bold(cell.text)
+        : safeThemeFg(theme, "muted", cell.text);
+    previous = cell;
+  }
+  return strip;
+}
+/**
+ * The section a click at column `x` of the strip formatSectionTabs draws
+ * picks: a label's own section, or for a marker the nearest hidden one.
+ */
+function sectionAtColumn(
+  x: number,
+  active: string,
+  labelOf: (section: string) => string,
+  width: number,
+  order: readonly string[],
+): string | undefined {
+  return sectionStrip(active, labelOf, width, order)?.find(
+    (cell) => x >= cell.column && x < cell.column + visibleWidth(cell.text),
+  )?.section;
 }
 function withSectionFooter(
   lines: string[],
@@ -1794,7 +1921,7 @@ export function createZentuiPreferencesComponent(
               },
             },
       ),
-      8,
+      LIST_ROWS,
       listTheme,
       (id, newValue) => {
         try {
@@ -2239,6 +2366,31 @@ export function createZentuiPreferencesComponent(
       return;
     }
   };
+  /**
+   * Page Up/Down in the section view, as the list moves them but landing on
+   * the nearest row that can hold the selection, so a heading is never
+   * focused and the panel's record of the selection stays the list's.
+   */
+  const pageSelection = (data: string): boolean => {
+    const current = Math.max(
+      0,
+      navItems.findIndex((item) => item.id === navSelectedId),
+    );
+    const target = getSelectPageIndex(getKeybindings(), data, current, navItems.length, LIST_ROWS);
+    if (target === undefined) return false;
+    const step = target < current ? -1 : 1;
+    // On a heading, keep going the way the key moves, then try the other way.
+    for (const direction of [step, -step]) {
+      for (let index = target; index >= 0 && index < navItems.length; index += direction) {
+        const item = navItems[index];
+        if (!selectable(item)) continue;
+        navSelectedId = item.id;
+        settingsList.selectItem(item.id);
+        return true;
+      }
+    }
+    return true;
+  };
   /** Which section's live preview the shown tab carries, if any. */
   const previewSource = (): "editor" | "userMessages" | "workingLine" | undefined => {
     if (searchQuery !== undefined) return undefined;
@@ -2341,6 +2493,16 @@ export function createZentuiPreferencesComponent(
     tui.requestRender();
   };
 
+  /** Shows one section's rows, leaving any search; ←/→ and a click on the strip land here. */
+  const showSection = (section: string): void => {
+    stopPreview();
+    searchQuery = undefined;
+    activeSection = section;
+    settingsList = makeSettingsList();
+    startPreview();
+    tui.requestRender();
+  };
+
   /** Rebuilds the shown list after a change, keeping the active search's filter and section. */
   const rebuildCurrentList = (focusId?: string): SettingsList => {
     settingsList = searchQuery === undefined ? makeSettingsList(focusId) : makeSearchList(focusId);
@@ -2375,6 +2537,33 @@ export function createZentuiPreferencesComponent(
       ];
     return [];
   };
+  /**
+   * Where the last frame drew the section strip and the settings list, for
+   * the mouse: rows from the panel's top, and the width it was laid out at.
+   */
+  let shownFrame: { width: number; listTop: number; listRows: number } | undefined;
+  const tabsRow = 1;
+  /** The settings list's answer to a mouse event over it, without its focus request. */
+  const forwardToList = (event: TuiMouseEvent, row: number): TuiMouseEventResult | undefined =>
+    keepHostFocus(
+      settingsList.handleMouse({
+        ...event,
+        y: row,
+        height: shownFrame?.listRows ?? 0,
+      }),
+    );
+  /**
+   * The section-view item drawn on list row `row`. The list is told the
+   * panel's selection first, so it lays the window out exactly as computed.
+   */
+  const itemAtRow = (row: number): SettingItem | undefined => {
+    if (navSelectedId === undefined) return undefined;
+    settingsList.selectItem(navSelectedId);
+    const selected = navItems.findIndex((item) => item.id === navSelectedId);
+    const { start, end } = visibleListRange(selected, navItems.length);
+    const index = start + row;
+    return index < end ? navItems[index] : undefined;
+  };
   return {
     render(width: number) {
       const border = renderChromeBorder(
@@ -2388,6 +2577,7 @@ export function createZentuiPreferencesComponent(
         const searchRows = withSectionFooter(settingsList.render(width), theme, "search").map(
           (line) => truncateToWidth(line, width, ""),
         );
+        shownFrame = { width, listTop: 3, listRows: searchRows.length };
         return [
           truncateToWidth(border, width, ""),
           truncateToWidth(
@@ -2412,6 +2602,11 @@ export function createZentuiPreferencesComponent(
       const bodyRows = indentedPreviewRows.some((line) => visibleWidth(line) > 0)
         ? ["", ...indentedPreviewRows, "", ...settingsRows]
         : settingsRows;
+      shownFrame = {
+        width,
+        listTop: 3 + bodyRows.length - settingsRows.length,
+        listRows: settingsRows.length,
+      };
       return [
         truncateToWidth(border, width, ""),
         truncateToWidth(
@@ -2455,24 +2650,70 @@ export function createZentuiPreferencesComponent(
           tui.requestRender();
           return;
         }
+        if (searchQuery === undefined && pageSelection(data)) {
+          tui.requestRender();
+          return;
+        }
       }
       if (!submenuOpen && matchesKey(data, "right")) {
-        stopPreview();
-        activeSection = nextSection(activeSection, visibleSections);
-        settingsList = makeSettingsList();
-        startPreview();
-        tui.requestRender();
+        showSection(nextSection(activeSection, visibleSections));
         return;
       }
       if (!submenuOpen && matchesKey(data, "left")) {
-        stopPreview();
-        activeSection = previousSection(activeSection, visibleSections);
-        settingsList = makeSettingsList();
-        startPreview();
-        tui.requestRender();
+        showSection(previousSection(activeSection, visibleSections));
         return;
       }
       settingsList.handleInput(data);
+    },
+    handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+      const frame = shownFrame;
+      if (frame === undefined) return undefined;
+      const leftPress = event.button === "left" && event.type === "press";
+      const leftClick = event.button === "left" && event.type === "click";
+      // A press must be taken for its click to follow; Pi starts a text
+      // selection on any press nothing takes.
+      if (event.y === tabsRow) {
+        // An open submenu owns the panel, as it does every key.
+        if (submenuOpen || (!leftPress && !leftClick)) return undefined;
+        const section = sectionAtColumn(
+          event.x,
+          activeSection,
+          labelOf,
+          frame.width,
+          visibleSections,
+        );
+        if (section === undefined) return undefined;
+        if (leftClick && (section !== activeSection || searchQuery !== undefined))
+          showSection(section);
+        return { handled: true, render: leftClick };
+      }
+      const row = event.y - frame.listTop;
+      if (row < 0 || row >= frame.listRows) return undefined;
+      // A submenu and the search list keep their own state; they take the event.
+      if (submenuOpen || searchQuery !== undefined) {
+        const result = forwardToList(event, row);
+        if (searchQuery !== undefined && !submenuOpen)
+          searchQuery = searchInternals(settingsList).searchInput?.getValue() ?? searchQuery;
+        return result;
+      }
+      if (event.type === "wheel") {
+        const delta = event.wheelDelta ?? 0;
+        if (delta === 0) return undefined;
+        moveSelection(delta < 0 ? -1 : 1);
+        return { handled: true };
+      }
+      if (leftPress) {
+        // A heading never holds the selection, so a press on one is left to Pi.
+        const item = itemAtRow(row);
+        if (!selectable(item)) return undefined;
+        const result = forwardToList(event, row);
+        if (result === undefined) return undefined;
+        navSelectedId = item.id;
+        return result;
+      }
+      // The list changes the row its press selected, as Enter would.
+      if (leftClick) return forwardToList(event, row);
+      return undefined;
     },
     dispose() {
       stopPreview();

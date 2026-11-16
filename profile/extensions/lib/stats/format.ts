@@ -1,3 +1,4 @@
+import { stripVTControlCharacters } from "node:util";
 import { visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { formatCost, formatTokens, type SessionInfoStyle } from "../session-usage.ts";
 import {
@@ -987,17 +988,38 @@ export function stepStatsSection(section: StatsSection, delta: 1 | -1): StatsSec
   return STATS_SECTIONS[(index + delta + count) % count]?.id ?? DEFAULT_STATS_SECTION;
 }
 
+const SECTION_BAR_LEAD = "  ";
+const SECTION_BAR_SEPARATOR = " / ";
+
 /**
  * The sub-menu bar, as the Preferences tab draws its sections: the active
  * title bold, the others dim, slash-separated. When the row would not fit,
  * only the active title and its position show.
  */
 function sectionBar(active: StatsSection, width: number, p: Palette): string {
-  const full = `  ${STATS_SECTIONS.map((section) => (section.id === active ? p.strong(section.title) : p.dim(section.title))).join(p.dim(" / "))}`;
+  const full = `${SECTION_BAR_LEAD}${STATS_SECTIONS.map((section) => (section.id === active ? p.strong(section.title) : p.dim(section.title))).join(p.dim(SECTION_BAR_SEPARATOR))}`;
   if (visibleWidth(full) <= width) return full;
   const index = STATS_SECTIONS.findIndex((section) => section.id === active);
   const title = STATS_SECTIONS[index]?.title ?? "";
   return `  ${p.strong(title)}${p.dim(` (${index + 1}/${STATS_SECTIONS.length})`)}`;
+}
+
+/**
+ * The section whose title covers column `x` when `line` is the full
+ * sub-menu bar sectionBar draws; any other line, including the narrow form
+ * that names only the active section, has none.
+ */
+export function statsSectionAt(line: string, x: number): StatsSection | undefined {
+  const titles = STATS_SECTIONS.map((section) => section.title);
+  const bar = SECTION_BAR_LEAD + titles.join(SECTION_BAR_SEPARATOR);
+  if (stripVTControlCharacters(line).trimEnd() !== bar) return undefined;
+  let column = SECTION_BAR_LEAD.length;
+  for (const section of STATS_SECTIONS) {
+    const width = visibleWidth(section.title);
+    if (x >= column && x < column + width) return section.id;
+    column += width + SECTION_BAR_SEPARATOR.length;
+  }
+  return undefined;
 }
 
 /** What every section renderer reads; computed once per body. */
