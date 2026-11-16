@@ -20,16 +20,18 @@ import type {
 } from "../../../packages/choco-pi-provider-synthetic/src/types/quotas.ts";
 import { providerUsageSnapshot } from "../provider-usage.ts";
 import type { ProviderUsageSnapshot } from "../provider-usage.ts";
-import { DEFAULT_ON_USAGE_LIMIT } from "./usage-limit-contract.ts";
+import { DEFAULT_ON_USAGE_LIMIT, scopeCoversModel, scopeKey } from "./usage-limit-contract.ts";
 import type {
   CodexUsageLimitEntry,
   FallbackCandidateContext,
   OnUsageLimit,
   UsageLimitClassification,
   UsageLimitClassifyInput,
+  UsageLimitClosureState,
   UsageLimitEvidence,
   UsageLimitPolicy,
   UsageLimitRecheck,
+  UsageLimitScope,
 } from "./usage-limit-contract.ts";
 import type { RuntimeValue } from "./runtime-values.ts";
 
@@ -189,8 +191,12 @@ function classifyOpenAI(
     : undefined;
 }
 
-/** One quota window that currently blocks requests, with the time it restores capacity. */
-type ExhaustedWindow = { resetAt?: number; label?: string };
+/**
+ * One quota window that currently blocks requests, with the time it restores
+ * capacity. `scope` is the lower-case name of the model group a scoped window
+ * limits; absent, the window limits every model on the account.
+ */
+type ExhaustedWindow = { resetAt?: number; label?: string; scope?: string };
 
 /** A provider reading reduced to what readiness needs. */
 type QuotaReading = { exhausted: ExhaustedWindow[]; observedAt: number };
@@ -232,11 +238,77 @@ function windowReading(snapshot: ProviderUsageSnapshot): QuotaReading {
       .filter((window) => window.percent >= 100)
       .map((window) => {
         const time = window.eventAt?.getTime();
-        return time === undefined || Number.isNaN(time)
-          ? { label: window.label }
-          : { resetAt: time, label: window.label };
+        const exhausted: ExhaustedWindow =
+          time === undefined || Number.isNaN(time)
+            ? { label: window.label }
+            : { resetAt: time, label: window.label };
+        if (window.scope !== undefined) exhausted.scope = window.scope.toLowerCase();
+        return exhausted;
       }),
   };
+}
+
+/**
+ * Model-scoped quota windows whose coverage is known, by lower-case scope name:
+ * Anthropic's Fable weekly limit covers the Claude Fable and Claude Mythos
+ * series and no other model.
+ */
+export const KNOWN_LIMIT_SCOPES = new Map([["fable", ["claude-fable", "claude-mythos"]]]);
+
+function knownScope(name: string): UsageLimitScope | undefined {
+  const models = KNOWN_LIMIT_SCOPES.get(name);
+  return models === undefined ? undefined : { name, models: [...models] };
+}
+
+/** Windows that can explain a limit on one model, and the scope of that limit. */
+export type ModelBlockingWindows = { blocking: ExhaustedWindow[]; scope?: UsageLimitScope };
+
+/**
+ * The windows among `exhausted` that can explain a limit on `modelId`, and
+ * the scope of that limit. A window without a scope blocks every model and
+ * makes the limit provider-wide. A known scoped window blocks only the models
+ * it covers. A scoped window of unknown coverage counts against `modelId`
+ * alone, so a failure on one model never closes the others; each model that
+ * fails is closed on its own failure.
+ */
+export function windowsBlockingModel(
+  exhausted: readonly ExhaustedWindow[],
+  modelId: string,
+): ModelBlockingWindows {
+  const blocking: ExhaustedWindow[] = [];
+  let providerWide = false;
+  let known: UsageLimitScope | undefined;
+  let unknown: UsageLimitScope | undefined;
+  for (const window of exhausted) {
+    if (window.scope === undefined) {
+      blocking.push(window);
+      providerWide = true;
+      continue;
+    }
+    const scope = knownScope(window.scope);
+    if (scope === undefined) {
+      blocking.push(window);
+      unknown ??= { name: window.scope, models: [modelId], exact: true };
+    } else if (scopeCoversModel(scope, modelId)) {
+      blocking.push(window);
+      known ??= scope;
+    }
+  }
+  const result: ModelBlockingWindows = { blocking };
+  const scope = known ?? unknown;
+  if (!providerWide && scope !== undefined) result.scope = scope;
+  return result;
+}
+
+/** `classification` with `scope` set, or without a scope for a provider-wide limit. */
+function withScope(
+  classification: UsageLimitClassification,
+  scope: UsageLimitScope | undefined,
+): UsageLimitClassification {
+  const copy: UsageLimitClassification = { ...classification };
+  if (scope === undefined) delete copy.scope;
+  else copy.scope = scope;
+  return copy;
 }
 
 /** Synthetic windows that block chat requests; search and free tool-call quotas do not. */
@@ -321,6 +393,8 @@ function earliest(times: readonly (number | undefined)[]): number | undefined {
  * both ways. An older reading can still prove exhaustion through a window whose
  * reset lies ahead, but its absence of exhaustion proves nothing, because the
  * limit may have been reached after it was taken.
+ * Only windows that can block the failed model count (`windowsBlockingModel`),
+ * and a confirmed limit carries their scope.
  */
 function applyReading(
   classification: UsageLimitClassification,
@@ -329,14 +403,16 @@ function applyReading(
   now: number,
 ): UsageLimitCorroboration {
   const fresh = reading.observedAt >= failedAt;
-  const blocking = fresh
+  const current = fresh
     ? reading.exhausted
     : reading.exhausted.filter((window) => window.resetAt !== undefined && window.resetAt > now);
+  const { blocking, scope } = windowsBlockingModel(current, classification.modelId);
   if (blocking.length > 0) {
     const resetAt = earliest(blocking.map((window) => window.resetAt));
+    const scoped = withScope(classification, scope);
     return {
       ready: false,
-      classification: resetAt === undefined ? classification : { ...classification, resetAt },
+      classification: resetAt === undefined ? scoped : { ...scoped, resetAt },
       evidence: "confirmed",
     };
   }
@@ -415,8 +491,11 @@ async function corroborateStructured(
   const elapsed = structuredResetAt <= current;
   if (!reading) return { ready: elapsed, classification, evidence: "confirmed" };
   const fresh = reading.observedAt >= failedAt;
-  const blocking = reading.exhausted.filter(
-    (window) => fresh || (window.resetAt !== undefined && window.resetAt > current),
+  const { blocking, scope } = windowsBlockingModel(
+    reading.exhausted.filter(
+      (window) => fresh || (window.resetAt !== undefined && window.resetAt > current),
+    ),
+    classification.modelId,
   );
   if (blocking.length === 0) return { ready: elapsed, classification, evidence: "confirmed" };
   const windowResetAt = earliest(blocking.map((window) => window.resetAt));
@@ -424,7 +503,7 @@ async function corroborateStructured(
     windowResetAt === undefined ? structuredResetAt : Math.max(structuredResetAt, windowResetAt);
   return {
     ready: false,
-    classification: { ...classification, resetAt },
+    classification: { ...withScope(classification, scope), resetAt },
     evidence: "confirmed",
   };
 }
@@ -518,6 +597,13 @@ export async function corroborateUsageLimit(
 const FallbackTierSchema = obj({
   primary: arr(str()),
   secondary: opt(arr(str())),
+  /**
+   * Name of the tier below. Its models are tried after every model of this
+   * tier and before the last resort, so a limit that covers only some of a
+   * provider's models (Fable) still reaches that provider's lower tier (Opus)
+   * when the other provider is closed too.
+   */
+  next: opt(str()),
 });
 
 export const ModelFallbacksSchema = obj({
@@ -631,8 +717,11 @@ function parseRefs(refs: readonly string[] | undefined): ModelRef[] {
 
 /**
  * Ordered fallback candidates for `current`: same-tier primaries on another
- * provider, then same-tier secondaries (another provider first), then the last
- * resort list. A model outside every tier only gets the last resort. The
+ * provider, then same-tier secondaries (another provider first), then the
+ * `next` tier's models on the current provider, then the last resort list.
+ * The `next` tier helps only when a model-scoped limit leaves the provider
+ * open; a provider-wide closure skips those candidates. A model outside every
+ * tier only gets the last resort. The
  * tiers list `openai-codex`; a limited model on the manually chosen `openai`
  * provider finds its tier through the same model id on `openai-codex`.
  * A candidate with a `preferWhenAvailable` variant is preceded by that
@@ -651,10 +740,15 @@ export function fallbackCandidates(table: ModelFallbacks, current: ModelRef): Mo
   );
   const primary = parseRefs(tier?.primary).filter((ref) => ref.provider !== current.provider);
   const secondary = parseRefs(tier?.secondary);
+  const next = tier?.next === undefined ? undefined : table.tiers[tier.next];
+  // Every provider: after a first switch (Fable to astra) the limited family is
+  // on the other provider, and its lower tier (Opus) must still come before the last resort.
+  const lower = [...parseRefs(next?.primary), ...parseRefs(next?.secondary)];
   const ordered = [
     ...primary,
     ...secondary.filter((ref) => ref.provider !== current.provider),
     ...secondary.filter((ref) => ref.provider === current.provider),
+    ...lower,
     ...parseRefs(table.lastResort),
   ];
   const preferred = table.preferWhenAvailable ?? {};
@@ -677,8 +771,8 @@ const defaultAccountId: AccountIdResolver = () => "default";
 
 /**
  * First candidate that is available, allowed by the scoped model list (empty
- * means unrestricted), and whose provider account is not closed. Never returns
- * `current`.
+ * means unrestricted), and not closed: neither its provider account nor a
+ * model-scoped closure covering it. Never returns `current`.
  */
 export function pickFallback(
   table: ModelFallbacks,
@@ -692,7 +786,9 @@ export function pickFallback(
     const key = refKey(candidate);
     if (!available.has(key)) continue;
     if (scoped.size > 0 && !scoped.has(key)) continue;
-    if (context.isClosed(candidate.provider, resolveAccountId(candidate.provider))) continue;
+    if (context.isClosed(candidate.provider, resolveAccountId(candidate.provider), candidate.id)) {
+      continue;
+    }
     return { provider: candidate.provider, id: candidate.id };
   }
   return undefined;
@@ -724,19 +820,40 @@ export type UsageLimitPolicyOptions = {
 
 export type UsageLimitPolicyInstance = Omit<UsageLimitPolicy, "corroborate"> & {
   corroborate(classification: UsageLimitClassification): Promise<UsageLimitCorroboration>;
-  recheck(providerKey: string, accountId: string, since?: number): Promise<UsageLimitRecheck>;
-  reopen(providerKey: string, accountId: string, at?: number): void;
+  recheck(
+    providerKey: string,
+    accountId: string,
+    since?: number,
+    modelId?: string,
+  ): Promise<UsageLimitRecheck>;
+  reopen(providerKey: string, accountId: string, at?: number, modelId?: string): void;
   accountId(provider: string): string;
   /** Settles once the fallback table is available (or failed to load). */
   fallbacksLoaded: Promise<void>;
 };
 
-function closedKey(providerKey: string, accountId: string): string {
+function accountKey(providerKey: string, accountId: string): string {
   return `${providerKey}\u0000${accountId}`;
 }
 
-/** A provider account closure and when it was written. */
-type ClosedAccount = { until: number; closedAt: number };
+function closedKey(providerKey: string, accountId: string, scope?: UsageLimitScope): string {
+  return `${accountKey(providerKey, accountId)}\u0000${scopeKey(scope)}`;
+}
+
+/**
+ * A provider account closure and when it was written; `scope` limits it to
+ * the models it covers.
+ */
+type ClosedAccount = { until: number; closedAt: number; scope?: UsageLimitScope };
+
+/**
+ * What a re-check judges: a closure, by the windows that can keep its scope
+ * closed, or, with no closure on record, one model, by the windows that can
+ * block it (`windowsBlockingModel`).
+ */
+export type RecheckTarget =
+  | { kind: "closure"; scope?: UsageLimitScope }
+  | { kind: "model"; modelId: string };
 
 function exhaustedDetail(windows: readonly ExhaustedWindow[]): string {
   const labels = windows.flatMap((window) => (window.label ? [window.label] : []));
@@ -752,17 +869,33 @@ function exhaustedDetail(windows: readonly ExhaustedWindow[]): string {
  * without such a window it proves nothing, and nothing proven reopens.
  * The closed answer's `until` is the latest reset among the blocking windows,
  * and is absent when any of them has no reset time.
+ * Only windows that bear on `target` count: a provider-wide closure (the
+ * default) stays closed only through windows without a scope, and a scoped
+ * closure also through windows of its own scope. The closed answer carries
+ * the scope still in force.
  */
 export function recheckReading(
   reading: QuotaReading | undefined,
   closedAt: number,
   now: number,
+  target: RecheckTarget = { kind: "closure" },
 ): UsageLimitRecheck {
   if (!reading) return { open: true, detail: "no live usage data" };
   const fresh = reading.observedAt >= closedAt;
-  const blocking = reading.exhausted.filter(
+  const current = reading.exhausted.filter(
     (window) => fresh || window.resetAt === undefined || window.resetAt > now,
   );
+  let blocking: ExhaustedWindow[];
+  let scope: UsageLimitScope | undefined;
+  if (target.kind === "model") {
+    ({ blocking, scope } = windowsBlockingModel(current, target.modelId));
+  } else {
+    const own = target.scope;
+    blocking = current.filter(
+      (window) => window.scope === undefined || (own !== undefined && window.scope === own.name),
+    );
+    scope = blocking.some((window) => window.scope === undefined) ? undefined : own;
+  }
   if (blocking.length === 0) {
     return { open: true, detail: fresh ? "live usage shows capacity" : "no current usage data" };
   }
@@ -774,16 +907,157 @@ export function recheckReading(
     for (const reset of resets) if (reset !== undefined && reset > until) until = reset;
     result.until = until;
   }
+  if (scope !== undefined) result.scope = scope;
   return result;
+}
+
+/**
+ * The closed answer for closures that block a model: the latest end among
+ * them, provider-wide unless every one of them is scoped.
+ */
+function closedAnswer(entries: readonly ClosedAccount[], detail?: string): UsageLimitRecheck {
+  let until: number | undefined;
+  for (const entry of entries) if (until === undefined || entry.until > until) until = entry.until;
+  const answer: UsageLimitRecheck = { open: false };
+  if (until !== undefined) answer.until = until;
+  if (detail !== undefined) answer.detail = detail;
+  const scoped = entries.every((entry) => entry.scope !== undefined);
+  const scope = scoped ? entries[0]?.scope : undefined;
+  if (scope !== undefined) answer.scope = scope;
+  answer.inForce = entries.map((entry) => {
+    const state: UsageLimitClosureState = { until: entry.until };
+    if (entry.scope !== undefined) state.scope = entry.scope;
+    return state;
+  });
+  return answer;
 }
 
 /** Builds the owner policy the usage-limit seam publishes. */
 export function createUsageLimitPolicy(options: UsageLimitPolicyOptions): UsageLimitPolicyInstance {
   const now = options.now ?? Date.now;
   const resolveAccountId = options.resolveAccountId ?? defaultAccountId;
+  /** Closures by account and scope (`closedKey`). */
   const closed = new Map<string, ClosedAccount>();
-  /** Start time of the latest successful request per provider account. */
-  const succeededAt = new Map<string, number>();
+  /**
+   * Start time of the latest successful request per provider account, by
+   * model id (`""` when the caller named no model).
+   */
+  const succeededAt = new Map<string, Map<string, number>>();
+
+  /**
+   * Live closures on the account that block `modelId`: the provider-wide one,
+   * and with `modelId` the scoped ones that cover it. Drops expired closures.
+   */
+  const blockingClosures = (
+    providerKey: string,
+    accountId: string,
+    modelId: string | undefined,
+    at: number,
+  ): [string, ClosedAccount][] => {
+    const prefix = `${accountKey(providerKey, accountId)}\u0000`;
+    const result: [string, ClosedAccount][] = [];
+    for (const [key, entry] of closed) {
+      if (!key.startsWith(prefix)) continue;
+      if (at >= entry.until) {
+        closed.delete(key);
+        continue;
+      }
+      if (
+        entry.scope === undefined ||
+        (modelId !== undefined && scopeCoversModel(entry.scope, modelId))
+      ) {
+        result.push([key, entry]);
+      }
+    }
+    return result;
+  };
+
+  /**
+   * Latest success that proves `scope` open: any success on the account for a
+   * provider-wide closure, a success on a covered model for a scoped one.
+   */
+  const latestSuccess = (
+    providerKey: string,
+    accountId: string,
+    scope: UsageLimitScope | undefined,
+  ): number | undefined => {
+    let latest: number | undefined;
+    for (const [modelId, at] of succeededAt.get(accountKey(providerKey, accountId)) ?? []) {
+      if (scope !== undefined && (modelId === "" || !scopeCoversModel(scope, modelId))) continue;
+      if (latest === undefined || at > latest) latest = at;
+    }
+    return latest;
+  };
+
+  const readLive = (providerKey: string): Promise<QuotaReading | undefined> =>
+    liveReading(
+      { usageSnapshot: options.usageSnapshot, extension: options.ctx, events: options.events },
+      providerKey,
+    );
+
+  /**
+   * Adds the provider-wide closure an account-wide window calls for while a
+   * scoped closure is checked; the scoped closure stays, because its own
+   * window may outlast the account-wide one. Never shortens an existing
+   * provider-wide closure.
+   */
+  const widenClosure = (
+    providerKey: string,
+    accountId: string,
+    entry: ClosedAccount,
+    at: number,
+  ): ClosedAccount => {
+    const wideKey = closedKey(providerKey, accountId);
+    const existing = closed.get(wideKey);
+    if (existing !== undefined) {
+      existing.until = Math.max(existing.until, entry.until);
+      return existing;
+    }
+    const widened: ClosedAccount = { until: entry.until, closedAt: at };
+    closed.set(wideKey, widened);
+    return widened;
+  };
+
+  /**
+   * Re-check with no closure of the owner's own on record: the caller's
+   * closure, written at `since`, is judged from the evidence alone.
+   */
+  const recheckUnrecorded = async (
+    providerKey: string,
+    accountId: string,
+    since: number | undefined,
+    modelId: string | undefined,
+  ): Promise<UsageLimitRecheck> => {
+    const closedAt = since ?? 0;
+    const proving =
+      modelId === undefined ? undefined : { name: "", models: [modelId], exact: true };
+    const success = latestSuccess(providerKey, accountId, proving);
+    if (success !== undefined && success >= closedAt) {
+      return { open: true, detail: "a request succeeded after the limit" };
+    }
+    const reading = await readLive(providerKey);
+    const current = now();
+    // A request that succeeded while the reading was in flight is newer evidence than it.
+    const succeeded = latestSuccess(providerKey, accountId, proving);
+    if (succeeded !== undefined && succeeded >= closedAt) {
+      return { open: true, detail: "a request succeeded after the limit" };
+    }
+    const written = blockingClosures(providerKey, accountId, modelId, current);
+    // Another failure closed the account during the read; that closure is newer evidence.
+    if (written.length > 0) return closedAnswer(written.map(([, entry]) => entry));
+    const result = recheckReading(
+      reading,
+      closedAt,
+      current,
+      modelId === undefined ? { kind: "closure" } : { kind: "model", modelId },
+    );
+    if (result.open) return result;
+    const state: UsageLimitClosureState = {};
+    if (result.scope !== undefined) state.scope = result.scope;
+    if (result.until !== undefined) state.until = result.until;
+    return { ...result, inForce: [state] };
+  };
+
   let fallbacks = options.fallbacks;
   const loadFallbacks = options.loadFallbacks ?? (() => loadModelFallbacks());
   // Settles exactly once and never rejects: a failed load leaves no fallbacks.
@@ -846,61 +1120,96 @@ export function createUsageLimitPolicy(options: UsageLimitPolicyOptions): UsageL
     accountId(provider) {
       return resolveAccountId(provider);
     },
-    closeProvider(providerKey, accountId, untilMs) {
+    closeProvider(providerKey, accountId, untilMs, scope) {
       if (Number.isNaN(untilMs)) return;
       const closedAt = now();
-      closed.set(closedKey(providerKey, accountId), {
+      const entry: ClosedAccount = {
         until: Math.min(untilMs, closedAt + MAX_CLOSE_MS),
         closedAt,
-      });
-    },
-    isClosed(providerKey, accountId, at = now()) {
-      const key = closedKey(providerKey, accountId);
-      const entry = closed.get(key);
-      if (entry === undefined) return false;
-      if (at < entry.until) return true;
-      closed.delete(key);
-      return false;
-    },
-    reopen(providerKey, accountId, at = now()) {
-      const key = closedKey(providerKey, accountId);
-      succeededAt.set(key, Math.max(succeededAt.get(key) ?? at, at));
-      const entry = closed.get(key);
-      if (entry !== undefined && at >= entry.closedAt) closed.delete(key);
-    },
-    async recheck(providerKey, accountId, since) {
-      const key = closedKey(providerKey, accountId);
-      const entry = closed.get(key);
-      const closedAt = Math.max(entry?.closedAt ?? Number.NEGATIVE_INFINITY, since ?? 0);
-      // Drops the closure this check started from; a closure written meanwhile stays.
-      const reopenChecked = (): void => {
-        if (entry !== undefined && closed.get(key) === entry) closed.delete(key);
       };
-      const success = succeededAt.get(key);
-      if (success !== undefined && success >= closedAt) {
-        reopenChecked();
+      if (scope !== undefined) {
+        entry.scope = { name: scope.name, models: [...scope.models] };
+        if (scope.exact === true) entry.scope.exact = true;
+      }
+      closed.set(closedKey(providerKey, accountId, scope), entry);
+    },
+    isClosed(providerKey, accountId, at = now(), modelId) {
+      return blockingClosures(providerKey, accountId, modelId, at).length > 0;
+    },
+    reopen(providerKey, accountId, at = now(), modelId) {
+      const account = accountKey(providerKey, accountId);
+      const byModel = succeededAt.get(account) ?? new Map<string, number>();
+      const model = modelId ?? "";
+      byModel.set(model, Math.max(byModel.get(model) ?? at, at));
+      succeededAt.set(account, byModel);
+      for (const [key, entry] of blockingClosures(providerKey, accountId, modelId, now())) {
+        if (at >= entry.closedAt) closed.delete(key);
+      }
+    },
+    async recheck(providerKey, accountId, since, modelId) {
+      const checked = blockingClosures(providerKey, accountId, modelId, now());
+      if (checked.length === 0) return recheckUnrecorded(providerKey, accountId, since, modelId);
+      // Drops a closure this check started from; a closure written meanwhile stays.
+      const reopenChecked = (key: string, entry: ClosedAccount): void => {
+        if (closed.get(key) === entry) closed.delete(key);
+      };
+      const pending: { key: string; entry: ClosedAccount; closedAt: number }[] = [];
+      for (const [key, entry] of checked) {
+        const closedAt = Math.max(entry.closedAt, since ?? 0);
+        const success = latestSuccess(providerKey, accountId, entry.scope);
+        if (success !== undefined && success >= closedAt) reopenChecked(key, entry);
+        else pending.push({ key, entry, closedAt });
+      }
+      if (pending.length === 0)
         return { open: true, detail: "a request succeeded after the limit" };
-      }
-      const reading = await liveReading(
-        { usageSnapshot: options.usageSnapshot, extension: options.ctx, events: options.events },
-        providerKey,
-      );
+      const reading = await readLive(providerKey);
       const current = now();
-      const latest = closed.get(key);
-      if (latest !== undefined && latest !== entry) {
-        // Another failure closed the account during the read; that closure is newer evidence.
-        return current < latest.until ? { open: false, until: latest.until } : { open: true };
+      const written = blockingClosures(providerKey, accountId, modelId, current).filter(
+        ([key, entry]) => !checked.some(([oldKey, old]) => oldKey === key && old === entry),
+      );
+      // Another failure closed the account during the read; that closure is newer evidence.
+      if (written.length > 0) return closedAnswer(written.map(([, entry]) => entry));
+      const stillClosed: ClosedAccount[] = [];
+      let detail: string | undefined;
+      let openDetail: string | undefined;
+      for (const { key, entry, closedAt } of pending) {
+        // The reading predates whatever happened during the await: a closure
+        // removed meanwhile (a success reopened it) stays removed, and a
+        // success after the closure reopens it whatever the reading shows.
+        if (closed.get(key) !== entry) {
+          openDetail ??= "a request succeeded after the limit";
+          continue;
+        }
+        const success = latestSuccess(providerKey, accountId, entry.scope);
+        if (success !== undefined && success >= closedAt) {
+          openDetail ??= "a request succeeded after the limit";
+          reopenChecked(key, entry);
+          continue;
+        }
+        const result = recheckReading(reading, closedAt, current, {
+          kind: "closure",
+          scope: entry.scope,
+        });
+        if (result.open) {
+          openDetail ??= result.detail;
+          reopenChecked(key, entry);
+          continue;
+        }
+        if (result.until !== undefined)
+          entry.until = Math.min(result.until, current + MAX_CLOSE_MS);
+        detail ??= result.detail;
+        stillClosed.push(entry);
+        // An account-wide window keeps a scoped closure in force: every model is
+        // closed now, while the scoped closure stays for its own window.
+        if (entry.scope !== undefined && result.scope === undefined) {
+          const wide = widenClosure(providerKey, accountId, entry, current);
+          if (!stillClosed.includes(wide)) stillClosed.push(wide);
+        }
       }
-      const result = recheckReading(reading, closedAt, current);
-      if (result.open) {
-        reopenChecked();
-        return result;
+      if (stillClosed.length === 0) {
+        return openDetail === undefined ? { open: true } : { open: true, detail: openDetail };
       }
-      if (entry !== undefined && result.until !== undefined) {
-        entry.until = Math.min(result.until, current + MAX_CLOSE_MS);
-        return { ...result, until: entry.until };
-      }
-      return entry === undefined ? result : { ...result, until: entry.until };
+      return closedAnswer(stillClosed, detail);
     },
   };
 }

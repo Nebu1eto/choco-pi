@@ -17,6 +17,8 @@ This page describes what choco-pi adds to Pi, grouped by area. [Common commands]
 
   Subagents report a limit to their parent with the reset estimate and a suggested in-scope model; under `auto-resume`, they are parked and resumed after the reset. While a `/goal` is active or paused, the goal runtime handles the recovery instead.
 
+  A limit that covers only some of a provider's models closes only those models. Anthropic's Fable weekly limit covers the Claude Fable and Claude Mythos series, so Opus, Sonnet, and Haiku keep running while it is exhausted. Live usage data decides which limit a failure hit. For a Fable limit, `fallback` tries `openai-codex/gpt-6-astra` first, then Opus on Anthropic, and only then the last-resort models. A scoped limit choco-pi does not recognize closes only the model whose request failed.
+
 ## Agents and orchestration
 
 - Specialist roles in [`profile/agents`](../../profile/agents) (`advisor`, `explore`, `general`, `handoff`, `implementer`, `planner`, `reviewer`, `verifier`) run as background subagents, as scheduled runs, in isolated Git worktrees, or as dependency-ordered workflows through `workflow_run`. `/agents` manages them.

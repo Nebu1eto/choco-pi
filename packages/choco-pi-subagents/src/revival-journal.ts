@@ -121,6 +121,8 @@ export const JournalUsageClassificationSchema = obj(
     resetAt: opt(finiteNum()),
     confidence: oneOf(["structured", "parsed", "inferred"]),
     sessionId: opt(str()),
+    /** Additive: models a model-scoped limit covers; absent means the whole account. */
+    scope: opt(obj({ name: str(), models: arr(str()), exact: opt(bool()) }, { open: true })),
   },
   { open: true },
 );
@@ -379,6 +381,10 @@ export function journalClassificationOf(
   if (classification.accountId !== undefined) copy.accountId = classification.accountId;
   if (classification.resetAt !== undefined) copy.resetAt = classification.resetAt;
   if (classification.sessionId !== undefined) copy.sessionId = classification.sessionId;
+  if (classification.scope !== undefined) {
+    copy.scope = { name: classification.scope.name, models: [...classification.scope.models] };
+    if (classification.scope.exact === true) copy.scope.exact = true;
+  }
   return copy;
 }
 

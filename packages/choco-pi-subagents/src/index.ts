@@ -260,6 +260,7 @@ import {
 import {
   describeUsageLimit,
   formatResetAt,
+  scopeNote,
   SUBAGENTS_USAGE_LIMIT_EVENT,
   type SubagentsUsageLimitEvent,
 } from "./usage-limit-seam.ts";
@@ -310,6 +311,16 @@ function textResult(msg: string, details?: AgentDetails) {
 }
 
 /** A failed tool call; `isError` lets the exec bridge raise it instead of returning text. */
+/** A workflow gate key split into its provider and, when present, model id. */
+type GateKeyParts = { provider: string; modelId?: string };
+
+/** Splits a workflow gate key (`<provider>` or `<provider>/<model id>`) at its first slash. */
+function splitGateKey(gateKey: string): GateKeyParts {
+  const slash = gateKey.indexOf("/");
+  if (slash <= 0 || slash === gateKey.length - 1) return { provider: gateKey };
+  return { provider: gateKey.slice(0, slash), modelId: gateKey.slice(slash + 1) };
+}
+
 function errorResult(msg: string) {
   return { ...textResult(msg), isError: true };
 }
@@ -993,7 +1004,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         ? "the provider reports capacity again (reset time unknown)"
         : formatResetAt(usageLimit.resetAt);
     const content =
-      `child ${name} paused until ${until}: ${formatProviderLabel(usageLimit.provider)} usage limit (${usageLimit.kind}). ` +
+      `child ${name} paused until ${until}: ${formatProviderLabel(usageLimit.provider)} usage limit (${usageLimit.kind})${scopeNote(usageLimit.scope)}. ` +
       `It resumes on the same model after the reset; its result will arrive as a notification. ` +
       `Suggested model: ${usageLimit.suggestedModel ?? "none available"}. ` +
       `To continue elsewhere now, stop it with stop_subagent and resume it with a model.`;
@@ -3342,6 +3353,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       await manager.refreshProviderBlock(
         model?.provider ?? ctx.model?.provider ?? "unknown",
         ctx.sessionManager.getSessionId(),
+        model !== undefined ? model.id : ctx.model?.id,
       );
 
       // Review roles: reserve a round (or refuse) after every other early return
@@ -3670,16 +3682,28 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       owner = undefined;
     }
     return {
+      // Gate key `<provider>/<model id>`: a model-scoped usage limit holds only
+      // the steps on the models it covers.
       providerKey: (step) => {
         try {
-          return (resolveWorkflowStepModel(ctx, step).model?.provider ?? "unknown").toLowerCase();
+          const model = resolveWorkflowStepModel(ctx, step).model;
+          return model === undefined ? "unknown" : `${model.provider.toLowerCase()}/${model.id}`;
         } catch {
           return undefined;
         }
       },
-      isProviderAvailable: (providerKey) => manager.isProviderAvailable(providerKey, owner),
-      refreshProvider: (providerKey) => manager.refreshProviderBlock(providerKey, owner),
-      unavailableMessage: (providerKey) => manager.providerUnavailableMessage(providerKey, owner),
+      isProviderAvailable: (gateKey) => {
+        const { provider, modelId } = splitGateKey(gateKey);
+        return manager.isProviderAvailable(provider, owner, modelId);
+      },
+      refreshProvider: (gateKey) => {
+        const { provider, modelId } = splitGateKey(gateKey);
+        return manager.refreshProviderBlock(provider, owner, modelId);
+      },
+      unavailableMessage: (gateKey) => {
+        const { provider, modelId } = splitGateKey(gateKey);
+        return manager.providerUnavailableMessage(provider, owner, modelId);
+      },
       run: async (step, prompt, workflowContext) => {
         const resolved = resolveWorkflowStepModel(ctx, step);
         const { config, resolvedConfig } = resolved;

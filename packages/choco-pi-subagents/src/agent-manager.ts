@@ -47,6 +47,7 @@ import type { ModelEntry } from "./model-resolver.ts";
 import { checkModelScope } from "./model-scope.ts";
 import { ResumeModelError } from "./resume-model-error.ts";
 import {
+  blockingUsageLimitClosure,
   classifyTerminalFailure,
   clearUsageLimitClosure,
   closeUntil,
@@ -57,8 +58,10 @@ import {
   recordFailure,
   recordSuccess,
   retryAfterMsFromFailure,
-  usageLimitClosure,
+  usageLimitClosuresFor,
+  type BlockingUsageLimitClosure,
   type UsageLimitClosure,
+  type UsageLimitClosureKey,
 } from "./provider-health.ts";
 import {
   beginResultGeneration,
@@ -123,6 +126,7 @@ import {
   readUsageLimitPolicy,
   recheckWithPolicy,
   reopenWithPolicy,
+  scopeKey,
   type Corroboration,
   type UsageLimitClassification,
   type UsageLimitPolicy,
@@ -495,6 +499,8 @@ type QueuedFinalizer = (notify: boolean) => void;
 interface QueueEntry {
   id: string;
   providerKey: string;
+  /** Model the start runs on, so a model-scoped closure gates only the models it covers. */
+  modelId?: string;
   start: () => void;
   /**
    * Post-reset continuation only: owns the parked task's promise and final
@@ -659,6 +665,32 @@ interface SpawnArgs {
 
 function providerKeyFor(options: SpawnOptions, ctx: ExtensionContext): string {
   return (options.model?.provider ?? ctx.model?.provider ?? "unknown").toLowerCase();
+}
+
+/** Model id a spawn runs on (the same source as `providerKeyFor`), if known. */
+function modelIdFor(options: SpawnOptions, ctx: ExtensionContext): string | undefined {
+  return options.model !== undefined ? options.model.id : ctx.model?.id;
+}
+
+/**
+ * Whether the closures changed while a re-check was in flight: one in
+ * `after` is new or was rewritten, or one in `before` was removed (a success
+ * reopened it). Either is newer evidence than the re-check's reading.
+ */
+function closuresRewritten(
+  before: readonly BlockingUsageLimitClosure[],
+  after: readonly BlockingUsageLimitClosure[],
+): boolean {
+  const changed = after.some(({ key, closure }) => {
+    const previous = before.find((entry) => scopeKey(entry.key.scope) === scopeKey(key.scope));
+    return closure.closedAt !== previous?.closure.closedAt;
+  });
+  return (
+    changed ||
+    before.some(
+      ({ key }) => !after.some((entry) => scopeKey(entry.key.scope) === scopeKey(key.scope)),
+    )
+  );
 }
 
 interface RunBudgetState {
@@ -1074,32 +1106,54 @@ export class AgentManager {
     return schedulingMaxConcurrent(this.maxConcurrent);
   }
 
-  isProviderAvailable(providerKey: string, owner?: string): boolean {
-    return this.providerBlock(providerKey, owner) === undefined;
+  /**
+   * Whether `owner` may run `modelId` on `providerKey`. Without `modelId`
+   * only provider-wide closures count; a model-scoped closure (such as the
+   * Fable limit) blocks only the models it covers.
+   */
+  isProviderAvailable(providerKey: string, owner?: string, modelId?: string): boolean {
+    return this.providerBlock(providerKey, owner, modelId) === undefined;
   }
 
-  /** Refusal text for `providerKey` under `owner`, with any usage-limit details. */
-  providerUnavailableMessage(providerKey: string, owner?: string): string {
+  /** Refusal text for `modelId` on `providerKey` under `owner`, with any usage-limit details. */
+  providerUnavailableMessage(providerKey: string, owner?: string, modelId?: string): string {
     const key = providerKey.toLowerCase();
-    return providerUnavailableMessage(key, this.providerBlock(key, owner)?.closure);
+    return providerUnavailableMessage(
+      key,
+      this.providerBlock(key, owner, modelId)?.closure,
+      modelId,
+    );
   }
 
-  private unavailableError(providerKey: string, owner: string | undefined): Error {
+  private unavailableError(
+    providerKey: string,
+    owner: string | undefined,
+    modelId: string | undefined,
+  ): Error {
     const key = providerKey.toLowerCase();
-    return new ProviderUnavailableError(key, this.providerBlock(key, owner)?.closure);
+    return new ProviderUnavailableError(
+      key,
+      this.providerBlock(key, owner, modelId)?.closure,
+      modelId,
+    );
   }
 
   /**
-   * Re-check `owner`'s usage-limit closure on `providerKey` against live
-   * evidence, for callers about to run a synchronous availability gate. A
+   * Re-check `owner`'s usage-limit closures that block `modelId` on
+   * `providerKey` against live evidence, for callers about to run a
+   * synchronous availability gate. A
    * closure is reopened when the owner's policy finds the limit gone (a later
    * success, a reading showing capacity, or no live reading at all) and keeps
    * the policy's reset and reason otherwise. Concurrent callers share one
    * check. A policy without `recheck`, a failed check, or a closure written
    * during the check leaves the stored state. Never rejects.
    */
-  async refreshProviderBlock(providerKey: string, owner: string | undefined): Promise<void> {
-    await this.closureRecheck(providerKey, owner);
+  async refreshProviderBlock(
+    providerKey: string,
+    owner: string | undefined,
+    modelId?: string,
+  ): Promise<void> {
+    await this.closureRecheck(providerKey, owner, modelId);
   }
 
   /**
@@ -1110,21 +1164,24 @@ export class AgentManager {
   private closureRecheck(
     providerKey: string,
     owner: string | undefined,
+    modelId: string | undefined,
   ): Promise<void> | undefined {
     if (owner === undefined || this.disposed) return undefined;
     const key = providerKey.toLowerCase();
-    if (this.providerBlock(key, owner)?.usage !== true) return undefined;
+    if (this.providerBlock(key, owner, modelId)?.usage !== true) return undefined;
     const policy = readUsageLimitPolicy(owner);
     if (policy?.recheck === undefined) return undefined;
     const accountId = this.accountFor(owner, key, policy);
-    const id = `${owner}\u0000${key}\u0000${accountId}`;
+    const id = `${owner}\u0000${key}\u0000${accountId}\u0000${modelId ?? ""}`;
     const existing = this.closureRechecks.get(id);
     if (existing !== undefined) return existing;
-    const recheck = this.recheckClosure(policy, { owner, providerKey: key, accountId }).finally(
-      () => {
-        if (this.closureRechecks.get(id) === recheck) this.closureRechecks.delete(id);
-      },
-    );
+    const recheck = this.recheckClosure(
+      policy,
+      { owner, providerKey: key, accountId },
+      modelId,
+    ).finally(() => {
+      if (this.closureRechecks.get(id) === recheck) this.closureRechecks.delete(id);
+    });
     this.closureRechecks.set(id, recheck);
     return recheck;
   }
@@ -1132,20 +1189,46 @@ export class AgentManager {
   private async recheckClosure(
     policy: UsageLimitPolicy,
     key: { owner: string; providerKey: string; accountId: string },
+    modelId: string | undefined,
   ): Promise<void> {
-    const before = usageLimitClosure(key);
-    const result = await recheckWithPolicy(
-      policy,
-      key.providerKey,
-      key.accountId,
-      before?.closedAt,
-    );
+    const before = usageLimitClosuresFor(key, modelId);
+    // Evidence must postdate the newest of the closures being checked.
+    let since: number | undefined;
+    for (const { closure } of before) {
+      if (closure.closedAt !== undefined && (since === undefined || closure.closedAt > since)) {
+        since = closure.closedAt;
+      }
+    }
+    const result = await recheckWithPolicy(policy, key.providerKey, key.accountId, since, modelId);
     if (this.disposed || readUsageLimitPolicy(key.owner) !== policy || result === undefined) return;
-    const after = usageLimitClosure(key);
     // A failure that closed the account during the check is newer evidence.
-    if (after !== undefined && after.closedAt !== before?.closedAt) return;
-    if (result.open) clearUsageLimitClosure(key);
-    else confirmUsageLimitClosure(key, result.until, result.detail);
+    if (closuresRewritten(before, usageLimitClosuresFor(key, modelId))) return;
+    if (result.open) {
+      for (const entry of before) clearUsageLimitClosure(entry.key);
+      return;
+    }
+    // Reconcile each closure on its own: one still in force keeps its own end,
+    // one the policy reopened is dropped, and one only the policy holds is
+    // recorded. A policy without `inForce` names at most the scope in force.
+    const inForce = result.inForce ?? [{ scope: result.scope, until: result.until }];
+    const states = new Map(inForce.map((state) => [scopeKey(state.scope), state]));
+    for (const entry of before) {
+      const state = states.get(scopeKey(entry.key.scope));
+      if (state === undefined) {
+        // Without the list, a provider-wide answer says nothing about scoped closures.
+        if (result.inForce !== undefined || entry.key.scope === undefined) {
+          clearUsageLimitClosure(entry.key);
+        }
+        continue;
+      }
+      states.delete(scopeKey(entry.key.scope));
+      confirmUsageLimitClosure(entry.key, state.until, result.detail);
+    }
+    for (const state of states.values()) {
+      const confirmed: UsageLimitClosureKey = { ...key };
+      if (state.scope !== undefined) confirmed.scope = state.scope;
+      confirmUsageLimitClosure(confirmed, state.until, result.detail);
+    }
   }
 
   /** Root owner a spawn with `options` is accounted to (see `captureUsageScope`). */
@@ -1157,7 +1240,11 @@ export class AgentManager {
 
   /** `refreshProviderBlock` for the provider and owner `spawn` would check. Never rejects. */
   async refreshSpawnProvider(ctx: ExtensionContext, options: SpawnOptions): Promise<void> {
-    await this.closureRecheck(providerKeyFor(options, ctx), this.spawnOwner(ctx, options));
+    await this.closureRecheck(
+      providerKeyFor(options, ctx),
+      this.spawnOwner(ctx, options),
+      modelIdFor(options, ctx),
+    );
   }
 
   /**
@@ -1177,35 +1264,47 @@ export class AgentManager {
   ): Promise<void> | undefined {
     const slash = model?.indexOf("/") ?? -1;
     const target = model !== undefined && slash > 0 ? model.slice(0, slash) : undefined;
+    const targetId = model !== undefined && slash > 0 ? model.slice(slash + 1) : undefined;
     const record = this.agents.get(id);
     if (record !== undefined) {
-      const provider = target ?? record.session?.model?.provider;
+      const current = record.session?.model;
+      const provider = target ?? current?.provider;
       if (provider === undefined) return undefined;
-      return this.closureRecheck(provider, this.usageScopes.get(id)?.owner);
+      const modelId = target === undefined ? current?.id : targetId;
+      return this.closureRecheck(provider, this.usageScopes.get(id)?.owner, modelId);
     }
     const saved = this.getDormant(id);
     if (saved === undefined) return undefined;
-    const provider = target ?? saved.model?.provider ?? ctx?.model?.provider;
+    const fallback = saved.model ?? ctx?.model;
+    const provider = target ?? fallback?.provider;
     if (provider === undefined) return undefined;
+    const modelId = target === undefined ? fallback?.id : targetId;
     const owner =
       this.journalSink?.rootSessionId ?? (ctx === undefined ? undefined : sessionRootOf(ctx));
-    return this.closureRecheck(provider, owner);
+    return this.closureRecheck(provider, owner, modelId);
   }
 
   /**
-   * A request that started at `startedAt` succeeded on `providerKey`: reopen
-   * `owner`'s usage-limit closure there, unless it was written after that start.
+   * A request on `modelId` that started at `startedAt` succeeded on
+   * `providerKey`: reopen `owner`'s usage-limit closures that blocked it
+   * there (the provider-wide one and the scoped ones covering the model),
+   * except any written after that start.
    */
-  private reopenAfterSuccess(owner: string | undefined, providerKey: string, startedAt: number) {
+  private reopenAfterSuccess(
+    owner: string | undefined,
+    providerKey: string,
+    startedAt: number,
+    modelId: string | undefined,
+  ) {
     if (owner === undefined) return;
     const key = providerKey.toLowerCase();
     const policy = readUsageLimitPolicy(owner);
     const accountId = this.accountFor(owner, key, policy);
-    if (policy !== undefined) reopenWithPolicy(policy, key, accountId, startedAt);
-    const closureKey = { owner, providerKey: key, accountId };
-    const closure = usageLimitClosure(closureKey);
-    if (closure !== undefined && startedAt >= (closure.closedAt ?? Number.POSITIVE_INFINITY)) {
-      clearUsageLimitClosure(closureKey);
+    if (policy !== undefined) reopenWithPolicy(policy, key, accountId, startedAt, modelId);
+    for (const entry of usageLimitClosuresFor({ owner, providerKey: key, accountId }, modelId)) {
+      if (startedAt >= (entry.closure.closedAt ?? Number.POSITIVE_INFINITY)) {
+        clearUsageLimitClosure(entry.key);
+      }
     }
   }
 
@@ -1226,22 +1325,34 @@ export class AgentManager {
   }
 
   /**
-   * Why `providerKey` is closed for `owner`, or undefined when it is open. The
+   * Why `modelId` on `providerKey` is closed for `owner`, or undefined when it
+   * is open. The
    * owner's usage-limit closures (policy first, then the manager's own record of
    * them, which carries the reset time and suggestion) are consulted before the
    * process-global transient registry. Other owners and accounts never block.
+   * A model-scoped closure blocks only the models it covers; without
+   * `modelId` only provider-wide closures count.
    * `usage` is true when a usage-limit closure (not a transient one) blocks.
    */
   private providerBlock(
     providerKey: string,
     owner: string | undefined,
+    modelId?: string,
   ): { closure?: UsageLimitClosure; usage: boolean } | undefined {
     const key = providerKey.toLowerCase();
     if (owner !== undefined) {
       const policy = readUsageLimitPolicy(owner);
       const accountId = this.accountFor(owner, key, policy);
-      const closure = usageLimitClosure({ owner, providerKey: key, accountId });
-      if (policy !== undefined && isClosedWithPolicy(policy, key, accountId)) {
+      const closure = blockingUsageLimitClosure({ owner, providerKey: key, accountId }, modelId);
+      // A provider-wide policy closure must not be reported as a scoped one.
+      if (
+        policy !== undefined &&
+        closure?.scope !== undefined &&
+        isClosedWithPolicy(policy, key, accountId)
+      ) {
+        return { usage: true };
+      }
+      if (policy !== undefined && isClosedWithPolicy(policy, key, accountId, modelId)) {
         return { closure, usage: true };
       }
       if (closure !== undefined) return { closure, usage: true };
@@ -1873,17 +1984,22 @@ export class AgentManager {
         : undefined;
     const requestedUntil =
       resetAt !== undefined && resetAt > now ? resetAt : now + USAGE_LIMIT_DEFAULT_CLOSE_MS;
+    // A model-scoped limit (corroboration set `scope`) closes only the models it covers.
+    const limitScope = classification.scope;
     for (const account of accountIds) {
       closeProviderWithPolicy(
         policy,
         providerKey,
         account,
         Math.min(requestedUntil, now + USAGE_LIMIT_MAX_WAIT_MS),
+        limitScope,
       );
     }
     const suggestedModel = this.suggestFallback(policy, scope, owner, model, record);
     for (const account of accountIds) {
-      closeUntil({ owner, providerKey, accountId: account }, requestedUntil, { suggestedModel });
+      const key: UsageLimitClosureKey = { owner, providerKey, accountId: account };
+      if (limitScope !== undefined) key.scope = limitScope;
+      closeUntil(key, requestedUntil, { suggestedModel });
     }
     const park =
       allowPark &&
@@ -1901,6 +2017,7 @@ export class AgentManager {
         resetAt,
         suggestedModel,
         status: park ? "waiting_for_reset" : reportStatus,
+        ...(limitScope !== undefined && { scope: limitScope }),
       },
     };
   }
@@ -1926,11 +2043,14 @@ export class AgentManager {
     const pick = pickFallbackWithPolicy(policy, current, {
       available,
       scoped: scope.scoped,
-      isClosed: (providerKey, accountId) => {
+      // With the candidate's model id, a model-scoped limit (such as Fable)
+      // leaves the provider's other models eligible.
+      isClosed: (providerKey, accountId, modelId) => {
         const key = providerKey.toLowerCase();
         return (
-          isClosedWithPolicy(policy, key, accountId) ||
-          usageLimitClosure({ owner, providerKey: key, accountId }) !== undefined ||
+          isClosedWithPolicy(policy, key, accountId, modelId) ||
+          blockingUsageLimitClosure({ owner, providerKey: key, accountId }, modelId) !==
+            undefined ||
           !isAvailable(key)
         );
       },
@@ -2151,12 +2271,23 @@ export class AgentManager {
   /** Resume the parked record on the same model as a new background generation. */
   private resumeAfterReset(record: AgentRecord, wait: UsageWait): void {
     this.usageWaits.delete(record.id);
-    // The owner's policy confirmed the reset: reopen every account the limit closed.
+    // The owner's policy confirmed the model has capacity: reopen, on every
+    // account the limit closed, each closure that blocked this model.
     const policy = readUsageLimitPolicy(wait.owner);
+    const modelId = wait.classification.modelId;
     for (const accountId of wait.accountIds) {
-      clearUsageLimitClosure({ owner: wait.owner, providerKey: wait.providerKey, accountId });
+      const account = { owner: wait.owner, providerKey: wait.providerKey, accountId };
+      const scopes = new Map<string, UsageLimitClosureKey["scope"]>([["", undefined]]);
+      for (const entry of usageLimitClosuresFor(account, modelId)) {
+        scopes.set(scopeKey(entry.key.scope), entry.key.scope);
+        clearUsageLimitClosure(entry.key);
+      }
+      const waitScope = wait.classification.scope;
+      if (waitScope !== undefined) scopes.set(scopeKey(waitScope), waitScope);
       if (policy !== undefined) {
-        closeProviderWithPolicy(policy, wait.providerKey, accountId, Date.now());
+        for (const scope of scopes.values()) {
+          closeProviderWithPolicy(policy, wait.providerKey, accountId, Date.now(), scope);
+        }
       }
     }
     // Steering accepted since the last park joins what an earlier, re-parked
@@ -2195,7 +2326,8 @@ export class AgentManager {
   private reparkQueuedWake(record: AgentRecord, wait: UsageWait, generation: number): void {
     if (this.wakeRuns.get(record.id) === generation) this.wakeRuns.delete(record.id);
     const key = wait.providerKey.toLowerCase();
-    const block = this.providerBlock(key, wait.owner);
+    const modelId = wait.classification.modelId;
+    const block = this.providerBlock(key, wait.owner, modelId);
     const resetAt = block?.closure?.until;
     // The account this re-closure is keyed under reopens with the others.
     const account = this.accountFor(wait.owner, key);
@@ -2204,7 +2336,7 @@ export class AgentManager {
     wait.pollUntil = undefined;
     if (resetAt !== undefined) wait.classification = { ...wait.classification, resetAt };
     this.transition(record, "waiting_for_reset");
-    record.error = providerUnavailableMessage(key, block?.closure);
+    record.error = providerUnavailableMessage(key, block?.closure, modelId);
     record.usageLimit =
       record.usageLimit === undefined
         ? undefined
@@ -2612,9 +2744,9 @@ export class AgentManager {
     });
     if (verdict.kind === "error") throw new ResumeModelError(verdict.message);
     const targetKey = model.provider.toLowerCase();
-    const block = this.providerBlock(targetKey, scope.owner);
+    const block = this.providerBlock(targetKey, scope.owner, model.id);
     if (block !== undefined) {
-      throw new ResumeModelError(providerUnavailableMessage(targetKey, block.closure));
+      throw new ResumeModelError(providerUnavailableMessage(targetKey, block.closure, model.id));
     }
     return model;
   }
@@ -2633,9 +2765,10 @@ export class AgentManager {
   /** Throw the owner-scoped availability refusal for the record's current provider. */
   private assertResumeProviderOpen(id: string, session: AgentSession): void {
     const key = (session.model?.provider ?? "unknown").toLowerCase();
-    const block = this.providerBlock(key, this.usageScopes.get(id)?.owner);
+    const modelId = session.model?.id;
+    const block = this.providerBlock(key, this.usageScopes.get(id)?.owner, modelId);
     if (block !== undefined) {
-      throw new ResumeModelError(providerUnavailableMessage(key, block.closure));
+      throw new ResumeModelError(providerUnavailableMessage(key, block.closure, modelId));
     }
   }
 
@@ -2722,6 +2855,7 @@ export class AgentManager {
           record.spawnModel?.provider ??
           "unknown"
         ).toLowerCase(),
+        modelId: record.session?.model?.id ?? record.spawnModel?.id,
         start,
         finalize: hooks.finalize,
         repark: hooks.repark,
@@ -2841,9 +2975,13 @@ export class AgentManager {
     const providerKey = providerKeyFor(options, ctx);
     const usageScope = this.captureUsageScope(ctx, options);
     if (identity?.scoped !== undefined) usageScope.scoped = [...identity.scoped];
+    const modelId = modelIdFor(options, ctx);
     // A re-armed wait is expected to find its provider closed.
-    if (identity?.rearm === undefined && !this.isProviderAvailable(providerKey, usageScope.owner)) {
-      throw this.unavailableError(providerKey, usageScope.owner);
+    if (
+      identity?.rearm === undefined &&
+      !this.isProviderAvailable(providerKey, usageScope.owner, modelId)
+    ) {
+      throw this.unavailableError(providerKey, usageScope.owner, modelId);
     }
     if (identity !== undefined && this.agents.has(identity.id)) {
       throw new Error(`Agent ${identity.id} is already live.`);
@@ -3011,7 +3149,7 @@ export class AgentManager {
       this.runningBackground >= this.getSchedulingMaxConcurrent()
     ) {
       // Queue it — will be started when a running agent completes
-      this.queue.push({ id, providerKey, start: () => this.startAgent(id, record, args) });
+      this.queue.push({ id, providerKey, modelId, start: () => this.startAgent(id, record, args) });
       return id;
     }
 
@@ -3074,8 +3212,9 @@ export class AgentManager {
     assertAbsoluteSpawnCwd(options.cwd);
     const providerKey = providerKeyFor(options, ctx);
     const owner = this.usageScopes.get(id)?.owner;
-    if (!this.isProviderAvailable(providerKey, owner)) {
-      throw this.unavailableError(providerKey, owner);
+    const startModelId = modelIdFor(options, ctx);
+    if (!this.isProviderAvailable(providerKey, owner, startModelId)) {
+      throw this.unavailableError(providerKey, owner, startModelId);
     }
     // Snapshot the requested model now; settle-time code must not read a ctx
     // the host may have retired. The live session model wins when available.
@@ -3528,7 +3667,12 @@ export class AgentManager {
               recordSuccess(providerKey);
               const startedAt = lastSuccessfulRequestStart(session);
               if (startedAt !== undefined) {
-                this.reopenAfterSuccess(this.usageScopes.get(id)?.owner, providerKey, startedAt);
+                this.reopenAfterSuccess(
+                  this.usageScopes.get(id)?.owner,
+                  providerKey,
+                  startedAt,
+                  (modelRefOf(session?.model) ?? runModel)?.id,
+                );
               }
             }
           }
@@ -3818,7 +3962,7 @@ export class AgentManager {
         this.refuseClosedStart(record, next.finalize);
         continue;
       }
-      const block = this.providerBlock(next.providerKey, owner);
+      const block = this.providerBlock(next.providerKey, owner, next.modelId);
       // A post-reset continuation whose account was closed again by a usage
       // limit waits for the new reset instead of dispatching or dropping; a
       // transient closure from another run must not hold or drop the task.
@@ -3828,7 +3972,11 @@ export class AgentManager {
       }
       if (next.finalize === undefined && block !== undefined) {
         this.transition(record, "error");
-        record.error = providerUnavailableMessage(next.providerKey.toLowerCase(), block.closure);
+        record.error = providerUnavailableMessage(
+          next.providerKey.toLowerCase(),
+          block.closure,
+          next.modelId,
+        );
         record.completedAt = Date.now();
         this.finishDeferredWorktreeThen(record, () => {
           this.publishTerminal(record);
@@ -5244,10 +5392,11 @@ export class AgentManager {
       if (verdict.kind === "error") return permanent(verdict.message);
     }
     if (mode !== "rearm") {
-      const providerKey = (model?.provider ?? ctx.model?.provider ?? "unknown").toLowerCase();
-      const block = this.providerBlock(providerKey, this.journalSink?.rootSessionId);
+      const target = model ?? ctx.model;
+      const providerKey = (target?.provider ?? "unknown").toLowerCase();
+      const block = this.providerBlock(providerKey, this.journalSink?.rootSessionId, target?.id);
       if (block !== undefined) {
-        return permanent(providerUnavailableMessage(providerKey, block.closure));
+        return permanent(providerUnavailableMessage(providerKey, block.closure, target?.id));
       }
     }
     const steers = [...(snapshot.steers ?? []), ...(snapshot.usageWait?.steers ?? [])];
@@ -5437,6 +5586,7 @@ export class AgentManager {
       kind: classification.kind,
       resetAt,
       status: "waiting_for_reset",
+      ...(classification.scope !== undefined && { scope: classification.scope }),
     };
     const wait: UsageWait = {
       generation: record.resultGeneration ?? 1,

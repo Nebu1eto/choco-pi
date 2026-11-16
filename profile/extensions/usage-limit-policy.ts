@@ -45,6 +45,7 @@ import type {
   UsageLimitPendingEntry,
   UsageLimitResolvedEntry,
 } from "./lib/usage-limit-contract.ts";
+import { scopeCoversModel, scopeNote } from "./lib/usage-limit-contract.ts";
 import { createUsageLimitPolicy } from "./lib/usage-limit.ts";
 import type {
   SyntheticQuotaEvents,
@@ -458,7 +459,12 @@ export function registerUsageLimitController<
     const accountIds = new Set([accountIdFor(session, classification.provider)]);
     if (classification.accountId !== undefined) accountIds.add(classification.accountId);
     for (const accountId of accountIds) {
-      session.policy.closeProvider(classification.provider, accountId, untilMs);
+      session.policy.closeProvider(
+        classification.provider,
+        accountId,
+        untilMs,
+        classification.scope,
+      );
     }
   };
 
@@ -631,10 +637,9 @@ export function registerUsageLimitController<
   const notifyLimit = (ctx: C, classification: UsageLimitClassification, suffix: string): void => {
     notify(
       ctx,
-      `${formatProviderLabel(classification.provider)} ${classification.kind} limit reached; resets ${formatReset(
-        classification.resetAt,
-        deps.now(),
-      )}. ${suffix}`,
+      `${formatProviderLabel(classification.provider)} ${classification.kind} limit reached${scopeNote(
+        classification.scope,
+      )}; resets ${formatReset(classification.resetAt, deps.now())}. ${suffix}`,
       "warning",
     );
   };
@@ -708,8 +713,11 @@ export function registerUsageLimitController<
     const current: ModelRef = ctx.model ?? limited;
     const scoped = ctx.scopedModels.map(({ model }) => `${model.provider}/${model.id}`);
     const rejected = new Set<string>();
-    const isClosed = (provider: string, accountId: string): boolean =>
-      provider === limited.provider || policy.isClosed(provider, accountId);
+    // A model-scoped limit leaves the provider's other models open.
+    const isClosed = (provider: string, accountId: string, modelId?: string): boolean =>
+      (provider === limited.provider &&
+        (modelId === undefined || scopeCoversModel(classification.scope, modelId))) ||
+      policy.isClosed(provider, accountId, undefined, modelId);
     for (;;) {
       const available = ctx.modelRegistry
         .getAvailable()
@@ -746,7 +754,9 @@ export function registerUsageLimitController<
       if (pi.getThinkingLevel() !== thinkingLevel) pi.setThinkingLevel(thinkingLevel);
       state.fallbackSwitches += 1;
       sendContinuation(
-        `${formatProviderLabel(classification.provider)} usage limit reached (resets ${formatReset(
+        `${formatProviderLabel(classification.provider)} usage limit reached${scopeNote(
+          classification.scope,
+        )} (resets ${formatReset(
           classification.resetAt,
           deps.now(),
         )}). Switched to ${key}. Continue the previous task without repeating completed tool calls.`,
@@ -779,7 +789,12 @@ export function registerUsageLimitController<
       state.handledEntryId = turn.entryId;
       resetBudgets();
       // The request began at `timestamp`; one that began after a closure proves the account serves again.
-      policy.reopen(message.provider, accountIdFor(session, message.provider), message.timestamp);
+      policy.reopen(
+        message.provider,
+        accountIdFor(session, message.provider),
+        message.timestamp,
+        message.model,
+      );
       return;
     }
     if (!isInterruptedByLimit(message)) return;

@@ -1099,3 +1099,82 @@ test("a closed provider is re-checked once before its steps are skipped", async 
     Array(2).fill("Provider anthropic unavailable (temporarily rate limited); 2 steps skipped."),
   );
 });
+test("a model-scoped refusal skips only the steps on the refused model", async () => {
+  const keys = new Map([
+    ["a", "anthropic/claude-fable-5-2"],
+    ["b", "anthropic/claude-opus-5-5"],
+    ["c", "anthropic/claude-fable-5-2"],
+  ]);
+  const message = providerUnavailableMessage(
+    "anthropic",
+    {
+      until: Date.parse("2026-05-04T00:00:00Z"),
+      scope: { name: "fable", models: ["claude-fable", "claude-mythos"] },
+    },
+    "claude-fable-5-2",
+  );
+  const runner = Object.assign(new DeferredRunner(), {
+    providerKey: (step: WorkflowStepDefinition) => keys.get(step.id),
+    isProviderAvailable: (key: string) => key !== "anthropic/claude-fable-5-2",
+    unavailableMessage: () => message,
+  });
+  const manager = new WorkflowManager();
+  const started = manager.start(
+    definition([
+      { id: "a", subagent_type: "Explore", prompt: "a", continue_on_error: true },
+      { id: "b", subagent_type: "Explore", prompt: "b", continue_on_error: true },
+      { id: "c", subagent_type: "Explore", prompt: "c", continue_on_error: true },
+    ]),
+    resolveType,
+    runner,
+    1,
+  );
+  await flush();
+  assert.deepEqual(runner.starts, ["b"], "the Opus step still runs");
+  runner.finish("b");
+  const result = await manager.wait(started.workflowId)!;
+  assert.deepEqual(
+    result.steps.map((step) => step.status),
+    ["skipped", "completed", "skipped"],
+  );
+  assert.match(
+    result.steps[0]?.error ?? "",
+    /^Model anthropic\/claude-fable-5-2 unavailable .*; 2 steps skipped\.$/,
+  );
+});
+
+test("a provider-wide refusal on model-level keys skips every step on that provider", async () => {
+  const keys = new Map([
+    ["a", "anthropic/claude-fable-5-2"],
+    ["b", "anthropic/claude-opus-5-5"],
+    ["c", "openai-codex/gpt-6-astra"],
+  ]);
+  const runner = Object.assign(new DeferredRunner(), {
+    providerKey: (step: WorkflowStepDefinition) => keys.get(step.id),
+    isProviderAvailable: (key: string) => !key.startsWith("anthropic/"),
+    unavailableMessage: () => providerUnavailableMessage("anthropic"),
+  });
+  const manager = new WorkflowManager();
+  const started = manager.start(
+    definition([
+      { id: "a", subagent_type: "Explore", prompt: "a", continue_on_error: true },
+      { id: "b", subagent_type: "Explore", prompt: "b", continue_on_error: true },
+      { id: "c", subagent_type: "Explore", prompt: "c", continue_on_error: true },
+    ]),
+    resolveType,
+    runner,
+    1,
+  );
+  await flush();
+  assert.deepEqual(runner.starts, ["c"]);
+  runner.finish("c");
+  const result = await manager.wait(started.workflowId)!;
+  assert.deepEqual(
+    result.steps.map((step) => step.status),
+    ["skipped", "skipped", "completed"],
+  );
+  assert.equal(
+    result.steps[0]?.error,
+    "Provider anthropic unavailable (temporarily rate limited); 2 steps skipped.",
+  );
+});

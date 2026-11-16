@@ -146,6 +146,11 @@ export type WorkflowRunnerContext = {
 };
 
 export type WorkflowStepRunner = {
+  /**
+   * Availability gate key of a step: `<provider>` or `<provider>/<model id>`.
+   * A model-level key lets a model-scoped usage limit hold only the steps on
+   * the models it covers. The other members receive the same key.
+   */
   providerKey?(step: WorkflowStepDefinition): string | undefined;
   isProviderAvailable?(providerKey: string): boolean;
   /**
@@ -166,6 +171,14 @@ export type WorkflowStepRunner = {
 function unavailableProvider(error: string | undefined): string | undefined {
   // Accepts the usage-limit form, which appends the reset time and suggestion.
   return providerKeyFromUnavailableMessage(error);
+}
+
+/**
+ * Whether a refusal for gate key `refused` covers a step with gate key
+ * `stepKey`: the same key, or a provider refusal covering a model-level key.
+ */
+function refusalCovers(refused: string, stepKey: string | undefined): boolean {
+  return stepKey !== undefined && (stepKey === refused || stepKey.startsWith(`${refused}/`));
 }
 
 export type WorkflowTypeResolver = (requested: string) => string | undefined;
@@ -629,15 +642,18 @@ class WorkflowController {
   }
 
   private failProviderUnavailable(providerKey: string): string {
-    const pendingSteps = this.definition.steps.filter(
-      (step) =>
-        this.states.get(step.id)?.status === "pending" &&
-        this.runner.providerKey?.(step) === providerKey,
-    );
-    const count = pendingSteps.length;
     // Usage-limit closures extend the base text with "until <T>; suggested: <model>".
     const message =
       this.runner.unavailableMessage?.(providerKey) ?? providerUnavailableMessage(providerKey);
+    // The refusal names what is closed: the whole provider, or one model under a
+    // model-scoped limit. Every step that refusal covers is skipped together.
+    const refused = unavailableProvider(message) ?? providerKey;
+    const pendingSteps = this.definition.steps.filter(
+      (step) =>
+        this.states.get(step.id)?.status === "pending" &&
+        refusalCovers(refused, this.runner.providerKey?.(step)),
+    );
+    const count = pendingSteps.length;
     const unavailable = message.replace(/\.$/, "");
     const error = `${unavailable}; ${count} step${count === 1 ? "" : "s"} skipped.`;
     for (const step of pendingSteps) {
@@ -648,7 +664,7 @@ class WorkflowController {
     }
     for (const [stepId, active] of this.stepControllers) {
       const step = this.definition.steps.find((candidate) => candidate.id === stepId);
-      if (step !== undefined && this.runner.providerKey?.(step) === providerKey) {
+      if (step !== undefined && refusalCovers(refused, this.runner.providerKey?.(step))) {
         this.providerAborts.set(stepId, error);
         active.abort();
       }

@@ -62,6 +62,11 @@ export type UsageWindow = {
    * snapshots against the refill rate.
    */
   pace?: { health: "over" | "under"; label: string };
+  /**
+   * Provider name of the model group a scoped window limits, such as
+   * `"Fable"`. Absent: the window limits every model on the account.
+   */
+  scope?: string;
 };
 
 export type ProviderUsage = {
@@ -171,6 +176,7 @@ function structuredClaudeWindow(value: RuntimeValue): UsageWindow | undefined {
 
   let label: string;
   let windowSeconds: number;
+  let scope: string | undefined;
   if (kind === "session") {
     label = "5h";
     windowSeconds = 5 * HOUR_SECONDS;
@@ -178,15 +184,18 @@ function structuredClaudeWindow(value: RuntimeValue): UsageWindow | undefined {
     label = "7d";
     windowSeconds = 7 * DAY_SECONDS;
   } else if (kind === "weekly_scoped") {
-    const scope = isRecord(value.scope) ? value.scope : undefined;
-    const model = scope && isRecord(scope.model) ? scope.model : undefined;
-    label = `${stringValue(model?.display_name) ?? "Scoped"} 7d`;
+    const scopeRecord = isRecord(value.scope) ? value.scope : undefined;
+    const model = scopeRecord && isRecord(scopeRecord.model) ? scopeRecord.model : undefined;
+    const name = stringValue(model?.display_name);
+    label = `${name ?? "Scoped"} 7d`;
+    // An unnamed scope still limits only some models; keep it scoped.
+    scope = name ?? stringValue(model?.id) ?? "Scoped";
     windowSeconds = 7 * DAY_SECONDS;
   } else {
     return undefined;
   }
 
-  return {
+  const window: UsageWindow = {
     label,
     percent: clampPercent(percent),
     qualifier: "used",
@@ -194,6 +203,8 @@ function structuredClaudeWindow(value: RuntimeValue): UsageWindow | undefined {
     eventLabel: "resets",
     windowSeconds,
   };
+  if (scope !== undefined) window.scope = scope;
+  return window;
 }
 
 const CLAUDE_RATE_LIMIT_TIERS = recordOf<string, string>()({
@@ -249,27 +260,26 @@ export function normalizeClaudeUsage(payload: RuntimeValue, profile?: RuntimeVal
         return window ? [window] : [];
       })
     : [];
-  const definitions: Array<[string, string, number]> = [
-    ["five_hour", "5h", 5 * HOUR_SECONDS],
-    ["seven_day", "7d", 7 * DAY_SECONDS],
-    ["seven_day_sonnet", "Sonnet 7d", 7 * DAY_SECONDS],
-    ["seven_day_opus", "Opus 7d", 7 * DAY_SECONDS],
-    ["seven_day_fable", "Fable 7d", 7 * DAY_SECONDS],
+  const definitions: Array<[string, string, number, string | undefined]> = [
+    ["five_hour", "5h", 5 * HOUR_SECONDS, undefined],
+    ["seven_day", "7d", 7 * DAY_SECONDS, undefined],
+    ["seven_day_sonnet", "Sonnet 7d", 7 * DAY_SECONDS, "Sonnet"],
+    ["seven_day_opus", "Opus 7d", 7 * DAY_SECONDS, "Opus"],
+    ["seven_day_fable", "Fable 7d", 7 * DAY_SECONDS, "Fable"],
   ];
-  const legacyWindows = definitions.flatMap(([key, label, windowSeconds]) => {
+  const legacyWindows = definitions.flatMap(([key, label, windowSeconds, scope]) => {
     const value = quotaWindow(payload[key]);
-    return value?.utilization === undefined
-      ? []
-      : [
-          {
-            label,
-            percent: clampPercent(value.utilization),
-            qualifier: "used" as const,
-            eventAt: dateValue(value.resets_at),
-            eventLabel: "resets",
-            windowSeconds,
-          },
-        ];
+    if (value?.utilization === undefined) return [];
+    const window: UsageWindow = {
+      label,
+      percent: clampPercent(value.utilization),
+      qualifier: "used",
+      eventAt: dateValue(value.resets_at),
+      eventLabel: "resets",
+      windowSeconds,
+    };
+    if (scope !== undefined) window.scope = scope;
+    return [window];
   });
   const extraUsage = isRecord(payload.extra_usage) ? payload.extra_usage : undefined;
   const extraPercent = extraUsage ? numberValue(extraUsage.utilization) : undefined;

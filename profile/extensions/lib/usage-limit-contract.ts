@@ -6,7 +6,7 @@
  * - `pi-subagents:manager`: choco-pi-subagents writes child-session probes; the root policy reads
  *   them. Every reader validates the host-owned value before using it.
  */
-import { bool, compile, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
+import { arr, bool, compile, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
 import { finiteNum } from "./finite-number.ts";
 import {
   isFunction,
@@ -43,6 +43,56 @@ export function parseOnUsageLimit(value: RuntimeValue): OnUsageLimit | undefined
 export type UsageLimitKind = "quota" | "billing" | "transient";
 export type UsageLimitConfidence = "structured" | "parsed" | "inferred";
 
+/**
+ * Models a usage limit covers when it is narrower than the provider account,
+ * such as Anthropic's Fable weekly limit, which covers the Fable and Mythos
+ * series only. `name` is the lower-case name of the provider's model-scoped
+ * quota window. A model id is covered when it equals a stem in `models` or
+ * starts with that stem followed by `-`. A limit without a scope covers every
+ * model on the provider account.
+ */
+export type UsageLimitScope = {
+  name: string;
+  models: string[];
+  /**
+   * The limit covers exactly the ids in `models`, not their `-` suffixed
+   * descendants: a scoped window of unknown coverage closes only the model
+   * whose request failed.
+   */
+  exact?: boolean;
+};
+
+export const UsageLimitScopeSchema = obj(
+  { name: str(), models: arr(str()), exact: opt(bool()) },
+  { open: true },
+);
+
+/** Whether a limit with `scope` covers `modelId`; a provider-wide limit covers every model. */
+export function scopeCoversModel(scope: UsageLimitScope | undefined, modelId: string): boolean {
+  if (scope === undefined) return true;
+  if (scope.exact === true) return scope.models.includes(modelId);
+  return scope.models.some((stem) => modelId === stem || modelId.startsWith(`${stem}-`));
+}
+
+/** Identity of a scope within one provider account; `""` is the provider-wide limit. */
+export function scopeKey(scope: UsageLimitScope | undefined): string {
+  if (scope === undefined) return "";
+  const kind = scope.exact === true ? "=" : "*";
+  return `${scope.name}\u0001${kind}\u0001${[...scope.models].sort().join("\u0001")}`;
+}
+
+/**
+ * User- and model-facing note on what a scoped limit covers, such as
+ * `" (claude-fable*, claude-mythos* only; other models stay available)"`;
+ * empty for a provider-wide limit.
+ */
+export function scopeNote(scope: UsageLimitScope | undefined): string {
+  if (scope === undefined || scope.models.length === 0) return "";
+  const suffix = scope.exact === true ? "" : "*";
+  const models = scope.models.map((stem) => `${stem}${suffix}`).join(", ");
+  return ` (${models} only; other models stay available)`;
+}
+
 export type UsageLimitClassification = {
   kind: UsageLimitKind;
   provider: string;
@@ -55,6 +105,11 @@ export type UsageLimitClassification = {
    * provider entries only when this is absent or names the policy owner.
    */
   sessionId?: string;
+  /**
+   * Models the limit covers, set by corroboration when live usage data shows
+   * only a model-scoped window blocking `modelId`. Absent: the whole account.
+   */
+  scope?: UsageLimitScope;
 };
 
 export const UsageLimitClassificationSchema = obj(
@@ -66,6 +121,7 @@ export const UsageLimitClassificationSchema = obj(
     resetAt: opt(finiteNum()),
     confidence: oneOf(["structured", "parsed", "inferred"]),
     sessionId: opt(str()),
+    scope: opt(UsageLimitScopeSchema),
   },
   { open: true },
 );
@@ -87,7 +143,8 @@ export type UsageLimitEvidence = "confirmed" | "capacity" | "unavailable";
 export type FallbackCandidateContext = {
   available: readonly { provider: string; id: string }[];
   scoped: readonly string[];
-  isClosed(providerKey: string, accountId: string): boolean;
+  /** `modelId` names the candidate, so a model-scoped closure blocks only the models it covers. */
+  isClosed(providerKey: string, accountId: string, modelId?: string): boolean;
 };
 
 /**
@@ -101,6 +158,21 @@ export type UsageLimitRecheck = {
   until?: number;
   /** Short reason for refusal text, such as the exhausted window names. */
   detail?: string;
+  /** Models the limit still in force covers; absent on a closed answer means the whole account. */
+  scope?: UsageLimitScope;
+  /**
+   * On a closed answer, each closure still in force among those checked: the
+   * provider-wide one (no `scope`) and each scoped one, with its end when
+   * known. A checked closure missing from the list was reopened. Readers that
+   * mirror closures reconcile each one against this list.
+   */
+  inForce?: UsageLimitClosureState[];
+};
+
+/** One closure a re-check found still in force. */
+export type UsageLimitClosureState = {
+  scope?: UsageLimitScope;
+  until?: number;
 };
 
 export type UsageLimitPolicy = {
@@ -118,20 +190,37 @@ export type UsageLimitPolicy = {
     current: { provider: string; id: string },
     context: FallbackCandidateContext,
   ): { provider: string; id: string } | undefined;
-  closeProvider(providerKey: string, accountId: string, untilMs: number): void;
-  isClosed(providerKey: string, accountId: string, now?: number): boolean;
+  /** Closes the account, or only the models `scope` covers when it is given. */
+  closeProvider(
+    providerKey: string,
+    accountId: string,
+    untilMs: number,
+    scope?: UsageLimitScope,
+  ): void;
   /**
-   * Re-checks a closure against live evidence and reopens the owner's own
-   * closure when the limit is gone. `since` is when the caller's closure was
-   * written; evidence older than it proves nothing. Absent from policies that
-   * predate it; readers then keep the stored closure.
+   * Whether a closure blocks the account. Without `modelId` only a
+   * provider-wide closure counts; with it, so does a scoped closure covering it.
    */
-  recheck?(providerKey: string, accountId: string, since?: number): Promise<UsageLimitRecheck>;
+  isClosed(providerKey: string, accountId: string, now?: number, modelId?: string): boolean;
+  /**
+   * Re-checks the closures blocking `modelId` (the provider-wide closure when
+   * it is absent) against live evidence and reopens the owner's own closures
+   * when the limit is gone. `since` is when the caller's closure was written;
+   * evidence older than it proves nothing. Absent from policies that predate
+   * it; readers then keep the stored closure.
+   */
+  recheck?(
+    providerKey: string,
+    accountId: string,
+    since?: number,
+    modelId?: string,
+  ): Promise<UsageLimitRecheck>;
   /**
    * Reopens the closure after a request that started at `at` succeeded; a
-   * success that started before the closure was written changes nothing.
+   * success that started before the closure was written changes nothing. A
+   * success on `modelId` also reopens the scoped closures that cover it.
    */
-  reopen?(providerKey: string, accountId: string, at?: number): void;
+  reopen?(providerKey: string, accountId: string, at?: number, modelId?: string): void;
   /**
    * Account id the owner keys `provider`'s closures under (`"default"` when unknown).
    * Absent from policies that predate it; readers then use `"default"`.
@@ -281,6 +370,8 @@ export type SubagentUsageLimit = {
   resetAt?: number;
   suggestedModel?: string;
   status: "reported" | "waiting_for_reset" | "resumed" | "exhausted";
+  /** Models the limit covers; absent: every model on the provider account. */
+  scope?: UsageLimitScope;
 };
 export const SubagentUsageLimitSchema = obj(
   {
@@ -290,6 +381,7 @@ export const SubagentUsageLimitSchema = obj(
     resetAt: opt(finiteNum()),
     suggestedModel: opt(str()),
     status: oneOf(["reported", "waiting_for_reset", "resumed", "exhausted"]),
+    scope: opt(UsageLimitScopeSchema),
   },
   { open: true },
 );

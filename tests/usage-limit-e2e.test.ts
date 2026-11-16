@@ -33,6 +33,7 @@ import {
   delay,
   E2E_AGENT_TYPE,
   E2E_SPAWN_MODEL,
+  FABLE_MODEL,
   managerRegistry,
   resultText,
   runTool,
@@ -507,6 +508,93 @@ test("real root closure from an Anthropic 429 is re-checked before the next Anth
     assert.equal(e2e.providers.requestsFor(CLAUDE_MODEL).length, 2);
     assert.equal(policy.isClosed("anthropic", account()), false);
   } finally {
+    await e2e.close();
+  }
+});
+test("Fable-scoped limit in a real session: Fable child refused, Anthropic non-Fable child runs", async () => {
+  const e2e = await createUsageLimitE2e({
+    preference: "none",
+    parentModel: CODEX_MODEL,
+    factories: [subagents],
+    // Child sessions read these: the 429 must reach the manager, not a host retry.
+    projectSettings: { retry: { enabled: false } },
+  });
+  const fableReset = Date.now() + 3 * 86_400_000;
+  const policy = createUsageLimitPolicy({
+    owner: e2e.session.sessionId,
+    generation: 1,
+    readPreference: async () => (await readAgentPreferencesAsync(e2e.agentDir)).onUsageLimit,
+    fallbacks: {
+      tiers: {
+        flagship: {
+          primary: ["anthropic/claude-fable-5-2", "openai-codex/e2e-codex"],
+          next: "workhorse",
+        },
+        workhorse: { primary: ["anthropic/e2e-claude"] },
+      },
+      lastResort: [],
+    },
+    // Live usage: only the Fable weekly window is exhausted.
+    usageSnapshot: async (provider) => ({
+      observedAt: Date.now(),
+      windows:
+        provider === "anthropic"
+          ? [
+              { label: "5h", percent: 20, qualifier: "used" },
+              {
+                label: "Fable 7d",
+                percent: 100,
+                qualifier: "used",
+                eventAt: new Date(fableReset),
+                scope: "Fable",
+              },
+            ]
+          : [],
+    }),
+  });
+  const unregister = registerUsageLimitPolicy(policy);
+  const spawn = (model: string, description: string) =>
+    runTool(e2e.session, "Agent", {
+      prompt: "Summarise the repository.",
+      description,
+      subagent_type: E2E_AGENT_TYPE,
+      model,
+      thinking: "medium",
+      model_override_reason: "usage-limit e2e: scoped Fable limit",
+      run_in_background: false,
+    });
+  try {
+    e2e.providers.script(FABLE_MODEL, { kind: "error", message: ANTHROPIC_LIMIT_TEXT });
+    const failed = resultText(await spawn("anthropic/claude-fable-5-2", "fable child"));
+    assert.match(failed, /Agent failed: 429/);
+    assert.match(
+      failed,
+      /Anthropic usage limit \(quota\) \(claude-fable\*, claude-mythos\* only; other models stay available\)/,
+    );
+    const [event] = usageEvents(e2e.usageEvents);
+    assert.ok(event);
+    const record = managerRegistry().getRecord(event.agentId);
+    assert.deepEqual(record?.usageLimit?.scope, {
+      name: "fable",
+      models: ["claude-fable", "claude-mythos"],
+    });
+    assert.equal(record?.usageLimit?.suggestedModel, "openai-codex/e2e-codex");
+
+    // Another Anthropic model is not covered: the spawn reaches the provider.
+    const opus = resultText(await spawn("anthropic/e2e-claude", "non-fable child"));
+    assert.doesNotMatch(opus, /unavailable|Agent failed/);
+    assert.equal(e2e.providers.requestsFor(CLAUDE_MODEL).length, 1);
+
+    // Fable stays refused after the pre-spawn re-check reads the same window.
+    // The tool throws the refusal; the host turns it into a tool error.
+    await assert.rejects(
+      spawn("anthropic/claude-fable-5-2", "fable again"),
+      /^ProviderUnavailableError: Model anthropic\/claude-fable-5-2 unavailable \(temporarily rate limited\)\. .*\(claude-fable\*, claude-mythos\* only; other models stay available\)/,
+    );
+    assert.equal(e2e.providers.requestsFor(FABLE_MODEL).length, 1);
+    assert.deepEqual(e2e.fetchCalls, []);
+  } finally {
+    unregister();
     await e2e.close();
   }
 });

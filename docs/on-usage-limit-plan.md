@@ -190,6 +190,8 @@ Dependencies: 1 and 2 are independent; 3, 4 and 5 depend on 2; 6 last. Units 4 a
 
 Host changes to pi-coding-agent or pi-ai; changing Pi's retry policy; per-model (rather than per-provider) limit tracking beyond what the quota stores expose.
 
+Later change: the model-scoped windows the Anthropic quota store does expose (`weekly_scoped`, such as the Fable weekly limit covering the Fable and Mythos series) are tracked per scope. A closure then blocks only the models it covers; see `packages/choco-pi-subagents/VENDORED.md` ("model-scoped usage limits").
+
 ## 8. Verification during implementation
 
 Trace the settle path end to end with a forced 429 on each provider and inspect both raw branch history and the outgoing request payload after switch. Trace goal error handling against root `agent_settled` ordering. Trace child terminal publication, foreground return, background notifications and teardown. Test restart re-arm, reload, branch navigation, two concurrent root sessions, missing auth, exhausted budgets, and a child hitting a limit while the root is on the same provider.

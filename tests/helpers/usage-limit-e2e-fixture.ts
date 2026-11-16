@@ -58,9 +58,11 @@ function fakeModel(provider: string, id: string): Model<Api> {
 
 export const CODEX_MODEL = fakeModel("openai-codex", "e2e-codex");
 export const CLAUDE_MODEL = fakeModel("anthropic", "e2e-claude");
+/** An Anthropic model the Fable weekly limit covers (the Fable series). */
+export const FABLE_MODEL = fakeModel("anthropic", "claude-fable-5-2");
 /** Registered and authenticated, but excluded from `enabledModels` when scope is on. */
 export const OUTSIDE_MODEL = fakeModel("e2e-outside", "e2e-outside");
-const FAKE_MODELS = [CODEX_MODEL, CLAUDE_MODEL, OUTSIDE_MODEL];
+const FAKE_MODELS = [CODEX_MODEL, CLAUDE_MODEL, FABLE_MODEL, OUTSIDE_MODEL];
 
 export const CODEX_LIMIT_TEXT = "Codex usage limit reached (plus plan). Resets in ~5m.";
 export const ANTHROPIC_LIMIT_TEXT =

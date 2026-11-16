@@ -1253,6 +1253,7 @@ test("recheck keeps a closure an exhausted window still enforces, ending it at t
     open: false,
     until: NOW + 2 * HOUR,
     detail: "live usage shows Opus 7d exhausted",
+    inForce: [{ until: NOW + 2 * HOUR }],
   });
   assert.equal(h.policy.isClosed("anthropic", "acct", NOW + 2 * HOUR - 1), true);
   assert.equal(h.policy.isClosed("anthropic", "acct", NOW + 2 * HOUR), false);
@@ -1322,6 +1323,10 @@ test("a closure written while the reading is in flight survives the recheck", as
   h.advance(MIN);
   h.policy.closeProvider("anthropic", "acct", NOW + 3 * HOUR);
   release();
-  assert.deepEqual(await pending, { open: false, until: NOW + 3 * HOUR });
+  assert.deepEqual(await pending, {
+    open: false,
+    until: NOW + 3 * HOUR,
+    inForce: [{ until: NOW + 3 * HOUR }],
+  });
   assert.equal(h.policy.isClosed("anthropic", "acct"), true);
 });

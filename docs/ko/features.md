@@ -17,6 +17,8 @@
 
   서브 에이전트는 한도에 걸리면 예상 초기화 시각과 범위 안에서 쓸 수 있는 추천 모델을 부모 에이전트에 보고합니다. `auto-resume`일 때는 대기 상태로 있다가 초기화 뒤 다시 실행됩니다. `/goal`이 active나 paused 상태이면 복구는 goal 런타임이 대신 맡습니다.
 
+  공급자의 일부 모델에만 걸리는 한도는 그 모델만 막습니다. Anthropic의 Fable 주간 한도는 Claude Fable과 Claude Mythos 계열에만 적용되므로, 이 한도가 다 차도 Opus, Sonnet, Haiku는 계속 실행됩니다. 실패가 어느 한도에 걸린 것인지는 실시간 사용량 데이터로 판단합니다. Fable 한도에서 `fallback`은 먼저 `openai-codex/gpt-6-astra`를, 다음으로 Anthropic의 Opus를 시도하고, 그래도 안 되면 최후 수단 모델로 넘어갑니다. choco-pi가 알지 못하는 모델 범위 한도는 요청이 실패한 그 모델만 막습니다.
+
 ## 에이전트와 오케스트레이션
 
 - [`profile/agents`](../../profile/agents)에 정의된 전문 역할(`advisor`, `explore`, `general`, `handoff`, `implementer`, `planner`, `reviewer`, `verifier`)은 백그라운드 서브 에이전트로 실행됩니다. 예약 실행도 지원하고, 격리된 Git worktree에서 실행하거나 `workflow_run`으로 의존 관계 순서에 맞춘 workflow로 묶어 실행할 수도 있습니다. 관리는 `/agents`에서 합니다.

@@ -2526,3 +2526,22 @@ Standalone mode is the `choco-pi` launcher's env contract (`CHOCO_PI_STANDALONE=
 ## 2026-11-15 choco-pi patch: `@choco-pi` package name
 
 - `package.json` `name`: `choco-pi-subagents` → `@choco-pi/subagents`; `version`: `0.1.0` → `1.0.0-alpha.1`, the root package's version. The directory stays `packages/choco-pi-subagents`, so path-based settings entries, imports, and the path-derived extension name are unchanged.
+
+## 2026-11-16 choco-pi patch: model-scoped usage limits
+
+Anthropic's Fable weekly limit covers only the Claude Fable and Claude Mythos series, but closures were keyed by provider account. A Fable limit therefore refused Opus, Sonnet and Haiku spawns, and an Opus 429 was "confirmed" by an exhausted Fable window. The root policy now derives a limit's `scope` (`{ name, models }`, model-id stems) from live usage windows. This package copies that contract and keys closures by scope.
+
+- `src/usage-limit-seam.ts`: `UsageLimitScope`, `scopeCoversModel`, `scopeKey`, `scopeNote`, `usageLimitScopeOf`. A scope with `exact: true` covers only the listed model ids; the root sets it for a scoped window of unknown coverage, which closes only the failed model. The classification and recheck schemas accept an optional `scope`, and `SubagentUsageLimit` carries it. `UsageLimitRecheck.inForce` (`UsageLimitClosureState[]`) lists each checked closure still in force, with its end. Policy methods take optional trailing arguments: `closeProvider(..., scope)`, and `isClosed(..., now, modelId)`, `recheck(..., since, modelId)` and `reopen(..., at, modelId)`. A wrapper called without them passes the old argument list. `FallbackCandidateContext.isClosed` gets the candidate's model id. `describeUsageLimit` names what a scoped limit covers.
+- `src/provider-health.ts`: `UsageLimitClosureKey.scope`, and each scope is a separate closure. `usageLimitClosuresFor` returns the provider-wide closure plus the scoped closures covering a model id, and `blockingUsageLimitClosure` picks the one to report. `providerUnavailableMessage(provider, closure, modelId)` reports a scoped refusal as `Model <provider>/<id> unavailable (temporarily rate limited). Usage limit until <ISO> (<stems>* only; other models stay available)...`, and `providerKeyFromUnavailableMessage` reads both forms.
+- `src/agent-manager.ts`: these paths take the model id and pass it on:
+  - `providerBlock`, `isProviderAvailable`, `providerUnavailableMessage`, `refreshProviderBlock`, `reopenAfterSuccess`
+  - the spawn, start, resume and revival gates
+  - `QueueEntry.modelId`, used by `drainQueue`
+  - `reparkQueuedWake`
+
+  `evaluateUsageLimit` writes the corroborated scope into the policy and local closures and into `usageLimit.scope`. `recheckClosure` checks every closure that blocks the model and reconciles each one with the recheck answer's `inForce` list. A closure still in force keeps its own end. A closure the policy reopened is dropped. A closure only the policy holds is recorded locally. If a policy predates `inForce`, its single `scope` decides, and a provider-wide answer leaves scoped closures untouched. (The root policy's `recheck` adds a provider-wide closure when an account-wide window is exhausted and keeps the scoped one for its own window.) `resumeAfterReset` clears the closures that blocked the parked model.
+
+- `src/revival-journal.ts`: the journaled classification keeps `scope` (additive); a wait journaled without one stays provider-wide.
+- `src/workflow.ts`: a step's gate key may be `<provider>/<model id>`. A refusal skips the steps it covers (`refusalCovers`), and a provider refusal still covers every model-level key on that provider. `src/index.ts` builds the model-level keys (`splitGateKey`), re-checks before a spawn with the model id, and names the scope in the parked-child nudge.
+- `closuresRewritten` also treats a closure removed during a re-check (a success reopened it) as newer evidence, so the re-check's older answer cannot recreate it.
+- Tests: new `tests/usage-limit-scope.test.ts`, and two model-level gate cases in `tests/workflow.test.ts`.
