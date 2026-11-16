@@ -342,7 +342,32 @@ test("a widened Fable closure keeps Fable closed after the account-wide window r
   assert.equal(policy.isClosed("anthropic", "acct", clock, "claude-fable-5-2"), true);
   assert.equal(policy.isClosed("anthropic", "acct", clock, "claude-opus-5-5"), false);
 });
-
+test("without live usage data a limit closes only the failed model, never the account", async () => {
+  const policy = createUsageLimitPolicy({
+    owner: "no-usage-data",
+    generation: 1,
+    readPreference: async () => "none",
+    fallbacks: { tiers: {}, lastResort: [] },
+    now: () => NOW,
+    usageSnapshot: async () => undefined,
+  });
+  const result = await policy.corroborate(quota("claude-fable-5-2"));
+  assert.equal(result.evidence, "unavailable");
+  assert.deepEqual(result.classification.scope, {
+    name: "unconfirmed",
+    models: ["claude-fable-5-2"],
+    exact: true,
+  });
+  policy.closeProvider("anthropic", "acct", NOW + HOUR, result.classification.scope);
+  assert.equal(policy.isClosed("anthropic", "acct", NOW, "claude-fable-5-2"), true);
+  for (const modelId of ["claude-opus-5-5", "claude-sonnet-5-5", "claude-mythos-5-2"]) {
+    assert.equal(policy.isClosed("anthropic", "acct", NOW, modelId), false, modelId);
+  }
+  assert.equal(policy.isClosed("anthropic", "acct"), false);
+  // Still no data on the next gate: the failed model is tried again.
+  const recheck = await policy.recheck("anthropic", "acct", undefined, "claude-fable-5-2");
+  assert.equal(recheck.open, true);
+});
 test("a success during an in-flight re-check is not undone by the older reading", async () => {
   let clock = 1000;
   let release: (snapshot: ProviderUsageSnapshot) => void = () => undefined;

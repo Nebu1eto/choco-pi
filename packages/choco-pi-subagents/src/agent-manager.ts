@@ -53,6 +53,7 @@ import {
   closeUntil,
   confirmUsageLimitClosure,
   isAvailable,
+  transientBlockLevel,
   ProviderUnavailableError,
   providerUnavailableMessage,
   recordFailure,
@@ -117,6 +118,7 @@ import {
   accountIdWithPolicy,
   classifyWithPolicy,
   closeProviderWithPolicy,
+  closureScopeFor,
   corroborateWithPolicy,
   describeUsageLimit,
   isClosedWithPolicy,
@@ -1118,11 +1120,8 @@ export class AgentManager {
   /** Refusal text for `modelId` on `providerKey` under `owner`, with any usage-limit details. */
   providerUnavailableMessage(providerKey: string, owner?: string, modelId?: string): string {
     const key = providerKey.toLowerCase();
-    return providerUnavailableMessage(
-      key,
-      this.providerBlock(key, owner, modelId)?.closure,
-      modelId,
-    );
+    const block = this.providerBlock(key, owner, modelId);
+    return providerUnavailableMessage(key, block?.closure, modelId, block?.modelOnly);
   }
 
   private unavailableError(
@@ -1131,11 +1130,8 @@ export class AgentManager {
     modelId: string | undefined,
   ): Error {
     const key = providerKey.toLowerCase();
-    return new ProviderUnavailableError(
-      key,
-      this.providerBlock(key, owner, modelId)?.closure,
-      modelId,
-    );
+    const block = this.providerBlock(key, owner, modelId);
+    return new ProviderUnavailableError(key, block?.closure, modelId, block?.modelOnly);
   }
 
   /**
@@ -1333,31 +1329,44 @@ export class AgentManager {
    * A model-scoped closure blocks only the models it covers; without
    * `modelId` only provider-wide closures count.
    * `usage` is true when a usage-limit closure (not a transient one) blocks.
+   * `modelOnly` is true when only `modelId` is closed and the provider's other
+   * models are open; refusal text then names the model, so a workflow skips
+   * only that model's steps.
    */
   private providerBlock(
     providerKey: string,
     owner: string | undefined,
     modelId?: string,
-  ): { closure?: UsageLimitClosure; usage: boolean } | undefined {
+  ): { closure?: UsageLimitClosure; usage: boolean; modelOnly: boolean } | undefined {
     const key = providerKey.toLowerCase();
     if (owner !== undefined) {
       const policy = readUsageLimitPolicy(owner);
       const accountId = this.accountFor(owner, key, policy);
       const closure = blockingUsageLimitClosure({ owner, providerKey: key, accountId }, modelId);
+      const policyWide = policy !== undefined && isClosedWithPolicy(policy, key, accountId);
       // A provider-wide policy closure must not be reported as a scoped one.
-      if (
-        policy !== undefined &&
-        closure?.scope !== undefined &&
-        isClosedWithPolicy(policy, key, accountId)
-      ) {
-        return { usage: true };
+      if (policyWide && closure?.scope !== undefined) {
+        return { usage: true, modelOnly: false };
       }
       if (policy !== undefined && isClosedWithPolicy(policy, key, accountId, modelId)) {
-        return { closure, usage: true };
+        // Without a provider-wide closure on either side, only this model is closed,
+        // even when the policy holds the only copy of the closure.
+        const modelOnly =
+          modelId !== undefined &&
+          !policyWide &&
+          (closure === undefined || closure.scope !== undefined);
+        return { closure, usage: true, modelOnly };
       }
-      if (closure !== undefined) return { closure, usage: true };
+      if (closure !== undefined) {
+        return {
+          closure,
+          usage: true,
+          modelOnly: modelId !== undefined && closure.scope !== undefined,
+        };
+      }
     }
-    return isAvailable(key) ? undefined : { usage: false };
+    const level = transientBlockLevel(key, modelId);
+    return level === undefined ? undefined : { usage: false, modelOnly: level === "model" };
   }
 
   /** Observe usage-limit transitions (reported, parked, resumed, exhausted). */
@@ -1963,8 +1972,13 @@ export class AgentManager {
     // The child's session stays attached whatever the policy answered.
     const corroborated = withSessionId(corroboration?.classification ?? initial, sessionId);
     // Billing stays billing whatever corroboration answered: reported, never parked.
-    const classification: UsageLimitClassification =
+    const billed: UsageLimitClassification =
       initial.kind === "billing" ? { ...corroborated, kind: "billing" } : corroborated;
+    // A model-scoped limit (corroboration set `scope`) closes only the models it
+    // covers, and a limit nothing confirmed (no usage data) only the failed model.
+    const limitScope = closureScopeFor(billed, verdict === "confirmed");
+    const classification: UsageLimitClassification =
+      limitScope === undefined ? billed : { ...billed, scope: limitScope };
 
     const limitedAccount = classification.accountId;
     if (limitedAccount !== undefined) {
@@ -1984,8 +1998,6 @@ export class AgentManager {
         : undefined;
     const requestedUntil =
       resetAt !== undefined && resetAt > now ? resetAt : now + USAGE_LIMIT_DEFAULT_CLOSE_MS;
-    // A model-scoped limit (corroboration set `scope`) closes only the models it covers.
-    const limitScope = classification.scope;
     for (const account of accountIds) {
       closeProviderWithPolicy(
         policy,
@@ -2051,7 +2063,7 @@ export class AgentManager {
           isClosedWithPolicy(policy, key, accountId, modelId) ||
           blockingUsageLimitClosure({ owner, providerKey: key, accountId }, modelId) !==
             undefined ||
-          !isAvailable(key)
+          !isAvailable(key, undefined, modelId)
         );
       },
     });
@@ -2336,7 +2348,7 @@ export class AgentManager {
     wait.pollUntil = undefined;
     if (resetAt !== undefined) wait.classification = { ...wait.classification, resetAt };
     this.transition(record, "waiting_for_reset");
-    record.error = providerUnavailableMessage(key, block?.closure, modelId);
+    record.error = providerUnavailableMessage(key, block?.closure, modelId, block?.modelOnly);
     record.usageLimit =
       record.usageLimit === undefined
         ? undefined
@@ -2746,7 +2758,9 @@ export class AgentManager {
     const targetKey = model.provider.toLowerCase();
     const block = this.providerBlock(targetKey, scope.owner, model.id);
     if (block !== undefined) {
-      throw new ResumeModelError(providerUnavailableMessage(targetKey, block.closure, model.id));
+      throw new ResumeModelError(
+        providerUnavailableMessage(targetKey, block.closure, model.id, block.modelOnly),
+      );
     }
     return model;
   }
@@ -2768,7 +2782,9 @@ export class AgentManager {
     const modelId = session.model?.id;
     const block = this.providerBlock(key, this.usageScopes.get(id)?.owner, modelId);
     if (block !== undefined) {
-      throw new ResumeModelError(providerUnavailableMessage(key, block.closure, modelId));
+      throw new ResumeModelError(
+        providerUnavailableMessage(key, block.closure, modelId, block.modelOnly),
+      );
     }
   }
 
@@ -3662,9 +3678,16 @@ export class AgentManager {
             // A usage-limit decision already applied its own closure via closeUntil.
             if (failure !== undefined && usageDecision === undefined) {
               const kind = classifyTerminalFailure(failure);
-              if (kind) recordFailure(providerKey, kind, retryAfterMsFromFailure(failure));
+              if (kind) {
+                recordFailure(
+                  providerKey,
+                  kind,
+                  retryAfterMsFromFailure(failure),
+                  (modelRefOf(session?.model) ?? runModel)?.id,
+                );
+              }
             } else if (failure === undefined && !aborted) {
-              recordSuccess(providerKey);
+              recordSuccess(providerKey, (modelRefOf(session?.model) ?? runModel)?.id);
               const startedAt = lastSuccessfulRequestStart(session);
               if (startedAt !== undefined) {
                 this.reopenAfterSuccess(
@@ -3799,7 +3822,8 @@ export class AgentManager {
             runBudget.forcedStatus === undefined
           ) {
             const kind = classifyTerminalFailure(error);
-            if (kind) recordFailure(providerKey, kind, retryAfterMsFromFailure(error));
+            if (kind)
+              recordFailure(providerKey, kind, retryAfterMsFromFailure(error), runModel?.id);
           }
           this.publishTerminal(record);
 
@@ -3976,6 +4000,7 @@ export class AgentManager {
           next.providerKey.toLowerCase(),
           block.closure,
           next.modelId,
+          block.modelOnly,
         );
         record.completedAt = Date.now();
         this.finishDeferredWorktreeThen(record, () => {
@@ -5396,7 +5421,9 @@ export class AgentManager {
       const providerKey = (target?.provider ?? "unknown").toLowerCase();
       const block = this.providerBlock(providerKey, this.journalSink?.rootSessionId, target?.id);
       if (block !== undefined) {
-        return permanent(providerUnavailableMessage(providerKey, block.closure, target?.id));
+        return permanent(
+          providerUnavailableMessage(providerKey, block.closure, target?.id, block.modelOnly),
+        );
       }
     }
     const steers = [...(snapshot.steers ?? []), ...(snapshot.usageWait?.steers ?? [])];

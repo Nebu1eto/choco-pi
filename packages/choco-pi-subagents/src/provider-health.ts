@@ -69,13 +69,31 @@ export function retryAfterMsFromFailure(failure: TerminalFailureInput): number |
   return Number.isFinite(milliseconds) ? milliseconds : undefined;
 }
 
-/** Transient (process-global, provider-keyed) availability. */
-export function isAvailable(providerKey: string, now = Date.now()): boolean {
-  const health = registry.get(providerKey);
-  if (health?.closedUntil === undefined) return true;
-  if (now < health.closedUntil) return false;
+/**
+ * Transient registry key: one entry per model. A terminal capacity failure is
+ * evidence about the model that failed only; `""` holds a failure whose model
+ * is unknown, which blocks the whole provider.
+ */
+function healthKey(providerKey: string, modelId: string | undefined): string {
+  return `${providerKey}\u0000${modelId ?? ""}`;
+}
+
+function closedNow(key: string, now: number): boolean {
+  const health = registry.get(key);
+  if (health?.closedUntil === undefined) return false;
+  if (now < health.closedUntil) return true;
   health.closedUntil = undefined;
-  return true;
+  return false;
+}
+
+/**
+ * Transient (process-global) availability of `modelId` on `providerKey`: open
+ * unless that model, or the provider through a failure of unknown model,
+ * recently failed. Without `modelId` only the provider-wide entry counts.
+ */
+export function isAvailable(providerKey: string, now = Date.now(), modelId?: string): boolean {
+  if (closedNow(healthKey(providerKey, undefined), now)) return false;
+  return modelId === undefined || !closedNow(healthKey(providerKey, modelId), now);
 }
 
 /** Active usage-limit closure under exactly `key` (account and scope), if any. */
@@ -220,26 +238,56 @@ export function clearUsageLimitClosure(key: UsageLimitClosureKey): void {
   usageClosures.delete(closureKey(key));
 }
 
+/**
+ * Whether a transient block on `modelId` is the model's own (`"model"`) or
+ * the provider-wide entry (`"provider"`); undefined when it is open.
+ */
+export function transientBlockLevel(
+  providerKey: string,
+  modelId: string | undefined,
+  now = Date.now(),
+): "provider" | "model" | undefined {
+  if (closedNow(healthKey(providerKey, undefined), now)) return "provider";
+  if (modelId !== undefined && closedNow(healthKey(providerKey, modelId), now)) return "model";
+  return undefined;
+}
+
+/**
+ * A terminal capacity failure on `modelId` closes that model only; the
+ * provider's other models stay open until they fail themselves.
+ */
 export function recordFailure(
   providerKey: string,
   _kind: TerminalProviderFailure,
   retryAfterMs?: number,
+  modelId?: string,
 ): void {
-  const health = registry.get(providerKey) ?? { consecutiveTerminal: 0 };
+  const key = healthKey(providerKey, modelId);
+  const health = registry.get(key) ?? { consecutiveTerminal: 0 };
   health.consecutiveTerminal++;
   const exponentialMs = MIN_CLOSED_MS * 2 ** Math.min(health.consecutiveTerminal - 1, 3);
   const requestedMs = Math.max(MIN_CLOSED_MS, retryAfterMs ?? 0, exponentialMs);
   health.closedUntil = Date.now() + Math.min(MAX_CLOSED_MS, requestedMs);
-  registry.set(providerKey, health);
+  registry.set(key, health);
 }
 
-export function recordSuccess(providerKey: string): void {
-  registry.delete(providerKey);
+/**
+ * A success on `modelId` resets that model and the provider-wide entry; with
+ * no `modelId` every entry of the provider is reset.
+ */
+export function recordSuccess(providerKey: string, modelId?: string): void {
+  if (modelId !== undefined) {
+    registry.delete(healthKey(providerKey, modelId));
+    registry.delete(healthKey(providerKey, undefined));
+    return;
+  }
+  const prefix = `${providerKey}\u0000`;
+  for (const key of registry.keys()) if (key.startsWith(prefix)) registry.delete(key);
 }
 
 /** Test and reset hook: drop the transient state and every owner's usage-limit closure for a provider. */
 export function resetProviderHealth(providerKey: string): void {
-  registry.delete(providerKey);
+  recordSuccess(providerKey);
   for (const [id, closure] of usageClosures) {
     if (closure.providerKey === providerKey) usageClosures.delete(id);
   }
@@ -257,16 +305,24 @@ export function providerUnavailableMessage(
   providerKey: string,
   closure?: UsageLimitClosure,
   modelId?: string,
+  modelOnly?: boolean,
 ): string {
   const scoped = closure?.scope !== undefined && modelId !== undefined;
-  const base = scoped
+  // The caller knows whether only the model is closed (a policy closure with
+  // no local copy carries no scope); otherwise a scoped closure or a transient
+  // block on the model alone refuses the model, not the provider.
+  const modelLevel =
+    modelId !== undefined &&
+    (modelOnly ??
+      (scoped || (closure === undefined && transientBlockLevel(providerKey, modelId) === "model")));
+  const base = modelLevel
     ? `Model ${providerKey}/${modelId} ${UNAVAILABLE_PREFIX}`
     : `Provider ${providerKey} ${UNAVAILABLE_PREFIX}`;
   if (closure === undefined) return base;
   const suggestion =
     closure.suggestedModel === undefined ? "" : `; suggested: ${closure.suggestedModel}`;
   const detail = closure.detail === undefined ? "" : `; ${closure.detail}`;
-  const covers = scoped ? scopeNote(closure.scope) : "";
+  const covers = modelLevel ? scopeNote(closure.scope) : "";
   return `${base} Usage limit until ${new Date(closure.until).toISOString()}${covers}${suggestion}${detail}.`;
 }
 
@@ -284,8 +340,13 @@ export function providerKeyFromUnavailableMessage(message: string | undefined): 
 export class ProviderUnavailableError extends Error {
   readonly providerKey: string;
 
-  constructor(providerKey: string, closure?: UsageLimitClosure, modelId?: string) {
-    super(providerUnavailableMessage(providerKey, closure, modelId));
+  constructor(
+    providerKey: string,
+    closure?: UsageLimitClosure,
+    modelId?: string,
+    modelOnly?: boolean,
+  ) {
+    super(providerUnavailableMessage(providerKey, closure, modelId, modelOnly));
     this.name = "ProviderUnavailableError";
     this.providerKey = providerKey;
   }

@@ -63,7 +63,7 @@ test("rate-limit classification requires a standalone 429", () => {
   assert.equal(classifyTerminalFailure("rate_limit_error"), "rate_limit");
 });
 
-test("terminal rate_limit_error closes the provider gate for queued children", async (t) => {
+test("terminal rate_limit_error closes the failed model's gate for queued children", async (t) => {
   let now = 1_000;
   t.mock.method(Date, "now", () => now);
   const pending: ((result: RunResult) => void)[] = [];
@@ -95,16 +95,28 @@ test("terminal rate_limit_error closes the provider gate for queued children", a
     assert.equal(invocations, 1, "closed gate starts no queued provider calls");
     for (const id of ids.slice(1)) {
       assert.equal(manager.getRecord(id)?.status, "error");
-      assert.match(manager.getRecord(id)?.error ?? "", /Provider .* unavailable/);
+      assert.match(manager.getRecord(id)?.error ?? "", /^Model .*\/.*-model unavailable/);
     }
-    assert.equal(manager.isProviderAvailable(provider), false);
+    const failedModel = `${provider}-model`;
+    assert.equal(manager.isProviderAvailable(provider, undefined, failedModel), false);
+    // A capacity failure is evidence about the failed model only.
+    assert.equal(manager.isProviderAvailable(provider), true);
+    assert.equal(manager.isProviderAvailable(provider, undefined, "another-model"), true);
 
     now += 45_001;
-    assert.equal(manager.isProviderAvailable(provider), true, "Retry-After reopens the gate");
+    assert.equal(
+      manager.isProviderAvailable(provider, undefined, failedModel),
+      true,
+      "Retry-After reopens the gate",
+    );
     const recovered = manager.spawn(pi, context(provider), "implementer", "recovered", background);
     pending[1]({ responseText: "ok", session, aborted: false, steered: false });
     await manager.getRecord(recovered)?.promise;
-    assert.equal(manager.isProviderAvailable(provider), true, "success resets provider health");
+    assert.equal(
+      manager.isProviderAvailable(provider, undefined, failedModel),
+      true,
+      "success resets provider health",
+    );
   } finally {
     manager.dispose();
     recordSuccess(provider);

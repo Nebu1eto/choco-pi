@@ -24,7 +24,9 @@ import {
   createUsageLimitEnv,
   flush,
   harness,
+  installPolicy,
   installPolicyObject,
+  policyState,
 } from "./usage-limit-fixture.ts";
 
 const DAY = 86_400_000;
@@ -234,6 +236,138 @@ test("a re-check drops a recovered Fable closure but keeps an unknown-scope one 
       manager.providerUnavailableMessage("anthropic", env.owner, "claude-fable-5-2"),
       /\(claude-fable-5-2 only; other models stay available\)/,
     );
+  } finally {
+    manager.dispose();
+    installed.remove();
+  }
+});
+test("without live usage data, a Fable 429 blocks only Fable; Opus keeps spawning", async (t) => {
+  const env = await createUsageLimitEnv();
+  t.after(() => {
+    env.dispose();
+    cleanupProviders();
+  });
+  const found = env.base.modelRegistry.find("anthropic", "claude-fable-5-2");
+  if (found === undefined) throw new Error("Built-in model anthropic/claude-fable-5-2 is missing.");
+  const fable: Model<Api> = found;
+  const fableSession = await env.childSession(fable);
+  const policy = createUsageLimitPolicy({
+    owner: env.owner,
+    generation: 1,
+    readPreference: async () => "auto-resume",
+    fallbacks: { tiers: {}, lastResort: [] },
+    // The usage endpoint cannot be read.
+    usageSnapshot: async () => undefined,
+  });
+  const installed = installPolicyObject(policy, env.owner);
+  const { manager, runs } = harness();
+  try {
+    const id = manager.spawn(env.pi, env.context(), "implementer", "on fable", {
+      ...background,
+      model: fable,
+    });
+    const promise = manager.getRecord(id)?.promise;
+    runs[0].resolve({
+      responseText: "",
+      session: fableSession,
+      aborted: false,
+      steered: false,
+      failure: ANTHROPIC_429,
+    });
+    await promise;
+    await flush();
+    assert.equal(manager.getRecord(id)?.status, "error");
+
+    for (const modelId of ["claude-opus-4-5", "claude-sonnet-4-5", "claude-mythos-5-2"]) {
+      assert.equal(manager.isProviderAvailable("anthropic", env.owner, modelId), true, modelId);
+    }
+    assert.equal(manager.isProviderAvailable("anthropic", env.owner), true);
+    await manager.refreshProviderBlock("anthropic", env.owner, "claude-opus-4-5");
+    manager.spawn(env.pi, env.context(), "implementer", "on opus", background);
+    assert.equal(runs.length, 2, "Opus reaches the provider");
+
+    // Fable itself waits out its own failure.
+    assert.throws(
+      () =>
+        manager.spawn(env.pi, env.context(), "implementer", "fable again", {
+          ...background,
+          model: fable,
+        }),
+      /^ProviderUnavailableError: Model anthropic\/claude-fable-5-2 unavailable \(temporarily rate limited\)\.$/,
+    );
+  } finally {
+    manager.dispose();
+    installed.remove();
+  }
+});
+
+test("a policy whose corroboration fails closes only the failed model", async (t) => {
+  const env = await createUsageLimitEnv();
+  t.after(() => {
+    env.dispose();
+    cleanupProviders();
+  });
+  const state = policyState({
+    classification: { kind: "quota", confidence: "parsed", resetAt: Date.now() + DAY },
+    corroborate: () => {
+      throw new Error("usage endpoint unreachable");
+    },
+  });
+  const installed = installPolicy(state, env.owner);
+  const { manager, runs } = harness();
+  try {
+    const id = manager.spawn(env.pi, env.context(), "implementer", "on opus", background);
+    const promise = manager.getRecord(id)?.promise;
+    runs[0].resolve({
+      responseText: "",
+      session: await env.childSession(env.models.opus),
+      aborted: false,
+      steered: false,
+      failure: "usage limit reached",
+    });
+    await promise;
+    const record = manager.getRecord(id);
+    assert.equal(record?.usageLimit?.status, "reported");
+    assert.deepEqual(record?.usageLimit?.scope, {
+      name: "unconfirmed",
+      models: ["claude-opus-4-5"],
+      exact: true,
+    });
+    assert.equal(manager.isProviderAvailable("anthropic", env.owner, "claude-opus-4-5"), false);
+    assert.equal(manager.isProviderAvailable("anthropic", env.owner, "claude-sonnet-4-5"), true);
+    assert.equal(manager.isProviderAvailable("anthropic", env.owner), true);
+  } finally {
+    manager.dispose();
+    installed.remove();
+  }
+});
+test("a policy-only exact closure refuses the model, not the provider, so workflows skip only it", async (t) => {
+  const env = await createUsageLimitEnv();
+  t.after(() => {
+    env.dispose();
+    cleanupProviders();
+  });
+  const policy = createUsageLimitPolicy({
+    owner: env.owner,
+    generation: 1,
+    readPreference: async () => "none",
+    fallbacks: { tiers: {}, lastResort: [] },
+    usageSnapshot: async () => undefined,
+  });
+  // The root wrote the closure (no usage data); the manager holds no copy.
+  policy.closeProvider("anthropic", "default", Date.now() + DAY, {
+    name: "unconfirmed",
+    models: ["claude-fable-5-2"],
+    exact: true,
+  });
+  const installed = installPolicyObject(policy, env.owner);
+  const { manager } = harness();
+  try {
+    assert.equal(manager.isProviderAvailable("anthropic", env.owner, "claude-fable-5-2"), false);
+    assert.equal(manager.isProviderAvailable("anthropic", env.owner, "claude-opus-4-5"), true);
+    const message = manager.providerUnavailableMessage("anthropic", env.owner, "claude-fable-5-2");
+    assert.match(message, /^Model anthropic\/claude-fable-5-2 unavailable /);
+    assert.equal(providerKeyFromUnavailableMessage(message), "anthropic/claude-fable-5-2");
   } finally {
     manager.dispose();
     installed.remove();

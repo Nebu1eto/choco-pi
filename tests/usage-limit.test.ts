@@ -963,7 +963,15 @@ test("policy corroborate reads the owner's Codex entry only for the owner's fail
   const foreign = quota("openai-codex", { confidence: "parsed", sessionId: "child-1" });
   const result = await policy.corroborate(foreign);
   assert.equal(entryReads, 0, "a child's failure never reads the root branch entry");
-  assert.deepEqual(result, { ready: false, classification: foreign, evidence: "unavailable" });
+  // Nothing confirms the child's limit, so it covers only the model that failed.
+  assert.deepEqual(result, {
+    ready: false,
+    classification: {
+      ...foreign,
+      scope: { name: "unconfirmed", models: [foreign.modelId], exact: true },
+    },
+    evidence: "unavailable",
+  });
 
   const own = await policy.corroborate(quota("openai-codex", { sessionId: "root" }));
   assert.equal(entryReads, 1);

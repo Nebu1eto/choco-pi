@@ -20,7 +20,12 @@ import type {
 } from "../../../packages/choco-pi-provider-synthetic/src/types/quotas.ts";
 import { providerUsageSnapshot } from "../provider-usage.ts";
 import type { ProviderUsageSnapshot } from "../provider-usage.ts";
-import { DEFAULT_ON_USAGE_LIMIT, scopeCoversModel, scopeKey } from "./usage-limit-contract.ts";
+import {
+  closureScopeFor,
+  DEFAULT_ON_USAGE_LIMIT,
+  scopeCoversModel,
+  scopeKey,
+} from "./usage-limit-contract.ts";
 import type {
   CodexUsageLimitEntry,
   FallbackCandidateContext,
@@ -1112,7 +1117,13 @@ export function createUsageLimitPolicy(options: UsageLimitPolicyOptions): UsageL
         classification,
       );
       await fallbacksLoaded;
-      return corroboration;
+      // Unconfirmed: the limit covers only the failed model (`closureScopeFor`).
+      const scope = closureScopeFor(
+        corroboration.classification,
+        corroboration.evidence === "confirmed",
+      );
+      if (scope === corroboration.classification.scope) return corroboration;
+      return { ...corroboration, classification: withScope(corroboration.classification, scope) };
     },
     pickFallback(current, context) {
       return fallbacks ? pickFallback(fallbacks, current, context, resolveAccountId) : undefined;
@@ -1186,10 +1197,17 @@ export function createUsageLimitPolicy(options: UsageLimitPolicyOptions): UsageL
           reopenChecked(key, entry);
           continue;
         }
-        const result = recheckReading(reading, closedAt, current, {
-          kind: "closure",
-          scope: entry.scope,
-        });
+        // A closure on exact models (an unconfirmed or unknown-scope limit) is
+        // judged by the windows that can block those models.
+        const exactModel = entry.scope?.exact === true ? entry.scope.models[0] : undefined;
+        const result = recheckReading(
+          reading,
+          closedAt,
+          current,
+          exactModel === undefined
+            ? { kind: "closure", scope: entry.scope }
+            : { kind: "model", modelId: exactModel },
+        );
         if (result.open) {
           openDetail ??= result.detail;
           reopenChecked(key, entry);

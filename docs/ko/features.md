@@ -17,7 +17,7 @@
 
   서브 에이전트는 한도에 걸리면 예상 초기화 시각과 범위 안에서 쓸 수 있는 추천 모델을 부모 에이전트에 보고합니다. `auto-resume`일 때는 대기 상태로 있다가 초기화 뒤 다시 실행됩니다. `/goal`이 active나 paused 상태이면 복구는 goal 런타임이 대신 맡습니다.
 
-  공급자의 일부 모델에만 걸리는 한도는 그 모델만 막습니다. Anthropic의 Fable 주간 한도는 Claude Fable과 Claude Mythos 계열에만 적용되므로, 이 한도가 다 차도 Opus, Sonnet, Haiku는 계속 실행됩니다. 실패가 어느 한도에 걸린 것인지는 실시간 사용량 데이터로 판단합니다. Fable 한도에서 `fallback`은 먼저 `openai-codex/gpt-6-astra`를, 다음으로 Anthropic의 Opus를 시도하고, 그래도 안 되면 최후 수단 모델로 넘어갑니다. choco-pi가 알지 못하는 모델 범위 한도는 요청이 실패한 그 모델만 막습니다.
+  공급자의 일부 모델에만 걸리는 한도는 그 모델만 막습니다. Anthropic의 Fable 주간 한도는 Claude Fable과 Claude Mythos 계열에만 적용되므로, 이 한도가 다 차도 Opus, Sonnet, Haiku는 계속 실행됩니다. 실패가 어느 한도에 걸린 것인지는 실시간 사용량 데이터로 판단합니다. Fable 한도에서 `fallback`은 먼저 `openai-codex/gpt-6-astra`를, 다음으로 Anthropic의 Opus를 시도하고, 그래도 안 되면 최후 수단 모델로 넘어갑니다. choco-pi가 알지 못하는 모델 범위 한도는 요청이 실패한 그 모델만 막습니다. 사용량 엔드포인트를 읽지 못하는 경우처럼 실시간 사용량 데이터로 계정 전체 한도를 확인할 수 없을 때도 같습니다. 실패한 모델만 막히고, 같은 공급자의 다른 모델은 직접 실패하기 전까지 계속 쓸 수 있습니다. 사용량 한도가 아닌 rate limit 실패도 실패한 모델만 잠시 멈춥니다.
 
 ## 에이전트와 오케스트레이션
 

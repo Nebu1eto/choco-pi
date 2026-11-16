@@ -81,6 +81,26 @@ export function scopeKey(scope: UsageLimitScope | undefined): string {
   return `${scope.name}\u0001${kind}\u0001${[...scope.models].sort().join("\u0001")}`;
 }
 
+/** Scope name of a limit that live evidence did not confirm. */
+export const UNCONFIRMED_SCOPE_NAME = "unconfirmed";
+
+/**
+ * The scope a quota limit closes. Only a limit the evidence confirms keeps
+ * its corroborated scope; with no scope that means the whole account. A limit
+ * nothing confirmed (no live usage data, a stale reading, a failed read)
+ * closes only the model whose request failed. Missing data never closes the
+ * account's other models; each one is closed by its own failure. Billing
+ * limits are explicit account-level provider errors and keep their scope.
+ */
+export function closureScopeFor(
+  classification: UsageLimitClassification,
+  confirmed: boolean,
+): UsageLimitScope | undefined {
+  if (classification.scope !== undefined) return classification.scope;
+  if (confirmed || classification.kind !== "quota") return undefined;
+  return { name: UNCONFIRMED_SCOPE_NAME, models: [classification.modelId], exact: true };
+}
+
 /**
  * User- and model-facing note on what a scoped limit covers, such as
  * `" (claude-fable*, claude-mythos* only; other models stay available)"`;

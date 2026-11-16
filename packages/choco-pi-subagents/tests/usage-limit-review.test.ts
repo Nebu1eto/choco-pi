@@ -34,6 +34,9 @@ import { waitFor } from "./wait-for.ts";
 const HOUR = 3_600_000;
 const SOL = "openai/gpt-5.6-sol";
 const OPUS = "anthropic/claude-opus-4-5";
+/** Model ids for availability checks: the child runs Opus; Sonnet is another Anthropic model. */
+const OPUS_ID = "claude-opus-4-5";
+const SONNET_ID = "claude-sonnet-4-5";
 const LIMIT = "Codex usage limit reached (plus plan). Resets in ~60m.";
 const background = { description: "usage limit", isBackground: true, isolated: true };
 const run = promisify(execFile);
@@ -327,13 +330,20 @@ for (const scenario of [
           scenario.parked ? "waiting_for_reset" : "reported",
         );
         assert.equal(state.closed.length, 1);
-        assert.equal(manager.isProviderAvailable("anthropic", env.owner), false);
+        assert.equal(manager.isProviderAvailable("anthropic", env.owner, OPUS_ID), false);
+        // Confirmed evidence closes the account; unconfirmed only the failed model.
+        const confirmed = scenario.parked; // only the confirmed scenario parks
+        assert.equal(manager.isProviderAvailable("anthropic", env.owner), !confirmed);
+        assert.equal(manager.isProviderAvailable("anthropic", env.owner, SONNET_ID), !confirmed);
       } else {
         assert.equal(record?.usageLimit, undefined, "no usage-limit block");
         assert.deepEqual(state.closed, [], "no closure");
         assert.deepEqual(usageEvents, []);
-        assert.equal(manager.isProviderAvailable("anthropic", env.owner), false, "transient gate");
-        assert.equal(manager.isProviderAvailable("anthropic", "another-owner"), false);
+        // The transient gate holds the failed model only, for every owner.
+        assert.equal(manager.isProviderAvailable("anthropic", env.owner, OPUS_ID), false, "gate");
+        assert.equal(manager.isProviderAvailable("anthropic", "another-owner", OPUS_ID), false);
+        assert.equal(manager.isProviderAvailable("anthropic", env.owner, SONNET_ID), true);
+        assert.equal(manager.isProviderAvailable("anthropic", env.owner), true);
       }
     } finally {
       manager.dispose();

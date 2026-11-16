@@ -102,7 +102,7 @@ async function waitForCacheKey(key: string): Promise<void> {
   }
 }
 
-test("preference none: child limit is reported, provider closed, model untouched", async () => {
+test("preference none: child limit is reported, failed model closed, model untouched", async () => {
   const e2e = await createUsageLimitE2e({
     preference: "none",
     parentModel: CLAUDE_MODEL,
@@ -130,7 +130,7 @@ test("preference none: child limit is reported, provider closed, model untouched
     assert.match(text, /Agent failed: Codex usage limit reached \(plus plan\)\. Resets in ~5m\./);
     assert.match(
       text,
-      /Usage limit: OpenAI usage limit \(quota\); resets ~\S+; suggested model: anthropic\/e2e-claude; status: reported/,
+      /Usage limit: OpenAI usage limit \(quota\) \(e2e-codex only; other models stay available\); resets ~\S+; suggested model: anthropic\/e2e-claude; status: reported/,
     );
 
     const events = usageEvents(e2e.usageEvents);
@@ -429,7 +429,7 @@ test("real root controller, fallback: Anthropic 429 switches the session to Code
     assert.equal(codexRequests.length, 1);
     assert.match(
       codexRequests[0]?.lastText ?? "",
-      /^Anthropic usage limit reached \(resets .+\)\. Switched to openai-codex\/e2e-codex\. Continue the previous task/,
+      /^Anthropic usage limit reached \(e2e-claude only; other models stay available\) \(resets .+\)\. Switched to openai-codex\/e2e-codex\. Continue the previous task/,
     );
     assert.deepEqual(usageLimitPolicyOwners(), [parentId]);
     // Corroboration had a (fake) Anthropic token, so it tried the OAuth usage endpoints.
@@ -492,7 +492,14 @@ test("real root closure from an Anthropic 429 is re-checked before the next Anth
     e2e.providers.script(CLAUDE_MODEL, { kind: "error", message: ANTHROPIC_LIMIT_TEXT });
     await e2e.session.prompt("Do the task.");
     await e2e.session.waitForIdle();
-    await waitFor(() => policy.isClosed("anthropic", account()), 5_000, "root closure");
+    // No usage data confirms the limit: the closure covers the failed model only.
+    await waitFor(
+      () => policy.isClosed("anthropic", account(), undefined, "e2e-claude"),
+      5_000,
+      "root closure",
+    );
+    assert.equal(policy.isClosed("anthropic", account()), false);
+    assert.equal(policy.isClosed("anthropic", account(), undefined, "claude-fable-5-2"), false);
 
     // The usage endpoint is refused here, so no reading exists: the closure is
     // not trusted and the spawn goes to the provider instead of being refused.
@@ -506,7 +513,7 @@ test("real root closure from an Anthropic 429 is re-checked before the next Anth
     });
     assert.doesNotMatch(resultText(result), /unavailable/);
     assert.equal(e2e.providers.requestsFor(CLAUDE_MODEL).length, 2);
-    assert.equal(policy.isClosed("anthropic", account()), false);
+    assert.equal(policy.isClosed("anthropic", account(), undefined, "e2e-claude"), false);
   } finally {
     await e2e.close();
   }
@@ -592,6 +599,48 @@ test("Fable-scoped limit in a real session: Fable child refused, Anthropic non-F
       /^ProviderUnavailableError: Model anthropic\/claude-fable-5-2 unavailable \(temporarily rate limited\)\. .*\(claude-fable\*, claude-mythos\* only; other models stay available\)/,
     );
     assert.equal(e2e.providers.requestsFor(FABLE_MODEL).length, 1);
+    assert.deepEqual(e2e.fetchCalls, []);
+  } finally {
+    unregister();
+    await e2e.close();
+  }
+});
+test("no live usage data in a real session: a Fable 429 never blocks other Anthropic models", async () => {
+  const e2e = await createUsageLimitE2e({
+    preference: "none",
+    parentModel: CODEX_MODEL,
+    factories: [subagents],
+    projectSettings: { retry: { enabled: false } },
+  });
+  const policy = createUsageLimitPolicy({
+    owner: e2e.session.sessionId,
+    generation: 1,
+    readPreference: async () => (await readAgentPreferencesAsync(e2e.agentDir)).onUsageLimit,
+    fallbacks: { tiers: {}, lastResort: [] },
+    // The usage endpoint cannot be read at all.
+    usageSnapshot: async () => undefined,
+  });
+  const unregister = registerUsageLimitPolicy(policy);
+  const spawn = (model: string, description: string) =>
+    runTool(e2e.session, "Agent", {
+      prompt: "Summarise the repository.",
+      description,
+      subagent_type: E2E_AGENT_TYPE,
+      model,
+      thinking: "medium",
+      model_override_reason: "usage-limit e2e: no usage data",
+      run_in_background: false,
+    });
+  try {
+    e2e.providers.script(FABLE_MODEL, { kind: "error", message: ANTHROPIC_LIMIT_TEXT });
+    assert.match(
+      resultText(await spawn("anthropic/claude-fable-5-2", "fable child")),
+      /Agent failed: 429/,
+    );
+
+    const other = resultText(await spawn("anthropic/e2e-claude", "other anthropic child"));
+    assert.doesNotMatch(other, /unavailable|Agent failed/);
+    assert.equal(e2e.providers.requestsFor(CLAUDE_MODEL).length, 1);
     assert.deepEqual(e2e.fetchCalls, []);
   } finally {
     unregister();

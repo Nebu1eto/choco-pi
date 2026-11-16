@@ -73,6 +73,24 @@ export function usageLimitScopeOf(value: HostSlotValue): UsageLimitScope | undef
   return scope;
 }
 
+/** Copy of the root contract's `UNCONFIRMED_SCOPE_NAME`. */
+export const UNCONFIRMED_SCOPE_NAME = "unconfirmed";
+
+/**
+ * Copy of the root contract's `closureScopeFor`: a quota limit nothing
+ * confirmed (no live usage data, a stale reading, a policy that failed or
+ * timed out) closes only the model whose request failed, never the account's
+ * other models. A confirmed limit keeps its scope (none: the whole account).
+ */
+export function closureScopeFor(
+  classification: UsageLimitClassification,
+  confirmed: boolean,
+): UsageLimitScope | undefined {
+  if (classification.scope !== undefined) return classification.scope;
+  if (confirmed || classification.kind !== "quota") return undefined;
+  return { name: UNCONFIRMED_SCOPE_NAME, models: [classification.modelId], exact: true };
+}
+
 export type UsageLimitClassification = {
   kind: UsageLimitKind;
   provider: string;

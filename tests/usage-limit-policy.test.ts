@@ -916,7 +916,7 @@ test("an inferred limit that live data shows has capacity is transient", async (
   }
 });
 
-test("an inferred limit without usage data falls back but does not auto-resume", async () => {
+test("an inferred limit without usage data closes only the failed model and does not auto-resume", async () => {
   const fallback = await started((h) => {
     h.preferences = ["fallback"];
     h.sessionId = "unavailable-fallback";
@@ -925,10 +925,11 @@ test("an inferred limit without usage data falls back but does not auto-resume",
   await fallback.settle();
   assert.deepEqual(fallback.setModelCalls, ["openai-codex/gpt-6-sol"]);
   assert.equal(fallback.sent.length, 1);
-  assert.equal(
-    getUsageLimitPolicy("unavailable-fallback")?.isClosed("anthropic", "default", T0 + 1),
-    true,
-  );
+  // Nothing confirmed the limit: only the failed model is closed, never the account.
+  const unavailable = getUsageLimitPolicy("unavailable-fallback");
+  assert.equal(unavailable?.isClosed("anthropic", "default", T0 + 1, "claude-opus-5-5"), true);
+  assert.equal(unavailable?.isClosed("anthropic", "default", T0 + 1, "claude-sonnet-5-5"), false);
+  assert.equal(unavailable?.isClosed("anthropic", "default", T0 + 1), false);
 
   const resume = await started((h) => {
     h.preferences = ["auto-resume"];
@@ -939,13 +940,22 @@ test("an inferred limit without usage data falls back but does not auto-resume",
   assert.equal(resume.pending().length, 0);
   assert.equal(resume.liveTimers.length, 0);
   assert.equal(
-    getUsageLimitPolicy("unavailable-auto-resume")?.isClosed("anthropic", "default", T0 + 1),
+    getUsageLimitPolicy("unavailable-auto-resume")?.isClosed(
+      "anthropic",
+      "default",
+      T0 + 1,
+      "claude-opus-5-5",
+    ),
     true,
+  );
+  assert.equal(
+    getUsageLimitPolicy("unavailable-auto-resume")?.isClosed("anthropic", "default", T0 + 1),
+    false,
   );
   assert.match(resume.notes[0] ?? "", /cannot confirm the reset/);
 });
 
-test("a parsed limit without usage data closes and may fall back but never auto-resumes", async () => {
+test("a parsed limit without usage data closes only the failed model and never auto-resumes", async () => {
   const fallback = await started((h) => {
     h.preferences = ["fallback"];
     h.currentModel = SOL;
@@ -955,10 +965,10 @@ test("a parsed limit without usage data closes and may fall back but never auto-
   await fallback.settle();
   assert.deepEqual(fallback.setModelCalls, ["anthropic/claude-opus-5-5"]);
   assert.equal(fallback.sent.length, 1);
-  assert.equal(
-    getUsageLimitPolicy("parsed-fallback")?.isClosed("openai-codex", "default", T0 + 1),
-    true,
-  );
+  const parsed = getUsageLimitPolicy("parsed-fallback");
+  assert.equal(parsed?.isClosed("openai-codex", "default", T0 + 1, "gpt-6-sol"), true);
+  assert.equal(parsed?.isClosed("openai-codex", "default", T0 + 1, "gpt-6-astra"), false);
+  assert.equal(parsed?.isClosed("openai-codex", "default", T0 + 1), false);
 
   const resume = await started((h) => {
     h.preferences = ["auto-resume"];
@@ -971,8 +981,12 @@ test("a parsed limit without usage data closes and may fall back but never auto-
   assert.equal(resume.liveTimers.length, 0);
   assert.equal(resume.sent.length, 0);
   assert.equal(
-    getUsageLimitPolicy("parsed-resume")?.isClosed("openai-codex", "default", T0 + 1),
+    getUsageLimitPolicy("parsed-resume")?.isClosed("openai-codex", "default", T0 + 1, "gpt-6-sol"),
     true,
+  );
+  assert.equal(
+    getUsageLimitPolicy("parsed-resume")?.isClosed("openai-codex", "default", T0 + 1),
+    false,
   );
   assert.match(resume.notes[0] ?? "", /cannot confirm the reset/);
 });
