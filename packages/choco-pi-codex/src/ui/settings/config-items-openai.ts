@@ -15,7 +15,7 @@ export function buildOpenAISettings(config: CodexConversionConfig, theme: Theme)
         id: "midTurnSteering",
         label: "Mid-turn Steering",
         description:
-          "Auto for GPT-6 models (Astra, Sol, Luna) and GPT-6.1 Sol over Responses WebSocket. Pi queued steering remains the fallback.",
+          "Auto for GPT-6 models (Astra, Sol, Luna), GPT-6.1 Sol, and GPT-6.2 Astra and Sol over Responses WebSocket. Pi queued steering remains the fallback.",
         currentValue: config.openai.midTurnSteering ? "auto" : "off",
         values: ["auto", "off"],
       },
@@ -29,7 +29,7 @@ export function buildOpenAISettings(config: CodexConversionConfig, theme: Theme)
         id: "asyncCodeMode",
         label: "Async Code Mode",
         description:
-          "Auto for direct exec on GPT-6 (Astra, Sol, Luna) and GPT-6.1 Sol Responses WebSocket. Pi preflight and Code Mode yield/wait are retained; hosted programmatic tools are excluded.",
+          "Auto for direct exec on GPT-6 (Astra, Sol, Luna), GPT-6.1 Sol, and GPT-6.2 Astra and Sol Responses WebSocket. Pi preflight and Code Mode yield/wait are retained; hosted programmatic tools are excluded.",
         currentValue: config.openai.asyncCodeMode ? "auto" : "off",
         values: ["auto", "off"],
       },

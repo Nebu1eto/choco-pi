@@ -269,7 +269,12 @@ apply-patch-display protocol strings, code-mode host cache path) are kept
 verbatim for protocol parity.
 
 `src/providers/openai-codex/model-catalog.ts` only adds models missing from the
-host's built-in `openai-codex` catalog (currently the Daybreak entries). The
+host's built-in `openai-codex` catalog (currently the Daybreak entries and,
+since 2026-11-18, `gpt-6.2-astra` and `gpt-6.2-sol`, which pi 1.5.2 and the
+pi.dev catalog do not carry; remove them once the host ships them). Their
+context windows (272,000 and 500,000) come from the Codex
+`/backend-api/codex/models` catalog and their prices from OpenAI's model pages;
+`profile/models.json` overrides both windows to 1,050,000. The
 temporary `gpt-6-astra` registration was removed once pi 0.85.1 shipped the
 model in the host catalog (272,000-token Codex context limit, `max` effort).
 
@@ -622,6 +627,10 @@ Other models and SSE keep ordinary behavior.
 2026-10-07: the gate also accepts `gpt-6.1-sol` (exact ID only; no other 6.1
 name). Native steering and async exec support for GPT-6.1 Sol is assumed from
 GPT-6 Sol and is pending a live probe by the orchestrator.
+
+2026-11-18: the gate also accepts `gpt-6.2-astra` and `gpt-6.2-sol` (exact IDs only). A live wire probe at client version 0.169.0 returned `response.steer.accepted`, an async `exec` custom tool call, and a completed response for both models.
+
+2026-11-18: `CODEX_CLIENT_VERSION` moved from 0.162.1 to 0.169.0, the latest stable codex-cli on npm. The Codex catalog lists GPT-6.2 only for client version 0.166.0 or later, and the backend rejects it with `model_not_found` below that. The request shape was verified by live probes and `pi -p` turns on `gpt-6.1-sol`, `gpt-6.2-sol`, and `gpt-6.2-astra`, not by a diff against the codex-cli 0.169.0 source.
 
 ## choco-pi patch: structured Codex usage-limit reset signal
 

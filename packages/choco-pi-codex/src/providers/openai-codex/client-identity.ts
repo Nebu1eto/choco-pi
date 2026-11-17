@@ -5,7 +5,7 @@ import { osInfo } from "./node-runtime.ts";
  * `CARGO_PKG_VERSION` both as the `version` header and inside the User-Agent; this matches the
  * codex-cli build the request shape was last verified against.
  */
-export const CODEX_CLIENT_VERSION = "0.162.1";
+export const CODEX_CLIENT_VERSION = "0.169.0";
 
 export type CodexRequestKind = "turn" | "prewarm";
 

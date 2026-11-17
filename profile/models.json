@@ -22,6 +22,12 @@
         },
         "gpt-6.1-terra": {
           "contextWindow": 1050000
+        },
+        "gpt-6.2-astra": {
+          "contextWindow": 1050000
+        },
+        "gpt-6.2-sol": {
+          "contextWindow": 1050000
         }
       }
     },
@@ -46,6 +52,12 @@
           "contextWindow": 1050000
         },
         "gpt-6.1-terra": {
+          "contextWindow": 1050000
+        },
+        "gpt-6.2-astra": {
+          "contextWindow": 1050000
+        },
+        "gpt-6.2-sol": {
           "contextWindow": 1050000
         }
       }
