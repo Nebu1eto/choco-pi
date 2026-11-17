@@ -220,13 +220,15 @@ test("fallbacks and role defaults route OpenAI through openai-codex only", async
   const files = (await readdir(resolve("profile/agents"))).filter((file) => file.endsWith(".md"));
   assert.ok(files.length > 0);
   const expectedOpenAI = new Map([
-    ["general.md", "openai-codex/gpt-6.2-sol"],
     ["explore.md", "openai-codex/gpt-6.2-sol"],
     ["handoff.md", "openai-codex/gpt-6.2-sol"],
     ["reviewer.md", "openai-codex/gpt-6.2-astra"],
     ["verifier.md", "openai-codex/gpt-6.2-sol"],
   ]);
   for (const file of expectedOpenAI.keys()) assert.ok(files.includes(file), file + " exists");
+  const general = await readFile(resolve("profile/agents/general.md"), "utf8");
+  assert.equal(/^model:\s*(\S+)$/mu.exec(general)?.[1], "anthropic/claude-opus-5-5", "general.md");
+  assert.equal(/^thinking:\s*(\S+)$/mu.exec(general)?.[1], "medium", "general.md thinking");
   for (const file of files) {
     const content = await readFile(resolve("profile/agents", file), "utf8");
     const model = /^model:\s*(\S+)$/mu.exec(content)?.[1];

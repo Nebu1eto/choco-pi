@@ -1,7 +1,7 @@
 ---
 description: General-purpose project leaf for tasks that do not fit a specialized role
-model: openai-codex/gpt-6.2-sol
-thinking: low
+model: anthropic/claude-opus-5-5
+thinking: medium
 allowed_subagents: "*"
 prompt_mode: append
 skills: true
